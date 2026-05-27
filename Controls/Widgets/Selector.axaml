@@ -1,0 +1,17 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="MyPlanner.Controls.Widgets.Selector">
+
+    <!-- Аналог DropdownSelector / ViewButton + ViewDropdown из selector.py -->
+    <ComboBox x:Name="PART_Combo"
+              ItemsSource="{Binding Items, RelativeSource={RelativeSource AncestorType=UserControl}}"
+              SelectedIndex="{Binding SelectedIndex, RelativeSource={RelativeSource AncestorType=UserControl}, Mode=TwoWay}"
+              DisplayMemberBinding="{Binding Label}"
+              Background="{StaticResource BrushSecondaryBg}"
+              BorderBrush="{StaticResource BrushSeparator}"
+              Foreground="{StaticResource BrushPrimaryText}"
+              CornerRadius="{StaticResource RadiusBase}"
+              Height="32"
+              HorizontalAlignment="Stretch" />
+
+</UserControl>

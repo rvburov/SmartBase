@@ -1,0 +1,44 @@
+<ResourceDictionary xmlns="https://github.com/avaloniaui"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <!-- Аналог Colors в styles.py -->
+
+    <!-- Фоны -->
+    <Color x:Key="ColorBg">#FFFFFF</Color>
+    <Color x:Key="ColorSecondaryBg">#F2F2F7</Color>
+    <Color x:Key="ColorInactiveBg">#FAFAFA</Color>
+    <Color x:Key="ColorActivityBar">#EBEBEB</Color>
+
+    <!-- Разделители -->
+    <Color x:Key="ColorSeparator">#E5E5EA</Color>
+    <Color x:Key="ColorGridLine">#E8E8E8</Color>
+
+    <!-- Текст -->
+    <Color x:Key="ColorPrimaryText">#1C1C1E</Color>
+    <Color x:Key="ColorSecondaryText">#8E8E93</Color>
+    <Color x:Key="ColorWeekend">#8E8E93</Color>
+    <Color x:Key="ColorTodayText">#FFFFFF</Color>
+
+    <!-- Акценты -->
+    <Color x:Key="ColorAccent">#007AFF</Color>
+    <Color x:Key="ColorAccentLight">#E5F0FF</Color>
+    <Color x:Key="ColorRed">#FF3B30</Color>
+    <Color x:Key="ColorGreen">#34C759</Color>
+
+    <!-- Прочее -->
+    <Color x:Key="ColorHover">#E5E5EA</Color>
+    <Color x:Key="ColorDragHandle">#AEAEB2</Color>
+    <Color x:Key="ColorScrollbar">#C7C7CC</Color>
+
+    <!-- SolidColorBrush для привязок -->
+    <SolidColorBrush x:Key="BrushBg"           Color="{StaticResource ColorBg}" />
+    <SolidColorBrush x:Key="BrushSecondaryBg"  Color="{StaticResource ColorSecondaryBg}" />
+    <SolidColorBrush x:Key="BrushSeparator"    Color="{StaticResource ColorSeparator}" />
+    <SolidColorBrush x:Key="BrushPrimaryText"  Color="{StaticResource ColorPrimaryText}" />
+    <SolidColorBrush x:Key="BrushSecondaryText" Color="{StaticResource ColorSecondaryText}" />
+    <SolidColorBrush x:Key="BrushAccent"       Color="{StaticResource ColorAccent}" />
+    <SolidColorBrush x:Key="BrushAccentLight"  Color="{StaticResource ColorAccentLight}" />
+    <SolidColorBrush x:Key="BrushRed"          Color="{StaticResource ColorRed}" />
+    <SolidColorBrush x:Key="BrushHover"        Color="{StaticResource ColorHover}" />
+
+</ResourceDictionary>

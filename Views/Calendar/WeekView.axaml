@@ -1,0 +1,47 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:comp="using:MyPlanner.Controls.Components"
+             x:Class="MyPlanner.Views.Calendar.WeekView"
+             Background="{StaticResource BrushBg}">
+
+    <Grid RowDefinitions="Auto,Auto,*">
+
+        <!-- AllDayBar -->
+        <comp:AllDayBar Grid.Row="0" x:Name="AllDayBarCtrl" />
+
+        <!-- Заголовки дней недели с датами -->
+        <Grid Grid.Row="1" x:Name="WeekHeader"
+              Background="{StaticResource BrushSecondaryBg}"
+              Height="40" />
+
+        <!-- Прокручиваемая сетка событий -->
+        <ScrollViewer Grid.Row="2" x:Name="TimeScroll">
+            <Grid ColumnDefinitions="72,*">
+
+                <!-- Метки часов -->
+                <ItemsControl Grid.Column="0" x:Name="HourLabels">
+                    <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <StackPanel />
+                        </ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <TextBlock Text="{Binding}" Height="60" Padding="0,2,8,0"
+                                       TextAlignment="Right"
+                                       FontSize="{StaticResource FontSizeSmall}"
+                                       Foreground="{StaticResource BrushSecondaryText}" />
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+
+                <!-- 7 колонок с событиями -->
+                <UniformGrid Grid.Column="1" x:Name="WeekColumns"
+                             Columns="7" Height="1440" />
+
+            </Grid>
+        </ScrollViewer>
+
+    </Grid>
+
+</UserControl>

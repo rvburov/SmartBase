@@ -1,0 +1,45 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:comp="using:MyPlanner.Controls.Components"
+             x:Class="MyPlanner.Views.Calendar.DayView"
+             Background="{StaticResource BrushBg}">
+
+    <Grid RowDefinitions="Auto,*">
+
+        <!-- Панель "весь день" -->
+        <comp:AllDayBar Grid.Row="0" x:Name="AllDayBarCtrl" />
+
+        <!-- Прокручиваемая сетка часов с событиями -->
+        <ScrollViewer Grid.Row="1" x:Name="TimeScroll">
+            <Grid ColumnDefinitions="72,*">
+
+                <!-- Метки часов -->
+                <ItemsControl Grid.Column="0" x:Name="HourLabels">
+                    <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <StackPanel />
+                        </ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <TextBlock Text="{Binding}"
+                                       Height="60"
+                                       Padding="0,2,8,0"
+                                       TextAlignment="Right"
+                                       FontSize="{StaticResource FontSizeSmall}"
+                                       Foreground="{StaticResource BrushSecondaryText}" />
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+
+                <!-- Canvas для событий (24 ч × 60 px/ч = 1440 px) -->
+                <Canvas Grid.Column="1" x:Name="EventCanvas"
+                        Height="1440"
+                        Background="Transparent" />
+
+            </Grid>
+        </ScrollViewer>
+
+    </Grid>
+
+</UserControl>

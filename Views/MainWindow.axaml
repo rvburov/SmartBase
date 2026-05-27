@@ -1,0 +1,45 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:comp="using:MyPlanner.Controls.Components"
+        xmlns:cal="using:MyPlanner.Views.Calendar"
+        xmlns:con="using:MyPlanner.Views.ConstructorDb"
+        x:Class="MyPlanner.Views.MainWindow"
+        Title="MyPlanner"
+        Width="1331" Height="813"
+        MinWidth="900" MinHeight="600"
+        Background="{StaticResource BrushBg}"
+        WindowStartupLocation="CenterScreen">
+
+    <Grid ColumnDefinitions="Auto,Auto,Auto,*">
+
+        <!-- Левая панель активности (48px) -->
+        <comp:ActivityBar Grid.Column="0"
+                          x:Name="ActivityBarControl" />
+
+        <!-- Вертикальный разделитель справа от ActivityBar -->
+        <Border Grid.Column="1"
+                Width="1"
+                Background="{StaticResource BrushSeparator}" />
+
+        <!-- Боковые панели (скрываются/показываются по модулю) -->
+        <Grid Grid.Column="2">
+            <comp:Sidebar x:Name="CalendarSidebar" />
+            <comp:SidebarTree x:Name="ConstructorSidebar" IsVisible="False" />
+        </Grid>
+
+        <!-- Основная область контента -->
+        <Grid Grid.Column="3" RowDefinitions="1,*">
+
+            <Border Grid.Row="0"
+                    Background="{StaticResource BrushSeparator}" />
+
+            <Grid Grid.Row="1">
+                <cal:CalendarControllerView x:Name="CalendarModule" />
+                <con:ConstructorControllerView x:Name="ConstructorModule" IsVisible="False" />
+            </Grid>
+
+        </Grid>
+
+    </Grid>
+
+</Window>

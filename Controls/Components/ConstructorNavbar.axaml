@@ -1,0 +1,101 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="MyPlanner.Controls.Components.ConstructorNavbar"
+             Height="57"
+             Background="{StaticResource BrushBg}">
+
+    <DockPanel>
+
+        <!-- Линия-разделитель снизу -->
+        <Border DockPanel.Dock="Bottom"
+                Height="1"
+                Background="{StaticResource BrushSeparator}" />
+
+        <!-- Содержимое: заголовок + кнопки -->
+        <Grid ColumnDefinitions="*,Auto,Auto,Auto,Auto,Auto,Auto,Auto"
+              Margin="16,0">
+
+            <!-- Название выбранной коллекции -->
+            <TextBlock Grid.Column="0" x:Name="TitleLabel"
+                       Text="Выберите коллекцию"
+                       VerticalAlignment="Center"
+                       FontSize="{StaticResource FontSizeLarge}"
+                       FontWeight="{StaticResource FontWeightBold}"
+                       Foreground="{StaticResource BrushPrimaryText}" />
+
+            <!-- Переключатель вида (Таблица / Список) -->
+            <ComboBox Grid.Column="1" x:Name="ViewSelector"
+                      Width="130" Height="30" Margin="0,0,8,0"
+                      Background="{StaticResource BrushSecondaryBg}"
+                      Foreground="{StaticResource BrushPrimaryText}"
+                      CornerRadius="{StaticResource RadiusBase}" />
+
+            <!-- Фильтр -->
+            <Button Grid.Column="2" x:Name="FilterBtn"
+                    Width="30" Height="30" Margin="0,0,4,0"
+                    CornerRadius="{StaticResource RadiusMedium}"
+                    Background="{StaticResource BrushSecondaryBg}"
+                    ToolTip.Tip="Фильтр">
+                <Path Data="M6,9 L24,9 M9,15 L21,15 M12,21 L18,21"
+                      Stroke="{StaticResource BrushSecondaryText}"
+                      StrokeThickness="1.5" StrokeLineCap="Round" />
+            </Button>
+
+            <!-- Сортировка -->
+            <Button Grid.Column="3" x:Name="SortBtn"
+                    Width="30" Height="30" Margin="0,0,4,0"
+                    CornerRadius="{StaticResource RadiusMedium}"
+                    Background="{StaticResource BrushSecondaryBg}"
+                    ToolTip.Tip="Сортировка">
+                <Path Data="M8,9 L20,9 M8,15 L16,15 M8,21 L12,21"
+                      Stroke="{StaticResource BrushSecondaryText}"
+                      StrokeThickness="1.5" StrokeLineCap="Round" />
+            </Button>
+
+            <!-- Добавить запись -->
+            <Button Grid.Column="4" x:Name="AddBtn"
+                    Width="30" Height="30" Margin="0,0,4,0"
+                    CornerRadius="{StaticResource RadiusMedium}"
+                    Background="{StaticResource BrushSecondaryBg}"
+                    ToolTip.Tip="Добавить запись">
+                <Path Data="M15,8 L15,22 M8,15 L22,15"
+                      Stroke="{StaticResource BrushSecondaryText}"
+                      StrokeThickness="1.5" StrokeLineCap="Round" />
+            </Button>
+
+            <!-- Ручная высота строк -->
+            <ToggleButton Grid.Column="5" x:Name="RowResizeBtn"
+                          Width="30" Height="30" Margin="0,0,4,0"
+                          CornerRadius="{StaticResource RadiusMedium}"
+                          ToolTip.Tip="Ручная высота строк">
+                <Path Data="M8,9 L22,9 M8,15 L22,15 M8,21 L22,21 M5,12 L5,18"
+                      Stroke="{StaticResource BrushSecondaryText}"
+                      StrokeThickness="1.5" StrokeLineCap="Round" />
+            </ToggleButton>
+
+            <!-- Ручная ширина столбцов -->
+            <ToggleButton Grid.Column="6" x:Name="ColResizeBtn"
+                          Width="30" Height="30" Margin="0,0,4,0"
+                          CornerRadius="{StaticResource RadiusMedium}"
+                          ToolTip.Tip="Ручная ширина столбцов">
+                <Path Data="M9,8 L9,22 M15,8 L15,22 M21,8 L21,22 M12,5 L18,5"
+                      Stroke="{StaticResource BrushSecondaryText}"
+                      StrokeThickness="1.5" StrokeLineCap="Round" />
+            </ToggleButton>
+
+            <!-- Добавить свойство (поле) -->
+            <Button Grid.Column="7" x:Name="AddPropertyBtn"
+                    Width="30" Height="30"
+                    CornerRadius="{StaticResource RadiusMedium}"
+                    Background="{StaticResource BrushSecondaryBg}"
+                    ToolTip.Tip="Добавить свойство">
+                <Path Data="M15,8 L15,22 M8,15 L22,15"
+                      Stroke="{StaticResource BrushAccent}"
+                      StrokeThickness="1.5" StrokeLineCap="Round" />
+            </Button>
+
+        </Grid>
+
+    </DockPanel>
+
+</UserControl>

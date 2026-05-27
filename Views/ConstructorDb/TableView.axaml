@@ -1,0 +1,21 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="MyPlanner.Views.ConstructorDb.TableView"
+             Background="{StaticResource BrushBg}">
+
+    <ScrollViewer HorizontalScrollBarVisibility="Auto"
+                  VerticalScrollBarVisibility="Auto">
+        <DataGrid x:Name="RecordsGrid"
+                  AutoGenerateColumns="False"
+                  CanUserResizeColumns="True"
+                  CanUserSortColumns="True"
+                  GridLinesVisibility="All"
+                  HeadersVisibility="Column"
+                  SelectionMode="Single"
+                  Background="Transparent"
+                  BorderThickness="0"
+                  FontSize="{StaticResource FontSizeBase}"
+                  Foreground="{StaticResource BrushPrimaryText}" />
+    </ScrollViewer>
+
+</UserControl>

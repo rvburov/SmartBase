@@ -1,0 +1,50 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="MyPlanner.Views.Calendar.JournalView"
+             Background="{StaticResource BrushBg}">
+
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <ItemsControl x:Name="GroupsList" Padding="16">
+            <ItemsControl.ItemTemplate>
+                <DataTemplate>
+                    <StackPanel Spacing="4" Margin="0,0,0,16">
+                        <!-- Заголовок даты -->
+                        <TextBlock Text="{Binding DateHeader}"
+                                   FontWeight="{StaticResource FontWeightBold}"
+                                   FontSize="{StaticResource FontSizeLarge}"
+                                   Foreground="{StaticResource BrushPrimaryText}"
+                                   Margin="0,0,0,4" />
+                        <!-- Список событий дня -->
+                        <ItemsControl ItemsSource="{Binding Events}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Button Margin="0,2"
+                                            Padding="12,8"
+                                            HorizontalAlignment="Stretch"
+                                            HorizontalContentAlignment="Left"
+                                            Background="{Binding ChipBg}"
+                                            Command="{Binding ClickCommand}"
+                                            CornerRadius="{StaticResource RadiusBase}">
+                                        <Grid ColumnDefinitions="*,Auto">
+                                            <TextBlock Grid.Column="0"
+                                                       Text="{Binding Title}"
+                                                       FontSize="{StaticResource FontSizeBase}"
+                                                       Foreground="{Binding TitleFg}"
+                                                       TextTrimming="CharacterEllipsis" />
+                                            <TextBlock Grid.Column="1"
+                                                       Text="{Binding TimeText}"
+                                                       FontSize="{StaticResource FontSizeSmall}"
+                                                       Foreground="{StaticResource BrushSecondaryText}"
+                                                       Margin="8,0,0,0" />
+                                        </Grid>
+                                    </Button>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+                </DataTemplate>
+            </ItemsControl.ItemTemplate>
+        </ItemsControl>
+    </ScrollViewer>
+
+</UserControl>

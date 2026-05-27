@@ -1,0 +1,47 @@
+# ===== C# / .NET =====
+bin/
+obj/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+.vs/
+publish/
+*.nupkg
+*.snupkg
+
+# ===== AVALONIA =====
+*.axaml.g.cs
+*.g.i.cs
+
+# ===== RIDER / JETBRAINS =====
+.idea/
+
+# ===== VISUAL STUDIO =====
+.vscode/
+*.rsuser
+*.MigrateUser
+
+# ===== БАЗЫ ДАННЫХ =====
+*.sqlite
+*.sqlite3
+*.db
+
+# ===== КОНФИГУРАЦИЯ =====
+settings.json
+settings.ini
+appsettings.Local.json
+
+# ===== СИСТЕМНЫЕ ФАЙЛЫ =====
+.DS_Store
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.tmp
+*.temp
+*.bak
+*~
+
+# ===== ЛОГИ =====
+logs/
+*.log

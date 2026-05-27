@@ -1,0 +1,15 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="MyPlanner.Controls.Widgets.AppButton">
+
+    <Button x:Name="PART_Button"
+            Classes.accent="{Binding IsAccent, RelativeSource={RelativeSource AncestorType=UserControl}}"
+            Classes.danger="{Binding IsDanger, RelativeSource={RelativeSource AncestorType=UserControl}}"
+            Content="{Binding Text, RelativeSource={RelativeSource AncestorType=UserControl}}"
+            Command="{Binding Command, RelativeSource={RelativeSource AncestorType=UserControl}}"
+            Height="32"
+            Padding="12,0"
+            HorizontalContentAlignment="Center"
+            CornerRadius="{StaticResource RadiusMedium}" />
+
+</UserControl>

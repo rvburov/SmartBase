@@ -1,0 +1,51 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="MyPlanner.Controls.Dialogs.GroupDialog"
+        Title="Новая группа"
+        Width="420"
+        SizeToContent="Height"
+        WindowStartupLocation="CenterOwner"
+        CanResize="False"
+        Background="{StaticResource BrushBg}">
+
+    <StackPanel Spacing="10" Margin="24">
+
+        <TextBlock Text="Название"
+                   FontWeight="{StaticResource FontWeightBold}"
+                   FontSize="{StaticResource FontSizeBase}"
+                   Foreground="{StaticResource BrushSecondaryText}" />
+
+        <TextBox x:Name="NameBox"
+                 Watermark="Введите название"
+                 Height="36"
+                 CornerRadius="{StaticResource RadiusMedium}" />
+
+        <TextBlock Text="Расположение"
+                   FontWeight="{StaticResource FontWeightBold}"
+                   FontSize="{StaticResource FontSizeBase}"
+                   Foreground="{StaticResource BrushSecondaryText}" />
+
+        <ComboBox x:Name="LocationCombo"
+                  HorizontalAlignment="Stretch"
+                  Height="36"
+                  Background="{StaticResource BrushSecondaryBg}"
+                  Foreground="{StaticResource BrushPrimaryText}"
+                  CornerRadius="{StaticResource RadiusBase}" />
+
+        <Grid ColumnDefinitions="*,Auto,8,Auto" Margin="0,8,0,4">
+            <Button Grid.Column="1" x:Name="CancelBtn"
+                    Content="Отмена" Width="110" Height="32"
+                    CornerRadius="{StaticResource RadiusMedium}"
+                    Background="{StaticResource BrushSecondaryBg}"
+                    Foreground="{StaticResource BrushPrimaryText}" />
+            <Button Grid.Column="3" x:Name="ConfirmBtn"
+                    Content="Создать" Width="110" Height="32"
+                    CornerRadius="{StaticResource RadiusMedium}"
+                    Background="{StaticResource BrushAccent}"
+                    Foreground="White"
+                    FontWeight="{StaticResource FontWeightBold}" />
+        </Grid>
+
+    </StackPanel>
+
+</Window>

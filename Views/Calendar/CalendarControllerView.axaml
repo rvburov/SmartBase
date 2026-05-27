@@ -1,0 +1,26 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:comp="using:MyPlanner.Controls.Components"
+             xmlns:cal="using:MyPlanner.Views.Calendar"
+             x:Class="MyPlanner.Views.Calendar.CalendarControllerView">
+
+    <Grid RowDefinitions="Auto,1,*">
+
+        <!-- Навбар с навигацией и поиском -->
+        <comp:Navbar Grid.Row="0" x:Name="NavbarControl" />
+
+        <Border Grid.Row="1" Height="1" Background="{StaticResource BrushSeparator}" />
+
+        <!-- Стек вьюх: 0-Расписание, 1-Журнал, 2-День, 3-Неделя, 4-Месяц, 5-Год -->
+        <Grid Grid.Row="2">
+            <cal:ListView    x:Name="ListViewCtrl"    IsVisible="False" />
+            <cal:JournalView x:Name="JournalViewCtrl" IsVisible="False" />
+            <cal:DayView     x:Name="DayViewCtrl"     IsVisible="False" />
+            <cal:WeekView    x:Name="WeekViewCtrl"    IsVisible="False" />
+            <cal:MonthView   x:Name="MonthViewCtrl"   IsVisible="True"  />
+            <cal:YearView    x:Name="YearViewCtrl"    IsVisible="False" />
+        </Grid>
+
+    </Grid>
+
+</UserControl>

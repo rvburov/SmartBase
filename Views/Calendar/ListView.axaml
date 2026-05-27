@@ -1,0 +1,42 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="MyPlanner.Views.Calendar.ListView"
+             Background="{StaticResource BrushBg}">
+
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <ItemsControl x:Name="EventsList" Padding="16">
+            <ItemsControl.ItemTemplate>
+                <DataTemplate>
+                    <Button Margin="0,2"
+                            Padding="12,8"
+                            HorizontalAlignment="Stretch"
+                            HorizontalContentAlignment="Left"
+                            Background="Transparent"
+                            Command="{Binding ClickCommand}">
+                        <Grid ColumnDefinitions="Auto,12,*">
+                            <!-- Цветная полоска -->
+                            <Border Grid.Column="0" Width="4" CornerRadius="2"
+                                    Background="{Binding ColorBrush}" />
+                            <!-- Информация о событии -->
+                            <StackPanel Grid.Column="2" Spacing="2">
+                                <TextBlock Text="{Binding Title}"
+                                           FontSize="{StaticResource FontSizeBase}"
+                                           FontWeight="{StaticResource FontWeightBold}"
+                                           Foreground="{StaticResource BrushPrimaryText}" />
+                                <TextBlock Text="{Binding DateTimeText}"
+                                           FontSize="{StaticResource FontSizeSmall}"
+                                           Foreground="{StaticResource BrushSecondaryText}" />
+                                <TextBlock Text="{Binding Description}"
+                                           FontSize="{StaticResource FontSizeSmall}"
+                                           Foreground="{StaticResource BrushSecondaryText}"
+                                           IsVisible="{Binding HasDescription}"
+                                           TextTrimming="CharacterEllipsis" />
+                            </StackPanel>
+                        </Grid>
+                    </Button>
+                </DataTemplate>
+            </ItemsControl.ItemTemplate>
+        </ItemsControl>
+    </ScrollViewer>
+
+</UserControl>

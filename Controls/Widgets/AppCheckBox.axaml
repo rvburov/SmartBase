@@ -1,0 +1,11 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="MyPlanner.Controls.Widgets.AppCheckBox">
+
+    <CheckBox x:Name="PART_CheckBox"
+              Content="{Binding Label, RelativeSource={RelativeSource AncestorType=UserControl}}"
+              IsChecked="{Binding IsChecked, RelativeSource={RelativeSource AncestorType=UserControl}, Mode=TwoWay}"
+              Foreground="{StaticResource BrushPrimaryText}"
+              FontSize="{StaticResource FontSizeBase}" />
+
+</UserControl>

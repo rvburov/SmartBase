@@ -1,0 +1,56 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="MyPlanner.Views.Settings.SettingsView"
+             Background="{StaticResource BrushBg}">
+
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <StackPanel Margin="24" Spacing="16" MaxWidth="500" HorizontalAlignment="Left">
+
+            <TextBlock Text="Настройки"
+                       FontSize="{StaticResource FontSizeLarge}"
+                       FontWeight="{StaticResource FontWeightBold}"
+                       Foreground="{StaticResource BrushPrimaryText}" />
+
+            <!-- Appearance -->
+            <TextBlock Text="Интерфейс"
+                       FontSize="{StaticResource FontSizeBase}"
+                       Foreground="{StaticResource BrushSecondaryText}"
+                       Margin="0,8,0,0" />
+
+            <Border Background="{StaticResource BrushSecondaryBg}"
+                    CornerRadius="{StaticResource RadiusBase}"
+                    Padding="16">
+                <Grid ColumnDefinitions="*,Auto">
+                    <TextBlock Grid.Column="0"
+                               Text="Масштаб интерфейса"
+                               FontSize="{StaticResource FontSizeBase}"
+                               Foreground="{StaticResource BrushPrimaryText}"
+                               VerticalAlignment="Center" />
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
+                        <Button x:Name="ZoomOutBtn"
+                                Content="−"
+                                Width="32"
+                                Height="32"
+                                Padding="0"
+                                HorizontalContentAlignment="Center" />
+                        <TextBlock x:Name="ZoomLabel"
+                                   Text="100%"
+                                   FontSize="{StaticResource FontSizeBase}"
+                                   Foreground="{StaticResource BrushPrimaryText}"
+                                   VerticalAlignment="Center"
+                                   Width="48"
+                                   TextAlignment="Center" />
+                        <Button x:Name="ZoomInBtn"
+                                Content="+"
+                                Width="32"
+                                Height="32"
+                                Padding="0"
+                                HorizontalContentAlignment="Center" />
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+        </StackPanel>
+    </ScrollViewer>
+
+</UserControl>

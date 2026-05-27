@@ -1,0 +1,84 @@
+<Styles xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <Styles.Resources>
+        <!-- Радиусы скругления -->
+        <CornerRadius x:Key="RadiusXS">4</CornerRadius>
+        <CornerRadius x:Key="RadiusSmall">5</CornerRadius>
+        <CornerRadius x:Key="RadiusBase">6</CornerRadius>
+        <CornerRadius x:Key="RadiusMedium">8</CornerRadius>
+        <CornerRadius x:Key="RadiusLarge">12</CornerRadius>
+        <CornerRadius x:Key="RadiusPill">15</CornerRadius>
+
+        <!-- Цвет скроллбара -->
+        <SolidColorBrush x:Key="BrushScrollbar" Color="#C7C7CC" />
+    </Styles.Resources>
+
+    <!-- Window -->
+    <Style Selector="Window">
+        <Setter Property="Background" Value="{StaticResource BrushBg}" />
+        <Setter Property="MinWidth"   Value="1100" />
+        <Setter Property="MinHeight"  Value="760" />
+    </Style>
+
+    <!-- Button -->
+    <Style Selector="Button">
+        <Setter Property="Background"   Value="{StaticResource BrushSecondaryBg}" />
+        <Setter Property="Foreground"   Value="{StaticResource BrushPrimaryText}" />
+        <Setter Property="CornerRadius" Value="{StaticResource RadiusBase}" />
+        <Setter Property="Padding"      Value="12,6" />
+        <Setter Property="Cursor"       Value="Hand" />
+    </Style>
+
+    <Style Selector="Button:pointerover /template/ ContentPresenter">
+        <Setter Property="Background" Value="{StaticResource BrushHover}" />
+    </Style>
+
+    <Style Selector="Button.accent">
+        <Setter Property="Background" Value="{StaticResource BrushAccent}" />
+        <Setter Property="Foreground" Value="White" />
+    </Style>
+
+    <Style Selector="Button.danger">
+        <Setter Property="Background" Value="{StaticResource BrushRed}" />
+        <Setter Property="Foreground" Value="White" />
+    </Style>
+
+    <!-- TextBox -->
+    <Style Selector="TextBox">
+        <Setter Property="Background"      Value="{StaticResource BrushSecondaryBg}" />
+        <Setter Property="Foreground"      Value="{StaticResource BrushPrimaryText}" />
+        <Setter Property="CornerRadius"    Value="{StaticResource RadiusBase}" />
+        <Setter Property="Padding"         Value="10,6" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="BorderBrush"     Value="{StaticResource BrushSeparator}" />
+    </Style>
+
+    <Style Selector="TextBox:focus /template/ Border">
+        <Setter Property="BorderBrush" Value="{StaticResource BrushAccent}" />
+    </Style>
+
+    <!-- ScrollBar тонкий -->
+    <Style Selector="ScrollBar">
+        <Setter Property="Width"   Value="6" />
+        <Setter Property="Height"  Value="6" />
+        <Setter Property="Opacity" Value="1.0" />
+    </Style>
+
+    <Style Selector="ScrollBar /template/ Thumb">
+        <Setter Property="Background"   Value="{StaticResource BrushScrollbar}" />
+        <Setter Property="CornerRadius" Value="{StaticResource RadiusXS}" />
+    </Style>
+
+    <!-- CheckBox -->
+    <Style Selector="CheckBox /template/ Border#NormalRectangle">
+        <Setter Property="CornerRadius"    Value="{StaticResource RadiusXS}" />
+        <Setter Property="BorderThickness" Value="1.5" />
+        <Setter Property="BorderBrush"     Value="{StaticResource BrushAccent}" />
+    </Style>
+
+    <Style Selector="CheckBox:checked /template/ Border#NormalRectangle">
+        <Setter Property="Background" Value="{StaticResource BrushAccent}" />
+    </Style>
+
+</Styles>

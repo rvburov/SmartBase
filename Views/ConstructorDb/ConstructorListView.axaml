@@ -1,0 +1,48 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="MyPlanner.Views.ConstructorDb.ConstructorListView"
+             Background="{StaticResource BrushBg}">
+
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <ItemsControl x:Name="RecordsList">
+            <ItemsControl.ItemTemplate>
+                <DataTemplate>
+                    <Button HorizontalAlignment="Stretch"
+                            HorizontalContentAlignment="Left"
+                            Background="Transparent"
+                            BorderThickness="0"
+                            Padding="12,0"
+                            Height="38"
+                            Command="{Binding ClickCommand}">
+                        <Grid ColumnDefinitions="*,Auto,Auto">
+                            <TextBlock Grid.Column="0"
+                                       Text="{Binding Name}"
+                                       FontSize="{StaticResource FontSizeBase}"
+                                       Foreground="{StaticResource BrushPrimaryText}"
+                                       VerticalAlignment="Center"
+                                       TextTrimming="CharacterEllipsis" />
+                            <Border Grid.Column="1"
+                                    IsVisible="{Binding HasStatus}"
+                                    Background="{StaticResource BrushAccentLight}"
+                                    CornerRadius="{StaticResource RadiusXS}"
+                                    Padding="8,1"
+                                    Margin="8,0,0,0">
+                                <TextBlock Text="{Binding Status}"
+                                           FontSize="{StaticResource FontSizeSmall}"
+                                           Foreground="{StaticResource BrushAccent}" />
+                            </Border>
+                            <TextBlock Grid.Column="2"
+                                       IsVisible="{Binding HasDate}"
+                                       Text="{Binding Date}"
+                                       FontSize="{StaticResource FontSizeSmall}"
+                                       Foreground="{StaticResource BrushSecondaryText}"
+                                       VerticalAlignment="Center"
+                                       Margin="8,0,0,0" />
+                        </Grid>
+                    </Button>
+                </DataTemplate>
+            </ItemsControl.ItemTemplate>
+        </ItemsControl>
+    </ScrollViewer>
+
+</UserControl>

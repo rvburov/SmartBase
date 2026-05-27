@@ -1,0 +1,42 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="MyPlanner.Controls.Dialogs.RecordDialog"
+        Title="Новая запись"
+        Width="520"
+        MinWidth="400"
+        SizeToContent="Height"
+        WindowStartupLocation="CenterOwner"
+        CanResize="False"
+        Background="{StaticResource BrushBg}">
+
+    <DockPanel Margin="24">
+
+        <!-- Динамические поля заполняются из кода -->
+        <Grid DockPanel.Dock="Bottom"
+              ColumnDefinitions="Auto,*,Auto,8,Auto"
+              Margin="0,16,0,4">
+            <Button Grid.Column="0" x:Name="DeleteBtn"
+                    Content="Удалить" Width="110" Height="32"
+                    IsVisible="False"
+                    CornerRadius="{StaticResource RadiusMedium}"
+                    Background="{StaticResource BrushRed}"
+                    Foreground="White"
+                    FontWeight="{StaticResource FontWeightBold}" />
+            <Button Grid.Column="2" x:Name="CancelBtn"
+                    Content="Отмена" Width="110" Height="32"
+                    CornerRadius="{StaticResource RadiusMedium}"
+                    Background="{StaticResource BrushSecondaryBg}"
+                    Foreground="{StaticResource BrushPrimaryText}" />
+            <Button Grid.Column="4" x:Name="SaveBtn"
+                    Content="Сохранить" Width="110" Height="32"
+                    CornerRadius="{StaticResource RadiusMedium}"
+                    Background="{StaticResource BrushAccent}"
+                    Foreground="White"
+                    FontWeight="{StaticResource FontWeightBold}" />
+        </Grid>
+
+        <StackPanel x:Name="FieldsPanel" Spacing="10" />
+
+    </DockPanel>
+
+</Window>

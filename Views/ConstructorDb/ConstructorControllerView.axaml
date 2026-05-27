@@ -1,0 +1,20 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:comp="using:MyPlanner.Controls.Components"
+             xmlns:con="using:MyPlanner.Views.ConstructorDb"
+             x:Class="MyPlanner.Views.ConstructorDb.ConstructorControllerView">
+
+    <Grid RowDefinitions="Auto,*">
+
+        <!-- Navbar конструктора -->
+        <comp:ConstructorNavbar Grid.Row="0" x:Name="ConstructorNavbar" />
+
+        <!-- Контент: таблица или список -->
+        <Grid Grid.Row="1">
+            <con:TableView          x:Name="TableViewCtrl"    IsVisible="True" />
+            <con:ConstructorListView x:Name="ListViewCtrl"    IsVisible="False" />
+        </Grid>
+
+    </Grid>
+
+</UserControl>

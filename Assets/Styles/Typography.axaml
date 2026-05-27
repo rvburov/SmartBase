@@ -1,0 +1,31 @@
+<Styles xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <Styles.Resources>
+        <!-- Размеры шрифтов -->
+        <x:Double x:Key="FontSizeSmall">11</x:Double>
+        <x:Double x:Key="FontSizeBase">13</x:Double>
+        <x:Double x:Key="FontSizeLarge">20</x:Double>
+
+        <!-- Веса шрифтов -->
+        <FontWeight x:Key="FontWeightNormal">Normal</FontWeight>
+        <FontWeight x:Key="FontWeightBold">SemiBold</FontWeight>
+    </Styles.Resources>
+
+    <Style Selector="TextBlock">
+        <Setter Property="FontFamily"  Value="Helvetica Neue, Arial, sans-serif" />
+        <Setter Property="FontSize"    Value="{StaticResource FontSizeBase}" />
+        <Setter Property="Foreground"  Value="{StaticResource BrushPrimaryText}" />
+    </Style>
+
+    <Style Selector="TextBox">
+        <Setter Property="FontFamily"  Value="Helvetica Neue, Arial, sans-serif" />
+        <Setter Property="FontSize"    Value="{StaticResource FontSizeBase}" />
+    </Style>
+
+    <Style Selector="Button">
+        <Setter Property="FontFamily"  Value="Helvetica Neue, Arial, sans-serif" />
+        <Setter Property="FontSize"    Value="{StaticResource FontSizeBase}" />
+    </Style>
+
+</Styles>

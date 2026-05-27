@@ -1,0 +1,45 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="MyPlanner.Controls.Components.ActivityBar"
+             Width="48"
+             Background="{StaticResource BrushSecondaryBg}">
+
+    <!-- Вертикальная панель модулей: Календарь / Конструктор -->
+    <StackPanel Spacing="8" Margin="8,12,8,0">
+
+        <!-- Кнопка сайдбара (бургер) -->
+        <ToggleButton x:Name="SidebarBtn"
+                      Width="32" Height="32"
+                      CornerRadius="{StaticResource RadiusMedium}"
+                      ToolTip.Tip="Сайдбар">
+            <Path Data="M6,9 L26,9 M6,15 L26,15 M6,21 L26,21"
+                  Stroke="{StaticResource BrushSecondaryText}"
+                  StrokeThickness="1.5" StrokeLineCap="Round" />
+        </ToggleButton>
+
+        <Separator Background="{StaticResource BrushSeparator}" Height="1" Margin="0,4" />
+
+        <!-- Модуль: Календарь -->
+        <ToggleButton x:Name="CalendarBtn"
+                      Width="32" Height="32"
+                      CornerRadius="{StaticResource RadiusMedium}"
+                      IsChecked="True"
+                      ToolTip.Tip="Календарь">
+            <Path Data="M8,8 L24,8 L24,24 L8,24 Z M8,14 L24,14 M14,6 L14,10 M20,6 L20,10"
+                  Stroke="{StaticResource BrushSecondaryText}"
+                  StrokeThickness="1.5" StrokeLineCap="Round" />
+        </ToggleButton>
+
+        <!-- Модуль: Конструктор -->
+        <ToggleButton x:Name="ConstructorBtn"
+                      Width="32" Height="32"
+                      CornerRadius="{StaticResource RadiusMedium}"
+                      ToolTip.Tip="Конструктор БД">
+            <Path Data="M8,9 L24,9 L24,23 L8,23 Z M8,15 L24,15 M8,19 L24,19 M14,9 L14,23 M19,9 L19,23"
+                  Stroke="{StaticResource BrushSecondaryText}"
+                  StrokeThickness="1.5" StrokeLineCap="Round" />
+        </ToggleButton>
+
+    </StackPanel>
+
+</UserControl>
