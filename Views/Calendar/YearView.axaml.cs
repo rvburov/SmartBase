@@ -45,9 +45,11 @@ public partial class YearView : UserControl
     ];
 
 
-    private const double Dch       = 24;
-    private const double TitleH    = 32;
-    private const double CardHeight = TitleH + 7 * Dch; // 32 + 189 = 221
+    private const double Dch        = 24;
+    private const double TitleH     = 32;
+    private const double CardHeight = TitleH + 7 * Dch; // 32 + 168 = 200
+    private const int    CellW      = 31;               // 220/7=31.43 → floor, чтобы колонки были целыми
+    private const int    DayGridW   = 7 * CellW;        // 217
 
     private Control BuildMonthCard(int year, int month, Dictionary<DateTime, int> eventCounts)
     {
@@ -58,7 +60,7 @@ public partial class YearView : UserControl
         {
             Text                = MonthNames[month - 1],
             FontSize            = 13,
-            FontWeight          = FontWeight.Bold,
+            FontWeight          = FontWeight.SemiBold,
             Height              = TitleH,
             Padding             = new Avalonia.Thickness(6, 6, 0, 2),
             Foreground          = isTitleMonth
@@ -67,7 +69,7 @@ public partial class YearView : UserControl
         };
 
         // Один UniformGrid: 7 заголовков + 42 ячейки = 49 элементов, 7 строк × 7 колонок
-        var dayGrid    = new UniformGrid { Columns = 7, Height = 7 * Dch };
+        var dayGrid    = new UniformGrid { Columns = 7, Width = DayGridW, Height = 7 * Dch };
         var firstDay   = new DateTime(year, month, 1);
         var startOffset = ((int)firstDay.DayOfWeek + 6) % 7;
 
@@ -77,7 +79,7 @@ public partial class YearView : UserControl
             {
                 Text              = DayNames[di],
                 FontSize          = 13,
-                FontWeight        = FontWeight.Light,
+                FontWeight        = FontWeight.Normal,
                 TextAlignment     = Avalonia.Media.TextAlignment.Center,
                 VerticalAlignment = VerticalAlignment.Center,
                 Foreground        = di >= 5
@@ -97,11 +99,12 @@ public partial class YearView : UserControl
 
             Control cell;
 
-            if (isToday)
+            if (isToday && isCurrentMonth)
             {
                 // Круг 22×22 по центру ячейки, как в PyQt (CS=22)
                 cell = new Border
                 {
+                    Margin              = new Avalonia.Thickness(1),
                     HorizontalAlignment = HorizontalAlignment.Center,
                     VerticalAlignment   = VerticalAlignment.Center,
                     Width               = 22,
@@ -112,7 +115,7 @@ public partial class YearView : UserControl
                     {
                         Text              = d.Day.ToString(),
                         FontSize          = 13,
-                        FontWeight        = FontWeight.Light,
+                        FontWeight        = FontWeight.Normal,
                         TextAlignment     = Avalonia.Media.TextAlignment.Center,
                         VerticalAlignment = VerticalAlignment.Center,
                         Foreground        = Avalonia.Media.Brushes.White,
@@ -129,12 +132,12 @@ public partial class YearView : UserControl
                     Background   = new SolidColorBrush(EventSteps[step].Bg),
                     Child = new TextBlock
                     {
-                        Text              = d.Day.ToString(),
-                        FontSize          = 13,
-                        FontWeight        = FontWeight.Light,
-                        TextAlignment     = Avalonia.Media.TextAlignment.Center,
-                        VerticalAlignment = VerticalAlignment.Center,
-                        Foreground        = new SolidColorBrush(EventSteps[step].Text),
+                        Text                = d.Day.ToString(),
+                        FontSize            = 13,
+                        FontWeight          = FontWeight.Normal,
+                        HorizontalAlignment = HorizontalAlignment.Center,
+                        VerticalAlignment   = VerticalAlignment.Center,
+                        Foreground          = new SolidColorBrush(EventSteps[step].Text),
                     },
                 };
             }
@@ -150,7 +153,8 @@ public partial class YearView : UserControl
                 {
                     Text              = d.Day.ToString(),
                     FontSize          = 13,
-                    FontWeight        = FontWeight.Light,
+                    FontWeight        = FontWeight.Normal,
+                    Margin            = new Avalonia.Thickness(1),
                     TextAlignment     = Avalonia.Media.TextAlignment.Center,
                     VerticalAlignment = VerticalAlignment.Center,
                     Foreground        = new SolidColorBrush(fg),

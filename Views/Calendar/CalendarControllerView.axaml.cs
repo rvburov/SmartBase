@@ -48,7 +48,7 @@ public partial class CalendarControllerView : UserControl
         NavbarControl.SearchChanged += (_, q) => { _searchQuery = q; RefreshCurrent(); };
 
         MonthViewCtrl.DaySelected  += (_, d)  => { _currentDate = d; SwitchView(2); };
-        YearViewCtrl.MonthSelected += (_, d)  => { _currentDate = d; SwitchView(3); };
+        YearViewCtrl.MonthSelected += (_, d)  => { _currentDate = d; SwitchView(4); };
 
         MonthViewCtrl.EventClicked += (_, ev) => _ = OpenEditDialog(ev);
         DayViewCtrl.EventClicked   += (_, ev) => _ = OpenEditDialog(ev);
