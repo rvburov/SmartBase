@@ -6,88 +6,40 @@
     <Grid RowDefinitions="Auto,*">
 
         <!-- Заголовки дней недели -->
-        <UniformGrid Grid.Row="0" Columns="7"
+        <Border Grid.Row="0"
+                BorderBrush="#E8E8E8"
+                BorderThickness="1,0,0,0">
+        <UniformGrid Columns="7"
                      Background="{StaticResource BrushSecondaryBg}">
             <TextBlock Text="Пн" HorizontalAlignment="Center" Padding="0,6"
-                       FontSize="{StaticResource FontSizeSmall}"
+                       FontSize="13"
                        Foreground="{StaticResource BrushSecondaryText}" />
             <TextBlock Text="Вт" HorizontalAlignment="Center" Padding="0,6"
-                       FontSize="{StaticResource FontSizeSmall}"
+                       FontSize="13"
                        Foreground="{StaticResource BrushSecondaryText}" />
             <TextBlock Text="Ср" HorizontalAlignment="Center" Padding="0,6"
-                       FontSize="{StaticResource FontSizeSmall}"
+                       FontSize="13"
                        Foreground="{StaticResource BrushSecondaryText}" />
             <TextBlock Text="Чт" HorizontalAlignment="Center" Padding="0,6"
-                       FontSize="{StaticResource FontSizeSmall}"
+                       FontSize="13"
                        Foreground="{StaticResource BrushSecondaryText}" />
             <TextBlock Text="Пт" HorizontalAlignment="Center" Padding="0,6"
-                       FontSize="{StaticResource FontSizeSmall}"
+                       FontSize="13"
                        Foreground="{StaticResource BrushSecondaryText}" />
             <TextBlock Text="Сб" HorizontalAlignment="Center" Padding="0,6"
-                       FontSize="{StaticResource FontSizeSmall}"
+                       FontSize="13"
                        Foreground="{StaticResource BrushRed}" />
             <TextBlock Text="Вс" HorizontalAlignment="Center" Padding="0,6"
-                       FontSize="{StaticResource FontSizeSmall}"
+                       FontSize="13"
                        Foreground="{StaticResource BrushRed}" />
         </UniformGrid>
+        </Border>
 
-        <!-- Сетка дней месяца — заполняется из кода -->
-        <ItemsControl Grid.Row="1" x:Name="DayGrid">
-            <ItemsControl.ItemsPanel>
-                <ItemsPanelTemplate>
-                    <UniformGrid Columns="7" />
-                </ItemsPanelTemplate>
-            </ItemsControl.ItemsPanel>
-            <ItemsControl.ItemTemplate>
-                <DataTemplate>
-                    <Border BorderBrush="{StaticResource BrushSeparator}"
-                            BorderThickness="0,0,1,1"
-                            Background="{Binding Background}"
-                            Padding="4,4">
-                        <DockPanel>
-                            <!-- Номер дня — кнопка для перехода в день -->
-                            <Button DockPanel.Dock="Top"
-                                    Width="24" Height="24"
-                                    CornerRadius="12"
-                                    Background="{Binding DayNumberBg}"
-                                    HorizontalAlignment="Left"
-                                    Padding="0"
-                                    BorderThickness="0"
-                                    Command="{Binding SelectCommand}">
-                                <TextBlock Text="{Binding DayNumber}"
-                                           FontSize="{StaticResource FontSizeSmall}"
-                                           FontWeight="{Binding DayNumberWeight}"
-                                           Foreground="{Binding DayNumberFg}"
-                                           HorizontalAlignment="Center"
-                                           VerticalAlignment="Center" />
-                            </Button>
-                            <!-- События -->
-                            <ItemsControl DockPanel.Dock="Top"
-                                          ItemsSource="{Binding Events}"
-                                          Margin="0,2,0,0">
-                                <ItemsControl.ItemTemplate>
-                                    <DataTemplate>
-                                        <Button Margin="0,1"
-                                                Height="18"
-                                                Padding="4,0"
-                                                HorizontalAlignment="Stretch"
-                                                HorizontalContentAlignment="Left"
-                                                Background="{Binding ChipBg}"
-                                                Foreground="{Binding ChipFg}"
-                                                CornerRadius="3"
-                                                Command="{Binding ClickCommand}">
-                                            <TextBlock Text="{Binding Title}"
-                                                       FontSize="11"
-                                                       TextTrimming="CharacterEllipsis" />
-                                        </Button>
-                                    </DataTemplate>
-                                </ItemsControl.ItemTemplate>
-                            </ItemsControl>
-                        </DockPanel>
-                    </Border>
-                </DataTemplate>
-            </ItemsControl.ItemTemplate>
-        </ItemsControl>
+        <!-- Сетка дней + прозрачный оверлей для многодневных событий -->
+        <Grid Grid.Row="1" x:Name="GridContainer">
+            <UniformGrid x:Name="DayGrid" Columns="7" />
+            <Canvas x:Name="SpanCanvas" />
+        </Grid>
 
     </Grid>
 

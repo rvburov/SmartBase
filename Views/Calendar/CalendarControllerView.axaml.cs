@@ -47,10 +47,12 @@ public partial class CalendarControllerView : UserControl
         NavbarControl.ViewChanged   += (_, idx) => SwitchView(idx);
         NavbarControl.SearchChanged += (_, q) => { _searchQuery = q; RefreshCurrent(); };
 
-        MonthViewCtrl.DaySelected  += (_, d)  => { _currentDate = d; SwitchView(2); };
+        MonthViewCtrl.DaySelected   += (_, d)  => { _currentDate = d; SwitchView(2); };
+        MonthViewCtrl.DayAddClicked += (_, d)  => _ = OpenAddDialog(d);
         YearViewCtrl.MonthSelected += (_, d)  => { _currentDate = d; SwitchView(4); };
 
         MonthViewCtrl.EventClicked += (_, ev) => _ = OpenEditDialog(ev);
+        MonthViewCtrl.EventMoved   += (_, ev) => { _events.Update(ev); CollectionsMayHaveChanged?.Invoke(this, EventArgs.Empty); RefreshCurrent(); };
         DayViewCtrl.EventClicked   += (_, ev) => _ = OpenEditDialog(ev);
         WeekViewCtrl.EventClicked  += (_, ev) => _ = OpenEditDialog(ev);
 
@@ -126,8 +128,8 @@ public partial class CalendarControllerView : UserControl
     {
         2 => (_currentDate.Date, _currentDate.Date.AddDays(1)),
         3 => (StartOfWeek(_currentDate), StartOfWeek(_currentDate).AddDays(7)),
-        4 => (new DateTime(_currentDate.Year, _currentDate.Month, 1),
-              new DateTime(_currentDate.Year, _currentDate.Month, 1).AddMonths(1)),
+        4 => (StartOfWeek(new DateTime(_currentDate.Year, _currentDate.Month, 1)),
+              StartOfWeek(new DateTime(_currentDate.Year, _currentDate.Month, 1)).AddDays(42)),
         5 => (new DateTime(_currentDate.Year, 1, 1), new DateTime(_currentDate.Year + 1, 1, 1)),
         _ => (DateTime.Today.AddDays(-365), DateTime.Today.AddDays(365)),
     };
