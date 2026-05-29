@@ -40,9 +40,21 @@ public partial class CalendarControllerView : UserControl
         _categories  = categories;
         _constructor = constructor;
 
-        NavbarControl.TodayClicked  += (_, _) => { _currentDate = DateTime.Today; RefreshCurrent(); };
-        NavbarControl.PrevClicked   += (_, _) => { NavigatePrev(); RefreshCurrent(); };
-        NavbarControl.NextClicked   += (_, _) => { NavigateNext(); RefreshCurrent(); };
+        NavbarControl.TodayClicked  += (_, _) =>
+        {
+            if (_currentViewIndex == 1) { JournalViewCtrl.GoToday(); return; }
+            _currentDate = DateTime.Today; RefreshCurrent();
+        };
+        NavbarControl.PrevClicked   += (_, _) =>
+        {
+            if (_currentViewIndex == 1) { JournalViewCtrl.GoPrev(); return; }
+            NavigatePrev(); RefreshCurrent();
+        };
+        NavbarControl.NextClicked   += (_, _) =>
+        {
+            if (_currentViewIndex == 1) { JournalViewCtrl.GoNext(); return; }
+            NavigateNext(); RefreshCurrent();
+        };
         NavbarControl.AddClicked    += (_, _) => _ = OpenAddDialog(_currentDate);
         NavbarControl.ViewChanged   += (_, idx) => SwitchView(idx);
         NavbarControl.SearchChanged += (_, q) => { _searchQuery = q; RefreshCurrent(); };
@@ -51,8 +63,10 @@ public partial class CalendarControllerView : UserControl
         MonthViewCtrl.DayAddClicked += (_, d)  => _ = OpenAddDialog(d);
         YearViewCtrl.MonthSelected += (_, d)  => { _currentDate = d; SwitchView(4); };
 
-        ListViewCtrl.EventClicked    += (_, ev) => _ = OpenEditDialog(ev);
-        ListViewCtrl.CreateRequested += (_, d)  => _ = OpenAddDialog(d);
+        ListViewCtrl.EventClicked      += (_, ev) => _ = OpenEditDialog(ev);
+        ListViewCtrl.CreateRequested   += (_, d)  => _ = OpenAddDialog(d);
+        JournalViewCtrl.EventClicked   += (_, ev) => _ = OpenEditDialog(ev);
+        JournalViewCtrl.CreateRequested += (_, d)  => _ = OpenAddDialog(d);
         MonthViewCtrl.EventClicked += (_, ev) => _ = OpenEditDialog(ev);
         MonthViewCtrl.EventMoved   += (_, ev) => { _events.Update(ev); CollectionsMayHaveChanged?.Invoke(this, EventArgs.Empty); RefreshCurrent(); };
         DayViewCtrl.EventClicked   += (_, ev) => _ = OpenEditDialog(ev);
@@ -162,7 +176,7 @@ public partial class CalendarControllerView : UserControl
         {
             var (text, brush) = _currentDate.Date switch
             {
-                var d when d == today => ("Сегодня", BrushRed),
+                var d when d == today => (_currentDate.ToString("dddd, d MMMM yyyy", ru), BrushRed),
                 var d when d < today  => (_currentDate.ToString("dddd, d MMMM yyyy", ru), BrushSecondary),
                 _                     => (_currentDate.ToString("dddd, d MMMM yyyy", ru), BrushPrimary),
             };

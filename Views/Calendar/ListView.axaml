@@ -30,7 +30,8 @@
                                     <StackPanel Grid.Column="2" Spacing="2">
                                         <TextBlock Text="{Binding Title}"
                                                    FontSize="13"
-                                                   Foreground="{Binding TitleBrush}" />
+                                                   Foreground="{Binding TitleBrush}"
+                                                   TextTrimming="CharacterEllipsis" />
                                         <TextBlock Text="{Binding DateTimeText}"
                                                    FontSize="13"
                                                    Foreground="{StaticResource BrushSecondaryText}" />

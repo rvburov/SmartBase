@@ -3,41 +3,54 @@
              x:Class="MyPlanner.Views.Calendar.JournalView"
              Background="{StaticResource BrushBg}">
 
-    <ScrollViewer VerticalScrollBarVisibility="Auto">
-        <ItemsControl x:Name="GroupsList" Padding="16">
+    <ScrollViewer x:Name="JournalScroll" VerticalScrollBarVisibility="Auto"
+                  DoubleTapped="OnBackgroundDoubleTapped">
+        <ItemsControl x:Name="GroupsList" Padding="8">
             <ItemsControl.ItemTemplate>
                 <DataTemplate>
-                    <StackPanel Spacing="4" Margin="0,0,0,16">
+                    <StackPanel Spacing="0" Margin="0,0,0,0">
                         <!-- Заголовок даты -->
                         <TextBlock Text="{Binding DateHeader}"
-                                   FontWeight="{StaticResource FontWeightBold}"
-                                   FontSize="{StaticResource FontSizeLarge}"
-                                   Foreground="{StaticResource BrushPrimaryText}"
-                                   Margin="0,0,0,4" />
+                                   FontSize="13"
+                                   FontWeight="Bold"
+                                   Foreground="{Binding HeaderBrush}"
+                                   Margin="8,8,0,8" />
+                        <!-- Подсказка для пустого сегодня -->
+                        <TextBlock Text="Нет событий на сегодня"
+                                   IsVisible="{Binding ShowEmptyHint}"
+                                   FontSize="13"
+                                   Foreground="{StaticResource BrushSecondaryText}"
+                                   Margin="24,0,0,8" />
                         <!-- Список событий дня -->
                         <ItemsControl ItemsSource="{Binding Events}">
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate>
-                                    <Button Margin="0,2"
-                                            Padding="12,8"
+                                    <Border Margin="0"
                                             HorizontalAlignment="Stretch"
-                                            HorizontalContentAlignment="Left"
-                                            Background="{Binding ChipBg}"
-                                            Command="{Binding ClickCommand}"
-                                            CornerRadius="{StaticResource RadiusBase}">
-                                        <Grid ColumnDefinitions="*,Auto">
-                                            <TextBlock Grid.Column="0"
-                                                       Text="{Binding Title}"
-                                                       FontSize="{StaticResource FontSizeBase}"
-                                                       Foreground="{Binding TitleFg}"
-                                                       TextTrimming="CharacterEllipsis" />
-                                            <TextBlock Grid.Column="1"
-                                                       Text="{Binding TimeText}"
-                                                       FontSize="{StaticResource FontSizeSmall}"
-                                                       Foreground="{StaticResource BrushSecondaryText}"
-                                                       Margin="8,0,0,0" />
+                                            CornerRadius="6"
+                                            Background="{Binding BackgroundBrush}"
+                                            Tag="{Binding}"
+                                            Cursor="Hand"
+                                            Tapped="OnEventTapped"
+                                            DoubleTapped="OnEventDoubleTapped"
+                                            PointerEntered="OnEventPointerEntered"
+                                            PointerExited="OnEventPointerExited">
+                                        <Grid Margin="16,8" ColumnDefinitions="Auto,12,*">
+                                            <!-- Цветная полоска -->
+                                            <Border Grid.Column="0" Width="4" CornerRadius="2"
+                                                    Background="{Binding ColorBrush}" />
+                                            <!-- Информация о событии -->
+                                            <StackPanel Grid.Column="2" Spacing="2">
+                                                <TextBlock Text="{Binding Title}"
+                                                           FontSize="13"
+                                                           Foreground="{Binding TitleBrush}"
+                                                           TextTrimming="CharacterEllipsis" />
+                                                <TextBlock Text="{Binding TimeText}"
+                                                           FontSize="13"
+                                                           Foreground="{StaticResource BrushSecondaryText}" />
+                                            </StackPanel>
                                         </Grid>
-                                    </Button>
+                                    </Border>
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>

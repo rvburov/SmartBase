@@ -4,44 +4,70 @@
              MinHeight="40"
              Background="{StaticResource BrushSecondaryBg}">
 
-    <Grid ColumnDefinitions="72,*">
+    <Grid RowDefinitions="*,Auto">
 
-        <!-- Метка "весь день" слева, выровнена по правому краю — как в PyQt5 -->
-        <TextBlock Grid.Column="0"
-                   Text="весь день"
-                   FontSize="{StaticResource FontSizeBase}"
-                   Foreground="{StaticResource BrushSecondaryText}"
-                   HorizontalAlignment="Right"
-                   VerticalAlignment="Center"
-                   Margin="0,0,8,0" />
+        <!-- Основной контент -->
+        <Grid Grid.Row="0" ColumnDefinitions="72,*">
 
-        <!-- Плашки all-day событий -->
-        <ItemsControl Grid.Column="1"
-                      x:Name="EventsList"
-                      Padding="4,6,12,6">
-            <ItemsControl.ItemsPanel>
-                <ItemsPanelTemplate>
-                    <WrapPanel Orientation="Horizontal" />
-                </ItemsPanelTemplate>
-            </ItemsControl.ItemsPanel>
-            <ItemsControl.ItemTemplate>
-                <DataTemplate>
-                    <Button Margin="0,2,4,2"
-                            Height="24"
-                            Padding="8,0"
-                            CornerRadius="5"
-                            Background="{Binding ChipBackground}"
-                            Foreground="{Binding ChipForeground}"
-                            Command="{Binding ClickCommand}"
-                            ToolTip.Tip="{Binding Title}">
-                        <TextBlock Text="{Binding Title}"
-                                   FontSize="{StaticResource FontSizeBase}"
-                                   TextTrimming="CharacterEllipsis"
-                                   MaxWidth="160" />
-                    </Button>
-                </DataTemplate>
-            </ItemsControl.ItemTemplate>
-        </ItemsControl>
+            <!-- Метка "весь день" слева с боковыми линиями -->
+            <Border Grid.Column="0"
+                    BorderBrush="#E8E8E8"
+                    BorderThickness="1,0,1,0">
+                <TextBlock Text="весь день"
+                           FontSize="{StaticResource FontSizeBase}"
+                           Foreground="{StaticResource BrushSecondaryText}"
+                           HorizontalAlignment="Right"
+                           VerticalAlignment="Center"
+                           Margin="0,0,8,0" />
+            </Border>
+
+            <!-- Плашки all-day событий -->
+            <ItemsControl Grid.Column="1"
+                          x:Name="EventsList"
+                          Padding="4,6,12,6">
+                <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate>
+                        <WrapPanel Orientation="Horizontal" />
+                    </ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <Button Margin="0,2,4,2"
+                                Height="24"
+                                Padding="8,0"
+                                CornerRadius="5"
+                                Background="{Binding ChipBackground}"
+                                Foreground="{Binding ChipForeground}"
+                                Command="{Binding ClickCommand}"
+                                ToolTip.Tip="{Binding Title}">
+                            <TextBlock Text="{Binding Title}"
+                                       FontSize="{StaticResource FontSizeBase}"
+                                       TextTrimming="CharacterEllipsis"
+                                       MaxWidth="160" />
+                        </Button>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+
+        </Grid>
+
+        <!-- Splitter-ручка для изменения высоты -->
+        <Border Grid.Row="1"
+                x:Name="ResizeHandle"
+                Height="4"
+                Background="#E5E5EA"
+                Cursor="SizeNorthSouth">
+            <StackPanel Orientation="Horizontal"
+                        HorizontalAlignment="Center"
+                        VerticalAlignment="Center"
+                        Spacing="4">
+                <Ellipse Width="3" Height="3" Fill="#8E8E93" />
+                <Ellipse Width="3" Height="3" Fill="#8E8E93" />
+                <Ellipse Width="3" Height="3" Fill="#8E8E93" />
+                <Ellipse Width="3" Height="3" Fill="#8E8E93" />
+                <Ellipse Width="3" Height="3" Fill="#8E8E93" />
+            </StackPanel>
+        </Border>
 
     </Grid>
 

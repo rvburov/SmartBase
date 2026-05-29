@@ -1,25 +1,51 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:comp="using:MyPlanner.Controls.Components"
+             xmlns:shapes="using:Avalonia.Controls.Shapes"
+             xmlns:local="using:MyPlanner.Views.Calendar"
              x:Class="MyPlanner.Views.Calendar.WeekView"
              Background="{StaticResource BrushBg}">
 
+    <UserControl.Resources>
+        <local:HourLineBorderConverter x:Key="HourBorderConv" />
+    </UserControl.Resources>
+
     <Grid RowDefinitions="Auto,Auto,*">
 
-        <!-- AllDayBar -->
-        <comp:AllDayBar Grid.Row="0" x:Name="AllDayBarCtrl" />
+        <!-- Заголовки дней недели — 72px пустой отступ + 7 равных колонок -->
+        <Border Grid.Row="0"
+                BorderBrush="#E8E8E8"
+                BorderThickness="1,0,0,1">
+            <Grid ColumnDefinitions="72,*"
+                  Background="{StaticResource BrushSecondaryBg}">
+                <UniformGrid Grid.Column="1" x:Name="WeekHeaderDays" Columns="7" />
+            </Grid>
+        </Border>
 
-        <!-- Заголовки дней недели с датами -->
-        <Grid Grid.Row="1" x:Name="WeekHeader"
-              Background="{StaticResource BrushSecondaryBg}"
-              Height="40" />
+        <!-- AllDayBar -->
+        <comp:AllDayBar Grid.Row="1" x:Name="AllDayBarCtrl" />
+
+        <!-- Вертикальные разделители поверх AllDayBar (сквозные для кликов) -->
+        <Grid Grid.Row="1" IsHitTestVisible="False" ColumnDefinitions="72,*">
+            <UniformGrid Grid.Column="1" Columns="7">
+                <Border BorderBrush="#E8E8E8" BorderThickness="0,0,0,0" />
+                <Border BorderBrush="#E8E8E8" BorderThickness="1,0,0,0" />
+                <Border BorderBrush="#E8E8E8" BorderThickness="1,0,0,0" />
+                <Border BorderBrush="#E8E8E8" BorderThickness="1,0,0,0" />
+                <Border BorderBrush="#E8E8E8" BorderThickness="1,0,0,0" />
+                <Border BorderBrush="#E8E8E8" BorderThickness="1,0,0,0" />
+                <Border BorderBrush="#E8E8E8" BorderThickness="1,0,0,0" />
+            </UniformGrid>
+        </Grid>
 
         <!-- Прокручиваемая сетка событий -->
         <ScrollViewer Grid.Row="2" x:Name="TimeScroll">
             <Grid ColumnDefinitions="72,*">
 
-                <!-- Метки часов -->
-                <ItemsControl Grid.Column="0" x:Name="HourLabels">
+                <!-- Метки часов: каждая метка прижата к низу 60px-слота,
+                     чтобы "01:00" совпадал с линией между 00:xx и 01:xx -->
+                <Border Grid.Column="0" BorderBrush="#E8E8E8" BorderThickness="1,0,0,0">
+                <ItemsControl x:Name="HourLabels">
                     <ItemsControl.ItemsPanel>
                         <ItemsPanelTemplate>
                             <StackPanel />
@@ -27,17 +53,58 @@
                     </ItemsControl.ItemsPanel>
                     <ItemsControl.ItemTemplate>
                         <DataTemplate>
-                            <TextBlock Text="{Binding}" Height="60" Padding="0,2,8,0"
-                                       TextAlignment="Right"
-                                       FontSize="{StaticResource FontSizeSmall}"
-                                       Foreground="{StaticResource BrushSecondaryText}" />
+                            <Grid Height="60">
+                                <TextBlock Text="{Binding}"
+                                           VerticalAlignment="Bottom"
+                                           HorizontalAlignment="Right"
+                                           Margin="0,0,8,-8"
+                                           FontSize="13"
+                                           Foreground="{StaticResource BrushSecondaryText}" />
+                            </Grid>
                         </DataTemplate>
                     </ItemsControl.ItemTemplate>
                 </ItemsControl>
+                </Border>
 
-                <!-- 7 колонок с событиями -->
-                <UniformGrid Grid.Column="1" x:Name="WeekColumns"
-                             Columns="7" Height="1440" />
+                <!-- Правая часть: линии сетки + 7 колонок -->
+                <Grid Grid.Column="1">
+
+                    <!-- Линии часов: сплошная сверху + светлая пунктирная на получасе. -->
+                    <ItemsControl x:Name="HourRows"
+                                  IsHitTestVisible="False"
+                                  Height="1440"
+                                  VerticalAlignment="Top">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <StackPanel />
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Height="60" ClipToBounds="True">
+                                    <!-- сплошная линия часа (скрыта для 00:00) -->
+                                    <Border BorderBrush="#E0E0E0"
+                                            BorderThickness="{Binding Converter={StaticResource HourBorderConv}}"
+                                            VerticalAlignment="Top" />
+                                    <!-- пунктирная линия получаса -->
+                                    <shapes:Line StartPoint="0,0.5" EndPoint="10000,0.5"
+                                                 Margin="0,30,0,0"
+                                                 VerticalAlignment="Top"
+                                                 HorizontalAlignment="Left"
+                                                 Stroke="#E0E0E0"
+                                                 StrokeThickness="1"
+                                                 StrokeDashArray="3,3" />
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+
+                    <!-- 7 колонок с событиями -->
+                    <UniformGrid x:Name="WeekColumns"
+                                 Columns="7" Height="1440"
+                                 VerticalAlignment="Top" />
+
+                </Grid>
 
             </Grid>
         </ScrollViewer>
