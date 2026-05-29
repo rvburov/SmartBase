@@ -3,40 +3,53 @@
              x:Class="MyPlanner.Views.Calendar.ListView"
              Background="{StaticResource BrushBg}">
 
-    <ScrollViewer VerticalScrollBarVisibility="Auto">
-        <ItemsControl x:Name="EventsList" Padding="16">
-            <ItemsControl.ItemTemplate>
-                <DataTemplate>
-                    <Button Margin="0,2"
-                            Padding="12,8"
-                            HorizontalAlignment="Stretch"
-                            HorizontalContentAlignment="Left"
-                            Background="Transparent"
-                            Command="{Binding ClickCommand}">
-                        <Grid ColumnDefinitions="Auto,12,*">
-                            <!-- Цветная полоска -->
-                            <Border Grid.Column="0" Width="4" CornerRadius="2"
-                                    Background="{Binding ColorBrush}" />
-                            <!-- Информация о событии -->
-                            <StackPanel Grid.Column="2" Spacing="2">
-                                <TextBlock Text="{Binding Title}"
-                                           FontSize="{StaticResource FontSizeBase}"
-                                           FontWeight="{StaticResource FontWeightBold}"
-                                           Foreground="{StaticResource BrushPrimaryText}" />
-                                <TextBlock Text="{Binding DateTimeText}"
-                                           FontSize="{StaticResource FontSizeSmall}"
-                                           Foreground="{StaticResource BrushSecondaryText}" />
-                                <TextBlock Text="{Binding Description}"
-                                           FontSize="{StaticResource FontSizeSmall}"
-                                           Foreground="{StaticResource BrushSecondaryText}"
-                                           IsVisible="{Binding HasDescription}"
-                                           TextTrimming="CharacterEllipsis" />
-                            </StackPanel>
-                        </Grid>
-                    </Button>
-                </DataTemplate>
-            </ItemsControl.ItemTemplate>
-        </ItemsControl>
+    <ScrollViewer VerticalScrollBarVisibility="Auto"
+                  DoubleTapped="OnBackgroundDoubleTapped">
+        <Border BorderThickness="1,0,0,0"
+                BorderBrush="{StaticResource BrushSeparator}"
+                Margin="0">
+            <Panel>
+                <ItemsControl x:Name="EventsList" Padding="8,8,8,8">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <Border Margin="0"
+                                    HorizontalAlignment="Stretch"
+                                    CornerRadius="6"
+                                    Background="{Binding BackgroundBrush}"
+                                    Tag="{Binding}"
+                                    Cursor="Hand"
+                                    Tapped="OnEventTapped"
+                                    DoubleTapped="OnEventDoubleTapped"
+                                    PointerEntered="OnEventPointerEntered"
+                                    PointerExited="OnEventPointerExited">
+                                <Grid Margin="16,8" ColumnDefinitions="Auto,12,*">
+                                    <!-- Цветная полоска -->
+                                    <Border Grid.Column="0" Width="4" CornerRadius="2"
+                                            Background="{Binding ColorBrush}" />
+                                    <!-- Информация о событии -->
+                                    <StackPanel Grid.Column="2" Spacing="2">
+                                        <TextBlock Text="{Binding Title}"
+                                                   FontSize="13"
+                                                   Foreground="{Binding TitleBrush}" />
+                                        <TextBlock Text="{Binding DateTimeText}"
+                                                   FontSize="13"
+                                                   Foreground="{StaticResource BrushSecondaryText}" />
+                                    </StackPanel>
+                                </Grid>
+                            </Border>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+
+                <TextBlock x:Name="EmptyHint"
+                           IsVisible="False"
+                           Text="Нет событий"
+                           FontSize="13"
+                           Foreground="{StaticResource BrushSecondaryText}"
+                           Margin="24,16"
+                           VerticalAlignment="Top" />
+            </Panel>
+        </Border>
     </ScrollViewer>
 
 </UserControl>

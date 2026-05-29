@@ -51,6 +51,8 @@ public partial class CalendarControllerView : UserControl
         MonthViewCtrl.DayAddClicked += (_, d)  => _ = OpenAddDialog(d);
         YearViewCtrl.MonthSelected += (_, d)  => { _currentDate = d; SwitchView(4); };
 
+        ListViewCtrl.EventClicked    += (_, ev) => _ = OpenEditDialog(ev);
+        ListViewCtrl.CreateRequested += (_, d)  => _ = OpenAddDialog(d);
         MonthViewCtrl.EventClicked += (_, ev) => _ = OpenEditDialog(ev);
         MonthViewCtrl.EventMoved   += (_, ev) => { _events.Update(ev); CollectionsMayHaveChanged?.Invoke(this, EventArgs.Empty); RefreshCurrent(); };
         DayViewCtrl.EventClicked   += (_, ev) => _ = OpenEditDialog(ev);
@@ -84,11 +86,12 @@ public partial class CalendarControllerView : UserControl
     {
         _currentDate = _currentViewIndex switch
         {
+            0 => _currentDate.AddDays(-1),
             2 => _currentDate.AddDays(-1),
             3 => _currentDate.AddDays(-7),
             4 => _currentDate.AddMonths(-1),
             5 => _currentDate.AddYears(-1),
-            _ => _currentDate.AddDays(-30),
+            _ => _currentDate.AddDays(-1),
         };
     }
 
@@ -96,11 +99,12 @@ public partial class CalendarControllerView : UserControl
     {
         _currentDate = _currentViewIndex switch
         {
+            0 => _currentDate.AddDays(1),
             2 => _currentDate.AddDays(1),
             3 => _currentDate.AddDays(7),
             4 => _currentDate.AddMonths(1),
             5 => _currentDate.AddYears(1),
-            _ => _currentDate.AddDays(30),
+            _ => _currentDate.AddDays(1),
         };
     }
 
@@ -131,6 +135,7 @@ public partial class CalendarControllerView : UserControl
         4 => (StartOfWeek(new DateTime(_currentDate.Year, _currentDate.Month, 1)),
               StartOfWeek(new DateTime(_currentDate.Year, _currentDate.Month, 1)).AddDays(42)),
         5 => (new DateTime(_currentDate.Year, 1, 1), new DateTime(_currentDate.Year + 1, 1, 1)),
+        0 => (_currentDate.Date, _currentDate.Date.AddDays(1)),
         _ => (DateTime.Today.AddDays(-365), DateTime.Today.AddDays(365)),
     };
 
@@ -141,14 +146,39 @@ public partial class CalendarControllerView : UserControl
         return d.AddDays(-diff).Date;
     }
 
-    private void UpdateTitle() => NavbarControl.SetTitle(_currentViewIndex switch
+    private static readonly Avalonia.Media.IBrush BrushRed =
+        new Avalonia.Media.SolidColorBrush(Avalonia.Media.Color.Parse("#FF3B30"));
+    private static readonly Avalonia.Media.IBrush BrushSecondary =
+        new Avalonia.Media.SolidColorBrush(Avalonia.Media.Color.Parse("#8E8E93"));
+    private static readonly Avalonia.Media.IBrush BrushPrimary =
+        new Avalonia.Media.SolidColorBrush(Avalonia.Media.Color.Parse("#1C1C1E"));
+
+    private void UpdateTitle()
     {
-        2 => _currentDate.ToString("dddd, d MMMM yyyy", new System.Globalization.CultureInfo("ru-RU")),
-        3 => $"{StartOfWeek(_currentDate):d MMM} – {StartOfWeek(_currentDate).AddDays(6):d MMM yyyy}",
-        4 => _currentDate.ToString("MMMM yyyy", new System.Globalization.CultureInfo("ru-RU")),
-        5 => _currentDate.Year.ToString(),
-        _ => "Все события",
-    });
+        var ru    = new System.Globalization.CultureInfo("ru-RU");
+        var today = DateTime.Today;
+
+        if (_currentViewIndex == 0)
+        {
+            var (text, brush) = _currentDate.Date switch
+            {
+                var d when d == today => ("Сегодня", BrushRed),
+                var d when d < today  => (_currentDate.ToString("dddd, d MMMM yyyy", ru), BrushSecondary),
+                _                     => (_currentDate.ToString("dddd, d MMMM yyyy", ru), BrushPrimary),
+            };
+            NavbarControl.SetTitle(text, brush);
+            return;
+        }
+
+        NavbarControl.SetTitle(_currentViewIndex switch
+        {
+            2 => _currentDate.ToString("dddd, d MMMM yyyy", ru),
+            3 => $"{StartOfWeek(_currentDate):d MMM} – {StartOfWeek(_currentDate).AddDays(6):d MMM yyyy}",
+            4 => _currentDate.ToString("MMMM yyyy", ru),
+            5 => _currentDate.Year.ToString(),
+            _ => "Все события",
+        });
+    }
 
     private async Task OpenAddDialog(DateTime presetDate)
     {

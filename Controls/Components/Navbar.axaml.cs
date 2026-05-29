@@ -33,7 +33,11 @@ public partial class Navbar : UserControl
             SearchChanged?.Invoke(this, SearchBox.Text ?? "");
     }
 
-    public void SetTitle(string text)   => TitleLabel.Text = text;
+    public void SetTitle(string text, Avalonia.Media.IBrush? color = null)
+    {
+        TitleLabel.Text       = text;
+        TitleLabel.Foreground = color ?? new Avalonia.Media.SolidColorBrush(Avalonia.Media.Color.Parse("#1C1C1E"));
+    }
     public void SetView(int idx)        => ViewSelector.SelectedIndex = idx;
     public int  CurrentViewIndex        => ViewSelector.SelectedIndex;
 }
