@@ -18,7 +18,8 @@ public partial class EventDialog : Window
         ConstructorRepository constructor,
         Event? editEvent       = null,
         DateTime? presetDate   = null,
-        TimeSpan? presetTime   = null)
+        TimeSpan? presetTime   = null,
+        bool presetAllDay      = false)
     {
         InitializeComponent();
 
@@ -47,6 +48,8 @@ public partial class EventDialog : Window
             DeleteBtn.IsVisible = true;
             FillFromEvent(editEvent);
         }
+
+        if (presetAllDay) AllDayCheck.IsChecked = true;
 
         AllDayCheck.IsCheckedChanged += (_, _) => UpdateTimeVisibility();
         StartTimePicker.SelectedTimeChanged += (_, _) =>

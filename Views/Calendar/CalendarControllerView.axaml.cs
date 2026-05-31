@@ -43,7 +43,7 @@ public partial class CalendarControllerView : UserControl
         NavbarControl.TodayClicked  += (_, _) =>
         {
             if (_currentViewIndex == 1) { JournalViewCtrl.GoToday(); return; }
-            _currentDate = DateTime.Today; RefreshCurrent();
+            _currentDate = DateTime.Today; RefreshCurrent(scrollToNow: true);
         };
         NavbarControl.PrevClicked   += (_, _) =>
         {
@@ -70,7 +70,10 @@ public partial class CalendarControllerView : UserControl
         MonthViewCtrl.EventClicked += (_, ev) => _ = OpenEditDialog(ev);
         MonthViewCtrl.EventMoved   += (_, ev) => { _events.Update(ev); CollectionsMayHaveChanged?.Invoke(this, EventArgs.Empty); RefreshCurrent(); };
         DayViewCtrl.EventClicked   += (_, ev) => _ = OpenEditDialog(ev);
-        WeekViewCtrl.EventClicked  += (_, ev) => _ = OpenEditDialog(ev);
+        WeekViewCtrl.EventClicked           += (_, ev) => _ = OpenEditDialog(ev);
+        WeekViewCtrl.EventMoved             += (_, ev) => { _events.Update(ev); CollectionsMayHaveChanged?.Invoke(this, EventArgs.Empty); RefreshCurrent(); };
+        WeekViewCtrl.AllDayCreationRequested   += (_, d)  => _ = OpenAddAllDayDialog(d);
+        WeekViewCtrl.TimeSlotCreationRequested += (_, dt) => _ = OpenAddDialog(dt.Date, dt.TimeOfDay);
 
         SwitchView(4);
         SeedIfEmpty();
@@ -93,7 +96,7 @@ public partial class CalendarControllerView : UserControl
         YearViewCtrl.IsVisible    = idx == 5;
 
         NavbarControl.SetView(idx);
-        RefreshCurrent();
+        RefreshCurrent(scrollToNow: true);
     }
 
     private void NavigatePrev()
@@ -122,7 +125,7 @@ public partial class CalendarControllerView : UserControl
         };
     }
 
-    private void RefreshCurrent()
+    private void RefreshCurrent(bool scrollToNow = false)
     {
         var (startDt, endDt) = GetDateRange();
         var events = _events.GetByDateRange(startDt, endDt, _activeIds);
@@ -136,7 +139,7 @@ public partial class CalendarControllerView : UserControl
             case 0: ListViewCtrl.Refresh(events, _currentDate); break;
             case 1: JournalViewCtrl.Refresh(events, _currentDate); break;
             case 2: DayViewCtrl.Refresh(events, DateOnly.FromDateTime(_currentDate)); break;
-            case 3: WeekViewCtrl.Refresh(events, _currentDate); break;
+            case 3: WeekViewCtrl.Refresh(events, _currentDate, scrollToNow); break;
             case 4: MonthViewCtrl.Refresh(events, _currentDate); break;
             case 5: YearViewCtrl.Refresh(events, _currentDate.Year); break;
         }
@@ -194,10 +197,25 @@ public partial class CalendarControllerView : UserControl
         });
     }
 
-    private async Task OpenAddDialog(DateTime presetDate)
+    private async Task OpenAddAllDayDialog(DateOnly date)
     {
         if (VisualRoot is not Avalonia.Controls.Window win) return;
-        var dlg = new EventDialog(_categories, _constructor, presetDate: presetDate);
+        var dlg = new EventDialog(_categories, _constructor,
+                                  presetDate: date.ToDateTime(TimeOnly.MinValue),
+                                  presetAllDay: true);
+        var result = await dlg.ShowDialog<EventDialogResult?>(win);
+        if (result?.Event is not null)
+        {
+            _events.Add(result.Event);
+            CollectionsMayHaveChanged?.Invoke(this, EventArgs.Empty);
+            RefreshCurrent();
+        }
+    }
+
+    private async Task OpenAddDialog(DateTime presetDate, TimeSpan? presetTime = null)
+    {
+        if (VisualRoot is not Avalonia.Controls.Window win) return;
+        var dlg = new EventDialog(_categories, _constructor, presetDate: presetDate, presetTime: presetTime);
         var result = await dlg.ShowDialog<EventDialogResult?>(win);
         if (result?.Event is not null)
         {

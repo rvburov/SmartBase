@@ -25,8 +25,8 @@ public class EventRepository(AppDbContext db)
         var rec = new DbRecordEntity
         {
             CollectionId = colId,
-            StartDt      = e.StartDt.ToString("o"),
-            EndDt        = e.EndDt.ToString("o"),
+            StartDt      = DateTime.SpecifyKind(e.StartDt, DateTimeKind.Unspecified).ToString("o"),
+            EndDt        = DateTime.SpecifyKind(e.EndDt,   DateTimeKind.Unspecified).ToString("o"),
             AllDay       = e.AllDay,
             CreatedAt    = DateTime.Now.ToString("o"),
             Position     = maxPos + 1000,
@@ -61,8 +61,8 @@ public class EventRepository(AppDbContext db)
             return;
         }
 
-        rec.StartDt = e.StartDt.ToString("o");
-        rec.EndDt   = e.EndDt.ToString("o");
+        rec.StartDt = DateTime.SpecifyKind(e.StartDt, DateTimeKind.Unspecified).ToString("o");
+        rec.EndDt   = DateTime.SpecifyKind(e.EndDt,   DateTimeKind.Unspecified).ToString("o");
         rec.AllDay  = e.AllDay;
         db.SaveChanges();
 
@@ -82,12 +82,14 @@ public class EventRepository(AppDbContext db)
 
     public List<Event> GetByDateRange(DateTime start, DateTime end, ISet<int>? activeIds = null)
     {
-        var startIso = start.ToString("o");
-        var endIso   = end.ToString("o");
+        // нормализуем Kind → Unspecified, чтобы строковое сравнение ISO было корректным
+        // независимо от того, в каком Kind пришли границы диапазона
+        var startIso = DateTime.SpecifyKind(start, DateTimeKind.Unspecified).ToString("o");
+        var endIso   = DateTime.SpecifyKind(end,   DateTimeKind.Unspecified).ToString("o");
 
         var query = db.DbRecords
             .Where(r => r.StartDt != null && r.StartDt.CompareTo(endIso) < 0
-                                          && r.EndDt!.CompareTo(startIso) > 0)
+                                          && r.EndDt!.CompareTo(startIso) >= 0)
             .OrderBy(r => r.StartDt);
 
         return RowsToEvents(query, activeIds);

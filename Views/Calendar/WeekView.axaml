@@ -25,19 +25,6 @@
         <!-- AllDayBar -->
         <comp:AllDayBar Grid.Row="1" x:Name="AllDayBarCtrl" />
 
-        <!-- Вертикальные разделители поверх AllDayBar (сквозные для кликов) -->
-        <Grid Grid.Row="1" IsHitTestVisible="False" ColumnDefinitions="72,*">
-            <UniformGrid Grid.Column="1" Columns="7">
-                <Border BorderBrush="#E8E8E8" BorderThickness="0,0,0,0" />
-                <Border BorderBrush="#E8E8E8" BorderThickness="1,0,0,0" />
-                <Border BorderBrush="#E8E8E8" BorderThickness="1,0,0,0" />
-                <Border BorderBrush="#E8E8E8" BorderThickness="1,0,0,0" />
-                <Border BorderBrush="#E8E8E8" BorderThickness="1,0,0,0" />
-                <Border BorderBrush="#E8E8E8" BorderThickness="1,0,0,0" />
-                <Border BorderBrush="#E8E8E8" BorderThickness="1,0,0,0" />
-            </UniformGrid>
-        </Grid>
-
         <!-- Прокручиваемая сетка событий -->
         <ScrollViewer Grid.Row="2" x:Name="TimeScroll">
             <Grid ColumnDefinitions="72,*">
@@ -67,7 +54,7 @@
                 </Border>
 
                 <!-- Правая часть: линии сетки + 7 колонок -->
-                <Grid Grid.Column="1">
+                <Grid Grid.Column="1" x:Name="EventsGrid">
 
                     <!-- Линии часов: сплошная сверху + светлая пунктирная на получасе. -->
                     <ItemsControl x:Name="HourRows"
@@ -103,6 +90,12 @@
                     <UniformGrid x:Name="WeekColumns"
                                  Columns="7" Height="1440"
                                  VerticalAlignment="Top" />
+
+                    <!-- оверлей для drag-ghost -->
+                    <Canvas x:Name="DragOverlay"
+                            IsHitTestVisible="False"
+                            Height="1440"
+                            VerticalAlignment="Top" />
 
                 </Grid>
 
