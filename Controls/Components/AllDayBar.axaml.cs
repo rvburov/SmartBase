@@ -310,7 +310,7 @@ public partial class AllDayBar : UserControl
             while (EventsPanel.RowDefinitions.Count <= row)
                 EventsPanel.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
 
-            var (root, block) = BuildBlock(ev, span);
+            var (root, block, titleBlock, timeBlock, stripBlock) = BuildBlock(ev, span);
             Grid.SetColumn(root, startCol);
             Grid.SetColumnSpan(root, span);
             Grid.SetRow(root, row);
@@ -321,8 +321,6 @@ public partial class AllDayBar : UserControl
             var solidBrush = new SolidColorBrush(color);
             var darkBrush  = new SolidColorBrush(Darken(color));
 
-            var titleBlock = (TextBlock)((Grid)block.Child!).Children[1];
-            var stripBlock = (Border)((Grid)block.Child!).Children[0];
             var isSelected = false;
 
             var entry = new AllDayEntry(ev, startCol, span, row, root, block)
@@ -332,6 +330,7 @@ public partial class AllDayBar : UserControl
                     isSelected            = true;
                     block.Background      = solidBrush;
                     titleBlock.Foreground = Brushes.White;
+                    if (timeBlock != null) timeBlock.Foreground = Brushes.White;
                     stripBlock.IsVisible  = false;
                 },
                 Deselect = () =>
@@ -339,6 +338,7 @@ public partial class AllDayBar : UserControl
                     isSelected            = false;
                     block.Background      = normalBg;
                     titleBlock.Foreground = darkBrush;
+                    if (timeBlock != null) timeBlock.Foreground = darkBrush;
                     stripBlock.IsVisible  = true;
                 },
             };
@@ -352,7 +352,7 @@ public partial class AllDayBar : UserControl
         UpdateAutoHeight();
     }
 
-    private static (Control root, Border colorBorder) BuildBlock(Event ev, int span)
+    private static (Control root, Border colorBorder, TextBlock titleBlock, TextBlock? timeBlock, Border stripBorder) BuildBlock(Event ev, int span)
     {
         var color      = Color.Parse(ev.Color);
         var normalBg   = new SolidColorBrush(Color.FromArgb(40, color.R, color.G, color.B));
@@ -376,15 +376,53 @@ public partial class AllDayBar : UserControl
             Foreground        = darkBrush,
             TextTrimming      = Avalonia.Media.TextTrimming.CharacterEllipsis,
             VerticalAlignment = VerticalAlignment.Center,
-            Margin            = new Thickness(4, 0, 4, 0),
+            Margin            = new Thickness(4, 0, 0, 0),
         };
 
         var inner = new Grid();
         inner.ColumnDefinitions.Add(new ColumnDefinition(new GridLength(4, GridUnitType.Pixel)));
         inner.ColumnDefinitions.Add(new ColumnDefinition(new GridLength(1, GridUnitType.Star)));
         inner.Children.Add(strip);
-        Grid.SetColumn(title, 1);
-        inner.Children.Add(title);
+
+        TextBlock? timeBlock = null;
+        if (!ev.AllDay)
+        {
+            title.Margin = new Thickness(4, 0, 0, 0);
+
+            var timeTb = new TextBlock
+            {
+                Text              = $", {ev.StartDt:HH:mm}",
+                FontSize          = 13,
+                FontWeight        = FontWeight.SemiBold,
+                Foreground        = darkBrush,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin            = new Thickness(0, 0, 4, 0),
+            };
+            timeBlock = timeTb;
+
+            var stack = new StackPanel { Orientation = Orientation.Horizontal };
+            stack.Children.Add(title);
+            stack.Children.Add(timeTb);
+
+            void UpdateMaxWidth()
+            {
+                var tw = timeTb.Bounds.Width + timeTb.Margin.Right;
+                var sw = stack.Bounds.Width;
+                if (sw > 0)
+                    title.MaxWidth = Math.Max(0, sw - tw);
+            }
+            stack.SizeChanged += (_, _) => UpdateMaxWidth();
+            timeTb.SizeChanged += (_, _) => UpdateMaxWidth();
+
+            Grid.SetColumn(stack, 1);
+            inner.Children.Add(stack);
+        }
+        else
+        {
+            title.Margin = new Thickness(4, 0, 4, 0);
+            Grid.SetColumn(title, 1);
+            inner.Children.Add(title);
+        }
 
         var block = new Border
         {
@@ -396,14 +434,14 @@ public partial class AllDayBar : UserControl
             Child        = inner,
         };
 
-        if (span <= 1) return (block, block);
+        if (span <= 1) return (block, block, title, timeBlock, strip);
 
         // white opaque wrapper covers internal divider lines
         var wrapper = new Grid { Height = 24, Margin = new Thickness(0, 0, 2, 2) };
         wrapper.Children.Add(new Border { Background = new SolidColorBrush(Color.Parse("#F2F2F7")), CornerRadius = new CornerRadius(3) });
         block.Margin = new Thickness(0);
         wrapper.Children.Add(block);
-        return (wrapper, block);
+        return (wrapper, block, title, timeBlock, strip);
     }
 
     private static Border CreateGhost(Event ev, double height)
@@ -428,15 +466,27 @@ public partial class AllDayBar : UserControl
             Foreground        = Brushes.White,
             TextTrimming      = Avalonia.Media.TextTrimming.CharacterEllipsis,
             VerticalAlignment = VerticalAlignment.Center,
-            Margin            = new Thickness(4, 0, 4, 0),
+            Margin            = new Thickness(4, 0, 0, 0),
         };
 
         var inner = new Grid();
         inner.ColumnDefinitions.Add(new ColumnDefinition(new GridLength(4, GridUnitType.Pixel)));
         inner.ColumnDefinitions.Add(new ColumnDefinition(new GridLength(1, GridUnitType.Star)));
         inner.Children.Add(strip);
-        Grid.SetColumn(title, 1);
-        inner.Children.Add(title);
+
+        if (!ev.AllDay)
+        {
+            title.Text   = $"{ev.Title}, {ev.StartDt:HH:mm}";
+            title.Margin = new Thickness(4, 0, 4, 0);
+            Grid.SetColumn(title, 1);
+            inner.Children.Add(title);
+        }
+        else
+        {
+            title.Margin = new Thickness(4, 0, 4, 0);
+            Grid.SetColumn(title, 1);
+            inner.Children.Add(title);
+        }
 
         return new Border
         {

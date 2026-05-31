@@ -27,6 +27,9 @@ public partial class WeekView : UserControl
     private Event?         _dragEvent;
     private Border?        _dragGhost;
     private Border?        _dragGhostOverflow;
+    private TextBlock?     _dragGhostTitleBlock;
+    private TextBlock?     _dragGhostTimeBlock;
+    private StackPanel?    _dragGhostContentStack;
     private double         _dragGhostOriginalHeight;
     private Border?        _dragSourceBtn;
     private List<Border>   _dragDimmedBtns = [];
@@ -44,6 +47,9 @@ public partial class WeekView : UserControl
     private bool        _resizeFromBottom;
     private Border?     _resizeGhost;
     private Border?     _resizeGhostOverflow;
+    private TextBlock?  _resizeGhostTitleBlock;
+    private TextBlock?  _resizeGhostTimeBlock;
+    private StackPanel? _resizeGhostContentStack;
 
     // selection
     private Action? _deselectCurrent;
@@ -126,17 +132,46 @@ public partial class WeekView : UserControl
                 var colorBrush = new SolidColorBrush(color);
                 var darkBrush  = new SolidColorBrush(Darken(color));
 
+                // Сколько строк заголовка влезает, оставляя место под время (≈15px)
+                const double lineH   = 16.0; // приблизительная высота строки FontSize=13
+                const double margins = 4.0;  // top+bottom margin contentStack
+                const double timeH   = 15.0; // высота строки времени FontSize=12
+
+                var maxTitleLines = (int)((evHVisible - margins - timeH) / lineH);
+                var showTime      = maxTitleLines >= 1;
+                var titleMaxLines = showTime
+                    ? maxTitleLines
+                    : Math.Max(1, (int)((evHVisible - margins) / lineH));
+
                 var titleBlock = new TextBlock
                 {
-                    Text              = ev.Title,
-                    FontSize          = 13,
-                    FontWeight        = FontWeight.SemiBold,
-                    Foreground        = darkBrush,
-                    TextTrimming      = Avalonia.Media.TextTrimming.CharacterEllipsis,
-                    VerticalAlignment = VerticalAlignment.Top,
-                    Margin            = new Thickness(4, 2, 3, 2),
+                    Text         = ev.Title,
+                    FontSize     = 13,
+                    FontWeight   = FontWeight.SemiBold,
+                    Foreground   = darkBrush,
+                    TextTrimming = Avalonia.Media.TextTrimming.CharacterEllipsis,
+                    TextWrapping = TextWrapping.Wrap,
+                    MaxLines     = titleMaxLines,
                 };
-                Grid.SetColumn(titleBlock, 1);
+
+                var contentStack = new StackPanel
+                {
+                    Margin = new Thickness(4, 2, 3, 2),
+                };
+                contentStack.Children.Add(titleBlock);
+
+                if (showTime)
+                {
+                    contentStack.Children.Add(new TextBlock
+                    {
+                        Text       = $"{ev.StartDt:HH:mm}–{ev.EndDt:HH:mm}",
+                        FontSize   = 12,
+                        Foreground = darkBrush,
+                        Margin     = new Thickness(0, 1, 0, 0),
+                    });
+                }
+
+                Grid.SetColumn(contentStack, 1);
 
                 var strip = new Border
                 {
@@ -160,16 +195,17 @@ public partial class WeekView : UserControl
                 innerGrid.ColumnDefinitions.Add(new ColumnDefinition(4, GridUnitType.Pixel));
                 innerGrid.ColumnDefinitions.Add(new ColumnDefinition(1, GridUnitType.Star));
                 innerGrid.Children.Add(strip);
-                innerGrid.Children.Add(titleBlock);
+                innerGrid.Children.Add(contentStack);
                 innerGrid.Children.Add(selFrame);
 
                 var btn = new Border
                 {
-                    Background   = normalBg,
-                    CornerRadius = new CornerRadius(3),
-                    Height       = evHVisible,
-                    Cursor       = new Cursor(StandardCursorType.Hand),
-                    Child        = innerGrid,
+                    Background    = normalBg,
+                    CornerRadius  = new CornerRadius(3),
+                    Height        = evHVisible,
+                    Cursor        = new Cursor(StandardCursorType.Hand),
+                    ClipToBounds  = true,
+                    Child         = innerGrid,
                 };
 
                 var isSelected = false;
@@ -207,15 +243,17 @@ public partial class WeekView : UserControl
                 {
                     Select = () =>
                     {
-                        isSelected            = true;
-                        btn.Background        = solidBrush;
-                        titleBlock.Foreground = Brushes.White;
+                        isSelected = true;
+                        btn.Background = solidBrush;
+                        foreach (var tb in contentStack.Children.OfType<TextBlock>())
+                            tb.Foreground = Brushes.White;
                     },
                     Deselect = () =>
                     {
-                        isSelected            = false;
-                        btn.Background        = normalBg;
-                        titleBlock.Foreground = darkBrush;
+                        isSelected = false;
+                        btn.Background = normalBg;
+                        foreach (var tb in contentStack.Children.OfType<TextBlock>())
+                            tb.Foreground = darkBrush;
                     },
                 };
                 _eventEntries.Add(entry);
@@ -311,12 +349,13 @@ public partial class WeekView : UserControl
 
             var borderLeft = entry.DayCol > 0 ? 1.0 : 0.0;
             var ghostW     = colW - 2.0 - borderLeft;
-            _resizeGhost   = CreateGhostButton(entry.Ev, entry.EndMin - entry.StartMin - 2, ghostW);
+            _resizeGhost   = CreateGhostButton(entry.Ev, entry.EndMin - entry.StartMin - 2, ghostW,
+                                out _resizeGhostTitleBlock, out _resizeGhostTimeBlock, out _resizeGhostContentStack);
             Canvas.SetLeft(_resizeGhost, entry.DayCol * colW + borderLeft);
             Canvas.SetTop(_resizeGhost, entry.StartMin + 2);
             DragOverlay.Children.Add(_resizeGhost);
 
-            entry.Btn.Opacity = 0.45;
+            entry.Btn.Opacity = 0;
             e.Pointer.Capture(EventsGrid);
             e.Handled = true;
             return;
@@ -379,8 +418,10 @@ public partial class WeekView : UserControl
                 if (!canExtendRight)
                 {
                     var newEndMin = Math.Clamp(timeSnapped, effectiveStartMin + 15, 1440);
+                    var ghostH    = Math.Max(13, newEndMin - effectiveStartMin - 2);
                     Canvas.SetTop(_resizeGhost, effectiveStartMin + 2);
-                    _resizeGhost.Height = Math.Max(13, newEndMin - effectiveStartMin - 2);
+                    _resizeGhost.Height = ghostH;
+                    UpdateResizeGhostText(ghostH, effectiveStartMin, newEndMin);
 
                     if (_resizeGhostOverflow != null)
                     {
@@ -390,8 +431,10 @@ public partial class WeekView : UserControl
                 }
                 else
                 {
+                    var ghostH = Math.Max(13, 1440 - effectiveStartMin - 2);
                     Canvas.SetTop(_resizeGhost, effectiveStartMin + 2);
-                    _resizeGhost.Height = Math.Max(13, 1440 - effectiveStartMin - 2);
+                    _resizeGhost.Height = ghostH;
+                    UpdateResizeGhostText(ghostH, effectiveStartMin, 1440);
 
                     var nextTime       = isOverflowDown && rawPointerCol <= _resizeEntry.DayCol
                         ? Math.Clamp(rawY - 1440, 0, 1425) : timeSnapped;
@@ -429,8 +472,10 @@ public partial class WeekView : UserControl
                 if (!canExtendLeft)
                 {
                     var newStartMin = Math.Clamp(timeSnapped, 0, effectiveEndMin - 15);
+                    var ghostH      = Math.Max(13, effectiveEndMin - newStartMin - 2);
                     Canvas.SetTop(_resizeGhost, newStartMin + 2);
-                    _resizeGhost.Height = Math.Max(13, effectiveEndMin - newStartMin - 2);
+                    _resizeGhost.Height = ghostH;
+                    UpdateResizeGhostText(ghostH, newStartMin, effectiveEndMin);
 
                     if (_resizeGhostOverflow != null)
                     {
@@ -440,8 +485,10 @@ public partial class WeekView : UserControl
                 }
                 else
                 {
+                    var ghostH = Math.Max(13, effectiveEndMin - 2);
                     Canvas.SetTop(_resizeGhost, 2);
-                    _resizeGhost.Height = Math.Max(13, effectiveEndMin - 2);
+                    _resizeGhost.Height = ghostH;
+                    UpdateResizeGhostText(ghostH, 0, effectiveEndMin);
 
                     var overflowStart   = isOverflowUp && rawPointerCol >= _resizeEntry.DayCol
                         ? Math.Clamp(1440 + rawY, 0, 1425) : Math.Clamp(timeSnapped, 0, 1425);
@@ -495,7 +542,8 @@ public partial class WeekView : UserControl
             foreach (var b in _dragDimmedBtns)
                 b.Opacity = 0.45;
 
-            _dragGhost = CreateGhostButton(_dragEvent, ghostH, ghostW);
+            _dragGhost = CreateGhostButton(_dragEvent, ghostH, ghostW,
+                out _dragGhostTitleBlock, out _dragGhostTimeBlock, out _dragGhostContentStack);
             Canvas.SetLeft(_dragGhost, _dragSourceCol * colW + borderLeft);
             Canvas.SetTop(_dragGhost, _dragSourceStartMin + 2);
             DragOverlay.Children.Add(_dragGhost);
@@ -528,6 +576,7 @@ public partial class WeekView : UserControl
                     Canvas.SetTop(_dragGhost, 2);
                     _dragGhost.Height    = minutesInThisDay - 2;
                     _dragGhost.IsVisible = true;
+                    UpdateDragGhostText(_dragGhost.Height, prevDayStart, prevDayStart + duration);
                 }
                 else
                 {
@@ -570,6 +619,7 @@ public partial class WeekView : UserControl
                     Canvas.SetTop(_dragGhost, 2);
                     _dragGhost.Height    = minutesInThisDay - 2;
                     _dragGhost.IsVisible = true;
+                    UpdateDragGhostText(_dragGhost.Height, 1440 + snapped, 1440 + snapped + duration);
                 }
                 else
                 {
@@ -591,6 +641,7 @@ public partial class WeekView : UserControl
                 Canvas.SetTop(_dragGhost, nextDayMin);
                 _dragGhost.Height    = Math.Max(13, Math.Min(duration, 1440 - nextDayMin) - 2);
                 _dragGhost.IsVisible = true;
+                UpdateDragGhostText(_dragGhost.Height, nextDayMin, nextDayMin + duration);
                 if (_dragGhostOverflow != null)
                 {
                     DragOverlay.Children.Remove(_dragGhostOverflow);
@@ -606,6 +657,7 @@ public partial class WeekView : UserControl
                 Canvas.SetTop(_dragGhost, nextDayMin);
                 _dragGhost.Height    = Math.Max(13, Math.Min(duration, 1440 - nextDayMin) - 2);
                 _dragGhost.IsVisible = true;
+                UpdateDragGhostText(_dragGhost.Height, nextDayMin, nextDayMin + duration);
                 if (_dragGhostOverflow != null)
                 {
                     DragOverlay.Children.Remove(_dragGhostOverflow);
@@ -633,6 +685,7 @@ public partial class WeekView : UserControl
                     _dragGhost.IsVisible = true;
                     Canvas.SetTop(_dragGhost, clamped);
                     _dragGhost.Height = mainH;
+                    UpdateDragGhostText(mainH, clamped, clamped + duration);
                 }
                 else
                 {
@@ -664,10 +717,12 @@ public partial class WeekView : UserControl
             else
             {
                 // Без overflow
-                var clamped = Math.Clamp(snapped, 0, 1425);
+                var clamped   = Math.Clamp(snapped, 0, 1425);
+                var ghostH    = Math.Max(13, Math.Min(duration, 1440 - clamped) - 2);
                 _dragGhost.IsVisible = true;
                 Canvas.SetTop(_dragGhost, clamped);
-                _dragGhost.Height = Math.Max(13, Math.Min(duration, 1440 - clamped) - 2);
+                _dragGhost.Height = ghostH;
+                UpdateDragGhostText(ghostH, clamped, clamped + duration);
 
                 if (_dragGhostOverflow != null)
                 {
@@ -776,9 +831,12 @@ public partial class WeekView : UserControl
             }
             _resizeEntry.Btn.Opacity = 1.0;
 
-            _isResizingEvent = false;
-            _resizeEntry     = null;
-            _resizeGhost     = null;
+            _isResizingEvent          = false;
+            _resizeEntry              = null;
+            _resizeGhost              = null;
+            _resizeGhostTitleBlock    = null;
+            _resizeGhostTimeBlock     = null;
+            _resizeGhostContentStack  = null;
             return;
         }
 
@@ -860,34 +918,158 @@ public partial class WeekView : UserControl
             b.Opacity = 1.0;
         _dragDimmedBtns.Clear();
 
-        _dragEvent     = null;
-        _dragGhost     = null;
-        _dragSourceBtn = null;
+        _dragEvent             = null;
+        _dragGhost             = null;
+        _dragSourceBtn         = null;
+        _dragGhostTitleBlock   = null;
+        _dragGhostTimeBlock    = null;
+        _dragGhostContentStack = null;
         _isDragging    = false;
     }
 
+    private void UpdateDragGhostText(double ghostHeight, int startMin, int endMin)
+    {
+        if (_dragGhostTitleBlock is null) return;
+
+        const double lineH   = 16.0;
+        const double margins = 4.0;
+        const double timeH   = 15.0;
+
+        var maxTitleLines = (int)((ghostHeight - margins - timeH) / lineH);
+        var showTime      = maxTitleLines >= 1;
+
+        _dragGhostTitleBlock.MaxLines = showTime
+            ? maxTitleLines
+            : Math.Max(1, (int)((ghostHeight - margins) / lineH));
+
+        var timeText = $"{startMin % 1440 / 60:D2}:{startMin % 60:D2}–{endMin % 1440 / 60:D2}:{endMin % 60:D2}";
+        if (showTime)
+        {
+            if (_dragGhostTimeBlock is null && _dragGhostContentStack is not null)
+            {
+                _dragGhostTimeBlock = new TextBlock
+                {
+                    Text       = timeText,
+                    FontSize   = 12,
+                    Foreground = Brushes.White,
+                    Margin     = new Thickness(0, 1, 0, 0),
+                };
+                _dragGhostContentStack.Children.Add(_dragGhostTimeBlock);
+            }
+            else if (_dragGhostTimeBlock is not null)
+            {
+                _dragGhostTimeBlock.IsVisible = true;
+                _dragGhostTimeBlock.Text      = timeText;
+            }
+        }
+        else if (_dragGhostTimeBlock != null)
+        {
+            _dragGhostTimeBlock.IsVisible = false;
+        }
+    }
+
+    private void UpdateResizeGhostText(double ghostHeight, int startMin, int endMin)
+    {
+        if (_resizeGhostTitleBlock is null) return;
+
+        const double lineH   = 16.0;
+        const double margins = 4.0;
+        const double timeH   = 15.0;
+
+        var maxTitleLines = (int)((ghostHeight - margins - timeH) / lineH);
+        var showTime      = maxTitleLines >= 1;
+
+        _resizeGhostTitleBlock.MaxLines = showTime
+            ? maxTitleLines
+            : Math.Max(1, (int)((ghostHeight - margins) / lineH));
+
+        var timeText = $"{startMin % 1440 / 60:D2}:{startMin % 60:D2}–{endMin % 1440 / 60:D2}:{endMin % 60:D2}";
+
+        if (showTime)
+        {
+            if (_resizeGhostTimeBlock is null && _resizeGhostContentStack is not null)
+            {
+                // ghost стал достаточно большим — создаём TextBlock времени динамически
+                _resizeGhostTimeBlock = new TextBlock
+                {
+                    Text       = timeText,
+                    FontSize   = 12,
+                    Foreground = Brushes.White,
+                    Margin     = new Thickness(0, 1, 0, 0),
+                };
+                _resizeGhostContentStack.Children.Add(_resizeGhostTimeBlock);
+            }
+            else if (_resizeGhostTimeBlock is not null)
+            {
+                _resizeGhostTimeBlock.IsVisible = true;
+                _resizeGhostTimeBlock.Text      = timeText;
+            }
+        }
+        else if (_resizeGhostTimeBlock != null)
+        {
+            _resizeGhostTimeBlock.IsVisible = false;
+        }
+    }
+
     private static Border CreateGhostButton(Event ev, double height, double width)
+        => CreateGhostButton(ev, height, width, out _, out _, out _);
+
+    private static Border CreateGhostButton(Event ev, double height, double width,
+        out TextBlock outTitleBlock, out TextBlock? outTimeBlock, out StackPanel outContentStack)
     {
         var color      = Color.Parse(ev.Color);
         var colorBrush = new SolidColorBrush(color);
 
+        const double lineH   = 16.0;
+        const double margins = 4.0;
+        const double timeH   = 15.0;
+
+        var maxTitleLines = (int)((height - margins - timeH) / lineH);
+        var showTime      = maxTitleLines >= 1;
+        var titleMaxLines = showTime
+            ? maxTitleLines
+            : Math.Max(1, (int)((height - margins) / lineH));
+
         var titleBlock = new TextBlock
         {
-            Text              = ev.Title,
-            FontSize          = 13,
-            FontWeight        = FontWeight.SemiBold,
-            Foreground        = Brushes.White,
-            TextTrimming      = Avalonia.Media.TextTrimming.CharacterEllipsis,
-            VerticalAlignment = VerticalAlignment.Top,
-            Margin            = new Thickness(4, 2, 3, 2),
+            Text         = ev.Title,
+            FontSize     = 13,
+            FontWeight   = FontWeight.SemiBold,
+            Foreground   = Brushes.White,
+            TextTrimming = Avalonia.Media.TextTrimming.CharacterEllipsis,
+            TextWrapping = TextWrapping.Wrap,
+            MaxLines     = titleMaxLines,
         };
-        Grid.SetColumn(titleBlock, 1);
+        outTitleBlock = titleBlock;
+
+        var contentStack = new StackPanel
+        {
+            Margin = new Thickness(4, 2, 3, 2),
+        };
+        outContentStack = contentStack;
+        contentStack.Children.Add(titleBlock);
+
+        TextBlock? timeBlock = null;
+        if (showTime)
+        {
+            timeBlock = new TextBlock
+            {
+                Text       = $"{ev.StartDt:HH:mm}–{ev.EndDt:HH:mm}",
+                FontSize   = 12,
+                Foreground = Brushes.White,
+                Margin     = new Thickness(0, 1, 0, 0),
+            };
+            contentStack.Children.Add(timeBlock);
+        }
+        outTimeBlock = timeBlock;
+
+        Grid.SetColumn(contentStack, 1);
 
         var innerGrid = new Grid();
         innerGrid.ColumnDefinitions.Add(new ColumnDefinition(4, GridUnitType.Pixel));
         innerGrid.ColumnDefinitions.Add(new ColumnDefinition(1, GridUnitType.Star));
         innerGrid.Children.Add(new Border { Background = colorBrush, CornerRadius = new CornerRadius(2), Width = 3, Margin = new Thickness(2, 3, 0, 3), VerticalAlignment = VerticalAlignment.Stretch });
-        innerGrid.Children.Add(titleBlock);
+        innerGrid.Children.Add(contentStack);
 
         return new Border
         {
@@ -896,6 +1078,7 @@ public partial class WeekView : UserControl
             Height           = height,
             Width            = width,
             IsHitTestVisible = false,
+            ClipToBounds     = true,
             Child            = innerGrid,
         };
     }
