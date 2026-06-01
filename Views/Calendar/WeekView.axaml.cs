@@ -444,6 +444,7 @@ public partial class WeekView : UserControl
             var pointerCol    = Math.Clamp(rawPointerCol, 0, _currentDays.Count - 1);
             var rawY          = (int)(pos.Y / 15) * 15;
             var timeSnapped   = Math.Clamp(rawY, 0, 1440);
+            _resizeGhost.IsVisible = true;
 
             if (_resizeFromBottom)
             {
@@ -457,42 +458,37 @@ public partial class WeekView : UserControl
                 var canExtendRight = rawPointerCol > _resizeEntry.DayCol || isOverflowDown;
                 // Конец уходит в предыдущий день: мышь перешла влево ИЛИ ушла выше Y=0
                 var canShrinkLeft  = (rawPointerCol < _resizeEntry.DayCol || rawY < 0)
-                                     && startIsPrevDay && _resizeEntry.DayCol > 0;
+                                     && startIsPrevDay;
 
                 if (canShrinkLeft)
                 {
-                    // Конец уходит обратно в предыдущий день
-                    var minEndInPrevDay = actualStartMin + 30;
-                    var newEndInPrev    = Math.Clamp(timeSnapped, minEndInPrevDay, 1440);
-                    var overflowH       = Math.Max(13, newEndInPrev - actualStartMin - 2);
-                    var prevCol         = _resizeEntry.DayCol - 1;
-                    var prevLeft        = prevCol > 0 ? prevCol * colW + 1.0 : 0.0;
+                    // Конец уходит обратно в предыдущий день — основной ghost переезжает в предыдущую колонку
+                    var logicalCol = rawPointerCol < _resizeEntry.DayCol
+                        ? rawPointerCol : _resizeEntry.DayCol - 1;
+                    var targetTime = rawPointerCol < _resizeEntry.DayCol
+                        ? timeSnapped
+                        : Math.Clamp(1440 + rawY, 0, 1440);
+                    var targetVisible  = logicalCol >= 0 && logicalCol < _currentDays.Count;
+                    var targetCol      = Math.Clamp(logicalCol, 0, _currentDays.Count - 1);
+                    var targetDate     = _currentDays[_resizeEntry.DayCol].AddDays(logicalCol - _resizeEntry.DayCol);
+                    var targetBorder   = logicalCol > 0 ? 1.0 : 0.0;
+                    var evStartDay     = DateOnly.FromDateTime(_resizeEntry.Ev.StartDt);
+                    var targetDateOnly = DateOnly.FromDateTime(targetDate);
+                    var newStartMin    = evStartDay == targetDateOnly ? actualStartMin : 0;
+                    var minEnd         = evStartDay == targetDateOnly ? actualStartMin + 30 : 30;
+                    var newEndMin      = Math.Clamp(targetTime, minEnd, 1440);
+                    var ghostH         = Math.Max(13, newEndMin - newStartMin - 2);
+                    Canvas.SetLeft(_resizeGhost, logicalCol * colW + targetBorder);
+                    _resizeGhost.Width  = colW - 2.0 - targetBorder;
+                    Canvas.SetTop(_resizeGhost, newStartMin + 2);
+                    _resizeGhost.Height = ghostH;
+                    _resizeGhost.IsVisible = targetVisible;
+                    UpdateResizeGhostText(ghostH, newStartMin, newEndMin);
 
-                    Canvas.SetTop(_resizeGhost, 2);
-                    _resizeGhost.Height = 13;
-                    UpdateResizeGhostText(13, actualStartMin, newEndInPrev);
-
-                    if (_resizeGhostOverflow is null)
+                    if (_resizeGhostOverflow != null)
                     {
-                        _resizeGhostOverflow = CreateGhostButton(_resizeEntry.Ev, overflowH, colW - 3.0);
-                        Canvas.SetLeft(_resizeGhostOverflow, prevLeft);
-                        Canvas.SetTop(_resizeGhostOverflow, actualStartMin + 2);
-                        DragOverlay.Children.Add(_resizeGhostOverflow);
-                    }
-                    else
-                    {
-                        _resizeGhostOverflow.Height = overflowH;
-                        Canvas.SetTop(_resizeGhostOverflow, actualStartMin + 2);
-                        Canvas.SetLeft(_resizeGhostOverflow, prevLeft);
-                    }
-
-                    var svH = TimeScroll.Bounds.Height;
-                    if (svH > 0)
-                    {
-                        var ghostBtm = actualStartMin + overflowH + 2;
-                        if (ghostBtm > TimeScroll.Offset.Y + svH - 30)
-                            TimeScroll.Offset = TimeScroll.Offset.WithY(
-                                Math.Clamp(ghostBtm - svH + 30, 0, Math.Max(0, 1440 - svH)));
+                        DragOverlay.Children.Remove(_resizeGhostOverflow);
+                        _resizeGhostOverflow = null;
                     }
                 }
                 else if (!canExtendRight)
@@ -531,22 +527,29 @@ public partial class WeekView : UserControl
                     var nextTime       = isOverflowDown && rawPointerCol <= _resizeEntry.DayCol
                         ? Math.Clamp(rawY - 1440, 0, 1425) : timeSnapped;
                     var overflowH      = Math.Max(13, nextTime - 2);
-                    var overflowDispCol = Math.Clamp(
-                        isOverflowDown && rawPointerCol <= _resizeEntry.DayCol
-                            ? _resizeEntry.DayCol + 1 : rawPointerCol,
-                        0, _currentDays.Count - 1);
+                    var logicalOverflowCol = isOverflowDown && rawPointerCol <= _resizeEntry.DayCol
+                        ? _resizeEntry.DayCol + 1 : rawPointerCol;
+                    var overflowVisible    = logicalOverflowCol >= 0 && logicalOverflowCol < _currentDays.Count;
 
-                    if (_resizeGhostOverflow is null)
+                    if (!overflowVisible)
+                    {
+                        if (_resizeGhostOverflow != null)
+                        {
+                            DragOverlay.Children.Remove(_resizeGhostOverflow);
+                            _resizeGhostOverflow = null;
+                        }
+                    }
+                    else if (_resizeGhostOverflow is null)
                     {
                         _resizeGhostOverflow = CreateGhostButton(_resizeEntry.Ev, overflowH, colW - 3.0);
-                        Canvas.SetLeft(_resizeGhostOverflow, overflowDispCol * colW + 1.0);
+                        Canvas.SetLeft(_resizeGhostOverflow, logicalOverflowCol * colW + 1.0);
                         Canvas.SetTop(_resizeGhostOverflow, 2);
                         DragOverlay.Children.Add(_resizeGhostOverflow);
                     }
                     else
                     {
                         _resizeGhostOverflow.Height = overflowH;
-                        Canvas.SetLeft(_resizeGhostOverflow, overflowDispCol * colW + 1.0);
+                        Canvas.SetLeft(_resizeGhostOverflow, logicalOverflowCol * colW + 1.0);
                     }
                 }
             }
@@ -558,10 +561,43 @@ public partial class WeekView : UserControl
                 var effectiveEndMin = DateOnly.FromDateTime(_resizeEntry.Ev.EndDt) == resizeColDay
                     ? actualEndMin : 1440;
 
-                var isOverflowUp  = rawY < 0;
-                var canExtendLeft = rawPointerCol < _resizeEntry.DayCol || isOverflowUp;
+                var isOverflowUp   = rawY < 0;
+                var isOverflowDown = rawY > 1440;
+                var canExtendLeft  = rawPointerCol < _resizeEntry.DayCol || isOverflowUp;
+                var canExtendRight = (rawPointerCol > _resizeEntry.DayCol || isOverflowDown) && !canExtendLeft;
 
-                if (!canExtendLeft)
+                if (canExtendRight)
+                {
+                    // Начало события уходит в следующую колонку
+                    var logicalCol = isOverflowDown && rawPointerCol <= _resizeEntry.DayCol
+                        ? _resizeEntry.DayCol + 1 : rawPointerCol;
+                    var targetTime = isOverflowDown && rawPointerCol <= _resizeEntry.DayCol
+                        ? Math.Clamp(rawY - 1440, 0, 1440)
+                        : timeSnapped;
+                    var targetVisible  = logicalCol >= 0 && logicalCol < _currentDays.Count;
+                    var targetCol      = Math.Clamp(logicalCol, 0, _currentDays.Count - 1);
+                    var targetDate     = _currentDays[_resizeEntry.DayCol].AddDays(logicalCol - _resizeEntry.DayCol);
+                    var targetBorder   = logicalCol > 0 ? 1.0 : 0.0;
+                    var evEndDay       = DateOnly.FromDateTime(_resizeEntry.Ev.EndDt);
+                    var targetDateOnly = DateOnly.FromDateTime(targetDate);
+                    var newEndMin      = evEndDay == targetDateOnly ? actualEndMin : 1440;
+                    var maxStart       = evEndDay == targetDateOnly ? Math.Max(0, actualEndMin - 30) : 1425;
+                    var newStartMin    = Math.Clamp(targetTime, 0, maxStart);
+                    var ghostH         = Math.Max(13, newEndMin - newStartMin - 2);
+                    Canvas.SetLeft(_resizeGhost, logicalCol * colW + targetBorder);
+                    _resizeGhost.Width  = colW - 2.0 - targetBorder;
+                    Canvas.SetTop(_resizeGhost, newStartMin + 2);
+                    _resizeGhost.Height = ghostH;
+                    _resizeGhost.IsVisible = targetVisible;
+                    UpdateResizeGhostText(ghostH, newStartMin, newEndMin);
+
+                    if (_resizeGhostOverflow != null)
+                    {
+                        DragOverlay.Children.Remove(_resizeGhostOverflow);
+                        _resizeGhostOverflow = null;
+                    }
+                }
+                else if (!canExtendLeft)
                 {
                     // For overflow segments (event ends on a next day), max start accounts for
                     // the portion remaining on the next day so the total >= 30 min.
@@ -591,15 +627,22 @@ public partial class WeekView : UserControl
                     _resizeGhost.Height = ghostH;
                     UpdateResizeGhostText(ghostH, 0, effectiveEndMin);
 
-                    var overflowStart   = isOverflowUp && rawPointerCol >= _resizeEntry.DayCol
+                    var overflowStart      = isOverflowUp && rawPointerCol >= _resizeEntry.DayCol
                         ? Math.Clamp(1440 + rawY, 0, 1425) : Math.Clamp(timeSnapped, 0, 1425);
-                    var overflowDispCol = Math.Clamp(
-                        isOverflowUp && rawPointerCol >= _resizeEntry.DayCol
-                            ? _resizeEntry.DayCol - 1 : rawPointerCol,
-                        0, _currentDays.Count - 1);
-                    var prevLeft        = overflowDispCol > 0 ? overflowDispCol * colW + 1.0 : 0.0;
+                    var logicalOverflowCol = isOverflowUp && rawPointerCol >= _resizeEntry.DayCol
+                        ? _resizeEntry.DayCol - 1 : rawPointerCol;
+                    var overflowVisible    = logicalOverflowCol >= 0 && logicalOverflowCol < _currentDays.Count;
+                    var prevLeft           = logicalOverflowCol > 0 ? logicalOverflowCol * colW + 1.0 : 0.0;
 
-                    if (_resizeGhostOverflow is null)
+                    if (!overflowVisible)
+                    {
+                        if (_resizeGhostOverflow != null)
+                        {
+                            DragOverlay.Children.Remove(_resizeGhostOverflow);
+                            _resizeGhostOverflow = null;
+                        }
+                    }
+                    else if (_resizeGhostOverflow is null)
                     {
                         _resizeGhostOverflow = CreateGhostButton(_resizeEntry.Ev,
                             Math.Max(13, 1440 - overflowStart - 2), colW - 3.0);
@@ -854,10 +897,30 @@ public partial class WeekView : UserControl
                     ? actualStartMin : 0;
                 var resizeDay = _currentDays[_resizeEntry.DayCol];
 
+                var startIsPrevDay = DateOnly.FromDateTime(ev.StartDt) < resizeColDay;
                 var isOverflowDown = rawY > 1440;
                 var canExtendRight = rawPointerCol > _resizeEntry.DayCol || isOverflowDown;
+                var canShrinkLeft  = (rawPointerCol < _resizeEntry.DayCol || rawY < 0)
+                                     && startIsPrevDay;
 
-                if (!canExtendRight)
+                if (canShrinkLeft)
+                {
+                    var logicalCol = rawPointerCol < _resizeEntry.DayCol
+                        ? rawPointerCol : _resizeEntry.DayCol - 1;
+                    var targetDay      = _currentDays[_resizeEntry.DayCol].AddDays(logicalCol - _resizeEntry.DayCol);
+                    var targetTime     = rawPointerCol < _resizeEntry.DayCol
+                        ? timeSnapped
+                        : Math.Clamp(1440 + rawY, 0, 1440);
+                    var evStartDay     = DateOnly.FromDateTime(ev.StartDt);
+                    var targetDateOnly = DateOnly.FromDateTime(targetDay);
+                    var minEnd         = evStartDay == targetDateOnly ? actualStartMin + 30 : 30;
+                    var newEndMin      = Math.Clamp(targetTime, minEnd, 1440);
+                    ev.EndDt = newEndMin >= 1440
+                        ? targetDay.Date.AddDays(1)
+                        : new DateTime(targetDay.Year, targetDay.Month, targetDay.Day,
+                                       newEndMin / 60, newEndMin % 60, 0);
+                }
+                else if (!canExtendRight)
                 {
                     var minEnd = DateOnly.FromDateTime(ev.StartDt) == resizeColDay
                         ? effectiveStartMin + 30
@@ -894,10 +957,28 @@ public partial class WeekView : UserControl
                     ? actualEndMin : 1440;
                 var resizeDay = _currentDays[_resizeEntry.DayCol];
 
-                var isOverflowUp  = rawY < 0;
-                var canExtendLeft = rawPointerCol < _resizeEntry.DayCol || isOverflowUp;
+                var isOverflowUp   = rawY < 0;
+                var isOverflowDown = rawY > 1440;
+                var canExtendLeft  = rawPointerCol < _resizeEntry.DayCol || isOverflowUp;
+                var canExtendRight = (rawPointerCol > _resizeEntry.DayCol || isOverflowDown) && !canExtendLeft;
 
-                if (!canExtendLeft)
+                if (canExtendRight)
+                {
+                    var logicalCol = isOverflowDown && rawPointerCol <= _resizeEntry.DayCol
+                        ? _resizeEntry.DayCol + 1 : rawPointerCol;
+                    var targetTime     = isOverflowDown && rawPointerCol <= _resizeEntry.DayCol
+                        ? Math.Clamp(rawY - 1440, 0, 1440)
+                        : timeSnapped;
+                    var targetDay      = _currentDays[_resizeEntry.DayCol].AddDays(logicalCol - _resizeEntry.DayCol);
+                    var evEndDay       = DateOnly.FromDateTime(ev.EndDt);
+                    var targetDateOnly = DateOnly.FromDateTime(targetDay);
+                    var maxStart       = evEndDay == targetDateOnly
+                        ? Math.Max(0, actualEndMin - 30) : 1425;
+                    var newStartMin    = Math.Clamp(targetTime, 0, maxStart);
+                    ev.StartDt = new DateTime(targetDay.Year, targetDay.Month, targetDay.Day,
+                                             newStartMin / 60, newStartMin % 60, 0);
+                }
+                else if (!canExtendLeft)
                 {
                     var maxStart = DateOnly.FromDateTime(ev.EndDt) == resizeColDay
                         ? effectiveEndMin - 30
