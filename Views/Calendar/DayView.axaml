@@ -1,20 +1,27 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:comp="using:MyPlanner.Controls.Components"
+             xmlns:shapes="using:Avalonia.Controls.Shapes"
+             xmlns:local="using:MyPlanner.Views.Calendar"
              x:Class="MyPlanner.Views.Calendar.DayView"
              Background="{StaticResource BrushBg}">
 
+    <UserControl.Resources>
+        <local:HourLineBorderConverter x:Key="HourBorderConv" />
+    </UserControl.Resources>
+
     <Grid RowDefinitions="Auto,*">
 
-        <!-- Панель "весь день" -->
+        <!-- AllDayBar -->
         <comp:AllDayBar Grid.Row="0" x:Name="AllDayBarCtrl" />
 
-        <!-- Прокручиваемая сетка часов с событиями -->
+        <!-- Прокручиваемая сетка событий -->
         <ScrollViewer Grid.Row="1" x:Name="TimeScroll">
             <Grid ColumnDefinitions="72,*">
 
                 <!-- Метки часов -->
-                <ItemsControl Grid.Column="0" x:Name="HourLabels">
+                <Border Grid.Column="0" BorderBrush="#E8E8E8" BorderThickness="1,0,0,0">
+                <ItemsControl x:Name="HourLabels">
                     <ItemsControl.ItemsPanel>
                         <ItemsPanelTemplate>
                             <StackPanel />
@@ -22,20 +29,62 @@
                     </ItemsControl.ItemsPanel>
                     <ItemsControl.ItemTemplate>
                         <DataTemplate>
-                            <TextBlock Text="{Binding}"
-                                       Height="60"
-                                       Padding="0,2,8,0"
-                                       TextAlignment="Right"
-                                       FontSize="{StaticResource FontSizeSmall}"
-                                       Foreground="{StaticResource BrushSecondaryText}" />
+                            <Grid Height="60">
+                                <TextBlock Text="{Binding}"
+                                           VerticalAlignment="Bottom"
+                                           HorizontalAlignment="Right"
+                                           Margin="0,0,8,-8"
+                                           FontSize="13"
+                                           Foreground="{StaticResource BrushSecondaryText}" />
+                            </Grid>
                         </DataTemplate>
                     </ItemsControl.ItemTemplate>
                 </ItemsControl>
+                </Border>
 
-                <!-- Canvas для событий (24 ч × 60 px/ч = 1440 px) -->
-                <Canvas Grid.Column="1" x:Name="EventCanvas"
-                        Height="1440"
-                        Background="Transparent" />
+                <!-- Правая часть: линии + колонка событий -->
+                <Grid Grid.Column="1" x:Name="EventsGrid">
+
+                    <!-- Линии часов -->
+                    <ItemsControl x:Name="HourRows"
+                                  IsHitTestVisible="False"
+                                  Height="1440"
+                                  VerticalAlignment="Top">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <StackPanel />
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Height="60" ClipToBounds="True">
+                                    <Border BorderBrush="#E0E0E0"
+                                            BorderThickness="{Binding Converter={StaticResource HourBorderConv}}"
+                                            VerticalAlignment="Top" />
+                                    <shapes:Line StartPoint="0,0.5" EndPoint="10000,0.5"
+                                                 Margin="0,30,0,0"
+                                                 VerticalAlignment="Top"
+                                                 HorizontalAlignment="Left"
+                                                 Stroke="#E0E0E0"
+                                                 StrokeThickness="1"
+                                                 StrokeDashArray="3,3" />
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+
+                    <!-- 1 колонка с событиями -->
+                    <UniformGrid x:Name="WeekColumns"
+                                 Columns="1" Height="1440"
+                                 VerticalAlignment="Top" />
+
+                    <!-- Оверлей для drag-ghost -->
+                    <Canvas x:Name="DragOverlay"
+                            IsHitTestVisible="False"
+                            Height="1440"
+                            VerticalAlignment="Top" />
+
+                </Grid>
 
             </Grid>
         </ScrollViewer>

@@ -69,7 +69,10 @@ public partial class CalendarControllerView : UserControl
         JournalViewCtrl.CreateRequested += (_, d)  => _ = OpenAddDialog(d);
         MonthViewCtrl.EventClicked += (_, ev) => _ = OpenEditDialog(ev);
         MonthViewCtrl.EventMoved   += (_, ev) => { _events.Update(ev); CollectionsMayHaveChanged?.Invoke(this, EventArgs.Empty); RefreshCurrent(); };
-        DayViewCtrl.EventClicked   += (_, ev) => _ = OpenEditDialog(ev);
+        DayViewCtrl.EventClicked              += (_, ev) => _ = OpenEditDialog(ev);
+        DayViewCtrl.EventMoved                += (_, ev) => { _events.Update(ev); CollectionsMayHaveChanged?.Invoke(this, EventArgs.Empty); RefreshCurrent(); };
+        DayViewCtrl.AllDayCreationRequested   += (_, d)  => _ = OpenAddAllDayDialog(d);
+        DayViewCtrl.TimeSlotCreationRequested += (_, dt) => _ = OpenAddDialog(dt.Date, dt.TimeOfDay);
         WeekViewCtrl.EventClicked           += (_, ev) => _ = OpenEditDialog(ev);
         WeekViewCtrl.EventMoved             += (_, ev) => { _events.Update(ev); CollectionsMayHaveChanged?.Invoke(this, EventArgs.Empty); RefreshCurrent(); };
         WeekViewCtrl.AllDayCreationRequested   += (_, d)  => _ = OpenAddAllDayDialog(d);
