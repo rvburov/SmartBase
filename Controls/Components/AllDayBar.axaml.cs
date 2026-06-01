@@ -393,7 +393,7 @@ public partial class AllDayBar : UserControl
             {
                 Text              = $", {ev.StartDt:HH:mm}",
                 FontSize          = 13,
-                FontWeight        = FontWeight.SemiBold,
+                FontWeight        = FontWeight.Normal,
                 Foreground        = darkBrush,
                 VerticalAlignment = VerticalAlignment.Center,
                 Margin            = new Thickness(0, 0, 4, 0),

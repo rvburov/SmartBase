@@ -32,7 +32,7 @@ public partial class WeekView : UserControl
     private StackPanel?    _dragGhostContentStack;
     private double         _dragGhostOriginalHeight;
     private Border?        _dragSourceBtn;
-    private List<Border>   _dragDimmedBtns = [];
+    private List<EventEntry> _dragDimmedBtns = [];
     private Point          _dragStartPos;
     private double         _dragOffsetY;
     private bool           _isDragging;
@@ -58,13 +58,18 @@ public partial class WeekView : UserControl
     // hit-testing
     private sealed class EventEntry(Event ev, int dayCol, int startMin, int endMin, Border btn)
     {
-        public Event   Ev       = ev;
-        public int     DayCol   = dayCol;
-        public int     StartMin = startMin;
-        public int     EndMin   = endMin;
-        public Border  Btn      = btn;
+        public Event   Ev         = ev;
+        public int     DayCol     = dayCol;
+        public int     StartMin   = startMin;
+        public int     EndMin     = endMin;
+        public Border  Btn        = btn;
+        public int     SubCol     = 0;
+        public int     SubColSpan = 1;
+        public int     TotalCols  = 1;
         public Action? Select;
         public Action? Deselect;
+        public Action? Dim;
+        public Action? Undim;
     }
     private readonly List<EventEntry> _eventEntries = [];
 
@@ -85,6 +90,8 @@ public partial class WeekView : UserControl
         AllDayBarCtrl.EventClicked            += (_, ev) => EventClicked?.Invoke(this, ev);
         AllDayBarCtrl.EventMoved              += (_, ev) => EventMoved?.Invoke(this, ev);
         AllDayBarCtrl.EventCreationRequested  += (_, d)  => AllDayCreationRequested?.Invoke(this, d);
+
+        SizeChanged += (_, _) => AllDayBarCtrl.InvalidateMeasure();
     }
 
     public void Refresh(IEnumerable<Event> events, DateTime weekStart, bool scrollToNow = false)
@@ -116,155 +123,180 @@ public partial class WeekView : UserControl
                          && dayDate <= DateOnly.FromDateTime(e.EndDt))
                 .ToList();
 
-            foreach (var ev in dayEvents)
+            var sortedDayEvents = dayEvents
+                .OrderBy(e => e.StartDt)
+                .ThenBy(e => e.Title)
+                .ToList();
+
+            // список пар (entry, topHandle, bottomHandle) для пересчёта при resize
+            var dayEntryLayouts = new List<(EventEntry Entry, Border TopHandle, Border BottomHandle)>();
+
+            foreach (var group in GroupOverlapping(sortedDayEvents))
             {
-                var startMin = DateOnly.FromDateTime(ev.StartDt) == dayDate
-                    ? ev.StartDt.Hour * 60 + ev.StartDt.Minute
-                    : 0;
-                var effectiveEndMin = DateOnly.FromDateTime(ev.EndDt) == dayDate
-                    ? ev.EndDt.Hour * 60 + ev.EndDt.Minute
-                    : 1440;
-                var evH = Math.Max(22, effectiveEndMin - startMin);
-                var evHVisible = evH - 2; // 2px нижний зазор между событиями
-                var color      = Color.Parse(ev.Color);
-                var normalBg   = new SolidColorBrush(Color.FromArgb(40, color.R, color.G, color.B));
-                var hoverBg    = new SolidColorBrush(Color.FromArgb(90, color.R, color.G, color.B));
-                var colorBrush = new SolidColorBrush(color);
-                var darkBrush  = new SolidColorBrush(Darken(color));
-
-                // Сколько строк заголовка влезает, оставляя место под время (≈15px)
-                const double lineH   = 16.0; // приблизительная высота строки FontSize=13
-                const double margins = 4.0;  // top+bottom margin contentStack
-                const double timeH   = 15.0; // высота строки времени FontSize=12
-
-                var maxTitleLines = (int)((evHVisible - margins - timeH) / lineH);
-                var showTime      = maxTitleLines >= 1;
-                var titleMaxLines = showTime
-                    ? maxTitleLines
-                    : Math.Max(1, (int)((evHVisible - margins) / lineH));
-
-                var titleBlock = new TextBlock
+                foreach (var (ev, colIdx, nCols, rightLimit) in AssignColumns(group))
                 {
-                    Text         = ev.Title,
-                    FontSize     = 13,
-                    FontWeight   = FontWeight.SemiBold,
-                    Foreground   = darkBrush,
-                    TextTrimming = Avalonia.Media.TextTrimming.CharacterEllipsis,
-                    TextWrapping = TextWrapping.Wrap,
-                    MaxLines     = titleMaxLines,
-                };
+                    var startMin = DateOnly.FromDateTime(ev.StartDt) == dayDate
+                        ? ev.StartDt.Hour * 60 + ev.StartDt.Minute
+                        : 0;
+                    var effectiveEndMin = DateOnly.FromDateTime(ev.EndDt) == dayDate
+                        ? ev.EndDt.Hour * 60 + ev.EndDt.Minute
+                        : 1440;
+                    var evH        = Math.Max(22, effectiveEndMin - startMin);
+                    var evHVisible = evH - 2;
+                    var color      = Color.Parse(ev.Color);
+                    var normalBg   = new SolidColorBrush(BlendWithWhite(color, 40));
+                    var hoverBg    = new SolidColorBrush(BlendWithWhite(color, 90));
+                    var colorBrush = new SolidColorBrush(color);
+                    var darkBrush  = new SolidColorBrush(Darken(color));
 
-                var contentStack = new StackPanel
-                {
-                    Margin = new Thickness(4, 2, 3, 2),
-                };
-                contentStack.Children.Add(titleBlock);
+                    const double lineH   = 16.0;
+                    const double margins = 4.0;
+                    const double timeH   = 15.0;
 
-                if (showTime)
-                {
-                    contentStack.Children.Add(new TextBlock
+                    var maxTitleLines = (int)((evHVisible - margins - timeH) / lineH);
+                    var showTime      = maxTitleLines >= 1;
+                    var titleMaxLines = showTime
+                        ? maxTitleLines
+                        : Math.Max(1, (int)((evHVisible - margins) / lineH));
+
+                    var titleBlock = new TextBlock
                     {
-                        Text       = $"{ev.StartDt:HH:mm}–{ev.EndDt:HH:mm}",
-                        FontSize   = 12,
-                        Foreground = darkBrush,
-                        Margin     = new Thickness(0, 1, 0, 0),
-                    });
+                        Text         = ev.Title,
+                        FontSize     = 13,
+                        FontWeight   = FontWeight.SemiBold,
+                        Foreground   = darkBrush,
+                        TextTrimming = Avalonia.Media.TextTrimming.CharacterEllipsis,
+                        TextWrapping = TextWrapping.Wrap,
+                        MaxLines     = titleMaxLines,
+                    };
+
+                    var contentStack = new StackPanel { Margin = new Thickness(4, 2, 3, 2) };
+                    contentStack.Children.Add(titleBlock);
+
+                    if (showTime)
+                    {
+                        contentStack.Children.Add(new TextBlock
+                        {
+                            Text       = $"{ev.StartDt:HH:mm}–{ev.EndDt:HH:mm}",
+                            FontSize   = 13,
+                            Foreground = darkBrush,
+                            Margin     = new Thickness(0, 1, 0, 0),
+                        });
+                    }
+
+                    Grid.SetColumn(contentStack, 1);
+
+                    var strip = new Border
+                    {
+                        Background        = colorBrush,
+                        CornerRadius      = new CornerRadius(2),
+                        Width             = 3,
+                        Margin            = new Thickness(2, 3, 0, 3),
+                        VerticalAlignment = VerticalAlignment.Stretch,
+                    };
+
+                    var selFrame = new Border
+                    {
+                        CornerRadius     = new CornerRadius(3),
+                        BorderThickness  = new Thickness(1.5),
+                        BorderBrush      = Brushes.Transparent,
+                        IsHitTestVisible = false,
+                    };
+                    Grid.SetColumnSpan(selFrame, 2);
+
+                    var innerGrid = new Grid();
+                    innerGrid.ColumnDefinitions.Add(new ColumnDefinition(4, GridUnitType.Pixel));
+                    innerGrid.ColumnDefinitions.Add(new ColumnDefinition(1, GridUnitType.Star));
+                    innerGrid.Children.Add(strip);
+                    innerGrid.Children.Add(contentStack);
+                    innerGrid.Children.Add(selFrame);
+
+                    var btn = new Border
+                    {
+                        Background   = normalBg,
+                        CornerRadius = new CornerRadius(3),
+                        Height       = evHVisible,
+                        Cursor       = new Cursor(StandardCursorType.Hand),
+                        ClipToBounds = true,
+                        Child        = innerGrid,
+                    };
+
+                    var isSelected = false;
+                    btn.PointerEntered += (_, _) => { if (!isSelected) btn.Background = hoverBg; };
+                    btn.PointerExited  += (_, _) => { if (!isSelected) btn.Background = normalBg; };
+
+                    Canvas.SetTop(btn, startMin + 2);
+                    canvas.Children.Add(btn);
+
+                    var topHandle = new Border
+                    {
+                        Height           = 6,
+                        Background       = Brushes.Transparent,
+                        Cursor           = new Cursor(StandardCursorType.SizeNorthSouth),
+                        IsHitTestVisible = true,
+                    };
+                    Canvas.SetTop(topHandle, startMin + 2);
+                    canvas.Children.Add(topHandle);
+
+                    var bottomHandle = new Border
+                    {
+                        Height           = 6,
+                        Background       = Brushes.Transparent,
+                        Cursor           = new Cursor(StandardCursorType.SizeNorthSouth),
+                        IsHitTestVisible = true,
+                    };
+                    Canvas.SetTop(bottomHandle, startMin + 2 + evHVisible - 6);
+                    canvas.Children.Add(bottomHandle);
+
+                    var solidBrush = new SolidColorBrush(color);
+                    var dimBg      = new SolidColorBrush(BlendWithWhite(color, 18));
+                    var entry = new EventEntry(ev, col, startMin, startMin + evH, btn)
+                    {
+                        SubCol     = colIdx,
+                        SubColSpan = rightLimit - colIdx,
+                        TotalCols  = nCols,
+                        Select = () =>
+                        {
+                            isSelected = true;
+                            btn.Background = solidBrush;
+                            foreach (var tb in contentStack.Children.OfType<TextBlock>())
+                                tb.Foreground = Brushes.White;
+                        },
+                        Deselect = () =>
+                        {
+                            isSelected = false;
+                            btn.Background = normalBg;
+                            foreach (var tb in contentStack.Children.OfType<TextBlock>())
+                                tb.Foreground = darkBrush;
+                        },
+                        Dim   = () => btn.Opacity = 0.45,
+                        Undim = () => btn.Opacity = 1.0,
+                    };
+                    _eventEntries.Add(entry);
+                    dayEntryLayouts.Add((entry, topHandle, bottomHandle));
                 }
-
-                Grid.SetColumn(contentStack, 1);
-
-                var strip = new Border
-                {
-                    Background        = colorBrush,
-                    CornerRadius      = new CornerRadius(2),
-                    Width             = 3,
-                    Margin            = new Thickness(2, 3, 0, 3),
-                    VerticalAlignment = VerticalAlignment.Stretch,
-                };
-
-                var selFrame = new Border
-                {
-                    CornerRadius     = new CornerRadius(3),
-                    BorderThickness  = new Thickness(1.5),
-                    BorderBrush      = Brushes.Transparent,
-                    IsHitTestVisible = false,
-                };
-                Grid.SetColumnSpan(selFrame, 2);
-
-                var innerGrid = new Grid();
-                innerGrid.ColumnDefinitions.Add(new ColumnDefinition(4, GridUnitType.Pixel));
-                innerGrid.ColumnDefinitions.Add(new ColumnDefinition(1, GridUnitType.Star));
-                innerGrid.Children.Add(strip);
-                innerGrid.Children.Add(contentStack);
-                innerGrid.Children.Add(selFrame);
-
-                var btn = new Border
-                {
-                    Background    = normalBg,
-                    CornerRadius  = new CornerRadius(3),
-                    Height        = evHVisible,
-                    Cursor        = new Cursor(StandardCursorType.Hand),
-                    ClipToBounds  = true,
-                    Child         = innerGrid,
-                };
-
-                var isSelected = false;
-                btn.PointerEntered += (_, _) => { if (!isSelected) btn.Background = hoverBg; };
-                btn.PointerExited  += (_, _) => { if (!isSelected) btn.Background = normalBg; };
-
-                Canvas.SetTop(btn, startMin + 2);
-                Canvas.SetLeft(btn, 0);
-                canvas.Children.Add(btn);
-
-                var topHandle = new Border
-                {
-                    Height           = 6,
-                    Background       = Brushes.Transparent,
-                    Cursor           = new Cursor(StandardCursorType.SizeNorthSouth),
-                    IsHitTestVisible = true,
-                };
-                Canvas.SetTop(topHandle, startMin + 2);
-                Canvas.SetLeft(topHandle, 0);
-                canvas.Children.Add(topHandle);
-
-                var bottomHandle = new Border
-                {
-                    Height           = 6,
-                    Background       = Brushes.Transparent,
-                    Cursor           = new Cursor(StandardCursorType.SizeNorthSouth),
-                    IsHitTestVisible = true,
-                };
-                Canvas.SetTop(bottomHandle, startMin + 2 + evHVisible - 6);
-                Canvas.SetLeft(bottomHandle, 0);
-                canvas.Children.Add(bottomHandle);
-
-                var solidBrush = new SolidColorBrush(color);
-                var entry = new EventEntry(ev, col, startMin, startMin + evH, btn)
-                {
-                    Select = () =>
-                    {
-                        isSelected = true;
-                        btn.Background = solidBrush;
-                        foreach (var tb in contentStack.Children.OfType<TextBlock>())
-                            tb.Foreground = Brushes.White;
-                    },
-                    Deselect = () =>
-                    {
-                        isSelected = false;
-                        btn.Background = normalBg;
-                        foreach (var tb in contentStack.Children.OfType<TextBlock>())
-                            tb.Foreground = darkBrush;
-                    },
-                };
-                _eventEntries.Add(entry);
             }
 
-            canvas.SizeChanged += (_, args) =>
+            void LayoutDayEntries(double canvasW)
             {
-                var w = args.NewSize.Width - 2;
-                foreach (var child in canvas.Children.OfType<Border>())
-                    child.Width = w;
-            };
+                foreach (var (entry, topHandle, bottomHandle) in dayEntryLayouts)
+                {
+                    var seg  = canvasW / entry.TotalCols;
+                    var left = entry.SubCol * seg + 1.0;
+                    var w    = Math.Max(1, entry.SubColSpan * seg - 3.0);
+                    Canvas.SetLeft(entry.Btn, left);
+                    entry.Btn.Width = w;
+                    Canvas.SetLeft(topHandle, left);
+                    topHandle.Width = w;
+                    Canvas.SetLeft(bottomHandle, left);
+                    bottomHandle.Width = w;
+                }
+            }
+
+            canvas.SizeChanged += (_, args) => LayoutDayEntries(args.NewSize.Width);
+            // начальная раскладка — будет вызвана при первом SizeChanged, но на случай
+            // если размер уже известен — применяем после layout pass
+            canvas.AttachedToVisualTree += (_, _) => LayoutDayEntries(canvas.Bounds.Width > 0 ? canvas.Bounds.Width : canvas.Width);
 
             var dayGrid = new Grid();
             if (col >= 5)
@@ -320,8 +352,17 @@ public partial class WeekView : UserControl
         if (colW <= 0) return;
 
         var col   = (int)(pos.X / colW);
-        var entry = _eventEntries.FirstOrDefault(h =>
-            h.DayCol == col && pos.Y >= h.StartMin && pos.Y <= h.EndMin);
+        var entry = _eventEntries
+            .Where(h => h.DayCol == col && pos.Y >= h.StartMin && pos.Y <= h.EndMin)
+            .OrderByDescending(h =>
+            {
+                var seg  = colW / h.TotalCols;
+                var left = h.SubCol * seg + 1.0;
+                var right = left + h.SubColSpan * seg - 3.0;
+                var localX = pos.X - col * colW;
+                return localX >= left && localX <= right ? 1 : 0;
+            })
+            .FirstOrDefault();
 
         if (entry is null)
         {
@@ -402,26 +443,77 @@ public partial class WeekView : UserControl
             var rawPointerCol = colW > 0 ? (int)Math.Floor(pos.X / colW) : _resizeEntry.DayCol;
             var pointerCol    = Math.Clamp(rawPointerCol, 0, _currentDays.Count - 1);
             var rawY          = (int)(pos.Y / 15) * 15;
-            var timeSnapped   = Math.Clamp(rawY, 0, 1425);
+            var timeSnapped   = Math.Clamp(rawY, 0, 1440);
 
             if (_resizeFromBottom)
             {
-                // Если событие началось в предыдущем дне (overflow-сегмент), граница = 0
                 var resizeColDay      = DateOnly.FromDateTime(_currentDays[_resizeEntry.DayCol]);
                 var actualStartMin    = _resizeEntry.Ev.StartDt.Hour * 60 + _resizeEntry.Ev.StartDt.Minute;
                 var effectiveStartMin = DateOnly.FromDateTime(_resizeEntry.Ev.StartDt) == resizeColDay
                     ? actualStartMin : 0;
+                var startIsPrevDay    = DateOnly.FromDateTime(_resizeEntry.Ev.StartDt) < resizeColDay;
 
-                var isOverflowDown    = rawY > 1440;
-                var canExtendRight    = rawPointerCol > _resizeEntry.DayCol || isOverflowDown;
+                var isOverflowDown = rawY > 1440;
+                var canExtendRight = rawPointerCol > _resizeEntry.DayCol || isOverflowDown;
+                // Конец уходит в предыдущий день: мышь перешла влево ИЛИ ушла выше Y=0
+                var canShrinkLeft  = (rawPointerCol < _resizeEntry.DayCol || rawY < 0)
+                                     && startIsPrevDay && _resizeEntry.DayCol > 0;
 
-                if (!canExtendRight)
+                if (canShrinkLeft)
                 {
-                    var newEndMin = Math.Clamp(timeSnapped, effectiveStartMin + 15, 1440);
+                    // Конец уходит обратно в предыдущий день
+                    var minEndInPrevDay = actualStartMin + 30;
+                    var newEndInPrev    = Math.Clamp(timeSnapped, minEndInPrevDay, 1440);
+                    var overflowH       = Math.Max(13, newEndInPrev - actualStartMin - 2);
+                    var prevCol         = _resizeEntry.DayCol - 1;
+                    var prevLeft        = prevCol > 0 ? prevCol * colW + 1.0 : 0.0;
+
+                    Canvas.SetTop(_resizeGhost, 2);
+                    _resizeGhost.Height = 13;
+                    UpdateResizeGhostText(13, actualStartMin, newEndInPrev);
+
+                    if (_resizeGhostOverflow is null)
+                    {
+                        _resizeGhostOverflow = CreateGhostButton(_resizeEntry.Ev, overflowH, colW - 3.0);
+                        Canvas.SetLeft(_resizeGhostOverflow, prevLeft);
+                        Canvas.SetTop(_resizeGhostOverflow, actualStartMin + 2);
+                        DragOverlay.Children.Add(_resizeGhostOverflow);
+                    }
+                    else
+                    {
+                        _resizeGhostOverflow.Height = overflowH;
+                        Canvas.SetTop(_resizeGhostOverflow, actualStartMin + 2);
+                        Canvas.SetLeft(_resizeGhostOverflow, prevLeft);
+                    }
+
+                    var svH = TimeScroll.Bounds.Height;
+                    if (svH > 0)
+                    {
+                        var ghostBtm = actualStartMin + overflowH + 2;
+                        if (ghostBtm > TimeScroll.Offset.Y + svH - 30)
+                            TimeScroll.Offset = TimeScroll.Offset.WithY(
+                                Math.Clamp(ghostBtm - svH + 30, 0, Math.Max(0, 1440 - svH)));
+                    }
+                }
+                else if (!canExtendRight)
+                {
+                    var minEnd = DateOnly.FromDateTime(_resizeEntry.Ev.StartDt) == resizeColDay
+                        ? effectiveStartMin + 30
+                        : Math.Max(0, 30 - (1440 - actualStartMin));
+                    var newEndMin = Math.Clamp(timeSnapped, minEnd, 1440);
                     var ghostH    = Math.Max(13, newEndMin - effectiveStartMin - 2);
                     Canvas.SetTop(_resizeGhost, effectiveStartMin + 2);
                     _resizeGhost.Height = ghostH;
                     UpdateResizeGhostText(ghostH, effectiveStartMin, newEndMin);
+
+                    var svH = TimeScroll.Bounds.Height;
+                    if (svH > 0)
+                    {
+                        var ghostBottom = effectiveStartMin + 2 + ghostH;
+                        if (ghostBottom > TimeScroll.Offset.Y + svH - 30)
+                            TimeScroll.Offset = TimeScroll.Offset.WithY(
+                                Math.Clamp(ghostBottom - svH + 30, 0, Math.Max(0, 1440 - svH)));
+                    }
 
                     if (_resizeGhostOverflow != null)
                     {
@@ -471,11 +563,20 @@ public partial class WeekView : UserControl
 
                 if (!canExtendLeft)
                 {
-                    var newStartMin = Math.Clamp(timeSnapped, 0, effectiveEndMin - 15);
+                    // For overflow segments (event ends on a next day), max start accounts for
+                    // the portion remaining on the next day so the total >= 30 min.
+                    var maxStart = DateOnly.FromDateTime(_resizeEntry.Ev.EndDt) == resizeColDay
+                        ? effectiveEndMin - 30
+                        : Math.Min(1440, 1440 + actualEndMin - 30);
+                    var newStartMin = Math.Clamp(timeSnapped, 0, maxStart);
                     var ghostH      = Math.Max(13, effectiveEndMin - newStartMin - 2);
                     Canvas.SetTop(_resizeGhost, newStartMin + 2);
                     _resizeGhost.Height = ghostH;
                     UpdateResizeGhostText(ghostH, newStartMin, effectiveEndMin);
+
+                    var svH = TimeScroll.Bounds.Height;
+                    if (svH > 0 && newStartMin + 2 < TimeScroll.Offset.Y + 30)
+                        TimeScroll.Offset = TimeScroll.Offset.WithY(Math.Max(0, newStartMin - 28));
 
                     if (_resizeGhostOverflow != null)
                     {
@@ -537,10 +638,9 @@ public partial class WeekView : UserControl
             _deselectCurrent = null;
             _dragDimmedBtns = _eventEntries
                 .Where(e => e.Ev.Id == _dragEvent!.Id)
-                .Select(e => e.Btn)
                 .ToList();
             foreach (var b in _dragDimmedBtns)
-                b.Opacity = 0.45;
+                b.Dim?.Invoke();
 
             _dragGhost = CreateGhostButton(_dragEvent, ghostH, ghostW,
                 out _dragGhostTitleBlock, out _dragGhostTimeBlock, out _dragGhostContentStack);
@@ -744,7 +844,7 @@ public partial class WeekView : UserControl
             var colW          = EventsGrid.Bounds.Width / _currentDays.Count;
             var rawPointerCol = colW > 0 ? (int)Math.Floor(resizePos.X / colW) : _resizeEntry.DayCol;
             var rawY          = (int)(resizePos.Y / 15) * 15;
-            var timeSnapped   = Math.Clamp(rawY, 0, 1425);
+            var timeSnapped   = Math.Clamp(rawY, 0, 1440);
 
             if (_resizeFromBottom)
             {
@@ -759,9 +859,13 @@ public partial class WeekView : UserControl
 
                 if (!canExtendRight)
                 {
-                    var newEndMin = Math.Clamp(timeSnapped, effectiveStartMin + 15, 1440);
-                    ev.EndDt = new DateTime(resizeDay.Year, resizeDay.Month, resizeDay.Day,
-                                            newEndMin / 60, newEndMin % 60, 0);
+                    var minEnd = DateOnly.FromDateTime(ev.StartDt) == resizeColDay
+                        ? effectiveStartMin + 30
+                        : Math.Max(0, 30 - (1440 - actualStartMin));
+                    var newEndMin = Math.Clamp(timeSnapped, minEnd, 1440);
+                    ev.EndDt = newEndMin >= 1440
+                        ? resizeDay.Date.AddDays(1)
+                        : new DateTime(resizeDay.Year, resizeDay.Month, resizeDay.Day, newEndMin / 60, newEndMin % 60, 0);
                 }
                 else
                 {
@@ -795,9 +899,13 @@ public partial class WeekView : UserControl
 
                 if (!canExtendLeft)
                 {
-                    var newStartMin = Math.Clamp(timeSnapped, 0, effectiveEndMin - 15);
-                    ev.StartDt = new DateTime(resizeDay.Year, resizeDay.Month, resizeDay.Day,
-                                              newStartMin / 60, newStartMin % 60, 0);
+                    var maxStart = DateOnly.FromDateTime(ev.EndDt) == resizeColDay
+                        ? effectiveEndMin - 30
+                        : Math.Min(1440, 1440 + actualEndMin - 30);
+                    var newStartMin = Math.Clamp(timeSnapped, 0, maxStart);
+                    ev.StartDt = newStartMin >= 1440
+                        ? resizeDay.Date.AddDays(1)
+                        : new DateTime(resizeDay.Year, resizeDay.Month, resizeDay.Day, newStartMin / 60, newStartMin % 60, 0);
                 }
                 else
                 {
@@ -856,8 +964,17 @@ public partial class WeekView : UserControl
                 // find the entry to set selection frame
                 var colW  = EventsGrid.Bounds.Width / 7;
                 var col   = (int)(pos.X / colW);
-                var entry = _eventEntries.FirstOrDefault(h =>
-                    h.DayCol == col && pos.Y >= h.StartMin && pos.Y <= h.EndMin);
+                var entry = _eventEntries
+                    .Where(h => h.DayCol == col && pos.Y >= h.StartMin && pos.Y <= h.EndMin)
+                    .OrderByDescending(h =>
+                    {
+                        var seg    = colW / h.TotalCols;
+                        var left   = h.SubCol * seg + 1.0;
+                        var right  = left + h.SubColSpan * seg - 3.0;
+                        var localX = pos.X - col * colW;
+                        return localX >= left && localX <= right ? 1 : 0;
+                    })
+                    .FirstOrDefault();
 
                 if (entry is not null)
                 {
@@ -915,7 +1032,7 @@ public partial class WeekView : UserControl
             _dragGhostOverflow = null;
         }
         foreach (var b in _dragDimmedBtns)
-            b.Opacity = 1.0;
+            b.Undim?.Invoke();
         _dragDimmedBtns.Clear();
 
         _dragEvent             = null;
@@ -950,7 +1067,7 @@ public partial class WeekView : UserControl
                 _dragGhostTimeBlock = new TextBlock
                 {
                     Text       = timeText,
-                    FontSize   = 12,
+                    FontSize   = 13,
                     Foreground = Brushes.White,
                     Margin     = new Thickness(0, 1, 0, 0),
                 };
@@ -993,7 +1110,7 @@ public partial class WeekView : UserControl
                 _resizeGhostTimeBlock = new TextBlock
                 {
                     Text       = timeText,
-                    FontSize   = 12,
+                    FontSize   = 13,
                     Foreground = Brushes.White,
                     Margin     = new Thickness(0, 1, 0, 0),
                 };
@@ -1055,7 +1172,7 @@ public partial class WeekView : UserControl
             timeBlock = new TextBlock
             {
                 Text       = $"{ev.StartDt:HH:mm}–{ev.EndDt:HH:mm}",
-                FontSize   = 12,
+                FontSize   = 13,
                 Foreground = Brushes.White,
                 Margin     = new Thickness(0, 1, 0, 0),
             };
@@ -1099,6 +1216,75 @@ public partial class WeekView : UserControl
 
     private static Color Darken(Color c, double f = 0.6)
         => Color.FromArgb(c.A, (byte)(c.R * f), (byte)(c.G * f), (byte)(c.B * f));
+
+    // смешивает цвет с белым фоном чтобы убрать прозрачность (alpha blending)
+    private static Color BlendWithWhite(Color c, byte alpha)
+    {
+        var a = alpha / 255.0;
+        return Color.FromRgb(
+            (byte)(c.R * a + 255 * (1 - a)),
+            (byte)(c.G * a + 255 * (1 - a)),
+            (byte)(c.B * a + 255 * (1 - a)));
+    }
+
+    private static List<List<Event>> GroupOverlapping(List<Event> events)
+    {
+        if (events.Count == 0) return [];
+        var evs    = events.OrderBy(e => e.StartDt).ThenBy(e => e.Title).ToList();
+        var groups = new List<List<Event>>();
+        var cur    = new List<Event> { evs[0] };
+        for (var i = 1; i < evs.Count; i++)
+        {
+            var ev = evs[i];
+            if (cur.Any(g => ev.StartDt < g.EndDt && ev.EndDt > g.StartDt))
+                cur.Add(ev);
+            else
+            {
+                groups.Add(cur);
+                cur = [ev];
+            }
+        }
+        groups.Add(cur);
+        return groups;
+    }
+
+    // Returns list of (ev, colIdx, nCols, rightLimit)
+    private static List<(Event Ev, int ColIdx, int NCols, int RightLimit)> AssignColumns(List<Event> group)
+    {
+        var evs     = group.OrderBy(e => e.StartDt).ThenBy(e => -(e.EndDt - e.StartDt).Ticks).ToList();
+        var colEnds = new List<DateTime>();
+        var evCol   = new Dictionary<Event, int>(ReferenceEqualityComparer.Instance);
+
+        foreach (var ev in evs)
+        {
+            var col = -1;
+            for (var i = 0; i < colEnds.Count; i++)
+            {
+                if (ev.StartDt >= colEnds[i]) { col = i; break; }
+            }
+            if (col == -1) { col = colEnds.Count; colEnds.Add(ev.EndDt); }
+            else colEnds[col] = ev.EndDt;
+            evCol[ev] = col;
+        }
+
+        var nCols  = colEnds.Count;
+        var result = new List<(Event, int, int, int)>();
+        foreach (var ev in group)
+        {
+            var colIdx     = evCol[ev];
+            var rightLimit = nCols;
+            foreach (var other in group)
+            {
+                if (!ReferenceEquals(other, ev) && evCol[other] > colIdx)
+                {
+                    if (ev.StartDt < other.EndDt && ev.EndDt > other.StartDt)
+                        rightLimit = Math.Min(rightLimit, evCol[other]);
+                }
+            }
+            result.Add((ev, colIdx, nCols, rightLimit));
+        }
+        return result;
+    }
 
     private void BuildHeader(List<DateTime> days)
     {
