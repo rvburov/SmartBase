@@ -4,100 +4,107 @@
         Title="Создать событие"
         Width="520"
         MinWidth="460"
+        MinHeight="0"
         SizeToContent="Height"
         WindowStartupLocation="CenterOwner"
         CanResize="False"
         Background="{StaticResource BrushBg}">
 
-    <StackPanel Spacing="10" Margin="24">
+    <StackPanel Spacing="0" Margin="20,16">
 
         <!-- Название -->
         <TextBlock Text="Название"
+                   Margin="0,0,0,6"
                    FontWeight="{StaticResource FontWeightBold}"
                    FontSize="{StaticResource FontSizeBase}"
                    Foreground="{StaticResource BrushSecondaryText}" />
         <TextBox x:Name="TitleBox"
                  Watermark="Добавить название"
-                 Height="36"
+                 Height="34"
+                 VerticalContentAlignment="Center"
+                 Margin="0,0,0,12"
                  CornerRadius="{StaticResource RadiusMedium}" />
 
         <!-- Весь день -->
         <CheckBox x:Name="AllDayCheck"
                   Content="Весь день"
+                  Margin="0,0,0,12"
                   FontSize="{StaticResource FontSizeBase}"
                   Foreground="{StaticResource BrushPrimaryText}" />
 
         <!-- Начало -->
         <TextBlock x:Name="StartLabel"
                    Text="Начало"
+                   Margin="0,0,0,6"
                    FontWeight="{StaticResource FontWeightBold}"
                    FontSize="{StaticResource FontSizeBase}"
                    Foreground="{StaticResource BrushSecondaryText}" />
-        <Grid ColumnDefinitions="2*,8,*">
+        <Grid ColumnDefinitions="2*,8,*" Margin="0,0,0,12">
             <CalendarDatePicker Grid.Column="0" x:Name="StartDatePicker"
-                                Height="36" HorizontalAlignment="Stretch"
+                                Height="34" HorizontalAlignment="Stretch"
                                 SelectedDateFormat="Custom"
                                 CustomDateFormatString="dd.MM.yyyy" />
             <TimePicker Grid.Column="2" x:Name="StartTimePicker"
-                        Height="36" />
+                        Height="34" />
         </Grid>
 
         <!-- Конец -->
         <TextBlock x:Name="EndLabel"
                    Text="Конец"
+                   Margin="0,0,0,6"
                    FontWeight="{StaticResource FontWeightBold}"
                    FontSize="{StaticResource FontSizeBase}"
                    Foreground="{StaticResource BrushSecondaryText}" />
-        <Grid ColumnDefinitions="2*,8,*">
+        <Grid ColumnDefinitions="2*,8,*" Margin="0,0,0,12">
             <CalendarDatePicker Grid.Column="0" x:Name="EndDatePicker"
-                                Height="36" HorizontalAlignment="Stretch"
+                                Height="34" HorizontalAlignment="Stretch"
                                 SelectedDateFormat="Custom"
                                 CustomDateFormatString="dd.MM.yyyy" />
             <TimePicker Grid.Column="2" x:Name="EndTimePicker"
-                        Height="36" />
+                        Height="34" />
         </Grid>
 
         <!-- Коллекция -->
         <TextBlock Text="Коллекция"
+                   Margin="0,0,0,6"
                    FontWeight="{StaticResource FontWeightBold}"
                    FontSize="{StaticResource FontSizeBase}"
                    Foreground="{StaticResource BrushSecondaryText}" />
         <ComboBox x:Name="CollectionCombo"
                   HorizontalAlignment="Stretch"
-                  Height="36"
+                  Height="34"
+                  Margin="0,0,0,12"
                   Background="{StaticResource BrushSecondaryBg}"
                   Foreground="{StaticResource BrushPrimaryText}"
                   CornerRadius="{StaticResource RadiusBase}" />
 
         <!-- Описание -->
         <TextBlock Text="Описание"
+                   Margin="0,0,0,6"
                    FontWeight="{StaticResource FontWeightBold}"
                    FontSize="{StaticResource FontSizeBase}"
                    Foreground="{StaticResource BrushSecondaryText}" />
         <TextBox x:Name="DescBox"
                  Watermark="Добавить описание (необязательно)"
-                 Height="80"
+                 Height="70"
+                 Margin="0,0,0,16"
                  AcceptsReturn="True"
                  TextWrapping="Wrap"
                  CornerRadius="{StaticResource RadiusMedium}" />
 
         <!-- Кнопки -->
-        <Grid ColumnDefinitions="Auto,*,Auto,8,Auto" Margin="0,8,0,4">
-            <Button Grid.Column="0" x:Name="DeleteBtn"
-                    Content="Удалить" Width="110" Height="32"
-                    IsVisible="False"
-                    CornerRadius="{StaticResource RadiusMedium}"
+        <Grid ColumnDefinitions="Auto,*,Auto,8,Auto">
+            <Button Grid.Column="0" x:Name="DeleteBtn" Classes="dialog"
+                    Content="Удалить" IsVisible="False"
                     Background="{StaticResource BrushRed}"
                     Foreground="White"
                     FontWeight="{StaticResource FontWeightBold}" />
-            <Button Grid.Column="2" x:Name="CancelBtn"
-                    Content="Отмена" Width="110" Height="32"
-                    CornerRadius="{StaticResource RadiusMedium}"
+            <Button Grid.Column="2" x:Name="CancelBtn" Classes="dialog"
+                    Content="Отмена"
                     Background="{StaticResource BrushSecondaryBg}"
                     Foreground="{StaticResource BrushPrimaryText}" />
-            <Button Grid.Column="4" x:Name="SaveBtn"
-                    Content="Сохранить" Width="110" Height="32"
-                    CornerRadius="{StaticResource RadiusMedium}"
+            <Button Grid.Column="4" x:Name="SaveBtn" Classes="dialog"
+                    Content="Сохранить"
                     Background="{StaticResource BrushAccent}"
                     Foreground="White"
                     FontWeight="{StaticResource FontWeightBold}" />

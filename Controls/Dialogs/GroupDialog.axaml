@@ -3,6 +3,7 @@
         x:Class="MyPlanner.Controls.Dialogs.GroupDialog"
         Title="Новая группа"
         Width="420"
+        MinHeight="0"
         SizeToContent="Height"
         WindowStartupLocation="CenterOwner"
         CanResize="False"
@@ -33,14 +34,12 @@
                   CornerRadius="{StaticResource RadiusBase}" />
 
         <Grid ColumnDefinitions="*,Auto,8,Auto" Margin="0,8,0,4">
-            <Button Grid.Column="1" x:Name="CancelBtn"
-                    Content="Отмена" Width="110" Height="32"
-                    CornerRadius="{StaticResource RadiusMedium}"
+            <Button Grid.Column="1" x:Name="CancelBtn" Classes="dialog"
+                    Content="Отмена"
                     Background="{StaticResource BrushSecondaryBg}"
                     Foreground="{StaticResource BrushPrimaryText}" />
-            <Button Grid.Column="3" x:Name="ConfirmBtn"
-                    Content="Создать" Width="110" Height="32"
-                    CornerRadius="{StaticResource RadiusMedium}"
+            <Button Grid.Column="3" x:Name="ConfirmBtn" Classes="dialog"
+                    Content="Создать"
                     Background="{StaticResource BrushAccent}"
                     Foreground="White"
                     FontWeight="{StaticResource FontWeightBold}" />

@@ -34,6 +34,14 @@
         <Setter Property="Background" Value="{StaticResource BrushHover}" />
     </Style>
 
+    <Style Selector="Button.dialog">
+        <Setter Property="Width"                      Value="110" />
+        <Setter Property="Height"                     Value="32" />
+        <Setter Property="HorizontalContentAlignment" Value="Center" />
+        <Setter Property="VerticalContentAlignment"   Value="Center" />
+        <Setter Property="CornerRadius"               Value="{StaticResource RadiusMedium}" />
+    </Style>
+
     <Style Selector="Button.accent">
         <Setter Property="Background" Value="{StaticResource BrushAccent}" />
         <Setter Property="Foreground" Value="White" />
@@ -44,6 +52,62 @@
         <Setter Property="Foreground" Value="White" />
     </Style>
 
+    <!-- ComboBox -->
+    <Style Selector="ComboBox">
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="BorderBrush"     Value="{StaticResource BrushSeparator}" />
+    </Style>
+
+    <Style Selector="ComboBox:pointerover /template/ Border#Background">
+        <Setter Property="Background"   Value="{StaticResource BrushSecondaryBg}" />
+        <Setter Property="BorderBrush"  Value="{StaticResource BrushSeparator}" />
+    </Style>
+
+    <Style Selector="ComboBox /template/ PathIcon#DropDownGlyph">
+        <Setter Property="IsVisible" Value="False" />
+        <Setter Property="Width"     Value="0" />
+        <Setter Property="Height"    Value="0" />
+    </Style>
+
+    <Style Selector="ComboBoxItem">
+        <Setter Property="Foreground"            Value="{StaticResource BrushPrimaryText}" />
+        <Setter Property="Background"            Value="Transparent" />
+        <Setter Property="Padding"               Value="10,7" />
+        <Setter Property="Margin"                Value="4,2" />
+        <Setter Property="CornerRadius"          Value="{StaticResource RadiusBase}" />
+        <Setter Property="HorizontalAlignment"   Value="Stretch" />
+    </Style>
+
+    <Style Selector="ComboBoxItem:pointerover /template/ ContentPresenter">
+        <Setter Property="Background"   Value="{StaticResource BrushHover}" />
+        <Setter Property="CornerRadius" Value="{StaticResource RadiusBase}" />
+    </Style>
+
+    <Style Selector="ComboBoxItem:selected">
+        <Setter Property="Foreground" Value="White" />
+    </Style>
+
+    <Style Selector="ComboBoxItem:selected /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="TextBlock.Foreground" Value="White" />
+    </Style>
+
+    <Style Selector="ComboBoxItem:selected /template/ ContentPresenter">
+        <Setter Property="Background"   Value="{StaticResource BrushAccent}" />
+        <Setter Property="CornerRadius" Value="{StaticResource RadiusBase}" />
+    </Style>
+
+    <Style Selector="ComboBoxItem:selected:pointerover /template/ ContentPresenter">
+        <Setter Property="Background" Value="{StaticResource BrushAccent}" />
+    </Style>
+
+    <Style Selector="ComboBox /template/ Popup > Border">
+        <Setter Property="Background"      Value="{StaticResource BrushSecondaryBg}" />
+        <Setter Property="BorderBrush"     Value="{StaticResource BrushSeparator}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="CornerRadius"    Value="{StaticResource RadiusMedium}" />
+        <Setter Property="Padding"         Value="4,6" />
+    </Style>
+
     <!-- TextBox -->
     <Style Selector="TextBox">
         <Setter Property="Background"      Value="{StaticResource BrushSecondaryBg}" />
@@ -52,6 +116,10 @@
         <Setter Property="Padding"         Value="10,6" />
         <Setter Property="BorderThickness" Value="1" />
         <Setter Property="BorderBrush"     Value="{StaticResource BrushSeparator}" />
+    </Style>
+
+    <Style Selector="TextBox:pointerover /template/ Border">
+        <Setter Property="BorderBrush" Value="{StaticResource BrushAccent}" />
     </Style>
 
     <Style Selector="TextBox:focus /template/ Border">
@@ -68,6 +136,212 @@
     <Style Selector="ScrollBar /template/ Thumb">
         <Setter Property="Background"   Value="{StaticResource BrushScrollbar}" />
         <Setter Property="CornerRadius" Value="{StaticResource RadiusXS}" />
+    </Style>
+
+    <!-- CalendarDatePicker -->
+    <Style Selector="CalendarDatePicker">
+        <Setter Property="Background"      Value="{StaticResource BrushSecondaryBg}" />
+        <Setter Property="BorderBrush"     Value="{StaticResource BrushSeparator}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="CornerRadius"    Value="{StaticResource RadiusMedium}" />
+        <Setter Property="Foreground"      Value="{StaticResource BrushPrimaryText}" />
+    </Style>
+
+    <Style Selector="CalendarDatePicker:pointerover /template/ Border#Background">
+        <Setter Property="BorderBrush" Value="{StaticResource BrushAccent}" />
+    </Style>
+
+    <Style Selector="CalendarDatePicker:focus /template/ Border#Background">
+        <Setter Property="BorderBrush" Value="{StaticResource BrushAccent}" />
+    </Style>
+
+    <!-- Popup календаря -->
+    <Style Selector="CalendarDatePicker /template/ Popup > Border">
+        <Setter Property="Background"      Value="{StaticResource BrushBg}" />
+        <Setter Property="BorderBrush"     Value="{StaticResource BrushSeparator}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="CornerRadius"    Value="{StaticResource RadiusMedium}" />
+        <Setter Property="BoxShadow"       Value="0 4 16 0 #1A000000" />
+    </Style>
+
+    <!-- Фон всего календаря -->
+    <Style Selector="Calendar">
+        <Setter Property="Background" Value="{StaticResource BrushBg}" />
+    </Style>
+
+    <Style Selector="CalendarItem">
+        <Setter Property="Background"      Value="{StaticResource BrushBg}" />
+        <Setter Property="BorderBrush"     Value="{StaticResource BrushBg}" />
+        <Setter Property="BorderThickness" Value="0" />
+    </Style>
+
+    <Style Selector="CalendarItem /template/ Border">
+        <Setter Property="Background" Value="{StaticResource BrushBg}" />
+        <Setter Property="BorderThickness" Value="0" />
+    </Style>
+
+    <Style Selector="CalendarItem /template/ Grid">
+        <Setter Property="Background" Value="{StaticResource BrushBg}" />
+    </Style>
+
+    <Style Selector="CalendarItem /template/ Grid#PART_Root">
+        <Setter Property="Background" Value="{StaticResource BrushBg}" />
+    </Style>
+
+    <Style Selector="CalendarItem /template/ Border#BackgroundLayer">
+        <Setter Property="Background" Value="{StaticResource BrushBg}" />
+    </Style>
+
+    <Style Selector="CalendarItem /template/ Rectangle">
+        <Setter Property="Fill" Value="Transparent" />
+    </Style>
+
+    <!-- Заголовок месяца -->
+    <Style Selector="CalendarItem /template/ Button#PART_HeaderButton">
+        <Setter Property="Foreground"  Value="{StaticResource BrushPrimaryText}" />
+        <Setter Property="FontWeight"  Value="{StaticResource FontWeightBold}" />
+        <Setter Property="FontSize"    Value="{StaticResource FontSizeBase}" />
+        <Setter Property="Background"  Value="{StaticResource BrushBg}" />
+        <Setter Property="Padding"     Value="0" />
+    </Style>
+
+    <Style Selector="CalendarItem /template/ Button#PART_HeaderButton:pointerover /template/ ContentPresenter">
+        <Setter Property="Background" Value="Transparent" />
+    </Style>
+
+    <!-- Кнопки prev/next месяца -->
+    <Style Selector="Calendar /template/ Button#PART_PreviousButton">
+        <Setter Property="Foreground"  Value="{StaticResource BrushSecondaryText}" />
+        <Setter Property="Background"  Value="Transparent" />
+        <Setter Property="Width"       Value="28" />
+        <Setter Property="Height"      Value="28" />
+    </Style>
+
+    <Style Selector="Calendar /template/ Button#PART_NextButton">
+        <Setter Property="Foreground"  Value="{StaticResource BrushSecondaryText}" />
+        <Setter Property="Background"  Value="Transparent" />
+        <Setter Property="Width"       Value="28" />
+        <Setter Property="Height"      Value="28" />
+    </Style>
+
+    <!-- Дни недели -->
+    <Style Selector="Calendar /template/ TextBlock">
+        <Setter Property="Foreground" Value="{StaticResource BrushSecondaryText}" />
+        <Setter Property="FontSize"   Value="{StaticResource FontSizeBase}" />
+    </Style>
+
+    <!-- Обычный день -->
+    <Style Selector="CalendarDayButton">
+        <Setter Property="Width"        Value="32" />
+        <Setter Property="Height"       Value="32" />
+        <Setter Property="Foreground"   Value="{StaticResource BrushPrimaryText}" />
+        <Setter Property="Background"   Value="Transparent" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="FontSize"     Value="{StaticResource FontSizeBase}" />
+        <Setter Property="HorizontalContentAlignment" Value="Center" />
+        <Setter Property="VerticalContentAlignment"   Value="Center" />
+    </Style>
+
+    <Style Selector="CalendarDayButton /template/ Border#DayButtonFocusVisual">
+        <Setter Property="IsVisible" Value="False" />
+    </Style>
+
+    <Style Selector="CalendarDayButton:pointerover /template/ Border#Background">
+        <Setter Property="Background"      Value="{StaticResource BrushHover}" />
+        <Setter Property="CornerRadius"    Value="{StaticResource RadiusBase}" />
+        <Setter Property="BorderThickness" Value="0" />
+    </Style>
+
+    <!-- Сегодня -->
+    <Style Selector="CalendarDayButton:today /template/ Border#Background">
+        <Setter Property="Background"      Value="Transparent" />
+        <Setter Property="BorderBrush"     Value="{StaticResource BrushAccent}" />
+        <Setter Property="BorderThickness" Value="1.5" />
+        <Setter Property="CornerRadius"    Value="{StaticResource RadiusBase}" />
+    </Style>
+
+    <Style Selector="CalendarDayButton:today">
+        <Setter Property="Foreground" Value="{StaticResource BrushAccent}" />
+        <Setter Property="FontWeight" Value="{StaticResource FontWeightBold}" />
+    </Style>
+
+    <!-- Выбранный день -->
+    <Style Selector="CalendarDayButton:selected /template/ Border#Background">
+        <Setter Property="Background"      Value="{StaticResource BrushAccent}" />
+        <Setter Property="CornerRadius"    Value="{StaticResource RadiusBase}" />
+        <Setter Property="BorderThickness" Value="0" />
+    </Style>
+
+    <Style Selector="CalendarDayButton:selected">
+        <Setter Property="Foreground" Value="White" />
+        <Setter Property="FontWeight" Value="{StaticResource FontWeightBold}" />
+    </Style>
+
+    <!-- Выбранный и сегодня одновременно -->
+    <Style Selector="CalendarDayButton:selected:today /template/ Border#Background">
+        <Setter Property="Background"      Value="{StaticResource BrushAccent}" />
+        <Setter Property="BorderThickness" Value="0" />
+    </Style>
+
+    <Style Selector="CalendarDayButton:selected:today">
+        <Setter Property="Foreground" Value="White" />
+    </Style>
+
+    <!-- Не текущего месяца -->
+    <Style Selector="CalendarDayButton:inactive">
+        <Setter Property="Foreground" Value="{StaticResource BrushSecondaryText}" />
+        <Setter Property="Opacity"    Value="0.4" />
+    </Style>
+
+    <Style Selector="CalendarItem /template/ Grid#PART_YearView">
+        <Setter Property="Background" Value="{StaticResource BrushBg}" />
+    </Style>
+
+    <Style Selector="CalendarItem /template/ Grid#PART_MonthView">
+        <Setter Property="Background" Value="{StaticResource BrushBg}" />
+    </Style>
+
+    <!-- CalendarButton (месяцы и годы) -->
+    <Style Selector="CalendarButton">
+        <Setter Property="Foreground"      Value="{StaticResource BrushPrimaryText}" />
+        <Setter Property="Background"      Value="Transparent" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="FontSize"        Value="{StaticResource FontSizeBase}" />
+        <Setter Property="HorizontalContentAlignment" Value="Center" />
+        <Setter Property="VerticalContentAlignment"   Value="Center" />
+    </Style>
+
+    <Style Selector="CalendarButton:pointerover /template/ Border#Background">
+        <Setter Property="Background"      Value="{StaticResource BrushHover}" />
+        <Setter Property="CornerRadius"    Value="{StaticResource RadiusBase}" />
+        <Setter Property="BorderThickness" Value="0" />
+    </Style>
+
+    <Style Selector="CalendarButton:selected">
+        <Setter Property="Foreground" Value="White" />
+        <Setter Property="FontWeight" Value="{StaticResource FontWeightBold}" />
+    </Style>
+
+    <Style Selector="CalendarButton:selected /template/ Border#Background">
+        <Setter Property="Background"      Value="{StaticResource BrushAccent}" />
+        <Setter Property="CornerRadius"    Value="{StaticResource RadiusBase}" />
+        <Setter Property="BorderThickness" Value="0" />
+    </Style>
+
+    <Style Selector="CalendarButton:selected:pointerover /template/ Border#Background">
+        <Setter Property="Background" Value="{StaticResource BrushAccent}" />
+    </Style>
+
+    <Style Selector="CalendarButton:calendarbutton-hasbtn /template/ Border#Background">
+        <Setter Property="Background"   Value="Transparent" />
+        <Setter Property="BorderBrush"  Value="{StaticResource BrushAccent}" />
+        <Setter Property="BorderThickness" Value="1.5" />
+        <Setter Property="CornerRadius" Value="{StaticResource RadiusBase}" />
+    </Style>
+
+    <Style Selector="CalendarButton:calendarbutton-hasbtn">
+        <Setter Property="Foreground" Value="{StaticResource BrushAccent}" />
+        <Setter Property="FontWeight" Value="{StaticResource FontWeightBold}" />
     </Style>
 
     <!-- CheckBox -->

@@ -41,4 +41,13 @@
     <SolidColorBrush x:Key="BrushRed"          Color="{StaticResource ColorRed}" />
     <SolidColorBrush x:Key="BrushHover"        Color="{StaticResource ColorHover}" />
 
+    <!-- Переопределение системного акцентного цвета Fluent -->
+    <Color x:Key="SystemAccentColor">#007AFF</Color>
+    <Color x:Key="SystemAccentColorLight1">#3395FF</Color>
+    <Color x:Key="SystemAccentColorLight2">#66B0FF</Color>
+    <Color x:Key="SystemAccentColorLight3">#99CAFF</Color>
+    <Color x:Key="SystemAccentColorDark1">#0062CC</Color>
+    <Color x:Key="SystemAccentColorDark2">#004999</Color>
+    <Color x:Key="SystemAccentColorDark3">#003166</Color>
+
 </ResourceDictionary>

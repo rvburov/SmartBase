@@ -1,5 +1,7 @@
+using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Interactivity;
+using Avalonia.Media;
 
 namespace MyPlanner.Controls.Components;
 
@@ -36,7 +38,7 @@ public partial class Navbar : UserControl
     public void SetTitle(string text, Avalonia.Media.IBrush? color = null)
     {
         TitleLabel.Text       = text;
-        TitleLabel.Foreground = color ?? new Avalonia.Media.SolidColorBrush(Avalonia.Media.Color.Parse("#1C1C1E"));
+        TitleLabel.Foreground = color ?? (IBrush)Application.Current!.FindResource("BrushPrimaryText")!;
     }
     public void SetView(int idx)        => ViewSelector.SelectedIndex = idx;
     public int  CurrentViewIndex        => ViewSelector.SelectedIndex;

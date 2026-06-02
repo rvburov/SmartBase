@@ -110,9 +110,8 @@
                          CornerRadius="{StaticResource RadiusMedium}" />
 
                 <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,14">
-                    <Button Grid.Column="1" x:Name="AddFieldBtn"
-                            Content="Добавить" Width="110" Height="32"
-                            CornerRadius="{StaticResource RadiusMedium}"
+                    <Button Grid.Column="1" x:Name="AddFieldBtn" Classes="dialog"
+                            Content="Добавить"
                             Background="{StaticResource BrushAccent}"
                             Foreground="White"
                             FontWeight="{StaticResource FontWeightBold}" />
@@ -124,9 +123,8 @@
         <Grid DockPanel.Dock="Bottom"
               ColumnDefinitions="*,Auto"
               Margin="20,12,20,20">
-            <Button Grid.Column="1" x:Name="CloseBtn"
-                    Content="Закрыть" Width="110" Height="32"
-                    CornerRadius="{StaticResource RadiusMedium}"
+            <Button Grid.Column="1" x:Name="CloseBtn" Classes="dialog"
+                    Content="Закрыть"
                     Background="{StaticResource BrushSecondaryBg}"
                     Foreground="{StaticResource BrushPrimaryText}" />
         </Grid>

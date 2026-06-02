@@ -34,6 +34,7 @@ public partial class MonthView : UserControl
     private DateTime  _dragSourceDay;
     private DateTime  _dragTargetDay;
     private IPointer? _dragPointer;
+    private Control?  _dragSrcControl;
     private Grid?     _dragPreview;
     private DateTime? _shiftedDay;
     private Control?  _removedChip;
@@ -42,8 +43,9 @@ public partial class MonthView : UserControl
     private bool      _skipNextDeselect;
 
     private readonly Dictionary<DateTime, (StackPanel Panel, TextBlock More, int OrigTopOff, int OrigHidden)> _dayUiMap    = new();
-    private readonly Dictionary<int, List<(Border SelFrame, Border? LeftStripe)>>                             _spanFrames   = new();
+    private readonly Dictionary<int, List<(Border SelFrame, Border? LeftStripe)>>                             _spanFrames    = new();
     private readonly Dictionary<int, List<Border>>                                                             _spanBgBorders = new();
+    private readonly Dictionary<int, List<TextBlock>>                                                          _spanTextBlocks = new();
     private readonly Dictionary<DateTime, (Border Cell, IBrush BaseBg)>                                       _dayCellMap   = new();
     private readonly Dictionary<DateTime, (Action Show, Action Hide)>                                         _dayPlusMap   = new();
     private DateTime? _hoveredDay;
@@ -138,6 +140,7 @@ public partial class MonthView : UserControl
         _dayUiMap.Clear();
         _spanFrames.Clear();
         _spanBgBorders.Clear();
+        _spanTextBlocks.Clear();
         _dayCellMap.Clear();
         _dayPlusMap.Clear();
         _hoveredDay       = null;
@@ -263,15 +266,19 @@ public partial class MonthView : UserControl
             FontWeight          = isToday ? FontWeight.Bold : FontWeight.Normal,
         };
 
-        // «+» текстом с LineHeight = FontSize — убирает скрытые отступы шрифта
-        var plusIcon = new TextBlock
+        // SVG lucide-plus: горизонтальная и вертикальная линии (M5 12h14 / M12 5v14)
+        // масштабируются из 24×24 → 14×14 через Viewbox
+        var plusGeometry = Geometry.Parse("M5 12 L19 12 M12 5 L12 19");
+        var plusIcon = new Avalonia.Controls.Shapes.Path
         {
-            Text                = "+",
-            FontSize            = 20,
-            LineHeight          = 20,
-            FontWeight          = FontWeight.SemiBold,
-            Foreground          = new SolidColorBrush(Color.Parse("#636366")),
-            TextAlignment       = TextAlignment.Center,
+            Data                = plusGeometry,
+            Stroke              = new SolidColorBrush(Color.Parse("#636366")),
+            StrokeThickness     = 2,
+            StrokeLineCap       = PenLineCap.Round,
+            StrokeJoin          = PenLineJoin.Round,
+            Width               = 14,
+            Height              = 14,
+            Stretch             = Stretch.Uniform,
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment   = VerticalAlignment.Center,
             IsVisible           = false,
@@ -395,9 +402,11 @@ public partial class MonthView : UserControl
 
     private Border _MakeChip(Event ev)
     {
-        var color    = Color.Parse(ev.Color);
-        var normalBg = new SolidColorBrush(Color.FromArgb(50, color.R, color.G, color.B));
-        var hoverBg  = new SolidColorBrush(Color.FromArgb(90, color.R, color.G, color.B));
+        var color      = Color.Parse(ev.Color);
+        var normalBg   = new SolidColorBrush(Color.FromArgb(50, color.R, color.G, color.B));
+        var hoverBg    = new SolidColorBrush(Color.FromArgb(90, color.R, color.G, color.B));
+        var selectedBg = new SolidColorBrush(color);
+        var darkBrush  = new SolidColorBrush(_Darken(color));
 
         var leftStripe = new Border
         {
@@ -408,26 +417,55 @@ public partial class MonthView : UserControl
         };
         var content = new Grid();
         content.Children.Add(leftStripe);
-        content.Children.Add(new TextBlock
-        {
-            Text              = ev.AllDay ? ev.Title : $"{ev.StartDt:HH:mm} {ev.Title}",
-            FontSize          = 13,
-            Foreground        = new SolidColorBrush(_Darken(color)),
-            Margin            = new Thickness(8, 0, 2, 0),
-            TextTrimming      = TextTrimming.CharacterEllipsis,
-            VerticalAlignment = VerticalAlignment.Center,
-        });
 
-        var selFrame = new Border
+        List<TextBlock> chipTextBlocks = [];
+        if (ev.AllDay)
         {
-            CornerRadius     = new CornerRadius(4),
-            BorderThickness  = new Thickness(1.5),
-            BorderBrush      = Brushes.Transparent,
-            IsHitTestVisible = false,
-        };
+            var tb = new TextBlock
+            {
+                Text              = ev.Title,
+                FontSize          = 13,
+                FontWeight        = FontWeight.SemiBold,
+                Foreground        = darkBrush,
+                Margin            = new Thickness(8, 0, 2, 0),
+                TextTrimming      = TextTrimming.CharacterEllipsis,
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+            chipTextBlocks.Add(tb);
+            content.Children.Add(tb);
+        }
+        else
+        {
+            var timeAndTitle = new StackPanel
+            {
+                Orientation       = Orientation.Horizontal,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin            = new Thickness(8, 0, 2, 0),
+            };
+            var timeTb = new TextBlock
+            {
+                Text       = $"{ev.StartDt:HH:mm} ",
+                FontSize   = 13,
+                FontWeight = FontWeight.Normal,
+                Foreground = darkBrush,
+            };
+            var titleTb = new TextBlock
+            {
+                Text         = ev.Title,
+                FontSize     = 13,
+                FontWeight   = FontWeight.SemiBold,
+                Foreground   = darkBrush,
+                TextTrimming = TextTrimming.CharacterEllipsis,
+            };
+            chipTextBlocks.Add(timeTb);
+            chipTextBlocks.Add(titleTb);
+            timeAndTitle.Children.Add(timeTb);
+            timeAndTitle.Children.Add(titleTb);
+            content.Children.Add(timeAndTitle);
+        }
+
         var wrapper = new Grid();
         wrapper.Children.Add(content);
-        wrapper.Children.Add(selFrame);
 
         var chip = new Border
         {
@@ -437,8 +475,10 @@ public partial class MonthView : UserControl
             Cursor       = new Cursor(StandardCursorType.Hand),
             Child        = wrapper,
         };
-        chip.PointerEntered += (_, _) => chip.Background = hoverBg;
-        chip.PointerExited  += (_, _) => chip.Background = normalBg;
+
+        var isSelected = false;
+        chip.PointerEntered += (_, _) => { if (!isSelected) chip.Background = hoverBg; };
+        chip.PointerExited  += (_, _) => { if (!isSelected) chip.Background = normalBg; };
         chip.PointerPressed  += (_, e) => { if (e.GetCurrentPoint(null).Properties.IsLeftButtonPressed) { _skipNextDeselect = true; _BeginDragTrack(ev, chip, e); e.Handled = true; } };
         chip.PointerMoved    += (_, e) => _OnDragMoved(e);
         chip.PointerReleased += (_, e) =>
@@ -454,9 +494,17 @@ public partial class MonthView : UserControl
             else
             {
                 _Deselect();
-                leftStripe.IsVisible = false;
-                selFrame.BorderBrush = new SolidColorBrush(color);
-                _deselectCurrent     = () => { selFrame.BorderBrush = Brushes.Transparent; leftStripe.IsVisible = true; };
+                isSelected             = true;
+                chip.Background        = selectedBg;
+                leftStripe.IsVisible   = false;
+                foreach (var tb in chipTextBlocks) tb.Foreground = Brushes.White;
+                _deselectCurrent = () =>
+                {
+                    isSelected           = false;
+                    chip.Background      = normalBg;
+                    leftStripe.IsVisible = true;
+                    foreach (var tb in chipTextBlocks) tb.Foreground = darkBrush;
+                };
             }
         };
         return chip;
@@ -467,10 +515,14 @@ public partial class MonthView : UserControl
     private void _AddSpanBar(Event ev, double bx, double by, double bw,
                               bool leftCap, bool rightCap)
     {
-        var color = Color.Parse(ev.Color);
-        var cr    = new CornerRadius(
+        var color      = Color.Parse(ev.Color);
+        var cr         = new CornerRadius(
             leftCap  ? 5 : 0, rightCap ? 5 : 0,
             rightCap ? 5 : 0, leftCap  ? 5 : 0);
+        var normalBg   = new SolidColorBrush(Color.FromArgb(50, color.R, color.G, color.B));
+        var hoverBg    = new SolidColorBrush(Color.FromArgb(90, color.R, color.G, color.B));
+        var selectedBg = new SolidColorBrush(color);
+        var darkBrush  = new SolidColorBrush(_Darken(color));
 
         var bar = new Grid { Width = bw, Height = BarH, Cursor = new Cursor(StandardCursorType.Hand) };
 
@@ -478,8 +530,6 @@ public partial class MonthView : UserControl
         bar.Children.Add(new Border { Background = Brushes.White, CornerRadius = cr });
 
         // Полупрозрачный цветной фон поверх белого
-        var normalBg = new SolidColorBrush(Color.FromArgb(50, color.R, color.G, color.B));
-        var hoverBg  = new SolidColorBrush(Color.FromArgb(90, color.R, color.G, color.B));
         var bgBorder = new Border { Background = normalBg, CornerRadius = cr };
         bar.Children.Add(bgBorder);
 
@@ -489,17 +539,6 @@ public partial class MonthView : UserControl
                 _spanBgBorders[ev.Id.Value] = new List<Border>();
             _spanBgBorders[ev.Id.Value].Add(bgBorder);
         }
-
-        bar.PointerEntered += (_, _) =>
-        {
-            var all = ev.Id.HasValue && _spanBgBorders.TryGetValue(ev.Id.Value, out var bs) ? bs : [bgBorder];
-            foreach (var b in all) b.Background = hoverBg;
-        };
-        bar.PointerExited += (_, _) =>
-        {
-            var all = ev.Id.HasValue && _spanBgBorders.TryGetValue(ev.Id.Value, out var bs) ? bs : [bgBorder];
-            foreach (var b in all) b.Background = normalBg;
-        };
 
         // Цветной акцент слева — только у начала события
         Border? leftStripeBar = null;
@@ -515,31 +554,73 @@ public partial class MonthView : UserControl
             bar.Children.Add(leftStripeBar);
         }
 
-        bar.Children.Add(new TextBlock
+        List<TextBlock> barTextBlocks = [];
+        if (ev.AllDay)
         {
-            Text              = ev.AllDay ? ev.Title : $"{ev.StartDt:HH:mm} {ev.Title}",
-            FontSize          = 13,
-            Foreground        = new SolidColorBrush(_Darken(color)),
-            Margin            = new Thickness(8, 0, 4, 0),
-            TextTrimming      = TextTrimming.CharacterEllipsis,
-            VerticalAlignment = VerticalAlignment.Center,
-        });
-
-        var selFrame = new Border
+            var tb = new TextBlock
+            {
+                Text              = ev.Title,
+                FontSize          = 13,
+                FontWeight        = FontWeight.SemiBold,
+                Foreground        = darkBrush,
+                Margin            = new Thickness(8, 0, 4, 0),
+                TextTrimming      = TextTrimming.CharacterEllipsis,
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+            barTextBlocks.Add(tb);
+            bar.Children.Add(tb);
+        }
+        else
         {
-            CornerRadius     = cr,
-            BorderThickness  = new Thickness(1.5),
-            BorderBrush      = Brushes.Transparent,
-            IsHitTestVisible = false,
-        };
-        bar.Children.Add(selFrame);
+            var timeAndTitle = new StackPanel
+            {
+                Orientation       = Orientation.Horizontal,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin            = new Thickness(8, 0, 4, 0),
+            };
+            var timeTb = new TextBlock
+            {
+                Text       = $"{ev.StartDt:HH:mm} ",
+                FontSize   = 13,
+                FontWeight = FontWeight.Normal,
+                Foreground = darkBrush,
+            };
+            var titleTb = new TextBlock
+            {
+                Text         = ev.Title,
+                FontSize     = 13,
+                FontWeight   = FontWeight.SemiBold,
+                Foreground   = darkBrush,
+                TextTrimming = TextTrimming.CharacterEllipsis,
+            };
+            barTextBlocks.Add(timeTb);
+            barTextBlocks.Add(titleTb);
+            timeAndTitle.Children.Add(timeTb);
+            timeAndTitle.Children.Add(titleTb);
+            bar.Children.Add(timeAndTitle);
+        }
 
         if (ev.Id.HasValue)
         {
-            if (!_spanFrames.ContainsKey(ev.Id.Value))
-                _spanFrames[ev.Id.Value] = new List<(Border, Border?)>();
-            _spanFrames[ev.Id.Value].Add((selFrame, leftStripeBar));
+            if (!_spanTextBlocks.ContainsKey(ev.Id.Value))
+                _spanTextBlocks[ev.Id.Value] = new List<TextBlock>();
+            _spanTextBlocks[ev.Id.Value].AddRange(barTextBlocks);
         }
+
+        var isBarSelected = false;
+
+        bar.PointerEntered += (_, _) =>
+        {
+            if (isBarSelected) return;
+            var all = ev.Id.HasValue && _spanBgBorders.TryGetValue(ev.Id.Value, out var bs) ? bs : [bgBorder];
+            foreach (var b in all) b.Background = hoverBg;
+        };
+        bar.PointerExited += (_, _) =>
+        {
+            if (isBarSelected) return;
+            var all = ev.Id.HasValue && _spanBgBorders.TryGetValue(ev.Id.Value, out var bs) ? bs : [bgBorder];
+            foreach (var b in all) b.Background = normalBg;
+        };
 
         bar.PointerPressed  += (_, e) => { if (e.GetCurrentPoint(null).Properties.IsLeftButtonPressed) { _skipNextDeselect = true; _BeginDragTrack(ev, bar, e); } };
         bar.PointerMoved    += (_, e) => _OnDragMoved(e);
@@ -556,12 +637,19 @@ public partial class MonthView : UserControl
             else
             {
                 _Deselect();
-                var colorBrush = new SolidColorBrush(color);
-                if (ev.Id.HasValue && _spanFrames.TryGetValue(ev.Id.Value, out var frames))
+                isBarSelected = true;
+                var allBg  = ev.Id.HasValue && _spanBgBorders.TryGetValue(ev.Id.Value, out var bs) ? bs : [bgBorder];
+                var allTbs = ev.Id.HasValue && _spanTextBlocks.TryGetValue(ev.Id.Value, out var tbs) ? tbs : barTextBlocks;
+                foreach (var b in allBg)  b.Background = selectedBg;
+                foreach (var tb in allTbs) tb.Foreground = Brushes.White;
+                if (leftStripeBar is not null) leftStripeBar.IsVisible = false;
+                _deselectCurrent = () =>
                 {
-                    foreach (var (sf, ls) in frames) { sf.BorderBrush = colorBrush; if (ls is not null) ls.IsVisible = false; }
-                    _deselectCurrent = () => { foreach (var (sf, ls) in frames) { sf.BorderBrush = Brushes.Transparent; if (ls is not null) ls.IsVisible = true; } };
-                }
+                    isBarSelected = false;
+                    foreach (var b in allBg)   b.Background = normalBg;
+                    foreach (var tb in allTbs) tb.Foreground = darkBrush;
+                    if (leftStripeBar is not null) leftStripeBar.IsVisible = true;
+                };
             }
         };
 
@@ -577,6 +665,7 @@ public partial class MonthView : UserControl
         if (_dragEv is not null) return;
         _dragEv          = ev;
         _dragActive      = false;
+        _dragSrcControl  = src;
         _pressClickCount = e.ClickCount;
         _dragPress       = e.GetPosition(GridContainer);
         _dragOrigStart = ev.StartDt;
@@ -595,6 +684,7 @@ public partial class MonthView : UserControl
         {
             if (Math.Abs(pos.X - _dragPress.X) + Math.Abs(pos.Y - _dragPress.Y) < 6) return;
             _dragActive = true;
+            if (_dragSrcControl is not null) _dragSrcControl.Opacity = 0.45;
         }
         var target = _DayAtPos(pos);
         if (!target.HasValue) return;
@@ -634,6 +724,7 @@ public partial class MonthView : UserControl
     {
         _dragPointer?.Capture(null);
         _dragPointer = null;
+        if (_dragSrcControl is not null) { _dragSrcControl.Opacity = 1.0; _dragSrcControl = null; }
         if (_dragPreview is not null) { SpanCanvas.Children.Remove(_dragPreview); _dragPreview = null; }
         if (_shiftedDay.HasValue) _RestoreShift(_shiftedDay.Value);
         _dragEv     = null;
@@ -763,23 +854,15 @@ public partial class MonthView : UserControl
             _dragPreview = new Grid { Height = BarH, IsHitTestVisible = false };
             _dragPreview.Children.Add(new Border
             {
-                Background      = new SolidColorBrush(Color.FromArgb(80, color.R, color.G, color.B)),
-                CornerRadius    = new CornerRadius(4),
-                BorderBrush     = new SolidColorBrush(color),
-                BorderThickness = new Thickness(1),
-            });
-            _dragPreview.Children.Add(new Border
-            {
-                Width               = 4,
-                Background          = new SolidColorBrush(color),
-                CornerRadius        = new CornerRadius(2, 0, 0, 2),
-                HorizontalAlignment = HorizontalAlignment.Left,
+                Background   = new SolidColorBrush(color),
+                CornerRadius = new CornerRadius(4),
             });
             _dragPreview.Children.Add(new TextBlock
             {
                 Text              = _dragEv.AllDay ? _dragEv.Title : $"{_dragEv.StartDt:HH:mm} {_dragEv.Title}",
                 FontSize          = 13,
-                Foreground        = new SolidColorBrush(_Darken(color)),
+                FontWeight        = FontWeight.SemiBold,
+                Foreground        = Brushes.White,
                 Margin            = new Thickness(8, 0, 4, 0),
                 TextTrimming      = TextTrimming.CharacterEllipsis,
                 VerticalAlignment = VerticalAlignment.Center,

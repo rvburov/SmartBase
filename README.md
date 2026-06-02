@@ -4,7 +4,7 @@
 шести режимов просмотра и удобным управлением событиями.
 
 ![Версия](https://img.shields.io/badge/version-1.0.0-blue)
-![.NET](https://img.shields.io/badge/.NET-9.0+-purple)
+![.NET](https://img.shields.io/badge/.NET-10.0+-purple)
 ![Avalonia](https://img.shields.io/badge/Avalonia-11.x-blue)
 
 ---
@@ -90,18 +90,51 @@ cd calendar_avalonia
 dotnet run
 ```
 
-### Сборка готового .exe для раздачи
+### Сборка готового бинарника для раздачи
+
+Каждая команда создаёт один самодостаточный файл — установка .NET на компьютере пользователя не нужна. Размер около 100–150 МБ.
+
+#### Windows (x64)
+
+**PowerShell, CMD или Git Bash**
+```powershell
+cd calendar_avalonia
+dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true
+```
+
+Результат: `bin/Release/net10.0/win-x64/publish/MyPlanner.exe`
+
+#### macOS (Intel)
 
 ```bash
 cd calendar_avalonia
-dotnet publish -c Release
+dotnet publish -c Release -r osx-x64 --self-contained true -p:PublishSingleFile=true
+chmod +x bin/Release/net10.0/osx-x64/publish/MyPlanner
 ```
 
-Готовый файл: `bin\Release\net9.0\win-x64\publish\MyPlanner.exe`
+Результат: `bin/Release/net10.0/osx-x64/publish/MyPlanner`
 
-- Не требует установки .NET на компьютере пользователя
-- Работает на Windows 10/11 x64
-- Размер около 120–150 МБ
+#### macOS (Apple Silicon)
+
+```bash
+cd calendar_avalonia
+dotnet publish -c Release -r osx-arm64 --self-contained true -p:PublishSingleFile=true
+chmod +x bin/Release/net10.0/osx-arm64/publish/MyPlanner
+```
+
+Результат: `bin/Release/net10.0/osx-arm64/publish/MyPlanner`
+
+#### Linux (x64)
+
+```bash
+cd calendar_avalonia
+dotnet publish -c Release -r linux-x64 --self-contained true -p:PublishSingleFile=true
+chmod +x bin/Release/net10.0/linux-x64/publish/MyPlanner
+```
+
+Результат: `bin/Release/net10.0/linux-x64/publish/MyPlanner`
+
+> Все платформы можно собирать с одной машины — cross-compilation поддерживается.
 
 ---
 

@@ -5,23 +5,32 @@
              Background="{StaticResource BrushBg}">
 
     <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,*,Auto,Auto"
-          Margin="16,0">
+          Margin="16,0"
+          VerticalAlignment="Center">
 
         <!-- Добавить событие -->
         <Button Grid.Column="0" x:Name="AddBtn"
                 Width="30" Height="30" Margin="0,0,8,0"
+                VerticalAlignment="Center"
                 CornerRadius="{StaticResource RadiusMedium}"
                 Background="{StaticResource BrushSecondaryBg}"
+                HorizontalContentAlignment="Center"
+                VerticalContentAlignment="Center"
                 ToolTip.Tip="Добавить событие">
-            <Path Data="M15,8 L15,22 M8,15 L22,15"
-                  Stroke="{StaticResource BrushSecondaryText}"
-                  StrokeThickness="1.5"
-                  StrokeLineCap="Round" />
+            <Viewbox Width="16" Height="16">
+                <Canvas Width="24" Height="24">
+                    <Path Data="M5 12 H19 M12 5 V19"
+                          Stroke="{StaticResource BrushSecondaryText}"
+                          StrokeThickness="2"
+                          StrokeLineCap="Round" />
+                </Canvas>
+            </Viewbox>
         </Button>
 
         <!-- Сегодня -->
         <Button Grid.Column="1" x:Name="TodayBtn"
                 Content="Сегодня" Width="80" Height="30" Margin="0,0,4,0"
+                VerticalAlignment="Center"
                 CornerRadius="{StaticResource RadiusMedium}"
                 Background="{StaticResource BrushSecondaryBg}"
                 Foreground="{StaticResource BrushPrimaryText}" />
@@ -29,25 +38,39 @@
         <!-- Назад -->
         <Button Grid.Column="2" x:Name="PrevBtn"
                 Width="30" Height="30" Margin="0,0,4,0"
+                VerticalAlignment="Center"
                 CornerRadius="{StaticResource RadiusMedium}"
                 Background="{StaticResource BrushSecondaryBg}"
+                HorizontalContentAlignment="Center"
+                VerticalContentAlignment="Center"
                 ToolTip.Tip="Назад">
-            <Path Data="M17,10 L12,15 L17,20"
-                  Stroke="{StaticResource BrushSecondaryText}"
-                  StrokeThickness="1.5"
-                  StrokeLineCap="Round" StrokeJoin="Round" />
+            <Viewbox Width="16" Height="16">
+                <Canvas Width="24" Height="24">
+                    <Path Data="M15 18 L9 12 L15 6"
+                          Stroke="{StaticResource BrushSecondaryText}"
+                          StrokeThickness="2"
+                          StrokeLineCap="Round" StrokeJoin="Round" />
+                </Canvas>
+            </Viewbox>
         </Button>
 
         <!-- Вперёд -->
         <Button Grid.Column="3" x:Name="NextBtn"
                 Width="30" Height="30" Margin="0,0,12,0"
+                VerticalAlignment="Center"
                 CornerRadius="{StaticResource RadiusMedium}"
                 Background="{StaticResource BrushSecondaryBg}"
+                HorizontalContentAlignment="Center"
+                VerticalContentAlignment="Center"
                 ToolTip.Tip="Вперёд">
-            <Path Data="M13,10 L18,15 L13,20"
-                  Stroke="{StaticResource BrushSecondaryText}"
-                  StrokeThickness="1.5"
-                  StrokeLineCap="Round" StrokeJoin="Round" />
+            <Viewbox Width="16" Height="16">
+                <Canvas Width="24" Height="24">
+                    <Path Data="M9 18 L15 12 L9 6"
+                          Stroke="{StaticResource BrushSecondaryText}"
+                          StrokeThickness="2"
+                          StrokeLineCap="Round" StrokeJoin="Round" />
+                </Canvas>
+            </Viewbox>
         </Button>
 
         <!-- Заголовок периода -->
@@ -59,18 +82,35 @@
 
         <!-- Поиск -->
         <TextBox Grid.Column="5" x:Name="SearchBox"
-                 Width="200" Height="32" Margin="0,0,8,0"
+                 Width="200" Height="30" Margin="0,0,8,0"
+                 VerticalAlignment="Center"
+                 VerticalContentAlignment="Center"
                  Watermark="Поиск..."
                  CornerRadius="{StaticResource RadiusPill}"
                  Background="{StaticResource BrushSecondaryBg}"
                  Foreground="{StaticResource BrushPrimaryText}" />
 
         <!-- Вид (Месяц/Неделя/День…) -->
-        <ComboBox Grid.Column="6" x:Name="ViewSelector"
-                  Width="140" Height="32"
-                  Background="{StaticResource BrushSecondaryBg}"
-                  Foreground="{StaticResource BrushPrimaryText}"
-                  CornerRadius="{StaticResource RadiusBase}" />
+        <Grid Grid.Column="6" VerticalAlignment="Center">
+            <ComboBox x:Name="ViewSelector"
+                      Width="140" Height="30"
+                      Background="{StaticResource BrushSecondaryBg}"
+                      Foreground="{StaticResource BrushPrimaryText}"
+                      CornerRadius="{StaticResource RadiusBase}" />
+            <Viewbox Width="16" Height="16"
+                     HorizontalAlignment="Right"
+                     VerticalAlignment="Center"
+                     Margin="0,0,8,0"
+                     IsHitTestVisible="False">
+                <Canvas Width="24" Height="24">
+                    <Path Data="M6 9 L12 15 L18 9"
+                          Stroke="{StaticResource BrushSecondaryText}"
+                          StrokeThickness="2"
+                          StrokeLineCap="Round"
+                          StrokeJoin="Round" />
+                </Canvas>
+            </Viewbox>
+        </Grid>
     </Grid>
 
 </UserControl>
