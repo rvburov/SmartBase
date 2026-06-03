@@ -39,13 +39,38 @@
                    FontWeight="{StaticResource FontWeightBold}"
                    FontSize="{StaticResource FontSizeBase}"
                    Foreground="{StaticResource BrushSecondaryText}" />
-        <Grid ColumnDefinitions="2*,8,*" Margin="0,0,0,12">
+        <Grid x:Name="StartRow" ColumnDefinitions="2*,8,*" Margin="0,0,0,12">
             <CalendarDatePicker Grid.Column="0" x:Name="StartDatePicker"
                                 Height="34" HorizontalAlignment="Stretch"
                                 SelectedDateFormat="Custom"
                                 CustomDateFormatString="dd.MM.yyyy" />
-            <TimePicker Grid.Column="2" x:Name="StartTimePicker"
-                        Height="34" />
+            <Border Grid.Column="2" x:Name="StartTimeBorder" Classes="timeField" Height="34">
+                <Grid ColumnDefinitions="*,Auto">
+                    <TextBox Grid.Column="0" x:Name="StartTimeInput" Classes="timeInput" />
+                    <Button Grid.Column="1" x:Name="StartTimeArrow" Classes="timeArrow">
+                        <Viewbox Width="16" Height="16">
+                            <Canvas Width="24" Height="24">
+                                <Path Data="M6 9 L12 15 L18 9"
+                                      Stroke="{StaticResource BrushSecondaryText}"
+                                      StrokeThickness="2"
+                                      StrokeLineCap="Round"
+                                      StrokeJoin="Round" />
+                            </Canvas>
+                        </Viewbox>
+                    </Button>
+                    <Popup Grid.Column="0" x:Name="StartTimePopup"
+                           PlacementTarget="{Binding #StartTimeBorder}"
+                           Placement="BottomEdgeAlignedLeft"
+                           IsLightDismissEnabled="True">
+                        <Border Classes="timePopup"
+                                MinWidth="{Binding #StartTimeBorder.Bounds.Width}">
+                            <ScrollViewer MaxHeight="240">
+                                <ListBox x:Name="StartTimeList" Classes="timeList" />
+                            </ScrollViewer>
+                        </Border>
+                    </Popup>
+                </Grid>
+            </Border>
         </Grid>
 
         <!-- Конец -->
@@ -55,13 +80,38 @@
                    FontWeight="{StaticResource FontWeightBold}"
                    FontSize="{StaticResource FontSizeBase}"
                    Foreground="{StaticResource BrushSecondaryText}" />
-        <Grid ColumnDefinitions="2*,8,*" Margin="0,0,0,12">
+        <Grid x:Name="EndRow" ColumnDefinitions="2*,8,*" Margin="0,0,0,12">
             <CalendarDatePicker Grid.Column="0" x:Name="EndDatePicker"
                                 Height="34" HorizontalAlignment="Stretch"
                                 SelectedDateFormat="Custom"
                                 CustomDateFormatString="dd.MM.yyyy" />
-            <TimePicker Grid.Column="2" x:Name="EndTimePicker"
-                        Height="34" />
+            <Border Grid.Column="2" x:Name="EndTimeBorder" Classes="timeField" Height="34">
+                <Grid ColumnDefinitions="*,Auto">
+                    <TextBox Grid.Column="0" x:Name="EndTimeInput" Classes="timeInput" />
+                    <Button Grid.Column="1" x:Name="EndTimeArrow" Classes="timeArrow">
+                        <Viewbox Width="16" Height="16">
+                            <Canvas Width="24" Height="24">
+                                <Path Data="M6 9 L12 15 L18 9"
+                                      Stroke="{StaticResource BrushSecondaryText}"
+                                      StrokeThickness="2"
+                                      StrokeLineCap="Round"
+                                      StrokeJoin="Round" />
+                            </Canvas>
+                        </Viewbox>
+                    </Button>
+                    <Popup Grid.Column="0" x:Name="EndTimePopup"
+                           PlacementTarget="{Binding #EndTimeBorder}"
+                           Placement="BottomEdgeAlignedLeft"
+                           IsLightDismissEnabled="True">
+                        <Border Classes="timePopup"
+                                MinWidth="{Binding #EndTimeBorder.Bounds.Width}">
+                            <ScrollViewer MaxHeight="240">
+                                <ListBox x:Name="EndTimeList" Classes="timeList" />
+                            </ScrollViewer>
+                        </Border>
+                    </Popup>
+                </Grid>
+            </Border>
         </Grid>
 
         <!-- Коллекция -->
@@ -92,22 +142,37 @@
                  TextWrapping="Wrap"
                  CornerRadius="{StaticResource RadiusMedium}" />
 
+        <!-- Уведомление об ошибке валидации -->
+        <Border x:Name="ErrorBanner" IsVisible="False"
+                Background="#1AFF3B30"
+                BorderBrush="{StaticResource BrushRed}"
+                BorderThickness="1"
+                CornerRadius="{StaticResource RadiusBase}"
+                Padding="10,7"
+                Margin="0,0,0,12">
+            <StackPanel Orientation="Horizontal" Spacing="8">
+                <Viewbox Width="16" Height="16" VerticalAlignment="Center">
+                    <Canvas Width="24" Height="24">
+                        <Ellipse Width="24" Height="24" Fill="{StaticResource BrushRed}" />
+                        <Path Data="M12 6 L12 14 M12 17 L12 18.5"
+                              Stroke="White" StrokeThickness="2"
+                              StrokeLineCap="Round" />
+                    </Canvas>
+                </Viewbox>
+                <TextBlock x:Name="ErrorText"
+                           VerticalAlignment="Center"
+                           TextWrapping="Wrap"
+                           FontSize="{StaticResource FontSizeBase}"
+                           Foreground="{StaticResource BrushRed}" />
+            </StackPanel>
+        </Border>
+
         <!-- Кнопки -->
-        <Grid ColumnDefinitions="Auto,*,Auto,8,Auto">
+        <Grid ColumnDefinitions="Auto,*,Auto">
             <Button Grid.Column="0" x:Name="DeleteBtn" Classes="dialog"
-                    Content="Удалить" IsVisible="False"
-                    Background="{StaticResource BrushRed}"
-                    Foreground="White"
-                    FontWeight="{StaticResource FontWeightBold}" />
-            <Button Grid.Column="2" x:Name="CancelBtn" Classes="dialog"
-                    Content="Отмена"
-                    Background="{StaticResource BrushSecondaryBg}"
-                    Foreground="{StaticResource BrushPrimaryText}" />
-            <Button Grid.Column="4" x:Name="SaveBtn" Classes="dialog"
-                    Content="Сохранить"
-                    Background="{StaticResource BrushAccent}"
-                    Foreground="White"
-                    FontWeight="{StaticResource FontWeightBold}" />
+                    Content="Удалить" IsVisible="False" />
+            <Button Grid.Column="2" x:Name="SaveBtn" Classes="dialog"
+                    Content="Сохранить" />
         </Grid>
 
     </StackPanel>

@@ -35,14 +35,9 @@
 
         <Grid ColumnDefinitions="*,Auto,8,Auto" Margin="0,8,0,4">
             <Button Grid.Column="1" x:Name="CancelBtn" Classes="dialog"
-                    Content="Отмена"
-                    Background="{StaticResource BrushSecondaryBg}"
-                    Foreground="{StaticResource BrushPrimaryText}" />
+                    Content="Отмена" />
             <Button Grid.Column="3" x:Name="ConfirmBtn" Classes="dialog"
-                    Content="Создать"
-                    Background="{StaticResource BrushAccent}"
-                    Foreground="White"
-                    FontWeight="{StaticResource FontWeightBold}" />
+                    Content="Создать" />
         </Grid>
 
     </StackPanel>

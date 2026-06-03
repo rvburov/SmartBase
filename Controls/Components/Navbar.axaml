@@ -91,26 +91,12 @@
                  Foreground="{StaticResource BrushPrimaryText}" />
 
         <!-- Вид (Месяц/Неделя/День…) -->
-        <Grid Grid.Column="6" VerticalAlignment="Center">
-            <ComboBox x:Name="ViewSelector"
-                      Width="140" Height="30"
-                      Background="{StaticResource BrushSecondaryBg}"
-                      Foreground="{StaticResource BrushPrimaryText}"
-                      CornerRadius="{StaticResource RadiusBase}" />
-            <Viewbox Width="16" Height="16"
-                     HorizontalAlignment="Right"
-                     VerticalAlignment="Center"
-                     Margin="0,0,8,0"
-                     IsHitTestVisible="False">
-                <Canvas Width="24" Height="24">
-                    <Path Data="M6 9 L12 15 L18 9"
-                          Stroke="{StaticResource BrushSecondaryText}"
-                          StrokeThickness="2"
-                          StrokeLineCap="Round"
-                          StrokeJoin="Round" />
-                </Canvas>
-            </Viewbox>
-        </Grid>
+        <ComboBox Grid.Column="6" x:Name="ViewSelector"
+                  VerticalAlignment="Center"
+                  Width="140" Height="30"
+                  Background="{StaticResource BrushSecondaryBg}"
+                  Foreground="{StaticResource BrushPrimaryText}"
+                  CornerRadius="{StaticResource RadiusBase}" />
     </Grid>
 
 </UserControl>

@@ -40,6 +40,11 @@
         <Setter Property="HorizontalContentAlignment" Value="Center" />
         <Setter Property="VerticalContentAlignment"   Value="Center" />
         <Setter Property="CornerRadius"               Value="{StaticResource RadiusMedium}" />
+        <Setter Property="Background"                 Value="{StaticResource BrushSecondaryBg}" />
+        <Setter Property="Foreground"                 Value="{StaticResource BrushPrimaryText}" />
+        <Setter Property="FontWeight"                 Value="{StaticResource FontWeightBold}" />
+        <Setter Property="BorderBrush"                Value="{StaticResource BrushSeparator}" />
+        <Setter Property="BorderThickness"            Value="1" />
     </Style>
 
     <Style Selector="Button.accent">
@@ -52,21 +57,38 @@
         <Setter Property="Foreground" Value="White" />
     </Style>
 
-    <!-- ComboBox -->
+    <!-- ComboBox — серый фон, скругление, рамка как у поля даты/времени -->
     <Style Selector="ComboBox">
+        <Setter Property="Background"      Value="{StaticResource BrushSecondaryBg}" />
+        <Setter Property="Foreground"      Value="{StaticResource BrushPrimaryText}" />
         <Setter Property="BorderThickness" Value="1" />
         <Setter Property="BorderBrush"     Value="{StaticResource BrushSeparator}" />
+        <Setter Property="CornerRadius"    Value="{StaticResource RadiusMedium}" />
+    </Style>
+
+    <Style Selector="ComboBox /template/ Border#Background">
+        <Setter Property="Background" Value="{StaticResource BrushSecondaryBg}" />
     </Style>
 
     <Style Selector="ComboBox:pointerover /template/ Border#Background">
         <Setter Property="Background"   Value="{StaticResource BrushSecondaryBg}" />
-        <Setter Property="BorderBrush"  Value="{StaticResource BrushSeparator}" />
+        <Setter Property="BorderBrush"  Value="{StaticResource BrushAccent}" />
     </Style>
 
+    <Style Selector="ComboBox:focus /template/ Border#Background">
+        <Setter Property="Background"   Value="{StaticResource BrushSecondaryBg}" />
+        <Setter Property="BorderBrush"  Value="{StaticResource BrushAccent}" />
+    </Style>
+
+    <!-- Стрелка — шеврон вниз (как у поля времени/даты), цвет BrushSecondaryText.
+         PathIcon рисует заливкой, поэтому геометрия — замкнутый контур "V". -->
     <Style Selector="ComboBox /template/ PathIcon#DropDownGlyph">
-        <Setter Property="IsVisible" Value="False" />
-        <Setter Property="Width"     Value="0" />
-        <Setter Property="Height"    Value="0" />
+        <Setter Property="IsVisible"   Value="True" />
+        <Setter Property="Width"       Value="12" />
+        <Setter Property="Height"      Value="8" />
+        <Setter Property="Foreground"  Value="{StaticResource BrushSecondaryText}" />
+        <Setter Property="Data"        Value="M1 1 L6 6 L11 1 L12.4 2.4 L6 8.8 L-0.4 2.4 Z" />
+        <Setter Property="RenderTransform" Value="none" />
     </Style>
 
     <Style Selector="ComboBoxItem">
@@ -145,6 +167,17 @@
         <Setter Property="BorderThickness" Value="1" />
         <Setter Property="CornerRadius"    Value="{StaticResource RadiusMedium}" />
         <Setter Property="Foreground"      Value="{StaticResource BrushPrimaryText}" />
+        <Setter Property="Padding"         Value="10,0" />
+    </Style>
+
+    <!-- Текст даты: прозрачный фон, вертикальный центр, отступ как у времени -->
+    <Style Selector="CalendarDatePicker /template/ TextBox#PART_TextBox">
+        <Setter Property="VerticalContentAlignment" Value="Center" />
+    </Style>
+
+    <Style Selector="CalendarDatePicker /template/ TextBox#PART_TextBox /template/ Border#PART_BorderElement">
+        <Setter Property="Background"      Value="Transparent" />
+        <Setter Property="BorderThickness" Value="0" />
     </Style>
 
     <Style Selector="CalendarDatePicker:pointerover /template/ Border#Background">
@@ -153,6 +186,33 @@
 
     <Style Selector="CalendarDatePicker:focus /template/ Border#Background">
         <Setter Property="BorderBrush" Value="{StaticResource BrushAccent}" />
+    </Style>
+
+    <!-- Кнопка справа — полностью свой шаблон с шевроном вниз (как у поля времени),
+         вместо стилизованной иконки календаря с числом дня -->
+    <Style Selector="CalendarDatePicker /template/ Button#PART_Button">
+        <Setter Property="Background"      Value="Transparent" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="Width"           Value="NaN" />
+        <Setter Property="MinWidth"        Value="0" />
+        <Setter Property="Padding"         Value="4,0,8,0" />
+        <Setter Property="Cursor"          Value="Hand" />
+        <Setter Property="Template">
+            <ControlTemplate>
+                <Border Background="Transparent" Padding="{TemplateBinding Padding}">
+                    <Viewbox Width="16" Height="16"
+                             VerticalAlignment="Center" HorizontalAlignment="Center">
+                        <Canvas Width="24" Height="24">
+                            <Path Data="M6 9 L12 15 L18 9"
+                                  Stroke="{StaticResource BrushSecondaryText}"
+                                  StrokeThickness="2"
+                                  StrokeLineCap="Round"
+                                  StrokeJoin="Round" />
+                        </Canvas>
+                    </Viewbox>
+                </Border>
+            </ControlTemplate>
+        </Setter>
     </Style>
 
     <!-- Popup календаря -->
@@ -342,6 +402,107 @@
     <Style Selector="CalendarButton:calendarbutton-hasbtn">
         <Setter Property="Foreground" Value="{StaticResource BrushAccent}" />
         <Setter Property="FontWeight" Value="{StaticResource FontWeightBold}" />
+    </Style>
+
+    <!-- ===== Кастомное поле времени (editable combobox, как CalendarDatePicker) ===== -->
+
+    <!-- Внешний бокс: фон, рамка, скругление как у даты -->
+    <Style Selector="Border.timeField">
+        <Setter Property="Background"      Value="{StaticResource BrushSecondaryBg}" />
+        <Setter Property="BorderBrush"     Value="{StaticResource BrushSeparator}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="CornerRadius"    Value="{StaticResource RadiusMedium}" />
+    </Style>
+
+    <!-- Наведение — синяя рамка (как у даты) -->
+    <Style Selector="Border.timeField:pointerover">
+        <Setter Property="BorderBrush" Value="{StaticResource BrushAccent}" />
+    </Style>
+
+    <!-- Фокус в поле — белый фон + яркая толстая синяя рамка (как у даты) -->
+    <Style Selector="Border.timeField:focus-within">
+        <Setter Property="Background"      Value="{StaticResource BrushBg}" />
+        <Setter Property="BorderBrush"     Value="{StaticResource BrushAccent}" />
+        <Setter Property="BorderThickness" Value="2" />
+    </Style>
+
+    <!-- Поле ввода внутри бокса: прозрачное, без рамки -->
+    <Style Selector="TextBox.timeInput">
+        <Setter Property="Background"               Value="Transparent" />
+        <Setter Property="Foreground"               Value="{StaticResource BrushPrimaryText}" />
+        <Setter Property="BorderThickness"          Value="0" />
+        <Setter Property="Padding"                  Value="10,0" />
+        <Setter Property="VerticalContentAlignment" Value="Center" />
+        <Setter Property="VerticalAlignment"        Value="Stretch" />
+    </Style>
+
+    <Style Selector="TextBox.timeInput /template/ Border#PART_BorderElement">
+        <Setter Property="Background"      Value="Transparent" />
+        <Setter Property="BorderThickness" Value="0" />
+    </Style>
+    <Style Selector="TextBox.timeInput:pointerover /template/ Border#PART_BorderElement">
+        <Setter Property="Background"      Value="Transparent" />
+        <Setter Property="BorderThickness" Value="0" />
+    </Style>
+    <Style Selector="TextBox.timeInput:focus /template/ Border#PART_BorderElement">
+        <Setter Property="Background"      Value="Transparent" />
+        <Setter Property="BorderThickness" Value="0" />
+    </Style>
+
+    <!-- Кнопка-стрелка справа -->
+    <Style Selector="Button.timeArrow">
+        <Setter Property="Background"                 Value="Transparent" />
+        <Setter Property="BorderThickness"            Value="0" />
+        <Setter Property="Padding"                    Value="4,0,8,0" />
+        <Setter Property="CornerRadius"               Value="0" />
+        <Setter Property="VerticalAlignment"          Value="Stretch" />
+        <Setter Property="VerticalContentAlignment"   Value="Center" />
+        <Setter Property="Cursor"                     Value="Hand" />
+    </Style>
+
+    <Style Selector="Button.timeArrow:pointerover /template/ ContentPresenter">
+        <Setter Property="Background" Value="Transparent" />
+    </Style>
+
+    <!-- Popup со списком времени -->
+    <Style Selector="Border.timePopup">
+        <Setter Property="Background"      Value="{StaticResource BrushBg}" />
+        <Setter Property="BorderBrush"     Value="{StaticResource BrushSeparator}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="CornerRadius"    Value="{StaticResource RadiusMedium}" />
+        <Setter Property="BoxShadow"       Value="0 4 16 0 #1A000000" />
+        <Setter Property="Padding"         Value="4,6" />
+        <Setter Property="Margin"          Value="0,4,0,0" />
+    </Style>
+
+    <Style Selector="ListBox.timeList">
+        <Setter Property="Background"      Value="Transparent" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="Padding"         Value="0" />
+    </Style>
+
+    <!-- Элементы списка времени -->
+    <Style Selector="ListBox.timeList ListBoxItem">
+        <Setter Property="Foreground"   Value="{StaticResource BrushPrimaryText}" />
+        <Setter Property="FontSize"     Value="{StaticResource FontSizeBase}" />
+        <Setter Property="Background"   Value="Transparent" />
+        <Setter Property="Padding"      Value="10,7" />
+        <Setter Property="Margin"       Value="4,2" />
+        <Setter Property="CornerRadius" Value="{StaticResource RadiusBase}" />
+    </Style>
+
+    <Style Selector="ListBox.timeList ListBoxItem:pointerover /template/ ContentPresenter">
+        <Setter Property="Background"   Value="{StaticResource BrushHover}" />
+        <Setter Property="CornerRadius" Value="{StaticResource RadiusBase}" />
+    </Style>
+
+    <Style Selector="ListBox.timeList ListBoxItem:selected /template/ ContentPresenter">
+        <Setter Property="Background"   Value="{StaticResource BrushAccent}" />
+        <Setter Property="CornerRadius" Value="{StaticResource RadiusBase}" />
+    </Style>
+
+    <Style Selector="ListBox.timeList ListBoxItem:selected /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="TextBlock.Foreground" Value="White" />
     </Style>
 
     <!-- CheckBox -->

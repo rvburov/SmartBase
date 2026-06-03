@@ -3,15 +3,42 @@
              x:Class="MyPlanner.Views.Calendar.YearView"
              Background="{StaticResource BrushBg}">
 
-    <ScrollViewer VerticalScrollBarVisibility="Auto"
-                  HorizontalScrollBarVisibility="Disabled">
-        <Panel HorizontalAlignment="Center" VerticalAlignment="Center">
+    <Panel>
+        <!-- Viewbox масштабирует весь календарь (включая текст) под размер окна -->
+        <Viewbox Stretch="Uniform"
+                 Margin="16"
+                 HorizontalAlignment="Center"
+                 VerticalAlignment="Center">
             <UniformGrid x:Name="MonthGrid" Columns="4"
                          Width="984"
                          Margin="13"
                          HorizontalAlignment="Center"
                          VerticalAlignment="Center" />
-        </Panel>
-    </ScrollViewer>
+        </Viewbox>
+
+        <!-- Попап со списком событий дня, привязывается к ячейке числа -->
+        <Popup x:Name="DayPopup"
+               Placement="Bottom"
+               IsLightDismissEnabled="True"
+               HorizontalOffset="0" VerticalOffset="4">
+            <Border Background="{StaticResource BrushBg}"
+                    BorderBrush="{StaticResource BrushSeparator}"
+                    BorderThickness="1"
+                    CornerRadius="{StaticResource RadiusMedium}"
+                    BoxShadow="0 4 16 0 #1A000000"
+                    Padding="12"
+                    MinWidth="200" MaxWidth="280">
+                <StackPanel Spacing="8">
+                    <TextBlock x:Name="DayPopupTitle"
+                               FontWeight="{StaticResource FontWeightBold}"
+                               FontSize="{StaticResource FontSizeBase}"
+                               Foreground="{StaticResource BrushPrimaryText}" />
+                    <ScrollViewer MaxHeight="220">
+                        <StackPanel x:Name="DayPopupList" Spacing="6" />
+                    </ScrollViewer>
+                </StackPanel>
+            </Border>
+        </Popup>
+    </Panel>
 
 </UserControl>

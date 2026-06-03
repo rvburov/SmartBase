@@ -17,19 +17,11 @@
               ColumnDefinitions="Auto,*,Auto,8,Auto"
               Margin="0,16,0,4">
             <Button Grid.Column="0" x:Name="DeleteBtn" Classes="dialog"
-                    Content="Удалить" IsVisible="False"
-                    Background="{StaticResource BrushRed}"
-                    Foreground="White"
-                    FontWeight="{StaticResource FontWeightBold}" />
+                    Content="Удалить" IsVisible="False" />
             <Button Grid.Column="2" x:Name="CancelBtn" Classes="dialog"
-                    Content="Отмена"
-                    Background="{StaticResource BrushSecondaryBg}"
-                    Foreground="{StaticResource BrushPrimaryText}" />
+                    Content="Отмена" />
             <Button Grid.Column="4" x:Name="SaveBtn" Classes="dialog"
-                    Content="Сохранить"
-                    Background="{StaticResource BrushAccent}"
-                    Foreground="White"
-                    FontWeight="{StaticResource FontWeightBold}" />
+                    Content="Сохранить" />
         </Grid>
 
         <StackPanel x:Name="FieldsPanel" Spacing="10" />

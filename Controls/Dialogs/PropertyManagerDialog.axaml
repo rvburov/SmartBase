@@ -111,10 +111,7 @@
 
                 <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,14">
                     <Button Grid.Column="1" x:Name="AddFieldBtn" Classes="dialog"
-                            Content="Добавить"
-                            Background="{StaticResource BrushAccent}"
-                            Foreground="White"
-                            FontWeight="{StaticResource FontWeightBold}" />
+                            Content="Добавить" />
                 </Grid>
             </StackPanel>
         </StackPanel>
@@ -124,9 +121,7 @@
               ColumnDefinitions="*,Auto"
               Margin="20,12,20,20">
             <Button Grid.Column="1" x:Name="CloseBtn" Classes="dialog"
-                    Content="Закрыть"
-                    Background="{StaticResource BrushSecondaryBg}"
-                    Foreground="{StaticResource BrushPrimaryText}" />
+                    Content="Закрыть" />
         </Grid>
 
     </DockPanel>
