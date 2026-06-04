@@ -4,88 +4,67 @@
              Width="48"
              Background="{StaticResource BrushSecondaryBg}">
 
-    <UserControl.Styles>
-        <!-- Кнопки панели в стиле навбарных (фон как у +, мягкая подсветка активного) -->
-        <Style Selector="ToggleButton">
-            <Setter Property="Background"                 Value="Transparent" />
-            <Setter Property="BorderThickness"            Value="0" />
-            <Setter Property="HorizontalContentAlignment" Value="Center" />
-            <Setter Property="VerticalContentAlignment"   Value="Center" />
-            <Setter Property="Padding"                    Value="0" />
-            <Setter Property="Cursor"                     Value="Hand" />
-        </Style>
-
-        <Style Selector="ToggleButton:pointerover /template/ ContentPresenter">
-            <Setter Property="Background" Value="{StaticResource BrushHover}" />
-        </Style>
-
-        <!-- Активный модуль: мягкий акцентный фон (только для кнопок-модулей,
-             не для бургера) -->
-        <Style Selector="ToggleButton.module:checked /template/ ContentPresenter">
-            <Setter Property="Background" Value="{StaticResource BrushAccentLight}" />
-        </Style>
-
-        <Style Selector="ToggleButton.module:checked:pointerover /template/ ContentPresenter">
-            <Setter Property="Background" Value="{StaticResource BrushAccentLight}" />
-        </Style>
-
-        <!-- Иконка активного модуля — акцентным цветом -->
-        <Style Selector="ToggleButton.module:checked Path">
-            <Setter Property="Stroke" Value="{StaticResource BrushAccent}" />
-        </Style>
-    </UserControl.Styles>
-
     <!-- Вертикальная панель модулей: Календарь / Конструктор -->
     <StackPanel Spacing="8" Margin="8,12,8,0">
 
-        <!-- Кнопка сайдбара (бургер) — Lucide menu, размер как у стрелок в навбаре -->
-        <ToggleButton x:Name="SidebarBtn"
-                      Width="30" Height="30"
+        <!-- Кнопка сайдбара: panel-left-open (закрыт) / panel-right-open (открыт) -->
+        <ToggleButton x:Name="SidebarBtn" Classes="icon"
+                      Width="32" Height="32"
                       HorizontalAlignment="Center"
                       CornerRadius="{StaticResource RadiusMedium}"
                       ToolTip.Tip="Сайдбар">
-            <Viewbox Width="16" Height="16">
+            <Viewbox Width="32" Height="32">
                 <Canvas Width="24" Height="24">
-                    <Path Data="M4 5 L20 5 M4 12 L20 12 M4 19 L20 19"
-                          Stroke="{StaticResource BrushSecondaryText}"
-                          StrokeThickness="2"
-                          StrokeLineCap="Round"
-                          StrokeJoin="Round" />
+                    <!-- panel-left-open: сайдбар закрыт (стрелка →) -->
+                    <Path x:Name="PanelOpenIcon"
+                          Data="M5 3 H19 A2 2 0 0 1 21 5 V19 A2 2 0 0 1 19 21 H5 A2 2 0 0 1 3 19 V5 A2 2 0 0 1 5 3 Z M9 3 V21 M14 9 L17 12 L14 15"
+                          Stroke="{Binding $parent[ToggleButton].Foreground}"
+                          StrokeThickness="1.2"
+                          StrokeLineCap="Round" StrokeJoin="Round" />
+                    <!-- panel-right-open: сайдбар открыт (стрелка ←) -->
+                    <Path x:Name="PanelCloseIcon"
+                          IsVisible="False"
+                          Data="M5 3 H19 A2 2 0 0 1 21 5 V19 A2 2 0 0 1 19 21 H5 A2 2 0 0 1 3 19 V5 A2 2 0 0 1 5 3 Z M15 3 V21 M10 15 L7 12 L10 9"
+                          Stroke="{Binding $parent[ToggleButton].Foreground}"
+                          StrokeThickness="1.2"
+                          StrokeLineCap="Round" StrokeJoin="Round" />
                 </Canvas>
             </Viewbox>
         </ToggleButton>
 
-        <Separator Background="{StaticResource BrushSeparator}" Height="1" Margin="0,4" />
+        <!-- Короткий разделитель на высоте линии сайдбара (Y=56):
+             12 (панель) + 32 (бургер) + 8 (Spacing) + 4 = 56 -->
+        <Separator Background="{StaticResource BrushSeparator}" Height="1" Margin="0,4,0,4" />
 
-        <!-- Модуль: Календарь — Lucide calendar-1 -->
-        <ToggleButton x:Name="CalendarBtn" Classes="module"
-                      Width="30" Height="30"
+        <!-- Модуль: Календарь -->
+        <ToggleButton x:Name="CalendarBtn" Classes="icon module"
+                      Width="32" Height="32"
                       HorizontalAlignment="Center"
                       CornerRadius="{StaticResource RadiusMedium}"
                       IsChecked="True"
                       ToolTip.Tip="Календарь">
-            <Viewbox Width="16" Height="16">
+            <Viewbox Width="30" Height="30">
                 <Canvas Width="24" Height="24">
                     <Path Data="M5 4 H19 A2 2 0 0 1 21 6 V20 A2 2 0 0 1 19 22 H5 A2 2 0 0 1 3 20 V6 A2 2 0 0 1 5 4 Z M3 10 H21 M8 2 V6 M16 2 V6 M11 14 H12 V18"
-                          Stroke="{StaticResource BrushSecondaryText}"
-                          StrokeThickness="2"
+                          Stroke="{Binding $parent[ToggleButton].Foreground}"
+                          StrokeThickness="1.2"
                           StrokeLineCap="Round"
                           StrokeJoin="Round" />
                 </Canvas>
             </Viewbox>
         </ToggleButton>
 
-        <!-- Модуль: Конструктор — Lucide grid-2x2-plus -->
-        <ToggleButton x:Name="ConstructorBtn" Classes="module"
-                      Width="30" Height="30"
+        <!-- Модуль: Конструктор БД -->
+        <ToggleButton x:Name="ConstructorBtn" Classes="icon module"
+                      Width="32" Height="32"
                       HorizontalAlignment="Center"
                       CornerRadius="{StaticResource RadiusMedium}"
                       ToolTip.Tip="Конструктор БД">
-            <Viewbox Width="16" Height="16">
+            <Viewbox Width="30" Height="30">
                 <Canvas Width="24" Height="24">
                     <Path Data="M12 3 V20 A1 1 0 0 1 11 21 H5 A2 2 0 0 1 3 19 V5 A2 2 0 0 1 5 3 H19 A2 2 0 0 1 21 5 V11 A1 1 0 0 1 20 12 H3 M16 19 H22 M19 22 V16"
-                          Stroke="{StaticResource BrushSecondaryText}"
-                          StrokeThickness="2"
+                          Stroke="{Binding $parent[ToggleButton].Foreground}"
+                          StrokeThickness="1.2"
                           StrokeLineCap="Round"
                           StrokeJoin="Round" />
                 </Canvas>

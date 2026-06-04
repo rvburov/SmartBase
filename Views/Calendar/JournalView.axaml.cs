@@ -256,7 +256,7 @@ public partial class JournalItem : ObservableObject
         OriginalEvent = ev;
         Title         = ev.Title;
         TimeText      = ev.AllDay ? "Весь день" : $"{ev.StartDt:HH:mm} – {ev.EndDt:HH:mm}";
-        ColorBrush    = new SolidColorBrush(Color.Parse(ev.Color));
+        ColorBrush    = new SolidColorBrush(Color.Parse(EventColors.Display(ev.Color)));
         TitleBrush    = isPast
             ? new SolidColorBrush(Color.Parse("#8E8E93"))
             : new SolidColorBrush(Color.Parse("#1C1C1E"));

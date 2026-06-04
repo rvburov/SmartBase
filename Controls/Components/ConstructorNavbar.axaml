@@ -11,88 +11,137 @@
                 Height="1"
                 Background="{StaticResource BrushSeparator}" />
 
-        <!-- Содержимое: заголовок + кнопки -->
+        <!-- Содержимое: заголовок слева, кнопки и выпадающий список справа -->
         <Grid ColumnDefinitions="*,Auto,Auto,Auto,Auto,Auto,Auto,Auto"
               Margin="16,0">
 
-            <!-- Название выбранной коллекции -->
+            <!-- Название выбранной коллекции (обрезается многоточием) -->
             <TextBlock Grid.Column="0" x:Name="TitleLabel"
                        Text="Выберите коллекцию"
                        VerticalAlignment="Center"
                        FontSize="{StaticResource FontSizeLarge}"
                        FontWeight="{StaticResource FontWeightBold}"
-                       Foreground="{StaticResource BrushPrimaryText}" />
-
-            <!-- Переключатель вида (Таблица / Список) -->
-            <ComboBox Grid.Column="1" x:Name="ViewSelector"
-                      Width="130" Height="30" Margin="0,0,8,0"
-                      Background="{StaticResource BrushSecondaryBg}"
-                      Foreground="{StaticResource BrushPrimaryText}"
-                      CornerRadius="{StaticResource RadiusBase}" />
+                       Foreground="{StaticResource BrushPrimaryText}"
+                       TextTrimming="CharacterEllipsis"
+                       Margin="0,0,12,0" />
 
             <!-- Фильтр -->
-            <Button Grid.Column="2" x:Name="FilterBtn"
+            <Button Grid.Column="1" x:Name="FilterBtn" Classes="navbtn"
                     Width="30" Height="30" Margin="0,0,4,0"
+                    VerticalAlignment="Center"
                     CornerRadius="{StaticResource RadiusMedium}"
-                    Background="{StaticResource BrushSecondaryBg}"
                     ToolTip.Tip="Фильтр">
-                <Path Data="M6,9 L24,9 M9,15 L21,15 M12,21 L18,21"
-                      Stroke="{StaticResource BrushSecondaryText}"
-                      StrokeThickness="1.5" StrokeLineCap="Round" />
+                <Viewbox Width="18" Height="18">
+                    <Canvas Width="24" Height="24">
+                        <Path Data="M10 20a1 1 0 0 0 .553.895l2 1A1 1 0 0 0 14 21v-7a2 2 0 0 1 .517-1.341L21.74 4.67A1 1 0 0 0 21 3H3a1 1 0 0 0-.742 1.67l7.225 7.989A2 2 0 0 1 10 14z"
+                              Stroke="{Binding $parent[Button].Foreground}"
+                              StrokeThickness="1.6"
+                              StrokeLineCap="Round"
+                              StrokeJoin="Round" />
+                    </Canvas>
+                </Viewbox>
             </Button>
 
             <!-- Сортировка -->
-            <Button Grid.Column="3" x:Name="SortBtn"
+            <Button Grid.Column="2" x:Name="SortBtn" Classes="navbtn"
                     Width="30" Height="30" Margin="0,0,4,0"
+                    VerticalAlignment="Center"
                     CornerRadius="{StaticResource RadiusMedium}"
-                    Background="{StaticResource BrushSecondaryBg}"
                     ToolTip.Tip="Сортировка">
-                <Path Data="M8,9 L20,9 M8,15 L16,15 M8,21 L12,21"
-                      Stroke="{StaticResource BrushSecondaryText}"
-                      StrokeThickness="1.5" StrokeLineCap="Round" />
+                <Viewbox Width="18" Height="18">
+                    <Canvas Width="24" Height="24">
+                        <Path Data="M3 16 L7 20 L11 16 M7 20 V4 M11 4 H21 M11 8 H18 M11 12 H15"
+                              Stroke="{Binding $parent[Button].Foreground}"
+                              StrokeThickness="1.6"
+                              StrokeLineCap="Round"
+                              StrokeJoin="Round" />
+                    </Canvas>
+                </Viewbox>
             </Button>
 
             <!-- Добавить запись -->
-            <Button Grid.Column="4" x:Name="AddBtn"
+            <Button Grid.Column="3" x:Name="AddBtn" Classes="navbtn"
                     Width="30" Height="30" Margin="0,0,4,0"
+                    VerticalAlignment="Center"
                     CornerRadius="{StaticResource RadiusMedium}"
-                    Background="{StaticResource BrushSecondaryBg}"
                     ToolTip.Tip="Добавить запись">
-                <Path Data="M15,8 L15,22 M8,15 L22,15"
-                      Stroke="{StaticResource BrushSecondaryText}"
-                      StrokeThickness="1.5" StrokeLineCap="Round" />
+                <Viewbox Width="18" Height="18">
+                    <Canvas Width="24" Height="24">
+                        <Path Data="M12 2 A10 10 0 1 0 12 22 A10 10 0 1 0 12 2 Z"
+                              Stroke="{Binding $parent[Button].Foreground}"
+                              StrokeThickness="1.6"
+                              StrokeLineCap="Round" />
+                        <Path Data="M8 12 H16 M12 8 V16"
+                              Stroke="{Binding $parent[Button].Foreground}"
+                              StrokeThickness="1.6"
+                              StrokeLineCap="Round" />
+                    </Canvas>
+                </Viewbox>
             </Button>
 
             <!-- Ручная высота строк -->
-            <ToggleButton Grid.Column="5" x:Name="RowResizeBtn"
+            <ToggleButton Grid.Column="4" x:Name="RowResizeBtn" Classes="navbtn"
                           Width="30" Height="30" Margin="0,0,4,0"
+                          VerticalAlignment="Center"
                           CornerRadius="{StaticResource RadiusMedium}"
                           ToolTip.Tip="Ручная высота строк">
-                <Path Data="M8,9 L22,9 M8,15 L22,15 M8,21 L22,21 M5,12 L5,18"
-                      Stroke="{StaticResource BrushSecondaryText}"
-                      StrokeThickness="1.5" StrokeLineCap="Round" />
+                <Viewbox Width="18" Height="18">
+                    <Canvas Width="24" Height="24">
+                        <Path Data="M7 15 L12 20 L17 15 M7 9 L12 4 L17 9"
+                              Stroke="{Binding $parent[ToggleButton].Foreground}"
+                              StrokeThickness="1.6"
+                              StrokeLineCap="Round"
+                              StrokeJoin="Round" />
+                    </Canvas>
+                </Viewbox>
             </ToggleButton>
 
             <!-- Ручная ширина столбцов -->
-            <ToggleButton Grid.Column="6" x:Name="ColResizeBtn"
+            <ToggleButton Grid.Column="5" x:Name="ColResizeBtn" Classes="navbtn"
                           Width="30" Height="30" Margin="0,0,4,0"
+                          VerticalAlignment="Center"
                           CornerRadius="{StaticResource RadiusMedium}"
                           ToolTip.Tip="Ручная ширина столбцов">
-                <Path Data="M9,8 L9,22 M15,8 L15,22 M21,8 L21,22 M12,5 L18,5"
-                      Stroke="{StaticResource BrushSecondaryText}"
-                      StrokeThickness="1.5" StrokeLineCap="Round" />
+                <Viewbox Width="18" Height="18">
+                    <Canvas Width="24" Height="24">
+                        <Path Data="M9 7 L4 12 L9 17 M15 7 L20 12 L15 17"
+                              Stroke="{Binding $parent[ToggleButton].Foreground}"
+                              StrokeThickness="1.6"
+                              StrokeLineCap="Round"
+                              StrokeJoin="Round" />
+                    </Canvas>
+                </Viewbox>
             </ToggleButton>
 
             <!-- Добавить свойство (поле) -->
-            <Button Grid.Column="7" x:Name="AddPropertyBtn"
-                    Width="30" Height="30"
+            <Button Grid.Column="6" x:Name="AddPropertyBtn" Classes="navbtn"
+                    Width="30" Height="30" Margin="0,0,8,0"
+                    VerticalAlignment="Center"
                     CornerRadius="{StaticResource RadiusMedium}"
-                    Background="{StaticResource BrushSecondaryBg}"
                     ToolTip.Tip="Добавить свойство">
-                <Path Data="M15,8 L15,22 M8,15 L22,15"
-                      Stroke="{StaticResource BrushAccent}"
-                      StrokeThickness="1.5" StrokeLineCap="Round" />
+                <Viewbox Width="18" Height="18">
+                    <Canvas Width="24" Height="24">
+                        <Path Data="M12 3 V20 A1 1 0 0 1 11 21 H5 A2 2 0 0 1 3 19 V5 A2 2 0 0 1 5 3 H19 A2 2 0 0 1 21 5 V11 A1 1 0 0 1 20 12 H3"
+                              Stroke="{Binding $parent[Button].Foreground}"
+                              StrokeThickness="1.6"
+                              StrokeLineCap="Round"
+                              StrokeJoin="Round" />
+                        <Path Data="M16 19 H22 M19 22 V16"
+                              Stroke="{Binding $parent[Button].Foreground}"
+                              StrokeThickness="1.6"
+                              StrokeLineCap="Round"
+                              StrokeJoin="Round" />
+                    </Canvas>
+                </Viewbox>
             </Button>
+
+            <!-- Переключатель вида (Таблица / Список) — первым справа -->
+            <ComboBox Grid.Column="7" x:Name="ViewSelector"
+                      Width="130" Height="30"
+                      VerticalAlignment="Center"
+                      Background="{StaticResource BrushSecondaryBg}"
+                      Foreground="{StaticResource BrushPrimaryText}"
+                      CornerRadius="{StaticResource RadiusBase}" />
 
         </Grid>
 

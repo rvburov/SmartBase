@@ -316,7 +316,7 @@ public partial class AllDayBar : UserControl
             Grid.SetRow(root, row);
             EventsPanel.Children.Add(root);
 
-            var color      = Color.Parse(ev.Color);
+            var color      = Color.Parse(EventColors.Display(ev.Color));
             var normalBg   = new SolidColorBrush(Color.FromArgb(40, color.R, color.G, color.B));
             var solidBrush = new SolidColorBrush(color);
             var darkBrush  = new SolidColorBrush(Darken(color));
@@ -354,7 +354,7 @@ public partial class AllDayBar : UserControl
 
     private static (Control root, Border colorBorder, TextBlock titleBlock, TextBlock? timeBlock, Border stripBorder) BuildBlock(Event ev, int span)
     {
-        var color      = Color.Parse(ev.Color);
+        var color      = Color.Parse(EventColors.Display(ev.Color));
         var normalBg   = new SolidColorBrush(Color.FromArgb(40, color.R, color.G, color.B));
         var darkBrush  = new SolidColorBrush(Darken(color));
         var colorBrush = new SolidColorBrush(color);
@@ -446,7 +446,7 @@ public partial class AllDayBar : UserControl
 
     private static Border CreateGhost(Event ev, double height)
     {
-        var color      = Color.Parse(ev.Color);
+        var color      = Color.Parse(EventColors.Display(ev.Color));
         var colorBrush = new SolidColorBrush(color);
 
         var strip = new Border

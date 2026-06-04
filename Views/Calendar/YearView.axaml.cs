@@ -80,7 +80,7 @@ public partial class YearView : UserControl
                 {
                     Width             = 4,
                     CornerRadius      = new Avalonia.CornerRadius(2),
-                    Background         = new SolidColorBrush(Color.Parse(e.Color)),
+                    Background         = new SolidColorBrush(Color.Parse(EventColors.Display(e.Color))),
                     VerticalAlignment = VerticalAlignment.Stretch,
                 });
                 row.Children.Add(new StackPanel

@@ -32,6 +32,7 @@
 
     <!-- SolidColorBrush для привязок -->
     <SolidColorBrush x:Key="BrushBg"           Color="{StaticResource ColorBg}" />
+    <SolidColorBrush x:Key="BrushInactiveBg"   Color="{StaticResource ColorInactiveBg}" />
     <SolidColorBrush x:Key="BrushSecondaryBg"  Color="{StaticResource ColorSecondaryBg}" />
     <SolidColorBrush x:Key="BrushSeparator"    Color="{StaticResource ColorSeparator}" />
     <SolidColorBrush x:Key="BrushPrimaryText"  Color="{StaticResource ColorPrimaryText}" />

@@ -5,7 +5,7 @@
 
     <ScrollViewer VerticalScrollBarVisibility="Auto"
                   DoubleTapped="OnBackgroundDoubleTapped">
-        <Border BorderThickness="1,0,0,0"
+        <Border BorderThickness="0"
                 BorderBrush="{StaticResource BrushSeparator}"
                 Margin="0">
             <Panel>

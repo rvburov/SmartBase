@@ -143,7 +143,7 @@ public partial class WeekView : UserControl
                         : 1440;
                     var evH        = Math.Max(22, effectiveEndMin - startMin);
                     var evHVisible = evH - 2;
-                    var color      = Color.Parse(ev.Color);
+                    var color      = Color.Parse(EventColors.Display(ev.Color));
                     var normalBg   = new SolidColorBrush(BlendWithWhite(color, 40));
                     var hoverBg    = new SolidColorBrush(BlendWithWhite(color, 90));
                     var colorBrush = new SolidColorBrush(color);
@@ -1215,7 +1215,7 @@ public partial class WeekView : UserControl
     private static Border CreateGhostButton(Event ev, double height, double width,
         out TextBlock outTitleBlock, out TextBlock? outTimeBlock, out StackPanel outContentStack)
     {
-        var color      = Color.Parse(ev.Color);
+        var color      = Color.Parse(EventColors.Display(ev.Color));
         var colorBrush = new SolidColorBrush(color);
 
         const double lineH   = 16.0;

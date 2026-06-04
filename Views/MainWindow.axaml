@@ -4,13 +4,20 @@
         xmlns:cal="using:MyPlanner.Views.Calendar"
         xmlns:con="using:MyPlanner.Views.ConstructorDb"
         x:Class="MyPlanner.Views.MainWindow"
+        Classes="main"
         Title="MyPlanner"
         Width="1331" Height="813"
-        MinWidth="900" MinHeight="600"
         Background="{StaticResource BrushBg}"
         WindowStartupLocation="CenterScreen">
 
-    <Grid ColumnDefinitions="Auto,Auto,Auto,*">
+    <Grid x:Name="RootGrid">
+        <Grid.ColumnDefinitions>
+            <!-- ActivityBar | разделитель | сайдбар (тянется) | контент -->
+            <ColumnDefinition Width="Auto" />
+            <ColumnDefinition Width="Auto" />
+            <ColumnDefinition Width="220" MinWidth="180" MaxWidth="500" />
+            <ColumnDefinition Width="*" />
+        </Grid.ColumnDefinitions>
 
         <!-- Левая панель активности (48px) -->
         <comp:ActivityBar Grid.Column="0"
@@ -21,24 +28,59 @@
                 Width="1"
                 Background="{StaticResource BrushSeparator}" />
 
-        <!-- Боковые панели (скрываются/показываются по модулю) -->
-        <Grid Grid.Column="2">
-            <comp:Sidebar x:Name="CalendarSidebar" />
-            <comp:SidebarTree x:Name="ConstructorSidebar" IsVisible="False" />
-        </Grid>
+        <!-- Боковые панели (скрываются/показываются по модулю).
+             Разделительная линия — правая граница; блок-ручка внутри у края тянет ширину. -->
+        <Border Grid.Column="2"
+                BorderBrush="{StaticResource BrushSeparator}"
+                BorderThickness="0,0,1,0">
+            <Grid>
+                <comp:Sidebar x:Name="CalendarSidebar" />
+                <comp:SidebarTree x:Name="ConstructorSidebar" IsVisible="False" />
+
+                <!-- Ручка перетаскивания у правого края сайдбара -->
+                <Border x:Name="ResizeGrip"
+                        Width="11" Height="34"
+                        HorizontalAlignment="Right"
+                        VerticalAlignment="Center"
+                        Margin="0,0,-5,0"
+                        CornerRadius="4"
+                        Background="{StaticResource BrushBg}"
+                        BorderBrush="{StaticResource BrushSeparator}"
+                        BorderThickness="1"
+                        Cursor="SizeWestEast"
+                        PointerPressed="OnGripPressed"
+                        PointerMoved="OnGripMoved"
+                        PointerReleased="OnGripReleased">
+                    <StackPanel Orientation="Vertical" Spacing="3"
+                                HorizontalAlignment="Center"
+                                VerticalAlignment="Center">
+                        <Ellipse Width="2.5" Height="2.5" Fill="{StaticResource BrushSecondaryText}" />
+                        <Ellipse Width="2.5" Height="2.5" Fill="{StaticResource BrushSecondaryText}" />
+                        <Ellipse Width="2.5" Height="2.5" Fill="{StaticResource BrushSecondaryText}" />
+                    </StackPanel>
+                </Border>
+            </Grid>
+        </Border>
 
         <!-- Основная область контента -->
-        <Grid Grid.Column="3" RowDefinitions="1,*">
-
-            <Border Grid.Row="0"
-                    Background="{StaticResource BrushSeparator}" />
-
-            <Grid Grid.Row="1">
-                <cal:CalendarControllerView x:Name="CalendarModule" />
-                <con:ConstructorControllerView x:Name="ConstructorModule" IsVisible="False" />
-            </Grid>
-
+        <Grid Grid.Column="3">
+            <cal:CalendarControllerView x:Name="CalendarModule" />
+            <con:ConstructorControllerView x:Name="ConstructorModule" IsVisible="False" />
         </Grid>
+
+        <!-- Линия под титульной зоной (на высоте навбара = 56px) через сайдбар и
+             контент. ActivityBar имеет собственный короткий разделитель на той же высоте. -->
+        <Border Grid.Column="1" Grid.ColumnSpan="3"
+                Height="1"
+                VerticalAlignment="Top"
+                Margin="0,56,0,0"
+                Background="{StaticResource BrushSeparator}" />
+
+        <!-- Самая верхняя линия окна — единой полосой над ActivityBar, сайдбаром и навбаром -->
+        <Border Grid.Column="0" Grid.ColumnSpan="4"
+                Height="1"
+                VerticalAlignment="Top"
+                Background="{StaticResource BrushSeparator}" />
 
     </Grid>
 

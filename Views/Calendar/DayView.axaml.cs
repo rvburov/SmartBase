@@ -130,7 +130,7 @@ public partial class DayView : UserControl
                     : 1440;
                 var evH        = Math.Max(22, effectiveEndMin - startMin);
                 var evHVisible = evH - 2;
-                var color      = Color.Parse(ev.Color);
+                var color      = Color.Parse(EventColors.Display(ev.Color));
                 var normalBg   = new SolidColorBrush(BlendWithWhite(color, 40));
                 var hoverBg    = new SolidColorBrush(BlendWithWhite(color, 90));
                 var colorBrush = new SolidColorBrush(color);

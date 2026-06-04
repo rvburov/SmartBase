@@ -359,10 +359,15 @@ public partial class MonthView : UserControl
         IBrush baseBg = new SolidColorBrush(
             isCurrentMonth ? Color.Parse("#FFFFFF") : Color.Parse("#F9F9F9"));
 
+        // Левая граница не нужна у первой колонки (Пн) — она у края контента,
+        // граничит с сайдбаром и дублирует разделитель.
+        var col      = ((int)date.DayOfWeek + 6) % 7;
+        var leftLine = col == 0 ? 0 : 1;
+
         var cellBorder = new Border
         {
             BorderBrush     = new SolidColorBrush(Color.Parse("#E8E8E8")),
-            BorderThickness = new Thickness(1, 1, 0, 0),
+            BorderThickness = new Thickness(leftLine, 1, 0, 0),
             Background      = baseBg,
             ClipToBounds    = true,
             Child           = inner,
@@ -402,7 +407,7 @@ public partial class MonthView : UserControl
 
     private Border _MakeChip(Event ev)
     {
-        var color      = Color.Parse(ev.Color);
+        var color      = Color.Parse(EventColors.Display(ev.Color));
         var normalBg   = new SolidColorBrush(Color.FromArgb(50, color.R, color.G, color.B));
         var hoverBg    = new SolidColorBrush(Color.FromArgb(90, color.R, color.G, color.B));
         var selectedBg = new SolidColorBrush(color);
@@ -436,11 +441,13 @@ public partial class MonthView : UserControl
         }
         else
         {
-            var timeAndTitle = new StackPanel
+            // Grid [время Auto][заголовок *] — заголовок в колонке * получает конечную
+            // ширину и обрезается многоточием, когда событие не помещается.
+            var timeAndTitle = new Grid
             {
-                Orientation       = Orientation.Horizontal,
-                VerticalAlignment = VerticalAlignment.Center,
-                Margin            = new Thickness(8, 0, 2, 0),
+                VerticalAlignment   = VerticalAlignment.Center,
+                Margin              = new Thickness(8, 0, 2, 0),
+                ColumnDefinitions   = new ColumnDefinitions("Auto,*"),
             };
             var timeTb = new TextBlock
             {
@@ -457,6 +464,8 @@ public partial class MonthView : UserControl
                 Foreground   = darkBrush,
                 TextTrimming = TextTrimming.CharacterEllipsis,
             };
+            Grid.SetColumn(timeTb, 0);
+            Grid.SetColumn(titleTb, 1);
             chipTextBlocks.Add(timeTb);
             chipTextBlocks.Add(titleTb);
             timeAndTitle.Children.Add(timeTb);
@@ -515,7 +524,7 @@ public partial class MonthView : UserControl
     private void _AddSpanBar(Event ev, double bx, double by, double bw,
                               bool leftCap, bool rightCap)
     {
-        var color      = Color.Parse(ev.Color);
+        var color      = Color.Parse(EventColors.Display(ev.Color));
         var cr         = new CornerRadius(
             leftCap  ? 5 : 0, rightCap ? 5 : 0,
             rightCap ? 5 : 0, leftCap  ? 5 : 0);
@@ -800,7 +809,7 @@ public partial class MonthView : UserControl
         var row = off / 7;
         var bx  = col * cw + 2;
         var bw  = cw - 4;
-        var color = Color.Parse(_dragEv.Color);
+        var color = Color.Parse(EventColors.Display(_dragEv.Color));
 
         var weekStart  = _gridStart.AddDays(row * 7);
         var layout     = _ComputeWeekLayout(weekStart);

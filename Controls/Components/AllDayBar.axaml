@@ -9,10 +9,10 @@
         <!-- Основной контент -->
         <Grid Grid.Row="0" ColumnDefinitions="72,*">
 
-            <!-- Метка "весь день" слева с боковыми линиями -->
+            <!-- Метка "весь день" слева (правая линия отделяет от зоны событий) -->
             <Border Grid.Column="0"
                     BorderBrush="#E8E8E8"
-                    BorderThickness="1,0,1,0">
+                    BorderThickness="0,0,1,0">
                 <TextBlock Text="весь день"
                            FontSize="{StaticResource FontSizeBase}"
                            Foreground="{StaticResource BrushSecondaryText}"

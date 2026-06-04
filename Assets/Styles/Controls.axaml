@@ -17,8 +17,11 @@
     <!-- Window -->
     <Style Selector="Window">
         <Setter Property="Background" Value="{StaticResource BrushBg}" />
-        <Setter Property="MinWidth"   Value="1100" />
-        <Setter Property="MinHeight"  Value="760" />
+    </Style>
+    <!-- Минимальный размер только у главного окна, не у диалогов -->
+    <Style Selector="Window.main">
+        <Setter Property="MinWidth"  Value="1100" />
+        <Setter Property="MinHeight" Value="760" />
     </Style>
 
     <!-- Button -->
@@ -36,15 +39,95 @@
 
     <Style Selector="Button.dialog">
         <Setter Property="Width"                      Value="110" />
-        <Setter Property="Height"                     Value="32" />
+        <Setter Property="Height"                     Value="30" />
         <Setter Property="HorizontalContentAlignment" Value="Center" />
         <Setter Property="VerticalContentAlignment"   Value="Center" />
         <Setter Property="CornerRadius"               Value="{StaticResource RadiusMedium}" />
         <Setter Property="Background"                 Value="{StaticResource BrushSecondaryBg}" />
         <Setter Property="Foreground"                 Value="{StaticResource BrushPrimaryText}" />
-        <Setter Property="FontWeight"                 Value="{StaticResource FontWeightBold}" />
+        <Setter Property="FontSize"                   Value="{StaticResource FontSizeBase}" />
+        <Setter Property="FontWeight"                 Value="{StaticResource FontWeightNormal}" />
         <Setter Property="BorderBrush"                Value="{StaticResource BrushSeparator}" />
-        <Setter Property="BorderThickness"            Value="1" />
+        <Setter Property="BorderThickness"            Value="1.2" />
+    </Style>
+
+    <Style Selector="Button.dialog:pointerover /template/ ContentPresenter">
+        <Setter Property="Background"  Value="{StaticResource BrushSecondaryBg}" />
+        <Setter Property="BorderBrush" Value="{StaticResource BrushAccent}" />
+    </Style>
+
+    <!-- Button/ToggleButton с иконкой: прозрачный фон, при наведении иконка синеет -->
+    <Style Selector="Button.icon, ToggleButton.icon">
+        <Setter Property="Background"                 Value="Transparent" />
+        <Setter Property="BorderThickness"            Value="0" />
+        <Setter Property="Padding"                    Value="0" />
+        <Setter Property="HorizontalContentAlignment" Value="Center" />
+        <Setter Property="VerticalContentAlignment"   Value="Center" />
+        <Setter Property="Foreground"                 Value="{StaticResource BrushSecondaryText}" />
+        <Setter Property="Cursor"                     Value="Hand" />
+    </Style>
+
+    <Style Selector="Button.icon /template/ ContentPresenter,
+                     ToggleButton.icon /template/ ContentPresenter">
+        <Setter Property="Background" Value="Transparent" />
+    </Style>
+
+    <Style Selector="Button.icon:pointerover /template/ ContentPresenter,
+                     ToggleButton.icon:pointerover /template/ ContentPresenter">
+        <Setter Property="Background" Value="Transparent" />
+    </Style>
+
+    <Style Selector="Button.icon:pointerover,
+                     ToggleButton.icon:pointerover">
+        <Setter Property="Foreground" Value="{StaticResource BrushAccent}" />
+    </Style>
+
+    <!-- Активный модуль в ActivityBar -->
+    <Style Selector="ToggleButton.icon.module:checked /template/ ContentPresenter">
+        <Setter Property="Background" Value="Transparent" />
+    </Style>
+
+    <Style Selector="ToggleButton.icon.module:checked">
+        <Setter Property="Foreground" Value="{StaticResource BrushAccent}" />
+    </Style>
+
+    <!-- Кнопки навбаров в стиле «Сегодня»: серый фон, серая рамка,
+         при наведении синяя рамка + синяя иконка -->
+    <Style Selector="Button.navbtn, ToggleButton.navbtn">
+        <Setter Property="Background"                 Value="{StaticResource BrushSecondaryBg}" />
+        <Setter Property="Foreground"                 Value="{StaticResource BrushSecondaryText}" />
+        <Setter Property="BorderBrush"                Value="{StaticResource BrushSeparator}" />
+        <Setter Property="BorderThickness"            Value="1.2" />
+        <Setter Property="Padding"                    Value="0" />
+        <Setter Property="HorizontalContentAlignment" Value="Center" />
+        <Setter Property="VerticalContentAlignment"   Value="Center" />
+        <Setter Property="Cursor"                     Value="Hand" />
+    </Style>
+    <Style Selector="Button.navbtn:pointerover /template/ ContentPresenter,
+                     ToggleButton.navbtn:pointerover /template/ ContentPresenter">
+        <Setter Property="Background"  Value="{StaticResource BrushSecondaryBg}" />
+        <Setter Property="BorderBrush" Value="{StaticResource BrushAccent}" />
+    </Style>
+    <Style Selector="Button.navbtn:pointerover,
+                     ToggleButton.navbtn:pointerover">
+        <Setter Property="Foreground" Value="{StaticResource BrushAccent}" />
+    </Style>
+    <!-- В нажатом/checked состоянии остаёмся серыми (перебиваем синий Fluent).
+         Синий — только при наведении. -->
+    <Style Selector="ToggleButton.navbtn:checked /template/ ContentPresenter">
+        <Setter Property="Background"  Value="{StaticResource BrushSecondaryBg}" />
+        <Setter Property="BorderBrush" Value="{StaticResource BrushSeparator}" />
+    </Style>
+    <Style Selector="ToggleButton.navbtn:checked">
+        <Setter Property="Foreground" Value="{StaticResource BrushSecondaryText}" />
+    </Style>
+    <!-- Но при наведении на checked — снова синий -->
+    <Style Selector="ToggleButton.navbtn:checked:pointerover /template/ ContentPresenter">
+        <Setter Property="Background"  Value="{StaticResource BrushSecondaryBg}" />
+        <Setter Property="BorderBrush" Value="{StaticResource BrushAccent}" />
+    </Style>
+    <Style Selector="ToggleButton.navbtn:checked:pointerover">
+        <Setter Property="Foreground" Value="{StaticResource BrushAccent}" />
     </Style>
 
     <Style Selector="Button.accent">
@@ -138,6 +221,9 @@
         <Setter Property="Padding"         Value="10,6" />
         <Setter Property="BorderThickness" Value="1" />
         <Setter Property="BorderBrush"     Value="{StaticResource BrushSeparator}" />
+        <!-- Выделение текста серым вместо системного синего -->
+        <Setter Property="SelectionBrush"           Value="#C7C7CC" />
+        <Setter Property="SelectionForegroundBrush" Value="{StaticResource BrushPrimaryText}" />
     </Style>
 
     <Style Selector="TextBox:pointerover /template/ Border">

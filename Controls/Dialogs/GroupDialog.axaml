@@ -3,37 +3,71 @@
         x:Class="MyPlanner.Controls.Dialogs.GroupDialog"
         Title="Новая группа"
         Width="420"
+        MinWidth="420"
+        MaxWidth="420"
         MinHeight="0"
         SizeToContent="Height"
         WindowStartupLocation="CenterOwner"
         CanResize="False"
         Background="{StaticResource BrushBg}">
 
-    <StackPanel Spacing="10" Margin="24">
+    <StackPanel Spacing="0" Margin="20,16" Width="380">
 
         <TextBlock Text="Название"
+                   Margin="0,0,0,6"
                    FontWeight="{StaticResource FontWeightBold}"
                    FontSize="{StaticResource FontSizeBase}"
                    Foreground="{StaticResource BrushSecondaryText}" />
 
         <TextBox x:Name="NameBox"
                  Watermark="Введите название"
-                 Height="36"
+                 Height="34"
+                 VerticalContentAlignment="Center"
+                 Margin="0,0,0,12"
                  CornerRadius="{StaticResource RadiusMedium}" />
 
         <TextBlock Text="Расположение"
+                   Margin="0,0,0,6"
                    FontWeight="{StaticResource FontWeightBold}"
                    FontSize="{StaticResource FontSizeBase}"
                    Foreground="{StaticResource BrushSecondaryText}" />
 
         <ComboBox x:Name="LocationCombo"
                   HorizontalAlignment="Stretch"
-                  Height="36"
+                  Height="34"
+                  VerticalContentAlignment="Center"
+                  Margin="0,0,0,12"
                   Background="{StaticResource BrushSecondaryBg}"
                   Foreground="{StaticResource BrushPrimaryText}"
                   CornerRadius="{StaticResource RadiusBase}" />
 
-        <Grid ColumnDefinitions="*,Auto,8,Auto" Margin="0,8,0,4">
+        <!-- Уведомление об ошибке валидации -->
+        <Border x:Name="ErrorBanner" IsVisible="False"
+                Background="#1AFF3B30"
+                BorderBrush="{StaticResource BrushRed}"
+                BorderThickness="1"
+                CornerRadius="{StaticResource RadiusBase}"
+                Padding="10,7"
+                Margin="0,0,0,12">
+            <StackPanel Orientation="Horizontal" Spacing="8">
+                <Viewbox Width="16" Height="16" VerticalAlignment="Center">
+                    <Canvas Width="24" Height="24">
+                        <Ellipse Width="24" Height="24" Fill="{StaticResource BrushRed}" />
+                        <Path Data="M12 6 L12 14 M12 17 L12 18.5"
+                              Stroke="White" StrokeThickness="2"
+                              StrokeLineCap="Round" />
+                    </Canvas>
+                </Viewbox>
+                <TextBlock x:Name="ErrorText"
+                           VerticalAlignment="Center"
+                           TextWrapping="Wrap"
+                           FontSize="{StaticResource FontSizeBase}"
+                           Foreground="{StaticResource BrushRed}" />
+            </StackPanel>
+        </Border>
+
+        <!-- Кнопки -->
+        <Grid ColumnDefinitions="*,Auto,8,Auto" Margin="0,4,0,0">
             <Button Grid.Column="1" x:Name="CancelBtn" Classes="dialog"
                     Content="Отмена" />
             <Button Grid.Column="3" x:Name="ConfirmBtn" Classes="dialog"

@@ -1,3 +1,4 @@
+using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using MyPlanner.Core.Models;
@@ -32,7 +33,7 @@ public partial class GroupDialog : Window
 
         if (editNode is not null)
         {
-            Title              = "Переименовать группу";
+            Title              = "Редактировать группу";
             NameBox.Text       = editNode.Name;
             ConfirmBtn.Content = "Сохранить";
 
@@ -40,16 +41,49 @@ public partial class GroupDialog : Window
             if (editIdx >= 0) LocationCombo.SelectedIndex = editIdx;
         }
 
-        CancelBtn.Click  += (_, _) => Close(null);
-        ConfirmBtn.Click += (_, _) => TryConfirm();
-        NameBox.KeyDown  += (_, e) => { if (e.Key == Key.Enter) TryConfirm(); };
+        CancelBtn.Click   += (_, _) => Close(null);
+        ConfirmBtn.Click  += (_, _) => TryConfirm();
+        NameBox.KeyDown   += (_, e) => { if (e.Key == Key.Enter) TryConfirm(); };
+        NameBox.TextChanged += (_, _) => HideError();
     }
 
     private void TryConfirm()
     {
         var name = NameBox.Text?.Trim() ?? "";
-        if (string.IsNullOrEmpty(name)) { NameBox.Focus(); return; }
+        if (string.IsNullOrEmpty(name))
+        {
+            ShowError("Укажите название группы");
+            NameBox.Focus();
+            return;
+        }
         var parentId = _groups[Math.Max(0, LocationCombo.SelectedIndex)].Id;
         Close(new GroupDialogResult(name, parentId));
+    }
+
+    private void ShowError(string message)
+    {
+        var pos = Position;            // баннер увеличит высоту — держим позицию
+        ErrorText.Text        = message;
+        ErrorBanner.IsVisible = true;
+        KeepWindowPosition(pos);
+    }
+
+    private void HideError()
+    {
+        if (!ErrorBanner.IsVisible) return;
+        var pos = Position;
+        ErrorBanner.IsVisible = false;
+        KeepWindowPosition(pos);
+    }
+
+    // Держим позицию окна при пересчёте высоты (SizeToContent), чтобы оно не «прыгало».
+    private void KeepWindowPosition(PixelPoint pos)
+    {
+        void Restore(object? _, EventArgs __)
+        {
+            LayoutUpdated -= Restore;
+            if (Position != pos) Position = pos;
+        }
+        LayoutUpdated += Restore;
     }
 }

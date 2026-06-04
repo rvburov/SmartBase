@@ -15,7 +15,7 @@
         <!-- Заголовки дней недели — 72px пустой отступ + 7 равных колонок -->
         <Border Grid.Row="0"
                 BorderBrush="#E8E8E8"
-                BorderThickness="1,0,0,1">
+                BorderThickness="0,0,0,1">
             <Grid ColumnDefinitions="72,*"
                   Background="{StaticResource BrushSecondaryBg}">
                 <UniformGrid Grid.Column="1" x:Name="WeekHeaderDays" Columns="7" />
@@ -31,7 +31,7 @@
 
                 <!-- Метки часов: каждая метка прижата к низу 60px-слота,
                      чтобы "01:00" совпадал с линией между 00:xx и 01:xx -->
-                <Border Grid.Column="0" BorderBrush="#E8E8E8" BorderThickness="1,0,0,0">
+                <Border Grid.Column="0" BorderBrush="#E8E8E8" BorderThickness="0">
                 <ItemsControl x:Name="HourLabels">
                     <ItemsControl.ItemsPanel>
                         <ItemsPanelTemplate>

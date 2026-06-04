@@ -3,19 +3,48 @@
              x:Class="MyPlanner.Views.ConstructorDb.TableView"
              Background="{StaticResource BrushBg}">
 
-    <ScrollViewer HorizontalScrollBarVisibility="Auto"
-                  VerticalScrollBarVisibility="Auto">
-        <DataGrid x:Name="RecordsGrid"
-                  AutoGenerateColumns="False"
-                  CanUserResizeColumns="True"
-                  CanUserSortColumns="True"
-                  GridLinesVisibility="All"
-                  HeadersVisibility="Column"
-                  SelectionMode="Single"
-                  Background="Transparent"
-                  BorderThickness="0"
-                  FontSize="{StaticResource FontSizeBase}"
-                  Foreground="{StaticResource BrushPrimaryText}" />
-    </ScrollViewer>
+    <UserControl.Styles>
+        <!-- Заголовок таблицы -->
+        <Style Selector="DataGridColumnHeader">
+            <Setter Property="Background"      Value="{StaticResource BrushInactiveBg}" />
+            <Setter Property="Foreground"      Value="{StaticResource BrushSecondaryText}" />
+            <Setter Property="FontSize"        Value="{StaticResource FontSizeBase}" />
+            <Setter Property="MinHeight"       Value="38" />
+            <Setter Property="Padding"         Value="6,0" />
+            <Setter Property="BorderBrush"     Value="{StaticResource BrushSeparator}" />
+            <Setter Property="BorderThickness" Value="0,0,1,1" />
+            <Setter Property="SeparatorBrush"  Value="{StaticResource BrushSeparator}" />
+        </Style>
+
+        <!-- Строки и ячейки -->
+        <Style Selector="DataGridRow">
+            <Setter Property="MinHeight" Value="38" />
+        </Style>
+        <Style Selector="DataGridCell">
+            <Setter Property="MinHeight"       Value="38" />
+            <Setter Property="BorderBrush"     Value="{StaticResource BrushSeparator}" />
+            <Setter Property="BorderThickness" Value="0,0,1,1" />
+            <Setter Property="FontSize"        Value="{StaticResource FontSizeBase}" />
+        </Style>
+        <Style Selector="DataGridCell:current /template/ Grid#FocusVisual">
+            <Setter Property="IsVisible" Value="False" />
+        </Style>
+    </UserControl.Styles>
+
+    <DataGrid x:Name="RecordsGrid"
+              AutoGenerateColumns="False"
+              CanUserResizeColumns="False"
+              CanUserReorderColumns="True"
+              CanUserSortColumns="False"
+              GridLinesVisibility="None"
+              HeadersVisibility="Column"
+              SelectionMode="Single"
+              IsReadOnly="False"
+              Background="Transparent"
+              BorderThickness="0"
+              RowBackground="{StaticResource BrushBg}"
+              HorizontalScrollBarVisibility="Auto"
+              VerticalScrollBarVisibility="Auto"
+              Foreground="{StaticResource BrushPrimaryText}" />
 
 </UserControl>

@@ -20,7 +20,7 @@
             <Grid ColumnDefinitions="72,*">
 
                 <!-- Метки часов -->
-                <Border Grid.Column="0" BorderBrush="#E8E8E8" BorderThickness="1,0,0,0">
+                <Border Grid.Column="0" BorderBrush="#E8E8E8" BorderThickness="0">
                 <ItemsControl x:Name="HourLabels">
                     <ItemsControl.ItemsPanel>
                         <ItemsPanelTemplate>
