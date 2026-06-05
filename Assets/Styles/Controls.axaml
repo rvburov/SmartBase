@@ -12,6 +12,44 @@
 
         <!-- Цвет скроллбара -->
         <SolidColorBrush x:Key="BrushScrollbar" Color="#C7C7CC" />
+
+        <!-- Тема кнопки-стрелки скроллбара: своя отрисовка без Fluent-обводки,
+             контент строго по центру. -->
+        <ControlTheme x:Key="ScrollLineButton" TargetType="RepeatButton">
+            <Setter Property="Background"       Value="#EDEDF0" />
+            <Setter Property="BorderThickness"  Value="0" />
+            <Setter Property="Padding"          Value="0" />
+            <Setter Property="MinWidth"         Value="0" />
+            <Setter Property="MinHeight"        Value="0" />
+            <Setter Property="Template">
+                <ControlTemplate>
+                    <Border Background="{TemplateBinding Background}" CornerRadius="4">
+                        <ContentPresenter HorizontalAlignment="Center"
+                                          VerticalAlignment="Center"
+                                          Content="{TemplateBinding Content}" />
+                    </Border>
+                </ControlTemplate>
+            </Setter>
+            <Style Selector="^:pointerover">
+                <Setter Property="Background" Value="#DADADE" />
+            </Style>
+            <Style Selector="^:pressed">
+                <Setter Property="Background" Value="#C2C2C8" />
+            </Style>
+        </ControlTheme>
+
+        <!-- Тема постраничной области (прозрачная, без визуала). -->
+        <ControlTheme x:Key="ScrollPageButton" TargetType="RepeatButton">
+            <Setter Property="Background"      Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="MinWidth"        Value="0" />
+            <Setter Property="MinHeight"       Value="0" />
+            <Setter Property="Template">
+                <ControlTemplate>
+                    <Border Background="{TemplateBinding Background}" />
+                </ControlTemplate>
+            </Setter>
+        </ControlTheme>
     </Styles.Resources>
 
     <!-- Window -->
@@ -147,6 +185,20 @@
         <Setter Property="BorderThickness" Value="1" />
         <Setter Property="BorderBrush"     Value="{StaticResource BrushSeparator}" />
         <Setter Property="CornerRadius"    Value="{StaticResource RadiusMedium}" />
+        <!-- Выбранное значение по центру по вертикали; единый внутренний отступ
+             (последнее число — отступ справа до стрелки одинаков везде). -->
+        <Setter Property="VerticalContentAlignment" Value="Center" />
+        <Setter Property="Padding"                  Value="10,0,8,0" />
+    </Style>
+
+    <!-- Текст выбранного значения: по центру + обрезка многоточием при длинном тексте. -->
+    <Style Selector="ComboBox /template/ ContentControl#ContentPresenter">
+        <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+    <Style Selector="ComboBox /template/ ContentControl#ContentPresenter TextBlock">
+        <Setter Property="TextTrimming"      Value="CharacterEllipsis" />
+        <Setter Property="TextWrapping"      Value="NoWrap" />
+        <Setter Property="VerticalAlignment" Value="Center" />
     </Style>
 
     <Style Selector="ComboBox /template/ Border#Background">
@@ -175,34 +227,45 @@
     </Style>
 
     <Style Selector="ComboBoxItem">
-        <Setter Property="Foreground"            Value="{StaticResource BrushPrimaryText}" />
-        <Setter Property="Background"            Value="Transparent" />
-        <Setter Property="Padding"               Value="10,7" />
-        <Setter Property="Margin"                Value="4,2" />
-        <Setter Property="CornerRadius"          Value="{StaticResource RadiusBase}" />
-        <Setter Property="HorizontalAlignment"   Value="Stretch" />
+        <Setter Property="Foreground"               Value="{StaticResource BrushPrimaryText}" />
+        <Setter Property="Background"               Value="Transparent" />
+        <Setter Property="Padding"                  Value="10,7" />
+        <Setter Property="Margin"                   Value="4,2" />
+        <Setter Property="CornerRadius"             Value="{StaticResource RadiusBase}" />
+        <Setter Property="HorizontalAlignment"      Value="Stretch" />
+        <Setter Property="VerticalContentAlignment" Value="Center" />
+    </Style>
+    <!-- Длинный пункт списка обрезается многоточием. -->
+    <Style Selector="ComboBoxItem TextBlock">
+        <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+        <Setter Property="TextWrapping" Value="NoWrap" />
     </Style>
 
+    <!-- Эффекты ровно как в контекстном меню: используем те же ресурсы темы Fluent,
+         что и MenuFlyoutItem (фон при наведении/выборе, цвет текста). -->
     <Style Selector="ComboBoxItem:pointerover /template/ ContentPresenter">
-        <Setter Property="Background"   Value="{StaticResource BrushHover}" />
-        <Setter Property="CornerRadius" Value="{StaticResource RadiusBase}" />
+        <Setter Property="Background"             Value="{DynamicResource MenuFlyoutItemBackgroundPointerOver}" />
+        <Setter Property="TextElement.Foreground" Value="{DynamicResource MenuFlyoutItemForegroundPointerOver}" />
+        <Setter Property="CornerRadius"           Value="{StaticResource RadiusBase}" />
     </Style>
 
     <Style Selector="ComboBoxItem:selected">
-        <Setter Property="Foreground" Value="White" />
-    </Style>
-
-    <Style Selector="ComboBoxItem:selected /template/ ContentPresenter#PART_ContentPresenter">
-        <Setter Property="TextBlock.Foreground" Value="White" />
+        <Setter Property="Foreground" Value="{StaticResource BrushPrimaryText}" />
     </Style>
 
     <Style Selector="ComboBoxItem:selected /template/ ContentPresenter">
-        <Setter Property="Background"   Value="{StaticResource BrushAccent}" />
-        <Setter Property="CornerRadius" Value="{StaticResource RadiusBase}" />
+        <Setter Property="Background"             Value="{DynamicResource MenuFlyoutItemBackgroundPointerOver}" />
+        <Setter Property="CornerRadius"           Value="{StaticResource RadiusBase}" />
+        <Setter Property="TextElement.Foreground" Value="{StaticResource BrushPrimaryText}" />
+    </Style>
+
+    <Style Selector="ComboBoxItem:selected /template/ ContentPresenter TextBlock">
+        <Setter Property="Foreground" Value="{StaticResource BrushPrimaryText}" />
     </Style>
 
     <Style Selector="ComboBoxItem:selected:pointerover /template/ ContentPresenter">
-        <Setter Property="Background" Value="{StaticResource BrushAccent}" />
+        <Setter Property="Background"             Value="{DynamicResource MenuFlyoutItemBackgroundPointerOver}" />
+        <Setter Property="TextElement.Foreground" Value="{StaticResource BrushPrimaryText}" />
     </Style>
 
     <Style Selector="ComboBox /template/ Popup > Border">
@@ -234,16 +297,116 @@
         <Setter Property="BorderBrush" Value="{StaticResource BrushAccent}" />
     </Style>
 
-    <!-- ScrollBar тонкий -->
+    <!-- Классический скроллбар (как в Excel): дорожка всегда видна, сверху/снизу
+         кнопки-стрелки, посередине перетаскиваемый ползунок. Собственный шаблон,
+         т.к. тема Fluent прячет ползунок. -->
     <Style Selector="ScrollBar">
-        <Setter Property="Width"   Value="6" />
-        <Setter Property="Height"  Value="6" />
-        <Setter Property="Opacity" Value="1.0" />
+        <Setter Property="AllowAutoHide" Value="False" />
+        <Setter Property="Opacity"       Value="1" />
+        <Setter Property="Background"     Value="Transparent" />
     </Style>
 
-    <Style Selector="ScrollBar /template/ Thumb">
-        <Setter Property="Background"   Value="{StaticResource BrushScrollbar}" />
-        <Setter Property="CornerRadius" Value="{StaticResource RadiusXS}" />
+    <!-- Стрелка в Viewbox — всегда влезает и одинакового размера. -->
+    <Style Selector="ScrollBar Path.arrow">
+        <Setter Property="Stroke"          Value="#7A7A80" />
+        <Setter Property="StrokeThickness" Value="2" />
+        <Setter Property="StrokeLineCap"   Value="Round" />
+        <Setter Property="StrokeJoin"      Value="Round" />
+    </Style>
+
+    <!-- Ползунок: собственный шаблон (залитый прямоугольник) — не зависит от темы Fluent. -->
+    <Style Selector="ScrollBar Thumb">
+        <Setter Property="Background" Value="#A0A0A6" />
+        <Setter Property="Template">
+            <ControlTemplate>
+                <Border Background="{TemplateBinding Background}" CornerRadius="3" />
+            </ControlTemplate>
+        </Setter>
+    </Style>
+    <Style Selector="ScrollBar Thumb:pointerover">
+        <Setter Property="Background" Value="#7A7A80" />
+    </Style>
+    <Style Selector="ScrollBar Thumb:pressed">
+        <Setter Property="Background" Value="#5A5A5E" />
+    </Style>
+
+    <!-- Вертикальный -->
+    <Style Selector="ScrollBar:vertical">
+        <Setter Property="Width" Value="20" />
+        <Setter Property="Template">
+            <ControlTemplate>
+                <!-- 3 отдельных блока: кнопка-вверх, дорожка с ползунком, кнопка-вниз; разделены зазорами -->
+                <Grid RowDefinitions="20,4,*,4,20" Background="Transparent">
+                    <RepeatButton Grid.Row="0" Name="PART_LineUpButton" Theme="{StaticResource ScrollLineButton}" Margin="2,0">
+                        <Viewbox Width="10" Height="7" Stretch="Uniform">
+                            <Path Classes="arrow" Data="M1 6 L7 1 L13 6" />
+                        </Viewbox>
+                    </RepeatButton>
+                    <Border Grid.Row="2" Background="#EDEDF0" CornerRadius="4" Margin="2,0" Padding="0,2">
+                        <Track Name="PART_Track" Orientation="Vertical"
+                               IsDirectionReversed="True"
+                               Minimum="{TemplateBinding Minimum}"
+                               Maximum="{TemplateBinding Maximum}"
+                               Value="{TemplateBinding Value, Mode=TwoWay}"
+                               ViewportSize="{TemplateBinding ViewportSize}">
+                            <Track.DecreaseButton>
+                                <RepeatButton Name="PART_PageUpButton" Theme="{StaticResource ScrollPageButton}" />
+                            </Track.DecreaseButton>
+                            <Track.IncreaseButton>
+                                <RepeatButton Name="PART_PageDownButton" Theme="{StaticResource ScrollPageButton}" />
+                            </Track.IncreaseButton>
+                            <Track.Thumb>
+                                <Thumb MinHeight="28" />
+                            </Track.Thumb>
+                        </Track>
+                    </Border>
+                    <RepeatButton Grid.Row="4" Name="PART_LineDownButton" Theme="{StaticResource ScrollLineButton}" Margin="2,0">
+                        <Viewbox Width="10" Height="7" Stretch="Uniform">
+                            <Path Classes="arrow" Data="M1 1 L7 6 L13 1" />
+                        </Viewbox>
+                    </RepeatButton>
+                </Grid>
+            </ControlTemplate>
+        </Setter>
+    </Style>
+
+    <!-- Горизонтальный -->
+    <Style Selector="ScrollBar:horizontal">
+        <Setter Property="Height" Value="20" />
+        <Setter Property="Template">
+            <ControlTemplate>
+                <!-- 3 отдельных блока: кнопка-влево, дорожка с ползунком, кнопка-вправо; разделены зазорами -->
+                <Grid ColumnDefinitions="20,4,*,4,20" Background="Transparent">
+                    <RepeatButton Grid.Column="0" Name="PART_LineUpButton" Theme="{StaticResource ScrollLineButton}" Margin="0,2">
+                        <Viewbox Width="7" Height="10" Stretch="Uniform">
+                            <Path Classes="arrow" Data="M6 1 L1 7 L6 13" />
+                        </Viewbox>
+                    </RepeatButton>
+                    <Border Grid.Column="2" Background="#EDEDF0" CornerRadius="4" Margin="0,2" Padding="2,0">
+                        <Track Name="PART_Track" Orientation="Horizontal"
+                               Minimum="{TemplateBinding Minimum}"
+                               Maximum="{TemplateBinding Maximum}"
+                               Value="{TemplateBinding Value, Mode=TwoWay}"
+                               ViewportSize="{TemplateBinding ViewportSize}">
+                            <Track.DecreaseButton>
+                                <RepeatButton Name="PART_PageUpButton" Theme="{StaticResource ScrollPageButton}" />
+                            </Track.DecreaseButton>
+                            <Track.IncreaseButton>
+                                <RepeatButton Name="PART_PageDownButton" Theme="{StaticResource ScrollPageButton}" />
+                            </Track.IncreaseButton>
+                            <Track.Thumb>
+                                <Thumb MinWidth="28" />
+                            </Track.Thumb>
+                        </Track>
+                    </Border>
+                    <RepeatButton Grid.Column="4" Name="PART_LineDownButton" Theme="{StaticResource ScrollLineButton}" Margin="0,2">
+                        <Viewbox Width="7" Height="10" Stretch="Uniform">
+                            <Path Classes="arrow" Data="M1 1 L6 7 L1 13" />
+                        </Viewbox>
+                    </RepeatButton>
+                </Grid>
+            </ControlTemplate>
+        </Setter>
     </Style>
 
     <!-- CalendarDatePicker -->

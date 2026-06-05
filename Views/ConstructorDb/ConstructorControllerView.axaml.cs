@@ -23,34 +23,60 @@ public partial class ConstructorControllerView : UserControl
     {
         _repository = repository;
 
-        ConstructorNavbar.ViewChanged          += (_, mode) => SwitchView(mode);
-        ConstructorNavbar.AddClicked           += (_, _)    => _ = OpenAddRecordDialog();
-        ConstructorNavbar.AddPropertyClicked   += (_, _)    => _ = OpenPropertyManagerDialog();
-        ConstructorNavbar.ColResizeModeChanged += (_, v)    => TableViewCtrl.SetColResizeMode(v);
-        ConstructorNavbar.RowResizeModeChanged += (_, v)    => TableViewCtrl.SetRowResizeMode(v);
+        // Переключатель вида остаётся в верхнем навбаре.
+        ConstructorNavbar.ViewChanged += (_, mode) => SwitchView(mode);
+
+        // Остальные кнопки управления — в нижней панели (футере).
+        ConstructorFooter.AddClicked           += (_, _)    => _ = OpenAddRecordDialog();
+        ConstructorFooter.AddPropertyClicked   += (_, _)    => _ = OpenPropertyManagerDialog();
+        ConstructorFooter.ColResizeModeChanged += (_, v)    => TableViewCtrl.SetColResizeMode(v);
+        ConstructorFooter.RowResizeModeChanged += (_, v)    => TableViewCtrl.SetRowResizeMode(v);
 
         TableViewCtrl.RecordClicked += (_, rid) => _ = OpenEditRecordDialog(rid);
         ListViewCtrl.RecordClicked  += (_, rid) => _ = OpenEditRecordDialog(rid);
+
+        // Навигация по страницам — заготовка (пагинация будет добавлена позже).
     }
 
     public void SelectCollection(int collectionId)
     {
-        _currentCollectionId = collectionId;
         var cols = _repository!.GetAllCollections();
         var col  = cols.FirstOrDefault(c => c.Id == collectionId);
-        if (col is null) return;
+        if (col is null)
+        {
+            // Коллекция отсутствует (например, удалена) — очищаем view.
+            ClearView();
+            return;
+        }
 
+        _currentCollectionId = collectionId;
         ConstructorNavbar.SetTitle(col.Name);
 
         var (colResize, rowResize, viewMode) = _repository.GetUiSettings(collectionId);
-        ConstructorNavbar.LoadCollectionState(colResize, rowResize, viewMode);
+        ConstructorFooter.LoadCollectionState(colResize, rowResize);
+        ConstructorNavbar.SetViewMode(viewMode);
         SwitchView(viewMode);
+
+        // Нижняя панель: счётчик записей и страницы (пока 1 страница).
+        var count = _repository.CountRecords(collectionId);
+        ConstructorFooter.SetCount(count);
+        ConstructorFooter.SetPage(1, 1);
     }
 
     public void Refresh()
     {
         if (_currentCollectionId.HasValue)
             SelectCollection(_currentCollectionId.Value);
+    }
+
+    private void ClearView()
+    {
+        _currentCollectionId = null;
+        ConstructorNavbar.SetTitle("");
+        TableViewCtrl.Clear();
+        ListViewCtrl.Clear();
+        ConstructorFooter.SetCount(0);
+        ConstructorFooter.SetPage(1, 1);
     }
 
     private void SwitchView(string mode)

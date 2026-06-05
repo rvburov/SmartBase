@@ -327,7 +327,10 @@ public partial class SidebarTree : UserControl
         if (res.Type == "group")
         {
             var pos = _repository.GetAllGroups().Select(g => g.Position).DefaultIfEmpty(0).Max() + 1000;
-            _repository.AddGroup(new DbGroup { Name = res.Name, ParentId = res.ParentId, Position = pos });
+            var group = _repository.AddGroup(new DbGroup { Name = res.Name, ParentId = res.ParentId, Position = pos });
+            ReloadAndNotify();
+            // Новая группа: показать в дереве и раскрыть.
+            if (group.Id.HasValue) ExpandGroup(group.Id.Value);
         }
         else
         {
@@ -335,8 +338,27 @@ public partial class SidebarTree : UserControl
             var col = _repository.AddCollection(new DbCollection { Name = res.Name, GroupId = res.ParentId, Position = pos });
             if (col.Id.HasValue)
                 _repository.AddRecord(new DbRecord { CollectionId = col.Id.Value });
+            ReloadAndNotify();
+            // Новая коллекция: выделить в дереве и открыть её таблицу.
+            if (col.Id.HasValue) OpenCollection(col.Id.Value);
         }
-        ReloadAndNotify();
+    }
+
+    /// <summary>Раскрыть группу в дереве (например, после её создания).</summary>
+    private void ExpandGroup(int groupId)
+    {
+        var node = FindNode(_roots, "group", groupId);
+        if (node is null) return;
+        ExpandAncestors(_roots, node);
+        node.IsExpanded = true;
+        RebuildRows();
+    }
+
+    /// <summary>Выделить коллекцию в дереве и открыть её таблицу.</summary>
+    private void OpenCollection(int collectionId)
+    {
+        SelectCollection(collectionId);
+        CollectionSelected?.Invoke(this, collectionId);
     }
 
     private async Task EditGroup(int groupId)

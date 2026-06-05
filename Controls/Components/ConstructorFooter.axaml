@@ -1,0 +1,168 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="MyPlanner.Controls.Components.ConstructorFooter"
+             Height="57"
+             Background="{StaticResource BrushBg}">
+
+    <DockPanel>
+
+        <!-- Линия-разделитель сверху -->
+        <Border DockPanel.Dock="Top"
+                Height="1"
+                Background="{StaticResource BrushSeparator}" />
+
+        <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto,*,Auto"
+              Margin="16,0">
+
+            <!-- Фильтр -->
+            <Button Grid.Column="0" x:Name="FilterBtn" Classes="navbtn"
+                    Width="30" Height="30" Margin="0,0,4,0"
+                    VerticalAlignment="Center"
+                    CornerRadius="{StaticResource RadiusMedium}"
+                    ToolTip.Tip="Фильтр">
+                <Viewbox Width="18" Height="18">
+                    <Canvas Width="24" Height="24">
+                        <Path Data="M10 20a1 1 0 0 0 .553.895l2 1A1 1 0 0 0 14 21v-7a2 2 0 0 1 .517-1.341L21.74 4.67A1 1 0 0 0 21 3H3a1 1 0 0 0-.742 1.67l7.225 7.989A2 2 0 0 1 10 14z"
+                              Stroke="{Binding $parent[Button].Foreground}"
+                              StrokeThickness="1.6"
+                              StrokeLineCap="Round" StrokeJoin="Round" />
+                    </Canvas>
+                </Viewbox>
+            </Button>
+
+            <!-- Сортировка -->
+            <Button Grid.Column="1" x:Name="SortBtn" Classes="navbtn"
+                    Width="30" Height="30" Margin="0,0,4,0"
+                    VerticalAlignment="Center"
+                    CornerRadius="{StaticResource RadiusMedium}"
+                    ToolTip.Tip="Сортировка">
+                <Viewbox Width="18" Height="18">
+                    <Canvas Width="24" Height="24">
+                        <Path Data="M3 16 L7 20 L11 16 M7 20 V4 M11 4 H21 M11 8 H18 M11 12 H15"
+                              Stroke="{Binding $parent[Button].Foreground}"
+                              StrokeThickness="1.6"
+                              StrokeLineCap="Round" StrokeJoin="Round" />
+                    </Canvas>
+                </Viewbox>
+            </Button>
+
+            <!-- Добавить запись -->
+            <Button Grid.Column="2" x:Name="AddBtn" Classes="navbtn"
+                    Width="30" Height="30" Margin="0,0,4,0"
+                    VerticalAlignment="Center"
+                    CornerRadius="{StaticResource RadiusMedium}"
+                    ToolTip.Tip="Добавить запись">
+                <Viewbox Width="18" Height="18">
+                    <Canvas Width="24" Height="24">
+                        <Path Data="M5 12 H19 M12 5 V19"
+                              Stroke="{Binding $parent[Button].Foreground}"
+                              StrokeThickness="2"
+                              StrokeLineCap="Round" StrokeJoin="Round" />
+                    </Canvas>
+                </Viewbox>
+            </Button>
+
+            <!-- Ручная высота строк -->
+            <ToggleButton Grid.Column="3" x:Name="RowResizeBtn" Classes="navbtn"
+                          Width="30" Height="30" Margin="0,0,4,0"
+                          VerticalAlignment="Center"
+                          CornerRadius="{StaticResource RadiusMedium}"
+                          ToolTip.Tip="Ручная высота строк">
+                <Viewbox Width="18" Height="18">
+                    <Canvas Width="24" Height="24">
+                        <Path Data="M7 15 L12 20 L17 15 M7 9 L12 4 L17 9"
+                              Stroke="{Binding $parent[ToggleButton].Foreground}"
+                              StrokeThickness="1.6"
+                              StrokeLineCap="Round" StrokeJoin="Round" />
+                    </Canvas>
+                </Viewbox>
+            </ToggleButton>
+
+            <!-- Ручная ширина столбцов -->
+            <ToggleButton Grid.Column="4" x:Name="ColResizeBtn" Classes="navbtn"
+                          Width="30" Height="30" Margin="0,0,4,0"
+                          VerticalAlignment="Center"
+                          CornerRadius="{StaticResource RadiusMedium}"
+                          ToolTip.Tip="Ручная ширина столбцов">
+                <Viewbox Width="18" Height="18">
+                    <Canvas Width="24" Height="24">
+                        <Path Data="M9 7 L4 12 L9 17 M15 7 L20 12 L15 17"
+                              Stroke="{Binding $parent[ToggleButton].Foreground}"
+                              StrokeThickness="1.6"
+                              StrokeLineCap="Round" StrokeJoin="Round" />
+                    </Canvas>
+                </Viewbox>
+            </ToggleButton>
+
+            <!-- Добавить свойство (поле) -->
+            <Button Grid.Column="5" x:Name="AddPropertyBtn" Classes="navbtn"
+                    Width="30" Height="30" Margin="0,0,8,0"
+                    VerticalAlignment="Center"
+                    CornerRadius="{StaticResource RadiusMedium}"
+                    ToolTip.Tip="Добавить свойство">
+                <Viewbox Width="18" Height="18">
+                    <Canvas Width="24" Height="24">
+                        <Path Data="M12 3 V20 A1 1 0 0 1 11 21 H5 A2 2 0 0 1 3 19 V5 A2 2 0 0 1 5 3 H19 A2 2 0 0 1 21 5 V11 A1 1 0 0 1 20 12 H3"
+                              Stroke="{Binding $parent[Button].Foreground}"
+                              StrokeThickness="1.6"
+                              StrokeLineCap="Round" StrokeJoin="Round" />
+                        <Path Data="M16 19 H22 M19 22 V16"
+                              Stroke="{Binding $parent[Button].Foreground}"
+                              StrokeThickness="1.6"
+                              StrokeLineCap="Round" StrokeJoin="Round" />
+                    </Canvas>
+                </Viewbox>
+            </Button>
+
+            <!-- Счётчик записей -->
+            <TextBlock Grid.Column="6" x:Name="CountLabel"
+                       Text="Всего: 0"
+                       VerticalAlignment="Center"
+                       Margin="8,0,0,0"
+                       FontSize="{StaticResource FontSizeSmall}"
+                       Foreground="{StaticResource BrushSecondaryText}" />
+
+            <!-- Навигация по страницам -->
+            <StackPanel Grid.Column="8" Orientation="Horizontal"
+                        VerticalAlignment="Center" Spacing="2" Margin="0,0,8,0">
+                <Button x:Name="PrevPageBtn" Classes="navbtn"
+                        Width="30" Height="30"
+                        CornerRadius="{StaticResource RadiusMedium}"
+                        ToolTip.Tip="Предыдущая страница">
+                    <Viewbox Width="18" Height="18">
+                        <Canvas Width="24" Height="24">
+                            <Path Data="M15 18 L9 12 L15 6"
+                                  Stroke="{Binding $parent[Button].Foreground}"
+                                  StrokeThickness="2"
+                                  StrokeLineCap="Round" StrokeJoin="Round" />
+                        </Canvas>
+                    </Viewbox>
+                </Button>
+
+                <TextBlock x:Name="PageLabel"
+                           Text="1 / 1"
+                           VerticalAlignment="Center"
+                           Margin="4,0"
+                           FontSize="{StaticResource FontSizeSmall}"
+                           Foreground="{StaticResource BrushSecondaryText}" />
+
+                <Button x:Name="NextPageBtn" Classes="navbtn"
+                        Width="30" Height="30"
+                        CornerRadius="{StaticResource RadiusMedium}"
+                        ToolTip.Tip="Следующая страница">
+                    <Viewbox Width="18" Height="18">
+                        <Canvas Width="24" Height="24">
+                            <Path Data="M9 18 L15 12 L9 6"
+                                  Stroke="{Binding $parent[Button].Foreground}"
+                                  StrokeThickness="2"
+                                  StrokeLineCap="Round" StrokeJoin="Round" />
+                        </Canvas>
+                    </Viewbox>
+                </Button>
+            </StackPanel>
+
+        </Grid>
+
+    </DockPanel>
+
+</UserControl>

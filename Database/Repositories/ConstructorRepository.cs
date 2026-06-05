@@ -189,6 +189,9 @@ public class ConstructorRepository(AppDbContext db)
           })
           .ToList();
 
+    public int CountRecords(int collectionId) =>
+        db.DbRecords.Count(r => r.CollectionId == collectionId);
+
     public DbRecord AddRecord(DbRecord record)
     {
         var entity = new DbRecordEntity

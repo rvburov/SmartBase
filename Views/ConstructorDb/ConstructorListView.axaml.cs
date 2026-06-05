@@ -21,6 +21,14 @@ public partial class ConstructorListView : UserControl
         Reload();
     }
 
+    /// <summary>Очистить список (например, после удаления открытой коллекции).</summary>
+    public void Clear()
+    {
+        _repository = null;
+        _collectionId = 0;
+        RecordsList.ItemsSource = null;
+    }
+
     private void Reload()
     {
         if (_repository is null) return;

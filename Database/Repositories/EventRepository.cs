@@ -194,11 +194,15 @@ public class EventRepository(AppDbContext db)
         var colMap = db.DbCollections.ToDictionary(c => c.Id);
         var colIds = records.Select(r => r.CollectionId).Distinct().ToList();
 
+        // Имена полей в коллекции могут дублироваться — берём первое поле с таким именем,
+        // иначе ToDictionary упадёт на дубликатном ключе.
         var fieldsByCol = colIds.ToDictionary(
             cid => cid,
             cid => db.DbFields
                 .Where(f => f.CollectionId == cid)
-                .ToDictionary(f => f.Name, f => f.Id)
+                .AsEnumerable()
+                .GroupBy(f => f.Name)
+                .ToDictionary(g => g.Key, g => g.First().Id)
         );
 
         var recIds = records.Select(r => r.Id).ToList();

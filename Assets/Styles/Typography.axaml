@@ -10,6 +10,12 @@
         <!-- Веса шрифтов -->
         <FontWeight x:Key="FontWeightNormal">Normal</FontWeight>
         <FontWeight x:Key="FontWeightBold">SemiBold</FontWeight>
+
+        <!-- Единый стандарт высоты строки (таблица + блоки сайдбара + блоки событий). -->
+        <x:Double x:Key="RowHeightStandard">36</x:Double>
+        <!-- Шаг строки = высота + линия-разделитель 1px (как сетка таблицы).
+             Используется в сайдбаре, где линия рисуется внутри высоты Border. -->
+        <x:Double x:Key="RowStepStandard">37</x:Double>
     </Styles.Resources>
 
     <Style Selector="TextBlock">

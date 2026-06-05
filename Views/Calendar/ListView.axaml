@@ -9,10 +9,11 @@
                 BorderBrush="{StaticResource BrushSeparator}"
                 Margin="0">
             <Panel>
-                <ItemsControl x:Name="EventsList" Padding="8,8,8,8">
+                <ItemsControl x:Name="EventsList" Padding="4,4">
                     <ItemsControl.ItemTemplate>
                         <DataTemplate>
-                            <Border Margin="0"
+                            <Border Margin="0,1"
+                                    Height="36"
                                     HorizontalAlignment="Stretch"
                                     CornerRadius="6"
                                     Background="{Binding BackgroundBrush}"
@@ -22,12 +23,14 @@
                                     DoubleTapped="OnEventDoubleTapped"
                                     PointerEntered="OnEventPointerEntered"
                                     PointerExited="OnEventPointerExited">
-                                <Grid Margin="16,8" ColumnDefinitions="Auto,12,*">
-                                    <!-- Цветная полоска -->
+                                <Grid Margin="0" ColumnDefinitions="Auto,12,*">
+                                    <!-- Цветная полоска: отступы слева и сверху/снизу -->
                                     <Border Grid.Column="0" Width="4" CornerRadius="2"
+                                            Margin="8,4,0,4"
                                             Background="{Binding ColorBrush}" />
                                     <!-- Информация о событии -->
-                                    <StackPanel Grid.Column="2" Spacing="2">
+                                    <StackPanel Grid.Column="2" Spacing="2"
+                                                VerticalAlignment="Center">
                                         <TextBlock Text="{Binding Title}"
                                                    FontSize="13"
                                                    Foreground="{Binding TitleBrush}"

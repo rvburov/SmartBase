@@ -20,14 +20,14 @@ public partial class TableView : UserControl
     public event EventHandler<int>? RecordClicked;
 
     private const int MinColWidth  = 160;
-    private const int NumColWidth   = 50;
+    private const int NumColWidth   = 36;   // квадрат: совпадает с высотой строки
     private const int PlusColWidth  = 38;
 
     private ConstructorRepository? _repository;
     private int  _collectionId;
     private bool _manualColResize;
     private List<DbField> _fields = [];
-    private List<TableRowVm> _rows = [];
+    private System.Collections.ObjectModel.ObservableCollection<TableRowVm> _rows = [];
 
     public TableView()
     {
@@ -36,6 +36,8 @@ public partial class TableView : UserControl
         RecordsGrid.ColumnReordered    += (_, _) => SaveColumnOrder();
         // Сохранение ширин после ручного ресайза (нет отдельного события «resize finished»).
         RecordsGrid.AddHandler(PointerReleasedEvent, OnGridPointerReleased, RoutingStrategies.Tunnel);
+        // Пересчёт ширин колонок в целых пикселях при изменении размера (как PyQt resizeEvent).
+        RecordsGrid.SizeChanged += (_, _) => ApplyColumnWidths();
     }
 
     private void OnGridPointerReleased(object? sender, PointerReleasedEventArgs e)
@@ -52,6 +54,17 @@ public partial class TableView : UserControl
         _manualColResize = colResize;
 
         Reload();
+    }
+
+    /// <summary>Очистить таблицу (например, после удаления открытой коллекции).</summary>
+    public void Clear()
+    {
+        _repository   = null;
+        _collectionId = 0;
+        _fields       = [];
+        _rows         = [];
+        RecordsGrid.ItemsSource = null;
+        RecordsGrid.Columns.Clear();
     }
 
     public void SetColResizeMode(bool manual)
@@ -98,10 +111,10 @@ public partial class TableView : UserControl
     {
         RecordsGrid.Columns.Clear();
 
-        // Колонка «№»
+        // Колонка «№» — заголовок пустой
         RecordsGrid.Columns.Add(new DataGridTemplateColumn
         {
-            Header        = "№",
+            Header        = "",
             IsReadOnly    = true,
             CanUserSort   = false,
             CanUserResize = false,
@@ -110,12 +123,19 @@ public partial class TableView : UserControl
             CellTemplate = new FuncDataTemplate<TableRowVm>((row, _) =>
                 row.IsAddRow
                     ? PlusGlyph()
-                    : new TextBlock
+                    // Ячейка номера залита фоном заголовка (серым), как «угловой» столбец.
+                    : new Border
                     {
-                        Text                = row.RowNumber.ToString(),
-                        HorizontalAlignment = HorizontalAlignment.Center,
-                        VerticalAlignment   = VerticalAlignment.Center,
-                        Foreground          = (IBrush)this.FindResource("BrushSecondaryText")!,
+                        Background           = (IBrush)this.FindResource("BrushInactiveBg")!,
+                        HorizontalAlignment  = HorizontalAlignment.Stretch,
+                        VerticalAlignment    = VerticalAlignment.Stretch,
+                        Child = new TextBlock
+                        {
+                            Text                = row.RowNumber.ToString(),
+                            HorizontalAlignment = HorizontalAlignment.Center,
+                            VerticalAlignment   = VerticalAlignment.Center,
+                            Foreground          = (IBrush)this.FindResource("BrushSecondaryText")!,
+                        },
                     }),
         });
 
@@ -160,12 +180,14 @@ public partial class TableView : UserControl
                 return cb;
             }
 
+            // Без inline Foreground — цвет берётся от стиля DataGridCell,
+            // чтобы при выборе строки текст становился синим (как в SidebarTree).
+            // Одна строка + многоточие — высота строки фиксирована (36px), как в сайдбаре.
             return new TextBlock
             {
                 Margin              = new Thickness(6, 0, 6, 0),
                 VerticalAlignment   = VerticalAlignment.Center,
                 TextTrimming        = TextTrimming.CharacterEllipsis,
-                Foreground          = (IBrush)this.FindResource("BrushPrimaryText")!,
                 [!TextBlock.TextProperty] = new Binding($"[{key}]")
                 {
                     Converter = new FieldDisplayConverter(field),
@@ -227,14 +249,32 @@ public partial class TableView : UserControl
             }
         });
 
-    private Control PlusGlyph() => new TextBlock
+    // Иконка lucide plus, как кнопки навбара.
+    private Control PlusGlyph()
     {
-        Text                = "+",
-        FontSize            = 18,
-        HorizontalAlignment = HorizontalAlignment.Center,
-        VerticalAlignment   = VerticalAlignment.Center,
-        Foreground          = (IBrush)this.FindResource("BrushSecondaryText")!,
-    };
+        var brush = (IBrush)this.FindResource("BrushSecondaryText")!;
+
+        var path = new Avalonia.Controls.Shapes.Path
+        {
+            Data            = Avalonia.Media.Geometry.Parse("M5 12 H19 M12 5 V19"),
+            Stroke          = brush,
+            StrokeThickness = 2,
+            StrokeLineCap   = PenLineCap.Round,
+            StrokeJoin      = PenLineJoin.Round,
+        };
+
+        var canvas = new Canvas { Width = 24, Height = 24 };
+        canvas.Children.Add(path);
+
+        return new Viewbox
+        {
+            Width               = 18,
+            Height              = 18,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment   = VerticalAlignment.Center,
+            Child               = canvas,
+        };
+    }
 
     // ── Клики ──────────────────────────────────────────────────────────────────
 
@@ -265,10 +305,16 @@ public partial class TableView : UserControl
         });
 
         var newRow = new TableRowVm(_repository, rec.Id ?? 0, _rows.Count, []);
+        // ObservableCollection.Insert обновляет грид без пересоздания ItemsSource —
+        // прокрутка не сбрасывается наверх.
         _rows.Insert(_rows.Count - 1, newRow);   // перед строкой-плюсом
         Renumber();
-        RecordsGrid.ItemsSource = null;
-        RecordsGrid.ItemsSource = _rows;
+
+        // Оставить новую строку в поле зрения (внизу), а не прыгать наверх.
+        RecordsGrid.ScrollIntoView(newRow, RecordsGrid.Columns.Count > 0 ? RecordsGrid.Columns[0] : null);
+
+        // Снять выделение со строки-«плюс» (DataGrid ставит его после нашего обработчика).
+        Avalonia.Threading.Dispatcher.UIThread.Post(() => RecordsGrid.SelectedItem = null);
     }
 
     private void Renumber()
@@ -282,18 +328,58 @@ public partial class TableView : UserControl
 
     private void ApplyColumnWidths()
     {
-        if (_repository is null) return;
+        if (_repository is null || _fields.Count == 0) return;
         var saved = _repository.GetColWidths(_collectionId);
 
-        for (var i = 0; i < _fields.Count; i++)
+        // Ручной режим: фиксированные сохранённые ширины (целые пиксели).
+        if (_manualColResize)
         {
-            var col = RecordsGrid.Columns[i + 1];   // +1 за колонку «№»
-            var id  = _fields[i].Id!.Value;
-            if (_manualColResize && saved.TryGetValue(id, out var w) && w > 0)
-                col.Width = new DataGridLength(w);
-            else
-                col.Width = new DataGridLength(1, DataGridLengthUnitType.Star);
+            for (var i = 0; i < _fields.Count; i++)
+            {
+                var col = RecordsGrid.Columns[i + 1];   // +1 за колонку «№»
+                var id  = _fields[i].Id!.Value;
+                col.Width = saved.TryGetValue(id, out var w) && w > 0
+                    ? new DataGridLength(w)
+                    : new DataGridLength(MinColWidth);
+            }
+            return;
         }
+
+        // Авто-режим: ширины вычисляются в ЦЕЛЫХ пикселях (как PyQt _calc_data_widths),
+        // чтобы границы колонок были целочисленными и вертикальные линии не «схлопывались».
+        var widths = CalcDataWidths(RecordsGrid.Bounds.Width, _fields.Count);
+        for (var i = 0; i < _fields.Count; i++)
+            RecordsGrid.Columns[i + 1].Width = new DataGridLength(widths[i]);
+    }
+
+    /// <summary>
+    /// Делит доступную ширину между data-колонками в целых пикселях.
+    /// Остаток от деления отдаётся последней колонке, чтобы сумма точно
+    /// совпадала с доступной шириной (целочисленные границы → линии не пропадают).
+    /// </summary>
+    private int[] CalcDataWidths(double gridWidth, int dataCols)
+    {
+        // Вертикальный скроллбар всегда видим — резервируем под него место,
+        // чтобы колонки не вылезали и не появлялся лишний горизонтальный скролл.
+        const int vScrollReserve = 14;
+        var available = (int)gridWidth - NumColWidth - vScrollReserve;
+
+        if (dataCols == 0 || available <= 0)
+            return Enumerable.Repeat(MinColWidth, dataCols).ToArray();
+
+        var natural = available / dataCols;
+        var widths  = new int[dataCols];
+
+        if (natural >= MinColWidth)
+        {
+            for (var i = 0; i < dataCols; i++) widths[i] = natural;
+            widths[dataCols - 1] += available - natural * dataCols;   // остаток последней колонке
+        }
+        else
+        {
+            for (var i = 0; i < dataCols; i++) widths[i] = MinColWidth;  // не влезает → горизонтальный скролл
+        }
+        return widths;
     }
 
     private void PersistColumnWidths()

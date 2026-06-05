@@ -4,7 +4,7 @@
              xmlns:con="using:MyPlanner.Views.ConstructorDb"
              x:Class="MyPlanner.Views.ConstructorDb.ConstructorControllerView">
 
-    <Grid RowDefinitions="Auto,*">
+    <Grid RowDefinitions="Auto,*,Auto">
 
         <!-- Navbar конструктора -->
         <comp:ConstructorNavbar Grid.Row="0" x:Name="ConstructorNavbar" />
@@ -14,6 +14,9 @@
             <con:TableView          x:Name="TableViewCtrl"    IsVisible="True" />
             <con:ConstructorListView x:Name="ListViewCtrl"    IsVisible="False" />
         </Grid>
+
+        <!-- Нижняя панель (statusbar): добавление, счётчик, навигация -->
+        <comp:ConstructorFooter Grid.Row="2" x:Name="ConstructorFooter" />
 
     </Grid>
 

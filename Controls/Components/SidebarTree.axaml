@@ -74,7 +74,7 @@
         <ScrollViewer VerticalScrollBarVisibility="Auto"
                       Background="Transparent"
                       ContextRequested="OnEmptyContextRequested">
-            <ItemsControl x:Name="RowsHost" Padding="4,4">
+            <ItemsControl x:Name="RowsHost" Padding="0">
                 <ItemsControl.ItemsPanel>
                     <ItemsPanelTemplate>
                         <VirtualizingStackPanel />
@@ -82,11 +82,15 @@
                 </ItemsControl.ItemsPanel>
                 <ItemsControl.ItemTemplate>
                     <DataTemplate x:DataType="comp:FlatRow">
+                        <!-- Высота строки = RowStepStandard (37px): контент 36px + линия 1px
+                             снизу (рисуется внутри Height). Шаг строки совпадает с таблицей,
+                             где линия сетки 1px между строками высотой 36px. -->
                         <Border x:Name="RowRoot"
                                 Background="{Binding RowBackground}"
-                                CornerRadius="{StaticResource RadiusSmall}"
-                                Margin="0,1"
-                                Height="32"
+                                Margin="0"
+                                Height="{StaticResource RowStepStandard}"
+                                BorderBrush="{StaticResource BrushBg}"
+                                BorderThickness="0,0,0,1"
                                 Tapped="OnRowTapped"
                                 PointerEntered="OnRowEnter"
                                 PointerExited="OnRowExit"

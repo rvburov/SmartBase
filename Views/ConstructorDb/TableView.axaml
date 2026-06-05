@@ -4,39 +4,80 @@
              Background="{StaticResource BrushBg}">
 
     <UserControl.Styles>
-        <!-- Заголовок таблицы -->
+        <!-- Заголовок таблицы. Без собственной нижней границы — линия под шапкой
+             рисуется единым встроенным разделителем DataGrid (PART_ColumnHeadersAndRowsSeparator),
+             иначе две линии накладываются и выглядят жирнее остальных.
+             Правый разделитель колонок — встроенный SeparatorBrush. -->
         <Style Selector="DataGridColumnHeader">
             <Setter Property="Background"      Value="{StaticResource BrushInactiveBg}" />
             <Setter Property="Foreground"      Value="{StaticResource BrushSecondaryText}" />
             <Setter Property="FontSize"        Value="{StaticResource FontSizeBase}" />
-            <Setter Property="MinHeight"       Value="38" />
+            <Setter Property="MinHeight"       Value="{StaticResource RowHeightStandard}" />
             <Setter Property="Padding"         Value="6,0" />
-            <Setter Property="BorderBrush"     Value="{StaticResource BrushSeparator}" />
-            <Setter Property="BorderThickness" Value="0,0,1,1" />
+            <Setter Property="BorderThickness" Value="0" />
             <Setter Property="SeparatorBrush"  Value="{StaticResource BrushSeparator}" />
+            <Setter Property="AreSeparatorsVisible" Value="True" />
+        </Style>
+        <!-- Линия под шапкой (разделитель шапки и строк) — той же толщины 1px. -->
+        <Style Selector="DataGrid /template/ Rectangle#PART_ColumnHeadersAndRowsSeparator">
+            <Setter Property="Fill"   Value="{StaticResource BrushSeparator}" />
+            <Setter Property="Height" Value="1" />
+        </Style>
+        <!-- Фон заголовка не меняется при наведении/нажатии, иначе подсветка
+             (рисуется на внутреннем PART_ColumnHeaderRoot) перекрывает
+             вертикальные линии-разделители колонок. -->
+        <Style Selector="DataGridColumnHeader:pointerover /template/ Grid#PART_ColumnHeaderRoot">
+            <Setter Property="Background" Value="{StaticResource BrushInactiveBg}" />
+        </Style>
+        <Style Selector="DataGridColumnHeader:pressed /template/ Grid#PART_ColumnHeaderRoot">
+            <Setter Property="Background" Value="{StaticResource BrushInactiveBg}" />
         </Style>
 
-        <!-- Строки и ячейки -->
-        <Style Selector="DataGridRow">
-            <Setter Property="MinHeight" Value="38" />
-        </Style>
+        <!-- Высота строки фиксируется через DataGrid.RowHeight (пробивает тему Fluent).
+             Вертикальные линии — встроенные (GridLinesVisibility=All); они не «схлопываются»,
+             потому что ширины колонок вычисляются в целых пикселях (см. ApplyColumnWidths). -->
         <Style Selector="DataGridCell">
-            <Setter Property="MinHeight"       Value="38" />
-            <Setter Property="BorderBrush"     Value="{StaticResource BrushSeparator}" />
-            <Setter Property="BorderThickness" Value="0,0,1,1" />
+            <Setter Property="Padding"         Value="0" />
+            <Setter Property="BorderThickness" Value="0" />
             <Setter Property="FontSize"        Value="{StaticResource FontSizeBase}" />
+            <Setter Property="Foreground"      Value="{StaticResource BrushPrimaryText}" />
         </Style>
         <Style Selector="DataGridCell:current /template/ Grid#FocusVisual">
             <Setter Property="IsVisible" Value="False" />
+        </Style>
+
+        <!-- Эффекты как в SidebarTree -->
+        <!-- Наведение на строку → светло-серый фон (#F2F2F7) -->
+        <Style Selector="DataGridRow:pointerover /template/ Rectangle#BackgroundRectangle">
+            <Setter Property="Fill"    Value="{StaticResource BrushSecondaryBg}" />
+            <Setter Property="Opacity" Value="1" />
+        </Style>
+        <!-- Выбор строки → голубой фон (#E5F0FF) -->
+        <Style Selector="DataGridRow:selected /template/ Rectangle#BackgroundRectangle">
+            <Setter Property="Fill"    Value="{StaticResource BrushAccentLight}" />
+            <Setter Property="Opacity" Value="1" />
+        </Style>
+        <!-- Выбранная строка имеет приоритет над наведением -->
+        <Style Selector="DataGridRow:selected:pointerover /template/ Rectangle#BackgroundRectangle">
+            <Setter Property="Fill"    Value="{StaticResource BrushAccentLight}" />
+            <Setter Property="Opacity" Value="1" />
+        </Style>
+        <!-- Текст ячеек выбранной строки → синий (#007AFF) -->
+        <Style Selector="DataGridRow:selected DataGridCell">
+            <Setter Property="Foreground" Value="{StaticResource BrushAccent}" />
         </Style>
     </UserControl.Styles>
 
     <DataGrid x:Name="RecordsGrid"
               AutoGenerateColumns="False"
+              RowHeight="{StaticResource RowHeightStandard}"
+              ColumnHeaderHeight="{StaticResource RowHeightStandard}"
               CanUserResizeColumns="False"
               CanUserReorderColumns="True"
               CanUserSortColumns="False"
-              GridLinesVisibility="None"
+              GridLinesVisibility="All"
+              HorizontalGridLinesBrush="{StaticResource BrushSeparator}"
+              VerticalGridLinesBrush="{StaticResource BrushSeparator}"
               HeadersVisibility="Column"
               SelectionMode="Single"
               IsReadOnly="False"
