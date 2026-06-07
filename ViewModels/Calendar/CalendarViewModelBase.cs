@@ -7,15 +7,15 @@ namespace MyPlanner.ViewModels.Calendar;
 
 public abstract partial class CalendarViewModelBase : ViewModelBase
 {
-    protected readonly EventRepository Events;
+    protected readonly ConstructorRepository Records;
 
-    [ObservableProperty] protected ObservableCollection<Event> _displayedEvents = [];
+    [ObservableProperty] protected ObservableCollection<CalendarRecord> _displayedRecords = [];
     [ObservableProperty] protected string _searchQuery = "";
     protected HashSet<int>? ActiveIds;
 
-    protected CalendarViewModelBase(EventRepository events)
+    protected CalendarViewModelBase(ConstructorRepository records)
     {
-        Events = events;
+        Records = records;
     }
 
     public abstract string HeaderText();
@@ -26,4 +26,11 @@ public abstract partial class CalendarViewModelBase : ViewModelBase
 
     public void SetActiveIds(HashSet<int>? ids) { ActiveIds = ids; Refresh(); }
     public void SetSearch(string query)         { SearchQuery = query; Refresh(); }
+
+    protected IEnumerable<CalendarRecord> FilterBySearch(IEnumerable<CalendarRecord> records)
+    {
+        if (string.IsNullOrWhiteSpace(SearchQuery)) return records;
+        var q = SearchQuery.ToLowerInvariant();
+        return records.Where(r => r.Title.ToLowerInvariant().Contains(q));
+    }
 }

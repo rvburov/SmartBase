@@ -1,3 +1,4 @@
+using Microsoft.EntityFrameworkCore;
 using MyPlanner.Core.Models;
 using MyPlanner.Database.Entities;
 
@@ -5,6 +6,10 @@ namespace MyPlanner.Database.Repositories;
 
 public class ConstructorRepository(AppDbContext db)
 {
+    // Системное поле «Дата» — единственное, что осталось schema-driven.
+    // Название и Описание подняты до колонок Title/Description в db_records.
+    private const string FieldDate = "Дата";
+
     // ── Группы ────────────────────────────────────────────────────────────────
 
     public List<DbGroup> GetAllGroups() =>
@@ -80,28 +85,8 @@ public class ConstructorRepository(AppDbContext db)
         db.SaveChanges();
         col.Id = entity.Id;
 
-        // Системные поля создаются автоматически:
-        //   «Название»  — title (text, required, IsSystem)
-        //   «Описание» — markdown body (rendered in RecordPageView)
-        db.DbFields.Add(new DbFieldEntity
-        {
-            CollectionId = entity.Id,
-            Name         = "Название",
-            FieldType    = "text",
-            Position     = 1000,
-            IsSystem     = true,
-            IsRequired   = true,
-        });
-        db.DbFields.Add(new DbFieldEntity
-        {
-            CollectionId = entity.Id,
-            Name         = "Описание",
-            FieldType    = "markdown",
-            Position     = 2000,
-            IsSystem     = true,
-            IsRequired   = false,
-        });
-        db.SaveChanges();
+        // Title и Description теперь являются колонками таблицы db_records.
+        // В схеме DbFields их больше не создаём.
         return col;
     }
 
@@ -187,7 +172,7 @@ public class ConstructorRepository(AppDbContext db)
         db.SaveChanges();
     }
 
-    // ── Записи ────────────────────────────────────────────────────────────────
+    // ── Записи (низкоуровневые DbRecord) ──────────────────────────────────────
 
     public List<DbRecord> GetRecords(int collectionId) =>
         db.DbRecords
@@ -197,11 +182,40 @@ public class ConstructorRepository(AppDbContext db)
           {
               Id = r.Id, CollectionId = r.CollectionId, CreatedAt = r.CreatedAt,
               Position = r.Position, StartDt = r.StartDt, EndDt = r.EndDt, AllDay = r.AllDay,
+              Title = r.Title, Description = r.Description,
           })
           .ToList();
 
     public int CountRecords(int collectionId) =>
         db.DbRecords.Count(r => r.CollectionId == collectionId);
+
+    public DbRecord? GetRecord(int recordId)
+    {
+        var r = db.DbRecords.Find(recordId);
+        if (r is null) return null;
+        return new DbRecord
+        {
+            Id = r.Id, CollectionId = r.CollectionId, CreatedAt = r.CreatedAt,
+            Position = r.Position, StartDt = r.StartDt, EndDt = r.EndDt, AllDay = r.AllDay,
+            Title = r.Title, Description = r.Description,
+        };
+    }
+
+    public void SetRecordTitle(int recordId, string title)
+    {
+        var rec = db.DbRecords.Find(recordId);
+        if (rec is null) return;
+        rec.Title = title;
+        db.SaveChanges();
+    }
+
+    public void SetRecordDescription(int recordId, string? description)
+    {
+        var rec = db.DbRecords.Find(recordId);
+        if (rec is null) return;
+        rec.Description = string.IsNullOrEmpty(description) ? null : description;
+        db.SaveChanges();
+    }
 
     public DbRecord AddRecord(DbRecord record)
     {
@@ -213,11 +227,29 @@ public class ConstructorRepository(AppDbContext db)
             StartDt      = record.StartDt,
             EndDt        = record.EndDt,
             AllDay       = record.AllDay,
+            Title        = record.Title,
+            Description  = record.Description,
         };
         db.DbRecords.Add(entity);
         db.SaveChanges();
         record.Id = entity.Id;
         return record;
+    }
+
+    public void UpdateRecord(DbRecord record)
+    {
+        if (record.Id is null) return;
+        var entity = db.DbRecords.Find(record.Id.Value);
+        if (entity is null) return;
+
+        entity.CollectionId = record.CollectionId;
+        entity.Position     = record.Position;
+        entity.StartDt      = record.StartDt;
+        entity.EndDt        = record.EndDt;
+        entity.AllDay       = record.AllDay;
+        entity.Title        = record.Title;
+        entity.Description  = record.Description;
+        db.SaveChanges();
     }
 
     public void ReorderRecords(List<int> orderedIds)
@@ -311,5 +343,225 @@ public class ConstructorRepository(AppDbContext db)
             CollectionId = collectionId, RecordId = kv.Key, Height = kv.Value,
         }));
         db.SaveChanges();
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // ─── CalendarRecord API (для календарных представлений) ───────────────────
+    // ══════════════════════════════════════════════════════════════════════════
+
+    public CalendarRecord AddCalendarRecord(CalendarRecord r)
+    {
+        var colId = r.CollectionId ?? GetOrCreateDefaultCollection();
+        var fieldIds = EnsureSystemFields(colId);
+
+        var maxPos = db.DbRecords
+            .Where(rec => rec.CollectionId == colId)
+            .Select(rec => (int?)rec.Position)
+            .Max() ?? 0;
+
+        var rec = new DbRecordEntity
+        {
+            CollectionId = colId,
+            StartDt      = DateTime.SpecifyKind(r.StartDt, DateTimeKind.Unspecified).ToString("o"),
+            EndDt        = DateTime.SpecifyKind(r.EndDt,   DateTimeKind.Unspecified).ToString("o"),
+            AllDay       = r.AllDay,
+            CreatedAt    = DateTime.Now.ToString("o"),
+            Position     = maxPos + 1000,
+            Title        = r.Title,
+            Description  = string.IsNullOrEmpty(r.Description) ? null : r.Description,
+        };
+        db.DbRecords.Add(rec);
+        db.SaveChanges();
+
+        SetCalendarFieldValues(rec.Id, fieldIds, r);
+
+        r.Id           = rec.Id;
+        r.CollectionId = colId;
+        return r;
+    }
+
+    public void UpdateCalendarRecord(CalendarRecord r)
+    {
+        if (r.Id is null) return;
+
+        var rec = db.DbRecords.Find(r.Id.Value);
+        if (rec is null) return;
+
+        var oldColId = rec.CollectionId;
+        var newColId = r.CollectionId ?? oldColId;
+
+        if (oldColId != newColId)
+        {
+            db.DbRecords.Remove(rec);
+            db.SaveChanges();
+            r.CollectionId = newColId;
+            r.Id = null;
+            AddCalendarRecord(r);
+            return;
+        }
+
+        rec.StartDt     = DateTime.SpecifyKind(r.StartDt, DateTimeKind.Unspecified).ToString("o");
+        rec.EndDt       = DateTime.SpecifyKind(r.EndDt,   DateTimeKind.Unspecified).ToString("o");
+        rec.AllDay      = r.AllDay;
+        rec.Title       = r.Title;
+        rec.Description = string.IsNullOrEmpty(r.Description) ? null : r.Description;
+        db.SaveChanges();
+
+        var fieldIds = EnsureSystemFields(newColId);
+        SetCalendarFieldValues(rec.Id, fieldIds, r);
+    }
+
+    public void DeleteCalendarRecord(int id)
+    {
+        var rec = db.DbRecords.Find(id);
+        if (rec is not null)
+        {
+            db.DbRecords.Remove(rec);
+            db.SaveChanges();
+        }
+    }
+
+    public List<CalendarRecord> GetCalendarRecordsByRange(DateTime start, DateTime end, ISet<int>? activeIds = null)
+    {
+        // нормализуем Kind → Unspecified, чтобы строковое сравнение ISO было корректным
+        // независимо от того, в каком Kind пришли границы диапазона
+        var startIso = DateTime.SpecifyKind(start, DateTimeKind.Unspecified).ToString("o");
+        var endIso   = DateTime.SpecifyKind(end,   DateTimeKind.Unspecified).ToString("o");
+
+        var query = db.DbRecords
+            .Where(r => r.StartDt != null && r.StartDt.CompareTo(endIso) < 0
+                                          && r.EndDt!.CompareTo(startIso) >= 0)
+            .OrderBy(r => r.StartDt);
+
+        return RowsToCalendarRecords(query, activeIds);
+    }
+
+    public List<CalendarRecord> GetAllCalendarRecords(ISet<int>? activeIds = null)
+    {
+        var query = db.DbRecords
+            .Where(r => r.StartDt != null)
+            .OrderBy(r => r.StartDt);
+
+        return RowsToCalendarRecords(query, activeIds);
+    }
+
+    public int CountCalendarRecords() =>
+        db.DbRecords.Count(r => r.StartDt != null);
+
+    // ── Вспомогательные методы для CalendarRecord ─────────────────────────────
+
+    private int GetOrCreateDefaultCollection()
+    {
+        var col = db.DbCollections.FirstOrDefault(c => c.Name == "Без названия");
+        if (col is not null) return col.Id;
+
+        var maxPos = db.DbCollections.Select(c => (int?)c.Position).Max() ?? 0;
+        col = new DbCollectionEntity { Name = "Без названия", Position = maxPos + 1000, Color = "#007AFF" };
+        db.DbCollections.Add(col);
+        db.SaveChanges();
+
+        EnsureSystemFields(col.Id);
+        return col.Id;
+    }
+
+    private Dictionary<string, int> EnsureSystemFields(int collectionId)
+    {
+        var existing = db.DbFields
+            .Where(f => f.CollectionId == collectionId)
+            .ToDictionary(f => f.Name, f => f.Id);
+
+        if (existing.ContainsKey(FieldDate)) return existing;
+
+        var maxPos = db.DbFields
+            .Where(f => f.CollectionId == collectionId)
+            .Select(f => (int?)f.Position)
+            .Max() ?? 0;
+
+        var field = new DbFieldEntity
+        {
+            CollectionId = collectionId,
+            Name         = FieldDate,
+            FieldType    = "text",
+            Position     = maxPos + 1000,
+            IsSystem     = true,
+            IsRequired   = false,
+        };
+        db.DbFields.Add(field);
+        db.SaveChanges();
+        existing[FieldDate] = field.Id;
+
+        return existing;
+    }
+
+    private void SetCalendarFieldValues(int recordId, Dictionary<string, int> fieldIds, CalendarRecord r)
+    {
+        // В DbFieldValues пишем только системное поле «Дата» — title/description
+        // живут в колонках db_records (Title / Description).
+        if (!fieldIds.TryGetValue(FieldDate, out var fid)) return;
+
+        var dateStr = FormatCalendarDate(r.StartDt, r.EndDt, r.AllDay);
+
+        var fv = db.DbFieldValues.FirstOrDefault(x => x.RecordId == recordId && x.FieldId == fid);
+        if (fv is null)
+        {
+            db.DbFieldValues.Add(new DbFieldValueEntity { RecordId = recordId, FieldId = fid, Value = dateStr });
+        }
+        else
+        {
+            fv.Value = dateStr;
+        }
+        db.SaveChanges();
+    }
+
+    private List<CalendarRecord> RowsToCalendarRecords(IQueryable<DbRecordEntity> query, ISet<int>? activeIds)
+    {
+        var records = query.ToList();
+        if (activeIds is not null)
+            records = records.Where(r => activeIds.Contains(r.CollectionId)).ToList();
+
+        if (records.Count == 0) return [];
+
+        var colMap = db.DbCollections.ToDictionary(c => c.Id);
+
+        var result = new List<CalendarRecord>();
+        foreach (var rec in records)
+        {
+            if (!DateTime.TryParse(rec.StartDt, out var startDt)) continue;
+            if (!DateTime.TryParse(rec.EndDt,   out var endDt))   continue;
+
+            colMap.TryGetValue(rec.CollectionId, out var col);
+
+            result.Add(new CalendarRecord
+            {
+                Id             = rec.Id,
+                Title          = rec.Title ?? "",
+                Description    = rec.Description ?? "",
+                StartDt        = startDt,
+                EndDt          = endDt,
+                AllDay         = rec.AllDay,
+                CollectionId   = rec.CollectionId,
+                CollectionName = col?.Name ?? "",
+                Color          = col?.Color ?? "#007AFF",
+            });
+        }
+
+        return result;
+    }
+
+    private static string FormatCalendarDate(DateTime s, DateTime e, bool allDay)
+    {
+        if (allDay)
+        {
+            return s.Date == e.Date
+                ? s.ToString("dd.MM.yyyy")
+                : $"{s:dd.MM.yyyy} - {e:dd.MM.yyyy}";
+        }
+
+        var st = s.ToString("HH:mm");
+        var et = e.ToString("HH:mm");
+        if (s.Date == e.Date)
+            return st == et ? $"{s:dd.MM.yyyy} {st}" : $"{s:dd.MM.yyyy} {st} - {et}";
+
+        return $"{s:dd.MM.yyyy} - {e:dd.MM.yyyy} {st}";
     }
 }

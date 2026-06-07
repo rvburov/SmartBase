@@ -4,74 +4,101 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Media;
 using CommunityToolkit.Mvvm.ComponentModel;
+using MyPlanner.Controls.Dialogs;
 using MyPlanner.Core.Models;
 using MyPlanner.Database.Repositories;
 
 namespace MyPlanner.Controls.Components;
 
+public enum SidebarMode { Calendar, Constructor }
+
 public partial class Sidebar : UserControl
 {
+    // Календарь
     public event EventHandler<HashSet<int>>? ActiveIdsChanged;
     public event EventHandler?               CalendarsChanged;
 
-    private ConstructorRepository? _constructor;
+    // Конструктор
+    public event EventHandler<int>? CollectionSelected;
+    public event EventHandler<int>? CollectionDeleted;
+    public event EventHandler?      RequestRefresh;
+
+    private ConstructorRepository? _repository;
+    private SidebarMode _mode = SidebarMode.Calendar;
     private SortState _sortState = SortState.None;
     private bool _expandedAll;
 
     // Логика как в PyQt: активны все коллекции, кроме явно отключённых пользователем.
     private readonly HashSet<int> _uncheckedIds = [];
 
-    private List<CalNode> _roots = [];
-    private readonly ObservableCollection<CalRow> _rows = [];
+    private List<SidebarNode> _roots = [];
+    private readonly ObservableCollection<SidebarRow> _rows = [];
+    private SidebarNode? _selected;
 
-    // Синий #007AFF трактуется как «без цвета» (серый), поэтому его нет в списке —
-    // вместо него отдельный пункт «Без цвета».
+    // Синий #007AFF трактуется как «без цвета» (серый) → отдельный пункт меню.
     private static readonly (string Hex, string Name)[] PredefinedColors =
     [
         ("#34C759", "Зеленый"),    ("#FF3B30", "Красный"),
         ("#FF9500", "Оранжевый"), ("#FF2D55", "Розовый"), ("#AF52DE", "Фиолетовый"),
-        ("#FFCC00", "Желтый"), ("#5E5CE6", "Индиго"),     ("#64D2FF", "Голубой"),
+        ("#FFCC00", "Желтый"),    ("#5E5CE6", "Индиго"),  ("#64D2FF", "Голубой"),
         ("#FF6B6B", "Коралловый"),
     ];
 
     public Sidebar()
     {
         InitializeComponent();
-
         RowsHost.ItemsSource = _rows;
 
+        CreateBtn.Click            += (_, _) => _ = CreateItem("collection", parentId: null);
         ExpandBtn.IsCheckedChanged += (_, _) => ToggleExpandAll(ExpandBtn.IsChecked == true);
-        SortBtn.Click      += (_, _) => CycleSort();
-        ToggleAllBtn.Click += (_, _) => ToggleAllChecked();
+        SortBtn.Click              += (_, _) => CycleSort();
+        ToggleAllBtn.Click         += (_, _) => ToggleAllChecked();
     }
 
-    public Sidebar(ConstructorRepository constructor) : this()
+    public void Initialize(ConstructorRepository repository, SidebarMode mode)
     {
-        _constructor = constructor;
+        _repository = repository;
+        _mode = mode;
+        ToggleAllBtn.IsVisible = mode == SidebarMode.Calendar;
         Refresh();
     }
 
-    public void Initialize(ConstructorRepository constructor) => _constructor = constructor;
-
     public void Refresh()
     {
-        if (_constructor is null) return;
+        if (_repository is null) return;
 
         var expandedIds = GetExpandedGroupIds();
+        var selectedId  = _selected?.Id;
 
         _roots = BuildTree();
         RestoreExpanded(_roots, expandedIds);
+
+        _selected = _mode == SidebarMode.Constructor && selectedId.HasValue
+            ? FindNode(_roots, "collection", selectedId.Value)
+            : null;
+        if (_selected is not null) ExpandAncestors(_roots, _selected);
+
         RebuildRows();
         UpdateToggleAllIcon();
     }
 
     public HashSet<int> GetActiveIds()
     {
-        if (_constructor is null) return [];
-        var all = _constructor.GetAllCollections()
+        if (_repository is null) return [];
+        var all = _repository.GetAllCollections()
             .Where(c => c.Id.HasValue).Select(c => c.Id!.Value).ToHashSet();
         all.ExceptWith(_uncheckedIds);
         return all;
+    }
+
+    public void SelectCollection(int collectionId)
+    {
+        if (_mode != SidebarMode.Constructor) return;
+        var target = FindNode(_roots, "collection", collectionId);
+        if (target is null) return;
+        ExpandAncestors(_roots, target);
+        _selected = target;
+        RebuildRows();
     }
 
     // ── Плоский список видимых строк ─────────────────────────────────────────────
@@ -82,28 +109,28 @@ public partial class Sidebar : UserControl
         Flatten(_roots, 0);
     }
 
-    private void Flatten(IEnumerable<CalNode> nodes, int depth)
+    private void Flatten(IEnumerable<SidebarNode> nodes, int depth)
     {
         foreach (var n in nodes)
         {
-            _rows.Add(new CalRow(n, depth, IsChecked(n)));
+            _rows.Add(new SidebarRow(n, depth, _mode, IsChecked(n), n == _selected));
             if (n.IsGroup && n.IsExpanded)
                 Flatten(n.Children, depth + 1);
         }
     }
 
-    private bool IsChecked(CalNode n) =>
-        n.IsGroup ? false : n.Id.HasValue && !_uncheckedIds.Contains(n.Id.Value);
+    private bool IsChecked(SidebarNode n) =>
+        !n.IsGroup && n.Id.HasValue && !_uncheckedIds.Contains(n.Id.Value);
 
-    // ── Построение дерева (группы + коллекции) ───────────────────────────────────
+    // ── Построение дерева ──────────────────────────────────────────────────────
 
-    private List<CalNode> BuildTree()
+    private List<SidebarNode> BuildTree()
     {
-        if (_constructor is null) return [];
+        if (_repository is null) return [];
 
-        var groups      = _constructor.GetAllGroups();
-        var collections = _constructor.GetAllCollections();
-        var root        = new List<CalNode>();
+        var groups      = _repository.GetAllGroups();
+        var collections = _repository.GetAllCollections();
+        var root        = new List<SidebarNode>();
 
         foreach (var g in groups.Where(g => g.ParentId is null).OrderBy(g => g.Position))
             root.Add(BuildGroupNode(g, groups, collections));
@@ -113,11 +140,11 @@ public partial class Sidebar : UserControl
         return SortNodes(root);
     }
 
-    private CalNode BuildGroupNode(DbGroup group, List<DbGroup> allGroups, List<DbCollection> allCollections)
+    private SidebarNode BuildGroupNode(DbGroup group, List<DbGroup> allGroups, List<DbCollection> allCollections)
     {
-        var node = new CalNode { NodeType = "group", Id = group.Id, Name = group.Name };
+        var node = new SidebarNode { NodeType = "group", Id = group.Id, Name = group.Name };
 
-        var children = new List<CalNode>();
+        var children = new List<SidebarNode>();
         foreach (var child in allGroups.Where(g => g.ParentId == group.Id).OrderBy(g => g.Position))
             children.Add(BuildGroupNode(child, allGroups, allCollections));
         foreach (var col in allCollections.Where(c => c.GroupId == group.Id).OrderBy(c => c.Position))
@@ -129,10 +156,10 @@ public partial class Sidebar : UserControl
         return node;
     }
 
-    private static CalNode MakeCollectionNode(DbCollection c) =>
+    private static SidebarNode MakeCollectionNode(DbCollection c) =>
         new() { NodeType = "collection", Id = c.Id, Name = c.Name, Color = c.Color };
 
-    private List<CalNode> SortNodes(List<CalNode> nodes)
+    private List<SidebarNode> SortNodes(List<SidebarNode> nodes)
     {
         var groups = nodes.Where(n => n.IsGroup).ToList();
         var colls  = nodes.Where(n => !n.IsGroup).ToList();
@@ -146,7 +173,7 @@ public partial class Sidebar : UserControl
         return [.. groups, .. colls];
     }
 
-    private static List<CalNode> ApplyOrder(List<CalNode> nodes, bool desc) =>
+    private static List<SidebarNode> ApplyOrder(List<SidebarNode> nodes, bool desc) =>
         desc ? nodes.OrderByDescending(n => NameKey(n.Name)).ToList()
              : nodes.OrderBy(n => NameKey(n.Name)).ToList();
 
@@ -169,7 +196,7 @@ public partial class Sidebar : UserControl
         RebuildRows();
     }
 
-    private static void SetExpandedRecursive(IEnumerable<CalNode> nodes, bool expand)
+    private static void SetExpandedRecursive(IEnumerable<SidebarNode> nodes, bool expand)
     {
         foreach (var n in nodes)
         {
@@ -184,7 +211,7 @@ public partial class Sidebar : UserControl
         Collect(_roots);
         return ids;
 
-        void Collect(IEnumerable<CalNode> ns)
+        void Collect(IEnumerable<SidebarNode> ns)
         {
             foreach (var n in ns)
             {
@@ -194,7 +221,7 @@ public partial class Sidebar : UserControl
         }
     }
 
-    private void RestoreExpanded(IEnumerable<CalNode> nodes, HashSet<int> ids)
+    private void RestoreExpanded(IEnumerable<SidebarNode> nodes, HashSet<int> ids)
     {
         foreach (var n in nodes)
         {
@@ -202,6 +229,31 @@ public partial class Sidebar : UserControl
                 n.IsExpanded = _expandedAll || ids.Contains(n.Id.Value);
             RestoreExpanded(n.Children, ids);
         }
+    }
+
+    private static bool ExpandAncestors(IEnumerable<SidebarNode> nodes, SidebarNode target)
+    {
+        foreach (var n in nodes)
+        {
+            if (n == target) return true;
+            if (ExpandAncestors(n.Children, target))
+            {
+                n.IsExpanded = true;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static SidebarNode? FindNode(IEnumerable<SidebarNode> nodes, string type, int id)
+    {
+        foreach (var node in nodes)
+        {
+            if (node.NodeType == type && node.Id == id) return node;
+            var found = FindNode(node.Children, type, id);
+            if (found is not null) return found;
+        }
+        return null;
     }
 
     // ── Сортировка ───────────────────────────────────────────────────────────────
@@ -223,9 +275,9 @@ public partial class Sidebar : UserControl
         Refresh();
     }
 
-    // ── Чекбоксы видимости ────────────────────────────────────────────────────────
+    // ── Чекбоксы видимости (только календарь) ────────────────────────────────────
 
-    private void ToggleCollection(CalNode node)
+    private void ToggleCollection(SidebarNode node)
     {
         if (!node.Id.HasValue) return;
         var id = node.Id.Value;
@@ -240,21 +292,21 @@ public partial class Sidebar : UserControl
 
     private bool AllChecked()
     {
-        if (_constructor is null) return false;
-        var all = _constructor.GetAllCollections().Where(c => c.Id.HasValue).Select(c => c.Id!.Value);
+        if (_repository is null) return false;
+        var all = _repository.GetAllCollections().Where(c => c.Id.HasValue).Select(c => c.Id!.Value);
         return all.All(id => !_uncheckedIds.Contains(id));
     }
 
     private void ToggleAllChecked()
     {
-        if (_constructor is null) return;
-        var allIds = _constructor.GetAllCollections()
+        if (_repository is null) return;
+        var allIds = _repository.GetAllCollections()
             .Where(c => c.Id.HasValue).Select(c => c.Id!.Value).ToList();
 
         if (AllChecked())
-            foreach (var id in allIds) _uncheckedIds.Add(id);   // выключить все
+            foreach (var id in allIds) _uncheckedIds.Add(id);
         else
-            _uncheckedIds.Clear();                              // включить все
+            _uncheckedIds.Clear();
 
         RebuildRows();
         UpdateToggleAllIcon();
@@ -263,7 +315,7 @@ public partial class Sidebar : UserControl
 
     private void UpdateToggleAllIcon()
     {
-        // Иконка всегда серая; синий — только при наведении (через стиль navbtn)
+        if (_mode != SidebarMode.Calendar) return;
         var on = AllChecked();
         ToolTip.SetTip(ToggleAllBtn, on ? "Выключить все" : "Включить все");
     }
@@ -272,21 +324,31 @@ public partial class Sidebar : UserControl
 
     private void OnRowTapped(object? sender, TappedEventArgs e)
     {
-        if (sender is not Control { DataContext: CalRow row }) return;
-        if (row.Node.IsGroup)
+        if (sender is not Control { DataContext: SidebarRow row }) return;
+        var node = row.Node;
+
+        if (node.IsGroup)
         {
-            row.Node.IsExpanded = !row.Node.IsExpanded;
+            node.IsExpanded = !node.IsExpanded;
             RebuildRows();
+            return;
+        }
+
+        if (_mode == SidebarMode.Calendar)
+        {
+            ToggleCollection(node);
         }
         else
         {
-            ToggleCollection(row.Node);
+            _selected = node;
+            RebuildRows();
+            if (node.Id.HasValue) CollectionSelected?.Invoke(this, node.Id.Value);
         }
     }
 
     private void OnChevronTapped(object? sender, TappedEventArgs e)
     {
-        if (sender is not Control { DataContext: CalRow row } || !row.Node.IsGroup) return;
+        if (sender is not Control { DataContext: SidebarRow row } || !row.Node.IsGroup) return;
         row.Node.IsExpanded = !row.Node.IsExpanded;
         RebuildRows();
         e.Handled = true;
@@ -294,31 +356,71 @@ public partial class Sidebar : UserControl
 
     private void OnCheckboxTapped(object? sender, TappedEventArgs e)
     {
-        if (sender is not Control { DataContext: CalRow row } || row.Node.IsGroup) return;
+        if (_mode != SidebarMode.Calendar) return;
+        if (sender is not Control { DataContext: SidebarRow row } || row.Node.IsGroup) return;
         ToggleCollection(row.Node);
         e.Handled = true;
     }
 
     private void OnRowEnter(object? sender, PointerEventArgs e)
     {
-        if (sender is Control { DataContext: CalRow row }) row.SetHovered(true);
+        if (sender is Control { DataContext: SidebarRow row }) row.SetHovered(true);
     }
 
     private void OnRowExit(object? sender, PointerEventArgs e)
     {
-        if (sender is Control { DataContext: CalRow row }) row.SetHovered(false);
+        if (sender is Control { DataContext: SidebarRow row }) row.SetHovered(false);
     }
+
+    // ── Контекстное меню ────────────────────────────────────────────────────────
 
     private void OnRowContextRequested(object? sender, ContextRequestedEventArgs e)
     {
-        if (sender is not Control { DataContext: CalRow row } anchor) return;
-        if (row.Node.IsGroup || !row.Node.Id.HasValue) return;
+        if (sender is not Control { DataContext: SidebarRow row } anchor) return;
+        if (!row.Node.Id.HasValue) return;
 
-        var nodeId = row.Node.Id.Value;
         var menu = new ContextMenu();
+        var node = row.Node;
+        var id   = node.Id.Value;
+
+        if (node.IsGroup)
+        {
+            menu.Items.Add(MenuItemSimple("Создать группу",    () => _ = CreateItem("group", parentId: id)));
+            menu.Items.Add(MenuItemSimple("Создать коллекцию", () => _ = CreateItem("collection", parentId: id)));
+            menu.Items.Add(new Separator());
+            menu.Items.Add(MenuItemSimple("Редактировать", () => _ = EditGroup(id)));
+            menu.Items.Add(MenuItemSimple("Удалить",       () => _ = DeleteGroup(id)));
+        }
+        else
+        {
+            if (_mode == SidebarMode.Calendar)
+            {
+                menu.Items.Add(BuildColorMenu(id));
+                menu.Items.Add(new Separator());
+            }
+            menu.Items.Add(MenuItemSimple("Редактировать", () => _ = EditCollection(id)));
+            menu.Items.Add(MenuItemSimple("Удалить",       () => _ = DeleteCollection(id)));
+        }
+
+        menu.Open(anchor);
+        e.Handled = true;
+    }
+
+    private void OnEmptyContextRequested(object? sender, ContextRequestedEventArgs e)
+    {
+        if (sender is not Control anchor) return;
+
+        var menu = new ContextMenu();
+        menu.Items.Add(MenuItemSimple("Создать группу",    () => _ = CreateItem("group", parentId: null)));
+        menu.Items.Add(MenuItemSimple("Создать коллекцию", () => _ = CreateItem("collection", parentId: null)));
+        menu.Open(anchor);
+        e.Handled = true;
+    }
+
+    private MenuItem BuildColorMenu(int collectionId)
+    {
         var colorItem = new MenuItem { Header = "Изменить цвет" };
 
-        // «Без цвета» → серый (дефолтный)
         var noColor = new MenuItem
         {
             Header = "Без цвета",
@@ -330,7 +432,7 @@ public partial class Sidebar : UserControl
                 BorderThickness = new Thickness(1.5),
             },
         };
-        noColor.Click += (_, _) => ChangeColor(nodeId, "#007AFF");  // дефолт = серый
+        noColor.Click += (_, _) => ChangeColor(collectionId, "#007AFF");
         colorItem.Items.Add(noColor);
         colorItem.Items.Add(new Separator());
 
@@ -345,31 +447,151 @@ public partial class Sidebar : UserControl
                     Background = new SolidColorBrush(Color.Parse(hex)),
                 },
             };
-            sub.Click += (_, _) => ChangeColor(nodeId, hex);
+            sub.Click += (_, _) => ChangeColor(collectionId, hex);
             colorItem.Items.Add(sub);
         }
-        menu.Items.Add(colorItem);
-        menu.Open(anchor);
-        e.Handled = true;
+        return colorItem;
+    }
+
+    private static MenuItem MenuItemSimple(string header, Action onClick)
+    {
+        var item = new MenuItem { Header = header };
+        item.Click += (_, _) => onClick();
+        return item;
     }
 
     private void ChangeColor(int collectionId, string hex)
     {
-        if (_constructor is null) return;
-        var col = _constructor.GetAllCollections().FirstOrDefault(c => c.Id == collectionId);
+        if (_repository is null) return;
+        var col = _repository.GetAllCollections().FirstOrDefault(c => c.Id == collectionId);
         if (col is null) return;
 
         col.Color = hex;
-        _constructor.UpdateCollection(col);
+        _repository.UpdateCollection(col);
         Refresh();
         CalendarsChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    // ── CRUD ────────────────────────────────────────────────────────────────────
+
+    private Window? OwnerWindow => VisualRoot as Window;
+
+    private async Task CreateItem(string presetType, int? parentId)
+    {
+        if (_repository is null || OwnerWindow is null) return;
+
+        var dlg = new CreateItemDialog(_repository, presetType, parentId);
+        var res = await dlg.ShowDialog<CreateItemResult?>(OwnerWindow);
+        if (res is null) return;
+
+        if (res.Type == "group")
+        {
+            var pos = _repository.GetAllGroups().Select(g => g.Position).DefaultIfEmpty(0).Max() + 1000;
+            var group = _repository.AddGroup(new DbGroup { Name = res.Name, ParentId = res.ParentId, Position = pos });
+            ReloadAndNotify();
+            if (group.Id.HasValue) ExpandGroup(group.Id.Value);
+        }
+        else
+        {
+            var pos = _repository.GetAllCollections().Select(c => c.Position).DefaultIfEmpty(0).Max() + 1000;
+            var col = _repository.AddCollection(new DbCollection { Name = res.Name, GroupId = res.ParentId, Position = pos });
+            if (col.Id.HasValue)
+                _repository.AddRecord(new DbRecord { CollectionId = col.Id.Value });
+            ReloadAndNotify();
+            if (col.Id.HasValue && _mode == SidebarMode.Constructor) OpenCollection(col.Id.Value);
+        }
+    }
+
+    private void ExpandGroup(int groupId)
+    {
+        var node = FindNode(_roots, "group", groupId);
+        if (node is null) return;
+        ExpandAncestors(_roots, node);
+        node.IsExpanded = true;
+        RebuildRows();
+    }
+
+    private void OpenCollection(int collectionId)
+    {
+        SelectCollection(collectionId);
+        CollectionSelected?.Invoke(this, collectionId);
+    }
+
+    private async Task EditGroup(int groupId)
+    {
+        if (_repository is null || OwnerWindow is null) return;
+
+        var group = _repository.GetAllGroups().FirstOrDefault(g => g.Id == groupId);
+        if (group is null) return;
+
+        var dlg = new GroupDialog(_repository, editNode: group);
+        var res = await dlg.ShowDialog<GroupDialogResult?>(OwnerWindow);
+        if (res is null) return;
+
+        group.Name     = res.Name;
+        group.ParentId = res.ParentId;
+        _repository.UpdateGroup(group);
+        ReloadAndNotify();
+    }
+
+    private async Task EditCollection(int collectionId)
+    {
+        if (_repository is null || OwnerWindow is null) return;
+
+        var col = _repository.GetAllCollections().FirstOrDefault(c => c.Id == collectionId);
+        if (col is null) return;
+
+        var dlg = new CollectionDialog(_repository, editNode: col);
+        var res = await dlg.ShowDialog<CollectionDialogResult?>(OwnerWindow);
+        if (res is null) return;
+
+        col.Name    = res.Name;
+        col.GroupId = res.GroupId;
+        _repository.UpdateCollection(col);
+        ReloadAndNotify();
+    }
+
+    private async Task DeleteGroup(int groupId)
+    {
+        if (_repository is null || OwnerWindow is null) return;
+
+        var dlg = new ConfirmDialog(
+            "Удалить группу? Коллекции внутри будут перемещены в корневой уровень.");
+        if (await dlg.ShowDialog<bool>(OwnerWindow) != true) return;
+
+        _repository.DeleteGroup(groupId);
+        ReloadAndNotify();
+    }
+
+    private async Task DeleteCollection(int collectionId)
+    {
+        if (_repository is null || OwnerWindow is null) return;
+
+        var dlg = new ConfirmDialog(
+            "Удалить коллекцию? Все данные будут удалены без возможности восстановления.");
+        if (await dlg.ShowDialog<bool>(OwnerWindow) != true) return;
+
+        _repository.DeleteCollection(collectionId);
+        ReloadAndNotify();
+        CollectionDeleted?.Invoke(this, collectionId);
+    }
+
+    private void ReloadAndNotify()
+    {
+        Refresh();
+        RequestRefresh?.Invoke(this, EventArgs.Empty);
+        if (_mode == SidebarMode.Calendar)
+        {
+            CalendarsChanged?.Invoke(this, EventArgs.Empty);
+            ActiveIdsChanged?.Invoke(this, GetActiveIds());
+        }
     }
 
     private enum SortState { None, Asc, Desc }
 }
 
 // ── Узел дерева ────────────────────────────────────────────────────────────────
-public class CalNode
+public class SidebarNode
 {
     public string NodeType { get; init; } = "";  // "group" | "collection"
     public int?    Id       { get; init; }
@@ -378,49 +600,62 @@ public class CalNode
     public bool    IsExpanded { get; set; }
     public bool    IsGroup => NodeType == "group";
 
-    public ObservableCollection<CalNode> Children { get; } = [];
+    public ObservableCollection<SidebarNode> Children { get; } = [];
 }
 
-// ── Плоская строка для отрисовки ──────────────────────────────────────────────────
-public partial class CalRow : ObservableObject
+// ── Плоская строка для отрисовки ──────────────────────────────────────────────
+public partial class SidebarRow : ObservableObject
 {
     private const double IndentStep = 22;
 
+    private static readonly IBrush Accent      = new SolidColorBrush(Color.Parse("#007AFF"));
     private static readonly IBrush AccentLight = new SolidColorBrush(Color.Parse("#E5F0FF"));
     private static readonly IBrush Hover       = new SolidColorBrush(Color.Parse("#F2F2F7"));
+    private static readonly IBrush Secondary   = new SolidColorBrush(Color.Parse("#8E8E93"));
+    private static readonly IBrush Primary     = new SolidColorBrush(Color.Parse("#1C1C1E"));
 
+    // Lucide: folder / grid-2x2-check
+    private const string FolderGeo =
+        "M20 20 A2 2 0 0 0 22 18 V8 A2 2 0 0 0 20 6 H12.1 A2 2 0 0 1 10.41 5.1 L9.6 3.9 A2 2 0 0 0 7.93 3 H4 A2 2 0 0 0 2 5 V18 A2 2 0 0 0 4 20 Z";
+    private const string CollectionGeo =
+        "M12 3 V20 A1 1 0 0 1 11 21 H5 A2 2 0 0 1 3 19 V5 A2 2 0 0 1 5 3 H19 A2 2 0 0 1 21 5 V11 A1 1 0 0 1 20 12 H3 M16 19 L18 21 L22 17";
     private const string ChevronRightGeo = "M9 18 L15 12 L9 6";
     private const string ChevronDownGeo  = "M6 9 L12 15 L18 9";
 
-    public CalNode Node { get; }
-    public int     Depth { get; }
-    public string  Name  => Node.Name;
+    // «Без цвета»: дефолтный синий → серый чекбокс.
+    private const string DefaultColor = "#007AFF";
+    private const string GreyColor    = "#8E8E93";
+
+    public SidebarNode Node { get; }
+    public int         Depth { get; }
+    public SidebarMode Mode { get; }
+    public string      Name => Node.Name;
 
     [ObservableProperty] private bool _hovered;
     [ObservableProperty] private bool _checked;
+    [ObservableProperty] private bool _selected;
 
-    public CalRow(CalNode node, int depth, bool isChecked)
+    public SidebarRow(SidebarNode node, int depth, SidebarMode mode, bool isChecked, bool selected)
     {
         Node     = node;
         Depth    = depth;
+        Mode     = mode;
         _checked = isChecked;
+        _selected = selected;
     }
 
     public void SetHovered(bool v) => Hovered = v;
 
     public Thickness IndentMargin => new(Depth * IndentStep, 0, 0, 0);
     public double    ChevronSlot  => Node.IsGroup ? IndentStep : 0;
-    // Зона чекбокса есть только у коллекций; у групп схлопывается → текст вплотную к стрелке
-    public double    CheckboxSlot => Node.IsGroup ? 0 : IndentStep;
+
+    // Чекбокс есть только в режиме календаря и только у коллекций.
+    public double CheckboxSlot => Mode == SidebarMode.Calendar && !Node.IsGroup ? IndentStep : 0;
+    public bool   ShowCheckbox => Mode == SidebarMode.Calendar && !Node.IsGroup;
 
     public bool   ShowChevron     => Node.IsGroup;
-    public bool   ShowCheckbox    => !Node.IsGroup;
     public string ChevronGeometry => Node.IsExpanded ? ChevronDownGeo : ChevronRightGeo;
-
-    // Дефолтный синий трактуем как «без цвета» → серый чекбокс.
-    // Цвет появляется только если выбран явно через контекстное меню.
-    private const string DefaultColor = "#007AFF";
-    private const string GreyColor    = "#8E8E93";
+    public string IconGeometry    => Node.IsGroup ? FolderGeo : CollectionGeo;
 
     private SolidColorBrush ColorBrush
     {
@@ -433,16 +668,26 @@ public partial class CalRow : ObservableObject
         }
     }
 
-    // Checked → залит цветом; Unchecked → прозрачный с цветным контуром
     public IBrush CheckFill   => Checked ? ColorBrush : Brushes.Transparent;
     public IBrush CheckBorder => ColorBrush;
 
-    public IBrush RowBackground => Hovered ? Hover : Brushes.Transparent;
+    public IBrush IconBrush => Selected ? Accent : Secondary;
+    public IBrush NameBrush => Selected ? Accent : Primary;
 
-    partial void OnHoveredChanged(bool value) => OnPropertyChanged(nameof(RowBackground));
+    public IBrush RowBackground =>
+        Selected ? AccentLight :
+        Hovered  ? Hover       : Brushes.Transparent;
+
+    partial void OnHoveredChanged(bool value)  => OnPropertyChanged(nameof(RowBackground));
     partial void OnCheckedChanged(bool value)
     {
         OnPropertyChanged(nameof(CheckFill));
         OnPropertyChanged(nameof(CheckBorder));
+    }
+    partial void OnSelectedChanged(bool value)
+    {
+        OnPropertyChanged(nameof(RowBackground));
+        OnPropertyChanged(nameof(IconBrush));
+        OnPropertyChanged(nameof(NameBrush));
     }
 }

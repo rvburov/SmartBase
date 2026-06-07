@@ -18,8 +18,14 @@ public partial class ConstructorControllerView : UserControl
     /// <summary>Запрос закрыть правую панель (например, при удалении открытой записи).</summary>
     public event EventHandler?      RecordPageClosed;
 
+    /// <summary>Запрос переключить видимость правой панели записи из навбара коллекции.</summary>
+    public event EventHandler<bool>? RecordPanelToggled;
+
     /// <summary>Текущая открытая коллекция (для MainWindow при открытии PageView).</summary>
     public int? CurrentCollectionId => _currentCollectionId;
+
+    /// <summary>Синхронизирует визуальное состояние toggle-кнопки записи в навбаре.</summary>
+    public void SetRecordPanelOpen(bool isOpen) => ConstructorNavbar.SetRecordPanelOpen(isOpen);
 
     public ConstructorControllerView() { InitializeComponent(); }
 
@@ -38,6 +44,9 @@ public partial class ConstructorControllerView : UserControl
 
         // Переименование коллекции прямо из заголовка навбара.
         ConstructorNavbar.TitleEdited += (_, newName) => RenameCurrentCollection(newName);
+
+        // Toggle правой панели записи в навбаре — пробрасываем в MainWindow.
+        ConstructorNavbar.RecordPanelToggled += (_, isOpen) => RecordPanelToggled?.Invoke(this, isOpen);
 
         // Управление ресайзом — в нижней панели.
         ConstructorFooter.ColResizeModeChanged += (_, v) => TableViewCtrl.SetColResizeMode(v);
@@ -134,7 +143,14 @@ public partial class ConstructorControllerView : UserControl
         CollectionsChanged?.Invoke(this, EventArgs.Empty);
 
         if (rec.Id.HasValue)
+        {
+            // Прокручиваем таблицу к новой записи, чтобы кнопка «+» (add-row)
+            // осталась в видимой зоне — иначе при серии создания приходится
+            // каждый раз листать вниз, чтобы снова нажать «+».
+            if (TableViewCtrl.IsVisible)
+                TableViewCtrl.ScrollToRecord(rec.Id.Value);
             RecordPageRequested?.Invoke(this, rec.Id.Value);
+        }
     }
 
     private void DeleteRecord(int recordId)

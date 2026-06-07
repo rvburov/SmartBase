@@ -66,6 +66,9 @@ public class DbRecordEntity
     public string? EndDt        { get; set; }
     public bool    AllDay       { get; set; } = false;
 
+    [Required] public string  Title       { get; set; } = "";
+    public string? Description { get; set; }
+
     [ForeignKey(nameof(CollectionId))]
     public DbCollectionEntity              Collection  { get; set; } = null!;
     public ICollection<DbFieldValueEntity> FieldValues { get; set; } = [];

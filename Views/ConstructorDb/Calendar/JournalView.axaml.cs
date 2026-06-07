@@ -11,7 +11,7 @@ namespace MyPlanner.Views.ConstructorDb.Calendar;
 
 public partial class JournalView : UserControl
 {
-    public event EventHandler<Event>?    EventClicked;
+    public event EventHandler<CalendarRecord>?    RecordClicked;
     public event EventHandler<DateTime>? CreateRequested;
 
     private List<JournalItem>  _allItems = new();
@@ -51,7 +51,7 @@ public partial class JournalView : UserControl
             i.IsSelected = false;
     }
 
-    public void Refresh(IEnumerable<Event> events, DateTime currentDate)
+    public void Refresh(IEnumerable<CalendarRecord> events, DateTime currentDate)
     {
         var today = DateTime.Today;
 
@@ -121,7 +121,7 @@ public partial class JournalView : UserControl
         if (sender is Border { Tag: JournalItem item })
         {
             e.Handled = true;
-            EventClicked?.Invoke(this, item.OriginalEvent);
+            RecordClicked?.Invoke(this, item.OriginalEvent);
         }
     }
 
@@ -231,7 +231,7 @@ public class JournalGroup
 
 public partial class JournalItem : ObservableObject
 {
-    public Event  OriginalEvent { get; }
+    public CalendarRecord  OriginalEvent { get; }
     public string Title         { get; }
     public string TimeText      { get; }
     public IBrush ColorBrush    { get; }
@@ -251,10 +251,10 @@ public partial class JournalItem : ObservableObject
             ? new SolidColorBrush(Color.FromArgb(25, 128, 128, 128))
             : Brushes.Transparent;
 
-    public JournalItem(Event ev, bool isPast = false)
+    public JournalItem(CalendarRecord ev, bool isPast = false)
     {
         OriginalEvent = ev;
-        Title         = ev.Title;
+        Title         = ev.DisplayTitle;
         TimeText      = ev.AllDay ? "Весь день" : $"{ev.StartDt:HH:mm} – {ev.EndDt:HH:mm}";
         ColorBrush    = new SolidColorBrush(Color.Parse(EventColors.Display(ev.Color)));
         TitleBrush    = isPast

@@ -11,6 +11,8 @@ public partial class ConstructorNavbar : UserControl
     public event EventHandler<string>? ViewChanged;
     /// <summary>Новое имя коллекции (после blur/Enter). Пусто/whitespace — игнорируется родителем.</summary>
     public event EventHandler<string>? TitleEdited;
+    /// <summary>Запрос изменить видимость правой панели записи (true — открыть, false — закрыть).</summary>
+    public event EventHandler<bool>?   RecordPanelToggled;
 
     private string _committedTitle = "";
 
@@ -34,6 +36,27 @@ public partial class ConstructorNavbar : UserControl
             if (e.Key == Key.Enter) { CommitTitle(); e.Handled = true; }
             if (e.Key == Key.Escape) { TitleBox.Text = _committedTitle; e.Handled = true; }
         };
+
+        RecordPanelBtn.IsCheckedChanged += (_, _) =>
+        {
+            UpdateRecordPanelIcon();
+            RecordPanelToggled?.Invoke(this, RecordPanelBtn.IsChecked == true);
+        };
+    }
+
+    /// <summary>Синхронизирует визуальное состояние кнопки с фактической видимостью панели записи.</summary>
+    public void SetRecordPanelOpen(bool isOpen)
+    {
+        if (RecordPanelBtn.IsChecked == isOpen) return;
+        RecordPanelBtn.IsChecked = isOpen;   // вызовет IsCheckedChanged → UpdateRecordPanelIcon
+    }
+
+    private void UpdateRecordPanelIcon()
+    {
+        var open = RecordPanelBtn.IsChecked == true;
+        RecordOpenIcon.IsVisible  = !open;
+        RecordCloseIcon.IsVisible = open;
+        ToolTip.SetTip(RecordPanelBtn, open ? "Закрыть запись" : "Открыть запись");
     }
 
     public void SetTitle(string text)

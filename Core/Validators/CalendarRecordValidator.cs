@@ -2,19 +2,16 @@ using MyPlanner.Core.Models;
 
 namespace MyPlanner.Core.Validators;
 
-public static class EventValidator
+public static class CalendarRecordValidator
 {
     private const int MinDurationSeconds = 1800; // 30 минут
 
-    public static string? Validate(Event e)
+    public static string? Validate(CalendarRecord r)
     {
-        if (string.IsNullOrWhiteSpace(e.Title))
-            return "Введите название записи";
-
-        if (e.EndDt <= e.StartDt)
+        if (r.EndDt <= r.StartDt)
             return "Время конца должно быть позже начала";
 
-        if ((e.EndDt - e.StartDt).TotalSeconds < MinDurationSeconds)
+        if ((r.EndDt - r.StartDt).TotalSeconds < MinDurationSeconds)
             return "Минимальная продолжительность записи — 30 минут";
 
         return null;

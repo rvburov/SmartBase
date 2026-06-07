@@ -1,9 +1,12 @@
 namespace MyPlanner.Core.Models;
 
-public class Event
+public class CalendarRecord
 {
+    public const string UntitledPlaceholder = "Без названия";
+
     public int?     Id             { get; set; }
     public string   Title          { get; set; } = "";
+    public string   DisplayTitle   => string.IsNullOrWhiteSpace(Title) ? UntitledPlaceholder : Title;
     public DateTime StartDt        { get; set; }
     public DateTime EndDt          { get; set; }
     public string   Description    { get; set; } = "";

@@ -19,8 +19,9 @@ namespace MyPlanner.Views.ConstructorDb;
 /// </summary>
 public partial class RecordPageView : UserControl
 {
-    public event EventHandler?      CloseRequested;
     public event EventHandler<int>? RecordChanged; // recordId — известили родителя, что данные изменились
+    /// <summary>Запрос изменить видимость блока коллекции (true — открыть, false — закрыть).</summary>
+    public event EventHandler<bool>? CollectionPanelToggled;
 
     private RecordPageViewModel? _vm;
 
@@ -28,8 +29,28 @@ public partial class RecordPageView : UserControl
     {
         InitializeComponent();
 
-        CloseBtn.Click       += (_, _) => CloseRequested?.Invoke(this, EventArgs.Empty);
         PreviewToggle.IsCheckedChanged += (_, _) => UpdatePreviewVisibility();
+
+        CollectionPanelBtn.IsCheckedChanged += (_, _) =>
+        {
+            UpdateCollectionPanelIcon();
+            CollectionPanelToggled?.Invoke(this, CollectionPanelBtn.IsChecked == true);
+        };
+    }
+
+    /// <summary>Синхронизирует визуальное состояние кнопки с фактической видимостью блока коллекции.</summary>
+    public void SetCollectionPanelOpen(bool isOpen)
+    {
+        if (CollectionPanelBtn.IsChecked == isOpen) return;
+        CollectionPanelBtn.IsChecked = isOpen;
+    }
+
+    private void UpdateCollectionPanelIcon()
+    {
+        var open = CollectionPanelBtn.IsChecked == true;
+        CollectionOpenIcon.IsVisible  = !open;
+        CollectionCloseIcon.IsVisible = open;
+        ToolTip.SetTip(CollectionPanelBtn, open ? "Закрыть коллекцию" : "Открыть коллекцию");
     }
 
     public void Show(ConstructorRepository repository, int recordId, int collectionId)

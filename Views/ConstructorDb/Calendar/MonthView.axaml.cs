@@ -11,8 +11,8 @@ public partial class MonthView : UserControl
 {
     public event EventHandler<DateTime>? DaySelected;
     public event EventHandler<DateTime>? DayAddClicked;
-    public event EventHandler<Event>?    EventClicked;
-    public event EventHandler<Event>?    EventMoved;
+    public event EventHandler<CalendarRecord>?    RecordClicked;
+    public event EventHandler<CalendarRecord>?    RecordMoved;
 
     // Константы макета (соответствуют PyQt DayCell / MonthOverlay)
     private const int DateH   = 34;
@@ -21,12 +21,12 @@ public partial class MonthView : UserControl
     private const int MoreH   = 16;
     private const int BPad    = 4;
 
-    private List<Event> _events      = [];
+    private List<CalendarRecord> _events      = [];
     private DateTime    _currentDate = DateTime.Today;
     private DateTime    _gridStart;
 
     // Drag state
-    private Event?    _dragEv;
+    private CalendarRecord?    _dragEv;
     private bool      _dragActive;
     private Point     _dragPress;
     private DateTime  _dragOrigStart;
@@ -85,7 +85,7 @@ public partial class MonthView : UserControl
         }
     }
 
-    public void Refresh(IEnumerable<Event> events, DateTime currentDate)
+    public void Refresh(IEnumerable<CalendarRecord> events, DateTime currentDate)
     {
         _events      = events.ToList();
         _currentDate = currentDate;
@@ -246,7 +246,7 @@ public partial class MonthView : UserControl
         bool        isCurrentMonth,
         bool        isToday,
         bool        isWeekend,
-        List<Event> singles,
+        List<CalendarRecord> singles,
         int         topOff,
         int         hidden)
     {
@@ -405,7 +405,7 @@ public partial class MonthView : UserControl
 
     // ── плашка однодневного события ───────────────────────────────────────────
 
-    private Border _MakeChip(Event ev)
+    private Border _MakeChip(CalendarRecord ev)
     {
         var color      = Color.Parse(EventColors.Display(ev.Color));
         var normalBg   = new SolidColorBrush(Color.FromArgb(50, color.R, color.G, color.B));
@@ -428,7 +428,7 @@ public partial class MonthView : UserControl
         {
             var tb = new TextBlock
             {
-                Text              = ev.Title,
+                Text              = ev.DisplayTitle,
                 FontSize          = 13,
                 FontWeight        = FontWeight.SemiBold,
                 Foreground        = darkBrush,
@@ -458,7 +458,7 @@ public partial class MonthView : UserControl
             };
             var titleTb = new TextBlock
             {
-                Text         = ev.Title,
+                Text         = ev.DisplayTitle,
                 FontSize     = 13,
                 FontWeight   = FontWeight.SemiBold,
                 Foreground   = darkBrush,
@@ -498,7 +498,7 @@ public partial class MonthView : UserControl
             if (_pressClickCount >= 2)
             {
                 _Deselect();
-                EventClicked?.Invoke(this, ev);
+                RecordClicked?.Invoke(this, ev);
             }
             else
             {
@@ -521,7 +521,7 @@ public partial class MonthView : UserControl
 
     // ── бар многодневного события на Canvas ───────────────────────────────────
 
-    private void _AddSpanBar(Event ev, double bx, double by, double bw,
+    private void _AddSpanBar(CalendarRecord ev, double bx, double by, double bw,
                               bool leftCap, bool rightCap)
     {
         var color      = Color.Parse(EventColors.Display(ev.Color));
@@ -568,7 +568,7 @@ public partial class MonthView : UserControl
         {
             var tb = new TextBlock
             {
-                Text              = ev.Title,
+                Text              = ev.DisplayTitle,
                 FontSize          = 13,
                 FontWeight        = FontWeight.SemiBold,
                 Foreground        = darkBrush,
@@ -596,7 +596,7 @@ public partial class MonthView : UserControl
             };
             var titleTb = new TextBlock
             {
-                Text         = ev.Title,
+                Text         = ev.DisplayTitle,
                 FontSize     = 13,
                 FontWeight   = FontWeight.SemiBold,
                 Foreground   = darkBrush,
@@ -641,7 +641,7 @@ public partial class MonthView : UserControl
             if (_pressClickCount >= 2)
             {
                 _Deselect();
-                EventClicked?.Invoke(this, ev);
+                RecordClicked?.Invoke(this, ev);
             }
             else
             {
@@ -669,7 +669,7 @@ public partial class MonthView : UserControl
 
     // ── drag-and-drop ─────────────────────────────────────────────────────────
 
-    private void _BeginDragTrack(Event ev, Control src, PointerPressedEventArgs e)
+    private void _BeginDragTrack(CalendarRecord ev, Control src, PointerPressedEventArgs e)
     {
         if (_dragEv is not null) return;
         _dragEv          = ev;
@@ -721,7 +721,7 @@ public partial class MonthView : UserControl
             ev.StartDt = _dragOrigStart + delta;
             ev.EndDt   = _dragOrigEnd   + delta;
             _CancelDrag();
-            EventMoved?.Invoke(this, ev);
+            RecordMoved?.Invoke(this, ev);
         }
         else
         {
@@ -868,7 +868,7 @@ public partial class MonthView : UserControl
             });
             _dragPreview.Children.Add(new TextBlock
             {
-                Text              = _dragEv.AllDay ? _dragEv.Title : $"{_dragEv.StartDt:HH:mm} {_dragEv.Title}",
+                Text              = _dragEv.AllDay ? _dragEv.DisplayTitle : $"{_dragEv.StartDt:HH:mm} {_dragEv.DisplayTitle}",
                 FontSize          = 13,
                 FontWeight        = FontWeight.SemiBold,
                 Foreground        = Brushes.White,

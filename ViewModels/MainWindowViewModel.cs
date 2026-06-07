@@ -10,7 +10,6 @@ namespace MyPlanner.ViewModels;
 public partial class MainWindowViewModel : ViewModelBase
 {
     private readonly AppDbContext        _db;
-    private readonly EventRepository     _events;
     private readonly CategoryRepository  _categories;
     private readonly ConstructorRepository _constructor;
 
@@ -23,17 +22,15 @@ public partial class MainWindowViewModel : ViewModelBase
 
     public MainWindowViewModel(
         AppDbContext db,
-        EventRepository events,
         CategoryRepository categories,
         ConstructorRepository constructor)
     {
         _db          = db;
-        _events      = events;
         _categories  = categories;
         _constructor = constructor;
 
-        CalendarVm     = new CalendarControllerViewModel(_events, _categories);
-        ConstructorVm  = new ConstructorControllerViewModel(_constructor, _events);
+        CalendarVm     = new CalendarControllerViewModel(_constructor, _categories);
+        ConstructorVm  = new ConstructorControllerViewModel(_constructor);
         _currentView   = CalendarVm;
     }
 

@@ -9,7 +9,6 @@ namespace MyPlanner.ViewModels.ConstructorDb;
 public partial class ConstructorControllerViewModel : ViewModelBase
 {
     private readonly ConstructorRepository _constructor;
-    private readonly EventRepository       _events;
 
     [ObservableProperty] private ObservableCollection<DbCollection> _collections = [];
     [ObservableProperty] private ObservableCollection<DbGroup>      _groups       = [];
@@ -20,13 +19,12 @@ public partial class ConstructorControllerViewModel : ViewModelBase
     public TableViewModel TableVm { get; }
     public ListViewModel  ListVm  { get; }
 
-    public ConstructorControllerViewModel(ConstructorRepository constructor, EventRepository events)
+    public ConstructorControllerViewModel(ConstructorRepository constructor)
     {
         _constructor = constructor;
-        _events      = events;
 
-        TableVm = new TableViewModel(constructor, events);
-        ListVm  = new ListViewModel(constructor, events);
+        TableVm = new TableViewModel(constructor);
+        ListVm  = new ListViewModel(constructor);
 
         Refresh();
     }

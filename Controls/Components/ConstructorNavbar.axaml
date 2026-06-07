@@ -11,8 +11,8 @@
                 Height="1"
                 Background="{StaticResource BrushSeparator}" />
 
-        <!-- Заголовок слева, переключатель вида справа (кнопки — в нижней панели) -->
-        <Grid ColumnDefinitions="*,Auto" Margin="16,0">
+        <!-- Заголовок слева, переключатель вида + toggle панели записи справа -->
+        <Grid ColumnDefinitions="*,Auto,Auto" Margin="16,0">
 
             <TextBox Grid.Column="0" x:Name="TitleBox"
                      Classes="titleEditor"
@@ -30,6 +30,32 @@
                       Background="{StaticResource BrushSecondaryBg}"
                       Foreground="{StaticResource BrushPrimaryText}"
                       CornerRadius="{StaticResource RadiusBase}" />
+
+            <!-- Toggle правой панели записи: arrow-right-from-line (открыть) /
+                 arrow-left-to-line (закрыть). Логика как у SidebarBtn в ActivityBar. -->
+            <ToggleButton Grid.Column="2" x:Name="RecordPanelBtn" Classes="navbtn"
+                          Width="30" Height="30" Margin="8,0,0,0"
+                          VerticalAlignment="Center"
+                          CornerRadius="{StaticResource RadiusMedium}"
+                          ToolTip.Tip="Открыть запись">
+                <Viewbox Width="18" Height="18">
+                    <Canvas Width="24" Height="24">
+                        <!-- arrow-left-to-line: панель закрыта → клик откроет (←) -->
+                        <Path x:Name="RecordOpenIcon"
+                              Data="M3 19 V5 M13 6 L7 12 L13 18 M7 12 H21"
+                              Stroke="{Binding $parent[ToggleButton].Foreground}"
+                              StrokeThickness="1.6"
+                              StrokeLineCap="Round" StrokeJoin="Round" />
+                        <!-- arrow-right-from-line: панель открыта → клик закроет (→) -->
+                        <Path x:Name="RecordCloseIcon"
+                              IsVisible="False"
+                              Data="M3 5 V19 M21 12 H7 M15 18 L21 12 L15 6"
+                              Stroke="{Binding $parent[ToggleButton].Foreground}"
+                              StrokeThickness="1.6"
+                              StrokeLineCap="Round" StrokeJoin="Round" />
+                    </Canvas>
+                </Viewbox>
+            </ToggleButton>
 
         </Grid>
 

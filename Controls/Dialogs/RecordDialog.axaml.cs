@@ -10,13 +10,12 @@ using MyPlanner.Database.Repositories;
 
 namespace MyPlanner.Controls.Dialogs;
 
-public record RecordDialogResult(Event? Event, bool Deleted = false);
+public record RecordDialogResult(CalendarRecord? Record, bool Deleted = false);
 
 public partial class RecordDialog : Window
 {
     // ── Общие зависимости ─────────────────────────────────────────────────────
     private readonly ConstructorRepository _repository;
-    private readonly EventRepository?      _eventRepo;
 
     // ── Схема-режим (конструктор) ─────────────────────────────────────────────
     private readonly int  _collectionId;
@@ -24,7 +23,7 @@ public partial class RecordDialog : Window
     private readonly Dictionary<int, (DbField Field, Control Input)> _fieldWidgets = [];
 
     // ── Календарь-режим ───────────────────────────────────────────────────────
-    private readonly Event? _editEvent;
+    private readonly CalendarRecord? _editRecord;
     private readonly List<(string Name, int? Id, string Color)> _collections = [];
     private TimeSpan _savedStartTime = new(9, 0, 0);
     private TimeSpan _savedEndTime   = new(10, 0, 0);
@@ -60,26 +59,26 @@ public partial class RecordDialog : Window
 
     // ── Конструктор: календарь-режим ──────────────────────────────────────────
     public RecordDialog(
-        EventRepository events,
         ConstructorRepository constructor,
-        Event? editEvent     = null,
-        DateTime? presetDate = null,
-        TimeSpan? presetTime = null,
-        bool presetAllDay    = false)
+        CalendarRecord? editRecord = null,
+        DateTime? presetDate       = null,
+        TimeSpan? presetTime       = null,
+        bool presetAllDay          = false)
     {
         InitializeComponent();
 
         _repository   = constructor;
-        _eventRepo    = events;
-        _editEvent    = editEvent;
+        _editRecord   = editRecord;
         _collectionId = 0;
 
         FieldsPanel.IsVisible     = false;
         CalendarSection.IsVisible = true;
 
-        // Заполняем список коллекций
+        // Заполняем список коллекций. Если ни одной нет — показываем плейсхолдер
+        // «Без названия» (id=null): при сохранении репозиторий создаст эту коллекцию автоматически.
         var cols = constructor.GetAllCollections();
-        _collections.Add(("Без коллекции", null, "#8E8E93"));
+        if (cols.Count == 0)
+            _collections.Add(("Без названия", null, "#007AFF"));
         foreach (var c in cols)
             _collections.Add((c.Name, c.Id, c.Color ?? "#8E8E93"));
 
@@ -101,11 +100,11 @@ public partial class RecordDialog : Window
         StartTimeInput.Text = FormatTime(_savedStartTime);
         EndTimeInput.Text   = FormatTime(_savedEndTime);
 
-        if (editEvent is not null)
+        if (editRecord is not null)
         {
             Title               = "Изменить запись";
             DeleteBtn.IsVisible = true;
-            FillFromEvent(editEvent);
+            FillFromRecord(editRecord);
         }
 
         if (presetAllDay) AllDayCheck.IsChecked = true;
@@ -127,7 +126,7 @@ public partial class RecordDialog : Window
 
         CancelBtn.Click += (_, _) => Close(null);
         DeleteBtn.Click += (_, _) => Close(new RecordDialogResult(null, Deleted: true));
-        SaveBtn.Click   += (_, _) => TrySaveCalendar(editEvent?.Id);
+        SaveBtn.Click   += (_, _) => TrySaveCalendar(editRecord?.Id);
 
         Deactivated += (_, _) => CloseTimePopups();
         Closing     += (_, _) => CloseTimePopups();
@@ -355,25 +354,25 @@ public partial class RecordDialog : Window
         return true;
     }
 
-    private void FillFromEvent(Event ev)
+    private void FillFromRecord(CalendarRecord r)
     {
-        TitleBox.Text                = ev.Title;
-        DescBox.Text                 = ev.Description;
-        AllDayCheck.IsChecked        = ev.AllDay;
-        StartDatePicker.SelectedDate = ev.StartDt.Date;
-        EndDatePicker.SelectedDate   = ev.EndDt.Date;
+        TitleBox.Text                = r.Title;
+        DescBox.Text                 = r.Description;
+        AllDayCheck.IsChecked        = r.AllDay;
+        StartDatePicker.SelectedDate = r.StartDt.Date;
+        EndDatePicker.SelectedDate   = r.EndDt.Date;
 
-        if (!ev.AllDay)
+        if (!r.AllDay)
         {
-            _savedStartTime = ev.StartDt.TimeOfDay;
-            _savedEndTime   = ev.EndDt.TimeOfDay;
+            _savedStartTime = r.StartDt.TimeOfDay;
+            _savedEndTime   = r.EndDt.TimeOfDay;
         }
         StartTimeInput.Text = FormatTime(_savedStartTime);
         EndTimeInput.Text   = FormatTime(_savedEndTime);
 
-        if (ev.CollectionId.HasValue)
+        if (r.CollectionId.HasValue)
         {
-            var idx = _collections.FindIndex(c => c.Id == ev.CollectionId);
+            var idx = _collections.FindIndex(c => c.Id == r.CollectionId);
             if (idx >= 0) CollectionCombo.SelectedIndex = idx;
         }
     }
@@ -403,12 +402,6 @@ public partial class RecordDialog : Window
         HideError();
 
         var title = TitleBox.Text?.Trim() ?? "";
-        if (string.IsNullOrEmpty(title))
-        {
-            ShowError("Укажите название записи");
-            TitleBox.Focus();
-            return;
-        }
 
         var startDate = StartDatePicker.SelectedDate ?? DateTime.Today;
         var endDate   = EndDatePicker.SelectedDate   ?? DateTime.Today;
@@ -422,7 +415,7 @@ public partial class RecordDialog : Window
         var colIdx = CollectionCombo.SelectedIndex;
         var colId  = colIdx >= 0 ? _collections[colIdx].Id : null;
 
-        var candidate = new Event
+        var candidate = new CalendarRecord
         {
             Id           = existingId,
             Title        = title,
@@ -434,7 +427,7 @@ public partial class RecordDialog : Window
             Color        = colId.HasValue ? _collections[colIdx].Color : "#007AFF",
         };
 
-        var error = EventValidator.Validate(candidate);
+        var error = CalendarRecordValidator.Validate(candidate);
         if (error is not null)
         {
             ShowError(error);

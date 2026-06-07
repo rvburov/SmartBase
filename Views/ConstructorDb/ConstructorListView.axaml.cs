@@ -38,10 +38,8 @@ public partial class ConstructorListView : UserControl
         var fields  = _repository.GetFields(_collectionId);
         var records = _repository.GetRecords(_collectionId);
 
-        // В списке заголовок берём из «Название» (если есть) или из первого не-markdown поля,
-        // статус — из первого select, дата — из первого date.
-        var nameField   = fields.FirstOrDefault(f => f.Name == "Название")
-                         ?? fields.FirstOrDefault(f => f.FieldType != "markdown");
+        // Заголовок берём из колонки записи Title; статус — из первого select-поля,
+        // дата — из первого date-поля схемы коллекции.
         var statusField = fields.FirstOrDefault(f => f.FieldType == "select");
         var dateField   = fields.FirstOrDefault(f => f.FieldType == "date");
 
@@ -53,7 +51,7 @@ public partial class ConstructorListView : UserControl
             var values = _repository.GetFieldValues(rid);
             items.Add(new ListRecordItem(
                 recordId: rid,
-                name:     nameField   is not null && values.TryGetValue(nameField.Id   ?? 0, out var n) ? n : "—",
+                name:     record.DisplayTitle,
                 status:   statusField is not null && values.TryGetValue(statusField.Id ?? 0, out var s) ? s : "",
                 date:     dateField   is not null && values.TryGetValue(dateField.Id   ?? 0, out var d) ? d : "",
                 onClick:  id => RecordClicked?.Invoke(this, id),

@@ -13,8 +13,8 @@ namespace MyPlanner.Views.ConstructorDb.Calendar;
 
 public partial class WeekView : UserControl
 {
-    public event EventHandler<Event>?    EventClicked;
-    public event EventHandler<Event>?    EventMoved;
+    public event EventHandler<CalendarRecord>?    RecordClicked;
+    public event EventHandler<CalendarRecord>?    RecordMoved;
     public event EventHandler<DateOnly>? AllDayCreationRequested;
     public event EventHandler<DateTime>? TimeSlotCreationRequested;
 
@@ -24,7 +24,7 @@ public partial class WeekView : UserControl
     private DispatcherTimer? _timeLineTimer;
 
     // drag state
-    private Event?         _dragEvent;
+    private CalendarRecord?         _dragEvent;
     private Border?        _dragGhost;
     private Border?        _dragGhostOverflow;
     private TextBlock?     _dragGhostTitleBlock;
@@ -56,9 +56,9 @@ public partial class WeekView : UserControl
     private int?    _pendingSelectId;
 
     // hit-testing
-    private sealed class EventEntry(Event ev, int dayCol, int startMin, int endMin, Border btn)
+    private sealed class EventEntry(CalendarRecord ev, int dayCol, int startMin, int endMin, Border btn)
     {
-        public Event   Ev         = ev;
+        public CalendarRecord Ev         = ev;
         public int     DayCol     = dayCol;
         public int     StartMin   = startMin;
         public int     EndMin     = endMin;
@@ -87,14 +87,14 @@ public partial class WeekView : UserControl
         EventsGrid.AddHandler(PointerMovedEvent,    OnGridPointerMoved,    RoutingStrategies.Bubble, handledEventsToo: true);
         EventsGrid.AddHandler(PointerReleasedEvent, OnGridPointerReleased, RoutingStrategies.Bubble, handledEventsToo: true);
 
-        AllDayBarCtrl.EventClicked            += (_, ev) => EventClicked?.Invoke(this, ev);
-        AllDayBarCtrl.EventMoved              += (_, ev) => EventMoved?.Invoke(this, ev);
-        AllDayBarCtrl.EventCreationRequested  += (_, d)  => AllDayCreationRequested?.Invoke(this, d);
+        AllDayBarCtrl.RecordClicked            += (_, ev) => RecordClicked?.Invoke(this, ev);
+        AllDayBarCtrl.RecordMoved              += (_, ev) => RecordMoved?.Invoke(this, ev);
+        AllDayBarCtrl.RecordCreationRequested  += (_, d)  => AllDayCreationRequested?.Invoke(this, d);
 
         SizeChanged += (_, _) => AllDayBarCtrl.InvalidateMeasure();
     }
 
-    public void Refresh(IEnumerable<Event> events, DateTime weekStart, bool scrollToNow = false)
+    public void Refresh(IEnumerable<CalendarRecord> events, DateTime weekStart, bool scrollToNow = false)
     {
         var monday    = weekStart.AddDays(-(((int)weekStart.DayOfWeek + 6) % 7));
         var allDays   = Enumerable.Range(0, 7).Select(i => monday.AddDays(i)).ToList();
@@ -161,7 +161,7 @@ public partial class WeekView : UserControl
 
                     var titleBlock = new TextBlock
                     {
-                        Text         = ev.Title,
+                        Text         = ev.DisplayTitle,
                         FontSize     = 13,
                         FontWeight   = FontWeight.SemiBold,
                         Foreground   = darkBrush,
@@ -1009,7 +1009,7 @@ public partial class WeekView : UserControl
             }
 
             _pendingSelectId = ev.Id;
-            EventMoved?.Invoke(this, ev);
+            RecordMoved?.Invoke(this, ev);
 
             e.Pointer.Capture(null);
             DragOverlay.Children.Remove(_resizeGhost!);
@@ -1038,7 +1038,7 @@ public partial class WeekView : UserControl
             if (_pressClickCount >= 2)
             {
                 DoDeselect();
-                EventClicked?.Invoke(this, _dragEvent);
+                RecordClicked?.Invoke(this, _dragEvent);
             }
             else
             {
@@ -1102,7 +1102,7 @@ public partial class WeekView : UserControl
             _dragEvent.EndDt   = newStart.AddMinutes(duration);
 
             _pendingSelectId = _dragEvent.Id;
-            EventMoved?.Invoke(this, _dragEvent);
+            RecordMoved?.Invoke(this, _dragEvent);
         }
 
         e.Pointer.Capture(null);
@@ -1209,10 +1209,10 @@ public partial class WeekView : UserControl
         }
     }
 
-    private static Border CreateGhostButton(Event ev, double height, double width)
+    private static Border CreateGhostButton(CalendarRecord ev, double height, double width)
         => CreateGhostButton(ev, height, width, out _, out _, out _);
 
-    private static Border CreateGhostButton(Event ev, double height, double width,
+    private static Border CreateGhostButton(CalendarRecord ev, double height, double width,
         out TextBlock outTitleBlock, out TextBlock? outTimeBlock, out StackPanel outContentStack)
     {
         var color      = Color.Parse(EventColors.Display(ev.Color));
@@ -1230,7 +1230,7 @@ public partial class WeekView : UserControl
 
         var titleBlock = new TextBlock
         {
-            Text         = ev.Title,
+            Text         = ev.DisplayTitle,
             FontSize     = 13,
             FontWeight   = FontWeight.SemiBold,
             Foreground   = Brushes.White,
@@ -1308,12 +1308,12 @@ public partial class WeekView : UserControl
             (byte)(c.B * a + 255 * (1 - a)));
     }
 
-    private static List<List<Event>> GroupOverlapping(List<Event> events)
+    private static List<List<CalendarRecord>> GroupOverlapping(List<CalendarRecord> events)
     {
         if (events.Count == 0) return [];
         var evs    = events.OrderBy(e => e.StartDt).ThenBy(e => e.Title).ToList();
-        var groups = new List<List<Event>>();
-        var cur    = new List<Event> { evs[0] };
+        var groups = new List<List<CalendarRecord>>();
+        var cur    = new List<CalendarRecord> { evs[0] };
         for (var i = 1; i < evs.Count; i++)
         {
             var ev = evs[i];
@@ -1330,11 +1330,11 @@ public partial class WeekView : UserControl
     }
 
     // Returns list of (ev, colIdx, nCols, rightLimit)
-    private static List<(Event Ev, int ColIdx, int NCols, int RightLimit)> AssignColumns(List<Event> group)
+    private static List<(CalendarRecord Ev, int ColIdx, int NCols, int RightLimit)> AssignColumns(List<CalendarRecord> group)
     {
         var evs     = group.OrderBy(e => e.StartDt).ThenBy(e => -(e.EndDt - e.StartDt).Ticks).ToList();
         var colEnds = new List<DateTime>();
-        var evCol   = new Dictionary<Event, int>(ReferenceEqualityComparer.Instance);
+        var evCol   = new Dictionary<CalendarRecord, int>(ReferenceEqualityComparer.Instance);
 
         foreach (var ev in evs)
         {
@@ -1349,7 +1349,7 @@ public partial class WeekView : UserControl
         }
 
         var nCols  = colEnds.Count;
-        var result = new List<(Event, int, int, int)>();
+        var result = new List<(CalendarRecord, int, int, int)>();
         foreach (var ev in group)
         {
             var colIdx     = evCol[ev];

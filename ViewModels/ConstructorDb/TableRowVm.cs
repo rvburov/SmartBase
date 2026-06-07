@@ -12,46 +12,44 @@ namespace MyPlanner.ViewModels.ConstructorDb;
 /// </summary>
 public class TableRowVm : INotifyPropertyChanged
 {
+    // Виртуальные ключи для колонок, которые хранятся не в db_field_values,
+    // а прямо в DbRecordEntity.Title / DbRecordEntity.Description.
+    public const string TitleKey = "__title__";
+    public const string DescKey  = "__desc__";
+
     private readonly ConstructorRepository? _repository;
     private readonly Dictionary<int, string> _values;
+    private string _title;
+    private string _description;
 
     public int  RecordId    { get; }
     public int  RowNumber   { get; private set; }
     public bool IsAddRow    { get; }
-    public bool IsHeaderRow { get; }
-    /// <summary>Для шапки: имена полей по field.Id (для отображения вместо значений).</summary>
-    public Dictionary<int, string> FieldNames { get; }
 
     public event PropertyChangedEventHandler? PropertyChanged;
 
     /// <summary>Обычная строка с данными.</summary>
-    public TableRowVm(ConstructorRepository repository, int recordId, int rowNumber, Dictionary<int, string> values)
+    public TableRowVm(ConstructorRepository repository, int recordId, int rowNumber,
+                     Dictionary<int, string> values, string title, string? description)
     {
-        _repository = repository;
-        RecordId    = recordId;
-        RowNumber   = rowNumber;
-        _values     = values;
-        FieldNames  = [];
+        _repository  = repository;
+        RecordId     = recordId;
+        RowNumber    = rowNumber;
+        _values      = values;
+        _title       = title       ?? "";
+        _description = description ?? "";
     }
 
     /// <summary>Строка-«плюс» в конце таблицы.</summary>
     private TableRowVm()
     {
-        IsAddRow   = true;
-        _values    = [];
-        FieldNames = [];
-    }
-
-    /// <summary>Шапка таблицы как обычная строка.</summary>
-    private TableRowVm(Dictionary<int, string> fieldNames)
-    {
-        IsHeaderRow = true;
-        _values     = [];
-        FieldNames  = fieldNames;
+        IsAddRow     = true;
+        _values      = [];
+        _title       = "";
+        _description = "";
     }
 
     public static TableRowVm AddRow() => new();
-    public static TableRowVm HeaderRow(Dictionary<int, string> fieldNames) => new(fieldNames);
 
     public void SetRowNumber(int n)
     {
@@ -66,11 +64,34 @@ public class TableRowVm : INotifyPropertyChanged
     /// </summary>
     public string this[string key]
     {
-        get => int.TryParse(key, out var id) && _values.TryGetValue(id, out var v) ? v : "";
+        get
+        {
+            if (key == TitleKey) return _title;
+            if (key == DescKey)  return _description;
+            return int.TryParse(key, out var id) && _values.TryGetValue(id, out var v) ? v : "";
+        }
         set
         {
-            if (IsAddRow || IsHeaderRow || !int.TryParse(key, out var id)) return;
+            if (IsAddRow) return;
             var newVal = value ?? "";
+
+            if (key == TitleKey)
+            {
+                if (_title == newVal) return;
+                _title = newVal;
+                _repository?.SetRecordTitle(RecordId, newVal);
+                OnPropertyChanged($"Item[{key}]");
+                return;
+            }
+            if (key == DescKey)
+            {
+                if (_description == newVal) return;
+                _description = newVal;
+                _repository?.SetRecordDescription(RecordId, newVal);
+                OnPropertyChanged($"Item[{key}]");
+                return;
+            }
+            if (!int.TryParse(key, out var id)) return;
             if (_values.TryGetValue(id, out var old) && old == newVal) return;
 
             _values[id] = newVal;

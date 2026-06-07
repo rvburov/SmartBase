@@ -10,9 +10,9 @@ namespace MyPlanner.Controls.Components;
 
 public partial class AllDayBar : UserControl
 {
-    public event EventHandler<Event>?    EventClicked;
-    public event EventHandler<Event>?    EventMoved;
-    public event EventHandler<DateOnly>? EventCreationRequested;
+    public event EventHandler<CalendarRecord>?    RecordClicked;
+    public event EventHandler<CalendarRecord>?    RecordMoved;
+    public event EventHandler<DateOnly>? RecordCreationRequested;
 
     private const double MinH          = 40;
     private const double MaxH          = 300;
@@ -32,7 +32,7 @@ public partial class AllDayBar : UserControl
     private int     _pressClickCount;
 
     // drag
-    private Event?         _dragEvent;
+    private CalendarRecord?         _dragEvent;
     private Border?        _dragGhost;
     private Control?       _dragSource;
     private Point          _dragStartPos;
@@ -47,9 +47,9 @@ public partial class AllDayBar : UserControl
     private List<DateOnly> _currentDays = [];
     private Dictionary<(int col, int row), bool> _occupied = [];
 
-    private sealed class AllDayEntry(Event ev, int col, int span, int row, Control root, Border colorBorder)
+    private sealed class AllDayEntry(CalendarRecord ev, int col, int span, int row, Control root, Border colorBorder)
     {
-        public Event   Ev          = ev;
+        public CalendarRecord Ev          = ev;
         public int     Col         = col;
         public int     Span        = span;
         public int     Row         = row;
@@ -123,7 +123,7 @@ public partial class AllDayBar : UserControl
                 if (colW > 0)
                 {
                     var col = Math.Clamp((int)(pos.X / colW), 0, _currentDays.Count - 1);
-                    EventCreationRequested?.Invoke(this, _currentDays[col]);
+                    RecordCreationRequested?.Invoke(this, _currentDays[col]);
                 }
                 e.Handled = true;
             }
@@ -214,7 +214,7 @@ public partial class AllDayBar : UserControl
             {
                 _deselectCurrent?.Invoke();
                 _deselectCurrent = null;
-                EventClicked?.Invoke(this, _dragEvent);
+                RecordClicked?.Invoke(this, _dragEvent);
             }
         }
         else if (_currentDays.Count > 0)
@@ -230,7 +230,7 @@ public partial class AllDayBar : UserControl
                 var duration       = (int)(_dragEvent.EndDt - _dragEvent.StartDt).TotalDays;
                 _dragEvent.StartDt = _dragEvent.StartDt.AddDays(delta);
                 _dragEvent.EndDt   = _dragEvent.StartDt.AddDays(duration);
-                EventMoved?.Invoke(this, _dragEvent);
+                RecordMoved?.Invoke(this, _dragEvent);
             }
         }
 
@@ -246,7 +246,7 @@ public partial class AllDayBar : UserControl
 
     // ── data ──────────────────────────────────────────────────────────────────
 
-    public void SetData(IEnumerable<DateOnly> days, IEnumerable<Event> events)
+    public void SetData(IEnumerable<DateOnly> days, IEnumerable<CalendarRecord> events)
     {
         _deselectCurrent = null;
         _allDayEntries.Clear();
@@ -352,7 +352,7 @@ public partial class AllDayBar : UserControl
         UpdateAutoHeight();
     }
 
-    private static (Control root, Border colorBorder, TextBlock titleBlock, TextBlock? timeBlock, Border stripBorder) BuildBlock(Event ev, int span)
+    private static (Control root, Border colorBorder, TextBlock titleBlock, TextBlock? timeBlock, Border stripBorder) BuildBlock(CalendarRecord ev, int span)
     {
         var color      = Color.Parse(EventColors.Display(ev.Color));
         var normalBg   = new SolidColorBrush(Color.FromArgb(40, color.R, color.G, color.B));
@@ -370,7 +370,7 @@ public partial class AllDayBar : UserControl
 
         var title = new TextBlock
         {
-            Text              = ev.Title,
+            Text              = ev.DisplayTitle,
             FontSize          = 13,
             FontWeight        = FontWeight.SemiBold,
             Foreground        = darkBrush,
@@ -444,7 +444,7 @@ public partial class AllDayBar : UserControl
         return (wrapper, block, title, timeBlock, strip);
     }
 
-    private static Border CreateGhost(Event ev, double height)
+    private static Border CreateGhost(CalendarRecord ev, double height)
     {
         var color      = Color.Parse(EventColors.Display(ev.Color));
         var colorBrush = new SolidColorBrush(color);
@@ -460,7 +460,7 @@ public partial class AllDayBar : UserControl
 
         var title = new TextBlock
         {
-            Text              = ev.Title,
+            Text              = ev.DisplayTitle,
             FontSize          = 13,
             FontWeight        = FontWeight.SemiBold,
             Foreground        = Brushes.White,
@@ -476,7 +476,7 @@ public partial class AllDayBar : UserControl
 
         if (!ev.AllDay)
         {
-            title.Text   = $"{ev.Title}, {ev.StartDt:HH:mm}";
+            title.Text   = $"{ev.DisplayTitle}, {ev.StartDt:HH:mm}";
             title.Margin = new Thickness(4, 0, 4, 0);
             Grid.SetColumn(title, 1);
             inner.Children.Add(title);
@@ -499,7 +499,7 @@ public partial class AllDayBar : UserControl
         };
     }
 
-    public void SetData(DateOnly day, IEnumerable<Event> events) =>
+    public void SetData(DateOnly day, IEnumerable<CalendarRecord> events) =>
         SetData([day], events);
 
     public void ClearData()

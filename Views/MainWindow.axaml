@@ -38,7 +38,7 @@
                 BorderThickness="0,0,1,0">
             <Grid>
                 <comp:Sidebar x:Name="CalendarSidebar" />
-                <comp:SidebarTree x:Name="ConstructorSidebar" IsVisible="False" />
+                <comp:Sidebar x:Name="ConstructorSidebar" IsVisible="False" />
             </Grid>
         </Border>
 

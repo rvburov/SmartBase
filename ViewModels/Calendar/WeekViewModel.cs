@@ -1,5 +1,4 @@
 using CommunityToolkit.Mvvm.ComponentModel;
-using MyPlanner.Core.Filters;
 using MyPlanner.Database.Repositories;
 
 namespace MyPlanner.ViewModels.Calendar;
@@ -8,7 +7,7 @@ public partial class WeekViewModel : CalendarViewModelBase
 {
     [ObservableProperty] private DateTime _currentDate = DateTime.Today;
 
-    public WeekViewModel(EventRepository events) : base(events) => Refresh();
+    public WeekViewModel(ConstructorRepository records) : base(records) => Refresh();
 
     public DateTime WeekStart => CurrentDate.AddDays(-(int)CurrentDate.DayOfWeek == 0 ? 6 : (int)CurrentDate.DayOfWeek - 1);
 
@@ -29,8 +28,7 @@ public partial class WeekViewModel : CalendarViewModelBase
     {
         var start = WeekStart;
         var end   = start.AddDays(7);
-        var raw      = Events.GetByDateRange(start, end, ActiveIds);
-        var filtered = EventFilter.BySearch(raw, SearchQuery).ToList();
-        DisplayedEvents = new(filtered);
+        var raw      = Records.GetCalendarRecordsByRange(start, end, ActiveIds);
+        DisplayedRecords = new(FilterBySearch(raw));
     }
 }

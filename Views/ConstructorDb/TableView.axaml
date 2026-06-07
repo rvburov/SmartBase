@@ -4,37 +4,6 @@
              Background="{StaticResource BrushBg}">
 
     <UserControl.Styles>
-        <!-- Заголовок таблицы. Без собственной нижней границы — линия под шапкой
-             рисуется единым встроенным разделителем DataGrid (PART_ColumnHeadersAndRowsSeparator),
-             иначе две линии накладываются и выглядят жирнее остальных.
-             Правый разделитель колонок — встроенный SeparatorBrush. -->
-        <Style Selector="DataGridColumnHeader">
-            <Setter Property="Background"      Value="{StaticResource BrushInactiveBg}" />
-            <Setter Property="Foreground"      Value="{StaticResource BrushSecondaryText}" />
-            <Setter Property="FontSize"        Value="{StaticResource FontSizeBase}" />
-            <Setter Property="MinHeight"       Value="{StaticResource RowHeightStandard}" />
-            <Setter Property="Padding"         Value="6,0" />
-            <Setter Property="BorderThickness" Value="0" />
-            <Setter Property="SeparatorBrush"  Value="{StaticResource BrushSeparator}" />
-            <Setter Property="AreSeparatorsVisible" Value="True" />
-        </Style>
-        <!-- Шапка отрисована как обычная строка (HeaderRow), нативная шапка скрыта.
-             Встроенный разделитель шапки и строк не нужен — иначе он накладывается
-             на нижнюю границу навбара (визуально удвоенная толщина). -->
-        <Style Selector="DataGrid /template/ Rectangle#PART_ColumnHeadersAndRowsSeparator">
-            <Setter Property="Height" Value="0" />
-            <Setter Property="IsVisible" Value="False" />
-        </Style>
-        <!-- Фон заголовка не меняется при наведении/нажатии, иначе подсветка
-             (рисуется на внутреннем PART_ColumnHeaderRoot) перекрывает
-             вертикальные линии-разделители колонок. -->
-        <Style Selector="DataGridColumnHeader:pointerover /template/ Grid#PART_ColumnHeaderRoot">
-            <Setter Property="Background" Value="{StaticResource BrushInactiveBg}" />
-        </Style>
-        <Style Selector="DataGridColumnHeader:pressed /template/ Grid#PART_ColumnHeaderRoot">
-            <Setter Property="Background" Value="{StaticResource BrushInactiveBg}" />
-        </Style>
-
         <!-- Высота строки фиксируется через DataGrid.RowHeight (пробивает тему Fluent).
              Вертикальные линии — встроенные (GridLinesVisibility=All); они не «схлопываются»,
              потому что ширины колонок вычисляются в целых пикселях (см. ApplyColumnWidths). -->
@@ -70,24 +39,45 @@
         </Style>
     </UserControl.Styles>
 
-    <DataGrid x:Name="RecordsGrid"
-              AutoGenerateColumns="False"
-              RowHeight="{StaticResource RowHeightStandard}"
-              ColumnHeaderHeight="{StaticResource RowHeightStandard}"
-              CanUserResizeColumns="False"
-              CanUserReorderColumns="True"
-              CanUserSortColumns="False"
-              GridLinesVisibility="All"
-              HorizontalGridLinesBrush="{StaticResource BrushSeparator}"
-              VerticalGridLinesBrush="{StaticResource BrushSeparator}"
-              HeadersVisibility="None"
-              SelectionMode="Single"
-              IsReadOnly="False"
-              Background="Transparent"
-              BorderThickness="0"
-              RowBackground="{StaticResource BrushBg}"
-              HorizontalScrollBarVisibility="Auto"
-              VerticalScrollBarVisibility="Auto"
-              Foreground="{StaticResource BrushPrimaryText}" />
+    <!-- Двухрядная разметка: фиксированный кастомный header сверху + скроллируемый DataGrid.
+         Нативная шапка DataGrid отключена (HeadersVisibility="None"), потому что
+         DataGridColumnHeader в Avalonia ненадёжно рендерит узкие/Control-заголовки. -->
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <!-- Sticky header: ширины колонок синхронизируются с RecordsGrid в SyncHeaderWidths. -->
+        <Border Grid.Row="0"
+                x:Name="HeaderRowHost"
+                Background="{StaticResource BrushInactiveBg}"
+                Height="{StaticResource RowHeightStandard}" />
+
+        <!-- Margin Bottom=-1 прячет лишнюю линию: при скролле до конца под последней
+             строкой видна её BottomGridLine + нижний край DataGrid области, что
+             выглядит как двойная линия. Сдвигаем DataGrid на 1px вниз, лишняя
+             линия уходит за пределы видимости. -->
+        <DataGrid Grid.Row="1"
+                  x:Name="RecordsGrid"
+                  Margin="0,0,0,-1"
+                  AutoGenerateColumns="False"
+                  RowHeight="{StaticResource RowHeightStandard}"
+                  CanUserResizeColumns="False"
+                  CanUserReorderColumns="False"
+                  CanUserSortColumns="False"
+                  GridLinesVisibility="All"
+                  HorizontalGridLinesBrush="{StaticResource BrushSeparator}"
+                  VerticalGridLinesBrush="{StaticResource BrushSeparator}"
+                  HeadersVisibility="None"
+                  SelectionMode="Single"
+                  IsReadOnly="False"
+                  Background="Transparent"
+                  BorderThickness="0"
+                  RowBackground="{StaticResource BrushBg}"
+                  HorizontalScrollBarVisibility="Auto"
+                  VerticalScrollBarVisibility="Auto"
+                  Foreground="{StaticResource BrushPrimaryText}" />
+    </Grid>
 
 </UserControl>

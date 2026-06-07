@@ -9,9 +9,8 @@ public partial class CalendarControllerView : UserControl
 {
     public event EventHandler? CollectionsMayHaveChanged;
 
-    private EventRepository _events = null!;
+    private ConstructorRepository _records = null!;
     private CategoryRepository _categories = null!;
-    private ConstructorRepository _constructor = null!;
 
     private DateTime _currentDate = DateTime.Today;
     private int _currentViewIndex = 4;   // 4 = Месяц
@@ -23,22 +22,19 @@ public partial class CalendarControllerView : UserControl
     public CalendarControllerView() { InitializeComponent(); }
 
     public CalendarControllerView(
-        EventRepository events,
-        CategoryRepository categories,
-        ConstructorRepository constructor)
+        ConstructorRepository records,
+        CategoryRepository categories)
     {
         InitializeComponent();
-        Initialize(events, categories, constructor);
+        Initialize(records, categories);
     }
 
     public void Initialize(
-        EventRepository events,
-        CategoryRepository categories,
-        ConstructorRepository constructor)
+        ConstructorRepository records,
+        CategoryRepository categories)
     {
-        _events      = events;
-        _categories  = categories;
-        _constructor = constructor;
+        _records    = records;
+        _categories = categories;
 
         NavbarControl.TodayClicked  += (_, _) =>
         {
@@ -63,18 +59,18 @@ public partial class CalendarControllerView : UserControl
         MonthViewCtrl.DayAddClicked += (_, d)  => _ = OpenAddDialog(d);
         YearViewCtrl.MonthSelected += (_, d)  => { _currentDate = d; SwitchView(4); };
 
-        ListViewCtrl.EventClicked      += (_, ev) => _ = OpenEditDialog(ev);
-        ListViewCtrl.CreateRequested   += (_, d)  => _ = OpenAddDialog(d);
-        JournalViewCtrl.EventClicked   += (_, ev) => _ = OpenEditDialog(ev);
-        JournalViewCtrl.CreateRequested += (_, d)  => _ = OpenAddDialog(d);
-        MonthViewCtrl.EventClicked += (_, ev) => _ = OpenEditDialog(ev);
-        MonthViewCtrl.EventMoved   += (_, ev) => { _events.Update(ev); CollectionsMayHaveChanged?.Invoke(this, EventArgs.Empty); RefreshCurrent(); };
-        DayViewCtrl.EventClicked              += (_, ev) => _ = OpenEditDialog(ev);
-        DayViewCtrl.EventMoved                += (_, ev) => { _events.Update(ev); CollectionsMayHaveChanged?.Invoke(this, EventArgs.Empty); RefreshCurrent(); };
-        DayViewCtrl.AllDayCreationRequested   += (_, d)  => _ = OpenAddAllDayDialog(d);
-        DayViewCtrl.TimeSlotCreationRequested += (_, dt) => _ = OpenAddDialog(dt.Date, dt.TimeOfDay);
-        WeekViewCtrl.EventClicked           += (_, ev) => _ = OpenEditDialog(ev);
-        WeekViewCtrl.EventMoved             += (_, ev) => { _events.Update(ev); CollectionsMayHaveChanged?.Invoke(this, EventArgs.Empty); RefreshCurrent(); };
+        ListViewCtrl.RecordClicked      += (_, r) => _ = OpenEditDialog(r);
+        ListViewCtrl.CreateRequested    += (_, d) => _ = OpenAddDialog(d);
+        JournalViewCtrl.RecordClicked   += (_, r) => _ = OpenEditDialog(r);
+        JournalViewCtrl.CreateRequested += (_, d) => _ = OpenAddDialog(d);
+        MonthViewCtrl.RecordClicked += (_, r) => _ = OpenEditDialog(r);
+        MonthViewCtrl.RecordMoved   += (_, r) => { _records.UpdateCalendarRecord(r); CollectionsMayHaveChanged?.Invoke(this, EventArgs.Empty); RefreshCurrent(); };
+        DayViewCtrl.RecordClicked              += (_, r) => _ = OpenEditDialog(r);
+        DayViewCtrl.RecordMoved                += (_, r) => { _records.UpdateCalendarRecord(r); CollectionsMayHaveChanged?.Invoke(this, EventArgs.Empty); RefreshCurrent(); };
+        DayViewCtrl.AllDayCreationRequested    += (_, d)  => _ = OpenAddAllDayDialog(d);
+        DayViewCtrl.TimeSlotCreationRequested  += (_, dt) => _ = OpenAddDialog(dt.Date, dt.TimeOfDay);
+        WeekViewCtrl.RecordClicked             += (_, r) => _ = OpenEditDialog(r);
+        WeekViewCtrl.RecordMoved               += (_, r) => { _records.UpdateCalendarRecord(r); CollectionsMayHaveChanged?.Invoke(this, EventArgs.Empty); RefreshCurrent(); };
         WeekViewCtrl.AllDayCreationRequested   += (_, d)  => _ = OpenAddAllDayDialog(d);
         WeekViewCtrl.TimeSlotCreationRequested += (_, dt) => _ = OpenAddDialog(dt.Date, dt.TimeOfDay);
 
@@ -131,20 +127,20 @@ public partial class CalendarControllerView : UserControl
     private void RefreshCurrent(bool scrollToNow = false)
     {
         var (startDt, endDt) = GetDateRange();
-        var events = _events.GetByDateRange(startDt, endDt, _activeIds);
+        var records = _records.GetCalendarRecordsByRange(startDt, endDt, _activeIds);
         if (!string.IsNullOrEmpty(_searchQuery))
-            events = events.Where(e => e.Title.Contains(_searchQuery, StringComparison.OrdinalIgnoreCase)).ToList();
+            records = records.Where(r => r.Title.Contains(_searchQuery, StringComparison.OrdinalIgnoreCase)).ToList();
 
         UpdateTitle();
 
         switch (_currentViewIndex)
         {
-            case 0: ListViewCtrl.Refresh(events, _currentDate); break;
-            case 1: JournalViewCtrl.Refresh(events, _currentDate); break;
-            case 2: DayViewCtrl.Refresh(events, DateOnly.FromDateTime(_currentDate)); break;
-            case 3: WeekViewCtrl.Refresh(events, _currentDate, scrollToNow); break;
-            case 4: MonthViewCtrl.Refresh(events, _currentDate); break;
-            case 5: YearViewCtrl.Refresh(events, _currentDate.Year); break;
+            case 0: ListViewCtrl.Refresh(records, _currentDate); break;
+            case 1: JournalViewCtrl.Refresh(records, _currentDate); break;
+            case 2: DayViewCtrl.Refresh(records, DateOnly.FromDateTime(_currentDate)); break;
+            case 3: WeekViewCtrl.Refresh(records, _currentDate, scrollToNow); break;
+            case 4: MonthViewCtrl.Refresh(records, _currentDate); break;
+            case 5: YearViewCtrl.Refresh(records, _currentDate.Year); break;
         }
     }
 
@@ -203,13 +199,13 @@ public partial class CalendarControllerView : UserControl
     private async Task OpenAddAllDayDialog(DateOnly date)
     {
         if (VisualRoot is not Avalonia.Controls.Window win) return;
-        var dlg = new RecordDialog(_events, _constructor,
+        var dlg = new RecordDialog(_records,
                                    presetDate: date.ToDateTime(TimeOnly.MinValue),
                                    presetAllDay: true);
         var result = await dlg.ShowDialog<RecordDialogResult?>(win);
-        if (result?.Event is not null)
+        if (result?.Record is not null)
         {
-            _events.Add(result.Event);
+            _records.AddCalendarRecord(result.Record);
             CollectionsMayHaveChanged?.Invoke(this, EventArgs.Empty);
             RefreshCurrent();
         }
@@ -218,26 +214,26 @@ public partial class CalendarControllerView : UserControl
     private async Task OpenAddDialog(DateTime presetDate, TimeSpan? presetTime = null)
     {
         if (VisualRoot is not Avalonia.Controls.Window win) return;
-        var dlg = new RecordDialog(_events, _constructor, presetDate: presetDate, presetTime: presetTime);
+        var dlg = new RecordDialog(_records, presetDate: presetDate, presetTime: presetTime);
         var result = await dlg.ShowDialog<RecordDialogResult?>(win);
-        if (result?.Event is not null)
+        if (result?.Record is not null)
         {
-            _events.Add(result.Event);
+            _records.AddCalendarRecord(result.Record);
             CollectionsMayHaveChanged?.Invoke(this, EventArgs.Empty);
             RefreshCurrent();
         }
     }
 
-    private async Task OpenEditDialog(Event ev)
+    private async Task OpenEditDialog(CalendarRecord r)
     {
         if (VisualRoot is not Avalonia.Controls.Window win) return;
-        var dlg = new RecordDialog(_events, _constructor, editEvent: ev);
+        var dlg = new RecordDialog(_records, editRecord: r);
         var result = await dlg.ShowDialog<RecordDialogResult?>(win);
         if (result is null) return;
-        if (result.Deleted) _events.Delete(ev.Id!.Value);
-        else if (result.Event is not null)
+        if (result.Deleted) _records.DeleteCalendarRecord(r.Id!.Value);
+        else if (result.Record is not null)
         {
-            _events.Update(result.Event);
+            _records.UpdateCalendarRecord(result.Record);
             CollectionsMayHaveChanged?.Invoke(this, EventArgs.Empty);
         }
         RefreshCurrent();
@@ -245,11 +241,11 @@ public partial class CalendarControllerView : UserControl
 
     private void SeedIfEmpty()
     {
-        if (_events.Count() > 0) return;
+        if (_records.CountCalendarRecords() > 0) return;
 
         var today = DateTime.Today;
-        _events.Add(new Event { Title = "Стэндап", StartDt = today.AddHours(10), EndDt = today.AddHours(10.5), Color = "#007AFF" });
-        _events.Add(new Event { Title = "Обед", StartDt = today.AddHours(13), EndDt = today.AddHours(14), Color = "#34C759" });
-        _events.Add(new Event { Title = "Ревью", StartDt = today.AddDays(1).AddHours(15), EndDt = today.AddDays(1).AddHours(16), Color = "#FF9500" });
+        _records.AddCalendarRecord(new CalendarRecord { Title = "Стэндап", StartDt = today.AddHours(10), EndDt = today.AddHours(10.5), Color = "#007AFF" });
+        _records.AddCalendarRecord(new CalendarRecord { Title = "Обед", StartDt = today.AddHours(13), EndDt = today.AddHours(14), Color = "#34C759" });
+        _records.AddCalendarRecord(new CalendarRecord { Title = "Ревью", StartDt = today.AddDays(1).AddHours(15), EndDt = today.AddDays(1).AddHours(16), Color = "#FF9500" });
     }
 }

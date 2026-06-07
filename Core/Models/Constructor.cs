@@ -41,4 +41,8 @@ public class DbRecord
     public string?  StartDt      { get; set; }
     public string?  EndDt        { get; set; }
     public bool     AllDay       { get; set; } = false;
+    public string   Title        { get; set; } = "";
+    public string?  Description  { get; set; }
+
+    public string   DisplayTitle => string.IsNullOrWhiteSpace(Title) ? "Без названия" : Title;
 }

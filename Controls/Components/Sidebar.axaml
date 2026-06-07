@@ -7,12 +7,26 @@
   <Border>
     <DockPanel>
 
-        <!-- Кнопки: развернуть/свернуть всё, сортировка, включить/выключить всё.
-             Нижняя линия рисуется единой полосой в MainWindow (на высоте навбара). -->
+        <!-- Тулбар: создать (всегда) + развернуть/свернуть + сортировка + включить/выключить (только календарь) -->
         <Border DockPanel.Dock="Top"
                 Height="56"
                 Padding="10,13">
             <StackPanel Orientation="Horizontal" Spacing="6">
+
+                <!-- Создать -->
+                <Button x:Name="CreateBtn" Classes="navbtn"
+                        Width="30" Height="30"
+                        CornerRadius="{StaticResource RadiusMedium}"
+                        ToolTip.Tip="Создать">
+                    <Viewbox Width="18" Height="18">
+                        <Canvas Width="24" Height="24">
+                            <Path Data="M5 12 H19 M12 5 V19"
+                                  Stroke="{Binding $parent[Button].Foreground}"
+                                  StrokeThickness="2"
+                                  StrokeLineCap="Round" StrokeJoin="Round" />
+                        </Canvas>
+                    </Viewbox>
+                </Button>
 
                 <!-- Развернуть/свернуть всё -->
                 <ToggleButton x:Name="ExpandBtn" Classes="navbtn"
@@ -36,7 +50,7 @@
                     </Viewbox>
                 </ToggleButton>
 
-                <!-- Сортировка по имени -->
+                <!-- Сортировка -->
                 <Button x:Name="SortBtn" Classes="navbtn"
                         Width="30" Height="30"
                         CornerRadius="{StaticResource RadiusMedium}"
@@ -51,15 +65,14 @@
                     </Viewbox>
                 </Button>
 
-                <!-- Включить/выключить всё (галочка) -->
+                <!-- Включить/выключить всё (только календарь) -->
                 <Button x:Name="ToggleAllBtn" Classes="navbtn"
                         Width="30" Height="30"
                         CornerRadius="{StaticResource RadiusMedium}"
                         ToolTip.Tip="Включить все">
                     <Viewbox Width="18" Height="18">
                         <Canvas Width="24" Height="24">
-                            <Path x:Name="ToggleAllIcon"
-                                  Data="M21 10.656 V19 A2 2 0 0 1 19 21 H5 A2 2 0 0 1 3 19 V5 A2 2 0 0 1 5 3 H17.344 M9 11 L12 14 L22 4"
+                            <Path Data="M21 10.656 V19 A2 2 0 0 1 19 21 H5 A2 2 0 0 1 3 19 V5 A2 2 0 0 1 5 3 H17.344 M9 11 L12 14 L22 4"
                                   Stroke="{Binding $parent[Button].Foreground}"
                                   StrokeThickness="1.8"
                                   StrokeLineCap="Round" StrokeJoin="Round" />
@@ -70,8 +83,10 @@
             </StackPanel>
         </Border>
 
-        <!-- Дерево коллекций: плоский список + виртуализация -->
-        <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <!-- Плоский список с виртуализацией -->
+        <ScrollViewer VerticalScrollBarVisibility="Auto"
+                      Background="Transparent"
+                      ContextRequested="OnEmptyContextRequested">
             <ItemsControl x:Name="RowsHost" Padding="0">
                 <ItemsControl.ItemsPanel>
                     <ItemsPanelTemplate>
@@ -79,12 +94,11 @@
                     </ItemsPanelTemplate>
                 </ItemsControl.ItemsPanel>
                 <ItemsControl.ItemTemplate>
-                    <DataTemplate x:DataType="comp:CalRow">
-                        <!-- Высота строки = RowStepStandard (37px): контент 36px + линия 1px
-                             снизу. Шаг строки совпадает с таблицей. -->
+                    <DataTemplate x:DataType="comp:SidebarRow">
                         <Border x:Name="RowRoot"
                                 Background="{Binding RowBackground}"
                                 Margin="0"
+                                Padding="10,0,0,0"
                                 Height="{StaticResource RowStepStandard}"
                                 BorderBrush="{StaticResource BrushBg}"
                                 BorderThickness="0,0,0,1"
@@ -93,10 +107,10 @@
                                 PointerExited="OnRowExit"
                                 ContextRequested="OnRowContextRequested">
                             <Grid VerticalAlignment="Stretch"
-                                  ColumnDefinitions="Auto,Auto,*"
+                                  ColumnDefinitions="Auto,Auto,Auto,*"
                                   Margin="{Binding IndentMargin}">
 
-                                <!-- Слот стрелки: 22px у групп, 0 у коллекций -->
+                                <!-- Слот стрелки (chevron): 22 для групп, 0 для коллекций -->
                                 <Border Grid.Column="0"
                                         Width="{Binding ChevronSlot}"
                                         VerticalAlignment="Stretch"
@@ -115,9 +129,7 @@
                                     </Viewbox>
                                 </Border>
 
-                                <!-- Зона чекбокса: 22px у коллекций, 0 у групп.
-                                     Так чекбокс встаёт на место стрелки, а у групп
-                                     текст идёт сразу после стрелки (без лишнего зазора). -->
+                                <!-- Слот чекбокса: только в режиме календаря у коллекций; иначе 0 -->
                                 <Border Grid.Column="1"
                                         Width="{Binding CheckboxSlot}"
                                         VerticalAlignment="Stretch"
@@ -143,14 +155,27 @@
                                     </Border>
                                 </Border>
 
+                                <!-- Иконка папки/файла (24px зона) -->
+                                <Viewbox Grid.Column="2" Width="18" Height="18"
+                                         Margin="2,0,0,0"
+                                         VerticalAlignment="Center"
+                                         HorizontalAlignment="Center">
+                                    <Canvas Width="24" Height="24">
+                                        <Path Data="{Binding IconGeometry}"
+                                              Stroke="{Binding IconBrush}"
+                                              StrokeThickness="1.6"
+                                              StrokeLineCap="Round" StrokeJoin="Round" />
+                                    </Canvas>
+                                </Viewbox>
+
                                 <!-- Имя -->
-                                <TextBlock Grid.Column="2"
+                                <TextBlock Grid.Column="3"
                                            Text="{Binding Name}"
                                            FontSize="{StaticResource FontSizeBase}"
-                                           Foreground="{StaticResource BrushPrimaryText}"
+                                           Foreground="{Binding NameBrush}"
                                            VerticalAlignment="Center"
                                            TextTrimming="CharacterEllipsis"
-                                           Margin="4,0,8,0" />
+                                           Margin="6,0,8,0" />
                             </Grid>
                         </Border>
                     </DataTemplate>

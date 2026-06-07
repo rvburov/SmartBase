@@ -1,5 +1,4 @@
 using CommunityToolkit.Mvvm.ComponentModel;
-using MyPlanner.Core.Filters;
 using MyPlanner.Database.Repositories;
 
 namespace MyPlanner.ViewModels.Calendar;
@@ -8,7 +7,7 @@ public partial class JournalViewModel : CalendarViewModelBase
 {
     [ObservableProperty] private DateTime _currentDate = DateTime.Today;
 
-    public JournalViewModel(EventRepository events) : base(events) => Refresh();
+    public JournalViewModel(ConstructorRepository records) : base(records) => Refresh();
 
     public override string HeaderText() =>
         CurrentDate.ToString("MMMM yyyy", System.Globalization.CultureInfo.GetCultureInfo("ru-RU"));
@@ -21,8 +20,7 @@ public partial class JournalViewModel : CalendarViewModelBase
     {
         var start = CurrentDate.Date;
         var end   = start.AddMonths(3);
-        var raw      = Events.GetByDateRange(start, end, ActiveIds);
-        var filtered = EventFilter.BySearch(raw, SearchQuery).ToList();
-        DisplayedEvents = new(filtered);
+        var raw      = Records.GetCalendarRecordsByRange(start, end, ActiveIds);
+        DisplayedRecords = new(FilterBySearch(raw));
     }
 }

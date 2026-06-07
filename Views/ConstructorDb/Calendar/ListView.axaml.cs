@@ -11,7 +11,7 @@ namespace MyPlanner.Views.ConstructorDb.Calendar;
 
 public partial class ListView : UserControl
 {
-    public event EventHandler<Event>?    EventClicked;
+    public event EventHandler<CalendarRecord>?    RecordClicked;
     public event EventHandler<DateTime>? CreateRequested;
 
     private List<EventListItem> _items       = new();
@@ -39,7 +39,7 @@ public partial class ListView : UserControl
             i.IsSelected = false;
     }
 
-    public void Refresh(IEnumerable<Event> events, DateTime currentDate)
+    public void Refresh(IEnumerable<CalendarRecord> events, DateTime currentDate)
     {
         _currentDate = currentDate;
         var isPast = currentDate.Date < DateTime.Today;
@@ -84,7 +84,7 @@ public partial class ListView : UserControl
         if (sender is Border { Tag: EventListItem item })
         {
             e.Handled = true;
-            EventClicked?.Invoke(this, item.OriginalEvent);
+            RecordClicked?.Invoke(this, item.OriginalEvent);
         }
     }
 
@@ -96,7 +96,7 @@ public partial class ListView : UserControl
 
 public partial class EventListItem : ObservableObject
 {
-    public Event  OriginalEvent  { get; }
+    public CalendarRecord  OriginalEvent  { get; }
     public string Title          { get; }
     public string DateTimeText   { get; }
     public string Description    { get; }
@@ -122,10 +122,10 @@ public partial class EventListItem : ObservableObject
         ["янв", "фев", "мар", "апр", "май", "июн",
          "июл", "авг", "сен", "окт", "ноя", "дек"];
 
-    public EventListItem(Event ev, bool isPast = false)
+    public EventListItem(CalendarRecord ev, bool isPast = false)
     {
         OriginalEvent  = ev;
-        Title          = ev.Title;
+        Title          = ev.DisplayTitle;
         // В превью разметка не нужна — снимаем markdown-форматирование
         Description    = MarkdownUtils.StripMarkdown(ev.Description);
         HasDescription = !string.IsNullOrWhiteSpace(Description);

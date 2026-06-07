@@ -8,16 +8,14 @@ namespace MyPlanner.ViewModels.ConstructorDb;
 public partial class ListViewModel : ViewModelBase
 {
     private readonly ConstructorRepository _constructor;
-    private readonly EventRepository       _events;
 
     [ObservableProperty] private ObservableCollection<DbField>  _fields  = [];
     [ObservableProperty] private ObservableCollection<DbRecord> _records = [];
     [ObservableProperty] private int? _collectionId;
 
-    public ListViewModel(ConstructorRepository constructor, EventRepository events)
+    public ListViewModel(ConstructorRepository constructor)
     {
         _constructor = constructor;
-        _events      = events;
     }
 
     public void LoadCollection(int collectionId)

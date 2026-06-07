@@ -21,16 +21,16 @@ public partial class YearView : UserControl
     public YearView() { InitializeComponent(); }
 
     // События по дате — для попапа со списком при клике на число
-    private readonly Dictionary<DateTime, List<Event>> _eventsByDay = new();
+    private readonly Dictionary<DateTime, List<CalendarRecord>> _eventsByDay = new();
 
-    public void Refresh(IEnumerable<Event> events, int year)
+    public void Refresh(IEnumerable<CalendarRecord> events, int year)
     {
         _eventsByDay.Clear();
         foreach (var e in events)
             foreach (var d in EachDay(e.StartDt.Date, e.EndDt.Date))
             {
                 if (!_eventsByDay.TryGetValue(d, out var list))
-                    _eventsByDay[d] = list = new List<Event>();
+                    _eventsByDay[d] = list = new List<CalendarRecord>();
                 list.Add(e);
             }
 
@@ -52,7 +52,7 @@ public partial class YearView : UserControl
         // (PlacementTarget применяется при открытии).
         if (DayPopup.IsOpen) DayPopup.IsOpen = false;
 
-        var events = _eventsByDay.GetValueOrDefault(day) ?? new List<Event>();
+        var events = _eventsByDay.GetValueOrDefault(day) ?? new List<CalendarRecord>();
 
         DayPopupTitle.Text = day.ToString("d MMMM yyyy");
         DayPopupList.Children.Clear();
@@ -90,7 +90,7 @@ public partial class YearView : UserControl
                     {
                         new TextBlock
                         {
-                            Text       = e.Title,
+                            Text       = e.DisplayTitle,
                             FontSize   = 13,
                             FontWeight = FontWeight.SemiBold,
                             Foreground = new SolidColorBrush(Color.Parse("#1C1C1E")),

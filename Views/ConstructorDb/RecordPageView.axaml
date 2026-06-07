@@ -13,6 +13,7 @@
               ColumnDefinitions="*,Auto"
               Height="57"
               Margin="16,0">
+
             <TextBox Grid.Column="0" x:Name="TitleBox"
                      Classes="titleEditor"
                      Watermark="Без названия"
@@ -21,14 +22,33 @@
                      FontWeight="{StaticResource FontWeightBold}"
                      Foreground="{StaticResource BrushPrimaryText}"
                      Margin="0,0,12,0" />
-            <Button Grid.Column="1" x:Name="CloseBtn"
-                    Content="×"
-                    Width="26" Height="26"
-                    VerticalAlignment="Center"
-                    Background="Transparent"
-                    Foreground="{StaticResource BrushSecondaryText}"
-                    FontSize="18" Padding="0"
-                    CornerRadius="5" />
+
+            <!-- Toggle блока коллекции справа. Симметричен кнопке записи в навбаре
+                 коллекции: коллекция закрыта → стрелка → (клик откроет),
+                 коллекция открыта → стрелка ← (клик закроет). -->
+            <ToggleButton Grid.Column="1" x:Name="CollectionPanelBtn" Classes="navbtn"
+                          Width="30" Height="30"
+                          VerticalAlignment="Center"
+                          CornerRadius="{StaticResource RadiusMedium}"
+                          ToolTip.Tip="Открыть коллекцию">
+                <Viewbox Width="18" Height="18">
+                    <Canvas Width="24" Height="24">
+                        <!-- arrow-right-from-line: коллекция закрыта → клик откроет (→) -->
+                        <Path x:Name="CollectionOpenIcon"
+                              Data="M3 5 V19 M21 12 H7 M15 18 L21 12 L15 6"
+                              Stroke="{Binding $parent[ToggleButton].Foreground}"
+                              StrokeThickness="1.6"
+                              StrokeLineCap="Round" StrokeJoin="Round" />
+                        <!-- arrow-left-to-line: коллекция открыта → клик закроет (←) -->
+                        <Path x:Name="CollectionCloseIcon"
+                              IsVisible="False"
+                              Data="M3 19 V5 M13 6 L7 12 L13 18 M7 12 H21"
+                              Stroke="{Binding $parent[ToggleButton].Foreground}"
+                              StrokeThickness="1.6"
+                              StrokeLineCap="Round" StrokeJoin="Round" />
+                    </Canvas>
+                </Viewbox>
+            </ToggleButton>
         </Grid>
 
         <Border Grid.Row="0"
