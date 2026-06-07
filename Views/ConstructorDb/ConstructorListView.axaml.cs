@@ -8,6 +8,8 @@ namespace MyPlanner.Views.ConstructorDb;
 public partial class ConstructorListView : UserControl
 {
     public event EventHandler<int>? RecordClicked;
+    public event EventHandler<int>? RecordDeleteRequested;
+    public event EventHandler?      RecordCreateRequested;
 
     private ConstructorRepository? _repository;
     private int _collectionId;
@@ -36,7 +38,10 @@ public partial class ConstructorListView : UserControl
         var fields  = _repository.GetFields(_collectionId);
         var records = _repository.GetRecords(_collectionId);
 
-        var nameField   = fields.FirstOrDefault();
+        // В списке заголовок берём из «Название» (если есть) или из первого не-markdown поля,
+        // статус — из первого select, дата — из первого date.
+        var nameField   = fields.FirstOrDefault(f => f.Name == "Название")
+                         ?? fields.FirstOrDefault(f => f.FieldType != "markdown");
         var statusField = fields.FirstOrDefault(f => f.FieldType == "select");
         var dateField   = fields.FirstOrDefault(f => f.FieldType == "date");
 
@@ -51,11 +56,11 @@ public partial class ConstructorListView : UserControl
                 name:     nameField   is not null && values.TryGetValue(nameField.Id   ?? 0, out var n) ? n : "—",
                 status:   statusField is not null && values.TryGetValue(statusField.Id ?? 0, out var s) ? s : "",
                 date:     dateField   is not null && values.TryGetValue(dateField.Id   ?? 0, out var d) ? d : "",
-                onClick:  id => RecordClicked?.Invoke(this, id)
+                onClick:  id => RecordClicked?.Invoke(this, id),
+                onDelete: id => RecordDeleteRequested?.Invoke(this, id),
+                onCreate: () => RecordCreateRequested?.Invoke(this, EventArgs.Empty)
             ));
         }
-
-        items.Add(new ListRecordItem(recordId: null, name: "+ Запись", status: "", date: "", onClick: _ => { }));
 
         RecordsList.ItemsSource = items;
     }
@@ -63,15 +68,19 @@ public partial class ConstructorListView : UserControl
 
 public class ListRecordItem
 {
-    public int?     RecordId     { get; }
-    public string   Name         { get; }
-    public string   Status       { get; }
-    public string   Date         { get; }
-    public bool     HasStatus    { get; }
-    public bool     HasDate      { get; }
-    public ICommand ClickCommand { get; }
+    public int?     RecordId      { get; }
+    public string   Name          { get; }
+    public string   Status        { get; }
+    public string   Date          { get; }
+    public bool     HasStatus     { get; }
+    public bool     HasDate       { get; }
+    public ICommand ClickCommand  { get; }
+    public ICommand OpenCommand   { get; }
+    public ICommand CreateCommand { get; }
+    public ICommand DeleteCommand { get; }
 
-    public ListRecordItem(int? recordId, string name, string status, string date, Action<int> onClick)
+    public ListRecordItem(int? recordId, string name, string status, string date,
+                          Action<int> onClick, Action<int> onDelete, Action onCreate)
     {
         RecordId     = recordId;
         Name         = name;
@@ -79,6 +88,10 @@ public class ListRecordItem
         Date         = date;
         HasStatus    = !string.IsNullOrEmpty(status);
         HasDate      = !string.IsNullOrEmpty(date);
-        ClickCommand = new RelayCommand(() => { if (recordId.HasValue) onClick(recordId.Value); });
+
+        ClickCommand  = new RelayCommand(() => { if (recordId.HasValue) onClick(recordId.Value); });
+        OpenCommand   = new RelayCommand(() => { if (recordId.HasValue) onClick(recordId.Value); });
+        DeleteCommand = new RelayCommand(() => { if (recordId.HasValue) onDelete(recordId.Value); });
+        CreateCommand = new RelayCommand(onCreate);
     }
 }

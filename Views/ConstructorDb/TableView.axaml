@@ -18,10 +18,12 @@
             <Setter Property="SeparatorBrush"  Value="{StaticResource BrushSeparator}" />
             <Setter Property="AreSeparatorsVisible" Value="True" />
         </Style>
-        <!-- Линия под шапкой (разделитель шапки и строк) — той же толщины 1px. -->
+        <!-- Шапка отрисована как обычная строка (HeaderRow), нативная шапка скрыта.
+             Встроенный разделитель шапки и строк не нужен — иначе он накладывается
+             на нижнюю границу навбара (визуально удвоенная толщина). -->
         <Style Selector="DataGrid /template/ Rectangle#PART_ColumnHeadersAndRowsSeparator">
-            <Setter Property="Fill"   Value="{StaticResource BrushSeparator}" />
-            <Setter Property="Height" Value="1" />
+            <Setter Property="Height" Value="0" />
+            <Setter Property="IsVisible" Value="False" />
         </Style>
         <!-- Фон заголовка не меняется при наведении/нажатии, иначе подсветка
              (рисуется на внутреннем PART_ColumnHeaderRoot) перекрывает
@@ -78,7 +80,7 @@
               GridLinesVisibility="All"
               HorizontalGridLinesBrush="{StaticResource BrushSeparator}"
               VerticalGridLinesBrush="{StaticResource BrushSeparator}"
-              HeadersVisibility="Column"
+              HeadersVisibility="None"
               SelectionMode="Single"
               IsReadOnly="False"
               Background="Transparent"

@@ -14,6 +14,14 @@
                             Padding="12,0"
                             Height="38"
                             Command="{Binding ClickCommand}">
+                        <Button.ContextMenu>
+                            <ContextMenu>
+                                <MenuItem Header="Открыть"        Command="{Binding OpenCommand}" />
+                                <MenuItem Header="Создать запись" Command="{Binding CreateCommand}" />
+                                <Separator />
+                                <MenuItem Header="Удалить"        Command="{Binding DeleteCommand}" />
+                            </ContextMenu>
+                        </Button.ContextMenu>
                         <Grid ColumnDefinitions="*,Auto,Auto">
                             <TextBlock Grid.Column="0"
                                        Text="{Binding Name}"

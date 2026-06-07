@@ -6,7 +6,7 @@ using CommunityToolkit.Mvvm.Input;
 using MyPlanner.Core.Models;
 using System.Windows.Input;
 
-namespace MyPlanner.Views.Calendar;
+namespace MyPlanner.Views.ConstructorDb.Calendar;
 
 public partial class YearView : UserControl
 {
@@ -61,7 +61,7 @@ public partial class YearView : UserControl
         {
             DayPopupList.Children.Add(new TextBlock
             {
-                Text       = "Нет событий",
+                Text       = "Нет записей",
                 FontSize   = 13,
                 Foreground = new SolidColorBrush(Color.Parse("#8E8E93")),
             });

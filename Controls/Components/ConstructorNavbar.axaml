@@ -14,14 +14,14 @@
         <!-- Заголовок слева, переключатель вида справа (кнопки — в нижней панели) -->
         <Grid ColumnDefinitions="*,Auto" Margin="16,0">
 
-            <TextBlock Grid.Column="0" x:Name="TitleLabel"
-                       Text="Выберите коллекцию"
-                       VerticalAlignment="Center"
-                       FontSize="{StaticResource FontSizeLarge}"
-                       FontWeight="{StaticResource FontWeightBold}"
-                       Foreground="{StaticResource BrushPrimaryText}"
-                       TextTrimming="CharacterEllipsis"
-                       Margin="0,0,12,0" />
+            <TextBox Grid.Column="0" x:Name="TitleBox"
+                     Classes="titleEditor"
+                     Watermark="Выберите коллекцию"
+                     VerticalAlignment="Center"
+                     FontSize="{StaticResource FontSizeLarge}"
+                     FontWeight="{StaticResource FontWeightBold}"
+                     Foreground="{StaticResource BrushPrimaryText}"
+                     Margin="0,0,12,0" />
 
             <!-- Переключатель вида (Таблица / Список) -->
             <ComboBox Grid.Column="1" x:Name="ViewSelector"

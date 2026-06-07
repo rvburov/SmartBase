@@ -9,13 +9,13 @@ public static class EventValidator
     public static string? Validate(Event e)
     {
         if (string.IsNullOrWhiteSpace(e.Title))
-            return "Введите название события";
+            return "Введите название записи";
 
         if (e.EndDt <= e.StartDt)
             return "Время конца должно быть позже начала";
 
         if ((e.EndDt - e.StartDt).TotalSeconds < MinDurationSeconds)
-            return "Минимальная продолжительность события — 30 минут";
+            return "Минимальная продолжительность записи — 30 минут";
 
         return null;
     }

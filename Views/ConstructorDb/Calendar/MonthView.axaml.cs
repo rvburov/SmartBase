@@ -5,7 +5,7 @@ using Avalonia.Layout;
 using Avalonia.Media;
 using MyPlanner.Core.Models;
 
-namespace MyPlanner.Views.Calendar;
+namespace MyPlanner.Views.ConstructorDb.Calendar;
 
 public partial class MonthView : UserControl
 {

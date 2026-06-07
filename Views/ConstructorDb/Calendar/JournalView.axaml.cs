@@ -7,7 +7,7 @@ using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using MyPlanner.Core.Models;
 
-namespace MyPlanner.Views.Calendar;
+namespace MyPlanner.Views.ConstructorDb.Calendar;
 
 public partial class JournalView : UserControl
 {

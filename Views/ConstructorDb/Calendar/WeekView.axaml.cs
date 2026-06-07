@@ -9,7 +9,7 @@ using Avalonia.Media;
 using Avalonia.Threading;
 using MyPlanner.Core.Models;
 
-namespace MyPlanner.Views.Calendar;
+namespace MyPlanner.Views.ConstructorDb.Calendar;
 
 public partial class WeekView : UserControl
 {

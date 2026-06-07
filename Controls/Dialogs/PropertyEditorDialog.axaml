@@ -1,0 +1,55 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="MyPlanner.Controls.Dialogs.PropertyEditorDialog"
+        Title="Свойство"
+        Width="380"
+        MinWidth="320"
+        SizeToContent="Height"
+        WindowStartupLocation="CenterOwner"
+        CanResize="False"
+        Background="{StaticResource BrushBg}">
+
+    <DockPanel Margin="20">
+
+        <StackPanel DockPanel.Dock="Top" Spacing="12">
+
+            <TextBlock x:Name="TitleLabel"
+                       Text="Новое свойство"
+                       FontWeight="{StaticResource FontWeightBold}"
+                       FontSize="{StaticResource FontSizeBase}"
+                       Foreground="{StaticResource BrushPrimaryText}" />
+
+            <!-- Имя -->
+            <StackPanel Spacing="4">
+                <TextBlock Text="Имя"
+                           FontSize="{StaticResource FontSizeSmall}"
+                           Foreground="{StaticResource BrushSecondaryText}" />
+                <TextBox x:Name="NameBox"
+                         Watermark="Название свойства"
+                         Height="34"
+                         CornerRadius="{StaticResource RadiusMedium}" />
+            </StackPanel>
+
+            <!-- Тип -->
+            <StackPanel Spacing="4">
+                <TextBlock Text="Тип"
+                           FontSize="{StaticResource FontSizeSmall}"
+                           Foreground="{StaticResource BrushSecondaryText}" />
+                <UniformGrid x:Name="TypeButtonsGrid"
+                             Columns="3" Rows="3" />
+            </StackPanel>
+
+        </StackPanel>
+
+        <Grid DockPanel.Dock="Bottom"
+              ColumnDefinitions="*,Auto,8,Auto"
+              Margin="0,18,0,0">
+            <Button Grid.Column="1" x:Name="CancelBtn" Classes="dialog"
+                    Content="Отмена" />
+            <Button Grid.Column="3" x:Name="SaveBtn" Classes="dialog"
+                    Content="Сохранить" />
+        </Grid>
+
+    </DockPanel>
+
+</Window>

@@ -297,6 +297,38 @@
         <Setter Property="BorderBrush" Value="{StaticResource BrushAccent}" />
     </Style>
 
+    <!-- Заголовок «в строку» (имя коллекции в навбаре, имя записи в RecordPageView).
+         Не показывает рамку/фон ни в одном состоянии. Watermark наследует
+         текущие FontSize/FontWeight, чтобы плейсхолдер выглядел как сам заголовок,
+         только полупрозрачным. -->
+    <Style Selector="TextBox.titleEditor">
+        <Setter Property="Background"               Value="Transparent" />
+        <Setter Property="BorderThickness"          Value="0" />
+        <Setter Property="Padding"                  Value="0" />
+        <Setter Property="VerticalContentAlignment" Value="Center" />
+    </Style>
+
+    <Style Selector="TextBox.titleEditor /template/ Border#PART_BorderElement">
+        <Setter Property="Background"      Value="Transparent" />
+        <Setter Property="BorderThickness" Value="0" />
+    </Style>
+    <Style Selector="TextBox.titleEditor:pointerover /template/ Border#PART_BorderElement">
+        <Setter Property="Background"      Value="Transparent" />
+        <Setter Property="BorderThickness" Value="0" />
+    </Style>
+    <Style Selector="TextBox.titleEditor:focus /template/ Border#PART_BorderElement">
+        <Setter Property="Background"      Value="Transparent" />
+        <Setter Property="BorderThickness" Value="0" />
+    </Style>
+
+    <!-- Watermark копирует размер и жирность с самого TextBox -->
+    <Style Selector="TextBox.titleEditor /template/ TextBlock#PART_Watermark">
+        <Setter Property="FontSize"          Value="{StaticResource FontSizeLarge}" />
+        <Setter Property="FontWeight"        Value="{StaticResource FontWeightBold}" />
+        <Setter Property="Foreground"        Value="{StaticResource BrushSecondaryText}" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+
     <!-- Классический скроллбар (как в Excel): дорожка всегда видна, сверху/снизу
          кнопки-стрелки, посередине перетаскиваемый ползунок. Собственный шаблон,
          т.к. тема Fluent прячет ползунок. -->

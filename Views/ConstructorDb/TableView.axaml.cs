@@ -17,15 +17,32 @@ namespace MyPlanner.Views.ConstructorDb;
 
 public partial class TableView : UserControl
 {
+    /// <summary>Запрос открыть запись (Edit) — родитель открывает RecordPageView.</summary>
     public event EventHandler<int>? RecordClicked;
+
+    /// <summary>Запрос удалить запись.</summary>
+    public event EventHandler<int>? RecordDeleteRequested;
+
+    /// <summary>Запрос создать новую запись (родитель создаёт и сразу открывает PageView).</summary>
+    public event EventHandler? RecordCreateRequested;
+
+    /// <summary>Запрос создать новое свойство (поле).</summary>
+    public event EventHandler? PropertyCreateRequested;
+
+    /// <summary>Запрос изменить свойство (передан field.Id).</summary>
+    public event EventHandler<int>? PropertyEditRequested;
+
+    /// <summary>Запрос удалить свойство (передан field.Id).</summary>
+    public event EventHandler<int>? PropertyDeleteRequested;
 
     private const int MinColWidth  = 160;
     private const int NumColWidth   = 36;   // квадрат: совпадает с высотой строки
-    private const int PlusColWidth  = 38;
+    private const int PlusColWidth  = 36;   // симметрично «№»
 
     private ConstructorRepository? _repository;
     private int  _collectionId;
     private bool _manualColResize;
+    // Поля, которые отображаются как колонки таблицы (без markdown).
     private List<DbField> _fields = [];
     private System.Collections.ObjectModel.ObservableCollection<TableRowVm> _rows = [];
 
@@ -34,6 +51,7 @@ public partial class TableView : UserControl
         InitializeComponent();
         RecordsGrid.CellPointerPressed += OnCellPointerPressed;
         RecordsGrid.ColumnReordered    += (_, _) => SaveColumnOrder();
+        RecordsGrid.LoadingRow         += OnLoadingRow;
         // Сохранение ширин после ручного ресайза (нет отдельного события «resize finished»).
         RecordsGrid.AddHandler(PointerReleasedEvent, OnGridPointerReleased, RoutingStrategies.Tunnel);
         // Пересчёт ширин колонок в целых пикселях при изменении размера (как PyQt resizeEvent).
@@ -86,21 +104,31 @@ public partial class TableView : UserControl
     {
         if (_repository is null) return;
 
-        _fields = _repository.GetFields(_collectionId);
+        // markdown-поле (Описание) редактируется только в RecordPageView,
+        // в таблице оно не отображается как колонка.
+        _fields = _repository.GetFields(_collectionId)
+            .Where(f => f.FieldType != "markdown")
+            .ToList();
         var records = _repository.GetRecords(_collectionId);
 
         BuildColumns();
 
         _rows = [];
+        // Первая строка — шапка (имена полей).
+        var fieldNames = _fields.ToDictionary(f => f.Id!.Value, f => f.Name);
+        _rows.Add(TableRowVm.HeaderRow(fieldNames));
+
         for (var i = 0; i < records.Count; i++)
         {
             var id     = records[i].Id ?? 0;
             var values = _repository.GetFieldValues(id);
             _rows.Add(new TableRowVm(_repository, id, i + 1, values));
         }
+        // Завершающая строка «+ Новая запись».
         _rows.Add(TableRowVm.AddRow());
 
         RecordsGrid.ItemsSource = _rows;
+        RecordsGrid.ContextMenu  = BuildGridContextMenu();
 
         RecordsGrid.CanUserResizeColumns  = _manualColResize;
         RecordsGrid.CanUserReorderColumns = true;
@@ -111,47 +139,94 @@ public partial class TableView : UserControl
     {
         RecordsGrid.Columns.Clear();
 
-        // Колонка «№» — заголовок пустой
+        // Колонка «№»
         RecordsGrid.Columns.Add(new DataGridTemplateColumn
         {
-            Header        = "",
+            Header        = "№",
             IsReadOnly    = true,
             CanUserSort   = false,
             CanUserResize = false,
             CanUserReorder = false,
             Width         = new DataGridLength(NumColWidth),
+            // Ячейка номера залита фоном заголовка (серым), как «угловой» столбец.
             CellTemplate = new FuncDataTemplate<TableRowVm>((row, _) =>
-                row.IsAddRow
-                    ? PlusGlyph()
-                    // Ячейка номера залита фоном заголовка (серым), как «угловой» столбец.
-                    : new Border
+                new Border
+                {
+                    Background           = (IBrush)this.FindResource("BrushInactiveBg")!,
+                    HorizontalAlignment  = HorizontalAlignment.Stretch,
+                    VerticalAlignment    = VerticalAlignment.Stretch,
+                    Child = new TextBlock
                     {
-                        Background           = (IBrush)this.FindResource("BrushInactiveBg")!,
-                        HorizontalAlignment  = HorizontalAlignment.Stretch,
-                        VerticalAlignment    = VerticalAlignment.Stretch,
-                        Child = new TextBlock
-                        {
-                            Text                = row.RowNumber.ToString(),
-                            HorizontalAlignment = HorizontalAlignment.Center,
-                            VerticalAlignment   = VerticalAlignment.Center,
-                            Foreground          = (IBrush)this.FindResource("BrushSecondaryText")!,
-                        },
-                    }),
+                        Text                = row.IsHeaderRow ? "№"
+                                            : row.IsAddRow    ? "+"
+                                            : row.RowNumber.ToString(),
+                        HorizontalAlignment = HorizontalAlignment.Center,
+                        VerticalAlignment   = VerticalAlignment.Center,
+                        Foreground          = (IBrush)this.FindResource("BrushSecondaryText")!,
+                    },
+                }),
         });
 
         // Колонки данных
         foreach (var field in _fields)
             RecordsGrid.Columns.Add(BuildFieldColumn(field));
+
+        // Завершающая «+»-колонка для создания нового свойства.
+        RecordsGrid.Columns.Add(BuildAddPropertyColumn());
+    }
+
+    private DataGridColumn BuildAddPropertyColumn()
+    {
+        return new DataGridTemplateColumn
+        {
+            Header        = "",   // нативный header скрыт (HeadersVisibility="None")
+            Tag           = "__add_property__",
+            IsReadOnly    = true,
+            CanUserSort   = false,
+            CanUserResize = false,
+            CanUserReorder = false,
+            Width         = new DataGridLength(PlusColWidth),
+            MinWidth      = PlusColWidth,
+            MaxWidth      = PlusColWidth,
+            CellTemplate  = new FuncDataTemplate<TableRowVm>((row, _) => new Border
+            {
+                Background          = (IBrush)this.FindResource("BrushInactiveBg")!,
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                VerticalAlignment   = VerticalAlignment.Stretch,
+                Child = row.IsHeaderRow
+                    ? new TextBlock
+                    {
+                        Text                = "+",
+                        FontSize            = 16,
+                        HorizontalAlignment = HorizontalAlignment.Center,
+                        VerticalAlignment   = VerticalAlignment.Center,
+                        Foreground          = (IBrush)this.FindResource("BrushSecondaryText")!,
+                    }
+                    : null,
+            }),
+        };
     }
 
     private DataGridColumn BuildFieldColumn(DbField field)
     {
-        var key = field.Id!.Value.ToString();
+        var key   = field.Id!.Value.ToString();
+        var fid   = field.Id!.Value;
+
+        // Заголовок колонки оборачиваем в TextBlock с контекстным меню для CRUD свойств.
+        var headerText = new TextBlock
+        {
+            Text                = field.Name,
+            VerticalAlignment   = VerticalAlignment.Center,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            TextTrimming        = TextTrimming.CharacterEllipsis,
+            Foreground          = (IBrush)this.FindResource("BrushSecondaryText")!,
+            ContextMenu         = BuildHeaderContextMenu(fid, field.IsRequired),
+        };
 
         return new DataGridTemplateColumn
         {
-            Header       = field.Name,
-            Tag          = field.Id!.Value,                 // для восстановления порядка колонок
+            Header       = headerText,
+            Tag          = fid,                            // для восстановления порядка колонок
             CanUserSort  = false,
             Width        = new DataGridLength(1, DataGridLengthUnitType.Star),
             MinWidth     = MinColWidth,
@@ -166,7 +241,28 @@ public partial class TableView : UserControl
     private IDataTemplate BuildCellTemplate(DbField field, string key) =>
         new FuncDataTemplate<TableRowVm>((row, _) =>
         {
-            if (row.IsAddRow) return new Control();   // пустая ячейка в строке-плюсе
+            // Шапка: имя поля на сером фоне + контекстное меню «свойство».
+            if (row.IsHeaderRow)
+            {
+                return new Border
+                {
+                    Background          = (IBrush)this.FindResource("BrushInactiveBg")!,
+                    HorizontalAlignment = HorizontalAlignment.Stretch,
+                    VerticalAlignment   = VerticalAlignment.Stretch,
+                    Padding             = new Thickness(6, 0),
+                    ContextMenu         = BuildHeaderContextMenu(field.Id!.Value, field.IsRequired),
+                    Child = new TextBlock
+                    {
+                        Text                = field.Name,
+                        VerticalAlignment   = VerticalAlignment.Center,
+                        TextTrimming        = TextTrimming.CharacterEllipsis,
+                        Foreground          = (IBrush)this.FindResource("BrushSecondaryText")!,
+                    },
+                };
+            }
+
+            // У add-row нет данных — ячейка пустая (визуально только «+» в первой колонке).
+            if (row.IsAddRow) return new Border();
 
             if (field.FieldType == "checkbox")
             {
@@ -198,8 +294,6 @@ public partial class TableView : UserControl
     private IDataTemplate BuildEditTemplate(DbField field, string key) =>
         new FuncDataTemplate<TableRowVm>((row, _) =>
         {
-            if (row.IsAddRow) return new Control();
-
             switch (field.FieldType)
             {
                 case "number":
@@ -249,79 +343,99 @@ public partial class TableView : UserControl
             }
         });
 
-    // Иконка lucide plus, как кнопки навбара.
-    private Control PlusGlyph()
-    {
-        var brush = (IBrush)this.FindResource("BrushSecondaryText")!;
+    // ── Клики и контекстные меню ───────────────────────────────────────────────
 
-        var path = new Avalonia.Controls.Shapes.Path
-        {
-            Data            = Avalonia.Media.Geometry.Parse("M5 12 H19 M12 5 V19"),
-            Stroke          = brush,
-            StrokeThickness = 2,
-            StrokeLineCap   = PenLineCap.Round,
-            StrokeJoin      = PenLineJoin.Round,
-        };
-
-        var canvas = new Canvas { Width = 24, Height = 24 };
-        canvas.Children.Add(path);
-
-        return new Viewbox
-        {
-            Width               = 18,
-            Height              = 18,
-            HorizontalAlignment = HorizontalAlignment.Center,
-            VerticalAlignment   = VerticalAlignment.Center,
-            Child               = canvas,
-        };
-    }
-
-    // ── Клики ──────────────────────────────────────────────────────────────────
-
+    // Клик по ячейке «№» открывает запись (привычный shortcut).
+    // Создание/удаление/редактирование выполняется через контекстные меню.
     private void OnCellPointerPressed(object? sender, DataGridCellPointerPressedEventArgs e)
     {
         if (e.Row.DataContext is not TableRowVm row) return;
 
-        if (row.IsAddRow)
+        // Шапка-строка: клик по «+»-колонке → создание свойства.
+        if (row.IsHeaderRow)
         {
-            AddRecordInline();
+            if (e.Column.Tag as string == "__add_property__")
+                PropertyCreateRequested?.Invoke(this, EventArgs.Empty);
             return;
         }
 
-        // Клик по колонке «№» открывает запись в диалоге (как record_clicked в PyQt).
+        // Клик по любой ячейке add-row → создание новой записи.
+        if (row.IsAddRow)
+        {
+            RecordCreateRequested?.Invoke(this, EventArgs.Empty);
+            return;
+        }
+
+        // Клик по «+»-колонке справа → создание нового свойства.
+        if (e.Column.Tag as string == "__add_property__")
+        {
+            PropertyCreateRequested?.Invoke(this, EventArgs.Empty);
+            return;
+        }
+
         if (e.Column.DisplayIndex == 0)
             RecordClicked?.Invoke(this, row.RecordId);
     }
 
-    private void AddRecordInline()
+    /// <summary>Контекстное меню для всей сетки — открывается на пустой области.</summary>
+    private ContextMenu BuildGridContextMenu()
     {
-        if (_repository is null) return;
-
-        var dataCount = _rows.Count(r => !r.IsAddRow);
-        var rec = _repository.AddRecord(new DbRecord
-        {
-            CollectionId = _collectionId,
-            Position     = (dataCount + 1) * 1000,
-        });
-
-        var newRow = new TableRowVm(_repository, rec.Id ?? 0, _rows.Count, []);
-        // ObservableCollection.Insert обновляет грид без пересоздания ItemsSource —
-        // прокрутка не сбрасывается наверх.
-        _rows.Insert(_rows.Count - 1, newRow);   // перед строкой-плюсом
-        Renumber();
-
-        // Оставить новую строку в поле зрения (внизу), а не прыгать наверх.
-        RecordsGrid.ScrollIntoView(newRow, RecordsGrid.Columns.Count > 0 ? RecordsGrid.Columns[0] : null);
-
-        // Снять выделение со строки-«плюс» (DataGrid ставит его после нашего обработчика).
-        Avalonia.Threading.Dispatcher.UIThread.Post(() => RecordsGrid.SelectedItem = null);
+        var menu = new ContextMenu();
+        var miCreate = new MenuItem { Header = "Создать запись" };
+        miCreate.Click += (_, _) => RecordCreateRequested?.Invoke(this, EventArgs.Empty);
+        menu.Items.Add(miCreate);
+        return menu;
     }
 
-    private void Renumber()
+    /// <summary>Контекстное меню для строки данных.</summary>
+    private ContextMenu BuildRowContextMenu(int recordId)
     {
-        var n = 1;
-        foreach (var r in _rows)
-            if (!r.IsAddRow) r.SetRowNumber(n++);
+        var menu = new ContextMenu();
+
+        var miOpen = new MenuItem { Header = "Открыть" };
+        miOpen.Click += (_, _) => RecordClicked?.Invoke(this, recordId);
+        menu.Items.Add(miOpen);
+
+        var miCreate = new MenuItem { Header = "Создать запись" };
+        miCreate.Click += (_, _) => RecordCreateRequested?.Invoke(this, EventArgs.Empty);
+        menu.Items.Add(miCreate);
+
+        menu.Items.Add(new Separator());
+
+        var miDelete = new MenuItem { Header = "Удалить" };
+        miDelete.Click += (_, _) => RecordDeleteRequested?.Invoke(this, recordId);
+        menu.Items.Add(miDelete);
+
+        return menu;
+    }
+
+    /// <summary>Контекстное меню для заголовка колонки (свойства).</summary>
+    private ContextMenu BuildHeaderContextMenu(int fieldId, bool isRequired)
+    {
+        var menu = new ContextMenu();
+
+        var miCreate = new MenuItem { Header = "Создать свойство" };
+        miCreate.Click += (_, _) => PropertyCreateRequested?.Invoke(this, EventArgs.Empty);
+        menu.Items.Add(miCreate);
+
+        var miEdit = new MenuItem { Header = "Изменить свойство" };
+        miEdit.Click += (_, _) => PropertyEditRequested?.Invoke(this, fieldId);
+        menu.Items.Add(miEdit);
+
+        menu.Items.Add(new Separator());
+
+        var miDelete = new MenuItem { Header = "Удалить", IsEnabled = !isRequired };
+        miDelete.Click += (_, _) => PropertyDeleteRequested?.Invoke(this, fieldId);
+        menu.Items.Add(miDelete);
+
+        return menu;
+    }
+
+    private void OnLoadingRow(object? sender, DataGridRowEventArgs e)
+    {
+        if (e.Row.DataContext is not TableRowVm row) return;
+        if (row.IsAddRow || row.IsHeaderRow) return;
+        e.Row.ContextMenu = BuildRowContextMenu(row.RecordId);
     }
 
     // ── Ширины колонок ─────────────────────────────────────────────────────────
@@ -345,11 +459,11 @@ public partial class TableView : UserControl
             return;
         }
 
-        // Авто-режим: ширины вычисляются в ЦЕЛЫХ пикселях (как PyQt _calc_data_widths),
-        // чтобы границы колонок были целочисленными и вертикальные линии не «схлопывались».
-        var widths = CalcDataWidths(RecordsGrid.Bounds.Width, _fields.Count);
+        // Авто-режим: data-колонки растягиваются на оставшееся пространство (Star),
+        // фиксированные «№» и «+»-колонка не трогаются. Это надёжнее ручного
+        // подсчёта пикселей — DataGrid сам учтёт скроллбар и разделители.
         for (var i = 0; i < _fields.Count; i++)
-            RecordsGrid.Columns[i + 1].Width = new DataGridLength(widths[i]);
+            RecordsGrid.Columns[i + 1].Width = new DataGridLength(1, DataGridLengthUnitType.Star);
     }
 
     /// <summary>
@@ -362,7 +476,9 @@ public partial class TableView : UserControl
         // Вертикальный скроллбар всегда видим — резервируем под него место,
         // чтобы колонки не вылезали и не появлялся лишний горизонтальный скролл.
         const int vScrollReserve = 14;
-        var available = (int)gridWidth - NumColWidth - vScrollReserve;
+        // +2 пикселя на вертикальные разделители колонок: между «№»/первой data
+        // и между последней data/«+».
+        var available = (int)gridWidth - NumColWidth - PlusColWidth - vScrollReserve - 2;
 
         if (dataCols == 0 || available <= 0)
             return Enumerable.Repeat(MinColWidth, dataCols).ToArray();

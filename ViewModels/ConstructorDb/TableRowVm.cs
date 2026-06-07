@@ -15,9 +15,12 @@ public class TableRowVm : INotifyPropertyChanged
     private readonly ConstructorRepository? _repository;
     private readonly Dictionary<int, string> _values;
 
-    public int  RecordId  { get; }
-    public int  RowNumber { get; private set; }
-    public bool IsAddRow  { get; }
+    public int  RecordId    { get; }
+    public int  RowNumber   { get; private set; }
+    public bool IsAddRow    { get; }
+    public bool IsHeaderRow { get; }
+    /// <summary>Для шапки: имена полей по field.Id (для отображения вместо значений).</summary>
+    public Dictionary<int, string> FieldNames { get; }
 
     public event PropertyChangedEventHandler? PropertyChanged;
 
@@ -28,16 +31,27 @@ public class TableRowVm : INotifyPropertyChanged
         RecordId    = recordId;
         RowNumber   = rowNumber;
         _values     = values;
+        FieldNames  = [];
     }
 
     /// <summary>Строка-«плюс» в конце таблицы.</summary>
     private TableRowVm()
     {
-        IsAddRow = true;
-        _values  = [];
+        IsAddRow   = true;
+        _values    = [];
+        FieldNames = [];
+    }
+
+    /// <summary>Шапка таблицы как обычная строка.</summary>
+    private TableRowVm(Dictionary<int, string> fieldNames)
+    {
+        IsHeaderRow = true;
+        _values     = [];
+        FieldNames  = fieldNames;
     }
 
     public static TableRowVm AddRow() => new();
+    public static TableRowVm HeaderRow(Dictionary<int, string> fieldNames) => new(fieldNames);
 
     public void SetRowNumber(int n)
     {
@@ -55,7 +69,7 @@ public class TableRowVm : INotifyPropertyChanged
         get => int.TryParse(key, out var id) && _values.TryGetValue(id, out var v) ? v : "";
         set
         {
-            if (IsAddRow || !int.TryParse(key, out var id)) return;
+            if (IsAddRow || IsHeaderRow || !int.TryParse(key, out var id)) return;
             var newVal = value ?? "";
             if (_values.TryGetValue(id, out var old) && old == newVal) return;
 

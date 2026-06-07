@@ -3,7 +3,7 @@ using MyPlanner.Controls.Dialogs;
 using MyPlanner.Core.Models;
 using MyPlanner.Database.Repositories;
 
-namespace MyPlanner.Views.Calendar;
+namespace MyPlanner.Views.ConstructorDb.Calendar;
 
 public partial class CalendarControllerView : UserControl
 {
@@ -196,17 +196,17 @@ public partial class CalendarControllerView : UserControl
             3 => $"{StartOfWeek(_currentDate):d MMM} – {StartOfWeek(_currentDate).AddDays(6):d MMM yyyy}",
             4 => _currentDate.ToString("MMMM yyyy", ru),
             5 => _currentDate.Year.ToString(),
-            _ => "Все события",
+            _ => "Все записи",
         });
     }
 
     private async Task OpenAddAllDayDialog(DateOnly date)
     {
         if (VisualRoot is not Avalonia.Controls.Window win) return;
-        var dlg = new EventDialog(_categories, _constructor,
-                                  presetDate: date.ToDateTime(TimeOnly.MinValue),
-                                  presetAllDay: true);
-        var result = await dlg.ShowDialog<EventDialogResult?>(win);
+        var dlg = new RecordDialog(_events, _constructor,
+                                   presetDate: date.ToDateTime(TimeOnly.MinValue),
+                                   presetAllDay: true);
+        var result = await dlg.ShowDialog<RecordDialogResult?>(win);
         if (result?.Event is not null)
         {
             _events.Add(result.Event);
@@ -218,8 +218,8 @@ public partial class CalendarControllerView : UserControl
     private async Task OpenAddDialog(DateTime presetDate, TimeSpan? presetTime = null)
     {
         if (VisualRoot is not Avalonia.Controls.Window win) return;
-        var dlg = new EventDialog(_categories, _constructor, presetDate: presetDate, presetTime: presetTime);
-        var result = await dlg.ShowDialog<EventDialogResult?>(win);
+        var dlg = new RecordDialog(_events, _constructor, presetDate: presetDate, presetTime: presetTime);
+        var result = await dlg.ShowDialog<RecordDialogResult?>(win);
         if (result?.Event is not null)
         {
             _events.Add(result.Event);
@@ -231,8 +231,8 @@ public partial class CalendarControllerView : UserControl
     private async Task OpenEditDialog(Event ev)
     {
         if (VisualRoot is not Avalonia.Controls.Window win) return;
-        var dlg = new EventDialog(_categories, _constructor, editEvent: ev);
-        var result = await dlg.ShowDialog<EventDialogResult?>(win);
+        var dlg = new RecordDialog(_events, _constructor, editEvent: ev);
+        var result = await dlg.ShowDialog<RecordDialogResult?>(win);
         if (result is null) return;
         if (result.Deleted) _events.Delete(ev.Id!.Value);
         else if (result.Event is not null)

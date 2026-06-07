@@ -4,8 +4,6 @@ namespace MyPlanner.Controls.Components;
 
 public partial class ConstructorFooter : UserControl
 {
-    public event EventHandler?       AddClicked;
-    public event EventHandler?       AddPropertyClicked;
     public event EventHandler?       FilterClicked;
     public event EventHandler?       SortClicked;
     public event EventHandler<bool>? ColResizeModeChanged;
@@ -17,8 +15,6 @@ public partial class ConstructorFooter : UserControl
     {
         InitializeComponent();
 
-        AddBtn.Click         += (_, _) => AddClicked?.Invoke(this, EventArgs.Empty);
-        AddPropertyBtn.Click += (_, _) => AddPropertyClicked?.Invoke(this, EventArgs.Empty);
         FilterBtn.Click      += (_, _) => FilterClicked?.Invoke(this, EventArgs.Empty);
         SortBtn.Click        += (_, _) => SortClicked?.Invoke(this, EventArgs.Empty);
         PrevPageBtn.Click    += (_, _) => PrevPageClicked?.Invoke(this, EventArgs.Empty);

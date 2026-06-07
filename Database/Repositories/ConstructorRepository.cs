@@ -80,7 +80,9 @@ public class ConstructorRepository(AppDbContext db)
         db.SaveChanges();
         col.Id = entity.Id;
 
-        // Системное поле «Название» создаётся автоматически
+        // Системные поля создаются автоматически:
+        //   «Название»  — title (text, required, IsSystem)
+        //   «Описание» — markdown body (rendered in RecordPageView)
         db.DbFields.Add(new DbFieldEntity
         {
             CollectionId = entity.Id,
@@ -89,6 +91,15 @@ public class ConstructorRepository(AppDbContext db)
             Position     = 1000,
             IsSystem     = true,
             IsRequired   = true,
+        });
+        db.DbFields.Add(new DbFieldEntity
+        {
+            CollectionId = entity.Id,
+            Name         = "Описание",
+            FieldType    = "markdown",
+            Position     = 2000,
+            IsSystem     = true,
+            IsRequired   = false,
         });
         db.SaveChanges();
         return col;

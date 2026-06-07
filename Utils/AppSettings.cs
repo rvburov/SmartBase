@@ -43,7 +43,46 @@ public static class AppSettings
         catch { SaveScale(ScaleDefault); return ScaleDefault; }
     }
 
-    public static void SaveScale(double scale)
+    public static void SaveScale(double scale) => SaveValue("scale", scale);
+
+    // ── Панель записи (правая) ────────────────────────────────────────────────
+
+    public const int RecordPanelWidthMin     = 320;
+    public const int RecordPanelWidthMax     = 800;
+    public const int RecordPanelWidthDefault = 420;
+
+    public static bool LoadRecordPanelOpen()
+    {
+        try
+        {
+            if (!File.Exists(SettingsPath)) return false;
+            var doc = JsonDocument.Parse(File.ReadAllText(SettingsPath));
+            return doc.RootElement.TryGetProperty("recordPanelOpen", out var el) && el.GetBoolean();
+        }
+        catch { return false; }
+    }
+
+    public static void SaveRecordPanelOpen(bool open) => SaveValue("recordPanelOpen", open);
+
+    public static int LoadRecordPanelWidth()
+    {
+        try
+        {
+            if (!File.Exists(SettingsPath)) return RecordPanelWidthDefault;
+            var doc = JsonDocument.Parse(File.ReadAllText(SettingsPath));
+            if (!doc.RootElement.TryGetProperty("recordPanelWidth", out var el)) return RecordPanelWidthDefault;
+            var w = el.GetInt32();
+            if (w < RecordPanelWidthMin || w > RecordPanelWidthMax) return RecordPanelWidthDefault;
+            return w;
+        }
+        catch { return RecordPanelWidthDefault; }
+    }
+
+    public static void SaveRecordPanelWidth(int width) => SaveValue("recordPanelWidth", width);
+
+    // ── Универсальный writer для settings.json ────────────────────────────────
+
+    private static void SaveValue(string key, object value)
     {
         try
         {
@@ -57,7 +96,7 @@ public static class AppSettings
                 }
                 catch { }
             }
-            data["scale"] = scale;
+            data[key] = value;
             File.WriteAllText(SettingsPath, JsonSerializer.Serialize(data, new JsonSerializerOptions { WriteIndented = true }));
         }
         catch { }

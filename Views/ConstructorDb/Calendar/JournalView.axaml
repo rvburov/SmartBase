@@ -1,6 +1,6 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             x:Class="MyPlanner.Views.Calendar.JournalView"
+             x:Class="MyPlanner.Views.ConstructorDb.Calendar.JournalView"
              Background="{StaticResource BrushBg}">
 
     <ScrollViewer x:Name="JournalScroll" VerticalScrollBarVisibility="Auto"
@@ -21,7 +21,7 @@
                         <!-- Подсказка для пустого сегодня -->
                         <Border Margin="0,1" Height="36"
                                 IsVisible="{Binding ShowEmptyHint}">
-                            <TextBlock Text="Нет событий на сегодня"
+                            <TextBlock Text="Нет записей на сегодня"
                                        FontSize="13"
                                        Foreground="{StaticResource BrushSecondaryText}"
                                        VerticalAlignment="Center"

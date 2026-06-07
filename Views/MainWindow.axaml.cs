@@ -1,5 +1,6 @@
 using Avalonia.Controls;
 using MyPlanner.Database.Repositories;
+using MyPlanner.Utils;
 using MyPlanner.ViewModels;
 
 namespace MyPlanner.Views;
@@ -81,6 +82,18 @@ public partial class MainWindow : Window
             ConstructorSidebar.Reload();
         };
 
+        // Правая панель «Страница записи»
+        ConstructorModule.RecordPageRequested += (_, rid)        => OpenRecordPanel(rid);
+        ConstructorModule.RecordPageClosed    += (_, _)          => CloseRecordPanel();
+        RecordPanel.CloseRequested            += (_, _)          => CloseRecordPanel();
+        RecordPanel.RecordChanged             += (_, _)          => ConstructorModule.Refresh();
+
+        // Восстановить состояние панели записи (открыта/закрыта + ширина).
+        // Физически применим в ShowModule — панель видна только в конструкторе.
+        _recordPanelWidth       = AppSettings.LoadRecordPanelWidth();
+        _recordPanelLogicalOpen = AppSettings.LoadRecordPanelOpen();
+        ApplyRecordPanelColumn(false);
+
         // Первоначальная загрузка фильтра
         CalendarModule.SetActiveIds(CalendarSidebar.GetActiveIds());
     }
@@ -100,6 +113,9 @@ public partial class MainWindow : Window
             ConstructorSidebar.IsVisible = false;
             CalendarSidebar.Refresh();
             CalendarModule.SetActiveIds(CalendarSidebar.GetActiveIds());
+            // Панель записи относится только к конструктору — физически схлопываем,
+            // но логическое состояние (_recordPanelLogicalOpen) сохраняем для возврата.
+            ApplyRecordPanelColumn(false);
         }
         else
         {
@@ -107,6 +123,8 @@ public partial class MainWindow : Window
             ConstructorSidebar.IsVisible = sidebarOpen;
             ConstructorSidebar.Reload();
             ConstructorModule.Refresh();
+            // Восстанавливаем последнее состояние панели записи.
+            ApplyRecordPanelColumn(_recordPanelLogicalOpen);
         }
 
         ApplySidebarColumn(sidebarOpen);
@@ -183,6 +201,100 @@ public partial class MainWindow : Window
     private void OnGripReleased(object? sender, Avalonia.Input.PointerReleasedEventArgs e)
     {
         _gripDragging = false;
+        e.Pointer.Capture(null);
+        e.Handled = true;
+    }
+
+    // ── Правая панель «Страница записи» ─────────────────────────────────────────
+
+    private int  _recordPanelWidth       = AppSettings.RecordPanelWidthDefault;
+    // Логическое состояние панели — относится только к конструктору. В календаре панель
+    // всегда физически скрыта, но при возврате в конструктор восстанавливаем это значение.
+    private bool _recordPanelLogicalOpen;
+
+    private void OpenRecordPanel(int recordId)
+    {
+        var collectionId = ConstructorModule.CurrentCollectionId;
+        if (collectionId is null) return;
+
+        RecordPanel.Show(_constructor, recordId, collectionId.Value);
+        _recordPanelLogicalOpen = true;
+        ApplyRecordPanelColumn(true);
+        AppSettings.SaveRecordPanelOpen(true);
+    }
+
+    private void CloseRecordPanel()
+    {
+        RecordPanel.Clear();
+        _recordPanelLogicalOpen = false;
+        ApplyRecordPanelColumn(false);
+        AppSettings.SaveRecordPanelOpen(false);
+    }
+
+    // Колонка панели записи: при открытии — фиксированная ширина (последняя сохранённая),
+    // при закрытии — 0 (контент занимает всё). Аналогично сайдбару.
+    private void ApplyRecordPanelColumn(bool isOpen)
+    {
+        var col = RootGrid.ColumnDefinitions[5];
+
+        if (isOpen)
+        {
+            col.MinWidth = AppSettings.RecordPanelWidthMin;
+            col.MaxWidth = AppSettings.RecordPanelWidthMax;
+            col.Width    = new Avalonia.Controls.GridLength(_recordPanelWidth, Avalonia.Controls.GridUnitType.Pixel);
+            RecordPanel.IsVisible          = true;
+            RecordPanelSeparator.IsVisible = true;
+            RecordResizeGrip.IsVisible     = true;
+        }
+        else
+        {
+            if (col.Width.IsAbsolute && col.Width.Value > 0)
+                _recordPanelWidth = (int)col.Width.Value;
+            col.MinWidth = 0;
+            col.MaxWidth = double.PositiveInfinity;
+            col.Width    = new Avalonia.Controls.GridLength(0);
+            RecordPanel.IsVisible          = false;
+            RecordPanelSeparator.IsVisible = false;
+            RecordResizeGrip.IsVisible     = false;
+        }
+    }
+
+    // ── Перетаскивание ручки панели записи ─────────────────────────────────────
+
+    private bool   _recordGripDragging;
+    private double _recordGripStartX;
+    private double _recordGripStartWidth;
+
+    private void OnRecordGripPressed(object? sender, Avalonia.Input.PointerPressedEventArgs e)
+    {
+        var col = RootGrid.ColumnDefinitions[5];
+        _recordGripDragging   = true;
+        _recordGripStartX     = e.GetPosition(this).X;
+        _recordGripStartWidth = col.Width.IsAbsolute ? col.Width.Value : col.ActualWidth;
+        e.Pointer.Capture((Avalonia.Input.IInputElement?)sender);
+        e.Handled = true;
+    }
+
+    private void OnRecordGripMoved(object? sender, Avalonia.Input.PointerEventArgs e)
+    {
+        if (!_recordGripDragging) return;
+
+        // Тянем за левый край — движение мыши вправо уменьшает ширину панели.
+        var dx       = e.GetPosition(this).X - _recordGripStartX;
+        var newWidth = Math.Clamp(
+            _recordGripStartWidth - dx,
+            AppSettings.RecordPanelWidthMin,
+            AppSettings.RecordPanelWidthMax);
+
+        var col = RootGrid.ColumnDefinitions[5];
+        col.Width = new Avalonia.Controls.GridLength(newWidth, Avalonia.Controls.GridUnitType.Pixel);
+        _recordPanelWidth = (int)newWidth;
+    }
+
+    private void OnRecordGripReleased(object? sender, Avalonia.Input.PointerReleasedEventArgs e)
+    {
+        if (_recordGripDragging) AppSettings.SaveRecordPanelWidth(_recordPanelWidth);
+        _recordGripDragging = false;
         e.Pointer.Capture(null);
         e.Handled = true;
     }

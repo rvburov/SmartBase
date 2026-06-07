@@ -54,7 +54,7 @@ public partial class EventDialog : Window
 
         if (editEvent is not null)
         {
-            Title               = "Изменить событие";
+            Title               = "Изменить запись";
             DeleteBtn.IsVisible = true;
             FillFromEvent(editEvent);
         }
@@ -255,7 +255,7 @@ public partial class EventDialog : Window
         var title = TitleBox.Text?.Trim() ?? "";
         if (string.IsNullOrEmpty(title))
         {
-            ShowError("Укажите название события");
+            ShowError("Укажите название записи");
             TitleBox.Focus();
             return;
         }

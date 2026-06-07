@@ -1,7 +1,7 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:comp="using:MyPlanner.Controls.Components"
-        xmlns:cal="using:MyPlanner.Views.Calendar"
+        xmlns:cal="using:MyPlanner.Views.ConstructorDb.Calendar"
         xmlns:con="using:MyPlanner.Views.ConstructorDb"
         x:Class="MyPlanner.Views.MainWindow"
         Classes="main"
@@ -12,11 +12,13 @@
 
     <Grid x:Name="RootGrid">
         <Grid.ColumnDefinitions>
-            <!-- ActivityBar | разделитель | сайдбар (тянется) | контент -->
+            <!-- ActivityBar | разделитель | сайдбар | контент | разделитель | панель записи -->
             <ColumnDefinition Width="Auto" />
             <ColumnDefinition Width="Auto" />
             <ColumnDefinition Width="220" MinWidth="180" MaxWidth="500" />
             <ColumnDefinition Width="*" />
+            <ColumnDefinition Width="Auto" />
+            <ColumnDefinition Width="0" />
         </Grid.ColumnDefinitions>
 
         <!-- Левая панель активности (48px) -->
@@ -29,55 +31,91 @@
                 Background="{StaticResource BrushSeparator}" />
 
         <!-- Боковые панели (скрываются/показываются по модулю).
-             Разделительная линия — правая граница; блок-ручка внутри у края тянет ширину. -->
+             Разделительная линия — правая граница Border. Ручка вынесена в колонку 3
+             (как у панели записи) — иначе её резало внешним Border'ом. -->
         <Border Grid.Column="2"
                 BorderBrush="{StaticResource BrushSeparator}"
                 BorderThickness="0,0,1,0">
             <Grid>
                 <comp:Sidebar x:Name="CalendarSidebar" />
                 <comp:SidebarTree x:Name="ConstructorSidebar" IsVisible="False" />
-
-                <!-- Ручка перетаскивания у правого края сайдбара -->
-                <Border x:Name="ResizeGrip"
-                        Width="11" Height="34"
-                        HorizontalAlignment="Right"
-                        VerticalAlignment="Center"
-                        Margin="0,0,-5,0"
-                        CornerRadius="4"
-                        Background="{StaticResource BrushBg}"
-                        BorderBrush="{StaticResource BrushSeparator}"
-                        BorderThickness="1"
-                        Cursor="SizeWestEast"
-                        PointerPressed="OnGripPressed"
-                        PointerMoved="OnGripMoved"
-                        PointerReleased="OnGripReleased">
-                    <StackPanel Orientation="Vertical" Spacing="3"
-                                HorizontalAlignment="Center"
-                                VerticalAlignment="Center">
-                        <Ellipse Width="2.5" Height="2.5" Fill="{StaticResource BrushSecondaryText}" />
-                        <Ellipse Width="2.5" Height="2.5" Fill="{StaticResource BrushSecondaryText}" />
-                        <Ellipse Width="2.5" Height="2.5" Fill="{StaticResource BrushSecondaryText}" />
-                    </StackPanel>
-                </Border>
             </Grid>
         </Border>
 
-        <!-- Основная область контента -->
+        <!-- Основная область контента + ручка перетаскивания у левого края (зеркало RecordResizeGrip) -->
         <Grid Grid.Column="3">
             <cal:CalendarControllerView x:Name="CalendarModule" />
             <con:ConstructorControllerView x:Name="ConstructorModule" IsVisible="False" />
+
+            <Border x:Name="ResizeGrip"
+                    Width="11" Height="34"
+                    HorizontalAlignment="Left"
+                    VerticalAlignment="Center"
+                    Margin="-5,0,0,0"
+                    CornerRadius="4"
+                    Background="{StaticResource BrushBg}"
+                    BorderBrush="{StaticResource BrushSeparator}"
+                    BorderThickness="1"
+                    Cursor="SizeWestEast"
+                    PointerPressed="OnGripPressed"
+                    PointerMoved="OnGripMoved"
+                    PointerReleased="OnGripReleased">
+                <StackPanel Orientation="Vertical" Spacing="3"
+                            HorizontalAlignment="Center"
+                            VerticalAlignment="Center">
+                    <Ellipse Width="2.5" Height="2.5" Fill="{StaticResource BrushSecondaryText}" />
+                    <Ellipse Width="2.5" Height="2.5" Fill="{StaticResource BrushSecondaryText}" />
+                    <Ellipse Width="2.5" Height="2.5" Fill="{StaticResource BrushSecondaryText}" />
+                </StackPanel>
+            </Border>
         </Grid>
 
-        <!-- Линия под титульной зоной (на высоте навбара = 56px) через сайдбар и
-             контент. ActivityBar имеет собственный короткий разделитель на той же высоте. -->
-        <Border Grid.Column="1" Grid.ColumnSpan="3"
+        <!-- Вертикальный разделитель слева от панели записи -->
+        <Border Grid.Column="4"
+                x:Name="RecordPanelSeparator"
+                Width="1"
+                IsVisible="False"
+                Background="{StaticResource BrushSeparator}" />
+
+        <!-- Правая панель «Страница записи» (Obsidian-style) -->
+        <Grid Grid.Column="5">
+            <con:RecordPageView x:Name="RecordPanel" IsVisible="False" />
+
+            <!-- Ручка перетаскивания у левого края панели — аналогично сайдбару -->
+            <Border x:Name="RecordResizeGrip"
+                    Width="11" Height="34"
+                    HorizontalAlignment="Left"
+                    VerticalAlignment="Center"
+                    Margin="-5,0,0,0"
+                    CornerRadius="4"
+                    Background="{StaticResource BrushBg}"
+                    BorderBrush="{StaticResource BrushSeparator}"
+                    BorderThickness="1"
+                    Cursor="SizeWestEast"
+                    IsVisible="False"
+                    PointerPressed="OnRecordGripPressed"
+                    PointerMoved="OnRecordGripMoved"
+                    PointerReleased="OnRecordGripReleased">
+                <StackPanel Orientation="Vertical" Spacing="3"
+                            HorizontalAlignment="Center"
+                            VerticalAlignment="Center">
+                    <Ellipse Width="2.5" Height="2.5" Fill="{StaticResource BrushSecondaryText}" />
+                    <Ellipse Width="2.5" Height="2.5" Fill="{StaticResource BrushSecondaryText}" />
+                    <Ellipse Width="2.5" Height="2.5" Fill="{StaticResource BrushSecondaryText}" />
+                </StackPanel>
+            </Border>
+        </Grid>
+
+        <!-- Линия под титульной зоной (на высоте навбара = 56px) через сайдбар,
+             контент и панель записи. ActivityBar имеет собственный короткий разделитель. -->
+        <Border Grid.Column="1" Grid.ColumnSpan="5"
                 Height="1"
                 VerticalAlignment="Top"
                 Margin="0,56,0,0"
                 Background="{StaticResource BrushSeparator}" />
 
-        <!-- Самая верхняя линия окна — единой полосой над ActivityBar, сайдбаром и навбаром -->
-        <Border Grid.Column="0" Grid.ColumnSpan="4"
+        <!-- Самая верхняя линия окна — единой полосой над всеми колонками -->
+        <Border Grid.Column="0" Grid.ColumnSpan="6"
                 Height="1"
                 VerticalAlignment="Top"
                 Background="{StaticResource BrushSeparator}" />

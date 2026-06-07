@@ -1,8 +1,8 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:comp="using:MyPlanner.Controls.Components"
-             xmlns:cal="using:MyPlanner.Views.Calendar"
-             x:Class="MyPlanner.Views.Calendar.CalendarControllerView">
+             xmlns:cal="using:MyPlanner.Views.ConstructorDb.Calendar"
+             x:Class="MyPlanner.Views.ConstructorDb.Calendar.CalendarControllerView">
 
     <Grid RowDefinitions="Auto,1,*">
 

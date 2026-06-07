@@ -5,8 +5,9 @@ using Avalonia.Media;
 using Avalonia.Interactivity;
 using CommunityToolkit.Mvvm.ComponentModel;
 using MyPlanner.Core.Models;
+using MyPlanner.Utils;
 
-namespace MyPlanner.Views.Calendar;
+namespace MyPlanner.Views.ConstructorDb.Calendar;
 
 public partial class ListView : UserControl
 {
@@ -125,8 +126,9 @@ public partial class EventListItem : ObservableObject
     {
         OriginalEvent  = ev;
         Title          = ev.Title;
-        Description    = ev.Description;
-        HasDescription = !string.IsNullOrWhiteSpace(ev.Description);
+        // В превью разметка не нужна — снимаем markdown-форматирование
+        Description    = MarkdownUtils.StripMarkdown(ev.Description);
+        HasDescription = !string.IsNullOrWhiteSpace(Description);
         ColorBrush     = new SolidColorBrush(Color.Parse(EventColors.Display(ev.Color)));
         TitleBrush     = isPast
             ? new SolidColorBrush(Color.Parse("#8E8E93"))

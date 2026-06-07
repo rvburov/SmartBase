@@ -143,9 +143,11 @@ public class EventRepository(AppDbContext db)
             {
                 CollectionId = collectionId,
                 Name         = name,
-                FieldType    = "text",
+                // «Описание» — markdown; остальное — text
+                FieldType    = name == FieldDesc ? "markdown" : "text",
                 Position     = maxPos,
                 IsSystem     = true,
+                IsRequired   = name == FieldName,
             };
             db.DbFields.Add(field);
             db.SaveChanges();
