@@ -189,6 +189,39 @@ public class ConstructorRepository(AppDbContext db)
     public int CountRecords(int collectionId) =>
         db.DbRecords.Count(r => r.CollectionId == collectionId);
 
+    public List<DbRecord> GetRecordsPage(int collectionId, int skip, int take) =>
+        db.DbRecords
+          .Where(r => r.CollectionId == collectionId)
+          .OrderBy(r => r.Position)
+          .Skip(skip)
+          .Take(take)
+          .Select(r => new DbRecord
+          {
+              Id = r.Id, CollectionId = r.CollectionId, CreatedAt = r.CreatedAt,
+              Position = r.Position, StartDt = r.StartDt, EndDt = r.EndDt, AllDay = r.AllDay,
+              Title = r.Title, Description = r.Description,
+          })
+          .ToList();
+
+    public Dictionary<int, Dictionary<int, string>> GetFieldValuesBatch(IReadOnlyList<int> recordIds)
+    {
+        if (recordIds.Count == 0) return [];
+        return db.DbFieldValues
+            .Where(fv => recordIds.Contains(fv.RecordId))
+            .GroupBy(fv => fv.RecordId)
+            .ToDictionary(g => g.Key, g => g.ToDictionary(fv => fv.FieldId, fv => fv.Value));
+    }
+
+    public int GetRecordPosition(int collectionId, int recordId)
+    {
+        var pos = db.DbRecords
+            .Where(r => r.CollectionId == collectionId && r.Id == recordId)
+            .Select(r => (int?)r.Position)
+            .FirstOrDefault();
+        if (pos is null) return -1;
+        return db.DbRecords.Count(r => r.CollectionId == collectionId && r.Position < pos);
+    }
+
     public DbRecord? GetRecord(int recordId)
     {
         var r = db.DbRecords.Find(recordId);

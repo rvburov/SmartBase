@@ -6,10 +6,9 @@ using Avalonia.Controls.Templates;
 using Avalonia.Data;
 using Avalonia.Data.Converters;
 using Avalonia.Input;
-using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Media;
-using Avalonia.VisualTree;
+using Avalonia.Threading;
 using MyPlanner.Core.Models;
 using MyPlanner.Database.Repositories;
 using MyPlanner.ViewModels.ConstructorDb;
@@ -18,48 +17,39 @@ namespace MyPlanner.Views.ConstructorDb;
 
 public partial class TableView : UserControl
 {
-    /// <summary>Запрос открыть запись (Edit) — родитель открывает RecordPageView.</summary>
+    // ── Публичные события ─────────────────────────────────────────────────────
     public event EventHandler<int>? RecordClicked;
-
-    /// <summary>Запрос удалить запись.</summary>
     public event EventHandler<int>? RecordDeleteRequested;
-
-    /// <summary>Запрос создать новую запись (родитель создаёт и сразу открывает PageView).</summary>
-    public event EventHandler? RecordCreateRequested;
-
-    /// <summary>Запрос создать новое свойство (поле).</summary>
-    public event EventHandler? PropertyCreateRequested;
-
-    /// <summary>Запрос изменить свойство (передан field.Id).</summary>
+    public event EventHandler?      RecordCreateRequested;
+    public event EventHandler?      PropertyCreateRequested;
     public event EventHandler<int>? PropertyEditRequested;
-
-    /// <summary>Запрос удалить свойство (передан field.Id).</summary>
     public event EventHandler<int>? PropertyDeleteRequested;
 
-    private const int MinColWidth  = 160;
-    private const int NumColWidth   = 36;   // квадрат: совпадает с высотой строки
-    private const int PlusColWidth  = 36;   // симметрично «№»
+    /// <summary>Срабатывает после построения колонок — родитель может навесить хуки на дефы.</summary>
+    public event EventHandler<IReadOnlyList<TableColumnDef>>? ColumnsBuilt;
 
+    // ── Константы геометрии ───────────────────────────────────────────────────
+    private const int MinColWidth  = 160;
+    private const int NumColWidth  = 36;
+    private const int PlusColWidth = 36;
+
+    // ── Состояние ─────────────────────────────────────────────────────────────
     private ConstructorRepository? _repository;
     private int  _collectionId;
     private bool _manualColResize;
-    // Поля, которые отображаются как колонки таблицы (без markdown).
-    private List<DbField> _fields = [];
-    private System.Collections.ObjectModel.ObservableCollection<TableRowVm> _rows = [];
-    // Кастомный sticky-ряд заголовков. Строится в BuildCustomHeader, ширины колонок
-    // синхронизируются с RecordsGrid.Columns в SyncHeaderWidths по событию LayoutUpdated.
-    private Grid? _customHeader;
+    private List<DbField>        _fields  = [];
+    private List<TableColumnDef> _colDefs = [];
+    private VirtualRowList?      _virtualRows;
 
     public TableView()
     {
         InitializeComponent();
         RecordsGrid.CellPointerPressed += OnCellPointerPressed;
         RecordsGrid.LoadingRow         += OnLoadingRow;
-        // Пересчёт ширин колонок в целых пикселях при изменении размера (как PyQt resizeEvent).
-        RecordsGrid.SizeChanged += (_, _) => ApplyColumnWidths();
-        // Ширины кастомных колонок шапки повторяют ActualWidth колонок DataGrid.
-        RecordsGrid.LayoutUpdated += (_, _) => SyncHeaderWidths();
+        RecordsGrid.SizeChanged        += (_, _) => ApplyColumnWidths();
     }
+
+    // ── Публичный API ─────────────────────────────────────────────────────────
 
     public void Load(ConstructorRepository repository, int collectionId)
     {
@@ -72,17 +62,15 @@ public partial class TableView : UserControl
         Reload();
     }
 
-    /// <summary>Очистить таблицу (например, после удаления открытой коллекции).</summary>
     public void Clear()
     {
         _repository   = null;
         _collectionId = 0;
         _fields       = [];
-        _rows         = [];
+        _colDefs      = [];
+        _virtualRows  = null;
         RecordsGrid.ItemsSource = null;
         RecordsGrid.Columns.Clear();
-        HeaderRowHost.Child = null;
-        _customHeader = null;
     }
 
     public void SetColResizeMode(bool manual)
@@ -96,27 +84,18 @@ public partial class TableView : UserControl
         }
     }
 
-    public void SetRowResizeMode(bool _) { /* построчный ресайз пока не поддержан DataGrid */ }
+    public void SetRowResizeMode(bool _) { }
 
-    /// <summary>
-    /// Прокручивает таблицу к строке записи, чтобы кнопка «+» (add-row) осталась
-    /// в видимой зоне после создания. Вызывается родителем после Refresh().
-    /// </summary>
     public void ScrollToRecord(int recordId)
     {
-        var row = _rows.FirstOrDefault(r => !r.IsAddRow && r.RecordId == recordId);
-        if (row is null) return;
-        // Откладываем до следующего тика, иначе ItemsSource ещё не успел
-        // материализовать строки и ScrollIntoView ничего не найдёт.
-        Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+        if (_virtualRows is null) return;
+        Dispatcher.UIThread.Post(() =>
         {
-            RecordsGrid.ScrollIntoView(row, RecordsGrid.Columns.FirstOrDefault());
-            // Дополнительно докручиваем до add-row — он рисуется ниже последней
-            // записи, и без второго прокрута «+» может остаться вне видимости.
-            var addRow = _rows.LastOrDefault(r => r.IsAddRow);
-            if (addRow is not null)
-                RecordsGrid.ScrollIntoView(addRow, RecordsGrid.Columns.FirstOrDefault());
-        }, Avalonia.Threading.DispatcherPriority.Background);
+            var row = _virtualRows.FindCachedByRecordId(recordId);
+            if (row is not null)
+                RecordsGrid.ScrollIntoView(row, RecordsGrid.Columns.FirstOrDefault());
+            RecordsGrid.ScrollIntoView(_virtualRows.AddRowItem, RecordsGrid.Columns.FirstOrDefault());
+        }, DispatcherPriority.Background);
     }
 
     // ── Построение таблицы ────────────────────────────────────────────────────
@@ -125,209 +104,105 @@ public partial class TableView : UserControl
     {
         if (_repository is null) return;
 
-        // markdown-поле (Описание) редактируется только в RecordPageView,
-        // в таблице оно не отображается как колонка.
         _fields = _repository.GetFields(_collectionId)
             .Where(f => f.FieldType != "markdown")
             .ToList();
-        var records = _repository.GetRecords(_collectionId);
+
+        _colDefs = BuildColDefs();
+        ColumnsBuilt?.Invoke(this, _colDefs);
+
+        _virtualRows = new VirtualRowList(_repository, _collectionId, _fields);
 
         BuildColumns();
 
-        _rows = [];
-        for (var i = 0; i < records.Count; i++)
-        {
-            var id     = records[i].Id ?? 0;
-            var values = _repository.GetFieldValues(id);
-            _rows.Add(new TableRowVm(_repository, id, i + 1, values,
-                                      records[i].Title, records[i].Description));
-        }
-        // Завершающая строка «+ Новая запись».
-        _rows.Add(TableRowVm.AddRow());
-
-        RecordsGrid.ItemsSource = _rows;
-        RecordsGrid.ContextMenu  = BuildGridContextMenu();
+        RecordsGrid.ItemsSource = _virtualRows;
+        RecordsGrid.ContextMenu = BuildGridContextMenu();
 
         ApplyColumnWidths();
+    }
 
-        // Нативная шапка DataGrid скрыта (HeadersVisibility="None") — рисуем свою.
-        BuildCustomHeader();
+    private List<TableColumnDef> BuildColDefs()
+    {
+        var defs = new List<TableColumnDef>
+        {
+            new() { Key = TableColumnDef.NumKey,    Header = "№",
+                    IsStarWidth = false, FixedWidth = NumColWidth,
+                    CanResize = false,   IsReadOnly = true },
+
+            new() { Key = TableRowVm.TitleKey, Header = "Название",
+                    FieldType = "text",  IsStarWidth = true, MinWidth = MinColWidth },
+
+            new() { Key = TableRowVm.DescKey,  Header = "Описание",
+                    FieldType = "text",  IsStarWidth = true, MinWidth = MinColWidth },
+        };
+
+        foreach (var f in _fields)
+        {
+            var fid = f.Id!.Value;
+            defs.Add(new TableColumnDef
+            {
+                Key         = fid.ToString(),
+                Header      = f.Name,
+                FieldType   = f.FieldType,
+                IsStarWidth = true,
+                MinWidth    = MinColWidth,
+                IsReadOnly  = f.FieldType == "checkbox",
+                Options     = ParseSelectOptions(f),
+                Tag         = fid,
+                BuildHeaderMenu = _ => BuildHeaderContextMenu(fid, f.IsRequired),
+            });
+        }
+
+        defs.Add(new() { Key = TableColumnDef.AddPropKey, Header = "+",
+                         IsStarWidth = false, FixedWidth = PlusColWidth,
+                         CanResize = false,   IsReadOnly = true,
+                         MaxWidth  = PlusColWidth });
+
+        return defs;
     }
 
     private void BuildColumns()
     {
         RecordsGrid.Columns.Clear();
+        RecordsGrid.CanUserResizeColumns = _manualColResize;
 
-        // Колонка «№». Сам заголовок «№» рендерит кастомная sticky-шапка
-        // (см. BuildCustomHeader); здесь — только ячейки с номером строки / «+».
-        RecordsGrid.Columns.Add(new DataGridTemplateColumn
+        foreach (var def in _colDefs)
+            RecordsGrid.Columns.Add(CreateDataGridColumn(def));
+    }
+
+    private DataGridColumn CreateDataGridColumn(TableColumnDef def)
+    {
+        var width = def.IsStarWidth
+            ? new DataGridLength(1, DataGridLengthUnitType.Star)
+            : new DataGridLength(def.FixedWidth);
+
+        var col = new DataGridTemplateColumn
         {
-            Header        = "№",
-            IsReadOnly    = true,
-            CanUserSort   = false,
-            CanUserResize = false,
+            Header         = BuildHeaderCell(def),
+            Tag            = def.Tag ?? def.Key,
+            Width          = width,
+            MinWidth       = def.IsStarWidth ? def.MinWidth : def.FixedWidth,
+            IsReadOnly     = def.IsReadOnly,
+            CanUserSort    = false,
+            CanUserResize  = def.CanResize,
             CanUserReorder = false,
-            Width         = new DataGridLength(NumColWidth),
-            CellTemplate = new FuncDataTemplate<TableRowVm>((row, _) =>
-                new Border
-                {
-                    Background           = (IBrush)this.FindResource("BrushInactiveBg")!,
-                    HorizontalAlignment  = HorizontalAlignment.Stretch,
-                    VerticalAlignment    = VerticalAlignment.Stretch,
-                    Child = new TextBlock
-                    {
-                        Text                = row.IsAddRow ? "+" : row.RowNumber.ToString(),
-                        HorizontalAlignment = HorizontalAlignment.Center,
-                        VerticalAlignment   = VerticalAlignment.Center,
-                        Foreground          = (IBrush)this.FindResource("BrushSecondaryText")!,
-                    },
-                }),
-        });
-
-        // Системные колонки записи: «Название» и «Описание» хранятся в DbRecord
-        // (а не в db_field_values), поэтому отображаются как фиксированные колонки.
-        RecordsGrid.Columns.Add(BuildRecordTextColumn("Название",  TableRowVm.TitleKey));
-        RecordsGrid.Columns.Add(BuildRecordTextColumn("Описание",  TableRowVm.DescKey));
-
-        // Колонки данных
-        foreach (var field in _fields)
-            RecordsGrid.Columns.Add(BuildFieldColumn(field));
-
-        // Завершающая «+»-колонка для создания нового свойства.
-        RecordsGrid.Columns.Add(BuildAddPropertyColumn());
-    }
-
-    /// <summary>
-    /// Колонка для системных текстовых полей записи (Название/Описание).
-    /// Их нельзя удалить или переупорядочить — это часть схемы DbRecord.
-    /// </summary>
-    private DataGridColumn BuildRecordTextColumn(string headerText, string rowKey)
-    {
-        var isTitle = rowKey == TableRowVm.TitleKey;
-        return new DataGridTemplateColumn
-        {
-            Header        = headerText,
-            Tag           = rowKey,                          // не int → не попадает в SaveColumnOrder
-            CanUserSort   = false,
-            CanUserReorder = false,
-            Width         = new DataGridLength(1, DataGridLengthUnitType.Star),
-            MinWidth      = MinColWidth,
-            IsReadOnly    = false,
-            CellTemplate  = new FuncDataTemplate<TableRowVm>((row, _) =>
-            {
-                if (row.IsAddRow) return new Border();
-
-                var binding = new Binding($"[{rowKey}]");
-                if (isTitle) binding.Converter = EmptyTitleConverter.Instance;
-
-                return new TextBlock
-                {
-                    Margin              = new Thickness(6, 0, 6, 0),
-                    VerticalAlignment   = VerticalAlignment.Center,
-                    TextTrimming        = TextTrimming.CharacterEllipsis,
-                    [!TextBlock.TextProperty] = binding,
-                };
-            }),
-            CellEditingTemplate = new FuncDataTemplate<TableRowVm>((row, _) =>
-            {
-                if (row.IsAddRow) return new Border();
-                return new TextBox
-                {
-                    BorderThickness = new Thickness(0),
-                    VerticalContentAlignment = VerticalAlignment.Center,
-                    [!TextBox.TextProperty] = new Binding($"[{rowKey}]", BindingMode.TwoWay),
-                };
-            }),
+            CellTemplate   = BuildCellTemplate(def),
         };
+
+        if (def.MaxWidth.HasValue)
+            col.MaxWidth = def.MaxWidth.Value;
+
+        if (!def.IsReadOnly)
+            col.CellEditingTemplate = BuildEditTemplate(def);
+
+        return col;
     }
 
-    private DataGridColumn BuildAddPropertyColumn()
+    // ── Ячейки шапки (передаются как Header в DataGridTemplateColumn) ──────────
+
+    private Control BuildHeaderCell(TableColumnDef def)
     {
-        // «+» в заголовке — клик создаёт свойство. Header — строка (см. комментарий
-        // в BuildColumns); центрирование и PointerPressed навешиваем на сам
-        // DataGridColumnHeader через ApplyHeaderCustomizations().
-        return new DataGridTemplateColumn
-        {
-            Header        = "+",
-            Tag           = "__add_property__",
-            IsReadOnly    = true,
-            CanUserSort   = false,
-            CanUserResize = false,
-            CanUserReorder = false,
-            Width         = new DataGridLength(PlusColWidth),
-            MinWidth      = PlusColWidth,
-            MaxWidth      = PlusColWidth,
-            CellTemplate  = new FuncDataTemplate<TableRowVm>((_, _) => new Border
-            {
-                Background          = (IBrush)this.FindResource("BrushInactiveBg")!,
-                HorizontalAlignment = HorizontalAlignment.Stretch,
-                VerticalAlignment   = VerticalAlignment.Stretch,
-            }),
-        };
-    }
-
-    private DataGridColumn BuildFieldColumn(DbField field)
-    {
-        var key   = field.Id!.Value.ToString();
-        var fid   = field.Id!.Value;
-
-        // Header = строка (см. комментарий в BuildColumns). ContextMenu свойств
-        // вешается на DataGridColumnHeader через ApplyHeaderCustomizations.
-        return new DataGridTemplateColumn
-        {
-            Header       = field.Name,
-            Tag          = fid,                            // для восстановления порядка колонок
-            CanUserSort  = false,
-            Width        = new DataGridLength(1, DataGridLengthUnitType.Star),
-            MinWidth     = MinColWidth,
-            IsReadOnly   = field.FieldType == "checkbox",   // чекбокс редактируется кликом в CellTemplate
-            CellTemplate = BuildCellTemplate(field, key),
-            CellEditingTemplate = field.FieldType == "checkbox" ? null : BuildEditTemplate(field, key),
-        };
-    }
-
-    // ── Кастомная sticky-шапка ─────────────────────────────────────────────────
-    //
-    // Нативная DataGridColumnHeader в Avalonia упрямо не рендерит ни Control-заголовок,
-    // ни узкие текстовые заголовки («№», «+»). Чтобы получить надёжную шапку с
-    // центрированными «№»/«+» и кликабельным «+», рисуем свой Grid поверх:
-    //  • ColumnDefinitions повторяют RecordsGrid.Columns (1:1) + хвост под скроллбар;
-    //  • ширины колонок шапки синхронизируются с ActualWidth колонок DataGrid в
-    //    SyncHeaderWidths (вызывается на LayoutUpdated).
-
-    // Ширина вертикального скроллбара — резервируется в правом крае шапки, чтобы
-    // вертикальные разделители колонок совпадали с разделителями таблицы.
-    private const int VScrollbarReserve = 14;
-
-    private void BuildCustomHeader()
-    {
-        var grid = new Grid();
-
-        for (var i = 0; i < RecordsGrid.Columns.Count; i++)
-            grid.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));
-        // Колонка-«заглушка» под полосу прокрутки DataGrid.
-        grid.ColumnDefinitions.Add(new ColumnDefinition(new GridLength(VScrollbarReserve)));
-
-        for (var i = 0; i < RecordsGrid.Columns.Count; i++)
-        {
-            var cell = BuildHeaderCell(RecordsGrid.Columns[i]);
-            Grid.SetColumn(cell, i);
-            grid.Children.Add(cell);
-        }
-
-        HeaderRowHost.Child = grid;
-        _customHeader       = grid;
-
-        SyncHeaderWidths();
-    }
-
-    /// <summary>Создаёт визуал ячейки шапки под конкретную колонку DataGrid.</summary>
-    private Control BuildHeaderCell(DataGridColumn col)
-    {
-        var tag = col.Tag;
-
-        // «+»-колонка справа — кликабельная.
-        if (tag as string == "__add_property__")
+        if (def.Key == TableColumnDef.AddPropKey)
         {
             var plus = MakeCenteredHeader("+", fontSize: 16);
             plus.Cursor = new Cursor(StandardCursorType.Hand);
@@ -336,36 +211,32 @@ public partial class TableView : UserControl
             return plus;
         }
 
-        // Колонка свойства (Tag = field.Id).
-        if (tag is int fid)
+        if (def.Key == TableColumnDef.NumKey)
+            return MakeCenteredHeader("№");
+
+        var cell = MakeTextHeader(def.Header);
+
+        if (def.OnHeaderClick is { } clickHandler)
         {
-            var field = _fields.FirstOrDefault(f => f.Id == fid);
-            var cell  = MakeTextHeader(field?.Name ?? col.Header as string ?? "");
-            if (field != null)
-                cell.ContextMenu = BuildHeaderContextMenu(fid, field.IsRequired);
-            return cell;
+            cell.Cursor = new Cursor(StandardCursorType.Hand);
+            cell.PointerPressed += (_, _) => clickHandler(def);
         }
 
-        // Системные «Название»/«Описание» — col.Tag = TableRowVm.TitleKey / DescKey.
-        if (tag as string == TableRowVm.TitleKey || tag as string == TableRowVm.DescKey)
-            return MakeTextHeader(col.Header as string ?? "");
+        if (def.BuildHeaderMenu is { } menuFactory)
+            cell.ContextMenu = menuFactory(def);
 
-        // «№»-колонка (без Tag) и любая другая — по центру.
-        return MakeCenteredHeader(col.Header as string ?? "");
+        return cell;
     }
 
     private Border MakeCenteredHeader(string text, double fontSize = 0) => new()
     {
-        Background          = Brushes.Transparent,  // прозрачный — чтобы ловить клики
+        Background          = Brushes.Transparent,
         HorizontalAlignment = HorizontalAlignment.Stretch,
         VerticalAlignment   = VerticalAlignment.Stretch,
-        BorderBrush         = (IBrush)this.FindResource("BrushSeparator")!,
-        BorderThickness     = new Thickness(0, 0, 1, 0),
         Child = new TextBlock
         {
             Text                = text,
-            FontSize            = fontSize > 0 ? fontSize
-                                              : (double)this.FindResource("FontSizeBase")!,
+            FontSize            = fontSize > 0 ? fontSize : (double)this.FindResource("FontSizeBase")!,
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment   = VerticalAlignment.Center,
             Foreground          = (IBrush)this.FindResource("BrushSecondaryText")!,
@@ -378,8 +249,6 @@ public partial class TableView : UserControl
         HorizontalAlignment = HorizontalAlignment.Stretch,
         VerticalAlignment   = VerticalAlignment.Stretch,
         Padding             = new Thickness(6, 0),
-        BorderBrush         = (IBrush)this.FindResource("BrushSeparator")!,
-        BorderThickness     = new Thickness(0, 0, 1, 0),
         Child = new TextBlock
         {
             Text              = text,
@@ -390,78 +259,83 @@ public partial class TableView : UserControl
         },
     };
 
-    /// <summary>Подгоняет ширины колонок шапки под ActualWidth колонок DataGrid.</summary>
-    private void SyncHeaderWidths()
-    {
-        if (_customHeader is null) return;
-        var n = Math.Min(RecordsGrid.Columns.Count, _customHeader.ColumnDefinitions.Count - 1);
-        for (var i = 0; i < n; i++)
-        {
-            var w = RecordsGrid.Columns[i].ActualWidth;
-            if (w <= 0) continue;
-            _customHeader.ColumnDefinitions[i].Width = new GridLength(w);
-        }
-    }
+    // ── Шаблоны ячеек ─────────────────────────────────────────────────────────
 
-    // ── Шаблоны отображения ────────────────────────────────────────────────────
-
-    private IDataTemplate BuildCellTemplate(DbField field, string key) =>
+    private IDataTemplate BuildCellTemplate(TableColumnDef def) =>
         new FuncDataTemplate<TableRowVm>((row, _) =>
         {
-            // У add-row нет данных — ячейка пустая (визуально только «+» в первой колонке).
+            if (def.Key == TableColumnDef.NumKey)
+                return new Border
+                {
+                    Background          = (IBrush)this.FindResource("BrushInactiveBg")!,
+                    HorizontalAlignment = HorizontalAlignment.Stretch,
+                    VerticalAlignment   = VerticalAlignment.Stretch,
+                    Child = new TextBlock
+                    {
+                        Text                = row.IsAddRow ? "+" : row.RowNumber.ToString(),
+                        HorizontalAlignment = HorizontalAlignment.Center,
+                        VerticalAlignment   = VerticalAlignment.Center,
+                        Foreground          = (IBrush)this.FindResource("BrushSecondaryText")!,
+                    },
+                };
+
+            if (def.Key == TableColumnDef.AddPropKey)
+                return new Border
+                {
+                    Background          = (IBrush)this.FindResource("BrushInactiveBg")!,
+                    HorizontalAlignment = HorizontalAlignment.Stretch,
+                    VerticalAlignment   = VerticalAlignment.Stretch,
+                };
+
             if (row.IsAddRow) return new Border();
 
-            if (field.FieldType == "checkbox")
+            if (def.FieldType == "checkbox")
             {
                 var cb = new CheckBox
                 {
-                    IsChecked           = IsTruthy(row[key]),
+                    IsChecked           = IsTruthy(row[def.Key]),
                     HorizontalAlignment = HorizontalAlignment.Center,
                     VerticalAlignment   = VerticalAlignment.Center,
                 };
-                cb.IsCheckedChanged += (_, _) => row[key] = cb.IsChecked == true ? "1" : "0";
+                cb.IsCheckedChanged += (_, _) => row[def.Key] = cb.IsChecked == true ? "1" : "0";
                 return cb;
             }
 
-            // Без inline Foreground — цвет берётся от стиля DataGridCell,
-            // чтобы при выборе строки текст становился синим (как в SidebarTree).
-            // Одна строка + многоточие — высота строки фиксирована (36px), как в сайдбаре.
+            var binding = new Binding($"[{def.Key}]")
+            {
+                Converter = def.Key == TableRowVm.TitleKey
+                    ? EmptyTitleConverter.Instance
+                    : new FieldDisplayConverter(def.FieldType),
+            };
+
             return new TextBlock
             {
                 Margin              = new Thickness(6, 0, 6, 0),
                 VerticalAlignment   = VerticalAlignment.Center,
                 TextTrimming        = TextTrimming.CharacterEllipsis,
-                [!TextBlock.TextProperty] = new Binding($"[{key}]")
-                {
-                    Converter = new FieldDisplayConverter(field),
-                },
+                [!TextBlock.TextProperty] = binding,
             };
         });
 
-    private IDataTemplate BuildEditTemplate(DbField field, string key) =>
+    private IDataTemplate BuildEditTemplate(TableColumnDef def) =>
         new FuncDataTemplate<TableRowVm>((row, _) =>
         {
-            switch (field.FieldType)
-            {
-                case "number":
-                    return new TextBox
-                    {
-                        BorderThickness = new Thickness(0),
-                        VerticalContentAlignment = VerticalAlignment.Center,
-                        [!TextBox.TextProperty] = new Binding($"[{key}]", BindingMode.TwoWay),
-                    };
+            if (row.IsAddRow) return new Border();
 
+            switch (def.FieldType)
+            {
                 case "date":
                 {
                     var picker = new CalendarDatePicker
                     {
-                        BorderThickness = new Thickness(0),
+                        BorderThickness   = new Thickness(0),
                         VerticalAlignment = VerticalAlignment.Center,
                     };
-                    if (DateTime.TryParseExact(row[key], "dd.MM.yyyy", null, DateTimeStyles.None, out var dt))
+                    if (DateTime.TryParseExact(row[def.Key], "dd.MM.yyyy", null,
+                            DateTimeStyles.None, out var dt))
                         picker.SelectedDate = dt;
                     picker.SelectedDateChanged += (_, _) =>
-                        row[key] = picker.SelectedDate?.ToString("dd.MM.yyyy") ?? "";
+                        row[def.Key] = picker.SelectedDate?.ToString("dd.MM.yyyy") ?? "";
                     return picker;
                 }
 
@@ -471,62 +345,60 @@ public partial class TableView : UserControl
                     {
                         BorderThickness     = new Thickness(0),
                         HorizontalAlignment = HorizontalAlignment.Stretch,
-                        ItemsSource         = SelectOptions(field),
-                        SelectedItem        = row[key],
+                        ItemsSource         = def.Options,
+                        SelectedItem        = row[def.Key],
                     };
                     combo.SelectionChanged += (_, _) =>
-                        row[key] = combo.SelectedItem?.ToString() ?? "";
+                        row[def.Key] = combo.SelectedItem?.ToString() ?? "";
                     return combo;
                 }
 
-                default:   // text, url
+                default:
                     return new TextBox
                     {
-                        BorderThickness = new Thickness(0),
+                        BorderThickness          = new Thickness(0),
                         VerticalContentAlignment = VerticalAlignment.Center,
-                        Watermark = field.FieldType == "url" ? "https://" : null,
-                        [!TextBox.TextProperty] = new Binding($"[{key}]", BindingMode.TwoWay),
+                        Watermark                = def.FieldType == "url" ? "https://" : null,
+                        [!TextBox.TextProperty]  = new Binding($"[{def.Key}]", BindingMode.TwoWay),
                     };
             }
         });
 
     // ── Клики и контекстные меню ───────────────────────────────────────────────
 
-    // Клик по ячейке «№» открывает запись (привычный shortcut).
-    // Создание/удаление/редактирование выполняется через контекстные меню.
     private void OnCellPointerPressed(object? sender, DataGridCellPointerPressedEventArgs e)
     {
         if (e.Row.DataContext is not TableRowVm row) return;
 
-        // Клик по любой ячейке add-row → создание новой записи.
         if (row.IsAddRow)
         {
             RecordCreateRequested?.Invoke(this, EventArgs.Empty);
             return;
         }
 
-        // Клик по «+»-колонке справа → создание нового свойства.
-        if (e.Column.Tag as string == "__add_property__")
+        if (e.Column.Tag as string == TableColumnDef.AddPropKey)
         {
             PropertyCreateRequested?.Invoke(this, EventArgs.Empty);
             return;
         }
 
+        var colIdx = RecordsGrid.Columns.IndexOf(e.Column);
+        if (colIdx >= 0 && colIdx < _colDefs.Count)
+            _colDefs[colIdx].OnCellClick?.Invoke(row, _colDefs[colIdx]);
+
         if (e.Column.DisplayIndex == 0)
             RecordClicked?.Invoke(this, row.RecordId);
     }
 
-    /// <summary>Контекстное меню для всей сетки — открывается на пустой области.</summary>
     private ContextMenu BuildGridContextMenu()
     {
         var menu = new ContextMenu();
-        var miCreate = new MenuItem { Header = "Создать запись" };
-        miCreate.Click += (_, _) => RecordCreateRequested?.Invoke(this, EventArgs.Empty);
-        menu.Items.Add(miCreate);
+        var mi = new MenuItem { Header = "Создать запись" };
+        mi.Click += (_, _) => RecordCreateRequested?.Invoke(this, EventArgs.Empty);
+        menu.Items.Add(mi);
         return menu;
     }
 
-    /// <summary>Контекстное меню для строки данных.</summary>
     private ContextMenu BuildRowContextMenu(int recordId)
     {
         var menu = new ContextMenu();
@@ -548,7 +420,6 @@ public partial class TableView : UserControl
         return menu;
     }
 
-    /// <summary>Контекстное меню для заголовка колонки (свойства).</summary>
     private ContextMenu BuildHeaderContextMenu(int fieldId, bool isRequired)
     {
         var menu = new ContextMenu();
@@ -579,74 +450,70 @@ public partial class TableView : UserControl
 
     // ── Ширины колонок ─────────────────────────────────────────────────────────
 
-    // Смещение data-колонок в RecordsGrid.Columns: «№» + 2 системные (Название/Описание).
-    private const int DataColumnsOffset = 3;
-
     private void ApplyColumnWidths()
     {
         if (_repository is null) return;
         var saved = _repository.GetColWidths(_collectionId);
 
-        // Ручной режим: фиксированные сохранённые ширины (целые пиксели).
-        if (_manualColResize)
+        for (var i = 0; i < _colDefs.Count && i < RecordsGrid.Columns.Count; i++)
         {
-            for (var i = 0; i < _fields.Count; i++)
-            {
-                var col = RecordsGrid.Columns[i + DataColumnsOffset];
-                var id  = _fields[i].Id!.Value;
-                col.Width = saved.TryGetValue(id, out var w) && w > 0
-                    ? new DataGridLength(w)
-                    : new DataGridLength(MinColWidth);
-            }
-            return;
-        }
+            var def = _colDefs[i];
+            if (!def.IsStarWidth) continue;
 
-        // Авто-режим: data-колонки растягиваются на оставшееся пространство (Star),
-        // фиксированные «№» и «+»-колонка не трогаются. Это надёжнее ручного
-        // подсчёта пикселей — DataGrid сам учтёт скроллбар и разделители.
-        for (var i = 0; i < _fields.Count; i++)
-            RecordsGrid.Columns[i + DataColumnsOffset].Width = new DataGridLength(1, DataGridLengthUnitType.Star);
+            var col = RecordsGrid.Columns[i];
+
+            if (_manualColResize && int.TryParse(def.Key, out var fieldId))
+            {
+                col.Width = saved.TryGetValue(fieldId, out var w) && w > 0
+                    ? new DataGridLength(w)
+                    : new DataGridLength(def.MinWidth);
+            }
+            else
+            {
+                col.Width = new DataGridLength(1, DataGridLengthUnitType.Star);
+            }
+        }
     }
 
-    // ── Хелперы значений ───────────────────────────────────────────────────────
+    // ── Утилиты ────────────────────────────────────────────────────────────────
 
     private static bool IsTruthy(string v) => v is "1" or "true" or "True";
 
-    private static List<string> SelectOptions(DbField field)
+    private static IReadOnlyList<string> ParseSelectOptions(DbField field)
     {
         try
         {
             using var doc = JsonDocument.Parse(field.ConfigJson ?? "{}");
-            if (doc.RootElement.TryGetProperty("options", out var opts) && opts.ValueKind == JsonValueKind.Array)
+            if (doc.RootElement.TryGetProperty("options", out var opts) &&
+                opts.ValueKind == JsonValueKind.Array)
                 return opts.EnumerateArray().Select(o => o.ToString()).ToList();
         }
-        catch { /* ignore bad json */ }
+        catch { }
         return [];
     }
 }
 
-// Пустой Title в режиме отображения подменяется на «Без названия».
-// Для CellEditingTemplate этот конвертер не применяется — там редактируется сырой Title.
+// ── Конвертеры ─────────────────────────────────────────────────────────────────
+
 internal sealed class EmptyTitleConverter : IValueConverter
 {
     public static readonly EmptyTitleConverter Instance = new();
 
-    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture) =>
-        string.IsNullOrWhiteSpace(value as string) ? "Без названия" : value;
+    public object? Convert(object? v, Type t, object? p, CultureInfo c) =>
+        string.IsNullOrWhiteSpace(v as string) ? "Без названия" : v;
 
-    public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture) =>
-        value?.ToString() ?? "";
+    public object? ConvertBack(object? v, Type t, object? p, CultureInfo c) =>
+        v?.ToString() ?? "";
 }
 
-// Конвертер отображения для TextBlock-ячеек (чекбокс → «✓», прочее как есть).
-internal sealed class FieldDisplayConverter(DbField field) : IValueConverter
+internal sealed class FieldDisplayConverter(string fieldType) : IValueConverter
 {
-    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
+    public object? Convert(object? v, Type t, object? p, CultureInfo c)
     {
-        var s = value?.ToString() ?? "";
-        return field.FieldType == "checkbox" ? (s is "1" or "true" or "True" ? "✓" : "") : s;
+        var s = v?.ToString() ?? "";
+        return fieldType == "checkbox" ? (s is "1" or "true" or "True" ? "✓" : "") : s;
     }
 
-    public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture) =>
-        value?.ToString() ?? "";
+    public object? ConvertBack(object? v, Type t, object? p, CultureInfo c) =>
+        v?.ToString() ?? "";
 }
