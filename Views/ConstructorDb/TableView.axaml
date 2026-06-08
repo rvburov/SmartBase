@@ -43,7 +43,7 @@
                 <ControlTemplate>
                     <Border Background="{TemplateBinding Background}"
                             BorderBrush="{StaticResource BrushSeparator}"
-                            BorderThickness="0,0,1,1">
+                            BorderThickness="0,0,0,1">
                         <ContentPresenter Content="{TemplateBinding Content}"
                                           HorizontalContentAlignment="{TemplateBinding HorizontalContentAlignment}"
                                           VerticalContentAlignment="{TemplateBinding VerticalContentAlignment}" />
@@ -67,8 +67,6 @@
               IsReadOnly="False"
               Background="Transparent"
               UseLayoutRounding="True"
-              BorderThickness="0,0,1,0"
-              BorderBrush="{StaticResource BrushSeparator}"
               RowBackground="{StaticResource BrushBg}"
               HorizontalScrollBarVisibility="Auto"
               VerticalScrollBarVisibility="Auto"

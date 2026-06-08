@@ -206,7 +206,7 @@ public partial class TableView : UserControl
     {
         if (def.Key == TableColumnDef.AddPropKey)
         {
-            var plus = MakeCenteredHeader("+", fontSize: 16);
+            var plus = MakeCenteredHeader("+", fontSize: 16, addRightBorder: false);
             plus.Cursor = new Cursor(StandardCursorType.Hand);
             plus.PointerPressed += (_, _) =>
                 PropertyCreateRequested?.Invoke(this, EventArgs.Empty);
@@ -230,11 +230,13 @@ public partial class TableView : UserControl
         return cell;
     }
 
-    private Border MakeCenteredHeader(string text, double fontSize = 0) => new()
+    private Border MakeCenteredHeader(string text, double fontSize = 0, bool addRightBorder = true) => new()
     {
         Background          = Brushes.Transparent,
         HorizontalAlignment = HorizontalAlignment.Stretch,
         VerticalAlignment   = VerticalAlignment.Stretch,
+        BorderBrush         = (IBrush)this.FindResource("BrushSeparator")!,
+        BorderThickness     = new Thickness(0, 0, addRightBorder ? 1 : 0, 0),
         Child = new TextBlock
         {
             Text                = text,
@@ -251,6 +253,8 @@ public partial class TableView : UserControl
         HorizontalAlignment = HorizontalAlignment.Stretch,
         VerticalAlignment   = VerticalAlignment.Stretch,
         Padding             = new Thickness(6, 0),
+        BorderBrush         = (IBrush)this.FindResource("BrushSeparator")!,
+        BorderThickness     = new Thickness(0, 0, 1, 0),
         Child = new TextBlock
         {
             Text              = text,
