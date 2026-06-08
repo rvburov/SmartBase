@@ -329,6 +329,27 @@
         <Setter Property="VerticalAlignment" Value="Center" />
     </Style>
 
+    <!-- Безбордерный редактор (письмо как в заметках): убираем рамку во всех состояниях,
+         включая синюю рамку фокуса. -->
+    <Style Selector="TextBox.notesEditor">
+        <Setter Property="Background"               Value="Transparent" />
+        <Setter Property="BorderThickness"          Value="0" />
+        <Setter Property="Padding"                  Value="0" />
+        <Setter Property="VerticalContentAlignment" Value="Top" />
+    </Style>
+    <Style Selector="TextBox.notesEditor /template/ Border#PART_BorderElement">
+        <Setter Property="Background"      Value="Transparent" />
+        <Setter Property="BorderThickness" Value="0" />
+    </Style>
+    <Style Selector="TextBox.notesEditor:pointerover /template/ Border#PART_BorderElement">
+        <Setter Property="Background"      Value="Transparent" />
+        <Setter Property="BorderThickness" Value="0" />
+    </Style>
+    <Style Selector="TextBox.notesEditor:focus /template/ Border#PART_BorderElement">
+        <Setter Property="Background"      Value="Transparent" />
+        <Setter Property="BorderThickness" Value="0" />
+    </Style>
+
     <!-- Классический скроллбар (как в Excel): дорожка всегда видна, сверху/снизу
          кнопки-стрелки, посередине перетаскиваемый ползунок. Собственный шаблон,
          т.к. тема Fluent прячет ползунок. -->

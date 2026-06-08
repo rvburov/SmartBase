@@ -4,7 +4,7 @@
              x:Class="MyPlanner.Views.ConstructorDb.RecordPageView"
              Background="{StaticResource BrushBg}">
 
-    <Grid RowDefinitions="Auto,Auto,*">
+    <Grid RowDefinitions="Auto,Auto,*,Auto">
 
         <!-- Шапка: редактируемое название записи + кнопка «закрыть».
              Стиль текста — как у заголовка коллекции в навбаре конструктора
@@ -72,45 +72,68 @@
         </StackPanel>
 
         <!-- Markdown-описание -->
-        <Grid Grid.Row="2" RowDefinitions="Auto,*" Margin="20,8,20,16">
+        <Grid Grid.Row="2" RowDefinitions="Auto,*" Margin="20,8,20,12">
 
-            <Grid Grid.Row="0" ColumnDefinitions="*,Auto" Margin="0,0,0,6">
-                <TextBlock Grid.Column="0"
-                           Text="Описание"
-                           FontSize="{StaticResource FontSizeSmall}"
-                           Foreground="{StaticResource BrushSecondaryText}"
-                           VerticalAlignment="Center" />
-                <ToggleButton Grid.Column="1" x:Name="PreviewToggle"
-                              Content="Просмотр"
-                              FontSize="{StaticResource FontSizeSmall}"
-                              Padding="8,2"
-                              CornerRadius="{StaticResource RadiusMedium}" />
-            </Grid>
+            <TextBlock Grid.Row="0"
+                       Text="Описание"
+                       Margin="0,0,0,6"
+                       FontSize="{StaticResource FontSizeBase}"
+                       Foreground="{StaticResource BrushSecondaryText}"
+                       VerticalAlignment="Center" />
 
-            <!-- Редактор -->
+            <!-- Редактор: безбордерный (как письмо в заметках) -->
             <TextBox Grid.Row="1" x:Name="MarkdownEditor"
+                     Classes="notesEditor"
                      AcceptsReturn="True"
                      TextWrapping="Wrap"
                      Watermark="Пишите в Markdown..."
-                     BorderBrush="{StaticResource BrushSeparator}"
-                     BorderThickness="1"
-                     CornerRadius="{StaticResource RadiusMedium}"
-                     Padding="10"
-                     Background="{StaticResource BrushBg}"
-                     VerticalContentAlignment="Top" />
+                     FontSize="{StaticResource FontSizeBase}"
+                     Background="Transparent" />
 
-            <!-- Превью -->
+            <!-- Превью: тоже без рамки -->
             <Border Grid.Row="1" x:Name="MarkdownPreviewBox"
                     IsVisible="False"
-                    BorderBrush="{StaticResource BrushSeparator}"
-                    BorderThickness="1"
-                    CornerRadius="{StaticResource RadiusMedium}"
-                    Padding="10"
-                    Background="{StaticResource BrushBg}">
+                    Background="Transparent">
                 <md:MarkdownScrollViewer x:Name="MarkdownPreview"
                                         Markdown="" />
             </Border>
         </Grid>
+
+        <!-- Нижняя панель записи (как футер коллекции): переключатель режима markdown -->
+        <Border Grid.Row="3" Height="57" Background="{StaticResource BrushBg}">
+            <DockPanel>
+                <Border DockPanel.Dock="Top"
+                        Height="1"
+                        Background="{StaticResource BrushSeparator}" />
+
+                <Grid Margin="16,0">
+                    <ToggleButton x:Name="PreviewToggle" Classes="navbtn"
+                                  Width="30" Height="30"
+                                  HorizontalAlignment="Left"
+                                  VerticalAlignment="Center"
+                                  CornerRadius="{StaticResource RadiusMedium}"
+                                  ToolTip.Tip="Динамический просмотр">
+                        <Viewbox Width="18" Height="18">
+                            <Canvas Width="24" Height="24">
+                                <!-- pencil-line: режим динамического просмотра (виден в режиме редактора) -->
+                                <Path x:Name="IconToPreview"
+                                      Data="M13 21 H21 M15 5 L19 9 M21.174 6.812 A1 1 0 0 0 17.188 2.825 L3.842 16.174 A2 2 0 0 0 3.342 17.004 L2.021 21.356 A0.5 0.5 0 0 0 2.644 21.978 L6.997 20.658 A2 2 0 0 0 7.827 20.161 Z"
+                                      Stroke="{Binding $parent[ToggleButton].Foreground}"
+                                      StrokeThickness="1.6"
+                                      StrokeLineCap="Round" StrokeJoin="Round" />
+                                <!-- code-xml: просмотр исходного текста (виден в режиме просмотра) -->
+                                <Path x:Name="IconToSource"
+                                      IsVisible="False"
+                                      Data="M18 16 L22 12 L18 8 M6 8 L2 12 L6 16 M14.5 4 L9.5 20"
+                                      Stroke="{Binding $parent[ToggleButton].Foreground}"
+                                      StrokeThickness="1.6"
+                                      StrokeLineCap="Round" StrokeJoin="Round" />
+                            </Canvas>
+                        </Viewbox>
+                    </ToggleButton>
+                </Grid>
+            </DockPanel>
+        </Border>
 
     </Grid>
 

@@ -118,6 +118,12 @@ public partial class RecordPageView : UserControl
         MarkdownPreviewBox.IsVisible = preview;
         MarkdownEditor.IsVisible     = !preview;
 
+        // В режиме редактора кнопка предлагает перейти к динамическому просмотру (карандаш);
+        // в режиме просмотра — вернуться к исходному тексту (code-xml).
+        IconToPreview.IsVisible = !preview;
+        IconToSource.IsVisible  = preview;
+        ToolTip.SetTip(PreviewToggle, preview ? "Просмотр исходного текста" : "Динамический просмотр");
+
         if (preview)
             MarkdownPreview.Markdown = MarkdownEditor.Text ?? "";
     }
