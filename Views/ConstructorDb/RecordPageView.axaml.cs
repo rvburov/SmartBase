@@ -4,6 +4,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Templates;
 using Avalonia.Data;
+using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Media;
@@ -19,8 +20,7 @@ namespace MyPlanner.Views.ConstructorDb;
 /// </summary>
 public partial class RecordPageView : UserControl
 {
-    public event EventHandler<int>? RecordChanged; // recordId — известили родителя, что данные изменились
-    /// <summary>Запрос изменить видимость блока коллекции (true — открыть, false — закрыть).</summary>
+    public event EventHandler<int>? RecordChanged;
     public event EventHandler<bool>? CollectionPanelToggled;
 
     private RecordPageViewModel? _vm;
@@ -31,11 +31,27 @@ public partial class RecordPageView : UserControl
 
         PreviewToggle.IsCheckedChanged += (_, _) => UpdatePreviewVisibility();
 
+        TitleDisplay.PointerPressed += (_, _) =>
+        {
+            if (_vm is null) return;
+            TitleDisplay.IsVisible = false;
+            TitleBox.IsVisible     = true;
+            TitleBox.Focus();
+            TitleBox.SelectAll();
+        };
+
+        TitleBox.LostFocus += (_, _) => ExitTitleEdit();
+        TitleBox.KeyDown   += (_, e) =>
+        {
+            if (e.Key is Key.Enter or Key.Escape) { ExitTitleEdit(); e.Handled = true; }
+        };
+
         CollectionPanelBtn.IsCheckedChanged += (_, _) =>
         {
             UpdateCollectionPanelIcon();
             CollectionPanelToggled?.Invoke(this, CollectionPanelBtn.IsChecked == true);
         };
+
     }
 
     /// <summary>Синхронизирует визуальное состояние кнопки с фактической видимостью блока коллекции.</summary>
@@ -59,6 +75,7 @@ public partial class RecordPageView : UserControl
         DataContext = _vm;
 
         TitleBox.Text        = _vm.Title;
+        ExitTitleEdit();
         MarkdownEditor.Text  = _vm.MarkdownText;
         PreviewToggle.IsChecked = false;
         UpdatePreviewVisibility();
@@ -72,9 +89,27 @@ public partial class RecordPageView : UserControl
         _vm = null;
         DataContext = null;
         TitleBox.Text        = "";
+        ExitTitleEdit();
         MarkdownEditor.Text  = "";
         MarkdownPreview.Markdown = "";
         PropertiesList.ItemsSource = null;
+    }
+
+    private void ExitTitleEdit()
+    {
+        TitleBox.IsVisible     = false;
+        TitleDisplay.IsVisible = true;
+        var title = TitleBox.Text ?? "";
+        if (string.IsNullOrEmpty(title))
+        {
+            TitleDisplay.Text       = "Без названия";
+            TitleDisplay.Foreground = (IBrush)this.FindResource("BrushSecondaryText")!;
+        }
+        else
+        {
+            TitleDisplay.Text       = title;
+            TitleDisplay.Foreground = (IBrush)this.FindResource("BrushPrimaryText")!;
+        }
     }
 
     private void UpdatePreviewVisibility()

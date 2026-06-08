@@ -65,6 +65,19 @@ public partial class ConstructorControllerView : UserControl
         TableViewCtrl.PropertyCreateRequested += (_, _)   => _ = OpenPropertyDialog(null);
         TableViewCtrl.PropertyEditRequested   += (_, fid) => _ = OpenPropertyDialog(fid);
         TableViewCtrl.PropertyDeleteRequested += (_, fid) => DeleteProperty(fid);
+
+        // Стартовое состояние: коллекция не выбрана — заголовок-плейсхолдер и подсказка.
+        ConstructorNavbar.SetTitle("");
+        SetEmptyState(true);
+    }
+
+    // Пустое состояние (коллекция не выбрана): подсказка по центру, скрыты контролы
+    // навбара (вид/запись) и нижняя панель — чтобы не показывать «Всего: 0» и пр.
+    private void SetEmptyState(bool empty)
+    {
+        EmptyStateHint.IsVisible    = empty;
+        ConstructorFooter.IsVisible = !empty;
+        ConstructorNavbar.ShowCollectionControls(!empty);
     }
 
     public void SelectCollection(int collectionId)
@@ -80,6 +93,7 @@ public partial class ConstructorControllerView : UserControl
 
         _currentCollectionId = collectionId;
         ConstructorNavbar.SetTitle(col.Name);
+        SetEmptyState(false);
 
         var (colResize, rowResize, viewMode) = _repository.GetUiSettings(collectionId);
         ConstructorFooter.LoadCollectionState(colResize, rowResize);
@@ -106,6 +120,7 @@ public partial class ConstructorControllerView : UserControl
         ListViewCtrl.Clear();
         ConstructorFooter.SetCount(0);
         ConstructorFooter.SetPage(1, 1);
+        SetEmptyState(true);
         RecordPageClosed?.Invoke(this, EventArgs.Empty);
     }
 

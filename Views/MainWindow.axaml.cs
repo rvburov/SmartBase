@@ -10,7 +10,12 @@ public partial class MainWindow : Window
     private readonly CategoryRepository _categories;
     private readonly ConstructorRepository _constructor;
     private string _activeModule = "calendar";
-    private bool _sidebarOpen = true;
+
+    // Три независимых состояния панелей. Физические ширины колонок и видимость ручек
+    // ресайза вычисляются из них в одном месте — ApplyColumns().
+    private bool _sidebarOpen    = true;   // левый сайдбар (col 2)
+    private bool _collectionOpen = true;   // центральный блок коллекции/контента (col 3)
+    // _recordPanelLogicalOpen — правая панель записи (col 5), объявлено ниже.
 
     public MainWindow(
         CategoryRepository categories,
@@ -56,9 +61,14 @@ public partial class MainWindow : Window
             CalendarModule.SetActiveIds(CalendarSidebar.GetActiveIds());
         };
 
-        // Дерево конструктора: выбор коллекции открывает её в ConstructorModule
+        // Дерево конструктора: выбор коллекции открывает её в ConstructorModule.
+        // Если центральный блок был скрыт (свёрнут из записи) — снова показываем его.
         ConstructorSidebar.CollectionSelected += (_, id) =>
+        {
             ConstructorModule.SelectCollection(id);
+            if (!_collectionOpen)
+                ApplyConstructorContentVisibility(true);
+        };
 
         // CRUD в дереве конструктора (создание/переименование/удаление) →
         // обновить календарь и заголовок/данные открытой коллекции в конструкторе
@@ -98,14 +108,12 @@ public partial class MainWindow : Window
             else CloseRecordPanel();
         };
 
-        // Toggle блока коллекции из навбара записи.
         RecordPanel.CollectionPanelToggled += (_, isOpen) => ApplyConstructorContentVisibility(isOpen);
 
-        // Восстановить состояние панели записи (открыта/закрыта + ширина).
-        // Физически применим в ShowModule — панель видна только в конструкторе.
-        _recordPanelWidth       = AppSettings.LoadRecordPanelWidth();
-        _recordPanelLogicalOpen = AppSettings.LoadRecordPanelOpen();
-        ApplyRecordPanelColumn(false);
+        // Ширину панели записи восстанавливаем; сама панель при запуске закрыта
+        // (_recordPanelLogicalOpen = false по умолчанию) — без выбранной записи
+        // открытая панель показывала бы пустой белый блок.
+        _recordPanelWidth = AppSettings.LoadRecordPanelWidth();
 
         // Первоначальная загрузка фильтра
         CalendarModule.SetActiveIds(CalendarSidebar.GetActiveIds());
@@ -115,43 +123,40 @@ public partial class MainWindow : Window
     {
         _activeModule = module;
 
-        CalendarModule.IsVisible    = module == "calendar";
-        ConstructorModule.IsVisible = module == "constructor";
-
-        var sidebarOpen = _sidebarOpen;
+        CalendarModule.IsVisible = module == "calendar";
+        // Видимость ConstructorModule зависит ещё и от _collectionOpen — её ставит ApplyColumns.
 
         if (module == "calendar")
         {
-            CalendarSidebar.IsVisible    = sidebarOpen;
+            CalendarSidebar.IsVisible    = _sidebarOpen;
             ConstructorSidebar.IsVisible = false;
             CalendarSidebar.Refresh();
             CalendarModule.SetActiveIds(CalendarSidebar.GetActiveIds());
-            // Панель записи относится только к конструктору — физически схлопываем,
-            // но логическое состояние (_recordPanelLogicalOpen) сохраняем для возврата.
-            ApplyRecordPanelColumn(false);
         }
         else
         {
             CalendarSidebar.IsVisible    = false;
-            ConstructorSidebar.IsVisible = sidebarOpen;
+            ConstructorSidebar.IsVisible = _sidebarOpen;
             ConstructorSidebar.Refresh();
             ConstructorModule.Refresh();
-            // Восстанавливаем последнее состояние панели записи.
-            ApplyRecordPanelColumn(_recordPanelLogicalOpen);
+            // Синхронизируем кнопки-тогглы с восстановленным состоянием.
             ConstructorModule.SetRecordPanelOpen(_recordPanelLogicalOpen);
+            RecordPanel.SetCollectionPanelOpen(_collectionOpen);
         }
 
-        ApplySidebarColumn(sidebarOpen);
+        ApplyColumns();
     }
 
     private void OnSidebarToggled(bool isOpen)
     {
+        _sidebarOpen = isOpen;
+
         if (_activeModule == "calendar")
             CalendarSidebar.IsVisible = isOpen;
         else
             ConstructorSidebar.IsVisible = isOpen;
 
-        ApplySidebarColumn(isOpen);
+        ApplyColumns();
     }
 
     // Запоминаем последнюю ширину сайдбара, чтобы вернуть её при повторном открытии
@@ -160,28 +165,74 @@ public partial class MainWindow : Window
     private const double SidebarMin = 180;
     private const double SidebarMax = 500;
 
-    // Колонка сайдбара схлопывается при скрытии, чтобы контент занимал всё окно
-    // (split-view как в Obsidian).
-    private void ApplySidebarColumn(bool isOpen)
+    // Единая точка раскладки трёх колонок (сайдбар | контент | запись) и обеих ручек
+    // ресайза. Вызывается при любом изменении состояния панелей. Колонки Grid сами
+    // учитывают ширину открытого сайдбара: контент/запись растягиваются на остаток.
+    //
+    //   сайдбар (col2)   — пиксельная ширина при открытии, 0 при закрытии
+    //   контент  (col3)  — Star (растягивается), либо 0 когда коллекция скрыта
+    //   разделитель(col4)— виден только когда коллекция и запись открыты одновременно
+    //   запись   (col5)  — пиксельная при открытой коллекции; Star когда коллекция скрыта; 0 когда закрыта
+    private void ApplyColumns()
     {
-        var col = RootGrid.ColumnDefinitions[2];
+        var cols = RootGrid.ColumnDefinitions;
+        var inConstructor = _activeModule == "constructor";
 
-        if (isOpen)
+        // Центральный блок скрывается только в конструкторе; в календаре он всегда «открыт».
+        var collection = !inConstructor || _collectionOpen;
+        // Панель записи существует только в конструкторе.
+        var record     = inConstructor && _recordPanelLogicalOpen;
+
+        // ── Сайдбар (col 2) ──
+        if (_sidebarOpen)
         {
-            col.MinWidth = SidebarMin;
-            col.MaxWidth = SidebarMax;
-            col.Width    = new Avalonia.Controls.GridLength(_lastSidebarWidth, Avalonia.Controls.GridUnitType.Pixel);
-            ResizeGrip.IsVisible = true;
+            cols[2].MinWidth = SidebarMin;
+            cols[2].MaxWidth = SidebarMax;
+            cols[2].Width    = new GridLength(_lastSidebarWidth, GridUnitType.Pixel);
         }
         else
         {
-            if (col.Width.IsAbsolute && col.Width.Value > 0)
-                _lastSidebarWidth = col.Width.Value;
-            col.MinWidth = 0;
-            col.MaxWidth = 0;
-            col.Width    = new Avalonia.Controls.GridLength(0);
-            ResizeGrip.IsVisible = false;
+            cols[2].MinWidth = 0;
+            cols[2].MaxWidth = 0;
+            cols[2].Width    = new GridLength(0);
         }
+
+        // ── Контент (col 3) | разделитель (col 4) | запись (col 5) ──
+        if (collection && record)            // обе панели открыты
+        {
+            cols[3].Width    = new GridLength(1, GridUnitType.Star);
+            cols[4].Width    = GridLength.Auto;
+            cols[5].MinWidth = AppSettings.RecordPanelWidthMin;
+            cols[5].MaxWidth = AppSettings.RecordPanelWidthMax;
+            cols[5].Width    = new GridLength(_recordPanelWidth, GridUnitType.Pixel);
+        }
+        else if (collection)                 // только коллекция → во всю ширину
+        {
+            cols[3].Width    = new GridLength(1, GridUnitType.Star);
+            cols[4].Width    = new GridLength(0);
+            cols[5].MinWidth = 0;
+            cols[5].MaxWidth = double.PositiveInfinity;
+            cols[5].Width    = new GridLength(0);
+        }
+        else                                 // только запись (коллекция скрыта) → во всю ширину
+        {
+            cols[3].Width    = new GridLength(0);
+            cols[4].Width    = new GridLength(0);
+            cols[5].MinWidth = 0;
+            cols[5].MaxWidth = double.PositiveInfinity;
+            cols[5].Width    = new GridLength(1, GridUnitType.Star);
+        }
+
+        // ── Видимость блоков ──
+        ConstructorModule.IsVisible    = inConstructor && collection;
+        RecordPanel.IsVisible          = record;
+        RecordPanelSeparator.IsVisible = collection && record;
+
+        // ── Ручки ресайза ──
+        // Сайдбара — когда сайдбар открыт (висит на его правом крае поверх коллекции/записи).
+        ResizeGrip.IsVisible       = _sidebarOpen;
+        // Записи — только когда коллекция и запись открыты одновременно (граница между ними).
+        RecordResizeGrip.IsVisible = collection && record;
     }
 
     // ── Перетаскивание ручки-блока для изменения ширины сайдбара ─────────────────
@@ -245,66 +296,31 @@ public partial class MainWindow : Window
         RecordPanel.Show(_constructor, recordId, collectionId.Value);
         _recordPanelLogicalOpen = true;
         _lastOpenedRecordId     = recordId;
-        ApplyRecordPanelColumn(true);
         ConstructorModule.SetRecordPanelOpen(true);
         AppSettings.SaveRecordPanelOpen(true);
+        ApplyColumns();
     }
 
     private void CloseRecordPanel()
     {
         RecordPanel.Clear();
         _recordPanelLogicalOpen = false;
-        ApplyRecordPanelColumn(false);
-        ConstructorModule.SetRecordPanelOpen(false);
-        // При закрытии панели блок коллекции всегда должен быть виден —
+        // При закрытии записи коллекция всегда должна быть видна —
         // иначе можно остаться с пустым экраном (обе панели скрыты).
-        ApplyConstructorContentVisibility(true);
+        _collectionOpen = true;
+        ConstructorModule.SetRecordPanelOpen(false);
+        RecordPanel.SetCollectionPanelOpen(true);
         AppSettings.SaveRecordPanelOpen(false);
+        ApplyColumns();
     }
 
-    // Скрытие/показ центрального блока коллекции (ConstructorModule).
-    // Кнопка в навбаре записи живёт внутри RecordPanel, поэтому панель записи
-    // должна оставаться открытой — иначе обе исчезнут и кнопку негде нажать.
+    // Скрытие/показ центрального блока коллекции — кнопка в навбаре записи.
+    // Панель записи при этом остаётся открытой (кнопка живёт внутри неё).
     private void ApplyConstructorContentVisibility(bool isOpen)
     {
-        ConstructorModule.IsVisible = isOpen;
+        _collectionOpen = isOpen;
         RecordPanel.SetCollectionPanelOpen(isOpen);
-
-        var col = RootGrid.ColumnDefinitions[3];
-        col.Width = isOpen
-            ? new GridLength(1, GridUnitType.Star)
-            : new GridLength(0);
-        // Ручка ресайза левого края правой панели не нужна, когда коллекция скрыта,
-        // и не нужна тем более ручка центрального блока.
-        ResizeGrip.IsVisible = isOpen;
-    }
-
-    // Колонка панели записи: при открытии — фиксированная ширина (последняя сохранённая),
-    // при закрытии — 0 (контент занимает всё). Аналогично сайдбару.
-    private void ApplyRecordPanelColumn(bool isOpen)
-    {
-        var col = RootGrid.ColumnDefinitions[5];
-
-        if (isOpen)
-        {
-            col.MinWidth = AppSettings.RecordPanelWidthMin;
-            col.MaxWidth = AppSettings.RecordPanelWidthMax;
-            col.Width    = new Avalonia.Controls.GridLength(_recordPanelWidth, Avalonia.Controls.GridUnitType.Pixel);
-            RecordPanel.IsVisible          = true;
-            RecordPanelSeparator.IsVisible = true;
-            RecordResizeGrip.IsVisible     = true;
-        }
-        else
-        {
-            if (col.Width.IsAbsolute && col.Width.Value > 0)
-                _recordPanelWidth = (int)col.Width.Value;
-            col.MinWidth = 0;
-            col.MaxWidth = double.PositiveInfinity;
-            col.Width    = new Avalonia.Controls.GridLength(0);
-            RecordPanel.IsVisible          = false;
-            RecordPanelSeparator.IsVisible = false;
-            RecordResizeGrip.IsVisible     = false;
-        }
+        ApplyColumns();
     }
 
     // ── Перетаскивание ручки панели записи ─────────────────────────────────────

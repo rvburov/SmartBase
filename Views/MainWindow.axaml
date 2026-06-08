@@ -42,32 +42,10 @@
             </Grid>
         </Border>
 
-        <!-- Основная область контента + ручка перетаскивания у левого края (зеркало RecordResizeGrip) -->
+        <!-- Основная область контента -->
         <Grid Grid.Column="3">
             <cal:CalendarControllerView x:Name="CalendarModule" />
             <con:ConstructorControllerView x:Name="ConstructorModule" IsVisible="False" />
-
-            <Border x:Name="ResizeGrip"
-                    Width="11" Height="34"
-                    HorizontalAlignment="Left"
-                    VerticalAlignment="Center"
-                    Margin="-5,0,0,0"
-                    CornerRadius="4"
-                    Background="{StaticResource BrushBg}"
-                    BorderBrush="{StaticResource BrushSeparator}"
-                    BorderThickness="1"
-                    Cursor="SizeWestEast"
-                    PointerPressed="OnGripPressed"
-                    PointerMoved="OnGripMoved"
-                    PointerReleased="OnGripReleased">
-                <StackPanel Orientation="Vertical" Spacing="3"
-                            HorizontalAlignment="Center"
-                            VerticalAlignment="Center">
-                    <Ellipse Width="2.5" Height="2.5" Fill="{StaticResource BrushSecondaryText}" />
-                    <Ellipse Width="2.5" Height="2.5" Fill="{StaticResource BrushSecondaryText}" />
-                    <Ellipse Width="2.5" Height="2.5" Fill="{StaticResource BrushSecondaryText}" />
-                </StackPanel>
-            </Border>
         </Grid>
 
         <!-- Вертикальный разделитель слева от панели записи -->
@@ -119,6 +97,32 @@
                 Height="1"
                 VerticalAlignment="Top"
                 Background="{StaticResource BrushSeparator}" />
+
+        <!-- Ручка ресайза сайдбара. Закреплена у правого края колонки сайдбара и висит
+             поверх соседнего блока (коллекции или записи) за счёт отрицательного отступа —
+             поэтому видна при любом из них. Объявлена последней → рисуется над панелями. -->
+        <Border x:Name="ResizeGrip"
+                Grid.Column="2"
+                Width="11" Height="34"
+                HorizontalAlignment="Right"
+                VerticalAlignment="Center"
+                Margin="0,0,-5,0"
+                CornerRadius="4"
+                Background="{StaticResource BrushBg}"
+                BorderBrush="{StaticResource BrushSeparator}"
+                BorderThickness="1"
+                Cursor="SizeWestEast"
+                PointerPressed="OnGripPressed"
+                PointerMoved="OnGripMoved"
+                PointerReleased="OnGripReleased">
+            <StackPanel Orientation="Vertical" Spacing="3"
+                        HorizontalAlignment="Center"
+                        VerticalAlignment="Center">
+                <Ellipse Width="2.5" Height="2.5" Fill="{StaticResource BrushSecondaryText}" />
+                <Ellipse Width="2.5" Height="2.5" Fill="{StaticResource BrushSecondaryText}" />
+                <Ellipse Width="2.5" Height="2.5" Fill="{StaticResource BrushSecondaryText}" />
+            </StackPanel>
+        </Border>
 
     </Grid>
 

@@ -1,5 +1,6 @@
 using Avalonia.Controls;
 using Avalonia.Input;
+using Avalonia.Media;
 
 namespace MyPlanner.Controls.Components;
 
@@ -30,11 +31,20 @@ public partial class ConstructorNavbar : UserControl
                 ViewChanged?.Invoke(this, ViewModes[idx]);
         };
 
-        TitleBox.LostFocus += (_, _) => CommitTitle();
+        TitleDisplay.PointerPressed += (_, _) =>
+        {
+            if (!TitleBox.IsEnabled) return;
+            TitleDisplay.IsVisible = false;
+            TitleBox.IsVisible     = true;
+            TitleBox.Focus();
+            TitleBox.SelectAll();
+        };
+
+        TitleBox.LostFocus += (_, _) => { CommitTitle(); ExitTitleEdit(); };
         TitleBox.KeyDown   += (_, e) =>
         {
-            if (e.Key == Key.Enter) { CommitTitle(); e.Handled = true; }
-            if (e.Key == Key.Escape) { TitleBox.Text = _committedTitle; e.Handled = true; }
+            if (e.Key == Key.Enter)  { CommitTitle(); ExitTitleEdit(); e.Handled = true; }
+            if (e.Key == Key.Escape) { TitleBox.Text = _committedTitle; ExitTitleEdit(); e.Handled = true; }
         };
 
         RecordPanelBtn.IsCheckedChanged += (_, _) =>
@@ -42,6 +52,14 @@ public partial class ConstructorNavbar : UserControl
             UpdateRecordPanelIcon();
             RecordPanelToggled?.Invoke(this, RecordPanelBtn.IsChecked == true);
         };
+    }
+
+    /// <summary>Показывает/скрывает контролы, осмысленные только при выбранной коллекции
+    /// (переключатель вида и кнопка панели записи).</summary>
+    public void ShowCollectionControls(bool show)
+    {
+        ViewSelector.IsVisible   = show;
+        RecordPanelBtn.IsVisible = show;
     }
 
     /// <summary>Синхронизирует визуальное состояние кнопки с фактической видимостью панели записи.</summary>
@@ -61,9 +79,26 @@ public partial class ConstructorNavbar : UserControl
 
     public void SetTitle(string text)
     {
-        _committedTitle = text ?? "";
-        TitleBox.Text   = _committedTitle;
+        _committedTitle    = text ?? "";
+        TitleBox.Text      = _committedTitle;
         TitleBox.IsEnabled = !string.IsNullOrEmpty(_committedTitle);
+        ExitTitleEdit();
+    }
+
+    private void ExitTitleEdit()
+    {
+        TitleBox.IsVisible     = false;
+        TitleDisplay.IsVisible = true;
+        if (string.IsNullOrEmpty(_committedTitle))
+        {
+            TitleDisplay.Text       = "Выберите коллекцию";
+            TitleDisplay.Foreground = (IBrush)this.FindResource("BrushSecondaryText")!;
+        }
+        else
+        {
+            TitleDisplay.Text       = _committedTitle;
+            TitleDisplay.Foreground = (IBrush)this.FindResource("BrushPrimaryText")!;
+        }
     }
 
     public string CurrentViewMode =>
