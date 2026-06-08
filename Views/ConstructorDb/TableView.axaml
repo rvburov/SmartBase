@@ -33,6 +33,7 @@
         <!-- Левый бордер контента совпадает с той же координатой X, где DataGrid рисует
              вертикальные линии строк — гарантированное выравнивание без субпиксельных артефактов. -->
         <Style Selector="DataGridColumnHeader">
+            <Setter Property="UseLayoutRounding"          Value="True" />
             <Setter Property="Background"                 Value="{StaticResource BrushInactiveBg}" />
             <Setter Property="Padding"                    Value="0" />
             <Setter Property="Height"                     Value="{StaticResource RowHeightStandard}" />

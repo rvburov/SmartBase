@@ -37,6 +37,7 @@ public partial class TableView : UserControl
     private ConstructorRepository? _repository;
     private int  _collectionId;
     private bool _manualColResize;
+    private bool _snapPending;
     private List<DbField>        _fields  = [];
     private List<TableColumnDef> _colDefs = [];
     private VirtualRowList?      _virtualRows;
@@ -47,6 +48,7 @@ public partial class TableView : UserControl
         RecordsGrid.CellPointerPressed += OnCellPointerPressed;
         RecordsGrid.LoadingRow         += OnLoadingRow;
         RecordsGrid.SizeChanged        += (_, _) => ApplyColumnWidths();
+        RecordsGrid.LayoutUpdated      += OnGridLayoutUpdated;
     }
 
     // ── Публичный API ─────────────────────────────────────────────────────────
@@ -473,6 +475,45 @@ public partial class TableView : UserControl
                 col.Width = new DataGridLength(1, DataGridLengthUnitType.Star);
             }
         }
+    }
+
+    private void OnGridLayoutUpdated(object? s, EventArgs e)
+    {
+        if (_snapPending || _manualColResize) return;
+
+        var hasFractional = false;
+        for (var i = 0; i < RecordsGrid.Columns.Count && i < _colDefs.Count; i++)
+        {
+            var col = RecordsGrid.Columns[i];
+            if (!_colDefs[i].IsStarWidth || !col.Width.IsStar || col.ActualWidth <= 0) continue;
+            if (col.ActualWidth != Math.Floor(col.ActualWidth)) { hasFractional = true; break; }
+        }
+        if (!hasFractional) return;
+
+        _snapPending = true;
+        Dispatcher.UIThread.Post(() =>
+        {
+            _snapPending = false;
+            SnapStarColumnWidths();
+        }, DispatcherPriority.Background);
+    }
+
+    private void SnapStarColumnWidths()
+    {
+        var starCols = new List<DataGridColumn>();
+        for (var i = 0; i < RecordsGrid.Columns.Count && i < _colDefs.Count; i++)
+        {
+            if (_colDefs[i].IsStarWidth && RecordsGrid.Columns[i].Width.IsStar && RecordsGrid.Columns[i].ActualWidth > 0)
+                starCols.Add(RecordsGrid.Columns[i]);
+        }
+        if (starCols.Count == 0) return;
+
+        var total = (int)Math.Round(starCols.Sum(c => c.ActualWidth));
+        var baseW = total / starCols.Count;
+        var extra = total % starCols.Count;
+
+        for (var i = 0; i < starCols.Count; i++)
+            starCols[i].Width = new DataGridLength(baseW + (i < extra ? 1 : 0));
     }
 
     // ── Утилиты ────────────────────────────────────────────────────────────────
