@@ -16,8 +16,8 @@ public partial class MonthView : UserControl
 
     // Константы макета (соответствуют PyQt DayCell / MonthOverlay)
     private const int DateH   = 34;
-    private const int BarH    = 18;
-    private const int BarStep = 20;
+    private const int BarH    = 20;
+    private const int BarStep = 22;
     private const int MoreH   = 16;
     private const int BPad    = 4;
 
@@ -37,12 +37,11 @@ public partial class MonthView : UserControl
     private Control?  _dragSrcControl;
     private Grid?     _dragPreview;
     private DateTime? _shiftedDay;
-    private Control?  _removedChip;
     private Action?   _deselectCurrent;
     private int       _pressClickCount;
     private bool      _skipNextDeselect;
 
-    private readonly Dictionary<DateTime, (StackPanel Panel, TextBlock More, int OrigTopOff, int OrigHidden)> _dayUiMap    = new();
+    private readonly Dictionary<DateTime, (Grid Panel, TextBlock More, HashSet<int> Occupied, int OrigHidden)> _dayUiMap    = new();
     private readonly Dictionary<int, List<(Border SelFrame, Border? LeftStripe)>>                             _spanFrames    = new();
     private readonly Dictionary<int, List<Border>>                                                             _spanBgBorders = new();
     private readonly Dictionary<int, List<TextBlock>>                                                          _spanTextBlocks = new();
@@ -50,6 +49,7 @@ public partial class MonthView : UserControl
     private readonly Dictionary<DateTime, (Action Show, Action Hide)>                                         _dayPlusMap   = new();
     private DateTime? _hoveredDay;
     private DateTime? _hoveredCircleDay;
+    private readonly HashSet<int> _selectedSpanIds = [];
 
     private EventHandler<PointerPressedEventArgs>? _windowClickHandler;
 
@@ -71,7 +71,11 @@ public partial class MonthView : UserControl
                 if (_skipNextDeselect) { _skipNextDeselect = false; return; }
                 _Deselect();
             };
-            win.AddHandler(PointerPressedEvent, _windowClickHandler);
+            // handledEventsToo: чип/бар помечают PointerPressed как Handled, поэтому
+            // без этого флага окно не увидит клик по событию и не сбросит
+            // _skipNextDeselect — тогда следующий клик по пустому дню «съедается»
+            // вместо снятия выделения.
+            win.AddHandler(PointerPressedEvent, _windowClickHandler, handledEventsToo: true);
         }
     }
 
@@ -130,6 +134,29 @@ public partial class MonthView : UserControl
         return layout;
     }
 
+    // Строки, занятые spanning-барами именно в день d (множество с возможными
+    // дырами — бар в строке 1 может покрывать день, а строка 0 в нём свободна).
+    private HashSet<int> _SpanRowsForDay(DateTime d, Dictionary<int, LayoutEntry> layout)
+    {
+        var rows = new HashSet<int>();
+        foreach (var e in _events)
+        {
+            if (!(e.AllDay || e.EndDt.Date > e.StartDt.Date)) continue;
+            if (!e.Id.HasValue || !layout.TryGetValue(e.Id.Value, out var le)) continue;
+            if (e.StartDt.Date <= d.Date && e.EndDt.Date >= d.Date)
+                rows.Add(le.RowIdx);
+        }
+        return rows;
+    }
+
+    // Первая строка r >= 0, отсутствующая в занятом множестве.
+    private static int _FirstFreeRow(HashSet<int> occupied)
+    {
+        var r = 0;
+        while (occupied.Contains(r)) r++;
+        return r;
+    }
+
     // ── единый построитель: ячейки + Canvas-оверлей ────────────────────────────
 
     private void _BuildAll()
@@ -141,6 +168,7 @@ public partial class MonthView : UserControl
         _spanFrames.Clear();
         _spanBgBorders.Clear();
         _spanTextBlocks.Clear();
+        _selectedSpanIds.Clear();
         _dayCellMap.Clear();
         _dayPlusMap.Clear();
         _hoveredDay       = null;
@@ -204,15 +232,8 @@ public partial class MonthView : UserControl
                 var isToday        = d.Date == DateTime.Today;
                 var isWeekend      = col >= 5;
 
-                // Максимальная занятая строка spanning-событий в этой ячейке
-                var maxSpanRow = _events
-                    .Where(e => (e.AllDay || e.EndDt.Date > e.StartDt.Date)
-                             && e.StartDt.Date <= d.Date
-                             && e.EndDt.Date   >= d.Date
-                             && e.Id.HasValue && layout.ContainsKey(e.Id.Value))
-                    .Select(e => layout[e.Id!.Value].RowIdx)
-                    .DefaultIfEmpty(-1)
-                    .Max();
+                // Строки, занятые spanning-барами в этот день (с дырами).
+                var spanRows = _SpanRowsForDay(d, layout);
 
                 // Однодневные события
                 var singles = _events
@@ -222,19 +243,30 @@ public partial class MonthView : UserControl
                     .OrderBy(e => e.StartDt)
                     .ToList();
 
-                // Сколько однодневных влезает ниже spanning-строк
-                // -1 компенсирует 1px границу ячейки, чтобы зазор chip↔spanbar = chip↔chip = 2px
-                var topOff = DateH + (maxSpanRow + 1) * BarStep - 1;
-                var maxVis = ch > 0
-                    ? Math.Max(0, (int)((ch - BPad - MoreH - topOff) / BarStep))
-                    : 5;
+                // Последняя строка, помещающаяся по высоте: row*BarStep от DateH,
+                // снизу резерв под «+N ещё» (MoreH) и нижний отступ (BPad).
+                var maxVisRow = ch > 0
+                    ? (int)((ch - BPad - MoreH - DateH) / BarStep) - 1
+                    : 4;
 
-                var visCount = Math.Min(singles.Count, maxVis);
-                var hidden   = singles.Count - visCount + hiddenSpans[col];
+                // Каждому single — первая свободная строка (заполняя верхние дыры).
+                // Строки, ушедшие за maxVisRow, считаются скрытыми.
+                var occupied = new HashSet<int>(spanRows);
+                var placed   = new List<(CalendarRecord Ev, int Row)>();
+                var hiddenSingles = 0;
+                foreach (var ev in singles)
+                {
+                    var r = _FirstFreeRow(occupied);
+                    occupied.Add(r);
+                    if (r <= maxVisRow) placed.Add((ev, r));
+                    else                hiddenSingles++;
+                }
+
+                var hidden = hiddenSingles + hiddenSpans[col];
 
                 DayGrid.Children.Add(
                     _MakeCell(d, isCurrentMonth, isToday, isWeekend,
-                              singles.Take(visCount).ToList(), topOff, hidden));
+                              placed, occupied, hidden));
             }
         }
     }
@@ -246,8 +278,8 @@ public partial class MonthView : UserControl
         bool        isCurrentMonth,
         bool        isToday,
         bool        isWeekend,
-        List<CalendarRecord> singles,
-        int         topOff,
+        List<(CalendarRecord Ev, int Row)> placed,
+        HashSet<int> occupied,
         int         hidden)
     {
         // Число дня
@@ -258,7 +290,7 @@ public partial class MonthView : UserControl
         var dayLabel = new TextBlock
         {
             Text                = date.Day.ToString(),
-            FontSize            = 13,
+            FontSize            = 14,
             TextAlignment       = TextAlignment.Center,
             HorizontalAlignment = HorizontalAlignment.Stretch,
             VerticalAlignment   = VerticalAlignment.Center,
@@ -266,19 +298,24 @@ public partial class MonthView : UserControl
             FontWeight          = isToday ? FontWeight.Bold : FontWeight.Normal,
         };
 
-        // SVG lucide-plus: горизонтальная и вертикальная линии (M5 12h14 / M12 5v14)
-        // масштабируются из 24×24 → 14×14 через Viewbox
-        var plusGeometry = Geometry.Parse("M5 12 L19 12 M12 5 L12 19");
-        var plusIcon = new Avalonia.Controls.Shapes.Path
+        // Плюс — как в кнопке «Создать» в сайдбаре (Sidebar.axaml):
+        // Path на Canvas 24×24 внутри Viewbox 18×18 — так и геометрия,
+        // и толщина штриха масштабируются одинаково (визуально тоньше и компактнее).
+        var plusPath = new Avalonia.Controls.Shapes.Path
         {
-            Data                = plusGeometry,
-            Stroke              = new SolidColorBrush(Color.Parse("#636366")),
-            StrokeThickness     = 2,
-            StrokeLineCap       = PenLineCap.Round,
-            StrokeJoin          = PenLineJoin.Round,
-            Width               = 14,
-            Height              = 14,
-            Stretch             = Stretch.Uniform,
+            Data            = Geometry.Parse("M5 12 H19 M12 5 V19"),
+            Stroke          = new SolidColorBrush(Color.Parse("#636366")),
+            StrokeThickness = 2,
+            StrokeLineCap   = PenLineCap.Round,
+            StrokeJoin      = PenLineJoin.Round,
+        };
+        var plusCanvas = new Canvas { Width = 24, Height = 24 };
+        plusCanvas.Children.Add(plusPath);
+        var plusIcon = new Viewbox
+        {
+            Width               = 18,
+            Height              = 18,
+            Child               = plusCanvas,
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment   = VerticalAlignment.Center,
             IsVisible           = false,
@@ -326,30 +363,35 @@ public partial class MonthView : UserControl
             }
         );
 
-        // Однодневные события (StackPanel смещён вниз, чтобы не перекрывать spanning-бары)
-        var eventsPanel = new StackPanel
+        // Однодневные события: каждый чип в свою строку дня (DateH + row*BarStep),
+        // заполняя «дыры» между spanning-барами. Grid-контейнер без строк —
+        // чипы разводятся по вертикали верхним отступом, ширина тянется по ячейке.
+        var eventsPanel = new Grid
         {
-            Spacing             = 2,
-            Margin              = new Thickness(2, topOff, 2, 0),
             VerticalAlignment   = VerticalAlignment.Top,
             HorizontalAlignment = HorizontalAlignment.Stretch,
         };
-        foreach (var ev in singles)
-            eventsPanel.Children.Add(_MakeChip(ev));
+        foreach (var (ev, row) in placed)
+        {
+            var chip = _MakeChip(ev);
+            chip.Margin            = new Thickness(2, DateH + row * BarStep, 2, 0);
+            chip.VerticalAlignment = VerticalAlignment.Top;
+            eventsPanel.Children.Add(chip);
+        }
 
         // «+N ещё» — прижата к нижнему краю ячейки
         var moreLabel = new TextBlock
         {
             Text                = $"+{hidden} ещё",
             IsVisible           = hidden > 0,
-            FontSize            = 13,
+            FontSize            = 14,
             Foreground          = new SolidColorBrush(Color.Parse("#8E8E93")),
             Margin              = new Thickness(6, 0, 0, 4),
             VerticalAlignment   = VerticalAlignment.Bottom,
             HorizontalAlignment = HorizontalAlignment.Left,
         };
 
-        _dayUiMap[date] = (eventsPanel, moreLabel, topOff, hidden);
+        _dayUiMap[date] = (eventsPanel, moreLabel, occupied, hidden);
 
         var inner = new Grid();
         inner.Children.Add(dayCircle);
@@ -429,8 +471,8 @@ public partial class MonthView : UserControl
             var tb = new TextBlock
             {
                 Text              = ev.DisplayTitle,
-                FontSize          = 13,
-                FontWeight        = FontWeight.SemiBold,
+                FontSize          = 14,
+                FontWeight        = (FontWeight)550,
                 Foreground        = darkBrush,
                 Margin            = new Thickness(8, 0, 2, 0),
                 TextTrimming      = TextTrimming.CharacterEllipsis,
@@ -452,15 +494,15 @@ public partial class MonthView : UserControl
             var timeTb = new TextBlock
             {
                 Text       = $"{ev.StartDt:HH:mm} ",
-                FontSize   = 13,
+                FontSize   = 14,
                 FontWeight = FontWeight.Normal,
                 Foreground = darkBrush,
             };
             var titleTb = new TextBlock
             {
                 Text         = ev.DisplayTitle,
-                FontSize     = 13,
-                FontWeight   = FontWeight.SemiBold,
+                FontSize     = 14,
+                FontWeight   = (FontWeight)550,
                 Foreground   = darkBrush,
                 TextTrimming = TextTrimming.CharacterEllipsis,
             };
@@ -569,8 +611,8 @@ public partial class MonthView : UserControl
             var tb = new TextBlock
             {
                 Text              = ev.DisplayTitle,
-                FontSize          = 13,
-                FontWeight        = FontWeight.SemiBold,
+                FontSize          = 14,
+                FontWeight        = (FontWeight)550,
                 Foreground        = darkBrush,
                 Margin            = new Thickness(8, 0, 4, 0),
                 TextTrimming      = TextTrimming.CharacterEllipsis,
@@ -581,27 +623,31 @@ public partial class MonthView : UserControl
         }
         else
         {
-            var timeAndTitle = new StackPanel
+            // Grid [время Auto][заголовок *] — заголовок в колонке * получает
+            // конечную ширину бара и обрезается многоточием, как у однодневного чипа.
+            var timeAndTitle = new Grid
             {
-                Orientation       = Orientation.Horizontal,
                 VerticalAlignment = VerticalAlignment.Center,
                 Margin            = new Thickness(8, 0, 4, 0),
+                ColumnDefinitions = new ColumnDefinitions("Auto,*"),
             };
             var timeTb = new TextBlock
             {
                 Text       = $"{ev.StartDt:HH:mm} ",
-                FontSize   = 13,
+                FontSize   = 14,
                 FontWeight = FontWeight.Normal,
                 Foreground = darkBrush,
             };
             var titleTb = new TextBlock
             {
                 Text         = ev.DisplayTitle,
-                FontSize     = 13,
-                FontWeight   = FontWeight.SemiBold,
+                FontSize     = 14,
+                FontWeight   = (FontWeight)550,
                 Foreground   = darkBrush,
                 TextTrimming = TextTrimming.CharacterEllipsis,
             };
+            Grid.SetColumn(timeTb, 0);
+            Grid.SetColumn(titleTb, 1);
             barTextBlocks.Add(timeTb);
             barTextBlocks.Add(titleTb);
             timeAndTitle.Children.Add(timeTb);
@@ -616,17 +662,19 @@ public partial class MonthView : UserControl
             _spanTextBlocks[ev.Id.Value].AddRange(barTextBlocks);
         }
 
-        var isBarSelected = false;
+        // Проверяем общий словарь _selectedSpanIds — он один на все сегменты события,
+        // поэтому ховер на любом сегменте не перебивает выделение другого сегмента.
+        var isSelected = () => ev.Id.HasValue && _selectedSpanIds.Contains(ev.Id.Value);
 
         bar.PointerEntered += (_, _) =>
         {
-            if (isBarSelected) return;
+            if (isSelected()) return;
             var all = ev.Id.HasValue && _spanBgBorders.TryGetValue(ev.Id.Value, out var bs) ? bs : [bgBorder];
             foreach (var b in all) b.Background = hoverBg;
         };
         bar.PointerExited += (_, _) =>
         {
-            if (isBarSelected) return;
+            if (isSelected()) return;
             var all = ev.Id.HasValue && _spanBgBorders.TryGetValue(ev.Id.Value, out var bs) ? bs : [bgBorder];
             foreach (var b in all) b.Background = normalBg;
         };
@@ -646,7 +694,7 @@ public partial class MonthView : UserControl
             else
             {
                 _Deselect();
-                isBarSelected = true;
+                if (ev.Id.HasValue) _selectedSpanIds.Add(ev.Id.Value);
                 var allBg  = ev.Id.HasValue && _spanBgBorders.TryGetValue(ev.Id.Value, out var bs) ? bs : [bgBorder];
                 var allTbs = ev.Id.HasValue && _spanTextBlocks.TryGetValue(ev.Id.Value, out var tbs) ? tbs : barTextBlocks;
                 foreach (var b in allBg)  b.Background = selectedBg;
@@ -654,7 +702,7 @@ public partial class MonthView : UserControl
                 if (leftStripeBar is not null) leftStripeBar.IsVisible = false;
                 _deselectCurrent = () =>
                 {
-                    isBarSelected = false;
+                    if (ev.Id.HasValue) _selectedSpanIds.Remove(ev.Id.Value);
                     foreach (var b in allBg)   b.Background = normalBg;
                     foreach (var tb in allTbs) tb.Foreground = darkBrush;
                     if (leftStripeBar is not null) leftStripeBar.IsVisible = true;
@@ -782,16 +830,11 @@ public partial class MonthView : UserControl
         _deselectCurrent = null;
     }
 
+    // Чипы при drag больше не двигаются — восстановить нужно только «+N ещё».
     private void _RestoreShift(DateTime day)
     {
         if (_dayUiMap.TryGetValue(day, out var ui))
         {
-            if (_removedChip is not null)
-            {
-                ui.Panel.Children.Add(_removedChip);
-                _removedChip = null;
-            }
-            ui.Panel.Margin   = new Thickness(2, ui.OrigTopOff, 2, 0);
             ui.More.IsVisible = ui.OrigHidden > 0;
             ui.More.Text      = $"+{ui.OrigHidden} ещё";
         }
@@ -813,30 +856,25 @@ public partial class MonthView : UserControl
 
         var weekStart  = _gridStart.AddDays(row * 7);
         var layout     = _ComputeWeekLayout(weekStart);
-        var maxSpanRow = _events
-            .Where(e => (e.AllDay || e.EndDt.Date > e.StartDt.Date)
-                     && e.StartDt.Date <= _dragTargetDay
-                     && e.EndDt.Date   >= _dragTargetDay
-                     && e.Id.HasValue && layout.ContainsKey(e.Id!.Value))
-            .Select(e => layout[e.Id!.Value].RowIdx)
-            .DefaultIfEmpty(-1)
-            .Max();
-        var singles = _events
-            .Where(e => !e.AllDay
-                     && e.EndDt.Date == e.StartDt.Date
-                     && e.StartDt.Date == _dragTargetDay)
-            .ToList();
-        var topOff = DateH + (maxSpanRow + 1) * BarStep - 1;
-        var maxVis = ch > 0 ? Math.Max(0, (int)((ch - BPad - MoreH - topOff) / BarStep)) : 5;
 
         // Restore shift from a previous target day before applying to new one
         if (_shiftedDay.HasValue && _shiftedDay.Value != _dragTargetDay)
             _RestoreShift(_shiftedDay.Value);
 
-        // Preview goes at the top of the singles area (topOff)
-        var by = row * ch + topOff;
+        // Первая свободная строка дня: занятые spanning-бары + уже показанные
+        // чипы этого дня (их строки запомнены в _dayUiMap.Occupied). Превью
+        // заполняет верхние дыры так же, как и обычная раскладка.
+        var occupied = _dayUiMap.TryGetValue(_dragTargetDay, out var ui)
+            ? new HashSet<int>(ui.Occupied)
+            : _SpanRowsForDay(_dragTargetDay, layout);
+        var freeRow = _FirstFreeRow(occupied);
 
-        // Not enough room even for the preview bar — hide and restore
+        // +1 — верхняя граница ячейки (BorderThickness top=1): контент ячейки
+        // (и реальные чипы) сдвинут на 1px вниз относительно row*ch, а превью
+        // лежит на Canvas без этой границы.
+        var by = row * ch + 1 + DateH + freeRow * BarStep;
+
+        // Свободной строки в пределах ячейки нет — прячем превью и восстанавливаем
         if (ch > 0 && by + BarH > row * ch + ch - BPad)
         {
             if (_dragPreview is not null) { SpanCanvas.Children.Remove(_dragPreview); _dragPreview = null; }
@@ -844,18 +882,9 @@ public partial class MonthView : UserControl
             return;
         }
 
-        // Shift existing single-day events down by BarStep and update "+N ещё"
-        if (_dayUiMap.TryGetValue(_dragTargetDay, out var ui))
-        {
-            ui.Panel.Margin = new Thickness(2, topOff + BarStep, 2, 0);
-            // If the panel was full (all maxVis slots used), the last chip now overflows — remove it
-            if (maxVis > 0 && ui.Panel.Children.Count > 0 && ui.Panel.Children.Count >= maxVis)
-            {
-                _removedChip = (Control)ui.Panel.Children[ui.Panel.Children.Count - 1];
-                ui.Panel.Children.RemoveAt(ui.Panel.Children.Count - 1);
-            }
-            ui.More.IsVisible = false;
-        }
+        // Если превью заняло бы строку «+N ещё» — прячем подпись на время drag.
+        if (_dayUiMap.TryGetValue(_dragTargetDay, out var ui2))
+            ui2.More.IsVisible = false;
         _shiftedDay = _dragTargetDay;
 
         if (_dragPreview is null)
@@ -869,8 +898,8 @@ public partial class MonthView : UserControl
             _dragPreview.Children.Add(new TextBlock
             {
                 Text              = _dragEv.AllDay ? _dragEv.DisplayTitle : $"{_dragEv.StartDt:HH:mm} {_dragEv.DisplayTitle}",
-                FontSize          = 13,
-                FontWeight        = FontWeight.SemiBold,
+                FontSize          = 14,
+                FontWeight        = (FontWeight)550,
                 Foreground        = Brushes.White,
                 Margin            = new Thickness(8, 0, 4, 0),
                 TextTrimming      = TextTrimming.CharacterEllipsis,
