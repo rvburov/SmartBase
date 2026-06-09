@@ -195,31 +195,19 @@ public partial class JournalView : UserControl
     {
         if (sender is not Border { Tag: JournalItem item } border) return;
 
-        var menu = new ContextMenu();
         var selected = SelectedRecords();
-
+        ContextMenu menu;
         if (selected.Count > 1 && item.IsSelected)
         {
-            menu.Items.Add(MakeMenuItem("Удалить", () =>
-            {
-                DeselectAll();
-                RecordsDeleteRequested?.Invoke(this, selected);
-            }));
+            menu = MyPlanner.Controls.Components.EventContextMenu.Multi(
+                () => { DeselectAll(); RecordsDeleteRequested?.Invoke(this, selected); });
         }
         else
         {
-            menu.Items.Add(MakeMenuItem("Редактировать", () =>
-            {
-                DeselectAll();
-                RecordClicked?.Invoke(this, item.OriginalEvent);
-            }));
-            menu.Items.Add(MakeMenuItem("Удалить", () =>
-            {
-                DeselectAll();
-                RecordDeleteRequested?.Invoke(this, item.OriginalEvent);
-            }));
+            menu = MyPlanner.Controls.Components.EventContextMenu.Single(
+                onEdit:   () => { DeselectAll(); RecordClicked?.Invoke(this, item.OriginalEvent); },
+                onDelete: () => { DeselectAll(); RecordDeleteRequested?.Invoke(this, item.OriginalEvent); });
         }
-
         menu.Open(border);
         e.Handled = true;
     }
@@ -230,8 +218,8 @@ public partial class JournalView : UserControl
         // сработает OnEventContextRequested и пометит e.Handled).
         DeselectAll();
         var date = GetDateForY(_lastContextY);
-        var menu = new ContextMenu();
-        menu.Items.Add(MakeMenuItem("Создать запись", () => CreateRequested?.Invoke(this, date)));
+        var menu = MyPlanner.Controls.Components.EventContextMenu.Background(
+            () => CreateRequested?.Invoke(this, date));
         if (sender is Control c) menu.Open(c);
         e.Handled = true;
     }
@@ -243,13 +231,6 @@ public partial class JournalView : UserControl
             e.Handled = true;
             RecordClicked?.Invoke(this, item.OriginalEvent);
         }
-    }
-
-    private static MenuItem MakeMenuItem(string header, Action onClick)
-    {
-        var item = new MenuItem { Header = header };
-        item.Click += (_, _) => Avalonia.Threading.Dispatcher.UIThread.Post(onClick);
-        return item;
     }
 
     private void OnBackgroundDoubleTapped(object? sender, TappedEventArgs e)

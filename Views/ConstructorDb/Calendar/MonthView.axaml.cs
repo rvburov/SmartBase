@@ -1070,18 +1070,17 @@ public partial class MonthView : UserControl
         menu.Opening += (_, _) =>
         {
             menu.Items.Clear();
-
-            // Множественное выделение (это событие в наборе и в нём 2+): только
-            // массовое удаление всех выделенных с подтверждением.
             if (_selections.Count > 1 && _selections.ContainsKey(ev))
             {
                 var batch = _selections.Keys.ToList();
-                menu.Items.Add(_MakeMenuItem("Удалить", () => { _Deselect(); RecordsDeleteRequested?.Invoke(this, batch); }));
+                menu.Items.Add(MyPlanner.Controls.Components.EventContextMenu.MakeItem(
+                    "Удалить", () => { _Deselect(); RecordsDeleteRequested?.Invoke(this, batch); }));
                 return;
             }
-
-            menu.Items.Add(_MakeMenuItem("Редактировать", () => { _Deselect(); RecordClicked?.Invoke(this, ev); }));
-            menu.Items.Add(_MakeMenuItem("Удалить",       () => { _Deselect(); RecordDeleteRequested?.Invoke(this, ev); }));
+            menu.Items.Add(MyPlanner.Controls.Components.EventContextMenu.MakeItem(
+                "Редактировать", () => { _Deselect(); RecordClicked?.Invoke(this, ev); }));
+            menu.Items.Add(MyPlanner.Controls.Components.EventContextMenu.MakeItem(
+                "Удалить", () => { _Deselect(); RecordDeleteRequested?.Invoke(this, ev); }));
         };
         return menu;
     }
@@ -1089,25 +1088,13 @@ public partial class MonthView : UserControl
     private ContextMenu _BuildDayContextMenu(DateTime date)
     {
         var menu = new ContextMenu();
-        // Меню дня открывается только при клике по пустой области ячейки (у чипа
-        // и спан-бара свой ContextMenu) — снимаем выделение группы, как левый клик.
         menu.Opening += (_, _) =>
         {
             _Deselect();
             menu.Items.Clear();
-            menu.Items.Add(_MakeMenuItem("Создать запись", () => DayAddClicked?.Invoke(this, date)));
+            menu.Items.Add(MyPlanner.Controls.Components.EventContextMenu.MakeItem(
+                "Создать запись", () => DayAddClicked?.Invoke(this, date)));
         };
         return menu;
-    }
-
-    // Действие откладывается до закрытия меню (Post в очередь диспетчера):
-    // пункт «Удалить»/«Редактировать» перестраивает сетку (_BuildAll) и сносит
-    // контрол, на котором висит закрывающееся меню — без отсрочки это вызывает
-    // мелькание. Аналог «после await» в диалоговом удалении.
-    private static MenuItem _MakeMenuItem(string header, Action onClick)
-    {
-        var item = new MenuItem { Header = header };
-        item.Click += (_, _) => Avalonia.Threading.Dispatcher.UIThread.Post(onClick);
-        return item;
     }
 }

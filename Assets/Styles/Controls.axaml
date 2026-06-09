@@ -273,7 +273,7 @@
         <Setter Property="BorderBrush"     Value="{StaticResource BrushSeparator}" />
         <Setter Property="BorderThickness" Value="1" />
         <Setter Property="CornerRadius"    Value="{StaticResource RadiusMedium}" />
-        <Setter Property="Padding"         Value="4,6" />
+        <Setter Property="Padding"         Value="0,2" />
     </Style>
 
     <!-- TextBox -->
@@ -773,7 +773,7 @@
         <Setter Property="BorderThickness" Value="1" />
         <Setter Property="CornerRadius"    Value="{StaticResource RadiusMedium}" />
         <Setter Property="BoxShadow"       Value="0 4 16 0 #1A000000" />
-        <Setter Property="Padding"         Value="4,6" />
+        <Setter Property="Padding"         Value="0,2" />
         <Setter Property="Margin"          Value="0,4,0,0" />
     </Style>
 
@@ -816,6 +816,74 @@
 
     <Style Selector="CheckBox:checked /template/ Border#NormalRectangle">
         <Setter Property="Background" Value="{StaticResource BrushAccent}" />
+    </Style>
+
+    <!-- ContextMenu / MenuItem: визуально как ComboBox-выпадашка.
+         Фон/рамка/скругление контейнера повторяют ComboBox Popup, элементы — ComboBoxItem
+         (наведение/выделение тем же ресурсом MenuFlyoutItemBackgroundPointerOver). -->
+    <Style Selector="ContextMenu">
+        <Setter Property="FontSize"        Value="{StaticResource FontSizeBase}" />
+        <Setter Property="Background"      Value="{StaticResource BrushSecondaryBg}" />
+        <Setter Property="BorderBrush"     Value="{StaticResource BrushSeparator}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="CornerRadius"    Value="{StaticResource RadiusMedium}" />
+        <Setter Property="Padding"         Value="0,2" />
+        <Setter Property="MinWidth"        Value="180" />
+    </Style>
+
+    <Style Selector="MenuItem">
+        <Setter Property="FontSize"                 Value="{StaticResource FontSizeBase}" />
+        <Setter Property="Foreground"               Value="{StaticResource BrushPrimaryText}" />
+        <Setter Property="Background"               Value="Transparent" />
+        <Setter Property="Padding"                  Value="10,7" />
+        <Setter Property="Margin"                   Value="4,2" />
+        <Setter Property="CornerRadius"             Value="{StaticResource RadiusSmall}" />
+        <!-- Минимальная ширина самого пункта — растянет контейнер до одинаковой ширины
+             у основного меню и у сабменю. -->
+        <Setter Property="MinWidth"                 Value="172" />
+    </Style>
+
+    <Style Selector="MenuItem /template/ Border#PART_LayoutRoot">
+        <Setter Property="Background"      Value="Transparent" />
+        <Setter Property="CornerRadius"    Value="{StaticResource RadiusSmall}" />
+        <Setter Property="Padding"         Value="0" />
+    </Style>
+
+    <Style Selector="MenuItem:pointerover /template/ Border#PART_LayoutRoot">
+        <Setter Property="Background"   Value="{DynamicResource MenuFlyoutItemBackgroundPointerOver}" />
+        <Setter Property="CornerRadius" Value="{StaticResource RadiusSmall}" />
+    </Style>
+
+    <Style Selector="MenuItem:selected /template/ Border#PART_LayoutRoot">
+        <Setter Property="Background"   Value="{DynamicResource MenuFlyoutItemBackgroundPointerOver}" />
+        <Setter Property="CornerRadius" Value="{StaticResource RadiusSmall}" />
+    </Style>
+
+    <!-- Подменю (MenuFlyoutPresenter) — тот же стиль контейнера, что и ContextMenu,
+         иначе сабменю «Изменить цвет» рендерится с белым Fluent-фоном. -->
+    <Style Selector="MenuFlyoutPresenter">
+        <Setter Property="Background"      Value="{StaticResource BrushSecondaryBg}" />
+        <Setter Property="BorderBrush"     Value="{StaticResource BrushSeparator}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="CornerRadius"    Value="{StaticResource RadiusMedium}" />
+        <Setter Property="Padding"         Value="0,2" />
+        <Setter Property="MinWidth"        Value="180" />
+    </Style>
+
+    <!-- Подменю у вложенного MenuItem (Popup со списком цветов): фон/рамка/радиус
+         как у основного контекстного меню. Шаблон MenuItem кладёт сабменю в
+         Border#PART_Popup + ScrollViewer#PART_ScrollViewer. -->
+    <Style Selector="MenuItem /template/ Border#PART_Popup">
+        <Setter Property="Background"      Value="{StaticResource BrushSecondaryBg}" />
+        <Setter Property="BorderBrush"     Value="{StaticResource BrushSeparator}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="CornerRadius"    Value="{StaticResource RadiusMedium}" />
+        <Setter Property="Padding"         Value="0,2" />
+    </Style>
+
+    <!-- Зазор между основным меню и сабменю: HorizontalOffset на самом Popup. -->
+    <Style Selector="MenuItem /template/ Popup#PART_Popup">
+        <Setter Property="HorizontalOffset" Value="6" />
     </Style>
 
 </Styles>

@@ -42,6 +42,16 @@
     <SolidColorBrush x:Key="BrushRed"          Color="{StaticResource ColorRed}" />
     <SolidColorBrush x:Key="BrushHover"        Color="{StaticResource ColorHover}" />
 
+    <!-- Фон вложенного меню (Popup у MenuItem с сабпунктами): Fluent по умолчанию
+         использует белый из FlyoutBackground/MenuFlyoutPresenterBackground.
+         Переопределяем на тот же серый, что и у основного ContextMenu. -->
+    <SolidColorBrush x:Key="FlyoutBackground"               Color="{StaticResource ColorSecondaryBg}" />
+    <SolidColorBrush x:Key="MenuFlyoutPresenterBackground"  Color="{StaticResource ColorSecondaryBg}" />
+    <SolidColorBrush x:Key="MenuFlyoutSubItemBackground"    Color="{StaticResource ColorSecondaryBg}" />
+
+    <!-- Фон выпадающего списка ComboBox — тот же серый, что и у контекстного меню. -->
+    <SolidColorBrush x:Key="ComboBoxDropDownBackground"     Color="{StaticResource ColorSecondaryBg}" />
+
     <!-- Переопределение системного акцентного цвета Fluent -->
     <Color x:Key="SystemAccentColor">#007AFF</Color>
     <Color x:Key="SystemAccentColorLight1">#3395FF</Color>

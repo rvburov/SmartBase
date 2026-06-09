@@ -657,32 +657,19 @@ public partial class AllDayBar : UserControl
 
     private void ShowEventContextMenu(AllDayEntry entry, Point pos)
     {
-        var ev   = entry.Ev;
-        var menu = new ContextMenu();
-
+        var ev = entry.Ev;
+        ContextMenu menu;
         if (_selections.Count > 1 && _selections.ContainsKey(ev))
         {
             var batch = _selections.Keys.ToList();
-            menu.Items.Add(MakeMenuItem("Удалить", () =>
-            {
-                _DeselectAll();
-                RecordsDeleteRequested?.Invoke(this, batch);
-            }));
+            menu = EventContextMenu.Multi(() => { _DeselectAll(); RecordsDeleteRequested?.Invoke(this, batch); });
         }
         else
         {
-            menu.Items.Add(MakeMenuItem("Редактировать", () =>
-            {
-                _DeselectAll();
-                RecordClicked?.Invoke(this, ev);
-            }));
-            menu.Items.Add(MakeMenuItem("Удалить", () =>
-            {
-                _DeselectAll();
-                RecordDeleteRequested?.Invoke(this, ev);
-            }));
+            menu = EventContextMenu.Single(
+                onEdit:   () => { _DeselectAll(); RecordClicked?.Invoke(this, ev); },
+                onDelete: () => { _DeselectAll(); RecordDeleteRequested?.Invoke(this, ev); });
         }
-
         menu.PlacementTarget = entry.Root;
         menu.Open(entry.Root);
     }
@@ -695,16 +682,8 @@ public partial class AllDayBar : UserControl
         var col = Math.Clamp((int)(pos.X / colW), 0, _currentDays.Count - 1);
         var day = _currentDays[col];
 
-        var menu = new ContextMenu();
-        menu.Items.Add(MakeMenuItem("Создать запись", () => RecordCreationRequested?.Invoke(this, day)));
+        var menu = EventContextMenu.Background(() => RecordCreationRequested?.Invoke(this, day));
         menu.PlacementTarget = EventsPanel;
         menu.Open(EventsPanel);
-    }
-
-    private static MenuItem MakeMenuItem(string header, Action onClick)
-    {
-        var item = new MenuItem { Header = header };
-        item.Click += (_, _) => Avalonia.Threading.Dispatcher.UIThread.Post(onClick);
-        return item;
     }
 }

@@ -1520,12 +1520,14 @@ public partial class WeekView : UserControl
             if (_selections.Count > 1 && _selections.ContainsKey(ev))
             {
                 var batch = _selections.Keys.ToList();
-                menu.Items.Add(_MakeMenuItem("Удалить", () => { _Deselect(); RecordsDeleteRequested?.Invoke(this, batch); }));
+                menu.Items.Add(MyPlanner.Controls.Components.EventContextMenu.MakeItem(
+                    "Удалить", () => { _Deselect(); RecordsDeleteRequested?.Invoke(this, batch); }));
                 return;
             }
-
-            menu.Items.Add(_MakeMenuItem("Редактировать", () => { _Deselect(); RecordClicked?.Invoke(this, ev); }));
-            menu.Items.Add(_MakeMenuItem("Удалить",       () => { _Deselect(); RecordDeleteRequested?.Invoke(this, ev); }));
+            menu.Items.Add(MyPlanner.Controls.Components.EventContextMenu.MakeItem(
+                "Редактировать", () => { _Deselect(); RecordClicked?.Invoke(this, ev); }));
+            menu.Items.Add(MyPlanner.Controls.Components.EventContextMenu.MakeItem(
+                "Удалить", () => { _Deselect(); RecordDeleteRequested?.Invoke(this, ev); }));
         };
         return menu;
     }
@@ -1571,19 +1573,10 @@ public partial class WeekView : UserControl
             var dt      = new DateTime(day.Year, day.Month, day.Day, minutes / 60, minutes % 60, 0);
 
             menu.Items.Clear();
-            menu.Items.Add(_MakeMenuItem("Создать запись", () => TimeSlotCreationRequested?.Invoke(this, dt)));
+            menu.Items.Add(MyPlanner.Controls.Components.EventContextMenu.MakeItem(
+                "Создать запись", () => TimeSlotCreationRequested?.Invoke(this, dt)));
         };
         return menu;
-    }
-
-    // Действие откладывается до закрытия меню (Post в очередь диспетчера):
-    // пункт перестраивает сетку и сносит контрол, на котором висит
-    // закрывающееся меню — без отсрочки это вызывает мелькание.
-    private static MenuItem _MakeMenuItem(string header, Action onClick)
-    {
-        var item = new MenuItem { Header = header };
-        item.Click += (_, _) => Avalonia.Threading.Dispatcher.UIThread.Post(onClick);
-        return item;
     }
 }
 
