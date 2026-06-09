@@ -4,7 +4,8 @@
              Background="{StaticResource BrushBg}">
 
     <ScrollViewer VerticalScrollBarVisibility="Auto"
-                  DoubleTapped="OnBackgroundDoubleTapped">
+                  DoubleTapped="OnBackgroundDoubleTapped"
+                  ContextRequested="OnBackgroundContextRequested">
         <Border BorderThickness="0"
                 BorderBrush="{StaticResource BrushSeparator}"
                 Margin="0">
@@ -22,7 +23,9 @@
                                     Tapped="OnEventTapped"
                                     DoubleTapped="OnEventDoubleTapped"
                                     PointerEntered="OnEventPointerEntered"
-                                    PointerExited="OnEventPointerExited">
+                                    PointerExited="OnEventPointerExited"
+                                    PointerPressed="OnEventPointerPressed"
+                                    ContextRequested="OnEventContextRequested">
                                 <Grid Margin="0" ColumnDefinitions="Auto,12,*">
                                     <!-- Цветная полоска: отступы слева и сверху/снизу -->
                                     <Border Grid.Column="0" Width="4" CornerRadius="2"
@@ -32,11 +35,11 @@
                                     <StackPanel Grid.Column="2" Spacing="2"
                                                 VerticalAlignment="Center">
                                         <TextBlock Text="{Binding Title}"
-                                                   FontSize="13"
+                                                   FontSize="12"
                                                    Foreground="{Binding TitleBrush}"
                                                    TextTrimming="CharacterEllipsis" />
                                         <TextBlock Text="{Binding DateTimeText}"
-                                                   FontSize="13"
+                                                   FontSize="12"
                                                    Foreground="{StaticResource BrushSecondaryText}" />
                                     </StackPanel>
                                 </Grid>
@@ -48,7 +51,7 @@
                 <TextBlock x:Name="EmptyHint"
                            IsVisible="False"
                            Text="Нет записей"
-                           FontSize="13"
+                           FontSize="12"
                            Foreground="{StaticResource BrushSecondaryText}"
                            Margin="24,16"
                            VerticalAlignment="Top" />

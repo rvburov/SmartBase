@@ -12,11 +12,16 @@ namespace MyPlanner.Views.ConstructorDb.Calendar;
 public partial class JournalView : UserControl
 {
     public event EventHandler<CalendarRecord>?    RecordClicked;
+    public event EventHandler<CalendarRecord>?    RecordDeleteRequested;
+    public event EventHandler<IReadOnlyList<CalendarRecord>>? RecordsDeleteRequested;
     public event EventHandler<DateTime>? CreateRequested;
 
     private List<JournalItem>  _allItems = new();
     private List<JournalGroup> _groups   = new();
     private ScrollViewer       _scroll   = null!;
+
+    // Y последнего правого клика (в координатах GroupsList) — для даты «Создать запись».
+    private double _lastContextY;
 
     private static readonly string[] Months =
         ["января", "февраля", "марта", "апреля", "мая", "июня",
@@ -47,9 +52,29 @@ public partial class JournalView : UserControl
 
     private void OnGlobalPointerPressed(object? sender, PointerPressedEventArgs e)
     {
+        // Правый клик не сбрасывает выделение — иначе меню откроется над снятым.
+        var props = e.GetCurrentPoint(this).Properties;
+        if (props.IsRightButtonPressed)
+        {
+            _lastContextY = e.GetPosition(GroupsList).Y;
+            return;
+        }
+
+        // Shift+клик — аддитивное выделение: глобальный сброс пропускаем,
+        // toggle делается в OnEventTapped.
+        if (e.KeyModifiers.HasFlag(KeyModifiers.Shift)) return;
+
+        DeselectAll();
+    }
+
+    private void DeselectAll()
+    {
         foreach (var i in _allItems)
             i.IsSelected = false;
     }
+
+    private List<CalendarRecord> SelectedRecords()
+        => _allItems.Where(i => i.IsSelected).Select(i => i.OriginalEvent).ToList();
 
     public void Refresh(IEnumerable<CalendarRecord> events, DateTime currentDate)
     {
@@ -106,14 +131,85 @@ public partial class JournalView : UserControl
     {
         if (sender is Border { Tag: JournalItem item })
         {
+            var additive = e.KeyModifiers.HasFlag(KeyModifiers.Shift);
+            if (additive)
+            {
+                // toggle: повторный Shift+клик по выделенному — снять
+                item.IsHovered  = false;
+                item.IsSelected = !item.IsSelected;
+            }
+            else
+            {
+                foreach (var i in _allItems)
+                {
+                    i.IsSelected = false;
+                    i.IsHovered  = false;
+                }
+                item.IsSelected = true;
+            }
+            e.Handled = true;
+        }
+    }
+
+    // Правый клик по событию: если ещё не выделено — выделяем его одно.
+    private void OnEventPointerPressed(object? sender, PointerPressedEventArgs e)
+    {
+        if (sender is Border { Tag: JournalItem item }
+            && e.GetCurrentPoint(this).Properties.IsRightButtonPressed
+            && !item.IsSelected)
+        {
             foreach (var i in _allItems)
             {
                 i.IsSelected = false;
                 i.IsHovered  = false;
             }
             item.IsSelected = true;
-            e.Handled = true;
         }
+    }
+
+    private void OnEventContextRequested(object? sender, ContextRequestedEventArgs e)
+    {
+        if (sender is not Border { Tag: JournalItem item } border) return;
+
+        var menu = new ContextMenu();
+        var selected = SelectedRecords();
+
+        if (selected.Count > 1 && item.IsSelected)
+        {
+            menu.Items.Add(MakeMenuItem("Удалить", () =>
+            {
+                DeselectAll();
+                RecordsDeleteRequested?.Invoke(this, selected);
+            }));
+        }
+        else
+        {
+            menu.Items.Add(MakeMenuItem("Редактировать", () =>
+            {
+                DeselectAll();
+                RecordClicked?.Invoke(this, item.OriginalEvent);
+            }));
+            menu.Items.Add(MakeMenuItem("Удалить", () =>
+            {
+                DeselectAll();
+                RecordDeleteRequested?.Invoke(this, item.OriginalEvent);
+            }));
+        }
+
+        menu.Open(border);
+        e.Handled = true;
+    }
+
+    private void OnBackgroundContextRequested(object? sender, ContextRequestedEventArgs e)
+    {
+        // Меню фона открывается, только если клик не по событию (по событию
+        // сработает OnEventContextRequested и пометит e.Handled).
+        DeselectAll();
+        var date = GetDateForY(_lastContextY);
+        var menu = new ContextMenu();
+        menu.Items.Add(MakeMenuItem("Создать запись", () => CreateRequested?.Invoke(this, date)));
+        if (sender is Control c) menu.Open(c);
+        e.Handled = true;
     }
 
     private void OnEventDoubleTapped(object? sender, TappedEventArgs e)
@@ -123,6 +219,13 @@ public partial class JournalView : UserControl
             e.Handled = true;
             RecordClicked?.Invoke(this, item.OriginalEvent);
         }
+    }
+
+    private static MenuItem MakeMenuItem(string header, Action onClick)
+    {
+        var item = new MenuItem { Header = header };
+        item.Click += (_, _) => Avalonia.Threading.Dispatcher.UIThread.Post(onClick);
+        return item;
     }
 
     private void OnBackgroundDoubleTapped(object? sender, TappedEventArgs e)

@@ -59,20 +59,28 @@ public partial class CalendarControllerView : UserControl
         MonthViewCtrl.DayAddClicked += (_, d)  => _ = OpenAddDialog(d);
         YearViewCtrl.MonthSelected += (_, d)  => { _currentDate = d; SwitchView(4); };
 
-        ListViewCtrl.RecordClicked      += (_, r) => _ = OpenEditDialog(r);
-        ListViewCtrl.CreateRequested    += (_, d) => _ = OpenAddDialog(d);
-        JournalViewCtrl.RecordClicked   += (_, r) => _ = OpenEditDialog(r);
-        JournalViewCtrl.CreateRequested += (_, d) => _ = OpenAddDialog(d);
+        ListViewCtrl.RecordClicked          += (_, r) => _ = OpenEditDialog(r);
+        ListViewCtrl.CreateRequested        += (_, d) => _ = OpenAddDialog(d);
+        ListViewCtrl.RecordDeleteRequested  += (_, r) => { if (r.Id.HasValue) { _records.DeleteCalendarRecord(r.Id.Value); CollectionsMayHaveChanged?.Invoke(this, EventArgs.Empty); RefreshCurrent(); } };
+        ListViewCtrl.RecordsDeleteRequested += (_, rs) => _ = DeleteRecordsWithConfirm(rs);
+        JournalViewCtrl.RecordClicked          += (_, r) => _ = OpenEditDialog(r);
+        JournalViewCtrl.CreateRequested        += (_, d) => _ = OpenAddDialog(d);
+        JournalViewCtrl.RecordDeleteRequested  += (_, r) => { if (r.Id.HasValue) { _records.DeleteCalendarRecord(r.Id.Value); CollectionsMayHaveChanged?.Invoke(this, EventArgs.Empty); RefreshCurrent(); } };
+        JournalViewCtrl.RecordsDeleteRequested += (_, rs) => _ = DeleteRecordsWithConfirm(rs);
         MonthViewCtrl.RecordClicked          += (_, r) => _ = OpenEditDialog(r);
         MonthViewCtrl.RecordMoved            += (_, r) => { _records.UpdateCalendarRecord(r); CollectionsMayHaveChanged?.Invoke(this, EventArgs.Empty); RefreshCurrent(); };
         MonthViewCtrl.RecordDeleteRequested  += (_, r) => { if (r.Id.HasValue) { _records.DeleteCalendarRecord(r.Id.Value); CollectionsMayHaveChanged?.Invoke(this, EventArgs.Empty); RefreshCurrent(); } };
         MonthViewCtrl.RecordsDeleteRequested += (_, rs) => _ = DeleteRecordsWithConfirm(rs);
         DayViewCtrl.RecordClicked              += (_, r) => _ = OpenEditDialog(r);
         DayViewCtrl.RecordMoved                += (_, r) => { _records.UpdateCalendarRecord(r); CollectionsMayHaveChanged?.Invoke(this, EventArgs.Empty); RefreshCurrent(); };
+        DayViewCtrl.RecordDeleteRequested      += (_, r) => { if (r.Id.HasValue) { _records.DeleteCalendarRecord(r.Id.Value); CollectionsMayHaveChanged?.Invoke(this, EventArgs.Empty); RefreshCurrent(); } };
+        DayViewCtrl.RecordsDeleteRequested     += (_, rs) => _ = DeleteRecordsWithConfirm(rs);
         DayViewCtrl.AllDayCreationRequested    += (_, d)  => _ = OpenAddAllDayDialog(d);
         DayViewCtrl.TimeSlotCreationRequested  += (_, dt) => _ = OpenAddDialog(dt.Date, dt.TimeOfDay);
         WeekViewCtrl.RecordClicked             += (_, r) => _ = OpenEditDialog(r);
         WeekViewCtrl.RecordMoved               += (_, r) => { _records.UpdateCalendarRecord(r); CollectionsMayHaveChanged?.Invoke(this, EventArgs.Empty); RefreshCurrent(); };
+        WeekViewCtrl.RecordDeleteRequested     += (_, r) => { if (r.Id.HasValue) { _records.DeleteCalendarRecord(r.Id.Value); CollectionsMayHaveChanged?.Invoke(this, EventArgs.Empty); RefreshCurrent(); } };
+        WeekViewCtrl.RecordsDeleteRequested    += (_, rs) => _ = DeleteRecordsWithConfirm(rs);
         WeekViewCtrl.AllDayCreationRequested   += (_, d)  => _ = OpenAddAllDayDialog(d);
         WeekViewCtrl.TimeSlotCreationRequested += (_, dt) => _ = OpenAddDialog(dt.Date, dt.TimeOfDay);
 

@@ -299,7 +299,7 @@ public partial class MonthView : UserControl
         var dayLabel = new TextBlock
         {
             Text                = date.Day.ToString(),
-            FontSize            = 14,
+            FontSize            = 12,
             TextAlignment       = TextAlignment.Center,
             HorizontalAlignment = HorizontalAlignment.Stretch,
             VerticalAlignment   = VerticalAlignment.Center,
@@ -393,7 +393,7 @@ public partial class MonthView : UserControl
         {
             Text                = $"+{hidden} ещё",
             IsVisible           = hidden > 0,
-            FontSize            = 14,
+            FontSize            = 12,
             Foreground          = new SolidColorBrush(Color.Parse("#8E8E93")),
             Margin              = new Thickness(6, 0, 0, 4),
             VerticalAlignment   = VerticalAlignment.Bottom,
@@ -481,8 +481,8 @@ public partial class MonthView : UserControl
             var tb = new TextBlock
             {
                 Text              = ev.DisplayTitle,
-                FontSize          = 14,
-                FontWeight        = (FontWeight)550,
+                FontSize          = 12,
+                FontWeight        = FontWeight.SemiBold,
                 Foreground        = darkBrush,
                 Margin            = new Thickness(8, 0, 2, 0),
                 TextTrimming      = TextTrimming.CharacterEllipsis,
@@ -504,15 +504,15 @@ public partial class MonthView : UserControl
             var timeTb = new TextBlock
             {
                 Text       = $"{ev.StartDt:HH:mm} ",
-                FontSize   = 14,
+                FontSize   = 12,
                 FontWeight = FontWeight.Normal,
                 Foreground = darkBrush,
             };
             var titleTb = new TextBlock
             {
                 Text         = ev.DisplayTitle,
-                FontSize     = 14,
-                FontWeight   = (FontWeight)550,
+                FontSize     = 12,
+                FontWeight   = FontWeight.SemiBold,
                 Foreground   = darkBrush,
                 TextTrimming = TextTrimming.CharacterEllipsis,
             };
@@ -659,8 +659,8 @@ public partial class MonthView : UserControl
             var tb = new TextBlock
             {
                 Text              = ev.DisplayTitle,
-                FontSize          = 14,
-                FontWeight        = (FontWeight)550,
+                FontSize          = 12,
+                FontWeight        = FontWeight.SemiBold,
                 Foreground        = darkBrush,
                 Margin            = new Thickness(8, 0, 4, 0),
                 TextTrimming      = TextTrimming.CharacterEllipsis,
@@ -682,15 +682,15 @@ public partial class MonthView : UserControl
             var timeTb = new TextBlock
             {
                 Text       = $"{ev.StartDt:HH:mm} ",
-                FontSize   = 14,
+                FontSize   = 12,
                 FontWeight = FontWeight.Normal,
                 Foreground = darkBrush,
             };
             var titleTb = new TextBlock
             {
                 Text         = ev.DisplayTitle,
-                FontSize     = 14,
-                FontWeight   = (FontWeight)550,
+                FontSize     = 12,
+                FontWeight   = FontWeight.SemiBold,
                 Foreground   = darkBrush,
                 TextTrimming = TextTrimming.CharacterEllipsis,
             };
@@ -995,8 +995,8 @@ public partial class MonthView : UserControl
             _dragPreview.Children.Add(new TextBlock
             {
                 Text              = _dragEv.AllDay ? _dragEv.DisplayTitle : $"{_dragEv.StartDt:HH:mm} {_dragEv.DisplayTitle}",
-                FontSize          = 14,
-                FontWeight        = (FontWeight)550,
+                FontSize          = 12,
+                FontWeight        = FontWeight.SemiBold,
                 Foreground        = Brushes.White,
                 Margin            = new Thickness(8, 0, 4, 0),
                 TextTrimming      = TextTrimming.CharacterEllipsis,
@@ -1053,7 +1053,14 @@ public partial class MonthView : UserControl
     private ContextMenu _BuildDayContextMenu(DateTime date)
     {
         var menu = new ContextMenu();
-        menu.Items.Add(_MakeMenuItem("Создать запись", () => DayAddClicked?.Invoke(this, date)));
+        // Меню дня открывается только при клике по пустой области ячейки (у чипа
+        // и спан-бара свой ContextMenu) — снимаем выделение группы, как левый клик.
+        menu.Opening += (_, _) =>
+        {
+            _Deselect();
+            menu.Items.Clear();
+            menu.Items.Add(_MakeMenuItem("Создать запись", () => DayAddClicked?.Invoke(this, date)));
+        };
         return menu;
     }
 

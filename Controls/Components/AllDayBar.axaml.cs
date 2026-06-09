@@ -371,7 +371,7 @@ public partial class AllDayBar : UserControl
         var title = new TextBlock
         {
             Text              = ev.DisplayTitle,
-            FontSize          = 13,
+            FontSize          = 12,
             FontWeight        = FontWeight.SemiBold,
             Foreground        = darkBrush,
             TextTrimming      = Avalonia.Media.TextTrimming.CharacterEllipsis,
@@ -392,7 +392,7 @@ public partial class AllDayBar : UserControl
             var timeTb = new TextBlock
             {
                 Text              = $", {ev.StartDt:HH:mm}",
-                FontSize          = 13,
+                FontSize          = 12,
                 FontWeight        = FontWeight.Normal,
                 Foreground        = darkBrush,
                 VerticalAlignment = VerticalAlignment.Center,
@@ -461,7 +461,7 @@ public partial class AllDayBar : UserControl
         var title = new TextBlock
         {
             Text              = ev.DisplayTitle,
-            FontSize          = 13,
+            FontSize          = 12,
             FontWeight        = FontWeight.SemiBold,
             Foreground        = Brushes.White,
             TextTrimming      = Avalonia.Media.TextTrimming.CharacterEllipsis,

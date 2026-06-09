@@ -4,7 +4,8 @@
              Background="{StaticResource BrushBg}">
 
     <ScrollViewer x:Name="JournalScroll" VerticalScrollBarVisibility="Auto"
-                  DoubleTapped="OnBackgroundDoubleTapped">
+                  DoubleTapped="OnBackgroundDoubleTapped"
+                  ContextRequested="OnBackgroundContextRequested">
         <ItemsControl x:Name="GroupsList" Padding="4,4">
             <ItemsControl.ItemTemplate>
                 <DataTemplate>
@@ -12,7 +13,7 @@
                         <!-- Заголовок даты: высота и отступы как у блока события -->
                         <Border Margin="0,1" Height="36">
                             <TextBlock Text="{Binding DateHeader}"
-                                       FontSize="13"
+                                       FontSize="12"
                                        FontWeight="Bold"
                                        Foreground="{Binding HeaderBrush}"
                                        VerticalAlignment="Center"
@@ -22,7 +23,7 @@
                         <Border Margin="0,1" Height="36"
                                 IsVisible="{Binding ShowEmptyHint}">
                             <TextBlock Text="Нет записей на сегодня"
-                                       FontSize="13"
+                                       FontSize="12"
                                        Foreground="{StaticResource BrushSecondaryText}"
                                        VerticalAlignment="Center"
                                        Margin="8,0,0,0" />
@@ -41,7 +42,9 @@
                                             Tapped="OnEventTapped"
                                             DoubleTapped="OnEventDoubleTapped"
                                             PointerEntered="OnEventPointerEntered"
-                                            PointerExited="OnEventPointerExited">
+                                            PointerExited="OnEventPointerExited"
+                                            PointerPressed="OnEventPointerPressed"
+                                            ContextRequested="OnEventContextRequested">
                                         <Grid Margin="0" ColumnDefinitions="Auto,12,*">
                                             <!-- Цветная полоска: отступы слева и сверху/снизу -->
                                             <Border Grid.Column="0" Width="4" CornerRadius="2"
@@ -51,11 +54,11 @@
                                             <StackPanel Grid.Column="2" Spacing="2"
                                                         VerticalAlignment="Center">
                                                 <TextBlock Text="{Binding Title}"
-                                                           FontSize="13"
+                                                           FontSize="12"
                                                            Foreground="{Binding TitleBrush}"
                                                            TextTrimming="CharacterEllipsis" />
                                                 <TextBlock Text="{Binding TimeText}"
-                                                           FontSize="13"
+                                                           FontSize="12"
                                                            Foreground="{StaticResource BrushSecondaryText}" />
                                             </StackPanel>
                                         </Grid>

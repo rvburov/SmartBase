@@ -15,6 +15,8 @@ public partial class WeekView : UserControl
 {
     public event EventHandler<CalendarRecord>?    RecordClicked;
     public event EventHandler<CalendarRecord>?    RecordMoved;
+    public event EventHandler<CalendarRecord>?    RecordDeleteRequested;
+    public event EventHandler<IReadOnlyList<CalendarRecord>>? RecordsDeleteRequested;
     public event EventHandler<DateOnly>? AllDayCreationRequested;
     public event EventHandler<DateTime>? TimeSlotCreationRequested;
 
@@ -51,9 +53,12 @@ public partial class WeekView : UserControl
     private TextBlock?  _resizeGhostTimeBlock;
     private StackPanel? _resizeGhostContentStack;
 
-    // selection
-    private Action? _deselectCurrent;
-    private int?    _pendingSelectId;
+    // selection (множественное: событие -> функция снятия подсветки)
+    private readonly Dictionary<CalendarRecord, Action> _selections = new();
+    private int? _pendingSelectId;
+
+    // позиция последнего правого клика по сетке — для меню «Создать запись»
+    private Point _gridContextPos;
 
     // hit-testing
     private sealed class EventEntry(CalendarRecord ev, int dayCol, int startMin, int endMin, Border btn)
@@ -87,6 +92,14 @@ public partial class WeekView : UserControl
         EventsGrid.AddHandler(PointerMovedEvent,    OnGridPointerMoved,    RoutingStrategies.Bubble, handledEventsToo: true);
         EventsGrid.AddHandler(PointerReleasedEvent, OnGridPointerReleased, RoutingStrategies.Bubble, handledEventsToo: true);
 
+        // Запоминаем позицию правого клика по сетке для меню «Создать запись».
+        EventsGrid.AddHandler(PointerPressedEvent, (_, pe) =>
+        {
+            if (pe.GetCurrentPoint(EventsGrid).Properties.IsRightButtonPressed)
+                _gridContextPos = pe.GetPosition(EventsGrid);
+        }, RoutingStrategies.Tunnel);
+        EventsGrid.ContextMenu = _BuildGridContextMenu();
+
         AllDayBarCtrl.RecordClicked            += (_, ev) => RecordClicked?.Invoke(this, ev);
         AllDayBarCtrl.RecordMoved              += (_, ev) => RecordMoved?.Invoke(this, ev);
         AllDayBarCtrl.RecordCreationRequested  += (_, d)  => AllDayCreationRequested?.Invoke(this, d);
@@ -102,7 +115,7 @@ public partial class WeekView : UserControl
 
         _currentDays = allDays;
         _eventEntries.Clear();
-        _deselectCurrent = null;
+        _selections.Clear();
 
         AllDayBarCtrl.SetData(allDays.Select(DateOnly.FromDateTime), allEvents);
         BuildHeader(allDays);
@@ -162,7 +175,7 @@ public partial class WeekView : UserControl
                     var titleBlock = new TextBlock
                     {
                         Text         = ev.DisplayTitle,
-                        FontSize     = 13,
+                        FontSize     = 12,
                         FontWeight   = FontWeight.SemiBold,
                         Foreground   = darkBrush,
                         TextTrimming = Avalonia.Media.TextTrimming.CharacterEllipsis,
@@ -178,7 +191,7 @@ public partial class WeekView : UserControl
                         contentStack.Children.Add(new TextBlock
                         {
                             Text       = $"{ev.StartDt:HH:mm}–{ev.EndDt:HH:mm}",
-                            FontSize   = 13,
+                            FontSize   = 12,
                             Foreground = darkBrush,
                             Margin     = new Thickness(0, 1, 0, 0),
                         });
@@ -274,6 +287,21 @@ public partial class WeekView : UserControl
                     };
                     _eventEntries.Add(entry);
                     dayEntryLayouts.Add((entry, topHandle, bottomHandle));
+
+                    // Контекстное меню по правому клику. Перед открытием выделяем
+                    // событие (если оно ещё не в наборе), чтобы пункт действовал
+                    // на видимо выделенное — как в режиме «Месяц».
+                    btn.ContextMenu = _BuildEventContextMenu(entry);
+                    btn.AddHandler(PointerPressedEvent, (_, pe) =>
+                    {
+                        if (pe.GetCurrentPoint(btn).Properties.IsRightButtonPressed
+                            && !_selections.ContainsKey(entry.Ev))
+                        {
+                            _Deselect();
+                            entry.Select?.Invoke();
+                            _selections[entry.Ev] = entry.Deselect ?? (() => { });
+                        }
+                    }, RoutingStrategies.Tunnel);
                 }
             }
 
@@ -326,7 +354,7 @@ public partial class WeekView : UserControl
             if (toSelect is not null)
             {
                 toSelect.Select?.Invoke();
-                _deselectCurrent = toSelect.Deselect;
+                _selections[toSelect.Ev] = toSelect.Deselect ?? (() => { });
             }
             _pendingSelectId = null;
         }
@@ -337,10 +365,19 @@ public partial class WeekView : UserControl
                 DispatcherPriority.Loaded);
     }
 
-    private void DoDeselect()
+    private void _Deselect()
     {
-        _deselectCurrent?.Invoke();
-        _deselectCurrent = null;
+        foreach (var unhighlight in _selections.Values.ToList()) unhighlight();
+        _selections.Clear();
+    }
+
+    private void _DeselectOne(CalendarRecord ev)
+    {
+        if (_selections.TryGetValue(ev, out var unhighlight))
+        {
+            unhighlight();
+            _selections.Remove(ev);
+        }
     }
 
     private void OnGridPointerPressed(object? sender, PointerPressedEventArgs e)
@@ -366,7 +403,7 @@ public partial class WeekView : UserControl
 
         if (entry is null)
         {
-            DoDeselect();
+            _Deselect();
             if (e.ClickCount >= 2 && col >= 0 && col < _currentDays.Count)
             {
                 var minutes = (int)(pos.Y / 30) * 30;
@@ -424,10 +461,17 @@ public partial class WeekView : UserControl
             _dragOffsetY = pos.Y - (entry.StartMin + 2);
         }
 
-        // сразу меняем цвет как при выделении
-        DoDeselect();
-        entry.Select?.Invoke();
-        _deselectCurrent = entry.Deselect;
+        // Визуальный отклик на press даём только для обычного клика по
+        // невыделенному событию (чтобы при последующем drag цвет уже сменился).
+        // С Shift ничего не трогаем здесь — всё выделение/toggle делается на
+        // release, иначе press+release дважды переключают набор и он «мигает».
+        var additive = e.KeyModifiers.HasFlag(KeyModifiers.Shift);
+        if (!additive && !_selections.ContainsKey(entry.Ev))
+        {
+            _Deselect();
+            entry.Select?.Invoke();
+            _selections[entry.Ev] = entry.Deselect ?? (() => { });
+        }
 
         e.Pointer.Capture(EventsGrid);
         e.Handled = true;
@@ -677,8 +721,7 @@ public partial class WeekView : UserControl
             _dragGhostOriginalHeight = ghostH;
 
             // снимаем выделение с источника и делаем все сегменты события полупрозрачными
-            _deselectCurrent?.Invoke();
-            _deselectCurrent = null;
+            if (_dragEvent is not null) _DeselectOne(_dragEvent);
             _dragDimmedBtns = _eventEntries
                 .Where(e => e.Ev.Id == _dragEvent!.Id)
                 .ToList();
@@ -1037,7 +1080,7 @@ public partial class WeekView : UserControl
         {
             if (_pressClickCount >= 2)
             {
-                DoDeselect();
+                _Deselect();
                 RecordClicked?.Invoke(this, _dragEvent);
             }
             else
@@ -1059,9 +1102,24 @@ public partial class WeekView : UserControl
 
                 if (entry is not null)
                 {
-                    DoDeselect();
-                    entry.Select?.Invoke();
-                    _deselectCurrent = entry.Deselect;
+                    var additive = e.KeyModifiers.HasFlag(KeyModifiers.Shift);
+                    if (additive)
+                    {
+                        // toggle: повторный Shift+клик по выделенному — снять
+                        if (_selections.ContainsKey(entry.Ev)) _DeselectOne(entry.Ev);
+                        else
+                        {
+                            entry.Select?.Invoke();
+                            _selections[entry.Ev] = entry.Deselect ?? (() => { });
+                        }
+                    }
+                    else
+                    {
+                        // обычный клик — оставить выделенным только это событие
+                        _Deselect();
+                        entry.Select?.Invoke();
+                        _selections[entry.Ev] = entry.Deselect ?? (() => { });
+                    }
                 }
             }
         }
@@ -1148,7 +1206,7 @@ public partial class WeekView : UserControl
                 _dragGhostTimeBlock = new TextBlock
                 {
                     Text       = timeText,
-                    FontSize   = 13,
+                    FontSize   = 12,
                     Foreground = Brushes.White,
                     Margin     = new Thickness(0, 1, 0, 0),
                 };
@@ -1191,7 +1249,7 @@ public partial class WeekView : UserControl
                 _resizeGhostTimeBlock = new TextBlock
                 {
                     Text       = timeText,
-                    FontSize   = 13,
+                    FontSize   = 12,
                     Foreground = Brushes.White,
                     Margin     = new Thickness(0, 1, 0, 0),
                 };
@@ -1231,7 +1289,7 @@ public partial class WeekView : UserControl
         var titleBlock = new TextBlock
         {
             Text         = ev.DisplayTitle,
-            FontSize     = 13,
+            FontSize     = 12,
             FontWeight   = FontWeight.SemiBold,
             Foreground   = Brushes.White,
             TextTrimming = Avalonia.Media.TextTrimming.CharacterEllipsis,
@@ -1253,7 +1311,7 @@ public partial class WeekView : UserControl
             timeBlock = new TextBlock
             {
                 Text       = $"{ev.StartDt:HH:mm}–{ev.EndDt:HH:mm}",
-                FontSize   = 13,
+                FontSize   = 12,
                 Foreground = Brushes.White,
                 Margin     = new Thickness(0, 1, 0, 0),
             };
@@ -1384,7 +1442,7 @@ public partial class WeekView : UserControl
             WeekHeaderDays.Children.Add(new TextBlock
             {
                 Text                = $"{DayNames[i]} {d.Day}",
-                FontSize            = 13,
+                FontSize            = 12,
                 FontWeight          = isToday ? FontWeight.SemiBold : FontWeight.Normal,
                 Foreground          = fg,
                 HorizontalAlignment = HorizontalAlignment.Center,
@@ -1392,6 +1450,88 @@ public partial class WeekView : UserControl
                 Padding             = new Thickness(0, 6),
             });
         }
+    }
+
+    // Меню назначается свойством ContextMenu на кнопке события — фреймворк сам
+    // открывает его по правому клику и закрывает предыдущее. Состав пунктов
+    // зависит от выделения на момент открытия, поэтому наполняем в Opening.
+    private ContextMenu _BuildEventContextMenu(EventEntry entry)
+    {
+        var ev   = entry.Ev;
+        var menu = new ContextMenu();
+        menu.Opening += (_, _) =>
+        {
+            menu.Items.Clear();
+
+            // Множественное выделение (это событие в наборе и в нём 2+):
+            // только массовое удаление всех выделенных с подтверждением.
+            if (_selections.Count > 1 && _selections.ContainsKey(ev))
+            {
+                var batch = _selections.Keys.ToList();
+                menu.Items.Add(_MakeMenuItem("Удалить", () => { _Deselect(); RecordsDeleteRequested?.Invoke(this, batch); }));
+                return;
+            }
+
+            menu.Items.Add(_MakeMenuItem("Редактировать", () => { _Deselect(); RecordClicked?.Invoke(this, ev); }));
+            menu.Items.Add(_MakeMenuItem("Удалить",       () => { _Deselect(); RecordDeleteRequested?.Invoke(this, ev); }));
+        };
+        return menu;
+    }
+
+    // Меню пустого места сетки: «Создать запись» в выбранный день/время.
+    // Если правый клик попал на событие — отменяем открытие, чтобы показалось
+    // меню события (оно висит на своей кнопке отдельным ContextMenu).
+    private ContextMenu _BuildGridContextMenu()
+    {
+        var menu = new ContextMenu();
+        menu.Opening += (_, args) =>
+        {
+            var colW = EventsGrid.Bounds.Width / 7;
+            if (colW <= 0 || _currentDays.Count == 0)
+            {
+                if (args is System.ComponentModel.CancelEventArgs cancel) cancel.Cancel = true;
+                return;
+            }
+
+            var col = (int)(_gridContextPos.X / colW);
+            var onEvent = _eventEntries.Any(h =>
+            {
+                if (h.DayCol != col) return false;
+                if (_gridContextPos.Y < h.StartMin || _gridContextPos.Y > h.EndMin) return false;
+                var seg    = colW / h.TotalCols;
+                var left   = h.SubCol * seg + 1.0;
+                var right  = left + h.SubColSpan * seg - 3.0;
+                var localX = _gridContextPos.X - col * colW;
+                return localX >= left && localX <= right;
+            });
+
+            if (onEvent || col < 0 || col >= _currentDays.Count)
+            {
+                if (args is System.ComponentModel.CancelEventArgs cancel) cancel.Cancel = true;
+                return;
+            }
+
+            // Правый клик по пустому месту снимает выделение группы — как левый.
+            _Deselect();
+
+            var minutes = (int)(_gridContextPos.Y / 30) * 30;
+            var day     = _currentDays[col];
+            var dt      = new DateTime(day.Year, day.Month, day.Day, minutes / 60, minutes % 60, 0);
+
+            menu.Items.Clear();
+            menu.Items.Add(_MakeMenuItem("Создать запись", () => TimeSlotCreationRequested?.Invoke(this, dt)));
+        };
+        return menu;
+    }
+
+    // Действие откладывается до закрытия меню (Post в очередь диспетчера):
+    // пункт перестраивает сетку и сносит контрол, на котором висит
+    // закрывающееся меню — без отсрочки это вызывает мелькание.
+    private static MenuItem _MakeMenuItem(string header, Action onClick)
+    {
+        var item = new MenuItem { Header = header };
+        item.Click += (_, _) => Avalonia.Threading.Dispatcher.UIThread.Post(onClick);
+        return item;
     }
 }
 

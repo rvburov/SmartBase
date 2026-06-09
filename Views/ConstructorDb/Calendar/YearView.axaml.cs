@@ -62,7 +62,7 @@ public partial class YearView : UserControl
             DayPopupList.Children.Add(new TextBlock
             {
                 Text       = "Нет записей",
-                FontSize   = 13,
+                FontSize   = 12,
                 Foreground = new SolidColorBrush(Color.Parse("#8E8E93")),
             });
         }
@@ -91,7 +91,7 @@ public partial class YearView : UserControl
                         new TextBlock
                         {
                             Text       = e.DisplayTitle,
-                            FontSize   = 13,
+                            FontSize   = 12,
                             FontWeight = FontWeight.SemiBold,
                             Foreground = new SolidColorBrush(Color.Parse("#1C1C1E")),
                             TextWrapping = TextWrapping.Wrap,
@@ -135,7 +135,7 @@ public partial class YearView : UserControl
         var titleBtn = new TextBlock
         {
             Text                = MonthNames[month - 1],
-            FontSize            = 13,
+            FontSize            = 12,
             FontWeight          = FontWeight.SemiBold,
             Height              = TitleH,
             Padding             = new Avalonia.Thickness(6, 6, 0, 2),
@@ -154,7 +154,7 @@ public partial class YearView : UserControl
             dayGrid.Children.Add(new TextBlock
             {
                 Text              = DayNames[di],
-                FontSize          = 13,
+                FontSize          = 12,
                 FontWeight        = FontWeight.Normal,
                 TextAlignment     = Avalonia.Media.TextAlignment.Center,
                 VerticalAlignment = VerticalAlignment.Center,
@@ -178,7 +178,7 @@ public partial class YearView : UserControl
             var label = new TextBlock
             {
                 Text                = d.Day.ToString(),
-                FontSize            = 13,
+                FontSize            = 12,
                 FontWeight          = FontWeight.Normal,
                 TextAlignment       = Avalonia.Media.TextAlignment.Center,
                 HorizontalAlignment = HorizontalAlignment.Center,

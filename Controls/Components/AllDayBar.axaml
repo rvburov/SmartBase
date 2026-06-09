@@ -14,7 +14,7 @@
                     BorderBrush="#E8E8E8"
                     BorderThickness="0,0,1,0">
                 <TextBlock Text="весь день"
-                           FontSize="{StaticResource FontSizeBase}"
+                           FontSize="12"
                            Foreground="{StaticResource BrushSecondaryText}"
                            HorizontalAlignment="Right"
                            VerticalAlignment="Top"
