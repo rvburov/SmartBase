@@ -63,8 +63,9 @@ public partial class CalendarControllerView : UserControl
         ListViewCtrl.CreateRequested    += (_, d) => _ = OpenAddDialog(d);
         JournalViewCtrl.RecordClicked   += (_, r) => _ = OpenEditDialog(r);
         JournalViewCtrl.CreateRequested += (_, d) => _ = OpenAddDialog(d);
-        MonthViewCtrl.RecordClicked += (_, r) => _ = OpenEditDialog(r);
-        MonthViewCtrl.RecordMoved   += (_, r) => { _records.UpdateCalendarRecord(r); CollectionsMayHaveChanged?.Invoke(this, EventArgs.Empty); RefreshCurrent(); };
+        MonthViewCtrl.RecordClicked          += (_, r) => _ = OpenEditDialog(r);
+        MonthViewCtrl.RecordMoved            += (_, r) => { _records.UpdateCalendarRecord(r); CollectionsMayHaveChanged?.Invoke(this, EventArgs.Empty); RefreshCurrent(); };
+        MonthViewCtrl.RecordDeleteRequested  += (_, r) => { if (r.Id.HasValue) { _records.DeleteCalendarRecord(r.Id.Value); CollectionsMayHaveChanged?.Invoke(this, EventArgs.Empty); RefreshCurrent(); } };
         DayViewCtrl.RecordClicked              += (_, r) => _ = OpenEditDialog(r);
         DayViewCtrl.RecordMoved                += (_, r) => { _records.UpdateCalendarRecord(r); CollectionsMayHaveChanged?.Invoke(this, EventArgs.Empty); RefreshCurrent(); };
         DayViewCtrl.AllDayCreationRequested    += (_, d)  => _ = OpenAddAllDayDialog(d);
