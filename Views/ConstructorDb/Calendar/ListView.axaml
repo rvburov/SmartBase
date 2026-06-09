@@ -35,11 +35,11 @@
                                     <StackPanel Grid.Column="2" Spacing="2"
                                                 VerticalAlignment="Center">
                                         <TextBlock Text="{Binding Title}"
-                                                   FontSize="12"
+                                                   FontSize="{StaticResource FontSizeBase}"
                                                    Foreground="{Binding TitleBrush}"
                                                    TextTrimming="CharacterEllipsis" />
                                         <TextBlock Text="{Binding DateTimeText}"
-                                                   FontSize="12"
+                                                   FontSize="{StaticResource FontSizeBase}"
                                                    Foreground="{StaticResource BrushSecondaryText}" />
                                     </StackPanel>
                                 </Grid>
@@ -51,7 +51,7 @@
                 <TextBlock x:Name="EmptyHint"
                            IsVisible="False"
                            Text="Нет записей"
-                           FontSize="12"
+                           FontSize="{StaticResource FontSizeBase}"
                            Foreground="{StaticResource BrushSecondaryText}"
                            Margin="24,16"
                            VerticalAlignment="Top" />

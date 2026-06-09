@@ -10,8 +10,13 @@ namespace MyPlanner.Controls.Components;
 
 public partial class AllDayBar : UserControl
 {
+    private static readonly double FontSizeBase =
+        Application.Current!.Resources["FontSizeBase"] is double v ? v : 12;
+
     public event EventHandler<CalendarRecord>?    RecordClicked;
     public event EventHandler<CalendarRecord>?    RecordMoved;
+    public event EventHandler<CalendarRecord>?    RecordDeleteRequested;
+    public event EventHandler<IReadOnlyList<CalendarRecord>>? RecordsDeleteRequested;
     public event EventHandler<DateOnly>? RecordCreationRequested;
 
     private const double MinH          = 40;
@@ -27,8 +32,8 @@ public partial class AllDayBar : UserControl
     private double    _resizeStartHeight;
     private IPointer? _resizePointer;
 
-    // selection
-    private Action? _deselectCurrent;
+    // selection (set of selected events → deselect-callback for each)
+    private readonly Dictionary<CalendarRecord, Action> _selections = new();
     private int     _pressClickCount;
 
     // drag
@@ -73,6 +78,34 @@ public partial class AllDayBar : UserControl
         EventsScroll.AddHandler(PointerReleasedEvent, OnEventsReleased, RoutingStrategies.Bubble, handledEventsToo: true);
     }
 
+    private EventHandler<KeyEventArgs>? _windowKeyHandler;
+
+    protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
+    {
+        base.OnAttachedToVisualTree(e);
+        if (e.Root is Avalonia.Controls.Window win)
+        {
+            _windowKeyHandler = (_, ke) =>
+            {
+                if (ke.Key != Key.Delete && ke.Key != Key.Back) return;
+                if (!IsVisible) return;
+                if (ke.Source is TextBox or AutoCompleteBox) return;
+                if (TryDeleteSelected()) ke.Handled = true;
+            };
+            win.AddHandler(KeyDownEvent, _windowKeyHandler, handledEventsToo: true);
+        }
+    }
+
+    protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
+    {
+        base.OnDetachedFromVisualTree(e);
+        if (e.Root is Avalonia.Controls.Window win && _windowKeyHandler is not null)
+        {
+            win.RemoveHandler(KeyDownEvent, _windowKeyHandler);
+            _windowKeyHandler = null;
+        }
+    }
+
     // ── resize ────────────────────────────────────────────────────────────────
 
     private void OnHandlePressed(object? sender, PointerPressedEventArgs e)
@@ -107,15 +140,37 @@ public partial class AllDayBar : UserControl
 
     private void OnEventsPressed(object? sender, PointerPressedEventArgs e)
     {
-        if (!e.GetCurrentPoint(EventsPanel).Properties.IsLeftButtonPressed) return;
-
+        var props = e.GetCurrentPoint(EventsPanel).Properties;
         var pos   = e.GetPosition(EventsPanel);
         var entry = HitTest(pos);
 
+        // Правый клик: показываем контекстное меню, не трогаем drag.
+        if (props.IsRightButtonPressed)
+        {
+            if (entry is null)
+            {
+                _DeselectAll();
+                ShowGridContextMenu(pos);
+            }
+            else
+            {
+                // Если клик по событию вне текущей группы — переключаем выделение на одиночное.
+                if (!_selections.ContainsKey(entry.Ev))
+                {
+                    _DeselectAll();
+                    _SelectEntry(entry);
+                }
+                ShowEventContextMenu(entry, pos);
+            }
+            e.Handled = true;
+            return;
+        }
+
+        if (!props.IsLeftButtonPressed) return;
+
         if (entry is null)
         {
-            _deselectCurrent?.Invoke();
-            _deselectCurrent = null;
+            _DeselectAll();
 
             if (e.ClickCount >= 2)
             {
@@ -139,12 +194,63 @@ public partial class AllDayBar : UserControl
         _dragSourceSpan = entry.Span;
         _dragSourceRow  = entry.Row;
 
-        _deselectCurrent?.Invoke();
-        entry.Select?.Invoke();
-        _deselectCurrent = entry.Deselect;
+        // Shift+Click — добавление/снятие в группу. Без Shift на не выделенном —
+        // сбрасываем группу и выделяем одиночно.
+        var additive = e.KeyModifiers.HasFlag(KeyModifiers.Shift);
+        if (additive)
+        {
+            if (_selections.ContainsKey(entry.Ev)) _DeselectOne(entry.Ev);
+            else                                    _SelectEntry(entry);
+        }
+        else if (!_selections.ContainsKey(entry.Ev))
+        {
+            _DeselectAll();
+            _SelectEntry(entry);
+        }
 
         e.Pointer.Capture(EventsScroll);
         e.Handled = true;
+    }
+
+    private void _SelectEntry(AllDayEntry entry)
+    {
+        entry.Select?.Invoke();
+        _selections[entry.Ev] = entry.Deselect ?? (() => { });
+    }
+
+    private void _DeselectAll()
+    {
+        foreach (var d in _selections.Values.ToList()) d();
+        _selections.Clear();
+    }
+
+    // Возвращает true, если что-то было выделено и инициировано удаление —
+    // родительский Week/DayView использует это для обработки Delete на окне.
+    public bool TryDeleteSelected()
+    {
+        if (_selections.Count == 0) return false;
+        if (_selections.Count == 1)
+        {
+            var only = _selections.Keys.First();
+            _DeselectAll();
+            RecordDeleteRequested?.Invoke(this, only);
+        }
+        else
+        {
+            var batch = _selections.Keys.ToList();
+            _DeselectAll();
+            RecordsDeleteRequested?.Invoke(this, batch);
+        }
+        return true;
+    }
+
+    private void _DeselectOne(CalendarRecord ev)
+    {
+        if (_selections.TryGetValue(ev, out var d))
+        {
+            d();
+            _selections.Remove(ev);
+        }
     }
 
     private void OnEventsMoved(object? sender, PointerEventArgs e)
@@ -159,8 +265,8 @@ public partial class AllDayBar : UserControl
 
             _isDragging = true;
 
-            _deselectCurrent?.Invoke();
-            _deselectCurrent    = null;
+            // drag отменяет multi-select на всех событиях
+            _DeselectAll();
             _dragSource.Opacity = 0.45;
 
             _dragGhost = CreateGhost(_dragEvent, 24);
@@ -212,8 +318,7 @@ public partial class AllDayBar : UserControl
         {
             if (_pressClickCount >= 2)
             {
-                _deselectCurrent?.Invoke();
-                _deselectCurrent = null;
+                _DeselectAll();
                 RecordClicked?.Invoke(this, _dragEvent);
             }
         }
@@ -248,7 +353,7 @@ public partial class AllDayBar : UserControl
 
     public void SetData(IEnumerable<DateOnly> days, IEnumerable<CalendarRecord> events)
     {
-        _deselectCurrent = null;
+        _selections.Clear();
         _allDayEntries.Clear();
         EventsPanel.Children.Clear();
         EventsPanel.ColumnDefinitions.Clear();
@@ -371,7 +476,7 @@ public partial class AllDayBar : UserControl
         var title = new TextBlock
         {
             Text              = ev.DisplayTitle,
-            FontSize          = 12,
+            FontSize          = FontSizeBase,
             FontWeight        = FontWeight.SemiBold,
             Foreground        = darkBrush,
             TextTrimming      = Avalonia.Media.TextTrimming.CharacterEllipsis,
@@ -392,7 +497,7 @@ public partial class AllDayBar : UserControl
             var timeTb = new TextBlock
             {
                 Text              = $", {ev.StartDt:HH:mm}",
-                FontSize          = 12,
+                FontSize          = FontSizeBase,
                 FontWeight        = FontWeight.Normal,
                 Foreground        = darkBrush,
                 VerticalAlignment = VerticalAlignment.Center,
@@ -461,7 +566,7 @@ public partial class AllDayBar : UserControl
         var title = new TextBlock
         {
             Text              = ev.DisplayTitle,
-            FontSize          = 12,
+            FontSize          = FontSizeBase,
             FontWeight        = FontWeight.SemiBold,
             Foreground        = Brushes.White,
             TextTrimming      = Avalonia.Media.TextTrimming.CharacterEllipsis,
@@ -504,7 +609,7 @@ public partial class AllDayBar : UserControl
 
     public void ClearData()
     {
-        _deselectCurrent = null;
+        _selections.Clear();
         _allDayEntries.Clear();
         _occupied.Clear();
         EventsPanel.Children.Clear();
@@ -547,4 +652,59 @@ public partial class AllDayBar : UserControl
 
     private static Color Darken(Color c, double f = 0.6)
         => Color.FromArgb(c.A, (byte)(c.R * f), (byte)(c.G * f), (byte)(c.B * f));
+
+    // ── context menus ─────────────────────────────────────────────────────────
+
+    private void ShowEventContextMenu(AllDayEntry entry, Point pos)
+    {
+        var ev   = entry.Ev;
+        var menu = new ContextMenu();
+
+        if (_selections.Count > 1 && _selections.ContainsKey(ev))
+        {
+            var batch = _selections.Keys.ToList();
+            menu.Items.Add(MakeMenuItem("Удалить", () =>
+            {
+                _DeselectAll();
+                RecordsDeleteRequested?.Invoke(this, batch);
+            }));
+        }
+        else
+        {
+            menu.Items.Add(MakeMenuItem("Редактировать", () =>
+            {
+                _DeselectAll();
+                RecordClicked?.Invoke(this, ev);
+            }));
+            menu.Items.Add(MakeMenuItem("Удалить", () =>
+            {
+                _DeselectAll();
+                RecordDeleteRequested?.Invoke(this, ev);
+            }));
+        }
+
+        menu.PlacementTarget = entry.Root;
+        menu.Open(entry.Root);
+    }
+
+    private void ShowGridContextMenu(Point pos)
+    {
+        if (_currentDays.Count == 0) return;
+        var colW = ColW();
+        if (colW <= 0) return;
+        var col = Math.Clamp((int)(pos.X / colW), 0, _currentDays.Count - 1);
+        var day = _currentDays[col];
+
+        var menu = new ContextMenu();
+        menu.Items.Add(MakeMenuItem("Создать запись", () => RecordCreationRequested?.Invoke(this, day)));
+        menu.PlacementTarget = EventsPanel;
+        menu.Open(EventsPanel);
+    }
+
+    private static MenuItem MakeMenuItem(string header, Action onClick)
+    {
+        var item = new MenuItem { Header = header };
+        item.Click += (_, _) => Avalonia.Threading.Dispatcher.UIThread.Post(onClick);
+        return item;
+    }
 }

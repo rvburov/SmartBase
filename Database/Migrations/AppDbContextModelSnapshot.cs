@@ -107,7 +107,8 @@ namespace MyPlanner.Database.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("CollectionId");
+                    b.HasIndex("CollectionId", "Name")
+                        .IsUnique();
 
                     b.ToTable("db_fields", (string)null);
                 });

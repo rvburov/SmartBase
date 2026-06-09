@@ -12,6 +12,9 @@ namespace MyPlanner.Views.ConstructorDb.Calendar;
 
 public partial class DayView : UserControl
 {
+    private static readonly double FontSizeBase =
+        Application.Current!.Resources["FontSizeBase"] is double v ? v : 12;
+
     public event EventHandler<CalendarRecord>?    RecordClicked;
     public event EventHandler<CalendarRecord>?    RecordMoved;
     public event EventHandler<CalendarRecord>?    RecordDeleteRequested;
@@ -95,10 +98,54 @@ public partial class DayView : UserControl
         EventsGrid.ContextMenu = _BuildGridContextMenu();
 
         AllDayBarCtrl.RecordClicked           += (_, ev) => RecordClicked?.Invoke(this, ev);
-        AllDayBarCtrl.RecordMoved             += (_, ev) => RecordMoved?.Invoke(this, ev);
+        AllDayBarCtrl.RecordMoved              += (_, ev) => RecordMoved?.Invoke(this, ev);
+        AllDayBarCtrl.RecordDeleteRequested    += (_, ev) => RecordDeleteRequested?.Invoke(this, ev);
+        AllDayBarCtrl.RecordsDeleteRequested   += (_, rs) => RecordsDeleteRequested?.Invoke(this, rs);
         AllDayBarCtrl.RecordCreationRequested += (_, d)  => AllDayCreationRequested?.Invoke(this, d);
 
         SizeChanged += (_, _) => AllDayBarCtrl.InvalidateMeasure();
+    }
+
+    private EventHandler<KeyEventArgs>? _windowKeyHandler;
+
+    protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
+    {
+        base.OnAttachedToVisualTree(e);
+        if (e.Root is Avalonia.Controls.Window win)
+        {
+            _windowKeyHandler = (_, ke) =>
+            {
+                if (ke.Key != Key.Delete && ke.Key != Key.Back) return;
+                if (!IsVisible) return;
+                if (ke.Source is TextBox or AutoCompleteBox) return;
+
+                if (_selections.Count == 0) return;
+                if (_selections.Count == 1)
+                {
+                    var only = _selections.Keys.First();
+                    _Deselect();
+                    RecordDeleteRequested?.Invoke(this, only);
+                }
+                else
+                {
+                    var batch = _selections.Keys.ToList();
+                    _Deselect();
+                    RecordsDeleteRequested?.Invoke(this, batch);
+                }
+                ke.Handled = true;
+            };
+            win.AddHandler(KeyDownEvent, _windowKeyHandler, handledEventsToo: true);
+        }
+    }
+
+    protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
+    {
+        base.OnDetachedFromVisualTree(e);
+        if (e.Root is Avalonia.Controls.Window win && _windowKeyHandler is not null)
+        {
+            win.RemoveHandler(KeyDownEvent, _windowKeyHandler);
+            _windowKeyHandler = null;
+        }
     }
 
     public void Refresh(IEnumerable<CalendarRecord> events, DateOnly date, bool scrollToNow = false)
@@ -121,7 +168,10 @@ public partial class DayView : UserControl
             .Where(e => !e.AllDay
                      && (e.EndDt - e.StartDt).TotalSeconds < 86400
                      && DateOnly.FromDateTime(e.StartDt) <= dayDate
-                     && dayDate <= DateOnly.FromDateTime(e.EndDt))
+                     && dayDate <= DateOnly.FromDateTime(e.EndDt)
+                     && !(DateOnly.FromDateTime(e.EndDt) == dayDate
+                          && DateOnly.FromDateTime(e.StartDt) != dayDate
+                          && e.EndDt.TimeOfDay == TimeSpan.Zero))
             .ToList();
 
         var sortedDayEvents = dayEvents
@@ -162,7 +212,7 @@ public partial class DayView : UserControl
                 var titleBlock = new TextBlock
                 {
                     Text         = ev.DisplayTitle,
-                    FontSize     = 12,
+                    FontSize     = FontSizeBase,
                     FontWeight   = FontWeight.SemiBold,
                     Foreground   = darkBrush,
                     TextTrimming = Avalonia.Media.TextTrimming.CharacterEllipsis,
@@ -178,7 +228,7 @@ public partial class DayView : UserControl
                     contentStack.Children.Add(new TextBlock
                     {
                         Text       = $"{ev.StartDt:HH:mm}–{ev.EndDt:HH:mm}",
-                        FontSize   = 12,
+                        FontSize   = FontSizeBase,
                         Foreground = darkBrush,
                         Margin     = new Thickness(0, 1, 0, 0),
                     });
@@ -580,7 +630,8 @@ public partial class DayView : UserControl
             var ghostH = _dragSourceBtn.Bounds.Height;
             _dragGhostOriginalHeight = ghostH;
 
-            if (_dragEvent is not null) _DeselectOne(_dragEvent);
+            // Снимаем выделение со всех событий (drag отменяет multi-select).
+            _Deselect();
             _dragDimmedBtns = _eventEntries.Where(e => e.Ev.Id == _dragEvent!.Id).ToList();
             foreach (var b in _dragDimmedBtns) b.Dim?.Invoke();
 
@@ -929,7 +980,7 @@ public partial class DayView : UserControl
     private static Border CreateGhostButton(CalendarRecord ev, double height, double width,
         out TextBlock outTitleBlock, out TextBlock? outTimeBlock, out StackPanel outContentStack)
     {
-        var color      = Color.Parse(ev.Color);
+        var color      = Color.Parse(EventColors.Display(ev.Color));
         var colorBrush = new SolidColorBrush(color);
 
         const double lineH   = 16.0;
@@ -943,7 +994,7 @@ public partial class DayView : UserControl
         var titleBlock = new TextBlock
         {
             Text         = ev.DisplayTitle,
-            FontSize     = 12,
+            FontSize     = FontSizeBase,
             FontWeight   = FontWeight.SemiBold,
             Foreground   = Brushes.White,
             TextTrimming = Avalonia.Media.TextTrimming.CharacterEllipsis,
@@ -962,7 +1013,7 @@ public partial class DayView : UserControl
             timeBlock = new TextBlock
             {
                 Text       = $"{ev.StartDt:HH:mm}–{ev.EndDt:HH:mm}",
-                FontSize   = 12,
+                FontSize   = FontSizeBase,
                 Foreground = Brushes.White,
                 Margin     = new Thickness(0, 1, 0, 0),
             };

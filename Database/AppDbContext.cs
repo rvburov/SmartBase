@@ -58,6 +58,7 @@ public class AppDbContext : DbContext
         {
             e.ToTable("db_fields");
             e.HasKey(x => x.Id);
+            e.HasIndex(x => new { x.CollectionId, x.Name }).IsUnique();
             e.HasOne(x => x.Collection)
              .WithMany(x => x.Fields)
              .HasForeignKey(x => x.CollectionId)

@@ -9,6 +9,9 @@ namespace MyPlanner.Views.ConstructorDb.Calendar;
 
 public partial class MonthView : UserControl
 {
+    private static readonly double FontSizeBase =
+        Application.Current!.Resources["FontSizeBase"] is double v ? v : 12;
+
     public event EventHandler<DateTime>? DaySelected;
     public event EventHandler<DateTime>? DayAddClicked;
     public event EventHandler<CalendarRecord>? RecordClicked;
@@ -57,6 +60,7 @@ public partial class MonthView : UserControl
     private readonly HashSet<int> _selectedSpanIds = [];
 
     private EventHandler<PointerPressedEventArgs>? _windowClickHandler;
+    private EventHandler<KeyEventArgs>?            _windowKeyHandler;
 
     public MonthView()
     {
@@ -85,16 +89,47 @@ public partial class MonthView : UserControl
             // _skipNextDeselect — тогда следующий клик по пустому дню «съедается»
             // вместо снятия выделения.
             win.AddHandler(PointerPressedEvent, _windowClickHandler, handledEventsToo: true);
+
+            _windowKeyHandler = (_, ke) =>
+            {
+                if (ke.Key != Key.Delete && ke.Key != Key.Back) return;
+                if (!IsVisible) return;
+                if (_selections.Count == 0) return;
+                // Не перехватываем Delete внутри текстовых полей (диалог редактирования и т.п.).
+                if (ke.Source is TextBox or AutoCompleteBox) return;
+                if (_selections.Count == 1)
+                {
+                    var only = _selections.Keys.First();
+                    _Deselect();
+                    RecordDeleteRequested?.Invoke(this, only);
+                }
+                else
+                {
+                    var batch = _selections.Keys.ToList();
+                    _Deselect();
+                    RecordsDeleteRequested?.Invoke(this, batch);
+                }
+                ke.Handled = true;
+            };
+            win.AddHandler(KeyDownEvent, _windowKeyHandler, handledEventsToo: true);
         }
     }
 
     protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
     {
         base.OnDetachedFromVisualTree(e);
-        if (e.Root is Avalonia.Controls.Window win && _windowClickHandler is not null)
+        if (e.Root is Avalonia.Controls.Window win)
         {
-            win.RemoveHandler(PointerPressedEvent, _windowClickHandler);
-            _windowClickHandler = null;
+            if (_windowClickHandler is not null)
+            {
+                win.RemoveHandler(PointerPressedEvent, _windowClickHandler);
+                _windowClickHandler = null;
+            }
+            if (_windowKeyHandler is not null)
+            {
+                win.RemoveHandler(KeyDownEvent, _windowKeyHandler);
+                _windowKeyHandler = null;
+            }
         }
     }
 
@@ -299,7 +334,7 @@ public partial class MonthView : UserControl
         var dayLabel = new TextBlock
         {
             Text                = date.Day.ToString(),
-            FontSize            = 12,
+            FontSize            = FontSizeBase,
             TextAlignment       = TextAlignment.Center,
             HorizontalAlignment = HorizontalAlignment.Stretch,
             VerticalAlignment   = VerticalAlignment.Center,
@@ -393,7 +428,7 @@ public partial class MonthView : UserControl
         {
             Text                = $"+{hidden} ещё",
             IsVisible           = hidden > 0,
-            FontSize            = 12,
+            FontSize            = FontSizeBase,
             Foreground          = new SolidColorBrush(Color.Parse("#8E8E93")),
             Margin              = new Thickness(6, 0, 0, 4),
             VerticalAlignment   = VerticalAlignment.Bottom,
@@ -481,7 +516,7 @@ public partial class MonthView : UserControl
             var tb = new TextBlock
             {
                 Text              = ev.DisplayTitle,
-                FontSize          = 12,
+                FontSize          = FontSizeBase,
                 FontWeight        = FontWeight.SemiBold,
                 Foreground        = darkBrush,
                 Margin            = new Thickness(8, 0, 2, 0),
@@ -504,14 +539,14 @@ public partial class MonthView : UserControl
             var timeTb = new TextBlock
             {
                 Text       = $"{ev.StartDt:HH:mm} ",
-                FontSize   = 12,
+                FontSize   = FontSizeBase,
                 FontWeight = FontWeight.Normal,
                 Foreground = darkBrush,
             };
             var titleTb = new TextBlock
             {
                 Text         = ev.DisplayTitle,
-                FontSize     = 12,
+                FontSize     = FontSizeBase,
                 FontWeight   = FontWeight.SemiBold,
                 Foreground   = darkBrush,
                 TextTrimming = TextTrimming.CharacterEllipsis,
@@ -659,7 +694,7 @@ public partial class MonthView : UserControl
             var tb = new TextBlock
             {
                 Text              = ev.DisplayTitle,
-                FontSize          = 12,
+                FontSize          = FontSizeBase,
                 FontWeight        = FontWeight.SemiBold,
                 Foreground        = darkBrush,
                 Margin            = new Thickness(8, 0, 4, 0),
@@ -682,14 +717,14 @@ public partial class MonthView : UserControl
             var timeTb = new TextBlock
             {
                 Text       = $"{ev.StartDt:HH:mm} ",
-                FontSize   = 12,
+                FontSize   = FontSizeBase,
                 FontWeight = FontWeight.Normal,
                 Foreground = darkBrush,
             };
             var titleTb = new TextBlock
             {
                 Text         = ev.DisplayTitle,
-                FontSize     = 12,
+                FontSize     = FontSizeBase,
                 FontWeight   = FontWeight.SemiBold,
                 Foreground   = darkBrush,
                 TextTrimming = TextTrimming.CharacterEllipsis,
@@ -827,6 +862,7 @@ public partial class MonthView : UserControl
         {
             if (Math.Abs(pos.X - _dragPress.X) + Math.Abs(pos.Y - _dragPress.Y) < 6) return;
             _dragActive = true;
+            _Deselect();
             if (_dragSrcControl is not null) _dragSrcControl.Opacity = 0.45;
         }
         var target = _DayAtPos(pos);
@@ -995,7 +1031,7 @@ public partial class MonthView : UserControl
             _dragPreview.Children.Add(new TextBlock
             {
                 Text              = _dragEv.AllDay ? _dragEv.DisplayTitle : $"{_dragEv.StartDt:HH:mm} {_dragEv.DisplayTitle}",
-                FontSize          = 12,
+                FontSize          = FontSizeBase,
                 FontWeight        = FontWeight.SemiBold,
                 Foreground        = Brushes.White,
                 Margin            = new Thickness(8, 0, 4, 0),

@@ -4,7 +4,7 @@
     <Styles.Resources>
         <!-- Размеры шрифтов -->
         <x:Double x:Key="FontSizeSmall">11</x:Double>
-        <x:Double x:Key="FontSizeBase">13</x:Double>
+        <x:Double x:Key="FontSizeBase">12</x:Double>
         <x:Double x:Key="FontSizeLarge">20</x:Double>
 
         <!-- Веса шрифтов -->

@@ -1,3 +1,4 @@
+using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
 using Avalonia.Layout;
@@ -11,6 +12,9 @@ namespace MyPlanner.Views.ConstructorDb.Calendar;
 public partial class YearView : UserControl
 {
     public event EventHandler<DateTime>? MonthSelected;
+
+    private static readonly double FontSizeBase =
+        Application.Current!.Resources["FontSizeBase"] is double v ? v : 12;
 
     private static readonly string[] MonthNames =
         ["Январь", "Февраль", "Март", "Апрель", "Май", "Июнь",
@@ -62,7 +66,7 @@ public partial class YearView : UserControl
             DayPopupList.Children.Add(new TextBlock
             {
                 Text       = "Нет записей",
-                FontSize   = 12,
+                FontSize   = FontSizeBase,
                 Foreground = new SolidColorBrush(Color.Parse("#8E8E93")),
             });
         }
@@ -91,7 +95,7 @@ public partial class YearView : UserControl
                         new TextBlock
                         {
                             Text       = e.DisplayTitle,
-                            FontSize   = 12,
+                            FontSize   = FontSizeBase,
                             FontWeight = FontWeight.SemiBold,
                             Foreground = new SolidColorBrush(Color.Parse("#1C1C1E")),
                             TextWrapping = TextWrapping.Wrap,
@@ -99,7 +103,7 @@ public partial class YearView : UserControl
                         new TextBlock
                         {
                             Text       = time,
-                            FontSize   = 12,
+                            FontSize   = FontSizeBase,
                             Foreground = new SolidColorBrush(Color.Parse("#8E8E93")),
                         },
                     },
@@ -135,7 +139,7 @@ public partial class YearView : UserControl
         var titleBtn = new TextBlock
         {
             Text                = MonthNames[month - 1],
-            FontSize            = 12,
+            FontSize            = FontSizeBase,
             FontWeight          = FontWeight.SemiBold,
             Height              = TitleH,
             Padding             = new Avalonia.Thickness(6, 6, 0, 2),
@@ -154,7 +158,7 @@ public partial class YearView : UserControl
             dayGrid.Children.Add(new TextBlock
             {
                 Text              = DayNames[di],
-                FontSize          = 12,
+                FontSize          = FontSizeBase,
                 FontWeight        = FontWeight.Normal,
                 TextAlignment     = Avalonia.Media.TextAlignment.Center,
                 VerticalAlignment = VerticalAlignment.Center,
@@ -178,7 +182,7 @@ public partial class YearView : UserControl
             var label = new TextBlock
             {
                 Text                = d.Day.ToString(),
-                FontSize            = 12,
+                FontSize            = FontSizeBase,
                 FontWeight          = FontWeight.Normal,
                 TextAlignment       = Avalonia.Media.TextAlignment.Center,
                 HorizontalAlignment = HorizontalAlignment.Center,

@@ -21,11 +21,30 @@ public partial class ListView : UserControl
 
     public ListView() { InitializeComponent(); }
 
+    private EventHandler<KeyEventArgs>? _windowKeyHandler;
+
     protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
     {
         base.OnAttachedToVisualTree(e);
-        TopLevel.GetTopLevel(this)?.AddHandler(
-            PointerPressedEvent, OnGlobalPointerPressed, RoutingStrategies.Tunnel);
+        var top = TopLevel.GetTopLevel(this);
+        top?.AddHandler(PointerPressedEvent, OnGlobalPointerPressed, RoutingStrategies.Tunnel);
+
+        if (e.Root is Avalonia.Controls.Window win)
+        {
+            _windowKeyHandler = (_, ke) =>
+            {
+                if (ke.Key != Key.Delete && ke.Key != Key.Back) return;
+                if (!IsVisible) return;
+                if (ke.Source is TextBox or AutoCompleteBox) return;
+                var selected = SelectedRecords();
+                if (selected.Count == 0) return;
+                DeselectAll();
+                if (selected.Count == 1) RecordDeleteRequested?.Invoke(this, selected[0]);
+                else                     RecordsDeleteRequested?.Invoke(this, selected);
+                ke.Handled = true;
+            };
+            win.AddHandler(KeyDownEvent, _windowKeyHandler, handledEventsToo: true);
+        }
     }
 
     protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
@@ -33,6 +52,11 @@ public partial class ListView : UserControl
         base.OnDetachedFromVisualTree(e);
         TopLevel.GetTopLevel(this)?.RemoveHandler(
             PointerPressedEvent, OnGlobalPointerPressed);
+        if (e.Root is Avalonia.Controls.Window win && _windowKeyHandler is not null)
+        {
+            win.RemoveHandler(KeyDownEvent, _windowKeyHandler);
+            _windowKeyHandler = null;
+        }
     }
 
     private void OnGlobalPointerPressed(object? sender, PointerPressedEventArgs e)

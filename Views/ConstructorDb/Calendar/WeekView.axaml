@@ -45,7 +45,7 @@
                                            VerticalAlignment="Bottom"
                                            HorizontalAlignment="Right"
                                            Margin="0,0,8,-8"
-                                           FontSize="12"
+                                           FontSize="{StaticResource FontSizeBase}"
                                            Foreground="{StaticResource BrushSecondaryText}" />
                             </Grid>
                         </DataTemplate>

@@ -13,6 +13,9 @@ namespace MyPlanner.Views.ConstructorDb.Calendar;
 
 public partial class WeekView : UserControl
 {
+    private static readonly double FontSizeBase =
+        Application.Current!.Resources["FontSizeBase"] is double v ? v : 12;
+
     public event EventHandler<CalendarRecord>?    RecordClicked;
     public event EventHandler<CalendarRecord>?    RecordMoved;
     public event EventHandler<CalendarRecord>?    RecordDeleteRequested;
@@ -102,9 +105,54 @@ public partial class WeekView : UserControl
 
         AllDayBarCtrl.RecordClicked            += (_, ev) => RecordClicked?.Invoke(this, ev);
         AllDayBarCtrl.RecordMoved              += (_, ev) => RecordMoved?.Invoke(this, ev);
+        AllDayBarCtrl.RecordDeleteRequested    += (_, ev) => RecordDeleteRequested?.Invoke(this, ev);
+        AllDayBarCtrl.RecordsDeleteRequested   += (_, rs) => RecordsDeleteRequested?.Invoke(this, rs);
         AllDayBarCtrl.RecordCreationRequested  += (_, d)  => AllDayCreationRequested?.Invoke(this, d);
 
         SizeChanged += (_, _) => AllDayBarCtrl.InvalidateMeasure();
+    }
+
+    private EventHandler<KeyEventArgs>? _windowKeyHandler;
+
+    protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
+    {
+        base.OnAttachedToVisualTree(e);
+        if (e.Root is Avalonia.Controls.Window win)
+        {
+            _windowKeyHandler = (_, ke) =>
+            {
+                if (ke.Key != Key.Delete && ke.Key != Key.Back) return;
+                if (!IsVisible) return;
+                if (ke.Source is TextBox or AutoCompleteBox) return;
+
+                // AllDayBar обрабатывает Delete своим handler на окне.
+                if (_selections.Count == 0) return;
+                if (_selections.Count == 1)
+                {
+                    var only = _selections.Keys.First();
+                    _Deselect();
+                    RecordDeleteRequested?.Invoke(this, only);
+                }
+                else
+                {
+                    var batch = _selections.Keys.ToList();
+                    _Deselect();
+                    RecordsDeleteRequested?.Invoke(this, batch);
+                }
+                ke.Handled = true;
+            };
+            win.AddHandler(KeyDownEvent, _windowKeyHandler, handledEventsToo: true);
+        }
+    }
+
+    protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
+    {
+        base.OnDetachedFromVisualTree(e);
+        if (e.Root is Avalonia.Controls.Window win && _windowKeyHandler is not null)
+        {
+            win.RemoveHandler(KeyDownEvent, _windowKeyHandler);
+            _windowKeyHandler = null;
+        }
     }
 
     public void Refresh(IEnumerable<CalendarRecord> events, DateTime weekStart, bool scrollToNow = false)
@@ -133,7 +181,10 @@ public partial class WeekView : UserControl
                 .Where(e => !e.AllDay
                          && (e.EndDt - e.StartDt).TotalSeconds < 86400
                          && DateOnly.FromDateTime(e.StartDt) <= dayDate
-                         && dayDate <= DateOnly.FromDateTime(e.EndDt))
+                         && dayDate <= DateOnly.FromDateTime(e.EndDt)
+                         && !(DateOnly.FromDateTime(e.EndDt) == dayDate
+                              && DateOnly.FromDateTime(e.StartDt) != dayDate
+                              && e.EndDt.TimeOfDay == TimeSpan.Zero))
                 .ToList();
 
             var sortedDayEvents = dayEvents
@@ -175,7 +226,7 @@ public partial class WeekView : UserControl
                     var titleBlock = new TextBlock
                     {
                         Text         = ev.DisplayTitle,
-                        FontSize     = 12,
+                        FontSize     = FontSizeBase,
                         FontWeight   = FontWeight.SemiBold,
                         Foreground   = darkBrush,
                         TextTrimming = Avalonia.Media.TextTrimming.CharacterEllipsis,
@@ -191,7 +242,7 @@ public partial class WeekView : UserControl
                         contentStack.Children.Add(new TextBlock
                         {
                             Text       = $"{ev.StartDt:HH:mm}–{ev.EndDt:HH:mm}",
-                            FontSize   = 12,
+                            FontSize   = FontSizeBase,
                             Foreground = darkBrush,
                             Margin     = new Thickness(0, 1, 0, 0),
                         });
@@ -720,8 +771,9 @@ public partial class WeekView : UserControl
             var ghostH     = _dragSourceBtn.Bounds.Height;
             _dragGhostOriginalHeight = ghostH;
 
-            // снимаем выделение с источника и делаем все сегменты события полупрозрачными
-            if (_dragEvent is not null) _DeselectOne(_dragEvent);
+            // снимаем выделение со всех событий (drag отменяет multi-select) и
+            // делаем все сегменты перетаскиваемого события полупрозрачными
+            _Deselect();
             _dragDimmedBtns = _eventEntries
                 .Where(e => e.Ev.Id == _dragEvent!.Id)
                 .ToList();
@@ -1206,7 +1258,7 @@ public partial class WeekView : UserControl
                 _dragGhostTimeBlock = new TextBlock
                 {
                     Text       = timeText,
-                    FontSize   = 12,
+                    FontSize   = FontSizeBase,
                     Foreground = Brushes.White,
                     Margin     = new Thickness(0, 1, 0, 0),
                 };
@@ -1249,7 +1301,7 @@ public partial class WeekView : UserControl
                 _resizeGhostTimeBlock = new TextBlock
                 {
                     Text       = timeText,
-                    FontSize   = 12,
+                    FontSize   = FontSizeBase,
                     Foreground = Brushes.White,
                     Margin     = new Thickness(0, 1, 0, 0),
                 };
@@ -1289,7 +1341,7 @@ public partial class WeekView : UserControl
         var titleBlock = new TextBlock
         {
             Text         = ev.DisplayTitle,
-            FontSize     = 12,
+            FontSize     = FontSizeBase,
             FontWeight   = FontWeight.SemiBold,
             Foreground   = Brushes.White,
             TextTrimming = Avalonia.Media.TextTrimming.CharacterEllipsis,
@@ -1311,7 +1363,7 @@ public partial class WeekView : UserControl
             timeBlock = new TextBlock
             {
                 Text       = $"{ev.StartDt:HH:mm}–{ev.EndDt:HH:mm}",
-                FontSize   = 12,
+                FontSize   = FontSizeBase,
                 Foreground = Brushes.White,
                 Margin     = new Thickness(0, 1, 0, 0),
             };
@@ -1442,7 +1494,7 @@ public partial class WeekView : UserControl
             WeekHeaderDays.Children.Add(new TextBlock
             {
                 Text                = $"{DayNames[i]} {d.Day}",
-                FontSize            = 12,
+                FontSize            = FontSizeBase,
                 FontWeight          = isToday ? FontWeight.SemiBold : FontWeight.Normal,
                 Foreground          = fg,
                 HorizontalAlignment = HorizontalAlignment.Center,

@@ -126,6 +126,9 @@ public class ConstructorRepository(AppDbContext db)
 
     public DbField AddField(DbField field)
     {
+        if (db.DbFields.Any(f => f.CollectionId == field.CollectionId && f.Name == field.Name))
+            throw new InvalidOperationException($"Поле с именем «{field.Name}» уже существует в этой коллекции.");
+
         var entity = new DbFieldEntity
         {
             CollectionId = field.CollectionId, Name = field.Name,
@@ -144,6 +147,9 @@ public class ConstructorRepository(AppDbContext db)
     {
         var entity = db.DbFields.Find(field.Id);
         if (entity is null) return;
+        if (entity.Name != field.Name &&
+            db.DbFields.Any(f => f.CollectionId == entity.CollectionId && f.Name == field.Name && f.Id != field.Id))
+            throw new InvalidOperationException($"Поле с именем «{field.Name}» уже существует в этой коллекции.");
         entity.Name       = field.Name;
         entity.FieldType  = field.FieldType;
         entity.ConfigJson = field.ConfigJson;
@@ -501,7 +507,8 @@ public class ConstructorRepository(AppDbContext db)
     {
         var existing = db.DbFields
             .Where(f => f.CollectionId == collectionId)
-            .ToDictionary(f => f.Name, f => f.Id);
+            .GroupBy(f => f.Name)
+            .ToDictionary(g => g.Key, g => g.Min(f => f.Id));
 
         if (existing.ContainsKey(FieldDate)) return existing;
 
