@@ -66,6 +66,7 @@ public partial class CalendarControllerView : UserControl
         MonthViewCtrl.RecordClicked          += (_, r) => _ = OpenEditDialog(r);
         MonthViewCtrl.RecordMoved            += (_, r) => { _records.UpdateCalendarRecord(r); CollectionsMayHaveChanged?.Invoke(this, EventArgs.Empty); RefreshCurrent(); };
         MonthViewCtrl.RecordDeleteRequested  += (_, r) => { if (r.Id.HasValue) { _records.DeleteCalendarRecord(r.Id.Value); CollectionsMayHaveChanged?.Invoke(this, EventArgs.Empty); RefreshCurrent(); } };
+        MonthViewCtrl.RecordsDeleteRequested += (_, rs) => _ = DeleteRecordsWithConfirm(rs);
         DayViewCtrl.RecordClicked              += (_, r) => _ = OpenEditDialog(r);
         DayViewCtrl.RecordMoved                += (_, r) => { _records.UpdateCalendarRecord(r); CollectionsMayHaveChanged?.Invoke(this, EventArgs.Empty); RefreshCurrent(); };
         DayViewCtrl.AllDayCreationRequested    += (_, d)  => _ = OpenAddAllDayDialog(d);
@@ -238,6 +239,34 @@ public partial class CalendarControllerView : UserControl
             CollectionsMayHaveChanged?.Invoke(this, EventArgs.Empty);
         }
         RefreshCurrent();
+    }
+
+    private async Task DeleteRecordsWithConfirm(IReadOnlyList<CalendarRecord> records)
+    {
+        if (VisualRoot is not Avalonia.Controls.Window win) return;
+        var ids = records.Where(r => r.Id.HasValue).Select(r => r.Id!.Value).Distinct().ToList();
+        if (ids.Count == 0) return;
+
+        var dlg = new ConfirmDialog($"Вы удаляете {ids.Count} {RecordsPlural(ids.Count)}. Подтвердить?");
+        if (await dlg.ShowDialog<bool>(win) != true) return;
+
+        foreach (var id in ids) _records.DeleteCalendarRecord(id);
+        CollectionsMayHaveChanged?.Invoke(this, EventArgs.Empty);
+        RefreshCurrent();
+    }
+
+    // Русское склонование: 1 запись, 2–4 записи, 5+ записей (с учётом 11–14).
+    private static string RecordsPlural(int n)
+    {
+        var mod100 = n % 100;
+        var mod10  = n % 10;
+        if (mod100 is >= 11 and <= 14) return "записей";
+        return mod10 switch
+        {
+            1 => "запись",
+            >= 2 and <= 4 => "записи",
+            _ => "записей",
+        };
     }
 
     private void SeedIfEmpty()

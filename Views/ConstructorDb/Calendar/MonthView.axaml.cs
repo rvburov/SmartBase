@@ -14,6 +14,7 @@ public partial class MonthView : UserControl
     public event EventHandler<CalendarRecord>? RecordClicked;
     public event EventHandler<CalendarRecord>? RecordMoved;
     public event EventHandler<CalendarRecord>? RecordDeleteRequested;
+    public event EventHandler<IReadOnlyList<CalendarRecord>>? RecordsDeleteRequested;
 
     // Константы макета (соответствуют PyQt DayCell / MonthOverlay)
     private const int DateH   = 34;
@@ -38,9 +39,12 @@ public partial class MonthView : UserControl
     private Control?  _dragSrcControl;
     private Grid?     _dragPreview;
     private DateTime? _shiftedDay;
-    private Action?   _deselectCurrent;
     private int       _pressClickCount;
     private bool      _skipNextDeselect;
+
+    // Выделенные события → действие снятия их подсветки. Множественное выделение
+    // (Shift+клик) копит несколько; одиночный клик оставляет одно.
+    private readonly Dictionary<CalendarRecord, Action> _selections = new();
 
     private readonly Dictionary<DateTime, (Grid Panel, TextBlock More, HashSet<int> Occupied, int OrigHidden)> _dayUiMap    = new();
     private readonly Dictionary<int, List<(Border SelFrame, Border? LeftStripe)>>                             _spanFrames    = new();
@@ -535,34 +539,52 @@ public partial class MonthView : UserControl
 
         var isSelected = false;
 
-        // Выделение чипа — общее для левого клика и правого клика (контекстное меню),
-        // чтобы перед удалением/редактированием было видно выбранное событие.
-        void SelectThis()
+        void Highlight()
         {
-            _Deselect();
-            isSelected             = true;
-            chip.Background        = selectedBg;
-            leftStripe.IsVisible   = false;
+            isSelected           = true;
+            chip.Background      = selectedBg;
+            leftStripe.IsVisible = false;
             foreach (var tb in chipTextBlocks) tb.Foreground = Brushes.White;
-            _deselectCurrent = () =>
+        }
+        void Unhighlight()
+        {
+            isSelected           = false;
+            chip.Background      = normalBg;
+            leftStripe.IsVisible = true;
+            foreach (var tb in chipTextBlocks) tb.Foreground = darkBrush;
+        }
+
+        // additive (Shift+клик): добавляет/убирает событие из набора, не трогая
+        // остальные. Иначе — одиночное выделение (сначала снимаем всё).
+        void SelectThis(bool additive)
+        {
+            if (additive)
             {
-                isSelected           = false;
-                chip.Background      = normalBg;
-                leftStripe.IsVisible = true;
-                foreach (var tb in chipTextBlocks) tb.Foreground = darkBrush;
-            };
+                if (_selections.ContainsKey(ev)) { _DeselectOne(ev); return; }
+            }
+            else
+            {
+                _Deselect();
+            }
+            Highlight();
+            _selections[ev] = Unhighlight;
         }
 
         chip.PointerEntered += (_, _) => { if (!isSelected) chip.Background = hoverBg; };
         chip.PointerExited  += (_, _) => { if (!isSelected) chip.Background = normalBg; };
         chip.ContextMenu = _BuildEventContextMenu(ev);
-        // Правый клик: выделяем событие до открытия меню, чтобы было видно, с чем
-        // работаем. Само снятие выделения окно делает только на левый клик мимо,
-        // поэтому переключение между событиями правой кнопкой не гасит подсветку.
+        // Правый клик: если событие уже в множественном выделении — оставляем набор
+        // как есть (меню удалит все). Иначе выделяем только это (как одиночный клик),
+        // чтобы было видно, с чем работаем. Окно снимает выделение только на левый
+        // клик мимо, поэтому переключение правой кнопкой подсветку не гасит.
         chip.PointerPressed  += (_, e) =>
         {
             var props = e.GetCurrentPoint(null).Properties;
-            if (props.IsRightButtonPressed) { SelectThis(); return; }
+            if (props.IsRightButtonPressed)
+            {
+                if (!_selections.ContainsKey(ev)) SelectThis(additive: false);
+                return;
+            }
             if (props.IsLeftButtonPressed)  { _skipNextDeselect = true; _BeginDragTrack(ev, chip, e); e.Handled = true; }
         };
         chip.PointerMoved    += (_, e) => _OnDragMoved(e);
@@ -581,7 +603,7 @@ public partial class MonthView : UserControl
             }
             else
             {
-                SelectThis();
+                SelectThis(additive: e.KeyModifiers.HasFlag(KeyModifiers.Shift));
             }
         };
         return chip;
@@ -705,32 +727,53 @@ public partial class MonthView : UserControl
             foreach (var b in all) b.Background = normalBg;
         };
 
-        // Выделение бара — общее для левого клика и правого клика (контекстное меню).
-        // Подсвечивает все сегменты события сразу через _selectedSpanIds.
-        void SelectThis()
+        // Выделение бара подсвечивает все сегменты события сразу через _selectedSpanIds.
+        void Highlight()
         {
-            _Deselect();
             if (ev.Id.HasValue) _selectedSpanIds.Add(ev.Id.Value);
             var allBg  = ev.Id.HasValue && _spanBgBorders.TryGetValue(ev.Id.Value, out var bs) ? bs : [bgBorder];
             var allTbs = ev.Id.HasValue && _spanTextBlocks.TryGetValue(ev.Id.Value, out var tbs) ? tbs : barTextBlocks;
             foreach (var b in allBg)  b.Background = selectedBg;
             foreach (var tb in allTbs) tb.Foreground = Brushes.White;
             if (leftStripeBar is not null) leftStripeBar.IsVisible = false;
-            _deselectCurrent = () =>
+        }
+        void Unhighlight()
+        {
+            if (ev.Id.HasValue) _selectedSpanIds.Remove(ev.Id.Value);
+            var allBg  = ev.Id.HasValue && _spanBgBorders.TryGetValue(ev.Id.Value, out var bs) ? bs : [bgBorder];
+            var allTbs = ev.Id.HasValue && _spanTextBlocks.TryGetValue(ev.Id.Value, out var tbs) ? tbs : barTextBlocks;
+            foreach (var b in allBg)   b.Background = normalBg;
+            foreach (var tb in allTbs) tb.Foreground = darkBrush;
+            if (leftStripeBar is not null) leftStripeBar.IsVisible = true;
+        }
+
+        // additive (Shift+клик): добавляет/убирает событие из набора, не трогая
+        // остальные. Иначе — одиночное выделение (сначала снимаем всё).
+        void SelectThis(bool additive)
+        {
+            if (additive)
             {
-                if (ev.Id.HasValue) _selectedSpanIds.Remove(ev.Id.Value);
-                foreach (var b in allBg)   b.Background = normalBg;
-                foreach (var tb in allTbs) tb.Foreground = darkBrush;
-                if (leftStripeBar is not null) leftStripeBar.IsVisible = true;
-            };
+                if (_selections.ContainsKey(ev)) { _DeselectOne(ev); return; }
+            }
+            else
+            {
+                _Deselect();
+            }
+            Highlight();
+            _selections[ev] = Unhighlight;
         }
 
         bar.ContextMenu = _BuildEventContextMenu(ev);
-        // Правый клик: выделяем событие (все его сегменты) до открытия меню.
+        // Правый клик: если событие уже в множественном выделении — оставляем набор;
+        // иначе выделяем только это (как одиночный клик).
         bar.PointerPressed  += (_, e) =>
         {
             var props = e.GetCurrentPoint(null).Properties;
-            if (props.IsRightButtonPressed) { SelectThis(); return; }
+            if (props.IsRightButtonPressed)
+            {
+                if (!_selections.ContainsKey(ev)) SelectThis(additive: false);
+                return;
+            }
             if (props.IsLeftButtonPressed)  { _skipNextDeselect = true; _BeginDragTrack(ev, bar, e); }
         };
         bar.PointerMoved    += (_, e) => _OnDragMoved(e);
@@ -749,7 +792,7 @@ public partial class MonthView : UserControl
             }
             else
             {
-                SelectThis();
+                SelectThis(additive: e.KeyModifiers.HasFlag(KeyModifiers.Shift));
             }
         };
 
@@ -867,10 +910,21 @@ public partial class MonthView : UserControl
         return dx * dx + dy * dy <= 12.0 * 12.0 ? _gridStart.AddDays(row * 7 + col) : null;
     }
 
+    // Снять выделение со всех событий.
     private void _Deselect()
     {
-        _deselectCurrent?.Invoke();
-        _deselectCurrent = null;
+        foreach (var unhighlight in _selections.Values.ToList()) unhighlight();
+        _selections.Clear();
+    }
+
+    // Снять выделение с одного события (для toggle по Shift+клику).
+    private void _DeselectOne(CalendarRecord ev)
+    {
+        if (_selections.TryGetValue(ev, out var unhighlight))
+        {
+            unhighlight();
+            _selections.Remove(ev);
+        }
     }
 
     // Чипы при drag больше не двигаются — восстановить нужно только «+N ещё».
@@ -972,12 +1026,27 @@ public partial class MonthView : UserControl
     // Меню назначаются свойством ContextMenu контрола — фреймворк сам открывает
     // их по правому клику и закрывает (в т.ч. предыдущее), поэтому ручной Open()
     // и перехват правой кнопки в PointerPressed не нужны (иначе попапы зависают
-    // и накапливаются).
+    // и накапливаются). Состав пунктов зависит от выделения на момент открытия,
+    // поэтому наполняем меню в Opening, а не один раз при создании.
     private ContextMenu _BuildEventContextMenu(CalendarRecord ev)
     {
         var menu = new ContextMenu();
-        menu.Items.Add(_MakeMenuItem("Редактировать", () => { _Deselect(); RecordClicked?.Invoke(this, ev); }));
-        menu.Items.Add(_MakeMenuItem("Удалить",       () => { _Deselect(); RecordDeleteRequested?.Invoke(this, ev); }));
+        menu.Opening += (_, _) =>
+        {
+            menu.Items.Clear();
+
+            // Множественное выделение (это событие в наборе и в нём 2+): только
+            // массовое удаление всех выделенных с подтверждением.
+            if (_selections.Count > 1 && _selections.ContainsKey(ev))
+            {
+                var batch = _selections.Keys.ToList();
+                menu.Items.Add(_MakeMenuItem("Удалить", () => { _Deselect(); RecordsDeleteRequested?.Invoke(this, batch); }));
+                return;
+            }
+
+            menu.Items.Add(_MakeMenuItem("Редактировать", () => { _Deselect(); RecordClicked?.Invoke(this, ev); }));
+            menu.Items.Add(_MakeMenuItem("Удалить",       () => { _Deselect(); RecordDeleteRequested?.Invoke(this, ev); }));
+        };
         return menu;
     }
 
