@@ -768,7 +768,7 @@
 
     <!-- Popup со списком времени -->
     <Style Selector="Border.timePopup">
-        <Setter Property="Background"      Value="{StaticResource BrushBg}" />
+        <Setter Property="Background"      Value="{StaticResource BrushSecondaryBg}" />
         <Setter Property="BorderBrush"     Value="{StaticResource BrushSeparator}" />
         <Setter Property="BorderThickness" Value="1" />
         <Setter Property="CornerRadius"    Value="{StaticResource RadiusMedium}" />
@@ -794,17 +794,22 @@
     </Style>
 
     <Style Selector="ListBox.timeList ListBoxItem:pointerover /template/ ContentPresenter">
-        <Setter Property="Background"   Value="{StaticResource BrushHover}" />
+        <Setter Property="Background"   Value="{DynamicResource MenuFlyoutItemBackgroundPointerOver}" />
         <Setter Property="CornerRadius" Value="{StaticResource RadiusBase}" />
     </Style>
 
     <Style Selector="ListBox.timeList ListBoxItem:selected /template/ ContentPresenter">
-        <Setter Property="Background"   Value="{StaticResource BrushAccent}" />
+        <Setter Property="Background"   Value="{DynamicResource MenuFlyoutItemBackgroundPointerOver}" />
         <Setter Property="CornerRadius" Value="{StaticResource RadiusBase}" />
     </Style>
 
     <Style Selector="ListBox.timeList ListBoxItem:selected /template/ ContentPresenter#PART_ContentPresenter">
-        <Setter Property="TextBlock.Foreground" Value="White" />
+        <Setter Property="TextBlock.Foreground" Value="{StaticResource BrushPrimaryText}" />
+    </Style>
+
+    <Style Selector="ListBox.timeList ListBoxItem:selected:pointerover /template/ ContentPresenter">
+        <Setter Property="Background"   Value="{DynamicResource MenuFlyoutItemBackgroundPointerOver}" />
+        <Setter Property="CornerRadius" Value="{StaticResource RadiusBase}" />
     </Style>
 
     <!-- CheckBox -->

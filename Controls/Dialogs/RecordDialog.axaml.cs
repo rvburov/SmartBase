@@ -403,6 +403,12 @@ public partial class RecordDialog : Window
 
         var title = TitleBox.Text?.Trim() ?? "";
 
+        if (string.IsNullOrWhiteSpace(title))
+        {
+            ShowError("Введите название записи");
+            return;
+        }
+
         var startDate = StartDatePicker.SelectedDate ?? DateTime.Today;
         var endDate   = EndDatePicker.SelectedDate   ?? DateTime.Today;
         var startTime = TryParseTime(StartTimeInput.Text, out var st) ? st : _savedStartTime;
