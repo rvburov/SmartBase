@@ -39,6 +39,7 @@ public partial class TableView : UserControl
     private ConstructorRepository? _repository;
     private int  _collectionId;
     private bool _manualColResize;
+    private bool _snapPending;
     private List<DbField>        _fields  = [];
     private List<TableColumnDef> _colDefs = [];
     private VirtualRowList?      _virtualRows;
@@ -48,10 +49,10 @@ public partial class TableView : UserControl
         InitializeComponent();
         RecordsGrid.CellPointerPressed += OnCellPointerPressed;
         RecordsGrid.LoadingRow         += OnLoadingRow;
-        // Никакого SizeChanged/LayoutUpdated-хука: snap дробных Star-ширин до
-        // целых пикселей создавал бесконечный цикл (ActualWidth → дробное →
-        // переназначение Star-весов → новый layout pass → опять дробное).
-        // Этот цикл дёргал родителей и заставлял кнопки футера мерцать на hover.
+        // Snap дробных Star-ширин до целочисленных весов — без этого DataGrid
+        // не рисует вертикальные грид-линии в сабпиксельных позициях. Снап сходится
+        // за один шаг (Σ весов = доступная ширина → каждая колонка == вес px).
+        RecordsGrid.LayoutUpdated      += OnGridLayoutUpdated;
     }
 
     // ── Публичный API ─────────────────────────────────────────────────────────
@@ -83,10 +84,11 @@ public partial class TableView : UserControl
         _manualColResize = manual;
         RecordsGrid.CanUserResizeColumns = manual;
         if (!manual)
-        {
             _repository?.SaveColWidths(_collectionId, []);
-            ApplyColumnWidths();
-        }
+
+        // Пересобирать колонки нельзя — DataGrid теряет ресайз-грипперы. Вместо
+        // этого переключаем IsVisible у filler-колонки и пересчитываем ширины.
+        ApplyColumnWidths();
     }
 
     public void SetRowResizeMode(bool _) { }
@@ -482,6 +484,56 @@ public partial class TableView : UserControl
                 col.Width = new DataGridLength(1, DataGridLengthUnitType.Star);
             }
         }
+    }
+
+    private void OnGridLayoutUpdated(object? s, EventArgs e)
+    {
+        if (_snapPending || _manualColResize) return;
+
+        // В авто-режиме снапим Star-колонки до целочисленных весов — иначе DataGrid
+        // не рисует вертикальные грид-линии в сабпиксельных позициях. В ручном режиме
+        // снап не нужен: UseLayoutRounding=True на DataGrid уже округляет рендер до
+        // пикселей, а активный снап во время drag делает перетаскивание «дёрганым».
+        var hasFractional = false;
+        for (var i = 0; i < RecordsGrid.Columns.Count && i < _colDefs.Count; i++)
+        {
+            var def = _colDefs[i];
+            if (!def.IsStarWidth) continue;
+            var col = RecordsGrid.Columns[i];
+            if (col.ActualWidth <= 0 || !col.Width.IsStar) continue;
+            if (col.ActualWidth != Math.Floor(col.ActualWidth)) { hasFractional = true; break; }
+        }
+        if (!hasFractional) return;
+
+        _snapPending = true;
+        Dispatcher.UIThread.Post(() =>
+        {
+            _snapPending = false;
+            SnapStarColumnWidths();
+        }, DispatcherPriority.Background);
+    }
+
+    private void SnapStarColumnWidths()
+    {
+        var starCols = new List<DataGridColumn>();
+        for (var i = 0; i < RecordsGrid.Columns.Count && i < _colDefs.Count; i++)
+        {
+            var def = _colDefs[i];
+            if (def.IsStarWidth && RecordsGrid.Columns[i].Width.IsStar && RecordsGrid.Columns[i].ActualWidth > 0)
+                starCols.Add(RecordsGrid.Columns[i]);
+        }
+        if (starCols.Count == 0) return;
+
+        var total = (int)Math.Round(starCols.Sum(c => c.ActualWidth));
+        var baseW = total / starCols.Count;
+        var extra = total % starCols.Count;
+
+        // Star-вес == целочисленным пикселям: сумма весов равна доступной ширине,
+        // каждая колонка получает ровно weight px, ActualWidth выходит целым,
+        // следующий проход LayoutUpdated уже не видит дробного — снап сходится.
+        for (var i = 0; i < starCols.Count; i++)
+            starCols[i].Width = new DataGridLength(baseW + (i < extra ? 1 : 0),
+                                                   DataGridLengthUnitType.Star);
     }
 
     // ── Утилиты ────────────────────────────────────────────────────────────────

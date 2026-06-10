@@ -46,7 +46,9 @@
                 </Viewbox>
             </Button>
 
-            <!-- Ручная высота строк -->
+            <!-- Ручная высота строк. Иконка переключается:
+                 unchecked (стандартный/авто-режим) — chevrons-down-up (стрелки внутрь),
+                 checked   (ручной режим)            — chevrons-up-down (стрелки наружу). -->
             <ToggleButton Grid.Column="2" x:Name="RowResizeBtn" Classes="navbtn"
                           Width="30" Height="30" Margin="0,0,4,0"
                           VerticalAlignment="Center"
@@ -54,15 +56,23 @@
                           ToolTip.Tip="Ручная высота строк">
                 <Viewbox Width="18" Height="18">
                     <Canvas Width="24" Height="24">
+                        <Path Data="M7 20 L12 15 L17 20 M7 4 L12 9 L17 4"
+                              Stroke="{Binding $parent[ToggleButton].Foreground}"
+                              StrokeThickness="1.6"
+                              StrokeLineCap="Round" StrokeJoin="Round"
+                              IsVisible="{Binding !IsChecked, ElementName=RowResizeBtn}" />
                         <Path Data="M7 15 L12 20 L17 15 M7 9 L12 4 L17 9"
                               Stroke="{Binding $parent[ToggleButton].Foreground}"
                               StrokeThickness="1.6"
-                              StrokeLineCap="Round" StrokeJoin="Round" />
+                              StrokeLineCap="Round" StrokeJoin="Round"
+                              IsVisible="{Binding IsChecked, ElementName=RowResizeBtn}" />
                     </Canvas>
                 </Viewbox>
             </ToggleButton>
 
-            <!-- Ручная ширина столбцов -->
+            <!-- Ручная ширина столбцов. Иконка переключается:
+                 unchecked (стандартный/авто-режим) — chevrons-right-left (стрелки внутрь),
+                 checked   (ручной режим)            — chevrons-left-right (стрелки наружу). -->
             <ToggleButton Grid.Column="3" x:Name="ColResizeBtn" Classes="navbtn"
                           Width="30" Height="30" Margin="0,0,8,0"
                           VerticalAlignment="Center"
@@ -70,10 +80,16 @@
                           ToolTip.Tip="Ручная ширина столбцов">
                 <Viewbox Width="18" Height="18">
                     <Canvas Width="24" Height="24">
+                        <Path Data="M20 17 L15 12 L20 7 M4 17 L9 12 L4 7"
+                              Stroke="{Binding $parent[ToggleButton].Foreground}"
+                              StrokeThickness="1.6"
+                              StrokeLineCap="Round" StrokeJoin="Round"
+                              IsVisible="{Binding !IsChecked, ElementName=ColResizeBtn}" />
                         <Path Data="M9 7 L4 12 L9 17 M15 7 L20 12 L15 17"
                               Stroke="{Binding $parent[ToggleButton].Foreground}"
                               StrokeThickness="1.6"
-                              StrokeLineCap="Round" StrokeJoin="Round" />
+                              StrokeLineCap="Round" StrokeJoin="Round"
+                              IsVisible="{Binding IsChecked, ElementName=ColResizeBtn}" />
                     </Canvas>
                 </Viewbox>
             </ToggleButton>
