@@ -9,7 +9,9 @@
     <Border BorderBrush="#E8E8E8" BorderThickness="0,0,0,1">
         <Grid>
 
-            <!-- Основной контент -->
+            <!-- Основной контент: 72px метка слева + зона колонок справа. Скроллбар сетки
+                 времени рисуется поверх контента (overlay) и место не отъедает, поэтому
+                 здесь резерв не нужен — зона колонок занимает всю ширину, как у сетки. -->
             <Grid ColumnDefinitions="72,*">
 
                 <!-- Метка "весь день" слева (правая линия отделяет от зоны событий) -->
@@ -24,10 +26,12 @@
                                Margin="0,4,4,0" />
                 </Border>
 
-                <!-- Плашки all-day событий + оверлей для drag-ghost -->
+                <!-- Плашки all-day событий + оверлей для drag-ghost. Делители — UniformGrid
+                     с такими же Border-колонками (левая граница), как WeekColumns в сетке
+                     времени, чтобы вертикальные линии совпадали пиксель-в-пиксель. -->
                 <Grid Grid.Column="1">
-                    <Grid x:Name="DividersPanel"
-                          IsHitTestVisible="False" />
+                    <UniformGrid x:Name="DividersPanel"
+                                 IsHitTestVisible="False" />
                     <ScrollViewer x:Name="EventsScroll"
                                   HorizontalScrollBarVisibility="Disabled"
                                   VerticalScrollBarVisibility="Auto">

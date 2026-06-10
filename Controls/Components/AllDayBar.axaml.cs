@@ -345,23 +345,20 @@ public partial class AllDayBar : UserControl
         EventsPanel.ColumnDefinitions.Clear();
         EventsPanel.RowDefinitions.Clear();
         DividersPanel.Children.Clear();
-        DividersPanel.ColumnDefinitions.Clear();
 
         _currentDays = days.ToList();
+
+        // Делители — UniformGrid с Border-колонками (левая граница, кроме первой), точно
+        // как WeekColumns в сетке времени → вертикальные линии совпадают пиксель-в-пиксель.
+        DividersPanel.Columns = _currentDays.Count;
         for (var i = 0; i < _currentDays.Count; i++)
         {
             EventsPanel.ColumnDefinitions.Add(new ColumnDefinition(new GridLength(1, GridUnitType.Star)));
-            DividersPanel.ColumnDefinitions.Add(new ColumnDefinition(new GridLength(1, GridUnitType.Star)));
-            if (i > 0)
+            DividersPanel.Children.Add(new Border
             {
-                var line = new Border
-                {
-                    BorderBrush     = new SolidColorBrush(Color.Parse("#E8E8E8")),
-                    BorderThickness = new Thickness(1, 0, 0, 0),
-                };
-                Grid.SetColumn(line, i);
-                DividersPanel.Children.Add(line);
-            }
+                BorderBrush     = new SolidColorBrush(Color.Parse("#E8E8E8")),
+                BorderThickness = new Thickness(i == 0 ? 0 : 1, 0, 0, 0),
+            });
         }
 
         var allDayEvents = events
@@ -515,12 +512,14 @@ public partial class AllDayBar : UserControl
             inner.Children.Add(title);
         }
 
+        // Отступы как у событий часовой сетки: слева 1px, справа 2px (см. WeekView
+        // LayoutDayEntries) — чтобы плашки «весь день» стояли на тех же позициях.
         var block = new Border
         {
             Background   = normalBg,
             CornerRadius = new CornerRadius(3),
             Height       = 24,
-            Margin       = new Thickness(0, 0, 2, 2),
+            Margin       = new Thickness(1, 0, 2, 2),
             Cursor       = new Cursor(StandardCursorType.Hand),
             Child        = inner,
         };
@@ -528,7 +527,7 @@ public partial class AllDayBar : UserControl
         if (span <= 1) return (block, block, title, timeBlock, strip);
 
         // white opaque wrapper covers internal divider lines
-        var wrapper = new Grid { Height = 24, Margin = new Thickness(0, 0, 2, 2) };
+        var wrapper = new Grid { Height = 24, Margin = new Thickness(1, 0, 2, 2) };
         wrapper.Children.Add(new Border { Background = new SolidColorBrush(Color.Parse("#F2F2F7")), CornerRadius = new CornerRadius(3) });
         block.Margin = new Thickness(0);
         wrapper.Children.Add(block);
@@ -584,7 +583,7 @@ public partial class AllDayBar : UserControl
             Background       = colorBrush,
             CornerRadius     = new CornerRadius(3),
             Height           = height,
-            Margin           = new Thickness(0, 0, 2, 2),
+            Margin           = new Thickness(1, 0, 2, 2),
             IsHitTestVisible = false,
             Child            = inner,
         };
@@ -602,7 +601,6 @@ public partial class AllDayBar : UserControl
         EventsPanel.ColumnDefinitions.Clear();
         EventsPanel.RowDefinitions.Clear();
         DividersPanel.Children.Clear();
-        DividersPanel.ColumnDefinitions.Clear();
         UpdateAutoHeight();
     }
 
