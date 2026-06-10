@@ -130,7 +130,12 @@
     </Style>
 
     <!-- Кнопки навбаров в стиле «Сегодня»: серый фон, серая рамка,
-         при наведении синяя рамка + синяя иконка -->
+         при наведении синяя рамка + синяя иконка.
+         ToolTip.Placement=Top: в fullscreen-режиме футер прижат к нижней границе
+         экрана; дефолтное Placement=Pointer уводит popup тултипа на саму кнопку,
+         курсор уходит в окно тултипа, hover теряется, тултип закрывается — и
+         цикл повторяется (мерцание hover-стиля и cursor Hand↔Arrow). Top гарантирует,
+         что popup всегда выше кнопки и не перехватывает курсор. -->
     <Style Selector="Button.navbtn, ToggleButton.navbtn">
         <Setter Property="Background"                 Value="{StaticResource BrushSecondaryBg}" />
         <Setter Property="Foreground"                 Value="{StaticResource BrushSecondaryText}" />
@@ -140,6 +145,8 @@
         <Setter Property="HorizontalContentAlignment" Value="Center" />
         <Setter Property="VerticalContentAlignment"   Value="Center" />
         <Setter Property="Cursor"                     Value="Hand" />
+        <Setter Property="ToolTip.Placement"          Value="Top" />
+        <Setter Property="ToolTip.VerticalOffset"     Value="-4" />
     </Style>
     <Style Selector="Button.navbtn:pointerover /template/ ContentPresenter,
                      ToggleButton.navbtn:pointerover /template/ ContentPresenter">

@@ -78,6 +78,14 @@ public partial class ConstructorControllerView : UserControl
         EmptyStateHint.IsVisible    = empty;
         ConstructorFooter.IsVisible = !empty;
         ConstructorNavbar.ShowCollectionControls(!empty);
+
+        // Скрываем таблицу/список, чтобы пустая шапка DataGrid не висела серой полосой
+        // под навбаром. При выборе коллекции SwitchView вернёт нужную видимость.
+        if (empty)
+        {
+            TableViewCtrl.IsVisible = false;
+            ListViewCtrl.IsVisible  = false;
+        }
     }
 
     public void SelectCollection(int collectionId)

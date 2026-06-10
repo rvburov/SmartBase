@@ -556,7 +556,7 @@ public partial class Sidebar : UserControl
         if (_repository is null || OwnerWindow is null) return;
 
         var dlg = new ConfirmDialog(
-            "Удалить группу? Коллекции внутри будут перемещены в корневой уровень.");
+            "Удалить группу? Все вложенные группы и коллекции будут удалены без возможности восстановления.");
         if (await dlg.ShowDialog<bool>(OwnerWindow) != true) return;
 
         _repository.DeleteGroup(groupId);

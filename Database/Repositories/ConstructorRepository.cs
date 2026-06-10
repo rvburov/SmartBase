@@ -39,8 +39,13 @@ public class ConstructorRepository(AppDbContext db)
 
     public void DeleteGroup(int groupId)
     {
-        foreach (var col in db.DbCollections.Where(c => c.GroupId == groupId))
-            col.GroupId = null;
+        // Рекурсивно удаляем все вложенные группы.
+        var childIds = db.DbGroups.Where(g => g.ParentId == groupId).Select(g => g.Id).ToList();
+        foreach (var childId in childIds)
+            DeleteGroup(childId);
+
+        // Удаляем коллекции этой группы; поля/записи/значения уйдут каскадно.
+        db.DbCollections.RemoveRange(db.DbCollections.Where(c => c.GroupId == groupId));
 
         var entity = db.DbGroups.Find(groupId);
         if (entity is not null) db.DbGroups.Remove(entity);
