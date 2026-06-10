@@ -23,14 +23,14 @@ public partial class AllDayBar : UserControl
     private const double MaxH          = 300;
     private const double RowH          = 26.0; // block height (24) + bottom margin (2)
     private const double PanelTopMargin = 2.0;
-    private const double ResizeHandleH = 4.0;
+    private const double ResizeHandleH = 6.0; // запас снизу под «пилюлю»-ручку (overlay)
     private const int    MaxAutoRows   = 4;
 
-    // resize
+    // resize (ручка вынесена в родительский вид — Week/DayView — по аналогии
+    // с ресайз-ручкой сайдбара в MainWindow; здесь только сама логика высоты)
     private bool      _isResizing;
     private double    _resizeStartY;
     private double    _resizeStartHeight;
-    private IPointer? _resizePointer;
 
     // selection (set of selected events → deselect-callback for each)
     private readonly Dictionary<CalendarRecord, Action> _selections = new();
@@ -69,10 +69,6 @@ public partial class AllDayBar : UserControl
     {
         InitializeComponent();
 
-        ResizeHandle.PointerPressed  += OnHandlePressed;
-        ResizeHandle.PointerMoved    += OnHandleMoved;
-        ResizeHandle.PointerReleased += OnHandleReleased;
-
         EventsScroll.AddHandler(PointerPressedEvent,  OnEventsPressed,  RoutingStrategies.Bubble, handledEventsToo: true);
         EventsScroll.AddHandler(PointerMovedEvent,    OnEventsMoved,    RoutingStrategies.Bubble, handledEventsToo: true);
         EventsScroll.AddHandler(PointerReleasedEvent, OnEventsReleased, RoutingStrategies.Bubble, handledEventsToo: true);
@@ -107,34 +103,24 @@ public partial class AllDayBar : UserControl
     }
 
     // ── resize ────────────────────────────────────────────────────────────────
+    // Вызывается из родительского вида (ручка-«пилюля» живёт там, чтобы не
+    // обрезалась границами этого контрола). pointerY — координата Y указателя
+    // в системе координат вида, единая между Begin/Update.
 
-    private void OnHandlePressed(object? sender, PointerPressedEventArgs e)
+    public void ResizeBegin(double pointerY)
     {
-        if (!e.GetCurrentPoint(null).Properties.IsLeftButtonPressed) return;
         _isResizing        = true;
-        _resizeStartY      = e.GetPosition(this).Y;
+        _resizeStartY      = pointerY;
         _resizeStartHeight = Bounds.Height;
-        _resizePointer     = e.Pointer;
-        e.Pointer.Capture(ResizeHandle);
-        e.Handled = true;
     }
 
-    private void OnHandleMoved(object? sender, PointerEventArgs e)
+    public void ResizeUpdate(double pointerY)
     {
         if (!_isResizing) return;
-        var delta = e.GetPosition(this).Y - _resizeStartY;
-        Height    = Math.Clamp(_resizeStartHeight + delta, MinH, MaxH);
-        e.Handled = true;
+        Height = Math.Clamp(_resizeStartHeight + (pointerY - _resizeStartY), MinH, MaxH);
     }
 
-    private void OnHandleReleased(object? sender, PointerReleasedEventArgs e)
-    {
-        if (!_isResizing) return;
-        _isResizing = false;
-        _resizePointer?.Capture(null);
-        _resizePointer = null;
-        e.Handled = true;
-    }
+    public void ResizeEnd() => _isResizing = false;
 
     // ── pointer events ────────────────────────────────────────────────────────
 

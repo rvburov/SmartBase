@@ -189,6 +189,9 @@
              (последнее число — отступ справа до стрелки одинаков везде). -->
         <Setter Property="VerticalContentAlignment" Value="Center" />
         <Setter Property="Padding"                  Value="10,0,8,0" />
+        <!-- Снимаем дефолтный Fluent MinHeight (~32px), чтобы Height=30
+             совпадал по высоте с навигационными кнопками. -->
+        <Setter Property="MinHeight"                Value="30" />
     </Style>
 
     <!-- Текст выбранного значения: по центру + обрезка многоточием при длинном тексте. -->
@@ -274,6 +277,8 @@
         <Setter Property="BorderThickness" Value="1" />
         <Setter Property="CornerRadius"    Value="{StaticResource RadiusMedium}" />
         <Setter Property="Padding"         Value="0,2" />
+        <!-- Зазор между полем и выпадашкой — как у списка времени (timePopup). -->
+        <Setter Property="Margin"          Value="0,1,0,0" />
     </Style>
 
     <!-- TextBox -->
@@ -774,7 +779,7 @@
         <Setter Property="CornerRadius"    Value="{StaticResource RadiusMedium}" />
         <Setter Property="BoxShadow"       Value="0 4 16 0 #1A000000" />
         <Setter Property="Padding"         Value="0,2" />
-        <Setter Property="Margin"          Value="0,4,0,0" />
+        <Setter Property="Margin"          Value="0,1,0,0" />
     </Style>
 
     <Style Selector="ListBox.timeList">
@@ -812,16 +817,7 @@
         <Setter Property="CornerRadius" Value="{StaticResource RadiusBase}" />
     </Style>
 
-    <!-- CheckBox -->
-    <Style Selector="CheckBox /template/ Border#NormalRectangle">
-        <Setter Property="CornerRadius"    Value="{StaticResource RadiusXS}" />
-        <Setter Property="BorderThickness" Value="1.5" />
-        <Setter Property="BorderBrush"     Value="{StaticResource BrushAccent}" />
-    </Style>
-
-    <Style Selector="CheckBox:checked /template/ Border#NormalRectangle">
-        <Setter Property="Background" Value="{StaticResource BrushAccent}" />
-    </Style>
+    <!-- CheckBox: единый стиль вынесен в Controls/Widgets/AppCheckBox.axaml -->
 
     <!-- ContextMenu / MenuItem: визуально как ComboBox-выпадашка.
          Фон/рамка/скругление контейнера повторяют ComboBox Popup, элементы — ComboBoxItem

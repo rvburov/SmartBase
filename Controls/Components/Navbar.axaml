@@ -39,6 +39,9 @@
         <Button Grid.Column="1" x:Name="TodayBtn"
                 Content="Сегодня" Width="80" Height="30" Margin="0,0,4,0"
                 VerticalAlignment="Center"
+                Padding="0"
+                HorizontalContentAlignment="Center"
+                VerticalContentAlignment="Center"
                 CornerRadius="{StaticResource RadiusMedium}"
                 Background="{StaticResource BrushSecondaryBg}"
                 Foreground="{StaticResource BrushPrimaryText}"
@@ -92,7 +95,7 @@
 
         <!-- Поиск -->
         <TextBox Grid.Column="5" x:Name="SearchBox"
-                 Width="200" Height="30" Margin="0,0,8,0"
+                 Width="200" Height="30" MinHeight="30" Margin="0,0,8,0"
                  VerticalAlignment="Center"
                  VerticalContentAlignment="Center"
                  Watermark="Поиск..."

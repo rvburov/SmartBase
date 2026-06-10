@@ -135,20 +135,22 @@
                                         VerticalAlignment="Stretch"
                                         Background="Transparent"
                                         Tapped="OnCheckboxTapped">
-                                    <Border Width="16" Height="16"
+                                    <Border Width="{StaticResource CheckBoxSize}"
+                                            Height="{StaticResource CheckBoxSize}"
                                             VerticalAlignment="Center"
                                             HorizontalAlignment="Center"
-                                            CornerRadius="{StaticResource RadiusXS}"
+                                            CornerRadius="{StaticResource CheckBoxRadius}"
                                             IsVisible="{Binding ShowCheckbox}"
                                             Background="{Binding CheckFill}"
                                             BorderBrush="{Binding CheckBorder}"
-                                            BorderThickness="1.5">
-                                        <Viewbox Width="12" Height="12"
+                                            BorderThickness="{StaticResource CheckBoxBorderThickness}">
+                                        <Viewbox Width="{StaticResource CheckBoxGlyphSize}"
+                                                 Height="{StaticResource CheckBoxGlyphSize}"
                                                  IsVisible="{Binding Checked}">
                                             <Canvas Width="24" Height="24">
-                                                <Path Data="M5 13 L10 18 L19 7"
+                                                <Path Data="{StaticResource CheckBoxGlyphGeometry}"
                                                       Stroke="White"
-                                                      StrokeThickness="2.5"
+                                                      StrokeThickness="{StaticResource CheckBoxGlyphThickness}"
                                                       StrokeLineCap="Round" StrokeJoin="Round" />
                                             </Canvas>
                                         </Viewbox>

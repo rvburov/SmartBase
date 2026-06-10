@@ -1,11 +1,104 @@
-<UserControl xmlns="https://github.com/avaloniaui"
-             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             x:Class="MyPlanner.Controls.Widgets.AppCheckBox">
+<Styles xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
 
-    <CheckBox x:Name="PART_CheckBox"
-              Content="{Binding Label, RelativeSource={RelativeSource AncestorType=UserControl}}"
-              IsChecked="{Binding IsChecked, RelativeSource={RelativeSource AncestorType=UserControl}, Mode=TwoWay}"
-              Foreground="{StaticResource BrushPrimaryText}"
-              FontSize="{StaticResource FontSizeBase}" />
+    <!-- ════════════════════════════════════════════════════════════════
+         Единый чекбокс для всего приложения.
 
-</UserControl>
+         Размер квадрата 16×16, радиус 2, рамка 1 — задаются здесь и в
+         ресурсах, чтобы и обычный CheckBox (свой ControlTheme ниже), и
+         «ручной» чекбокс в Sidebar (Border с галочкой внутри шаблона
+         строки дерева) рисовались одинаково.
+
+         Размер в дефолтном Fluent-шаблоне зашит локальными значениями
+         (20×20) прямо в шаблоне, а локальное значение приоритетнее
+         сеттера стиля — поэтому переопределить его стилем нельзя и мы
+         задаём собственный ControlTheme.
+
+         Отличие только в цвете:
+           • обычный CheckBox — чёрная рамка (BrushPrimaryText),
+                                заливка акцентом в отмеченном состоянии;
+           • Sidebar          — цветной (цвет коллекции, задаётся в шаблоне).
+         ════════════════════════════════════════════════════════════════ -->
+    <Styles.Resources>
+        <!-- Геометрия чекбокса (единая везде; используется и в Sidebar) -->
+        <x:Double x:Key="CheckBoxSize">16</x:Double>
+        <x:Double x:Key="CheckBoxGlyphSize">12</x:Double>
+        <CornerRadius x:Key="CheckBoxRadius">2</CornerRadius>
+        <Thickness x:Key="CheckBoxBorderThickness">1</Thickness>
+
+        <!-- Галочка: форма и толщина — общие, чтобы Sidebar рисовал её так же -->
+        <StreamGeometry x:Key="CheckBoxGlyphGeometry">M5 13 L10 18 L19 7</StreamGeometry>
+        <x:Double x:Key="CheckBoxGlyphThickness">2.5</x:Double>
+
+        <ControlTheme x:Key="{x:Type CheckBox}" TargetType="CheckBox">
+            <Setter Property="Foreground"                 Value="{StaticResource BrushPrimaryText}" />
+            <Setter Property="Background"                 Value="Transparent" />
+            <Setter Property="BorderThickness"            Value="0" />
+            <Setter Property="Padding"                    Value="8,0,0,0" />
+            <Setter Property="MinWidth"                   Value="0" />
+            <Setter Property="MinHeight"                  Value="0" />
+            <Setter Property="HorizontalAlignment"        Value="Left" />
+            <Setter Property="VerticalContentAlignment"   Value="Center" />
+            <Setter Property="HorizontalContentAlignment" Value="Left" />
+            <Setter Property="Template">
+                <ControlTemplate>
+                    <Grid ColumnDefinitions="Auto,*">
+
+                        <!-- Квадрат: 16×16, радиус 2, рамка 1 -->
+                        <Border x:Name="NormalRectangle"
+                                Width="{StaticResource CheckBoxSize}"
+                                Height="{StaticResource CheckBoxSize}"
+                                VerticalAlignment="Center"
+                                CornerRadius="{StaticResource CheckBoxRadius}"
+                                BorderThickness="{StaticResource CheckBoxBorderThickness}"
+                                BorderBrush="{StaticResource BrushPrimaryText}"
+                                Background="Transparent">
+                            <Viewbox Width="{StaticResource CheckBoxGlyphSize}"
+                                     Height="{StaticResource CheckBoxGlyphSize}">
+                                <Canvas Width="24" Height="24">
+                                    <Path x:Name="CheckGlyph"
+                                          Data="{StaticResource CheckBoxGlyphGeometry}"
+                                          Stroke="White"
+                                          StrokeThickness="{StaticResource CheckBoxGlyphThickness}"
+                                          StrokeLineCap="Round" StrokeJoin="Round"
+                                          IsVisible="False" />
+                                </Canvas>
+                            </Viewbox>
+                        </Border>
+
+                        <!-- Текстовая подпись (если есть) -->
+                        <ContentPresenter x:Name="PART_ContentPresenter"
+                                          Grid.Column="1"
+                                          Content="{TemplateBinding Content}"
+                                          ContentTemplate="{TemplateBinding ContentTemplate}"
+                                          Foreground="{TemplateBinding Foreground}"
+                                          Padding="{TemplateBinding Padding}"
+                                          VerticalAlignment="Center"
+                                          HorizontalAlignment="Left" />
+                    </Grid>
+                </ControlTemplate>
+            </Setter>
+
+            <!-- Отмечено: заливка акцентом, рамка под цвет заливки, галочка видна -->
+            <Style Selector="^:checked /template/ Border#NormalRectangle">
+                <Setter Property="Background"  Value="{StaticResource BrushAccent}" />
+                <Setter Property="BorderBrush" Value="{StaticResource BrushAccent}" />
+            </Style>
+            <Style Selector="^:checked /template/ Path#CheckGlyph">
+                <Setter Property="IsVisible" Value="True" />
+            </Style>
+
+            <!-- Промежуточное состояние — тоже акцент -->
+            <Style Selector="^:indeterminate /template/ Border#NormalRectangle">
+                <Setter Property="Background"  Value="{StaticResource BrushAccent}" />
+                <Setter Property="BorderBrush" Value="{StaticResource BrushAccent}" />
+            </Style>
+
+            <!-- Недоступно -->
+            <Style Selector="^:disabled">
+                <Setter Property="Opacity" Value="0.5" />
+            </Style>
+        </ControlTheme>
+    </Styles.Resources>
+
+</Styles>

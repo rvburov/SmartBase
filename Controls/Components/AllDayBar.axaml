@@ -4,58 +4,44 @@
              MinHeight="40"
              Background="{StaticResource BrushSecondaryBg}">
 
-    <Grid RowDefinitions="*,Auto">
+    <!-- Нижняя граница — сплошная разделительная линия (как у сайдбара).
+         Контент занимает всю высоту; ручка-«пилюля» висит поверх линии. -->
+    <Border BorderBrush="#E8E8E8" BorderThickness="0,0,0,1">
+        <Grid>
 
-        <!-- Основной контент -->
-        <Grid Grid.Row="0" ColumnDefinitions="72,*">
+            <!-- Основной контент -->
+            <Grid ColumnDefinitions="72,*">
 
-            <!-- Метка "весь день" слева (правая линия отделяет от зоны событий) -->
-            <Border Grid.Column="0"
-                    BorderBrush="#E8E8E8"
-                    BorderThickness="0,0,1,0">
-                <TextBlock Text="весь день"
-                           FontSize="{StaticResource FontSizeBase}"
-                           Foreground="{StaticResource BrushSecondaryText}"
-                           HorizontalAlignment="Right"
-                           VerticalAlignment="Top"
-                           Margin="0,4,4,0" />
-            </Border>
+                <!-- Метка "весь день" слева (правая линия отделяет от зоны событий) -->
+                <Border Grid.Column="0"
+                        BorderBrush="#E8E8E8"
+                        BorderThickness="0,0,1,0">
+                    <TextBlock Text="весь день"
+                               FontSize="{StaticResource FontSizeBase}"
+                               Foreground="{StaticResource BrushSecondaryText}"
+                               HorizontalAlignment="Right"
+                               VerticalAlignment="Top"
+                               Margin="0,4,4,0" />
+                </Border>
 
-            <!-- Плашки all-day событий + оверлей для drag-ghost -->
-            <Grid Grid.Column="1">
-                <Grid x:Name="DividersPanel"
-                      IsHitTestVisible="False" />
-                <ScrollViewer x:Name="EventsScroll"
-                              HorizontalScrollBarVisibility="Disabled"
-                              VerticalScrollBarVisibility="Auto">
-                    <Grid x:Name="EventsPanel"
-                          VerticalAlignment="Top"
-                          Margin="0,2,0,0" />
-                </ScrollViewer>
-                <Canvas x:Name="DragOverlay"
-                        IsHitTestVisible="False" />
+                <!-- Плашки all-day событий + оверлей для drag-ghost -->
+                <Grid Grid.Column="1">
+                    <Grid x:Name="DividersPanel"
+                          IsHitTestVisible="False" />
+                    <ScrollViewer x:Name="EventsScroll"
+                                  HorizontalScrollBarVisibility="Disabled"
+                                  VerticalScrollBarVisibility="Auto">
+                        <Grid x:Name="EventsPanel"
+                              VerticalAlignment="Top"
+                              Margin="0,2,0,0" />
+                    </ScrollViewer>
+                    <Canvas x:Name="DragOverlay"
+                            IsHitTestVisible="False" />
+                </Grid>
+
             </Grid>
 
         </Grid>
-
-        <!-- Splitter-ручка для изменения высоты -->
-        <Border Grid.Row="1"
-                x:Name="ResizeHandle"
-                Height="4"
-                Background="#E5E5EA"
-                Cursor="SizeNorthSouth">
-            <StackPanel Orientation="Horizontal"
-                        HorizontalAlignment="Center"
-                        VerticalAlignment="Center"
-                        Spacing="4">
-                <Ellipse Width="3" Height="3" Fill="#8E8E93" />
-                <Ellipse Width="3" Height="3" Fill="#8E8E93" />
-                <Ellipse Width="3" Height="3" Fill="#8E8E93" />
-                <Ellipse Width="3" Height="3" Fill="#8E8E93" />
-                <Ellipse Width="3" Height="3" Fill="#8E8E93" />
-            </StackPanel>
-        </Border>
-
-    </Grid>
+    </Border>
 
 </UserControl>

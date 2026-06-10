@@ -89,6 +89,29 @@
             </Grid>
         </ScrollViewer>
 
+        <!-- Ручка ресайза AllDayBar — «пилюля» как у сайдбара. Вынесена на уровень
+             вида и объявлена последней → рисуется поверх сетки и наезжает на
+             разделительную линию снизу (отрицательный отступ), не обрезаясь. -->
+        <Border x:Name="AllDayResizeGrip"
+                Grid.Row="0"
+                Width="34" Height="11"
+                HorizontalAlignment="Center"
+                VerticalAlignment="Bottom"
+                Margin="0,0,0,-6"
+                CornerRadius="4"
+                Background="{StaticResource BrushBg}"
+                BorderBrush="{StaticResource BrushSeparator}"
+                BorderThickness="1"
+                Cursor="SizeNorthSouth">
+            <StackPanel Orientation="Horizontal" Spacing="3"
+                        HorizontalAlignment="Center"
+                        VerticalAlignment="Center">
+                <Ellipse Width="2.5" Height="2.5" Fill="{StaticResource BrushSecondaryText}" />
+                <Ellipse Width="2.5" Height="2.5" Fill="{StaticResource BrushSecondaryText}" />
+                <Ellipse Width="2.5" Height="2.5" Fill="{StaticResource BrushSecondaryText}" />
+            </StackPanel>
+        </Border>
+
     </Grid>
 
 </UserControl>

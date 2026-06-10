@@ -103,6 +103,21 @@ public partial class DayView : UserControl
         AllDayBarCtrl.RecordsDeleteRequested   += (_, rs) => RecordsDeleteRequested?.Invoke(this, rs);
         AllDayBarCtrl.RecordCreationRequested += (_, d)  => AllDayCreationRequested?.Invoke(this, d);
 
+        AllDayResizeGrip.PointerPressed += (_, e) =>
+        {
+            if (!e.GetCurrentPoint(this).Properties.IsLeftButtonPressed) return;
+            AllDayBarCtrl.ResizeBegin(e.GetPosition(this).Y);
+            e.Pointer.Capture(AllDayResizeGrip);
+            e.Handled = true;
+        };
+        AllDayResizeGrip.PointerMoved    += (_, e) => AllDayBarCtrl.ResizeUpdate(e.GetPosition(this).Y);
+        AllDayResizeGrip.PointerReleased += (_, e) =>
+        {
+            AllDayBarCtrl.ResizeEnd();
+            e.Pointer.Capture(null);
+            e.Handled = true;
+        };
+
         SizeChanged += (_, _) => AllDayBarCtrl.InvalidateMeasure();
     }
 
