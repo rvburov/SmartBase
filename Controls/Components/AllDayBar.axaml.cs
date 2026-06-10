@@ -395,7 +395,12 @@ public partial class AllDayBar : UserControl
             while (EventsPanel.RowDefinitions.Count <= row)
                 EventsPanel.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
 
-            var (root, block, titleBlock, timeBlock, stripBlock) = BuildBlock(ev, span);
+            // Есть ли начало/конец события в пределах видимых дней. Если событие
+            // тянется за границу недели/дня — с того края cap == false.
+            var leftCap  = evStart >= _currentDays[0];
+            var rightCap = evEnd   <= _currentDays[^1];
+
+            var (root, block, titleBlock, timeBlock, stripBlock) = BuildBlock(ev, span, leftCap, rightCap);
             Grid.SetColumn(root, startCol);
             Grid.SetColumnSpan(root, span);
             Grid.SetRow(root, row);
@@ -424,7 +429,7 @@ public partial class AllDayBar : UserControl
                     block.Background      = normalBg;
                     titleBlock.Foreground = darkBrush;
                     if (timeBlock != null) timeBlock.Foreground = darkBrush;
-                    stripBlock.IsVisible  = true;
+                    stripBlock.IsVisible  = leftCap; // без начала — полоски нет
                 },
             };
             _allDayEntries.Add(entry);
@@ -437,7 +442,11 @@ public partial class AllDayBar : UserControl
         UpdateAutoHeight();
     }
 
-    private static (Control root, Border colorBorder, TextBlock titleBlock, TextBlock? timeBlock, Border stripBorder) BuildBlock(CalendarRecord ev, int span)
+    // leftCap/rightCap: событие начинается/заканчивается в пределах видимых дней.
+    // Где cap == false — событие «тянется» за границу недели/дня: с той стороны нет
+    // скругления и бокового отступа (стыкуется встык), а слева без начала — без
+    // цветной полоски. По аналогии с многодневным баром в режиме «Месяц».
+    private static (Control root, Border colorBorder, TextBlock titleBlock, TextBlock? timeBlock, Border stripBorder) BuildBlock(CalendarRecord ev, int span, bool leftCap = true, bool rightCap = true)
     {
         var color      = Color.Parse(EventColors.Display(ev.Color));
         var normalBg   = new SolidColorBrush(Color.FromArgb(40, color.R, color.G, color.B));
@@ -451,6 +460,7 @@ public partial class AllDayBar : UserControl
             Width             = 3,
             Margin            = new Thickness(2, 2, 0, 2),
             VerticalAlignment = VerticalAlignment.Stretch,
+            IsVisible         = leftCap, // полоска только у начала события
         };
 
         var title = new TextBlock
@@ -509,14 +519,23 @@ public partial class AllDayBar : UserControl
             inner.Children.Add(title);
         }
 
+        // Скругления только с того края, где у события есть начало/конец; где
+        // событие обрезано границей недели — угол прямой.
+        var cr = new CornerRadius(
+            leftCap  ? 3 : 0, rightCap ? 3 : 0,
+            rightCap ? 3 : 0, leftCap  ? 3 : 0);
+
         // Отступы как у событий часовой сетки: слева 1px, справа 2px (см. WeekView
-        // LayoutDayEntries) — чтобы плашки «весь день» стояли на тех же позициях.
+        // LayoutDayEntries). С обрезанного края отступ убираем — плашка стыкуется
+        // встык через границу недели.
+        var margin = new Thickness(leftCap ? 1 : 0, 0, rightCap ? 2 : 0, 2);
+
         var block = new Border
         {
             Background   = normalBg,
-            CornerRadius = new CornerRadius(3),
+            CornerRadius = cr,
             Height       = 24,
-            Margin       = new Thickness(1, 0, 2, 2),
+            Margin       = margin,
             Cursor       = new Cursor(StandardCursorType.Hand),
             Child        = inner,
         };
@@ -524,8 +543,8 @@ public partial class AllDayBar : UserControl
         if (span <= 1) return (block, block, title, timeBlock, strip);
 
         // white opaque wrapper covers internal divider lines
-        var wrapper = new Grid { Height = 24, Margin = new Thickness(1, 0, 2, 2) };
-        wrapper.Children.Add(new Border { Background = new SolidColorBrush(Color.Parse("#F2F2F7")), CornerRadius = new CornerRadius(3) });
+        var wrapper = new Grid { Height = 24, Margin = margin };
+        wrapper.Children.Add(new Border { Background = new SolidColorBrush(Color.Parse("#F2F2F7")), CornerRadius = cr });
         block.Margin = new Thickness(0);
         wrapper.Children.Add(block);
         return (wrapper, block, title, timeBlock, strip);
