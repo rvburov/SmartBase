@@ -33,6 +33,7 @@
                     <UniformGrid x:Name="DividersPanel"
                                  IsHitTestVisible="False" />
                     <ScrollViewer x:Name="EventsScroll"
+                                  Background="Transparent"
                                   HorizontalScrollBarVisibility="Disabled"
                                   VerticalScrollBarVisibility="Auto">
                         <Grid x:Name="EventsPanel"

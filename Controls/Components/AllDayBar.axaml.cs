@@ -72,7 +72,24 @@ public partial class AllDayBar : UserControl
         EventsScroll.AddHandler(PointerPressedEvent,  OnEventsPressed,  RoutingStrategies.Bubble, handledEventsToo: true);
         EventsScroll.AddHandler(PointerMovedEvent,    OnEventsMoved,    RoutingStrategies.Bubble, handledEventsToo: true);
         EventsScroll.AddHandler(PointerReleasedEvent, OnEventsReleased, RoutingStrategies.Bubble, handledEventsToo: true);
+
+        // Запоминаем позицию правого клика в координатах EventsPanel (там лежат
+        // плашки и считается HitTest/колонка), как _gridContextPos в WeekView.
+        EventsScroll.AddHandler(PointerPressedEvent, (_, pe) =>
+        {
+            if (pe.GetCurrentPoint(EventsScroll).Properties.IsRightButtonPressed)
+                _menuPos = pe.GetPosition(EventsPanel);
+        }, RoutingStrategies.Tunnel);
+
+        // Единое контекстное меню вешаем на ScrollViewer (он растянут на всю зону
+        // колонок и хит-тестируется даже на пустых днях; сам EventsPanel сжат по
+        // содержимому и без фона). Фреймворк сам открывает меню по правому клику и
+        // закрывает предыдущее — дублей «Создать запись» не будет. Состав пунктов
+        // зависит от того, попал ли клик на событие — наполняем в Opening.
+        EventsScroll.ContextMenu = _BuildContextMenu();
     }
+
+    private Point _menuPos;
 
     private EventHandler<KeyEventArgs>? _windowKeyHandler;
 
@@ -130,25 +147,20 @@ public partial class AllDayBar : UserControl
         var pos   = e.GetPosition(EventsPanel);
         var entry = HitTest(pos);
 
-        // Правый клик: показываем контекстное меню, не трогаем drag.
+        // Правый клик: выделяем событие под курсором (если оно вне текущей группы),
+        // чтобы пункт меню действовал на видимо выделенное — как в режиме «Месяц».
+        // Само меню открывает фреймворк (EventsPanel.ContextMenu), наполнение — в Opening.
         if (props.IsRightButtonPressed)
         {
             if (entry is null)
             {
                 _DeselectAll();
-                ShowGridContextMenu(pos);
             }
-            else
+            else if (!_selections.ContainsKey(entry.Ev))
             {
-                // Если клик по событию вне текущей группы — переключаем выделение на одиночное.
-                if (!_selections.ContainsKey(entry.Ev))
-                {
-                    _DeselectAll();
-                    _SelectEntry(entry);
-                }
-                ShowEventContextMenu(entry, pos);
+                _DeselectAll();
+                _SelectEntry(entry);
             }
-            e.Handled = true;
             return;
         }
 
@@ -637,37 +649,53 @@ public partial class AllDayBar : UserControl
     private static Color Darken(Color c, double f = 0.6)
         => Color.FromArgb(c.A, (byte)(c.R * f), (byte)(c.G * f), (byte)(c.B * f));
 
-    // ── context menus ─────────────────────────────────────────────────────────
+    // ── context menu ──────────────────────────────────────────────────────────
 
-    private void ShowEventContextMenu(AllDayEntry entry, Point pos)
+    // Единое меню области событий. Наполнение зависит от того, попал ли последний
+    // правый клик на событие: на событии — «Редактировать/Удалить» (или массовое
+    // удаление при множественном выделении), на пустом месте — «Создать запись».
+    // Меню назначается свойством ContextMenu, поэтому фреймворк сам открывает его
+    // по правому клику и закрывает предыдущее — дублей «Создать запись» не будет.
+    private ContextMenu _BuildContextMenu()
     {
-        var ev = entry.Ev;
-        ContextMenu menu;
-        if (_selections.Count > 1 && _selections.ContainsKey(ev))
+        var menu = new ContextMenu();
+        menu.Opening += (_, args) =>
         {
-            var batch = _selections.Keys.ToList();
-            menu = EventContextMenu.Multi(() => { _DeselectAll(); RecordsDeleteRequested?.Invoke(this, batch); });
-        }
-        else
-        {
-            menu = EventContextMenu.Single(
-                onEdit:   () => { _DeselectAll(); RecordClicked?.Invoke(this, ev); },
-                onDelete: () => { _DeselectAll(); RecordDeleteRequested?.Invoke(this, ev); });
-        }
-        menu.PlacementTarget = entry.Root;
-        menu.Open(entry.Root);
-    }
+            menu.Items.Clear();
 
-    private void ShowGridContextMenu(Point pos)
-    {
-        if (_currentDays.Count == 0) return;
-        var colW = ColW();
-        if (colW <= 0) return;
-        var col = Math.Clamp((int)(pos.X / colW), 0, _currentDays.Count - 1);
-        var day = _currentDays[col];
+            var entry = HitTest(_menuPos);
+            if (entry is not null)
+            {
+                var ev = entry.Ev;
 
-        var menu = EventContextMenu.Background(() => RecordCreationRequested?.Invoke(this, day));
-        menu.PlacementTarget = EventsPanel;
-        menu.Open(EventsPanel);
+                // Множественное выделение → только массовое удаление с подтверждением.
+                if (_selections.Count > 1 && _selections.ContainsKey(ev))
+                {
+                    var batch = _selections.Keys.ToList();
+                    menu.Items.Add(EventContextMenu.MakeItem(
+                        "Удалить", () => { _DeselectAll(); RecordsDeleteRequested?.Invoke(this, batch); }));
+                    return;
+                }
+
+                menu.Items.Add(EventContextMenu.MakeItem(
+                    "Редактировать", () => { _DeselectAll(); RecordClicked?.Invoke(this, ev); }));
+                menu.Items.Add(EventContextMenu.MakeItem(
+                    "Удалить", () => { _DeselectAll(); RecordDeleteRequested?.Invoke(this, ev); }));
+                return;
+            }
+
+            // Пустое место — «Создать запись» в день под курсором.
+            var colW = ColW();
+            if (colW <= 0 || _currentDays.Count == 0)
+            {
+                args.Cancel = true;
+                return;
+            }
+            var col = Math.Clamp((int)(_menuPos.X / colW), 0, _currentDays.Count - 1);
+            var day = _currentDays[col];
+            menu.Items.Add(EventContextMenu.MakeItem(
+                "Создать запись", () => RecordCreationRequested?.Invoke(this, day)));
+        };
+        return menu;
     }
 }
