@@ -42,6 +42,7 @@ public partial class MonthView : UserControl
     private Control?  _dragSrcControl;
     private Grid?     _dragPreview;
     private DateTime? _shiftedDay;
+    private bool      _srcCounterShifted; // в исходном дне «+N ещё» временно уменьшен на утащенное
     private int       _pressClickCount;
     private bool      _skipNextDeselect;
 
@@ -871,6 +872,11 @@ public partial class MonthView : UserControl
         var changed = target.Value.Date != _dragTargetDay;
         if (changed) _dragTargetDay = target.Value.Date;
 
+        // Счётчик исходного дня: пока событие уведено в другой день — там одним
+        // меньше; вернулось на место — счётчик восстанавливаем.
+        if (_dragTargetDay != _dragSourceDay) _ShiftSourceCounter();
+        else                                  _RestoreSourceCounter();
+
         // Превью рисуем для любого дня под курсором — в т.ч. при возврате в исходный,
         // чтобы событие там тоже было ярким, а не пропадало.
         if (changed || _dragPreview is null) _UpdateDragPreview();
@@ -901,6 +907,7 @@ public partial class MonthView : UserControl
         if (_dragSrcControl is not null) { _dragSrcControl.Opacity = 1.0; _dragSrcControl = null; }
         if (_dragPreview is not null) { SpanCanvas.Children.Remove(_dragPreview); _dragPreview = null; }
         if (_shiftedDay.HasValue) _RestoreShift(_shiftedDay.Value);
+        _RestoreSourceCounter();
         _dragEv     = null;
         _dragActive = false;
     }
@@ -967,6 +974,32 @@ public partial class MonthView : UserControl
             ui.More.Text      = $"+{ui.OrigHidden} ещё";
         }
         _shiftedDay = null;
+    }
+
+    // Пока событие утащено из исходного дня в другой — там одним событием меньше:
+    // освободившееся место займёт скрытое, поэтому «+N ещё» уменьшаем на 1.
+    private void _ShiftSourceCounter()
+    {
+        if (_srcCounterShifted) return;
+        if (_dayUiMap.TryGetValue(_dragSourceDay, out var ui) && ui.OrigHidden > 0)
+        {
+            var n = ui.OrigHidden - 1;
+            ui.More.IsVisible = n > 0;
+            ui.More.Text      = $"+{n} ещё";
+        }
+        _srcCounterShifted = true;
+    }
+
+    // Вернуть исходному дню его настоящий «+N ещё» (возврат курсора / отпускание).
+    private void _RestoreSourceCounter()
+    {
+        if (!_srcCounterShifted) return;
+        if (_dayUiMap.TryGetValue(_dragSourceDay, out var ui))
+        {
+            ui.More.IsVisible = ui.OrigHidden > 0;
+            ui.More.Text      = $"+{ui.OrigHidden} ещё";
+        }
+        _srcCounterShifted = false;
     }
 
     // Создаёт превью-плашку (яркая красная, белый текст) при первом обращении.
@@ -1042,11 +1075,21 @@ public partial class MonthView : UserControl
         // лежит на Canvas без этой границы.
         var by = row * ch + 1 + DateH + freeRow * BarStep;
 
-        // Свободной строки в пределах ячейки нет — прячем превью и восстанавливаем
+        // Свободной строки в пределах ячейки нет — событие не влезает: прячем превью
+        // и показываем «+N ещё», увеличив счётчик на это перетаскиваемое событие
+        // (исходные скрытые + 1).
         if (ch > 0 && by + BarH > row * ch + ch - BPad)
         {
             if (_dragPreview is not null) { SpanCanvas.Children.Remove(_dragPreview); _dragPreview = null; }
-            if (_shiftedDay.HasValue) _RestoreShift(_shiftedDay.Value);
+            if (_shiftedDay.HasValue && _shiftedDay.Value != _dragTargetDay)
+                _RestoreShift(_shiftedDay.Value);
+            if (_dayUiMap.TryGetValue(_dragTargetDay, out var uiHidden))
+            {
+                var n = uiHidden.OrigHidden + 1;
+                uiHidden.More.IsVisible = true;
+                uiHidden.More.Text      = $"+{n} ещё";
+            }
+            _shiftedDay = _dragTargetDay;
             return;
         }
 
