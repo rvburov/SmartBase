@@ -19,6 +19,19 @@ public partial class AllDayBar : UserControl
     public event EventHandler<IReadOnlyList<CalendarRecord>>? RecordsDeleteRequested;
     public event EventHandler<DateOnly>? RecordCreationRequested;
 
+    // Сигнал «здесь что-то выделили». Аргумент = additive (Shift): при обычном
+    // выделении родитель (Week/DayView) сбрасывает выделение в часовой сетке
+    // (одно на экран); при additive — НЕ сбрасывает, чтобы Shift копил общий
+    // набор через обе зоны.
+    public event EventHandler<bool>? SelectionRequested;
+
+    // Хуки для общего (кросс-зонного) удаления. Родитель задаёт:
+    //  • ExternalSelectedCount — сколько выделено ВНЕ бара (в часовой сетке);
+    //  • DeleteAllSelected      — удалить общий набор обеих зон разом.
+    // Нужны, чтобы контекстное «Удалить» в баре сносило весь набор, как Delete.
+    public Func<int>? ExternalSelectedCount { get; set; }
+    public Action?    DeleteAllSelected     { get; set; }
+
     private const double MinH          = 40;
     private const double MaxH          = 300;
     private const double RowH          = 26.0; // block height (24) + bottom margin (2)
@@ -91,33 +104,8 @@ public partial class AllDayBar : UserControl
 
     private Point _menuPos;
 
-    private EventHandler<KeyEventArgs>? _windowKeyHandler;
-
-    protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
-    {
-        base.OnAttachedToVisualTree(e);
-        if (e.Root is Avalonia.Controls.Window win)
-        {
-            _windowKeyHandler = (_, ke) =>
-            {
-                if (ke.Key != Key.Delete && ke.Key != Key.Back) return;
-                if (!IsVisible) return;
-                if (ke.Source is TextBox or AutoCompleteBox) return;
-                if (TryDeleteSelected()) ke.Handled = true;
-            };
-            win.AddHandler(KeyDownEvent, _windowKeyHandler, handledEventsToo: true);
-        }
-    }
-
-    protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
-    {
-        base.OnDetachedFromVisualTree(e);
-        if (e.Root is Avalonia.Controls.Window win && _windowKeyHandler is not null)
-        {
-            win.RemoveHandler(KeyDownEvent, _windowKeyHandler);
-            _windowKeyHandler = null;
-        }
-    }
+    // Delete больше не обрабатывается здесь: родитель (Week/DayView) собирает общий
+    // набор выделенных из обеих зон и удаляет разом — см. SelectedRecords/ClearSelection.
 
     // ── resize ────────────────────────────────────────────────────────────────
     // Вызывается из родительского вида (ручка-«пилюля» живёт там, чтобы не
@@ -160,6 +148,7 @@ public partial class AllDayBar : UserControl
             {
                 _DeselectAll();
                 _SelectEntry(entry);
+                SelectionRequested?.Invoke(this, false);
             }
             return;
         }
@@ -192,18 +181,21 @@ public partial class AllDayBar : UserControl
         _dragSourceSpan = entry.Span;
         _dragSourceRow  = entry.Row;
 
-        // Shift+Click — добавление/снятие в группу. Без Shift на не выделенном —
-        // сбрасываем группу и выделяем одиночно.
+        // Shift+Click — добавление/снятие в группу (общий набор копится через обе
+        // зоны: сетку не сбрасываем). Без Shift на не выделенном — сбрасываем
+        // группу и выделяем одиночно (сетка тоже сбрасывается).
         var additive = e.KeyModifiers.HasFlag(KeyModifiers.Shift);
         if (additive)
         {
             if (_selections.ContainsKey(entry.Ev)) _DeselectOne(entry.Ev);
             else                                    _SelectEntry(entry);
+            SelectionRequested?.Invoke(this, true);
         }
         else if (!_selections.ContainsKey(entry.Ev))
         {
             _DeselectAll();
             _SelectEntry(entry);
+            SelectionRequested?.Invoke(this, false);
         }
 
         e.Pointer.Capture(EventsScroll);
@@ -222,25 +214,12 @@ public partial class AllDayBar : UserControl
         _selections.Clear();
     }
 
-    // Возвращает true, если что-то было выделено и инициировано удаление —
-    // родительский Week/DayView использует это для обработки Delete на окне.
-    public bool TryDeleteSelected()
-    {
-        if (_selections.Count == 0) return false;
-        if (_selections.Count == 1)
-        {
-            var only = _selections.Keys.First();
-            _DeselectAll();
-            RecordDeleteRequested?.Invoke(this, only);
-        }
-        else
-        {
-            var batch = _selections.Keys.ToList();
-            _DeselectAll();
-            RecordsDeleteRequested?.Invoke(this, batch);
-        }
-        return true;
-    }
+    // Внешний сброс выделения (родитель зовёт при выделении в часовой сетке).
+    public void ClearSelection() => _DeselectAll();
+
+    // Текущий набор выделенных в баре — родитель объединяет его с выделением
+    // часовой сетки, чтобы Delete/«Удалить» сносили общий набор разом.
+    public IReadOnlyList<CalendarRecord> SelectedRecords => _selections.Keys.ToList();
 
     private void _DeselectOne(CalendarRecord ev)
     {
@@ -265,6 +244,8 @@ public partial class AllDayBar : UserControl
 
             // drag отменяет multi-select на всех событиях
             _DeselectAll();
+            // Оригинал делаем полупрозрачным (видно, откуда тащим). Дубля не будет:
+            // в исходной колонке ghost ложится ровно на строку события (см. ниже).
             _dragSource.Opacity = 0.45;
 
             _dragGhost = CreateGhost(_dragEvent, 24);
@@ -280,23 +261,24 @@ public partial class AllDayBar : UserControl
             var maxCol = Math.Max(0, _currentDays.Count - _dragSourceSpan);
             var col    = Math.Clamp((int)(pos.X / colW), 0, maxCol);
 
-            var targetEnd = col + _dragSourceSpan - 1;
-            var bottomRow = _allDayEntries
-                .Where(en => en.Ev.Id != _dragEvent?.Id
-                          && en.Col <= targetEnd
-                          && en.Col + en.Span - 1 >= col)
-                .Select(en => en.Row)
-                .DefaultIfEmpty(-1)
-                .Max() + 1;
+            // В исходной колонке событие остаётся на своей строке (это «то же
+            // событие на месте» — без перестановки вниз). В другой колонке ищем
+            // первую свободную строку для целевых дней — так же, как при первичной
+            // раскладке: ghost занимает дыру выше, а не всегда падает в самый низ.
+            int targetRow;
+            if (col == _dragSourceCol)
+                targetRow = _dragSourceRow;
+            else
+                targetRow = FirstFreeRow(col, col + _dragSourceSpan - 1);
 
-            while (EventsPanel.RowDefinitions.Count <= bottomRow)
+            while (EventsPanel.RowDefinitions.Count <= targetRow)
                 EventsPanel.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
 
             Grid.SetColumn(_dragGhost, col);
-            Grid.SetRow(_dragGhost, bottomRow);
+            Grid.SetRow(_dragGhost, targetRow);
 
             // auto-scroll so ghost row is visible
-            var ghostContentY = PanelTopMargin + bottomRow * RowH;
+            var ghostContentY = PanelTopMargin + targetRow * RowH;
             var viewH = EventsScroll.Bounds.Height;
             if (viewH > 0)
             {
@@ -378,7 +360,10 @@ public partial class AllDayBar : UserControl
             .Where(e => _currentDays.Any(d =>
                 DateOnly.FromDateTime(e.StartDt) <= d && d <= DateOnly.FromDateTime(e.EndDt)))
             .DistinctBy(e => e.Id)
+            // Сначала многодневные, затем однодневные; внутри группы — по времени
+            // начала (раньше → выше), при равенстве — по названию для стабильности.
             .OrderBy(e => (e.EndDt.Date - e.StartDt.Date).TotalDays < 1 ? 1 : 0)
+            .ThenBy(e => e.StartDt)
             .ThenBy(e => e.Title)
             .ToList();
 
@@ -646,6 +631,22 @@ public partial class AllDayBar : UserControl
     private double ColW() =>
         _currentDays.Count > 0 ? EventsScroll.Bounds.Width / _currentDays.Count : 0;
 
+    // Первая строка, где все колонки [startCol..endCol] свободны от других событий
+    // (перетаскиваемое исключаем). Заполняет «дыры», образованные многодневными
+    // блоками, вместо того чтобы всегда падать в самый низ списка.
+    private int FirstFreeRow(int startCol, int endCol)
+    {
+        for (var row = 0; ; row++)
+        {
+            var occupied = _allDayEntries.Any(en =>
+                en.Ev.Id != _dragEvent?.Id
+                && en.Row == row
+                && en.Col <= endCol
+                && en.Col + en.Span - 1 >= startCol);
+            if (!occupied) return row;
+        }
+    }
+
     private static Color Darken(Color c, double f = 0.6)
         => Color.FromArgb(c.A, (byte)(c.R * f), (byte)(c.G * f), (byte)(c.B * f));
 
@@ -668,12 +669,16 @@ public partial class AllDayBar : UserControl
             {
                 var ev = entry.Ev;
 
-                // Множественное выделение → только массовое удаление с подтверждением.
-                if (_selections.Count > 1 && _selections.ContainsKey(ev))
+                // Общий набор обеих зон: в баре + в часовой сетке (ExternalSelectedCount).
+                var totalSelected = _selections.Count + (ExternalSelectedCount?.Invoke() ?? 0);
+
+                // Множественное выделение → массовое удаление всего набора разом
+                // (как по Delete). Делегируем родителю, т.к. он знает обе зоны.
+                if (totalSelected > 1 && _selections.ContainsKey(ev))
                 {
-                    var batch = _selections.Keys.ToList();
                     menu.Items.Add(EventContextMenu.MakeItem(
-                        "Удалить", () => { _DeselectAll(); RecordsDeleteRequested?.Invoke(this, batch); }));
+                        "Удалить", () => (DeleteAllSelected ??
+                            (() => { _DeselectAll(); RecordsDeleteRequested?.Invoke(this, _selections.Keys.ToList()); }))()));
                     return;
                 }
 

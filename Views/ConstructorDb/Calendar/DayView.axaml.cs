@@ -102,6 +102,12 @@ public partial class DayView : UserControl
         AllDayBarCtrl.RecordDeleteRequested    += (_, ev) => RecordDeleteRequested?.Invoke(this, ev);
         AllDayBarCtrl.RecordsDeleteRequested   += (_, rs) => RecordsDeleteRequested?.Invoke(this, rs);
         AllDayBarCtrl.RecordCreationRequested += (_, d)  => AllDayCreationRequested?.Invoke(this, d);
+        // Выделили в AllDayBar: при обычном клике снимаем выделение в часовой сетке;
+        // при Shift (additive) — не трогаем, чтобы копился общий набор.
+        AllDayBarCtrl.SelectionRequested       += (_, additive) => { if (!additive) _Deselect(); };
+        // Хуки для общего удаления из контекстного меню бара.
+        AllDayBarCtrl.ExternalSelectedCount     = () => _selections.Count;
+        AllDayBarCtrl.DeleteAllSelected         = _DeleteSelectedAll;
 
         AllDayResizeGrip.PointerPressed += (_, e) =>
         {
@@ -134,19 +140,9 @@ public partial class DayView : UserControl
                 if (!IsVisible) return;
                 if (ke.Source is TextBox or AutoCompleteBox) return;
 
-                if (_selections.Count == 0) return;
-                if (_selections.Count == 1)
-                {
-                    var only = _selections.Keys.First();
-                    _Deselect();
-                    RecordDeleteRequested?.Invoke(this, only);
-                }
-                else
-                {
-                    var batch = _selections.Keys.ToList();
-                    _Deselect();
-                    RecordsDeleteRequested?.Invoke(this, batch);
-                }
+                // Общий набор: выделенные в часовой сетке + в баре «весь день».
+                if (_SelectedAll().Count == 0) return;
+                _DeleteSelectedAll();
                 ke.Handled = true;
             };
             win.AddHandler(KeyDownEvent, _windowKeyHandler, handledEventsToo: true);
@@ -348,6 +344,7 @@ public partial class DayView : UserControl
                         && !_selections.ContainsKey(entry.Ev))
                     {
                         _Deselect();
+                        _ClearAllDaySelection();
                         entry.Select?.Invoke();
                         _selections[entry.Ev] = entry.Deselect ?? (() => { });
                     }
@@ -408,6 +405,26 @@ public partial class DayView : UserControl
     {
         foreach (var unhighlight in _selections.Values.ToList()) unhighlight();
         _selections.Clear();
+    }
+
+    // Снять выделение в баре «весь день» при выделении в часовой сетке.
+    private void _ClearAllDaySelection() => AllDayBarCtrl.ClearSelection();
+
+    // Общий набор выделенного по обеим зонам (сетка + бар «весь день»).
+    private List<CalendarRecord> _SelectedAll() => _selections.Keys
+        .Concat(AllDayBarCtrl.SelectedRecords)
+        .DistinctBy(r => r.Id)
+        .ToList();
+
+    // Снять выделение в обеих зонах и удалить общий набор разом одним пакетом.
+    private void _DeleteSelectedAll()
+    {
+        var batch = _SelectedAll();
+        if (batch.Count == 0) return;
+        _Deselect();
+        AllDayBarCtrl.ClearSelection();
+        if (batch.Count == 1) RecordDeleteRequested?.Invoke(this, batch[0]);
+        else                   RecordsDeleteRequested?.Invoke(this, batch);
     }
 
     private void _DeselectOne(CalendarRecord ev)
@@ -494,6 +511,7 @@ public partial class DayView : UserControl
         if (!additive && !_selections.ContainsKey(entry.Ev))
         {
             _Deselect();
+            _ClearAllDaySelection();
             entry.Select?.Invoke();
             _selections[entry.Ev] = entry.Deselect ?? (() => { });
         }
@@ -852,7 +870,8 @@ public partial class DayView : UserControl
                     var additive = e.KeyModifiers.HasFlag(KeyModifiers.Shift);
                     if (additive)
                     {
-                        // toggle: повторный Shift+клик по выделенному — снять
+                        // toggle: повторный Shift+клик по выделенному — снять.
+                        // AllDayBar НЕ трогаем — Shift копит общий набор через зоны.
                         if (_selections.ContainsKey(entry.Ev)) _DeselectOne(entry.Ev);
                         else
                         {
@@ -864,6 +883,7 @@ public partial class DayView : UserControl
                     {
                         // обычный клик — оставить выделенным только это событие
                         _Deselect();
+                        _ClearAllDaySelection();
                         entry.Select?.Invoke();
                         _selections[entry.Ev] = entry.Deselect ?? (() => { });
                     }
@@ -1148,17 +1168,19 @@ public partial class DayView : UserControl
         {
             menu.Items.Clear();
 
-            if (_selections.Count > 1 && _selections.ContainsKey(ev))
+            // Множественное выделение по обеим зонам → массовое удаление всего
+            // набора разом (как по Delete).
+            var all = _SelectedAll();
+            if (all.Count > 1 && all.Any(r => r.Id == ev.Id))
             {
-                var batch = _selections.Keys.ToList();
                 menu.Items.Add(MyPlanner.Controls.Components.EventContextMenu.MakeItem(
-                    "Удалить", () => { _Deselect(); RecordsDeleteRequested?.Invoke(this, batch); }));
+                    "Удалить", _DeleteSelectedAll));
                 return;
             }
             menu.Items.Add(MyPlanner.Controls.Components.EventContextMenu.MakeItem(
                 "Редактировать", () => { _Deselect(); RecordClicked?.Invoke(this, ev); }));
             menu.Items.Add(MyPlanner.Controls.Components.EventContextMenu.MakeItem(
-                "Удалить", () => { _Deselect(); RecordDeleteRequested?.Invoke(this, ev); }));
+                "Удалить", () => { _Deselect(); _ClearAllDaySelection(); RecordDeleteRequested?.Invoke(this, ev); }));
         };
         return menu;
     }
