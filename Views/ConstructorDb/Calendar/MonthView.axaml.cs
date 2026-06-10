@@ -863,6 +863,7 @@ public partial class MonthView : UserControl
             if (Math.Abs(pos.X - _dragPress.X) + Math.Abs(pos.Y - _dragPress.Y) < 6) return;
             _dragActive = true;
             _Deselect();
+            // Оригинал остаётся прозрачным (Opacity 0.45) на исходном месте.
             if (_dragSrcControl is not null) _dragSrcControl.Opacity = 0.45;
         }
         var target = _DayAtPos(pos);
@@ -870,15 +871,9 @@ public partial class MonthView : UserControl
         var changed = target.Value.Date != _dragTargetDay;
         if (changed) _dragTargetDay = target.Value.Date;
 
-        if (_dragTargetDay != _dragSourceDay)
-        {
-            if (changed || _dragPreview is null) _UpdateDragPreview();
-        }
-        else
-        {
-            if (_dragPreview is not null) { SpanCanvas.Children.Remove(_dragPreview); _dragPreview = null; }
-            if (_shiftedDay.HasValue) _RestoreShift(_shiftedDay.Value);
-        }
+        // Превью рисуем для любого дня под курсором — в т.ч. при возврате в исходный,
+        // чтобы событие там тоже было ярким, а не пропадало.
+        if (changed || _dragPreview is null) _UpdateDragPreview();
     }
 
     private void _OnDragReleased(PointerReleasedEventArgs e)
@@ -974,6 +969,29 @@ public partial class MonthView : UserControl
         _shiftedDay = null;
     }
 
+    // Создаёт превью-плашку (яркая красная, белый текст) при первом обращении.
+    private void _EnsureDragPreview(Color color)
+    {
+        if (_dragPreview is not null || _dragEv is null) return;
+        _dragPreview = new Grid { Height = BarH, IsHitTestVisible = false };
+        _dragPreview.Children.Add(new Border
+        {
+            Background   = new SolidColorBrush(color),
+            CornerRadius = new CornerRadius(4),
+        });
+        _dragPreview.Children.Add(new TextBlock
+        {
+            Text              = _dragEv.AllDay ? _dragEv.DisplayTitle : $"{_dragEv.StartDt:HH:mm} {_dragEv.DisplayTitle}",
+            FontSize          = FontSizeBase,
+            FontWeight        = FontWeight.SemiBold,
+            Foreground        = Brushes.White,
+            Margin            = new Thickness(8, 0, 4, 0),
+            TextTrimming      = TextTrimming.CharacterEllipsis,
+            VerticalAlignment = VerticalAlignment.Center,
+        });
+        SpanCanvas.Children.Add(_dragPreview);
+    }
+
     private void _UpdateDragPreview()
     {
         if (_dragEv is null || GridContainer.Bounds.Width == 0) return;
@@ -986,6 +1004,23 @@ public partial class MonthView : UserControl
         var bx  = col * cw + 2;
         var bw  = cw - 4;
         var color = Color.Parse(EventColors.Display(_dragEv.Color));
+
+        // Возврат в исходный день: ставим превью ровно на место оригинала (по его
+        // фактическим координатам), не пересчитывая строку — так яркая плашка
+        // садится точно туда, откуда тащим.
+        if (_dragTargetDay == _dragSourceDay && _dragSrcControl is not null)
+        {
+            if (_shiftedDay.HasValue) _RestoreShift(_shiftedDay.Value);
+            var topLeft = _dragSrcControl.TranslatePoint(new Point(0, 0), SpanCanvas);
+            if (topLeft.HasValue)
+            {
+                _EnsureDragPreview(color);
+                _dragPreview!.Width = _dragSrcControl.Bounds.Width;
+                Canvas.SetLeft(_dragPreview, topLeft.Value.X);
+                Canvas.SetTop(_dragPreview, topLeft.Value.Y);
+            }
+            return;
+        }
 
         var weekStart  = _gridStart.AddDays(row * 7);
         var layout     = _ComputeWeekLayout(weekStart);
@@ -1020,28 +1055,9 @@ public partial class MonthView : UserControl
             ui2.More.IsVisible = false;
         _shiftedDay = _dragTargetDay;
 
-        if (_dragPreview is null)
-        {
-            _dragPreview = new Grid { Height = BarH, IsHitTestVisible = false };
-            _dragPreview.Children.Add(new Border
-            {
-                Background   = new SolidColorBrush(color),
-                CornerRadius = new CornerRadius(4),
-            });
-            _dragPreview.Children.Add(new TextBlock
-            {
-                Text              = _dragEv.AllDay ? _dragEv.DisplayTitle : $"{_dragEv.StartDt:HH:mm} {_dragEv.DisplayTitle}",
-                FontSize          = FontSizeBase,
-                FontWeight        = FontWeight.SemiBold,
-                Foreground        = Brushes.White,
-                Margin            = new Thickness(8, 0, 4, 0),
-                TextTrimming      = TextTrimming.CharacterEllipsis,
-                VerticalAlignment = VerticalAlignment.Center,
-            });
-            SpanCanvas.Children.Add(_dragPreview);
-        }
+        _EnsureDragPreview(color);
 
-        _dragPreview.Width = bw;
+        _dragPreview!.Width = bw;
         Canvas.SetLeft(_dragPreview, bx);
         Canvas.SetTop(_dragPreview, by);
     }
