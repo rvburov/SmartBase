@@ -20,7 +20,9 @@ public partial class TableView : UserControl
     // ── Публичные события ─────────────────────────────────────────────────────
     public event EventHandler<int>? RecordClicked;
     public event EventHandler<int>? RecordDeleteRequested;
-    public event EventHandler?      RecordCreateRequested;
+    // bool = открывать ли запись справа после создания. «+»-строка создаёт без
+    // открытия (false), контекстное «Создать запись» — с открытием (true).
+    public event EventHandler<bool>? RecordCreateRequested;
     public event EventHandler?      PropertyCreateRequested;
     public event EventHandler<int>? PropertyEditRequested;
     public event EventHandler<int>? PropertyDeleteRequested;
@@ -378,7 +380,7 @@ public partial class TableView : UserControl
 
         if (row.IsAddRow)
         {
-            RecordCreateRequested?.Invoke(this, EventArgs.Empty);
+            RecordCreateRequested?.Invoke(this, false); // создать без открытия
             return;
         }
 
@@ -400,7 +402,7 @@ public partial class TableView : UserControl
     {
         var menu = new ContextMenu();
         var mi = new MenuItem { Header = "Создать запись" };
-        mi.Click += (_, _) => RecordCreateRequested?.Invoke(this, EventArgs.Empty);
+        mi.Click += (_, _) => RecordCreateRequested?.Invoke(this, true);
         menu.Items.Add(mi);
         return menu;
     }
@@ -409,15 +411,15 @@ public partial class TableView : UserControl
     {
         var menu = new ContextMenu();
 
-        var miOpen = new MenuItem { Header = "Открыть" };
-        miOpen.Click += (_, _) => RecordClicked?.Invoke(this, recordId);
-        menu.Items.Add(miOpen);
-
         var miCreate = new MenuItem { Header = "Создать запись" };
-        miCreate.Click += (_, _) => RecordCreateRequested?.Invoke(this, EventArgs.Empty);
+        miCreate.Click += (_, _) => RecordCreateRequested?.Invoke(this, true);
         menu.Items.Add(miCreate);
 
         menu.Items.Add(new Separator());
+
+        var miEdit = new MenuItem { Header = "Редактировать" };
+        miEdit.Click += (_, _) => RecordClicked?.Invoke(this, recordId);
+        menu.Items.Add(miEdit);
 
         var miDelete = new MenuItem { Header = "Удалить" };
         miDelete.Click += (_, _) => RecordDeleteRequested?.Invoke(this, recordId);

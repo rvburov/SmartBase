@@ -53,9 +53,9 @@ public partial class ConstructorControllerView : UserControl
         ConstructorFooter.RowResizeModeChanged += (_, v) => TableViewCtrl.SetRowResizeMode(v);
 
         // CRUD для записей — через контекстные меню в TableView/ListView.
-        TableViewCtrl.RecordClicked          += (_, rid) => OpenPage(rid);
-        TableViewCtrl.RecordCreateRequested  += (_, _)   => CreateAndOpen();
-        TableViewCtrl.RecordDeleteRequested  += (_, rid) => DeleteRecord(rid);
+        TableViewCtrl.RecordClicked          += (_, rid)  => OpenPage(rid);
+        TableViewCtrl.RecordCreateRequested  += (_, open) => CreateAndOpen(open);
+        TableViewCtrl.RecordDeleteRequested  += (_, rid)  => DeleteRecord(rid);
 
         ListViewCtrl.RecordClicked           += (_, rid) => OpenPage(rid);
         ListViewCtrl.RecordCreateRequested   += (_, _)   => CreateAndOpen();
@@ -143,7 +143,9 @@ public partial class ConstructorControllerView : UserControl
     private void OpenPage(int recordId) =>
         RecordPageRequested?.Invoke(this, recordId);
 
-    private void CreateAndOpen()
+    // open=false — создать запись, не открывая правую панель (нажатие «+» в таблице).
+    // open=true  — создать и открыть деталь (контекстное «Создать запись»).
+    private void CreateAndOpen(bool open = true)
     {
         if (_currentCollectionId is null || _repository is null) return;
 
@@ -164,7 +166,8 @@ public partial class ConstructorControllerView : UserControl
             // каждый раз листать вниз, чтобы снова нажать «+».
             if (TableViewCtrl.IsVisible)
                 TableViewCtrl.ScrollToRecord(rec.Id.Value);
-            RecordPageRequested?.Invoke(this, rec.Id.Value);
+            if (open)
+                RecordPageRequested?.Invoke(this, rec.Id.Value);
         }
     }
 
