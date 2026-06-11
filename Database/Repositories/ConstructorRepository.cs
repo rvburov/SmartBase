@@ -320,6 +320,59 @@ public class ConstructorRepository(AppDbContext db)
           .Where(fv => fv.RecordId == recordId)
           .ToDictionary(fv => fv.FieldId, fv => fv.Value);
 
+    /// <summary>Все значения полей коллекции одним запросом (для фильтрации/сортировки).</summary>
+    public Dictionary<int, Dictionary<int, string>> GetFieldValuesByCollection(int collectionId) =>
+        db.DbFieldValues
+          .Where(fv => fv.Record.CollectionId == collectionId)
+          .Select(fv => new { fv.RecordId, fv.FieldId, fv.Value })
+          .ToList()
+          .GroupBy(x => x.RecordId)
+          .ToDictionary(g => g.Key, g => g.ToDictionary(x => x.FieldId, x => x.Value));
+
+    // ── Фильтр колонок (Excel-стиль): уникальные значения с количеством ───────
+
+    public List<(string Value, int Count)> GetTitleCounts(int collectionId) =>
+        db.DbRecords
+          .Where(r => r.CollectionId == collectionId)
+          .GroupBy(r => r.Title)
+          .Select(g => new { g.Key, Cnt = g.Count() })
+          .ToList()
+          .Select(x => (x.Key ?? "", x.Cnt))
+          .ToList();
+
+    public List<(string Value, int Count)> GetDescriptionCounts(int collectionId) =>
+        db.DbRecords
+          .Where(r => r.CollectionId == collectionId)
+          .GroupBy(r => r.Description ?? "")
+          .Select(g => new { g.Key, Cnt = g.Count() })
+          .ToList()
+          .Select(x => (x.Key ?? "", x.Cnt))
+          .ToList();
+
+    /// <summary>
+    /// Значения поля с количеством. Записи без строки значения учитываются
+    /// в пустом значении "" — в UI оно показывается как «(Пусто)».
+    /// </summary>
+    public List<(string Value, int Count)> GetFieldValueCounts(int collectionId, int fieldId)
+    {
+        var groups = db.DbFieldValues
+            .Where(fv => fv.FieldId == fieldId && fv.Record.CollectionId == collectionId)
+            .GroupBy(fv => fv.Value)
+            .Select(g => new { g.Key, Cnt = g.Count() })
+            .ToList();
+
+        var result  = groups.Select(x => (Value: x.Key ?? "", Count: x.Cnt)).ToList();
+        var total   = db.DbRecords.Count(r => r.CollectionId == collectionId);
+        var missing = total - groups.Sum(g => g.Cnt);
+        if (missing > 0)
+        {
+            var emptyIdx = result.FindIndex(t => t.Value == "");
+            if (emptyIdx >= 0) result[emptyIdx] = ("", result[emptyIdx].Count + missing);
+            else result.Add(("", missing));
+        }
+        return result;
+    }
+
     public void SetFieldValue(int recordId, int fieldId, string value)
     {
         var fv = db.DbFieldValues.FirstOrDefault(x => x.RecordId == recordId && x.FieldId == fieldId);

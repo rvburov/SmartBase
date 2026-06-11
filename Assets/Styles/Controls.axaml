@@ -185,6 +185,17 @@
         <Setter Property="Foreground" Value="White" />
     </Style>
 
+    <!-- Всплывающее окно фильтра/сортировки колонок таблицы (Excel-стиль).
+         Стиль обязан жить здесь: FlyoutPresenter рендерится в popup-руте,
+         до которого локальные стили UserControl не доходят. -->
+    <Style Selector="FlyoutPresenter.filterFlyout">
+        <Setter Property="Padding"         Value="0" />
+        <Setter Property="Background"      Value="{StaticResource BrushBg}" />
+        <Setter Property="BorderBrush"     Value="{StaticResource BrushSeparator}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="CornerRadius"    Value="{StaticResource RadiusMedium}" />
+    </Style>
+
     <!-- ComboBox — серый фон, скругление, рамка как у поля даты/времени -->
     <Style Selector="ComboBox">
         <Setter Property="Background"      Value="{StaticResource BrushSecondaryBg}" />
