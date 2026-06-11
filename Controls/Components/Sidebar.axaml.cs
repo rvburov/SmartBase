@@ -388,7 +388,7 @@ public partial class Sidebar : UserControl
             menu.Items.Add(MenuItemSimple("Создать группу",    () => _ = CreateItem("group", parentId: id)));
             menu.Items.Add(MenuItemSimple("Создать коллекцию", () => _ = CreateItem("collection", parentId: id)));
             menu.Items.Add(new Separator());
-            menu.Items.Add(MenuItemSimple("Редактировать", () => _ = EditGroup(id)));
+            menu.Items.Add(MenuItemSimple("Изменить", () => _ = EditGroup(id)));
             menu.Items.Add(MenuItemSimple("Удалить",       () => _ = DeleteGroup(id)));
         }
         else
@@ -398,7 +398,7 @@ public partial class Sidebar : UserControl
                 menu.Items.Add(BuildColorMenu(id));
                 menu.Items.Add(new Separator());
             }
-            menu.Items.Add(MenuItemSimple("Редактировать", () => _ = EditCollection(id)));
+            menu.Items.Add(MenuItemSimple("Изменить", () => _ = EditCollection(id)));
             menu.Items.Add(MenuItemSimple("Удалить",       () => _ = DeleteCollection(id)));
         }
 

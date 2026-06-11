@@ -8,15 +8,15 @@ namespace MyPlanner.Controls.Components;
 // через селекторы ContextMenu / MenuItem — здесь только состав пунктов.
 //
 // Каждый пункт оборачивается в Dispatcher.UIThread.Post, потому что нажатие
-// «Удалить»/«Редактировать» пересобирает сетку и сносит контрол, на котором висит
+// «Удалить»/«Изменить» пересобирает сетку и сносит контрол, на котором висит
 // закрывающееся меню — без отсрочки это вызывает мелькание.
 public static class EventContextMenu
 {
-    // Меню одиночного события: «Редактировать» + «Удалить».
+    // Меню одиночного события: «Изменить» + «Удалить».
     public static ContextMenu Single(Action onEdit, Action onDelete)
     {
         var menu = new ContextMenu();
-        menu.Items.Add(MakeItem("Редактировать", onEdit));
+        menu.Items.Add(MakeItem("Изменить", onEdit));
         menu.Items.Add(MakeItem("Удалить",       onDelete));
         return menu;
     }

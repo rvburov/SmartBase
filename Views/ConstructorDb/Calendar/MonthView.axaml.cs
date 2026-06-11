@@ -1137,7 +1137,7 @@ public partial class MonthView : UserControl
                 return;
             }
             menu.Items.Add(MyPlanner.Controls.Components.EventContextMenu.MakeItem(
-                "Редактировать", () => { _Deselect(); RecordClicked?.Invoke(this, ev); }));
+                "Изменить", () => { _Deselect(); RecordClicked?.Invoke(this, ev); }));
             menu.Items.Add(MyPlanner.Controls.Components.EventContextMenu.MakeItem(
                 "Удалить", () => { _Deselect(); RecordDeleteRequested?.Invoke(this, ev); }));
         };

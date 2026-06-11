@@ -1,6 +1,5 @@
+using Avalonia;
 using Avalonia.Controls;
-using Avalonia.Layout;
-using Avalonia.Media;
 using MyPlanner.Core.Models;
 using MyPlanner.Database.Repositories;
 
@@ -8,7 +7,7 @@ namespace MyPlanner.Controls.Dialogs;
 
 /// <summary>
 /// Notion-style мини-диалог для создания/изменения одного свойства (поля коллекции).
-/// Только два параметра: имя и тип. Markdown как тип скрыт (это системный body-поле).
+/// Только два параметра: название и тип. Markdown как тип скрыт (это системное body-поле).
 /// </summary>
 public partial class PropertyEditorDialog : Window
 {
@@ -27,7 +26,6 @@ public partial class PropertyEditorDialog : Window
     private readonly int? _editFieldId;
 
     private string _selectedType = "text";
-    private readonly List<Button> _typeButtons = [];
 
     public PropertyEditorDialog(ConstructorRepository repository, int collectionId, int? editFieldId = null)
     {
@@ -37,12 +35,11 @@ public partial class PropertyEditorDialog : Window
         _collectionId = collectionId;
         _editFieldId  = editFieldId;
 
-        BuildTypeButtons();
+        TypeCombo.ItemsSource = FieldTypes.Select(t => $"{t.Icon}  {t.Label}").ToList();
 
         if (editFieldId.HasValue)
         {
-            Title             = "Изменить свойство";
-            TitleLabel.Text   = "Изменить свойство";
+            Title = "Изменение свойства";
             var field = repository.GetFields(collectionId).FirstOrDefault(f => f.Id == editFieldId);
             if (field is not null)
             {
@@ -51,57 +48,56 @@ public partial class PropertyEditorDialog : Window
             }
         }
 
-        UpdateTypeButtonStyles();
+        var idx = Array.FindIndex(FieldTypes, t => t.Type == _selectedType);
+        TypeCombo.SelectedIndex = idx >= 0 ? idx : 0;
+        TypeCombo.SelectionChanged += (_, _) =>
+        {
+            var i = TypeCombo.SelectedIndex;
+            if (i >= 0 && i < FieldTypes.Length) _selectedType = FieldTypes[i].Type;
+        };
 
         CancelBtn.Click += (_, _) => Close(false);
         SaveBtn.Click   += (_, _) => TrySave();
         NameBox.KeyDown += (_, e) => { if (e.Key == Avalonia.Input.Key.Enter) TrySave(); };
+        NameBox.TextChanged += (_, _) => HideError();
     }
 
-    private void BuildTypeButtons()
+    private void ShowError(string message)
     {
-        foreach (var (type, icon, label) in FieldTypes)
-        {
-            var btn = new Button
-            {
-                Content = $"{icon}  {label}",
-                Height  = 34,
-                HorizontalContentAlignment = HorizontalAlignment.Left,
-                Margin  = new Avalonia.Thickness(2),
-            };
-            btn.Click += (_, _) => { _selectedType = type; UpdateTypeButtonStyles(); };
-            _typeButtons.Add(btn);
-            TypeButtonsGrid.Children.Add(btn);
-        }
+        var pos = Position;            // баннер увеличит высоту — держим позицию
+        ErrorText.Text        = message;
+        ErrorBanner.IsVisible = true;
+        KeepWindowPosition(pos);
     }
 
-    private void UpdateTypeButtonStyles()
+    private void HideError()
     {
-        for (var i = 0; i < FieldTypes.Length; i++)
+        if (!ErrorBanner.IsVisible) return;
+        var pos = Position;
+        ErrorBanner.IsVisible = false;
+        KeepWindowPosition(pos);
+    }
+
+    // Держим позицию окна при пересчёте высоты (SizeToContent), чтобы оно не «прыгало».
+    private void KeepWindowPosition(PixelPoint pos)
+    {
+        void Restore(object? _, EventArgs __)
         {
-            var (type, _, _) = FieldTypes[i];
-            var btn = _typeButtons[i];
-            if (type == _selectedType)
-            {
-                btn.Background      = new SolidColorBrush(Color.Parse("#E3F0FF"));
-                btn.Foreground      = new SolidColorBrush(Color.Parse("#007AFF"));
-                btn.BorderBrush     = new SolidColorBrush(Color.Parse("#007AFF"));
-                btn.BorderThickness = new Avalonia.Thickness(1.5);
-            }
-            else
-            {
-                btn.Background      = new SolidColorBrush(Color.Parse("#FFFFFF"));
-                btn.Foreground      = new SolidColorBrush(Color.Parse("#1C1C1E"));
-                btn.BorderBrush     = new SolidColorBrush(Color.Parse("#E5E5EA"));
-                btn.BorderThickness = new Avalonia.Thickness(1.5);
-            }
+            LayoutUpdated -= Restore;
+            if (Position != pos) Position = pos;
         }
+        LayoutUpdated += Restore;
     }
 
     private void TrySave()
     {
         var name = NameBox.Text?.Trim() ?? "";
-        if (string.IsNullOrEmpty(name)) { NameBox.Focus(); return; }
+        if (string.IsNullOrEmpty(name))
+        {
+            ShowError("Укажите название свойства");
+            NameBox.Focus();
+            return;
+        }
 
         if (_editFieldId.HasValue)
         {

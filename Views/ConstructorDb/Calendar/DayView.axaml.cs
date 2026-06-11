@@ -1158,7 +1158,7 @@ public partial class DayView : UserControl
         return result;
     }
 
-    // Меню события: «Редактировать»/«Удалить», либо при множественном
+    // Меню события: «Изменить»/«Удалить», либо при множественном
     // выделении — только массовое «Удалить». Наполняем в Opening.
     private ContextMenu _BuildEventContextMenu(EventEntry entry)
     {
@@ -1178,7 +1178,7 @@ public partial class DayView : UserControl
                 return;
             }
             menu.Items.Add(MyPlanner.Controls.Components.EventContextMenu.MakeItem(
-                "Редактировать", () => { _Deselect(); RecordClicked?.Invoke(this, ev); }));
+                "Изменить", () => { _Deselect(); RecordClicked?.Invoke(this, ev); }));
             menu.Items.Add(MyPlanner.Controls.Components.EventContextMenu.MakeItem(
                 "Удалить", () => { _Deselect(); _ClearAllDaySelection(); RecordDeleteRequested?.Invoke(this, ev); }));
         };

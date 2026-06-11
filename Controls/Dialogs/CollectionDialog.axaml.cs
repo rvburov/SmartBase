@@ -30,7 +30,7 @@ public partial class CollectionDialog : Window
 
         if (editNode is not null)
         {
-            Title              = "Редактировать коллекцию";
+            Title              = "Изменение коллекции";
             NameBox.Text       = editNode.Name;
             ConfirmBtn.Content = "Сохранить";
 

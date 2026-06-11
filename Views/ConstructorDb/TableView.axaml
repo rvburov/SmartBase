@@ -3,6 +3,14 @@
              x:Class="MyPlanner.Views.ConstructorDb.TableView"
              Background="{StaticResource BrushBg}">
 
+    <!-- Переопределяем встроенные кисти линий DataGrid из темы Fluent на единый
+         цвет BrushSeparator — иначе тема рисует разделитель под шапкой более тёмным,
+         чем горизонтальные линии между строками. -->
+    <UserControl.Resources>
+        <SolidColorBrush x:Key="DataGridGridLinesBrush"             Color="{StaticResource ColorSeparator}" />
+        <SolidColorBrush x:Key="DataGridFillerColumnGridLinesBrush" Color="{StaticResource ColorSeparator}" />
+    </UserControl.Resources>
+
     <UserControl.Styles>
         <Style Selector="DataGridCell">
             <Setter Property="Padding"         Value="0" />
@@ -41,6 +49,9 @@
             <Setter Property="VerticalContentAlignment"   Value="Stretch" />
             <Setter Property="Template">
                 <ControlTemplate>
+                    <!-- Нижнюю линию под шапкой рисуем сами тем же цветом, что и линии сетки
+                         (BrushSeparator), чтобы она не отличалась от межстрочных. Встроенный
+                         разделитель темы Fluent гасится переопределением ресурсов ниже. -->
                     <Border Background="{TemplateBinding Background}"
                             BorderBrush="{StaticResource BrushSeparator}"
                             BorderThickness="0,0,0,1">

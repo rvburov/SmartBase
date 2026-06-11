@@ -672,7 +672,7 @@ public partial class AllDayBar : UserControl
     // ── context menu ──────────────────────────────────────────────────────────
 
     // Единое меню области событий. Наполнение зависит от того, попал ли последний
-    // правый клик на событие: на событии — «Редактировать/Удалить» (или массовое
+    // правый клик на событие: на событии — «Изменить/Удалить» (или массовое
     // удаление при множественном выделении), на пустом месте — «Создать запись».
     // Меню назначается свойством ContextMenu, поэтому фреймворк сам открывает его
     // по правому клику и закрывает предыдущее — дублей «Создать запись» не будет.
@@ -702,7 +702,7 @@ public partial class AllDayBar : UserControl
                 }
 
                 menu.Items.Add(EventContextMenu.MakeItem(
-                    "Редактировать", () => { _DeselectAll(); RecordClicked?.Invoke(this, ev); }));
+                    "Изменить", () => { _DeselectAll(); RecordClicked?.Invoke(this, ev); }));
                 menu.Items.Add(EventContextMenu.MakeItem(
                     "Удалить", () => { _DeselectAll(); RecordDeleteRequested?.Invoke(this, ev); }));
                 return;

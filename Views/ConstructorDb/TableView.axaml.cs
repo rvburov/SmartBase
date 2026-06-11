@@ -420,7 +420,7 @@ public partial class TableView : UserControl
 
         menu.Items.Add(new Separator());
 
-        var miEdit = new MenuItem { Header = "Редактировать" };
+        var miEdit = new MenuItem { Header = "Изменить" };
         miEdit.Click += (_, _) => RecordClicked?.Invoke(this, recordId);
         menu.Items.Add(miEdit);
 

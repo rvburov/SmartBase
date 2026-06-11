@@ -33,7 +33,7 @@ public partial class GroupDialog : Window
 
         if (editNode is not null)
         {
-            Title              = "Редактировать группу";
+            Title              = "Изменение группы";
             NameBox.Text       = editNode.Name;
             ConfirmBtn.Content = "Сохранить";
 
