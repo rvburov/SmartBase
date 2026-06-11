@@ -1,6 +1,10 @@
 # ===== C# / .NET =====
 bin/
 obj/
+# Все артефакты сборки (bin/obj/publish) собраны сюда — см. Directory.Build.props
+artifacts/
+# Локальный кэш NuGet-пакетов внутри проекта (см. nuget.config) — аналог venv
+packages/
 *.user
 *.suo
 *.userosscache
@@ -9,6 +13,18 @@ obj/
 publish/
 *.nupkg
 *.snupkg
+# Результаты publish и self-contained сборки
+[Pp]ublish/
+*.[Pp]ublish.xml
+# Прочие артефакты сборки/тестов
+[Dd]ebug/
+[Rr]elease/
+TestResults/
+*.coverage
+*.VisualState.xml
+project.lock.json
+project.assets.json
+artifacts/
 
 # ===== AVALONIA =====
 *.axaml.g.cs
@@ -26,6 +42,13 @@ publish/
 *.sqlite
 *.sqlite3
 *.db
+# Временные файлы SQLite (journal / write-ahead log / shared-memory)
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
 
 # ===== КОНФИГУРАЦИЯ =====
 settings.json

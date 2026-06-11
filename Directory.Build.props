@@ -1,0 +1,15 @@
+<Project>
+
+  <!--
+    Artifacts Output Layout (официальная фича .NET 8+).
+    Все результаты сборки (bin/, obj/, publish/) собираются в одну папку
+    artifacts\ в корне проекта вместо разбросанных bin\ и obj\.
+    Корень проекта остаётся чистым — только код.
+    Папка artifacts\ исключена в .gitignore.
+    Кэш NuGet-пакетов лежит отдельно в packages\ (см. nuget.config).
+  -->
+  <PropertyGroup>
+    <UseArtifactsOutput>true</UseArtifactsOutput>
+  </PropertyGroup>
+
+</Project>
