@@ -20,6 +20,7 @@ public partial class WeekView : UserControl
     public event EventHandler<CalendarRecord>?    RecordMoved;
     public event EventHandler<CalendarRecord>?    RecordDeleteRequested;
     public event EventHandler<IReadOnlyList<CalendarRecord>>? RecordsDeleteRequested;
+    public event EventHandler<CalendarRecord>?    RecordDuplicateRequested;
     public event EventHandler<DateOnly>? AllDayCreationRequested;
     public event EventHandler<DateTime>? TimeSlotCreationRequested;
 
@@ -107,6 +108,7 @@ public partial class WeekView : UserControl
         AllDayBarCtrl.RecordMoved              += (_, ev) => RecordMoved?.Invoke(this, ev);
         AllDayBarCtrl.RecordDeleteRequested    += (_, ev) => RecordDeleteRequested?.Invoke(this, ev);
         AllDayBarCtrl.RecordsDeleteRequested   += (_, rs) => RecordsDeleteRequested?.Invoke(this, rs);
+        AllDayBarCtrl.RecordDuplicateRequested += (_, ev) => RecordDuplicateRequested?.Invoke(this, ev);
         AllDayBarCtrl.RecordCreationRequested  += (_, d)  => AllDayCreationRequested?.Invoke(this, d);
         // Выделили в AllDayBar: при обычном клике снимаем выделение в часовой сетке
         // (одно на экран); при Shift (additive) — не трогаем, чтобы копился общий
@@ -1557,14 +1559,16 @@ public partial class WeekView : UserControl
             var all = _SelectedAll();
             if (all.Count > 1 && all.Any(r => r.Id == ev.Id))
             {
-                menu.Items.Add(MyPlanner.Controls.Components.EventContextMenu.MakeItem(
-                    "Удалить", _DeleteSelectedAll));
+                menu.Items.Add(MyPlanner.Controls.Components.EventContextMenu.MakeDeleteItem(
+                    _DeleteSelectedAll));
                 return;
             }
-            menu.Items.Add(MyPlanner.Controls.Components.EventContextMenu.MakeItem(
-                "Изменить", () => { _Deselect(); RecordClicked?.Invoke(this, ev); }));
-            menu.Items.Add(MyPlanner.Controls.Components.EventContextMenu.MakeItem(
-                "Удалить", () => { _Deselect(); _ClearAllDaySelection(); RecordDeleteRequested?.Invoke(this, ev); }));
+            menu.Items.Add(MyPlanner.Controls.Components.EventContextMenu.MakeEditItem(
+                () => { _Deselect(); RecordClicked?.Invoke(this, ev); }));
+            menu.Items.Add(MyPlanner.Controls.Components.EventContextMenu.MakeDuplicateItem(
+                () => { _Deselect(); _ClearAllDaySelection(); RecordDuplicateRequested?.Invoke(this, ev); }));
+            menu.Items.Add(MyPlanner.Controls.Components.EventContextMenu.MakeDeleteItem(
+                () => { _Deselect(); _ClearAllDaySelection(); RecordDeleteRequested?.Invoke(this, ev); }));
         };
         return menu;
     }

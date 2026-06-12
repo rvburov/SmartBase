@@ -18,6 +18,7 @@ public partial class MonthView : UserControl
     public event EventHandler<CalendarRecord>? RecordMoved;
     public event EventHandler<CalendarRecord>? RecordDeleteRequested;
     public event EventHandler<IReadOnlyList<CalendarRecord>>? RecordsDeleteRequested;
+    public event EventHandler<CalendarRecord>? RecordDuplicateRequested;
 
     // Константы макета (соответствуют PyQt DayCell / MonthOverlay)
     private const int DateH   = 34;
@@ -1132,14 +1133,16 @@ public partial class MonthView : UserControl
             if (_selections.Count > 1 && _selections.ContainsKey(ev))
             {
                 var batch = _selections.Keys.ToList();
-                menu.Items.Add(MyPlanner.Controls.Components.EventContextMenu.MakeItem(
-                    "Удалить", () => { _Deselect(); RecordsDeleteRequested?.Invoke(this, batch); }));
+                menu.Items.Add(MyPlanner.Controls.Components.EventContextMenu.MakeDeleteItem(
+                    () => { _Deselect(); RecordsDeleteRequested?.Invoke(this, batch); }));
                 return;
             }
-            menu.Items.Add(MyPlanner.Controls.Components.EventContextMenu.MakeItem(
-                "Изменить", () => { _Deselect(); RecordClicked?.Invoke(this, ev); }));
-            menu.Items.Add(MyPlanner.Controls.Components.EventContextMenu.MakeItem(
-                "Удалить", () => { _Deselect(); RecordDeleteRequested?.Invoke(this, ev); }));
+            menu.Items.Add(MyPlanner.Controls.Components.EventContextMenu.MakeEditItem(
+                () => { _Deselect(); RecordClicked?.Invoke(this, ev); }));
+            menu.Items.Add(MyPlanner.Controls.Components.EventContextMenu.MakeDuplicateItem(
+                () => { _Deselect(); RecordDuplicateRequested?.Invoke(this, ev); }));
+            menu.Items.Add(MyPlanner.Controls.Components.EventContextMenu.MakeDeleteItem(
+                () => { _Deselect(); RecordDeleteRequested?.Invoke(this, ev); }));
         };
         return menu;
     }

@@ -388,8 +388,9 @@ public partial class Sidebar : UserControl
             menu.Items.Add(MenuItemSimple("Создать группу",    () => _ = CreateItem("group", parentId: id)));
             menu.Items.Add(MenuItemSimple("Создать коллекцию", () => _ = CreateItem("collection", parentId: id)));
             menu.Items.Add(new Separator());
-            menu.Items.Add(MenuItemSimple("Изменить", () => _ = EditGroup(id)));
-            menu.Items.Add(MenuItemSimple("Удалить",       () => _ = DeleteGroup(id)));
+            menu.Items.Add(MenuItemEdit(() => _ = EditGroup(id)));
+            menu.Items.Add(MenuItemDuplicate(() => DuplicateGroup(id)));
+            menu.Items.Add(MenuItemDelete(() => _ = DeleteGroup(id)));
         }
         else
         {
@@ -398,8 +399,9 @@ public partial class Sidebar : UserControl
                 menu.Items.Add(BuildColorMenu(id));
                 menu.Items.Add(new Separator());
             }
-            menu.Items.Add(MenuItemSimple("Изменить", () => _ = EditCollection(id)));
-            menu.Items.Add(MenuItemSimple("Удалить",       () => _ = DeleteCollection(id)));
+            menu.Items.Add(MenuItemEdit(() => _ = EditCollection(id)));
+            menu.Items.Add(MenuItemDuplicate(() => DuplicateCollection(id)));
+            menu.Items.Add(MenuItemDelete(() => _ = DeleteCollection(id)));
         }
 
         menu.Open(anchor);
@@ -456,6 +458,30 @@ public partial class Sidebar : UserControl
     private static MenuItem MenuItemSimple(string header, Action onClick)
     {
         var item = new MenuItem { Header = header };
+        item.Click += (_, _) => onClick();
+        return item;
+    }
+
+    // Пункт «Изменить» с иконкой карандаша.
+    private static MenuItem MenuItemEdit(Action onClick)
+    {
+        var item = new MenuItem { Header = MenuIcons.EditHeader() };
+        item.Click += (_, _) => onClick();
+        return item;
+    }
+
+    // Пункт «Дублировать» с иконкой копирования.
+    private static MenuItem MenuItemDuplicate(Action onClick)
+    {
+        var item = new MenuItem { Header = MenuIcons.DuplicateHeader() };
+        item.Click += (_, _) => onClick();
+        return item;
+    }
+
+    // Красный пункт «Удалить» с иконкой корзины.
+    private static MenuItem MenuItemDelete(Action onClick)
+    {
+        var item = new MenuItem { Header = MenuIcons.DeleteHeader() };
         item.Click += (_, _) => onClick();
         return item;
     }
@@ -549,6 +575,22 @@ public partial class Sidebar : UserControl
         col.GroupId = res.GroupId;
         _repository.UpdateCollection(col);
         ReloadAndNotify();
+    }
+
+    private void DuplicateGroup(int groupId)
+    {
+        if (_repository is null) return;
+        var copy = _repository.DuplicateGroup(groupId);
+        ReloadAndNotify();
+        if (copy.Id.HasValue) ExpandGroup(copy.Id.Value);
+    }
+
+    private void DuplicateCollection(int collectionId)
+    {
+        if (_repository is null) return;
+        var copy = _repository.DuplicateCollection(collectionId);
+        ReloadAndNotify();
+        if (copy.Id.HasValue && _mode == SidebarMode.Constructor) OpenCollection(copy.Id.Value);
     }
 
     private async Task DeleteGroup(int groupId)

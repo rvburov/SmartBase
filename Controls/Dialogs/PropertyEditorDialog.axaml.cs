@@ -1,9 +1,18 @@
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Media;
 using MyPlanner.Core.Models;
 using MyPlanner.Database.Repositories;
 
 namespace MyPlanner.Controls.Dialogs;
+
+/// <summary>Тип поля для ComboBox: обводочная иконка (lucide) + подпись.</summary>
+public sealed class FieldTypeItem
+{
+    public required string   Type  { get; init; }
+    public required string   Label { get; init; }
+    public required Geometry Icon  { get; init; }
+}
 
 /// <summary>
 /// Notion-style мини-диалог для создания/изменения одного свойства (поля коллекции).
@@ -11,21 +20,29 @@ namespace MyPlanner.Controls.Dialogs;
 /// </summary>
 public partial class PropertyEditorDialog : Window
 {
-    private static readonly (string Type, string Icon, string Label)[] FieldTypes =
+    // Иконки берём из общего источника FieldTypeIcons (lucide, 24×24).
+    private static readonly FieldTypeItem[] FieldTypes =
     [
-        ("text",     "Аа", "Текст"),
-        ("number",   "#",  "Число"),
-        ("date",     "⊙",  "Дата"),
-        ("select",   "≡",  "Список"),
-        ("checkbox", "✓",  "Флаг"),
-        ("url",      "↗",  "Ссылка"),
+        new() { Type = "text",     Label = "Текст",   Icon = Components.FieldTypeIcons.ForType("text")!     },
+        new() { Type = "number",   Label = "Число",   Icon = Components.FieldTypeIcons.ForType("number")!   },
+        new() { Type = "date",     Label = "Дата",    Icon = Components.FieldTypeIcons.ForType("date")!     },
+        new() { Type = "select",   Label = "Список",  Icon = Components.FieldTypeIcons.ForType("select")!   },
+        new() { Type = "checkbox", Label = "Чекбокс", Icon = Components.FieldTypeIcons.ForType("checkbox")! },
+        new() { Type = "url",      Label = "Ссылка",  Icon = Components.FieldTypeIcons.ForType("url")!      },
     ];
 
     private readonly ConstructorRepository _repository;
     private readonly int  _collectionId;
     private readonly int? _editFieldId;
 
+    // Режим системной колонки («Название»/«Описание»): тип зафиксирован «Текст»,
+    // запись идёт не в DbFields, а через результат диалога (см. ResultName).
+    private readonly bool _systemMode;
+
     private string _selectedType = "text";
+
+    /// <summary>В системном режиме — введённая подпись (после Сохранить); иначе null.</summary>
+    public string? ResultName { get; private set; }
 
     public PropertyEditorDialog(ConstructorRepository repository, int collectionId, int? editFieldId = null)
     {
@@ -35,7 +52,7 @@ public partial class PropertyEditorDialog : Window
         _collectionId = collectionId;
         _editFieldId  = editFieldId;
 
-        TypeCombo.ItemsSource = FieldTypes.Select(t => $"{t.Icon}  {t.Label}").ToList();
+        TypeCombo.ItemsSource = FieldTypes;
 
         if (editFieldId.HasValue)
         {
@@ -60,6 +77,36 @@ public partial class PropertyEditorDialog : Window
         SaveBtn.Click   += (_, _) => TrySave();
         NameBox.KeyDown += (_, e) => { if (e.Key == Avalonia.Input.Key.Enter) TrySave(); };
         NameBox.TextChanged += (_, _) => HideError();
+    }
+
+    /// <summary>
+    /// Конструктор для системной колонки «Название»/«Описание». Визуально как
+    /// «Изменение свойства», но тип зафиксирован «Текст» (ComboBox заблокирован),
+    /// а сохранение возвращает подпись через ResultName, не трогая DbFields.
+    /// </summary>
+    public PropertyEditorDialog(string currentName)
+    {
+        InitializeComponent();
+
+        _repository   = null!;   // в системном режиме не используется
+        _collectionId = 0;
+        _editFieldId  = null;
+        _systemMode   = true;
+
+        Title = "Изменение свойства";
+
+        TypeCombo.ItemsSource   = FieldTypes;
+        TypeCombo.SelectedIndex = Array.FindIndex(FieldTypes, t => t.Type == "text");
+        TypeCombo.IsEnabled     = false;   // тип «Текст» нельзя изменить
+
+        NameBox.Text = currentName;
+
+        CancelBtn.Click += (_, _) => Close(false);
+        SaveBtn.Click   += (_, _) => TrySave();
+        NameBox.KeyDown += (_, e) => { if (e.Key == Avalonia.Input.Key.Enter) TrySave(); };
+        NameBox.TextChanged += (_, _) => HideError();
+
+        Opened += (_, _) => { NameBox.Focus(); NameBox.SelectAll(); };
     }
 
     private void ShowError(string message)
@@ -96,6 +143,15 @@ public partial class PropertyEditorDialog : Window
         {
             ShowError("Укажите название свойства");
             NameBox.Focus();
+            return;
+        }
+
+        // Системная колонка: возвращаем подпись наружу, запись делает контроллер
+        // (метаданные), DbFields не трогаем.
+        if (_systemMode)
+        {
+            ResultName = name;
+            Close(true);
             return;
         }
 

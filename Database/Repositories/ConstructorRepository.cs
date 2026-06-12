@@ -37,6 +37,20 @@ public class ConstructorRepository(AppDbContext db)
         db.SaveChanges();
     }
 
+    public DbGroup DuplicateGroup(int groupId)
+    {
+        var src = db.DbGroups.Find(groupId);
+        if (src is null) throw new InvalidOperationException($"Group {groupId} not found");
+
+        var maxPos = db.DbGroups.Where(g => g.ParentId == src.ParentId).Select(g => (int?)g.Position).Max() ?? 0;
+
+        var copy = new DbGroupEntity { Name = src.Name + " (копия)", ParentId = src.ParentId, Position = maxPos + 1000 };
+        db.DbGroups.Add(copy);
+        db.SaveChanges();
+
+        return new DbGroup { Id = copy.Id, Name = copy.Name, ParentId = copy.ParentId, Position = copy.Position };
+    }
+
     public void DeleteGroup(int groupId)
     {
         // Рекурсивно удаляем все вложенные группы.
@@ -114,6 +128,70 @@ public class ConstructorRepository(AppDbContext db)
         db.SaveChanges();
     }
 
+    public DbCollection DuplicateCollection(int collectionId)
+    {
+        var src = db.DbCollections.Find(collectionId);
+        if (src is null) throw new InvalidOperationException($"Collection {collectionId} not found");
+
+        var maxPos = db.DbCollections.Select(c => (int?)c.Position).Max() ?? 0;
+
+        var copy = new DbCollectionEntity
+        {
+            Name     = src.Name + " (копия)",
+            GroupId  = src.GroupId,
+            Position = maxPos + 1000,
+            Icon     = src.Icon,
+            Color    = src.Color,
+        };
+        db.DbCollections.Add(copy);
+        db.SaveChanges();
+
+        // Копируем поля
+        var fields = db.DbFields.Where(f => f.CollectionId == collectionId).ToList();
+        var fieldMap = new Dictionary<int, int>(); // oldId -> newId
+        foreach (var f in fields)
+        {
+            var newField = new DbFieldEntity
+            {
+                CollectionId = copy.Id, Name = f.Name, FieldType = f.FieldType,
+                ConfigJson = f.ConfigJson, Position = f.Position,
+                IsCalStart = f.IsCalStart, IsCalEnd = f.IsCalEnd,
+                IsSystem = f.IsSystem, IsRequired = f.IsRequired,
+            };
+            db.DbFields.Add(newField);
+            db.SaveChanges();
+            fieldMap[f.Id] = newField.Id;
+        }
+
+        // Копируем записи и их значения полей
+        var records = db.DbRecords.Where(r => r.CollectionId == collectionId).ToList();
+        foreach (var r in records)
+        {
+            var newRec = new DbRecordEntity
+            {
+                CollectionId = copy.Id, CreatedAt = DateTime.Now.ToString("o"),
+                Position = r.Position, StartDt = r.StartDt, EndDt = r.EndDt,
+                AllDay = r.AllDay, Title = r.Title, Description = r.Description,
+            };
+            db.DbRecords.Add(newRec);
+            db.SaveChanges();
+
+            var fvs = db.DbFieldValues.Where(fv => fv.RecordId == r.Id).ToList();
+            foreach (var fv in fvs)
+            {
+                if (!fieldMap.TryGetValue(fv.FieldId, out var newFid)) continue;
+                db.DbFieldValues.Add(new DbFieldValueEntity { RecordId = newRec.Id, FieldId = newFid, Value = fv.Value });
+            }
+            db.SaveChanges();
+        }
+
+        return new DbCollection
+        {
+            Id = copy.Id, Name = copy.Name, GroupId = copy.GroupId,
+            Position = copy.Position, Icon = copy.Icon, Color = copy.Color,
+        };
+    }
+
     // ── Поля ──────────────────────────────────────────────────────────────────
 
     public List<DbField> GetFields(int collectionId) =>
@@ -164,6 +242,48 @@ public class ConstructorRepository(AppDbContext db)
         entity.IsSystem   = field.IsSystem;
         entity.IsRequired = field.IsRequired;
         db.SaveChanges();
+    }
+
+    public DbField DuplicateField(int fieldId)
+    {
+        var src = db.DbFields.Find(fieldId);
+        if (src is null) throw new InvalidOperationException($"Field {fieldId} not found");
+
+        var baseName = src.Name + " (копия)";
+        var name = baseName;
+        var n = 2;
+        while (db.DbFields.Any(f => f.CollectionId == src.CollectionId && f.Name == name))
+            name = $"{baseName} {n++}";
+
+        // Сдвигаем все поля правее исходного, освобождая место под копию.
+        var following = db.DbFields
+            .Where(f => f.CollectionId == src.CollectionId && f.Position > src.Position)
+            .ToList();
+        foreach (var f in following)
+            f.Position += 1000;
+
+        var copy = new DbFieldEntity
+        {
+            CollectionId = src.CollectionId,     Name = name,
+            FieldType    = src.FieldType,        ConfigJson = src.ConfigJson,
+            Position     = src.Position + 1000,  IsCalStart = false,
+            IsCalEnd     = false,                IsSystem = false,
+            IsRequired   = false,
+        };
+        db.DbFields.Add(copy);
+        db.SaveChanges();
+
+        // Копируем значения ячеек исходного свойства во всех записях.
+        var values = db.DbFieldValues.Where(fv => fv.FieldId == fieldId).ToList();
+        foreach (var fv in values)
+            db.DbFieldValues.Add(new DbFieldValueEntity { RecordId = fv.RecordId, FieldId = copy.Id, Value = fv.Value });
+        db.SaveChanges();
+
+        return new DbField
+        {
+            Id = copy.Id, CollectionId = copy.CollectionId, Name = copy.Name,
+            FieldType = copy.FieldType, ConfigJson = copy.ConfigJson, Position = copy.Position,
+        };
     }
 
     public void DeleteField(int fieldId)
@@ -313,6 +433,45 @@ public class ConstructorRepository(AppDbContext db)
         db.SaveChanges();
     }
 
+    public DbRecord DuplicateRecord(int recordId)
+    {
+        var src = db.DbRecords.Find(recordId);
+        if (src is null) throw new InvalidOperationException($"Record {recordId} not found");
+
+        var maxPos = db.DbRecords
+            .Where(r => r.CollectionId == src.CollectionId)
+            .Select(r => (int?)r.Position)
+            .Max() ?? 0;
+
+        var copy = new DbRecordEntity
+        {
+            CollectionId = src.CollectionId,
+            CreatedAt    = DateTime.Now.ToString("o"),
+            Position     = maxPos + 1000,
+            StartDt      = src.StartDt,
+            EndDt        = src.EndDt,
+            AllDay       = src.AllDay,
+            Title        = src.Title,
+            Description  = src.Description,
+        };
+        db.DbRecords.Add(copy);
+        db.SaveChanges();
+
+        var fieldValues = db.DbFieldValues.Where(fv => fv.RecordId == recordId).ToList();
+        foreach (var fv in fieldValues)
+            db.DbFieldValues.Add(new DbFieldValueEntity { RecordId = copy.Id, FieldId = fv.FieldId, Value = fv.Value });
+        db.SaveChanges();
+
+        return new DbRecord
+        {
+            Id           = copy.Id,
+            CollectionId = copy.CollectionId,
+            Position     = copy.Position,
+            Title        = copy.Title,
+            Description  = copy.Description,
+        };
+    }
+
     // ── Значения полей ────────────────────────────────────────────────────────
 
     public Dictionary<int, string> GetFieldValues(int recordId) =>
@@ -409,6 +568,80 @@ public class ConstructorRepository(AppDbContext db)
             s.RowResize = rowResize;
             s.ViewMode  = viewMode;
         }
+        db.SaveChanges();
+    }
+
+    // Подписи системных колонок «Название»/«Описание» (только заданные пользователем).
+    // Ключ — TableRowVm.TitleKey / DescKey; значение — отображаемое имя.
+    public Dictionary<string, string> GetSystemFieldNames(int collectionId) =>
+        db.SystemFieldMeta
+          .Where(m => m.CollectionId == collectionId && m.DisplayName != null)
+          .ToDictionary(m => m.Key, m => m.DisplayName!);
+
+    // Upsert подписи. Пустое имя или совпадение с дефолтом — удаляем строку
+    // (колонка возвращается к имени по умолчанию).
+    public void SetSystemFieldName(int collectionId, string key, string? displayName, string defaultName)
+    {
+        var trimmed = displayName?.Trim();
+        var reset   = string.IsNullOrEmpty(trimmed) || trimmed == defaultName;
+
+        var row = db.SystemFieldMeta.FirstOrDefault(m => m.CollectionId == collectionId && m.Key == key);
+
+        if (reset)
+        {
+            if (row is not null) db.SystemFieldMeta.Remove(row);
+        }
+        else if (row is null)
+        {
+            db.SystemFieldMeta.Add(new SystemFieldMetaEntity
+            {
+                CollectionId = collectionId, Key = key, DisplayName = trimmed,
+            });
+        }
+        else
+        {
+            row.DisplayName = trimmed;
+        }
+
+        db.SaveChanges();
+    }
+
+    // ── Порядок колонок (единый для Title/Desc и пользовательских) ─────────────
+
+    // Сохранённый порядок (key -> position); пусто, если в коллекции ещё не двигали.
+    public Dictionary<string, int> GetColumnOrder(int collectionId) =>
+        db.ColumnOrder
+          .Where(o => o.CollectionId == collectionId)
+          .ToDictionary(o => o.Key, o => o.Position);
+
+    // Переместить колонку key на одну позицию влево/вправо в общем ряду движимых
+    // колонок. movableKeys — текущий порядок всех движимых колонок (как их строит
+    // TableView); нужен для ленивой материализации дефолтного порядка.
+    public void MoveColumn(int collectionId, string key, bool left, IReadOnlyList<string> movableKeys)
+    {
+        // Первый перенос в коллекции — материализуем текущий порядок целиком.
+        if (!db.ColumnOrder.Any(o => o.CollectionId == collectionId))
+        {
+            for (var i = 0; i < movableKeys.Count; i++)
+                db.ColumnOrder.Add(new ColumnOrderEntity
+                {
+                    CollectionId = collectionId, Key = movableKeys[i], Position = (i + 1) * 1000,
+                });
+            db.SaveChanges();
+        }
+
+        var rows = db.ColumnOrder
+            .Where(o => o.CollectionId == collectionId)
+            .OrderBy(o => o.Position)
+            .ToList();
+
+        var idx = rows.FindIndex(o => o.Key == key);
+        if (idx < 0) return;
+
+        var swapIdx = left ? idx - 1 : idx + 1;
+        if (swapIdx < 0 || swapIdx >= rows.Count) return;   // крайняя колонка — no-op
+
+        (rows[idx].Position, rows[swapIdx].Position) = (rows[swapIdx].Position, rows[idx].Position);
         db.SaveChanges();
     }
 

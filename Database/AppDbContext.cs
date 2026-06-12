@@ -14,6 +14,8 @@ public class AppDbContext : DbContext
     public DbSet<UiColWidthEntity>         UiColWidths          { get; set; } = null!;
     public DbSet<UiRowHeightEntity>        UiRowHeights         { get; set; } = null!;
     public DbSet<UiCollectionSettingEntity> UiCollectionSettings { get; set; } = null!;
+    public DbSet<SystemFieldMetaEntity>    SystemFieldMeta      { get; set; } = null!;
+    public DbSet<ColumnOrderEntity>        ColumnOrder          { get; set; } = null!;
 
     private readonly string _dbPath;
 
@@ -106,6 +108,18 @@ public class AppDbContext : DbContext
         {
             e.ToTable("ui_collection_settings");
             e.HasKey(x => x.CollectionId);
+        });
+
+        model.Entity<SystemFieldMetaEntity>(e =>
+        {
+            e.ToTable("system_field_meta");
+            e.HasKey(x => new { x.CollectionId, x.Key });
+        });
+
+        model.Entity<ColumnOrderEntity>(e =>
+        {
+            e.ToTable("column_order");
+            e.HasKey(x => new { x.CollectionId, x.Key });
         });
     }
 }

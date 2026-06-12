@@ -64,23 +64,37 @@
         </Style>
     </UserControl.Styles>
 
-    <DataGrid x:Name="RecordsGrid"
-              AutoGenerateColumns="False"
-              RowHeight="{StaticResource RowHeightStandard}"
-              CanUserResizeColumns="False"
-              CanUserReorderColumns="False"
-              CanUserSortColumns="False"
-              GridLinesVisibility="All"
-              HorizontalGridLinesBrush="{StaticResource BrushSeparator}"
-              VerticalGridLinesBrush="{StaticResource BrushSeparator}"
-              HeadersVisibility="Column"
-              SelectionMode="Single"
-              IsReadOnly="False"
-              Background="Transparent"
-              UseLayoutRounding="True"
-              RowBackground="{StaticResource BrushBg}"
-              HorizontalScrollBarVisibility="Auto"
-              VerticalScrollBarVisibility="Auto"
-              Foreground="{StaticResource BrushPrimaryText}" />
+    <!-- DataGrid + накладная рамка выделенной колонки (позиционируется в коде). -->
+    <Panel>
+        <DataGrid x:Name="RecordsGrid"
+                  AutoGenerateColumns="False"
+                  RowHeight="{StaticResource RowHeightStandard}"
+                  CanUserResizeColumns="False"
+                  CanUserReorderColumns="False"
+                  CanUserSortColumns="False"
+                  GridLinesVisibility="All"
+                  HorizontalGridLinesBrush="{StaticResource BrushSeparator}"
+                  VerticalGridLinesBrush="{StaticResource BrushSeparator}"
+                  HeadersVisibility="Column"
+                  SelectionMode="Single"
+                  IsReadOnly="False"
+                  Background="Transparent"
+                  UseLayoutRounding="True"
+                  RowBackground="{StaticResource BrushBg}"
+                  HorizontalScrollBarVisibility="Auto"
+                  VerticalScrollBarVisibility="Auto"
+                  Foreground="{StaticResource BrushPrimaryText}" />
+
+        <!-- Голубая рамка выделенной колонки. IsHitTestVisible=False — клики проходят
+             сквозь неё в таблицу. Позиция/размер задаются в PositionColumnHighlight. -->
+        <Border x:Name="ColumnHighlight"
+                IsVisible="False"
+                IsHitTestVisible="False"
+                HorizontalAlignment="Left"
+                VerticalAlignment="Top"
+                BorderBrush="{StaticResource BrushAccent}"
+                BorderThickness="2"
+                CornerRadius="2" />
+    </Panel>
 
 </UserControl>

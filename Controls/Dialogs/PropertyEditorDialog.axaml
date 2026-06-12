@@ -39,7 +39,26 @@
                   Margin="0,0,0,12"
                   Background="{StaticResource BrushSecondaryBg}"
                   Foreground="{StaticResource BrushPrimaryText}"
-                  CornerRadius="{StaticResource RadiusBase}" />
+                  CornerRadius="{StaticResource RadiusBase}">
+            <ComboBox.ItemTemplate>
+                <DataTemplate>
+                    <StackPanel Orientation="Horizontal" Spacing="10">
+                        <Viewbox Width="18" Height="18" VerticalAlignment="Center">
+                            <Canvas Width="24" Height="24">
+                                <Path Data="{Binding Icon}"
+                                      Stroke="{StaticResource BrushPrimaryText}"
+                                      StrokeThickness="1.6"
+                                      StrokeLineCap="Round" StrokeJoin="Round" />
+                            </Canvas>
+                        </Viewbox>
+                        <TextBlock Text="{Binding Label}"
+                                   VerticalAlignment="Center"
+                                   FontSize="{StaticResource FontSizeBase}"
+                                   Foreground="{StaticResource BrushPrimaryText}" />
+                    </StackPanel>
+                </DataTemplate>
+            </ComboBox.ItemTemplate>
+        </ComboBox>
 
         <!-- Уведомление об ошибке валидации -->
         <Border x:Name="ErrorBanner" IsVisible="False"

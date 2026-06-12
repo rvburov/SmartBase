@@ -16,8 +16,8 @@ public static class EventContextMenu
     public static ContextMenu Single(Action onEdit, Action onDelete)
     {
         var menu = new ContextMenu();
-        menu.Items.Add(MakeItem("Изменить", onEdit));
-        menu.Items.Add(MakeItem("Удалить",       onDelete));
+        menu.Items.Add(MakeEditItem(onEdit));
+        menu.Items.Add(MakeDeleteItem(onDelete));
         return menu;
     }
 
@@ -25,7 +25,7 @@ public static class EventContextMenu
     public static ContextMenu Multi(Action onDeleteAll)
     {
         var menu = new ContextMenu();
-        menu.Items.Add(MakeItem("Удалить", onDeleteAll));
+        menu.Items.Add(MakeDeleteItem(onDeleteAll));
         return menu;
     }
 
@@ -40,6 +40,30 @@ public static class EventContextMenu
     public static MenuItem MakeItem(string header, Action onClick)
     {
         var item = new MenuItem { Header = header };
+        item.Click += (_, _) => Dispatcher.UIThread.Post(onClick);
+        return item;
+    }
+
+    // Пункт «Дублировать» с иконкой копирования.
+    public static MenuItem MakeDuplicateItem(Action onClick)
+    {
+        var item = new MenuItem { Header = MenuIcons.DuplicateHeader() };
+        item.Click += (_, _) => Dispatcher.UIThread.Post(onClick);
+        return item;
+    }
+
+    // Пункт «Изменить» с иконкой карандаша.
+    public static MenuItem MakeEditItem(Action onClick)
+    {
+        var item = new MenuItem { Header = MenuIcons.EditHeader() };
+        item.Click += (_, _) => Dispatcher.UIThread.Post(onClick);
+        return item;
+    }
+
+    // Красный пункт «Удалить» с иконкой корзины.
+    public static MenuItem MakeDeleteItem(Action onClick)
+    {
+        var item = new MenuItem { Header = MenuIcons.DeleteHeader() };
         item.Click += (_, _) => Dispatcher.UIThread.Post(onClick);
         return item;
     }

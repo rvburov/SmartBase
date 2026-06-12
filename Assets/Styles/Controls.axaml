@@ -125,6 +125,11 @@
         <Setter Property="CornerRadius"   Value="4" />
     </Style>
 
+    <!-- Заголовок колонки таблицы: серый фон при наведении -->
+    <Style Selector="Border.colHeader:pointerover">
+        <Setter Property="Background" Value="{StaticResource BrushHover}" />
+    </Style>
+
     <!-- Активный модуль в ActivityBar -->
     <Style Selector="ToggleButton.icon.module:checked /template/ ContentPresenter">
         <Setter Property="Background" Value="Transparent" />

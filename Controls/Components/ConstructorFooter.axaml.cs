@@ -6,7 +6,6 @@ public partial class ConstructorFooter : UserControl
 {
     public event EventHandler?       FilterClicked;
     public event EventHandler?       SortClicked;
-    public event EventHandler<bool>? ColResizeModeChanged;
     public event EventHandler<bool>? RowResizeModeChanged;
     public event EventHandler?       PrevPageClicked;
     public event EventHandler?       NextPageClicked;
@@ -20,17 +19,14 @@ public partial class ConstructorFooter : UserControl
         PrevPageBtn.Click    += (_, _) => PrevPageClicked?.Invoke(this, EventArgs.Empty);
         NextPageBtn.Click    += (_, _) => NextPageClicked?.Invoke(this, EventArgs.Empty);
 
-        ColResizeBtn.IsCheckedChanged += (_, _) =>
-            ColResizeModeChanged?.Invoke(this, ColResizeBtn.IsChecked == true);
-
         RowResizeBtn.IsCheckedChanged += (_, _) =>
             RowResizeModeChanged?.Invoke(this, RowResizeBtn.IsChecked == true);
     }
 
-    /// <summary>Применить состояние режимов ресайза при загрузке коллекции.</summary>
-    public void LoadCollectionState(bool colResize, bool rowResize)
+    /// <summary>Применить состояние режима высоты строк при загрузке коллекции.
+    /// (Ширина столбцов теперь управляется из контекстного меню заголовка.)</summary>
+    public void LoadCollectionState(bool rowResize)
     {
-        ColResizeBtn.IsChecked = colResize;
         RowResizeBtn.IsChecked = rowResize;
     }
 

@@ -17,6 +17,7 @@ public partial class AllDayBar : UserControl
     public event EventHandler<CalendarRecord>?    RecordMoved;
     public event EventHandler<CalendarRecord>?    RecordDeleteRequested;
     public event EventHandler<IReadOnlyList<CalendarRecord>>? RecordsDeleteRequested;
+    public event EventHandler<CalendarRecord>?    RecordDuplicateRequested;
     public event EventHandler<DateOnly>? RecordCreationRequested;
 
     // Сигнал «здесь что-то выделили». Аргумент = additive (Shift): при обычном
@@ -695,16 +696,18 @@ public partial class AllDayBar : UserControl
                 // (как по Delete). Делегируем родителю, т.к. он знает обе зоны.
                 if (totalSelected > 1 && _selections.ContainsKey(ev))
                 {
-                    menu.Items.Add(EventContextMenu.MakeItem(
-                        "Удалить", () => (DeleteAllSelected ??
+                    menu.Items.Add(EventContextMenu.MakeDeleteItem(
+                        () => (DeleteAllSelected ??
                             (() => { _DeselectAll(); RecordsDeleteRequested?.Invoke(this, _selections.Keys.ToList()); }))()));
                     return;
                 }
 
-                menu.Items.Add(EventContextMenu.MakeItem(
-                    "Изменить", () => { _DeselectAll(); RecordClicked?.Invoke(this, ev); }));
-                menu.Items.Add(EventContextMenu.MakeItem(
-                    "Удалить", () => { _DeselectAll(); RecordDeleteRequested?.Invoke(this, ev); }));
+                menu.Items.Add(EventContextMenu.MakeEditItem(
+                    () => { _DeselectAll(); RecordClicked?.Invoke(this, ev); }));
+                menu.Items.Add(EventContextMenu.MakeDuplicateItem(
+                    () => { _DeselectAll(); RecordDuplicateRequested?.Invoke(this, ev); }));
+                menu.Items.Add(EventContextMenu.MakeDeleteItem(
+                    () => { _DeselectAll(); RecordDeleteRequested?.Invoke(this, ev); }));
                 return;
             }
 

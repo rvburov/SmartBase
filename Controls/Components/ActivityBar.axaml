@@ -62,7 +62,8 @@
                       ToolTip.Tip="Конструктор БД">
             <Viewbox Width="30" Height="30">
                 <Canvas Width="24" Height="24">
-                    <Path Data="M12 3 V20 A1 1 0 0 1 11 21 H5 A2 2 0 0 1 3 19 V5 A2 2 0 0 1 5 3 H19 A2 2 0 0 1 21 5 V11 A1 1 0 0 1 20 12 H3 M16 19 H22 M19 22 V16"
+                    <!-- tabler database-check -->
+                    <Path Data="M4 6c0 1.657 3.582 3 8 3s8 -1.343 8 -3s-3.582 -3 -8 -3s-8 1.343 -8 3 M4 6v6c0 1.657 3.582 3 8 3c1.075 0 2.1 -.08 3.037 -.224 M20 6v8 M4 12v6c0 1.657 3.582 3 8 3c.166 0 .331 -.002 .495 -.006 M15 19l2 2l4 -4"
                           Stroke="{Binding $parent[ToggleButton].Foreground}"
                           StrokeThickness="1.2"
                           StrokeLineCap="Round"

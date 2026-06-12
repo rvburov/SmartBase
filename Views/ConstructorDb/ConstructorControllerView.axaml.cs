@@ -48,23 +48,25 @@ public partial class ConstructorControllerView : UserControl
         // Toggle правой панели записи в навбаре — пробрасываем в MainWindow.
         ConstructorNavbar.RecordPanelToggled += (_, isOpen) => RecordPanelToggled?.Invoke(this, isOpen);
 
-        // Управление ресайзом — в нижней панели.
-        ConstructorFooter.ColResizeModeChanged += (_, v) => TableViewCtrl.SetColResizeMode(v);
+        // Высота строк — в нижней панели; ширина столбцов — в меню заголовка.
         ConstructorFooter.RowResizeModeChanged += (_, v) => TableViewCtrl.SetRowResizeMode(v);
 
         // CRUD для записей — через контекстные меню в TableView/ListView.
-        TableViewCtrl.RecordClicked          += (_, rid)  => OpenPage(rid);
-        TableViewCtrl.RecordCreateRequested  += (_, open) => CreateAndOpen(open);
-        TableViewCtrl.RecordDeleteRequested  += (_, rid)  => DeleteRecord(rid);
+        TableViewCtrl.RecordClicked             += (_, rid)  => OpenPage(rid);
+        TableViewCtrl.RecordCreateRequested     += (_, open) => CreateAndOpen(open);
+        TableViewCtrl.RecordDeleteRequested     += (_, rid)  => DeleteRecord(rid);
+        TableViewCtrl.RecordDuplicateRequested  += (_, rid)  => DuplicateRecord(rid);
 
-        ListViewCtrl.RecordClicked           += (_, rid) => OpenPage(rid);
-        ListViewCtrl.RecordCreateRequested   += (_, _)   => CreateAndOpen();
-        ListViewCtrl.RecordDeleteRequested   += (_, rid) => DeleteRecord(rid);
+        ListViewCtrl.RecordClicked              += (_, rid) => OpenPage(rid);
+        ListViewCtrl.RecordCreateRequested      += (_, _)   => CreateAndOpen();
+        ListViewCtrl.RecordDeleteRequested      += (_, rid) => DeleteRecord(rid);
 
         // CRUD для свойств — через контекстное меню заголовков колонок.
-        TableViewCtrl.PropertyCreateRequested += (_, _)   => _ = OpenPropertyDialog(null);
-        TableViewCtrl.PropertyEditRequested   += (_, fid) => _ = OpenPropertyDialog(fid);
-        TableViewCtrl.PropertyDeleteRequested += (_, fid) => DeleteProperty(fid);
+        TableViewCtrl.PropertyCreateRequested    += (_, _)   => _ = OpenPropertyDialog(null);
+        TableViewCtrl.PropertyEditRequested      += (_, fid) => _ = OpenPropertyDialog(fid);
+        TableViewCtrl.PropertyDuplicateRequested += (_, fid) => DuplicateProperty(fid);
+        TableViewCtrl.PropertyDeleteRequested    += (_, fid) => DeleteProperty(fid);
+        TableViewCtrl.SystemFieldRenameRequested += (_, key) => _ = RenameSystemField(key);
 
         // Стартовое состояние: коллекция не выбрана — заголовок-плейсхолдер и подсказка.
         ConstructorNavbar.SetTitle("");
@@ -103,8 +105,8 @@ public partial class ConstructorControllerView : UserControl
         ConstructorNavbar.SetTitle(col.Name);
         SetEmptyState(false);
 
-        var (colResize, rowResize, viewMode) = _repository.GetUiSettings(collectionId);
-        ConstructorFooter.LoadCollectionState(colResize, rowResize);
+        var (_, rowResize, viewMode) = _repository.GetUiSettings(collectionId);
+        ConstructorFooter.LoadCollectionState(rowResize);
         ConstructorNavbar.SetViewMode(viewMode);
         SwitchView(viewMode);
 
@@ -186,8 +188,15 @@ public partial class ConstructorControllerView : UserControl
         _repository.DeleteRecord(recordId);
         Refresh();
         CollectionsChanged?.Invoke(this, EventArgs.Empty);
-        // Если удаляли открытую — попросим главное окно закрыть панель.
         RecordPageClosed?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void DuplicateRecord(int recordId)
+    {
+        if (_repository is null) return;
+        _repository.DuplicateRecord(recordId);
+        Refresh();
+        CollectionsChanged?.Invoke(this, EventArgs.Empty);
     }
 
     // ── Свойства (поля) ───────────────────────────────────────────────────────
@@ -206,6 +215,24 @@ public partial class ConstructorControllerView : UserControl
         }
     }
 
+    // Переименование системной колонки «Название»/«Описание»: меняем только подпись
+    // (DisplayName в метаданных). Физические колонки Title/Description не трогаем.
+    private async Task RenameSystemField(string key)
+    {
+        if (_currentCollectionId is null || _repository is null) return;
+        if (VisualRoot is not Avalonia.Controls.Window win) return;
+
+        var current = TableViewCtrl.GetSystemHeader(key);
+        var dlg     = new PropertyEditorDialog(current);
+        var ok      = await dlg.ShowDialog<bool?>(win);
+        if (ok != true || dlg.ResultName is null) return;   // отмена
+
+        var defaultName = TableViewCtrl.GetSystemDefaultName(key);
+        _repository.SetSystemFieldName(_currentCollectionId.Value, key, dlg.ResultName, defaultName);
+        Refresh();
+        CollectionsChanged?.Invoke(this, EventArgs.Empty);
+    }
+
     // ── Переименование коллекции ──────────────────────────────────────────────
 
     private void RenameCurrentCollection(string newName)
@@ -217,6 +244,14 @@ public partial class ConstructorControllerView : UserControl
 
         col.Name = newName;
         _repository.UpdateCollection(col);
+        CollectionsChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void DuplicateProperty(int fieldId)
+    {
+        if (_repository is null) return;
+        _repository.DuplicateField(fieldId);
+        Refresh();
         CollectionsChanged?.Invoke(this, EventArgs.Empty);
     }
 

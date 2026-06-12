@@ -108,3 +108,24 @@ public class UiCollectionSettingEntity
     public bool   RowResize    { get; set; } = false;
     public string ViewMode     { get; set; } = "table";
 }
+
+// Метаданные системных колонок «Название»/«Описание» (Title/Description в db_records).
+// Сами колонки физические, поэтому их подпись храним отдельно, наложением.
+// Key = TableRowVm.TitleKey ("__title__") | TableRowVm.DescKey ("__desc__").
+public class SystemFieldMetaEntity
+{
+    public int     CollectionId { get; set; }
+    public string  Key          { get; set; } = "";
+    public string? DisplayName  { get; set; }   // null = показывать имя по умолчанию
+    public int     Position     { get; set; }   // не используется (порядок — в column_order)
+}
+
+// Единый порядок отображения колонок таблицы (Title/Desc + пользовательские поля).
+// Key = TableRowVm.TitleKey/DescKey или строковый id поля. Источник правды только
+// для порядка; DbFields.Position остаётся для внутренней логики.
+public class ColumnOrderEntity
+{
+    public int    CollectionId { get; set; }
+    public string Key          { get; set; } = "";
+    public int    Position     { get; set; }
+}

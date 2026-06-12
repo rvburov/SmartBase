@@ -38,6 +38,22 @@ namespace MyPlanner.Database.Migrations
                     b.ToTable("categories", (string)null);
                 });
 
+            modelBuilder.Entity("MyPlanner.Database.Entities.ColumnOrderEntity", b =>
+                {
+                    b.Property<int>("CollectionId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Key")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Position")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("CollectionId", "Key");
+
+                    b.ToTable("column_order", (string)null);
+                });
+
             modelBuilder.Entity("MyPlanner.Database.Entities.DbCollectionEntity", b =>
                 {
                     b.Property<int>("Id")
@@ -199,6 +215,25 @@ namespace MyPlanner.Database.Migrations
                     b.HasIndex("CollectionId");
 
                     b.ToTable("db_records", (string)null);
+                });
+
+            modelBuilder.Entity("MyPlanner.Database.Entities.SystemFieldMetaEntity", b =>
+                {
+                    b.Property<int>("CollectionId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Key")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("DisplayName")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Position")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("CollectionId", "Key");
+
+                    b.ToTable("system_field_meta", (string)null);
                 });
 
             modelBuilder.Entity("MyPlanner.Database.Entities.UiColWidthEntity", b =>

@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text.Json;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
 using Avalonia.Controls.Templates;
 using Avalonia.Data;
 using Avalonia.Data.Converters;
@@ -9,6 +10,7 @@ using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Threading;
+using Avalonia.VisualTree;
 using MyPlanner.Core.Models;
 using MyPlanner.Database.Repositories;
 using MyPlanner.ViewModels.ConstructorDb;
@@ -20,12 +22,16 @@ public partial class TableView : UserControl
     // ── Публичные события ─────────────────────────────────────────────────────
     public event EventHandler<int>? RecordClicked;
     public event EventHandler<int>? RecordDeleteRequested;
+    public event EventHandler<int>? RecordDuplicateRequested;
     // bool = открывать ли запись справа после создания. «+»-строка создаёт без
     // открытия (false), контекстное «Создать запись» — с открытием (true).
     public event EventHandler<bool>? RecordCreateRequested;
     public event EventHandler?      PropertyCreateRequested;
     public event EventHandler<int>? PropertyEditRequested;
+    public event EventHandler<int>? PropertyDuplicateRequested;
     public event EventHandler<int>? PropertyDeleteRequested;
+    // Переименование системной колонки «Название»/«Описание» (string = ключ колонки).
+    public event EventHandler<string>? SystemFieldRenameRequested;
 
     /// <summary>Срабатывает после построения колонок — родитель может навесить хуки на дефы.</summary>
     public event EventHandler<IReadOnlyList<TableColumnDef>>? ColumnsBuilt;
@@ -43,6 +49,12 @@ public partial class TableView : UserControl
     private List<DbField>        _fields  = [];
     private List<TableColumnDef> _colDefs = [];
     private VirtualRowList?      _virtualRows;
+    // Пользовательские подписи системных колонок: ключ → отображаемое имя.
+    private Dictionary<string, string> _systemNames = [];
+    // Сохранённый порядок колонок: ключ → позиция (пусто, если ещё не двигали).
+    private Dictionary<string, int> _columnOrder = [];
+    // Выделенная по клику в заголовок колонка (голубая рамка). null — нет выделения.
+    private string? _selectedColumnKey;
 
     // ── Фильтр/сортировка колонок (Excel-стиль) ───────────────────────────────
     // key колонки → набор разрешённых значений; null-наличие ключа = фильтра нет.
@@ -86,6 +98,8 @@ public partial class TableView : UserControl
         _collectionId = 0;
         _fields       = [];
         _colDefs      = [];
+        _systemNames  = [];
+        _columnOrder  = [];
         _virtualRows  = null;
         _filters.Clear();
         _chevronPaths.Clear();
@@ -101,10 +115,21 @@ public partial class TableView : UserControl
         if (!manual)
             _repository?.SaveColWidths(_collectionId, []);
 
+        // Запоминаем режим, чтобы он сохранялся между сессиями (раньше управлялся
+        // из футера без персиста; теперь — из меню заголовка).
+        if (_repository is not null)
+        {
+            var (_, rowResize, viewMode) = _repository.GetUiSettings(_collectionId);
+            _repository.SaveUiSettings(_collectionId, manual, rowResize, viewMode);
+        }
+
         // Пересобирать колонки нельзя — DataGrid теряет ресайз-грипперы. Вместо
         // этого переключаем IsVisible у filler-колонки и пересчитываем ширины.
         ApplyColumnWidths();
     }
+
+    // Текущий режим ширины столбцов (для отметки активного пункта в меню).
+    public bool IsManualColResize => _manualColResize;
 
     public void SetRowResizeMode(bool _) { }
 
@@ -130,6 +155,11 @@ public partial class TableView : UserControl
             .Where(f => f.FieldType != "markdown")
             .ToList();
 
+        _systemNames = _repository.GetSystemFieldNames(_collectionId);
+        _columnOrder = _repository.GetColumnOrder(_collectionId);
+
+        ClearColumnSelection();   // колонки пересобираются — снимаем выделение
+
         _colDefs = BuildColDefs();
         ColumnsBuilt?.Invoke(this, _colDefs);
 
@@ -146,23 +176,23 @@ public partial class TableView : UserControl
 
     private List<TableColumnDef> BuildColDefs()
     {
-        var defs = new List<TableColumnDef>
+        // Движимые колонки: Title, Desc и пользовательские поля. Порядок — по
+        // эффективной позиции (из column_order, иначе дефолт). № и «+» закреплены.
+        var movable = new List<TableColumnDef>
         {
-            new() { Key = TableColumnDef.NumKey,    Header = "№",
-                    IsStarWidth = false, FixedWidth = NumColWidth,
-                    CanResize = false,   IsReadOnly = true },
+            new() { Key = TableRowVm.TitleKey, Header = SystemHeader(TableRowVm.TitleKey),
+                    FieldType = "text",  IsStarWidth = true, MinWidth = MinColWidth,
+                    BuildHeaderMenu = _ => BuildSystemHeaderContextMenu(TableRowVm.TitleKey) },
 
-            new() { Key = TableRowVm.TitleKey, Header = "Название",
-                    FieldType = "text",  IsStarWidth = true, MinWidth = MinColWidth },
-
-            new() { Key = TableRowVm.DescKey,  Header = "Описание",
-                    FieldType = "text",  IsStarWidth = true, MinWidth = MinColWidth },
+            new() { Key = TableRowVm.DescKey,  Header = SystemHeader(TableRowVm.DescKey),
+                    FieldType = "text",  IsStarWidth = true, MinWidth = MinColWidth,
+                    BuildHeaderMenu = _ => BuildSystemHeaderContextMenu(TableRowVm.DescKey) },
         };
 
         foreach (var f in _fields)
         {
             var fid = f.Id!.Value;
-            defs.Add(new TableColumnDef
+            movable.Add(new TableColumnDef
             {
                 Key         = fid.ToString(),
                 Header      = f.Name,
@@ -176,12 +206,63 @@ public partial class TableView : UserControl
             });
         }
 
+        // Стабильная сортировка по эффективной позиции (OrderBy сохраняет порядок
+        // равных — важно, если у пары колонок совпали ключи дефолта).
+        var ordered = movable.OrderBy(EffectiveColumnPosition).ToList();
+
+        var defs = new List<TableColumnDef>
+        {
+            new() { Key = TableColumnDef.NumKey, Header = "№",
+                    IsStarWidth = false, FixedWidth = NumColWidth,
+                    CanResize = false,   IsReadOnly = true },
+        };
+        defs.AddRange(ordered);
         defs.Add(new() { Key = TableColumnDef.AddPropKey, Header = "+",
                          IsStarWidth = false, FixedWidth = PlusColWidth,
                          CanResize = false,   IsReadOnly = true,
                          MaxWidth  = PlusColWidth });
 
         return defs;
+    }
+
+    // Эффективная позиция движимой колонки: сохранённая (column_order) или дефолт.
+    // Дефолт: Title=1000, Desc=2000, пользовательские = 3000 + DbFields.Position.
+    private int EffectiveColumnPosition(TableColumnDef def)
+    {
+        if (_columnOrder.TryGetValue(def.Key, out var pos)) return pos;
+        if (def.Key == TableRowVm.TitleKey) return 1000;
+        if (def.Key == TableRowVm.DescKey)  return 2000;
+        if (int.TryParse(def.Key, out var fid))
+        {
+            var f = _fields.FirstOrDefault(x => x.Id == fid);
+            if (f is not null) return 3000 + f.Position;
+        }
+        return int.MaxValue;
+    }
+
+    // Текущий порядок ключей движимых колонок (без № и «+») — для MoveColumn.
+    private List<string> MovableKeysInOrder() =>
+        _colDefs
+            .Where(d => d.Key != TableColumnDef.NumKey && d.Key != TableColumnDef.AddPropKey)
+            .Select(d => d.Key)
+            .ToList();
+
+    // Перемещение колонки влево/вправо: пишем порядок в БД, перестраиваем таблицу.
+    // Reload сохраняет активные фильтры/сортировку.
+    private void MoveColumn(string key, bool left)
+    {
+        if (_repository is null) return;
+        _repository.MoveColumn(_collectionId, key, left, MovableKeysInOrder());
+        Reload();
+    }
+
+    // Можно ли двигать колонку влево/вправо (не крайняя ли она среди движимых).
+    private bool CanMoveColumn(string key, bool left)
+    {
+        var keys = MovableKeysInOrder();
+        var idx  = keys.IndexOf(key);
+        if (idx < 0) return false;
+        return left ? idx > 0 : idx < keys.Count - 1;
     }
 
     private void BuildColumns()
@@ -246,6 +327,13 @@ public partial class TableView : UserControl
             cell.PointerPressed += (_, _) => clickHandler(def);
         }
 
+        // Левый клик по заголовку — выделить колонку голубой рамкой.
+        cell.PointerPressed += (_, e) =>
+        {
+            if (e.GetCurrentPoint(cell).Properties.IsLeftButtonPressed)
+                SelectColumn(def.Key);
+        };
+
         if (def.BuildHeaderMenu is { } menuFactory)
             cell.ContextMenu = menuFactory(def);
 
@@ -280,15 +368,24 @@ public partial class TableView : UserControl
             Foreground        = (IBrush)this.FindResource("BrushSecondaryText")!,
         };
 
-        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto") };
-        Grid.SetColumn(text, 0);
+        // Слева — иконка типа свойства (если тип известен). Сетка: [иконка][текст][шеврон].
+        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto") };
+
+        var typeIcon = BuildTypeIcon(def.FieldType);
+        if (typeIcon is not null)
+        {
+            Grid.SetColumn(typeIcon, 0);
+            grid.Children.Add(typeIcon);
+        }
+
+        Grid.SetColumn(text, 1);
         grid.Children.Add(text);
 
         var chevron = BuildFilterChevron(def);
-        Grid.SetColumn(chevron, 1);
+        Grid.SetColumn(chevron, 2);
         grid.Children.Add(chevron);
 
-        return new Border
+        var border = new Border
         {
             Background          = Brushes.Transparent,
             HorizontalAlignment = HorizontalAlignment.Stretch,
@@ -297,6 +394,40 @@ public partial class TableView : UserControl
             BorderBrush         = (IBrush)this.FindResource("BrushSeparator")!,
             BorderThickness     = new Thickness(0, 0, 1, 0),
             Child               = grid,
+        };
+        border.Classes.Add("colHeader");   // hover-фон через стиль (Assets/Styles/Controls.axaml)
+        return border;
+    }
+
+    // Иконка типа свойства слева от названия колонки (серый цвет шапки). null —
+    // если тип неизвестен (тогда колонка без иконки).
+    private Control? BuildTypeIcon(string? fieldType)
+    {
+        var geo = Controls.Components.FieldTypeIcons.ForType(fieldType);
+        if (geo is null) return null;
+
+        return new Viewbox
+        {
+            Width             = 16,
+            Height            = 16,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin            = new Thickness(0, 0, 6, 0),
+            Child = new Canvas
+            {
+                Width  = 24,
+                Height = 24,
+                Children =
+                {
+                    new Avalonia.Controls.Shapes.Path
+                    {
+                        Data            = geo,
+                        Stroke          = (IBrush)this.FindResource("BrushSecondaryText")!,
+                        StrokeThickness = 1.8,
+                        StrokeLineCap   = PenLineCap.Round,
+                        StrokeJoin      = PenLineJoin.Round,
+                    },
+                },
+            },
         };
     }
 
@@ -467,6 +598,9 @@ public partial class TableView : UserControl
 
     private void OnCellPointerPressed(object? sender, DataGridCellPointerPressedEventArgs e)
     {
+        // Клик по любой ячейке снимает выделение колонки.
+        ClearColumnSelection();
+
         if (e.Row.DataContext is not TableRowVm row) return;
 
         if (row.IsAddRow)
@@ -485,8 +619,100 @@ public partial class TableView : UserControl
         if (colIdx >= 0 && colIdx < _colDefs.Count)
             _colDefs[colIdx].OnCellClick?.Invoke(row, _colDefs[colIdx]);
 
-        if (e.Column.DisplayIndex == 0)
+        if (e.Column.DisplayIndex == 0
+            && e.PointerPressedEventArgs.GetCurrentPoint(null).Properties.IsLeftButtonPressed)
             RecordClicked?.Invoke(this, row.RecordId);
+    }
+
+    // ── Выделение колонки голубой рамкой ──────────────────────────────────────
+
+    private void SelectColumn(string key)
+    {
+        // Системные служебные колонки (№, +) не выделяем.
+        if (key == TableColumnDef.NumKey || key == TableColumnDef.AddPropKey) return;
+
+        _selectedColumnKey = key;
+        PositionColumnHighlight();
+    }
+
+    private void ClearColumnSelection()
+    {
+        if (_selectedColumnKey is null) return;
+        _selectedColumnKey = null;
+        ColumnHighlight.IsVisible = false;
+    }
+
+    // Позиционирует рамку поверх выделенной колонки: X/ширину берём у заголовка
+    // колонки, высоту растягиваем на всю видимую область таблицы. Вызывается при
+    // выделении, скролле и изменении размеров.
+    private void PositionColumnHighlight()
+    {
+        if (_selectedColumnKey is null) { ColumnHighlight.IsVisible = false; return; }
+
+        var colIdx = _colDefs.FindIndex(d => d.Key == _selectedColumnKey);
+        if (colIdx < 0 || colIdx >= RecordsGrid.Columns.Count)
+        {
+            ColumnHighlight.IsVisible = false;
+            return;
+        }
+
+        var hdr = FindHeaderForColumn(colIdx);
+        if (hdr is null) { ColumnHighlight.IsVisible = false; return; }
+
+        var panel   = (Panel)ColumnHighlight.Parent!;
+        var topLeft = hdr.TranslatePoint(new Point(0, 0), panel);
+        if (topLeft is null) { ColumnHighlight.IsVisible = false; return; }
+
+        var x = topLeft.Value.X;
+        var w = hdr.Bounds.Width;
+
+        // Низ рамки привязываем к нижней границе области строк (RowsPresenter), а не к
+        // полной высоте грида — иначе нижняя линия уходит под горизонтальный скроллбар
+        // и выглядит обрезанной. Если presenter не найден — берём высоту грида минус
+        // запас на возможный скроллбар.
+        var rowsPresenter = RecordsGrid.GetVisualDescendants()
+            .FirstOrDefault(v => v.GetType().Name == "DataGridRowsPresenter") as Visual;
+
+        double h;
+        if (rowsPresenter is not null)
+        {
+            var bottomLeft = rowsPresenter.TranslatePoint(
+                new Point(0, rowsPresenter.Bounds.Height), panel);
+            h = (bottomLeft?.Y ?? RecordsGrid.Bounds.Height);
+        }
+        else
+        {
+            h = RecordsGrid.Bounds.Height;
+        }
+
+        // Не вылезать за нижний край панели (с запасом на толщину линии).
+        h = Math.Min(h, panel.Bounds.Height - 2);
+
+        // Колонка вне видимой области (уехала за горизонтальный скролл) — прячем.
+        if (x + w <= 0 || x >= panel.Bounds.Width)
+        {
+            ColumnHighlight.IsVisible = false;
+            return;
+        }
+
+        ColumnHighlight.Margin    = new Thickness(x, 0, 0, 0);
+        ColumnHighlight.Width     = w;
+        ColumnHighlight.Height    = h;
+        ColumnHighlight.IsVisible = true;
+    }
+
+    // Заголовок колонки по индексу. Заголовки в визуальном дереве идут в порядке
+    // колонок и позиционированы по X — сортируем по фактической X-координате и
+    // берём colIdx-й (надёжнее матчинга по ширине, т.к. ширины могут совпадать).
+    private DataGridColumnHeader? FindHeaderForColumn(int colIdx)
+    {
+        var headers = RecordsGrid.GetVisualDescendants()
+            .OfType<DataGridColumnHeader>()
+            .Where(h => h.Bounds.Width > 0)
+            .OrderBy(h => h.TranslatePoint(new Point(0, 0), RecordsGrid)?.X ?? double.MaxValue)
+            .ToList();
+
+        return colIdx >= 0 && colIdx < headers.Count ? headers[colIdx] : null;
     }
 
     private ContextMenu BuildGridContextMenu()
@@ -508,32 +734,128 @@ public partial class TableView : UserControl
 
         menu.Items.Add(new Separator());
 
-        var miEdit = new MenuItem { Header = "Изменить" };
+        var miEdit = new MenuItem { Header = Controls.Components.MenuIcons.EditHeader() };
         miEdit.Click += (_, _) => RecordClicked?.Invoke(this, recordId);
         menu.Items.Add(miEdit);
 
-        var miDelete = new MenuItem { Header = "Удалить" };
+        var miDuplicate = new MenuItem { Header = Controls.Components.MenuIcons.DuplicateHeader() };
+        miDuplicate.Click += (_, _) => RecordDuplicateRequested?.Invoke(this, recordId);
+        menu.Items.Add(miDuplicate);
+
+        var miDelete = MakeDeleteMenuItem();
         miDelete.Click += (_, _) => RecordDeleteRequested?.Invoke(this, recordId);
         menu.Items.Add(miDelete);
 
         return menu;
     }
 
+    // Красный пункт «Удалить» с иконкой корзины — общий для меню записей и свойств.
+    private static MenuItem MakeDeleteMenuItem(bool enabled = true) =>
+        new() { Header = Controls.Components.MenuIcons.DeleteHeader(), IsEnabled = enabled };
+
+    // ── Системные колонки «Название»/«Описание» ───────────────────────────────
+
+    // Публично для контроллера: текущая подпись и имя по умолчанию по ключу колонки.
+    public string GetSystemHeader(string key)        => SystemHeader(key);
+    public string GetSystemDefaultName(string key)   => SystemDefaultName(key);
+
+    // Имя по умолчанию для системной колонки.
+    private static string SystemDefaultName(string key) =>
+        key == TableRowVm.DescKey ? "Описание" : "Название";
+
+    // Текущая подпись: пользовательская из метаданных, иначе имя по умолчанию.
+    private string SystemHeader(string key) =>
+        _systemNames.TryGetValue(key, out var name) ? name : SystemDefaultName(key);
+
+    // Меню заголовка системной колонки «Название»/«Описание»:
+    //   Изменить · Создать новое свойство · — · Сдвинуть вправо · Сдвинуть влево
+    // Удаление/смена типа/дублирование для системных колонок недоступны.
+    private ContextMenu BuildSystemHeaderContextMenu(string key)
+    {
+        var menu = new ContextMenu();
+
+        var miEdit = new MenuItem { Header = Controls.Components.MenuIcons.EditHeader() };
+        miEdit.Click += (_, _) => SystemFieldRenameRequested?.Invoke(this, key);
+        menu.Items.Add(miEdit);
+
+        var miCreate = new MenuItem { Header = Controls.Components.MenuIcons.CreatePropertyHeader() };
+        miCreate.Click += (_, _) => PropertyCreateRequested?.Invoke(this, EventArgs.Empty);
+        menu.Items.Add(miCreate);
+
+        AddMoveItems(menu, key);
+        AddWidthModeItems(menu);
+        return menu;
+    }
+
+    // Пункты «Сдвинуть вправо/влево» (именно в таком порядке) с разделителем перед
+    // ними. Общие для меню системных и пользовательских колонок. Неприменимое
+    // направление (крайняя колонка) скрываем.
+    private void AddMoveItems(ContextMenu menu, string key)
+    {
+        var canLeft  = CanMoveColumn(key, left: true);
+        var canRight = CanMoveColumn(key, left: false);
+        if (!canLeft && !canRight) return;
+
+        menu.Items.Add(new Separator());
+
+        if (canRight)
+        {
+            var mi = new MenuItem { Header = Controls.Components.MenuIcons.MoveRightHeader() };
+            mi.Click += (_, _) => MoveColumn(key, left: false);
+            menu.Items.Add(mi);
+        }
+        if (canLeft)
+        {
+            var mi = new MenuItem { Header = Controls.Components.MenuIcons.MoveLeftHeader() };
+            mi.Click += (_, _) => MoveColumn(key, left: true);
+            menu.Items.Add(mi);
+        }
+    }
+
+    // Пункт-переключатель режима ширины столбцов (общий для всей таблицы). Текст
+    // показывает режим, в который переключит клик: при стандартной ширине — «Ручная
+    // ширина столбцов», при ручной — «Стандартная ширина столбцов». Заголовок
+    // пересчитывается при открытии меню (меню кэшируется на заголовке колонки).
+    private void AddWidthModeItems(ContextMenu menu)
+    {
+        menu.Items.Add(new Separator());
+
+        var item = new MenuItem();
+        item.Click += (_, _) => SetColResizeMode(!_manualColResize);
+        menu.Items.Add(item);
+
+        void Refresh() => item.Header = Controls.Components.MenuIcons.WidthModeHeader(
+            _manualColResize ? "Стандартная ширина столбцов" : "Ручная ширина столбцов");
+
+        Refresh();
+        menu.Opening += (_, _) => Refresh();
+    }
+
+    // Меню заголовка пользовательского поля:
+    //   Изменить · Дублировать · Создать новое свойство · — · Сдвинуть вправо ·
+    //   Сдвинуть влево · — · Удалить
     private ContextMenu BuildHeaderContextMenu(int fieldId, bool isRequired)
     {
         var menu = new ContextMenu();
 
-        var miCreate = new MenuItem { Header = "Создать свойство" };
-        miCreate.Click += (_, _) => PropertyCreateRequested?.Invoke(this, EventArgs.Empty);
-        menu.Items.Add(miCreate);
-
-        var miEdit = new MenuItem { Header = "Изменить свойство" };
+        var miEdit = new MenuItem { Header = Controls.Components.MenuIcons.EditHeader() };
         miEdit.Click += (_, _) => PropertyEditRequested?.Invoke(this, fieldId);
         menu.Items.Add(miEdit);
 
+        var miDuplicate = new MenuItem { Header = Controls.Components.MenuIcons.DuplicateHeader() };
+        miDuplicate.Click += (_, _) => PropertyDuplicateRequested?.Invoke(this, fieldId);
+        menu.Items.Add(miDuplicate);
+
+        var miCreate = new MenuItem { Header = Controls.Components.MenuIcons.CreatePropertyHeader() };
+        miCreate.Click += (_, _) => PropertyCreateRequested?.Invoke(this, EventArgs.Empty);
+        menu.Items.Add(miCreate);
+
+        AddMoveItems(menu, fieldId.ToString());
+        AddWidthModeItems(menu);
+
         menu.Items.Add(new Separator());
 
-        var miDelete = new MenuItem { Header = "Удалить", IsEnabled = !isRequired };
+        var miDelete = MakeDeleteMenuItem(enabled: !isRequired);
         miDelete.Click += (_, _) => PropertyDeleteRequested?.Invoke(this, fieldId);
         menu.Items.Add(miDelete);
 
@@ -567,6 +889,11 @@ public partial class TableView : UserControl
 
         var panel = new StackPanel { Width = 240, Margin = new Thickness(12), Spacing = 2 };
 
+        // ── Данные ──
+        // Загружаем строки сразу, до RenderSort, чтобы замыкания могли ссылаться на allRows.
+        var allRows = _repository is null ? [] : LoadAllRows();
+        var domain  = allRows.Select(r => r[def.Key]).ToHashSet();
+
         // ── Сортировка ──
         // Выбор не применяется сразу: копится в pendingSort и вступает в силу
         // вместе с фильтром по кнопке «Готово».
@@ -581,17 +908,28 @@ public partial class TableView : UserControl
         var sortSection = new StackPanel { Spacing = 2 };
         panel.Children.Add(sortSection);
 
+        Action rebuildListRef = () => { };   // заполняется после объявления RebuildList
+
+        List<(string Raw, int Count)> counts = [];
+        void ReloadCounts()
+        {
+            var sk = pendingSort.HasValue ? def.Key : _sortKey;
+            var sa = pendingSort ?? _sortAsc;
+            counts = LoadValueCounts(def, allRows, sk, sa);
+        }
+        ReloadCounts();
+
         void RenderSort()
         {
             sortSection.Children.Clear();
             sortSection.Children.Add(MakeFlatItem(ascLabel,
-                () => { pendingSort = true;  RenderSort(); },
+                () => { pendingSort = true;  RenderSort(); ReloadCounts(); rebuildListRef(); },
                 SortAzIcon, active: pendingSort == true));
             sortSection.Children.Add(MakeFlatItem(descLabel,
-                () => { pendingSort = false; RenderSort(); },
+                () => { pendingSort = false; RenderSort(); ReloadCounts(); rebuildListRef(); },
                 SortZaIcon, active: pendingSort == false));
             sortSection.Children.Add(MakeFlatItem("Снять сортировку",
-                () => { pendingSort = null;  RenderSort(); },
+                () => { pendingSort = null;  RenderSort(); ReloadCounts(); rebuildListRef(); },
                 XIcon));
         }
         RenderSort();
@@ -609,11 +947,9 @@ public partial class TableView : UserControl
         };
         panel.Children.Add(search);
 
-        // ── Список значений ──
-        var counts     = LoadValueCounts(def);
         var checkedSet = _filters.TryGetValue(def.Key, out var f)
             ? new HashSet<string>(f)
-            : new HashSet<string>(counts.Select(c => c.Raw));
+            : new HashSet<string>(domain);
         var syncingSelectAll = false;
 
         var selectAll = new CheckBox
@@ -669,34 +1005,37 @@ public partial class TableView : UserControl
                     TextTrimming      = TextTrimming.CharacterEllipsis,
                     VerticalAlignment = VerticalAlignment.Center,
                 };
+                var cb = new CheckBox
+                {
+                    Content   = nameText,
+                    FontSize  = fontBase,
+                    IsChecked = checkedSet.Contains(raw),
+                    HorizontalAlignment        = HorizontalAlignment.Stretch,
+                    HorizontalContentAlignment = HorizontalAlignment.Left,
+                    Margin    = new Thickness(0),
+                };
                 var cntText = new TextBlock
                 {
                     Text              = cnt.ToString(),
                     Foreground        = secondary,
-                    Margin            = new Thickness(8, 0, 0, 0),
                     VerticalAlignment = VerticalAlignment.Center,
+                    HorizontalAlignment = HorizontalAlignment.Right,
+                    // Резерв под полосу прокрутки (overlay-скроллбар Fluent перекрывает
+                    // контент) — иначе цифры заходят под бегунок и выглядят неровно.
+                    Margin            = new Thickness(0, 0, 12, 0),
                 };
-                var g = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto") };
-                Grid.SetColumn(nameText, 0);
+                var row = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto") };
+                Grid.SetColumn(cb, 0);
                 Grid.SetColumn(cntText, 1);
-                g.Children.Add(nameText);
-                g.Children.Add(cntText);
-
-                var cb = new CheckBox
-                {
-                    Content   = g,
-                    FontSize  = fontBase,
-                    IsChecked = checkedSet.Contains(raw),
-                    HorizontalAlignment        = HorizontalAlignment.Stretch,
-                    HorizontalContentAlignment = HorizontalAlignment.Stretch,
-                };
+                row.Children.Add(cb);
+                row.Children.Add(cntText);
                 cb.IsCheckedChanged += (_, _) =>
                 {
                     if (cb.IsChecked == true) checkedSet.Add(raw);
                     else checkedSet.Remove(raw);
                     SyncSelectAll();
                 };
-                listPanel.Children.Add(cb);
+                listPanel.Children.Add(row);
             }
             if (matched.Count > MaxRender)
                 listPanel.Children.Add(new TextBlock
@@ -707,6 +1046,7 @@ public partial class TableView : UserControl
                     Margin     = new Thickness(4, 4, 0, 0),
                 });
         }
+        rebuildListRef = RebuildList;
 
         // «Выделить всё» отражает состояние видимых значений: снял одну галку —
         // снимается и общая. Guard защищает от каскада, когда IsChecked меняется
@@ -750,8 +1090,8 @@ public partial class TableView : UserControl
             if (pendingSort is bool asc) { _sortKey = def.Key; _sortAsc = asc; }
             else if (_sortKey == def.Key) _sortKey = null;
 
-            // Все значения выбраны — фильтр не нужен.
-            if (checkedSet.Count >= counts.Count) _filters.Remove(def.Key);
+            // Выбраны все значения колонки (а не только видимые) — фильтр не нужен.
+            if (domain.All(checkedSet.Contains)) _filters.Remove(def.Key);
             else _filters[def.Key] = new HashSet<string>(checkedSet);
             ApplyFilters();
             close();
@@ -802,6 +1142,7 @@ public partial class TableView : UserControl
             var label = new TextBlock
             {
                 Text                = text,
+                Foreground          = fg,
                 Margin              = new Thickness(8, 0, 0, 0),
                 VerticalAlignment   = VerticalAlignment.Center,
                 HorizontalAlignment = HorizontalAlignment.Left,
@@ -844,22 +1185,49 @@ public partial class TableView : UserControl
         Margin     = new Thickness(0, 6),
     };
 
-    private List<(string Raw, int Count)> LoadValueCounts(TableColumnDef def)
+    // sortKey/sortAsc — pending-сортировка из панели фильтра (может отличаться от _sortKey).
+    private List<(string Raw, int Count)> LoadValueCounts(
+        TableColumnDef def, List<TableRowVm> allRows, string? sortKey, bool sortAsc)
     {
-        if (_repository is null) return [];
+        // Excel-каскад: список значений и счётчики считаем по строкам, прошедшим
+        // фильтры всех ОСТАЛЬНЫХ колонок. Собственный фильтр колонки не учитываем —
+        // иначе снятые галки исчезали бы из списка и их нельзя было бы вернуть.
+        IEnumerable<TableRowVm> rows = allRows;
+        foreach (var (key, allowed) in _filters)
+            if (key != def.Key)
+                rows = rows.Where(r => allowed.Contains(r[key]));
 
-        var raw =
-            def.Key == TableRowVm.TitleKey ? _repository.GetTitleCounts(_collectionId) :
-            def.Key == TableRowVm.DescKey  ? _repository.GetDescriptionCounts(_collectionId) :
-            int.TryParse(def.Key, out var fid)
-                ? _repository.GetFieldValueCounts(_collectionId, fid)
-                : [];
+        // Применяем pending-сортировку, чтобы порядок значений в списке совпадал
+        // с порядком строк в таблице — как только пользователь сменит выбор сортировки,
+        // список сразу перестроится. Если сортировки нет — порядок строк таблицы.
+        if (sortKey is not null)
+        {
+            var cmp = BuildComparer(def.FieldType, sortAsc);
+            rows = rows.OrderBy(r => r[sortKey], Comparer<string>.Create((a, b) => cmp(a, b)));
+        }
 
-        // «(Пусто)» — в конец, остальное по алфавиту.
-        return raw.OrderBy(v => v.Value == "" ? 1 : 0)
-                  .ThenBy(v => v.Value, StringComparer.CurrentCultureIgnoreCase)
-                  .Select(v => (Raw: v.Value, v.Count))
-                  .ToList();
+        // Дедупликация с сохранением первого вхождения (= порядок из таблицы).
+        // «(Пусто)» при отсутствии сортировки идёт в конец.
+        var seen   = new HashSet<string>();
+        var result = new List<(string Raw, int Count)>();
+        var counts = rows.GroupBy(r => r[def.Key]).ToDictionary(g => g.Key, g => g.Count());
+
+        foreach (var row in rows)
+        {
+            var v = row[def.Key];
+            if (seen.Add(v))
+                result.Add((v, counts[v]));
+        }
+
+        if (sortKey is null)
+        {
+            // Без сортировки: пустые в конец, остальное в порядке появления (по таблице).
+            var nonEmpty = result.Where(x => x.Raw != "").ToList();
+            var empty    = result.Where(x => x.Raw == "").ToList();
+            result = [.. nonEmpty, .. empty];
+        }
+
+        return result;
     }
 
     private static string DisplayValue(string raw, string fieldType)
@@ -986,6 +1354,10 @@ public partial class TableView : UserControl
 
     private void OnGridLayoutUpdated(object? s, EventArgs e)
     {
+        // Рамка выделенной колонки следует за скроллом/ресайзом (до ранних return ниже).
+        if (_selectedColumnKey is not null)
+            PositionColumnHighlight();
+
         if (_snapPending || _manualColResize) return;
 
         // В авто-режиме снапим Star-колонки до целочисленных весов — иначе DataGrid
