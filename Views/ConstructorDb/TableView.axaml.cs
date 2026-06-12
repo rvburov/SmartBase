@@ -303,16 +303,17 @@ public partial class TableView : UserControl
     /// <summary>Стрелка в шапке колонки — открывает окно фильтра/сортировки.</summary>
     private Control BuildFilterChevron(TableColumnDef def)
     {
-        // Обводочный шеврон (как в полях даты/навбаре), не PathIcon-заливка.
+        // Обводочная иконка (как в полях даты/навбаре), не PathIcon-заливка.
+        // Спокойное состояние — серый шеврон; активный фильтр/сортировка —
+        // синяя воронка (lucide funnel), см. ApplyChevronState.
         var path = new Avalonia.Controls.Shapes.Path
         {
-            Data            = Geometry.Parse("M6 9 L12 15 L18 9"),
-            Stroke          = ChevronBrush(def.Key),
             StrokeThickness = 2,
             StrokeLineCap   = PenLineCap.Round,
             StrokeJoin      = PenLineJoin.Round,
         };
         _chevronPaths[def.Key] = path;
+        ApplyChevronState(def.Key, path);
 
         var canvas = new Canvas { Width = 24, Height = 24 };
         canvas.Children.Add(path);
@@ -325,20 +326,36 @@ public partial class TableView : UserControl
             Content           = new Viewbox { Width = 12, Height = 12, Child = canvas },
         };
         btn.Classes.Add("icon");
+        btn.Classes.Add("filterChevron");
         ToolTip.SetTip(btn, "Фильтр и сортировка");
         btn.Click += (_, _) => ShowFilterFlyout(btn, def);
         return btn;
     }
 
-    private IBrush ChevronBrush(string key) =>
-        _filters.ContainsKey(key) || _sortKey == key
+    // lucide chevron-down, funnel, arrow-down-a-z и arrow-up-z-a в сетке 24×24.
+    private static readonly Geometry ChevronIcon = Geometry.Parse("M6 9 L12 15 L18 9");
+    private static readonly Geometry FunnelIcon  = Geometry.Parse(
+        "M10 20a1 1 0 0 0 .553.895l2 1A1 1 0 0 0 14 21v-7a2 2 0 0 1 .517-1.341L21.74 4.67A1 1 0 0 0 21 3H3a1 1 0 0 0-.742 1.67l7.225 7.989A2 2 0 0 1 10 14z");
+    private static readonly Geometry SortAzIcon  = Geometry.Parse(
+        "M3 16 l4 4 4 -4 M7 20 V4 M20 8 h-5 M15 10 V6.5 a2.5 2.5 0 0 1 5 0 V10 M15 14 h5 l-5 6 h5");
+    private static readonly Geometry SortZaIcon  = Geometry.Parse(
+        "M3 8 l4 -4 4 4 M7 4 v16 M15 4 h5 l-5 6 h5 M15 20 v-3.5 a2.5 2.5 0 0 1 5 0 V20 M20 18 h-5");
+    private static readonly Geometry CheckIcon   = Geometry.Parse("M20 6 L9 17 l-5 -5");
+    private static readonly Geometry XIcon       = Geometry.Parse("M18 6 L6 18 M6 6 L18 18");
+
+    private void ApplyChevronState(string key, Avalonia.Controls.Shapes.Path path)
+    {
+        var active  = _filters.ContainsKey(key) || _sortKey == key;
+        path.Data   = active ? FunnelIcon : ChevronIcon;
+        path.Stroke = active
             ? (IBrush)this.FindResource("BrushAccent")!
             : (IBrush)this.FindResource("BrushSecondaryText")!;
+    }
 
     private void UpdateChevronStates()
     {
         foreach (var (key, path) in _chevronPaths)
-            path.Stroke = ChevronBrush(key);
+            ApplyChevronState(key, path);
     }
 
     // ── Шаблоны ячеек ─────────────────────────────────────────────────────────
@@ -551,16 +568,33 @@ public partial class TableView : UserControl
         var panel = new StackPanel { Width = 240, Margin = new Thickness(12), Spacing = 2 };
 
         // ── Сортировка ──
+        // Выбор не применяется сразу: копится в pendingSort и вступает в силу
+        // вместе с фильтром по кнопке «Готово».
         var (ascLabel, descLabel) = def.FieldType switch
         {
             "number" => ("По возрастанию", "По убыванию"),
             "date"   => ("Сначала старые", "Сначала новые"),
             _        => ("От А до Я", "От Я до А"),
         };
-        panel.Children.Add(MakeFlatItem($"↑  {ascLabel}",
-            () => { _sortKey = def.Key; _sortAsc = true;  ApplyFilters(); close(); }));
-        panel.Children.Add(MakeFlatItem($"↓  {descLabel}",
-            () => { _sortKey = def.Key; _sortAsc = false; ApplyFilters(); close(); }));
+        bool? pendingSort = _sortKey == def.Key ? _sortAsc : null;
+
+        var sortSection = new StackPanel { Spacing = 2 };
+        panel.Children.Add(sortSection);
+
+        void RenderSort()
+        {
+            sortSection.Children.Clear();
+            sortSection.Children.Add(MakeFlatItem(ascLabel,
+                () => { pendingSort = true;  RenderSort(); },
+                SortAzIcon, active: pendingSort == true));
+            sortSection.Children.Add(MakeFlatItem(descLabel,
+                () => { pendingSort = false; RenderSort(); },
+                SortZaIcon, active: pendingSort == false));
+            sortSection.Children.Add(MakeFlatItem("Снять сортировку",
+                () => { pendingSort = null;  RenderSort(); },
+                XIcon));
+        }
+        RenderSort();
 
         panel.Children.Add(MakeSeparator());
 
@@ -580,6 +614,7 @@ public partial class TableView : UserControl
         var checkedSet = _filters.TryGetValue(def.Key, out var f)
             ? new HashSet<string>(f)
             : new HashSet<string>(counts.Select(c => c.Raw));
+        var syncingSelectAll = false;
 
         var selectAll = new CheckBox
         {
@@ -659,6 +694,7 @@ public partial class TableView : UserControl
                 {
                     if (cb.IsChecked == true) checkedSet.Add(raw);
                     else checkedSet.Remove(raw);
+                    SyncSelectAll();
                 };
                 listPanel.Children.Add(cb);
             }
@@ -672,9 +708,20 @@ public partial class TableView : UserControl
                 });
         }
 
-        search.TextChanged += (_, _) => RebuildList();
+        // «Выделить всё» отражает состояние видимых значений: снял одну галку —
+        // снимается и общая. Guard защищает от каскада, когда IsChecked меняется
+        // программно (иначе обработчик ниже снял бы галки со всех значений).
+        void SyncSelectAll()
+        {
+            syncingSelectAll    = true;
+            selectAll.IsChecked = Matched().All(c => checkedSet.Contains(c.Raw));
+            syncingSelectAll    = false;
+        }
+
+        search.TextChanged += (_, _) => { RebuildList(); SyncSelectAll(); };
         selectAll.IsCheckedChanged += (_, _) =>
         {
+            if (syncingSelectAll) return;
             // «Выделить всё» действует на видимое (после поиска) подмножество.
             var on = selectAll.IsChecked == true;
             foreach (var (raw, _) in Matched())
@@ -685,77 +732,106 @@ public partial class TableView : UserControl
             RebuildList();
         };
         RebuildList();
+        SyncSelectAll();
 
         panel.Children.Add(MakeSeparator());
 
-        // ── Нижние кнопки ──
-        // Крестик и текст — отдельными TextBlock с центрированием по вертикали,
-        // иначе глиф «✕» визуально сидит выше строки.
-        var clearContent = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
-        clearContent.Children.Add(new TextBlock
+        // ── Кнопка «Готово» ──
+        // Сортировка и фильтр применяются разом, только по этой кнопке.
+        var okBtn = new Button
         {
-            Text = "✕", FontSize = fontBase, VerticalAlignment = VerticalAlignment.Center,
-        });
-        clearContent.Children.Add(new TextBlock
-        {
-            Text = "Снять фильтр", FontSize = fontBase, VerticalAlignment = VerticalAlignment.Center,
-        });
-
-        var clearBtn = new Button
-        {
-            Content   = clearContent,
-            Padding   = new Thickness(4, 6),
-            IsEnabled = _filters.ContainsKey(def.Key) || _sortKey == def.Key,
-            HorizontalAlignment = HorizontalAlignment.Left,
-            VerticalAlignment   = VerticalAlignment.Center,
+            Content             = "Готово",
+            HorizontalAlignment = HorizontalAlignment.Right,
+            Margin              = new Thickness(0, 4, 0, 0),
         };
-        clearBtn.Classes.Add("icon");
-        clearBtn.Click += (_, _) =>
-        {
-            _filters.Remove(def.Key);
-            if (_sortKey == def.Key) _sortKey = null;
-            ApplyFilters();
-            close();
-        };
-
-        var okBtn = new Button { Content = "Готово", Padding = new Thickness(16, 6) };
-        okBtn.Classes.Add("accent");
+        okBtn.Classes.Add("dialog");
         okBtn.Click += (_, _) =>
         {
+            if (pendingSort is bool asc) { _sortKey = def.Key; _sortAsc = asc; }
+            else if (_sortKey == def.Key) _sortKey = null;
+
             // Все значения выбраны — фильтр не нужен.
             if (checkedSet.Count >= counts.Count) _filters.Remove(def.Key);
             else _filters[def.Key] = new HashSet<string>(checkedSet);
             ApplyFilters();
             close();
         };
-
-        var bottom = new Grid
-        {
-            ColumnDefinitions = new ColumnDefinitions("*,Auto"),
-            Margin            = new Thickness(0, 4, 0, 0),
-        };
-        Grid.SetColumn(clearBtn, 0);
-        Grid.SetColumn(okBtn, 1);
-        bottom.Children.Add(clearBtn);
-        bottom.Children.Add(okBtn);
-        panel.Children.Add(bottom);
+        panel.Children.Add(okBtn);
 
         return panel;
     }
 
-    private Button MakeFlatItem(string text, Action onClick)
+    // Иконка в стандарте сайдбара: Viewbox 18×18 поверх сетки 24×24.
+    private Viewbox MakeStrokeIcon(Geometry data, IBrush stroke) => new()
     {
+        Width  = 18,
+        Height = 18,
+        VerticalAlignment = VerticalAlignment.Center,
+        Child  = new Canvas
+        {
+            Width  = 24,
+            Height = 24,
+            Children =
+            {
+                new Avalonia.Controls.Shapes.Path
+                {
+                    Data            = data,
+                    Stroke          = stroke,
+                    StrokeThickness = 1.6,
+                    StrokeLineCap   = PenLineCap.Round,
+                    StrokeJoin      = PenLineJoin.Round,
+                },
+            },
+        },
+    };
+
+    private Button MakeFlatItem(string text, Action onClick, Geometry? icon = null, bool active = false)
+    {
+        // Активный пункт (выбранная сортировка) — акцентный цвет и галка справа.
+        var fg = (IBrush)this.FindResource(active ? "BrushAccent" : "BrushPrimaryText")!;
+
+        object content = text;
+        if (icon is not null)
+        {
+            var row = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto") };
+
+            var iconBox = MakeStrokeIcon(icon, fg);
+            Grid.SetColumn(iconBox, 0);
+            row.Children.Add(iconBox);
+
+            var label = new TextBlock
+            {
+                Text                = text,
+                Margin              = new Thickness(8, 0, 0, 0),
+                VerticalAlignment   = VerticalAlignment.Center,
+                HorizontalAlignment = HorizontalAlignment.Left,
+            };
+            Grid.SetColumn(label, 1);
+            row.Children.Add(label);
+
+            if (active)
+            {
+                var check = MakeStrokeIcon(CheckIcon, fg);
+                Grid.SetColumn(check, 2);
+                row.Children.Add(check);
+            }
+
+            content = row;
+        }
+
         var btn = new Button
         {
-            Content         = text,
+            Content         = content,
             Background      = Brushes.Transparent,
             BorderThickness = new Thickness(0),
             Padding         = new Thickness(8, 6),
             FontSize        = (double)this.FindResource("FontSizeBase")!,
-            Foreground      = (IBrush)this.FindResource("BrushPrimaryText")!,
+            Foreground      = fg,
             CornerRadius    = (CornerRadius)this.FindResource("RadiusBase")!,
             HorizontalAlignment        = HorizontalAlignment.Stretch,
-            HorizontalContentAlignment = HorizontalAlignment.Left,
+            HorizontalContentAlignment = icon is not null
+                ? HorizontalAlignment.Stretch
+                : HorizontalAlignment.Left,
         };
         btn.Click += (_, _) => onClick();
         return btn;

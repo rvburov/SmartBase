@@ -162,6 +162,7 @@ public partial class ConstructorControllerView : UserControl
         {
             CollectionId = _currentCollectionId.Value,
             Position     = (count + 1) * 1000,
+            Title        = "Без названия",
         });
 
         Refresh();

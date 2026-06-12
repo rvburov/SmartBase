@@ -74,7 +74,7 @@ public partial class RecordPageView : UserControl
         _vm = new RecordPageViewModel(repository, recordId, collectionId);
         DataContext = _vm;
 
-        TitleBox.Text        = _vm.Title;
+        TitleBox.Text        = _vm.Title == "Без названия" ? "" : _vm.Title;
         ExitTitleEdit();
         MarkdownEditor.Text  = _vm.MarkdownText;
         PreviewToggle.IsChecked = false;
@@ -136,7 +136,8 @@ public partial class RecordPageView : UserControl
         TitleBox.LostFocus += (_, _) =>
         {
             if (_vm is null) return;
-            _vm.Title = TitleBox.Text ?? "";
+            var entered = TitleBox.Text?.Trim() ?? "";
+            _vm.Title = string.IsNullOrEmpty(entered) ? "Без названия" : entered;
             _vm.SaveTitle();
             RecordChanged?.Invoke(this, _vm.RecordId);
         };

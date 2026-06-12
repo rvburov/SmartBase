@@ -120,6 +120,11 @@
         <Setter Property="Foreground" Value="{StaticResource BrushAccent}" />
     </Style>
 
+    <Style Selector="Button.filterChevron:pointerover /template/ ContentPresenter">
+        <Setter Property="Background"     Value="{StaticResource BrushHover}" />
+        <Setter Property="CornerRadius"   Value="4" />
+    </Style>
+
     <!-- Активный модуль в ActivityBar -->
     <Style Selector="ToggleButton.icon.module:checked /template/ ContentPresenter">
         <Setter Property="Background" Value="Transparent" />
