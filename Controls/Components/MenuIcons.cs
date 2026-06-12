@@ -87,6 +87,98 @@ public static class MenuIcons
     // + текст. Текст задаёт вызывающий (показывает режим, в который переключит клик).
     public static Control WidthModeHeader(string text) => Header(MoveHorizontal, text);
 
+    // Русская подпись типа поля — для шапки контекстного меню свойства.
+    private static string TypeLabel(string? fieldType) => fieldType switch
+    {
+        "text"     => "Текст",
+        "number"   => "Число",
+        "date"     => "Дата",
+        "select"   => "Список",
+        "checkbox" => "Чекбокс",
+        "url"      => "Ссылка",
+        _          => "Текст",
+    };
+
+    private static IBrush Brush(string key, IBrush fallback) =>
+        Application.Current!.TryFindResource(key, out var res) && res is IBrush b ? b : fallback;
+
+    // Шапка контекстного меню свойства: слева иконка типа в светло-синем квадрате,
+    // справа — название свойства (жирное) и под ним тип данных (серым). Некликабельная.
+    public static Control PropertyMenuHeader(string name, string? fieldType)
+    {
+        var accent       = Brush("BrushAccent", Brushes.RoyalBlue);
+        var accentLight  = Brush("BrushAccentLight", Brushes.LightSteelBlue);
+        var primary      = Brush("BrushPrimaryText", Brushes.Black);
+        var secondary    = Brush("BrushSecondaryText", Brushes.Gray);
+
+        var fontBase  = Application.Current!.TryFindResource("FontSizeBase", out var fb) && fb is double d1 ? d1 : 12d;
+        var fontSmall = Application.Current!.TryFindResource("FontSizeSmall", out var fs) && fs is double d2 ? d2 : 11d;
+        var radius    = Application.Current!.TryFindResource("RadiusSmall", out var r) && r is CornerRadius cr ? cr : new CornerRadius(5);
+
+        // Иконка типа в светло-синем квадрате (как на карточке свойства).
+        var geo  = FieldTypeIcons.ForType(fieldType);
+        var icon = new Border
+        {
+            Width             = 30,
+            Height            = 30,
+            CornerRadius      = radius,
+            Background        = accentLight,
+            VerticalAlignment = VerticalAlignment.Center,
+            Child = geo is null ? null : new Viewbox
+            {
+                Width  = 18,
+                Height = 18,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment   = VerticalAlignment.Center,
+                Child = new Canvas
+                {
+                    Width  = 24,
+                    Height = 24,
+                    Children =
+                    {
+                        new Path
+                        {
+                            Data            = geo,
+                            Stroke          = accent,
+                            StrokeThickness = 1.8,
+                            StrokeLineCap   = PenLineCap.Round,
+                            StrokeJoin      = PenLineJoin.Round,
+                        },
+                    },
+                },
+            },
+        };
+
+        // Ограничиваем ширину текстов — длинное название обрезается многоточием,
+        // меню не растягивается на весь экран.
+        var texts = new StackPanel
+        {
+            VerticalAlignment = VerticalAlignment.Center,
+            Spacing           = 1,
+            MaxWidth          = 160,
+        };
+        texts.Children.Add(new TextBlock
+        {
+            Text         = string.IsNullOrWhiteSpace(name) ? "Без названия" : name,
+            FontSize     = fontBase,
+            FontWeight   = FontWeight.SemiBold,
+            Foreground   = primary,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+        });
+        texts.Children.Add(new TextBlock
+        {
+            Text         = TypeLabel(fieldType),
+            FontSize     = fontSmall,
+            Foreground   = secondary,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+        });
+
+        var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10 };
+        row.Children.Add(icon);
+        row.Children.Add(texts);
+        return row;
+    }
+
     // Заголовок пункта «Удалить»: иконка корзины + красный текст.
     public static Control DeleteHeader()
     {

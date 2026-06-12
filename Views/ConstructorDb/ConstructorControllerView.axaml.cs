@@ -63,9 +63,10 @@ public partial class ConstructorControllerView : UserControl
 
         // CRUD для свойств — через контекстное меню заголовков колонок.
         TableViewCtrl.PropertyCreateRequested    += (_, _)   => _ = OpenPropertyDialog(null);
+        TableViewCtrl.PropertyCreateAfterRequested += (_, key) => _ = CreatePropertyAfter(key);
         TableViewCtrl.PropertyEditRequested      += (_, fid) => _ = OpenPropertyDialog(fid);
         TableViewCtrl.PropertyDuplicateRequested += (_, fid) => DuplicateProperty(fid);
-        TableViewCtrl.PropertyDeleteRequested    += (_, fid) => DeleteProperty(fid);
+        TableViewCtrl.PropertiesDeleteRequested  += (_, ids) => _ = DeletePropertiesWithConfirm(ids);
         TableViewCtrl.SystemFieldRenameRequested += (_, key) => _ = RenameSystemField(key);
 
         // Стартовое состояние: коллекция не выбрана — заголовок-плейсхолдер и подсказка.
@@ -215,6 +216,38 @@ public partial class ConstructorControllerView : UserControl
         }
     }
 
+    // Создать новое свойство и поставить его сразу справа от колонки afterKey
+    // (колонка, на заголовке которой вызвали меню). afterKey — ключ колонки:
+    // id поля как строка либо системный «__title__»/«__desc__».
+    private async Task CreatePropertyAfter(string afterKey)
+    {
+        if (_currentCollectionId is null || _repository is null) return;
+        if (VisualRoot is not Avalonia.Controls.Window win) return;
+
+        // Порядок колонок и набор полей ДО создания — чтобы вычислить новое поле.
+        var orderBefore = TableViewCtrl.MovableKeysInOrder();
+        var idsBefore   = _repository.GetFields(_currentCollectionId.Value).Select(f => f.Id).ToHashSet();
+
+        var dlg = new PropertyEditorDialog(_repository, _currentCollectionId.Value, null);
+        var ok  = await dlg.ShowDialog<bool?>(win);
+        if (ok != true) return;
+
+        // Новое поле — то, которого не было до открытия диалога.
+        var newField = _repository.GetFields(_currentCollectionId.Value)
+            .FirstOrDefault(f => !idsBefore.Contains(f.Id));
+
+        if (newField?.Id is { } newId)
+        {
+            // movableKeys для MoveColumnAfter = прежний порядок + новый ключ в конце
+            // (как его кладёт AddField). Затем метод переставит его за afterKey.
+            var movable = new List<string>(orderBefore) { newId.ToString() };
+            _repository.MoveColumnAfter(_currentCollectionId.Value, newId.ToString(), afterKey, movable);
+        }
+
+        Refresh();
+        CollectionsChanged?.Invoke(this, EventArgs.Empty);
+    }
+
     // Переименование системной колонки «Название»/«Описание»: меняем только подпись
     // (DisplayName в метаданных). Физические колонки Title/Description не трогаем.
     private async Task RenameSystemField(string key)
@@ -255,14 +288,39 @@ public partial class ConstructorControllerView : UserControl
         CollectionsChanged?.Invoke(this, EventArgs.Empty);
     }
 
-    private void DeleteProperty(int fieldId)
+    // Пакетное удаление выделенных свойств (клавиша Delete) с подтверждением —
+    // аналог DeleteRecordsWithConfirm в календаре. Обязательные поля отфильтровываются.
+    private async Task DeletePropertiesWithConfirm(IReadOnlyList<int> fieldIds)
     {
-        if (_repository is null) return;
-        var field = _repository.GetFields(_currentCollectionId ?? 0).FirstOrDefault(f => f.Id == fieldId);
-        if (field is null || field.IsRequired) return;
+        if (_currentCollectionId is null || _repository is null) return;
+        if (VisualRoot is not Avalonia.Controls.Window win) return;
 
-        _repository.DeleteField(fieldId);
+        var fields  = _repository.GetFields(_currentCollectionId.Value);
+        var deletable = fieldIds
+            .Distinct()
+            .Where(id => fields.FirstOrDefault(f => f.Id == id) is { IsRequired: false })
+            .ToList();
+        if (deletable.Count == 0) return;
+
+        var dlg = new ConfirmDialog($"Вы удаляете {deletable.Count} {PropertiesPlural(deletable.Count)}. Подтвердить?");
+        if (await dlg.ShowDialog<bool>(win) != true) return;
+
+        foreach (var id in deletable) _repository.DeleteField(id);
         Refresh();
         CollectionsChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    // Русское склонение: 1 свойство, 2–4 свойства, 5+ свойств (с учётом 11–14).
+    private static string PropertiesPlural(int n)
+    {
+        var mod100 = n % 100;
+        var mod10  = n % 10;
+        if (mod100 is >= 11 and <= 14) return "свойств";
+        return mod10 switch
+        {
+            1 => "свойство",
+            >= 2 and <= 4 => "свойства",
+            _ => "свойств",
+        };
     }
 }

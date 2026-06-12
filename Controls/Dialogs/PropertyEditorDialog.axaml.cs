@@ -155,29 +155,39 @@ public partial class PropertyEditorDialog : Window
             return;
         }
 
-        if (_editFieldId.HasValue)
+        try
         {
-            var field = _repository.GetFields(_collectionId).FirstOrDefault(f => f.Id == _editFieldId);
-            if (field is not null)
+            if (_editFieldId.HasValue)
             {
-                field.Name      = name;
-                // Системные поля имеют фиксированный тип (markdown/title), их тип не меняем.
-                if (!field.IsSystem) field.FieldType = _selectedType;
-                _repository.UpdateField(field);
+                var field = _repository.GetFields(_collectionId).FirstOrDefault(f => f.Id == _editFieldId);
+                if (field is not null)
+                {
+                    field.Name      = name;
+                    // Системные поля имеют фиксированный тип (markdown/title), их тип не меняем.
+                    if (!field.IsSystem) field.FieldType = _selectedType;
+                    _repository.UpdateField(field);
+                }
+            }
+            else
+            {
+                var fields = _repository.GetFields(_collectionId);
+                var maxPos = fields.Count > 0 ? fields.Max(f => f.Position) : 0;
+
+                _repository.AddField(new DbField
+                {
+                    CollectionId = _collectionId,
+                    Name         = name,
+                    FieldType    = _selectedType,
+                    Position     = maxPos + 1000,
+                });
             }
         }
-        else
+        catch (InvalidOperationException ex)
         {
-            var fields = _repository.GetFields(_collectionId);
-            var maxPos = fields.Count > 0 ? fields.Max(f => f.Position) : 0;
-
-            _repository.AddField(new DbField
-            {
-                CollectionId = _collectionId,
-                Name         = name,
-                FieldType    = _selectedType,
-                Position     = maxPos + 1000,
-            });
+            // Дубль имени поля и прочие нарушения — показываем в баннере, не роняя приложение.
+            ShowError(ex.Message);
+            NameBox.Focus();
+            return;
         }
 
         Close(true);

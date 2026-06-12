@@ -289,7 +289,17 @@ public class ConstructorRepository(AppDbContext db)
     public void DeleteField(int fieldId)
     {
         var entity = db.DbFields.Find(fieldId);
-        if (entity is not null) db.DbFields.Remove(entity);
+        if (entity is null) { db.SaveChanges(); return; }
+
+        var colId = entity.CollectionId;
+        db.DbFields.Remove(entity);
+
+        // Чистим строку порядка для этого поля, чтобы в column_order не копились
+        // мёртвые ключи (иначе перемещение колонок начинает «не работать»).
+        var key      = fieldId.ToString();
+        var orderRow = db.ColumnOrder.FirstOrDefault(o => o.CollectionId == colId && o.Key == key);
+        if (orderRow is not null) db.ColumnOrder.Remove(orderRow);
+
         db.SaveChanges();
     }
 
@@ -619,16 +629,18 @@ public class ConstructorRepository(AppDbContext db)
     // TableView); нужен для ленивой материализации дефолтного порядка.
     public void MoveColumn(int collectionId, string key, bool left, IReadOnlyList<string> movableKeys)
     {
-        // Первый перенос в коллекции — материализуем текущий порядок целиком.
-        if (!db.ColumnOrder.Any(o => o.CollectionId == collectionId))
-        {
-            for (var i = 0; i < movableKeys.Count; i++)
-                db.ColumnOrder.Add(new ColumnOrderEntity
-                {
-                    CollectionId = collectionId, Key = movableKeys[i], Position = (i + 1) * 1000,
-                });
-            db.SaveChanges();
-        }
+        // Синхронизируем column_order с актуальным набором колонок (movableKeys):
+        // удаляем строки с устаревшими ключами (поля могли быть удалены) и
+        // перезаписываем порядок целиком в текущей раскладке. Это убирает рассинхрон,
+        // из-за которого своп не находил ключ и молча ничего не делал.
+        var existing = db.ColumnOrder.Where(o => o.CollectionId == collectionId).ToList();
+        db.ColumnOrder.RemoveRange(existing);
+        for (var i = 0; i < movableKeys.Count; i++)
+            db.ColumnOrder.Add(new ColumnOrderEntity
+            {
+                CollectionId = collectionId, Key = movableKeys[i], Position = (i + 1) * 1000,
+            });
+        db.SaveChanges();
 
         var rows = db.ColumnOrder
             .Where(o => o.CollectionId == collectionId)
@@ -642,6 +654,27 @@ public class ConstructorRepository(AppDbContext db)
         if (swapIdx < 0 || swapIdx >= rows.Count) return;   // крайняя колонка — no-op
 
         (rows[idx].Position, rows[swapIdx].Position) = (rows[swapIdx].Position, rows[idx].Position);
+        db.SaveChanges();
+    }
+
+    // Поставить колонку newKey сразу после afterKey в общем порядке. movableKeys —
+    // актуальный порядок колонок ДО вставки (newKey там в конце, как создаёт AddField).
+    // Перезаписываем column_order из movableKeys, затем перемещаем newKey за afterKey.
+    public void MoveColumnAfter(int collectionId, string newKey, string afterKey, IReadOnlyList<string> movableKeys)
+    {
+        // Целевой порядок: как movableKeys, но newKey вынут и вставлен после afterKey.
+        var order = movableKeys.Where(k => k != newKey).ToList();
+        var at    = order.IndexOf(afterKey);
+        if (at < 0) order.Add(newKey);              // afterKey не найден — оставляем в конце
+        else        order.Insert(at + 1, newKey);
+
+        var existing = db.ColumnOrder.Where(o => o.CollectionId == collectionId).ToList();
+        db.ColumnOrder.RemoveRange(existing);
+        for (var i = 0; i < order.Count; i++)
+            db.ColumnOrder.Add(new ColumnOrderEntity
+            {
+                CollectionId = collectionId, Key = order[i], Position = (i + 1) * 1000,
+            });
         db.SaveChanges();
     }
 

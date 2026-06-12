@@ -85,16 +85,11 @@
                   VerticalScrollBarVisibility="Auto"
                   Foreground="{StaticResource BrushPrimaryText}" />
 
-        <!-- Голубая рамка выделенной колонки. IsHitTestVisible=False — клики проходят
-             сквозь неё в таблицу. Позиция/размер задаются в PositionColumnHighlight. -->
-        <Border x:Name="ColumnHighlight"
-                IsVisible="False"
-                IsHitTestVisible="False"
-                HorizontalAlignment="Left"
-                VerticalAlignment="Top"
-                BorderBrush="{StaticResource BrushAccent}"
-                BorderThickness="2"
-                CornerRadius="2" />
+        <!-- Слой голубых рамок выделенных колонок (по одной на колонку). Рамки
+             добавляются в коде (RefreshColumnHighlights). IsHitTestVisible=False —
+             клики проходят сквозь слой в таблицу. -->
+        <Canvas x:Name="ColumnHighlightLayer"
+                IsHitTestVisible="False" />
     </Panel>
 
 </UserControl>

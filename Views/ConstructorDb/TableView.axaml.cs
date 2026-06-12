@@ -7,6 +7,7 @@ using Avalonia.Controls.Templates;
 using Avalonia.Data;
 using Avalonia.Data.Converters;
 using Avalonia.Input;
+using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Threading;
@@ -27,9 +28,13 @@ public partial class TableView : UserControl
     // открытия (false), контекстное «Создать запись» — с открытием (true).
     public event EventHandler<bool>? RecordCreateRequested;
     public event EventHandler?      PropertyCreateRequested;
+    // Создать свойство сразу справа от колонки (string = ключ колонки-инициатора).
+    public event EventHandler<string>? PropertyCreateAfterRequested;
     public event EventHandler<int>? PropertyEditRequested;
     public event EventHandler<int>? PropertyDuplicateRequested;
-    public event EventHandler<int>? PropertyDeleteRequested;
+    // Удаление пользовательских полей (Delete или меню «Удалить») — всегда пакетно,
+    // с подтверждением; для одного поля список из одного id.
+    public event EventHandler<IReadOnlyList<int>>? PropertiesDeleteRequested;
     // Переименование системной колонки «Название»/«Описание» (string = ключ колонки).
     public event EventHandler<string>? SystemFieldRenameRequested;
 
@@ -46,6 +51,7 @@ public partial class TableView : UserControl
     private int  _collectionId;
     private bool _manualColResize;
     private bool _snapPending;
+    private bool _highlightPending;   // отложенная перестройка рамок выделения
     private List<DbField>        _fields  = [];
     private List<TableColumnDef> _colDefs = [];
     private VirtualRowList?      _virtualRows;
@@ -53,8 +59,9 @@ public partial class TableView : UserControl
     private Dictionary<string, string> _systemNames = [];
     // Сохранённый порядок колонок: ключ → позиция (пусто, если ещё не двигали).
     private Dictionary<string, int> _columnOrder = [];
-    // Выделенная по клику в заголовок колонка (голубая рамка). null — нет выделения.
-    private string? _selectedColumnKey;
+    // Выделенные по клику в заголовок колонки (голубые рамки). Пусто — нет выделения.
+    // Обычный клик — одна колонка; Shift+клик — точечный toggle колонки.
+    private readonly List<string> _selectedColumnKeys = [];
 
     // ── Фильтр/сортировка колонок (Excel-стиль) ───────────────────────────────
     // key колонки → набор разрешённых значений; null-наличие ключа = фильтра нет.
@@ -73,6 +80,30 @@ public partial class TableView : UserControl
         // не рисует вертикальные грид-линии в сабпиксельных позициях. Снап сходится
         // за один шаг (Σ весов = доступная ширина → каждая колонка == вес px).
         RecordsGrid.LayoutUpdated      += OnGridLayoutUpdated;
+        // Delete по выделенным колонкам. Tunnel — чтобы перехватить раньше, чем
+        // DataGrid обработает клавишу для редактирования/навигации.
+        AddHandler(KeyDownEvent, OnTableKeyDown, RoutingStrategies.Tunnel);
+    }
+
+    private void OnTableKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Delete && e.Key != Key.Back) return;
+        if (_selectedColumnKeys.Count == 0) return;
+
+        // Удаляемые = только пользовательские поля (ключ = id поля). Системные
+        // (__title__/__desc__) и №/+ не парсятся в int → отсекаются.
+        var fieldIds = _selectedColumnKeys
+            .Where(k => int.TryParse(k, out _))
+            .Select(int.Parse)
+            .ToList();
+
+        if (fieldIds.Count == 0) return;
+
+        // Перед показом диалога оставляем рамки только на удаляемых колонках:
+        // с системных («Название»/«Описание») обводка снимается — их удаление не коснётся.
+        KeepSelectionOnDeletableOnly();
+        PropertiesDeleteRequested?.Invoke(this, fieldIds);
+        e.Handled = true;
     }
 
     // ── Публичный API ─────────────────────────────────────────────────────────
@@ -202,7 +233,7 @@ public partial class TableView : UserControl
                 IsReadOnly  = f.FieldType == "checkbox",
                 Options     = ParseSelectOptions(f),
                 Tag         = fid,
-                BuildHeaderMenu = _ => BuildHeaderContextMenu(fid, f.IsRequired),
+                BuildHeaderMenu = _ => BuildHeaderContextMenu(fid, f.IsRequired, f.Name, f.FieldType),
             });
         }
 
@@ -240,8 +271,9 @@ public partial class TableView : UserControl
         return int.MaxValue;
     }
 
-    // Текущий порядок ключей движимых колонок (без № и «+») — для MoveColumn.
-    private List<string> MovableKeysInOrder() =>
+    // Текущий порядок ключей движимых колонок (без № и «+») — для MoveColumn и
+    // вставки нового свойства справа от колонки (контроллер).
+    public List<string> MovableKeysInOrder() =>
         _colDefs
             .Where(d => d.Key != TableColumnDef.NumKey && d.Key != TableColumnDef.AddPropKey)
             .Select(d => d.Key)
@@ -327,11 +359,12 @@ public partial class TableView : UserControl
             cell.PointerPressed += (_, _) => clickHandler(def);
         }
 
-        // Левый клик по заголовку — выделить колонку голубой рамкой.
+        // Левый клик по заголовку — выделить колонку голубой рамкой. С Shift —
+        // диапазон от последней обычной выделенной колонки.
         cell.PointerPressed += (_, e) =>
         {
             if (e.GetCurrentPoint(cell).Properties.IsLeftButtonPressed)
-                SelectColumn(def.Key);
+                SelectColumn(def.Key, e.KeyModifiers.HasFlag(KeyModifiers.Shift));
         };
 
         if (def.BuildHeaderMenu is { } menuFactory)
@@ -624,81 +657,146 @@ public partial class TableView : UserControl
             RecordClicked?.Invoke(this, row.RecordId);
     }
 
-    // ── Выделение колонки голубой рамкой ──────────────────────────────────────
+    // ── Выделение колонок голубой рамкой (одиночное и Shift-диапазон) ──────────
 
-    private void SelectColumn(string key)
+    private void SelectColumn(string key, bool shift)
     {
-        // Системные служебные колонки (№, +) не выделяем.
+        // Служебные колонки № и + не выделяем. «Название»/«Описание» выделять можно
+        // (синяя рамка появляется), но при удалении они отфильтровываются.
         if (key == TableColumnDef.NumKey || key == TableColumnDef.AddPropKey) return;
 
-        _selectedColumnKey = key;
-        PositionColumnHighlight();
+        if (shift)
+        {
+            // Точечно добавить/убрать одну колонку (toggle), не трогая остальные.
+            if (!_selectedColumnKeys.Remove(key))
+                _selectedColumnKeys.Add(key);
+        }
+        else
+        {
+            // Обычный клик — выделить только эту колонку.
+            _selectedColumnKeys.Clear();
+            _selectedColumnKeys.Add(key);
+        }
+
+        // Порядок выделения держим по порядку колонок — для аккуратной отрисовки рамок.
+        _selectedColumnKeys.Sort((a, b) =>
+            _colDefs.FindIndex(d => d.Key == a).CompareTo(_colDefs.FindIndex(d => d.Key == b)));
+
+        RefreshColumnHighlights();
     }
 
     private void ClearColumnSelection()
     {
-        if (_selectedColumnKey is null) return;
-        _selectedColumnKey = null;
-        ColumnHighlight.IsVisible = false;
+        if (_selectedColumnKeys.Count == 0) return;
+        _selectedColumnKeys.Clear();
+        _lastHighlights.Clear();
+        ColumnHighlightLayer.Children.Clear();
     }
 
-    // Позиционирует рамку поверх выделенной колонки: X/ширину берём у заголовка
-    // колонки, высоту растягиваем на всю видимую область таблицы. Вызывается при
-    // выделении, скролле и изменении размеров.
-    private void PositionColumnHighlight()
+    // Откладывает перестройку рамок на следующий тик диспетчера — безопасно вызывать
+    // из LayoutUpdated (синхронная модификация Canvas там даёт «Infinite layout loop»).
+    private void ScheduleHighlightRefresh()
     {
-        if (_selectedColumnKey is null) { ColumnHighlight.IsVisible = false; return; }
-
-        var colIdx = _colDefs.FindIndex(d => d.Key == _selectedColumnKey);
-        if (colIdx < 0 || colIdx >= RecordsGrid.Columns.Count)
+        if (_highlightPending) return;
+        _highlightPending = true;
+        Dispatcher.UIThread.Post(() =>
         {
-            ColumnHighlight.IsVisible = false;
-            return;
+            _highlightPending = false;
+            RefreshColumnHighlights();
+        }, DispatcherPriority.Background);
+    }
+
+    // Перерисовывает рамки поверх всех выделенных колонок: по одной на колонку.
+    // X/ширина — от заголовка; высота — до низа области строк (RowsPresenter), чтобы
+    // нижняя линия не уходила под горизонтальный скроллбар. Вызывается при выделении,
+    // скролле и изменении размеров.
+    // Геометрия последней отрисовки рамок — чтобы не трогать дерево, если ничего не
+    // изменилось (иначе перестройка в LayoutUpdated самоподдерживается циклом).
+    private readonly List<(double X, double W, double H)> _lastHighlights = [];
+
+    private void RefreshColumnHighlights()
+    {
+        var panel = ColumnHighlightLayer;
+
+        // Считаем целевую геометрию рамок, НЕ трогая дерево.
+        var target = new List<(double X, double W, double H)>();
+
+        if (_selectedColumnKeys.Count > 0)
+        {
+            var rowsPresenter = RecordsGrid.GetVisualDescendants()
+                .FirstOrDefault(v => v.GetType().Name == "DataGridRowsPresenter") as Visual;
+
+            double h;
+            if (rowsPresenter is not null)
+            {
+                var bottomLeft = rowsPresenter.TranslatePoint(new Point(0, rowsPresenter.Bounds.Height), panel);
+                h = bottomLeft?.Y ?? RecordsGrid.Bounds.Height;
+            }
+            else
+            {
+                h = RecordsGrid.Bounds.Height;
+            }
+            h = Math.Min(h, panel.Bounds.Height - 2);
+
+            foreach (var key in _selectedColumnKeys)
+            {
+                var colIdx = _colDefs.FindIndex(d => d.Key == key);
+                if (colIdx < 0 || colIdx >= RecordsGrid.Columns.Count) continue;
+
+                var hdr = FindHeaderForColumn(colIdx);
+                if (hdr is null) continue;
+
+                var topLeft = hdr.TranslatePoint(new Point(0, 0), panel);
+                if (topLeft is null) continue;
+
+                var x = topLeft.Value.X;
+                var w = hdr.Bounds.Width;
+
+                // Колонка вне видимой области (за горизонтальным скроллом) — пропускаем.
+                if (x + w <= 0 || x >= panel.Bounds.Width) continue;
+
+                target.Add((x, w, h));
+            }
         }
 
-        var hdr = FindHeaderForColumn(colIdx);
-        if (hdr is null) { ColumnHighlight.IsVisible = false; return; }
+        // Ничего не изменилось — дерево не трогаем (разрывает layout-цикл).
+        if (HighlightsEqual(target, _lastHighlights)) return;
 
-        var panel   = (Panel)ColumnHighlight.Parent!;
-        var topLeft = hdr.TranslatePoint(new Point(0, 0), panel);
-        if (topLeft is null) { ColumnHighlight.IsVisible = false; return; }
+        _lastHighlights.Clear();
+        _lastHighlights.AddRange(target);
 
-        var x = topLeft.Value.X;
-        var w = hdr.Bounds.Width;
+        panel.Children.Clear();
+        if (target.Count == 0) return;
 
-        // Низ рамки привязываем к нижней границе области строк (RowsPresenter), а не к
-        // полной высоте грида — иначе нижняя линия уходит под горизонтальный скроллбар
-        // и выглядит обрезанной. Если presenter не найден — берём высоту грида минус
-        // запас на возможный скроллбар.
-        var rowsPresenter = RecordsGrid.GetVisualDescendants()
-            .FirstOrDefault(v => v.GetType().Name == "DataGridRowsPresenter") as Visual;
-
-        double h;
-        if (rowsPresenter is not null)
+        var accent = (IBrush)this.FindResource("BrushAccent")!;
+        foreach (var (x, w, h) in target)
         {
-            var bottomLeft = rowsPresenter.TranslatePoint(
-                new Point(0, rowsPresenter.Bounds.Height), panel);
-            h = (bottomLeft?.Y ?? RecordsGrid.Bounds.Height);
+            var border = new Border
+            {
+                Width            = w,
+                Height           = h,
+                BorderBrush      = accent,
+                BorderThickness  = new Thickness(2),
+                CornerRadius     = new CornerRadius(2),
+                IsHitTestVisible = false,
+            };
+            Canvas.SetLeft(border, x);
+            Canvas.SetTop(border, 0);
+            panel.Children.Add(border);
         }
-        else
+    }
+
+    private static bool HighlightsEqual(
+        List<(double X, double W, double H)> a, List<(double X, double W, double H)> b)
+    {
+        if (a.Count != b.Count) return false;
+        for (var i = 0; i < a.Count; i++)
         {
-            h = RecordsGrid.Bounds.Height;
+            if (Math.Abs(a[i].X - b[i].X) > 0.5 ||
+                Math.Abs(a[i].W - b[i].W) > 0.5 ||
+                Math.Abs(a[i].H - b[i].H) > 0.5) return false;
         }
-
-        // Не вылезать за нижний край панели (с запасом на толщину линии).
-        h = Math.Min(h, panel.Bounds.Height - 2);
-
-        // Колонка вне видимой области (уехала за горизонтальный скролл) — прячем.
-        if (x + w <= 0 || x >= panel.Bounds.Width)
-        {
-            ColumnHighlight.IsVisible = false;
-            return;
-        }
-
-        ColumnHighlight.Margin    = new Thickness(x, 0, 0, 0);
-        ColumnHighlight.Width     = w;
-        ColumnHighlight.Height    = h;
-        ColumnHighlight.IsVisible = true;
+        return true;
     }
 
     // Заголовок колонки по индексу. Заголовки в визуальном дереве идут в порядке
@@ -753,6 +851,15 @@ public partial class TableView : UserControl
     private static MenuItem MakeDeleteMenuItem(bool enabled = true) =>
         new() { Header = Controls.Components.MenuIcons.DeleteHeader(), IsEnabled = enabled };
 
+    // Некликабельная шапка контекстного меню (карточка свойства). IsHitTestVisible=
+    // false — не подсвечивается при наведении и не реагирует на клик.
+    private static MenuItem MakeMenuHeaderItem(Control content) => new()
+    {
+        Header           = content,
+        IsHitTestVisible = false,
+        Focusable        = false,
+    };
+
     // ── Системные колонки «Название»/«Описание» ───────────────────────────────
 
     // Публично для контроллера: текущая подпись и имя по умолчанию по ключу колонки.
@@ -774,12 +881,17 @@ public partial class TableView : UserControl
     {
         var menu = new ContextMenu();
 
+        // Шапка: иконка типа + подпись колонки + тип «Текст» (Title/Desc — текстовые).
+        menu.Items.Add(MakeMenuHeaderItem(
+            Controls.Components.MenuIcons.PropertyMenuHeader(SystemHeader(key), "text")));
+        menu.Items.Add(new Separator());
+
         var miEdit = new MenuItem { Header = Controls.Components.MenuIcons.EditHeader() };
         miEdit.Click += (_, _) => SystemFieldRenameRequested?.Invoke(this, key);
         menu.Items.Add(miEdit);
 
         var miCreate = new MenuItem { Header = Controls.Components.MenuIcons.CreatePropertyHeader() };
-        miCreate.Click += (_, _) => PropertyCreateRequested?.Invoke(this, EventArgs.Empty);
+        miCreate.Click += (_, _) => PropertyCreateAfterRequested?.Invoke(this, key);
         menu.Items.Add(miCreate);
 
         AddMoveItems(menu, key);
@@ -834,9 +946,13 @@ public partial class TableView : UserControl
     // Меню заголовка пользовательского поля:
     //   Изменить · Дублировать · Создать новое свойство · — · Сдвинуть вправо ·
     //   Сдвинуть влево · — · Удалить
-    private ContextMenu BuildHeaderContextMenu(int fieldId, bool isRequired)
+    private ContextMenu BuildHeaderContextMenu(int fieldId, bool isRequired, string name, string fieldType)
     {
         var menu = new ContextMenu();
+
+        // Шапка: иконка типа + название свойства + тип данных (некликабельная).
+        menu.Items.Add(MakeMenuHeaderItem(Controls.Components.MenuIcons.PropertyMenuHeader(name, fieldType)));
+        menu.Items.Add(new Separator());
 
         var miEdit = new MenuItem { Header = Controls.Components.MenuIcons.EditHeader() };
         miEdit.Click += (_, _) => PropertyEditRequested?.Invoke(this, fieldId);
@@ -847,7 +963,7 @@ public partial class TableView : UserControl
         menu.Items.Add(miDuplicate);
 
         var miCreate = new MenuItem { Header = Controls.Components.MenuIcons.CreatePropertyHeader() };
-        miCreate.Click += (_, _) => PropertyCreateRequested?.Invoke(this, EventArgs.Empty);
+        miCreate.Click += (_, _) => PropertyCreateAfterRequested?.Invoke(this, fieldId.ToString());
         menu.Items.Add(miCreate);
 
         AddMoveItems(menu, fieldId.ToString());
@@ -856,10 +972,46 @@ public partial class TableView : UserControl
         menu.Items.Add(new Separator());
 
         var miDelete = MakeDeleteMenuItem(enabled: !isRequired);
-        miDelete.Click += (_, _) => PropertyDeleteRequested?.Invoke(this, fieldId);
+        miDelete.Click += (_, _) => RequestDeleteFromMenu(fieldId);
         menu.Items.Add(miDelete);
 
         return menu;
+    }
+
+    // Удаление из контекстного меню «Удалить». Если поле входит в текущее выделение
+    // (несколько колонок) — удаляем весь выделенный набор; иначе только это поле.
+    // В любом случае идём через пакетный путь с подтверждением (PropertiesDeleteRequested).
+    private void RequestDeleteFromMenu(int fieldId)
+    {
+        var key = fieldId.ToString();
+
+        List<int> ids;
+        if (_selectedColumnKeys.Contains(key) && _selectedColumnKeys.Count > 1)
+        {
+            ids = _selectedColumnKeys
+                .Where(k => int.TryParse(k, out _))
+                .Select(int.Parse)
+                .ToList();
+        }
+        else
+        {
+            ids = [fieldId];
+        }
+
+        if (ids.Count == 0) return;
+
+        // Перед показом диалога оставляем рамки только на удаляемых колонках.
+        KeepSelectionOnDeletableOnly();
+        PropertiesDeleteRequested?.Invoke(this, ids);
+    }
+
+    // Убирает из выделения системные колонки («Название»/«Описание») — они не
+    // удаляются, поэтому при запросе удаления их обводка гаснет, а рамки на
+    // удаляемых полях остаются видимыми, пока открыт диалог подтверждения.
+    private void KeepSelectionOnDeletableOnly()
+    {
+        var removed = _selectedColumnKeys.RemoveAll(k => !int.TryParse(k, out _));
+        if (removed > 0) RefreshColumnHighlights();
     }
 
     private void OnLoadingRow(object? sender, DataGridRowEventArgs e)
@@ -1354,9 +1506,11 @@ public partial class TableView : UserControl
 
     private void OnGridLayoutUpdated(object? s, EventArgs e)
     {
-        // Рамка выделенной колонки следует за скроллом/ресайзом (до ранних return ниже).
-        if (_selectedColumnKey is not null)
-            PositionColumnHighlight();
+        // Рамки выделенных колонок следуют за скроллом/ресайзом. Перестройку откладываем
+        // через Dispatcher: менять дерево Canvas прямо в LayoutUpdated нельзя — это
+        // инвалидирует раскладку и вызывает «Infinite layout loop».
+        if (_selectedColumnKeys.Count > 0)
+            ScheduleHighlightRefresh();
 
         if (_snapPending || _manualColResize) return;
 
