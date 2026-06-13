@@ -53,7 +53,7 @@ public partial class ConstructorControllerView : UserControl
 
         // CRUD для записей — через контекстные меню в TableView/ListView.
         TableViewCtrl.RecordClicked             += (_, rid)  => OpenPage(rid);
-        TableViewCtrl.RecordCreateRequested     += (_, open) => CreateAndOpen(open);
+        TableViewCtrl.RecordCreateRequested     += (_, e)    => CreateAndOpen(e.Open, e.AfterId);
         TableViewCtrl.RecordDeleteRequested     += (_, rid)  => DeleteRecord(rid);
         TableViewCtrl.RecordDuplicateRequested  += (_, rid)  => DuplicateRecord(rid);
 
@@ -157,28 +157,54 @@ public partial class ConstructorControllerView : UserControl
 
     // open=false — создать запись, не открывая правую панель (нажатие «+» в таблице).
     // open=true  — создать и открыть деталь (контекстное «Создать запись»).
-    private void CreateAndOpen(bool open = true)
+    // afterRecordId != null — создать сразу после этой записи (меню строки); иначе в конце.
+    private void CreateAndOpen(bool open = true, int? afterRecordId = null)
     {
         if (_currentCollectionId is null || _repository is null) return;
 
-        var count = _repository.CountRecords(_currentCollectionId.Value);
-        var rec   = _repository.AddRecord(new DbRecord
+        // Создание в середине (меню строки) — сохраняем вертикальную позицию, чтобы
+        // таблицу не откидывало вниз. Снимаем offset ДО пересборки.
+        var keepVertical = afterRecordId is not null && TableViewCtrl.IsVisible
+            ? TableViewCtrl.CurrentVerticalOffset()
+            : (double?)null;
+
+        var newRecord = new DbRecord
         {
             CollectionId = _currentCollectionId.Value,
-            Position     = (count + 1) * 1000,
             Title        = "Без названия",
-        });
+        };
+
+        DbRecord rec;
+        if (afterRecordId is { } afterId)
+        {
+            rec = _repository.AddRecordAfter(newRecord, afterId);
+        }
+        else
+        {
+            var count = _repository.CountRecords(_currentCollectionId.Value);
+            newRecord.Position = (count + 1) * 1000;
+            rec = _repository.AddRecord(newRecord);
+        }
 
         Refresh();
         CollectionsChanged?.Invoke(this, EventArgs.Empty);
 
         if (rec.Id.HasValue)
         {
-            // Прокручиваем таблицу к новой записи, чтобы кнопка «+» (add-row)
-            // осталась в видимой зоне — иначе при серии создания приходится
-            // каждый раз листать вниз, чтобы снова нажать «+».
-            if (TableViewCtrl.IsVisible)
+            if (keepVertical is { } off)
+            {
+                // Создание в середине — остаёмся на месте (новая запись появляется
+                // прямо под строкой-инициатором, в зоне видимости).
+                if (TableViewCtrl.IsVisible)
+                    TableViewCtrl.RestoreVerticalOffset(off);
+            }
+            else if (TableViewCtrl.IsVisible)
+            {
+                // Создание в конце — прокручиваем к новой записи, чтобы кнопка «+»
+                // (add-row) осталась в видимой зоне при серии создания.
                 TableViewCtrl.ScrollToRecord(rec.Id.Value);
+            }
+
             if (open)
                 RecordPageRequested?.Invoke(this, rec.Id.Value);
         }
@@ -196,9 +222,17 @@ public partial class ConstructorControllerView : UserControl
     private void DuplicateRecord(int recordId)
     {
         if (_repository is null) return;
+
+        // Копия встаёт сразу после исходной (как создание после строки) — сохраняем
+        // вертикальную позицию, чтобы таблицу не откидывало.
+        var keepVertical = TableViewCtrl.IsVisible ? TableViewCtrl.CurrentVerticalOffset() : (double?)null;
+
         _repository.DuplicateRecord(recordId);
         Refresh();
         CollectionsChanged?.Invoke(this, EventArgs.Empty);
+
+        if (keepVertical is { } off && TableViewCtrl.IsVisible)
+            TableViewCtrl.RestoreVerticalOffset(off);
     }
 
     // ── Свойства (поля) ───────────────────────────────────────────────────────
@@ -304,8 +338,20 @@ public partial class ConstructorControllerView : UserControl
 
     private void DuplicateProperty(int fieldId)
     {
-        if (_repository is null) return;
-        _repository.DuplicateField(fieldId);
+        if (_repository is null || _currentCollectionId is null) return;
+
+        // Порядок колонок ДО дублирования — чтобы поставить копию сразу справа от
+        // исходной (как «Создать новое свойство»), а не в конец, если задан column_order.
+        var orderBefore = TableViewCtrl.MovableKeysInOrder();
+
+        var copy = _repository.DuplicateField(fieldId);
+
+        if (copy.Id is { } copyId)
+        {
+            var movable = new List<string>(orderBefore) { copyId.ToString() };
+            _repository.MoveColumnAfter(_currentCollectionId.Value, copyId.ToString(), fieldId.ToString(), movable);
+        }
+
         Refresh();
         CollectionsChanged?.Invoke(this, EventArgs.Empty);
     }

@@ -410,6 +410,38 @@ public class ConstructorRepository(AppDbContext db)
         return record;
     }
 
+    // Создаёт запись сразу после afterRecordId (по позиции).
+    public DbRecord AddRecordAfter(DbRecord record, int afterRecordId)
+    {
+        record.Position = PositionAfterRecord(record.CollectionId, afterRecordId);
+        return AddRecord(record);
+    }
+
+    // Позиция для вставки записи сразу после afterRecordId (между ней и следующей).
+    // Инициатор не найден — позиция в конце. Если зазора между соседями не хватает —
+    // предварительно перенумеровывает позиции коллекции с шагом 1000.
+    private int PositionAfterRecord(int collectionId, int afterRecordId)
+    {
+        var ordered = db.DbRecords
+            .Where(r => r.CollectionId == collectionId)
+            .OrderBy(r => r.Position)
+            .ToList();
+
+        var idx = ordered.FindIndex(r => r.Id == afterRecordId);
+        if (idx < 0) return (ordered.Count + 1) * 1000;   // инициатор не найден — в конец
+
+        int AfterPos() => ordered[idx].Position;
+        int NextPos()  => idx + 1 < ordered.Count ? ordered[idx + 1].Position : AfterPos() + 2000;
+
+        if (NextPos() - AfterPos() < 2)
+        {
+            for (var i = 0; i < ordered.Count; i++) ordered[i].Position = (i + 1) * 1000;
+            db.SaveChanges();
+        }
+
+        return AfterPos() + (NextPos() - AfterPos()) / 2;
+    }
+
     public void UpdateRecord(DbRecord record)
     {
         if (record.Id is null) return;
@@ -448,16 +480,11 @@ public class ConstructorRepository(AppDbContext db)
         var src = db.DbRecords.Find(recordId);
         if (src is null) throw new InvalidOperationException($"Record {recordId} not found");
 
-        var maxPos = db.DbRecords
-            .Where(r => r.CollectionId == src.CollectionId)
-            .Select(r => (int?)r.Position)
-            .Max() ?? 0;
-
         var copy = new DbRecordEntity
         {
             CollectionId = src.CollectionId,
             CreatedAt    = DateTime.Now.ToString("o"),
-            Position     = maxPos + 1000,
+            Position     = PositionAfterRecord(src.CollectionId, recordId),   // сразу после исходной
             StartDt      = src.StartDt,
             EndDt        = src.EndDt,
             AllDay       = src.AllDay,

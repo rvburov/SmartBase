@@ -25,9 +25,11 @@ public partial class TableView : UserControl
     public event EventHandler<int>? RecordClicked;
     public event EventHandler<int>? RecordDeleteRequested;
     public event EventHandler<int>? RecordDuplicateRequested;
-    // bool = открывать ли запись справа после создания. «+»-строка создаёт без
+    // Open = открывать ли запись справа после создания. «+»-строка создаёт без
     // открытия (false), контекстное «Создать запись» — с открытием (true).
-    public event EventHandler<bool>? RecordCreateRequested;
+    // AfterId = id записи-инициатора (меню строки) — создать сразу после неё; null —
+    // создать в конце («+»-строка и меню пустой области таблицы).
+    public event EventHandler<(bool Open, int? AfterId)>? RecordCreateRequested;
     public event EventHandler?      PropertyCreateRequested;
     // Создать свойство сразу справа от колонки (string = ключ колонки-инициатора).
     public event EventHandler<string>? PropertyCreateAfterRequested;
@@ -155,6 +157,50 @@ public partial class TableView : UserControl
     private static readonly MethodInfo? UpdateHOffsetMethod =
         typeof(DataGrid).GetMethod("UpdateHorizontalOffset",
             BindingFlags.Instance | BindingFlags.NonPublic);
+
+    // Вертикальная прокрутка (строки) виртуализирована: чистого UpdateVerticalOffset
+    // нет. Абсолютная прокрутка идёт через _vScrollBar.Value + ProcessVerticalScroll
+    // (ветка ThumbTrack инвалидирует measure). Доступ — рефлексией (Avalonia 11.2.x).
+    private static readonly PropertyInfo? VScrollBarProp =
+        typeof(DataGrid).GetProperty("VerticalScrollBar",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+    private static readonly MethodInfo? ProcessVScrollMethod =
+        typeof(DataGrid).GetMethod("ProcessVerticalScroll",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+
+    // Текущая вертикальная прокрутка (0, если API недоступен). Для сохранения позиции
+    // при создании записи в середине таблицы.
+    public double CurrentVerticalOffset() =>
+        (VScrollBarProp?.GetValue(RecordsGrid) as ScrollBar)?.Value ?? 0;
+
+    // Восстанавливает вертикальную прокрутку после пересборки: высота контента готова
+    // не сразу, поэтому ждём через LayoutUpdated, пока Maximum дорастёт до offset,
+    // затем выставляем Value и применяем через ProcessVerticalScroll (ThumbTrack).
+    public void RestoreVerticalOffset(double offset)
+    {
+        if (offset <= 0 || VScrollBarProp is null || ProcessVScrollMethod is null) return;
+
+        var attempts = 0;
+
+        void Handler(object? _, EventArgs __)
+        {
+            attempts++;
+            if (VScrollBarProp.GetValue(RecordsGrid) is not ScrollBar sb)
+            {
+                if (attempts > 20) RecordsGrid.LayoutUpdated -= Handler;
+                return;
+            }
+
+            // Контент ещё не дорос до нужного offset — ждём следующий layout-проход.
+            if (sb.Maximum < offset && attempts <= 20) return;
+
+            sb.Value = Math.Min(offset, sb.Maximum);
+            ProcessVScrollMethod.Invoke(RecordsGrid, [ScrollEventType.ThumbTrack]);
+            RecordsGrid.LayoutUpdated -= Handler;
+        }
+
+        RecordsGrid.LayoutUpdated += Handler;
+    }
 
     // Текущий горизонтальный offset DataGrid (0, если API недоступен).
     private double CurrentScrollOffset() =>
@@ -765,7 +811,7 @@ public partial class TableView : UserControl
 
         if (row.IsAddRow)
         {
-            RecordCreateRequested?.Invoke(this, false); // создать без открытия
+            RecordCreateRequested?.Invoke(this, (false, null)); // создать в конце, без открытия
             return;
         }
 
@@ -971,7 +1017,7 @@ public partial class TableView : UserControl
     {
         var menu = new ContextMenu();
         var mi = new MenuItem { Header = Controls.Components.MenuIcons.CreateRecordHeader() };
-        mi.Click += (_, _) => RecordCreateRequested?.Invoke(this, true);
+        mi.Click += (_, _) => RecordCreateRequested?.Invoke(this, (false, null)); // в конце, без открытия
         menu.Items.Add(mi);
 
         // «Отображение» доступно и отсюда — на случай, если все колонки скрыты и до
@@ -988,7 +1034,7 @@ public partial class TableView : UserControl
         var menu = new ContextMenu();
 
         var miCreate = new MenuItem { Header = Controls.Components.MenuIcons.CreateRecordHeader() };
-        miCreate.Click += (_, _) => RecordCreateRequested?.Invoke(this, true);
+        miCreate.Click += (_, _) => RecordCreateRequested?.Invoke(this, (false, recordId)); // после этой строки, без открытия
         menu.Items.Add(miCreate);
 
         menu.Items.Add(new Separator());
