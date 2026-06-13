@@ -212,6 +212,13 @@ public partial class ConstructorControllerView : UserControl
         if (ok == true)
         {
             Refresh();
+
+            // Создание нового свойства (fieldId == null) идёт через правый «+» — оно
+            // добавляется в конец таблицы. Прокручиваем к правому краю, чтобы новая
+            // колонка и кнопка «+» остались видны (как ScrollToRecord держит add-row «+»).
+            if (fieldId is null && TableViewCtrl.IsVisible)
+                TableViewCtrl.ScrollToAddPropertyColumn();
+
             CollectionsChanged?.Invoke(this, EventArgs.Empty);
         }
     }

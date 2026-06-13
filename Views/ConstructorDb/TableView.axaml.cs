@@ -154,15 +154,24 @@ public partial class TableView : UserControl
     private double CurrentScrollOffset() =>
         HOffsetProp?.GetValue(RecordsGrid) is double x ? x : 0;
 
-    // Ожидающий восстановитель скролла — чтобы при быстрых повторных пересборках
+    // Ожидающий выставитель скролла — чтобы при быстрых повторных пересборках
     // не копились хендлеры со старыми offset'ами (новый отменяет предыдущий).
     private EventHandler? _scrollRestoreHandler;
 
-    // Восстанавливает горизонтальную прокрутку после пересборки таблицы. Star-ширины
-    // колонок «устаканиваются» за несколько layout-проходов, поэтому offset выставляем
-    // отложенно и повторяем, пока он не приживётся (setter сам клампит до реального
-    // максимума). Отписываемся, как только offset достиг цели или вышли по числу попыток.
-    private void RestoreScrollOffset(double offsetX)
+    // Восстанавливает горизонтальную прокрутку на точную позицию после пересборки.
+    private void RestoreScrollOffset(double offsetX) => ApplyHorizontalOffsetDeferred(offsetX);
+
+    // Прокручивает таблицу к правому краю — к колонке «+» (добавление свойства).
+    // Используется после добавления нового свойства через правый «+»: новая колонка
+    // и кнопка «+» остаются видны (аналог ScrollToRecord, удерживающего add-row «+»).
+    public void ScrollToAddPropertyColumn() => ApplyHorizontalOffsetDeferred(double.MaxValue);
+
+    // Откладывает выставление горизонтального offset до тех пор, пока star-ширины
+    // колонок не осядут (несколько layout-проходов). offsetX — желаемая позиция;
+    // для прокрутки к правому краю передаём double.MaxValue (setter клампит до реального
+    // максимума, останавливаемся, когда offset перестаёт расти). Отписываемся, когда
+    // цель достигнута, offset вышел на плато (упёрлись в максимум) или исчерпали попытки.
+    private void ApplyHorizontalOffsetDeferred(double offsetX)
     {
         if (HOffsetProp is null || UpdateHOffsetMethod is null) return;
 
@@ -172,7 +181,10 @@ public partial class TableView : UserControl
 
         if (offsetX <= 0) { _scrollRestoreHandler = null; return; }
 
-        var attempts = 0;
+        var attempts   = 0;
+        var lastActual = -1.0;
+        var plateau    = 0;
+        var grew       = false;
 
         void Handler(object? _, EventArgs __)
         {
@@ -183,7 +195,16 @@ public partial class TableView : UserControl
             UpdateHOffsetMethod.Invoke(RecordsGrid, [offsetX]);
             var actual = HOffsetProp.GetValue(RecordsGrid) is double a ? a : 0;
 
-            if (actual >= offsetX - 0.5 || attempts > 30)
+            if (actual > 0.5) grew = true;
+
+            // Плато: offset перестал расти между проходами. Учитываем только после того,
+            // как он реально вырос (grew) — иначе нулевой offset на ранних проходах (ширины
+            // ещё не готовы) приняли бы за «упёрлись в максимум» и остановились бы на нуле.
+            if (Math.Abs(actual - lastActual) < 0.5) plateau++;
+            else plateau = 0;
+            lastActual = actual;
+
+            if (actual >= offsetX - 0.5 || (grew && plateau >= 2) || attempts > 30)
             {
                 RecordsGrid.LayoutUpdated -= _scrollRestoreHandler!;
                 _scrollRestoreHandler = null;
