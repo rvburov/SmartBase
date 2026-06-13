@@ -720,8 +720,8 @@ public partial class AllDayBar : UserControl
             }
             var col = Math.Clamp((int)(_menuPos.X / colW), 0, _currentDays.Count - 1);
             var day = _currentDays[col];
-            menu.Items.Add(EventContextMenu.MakeItem(
-                "Создать запись", () => RecordCreationRequested?.Invoke(this, day)));
+            menu.Items.Add(EventContextMenu.MakeCreateItem(
+                () => RecordCreationRequested?.Invoke(this, day)));
         };
         return menu;
     }

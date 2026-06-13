@@ -1,4 +1,5 @@
 using Avalonia.Controls;
+using Avalonia.VisualTree;
 using MyPlanner.Database.Repositories;
 using MyPlanner.Utils;
 using MyPlanner.ViewModels;
@@ -117,6 +118,27 @@ public partial class MainWindow : Window
 
         // Первоначальная загрузка фильтра
         CalendarModule.SetActiveIds(CalendarSidebar.GetActiveIds());
+
+        // При потере фокуса окном закрываем открытые контекстные меню/flyout —
+        // иначе на macOS popup «зависает» поверх других приложений (Avalonia issue).
+        Deactivated += (_, _) => CloseOpenPopups();
+    }
+
+    // Закрывает открытые контекстные меню и flyout. Вызывается при потере фокуса окном —
+    // иначе на macOS popup «зависает» поверх других окон (Avalonia issue).
+    private void CloseOpenPopups()
+    {
+        // Материализуем дерево в список ДО закрытия: Close()/Hide() меняют визуальное
+        // дерево, а GetVisualDescendants() ленивый — иначе «Collection was modified».
+        var controls = this.GetVisualDescendants().OfType<Control>().ToList();
+
+        foreach (var ctrl in controls)
+            if (ctrl.ContextMenu is { IsOpen: true } cm)
+                cm.Close();
+
+        // Flyout фильтра/сортировки в таблице — он живёт отдельным popup.
+        foreach (var table in controls.OfType<ConstructorDb.TableView>())
+            table.CloseTransientPopups();
     }
 
     private void ShowModule(string module)

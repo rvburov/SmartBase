@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Reflection;
 using System.Text.Json;
 using Avalonia;
 using Avalonia.Controls;
@@ -108,8 +109,14 @@ public partial class TableView : UserControl
 
     // ── Публичный API ─────────────────────────────────────────────────────────
 
+    // Коллекция, отрисованная в прошлый Load — чтобы понять, сменилась ли она
+    // (тогда горизонтальный скролл сбрасываем) или это refresh той же (скролл храним).
+    private int? _lastLoadedCollectionId;
+
     public void Load(ConstructorRepository repository, int collectionId)
     {
+        var sameCollection = _lastLoadedCollectionId == collectionId;
+
         _repository   = repository;
         _collectionId = collectionId;
 
@@ -120,13 +127,78 @@ public partial class TableView : UserControl
         var (colResize, _, _) = repository.GetUiSettings(collectionId);
         _manualColResize = colResize;
 
-        Reload();
+        // При refresh той же коллекции (создание/изменение свойства) сохраняем
+        // горизонтальную прокрутку — иначе при 50 колонках откидывает в начало.
+        // Смена коллекции — скролл сбрасываем (новая таблица начинается слева).
+        if (sameCollection)
+            ReloadPreservingScroll();
+        else
+            Reload();
+
+        _lastLoadedCollectionId = collectionId;
+    }
+
+    // Avalonia DataGrid НЕ использует ScrollViewer для горизонтальной прокрутки —
+    // offset живёт во внутреннем поле и доступен через internal-свойство
+    // HorizontalOffset и метод UpdateHorizontalOffset(double). При Columns.Clear()
+    // DataGrid сам сбрасывает offset в 0 (OnClearingColumns), поэтому после пересборки
+    // его надо вернуть. Доступ — через рефлексию (версия Avalonia зафиксирована 11.2.x).
+    private static readonly PropertyInfo? HOffsetProp =
+        typeof(DataGrid).GetProperty("HorizontalOffset",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+    private static readonly MethodInfo? UpdateHOffsetMethod =
+        typeof(DataGrid).GetMethod("UpdateHorizontalOffset",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+
+    // Текущий горизонтальный offset DataGrid (0, если API недоступен).
+    private double CurrentScrollOffset() =>
+        HOffsetProp?.GetValue(RecordsGrid) is double x ? x : 0;
+
+    // Ожидающий восстановитель скролла — чтобы при быстрых повторных пересборках
+    // не копились хендлеры со старыми offset'ами (новый отменяет предыдущий).
+    private EventHandler? _scrollRestoreHandler;
+
+    // Восстанавливает горизонтальную прокрутку после пересборки таблицы. Star-ширины
+    // колонок «устаканиваются» за несколько layout-проходов, поэтому offset выставляем
+    // отложенно и повторяем, пока он не приживётся (setter сам клампит до реального
+    // максимума). Отписываемся, как только offset достиг цели или вышли по числу попыток.
+    private void RestoreScrollOffset(double offsetX)
+    {
+        if (HOffsetProp is null || UpdateHOffsetMethod is null) return;
+
+        // Отменяем предыдущее незавершённое восстановление (его offset устарел).
+        if (_scrollRestoreHandler is not null)
+            RecordsGrid.LayoutUpdated -= _scrollRestoreHandler;
+
+        if (offsetX <= 0) { _scrollRestoreHandler = null; return; }
+
+        var attempts = 0;
+
+        void Handler(object? _, EventArgs __)
+        {
+            attempts++;
+
+            // Setter клампит до (VisibleEdgedColumnsWidth - CellsWidth); пока ширины
+            // не дорастут, offset «осядет» ниже цели — пробуем на следующем проходе.
+            UpdateHOffsetMethod.Invoke(RecordsGrid, [offsetX]);
+            var actual = HOffsetProp.GetValue(RecordsGrid) is double a ? a : 0;
+
+            if (actual >= offsetX - 0.5 || attempts > 30)
+            {
+                RecordsGrid.LayoutUpdated -= _scrollRestoreHandler!;
+                _scrollRestoreHandler = null;
+            }
+        }
+
+        _scrollRestoreHandler = Handler;
+        RecordsGrid.LayoutUpdated += Handler;
     }
 
     public void Clear()
     {
         _repository   = null;
         _collectionId = 0;
+        _lastLoadedCollectionId = null;
         _fields       = [];
         _colDefs      = [];
         _systemNames  = [];
@@ -280,12 +352,24 @@ public partial class TableView : UserControl
             .ToList();
 
     // Перемещение колонки влево/вправо: пишем порядок в БД, перестраиваем таблицу.
-    // Reload сохраняет активные фильтры/сортировку.
+    // Reload сохраняет активные фильтры/сортировку; горизонтальную прокрутку держим
+    // на месте — иначе таблицу откидывает в начало при каждом сдвиге.
     private void MoveColumn(string key, bool left)
     {
         if (_repository is null) return;
         _repository.MoveColumn(_collectionId, key, left, MovableKeysInOrder());
+        ReloadPreservingScroll();
+    }
+
+    // Reload + восстановление горизонтального скролла. Используется операциями,
+    // перестраивающими колонки на месте (сдвиг колонки), чтобы таблица не прыгала
+    // в начало. Сам Reload пересобирает DataGrid, поэтому offset снимаем до него.
+    private void ReloadPreservingScroll()
+    {
+        var keepOffset = CurrentScrollOffset();
         Reload();
+        if (keepOffset > 0)
+            RestoreScrollOffset(keepOffset);
     }
 
     // Можно ли двигать колонку влево/вправо (не крайняя ли она среди движимых).
@@ -759,17 +843,36 @@ public partial class TableView : UserControl
             }
         }
 
+        // Соседние выделенные колонки сливаем в одну рамку: иначе на их общей
+        // границе ложатся две линии по 2px и выглядят толстой полосой. Внутри
+        // объединённой рамки границу колонок рисует обычная серая линия сетки.
+        target.Sort((a, b) => a.X.CompareTo(b.X));
+        var merged = new List<(double X, double W, double H)>();
+        foreach (var r in target)
+        {
+            if (merged.Count > 0)
+            {
+                var last = merged[^1];
+                if (r.X <= last.X + last.W + 1)   // смежные/перекрывающиеся колонки
+                {
+                    merged[^1] = (last.X, Math.Max(last.X + last.W, r.X + r.W) - last.X, Math.Max(last.H, r.H));
+                    continue;
+                }
+            }
+            merged.Add(r);
+        }
+
         // Ничего не изменилось — дерево не трогаем (разрывает layout-цикл).
-        if (HighlightsEqual(target, _lastHighlights)) return;
+        if (HighlightsEqual(merged, _lastHighlights)) return;
 
         _lastHighlights.Clear();
-        _lastHighlights.AddRange(target);
+        _lastHighlights.AddRange(merged);
 
         panel.Children.Clear();
-        if (target.Count == 0) return;
+        if (merged.Count == 0) return;
 
         var accent = (IBrush)this.FindResource("BrushAccent")!;
-        foreach (var (x, w, h) in target)
+        foreach (var (x, w, h) in merged)
         {
             var border = new Border
             {
@@ -816,7 +919,7 @@ public partial class TableView : UserControl
     private ContextMenu BuildGridContextMenu()
     {
         var menu = new ContextMenu();
-        var mi = new MenuItem { Header = "Создать запись" };
+        var mi = new MenuItem { Header = Controls.Components.MenuIcons.CreateRecordHeader() };
         mi.Click += (_, _) => RecordCreateRequested?.Invoke(this, true);
         menu.Items.Add(mi);
         return menu;
@@ -826,7 +929,7 @@ public partial class TableView : UserControl
     {
         var menu = new ContextMenu();
 
-        var miCreate = new MenuItem { Header = "Создать запись" };
+        var miCreate = new MenuItem { Header = Controls.Components.MenuIcons.CreateRecordHeader() };
         miCreate.Click += (_, _) => RecordCreateRequested?.Invoke(this, true);
         menu.Items.Add(miCreate);
 
@@ -1023,6 +1126,9 @@ public partial class TableView : UserControl
 
     // ── Фильтр и сортировка колонок (Excel-стиль) ──────────────────────────────
 
+    // Текущий открытый flyout фильтра/сортировки — чтобы закрыть его при потере фокуса.
+    private Flyout? _activeFilterFlyout;
+
     private void ShowFilterFlyout(Control anchor, TableColumnDef def)
     {
         if (_repository is null) return;
@@ -1030,8 +1136,13 @@ public partial class TableView : UserControl
         var flyout = new Flyout { Placement = PlacementMode.BottomEdgeAlignedRight };
         flyout.FlyoutPresenterClasses.Add("filterFlyout");
         flyout.Content = BuildFilterPanel(def, () => flyout.Hide());
+        flyout.Closed += (_, _) => { if (ReferenceEquals(_activeFilterFlyout, flyout)) _activeFilterFlyout = null; };
+        _activeFilterFlyout = flyout;
         flyout.ShowAt(anchor);
     }
+
+    // Закрывает открытый flyout фильтра/сортировки (вызывается при деактивации окна).
+    public void CloseTransientPopups() => _activeFilterFlyout?.Hide();
 
     private Control BuildFilterPanel(TableColumnDef def, Action close)
     {

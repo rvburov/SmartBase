@@ -1614,8 +1614,8 @@ public partial class WeekView : UserControl
             var dt      = new DateTime(day.Year, day.Month, day.Day, minutes / 60, minutes % 60, 0);
 
             menu.Items.Clear();
-            menu.Items.Add(MyPlanner.Controls.Components.EventContextMenu.MakeItem(
-                "Создать запись", () => TimeSlotCreationRequested?.Invoke(this, dt)));
+            menu.Items.Add(MyPlanner.Controls.Components.EventContextMenu.MakeCreateItem(
+                () => TimeSlotCreationRequested?.Invoke(this, dt)));
         };
         return menu;
     }

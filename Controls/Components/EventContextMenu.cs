@@ -33,13 +33,21 @@ public static class EventContextMenu
     public static ContextMenu Background(Action onCreate)
     {
         var menu = new ContextMenu();
-        menu.Items.Add(MakeItem("Создать запись", onCreate));
+        menu.Items.Add(MakeCreateItem(onCreate));
         return menu;
     }
 
     public static MenuItem MakeItem(string header, Action onClick)
     {
         var item = new MenuItem { Header = header };
+        item.Click += (_, _) => Dispatcher.UIThread.Post(onClick);
+        return item;
+    }
+
+    // Пункт «Создать запись» с иконкой plus.
+    public static MenuItem MakeCreateItem(Action onClick)
+    {
+        var item = new MenuItem { Header = MenuIcons.CreateRecordHeader() };
         item.Click += (_, _) => Dispatcher.UIThread.Post(onClick);
         return item;
     }

@@ -83,6 +83,9 @@ public static class MenuIcons
     // Заголовок пункта «Создать новое свойство»: иконка plus + стандартный текст.
     public static Control CreatePropertyHeader() => Header(Plus, "Создать новое свойство");
 
+    // Заголовок пункта «Создать запись»: иконка plus + стандартный текст.
+    public static Control CreateRecordHeader() => Header(Plus, "Создать запись");
+
     // Заголовок пункта-переключателя режима ширины столбцов: иконка move-horizontal
     // + текст. Текст задаёт вызывающий (показывает режим, в который переключит клик).
     public static Control WidthModeHeader(string text) => Header(MoveHorizontal, text);

@@ -1154,8 +1154,8 @@ public partial class MonthView : UserControl
         {
             _Deselect();
             menu.Items.Clear();
-            menu.Items.Add(MyPlanner.Controls.Components.EventContextMenu.MakeItem(
-                "Создать запись", () => DayAddClicked?.Invoke(this, date)));
+            menu.Items.Add(MyPlanner.Controls.Components.EventContextMenu.MakeCreateItem(
+                () => DayAddClicked?.Invoke(this, date)));
         };
         return menu;
     }
