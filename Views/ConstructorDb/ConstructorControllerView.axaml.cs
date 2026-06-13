@@ -68,6 +68,7 @@ public partial class ConstructorControllerView : UserControl
         TableViewCtrl.PropertyDuplicateRequested += (_, fid) => DuplicateProperty(fid);
         TableViewCtrl.PropertiesDeleteRequested  += (_, ids) => _ = DeletePropertiesWithConfirm(ids);
         TableViewCtrl.SystemFieldRenameRequested += (_, key) => _ = RenameSystemField(key);
+        TableViewCtrl.ColumnDisplayRequested     += (_, _)   => _ = OpenDisplayDialog();
 
         // Стартовое состояние: коллекция не выбрана — заголовок-плейсхолдер и подсказка.
         ConstructorNavbar.SetTitle("");
@@ -221,6 +222,20 @@ public partial class ConstructorControllerView : UserControl
 
             CollectionsChanged?.Invoke(this, EventArgs.Empty);
         }
+    }
+
+    // Окно «Отображение» — менеджер видимости/уровней колонок. Список свойств берём
+    // из таблицы (полный, включая скрытые). По «Сохранить» — обновляем таблицу.
+    private async Task OpenDisplayDialog()
+    {
+        if (_currentCollectionId is null || _repository is null) return;
+        if (VisualRoot is not Avalonia.Controls.Window win) return;
+
+        var columns = TableViewCtrl.MovableColumnsInOrder();
+        var dlg = new DisplayDialog(_repository, _currentCollectionId.Value, columns);
+        var ok  = await dlg.ShowDialog<bool?>(win);
+        if (ok == true)
+            Refresh();
     }
 
     // Создать новое свойство и поставить его сразу справа от колонки afterKey

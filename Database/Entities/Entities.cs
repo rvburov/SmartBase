@@ -129,3 +129,16 @@ public class ColumnOrderEntity
     public string Key          { get; set; } = "";
     public int    Position     { get; set; }
 }
+
+// Отображение колонок (окно «Отображение»). Key = TableRowVm.TitleKey/DescKey либо
+// строковый id поля (как в column_order). Visible=false — колонка скрыта в таблице.
+// Level — пресет-уровень колонки (по умолчанию 1); блок уровней массово включает
+// чекбоксы видимости по уровню ≤ выбранного. Строки только для изменённых колонок;
+// отсутствие строки = видима, уровень 1.
+public class ColumnDisplayEntity
+{
+    public int    CollectionId { get; set; }
+    public string Key          { get; set; } = "";
+    public bool   Visible      { get; set; } = true;
+    public int    Level        { get; set; } = 1;
+}

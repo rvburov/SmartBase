@@ -210,7 +210,7 @@ public class ConstructorRepository(AppDbContext db)
     public DbField AddField(DbField field)
     {
         if (db.DbFields.Any(f => f.CollectionId == field.CollectionId && f.Name == field.Name))
-            throw new InvalidOperationException($"Поле с именем «{field.Name}» уже существует в этой коллекции.");
+            throw new InvalidOperationException("Поле с таким именем уже существует.");
 
         var entity = new DbFieldEntity
         {
@@ -232,7 +232,7 @@ public class ConstructorRepository(AppDbContext db)
         if (entity is null) return;
         if (entity.Name != field.Name &&
             db.DbFields.Any(f => f.CollectionId == entity.CollectionId && f.Name == field.Name && f.Id != field.Id))
-            throw new InvalidOperationException($"Поле с именем «{field.Name}» уже существует в этой коллекции.");
+            throw new InvalidOperationException("Поле с таким именем уже существует.");
         entity.Name       = field.Name;
         entity.FieldType  = field.FieldType;
         entity.ConfigJson = field.ConfigJson;
@@ -678,6 +678,20 @@ public class ConstructorRepository(AppDbContext db)
         db.SaveChanges();
     }
 
+    // Перезаписать порядок колонок целиком из заданной последовательности ключей
+    // (как они идут слева-направо). Используется окном «Отображение» при сохранении.
+    public void SaveColumnOrder(int collectionId, IReadOnlyList<string> orderedKeys)
+    {
+        var existing = db.ColumnOrder.Where(o => o.CollectionId == collectionId).ToList();
+        db.ColumnOrder.RemoveRange(existing);
+        for (var i = 0; i < orderedKeys.Count; i++)
+            db.ColumnOrder.Add(new ColumnOrderEntity
+            {
+                CollectionId = collectionId, Key = orderedKeys[i], Position = (i + 1) * 1000,
+            });
+        db.SaveChanges();
+    }
+
     public Dictionary<int, int> GetColWidths(int collectionId) =>
         db.UiColWidths
           .Where(w => w.CollectionId == collectionId)
@@ -690,6 +704,30 @@ public class ConstructorRepository(AppDbContext db)
         {
             CollectionId = collectionId, FieldId = kv.Key, Width = kv.Value,
         }));
+        db.SaveChanges();
+    }
+
+    // ── Отображение колонок (видимость + уровень; окно «Отображение») ──────────
+
+    // key → (Visible, Level). Только сохранённые строки; отсутствие ключа = (видима, 1).
+    public Dictionary<string, (bool Visible, int Level)> GetColumnDisplay(int collectionId) =>
+        db.ColumnDisplay
+          .Where(d => d.CollectionId == collectionId)
+          .ToDictionary(d => d.Key, d => (d.Visible, d.Level));
+
+    // Перезаписываем отображение колонок целиком. Дефолтные строки (видима, уровень 1)
+    // не храним — так таблица не разрастается, а новые колонки по умолчанию видимы.
+    public void SaveColumnDisplay(int collectionId, IEnumerable<(string Key, bool Visible, int Level)> entries)
+    {
+        db.ColumnDisplay.RemoveRange(db.ColumnDisplay.Where(d => d.CollectionId == collectionId));
+        foreach (var (key, visible, level) in entries)
+        {
+            if (visible && level <= 1) continue;   // дефолт — не храним
+            db.ColumnDisplay.Add(new ColumnDisplayEntity
+            {
+                CollectionId = collectionId, Key = key, Visible = visible, Level = Math.Max(1, level),
+            });
+        }
         db.SaveChanges();
     }
 

@@ -33,6 +33,9 @@ public partial class TableView : UserControl
     public event EventHandler<string>? PropertyCreateAfterRequested;
     public event EventHandler<int>? PropertyEditRequested;
     public event EventHandler<int>? PropertyDuplicateRequested;
+    // Открыть окно «Отображение» (менеджер видимости/уровней колонок). Окно глобальное
+    // (список всех колонок), поэтому без аргумента — инициатор-колонка не важна.
+    public event EventHandler? ColumnDisplayRequested;
     // Удаление пользовательских полей (Delete или меню «Удалить») — всегда пакетно,
     // с подтверждением; для одного поля список из одного id.
     public event EventHandler<IReadOnlyList<int>>? PropertiesDeleteRequested;
@@ -60,6 +63,9 @@ public partial class TableView : UserControl
     private Dictionary<string, string> _systemNames = [];
     // Сохранённый порядок колонок: ключ → позиция (пусто, если ещё не двигали).
     private Dictionary<string, int> _columnOrder = [];
+    // Скрытые колонки (окно «Отображение»): ключ есть в множестве ⇒ колонка скрыта.
+    // Колонки из _colDefs не удаляются (порядок/перемещение целы) — гасим через IsVisible.
+    private HashSet<string> _hiddenColumns = [];
     // Выделенные по клику в заголовок колонки (голубые рамки). Пусто — нет выделения.
     // Обычный клик — одна колонка; Shift+клик — точечный toggle колонки.
     private readonly List<string> _selectedColumnKeys = [];
@@ -281,6 +287,10 @@ public partial class TableView : UserControl
 
         _systemNames = _repository.GetSystemFieldNames(_collectionId);
         _columnOrder = _repository.GetColumnOrder(_collectionId);
+        _hiddenColumns = _repository.GetColumnDisplay(_collectionId)
+            .Where(kv => !kv.Value.Visible)
+            .Select(kv => kv.Key)
+            .ToHashSet();
 
         ClearColumnSelection();   // колонки пересобираются — снимаем выделение
 
@@ -372,6 +382,14 @@ public partial class TableView : UserControl
             .Select(d => d.Key)
             .ToList();
 
+    // Движимые колонки (ключ + отображаемое имя) в порядке слева-направо — для окна
+    // «Отображение». Включает и скрытые колонки (их там можно вернуть), № и «+» — нет.
+    public IReadOnlyList<(string Key, string Name)> MovableColumnsInOrder() =>
+        _colDefs
+            .Where(d => d.Key != TableColumnDef.NumKey && d.Key != TableColumnDef.AddPropKey)
+            .Select(d => (d.Key, d.Header))
+            .ToList();
+
     // Перемещение колонки влево/вправо: пишем порядок в БД, перестраиваем таблицу.
     // Reload сохраняет активные фильтры/сортировку; горизонтальную прокрутку держим
     // на месте — иначе таблицу откидывает в начало при каждом сдвиге.
@@ -436,6 +454,10 @@ public partial class TableView : UserControl
 
         if (!def.IsReadOnly)
             col.CellEditingTemplate = BuildEditTemplate(def);
+
+        // Скрытая в окне «Отображение» колонка — гасим, не удаляя из _colDefs
+        // (порядок/перемещение/фильтры продолжают работать с полным набором).
+        col.IsVisible = !_hiddenColumns.Contains(def.Key);
 
         return col;
     }
@@ -923,18 +945,26 @@ public partial class TableView : UserControl
         return true;
     }
 
-    // Заголовок колонки по индексу. Заголовки в визуальном дереве идут в порядке
-    // колонок и позиционированы по X — сортируем по фактической X-координате и
-    // берём colIdx-й (надёжнее матчинга по ширине, т.к. ширины могут совпадать).
+    // Заголовок колонки по индексу в _colDefs. Заголовки в визуальном дереве идут в
+    // порядке колонок и позиционированы по X — сортируем по фактической X-координате.
+    // Скрытые колонки (IsVisible=false) заголовков не имеют, поэтому индекс _colDefs
+    // не совпадает со списком видимых заголовков — переводим в «видимый ранг».
     private DataGridColumnHeader? FindHeaderForColumn(int colIdx)
     {
+        if (colIdx < 0 || colIdx >= RecordsGrid.Columns.Count) return null;
+        if (!RecordsGrid.Columns[colIdx].IsVisible) return null;
+
+        var visibleRank = 0;
+        for (var i = 0; i < colIdx; i++)
+            if (RecordsGrid.Columns[i].IsVisible) visibleRank++;
+
         var headers = RecordsGrid.GetVisualDescendants()
             .OfType<DataGridColumnHeader>()
             .Where(h => h.Bounds.Width > 0)
             .OrderBy(h => h.TranslatePoint(new Point(0, 0), RecordsGrid)?.X ?? double.MaxValue)
             .ToList();
 
-        return colIdx >= 0 && colIdx < headers.Count ? headers[colIdx] : null;
+        return visibleRank < headers.Count ? headers[visibleRank] : null;
     }
 
     private ContextMenu BuildGridContextMenu()
@@ -943,6 +973,13 @@ public partial class TableView : UserControl
         var mi = new MenuItem { Header = Controls.Components.MenuIcons.CreateRecordHeader() };
         mi.Click += (_, _) => RecordCreateRequested?.Invoke(this, true);
         menu.Items.Add(mi);
+
+        // «Отображение» доступно и отсюда — на случай, если все колонки скрыты и до
+        // меню заголовка не добраться (окно показывает полный список колонок).
+        var miDisplay = new MenuItem { Header = Controls.Components.MenuIcons.DisplayHeader() };
+        miDisplay.Click += (_, _) => ColumnDisplayRequested?.Invoke(this, EventArgs.Empty);
+        menu.Items.Add(miDisplay);
+
         return menu;
     }
 
@@ -1018,6 +1055,10 @@ public partial class TableView : UserControl
         miCreate.Click += (_, _) => PropertyCreateAfterRequested?.Invoke(this, key);
         menu.Items.Add(miCreate);
 
+        var miDisplay = new MenuItem { Header = Controls.Components.MenuIcons.DisplayHeader() };
+        miDisplay.Click += (_, _) => ColumnDisplayRequested?.Invoke(this, EventArgs.Empty);
+        menu.Items.Add(miDisplay);
+
         AddMoveItems(menu, key);
         AddWidthModeItems(menu);
         return menu;
@@ -1089,6 +1130,10 @@ public partial class TableView : UserControl
         var miCreate = new MenuItem { Header = Controls.Components.MenuIcons.CreatePropertyHeader() };
         miCreate.Click += (_, _) => PropertyCreateAfterRequested?.Invoke(this, fieldId.ToString());
         menu.Items.Add(miCreate);
+
+        var miDisplay = new MenuItem { Header = Controls.Components.MenuIcons.DisplayHeader() };
+        miDisplay.Click += (_, _) => ColumnDisplayRequested?.Invoke(this, EventArgs.Empty);
+        menu.Items.Add(miDisplay);
 
         AddMoveItems(menu, fieldId.ToString());
         AddWidthModeItems(menu);

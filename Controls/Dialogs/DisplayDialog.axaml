@@ -1,0 +1,83 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="MyPlanner.Controls.Dialogs.DisplayDialog"
+        Title="Отображение свойств"
+        Width="460"
+        MinWidth="460"
+        MaxWidth="460"
+        Height="700"
+        MinHeight="700"
+        MaxHeight="700"
+        WindowStartupLocation="CenterOwner"
+        CanResize="False"
+        Background="{StaticResource BrushBg}">
+
+    <!-- Два отдельных блока: слева контент, справа активитибар уровней; между ними черта -->
+    <Grid ColumnDefinitions="*,Auto,Auto">
+
+        <!-- Левый блок: поиск (сверху) · список (на всю высоту) · Отмена/Сохранить (внизу) -->
+        <Grid Grid.Column="0" Margin="20,16" RowDefinitions="Auto,*,Auto">
+
+            <!-- Поиск + кнопки перемещения выделенного свойства (вверх/вниз) -->
+            <Grid Grid.Row="0" ColumnDefinitions="*,Auto" Margin="0,0,0,12">
+                <TextBox Grid.Column="0" x:Name="SearchBox"
+                         Watermark="Поиск свойств..."
+                         Height="34"
+                         VerticalContentAlignment="Center"
+                         CornerRadius="{StaticResource RadiusMedium}" />
+                <StackPanel Grid.Column="1" x:Name="MoveButtons"
+                            Orientation="Horizontal" Spacing="6"
+                            Margin="8,0,0,0" VerticalAlignment="Center" />
+            </Grid>
+
+            <!-- Список свойств: № · чекбокс · уровень · название. Без внутренних отступов
+                 и спейсинга — выделение строки идёт во всю ширину до линии рамки и вплотную
+                 сверху/снизу (как строки сайдбара). ClipToBounds — обрезка по скруглению. -->
+            <Border Grid.Row="1"
+                    BorderBrush="{StaticResource BrushSeparator}"
+                    BorderThickness="1"
+                    CornerRadius="{StaticResource RadiusBase}"
+                    ClipToBounds="True"
+                    Padding="0">
+                <ScrollViewer HorizontalScrollBarVisibility="Disabled">
+                    <StackPanel x:Name="ListHost" Spacing="0" />
+                </ScrollViewer>
+            </Border>
+
+            <!-- Кнопки внизу -->
+            <Grid Grid.Row="2" ColumnDefinitions="*,Auto,8,Auto" Margin="0,12,0,0">
+                <Button Grid.Column="1" x:Name="CancelBtn" Classes="dialog" Content="Отмена" />
+                <Button Grid.Column="3" x:Name="SaveBtn" Classes="dialog" Content="Сохранить" />
+            </Grid>
+
+        </Grid>
+
+        <!-- Черта между блоками (на всю высоту) -->
+        <Border Grid.Column="1"
+                Width="1"
+                Background="{StaticResource BrushSeparator}" />
+
+        <!-- Правый блок: активитибар уровней (на всю высоту, заподлицо).
+             Числа — сверху; «+» и «−» прибиты к низу. -->
+        <Border Grid.Column="2"
+                Background="{StaticResource BrushSecondaryBg}"
+                Width="48">
+            <Grid RowDefinitions="*,Auto">
+                <StackPanel Grid.Row="0" x:Name="LevelPanel"
+                            Orientation="Vertical"
+                            Spacing="8"
+                            Margin="8,12,8,0"
+                            VerticalAlignment="Top"
+                            HorizontalAlignment="Center" />
+                <StackPanel Grid.Row="1" x:Name="LevelActions"
+                            Orientation="Vertical"
+                            Spacing="8"
+                            Margin="8,8,8,12"
+                            VerticalAlignment="Bottom"
+                            HorizontalAlignment="Center" />
+            </Grid>
+        </Border>
+
+    </Grid>
+
+</Window>

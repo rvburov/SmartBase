@@ -38,6 +38,25 @@ namespace MyPlanner.Database.Migrations
                     b.ToTable("categories", (string)null);
                 });
 
+            modelBuilder.Entity("MyPlanner.Database.Entities.ColumnDisplayEntity", b =>
+                {
+                    b.Property<int>("CollectionId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Key")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Level")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("Visible")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("CollectionId", "Key");
+
+                    b.ToTable("column_display", (string)null);
+                });
+
             modelBuilder.Entity("MyPlanner.Database.Entities.ColumnOrderEntity", b =>
                 {
                     b.Property<int>("CollectionId")

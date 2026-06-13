@@ -16,6 +16,7 @@ public class AppDbContext : DbContext
     public DbSet<UiCollectionSettingEntity> UiCollectionSettings { get; set; } = null!;
     public DbSet<SystemFieldMetaEntity>    SystemFieldMeta      { get; set; } = null!;
     public DbSet<ColumnOrderEntity>        ColumnOrder          { get; set; } = null!;
+    public DbSet<ColumnDisplayEntity>      ColumnDisplay        { get; set; } = null!;
 
     private readonly string _dbPath;
 
@@ -119,6 +120,12 @@ public class AppDbContext : DbContext
         model.Entity<ColumnOrderEntity>(e =>
         {
             e.ToTable("column_order");
+            e.HasKey(x => new { x.CollectionId, x.Key });
+        });
+
+        model.Entity<ColumnDisplayEntity>(e =>
+        {
+            e.ToTable("column_display");
             e.HasKey(x => new { x.CollectionId, x.Key });
         });
     }

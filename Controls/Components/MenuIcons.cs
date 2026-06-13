@@ -32,6 +32,9 @@ public static class MenuIcons
     // lucide move-horizontal
     private static readonly Geometry MoveHorizontal = Geometry.Parse("M18 8l4 4-4 4 M2 12h20 M6 8l-4 4 4 4");
 
+    // lucide check-check
+    private static readonly Geometry CheckCheck = Geometry.Parse("M18 6 7 17l-5-5 M22 10l-7.5 7.5L13 16");
+
     private static SolidColorBrush Red => new(Color.Parse("#FF3B30"));
 
     // Стандартный цвет текста/иконки меню (BrushPrimaryText, fallback — чёрный).
@@ -82,6 +85,9 @@ public static class MenuIcons
 
     // Заголовок пункта «Создать новое свойство»: иконка plus + стандартный текст.
     public static Control CreatePropertyHeader() => Header(Plus, "Создать новое свойство");
+
+    // Заголовок пункта «Отображение»: иконка check-check + стандартный текст.
+    public static Control DisplayHeader() => Header(CheckCheck, "Отображение");
 
     // Заголовок пункта «Создать запись»: иконка plus + стандартный текст.
     public static Control CreateRecordHeader() => Header(Plus, "Создать запись");
