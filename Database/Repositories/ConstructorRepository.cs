@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using Microsoft.EntityFrameworkCore;
 using MyPlanner.Core.Models;
 using MyPlanner.Database.Entities;
@@ -249,11 +250,8 @@ public class ConstructorRepository(AppDbContext db)
         var src = db.DbFields.Find(fieldId);
         if (src is null) throw new InvalidOperationException($"Field {fieldId} not found");
 
-        var baseName = src.Name + " (копия)";
-        var name = baseName;
-        var n = 2;
-        while (db.DbFields.Any(f => f.CollectionId == src.CollectionId && f.Name == name))
-            name = $"{baseName} {n++}";
+        var name = NextCopyName(src.Name,
+            candidate => db.DbFields.Any(f => f.CollectionId == src.CollectionId && f.Name == candidate));
 
         // Сдвигаем все поля правее исходного, освобождая место под копию.
         var following = db.DbFields
@@ -285,6 +283,27 @@ public class ConstructorRepository(AppDbContext db)
             FieldType = copy.FieldType, ConfigJson = copy.ConfigJson, Position = copy.Position,
         };
     }
+
+    // Имя копии в стиле macOS (без стакания слова «копия»). Отрезаем уже имеющийся
+    // суффикс «(копия)»/«(копия) N» и подбираем первый свободный: «X (копия)»,
+    // «X (копия) 2», «X (копия) 3» … exists — проверка занятости имени.
+    private static string NextCopyName(string sourceName, Func<string, bool> exists)
+    {
+        var stem = StripCopySuffix(sourceName);
+        if (string.IsNullOrEmpty(stem)) stem = sourceName;
+
+        string Make(int n) => n <= 1 ? $"{stem} (копия)" : $"{stem} (копия) {n}";
+
+        var name = Make(1);
+        var k = 2;
+        while (exists(name)) name = Make(k++);
+        return name;
+    }
+
+    // Убирает хвостовые суффиксы копий — «(копия)» и «(копия) N», один или несколько:
+    // «8888 (копия) 2» → «8888», «8888 (копия) (копия)» → «8888».
+    private static string StripCopySuffix(string name) =>
+        Regex.Replace(name, @"(\s+\(копия\)(\s+\d+)?)+$", "").TrimEnd();
 
     public void DeleteField(int fieldId)
     {
