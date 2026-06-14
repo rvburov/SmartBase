@@ -48,8 +48,8 @@ public partial class ConstructorControllerView : UserControl
         // Toggle правой панели записи в навбаре — пробрасываем в MainWindow.
         ConstructorNavbar.RecordPanelToggled += (_, isOpen) => RecordPanelToggled?.Invoke(this, isOpen);
 
-        // Высота строк — в нижней панели; ширина столбцов — в меню заголовка.
-        ConstructorFooter.RowResizeModeChanged += (_, v) => TableViewCtrl.SetRowResizeMode(v);
+        // Высота строк и ширина столбцов переключаются из контекстных меню таблицы
+        // (записи и заголовка колонки соответственно).
 
         // CRUD для записей — через контекстные меню в TableView/ListView.
         TableViewCtrl.RecordClicked             += (_, rid)  => OpenPage(rid);
@@ -107,8 +107,7 @@ public partial class ConstructorControllerView : UserControl
         ConstructorNavbar.SetTitle(col.Name);
         SetEmptyState(false);
 
-        var (_, rowResize, viewMode) = _repository.GetUiSettings(collectionId);
-        ConstructorFooter.LoadCollectionState(rowResize);
+        var (_, _, viewMode) = _repository.GetUiSettings(collectionId);
         ConstructorNavbar.SetViewMode(viewMode);
         SwitchView(viewMode);
 

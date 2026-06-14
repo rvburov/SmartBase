@@ -26,11 +26,18 @@ public static class MenuIcons
     private static readonly Geometry ArrowLeft  = Geometry.Parse("M12 19l-7-7 7-7 M19 12H5");
     private static readonly Geometry ArrowRight = Geometry.Parse("M5 12h14 M12 5l7 7-7 7");
 
+    // lucide arrow-up / arrow-down
+    private static readonly Geometry ArrowUp   = Geometry.Parse("M5 12l7-7 7 7 M12 19V5");
+    private static readonly Geometry ArrowDown = Geometry.Parse("M12 5v14 M19 12l-7 7-7-7");
+
     // lucide plus
     private static readonly Geometry Plus = Geometry.Parse("M5 12h14 M12 5v14");
 
     // lucide move-horizontal
     private static readonly Geometry MoveHorizontal = Geometry.Parse("M18 8l4 4-4 4 M2 12h20 M6 8l-4 4 4 4");
+
+    // lucide move-vertical
+    private static readonly Geometry MoveVertical = Geometry.Parse("M12 2v20 M8 18l4 4 4-4 M8 6l4-4 4 4");
 
     // lucide check-check
     private static readonly Geometry CheckCheck = Geometry.Parse("M18 6 7 17l-5-5 M22 10l-7.5 7.5L13 16");
@@ -83,6 +90,10 @@ public static class MenuIcons
     public static Control MoveLeftHeader()  => Header(ArrowLeft,  "Сдвинуть влево");
     public static Control MoveRightHeader() => Header(ArrowRight, "Сдвинуть вправо");
 
+    // Заголовки пунктов перемещения записи (строки).
+    public static Control MoveUpHeader()   => Header(ArrowUp,   "Сдвинуть вверх");
+    public static Control MoveDownHeader() => Header(ArrowDown, "Сдвинуть вниз");
+
     // Заголовок пункта «Создать новое свойство»: иконка plus + стандартный текст.
     public static Control CreatePropertyHeader() => Header(Plus, "Создать новое свойство");
 
@@ -95,6 +106,10 @@ public static class MenuIcons
     // Заголовок пункта-переключателя режима ширины столбцов: иконка move-horizontal
     // + текст. Текст задаёт вызывающий (показывает режим, в который переключит клик).
     public static Control WidthModeHeader(string text) => Header(MoveHorizontal, text);
+
+    // Заголовок пункта-переключателя режима высоты строк: иконка move-vertical + текст.
+    // Текст задаёт вызывающий (показывает режим, в который переключит клик).
+    public static Control HeightModeHeader(string text) => Header(MoveVertical, text);
 
     // Русская подпись типа поля — для шапки контекстного меню свойства.
     private static string TypeLabel(string? fieldType) => fieldType switch

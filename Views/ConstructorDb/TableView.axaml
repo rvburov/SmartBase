@@ -90,6 +90,12 @@
              клики проходят сквозь слой в таблицу. -->
         <Canvas x:Name="ColumnHighlightLayer"
                 IsHitTestVisible="False" />
+
+        <!-- Слой прозрачных полосок-«грипперов» у нижней границы строк для ручного
+             изменения высоты. В отличие от слоя рамок — кликабельный (ловит drag).
+             Полоски строятся в коде (RefreshRowResizeHandles) только в ручном режиме. -->
+        <Canvas x:Name="RowResizeLayer"
+                IsHitTestVisible="True" />
     </Panel>
 
 </UserControl>

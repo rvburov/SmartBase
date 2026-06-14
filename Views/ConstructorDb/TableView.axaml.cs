@@ -56,6 +56,7 @@ public partial class TableView : UserControl
     private ConstructorRepository? _repository;
     private int  _collectionId;
     private bool _manualColResize;
+    private bool _manualRowResize;
     private bool _snapPending;
     private bool _highlightPending;   // отложенная перестройка рамок выделения
     private List<DbField>        _fields  = [];
@@ -79,6 +80,23 @@ public partial class TableView : UserControl
     private readonly Dictionary<string, Avalonia.Controls.Shapes.Path> _chevronPaths = [];
     private string? _sortKey;
     private bool    _sortAsc = true;
+
+    // ── Ручная высота строк ───────────────────────────────────────────────────
+    // recordId → высота строки (px). Применяется в OnLoadingRow при ручном режиме;
+    // в стандартном режиме пусто (высоты сбрасываются при выключении режима).
+    private Dictionary<int, int> _rowHeights = [];
+
+    private static readonly Cursor RowResizeCursor = new(StandardCursorType.SizeNorthSouth);
+    private const double RowGripThickness = 8;     // высота прозрачной полоски-захвата
+    private const double RowHeightMax     = 600;
+    private bool   _rowHandlesPending;             // отложенная перестройка полосок
+    // Состояние перетаскивания нижней границы строки (одно за раз).
+    private bool   _isResizingRow;
+    private DataGridRow? _resizeRow;
+    private int    _resizeRecordId;
+    private double _resizeStartPointerY;           // в координатах RowResizeLayer
+    private double _resizeStartBottomY;            // нижняя граница строки на старте
+    private double _resizeStartHeight;
 
     public TableView()
     {
@@ -132,8 +150,9 @@ public partial class TableView : UserControl
         _filters.Clear();
         _sortKey = null;
 
-        var (colResize, _, _) = repository.GetUiSettings(collectionId);
+        var (colResize, rowResize, _) = repository.GetUiSettings(collectionId);
         _manualColResize = colResize;
+        _manualRowResize = rowResize;
 
         // При refresh той же коллекции (создание/изменение свойства) сохраняем
         // горизонтальную прокрутку — иначе при 50 колонках откидывает в начало.
@@ -280,6 +299,11 @@ public partial class TableView : UserControl
         _filters.Clear();
         _chevronPaths.Clear();
         _sortKey = null;
+        _rowHeights = [];
+        _isResizingRow = false;
+        _resizeRow = null;
+        _lastRowGrips.Clear();
+        RowResizeLayer.Children.Clear();
         RecordsGrid.ItemsSource = null;
         RecordsGrid.Columns.Clear();
     }
@@ -307,7 +331,34 @@ public partial class TableView : UserControl
     // Текущий режим ширины столбцов (для отметки активного пункта в меню).
     public bool IsManualColResize => _manualColResize;
 
-    public void SetRowResizeMode(bool _) { }
+    // Переключение режима высоты строк (вызывается из меню записи). Запоминаем режим
+    // между сессиями — как и режим ширины столбцов (раньше управлялся из футера).
+    public void SetRowResizeMode(bool manual)
+    {
+        _manualRowResize = manual;
+
+        // Выключение ручного режима сбрасывает все сохранённые высоты на стандарт
+        // (как сброс ширин при переходе на стандартную ширину столбцов).
+        if (!manual)
+        {
+            _rowHeights.Clear();
+            _repository?.SaveRowHeights(_collectionId, []);
+        }
+
+        if (_repository is not null)
+        {
+            var (colResize, _, viewMode) = _repository.GetUiSettings(_collectionId);
+            _repository.SaveUiSettings(_collectionId, colResize, manual, viewMode);
+        }
+
+        // Перестраиваем строки, чтобы применить/сбросить высоты; держим прокрутку.
+        var keepV = CurrentVerticalOffset();
+        ReloadPreservingScroll();
+        RestoreVerticalOffset(keepV);
+    }
+
+    // Текущий режим высоты строк (для отметки активного пункта в меню).
+    public bool IsManualRowResize => _manualRowResize;
 
     public void ScrollToRecord(int recordId)
     {
@@ -337,6 +388,7 @@ public partial class TableView : UserControl
             .Where(kv => !kv.Value.Visible)
             .Select(kv => kv.Key)
             .ToHashSet();
+        _rowHeights = _repository.GetRowHeights(_collectionId);
 
         ClearColumnSelection();   // колонки пересобираются — снимаем выделение
 
@@ -352,6 +404,7 @@ public partial class TableView : UserControl
 
         ApplyColumnWidths();
         ApplyFilters();   // переустановит ItemsSource, если фильтр/сортировка активны
+        ScheduleRowHandlesRefresh();   // полоски ресайза строк (если ручной режим)
     }
 
     private List<TableColumnDef> BuildColDefs()
@@ -464,6 +517,32 @@ public partial class TableView : UserControl
         var idx  = keys.IndexOf(key);
         if (idx < 0) return false;
         return left ? idx > 0 : idx < keys.Count - 1;
+    }
+
+    // Перемещение записи вверх/вниз: пишем порядок в БД, перестраиваем таблицу.
+    // Вертикальную и горизонтальную прокрутку держим на месте — иначе таблицу
+    // откидывает при каждом сдвиге, и сдвигаемая строка уезжает из зоны видимости.
+    private void MoveRecord(int recordId, bool up)
+    {
+        if (_repository is null) return;
+
+        var keepV = CurrentVerticalOffset();
+        var keepH = CurrentScrollOffset();
+
+        _repository.MoveRecord(_collectionId, recordId, up);
+        Reload();
+
+        if (keepH > 0) RestoreScrollOffset(keepH);
+        RestoreVerticalOffset(keepV);
+    }
+
+    // Можно ли двигать запись вверх/вниз (не крайняя ли она в порядке коллекции).
+    private bool CanMoveRecord(int recordId, bool up)
+    {
+        if (_repository is null) return false;
+        var idx = _repository.GetRecordPosition(_collectionId, recordId);   // 0-based
+        if (idx < 0) return false;
+        return up ? idx > 0 : idx < _repository.CountRecords(_collectionId) - 1;
     }
 
     private void BuildColumns()
@@ -1047,11 +1126,48 @@ public partial class TableView : UserControl
         miDuplicate.Click += (_, _) => RecordDuplicateRequested?.Invoke(this, recordId);
         menu.Items.Add(miDuplicate);
 
+        AddRecordMoveItems(menu, recordId);
+        AddHeightModeItems(menu);
+
+        menu.Items.Add(new Separator());
+
         var miDelete = MakeDeleteMenuItem();
         miDelete.Click += (_, _) => RecordDeleteRequested?.Invoke(this, recordId);
         menu.Items.Add(miDelete);
 
         return menu;
+    }
+
+    // Пункты «Сдвинуть вверх/вниз» (именно в таком порядке) с разделителем перед ними.
+    // Доступны только без активных фильтра и сортировки: при сортировке порядок задаёт
+    // сортировка, а не позиция, поэтому ручной сдвиг был бы невидим. Неприменимое
+    // направление (крайняя запись) скрываем; видимость уточняем при открытии меню
+    // (меню кэшируется на строке при её отрисовке).
+    private void AddRecordMoveItems(ContextMenu menu, int recordId)
+    {
+        if (_sortKey is not null || _filters.Count > 0) return;
+
+        var sep    = new Separator();
+        var miUp   = new MenuItem { Header = Controls.Components.MenuIcons.MoveUpHeader() };
+        miUp.Click += (_, _) => MoveRecord(recordId, up: true);
+        var miDown = new MenuItem { Header = Controls.Components.MenuIcons.MoveDownHeader() };
+        miDown.Click += (_, _) => MoveRecord(recordId, up: false);
+
+        menu.Items.Add(sep);
+        menu.Items.Add(miUp);
+        menu.Items.Add(miDown);
+
+        void Refresh()
+        {
+            var canUp   = CanMoveRecord(recordId, up: true);
+            var canDown = CanMoveRecord(recordId, up: false);
+            miUp.IsVisible   = canUp;
+            miDown.IsVisible = canDown;
+            sep.IsVisible    = canUp || canDown;
+        }
+
+        Refresh();
+        menu.Opening += (_, _) => Refresh();
     }
 
     // Красный пункт «Удалить» с иконкой корзины — общий для меню записей и свойств.
@@ -1154,6 +1270,25 @@ public partial class TableView : UserControl
         menu.Opening += (_, _) => Refresh();
     }
 
+    // Пункт-переключатель режима высоты строк (общий для всей таблицы) — в меню записи.
+    // Текст показывает режим, в который переключит клик: при стандартной высоте —
+    // «Ручная высота строк», при ручной — «Стандартная высота строк». Заголовок
+    // пересчитывается при открытии меню (меню кэшируется на строке при её отрисовке).
+    private void AddHeightModeItems(ContextMenu menu)
+    {
+        menu.Items.Add(new Separator());
+
+        var item = new MenuItem();
+        item.Click += (_, _) => SetRowResizeMode(!_manualRowResize);
+        menu.Items.Add(item);
+
+        void Refresh() => item.Header = Controls.Components.MenuIcons.HeightModeHeader(
+            _manualRowResize ? "Стандартная высота строк" : "Ручная высота строк");
+
+        Refresh();
+        menu.Opening += (_, _) => Refresh();
+    }
+
     // Меню заголовка пользовательского поля:
     //   Изменить · Дублировать · Создать новое свойство · — · Сдвинуть вправо ·
     //   Сдвинуть влево · — · Удалить
@@ -1232,8 +1367,163 @@ public partial class TableView : UserControl
     private void OnLoadingRow(object? sender, DataGridRowEventArgs e)
     {
         if (e.Row.DataContext is not TableRowVm row) return;
-        if (row.IsAddRow) return;
+        if (row.IsAddRow)
+        {
+            e.Row.Height = double.NaN;   // строка «+» всегда стандартная
+            return;
+        }
         e.Row.ContextMenu = BuildRowContextMenu(row.RecordId);
+
+        // Высота строки: в ручном режиме применяем сохранённую (если есть), иначе
+        // сбрасываем на стандартную — важно для переиспользуемых строк (виртуализация).
+        e.Row.Height = _manualRowResize && _rowHeights.TryGetValue(row.RecordId, out var h)
+            ? h
+            : double.NaN;
+
+        ScheduleRowHandlesRefresh();   // строка реализована — обновим полоски ресайза
+    }
+
+    // ── Ручная высота строк: полоски-«грипперы» у нижней границы ───────────────
+
+    private double StandardRowHeight() =>
+        this.TryFindResource("RowHeightStandard", out var r) && r is double d ? d : 36;
+
+    // Откладывает перестройку полосок на тик диспетчера (как у рамок колонок —
+    // менять дерево Canvas прямо в LayoutUpdated нельзя). Во время drag не трогаем.
+    private void ScheduleRowHandlesRefresh()
+    {
+        if (_rowHandlesPending || _isResizingRow) return;
+        _rowHandlesPending = true;
+        Dispatcher.UIThread.Post(() =>
+        {
+            _rowHandlesPending = false;
+            RefreshRowResizeHandles();
+        }, DispatcherPriority.Background);
+    }
+
+    // Геометрия последней раскладки полосок — чтобы не трогать дерево, если ничего не
+    // изменилось (иначе перестройка из LayoutUpdated самоподдерживается layout-циклом —
+    // та же защита, что у рамок выделения колонок).
+    private readonly List<(DataGridRow Row, double X, double W, double Top, int Rec)> _lastRowGrips = [];
+
+    // Размещает по прозрачной полоске на нижней границе каждой видимой строки данных.
+    // Полоска кликабельна и несёт курсор «↕»; перетаскивание меняет высоту строки.
+    private void RefreshRowResizeHandles()
+    {
+        if (_isResizingRow) return;   // во время перетаскивания полоски не пересобираем
+
+        var layer = RowResizeLayer;
+
+        // Считаем целевую раскладку полосок, НЕ трогая дерево.
+        var target = new List<(DataGridRow Row, double X, double W, double Top, int Rec)>();
+        if (_manualRowResize)
+        {
+            foreach (var rowCtrl in RecordsGrid.GetVisualDescendants().OfType<DataGridRow>())
+            {
+                if (rowCtrl.DataContext is not TableRowVm vm || vm.IsAddRow) continue;
+                if (rowCtrl.Bounds.Height <= 0) continue;
+
+                var topLeft = rowCtrl.TranslatePoint(new Point(0, 0), layer);
+                if (topLeft is null) continue;
+
+                var bottomY = topLeft.Value.Y + rowCtrl.Bounds.Height;
+                if (bottomY < 0 || bottomY > layer.Bounds.Height) continue;   // вне видимой зоны
+
+                target.Add((rowCtrl, topLeft.Value.X, rowCtrl.Bounds.Width,
+                            bottomY - RowGripThickness / 2, vm.RecordId));
+            }
+        }
+
+        // Ничего не изменилось — дерево не трогаем (разрывает layout-цикл).
+        if (RowGripsEqual(target, _lastRowGrips)) return;
+
+        _lastRowGrips.Clear();
+        _lastRowGrips.AddRange(target);
+
+        layer.Children.Clear();
+        foreach (var (rowCtrl, x, w, top, rec) in target)
+        {
+            var grip = new Border
+            {
+                Width      = w,
+                Height     = RowGripThickness,
+                Background = Brushes.Transparent,
+                Cursor     = RowResizeCursor,
+            };
+            grip.PointerPressed  += (_, e) => BeginRowResize(rowCtrl, rec, e);
+            grip.PointerMoved    += (_, e) => DragRowResize(e);
+            grip.PointerReleased += (_, e) => EndRowResize(e);
+
+            Canvas.SetLeft(grip, x);
+            Canvas.SetTop(grip, top);
+            layer.Children.Add(grip);
+        }
+    }
+
+    private static bool RowGripsEqual(
+        List<(DataGridRow Row, double X, double W, double Top, int Rec)> a,
+        List<(DataGridRow Row, double X, double W, double Top, int Rec)> b)
+    {
+        if (a.Count != b.Count) return false;
+        for (var i = 0; i < a.Count; i++)
+        {
+            if (!ReferenceEquals(a[i].Row, b[i].Row) || a[i].Rec != b[i].Rec) return false;
+            if (Math.Abs(a[i].X   - b[i].X)   > 0.5) return false;
+            if (Math.Abs(a[i].W   - b[i].W)   > 0.5) return false;
+            if (Math.Abs(a[i].Top - b[i].Top) > 0.5) return false;
+        }
+        return true;
+    }
+
+    private void BeginRowResize(DataGridRow rowCtrl, int recordId, PointerPressedEventArgs e)
+    {
+        if (!e.GetCurrentPoint(RowResizeLayer).Properties.IsLeftButtonPressed) return;
+
+        var bottom = rowCtrl.TranslatePoint(new Point(0, rowCtrl.Bounds.Height), RowResizeLayer);
+
+        _isResizingRow       = true;
+        _resizeRow           = rowCtrl;
+        _resizeRecordId      = recordId;
+        _resizeStartPointerY = e.GetPosition(RowResizeLayer).Y;
+        _resizeStartBottomY  = bottom?.Y ?? _resizeStartPointerY;
+        _resizeStartHeight   = rowCtrl.Bounds.Height;
+        e.Pointer.Capture(e.Source as IInputElement);
+        e.Handled = true;
+    }
+
+    private void DragRowResize(PointerEventArgs e)
+    {
+        if (!_isResizingRow || _resizeRow is null) return;
+
+        var delta = e.GetPosition(RowResizeLayer).Y - _resizeStartPointerY;
+        var h     = Math.Clamp(_resizeStartHeight + delta, StandardRowHeight(), RowHeightMax);
+        _resizeRow.Height = h;
+
+        // Полоска следует за новой нижней границей (по clamp'нутой высоте, не по Bounds,
+        // которые на этом проходе ещё не пересчитаны).
+        if (e.Source is Control grip)
+            Canvas.SetTop(grip, _resizeStartBottomY + (h - _resizeStartHeight) - RowGripThickness / 2);
+
+        e.Handled = true;
+    }
+
+    private void EndRowResize(PointerReleasedEventArgs e)
+    {
+        if (!_isResizingRow) return;
+
+        _isResizingRow = false;
+        e.Pointer.Capture(null);
+        e.Handled = true;
+
+        if (_resizeRow is not null)
+        {
+            var h = (int)Math.Round(Math.Clamp(_resizeRow.Height, StandardRowHeight(), RowHeightMax));
+            _rowHeights[_resizeRecordId] = h;
+            _repository?.SaveRowHeights(_collectionId, _rowHeights);
+        }
+
+        _resizeRow = null;
+        ScheduleRowHandlesRefresh();   // пересобрать полоски под новые позиции строк
     }
 
     // ── Фильтр и сортировка колонок (Excel-стиль) ──────────────────────────────
@@ -1734,6 +2024,10 @@ public partial class TableView : UserControl
         // инвалидирует раскладку и вызывает «Infinite layout loop».
         if (_selectedColumnKeys.Count > 0)
             ScheduleHighlightRefresh();
+
+        // Полоски ресайза строк следуют за скроллом/ресайзом (как и рамки колонок).
+        if (_manualRowResize && !_isResizingRow)
+            ScheduleRowHandlesRefresh();
 
         if (_snapPending || _manualColResize) return;
 

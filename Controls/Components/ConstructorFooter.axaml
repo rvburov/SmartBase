@@ -11,7 +11,7 @@
                 Height="1"
                 Background="{StaticResource BrushSeparator}" />
 
-        <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,*,Auto"
+        <Grid ColumnDefinitions="Auto,Auto,Auto,*,Auto"
               Margin="16,0">
 
             <!-- Фильтр -->
@@ -30,7 +30,7 @@
                 </Viewbox>
             </Button>
 
-            <!-- Сортировка -->
+            <!-- Сортировка. Высота строк теперь переключается из контекстного меню записи. -->
             <Button Grid.Column="1" x:Name="SortBtn" Classes="navbtn"
                     Width="30" Height="30" Margin="0,0,4,0"
                     VerticalAlignment="Center"
@@ -46,32 +46,8 @@
                 </Viewbox>
             </Button>
 
-            <!-- Ручная высота строк. Иконка переключается:
-                 unchecked (стандартный/авто-режим) — chevrons-down-up (стрелки внутрь),
-                 checked   (ручной режим)            — chevrons-up-down (стрелки наружу). -->
-            <ToggleButton Grid.Column="2" x:Name="RowResizeBtn" Classes="navbtn"
-                          Width="30" Height="30" Margin="0,0,8,0"
-                          VerticalAlignment="Center"
-                          CornerRadius="{StaticResource RadiusMedium}"
-                          ToolTip.Tip="Ручная высота строк">
-                <Viewbox Width="18" Height="18">
-                    <Canvas Width="24" Height="24">
-                        <Path Data="M7 20 L12 15 L17 20 M7 4 L12 9 L17 4"
-                              Stroke="{Binding $parent[ToggleButton].Foreground}"
-                              StrokeThickness="1.6"
-                              StrokeLineCap="Round" StrokeJoin="Round"
-                              IsVisible="{Binding !IsChecked, ElementName=RowResizeBtn}" />
-                        <Path Data="M7 15 L12 20 L17 15 M7 9 L12 4 L17 9"
-                              Stroke="{Binding $parent[ToggleButton].Foreground}"
-                              StrokeThickness="1.6"
-                              StrokeLineCap="Round" StrokeJoin="Round"
-                              IsVisible="{Binding IsChecked, ElementName=RowResizeBtn}" />
-                    </Canvas>
-                </Viewbox>
-            </ToggleButton>
-
             <!-- Счётчик записей -->
-            <TextBlock Grid.Column="3" x:Name="CountLabel"
+            <TextBlock Grid.Column="2" x:Name="CountLabel"
                        Text="Всего: 0"
                        VerticalAlignment="Center"
                        Margin="8,0,0,0"
@@ -79,7 +55,7 @@
                        Foreground="{StaticResource BrushSecondaryText}" />
 
             <!-- Навигация по страницам -->
-            <StackPanel Grid.Column="5" Orientation="Horizontal"
+            <StackPanel Grid.Column="4" Orientation="Horizontal"
                         VerticalAlignment="Center" Spacing="2" Margin="0,0,8,0">
                 <Button x:Name="PrevPageBtn" Classes="navbtn"
                         Width="30" Height="30"

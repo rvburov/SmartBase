@@ -487,6 +487,31 @@ public class ConstructorRepository(AppDbContext db)
         db.SaveChanges();
     }
 
+    // Переместить запись на одну позицию вверх/вниз в порядке коллекции (по Position).
+    // Меняет местами Position двух соседних записей — дёшево даже на больших таблицах.
+    // Крайняя запись (первая при up / последняя при down) — no-op. Если позиции
+    // соседей слиплись (после серии вставок копий), порядок предварительно
+    // перенумеровывается с шагом 1000, чтобы своп остался корректным.
+    public void MoveRecord(int collectionId, int recordId, bool up)
+    {
+        var ordered = db.DbRecords
+            .Where(r => r.CollectionId == collectionId)
+            .OrderBy(r => r.Position)
+            .ToList();
+
+        var idx = ordered.FindIndex(r => r.Id == recordId);
+        if (idx < 0) return;
+
+        var swapIdx = up ? idx - 1 : idx + 1;
+        if (swapIdx < 0 || swapIdx >= ordered.Count) return;   // крайняя запись — no-op
+
+        if (ordered[idx].Position == ordered[swapIdx].Position)
+            for (var i = 0; i < ordered.Count; i++) ordered[i].Position = (i + 1) * 1000;
+
+        (ordered[idx].Position, ordered[swapIdx].Position) = (ordered[swapIdx].Position, ordered[idx].Position);
+        db.SaveChanges();
+    }
+
     public void DeleteRecord(int recordId)
     {
         var entity = db.DbRecords.Find(recordId);
