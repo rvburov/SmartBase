@@ -54,7 +54,7 @@ public partial class ConstructorControllerView : UserControl
         // CRUD для записей — через контекстные меню в TableView/ListView.
         TableViewCtrl.RecordClicked             += (_, rid)  => OpenPage(rid);
         TableViewCtrl.RecordCreateRequested     += (_, e)    => CreateAndOpen(e.Open, e.AfterId);
-        TableViewCtrl.RecordDeleteRequested     += (_, rid)  => DeleteRecord(rid);
+        TableViewCtrl.RecordsDeleteRequested    += (_, ids)  => _ = DeleteRecordsWithConfirm(ids);
         TableViewCtrl.RecordDuplicateRequested  += (_, rid)  => DuplicateRecord(rid);
 
         ListViewCtrl.RecordClicked              += (_, rid) => OpenPage(rid);
@@ -224,6 +224,45 @@ public partial class ConstructorControllerView : UserControl
 
         if (keepVertical is { } off && TableViewCtrl.IsVisible)
             TableViewCtrl.RestoreVerticalOffset(off);
+    }
+
+    // Пакетное удаление записей (мультивыделение в таблице) с подтверждением — аналог
+    // DeletePropertiesWithConfirm для свойств. Сохраняем вертикальную позицию, чтобы при
+    // тысячах записей таблицу не откидывало в начало.
+    private async Task DeleteRecordsWithConfirm(IReadOnlyList<int> recordIds)
+    {
+        if (_repository is null) return;
+        if (VisualRoot is not Avalonia.Controls.Window win) return;
+
+        var ids = recordIds.Distinct().ToList();
+        if (ids.Count == 0) return;
+
+        var dlg = new ConfirmDialog($"Вы удаляете {ids.Count} {RecordsPlural(ids.Count)}. Подтвердить?");
+        if (await dlg.ShowDialog<bool>(win) != true) return;
+
+        var keepVertical = TableViewCtrl.IsVisible ? TableViewCtrl.CurrentVerticalOffset() : (double?)null;
+
+        foreach (var id in ids) _repository.DeleteRecord(id);
+        Refresh();
+        CollectionsChanged?.Invoke(this, EventArgs.Empty);
+        RecordPageClosed?.Invoke(this, EventArgs.Empty);
+
+        if (keepVertical is { } off && TableViewCtrl.IsVisible)
+            TableViewCtrl.RestoreVerticalOffset(off);
+    }
+
+    // Русское склонение: 1 запись, 2–4 записи, 5+ записей (с учётом 11–14).
+    private static string RecordsPlural(int n)
+    {
+        var mod100 = n % 100;
+        var mod10  = n % 10;
+        if (mod100 is >= 11 and <= 14) return "записей";
+        return mod10 switch
+        {
+            1 => "запись",
+            >= 2 and <= 4 => "записи",
+            _ => "записей",
+        };
     }
 
     private void DuplicateRecord(int recordId)

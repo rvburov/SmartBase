@@ -76,7 +76,7 @@
                   HorizontalGridLinesBrush="{StaticResource BrushSeparator}"
                   VerticalGridLinesBrush="{StaticResource BrushSeparator}"
                   HeadersVisibility="Column"
-                  SelectionMode="Single"
+                  SelectionMode="Extended"
                   IsReadOnly="False"
                   Background="Transparent"
                   UseLayoutRounding="True"

@@ -23,7 +23,10 @@ public partial class TableView : UserControl
 {
     // ── Публичные события ─────────────────────────────────────────────────────
     public event EventHandler<int>? RecordClicked;
-    public event EventHandler<int>? RecordDeleteRequested;
+    // Удаление записей из таблицы (одной или мультивыделения: Shift/Ctrl-клик → меню
+    // «Удалить» или клавиша Delete) — всегда пакетно, с подтверждением; для одной записи
+    // список из одного id (как удаление свойств).
+    public event EventHandler<IReadOnlyList<int>>? RecordsDeleteRequested;
     public event EventHandler<int>? RecordDuplicateRequested;
     // Open = открывать ли запись справа после создания. «+»-строка создаёт без
     // открытия (false), контекстное «Создать запись» — с открытием (true).
@@ -101,6 +104,10 @@ public partial class TableView : UserControl
     public TableView()
     {
         InitializeComponent();
+        // Фокусируемый контрол: при Shift/Ctrl-выделении строк уводим фокус сюда из
+        // текстовых полей (например, правой панели открытой записи), иначе Delete будет
+        // трактоваться как «удалить символ», а не как удаление выделенных записей.
+        Focusable = true;
         RecordsGrid.CellPointerPressed += OnCellPointerPressed;
         RecordsGrid.LoadingRow         += OnLoadingRow;
         // Snap дробных Star-ширин до целочисленных весов — без этого DataGrid
@@ -112,26 +119,86 @@ public partial class TableView : UserControl
         AddHandler(KeyDownEvent, OnTableKeyDown, RoutingStrategies.Tunnel);
     }
 
+    // Окно, на которое навешен обработчик Delete для записей (см. OnTopLevelKeyDown).
+    private TopLevel? _keyHookTopLevel;
+
+    // Записи удаляем по Delete на уровне окна, а не только когда фокус внутри таблицы:
+    // после выделения строк фокус часто оказывается вне грида (правая панель открытой
+    // записи и т.п.), и туннельный OnTableKeyDown на TableView клавишу не получает —
+    // именно поэтому Delete «не работал». На уровне окна клавиша приходит всегда.
+    protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
+    {
+        base.OnAttachedToVisualTree(e);
+        _keyHookTopLevel = TopLevel.GetTopLevel(this);
+        _keyHookTopLevel?.AddHandler(KeyDownEvent, OnTopLevelKeyDown, RoutingStrategies.Tunnel);
+    }
+
+    protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
+    {
+        _keyHookTopLevel?.RemoveHandler(KeyDownEvent, OnTopLevelKeyDown);
+        _keyHookTopLevel = null;
+        base.OnDetachedFromVisualTree(e);
+    }
+
+    private void OnTopLevelKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Delete) return;
+        if (!IsVisible) return;                       // таблица не на экране (режим «Список»)
+        if (_selectedColumnKeys.Count > 0) return;    // удаление колонок — в OnTableKeyDown
+        if (IsTextInputFocused(e)) return;            // печатают в поле — не удаляем записи
+
+        var ids = SelectedRecordIds();
+        if (ids.Count == 0) return;
+
+        RecordsDeleteRequested?.Invoke(this, ids);
+        e.Handled = true;
+    }
+
     private void OnTableKeyDown(object? sender, KeyEventArgs e)
     {
         if (e.Key != Key.Delete && e.Key != Key.Back) return;
-        if (_selectedColumnKeys.Count == 0) return;
 
-        // Удаляемые = только пользовательские поля (ключ = id поля). Системные
-        // (__title__/__desc__) и №/+ не парсятся в int → отсекаются.
-        var fieldIds = _selectedColumnKeys
-            .Where(k => int.TryParse(k, out _))
-            .Select(int.Parse)
-            .ToList();
+        // Колонки имеют приоритет: их выделение — явный жест по заголовку.
+        if (_selectedColumnKeys.Count > 0)
+        {
+            // Удаляемые = только пользовательские поля (ключ = id поля). Системные
+            // (__title__/__desc__) и №/+ не парсятся в int → отсекаются.
+            var fieldIds = _selectedColumnKeys
+                .Where(k => int.TryParse(k, out _))
+                .Select(int.Parse)
+                .ToList();
+            if (fieldIds.Count == 0) return;
 
-        if (fieldIds.Count == 0) return;
+            // Перед показом диалога оставляем рамки только на удаляемых колонках:
+            // с системных («Название»/«Описание») обводка снимается — их удаление не коснётся.
+            KeepSelectionOnDeletableOnly();
+            PropertiesDeleteRequested?.Invoke(this, fieldIds);
+            e.Handled = true;
+            return;
+        }
 
-        // Перед показом диалога оставляем рамки только на удаляемых колонках:
-        // с системных («Название»/«Описание») обводка снимается — их удаление не коснётся.
-        KeepSelectionOnDeletableOnly();
-        PropertiesDeleteRequested?.Invoke(this, fieldIds);
+        // Записи: только Delete (Backspace для строк не используем — слишком легко задеть)
+        // и не пока редактируется ячейка (тогда клавиша правит текст, а не удаляет строки).
+        if (e.Key != Key.Delete || IsTextInputFocused(e)) return;
+
+        var ids = SelectedRecordIds();
+        if (ids.Count == 0) return;
+
+        RecordsDeleteRequested?.Invoke(this, ids);
         e.Handled = true;
     }
+
+    // Выделенные записи (без строки «+») в виде списка их id.
+    private List<int> SelectedRecordIds() =>
+        RecordsGrid.SelectedItems
+            .OfType<TableRowVm>()
+            .Where(r => !r.IsAddRow)
+            .Select(r => r.RecordId)
+            .ToList();
+
+    // Фокус внутри текстового поля ячейки — чтобы Delete правил текст, а не удалял строки.
+    private static bool IsTextInputFocused(KeyEventArgs e) =>
+        e.Source is TextBox || (e.Source is Visual v && v.FindAncestorOfType<TextBox>() is not null);
 
     // ── Публичный API ─────────────────────────────────────────────────────────
 
@@ -894,6 +961,22 @@ public partial class TableView : UserControl
             return;
         }
 
+        // Shift/Ctrl + левый клик — точечно добавить/убрать строку из выделения (toggle,
+        // по одной строке — как у колонок). Перехватываем до DataGrid (Handled), иначе он
+        // сделал бы выделение диапазоном. Запись при этом не открываем.
+        var props = e.PointerPressedEventArgs.GetCurrentPoint(null).Properties;
+        var mods  = e.PointerPressedEventArgs.KeyModifiers;
+        if (props.IsLeftButtonPressed
+            && (mods.HasFlag(KeyModifiers.Shift) || mods.HasFlag(KeyModifiers.Control)))
+        {
+            ToggleRecordSelection(row);
+            e.PointerPressedEventArgs.Handled = true;
+            // Уводим фокус из возможного текстового поля (правая панель) в таблицу, чтобы
+            // последующий Delete удалял записи, а не правил текст.
+            Focus();
+            return;
+        }
+
         if (e.Column.Tag as string == TableColumnDef.AddPropKey)
         {
             PropertyCreateRequested?.Invoke(this, EventArgs.Empty);
@@ -904,9 +987,17 @@ public partial class TableView : UserControl
         if (colIdx >= 0 && colIdx < _colDefs.Count)
             _colDefs[colIdx].OnCellClick?.Invoke(row, _colDefs[colIdx]);
 
-        if (e.Column.DisplayIndex == 0
-            && e.PointerPressedEventArgs.GetCurrentPoint(null).Properties.IsLeftButtonPressed)
+        // Открываем запись только обычным левым кликом (без модификаторов — они выше).
+        if (e.Column.DisplayIndex == 0 && props.IsLeftButtonPressed)
             RecordClicked?.Invoke(this, row.RecordId);
+    }
+
+    // Точечный toggle строки в выделении (Extended-режим поддерживает Add/Remove).
+    private void ToggleRecordSelection(TableRowVm row)
+    {
+        var sel = RecordsGrid.SelectedItems;
+        if (sel.Contains(row)) sel.Remove(row);
+        else                   sel.Add(row);
     }
 
     // ── Выделение колонок голубой рамкой (одиночное и Shift-диапазон) ──────────
@@ -1132,10 +1223,21 @@ public partial class TableView : UserControl
         menu.Items.Add(new Separator());
 
         var miDelete = MakeDeleteMenuItem();
-        miDelete.Click += (_, _) => RecordDeleteRequested?.Invoke(this, recordId);
+        miDelete.Click += (_, _) => RequestRecordDeleteFromMenu(recordId);
         menu.Items.Add(miDelete);
 
         return menu;
+    }
+
+    // Удаление из меню записи. Если запись входит в текущее мультивыделение (правый
+    // клик по выделенной строке его сохраняет) — удаляем весь набор; иначе только её.
+    // В любом случае идём через пакетный путь с подтверждением (RecordsDeleteRequested) —
+    // как и удаление свойств.
+    private void RequestRecordDeleteFromMenu(int recordId)
+    {
+        var selected = SelectedRecordIds();
+        List<int> ids = selected.Contains(recordId) && selected.Count > 1 ? selected : [recordId];
+        RecordsDeleteRequested?.Invoke(this, ids);
     }
 
     // Пункты «Сдвинуть вверх/вниз» (именно в таком порядке) с разделителем перед ними.
