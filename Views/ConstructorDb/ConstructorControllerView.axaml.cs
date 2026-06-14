@@ -212,10 +212,18 @@ public partial class ConstructorControllerView : UserControl
     private void DeleteRecord(int recordId)
     {
         if (_repository is null) return;
+
+        // Удаление в середине таблицы — сохраняем вертикальную позицию, чтобы при
+        // тысячах записей таблицу не откидывало в начало (снимаем offset ДО пересборки).
+        var keepVertical = TableViewCtrl.IsVisible ? TableViewCtrl.CurrentVerticalOffset() : (double?)null;
+
         _repository.DeleteRecord(recordId);
         Refresh();
         CollectionsChanged?.Invoke(this, EventArgs.Empty);
         RecordPageClosed?.Invoke(this, EventArgs.Empty);
+
+        if (keepVertical is { } off && TableViewCtrl.IsVisible)
+            TableViewCtrl.RestoreVerticalOffset(off);
     }
 
     private void DuplicateRecord(int recordId)
