@@ -2,7 +2,9 @@ using System.Collections.ObjectModel;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
+using Avalonia.Interactivity;
 using Avalonia.Media;
+using Avalonia.VisualTree;
 using CommunityToolkit.Mvvm.ComponentModel;
 using DataBase.Controls.Dialogs;
 using DataBase.Core.Models;
@@ -33,7 +35,16 @@ public partial class Sidebar : UserControl
 
     private List<SidebarNode> _roots = [];
     private readonly ObservableCollection<SidebarRow> _rows = [];
-    private SidebarNode? _selected;
+
+    // Выделение: подсветка + цель удаления. Обычный клик — одна запись; Shift/Ctrl/Cmd-клик
+    // — точечный toggle (группы и коллекции вместе) для пакетного удаления.
+    private readonly HashSet<SidebarNode> _selectedNodes = [];
+    // Id открытой в основном окне коллекции — для подсветки и восстановления после Refresh.
+    private int? _openId;
+    // Был ли последний клик мышью внутри сайдбара. Delete удаляет выделение сайдбара
+    // только в этом случае — иначе пользователь работает в таблице/поле справа, и
+    // клавиша не должна трогать выделение (в т.ч. пассивно подсвеченную коллекцию).
+    private bool _lastPressInSidebar;
 
     // Синий #007AFF трактуется как «без цвета» (серый) → отдельный пункт меню.
     private static readonly (string Hex, string Name)[] PredefinedColors =
@@ -68,15 +79,19 @@ public partial class Sidebar : UserControl
         if (_repository is null) return;
 
         var expandedIds = GetExpandedGroupIds();
-        var selectedId  = _selected?.Id;
 
         _roots = BuildTree();
         RestoreExpanded(_roots, expandedIds);
 
-        _selected = _mode == SidebarMode.Constructor && selectedId.HasValue
-            ? FindNode(_roots, "collection", selectedId.Value)
-            : null;
-        if (_selected is not null) ExpandAncestors(_roots, _selected);
+        // Мультивыделение не переживает перестройку дерева; восстанавливаем только
+        // подсветку открытой коллекции по её id (в режиме конструктора).
+        _selectedNodes.Clear();
+        if (_mode == SidebarMode.Constructor && _openId is int oid)
+        {
+            var node = FindNode(_roots, "collection", oid);
+            if (node is not null) { _selectedNodes.Add(node); ExpandAncestors(_roots, node); }
+            else _openId = null;
+        }
 
         RebuildRows();
         UpdateToggleAllIcon();
@@ -97,7 +112,9 @@ public partial class Sidebar : UserControl
         var target = FindNode(_roots, "collection", collectionId);
         if (target is null) return;
         ExpandAncestors(_roots, target);
-        _selected = target;
+        _selectedNodes.Clear();
+        _selectedNodes.Add(target);
+        _openId = collectionId;
         RebuildRows();
     }
 
@@ -113,7 +130,7 @@ public partial class Sidebar : UserControl
     {
         foreach (var n in nodes)
         {
-            _rows.Add(new SidebarRow(n, depth, _mode, IsChecked(n), n == _selected));
+            _rows.Add(new SidebarRow(n, depth, _mode, IsChecked(n), _selectedNodes.Contains(n)));
             if (n.IsGroup && n.IsExpanded)
                 Flatten(n.Children, depth + 1);
         }
@@ -327,24 +344,97 @@ public partial class Sidebar : UserControl
         if (sender is not Control { DataContext: SidebarRow row }) return;
         var node = row.Node;
 
+        // Shift/Ctrl/Cmd + клик — точечный toggle узла в мультивыделение (группы и
+        // коллекции вместе), без раскрытия/открытия. Так набираются элементы для
+        // пакетного удаления через контекстное меню.
+        var additive = e.KeyModifiers.HasFlag(KeyModifiers.Shift)
+                    || e.KeyModifiers.HasFlag(KeyModifiers.Control)
+                    || e.KeyModifiers.HasFlag(KeyModifiers.Meta);
+        if (additive && node.Id.HasValue)
+        {
+            if (!_selectedNodes.Remove(node)) _selectedNodes.Add(node);
+            RebuildRows();
+            return;
+        }
+
+        // Обычный клик сбрасывает мультивыделение.
         if (node.IsGroup)
         {
             node.IsExpanded = !node.IsExpanded;
+            ResetSelectionToOpen();   // открытая коллекция остаётся подсвеченной
             RebuildRows();
             return;
         }
 
         if (_mode == SidebarMode.Calendar)
         {
-            ToggleCollection(node);
+            _selectedNodes.Clear();
+            ToggleCollection(node);   // RebuildRows внутри
         }
         else
         {
-            _selected = node;
+            _selectedNodes.Clear();
+            _selectedNodes.Add(node);
+            _openId = node.Id;
             RebuildRows();
             if (node.Id.HasValue) CollectionSelected?.Invoke(this, node.Id.Value);
         }
     }
+
+    // Сброс выделения к одной открытой коллекции (она остаётся подсвеченной при
+    // обычном клике по группе), как было до мультивыделения.
+    private void ResetSelectionToOpen()
+    {
+        _selectedNodes.Clear();
+        if (_mode == SidebarMode.Constructor && _openId is int oid)
+        {
+            var node = FindNode(_roots, "collection", oid);
+            if (node is not null) _selectedNodes.Add(node);
+        }
+    }
+
+    // Окно, на котором висит обработчик Delete (см. OnTopLevelKeyDown). Как в таблице:
+    // ловим клавишу на уровне окна — фокус UserControl ненадёжен, и собственный OnKeyDown
+    // часто не получает клавишу.
+    private TopLevel? _keyHookTopLevel;
+
+    protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
+    {
+        base.OnAttachedToVisualTree(e);
+        _keyHookTopLevel = TopLevel.GetTopLevel(this);
+        // Клавиши и клики ловим на уровне окна (туннель): фокус UserControl ненадёжен.
+        _keyHookTopLevel?.AddHandler(KeyDownEvent,        OnTopLevelKeyDown,        RoutingStrategies.Tunnel);
+        _keyHookTopLevel?.AddHandler(PointerPressedEvent, OnTopLevelPointerPressed, RoutingStrategies.Tunnel);
+    }
+
+    protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
+    {
+        _keyHookTopLevel?.RemoveHandler(KeyDownEvent,        OnTopLevelKeyDown);
+        _keyHookTopLevel?.RemoveHandler(PointerPressedEvent, OnTopLevelPointerPressed);
+        _keyHookTopLevel = null;
+        base.OnDetachedFromVisualTree(e);
+    }
+
+    // Запоминаем, был ли клик внутри сайдбара — это и есть «пользователь работает здесь».
+    private void OnTopLevelPointerPressed(object? sender, PointerPressedEventArgs e) =>
+        _lastPressInSidebar = e.Source is Visual v && (ReferenceEquals(v, this) || this.IsVisualAncestorOf(v));
+
+    // Delete — удалить выделенные узлы (как пункт «Удалить» в меню), с тем же диалогом и
+    // подсчётом. Срабатывает, только если последний клик был в сайдбаре (иначе клавиша
+    // принадлежит таблице/полю справа).
+    private void OnTopLevelKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (e.Handled || e.Key != Key.Delete) return;
+        if (_selectedNodes.Count == 0) return;
+        if (IsTextInputFocused(e)) return;       // печатают в поле — Delete правит текст
+        if (!_lastPressInSidebar) return;        // пользователь работает не в сайдбаре
+
+        _ = DeleteNodes(_selectedNodes.ToList());
+        e.Handled = true;
+    }
+
+    private static bool IsTextInputFocused(KeyEventArgs e) =>
+        e.Source is TextBox || (e.Source is Visual v && v.FindAncestorOfType<TextBox>() is not null);
 
     private void OnChevronTapped(object? sender, TappedEventArgs e)
     {
@@ -390,7 +480,7 @@ public partial class Sidebar : UserControl
             menu.Items.Add(new Separator());
             menu.Items.Add(MenuItemEdit(() => _ = EditGroup(id)));
             menu.Items.Add(MenuItemDuplicate(() => DuplicateGroup(id)));
-            menu.Items.Add(MenuItemDelete(() => _ = DeleteGroup(id)));
+            menu.Items.Add(MenuItemDelete(() => _ = DeleteSelectionOrNode(node)));
         }
         else
         {
@@ -401,7 +491,7 @@ public partial class Sidebar : UserControl
             }
             menu.Items.Add(MenuItemEdit(() => _ = EditCollection(id)));
             menu.Items.Add(MenuItemDuplicate(() => DuplicateCollection(id)));
-            menu.Items.Add(MenuItemDelete(() => _ = DeleteCollection(id)));
+            menu.Items.Add(MenuItemDelete(() => _ = DeleteSelectionOrNode(node)));
         }
 
         menu.Open(anchor);
@@ -609,29 +699,61 @@ public partial class Sidebar : UserControl
         if (copy.Id.HasValue && _mode == SidebarMode.Constructor) OpenCollection(copy.Id.Value);
     }
 
-    private async Task DeleteGroup(int groupId)
+    // Удаление через контекстное меню: если клик по узлу из мультивыделения — удаляем
+    // весь набор; иначе только этот узел.
+    private Task DeleteSelectionOrNode(SidebarNode node)
     {
-        if (_repository is null || OwnerWindow is null) return;
-
-        var dlg = new ConfirmDialog(
-            "Удалить группу? Все вложенные группы и коллекции будут удалены без возможности восстановления.");
-        if (await dlg.ShowDialog<bool>(OwnerWindow) != true) return;
-
-        _repository.DeleteGroup(groupId);
-        ReloadAndNotify();
+        List<SidebarNode> targets = _selectedNodes.Contains(node) ? _selectedNodes.ToList() : [node];
+        return DeleteNodes(targets);
     }
 
-    private async Task DeleteCollection(int collectionId)
+    private async Task DeleteNodes(IReadOnlyCollection<SidebarNode> nodes)
     {
         if (_repository is null || OwnerWindow is null) return;
 
-        var dlg = new ConfirmDialog(
-            "Удалить коллекцию? Все данные будут удалены без возможности восстановления.");
+        var groupIds = nodes.Where(n => n.IsGroup  && n.Id.HasValue).Select(n => n.Id!.Value).Distinct().ToList();
+        var collIds  = nodes.Where(n => !n.IsGroup && n.Id.HasValue).Select(n => n.Id!.Value).Distinct().ToList();
+        if (groupIds.Count == 0 && collIds.Count == 0) return;
+
+        var dlg = new ConfirmDialog(BuildDeleteMessage(groupIds.Count, collIds.Count));
         if (await dlg.ShowDialog<bool>(OwnerWindow) != true) return;
 
-        _repository.DeleteCollection(collectionId);
-        ReloadAndNotify();
-        CollectionDeleted?.Invoke(this, collectionId);
+        // Сначала группы (каскадно удаляют вложенное), затем коллекции; коллекции,
+        // уже удалённые каскадом, — безопасный no-op в репозитории.
+        foreach (var gid in groupIds) _repository.DeleteGroup(gid);
+        foreach (var cid in collIds)  _repository.DeleteCollection(cid);
+
+        _selectedNodes.Clear();
+        ReloadAndNotify();   // RequestRefresh обновит и конструктор, и календарь
+        if (collIds.Count > 0) CollectionDeleted?.Invoke(this, collIds[0]);
+    }
+
+    // Текст подтверждения с подсчётом: только группы / только коллекции / и то и другое.
+    private static string BuildDeleteMessage(int groups, int colls)
+    {
+        var parts = new List<string>();
+        if (groups > 0) parts.Add($"{groups} {GroupsPlural(groups)}");
+        if (colls  > 0) parts.Add($"{colls} {CollectionsPlural(colls)}");
+        var warn = groups > 0
+            ? "Вложенные группы и коллекции также будут удалены без возможности восстановления."
+            : "Данные будут удалены без возможности восстановления.";
+        return $"Вы удаляете {string.Join(" и ", parts)}. {warn} Подтвердить?";
+    }
+
+    // Винительный падеж: 1 группу, 2–4 группы, 5+ групп (11–14 → групп).
+    private static string GroupsPlural(int n)
+    {
+        var m100 = n % 100; var m10 = n % 10;
+        if (m100 is >= 11 and <= 14) return "групп";
+        return m10 switch { 1 => "группу", >= 2 and <= 4 => "группы", _ => "групп" };
+    }
+
+    // 1 коллекцию, 2–4 коллекции, 5+ коллекций (11–14 → коллекций).
+    private static string CollectionsPlural(int n)
+    {
+        var m100 = n % 100; var m10 = n % 10;
+        if (m100 is >= 11 and <= 14) return "коллекций";
+        return m10 switch { 1 => "коллекцию", >= 2 and <= 4 => "коллекции", _ => "коллекций" };
     }
 
     private void ReloadAndNotify()
