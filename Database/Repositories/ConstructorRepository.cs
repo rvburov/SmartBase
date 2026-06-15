@@ -346,12 +346,19 @@ public class ConstructorRepository(AppDbContext db)
           })
           .ToList();
 
-    public int CountRecords(int collectionId) =>
-        db.DbRecords.Count(r => r.CollectionId == collectionId);
+    // excludeHidden=true исключает записи, скрытые в окне «Отображение записей»
+    // (record_display.Visible=false). Фильтр уходит в SQL до Count/Skip/Take, поэтому
+    // виртуализация и пагинация таблицы сохраняются (см. VirtualRowList).
+    public int CountRecords(int collectionId, bool excludeHidden = false) =>
+        db.DbRecords.Count(r => r.CollectionId == collectionId
+            && (!excludeHidden || !db.RecordDisplay.Any(d =>
+                   d.CollectionId == collectionId && d.RecordId == r.Id && !d.Visible)));
 
-    public List<DbRecord> GetRecordsPage(int collectionId, int skip, int take) =>
+    public List<DbRecord> GetRecordsPage(int collectionId, int skip, int take, bool excludeHidden = false) =>
         db.DbRecords
-          .Where(r => r.CollectionId == collectionId)
+          .Where(r => r.CollectionId == collectionId
+              && (!excludeHidden || !db.RecordDisplay.Any(d =>
+                     d.CollectionId == collectionId && d.RecordId == r.Id && !d.Visible)))
           .OrderBy(r => r.Position)
           .Skip(skip)
           .Take(take)
@@ -799,6 +806,43 @@ public class ConstructorRepository(AppDbContext db)
                 CollectionId = collectionId, Key = key, Visible = visible, Level = Math.Max(1, level),
             });
         }
+        db.SaveChanges();
+    }
+
+    // ── Отображение записей (видимость + уровень; окно «Отображение записей») ────
+
+    // recordId → (Visible, Level). Только сохранённые строки; отсутствие ключа = (видима, 1).
+    public Dictionary<int, (bool Visible, int Level)> GetRecordDisplay(int collectionId) =>
+        db.RecordDisplay
+          .Where(d => d.CollectionId == collectionId)
+          .ToDictionary(d => d.RecordId, d => (d.Visible, d.Level));
+
+    // Перезаписываем отображение записей целиком. Дефолт (видима, уровень 1) не храним —
+    // так таблица не разрастается, а новые записи по умолчанию видимы.
+    public void SaveRecordDisplay(int collectionId, IEnumerable<(int RecordId, bool Visible, int Level)> entries)
+    {
+        db.RecordDisplay.RemoveRange(db.RecordDisplay.Where(d => d.CollectionId == collectionId));
+        foreach (var (recordId, visible, level) in entries)
+        {
+            if (visible && level <= 1) continue;   // дефолт — не храним
+            db.RecordDisplay.Add(new RecordDisplayEntity
+            {
+                CollectionId = collectionId, RecordId = recordId, Visible = visible, Level = Math.Max(1, level),
+            });
+        }
+        db.SaveChanges();
+    }
+
+    // Пакетная перестановка порядка записей (окно «Отображение записей»). Переписываем
+    // Position по порядку списка — как SaveColumnOrder для колонок.
+    public void SaveRecordOrder(int collectionId, IReadOnlyList<int> orderedRecordIds)
+    {
+        var byId = db.DbRecords
+            .Where(r => r.CollectionId == collectionId)
+            .ToDictionary(r => r.Id);
+        for (var i = 0; i < orderedRecordIds.Count; i++)
+            if (byId.TryGetValue(orderedRecordIds[i], out var rec))
+                rec.Position = (i + 1) * 1000;
         db.SaveChanges();
     }
 

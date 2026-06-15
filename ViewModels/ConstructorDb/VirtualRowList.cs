@@ -19,6 +19,7 @@ internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollecti
     private readonly ConstructorRepository _repo;
     private readonly int                   _collectionId;
     private readonly List<DbField>         _fields;
+    private readonly bool                  _excludeHidden;   // исключать скрытые записи (окно «Отображение записей»)
     private readonly Dictionary<int, TableRowVm[]> _pages = [];
     private readonly LinkedList<int> _lru = new();
     private readonly int _dataCount;
@@ -30,12 +31,14 @@ internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollecti
 
     public event NotifyCollectionChangedEventHandler? CollectionChanged;
 
-    public VirtualRowList(ConstructorRepository repo, int collectionId, List<DbField> fields)
+    public VirtualRowList(ConstructorRepository repo, int collectionId, List<DbField> fields,
+                          bool excludeHidden = false)
     {
-        _repo         = repo;
-        _collectionId = collectionId;
-        _fields       = fields;
-        _dataCount    = repo.CountRecords(collectionId);
+        _repo          = repo;
+        _collectionId  = collectionId;
+        _fields        = fields;
+        _excludeHidden = excludeHidden;
+        _dataCount     = repo.CountRecords(collectionId, excludeHidden);
     }
 
     public TableRowVm this[int index]
@@ -59,7 +62,7 @@ internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollecti
 
         var skip    = page * PageSize;
         var take    = Math.Min(PageSize, _dataCount - skip);
-        var records = _repo.GetRecordsPage(_collectionId, skip, take);
+        var records = _repo.GetRecordsPage(_collectionId, skip, take, _excludeHidden);
         var ids     = records.Select(r => r.Id!.Value).ToList();
         var valMap  = _repo.GetFieldValuesBatch(ids);
 

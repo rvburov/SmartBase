@@ -17,6 +17,7 @@ public class AppDbContext : DbContext
     public DbSet<SystemFieldMetaEntity>    SystemFieldMeta      { get; set; } = null!;
     public DbSet<ColumnOrderEntity>        ColumnOrder          { get; set; } = null!;
     public DbSet<ColumnDisplayEntity>      ColumnDisplay        { get; set; } = null!;
+    public DbSet<RecordDisplayEntity>      RecordDisplay        { get; set; } = null!;
 
     private readonly string _dbPath;
 
@@ -127,6 +128,12 @@ public class AppDbContext : DbContext
         {
             e.ToTable("column_display");
             e.HasKey(x => new { x.CollectionId, x.Key });
+        });
+
+        model.Entity<RecordDisplayEntity>(e =>
+        {
+            e.ToTable("record_display");
+            e.HasKey(x => new { x.CollectionId, x.RecordId });
         });
     }
 }

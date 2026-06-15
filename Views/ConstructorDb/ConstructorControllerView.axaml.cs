@@ -69,6 +69,7 @@ public partial class ConstructorControllerView : UserControl
         TableViewCtrl.PropertiesDeleteRequested  += (_, ids) => _ = DeletePropertiesWithConfirm(ids);
         TableViewCtrl.SystemFieldRenameRequested += (_, key) => _ = RenameSystemField(key);
         TableViewCtrl.ColumnDisplayRequested     += (_, _)   => _ = OpenDisplayDialog();
+        TableViewCtrl.RecordDisplayRequested     += (_, _)   => _ = OpenRecordDisplayDialog();
 
         // Стартовое состояние: коллекция не выбрана — заголовок-плейсхолдер и подсказка.
         ConstructorNavbar.SetTitle("");
@@ -313,6 +314,23 @@ public partial class ConstructorControllerView : UserControl
 
         var columns = TableViewCtrl.MovableColumnsInOrder();
         var dlg = new DisplayDialog(_repository, _currentCollectionId.Value, columns);
+        var ok  = await dlg.ShowDialog<bool?>(win);
+        if (ok == true)
+            Refresh();
+    }
+
+    // Окно «Отображение записей» — менеджер видимости/уровней/порядка строк. Список
+    // записей берём из БД (полный, включая скрытые — их там можно вернуть), в порядке
+    // позиций. По «Сохранить» — обновляем таблицу.
+    private async Task OpenRecordDisplayDialog()
+    {
+        if (_currentCollectionId is null || _repository is null) return;
+        if (VisualRoot is not Avalonia.Controls.Window win) return;
+
+        var records = _repository.GetRecords(_currentCollectionId.Value)
+            .Select(r => (r.Id!.Value, r.Title ?? ""))
+            .ToList();
+        var dlg = new RecordDisplayDialog(_repository, _currentCollectionId.Value, records);
         var ok  = await dlg.ShowDialog<bool?>(win);
         if (ok == true)
             Refresh();

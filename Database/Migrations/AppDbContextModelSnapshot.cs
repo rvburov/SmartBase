@@ -236,6 +236,25 @@ namespace MyPlanner.Database.Migrations
                     b.ToTable("db_records", (string)null);
                 });
 
+            modelBuilder.Entity("MyPlanner.Database.Entities.RecordDisplayEntity", b =>
+                {
+                    b.Property<int>("CollectionId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("RecordId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("Level")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("Visible")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("CollectionId", "RecordId");
+
+                    b.ToTable("record_display", (string)null);
+                });
+
             modelBuilder.Entity("MyPlanner.Database.Entities.SystemFieldMetaEntity", b =>
                 {
                     b.Property<int>("CollectionId")

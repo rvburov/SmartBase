@@ -41,6 +41,9 @@ public partial class TableView : UserControl
     // Открыть окно «Отображение» (менеджер видимости/уровней колонок). Окно глобальное
     // (список всех колонок), поэтому без аргумента — инициатор-колонка не важна.
     public event EventHandler? ColumnDisplayRequested;
+    // Открыть окно «Отображение записей» (менеджер видимости/уровней строк). Окно
+    // глобальное (список всех записей), поэтому без аргумента — инициатор-строка не важна.
+    public event EventHandler? RecordDisplayRequested;
     // Удаление пользовательских полей (Delete или меню «Удалить») — всегда пакетно,
     // с подтверждением; для одного поля список из одного id.
     public event EventHandler<IReadOnlyList<int>>? PropertiesDeleteRequested;
@@ -72,6 +75,9 @@ public partial class TableView : UserControl
     // Скрытые колонки (окно «Отображение»): ключ есть в множестве ⇒ колонка скрыта.
     // Колонки из _colDefs не удаляются (порядок/перемещение целы) — гасим через IsVisible.
     private HashSet<string> _hiddenColumns = [];
+    // Скрытые записи (окно «Отображение записей»): id есть в множестве ⇒ строка скрыта.
+    // Применяется фильтром на уровне SQL (VirtualRowList + LoadAllRows), виртуализация цела.
+    private HashSet<int> _hiddenRecords = [];
     // Выделенные по клику в заголовок колонки (голубые рамки). Пусто — нет выделения.
     // Обычный клик — одна колонка; Shift+клик — точечный toggle колонки.
     private readonly List<string> _selectedColumnKeys = [];
@@ -455,6 +461,10 @@ public partial class TableView : UserControl
             .Where(kv => !kv.Value.Visible)
             .Select(kv => kv.Key)
             .ToHashSet();
+        _hiddenRecords = _repository.GetRecordDisplay(_collectionId)
+            .Where(kv => !kv.Value.Visible)
+            .Select(kv => kv.Key)
+            .ToHashSet();
         _rowHeights = _repository.GetRowHeights(_collectionId);
 
         ClearColumnSelection();   // колонки пересобираются — снимаем выделение
@@ -462,7 +472,8 @@ public partial class TableView : UserControl
         _colDefs = BuildColDefs();
         ColumnsBuilt?.Invoke(this, _colDefs);
 
-        _virtualRows = new VirtualRowList(_repository, _collectionId, _fields);
+        _virtualRows = new VirtualRowList(_repository, _collectionId, _fields,
+                                          excludeHidden: _hiddenRecords.Count > 0);
 
         BuildColumns();
 
@@ -1217,6 +1228,12 @@ public partial class TableView : UserControl
         miDuplicate.Click += (_, _) => RecordDuplicateRequested?.Invoke(this, recordId);
         menu.Items.Add(miDuplicate);
 
+        // «Отображение» (записей) — глобальное окно видимости/уровней строк (список всех
+        // записей), инициатор-строка не важна.
+        var miDisplay = new MenuItem { Header = Controls.Components.MenuIcons.DisplayHeader() };
+        miDisplay.Click += (_, _) => RecordDisplayRequested?.Invoke(this, EventArgs.Empty);
+        menu.Items.Add(miDisplay);
+
         AddRecordMoveItems(menu, recordId);
         AddHeightModeItems(menu);
 
@@ -1654,7 +1671,16 @@ public partial class TableView : UserControl
         var fontBase  = (double)this.FindResource("FontSizeBase")!;
         var radius    = (CornerRadius)this.FindResource("RadiusBase")!;
 
-        var panel = new StackPanel { Width = 240, Margin = new Thickness(12), Spacing = 2 };
+        // Курсор-стрелка по умолчанию для всей панели (наследуется вниз): на пустых
+        // местах и подложке — стрелка. Интерактивные элементы (кнопки сортировки,
+        // чекбоксы значений, «Готово») задают курсор-руку явно и перебивают наследование.
+        var panel = new StackPanel
+        {
+            Width  = 240,
+            Margin = new Thickness(12),
+            Spacing = 2,
+            Cursor  = new Cursor(StandardCursorType.Arrow),
+        };
 
         // ── Данные ──
         // Загружаем строки сразу, до RenderSort, чтобы замыкания могли ссылаться на allRows.
@@ -1724,6 +1750,7 @@ public partial class TableView : UserControl
             Content   = "(Выделить всё)",
             FontSize  = fontBase,
             IsChecked = !_filters.ContainsKey(def.Key),
+            Cursor    = new Cursor(StandardCursorType.Hand),
         };
 
         // «Выделить всё» прокручивается вместе со значениями (не закреплён),
@@ -1784,6 +1811,7 @@ public partial class TableView : UserControl
                     HorizontalAlignment        = HorizontalAlignment.Stretch,
                     HorizontalContentAlignment = HorizontalAlignment.Left,
                     Margin    = new Thickness(0),
+                    Cursor    = new Cursor(StandardCursorType.Hand),
                 };
                 var cntText = new TextBlock
                 {
@@ -2059,17 +2087,22 @@ public partial class TableView : UserControl
         RecordsGrid.ItemsSource = rows;
     }
 
+    // Все строки в память (материализованный путь: активный фильтр/сортировка колонок,
+    // а также подсчёт значений в панели фильтра). Скрытые записи (окно «Отображение
+    // записей») исключаем — как и виртуализованный путь через excludeHidden, чтобы оба
+    // пути показывали один и тот же набор строк.
     private List<TableRowVm> LoadAllRows()
     {
         var records = _repository!.GetRecords(_collectionId);
         var values  = _repository.GetFieldValuesByCollection(_collectionId);
 
         var rows = new List<TableRowVm>(records.Count);
-        for (var i = 0; i < records.Count; i++)
+        var num  = 0;
+        foreach (var rec in records)
         {
-            var rec = records[i];
-            var id  = rec.Id!.Value;
-            rows.Add(new TableRowVm(_repository, id, i + 1,
+            var id = rec.Id!.Value;
+            if (_hiddenRecords.Contains(id)) continue;
+            rows.Add(new TableRowVm(_repository, id, ++num,
                 values.TryGetValue(id, out var v) ? v : [],
                 rec.Title ?? "", rec.Description));
         }

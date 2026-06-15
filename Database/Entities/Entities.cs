@@ -142,3 +142,17 @@ public class ColumnDisplayEntity
     public bool   Visible      { get; set; } = true;
     public int    Level        { get; set; } = 1;
 }
+
+// Отображение записей (окно «Отображение записей») — аналог ColumnDisplayEntity, но
+// для строк-записей. Visible=false — запись скрыта в таблице (фильтруется на уровне
+// SQL в постраничной загрузке, виртуализация сохраняется). Level — пресет-уровень
+// записи; блок уровней массово включает видимость по уровню ≤ выбранного (только
+// внутри окна, на отрисовку таблицы не влияет). Строки только для изменённых записей;
+// отсутствие строки = видима, уровень 1.
+public class RecordDisplayEntity
+{
+    public int  CollectionId { get; set; }
+    public int  RecordId     { get; set; }
+    public bool Visible      { get; set; } = true;
+    public int  Level        { get; set; } = 1;
+}
