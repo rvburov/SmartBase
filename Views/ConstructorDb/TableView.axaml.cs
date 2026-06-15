@@ -1739,11 +1739,15 @@ public partial class TableView : UserControl
             BorderThickness = new Thickness(1),
             CornerRadius    = radius,
             Padding         = new Thickness(8, 6),
+            // Фиксированная высота списка значений — не зависит от количества записей:
+            // одинаковый размер и при одном-двух значениях, и при большом наборе
+            // (мало значений → внизу пустое место, много → прокрутка).
             Child = new ScrollViewer
             {
-                MaxHeight = 230,
+                Height    = 230,
                 Content   = scrollContent,
                 HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled,
+                VerticalScrollBarVisibility   = Avalonia.Controls.Primitives.ScrollBarVisibility.Auto,
             },
         });
 
@@ -1857,9 +1861,17 @@ public partial class TableView : UserControl
             if (pendingSort is bool asc) { _sortKey = def.Key; _sortAsc = asc; }
             else if (_sortKey == def.Key) _sortKey = null;
 
-            // Выбраны все значения колонки (а не только видимые) — фильтр не нужен.
-            if (domain.All(checkedSet.Contains)) _filters.Remove(def.Key);
-            else _filters[def.Key] = new HashSet<string>(checkedSet);
+            // Excel-режим «Заменить»: при активном поиске фильтр = только отмеченные
+            // СРЕДИ найденного; значения вне зоны поиска отсекаются (в фильтр не входят).
+            // Поиск пуст — фильтр = все отмеченные галки по всему домену.
+            var hasSearch = !string.IsNullOrWhiteSpace(search.Text);
+            var effective = hasSearch
+                ? Matched().Select(c => c.Raw).Where(checkedSet.Contains).ToHashSet()
+                : new HashSet<string>(checkedSet);
+
+            // Отмечены все значения колонки (а не только видимые) — фильтр не нужен.
+            if (domain.SetEquals(effective)) _filters.Remove(def.Key);
+            else _filters[def.Key] = effective;
             ApplyFilters();
             close();
         };
