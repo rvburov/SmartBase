@@ -506,8 +506,22 @@ public partial class Sidebar : UserControl
     {
         if (_repository is null || OwnerWindow is null) return;
 
-        var dlg = new CreateItemDialog(_repository, presetType, parentId);
-        var res = await dlg.ShowDialog<CreateItemResult?>(OwnerWindow);
+        // Тултип «Создать» кнопки «+» не должен висеть и мерцать поверх модального
+        // окна: закрываем его и отключаем сервис тултипа на кнопке на время диалога
+        // (при открытой модалке окно-владелец «полуактивно», и тултип переоткрывается
+        // от событий курсора над диалогом — отсюда мигание).
+        ToolTip.SetIsOpen(CreateBtn, false);
+        ToolTip.SetServiceEnabled(CreateBtn, false);
+        CreateItemResult? res;
+        try
+        {
+            var dlg = new CreateItemDialog(_repository, presetType, parentId);
+            res = await dlg.ShowDialog<CreateItemResult?>(OwnerWindow);
+        }
+        finally
+        {
+            ToolTip.SetServiceEnabled(CreateBtn, true);
+        }
         if (res is null) return;
 
         if (res.Type == "group")
@@ -522,7 +536,9 @@ public partial class Sidebar : UserControl
             var pos = _repository.GetAllCollections().Select(c => c.Position).DefaultIfEmpty(0).Max() + 1000;
             var col = _repository.AddCollection(new DbCollection { Name = res.Name, GroupId = res.ParentId, Position = pos });
             if (col.Id.HasValue)
-                _repository.AddRecord(new DbRecord { CollectionId = col.Id.Value });
+                // Title задаём реальным текстом «Без названия» (как кнопка «+»),
+                // а не оставляем пустым с одним плейсхолдером в ячейке.
+                _repository.AddRecord(new DbRecord { CollectionId = col.Id.Value, Title = "Без названия" });
             ReloadAndNotify();
             if (col.Id.HasValue && _mode == SidebarMode.Constructor) OpenCollection(col.Id.Value);
         }
