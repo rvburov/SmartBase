@@ -213,6 +213,12 @@ public class ConstructorRepository(AppDbContext db)
         if (db.DbFields.Any(f => f.CollectionId == field.CollectionId && f.Name == field.Name))
             throw new InvalidOperationException("Поле с таким именем уже существует.");
 
+        // Первое поле-дата в коллекции становится источником календаря: его значение
+        // проецируется на db_records.StartDt/EndDt (см. SetFieldValue → ProjectDateToRecord).
+        if (field.FieldType == "date" &&
+            !db.DbFields.Any(f => f.CollectionId == field.CollectionId && f.FieldType == "date" && f.IsCalStart))
+            field.IsCalStart = true;
+
         var entity = new DbFieldEntity
         {
             CollectionId = field.CollectionId, Name = field.Name,
@@ -628,7 +634,34 @@ public class ConstructorRepository(AppDbContext db)
         else
             fv.Value = value;
 
+        // Календарное поле-дата проецируем на колонки записи, которые читает календарь.
+        var field = db.DbFields.Find(fieldId);
+        if (field is { FieldType: "date", IsCalStart: true })
+            ProjectDateToRecord(recordId, value);
+
         db.SaveChanges();
+    }
+
+    // Записывает значение поля-даты в db_records.StartDt/EndDt/AllDay (источник правды
+    // для календаря). Пустое/нераспознанное значение убирает запись из календаря.
+    private void ProjectDateToRecord(int recordId, string value)
+    {
+        var rec = db.DbRecords.Find(recordId);
+        if (rec is null) return;
+
+        if (DateValue.TryParse(value, out var dv))
+        {
+            var (startIso, endIso) = dv.ToRecordColumns();
+            rec.StartDt = startIso;
+            rec.EndDt   = endIso;
+            rec.AllDay  = dv.AllDay;
+        }
+        else
+        {
+            rec.StartDt = null;
+            rec.EndDt   = null;
+            rec.AllDay  = false;
+        }
     }
 
     // ── UI настройки ──────────────────────────────────────────────────────────
@@ -994,13 +1027,18 @@ public class ConstructorRepository(AppDbContext db)
             .Select(f => (int?)f.Position)
             .Max() ?? 0;
 
+        // Системное поле «Дата» — источник календаря (если другой ещё не назначен).
+        var hasCalField = db.DbFields.Any(f =>
+            f.CollectionId == collectionId && f.FieldType == "date" && f.IsCalStart);
+
         var field = new DbFieldEntity
         {
             CollectionId = collectionId,
             Name         = FieldDate,
-            FieldType    = "text",
+            FieldType    = "date",
             Position     = maxPos + 1000,
             IsSystem     = true,
+            IsCalStart   = !hasCalField,
             IsRequired   = false,
         };
         db.DbFields.Add(field);
@@ -1016,7 +1054,7 @@ public class ConstructorRepository(AppDbContext db)
         // живут в колонках db_records (Title / Description).
         if (!fieldIds.TryGetValue(FieldDate, out var fid)) return;
 
-        var dateStr = FormatCalendarDate(r.StartDt, r.EndDt, r.AllDay);
+        var dateStr = new DateValue(r.StartDt, r.EndDt, r.AllDay).ToStorage();
 
         var fv = db.DbFieldValues.FirstOrDefault(x => x.RecordId == recordId && x.FieldId == fid);
         if (fv is null)
@@ -1065,20 +1103,68 @@ public class ConstructorRepository(AppDbContext db)
         return result;
     }
 
-    private static string FormatCalendarDate(DateTime s, DateTime e, bool allDay)
+    // ── Разовая миграция/бэкафилл календарных дат (вызывается при старте) ──────
+
+    /// <summary>
+    /// 1) Системные поля «Дата» из эпохи, когда они были типа text, переводит в date
+    ///    и помечает источником календаря. 2) Бэкафилл: для записей с заполненным
+    ///    календарным полем-датой, но пустыми StartDt — проецирует значение на колонки,
+    ///    чтобы такие записи появились в календаре. Идемпотентно и дёшево.
+    /// </summary>
+    public void MigrateAndBackfillCalendarDates()
     {
-        if (allDay)
+        var legacy = db.DbFields.Where(f => f.Name == FieldDate && f.FieldType == "text").ToList();
+        foreach (var f in legacy)
         {
-            return s.Date == e.Date
-                ? s.ToString("dd.MM.yyyy")
-                : $"{s:dd.MM.yyyy} - {e:dd.MM.yyyy}";
+            f.FieldType = "date";
+            var hasOther = db.DbFields.Any(o =>
+                o.CollectionId == f.CollectionId && o.Id != f.Id && o.FieldType == "date" && o.IsCalStart);
+            if (!hasOther) f.IsCalStart = true;
         }
+        if (legacy.Count > 0) db.SaveChanges();
 
-        var st = s.ToString("HH:mm");
-        var et = e.ToString("HH:mm");
-        if (s.Date == e.Date)
-            return st == et ? $"{s:dd.MM.yyyy} {st}" : $"{s:dd.MM.yyyy} {st} - {et}";
+        // Коллекции, где есть поля-даты, но ни одно не назначено календарным: первое
+        // (по позиции) становится источником календаря — чтобы существующие даты тоже
+        // попали в календарь.
+        var calCollections = db.DbFields
+            .Where(f => f.FieldType == "date" && f.IsCalStart)
+            .Select(f => f.CollectionId)
+            .Distinct()
+            .ToHashSet();
 
-        return $"{s:dd.MM.yyyy} - {e:dd.MM.yyyy} {st}";
+        var orphanDateFields = db.DbFields
+            .Where(f => f.FieldType == "date" && !calCollections.Contains(f.CollectionId))
+            .OrderBy(f => f.CollectionId).ThenBy(f => f.Position)
+            .ToList();
+
+        var assigned = new HashSet<int>();
+        foreach (var f in orphanDateFields)
+            if (assigned.Add(f.CollectionId)) f.IsCalStart = true;
+        if (assigned.Count > 0) db.SaveChanges();
+
+        var calFieldIds = db.DbFields
+            .Where(f => f.FieldType == "date" && f.IsCalStart)
+            .Select(f => f.Id)
+            .ToList();
+        if (calFieldIds.Count == 0) return;
+
+        var pending = db.DbFieldValues
+            .Where(v => calFieldIds.Contains(v.FieldId) && v.Value != "" && v.Record.StartDt == null)
+            .Select(v => new { v.RecordId, v.Value })
+            .ToList();
+
+        var touched = false;
+        foreach (var x in pending)
+        {
+            if (!DateValue.TryParse(x.Value, out var dv)) continue;
+            var rec = db.DbRecords.Find(x.RecordId);
+            if (rec is null) continue;
+            var (startIso, endIso) = dv.ToRecordColumns();
+            rec.StartDt = startIso;
+            rec.EndDt   = endIso;
+            rec.AllDay  = dv.AllDay;
+            touched = true;
+        }
+        if (touched) db.SaveChanges();
     }
 }

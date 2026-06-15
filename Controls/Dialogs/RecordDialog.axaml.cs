@@ -1,12 +1,13 @@
-using System.Globalization;
 using System.Text.Json;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
 using Avalonia.Layout;
+using DataBase.Controls.Widgets;
 using DataBase.Core.Models;
 using DataBase.Core.Validators;
 using DataBase.Database.Repositories;
+using DataBase.Utils;
 
 namespace DataBase.Controls.Dialogs;
 
@@ -27,9 +28,6 @@ public partial class RecordDialog : Window
     private readonly List<(string Name, int? Id, string Color)> _collections = [];
     private TimeSpan _savedStartTime = new(9, 0, 0);
     private TimeSpan _savedEndTime   = new(10, 0, 0);
-
-    // Варианты времени с шагом 15 минут: 00:00, 00:15, … 23:45
-    private static readonly List<string> TimeOptions = BuildTimeOptions();
 
     // ── Конструктор: схема-режим ──────────────────────────────────────────────
     public RecordDialog(ConstructorRepository repository, int collectionId, int? recordId = null)
@@ -85,8 +83,8 @@ public partial class RecordDialog : Window
         CollectionCombo.ItemsSource   = _collections.Select(c => c.Name).ToList();
         CollectionCombo.SelectedIndex = 0;
 
-        StartTimeList.ItemsSource = TimeOptions;
-        EndTimeList.ItemsSource   = TimeOptions;
+        StartTimeList.ItemsSource = TimeText.Options;
+        EndTimeList.ItemsSource   = TimeText.Options;
 
         var now = presetDate ?? DateTime.Today;
         StartDatePicker.SelectedDate = now;
@@ -97,8 +95,8 @@ public partial class RecordDialog : Window
             _savedStartTime = presetTime.Value;
             _savedEndTime   = presetTime.Value + TimeSpan.FromHours(1);
         }
-        StartTimeInput.Text = FormatTime(_savedStartTime);
-        EndTimeInput.Text   = FormatTime(_savedEndTime);
+        StartTimeInput.Text = TimeText.Format(_savedStartTime);
+        EndTimeInput.Text   = TimeText.Format(_savedEndTime);
 
         if (editRecord is not null)
         {
@@ -167,7 +165,7 @@ public partial class RecordDialog : Window
         return field.FieldType switch
         {
             "number" => new NumericUpDown { Minimum = decimal.MinValue, Maximum = decimal.MaxValue, Height = 36 },
-            "date"   => new CalendarDatePicker { SelectedDate = DateTime.Today, Height = 36, HorizontalAlignment = HorizontalAlignment.Stretch },
+            "date"   => new DateEditor(),
             "select" => BuildSelectCombo(config),
             "checkbox" => new CheckBox { VerticalAlignment = VerticalAlignment.Center },
             "url"    => new TextBox { Watermark = "https://", Height = 36 },
@@ -202,8 +200,7 @@ public partial class RecordDialog : Window
                     ((CheckBox)input).IsChecked = val is "1" or "true" or "True";
                     break;
                 case "date":
-                    if (DateTime.TryParseExact(val, "dd.MM.yyyy", null, DateTimeStyles.None, out var dt))
-                        ((CalendarDatePicker)input).SelectedDate = dt;
+                    ((DateEditor)input).Storage = val;
                     break;
                 case "select":
                     var cb = (ComboBox)input;
@@ -224,7 +221,7 @@ public partial class RecordDialog : Window
     private static string GetValue(DbField field, Control input) => field.FieldType switch
     {
         "checkbox" => ((CheckBox)input).IsChecked == true ? "1" : "0",
-        "date"     => ((CalendarDatePicker)input).SelectedDate?.ToString("dd.MM.yyyy") ?? "",
+        "date"     => ((DateEditor)input).Storage ?? "",
         "select"   => ((ComboBox)input).SelectedItem?.ToString() ?? "",
         "number"   => ((NumericUpDown)input).Value?.ToString() ?? "",
         _          => ((TextBox)input).Text ?? "",
@@ -272,7 +269,7 @@ public partial class RecordDialog : Window
     {
         input.TextChanged += (_, _) =>
         {
-            if (AllDayCheck.IsChecked != true && TryParseTime(input.Text, out var t))
+            if (AllDayCheck.IsChecked != true && TimeText.TryParse(input.Text, out var t))
                 setSaved(t);
         };
 
@@ -289,7 +286,7 @@ public partial class RecordDialog : Window
         list.SelectionChanged += (_, _) =>
         {
             if (!popup.IsOpen) return;
-            if (list.SelectedItem is string s && TryParseTime(s, out var t))
+            if (list.SelectedItem is string s && TimeText.TryParse(s, out var t))
             {
                 setSaved(t);
                 input.Text = s;
@@ -300,58 +297,13 @@ public partial class RecordDialog : Window
 
     private static void SelectInList(ListBox list, TimeSpan time)
     {
-        var text = FormatTime(time);
-        var idx  = TimeOptions.IndexOf(text);
+        var idx = TimeText.Options.ToList().IndexOf(TimeText.Format(time));
         if (idx < 0)
         {
             var quarter = (time.Hours * 60 + time.Minutes) / 15;
-            idx = Math.Clamp(quarter, 0, TimeOptions.Count - 1);
+            idx = Math.Clamp(quarter, 0, TimeText.Options.Count - 1);
         }
         list.SelectedIndex = idx;
-    }
-
-    private static List<string> BuildTimeOptions()
-    {
-        var list = new List<string>(96);
-        for (var t = TimeSpan.Zero; t < TimeSpan.FromDays(1); t += TimeSpan.FromMinutes(15))
-            list.Add(FormatTime(t));
-        return list;
-    }
-
-    private static string FormatTime(TimeSpan t) =>
-        $"{t.Hours:D2}:{t.Minutes:D2}";
-
-    private static bool TryParseTime(string? text, out TimeSpan result)
-    {
-        result = TimeSpan.Zero;
-        if (string.IsNullOrWhiteSpace(text)) return false;
-
-        text = text.Trim().Replace('.', ':').Replace(',', ':').Replace(' ', ':');
-
-        if (!text.Contains(':') && int.TryParse(text, out var digits))
-        {
-            text = digits switch
-            {
-                <= 23   => $"{digits}:00",
-                >= 100  => $"{digits / 100}:{digits % 100:D2}",
-                _       => text,
-            };
-        }
-
-        var parts = text.Split(':', StringSplitOptions.RemoveEmptyEntries);
-        if (parts.Length == 0) return false;
-
-        if (!int.TryParse(parts[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out var h))
-            return false;
-        var m = 0;
-        if (parts.Length > 1 &&
-            !int.TryParse(parts[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out m))
-            return false;
-
-        if (h is < 0 or > 23 || m is < 0 or > 59) return false;
-
-        result = new TimeSpan(h, m, 0);
-        return true;
     }
 
     private void FillFromRecord(CalendarRecord r)
@@ -367,8 +319,8 @@ public partial class RecordDialog : Window
             _savedStartTime = r.StartDt.TimeOfDay;
             _savedEndTime   = r.EndDt.TimeOfDay;
         }
-        StartTimeInput.Text = FormatTime(_savedStartTime);
-        EndTimeInput.Text   = FormatTime(_savedEndTime);
+        StartTimeInput.Text = TimeText.Format(_savedStartTime);
+        EndTimeInput.Text   = TimeText.Format(_savedEndTime);
 
         if (r.CollectionId.HasValue)
         {
@@ -392,8 +344,8 @@ public partial class RecordDialog : Window
 
         if (!isAllDay)
         {
-            StartTimeInput.Text = FormatTime(_savedStartTime);
-            EndTimeInput.Text   = FormatTime(_savedEndTime);
+            StartTimeInput.Text = TimeText.Format(_savedStartTime);
+            EndTimeInput.Text   = TimeText.Format(_savedEndTime);
         }
     }
 
@@ -411,8 +363,8 @@ public partial class RecordDialog : Window
 
         var startDate = StartDatePicker.SelectedDate ?? DateTime.Today;
         var endDate   = EndDatePicker.SelectedDate   ?? DateTime.Today;
-        var startTime = TryParseTime(StartTimeInput.Text, out var st) ? st : _savedStartTime;
-        var endTime   = TryParseTime(EndTimeInput.Text,   out var et) ? et : _savedEndTime;
+        var startTime = TimeText.TryParse(StartTimeInput.Text, out var st) ? st : _savedStartTime;
+        var endTime   = TimeText.TryParse(EndTimeInput.Text,   out var et) ? et : _savedEndTime;
 
         var isAllDay = AllDayCheck.IsChecked == true;
         var startDt  = startDate.Date + (isAllDay ? TimeSpan.Zero : startTime);

@@ -1,0 +1,32 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="DataBase.Controls.Widgets.TimeField">
+
+    <Border x:Name="Box" Classes="timeField" Height="34">
+        <Grid ColumnDefinitions="*,Auto">
+            <TextBox Grid.Column="0" x:Name="Input" Classes="timeInput" />
+            <Button Grid.Column="1" x:Name="Arrow" Classes="timeArrow">
+                <Viewbox Width="16" Height="16">
+                    <Canvas Width="24" Height="24">
+                        <Path Data="M6 9 L12 15 L18 9"
+                              Stroke="{StaticResource BrushSecondaryText}"
+                              StrokeThickness="2"
+                              StrokeLineCap="Round"
+                              StrokeJoin="Round" />
+                    </Canvas>
+                </Viewbox>
+            </Button>
+            <Popup Grid.Column="0" x:Name="Pop"
+                   PlacementTarget="{Binding #Box}"
+                   Placement="BottomEdgeAlignedLeft"
+                   IsLightDismissEnabled="True">
+                <Border Classes="timePopup" MinWidth="{Binding #Box.Bounds.Width}">
+                    <ScrollViewer MaxHeight="240">
+                        <ListBox x:Name="List" Classes="timeList" />
+                    </ScrollViewer>
+                </Border>
+            </Popup>
+        </Grid>
+    </Border>
+
+</UserControl>

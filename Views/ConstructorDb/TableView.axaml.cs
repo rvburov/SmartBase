@@ -13,6 +13,7 @@ using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
+using DataBase.Controls.Widgets;
 using DataBase.Core.Models;
 using DataBase.Database.Repositories;
 using DataBase.ViewModels.ConstructorDb;
@@ -919,17 +920,13 @@ public partial class TableView : UserControl
             {
                 case "date":
                 {
-                    var picker = new CalendarDatePicker
+                    var editor = new DateEditor
                     {
-                        BorderThickness   = new Thickness(0),
                         VerticalAlignment = VerticalAlignment.Center,
+                        Storage           = row[def.Key],
                     };
-                    if (DateTime.TryParseExact(row[def.Key], "dd.MM.yyyy", null,
-                            DateTimeStyles.None, out var dt))
-                        picker.SelectedDate = dt;
-                    picker.SelectedDateChanged += (_, _) =>
-                        row[def.Key] = picker.SelectedDate?.ToString("dd.MM.yyyy") ?? "";
-                    return picker;
+                    editor.Changed += (_, _) => row[def.Key] = editor.Storage ?? "";
+                    return editor;
                 }
 
                 case "select":
@@ -2134,8 +2131,7 @@ public partial class TableView : UserControl
             ? d : double.MaxValue;
 
     private static DateTime ParseDate(string s) =>
-        DateTime.TryParseExact(s, "dd.MM.yyyy", null, DateTimeStyles.None, out var dt)
-            ? dt : DateTime.MaxValue;
+        DateValue.TryParse(s, out var dv) ? dv.Start : DateTime.MaxValue;
 
     // ── Ширины колонок ─────────────────────────────────────────────────────────
 
@@ -2260,7 +2256,12 @@ internal sealed class FieldDisplayConverter(string fieldType) : IValueConverter
     public object? Convert(object? v, Type t, object? p, CultureInfo c)
     {
         var s = v?.ToString() ?? "";
-        return fieldType == "checkbox" ? (s is "1" or "true" or "True" ? "✓" : "") : s;
+        return fieldType switch
+        {
+            "checkbox" => s is "1" or "true" or "True" ? "✓" : "",
+            "date"     => DateValue.TryParse(s, out var dv) ? dv.ToDisplay() : s,
+            _          => s,
+        };
     }
 
     public object? ConvertBack(object? v, Type t, object? p, CultureInfo c) =>

@@ -1,0 +1,60 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:w="clr-namespace:DataBase.Controls.Widgets"
+             x:Class="DataBase.Controls.Widgets.DateEditor">
+
+    <Border x:Name="Box" Classes="timeField" Height="34">
+        <Grid ColumnDefinitions="*,Auto">
+            <TextBox Grid.Column="0" x:Name="Input" Classes="timeInput"
+                     Watermark="дд.мм.гггг" />
+            <Button Grid.Column="1" x:Name="Arrow" Classes="timeArrow">
+                <Viewbox Width="16" Height="16">
+                    <Canvas Width="24" Height="24">
+                        <!-- иконка календаря -->
+                        <Path Data="M7 4 L7 7 M17 4 L17 7 M4 9 L20 9
+                                    M5 6 L19 6 A1 1 0 0 1 20 7 L20 19
+                                    A1 1 0 0 1 19 20 L5 20 A1 1 0 0 1 4 19
+                                    L4 7 A1 1 0 0 1 5 6 Z"
+                              Stroke="{StaticResource BrushSecondaryText}"
+                              StrokeThickness="2"
+                              StrokeLineCap="Round"
+                              StrokeJoin="Round" />
+                    </Canvas>
+                </Viewbox>
+            </Button>
+
+            <Popup Grid.Column="0" x:Name="Pop"
+                   PlacementTarget="{Binding #Box}"
+                   Placement="BottomEdgeAlignedLeft"
+                   IsLightDismissEnabled="True">
+                <Border Classes="timePopup" Padding="14" MinWidth="300">
+                    <StackPanel Spacing="12">
+
+                        <Calendar x:Name="Cal"
+                                  SelectionMode="SingleRange"
+                                  HorizontalAlignment="Stretch" />
+
+                        <CheckBox x:Name="AllDayCheck"
+                                  Content="Весь день"
+                                  FontSize="{StaticResource FontSizeBase}"
+                                  Foreground="{StaticResource BrushPrimaryText}" />
+
+                        <Grid x:Name="TimeRow" ColumnDefinitions="*,Auto,*">
+                            <w:TimeField Grid.Column="0" x:Name="StartTime" />
+                            <TextBlock Grid.Column="1" Text="—"
+                                       Margin="8,0"
+                                       VerticalAlignment="Center"
+                                       Foreground="{StaticResource BrushSecondaryText}" />
+                            <w:TimeField Grid.Column="2" x:Name="EndTime" />
+                        </Grid>
+
+                        <Button x:Name="ClearBtn" Classes="dialog"
+                                Content="Очистить"
+                                HorizontalAlignment="Right" />
+                    </StackPanel>
+                </Border>
+            </Popup>
+        </Grid>
+    </Border>
+
+</UserControl>

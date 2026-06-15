@@ -28,6 +28,10 @@ public partial class App : Application
             var categories  = new CategoryRepository(db);
             var constructor = new ConstructorRepository(db);
 
+            // Системное поле «Дата» → тип date + источник календаря; бэкафилл StartDt
+            // для записей, у которых дата задана только в поле конструктора.
+            constructor.MigrateAndBackfillCalendarDates();
+
             categories.SeedDefaults();
 
             desktop.MainWindow = new MainWindow(categories, constructor);
