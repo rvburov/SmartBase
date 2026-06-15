@@ -16,12 +16,10 @@ public partial class GroupDialog : Window
     {
         InitializeComponent();
 
-        var allGroups = repository.GetAllGroups()
-            .Where(g => editNode is null || g.Id != editNode.Id)
-            .ToList();
-
-        _groups = [("Корневой уровень", null), ..allGroups.Select(g => (g.Name, (int?)g.Id))];
-
+        // Список «Расположение» с полным путём вложенности групп (см. GroupLocationOptions).
+        // При редактировании исключаем саму группу и всех её потомков — нельзя вложить
+        // группу в саму себя или в собственного потомка (иначе цикл).
+        _groups = GroupLocationOptions.Build(repository.GetAllGroups(), excludeSubtreeRootId: editNode?.Id);
         LocationCombo.ItemsSource   = _groups.Select(g => g.Label).ToList();
         LocationCombo.SelectedIndex = 0;
 

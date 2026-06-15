@@ -54,7 +54,23 @@
                   Margin="0,0,0,12"
                   Background="{StaticResource BrushSecondaryBg}"
                   Foreground="{StaticResource BrushPrimaryText}"
-                  CornerRadius="{StaticResource RadiusBase}" />
+                  CornerRadius="{StaticResource RadiusBase}">
+            <!-- Длинный путь вложенности обрезается СЛЕВА (видна правая, самая конкретная
+                 часть) — и в самом поле, и в пунктах выпадающего списка. -->
+            <ComboBox.ItemTemplate>
+                <DataTemplate>
+                    <TextBlock Text="{Binding}"
+                               TextTrimming="LeadingCharacterEllipsis"
+                               VerticalAlignment="Center" />
+                </DataTemplate>
+            </ComboBox.ItemTemplate>
+            <!-- Пункт списка не шире самого поля — выпадашка не растягивается. -->
+            <ComboBox.Styles>
+                <Style Selector="ComboBoxItem">
+                    <Setter Property="MaxWidth" Value="{Binding $parent[ComboBox].Bounds.Width}" />
+                </Style>
+            </ComboBox.Styles>
+        </ComboBox>
 
         <!-- Уведомление об ошибке валидации -->
         <Border x:Name="ErrorBanner" IsVisible="False"

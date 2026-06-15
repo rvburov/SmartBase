@@ -38,6 +38,15 @@ public class ConstructorRepository(AppDbContext db)
         db.SaveChanges();
     }
 
+    // Существует ли группа с таким именем на том же уровне (с тем же родителем).
+    // excludeId — id исключаемой группы (для переименования самой себя).
+    public bool GroupNameExists(string name, int? parentId, int? excludeId = null)
+    {
+        var q = db.DbGroups.Where(g => g.ParentId == parentId && g.Name == name);
+        if (excludeId is int id) q = q.Where(g => g.Id != id);
+        return q.Any();
+    }
+
     public DbGroup DuplicateGroup(int groupId)
     {
         var src = db.DbGroups.Find(groupId);
@@ -45,7 +54,11 @@ public class ConstructorRepository(AppDbContext db)
 
         var maxPos = db.DbGroups.Where(g => g.ParentId == src.ParentId).Select(g => (int?)g.Position).Max() ?? 0;
 
-        var copy = new DbGroupEntity { Name = src.Name + " (копия)", ParentId = src.ParentId, Position = maxPos + 1000 };
+        // Уникальное имя на том же уровне: «X (копия)», «X (копия) 2» … (без стакания «копия»).
+        var name = NextCopyName(src.Name,
+            candidate => db.DbGroups.Any(g => g.ParentId == src.ParentId && g.Name == candidate));
+
+        var copy = new DbGroupEntity { Name = name, ParentId = src.ParentId, Position = maxPos + 1000 };
         db.DbGroups.Add(copy);
         db.SaveChanges();
 
@@ -94,6 +107,15 @@ public class ConstructorRepository(AppDbContext db)
                     .ToList();
     }
 
+    // Существует ли коллекция с таким именем на том же уровне (в той же группе).
+    // excludeId — id исключаемой коллекции (для переименования самой себя).
+    public bool CollectionNameExists(string name, int? groupId, int? excludeId = null)
+    {
+        var q = db.DbCollections.Where(c => c.GroupId == groupId && c.Name == name);
+        if (excludeId is int id) q = q.Where(c => c.Id != id);
+        return q.Any();
+    }
+
     public DbCollection AddCollection(DbCollection col)
     {
         var entity = new DbCollectionEntity
@@ -136,9 +158,13 @@ public class ConstructorRepository(AppDbContext db)
 
         var maxPos = db.DbCollections.Select(c => (int?)c.Position).Max() ?? 0;
 
+        // Уникальное имя на том же уровне: «X (копия)», «X (копия) 2» … (без стакания «копия»).
+        var name = NextCopyName(src.Name,
+            candidate => db.DbCollections.Any(c => c.GroupId == src.GroupId && c.Name == candidate));
+
         var copy = new DbCollectionEntity
         {
-            Name     = src.Name + " (копия)",
+            Name     = name,
             GroupId  = src.GroupId,
             Position = maxPos + 1000,
             Icon     = src.Icon,

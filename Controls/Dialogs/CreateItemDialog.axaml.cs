@@ -11,18 +11,20 @@ public record CreateItemResult(string Type, string Name, int? ParentId);
 public partial class CreateItemDialog : Window
 {
     private readonly List<(string Label, int? Id)> _groups;
+    private readonly ConstructorRepository _repository;
 
     public CreateItemDialog(ConstructorRepository repository,
                             string presetType = "collection",
                             int? presetParentId = null)
     {
         InitializeComponent();
+        _repository = repository;
 
         TypeCombo.ItemsSource = new[] { "Коллекция", "Группа" };
         TypeCombo.SelectedIndex = presetType == "group" ? 1 : 0;
 
-        var allGroups = repository.GetAllGroups();
-        _groups = [("Корневой уровень", null), .. allGroups.Select(g => (g.Name, (int?)g.Id))];
+        // Список «Расположение» с полным путём вложенности групп (см. GroupLocationOptions).
+        _groups = GroupLocationOptions.Build(repository.GetAllGroups());
         LocationCombo.ItemsSource   = _groups.Select(g => g.Label).ToList();
         LocationCombo.SelectedIndex = 0;
 
@@ -51,6 +53,19 @@ public partial class CreateItemDialog : Window
         }
 
         var parentId = _groups[Math.Max(0, LocationCombo.SelectedIndex)].Id;
+
+        var exists = type == "group"
+            ? _repository.GroupNameExists(name, parentId)
+            : _repository.CollectionNameExists(name, parentId);
+        if (exists)
+        {
+            ShowError(type == "group"
+                ? "Группа с таким названием уже существует"
+                : "Коллекция с таким названием уже существует");
+            NameBox.Focus();
+            return;
+        }
+
         Close(new CreateItemResult(type, name, parentId));
     }
 

@@ -16,9 +16,8 @@ public partial class CollectionDialog : Window
     {
         InitializeComponent();
 
-        var allGroups = repository.GetAllGroups();
-        _groups = [("Корневой уровень", null), ..allGroups.Select(g => (g.Name, (int?)g.Id))];
-
+        // Список «Расположение» с полным путём вложенности групп (см. GroupLocationOptions).
+        _groups = GroupLocationOptions.Build(repository.GetAllGroups());
         LocationCombo.ItemsSource   = _groups.Select(g => g.Label).ToList();
         LocationCombo.SelectedIndex = 0;
 
