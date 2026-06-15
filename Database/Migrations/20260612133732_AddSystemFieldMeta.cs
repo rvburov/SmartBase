@@ -2,7 +2,7 @@
 
 #nullable disable
 
-namespace MyPlanner.Database.Migrations
+namespace DataBase.Database.Migrations
 {
     /// <inheritdoc />
     public partial class AddSystemFieldMeta : Migration

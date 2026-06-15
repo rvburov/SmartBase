@@ -1,6 +1,6 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             x:Class="MyPlanner.Views.ConstructorDb.TableView"
+             x:Class="DataBase.Views.ConstructorDb.TableView"
              Background="{StaticResource BrushBg}">
 
     <!-- Переопределяем встроенные кисти линий DataGrid из темы Fluent на единый

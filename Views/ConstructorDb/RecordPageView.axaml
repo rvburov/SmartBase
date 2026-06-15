@@ -1,7 +1,7 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:md="https://github.com/whistyun/Markdown.Avalonia"
-             x:Class="MyPlanner.Views.ConstructorDb.RecordPageView"
+             x:Class="DataBase.Views.ConstructorDb.RecordPageView"
              Background="{StaticResource BrushBg}">
 
     <Grid RowDefinitions="Auto,Auto,*,Auto">

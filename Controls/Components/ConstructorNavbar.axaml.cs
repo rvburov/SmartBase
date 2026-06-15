@@ -2,7 +2,7 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Media;
 
-namespace MyPlanner.Controls.Components;
+namespace DataBase.Controls.Components;
 
 public partial class ConstructorNavbar : UserControl
 {

@@ -1,6 +1,6 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             x:Class="MyPlanner.Controls.Components.AllDayBar"
+             x:Class="DataBase.Controls.Components.AllDayBar"
              MinHeight="40"
              Background="{StaticResource BrushSecondaryBg}">
 

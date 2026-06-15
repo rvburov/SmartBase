@@ -1,7 +1,7 @@
 using Microsoft.EntityFrameworkCore.Design;
-using MyPlanner.Utils;
+using DataBase.Utils;
 
-namespace MyPlanner.Database;
+namespace DataBase.Database;
 
 public class AppDbContextFactory : IDesignTimeDbContextFactory<AppDbContext>
 {

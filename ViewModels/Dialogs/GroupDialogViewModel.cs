@@ -1,9 +1,9 @@
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
-using MyPlanner.Core.Models;
-using MyPlanner.Database.Repositories;
+using DataBase.Core.Models;
+using DataBase.Database.Repositories;
 
-namespace MyPlanner.ViewModels.Dialogs;
+namespace DataBase.ViewModels.Dialogs;
 
 public partial class GroupDialogViewModel : ViewModelBase
 {

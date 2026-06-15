@@ -1,4 +1,4 @@
-namespace MyPlanner.Utils;
+namespace DataBase.Utils;
 
 /// <summary>
 /// Утилиты для работы с Markdown.

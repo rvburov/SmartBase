@@ -13,11 +13,11 @@ using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
-using MyPlanner.Core.Models;
-using MyPlanner.Database.Repositories;
-using MyPlanner.ViewModels.ConstructorDb;
+using DataBase.Core.Models;
+using DataBase.Database.Repositories;
+using DataBase.ViewModels.ConstructorDb;
 
-namespace MyPlanner.Views.ConstructorDb;
+namespace DataBase.Views.ConstructorDb;
 
 public partial class TableView : UserControl
 {

@@ -1,6 +1,6 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             x:Class="MyPlanner.Views.ConstructorDb.Calendar.YearView"
+             x:Class="DataBase.Views.ConstructorDb.Calendar.YearView"
              Background="{StaticResource BrushBg}">
 
     <Panel>

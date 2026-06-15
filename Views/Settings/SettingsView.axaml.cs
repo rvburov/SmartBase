@@ -1,7 +1,7 @@
 using Avalonia.Controls;
-using MyPlanner.Utils;
+using DataBase.Utils;
 
-namespace MyPlanner.Views.Settings;
+namespace DataBase.Views.Settings;
 
 public partial class SettingsView : UserControl
 {

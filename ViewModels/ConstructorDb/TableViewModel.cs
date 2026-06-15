@@ -1,10 +1,10 @@
 using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
-using MyPlanner.Core.Models;
-using MyPlanner.Database.Repositories;
+using DataBase.Core.Models;
+using DataBase.Database.Repositories;
 
-namespace MyPlanner.ViewModels.ConstructorDb;
+namespace DataBase.ViewModels.ConstructorDb;
 
 public partial class TableViewModel : ViewModelBase
 {

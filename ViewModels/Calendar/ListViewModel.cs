@@ -1,6 +1,6 @@
-using MyPlanner.Database.Repositories;
+using DataBase.Database.Repositories;
 
-namespace MyPlanner.ViewModels.Calendar;
+namespace DataBase.ViewModels.Calendar;
 
 public class ListViewModel : CalendarViewModelBase
 {

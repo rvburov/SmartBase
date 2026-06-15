@@ -2,12 +2,12 @@ using Avalonia;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
 using Microsoft.EntityFrameworkCore;
-using MyPlanner.Database;
-using MyPlanner.Database.Repositories;
-using MyPlanner.Utils;
-using MyPlanner.Views;
+using DataBase.Database;
+using DataBase.Database.Repositories;
+using DataBase.Utils;
+using DataBase.Views;
 
-namespace MyPlanner;
+namespace DataBase;
 
 public partial class App : Application
 {

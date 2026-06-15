@@ -1,6 +1,6 @@
-using MyPlanner.Core.Models;
+using DataBase.Core.Models;
 
-namespace MyPlanner.Core.Validators;
+namespace DataBase.Core.Validators;
 
 public static class CalendarRecordValidator
 {

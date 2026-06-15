@@ -1,7 +1,7 @@
-using MyPlanner.Core.Models;
-using MyPlanner.Database.Entities;
+using DataBase.Core.Models;
+using DataBase.Database.Entities;
 
-namespace MyPlanner.Database.Repositories;
+namespace DataBase.Database.Repositories;
 
 public class CategoryRepository(AppDbContext db)
 {

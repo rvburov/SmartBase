@@ -1,4 +1,4 @@
-namespace MyPlanner.Core.Models;
+namespace DataBase.Core.Models;
 
 public class CalendarRecord
 {

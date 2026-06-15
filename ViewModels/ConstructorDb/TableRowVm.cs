@@ -1,9 +1,9 @@
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
-using MyPlanner.Core.Models;
-using MyPlanner.Database.Repositories;
+using DataBase.Core.Models;
+using DataBase.Database.Repositories;
 
-namespace MyPlanner.ViewModels.ConstructorDb;
+namespace DataBase.ViewModels.ConstructorDb;
 
 /// <summary>
 /// Одна строка таблицы конструктора. Хранит значения полей по field.Id и

@@ -1,13 +1,13 @@
 using System.Text.Json;
 
-namespace MyPlanner.Utils;
+namespace DataBase.Utils;
 
 /// <summary>
 /// Аналог config.py — пути к БД, настройки окна, масштаб.
 /// </summary>
 public static class AppSettings
 {
-    public const string AppName    = "MyPlanner";
+    public const string AppName    = "DataBase";
     public const string AppVersion = "1.0.0";
 
     public const double ScaleMin     = 1.0;
@@ -106,7 +106,7 @@ public static class AppSettings
 
     private static string ResolveAppDataDir()
     {
-        // В Release (publish) — AppData/Roaming/MyPlanner
+        // В Release (publish) — AppData/Roaming/DataBase
         // В Debug — папка Database/ рядом с проектом
 #if DEBUG
         return Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "Database");

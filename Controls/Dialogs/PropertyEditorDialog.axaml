@@ -1,6 +1,6 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        x:Class="MyPlanner.Controls.Dialogs.PropertyEditorDialog"
+        x:Class="DataBase.Controls.Dialogs.PropertyEditorDialog"
         Title="Создание свойства"
         Width="380"
         MinWidth="380"

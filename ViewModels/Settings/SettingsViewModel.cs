@@ -1,8 +1,8 @@
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
-using MyPlanner.Utils;
+using DataBase.Utils;
 
-namespace MyPlanner.ViewModels.Settings;
+namespace DataBase.ViewModels.Settings;
 
 public partial class SettingsViewModel : ViewModelBase
 {

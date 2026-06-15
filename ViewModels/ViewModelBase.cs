@@ -1,5 +1,5 @@
 using CommunityToolkit.Mvvm.ComponentModel;
 
-namespace MyPlanner.ViewModels;
+namespace DataBase.ViewModels;
 
 public abstract class ViewModelBase : ObservableObject;

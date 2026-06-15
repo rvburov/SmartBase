@@ -1,6 +1,6 @@
 using Avalonia.Controls;
 
-namespace MyPlanner.Controls.Components;
+namespace DataBase.Controls.Components;
 
 public partial class ConstructorFooter : UserControl
 {

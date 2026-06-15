@@ -1,4 +1,4 @@
-namespace MyPlanner.Utils;
+namespace DataBase.Utils;
 
 /// <summary>
 /// Аналог scaling.py — управление масштабом через settings.json.

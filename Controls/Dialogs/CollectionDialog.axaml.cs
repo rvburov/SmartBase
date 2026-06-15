@@ -1,10 +1,10 @@
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
-using MyPlanner.Core.Models;
-using MyPlanner.Database.Repositories;
+using DataBase.Core.Models;
+using DataBase.Database.Repositories;
 
-namespace MyPlanner.Controls.Dialogs;
+namespace DataBase.Controls.Dialogs;
 
 public record CollectionDialogResult(string Name, int? GroupId);
 

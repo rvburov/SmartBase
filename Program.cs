@@ -1,7 +1,7 @@
 using Avalonia;
-using MyPlanner.Utils;
+using DataBase.Utils;
 
-namespace MyPlanner;
+namespace DataBase;
 
 internal sealed class Program
 {

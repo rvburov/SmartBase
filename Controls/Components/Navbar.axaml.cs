@@ -3,7 +3,7 @@ using Avalonia.Controls;
 using Avalonia.Interactivity;
 using Avalonia.Media;
 
-namespace MyPlanner.Controls.Components;
+namespace DataBase.Controls.Components;
 
 public partial class Navbar : UserControl
 {

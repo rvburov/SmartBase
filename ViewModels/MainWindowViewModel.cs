@@ -1,11 +1,11 @@
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
-using MyPlanner.Database;
-using MyPlanner.Database.Repositories;
-using MyPlanner.ViewModels.Calendar;
-using MyPlanner.ViewModels.ConstructorDb;
+using DataBase.Database;
+using DataBase.Database.Repositories;
+using DataBase.ViewModels.Calendar;
+using DataBase.ViewModels.ConstructorDb;
 
-namespace MyPlanner.ViewModels;
+namespace DataBase.ViewModels;
 
 public partial class MainWindowViewModel : ViewModelBase
 {

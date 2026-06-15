@@ -1,6 +1,6 @@
 using Avalonia.Controls;
 
-namespace MyPlanner.Controls.Dialogs;
+namespace DataBase.Controls.Dialogs;
 
 public partial class ConfirmDialog : Window
 {

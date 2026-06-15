@@ -1,7 +1,7 @@
 using Microsoft.EntityFrameworkCore;
-using MyPlanner.Database.Entities;
+using DataBase.Database.Entities;
 
-namespace MyPlanner.Database;
+namespace DataBase.Database;
 
 public class AppDbContext : DbContext
 {

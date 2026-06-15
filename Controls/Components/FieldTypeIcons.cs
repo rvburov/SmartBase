@@ -1,6 +1,6 @@
 using Avalonia.Media;
 
-namespace MyPlanner.Controls.Components;
+namespace DataBase.Controls.Components;
 
 // Иконки типов свойств (lucide, сетка 24×24) — единый источник для диалога
 // создания/изменения свойства и заголовков колонок таблицы.

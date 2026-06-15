@@ -1,9 +1,9 @@
 using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
-using MyPlanner.Core.Models;
-using MyPlanner.Database.Repositories;
+using DataBase.Core.Models;
+using DataBase.Database.Repositories;
 
-namespace MyPlanner.ViewModels.ConstructorDb;
+namespace DataBase.ViewModels.ConstructorDb;
 
 /// <summary>
 /// Модель состояния правой панели «Страница записи» (Obsidian-стиль):

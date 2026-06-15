@@ -3,9 +3,9 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Media;
-using MyPlanner.Database.Repositories;
+using DataBase.Database.Repositories;
 
-namespace MyPlanner.Controls.Dialogs;
+namespace DataBase.Controls.Dialogs;
 
 /// <summary>
 /// Окно «Отображение записей» — менеджер видимости/уровней строк-записей таблицы

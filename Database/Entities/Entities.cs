@@ -1,7 +1,7 @@
 using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
 
-namespace MyPlanner.Database.Entities;
+namespace DataBase.Database.Entities;
 
 public class CategoryEntity
 {

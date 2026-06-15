@@ -4,9 +4,9 @@ using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Media;
-using MyPlanner.Core.Models;
+using DataBase.Core.Models;
 
-namespace MyPlanner.Controls.Components;
+namespace DataBase.Controls.Components;
 
 public partial class AllDayBar : UserControl
 {

@@ -4,11 +4,11 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Media;
 using CommunityToolkit.Mvvm.ComponentModel;
-using MyPlanner.Controls.Dialogs;
-using MyPlanner.Core.Models;
-using MyPlanner.Database.Repositories;
+using DataBase.Controls.Dialogs;
+using DataBase.Core.Models;
+using DataBase.Database.Repositories;
 
-namespace MyPlanner.Controls.Components;
+namespace DataBase.Controls.Components;
 
 public enum SidebarMode { Calendar, Constructor }
 

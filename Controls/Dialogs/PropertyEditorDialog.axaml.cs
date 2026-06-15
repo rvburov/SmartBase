@@ -1,10 +1,10 @@
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Media;
-using MyPlanner.Core.Models;
-using MyPlanner.Database.Repositories;
+using DataBase.Core.Models;
+using DataBase.Database.Repositories;
 
-namespace MyPlanner.Controls.Dialogs;
+namespace DataBase.Controls.Dialogs;
 
 /// <summary>Тип поля для ComboBox: обводочная иконка (lucide) + подпись.</summary>
 public sealed class FieldTypeItem

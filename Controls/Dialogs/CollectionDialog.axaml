@@ -1,6 +1,6 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        x:Class="MyPlanner.Controls.Dialogs.CollectionDialog"
+        x:Class="DataBase.Controls.Dialogs.CollectionDialog"
         Title="Новая коллекция"
         Width="420"
         MinWidth="420"

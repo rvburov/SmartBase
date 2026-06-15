@@ -1,7 +1,7 @@
 using CommunityToolkit.Mvvm.ComponentModel;
-using MyPlanner.Database.Repositories;
+using DataBase.Database.Repositories;
 
-namespace MyPlanner.ViewModels.Calendar;
+namespace DataBase.ViewModels.Calendar;
 
 public partial class JournalViewModel : CalendarViewModelBase
 {

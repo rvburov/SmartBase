@@ -2,7 +2,7 @@ using Microsoft.EntityFrameworkCore.Migrations;
 
 #nullable disable
 
-namespace MyPlanner.Database.Migrations
+namespace DataBase.Database.Migrations
 {
     /// <inheritdoc />
     public partial class DedupAndUniqueFieldNames : Migration

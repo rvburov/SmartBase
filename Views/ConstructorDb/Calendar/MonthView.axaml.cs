@@ -3,9 +3,9 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Media;
-using MyPlanner.Core.Models;
+using DataBase.Core.Models;
 
-namespace MyPlanner.Views.ConstructorDb.Calendar;
+namespace DataBase.Views.ConstructorDb.Calendar;
 
 public partial class MonthView : UserControl
 {
@@ -1133,15 +1133,15 @@ public partial class MonthView : UserControl
             if (_selections.Count > 1 && _selections.ContainsKey(ev))
             {
                 var batch = _selections.Keys.ToList();
-                menu.Items.Add(MyPlanner.Controls.Components.EventContextMenu.MakeDeleteItem(
+                menu.Items.Add(DataBase.Controls.Components.EventContextMenu.MakeDeleteItem(
                     () => { _Deselect(); RecordsDeleteRequested?.Invoke(this, batch); }));
                 return;
             }
-            menu.Items.Add(MyPlanner.Controls.Components.EventContextMenu.MakeEditItem(
+            menu.Items.Add(DataBase.Controls.Components.EventContextMenu.MakeEditItem(
                 () => { _Deselect(); RecordClicked?.Invoke(this, ev); }));
-            menu.Items.Add(MyPlanner.Controls.Components.EventContextMenu.MakeDuplicateItem(
+            menu.Items.Add(DataBase.Controls.Components.EventContextMenu.MakeDuplicateItem(
                 () => { _Deselect(); RecordDuplicateRequested?.Invoke(this, ev); }));
-            menu.Items.Add(MyPlanner.Controls.Components.EventContextMenu.MakeDeleteItem(
+            menu.Items.Add(DataBase.Controls.Components.EventContextMenu.MakeDeleteItem(
                 () => { _Deselect(); RecordDeleteRequested?.Invoke(this, ev); }));
         };
         return menu;
@@ -1154,7 +1154,7 @@ public partial class MonthView : UserControl
         {
             _Deselect();
             menu.Items.Clear();
-            menu.Items.Add(MyPlanner.Controls.Components.EventContextMenu.MakeCreateItem(
+            menu.Items.Add(DataBase.Controls.Components.EventContextMenu.MakeCreateItem(
                 () => DayAddClicked?.Invoke(this, date)));
         };
         return menu;

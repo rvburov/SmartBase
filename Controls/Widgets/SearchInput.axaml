@@ -1,6 +1,6 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             x:Class="MyPlanner.Controls.Widgets.SearchInput">
+             x:Class="DataBase.Controls.Widgets.SearchInput">
 
     <TextBox x:Name="PART_Input"
              Text="{Binding Text, RelativeSource={RelativeSource AncestorType=UserControl}, Mode=TwoWay}"

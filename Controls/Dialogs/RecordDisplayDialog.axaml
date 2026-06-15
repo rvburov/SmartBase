@@ -1,6 +1,6 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        x:Class="MyPlanner.Controls.Dialogs.RecordDisplayDialog"
+        x:Class="DataBase.Controls.Dialogs.RecordDisplayDialog"
         Title="Отображение записей"
         Width="460"
         MinWidth="460"

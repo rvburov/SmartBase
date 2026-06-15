@@ -4,10 +4,10 @@ using Avalonia.Input;
 using Avalonia.Media;
 using Avalonia.Interactivity;
 using CommunityToolkit.Mvvm.ComponentModel;
-using MyPlanner.Core.Models;
-using MyPlanner.Utils;
+using DataBase.Core.Models;
+using DataBase.Utils;
 
-namespace MyPlanner.Views.ConstructorDb.Calendar;
+namespace DataBase.Views.ConstructorDb.Calendar;
 
 public partial class ListView : UserControl
 {
@@ -157,12 +157,12 @@ public partial class ListView : UserControl
         ContextMenu menu;
         if (selected.Count > 1 && item.IsSelected)
         {
-            menu = MyPlanner.Controls.Components.EventContextMenu.Multi(
+            menu = DataBase.Controls.Components.EventContextMenu.Multi(
                 () => { DeselectAll(); RecordsDeleteRequested?.Invoke(this, selected); });
         }
         else
         {
-            menu = MyPlanner.Controls.Components.EventContextMenu.Single(
+            menu = DataBase.Controls.Components.EventContextMenu.Single(
                 onEdit:   () => { DeselectAll(); RecordClicked?.Invoke(this, item.OriginalEvent); },
                 onDelete: () => { DeselectAll(); RecordDeleteRequested?.Invoke(this, item.OriginalEvent); });
         }
@@ -175,7 +175,7 @@ public partial class ListView : UserControl
         // Меню фона открывается, только если клик не по событию (по событию
         // сработает OnEventContextRequested и пометит e.Handled).
         DeselectAll();
-        var menu = MyPlanner.Controls.Components.EventContextMenu.Background(
+        var menu = DataBase.Controls.Components.EventContextMenu.Background(
             () => CreateRequested?.Invoke(this, _currentDate));
         if (sender is Control c) menu.Open(c);
         e.Handled = true;

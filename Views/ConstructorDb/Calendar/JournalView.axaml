@@ -1,6 +1,6 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             x:Class="MyPlanner.Views.ConstructorDb.Calendar.JournalView"
+             x:Class="DataBase.Views.ConstructorDb.Calendar.JournalView"
              Background="{StaticResource BrushBg}">
 
     <ScrollViewer x:Name="JournalScroll" VerticalScrollBarVisibility="Auto"

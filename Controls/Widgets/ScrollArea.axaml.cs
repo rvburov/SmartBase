@@ -2,7 +2,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
 
-namespace MyPlanner.Controls.Widgets;
+namespace DataBase.Controls.Widgets;
 
 public partial class ScrollArea : UserControl
 {

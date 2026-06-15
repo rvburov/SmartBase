@@ -1,10 +1,10 @@
 using Avalonia.Controls;
 using Avalonia.VisualTree;
-using MyPlanner.Database.Repositories;
-using MyPlanner.Utils;
-using MyPlanner.ViewModels;
+using DataBase.Database.Repositories;
+using DataBase.Utils;
+using DataBase.ViewModels;
 
-namespace MyPlanner.Views;
+namespace DataBase.Views;
 
 public partial class MainWindow : Window
 {

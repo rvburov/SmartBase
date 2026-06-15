@@ -3,11 +3,11 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
-using MyPlanner.Database;
+using DataBase.Database;
 
 #nullable disable
 
-namespace MyPlanner.Database.Migrations
+namespace DataBase.Database.Migrations
 {
     [DbContext(typeof(AppDbContext))]
     [Migration("20260612133732_AddSystemFieldMeta")]
@@ -19,7 +19,7 @@ namespace MyPlanner.Database.Migrations
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "9.0.0");
 
-            modelBuilder.Entity("MyPlanner.Database.Entities.CategoryEntity", b =>
+            modelBuilder.Entity("DataBase.Database.Entities.CategoryEntity", b =>
                 {
                     b.Property<int>("Id")
                         .ValueGeneratedOnAdd()
@@ -41,7 +41,7 @@ namespace MyPlanner.Database.Migrations
                     b.ToTable("categories", (string)null);
                 });
 
-            modelBuilder.Entity("MyPlanner.Database.Entities.DbCollectionEntity", b =>
+            modelBuilder.Entity("DataBase.Database.Entities.DbCollectionEntity", b =>
                 {
                     b.Property<int>("Id")
                         .ValueGeneratedOnAdd()
@@ -72,7 +72,7 @@ namespace MyPlanner.Database.Migrations
                     b.ToTable("db_collections", (string)null);
                 });
 
-            modelBuilder.Entity("MyPlanner.Database.Entities.DbFieldEntity", b =>
+            modelBuilder.Entity("DataBase.Database.Entities.DbFieldEntity", b =>
                 {
                     b.Property<int>("Id")
                         .ValueGeneratedOnAdd()
@@ -116,7 +116,7 @@ namespace MyPlanner.Database.Migrations
                     b.ToTable("db_fields", (string)null);
                 });
 
-            modelBuilder.Entity("MyPlanner.Database.Entities.DbFieldValueEntity", b =>
+            modelBuilder.Entity("DataBase.Database.Entities.DbFieldValueEntity", b =>
                 {
                     b.Property<int>("Id")
                         .ValueGeneratedOnAdd()
@@ -142,7 +142,7 @@ namespace MyPlanner.Database.Migrations
                     b.ToTable("db_field_values", (string)null);
                 });
 
-            modelBuilder.Entity("MyPlanner.Database.Entities.DbGroupEntity", b =>
+            modelBuilder.Entity("DataBase.Database.Entities.DbGroupEntity", b =>
                 {
                     b.Property<int>("Id")
                         .ValueGeneratedOnAdd()
@@ -165,7 +165,7 @@ namespace MyPlanner.Database.Migrations
                     b.ToTable("db_groups", (string)null);
                 });
 
-            modelBuilder.Entity("MyPlanner.Database.Entities.DbRecordEntity", b =>
+            modelBuilder.Entity("DataBase.Database.Entities.DbRecordEntity", b =>
                 {
                     b.Property<int>("Id")
                         .ValueGeneratedOnAdd()
@@ -204,7 +204,7 @@ namespace MyPlanner.Database.Migrations
                     b.ToTable("db_records", (string)null);
                 });
 
-            modelBuilder.Entity("MyPlanner.Database.Entities.SystemFieldMetaEntity", b =>
+            modelBuilder.Entity("DataBase.Database.Entities.SystemFieldMetaEntity", b =>
                 {
                     b.Property<int>("CollectionId")
                         .HasColumnType("INTEGER");
@@ -223,7 +223,7 @@ namespace MyPlanner.Database.Migrations
                     b.ToTable("system_field_meta", (string)null);
                 });
 
-            modelBuilder.Entity("MyPlanner.Database.Entities.UiColWidthEntity", b =>
+            modelBuilder.Entity("DataBase.Database.Entities.UiColWidthEntity", b =>
                 {
                     b.Property<int>("CollectionId")
                         .HasColumnType("INTEGER");
@@ -239,7 +239,7 @@ namespace MyPlanner.Database.Migrations
                     b.ToTable("ui_col_widths", (string)null);
                 });
 
-            modelBuilder.Entity("MyPlanner.Database.Entities.UiCollectionSettingEntity", b =>
+            modelBuilder.Entity("DataBase.Database.Entities.UiCollectionSettingEntity", b =>
                 {
                     b.Property<int>("CollectionId")
                         .ValueGeneratedOnAdd()
@@ -260,7 +260,7 @@ namespace MyPlanner.Database.Migrations
                     b.ToTable("ui_collection_settings", (string)null);
                 });
 
-            modelBuilder.Entity("MyPlanner.Database.Entities.UiRowHeightEntity", b =>
+            modelBuilder.Entity("DataBase.Database.Entities.UiRowHeightEntity", b =>
                 {
                     b.Property<int>("CollectionId")
                         .HasColumnType("INTEGER");
@@ -276,9 +276,9 @@ namespace MyPlanner.Database.Migrations
                     b.ToTable("ui_row_heights", (string)null);
                 });
 
-            modelBuilder.Entity("MyPlanner.Database.Entities.DbCollectionEntity", b =>
+            modelBuilder.Entity("DataBase.Database.Entities.DbCollectionEntity", b =>
                 {
-                    b.HasOne("MyPlanner.Database.Entities.DbGroupEntity", "Group")
+                    b.HasOne("DataBase.Database.Entities.DbGroupEntity", "Group")
                         .WithMany("Collections")
                         .HasForeignKey("GroupId")
                         .OnDelete(DeleteBehavior.SetNull);
@@ -286,9 +286,9 @@ namespace MyPlanner.Database.Migrations
                     b.Navigation("Group");
                 });
 
-            modelBuilder.Entity("MyPlanner.Database.Entities.DbFieldEntity", b =>
+            modelBuilder.Entity("DataBase.Database.Entities.DbFieldEntity", b =>
                 {
-                    b.HasOne("MyPlanner.Database.Entities.DbCollectionEntity", "Collection")
+                    b.HasOne("DataBase.Database.Entities.DbCollectionEntity", "Collection")
                         .WithMany("Fields")
                         .HasForeignKey("CollectionId")
                         .OnDelete(DeleteBehavior.Cascade)
@@ -297,15 +297,15 @@ namespace MyPlanner.Database.Migrations
                     b.Navigation("Collection");
                 });
 
-            modelBuilder.Entity("MyPlanner.Database.Entities.DbFieldValueEntity", b =>
+            modelBuilder.Entity("DataBase.Database.Entities.DbFieldValueEntity", b =>
                 {
-                    b.HasOne("MyPlanner.Database.Entities.DbFieldEntity", "Field")
+                    b.HasOne("DataBase.Database.Entities.DbFieldEntity", "Field")
                         .WithMany("FieldValues")
                         .HasForeignKey("FieldId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
-                    b.HasOne("MyPlanner.Database.Entities.DbRecordEntity", "Record")
+                    b.HasOne("DataBase.Database.Entities.DbRecordEntity", "Record")
                         .WithMany("FieldValues")
                         .HasForeignKey("RecordId")
                         .OnDelete(DeleteBehavior.Cascade)
@@ -316,9 +316,9 @@ namespace MyPlanner.Database.Migrations
                     b.Navigation("Record");
                 });
 
-            modelBuilder.Entity("MyPlanner.Database.Entities.DbGroupEntity", b =>
+            modelBuilder.Entity("DataBase.Database.Entities.DbGroupEntity", b =>
                 {
-                    b.HasOne("MyPlanner.Database.Entities.DbGroupEntity", "Parent")
+                    b.HasOne("DataBase.Database.Entities.DbGroupEntity", "Parent")
                         .WithMany("Children")
                         .HasForeignKey("ParentId")
                         .OnDelete(DeleteBehavior.SetNull);
@@ -326,9 +326,9 @@ namespace MyPlanner.Database.Migrations
                     b.Navigation("Parent");
                 });
 
-            modelBuilder.Entity("MyPlanner.Database.Entities.DbRecordEntity", b =>
+            modelBuilder.Entity("DataBase.Database.Entities.DbRecordEntity", b =>
                 {
-                    b.HasOne("MyPlanner.Database.Entities.DbCollectionEntity", "Collection")
+                    b.HasOne("DataBase.Database.Entities.DbCollectionEntity", "Collection")
                         .WithMany("Records")
                         .HasForeignKey("CollectionId")
                         .OnDelete(DeleteBehavior.Cascade)
@@ -337,26 +337,26 @@ namespace MyPlanner.Database.Migrations
                     b.Navigation("Collection");
                 });
 
-            modelBuilder.Entity("MyPlanner.Database.Entities.DbCollectionEntity", b =>
+            modelBuilder.Entity("DataBase.Database.Entities.DbCollectionEntity", b =>
                 {
                     b.Navigation("Fields");
 
                     b.Navigation("Records");
                 });
 
-            modelBuilder.Entity("MyPlanner.Database.Entities.DbFieldEntity", b =>
+            modelBuilder.Entity("DataBase.Database.Entities.DbFieldEntity", b =>
                 {
                     b.Navigation("FieldValues");
                 });
 
-            modelBuilder.Entity("MyPlanner.Database.Entities.DbGroupEntity", b =>
+            modelBuilder.Entity("DataBase.Database.Entities.DbGroupEntity", b =>
                 {
                     b.Navigation("Children");
 
                     b.Navigation("Collections");
                 });
 
-            modelBuilder.Entity("MyPlanner.Database.Entities.DbRecordEntity", b =>
+            modelBuilder.Entity("DataBase.Database.Entities.DbRecordEntity", b =>
                 {
                     b.Navigation("FieldValues");
                 });

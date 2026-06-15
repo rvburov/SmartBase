@@ -1,9 +1,9 @@
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
-using MyPlanner.Database.Repositories;
+using DataBase.Database.Repositories;
 
-namespace MyPlanner.Controls.Dialogs;
+namespace DataBase.Controls.Dialogs;
 
 // Type: "collection" | "group"
 public record CreateItemResult(string Type, string Name, int? ParentId);

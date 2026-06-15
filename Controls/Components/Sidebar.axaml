@@ -1,7 +1,7 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             xmlns:comp="using:MyPlanner.Controls.Components"
-             x:Class="MyPlanner.Controls.Components.Sidebar"
+             xmlns:comp="using:DataBase.Controls.Components"
+             x:Class="DataBase.Controls.Components.Sidebar"
              Background="{StaticResource BrushBg}">
 
   <Border>

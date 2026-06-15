@@ -1,7 +1,7 @@
 using Avalonia;
 using Avalonia.Controls;
 
-namespace MyPlanner.Controls.Widgets;
+namespace DataBase.Controls.Widgets;
 
 public partial class AppLabel : UserControl
 {

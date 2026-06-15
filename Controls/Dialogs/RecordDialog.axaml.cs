@@ -4,11 +4,11 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
 using Avalonia.Layout;
-using MyPlanner.Core.Models;
-using MyPlanner.Core.Validators;
-using MyPlanner.Database.Repositories;
+using DataBase.Core.Models;
+using DataBase.Core.Validators;
+using DataBase.Database.Repositories;
 
-namespace MyPlanner.Controls.Dialogs;
+namespace DataBase.Controls.Dialogs;
 
 public record RecordDialogResult(CalendarRecord? Record, bool Deleted = false);
 

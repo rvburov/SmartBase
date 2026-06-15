@@ -102,37 +102,37 @@ cd calendar_avalonia
 dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true
 ```
 
-Результат: `artifacts/publish/MyPlanner/release_win-x64/MyPlanner.exe`
+Результат: `artifacts/publish/DataBase/release_win-x64/DataBase.exe`
 
 #### macOS (Intel)
 
 ```bash
 cd calendar_avalonia
 dotnet publish -c Release -r osx-x64 --self-contained true -p:PublishSingleFile=true
-chmod +x artifacts/publish/MyPlanner/release_osx-x64/MyPlanner
+chmod +x artifacts/publish/DataBase/release_osx-x64/DataBase
 ```
 
-Результат: `artifacts/publish/MyPlanner/release_osx-x64/MyPlanner`
+Результат: `artifacts/publish/DataBase/release_osx-x64/DataBase`
 
 #### macOS (Apple Silicon)
 
 ```bash
 cd calendar_avalonia
 dotnet publish -c Release -r osx-arm64 --self-contained true -p:PublishSingleFile=true
-chmod +x artifacts/publish/MyPlanner/release_osx-arm64/MyPlanner
+chmod +x artifacts/publish/DataBase/release_osx-arm64/DataBase
 ```
 
-Результат: `artifacts/publish/MyPlanner/release_osx-arm64/MyPlanner`
+Результат: `artifacts/publish/DataBase/release_osx-arm64/DataBase`
 
 #### Linux (x64)
 
 ```bash
 cd calendar_avalonia
 dotnet publish -c Release -r linux-x64 --self-contained true -p:PublishSingleFile=true
-chmod +x artifacts/publish/MyPlanner/release_linux-x64/MyPlanner
+chmod +x artifacts/publish/DataBase/release_linux-x64/DataBase
 ```
 
-Результат: `artifacts/publish/MyPlanner/release_linux-x64/MyPlanner`
+Результат: `artifacts/publish/DataBase/release_linux-x64/DataBase`
 
 > Все платформы можно собирать с одной машины — cross-compilation поддерживается.
 
@@ -192,8 +192,8 @@ calendar_avalonia/
 ├── Scripts/                    # installer.ps1, setup.ps1 — установка/настройка
 ├── docs/                       # DEVELOPER_GUIDE, USER_GUIDE, ROADMAP
 │
-├── MyPlanner.csproj            # Проект
-├── MyPlanner.sln               # Solution
+├── DataBase.csproj            # Проект
+├── DataBase.sln               # Solution
 ├── Directory.Build.props       # Артефакты сборки → artifacts\ (а не bin\/obj\)
 ├── nuget.config                # Кэш NuGet-пакетов → packages\ внутри проекта
 │
@@ -275,6 +275,6 @@ calendar_avalonia/
 **Расположение** (определяется в [Utils/AppSettings.cs](Utils/AppSettings.cs)):
 - При разработке (Debug): папка `Database/` рядом с проектом — `Database/database.db`
 - В собранном виде (Release) — в пользовательской папке данных ОС:
-  - **Windows:** `%APPDATA%\MyPlanner\database.db`
-  - **macOS:** `~/.config/MyPlanner/database.db`
-  - **Linux:** `~/.config/MyPlanner/database.db`
+  - **Windows:** `%APPDATA%\DataBase\database.db`
+  - **macOS:** `~/.config/DataBase/database.db`
+  - **Linux:** `~/.config/DataBase/database.db`

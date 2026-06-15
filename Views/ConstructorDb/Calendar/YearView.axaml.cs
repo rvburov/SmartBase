@@ -4,10 +4,10 @@ using Avalonia.Controls.Primitives;
 using Avalonia.Layout;
 using Avalonia.Media;
 using CommunityToolkit.Mvvm.Input;
-using MyPlanner.Core.Models;
+using DataBase.Core.Models;
 using System.Windows.Input;
 
-namespace MyPlanner.Views.ConstructorDb.Calendar;
+namespace DataBase.Views.ConstructorDb.Calendar;
 
 public partial class YearView : UserControl
 {

@@ -1,12 +1,12 @@
 <Application xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             x:Class="MyPlanner.App"
+             x:Class="DataBase.App"
              RequestedThemeVariant="Light">
 
     <Application.Resources>
         <ResourceDictionary>
             <ResourceDictionary.MergedDictionaries>
-                <ResourceInclude Source="avares://MyPlanner/Assets/Styles/Colors.axaml" />
+                <ResourceInclude Source="avares://DataBase/Assets/Styles/Colors.axaml" />
             </ResourceDictionary.MergedDictionaries>
 
         </ResourceDictionary>
@@ -15,9 +15,9 @@
     <Application.Styles>
         <FluentTheme />
         <StyleInclude Source="avares://Avalonia.Controls.DataGrid/Themes/Fluent.xaml" />
-        <StyleInclude Source="avares://MyPlanner/Assets/Styles/Typography.axaml" />
-        <StyleInclude Source="avares://MyPlanner/Assets/Styles/Controls.axaml" />
-        <StyleInclude Source="avares://MyPlanner/Controls/Widgets/AppCheckBox.axaml" />
+        <StyleInclude Source="avares://DataBase/Assets/Styles/Typography.axaml" />
+        <StyleInclude Source="avares://DataBase/Assets/Styles/Controls.axaml" />
+        <StyleInclude Source="avares://DataBase/Controls/Widgets/AppCheckBox.axaml" />
     </Application.Styles>
 
 </Application>

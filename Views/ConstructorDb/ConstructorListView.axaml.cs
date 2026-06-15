@@ -1,9 +1,9 @@
 using Avalonia.Controls;
 using CommunityToolkit.Mvvm.Input;
-using MyPlanner.Database.Repositories;
+using DataBase.Database.Repositories;
 using System.Windows.Input;
 
-namespace MyPlanner.Views.ConstructorDb;
+namespace DataBase.Views.ConstructorDb;
 
 public partial class ConstructorListView : UserControl
 {

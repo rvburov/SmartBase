@@ -1,6 +1,6 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             x:Class="MyPlanner.Views.Settings.SettingsView"
+             x:Class="DataBase.Views.Settings.SettingsView"
              Background="{StaticResource BrushBg}">
 
     <ScrollViewer VerticalScrollBarVisibility="Auto">

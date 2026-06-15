@@ -5,9 +5,9 @@ using Avalonia.Interactivity;
 using Avalonia.Media;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
-using MyPlanner.Core.Models;
+using DataBase.Core.Models;
 
-namespace MyPlanner.Views.ConstructorDb.Calendar;
+namespace DataBase.Views.ConstructorDb.Calendar;
 
 public partial class JournalView : UserControl
 {
@@ -199,12 +199,12 @@ public partial class JournalView : UserControl
         ContextMenu menu;
         if (selected.Count > 1 && item.IsSelected)
         {
-            menu = MyPlanner.Controls.Components.EventContextMenu.Multi(
+            menu = DataBase.Controls.Components.EventContextMenu.Multi(
                 () => { DeselectAll(); RecordsDeleteRequested?.Invoke(this, selected); });
         }
         else
         {
-            menu = MyPlanner.Controls.Components.EventContextMenu.Single(
+            menu = DataBase.Controls.Components.EventContextMenu.Single(
                 onEdit:   () => { DeselectAll(); RecordClicked?.Invoke(this, item.OriginalEvent); },
                 onDelete: () => { DeselectAll(); RecordDeleteRequested?.Invoke(this, item.OriginalEvent); });
         }
@@ -218,7 +218,7 @@ public partial class JournalView : UserControl
         // сработает OnEventContextRequested и пометит e.Handled).
         DeselectAll();
         var date = GetDateForY(_lastContextY);
-        var menu = MyPlanner.Controls.Components.EventContextMenu.Background(
+        var menu = DataBase.Controls.Components.EventContextMenu.Background(
             () => CreateRequested?.Invoke(this, date));
         if (sender is Control c) menu.Open(c);
         e.Handled = true;

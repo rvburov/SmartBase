@@ -1,9 +1,9 @@
 using System.Collections;
 using System.Collections.Specialized;
-using MyPlanner.Core.Models;
-using MyPlanner.Database.Repositories;
+using DataBase.Core.Models;
+using DataBase.Database.Repositories;
 
-namespace MyPlanner.ViewModels.ConstructorDb;
+namespace DataBase.ViewModels.ConstructorDb;
 
 /// <summary>
 /// Виртуальная коллекция строк таблицы с LRU-кешем страниц.

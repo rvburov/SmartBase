@@ -8,11 +8,11 @@ using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Media;
-using MyPlanner.Core.Models;
-using MyPlanner.Database.Repositories;
-using MyPlanner.ViewModels.ConstructorDb;
+using DataBase.Core.Models;
+using DataBase.Database.Repositories;
+using DataBase.ViewModels.ConstructorDb;
 
-namespace MyPlanner.Views.ConstructorDb;
+namespace DataBase.Views.ConstructorDb;
 
 /// <summary>
 /// Правая панель «Страница записи» (Obsidian-стиль): свойства сверху + markdown снизу.

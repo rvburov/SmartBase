@@ -1,9 +1,9 @@
 using Avalonia.Controls;
-using MyPlanner.Controls.Dialogs;
-using MyPlanner.Core.Models;
-using MyPlanner.Database.Repositories;
+using DataBase.Controls.Dialogs;
+using DataBase.Core.Models;
+using DataBase.Database.Repositories;
 
-namespace MyPlanner.Views.ConstructorDb.Calendar;
+namespace DataBase.Views.ConstructorDb.Calendar;
 
 public partial class CalendarControllerView : UserControl
 {

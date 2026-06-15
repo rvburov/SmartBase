@@ -1,6 +1,6 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        x:Class="MyPlanner.Controls.Dialogs.GroupDialog"
+        x:Class="DataBase.Controls.Dialogs.GroupDialog"
         Title="Новая группа"
         Width="420"
         MinWidth="420"
