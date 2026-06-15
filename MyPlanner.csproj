@@ -8,6 +8,13 @@
     <RootNamespace>MyPlanner</RootNamespace>
     <AssemblyName>MyPlanner</AssemblyName>
     <Version>1.0.0</Version>
+    <!--
+      При публикации в один файл (-p:PublishSingleFile=true) вшивать нативные
+      библиотеки (SkiaSharp, HarfBuzz, SQLite) в .exe и распаковывать их при
+      запуске. Без этого Skia не грузится из бандла → DllNotFoundException и
+      приложение падает на старте. На обычные сборки свойство не влияет.
+    -->
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
   </PropertyGroup>
 
   <ItemGroup>
