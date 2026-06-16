@@ -26,31 +26,50 @@
             <Popup Grid.Column="0" x:Name="Pop"
                    PlacementTarget="{Binding #Box}"
                    Placement="BottomEdgeAlignedLeft"
-                   IsLightDismissEnabled="True">
-                <Border Classes="timePopup" Padding="14" MinWidth="300">
-                    <StackPanel Spacing="12">
+                   IsLightDismissEnabled="False">
+                <Border Classes="timePopup" Background="{StaticResource BrushBg}"
+                        Padding="14" MinWidth="320">
+                    <StackPanel Spacing="8">
 
-                        <Calendar x:Name="Cal"
-                                  SelectionMode="SingleRange"
-                                  HorizontalAlignment="Stretch" />
+                        <!-- Начало -->
+                        <TextBlock Text="Начало"
+                                   FontWeight="{StaticResource FontWeightBold}"
+                                   FontSize="{StaticResource FontSizeBase}"
+                                   Foreground="{StaticResource BrushSecondaryText}" />
+                        <Grid x:Name="StartRow" ColumnDefinitions="2*,8,*">
+                            <CalendarDatePicker Grid.Column="0" x:Name="StartDate"
+                                                Height="34" HorizontalAlignment="Stretch"
+                                                SelectedDateFormat="Custom"
+                                                CustomDateFormatString="dd.MM.yyyy" />
+                            <w:TimeField Grid.Column="2" x:Name="StartTime" />
+                        </Grid>
 
-                        <CheckBox x:Name="AllDayCheck"
-                                  Content="Весь день"
-                                  FontSize="{StaticResource FontSizeBase}"
-                                  Foreground="{StaticResource BrushPrimaryText}" />
-
-                        <Grid x:Name="TimeRow" ColumnDefinitions="*,Auto,*">
-                            <w:TimeField Grid.Column="0" x:Name="StartTime" />
-                            <TextBlock Grid.Column="1" Text="—"
-                                       Margin="8,0"
-                                       VerticalAlignment="Center"
-                                       Foreground="{StaticResource BrushSecondaryText}" />
+                        <!-- Конец -->
+                        <TextBlock Text="Конец"
+                                   Margin="0,4,0,0"
+                                   FontWeight="{StaticResource FontWeightBold}"
+                                   FontSize="{StaticResource FontSizeBase}"
+                                   Foreground="{StaticResource BrushSecondaryText}" />
+                        <Grid x:Name="EndRow" ColumnDefinitions="2*,8,*">
+                            <CalendarDatePicker Grid.Column="0" x:Name="EndDate"
+                                                Height="34" HorizontalAlignment="Stretch"
+                                                SelectedDateFormat="Custom"
+                                                CustomDateFormatString="dd.MM.yyyy" />
                             <w:TimeField Grid.Column="2" x:Name="EndTime" />
                         </Grid>
 
-                        <Button x:Name="ClearBtn" Classes="dialog"
-                                Content="Очистить"
-                                HorizontalAlignment="Right" />
+                        <CheckBox x:Name="AllDayCheck"
+                                  Content="Весь день"
+                                  Margin="0,6,0,2"
+                                  FontSize="{StaticResource FontSizeBase}"
+                                  Foreground="{StaticResource BrushPrimaryText}" />
+
+                        <Grid ColumnDefinitions="Auto,*,Auto">
+                            <Button Grid.Column="0" x:Name="ClearBtn" Classes="dialog"
+                                    Content="Очистить" />
+                            <Button Grid.Column="2" x:Name="DoneBtn" Classes="dialog"
+                                    Content="Готово" />
+                        </Grid>
                     </StackPanel>
                 </Border>
             </Popup>

@@ -902,10 +902,14 @@ public partial class TableView : UserControl
                     : new FieldDisplayConverter(def.FieldType),
             };
 
+            // Числа выравниваем вправо (для этого TextBlock должен занять всю ширину ячейки).
+            var isNumber = def.FieldType == "number";
             return new TextBlock
             {
                 Margin              = new Thickness(6, 0, 6, 0),
                 VerticalAlignment   = VerticalAlignment.Center,
+                HorizontalAlignment = isNumber ? HorizontalAlignment.Stretch : HorizontalAlignment.Left,
+                TextAlignment       = isNumber ? TextAlignment.Right : TextAlignment.Left,
                 TextTrimming        = TextTrimming.CharacterEllipsis,
                 [!TextBlock.TextProperty] = binding,
             };
@@ -943,6 +947,20 @@ public partial class TableView : UserControl
                     return combo;
                 }
 
+                case "number":
+                {
+                    var tb = new TextBox
+                    {
+                        BorderThickness          = new Thickness(0),
+                        VerticalContentAlignment = VerticalAlignment.Center,
+                        TextAlignment            = TextAlignment.Right,
+                        [!TextBox.TextProperty]  = new Binding($"[{def.Key}]", BindingMode.TwoWay),
+                    };
+                    // Пропускаем только цифры, один разделитель и ведущий минус.
+                    tb.AddHandler(InputElement.TextInputEvent, OnNumberTextInput, RoutingStrategies.Tunnel);
+                    return tb;
+                }
+
                 default:
                     return new TextBox
                     {
@@ -953,6 +971,35 @@ public partial class TableView : UserControl
                     };
             }
         });
+
+    // Фильтр ввода числовой ячейки: символ принимается только если итоговый текст
+    // остаётся допустимым (частичным) числом — цифры, один разделитель, ведущий минус.
+    private static void OnNumberTextInput(object? sender, TextInputEventArgs e)
+    {
+        if (sender is not TextBox tb || string.IsNullOrEmpty(e.Text)) return;
+
+        var text  = tb.Text ?? "";
+        var start = Math.Min(tb.SelectionStart, tb.SelectionEnd);
+        var end   = Math.Max(tb.SelectionStart, tb.SelectionEnd);
+        var prospective = text[..start] + e.Text + text[end..];
+
+        if (!IsPartialNumber(prospective)) e.Handled = true;
+    }
+
+    // Допускает незавершённый ввод: "", "-", "12", "12,", "-3.5".
+    private static bool IsPartialNumber(string s)
+    {
+        if (s.Length == 0) return true;
+        var i = s[0] == '-' ? 1 : 0;
+        var seps = 0;
+        for (; i < s.Length; i++)
+        {
+            var c = s[i];
+            if (c is '.' or ',') { if (++seps > 1) return false; }
+            else if (!char.IsDigit(c)) return false;
+        }
+        return true;
+    }
 
     // ── Клики и контекстные меню ───────────────────────────────────────────────
 
