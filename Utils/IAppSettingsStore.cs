@@ -2,8 +2,8 @@ namespace DataBase.Utils;
 
 /// <summary>
 /// Хранилище настроек приложения (ключ-значение). Реализуется поверх системной app.db
-/// (см. <c>DatabaseRegistry</c>); <see cref="AppSettings"/> обращается к нему вместо
-/// прежнего settings.json. Интерфейс живёт в Utils, чтобы не тянуть слой БД в AppSettings.
+/// (см. <c>DatabaseRegistry</c>); <see cref="AppSettings"/> обращается к нему за
+/// настройками. Интерфейс живёт в Utils, чтобы не тянуть слой БД в AppSettings.
 /// </summary>
 public interface IAppSettingsStore
 {

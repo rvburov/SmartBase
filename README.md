@@ -153,9 +153,14 @@ calendar_avalonia/
 │   └── Importers/              # CalendarImporter — импорт данных
 │
 ├── Database/                   # Слой данных (EF Core + SQLite)
-│   ├── AppDbContext.cs         # EF Core контекст
+│   ├── AppDbContext.cs         # EF Core контекст пользовательской БД (database.db)
 │   ├── AppDbContextFactory.cs  # Фабрика для design-time миграций
-│   ├── Entities/               # Entities.cs — таблицы БД
+│   ├── SystemDbContext.cs      # Контекст системной app.db (реестр БД + настройки)
+│   ├── DatabaseManager.cs      # Открытие и миграции одной БД
+│   ├── DatabaseRegistry.cs     # Реестр БД + хранилище настроек поверх app.db
+│   ├── Workspace.cs            # Набор смонтированных БД (мультибаза)
+│   ├── EntityRef.cs            # Изоляция id (DbId, Id) между БД
+│   ├── Entities/               # Entities.cs, DatabaseRefEntity, AppSettingEntity
 │   ├── Migrations/             # Миграции EF Core + снапшот модели
 │   └── Repositories/           # CategoryRepository, ConstructorRepository
 │
@@ -179,7 +184,8 @@ calendar_avalonia/
 │   └── Widgets/                # AppButton, AppCheckBox, AppLabel, Selector, SearchInput, ScrollArea
 │
 ├── Utils/                      # Вспомогательные утилиты
-│   ├── AppSettings.cs          # Пути к БД, настройки окна, масштаб
+│   ├── AppSettings.cs          # Пути к БД (.localdata / %AppData%) + доступ к настройкам
+│   ├── IAppSettingsStore.cs    # Интерфейс хранилища настроек (реализован поверх app.db)
 │   ├── Autostart.cs            # Автозапуск приложения
 │   ├── BackgroundWorker.cs     # Фоновые задачи
 │   ├── Scaling.cs              # DPI-масштабирование
@@ -192,27 +198,57 @@ calendar_avalonia/
 ├── Scripts/                    # installer.ps1, setup.ps1 — установка/настройка
 ├── docs/                       # DEVELOPER_GUIDE, USER_GUIDE, ROADMAP
 │
-├── DataBase.csproj            # Проект
-├── DataBase.sln               # Solution
-├── Directory.Build.props       # Артефакты сборки → artifacts\ (а не bin\/obj\)
+│   # ── Файлы в корне проекта ──
+├── DataBase.csproj             # Проект
+├── DataBase.sln                # Solution
+├── Directory.Build.props       # Вывод сборки → artifacts\ (а не bin\/obj\)
 ├── nuget.config                # Кэш NuGet-пакетов → packages\ внутри проекта
+├── dotnet-tools.json           # Локальные dotnet-инструменты (например, EF CLI)
+├── .gitignore                  # Игнор: artifacts, packages, obj, *.db, .localdata…
+├── .gitattributes              # Нормализация переносов строк (LF/CRLF)
+├── README.md                   # Этот файл
 │
-├── artifacts/                  # ⚙ Служебная: вся сборка (bin/obj/publish). В .gitignore
-└── packages/                   # ⚙ Служебная: кэш NuGet-пакетов. В .gitignore
+│   # ── Служебные папки (в .gitignore, пересоздаются автоматически) ──
+├── .localdata/                 # ⚙ Dev-данные (Debug): database.db, app.db
+├── artifacts/                  # ⚙ Вся сборка: bin / obj / publish
+├── packages/                   # ⚙ Кэш NuGet-пакетов
+└── obj/                        # ⚙ Промежуточные файлы restore
 ```
 
-> **Служебные папки `artifacts/` и `packages/`** держат все временные файлы сборки
+> **Служебные папки `artifacts/`, `packages/`, `obj/`** держат временные файлы сборки
 > и скачанные пакеты внутри проекта (аналог `venv` в Python) — системный диск не
-> засоряется. Обе в `.gitignore` и пересоздаются автоматически при `dotnet build`.
-> Полностью очистить проект: удалить `artifacts\` и `packages\`.
+> засоряется. Все в `.gitignore` и пересоздаются автоматически при `dotnet build`.
+> Очистить только сборку: удалить `artifacts\` и `packages\`.
+>
+> Папка **`.localdata/`** тоже в `.gitignore`, но это **dev-данные** (БД при Debug) —
+> её удаление сотрёт локальную базу разработки, поэтому при «очистке проекта» её не трогают.
 
 ---
 
 ## База данных
 
-**Расположение** (определяется в [Utils/AppSettings.cs](Utils/AppSettings.cs)):
-- При разработке (Debug): папка `Database/` рядом с проектом — `Database/database.db`
-- В собранном виде (Release) — в пользовательской папке данных ОС:
-  - **Windows:** `%APPDATA%\DataBase\database.db`
-  - **macOS:** `~/.config/DataBase/database.db`
-  - **Linux:** `~/.config/DataBase/database.db`
+Приложение работает с двумя SQLite-БД (пути задаются в [Utils/AppSettings.cs](Utils/AppSettings.cs)):
+
+- **`database.db`** — пользовательские данные (коллекции, поля, записи, события календаря).
+- **`app.db`** — системная: реестр подключённых БД + настройки приложения.
+
+**В продакшене (Release)** файлы лежат в стандартной папке данных пользователя ОС — `…/DataBase/`:
+
+- **Windows** (`%APPDATA%`, Roaming):
+  - `C:\Users\<Имя>\AppData\Roaming\DataBase\database.db`
+  - `C:\Users\<Имя>\AppData\Roaming\DataBase\app.db`
+- **Linux** (`~/.config`):
+  - `/home/<имя>/.config/DataBase/database.db`
+  - `/home/<имя>/.config/DataBase/app.db`
+- **macOS** (`~/.config` — в .NET `ApplicationData` указывает на `~/.config`, а не на `~/Library/Application Support`):
+  - `/Users/<имя>/.config/DataBase/database.db`
+  - `/Users/<имя>/.config/DataBase/app.db`
+
+Во время работы рядом появляются временные файлы SQLite: `*.db-wal`, `*.db-shm`.
+
+**При разработке (Debug)** — папка `.localdata/` в корне проекта (находится по маркеру
+`DataBase.csproj`, поэтому не зависит от раскладки вывода):
+`calendar_avalonia/.localdata/database.db` и `.localdata/app.db` (в `.gitignore`).
+
+> Дополнительные `.db`-файлы (в т.ч. общие в сетевых папках) подключаются через
+> «Настройки → Управление базой данных»; их пути хранятся в `app.db`.

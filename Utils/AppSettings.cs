@@ -1,12 +1,10 @@
 using System.Globalization;
-using System.Text.Json;
 
 namespace DataBase.Utils;
 
 /// <summary>
 /// Пути к БД и типизированный доступ к настройкам приложения.
-/// Настройки хранятся в app.db через <see cref="IAppSettingsStore"/>; прежний
-/// settings.json упразднён — при наличии он один раз переносится в app.db и удаляется.
+/// Настройки хранятся в app.db через <see cref="IAppSettingsStore"/>.
 /// </summary>
 public static class AppSettings
 {
@@ -27,8 +25,6 @@ public static class AppSettings
     public static string DbPath     { get; } = Path.Combine(AppDataDir, "database.db");
     // Системная БД (реестр БД + настройки приложения) — независимое хранилище, не показывается.
     public static string SystemDbPath { get; } = Path.Combine(AppDataDir, "app.db");
-    // Устаревший файл настроек: больше не используется — переносится в app.db и удаляется.
-    public static string LegacySettingsPath { get; } = Path.Combine(AppDataDir, "settings.json");
 
     public static void EnsureCreated() =>
         Directory.CreateDirectory(AppDataDir);
@@ -39,12 +35,8 @@ public static class AppSettings
     // значения по умолчанию, а записи — no-op (живых обращений к настройкам до старта нет).
     private static IAppSettingsStore? _store;
 
-    /// <summary>Подключить хранилище настроек (app.db) и перенести старый settings.json, если он есть.</summary>
-    public static void AttachStore(IAppSettingsStore store)
-    {
-        _store = store;
-        MigrateLegacyJson();
-    }
+    /// <summary>Подключить хранилище настроек (app.db). Вызывается на старте после открытия app.db.</summary>
+    public static void AttachStore(IAppSettingsStore store) => _store = store;
 
     // ── Масштаб ───────────────────────────────────────────────────────────────
 
@@ -87,32 +79,6 @@ public static class AppSettings
     private const string KeyScale            = "scale";
     private const string KeyRecordPanelOpen  = "recordPanelOpen";
     private const string KeyRecordPanelWidth = "recordPanelWidth";
-
-    // ── Перенос со старого settings.json ───────────────────────────────────────
-
-    // Однократно: если рядом лежит старый settings.json — переносим известные ключи в
-    // app.db и удаляем файл. Битый/частичный JSON просто игнорируем (значения вернутся
-    // к умолчаниям). Вызывается из AttachStore, т.е. когда _store уже доступно.
-    private static void MigrateLegacyJson()
-    {
-        if (_store is null || !File.Exists(LegacySettingsPath)) return;
-        try
-        {
-            using var doc = JsonDocument.Parse(File.ReadAllText(LegacySettingsPath));
-            var root = doc.RootElement;
-
-            if (root.TryGetProperty(KeyScale, out var sc) && sc.ValueKind == JsonValueKind.Number)
-                _store.Set(KeyScale, sc.GetDouble().ToString(CultureInfo.InvariantCulture));
-            if (root.TryGetProperty(KeyRecordPanelOpen, out var po)
-                && po.ValueKind is JsonValueKind.True or JsonValueKind.False)
-                _store.Set(KeyRecordPanelOpen, po.GetBoolean() ? "true" : "false");
-            if (root.TryGetProperty(KeyRecordPanelWidth, out var pw) && pw.ValueKind == JsonValueKind.Number)
-                _store.Set(KeyRecordPanelWidth, pw.GetInt32().ToString(CultureInfo.InvariantCulture));
-
-            File.Delete(LegacySettingsPath);
-        }
-        catch { /* не критично: либо файл уже удалён, либо повторим при следующем старте */ }
-    }
 
     // ── Приватное ─────────────────────────────────────────────────────────────
 

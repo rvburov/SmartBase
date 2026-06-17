@@ -18,7 +18,7 @@ public partial class App : Application
             // Системный реестр БД (app.db). Регистрирует текущую БД как дефолтную.
             var registry = DatabaseRegistry.Open(AppSettings.DbPath);
 
-            // Настройки приложения хранятся в app.db; при наличии переносим старый settings.json.
+            // Настройки приложения хранятся в app.db.
             AppSettings.AttachStore(registry);
 
             // Рабочее пространство: монтирует дефолтную БД (миграции/сидинг внутри DatabaseManager).

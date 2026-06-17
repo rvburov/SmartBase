@@ -22,6 +22,7 @@ public sealed class DatabaseRegistry : IDisposable, IAppSettingsStore
         var db = new SystemDbContext(AppSettings.SystemDbPath);
         db.Database.EnsureCreated();   // создаёт app.db и таблицы, если их нет; существующие данные не трогает
         EnsureSettingsTable(db);       // app_settings могло не быть в старых app.db (EnsureCreated её не достроит)
+        db.Database.ExecuteSqlRaw("PRAGMA journal_mode=WAL;");  // WAL: параллельные чтения во время записи
         var registry = new DatabaseRegistry(db);
         registry.EnsureDefault(defaultDataPath);
         return registry;

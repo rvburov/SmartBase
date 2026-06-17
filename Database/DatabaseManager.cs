@@ -32,6 +32,10 @@ public sealed class DatabaseManager : IDisposable
         // при следующем запуске Migrate() накатит её, не трогая существующие данные.
         ApplySchemaMigrations(Context, path);
 
+        // Режим WAL: параллельные чтения во время записи + быстрее коммиты. Настройка
+        // персистится в заголовке файла; на сетевой ФС SQLite её тихо игнорирует.
+        EnableWal(Context);
+
         Categories  = new CategoryRepository(Context);
         Constructor = new ConstructorRepository(Context);
 
@@ -46,6 +50,10 @@ public sealed class DatabaseManager : IDisposable
     public static DatabaseManager Open(int dbId, string name, string path) => new(dbId, name, path);
 
     public void Dispose() => Context.Dispose();
+
+    // Включить WAL для файла БД (идемпотентно). На сетевой ФС SQLite оставит прежний режим.
+    private static void EnableWal(AppDbContext db) =>
+        db.Database.ExecuteSqlRaw("PRAGMA journal_mode=WAL;");
 
     // ── Миграции ────────────────────────────────────────────────────────────────
 

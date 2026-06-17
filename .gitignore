@@ -55,7 +55,6 @@ artifacts/
 /.localdata/
 
 # ===== КОНФИГУРАЦИЯ =====
-settings.json
 settings.ini
 appsettings.Local.json
 
