@@ -1,7 +1,7 @@
 namespace DataBase.Utils;
 
 /// <summary>
-/// Аналог scaling.py — управление масштабом через settings.json.
+/// Аналог scaling.py — управление масштабом (хранится в app.db, бывший settings.json).
 /// В Avalonia масштаб меняется через RenderScaling без перезапуска.
 /// </summary>
 public static class Scaling

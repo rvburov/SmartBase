@@ -13,7 +13,7 @@ public partial class SettingsSidebar : UserControl
     public SettingsSidebar()
     {
         InitializeComponent();
-        _rows = [GeneralRow, AppearanceRow, AboutRow];
+        _rows = [GeneralRow, AppearanceRow, DatabaseRow, AboutRow];
     }
 
     // Текущий выбранный раздел (по умолчанию — «Общие»).

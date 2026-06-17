@@ -50,6 +50,10 @@ artifacts/
 *.sqlite-wal
 *.sqlite-shm
 
+# ===== ЛОКАЛЬНЫЕ ДАННЫЕ (DEV) =====
+# Папка данных при разработке (Debug): app.db / database.db в корне проекта.
+/.localdata/
+
 # ===== КОНФИГУРАЦИЯ =====
 settings.json
 settings.ini

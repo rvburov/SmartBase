@@ -1,15 +1,16 @@
+using Microsoft.EntityFrameworkCore;
 using DataBase.Database.Entities;
 using DataBase.Utils;
 
 namespace DataBase.Database;
 
 /// <summary>
-/// Реестр пользовательских БД поверх системной app.db.
-/// Гарантирует наличие единственной дефолтной БД (текущий database.db), которую
-/// нельзя удалить. Добавленные базы пока только записываются в реестр —
-/// монтирование (открытие и работа с ними) появится на следующих этапах.
+/// Реестр пользовательских БД поверх системной app.db. Гарантирует наличие единственной
+/// дефолтной БД (текущий database.db), которую нельзя удалить. Здесь же — хранилище
+/// настроек приложения (<see cref="IAppSettingsStore"/>, таблица app_settings): контекст
+/// app.db живёт всё время работы приложения, поэтому настройки читаются/пишутся через него.
 /// </summary>
-public sealed class DatabaseRegistry : IDisposable
+public sealed class DatabaseRegistry : IDisposable, IAppSettingsStore
 {
     private readonly SystemDbContext _db;
 
@@ -19,10 +20,34 @@ public sealed class DatabaseRegistry : IDisposable
     public static DatabaseRegistry Open(string defaultDataPath)
     {
         var db = new SystemDbContext(AppSettings.SystemDbPath);
-        db.Database.EnsureCreated();   // создаёт app.db и таблицу, если их нет; существующие данные не трогает
+        db.Database.EnsureCreated();   // создаёт app.db и таблицы, если их нет; существующие данные не трогает
+        EnsureSettingsTable(db);       // app_settings могло не быть в старых app.db (EnsureCreated её не достроит)
         var registry = new DatabaseRegistry(db);
         registry.EnsureDefault(defaultDataPath);
         return registry;
+    }
+
+    // EnsureCreated() не изменяет уже существующую БД, поэтому в app.db, созданных до
+    // появления настроек, таблицы app_settings нет — создаём её аддитивно при открытии.
+    private static void EnsureSettingsTable(SystemDbContext db) =>
+        db.Database.ExecuteSqlRaw(
+            "CREATE TABLE IF NOT EXISTS \"app_settings\" (" +
+            "\"Key\" TEXT NOT NULL CONSTRAINT \"PK_app_settings\" PRIMARY KEY, " +
+            "\"Value\" TEXT NOT NULL);");
+
+    // ── Настройки приложения (IAppSettingsStore поверх app.db) ──────────────────
+
+    /// <summary>Значение настройки по ключу или null, если ключа нет.</summary>
+    public string? Get(string key) =>
+        _db.Settings.AsNoTracking().FirstOrDefault(s => s.Key == key)?.Value;
+
+    /// <summary>Записать/обновить значение настройки по ключу.</summary>
+    public void Set(string key, string value)
+    {
+        var row = _db.Settings.FirstOrDefault(s => s.Key == key);
+        if (row is null) _db.Settings.Add(new AppSettingEntity { Key = key, Value = value });
+        else             row.Value = value;
+        _db.SaveChanges();
     }
 
     // Если дефолтной БД ещё нет — регистрируем текущий database.db как основную.
