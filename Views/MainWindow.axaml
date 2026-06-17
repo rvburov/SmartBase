@@ -3,6 +3,7 @@
         xmlns:comp="using:DataBase.Controls.Components"
         xmlns:cal="using:DataBase.Views.ConstructorDb.Calendar"
         xmlns:con="using:DataBase.Views.ConstructorDb"
+        xmlns:settings="using:DataBase.Views.Settings"
         x:Class="DataBase.Views.MainWindow"
         Classes="main"
         Title="DataBase"
@@ -39,6 +40,7 @@
             <Grid>
                 <comp:Sidebar x:Name="CalendarSidebar" />
                 <comp:Sidebar x:Name="ConstructorSidebar" IsVisible="False" />
+                <comp:SettingsSidebar x:Name="SettingsSidebar" IsVisible="False" />
             </Grid>
         </Border>
 
@@ -46,6 +48,7 @@
         <Grid Grid.Column="3">
             <cal:CalendarControllerView x:Name="CalendarModule" />
             <con:ConstructorControllerView x:Name="ConstructorModule" IsVisible="False" />
+            <settings:SettingsView x:Name="SettingsModule" IsVisible="False" />
         </Grid>
 
         <!-- Вертикальный разделитель слева от панели записи -->

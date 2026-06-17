@@ -93,6 +93,23 @@ public partial class ConstructorControllerView : UserControl
         }
     }
 
+    // Открыть коллекцию из конкретной БД: перенацеливаем модуль на её репозиторий.
+    // В основной области одновременно открыта одна коллекция, поэтому достаточно
+    // держать активным один репозиторий (мульти-маунт живёт в сайдбаре).
+    public void OpenFrom(ConstructorRepository repository, int collectionId)
+    {
+        _repository = repository;
+        SelectCollection(collectionId);
+    }
+
+    // БД текущей коллекции размонтирована (удалена в настройках): переключаемся на
+    // запасной репозиторий и очищаем вид, чтобы не держать ссылку на закрытый контекст.
+    public void DetachDatabase(ConstructorRepository fallback)
+    {
+        _repository = fallback;
+        ClearView();
+    }
+
     public void SelectCollection(int collectionId)
     {
         var cols = _repository!.GetAllCollections();

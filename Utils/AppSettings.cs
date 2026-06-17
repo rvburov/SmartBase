@@ -22,6 +22,8 @@ public static class AppSettings
 
     public static string AppDataDir { get; } = ResolveAppDataDir();
     public static string DbPath     { get; } = Path.Combine(AppDataDir, "database.db");
+    // Системная БД (реестр БД + настройки приложения) — независимое хранилище, не показывается.
+    public static string SystemDbPath { get; } = Path.Combine(AppDataDir, "app.db");
     public static string SettingsPath { get; } = Path.Combine(AppDataDir, "settings.json");
 
     public static void EnsureCreated() =>

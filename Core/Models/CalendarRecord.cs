@@ -4,6 +4,7 @@ public class CalendarRecord
 {
     public const string UntitledPlaceholder = "Без названия";
 
+    public int      DbId           { get; set; }   // владелец-БД (мульти-маунт); 0 = по умолчанию
     public int?     Id             { get; set; }
     public string   Title          { get; set; } = "";
     public string   DisplayTitle   => string.IsNullOrWhiteSpace(Title) ? UntitledPlaceholder : Title;

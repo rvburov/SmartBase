@@ -19,6 +19,7 @@ public partial class ActivityBar : UserControl
 
         CalendarBtn.Click += (_, _) => SwitchModule("calendar");
         ConstructorBtn.Click += (_, _) => SwitchModule("constructor");
+        SettingsBtn.Click += (_, _) => SwitchModule("settings");
     }
 
     public void SetSidebarOpen(bool isOpen)
@@ -40,6 +41,7 @@ public partial class ActivityBar : UserControl
     {
         CalendarBtn.IsChecked = module == "calendar";
         ConstructorBtn.IsChecked = module == "constructor";
+        SettingsBtn.IsChecked = module == "settings";
     }
 
     private void SwitchModule(string module)

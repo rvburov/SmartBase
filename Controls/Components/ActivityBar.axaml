@@ -4,8 +4,10 @@
              Width="48"
              Background="{StaticResource BrushSecondaryBg}">
 
-    <!-- Вертикальная панель модулей: Календарь / Конструктор -->
-    <StackPanel Spacing="8" Margin="8,12,8,0">
+    <!-- Вертикальная панель модулей: Календарь / Конструктор сверху, Настройки снизу -->
+    <DockPanel LastChildFill="False">
+
+    <StackPanel DockPanel.Dock="Top" Spacing="8" Margin="8,12,8,0">
 
         <!-- Кнопка сайдбара: panel-left-open (закрыт) / panel-right-open (открыт) -->
         <ToggleButton x:Name="SidebarBtn" Classes="icon"
@@ -73,5 +75,27 @@
         </ToggleButton>
 
     </StackPanel>
+
+    <!-- Модуль: Настройки — закреплён внизу панели -->
+    <ToggleButton x:Name="SettingsBtn" Classes="icon module"
+                  DockPanel.Dock="Bottom"
+                  Width="32" Height="32"
+                  Margin="8,0,8,12"
+                  HorizontalAlignment="Center"
+                  CornerRadius="{StaticResource RadiusMedium}"
+                  ToolTip.Tip="Настройки">
+        <Viewbox Width="32" Height="32">
+            <Canvas Width="24" Height="24">
+                <!-- lucide settings -->
+                <Path Data="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1 -2.33 4.033 2.34 2.34 0 0 0 -3.319 1.915 2.34 2.34 0 0 1 -4.659 0 2.34 2.34 0 0 0 -3.32 -1.915 2.34 2.34 0 0 1 -2.33 -4.033 2.34 2.34 0 0 0 0 -3.831 A2.34 2.34 0 0 1 6.35 6.051 a2.34 2.34 0 0 0 3.319 -1.915 Z M15 12 A3 3 0 0 1 9 12 A3 3 0 0 1 15 12 Z"
+                      Stroke="{Binding $parent[ToggleButton].Foreground}"
+                      StrokeThickness="1.2"
+                      StrokeLineCap="Round"
+                      StrokeJoin="Round" />
+            </Canvas>
+        </Viewbox>
+    </ToggleButton>
+
+    </DockPanel>
 
 </UserControl>

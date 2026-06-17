@@ -1,5 +1,6 @@
 using Avalonia.Controls;
 using Avalonia.VisualTree;
+using DataBase.Database;
 using DataBase.Database.Repositories;
 using DataBase.Utils;
 using DataBase.ViewModels;
@@ -8,9 +9,17 @@ namespace DataBase.Views;
 
 public partial class MainWindow : Window
 {
+    private readonly Workspace _workspace;
     private readonly CategoryRepository _categories;
     private readonly ConstructorRepository _constructor;
     private string _activeModule = "calendar";
+
+    // Какая БД сейчас открыта в модуле конструктора (для панели записи и первой записи).
+    private int _currentConstructorDbId;
+
+    // Репозиторий конструктора текущей открытой БД (откат на дефолт, если не найдена).
+    private ConstructorRepository CurrentConstructorRepo =>
+        _workspace.Get(_currentConstructorDbId)?.Constructor ?? _constructor;
 
     // Три независимых состояния панелей. Физические ширины колонок и видимость ручек
     // ресайза вычисляются из них в одном месте — ApplyColumns().
@@ -18,22 +27,56 @@ public partial class MainWindow : Window
     private bool _collectionOpen = true;   // центральный блок коллекции/контента (col 3)
     // _recordPanelLogicalOpen — правая панель записи (col 5), объявлено ниже.
 
-    public MainWindow(
-        CategoryRepository categories,
-        ConstructorRepository constructor)
+    public MainWindow(Workspace workspace)
     {
         InitializeComponent();
 
-        _categories  = categories;
-        _constructor = constructor;
+        _workspace   = workspace;
+        // Календарь и панель записи пока работают с дефолтной БД (мульти-БД календаря — Этап 3.3).
+        _categories  = workspace.Default.Categories;
+        _constructor = workspace.Default.Constructor;
+        _currentConstructorDbId = workspace.Default.DbId;
 
-        // Инициализируем модули через AXAML-конструкторы
-        CalendarModule.Initialize(_constructor, _categories);
+        // Раздел настроек «Управление базой данных»: реестр + статус монтирования.
+        SettingsModule.Initialize(workspace.Registry, dbId => _workspace.Get(dbId) is not null);
+
+        // Live mount/unmount: добавление/удаление БД в настройках сразу отражается в
+        // сайдбаре конструктора без перезапуска.
+        SettingsModule.DatabaseAdded += (_, entry) =>
+        {
+            _workspace.Mount(entry);
+            SyncMountedToUi();
+        };
+        SettingsModule.DatabaseRemoved += (_, dbId) =>
+        {
+            // Если открыта коллекция удаляемой БД — отвязываем модуль на дефолтную БД.
+            if (_currentConstructorDbId == dbId)
+            {
+                _currentConstructorDbId = _workspace.Default.DbId;
+                ConstructorModule.DetachDatabase(_workspace.Default.Constructor);
+            }
+            _workspace.Unmount(dbId);
+            SyncMountedToUi();
+        };
+        SettingsModule.DatabaseReconnectRequested += (_, dbId) =>
+        {
+            // Повторная попытка монтирования (например, сетевая папка снова доступна).
+            var entry = _workspace.Registry.GetAll().FirstOrDefault(d => d.Id == dbId);
+            if (entry is not null)
+            {
+                _workspace.Mount(entry);
+                SyncMountedToUi();
+            }
+        };
+
+        // Инициализируем модули через AXAML-конструкторы.
+        // Календарь агрегирует события из всех смонтированных БД.
+        CalendarModule.Initialize(workspace.Mounted, _categories);
         ConstructorModule.Initialize(_constructor);
 
-        // Инициализируем данные боковых панелей
-        CalendarSidebar.Initialize(_constructor, Controls.Components.SidebarMode.Calendar);
-        ConstructorSidebar.Initialize(_constructor, Controls.Components.SidebarMode.Constructor);
+        // Боковые панели: и календарь, и конструктор показывают все смонтированные БД корнями.
+        CalendarSidebar.InitializeWorkspace(workspace.Mounted, Controls.Components.SidebarMode.Calendar);
+        ConstructorSidebar.InitializeWorkspace(workspace.Mounted, Controls.Components.SidebarMode.Constructor);
 
         // Начальное состояние: модуль Календарь
         ActivityBarControl.SetModuleActive("calendar");
@@ -43,6 +86,9 @@ public partial class MainWindow : Window
         // Связываем ActivityBar
         ActivityBarControl.SidebarToggled += (_, isOpen) => { _sidebarOpen = isOpen; OnSidebarToggled(isOpen); };
         ActivityBarControl.ModuleChanged  += (_, module) => ShowModule(module);
+
+        // Сайдбар настроек: выбор раздела открывает его в основной области.
+        SettingsSidebar.CategorySelected += (_, key) => SettingsModule.ShowCategory(key);
 
         // Sidebar коллекций передаёт активные id в CalendarModule
         CalendarSidebar.ActiveIdsChanged += (_, ids) =>
@@ -62,11 +108,13 @@ public partial class MainWindow : Window
             CalendarModule.SetActiveIds(CalendarSidebar.GetActiveIds());
         };
 
-        // Дерево конструктора: выбор коллекции открывает её в ConstructorModule.
+        // Дерево конструктора: выбор коллекции открывает её в ConstructorModule из её БД.
         // Если центральный блок был скрыт (свёрнут из записи) — снова показываем его.
-        ConstructorSidebar.CollectionSelected += (_, id) =>
+        ConstructorSidebar.CollectionSelected += (_, sel) =>
         {
-            ConstructorModule.SelectCollection(id);
+            var db = _workspace.Get(sel.DbId) ?? _workspace.Default;
+            _currentConstructorDbId = db.DbId;
+            ConstructorModule.OpenFrom(db.Constructor, sel.Id);
             if (!_collectionOpen)
                 ApplyConstructorContentVisibility(true);
         };
@@ -141,11 +189,22 @@ public partial class MainWindow : Window
             table.CloseTransientPopups();
     }
 
+    // Пересобрать боковые панели и обновить набор БД календаря после монтирования/размонтирования.
+    private void SyncMountedToUi()
+    {
+        ConstructorSidebar.InitializeWorkspace(_workspace.Mounted, Controls.Components.SidebarMode.Constructor);
+        CalendarSidebar.InitializeWorkspace(_workspace.Mounted, Controls.Components.SidebarMode.Calendar);
+        CalendarModule.SetDatabases(_workspace.Mounted);
+        CalendarModule.SetActiveIds(CalendarSidebar.GetActiveIds());
+        SettingsModule.RefreshDatabases();   // обновить статус «подключена/не подключена»
+    }
+
     private void ShowModule(string module)
     {
         _activeModule = module;
 
         CalendarModule.IsVisible = module == "calendar";
+        SettingsModule.IsVisible = module == "settings";
         // Видимость ConstructorModule зависит ещё и от _collectionOpen — её ставит ApplyColumns.
 
         if (module == "calendar")
@@ -155,7 +214,7 @@ public partial class MainWindow : Window
             CalendarSidebar.Refresh();
             CalendarModule.SetActiveIds(CalendarSidebar.GetActiveIds());
         }
-        else
+        else if (module == "constructor")
         {
             CalendarSidebar.IsVisible    = false;
             ConstructorSidebar.IsVisible = _sidebarOpen;
@@ -165,6 +224,17 @@ public partial class MainWindow : Window
             ConstructorModule.SetRecordPanelOpen(_recordPanelLogicalOpen);
             RecordPanel.SetCollectionPanelOpen(_collectionOpen);
         }
+        else // settings — собственный сайдбар со списком разделов, без панели записи
+        {
+            CalendarSidebar.IsVisible    = false;
+            ConstructorSidebar.IsVisible = false;
+            SettingsSidebar.IsVisible    = _sidebarOpen;
+            SettingsModule.ShowCategory(SettingsSidebar.SelectedKey);
+        }
+
+        // Сайдбар настроек виден только в режиме настроек.
+        if (module != "settings")
+            SettingsSidebar.IsVisible = false;
 
         ApplyColumns();
     }
@@ -175,8 +245,10 @@ public partial class MainWindow : Window
 
         if (_activeModule == "calendar")
             CalendarSidebar.IsVisible = isOpen;
-        else
+        else if (_activeModule == "constructor")
             ConstructorSidebar.IsVisible = isOpen;
+        else // settings
+            SettingsSidebar.IsVisible = isOpen;
 
         ApplyColumns();
     }
@@ -200,7 +272,7 @@ public partial class MainWindow : Window
         var cols = RootGrid.ColumnDefinitions;
         var inConstructor = _activeModule == "constructor";
 
-        // Центральный блок скрывается только в конструкторе; в календаре он всегда «открыт».
+        // Центральный блок скрывается только в конструкторе; в календаре/настройках он всегда «открыт».
         var collection = !inConstructor || _collectionOpen;
         // Панель записи существует только в конструкторе.
         var record     = inConstructor && _recordPanelLogicalOpen;
@@ -306,7 +378,7 @@ public partial class MainWindow : Window
     {
         var cid = ConstructorModule.CurrentCollectionId;
         if (cid is null) return null;
-        var first = _constructor.GetRecords(cid.Value).FirstOrDefault();
+        var first = CurrentConstructorRepo.GetRecords(cid.Value).FirstOrDefault();
         return first?.Id;
     }
 
@@ -315,7 +387,8 @@ public partial class MainWindow : Window
         var collectionId = ConstructorModule.CurrentCollectionId;
         if (collectionId is null) return;
 
-        RecordPanel.Show(_constructor, recordId, collectionId.Value);
+        // Панель записи открывается из репозитория той БД, чья коллекция сейчас активна.
+        RecordPanel.Show(CurrentConstructorRepo, recordId, collectionId.Value);
         _recordPanelLogicalOpen = true;
         _lastOpenedRecordId     = recordId;
         ConstructorModule.SetRecordPanelOpen(true);

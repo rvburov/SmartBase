@@ -1,56 +1,273 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:DataBase.Views.Settings"
              x:Class="DataBase.Views.Settings.SettingsView"
              Background="{StaticResource BrushBg}">
 
-    <ScrollViewer VerticalScrollBarVisibility="Auto">
-        <StackPanel Margin="24" Spacing="16" MaxWidth="500" HorizontalAlignment="Left">
+    <UserControl.Resources>
+        <!-- Ползунок-«таблетка»: белый прямоугольник со скруглением и мягкой тенью. -->
+        <ControlTheme x:Key="SettingSliderThumb" TargetType="Thumb">
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Template">
+                <ControlTemplate>
+                    <Border CornerRadius="9"
+                            Background="White"
+                            BorderBrush="{StaticResource BrushSeparator}"
+                            BorderThickness="1"
+                            BoxShadow="0 1 3 0 #22000000" />
+                </ControlTemplate>
+            </Setter>
+        </ControlTheme>
 
-            <TextBlock Text="Настройки"
+        <!-- Половинки дорожки — прозрачные, чтобы под ними была видна единая линия. -->
+        <ControlTheme x:Key="SettingSliderTrackButton" TargetType="RepeatButton">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="Template">
+                <ControlTemplate>
+                    <Border Background="Transparent" />
+                </ControlTemplate>
+            </Setter>
+        </ControlTheme>
+    </UserControl.Resources>
+
+    <UserControl.Styles>
+        <!-- Слайдер настроек: тонкая дорожка + ползунок-«таблетка» (как в Obsidian). -->
+        <Style Selector="Slider.setting">
+            <Setter Property="MinWidth" Value="180" />
+            <Setter Property="Height"   Value="24" />
+            <Setter Property="Minimum"  Value="0" />
+            <Setter Property="Maximum"  Value="100" />
+            <Setter Property="Template">
+                <ControlTemplate>
+                    <Border Background="Transparent" VerticalAlignment="Center">
+                        <Grid VerticalAlignment="Center">
+                            <!-- единая дорожка -->
+                            <Border Height="4" CornerRadius="2"
+                                    VerticalAlignment="Center"
+                                    Background="{StaticResource BrushSeparator}" />
+                            <Track Name="PART_Track" Orientation="Horizontal"
+                                   Minimum="{TemplateBinding Minimum}"
+                                   Maximum="{TemplateBinding Maximum}"
+                                   Value="{TemplateBinding Value, Mode=TwoWay}">
+                                <Track.DecreaseButton>
+                                    <RepeatButton Name="PART_DecreaseButton"
+                                                  Theme="{StaticResource SettingSliderTrackButton}" />
+                                </Track.DecreaseButton>
+                                <Track.IncreaseButton>
+                                    <RepeatButton Name="PART_IncreaseButton"
+                                                  Theme="{StaticResource SettingSliderTrackButton}" />
+                                </Track.IncreaseButton>
+                                <Track.Thumb>
+                                    <Thumb Width="26" Height="18"
+                                           Theme="{StaticResource SettingSliderThumb}" />
+                                </Track.Thumb>
+                            </Track>
+                        </Grid>
+                    </Border>
+                </ControlTemplate>
+            </Setter>
+        </Style>
+
+        <!-- Строка одной настройки -->
+        <Style Selector="Border.settingRow">
+            <Setter Property="BorderBrush"     Value="{StaticResource BrushSeparator}" />
+            <Setter Property="BorderThickness" Value="0,0,0,1" />
+            <Setter Property="Padding"         Value="0,16" />
+        </Style>
+        <Style Selector="Border.settingRow TextBlock.title">
+            <Setter Property="Foreground" Value="{StaticResource BrushPrimaryText}" />
+        </Style>
+        <Style Selector="Border.settingRow TextBlock.desc">
+            <Setter Property="FontSize"     Value="{StaticResource FontSizeSmall}" />
+            <Setter Property="Foreground"   Value="{StaticResource BrushSecondaryText}" />
+            <Setter Property="TextWrapping" Value="Wrap" />
+        </Style>
+    </UserControl.Styles>
+
+    <DockPanel>
+
+        <!-- Шапка раздела (высота 56 — выравнивание с линией навбара) -->
+        <Border DockPanel.Dock="Top" Height="56" Padding="32,0">
+            <TextBlock x:Name="TitleText"
+                       Text="Общие"
+                       VerticalAlignment="Center"
                        FontSize="{StaticResource FontSizeLarge}"
                        FontWeight="{StaticResource FontWeightBold}"
                        Foreground="{StaticResource BrushPrimaryText}" />
+        </Border>
 
-            <!-- Appearance -->
-            <TextBlock Text="Интерфейс"
-                       FontSize="{StaticResource FontSizeBase}"
-                       Foreground="{StaticResource BrushSecondaryText}"
-                       Margin="0,8,0,0" />
+        <!-- Содержимое выбранного раздела -->
+        <Grid>
 
-            <Border Background="{StaticResource BrushSecondaryBg}"
-                    CornerRadius="{StaticResource RadiusBase}"
-                    Padding="16">
-                <Grid ColumnDefinitions="*,Auto">
-                    <TextBlock Grid.Column="0"
-                               Text="Масштаб интерфейса"
-                               FontSize="{StaticResource FontSizeBase}"
-                               Foreground="{StaticResource BrushPrimaryText}"
-                               VerticalAlignment="Center" />
-                    <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
-                        <Button x:Name="ZoomOutBtn"
-                                Content="−"
-                                Width="32"
-                                Height="32"
-                                Padding="0"
-                                HorizontalContentAlignment="Center" />
-                        <TextBlock x:Name="ZoomLabel"
-                                   Text="100%"
-                                   FontSize="{StaticResource FontSizeBase}"
-                                   Foreground="{StaticResource BrushPrimaryText}"
-                                   VerticalAlignment="Center"
-                                   Width="48"
-                                   TextAlignment="Center" />
-                        <Button x:Name="ZoomInBtn"
-                                Content="+"
-                                Width="32"
-                                Height="32"
-                                Padding="0"
-                                HorizontalContentAlignment="Center" />
+            <!-- ── Общие ─────────────────────────────────────────── -->
+            <ScrollViewer x:Name="GeneralPanel" VerticalScrollBarVisibility="Auto">
+                <StackPanel Margin="32,16,32,32" Spacing="12" MaxWidth="640"
+                            HorizontalAlignment="Left">
+                    <TextBlock Text="Основные параметры приложения."
+                               Foreground="{StaticResource BrushSecondaryText}" />
+                </StackPanel>
+            </ScrollViewer>
+
+            <!-- ── Оформление ────────────────────────────────────── -->
+            <ScrollViewer x:Name="AppearancePanel" IsVisible="False"
+                          VerticalScrollBarVisibility="Auto">
+                <StackPanel Margin="32,0,32,32" MaxWidth="720">
+
+                    <!-- Уровень масштабирования -->
+                    <Border Classes="settingRow">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <StackPanel Grid.Column="0" Spacing="4"
+                                        VerticalAlignment="Center" Margin="0,0,32,0">
+                                <TextBlock Classes="title" Text="Уровень масштабирования" />
+                                <TextBlock Classes="desc"
+                                           Text="Управление общим уровнем масштабирования в приложении." />
+                            </StackPanel>
+                            <StackPanel Grid.Column="1" Orientation="Horizontal"
+                                        Spacing="14" VerticalAlignment="Center">
+                                <Button Classes="icon" Width="24" Height="24"
+                                        ToolTip.Tip="Сбросить">
+                                    <Viewbox Width="16" Height="16">
+                                        <Canvas Width="24" Height="24">
+                                            <!-- rotate-ccw -->
+                                            <Path Data="M3 12 a9 9 0 1 0 9 -9 a9.75 9.75 0 0 0 -6.74 2.74 L3 8 M3 3 V8 H8"
+                                                  Stroke="{Binding $parent[Button].Foreground}"
+                                                  StrokeThickness="1.8"
+                                                  StrokeLineCap="Round" StrokeJoin="Round" />
+                                        </Canvas>
+                                    </Viewbox>
+                                </Button>
+                                <Slider Classes="setting" Width="200" Value="50" />
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+
+                    <!-- Размер шрифта -->
+                    <Border Classes="settingRow">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <StackPanel Grid.Column="0" Spacing="4"
+                                        VerticalAlignment="Center" Margin="0,0,32,0">
+                                <TextBlock Classes="title" Text="Размер шрифта" />
+                                <TextBlock Classes="desc"
+                                           Text="Размер шрифта в пикселях в области редактирования и предварительного просмотра." />
+                            </StackPanel>
+                            <StackPanel Grid.Column="1" Orientation="Horizontal"
+                                        Spacing="14" VerticalAlignment="Center">
+                                <Button Classes="icon" Width="24" Height="24"
+                                        ToolTip.Tip="Сбросить">
+                                    <Viewbox Width="16" Height="16">
+                                        <Canvas Width="24" Height="24">
+                                            <!-- rotate-ccw -->
+                                            <Path Data="M3 12 a9 9 0 1 0 9 -9 a9.75 9.75 0 0 0 -6.74 2.74 L3 8 M3 3 V8 H8"
+                                                  Stroke="{Binding $parent[Button].Foreground}"
+                                                  StrokeThickness="1.8"
+                                                  StrokeLineCap="Round" StrokeJoin="Round" />
+                                        </Canvas>
+                                    </Viewbox>
+                                </Button>
+                                <Slider Classes="setting" Width="200" Value="40" />
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+
+                </StackPanel>
+            </ScrollViewer>
+
+            <!-- ── Управление базой данных ───────────────────────── -->
+            <ScrollViewer x:Name="DatabasePanel" IsVisible="False"
+                          VerticalScrollBarVisibility="Auto">
+                <StackPanel Margin="32,16,32,32" Spacing="16" MaxWidth="720">
+
+                    <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Left">
+                        <Button x:Name="CreateDatabaseBtn"
+                                Content="Создать базу данных"
+                                Click="OnCreateDatabaseClick" />
+                        <Button x:Name="ConnectDatabaseBtn"
+                                Content="Подключить существующую"
+                                Click="OnConnectDatabaseClick" />
                     </StackPanel>
-                </Grid>
-            </Border>
 
-        </StackPanel>
-    </ScrollViewer>
+                    <ItemsControl x:Name="DatabaseList">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate x:DataType="vm:DatabaseRow">
+                                <Border Classes="settingRow">
+                                    <Grid ColumnDefinitions="*,Auto">
+                                        <StackPanel Grid.Column="0" Spacing="3"
+                                                    VerticalAlignment="Center" Margin="0,0,16,0">
+                                            <TextBlock Text="{Binding Name}"
+                                                       Foreground="{StaticResource BrushPrimaryText}" />
+                                            <TextBlock Text="{Binding Path}"
+                                                       FontSize="{StaticResource FontSizeSmall}"
+                                                       Foreground="{StaticResource BrushSecondaryText}"
+                                                       TextTrimming="CharacterEllipsis" />
+                                            <!-- Файл недоступен / не смонтирована -->
+                                            <TextBlock Text="Не подключена (файл недоступен)"
+                                                       FontSize="{StaticResource FontSizeSmall}"
+                                                       Foreground="{StaticResource BrushRed}"
+                                                       IsVisible="{Binding ShowNotMounted}" />
+                                        </StackPanel>
+
+                                        <StackPanel Grid.Column="1" Orientation="Horizontal"
+                                                    Spacing="8" VerticalAlignment="Center">
+
+                                            <!-- Дефолтная БД: метка -->
+                                            <TextBlock Text="По умолчанию"
+                                                       VerticalAlignment="Center"
+                                                       FontSize="{StaticResource FontSizeSmall}"
+                                                       Foreground="{StaticResource BrushSecondaryText}"
+                                                       IsVisible="{Binding ShowDefaultBadge}" />
+
+                                            <!-- Недоступна → попытка переподключения -->
+                                            <Button Content="Подключить заново"
+                                                    Tag="{Binding Id}"
+                                                    Click="OnReconnectDatabaseClick"
+                                                    VerticalAlignment="Center"
+                                                    IsVisible="{Binding ShowNotMounted}" />
+
+                                            <!-- Удалить из реестра (файл не удаляется) -->
+                                            <Button Classes="icon"
+                                                    Width="28" Height="28"
+                                                    Tag="{Binding Id}"
+                                                    Click="OnRemoveDatabaseClick"
+                                                    ToolTip.Tip="Отключить (файл не удаляется)"
+                                                    VerticalAlignment="Center"
+                                                    IsVisible="{Binding ShowDeleteButton}">
+                                                <Viewbox Width="16" Height="16">
+                                                    <Canvas Width="24" Height="24">
+                                                        <!-- trash -->
+                                                        <Path Data="M3 6 H21 M8 6 V4 A1 1 0 0 1 9 3 H15 A1 1 0 0 1 16 4 V6 M19 6 V20 A2 2 0 0 1 17 22 H7 A2 2 0 0 1 5 20 V6 M10 11 V17 M14 11 V17"
+                                                              Stroke="{Binding $parent[Button].Foreground}"
+                                                              StrokeThickness="1.6"
+                                                              StrokeLineCap="Round" StrokeJoin="Round" />
+                                                    </Canvas>
+                                                </Viewbox>
+                                            </Button>
+                                        </StackPanel>
+                                    </Grid>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+
+                </StackPanel>
+            </ScrollViewer>
+
+            <!-- ── О программе ───────────────────────────────────── -->
+            <ScrollViewer x:Name="AboutPanel" IsVisible="False"
+                          VerticalScrollBarVisibility="Auto">
+                <StackPanel Margin="32,16,32,32" Spacing="6" MaxWidth="640"
+                            HorizontalAlignment="Left">
+                    <TextBlock Text="DataBase"
+                               FontSize="{StaticResource FontSizeLarge}"
+                               FontWeight="{StaticResource FontWeightBold}"
+                               Foreground="{StaticResource BrushPrimaryText}" />
+                    <TextBlock x:Name="VersionText"
+                               Text="Версия 1.0.0"
+                               Foreground="{StaticResource BrushSecondaryText}" />
+                </StackPanel>
+            </ScrollViewer>
+
+        </Grid>
+
+    </DockPanel>
 
 </UserControl>

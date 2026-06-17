@@ -1,6 +1,7 @@
 using Avalonia.Controls;
 using DataBase.Controls.Dialogs;
 using DataBase.Core.Models;
+using DataBase.Database;
 using DataBase.Database.Repositories;
 
 namespace DataBase.Views.ConstructorDb.Calendar;
@@ -9,31 +10,31 @@ public partial class CalendarControllerView : UserControl
 {
     public event EventHandler? CollectionsMayHaveChanged;
 
-    private ConstructorRepository _records = null!;
+    // Все смонтированные БД: события агрегируются из всех, CRUD маршрутизируется по DbId.
+    private readonly List<(int DbId, string Name, ConstructorRepository Repo)> _dbs = [];
     private CategoryRepository _categories = null!;
 
     private DateTime _currentDate = DateTime.Today;
     private int _currentViewIndex = 4;   // 4 = Месяц
-    private HashSet<int>? _activeIds;
+    // Активные коллекции по БД (DbId → набор id). null до первого SetActiveIds.
+    private Dictionary<int, HashSet<int>>? _activeByDb;
     private string _searchQuery = "";
 
-    private static readonly UserControl[] ViewOrder = [];  // заполняется в конструкторе
+    // Репозиторий БД по умолчанию (новые события, сидинг) и маршрутизация по записи.
+    private ConstructorRepository DefaultRepo => _dbs[0].Repo;
+    private ConstructorRepository RepoOf(CalendarRecord r)
+    {
+        foreach (var d in _dbs) if (d.DbId == r.DbId) return d.Repo;
+        return DefaultRepo;
+    }
 
     public CalendarControllerView() { InitializeComponent(); }
 
-    public CalendarControllerView(
-        ConstructorRepository records,
-        CategoryRepository categories)
-    {
-        InitializeComponent();
-        Initialize(records, categories);
-    }
-
     public void Initialize(
-        ConstructorRepository records,
+        IReadOnlyList<DatabaseManager> databases,
         CategoryRepository categories)
     {
-        _records    = records;
+        SetDatabaseList(databases);
         _categories = categories;
 
         NavbarControl.TodayClicked  += (_, _) =>
@@ -61,27 +62,27 @@ public partial class CalendarControllerView : UserControl
 
         ListViewCtrl.RecordClicked          += (_, r) => _ = OpenEditDialog(r);
         ListViewCtrl.CreateRequested        += (_, d) => _ = OpenAddDialog(d);
-        ListViewCtrl.RecordDeleteRequested  += (_, r) => { if (r.Id.HasValue) { _records.DeleteCalendarRecord(r.Id.Value); CollectionsMayHaveChanged?.Invoke(this, EventArgs.Empty); RefreshCurrent(); } };
+        ListViewCtrl.RecordDeleteRequested  += (_, r) => { if (r.Id.HasValue) { RepoOf(r).DeleteCalendarRecord(r.Id.Value); CollectionsMayHaveChanged?.Invoke(this, EventArgs.Empty); RefreshCurrent(); } };
         ListViewCtrl.RecordsDeleteRequested += (_, rs) => _ = DeleteRecordsWithConfirm(rs);
         JournalViewCtrl.RecordClicked          += (_, r) => _ = OpenEditDialog(r);
         JournalViewCtrl.CreateRequested        += (_, d) => _ = OpenAddDialog(d);
-        JournalViewCtrl.RecordDeleteRequested  += (_, r) => { if (r.Id.HasValue) { _records.DeleteCalendarRecord(r.Id.Value); CollectionsMayHaveChanged?.Invoke(this, EventArgs.Empty); RefreshCurrent(); } };
+        JournalViewCtrl.RecordDeleteRequested  += (_, r) => { if (r.Id.HasValue) { RepoOf(r).DeleteCalendarRecord(r.Id.Value); CollectionsMayHaveChanged?.Invoke(this, EventArgs.Empty); RefreshCurrent(); } };
         JournalViewCtrl.RecordsDeleteRequested += (_, rs) => _ = DeleteRecordsWithConfirm(rs);
         MonthViewCtrl.RecordClicked          += (_, r) => _ = OpenEditDialog(r);
-        MonthViewCtrl.RecordMoved            += (_, r) => { _records.UpdateCalendarRecord(r); CollectionsMayHaveChanged?.Invoke(this, EventArgs.Empty); RefreshCurrent(); };
-        MonthViewCtrl.RecordDeleteRequested    += (_, r) => { if (r.Id.HasValue) { _records.DeleteCalendarRecord(r.Id.Value); CollectionsMayHaveChanged?.Invoke(this, EventArgs.Empty); RefreshCurrent(); } };
+        MonthViewCtrl.RecordMoved            += (_, r) => { RepoOf(r).UpdateCalendarRecord(r); CollectionsMayHaveChanged?.Invoke(this, EventArgs.Empty); RefreshCurrent(); };
+        MonthViewCtrl.RecordDeleteRequested    += (_, r) => { if (r.Id.HasValue) { RepoOf(r).DeleteCalendarRecord(r.Id.Value); CollectionsMayHaveChanged?.Invoke(this, EventArgs.Empty); RefreshCurrent(); } };
         MonthViewCtrl.RecordsDeleteRequested   += (_, rs) => _ = DeleteRecordsWithConfirm(rs);
         MonthViewCtrl.RecordDuplicateRequested += (_, r) => DuplicateCalendarRecord(r);
         DayViewCtrl.RecordClicked              += (_, r) => _ = OpenEditDialog(r);
-        DayViewCtrl.RecordMoved                += (_, r) => { _records.UpdateCalendarRecord(r); CollectionsMayHaveChanged?.Invoke(this, EventArgs.Empty); RefreshCurrent(); };
-        DayViewCtrl.RecordDeleteRequested      += (_, r) => { if (r.Id.HasValue) { _records.DeleteCalendarRecord(r.Id.Value); CollectionsMayHaveChanged?.Invoke(this, EventArgs.Empty); RefreshCurrent(); } };
+        DayViewCtrl.RecordMoved                += (_, r) => { RepoOf(r).UpdateCalendarRecord(r); CollectionsMayHaveChanged?.Invoke(this, EventArgs.Empty); RefreshCurrent(); };
+        DayViewCtrl.RecordDeleteRequested      += (_, r) => { if (r.Id.HasValue) { RepoOf(r).DeleteCalendarRecord(r.Id.Value); CollectionsMayHaveChanged?.Invoke(this, EventArgs.Empty); RefreshCurrent(); } };
         DayViewCtrl.RecordsDeleteRequested     += (_, rs) => _ = DeleteRecordsWithConfirm(rs);
         DayViewCtrl.RecordDuplicateRequested   += (_, r) => DuplicateCalendarRecord(r);
         DayViewCtrl.AllDayCreationRequested    += (_, d)  => _ = OpenAddAllDayDialog(d);
         DayViewCtrl.TimeSlotCreationRequested  += (_, dt) => _ = OpenAddDialog(dt.Date, dt.TimeOfDay);
         WeekViewCtrl.RecordClicked             += (_, r) => _ = OpenEditDialog(r);
-        WeekViewCtrl.RecordMoved               += (_, r) => { _records.UpdateCalendarRecord(r); CollectionsMayHaveChanged?.Invoke(this, EventArgs.Empty); RefreshCurrent(); };
-        WeekViewCtrl.RecordDeleteRequested     += (_, r) => { if (r.Id.HasValue) { _records.DeleteCalendarRecord(r.Id.Value); CollectionsMayHaveChanged?.Invoke(this, EventArgs.Empty); RefreshCurrent(); } };
+        WeekViewCtrl.RecordMoved               += (_, r) => { RepoOf(r).UpdateCalendarRecord(r); CollectionsMayHaveChanged?.Invoke(this, EventArgs.Empty); RefreshCurrent(); };
+        WeekViewCtrl.RecordDeleteRequested     += (_, r) => { if (r.Id.HasValue) { RepoOf(r).DeleteCalendarRecord(r.Id.Value); CollectionsMayHaveChanged?.Invoke(this, EventArgs.Empty); RefreshCurrent(); } };
         WeekViewCtrl.RecordsDeleteRequested    += (_, rs) => _ = DeleteRecordsWithConfirm(rs);
         WeekViewCtrl.RecordDuplicateRequested  += (_, r) => DuplicateCalendarRecord(r);
         WeekViewCtrl.AllDayCreationRequested   += (_, d)  => _ = OpenAddAllDayDialog(d);
@@ -91,10 +92,39 @@ public partial class CalendarControllerView : UserControl
         SeedIfEmpty();
     }
 
-    public void SetActiveIds(HashSet<int> ids)
+    public void SetActiveIds(Dictionary<int, HashSet<int>> activeByDb)
     {
-        _activeIds = ids;
+        _activeByDb = activeByDb;
         RefreshCurrent();
+    }
+
+    // Обновить набор смонтированных БД (live add/remove) без переподписки обработчиков.
+    public void SetDatabases(IReadOnlyList<DatabaseManager> databases)
+    {
+        SetDatabaseList(databases);
+        RefreshCurrent();
+    }
+
+    private void SetDatabaseList(IReadOnlyList<DatabaseManager> databases)
+    {
+        _dbs.Clear();
+        foreach (var d in databases) _dbs.Add((d.DbId, d.Name, d.Constructor));
+    }
+
+    // Выбрать целевую БД для нового события. Одна БД → без вопроса; несколько → диалог.
+    // Возвращает null при отмене.
+    private async Task<ConstructorRepository?> ChooseTargetRepoAsync()
+    {
+        if (_dbs.Count == 0) return null;
+        if (_dbs.Count == 1) return _dbs[0].Repo;
+        if (VisualRoot is not Avalonia.Controls.Window win) return _dbs[0].Repo;
+
+        var dlg    = new SelectDatabaseDialog(_dbs.Select(d => (d.DbId, d.Name)).ToList());
+        var chosen = await dlg.ShowDialog<int?>(win);
+        if (chosen is not int dbId) return null;
+
+        foreach (var d in _dbs) if (d.DbId == dbId) return d.Repo;
+        return _dbs[0].Repo;
     }
 
     private void SwitchView(int idx)
@@ -140,7 +170,18 @@ public partial class CalendarControllerView : UserControl
     private void RefreshCurrent(bool scrollToNow = false)
     {
         var (startDt, endDt) = GetDateRange();
-        var records = _records.GetCalendarRecordsByRange(startDt, endDt, _activeIds);
+
+        // Агрегируем события из всех смонтированных БД, помечая каждое его DbId,
+        // и фильтруем каждую БД по её активным коллекциям.
+        var records = new List<CalendarRecord>();
+        foreach (var (dbId, _, repo) in _dbs)
+        {
+            ISet<int>? active = _activeByDb is not null && _activeByDb.TryGetValue(dbId, out var s) ? s : null;
+            var part = repo.GetCalendarRecordsByRange(startDt, endDt, active);
+            foreach (var r in part) r.DbId = dbId;
+            records.AddRange(part);
+        }
+
         if (!string.IsNullOrEmpty(_searchQuery))
             records = records.Where(r => r.Title.Contains(_searchQuery, StringComparison.OrdinalIgnoreCase)).ToList();
 
@@ -212,13 +253,16 @@ public partial class CalendarControllerView : UserControl
     private async Task OpenAddAllDayDialog(DateOnly date)
     {
         if (VisualRoot is not Avalonia.Controls.Window win) return;
-        var dlg = new RecordDialog(_records,
+        var repo = await ChooseTargetRepoAsync();
+        if (repo is null) return;   // отмена выбора БД
+
+        var dlg = new RecordDialog(repo,
                                    presetDate: date.ToDateTime(TimeOnly.MinValue),
                                    presetAllDay: true);
         var result = await dlg.ShowDialog<RecordDialogResult?>(win);
         if (result?.Record is not null)
         {
-            _records.AddCalendarRecord(result.Record);
+            repo.AddCalendarRecord(result.Record);
             CollectionsMayHaveChanged?.Invoke(this, EventArgs.Empty);
             RefreshCurrent();
         }
@@ -227,11 +271,14 @@ public partial class CalendarControllerView : UserControl
     private async Task OpenAddDialog(DateTime presetDate, TimeSpan? presetTime = null)
     {
         if (VisualRoot is not Avalonia.Controls.Window win) return;
-        var dlg = new RecordDialog(_records, presetDate: presetDate, presetTime: presetTime);
+        var repo = await ChooseTargetRepoAsync();
+        if (repo is null) return;   // отмена выбора БД
+
+        var dlg = new RecordDialog(repo, presetDate: presetDate, presetTime: presetTime);
         var result = await dlg.ShowDialog<RecordDialogResult?>(win);
         if (result?.Record is not null)
         {
-            _records.AddCalendarRecord(result.Record);
+            repo.AddCalendarRecord(result.Record);
             CollectionsMayHaveChanged?.Invoke(this, EventArgs.Empty);
             RefreshCurrent();
         }
@@ -240,13 +287,16 @@ public partial class CalendarControllerView : UserControl
     private async Task OpenEditDialog(CalendarRecord r)
     {
         if (VisualRoot is not Avalonia.Controls.Window win) return;
-        var dlg = new RecordDialog(_records, editRecord: r);
+        var repo = RepoOf(r);
+        var dlg = new RecordDialog(repo, editRecord: r);
         var result = await dlg.ShowDialog<RecordDialogResult?>(win);
         if (result is null) return;
-        if (result.Deleted) _records.DeleteCalendarRecord(r.Id!.Value);
+        if (result.Deleted) repo.DeleteCalendarRecord(r.Id!.Value);
         else if (result.Record is not null)
         {
-            _records.UpdateCalendarRecord(result.Record);
+            // Сохраняем принадлежность БД (диалог её не знает).
+            result.Record.DbId = r.DbId;
+            repo.UpdateCalendarRecord(result.Record);
             CollectionsMayHaveChanged?.Invoke(this, EventArgs.Empty);
         }
         RefreshCurrent();
@@ -256,6 +306,7 @@ public partial class CalendarControllerView : UserControl
     {
         var copy = new CalendarRecord
         {
+            DbId         = r.DbId,
             CollectionId = r.CollectionId,
             Title        = r.Title,
             Description  = r.Description,
@@ -264,7 +315,7 @@ public partial class CalendarControllerView : UserControl
             AllDay       = r.AllDay,
             Color        = r.Color,
         };
-        _records.AddCalendarRecord(copy);
+        RepoOf(r).AddCalendarRecord(copy);
         CollectionsMayHaveChanged?.Invoke(this, EventArgs.Empty);
         RefreshCurrent();
     }
@@ -272,13 +323,14 @@ public partial class CalendarControllerView : UserControl
     private async Task DeleteRecordsWithConfirm(IReadOnlyList<CalendarRecord> records)
     {
         if (VisualRoot is not Avalonia.Controls.Window win) return;
-        var ids = records.Where(r => r.Id.HasValue).Select(r => r.Id!.Value).Distinct().ToList();
-        if (ids.Count == 0) return;
+        var targets = records.Where(r => r.Id.HasValue).ToList();
+        if (targets.Count == 0) return;
 
-        var dlg = new ConfirmDialog($"Вы удаляете {ids.Count} {RecordsPlural(ids.Count)}. Подтвердить?");
+        var dlg = new ConfirmDialog($"Вы удаляете {targets.Count} {RecordsPlural(targets.Count)}. Подтвердить?");
         if (await dlg.ShowDialog<bool>(win) != true) return;
 
-        foreach (var id in ids) _records.DeleteCalendarRecord(id);
+        // Каждую запись удаляем в её БД.
+        foreach (var r in targets) RepoOf(r).DeleteCalendarRecord(r.Id!.Value);
         CollectionsMayHaveChanged?.Invoke(this, EventArgs.Empty);
         RefreshCurrent();
     }
@@ -299,11 +351,11 @@ public partial class CalendarControllerView : UserControl
 
     private void SeedIfEmpty()
     {
-        if (_records.CountCalendarRecords() > 0) return;
+        if (DefaultRepo.CountCalendarRecords() > 0) return;
 
         var today = DateTime.Today;
-        _records.AddCalendarRecord(new CalendarRecord { Title = "Стэндап", StartDt = today.AddHours(10), EndDt = today.AddHours(10.5), Color = "#007AFF" });
-        _records.AddCalendarRecord(new CalendarRecord { Title = "Обед", StartDt = today.AddHours(13), EndDt = today.AddHours(14), Color = "#34C759" });
-        _records.AddCalendarRecord(new CalendarRecord { Title = "Ревью", StartDt = today.AddDays(1).AddHours(15), EndDt = today.AddDays(1).AddHours(16), Color = "#FF9500" });
+        DefaultRepo.AddCalendarRecord(new CalendarRecord { Title = "Стэндап", StartDt = today.AddHours(10), EndDt = today.AddHours(10.5), Color = "#007AFF" });
+        DefaultRepo.AddCalendarRecord(new CalendarRecord { Title = "Обед", StartDt = today.AddHours(13), EndDt = today.AddHours(14), Color = "#34C759" });
+        DefaultRepo.AddCalendarRecord(new CalendarRecord { Title = "Ревью", StartDt = today.AddDays(1).AddHours(15), EndDt = today.AddDays(1).AddHours(16), Color = "#FF9500" });
     }
 }
