@@ -1,5 +1,6 @@
 using System.Text.RegularExpressions;
 using Microsoft.EntityFrameworkCore;
+using DataBase.Core.Importers;
 using DataBase.Core.Models;
 using DataBase.Database.Entities;
 
@@ -130,6 +131,69 @@ public class ConstructorRepository(AppDbContext db)
         // Title и Description теперь являются колонками таблицы db_records.
         // В схеме DbFields их больше не создаём.
         return col;
+    }
+
+    // Ключи системных колонок (см. TableRowVm.TitleKey/DescKey). Дублируем строками,
+    // чтобы слой БД не зависел от ViewModels.
+    private const string TitleKey = "__title__";
+    private const string DescKey  = "__desc__";
+
+    /// <summary>
+    /// Создать новую коллекцию из распарсенного листа Excel: текстовые свойства по столбцам,
+    /// записи со значениями, подписи системных колонок «Название»/«Описание» из заголовков.
+    /// Всё в одной транзакции. Возвращает id созданной коллекции.
+    /// </summary>
+    public int ImportExcelCollection(string collectionName, int? groupId, ExcelImportData data)
+    {
+        using var tx = db.Database.BeginTransaction();
+
+        var maxPos = db.DbCollections.Select(c => (int?)c.Position).Max() ?? 0;
+        var col = new DbCollectionEntity
+        {
+            Name = collectionName, GroupId = groupId, Position = maxPos + 1000,
+            Icon = "table", Color = "#007AFF",
+        };
+        db.DbCollections.Add(col);
+        db.SaveChanges();
+
+        // Свойства (столбцы 3+) — текстовые, в порядке столбцов. Имена уже уникальны.
+        var fields = data.FieldNames
+            .Select((name, i) => new DbFieldEntity
+            {
+                CollectionId = col.Id, Name = name, FieldType = "text", Position = (i + 1) * 1000,
+            })
+            .ToList();
+        db.DbFields.AddRange(fields);
+        db.SaveChanges();
+        var fieldIds = fields.Select(f => f.Id).ToList();
+
+        // Подписи системных колонок из заголовков (пусто/дефолт → имя по умолчанию).
+        SetSystemFieldName(col.Id, TitleKey, data.TitleHeader, "Название");
+        SetSystemFieldName(col.Id, DescKey,  data.DescHeader,  "Описание");
+
+        // Записи + значения свойств. Значения добавляем через навигацию, чтобы вставить
+        // всё одним SaveChanges (быстро даже на больших файлах).
+        var now = DateTime.Now.ToString("o");
+        var pos = 0;
+        foreach (var row in data.Rows)
+        {
+            pos += 1000;
+            var rec = new DbRecordEntity
+            {
+                CollectionId = col.Id, CreatedAt = now, Position = pos,
+                Title = row.Title, Description = row.Description,
+            };
+            for (var i = 0; i < fieldIds.Count; i++)
+            {
+                var val = i < row.FieldValues.Count ? row.FieldValues[i] : "";
+                rec.FieldValues.Add(new DbFieldValueEntity { FieldId = fieldIds[i], Value = val ?? "" });
+            }
+            db.DbRecords.Add(rec);
+        }
+        db.SaveChanges();
+
+        tx.Commit();
+        return col.Id;
     }
 
     public void UpdateCollection(DbCollection col)

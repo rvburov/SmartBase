@@ -80,6 +80,21 @@
                     </Viewbox>
                 </Button>
 
+                <!-- Импорт/экспорт данных (заглушка, lucide download) -->
+                <Button x:Name="ImportExportBtn" Classes="navbtn"
+                        Width="30" Height="30"
+                        CornerRadius="{StaticResource RadiusMedium}"
+                        ToolTip.Tip="Импорт/Экспорт">
+                    <Viewbox Width="18" Height="18">
+                        <Canvas Width="24" Height="24">
+                            <Path Data="M12 15 V3 M21 15 v4 a2 2 0 0 1 -2 2 H5 a2 2 0 0 1 -2 -2 v-4 M7 10 l5 5 5 -5"
+                                  Stroke="{Binding $parent[Button].Foreground}"
+                                  StrokeThickness="1.8"
+                                  StrokeLineCap="Round" StrokeJoin="Round" />
+                        </Canvas>
+                    </Viewbox>
+                </Button>
+
             </StackPanel>
         </Border>
 

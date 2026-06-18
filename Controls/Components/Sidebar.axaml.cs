@@ -84,6 +84,7 @@ public partial class Sidebar : UserControl
         ExpandBtn.IsCheckedChanged += (_, _) => ToggleExpandAll(ExpandBtn.IsChecked == true);
         SortBtn.Click              += (_, _) => CycleSort();
         ToggleAllBtn.Click         += (_, _) => ToggleAllChecked();
+        ImportExportBtn.Click      += (_, _) => _ = OpenImportExport();
     }
 
     // Календарь: одна БД, без корневых узлов (вид как прежде). DbId не важен — узлы
@@ -745,6 +746,31 @@ public partial class Sidebar : UserControl
             ReloadAndNotify();
             if (col.Id.HasValue && _mode == SidebarMode.Constructor) OpenCollection(res.DbId, col.Id.Value);
         }
+    }
+
+    // Импорт листа Excel в новую коллекцию. Окно само читает файл и создаёт коллекцию
+    // в выбранной БД; здесь только обновляем список и открываем результат (в конструкторе).
+    private async Task OpenImportExport()
+    {
+        if (OwnerWindow is null || RepoFor(DefaultDbId) is null) return;
+
+        // Тултип кнопки не должен мерцать поверх модального окна (как в CreateItem).
+        ToolTip.SetIsOpen(ImportExportBtn, false);
+        ToolTip.SetServiceEnabled(ImportExportBtn, false);
+        ImportExportResult? res;
+        try
+        {
+            var dlg = new ImportExportDialog(DbOptions(), DefaultDbId);
+            res = await dlg.ShowDialog<ImportExportResult?>(OwnerWindow);
+        }
+        finally
+        {
+            ToolTip.SetServiceEnabled(ImportExportBtn, true);
+        }
+        if (res is null) return;
+
+        ReloadAndNotify();
+        if (_mode == SidebarMode.Constructor) OpenCollection(res.DbId, res.CollectionId);
     }
 
     private void ExpandGroup(int dbId, int groupId)
