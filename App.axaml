@@ -15,6 +15,13 @@
     <Application.Styles>
         <FluentTheme />
         <StyleInclude Source="avares://Avalonia.Controls.DataGrid/Themes/Fluent.xaml" />
+
+        <!-- Иконка приложения для ВСЕХ окон (главное + все диалоги, в т.ч. будущие).
+             На Windows/Linux это иконка в заголовке окна, таскбаре и Alt-Tab.
+             На macOS иконка окна не отображается — там она берётся из .app-бандла. -->
+        <Style Selector="Window">
+            <Setter Property="Icon" Value="/Assets/Branding/icon.png" />
+        </Style>
         <StyleInclude Source="avares://DataBase/Assets/Styles/Typography.axaml" />
         <StyleInclude Source="avares://DataBase/Assets/Styles/Controls.axaml" />
         <StyleInclude Source="avares://DataBase/Controls/Widgets/AppCheckBox.axaml" />

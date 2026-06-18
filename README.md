@@ -92,49 +92,47 @@ dotnet run
 
 ### Сборка готового бинарника для раздачи
 
-Каждая команда создаёт один самодостаточный файл — установка .NET на компьютере пользователя не нужна. Размер около 100–150 МБ.
+Все готовые файлы собираются в одну папку **`dist/`** — это и есть то, что
+раздаётся пользователям. Установка .NET им не нужна (self-contained), размер ~100–150 МБ.
 
 #### Windows (x64)
 
 **PowerShell, CMD или Git Bash**
 ```powershell
 cd calendar_avalonia
-dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true
+dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -o dist/win-x64
 ```
 
-Результат: `artifacts/publish/DataBase/release_win-x64/DataBase.exe`
-
-#### macOS (Intel)
-
-```bash
-cd calendar_avalonia
-dotnet publish -c Release -r osx-x64 --self-contained true -p:PublishSingleFile=true
-chmod +x artifacts/publish/DataBase/release_osx-x64/DataBase
-```
-
-Результат: `artifacts/publish/DataBase/release_osx-x64/DataBase`
-
-#### macOS (Apple Silicon)
-
-```bash
-cd calendar_avalonia
-dotnet publish -c Release -r osx-arm64 --self-contained true -p:PublishSingleFile=true
-chmod +x artifacts/publish/DataBase/release_osx-arm64/DataBase
-```
-
-Результат: `artifacts/publish/DataBase/release_osx-arm64/DataBase`
+Результат: `dist/win-x64/DataBase.exe` — иконка уже вшита в `.exe`.
 
 #### Linux (x64)
 
 ```bash
 cd calendar_avalonia
-dotnet publish -c Release -r linux-x64 --self-contained true -p:PublishSingleFile=true
-chmod +x artifacts/publish/DataBase/release_linux-x64/DataBase
+dotnet publish -c Release -r linux-x64 --self-contained true -p:PublishSingleFile=true -o dist/linux-x64
+chmod +x dist/linux-x64/DataBase
 ```
 
-Результат: `artifacts/publish/DataBase/release_linux-x64/DataBase`
+Результат: `dist/linux-x64/DataBase`. Чтобы в меню приложений появился пункт
+с иконкой, на целевой машине выполните `Scripts/install-linux.sh`.
 
-> Все платформы можно собирать с одной машины — cross-compilation поддерживается.
+#### macOS (Apple Silicon / Intel)
+
+Здесь одна команда — скрипт сам публикует бинарь **и** упаковывает его в `.app`
+с иконкой (на маке без бандла иконки в Dock не будет):
+
+```bash
+cd calendar_avalonia
+Scripts/build-macos-app.sh osx-arm64 Release   # Apple Silicon
+Scripts/build-macos-app.sh osx-x64  Release    # Intel
+```
+
+Результат: `dist/osx-arm64/DataBase.app` (или `dist/osx-x64/…` для Intel) —
+готовое приложение с иконкой (`open dist/osx-arm64/DataBase.app`).
+Подробности — [docs/features/icons.md](docs/features/icons.md).
+
+> Все платформы собираются с одной машины (cross-compilation). Папка `dist/`
+> в `.gitignore` — это артефакты раздачи, пересоздаются.
 
 ---
 
@@ -192,11 +190,11 @@ calendar_avalonia/
 │   └── MarkdownUtils.cs        # Работа с Markdown
 │
 ├── Assets/                     # Ресурсы
-│   ├── Icons/                  # Иконки
+│   ├── Branding/               # Иконка приложения (icon.png/.ico/.icns, Info.plist, .desktop)
 │   └── Styles/                 # Colors, Controls, Typography
 │
-├── Scripts/                    # installer.ps1, setup.ps1 — установка/настройка
-├── docs/                       # DEVELOPER_GUIDE, USER_GUIDE, ROADMAP
+├── Scripts/                    # generate-icons.sh, build-macos-app.sh, install-linux.sh
+├── docs/                       # guides/, architecture/, features/, ui/, plans/, ROADMAP (см. docs/README.md)
 │
 │   # ── Файлы в корне проекта ──
 ├── DataBase.csproj             # Проект
@@ -204,7 +202,7 @@ calendar_avalonia/
 ├── Directory.Build.props       # Вывод сборки → artifacts\ (а не bin\/obj\)
 ├── nuget.config                # Кэш NuGet-пакетов → packages\ внутри проекта
 ├── dotnet-tools.json           # Локальные dotnet-инструменты (например, EF CLI)
-├── .gitignore                  # Игнор: artifacts, packages, obj, *.db, .localdata…
+├── .gitignore                  # Игнор: artifacts, packages, dist, obj, *.db, .localdata…
 ├── .gitattributes              # Нормализация переносов строк (LF/CRLF)
 ├── README.md                   # Этот файл
 │

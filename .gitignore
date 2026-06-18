@@ -3,6 +3,8 @@ bin/
 obj/
 # Все артефакты сборки (bin/obj/publish) собраны сюда — см. Directory.Build.props
 artifacts/
+# Готовые сборки для раздачи: dist/<rid>/ (Windows/Linux) и dist/<rid>/DataBase.app (macOS)
+dist/
 # Локальный кэш NuGet-пакетов внутри проекта (см. nuget.config) — аналог venv
 packages/
 *.user
@@ -10,7 +12,6 @@ packages/
 *.userosscache
 *.sln.docstates
 .vs/
-publish/
 *.nupkg
 *.snupkg
 # Результаты publish и self-contained сборки
@@ -24,7 +25,6 @@ TestResults/
 *.VisualState.xml
 project.lock.json
 project.assets.json
-artifacts/
 
 # ===== AVALONIA =====
 *.axaml.g.cs

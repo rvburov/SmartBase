@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=DataBase
+Comment=Calendar / database application
+Exec=DataBase
+Icon=database
+Terminal=false
+Categories=Office;Utility;Database;
+StartupWMClass=DataBase

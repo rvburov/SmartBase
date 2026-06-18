@@ -8,6 +8,9 @@
     <RootNamespace>DataBase</RootNamespace>
     <AssemblyName>DataBase</AssemblyName>
     <Version>1.0.0</Version>
+    <!-- Иконка, вшиваемая в Windows .exe (проводник, ярлык, закреп в таскбаре).
+         Учитывается только при сборке под Windows; на других ОС игнорируется. -->
+    <ApplicationIcon>Assets\Branding\icon.ico</ApplicationIcon>
     <!--
       При публикации в один файл (-p:PublishSingleFile=true) вшивать нативные
       библиотеки (SkiaSharp, HarfBuzz, SQLite) в .exe и распаковывать их при
