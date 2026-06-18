@@ -45,16 +45,9 @@
                      Height="34"
                      VerticalContentAlignment="Center"
                      CornerRadius="{StaticResource RadiusMedium}" />
-            <Button Grid.Column="2" x:Name="BrowseBtn"
+            <Button Grid.Column="2" x:Name="BrowseBtn" Classes="dialog"
                     Content="Обзор…"
-                    Height="34"
-                    VerticalAlignment="Center"
-                    Padding="14,0"
-                    Background="{StaticResource BrushSecondaryBg}"
-                    Foreground="{StaticResource BrushPrimaryText}"
-                    BorderBrush="{StaticResource BrushSeparator}"
-                    BorderThickness="1.2"
-                    CornerRadius="{StaticResource RadiusMedium}" />
+                    Width="100" Height="34" />
         </Grid>
 
         <!-- Название создаваемой коллекции -->
@@ -138,7 +131,7 @@
                    TextWrapping="Wrap"
                    FontSize="{StaticResource FontSizeSmall}"
                    Foreground="{StaticResource BrushSecondaryText}"
-                   Text="Берётся первый лист. Первая строка — заголовки (имена свойств). Столбец 1 → название записи, столбец 2 → описание, остальные столбцы → текстовые свойства. Данные читаются со второй строки. Все значения сохраняются как текст." />
+                   Text="Берется первый лист. Первая строка — заголовки (имена свойств). Столбец 1 → название записи, столбец 2 → описание, остальные столбцы → текстовые свойства. Данные читаются со второй строки. Все значения сохраняются как текст." />
 
         <!-- Параметры ручного типа -->
         <StackPanel x:Name="ManualPanel" Spacing="0" IsVisible="False">
@@ -223,7 +216,7 @@
             <Button Grid.Column="1" x:Name="CancelBtn" Classes="dialog"
                     Content="Отмена" />
             <Button Grid.Column="3" x:Name="ConfirmBtn" Classes="dialog"
-                    Content="Импортировать" />
+                    Content="Импортировать" Width="150" />
         </Grid>
 
     </StackPanel>
