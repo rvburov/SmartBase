@@ -33,23 +33,24 @@ public partial class DateEditor : UserControl
         {
             if (Pop.IsOpen) { Pop.IsOpen = false; return; }
             PushToUi(_value);
+            HideError();
             Pop.IsOpen = true;
         };
 
-        StartDate.SelectedDateChanged += (_, _) =>
+        StartDate.DateChanged += (_, _) =>
         {
             if (_suppress) return;
             // Конец не задан или раньше начала — подтягиваем к началу.
-            if (StartDate.SelectedDate is { } s &&
-                (EndDate.SelectedDate is null || EndDate.SelectedDate < s))
+            if (StartDate.Date is { } s &&
+                (EndDate.Date is null || EndDate.Date < s))
             {
                 _suppress = true;
-                EndDate.SelectedDate = s;
+                EndDate.Date = s;
                 _suppress = false;
             }
             RecomputeFromUi();
         };
-        EndDate.SelectedDateChanged += (_, _) => { if (!_suppress) RecomputeFromUi(); };
+        EndDate.DateChanged += (_, _) => { if (!_suppress) RecomputeFromUi(); };
         StartTime.TimeChanged       += (_, _) => { if (!_suppress) RecomputeFromUi(); };
         EndTime.TimeChanged         += (_, _) => { if (!_suppress) RecomputeFromUi(); };
         AllDayCheck.IsCheckedChanged += (_, _) =>
@@ -60,10 +61,12 @@ public partial class DateEditor : UserControl
 
         ClearBtn.Click += (_, _) =>
         {
+            HideError();
             SetValue(null, raise: true);
             Pop.IsOpen = false;
         };
-        DoneBtn.Click += (_, _) => Pop.IsOpen = false;
+        // Как в диалоге события: при ошибке валидации не закрываем (баннер виден).
+        DoneBtn.Click += (_, _) => { if (!ErrorBanner.IsVisible) Pop.IsOpen = false; };
 
         Input.KeyDown   += (_, e) => { if (e.Key == Key.Enter) CommitManual(); };
         Input.LostFocus += (_, _) => CommitManual();
@@ -95,20 +98,35 @@ public partial class DateEditor : UserControl
         {
             StartTime.ClosePopup();
             EndTime.ClosePopup();
-            StartDate.IsDropDownOpen = false;
-            EndDate.IsDropDownOpen   = false;
+            StartDate.ClosePopup();
+            EndDate.ClosePopup();
         };
 
         UpdateTimeVisibility();
     }
 
-    private void OnWindowDeactivated(object? sender, EventArgs e) => CloseDropdown();
+    // Вложенный календарь даты и список времени — overlay-попапы главного окна, поэтому
+    // клик по дню/времени доходит до оконных обработчиков и НЕ виден как «внутри поля».
+    // Пока любой из них открыт, внешнюю выпадашку не закрываем.
+    private bool AnyChildPopupOpen =>
+        StartDate.IsPopupOpen || EndDate.IsPopupOpen || StartTime.IsPopupOpen || EndTime.IsPopupOpen;
+
+    private void OnWindowDeactivated(object? sender, EventArgs e)
+    {
+        if (AnyChildPopupOpen) return;
+        CloseDropdown();
+    }
 
     private void OnWindowPointerPressed(object? sender, PointerPressedEventArgs e)
     {
         if (!Pop.IsOpen) return;
-        // Клик по самому полю (стрелка/поле ввода) — не закрываем, это обработается отдельно.
-        if (e.Source is Visual v && this.IsVisualAncestorOf(v)) return;
+        if (AnyChildPopupOpen) return;
+        // Клик внутри любого попапа (сама выпадашка + вложенные календарь/список времени)
+        // не должен её закрывать. Вложенные попапы — overlay в главном окне и в визуальном
+        // дереве отделены от this, поэтому узнаём их по предку PopupRoot/OverlayPopupHost.
+        if (e.Source is Visual v &&
+            v.GetSelfAndVisualAncestors().Any(a => a.GetType().Name is "PopupRoot" or "OverlayPopupHost"))
+            return;
         CloseDropdown();
     }
 
@@ -154,8 +172,8 @@ public partial class DateEditor : UserControl
     // Считать значение из «Начало»/«Конец»/времени и поднять Changed.
     private void RecomputeFromUi()
     {
-        if (StartDate.SelectedDate is not { } sDate) return;
-        var eDate = EndDate.SelectedDate ?? sDate;
+        if (StartDate.Date is not { } sDate) return;
+        var eDate = EndDate.Date ?? sDate;
         if (eDate < sDate) eDate = sDate;
 
         var allDay = AllDayCheck.IsChecked == true;
@@ -163,10 +181,27 @@ public partial class DateEditor : UserControl
             ? new DateValue(sDate.Date, eDate.Date + DateValue.EndOfDay, true)
             : new DateValue(sDate.Date + StartTime.Time, eDate.Date + EndTime.Time, false);
 
+        // Как в диалоге события: конец должен быть позже начала. Некорректный диапазон
+        // не коммитим — показываем баннер, пока пользователь не поправит время.
+        if (!allDay && v.End <= v.Start)
+        {
+            ShowError("Время конца должно быть позже начала");
+            return;
+        }
+        HideError();
+
         _value     = v;
         Input.Text = v.ToDisplay();
         Changed?.Invoke(this, EventArgs.Empty);
     }
+
+    private void ShowError(string message)
+    {
+        ErrorText.Text        = message;
+        ErrorBanner.IsVisible = true;
+    }
+
+    private void HideError() => ErrorBanner.IsVisible = false;
 
     // Разложить значение по элементам выпадашки (без поднятия Changed).
     private void PushToUi(DateValue? v)
@@ -175,8 +210,8 @@ public partial class DateEditor : UserControl
         try
         {
             AllDayCheck.IsChecked  = v?.AllDay ?? false;
-            StartDate.SelectedDate = v?.Start.Date;
-            EndDate.SelectedDate   = v?.End.Date;
+            StartDate.Date = v?.Start.Date;
+            EndDate.Date   = v?.End.Date;
 
             if (!(v?.AllDay ?? true))
             {

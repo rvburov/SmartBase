@@ -516,10 +516,12 @@
     </Style>
 
     <Style Selector="CalendarDatePicker:pointerover /template/ Border#Background">
+        <Setter Property="Background"  Value="{StaticResource BrushSecondaryBg}" />
         <Setter Property="BorderBrush" Value="{StaticResource BrushAccent}" />
     </Style>
 
     <Style Selector="CalendarDatePicker:focus /template/ Border#Background">
+        <Setter Property="Background"  Value="{StaticResource BrushSecondaryBg}" />
         <Setter Property="BorderBrush" Value="{StaticResource BrushAccent}" />
     </Style>
 
@@ -795,7 +797,15 @@
         <Setter Property="Cursor"                     Value="Hand" />
     </Style>
 
+    <!-- Фон стрелки прозрачный во ВСЕХ состояниях: иначе тема Fluent рисует серый
+         квадрат (фон кнопки по умолчанию виден через TemplateBinding). -->
+    <Style Selector="Button.timeArrow /template/ ContentPresenter">
+        <Setter Property="Background" Value="Transparent" />
+    </Style>
     <Style Selector="Button.timeArrow:pointerover /template/ ContentPresenter">
+        <Setter Property="Background" Value="Transparent" />
+    </Style>
+    <Style Selector="Button.timeArrow:pressed /template/ ContentPresenter">
         <Setter Property="Background" Value="Transparent" />
     </Style>
 

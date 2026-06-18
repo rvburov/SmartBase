@@ -64,6 +64,9 @@ public partial class TimeField : UserControl
         }
     }
 
+    /// <summary>Открыт ли выпадающий список (для внешней выпадашки — не закрываться, пока открыт).</summary>
+    public bool IsPopupOpen => Pop.IsOpen;
+
     public void ClosePopup() => Pop.IsOpen = false;
 
     private void SelectInList(TimeSpan time)
