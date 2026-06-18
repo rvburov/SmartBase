@@ -41,6 +41,21 @@
                  Margin="0,0,0,12"
                  CornerRadius="{StaticResource RadiusMedium}" />
 
+        <TextBlock Text="База данных"
+                   Margin="0,0,0,6"
+                   FontWeight="{StaticResource FontWeightBold}"
+                   FontSize="{StaticResource FontSizeBase}"
+                   Foreground="{StaticResource BrushSecondaryText}" />
+
+        <ComboBox x:Name="DbCombo"
+                  HorizontalAlignment="Stretch"
+                  Height="34"
+                  VerticalContentAlignment="Center"
+                  Margin="0,0,0,12"
+                  Background="{StaticResource BrushSecondaryBg}"
+                  Foreground="{StaticResource BrushPrimaryText}"
+                  CornerRadius="{StaticResource RadiusBase}" />
+
         <TextBlock Text="Расположение"
                    Margin="0,0,0,6"
                    FontWeight="{StaticResource FontWeightBold}"

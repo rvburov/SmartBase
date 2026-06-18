@@ -6,41 +6,54 @@ using DataBase.Database.Repositories;
 
 namespace DataBase.Controls.Dialogs;
 
-public record CollectionDialogResult(string Name, int? GroupId);
+public record CollectionDialogResult(string Name, int? GroupId, int DbId);
 
 public partial class CollectionDialog : Window
 {
-    private readonly List<(string Label, int? Id)> _groups;
+    private readonly IReadOnlyList<DbOption> _dbs;
+    private List<(string Label, int? Id)> _groups = [];
 
-    public CollectionDialog(ConstructorRepository repository, DbCollection? editNode = null, int? defaultGroupId = null)
+    private ConstructorRepository CurrentRepo => _dbs[Math.Max(0, DbCombo.SelectedIndex)].Repo;
+    private int                   CurrentDbId => _dbs[Math.Max(0, DbCombo.SelectedIndex)].Id;
+
+    public CollectionDialog(IReadOnlyList<DbOption> dbs, int currentDbId, DbCollection? editNode = null)
     {
         InitializeComponent();
+        _dbs = dbs;
 
-        // Список «Расположение» с полным путём вложенности групп (см. GroupLocationOptions).
-        _groups = GroupLocationOptions.Build(repository.GetAllGroups());
-        LocationCombo.ItemsSource   = _groups.Select(g => g.Label).ToList();
-        LocationCombo.SelectedIndex = 0;
+        DbCombo.ItemsSource   = _dbs.Select(d => d.Name).ToList();
+        DbCombo.SelectedIndex = IndexOfDb(currentDbId);
 
-        if (defaultGroupId.HasValue)
-        {
-            var idx = _groups.FindIndex(g => g.Id == defaultGroupId);
-            if (idx >= 0) LocationCombo.SelectedIndex = idx;
-        }
+        // «Расположение» под выбранную БД; при создании editNode=null → корень.
+        RebuildLocation(editNode?.GroupId);
+        DbCombo.SelectionChanged += (_, _) => RebuildLocation(null);
 
         if (editNode is not null)
         {
             Title              = "Изменение коллекции";
             NameBox.Text       = editNode.Name;
             ConfirmBtn.Content = "Сохранить";
-
-            var editIdx = _groups.FindIndex(g => g.Id == editNode.GroupId);
-            if (editIdx >= 0) LocationCombo.SelectedIndex = editIdx;
         }
 
-        CancelBtn.Click   += (_, _) => Close(null);
-        ConfirmBtn.Click  += (_, _) => TryConfirm();
-        NameBox.KeyDown   += (_, e) => { if (e.Key == Key.Enter) TryConfirm(); };
+        CancelBtn.Click     += (_, _) => Close(null);
+        ConfirmBtn.Click    += (_, _) => TryConfirm();
+        NameBox.KeyDown     += (_, e) => { if (e.Key == Key.Enter) TryConfirm(); };
         NameBox.TextChanged += (_, _) => HideError();
+    }
+
+    private int IndexOfDb(int dbId)
+    {
+        for (var i = 0; i < _dbs.Count; i++)
+            if (_dbs[i].Id == dbId) return i;
+        return 0;
+    }
+
+    private void RebuildLocation(int? selectGroupId)
+    {
+        _groups = GroupLocationOptions.Build(CurrentRepo.GetAllGroups());
+        LocationCombo.ItemsSource = _groups.Select(g => g.Label).ToList();
+        var idx = selectGroupId.HasValue ? _groups.FindIndex(g => g.Id == selectGroupId) : -1;
+        LocationCombo.SelectedIndex = idx >= 0 ? idx : 0;
     }
 
     private void TryConfirm()
@@ -53,7 +66,7 @@ public partial class CollectionDialog : Window
             return;
         }
         var groupId = _groups[Math.Max(0, LocationCombo.SelectedIndex)].Id;
-        Close(new CollectionDialogResult(name, groupId));
+        Close(new CollectionDialogResult(name, groupId, CurrentDbId));
     }
 
     private void ShowError(string message)

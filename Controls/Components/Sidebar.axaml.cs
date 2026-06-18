@@ -49,6 +49,13 @@ public partial class Sidebar : UserControl
     private ConstructorRepository? RepoOf(SidebarNode node) => RepoFor(node.DbId);
     private int DefaultDbId => _dbs.Count > 0 ? _dbs[0].DbId : 0;
 
+    // Описатели всех смонтированных БД для диалогов (выбор целевой БД + перенос).
+    private List<DbOption> DbOptions() =>
+        _dbs.Select(d => new DbOption(
+            d.DbId,
+            string.IsNullOrWhiteSpace(d.Name) ? "База данных" : d.Name,
+            d.Repo)).ToList();
+
     // Выделение: подсветка + цель удаления. Обычный клик — одна запись; Shift/Ctrl/Cmd-клик
     // — точечный toggle (группы и коллекции вместе) для пакетного удаления.
     private readonly HashSet<SidebarNode> _selectedNodes = [];
@@ -696,8 +703,7 @@ public partial class Sidebar : UserControl
 
     private async Task CreateItem(string presetType, int dbId, int? parentId)
     {
-        var repo = RepoFor(dbId);
-        if (repo is null || OwnerWindow is null) return;
+        if (OwnerWindow is null || RepoFor(dbId) is null) return;
 
         // Тултип «Создать» кнопки «+» не должен висеть и мерцать поверх модального
         // окна: закрываем его и отключаем сервис тултипа на кнопке на время диалога
@@ -708,7 +714,7 @@ public partial class Sidebar : UserControl
         CreateItemResult? res;
         try
         {
-            var dlg = new CreateItemDialog(repo, presetType, parentId);
+            var dlg = new CreateItemDialog(DbOptions(), dbId, presetType, parentId);
             res = await dlg.ShowDialog<CreateItemResult?>(OwnerWindow);
         }
         finally
@@ -717,12 +723,16 @@ public partial class Sidebar : UserControl
         }
         if (res is null) return;
 
+        // Целевая БД — выбранная в диалоге (может отличаться от исходной).
+        var repo = RepoFor(res.DbId);
+        if (repo is null) return;
+
         if (res.Type == "group")
         {
             var pos = repo.GetAllGroups().Select(g => g.Position).DefaultIfEmpty(0).Max() + 1000;
             var group = repo.AddGroup(new DbGroup { Name = res.Name, ParentId = res.ParentId, Position = pos });
             ReloadAndNotify();
-            if (group.Id.HasValue) ExpandGroup(dbId, group.Id.Value);
+            if (group.Id.HasValue) ExpandGroup(res.DbId, group.Id.Value);
         }
         else
         {
@@ -733,7 +743,7 @@ public partial class Sidebar : UserControl
                 // а не оставляем пустым с одним плейсхолдером в ячейке.
                 repo.AddRecord(new DbRecord { CollectionId = col.Id.Value, Title = "Без названия" });
             ReloadAndNotify();
-            if (col.Id.HasValue && _mode == SidebarMode.Constructor) OpenCollection(dbId, col.Id.Value);
+            if (col.Id.HasValue && _mode == SidebarMode.Constructor) OpenCollection(res.DbId, col.Id.Value);
         }
     }
 
@@ -760,9 +770,28 @@ public partial class Sidebar : UserControl
         var group = repo.GetAllGroups().FirstOrDefault(g => g.Id == groupId);
         if (group is null) return;
 
-        var dlg = new GroupDialog(repo, editNode: group);
+        var dlg = new GroupDialog(DbOptions(), dbId, editNode: group);
         var res = await dlg.ShowDialog<GroupDialogResult?>(OwnerWindow);
         if (res is null) return;
+
+        // Смена БД → перенос группы со всей веткой в целевую БД (атомарный импорт + откат при сбое).
+        if (res.DbId != dbId && RepoFor(res.DbId) is { } target)
+        {
+            try
+            {
+                var moved = ConstructorRepository.MoveGroup(repo, target, groupId, res.ParentId, res.Name);
+                ReloadAndNotify();
+                if (moved.Id.HasValue) ExpandGroup(res.DbId, moved.Id.Value);
+            }
+            catch
+            {
+                ReloadAndNotify();
+                if (OwnerWindow is not null)
+                    await new ConfirmDialog("Не удалось перенести группу в другую базу. Данные остались в исходной базе.")
+                        .ShowDialog<bool>(OwnerWindow);
+            }
+            return;
+        }
 
         group.Name     = res.Name;
         group.ParentId = res.ParentId;
@@ -778,9 +807,29 @@ public partial class Sidebar : UserControl
         var col = repo.GetAllCollections().FirstOrDefault(c => c.Id == collectionId);
         if (col is null) return;
 
-        var dlg = new CollectionDialog(repo, editNode: col);
+        var dlg = new CollectionDialog(DbOptions(), dbId, editNode: col);
         var res = await dlg.ShowDialog<CollectionDialogResult?>(OwnerWindow);
         if (res is null) return;
+
+        // Смена БД → перенос коллекции в целевую БД (атомарный импорт + откат копии при сбое).
+        if (res.DbId != dbId && RepoFor(res.DbId) is { } target)
+        {
+            try
+            {
+                var moved = ConstructorRepository.MoveCollection(repo, target, collectionId, res.GroupId, res.Name);
+                ReloadAndNotify();
+                if (_mode == SidebarMode.Constructor && moved.Id.HasValue)
+                    OpenCollection(res.DbId, moved.Id.Value);
+            }
+            catch
+            {
+                ReloadAndNotify();   // вернёт исходное состояние в дерево
+                if (OwnerWindow is not null)
+                    await new ConfirmDialog("Не удалось перенести коллекцию в другую базу. Данные остались в исходной базе.")
+                        .ShowDialog<bool>(OwnerWindow);
+            }
+            return;
+        }
 
         col.Name    = res.Name;
         col.GroupId = res.GroupId;

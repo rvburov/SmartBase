@@ -219,6 +219,266 @@ public class ConstructorRepository(AppDbContext db)
         };
     }
 
+    // ── Перенос между БД (мульти-маунт) ───────────────────────────────────────
+    //
+    // Из-за изоляции id (DbId, Id) коллекция/группа физически живут в своём .db-файле,
+    // поэтому «перенос в другую БД» = глубокая копия снимка в целевой репозиторий (с
+    // перенумерацией id) + удаление из исходного. Переносится всё: поля, записи, значения
+    // и UI-настройки коллекции (ширины/порядок/видимость колонок, высоты строк, отображение
+    // записей, подписи системных колонок) — ключи-id (поле/запись) перемэппливаются на новые.
+
+    // Снимок коллекции: метаданные + поля + записи со значениями + UI-настройки.
+    // Ключи значений и UI — СТАРЫЕ id поля/записи; при импорте перемэппливаются.
+    public sealed record CollectionSnapshot(DbCollection Collection, List<DbField> Fields,
+                                            List<RecordSnapshot> Records, UiSnapshot Ui);
+    public sealed record RecordSnapshot(DbRecord Record, Dictionary<int, string> ValuesByOldFieldId);
+
+    // UI-настройки коллекции для переноса (отвязанные от контекста-источника значения).
+    public sealed record UiSnapshot(
+        List<(int FieldId, int Width)>                        ColWidths,
+        List<(int RecordId, int Height)>                      RowHeights,
+        (bool ColResize, bool RowResize, string ViewMode)?    Settings,
+        List<(string Key, string? DisplayName, int Position)> SystemMeta,
+        List<(string Key, int Position)>                      ColumnOrder,
+        List<(string Key, bool Visible, int Level)>           ColumnDisplay,
+        List<(int RecordId, bool Visible, int Level)>         RecordDisplay);
+
+    // Снимок группы со всей вложенной веткой (подгруппы + коллекции).
+    public sealed record GroupSnapshot(DbGroup Group, List<GroupSnapshot> Subgroups, List<CollectionSnapshot> Collections);
+
+    /// <summary>Снять коллекцию (с полями, записями и значениями) для переноса в другую БД.</summary>
+    public CollectionSnapshot ExportCollection(int collectionId)
+    {
+        var col     = GetAllCollections().First(c => c.Id == collectionId);
+        var fields  = GetFields(collectionId);
+        var records = GetRecords(collectionId);
+        var byRec   = GetFieldValuesBatch(records.Where(r => r.Id.HasValue).Select(r => r.Id!.Value).ToList());
+
+        var recSnaps = new List<RecordSnapshot>(records.Count);
+        foreach (var r in records)
+        {
+            Dictionary<int, string> vals = new();
+            if (r.Id is int rid && byRec.TryGetValue(rid, out var v)) vals = v;
+            recSnaps.Add(new RecordSnapshot(r, vals));
+        }
+
+        return new CollectionSnapshot(col, fields, recSnaps, ExportUi(collectionId));
+    }
+
+    // Снять UI-настройки коллекции в отвязанные значения (AsNoTracking — детач от источника).
+    private UiSnapshot ExportUi(int collectionId)
+    {
+        var settings = db.UiCollectionSettings.AsNoTracking().FirstOrDefault(s => s.CollectionId == collectionId);
+        return new UiSnapshot(
+            ColWidths:     db.UiColWidths.AsNoTracking().Where(w => w.CollectionId == collectionId).ToList()
+                             .Select(w => (w.FieldId, w.Width)).ToList(),
+            RowHeights:    db.UiRowHeights.AsNoTracking().Where(h => h.CollectionId == collectionId).ToList()
+                             .Select(h => (h.RecordId, h.Height)).ToList(),
+            Settings:      settings is null ? null : (settings.ColResize, settings.RowResize, settings.ViewMode),
+            SystemMeta:    db.SystemFieldMeta.AsNoTracking().Where(m => m.CollectionId == collectionId).ToList()
+                             .Select(m => (m.Key, m.DisplayName, m.Position)).ToList(),
+            ColumnOrder:   db.ColumnOrder.AsNoTracking().Where(o => o.CollectionId == collectionId).ToList()
+                             .Select(o => (o.Key, o.Position)).ToList(),
+            ColumnDisplay: db.ColumnDisplay.AsNoTracking().Where(d => d.CollectionId == collectionId).ToList()
+                             .Select(d => (d.Key, d.Visible, d.Level)).ToList(),
+            RecordDisplay: db.RecordDisplay.AsNoTracking().Where(d => d.CollectionId == collectionId).ToList()
+                             .Select(d => (d.RecordId, d.Visible, d.Level)).ToList());
+    }
+
+    /// <summary>Импортировать снимок коллекции под группу targetGroupId — атомарно (одна транзакция). Возвращает новую коллекцию.</summary>
+    public DbCollection ImportCollection(CollectionSnapshot snap, int? targetGroupId)
+    {
+        using var tx = db.Database.BeginTransaction();
+        var result = ImportCollectionCore(snap, targetGroupId);
+        tx.Commit();
+        return result;
+    }
+
+    private DbCollection ImportCollectionCore(CollectionSnapshot snap, int? targetGroupId)
+    {
+        var maxPos = db.DbCollections.Select(c => (int?)c.Position).Max() ?? 0;
+        var copy = new DbCollectionEntity
+        {
+            Name = snap.Collection.Name, GroupId = targetGroupId,
+            Position = maxPos + 1000, Icon = snap.Collection.Icon, Color = snap.Collection.Color,
+        };
+        db.DbCollections.Add(copy);
+        db.SaveChanges();
+
+        var fieldMap = new Dictionary<int, int>();   // старый id поля → новый
+        foreach (var f in snap.Fields)
+        {
+            var nf = new DbFieldEntity
+            {
+                CollectionId = copy.Id, Name = f.Name, FieldType = f.FieldType,
+                ConfigJson = f.ConfigJson, Position = f.Position,
+                IsCalStart = f.IsCalStart, IsCalEnd = f.IsCalEnd,
+                IsSystem = f.IsSystem, IsRequired = f.IsRequired,
+            };
+            db.DbFields.Add(nf);
+            db.SaveChanges();
+            if (f.Id is int oldFid) fieldMap[oldFid] = nf.Id;
+        }
+
+        var recordMap = new Dictionary<int, int>();   // старый id записи → новый
+        foreach (var rs in snap.Records)
+        {
+            var r = rs.Record;
+            var nr = new DbRecordEntity
+            {
+                CollectionId = copy.Id, CreatedAt = r.CreatedAt ?? DateTime.Now.ToString("o"),
+                Position = r.Position, StartDt = r.StartDt, EndDt = r.EndDt,
+                AllDay = r.AllDay, Title = r.Title, Description = r.Description,
+            };
+            db.DbRecords.Add(nr);
+            db.SaveChanges();
+            if (r.Id is int oldRid) recordMap[oldRid] = nr.Id;
+
+            foreach (var (oldFid, val) in rs.ValuesByOldFieldId)
+                if (fieldMap.TryGetValue(oldFid, out var nfid))
+                    db.DbFieldValues.Add(new DbFieldValueEntity { RecordId = nr.Id, FieldId = nfid, Value = val });
+            db.SaveChanges();
+        }
+
+        ImportUi(snap.Ui, copy.Id, fieldMap, recordMap);
+
+        return new DbCollection
+        {
+            Id = copy.Id, Name = copy.Name, GroupId = copy.GroupId,
+            Position = copy.Position, Icon = copy.Icon, Color = copy.Color,
+        };
+    }
+
+    // Восстановить UI-настройки в новой коллекции: id полей/записей — через карты,
+    // системные ключи (__title__/__desc__) и настройки коллекции — как есть.
+    private void ImportUi(UiSnapshot ui, int newCollectionId,
+                          Dictionary<int, int> fieldMap, Dictionary<int, int> recordMap)
+    {
+        foreach (var (oldFid, width) in ui.ColWidths)
+            if (fieldMap.TryGetValue(oldFid, out var nfid))
+                db.UiColWidths.Add(new UiColWidthEntity { CollectionId = newCollectionId, FieldId = nfid, Width = width });
+
+        foreach (var (oldRid, height) in ui.RowHeights)
+            if (recordMap.TryGetValue(oldRid, out var nrid))
+                db.UiRowHeights.Add(new UiRowHeightEntity { CollectionId = newCollectionId, RecordId = nrid, Height = height });
+
+        if (ui.Settings is { } st)
+            db.UiCollectionSettings.Add(new UiCollectionSettingEntity
+            {
+                CollectionId = newCollectionId, ColResize = st.ColResize, RowResize = st.RowResize, ViewMode = st.ViewMode,
+            });
+
+        foreach (var (key, name, pos) in ui.SystemMeta)
+            db.SystemFieldMeta.Add(new SystemFieldMetaEntity
+            {
+                CollectionId = newCollectionId, Key = key, DisplayName = name, Position = pos,
+            });
+
+        foreach (var (key, pos) in ui.ColumnOrder)
+            db.ColumnOrder.Add(new ColumnOrderEntity
+            {
+                CollectionId = newCollectionId, Key = RemapColKey(key, fieldMap), Position = pos,
+            });
+
+        foreach (var (key, vis, lvl) in ui.ColumnDisplay)
+            db.ColumnDisplay.Add(new ColumnDisplayEntity
+            {
+                CollectionId = newCollectionId, Key = RemapColKey(key, fieldMap), Visible = vis, Level = lvl,
+            });
+
+        foreach (var (oldRid, vis, lvl) in ui.RecordDisplay)
+            if (recordMap.TryGetValue(oldRid, out var nrid))
+                db.RecordDisplay.Add(new RecordDisplayEntity
+                {
+                    CollectionId = newCollectionId, RecordId = nrid, Visible = vis, Level = lvl,
+                });
+
+        db.SaveChanges();
+    }
+
+    // Ключ колонки: системные (__title__/__desc__) оставляем как есть; числовой id поля — на новый.
+    private static string RemapColKey(string key, Dictionary<int, int> fieldMap) =>
+        int.TryParse(key, out var oldFid) && fieldMap.TryGetValue(oldFid, out var nfid) ? nfid.ToString() : key;
+
+    /// <summary>Снять группу со всей вложенной веткой (подгруппы + коллекции) для переноса в другую БД.</summary>
+    public GroupSnapshot ExportGroup(int groupId)
+    {
+        var groups = GetAllGroups();
+        var g      = groups.First(x => x.Id == groupId);
+        var subs   = groups.Where(x => x.ParentId == groupId)
+                           .Select(x => ExportGroup(x.Id!.Value)).ToList();
+        var cols   = GetCollectionsByGroup(groupId)
+                           .Select(c => ExportCollection(c.Id!.Value)).ToList();
+        return new GroupSnapshot(g, subs, cols);
+    }
+
+    /// <summary>Импортировать снимок группы (с веткой) под targetParentId — атомарно (одна транзакция). Возвращает новую группу.</summary>
+    public DbGroup ImportGroup(GroupSnapshot snap, int? targetParentId)
+    {
+        using var tx = db.Database.BeginTransaction();
+        var result = ImportGroupCore(snap, targetParentId);
+        tx.Commit();
+        return result;
+    }
+
+    private DbGroup ImportGroupCore(GroupSnapshot snap, int? targetParentId)
+    {
+        var maxPos = db.DbGroups.Where(x => x.ParentId == targetParentId).Select(x => (int?)x.Position).Max() ?? 0;
+        var copy = new DbGroupEntity { Name = snap.Group.Name, ParentId = targetParentId, Position = maxPos + 1000 };
+        db.DbGroups.Add(copy);
+        db.SaveChanges();
+
+        // Внутри уже открытой транзакции — зовём *Core (без вложенной транзакции).
+        foreach (var sub in snap.Subgroups)   ImportGroupCore(sub, copy.Id);
+        foreach (var col in snap.Collections) ImportCollectionCore(col, copy.Id);
+
+        return new DbGroup { Id = copy.Id, Name = copy.Name, ParentId = copy.ParentId, Position = copy.Position };
+    }
+
+    // ── Перенос целиком: export → import (в транзакции) → delete; откат копии при сбое ──
+    //
+    // import уже атомарен (транзакция целевой БД) — частичной копии не бывает. Если удаление
+    // из исходной упадёт после копии, удаляем копию из целевой (компенсация) и возвращаемся к
+    // исходному состоянию. Дубль возможен лишь при двойном сбое (исчезающе редко) — данные целы.
+
+    /// <summary>Перенести коллекцию из source в target (с именем newName). Бросает при сбое — после отката копии.</summary>
+    public static DbCollection MoveCollection(ConstructorRepository source, ConstructorRepository target,
+                                              int collectionId, int? targetGroupId, string newName)
+    {
+        var snap = source.ExportCollection(collectionId);
+        snap.Collection.Name = newName;
+        var moved = target.ImportCollection(snap, targetGroupId);
+        try
+        {
+            source.DeleteCollection(collectionId);
+        }
+        catch
+        {
+            if (moved.Id is int newId) target.DeleteCollection(newId);   // откат копии — без дубля
+            throw;
+        }
+        return moved;
+    }
+
+    /// <summary>Перенести группу (с веткой) из source в target. Бросает при сбое — после отката копии.</summary>
+    public static DbGroup MoveGroup(ConstructorRepository source, ConstructorRepository target,
+                                    int groupId, int? targetParentId, string newName)
+    {
+        var snap = source.ExportGroup(groupId);
+        snap.Group.Name = newName;
+        var moved = target.ImportGroup(snap, targetParentId);
+        try
+        {
+            source.DeleteGroup(groupId);
+        }
+        catch
+        {
+            if (moved.Id is int newId) target.DeleteGroup(newId);   // откат копии — без дубля
+            throw;
+        }
+        return moved;
+    }
+
     // ── Поля ──────────────────────────────────────────────────────────────────
 
     public List<DbField> GetFields(int collectionId) =>
