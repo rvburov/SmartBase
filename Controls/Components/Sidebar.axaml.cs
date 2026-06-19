@@ -780,11 +780,13 @@ public partial class Sidebar : UserControl
             var repo = RepoFor(req.DbId);
             if (repo is null) return;
 
-            // Окно загрузки: показываем модально (не ждём — закроем сами после импорта).
+            // Окно загрузки: показываем модально. Задачу ShowDialog запоминаем и дожидаемся
+            // её завершения после закрытия — иначе повторный показ окна импорта (при ошибке)
+            // стартует поверх ещё не закрытого модального окна и падает.
             var progress = new ProgressDialog();
             IProgress<double> readP  = new Progress<double>(p => progress.SetProgress(p * 0.5,       "Чтение файла…"));
             IProgress<double> writeP = new Progress<double>(p => progress.SetProgress(0.5 + p * 0.5, "Сохранение записей…"));
-            _ = progress.ShowDialog(OwnerWindow);
+            var progressClosed = progress.ShowDialog(OwnerWindow);
 
             try
             {
@@ -795,6 +797,7 @@ public partial class Sidebar : UserControl
                 });
 
                 progress.Done();
+                await progressClosed;
                 ReloadAndNotify();
                 if (_mode == SidebarMode.Constructor) OpenCollection(req.DbId, colId);
                 return;
@@ -802,12 +805,14 @@ public partial class Sidebar : UserControl
             catch (ExcelImportException ex)
             {
                 progress.Done();
+                await progressClosed;
                 prefill = req.Draft;
                 error   = ex.Message;
             }
             catch
             {
                 progress.Done();
+                await progressClosed;
                 prefill = req.Draft;
                 error   = "Не удалось импортировать данные.";
             }

@@ -179,35 +179,51 @@ public class ConstructorRepository(AppDbContext db)
         SaveColumnOrder(col.Id, order);
 
         // Записи + значения свойств. Описание не импортируется — остаётся пустым.
-        // Значения добавляем через навигацию; SaveChanges батчами — чтобы отдавать
-        // прогресс (троттлинг по проценту) и не накапливать всё в один огромный flush.
+        // Bulk-insert: отключаем авто-DetectChanges и чистим трекер после каждой пачки.
+        // Иначе на больших файлах SaveChanges становится O(n²) (DetectChanges по всё
+        // растущему набору отслеживаемых сущностей) и импорт сильно тормозит.
         const int batchSize = 500;
         var now      = DateTime.Now.ToString("o");
         var pos      = 0;
         var total    = Math.Max(1, data.Rows.Count);
         var lastPct  = -1;
-        for (var idx = 0; idx < data.Rows.Count; idx++)
+
+        var autoDetect = db.ChangeTracker.AutoDetectChangesEnabled;
+        db.ChangeTracker.AutoDetectChangesEnabled = false;
+        try
         {
-            var row = data.Rows[idx];
-            pos += 1000;
-            var rec = new DbRecordEntity
+            for (var idx = 0; idx < data.Rows.Count; idx++)
             {
-                CollectionId = col.Id, CreatedAt = now, Position = pos,
-                Title = row.Title, Description = null,
-            };
-            for (var i = 0; i < fieldIds.Count; i++)
-            {
-                var val = i < row.FieldValues.Count ? row.FieldValues[i] : "";
-                rec.FieldValues.Add(new DbFieldValueEntity { FieldId = fieldIds[i], Value = val ?? "" });
+                var row = data.Rows[idx];
+                pos += 1000;
+                var rec = new DbRecordEntity
+                {
+                    CollectionId = col.Id, CreatedAt = now, Position = pos,
+                    Title = row.Title, Description = null,
+                };
+                for (var i = 0; i < fieldIds.Count; i++)
+                {
+                    var val = i < row.FieldValues.Count ? row.FieldValues[i] : "";
+                    rec.FieldValues.Add(new DbFieldValueEntity { FieldId = fieldIds[i], Value = val ?? "" });
+                }
+                db.DbRecords.Add(rec);
+
+                if ((idx + 1) % batchSize == 0)
+                {
+                    db.SaveChanges();
+                    db.ChangeTracker.Clear();   // не накапливаем отслеживаемые сущности
+                }
+
+                var pct = (idx + 1) * 100 / total;
+                if (progress is not null && pct != lastPct) { progress.Report((idx + 1) / (double)total); lastPct = pct; }
             }
-            db.DbRecords.Add(rec);
-
-            if ((idx + 1) % batchSize == 0) db.SaveChanges();
-
-            var pct = (idx + 1) * 100 / total;
-            if (progress is not null && pct != lastPct) { progress.Report((idx + 1) / (double)total); lastPct = pct; }
+            db.SaveChanges();
+            db.ChangeTracker.Clear();
         }
-        db.SaveChanges();
+        finally
+        {
+            db.ChangeTracker.AutoDetectChangesEnabled = autoDetect;
+        }
         progress?.Report(1.0);
 
         tx.Commit();

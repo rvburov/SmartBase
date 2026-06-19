@@ -81,7 +81,13 @@ public static class ExcelImporter
             var lastCol  = used.RangeAddress.LastAddress.ColumnNumber;
             var lastRow  = used.RangeAddress.LastAddress.RowNumber;
 
-            string Cell(int row, int col) => sheet.Cell(row, col).GetFormattedString();
+            // Читаем заполненные ячейки одним проходом в словарь — это в разы быстрее, чем
+            // дёргать sheet.Cell(r,c) в цикле (он к тому же материализует пустые ячейки).
+            var values = new Dictionary<(int Row, int Col), string>();
+            foreach (var cell in used.CellsUsed())
+                values[(cell.Address.RowNumber, cell.Address.ColumnNumber)] = cell.GetFormattedString();
+
+            string Cell(int row, int col) => values.TryGetValue((row, col), out var v) ? v : "";
             return BuildImportData(spec, titleCol, firstCol, lastCol, lastRow, Cell, progress);
         }
     }
