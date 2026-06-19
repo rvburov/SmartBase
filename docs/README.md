@@ -14,6 +14,7 @@ EF Core/SQLite). Здесь описано, **как устроено и как 
 - [data-model.md](architecture/data-model.md) — модели и таблицы.
 - [databases.md](architecture/databases.md) — два SQLite-файла, миграции, пути, WAL.
 - [multi-database.md](architecture/multi-database.md) — несколько БД одновременно.
+- [performance.md](architecture/performance.md) — горячие пути, виртуализация, индексы, узкие места.
 
 ### Фичи ([features/](features/))
 - **Календарь** ([features/calendar/](features/calendar/)): [overview](features/calendar/overview.md) · [month](features/calendar/month.md) · [week](features/calendar/week.md) · [day](features/calendar/day.md) · [year](features/calendar/year.md) · [schedule](features/calendar/schedule.md) · [journal](features/calendar/journal.md) · [interactions](features/calendar/interactions.md)
@@ -29,8 +30,7 @@ EF Core/SQLite). Здесь описано, **как устроено и как 
 - [theming.md](ui/theming.md) — цвета, типографика, масштаб.
 
 ### Планы
-- [ROADMAP.md](ROADMAP.md) — высокоуровневые этапы.
-- [plans/](plans/) — черновики и задумки по фичам.
+- [ROADMAP.md](ROADMAP.md) — этапы, заглушки в коде, масштабирование, риски.
 
 ## Как вести документацию
 
@@ -39,3 +39,9 @@ EF Core/SQLite). Здесь описано, **как устроено и как 
 `lowercase-kebab-case`, содержимое — на русском. Ссылки на код относительные
 (например, из `docs/features/calendar/` к корню — `../../../`). Связи между
 документами помечаются `[[имя]]`.
+
+Про скорость: общая картина и принципы — в одном месте,
+[architecture/performance.md](architecture/performance.md). В фич-документ добавляйте
+подраздел `### Производительность` (внутри «Как работает») **только если есть
+конкретика**, и со ссылкой на центральный документ — не дублируя суть. Не во всех
+разделах он нужен.

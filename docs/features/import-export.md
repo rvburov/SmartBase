@@ -141,7 +141,7 @@
 Файлы [CalendarExporter.cs](../../Core/Exporters/CalendarExporter.cs) и
 [CalendarImporter.cs](../../Core/Importers/CalendarImporter.cs) **пустые** — общий
 экспорт/импорт календаря (например, CSV/iCal) ещё не реализован. См.
-[../ROADMAP.md](../ROADMAP.md) и [../plans/](../plans/).
+[../ROADMAP.md](../ROADMAP.md) (раздел «Заглушки в коде»).
 
 ## Связанные документы
 
