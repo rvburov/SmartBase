@@ -144,7 +144,8 @@ public class ConstructorRepository(AppDbContext db)
     /// «Описание» создаётся пустой и ставится в конец (данные в неё не импортируются).
     /// Всё в одной транзакции. Возвращает id созданной коллекции.
     /// </summary>
-    public int ImportExcelCollection(string collectionName, int? groupId, ExcelImportData data)
+    public int ImportExcelCollection(string collectionName, int? groupId, ExcelImportData data,
+                                     IProgress<double>? progress = null)
     {
         using var tx = db.Database.BeginTransaction();
 
@@ -178,11 +179,16 @@ public class ConstructorRepository(AppDbContext db)
         SaveColumnOrder(col.Id, order);
 
         // Записи + значения свойств. Описание не импортируется — остаётся пустым.
-        // Значения добавляем через навигацию, чтобы вставить всё одним SaveChanges.
-        var now = DateTime.Now.ToString("o");
-        var pos = 0;
-        foreach (var row in data.Rows)
+        // Значения добавляем через навигацию; SaveChanges батчами — чтобы отдавать
+        // прогресс (троттлинг по проценту) и не накапливать всё в один огромный flush.
+        const int batchSize = 500;
+        var now      = DateTime.Now.ToString("o");
+        var pos      = 0;
+        var total    = Math.Max(1, data.Rows.Count);
+        var lastPct  = -1;
+        for (var idx = 0; idx < data.Rows.Count; idx++)
         {
+            var row = data.Rows[idx];
             pos += 1000;
             var rec = new DbRecordEntity
             {
@@ -195,8 +201,14 @@ public class ConstructorRepository(AppDbContext db)
                 rec.FieldValues.Add(new DbFieldValueEntity { FieldId = fieldIds[i], Value = val ?? "" });
             }
             db.DbRecords.Add(rec);
+
+            if ((idx + 1) % batchSize == 0) db.SaveChanges();
+
+            var pct = (idx + 1) * 100 / total;
+            if (progress is not null && pct != lastPct) { progress.Report((idx + 1) / (double)total); lastPct = pct; }
         }
         db.SaveChanges();
+        progress?.Report(1.0);
 
         tx.Commit();
         return col.Id;

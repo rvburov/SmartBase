@@ -7,6 +7,7 @@ using Avalonia.Media;
 using Avalonia.VisualTree;
 using CommunityToolkit.Mvvm.ComponentModel;
 using DataBase.Controls.Dialogs;
+using DataBase.Core.Importers;
 using DataBase.Core.Models;
 using DataBase.Database;
 using DataBase.Database.Repositories;
@@ -748,29 +749,69 @@ public partial class Sidebar : UserControl
         }
     }
 
-    // Импорт листа Excel в новую коллекцию. Окно само читает файл и создаёт коллекцию
-    // в выбранной БД; здесь только обновляем список и открываем результат (в конструкторе).
+    // Импорт таблицы в новую коллекцию. Окно собирает заявку (ImportRequest), затем здесь
+    // показываем окно загрузки с процентами и выполняем чтение+запись в фоне. При ошибке —
+    // снова открываем окно с теми же значениями и текстом ошибки; при отмене — выходим.
     private async Task OpenImportExport()
     {
         if (OwnerWindow is null || RepoFor(DefaultDbId) is null) return;
 
-        // Тултип кнопки не должен мерцать поверх модального окна (как в CreateItem).
-        ToolTip.SetIsOpen(ImportExportBtn, false);
-        ToolTip.SetServiceEnabled(ImportExportBtn, false);
-        ImportExportResult? res;
-        try
-        {
-            var dlg = new ImportExportDialog(DbOptions(), DefaultDbId);
-            res = await dlg.ShowDialog<ImportExportResult?>(OwnerWindow);
-        }
-        finally
-        {
-            ToolTip.SetServiceEnabled(ImportExportBtn, true);
-        }
-        if (res is null) return;
+        ImportDraft? prefill = null;
+        string?      error   = null;
 
-        ReloadAndNotify();
-        if (_mode == SidebarMode.Constructor) OpenCollection(res.DbId, res.CollectionId);
+        while (true)
+        {
+            // Тултип кнопки не должен мерцать поверх модального окна (как в CreateItem).
+            ToolTip.SetIsOpen(ImportExportBtn, false);
+            ToolTip.SetServiceEnabled(ImportExportBtn, false);
+            ImportRequest? req;
+            try
+            {
+                var dlg = new ImportExportDialog(DbOptions(), DefaultDbId, prefill, error);
+                req = await dlg.ShowDialog<ImportRequest?>(OwnerWindow);
+            }
+            finally
+            {
+                ToolTip.SetServiceEnabled(ImportExportBtn, true);
+            }
+
+            if (req is null) return;   // отмена
+
+            var repo = RepoFor(req.DbId);
+            if (repo is null) return;
+
+            // Окно загрузки: показываем модально (не ждём — закроем сами после импорта).
+            var progress = new ProgressDialog();
+            IProgress<double> readP  = new Progress<double>(p => progress.SetProgress(p * 0.5,       "Чтение файла…"));
+            IProgress<double> writeP = new Progress<double>(p => progress.SetProgress(0.5 + p * 0.5, "Сохранение записей…"));
+            _ = progress.ShowDialog(OwnerWindow);
+
+            try
+            {
+                var colId = await Task.Run(() =>
+                {
+                    var data = ExcelImporter.Parse(req.Spec, readP);
+                    return repo.ImportExcelCollection(req.Name, req.ParentId, data, writeP);
+                });
+
+                progress.Done();
+                ReloadAndNotify();
+                if (_mode == SidebarMode.Constructor) OpenCollection(req.DbId, colId);
+                return;
+            }
+            catch (ExcelImportException ex)
+            {
+                progress.Done();
+                prefill = req.Draft;
+                error   = ex.Message;
+            }
+            catch
+            {
+                progress.Done();
+                prefill = req.Draft;
+                error   = "Не удалось импортировать данные.";
+            }
+        }
     }
 
     private void ExpandGroup(int dbId, int groupId)

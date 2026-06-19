@@ -1,0 +1,41 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="DataBase.Controls.Dialogs.ProgressDialog"
+        Title="Импорт данных"
+        Width="340"
+        MinWidth="340"
+        MaxWidth="340"
+        MinHeight="0"
+        SizeToContent="Height"
+        WindowStartupLocation="CenterOwner"
+        CanResize="False"
+        ShowInTaskbar="False"
+        Background="{StaticResource BrushBg}">
+
+    <StackPanel Margin="22,20" Spacing="14">
+
+        <TextBlock x:Name="PhaseText"
+                   Text="Подготовка…"
+                   FontWeight="{StaticResource FontWeightBold}"
+                   FontSize="{StaticResource FontSizeBase}"
+                   Foreground="{StaticResource BrushPrimaryText}" />
+
+        <Grid ColumnDefinitions="*,Auto">
+            <ProgressBar Grid.Column="0" x:Name="Bar"
+                         Minimum="0" Maximum="100" Value="0"
+                         Height="8"
+                         VerticalAlignment="Center"
+                         Foreground="{StaticResource BrushAccent}" />
+            <TextBlock Grid.Column="1" x:Name="PercentText"
+                       Text="0%"
+                       MinWidth="42"
+                       Margin="10,0,0,0"
+                       TextAlignment="Right"
+                       FontSize="{StaticResource FontSizeBase}"
+                       Foreground="{StaticResource BrushSecondaryText}"
+                       VerticalAlignment="Center" />
+        </Grid>
+
+    </StackPanel>
+
+</Window>

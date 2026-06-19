@@ -42,7 +42,7 @@
 
         <Grid ColumnDefinitions="*,8,Auto" Margin="0,0,0,12">
             <TextBox Grid.Column="0" x:Name="PathBox"
-                     Watermark="Путь к файлу .xlsx / .xlsm"
+                     Watermark="Путь к файлу .xlsx / .xlsm / .csv"
                      Height="34"
                      VerticalContentAlignment="Center"
                      CornerRadius="{StaticResource RadiusMedium}" />
@@ -132,7 +132,7 @@
                    TextWrapping="Wrap"
                    FontSize="{StaticResource FontSizeSmall}"
                    Foreground="{StaticResource BrushSecondaryText}"
-                   Text="Берется первый лист. Первая строка — заголовки (имена свойств). Столбец 1 → название записи, остальные столбцы → текстовые свойства. Колонка «Описание» создается пустой в конце. Данные читаются со второй строки. Все значения сохраняются как текст." />
+                   Text="Берется первый лист (для CSV — весь файл). Первая строка — заголовки (имена свойств). Столбец 1 → название записи, остальные столбцы → текстовые свойства. Колонка «Описание» создается пустой в конце. Данные читаются со второй строки. Все значения сохраняются как текст." />
 
         <!-- Параметры ручного типа — отдельный блок (белая карточка с рамкой) -->
         <Border x:Name="ManualPanel" IsVisible="False"
