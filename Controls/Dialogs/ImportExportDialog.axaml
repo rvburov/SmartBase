@@ -132,60 +132,73 @@
                    TextWrapping="Wrap"
                    FontSize="{StaticResource FontSizeSmall}"
                    Foreground="{StaticResource BrushSecondaryText}"
-                   Text="Берется первый лист. Первая строка — заголовки (имена свойств). Столбец 1 → название записи, столбец 2 → описание, остальные столбцы → текстовые свойства. Данные читаются со второй строки. Все значения сохраняются как текст." />
+                   Text="Берется первый лист. Первая строка — заголовки (имена свойств). Столбец 1 → название записи, остальные столбцы → текстовые свойства. Колонка «Описание» создается пустой в конце. Данные читаются со второй строки. Все значения сохраняются как текст." />
 
-        <!-- Параметры ручного типа -->
-        <StackPanel x:Name="ManualPanel" Spacing="0" IsVisible="False">
+        <!-- Параметры ручного типа — отдельный блок (белая карточка с рамкой) -->
+        <Border x:Name="ManualPanel" IsVisible="False"
+                Background="{StaticResource BrushBg}"
+                BorderBrush="{StaticResource BrushSeparator}"
+                BorderThickness="1"
+                CornerRadius="{StaticResource RadiusBase}"
+                Padding="12"
+                Margin="0,0,0,12">
+            <StackPanel Spacing="0">
 
-            <TextBlock Text="Лист"
-                       Margin="0,0,0,6"
-                       FontWeight="{StaticResource FontWeightBold}"
-                       FontSize="{StaticResource FontSizeBase}"
-                       Foreground="{StaticResource BrushSecondaryText}" />
-            <TextBox x:Name="SheetBox"
-                     Watermark="Название листа (пусто — первый)"
-                     Height="34"
-                     VerticalContentAlignment="Center"
-                     Margin="0,0,0,12"
-                     CornerRadius="{StaticResource RadiusMedium}" />
+                <TextBlock Text="Параметры ручного импорта"
+                           Margin="0,0,0,10"
+                           FontWeight="{StaticResource FontWeightBold}"
+                           FontSize="{StaticResource FontSizeBase}"
+                           Foreground="{StaticResource BrushPrimaryText}" />
 
-            <TextBlock Text="Строка заголовков"
-                       Margin="0,0,0,6"
-                       FontWeight="{StaticResource FontWeightBold}"
-                       FontSize="{StaticResource FontSizeBase}"
-                       Foreground="{StaticResource BrushSecondaryText}" />
-            <TextBox x:Name="HeaderRowBox"
-                     Watermark="Например, 1"
-                     Height="34"
-                     VerticalContentAlignment="Center"
-                     Margin="0,0,0,12"
-                     CornerRadius="{StaticResource RadiusMedium}" />
+                <TextBlock Text="Лист"
+                           Margin="0,0,0,6"
+                           FontWeight="{StaticResource FontWeightBold}"
+                           FontSize="{StaticResource FontSizeBase}"
+                           Foreground="{StaticResource BrushSecondaryText}" />
+                <TextBox x:Name="SheetBox"
+                         Watermark="Название листа (пусто — первый)"
+                         Height="34"
+                         VerticalContentAlignment="Center"
+                         Margin="0,0,0,12"
+                         CornerRadius="{StaticResource RadiusMedium}" />
 
-            <TextBlock Text="Столбец названия"
-                       Margin="0,0,0,6"
-                       FontWeight="{StaticResource FontWeightBold}"
-                       FontSize="{StaticResource FontSizeBase}"
-                       Foreground="{StaticResource BrushSecondaryText}" />
-            <TextBox x:Name="TitleColBox"
-                     Watermark="Число или буква, например 1 или A"
-                     Height="34"
-                     VerticalContentAlignment="Center"
-                     Margin="0,0,0,12"
-                     CornerRadius="{StaticResource RadiusMedium}" />
+                <TextBlock Text="Строка заголовков"
+                           Margin="0,0,0,6"
+                           FontWeight="{StaticResource FontWeightBold}"
+                           FontSize="{StaticResource FontSizeBase}"
+                           Foreground="{StaticResource BrushSecondaryText}" />
+                <TextBox x:Name="HeaderRowBox"
+                         Watermark="Например, 1"
+                         Height="34"
+                         VerticalContentAlignment="Center"
+                         Margin="0,0,0,12"
+                         CornerRadius="{StaticResource RadiusMedium}" />
 
-            <TextBlock Text="Столбец описания"
-                       Margin="0,0,0,6"
-                       FontWeight="{StaticResource FontWeightBold}"
-                       FontSize="{StaticResource FontSizeBase}"
-                       Foreground="{StaticResource BrushSecondaryText}" />
-            <TextBox x:Name="DescColBox"
-                     Watermark="Число или буква, например 2 или B"
-                     Height="34"
-                     VerticalContentAlignment="Center"
-                     Margin="0,0,0,12"
-                     CornerRadius="{StaticResource RadiusMedium}" />
+                <TextBlock Text="Строка данных"
+                           Margin="0,0,0,6"
+                           FontWeight="{StaticResource FontWeightBold}"
+                           FontSize="{StaticResource FontSizeBase}"
+                           Foreground="{StaticResource BrushSecondaryText}" />
+                <TextBox x:Name="DataRowBox"
+                         Watermark="Например, 2"
+                         Height="34"
+                         VerticalContentAlignment="Center"
+                         Margin="0,0,0,12"
+                         CornerRadius="{StaticResource RadiusMedium}" />
 
-        </StackPanel>
+                <TextBlock Text="Столбец названия"
+                           Margin="0,0,0,6"
+                           FontWeight="{StaticResource FontWeightBold}"
+                           FontSize="{StaticResource FontSizeBase}"
+                           Foreground="{StaticResource BrushSecondaryText}" />
+                <TextBox x:Name="TitleColBox"
+                         Watermark="Число или буква, например 1 или A"
+                         Height="34"
+                         VerticalContentAlignment="Center"
+                         CornerRadius="{StaticResource RadiusMedium}" />
+
+            </StackPanel>
+        </Border>
 
         <!-- Уведомление об ошибке -->
         <w:ErrorBanner x:Name="ErrorBanner" Margin="0,0,0,12" />

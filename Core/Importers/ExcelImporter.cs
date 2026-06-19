@@ -5,31 +5,29 @@ namespace DataBase.Core.Importers;
 /// <summary>Ошибка импорта с дружелюбным текстом — показывается пользователю в баннере диалога.</summary>
 public sealed class ExcelImportException(string message) : Exception(message);
 
-/// <summary>Готовые к записи данные импорта: подписи системных колонок, имена свойств и записи.</summary>
+/// <summary>Готовые к записи данные импорта: подпись названия, имена свойств и записи.</summary>
 public sealed record ExcelImportData(
     string? TitleHeader,
-    string? DescHeader,
     IReadOnlyList<string> FieldNames,
     IReadOnlyList<ExcelImportRow> Rows);
 
-/// <summary>Одна запись: название, описание и значения свойств (в порядке FieldNames).</summary>
-public sealed record ExcelImportRow(string Title, string? Description, IReadOnlyList<string> FieldValues);
+/// <summary>Одна запись: название и значения свойств (в порядке FieldNames). Описание не импортируется.</summary>
+public sealed record ExcelImportRow(string Title, IReadOnlyList<string> FieldValues);
 
 /// <summary>
 /// Чтение листа Excel (.xlsx/.xlsm) в структуру для создания коллекции.
-/// Каждый столбец используемого диапазона = свойство: 1-й (заданный) → название записи,
-/// 2-й (заданный) → описание, остальные → текстовые свойства. Имена свойств берутся из
-/// строки заголовков; пустые/повторяющиеся приводятся к уникальным («Без названия N»).
-/// Данные читаются со строки сразу после заголовка; всё сохраняется как текст.
+/// Заданный столбец → название записи, остальные столбцы используемого диапазона →
+/// текстовые свойства. Колонка «Описание» не импортируется (создаётся пустой отдельно).
+/// Имена свойств берутся из строки заголовков; пустые/повторяющиеся приводятся к
+/// уникальным («Без названия N»). Данные — со строки сразу после заголовка, как текст.
 /// </summary>
 public static class ExcelImporter
 {
     /// <param name="SheetName">Название листа; пусто — первый лист.</param>
     /// <param name="HeaderRow">Номер строки заголовков (≥ 1).</param>
+    /// <param name="DataRow">Номер строки, с которой начинаются данные (≥ 1).</param>
     /// <param name="TitleColumn">Столбец названия записи — число («1») или буква («A»).</param>
-    /// <param name="DescColumn">Столбец описания — число или буква.</param>
-    public sealed record Spec(string FilePath, string? SheetName, int HeaderRow,
-                              string TitleColumn, string DescColumn);
+    public sealed record Spec(string FilePath, string? SheetName, int HeaderRow, int DataRow, string TitleColumn);
 
     public static ExcelImportData Parse(Spec spec)
     {
@@ -39,11 +37,10 @@ public static class ExcelImporter
             throw new ExcelImportException("Файл не найден.");
         if (spec.HeaderRow < 1)
             throw new ExcelImportException("Строка заголовков должна быть ≥ 1.");
+        if (spec.DataRow < 1)
+            throw new ExcelImportException("Строка данных должна быть ≥ 1.");
 
         var titleCol = ParseColumn(spec.TitleColumn, "Столбец названия");
-        var descCol  = ParseColumn(spec.DescColumn,  "Столбец описания");
-        if (titleCol == descCol)
-            throw new ExcelImportException("Столбец названия и столбец описания не должны совпадать.");
 
         XLWorkbook wb;
         try { wb = new XLWorkbook(spec.FilePath); }
@@ -75,16 +72,16 @@ public static class ExcelImporter
             var lastCol  = used.RangeAddress.LastAddress.ColumnNumber;
             var lastRow  = used.RangeAddress.LastAddress.RowNumber;
 
-            // Столбцы-свойства = весь используемый диапазон, кроме названия и описания.
+            // Столбцы-свойства = весь используемый диапазон, кроме столбца названия.
             var fieldCols = new List<int>();
             for (var c = firstCol; c <= lastCol; c++)
-                if (c != titleCol && c != descCol)
+                if (c != titleCol)
                     fieldCols.Add(c);
 
             // Имена свойств из строки заголовков: пустые → «Без названия N», уникальность гарантируется.
             string Header(int col) => sheet.Cell(spec.HeaderRow, col).GetFormattedString().Trim();
 
-            var named = new List<(int Col, string Raw)> { (titleCol, Header(titleCol)), (descCol, Header(descCol)) };
+            var named = new List<(int Col, string Raw)> { (titleCol, Header(titleCol)) };
             named.AddRange(fieldCols.Select(c => (c, Header(c))));
             named.Sort((a, b) => a.Col.CompareTo(b.Col));
             var nameByCol = AssignUniqueNames(named);
@@ -92,11 +89,11 @@ public static class ExcelImporter
             // Данные записей — со строки сразу после заголовка.
             string Cell(int row, int col) => sheet.Cell(row, col).GetFormattedString();
 
-            var rawRows = new List<(string Title, string Desc, List<string> Vals)>();
-            for (var r = spec.HeaderRow + 1; r <= lastRow; r++)
+            var rawRows = new List<(string Title, List<string> Vals)>();
+            for (var r = spec.DataRow; r <= lastRow; r++)
             {
                 var vals = fieldCols.Select(c => Cell(r, c)).ToList();
-                rawRows.Add((Cell(r, titleCol), Cell(r, descCol), vals));
+                rawRows.Add((Cell(r, titleCol), vals));
             }
 
             // Пустое название → «Без названия»; если таких несколько — нумеруем.
@@ -113,11 +110,11 @@ public static class ExcelImporter
                 }
                 else title = x.Title;
 
-                rows.Add(new ExcelImportRow(title, string.IsNullOrEmpty(x.Desc) ? null : x.Desc, x.Vals));
+                rows.Add(new ExcelImportRow(title, x.Vals));
             }
 
             var fieldNames = fieldCols.Select(c => nameByCol[c]).ToList();
-            return new ExcelImportData(nameByCol[titleCol], nameByCol[descCol], fieldNames, rows);
+            return new ExcelImportData(nameByCol[titleCol], fieldNames, rows);
         }
     }
 

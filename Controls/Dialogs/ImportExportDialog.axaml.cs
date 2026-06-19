@@ -115,14 +115,17 @@ public partial class ImportExportDialog : Window
                 ShowError("Строка заголовков: укажите число ≥ 1");
                 return;
             }
+            if (!int.TryParse(DataRowBox.Text?.Trim(), out var dataRow) || dataRow < 1)
+            {
+                ShowError("Строка данных: укажите число ≥ 1");
+                return;
+            }
             var sheet = string.IsNullOrWhiteSpace(SheetBox.Text) ? null : SheetBox.Text!.Trim();
-            spec = new ExcelImporter.Spec(path, sheet, headerRow,
-                TitleColBox.Text?.Trim() ?? "", DescColBox.Text?.Trim() ?? "");
+            spec = new ExcelImporter.Spec(path, sheet, headerRow, dataRow, TitleColBox.Text?.Trim() ?? "");
         }
         else                                 // Стандартный
         {
-            spec = new ExcelImporter.Spec(path, SheetName: null, HeaderRow: 1,
-                TitleColumn: "1", DescColumn: "2");
+            spec = new ExcelImporter.Spec(path, SheetName: null, HeaderRow: 1, DataRow: 2, TitleColumn: "1");
         }
 
         SetBusy(true);

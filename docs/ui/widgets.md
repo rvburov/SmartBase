@@ -18,9 +18,16 @@
 | [ScrollArea](../../Controls/Widgets/ScrollArea.axaml) | прокручиваемая область с оформлением проекта |
 | [DateEditor](../../Controls/Widgets/DateEditor.axaml) | ввод даты; событие `Changed` |
 | [TimeField](../../Controls/Widgets/TimeField.axaml) | ввод времени; событие `TimeChanged` |
+| [ErrorBanner](../../Controls/Widgets/ErrorBanner.axaml) | красный баннер ошибки валидации; методы `Show(msg)` / `Hide()` |
 
 `DateEditor` и `TimeField` используются в диалоге события ([RecordDialog](dialogs.md))
 для выбора начала/конца.
+
+`ErrorBanner` — единый контрол для уведомлений об ошибках валидации (раньше вёрстка
+дублировалась в каждом диалоге). Скрыт, пока нет текста; `Show(msg)` показывает и
+подставляет текст, `Hide()` прячет. Длинный текст переносится по словам, высота
+подстраивается под содержимое. Внешний отступ (`Margin`) и `DockPanel.Dock` задаются
+на месте использования. Применяется в диалогах с валидацией и внутри `DateEditor`.
 
 ## Компоненты ([Controls/Components/](../../Controls/Components/))
 

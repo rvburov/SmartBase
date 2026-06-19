@@ -34,6 +34,14 @@ if (await dlg.ShowDialog<bool>(ownerWindow) == true) { /* ... */ }
 [ConstructorControllerView](../../Views/ConstructorDb/ConstructorControllerView.axaml.cs))
 открывают диалоги и применяют результат к репозиторию.
 
+## Ошибки валидации
+
+Диалоги с проверкой ввода (`RecordDialog`, `CreateItemDialog`, `GroupDialog`,
+`CollectionDialog`, `PropertyEditorDialog`, `ImportExportDialog`) показывают ошибки
+через единый виджет [ErrorBanner](widgets.md) — красный баннер с иконкой и текстом.
+Диалог зовёт `ErrorBanner.Show(msg)` при неудачной валидации и `Hide()` при правке
+поля; длинный текст переносится, окно (`SizeToContent="Height"`) подстраивает высоту.
+
 ## Связанные документы
 
 [[widgets]], [[../features/constructor-db/overview]], [[../features/calendar/overview]]

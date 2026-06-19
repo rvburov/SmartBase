@@ -140,7 +140,8 @@ public class ConstructorRepository(AppDbContext db)
 
     /// <summary>
     /// Создать новую коллекцию из распарсенного листа Excel: текстовые свойства по столбцам,
-    /// записи со значениями, подписи системных колонок «Название»/«Описание» из заголовков.
+    /// записи со значениями, подпись системной колонки «Название» из заголовка. Колонка
+    /// «Описание» создаётся пустой и ставится в конец (данные в неё не импортируются).
     /// Всё в одной транзакции. Возвращает id созданной коллекции.
     /// </summary>
     public int ImportExcelCollection(string collectionName, int? groupId, ExcelImportData data)
@@ -156,7 +157,7 @@ public class ConstructorRepository(AppDbContext db)
         db.DbCollections.Add(col);
         db.SaveChanges();
 
-        // Свойства (столбцы 3+) — текстовые, в порядке столбцов. Имена уже уникальны.
+        // Свойства по столбцам — текстовые, в порядке столбцов. Имена уже уникальны.
         var fields = data.FieldNames
             .Select((name, i) => new DbFieldEntity
             {
@@ -167,12 +168,17 @@ public class ConstructorRepository(AppDbContext db)
         db.SaveChanges();
         var fieldIds = fields.Select(f => f.Id).ToList();
 
-        // Подписи системных колонок из заголовков (пусто/дефолт → имя по умолчанию).
+        // Подпись колонки «Название» из заголовка (пусто/дефолт → имя по умолчанию).
         SetSystemFieldName(col.Id, TitleKey, data.TitleHeader, "Название");
-        SetSystemFieldName(col.Id, DescKey,  data.DescHeader,  "Описание");
 
-        // Записи + значения свойств. Значения добавляем через навигацию, чтобы вставить
-        // всё одним SaveChanges (быстро даже на больших файлах).
+        // Порядок колонок: «Название», затем свойства, «Описание» — в конце.
+        var order = new List<string> { TitleKey };
+        order.AddRange(fieldIds.Select(id => id.ToString()));
+        order.Add(DescKey);
+        SaveColumnOrder(col.Id, order);
+
+        // Записи + значения свойств. Описание не импортируется — остаётся пустым.
+        // Значения добавляем через навигацию, чтобы вставить всё одним SaveChanges.
         var now = DateTime.Now.ToString("o");
         var pos = 0;
         foreach (var row in data.Rows)
@@ -181,7 +187,7 @@ public class ConstructorRepository(AppDbContext db)
             var rec = new DbRecordEntity
             {
                 CollectionId = col.Id, CreatedAt = now, Position = pos,
-                Title = row.Title, Description = row.Description,
+                Title = row.Title, Description = null,
             };
             for (var i = 0; i < fieldIds.Count; i++)
             {
