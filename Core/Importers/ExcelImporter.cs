@@ -78,14 +78,24 @@ public static class ExcelImporter
                 throw new ExcelImportException("Лист пустой — нет данных для импорта.");
 
             var firstCol = used.RangeAddress.FirstAddress.ColumnNumber;
-            var lastCol  = used.RangeAddress.LastAddress.ColumnNumber;
-            var lastRow  = used.RangeAddress.LastAddress.RowNumber;
 
-            // Читаем заполненные ячейки одним проходом в словарь — это в разы быстрее, чем
-            // дёргать sheet.Cell(r,c) в цикле (он к тому же материализует пустые ячейки).
+            // Читаем только НЕПУСТЫЕ ячейки одним проходом в словарь. Это и быстрее, чем
+            // sheet.Cell(r,c) в цикле, и задаёт границы по реальному содержимому. Адрес
+            // RangeUsed включает пустые-но-отформатированные ячейки (заливка, рамки, формат
+            // на весь столбец) — без этого фильтра импорт раздулся бы лишними столбцами/строками.
             var values = new Dictionary<(int Row, int Col), string>();
             foreach (var cell in used.CellsUsed())
-                values[(cell.Address.RowNumber, cell.Address.ColumnNumber)] = cell.GetFormattedString();
+            {
+                var s = cell.GetFormattedString();
+                if (!string.IsNullOrEmpty(s))
+                    values[(cell.Address.RowNumber, cell.Address.ColumnNumber)] = s;
+            }
+
+            if (values.Count == 0)
+                throw new ExcelImportException("Лист пустой — нет данных для импорта.");
+
+            var lastCol = values.Keys.Max(k => k.Col);
+            var lastRow = values.Keys.Max(k => k.Row);
 
             string Cell(int row, int col) => values.TryGetValue((row, col), out var v) ? v : "";
             return BuildImportData(spec, titleCol, firstCol, lastCol, lastRow, Cell, progress);
@@ -109,7 +119,14 @@ public static class ExcelImporter
             throw new ExcelImportException("Файл пустой — нет данных для импорта.");
 
         var lastRow = grid.Count;
-        var lastCol = grid.Max(r => r.Length);
+
+        // Эффективный последний столбец = самый правый непустой хоть в одной строке.
+        // Excel при экспорте набивает хвост пустых полей (запятых) — без обрезки это
+        // тысячи лишних «Без названия»-столбцов и взрыв числа значений (тормоза/память).
+        var lastCol = 1;
+        foreach (var r in grid)
+            for (var c = r.Length; c >= 1; c--)
+                if (!string.IsNullOrWhiteSpace(r[c - 1])) { if (c > lastCol) lastCol = c; break; }
 
         string Cell(int row, int col)
         {
