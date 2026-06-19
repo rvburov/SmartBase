@@ -81,8 +81,7 @@ public partial class GroupDialog : Window
     private void ShowError(string message)
     {
         var pos = Position;            // баннер увеличит высоту — держим позицию
-        ErrorText.Text        = message;
-        ErrorBanner.IsVisible = true;
+        ErrorBanner.Show(message);
         KeepWindowPosition(pos);
     }
 
@@ -90,7 +89,7 @@ public partial class GroupDialog : Window
     {
         if (!ErrorBanner.IsVisible) return;
         var pos = Position;
-        ErrorBanner.IsVisible = false;
+        ErrorBanner.Hide();
         KeepWindowPosition(pos);
     }
 

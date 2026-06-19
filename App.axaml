@@ -18,9 +18,14 @@
 
         <!-- Иконка приложения для ВСЕХ окон (главное + все диалоги, в т.ч. будущие).
              На Windows/Linux это иконка в заголовке окна, таскбаре и Alt-Tab.
-             На macOS иконка окна не отображается — там она берётся из .app-бандла. -->
+             На macOS иконка окна не отображается — там она берётся из .app-бандла.
+
+             Указываем .ico, а не .png: backend Win32 разбирает ICONDIR и через
+             CreateIconFromResourceEx отдаёт Windows ГОТОВЫЙ слой нужного размера
+             (16/24/32/48), а не масштабирует на лету одиночный 512px PNG. Без этого
+             иконка в заголовке и таскбаре выглядит мыльной. -->
         <Style Selector="Window">
-            <Setter Property="Icon" Value="/Assets/Branding/icon.png" />
+            <Setter Property="Icon" Value="/Assets/Branding/icon.ico" />
         </Style>
         <StyleInclude Source="avares://DataBase/Assets/Styles/Typography.axaml" />
         <StyleInclude Source="avares://DataBase/Assets/Styles/Controls.axaml" />

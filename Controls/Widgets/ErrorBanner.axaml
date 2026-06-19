@@ -1,0 +1,28 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="DataBase.Controls.Widgets.ErrorBanner"
+             IsVisible="False">
+
+    <Border Background="#1AFF3B30"
+            BorderBrush="{StaticResource BrushRed}"
+            BorderThickness="1"
+            CornerRadius="{StaticResource RadiusBase}"
+            Padding="10,7">
+        <Grid ColumnDefinitions="Auto,8,*">
+            <Viewbox Grid.Column="0" Width="16" Height="16"
+                     VerticalAlignment="Top">
+                <Canvas Width="24" Height="24">
+                    <Ellipse Width="24" Height="24" Fill="{StaticResource BrushRed}" />
+                    <Path Data="M12 6 L12 14 M12 17 L12 18.5"
+                          Stroke="White" StrokeThickness="2"
+                          StrokeLineCap="Round" />
+                </Canvas>
+            </Viewbox>
+            <TextBlock Grid.Column="2" x:Name="MessageText"
+                       VerticalAlignment="Top"
+                       TextWrapping="Wrap"
+                       FontSize="{StaticResource FontSizeBase}"
+                       Foreground="{StaticResource BrushRed}" />
+        </Grid>
+    </Border>
+</UserControl>

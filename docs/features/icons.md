@@ -1,35 +1,69 @@
 # Иконка приложения
 
 Всё, что относится к иконке, лежит в **одной папке** `Assets/Branding/`.
-Каждая ОС берёт иконку из своего источника и формата, но генерируются они
-из одного мастер-файла.
+Каждая ОС берёт иконку из своего файла и формата, но все они делаются из
+одного мастера — `icon.png`.
 
 ## Папка Assets/Branding/
 
-| Файл | Для чего |
-|---|---|
-| `icon.png` | мастер (512×512). Иконка окна на Windows/Linux + иконка меню на Linux |
-| `icon.ico` | иконка Windows `.exe` (генерируется из `icon.png`) |
-| `icon.icns` | иконка macOS-бандла (генерируется из `icon.png`) |
-| `Info.plist` | метаданные macOS `.app` (ссылается на иконку) |
-| `DataBase.desktop` | пункт меню приложения для Linux |
+| Файл | Формат | Для чего |
+|---|---|---|
+| `icon.png` | PNG-32 (RGBA), мастер 1024×1024 (мин. 512) | исходник для генерации `.ico`/`.icns` + иконка меню на Linux |
+| `icon.ico` | ICO, слои 16/24/32/48/64/128/256 | иконка окна (Windows/Linux) **и** иконка Windows `.exe` |
+| `icon.icns` | ICNS | иконка macOS-бандла `.app` |
+| `Info.plist` | — | метаданные macOS `.app` (ссылается на `icon.icns`) |
+| `DataBase.desktop` | — | пункт меню приложения для Linux |
 
-`icon.ico` и `icon.icns` **генерируются** — править их вручную не нужно.
-Чтобы сменить иконку: замените `icon.png` и запустите `Scripts/generate-icons.sh`.
-Идеальный мастер — 1024×1024 (тогда и retina-слот macOS будет чётким).
+`icon.ico` и `icon.icns` **генерируются из `icon.png`** — править их вручную не нужно.
+
+## Как поменять иконку
+
+Подготовьте квадратный мастер: **PNG-32 (RGBA), прозрачный фон, 1024×1024**
+(минимум 512×512, иначе retina-слот macOS будет нечётким). Помните, что та же
+картинка показывается и на 16px — тонкие линии и мелкие детали там сливаются в
+кашу, поэтому лучше простой силуэт с толстыми штрихами.
+
+**1. Замените мастер** `Assets/Branding/icon.png`.
+
+**2. Перегенерируйте `icon.ico` и `icon.icns` из мастера:**
+
+- **на Windows** — через ImageMagick (`winget install ImageMagick.ImageMagick`):
+  ```powershell
+  cd Assets/Branding
+  magick icon.png -define icon:auto-resize=256,128,64,48,32,24,16 icon.ico
+  magick icon.png icon.icns
+  ```
+- **на macOS** — штатным скриптом (использует `sips`, `iconutil`, `python3`):
+  ```bash
+  Scripts/generate-icons.sh
+  ```
+  > ⚠️ `generate-icons.sh` работает **только на macOS**. На Windows запускайте
+  > команды ImageMagick выше.
+
+**3. Если правите иконку только под Windows** — достаточно заменить один
+`icon.ico` (это сразу и значок окна, и значок `.exe`). Мастер `.png` и `.icns`
+нужны лишь для сборок под Linux/macOS.
 
 ## Как подключено
 
 - **Окно (Windows/Linux):** глобальный стиль `Window` в [App.axaml](../../App.axaml)
-  задаёт `Icon` = `Assets/Branding/icon.png` для всех окон, включая будущие диалоги.
-- **Windows `.exe`:** `<ApplicationIcon>` в [DataBase.csproj](../../DataBase.csproj).
-- **macOS Dock/Finder/Launchpad:** только через `.app`-бандл (`Info.plist` + `icon.icns`).
-  Свойство `Window.Icon` на маке иконку не показывает.
+  задаёт `Icon` = `Assets/Branding/icon.ico` для всех окон, включая будущие диалоги.
+  Указан именно `.ico`, а не `.png`: на Windows backend разбирает слои ICO и отдаёт
+  Windows готовый кадр нужного размера (чётко в заголовке окна и таскбаре), а не
+  масштабирует 512px PNG на лету. На Linux Avalonia декодирует `.ico` в bitmap для
+  значка окна.
+- **Windows `.exe`:** `<ApplicationIcon>` = `icon.ico` в [DataBase.csproj](../../DataBase.csproj) —
+  значок в Проводнике, ярлыке и закрепе на таскбаре.
+- **macOS Dock/Finder/Launchpad:** только через `.app`-бандл (`Info.plist` →
+  `CFBundleIconFile` → `icon.icns`). Свойство `Window.Icon` на маке иконку окна
+  не показывает.
+- **Linux меню/лаунчер:** `DataBase.desktop` + `icon.png`, ставятся через
+  `Scripts/install-linux.sh`.
 
 ## Сборка под каждую ОС
 
 ```bash
-Scripts/generate-icons.sh                        # пересобрать .ico/.icns из icon.png
+Scripts/generate-icons.sh                        # (только macOS) пересобрать .ico/.icns из icon.png
 
 Scripts/build-macos-app.sh osx-arm64 Release     # macOS → dist/osx-arm64/DataBase.app
 open dist/osx-arm64/DataBase.app
@@ -44,6 +78,6 @@ Scripts/install-linux.sh                          # Linux: запускать н
 ## Скрипты (Scripts/)
 
 - `generate-icons.sh` — генерирует `icon.ico` и `icon.icns` из `icon.png`
-  (нужны только штатные `sips`, `iconutil`, `python3`).
+  (**только macOS**: нужны штатные `sips`, `iconutil`, `python3`).
 - `build-macos-app.sh` — собирает `dist/<rid>/DataBase.app` с иконкой.
 - `install-linux.sh` — ставит иконку и ярлык в меню Linux.

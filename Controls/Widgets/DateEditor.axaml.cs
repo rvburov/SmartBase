@@ -195,13 +195,9 @@ public partial class DateEditor : UserControl
         Changed?.Invoke(this, EventArgs.Empty);
     }
 
-    private void ShowError(string message)
-    {
-        ErrorText.Text        = message;
-        ErrorBanner.IsVisible = true;
-    }
+    private void ShowError(string message) => ErrorBanner.Show(message);
 
-    private void HideError() => ErrorBanner.IsVisible = false;
+    private void HideError() => ErrorBanner.Hide();
 
     // Разложить значение по элементам выпадашки (без поднятия Changed).
     private void PushToUi(DateValue? v)

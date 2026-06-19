@@ -1,5 +1,6 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:w="clr-namespace:DataBase.Controls.Widgets"
         x:Class="DataBase.Controls.Dialogs.ImportExportDialog"
         Title="Импорт/Экспорт"
         Width="420"
@@ -187,29 +188,7 @@
         </StackPanel>
 
         <!-- Уведомление об ошибке -->
-        <Border x:Name="ErrorBanner" IsVisible="False"
-                Background="#1AFF3B30"
-                BorderBrush="{StaticResource BrushRed}"
-                BorderThickness="1"
-                CornerRadius="{StaticResource RadiusBase}"
-                Padding="10,7"
-                Margin="0,0,0,12">
-            <StackPanel Orientation="Horizontal" Spacing="8">
-                <Viewbox Width="16" Height="16" VerticalAlignment="Center">
-                    <Canvas Width="24" Height="24">
-                        <Ellipse Width="24" Height="24" Fill="{StaticResource BrushRed}" />
-                        <Path Data="M12 6 L12 14 M12 17 L12 18.5"
-                              Stroke="White" StrokeThickness="2"
-                              StrokeLineCap="Round" />
-                    </Canvas>
-                </Viewbox>
-                <TextBlock x:Name="ErrorText"
-                           VerticalAlignment="Center"
-                           TextWrapping="Wrap"
-                           FontSize="{StaticResource FontSizeBase}"
-                           Foreground="{StaticResource BrushRed}" />
-            </StackPanel>
-        </Border>
+        <w:ErrorBanner x:Name="ErrorBanner" Margin="0,0,0,12" />
 
         <!-- Кнопки -->
         <Grid ColumnDefinitions="*,Auto,8,Auto" Margin="0,4,0,0">

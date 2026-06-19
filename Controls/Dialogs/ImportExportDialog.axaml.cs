@@ -155,8 +155,7 @@ public partial class ImportExportDialog : Window
     private void ShowError(string message)
     {
         var pos = Position;
-        ErrorText.Text        = message;
-        ErrorBanner.IsVisible = true;
+        ErrorBanner.Show(message);
         KeepWindowPosition(pos);
     }
 
@@ -164,7 +163,7 @@ public partial class ImportExportDialog : Window
     {
         if (!ErrorBanner.IsVisible) return;
         var pos = Position;
-        ErrorBanner.IsVisible = false;
+        ErrorBanner.Hide();
         KeepWindowPosition(pos);
     }
 

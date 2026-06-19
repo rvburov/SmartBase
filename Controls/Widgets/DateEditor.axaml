@@ -59,29 +59,7 @@
                                   Foreground="{StaticResource BrushPrimaryText}" />
 
                         <!-- Уведомление об ошибке валидации (как в RecordDialog) -->
-                        <Border x:Name="ErrorBanner" IsVisible="False"
-                                Background="#1AFF3B30"
-                                BorderBrush="{StaticResource BrushRed}"
-                                BorderThickness="1"
-                                CornerRadius="{StaticResource RadiusBase}"
-                                Padding="10,7"
-                                Margin="0,2,0,2">
-                            <StackPanel Orientation="Horizontal" Spacing="8">
-                                <Viewbox Width="16" Height="16" VerticalAlignment="Center">
-                                    <Canvas Width="24" Height="24">
-                                        <Ellipse Width="24" Height="24" Fill="{StaticResource BrushRed}" />
-                                        <Path Data="M12 6 L12 14 M12 17 L12 18.5"
-                                              Stroke="White" StrokeThickness="2"
-                                              StrokeLineCap="Round" />
-                                    </Canvas>
-                                </Viewbox>
-                                <TextBlock x:Name="ErrorText"
-                                           VerticalAlignment="Center"
-                                           TextWrapping="Wrap"
-                                           FontSize="{StaticResource FontSizeBase}"
-                                           Foreground="{StaticResource BrushRed}" />
-                            </StackPanel>
-                        </Border>
+                        <w:ErrorBanner x:Name="ErrorBanner" Margin="0,2,0,2" />
 
                         <Grid ColumnDefinitions="Auto,*,Auto">
                             <Button Grid.Column="0" x:Name="ClearBtn" Classes="dialog"
