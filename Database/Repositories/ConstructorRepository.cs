@@ -661,11 +661,12 @@ public class ConstructorRepository(AppDbContext db)
         db.DbFields.Add(copy);
         db.SaveChanges();
 
-        // Копируем значения ячеек исходного свойства во всех записях.
-        var values = db.DbFieldValues.Where(fv => fv.FieldId == fieldId).ToList();
-        foreach (var fv in values)
-            db.DbFieldValues.Add(new DbFieldValueEntity { RecordId = fv.RecordId, FieldId = copy.Id, Value = fv.Value });
-        db.SaveChanges();
+        // Копируем значения ячеек исходного свойства во всех записях ОДНИМ bulk-SQL —
+        // на больших коллекциях это сотни тысяч строк, поэлементная вставка через EF
+        // подвешивала бы приложение. Конфликтов по (RecordId, FieldId) нет: поле новое.
+        db.Database.ExecuteSqlInterpolated($@"
+            INSERT INTO db_field_values (RecordId, FieldId, Value)
+            SELECT RecordId, {copy.Id}, Value FROM db_field_values WHERE FieldId = {fieldId}");
 
         return new DbField
         {
@@ -736,6 +737,20 @@ public class ConstructorRepository(AppDbContext db)
           })
           .ToList();
 
+    /// <summary>
+    /// Лёгкая выборка (Id, Title) всех записей коллекции в порядке (Position, Id) — для окна
+    /// «Отображение записей». Только две колонки через проекцию + AsNoTracking: не материализует
+    /// полные сущности и не засоряет трекер (на коллекциях в сотни тысяч строк это заметно).
+    /// </summary>
+    public List<(int Id, string Title)> GetRecordTitlesOrdered(int collectionId) =>
+        db.DbRecords.AsNoTracking()
+          .Where(r => r.CollectionId == collectionId)
+          .OrderBy(r => r.Position).ThenBy(r => r.Id)
+          .Select(r => new { r.Id, r.Title })
+          .ToList()
+          .Select(r => (r.Id, r.Title ?? ""))
+          .ToList();
+
     // excludeHidden=true исключает записи, скрытые в окне «Отображение записей»
     // (record_display.Visible=false). Фильтр уходит в SQL до Count/Skip/Take, поэтому
     // виртуализация и пагинация таблицы сохраняются (см. VirtualRowList).
@@ -749,7 +764,7 @@ public class ConstructorRepository(AppDbContext db)
           .Where(r => r.CollectionId == collectionId
               && (!excludeHidden || !db.RecordDisplay.Any(d =>
                      d.CollectionId == collectionId && d.RecordId == r.Id && !d.Visible)))
-          .OrderBy(r => r.Position)
+          .OrderBy(r => r.Position).ThenBy(r => r.Id)
           .Skip(skip)
           .Take(take)
           .Select(r => new DbRecord
@@ -759,6 +774,37 @@ public class ConstructorRepository(AppDbContext db)
               Title = r.Title, Description = r.Description,
           })
           .ToList();
+
+    /// <summary>
+    /// Keyset-пагинация: следующая страница ПОСЛЕ курсора (afterPosition, afterId), упорядочение
+    /// по <c>(Position, Id)</c> — тот же ключ, что и составной индекс db_records(CollectionId, Position).
+    /// В отличие от <see cref="GetRecordsPage"/> со <c>Skip(N)</c> (O(offset) — перечитывает N строк),
+    /// здесь стоимость = O(take): нет смещения, индекс сразу позиционируется на курсор. Используется
+    /// при последовательном скролле, когда известна последняя строка предыдущей страницы.
+    /// Курсор null/null — с самого начала. Двойной ключ (Position, Id) устойчив к дублям Position
+    /// (после серий вставок/свопов), иначе строки с равной Position могли бы потеряться/повториться.
+    /// </summary>
+    public List<DbRecord> GetRecordsPageAfter(int collectionId, int? afterPosition, int? afterId,
+                                              int take, bool excludeHidden = false)
+    {
+        var q = db.DbRecords
+            .Where(r => r.CollectionId == collectionId
+                && (!excludeHidden || !db.RecordDisplay.Any(d =>
+                       d.CollectionId == collectionId && d.RecordId == r.Id && !d.Visible)));
+
+        if (afterPosition is int p && afterId is int aid)
+            q = q.Where(r => r.Position > p || (r.Position == p && r.Id > aid));
+
+        return q.OrderBy(r => r.Position).ThenBy(r => r.Id)
+                .Take(take)
+                .Select(r => new DbRecord
+                {
+                    Id = r.Id, CollectionId = r.CollectionId, CreatedAt = r.CreatedAt,
+                    Position = r.Position, StartDt = r.StartDt, EndDt = r.EndDt, AllDay = r.AllDay,
+                    Title = r.Title, Description = r.Description,
+                })
+                .ToList();
+    }
 
     public Dictionary<int, Dictionary<int, string>> GetFieldValuesBatch(IReadOnlyList<int> recordIds)
     {
@@ -834,28 +880,54 @@ public class ConstructorRepository(AppDbContext db)
     }
 
     // Позиция для вставки записи сразу после afterRecordId (между ней и следующей).
-    // Инициатор не найден — позиция в конце. Если зазора между соседями не хватает —
-    // предварительно перенумеровывает позиции коллекции с шагом 1000.
+    // Соседи берутся запросами по индексу (CollectionId, Position) — без загрузки всей
+    // коллекции в память (иначе на 100k+ зависание). Инициатор не найден — позиция в конце.
+    // Если зазора между соседями нет — редкая перенумерация одним bulk-SQL (RenumberPositions),
+    // тоже без материализации в EF.
     private int PositionAfterRecord(int collectionId, int afterRecordId)
     {
-        var ordered = db.DbRecords
-            .Where(r => r.CollectionId == collectionId)
-            .OrderBy(r => r.Position)
-            .ToList();
+        var after = db.DbRecords.AsNoTracking()
+            .Where(r => r.Id == afterRecordId && r.CollectionId == collectionId)
+            .Select(r => new { r.Position, r.Id })
+            .FirstOrDefault();
 
-        var idx = ordered.FindIndex(r => r.Id == afterRecordId);
-        if (idx < 0) return (ordered.Count + 1) * 1000;   // инициатор не найден — в конец
+        if (after is null)   // инициатор не найден — в конец
+            return (db.DbRecords.Where(r => r.CollectionId == collectionId)
+                        .Select(r => (int?)r.Position).Max() ?? 0) + 1000;
 
-        int AfterPos() => ordered[idx].Position;
-        int NextPos()  => idx + 1 < ordered.Count ? ordered[idx + 1].Position : AfterPos() + 2000;
+        var nextPos = db.DbRecords.AsNoTracking()
+            .Where(r => r.CollectionId == collectionId
+                && (r.Position > after.Position || (r.Position == after.Position && r.Id > after.Id)))
+            .OrderBy(r => r.Position).ThenBy(r => r.Id)
+            .Select(r => (int?)r.Position)
+            .FirstOrDefault();
 
-        if (NextPos() - AfterPos() < 2)
-        {
-            for (var i = 0; i < ordered.Count; i++) ordered[i].Position = (i + 1) * 1000;
-            db.SaveChanges();
-        }
+        if (nextPos is not int np) return after.Position + 1000;          // после последней
+        if (np - after.Position >= 2) return after.Position + (np - after.Position) / 2;
 
-        return AfterPos() + (NextPos() - AfterPos()) / 2;
+        // Зазора нет — перенумеровываем всю коллекцию одним SQL-запросом, затем считаем середину.
+        RenumberPositions(collectionId);
+        var ap = db.DbRecords.AsNoTracking().Where(r => r.Id == afterRecordId).Select(r => r.Position).First();
+        var n2 = db.DbRecords.AsNoTracking()
+            .Where(r => r.CollectionId == collectionId && r.Position > ap)
+            .OrderBy(r => r.Position).Select(r => (int?)r.Position).FirstOrDefault();
+        return n2 is int n ? ap + (n - ap) / 2 : ap + 1000;
+    }
+
+    // Перенумеровать Position всех записей коллекции с шагом 1000 ОДНИМ bulk-SQL-запросом
+    // (оконная функция ROW_NUMBER), не загружая записи в EF. Используется как редкий
+    // «ребаланс», когда между соседями не осталось зазора для вставки.
+    private void RenumberPositions(int collectionId)
+    {
+        db.Database.ExecuteSqlInterpolated($@"
+            UPDATE db_records
+            SET Position = sub.rn * 1000
+            FROM (SELECT Id, ROW_NUMBER() OVER (ORDER BY Position, Id) AS rn
+                  FROM db_records WHERE CollectionId = {collectionId}) AS sub
+            WHERE db_records.Id = sub.Id");
+        // Сбрасываем закешированные EF позиции, чтобы последующие чтения видели свежие значения.
+        foreach (var e in db.ChangeTracker.Entries<DbRecordEntity>().ToList())
+            if (e.Entity.CollectionId == collectionId) e.Reload();
     }
 
     public void UpdateRecord(DbRecord record)
@@ -884,28 +956,33 @@ public class ConstructorRepository(AppDbContext db)
         db.SaveChanges();
     }
 
-    // Переместить запись на одну позицию вверх/вниз в порядке коллекции (по Position).
-    // Меняет местами Position двух соседних записей — дёшево даже на больших таблицах.
-    // Крайняя запись (первая при up / последняя при down) — no-op. Если позиции
-    // соседей слиплись (после серии вставок копий), порядок предварительно
-    // перенумеровывается с шагом 1000, чтобы своп остался корректным.
+    // Переместить запись на одну позицию вверх/вниз в порядке коллекции (по (Position, Id)).
+    // Сосед ищется ОДНИМ индексным запросом (не загрузкой всей коллекции — иначе на 100k+
+    // зависание), затем меняем местами Position двух записей. Крайняя запись — no-op.
     public void MoveRecord(int collectionId, int recordId, bool up)
     {
-        var ordered = db.DbRecords
-            .Where(r => r.CollectionId == collectionId)
-            .OrderBy(r => r.Position)
-            .ToList();
+        var rec = db.DbRecords.Find(recordId);
+        if (rec is null || rec.CollectionId != collectionId) return;
+        var p = rec.Position;
+        var id = rec.Id;
 
-        var idx = ordered.FindIndex(r => r.Id == recordId);
-        if (idx < 0) return;
+        // Ближайший сосед в нужную сторону по упорядочению (Position, Id).
+        var neighbor = up
+            ? db.DbRecords.Where(r => r.CollectionId == collectionId
+                  && (r.Position < p || (r.Position == p && r.Id < id)))
+                .OrderByDescending(r => r.Position).ThenByDescending(r => r.Id).FirstOrDefault()
+            : db.DbRecords.Where(r => r.CollectionId == collectionId
+                  && (r.Position > p || (r.Position == p && r.Id > id)))
+                .OrderBy(r => r.Position).ThenBy(r => r.Id).FirstOrDefault();
+        if (neighbor is null) return;   // крайняя запись — no-op
 
-        var swapIdx = up ? idx - 1 : idx + 1;
-        if (swapIdx < 0 || swapIdx >= ordered.Count) return;   // крайняя запись — no-op
+        if (neighbor.Position != rec.Position)
+            (rec.Position, neighbor.Position) = (neighbor.Position, rec.Position);
+        else
+            // Позиции слиплись (ничью решал Id) — сдвигаем текущую на 1, чтобы реально
+            // переставить относительно соседа. Без глобальной перенумерации.
+            rec.Position = up ? rec.Position - 1 : rec.Position + 1;
 
-        if (ordered[idx].Position == ordered[swapIdx].Position)
-            for (var i = 0; i < ordered.Count; i++) ordered[i].Position = (i + 1) * 1000;
-
-        (ordered[idx].Position, ordered[swapIdx].Position) = (ordered[swapIdx].Position, ordered[idx].Position);
         db.SaveChanges();
     }
 

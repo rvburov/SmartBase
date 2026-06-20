@@ -36,6 +36,11 @@ public sealed class DatabaseManager : IDisposable
         // персистится в заголовке файла; на сетевой ФС SQLite её тихо игнорирует.
         EnableWal(Context);
 
+        // Настройки скорости под большие коллекции (100k–10M строк). В отличие от WAL
+        // (живёт в заголовке файла) эти прагмы — на соединение; ставим на основном
+        // соединении контекста, которое живёт весь сеанс работы с БД.
+        TunePerformancePragmas(Context);
+
         Categories  = new CategoryRepository(Context);
         Constructor = new ConstructorRepository(Context);
 
@@ -54,6 +59,19 @@ public sealed class DatabaseManager : IDisposable
     // Включить WAL для файла БД (идемпотентно). На сетевой ФС SQLite оставит прежний режим.
     private static void EnableWal(AppDbContext db) =>
         db.Database.ExecuteSqlRaw("PRAGMA journal_mode=WAL;");
+
+    // Прагмы скорости (на соединение):
+    //  • synchronous=NORMAL — с WAL безопасно и заметно быстрее коммитов (импорт пачками);
+    //  • temp_store=MEMORY  — временные индексы/сортировки в RAM, не на диск;
+    //  • mmap_size=256MB    — чтение через memory-map: меньше syscalls на больших скан-ах;
+    //  • cache_size=-65536  — страничный кеш ~64 МБ (значение в КБ со знаком «−»), дефолт ~2 МБ.
+    private static void TunePerformancePragmas(AppDbContext db)
+    {
+        db.Database.ExecuteSqlRaw("PRAGMA synchronous=NORMAL;");
+        db.Database.ExecuteSqlRaw("PRAGMA temp_store=MEMORY;");
+        db.Database.ExecuteSqlRaw("PRAGMA mmap_size=268435456;");
+        db.Database.ExecuteSqlRaw("PRAGMA cache_size=-65536;");
+    }
 
     // ── Миграции ────────────────────────────────────────────────────────────────
 

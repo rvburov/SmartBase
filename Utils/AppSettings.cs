@@ -74,11 +74,28 @@ public static class AppSettings
     public static void SaveRecordPanelWidth(int width) =>
         _store?.Set(KeyRecordPanelWidth, width.ToString(CultureInfo.InvariantCulture));
 
+    // ── Виртуализация таблицы (большие коллекции) ──────────────────────────────
+
+    // Включает постраничную виртуализацию строк DataGrid через VirtualCollectionView:
+    // коллекции на 100k–10M строк открываются мгновенно (грузятся только видимые строки),
+    // вместо материализации всего источника. По умолчанию ВКЛ — это и есть исправление
+    // производительности; флаг оставлен как аварийный откат к старому пути (set false).
+    public static bool LoadVirtualizedGrid()
+    {
+        var v = _store?.Get(KeyVirtualizedGrid);
+        if (v is null) return true;                       // по умолчанию включено
+        return !bool.TryParse(v, out var on) || on;
+    }
+
+    public static void SaveVirtualizedGrid(bool on) =>
+        _store?.Set(KeyVirtualizedGrid, on ? "true" : "false");
+
     // ── Ключи настроек ─────────────────────────────────────────────────────────
 
     private const string KeyScale            = "scale";
     private const string KeyRecordPanelOpen  = "recordPanelOpen";
     private const string KeyRecordPanelWidth = "recordPanelWidth";
+    private const string KeyVirtualizedGrid  = "virtualizedGrid";
 
     // ── Приватное ─────────────────────────────────────────────────────────────
 

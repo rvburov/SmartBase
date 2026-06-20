@@ -344,9 +344,7 @@ public partial class ConstructorControllerView : UserControl
         if (_currentCollectionId is null || _repository is null) return;
         if (VisualRoot is not Avalonia.Controls.Window win) return;
 
-        var records = _repository.GetRecords(_currentCollectionId.Value)
-            .Select(r => (r.Id!.Value, r.Title ?? ""))
-            .ToList();
+        var records = _repository.GetRecordTitlesOrdered(_currentCollectionId.Value);
         var dlg = new RecordDisplayDialog(_repository, _currentCollectionId.Value, records);
         var ok  = await dlg.ShowDialog<bool?>(win);
         if (ok == true)

@@ -39,9 +39,26 @@
                     CornerRadius="{StaticResource RadiusBase}"
                     ClipToBounds="True"
                     Padding="0">
-                <ScrollViewer HorizontalScrollBarVisibility="Disabled">
-                    <StackPanel x:Name="ListHost" Spacing="0" />
-                </ScrollViewer>
+                <!-- Виртуализирующий список: рендерятся только видимые строки, поэтому окно
+                     открывается мгновенно даже на коллекциях в сотни тысяч записей. -->
+                <ListBox x:Name="ListHost"
+                         Background="Transparent"
+                         BorderThickness="0"
+                         Padding="0"
+                         ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                    <ListBox.Styles>
+                        <Style Selector="ListBox#ListHost ListBoxItem">
+                            <Setter Property="Padding"   Value="0" />
+                            <Setter Property="MinHeight" Value="0" />
+                        </Style>
+                        <Style Selector="ListBox#ListHost ListBoxItem:pointerover /template/ ContentPresenter">
+                            <Setter Property="Background" Value="{StaticResource BrushSecondaryBg}" />
+                        </Style>
+                        <Style Selector="ListBox#ListHost ListBoxItem:selected /template/ ContentPresenter">
+                            <Setter Property="Background" Value="{StaticResource BrushAccentLight}" />
+                        </Style>
+                    </ListBox.Styles>
+                </ListBox>
             </Border>
 
             <!-- Кнопки внизу -->

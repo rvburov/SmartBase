@@ -73,6 +73,11 @@ public class AppDbContext : DbContext
         {
             e.ToTable("db_records");
             e.HasKey(x => x.Id);
+            // Составной индекс под горячий путь таблицы: WHERE CollectionId ORDER BY Position.
+            // Без него SQLite пересортировывает всю коллекцию на каждый запрос страницы —
+            // на больших коллекциях (100k+) открытие/скролл деградируют. С индексом записи
+            // уже лежат в нужном порядке: и фильтр по коллекции, и keyset-пагинация по Position.
+            e.HasIndex(x => new { x.CollectionId, x.Position });
             e.HasOne(x => x.Collection)
              .WithMany(x => x.Records)
              .HasForeignKey(x => x.CollectionId)

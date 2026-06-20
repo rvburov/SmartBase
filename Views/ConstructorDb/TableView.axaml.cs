@@ -17,6 +17,7 @@ using DataBase.Controls.Widgets;
 using DataBase.Core.Models;
 using DataBase.Database.Repositories;
 using DataBase.ViewModels.ConstructorDb;
+using DataBase.Utils;
 
 namespace DataBase.Views.ConstructorDb;
 
@@ -69,6 +70,14 @@ public partial class TableView : UserControl
     private List<DbField>        _fields  = [];
     private List<TableColumnDef> _colDefs = [];
     private VirtualRowList?      _virtualRows;
+    // Виртуализирующая обёртка над _virtualRows: когда включён флаг AppSettings.LoadVirtualizedGrid,
+    // именно она кладётся в ItemsSource — DataGrid берёт её как IDataGridCollectionView без
+    // материализации и тянет только видимые строки. null — старый путь (без виртуализации).
+    private VirtualCollectionView? _virtualView;
+    // Источник по умолчанию для грида (без активного фильтра/сортировки): виртуализирующее
+    // представление, если включено, иначе сам постраничный список.
+    private System.Collections.IEnumerable? DefaultItemsSource =>
+        (System.Collections.IEnumerable?)_virtualView ?? _virtualRows;
     // Пользовательские подписи системных колонок: ключ → отображаемое имя.
     private Dictionary<string, string> _systemNames = [];
     // Сохранённый порядок колонок: ключ → позиция (пусто, если ещё не двигали).
@@ -370,6 +379,7 @@ public partial class TableView : UserControl
         _systemNames  = [];
         _columnOrder  = [];
         _virtualRows  = null;
+        _virtualView  = null;
         _filters.Clear();
         _chevronPaths.Clear();
         _sortKey = null;
@@ -475,10 +485,13 @@ public partial class TableView : UserControl
 
         _virtualRows = new VirtualRowList(_repository, _collectionId, _fields,
                                           excludeHidden: _hiddenRecords.Count > 0);
+        // Виртуализирующая обёртка (если флаг включён): DataGrid не материализует источник,
+        // тянет только видимые строки → большие коллекции открываются мгновенно.
+        _virtualView = AppSettings.LoadVirtualizedGrid() ? new VirtualCollectionView(_virtualRows) : null;
 
         BuildColumns();
 
-        RecordsGrid.ItemsSource = _virtualRows;
+        RecordsGrid.ItemsSource = DefaultItemsSource;
         RecordsGrid.ContextMenu = BuildGridContextMenu();
 
         ApplyColumnWidths();
@@ -2107,8 +2120,8 @@ public partial class TableView : UserControl
 
         if (_filters.Count == 0 && _sortKey is null)
         {
-            if (!ReferenceEquals(RecordsGrid.ItemsSource, _virtualRows))
-                RecordsGrid.ItemsSource = _virtualRows;
+            if (!ReferenceEquals(RecordsGrid.ItemsSource, DefaultItemsSource))
+                RecordsGrid.ItemsSource = DefaultItemsSource;
             return;
         }
 

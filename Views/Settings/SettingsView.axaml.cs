@@ -5,6 +5,7 @@ using Avalonia.Platform.Storage;
 using DataBase.Controls.Dialogs;
 using DataBase.Database;
 using DataBase.Database.Entities;
+using DataBase.Utils;
 
 namespace DataBase.Views.Settings;
 
@@ -27,6 +28,16 @@ public partial class SettingsView : UserControl
         var version = Assembly.GetExecutingAssembly().GetName().Version;
         if (version is not null)
             VersionText.Text = $"Версия {version.Major}.{version.Minor}.{version.Build}";
+
+        VirtualizedGridCheck.IsChecked = AppSettings.LoadVirtualizedGrid();
+    }
+
+    // Переключатель виртуализации таблиц: сохраняем в настройки. Применяется при
+    // следующем открытии коллекции (TableView читает флаг в Load).
+    private void OnVirtualizedGridChanged(object? sender, RoutedEventArgs e)
+    {
+        if (sender is CheckBox cb && cb.IsChecked is bool on)
+            AppSettings.SaveVirtualizedGrid(on);
     }
 
     // Вызывается из MainWindow: реестр + способ узнать, смонтирована ли БД сейчас.

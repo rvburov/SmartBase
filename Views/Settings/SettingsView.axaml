@@ -101,10 +101,26 @@
 
             <!-- ── Общие ─────────────────────────────────────────── -->
             <ScrollViewer x:Name="GeneralPanel" VerticalScrollBarVisibility="Auto">
-                <StackPanel Margin="32,16,32,32" Spacing="12" MaxWidth="640"
+                <StackPanel Margin="32,16,32,32" Spacing="12" MaxWidth="720"
                             HorizontalAlignment="Left">
                     <TextBlock Text="Основные параметры приложения."
                                Foreground="{StaticResource BrushSecondaryText}" />
+
+                    <!-- Виртуализация больших таблиц -->
+                    <Border Classes="settingRow">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <StackPanel Grid.Column="0" Spacing="4"
+                                        VerticalAlignment="Center" Margin="0,0,32,0">
+                                <TextBlock Classes="title" Text="Виртуализация больших таблиц" />
+                                <TextBlock Classes="desc"
+                                           Text="Грузить строки таблицы постранично по мере прокрутки. Позволяет открывать коллекции на сотни тысяч и миллионы записей мгновенно. Изменение вступает в силу при следующем открытии коллекции. Отключайте только при проблемах с отображением." />
+                            </StackPanel>
+                            <CheckBox x:Name="VirtualizedGridCheck"
+                                      Grid.Column="1"
+                                      VerticalAlignment="Center"
+                                      IsCheckedChanged="OnVirtualizedGridChanged" />
+                        </Grid>
+                    </Border>
                 </StackPanel>
             </ScrollViewer>
 

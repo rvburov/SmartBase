@@ -22,6 +22,10 @@ internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollecti
     private readonly bool                  _excludeHidden;   // исключать скрытые записи (окно «Отображение записей»)
     private readonly Dictionary<int, TableRowVm[]> _pages = [];
     private readonly LinkedList<int> _lru = new();
+    // page → (Position, Id) последней строки страницы: курсор для keyset-загрузки
+    // следующей страницы при последовательном скролле. Храним даже для вытесненных из
+    // _pages страниц (это всего пара int) — курсоры дёшевы и ускоряют скролл по глубине.
+    private readonly Dictionary<int, (int Pos, int Id)> _pageEnd = [];
     private readonly int _dataCount;
 
     // Постоянный экземпляр add-row — DataGrid сравнивает по ссылке при ScrollIntoView.
@@ -60,20 +64,33 @@ internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollecti
     {
         EvictOldestIfFull();
 
-        var skip    = page * PageSize;
-        var take    = Math.Min(PageSize, _dataCount - skip);
-        var records = _repo.GetRecordsPage(_collectionId, skip, take, _excludeHidden);
-        var ids     = records.Select(r => r.Id!.Value).ToList();
-        var valMap  = _repo.GetFieldValuesBatch(ids);
+        var skip = page * PageSize;
+        var take = Math.Min(PageSize, _dataCount - skip);
 
-        var rows = new TableRowVm[take];
-        for (var i = 0; i < take; i++)
+        // Keyset, если предыдущая страница уже грузилась (последовательный скролл): запрос
+        // ПОСЛЕ её последней строки — O(take), не зависит от глубины. Иначе offset (прыжок по
+        // скроллбару) — O(offset), но по составному индексу (CollectionId, Position) это быстро.
+        var records = page > 0 && _pageEnd.TryGetValue(page - 1, out var cur)
+            ? _repo.GetRecordsPageAfter(_collectionId, cur.Pos, cur.Id, take, _excludeHidden)
+            : _repo.GetRecordsPage(_collectionId, skip, take, _excludeHidden);
+
+        var ids    = records.Select(r => r.Id!.Value).ToList();
+        var valMap = _repo.GetFieldValuesBatch(ids);
+
+        var rows = new TableRowVm[records.Count];
+        for (var i = 0; i < records.Count; i++)
         {
             var rec    = records[i];
             var id     = rec.Id!.Value;
             var values = valMap.TryGetValue(id, out var v) ? v : [];
             rows[i]    = new TableRowVm(_repo, id, skip + i + 1, values,
                                         rec.Title ?? "", rec.Description);
+        }
+
+        if (records.Count > 0)
+        {
+            var last = records[^1];
+            _pageEnd[page] = (last.Position, last.Id!.Value);
         }
 
         _pages[page] = rows;
@@ -103,6 +120,7 @@ internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollecti
     {
         _pages.Clear();
         _lru.Clear();
+        _pageEnd.Clear();
         CollectionChanged?.Invoke(this,
             new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Reset));
     }
