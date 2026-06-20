@@ -166,7 +166,7 @@ namespace DataBase.Database.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("FieldId");
+                    b.HasIndex("FieldId", "Value");
 
                     b.HasIndex("RecordId", "FieldId")
                         .IsUnique();

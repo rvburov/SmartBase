@@ -17,14 +17,17 @@ public class TableRowVm : INotifyPropertyChanged
     public const string TitleKey = "__title__";
     public const string DescKey  = "__desc__";
 
-    private readonly ConstructorRepository? _repository;
-    private readonly Dictionary<int, string> _values;
+    private ConstructorRepository? _repository;
+    private Dictionary<int, string> _values;
     private string _title;
     private string _description;
 
-    public int  RecordId    { get; }
+    public int  RecordId    { get; private set; }
     public int  RowNumber   { get; private set; }
     public bool IsAddRow    { get; }
+    // Строка-заглушка: данные страницы ещё не пришли (async-подгрузка), ячейки показывают
+    // «Загрузка…». Заполняется методом Fill, который обновляет ячейки.
+    public bool IsLoading   { get; private set; }
 
     public event PropertyChangedEventHandler? PropertyChanged;
 
@@ -51,6 +54,38 @@ public class TableRowVm : INotifyPropertyChanged
 
     public static TableRowVm AddRow() => new();
 
+    /// <summary>Строка-заглушка «Загрузка…» до прихода данных страницы (async-подгрузка).</summary>
+    public static TableRowVm Loading(int rowNumber) => new(rowNumber);
+
+    private TableRowVm(int rowNumber)
+    {
+        IsLoading    = true;
+        RowNumber    = rowNumber;
+        _values      = [];
+        _title       = "";
+        _description = "";
+    }
+
+    /// <summary>
+    /// Заполнить строку-заглушку реальными данными и обновить ячейки. Уведомление идёт
+    /// тем же путём (Item[key]), что и при редактировании ячейки, — проверенный механизм.
+    /// </summary>
+    public void Fill(ConstructorRepository repository, int recordId,
+                     Dictionary<int, string> values, string title, string? description)
+    {
+        _repository  = repository;
+        RecordId     = recordId;
+        _values      = values;
+        _title       = title       ?? "";
+        _description = description ?? "";
+        IsLoading    = false;
+
+        OnPropertyChanged($"Item[{TitleKey}]");
+        OnPropertyChanged($"Item[{DescKey}]");
+        foreach (var fid in _values.Keys)
+            OnPropertyChanged($"Item[{fid}]");
+    }
+
     public void SetRowNumber(int n)
     {
         if (RowNumber == n) return;
@@ -66,13 +101,14 @@ public class TableRowVm : INotifyPropertyChanged
     {
         get
         {
+            if (IsLoading) return key == TitleKey ? "Загрузка…" : "";
             if (key == TitleKey) return _title;
             if (key == DescKey)  return _description;
             return int.TryParse(key, out var id) && _values.TryGetValue(id, out var v) ? v : "";
         }
         set
         {
-            if (IsAddRow) return;
+            if (IsAddRow || IsLoading) return;
             var newVal = value ?? "";
 
             if (key == TitleKey)

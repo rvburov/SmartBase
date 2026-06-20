@@ -1,5 +1,6 @@
 using System.Collections;
 using System.Collections.Specialized;
+using Avalonia.Threading;
 using DataBase.Core.Models;
 using DataBase.Database.Repositories;
 
@@ -26,6 +27,15 @@ internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollecti
     // следующей страницы при последовательном скролле. Храним даже для вытесненных из
     // _pages страниц (это всего пара int) — курсоры дёшевы и ускоряют скролл по глубине.
     private readonly Dictionary<int, (int Pos, int Id)> _pageEnd = [];
+    // Страницы, ожидающие отложенного заполнения (показывают «Загрузка…»).
+    private readonly HashSet<int> _pending = [];
+    // Поколение кеша: растёт при Reset; фоновые загрузки со старым поколением отбрасываются.
+    private int _generation;
+    // Ограничитель параллельных фоновых чтений (защита от всплеска при быстром драге скролла).
+    private readonly System.Threading.SemaphoreSlim _loadGate = new(4);
+    // Режим списка id (фильтр/сортировка): если задан — страницы берутся срезом этого списка
+    // и грузятся по id в его порядке, а не keyset/offset по Position. null — обычный режим.
+    private readonly IReadOnlyList<int>? _recordIds;
     private readonly int _dataCount;
 
     // Постоянный экземпляр add-row — DataGrid сравнивает по ссылке при ScrollIntoView.
@@ -35,14 +45,21 @@ internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollecti
 
     public event NotifyCollectionChangedEventHandler? CollectionChanged;
 
+    // Отложенная подгрузка с заглушками «Загрузка…» (флаг настроек). По умолчанию выкл —
+    // тогда страницы грузятся синхронно (проверенный путь). Вкл — эффект «Загрузка…» при скролле.
+    private readonly bool _asyncLoad;
+
     public VirtualRowList(ConstructorRepository repo, int collectionId, List<DbField> fields,
-                          bool excludeHidden = false)
+                          bool excludeHidden = false, IReadOnlyList<int>? recordIds = null)
     {
         _repo          = repo;
         _collectionId  = collectionId;
         _fields        = fields;
         _excludeHidden = excludeHidden;
-        _dataCount     = repo.CountRecords(collectionId, excludeHidden);
+        _recordIds     = recordIds;
+        _asyncLoad     = Utils.AppSettings.LoadAsyncRowLoad();
+        // В режиме списка id количество = длина списка; иначе считаем из БД.
+        _dataCount     = recordIds?.Count ?? repo.CountRecords(collectionId, excludeHidden);
     }
 
     public TableRowVm this[int index]
@@ -59,7 +76,12 @@ internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollecti
         set => throw new NotSupportedException();
     }
 
-    /// <summary>Загружает страницу из БД (один запрос записей + один пакетный для значений).</summary>
+    /// <summary>
+    /// Загружает страницу. При выключенном async-флаге — синхронно (реальные строки сразу).
+    /// При включённом — создаёт строки-заглушки «Загрузка…» и грузит данные в ФОНОВОМ потоке
+    /// (отдельное read-only подключение, WAL), затем на UI-потоке заполняет строки. UI-поток
+    /// не трогает БД при скролле → ноль микроподвисаний даже при экстремально быстром скролле.
+    /// </summary>
     private TableRowVm[] LoadPage(int page)
     {
         EvictOldestIfFull();
@@ -67,13 +89,87 @@ internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollecti
         var skip = page * PageSize;
         var take = Math.Min(PageSize, _dataCount - skip);
 
+        if (!_asyncLoad)
+        {
+            // Синхронный путь: грузим записи и сразу строим реальные строки.
+            var records = LoadRecordsForPage(page, skip, take);
+            var rows    = BuildRows(skip, records);
+            _pages[page] = rows;
+            _lru.AddLast(page);
+            return rows;
+        }
+
+        // Async-путь: заглушки «Загрузка…» сразу, данные — в фоне.
+        var placeholders = new TableRowVm[take];
+        for (var i = 0; i < take; i++) placeholders[i] = TableRowVm.Loading(skip + i + 1);
+
+        _pages[page] = placeholders;
+        _lru.AddLast(page);
+        _pending.Add(page);
+
+        // Параметры запроса вычисляем на UI-потоке (без гонки с _pageEnd/_recordIds).
+        List<int>? idSlice = null;
+        int? afterPos = null, afterId = null;
+        if (_recordIds is not null)
+        {
+            idSlice = new List<int>(take);
+            for (var k = 0; k < take; k++) idSlice.Add(_recordIds[skip + k]);
+        }
+        else if (page > 0 && _pageEnd.TryGetValue(page - 1, out var cur))
+        {
+            afterPos = cur.Pos; afterId = cur.Id;
+        }
+
+        // Поколение фиксируем сейчас: если до прихода данных был Reset (правка/перезагрузка),
+        // результат уже неактуален — отбрасываем (иначе заполнили бы НОВЫЕ заглушки СТАРЫМИ данными).
+        _ = LoadPageBackgroundAsync(_generation, page, idSlice, skip, take, afterPos, afterId);
+        return placeholders;
+    }
+
+    // Фоновая загрузка страницы с ограничением параллелизма (семафор): при очень быстром
+    // драге скроллбара не плодим сотни подключений/задач. Чтение — в фоне, заполнение — на UI.
+    private async Task LoadPageBackgroundAsync(int gen, int page, List<int>? idSlice,
+                                               int skip, int take, int? afterPos, int? afterId)
+    {
+        await _loadGate.WaitAsync();
+        try
+        {
+            if (gen != _generation) return;   // устарело ещё до старта (был Reset)
+            var data = await _repo.LoadPageAsync(_collectionId, _excludeHidden, idSlice, skip, take, afterPos, afterId);
+            Dispatcher.UIThread.Post(() => FillFromData(gen, page, data.Records, data.Values));
+        }
+        catch
+        {
+            // Фоновая загрузка: ошибку проглатываем — строки останутся «Загрузка…» до повторного запроса.
+        }
+        finally
+        {
+            _loadGate.Release();
+        }
+    }
+
+    // Запрос записей страницы из БД (режим списка id / keyset / offset) — общий для обоих путей.
+    private List<DbRecord> LoadRecordsForPage(int page, int skip, int take)
+    {
+        if (_recordIds is not null)
+        {
+            // Режим списка id: страница — срез готового списка, грузим записи по id в его порядке.
+            var slice = new List<int>(take);
+            for (var k = 0; k < take; k++) slice.Add(_recordIds[skip + k]);
+            return _repo.GetRecordsByIdsOrdered(slice);
+        }
+
         // Keyset, если предыдущая страница уже грузилась (последовательный скролл): запрос
         // ПОСЛЕ её последней строки — O(take), не зависит от глубины. Иначе offset (прыжок по
         // скроллбару) — O(offset), но по составному индексу (CollectionId, Position) это быстро.
-        var records = page > 0 && _pageEnd.TryGetValue(page - 1, out var cur)
+        return page > 0 && _pageEnd.TryGetValue(page - 1, out var cur)
             ? _repo.GetRecordsPageAfter(_collectionId, cur.Pos, cur.Id, take, _excludeHidden)
             : _repo.GetRecordsPage(_collectionId, skip, take, _excludeHidden);
+    }
 
+    // Строит реальные строки из записей + их значений (синхронный путь).
+    private TableRowVm[] BuildRows(int skip, List<DbRecord> records)
+    {
         var ids    = records.Select(r => r.Id!.Value).ToList();
         var valMap = _repo.GetFieldValuesBatch(ids);
 
@@ -83,19 +179,39 @@ internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollecti
             var rec    = records[i];
             var id     = rec.Id!.Value;
             var values = valMap.TryGetValue(id, out var v) ? v : [];
-            rows[i]    = new TableRowVm(_repo, id, skip + i + 1, values,
-                                        rec.Title ?? "", rec.Description);
+            rows[i]    = new TableRowVm(_repo, id, skip + i + 1, values, rec.Title ?? "", rec.Description);
         }
-
-        if (records.Count > 0)
-        {
-            var last = records[^1];
-            _pageEnd[page] = (last.Position, last.Id!.Value);
-        }
-
-        _pages[page] = rows;
-        _lru.AddLast(page);
+        RememberCursor(skip / PageSize, records);
         return rows;
+    }
+
+    /// <summary>Заполняет ранее созданные строки-заглушки данными, пришедшими из фона (UI-поток).</summary>
+    private void FillFromData(int gen, int page, List<DbRecord> records,
+                             Dictionary<int, Dictionary<int, string>> valMap)
+    {
+        if (gen != _generation) return;                         // данные устарели (был Reset)
+        if (!_pending.Remove(page)) return;                     // уже заполнена/сброшена
+        if (!_pages.TryGetValue(page, out var rows)) return;    // вытеснена из кеша
+
+        // Строки-заглушки заполняем реальными данными; на будущее (редактирование ячеек)
+        // отдаём ОСНОВНОЙ репозиторий — фоновый контекст использовался только для чтения.
+        for (var i = 0; i < records.Count && i < rows.Length; i++)
+        {
+            var rec    = records[i];
+            var id     = rec.Id!.Value;
+            var values = valMap.TryGetValue(id, out var v) ? v : [];
+            rows[i].Fill(_repo, id, values, rec.Title ?? "", rec.Description);
+        }
+
+        RememberCursor(page, records);
+    }
+
+    // Сохраняет (Position, Id) последней строки страницы — курсор для keyset следующей.
+    private void RememberCursor(int page, List<DbRecord> records)
+    {
+        if (records.Count == 0) return;
+        var last = records[^1];
+        _pageEnd[page] = (last.Position, last.Id!.Value);
     }
 
     private void EvictOldestIfFull()
@@ -118,9 +234,11 @@ internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollecti
     /// <summary>Сбрасывает кеш и сигнализирует DataGrid о полной перестройке.</summary>
     public void Reset()
     {
+        _generation++;          // отбрасываем фоновые загрузки, начатые до сброса
         _pages.Clear();
         _lru.Clear();
         _pageEnd.Clear();
+        _pending.Clear();
         CollectionChanged?.Invoke(this,
             new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Reset));
     }

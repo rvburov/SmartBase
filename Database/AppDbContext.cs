@@ -21,6 +21,10 @@ public class AppDbContext : DbContext
 
     private readonly string _dbPath;
 
+    /// <summary>Путь к файлу БД — нужен, чтобы открыть параллельное read-only подключение
+    /// (фоновые запросы, WAL допускает одновременное чтение) без общего контекста.</summary>
+    public string DbPath => _dbPath;
+
     public AppDbContext(string dbPath)
     {
         _dbPath = dbPath;
@@ -89,6 +93,9 @@ public class AppDbContext : DbContext
             e.ToTable("db_field_values");
             e.HasKey(x => x.Id);
             e.HasIndex(x => new { x.RecordId, x.FieldId }).IsUnique();
+            // Фильтр по значению поля (Value IN ...) и подсчёт уникальных значений (GROUP BY Value)
+            // идут по этому индексу — иначе скан всех значений поля. См. GetFilteredRecordIds.
+            e.HasIndex(x => new { x.FieldId, x.Value });
             e.HasOne(x => x.Record)
              .WithMany(x => x.FieldValues)
              .HasForeignKey(x => x.RecordId)

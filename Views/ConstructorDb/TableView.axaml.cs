@@ -3,9 +3,11 @@ using System.Reflection;
 using System.Text.Json;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Collections;
 using Avalonia.Controls.Primitives;
 using Avalonia.Controls.Templates;
 using Avalonia.Data;
+using Avalonia.Styling;
 using Avalonia.Data.Converters;
 using Avalonia.Input;
 using Avalonia.Interactivity;
@@ -1739,10 +1741,14 @@ public partial class TableView : UserControl
             Cursor  = new Cursor(StandardCursorType.Arrow),
         };
 
-        // ── Данные ──
-        // Загружаем строки сразу, до RenderSort, чтобы замыкания могли ссылаться на allRows.
-        var allRows = _repository is null ? [] : LoadAllRows();
-        var domain  = allRows.Select(r => r[def.Key]).ToHashSet();
+        // ── Данные (грузятся в ФОНЕ; окно открывается мгновенно) ──
+        // Уникальные значения с количеством считаются SQL-агрегатом на фоновом потоке
+        // (отдельное read-only подключение, WAL → параллельное чтение). До прихода данных в
+        // области списка показывается «Загрузка…». Счётчики — по всей колонке (без Excel-каскада
+        // по другим фильтрам: на больших данных каскад неподъёмен, а список значений полный).
+        var baseCounts = new List<(string Value, int Count)>();
+        var domain     = new HashSet<string>();
+        var loaded     = false;
 
         // ── Сортировка ──
         // Выбор не применяется сразу: копится в pendingSort и вступает в силу
@@ -1763,9 +1769,10 @@ public partial class TableView : UserControl
         List<(string Raw, int Count)> counts = [];
         void ReloadCounts()
         {
-            var sk = pendingSort.HasValue ? def.Key : _sortKey;
-            var sa = pendingSort ?? _sortAsc;
-            counts = LoadValueCounts(def, allRows, sk, sa);
+            // Порядок значений = выбранная сортировка ЭТОЙ колонки (pending или активная),
+            // иначе по значению с пустыми в конце.
+            bool? asc = pendingSort ?? (_sortKey == def.Key ? _sortAsc : (bool?)null);
+            counts = SortValueCounts(baseCounts, def.FieldType, asc);
         }
         ReloadCounts();
 
@@ -1797,9 +1804,8 @@ public partial class TableView : UserControl
         };
         panel.Children.Add(search);
 
-        var checkedSet = _filters.TryGetValue(def.Key, out var f)
-            ? new HashSet<string>(f)
-            : new HashSet<string>(domain);
+        // Наполняется по приходе данных (см. фоновую загрузку ниже).
+        var checkedSet       = new HashSet<string>();
         var syncingSelectAll = false;
 
         var selectAll = new CheckBox
@@ -1810,34 +1816,54 @@ public partial class TableView : UserControl
             Cursor    = new Cursor(StandardCursorType.Hand),
         };
 
-        // «Выделить всё» прокручивается вместе со значениями (не закреплён),
-        // весь список — в рамке.
-        var listPanel     = new StackPanel { Spacing = 2 };
-        var scrollContent = new StackPanel { Spacing = 2 };
-        scrollContent.Children.Add(selectAll);
-        scrollContent.Children.Add(listPanel);
+        // Список значений — виртуализирующий ListBox: рендерятся только видимые строки,
+        // поэтому показываются ВСЕ уникальные значения (без лимита) и без зависания даже
+        // при сотнях тысяч значений. «Выделить всё» закреплён сверху.
+        var shown    = new AvaloniaList<FilterValueVm>();
+        var vmCache  = new Dictionary<string, FilterValueVm>();
+        FilterValueVm Vm(string raw, int count) =>
+            vmCache.TryGetValue(raw, out var v) ? v
+                : vmCache[raw] = new FilterValueVm(raw, DisplayValue(raw, def.FieldType), count,
+                                                   checkedSet, () => SyncSelectAll());
 
-        panel.Children.Add(new Border
+        var valuesList = new ListBox
+        {
+            Height          = 200,
+            Background       = Brushes.Transparent,
+            BorderThickness  = new Thickness(0),
+            Padding          = new Thickness(0),
+            ItemsSource      = shown,
+            ItemTemplate     = BuildFilterValueTemplate(fontBase, secondary),
+        };
+        valuesList.Styles.Add(new Style(x => x.OfType<ListBoxItem>())
+        {
+            Setters = { new Setter(ListBoxItem.PaddingProperty, new Thickness(0)),
+                        new Setter(ListBoxItem.MinHeightProperty, 0.0) },
+        });
+
+        var valuesBox = new StackPanel { Spacing = 4 };
+        valuesBox.Children.Add(selectAll);
+        valuesBox.Children.Add(valuesList);
+
+        // До прихода данных — «Загрузка…»; по готовности заменяется на список значений.
+        var loadingText = new TextBlock
+        {
+            Text                = "Загрузка…",
+            Foreground          = secondary,
+            FontSize            = fontBase,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment   = VerticalAlignment.Center,
+        };
+        var valuesHost = new Border
         {
             BorderBrush     = (IBrush)this.FindResource("BrushSeparator")!,
             BorderThickness = new Thickness(1),
             CornerRadius    = radius,
             Padding         = new Thickness(8, 6),
-            // Фиксированная высота списка значений — не зависит от количества записей:
-            // одинаковый размер и при одном-двух значениях, и при большом наборе
-            // (мало значений → внизу пустое место, много → прокрутка).
-            Child = new ScrollViewer
-            {
-                Height    = 230,
-                Content   = scrollContent,
-                HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled,
-                VerticalScrollBarVisibility   = Avalonia.Controls.Primitives.ScrollBarVisibility.Auto,
-            },
-        });
-
-        // Рендерим не более 500 чекбоксов за раз — при большем количестве уникальных
-        // значений пользователь уточняет поиск (как в Excel).
-        const int MaxRender = 500;
+            Height          = 232,   // фикс высота — список не «прыгает» при замене «Загрузка…»
+            Child           = loadingText,
+        };
+        panel.Children.Add(valuesHost);
 
         List<(string Raw, int Count)> Matched()
         {
@@ -1850,57 +1876,8 @@ public partial class TableView : UserControl
 
         void RebuildList()
         {
-            listPanel.Children.Clear();
-            var matched = Matched();
-            foreach (var (raw, cnt) in matched.Take(MaxRender))
-            {
-                var nameText = new TextBlock
-                {
-                    Text              = DisplayValue(raw, def.FieldType),
-                    TextTrimming      = TextTrimming.CharacterEllipsis,
-                    VerticalAlignment = VerticalAlignment.Center,
-                };
-                var cb = new CheckBox
-                {
-                    Content   = nameText,
-                    FontSize  = fontBase,
-                    IsChecked = checkedSet.Contains(raw),
-                    HorizontalAlignment        = HorizontalAlignment.Stretch,
-                    HorizontalContentAlignment = HorizontalAlignment.Left,
-                    Margin    = new Thickness(0),
-                    Cursor    = new Cursor(StandardCursorType.Hand),
-                };
-                var cntText = new TextBlock
-                {
-                    Text              = cnt.ToString(),
-                    Foreground        = secondary,
-                    VerticalAlignment = VerticalAlignment.Center,
-                    HorizontalAlignment = HorizontalAlignment.Right,
-                    // Резерв под полосу прокрутки (overlay-скроллбар Fluent перекрывает
-                    // контент) — иначе цифры заходят под бегунок и выглядят неровно.
-                    Margin            = new Thickness(0, 0, 12, 0),
-                };
-                var row = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto") };
-                Grid.SetColumn(cb, 0);
-                Grid.SetColumn(cntText, 1);
-                row.Children.Add(cb);
-                row.Children.Add(cntText);
-                cb.IsCheckedChanged += (_, _) =>
-                {
-                    if (cb.IsChecked == true) checkedSet.Add(raw);
-                    else checkedSet.Remove(raw);
-                    SyncSelectAll();
-                };
-                listPanel.Children.Add(row);
-            }
-            if (matched.Count > MaxRender)
-                listPanel.Children.Add(new TextBlock
-                {
-                    Text       = $"…ещё {matched.Count - MaxRender} — уточните поиск",
-                    Foreground = secondary,
-                    FontSize   = fontBase,
-                    Margin     = new Thickness(4, 4, 0, 0),
-                });
+            shown.Clear();
+            shown.AddRange(Matched().Select(c => Vm(c.Raw, c.Count)));
         }
         rebuildListRef = RebuildList;
 
@@ -1927,8 +1904,7 @@ public partial class TableView : UserControl
             }
             RebuildList();
         };
-        RebuildList();
-        SyncSelectAll();
+        // Первичное наполнение списка — после фоновой загрузки данных (см. ниже).
 
         panel.Children.Add(MakeSeparator());
 
@@ -1943,6 +1919,15 @@ public partial class TableView : UserControl
         okBtn.Classes.Add("dialog");
         okBtn.Click += (_, _) =>
         {
+            // Данные ещё грузятся — применять нечего (фильтр по колонке не трогаем).
+            if (!loaded)
+            {
+                if (pendingSort is bool a) { _sortKey = def.Key; _sortAsc = a; ApplyFilters(); }
+                else if (_sortKey == def.Key) { _sortKey = null; ApplyFilters(); }
+                close();
+                return;
+            }
+
             if (pendingSort is bool asc) { _sortKey = def.Key; _sortAsc = asc; }
             else if (_sortKey == def.Key) _sortKey = null;
 
@@ -1961,6 +1946,33 @@ public partial class TableView : UserControl
             close();
         };
         panel.Children.Add(okBtn);
+
+        // ── Фоновая загрузка значений ──
+        // Окно уже показано с «Загрузка…»; считаем значения на фоновом потоке и по готовности
+        // (на UI-потоке) наполняем список. Если окно успели закрыть — операции над уже
+        // отсоединёнными контролами безвредны.
+        _repository!.GetColumnCountsAsync(_collectionId, def.Key).ContinueWith(t =>
+        {
+            if (t.IsFaulted || t.IsCanceled) return;
+            var data = t.Result;
+            Dispatcher.UIThread.Post(() =>
+            {
+                baseCounts.Clear();
+                baseCounts.AddRange(data);
+                domain.Clear();
+                foreach (var c in data) domain.Add(c.Value);
+
+                checkedSet.Clear();
+                if (_filters.TryGetValue(def.Key, out var ff)) checkedSet.UnionWith(ff);
+                else checkedSet.UnionWith(domain);
+
+                ReloadCounts();
+                valuesHost.Child = valuesBox;   // «Загрузка…» → список значений
+                RebuildList();
+                SyncSelectAll();
+                loaded = true;
+            });
+        });
 
         return panel;
     }
@@ -2049,49 +2061,87 @@ public partial class TableView : UserControl
         Margin     = new Thickness(0, 6),
     };
 
-    // sortKey/sortAsc — pending-сортировка из панели фильтра (может отличаться от _sortKey).
-    private List<(string Raw, int Count)> LoadValueCounts(
-        TableColumnDef def, List<TableRowVm> allRows, string? sortKey, bool sortAsc)
+    // Упорядочивает список значений с количеством для панели фильтра. asc задан — сортировка
+    // тем же компаратором, что и таблица (text/number/date); null — порядок как в таблице
+    // (репозиторий уже отдал по первой позиции, «(Пусто)» в конце). src — SQL-агрегат по колонке.
+    private List<(string Raw, int Count)> SortValueCounts(
+        List<(string Value, int Count)> src, string fieldType, bool? asc)
     {
-        // Excel-каскад: список значений и счётчики считаем по строкам, прошедшим
-        // фильтры всех ОСТАЛЬНЫХ колонок. Собственный фильтр колонки не учитываем —
-        // иначе снятые галки исчезали бы из списка и их нельзя было бы вернуть.
-        IEnumerable<TableRowVm> rows = allRows;
-        foreach (var (key, allowed) in _filters)
-            if (key != def.Key)
-                rows = rows.Where(r => allowed.Contains(r[key]));
-
-        // Применяем pending-сортировку, чтобы порядок значений в списке совпадал
-        // с порядком строк в таблице — как только пользователь сменит выбор сортировки,
-        // список сразу перестроится. Если сортировки нет — порядок строк таблицы.
-        if (sortKey is not null)
+        if (asc is bool a)
         {
-            var cmp = BuildComparer(def.FieldType, sortAsc);
-            rows = rows.OrderBy(r => r[sortKey], Comparer<string>.Create((a, b) => cmp(a, b)));
+            var cmp = BuildComparer(fieldType, a);
+            return src.OrderBy(c => c.Value, Comparer<string>.Create((x, y) => cmp(x, y)))
+                      .Select(c => (c.Value, c.Count)).ToList();
         }
 
-        // Дедупликация с сохранением первого вхождения (= порядок из таблицы).
-        // «(Пусто)» при отсутствии сортировки идёт в конец.
-        var seen   = new HashSet<string>();
-        var result = new List<(string Raw, int Count)>();
-        var counts = rows.GroupBy(r => r[def.Key]).ToDictionary(g => g.Key, g => g.Count());
+        // Без сортировки — порядок как в таблице: репозиторий уже вернул значения по первой
+        // позиции записи, «(Пусто)» в конце. Ничего не пересортировываем.
+        return src.Select(c => (c.Value, c.Count)).ToList();
+    }
 
-        foreach (var row in rows)
+    // Шаблон строки списка значений фильтра (чекбокс + количество) — для виртуализированного
+    // ListBox: привязки следуют за DataContext при переиспользовании контейнеров.
+    private static IDataTemplate BuildFilterValueTemplate(double fontBase, IBrush secondary) =>
+        new FuncDataTemplate<FilterValueVm>((_, _) =>
         {
-            var v = row[def.Key];
-            if (seen.Add(v))
-                result.Add((v, counts[v]));
+            var name = new TextBlock { TextTrimming = TextTrimming.CharacterEllipsis, VerticalAlignment = VerticalAlignment.Center };
+            name.Bind(TextBlock.TextProperty, new Binding(nameof(FilterValueVm.Display)));
+
+            var cb = new CheckBox
+            {
+                Content   = name,
+                FontSize  = fontBase,
+                HorizontalAlignment        = HorizontalAlignment.Stretch,
+                HorizontalContentAlignment = HorizontalAlignment.Left,
+                Margin    = new Thickness(0),
+                Cursor    = new Cursor(StandardCursorType.Hand),
+            };
+            cb.Bind(ToggleButton.IsCheckedProperty, new Binding(nameof(FilterValueVm.Checked)) { Mode = BindingMode.TwoWay });
+
+            var cnt = new TextBlock
+            {
+                Foreground          = secondary,
+                VerticalAlignment   = VerticalAlignment.Center,
+                HorizontalAlignment = HorizontalAlignment.Right,
+                Margin              = new Thickness(0, 0, 12, 0),
+            };
+            cnt.Bind(TextBlock.TextProperty, new Binding(nameof(FilterValueVm.CountText)));
+
+            var row = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto") };
+            Grid.SetColumn(cb, 0);  row.Children.Add(cb);
+            Grid.SetColumn(cnt, 1); row.Children.Add(cnt);
+            return row;
+        });
+
+    // Строка списка значений фильтра. Checked читает/пишет общий checkedSet; onChanged
+    // обновляет состояние «(Выделить всё)».
+    private sealed class FilterValueVm : System.ComponentModel.INotifyPropertyChanged
+    {
+        public string Raw       { get; }
+        public string Display   { get; }
+        public string CountText { get; }
+
+        private readonly HashSet<string> _checked;
+        private readonly Action _onChanged;
+
+        public FilterValueVm(string raw, string display, int count, HashSet<string> checkedSet, Action onChanged)
+        {
+            Raw = raw; Display = display; CountText = count.ToString();
+            _checked = checkedSet; _onChanged = onChanged;
         }
 
-        if (sortKey is null)
+        public bool Checked
         {
-            // Без сортировки: пустые в конец, остальное в порядке появления (по таблице).
-            var nonEmpty = result.Where(x => x.Raw != "").ToList();
-            var empty    = result.Where(x => x.Raw == "").ToList();
-            result = [.. nonEmpty, .. empty];
+            get => _checked.Contains(Raw);
+            set
+            {
+                if (value) _checked.Add(Raw); else _checked.Remove(Raw);
+                PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(Checked)));
+                _onChanged();
+            }
         }
 
-        return result;
+        public event System.ComponentModel.PropertyChangedEventHandler? PropertyChanged;
     }
 
     private static string DisplayValue(string raw, string fieldType)
@@ -2125,6 +2175,28 @@ public partial class TableView : UserControl
             return;
         }
 
+        // Виртуализация включена → фильтр уходит в SQL (только id совпавших записей),
+        // сортировка — тем же компаратором по значениям ОДНОЙ колонки, показ виртуализируется
+        // постранично по списку id. Не трогаем нефильтрованные _virtualRows/_virtualView —
+        // создаём временный источник; при снятии фильтра вернёмся к DefaultItemsSource.
+        if (_virtualView is not null)
+        {
+            var ids = _repository.GetFilteredRecordIds(_collectionId, _filters,
+                                                       excludeHidden: _hiddenRecords.Count > 0);
+            if (_sortKey is { } sk)
+            {
+                var def  = _colDefs.FirstOrDefault(d => d.Key == sk);
+                var cmp  = BuildComparer(def?.FieldType ?? "text", _sortAsc);
+                var vals = _repository.GetColumnValues(_collectionId, sk);
+                ids.Sort((a, b) => cmp(vals.GetValueOrDefault(a, ""), vals.GetValueOrDefault(b, "")));
+            }
+
+            var filteredRows = new VirtualRowList(_repository, _collectionId, _fields, recordIds: ids);
+            RecordsGrid.ItemsSource = new VirtualCollectionView(filteredRows);
+            return;
+        }
+
+        // Виртуализация выключена → старый материализованный путь (всё в память).
         var rows = LoadAllRows();
 
         foreach (var (key, allowed) in _filters)

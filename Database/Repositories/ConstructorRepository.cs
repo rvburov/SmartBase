@@ -1043,47 +1043,201 @@ public class ConstructorRepository(AppDbContext db)
           .GroupBy(x => x.RecordId)
           .ToDictionary(g => g.Key, g => g.ToDictionary(x => x.FieldId, x => x.Value));
 
-    // ── Фильтр колонок (Excel-стиль): уникальные значения с количеством ───────
-
-    public List<(string Value, int Count)> GetTitleCounts(int collectionId) =>
-        db.DbRecords
-          .Where(r => r.CollectionId == collectionId)
-          .GroupBy(r => r.Title)
-          .Select(g => new { g.Key, Cnt = g.Count() })
-          .ToList()
-          .Select(x => (x.Key ?? "", x.Cnt))
-          .ToList();
-
-    public List<(string Value, int Count)> GetDescriptionCounts(int collectionId) =>
-        db.DbRecords
-          .Where(r => r.CollectionId == collectionId)
-          .GroupBy(r => r.Description ?? "")
-          .Select(g => new { g.Key, Cnt = g.Count() })
-          .ToList()
-          .Select(x => (x.Key ?? "", x.Cnt))
-          .ToList();
+    // ── Фильтр/сортировка в SQL (для виртуализации отфильтрованного представления) ──
+    //
+    // Вместо загрузки ВСЕХ строк в память (старый LoadAllRows — зависание на больших
+    // коллекциях) фильтр уходит в SQL и возвращает только id совпавших записей. Показ
+    // затем виртуализируется постранично по этому списку id (см. VirtualRowList в режиме
+    // списка id). Сортировка — отдельным шагом в UI (тот же компаратор, что и раньше),
+    // по значениям одной колонки (GetColumnValues), а не по всем полям.
 
     /// <summary>
-    /// Значения поля с количеством. Записи без строки значения учитываются
-    /// в пустом значении "" — в UI оно показывается как «(Пусто)».
+    /// id записей коллекции, прошедших фильтры (key → набор допустимых значений), в порядке
+    /// (Position, Id). Пустое значение "" в наборе допускает записи без значения/с пустым.
+    /// excludeHidden — исключить скрытые в окне «Отображение записей».
+    /// </summary>
+    public List<int> GetFilteredRecordIds(int collectionId,
+        IReadOnlyDictionary<string, HashSet<string>> filters, bool excludeHidden = false)
+    {
+        var q = db.DbRecords.AsNoTracking()
+            .Where(r => r.CollectionId == collectionId
+                && (!excludeHidden || !db.RecordDisplay.Any(d =>
+                       d.CollectionId == collectionId && d.RecordId == r.Id && !d.Visible)));
+
+        foreach (var (key, allowed) in filters)
+        {
+            var allow = allowed.ToList();   // EF переведёт Contains → SQL IN (...)
+            if (key == TitleKey)
+                q = q.Where(r => allow.Contains(r.Title));
+            else if (key == DescKey)
+                q = q.Where(r => allow.Contains(r.Description ?? ""));
+            else if (int.TryParse(key, out var fid))
+            {
+                var hasEmpty = allowed.Contains("");
+                q = q.Where(r =>
+                    db.DbFieldValues.Any(fv => fv.RecordId == r.Id && fv.FieldId == fid && allow.Contains(fv.Value))
+                    || (hasEmpty && !db.DbFieldValues.Any(fv => fv.RecordId == r.Id && fv.FieldId == fid && fv.Value != "")));
+            }
+        }
+
+        return q.OrderBy(r => r.Position).ThenBy(r => r.Id).Select(r => r.Id).ToList();
+    }
+
+    /// <summary>
+    /// Значения одной колонки по всем записям коллекции (id → значение) — для сортировки
+    /// отфильтрованного списка в UI тем же компаратором, что и раньше. Грузит ровно одну
+    /// колонку, а не все поля (в отличие от GetFieldValuesByCollection).
+    /// </summary>
+    public Dictionary<int, string> GetColumnValues(int collectionId, string key)
+    {
+        if (key == TitleKey)
+            return db.DbRecords.AsNoTracking().Where(r => r.CollectionId == collectionId)
+                     .Select(r => new { r.Id, r.Title }).ToList()
+                     .ToDictionary(x => x.Id, x => x.Title ?? "");
+        if (key == DescKey)
+            return db.DbRecords.AsNoTracking().Where(r => r.CollectionId == collectionId)
+                     .Select(r => new { r.Id, r.Description }).ToList()
+                     .ToDictionary(x => x.Id, x => x.Description ?? "");
+        if (int.TryParse(key, out var fid))
+            return db.DbFieldValues.AsNoTracking()
+                     .Where(fv => fv.FieldId == fid && fv.Record.CollectionId == collectionId)
+                     .Select(fv => new { fv.RecordId, fv.Value }).ToList()
+                     .ToDictionary(x => x.RecordId, x => x.Value);
+        return new();
+    }
+
+    /// <summary>Записи по списку id в ТОМ ЖЕ порядке, что и переданный список (для постраничной
+    /// подгрузки отфильтрованного/отсортированного представления). ids — одна страница (≤ PageSize).</summary>
+    public List<DbRecord> GetRecordsByIdsOrdered(IReadOnlyList<int> ids)
+    {
+        if (ids.Count == 0) return [];
+        var byId = db.DbRecords.AsNoTracking()
+            .Where(r => ids.Contains(r.Id))
+            .Select(r => new DbRecord
+            {
+                Id = r.Id, CollectionId = r.CollectionId, CreatedAt = r.CreatedAt,
+                Position = r.Position, StartDt = r.StartDt, EndDt = r.EndDt, AllDay = r.AllDay,
+                Title = r.Title, Description = r.Description,
+            })
+            .ToList()
+            .ToDictionary(r => r.Id!.Value);
+
+        var result = new List<DbRecord>(ids.Count);
+        foreach (var id in ids)
+            if (byId.TryGetValue(id, out var r)) result.Add(r);
+        return result;
+    }
+
+    /// <summary>
+    /// Асинхронно (на фоновом потоке, отдельное read-only подключение) грузит страницу записей
+    /// и их значения. Нужно виртуализации таблицы, чтобы подгрузка строк при скролле НЕ блокировала
+    /// UI-поток (ноль микроподвисаний даже при экстремально быстром скролле). WAL → фоновое чтение
+    /// не конфликтует с основным контекстом. Режим выбирается параметрами: idSlice (фильтр/сортировка),
+    /// иначе keyset по (afterPos, afterId), иначе offset по skip.
+    /// </summary>
+    public Task<(List<DbRecord> Records, Dictionary<int, Dictionary<int, string>> Values)> LoadPageAsync(
+        int collectionId, bool excludeHidden, IReadOnlyList<int>? idSlice,
+        int skip, int take, int? afterPos, int? afterId) =>
+        Task.Run(() =>
+        {
+            using var ctx = new AppDbContext(db.DbPath);
+            var repo = new ConstructorRepository(ctx);
+
+            var records = idSlice is not null
+                ? repo.GetRecordsByIdsOrdered(idSlice)
+                : afterPos is int p && afterId is int aid
+                    ? repo.GetRecordsPageAfter(collectionId, p, aid, take, excludeHidden)
+                    : repo.GetRecordsPage(collectionId, skip, take, excludeHidden);
+
+            var ids    = records.Select(r => r.Id!.Value).ToList();
+            var values = repo.GetFieldValuesBatch(ids);
+            return (records, values);
+        });
+
+    // ── Фильтр колонок (Excel-стиль): уникальные значения с количеством ───────
+    //
+    // Порядок значений — как в таблице: по первой позиции записи с этим значением
+    // (MIN(Position)); «(Пусто)» всегда последним. Это нужно панели фильтра — при открытии
+    // значения идут в том же порядке, что строки таблицы, а сортировку пользователь выбирает сам.
+
+    public List<(string Value, int Count)> GetTitleCounts(int collectionId)
+    {
+        var groups = db.DbRecords
+            .Where(r => r.CollectionId == collectionId)
+            .GroupBy(r => r.Title)
+            .Select(g => new { Value = g.Key, Cnt = g.Count(), FirstPos = g.Min(r => r.Position) })
+            .ToList();
+        return OrderValueGroups(groups.Select(g => (g.Value ?? "", g.Cnt, g.FirstPos)));
+    }
+
+    public List<(string Value, int Count)> GetDescriptionCounts(int collectionId)
+    {
+        var groups = db.DbRecords
+            .Where(r => r.CollectionId == collectionId)
+            .GroupBy(r => r.Description ?? "")
+            .Select(g => new { Value = g.Key, Cnt = g.Count(), FirstPos = g.Min(r => r.Position) })
+            .ToList();
+        return OrderValueGroups(groups.Select(g => (g.Value, g.Cnt, g.FirstPos)));
+    }
+
+    /// <summary>
+    /// Значения поля с количеством в порядке таблицы (по первой позиции). Записи без строки
+    /// значения учитываются в пустом значении "" — в UI оно показывается как «(Пусто)» и идёт в конец.
     /// </summary>
     public List<(string Value, int Count)> GetFieldValueCounts(int collectionId, int fieldId)
     {
         var groups = db.DbFieldValues
             .Where(fv => fv.FieldId == fieldId && fv.Record.CollectionId == collectionId)
             .GroupBy(fv => fv.Value)
-            .Select(g => new { g.Key, Cnt = g.Count() })
+            .Select(g => new { Value = g.Key, Cnt = g.Count(), FirstPos = g.Min(fv => fv.Record.Position) })
             .ToList();
 
-        var result  = groups.Select(x => (Value: x.Key ?? "", Count: x.Cnt)).ToList();
+        // Непустые — по первой позиции (порядок таблицы).
+        var result = groups.Where(g => g.Value != "")
+            .OrderBy(g => g.FirstPos)
+            .Select(g => (Value: g.Value ?? "", Count: g.Cnt))
+            .ToList();
+
+        // «(Пусто)» = записи без строки значения + с пустым значением — последним.
         var total   = db.DbRecords.Count(r => r.CollectionId == collectionId);
-        var missing = total - groups.Sum(g => g.Cnt);
-        if (missing > 0)
+        var emptied = total - groups.Where(g => g.Value != "").Sum(g => g.Cnt);
+        if (emptied > 0) result.Add(("", emptied));
+        return result;
+    }
+
+    // Счётчики значений колонки (Title/Desc/поле) по ключу — диспетчер для фона.
+    private List<(string Value, int Count)> ColumnCounts(int collectionId, string key) =>
+        key == TitleKey ? GetTitleCounts(collectionId)
+        : key == DescKey ? GetDescriptionCounts(collectionId)
+        : int.TryParse(key, out var fid) ? GetFieldValueCounts(collectionId, fid)
+        : [];
+
+    /// <summary>
+    /// Асинхронно (на фоновом потоке, отдельное read-only подключение) считает значения колонки
+    /// с количеством — чтобы окно фильтра открывалось мгновенно, а UI не подвисал на подсчёте.
+    /// WAL допускает одновременное чтение, поэтому фоновое подключение не конфликтует с основным.
+    /// </summary>
+    public Task<List<(string Value, int Count)>> GetColumnCountsAsync(int collectionId, string key) =>
+        Task.Run(() =>
         {
-            var emptyIdx = result.FindIndex(t => t.Value == "");
-            if (emptyIdx >= 0) result[emptyIdx] = ("", result[emptyIdx].Count + missing);
-            else result.Add(("", missing));
-        }
+            using var ctx = new AppDbContext(db.DbPath);
+            ctx.Database.ExecuteSqlRaw("PRAGMA mmap_size=268435456;");
+            ctx.Database.ExecuteSqlRaw("PRAGMA cache_size=-65536;");
+            ctx.Database.ExecuteSqlRaw("PRAGMA temp_store=MEMORY;");
+            return new ConstructorRepository(ctx).ColumnCounts(collectionId, key);
+        });
+
+    // Упорядочить группы значений по первой позиции (порядок таблицы); пустое — последним.
+    private static List<(string Value, int Count)> OrderValueGroups(
+        IEnumerable<(string Value, int Count, int FirstPos)> groups)
+    {
+        var list   = groups.ToList();
+        var result = list.Where(g => g.Value != "")
+            .OrderBy(g => g.FirstPos)
+            .Select(g => (g.Value, g.Count))
+            .ToList();
+        var empty = list.Where(g => g.Value == "").Sum(g => g.Count);
+        if (empty > 0) result.Add(("", empty));
         return result;
     }
 
@@ -1327,17 +1481,58 @@ public class ConstructorRepository(AppDbContext db)
         db.SaveChanges();
     }
 
-    // Пакетная перестановка порядка записей (окно «Отображение записей»). Переписываем
-    // Position по порядку списка — как SaveColumnOrder для колонок.
+    // Пакетная перестановка порядка записей (окно «Отображение записей»). Переписывает
+    // Position по порядку списка через bulk-SQL (временная таблица id→Pos + один UPDATE FROM),
+    // а не загрузкой всех записей в EF — иначе на коллекциях в сотни тысяч строк зависание.
     public void SaveRecordOrder(int collectionId, IReadOnlyList<int> orderedRecordIds)
     {
-        var byId = db.DbRecords
-            .Where(r => r.CollectionId == collectionId)
-            .ToDictionary(r => r.Id);
-        for (var i = 0; i < orderedRecordIds.Count; i++)
-            if (byId.TryGetValue(orderedRecordIds[i], out var rec))
-                rec.Position = (i + 1) * 1000;
-        db.SaveChanges();
+        if (orderedRecordIds.Count == 0) return;
+
+        var conn   = db.Database.GetDbConnection();
+        var wasOpen = conn.State == System.Data.ConnectionState.Open;
+        if (!wasOpen) conn.Open();
+        using (var tx = conn.BeginTransaction())
+        {
+            void Exec(string sql, System.Data.Common.DbTransaction t)
+            {
+                using var c = conn.CreateCommand();
+                c.Transaction = t; c.CommandText = sql; c.ExecuteNonQuery();
+            }
+
+            Exec("CREATE TEMP TABLE _ord (Id INTEGER PRIMARY KEY, Pos INTEGER)", tx);
+
+            using (var ins = conn.CreateCommand())
+            {
+                ins.Transaction = tx;
+                ins.CommandText = "INSERT INTO _ord (Id, Pos) VALUES ($id, $pos)";
+                var pId  = ins.CreateParameter(); pId.ParameterName  = "$id";  ins.Parameters.Add(pId);
+                var pPos = ins.CreateParameter(); pPos.ParameterName = "$pos"; ins.Parameters.Add(pPos);
+                for (var i = 0; i < orderedRecordIds.Count; i++)
+                {
+                    pId.Value  = orderedRecordIds[i];
+                    pPos.Value = (i + 1) * 1000;
+                    ins.ExecuteNonQuery();
+                }
+            }
+
+            using (var upd = conn.CreateCommand())
+            {
+                upd.Transaction = tx;
+                upd.CommandText =
+                    "UPDATE db_records SET Position = (SELECT Pos FROM _ord WHERE _ord.Id = db_records.Id) " +
+                    "WHERE CollectionId = $c AND Id IN (SELECT Id FROM _ord)";
+                var pC = upd.CreateParameter(); pC.ParameterName = "$c"; pC.Value = collectionId; upd.Parameters.Add(pC);
+                upd.ExecuteNonQuery();
+            }
+
+            Exec("DROP TABLE _ord", tx);
+            tx.Commit();
+        }
+        if (!wasOpen) conn.Close();
+
+        // Освежаем позиции у отслеживаемых записей этой коллекции (правка шла мимо EF).
+        foreach (var e in db.ChangeTracker.Entries<DbRecordEntity>().ToList())
+            if (e.Entity.CollectionId == collectionId) e.Reload();
     }
 
     public Dictionary<int, int> GetRowHeights(int collectionId) =>

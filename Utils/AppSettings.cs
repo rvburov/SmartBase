@@ -90,12 +90,27 @@ public static class AppSettings
     public static void SaveVirtualizedGrid(bool on) =>
         _store?.Set(KeyVirtualizedGrid, on ? "true" : "false");
 
+    // Фоновая подгрузка строк таблицы с заглушкой «Загрузка…» при прокрутке. По умолчанию ВКЛ:
+    // данные страниц грузятся в фоновом потоке (UI не подвисает даже при очень быстром скролле),
+    // строки до прихода данных показывают «Загрузка…». Выкл — синхронная загрузка на UI-потоке
+    // (тоже быстро, ~мс). Действует только при включённой виртуализации таблицы.
+    public static bool LoadAsyncRowLoad()
+    {
+        var v = _store?.Get(KeyAsyncRowLoad);
+        if (v is null) return true;                       // по умолчанию включено
+        return !bool.TryParse(v, out var on) || on;
+    }
+
+    public static void SaveAsyncRowLoad(bool on) =>
+        _store?.Set(KeyAsyncRowLoad, on ? "true" : "false");
+
     // ── Ключи настроек ─────────────────────────────────────────────────────────
 
     private const string KeyScale            = "scale";
     private const string KeyRecordPanelOpen  = "recordPanelOpen";
     private const string KeyRecordPanelWidth = "recordPanelWidth";
     private const string KeyVirtualizedGrid  = "virtualizedGrid";
+    private const string KeyAsyncRowLoad     = "asyncRowLoad";
 
     // ── Приватное ─────────────────────────────────────────────────────────────
 
