@@ -101,6 +101,10 @@ public partial class MainWindow : Window
             ConstructorSidebar.Refresh();
         };
 
+        // Дубль коллекции в календаре: записи скопированы в фоне — перерисовать календарь.
+        CalendarSidebar.CollectionDuplicated += (_, _) =>
+            CalendarModule.SetActiveIds(CalendarSidebar.GetActiveIds());
+
         // После создания/изменения события обновляем Sidebar (могла появиться новая коллекция)
         CalendarModule.CollectionsMayHaveChanged += (_, _) =>
         {
@@ -128,6 +132,25 @@ public partial class MainWindow : Window
             ConstructorModule.Refresh();
         };
         ConstructorSidebar.CollectionDeleted += (_, _) => ConstructorModule.Refresh();
+
+        // Дубль коллекции: «скелет» готов — открываем таблицу со строками «Загрузка…»,
+        // пока записи копируются в фоне.
+        ConstructorSidebar.CollectionDuplicating += (_, e) =>
+        {
+            var db = _workspace.Get(e.Ref.DbId) ?? _workspace.Default;
+            _currentConstructorDbId = db.DbId;
+            ConstructorModule.OpenFromCopying(db.Constructor, e.Ref.Id, e.ExpectedCount);
+            if (!_collectionOpen)
+                ApplyConstructorContentVisibility(true);
+        };
+        // Копирование завершилось — показываем реальные данные, если коллекция ещё открыта.
+        ConstructorSidebar.CollectionDuplicated += (_, e) =>
+        {
+            if (ConstructorModule.CurrentCollectionId == e.Id)
+                ConstructorModule.Refresh();
+            CalendarSidebar.Refresh();
+            CalendarModule.SetActiveIds(CalendarSidebar.GetActiveIds());
+        };
 
         // При изменении коллекций из конструктора — обновить sidebar
         ConstructorModule.CollectionsChanged += (_, _) =>

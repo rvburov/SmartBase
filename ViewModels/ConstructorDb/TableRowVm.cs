@@ -67,8 +67,7 @@ public class TableRowVm : INotifyPropertyChanged
     }
 
     /// <summary>
-    /// Заполнить строку-заглушку реальными данными и обновить ячейки. Уведомление идёт
-    /// тем же путём (Item[key]), что и при редактировании ячейки, — проверенный механизм.
+    /// Заполнить строку-заглушку реальными данными и обновить ячейки.
     /// </summary>
     public void Fill(ConstructorRepository repository, int recordId,
                      Dictionary<int, string> values, string title, string? description)
@@ -80,11 +79,14 @@ public class TableRowVm : INotifyPropertyChanged
         _description = description ?? "";
         IsLoading    = false;
 
-        OnPropertyChanged($"Item[{TitleKey}]");
-        OnPropertyChanged($"Item[{DescKey}]");
-        foreach (var fid in _values.Keys)
-            OnPropertyChanged($"Item[{fid}]");
+        // Уведомляем именем индексатора "Item": Avalonia ReflectionIndexerNode.ShouldUpdate
+        // реагирует на имя самого индексатора (GetDeclaredProperty("Item")), а НЕ на WPF-стиль
+        // "Item[key]" — тот он молча игнорирует. Одно "Item" перечитывает все ячейки строки.
+        NotifyAllCells();
     }
+
+    // Перечитать все привязки ячеек строки (каждая по своему ключу): см. комментарий в Fill.
+    private void NotifyAllCells() => OnPropertyChanged("Item");
 
     public void SetRowNumber(int n)
     {
@@ -116,7 +118,7 @@ public class TableRowVm : INotifyPropertyChanged
                 if (_title == newVal) return;
                 _title = newVal;
                 _repository?.SetRecordTitle(RecordId, newVal);
-                OnPropertyChanged($"Item[{key}]");
+                NotifyAllCells();
                 return;
             }
             if (key == DescKey)
@@ -124,7 +126,7 @@ public class TableRowVm : INotifyPropertyChanged
                 if (_description == newVal) return;
                 _description = newVal;
                 _repository?.SetRecordDescription(RecordId, newVal);
-                OnPropertyChanged($"Item[{key}]");
+                NotifyAllCells();
                 return;
             }
             if (!int.TryParse(key, out var id)) return;
@@ -132,7 +134,7 @@ public class TableRowVm : INotifyPropertyChanged
 
             _values[id] = newVal;
             _repository?.SetFieldValue(RecordId, id, newVal);
-            OnPropertyChanged($"Item[{key}]");
+            NotifyAllCells();
         }
     }
 

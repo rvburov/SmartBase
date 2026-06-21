@@ -29,19 +29,10 @@ public partial class SettingsView : UserControl
         if (version is not null)
             VersionText.Text = $"Версия {version.Major}.{version.Minor}.{version.Build}";
 
-        VirtualizedGridCheck.IsChecked = AppSettings.LoadVirtualizedGrid();
-        AsyncRowLoadCheck.IsChecked    = AppSettings.LoadAsyncRowLoad();
+        AsyncRowLoadCheck.IsChecked = AppSettings.LoadAsyncRowLoad();
     }
 
-    // Переключатель виртуализации таблиц: сохраняем в настройки. Применяется при
-    // следующем открытии коллекции (TableView читает флаг в Load).
-    private void OnVirtualizedGridChanged(object? sender, RoutedEventArgs e)
-    {
-        if (sender is CheckBox cb && cb.IsChecked is bool on)
-            AppSettings.SaveVirtualizedGrid(on);
-    }
-
-    // Переключатель заглушек «Загрузка…» при прокрутке. Применяется при следующем
+    // Переключатель фоновой подгрузки строк («Загрузка…»). Применяется при следующем
     // открытии коллекции (VirtualRowList читает флаг в конструкторе).
     private void OnAsyncRowLoadChanged(object? sender, RoutedEventArgs e)
     {

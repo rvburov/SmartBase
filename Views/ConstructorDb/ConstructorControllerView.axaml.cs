@@ -9,6 +9,9 @@ public partial class ConstructorControllerView : UserControl
 {
     private ConstructorRepository? _repository;
     private int? _currentCollectionId;
+    // Число строк-заглушек, пока дубль коллекции копируется в фоне (см. OpenFromCopying); null —
+    // обычное открытие. Используется SelectCollection/SwitchView при построении таблицы.
+    private int? _pendingSkeletonCount;
 
     public event EventHandler?      CollectionsChanged;
 
@@ -102,6 +105,17 @@ public partial class ConstructorControllerView : UserControl
         SelectCollection(collectionId);
     }
 
+    // Открыть только что созданный «скелет» дубля: таблица показывает expectedCount строк
+    // «Загрузка…», пока записи копируются в фоне. По завершении копии MainWindow вызовет
+    // Refresh() — таблица перестроится с реальными данными.
+    public void OpenFromCopying(ConstructorRepository repository, int collectionId, int expectedCount)
+    {
+        _repository = repository;
+        _pendingSkeletonCount = expectedCount;
+        SelectCollection(collectionId);
+        _pendingSkeletonCount = null;
+    }
+
     // БД текущей коллекции размонтирована (удалена в настройках): переключаемся на
     // запасной репозиторий и очищаем вид, чтобы не держать ссылку на закрытый контекст.
     public void DetachDatabase(ConstructorRepository fallback)
@@ -129,8 +143,9 @@ public partial class ConstructorControllerView : UserControl
         ConstructorNavbar.SetViewMode(viewMode);
         SwitchView(viewMode);
 
-        // Нижняя панель: счётчик записей и страницы (пока 1 страница).
-        var count = _repository.CountRecords(collectionId);
+        // Нижняя панель: счётчик записей и страницы (пока 1 страница). В режиме «скелет» (дубль
+        // копируется) показываем ожидаемое число записей — реальные ещё не в БД.
+        var count = _pendingSkeletonCount ?? _repository.CountRecords(collectionId);
         ConstructorFooter.SetCount(count);
         ConstructorFooter.SetPage(1, 1);
     }
@@ -163,7 +178,7 @@ public partial class ConstructorControllerView : UserControl
             if (mode == "list")
                 ListViewCtrl.Load(_repository, _currentCollectionId.Value);
             else
-                TableViewCtrl.Load(_repository, _currentCollectionId.Value);
+                TableViewCtrl.Load(_repository, _currentCollectionId.Value, _pendingSkeletonCount);
         }
     }
 

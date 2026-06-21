@@ -74,26 +74,15 @@ public static class AppSettings
     public static void SaveRecordPanelWidth(int width) =>
         _store?.Set(KeyRecordPanelWidth, width.ToString(CultureInfo.InvariantCulture));
 
-    // ── Виртуализация таблицы (большие коллекции) ──────────────────────────────
-
-    // Включает постраничную виртуализацию строк DataGrid через VirtualCollectionView:
-    // коллекции на 100k–10M строк открываются мгновенно (грузятся только видимые строки),
-    // вместо материализации всего источника. По умолчанию ВКЛ — это и есть исправление
-    // производительности; флаг оставлен как аварийный откат к старому пути (set false).
-    public static bool LoadVirtualizedGrid()
-    {
-        var v = _store?.Get(KeyVirtualizedGrid);
-        if (v is null) return true;                       // по умолчанию включено
-        return !bool.TryParse(v, out var on) || on;
-    }
-
-    public static void SaveVirtualizedGrid(bool on) =>
-        _store?.Set(KeyVirtualizedGrid, on ? "true" : "false");
+    // ── Подгрузка строк таблицы ────────────────────────────────────────────────
+    //
+    // Виртуализация таблицы (постраничная подгрузка через VirtualCollectionView) — всегда
+    // включена, это часть программы, переключателя нет (без неё большие коллекции зависают).
 
     // Фоновая подгрузка строк таблицы с заглушкой «Загрузка…» при прокрутке. По умолчанию ВКЛ:
     // данные страниц грузятся в фоновом потоке (UI не подвисает даже при очень быстром скролле),
     // строки до прихода данных показывают «Загрузка…». Выкл — синхронная загрузка на UI-потоке
-    // (тоже быстро, ~мс). Действует только при включённой виртуализации таблицы.
+    // (тоже быстро, ~мс).
     public static bool LoadAsyncRowLoad()
     {
         var v = _store?.Get(KeyAsyncRowLoad);
@@ -109,7 +98,6 @@ public static class AppSettings
     private const string KeyScale            = "scale";
     private const string KeyRecordPanelOpen  = "recordPanelOpen";
     private const string KeyRecordPanelWidth = "recordPanelWidth";
-    private const string KeyVirtualizedGrid  = "virtualizedGrid";
     private const string KeyAsyncRowLoad     = "asyncRowLoad";
 
     // ── Приватное ─────────────────────────────────────────────────────────────

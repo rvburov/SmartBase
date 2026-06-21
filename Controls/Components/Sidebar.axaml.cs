@@ -26,6 +26,10 @@ public partial class Sidebar : UserControl
     public event EventHandler<EntityRef>? CollectionSelected;
     public event EventHandler<int>?       CollectionDeleted;
     public event EventHandler?            RequestRefresh;
+    // Дубль коллекции: «скелет» создан, записи копируются в фоне — открыть таблицу с
+    // ExpectedCount строк «Загрузка…». По завершении копии — CollectionDuplicated (показать данные).
+    public event EventHandler<(EntityRef Ref, int ExpectedCount)>? CollectionDuplicating;
+    public event EventHandler<EntityRef>?                          CollectionDuplicated;
 
     // Смонтированные БД сайдбара. В режиме календаря — одна (дефолт). В конструкторе —
     // все из рабочего пространства, и каждая показывается корневым узлом (_showRoots).
@@ -918,13 +922,38 @@ public partial class Sidebar : UserControl
         if (copy.Id.HasValue) ExpandGroup(dbId, copy.Id.Value);
     }
 
-    private void DuplicateCollection(int dbId, int collectionId)
+    private async void DuplicateCollection(int dbId, int collectionId)
     {
         var repo = RepoFor(dbId);
         if (repo is null) return;
-        var copy = repo.DuplicateCollection(collectionId);
+
+        // 1) «Скелет» дубля (коллекция + колонки) создаётся мгновенно — узел сразу виден в дереве,
+        //    а таблица сразу открывается, не дожидаясь копирования записей (на больших — миллионы).
+        var shell = repo.CreateCollectionShell(collectionId);
+        if (shell.Collection.Id is not int newId) return;
+
         ReloadAndNotify();
-        if (copy.Id.HasValue && _mode == SidebarMode.Constructor) OpenCollection(dbId, copy.Id.Value);
+
+        // 2) В конструкторе открываем таблицу в режиме «скелет»: строки «Загрузка…» по числу записей
+        //    источника. (В календаре таблицы нет — просто копируем в фоне.)
+        if (_mode == SidebarMode.Constructor)
+        {
+            SelectCollection(dbId, newId);
+            CollectionDuplicating?.Invoke(this, (new EntityRef(dbId, newId), shell.SourceRecordCount));
+        }
+
+        // 3) Тяжёлое копирование записей и значений — на фоновом потоке (UI отзывчив).
+        try
+        {
+            await repo.CopyCollectionDataAsync(collectionId, newId);
+        }
+        catch
+        {
+            // Ошибку фона проглатываем: данные либо скопированы, либо нет — UI не валим.
+        }
+
+        // 4) Готово — реальные данные. Заменяем «Загрузка…» на строки (если коллекция ещё открыта).
+        CollectionDuplicated?.Invoke(this, new EntityRef(dbId, newId));
     }
 
     // Удаление через контекстное меню: если клик по узлу из мультивыделения — удаляем

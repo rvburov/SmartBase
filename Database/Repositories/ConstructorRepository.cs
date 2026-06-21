@@ -1,5 +1,6 @@
 using System.Text.RegularExpressions;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using DataBase.Core.Importers;
 using DataBase.Core.Models;
 using DataBase.Database.Entities;
@@ -249,7 +250,25 @@ public class ConstructorRepository(AppDbContext db)
         db.SaveChanges();
     }
 
+    // «Скелет» дубля: новая коллекция + число записей источника (для строк-заглушек таблицы),
+    // пока сами записи/значения копируются отдельно (см. CopyCollectionData).
+    public sealed record CollectionShell(DbCollection Collection, int SourceRecordCount);
+
     public DbCollection DuplicateCollection(int collectionId)
+    {
+        var shell = CreateCollectionShell(collectionId);
+        if (shell.Collection.Id is int newId)
+            CopyCollectionData(collectionId, newId);
+        return shell.Collection;
+    }
+
+    /// <summary>
+    /// Создать «скелет» дубля коллекции БЫСТРО: строка коллекции + копии полей (колонок), без
+    /// записей. Выполняется мгновенно (несколько строк), поэтому коллекция сразу видна в сайдбаре
+    /// и таблица открывается, пока записи копируются в фоне (см. <see cref="CopyCollectionDataAsync"/>).
+    /// Возвращает новую коллекцию и число записей источника (для строк-заглушек «Загрузка…»).
+    /// </summary>
+    public CollectionShell CreateCollectionShell(int collectionId)
     {
         var src = db.DbCollections.Find(collectionId);
         if (src is null) throw new InvalidOperationException($"Collection {collectionId} not found");
@@ -271,51 +290,105 @@ public class ConstructorRepository(AppDbContext db)
         db.DbCollections.Add(copy);
         db.SaveChanges();
 
-        // Копируем поля
-        var fields = db.DbFields.Where(f => f.CollectionId == collectionId).ToList();
-        var fieldMap = new Dictionary<int, int>(); // oldId -> newId
+        // Поля (колонки) немногочисленны — копируем через EF в порядке Id; этот же порядок
+        // позволит сопоставить старые и новые поля при копировании значений (CopyCollectionData).
+        var fields = db.DbFields.AsNoTracking()
+            .Where(f => f.CollectionId == collectionId)
+            .OrderBy(f => f.Id)
+            .ToList();
         foreach (var f in fields)
         {
-            var newField = new DbFieldEntity
+            db.DbFields.Add(new DbFieldEntity
             {
                 CollectionId = copy.Id, Name = f.Name, FieldType = f.FieldType,
                 ConfigJson = f.ConfigJson, Position = f.Position,
                 IsCalStart = f.IsCalStart, IsCalEnd = f.IsCalEnd,
                 IsSystem = f.IsSystem, IsRequired = f.IsRequired,
-            };
-            db.DbFields.Add(newField);
-            db.SaveChanges();
-            fieldMap[f.Id] = newField.Id;
+            });
         }
+        db.SaveChanges();
 
-        // Копируем записи и их значения полей
-        var records = db.DbRecords.Where(r => r.CollectionId == collectionId).ToList();
-        foreach (var r in records)
-        {
-            var newRec = new DbRecordEntity
-            {
-                CollectionId = copy.Id, CreatedAt = DateTime.Now.ToString("o"),
-                Position = r.Position, StartDt = r.StartDt, EndDt = r.EndDt,
-                AllDay = r.AllDay, Title = r.Title, Description = r.Description,
-            };
-            db.DbRecords.Add(newRec);
-            db.SaveChanges();
-
-            var fvs = db.DbFieldValues.Where(fv => fv.RecordId == r.Id).ToList();
-            foreach (var fv in fvs)
-            {
-                if (!fieldMap.TryGetValue(fv.FieldId, out var newFid)) continue;
-                db.DbFieldValues.Add(new DbFieldValueEntity { RecordId = newRec.Id, FieldId = newFid, Value = fv.Value });
-            }
-            db.SaveChanges();
-        }
-
-        return new DbCollection
+        var recCount = db.DbRecords.Count(r => r.CollectionId == collectionId);
+        var dto = new DbCollection
         {
             Id = copy.Id, Name = copy.Name, GroupId = copy.GroupId,
             Position = copy.Position, Icon = copy.Icon, Color = copy.Color,
         };
+        return new CollectionShell(dto, recCount);
     }
+
+    /// <summary>
+    /// Скопировать записи и значения из исходной коллекции в уже созданный «скелет» (newCollectionId).
+    /// Только bulk-SQL без материализации в EF: прежняя реализация делала две SaveChanges на КАЖДУЮ
+    /// запись (+ запрос значений на запись) — сотни тысяч/миллионы round-trip'ов подвешивали приложение.
+    /// Карта полей old→new восстанавливается из БД по порядку Id (поля созданы в том же порядке).
+    /// </summary>
+    public void CopyCollectionData(int srcCollectionId, int newCollectionId)
+    {
+        var recCount = db.DbRecords.Count(r => r.CollectionId == srcCollectionId);
+        if (recCount == 0) return;
+
+        // old FieldId → new FieldId по Position: скелет копирует Position полей дословно, а Position
+        // уникален в пределах коллекции — надёжнее, чем полагаться на порядок вставки/нумерации Id.
+        var oldFields = db.DbFields.AsNoTracking().Where(f => f.CollectionId == srcCollectionId)
+            .Select(f => new { f.Id, f.Position }).ToList();
+        var newByPos = new Dictionary<int, int>();
+        foreach (var nf in db.DbFields.AsNoTracking().Where(f => f.CollectionId == newCollectionId)
+                     .Select(f => new { f.Id, f.Position }))
+            newByPos[nf.Position] = nf.Id;
+        var fieldMap = new Dictionary<int, int>(oldFields.Count);
+        foreach (var of in oldFields)
+            if (newByPos.TryGetValue(of.Position, out var newFid)) fieldMap[of.Id] = newFid;
+
+        using var tx = db.Database.BeginTransaction();
+        var createdAt = DateTime.Now.ToString("o");
+
+        // Копия записей в порядке Id. SQLite присваивает новым строкам непрерывный блок id
+        // в порядке вставки (= порядок SELECT), поэтому id новой записи = firstNew + ранг.
+        db.Database.ExecuteSqlInterpolated($@"
+            INSERT INTO db_records (CollectionId, CreatedAt, Position, StartDt, EndDt, AllDay, Title, Description)
+            SELECT {newCollectionId}, {createdAt}, Position, StartDt, EndDt, AllDay, Title, Description
+            FROM db_records WHERE CollectionId = {srcCollectionId} ORDER BY Id");
+
+        // id последней вставленной записи (на этом подключении) → первый новый id блока.
+        long lastRowid;
+        using (var c = db.Database.GetDbConnection().CreateCommand())
+        {
+            c.Transaction = db.Database.CurrentTransaction!.GetDbTransaction();
+            c.CommandText = "SELECT last_insert_rowid()";
+            lastRowid = (long)c.ExecuteScalar()!;
+        }
+        var firstNew = lastRowid - recCount + 1;
+
+        // Значения по каждому полю одним bulk-INSERT: старый RecordId → новый через ранг
+        // (ROW_NUMBER по тому же ORDER BY Id), старый FieldId → новый по карте полей.
+        foreach (var (oldFid, newFid) in fieldMap)
+        {
+            db.Database.ExecuteSqlInterpolated($@"
+                INSERT INTO db_field_values (RecordId, FieldId, Value)
+                SELECT {firstNew} + r.rn - 1, {newFid}, fv.Value
+                FROM db_field_values fv
+                JOIN (SELECT Id AS old_id, ROW_NUMBER() OVER (ORDER BY Id) AS rn
+                      FROM db_records WHERE CollectionId = {srcCollectionId}) r ON r.old_id = fv.RecordId
+                WHERE fv.FieldId = {oldFid}");
+        }
+
+        tx.Commit();
+    }
+
+    /// <summary>
+    /// Скопировать записи/значения дубля на фоновом потоке (отдельное подключение к тому же файлу).
+    /// Может быть тяжёлым (миллионы строк) — выносим из UI-потока, чтобы интерфейс не подвисал.
+    /// WAL допускает параллельную работу с основным подключением (чтения таблицы во время копии).
+    /// </summary>
+    public Task CopyCollectionDataAsync(int srcCollectionId, int newCollectionId) =>
+        Task.Run(() =>
+        {
+            using var ctx = new AppDbContext(db.DbPath);
+            ctx.Database.ExecuteSqlRaw("PRAGMA temp_store=MEMORY;");
+            ctx.Database.ExecuteSqlRaw("PRAGMA cache_size=-65536;");
+            new ConstructorRepository(ctx).CopyCollectionData(srcCollectionId, newCollectionId);
+        });
 
     // ── Перенос между БД (мульти-маунт) ───────────────────────────────────────
     //

@@ -106,22 +106,6 @@
                     <TextBlock Text="Основные параметры приложения."
                                Foreground="{StaticResource BrushSecondaryText}" />
 
-                    <!-- Виртуализация больших таблиц -->
-                    <Border Classes="settingRow">
-                        <Grid ColumnDefinitions="*,Auto">
-                            <StackPanel Grid.Column="0" Spacing="4"
-                                        VerticalAlignment="Center" Margin="0,0,32,0">
-                                <TextBlock Classes="title" Text="Виртуализация больших таблиц" />
-                                <TextBlock Classes="desc"
-                                           Text="Грузить строки таблицы постранично по мере прокрутки. Позволяет открывать коллекции на сотни тысяч и миллионы записей мгновенно. Изменение вступает в силу при следующем открытии коллекции. Отключайте только при проблемах с отображением." />
-                            </StackPanel>
-                            <CheckBox x:Name="VirtualizedGridCheck"
-                                      Grid.Column="1"
-                                      VerticalAlignment="Center"
-                                      IsCheckedChanged="OnVirtualizedGridChanged" />
-                        </Grid>
-                    </Border>
-
                     <!-- Подгрузка строк с заглушкой «Загрузка…» -->
                     <Border Classes="settingRow">
                         <Grid ColumnDefinitions="*,Auto">
@@ -129,7 +113,7 @@
                                         VerticalAlignment="Center" Margin="0,0,32,0">
                                 <TextBlock Classes="title" Text="Фоновая подгрузка строк («Загрузка…»)" />
                                 <TextBlock Classes="desc"
-                                           Text="Данные строк подгружаются в фоновом потоке: при прокрутке строки сначала показывают «Загрузка…», затем заполняются — интерфейс не подвисает даже при очень быстрой прокрутке больших таблиц. Выключите для синхронной загрузки (тоже быстрой). Работает только при включённой виртуализации." />
+                                           Text="Данные строк подгружаются в фоновом потоке: при прокрутке строки сначала показывают «Загрузка…», затем заполняются — интерфейс не подвисает даже при очень быстрой прокрутке больших таблиц. Выключите для синхронной загрузки (тоже быстрой, ~мс). Изменение вступает в силу при следующем открытии коллекции." />
                             </StackPanel>
                             <CheckBox x:Name="AsyncRowLoadCheck"
                                       Grid.Column="1"

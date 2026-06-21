@@ -37,6 +37,9 @@ internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollecti
     // и грузятся по id в его порядке, а не keyset/offset по Position. null — обычный режим.
     private readonly IReadOnlyList<int>? _recordIds;
     private readonly int _dataCount;
+    // Режим «скелет»: коллекция дублируется, записи ещё копируются в фоне. Все строки —
+    // «Загрузка…» без обращения к БД; реальные данные появятся при перезагрузке таблицы.
+    private readonly bool _skeleton;
 
     // Постоянный экземпляр add-row — DataGrid сравнивает по ссылке при ScrollIntoView.
     public TableRowVm AddRowItem { get; } = TableRowVm.AddRow();
@@ -50,7 +53,8 @@ internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollecti
     private readonly bool _asyncLoad;
 
     public VirtualRowList(ConstructorRepository repo, int collectionId, List<DbField> fields,
-                          bool excludeHidden = false, IReadOnlyList<int>? recordIds = null)
+                          bool excludeHidden = false, IReadOnlyList<int>? recordIds = null,
+                          int? skeletonCount = null)
     {
         _repo          = repo;
         _collectionId  = collectionId;
@@ -58,8 +62,10 @@ internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollecti
         _excludeHidden = excludeHidden;
         _recordIds     = recordIds;
         _asyncLoad     = Utils.AppSettings.LoadAsyncRowLoad();
-        // В режиме списка id количество = длина списка; иначе считаем из БД.
-        _dataCount     = recordIds?.Count ?? repo.CountRecords(collectionId, excludeHidden);
+        _skeleton      = skeletonCount is not null;
+        // Скелет (дубль в процессе): число строк = записей источника. Режим списка id: длина
+        // списка. Иначе — считаем из БД.
+        _dataCount     = skeletonCount ?? recordIds?.Count ?? repo.CountRecords(collectionId, excludeHidden);
     }
 
     public TableRowVm this[int index]
@@ -88,6 +94,16 @@ internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollecti
 
         var skip = page * PageSize;
         var take = Math.Min(PageSize, _dataCount - skip);
+
+        if (_skeleton)
+        {
+            // Дубль ещё копируется: показываем «Загрузка…» по всем строкам без обращения к БД.
+            var ph = new TableRowVm[take];
+            for (var i = 0; i < take; i++) ph[i] = TableRowVm.Loading(skip + i + 1);
+            _pages[page] = ph;
+            _lru.AddLast(page);
+            return ph;
+        }
 
         if (!_asyncLoad)
         {
@@ -135,6 +151,12 @@ internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollecti
         try
         {
             if (gen != _generation) return;   // устарело ещё до старта (был Reset)
+            // Пока задача ждала слот, пользователь мог проскроллить дальше и страницу вытеснили
+            // из кеша (EvictOldestIfFull). Тогда не тратим слот/запрос — освобождаем гейт сразу,
+            // чтобы быстрее дошла очередь до СТРАНИЦЫ, на которой пользователь остановился.
+            // (Возврат на эту страницу запросит загрузку заново.) Чтение полей — на UI-потоке
+            // (продолжение после await идёт в захваченном контексте), гонки нет.
+            if (!_pending.Contains(page) || !_pages.ContainsKey(page)) return;
             var data = await _repo.LoadPageAsync(_collectionId, _excludeHidden, idSlice, skip, take, afterPos, afterId);
             Dispatcher.UIThread.Post(() => FillFromData(gen, page, data.Records, data.Values));
         }
@@ -220,6 +242,7 @@ internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollecti
         var oldest = _lru.First!.Value;
         _lru.RemoveFirst();
         _pages.Remove(oldest);
+        _pending.Remove(oldest);   // вытесненную страницу её фоновая загрузка пропустит (см. выше)
     }
 
     /// <summary>Ищет строку по RecordId в уже загруженных страницах (не инициирует загрузку).</summary>

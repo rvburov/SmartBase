@@ -72,12 +72,11 @@ public partial class TableView : UserControl
     private List<DbField>        _fields  = [];
     private List<TableColumnDef> _colDefs = [];
     private VirtualRowList?      _virtualRows;
-    // Виртуализирующая обёртка над _virtualRows: когда включён флаг AppSettings.LoadVirtualizedGrid,
-    // именно она кладётся в ItemsSource — DataGrid берёт её как IDataGridCollectionView без
-    // материализации и тянет только видимые строки. null — старый путь (без виртуализации).
+    // Виртуализирующая обёртка над _virtualRows: кладётся в ItemsSource — DataGrid берёт её
+    // как IDataGridCollectionView без материализации и тянет только видимые строки.
+    // Виртуализация всегда включена (часть программы), переключателя нет.
     private VirtualCollectionView? _virtualView;
-    // Источник по умолчанию для грида (без активного фильтра/сортировки): виртуализирующее
-    // представление, если включено, иначе сам постраничный список.
+    // Источник по умолчанию для грида (без активного фильтра/сортировки).
     private System.Collections.IEnumerable? DefaultItemsSource =>
         (System.Collections.IEnumerable?)_virtualView ?? _virtualRows;
     // Пользовательские подписи системных колонок: ключ → отображаемое имя.
@@ -88,7 +87,7 @@ public partial class TableView : UserControl
     // Колонки из _colDefs не удаляются (порядок/перемещение целы) — гасим через IsVisible.
     private HashSet<string> _hiddenColumns = [];
     // Скрытые записи (окно «Отображение записей»): id есть в множестве ⇒ строка скрыта.
-    // Применяется фильтром на уровне SQL (VirtualRowList + LoadAllRows), виртуализация цела.
+    // Применяется на уровне SQL (excludeHidden в запросах страницы/фильтра), виртуализация цела.
     private HashSet<int> _hiddenRecords = [];
     // Выделенные по клику в заголовок колонки (голубые рамки). Пусто — нет выделения.
     // Обычный клик — одна колонка; Shift+клик — точечный toggle колонки.
@@ -224,10 +223,18 @@ public partial class TableView : UserControl
     // (тогда горизонтальный скролл сбрасываем) или это refresh той же (скролл храним).
     private int? _lastLoadedCollectionId;
 
-    public void Load(ConstructorRepository repository, int collectionId)
+    // Число строк-заглушек для режима «скелет» (дубль коллекции копируется в фоне); null — обычная
+    // загрузка. Ставится в Load, читается в Reload при построении источника строк.
+    private int? _skeletonCount;
+
+    // skeletonCount != null — открыть таблицу в режиме «скелет»: показать ровно столько строк
+    // «Загрузка…» (дубль коллекции ещё копируется в фоне), не обращаясь к БД за записями.
+    // Реальные данные появятся повторным Load(...) без skeletonCount после завершения копии.
+    public void Load(ConstructorRepository repository, int collectionId, int? skeletonCount = null)
     {
         var sameCollection = _lastLoadedCollectionId == collectionId;
 
+        _skeletonCount = skeletonCount;
         _repository   = repository;
         _collectionId = collectionId;
 
@@ -485,11 +492,13 @@ public partial class TableView : UserControl
         _colDefs = BuildColDefs();
         ColumnsBuilt?.Invoke(this, _colDefs);
 
-        _virtualRows = new VirtualRowList(_repository, _collectionId, _fields,
-                                          excludeHidden: _hiddenRecords.Count > 0);
-        // Виртуализирующая обёртка (если флаг включён): DataGrid не материализует источник,
-        // тянет только видимые строки → большие коллекции открываются мгновенно.
-        _virtualView = AppSettings.LoadVirtualizedGrid() ? new VirtualCollectionView(_virtualRows) : null;
+        _virtualRows = _skeletonCount is int skel
+            ? new VirtualRowList(_repository, _collectionId, _fields, skeletonCount: skel)
+            : new VirtualRowList(_repository, _collectionId, _fields,
+                                 excludeHidden: _hiddenRecords.Count > 0);
+        // Виртуализирующая обёртка: DataGrid не материализует источник, тянет только видимые
+        // строки → большие коллекции открываются мгновенно. Всегда включена.
+        _virtualView = new VirtualCollectionView(_virtualRows);
 
         BuildColumns();
 
@@ -2152,9 +2161,9 @@ public partial class TableView : UserControl
     }
 
     /// <summary>
-    /// Применяет активные фильтры/сортировку. Без них таблица работает на
-    /// виртуализированном списке; с ними — на материализованном (все записи
-    /// загружаются, фильтруются и сортируются в памяти).
+    /// Применяет активные фильтры/сортировку. Без них таблица работает на полном
+    /// виртуализированном списке; с ними — фильтр считается в SQL (список id), показ
+    /// тоже виртуализирован по этому списку. Всё постранично, без загрузки в память.
     /// </summary>
     private void ApplyFilters()
     {
@@ -2175,67 +2184,22 @@ public partial class TableView : UserControl
             return;
         }
 
-        // Виртуализация включена → фильтр уходит в SQL (только id совпавших записей),
-        // сортировка — тем же компаратором по значениям ОДНОЙ колонки, показ виртуализируется
-        // постранично по списку id. Не трогаем нефильтрованные _virtualRows/_virtualView —
-        // создаём временный источник; при снятии фильтра вернёмся к DefaultItemsSource.
-        if (_virtualView is not null)
+        // Фильтр уходит в SQL (только id совпавших записей), сортировка — тем же компаратором
+        // по значениям ОДНОЙ колонки, показ виртуализируется постранично по списку id. Не трогаем
+        // нефильтрованные _virtualRows/_virtualView — создаём временный источник; при снятии
+        // фильтра вернёмся к DefaultItemsSource.
+        var ids = _repository.GetFilteredRecordIds(_collectionId, _filters,
+                                                   excludeHidden: _hiddenRecords.Count > 0);
+        if (_sortKey is { } sk)
         {
-            var ids = _repository.GetFilteredRecordIds(_collectionId, _filters,
-                                                       excludeHidden: _hiddenRecords.Count > 0);
-            if (_sortKey is { } sk)
-            {
-                var def  = _colDefs.FirstOrDefault(d => d.Key == sk);
-                var cmp  = BuildComparer(def?.FieldType ?? "text", _sortAsc);
-                var vals = _repository.GetColumnValues(_collectionId, sk);
-                ids.Sort((a, b) => cmp(vals.GetValueOrDefault(a, ""), vals.GetValueOrDefault(b, "")));
-            }
-
-            var filteredRows = new VirtualRowList(_repository, _collectionId, _fields, recordIds: ids);
-            RecordsGrid.ItemsSource = new VirtualCollectionView(filteredRows);
-            return;
+            var def  = _colDefs.FirstOrDefault(d => d.Key == sk);
+            var cmp  = BuildComparer(def?.FieldType ?? "text", _sortAsc);
+            var vals = _repository.GetColumnValues(_collectionId, sk);
+            ids.Sort((a, b) => cmp(vals.GetValueOrDefault(a, ""), vals.GetValueOrDefault(b, "")));
         }
 
-        // Виртуализация выключена → старый материализованный путь (всё в память).
-        var rows = LoadAllRows();
-
-        foreach (var (key, allowed) in _filters)
-            rows = rows.Where(r => allowed.Contains(r[key])).ToList();
-
-        if (_sortKey is { } sortKey)
-        {
-            var def = _colDefs.FirstOrDefault(d => d.Key == sortKey);
-            var cmp = BuildComparer(def?.FieldType ?? "text", _sortAsc);
-            rows.Sort((a, b) => cmp(a[sortKey], b[sortKey]));
-        }
-
-        for (var i = 0; i < rows.Count; i++)
-            rows[i].SetRowNumber(i + 1);
-
-        rows.Add(TableRowVm.AddRow());
-        RecordsGrid.ItemsSource = rows;
-    }
-
-    // Все строки в память (материализованный путь: активный фильтр/сортировка колонок,
-    // а также подсчёт значений в панели фильтра). Скрытые записи (окно «Отображение
-    // записей») исключаем — как и виртуализованный путь через excludeHidden, чтобы оба
-    // пути показывали один и тот же набор строк.
-    private List<TableRowVm> LoadAllRows()
-    {
-        var records = _repository!.GetRecords(_collectionId);
-        var values  = _repository.GetFieldValuesByCollection(_collectionId);
-
-        var rows = new List<TableRowVm>(records.Count);
-        var num  = 0;
-        foreach (var rec in records)
-        {
-            var id = rec.Id!.Value;
-            if (_hiddenRecords.Contains(id)) continue;
-            rows.Add(new TableRowVm(_repository, id, ++num,
-                values.TryGetValue(id, out var v) ? v : [],
-                rec.Title ?? "", rec.Description));
-        }
-        return rows;
+        var filteredRows = new VirtualRowList(_repository, _collectionId, _fields, recordIds: ids);
+        RecordsGrid.ItemsSource = new VirtualCollectionView(filteredRows);
     }
 
     private static Func<string, string, int> BuildComparer(string fieldType, bool asc)

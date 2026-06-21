@@ -20,21 +20,62 @@
 
 | Путь | Масштаб | Что держит скорость | Код |
 |---|---|---|---|
-| Таблица коллекции | 100k+ записей | `VirtualRowList` (страницы 200, LRU) | [TableView](../../Views/ConstructorDb/TableView.axaml.cs), [VirtualRowList](../../ViewModels/ConstructorDb/VirtualRowList.cs) |
+| Таблица коллекции | до ~10 млн записей | `VirtualCollectionView` (DataGrid не материализует источник) + keyset + фоновая подгрузка | [TableView](../../Views/ConstructorDb/TableView.axaml.cs), [VirtualRowList](../../ViewModels/ConstructorDb/VirtualRowList.cs), [VirtualCollectionView](../../ViewModels/ConstructorDb/VirtualCollectionView.cs) |
+| Фильтр / сортировка | до ~10 млн | фильтр в SQL → список id → виртуализация; выпадающий список значений — SQL-агрегат в фоне | [TableView](../../Views/ConstructorDb/TableView.axaml.cs), [ConstructorRepository](../../Database/Repositories/ConstructorRepository.cs) |
 | Импорт таблиц | 100k+ строк | bulk-insert + границы по содержимому | [ExcelImporter](../../Core/Importers/ExcelImporter.cs), `ImportExcelCollection` |
 | Календарь | выборка по диапазону дат | запрос диапазона, не все записи | [ConstructorRepository](../../Database/Repositories/ConstructorRepository.cs) |
 
 ### Таблица коллекции
 
-[VirtualRowList](../../ViewModels/ConstructorDb/VirtualRowList.cs) реализует `IList`
-для `DataGrid`, но данные тянет из БД **постранично**: страница — 200 строк, в кеше
-максимум 50 страниц (≈10k строк) с LRU-вытеснением. `Count` отдаётся из `CountRecords`
-без загрузки строк; строки грузятся по индексу при обращении `this[index]`.
+**Avalonia DataGrid не умеет виртуализацию данных.** Если в `ItemsSource` положить
+обычный список (даже ленивый `IList`), `DataGridCollectionView` в конструкторе
+перебирает источник **целиком** → на 100k+ открытие занимает минуты. Обход:
+[VirtualCollectionView](../../ViewModels/ConstructorDb/VirtualCollectionView.cs)
+реализует `IDataGridCollectionView` + `IList` — такой источник DataGrid берёт **как есть,
+без копирования** и запрашивает строки **по индексу только для видимых** (презентер строк
+UI-виртуализирован).
 
-Каждая страница — один запрос записей (`GetRecordsPage`, `Skip/Take`) и один пакетный
-запрос значений (`GetFieldValuesBatch`, `IN` по индексу `(RecordId, FieldId)`).
-Материализованный путь (`LoadAllRows` — все строки в память) включается **только**
-при активном фильтре/сортировке колонок или при подсчёте значений в панели фильтра.
+Данные тянет [VirtualRowList](../../ViewModels/ConstructorDb/VirtualRowList.cs)
+постранично (страница — 200 строк, в кеше до 50 страниц ≈10k с LRU):
+- `Count` — из `CountRecords` без загрузки строк;
+- последовательный скролл — **keyset** (`GetRecordsPageAfter`, `WHERE (Position, Id) >
+  курсор`): O(take), не зависит от глубины;
+- произвольный прыжок по скроллбару — offset (`GetRecordsPage`, `Skip/Take`), но по
+  составному индексу `(CollectionId, Position)` это быстрый индексный скан;
+- значения страницы — один пакетный запрос (`GetFieldValuesBatch`, `IN` по индексу
+  `(RecordId, FieldId)`).
+
+Подгрузка строк идёт в **фоновом потоке** (`LoadPageAsync` — отдельное read-only
+подключение, WAL допускает параллельное чтение): строки сразу показывают «Загрузка…»
+(`TableRowVm.IsLoading`), данные приходят и заполняют их на UI-потоке (`Fill`) → ноль
+микроподвисаний при скролле. Параллелизм ограничен семафором; загрузки, устаревшие после
+`Reset` (правка/перезагрузка), отбрасываются по счётчику поколений, а загрузки страниц,
+вытесненных из кеша при быстром скролле, пропускаются (проверка `_pending`/`_pages` после
+семафора) — чтобы страница, на которой пользователь остановился, грузилась без очереди из
+устаревших. Флаг «Фоновая подгрузка строк» (Настройки → Общие, по умолчанию вкл) переключает
+на синхронный путь.
+
+> **Важно (Avalonia).** `Fill` уведомляет об изменении ячеек через `OnPropertyChanged("Item")`
+> — именно имя индексатора. Привязка `Binding("[key]")` обновляется только по нему;
+> WPF-стиль `"Item[key]"` Avalonia игнорирует (`ReflectionIndexerNode.ShouldUpdate`), и тогда
+> «Загрузка…» не сменялась бы данными на месте, только при пересоздании ячейки скроллом.
+
+### Фильтр и сортировка
+
+При активном фильтре/сортировке таблица **не грузит все строки в память**. Фильтр уходит
+в SQL (`GetFilteredRecordIds` — EAV-условия через `EXISTS`/`IN`, пустые значения учтены),
+возвращает только id совпавших записей в порядке `Position`; сортировка применяется тем же
+компаратором по значениям **одной** колонки (`GetColumnValues`). Показ виртуализируется по
+списку id (`VirtualRowList` в режиме списка id + `GetRecordsByIdsOrdered`).
+
+Выпадающий список значений в заголовке открывается **мгновенно**: значения считаются
+SQL-агрегатом (`GetFieldValueCounts` / `GetTitleCounts` / `GetDescriptionCounts`, GROUP BY
+по индексу `(FieldId, Value)`) на **фоновом потоке** (`GetColumnCountsAsync`), до прихода —
+«Загрузка…». Значения идут в **порядке таблицы** (по `MIN(Position)`), «(Пусто)» — в конце;
+список **виртуализирован** (`ListBox`), показываются все уникальные значения без лимита.
+
+Старый материализованный путь (`LoadAllRows` — все строки в память) остаётся только как
+fallback при **выключенной** виртуализации.
 
 Подробнее: [[../features/constructor-db/tables]].
 
@@ -66,32 +107,56 @@ bulk-insert — на время вставки записей отключает
 
 | Таблица | Индекс | Назначение |
 |---|---|---|
-| `db_records` | `(CollectionId)` | записи коллекции |
-| `db_field_values` | `(RecordId, FieldId)` UNIQUE, `(FieldId)` | значения записи / по полю |
+| `db_records` | `(CollectionId, Position)` | записи коллекции в порядке отображения (страницы, keyset) |
+| `db_field_values` | `(RecordId, FieldId)` UNIQUE, `(FieldId, Value)` | значения записи / фильтр и подсчёт по значению поля |
 | `db_fields` | `(CollectionId, Name)` UNIQUE | поля коллекции, уникальность имени |
 | `db_collections` | `(GroupId)` | коллекции группы |
 | `db_groups` | `(ParentId)` | дерево групп |
 
 Миграции применяются автоматически при монтировании БД (`db.Database.Migrate()` в
-[DatabaseManager](../../Database/DatabaseManager.cs)); см. [[databases]]. Включён WAL
-(`PRAGMA journal_mode=WAL`) — лучше параллелизм чтения/записи.
+[DatabaseManager](../../Database/DatabaseManager.cs)); см. [[databases]]. Прагмы скорости
+([DatabaseManager](../../Database/DatabaseManager.cs)): `journal_mode=WAL` (параллельные
+чтения во время записи), `synchronous=NORMAL` (быстрее коммиты при WAL), `temp_store=MEMORY`,
+`mmap_size=256MB`, `cache_size≈64MB`.
+
+## Сделано (перф-итерация June 2026)
+
+- ✅ Составной индекс `db_records(CollectionId, Position)` — убрал пересортировку коллекции
+  на каждый запрос страницы.
+- ✅ Keyset-пагинация (`GetRecordsPageAfter`) для последовательного скролла.
+- ✅ Виртуализация данных DataGrid через `VirtualCollectionView : IDataGridCollectionView`
+  (подтверждено: stock `DataGridCollectionView` материализует источник; кастомный — нет).
+- ✅ Фоновая подгрузка строк (`LoadPageAsync`) и значений фильтра (`GetColumnCountsAsync`)
+  с заглушками «Загрузка…».
+- ✅ Фильтр/сортировка в SQL вместо `LoadAllRows`; индекс `db_field_values(FieldId, Value)`.
+- ✅ Тяжёлые операции мимо EF-материализации на raw SQL: `RenumberPositions`,
+  `SaveRecordOrder` (temp-таблица), копирование значений в `DuplicateField` (`INSERT … SELECT`);
+  `MoveRecord`/`PositionAfterRecord` — соседи индексными запросами, без загрузки всей коллекции.
+- ✅ Дубль коллекции — мгновенное открытие + копирование в фоне. `CreateCollectionShell`
+  создаёт коллекцию + колонки сразу (несколько строк) → узел появляется в сайдбаре и таблица
+  открывается без ожидания; записи/значения копируются `CopyCollectionDataAsync` (отдельное
+  подключение) одним bulk-SQL (`INSERT … SELECT`, old→new id записи по рангу `ROW_NUMBER`,
+  old→new поле по `Position`). Пока копия идёт — таблица в режиме «скелет» (`VirtualRowList`
+  с `skeletonCount`): N строк «Загрузка…» без обращения к БД; по завершении — один `Refresh`,
+  данные появляются. Раньше всё шло по-записно через EF (2× `SaveChanges` на запись) с ожиданием
+  всей копии до показа → зависание/ожидание 5–10 с на больших коллекциях.
+- ✅ Окна «Отображение» записей/свойств и список значений фильтра — виртуализированы (`ListBox`).
 
 ## Известные узкие места / TODO
 
-- **Нет составного индекса `db_records(CollectionId, Position)`.** `GetRecordsPage`
-  сортирует по `Position` в пределах коллекции — при индексе только по `CollectionId`
-  SQLite пересортировывает все записи коллекции на **каждый** запрос страницы. На
-  больших коллекциях (100k+) открытие таблицы занимает минуты.
-- **`Skip/Take` пагинация — O(offset).** `Skip(N*200)` перечитывает `offset` строк;
-  сумма по страницам — O(n²/PageSize). Решение — keyset-пагинация (`WHERE Position > ?`).
-  См. [[../ROADMAP]].
-- **Возможная материализация `DataGrid`.** Симптомы намекают, что грид при открытии
-  реализует далеко не только видимое окно (тянет большинство страниц `VirtualRowList`).
-  Нужно подтвердить headless-тестом, не материализует ли `DataGridCollectionView`
-  весь источник, и при необходимости — настоящая виртуализация.
+- **Строковые `Value` (EAV).** Фильтр по равенству и сортировка работают, но «число > N»,
+  «дата в диапазоне» по строкам некорректны и не индексируются типобезопасно. Решение —
+  типизированные колонки `ValueNumber/ValueDate` + индексы (Этап 4, см. [[../ROADMAP]]).
+- **Перенос коллекции между БД** (`ExportCollection`/`ImportCollection`) всё ещё идёт через
+  EF-снимок в память — тяжело на больших коллекциях (разные файлы БД, bulk `INSERT … SELECT`
+  напрямую не применить). Кандидат на пакетную потоковую передачу. (Дублирование в ту же
+  БД, `DuplicateCollection`, уже переведено на bulk-SQL + фоновый поток.)
+- **1000+ колонок — UI-проблема.** DataGrid создаёт ячейки всех колонок для каждой видимой
+  строки; меры по БД её не решают. Решение — ограничение видимых колонок через сохранённые
+  представления (Этап 3) + виртуализация списка свойств на странице записи.
 - **Календарные запросы по `StartDt/EndDt` без индекса.** `GetCalendarRecordsByRange`
-  сравнивает строки дат без индекса на этих колонках → скан `db_records`. На большом
-  числе датированных записей стоит добавить индекс.
+  сравнивает строки дат без индекса → скан `db_records`. На большом числе датированных
+  записей стоит добавить индекс.
 
 ## Как мерить
 
