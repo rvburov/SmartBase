@@ -262,6 +262,69 @@ public class ConstructorRepository(AppDbContext db)
         db.SaveChanges();
     }
 
+    /// <summary>
+    /// Удалить коллекцию на ОТДЕЛЬНОМ подключении (фон + прогресс) — для больших коллекций.
+    /// Не трогает общий Context (см. правило об общем AppDbContext), поэтому безопасно из Task.Run.
+    /// </summary>
+    public void DeleteCollectionIsolated(int collectionId, IProgress<int>? progress = null)
+    {
+        using var ctx = new AppDbContext(db.DbPath);
+        ctx.ApplyPerformancePragmas();
+        new ConstructorRepository(ctx).DeleteCollectionData(collectionId, progress);
+    }
+
+    /// <summary>
+    /// Удалить записи коллекции ПАКЕТАМИ (значения уходят каскадом по FK ON DELETE CASCADE — его
+    /// включает провайдер EF), затем строку коллекции (каскад уберёт поля и UI-настройки). Всё в
+    /// одной транзакции. Пакеты — только ради гранулярности прогресса (<paramref name="progress"/> —
+    /// нарастающее число удалённых записей); по SQL это та же работа, что один каскадный DELETE.
+    /// </summary>
+    public void DeleteCollectionData(int collectionId, IProgress<int>? progress = null, int batchSize = 10000)
+    {
+        var recCount = db.DbRecords.Count(r => r.CollectionId == collectionId);
+
+        using var tx = db.Database.BeginTransaction();
+
+        // Записи пакетами по Id (порядок не важен): DELETE по диапазону каскадит на значения.
+        int prevId = 0, deleted = 0;
+        while (true)
+        {
+            var end = DeleteBatchEndId(collectionId, prevId, batchSize);
+            if (end is int e)
+            {
+                db.Database.ExecuteSqlInterpolated(
+                    $"DELETE FROM db_records WHERE CollectionId = {collectionId} AND Id > {prevId} AND Id <= {e}");
+                deleted += batchSize; prevId = e;
+                progress?.Report(deleted);
+            }
+            else
+            {
+                // Последний (неполный) пакет: без верхней границы.
+                db.Database.ExecuteSqlInterpolated(
+                    $"DELETE FROM db_records WHERE CollectionId = {collectionId} AND Id > {prevId}");
+                break;
+            }
+        }
+
+        // Строка коллекции: каскад уберёт поля (и UI-настройки, если их FK каскадные).
+        db.Database.ExecuteSqlInterpolated($"DELETE FROM db_collections WHERE Id = {collectionId}");
+        tx.Commit();
+        progress?.Report(recCount);   // финально 100% для этой коллекции
+    }
+
+    // Id записи на позиции offset−1 в срезе коллекции после prevId (порядок Id) — граница пакета.
+    // null, если записей меньше (последний неполный пакет). Параметры — int, не строки.
+    private int? DeleteBatchEndId(int collectionId, int prevId, int offset)
+    {
+        using var c = db.Database.GetDbConnection().CreateCommand();
+        c.Transaction = db.Database.CurrentTransaction!.GetDbTransaction();
+        c.CommandText = $@"SELECT Id FROM db_records
+            WHERE CollectionId = {collectionId} AND Id > {prevId}
+            ORDER BY Id LIMIT 1 OFFSET {offset - 1}";
+        using var rdr = c.ExecuteReader();
+        return rdr.Read() ? rdr.GetInt32(0) : null;
+    }
+
     // «Скелет» дубля: новая коллекция + число записей источника (для строк-заглушек таблицы),
     // пока сами записи/значения копируются отдельно (см. CopyCollectionData).
     public sealed record CollectionShell(DbCollection Collection, int SourceRecordCount);

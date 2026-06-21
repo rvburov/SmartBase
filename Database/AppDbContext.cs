@@ -44,6 +44,11 @@ public class AppDbContext : DbContext
     /// </summary>
     public void ApplyPerformancePragmas()
     {
+        // Каскадное удаление (записи→значения, коллекция→поля/настройки) держится на FK ON DELETE
+        // CASCADE — а оно работает только при включённом enforcement. Включаем явно на КАЖДОМ
+        // подключении (и фоновом), чтобы batched-удаление и удаление группы/коллекции не оставляли
+        // «осиротевшие» значения/поля. PRAGMA вне транзакции (вызываем сразу после создания контекста).
+        Database.ExecuteSqlRaw("PRAGMA foreign_keys=ON;");
         Database.ExecuteSqlRaw("PRAGMA busy_timeout=10000;");   // ждать чужого писателя, не падать SQLITE_BUSY
         Database.ExecuteSqlRaw("PRAGMA synchronous=NORMAL;");   // с WAL безопасно и быстрее коммитов
         Database.ExecuteSqlRaw("PRAGMA temp_store=MEMORY;");

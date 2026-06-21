@@ -921,9 +921,9 @@ public partial class Sidebar : UserControl
         if (copy.Id.HasValue) ExpandGroup(dbId, copy.Id.Value);
     }
 
-    // Порог записей (суммарно по выделению): меньше — копируем мгновенно без окна; больше —
-    // показываем окно прогресса с %, как при импорте, и копируем в фоне по очереди.
-    private const int DuplicateDialogThreshold = 20000;
+    // Порог записей (суммарно по выделению) для дублирования/удаления: меньше — операция идёт
+    // мгновенно синхронно без окна; больше — окно прогресса с % (как импорт) и работа в фоне.
+    private const int BulkProgressThreshold = 20000;
 
     // Дублирование через контекстное меню: если клик по узлу из мультивыделения — дублируем
     // ВЕСЬ набор коллекций; иначе только эту. Большие (суммарно много записей) — с окном
@@ -946,7 +946,7 @@ public partial class Sidebar : UserControl
         if (targets.Count == 0) return;
 
         // Малый объём — мгновенно, синхронно (без окна): bulk-копия быстрая.
-        if (total <= DuplicateDialogThreshold)
+        if (total <= BulkProgressThreshold)
         {
             (int DbId, int Id)? opened = null;
             foreach (var t in targets)
@@ -1035,13 +1035,70 @@ public partial class Sidebar : UserControl
         var colls  = nodes.Where(n => !n.IsGroup && !n.IsDatabase && n.Id.HasValue).ToList();
         if (groups.Count == 0 && colls.Count == 0) return;
 
-        var dlg = new ConfirmDialog(BuildDeleteMessage(groups.Count, colls.Count));
-        if (await dlg.ShowDialog<bool>(OwnerWindow) != true) return;
+        var confirm = new ConfirmDialog(BuildDeleteMessage(groups.Count, colls.Count));
+        if (await confirm.ShowDialog<bool>(OwnerWindow) != true) return;
 
-        // Сначала группы (каскадно удаляют вложенное), затем коллекции; каждая — через
-        // репозиторий своей БД. Коллекции, уже удалённые каскадом, — безопасный no-op.
+        // Группы — синхронно (структурные узлы; рекурсивный каскад). Репозитории и число записей
+        // коллекций считаем здесь, на UI-потоке (общий список не трогаем из Task.Run).
         foreach (var g in groups) RepoOf(g)?.DeleteGroup(g.Id!.Value);
-        foreach (var c in colls)  RepoOf(c)?.DeleteCollection(c.Id!.Value);
+
+        var targets = new List<(ConstructorRepository Repo, int Id, int Count)>();
+        long total = 0;
+        foreach (var c in colls)
+        {
+            var r = RepoOf(c);
+            if (r is null) continue;
+            var cnt = r.CountRecords(c.Id!.Value);
+            targets.Add((r, c.Id!.Value, cnt));
+            total += cnt;
+        }
+
+        if (total <= BulkProgressThreshold)
+        {
+            // Малый объём — мгновенно, синхронно (без окна): каскадный DELETE быстрый.
+            foreach (var t in targets) t.Repo.DeleteCollection(t.Id);
+        }
+        else
+        {
+            // Большой объём — окно прогресса (как дубль/импорт). Удаление ПО ОЧЕРЕДИ в фоне на
+            // отдельных подключениях (DeleteCollectionIsolated), проценты — общий прогресс по целям.
+            var dlg = new ProgressDialog { Title = "Удаление" };
+            dlg.SetInfo($"Количество записей: {total}");
+            var dlgClosed = dlg.ShowDialog(OwnerWindow);
+
+            var lastPct = -1;
+            try
+            {
+                await Task.Run(() =>
+                {
+                    long basis = 0;
+                    for (var i = 0; i < targets.Count; i++)
+                    {
+                        var t    = targets[i];
+                        var b    = basis;
+                        var text = targets.Count > 1
+                            ? $"Удаление коллекций ({i + 1}/{targets.Count})…"
+                            : "Удаление коллекции…";
+                        IProgress<int> p = new IntProgress(done =>
+                        {
+                            var pct = total == 0 ? 100 : (int)((b + done) * 100 / total);
+                            if (pct == lastPct) return;
+                            lastPct = pct;
+                            Dispatcher.UIThread.Post(() => dlg.SetProgress(pct / 100.0, text));
+                        });
+                        t.Repo.DeleteCollectionIsolated(t.Id, p);
+                        basis += t.Count;
+                    }
+                });
+            }
+            catch
+            {
+                // Ошибку фона проглатываем: коллекция либо удалена, либо нет — UI не валим.
+            }
+
+            dlg.Done();
+            await dlgClosed;
+        }
 
         _selectedNodes.Clear();
         ReloadAndNotify();   // RequestRefresh обновит и конструктор, и календарь
