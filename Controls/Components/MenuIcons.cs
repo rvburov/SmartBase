@@ -42,6 +42,12 @@ public static class MenuIcons
     // lucide check-check
     private static readonly Geometry CheckCheck = Geometry.Parse("M18 6 7 17l-5-5 M22 10l-7.5 7.5L13 16");
 
+    // lucide folder-tree
+    private static readonly Geometry FolderTree = Geometry.Parse(
+        "M20 10a1 1 0 0 0 1-1V6a1 1 0 0 0-1-1h-2.5a1 1 0 0 1-.8-.4l-.9-1.2A1 1 0 0 0 15 3h-2a1 1 0 0 0-1 1v5a1 1 0 0 0 1 1Z " +
+        "M20 21a1 1 0 0 0 1-1v-3a1 1 0 0 0-1-1h-2.9a1 1 0 0 1-.88-.55l-.42-.85a1 1 0 0 0-.92-.6H13a1 1 0 0 0-1 1v5a1 1 0 0 0 1 1Z " +
+        "M3 5a2 2 0 0 0 2 2h3 M3 3v13a2 2 0 0 0 2 2h3");
+
     private static SolidColorBrush Red => new(Color.Parse("#FF3B30"));
 
     // Стандартный цвет текста/иконки меню (BrushPrimaryText, fallback — чёрный).
@@ -85,6 +91,9 @@ public static class MenuIcons
 
     // Заголовок пункта «Изменить»: иконка карандаша + стандартный текст.
     public static Control EditHeader() => Header(Pencil, "Изменить");
+
+    // Заголовок пункта «Расположение»: иконка дерева папок + стандартный текст.
+    public static Control LocationHeader() => Header(FolderTree, "Расположение");
 
     // Заголовки пунктов перемещения колонки.
     public static Control MoveLeftHeader()  => Header(ArrowLeft,  "Сдвинуть влево");

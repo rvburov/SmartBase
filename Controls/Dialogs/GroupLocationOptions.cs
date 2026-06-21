@@ -7,10 +7,11 @@ namespace DataBase.Controls.Dialogs;
 // уровнях были различимы.
 internal static class GroupLocationOptions
 {
-    // groups — все группы; excludeSubtreeRootId — корень поддерева, исключаемого из
-    // вариантов (для перемещения группы: нельзя вложить её в саму себя или потомка).
+    // groups — все группы; excludeSubtreeRoots — корни поддеревьев, исключаемых из вариантов
+    // (для перемещения групп: нельзя вложить группу в саму себя или своего потомка; при мультивыборе
+    // исключаем все выбранные группы сразу).
     public static List<(string Label, int? Id)> Build(
-        IEnumerable<DbGroup> groups, int? excludeSubtreeRootId = null)
+        IEnumerable<DbGroup> groups, IReadOnlySet<int>? excludeSubtreeRoots = null)
     {
         // ToLookup (в отличие от ToDictionary) допускает null-ключ — это группы
         // корневого уровня (ParentId == null) — и возвращает пустую последовательность
@@ -24,7 +25,8 @@ internal static class GroupLocationOptions
         {
             foreach (var g in byParent[parentId])
             {
-                if (excludeSubtreeRootId is int ex && g.Id == ex) continue; // группа и всё под ней
+                if (g.Id is int gid && excludeSubtreeRoots is not null && excludeSubtreeRoots.Contains(gid))
+                    continue; // группа и всё под ней (рекурсия в неё не заходит)
                 var label = prefix.Length == 0 ? g.Name : $"{prefix} / {g.Name}";
                 result.Add((label, g.Id));
                 AddChildren(g.Id, label);

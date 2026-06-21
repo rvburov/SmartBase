@@ -589,7 +589,8 @@ public partial class Sidebar : UserControl
             menu.Items.Add(MenuItemSimple("Создать коллекцию", () => _ = CreateItem("collection", db, parentId: id)));
             menu.Items.Add(new Separator());
             menu.Items.Add(MenuItemEdit(() => _ = EditGroup(db, id)));
-            menu.Items.Add(MenuItemDuplicate(() => DuplicateGroup(db, id)));
+            menu.Items.Add(MenuItemLocation(() => RelocateSelectionOrNode(node)));
+            menu.Items.Add(MenuItemDuplicate(() => DuplicateSelectionOrNode(node)));
             menu.Items.Add(MenuItemDelete(() => _ = DeleteSelectionOrNode(node)));
         }
         else
@@ -600,6 +601,7 @@ public partial class Sidebar : UserControl
                 menu.Items.Add(new Separator());
             }
             menu.Items.Add(MenuItemEdit(() => _ = EditCollection(db, id)));
+            menu.Items.Add(MenuItemLocation(() => RelocateSelectionOrNode(node)));
             menu.Items.Add(MenuItemDuplicate(() => DuplicateSelectionOrNode(node)));
             menu.Items.Add(MenuItemDelete(() => _ = DeleteSelectionOrNode(node)));
         }
@@ -667,6 +669,14 @@ public partial class Sidebar : UserControl
     private static MenuItem MenuItemEdit(Action onClick)
     {
         var item = new MenuItem { Header = MenuIcons.EditHeader() };
+        item.Click += (_, _) => onClick();
+        return item;
+    }
+
+    // Пункт «Расположение» с иконкой дерева папок.
+    private static MenuItem MenuItemLocation(Action onClick)
+    {
+        var item = new MenuItem { Header = MenuIcons.LocationHeader() };
         item.Click += (_, _) => onClick();
         return item;
     }
@@ -912,64 +922,66 @@ public partial class Sidebar : UserControl
         ReloadAndNotify();
     }
 
-    private void DuplicateGroup(int dbId, int groupId)
-    {
-        var repo = RepoFor(dbId);
-        if (repo is null) return;
-        var copy = repo.DuplicateGroup(groupId);
-        ReloadAndNotify();
-        if (copy.Id.HasValue) ExpandGroup(dbId, copy.Id.Value);
-    }
-
-    // Порог записей (суммарно по выделению) для дублирования/удаления: меньше — операция идёт
-    // мгновенно синхронно без окна; больше — окно прогресса с % (как импорт) и работа в фоне.
+    // Порог записей (суммарно по выделению) для дублирования/удаления/переноса: меньше — операция
+    // идёт мгновенно синхронно без окна; больше — окно прогресса с % (как импорт) и работа в фоне.
     private const int BulkProgressThreshold = 20000;
 
-    // Дублирование через контекстное меню: если клик по узлу из мультивыделения — дублируем
-    // ВЕСЬ набор коллекций; иначе только эту. Большие (суммарно много записей) — с окном
-    // прогресса (как импорт) и копированием в фоне; малые — мгновенно, синхронно.
+    // Записей в узле и сколько коллекций он несёт: коллекция — её записи и 1; группа — сумма по всей
+    // ветке (подгруппы + коллекции) и число коллекций в ветке. Для порога, % и текста индикатора.
+    private (long Records, int Collections) CountNode(SidebarNode n)
+    {
+        var r = RepoFor(n.DbId);
+        if (r is null || !n.Id.HasValue || n.IsDatabase) return (0, 0);
+        if (n.IsGroup) { var (c, rec) = r.CountGroupSubtree(n.Id.Value); return (rec, c); }
+        return (r.CountRecords(n.Id.Value), 1);
+    }
+
+    // Текст индикатора: для операций с группами — «Коллекций: X · Записей: Y»; иначе только записи.
+    private static string BulkInfo(int collections, long records, bool withCollections) =>
+        withCollections ? $"Коллекций: {collections} · Записей: {records}" : $"Количество записей: {records}";
+
+    // Дублирование через контекстное меню: если клик по узлу из мультивыделения — дублируем ВЕСЬ
+    // набор (коллекции И группы со всей веткой); иначе только этот узел. Большие (суммарно много
+    // записей) — с окном прогресса и копированием в фоне на отдельных подключениях; малые — мгновенно.
     private async void DuplicateSelectionOrNode(SidebarNode node)
     {
-        // Цели — только коллекции (группы дублируются отдельным лёгким пунктом DuplicateGroup).
-        // Репозитории резолвим здесь, на UI-потоке (общий список _dbs не трогаем из Task.Run).
-        var sel = _selectedNodes.Contains(node) ? _selectedNodes.ToList() : [node];
-        var targets = new List<(int DbId, ConstructorRepository Repo, int CollectionId, int Count)>();
-        long total = 0;
-        foreach (var c in sel.Where(n => !n.IsGroup && !n.IsDatabase && n.Id.HasValue))
+        // Репозитории и счётчики резолвим здесь, на UI-потоке (общий список _dbs не трогаем из Task.Run).
+        var sel     = _selectedNodes.Contains(node) ? _selectedNodes.ToList() : [node];
+        var targets = new List<(int DbId, ConstructorRepository Repo, bool IsGroup, int Id, long Records)>();
+        long total = 0; int totalCollections = 0; bool anyGroup = false;
+        foreach (var n in sel.Where(n => n.Id.HasValue && !n.IsDatabase))
         {
-            var r = RepoFor(c.DbId);
+            var r = RepoFor(n.DbId);
             if (r is null) continue;
-            var cnt = r.CountRecords(c.Id!.Value);
-            targets.Add((c.DbId, r, c.Id!.Value, cnt));
-            total += cnt;
+            var (rec, cols) = CountNode(n);
+            targets.Add((n.DbId, r, n.IsGroup, n.Id!.Value, rec));
+            total += rec; totalCollections += cols; anyGroup |= n.IsGroup;
         }
         if (targets.Count == 0) return;
+        var single = targets.Count == 1;
 
         // Малый объём — мгновенно, синхронно (без окна): bulk-копия быстрая.
         if (total <= BulkProgressThreshold)
         {
-            (int DbId, int Id)? opened = null;
+            (int DbId, int Id, bool IsGroup)? made = null;
             foreach (var t in targets)
             {
-                var copy = t.Repo.DuplicateCollection(t.CollectionId);
-                if (copy.Id is int nid) opened = (t.DbId, nid);
+                if (t.IsGroup) made = (t.DbId, t.Repo.DuplicateGroupCore(t.Id), true);
+                else { var copy = t.Repo.DuplicateCollection(t.Id); if (copy.Id is int nid) made = (t.DbId, nid, false); }
             }
             ReloadAndNotify();
-            if (_mode == SidebarMode.Constructor && targets.Count == 1 && opened is { } o)
-                OpenCollection(o.DbId, o.Id);
+            RevealDuplicate(single, made);
             return;
         }
 
-        // Большой объём — окно прогресса (как импорт). Копии идут ПО ОЧЕРЕДИ в фоне на отдельных
-        // подключениях (DuplicateCollectionIsolated), чтобы не трогать общий Context с фонового
-        // потока и не плодить параллельных писателей. Проценты — общий прогресс по всем целям.
+        // Большой объём — окно прогресса. Копии идут ПО ОЧЕРЕДИ в фоне на отдельных подключениях
+        // (DuplicateCollectionIsolated/DuplicateGroupIsolated) — не трогаем общий Context с фона.
         if (OwnerWindow is null) return;
         var dlg = new ProgressDialog { Title = "Дублирование" };
-        // Суммарное число записей по всем дублируемым коллекциям (для нескольких — суммируем).
-        dlg.SetInfo($"Количество записей: {total}");
+        dlg.SetInfo(BulkInfo(totalCollections, total, anyGroup));
         var dlgClosed = dlg.ShowDialog(OwnerWindow);
 
-        (int DbId, int Id)? openedBig = null;
+        (int DbId, int Id, bool IsGroup)? madeBig = null;
         var lastPct = -1;
         try
         {
@@ -982,8 +994,8 @@ public partial class Sidebar : UserControl
                     var b    = basis;
                     var step = i + 1;
                     var text = targets.Count > 1
-                        ? $"Дублирование коллекций ({step}/{targets.Count})…"
-                        : "Дублирование коллекции…";
+                        ? $"Дублирование… ({step}/{targets.Count})"
+                        : t.IsGroup ? "Дублирование группы…" : "Дублирование коллекции…";
                     IProgress<int> p = new IntProgress(copied =>
                     {
                         var pct = total == 0 ? 100 : (int)((b + copied) * 100 / total);
@@ -991,23 +1003,29 @@ public partial class Sidebar : UserControl
                         lastPct = pct;
                         Dispatcher.UIThread.Post(() => dlg.SetProgress(pct / 100.0, text));
                     });
-                    var nid = t.Repo.DuplicateCollectionIsolated(t.CollectionId, p);
-                    if (nid != 0) openedBig = (t.DbId, nid);
-                    basis += t.Count;
+                    if (t.IsGroup) madeBig = (t.DbId, t.Repo.DuplicateGroupIsolated(t.Id, p), true);
+                    else { var nid = t.Repo.DuplicateCollectionIsolated(t.Id, p); if (nid != 0) madeBig = (t.DbId, nid, false); }
+                    basis += t.Records;
                 }
             });
         }
         catch
         {
-            // Ошибку фона проглатываем: коллекция либо скопирована, либо нет — UI не валим.
+            // Ошибку фона проглатываем: узел либо скопирован, либо нет — UI не валим.
         }
 
         dlg.Done();
         await dlgClosed;
 
         ReloadAndNotify();
-        if (_mode == SidebarMode.Constructor && targets.Count == 1 && openedBig is { } ob)
-            OpenCollection(ob.DbId, ob.Id);
+        RevealDuplicate(single, madeBig);
+    }
+
+    // Показать результат единичного дубля: коллекцию открыть, группу — раскрыть (в конструкторе).
+    private void RevealDuplicate(bool single, (int DbId, int Id, bool IsGroup)? made)
+    {
+        if (_mode != SidebarMode.Constructor || !single || made is not { } m) return;
+        if (m.IsGroup) ExpandGroup(m.DbId, m.Id); else OpenCollection(m.DbId, m.Id);
     }
 
     // Адаптер IProgress<int> для сырого прогресса копии (вызывается с фонового потока, сам
@@ -1016,6 +1034,145 @@ public partial class Sidebar : UserControl
     private sealed class IntProgress(Action<int> report) : IProgress<int>
     {
         public void Report(int value) => report(value);
+    }
+
+    // «Расположение» через контекстное меню: если клик по узлу из мультивыделения — перемещаем ВЕСЬ
+    // набор (коллекции И группы со всей веткой); иначе только этот узел. Окно (как «Изменение», но без
+    // названия) выбирает целевую БД и расположение (для коллекции — её группа, для группы — родитель).
+    // В той же БД — мгновенно (смена GroupId/ParentId, данные на месте); в другую БД — bulk-перенос
+    // (как дубль): малый объём синхронно, большой — окно прогресса и фон (Move*Isolated).
+    private async void RelocateSelectionOrNode(SidebarNode node)
+    {
+        if (OwnerWindow is null) return;
+
+        var sel    = _selectedNodes.Contains(node) ? _selectedNodes.ToList() : [node];
+        var picked = sel.Where(n => n.Id.HasValue && !n.IsDatabase).ToList();
+        if (picked.Count == 0) return;
+
+        // Префилл: для группы — её родитель, для коллекции — её группа (узел, по которому кликнули).
+        int? prefill = node.IsGroup
+            ? RepoFor(node.DbId)?.GetAllGroups().FirstOrDefault(g => g.Id == node.Id)?.ParentId
+            : RepoFor(node.DbId)?.GetAllCollections().FirstOrDefault(c => c.Id == node.Id)?.GroupId;
+
+        // Нельзя вложить перемещаемую группу в саму себя/потомка — исключаем их ветки из назначения.
+        var exclude = picked.Where(n => n.IsGroup).Select(n => n.Id!.Value).ToHashSet();
+
+        var dlg = new LocationDialog(DbOptions(), node.DbId, prefill, exclude.Count > 0 ? exclude : null);
+        var res = await dlg.ShowDialog<LocationDialogResult?>(OwnerWindow);
+        if (res is null) return;
+
+        var targetRepo = RepoFor(res.DbId);
+        if (targetRepo is null) return;
+
+        // Разделяем: та же БД (мгновенно: метаданные) vs перенос в другую БД (bulk + прогресс).
+        var sameDb  = new List<(ConstructorRepository Repo, bool IsGroup, int Id)>();
+        var crossDb = new List<(ConstructorRepository SrcRepo, bool IsGroup, int Id, long Records)>();
+        long crossTotal = 0; int crossCollections = 0; bool crossAnyGroup = false;
+        foreach (var n in picked)
+        {
+            var r = RepoFor(n.DbId);
+            if (r is null) continue;
+            if (n.DbId == res.DbId) sameDb.Add((r, n.IsGroup, n.Id!.Value));
+            else
+            {
+                var (rec, cols) = CountNode(n);
+                crossDb.Add((r, n.IsGroup, n.Id!.Value, rec));
+                crossTotal += rec; crossCollections += cols; crossAnyGroup |= n.IsGroup;
+            }
+        }
+
+        // Та же БД — только метаданные: группа меняет ParentId, коллекция — GroupId (ветка/записи на месте).
+        foreach (var (r, isGroup, id) in sameDb)
+        {
+            if (isGroup)
+            {
+                var g = r.GetAllGroups().FirstOrDefault(x => x.Id == id);
+                if (g is null) continue;
+                g.ParentId = res.GroupId;
+                r.UpdateGroup(g);
+            }
+            else
+            {
+                var col = r.GetAllCollections().FirstOrDefault(x => x.Id == id);
+                if (col is null) continue;
+                col.GroupId = res.GroupId;
+                r.UpdateCollection(col);
+            }
+        }
+
+        var single = picked.Count == 1;
+        // Что показать после: единственный перемещённый узел (коллекцию открыть, группу раскрыть).
+        (int DbId, int Id, bool IsGroup)? reveal =
+            single && sameDb.Count == 1 ? (res.DbId, sameDb[0].Id, sameDb[0].IsGroup) : null;
+
+        if (crossDb.Count > 0)
+        {
+            if (crossTotal <= BulkProgressThreshold)
+            {
+                // Малый объём — перенос синхронно, мгновенно (bulk-копия быстрая).
+                foreach (var t in crossDb)
+                {
+                    var nid = t.IsGroup
+                        ? targetRepo.MoveGroupIsolated(t.SrcRepo.DbPath, t.Id, res.GroupId)
+                        : targetRepo.MoveCollectionIsolated(t.SrcRepo.DbPath, t.Id, res.GroupId);
+                    if (nid != 0 && single) reveal = (res.DbId, nid, t.IsGroup);
+                }
+            }
+            else
+            {
+                // Большой объём — окно прогресса. Перенос ПО ОЧЕРЕДИ в фоне на отдельных подключениях;
+                // проценты — общий прогресс по всем целям.
+                var pdlg = new ProgressDialog { Title = "Перемещение" };
+                pdlg.SetInfo(BulkInfo(crossCollections, crossTotal, crossAnyGroup));
+                var pclosed = pdlg.ShowDialog(OwnerWindow);
+
+                (int DbId, int Id, bool IsGroup)? revealBig = null;
+                var lastPct = -1;
+                try
+                {
+                    await Task.Run(() =>
+                    {
+                        long basis = 0;
+                        for (var i = 0; i < crossDb.Count; i++)
+                        {
+                            var t    = crossDb[i];
+                            var b    = basis;
+                            var step = i + 1;
+                            var text = crossDb.Count > 1
+                                ? $"Перемещение… ({step}/{crossDb.Count})"
+                                : t.IsGroup ? "Перемещение группы…" : "Перемещение коллекции…";
+                            IProgress<int> p = new IntProgress(done =>
+                            {
+                                var pct = crossTotal == 0 ? 100 : (int)((b + done) * 100 / crossTotal);
+                                if (pct == lastPct) return;
+                                lastPct = pct;
+                                Dispatcher.UIThread.Post(() => pdlg.SetProgress(pct / 100.0, text));
+                            });
+                            var nid = t.IsGroup
+                                ? targetRepo.MoveGroupIsolated(t.SrcRepo.DbPath, t.Id, res.GroupId, p)
+                                : targetRepo.MoveCollectionIsolated(t.SrcRepo.DbPath, t.Id, res.GroupId, p);
+                            if (nid != 0) revealBig = (res.DbId, nid, t.IsGroup);
+                            basis += t.Records;
+                        }
+                    });
+                }
+                catch
+                {
+                    // Ошибку фона проглатываем: узел либо перенесён, либо нет — UI не валим.
+                }
+
+                pdlg.Done();
+                await pclosed;
+                if (single && revealBig is { } rb) reveal = rb;
+            }
+        }
+
+        _selectedNodes.Clear();
+        ReloadAndNotify();
+        if (_mode == SidebarMode.Constructor && reveal is { } rv)
+        {
+            if (rv.IsGroup) ExpandGroup(rv.DbId, rv.Id); else OpenCollection(rv.DbId, rv.Id);
+        }
     }
 
     // Удаление через контекстное меню: если клик по узлу из мультивыделения — удаляем
@@ -1038,32 +1195,33 @@ public partial class Sidebar : UserControl
         var confirm = new ConfirmDialog(BuildDeleteMessage(groups.Count, colls.Count));
         if (await confirm.ShowDialog<bool>(OwnerWindow) != true) return;
 
-        // Группы — синхронно (структурные узлы; рекурсивный каскад). Репозитории и число записей
-        // коллекций считаем здесь, на UI-потоке (общий список не трогаем из Task.Run).
-        foreach (var g in groups) RepoOf(g)?.DeleteGroup(g.Id!.Value);
-
-        var targets = new List<(ConstructorRepository Repo, int Id, int Count)>();
-        long total = 0;
-        foreach (var c in colls)
+        // Цели: группа (удаляем ВСЮ ветку) или коллекция. Репозитории и счётчики (для группы —
+        // число коллекций и записей по всей ветке) считаем здесь, на UI-потоке (общий список не
+        // трогаем из Task.Run). Порог и % — по суммарному числу записей; в индикаторе при группах
+        // показываем и число коллекций.
+        var targets = new List<(ConstructorRepository Repo, bool IsGroup, int Id, long Records)>();
+        long total = 0; int totalCollections = 0;
+        foreach (var n in groups.Concat(colls))
         {
-            var r = RepoOf(c);
+            var r = RepoOf(n);
             if (r is null) continue;
-            var cnt = r.CountRecords(c.Id!.Value);
-            targets.Add((r, c.Id!.Value, cnt));
-            total += cnt;
+            var (rec, cols) = CountNode(n);
+            targets.Add((r, n.IsGroup, n.Id!.Value, rec));
+            total += rec; totalCollections += cols;
         }
 
         if (total <= BulkProgressThreshold)
         {
             // Малый объём — мгновенно, синхронно (без окна): каскадный DELETE быстрый.
-            foreach (var t in targets) t.Repo.DeleteCollection(t.Id);
+            foreach (var t in targets)
+                if (t.IsGroup) t.Repo.DeleteGroup(t.Id); else t.Repo.DeleteCollection(t.Id);
         }
         else
         {
             // Большой объём — окно прогресса (как дубль/импорт). Удаление ПО ОЧЕРЕДИ в фоне на
-            // отдельных подключениях (DeleteCollectionIsolated), проценты — общий прогресс по целям.
+            // отдельных подключениях (Delete*Isolated), проценты — общий прогресс по всем целям.
             var dlg = new ProgressDialog { Title = "Удаление" };
-            dlg.SetInfo($"Количество записей: {total}");
+            dlg.SetInfo(BulkInfo(totalCollections, total, groups.Count > 0));
             var dlgClosed = dlg.ShowDialog(OwnerWindow);
 
             var lastPct = -1;
@@ -1076,9 +1234,10 @@ public partial class Sidebar : UserControl
                     {
                         var t    = targets[i];
                         var b    = basis;
+                        var step = i + 1;
                         var text = targets.Count > 1
-                            ? $"Удаление коллекций ({i + 1}/{targets.Count})…"
-                            : "Удаление коллекции…";
+                            ? $"Удаление… ({step}/{targets.Count})"
+                            : t.IsGroup ? "Удаление группы…" : "Удаление коллекции…";
                         IProgress<int> p = new IntProgress(done =>
                         {
                             var pct = total == 0 ? 100 : (int)((b + done) * 100 / total);
@@ -1086,14 +1245,14 @@ public partial class Sidebar : UserControl
                             lastPct = pct;
                             Dispatcher.UIThread.Post(() => dlg.SetProgress(pct / 100.0, text));
                         });
-                        t.Repo.DeleteCollectionIsolated(t.Id, p);
-                        basis += t.Count;
+                        if (t.IsGroup) t.Repo.DeleteGroupIsolated(t.Id, p); else t.Repo.DeleteCollectionIsolated(t.Id, p);
+                        basis += t.Records;
                     }
                 });
             }
             catch
             {
-                // Ошибку фона проглатываем: коллекция либо удалена, либо нет — UI не валим.
+                // Ошибку фона проглатываем: узел либо удалён, либо нет — UI не валим.
             }
 
             dlg.Done();

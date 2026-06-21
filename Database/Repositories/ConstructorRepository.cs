@@ -1,3 +1,4 @@
+using System.Data.Common;
 using System.Text.RegularExpressions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
@@ -12,6 +13,10 @@ public class ConstructorRepository(AppDbContext db)
     // Системное поле «Дата» — единственное, что осталось schema-driven.
     // Название и Описание подняты до колонок Title/Description в db_records.
     private const string FieldDate = "Дата";
+
+    /// <summary>Путь к файлу БД этого репозитория — для переноса коллекции в другую БД
+    /// (ATTACH источника на подключении целевой БД, см. MoveCollectionIsolated).</summary>
+    public string DbPath => db.DbPath;
 
     // ── Группы ────────────────────────────────────────────────────────────────
 
@@ -49,22 +54,71 @@ public class ConstructorRepository(AppDbContext db)
         return q.Any();
     }
 
-    public DbGroup DuplicateGroup(int groupId)
+    /// <summary>
+    /// Полный дубль группы СО ВСЕМ содержимым (подгруппы + коллекции + записи + значения + UI) в той же
+    /// БД. Структуру (группы + шеллы коллекций) создаём через EF, данные коллекций — bulk-SQL
+    /// (<see cref="CopyCollectionData"/>), как дубль коллекции. Верхняя группа получает имя «X (копия)»,
+    /// вложенные элементы — свои имена. <paramref name="progress"/> — нарастающее число скопированных
+    /// записей по всем коллекциям ветки (для %). Возвращает id новой верхней группы.
+    /// </summary>
+    public int DuplicateGroupCore(int groupId, IProgress<int>? progress = null, int batchSize = 10000)
     {
         var src = db.DbGroups.Find(groupId);
         if (src is null) throw new InvalidOperationException($"Group {groupId} not found");
 
-        var maxPos = db.DbGroups.Where(g => g.ParentId == src.ParentId).Select(g => (int?)g.Position).Max() ?? 0;
+        // 1) Структура: верхняя группа «(копия)» под тем же родителем; подгруппы — со своими именами.
+        var groupMap = new Dictionary<int, int>();   // старый id группы → новый
+        var newRootId = CloneGroupTree(groupId, src.ParentId, isRoot: true, groupMap);
 
-        // Уникальное имя на том же уровне: «X (копия)», «X (копия) 2» … (без стакания «копия»).
-        var name = NextCopyName(src.Name,
-            candidate => db.DbGroups.Any(g => g.ParentId == src.ParentId && g.Name == candidate));
+        // 2) Коллекции ветки: шелл в новую группу + bulk-копия записей/значений (общий % по ветке).
+        var subtree = groupMap.Keys.ToList();
+        var cols = db.DbCollections
+            .Where(c => c.GroupId != null && subtree.Contains(c.GroupId.Value))
+            .OrderBy(c => c.GroupId).ThenBy(c => c.Position)
+            .Select(c => new { c.Id, c.GroupId })
+            .ToList();
 
-        var copy = new DbGroupEntity { Name = name, ParentId = src.ParentId, Position = maxPos + 1000 };
+        long basis = 0;
+        foreach (var c in cols)
+        {
+            var rc    = db.DbRecords.Count(r => r.CollectionId == c.Id);
+            var shell = CreateCollectionShell(c.Id, overrideGroupId: groupMap[c.GroupId!.Value], addCopySuffix: false);
+            if (shell.Collection.Id is int newColId)
+                CopyCollectionData(c.Id, newColId, new BaseProgress(progress, basis), batchSize);
+            basis += rc;
+        }
+        progress?.Report((int)basis);
+        return newRootId;
+    }
+
+    /// <summary>Полный дубль группы на ОТДЕЛЬНОМ подключении (фон + прогресс для больших веток) —
+    /// не трогает общий Context (см. правило об общем AppDbContext), безопасно из Task.Run.</summary>
+    public int DuplicateGroupIsolated(int groupId, IProgress<int>? progress = null, int batchSize = 10000)
+    {
+        using var ctx = new AppDbContext(db.DbPath);
+        ctx.ApplyPerformancePragmas();
+        return new ConstructorRepository(ctx).DuplicateGroupCore(groupId, progress, batchSize);
+    }
+
+    // Рекурсивно копирует только СТРУКТУРУ групп (без коллекций): новая группа под targetParentId,
+    // затем её подгруппы. Заполняет map (старый id → новый). Верхняя получает «(копия)», вложенные — имена как есть.
+    private int CloneGroupTree(int srcGroupId, int? targetParentId, bool isRoot, Dictionary<int, int> map)
+    {
+        var src    = db.DbGroups.Find(srcGroupId)!;
+        var maxPos = db.DbGroups.Where(g => g.ParentId == targetParentId).Select(g => (int?)g.Position).Max() ?? 0;
+        var name   = isRoot
+            ? NextCopyName(src.Name, cand => db.DbGroups.Any(g => g.ParentId == targetParentId && g.Name == cand))
+            : src.Name;
+
+        var copy = new DbGroupEntity { Name = name, ParentId = targetParentId, Position = maxPos + 1000 };
         db.DbGroups.Add(copy);
         db.SaveChanges();
+        map[srcGroupId] = copy.Id;
 
-        return new DbGroup { Id = copy.Id, Name = copy.Name, ParentId = copy.ParentId, Position = copy.Position };
+        foreach (var childId in db.DbGroups.Where(g => g.ParentId == srcGroupId).OrderBy(g => g.Position)
+                     .Select(g => g.Id).ToList())
+            CloneGroupTree(childId, copy.Id, false, map);
+        return copy.Id;
     }
 
     public void DeleteGroup(int groupId)
@@ -80,6 +134,90 @@ public class ConstructorRepository(AppDbContext db)
         var entity = db.DbGroups.Find(groupId);
         if (entity is not null) db.DbGroups.Remove(entity);
         db.SaveChanges();
+    }
+
+    // Id всех групп ветки (сама группа + потомки на любой глубине). Один проход по таблице групп.
+    private List<int> SubtreeGroupIds(int rootGroupId)
+    {
+        var byParent = db.DbGroups.Select(g => new { g.Id, g.ParentId }).ToList()
+            .Where(g => g.ParentId.HasValue).ToLookup(g => g.ParentId!.Value, g => g.Id);
+        var result = new List<int>();
+        var stack  = new Stack<int>();
+        stack.Push(rootGroupId);
+        while (stack.Count > 0)
+        {
+            var id = stack.Pop();
+            result.Add(id);
+            foreach (var child in byParent[id]) stack.Push(child);
+        }
+        return result;
+    }
+
+    /// <summary>Число коллекций во всей ветке группы и суммарное число их записей — для индикатора
+    /// (дубль/удаление/перенос группы показывают «Коллекций: X · Записей: Y»).</summary>
+    public (int Collections, long Records) CountGroupSubtree(int groupId)
+    {
+        var groupIds = SubtreeGroupIds(groupId);
+        var colIds   = db.DbCollections.Where(c => c.GroupId != null && groupIds.Contains(c.GroupId.Value))
+                         .Select(c => c.Id).ToList();
+        long records = colIds.Count == 0 ? 0 : db.DbRecords.LongCount(r => colIds.Contains(r.CollectionId));
+        return (colIds.Count, records);
+    }
+
+    /// <summary>Удалить группу со всей веткой на ОТДЕЛЬНОМ подключении (фон + прогресс) — для больших
+    /// веток. Не трогает общий Context (см. правило об общем AppDbContext), безопасно из Task.Run.</summary>
+    public void DeleteGroupIsolated(int groupId, IProgress<int>? progress = null)
+    {
+        using var ctx = new AppDbContext(db.DbPath);
+        ctx.ApplyPerformancePragmas();
+        new ConstructorRepository(ctx).DeleteGroupData(groupId, progress);
+    }
+
+    /// <summary>
+    /// Удалить группу со всей веткой ПАКЕТАМИ: записи всех коллекций ветки по 10 000 (значения — каскадом
+    /// по FK), затем строки коллекций (каскад уберёт поля), затем строки групп ветки. Всё в одной
+    /// транзакции. <paramref name="progress"/> — нарастающее число удалённых записей (для %). Каскад
+    /// держится на PRAGMA foreign_keys=ON (см. ApplyPerformancePragmas).
+    /// </summary>
+    public void DeleteGroupData(int groupId, IProgress<int>? progress = null, int batchSize = 10000)
+    {
+        var groupIds = SubtreeGroupIds(groupId);
+        var colIds   = db.DbCollections.Where(c => c.GroupId != null && groupIds.Contains(c.GroupId.Value))
+                         .Select(c => c.Id).ToList();
+        var total    = colIds.Count == 0 ? 0L : db.DbRecords.LongCount(r => colIds.Contains(r.CollectionId));
+
+        using var tx = db.Database.BeginTransaction();
+
+        long deleted = 0;
+        foreach (var cid in colIds)
+        {
+            int prevId = 0;
+            while (true)
+            {
+                var end = DeleteBatchEndId(cid, prevId, batchSize);
+                if (end is int e)
+                {
+                    db.Database.ExecuteSqlInterpolated(
+                        $"DELETE FROM db_records WHERE CollectionId = {cid} AND Id > {prevId} AND Id <= {e}");
+                    deleted += batchSize; prevId = e;
+                    progress?.Report((int)deleted);
+                }
+                else
+                {
+                    db.Database.ExecuteSqlInterpolated(
+                        $"DELETE FROM db_records WHERE CollectionId = {cid} AND Id > {prevId}");
+                    break;
+                }
+            }
+            db.Database.ExecuteSqlInterpolated($"DELETE FROM db_collections WHERE Id = {cid}");
+        }
+
+        // Строки групп ветки (ParentId — SET NULL, не каскад, поэтому удаляем явно весь набор).
+        foreach (var gid in groupIds)
+            db.Database.ExecuteSqlInterpolated($"DELETE FROM db_groups WHERE Id = {gid}");
+
+        tx.Commit();
+        progress?.Report((int)total);   // финально 100% для этой ветки
     }
 
     // ── Коллекции ─────────────────────────────────────────────────────────────
@@ -343,21 +481,28 @@ public class ConstructorRepository(AppDbContext db)
     /// <see cref="DuplicateCollectionIsolated"/> (фон + прогресс). Возвращает новую коллекцию
     /// и число записей источника.
     /// </summary>
-    public CollectionShell CreateCollectionShell(int collectionId)
+    /// <param name="overrideGroupId">Если задан — коллекция-копия кладётся в ЭТУ группу (для дубля
+    /// группы: копии коллекций идут в новые подгруппы), иначе в группу источника.</param>
+    /// <param name="addCopySuffix">true — имя «X (копия)» (дубль одной коллекции); false — имя как у
+    /// источника (дубль группы: суффикс «(копия)» получает только верхняя группа, вложенное — нет).</param>
+    public CollectionShell CreateCollectionShell(int collectionId, int? overrideGroupId = null, bool addCopySuffix = true)
     {
         var src = db.DbCollections.Find(collectionId);
         if (src is null) throw new InvalidOperationException($"Collection {collectionId} not found");
 
-        var maxPos = db.DbCollections.Select(c => (int?)c.Position).Max() ?? 0;
+        var maxPos     = db.DbCollections.Select(c => (int?)c.Position).Max() ?? 0;
+        var targetGroup = overrideGroupId ?? src.GroupId;
 
-        // Уникальное имя на том же уровне: «X (копия)», «X (копия) 2» … (без стакания «копия»).
-        var name = NextCopyName(src.Name,
-            candidate => db.DbCollections.Any(c => c.GroupId == src.GroupId && c.Name == candidate));
+        // Уникальное имя на целевом уровне: «X (копия)», «X (копия) 2» … (без стакания «копия»).
+        // При дубле группы (addCopySuffix=false) имя коллекции сохраняем — новая подгруппа пуста, конфликта нет.
+        var name = addCopySuffix
+            ? NextCopyName(src.Name, candidate => db.DbCollections.Any(c => c.GroupId == targetGroup && c.Name == candidate))
+            : src.Name;
 
         var copy = new DbCollectionEntity
         {
             Name     = name,
-            GroupId  = src.GroupId,
+            GroupId  = targetGroup,
             Position = maxPos + 1000,
             Icon     = src.Icon,
             Color    = src.Color,
@@ -811,6 +956,370 @@ public class ConstructorRepository(AppDbContext db)
             throw;
         }
         return moved;
+    }
+
+    // ── Быстрый перенос коллекции в другую БД (bulk-SQL через ATTACH) ──────────
+    //
+    // Старый MoveCollection материализует ВСЮ коллекцию в память (ExportCollection) и пишет её в
+    // целевую БД через EF по одной записи (ImportCollection) — на больших коллекциях это минуты
+    // (как был импорт до перевода на bulk). Здесь то же, что дубль, только источник — присоединённый
+    // файл: на подключении ЦЕЛЕВОЙ БД делаем `ATTACH src`, копируем шелл/записи/значения/UI bulk-ом
+    // (id полей и записей перемэппливаются), затем удаляем коллекцию из источника на ОТДЕЛЬНОМ
+    // подключении. Копия и удаление раздельны (в WAL межбазовая транзакция не атомарна), с той же
+    // компенсацией, что и MoveCollection: при сбое удаления откатываем копию.
+
+    /// <summary>
+    /// Перенести коллекцию в ДРУГУЮ БД быстро (bulk-SQL через ATTACH) на ОТДЕЛЬНЫХ подключениях —
+    /// не трогает общий Context (см. правило об общем AppDbContext), поэтому безопасно из Task.Run.
+    /// <c>this</c> — репозиторий ЦЕЛЕВОЙ БД (куда переносим); источник задаётся путём к его .db-файлу.
+    /// <paramref name="progress"/> — нарастающее число перенесённых записей (для % в окне). Возвращает
+    /// id новой коллекции в целевой БД (0 — если копировать нечего). Бросает при сбое (после отката копии).
+    /// </summary>
+    public int MoveCollectionIsolated(string sourceDbPath, int srcCollectionId, int? targetGroupId,
+                                      IProgress<int>? progress = null, int batchSize = 10000)
+    {
+        using var targetCtx = new AppDbContext(db.DbPath);
+        targetCtx.ApplyPerformancePragmas();
+        var target = new ConstructorRepository(targetCtx);
+
+        var newColId = target.CopyCollectionFromAttached(sourceDbPath, srcCollectionId, targetGroupId, progress, batchSize);
+        if (newColId == 0) return 0;
+
+        // Источник чистим на отдельном подключении (каскад: записи→значения, коллекция→поля).
+        try
+        {
+            using var srcCtx = new AppDbContext(sourceDbPath);
+            srcCtx.ApplyPerformancePragmas();
+            new ConstructorRepository(srcCtx).DeleteCollectionData(srcCollectionId);
+        }
+        catch
+        {
+            try { target.DeleteCollectionData(newColId); } catch { /* копию убрать не удалось — данные целы в обеих БД */ }
+            throw;
+        }
+        return newColId;
+    }
+
+    /// <summary>
+    /// Перенести группу СО ВСЕЙ веткой в ДРУГУЮ БД быстро (bulk-SQL через ATTACH). <c>this</c> —
+    /// репозиторий ЦЕЛЕВОЙ БД; источник задаётся путём к его .db-файлу. Структуру групп и все коллекции
+    /// ветки копируем в ОДНОЙ транзакции целевой БД, затем удаляем ветку из источника на ОТДЕЛЬНОМ
+    /// подключении (с компенсацией как в MoveCollectionIsolated). <paramref name="progress"/> —
+    /// нарастающее число перенесённых записей. Возвращает id новой верхней группы (0 — нечего копировать).
+    /// </summary>
+    public int MoveGroupIsolated(string sourceDbPath, int srcGroupId, int? targetParentId,
+                                 IProgress<int>? progress = null, int batchSize = 10000)
+    {
+        using var targetCtx = new AppDbContext(db.DbPath);
+        targetCtx.ApplyPerformancePragmas();
+        var target = new ConstructorRepository(targetCtx);
+
+        var newRootId = target.CopyGroupFromAttached(sourceDbPath, srcGroupId, targetParentId, progress, batchSize);
+        if (newRootId == 0) return 0;
+
+        try
+        {
+            using var srcCtx = new AppDbContext(sourceDbPath);
+            srcCtx.ApplyPerformancePragmas();
+            new ConstructorRepository(srcCtx).DeleteGroupData(srcGroupId);
+        }
+        catch
+        {
+            try { target.DeleteGroupData(newRootId); } catch { /* копию убрать не удалось — данные целы в обеих БД */ }
+            throw;
+        }
+        return newRootId;
+    }
+
+    // Перенос группы из присоединённой БД: одна транзакция целевой БД — сначала структура групп
+    // (CloneGroupTreeAttached, имена через INSERT…SELECT, без материализации в C#), затем все коллекции
+    // ветки по очереди с общим % (progressBase накапливает перенесённые записи).
+    private int CopyGroupFromAttached(string sourceDbPath, int srcGroupId, int? targetParentId,
+                                      IProgress<int>? progress, int batchSize) =>
+        WithAttachedSource(sourceDbPath, conn =>
+        {
+            using var tx = conn.BeginTransaction();
+
+            var map     = new Dictionary<int, int>();   // старый id группы → новый
+            var newRoot = CloneGroupTreeAttached(conn, tx, srcGroupId, targetParentId, map);
+
+            // Коллекции ветки (GroupId в наборе старых id) — по очереди, с накоплением прогресса.
+            var oldGroupIds = string.Join(",", map.Keys);
+            var cols = ReadIntPairs(conn, tx,
+                $"SELECT Id, GroupId FROM src.db_collections WHERE GroupId IN ({oldGroupIds}) ORDER BY GroupId, Position");
+
+            long basis = 0;
+            foreach (var (colId, oldGroup) in cols)
+            {
+                var (_, rc) = CopyOneCollectionFromAttached(conn, tx, colId, map[oldGroup], progress, basis, batchSize);
+                basis += rc;
+            }
+
+            tx.Commit();
+            return newRoot;
+        });
+
+    // Рекурсивно копирует структуру групп из src в main (INSERT…SELECT — имя остаётся в SQL, без
+    // инъекции). Заполняет map (старый id → новый). Возвращает id новой верхней группы.
+    private int CloneGroupTreeAttached(DbConnection conn, DbTransaction tx, int srcGroupId,
+                                       int? targetParentId, Dictionary<int, int> map)
+    {
+        var parentVal  = targetParentId is int pid ? pid.ToString() : "NULL";
+        var parentCond = targetParentId is int p2 ? $"ParentId = {p2}" : "ParentId IS NULL";
+        var maxPos     = ScalarLong(conn, tx, $"SELECT COALESCE(MAX(Position), 0) FROM main.db_groups WHERE {parentCond}");
+
+        Exec(conn, tx, $@"
+            INSERT INTO main.db_groups (Name, ParentId, Position)
+            SELECT Name, {parentVal}, {maxPos + 1000} FROM src.db_groups WHERE Id = {srcGroupId}");
+        var newId = (int)ScalarLong(conn, tx, "SELECT last_insert_rowid()");
+        map[srcGroupId] = newId;
+
+        foreach (var childId in ReadIntList(conn, tx, $"SELECT Id FROM src.db_groups WHERE ParentId = {srcGroupId} ORDER BY Position"))
+            CloneGroupTreeAttached(conn, tx, childId, newId, map);
+        return newId;
+    }
+
+    // Прогресс со сдвигом: пробрасывает baseValue + value (общий % по нескольким коллекциям ветки,
+    // когда CopyCollectionData/CopyOneCollection сообщает 0..recCount для каждой по отдельности).
+    private sealed class BaseProgress(IProgress<int>? inner, long baseValue) : IProgress<int>
+    {
+        public void Report(int value) => inner?.Report((int)(baseValue + value));
+    }
+
+    // ATTACH источника (src) на подключение целевой БД, выполнить body, DETACH. Подключение держим
+    // открытым на всё время: ATTACH живёт на подключении. Путь источника — через параметр (в пути
+    // iCloud пробелы и спецсимволы). Используется и переносом коллекции, и переносом группы.
+    private T WithAttachedSource<T>(string sourceDbPath, Func<DbConnection, T> body)
+    {
+        var conn = db.Database.GetDbConnection();
+        db.Database.OpenConnection();
+        try
+        {
+            using (var att = conn.CreateCommand())
+            {
+                att.CommandText = "ATTACH DATABASE $src AS src";
+                var p = att.CreateParameter(); p.ParameterName = "$src"; p.Value = sourceDbPath; att.Parameters.Add(p);
+                att.ExecuteNonQuery();
+            }
+            try { return body(conn); }
+            finally
+            {
+                using var det = conn.CreateCommand();
+                det.CommandText = "DETACH src";
+                det.ExecuteNonQuery();
+            }
+        }
+        finally
+        {
+            db.Database.CloseConnection();
+        }
+    }
+
+    // Перенос одной коллекции из присоединённой БД: одна транзакция целевой БД.
+    private int CopyCollectionFromAttached(string sourceDbPath, int srcCollectionId, int? targetGroupId,
+                                           IProgress<int>? progress, int batchSize) =>
+        WithAttachedSource(sourceDbPath, conn =>
+        {
+            using var tx = conn.BeginTransaction();
+            var (newColId, _) = CopyOneCollectionFromAttached(conn, tx, srcCollectionId, targetGroupId, progress, 0, batchSize);
+            tx.Commit();
+            return newColId;
+        });
+
+    // Копия ОДНОЙ коллекции из src в main в УЖЕ открытой транзакции (для переноса группы — много
+    // коллекций в одной транзакции). Шелл (коллекция + поля) bulk-ом из src, карта полей old→new по
+    // Position (temp _move_fmap), записи одним INSERT…SELECT (новые id — непрерывный блок в порядке
+    // Position,Id), значения крупными пакетами (один INSERT по всем полям через _move_fmap; пакеты —
+    // ради гранулярности %), затем UI-настройки. progressBase — сколько записей уже перенесено ранее
+    // (для общего % по группе). Возвращает (id новой коллекции, число её записей). Числа в SQL — int/
+    // long, которые мы формируем сами (не пользовательский ввод), поэтому интерполяция безопасна.
+    private (int NewColId, long RecCount) CopyOneCollectionFromAttached(DbConnection conn, DbTransaction tx,
+        int srcCollectionId, int? targetGroupId, IProgress<int>? progress, long progressBase, int batchSize)
+    {
+        var recCount = ScalarLong(conn, tx, $"SELECT COUNT(*) FROM src.db_records WHERE CollectionId = {srcCollectionId}");
+
+        var maxPos   = ScalarLong(conn, tx, "SELECT COALESCE(MAX(Position), 0) FROM main.db_collections");
+        var groupSql = targetGroupId is int gid ? gid.ToString() : "NULL";
+
+        // 1) Строка коллекции (имя/иконку/цвет переносим как есть; группа — целевая).
+        Exec(conn, tx, $@"
+            INSERT INTO main.db_collections (Name, GroupId, Position, Icon, Color)
+            SELECT Name, {groupSql}, {maxPos + 1000}, Icon, Color FROM src.db_collections WHERE Id = {srcCollectionId}");
+        var newColId = (int)ScalarLong(conn, tx, "SELECT last_insert_rowid()");
+
+        // 2) Поля (Position копируем дословно — по нему строим карту old→new).
+        Exec(conn, tx, $@"
+            INSERT INTO main.db_fields (CollectionId, Name, FieldType, ConfigJson, Position, IsCalStart, IsCalEnd, IsSystem, IsRequired)
+            SELECT {newColId}, Name, FieldType, ConfigJson, Position, IsCalStart, IsCalEnd, IsSystem, IsRequired
+            FROM src.db_fields WHERE CollectionId = {srcCollectionId} ORDER BY Id");
+
+        Exec(conn, tx, "DROP TABLE IF EXISTS temp._move_fmap");
+        Exec(conn, tx, "CREATE TEMP TABLE _move_fmap(old_fid INTEGER PRIMARY KEY, new_fid INTEGER)");
+        Exec(conn, tx, $@"
+            INSERT INTO _move_fmap(old_fid, new_fid)
+            SELECT s.Id, n.Id FROM src.db_fields s
+            JOIN main.db_fields n ON n.CollectionId = {newColId} AND n.Position = s.Position
+            WHERE s.CollectionId = {srcCollectionId}");
+
+        if (recCount > 0)
+        {
+            // 3) Записи одним INSERT … SELECT в порядке (Position, Id) — новые id непрерывным блоком.
+            Exec(conn, tx, $@"
+                INSERT INTO main.db_records (CollectionId, CreatedAt, Position, StartDt, EndDt, AllDay, Title, Description)
+                SELECT {newColId}, CreatedAt, Position, StartDt, EndDt, AllDay, Title, Description
+                FROM src.db_records WHERE CollectionId = {srcCollectionId} ORDER BY Position, Id");
+            var firstNew = ScalarLong(conn, tx, "SELECT last_insert_rowid()") - recCount + 1;
+
+            // 4) Значения крупными пакетами по (Position, Id): на пакет — один INSERT по всем полям.
+            long prevPos = long.MinValue, prevId = 0, processed = 0;
+            while (processed < recCount)
+            {
+                var bbase = firstNew + processed;
+                var end   = AttachedBatchEnd(conn, tx, srcCollectionId, prevPos, prevId, batchSize);
+                if (end is { } e)
+                {
+                    Exec(conn, tx, $@"
+                        INSERT INTO main.db_field_values (RecordId, FieldId, Value)
+                        SELECT {bbase} + r.rn - 1, fm.new_fid, fv.Value
+                        FROM src.db_field_values fv
+                        JOIN (SELECT Id AS old_id, ROW_NUMBER() OVER (ORDER BY Position, Id) AS rn
+                              FROM src.db_records
+                              WHERE CollectionId = {srcCollectionId}
+                                AND (Position > {prevPos} OR (Position = {prevPos} AND Id > {prevId}))
+                                AND (Position < {e.Pos} OR (Position = {e.Pos} AND Id <= {e.Id}))) r
+                          ON r.old_id = fv.RecordId
+                        JOIN _move_fmap fm ON fm.old_fid = fv.FieldId");
+                    processed += batchSize; prevPos = e.Pos; prevId = e.Id;
+                }
+                else
+                {
+                    Exec(conn, tx, $@"
+                        INSERT INTO main.db_field_values (RecordId, FieldId, Value)
+                        SELECT {bbase} + r.rn - 1, fm.new_fid, fv.Value
+                        FROM src.db_field_values fv
+                        JOIN (SELECT Id AS old_id, ROW_NUMBER() OVER (ORDER BY Position, Id) AS rn
+                              FROM src.db_records
+                              WHERE CollectionId = {srcCollectionId}
+                                AND (Position > {prevPos} OR (Position = {prevPos} AND Id > {prevId}))) r
+                          ON r.old_id = fv.RecordId
+                        JOIN _move_fmap fm ON fm.old_fid = fv.FieldId");
+                    processed = recCount;
+                }
+                progress?.Report((int)(progressBase + Math.Min(processed, recCount)));
+            }
+
+            CopyMovedUi(conn, tx, srcCollectionId, newColId, firstNew, recCount);
+        }
+        else
+        {
+            CopyMovedUi(conn, tx, srcCollectionId, newColId, 0, 0);
+            progress?.Report((int)progressBase);
+        }
+
+        Exec(conn, tx, "DROP TABLE IF EXISTS temp._move_fmap");
+        return (newColId, recCount);
+    }
+
+    // UI-настройки переносимой коллекции: ключи-id полей/записей перемэппливаются (поля — через
+    // _move_fmap; записи — по рангу в порядке Position,Id → firstNew + ранг − 1). Ключи колонок
+    // (column_order/display) числовые → новый id поля, системные (__title__/__desc__) — как есть.
+    private static void CopyMovedUi(DbConnection conn, DbTransaction tx, int srcCol, int newCol, long firstNew, long recCount)
+    {
+        Exec(conn, tx, $@"
+            INSERT INTO main.ui_col_widths (CollectionId, FieldId, Width)
+            SELECT {newCol}, fm.new_fid, w.Width FROM src.ui_col_widths w
+            JOIN _move_fmap fm ON fm.old_fid = w.FieldId WHERE w.CollectionId = {srcCol}");
+
+        Exec(conn, tx, $@"
+            INSERT INTO main.ui_collection_settings (CollectionId, ColResize, RowResize, ViewMode)
+            SELECT {newCol}, ColResize, RowResize, ViewMode FROM src.ui_collection_settings WHERE CollectionId = {srcCol}");
+
+        Exec(conn, tx, $@"
+            INSERT INTO main.system_field_meta (CollectionId, Key, DisplayName, Position)
+            SELECT {newCol}, Key, DisplayName, Position FROM src.system_field_meta WHERE CollectionId = {srcCol}");
+
+        Exec(conn, tx, $@"
+            INSERT INTO main.column_order (CollectionId, Key, Position)
+            SELECT {newCol},
+                   CASE WHEN fm.new_fid IS NOT NULL THEN CAST(fm.new_fid AS TEXT) ELSE co.Key END,
+                   co.Position
+            FROM src.column_order co
+            LEFT JOIN _move_fmap fm ON co.Key GLOB '[0-9]*' AND CAST(co.Key AS INTEGER) = fm.old_fid
+            WHERE co.CollectionId = {srcCol}");
+
+        Exec(conn, tx, $@"
+            INSERT INTO main.column_display (CollectionId, Key, Visible, Level)
+            SELECT {newCol},
+                   CASE WHEN fm.new_fid IS NOT NULL THEN CAST(fm.new_fid AS TEXT) ELSE cd.Key END,
+                   cd.Visible, cd.Level
+            FROM src.column_display cd
+            LEFT JOIN _move_fmap fm ON cd.Key GLOB '[0-9]*' AND CAST(cd.Key AS INTEGER) = fm.old_fid
+            WHERE cd.CollectionId = {srcCol}");
+
+        if (recCount > 0)
+        {
+            var rank = $@"(SELECT Id AS old_id, ROW_NUMBER() OVER (ORDER BY Position, Id) AS rn
+                          FROM src.db_records WHERE CollectionId = {srcCol})";
+            Exec(conn, tx, $@"
+                INSERT INTO main.ui_row_heights (CollectionId, RecordId, Height)
+                SELECT {newCol}, {firstNew} + r.rn - 1, h.Height FROM src.ui_row_heights h
+                JOIN {rank} r ON r.old_id = h.RecordId WHERE h.CollectionId = {srcCol}");
+            Exec(conn, tx, $@"
+                INSERT INTO main.record_display (CollectionId, RecordId, Visible, Level)
+                SELECT {newCol}, {firstNew} + r.rn - 1, d.Visible, d.Level FROM src.record_display d
+                JOIN {rank} r ON r.old_id = d.RecordId WHERE d.CollectionId = {srcCol}");
+        }
+    }
+
+    // (Position, Id) записи источника на позиции offset−1 после курсора — граница пакета значений.
+    // null — записей меньше (последний неполный пакет). Источник — присоединённая схема src.
+    private static (long Pos, long Id)? AttachedBatchEnd(DbConnection conn, DbTransaction tx,
+        int srcCollectionId, long prevPos, long prevId, int offset)
+    {
+        using var c = conn.CreateCommand();
+        c.Transaction = tx;
+        c.CommandText = $@"
+            SELECT Position, Id FROM src.db_records
+            WHERE CollectionId = {srcCollectionId}
+              AND (Position > {prevPos} OR (Position = {prevPos} AND Id > {prevId}))
+            ORDER BY Position, Id LIMIT 1 OFFSET {offset - 1}";
+        using var rdr = c.ExecuteReader();
+        return rdr.Read() ? (rdr.GetInt64(0), rdr.GetInt64(1)) : null;
+    }
+
+    private static void Exec(DbConnection conn, DbTransaction tx, string sql)
+    {
+        using var c = conn.CreateCommand();
+        c.Transaction = tx; c.CommandText = sql; c.ExecuteNonQuery();
+    }
+
+    private static long ScalarLong(DbConnection conn, DbTransaction? tx, string sql)
+    {
+        using var c = conn.CreateCommand();
+        if (tx is not null) c.Transaction = tx;
+        c.CommandText = sql;
+        return Convert.ToInt64(c.ExecuteScalar());
+    }
+
+    private static List<int> ReadIntList(DbConnection conn, DbTransaction tx, string sql)
+    {
+        using var c = conn.CreateCommand();
+        c.Transaction = tx; c.CommandText = sql;
+        using var rdr = c.ExecuteReader();
+        var list = new List<int>();
+        while (rdr.Read()) list.Add(rdr.GetInt32(0));
+        return list;
+    }
+
+    // Пары (col0, col1) из запроса — для (Id, GroupId) коллекций поддерева при переносе группы.
+    private static List<(int A, int B)> ReadIntPairs(DbConnection conn, DbTransaction tx, string sql)
+    {
+        using var c = conn.CreateCommand();
+        c.Transaction = tx; c.CommandText = sql;
+        using var rdr = c.ExecuteReader();
+        var list = new List<(int, int)>();
+        while (rdr.Read()) list.Add((rdr.GetInt32(0), rdr.GetInt32(1)));
+        return list;
     }
 
     // ── Поля ──────────────────────────────────────────────────────────────────

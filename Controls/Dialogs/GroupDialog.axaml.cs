@@ -58,8 +58,9 @@ public partial class GroupDialog : Window
     private void RebuildLocation(int? selectParentId)
     {
         // Ветку группы исключаем только в её собственной БД; при переносе — все группы доступны.
-        var exclude = CurrentDbId == _originalDbId ? _excludeSubtreeRootId : null;
-        _groups = GroupLocationOptions.Build(CurrentRepo.GetAllGroups(), excludeSubtreeRootId: exclude);
+        var exclude = CurrentDbId == _originalDbId && _excludeSubtreeRootId is int ex
+            ? new HashSet<int> { ex } : null;
+        _groups = GroupLocationOptions.Build(CurrentRepo.GetAllGroups(), excludeSubtreeRoots: exclude);
         LocationCombo.ItemsSource = _groups.Select(g => g.Label).ToList();
         var idx = selectParentId.HasValue ? _groups.FindIndex(g => g.Id == selectParentId) : -1;
         LocationCombo.SelectedIndex = idx >= 0 ? idx : 0;
