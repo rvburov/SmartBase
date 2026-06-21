@@ -179,51 +179,63 @@ public class ConstructorRepository(AppDbContext db)
         order.Add(DescKey);
         SaveColumnOrder(col.Id, order);
 
-        // Записи + значения свойств. Описание не импортируется — остаётся пустым.
-        // Bulk-insert: отключаем авто-DetectChanges и чистим трекер после каждой пачки.
-        // Иначе на больших файлах SaveChanges становится O(n²) (DetectChanges по всё
-        // растущему набору отслеживаемых сущностей) и импорт сильно тормозит.
-        const int batchSize = 500;
-        var now      = DateTime.Now.ToString("o");
-        var pos      = 0;
-        var total    = Math.Max(1, data.Rows.Count);
-        var lastPct  = -1;
+        // Записи + значения свойств (Описание не импортируется). Пишем СЫРЫМ ADO.NET через
+        // подготовленные команды, а НЕ через EF: EF на каждую из миллионов сущностей тратит
+        // построение графа и чтение сгенерированного Id — импорт 425k×N колонок деградирует до
+        // минут (≈60× медленнее сырого пути). Подготовленные INSERT в одной транзакции —
+        // секунды (как bulk-копия дубля). Мы единственный писатель в транзакции → id новых
+        // записей идут непрерывным блоком, поэтому RecordId значения = firstNew + индекс строки.
+        var now   = DateTime.Now.ToString("o");
+        var total = Math.Max(1, data.Rows.Count);
+        var conn  = db.Database.GetDbConnection();
+        var dbTx  = db.Database.CurrentTransaction!.GetDbTransaction();
 
-        var autoDetect = db.ChangeTracker.AutoDetectChangesEnabled;
-        db.ChangeTracker.AutoDetectChangesEnabled = false;
-        try
+        long firstNew = 0;
+        using (var insRec = conn.CreateCommand())
         {
+            insRec.Transaction = dbTx;
+            insRec.CommandText =
+                "INSERT INTO db_records (CollectionId, CreatedAt, Position, AllDay, Title, Description) " +
+                "VALUES ($cid, $created, $pos, 0, $title, NULL)";
+            var pCid     = AddParam(insRec, "$cid");
+            var pCreated = AddParam(insRec, "$created");
+            var pPos     = AddParam(insRec, "$pos");
+            var pTitle   = AddParam(insRec, "$title");
+            pCid.Value     = col.Id;
+            pCreated.Value = now;
+            insRec.Prepare();
+
+            for (var idx = 0; idx < data.Rows.Count; idx++)
+            {
+                pPos.Value   = (idx + 1) * 1000;
+                pTitle.Value = data.Rows[idx].Title ?? "";
+                insRec.ExecuteNonQuery();
+                if (progress is not null && idx % 2000 == 0) progress.Report((idx + 1) / (double)total * 0.3);
+            }
+            if (data.Rows.Count > 0) firstNew = LastInsertRowid() - data.Rows.Count + 1;
+        }
+
+        using (var insVal = conn.CreateCommand())
+        {
+            insVal.Transaction = dbTx;
+            insVal.CommandText = "INSERT INTO db_field_values (RecordId, FieldId, Value) VALUES ($rid, $fid, $val)";
+            var pRid = AddParam(insVal, "$rid");
+            var pFid = AddParam(insVal, "$fid");
+            var pVal = AddParam(insVal, "$val");
+            insVal.Prepare();
+
             for (var idx = 0; idx < data.Rows.Count; idx++)
             {
                 var row = data.Rows[idx];
-                pos += 1000;
-                var rec = new DbRecordEntity
-                {
-                    CollectionId = col.Id, CreatedAt = now, Position = pos,
-                    Title = row.Title, Description = null,
-                };
+                pRid.Value = firstNew + idx;
                 for (var i = 0; i < fieldIds.Count; i++)
                 {
-                    var val = i < row.FieldValues.Count ? row.FieldValues[i] : "";
-                    rec.FieldValues.Add(new DbFieldValueEntity { FieldId = fieldIds[i], Value = val ?? "" });
+                    pFid.Value = fieldIds[i];
+                    pVal.Value = (i < row.FieldValues.Count ? row.FieldValues[i] : "") ?? "";
+                    insVal.ExecuteNonQuery();
                 }
-                db.DbRecords.Add(rec);
-
-                if ((idx + 1) % batchSize == 0)
-                {
-                    db.SaveChanges();
-                    db.ChangeTracker.Clear();   // не накапливаем отслеживаемые сущности
-                }
-
-                var pct = (idx + 1) * 100 / total;
-                if (progress is not null && pct != lastPct) { progress.Report((idx + 1) / (double)total); lastPct = pct; }
+                if (progress is not null && idx % 2000 == 0) progress.Report(0.3 + (idx + 1) / (double)total * 0.7);
             }
-            db.SaveChanges();
-            db.ChangeTracker.Clear();
-        }
-        finally
-        {
-            db.ChangeTracker.AutoDetectChangesEnabled = autoDetect;
         }
         progress?.Report(1.0);
 
@@ -263,10 +275,10 @@ public class ConstructorRepository(AppDbContext db)
     }
 
     /// <summary>
-    /// Создать «скелет» дубля коллекции БЫСТРО: строка коллекции + копии полей (колонок), без
-    /// записей. Выполняется мгновенно (несколько строк), поэтому коллекция сразу видна в сайдбаре
-    /// и таблица открывается, пока записи копируются в фоне (см. <see cref="CopyCollectionDataAsync"/>).
-    /// Возвращает новую коллекцию и число записей источника (для строк-заглушек «Загрузка…»).
+    /// Создать «скелет» дубля коллекции: строка коллекции + копии полей (колонок), без записей.
+    /// Записи/значения копирует затем <see cref="CopyCollectionData"/> (sync) или
+    /// <see cref="DuplicateCollectionIsolated"/> (фон + прогресс). Возвращает новую коллекцию
+    /// и число записей источника.
     /// </summary>
     public CollectionShell CreateCollectionShell(int collectionId)
     {
@@ -319,14 +331,21 @@ public class ConstructorRepository(AppDbContext db)
 
     /// <summary>
     /// Скопировать записи и значения из исходной коллекции в уже созданный «скелет» (newCollectionId).
-    /// Только bulk-SQL без материализации в EF: прежняя реализация делала две SaveChanges на КАЖДУЮ
-    /// запись (+ запрос значений на запись) — сотни тысяч/миллионы round-trip'ов подвешивали приложение.
-    /// Карта полей old→new восстанавливается из БД по порядку Id (поля созданы в том же порядке).
+    /// Только bulk-SQL без материализации в EF. Карта полей old→new — по Position (скелет копирует
+    /// Position дословно). Всё в ОДНОЙ транзакции (атомарно, без частичной копии при ошибке):
+    ///  1) ВСЕ записи одним `INSERT … SELECT … ORDER BY Position, Id` (id новых записей — непрерывный
+    ///     блок в этом порядке: firstNew = last_insert_rowid − recCount + 1);
+    ///  2) значения — КРУПНЫМИ пакетами (по batchSize записей), но ВСЕ поля за один `INSERT` через
+    ///     временную карту полей `_dup_fmap` (а не по одному полю с `ROW_NUMBER` на каждом — это было
+    ///     в ~3.4× медленнее). Пакеты нужны лишь для гранулярности прогресса (окно с %); внутри
+    ///     пакета новый RecordId = (firstNew + processed) + локальный ранг − 1.
+    /// <paramref name="progress"/> — нарастающее число скопированных записей (для процентов в окне).
     /// </summary>
-    public void CopyCollectionData(int srcCollectionId, int newCollectionId)
+    public void CopyCollectionData(int srcCollectionId, int newCollectionId,
+                                   IProgress<int>? progress = null, int batchSize = 10000)
     {
         var recCount = db.DbRecords.Count(r => r.CollectionId == srcCollectionId);
-        if (recCount == 0) return;
+        if (recCount == 0) { progress?.Report(0); return; }
 
         // old FieldId → new FieldId по Position: скелет копирует Position полей дословно, а Position
         // уникален в пределах коллекции — надёжнее, чем полагаться на порядок вставки/нумерации Id.
@@ -343,52 +362,133 @@ public class ConstructorRepository(AppDbContext db)
         using var tx = db.Database.BeginTransaction();
         var createdAt = DateTime.Now.ToString("o");
 
-        // Копия записей в порядке Id. SQLite присваивает новым строкам непрерывный блок id
-        // в порядке вставки (= порядок SELECT), поэтому id новой записи = firstNew + ранг.
+        // 1) Все записи одним INSERT … SELECT в порядке (Position, Id). Новые id — непрерывный блок
+        //    в этом порядке (SQLite присваивает rowid по порядку SELECT, мы единственный писатель).
         db.Database.ExecuteSqlInterpolated($@"
             INSERT INTO db_records (CollectionId, CreatedAt, Position, StartDt, EndDt, AllDay, Title, Description)
             SELECT {newCollectionId}, {createdAt}, Position, StartDt, EndDt, AllDay, Title, Description
-            FROM db_records WHERE CollectionId = {srcCollectionId} ORDER BY Id");
+            FROM db_records WHERE CollectionId = {srcCollectionId} ORDER BY Position, Id");
+        var firstNew = LastInsertRowid() - recCount + 1;
 
-        // id последней вставленной записи (на этом подключении) → первый новый id блока.
-        long lastRowid;
-        using (var c = db.Database.GetDbConnection().CreateCommand())
-        {
-            c.Transaction = db.Database.CurrentTransaction!.GetDbTransaction();
-            c.CommandText = "SELECT last_insert_rowid()";
-            lastRowid = (long)c.ExecuteScalar()!;
-        }
-        var firstNew = lastRowid - recCount + 1;
-
-        // Значения по каждому полю одним bulk-INSERT: старый RecordId → новый через ранг
-        // (ROW_NUMBER по тому же ORDER BY Id), старый FieldId → новый по карте полей.
+        // Временная карта полей (old_fid → new_fid) — чтобы копировать значения ВСЕХ полей за один
+        // INSERT (JOIN _dup_fmap), а не по одному полю. Живёт на этом подключении; пересоздаём.
+        db.Database.ExecuteSqlRaw("DROP TABLE IF EXISTS temp._dup_fmap");
+        db.Database.ExecuteSqlRaw("CREATE TEMP TABLE _dup_fmap(old_fid INTEGER PRIMARY KEY, new_fid INTEGER)");
         foreach (var (oldFid, newFid) in fieldMap)
+            db.Database.ExecuteSqlInterpolated($"INSERT INTO _dup_fmap(old_fid, new_fid) VALUES ({oldFid}, {newFid})");
+
+        // 2) Значения крупными пакетами по (Position, Id). На каждый пакет — один INSERT по всем полям.
+        int prevPos = int.MinValue, prevId = 0, processed = 0;
+        while (processed < recCount)
         {
-            db.Database.ExecuteSqlInterpolated($@"
-                INSERT INTO db_field_values (RecordId, FieldId, Value)
-                SELECT {firstNew} + r.rn - 1, {newFid}, fv.Value
-                FROM db_field_values fv
-                JOIN (SELECT Id AS old_id, ROW_NUMBER() OVER (ORDER BY Id) AS rn
-                      FROM db_records WHERE CollectionId = {srcCollectionId}) r ON r.old_id = fv.RecordId
-                WHERE fv.FieldId = {oldFid}");
+            var bbase = firstNew + processed;   // новый RecordId первой записи пакета = bbase
+            var end   = BatchEndCursor(srcCollectionId, prevPos, prevId, batchSize);
+            if (end is { } e)
+            {
+                db.Database.ExecuteSqlInterpolated($@"
+                    INSERT INTO db_field_values (RecordId, FieldId, Value)
+                    SELECT {bbase} + r.rn - 1, fm.new_fid, fv.Value
+                    FROM db_field_values fv
+                    JOIN (SELECT Id AS old_id, ROW_NUMBER() OVER (ORDER BY Position, Id) AS rn
+                          FROM db_records
+                          WHERE CollectionId = {srcCollectionId}
+                            AND (Position > {prevPos} OR (Position = {prevPos} AND Id > {prevId}))
+                            AND (Position < {e.Pos} OR (Position = {e.Pos} AND Id <= {e.Id}))) r
+                      ON r.old_id = fv.RecordId
+                    JOIN _dup_fmap fm ON fm.old_fid = fv.FieldId");
+                processed += batchSize;
+                prevPos = e.Pos; prevId = e.Id;
+            }
+            else
+            {
+                // Последний (неполный) пакет: без верхней границы.
+                db.Database.ExecuteSqlInterpolated($@"
+                    INSERT INTO db_field_values (RecordId, FieldId, Value)
+                    SELECT {bbase} + r.rn - 1, fm.new_fid, fv.Value
+                    FROM db_field_values fv
+                    JOIN (SELECT Id AS old_id, ROW_NUMBER() OVER (ORDER BY Position, Id) AS rn
+                          FROM db_records
+                          WHERE CollectionId = {srcCollectionId}
+                            AND (Position > {prevPos} OR (Position = {prevPos} AND Id > {prevId}))) r
+                      ON r.old_id = fv.RecordId
+                    JOIN _dup_fmap fm ON fm.old_fid = fv.FieldId");
+                processed = recCount;
+            }
+            progress?.Report(Math.Min(processed, recCount));
         }
 
+        db.Database.ExecuteSqlRaw("DROP TABLE IF EXISTS temp._dup_fmap");
         tx.Commit();
     }
 
+    // id последней вставленной строки на текущем подключении (в открытой транзакции).
+    private long LastInsertRowid()
+    {
+        using var c = db.Database.GetDbConnection().CreateCommand();
+        c.Transaction = db.Database.CurrentTransaction!.GetDbTransaction();
+        c.CommandText = "SELECT last_insert_rowid()";
+        return (long)c.ExecuteScalar()!;
+    }
+
+    // Именованный параметр для сырых ADO.NET-команд (bulk-импорт). Имя — как плейсхолдер ($name).
+    private static System.Data.Common.DbParameter AddParam(System.Data.Common.DbCommand cmd, string name)
+    {
+        var p = cmd.CreateParameter();
+        p.ParameterName = name;
+        cmd.Parameters.Add(p);
+        return p;
+    }
+
+    // (Position, Id) записи на позиции offset−1 в keyset-срезе источника после курсора — т.е.
+    // граница пакета из batchSize записей. null, если записей меньше (последний неполный пакет).
+    // Параметры — int, не строки.
+    private (int Pos, int Id)? BatchEndCursor(int srcCollectionId, int prevPos, int prevId, int offset)
+    {
+        using var c = db.Database.GetDbConnection().CreateCommand();
+        c.Transaction = db.Database.CurrentTransaction!.GetDbTransaction();
+        c.CommandText = $@"
+            SELECT Position, Id FROM db_records
+            WHERE CollectionId = {srcCollectionId}
+              AND (Position > {prevPos} OR (Position = {prevPos} AND Id > {prevId}))
+            ORDER BY Position, Id
+            LIMIT 1 OFFSET {offset - 1}";
+        using var rdr = c.ExecuteReader();
+        return rdr.Read() ? (rdr.GetInt32(0), rdr.GetInt32(1)) : null;
+    }
+
     /// <summary>
-    /// Скопировать записи/значения дубля на фоновом потоке (отдельное подключение к тому же файлу).
-    /// Может быть тяжёлым (миллионы строк) — выносим из UI-потока, чтобы интерфейс не подвисал.
-    /// WAL допускает параллельную работу с основным подключением (чтения таблицы во время копии).
+    /// Полный дубль коллекции (коллекция + колонки + записи + значения) на ОТДЕЛЬНОМ подключении.
+    /// Для фонового дублирования больших коллекций с окном прогресса: НЕ трогает общий Context
+    /// (см. правило об общем AppDbContext — фоновая работа только на свежем подключении), поэтому
+    /// безопасно вызывать из Task.Run. <paramref name="progress"/> сообщает нарастающее число
+    /// скопированных записей (для процентов в окне). Возвращает id новой коллекции (0 при ошибке).
     /// </summary>
-    public Task CopyCollectionDataAsync(int srcCollectionId, int newCollectionId) =>
-        Task.Run(() =>
-        {
-            using var ctx = new AppDbContext(db.DbPath);
-            ctx.Database.ExecuteSqlRaw("PRAGMA temp_store=MEMORY;");
-            ctx.Database.ExecuteSqlRaw("PRAGMA cache_size=-65536;");
-            new ConstructorRepository(ctx).CopyCollectionData(srcCollectionId, newCollectionId);
-        });
+    public int DuplicateCollectionIsolated(int srcCollectionId, IProgress<int>? progress = null)
+    {
+        using var ctx = new AppDbContext(db.DbPath);
+        ctx.ApplyPerformancePragmas();
+        var repo  = new ConstructorRepository(ctx);
+        var shell = repo.CreateCollectionShell(srcCollectionId);
+        if (shell.Collection.Id is not int newId) return 0;
+        repo.CopyCollectionData(srcCollectionId, newId, progress);
+        return newId;
+    }
+
+    /// <summary>
+    /// Импорт Excel-листа в новую коллекцию на ОТДЕЛЬНОМ подключении (не общий <c>Context</c>).
+    /// Вызывается уже с фонового потока (после `ExcelImporter.Parse`), поэтому работает синхронно.
+    /// Главное — НЕ трогать общий контекст с фонового потока: иначе параллельное обращение к нему
+    /// из UI (дерево/календарь) или фоновое копирование дубля валит EF («A second operation was
+    /// started on this context instance»). Свежий контекст + WAL + busy_timeout делают импорт
+    /// безопасным рядом с любыми другими операциями над той же БД.
+    /// </summary>
+    public int ImportExcelCollectionIsolated(string collectionName, int? groupId, ExcelImportData data,
+                                             IProgress<double>? progress = null)
+    {
+        using var ctx = new AppDbContext(db.DbPath);
+        ctx.ApplyPerformancePragmas();   // в т.ч. mmap_size — без него вставка в глобальные индексы db_field_values деградирует
+        return new ConstructorRepository(ctx).ImportExcelCollection(collectionName, groupId, data, progress);
+    }
 
     // ── Перенос между БД (мульти-маунт) ───────────────────────────────────────
     //
@@ -1214,6 +1314,7 @@ public class ConstructorRepository(AppDbContext db)
         Task.Run(() =>
         {
             using var ctx = new AppDbContext(db.DbPath);
+            ctx.ApplyPerformancePragmas();
             var repo = new ConstructorRepository(ctx);
 
             var records = idSlice is not null
@@ -1294,9 +1395,7 @@ public class ConstructorRepository(AppDbContext db)
         Task.Run(() =>
         {
             using var ctx = new AppDbContext(db.DbPath);
-            ctx.Database.ExecuteSqlRaw("PRAGMA mmap_size=268435456;");
-            ctx.Database.ExecuteSqlRaw("PRAGMA cache_size=-65536;");
-            ctx.Database.ExecuteSqlRaw("PRAGMA temp_store=MEMORY;");
+            ctx.ApplyPerformancePragmas();
             return new ConstructorRepository(ctx).ColumnCounts(collectionId, key);
         });
 

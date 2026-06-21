@@ -20,6 +20,12 @@
                    FontSize="{StaticResource FontSizeBase}"
                    Foreground="{StaticResource BrushPrimaryText}" />
 
+        <TextBlock x:Name="InfoText"
+                   Text=""
+                   IsVisible="False"
+                   FontSize="{StaticResource FontSizeBase}"
+                   Foreground="{StaticResource BrushSecondaryText}" />
+
         <Grid ColumnDefinitions="*,Auto">
             <ProgressBar Grid.Column="0" x:Name="Bar"
                          Minimum="0" Maximum="100" Value="0"

@@ -65,13 +65,9 @@ public sealed class DatabaseManager : IDisposable
     //  • temp_store=MEMORY  — временные индексы/сортировки в RAM, не на диск;
     //  • mmap_size=256MB    — чтение через memory-map: меньше syscalls на больших скан-ах;
     //  • cache_size=-65536  — страничный кеш ~64 МБ (значение в КБ со знаком «−»), дефолт ~2 МБ.
-    private static void TunePerformancePragmas(AppDbContext db)
-    {
-        db.Database.ExecuteSqlRaw("PRAGMA synchronous=NORMAL;");
-        db.Database.ExecuteSqlRaw("PRAGMA temp_store=MEMORY;");
-        db.Database.ExecuteSqlRaw("PRAGMA mmap_size=268435456;");
-        db.Database.ExecuteSqlRaw("PRAGMA cache_size=-65536;");
-    }
+    // Прагмы скорости (на соединение) — единый набор для основного и фоновых подключений,
+    // см. AppDbContext.ApplyPerformancePragmas (busy_timeout/synchronous/temp_store/mmap/cache).
+    private static void TunePerformancePragmas(AppDbContext db) => db.ApplyPerformancePragmas();
 
     // ── Миграции ────────────────────────────────────────────────────────────────
 

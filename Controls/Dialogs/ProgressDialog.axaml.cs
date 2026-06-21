@@ -21,6 +21,13 @@ public partial class ProgressDialog : Window
         PhaseText.Text   = phase;
     }
 
+    /// <summary>Доп. строка под заголовком (напр. «Количество записей: 235000»). Пусто — скрыта.</summary>
+    public void SetInfo(string text)
+    {
+        InfoText.Text      = text;
+        InfoText.IsVisible = !string.IsNullOrEmpty(text);
+    }
+
     /// <summary>Закрыть окно загрузки (после завершения или ошибки импорта).</summary>
     public void Done()
     {

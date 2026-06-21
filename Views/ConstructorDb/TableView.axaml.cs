@@ -223,18 +223,10 @@ public partial class TableView : UserControl
     // (тогда горизонтальный скролл сбрасываем) или это refresh той же (скролл храним).
     private int? _lastLoadedCollectionId;
 
-    // Число строк-заглушек для режима «скелет» (дубль коллекции копируется в фоне); null — обычная
-    // загрузка. Ставится в Load, читается в Reload при построении источника строк.
-    private int? _skeletonCount;
-
-    // skeletonCount != null — открыть таблицу в режиме «скелет»: показать ровно столько строк
-    // «Загрузка…» (дубль коллекции ещё копируется в фоне), не обращаясь к БД за записями.
-    // Реальные данные появятся повторным Load(...) без skeletonCount после завершения копии.
-    public void Load(ConstructorRepository repository, int collectionId, int? skeletonCount = null)
+    public void Load(ConstructorRepository repository, int collectionId)
     {
         var sameCollection = _lastLoadedCollectionId == collectionId;
 
-        _skeletonCount = skeletonCount;
         _repository   = repository;
         _collectionId = collectionId;
 
@@ -492,10 +484,8 @@ public partial class TableView : UserControl
         _colDefs = BuildColDefs();
         ColumnsBuilt?.Invoke(this, _colDefs);
 
-        _virtualRows = _skeletonCount is int skel
-            ? new VirtualRowList(_repository, _collectionId, _fields, skeletonCount: skel)
-            : new VirtualRowList(_repository, _collectionId, _fields,
-                                 excludeHidden: _hiddenRecords.Count > 0);
+        _virtualRows = new VirtualRowList(_repository, _collectionId, _fields,
+                                         excludeHidden: _hiddenRecords.Count > 0);
         // Виртуализирующая обёртка: DataGrid не материализует источник, тянет только видимые
         // строки → большие коллекции открываются мгновенно. Всегда включена.
         _virtualView = new VirtualCollectionView(_virtualRows);

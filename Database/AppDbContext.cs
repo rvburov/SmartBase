@@ -33,6 +33,24 @@ public class AppDbContext : DbContext
     protected override void OnConfiguring(DbContextOptionsBuilder options)
         => options.UseSqlite($"Data Source={_dbPath}");
 
+    /// <summary>
+    /// Прагмы скорости на ПОДКЛЮЧЕНИЕ (не на файл). Применять и к основному контексту, и к КАЖДОМУ
+    /// свежему фоновому (импорт/копия дубля/подгрузка строк и значений) — иначе фоновые операции
+    /// деградируют: без <c>mmap_size</c> чтения страниц индексов идут pread-syscall'ами (импорт
+    /// 425k в БД с уже большими коллекциями — минуты вместо секунд, т.к. индексы db_field_values
+    /// глобальные); без <c>busy_timeout</c> параллельные писатели падают с SQLITE_BUSY. journal_mode=WAL
+    /// здесь НЕ ставим — он персистится в заголовке файла (см. DatabaseManager.EnableWal).
+    /// Централизовано, чтобы наборы прагм основного и фоновых подключений не расходились.
+    /// </summary>
+    public void ApplyPerformancePragmas()
+    {
+        Database.ExecuteSqlRaw("PRAGMA busy_timeout=10000;");   // ждать чужого писателя, не падать SQLITE_BUSY
+        Database.ExecuteSqlRaw("PRAGMA synchronous=NORMAL;");   // с WAL безопасно и быстрее коммитов
+        Database.ExecuteSqlRaw("PRAGMA temp_store=MEMORY;");
+        Database.ExecuteSqlRaw("PRAGMA mmap_size=268435456;");  // чтение индексов через mmap, а не syscalls
+        Database.ExecuteSqlRaw("PRAGMA cache_size=-65536;");    // ~64 МБ страничного кеша
+    }
+
     protected override void OnModelCreating(ModelBuilder model)
     {
         model.Entity<CategoryEntity>(e =>

@@ -4,6 +4,7 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Media;
+using Avalonia.Threading;
 using Avalonia.VisualTree;
 using CommunityToolkit.Mvvm.ComponentModel;
 using DataBase.Controls.Dialogs;
@@ -26,10 +27,6 @@ public partial class Sidebar : UserControl
     public event EventHandler<EntityRef>? CollectionSelected;
     public event EventHandler<int>?       CollectionDeleted;
     public event EventHandler?            RequestRefresh;
-    // Дубль коллекции: «скелет» создан, записи копируются в фоне — открыть таблицу с
-    // ExpectedCount строк «Загрузка…». По завершении копии — CollectionDuplicated (показать данные).
-    public event EventHandler<(EntityRef Ref, int ExpectedCount)>? CollectionDuplicating;
-    public event EventHandler<EntityRef>?                          CollectionDuplicated;
 
     // Смонтированные БД сайдбара. В режиме календаря — одна (дефолт). В конструкторе —
     // все из рабочего пространства, и каждая показывается корневым узлом (_showRoots).
@@ -603,7 +600,7 @@ public partial class Sidebar : UserControl
                 menu.Items.Add(new Separator());
             }
             menu.Items.Add(MenuItemEdit(() => _ = EditCollection(db, id)));
-            menu.Items.Add(MenuItemDuplicate(() => DuplicateCollection(db, id)));
+            menu.Items.Add(MenuItemDuplicate(() => DuplicateSelectionOrNode(node)));
             menu.Items.Add(MenuItemDelete(() => _ = DeleteSelectionOrNode(node)));
         }
 
@@ -797,7 +794,9 @@ public partial class Sidebar : UserControl
                 var colId = await Task.Run(() =>
                 {
                     var data = ExcelImporter.Parse(req.Spec, readP);
-                    return repo.ImportExcelCollection(req.Name, req.ParentId, data, writeP);
+                    // Импорт на ОТДЕЛЬНОМ контексте: с фонового потока нельзя трогать общий Context
+                    // (его параллельно использует UI: дерево/календарь) — иначе EF «second operation».
+                    return repo.ImportExcelCollectionIsolated(req.Name, req.ParentId, data, writeP);
                 });
 
                 progress.Done();
@@ -922,38 +921,101 @@ public partial class Sidebar : UserControl
         if (copy.Id.HasValue) ExpandGroup(dbId, copy.Id.Value);
     }
 
-    private async void DuplicateCollection(int dbId, int collectionId)
+    // Порог записей (суммарно по выделению): меньше — копируем мгновенно без окна; больше —
+    // показываем окно прогресса с %, как при импорте, и копируем в фоне по очереди.
+    private const int DuplicateDialogThreshold = 20000;
+
+    // Дублирование через контекстное меню: если клик по узлу из мультивыделения — дублируем
+    // ВЕСЬ набор коллекций; иначе только эту. Большие (суммарно много записей) — с окном
+    // прогресса (как импорт) и копированием в фоне; малые — мгновенно, синхронно.
+    private async void DuplicateSelectionOrNode(SidebarNode node)
     {
-        var repo = RepoFor(dbId);
-        if (repo is null) return;
-
-        // 1) «Скелет» дубля (коллекция + колонки) создаётся мгновенно — узел сразу виден в дереве,
-        //    а таблица сразу открывается, не дожидаясь копирования записей (на больших — миллионы).
-        var shell = repo.CreateCollectionShell(collectionId);
-        if (shell.Collection.Id is not int newId) return;
-
-        ReloadAndNotify();
-
-        // 2) В конструкторе открываем таблицу в режиме «скелет»: строки «Загрузка…» по числу записей
-        //    источника. (В календаре таблицы нет — просто копируем в фоне.)
-        if (_mode == SidebarMode.Constructor)
+        // Цели — только коллекции (группы дублируются отдельным лёгким пунктом DuplicateGroup).
+        // Репозитории резолвим здесь, на UI-потоке (общий список _dbs не трогаем из Task.Run).
+        var sel = _selectedNodes.Contains(node) ? _selectedNodes.ToList() : [node];
+        var targets = new List<(int DbId, ConstructorRepository Repo, int CollectionId, int Count)>();
+        long total = 0;
+        foreach (var c in sel.Where(n => !n.IsGroup && !n.IsDatabase && n.Id.HasValue))
         {
-            SelectCollection(dbId, newId);
-            CollectionDuplicating?.Invoke(this, (new EntityRef(dbId, newId), shell.SourceRecordCount));
+            var r = RepoFor(c.DbId);
+            if (r is null) continue;
+            var cnt = r.CountRecords(c.Id!.Value);
+            targets.Add((c.DbId, r, c.Id!.Value, cnt));
+            total += cnt;
+        }
+        if (targets.Count == 0) return;
+
+        // Малый объём — мгновенно, синхронно (без окна): bulk-копия быстрая.
+        if (total <= DuplicateDialogThreshold)
+        {
+            (int DbId, int Id)? opened = null;
+            foreach (var t in targets)
+            {
+                var copy = t.Repo.DuplicateCollection(t.CollectionId);
+                if (copy.Id is int nid) opened = (t.DbId, nid);
+            }
+            ReloadAndNotify();
+            if (_mode == SidebarMode.Constructor && targets.Count == 1 && opened is { } o)
+                OpenCollection(o.DbId, o.Id);
+            return;
         }
 
-        // 3) Тяжёлое копирование записей и значений — на фоновом потоке (UI отзывчив).
+        // Большой объём — окно прогресса (как импорт). Копии идут ПО ОЧЕРЕДИ в фоне на отдельных
+        // подключениях (DuplicateCollectionIsolated), чтобы не трогать общий Context с фонового
+        // потока и не плодить параллельных писателей. Проценты — общий прогресс по всем целям.
+        if (OwnerWindow is null) return;
+        var dlg = new ProgressDialog { Title = "Дублирование" };
+        // Суммарное число записей по всем дублируемым коллекциям (для нескольких — суммируем).
+        dlg.SetInfo($"Количество записей: {total}");
+        var dlgClosed = dlg.ShowDialog(OwnerWindow);
+
+        (int DbId, int Id)? openedBig = null;
+        var lastPct = -1;
         try
         {
-            await repo.CopyCollectionDataAsync(collectionId, newId);
+            await Task.Run(() =>
+            {
+                long basis = 0;
+                for (var i = 0; i < targets.Count; i++)
+                {
+                    var t    = targets[i];
+                    var b    = basis;
+                    var step = i + 1;
+                    var text = targets.Count > 1
+                        ? $"Дублирование коллекций ({step}/{targets.Count})…"
+                        : "Дублирование коллекции…";
+                    IProgress<int> p = new IntProgress(copied =>
+                    {
+                        var pct = total == 0 ? 100 : (int)((b + copied) * 100 / total);
+                        if (pct == lastPct) return;
+                        lastPct = pct;
+                        Dispatcher.UIThread.Post(() => dlg.SetProgress(pct / 100.0, text));
+                    });
+                    var nid = t.Repo.DuplicateCollectionIsolated(t.CollectionId, p);
+                    if (nid != 0) openedBig = (t.DbId, nid);
+                    basis += t.Count;
+                }
+            });
         }
         catch
         {
-            // Ошибку фона проглатываем: данные либо скопированы, либо нет — UI не валим.
+            // Ошибку фона проглатываем: коллекция либо скопирована, либо нет — UI не валим.
         }
 
-        // 4) Готово — реальные данные. Заменяем «Загрузка…» на строки (если коллекция ещё открыта).
-        CollectionDuplicated?.Invoke(this, new EntityRef(dbId, newId));
+        dlg.Done();
+        await dlgClosed;
+
+        ReloadAndNotify();
+        if (_mode == SidebarMode.Constructor && targets.Count == 1 && openedBig is { } ob)
+            OpenCollection(ob.DbId, ob.Id);
+    }
+
+    // Адаптер IProgress<int> для сырого прогресса копии (вызывается с фонового потока, сам
+    // маршалит на UI через Dispatcher) — Progress<T> здесь не годится (создаётся в Task.Run,
+    // захватил бы фоновый контекст синхронизации).
+    private sealed class IntProgress(Action<int> report) : IProgress<int>
+    {
+        public void Report(int value) => report(value);
     }
 
     // Удаление через контекстное меню: если клик по узлу из мультивыделения — удаляем
