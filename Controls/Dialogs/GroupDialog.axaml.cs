@@ -76,6 +76,17 @@ public partial class GroupDialog : Window
             return;
         }
         var parentId = _groups[Math.Max(0, LocationCombo.SelectedIndex)].Id;
+
+        // Уникальность имени на целевом уровне в выбранной БД (как при создании). В своей БД исключаем
+        // саму группу (переименование/перемещение себя — не конфликт); при переносе в другую БД — без исключения.
+        var excludeId = CurrentDbId == _originalDbId ? _excludeSubtreeRootId : null;
+        if (CurrentRepo.GroupNameExists(name, parentId, excludeId))
+        {
+            ShowError("Группа с таким названием уже существует");
+            NameBox.Focus();
+            return;
+        }
+
         Close(new GroupDialogResult(name, parentId, CurrentDbId));
     }
 

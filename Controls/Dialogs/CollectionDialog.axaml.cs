@@ -13,13 +13,20 @@ public partial class CollectionDialog : Window
     private readonly IReadOnlyList<DbOption> _dbs;
     private List<(string Label, int? Id)> _groups = [];
 
+    // Исходная БД коллекции и её id — чтобы при проверке уникальности имени исключать саму себя
+    // (в пределах своей БД). При переносе в другую БД исключения нет.
+    private readonly int  _originalDbId;
+    private readonly int? _editCollectionId;
+
     private ConstructorRepository CurrentRepo => _dbs[Math.Max(0, DbCombo.SelectedIndex)].Repo;
     private int                   CurrentDbId => _dbs[Math.Max(0, DbCombo.SelectedIndex)].Id;
 
     public CollectionDialog(IReadOnlyList<DbOption> dbs, int currentDbId, DbCollection? editNode = null)
     {
         InitializeComponent();
-        _dbs = dbs;
+        _dbs              = dbs;
+        _originalDbId     = currentDbId;
+        _editCollectionId = editNode?.Id;
 
         DbCombo.ItemsSource   = _dbs.Select(d => d.Name).ToList();
         DbCombo.SelectedIndex = IndexOfDb(currentDbId);
@@ -66,6 +73,17 @@ public partial class CollectionDialog : Window
             return;
         }
         var groupId = _groups[Math.Max(0, LocationCombo.SelectedIndex)].Id;
+
+        // Уникальность имени в целевой группе выбранной БД (как при создании). В своей БД исключаем
+        // саму коллекцию (переименование/перемещение себя — не конфликт); при переносе в другую БД — без исключения.
+        var excludeId = CurrentDbId == _originalDbId ? _editCollectionId : null;
+        if (CurrentRepo.CollectionNameExists(name, groupId, excludeId))
+        {
+            ShowError("Коллекция с таким названием уже существует");
+            NameBox.Focus();
+            return;
+        }
+
         Close(new CollectionDialogResult(name, groupId, CurrentDbId));
     }
 

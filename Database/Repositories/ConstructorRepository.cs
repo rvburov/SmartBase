@@ -1059,6 +1059,9 @@ public class ConstructorRepository(AppDbContext db)
         var (newColId, recCount) = target.CopyCollectionFromAttached(sourceDbPath, srcCollectionId, targetGroupId, progress, batchSize);
         if (newColId == 0) return 0;
 
+        // Имя копируется как есть → если в целевой группе уже есть одноимённая коллекция, даём «(копия)».
+        target.UniquifyCollectionName(newColId, targetGroupId);
+
         // Источник чистим на отдельном подключении (каскад: записи→значения, коллекция→поля).
         try
         {
@@ -1091,6 +1094,10 @@ public class ConstructorRepository(AppDbContext db)
         // Прогресс покрывает ОБЕ фазы: копию ветки (0..total) и удаление исходной ветки (total..2·total).
         var (newRootId, total) = target.CopyGroupFromAttached(sourceDbPath, srcGroupId, targetParentId, progress, batchSize);
         if (newRootId == 0) return 0;
+
+        // Имя корня ветки копируется как есть → если на целевом уровне уже есть одноимённая группа,
+        // даём «(копия)». Вложенные группы/коллекции легли в новую (пустую) ветку — там конфликтов нет.
+        target.UniquifyGroupName(newRootId, targetParentId);
 
         try
         {
@@ -1515,6 +1522,45 @@ public class ConstructorRepository(AppDbContext db)
     // «8888 (копия) 2» → «8888», «8888 (копия) (копия)» → «8888».
     private static string StripCopySuffix(string name) =>
         Regex.Replace(name, @"(\s+\(копия\)(\s+\d+)?)+$", "").TrimEnd();
+
+    // ── Уникальные имена при переносе/изменении (как дубль: «X», затем «X (копия)», «X (копия) 2» …) ──
+
+    /// <summary>Имя коллекции, свободное в целевой группе: если <paramref name="desired"/> занято —
+    /// «(копия)»-вариант (как дубль), иначе <paramref name="desired"/> без изменений.
+    /// <paramref name="excludeId"/> — id самой коллекции (не считать её саму конфликтом).</summary>
+    public string UniqueCollectionName(string desired, int? groupId, int? excludeId = null) =>
+        CollectionNameExists(desired, groupId, excludeId)
+            ? NextCopyName(desired, c => CollectionNameExists(c, groupId, excludeId))
+            : desired;
+
+    /// <summary>Имя группы, свободное на целевом уровне (родитель): если занято — «(копия)»-вариант.</summary>
+    public string UniqueGroupName(string desired, int? parentId, int? excludeId = null) =>
+        GroupNameExists(desired, parentId, excludeId)
+            ? NextCopyName(desired, c => GroupNameExists(c, parentId, excludeId))
+            : desired;
+
+    /// <summary>Если имя коллекции совпало с другой в её группе — переименовать в «(копия)»-вариант
+    /// (для bulk-переноса в другую БД, где имя копируется как есть). No-op, если конфликта нет.</summary>
+    public void UniquifyCollectionName(int collectionId, int? groupId)
+    {
+        var col = db.DbCollections.Find(collectionId);
+        if (col is null) return;
+        var unique = UniqueCollectionName(col.Name, groupId, excludeId: collectionId);
+        if (unique == col.Name) return;
+        col.Name = unique;
+        db.SaveChanges();
+    }
+
+    /// <summary>Если имя группы совпало с другой на её уровне — переименовать в «(копия)»-вариант.</summary>
+    public void UniquifyGroupName(int groupId, int? parentId)
+    {
+        var g = db.DbGroups.Find(groupId);
+        if (g is null) return;
+        var unique = UniqueGroupName(g.Name, parentId, excludeId: groupId);
+        if (unique == g.Name) return;
+        g.Name = unique;
+        db.SaveChanges();
+    }
 
     public void DeleteField(int fieldId)
     {

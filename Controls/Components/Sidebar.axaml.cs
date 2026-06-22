@@ -577,6 +577,11 @@ public partial class Sidebar : UserControl
         var db   = node.DbId;
         var id   = node.Id.Value;
 
+        // Мультивыделение (клик по узлу из выделенного набора > 1): «Расположение»/«Дублировать»/
+        // «Удалить» применяются ко ВСЕМУ набору, а «Изменить» — лишь к одному узлу, поэтому при
+        // множественном выборе его скрываем (иначе пункт некорректен — правил бы только этот узел).
+        var multi = _selectedNodes.Contains(node) && _selectedNodes.Count > 1;
+
         if (node.IsDatabase)
         {
             // Корень-БД: создание группы/коллекции в этой БД. Сама БД управляется в настройках.
@@ -588,7 +593,7 @@ public partial class Sidebar : UserControl
             menu.Items.Add(MenuItemSimple("Создать группу",    () => _ = CreateItem("group", db, parentId: id)));
             menu.Items.Add(MenuItemSimple("Создать коллекцию", () => _ = CreateItem("collection", db, parentId: id)));
             menu.Items.Add(new Separator());
-            menu.Items.Add(MenuItemEdit(() => _ = EditGroup(db, id)));
+            if (!multi) menu.Items.Add(MenuItemEdit(() => _ = EditGroup(db, id)));
             menu.Items.Add(MenuItemLocation(() => RelocateSelectionOrNode(node)));
             menu.Items.Add(MenuItemDuplicate(() => DuplicateSelectionOrNode(node)));
             menu.Items.Add(MenuItemDelete(() => _ = DeleteSelectionOrNode(node)));
@@ -600,7 +605,7 @@ public partial class Sidebar : UserControl
                 menu.Items.Add(BuildColorMenu(db, id));
                 menu.Items.Add(new Separator());
             }
-            menu.Items.Add(MenuItemEdit(() => _ = EditCollection(db, id)));
+            if (!multi) menu.Items.Add(MenuItemEdit(() => _ = EditCollection(db, id)));
             menu.Items.Add(MenuItemLocation(() => RelocateSelectionOrNode(node)));
             menu.Items.Add(MenuItemDuplicate(() => DuplicateSelectionOrNode(node)));
             menu.Items.Add(MenuItemDelete(() => _ = DeleteSelectionOrNode(node)));
@@ -869,6 +874,7 @@ public partial class Sidebar : UserControl
             var moved = await MoveNodesCrossDb(target, res.DbId, res.ParentId, [move], "Перемещение");
             if (moved is { } m)
             {
+                // Имя из диалога (уникальность уже проверена диалогом) применяем на цели.
                 if (target.GetAllGroups().FirstOrDefault(g => g.Id == m.Id) is { } movedGroup && movedGroup.Name != res.Name)
                 {
                     movedGroup.Name = res.Name;
@@ -914,6 +920,7 @@ public partial class Sidebar : UserControl
             var moved = await MoveNodesCrossDb(target, res.DbId, res.GroupId, [move], "Перемещение");
             if (moved is { } m)
             {
+                // Имя из диалога (уникальность уже проверена диалогом) применяем на цели.
                 if (target.GetAllCollections().FirstOrDefault(c => c.Id == m.Id) is { } movedCol && movedCol.Name != res.Name)
                 {
                     movedCol.Name = res.Name;
@@ -1189,7 +1196,8 @@ public partial class Sidebar : UserControl
             }
         }
 
-        // Та же БД — только метаданные: группа меняет ParentId, коллекция — GroupId (ветка/записи на месте).
+        // Та же БД — только метаданные: группа меняет ParentId, коллекция — GroupId (ветка/записи на
+        // месте). Если в целевой группе/уровне уже есть одноимённый узел — даём «(копия)» (как дубль).
         foreach (var (r, isGroup, id) in sameDb)
         {
             if (isGroup)
@@ -1197,6 +1205,7 @@ public partial class Sidebar : UserControl
                 var g = r.GetAllGroups().FirstOrDefault(x => x.Id == id);
                 if (g is null) continue;
                 g.ParentId = res.GroupId;
+                g.Name     = r.UniqueGroupName(g.Name, res.GroupId, excludeId: id);
                 r.UpdateGroup(g);
             }
             else
@@ -1204,6 +1213,7 @@ public partial class Sidebar : UserControl
                 var col = r.GetAllCollections().FirstOrDefault(x => x.Id == id);
                 if (col is null) continue;
                 col.GroupId = res.GroupId;
+                col.Name    = r.UniqueCollectionName(col.Name, res.GroupId, excludeId: id);
                 r.UpdateCollection(col);
             }
         }
