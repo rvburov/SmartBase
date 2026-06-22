@@ -553,10 +553,10 @@ public class ConstructorRepository(AppDbContext db)
                                    IProgress<int>? progress = null, int batchSize = 10000)
     {
         var recCount = db.DbRecords.Count(r => r.CollectionId == srcCollectionId);
-        if (recCount == 0) { progress?.Report(0); return; }
 
         // old FieldId → new FieldId по Position: скелет копирует Position полей дословно, а Position
         // уникален в пределах коллекции — надёжнее, чем полагаться на порядок вставки/нумерации Id.
+        // Карта нужна и для значений, и для перемэппинга ключей UI-колонок (ширины/порядок/видимость).
         var oldFields = db.DbFields.AsNoTracking().Where(f => f.CollectionId == srcCollectionId)
             .Select(f => new { f.Id, f.Position }).ToList();
         var newByPos = new Dictionary<int, int>();
@@ -568,65 +568,137 @@ public class ConstructorRepository(AppDbContext db)
             if (newByPos.TryGetValue(of.Position, out var newFid)) fieldMap[of.Id] = newFid;
 
         using var tx = db.Database.BeginTransaction();
-        var createdAt = DateTime.Now.ToString("o");
-
-        // 1) Все записи одним INSERT … SELECT в порядке (Position, Id). Новые id — непрерывный блок
-        //    в этом порядке (SQLite присваивает rowid по порядку SELECT, мы единственный писатель).
-        db.Database.ExecuteSqlInterpolated($@"
-            INSERT INTO db_records (CollectionId, CreatedAt, Position, StartDt, EndDt, AllDay, Title, Description)
-            SELECT {newCollectionId}, {createdAt}, Position, StartDt, EndDt, AllDay, Title, Description
-            FROM db_records WHERE CollectionId = {srcCollectionId} ORDER BY Position, Id");
-        var firstNew = LastInsertRowid() - recCount + 1;
 
         // Временная карта полей (old_fid → new_fid) — чтобы копировать значения ВСЕХ полей за один
-        // INSERT (JOIN _dup_fmap), а не по одному полю. Живёт на этом подключении; пересоздаём.
+        // INSERT (JOIN _dup_fmap), а не по одному полю; та же карта перемэппливает ключи UI-колонок.
+        // Создаём заранее (нужна и при пустой коллекции — UI колонок копируем без записей). Живёт на
+        // этом подключении; пересоздаём.
         db.Database.ExecuteSqlRaw("DROP TABLE IF EXISTS temp._dup_fmap");
         db.Database.ExecuteSqlRaw("CREATE TEMP TABLE _dup_fmap(old_fid INTEGER PRIMARY KEY, new_fid INTEGER)");
         foreach (var (oldFid, newFid) in fieldMap)
             db.Database.ExecuteSqlInterpolated($"INSERT INTO _dup_fmap(old_fid, new_fid) VALUES ({oldFid}, {newFid})");
 
-        // 2) Значения крупными пакетами по (Position, Id). На каждый пакет — один INSERT по всем полям.
-        int prevPos = int.MinValue, prevId = 0, processed = 0;
-        while (processed < recCount)
+        long firstNew = 0;
+        if (recCount > 0)
         {
-            var bbase = firstNew + processed;   // новый RecordId первой записи пакета = bbase
-            var end   = BatchEndCursor(srcCollectionId, prevPos, prevId, batchSize);
-            if (end is { } e)
+            var createdAt = DateTime.Now.ToString("o");
+
+            // 1) Все записи одним INSERT … SELECT в порядке (Position, Id). Новые id — непрерывный блок
+            //    в этом порядке (SQLite присваивает rowid по порядку SELECT, мы единственный писатель).
+            db.Database.ExecuteSqlInterpolated($@"
+                INSERT INTO db_records (CollectionId, CreatedAt, Position, StartDt, EndDt, AllDay, Title, Description)
+                SELECT {newCollectionId}, {createdAt}, Position, StartDt, EndDt, AllDay, Title, Description
+                FROM db_records WHERE CollectionId = {srcCollectionId} ORDER BY Position, Id");
+            firstNew = LastInsertRowid() - recCount + 1;
+
+            // 2) Значения крупными пакетами по (Position, Id). На каждый пакет — один INSERT по всем полям.
+            int prevPos = int.MinValue, prevId = 0, processed = 0;
+            while (processed < recCount)
             {
-                db.Database.ExecuteSqlInterpolated($@"
-                    INSERT INTO db_field_values (RecordId, FieldId, Value)
-                    SELECT {bbase} + r.rn - 1, fm.new_fid, fv.Value
-                    FROM db_field_values fv
-                    JOIN (SELECT Id AS old_id, ROW_NUMBER() OVER (ORDER BY Position, Id) AS rn
-                          FROM db_records
-                          WHERE CollectionId = {srcCollectionId}
-                            AND (Position > {prevPos} OR (Position = {prevPos} AND Id > {prevId}))
-                            AND (Position < {e.Pos} OR (Position = {e.Pos} AND Id <= {e.Id}))) r
-                      ON r.old_id = fv.RecordId
-                    JOIN _dup_fmap fm ON fm.old_fid = fv.FieldId");
-                processed += batchSize;
-                prevPos = e.Pos; prevId = e.Id;
+                var bbase = firstNew + processed;   // новый RecordId первой записи пакета = bbase
+                var end   = BatchEndCursor(srcCollectionId, prevPos, prevId, batchSize);
+                if (end is { } e)
+                {
+                    db.Database.ExecuteSqlInterpolated($@"
+                        INSERT INTO db_field_values (RecordId, FieldId, Value)
+                        SELECT {bbase} + r.rn - 1, fm.new_fid, fv.Value
+                        FROM db_field_values fv
+                        JOIN (SELECT Id AS old_id, ROW_NUMBER() OVER (ORDER BY Position, Id) AS rn
+                              FROM db_records
+                              WHERE CollectionId = {srcCollectionId}
+                                AND (Position > {prevPos} OR (Position = {prevPos} AND Id > {prevId}))
+                                AND (Position < {e.Pos} OR (Position = {e.Pos} AND Id <= {e.Id}))) r
+                          ON r.old_id = fv.RecordId
+                        JOIN _dup_fmap fm ON fm.old_fid = fv.FieldId");
+                    processed += batchSize;
+                    prevPos = e.Pos; prevId = e.Id;
+                }
+                else
+                {
+                    // Последний (неполный) пакет: без верхней границы.
+                    db.Database.ExecuteSqlInterpolated($@"
+                        INSERT INTO db_field_values (RecordId, FieldId, Value)
+                        SELECT {bbase} + r.rn - 1, fm.new_fid, fv.Value
+                        FROM db_field_values fv
+                        JOIN (SELECT Id AS old_id, ROW_NUMBER() OVER (ORDER BY Position, Id) AS rn
+                              FROM db_records
+                              WHERE CollectionId = {srcCollectionId}
+                                AND (Position > {prevPos} OR (Position = {prevPos} AND Id > {prevId}))) r
+                          ON r.old_id = fv.RecordId
+                        JOIN _dup_fmap fm ON fm.old_fid = fv.FieldId");
+                    processed = recCount;
+                }
+                progress?.Report(Math.Min(processed, recCount));
             }
-            else
-            {
-                // Последний (неполный) пакет: без верхней границы.
-                db.Database.ExecuteSqlInterpolated($@"
-                    INSERT INTO db_field_values (RecordId, FieldId, Value)
-                    SELECT {bbase} + r.rn - 1, fm.new_fid, fv.Value
-                    FROM db_field_values fv
-                    JOIN (SELECT Id AS old_id, ROW_NUMBER() OVER (ORDER BY Position, Id) AS rn
-                          FROM db_records
-                          WHERE CollectionId = {srcCollectionId}
-                            AND (Position > {prevPos} OR (Position = {prevPos} AND Id > {prevId}))) r
-                      ON r.old_id = fv.RecordId
-                    JOIN _dup_fmap fm ON fm.old_fid = fv.FieldId");
-                processed = recCount;
-            }
-            progress?.Report(Math.Min(processed, recCount));
         }
+        else
+        {
+            progress?.Report(0);
+        }
+
+        // 3) UI-настройки коллекции (ширины/порядок/видимость колонок, высоты/видимость строк, режим
+        //    просмотра, подписи системных колонок) — чтобы дубль был ПОЛНОЙ копией, как перенос в другую
+        //    БД (см. CopyMovedUi). Поле-/коллекция-level копируем всегда, строки — только при наличии записей.
+        CopyDuplicatedUi(srcCollectionId, newCollectionId, firstNew, recCount);
 
         db.Database.ExecuteSqlRaw("DROP TABLE IF EXISTS temp._dup_fmap");
         tx.Commit();
+    }
+
+    // UI-настройки коллекции при дубле В ТОЙ ЖЕ БД: ключи-id полей перемэппливаются через временную
+    // карту _dup_fmap (та же, что для значений), записи — по рангу (Position, Id) → firstNew + ранг − 1
+    // (новые id непрерывны). Ключи column_order/display: числовой id поля → новый, системные
+    // (__title__/__desc__) — как есть. Поле-/коллекция-level копируем всегда; строки (row_heights,
+    // record_display) — только при наличии записей. Зеркало CopyMovedUi для одной БД (без ATTACH).
+    private void CopyDuplicatedUi(int srcCol, int newCol, long firstNew, long recCount)
+    {
+        db.Database.ExecuteSqlInterpolated($@"
+            INSERT INTO ui_col_widths (CollectionId, FieldId, Width)
+            SELECT {newCol}, fm.new_fid, w.Width FROM ui_col_widths w
+            JOIN _dup_fmap fm ON fm.old_fid = w.FieldId WHERE w.CollectionId = {srcCol}");
+
+        db.Database.ExecuteSqlInterpolated($@"
+            INSERT INTO ui_collection_settings (CollectionId, ColResize, RowResize, ViewMode)
+            SELECT {newCol}, ColResize, RowResize, ViewMode FROM ui_collection_settings WHERE CollectionId = {srcCol}");
+
+        db.Database.ExecuteSqlInterpolated($@"
+            INSERT INTO system_field_meta (CollectionId, Key, DisplayName, Position)
+            SELECT {newCol}, Key, DisplayName, Position FROM system_field_meta WHERE CollectionId = {srcCol}");
+
+        db.Database.ExecuteSqlInterpolated($@"
+            INSERT INTO column_order (CollectionId, Key, Position)
+            SELECT {newCol},
+                   CASE WHEN fm.new_fid IS NOT NULL THEN CAST(fm.new_fid AS TEXT) ELSE co.Key END,
+                   co.Position
+            FROM column_order co
+            LEFT JOIN _dup_fmap fm ON co.Key GLOB '[0-9]*' AND CAST(co.Key AS INTEGER) = fm.old_fid
+            WHERE co.CollectionId = {srcCol}");
+
+        db.Database.ExecuteSqlInterpolated($@"
+            INSERT INTO column_display (CollectionId, Key, Visible, Level)
+            SELECT {newCol},
+                   CASE WHEN fm.new_fid IS NOT NULL THEN CAST(fm.new_fid AS TEXT) ELSE cd.Key END,
+                   cd.Visible, cd.Level
+            FROM column_display cd
+            LEFT JOIN _dup_fmap fm ON cd.Key GLOB '[0-9]*' AND CAST(cd.Key AS INTEGER) = fm.old_fid
+            WHERE cd.CollectionId = {srcCol}");
+
+        if (recCount > 0)
+        {
+            db.Database.ExecuteSqlInterpolated($@"
+                INSERT INTO ui_row_heights (CollectionId, RecordId, Height)
+                SELECT {newCol}, {firstNew} + r.rn - 1, h.Height FROM ui_row_heights h
+                JOIN (SELECT Id AS old_id, ROW_NUMBER() OVER (ORDER BY Position, Id) AS rn
+                      FROM db_records WHERE CollectionId = {srcCol}) r ON r.old_id = h.RecordId
+                WHERE h.CollectionId = {srcCol}");
+
+            db.Database.ExecuteSqlInterpolated($@"
+                INSERT INTO record_display (CollectionId, RecordId, Visible, Level)
+                SELECT {newCol}, {firstNew} + r.rn - 1, d.Visible, d.Level FROM record_display d
+                JOIN (SELECT Id AS old_id, ROW_NUMBER() OVER (ORDER BY Position, Id) AS rn
+                      FROM db_records WHERE CollectionId = {srcCol}) r ON r.old_id = d.RecordId
+                WHERE d.CollectionId = {srcCol}");
+        }
     }
 
     // id последней вставленной строки на текущем подключении (в открытой транзакции).
@@ -982,7 +1054,9 @@ public class ConstructorRepository(AppDbContext db)
         targetCtx.ApplyPerformancePragmas();
         var target = new ConstructorRepository(targetCtx);
 
-        var newColId = target.CopyCollectionFromAttached(sourceDbPath, srcCollectionId, targetGroupId, progress, batchSize);
+        // Прогресс покрывает ОБЕ фазы: копию (0..recCount) и удаление исходника (recCount..2·recCount).
+        // Иначе бар замирал на 100% на всё время удаления (каскад записей/значений — минуты на больших).
+        var (newColId, recCount) = target.CopyCollectionFromAttached(sourceDbPath, srcCollectionId, targetGroupId, progress, batchSize);
         if (newColId == 0) return 0;
 
         // Источник чистим на отдельном подключении (каскад: записи→значения, коллекция→поля).
@@ -990,7 +1064,7 @@ public class ConstructorRepository(AppDbContext db)
         {
             using var srcCtx = new AppDbContext(sourceDbPath);
             srcCtx.ApplyPerformancePragmas();
-            new ConstructorRepository(srcCtx).DeleteCollectionData(srcCollectionId);
+            new ConstructorRepository(srcCtx).DeleteCollectionData(srcCollectionId, new BaseProgress(progress, recCount));
         }
         catch
         {
@@ -1014,14 +1088,15 @@ public class ConstructorRepository(AppDbContext db)
         targetCtx.ApplyPerformancePragmas();
         var target = new ConstructorRepository(targetCtx);
 
-        var newRootId = target.CopyGroupFromAttached(sourceDbPath, srcGroupId, targetParentId, progress, batchSize);
+        // Прогресс покрывает ОБЕ фазы: копию ветки (0..total) и удаление исходной ветки (total..2·total).
+        var (newRootId, total) = target.CopyGroupFromAttached(sourceDbPath, srcGroupId, targetParentId, progress, batchSize);
         if (newRootId == 0) return 0;
 
         try
         {
             using var srcCtx = new AppDbContext(sourceDbPath);
             srcCtx.ApplyPerformancePragmas();
-            new ConstructorRepository(srcCtx).DeleteGroupData(srcGroupId);
+            new ConstructorRepository(srcCtx).DeleteGroupData(srcGroupId, new BaseProgress(progress, total));
         }
         catch
         {
@@ -1034,8 +1109,8 @@ public class ConstructorRepository(AppDbContext db)
     // Перенос группы из присоединённой БД: одна транзакция целевой БД — сначала структура групп
     // (CloneGroupTreeAttached, имена через INSERT…SELECT, без материализации в C#), затем все коллекции
     // ветки по очереди с общим % (progressBase накапливает перенесённые записи).
-    private int CopyGroupFromAttached(string sourceDbPath, int srcGroupId, int? targetParentId,
-                                      IProgress<int>? progress, int batchSize) =>
+    private (int NewRootId, long TotalRecords) CopyGroupFromAttached(string sourceDbPath, int srcGroupId,
+                                      int? targetParentId, IProgress<int>? progress, int batchSize) =>
         WithAttachedSource(sourceDbPath, conn =>
         {
             using var tx = conn.BeginTransaction();
@@ -1056,7 +1131,7 @@ public class ConstructorRepository(AppDbContext db)
             }
 
             tx.Commit();
-            return newRoot;
+            return (newRoot, basis);   // basis = суммарно перенесённых записей ветки (для прогресса удаления)
         });
 
     // Рекурсивно копирует структуру групп из src в main (INSERT…SELECT — имя остаётся в SQL, без
@@ -1116,14 +1191,14 @@ public class ConstructorRepository(AppDbContext db)
     }
 
     // Перенос одной коллекции из присоединённой БД: одна транзакция целевой БД.
-    private int CopyCollectionFromAttached(string sourceDbPath, int srcCollectionId, int? targetGroupId,
-                                           IProgress<int>? progress, int batchSize) =>
+    private (int NewColId, long RecCount) CopyCollectionFromAttached(string sourceDbPath, int srcCollectionId,
+                                           int? targetGroupId, IProgress<int>? progress, int batchSize) =>
         WithAttachedSource(sourceDbPath, conn =>
         {
             using var tx = conn.BeginTransaction();
-            var (newColId, _) = CopyOneCollectionFromAttached(conn, tx, srcCollectionId, targetGroupId, progress, 0, batchSize);
+            var (newColId, recCount) = CopyOneCollectionFromAttached(conn, tx, srcCollectionId, targetGroupId, progress, 0, batchSize);
             tx.Commit();
-            return newColId;
+            return (newColId, recCount);
         });
 
     // Копия ОДНОЙ коллекции из src в main в УЖЕ открытой транзакции (для переноса группы — много

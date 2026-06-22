@@ -859,16 +859,25 @@ public partial class Sidebar : UserControl
         var res = await dlg.ShowDialog<GroupDialogResult?>(OwnerWindow);
         if (res is null) return;
 
-        // Смена БД → перенос группы со всей веткой в целевую БД (атомарный импорт + откат при сбое).
+        // Смена БД → перенос группы со всей веткой в целевую БД быстрым путём (ATTACH + bulk, окно
+        // прогресса для больших), как пункт «Расположение». Имя задаётся отдельно (быстрый путь
+        // копирует его как есть) — применяем выбранное после переноса.
         if (res.DbId != dbId && RepoFor(res.DbId) is { } target)
         {
-            try
+            var (gcols, grecs) = repo.CountGroupSubtree(groupId);
+            var move  = new CrossMove(repo, IsGroup: true, groupId, grecs, gcols);
+            var moved = await MoveNodesCrossDb(target, res.DbId, res.ParentId, [move], "Перемещение");
+            if (moved is { } m)
             {
-                var moved = ConstructorRepository.MoveGroup(repo, target, groupId, res.ParentId, res.Name);
+                if (target.GetAllGroups().FirstOrDefault(g => g.Id == m.Id) is { } movedGroup && movedGroup.Name != res.Name)
+                {
+                    movedGroup.Name = res.Name;
+                    target.UpdateGroup(movedGroup);
+                }
                 ReloadAndNotify();
-                if (moved.Id.HasValue) ExpandGroup(res.DbId, moved.Id.Value);
+                ExpandGroup(res.DbId, m.Id);
             }
-            catch
+            else
             {
                 ReloadAndNotify();
                 if (OwnerWindow is not null)
@@ -896,17 +905,24 @@ public partial class Sidebar : UserControl
         var res = await dlg.ShowDialog<CollectionDialogResult?>(OwnerWindow);
         if (res is null) return;
 
-        // Смена БД → перенос коллекции в целевую БД (атомарный импорт + откат копии при сбое).
+        // Смена БД → перенос коллекции в целевую БД быстрым путём (ATTACH + bulk, окно прогресса для
+        // больших), как пункт «Расположение». Имя задаётся отдельно (быстрый путь копирует его как
+        // есть) — применяем выбранное после переноса.
         if (res.DbId != dbId && RepoFor(res.DbId) is { } target)
         {
-            try
+            var move  = new CrossMove(repo, IsGroup: false, collectionId, repo.CountRecords(collectionId), Collections: 1);
+            var moved = await MoveNodesCrossDb(target, res.DbId, res.GroupId, [move], "Перемещение");
+            if (moved is { } m)
             {
-                var moved = ConstructorRepository.MoveCollection(repo, target, collectionId, res.GroupId, res.Name);
+                if (target.GetAllCollections().FirstOrDefault(c => c.Id == m.Id) is { } movedCol && movedCol.Name != res.Name)
+                {
+                    movedCol.Name = res.Name;
+                    target.UpdateCollection(movedCol);
+                }
                 ReloadAndNotify();
-                if (_mode == SidebarMode.Constructor && moved.Id.HasValue)
-                    OpenCollection(res.DbId, moved.Id.Value);
+                if (_mode == SidebarMode.Constructor) OpenCollection(res.DbId, m.Id);
             }
-            catch
+            else
             {
                 ReloadAndNotify();   // вернёт исходное состояние в дерево
                 if (OwnerWindow is not null)
@@ -1036,6 +1052,100 @@ public partial class Sidebar : UserControl
         public void Report(int value) => report(value);
     }
 
+    // Одна цель кросс-БД переноса: репозиторий-ИСТОЧНИК, что переносим (группа/коллекция), его id,
+    // и счётчики (записей в ветке/коллекции и число коллекций — для порога, % и текста индикатора).
+    private sealed record CrossMove(ConstructorRepository SrcRepo, bool IsGroup, int Id, long Records, int Collections);
+
+    // Перенести набор узлов в ДРУГУЮ БД быстрым путём (Move*Isolated: ATTACH + bulk INSERT…SELECT на
+    // отдельных подключениях, не трогая общий Context). targetLocation — расположение в целевой БД:
+    // для коллекции это её группа, для группы — родитель. Малый суммарный объём (≤ порога) — синхронно
+    // мгновенно без окна; больше — окно прогресса (title) + перенос по очереди в фоне с общим %. Ошибки
+    // переноса не валят UI (как дубль/удаление). Возвращает (целевая БД, новый id, IsGroup) последнего
+    // успешно перенесённого узла (для reveal) либо null, если ничего не перенеслось/была ошибка.
+    private async Task<(int DbId, int Id, bool IsGroup)?> MoveNodesCrossDb(
+        ConstructorRepository targetRepo, int targetDbId, int? targetLocation,
+        IReadOnlyList<CrossMove> crossDb, string title)
+    {
+        if (crossDb.Count == 0 || OwnerWindow is null) return null;
+
+        long total       = crossDb.Sum(t => t.Records);
+        int  collections = crossDb.Sum(t => t.Collections);
+        bool anyGroup    = crossDb.Any(t => t.IsGroup);
+
+        int MoveOne(CrossMove t, IProgress<int>? p) => t.IsGroup
+            ? targetRepo.MoveGroupIsolated(t.SrcRepo.DbPath, t.Id, targetLocation, p)
+            : targetRepo.MoveCollectionIsolated(t.SrcRepo.DbPath, t.Id, targetLocation, p);
+
+        (int DbId, int Id, bool IsGroup)? reveal = null;
+
+        // Малый объём — перенос синхронно, мгновенно (bulk-копия быстрая).
+        if (total <= BulkProgressThreshold)
+        {
+            try
+            {
+                foreach (var t in crossDb)
+                {
+                    var nid = MoveOne(t, null);
+                    if (nid != 0) reveal = (targetDbId, nid, t.IsGroup);
+                }
+            }
+            catch { /* узел либо перенесён, либо нет — UI не валим */ }
+            return reveal;
+        }
+
+        // Большой объём — окно прогресса. Перенос ПО ОЧЕРЕДИ в фоне на отдельных подключениях;
+        // проценты — общий прогресс по всем целям.
+        var dlg = new ProgressDialog { Title = title };
+        dlg.SetInfo(BulkInfo(collections, total, anyGroup));
+        var closed = dlg.ShowDialog(OwnerWindow);
+
+        // Прогресс покрывает И копию, И удаление исходника: на каждую цель 2× записей (копия — первая
+        // половина 0..Records, удаление исходной БД — вторая Records..2·Records). Иначе бар замирал на
+        // 100% на всё время удаления (каскад записей/значений — минуты на больших коллекциях/ветках).
+        long workTotal = 2 * total;
+        var lastPct = -1;
+        var lastText = "";
+        try
+        {
+            await Task.Run(() =>
+            {
+                long basis = 0;
+                for (var i = 0; i < crossDb.Count; i++)
+                {
+                    var t    = crossDb[i];
+                    var b    = basis;
+                    var step = i + 1;
+                    var moving = crossDb.Count > 1
+                        ? $"{title}… ({step}/{crossDb.Count})"
+                        : t.IsGroup ? $"{title} группы…" : $"{title} коллекции…";
+                    var deleting = crossDb.Count > 1
+                        ? $"Удаление из исходной базы… ({step}/{crossDb.Count})"
+                        : "Удаление из исходной базы…";
+                    IProgress<int> p = new IntProgress(done =>
+                    {
+                        // done: 0..Records — копия, Records..2·Records — удаление исходника.
+                        var text = done < t.Records ? moving : deleting;
+                        var pct  = workTotal == 0 ? 100 : (int)((b + done) * 100 / workTotal);
+                        if (pct == lastPct && text == lastText) return;   // фаза могла смениться при том же %
+                        lastPct = pct; lastText = text;
+                        Dispatcher.UIThread.Post(() => dlg.SetProgress(pct / 100.0, text));
+                    });
+                    var nid = MoveOne(t, p);
+                    if (nid != 0) reveal = (targetDbId, nid, t.IsGroup);
+                    basis += 2 * t.Records;
+                }
+            });
+        }
+        catch
+        {
+            // Ошибку фона проглатываем: узел либо перенесён, либо нет — UI не валим.
+        }
+
+        dlg.Done();
+        await closed;
+        return reveal;
+    }
+
     // «Расположение» через контекстное меню: если клик по узлу из мультивыделения — перемещаем ВЕСЬ
     // набор (коллекции И группы со всей веткой); иначе только этот узел. Окно (как «Изменение», но без
     // названия) выбирает целевую БД и расположение (для коллекции — её группа, для группы — родитель).
@@ -1066,8 +1176,7 @@ public partial class Sidebar : UserControl
 
         // Разделяем: та же БД (мгновенно: метаданные) vs перенос в другую БД (bulk + прогресс).
         var sameDb  = new List<(ConstructorRepository Repo, bool IsGroup, int Id)>();
-        var crossDb = new List<(ConstructorRepository SrcRepo, bool IsGroup, int Id, long Records)>();
-        long crossTotal = 0; int crossCollections = 0; bool crossAnyGroup = false;
+        var crossDb = new List<CrossMove>();
         foreach (var n in picked)
         {
             var r = RepoFor(n.DbId);
@@ -1076,8 +1185,7 @@ public partial class Sidebar : UserControl
             else
             {
                 var (rec, cols) = CountNode(n);
-                crossDb.Add((r, n.IsGroup, n.Id!.Value, rec));
-                crossTotal += rec; crossCollections += cols; crossAnyGroup |= n.IsGroup;
+                crossDb.Add(new CrossMove(r, n.IsGroup, n.Id!.Value, rec, cols));
             }
         }
 
@@ -1107,64 +1215,8 @@ public partial class Sidebar : UserControl
 
         if (crossDb.Count > 0)
         {
-            if (crossTotal <= BulkProgressThreshold)
-            {
-                // Малый объём — перенос синхронно, мгновенно (bulk-копия быстрая).
-                foreach (var t in crossDb)
-                {
-                    var nid = t.IsGroup
-                        ? targetRepo.MoveGroupIsolated(t.SrcRepo.DbPath, t.Id, res.GroupId)
-                        : targetRepo.MoveCollectionIsolated(t.SrcRepo.DbPath, t.Id, res.GroupId);
-                    if (nid != 0 && single) reveal = (res.DbId, nid, t.IsGroup);
-                }
-            }
-            else
-            {
-                // Большой объём — окно прогресса. Перенос ПО ОЧЕРЕДИ в фоне на отдельных подключениях;
-                // проценты — общий прогресс по всем целям.
-                var pdlg = new ProgressDialog { Title = "Перемещение" };
-                pdlg.SetInfo(BulkInfo(crossCollections, crossTotal, crossAnyGroup));
-                var pclosed = pdlg.ShowDialog(OwnerWindow);
-
-                (int DbId, int Id, bool IsGroup)? revealBig = null;
-                var lastPct = -1;
-                try
-                {
-                    await Task.Run(() =>
-                    {
-                        long basis = 0;
-                        for (var i = 0; i < crossDb.Count; i++)
-                        {
-                            var t    = crossDb[i];
-                            var b    = basis;
-                            var step = i + 1;
-                            var text = crossDb.Count > 1
-                                ? $"Перемещение… ({step}/{crossDb.Count})"
-                                : t.IsGroup ? "Перемещение группы…" : "Перемещение коллекции…";
-                            IProgress<int> p = new IntProgress(done =>
-                            {
-                                var pct = crossTotal == 0 ? 100 : (int)((b + done) * 100 / crossTotal);
-                                if (pct == lastPct) return;
-                                lastPct = pct;
-                                Dispatcher.UIThread.Post(() => pdlg.SetProgress(pct / 100.0, text));
-                            });
-                            var nid = t.IsGroup
-                                ? targetRepo.MoveGroupIsolated(t.SrcRepo.DbPath, t.Id, res.GroupId, p)
-                                : targetRepo.MoveCollectionIsolated(t.SrcRepo.DbPath, t.Id, res.GroupId, p);
-                            if (nid != 0) revealBig = (res.DbId, nid, t.IsGroup);
-                            basis += t.Records;
-                        }
-                    });
-                }
-                catch
-                {
-                    // Ошибку фона проглатываем: узел либо перенесён, либо нет — UI не валим.
-                }
-
-                pdlg.Done();
-                await pclosed;
-                if (single && revealBig is { } rb) reveal = rb;
-            }
+            var moved = await MoveNodesCrossDb(targetRepo, res.DbId, res.GroupId, crossDb, "Перемещение");
+            if (single && moved is { } m) reveal = m;
         }
 
         _selectedNodes.Clear();
