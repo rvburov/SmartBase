@@ -206,6 +206,23 @@
         <Setter Property="CornerRadius"    Value="{StaticResource RadiusMedium}" />
     </Style>
 
+    <!-- Всплывашка-уведомление (Toast): сама плашка БЕЗ своего оформления — внутри живёт обычный
+         баннер (ErrorBanner) ровно как в диалогах, поэтому фон под ним = BrushBg (как фон окна
+         диалога), скругление = радиус баннера, без рамки/паддинга. Так всплывашка 1-в-1 совпадает
+         с баннером в окнах «Создать»/«Изменить». Живёт здесь, т.к. FlyoutPresenter рендерится в popup-руте. -->
+    <Style Selector="FlyoutPresenter.toast">
+        <Setter Property="Padding"                    Value="0" />
+        <Setter Property="Background"                 Value="{StaticResource BrushBg}" />
+        <Setter Property="BorderThickness"            Value="0" />
+        <Setter Property="CornerRadius"               Value="{StaticResource RadiusBase}" />
+        <Setter Property="MinWidth"                   Value="0" />
+        <!-- Снимаем дефолтную min-высоту Fluent: высота = как у баннера (по контенту),
+             а не выше с пустотой снизу. Контент — по центру по вертикали. -->
+        <Setter Property="MinHeight"                  Value="0" />
+        <Setter Property="VerticalContentAlignment"   Value="Center" />
+        <Setter Property="MaxWidth"                   Value="460" />
+    </Style>
+
     <!-- ComboBox — серый фон, скругление, рамка как у поля даты/времени -->
     <Style Selector="ComboBox">
         <Setter Property="Background"      Value="{StaticResource BrushSecondaryBg}" />

@@ -410,6 +410,15 @@ public partial class ConstructorControllerView : UserControl
         var col = _repository.GetAllCollections().FirstOrDefault(c => c.Id == _currentCollectionId);
         if (col is null || col.Name == newName) return;
 
+        // Имя занято другой коллекцией в той же группе → отклоняем (как диалоги «Создать»/«Изменить»):
+        // возвращаем прежнее имя в заголовке и показываем всплывашку у самого заголовка.
+        if (_repository.CollectionNameExists(newName, col.GroupId, excludeId: col.Id))
+        {
+            ConstructorNavbar.SetTitle(col.Name);
+            ConstructorNavbar.ShowTitleError("Коллекция с таким названием уже существует");
+            return;
+        }
+
         col.Name = newName;
         _repository.UpdateCollection(col);
         CollectionsChanged?.Invoke(this, EventArgs.Empty);

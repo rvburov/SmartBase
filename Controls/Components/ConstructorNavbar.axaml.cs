@@ -1,6 +1,8 @@
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Media;
+using Avalonia.Threading;
+using DataBase.Controls.Widgets;
 
 namespace DataBase.Controls.Components;
 
@@ -76,6 +78,11 @@ public partial class ConstructorNavbar : UserControl
         RecordCloseIcon.IsVisible = open;
         ToolTip.SetTip(RecordPanelBtn, open ? "Закрыть запись" : "Открыть запись");
     }
+
+    /// <summary>Всплывашка-ошибка у заголовка коллекции (напр. при попытке дублирующего имени).
+    /// Через Post — чтобы показать после завершения текущего события commit/focus.</summary>
+    public void ShowTitleError(string message)
+        => Dispatcher.UIThread.Post(() => Toast.Error(TitleDisplay, message));
 
     public void SetTitle(string text)
     {
