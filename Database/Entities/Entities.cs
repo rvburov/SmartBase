@@ -87,6 +87,27 @@ public class DbFieldValueEntity
     public DbFieldEntity  Field  { get; set; } = null!;
 }
 
+// Индексная проекция календаря: по строке на каждое видимое значение поля-даты
+// (запись × поле-дата с IsCalStart). Денормализованный кэш под быстрый запрос диапазона —
+// календарь читает отсюда, а не сканирует db_field_values. Start/End — ISO-строки
+// (yyyy-MM-ddTHH:mm:ss), сортируются лексикографически. FK-каскады чистят строки при
+// удалении записи/поля (как у db_field_values). Содержимое целиком derived из
+// db_field_values + DbFields.IsCalStart.
+public class CalendarIndexEntity
+{
+    public int    RecordId     { get; set; }
+    public int    FieldId      { get; set; }
+    public int    CollectionId { get; set; }
+    public string StartIso     { get; set; } = "";   // ISO "o"-формат, сортируется лексикографически
+    public string EndIso       { get; set; } = "";
+    public bool   AllDay       { get; set; }
+
+    [ForeignKey(nameof(RecordId))]
+    public DbRecordEntity Record { get; set; } = null!;
+    [ForeignKey(nameof(FieldId))]
+    public DbFieldEntity  Field  { get; set; } = null!;
+}
+
 public class UiColWidthEntity
 {
     public int CollectionId { get; set; }

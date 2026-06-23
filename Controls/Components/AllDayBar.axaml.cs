@@ -360,7 +360,7 @@ public partial class AllDayBar : UserControl
             .Where(e => e.AllDay || (e.EndDt - e.StartDt).TotalSeconds >= 86400)
             .Where(e => _currentDays.Any(d =>
                 DateOnly.FromDateTime(e.StartDt) <= d && d <= DateOnly.FromDateTime(e.EndDt)))
-            .DistinctBy(e => e.Id)
+            .DistinctBy(e => (e.Id, e.FieldId))   // событие = (запись, поле-дата): не схлопываем разные даты одной записи
             // Сначала многодневные, затем однодневные; внутри группы — по времени
             // начала (раньше → выше), при равенстве — по названию для стабильности.
             .OrderBy(e => (e.EndDt.Date - e.StartDt.Date).TotalDays < 1 ? 1 : 0)
@@ -659,7 +659,7 @@ public partial class AllDayBar : UserControl
         for (var row = 0; ; row++)
         {
             var occupied = _allDayEntries.Any(en =>
-                en.Ev.Id != _dragEvent?.Id
+                !(_dragEvent is not null && en.Ev.Id == _dragEvent.Id && en.Ev.FieldId == _dragEvent.FieldId)
                 && en.Row == row
                 && en.Col <= endCol
                 && en.Col + en.Span - 1 >= startCol);

@@ -166,6 +166,24 @@
                           Foreground="{StaticResource BrushPrimaryText}"
                           CornerRadius="{StaticResource RadiusBase}" />
 
+                <!-- Дата записи: выбирает, какое поле-дата коллекции показывается в календаре
+                     (общее для всей коллекции). Показывается всегда. -->
+                <StackPanel x:Name="EventDateSection" IsVisible="False" Spacing="0">
+                    <TextBlock Text="Дата записи"
+                               Margin="0,0,0,6"
+                               FontWeight="{StaticResource FontWeightBold}"
+                               FontSize="{StaticResource FontSizeBase}"
+                               Foreground="{StaticResource BrushSecondaryText}" />
+                    <ComboBox x:Name="EventDateCombo"
+                              HorizontalAlignment="Stretch"
+                              Height="34"
+                              Margin="0,0,0,12"
+                              PlaceholderText="Выберите дату"
+                              Background="{StaticResource BrushSecondaryBg}"
+                              Foreground="{StaticResource BrushPrimaryText}"
+                              CornerRadius="{StaticResource RadiusBase}" />
+                </StackPanel>
+
                 <!-- Описание -->
                 <TextBlock Text="Описание"
                            Margin="0,0,0,6"

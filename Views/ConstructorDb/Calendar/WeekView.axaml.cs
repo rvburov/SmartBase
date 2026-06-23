@@ -59,7 +59,9 @@ public partial class WeekView : UserControl
 
     // selection (множественное: событие -> функция снятия подсветки)
     private readonly Dictionary<CalendarRecord, Action> _selections = new();
-    private int? _pendingSelectId;
+    // Идентичность события — пара (Id записи, FieldId поля-даты): одна запись может давать
+    // несколько событий (по полю на дату), поэтому одного Id для опознания недостаточно.
+    private (int Id, int FieldId)? _pendingSelectId;
 
     // позиция последнего правого клика по сетке — для меню «Создать запись»
     private Point _gridContextPos;
@@ -415,7 +417,8 @@ public partial class WeekView : UserControl
 
         if (_pendingSelectId.HasValue)
         {
-            var toSelect = _eventEntries.FirstOrDefault(e => e.Ev.Id == _pendingSelectId.Value);
+            var toSelect = _eventEntries.FirstOrDefault(e =>
+                e.Ev.Id == _pendingSelectId.Value.Id && e.Ev.FieldId == _pendingSelectId.Value.FieldId);
             if (toSelect is not null)
             {
                 toSelect.Select?.Invoke();
@@ -812,7 +815,7 @@ public partial class WeekView : UserControl
             // делаем все сегменты перетаскиваемого события полупрозрачными
             _Deselect();
             _dragDimmedBtns = _eventEntries
-                .Where(e => e.Ev.Id == _dragEvent!.Id)
+                .Where(e => e.Ev.Id == _dragEvent!.Id && e.Ev.FieldId == _dragEvent!.FieldId)
                 .ToList();
             foreach (var b in _dragDimmedBtns)
                 b.Dim?.Invoke();
@@ -1140,7 +1143,7 @@ public partial class WeekView : UserControl
                 }
             }
 
-            _pendingSelectId = ev.Id;
+            _pendingSelectId = (ev.Id ?? 0, ev.FieldId);
             RecordMoved?.Invoke(this, ev);
 
             e.Pointer.Capture(null);
@@ -1250,7 +1253,7 @@ public partial class WeekView : UserControl
             _dragEvent.StartDt = newStart;
             _dragEvent.EndDt   = newStart.AddMinutes(duration);
 
-            _pendingSelectId = _dragEvent.Id;
+            _pendingSelectId = (_dragEvent.Id ?? 0, _dragEvent.FieldId);
             RecordMoved?.Invoke(this, _dragEvent);
         }
 

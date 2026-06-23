@@ -11,6 +11,8 @@ using DataBase.Utils;
 
 namespace DataBase.Controls.Dialogs;
 
+// Record.FieldId — выбранное поле-дата (куда кладётся дата события). Контроллер при
+// изменении сравнивает его с прежним полем и при смене переносит дату (очищает старое).
 public record RecordDialogResult(CalendarRecord? Record, bool Deleted = false);
 
 public partial class RecordDialog : Window
@@ -29,6 +31,8 @@ public partial class RecordDialog : Window
     // Смонтированные БД и выбранная цель (выбор перенесён сюда из отдельного окна).
     private readonly List<(int DbId, string Name, ConstructorRepository Repo)> _databases = [];
     private int _selectedDbId;
+    // Поля-даты выбранной коллекции (для списка «Дата события» при 2+ датах).
+    private List<DbField> _eventDateFields = [];
     private TimeSpan _savedStartTime = new(9, 0, 0);
     private TimeSpan _savedEndTime   = new(10, 0, 0);
 
@@ -144,7 +148,35 @@ public partial class RecordDialog : Window
         Deactivated += (_, _) => CloseTimePopups();
         Closing     += (_, _) => CloseTimePopups();
 
+        // Список «Дата события» зависит от выбранной коллекции — обновляем при её смене
+        // (смена БД тоже сюда приводит: LoadCollections сбрасывает выбор коллекции).
+        CollectionCombo.SelectionChanged += (_, _) => UpdateEventDateField();
+        UpdateEventDateField();
+
         UpdateTimeVisibility();
+    }
+
+    // Список «Дата записи»: показываем всегда. Перечисляет видимые в календаре поля-даты
+    // коллекции (IsCalStart) — куда положить дату этого события. По умолчанию: при изменении —
+    // поле самого события, при создании — первое доступное. Если видимых полей-дат нет —
+    // список пуст, и при сохранении дата ляжет в системное «Дата» (создаётся автоматически).
+    private void UpdateEventDateField()
+    {
+        var idx   = CollectionCombo.SelectedIndex;
+        var colId = idx >= 0 && idx < _collections.Count ? _collections[idx].Id : null;
+
+        _eventDateFields = colId.HasValue
+            ? CurrentRepo.GetFields(colId.Value).Where(f => f.FieldType == "date" && f.IsCalStart).ToList()
+            : [];
+
+        EventDateSection.IsVisible = true;
+        EventDateCombo.ItemsSource = _eventDateFields.Select(f => f.Name).ToList();
+
+        var sel = _editRecord is not null
+            ? _eventDateFields.FindIndex(f => f.Id == _editRecord.FieldId)
+            : -1;
+        if (sel < 0 && _eventDateFields.Count > 0) sel = 0;
+        EventDateCombo.SelectedIndex = sel;
     }
 
     // Репозиторий выбранной БД.
@@ -413,10 +445,25 @@ public partial class RecordDialog : Window
         var colIdx = CollectionCombo.SelectedIndex;
         var colId  = colIdx >= 0 ? _collections[colIdx].Id : null;
 
+        // Поле-дата, куда положить дату события. Если есть видимые поля-даты — берём выбранное;
+        // если их нет — 0 (репозиторий положит дату в системное «Дата», создав его).
+        var chosenFieldId = 0;
+        if (_eventDateFields.Count > 0)
+        {
+            var di = EventDateCombo.SelectedIndex;
+            if (di < 0 || di >= _eventDateFields.Count)
+            {
+                ShowError("Выберите дату для отображения в календаре");
+                return;
+            }
+            chosenFieldId = _eventDateFields[di].Id ?? 0;
+        }
+
         var candidate = new CalendarRecord
         {
             Id           = existingId,
             DbId         = _selectedDbId,
+            FieldId      = chosenFieldId,
             Title        = title,
             Description  = DescBox.Text ?? "",
             StartDt      = startDt,

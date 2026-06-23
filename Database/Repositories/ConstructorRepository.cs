@@ -643,6 +643,9 @@ public class ConstructorRepository(AppDbContext db)
 
         db.Database.ExecuteSqlRaw("DROP TABLE IF EXISTS temp._dup_fmap");
         tx.Commit();
+
+        // Дубль мог принести видимые поля-даты со значениями — наполняем их проекцию календаря.
+        RebuildCalendarIndexForCollection(newCollectionId);
     }
 
     // UI-настройки коллекции при дубле В ТОЙ ЖЕ БД: ключи-id полей перемэппливаются через временную
@@ -1117,13 +1120,15 @@ public class ConstructorRepository(AppDbContext db)
     // (CloneGroupTreeAttached, имена через INSERT…SELECT, без материализации в C#), затем все коллекции
     // ветки по очереди с общим % (progressBase накапливает перенесённые записи).
     private (int NewRootId, long TotalRecords) CopyGroupFromAttached(string sourceDbPath, int srcGroupId,
-                                      int? targetParentId, IProgress<int>? progress, int batchSize) =>
-        WithAttachedSource(sourceDbPath, conn =>
+                                      int? targetParentId, IProgress<int>? progress, int batchSize)
+    {
+        var newColIds = new List<int>();
+        var (newRoot, total) = WithAttachedSource(sourceDbPath, conn =>
         {
             using var tx = conn.BeginTransaction();
 
             var map     = new Dictionary<int, int>();   // старый id группы → новый
-            var newRoot = CloneGroupTreeAttached(conn, tx, srcGroupId, targetParentId, map);
+            var root    = CloneGroupTreeAttached(conn, tx, srcGroupId, targetParentId, map);
 
             // Коллекции ветки (GroupId в наборе старых id) — по очереди, с накоплением прогресса.
             var oldGroupIds = string.Join(",", map.Keys);
@@ -1133,13 +1138,19 @@ public class ConstructorRepository(AppDbContext db)
             long basis = 0;
             foreach (var (colId, oldGroup) in cols)
             {
-                var (_, rc) = CopyOneCollectionFromAttached(conn, tx, colId, map[oldGroup], progress, basis, batchSize);
+                var (newColId, rc) = CopyOneCollectionFromAttached(conn, tx, colId, map[oldGroup], progress, basis, batchSize);
+                newColIds.Add(newColId);
                 basis += rc;
             }
 
             tx.Commit();
-            return (newRoot, basis);   // basis = суммарно перенесённых записей ветки (для прогресса удаления)
+            return (root, basis);   // basis = суммарно перенесённых записей ветки (для прогресса удаления)
         });
+
+        // Наполняем проекцию календаря для перенесённых коллекций (вне ATTACH-транзакции).
+        foreach (var cid in newColIds) RebuildCalendarIndexForCollection(cid);
+        return (newRoot, total);
+    }
 
     // Рекурсивно копирует структуру групп из src в main (INSERT…SELECT — имя остаётся в SQL, без
     // инъекции). Заполняет map (старый id → новый). Возвращает id новой верхней группы.
@@ -1199,14 +1210,20 @@ public class ConstructorRepository(AppDbContext db)
 
     // Перенос одной коллекции из присоединённой БД: одна транзакция целевой БД.
     private (int NewColId, long RecCount) CopyCollectionFromAttached(string sourceDbPath, int srcCollectionId,
-                                           int? targetGroupId, IProgress<int>? progress, int batchSize) =>
-        WithAttachedSource(sourceDbPath, conn =>
+                                           int? targetGroupId, IProgress<int>? progress, int batchSize)
+    {
+        var result = WithAttachedSource(sourceDbPath, conn =>
         {
             using var tx = conn.BeginTransaction();
-            var (newColId, recCount) = CopyOneCollectionFromAttached(conn, tx, srcCollectionId, targetGroupId, progress, 0, batchSize);
+            var r = CopyOneCollectionFromAttached(conn, tx, srcCollectionId, targetGroupId, progress, 0, batchSize);
             tx.Commit();
-            return (newColId, recCount);
+            return r;
         });
+
+        // Наполняем проекцию календаря перенесённой коллекции (вне ATTACH-транзакции).
+        RebuildCalendarIndexForCollection(result.NewColId);
+        return result;
+    }
 
     // Копия ОДНОЙ коллекции из src в main в УЖЕ открытой транзакции (для переноса группы — много
     // коллекций в одной транзакции). Шелл (коллекция + поля) bulk-ом из src, карта полей old→new по
@@ -1424,8 +1441,8 @@ public class ConstructorRepository(AppDbContext db)
         if (db.DbFields.Any(f => f.CollectionId == field.CollectionId && f.Name == field.Name))
             throw new InvalidOperationException("Поле с таким именем уже существует.");
 
-        // Первое поле-дата в коллекции становится источником календаря: его значение
-        // проецируется на db_records.StartDt/EndDt (см. SetFieldValue → ProjectDateToRecord).
+        // Первое поле-дата в коллекции по умолчанию видно в календаре (IsCalStart); его
+        // значения попадают в индексную проекцию calendar_index (см. SyncCalendarIndexValue).
         if (field.FieldType == "date" &&
             !db.DbFields.Any(f => f.CollectionId == field.CollectionId && f.FieldType == "date" && f.IsCalStart))
             field.IsCalStart = true;
@@ -1451,6 +1468,10 @@ public class ConstructorRepository(AppDbContext db)
         if (entity.Name != field.Name &&
             db.DbFields.Any(f => f.CollectionId == entity.CollectionId && f.Name == field.Name && f.Id != field.Id))
             throw new InvalidOperationException("Поле с таким именем уже существует.");
+
+        // Менялись ли тип/видимость — от этого зависит, надо ли пересобирать проекцию календаря.
+        var calRelevantChanged = entity.FieldType != field.FieldType || entity.IsCalStart != field.IsCalStart;
+
         entity.Name       = field.Name;
         entity.FieldType  = field.FieldType;
         entity.ConfigJson = field.ConfigJson;
@@ -1460,6 +1481,10 @@ public class ConstructorRepository(AppDbContext db)
         entity.IsSystem   = field.IsSystem;
         entity.IsRequired = field.IsRequired;
         db.SaveChanges();
+
+        // Поле стало/перестало быть видимой датой → пересобрать его строки проекции.
+        if (calRelevantChanged && field.Id is int fid)
+            RebuildCalendarIndexForField(fid);
     }
 
     public DbField DuplicateField(int fieldId)
@@ -1883,6 +1908,9 @@ public class ConstructorRepository(AppDbContext db)
             db.DbFieldValues.Add(new DbFieldValueEntity { RecordId = copy.Id, FieldId = fv.FieldId, Value = fv.Value });
         db.SaveChanges();
 
+        // Копия записи могла принести значения видимых полей-дат — наполняем проекцию календаря.
+        RebuildCalendarIndexForRecord(copy.Id);
+
         return new DbRecord
         {
             Id           = copy.Id,
@@ -2114,34 +2142,26 @@ public class ConstructorRepository(AppDbContext db)
         else
             fv.Value = value;
 
-        // Календарное поле-дата проецируем на колонки записи, которые читает календарь.
-        var field = db.DbFields.Find(fieldId);
-        if (field is { FieldType: "date", IsCalStart: true })
-            ProjectDateToRecord(recordId, value);
-
         db.SaveChanges();
+
+        // Поддерживаем индексную проекцию календаря (для видимых полей-дат).
+        SyncCalendarIndexValue(recordId, fieldId, value);
     }
 
-    // Записывает значение поля-даты в db_records.StartDt/EndDt/AllDay (источник правды
-    // для календаря). Пустое/нераспознанное значение убирает запись из календаря.
-    private void ProjectDateToRecord(int recordId, string value)
+    /// <summary>
+    /// Включает/выключает показ поля-даты в календаре (флаг <c>IsCalStart</c>). Несколько
+    /// полей-дат коллекции могут быть включены одновременно — каждое даёт свои события.
+    /// </summary>
+    public void SetDateFieldVisible(int fieldId, bool visible)
     {
-        var rec = db.DbRecords.Find(recordId);
-        if (rec is null) return;
+        var field = db.DbFields.Find(fieldId);
+        if (field is null || field.FieldType != "date" || field.IsCalStart == visible) return;
+        field.IsCalStart = visible;
+        db.SaveChanges();
 
-        if (DateValue.TryParse(value, out var dv))
-        {
-            var (startIso, endIso) = dv.ToRecordColumns();
-            rec.StartDt = startIso;
-            rec.EndDt   = endIso;
-            rec.AllDay  = dv.AllDay;
-        }
-        else
-        {
-            rec.StartDt = null;
-            rec.EndDt   = null;
-            rec.AllDay  = false;
-        }
+        // Видимость изменилась → пересобрать строки проекции этого поля (вкл. → наполнить,
+        // выкл. → очистить).
+        RebuildCalendarIndexForField(fieldId);
     }
 
     // ── UI настройки ──────────────────────────────────────────────────────────
@@ -2422,7 +2442,7 @@ public class ConstructorRepository(AppDbContext db)
     public CalendarRecord AddCalendarRecord(CalendarRecord r)
     {
         var colId = r.CollectionId ?? GetOrCreateDefaultCollection();
-        var fieldIds = EnsureSystemFields(colId);
+        var dateFieldId = ResolveCalendarDateField(colId, r.FieldId);
 
         var maxPos = db.DbRecords
             .Where(rec => rec.CollectionId == colId)
@@ -2443,10 +2463,11 @@ public class ConstructorRepository(AppDbContext db)
         db.DbRecords.Add(rec);
         db.SaveChanges();
 
-        SetCalendarFieldValues(rec.Id, fieldIds, r);
+        SetCalendarDateValue(rec.Id, dateFieldId, r);
 
         r.Id           = rec.Id;
         r.CollectionId = colId;
+        r.FieldId      = dateFieldId;
         return r;
     }
 
@@ -2477,8 +2498,9 @@ public class ConstructorRepository(AppDbContext db)
         rec.Description = string.IsNullOrEmpty(r.Description) ? null : r.Description;
         db.SaveChanges();
 
-        var fieldIds = EnsureSystemFields(newColId);
-        SetCalendarFieldValues(rec.Id, fieldIds, r);
+        var dateFieldId = ResolveCalendarDateField(newColId, r.FieldId);
+        SetCalendarDateValue(rec.Id, dateFieldId, r);
+        r.FieldId = dateFieldId;
     }
 
     public void DeleteCalendarRecord(int id)
@@ -2491,32 +2513,167 @@ public class ConstructorRepository(AppDbContext db)
         }
     }
 
-    public List<CalendarRecord> GetCalendarRecordsByRange(DateTime start, DateTime end, ISet<int>? activeIds = null)
+    public List<CalendarRecord> GetCalendarRecordsByRange(DateTime start, DateTime end, ISet<int>? activeIds = null) =>
+        ReadCalendarEvents(start, end, activeIds);
+
+    public List<CalendarRecord> GetAllCalendarRecords(ISet<int>? activeIds = null) =>
+        ReadCalendarEvents(null, null, activeIds);
+
+    public int CountCalendarRecords() => db.CalendarIndex.Count();
+
+    // Строит события календаря из индексной проекции calendar_index (быстрый индексный
+    // range-query вместо скана значений). Каждая строка проекции = одно событие
+    // (запись × видимое поле-дата). rangeStart/rangeEnd == null → без фильтра по диапазону.
+    private List<CalendarRecord> ReadCalendarEvents(DateTime? rangeStart, DateTime? rangeEnd, ISet<int>? activeIds)
     {
-        // нормализуем Kind → Unspecified, чтобы строковое сравнение ISO было корректным
-        // независимо от того, в каком Kind пришли границы диапазона
-        var startIso = DateTime.SpecifyKind(start, DateTimeKind.Unspecified).ToString("o");
-        var endIso   = DateTime.SpecifyKind(end,   DateTimeKind.Unspecified).ToString("o");
+        var q = db.CalendarIndex.AsNoTracking();
 
-        var query = db.DbRecords
-            .Where(r => r.StartDt != null && r.StartDt.CompareTo(endIso) < 0
-                                          && r.EndDt!.CompareTo(startIso) >= 0)
-            .OrderBy(r => r.StartDt);
+        var active = activeIds?.ToList();
+        if (active is not null)
+            q = q.Where(ci => active.Contains(ci.CollectionId));
 
-        return RowsToCalendarRecords(query, activeIds);
+        // Пересечение с окном по индексу (CollectionId, StartIso): StartIso < конец окна И
+        // EndIso >= начало окна. Сравнение ISO-строк лексикографическое (формат фиксирован).
+        if (rangeStart is { } rs && rangeEnd is { } re)
+        {
+            var startIso = DateTime.SpecifyKind(rs, DateTimeKind.Unspecified).ToString("o");
+            var endIso   = DateTime.SpecifyKind(re, DateTimeKind.Unspecified).ToString("o");
+            q = q.Where(ci => ci.StartIso.CompareTo(endIso) < 0 && ci.EndIso.CompareTo(startIso) >= 0);
+        }
+
+        var rows = q
+            .OrderBy(ci => ci.StartIso)
+            .Select(ci => new
+            {
+                ci.RecordId,
+                ci.FieldId,
+                ci.CollectionId,
+                ci.StartIso,
+                ci.EndIso,
+                ci.AllDay,
+                Title          = ci.Record.Title,
+                Description    = ci.Record.Description,
+                CollectionName = ci.Record.Collection.Name,
+                Color          = ci.Record.Collection.Color,
+            })
+            .ToList();
+
+        var result = new List<CalendarRecord>(rows.Count);
+        foreach (var row in rows)
+        {
+            if (!DateTime.TryParse(row.StartIso, out var start)) continue;
+            if (!DateTime.TryParse(row.EndIso,   out var end))   continue;
+            result.Add(new CalendarRecord
+            {
+                Id             = row.RecordId,
+                FieldId        = row.FieldId,
+                Title          = row.Title ?? "",
+                Description    = row.Description ?? "",
+                StartDt        = start,
+                EndDt          = end,
+                AllDay         = row.AllDay,
+                CollectionId   = row.CollectionId,
+                CollectionName = row.CollectionName ?? "",
+                Color          = row.Color ?? "#007AFF",
+            });
+        }
+        return result;
     }
 
-    public List<CalendarRecord> GetAllCalendarRecords(ISet<int>? activeIds = null)
-    {
-        var query = db.DbRecords
-            .Where(r => r.StartDt != null)
-            .OrderBy(r => r.StartDt);
+    // ── Поддержка проекции calendar_index ─────────────────────────────────────
 
-        return RowsToCalendarRecords(query, activeIds);
+    // Синхронизирует строку проекции для одного значения поля. Видимое поле-дата с
+    // распознаваемым значением → upsert; иначе → удалить строку. Вызывать ПОСЛЕ записи
+    // значения в db_field_values (читаем переданное value, в БД не лезем повторно).
+    private void SyncCalendarIndexValue(int recordId, int fieldId, string? value)
+    {
+        var field = db.DbFields.Find(fieldId);
+        if (field is { FieldType: "date", IsCalStart: true } && DateValue.TryParse(value, out var dv))
+        {
+            var (s, e) = dv.ToRecordColumns();
+            var allDay = dv.AllDay ? 1 : 0;
+            db.Database.ExecuteSqlInterpolated($@"
+                INSERT INTO calendar_index (RecordId, FieldId, CollectionId, StartIso, EndIso, AllDay)
+                VALUES ({recordId}, {fieldId}, {field.CollectionId}, {s}, {e}, {allDay})
+                ON CONFLICT(RecordId, FieldId) DO UPDATE SET
+                    CollectionId = excluded.CollectionId, StartIso = excluded.StartIso,
+                    EndIso = excluded.EndIso, AllDay = excluded.AllDay");
+        }
+        else
+        {
+            db.Database.ExecuteSqlInterpolated(
+                $"DELETE FROM calendar_index WHERE RecordId = {recordId} AND FieldId = {fieldId}");
+        }
     }
 
-    public int CountCalendarRecords() =>
-        db.DbRecords.Count(r => r.StartDt != null);
+    private void RebuildCalendarIndexForField(int fieldId)
+    {
+        db.Database.ExecuteSqlInterpolated($"DELETE FROM calendar_index WHERE FieldId = {fieldId}");
+        FillCalendarIndex(q => q.Where(v => v.FieldId == fieldId));
+    }
+
+    private void RebuildCalendarIndexForCollection(int collectionId)
+    {
+        db.Database.ExecuteSqlInterpolated($"DELETE FROM calendar_index WHERE CollectionId = {collectionId}");
+        FillCalendarIndex(q => q.Where(v => v.Field.CollectionId == collectionId));
+    }
+
+    private void RebuildCalendarIndexForRecord(int recordId)
+    {
+        db.Database.ExecuteSqlInterpolated($"DELETE FROM calendar_index WHERE RecordId = {recordId}");
+        FillCalendarIndex(q => q.Where(v => v.RecordId == recordId));
+    }
+
+    // Наполняет calendar_index из значений видимых полей-дат, отобранных scope. Читаем
+    // постранично (keyset по Id) через EF и вставляем пакетами подготовленным INSERT —
+    // память ограничена размером пакета (важно для бэкафилла на миллионах строк).
+    private void FillCalendarIndex(Func<IQueryable<DbFieldValueEntity>, IQueryable<DbFieldValueEntity>> scope)
+    {
+        const int batch = 20000;
+        var calFieldIds = db.DbFields.Where(f => f.FieldType == "date" && f.IsCalStart).Select(f => f.Id);
+        var baseQ = scope(db.DbFieldValues.Where(v => calFieldIds.Contains(v.FieldId) && v.Value != ""));
+
+        var lastId = 0;
+        while (true)
+        {
+            var page = baseQ
+                .Where(v => v.Id > lastId)
+                .OrderBy(v => v.Id)
+                .Select(v => new { v.Id, v.RecordId, v.FieldId, v.Value, v.Field.CollectionId })
+                .Take(batch)
+                .ToList();
+            if (page.Count == 0) break;
+
+            var conn = db.Database.GetDbConnection();
+            var wasOpen = conn.State == System.Data.ConnectionState.Open;
+            if (!wasOpen) conn.Open();
+            using (var tx = conn.BeginTransaction())
+            using (var ins = conn.CreateCommand())
+            {
+                ins.Transaction = tx;
+                ins.CommandText = @"INSERT OR REPLACE INTO calendar_index
+                    (RecordId, FieldId, CollectionId, StartIso, EndIso, AllDay)
+                    VALUES ($rid, $fid, $cid, $s, $e, $a)";
+                var pRid = AddParam(ins, "$rid"); var pFid = AddParam(ins, "$fid");
+                var pCid = AddParam(ins, "$cid"); var pS = AddParam(ins, "$s");
+                var pE = AddParam(ins, "$e");     var pA = AddParam(ins, "$a");
+                ins.Prepare();
+
+                foreach (var row in page)
+                {
+                    if (!DateValue.TryParse(row.Value, out var dv)) continue;
+                    var (s, e) = dv.ToRecordColumns();
+                    pRid.Value = row.RecordId; pFid.Value = row.FieldId; pCid.Value = row.CollectionId;
+                    pS.Value = s; pE.Value = e; pA.Value = dv.AllDay ? 1 : 0;
+                    ins.ExecuteNonQuery();
+                }
+                tx.Commit();
+            }
+            if (!wasOpen) conn.Close();
+
+            lastId = page[^1].Id;
+        }
+    }
 
     // ── Вспомогательные методы для CalendarRecord ─────────────────────────────
 
@@ -2569,59 +2726,59 @@ public class ConstructorRepository(AppDbContext db)
         return existing;
     }
 
-    private void SetCalendarFieldValues(int recordId, Dictionary<string, int> fieldIds, CalendarRecord r)
+    // Поле-дата, в которое класть дату события. Если в окне явно выбрано поле
+    // (preferredFieldId — date-поле этой коллекции), пишем в него; иначе фолбэк на
+    // EnsureCalendarDateField (видимое поле или авто-«Дата»).
+    private int ResolveCalendarDateField(int collectionId, int preferredFieldId)
     {
-        // В DbFieldValues пишем только системное поле «Дата» — title/description
-        // живут в колонках db_records (Title / Description).
-        if (!fieldIds.TryGetValue(FieldDate, out var fid)) return;
-
-        var dateStr = new DateValue(r.StartDt, r.EndDt, r.AllDay).ToStorage();
-
-        var fv = db.DbFieldValues.FirstOrDefault(x => x.RecordId == recordId && x.FieldId == fid);
-        if (fv is null)
+        if (preferredFieldId > 0)
         {
-            db.DbFieldValues.Add(new DbFieldValueEntity { RecordId = recordId, FieldId = fid, Value = dateStr });
+            var f = db.DbFields.FirstOrDefault(x =>
+                x.Id == preferredFieldId && x.CollectionId == collectionId && x.FieldType == "date");
+            if (f is not null) return f.Id;
         }
-        else
-        {
-            fv.Value = dateStr;
-        }
-        db.SaveChanges();
+        return EnsureCalendarDateField(collectionId);
     }
 
-    private List<CalendarRecord> RowsToCalendarRecords(IQueryable<DbRecordEntity> query, ISet<int>? activeIds)
+    // id поля-источника календаря коллекции: существующее поле-дата с IsCalStart, иначе
+    // системное «Дата» (создаётся при необходимости и помечается видимым). Фолбэк, когда
+    // явное поле не выбрано.
+    private int EnsureCalendarDateField(int collectionId)
     {
-        var records = query.ToList();
-        if (activeIds is not null)
-            records = records.Where(r => activeIds.Contains(r.CollectionId)).ToList();
+        var source = db.DbFields.FirstOrDefault(f =>
+            f.CollectionId == collectionId && f.FieldType == "date" && f.IsCalStart);
+        if (source is not null) return source.Id;
 
-        if (records.Count == 0) return [];
-
-        var colMap = db.DbCollections.ToDictionary(c => c.Id);
-
-        var result = new List<CalendarRecord>();
-        foreach (var rec in records)
+        // Источника нет (коллекция без даты или помечена «Не отображать») — гарантируем
+        // системное «Дата» и делаем его источником: добавление события через календарь
+        // должно показать запись в календаре.
+        var fieldIds  = EnsureSystemFields(collectionId);
+        var dateId    = fieldIds[FieldDate];
+        var dateField = db.DbFields.Find(dateId);
+        if (dateField is not null && !dateField.IsCalStart)
         {
-            if (!DateTime.TryParse(rec.StartDt, out var startDt)) continue;
-            if (!DateTime.TryParse(rec.EndDt,   out var endDt))   continue;
-
-            colMap.TryGetValue(rec.CollectionId, out var col);
-
-            result.Add(new CalendarRecord
-            {
-                Id             = rec.Id,
-                Title          = rec.Title ?? "",
-                Description    = rec.Description ?? "",
-                StartDt        = startDt,
-                EndDt          = endDt,
-                AllDay         = rec.AllDay,
-                CollectionId   = rec.CollectionId,
-                CollectionName = col?.Name ?? "",
-                Color          = col?.Color ?? "#007AFF",
-            });
+            dateField.IsCalStart = true;
+            db.SaveChanges();
         }
+        return dateId;
+    }
 
-        return result;
+    // Пишет дату записи в поле-источник календаря (db_field_values). Колонки StartDt/EndDt
+    // уже проставлены напрямую в Add/UpdateCalendarRecord — здесь синхронизируем значение
+    // самого поля, чтобы оно совпадало с тем, что показывает таблица.
+    private void SetCalendarDateValue(int recordId, int dateFieldId, CalendarRecord r)
+    {
+        var dateStr = new DateValue(r.StartDt, r.EndDt, r.AllDay).ToStorage();
+
+        var fv = db.DbFieldValues.FirstOrDefault(x => x.RecordId == recordId && x.FieldId == dateFieldId);
+        if (fv is null)
+            db.DbFieldValues.Add(new DbFieldValueEntity { RecordId = recordId, FieldId = dateFieldId, Value = dateStr });
+        else
+            fv.Value = dateStr;
+        db.SaveChanges();
+
+        // Поддерживаем индексную проекцию календаря.
+        SyncCalendarIndexValue(recordId, dateFieldId, dateStr);
     }
 
     // ── Разовая миграция/бэкафилл календарных дат (вызывается при старте) ──────
@@ -2687,5 +2844,10 @@ public class ConstructorRepository(AppDbContext db)
             touched = true;
         }
         if (touched) db.SaveChanges();
+
+        // Индексная проекция календаря: строим один раз, если пуста (первый запуск после
+        // обновления). Дальше поддерживается инкрементально при записи/копировании.
+        if (!db.CalendarIndex.Any())
+            FillCalendarIndex(q => q);
     }
 }

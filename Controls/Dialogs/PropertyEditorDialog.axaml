@@ -61,6 +61,21 @@
             </ComboBox.ItemTemplate>
         </ComboBox>
 
+        <!-- Отображать в календаре: виден только для типа «Дата». Если включено — значения
+             этого поля показываются в календаре как события. Несколько полей-дат коллекции
+             могут быть включены одновременно (запись появится в календаре несколько раз). -->
+        <StackPanel x:Name="CalDateSection" IsVisible="False"
+                    Orientation="Horizontal" Spacing="10" Margin="0,0,0,12">
+            <ToggleSwitch x:Name="CalDateToggle"
+                          OnContent="" OffContent=""
+                          VerticalAlignment="Center" />
+            <TextBlock Text="Отображать в календаре"
+                       VerticalAlignment="Center"
+                       FontWeight="{StaticResource FontWeightBold}"
+                       FontSize="{StaticResource FontSizeBase}"
+                       Foreground="{StaticResource BrushSecondaryText}" />
+        </StackPanel>
+
         <!-- Уведомление об ошибке валидации -->
         <w:ErrorBanner x:Name="ErrorBanner" Margin="0,0,0,12" />
 

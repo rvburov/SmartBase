@@ -16,6 +16,37 @@ namespace DataBase.Database.Migrations
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "9.0.0");
 
+            modelBuilder.Entity("DataBase.Database.Entities.CalendarIndexEntity", b =>
+                {
+                    b.Property<int>("RecordId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("FieldId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("AllDay")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("CollectionId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("EndIso")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("StartIso")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("RecordId", "FieldId");
+
+                    b.HasIndex("FieldId");
+
+                    b.HasIndex("CollectionId", "StartIso");
+
+                    b.ToTable("calendar_index", (string)null);
+                });
+
             modelBuilder.Entity("DataBase.Database.Entities.CategoryEntity", b =>
                 {
                     b.Property<int>("Id")
@@ -325,6 +356,25 @@ namespace DataBase.Database.Migrations
                     b.HasKey("CollectionId", "RecordId");
 
                     b.ToTable("ui_row_heights", (string)null);
+                });
+
+            modelBuilder.Entity("DataBase.Database.Entities.CalendarIndexEntity", b =>
+                {
+                    b.HasOne("DataBase.Database.Entities.DbFieldEntity", "Field")
+                        .WithMany()
+                        .HasForeignKey("FieldId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("DataBase.Database.Entities.DbRecordEntity", "Record")
+                        .WithMany()
+                        .HasForeignKey("RecordId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Field");
+
+                    b.Navigation("Record");
                 });
 
             modelBuilder.Entity("DataBase.Database.Entities.DbCollectionEntity", b =>

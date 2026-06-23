@@ -17,6 +17,8 @@ public sealed class FieldTypeItem
 /// <summary>
 /// Notion-style мини-диалог для создания/изменения одного свойства (поля коллекции).
 /// Только два параметра: название и тип. Markdown как тип скрыт (это системное body-поле).
+/// Для типа «Дата» есть переключатель «Отображать в календаре» (флаг IsCalStart поля) —
+/// несколько полей-дат коллекции могут быть включены одновременно.
 /// </summary>
 public partial class PropertyEditorDialog : Window
 {
@@ -54,6 +56,9 @@ public partial class PropertyEditorDialog : Window
 
         TypeCombo.ItemsSource = FieldTypes;
 
+        // По умолчанию новое поле-дата отображается в календаре (включено).
+        CalDateToggle.IsChecked = true;
+
         if (editFieldId.HasValue)
         {
             Title = "Изменение свойства";
@@ -62,6 +67,7 @@ public partial class PropertyEditorDialog : Window
             {
                 NameBox.Text  = field.Name;
                 _selectedType = field.FieldType;
+                CalDateToggle.IsChecked = field.IsCalStart;
             }
         }
 
@@ -71,13 +77,18 @@ public partial class PropertyEditorDialog : Window
         {
             var i = TypeCombo.SelectedIndex;
             if (i >= 0 && i < FieldTypes.Length) _selectedType = FieldTypes[i].Type;
+            UpdateCalDateVisibility();
         };
+        UpdateCalDateVisibility();
 
         CancelBtn.Click += (_, _) => Close(false);
         SaveBtn.Click   += (_, _) => TrySave();
         NameBox.KeyDown += (_, e) => { if (e.Key == Avalonia.Input.Key.Enter) TrySave(); };
         NameBox.TextChanged += (_, _) => HideError();
     }
+
+    // Переключатель «Отображать в календаре» виден только для типа «Дата».
+    private void UpdateCalDateVisibility() => CalDateSection.IsVisible = _selectedType == "date";
 
     /// <summary>
     /// Конструктор для системной колонки «Название»/«Описание». Визуально как
@@ -154,31 +165,33 @@ public partial class PropertyEditorDialog : Window
             return;
         }
 
+        int savedFieldId;
         try
         {
             if (_editFieldId.HasValue)
             {
                 var field = _repository.GetFields(_collectionId).FirstOrDefault(f => f.Id == _editFieldId);
-                if (field is not null)
-                {
-                    field.Name      = name;
-                    // Системные поля имеют фиксированный тип (markdown/title), их тип не меняем.
-                    if (!field.IsSystem) field.FieldType = _selectedType;
-                    _repository.UpdateField(field);
-                }
+                if (field is null) { Close(true); return; }
+
+                field.Name = name;
+                // Системные поля имеют фиксированный тип (markdown/title), их тип не меняем.
+                if (!field.IsSystem) field.FieldType = _selectedType;
+                _repository.UpdateField(field);
+                savedFieldId = _editFieldId.Value;
             }
             else
             {
                 var fields = _repository.GetFields(_collectionId);
                 var maxPos = fields.Count > 0 ? fields.Max(f => f.Position) : 0;
 
-                _repository.AddField(new DbField
+                var added = _repository.AddField(new DbField
                 {
                     CollectionId = _collectionId,
                     Name         = name,
                     FieldType    = _selectedType,
                     Position     = maxPos + 1000,
                 });
+                savedFieldId = added.Id!.Value;
             }
         }
         catch (InvalidOperationException ex)
@@ -188,6 +201,10 @@ public partial class PropertyEditorDialog : Window
             NameBox.Focus();
             return;
         }
+
+        // Для типа «Дата» применяем переключатель «Отображать в календаре».
+        if (_selectedType == "date")
+            _repository.SetDateFieldVisible(savedFieldId, CalDateToggle.IsChecked == true);
 
         Close(true);
     }

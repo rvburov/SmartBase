@@ -283,11 +283,17 @@ public partial class CalendarControllerView : UserControl
             var rec = result.Record;
             if (rec.DbId == r.DbId)
             {
-                RepoOf(rec).UpdateCalendarRecord(rec);
+                var repo = RepoOf(rec);
+                // Перенос даты в другое поле той же записи (та же коллекция): очищаем старое
+                // поле, чтобы дата не осталась в обоих — событие переезжает целиком.
+                if (rec.CollectionId == r.CollectionId && r.FieldId > 0 &&
+                    rec.FieldId != r.FieldId && r.Id is int rid)
+                    repo.SetFieldValue(rid, r.FieldId, "");
+                repo.UpdateCalendarRecord(rec);
             }
             else
             {
-                // БД сменили — переносим: создаём в целевой базе, удаляем из исходной.
+                // БД сменили — переносим запись: создаём в целевой базе, удаляем из исходной.
                 RepoOf(rec).AddCalendarRecord(rec);
                 RepoOf(r).DeleteCalendarRecord(r.Id!.Value);
             }
@@ -302,6 +308,7 @@ public partial class CalendarControllerView : UserControl
         {
             DbId         = r.DbId,
             CollectionId = r.CollectionId,
+            FieldId      = r.FieldId,   // дубль кладём в то же поле-дату, что и оригинал
             Title        = r.Title,
             Description  = r.Description,
             StartDt      = r.StartDt,

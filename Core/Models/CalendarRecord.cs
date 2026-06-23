@@ -6,6 +6,9 @@ public class CalendarRecord
 
     public int      DbId           { get; set; }   // владелец-БД (мульти-маунт); 0 = по умолчанию
     public int?     Id             { get; set; }
+    // Поле-дата, из которого получено событие. Одна запись может давать несколько событий
+    // (по полю на каждую видимую дату), поэтому событие опознаётся парой (Id, FieldId).
+    public int      FieldId        { get; set; }
     public string   Title          { get; set; } = "";
     public string   DisplayTitle   => string.IsNullOrWhiteSpace(Title) ? UntitledPlaceholder : Title;
     public DateTime StartDt        { get; set; }

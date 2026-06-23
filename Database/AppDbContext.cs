@@ -11,6 +11,7 @@ public class AppDbContext : DbContext
     public DbSet<DbFieldEntity>            DbFields             { get; set; } = null!;
     public DbSet<DbRecordEntity>           DbRecords            { get; set; } = null!;
     public DbSet<DbFieldValueEntity>       DbFieldValues        { get; set; } = null!;
+    public DbSet<CalendarIndexEntity>      CalendarIndex        { get; set; } = null!;
     public DbSet<UiColWidthEntity>         UiColWidths          { get; set; } = null!;
     public DbSet<UiRowHeightEntity>        UiRowHeights         { get; set; } = null!;
     public DbSet<UiCollectionSettingEntity> UiCollectionSettings { get; set; } = null!;
@@ -125,6 +126,22 @@ public class AppDbContext : DbContext
              .OnDelete(DeleteBehavior.Cascade);
             e.HasOne(x => x.Field)
              .WithMany(x => x.FieldValues)
+             .HasForeignKey(x => x.FieldId)
+             .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        model.Entity<CalendarIndexEntity>(e =>
+        {
+            e.ToTable("calendar_index");
+            e.HasKey(x => new { x.RecordId, x.FieldId });
+            // Горячий путь календаря: WHERE CollectionId IN(...) AND StartIso < end AND EndIso >= start.
+            e.HasIndex(x => new { x.CollectionId, x.StartIso });
+            e.HasOne(x => x.Record)
+             .WithMany()
+             .HasForeignKey(x => x.RecordId)
+             .OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(x => x.Field)
+             .WithMany()
              .HasForeignKey(x => x.FieldId)
              .OnDelete(DeleteBehavior.Cascade);
         });
