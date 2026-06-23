@@ -603,6 +603,7 @@ public partial class Sidebar : UserControl
             if (_mode == SidebarMode.Calendar)
             {
                 menu.Items.Add(BuildColorMenu(db, id));
+                menu.Items.Add(BuildDateFieldsMenu(db, id));
                 menu.Items.Add(new Separator());
             }
             if (!multi) menu.Items.Add(MenuItemEdit(() => _ = EditCollection(db, id)));
@@ -713,6 +714,134 @@ public partial class Sidebar : UserControl
         repo.UpdateCollection(col);
         Refresh();
         CalendarsChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    // ── «Отображение свойств даты» ────────────────────────────────────────────────
+
+    // Подменю (как «Изменить цвет»): открывается справа от контекстного меню, со стрелкой
+    // и тем же стилем, контекстное меню остаётся открытым. Внутри — панель выбора, какие
+    // поля-даты коллекции показывать в календаре (вкл/выкл IsCalStart): поиск + чеклист
+    // с «Выделить всё», как у фильтра колонок таблицы. Применяется сразу по клику чекбокса.
+    private MenuItem BuildDateFieldsMenu(int dbId, int collectionId)
+    {
+        var dateItem = new MenuItem { Header = "Отображение свойств даты" };
+
+        // Контент в дочернем пункте со StaysOpenOnClick — клики по чекбоксам не закрывают меню.
+        // Padding=0: панель сама задаёт свои отступы (не двоится с паддингом пункта меню).
+        var host = new MenuItem { StaysOpenOnClick = true, Padding = new Thickness(0) };
+        var repo = RepoFor(dbId);
+        if (repo is not null)
+        {
+            var dateFields = repo.GetFields(collectionId).Where(f => f.FieldType == "date").ToList();
+            host.Header = BuildDateFieldsPanel(repo, dateFields);
+        }
+        dateItem.Items.Add(host);
+        return dateItem;
+    }
+
+    private Control BuildDateFieldsPanel(ConstructorRepository repo, List<DbField> dateFields)
+    {
+        var secondary = (IBrush)this.FindResource("BrushSecondaryText")!;
+        var fontBase  = (double)this.FindResource("FontSizeBase")!;
+        var radius    = (CornerRadius)this.FindResource("RadiusBase")!;
+
+        var panel = new StackPanel
+        {
+            Width = 240, Margin = new Thickness(10, 8), Spacing = 6,
+            Cursor = new Cursor(StandardCursorType.Arrow),
+        };
+
+        var search = new TextBox
+        {
+            Watermark = "Поиск свойств...",
+            Height = 30, CornerRadius = radius,
+            VerticalContentAlignment = Avalonia.Layout.VerticalAlignment.Center,
+        };
+        panel.Children.Add(search);
+
+        if (dateFields.Count == 0)
+        {
+            panel.Children.Add(new TextBlock
+            {
+                Text = "Нет свойств с датой", Foreground = secondary, FontSize = fontBase,
+                Margin = new Thickness(2, 2, 0, 0),
+            });
+            return panel;
+        }
+
+        var syncing   = false;
+        var selectAll = new CheckBox
+        {
+            Content = "(Выделить всё)", FontSize = fontBase,
+            Cursor = new Cursor(StandardCursorType.Hand),
+        };
+
+        var list = new StackPanel { Spacing = 4 };
+        var rows = new List<(DbField Field, CheckBox Box)>();
+
+        bool Matches(DbField f) =>
+            string.IsNullOrWhiteSpace(search.Text) ||
+            f.Name.Contains(search.Text!.Trim(), StringComparison.OrdinalIgnoreCase);
+
+        void SyncSelectAll()
+        {
+            syncing = true;
+            var vis = rows.Where(r => Matches(r.Field)).ToList();
+            selectAll.IsChecked = vis.Count > 0 && vis.All(r => r.Box.IsChecked == true);
+            syncing = false;
+        }
+
+        foreach (var f in dateFields)
+        {
+            var fid = f.Id!.Value;
+            var cb = new CheckBox
+            {
+                Content = f.Name, FontSize = fontBase, IsChecked = f.IsCalStart,
+                Cursor = new Cursor(StandardCursorType.Hand),
+            };
+            cb.IsCheckedChanged += (_, _) =>
+            {
+                if (syncing) return;
+                repo.SetDateFieldVisible(fid, cb.IsChecked == true);
+                CalendarsChanged?.Invoke(this, EventArgs.Empty);
+                SyncSelectAll();
+            };
+            rows.Add((f, cb));
+            list.Children.Add(cb);
+        }
+
+        // «Выделить всё» действует на видимое (после поиска) подмножество.
+        selectAll.IsCheckedChanged += (_, _) =>
+        {
+            if (syncing) return;
+            var on = selectAll.IsChecked == true;
+            foreach (var (f, box) in rows.Where(r => Matches(r.Field)))
+                if ((box.IsChecked == true) != on) box.IsChecked = on;   // дёргает обработчик чекбокса
+        };
+
+        search.TextChanged += (_, _) =>
+        {
+            foreach (var (f, box) in rows) box.IsVisible = Matches(f);
+            SyncSelectAll();
+        };
+
+        SyncSelectAll();
+
+        var listBox = new Border
+        {
+            BorderBrush     = (IBrush)this.FindResource("BrushSeparator")!,
+            BorderThickness = new Thickness(1),
+            CornerRadius    = radius,
+            Padding         = new Thickness(8, 6),
+            Child = new StackPanel
+            {
+                Spacing = 4,
+                Children = { selectAll, new ScrollViewer { MaxHeight = 240, Content = list } },
+            },
+        };
+        panel.Children.Add(listBox);
+
+        return panel;
     }
 
     // ── CRUD ────────────────────────────────────────────────────────────────────
