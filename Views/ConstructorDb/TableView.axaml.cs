@@ -539,7 +539,7 @@ public partial class TableView : UserControl
         var defs = new List<TableColumnDef>
         {
             new() { Key = TableColumnDef.NumKey, Header = "№",
-                    IsStarWidth = false, FixedWidth = NumColWidth,
+                    IsStarWidth = false, FixedWidth = NumColumnWidth(),
                     CanResize = false,   IsReadOnly = true },
         };
         defs.AddRange(ordered);
@@ -549,6 +549,26 @@ public partial class TableView : UserControl
                          MaxWidth  = PlusColWidth });
 
         return defs;
+    }
+
+    // Ширина служебной колонки «№»: дефолт NumColWidth для коротких номеров, но
+    // расширяется ровно под самый длинный номер (= числу записей), чтобы крупные
+    // числа не обрезались. Фиксированная (не Auto) — иначе DataGrid сбивает экстент
+    // горизонтального скролла, и последняя колонка «+» обрезается при прокрутке полосой.
+    private double NumColumnWidth()
+    {
+        if (_repository is null) return NumColWidth;
+
+        var maxRow = _repository.CountRecords(_collectionId, _hiddenRecords.Count > 0);
+        var text   = Math.Max(1, maxRow).ToString(CultureInfo.InvariantCulture);
+
+        var fontSize = (double)this.FindResource("FontSizeBase")!;
+        var measured = new FormattedText(text, CultureInfo.InvariantCulture,
+                                         FlowDirection.LeftToRight,
+                                         new Typeface(this.FontFamily), fontSize, null).Width;
+
+        // Поля по бокам, чтобы число не липло к границам колонки.
+        return Math.Max(NumColWidth, Math.Ceiling(measured) + 16);
     }
 
     // Эффективная позиция движимой колонки: сохранённая (column_order) или дефолт.
