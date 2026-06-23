@@ -136,6 +136,22 @@
                     </Border>
                 </Grid>
 
+                <!-- База данных (видна только при создании, когда смонтировано несколько БД) -->
+                <StackPanel x:Name="DbSection" IsVisible="False" Spacing="0">
+                    <TextBlock Text="База данных"
+                               Margin="0,0,0,6"
+                               FontWeight="{StaticResource FontWeightBold}"
+                               FontSize="{StaticResource FontSizeBase}"
+                               Foreground="{StaticResource BrushSecondaryText}" />
+                    <ComboBox x:Name="DbCombo"
+                              HorizontalAlignment="Stretch"
+                              Height="34"
+                              Margin="0,0,0,12"
+                              Background="{StaticResource BrushSecondaryBg}"
+                              Foreground="{StaticResource BrushPrimaryText}"
+                              CornerRadius="{StaticResource RadiusBase}" />
+                </StackPanel>
+
                 <!-- Коллекция -->
                 <TextBlock Text="Коллекция"
                            Margin="0,0,0,6"

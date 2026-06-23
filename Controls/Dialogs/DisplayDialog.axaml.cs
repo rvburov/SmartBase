@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Globalization;
 using Avalonia;
 using Avalonia.Collections;
 using Avalonia.Controls;
@@ -35,6 +36,10 @@ public partial class DisplayDialog : Window
     private int _activeLevel = 1;
     private bool _orderChanged;
 
+    // Ширина колонки «№» — единая для всех строк (вычисляется под самый длинный номер),
+    // чтобы крупные номера не обрезались, а чекбокс справа оставался ровным по горизонтали.
+    private double _numWidth = 22;
+
     public DisplayDialog(ConstructorRepository repository, int collectionId,
                          IReadOnlyList<(string Key, string Name)> columns)
     {
@@ -52,6 +57,7 @@ public partial class DisplayDialog : Window
         }
         _maxLevel    = Math.Max(1, _all.Select(r => r.Level).DefaultIfEmpty(1).Max());
         _activeLevel = 0;
+        _numWidth    = NumberColumnWidth();
 
         ListHost.ItemTemplate = BuildRowTemplate();
         ListHost.ItemsSource   = _shown;
@@ -75,6 +81,18 @@ public partial class DisplayDialog : Window
         Close(true);
     }
 
+    // Единая ширина колонки «№»: дефолтные 22px для коротких номеров, шире — под самый
+    // длинный номер (= числу строк), измеренный реальным шрифтом строки.
+    private double NumberColumnWidth()
+    {
+        var text     = Math.Max(1, _all.Count).ToString(CultureInfo.InvariantCulture);
+        var fontBase = (double)this.FindResource("FontSizeBase")!;
+        var measured = new FormattedText(text, CultureInfo.InvariantCulture,
+                                         FlowDirection.LeftToRight,
+                                         new Typeface(this.FontFamily), fontBase, null).Width;
+        return Math.Max(22, Math.Ceiling(measured) + 8);
+    }
+
     // ── Шаблон строки ──────────────────────────────────────────────────────────
     private IDataTemplate BuildRowTemplate()
     {
@@ -85,7 +103,7 @@ public partial class DisplayDialog : Window
         {
             var num = new TextBlock
             {
-                Width = 22, Foreground = secondary, FontSize = fontBase,
+                Width = _numWidth, Foreground = secondary, FontSize = fontBase,
                 HorizontalAlignment = HorizontalAlignment.Center,
                 VerticalAlignment   = VerticalAlignment.Center,
             };

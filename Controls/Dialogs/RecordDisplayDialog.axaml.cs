@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Globalization;
 using Avalonia;
 using Avalonia.Collections;
 using Avalonia.Controls;
@@ -39,6 +40,10 @@ public partial class RecordDisplayDialog : Window
     private int _maxLevel = 1;
     private int _activeLevel = 1;
 
+    // Ширина колонки «№» — единая для всех строк (вычисляется под самый длинный номер),
+    // чтобы крупные номера не обрезались, а чекбокс справа оставался ровным по горизонтали.
+    private double _numWidth = 22;
+
     // Порядок строк меняли (кнопки вверх/вниз) — только тогда переписываем позиции в БД.
     private bool _orderChanged;
 
@@ -59,6 +64,7 @@ public partial class RecordDisplayDialog : Window
         }
         _maxLevel    = Math.Max(1, _all.Select(r => r.Level).DefaultIfEmpty(1).Max());
         _activeLevel = 0;   // ни один уровень не выбран (видимость — из сохранённого состояния)
+        _numWidth    = NumberColumnWidth();
 
         ListHost.ItemTemplate = BuildRowTemplate();
         ListHost.ItemsSource   = _shown;
@@ -84,6 +90,18 @@ public partial class RecordDisplayDialog : Window
         Close(true);
     }
 
+    // Единая ширина колонки «№»: дефолтные 22px для коротких номеров, шире — под самый
+    // длинный номер (= числу строк), измеренный реальным шрифтом строки.
+    private double NumberColumnWidth()
+    {
+        var text     = Math.Max(1, _all.Count).ToString(CultureInfo.InvariantCulture);
+        var fontBase = (double)this.FindResource("FontSizeBase")!;
+        var measured = new FormattedText(text, CultureInfo.InvariantCulture,
+                                         FlowDirection.LeftToRight,
+                                         new Typeface(this.FontFamily), fontBase, null).Width;
+        return Math.Max(22, Math.Ceiling(measured) + 8);
+    }
+
     // ── Шаблон строки (рендерится только для видимых строк) ────────────────────
     private IDataTemplate BuildRowTemplate()
     {
@@ -94,7 +112,7 @@ public partial class RecordDisplayDialog : Window
         {
             var num = new TextBlock
             {
-                Width = 22, Foreground = secondary, FontSize = fontBase,
+                Width = _numWidth, Foreground = secondary, FontSize = fontBase,
                 HorizontalAlignment = HorizontalAlignment.Center,
                 VerticalAlignment   = VerticalAlignment.Center,
             };

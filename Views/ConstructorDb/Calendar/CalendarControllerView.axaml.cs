@@ -111,22 +111,6 @@ public partial class CalendarControllerView : UserControl
         foreach (var d in databases) _dbs.Add((d.DbId, d.Name, d.Constructor));
     }
 
-    // Выбрать целевую БД для нового события. Одна БД → без вопроса; несколько → диалог.
-    // Возвращает null при отмене.
-    private async Task<ConstructorRepository?> ChooseTargetRepoAsync()
-    {
-        if (_dbs.Count == 0) return null;
-        if (_dbs.Count == 1) return _dbs[0].Repo;
-        if (VisualRoot is not Avalonia.Controls.Window win) return _dbs[0].Repo;
-
-        var dlg    = new SelectDatabaseDialog(_dbs.Select(d => (d.DbId, d.Name)).ToList());
-        var chosen = await dlg.ShowDialog<int?>(win);
-        if (chosen is not int dbId) return null;
-
-        foreach (var d in _dbs) if (d.DbId == dbId) return d.Repo;
-        return _dbs[0].Repo;
-    }
-
     private void SwitchView(int idx)
     {
         _currentViewIndex = idx;
@@ -252,17 +236,16 @@ public partial class CalendarControllerView : UserControl
 
     private async Task OpenAddAllDayDialog(DateOnly date)
     {
-        if (VisualRoot is not Avalonia.Controls.Window win) return;
-        var repo = await ChooseTargetRepoAsync();
-        if (repo is null) return;   // отмена выбора БД
+        if (VisualRoot is not Avalonia.Controls.Window win || _dbs.Count == 0) return;
 
-        var dlg = new RecordDialog(repo,
+        // Выбор целевой БД встроен в само окно (показывается при нескольких БД).
+        var dlg = new RecordDialog(_dbs, _dbs[0].DbId,
                                    presetDate: date.ToDateTime(TimeOnly.MinValue),
                                    presetAllDay: true);
         var result = await dlg.ShowDialog<RecordDialogResult?>(win);
         if (result?.Record is not null)
         {
-            repo.AddCalendarRecord(result.Record);
+            RepoOf(result.Record).AddCalendarRecord(result.Record);
             CollectionsMayHaveChanged?.Invoke(this, EventArgs.Empty);
             RefreshCurrent();
         }
@@ -270,15 +253,13 @@ public partial class CalendarControllerView : UserControl
 
     private async Task OpenAddDialog(DateTime presetDate, TimeSpan? presetTime = null)
     {
-        if (VisualRoot is not Avalonia.Controls.Window win) return;
-        var repo = await ChooseTargetRepoAsync();
-        if (repo is null) return;   // отмена выбора БД
+        if (VisualRoot is not Avalonia.Controls.Window win || _dbs.Count == 0) return;
 
-        var dlg = new RecordDialog(repo, presetDate: presetDate, presetTime: presetTime);
+        var dlg = new RecordDialog(_dbs, _dbs[0].DbId, presetDate: presetDate, presetTime: presetTime);
         var result = await dlg.ShowDialog<RecordDialogResult?>(win);
         if (result?.Record is not null)
         {
-            repo.AddCalendarRecord(result.Record);
+            RepoOf(result.Record).AddCalendarRecord(result.Record);
             CollectionsMayHaveChanged?.Invoke(this, EventArgs.Empty);
             RefreshCurrent();
         }
@@ -286,17 +267,30 @@ public partial class CalendarControllerView : UserControl
 
     private async Task OpenEditDialog(CalendarRecord r)
     {
-        if (VisualRoot is not Avalonia.Controls.Window win) return;
-        var repo = RepoOf(r);
-        var dlg = new RecordDialog(repo, editRecord: r);
+        if (VisualRoot is not Avalonia.Controls.Window win || _dbs.Count == 0) return;
+
+        // Выбор БД встроен в окно (при нескольких БД); запись с целевым DbId возвращается.
+        var dlg = new RecordDialog(_dbs, r.DbId, editRecord: r);
         var result = await dlg.ShowDialog<RecordDialogResult?>(win);
         if (result is null) return;
-        if (result.Deleted) repo.DeleteCalendarRecord(r.Id!.Value);
+
+        if (result.Deleted)
+        {
+            RepoOf(r).DeleteCalendarRecord(r.Id!.Value);
+        }
         else if (result.Record is not null)
         {
-            // Сохраняем принадлежность БД (диалог её не знает).
-            result.Record.DbId = r.DbId;
-            repo.UpdateCalendarRecord(result.Record);
+            var rec = result.Record;
+            if (rec.DbId == r.DbId)
+            {
+                RepoOf(rec).UpdateCalendarRecord(rec);
+            }
+            else
+            {
+                // БД сменили — переносим: создаём в целевой базе, удаляем из исходной.
+                RepoOf(rec).AddCalendarRecord(rec);
+                RepoOf(r).DeleteCalendarRecord(r.Id!.Value);
+            }
             CollectionsMayHaveChanged?.Invoke(this, EventArgs.Empty);
         }
         RefreshCurrent();

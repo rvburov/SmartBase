@@ -26,6 +26,9 @@ public partial class RecordDialog : Window
     // ── Календарь-режим ───────────────────────────────────────────────────────
     private readonly CalendarRecord? _editRecord;
     private readonly List<(string Name, int? Id, string Color)> _collections = [];
+    // Смонтированные БД и выбранная цель (выбор перенесён сюда из отдельного окна).
+    private readonly List<(int DbId, string Name, ConstructorRepository Repo)> _databases = [];
+    private int _selectedDbId;
     private TimeSpan _savedStartTime = new(9, 0, 0);
     private TimeSpan _savedEndTime   = new(10, 0, 0);
 
@@ -55,9 +58,10 @@ public partial class RecordDialog : Window
         SaveBtn.Click   += (_, _) => TrySaveSchema();
     }
 
-    // ── Конструктор: календарь-режим ──────────────────────────────────────────
+    // ── Конструктор: календарь-режим, выбор целевой БД в самом окне ────────────
     public RecordDialog(
-        ConstructorRepository constructor,
+        IReadOnlyList<(int DbId, string Name, ConstructorRepository Repo)> databases,
+        int selectedDbId,
         CalendarRecord? editRecord = null,
         DateTime? presetDate       = null,
         TimeSpan? presetTime       = null,
@@ -65,23 +69,34 @@ public partial class RecordDialog : Window
     {
         InitializeComponent();
 
-        _repository   = constructor;
+        _databases.AddRange(databases);
+        _selectedDbId = _databases.Any(d => d.DbId == selectedDbId) ? selectedDbId : _databases[0].DbId;
+        _repository   = CurrentRepo;
         _editRecord   = editRecord;
         _collectionId = 0;
 
         FieldsPanel.IsVisible     = false;
         CalendarSection.IsVisible = true;
 
-        // Заполняем список коллекций. Если ни одной нет — показываем плейсхолдер
-        // «Без названия» (id=null): при сохранении репозиторий создаст эту коллекцию автоматически.
-        var cols = constructor.GetAllCollections();
-        if (cols.Count == 0)
-            _collections.Add(("Без названия", null, "#007AFF"));
-        foreach (var c in cols)
-            _collections.Add((c.Name, c.Id, c.Color ?? "#8E8E93"));
+        // Выбор БД показываем, когда смонтировано несколько баз (и при создании, и при
+        // изменении — там смена БД означает перенос записи). При смене БД список коллекций
+        // перезагружается из выбранной базы.
+        var showDbPicker = _databases.Count > 1;
+        DbSection.IsVisible = showDbPicker;
+        if (showDbPicker)
+        {
+            DbCombo.ItemsSource   = _databases.Select(d => d.Name).ToList();
+            DbCombo.SelectedIndex = _databases.FindIndex(d => d.DbId == _selectedDbId);
+            DbCombo.SelectionChanged += (_, _) =>
+            {
+                var idx = DbCombo.SelectedIndex;
+                if (idx < 0 || idx >= _databases.Count) return;
+                _selectedDbId = _databases[idx].DbId;
+                LoadCollections(_databases[idx].Repo);
+            };
+        }
 
-        CollectionCombo.ItemsSource   = _collections.Select(c => c.Name).ToList();
-        CollectionCombo.SelectedIndex = 0;
+        LoadCollections(CurrentRepo);
 
         StartTimeList.ItemsSource = TimeText.Options;
         EndTimeList.ItemsSource   = TimeText.Options;
@@ -130,6 +145,31 @@ public partial class RecordDialog : Window
         Closing     += (_, _) => CloseTimePopups();
 
         UpdateTimeVisibility();
+    }
+
+    // Репозиторий выбранной БД.
+    private ConstructorRepository CurrentRepo
+    {
+        get
+        {
+            foreach (var d in _databases) if (d.DbId == _selectedDbId) return d.Repo;
+            return _databases[0].Repo;
+        }
+    }
+
+    // Перезагружает список коллекций из указанной БД. Если ни одной нет — плейсхолдер
+    // «Без названия» (id=null): при сохранении репозиторий создаст эту коллекцию автоматически.
+    private void LoadCollections(ConstructorRepository repo)
+    {
+        _collections.Clear();
+        var cols = repo.GetAllCollections();
+        if (cols.Count == 0)
+            _collections.Add(("Без названия", null, "#007AFF"));
+        foreach (var c in cols)
+            _collections.Add((c.Name, c.Id, c.Color ?? "#8E8E93"));
+
+        CollectionCombo.ItemsSource   = _collections.Select(c => c.Name).ToList();
+        CollectionCombo.SelectedIndex = 0;
     }
 
     // ══════════════════════════════════════════════════════════════════════════
@@ -376,6 +416,7 @@ public partial class RecordDialog : Window
         var candidate = new CalendarRecord
         {
             Id           = existingId,
+            DbId         = _selectedDbId,
             Title        = title,
             Description  = DescBox.Text ?? "",
             StartDt      = startDt,
