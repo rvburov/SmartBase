@@ -1288,22 +1288,33 @@ public partial class TableView : UserControl
         return menu;
     }
 
-    private ContextMenu BuildRowContextMenu(int recordId)
+    // Меню строится с ЛЕНИВЫМ резолвом RecordId из текущего DataContext строки (см. RowRecordId),
+    // а не с захватом id в момент BuildRowContextMenu. Причина: при async-подгрузке строк
+    // (AppSettings.asyncRowLoad) строка сперва realized как заглушка «Загрузка…» с RecordId=0,
+    // и только потом Fill проставляет реальный id в ТОТ ЖЕ VM — без повторного realized, т.е. без
+    // повторного OnLoadingRow. Захваченный id остался бы 0: дубль падал «Record 0 not found»,
+    // удаление/изменение/сдвиг — тихий no-op. Чтение на момент клика всегда даёт актуальный id.
+    private ContextMenu BuildRowContextMenu(DataGridRow row)
     {
         var menu = new ContextMenu();
 
         var miCreate = new MenuItem { Header = Controls.Components.MenuIcons.CreateRecordHeader() };
-        miCreate.Click += (_, _) => RecordCreateRequested?.Invoke(this, (false, recordId)); // после этой строки, без открытия
+        // После этой строки, без открытия. Если строка ещё не заполнена (id=0) — создаём в конце.
+        miCreate.Click += (_, _) =>
+        {
+            var rid = RowRecordId(row);
+            RecordCreateRequested?.Invoke(this, (false, rid > 0 ? rid : (int?)null));
+        };
         menu.Items.Add(miCreate);
 
         menu.Items.Add(new Separator());
 
         var miEdit = new MenuItem { Header = Controls.Components.MenuIcons.EditHeader() };
-        miEdit.Click += (_, _) => RecordClicked?.Invoke(this, recordId);
+        miEdit.Click += (_, _) => { var rid = RowRecordId(row); if (rid > 0) RecordClicked?.Invoke(this, rid); };
         menu.Items.Add(miEdit);
 
         var miDuplicate = new MenuItem { Header = Controls.Components.MenuIcons.DuplicateHeader() };
-        miDuplicate.Click += (_, _) => RecordDuplicateRequested?.Invoke(this, recordId);
+        miDuplicate.Click += (_, _) => { var rid = RowRecordId(row); if (rid > 0) RecordDuplicateRequested?.Invoke(this, rid); };
         menu.Items.Add(miDuplicate);
 
         // «Отображение» (записей) — глобальное окно видимости/уровней строк (список всех
@@ -1312,24 +1323,32 @@ public partial class TableView : UserControl
         miDisplay.Click += (_, _) => RecordDisplayRequested?.Invoke(this, EventArgs.Empty);
         menu.Items.Add(miDisplay);
 
-        AddRecordMoveItems(menu, recordId);
+        AddRecordMoveItems(menu, row);
         AddHeightModeItems(menu);
 
         menu.Items.Add(new Separator());
 
         var miDelete = MakeDeleteMenuItem();
-        miDelete.Click += (_, _) => RequestRecordDeleteFromMenu(recordId);
+        miDelete.Click += (_, _) => RequestRecordDeleteFromMenu(row);
         menu.Items.Add(miDelete);
 
         return menu;
     }
 
+    // Текущий RecordId строки из её DataContext (0 — заглушка «Загрузка…» или add-row).
+    // Резолвится на момент вызова, поэтому видит id, проставленный async-заполнением строки.
+    private static int RowRecordId(DataGridRow row) =>
+        (row.DataContext as TableRowVm)?.RecordId ?? 0;
+
     // Удаление из меню записи. Если запись входит в текущее мультивыделение (правый
     // клик по выделенной строке его сохраняет) — удаляем весь набор; иначе только её.
     // В любом случае идём через пакетный путь с подтверждением (RecordsDeleteRequested) —
     // как и удаление свойств.
-    private void RequestRecordDeleteFromMenu(int recordId)
+    private void RequestRecordDeleteFromMenu(DataGridRow row)
     {
+        var recordId = RowRecordId(row);
+        if (recordId <= 0) return;   // строка-заглушка ещё не заполнена — удалять нечего
+
         var selected = SelectedRecordIds();
         List<int> ids = selected.Contains(recordId) && selected.Count > 1 ? selected : [recordId];
         RecordsDeleteRequested?.Invoke(this, ids);
@@ -1338,17 +1357,17 @@ public partial class TableView : UserControl
     // Пункты «Сдвинуть вверх/вниз» (именно в таком порядке) с разделителем перед ними.
     // Доступны только без активных фильтра и сортировки: при сортировке порядок задаёт
     // сортировка, а не позиция, поэтому ручной сдвиг был бы невидим. Неприменимое
-    // направление (крайняя запись) скрываем; видимость уточняем при открытии меню
-    // (меню кэшируется на строке при её отрисовке).
-    private void AddRecordMoveItems(ContextMenu menu, int recordId)
+    // направление (крайняя запись) скрываем; видимость уточняем при открытии меню — тогда
+    // же резолвится RecordId строки (async-заполнение к моменту открытия уже прошло).
+    private void AddRecordMoveItems(ContextMenu menu, DataGridRow row)
     {
         if (_sortKey is not null || _filters.Count > 0) return;
 
         var sep    = new Separator();
         var miUp   = new MenuItem { Header = Controls.Components.MenuIcons.MoveUpHeader() };
-        miUp.Click += (_, _) => MoveRecord(recordId, up: true);
+        miUp.Click += (_, _) => { var rid = RowRecordId(row); if (rid > 0) MoveRecord(rid, up: true); };
         var miDown = new MenuItem { Header = Controls.Components.MenuIcons.MoveDownHeader() };
-        miDown.Click += (_, _) => MoveRecord(recordId, up: false);
+        miDown.Click += (_, _) => { var rid = RowRecordId(row); if (rid > 0) MoveRecord(rid, up: false); };
 
         menu.Items.Add(sep);
         menu.Items.Add(miUp);
@@ -1356,8 +1375,9 @@ public partial class TableView : UserControl
 
         void Refresh()
         {
-            var canUp   = CanMoveRecord(recordId, up: true);
-            var canDown = CanMoveRecord(recordId, up: false);
+            var rid     = RowRecordId(row);
+            var canUp   = rid > 0 && CanMoveRecord(rid, up: true);
+            var canDown = rid > 0 && CanMoveRecord(rid, up: false);
             miUp.IsVisible   = canUp;
             miDown.IsVisible = canDown;
             sep.IsVisible    = canUp || canDown;
@@ -1569,7 +1589,7 @@ public partial class TableView : UserControl
             e.Row.Height = double.NaN;   // строка «+» всегда стандартная
             return;
         }
-        e.Row.ContextMenu = BuildRowContextMenu(row.RecordId);
+        e.Row.ContextMenu = BuildRowContextMenu(e.Row);
 
         // Высота строки: в ручном режиме применяем сохранённую (если есть), иначе
         // сбрасываем на стандартную — важно для переиспользуемых строк (виртуализация).
