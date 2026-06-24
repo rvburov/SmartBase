@@ -1,4 +1,5 @@
 using Avalonia.Controls;
+using Avalonia.Threading;
 using DataBase.Controls.Dialogs;
 using DataBase.Core.Models;
 using DataBase.Database.Repositories;
@@ -65,7 +66,7 @@ public partial class ConstructorControllerView : UserControl
         TableViewCtrl.PropertyCreateRequested    += (_, _)   => _ = OpenPropertyDialog(null);
         TableViewCtrl.PropertyCreateAfterRequested += (_, key) => _ = CreatePropertyAfter(key);
         TableViewCtrl.PropertyEditRequested      += (_, fid) => _ = OpenPropertyDialog(fid);
-        TableViewCtrl.PropertyDuplicateRequested += (_, fid) => DuplicateProperty(fid);
+        TableViewCtrl.PropertyDuplicateRequested += (_, fid) => _ = DuplicateProperty(fid);
         TableViewCtrl.PropertiesDeleteRequested  += (_, ids) => _ = DeletePropertiesWithConfirm(ids);
         TableViewCtrl.SystemFieldRenameRequested += (_, key) => _ = RenameSystemField(key);
         TableViewCtrl.ColumnDisplayRequested     += (_, _)   => _ = OpenDisplayDialog();
@@ -141,6 +142,25 @@ public partial class ConstructorControllerView : UserControl
             SelectCollection(_currentCollectionId.Value);
     }
 
+    // Лёгкое обновление при изменении ТОЛЬКО строк (создание/удаление/дубль/сдвиг записей,
+    // видимость записей): в таблице пересобираем только строки (ReloadRows) — набор колонок
+    // не трогаем, поэтому при 1000 свойств нет «моргания» и тяжёлой пересборки. Для режима
+    // «Список» (без множества колонок) — пока полный путь Refresh.
+    private void RefreshRows()
+    {
+        if (_currentCollectionId is null || _repository is null) return;
+
+        if (TableViewCtrl.IsVisible)
+        {
+            TableViewCtrl.ReloadRows();
+            ConstructorFooter.SetCount(_repository.CountRecords(_currentCollectionId.Value));
+        }
+        else
+        {
+            Refresh();
+        }
+    }
+
     private void ClearView()
     {
         _currentCollectionId = null;
@@ -203,7 +223,7 @@ public partial class ConstructorControllerView : UserControl
             rec = _repository.AddRecord(newRecord);
         }
 
-        Refresh();
+        RefreshRows();
         CollectionsChanged?.Invoke(this, EventArgs.Empty);
 
         if (rec.Id.HasValue)
@@ -236,7 +256,7 @@ public partial class ConstructorControllerView : UserControl
         var keepVertical = TableViewCtrl.IsVisible ? TableViewCtrl.CurrentVerticalOffset() : (double?)null;
 
         _repository.DeleteRecord(recordId);
-        Refresh();
+        RefreshRows();
         CollectionsChanged?.Invoke(this, EventArgs.Empty);
         RecordPageClosed?.Invoke(this, EventArgs.Empty);
 
@@ -261,7 +281,7 @@ public partial class ConstructorControllerView : UserControl
         var keepVertical = TableViewCtrl.IsVisible ? TableViewCtrl.CurrentVerticalOffset() : (double?)null;
 
         foreach (var id in ids) _repository.DeleteRecord(id);
-        Refresh();
+        RefreshRows();
         CollectionsChanged?.Invoke(this, EventArgs.Empty);
         RecordPageClosed?.Invoke(this, EventArgs.Empty);
 
@@ -292,7 +312,7 @@ public partial class ConstructorControllerView : UserControl
         var keepVertical = TableViewCtrl.IsVisible ? TableViewCtrl.CurrentVerticalOffset() : (double?)null;
 
         _repository.DuplicateRecord(recordId);
-        Refresh();
+        RefreshRows();
         CollectionsChanged?.Invoke(this, EventArgs.Empty);
 
         if (keepVertical is { } off && TableViewCtrl.IsVisible)
@@ -306,20 +326,37 @@ public partial class ConstructorControllerView : UserControl
         if (_currentCollectionId is null || _repository is null) return;
         if (VisualRoot is not Avalonia.Controls.Window win) return;
 
+        // Для создания (fieldId == null) запоминаем поля ДО — чтобы вычислить новое и
+        // добавить ровно одну колонку, не пересобирая таблицу.
+        var idsBefore = fieldId is null
+            ? _repository.GetFields(_currentCollectionId.Value).Select(f => f.Id).ToHashSet()
+            : null;
+
         var dlg = new PropertyEditorDialog(_repository, _currentCollectionId.Value, fieldId);
         var ok  = await dlg.ShowDialog<bool?>(win);
-        if (ok == true)
+        if (ok != true) return;
+
+        if (fieldId is { } editId)
         {
-            Refresh();
-
-            // Создание нового свойства (fieldId == null) идёт через правый «+» — оно
-            // добавляется в конец таблицы. Прокручиваем к правому краю, чтобы новая
-            // колонка и кнопка «+» остались видны (как ScrollToRecord держит add-row «+»).
-            if (fieldId is null && TableViewCtrl.IsVisible)
-                TableViewCtrl.ScrollToAddPropertyColumn();
-
-            CollectionsChanged?.Invoke(this, EventArgs.Empty);
+            // Изменение свойства (имя/тип/опции) — перестраиваем только эту колонку.
+            TableViewCtrl.RebuildColumn(editId.ToString());
         }
+        else
+        {
+            // Создание — новое поле добавляется в конец; вставляем одну колонку и
+            // прокручиваем к правому краю (новая колонка и «+» остаются видны).
+            var newField = _repository.GetFields(_currentCollectionId.Value)
+                .FirstOrDefault(f => idsBefore is not null && !idsBefore.Contains(f.Id));
+            if (newField?.Id is { } newId)
+                TableViewCtrl.AddColumnForField(newId);
+            else
+                Refresh();   // не нашли новое поле — безопасный фоллбек
+
+            if (TableViewCtrl.IsVisible)
+                TableViewCtrl.ScrollToAddPropertyColumn();
+        }
+
+        CollectionsChanged?.Invoke(this, EventArgs.Empty);
     }
 
     // Окно «Отображение» — менеджер видимости/уровней колонок. Список свойств берём
@@ -333,7 +370,7 @@ public partial class ConstructorControllerView : UserControl
         var dlg = new DisplayDialog(_repository, _currentCollectionId.Value, columns);
         var ok  = await dlg.ShowDialog<bool?>(win);
         if (ok == true)
-            Refresh();
+            TableViewCtrl.ReloadColumns();   // только колонки (строки не сбрасываем); выделение работает
     }
 
     // Окно «Отображение записей» — менеджер видимости/уровней/порядка строк. Список
@@ -348,7 +385,7 @@ public partial class ConstructorControllerView : UserControl
         var dlg = new RecordDisplayDialog(_repository, _currentCollectionId.Value, records);
         var ok  = await dlg.ShowDialog<bool?>(win);
         if (ok == true)
-            Refresh();
+            RefreshRows();
     }
 
     // Создать новое свойство и поставить его сразу справа от колонки afterKey
@@ -379,7 +416,7 @@ public partial class ConstructorControllerView : UserControl
             _repository.MoveColumnAfter(_currentCollectionId.Value, newId.ToString(), afterKey, movable);
         }
 
-        Refresh();
+        TableViewCtrl.ReloadColumns();   // только колонки, строки не сбрасываем
         CollectionsChanged?.Invoke(this, EventArgs.Empty);
     }
 
@@ -397,7 +434,7 @@ public partial class ConstructorControllerView : UserControl
 
         var defaultName = TableViewCtrl.GetSystemDefaultName(key);
         _repository.SetSystemFieldName(_currentCollectionId.Value, key, dlg.ResultName, defaultName);
-        Refresh();
+        TableViewCtrl.RebuildColumn(key);   // перестроить только этот заголовок, не всю таблицу
         CollectionsChanged?.Invoke(this, EventArgs.Empty);
     }
 
@@ -424,24 +461,40 @@ public partial class ConstructorControllerView : UserControl
         CollectionsChanged?.Invoke(this, EventArgs.Empty);
     }
 
-    private void DuplicateProperty(int fieldId)
+    private async Task DuplicateProperty(int fieldId)
     {
         if (_repository is null || _currentCollectionId is null) return;
 
         // Порядок колонок ДО дублирования — чтобы поставить копию сразу справа от
         // исходной (как «Создать новое свойство»), а не в конец, если задан column_order.
         var orderBefore = TableViewCtrl.MovableKeysInOrder();
+        var total       = _repository.CountFieldValues(fieldId);
 
-        var copy = _repository.DuplicateField(fieldId);
+        // Маленькое поле — мгновенно синхронно; большое — окно прогресса с % и копирование
+        // значений в фоне на отдельном подключении (как дубль коллекции в сайдбаре).
+        DbField? copy;
+        if (total <= FieldBulkThreshold || VisualRoot is not Avalonia.Controls.Window win)
+            copy = _repository.DuplicateField(fieldId);
+        else
+            copy = await RunFieldOpWithProgress("Дублирование столбца", total,
+                (p, setPhase) => { setPhase("Дублирование столбца"); return _repository.DuplicateFieldIsolated(fieldId, p); }, win);
 
-        if (copy.Id is { } copyId)
+        if (copy?.Id is { } copyId)
         {
             var movable = new List<string>(orderBefore) { copyId.ToString() };
             _repository.MoveColumnAfter(_currentCollectionId.Value, copyId.ToString(), fieldId.ToString(), movable);
         }
 
-        Refresh();
-        CollectionsChanged?.Invoke(this, EventArgs.Empty);
+        // У копии есть значения для СУЩЕСТВУЮЩИХ строк, а кэш строк таблицы их не знает (строки
+        // грузились до создания копии) — поэтому обновляем и строки. Иначе у уже отрисованных
+        // строк новая колонка показывала бы ПУСТО (а у прокрученных данные есть). В отличие от
+        // удаления/сдвига, где данные строк не меняются и ReloadColumns достаточно.
+        var keepV = TableViewCtrl.CurrentVerticalOffset();
+        TableViewCtrl.ReloadColumns();   // добавить колонку + обновить список полей
+        TableViewCtrl.ReloadRows();      // перечитать строки, чтобы подтянулись значения копии
+        TableViewCtrl.RestoreVerticalOffset(keepV);
+        // CollectionsChanged не нужен: копия не источник календаря (IsCalStart=false), список
+        // коллекций не меняется — кросс-БД рефреш лишь тормозил бы.
     }
 
     // Пакетное удаление выделенных свойств (клавиша Delete) с подтверждением —
@@ -461,9 +514,102 @@ public partial class ConstructorControllerView : UserControl
         var dlg = new ConfirmDialog($"Вы удаляете {deletable.Count} {PropertiesPlural(deletable.Count)}. Подтвердить?");
         if (await dlg.ShowDialog<bool>(win) != true) return;
 
-        foreach (var id in deletable) _repository.DeleteField(id);
-        Refresh();
-        CollectionsChanged?.Invoke(this, EventArgs.Empty);
+        // Надёжно (синхронно, без осиротевших данных): маленькие поля — мгновенно; большие —
+        // окно прогресса с % и удаление значений в фоне (на отдельном подключении).
+        var counts = deletable.Select(id => _repository.CountFieldValues(id)).ToList();
+        var total  = counts.Sum(c => (long)c);
+        if (total <= FieldBulkThreshold)
+        {
+            foreach (var id in deletable) _repository.DeleteField(id);
+        }
+        else
+        {
+            var manyCols = deletable.Count > 1;
+            await RunFieldOpWithProgress(manyCols ? "Удаление столбцов" : "Удаление столбца", total,
+                (p, setPhase) =>
+                {
+                    // Поля удаляем по очереди (каждое — на своём подключении), показывая «N/M».
+                    long basis = 0;
+                    for (var i = 0; i < deletable.Count; i++)
+                    {
+                        setPhase(manyCols ? $"Удаление {i + 1}/{deletable.Count} столбцов" : "Удаление столбца");
+                        var b = basis;
+                        _repository.DeleteFieldIsolated(deletable[i], new IntProgress(done => p.Report((int)(b + done))));
+                        basis += counts[i];
+                    }
+                    return true;
+                }, win);
+        }
+
+        TableViewCtrl.ReloadColumns();   // колонка исчезает сразу; строки не пересобираем
+
+        // Кросс-БД обновление (сайдбары + календарь по всем БД) после операции лишь тормозит и
+        // НУЖНО только если удалили поле-источник календаря (IsCalStart): колонки не меняют ни
+        // список коллекций, ни события календаря. Этот лишний рефреш и давал «зависон» после 100%.
+        if (fields.Any(f => f.IsCalStart && f.Id is { } fid && deletable.Contains(fid)))
+            CollectionsChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    // Порог значений: меньше — операция с полем идёт мгновенно синхронно (без окна); больше —
+    // окно прогресса с % и работа в фоне на отдельном подключении (как bulk-операции в сайдбаре).
+    private const int FieldBulkThreshold = 20000;
+
+    // Сентинел для lastPct: фаза «Сохранение…» (коммит) показана. Не пересекается с 0..100.
+    private const int SavingPhase = -2;
+
+    // Окно прогресса + фоновая работа (внутри work — на отдельном подключении) с % по значениям.
+    // Возвращает результат work (или default при ошибке/прерывании).
+    private async Task<T> RunFieldOpWithProgress<T>(string windowTitle, long total,
+                                                    Func<IProgress<int>, Action<string>, T> work,
+                                                    Avalonia.Controls.Window win)
+    {
+        var dlg = new ProgressDialog { Title = windowTitle };
+        dlg.SetInfo($"Значений: {total}");
+        var dlgClosed = dlg.ShowDialog(win);
+
+        var lastPct   = -1;
+        var lastPhase = "";
+        var phase     = windowTitle;
+        T result = default!;
+        try
+        {
+            await Task.Run(() =>
+            {
+                // work задаёт текст фазы (напр. «Удаление 2/3 столбцов») через setPhase.
+                Action<string> setPhase = ph => phase = ph;
+                IProgress<int> p = new IntProgress(done =>
+                {
+                    // Все значения обработаны → впереди коммит/чек-пойнт большой транзакции (на
+                    // 400k+ это секунды записи на диск). Бегущая фаза «Сохранение…», чтобы 100%
+                    // не выглядели зависшими.
+                    if (done >= total)
+                    {
+                        if (lastPct == SavingPhase) return;
+                        lastPct = SavingPhase;
+                        Dispatcher.UIThread.Post(() => dlg.SetSaving("Сохранение…"));
+                        return;
+                    }
+                    var pct = total == 0 ? 100 : (int)(done * 100L / total);
+                    var ph  = phase;
+                    if (pct == lastPct && ph == lastPhase) return;
+                    lastPct = pct; lastPhase = ph;
+                    Dispatcher.UIThread.Post(() => dlg.SetProgress(pct / 100.0, ph));
+                });
+                result = work(p, setPhase);
+            });
+        }
+        catch { /* фон: ошибку не валим в UI */ }
+
+        dlg.Done();
+        await dlgClosed;
+        return result;
+    }
+
+    // Адаптер IProgress<int> для прогресса с фонового потока (сам маршалит на UI через Dispatcher);
+    // Progress<T> здесь не годится — создаётся в Task.Run и захватил бы фоновый контекст.
+    private sealed class IntProgress(Action<int> report) : IProgress<int>
+    {
+        public void Report(int value) => report(value);
     }
 
     // Русское склонение: 1 свойство, 2–4 свойства, 5+ свойств (с учётом 11–14).

@@ -1489,6 +1489,23 @@ public class ConstructorRepository(AppDbContext db)
 
     public DbField DuplicateField(int fieldId)
     {
+        var copy = CreateFieldCopyEntity(fieldId);
+
+        // Копируем значения ячеек исходного свойства во всех записях ОДНИМ bulk-SQL —
+        // на больших коллекциях это сотни тысяч строк, поэлементная вставка через EF
+        // подвешивала бы приложение. Конфликтов по (RecordId, FieldId) нет: поле новое.
+        db.Database.ExecuteSqlInterpolated($@"
+            INSERT INTO db_field_values (RecordId, FieldId, Value)
+            SELECT RecordId, {copy.Id}, Value FROM db_field_values WHERE FieldId = {fieldId}");
+
+        return ToDbField(copy);
+    }
+
+    // Метаданные копии поля (имя «(копия)», сдвиг позиций соседей, новая строка db_fields) БЕЗ
+    // значений. Значения копирует вызывающий: одним SQL (DuplicateField) или пакетами с прогрессом
+    // (DuplicateFieldData).
+    private DbFieldEntity CreateFieldCopyEntity(int fieldId)
+    {
         var src = db.DbFields.Find(fieldId);
         if (src is null) throw new InvalidOperationException($"Field {fieldId} not found");
 
@@ -1512,20 +1529,118 @@ public class ConstructorRepository(AppDbContext db)
         };
         db.DbFields.Add(copy);
         db.SaveChanges();
-
-        // Копируем значения ячеек исходного свойства во всех записях ОДНИМ bulk-SQL —
-        // на больших коллекциях это сотни тысяч строк, поэлементная вставка через EF
-        // подвешивала бы приложение. Конфликтов по (RecordId, FieldId) нет: поле новое.
-        db.Database.ExecuteSqlInterpolated($@"
-            INSERT INTO db_field_values (RecordId, FieldId, Value)
-            SELECT RecordId, {copy.Id}, Value FROM db_field_values WHERE FieldId = {fieldId}");
-
-        return new DbField
-        {
-            Id = copy.Id, CollectionId = copy.CollectionId, Name = copy.Name,
-            FieldType = copy.FieldType, ConfigJson = copy.ConfigJson, Position = copy.Position,
-        };
+        return copy;
     }
+
+    private static DbField ToDbField(DbFieldEntity e) => new()
+    {
+        Id = e.Id, CollectionId = e.CollectionId, Name = e.Name,
+        FieldType = e.FieldType, ConfigJson = e.ConfigJson, Position = e.Position,
+    };
+
+    // ── Тяжёлые операции со свойствами: счётчик + пакетные версии с прогрессом ──
+    // Удаление и дубль поля затрагивают его значения по ВСЕМ записям коллекции (на больших
+    // коллекциях — сотни тысяч строк). Маленькие поля контроллер делает синхронно мгновенно;
+    // большие — через *Isolated на отдельном подключении в фоне, с окном прогресса (как дубль/
+    // удаление коллекций в сайдбаре). Пакеты — только ради гранулярности прогресса: по SQL это
+    // та же работа, что один INSERT…SELECT / каскадный DELETE.
+
+    /// <summary>Число значений поля по всем записям — для выбора «мгновенно» vs «окно прогресса».</summary>
+    public int CountFieldValues(int fieldId) =>
+        db.DbFieldValues.Count(v => v.FieldId == fieldId);
+
+    /// <summary>Дубль поля на ОТДЕЛЬНОМ подключении (для фона) с прогрессом по скопированным значениям.</summary>
+    public DbField DuplicateFieldIsolated(int fieldId, IProgress<int>? progress = null)
+    {
+        using var ctx = new AppDbContext(db.DbPath);
+        ctx.ApplyPerformancePragmas();
+        return new ConstructorRepository(ctx).DuplicateFieldData(fieldId, progress);
+    }
+
+    /// <summary>Удаление ОДНОГО поля на ОТДЕЛЬНОМ подключении (для фона) с прогрессом по его значениям.
+    /// Несколько полей контроллер удаляет в цикле — чтобы показывать «N/M столбцов».</summary>
+    public void DeleteFieldIsolated(int fieldId, IProgress<int>? progress = null)
+    {
+        using var ctx = new AppDbContext(db.DbPath);
+        ctx.ApplyPerformancePragmas();
+        new ConstructorRepository(ctx).DeleteFieldData(fieldId, progress);
+    }
+
+
+    /// <summary>Дубль поля ПАКЕТАМИ: метаданные мгновенно, значения — порциями по списку их Id.</summary>
+    public DbField DuplicateFieldData(int fieldId, IProgress<int>? progress = null, int batchSize = 10000)
+    {
+        var copy   = CreateFieldCopyEntity(fieldId);
+        var copyId = copy.Id;
+
+        var ids = FieldValueIdsSorted(fieldId);   // Id-порядок → последовательные обновления индексов
+        using var tx = db.Database.BeginTransaction();
+        for (var i = 0; i < ids.Count; i += batchSize)
+        {
+            var inList = JoinIdRange(ids, i, batchSize);
+            // Копируем строго по PK (Id IN …) — без скана значений чужих полей. ExecuteSqlRaw:
+            // в готовой строке нет фигурных скобок (copyId — число, inList — «1,2,3»).
+            db.Database.ExecuteSqlRaw(
+                $"INSERT INTO db_field_values (RecordId, FieldId, Value) " +
+                $"SELECT RecordId, {copyId}, Value FROM db_field_values WHERE Id IN ({inList})");
+            progress?.Report(Math.Min(ids.Count, i + batchSize));
+        }
+        tx.Commit();
+        return ToDbField(copy);
+    }
+
+    /// <summary>Удаление поля ПАКЕТАМИ: значения порциями по списку их Id (прогресс), затем строка
+    /// поля (каскад на calendar_index по FK) и чистка column_order — как в DeleteField.</summary>
+    public void DeleteFieldData(int fieldId, IProgress<int>? progress = null, int batchSize = 10000)
+    {
+        var field = db.DbFields.Find(fieldId);
+        if (field is null) return;
+        var colId = field.CollectionId;
+
+        var ids = FieldValueIdsSorted(fieldId);
+        using var tx = db.Database.BeginTransaction();
+        for (var i = 0; i < ids.Count; i += batchSize)
+        {
+            var inList = JoinIdRange(ids, i, batchSize);
+            db.Database.ExecuteSqlRaw($"DELETE FROM db_field_values WHERE Id IN ({inList})");
+            progress?.Report(Math.Min(ids.Count, i + batchSize));
+        }
+
+        // Строка поля (FK ON DELETE CASCADE уберёт calendar_index) + чистка column_order
+        // (его FK не каскадит — ключ строковый), как в синхронном DeleteField.
+        var key = fieldId.ToString();
+        db.Database.ExecuteSqlInterpolated($"DELETE FROM db_fields WHERE Id = {fieldId}");
+        db.Database.ExecuteSqlInterpolated(
+            $"DELETE FROM column_order WHERE CollectionId = {colId} AND Key = {key}");
+        tx.Commit();
+    }
+
+    // Id всех значений поля одним индексным запросом ((FieldId,Value) — без скана чужих полей),
+    // отсортированные по Id. Id-порядок ≈ порядок создания записей ≈ порядок RecordId, поэтому
+    // удаление/вставка по нему дают ПОСЛЕДОВАТЕЛЬНЫЕ обновления индексов (на больших полях это
+    // в разы быстрее случайного порядка, который давал бы один общий DELETE по (FieldId,Value)).
+    private List<long> FieldValueIdsSorted(int fieldId)
+    {
+        var ids = new List<long>();
+        var conn = db.Database.GetDbConnection();
+        var wasOpen = conn.State == System.Data.ConnectionState.Open;
+        if (!wasOpen) conn.Open();
+        try
+        {
+            using var c = conn.CreateCommand();
+            if (db.Database.CurrentTransaction is { } t) c.Transaction = t.GetDbTransaction();
+            c.CommandText = $"SELECT Id FROM db_field_values WHERE FieldId = {fieldId}";
+            using var rdr = c.ExecuteReader();
+            while (rdr.Read()) ids.Add(rdr.GetInt64(0));
+        }
+        finally { if (!wasOpen) conn.Close(); }
+        ids.Sort();
+        return ids;
+    }
+
+    // «a,b,c» из среза ids[start .. start+count) — для списка Id IN (…). Только числа (без инъекций).
+    private static string JoinIdRange(List<long> ids, int start, int count) =>
+        string.Join(",", ids.GetRange(start, Math.Min(count, ids.Count - start)));
 
     // Имя копии в стиле macOS (без стакания слова «копия»). Отрезаем уже имеющийся
     // суффикс «(копия)»/«(копия) N» и подбираем первый свободный: «X (копия)»,

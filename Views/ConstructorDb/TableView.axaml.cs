@@ -436,9 +436,9 @@ public partial class TableView : UserControl
             _repository.SaveUiSettings(_collectionId, colResize, manual, viewMode);
         }
 
-        // Перестраиваем строки, чтобы применить/сбросить высоты; держим прокрутку.
+        // Перестраиваем только строки, чтобы применить/сбросить высоты; колонки не трогаем.
         var keepV = CurrentVerticalOffset();
-        ReloadPreservingScroll();
+        ReloadRows();
         RestoreVerticalOffset(keepV);
     }
 
@@ -459,7 +459,85 @@ public partial class TableView : UserControl
 
     // ── Построение таблицы ────────────────────────────────────────────────────
 
+    // Полная пересборка: и КОЛОНКИ, и строки. Тяжёлая (при 1000 свойств строит 1000
+    // DataGridColumn с шаблонами/заголовками/меню) — вызывать только когда реально
+    // изменился НАБОР колонок: открытие коллекции, создание/удаление/смена типа свойства.
+    // Для операций со строками есть ReloadRows — там колонки не трогаются (нет «моргания»
+    // шапки и тяжёлой пересборки), что и нужно при больших объёмах.
     private void Reload()
+    {
+        if (_repository is null) return;
+
+        LoadColumnState();
+
+        ClearColumnSelection();   // колонки пересобираются — снимаем выделение
+
+        _colDefs = BuildColDefs();
+        ColumnsBuilt?.Invoke(this, _colDefs);
+
+        BuildColumns();
+        RecordsGrid.ContextMenu = BuildGridContextMenu();
+        ApplyColumnWidths();
+
+        ReloadRows();   // источник строк + фильтры + полоски ресайза (общий путь со строковыми операциями)
+    }
+
+    // Пересобирает ТОЛЬКО строки: новый источник данных, фильтры, высоты — НЕ трогая набор
+    // колонок. Дёшево при 1000 свойств: DataGrid не пересобирает заголовки/шаблоны колонок
+    // (нет «моргания» шапки), перестраиваются лишь видимые строки (виртуализация). Вызывать
+    // на операциях, меняющих набор/порядок ЗАПИСЕЙ (создание/удаление/дубль/сдвиг записи,
+    // видимость записей) и при переключении ручной высоты строк. _fields берётся из последнего
+    // полного Reload — для строковых операций он не меняется.
+    public void ReloadRows()
+    {
+        if (_repository is null) return;
+
+        _hiddenRecords = _repository.GetRecordDisplay(_collectionId)
+            .Where(kv => !kv.Value.Visible)
+            .Select(kv => kv.Key)
+            .ToHashSet();
+        _rowHeights = _repository.GetRowHeights(_collectionId);
+
+        _virtualRows = new VirtualRowList(_repository, _collectionId, _fields,
+                                         excludeHidden: _hiddenRecords.Count > 0);
+        // Виртуализирующая обёртка: DataGrid не материализует источник, тянет только видимые
+        // строки → большие коллекции открываются мгновенно. Всегда включена.
+        _virtualView = new VirtualCollectionView(_virtualRows);
+
+        RecordsGrid.ItemsSource = DefaultItemsSource;
+
+        ApplyFilters();                // переустановит ItemsSource, если фильтр/сортировка активны
+        ScheduleRowHandlesRefresh();   // полоски ресайза строк (если ручной режим)
+    }
+
+    // Пересобирает ТОЛЬКО колонки, СОХРАНЯЯ строки (источник _virtualRows не пересоздаётся).
+    // Для операций, меняющих набор/порядок КОЛОНОК (сдвиг, удаление/дубль поля, «Отображение»,
+    // создание после): строки не сбрасываются в заглушки «Загрузка…» → нет «белого» мелькания
+    // на больших коллекциях. Полная пересборка колонок надёжна (в отличие от точечной
+    // перестановки/удаления, которые Avalonia DataGrid не отрабатывал). Горизонтальную
+    // прокрутку держим на месте (Columns.Clear сбрасывает offset в 0).
+    public void ReloadColumns()
+    {
+        if (_repository is null) return;
+
+        var keepH = CurrentScrollOffset();
+
+        LoadColumnState();
+        ClearColumnSelection();   // колонки пересобираются — снимаем выделение
+
+        _colDefs = BuildColDefs();
+        ColumnsBuilt?.Invoke(this, _colDefs);
+
+        BuildColumns();
+        RecordsGrid.ContextMenu = BuildGridContextMenu();
+        ApplyColumnWidths();
+
+        if (keepH > 0) RestoreScrollOffset(keepH);
+    }
+
+    // Состояние, нужное для построения КОЛОНОК (поля, подписи системных, порядок, скрытые).
+    // Вынесено из Reload, чтобы переиспользовать в точечных операциях со свойствами.
+    private void LoadColumnState()
     {
         if (_repository is null) return;
 
@@ -473,31 +551,62 @@ public partial class TableView : UserControl
             .Where(kv => !kv.Value.Visible)
             .Select(kv => kv.Key)
             .ToHashSet();
-        _hiddenRecords = _repository.GetRecordDisplay(_collectionId)
-            .Where(kv => !kv.Value.Visible)
-            .Select(kv => kv.Key)
-            .ToHashSet();
-        _rowHeights = _repository.GetRowHeights(_collectionId);
+    }
 
-        ClearColumnSelection();   // колонки пересобираются — снимаем выделение
+    // ── Точечные изменения набора колонок (без полной пересборки) ──────────────
+    // RecordsGrid.Columns[i] выровнен 1:1 с _colDefs[i] (см. BuildColumns). Поэтому
+    // вставку/удаление/замену ОДНОЙ колонки делаем по индексу — без Columns.Clear() и
+    // пересборки всех DataGridColumn: нет «моргания» шапки и тяжёлой работы при 1000 свойств.
+    // Везде есть безопасный фоллбек на полную пересборку, если набор/порядок разошёлся.
 
-        _colDefs = BuildColDefs();
+    // Создание/«создать после»/дубль свойства: порядок в БД уже выставлен контроллером
+    // (AddField/MoveColumnAfter), здесь — одна вставка на её место в порядке.
+    public void AddColumnForField(int fieldId)
+    {
+        if (_repository is null) return;
+
+        LoadColumnState();
+        var newDefs = BuildColDefs();
+        var idx     = newDefs.FindIndex(d => d.Key == fieldId.ToString());
+
+        // Норма: добавилась ровно одна колонка, относительный порядок остальных не менялся.
+        if (idx < 0 || newDefs.Count != RecordsGrid.Columns.Count + 1)
+        {
+            _colDefs = newDefs;
+            BuildColumns();              // фоллбек: что-то разошлось — полная пересборка
+            ApplyColumnWidths();
+            return;
+        }
+
+        _colDefs = newDefs;
+        RecordsGrid.Columns.Insert(idx, CreateDataGridColumn(newDefs[idx]));
         ColumnsBuilt?.Invoke(this, _colDefs);
-
-        _virtualRows = new VirtualRowList(_repository, _collectionId, _fields,
-                                         excludeHidden: _hiddenRecords.Count > 0);
-        // Виртуализирующая обёртка: DataGrid не материализует источник, тянет только видимые
-        // строки → большие коллекции открываются мгновенно. Всегда включена.
-        _virtualView = new VirtualCollectionView(_virtualRows);
-
-        BuildColumns();
-
-        RecordsGrid.ItemsSource = DefaultItemsSource;
-        RecordsGrid.ContextMenu = BuildGridContextMenu();
-
         ApplyColumnWidths();
-        ApplyFilters();   // переустановит ItemsSource, если фильтр/сортировка активны
-        ScheduleRowHandlesRefresh();   // полоски ресайза строк (если ручной режим)
+    }
+
+    // Изменение свойства (имя/тип/опции) или переименование системного заголовка: позиция
+    // не меняется → заменяем одну колонку на месте (мелькнёт только она, не вся таблица).
+    public void RebuildColumn(string key)
+    {
+        if (_repository is null) return;
+
+        LoadColumnState();
+        var newDefs = BuildColDefs();
+        var idx     = newDefs.FindIndex(d => d.Key == key);
+
+        if (idx < 0 || newDefs.Count != RecordsGrid.Columns.Count || idx >= RecordsGrid.Columns.Count)
+        {
+            _colDefs = newDefs;
+            BuildColumns();              // фоллбек: набор/порядок изменился
+            ApplyColumnWidths();
+            return;
+        }
+
+        _colDefs = newDefs;
+        RecordsGrid.Columns.RemoveAt(idx);
+        RecordsGrid.Columns.Insert(idx, CreateDataGridColumn(newDefs[idx]));
+        ColumnsBuilt?.Invoke(this, _colDefs);
+        ApplyColumnWidths();
     }
 
     private List<TableColumnDef> BuildColDefs()
@@ -602,14 +711,14 @@ public partial class TableView : UserControl
             .Select(d => (d.Key, d.Header))
             .ToList();
 
-    // Перемещение колонки влево/вправо: пишем порядок в БД, перестраиваем таблицу.
-    // Reload сохраняет активные фильтры/сортировку; горизонтальную прокрутку держим
-    // на месте — иначе таблицу откидывает в начало при каждом сдвиге.
+    // Перемещение колонки влево/вправо: пишем порядок в БД и пересобираем ТОЛЬКО колонки
+    // (строки не сбрасываем) — на больших коллекциях нет «белого» мелькания от перезагрузки
+    // строк. Горизонтальную прокрутку ReloadColumns держит на месте.
     private void MoveColumn(string key, bool left)
     {
         if (_repository is null) return;
         _repository.MoveColumn(_collectionId, key, left, MovableKeysInOrder());
-        ReloadPreservingScroll();
+        ReloadColumns();
     }
 
     // Reload + восстановление горизонтального скролла. Используется операциями,
@@ -643,7 +752,7 @@ public partial class TableView : UserControl
         var keepH = CurrentScrollOffset();
 
         _repository.MoveRecord(_collectionId, recordId, up);
-        Reload();
+        ReloadRows();   // меняется порядок записей, не набор колонок — колонки не пересобираем
 
         if (keepH > 0) RestoreScrollOffset(keepH);
         RestoreVerticalOffset(keepV);

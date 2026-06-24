@@ -16,9 +16,19 @@ public partial class ProgressDialog : Window
     public void SetProgress(double fraction, string phase)
     {
         var pct = Math.Clamp((int)Math.Round(fraction * 100), 0, 100);
+        Bar.IsIndeterminate = false;
         Bar.Value        = pct;
         PercentText.Text = pct + "%";
         PhaseText.Text   = phase;
+    }
+
+    /// <summary>Финальная фаза без процентов (запись на диск/коммит большой транзакции): бегущая
+    /// полоса + текст фазы — чтобы 100% не выглядели «зависшими».</summary>
+    public void SetSaving(string phase)
+    {
+        Bar.IsIndeterminate = true;
+        PercentText.Text    = "";
+        PhaseText.Text      = phase;
     }
 
     /// <summary>Доп. строка под заголовком (напр. «Количество записей: 235000»). Пусто — скрыта.</summary>
