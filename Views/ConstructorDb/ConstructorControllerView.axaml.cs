@@ -66,7 +66,7 @@ public partial class ConstructorControllerView : UserControl
         TableViewCtrl.PropertyCreateRequested    += (_, _)   => _ = OpenPropertyDialog(null);
         TableViewCtrl.PropertyCreateAfterRequested += (_, key) => _ = CreatePropertyAfter(key);
         TableViewCtrl.PropertyEditRequested      += (_, fid) => _ = OpenPropertyDialog(fid);
-        TableViewCtrl.PropertyDuplicateRequested += (_, fid) => _ = DuplicateProperty(fid);
+        TableViewCtrl.PropertyDuplicateRequested += (_, fids) => _ = DuplicateProperties(fids);
         TableViewCtrl.PropertiesDeleteRequested  += (_, ids) => _ = DeletePropertiesWithConfirm(ids);
         TableViewCtrl.SystemFieldRenameRequested += (_, key) => _ = RenameSystemField(key);
         TableViewCtrl.ColumnDisplayRequested     += (_, _)   => _ = OpenDisplayDialog();
@@ -461,40 +461,70 @@ public partial class ConstructorControllerView : UserControl
         CollectionsChanged?.Invoke(this, EventArgs.Empty);
     }
 
-    private async Task DuplicateProperty(int fieldId)
+    private async Task DuplicateProperties(IReadOnlyList<int> fieldIds)
     {
         if (_repository is null || _currentCollectionId is null) return;
+        var ids = fieldIds.Distinct().ToList();
+        if (ids.Count == 0) return;
 
-        // Порядок колонок ДО дублирования — чтобы поставить копию сразу справа от
-        // исходной (как «Создать новое свойство»), а не в конец, если задан column_order.
+        // Порядок колонок ДО дублирования — чтобы каждую копию поставить сразу справа от её
+        // исходника (как одиночный дубль), даже если задан column_order.
         var orderBefore = TableViewCtrl.MovableKeysInOrder();
-        var total       = _repository.CountFieldValues(fieldId);
+        var counts      = ids.Select(id => _repository.CountFieldValues(id)).ToList();
+        var total       = counts.Sum(c => (long)c);
 
-        // Маленькое поле — мгновенно синхронно; большое — окно прогресса с % и копирование
-        // значений в фоне на отдельном подключении (как дубль коллекции в сайдбаре).
-        DbField? copy;
+        var copies = new List<(int Src, int Copy)>();   // исходник → созданная копия
+
+        // Маленький объём — мгновенно синхронно; большой — окно прогресса с % и копирование
+        // значений в фоне (на отдельном подключении), по колонкам с фазой «N/M столбцов».
         if (total <= FieldBulkThreshold || VisualRoot is not Avalonia.Controls.Window win)
-            copy = _repository.DuplicateField(fieldId);
-        else
-            copy = await RunFieldOpWithProgress("Дублирование столбца", total,
-                (p, setPhase) => { setPhase("Дублирование столбца"); return _repository.DuplicateFieldIsolated(fieldId, p); }, win);
-
-        if (copy?.Id is { } copyId)
         {
-            var movable = new List<string>(orderBefore) { copyId.ToString() };
-            _repository.MoveColumnAfter(_currentCollectionId.Value, copyId.ToString(), fieldId.ToString(), movable);
+            foreach (var id in ids)
+            {
+                var copy = _repository.DuplicateField(id);
+                if (copy.Id is { } cid) copies.Add((id, cid));
+            }
+        }
+        else
+        {
+            var many = ids.Count > 1;
+            await RunFieldOpWithProgress(many ? "Дублирование столбцов" : "Дублирование столбца", total,
+                (p, setPhase) =>
+                {
+                    long basis = 0;
+                    for (var i = 0; i < ids.Count; i++)
+                    {
+                        setPhase(many ? $"Дублирование {i + 1}/{ids.Count} столбцов" : "Дублирование столбца");
+                        var b = basis;
+                        var copy = _repository.DuplicateFieldIsolated(ids[i], new IntProgress(done => p.Report((int)(b + done))));
+                        if (copy.Id is { } cid) copies.Add((ids[i], cid));
+                        basis += counts[i];
+                    }
+                    return true;
+                }, win);
         }
 
-        // У копии есть значения для СУЩЕСТВУЮЩИХ строк, а кэш строк таблицы их не знает (строки
-        // грузились до создания копии) — поэтому обновляем и строки. Иначе у уже отрисованных
-        // строк новая колонка показывала бы ПУСТО (а у прокрученных данные есть). В отличие от
-        // удаления/сдвига, где данные строк не меняются и ReloadColumns достаточно.
+        // Каждую копию — сразу за её исходником, одним пересохранением порядка колонок.
+        if (copies.Count > 0)
+        {
+            var copyBySrc  = copies.ToDictionary(c => c.Src.ToString(), c => c.Copy.ToString());
+            var finalOrder = new List<string>();
+            foreach (var key in orderBefore)
+            {
+                finalOrder.Add(key);
+                if (copyBySrc.TryGetValue(key, out var copyKey)) finalOrder.Add(copyKey);
+            }
+            _repository.SaveColumnOrder(_currentCollectionId.Value, finalOrder);
+        }
+
+        // У копий есть значения для СУЩЕСТВУЮЩИХ строк, а кэш строк их не знает (грузились до
+        // создания копий) — обновляем и строки, иначе у уже отрисованных строк новые колонки
+        // показывали бы ПУСТО. (У удаления/сдвига данные строк не меняются — там хватает ReloadColumns.)
         var keepV = TableViewCtrl.CurrentVerticalOffset();
-        TableViewCtrl.ReloadColumns();   // добавить колонку + обновить список полей
-        TableViewCtrl.ReloadRows();      // перечитать строки, чтобы подтянулись значения копии
+        TableViewCtrl.ReloadColumns();
+        TableViewCtrl.ReloadRows();
         TableViewCtrl.RestoreVerticalOffset(keepV);
-        // CollectionsChanged не нужен: копия не источник календаря (IsCalStart=false), список
-        // коллекций не меняется — кросс-БД рефреш лишь тормозил бы.
+        // CollectionsChanged не нужен: копии не источники календаря, список коллекций не меняется.
     }
 
     // Пакетное удаление выделенных свойств (клавиша Delete) с подтверждением —

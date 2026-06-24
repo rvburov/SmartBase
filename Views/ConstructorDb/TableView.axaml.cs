@@ -41,7 +41,9 @@ public partial class TableView : UserControl
     // Создать свойство сразу справа от колонки (string = ключ колонки-инициатора).
     public event EventHandler<string>? PropertyCreateAfterRequested;
     public event EventHandler<int>? PropertyEditRequested;
-    public event EventHandler<int>? PropertyDuplicateRequested;
+    // Дублирование свойств (одного или мультивыделения колонок: меню «Дублировать») — всегда
+    // пакетно, как удаление; для одного поля список из одного id.
+    public event EventHandler<IReadOnlyList<int>>? PropertyDuplicateRequested;
     // Открыть окно «Отображение» (менеджер видимости/уровней колонок). Окно глобальное
     // (список всех колонок), поэтому без аргумента — инициатор-колонка не важна.
     public event EventHandler? ColumnDisplayRequested;
@@ -1631,7 +1633,7 @@ public partial class TableView : UserControl
         menu.Items.Add(miEdit);
 
         var miDuplicate = new MenuItem { Header = Controls.Components.MenuIcons.DuplicateHeader() };
-        miDuplicate.Click += (_, _) => PropertyDuplicateRequested?.Invoke(this, fieldId);
+        miDuplicate.Click += (_, _) => RequestDuplicateFromMenu(fieldId);
         menu.Items.Add(miDuplicate);
 
         var miCreate = new MenuItem { Header = Controls.Components.MenuIcons.CreatePropertyHeader() };
@@ -1679,6 +1681,22 @@ public partial class TableView : UserControl
         // Перед показом диалога оставляем рамки только на удаляемых колонках.
         KeepSelectionOnDeletableOnly();
         PropertiesDeleteRequested?.Invoke(this, ids);
+    }
+
+    // Дублирование из контекстного меню «Дублировать». Если поле входит в текущее
+    // мультивыделение (несколько колонок) — дублируем весь выделенный набор; иначе только это
+    // поле. Системные колонки (нечисловые ключи) в набор не попадают. Пакетный путь — как удаление.
+    private void RequestDuplicateFromMenu(int fieldId)
+    {
+        var key = fieldId.ToString();
+
+        List<int> ids =
+            _selectedColumnKeys.Contains(key) && _selectedColumnKeys.Count > 1
+                ? _selectedColumnKeys.Where(k => int.TryParse(k, out _)).Select(int.Parse).ToList()
+                : [fieldId];
+
+        if (ids.Count == 0) return;
+        PropertyDuplicateRequested?.Invoke(this, ids);
     }
 
     // Убирает из выделения системные колонки («Название»/«Описание») — они не
