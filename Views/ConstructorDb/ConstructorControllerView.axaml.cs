@@ -470,39 +470,30 @@ public partial class ConstructorControllerView : UserControl
         // Порядок колонок ДО дублирования — чтобы каждую копию поставить сразу справа от её
         // исходника (как одиночный дубль), даже если задан column_order.
         var orderBefore = TableViewCtrl.MovableKeysInOrder();
-        var counts      = ids.Select(id => _repository.CountFieldValues(id)).ToList();
-        var total       = counts.Sum(c => (long)c);
 
         var copies = new List<(int Src, int Copy)>();   // исходник → созданная копия
+        var many   = ids.Count > 1;
 
-        // Маленький объём — мгновенно синхронно; большой — окно прогресса с % и копирование
-        // значений в фоне (на отдельном подключении), по колонкам с фазой «N/M столбцов».
-        if (total <= FieldBulkThreshold || VisualRoot is not Avalonia.Controls.Window win)
-        {
-            foreach (var id in ids)
+        // Всю тяжёлую работу (подсчёт значений + копирование) делаем в фоне на изолированных
+        // подключениях — на главном потоке ничего не считаем, поэтому UI не «висит» до окна.
+        // Окно прогресса покажется само, если работа не уложится в короткий момент (RunFieldOp).
+        await RunFieldOp(many ? "Дублирование столбцов" : "Дублирование столбца",
+            (p, setPhase) =>
             {
-                var copy = _repository.DuplicateField(id);
-                if (copy.Id is { } cid) copies.Add((id, cid));
-            }
-        }
-        else
-        {
-            var many = ids.Count > 1;
-            await RunFieldOpWithProgress(many ? "Дублирование столбцов" : "Дублирование столбца", total,
-                (p, setPhase) =>
+                var counts = _repository.CountFieldValuesIsolated(ids);
+                var total  = counts.Sum(c => (long)c);
+                long basis = 0;
+                for (var i = 0; i < ids.Count; i++)
                 {
-                    long basis = 0;
-                    for (var i = 0; i < ids.Count; i++)
-                    {
-                        setPhase(many ? $"Дублирование {i + 1}/{ids.Count} столбцов" : "Дублирование столбца");
-                        var b = basis;
-                        var copy = _repository.DuplicateFieldIsolated(ids[i], new IntProgress(done => p.Report((int)(b + done))));
-                        if (copy.Id is { } cid) copies.Add((ids[i], cid));
-                        basis += counts[i];
-                    }
-                    return true;
-                }, win);
-        }
+                    setPhase(many ? $"Дублирование {i + 1}/{ids.Count} столбцов" : "Дублирование столбца");
+                    var b = basis;
+                    var copy = _repository.DuplicateFieldIsolated(ids[i],
+                        new IntProgress(done => p.Report((b + done, total))));
+                    if (copy.Id is { } cid) copies.Add((ids[i], cid));
+                    basis += counts[i];
+                }
+                p.Report((total, total));   // финал → «Сохранение…»
+            });
 
         // Каждую копию — сразу за её исходником, одним пересохранением порядка колонок.
         if (copies.Count > 0)
@@ -544,32 +535,27 @@ public partial class ConstructorControllerView : UserControl
         var dlg = new ConfirmDialog($"Вы удаляете {deletable.Count} {PropertiesPlural(deletable.Count)}. Подтвердить?");
         if (await dlg.ShowDialog<bool>(win) != true) return;
 
-        // Надёжно (синхронно, без осиротевших данных): маленькие поля — мгновенно; большие —
-        // окно прогресса с % и удаление значений в фоне (на отдельном подключении).
-        var counts = deletable.Select(id => _repository.CountFieldValues(id)).ToList();
-        var total  = counts.Sum(c => (long)c);
-        if (total <= FieldBulkThreshold)
-        {
-            foreach (var id in deletable) _repository.DeleteField(id);
-        }
-        else
-        {
-            var manyCols = deletable.Count > 1;
-            await RunFieldOpWithProgress(manyCols ? "Удаление столбцов" : "Удаление столбца", total,
-                (p, setPhase) =>
+        // Надёжно (без осиротевших данных) и без фриза UI: подсчёт значений и удаление идут
+        // в фоне на изолированных подключениях, на главном потоке ничего не считаем. Окно
+        // прогресса покажется само, если работа не уложится в короткий момент (RunFieldOp).
+        var manyCols = deletable.Count > 1;
+        await RunFieldOp(manyCols ? "Удаление столбцов" : "Удаление столбца",
+            (p, setPhase) =>
+            {
+                var counts = _repository.CountFieldValuesIsolated(deletable);
+                var total  = counts.Sum(c => (long)c);
+                // Поля удаляем по очереди (каждое — на своём подключении), показывая «N/M».
+                long basis = 0;
+                for (var i = 0; i < deletable.Count; i++)
                 {
-                    // Поля удаляем по очереди (каждое — на своём подключении), показывая «N/M».
-                    long basis = 0;
-                    for (var i = 0; i < deletable.Count; i++)
-                    {
-                        setPhase(manyCols ? $"Удаление {i + 1}/{deletable.Count} столбцов" : "Удаление столбца");
-                        var b = basis;
-                        _repository.DeleteFieldIsolated(deletable[i], new IntProgress(done => p.Report((int)(b + done))));
-                        basis += counts[i];
-                    }
-                    return true;
-                }, win);
-        }
+                    setPhase(manyCols ? $"Удаление {i + 1}/{deletable.Count} столбцов" : "Удаление столбца");
+                    var b = basis;
+                    _repository.DeleteFieldIsolated(deletable[i],
+                        new IntProgress(done => p.Report((b + done, total))));
+                    basis += counts[i];
+                }
+                p.Report((total, total));   // финал → «Сохранение…»
+            });
 
         TableViewCtrl.ReloadColumns();   // колонка исчезает сразу; строки не пересобираем
 
@@ -580,66 +566,79 @@ public partial class ConstructorControllerView : UserControl
             CollectionsChanged?.Invoke(this, EventArgs.Empty);
     }
 
-    // Порог значений: меньше — операция с полем идёт мгновенно синхронно (без окна); больше —
-    // окно прогресса с % и работа в фоне на отдельном подключении (как bulk-операции в сайдбаре).
-    private const int FieldBulkThreshold = 20000;
-
-    // Сентинел для lastPct: фаза «Сохранение…» (коммит) показана. Не пересекается с 0..100.
+    // Сентинел для lastShown: фаза «Сохранение…» (коммит) показана. Не пересекается с 0..100.
     private const int SavingPhase = -2;
 
-    // Окно прогресса + фоновая работа (внутри work — на отдельном подключении) с % по значениям.
-    // Возвращает результат work (или default при ошибке/прерывании).
-    private async Task<T> RunFieldOpWithProgress<T>(string windowTitle, long total,
-                                                    Func<IProgress<int>, Action<string>, T> work,
-                                                    Avalonia.Controls.Window win)
+    // Через сколько мс работы показывать окно прогресса. Мелкие операции (несколько полей по
+    // паре значений) укладываются раньше — для них окно не появляется вовсе. На больших объёмах
+    // окно всплывает почти сразу, но UI при этом НЕ висит: вся работа уже в фоне.
+    private const int FieldOpDialogDelayMs = 200;
+
+    // Выполняет тяжёлую операцию со свойствами ПОЛНОСТЬЮ в фоне (подсчёт значений + сама работа —
+    // на изолированных подключениях; главный контекст из фонового потока не трогаем). Окно
+    // прогресса показываем, только если работа не уложилась в FieldOpDialogDelayMs: раньше до
+    // окна на главном потоке шёл подсчёт значений по каждому полю (на сотнях тысяч строк — фриз
+    // на несколько секунд, и лишь потом индикатор). work репортит (готово, всего); пока всего
+    // неизвестно/0 — индикатор крутится «Подсчёт значений…».
+    private async Task RunFieldOp(string windowTitle,
+                                  Action<IProgress<(long Done, long Total)>, Action<string>> work)
     {
-        var dlg = new ProgressDialog { Title = windowTitle };
-        dlg.SetInfo($"Значений: {total}");
-        var dlgClosed = dlg.ShowDialog(win);
-
-        var lastPct   = -1;
-        var lastPhase = "";
+        ProgressDialog? dlg = null;
+        var lastShown = -1;          // -1 ещё не показывали %, -2 «Сохранение…», 0..100 — проценты
         var phase     = windowTitle;
-        T result = default!;
-        try
-        {
-            await Task.Run(() =>
-            {
-                // work задаёт текст фазы (напр. «Удаление 2/3 столбцов») через setPhase.
-                Action<string> setPhase = ph => phase = ph;
-                IProgress<int> p = new IntProgress(done =>
-                {
-                    // Все значения обработаны → впереди коммит/чек-пойнт большой транзакции (на
-                    // 400k+ это секунды записи на диск). Бегущая фаза «Сохранение…», чтобы 100%
-                    // не выглядели зависшими.
-                    if (done >= total)
-                    {
-                        if (lastPct == SavingPhase) return;
-                        lastPct = SavingPhase;
-                        Dispatcher.UIThread.Post(() => dlg.SetSaving("Сохранение…"));
-                        return;
-                    }
-                    var pct = total == 0 ? 100 : (int)(done * 100L / total);
-                    var ph  = phase;
-                    if (pct == lastPct && ph == lastPhase) return;
-                    lastPct = pct; lastPhase = ph;
-                    Dispatcher.UIThread.Post(() => dlg.SetProgress(pct / 100.0, ph));
-                });
-                result = work(p, setPhase);
-            });
-        }
-        catch { /* фон: ошибку не валим в UI */ }
 
-        dlg.Done();
-        await dlgClosed;
-        return result;
+        // Обновление окна (на UI-потоке). dlg может быть ещё/уже null — тогда отчёт игнорируем.
+        void Update(long done, long total)
+        {
+            if (dlg is null || total <= 0) return;
+            if (done >= total)
+            {
+                if (lastShown == SavingPhase) return;
+                lastShown = SavingPhase;
+                dlg.SetSaving("Сохранение…");
+                return;
+            }
+            var pct = (int)(done * 100L / total);
+            if (pct == lastShown) return;
+            lastShown = pct;
+            dlg.SetProgress(pct / 100.0, phase);
+        }
+
+        // PairProgress сам маршалит на UI-поток через Dispatcher (Report вызывается из фона).
+        IProgress<(long, long)> p = new PairProgress((done, total) =>
+            Dispatcher.UIThread.Post(() => Update(done, total)));
+        Action<string> setPhase = ph => phase = ph;
+
+        var bg = Task.Run(() => { try { work(p, setPhase); } catch { /* фон: ошибку не валим в UI */ } });
+
+        // Успело быстро — окна не показываем вовсе.
+        if (await Task.WhenAny(bg, Task.Delay(FieldOpDialogDelayMs)) == bg) { await bg; return; }
+
+        if (VisualRoot is Avalonia.Controls.Window win)
+        {
+            dlg = new ProgressDialog { Title = windowTitle };
+            dlg.SetSaving("Подсчёт значений…");   // пока total неизвестен — бегущая полоса
+            var dlgClosed = dlg.ShowDialog(win);
+            await bg;
+            dlg.Done();
+            await dlgClosed;
+        }
+        else
+        {
+            await bg;   // некуда показать окно — просто дожидаемся фон
+        }
     }
 
-    // Адаптер IProgress<int> для прогресса с фонового потока (сам маршалит на UI через Dispatcher);
-    // Progress<T> здесь не годится — создаётся в Task.Run и захватил бы фоновый контекст.
+    // Адаптер IProgress<int> для прогресса с фонового потока (передаётся в *Isolated-методы).
     private sealed class IntProgress(Action<int> report) : IProgress<int>
     {
         public void Report(int value) => report(value);
+    }
+
+    // Прогресс (готово, всего) с фонового потока; report сам маршалит обновление окна на UI.
+    private sealed class PairProgress(Action<long, long> report) : IProgress<(long Done, long Total)>
+    {
+        public void Report((long Done, long Total) v) => report(v.Done, v.Total);
     }
 
     // Русское склонение: 1 свойство, 2–4 свойства, 5+ свойств (с учётом 11–14).

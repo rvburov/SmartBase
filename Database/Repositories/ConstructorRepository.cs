@@ -1549,6 +1549,23 @@ public class ConstructorRepository(AppDbContext db)
     public int CountFieldValues(int fieldId) =>
         db.DbFieldValues.Count(v => v.FieldId == fieldId);
 
+    /// <summary>Число значений по каждому из полей (для прогресса bulk-операций со свойствами) на
+    /// ОТДЕЛЬНОМ подключении — чтобы счёт по сотням тысяч строк шёл в фоне, не подвешивая UI до
+    /// появления индикатора. Одним GROUP BY-запросом (индекс (FieldId,Value)). Порядок результата
+    /// совпадает с fieldIds; для полей без значений — 0.</summary>
+    public List<int> CountFieldValuesIsolated(IReadOnlyList<int> fieldIds)
+    {
+        if (fieldIds.Count == 0) return [];
+        using var ctx = new AppDbContext(db.DbPath);
+        ctx.ApplyPerformancePragmas();
+        var byField = ctx.DbFieldValues
+            .Where(v => fieldIds.Contains(v.FieldId))
+            .GroupBy(v => v.FieldId)
+            .Select(g => new { g.Key, Count = g.Count() })
+            .ToDictionary(x => x.Key, x => x.Count);
+        return fieldIds.Select(id => byField.TryGetValue(id, out var c) ? c : 0).ToList();
+    }
+
     /// <summary>Дубль поля на ОТДЕЛЬНОМ подключении (для фона) с прогрессом по скопированным значениям.</summary>
     public DbField DuplicateFieldIsolated(int fieldId, IProgress<int>? progress = null)
     {
