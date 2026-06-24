@@ -43,13 +43,20 @@
 | Событие вью | Действие контроллера |
 |---|---|
 | `RecordClicked` | `OpenEditDialog` → [RecordDialog](../../../Controls/Dialogs/RecordDialog.axaml.cs) |
-| `CreateRequested` / `TimeSlotCreationRequested` / `AllDayCreationRequested` | `OpenAddDialog` (+ выбор БД при мультибазе) |
-| `RecordMoved` | `UpdateCalendarRecord` в БД события |
+| `CreateRequested` / `TimeSlotCreationRequested` / `AllDayCreationRequested` | `OpenAddDialog` (выбор БД и поля-даты — в самом окне) |
+| `RecordMoved` | `UpdateCalendarRecord` в БД события (дата пишется в поле `FieldId` события) |
 | `RecordDeleteRequested` / `RecordsDeleteRequested` | удаление (с подтверждением для нескольких) |
-| `RecordDuplicateRequested` | копия события в той же БД |
+| `RecordDuplicateRequested` | копия события в той же БД (в то же поле-дату) |
 
 После любой правки контроллер поднимает `CollectionsMayHaveChanged` (обновить
 сайдбар) и вызывает `RefreshCurrent()`.
+
+> **Несколько дат на запись.** Событие опознаётся парой `(Id, FieldId)` (вью используют её
+> для выделения/перетаскивания, не путая «соседние» даты одной записи). **Перетаскивание/ресайз**
+> меняет дату именно в поле `FieldId` события. **Удаление** удаляет всю запись (а не только эту
+> дату) — поэтому пропадают и остальные её события. **Перенос даты в другое поле** — через
+> список «Дата записи» в окне (старое поле очищается). См. [[overview]] и
+> [[../../architecture/data-model]].
 
 ## Связанные документы
 

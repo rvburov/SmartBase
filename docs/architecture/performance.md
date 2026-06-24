@@ -31,7 +31,7 @@
 | Таблица коллекции | до ~10 млн записей | `VirtualCollectionView` (DataGrid не материализует источник) + keyset + фоновая подгрузка | [TableView](../../Views/ConstructorDb/TableView.axaml.cs), [VirtualRowList](../../ViewModels/ConstructorDb/VirtualRowList.cs), [VirtualCollectionView](../../ViewModels/ConstructorDb/VirtualCollectionView.cs) |
 | Фильтр / сортировка | до ~10 млн | фильтр в SQL → список id → виртуализация; выпадающий список значений — SQL-агрегат в фоне | [TableView](../../Views/ConstructorDb/TableView.axaml.cs), [ConstructorRepository](../../Database/Repositories/ConstructorRepository.cs) |
 | Импорт таблиц | 100k+ строк | bulk-insert + границы по содержимому | [ExcelImporter](../../Core/Importers/ExcelImporter.cs), `ImportExcelCollection` |
-| Календарь | выборка по диапазону дат | запрос диапазона, не все записи | [ConstructorRepository](../../Database/Repositories/ConstructorRepository.cs) |
+| Календарь | до ~10 млн записей | индексная проекция `calendar_index` + range-query по `(CollectionId, StartIso)` | [ConstructorRepository](../../Database/Repositories/ConstructorRepository.cs) |
 
 ### Таблица коллекции
 
@@ -110,9 +110,26 @@ fallback при **выключенной** виртуализации.
 
 ### Календарь
 
-`GetCalendarRecordsByRange(start, end)` выбирает записи, пересекающие диапазон дат,
-а не все подряд. Даты хранятся как ISO-строки в `db_records.StartDt/EndDt`, сравнение
-строковое (корректно для ISO).
+Календарь поддерживает **несколько дат на запись** (любое число полей-дат коллекции с
+флагом `IsCalStart` показываются как отдельные события). Чтобы это масштабировалось, как
+таблица, события материализуются в индексную таблицу-проекцию **`calendar_index`** (строка
+на запись × видимое поле-дата: `RecordId, FieldId, CollectionId, StartIso, EndIso, AllDay`).
+
+`GetCalendarRecordsByRange(start, end)` → `ReadCalendarEvents` читает из `calendar_index`
+индексным range-query по `(CollectionId, StartIso)`: `StartIso < конец` И `EndIso >= начало`
+(ISO-строки сравниваются лексикографически). Трогаются только события окна, а не все значения —
+прежний путь (скан `db_field_values` с разбором в C#) был тяжёл на больших коллекциях.
+
+Проекция поддерживается **инкрементально** (не пересобирается целиком на каждый чих):
+upsert одной строки при правке значения (`SyncCalendarIndexValue` из
+`SetFieldValue`/`SetCalendarDateValue`); пересбор поля при тумблере видимости/смене типа
+(`RebuildCalendarIndexForField`); пересбор коллекции/записи при дубле и переносе между БД;
+удаления — каскадом по FK (`ON DELETE CASCADE` + `PRAGMA foreign_keys=ON`). Однократный
+потоковый бэкафилл (keyset + пакетный prepared `INSERT`, как импорт) в
+`MigrateAndBackfillCalendarDates`, если проекция пуста.
+
+> Колонки `db_records.StartDt/EndDt` остались от модели «одна дата на запись» и больше
+> не читаются календарём.
 
 ## Индексы БД
 
@@ -122,6 +139,7 @@ fallback при **выключенной** виртуализации.
 |---|---|---|
 | `db_records` | `(CollectionId, Position)` | записи коллекции в порядке отображения (страницы, keyset) |
 | `db_field_values` | `(RecordId, FieldId)` UNIQUE, `(FieldId, Value)` | значения записи / фильтр и подсчёт по значению поля |
+| `calendar_index` | `(RecordId, FieldId)` PK, `(CollectionId, StartIso)`, `(FieldId)` | проекция событий: range-query окна календаря / FK-каскады |
 | `db_fields` | `(CollectionId, Name)` UNIQUE | поля коллекции, уникальность имени |
 | `db_collections` | `(GroupId)` | коллекции группы |
 | `db_groups` | `(ParentId)` | дерево групп |
@@ -212,6 +230,12 @@ fallback при **выключенной** виртуализации.
   message)` (Flyout, привязанный к контролу, как tooltip; стиль `FlyoutPresenter.toast`; автоскрытие). `Toast` —
   общий помощник для всплывающих уведомлений у любого контрола (расширяется под Info/Success).
 - ✅ Окна «Отображение» записей/свойств и список значений фильтра — виртуализированы (`ListBox`).
+- ✅ Масштабируемый календарь на индексной проекции `calendar_index` (строка на запись × видимое
+  поле-дата). Чтение — индексный range-query по `(CollectionId, StartIso)` вместо скана/разбора
+  значений; поддержка инкрементальная (upsert при правке, пересбор поля/коллекции/записи при
+  тумблере/смене типа/дубле/переносе, удаления каскадом по FK), бэкафилл — однократно потоково.
+  Заодно сняло прежнее узкое место «календарные запросы без индекса». Поддерживает несколько
+  дат на запись (одна запись — несколько событий).
 
 ## Известные узкие места / TODO
 
@@ -221,9 +245,6 @@ fallback при **выключенной** виртуализации.
 - **1000+ колонок — UI-проблема.** DataGrid создаёт ячейки всех колонок для каждой видимой
   строки; меры по БД её не решают. Решение — ограничение видимых колонок через сохранённые
   представления (Этап 3) + виртуализация списка свойств на странице записи.
-- **Календарные запросы по `StartDt/EndDt` без индекса.** `GetCalendarRecordsByRange`
-  сравнивает строки дат без индекса → скан `db_records`. На большом числе датированных
-  записей стоит добавить индекс.
 
 ## Как мерить
 

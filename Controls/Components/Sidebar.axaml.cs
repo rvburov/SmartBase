@@ -628,9 +628,20 @@ public partial class Sidebar : UserControl
         e.Handled = true;
     }
 
+    // Сабменю по умолчанию (тема Fluent) ставит HorizontalOffset попапа ≈ -1 (локальное
+    // значение шаблона, стилем не перебить) → блок наезжает на меню. После применения
+    // шаблона находим Popup сабменю и сдвигаем вправо, чтобы он стоял отдельно (как в VSCode).
+    private static void FixSubmenuGap(MenuItem item) =>
+        item.TemplateApplied += (_, e) =>
+        {
+            if (e.NameScope.Find<Avalonia.Controls.Primitives.Popup>("PART_Popup") is { } popup)
+                popup.HorizontalOffset = 6;
+        };
+
     private MenuItem BuildColorMenu(int dbId, int collectionId)
     {
         var colorItem = new MenuItem { Header = "Изменить цвет" };
+        FixSubmenuGap(colorItem);
 
         var noColor = new MenuItem
         {
@@ -725,10 +736,12 @@ public partial class Sidebar : UserControl
     private MenuItem BuildDateFieldsMenu(int dbId, int collectionId)
     {
         var dateItem = new MenuItem { Header = "Отображение свойств даты" };
+        FixSubmenuGap(dateItem);
 
         // Контент в дочернем пункте со StaysOpenOnClick — клики по чекбоксам не закрывают меню.
-        // Padding=0: панель сама задаёт свои отступы (не двоится с паддингом пункта меню).
-        var host = new MenuItem { StaysOpenOnClick = true, Padding = new Thickness(0) };
+        // Класс dateFieldsHost убирает chrome пункта меню (паддинг/подсветку наведения),
+        // чтобы внутри была чистая панель фильтра, а не подсвеченная строка меню.
+        var host = new MenuItem { StaysOpenOnClick = true, Classes = { "dateFieldsHost" } };
         var repo = RepoFor(dbId);
         if (repo is not null)
         {
@@ -755,6 +768,7 @@ public partial class Sidebar : UserControl
         {
             Watermark = "Поиск свойств...",
             Height = 30, CornerRadius = radius,
+            Background = Brushes.White,
             VerticalContentAlignment = Avalonia.Layout.VerticalAlignment.Center,
         };
         panel.Children.Add(search);
@@ -829,6 +843,7 @@ public partial class Sidebar : UserControl
 
         var listBox = new Border
         {
+            Background       = Brushes.White,
             BorderBrush     = (IBrush)this.FindResource("BrushSeparator")!,
             BorderThickness = new Thickness(1),
             CornerRadius    = radius,

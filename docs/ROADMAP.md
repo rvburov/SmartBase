@@ -24,7 +24,7 @@
 | Пользовательские типы полей                                | ✅ `text, number, date, select, checkbox, url` + `ConfigJson`    |
 | Иерархия групп коллекций (дерево в сайдбаре)               | ✅ `DbGroupEntity.ParentId`                                      |
 | Страница записи: свойства + markdown с предпросмотром      | ✅ Obsidian-стиль, автосохранение on-blur                        |
-| Календарь как представление над коллекциями                | ✅ 6 режимов, маппинг через `IsCalStart` / `IsCalEnd`            |
+| Календарь как представление над коллекциями                | ✅ 6 режимов; несколько видимых полей-дат (`IsCalStart`) на запись → проекция `calendar_index` (до ~10 млн) |
 | Виртуализация больших таблиц                               | ✅ `VirtualCollectionView`/`VirtualRowList` — keyset + фоновая подгрузка, фильтр/сортировка в SQL (до ~10 млн) |
 | Настройки UI per-collection (ширины, высоты, view mode)    | ✅                                                               |
 | Импорт / экспорт календаря                                 | ❌ `CalendarExporter` / `CalendarImporter`                       |

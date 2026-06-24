@@ -15,8 +15,8 @@
 |---|---|
 | `DbGroup` | группа (папка) коллекций; может быть вложенной (`ParentId`) |
 | `DbCollection` | коллекция/таблица: имя, иконка, цвет, группа, позиция |
-| `DbField` | поле/свойство: тип (`text/number/date/select/checkbox/url`), `ConfigJson`, флаги `IsCalStart`/`IsCalEnd` (связь с календарём), `IsSystem`, `IsRequired` |
-| `DbRecord` | запись/строка: `Title`, `Description`, позиция, даты; значения полей хранятся отдельно |
+| `DbField` | поле/свойство: тип (`text/number/date/select/checkbox/url`), `ConfigJson`, `IsCalStart` (= «показывать это поле-дату в календарём»; включается тумблером, может быть у нескольких полей-дат), `IsCalEnd` (не используется), `IsSystem`, `IsRequired` |
+| `DbRecord` | запись/строка: `Title`, `Description`, позиция; значения полей (включая даты) хранятся отдельно в `db_field_values` |
 
 Значения произвольных полей записи хранятся отдельной таблицей «значение по
 (recordId, fieldId)» и читаются через `GetFieldValues(recordId)`.

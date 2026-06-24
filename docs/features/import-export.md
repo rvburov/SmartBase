@@ -10,8 +10,8 @@
 - Excel-импорт: [ExcelImporter.cs](../../Core/Importers/ExcelImporter.cs)
 - UI: [ImportExportDialog](../../Controls/Dialogs/ImportExportDialog.axaml.cs)
 - Создание коллекции из импорта: `ConstructorRepository.ImportExcelCollection(...)`
-- Перенос коллекций/групп между БД: методы `ExportCollection`/`ImportCollection`,
-  `ExportGroup`/`ImportGroup`, `MoveCollection`/`MoveGroup` в [ConstructorRepository](../../Database/Repositories/ConstructorRepository.cs)
+- Перенос коллекций/групп между БД (реальный путь): `MoveCollectionIsolated`/`MoveGroupIsolated`
+  в [ConstructorRepository](../../Database/Repositories/ConstructorRepository.cs) (через `ATTACH`)
 
 ## Импорт из Excel
 
@@ -131,10 +131,20 @@
 
 ## Перенос между БД
 
-Внутри приложения коллекции и группы можно экспортировать в снимок
-(`CollectionSnapshot`/`GroupSnapshot`) и импортировать в другую БД, а также
-перемещать (`MoveCollection`/`MoveGroup`). Это используется при работе с
-несколькими БД — см. [../architecture/multi-database.md](../architecture/multi-database.md).
+Перенос коллекций/групп в другую БД (контекстное меню «Расположение», смена БД в окне
+«Изменить») идёт **быстрым ATTACH-путём** — `MoveCollectionIsolated`/`MoveGroupIsolated`:
+на подключении целевой БД присоединяется файл-источник и данные копируются bulk-ом
+(`INSERT … SELECT`), затем источник удаляется. Этот путь **переносит флаги `IsCalStart`
+и пересобирает проекцию календаря** `calendar_index` целевой коллекции. Подробнее о механике
+и индикаторе прогресса — в [[../architecture/performance]] и
+[../architecture/multi-database.md](../architecture/multi-database.md).
+
+> **Легаси (не используется UI).** Старые EF-методы `ExportCollection`/`ImportCollection`,
+> `ExportGroup`/`ImportGroup`, `MoveCollection`/`MoveGroup` (снимок `CollectionSnapshot`/
+> `GroupSnapshot` в память → запись по одной записи) ни одной кнопкой не вызываются — их
+> заменил ATTACH-путь. Задел под будущий экспорт/импорт коллекции **в файл**. Если будешь их
+> подключать, не забудь добавить пересборку `calendar_index` (`RebuildCalendarIndexForCollection`) —
+> сейчас они её не делают, и скопированные события не попали бы в календарь.
 
 ## Заглушки (в планах)
 

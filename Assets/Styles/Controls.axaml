@@ -928,7 +928,10 @@
 
     <!-- Подменю у вложенного MenuItem (Popup со списком цветов): фон/рамка/радиус
          как у основного контекстного меню. Шаблон MenuItem кладёт сабменю в
-         Border#PART_Popup + ScrollViewer#PART_ScrollViewer. -->
+         Border#PART_Popup + ScrollViewer#PART_ScrollViewer.
+         Зазор от меню (чтобы не наезжало) задаётся в коде: HorizontalOffset попапа правится
+         на инстансе (Sidebar.FixSubmenuGap), т.к. шаблон темы ставит его локальным значением,
+         которое стиль перебить не может. -->
     <Style Selector="MenuItem /template/ Border#PART_Popup">
         <Setter Property="Background"      Value="{StaticResource BrushSecondaryBg}" />
         <Setter Property="BorderBrush"     Value="{StaticResource BrushSeparator}" />
@@ -937,9 +940,20 @@
         <Setter Property="Padding"         Value="0,2" />
     </Style>
 
-    <!-- Зазор между основным меню и сабменю: HorizontalOffset на самом Popup. -->
-    <Style Selector="MenuItem /template/ Popup#PART_Popup">
-        <Setter Property="HorizontalOffset" Value="6" />
+    <!-- Хост панели «Отображение свойств даты» в сабменю: без chrome пункта меню
+         (паддинг/маржа/подсветка наведения), чтобы внутри была чистая панель фильтра. -->
+    <!-- Свой минимальный шаблон: только контент, без иконочной колонки/шеврона/подсветки
+         пункта меню. Иначе общая (SharedSizeGroup) иконочная колонка добавляла бы лишний
+         отступ слева — панель должна иметь одинаковые поля по кругу. -->
+    <Style Selector="MenuItem.dateFieldsHost">
+        <Setter Property="Margin"   Value="0" />
+        <Setter Property="Padding"  Value="0" />
+        <Setter Property="MinWidth" Value="0" />
+        <Setter Property="Template">
+            <ControlTemplate TargetType="MenuItem">
+                <ContentPresenter Content="{TemplateBinding Header}" />
+            </ControlTemplate>
+        </Setter>
     </Style>
 
 </Styles>

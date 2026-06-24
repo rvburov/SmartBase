@@ -34,8 +34,9 @@
 - **Календарь** ([CalendarControllerView](../../Views/ConstructorDb/Calendar/CalendarControllerView.axaml.cs)):
   `RefreshCurrent()` собирает события из всех смонтированных БД, помечает каждое
   `DbId` и фильтрует по активным коллекциям этой БД. CRUD идёт в БД события
-  (`RepoOf(record)`); новое событие при нескольких БД требует выбора целевой
-  ([SelectDatabaseDialog](../../Controls/Dialogs/SelectDatabaseDialog.axaml.cs)).
+  (`RepoOf(record)`); выбор целевой БД встроен в окно записи
+  ([RecordDialog](../../Controls/Dialogs/RecordDialog.axaml.cs)) — комбобокс «База данных»
+  при нескольких смонтированных БД (при изменении — перенос записи в другую базу).
 - **Конструктор** ([ConstructorControllerView](../../Views/ConstructorDb/ConstructorControllerView.axaml.cs)):
   в основной области открыта одна коллекция, поэтому держится один активный
   репозиторий; `OpenFrom(repo, collectionId)` переключает БД, `DetachDatabase` —

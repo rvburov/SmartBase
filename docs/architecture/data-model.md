@@ -13,9 +13,9 @@
 |---|---|
 | `DbGroup` | группа коллекций (может быть вложенной) |
 | `DbCollection` | коллекция/таблица: имя, иконка, цвет, группа |
-| `DbField` | поле: тип (`text/number/date/select/checkbox/url`), `ConfigJson`, флаги `IsCalStart/IsCalEnd/IsSystem/IsRequired` |
-| `DbRecord` | запись: `Title`, `Description`, `StartDt/EndDt/AllDay`, позиция |
-| `CalendarRecord` | календарное представление записи с датами (`DbId`, `Title`, `StartDt/EndDt`, `AllDay`, `Color`, `CollectionId`) |
+| `DbField` | поле: тип (`text/number/date/select/checkbox/url`), `ConfigJson`, флаги `IsCalStart` (= «показывать поле-дату в календаре»; может быть включён у нескольких полей-дат коллекции), `IsCalEnd` (не используется), `IsSystem/IsRequired` |
+| `DbRecord` | запись: `Title`, `Description`, позиция; колонки `StartDt/EndDt/AllDay` — устаревший след (календарём больше не читаются, см. ниже) |
+| `CalendarRecord` | одно событие календаря (`DbId`, `Id`, **`FieldId`** — из какого поля-даты получено событие, `Title`, `StartDt/EndDt`, `AllDay`, `Color`, `CollectionId`). Идентичность события — пара `(Id, FieldId)`: одна запись даёт по событию на каждое видимое поле-дату |
 | `Category` | категория (имя + цвет) |
 | `DateValue` | разбор/форматирование дат полей-`date` |
 | `EventColors` | правило «дефолтный синий = без цвета → серый» |
@@ -26,6 +26,7 @@
 
 - **Контент:** `categories`, `db_groups`, `db_collections`, `db_fields`, `db_records`, `db_field_values`.
 - **Значения полей:** `db_field_values` — пара `(RecordId, FieldId) → Value` (уникальный индекс). Так произвольные поля хранятся «вертикально», а не колонками.
+- **Проекция календаря:** `calendar_index` — денормализованное «оглавление» событий (строка на каждое видимое поле-дату записи: `RecordId, FieldId, CollectionId, StartIso, EndIso, AllDay`; индекс `(CollectionId, StartIso)`, FK-каскады на `db_records`/`db_fields`). Из неё календарь читает события индексным range-query (см. ниже).
 - **UI-настройки коллекции:** `ui_col_widths`, `ui_row_heights`, `ui_collection_settings` (режим вида, ручной ресайз), `system_field_meta` (подписи «Название»/«Описание»), `column_order`, `column_display`, `record_display`.
 
 Связи каскадные: удаление коллекции уносит её поля, записи и значения; группа/коллекция
@@ -33,11 +34,26 @@
 
 ### Где календарь
 
-Календарное событие — это `db_record` с заполненными `StartDt/EndDt/AllDay`.
-`ConstructorRepository` отдаёт их как `CalendarRecord` (`GetCalendarRecordsByRange`,
-`AddCalendarRecord`, …). Поля `IsCalStart/IsCalEnd` на `DbField` помечают, какие поля
-коллекции считаются датами календаря; `MigrateAndBackfillCalendarDates()` проставляет
-их и заполняет `StartDt` из значения поля-даты для старых записей.
+Источник правды для дат — **значения полей-дат** в `db_field_values`. Поле-дата с флагом
+`IsCalStart=true` показывается в календарём; таких полей в коллекции может быть **несколько**
+(включаются тумблером «Отображать в календаре» в окне свойства или из контекстного меню
+коллекции в сайдбаре). Каждое непустое значение такого поля = одно событие, поэтому одна
+запись может появляться в календаре несколько раз (по событию на каждую видимую дату).
+
+Чтобы чтение масштабировалось (10М+ записей, как таблица), события материализуются в
+индексную таблицу-проекцию `calendar_index` и читаются оттуда быстрым range-query по
+`(CollectionId, StartIso)` (`GetCalendarRecordsByRange` → `ReadCalendarEvents`). Проекция
+поддерживается инкрементально:
+- запись значения (`SetFieldValue`/`SetCalendarDateValue`) → upsert/удаление одной строки
+  (`SyncCalendarIndexValue`);
+- тумблер видимости (`SetDateFieldVisible`) и смена типа поля (`UpdateField`) → пересбор поля
+  (`RebuildCalendarIndexForField`);
+- дубль/перенос коллекции/записи → пересбор затронутой коллекции/записи;
+- удаления (запись/поле/коллекция/группа, в т.ч. bulk) — авто-очистка через FK `ON DELETE CASCADE`;
+- однократный потоковый бэкафилл при первом запуске (`MigrateAndBackfillCalendarDates`).
+
+Колонки `db_records.StartDt/EndDt/AllDay` остались от прежней модели «одна дата на запись»
+и календарём больше не читаются (пишутся, но не авторитетны).
 
 ## Хранилище app.db (системное)
 
