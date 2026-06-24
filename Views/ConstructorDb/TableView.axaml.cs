@@ -713,15 +713,60 @@ public partial class TableView : UserControl
             .Select(d => (d.Key, d.Header))
             .ToList();
 
-    // Перемещение колонки влево/вправо: пишем порядок в БД и пересобираем ТОЛЬКО колонки
-    // (строки не сбрасываем) — на больших коллекциях нет «белого» мелькания от перезагрузки
-    // строк. Горизонтальную прокрутку ReloadColumns держит на месте.
+    // Перемещение колонки влево/вправо: пишем порядок в БД и двигаем ТОЛЬКО одну колонку
+    // на месте (RemoveAt+Insert), не сбрасывая весь набор. Полная пересборка (BuildColumns →
+    // Columns.Clear) на коллекции со множеством колонок и сотнями тысяч строк рушит всё
+    // визуальное дерево грида и даёт «белое» мелькание на 1–2 сек, пока ячейки заново
+    // материализуются. Сдвиг меняет позицию ровно одной колонки (своп с соседом), поэтому
+    // переставляем её точечно — как AddColumnForField/RebuildColumn. Строки не трогаем,
+    // горизонтальную прокрутку держим на месте. Есть безопасный фоллбек на полную пересборку.
     private void MoveColumn(string key, bool left)
     {
         if (_repository is null) return;
         _repository.MoveColumn(_collectionId, key, left, MovableKeysInOrder());
-        ReloadColumns();
+
+        var keepH   = CurrentScrollOffset();
+        var oldDefs = _colDefs;
+
+        LoadColumnState();
+        var newDefs = BuildColDefs();
+
+        var oldIdx = oldDefs.FindIndex(d => d.Key == key);
+        var newIdx = newDefs.FindIndex(d => d.Key == key);
+
+        _colDefs = newDefs;
+        ColumnsBuilt?.Invoke(this, _colDefs);
+        ClearColumnSelection();          // колонки переставлены — снимаем выделение (как ReloadColumns)
+
+        // Точечный сдвиг возможен, только если позиция изменилась ровно у этой колонки,
+        // набор и относительный порядок прочих неизменны, а грид выровнен с _colDefs 1:1.
+        var canTargeted =
+            oldIdx >= 0 && newIdx >= 0 &&
+            oldDefs.Count == newDefs.Count &&
+            RecordsGrid.Columns.Count == oldDefs.Count &&
+            SameOrderExcept(oldDefs, newDefs, key);
+
+        if (canTargeted)
+        {
+            RecordsGrid.Columns.RemoveAt(oldIdx);
+            RecordsGrid.Columns.Insert(newIdx, CreateDataGridColumn(newDefs[newIdx]));
+        }
+        else
+        {
+            BuildColumns();              // фоллбек: набор/порядок разошёлся — полная пересборка
+            RecordsGrid.ContextMenu = BuildGridContextMenu();
+        }
+
+        ApplyColumnWidths();
+        if (keepH > 0) RestoreScrollOffset(keepH);
     }
+
+    // true, если два набора колонок совпадают по ключам и порядку после исключения key
+    // (т.е. сдвинулась ровно эта колонка, остальные на местах) — условие точечного сдвига.
+    private static bool SameOrderExcept(
+        IReadOnlyList<TableColumnDef> a, IReadOnlyList<TableColumnDef> b, string key) =>
+        a.Where(d => d.Key != key).Select(d => d.Key)
+         .SequenceEqual(b.Where(d => d.Key != key).Select(d => d.Key));
 
     // Reload + восстановление горизонтального скролла. Используется операциями,
     // перестраивающими колонки на месте (сдвиг колонки), чтобы таблица не прыгала
