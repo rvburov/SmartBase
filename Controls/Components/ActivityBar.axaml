@@ -74,6 +74,24 @@
             </Viewbox>
         </ToggleButton>
 
+        <!-- Модуль: Расширения -->
+        <ToggleButton x:Name="ExtensionsBtn" Classes="icon module"
+                      Width="32" Height="32"
+                      HorizontalAlignment="Center"
+                      CornerRadius="{StaticResource RadiusMedium}"
+                      ToolTip.Tip="Расширения">
+            <Viewbox Width="32" Height="32">
+                <Canvas Width="24" Height="24">
+                    <!-- lucide blocks -->
+                    <Path Data="M10 22V7a1 1 0 0 0-1-1H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-5a1 1 0 0 0-1-1H2 M15 2 H21 A1 1 0 0 1 22 3 V9 A1 1 0 0 1 21 10 H15 A1 1 0 0 1 14 9 V3 A1 1 0 0 1 15 2 Z"
+                          Stroke="{Binding $parent[ToggleButton].Foreground}"
+                          StrokeThickness="1.2"
+                          StrokeLineCap="Round"
+                          StrokeJoin="Round" />
+                </Canvas>
+            </Viewbox>
+        </ToggleButton>
+
     </StackPanel>
 
     <!-- Модуль: Настройки — закреплён внизу панели -->

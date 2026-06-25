@@ -72,25 +72,27 @@
         <ScrollViewer Grid.Row="1" x:Name="PropertiesScroll"
                       VerticalScrollBarVisibility="Auto"
                       HorizontalScrollBarVisibility="Disabled">
-            <StackPanel Margin="20,16,20,8">
+            <StackPanel Margin="20,16,20,0">
                 <ItemsControl x:Name="PropertiesList" />
             </StackPanel>
         </ScrollViewer>
 
         <!-- Ручка перетаскивания: делит свойства (сверху) и описание (снизу).
-             Тонкая линия-разделитель на всю ширину + плавающая пилюля с точками
-             (горизонтальная — как вертикальные ручки сайдбара/панели записи). -->
+             Линия-разделитель живёт в своей 1px-строке (Row 2) и не даёт белой полосы.
+             Пилюля-ручка ПЛАВАЕТ поверх линии: лежит в строке свойств (Row 1) у нижнего
+             края с отрицательным нижним отступом, поэтому центрируется на линии, не
+             занимает высоту и не отодвигает контент (как ручки сайдбара/панели записи). -->
         <Border Grid.Row="2"
                 Height="1"
                 VerticalAlignment="Center"
                 Background="{StaticResource BrushSeparator}" />
 
-        <Border Grid.Row="2"
+        <Border Grid.Row="1"
                 x:Name="PropsResizeGrip"
                 Width="34" Height="11"
-                Margin="0,3"
+                Margin="0,0,0,-5"
                 HorizontalAlignment="Center"
-                VerticalAlignment="Center"
+                VerticalAlignment="Bottom"
                 CornerRadius="4"
                 Background="{StaticResource BrushBg}"
                 BorderBrush="{StaticResource BrushSeparator}"
@@ -109,7 +111,7 @@
         </Border>
 
         <!-- Markdown-описание -->
-        <Grid Grid.Row="3" RowDefinitions="Auto,*" Margin="20,8,20,12">
+        <Grid Grid.Row="3" RowDefinitions="Auto,*" Margin="20,0,20,12">
 
             <TextBlock Grid.Row="0"
                        Text="Описание"

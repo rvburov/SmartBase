@@ -90,6 +90,9 @@ public partial class MainWindow : Window
         // Сайдбар настроек: выбор раздела открывает его в основной области.
         SettingsSidebar.CategorySelected += (_, key) => SettingsModule.ShowCategory(key);
 
+        // Сайдбар расширений: выбор расширения открывает его блок в основной области.
+        ExtensionsSidebar.CategorySelected += (_, key) => ExtensionsModule.ShowExtension(key);
+
         // Sidebar коллекций передаёт активные id в CalendarModule
         CalendarSidebar.ActiveIdsChanged += (_, ids) =>
             CalendarModule.SetActiveIds(ids);
@@ -216,8 +219,9 @@ public partial class MainWindow : Window
     {
         _activeModule = module;
 
-        CalendarModule.IsVisible = module == "calendar";
-        SettingsModule.IsVisible = module == "settings";
+        CalendarModule.IsVisible   = module == "calendar";
+        SettingsModule.IsVisible   = module == "settings";
+        ExtensionsModule.IsVisible = module == "extensions";
         // Видимость ConstructorModule зависит ещё и от _collectionOpen — её ставит ApplyColumns.
 
         if (module == "calendar")
@@ -237,17 +241,24 @@ public partial class MainWindow : Window
             ConstructorModule.SetRecordPanelOpen(_recordPanelLogicalOpen);
             RecordPanel.SetCollectionPanelOpen(_collectionOpen);
         }
-        else // settings — собственный сайдбар со списком разделов, без панели записи
+        else if (module == "settings") // собственный сайдбар со списком разделов, без панели записи
         {
             CalendarSidebar.IsVisible    = false;
             ConstructorSidebar.IsVisible = false;
             SettingsSidebar.IsVisible    = _sidebarOpen;
             SettingsModule.ShowCategory(SettingsSidebar.SelectedKey);
         }
+        else // extensions — собственный сайдбар со списком расширений, без панели записи
+        {
+            CalendarSidebar.IsVisible    = false;
+            ConstructorSidebar.IsVisible = false;
+            ExtensionsSidebar.IsVisible  = _sidebarOpen;
+            ExtensionsModule.ShowExtension(ExtensionsSidebar.SelectedKey);
+        }
 
-        // Сайдбар настроек виден только в режиме настроек.
-        if (module != "settings")
-            SettingsSidebar.IsVisible = false;
+        // Сайдбары мета-разделов видны только в своём режиме.
+        if (module != "settings")   SettingsSidebar.IsVisible   = false;
+        if (module != "extensions") ExtensionsSidebar.IsVisible = false;
 
         ApplyColumns();
     }
@@ -260,8 +271,10 @@ public partial class MainWindow : Window
             CalendarSidebar.IsVisible = isOpen;
         else if (_activeModule == "constructor")
             ConstructorSidebar.IsVisible = isOpen;
-        else // settings
+        else if (_activeModule == "settings")
             SettingsSidebar.IsVisible = isOpen;
+        else // extensions
+            ExtensionsSidebar.IsVisible = isOpen;
 
         ApplyColumns();
     }

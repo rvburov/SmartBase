@@ -1,0 +1,51 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="DataBase.Controls.Components.ExtensionsSidebar"
+             Background="{StaticResource BrushBg}">
+
+    <UserControl.Styles>
+        <!-- Строка раздела — те же метрики, что у строки сайдбара настроек:
+             подсветка во всю ширину без скруглений, hover #F2F2F7, выбор #E5F0FF. -->
+        <Style Selector="Border.navrow">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="Cursor"     Value="Hand" />
+        </Style>
+        <Style Selector="Border.navrow:pointerover">
+            <Setter Property="Background" Value="{StaticResource BrushSecondaryBg}" />
+        </Style>
+        <Style Selector="Border.navrow.selected, Border.navrow.selected:pointerover">
+            <Setter Property="Background" Value="{StaticResource BrushAccentLight}" />
+        </Style>
+
+        <!-- Невыбранная: тёмный текст + серая иконка. Выбранная: синий текст и иконка. -->
+        <Style Selector="Border.navrow TextBlock">
+            <Setter Property="Foreground" Value="{StaticResource BrushPrimaryText}" />
+        </Style>
+        <Style Selector="Border.navrow Path">
+            <Setter Property="Stroke" Value="{StaticResource BrushSecondaryText}" />
+        </Style>
+        <Style Selector="Border.navrow.selected TextBlock">
+            <Setter Property="Foreground" Value="{StaticResource BrushAccent}" />
+        </Style>
+        <Style Selector="Border.navrow.selected Path">
+            <Setter Property="Stroke" Value="{StaticResource BrushAccent}" />
+        </Style>
+    </UserControl.Styles>
+
+    <DockPanel>
+
+        <!-- Заголовок раздела (высота 56 — выравнивание с линией навбара) -->
+        <Border DockPanel.Dock="Top" Height="56" Padding="16,0">
+            <TextBlock Text="Расширения"
+                       VerticalAlignment="Center"
+                       FontSize="{StaticResource FontSizeLarge}"
+                       FontWeight="{StaticResource FontWeightBold}"
+                       Foreground="{StaticResource BrushPrimaryText}" />
+        </Border>
+
+        <!-- Список расширений: строки строятся в code-behind из ExtensionRegistry -->
+        <StackPanel x:Name="RowsHost" />
+
+    </DockPanel>
+
+</UserControl>
