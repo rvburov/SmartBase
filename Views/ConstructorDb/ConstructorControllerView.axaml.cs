@@ -252,6 +252,11 @@ public partial class ConstructorControllerView : UserControl
                 TableViewCtrl.ScrollToRecord(rec.Id.Value);
             }
 
+            // Выделяем голубым ТОЛЬКО созданную запись (после Reset грид иначе оставляет
+            // съехавшее/лишнее выделение по старым индексам).
+            if (TableViewCtrl.IsVisible)
+                TableViewCtrl.SelectRecords([rec.Id.Value]);
+
             if (open)
                 RecordPageRequested?.Invoke(this, rec.Id.Value);
         }
@@ -267,6 +272,7 @@ public partial class ConstructorControllerView : UserControl
 
         _repository.DeleteRecord(recordId);
         RefreshRows(structural: true);
+        TableViewCtrl.ClearRecordSelection();   // удалённая строка не должна оставаться «подсвеченной»
         CollectionsChanged?.Invoke(this, EventArgs.Empty);
         RecordPageClosed?.Invoke(this, EventArgs.Empty);
 
@@ -303,6 +309,7 @@ public partial class ConstructorControllerView : UserControl
             });
 
         RefreshRows(structural: true);
+        TableViewCtrl.ClearRecordSelection();   // удалённые строки не должны оставаться «подсвеченными»
         CollectionsChanged?.Invoke(this, EventArgs.Empty);
         RecordPageClosed?.Invoke(this, EventArgs.Empty);
 
@@ -321,12 +328,14 @@ public partial class ConstructorControllerView : UserControl
 
         var keepVertical = TableViewCtrl.IsVisible ? TableViewCtrl.CurrentVerticalOffset() : (double?)null;
 
+        var newIds = new List<int>();   // id копий — выделим их голубым после операции
         if (ids.Count == 1)
         {
             // Копия сразу после исходной (по середине, без сдвига хвоста) — но в ФОНЕ (изолированно)
             // + await: синхронная вставка одной строки с немедленным refresh моргала; фоновый путь
             // (как у дубля нескольких) даёт гриду чистый кадр.
-            await Task.Run(() => _repository.DuplicateRecordIsolated(ids[0]));
+            var copy = await Task.Run(() => _repository.DuplicateRecordIsolated(ids[0]));
+            if (copy.Id is { } cid) newIds.Add(cid);
         }
         else
         {
@@ -335,7 +344,7 @@ public partial class ConstructorControllerView : UserControl
                 (p, setPhase) =>
                 {
                     setPhase("Дублирование записей");
-                    _repository.DuplicateRecordsIsolated(colId, ids, new IntProgress(done => p.Report((done, ids.Count))));
+                    newIds = _repository.DuplicateRecordsIsolated(colId, ids, new IntProgress(done => p.Report((done, ids.Count))));
                     p.Report((ids.Count, ids.Count));   // финал → «Сохранение…»
                 });
         }
@@ -345,6 +354,10 @@ public partial class ConstructorControllerView : UserControl
 
         if (keepVertical is { } off && TableViewCtrl.IsVisible)
             TableViewCtrl.RestoreVerticalOffset(off);
+
+        // Выделяем голубым КОПИИ (а не исходники, которые оставались выделены раньше).
+        if (TableViewCtrl.IsVisible)
+            TableViewCtrl.SelectRecords(newIds);
     }
 
     // Русское склонение: 1 запись, 2–4 записи, 5+ записей (с учётом 11–14).

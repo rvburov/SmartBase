@@ -844,6 +844,22 @@ public partial class TableView : UserControl
     // множеством колонок давал тяжёлую перезагрузку при каждой правке.
     public void RefreshRecordRow(int recordId) => _virtualRows?.RefreshRecord(recordId);
 
+    // Выделить голубым ровно заданные записи (по id), сняв прежнее выделение. Используется после
+    // структурных операций (создание/дубль): после Reset грид мог «восстановить» выделение по индексам
+    // на уже ДРУГИЕ записи (отсюда лишние/съехавшие подсветки) — мы переустанавливаем его явно на
+    // результат операции. Подсветка появится у тех строк, что сейчас в кеше (видимые/прогретые).
+    public void SelectRecords(IReadOnlyList<int> recordIds)
+    {
+        RecordsGrid.SelectedItems.Clear();
+        if (_virtualRows is null) return;
+        foreach (var id in recordIds)
+            if (_virtualRows.FindCachedByRecordId(id) is { } row)
+                RecordsGrid.SelectedItems.Add(row);
+    }
+
+    // Снять всё выделение записей (после удаления — удалённые строки не должны оставаться «подсвеченными»).
+    public void ClearRecordSelection() => RecordsGrid.SelectedItems.Clear();
+
     // Можно ли двигать запись вверх/вниз (не крайняя ли она в порядке коллекции).
     private bool CanMoveRecord(int recordId, bool up)
     {

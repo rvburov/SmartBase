@@ -2121,12 +2121,13 @@ public class ConstructorRepository(AppDbContext db)
         tx.Commit();
     }
 
-    /// <summary>Дубль выбранных записей на ОТДЕЛЬНОМ подключении (фон + прогресс).</summary>
-    public void DuplicateRecordsIsolated(int collectionId, IReadOnlyList<int> recordIds, IProgress<int>? progress = null)
+    /// <summary>Дубль выбранных записей на ОТДЕЛЬНОМ подключении (фон + прогресс). Возвращает id копий
+    /// (для выделения их голубым после операции).</summary>
+    public List<int> DuplicateRecordsIsolated(int collectionId, IReadOnlyList<int> recordIds, IProgress<int>? progress = null)
     {
         using var ctx = new AppDbContext(db.DbPath);
         ctx.ApplyPerformancePragmas();
-        new ConstructorRepository(ctx).DuplicateRecordsData(collectionId, recordIds, progress);
+        return new ConstructorRepository(ctx).DuplicateRecordsData(collectionId, recordIds, progress);
     }
 
     /// <summary>Дубль выбранных записей коллекции bulk-SQL: копии встают СРАЗУ ПОСЛЕ последней (самой
@@ -2135,11 +2136,12 @@ public class ConstructorRepository(AppDbContext db)
     /// транзакции: освобождаем count слотов сразу после якоря сдвигом ТОЛЬКО хвоста (без перенумерации всей
     /// коллекции); 1) записи одним INSERT…SELECT в эти слоты (новые id — непрерывный блок в порядке вставки:
     /// firstNew = last_insert_rowid − count + 1); 2) значения пакетами по рангу (новый RecordId = firstNew +
-    /// ранг − 1), один INSERT по всем полям на пакет. progress — нарастающее число скопированных записей.</summary>
-    public void DuplicateRecordsData(int collectionId, IReadOnlyList<int> recordIds,
-                                     IProgress<int>? progress = null, int batchSize = 10000)
+    /// ранг − 1), один INSERT по всем полям на пакет. progress — нарастающее число скопированных записей.
+    /// Возвращает id созданных копий (непрерывный блок firstNew..firstNew+count−1) — для их выделения.</summary>
+    public List<int> DuplicateRecordsData(int collectionId, IReadOnlyList<int> recordIds,
+                                          IProgress<int>? progress = null, int batchSize = 10000)
     {
-        if (recordIds.Count == 0) return;
+        if (recordIds.Count == 0) return [];
         var ids = recordIds.Distinct().ToList();
 
         using var tx = db.Database.BeginTransaction();
@@ -2160,7 +2162,7 @@ public class ConstructorRepository(AppDbContext db)
             db.Database.ExecuteSqlRaw("DROP TABLE IF EXISTS temp._dup_recsel");
             tx.Commit();
             progress?.Report(0);
-            return;
+            return [];
         }
 
         // Якорь — ПОСЛЕДНЯЯ (самая нижняя) выбранная запись в порядке (Position, Id): её Position, и среди
@@ -2225,6 +2227,8 @@ public class ConstructorRepository(AppDbContext db)
         // по диапазону новых id (без удаления — строки новые).
         var lastNew = firstNew + count - 1;
         FillCalendarIndex(q => q.Where(v => v.RecordId >= firstNew && v.RecordId <= lastNew));
+
+        return Enumerable.Range(firstNew, count).ToList();   // id копий (для выделения)
     }
 
     // Скалярный int на текущем подключении (в открытой транзакции) — для bulk-операций с temp-таблицами.
