@@ -65,8 +65,15 @@ public partial class DateEditor : UserControl
             SetValue(null, raise: true);
             Pop.IsOpen = false;
         };
+        // «Готово» применяет текущее состояние выпадашки (на случай, если изменение ещё не
+        // зафиксировалось через RecomputeFromUi — например, фокус не ушёл из поля), затем закрывает.
+        // RecomputeFromUi идемпотентна (Changed поднимается только при реальной смене значения).
         // Как в диалоге события: при ошибке валидации не закрываем (баннер виден).
-        DoneBtn.Click += (_, _) => { if (!ErrorBanner.IsVisible) Pop.IsOpen = false; };
+        DoneBtn.Click += (_, _) =>
+        {
+            RecomputeFromUi();
+            if (!ErrorBanner.IsVisible) Pop.IsOpen = false;
+        };
 
         Input.KeyDown   += (_, e) => { if (e.Key == Key.Enter) CommitManual(); };
         Input.LostFocus += (_, _) => CommitManual();
@@ -190,9 +197,12 @@ public partial class DateEditor : UserControl
         }
         HideError();
 
+        // Поднимаем Changed только при реальной смене значения — чтобы повторный вызов
+        // (например, из «Готово» поверх уже зафиксированного live-выбора) не плодил лишних сохранений.
+        var changed = _value?.ToStorage() != v.ToStorage();
         _value     = v;
         Input.Text = v.ToDisplay();
-        Changed?.Invoke(this, EventArgs.Empty);
+        if (changed) Changed?.Invoke(this, EventArgs.Empty);
     }
 
     private void ShowError(string message) => ErrorBanner.Show(message);

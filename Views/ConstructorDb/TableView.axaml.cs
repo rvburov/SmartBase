@@ -27,6 +27,9 @@ public partial class TableView : UserControl
 {
     // ── Публичные события ─────────────────────────────────────────────────────
     public event EventHandler<int>? RecordClicked;
+    // Значение записи изменено прямо в таблице (правка ячейки: имя/описание/поле). Аргумент —
+    // RecordId. MainWindow обновляет открытую панель «Страница записи», если это та же запись.
+    public event EventHandler<int>? RecordValueEdited;
     // Удаление записей из таблицы (одной или мультивыделения: Shift/Ctrl-клик → меню
     // «Удалить» или клавиша Delete) — всегда пакетно, с подтверждением; для одной записи
     // список из одного id (как удаление свойств).
@@ -518,6 +521,7 @@ public partial class TableView : UserControl
 
         _virtualRows = new VirtualRowList(_repository, _collectionId, _fields,
                                          excludeHidden: _hiddenRecords.Count > 0);
+        _virtualRows.RecordEdited += (_, rid) => RecordValueEdited?.Invoke(this, rid);
         // Виртуализирующая обёртка: DataGrid не материализует источник, тянет только видимые
         // строки → большие коллекции открываются мгновенно. Всегда включена.
         _virtualView = new VirtualCollectionView(_virtualRows);
@@ -842,7 +846,15 @@ public partial class TableView : UserControl
     // Точечное обновление ОДНОЙ строки (после правки записи в правой панели): перечитываем её данные
     // и заполняем строку на месте, без пересборки таблицы. Полный Refresh на больших коллекциях с
     // множеством колонок давал тяжёлую перезагрузку при каждой правке.
-    public void RefreshRecordRow(int recordId) => _virtualRows?.RefreshRecord(recordId);
+    public void RefreshRecordRow(int recordId)
+    {
+        // Снимаем активное редактирование ячейки. Редакторы даты/выбора задают значение императивно
+        // (Storage/SelectedItem ставятся один раз) и НЕ обновляются по NotifyAllCells — открытый
+        // редактор показывал бы устаревшее значение, а при коммите ещё и затёр бы свежее из панели.
+        // CancelEdit отменяет (не коммитит) правку, после чего ячейка показывает биндинг-дисплей.
+        RecordsGrid.CancelEdit();
+        _virtualRows?.RefreshRecord(recordId);
+    }
 
     // Выделить голубым ровно заданные записи (по id), сняв прежнее выделение. Используется после
     // структурных операций (создание/дубль): после Reset грид мог «восстановить» выделение по индексам
@@ -2469,6 +2481,7 @@ public partial class TableView : UserControl
         }
 
         var filteredRows = new VirtualRowList(_repository, _collectionId, _fields, recordIds: ids);
+        filteredRows.RecordEdited += (_, rid) => RecordValueEdited?.Invoke(this, rid);
         RecordsGrid.ItemsSource = new VirtualCollectionView(filteredRows);
     }
 

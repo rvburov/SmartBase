@@ -22,6 +22,16 @@ public partial class ConstructorControllerView : UserControl
     /// <summary>Запрос переключить видимость правой панели записи из навбара коллекции.</summary>
     public event EventHandler<bool>? RecordPanelToggled;
 
+    /// <summary>Значение записи отредактировано прямо в таблице — для живой синхронизации открытой
+    /// панели «Страница записи» (MainWindow обновит её, если это та же запись).</summary>
+    public event EventHandler<int>? RecordValueEdited;
+
+    /// <summary>Состав/имена полей коллекции изменились (добавление/правка/дубль/удаление свойства) —
+    /// открытая панель «Страница записи» должна перестроить список свойств.</summary>
+    public event EventHandler? FieldsChanged;
+
+    private void NotifyFieldsChanged() => FieldsChanged?.Invoke(this, EventArgs.Empty);
+
     /// <summary>Текущая открытая коллекция (для MainWindow при открытии PageView).</summary>
     public int? CurrentCollectionId => _currentCollectionId;
 
@@ -54,6 +64,7 @@ public partial class ConstructorControllerView : UserControl
 
         // CRUD для записей — через контекстные меню в TableView/ListView.
         TableViewCtrl.RecordClicked             += (_, rid)  => OpenPage(rid);
+        TableViewCtrl.RecordValueEdited         += (_, rid)  => RecordValueEdited?.Invoke(this, rid);
         TableViewCtrl.RecordCreateRequested     += (_, e)    => _ = CreateAndOpen(e.Open, e.AfterId);
         TableViewCtrl.RecordsDeleteRequested    += (_, ids)  => _ = DeleteRecordsWithConfirm(ids);
         TableViewCtrl.RecordDuplicateRequested  += (_, ids)  => _ = DuplicateRecords(ids);
@@ -427,6 +438,7 @@ public partial class ConstructorControllerView : UserControl
                 TableViewCtrl.ScrollToAddPropertyColumn();
         }
 
+        NotifyFieldsChanged();
         CollectionsChanged?.Invoke(this, EventArgs.Empty);
     }
 
@@ -507,6 +519,7 @@ public partial class ConstructorControllerView : UserControl
         }
 
         TableViewCtrl.ReloadColumns();   // только колонки, строки не сбрасываем
+        NotifyFieldsChanged();
         CollectionsChanged?.Invoke(this, EventArgs.Empty);
     }
 
@@ -605,6 +618,7 @@ public partial class ConstructorControllerView : UserControl
         TableViewCtrl.ReloadColumns();
         TableViewCtrl.ReloadRows();
         TableViewCtrl.RestoreVerticalOffset(keepV);
+        NotifyFieldsChanged();
         // CollectionsChanged не нужен: копии не источники календаря, список коллекций не меняется.
     }
 
@@ -648,6 +662,7 @@ public partial class ConstructorControllerView : UserControl
             });
 
         TableViewCtrl.ReloadColumns();   // колонка исчезает сразу; строки не пересобираем
+        NotifyFieldsChanged();
 
         // Кросс-БД обновление (сайдбары + календарь по всем БД) после операции лишь тормозит и
         // НУЖНО только если удалили поле-источник календаря (IsCalStart): колонки не меняют ни

@@ -4,7 +4,7 @@
              x:Class="DataBase.Views.ConstructorDb.RecordPageView"
              Background="{StaticResource BrushBg}">
 
-    <Grid RowDefinitions="Auto,Auto,*,Auto">
+    <Grid x:Name="PageGrid" RowDefinitions="Auto,Auto,Auto,*,Auto">
 
         <!-- Шапка: редактируемое название записи + кнопка «закрыть».
              Стиль текста — как у заголовка коллекции в навбаре конструктора
@@ -66,13 +66,50 @@
                 VerticalAlignment="Bottom"
                 Background="{StaticResource BrushSeparator}" />
 
-        <!-- Свойства (всё кроме системного «Название» и markdown) -->
-        <StackPanel Grid.Row="1" Margin="20,16,20,12">
-            <ItemsControl x:Name="PropertiesList" />
-        </StackPanel>
+        <!-- Свойства (всё кроме системного «Название» и markdown).
+             В ScrollViewer: когда ручкой ниже задана пиксельная высота строки и
+             свойств больше, чем влезает, — список прокручивается. -->
+        <ScrollViewer Grid.Row="1" x:Name="PropertiesScroll"
+                      VerticalScrollBarVisibility="Auto"
+                      HorizontalScrollBarVisibility="Disabled">
+            <StackPanel Margin="20,16,20,8">
+                <ItemsControl x:Name="PropertiesList" />
+            </StackPanel>
+        </ScrollViewer>
+
+        <!-- Ручка перетаскивания: делит свойства (сверху) и описание (снизу).
+             Тонкая линия-разделитель на всю ширину + плавающая пилюля с точками
+             (горизонтальная — как вертикальные ручки сайдбара/панели записи). -->
+        <Border Grid.Row="2"
+                Height="1"
+                VerticalAlignment="Center"
+                Background="{StaticResource BrushSeparator}" />
+
+        <Border Grid.Row="2"
+                x:Name="PropsResizeGrip"
+                Width="34" Height="11"
+                Margin="0,3"
+                HorizontalAlignment="Center"
+                VerticalAlignment="Center"
+                CornerRadius="4"
+                Background="{StaticResource BrushBg}"
+                BorderBrush="{StaticResource BrushSeparator}"
+                BorderThickness="1"
+                Cursor="SizeNorthSouth"
+                PointerPressed="OnPropsGripPressed"
+                PointerMoved="OnPropsGripMoved"
+                PointerReleased="OnPropsGripReleased">
+            <StackPanel Orientation="Horizontal" Spacing="3"
+                        HorizontalAlignment="Center"
+                        VerticalAlignment="Center">
+                <Ellipse Width="2.5" Height="2.5" Fill="{StaticResource BrushSecondaryText}" />
+                <Ellipse Width="2.5" Height="2.5" Fill="{StaticResource BrushSecondaryText}" />
+                <Ellipse Width="2.5" Height="2.5" Fill="{StaticResource BrushSecondaryText}" />
+            </StackPanel>
+        </Border>
 
         <!-- Markdown-описание -->
-        <Grid Grid.Row="2" RowDefinitions="Auto,*" Margin="20,8,20,12">
+        <Grid Grid.Row="3" RowDefinitions="Auto,*" Margin="20,8,20,12">
 
             <TextBlock Grid.Row="0"
                        Text="Описание"
@@ -100,7 +137,7 @@
         </Grid>
 
         <!-- Нижняя панель записи (как футер коллекции): переключатель режима markdown -->
-        <Border Grid.Row="3" Height="57" Background="{StaticResource BrushBg}">
+        <Border Grid.Row="4" Height="57" Background="{StaticResource BrushBg}">
             <DockPanel>
                 <Border DockPanel.Dock="Top"
                         Height="1"

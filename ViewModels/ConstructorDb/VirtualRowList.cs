@@ -45,6 +45,19 @@ internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollecti
 
     public event NotifyCollectionChangedEventHandler? CollectionChanged;
 
+    /// <summary>Пользователь отредактировал ячейку какой-то строки прямо в таблице (аргумент — RecordId).
+    /// Ретранслируется из <see cref="TableRowVm.Edited"/> всех строк списка — для живой синхронизации
+    /// открытой панели «Страница записи».</summary>
+    public event EventHandler<int>? RecordEdited;
+
+    // Подписать строку: её правки (из сеттера ячейки) ретранслируем наружу как RecordEdited.
+    // Заглушки «Загрузка…» тоже подписываем — после Fill это тот же экземпляр, подписка сохраняется.
+    private TableRowVm Track(TableRowVm row)
+    {
+        row.Edited += (_, rid) => RecordEdited?.Invoke(this, rid);
+        return row;
+    }
+
     // Отложенная подгрузка с заглушками «Загрузка…» (флаг настроек). По умолчанию выкл —
     // тогда страницы грузятся синхронно (проверенный путь). Вкл — эффект «Загрузка…» при скролле.
     private readonly bool _asyncLoad;
@@ -109,7 +122,7 @@ internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollecti
     private TableRowVm[] MakePlaceholders(int page, int skip, int take)
     {
         var ph = new TableRowVm[take];
-        for (var i = 0; i < take; i++) ph[i] = TableRowVm.Loading(skip + i + 1);
+        for (var i = 0; i < take; i++) ph[i] = Track(TableRowVm.Loading(skip + i + 1));
         _pages[page] = ph;
         _lru.AddLast(page);
         _pending.Add(page);
@@ -195,7 +208,7 @@ internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollecti
             var rec    = records[i];
             var id     = rec.Id!.Value;
             var values = valMap.TryGetValue(id, out var v) ? v : [];
-            rows[i]    = new TableRowVm(_repo, id, skip + i + 1, values, rec.Title ?? "", rec.Description);
+            rows[i]    = Track(new TableRowVm(_repo, id, skip + i + 1, values, rec.Title ?? "", rec.Description));
         }
         RememberCursor(skip / PageSize, records);
         return rows;

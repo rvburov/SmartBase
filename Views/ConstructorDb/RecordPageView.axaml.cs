@@ -1,4 +1,3 @@
-using System.Globalization;
 using System.Text.Json;
 using Avalonia;
 using Avalonia.Controls;
@@ -8,6 +7,7 @@ using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Media;
+using DataBase.Controls.Widgets;
 using DataBase.Core.Models;
 using DataBase.Database.Repositories;
 using DataBase.ViewModels.ConstructorDb;
@@ -24,6 +24,7 @@ public partial class RecordPageView : UserControl
     public event EventHandler<bool>? CollectionPanelToggled;
 
     private RecordPageViewModel? _vm;
+    private ConstructorRepository? _repo;   // для перечитывания записи из БД (ReloadFromDb)
 
     public RecordPageView()
     {
@@ -71,6 +72,7 @@ public partial class RecordPageView : UserControl
 
     public void Show(ConstructorRepository repository, int recordId, int collectionId)
     {
+        _repo = repository;
         _vm = new RecordPageViewModel(repository, recordId, collectionId);
         DataContext = _vm;
 
@@ -81,12 +83,50 @@ public partial class RecordPageView : UserControl
         UpdatePreviewVisibility();
 
         BuildProperties();
+        ApplyPropsHeight();
         WireAutoSave();
+    }
+
+    /// <summary>
+    /// Перечитать ТЕКУЩУЮ запись из БД и обновить панель на месте — когда ту же запись поправили
+    /// прямо в таблице. Обновляются значения свойств, имя и описание. Поле, которое пользователь
+    /// сейчас редактирует в панели (заголовок в режиме правки или markdown-редактор в фокусе),
+    /// не трогаем — чтобы не затереть набираемый текст; режим просмотра markdown сохраняется.
+    /// WireAutoSave повторно НЕ вызываем (его LostFocus-подписки читают актуальный _vm).
+    /// </summary>
+    public void ReloadFromDb()
+    {
+        if (_vm is null || _repo is null) return;
+
+        var recordId     = _vm.RecordId;
+        var collectionId = _vm.CollectionId;
+        var preview      = PreviewToggle.IsChecked == true;
+
+        _vm = new RecordPageViewModel(_repo, recordId, collectionId);
+        DataContext = _vm;
+
+        // Заголовок — только если он не в режиме редактирования.
+        if (!TitleBox.IsVisible)
+        {
+            TitleBox.Text = _vm.Title == "Без названия" ? "" : _vm.Title;
+            ExitTitleEdit();
+        }
+
+        // Описание — только если редактор не в фокусе (иначе затёрли бы набираемый текст).
+        if (!MarkdownEditor.IsFocused)
+            MarkdownEditor.Text = _vm.MarkdownText;
+
+        BuildProperties();
+        ApplyPropsHeight();
+
+        PreviewToggle.IsChecked = preview;
+        UpdatePreviewVisibility();
     }
 
     public void Clear()
     {
         _vm = null;
+        _repo = null;
         DataContext = null;
         TitleBox.Text        = "";
         ExitTitleEdit();
@@ -152,6 +192,59 @@ public partial class RecordPageView : UserControl
         };
     }
 
+    // ── Перетаскивание ручки между свойствами и описанием ──────────────────────
+    //
+    // По умолчанию блок свойств занимает высоту контента (строка Auto), ручка-пилюля
+    // сидит ровно на границе с описанием. Перетаскивание задаёт строке пиксельную
+    // высоту: тянем вниз — свойства растут (описание сжимается, оно в Star-строке),
+    // тянем вверх — свойства сжимаются, и если их больше, чем влезает, ScrollViewer
+    // даёт прокрутку. Выбранная высота помнится в пределах сессии и переносится
+    // между записями (на диск не пишем — у разных записей разное число свойств).
+
+    private bool    _propsGripDragging;
+    private double  _propsGripStartY;
+    private double  _propsGripStartHeight;
+    private double? _propsHeight;   // выбранная пользователем высота блока свойств (null = Auto)
+
+    private const double PropsHeightMin = 48;
+
+    // Строка свойств в PageGrid (Auto,Auto,Auto,*,Auto): индекс 1.
+    private RowDefinition PropsRow => PageGrid.RowDefinitions[1];
+
+    private void ApplyPropsHeight() =>
+        PropsRow.Height = _propsHeight is double h
+            ? new GridLength(h, GridUnitType.Pixel)
+            : GridLength.Auto;
+
+    private void OnPropsGripPressed(object? sender, PointerPressedEventArgs e)
+    {
+        _propsGripDragging    = true;
+        _propsGripStartY      = e.GetPosition(this).Y;
+        _propsGripStartHeight = PropsRow.ActualHeight;   // текущая высота (при Auto = высота контента)
+        e.Pointer.Capture((IInputElement?)sender);
+        e.Handled = true;
+    }
+
+    private void OnPropsGripMoved(object? sender, PointerEventArgs e)
+    {
+        if (!_propsGripDragging) return;
+
+        var dy = e.GetPosition(this).Y - _propsGripStartY;
+        // Не даём свойствам съесть всё описание: оставляем ему запас (шапка+футер+минимум описания).
+        var max = Math.Max(PropsHeightMin, PageGrid.Bounds.Height - 260);
+        var newHeight = Math.Clamp(_propsGripStartHeight + dy, PropsHeightMin, max);
+
+        PropsRow.Height = new GridLength(newHeight, GridUnitType.Pixel);
+        _propsHeight = newHeight;
+    }
+
+    private void OnPropsGripReleased(object? sender, PointerReleasedEventArgs e)
+    {
+        _propsGripDragging = false;
+        e.Pointer.Capture(null);
+        e.Handled = true;
+    }
+
     private void BuildProperties()
     {
         if (_vm is null) { PropertiesList.ItemsSource = null; return; }
@@ -209,15 +302,16 @@ public partial class RecordPageView : UserControl
             }
             case "date":
             {
-                var picker = new CalendarDatePicker { Height = 32, HorizontalAlignment = HorizontalAlignment.Stretch };
-                if (DateTime.TryParseExact(row.Value, "dd.MM.yyyy", null, DateTimeStyles.None, out var dt))
-                    picker.SelectedDate = dt;
-                picker.SelectedDateChanged += (_, _) =>
+                // Тот же редактор, что и в таблице: хранит/отдаёт канон DateValue (диапазоны,
+                // дата+время, «весь день»). Прежний CalendarDatePicker понимал только «dd.MM.yyyy»
+                // и терял богатые значения (диапазон/время «пропадал» в панели).
+                var editor = new DateEditor
                 {
-                    row.Value = picker.SelectedDate?.ToString("dd.MM.yyyy") ?? "";
-                    PersistProperty(row);
+                    HorizontalAlignment = HorizontalAlignment.Stretch,
+                    Storage             = row.Value,
                 };
-                input = picker;
+                editor.Changed += (_, _) => { row.Value = editor.Storage ?? ""; PersistProperty(row); };
+                input = editor;
                 break;
             }
             case "select":

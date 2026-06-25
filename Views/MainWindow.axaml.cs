@@ -141,6 +141,19 @@ public partial class MainWindow : Window
         ConstructorModule.RecordPageRequested += (_, rid)        => OpenRecordPanel(rid);
         ConstructorModule.RecordPageClosed    += (_, _)          => CloseRecordPanel();
         RecordPanel.RecordChanged             += (_, rid)        => ConstructorModule.RefreshRecordRow(rid);
+        // Обратная синхронизация: правка ячейки в таблице → обновить открытую панель записи,
+        // если это та же запись (значения свойств, имя и описание перечитываются из БД).
+        ConstructorModule.RecordValueEdited   += (_, rid) =>
+        {
+            if (_recordPanelLogicalOpen && rid == _lastOpenedRecordId)
+                RecordPanel.ReloadFromDb();
+        };
+        // Состав/имена свойств изменились в таблице (добавили/удалили/переименовали/дублировали поле) —
+        // открытая панель записи перестраивает список свойств, чтобы новое поле сразу появилось.
+        ConstructorModule.FieldsChanged       += (_, _) =>
+        {
+            if (_recordPanelLogicalOpen) RecordPanel.ReloadFromDb();
+        };
 
         // Toggle правой панели записи из навбара коллекции.
         // Если запись ранее была открыта (_lastOpenedRecordId есть) — переоткрываем её;

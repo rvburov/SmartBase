@@ -31,6 +31,12 @@ public class TableRowVm : INotifyPropertyChanged
 
     public event PropertyChangedEventHandler? PropertyChanged;
 
+    /// <summary>Пользователь отредактировал ячейку этой строки прямо в таблице (имя/описание/значение
+    /// уже записаны в БД). Аргумент — RecordId. Поднимается ТОЛЬКО из сеттера индексатора (правка из
+    /// таблицы), но НЕ из Fill (это загрузка данных страницы). Нужно для живой синхронизации открытой
+    /// панели «Страница записи»: правка в таблице сразу отражается в записи, и наоборот.</summary>
+    public event EventHandler<int>? Edited;
+
     /// <summary>Обычная строка с данными.</summary>
     public TableRowVm(ConstructorRepository repository, int recordId, int rowNumber,
                      Dictionary<int, string> values, string title, string? description)
@@ -119,6 +125,7 @@ public class TableRowVm : INotifyPropertyChanged
                 _title = newVal;
                 _repository?.SetRecordTitle(RecordId, newVal);
                 NotifyAllCells();
+                Edited?.Invoke(this, RecordId);
                 return;
             }
             if (key == DescKey)
@@ -127,6 +134,7 @@ public class TableRowVm : INotifyPropertyChanged
                 _description = newVal;
                 _repository?.SetRecordDescription(RecordId, newVal);
                 NotifyAllCells();
+                Edited?.Invoke(this, RecordId);
                 return;
             }
             if (!int.TryParse(key, out var id)) return;
@@ -135,6 +143,7 @@ public class TableRowVm : INotifyPropertyChanged
             _values[id] = newVal;
             _repository?.SetFieldValue(RecordId, id, newVal);
             NotifyAllCells();
+            Edited?.Invoke(this, RecordId);
         }
     }
 
