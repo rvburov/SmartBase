@@ -26,6 +26,11 @@ public partial class RecordPageView : UserControl
     private RecordPageViewModel? _vm;
     private ConstructorRepository? _repo;   // для перечитывания записи из БД (ReloadFromDb)
 
+    // Гасит авто-сейв на время служебной установки текста (Show/ReloadFromDb), чтобы
+    // программное TitleBox.Text/MarkdownEditor.Text не приняли за правку пользователя
+    // (иначе перечитанное из БД значение тут же писалось бы обратно и дёргало таблицу).
+    private bool _suppressAutoSave;
+
     public RecordPageView()
     {
         InitializeComponent();
@@ -45,6 +50,26 @@ public partial class RecordPageView : UserControl
         TitleBox.KeyDown   += (_, e) =>
         {
             if (e.Key is Key.Enter or Key.Escape) { ExitTitleEdit(); e.Handled = true; }
+        };
+
+        // Живая запись по символу — как ячейка таблицы: правка имени/описания в панели сразу
+        // видна в строке таблицы (RecordChanged → RefreshRecordRow). Обработчики висят на
+        // постоянных контролах и читают актуальный _vm, поэтому вешаем их один раз в ctor
+        // (а не в Show — иначе при каждом открытии записи копились бы дубли).
+        TitleBox.TextChanged += (_, _) =>
+        {
+            if (_vm is null || _suppressAutoSave) return;
+            var entered = TitleBox.Text?.Trim() ?? "";
+            _vm.Title = string.IsNullOrEmpty(entered) ? "Без названия" : entered;
+            _vm.SaveTitle();
+            RecordChanged?.Invoke(this, _vm.RecordId);
+        };
+        MarkdownEditor.TextChanged += (_, _) =>
+        {
+            if (_vm is null || _suppressAutoSave) return;
+            _vm.MarkdownText = MarkdownEditor.Text ?? "";
+            _vm.SaveMarkdown();
+            RecordChanged?.Invoke(this, _vm.RecordId);
         };
 
         CollectionPanelBtn.IsCheckedChanged += (_, _) =>
@@ -76,15 +101,16 @@ public partial class RecordPageView : UserControl
         _vm = new RecordPageViewModel(repository, recordId, collectionId);
         DataContext = _vm;
 
+        _suppressAutoSave = true;
         TitleBox.Text        = _vm.Title == "Без названия" ? "" : _vm.Title;
         ExitTitleEdit();
         MarkdownEditor.Text  = _vm.MarkdownText;
+        _suppressAutoSave = false;
         PreviewToggle.IsChecked = false;
         UpdatePreviewVisibility();
 
         BuildProperties();
         ApplyPropsHeight();
-        WireAutoSave();
     }
 
     /// <summary>
@@ -105,6 +131,10 @@ public partial class RecordPageView : UserControl
         _vm = new RecordPageViewModel(_repo, recordId, collectionId);
         DataContext = _vm;
 
+        // Перечитанные из БД значения ставим под guard'ом — иначе TextChanged принял бы их
+        // за правку и тут же записал обратно (+ лишний RefreshRecordRow по таблице).
+        _suppressAutoSave = true;
+
         // Заголовок — только если он не в режиме редактирования.
         if (!TitleBox.IsVisible)
         {
@@ -115,6 +145,8 @@ public partial class RecordPageView : UserControl
         // Описание — только если редактор не в фокусе (иначе затёрли бы набираемый текст).
         if (!MarkdownEditor.IsFocused)
             MarkdownEditor.Text = _vm.MarkdownText;
+
+        _suppressAutoSave = false;
 
         BuildProperties();
         ApplyPropsHeight();
@@ -166,30 +198,6 @@ public partial class RecordPageView : UserControl
 
         if (preview)
             MarkdownPreview.Markdown = MarkdownEditor.Text ?? "";
-    }
-
-    private void WireAutoSave()
-    {
-        if (_vm is null) return;
-
-        // Имя — пишем в БД при потере фокуса (как Notion: save on blur).
-        TitleBox.LostFocus += (_, _) =>
-        {
-            if (_vm is null) return;
-            var entered = TitleBox.Text?.Trim() ?? "";
-            _vm.Title = string.IsNullOrEmpty(entered) ? "Без названия" : entered;
-            _vm.SaveTitle();
-            RecordChanged?.Invoke(this, _vm.RecordId);
-        };
-
-        // Описание — также при потере фокуса (избегаем шторма записей при печати).
-        MarkdownEditor.LostFocus += (_, _) =>
-        {
-            if (_vm is null) return;
-            _vm.MarkdownText = MarkdownEditor.Text ?? "";
-            _vm.SaveMarkdown();
-            RecordChanged?.Invoke(this, _vm.RecordId);
-        };
     }
 
     // ── Перетаскивание ручки между свойствами и описанием ──────────────────────
@@ -296,7 +304,11 @@ public partial class RecordPageView : UserControl
             case "number":
             {
                 var tb = new TextBox { Text = row.Value, BorderThickness = new Thickness(1), Height = 32 };
-                tb.LostFocus += (_, _) => { row.Value = tb.Text ?? ""; PersistProperty(row); };
+                // Тот же фильтр ввода, что и в ячейке таблицы: пускаем только цифры, один
+                // разделитель и ведущий минус — иначе живая запись по символу клала бы в БД
+                // промежуточный мусор («-», «12,»).
+                tb.AddHandler(InputElement.TextInputEvent, OnNumberTextInput, RoutingStrategies.Tunnel);
+                tb.TextChanged += (_, _) => { row.Value = tb.Text ?? ""; PersistProperty(row); };
                 input = tb;
                 break;
             }
@@ -349,20 +361,49 @@ public partial class RecordPageView : UserControl
             case "url":
             {
                 var tb = new TextBox { Text = row.Value, Watermark = "https://", Height = 32 };
-                tb.LostFocus += (_, _) => { row.Value = tb.Text ?? ""; PersistProperty(row); };
+                tb.TextChanged += (_, _) => { row.Value = tb.Text ?? ""; PersistProperty(row); };
                 input = tb;
                 break;
             }
             default:  // text
             {
                 var tb = new TextBox { Text = row.Value, Height = 32 };
-                tb.LostFocus += (_, _) => { row.Value = tb.Text ?? ""; PersistProperty(row); };
+                tb.TextChanged += (_, _) => { row.Value = tb.Text ?? ""; PersistProperty(row); };
                 input = tb;
                 break;
             }
         }
 
         return input;
+    }
+
+    // Фильтр ввода числового поля (как в TableView): символ принимается только если итоговый
+    // текст остаётся допустимым (частичным) числом — цифры, один разделитель, ведущий минус.
+    private static void OnNumberTextInput(object? sender, TextInputEventArgs e)
+    {
+        if (sender is not TextBox tb || string.IsNullOrEmpty(e.Text)) return;
+
+        var text  = tb.Text ?? "";
+        var start = Math.Min(tb.SelectionStart, tb.SelectionEnd);
+        var end   = Math.Max(tb.SelectionStart, tb.SelectionEnd);
+        var prospective = text[..start] + e.Text + text[end..];
+
+        if (!IsPartialNumber(prospective)) e.Handled = true;
+    }
+
+    // Допускает незавершённый ввод: "", "-", "12", "12,", "-3.5".
+    private static bool IsPartialNumber(string s)
+    {
+        if (s.Length == 0) return true;
+        var i = s[0] == '-' ? 1 : 0;
+        var seps = 0;
+        for (; i < s.Length; i++)
+        {
+            var c = s[i];
+            if (c is '.' or ',') { if (++seps > 1) return false; }
+            else if (!char.IsDigit(c)) return false;
+        }
+        return true;
     }
 
     private static List<string> SelectOptions(DbField field)
