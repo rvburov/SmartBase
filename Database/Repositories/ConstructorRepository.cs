@@ -2062,6 +2062,28 @@ public class ConstructorRepository(AppDbContext db)
         };
     }
 
+    /// <summary>Дубль ОДНОЙ записи (копия сразу после исходной, по середине — без сдвига хвоста) на
+    /// ОТДЕЛЬНОМ подключении: чтобы контроллер выполнял вставку в фоне (Task.Run) и обновлял таблицу
+    /// уже после — без «моргания», которое даёт синхронная вставка-плюс-refresh в одном кадре UI.</summary>
+    public DbRecord DuplicateRecordIsolated(int recordId)
+    {
+        using var ctx = new AppDbContext(db.DbPath);
+        ctx.ApplyPerformancePragmas();
+        return new ConstructorRepository(ctx).DuplicateRecord(recordId);
+    }
+
+    /// <summary>Создать запись (в конце или сразу после afterRecordId) на ОТДЕЛЬНОМ подключении —
+    /// чтобы контроллер вставлял в фоне (Task.Run) и обновлял таблицу уже после, без «моргания».</summary>
+    public DbRecord AddRecordIsolated(DbRecord record, int? afterRecordId)
+    {
+        using var ctx = new AppDbContext(db.DbPath);
+        ctx.ApplyPerformancePragmas();
+        var repo = new ConstructorRepository(ctx);
+        if (afterRecordId is { } aid) return repo.AddRecordAfter(record, aid);
+        record.Position = (repo.CountRecords(record.CollectionId) + 1) * 1000;
+        return repo.AddRecord(record);
+    }
+
     // ── Пакетные операции над выбранными записями (мультивыделение в таблице) ────
     // Удаление/дубль МНОГИХ записей сразу — bulk-SQL мимо EF (как дубль/удаление коллекций),
     // на ОТДЕЛЬНОМ подключении в фоне (см. принцип 5 в docs/architecture/performance). Прежний

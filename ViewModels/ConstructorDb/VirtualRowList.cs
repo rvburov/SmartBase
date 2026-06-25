@@ -36,7 +36,7 @@ internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollecti
     // Режим списка id (фильтр/сортировка): если задан — страницы берутся срезом этого списка
     // и грузятся по id в его порядке, а не keyset/offset по Position. null — обычный режим.
     private readonly IReadOnlyList<int>? _recordIds;
-    private readonly int _dataCount;
+    private int _dataCount;   // меняется при структурном обновлении (создание/удаление/дубль записей)
 
     // Постоянный экземпляр add-row — DataGrid сравнивает по ссылке при ScrollIntoView.
     public TableRowVm AddRowItem { get; } = TableRowVm.AddRow();
@@ -299,6 +299,52 @@ internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollecti
             return _repo.GetRecordsByIdsOrdered(slice);
         }
         return _repo.GetRecordsPage(_collectionId, skip, take, _excludeHidden);
+    }
+
+    /// <summary>Структурное обновление (создание/удаление/дубль записей): пересчитывает число строк и
+    /// СИНХРОННО перестраивает уже загруженные страницы реальными данными (+ страницу 0 — после Reset
+    /// грид может прокрутиться в начало), затем шлёт Reset. Кеш остаётся ТЁПЛЫМ, поэтому грид
+    /// перерисовывается сразу из него, без заглушек «Загрузка…» — это и убирает мелькание. Применяется
+    /// только в обычном режиме (без фильтра/сортировки — там список id пересобирает полный ReloadRows).</summary>
+    public void RefreshStructural()
+    {
+        _dataCount = _recordIds?.Count ?? _repo.CountRecords(_collectionId, _excludeHidden);
+
+        // Курсоры keyset устарели (набор/порядок записей сдвинулся) — сбрасываем, чтобы незагруженные
+        // страницы грузились offset’ом по индексу; перестроенные ниже заново проставят свои (BuildRows).
+        _pageEnd.Clear();
+
+        // Страницы целиком вне нового диапазона — выкидываем; остальные перестраиваем реальными строками.
+        foreach (var page in _pages.Keys.ToList())
+        {
+            if (page * PageSize >= _dataCount) DropPage(page);
+            else                               RebuildPageSync(page);
+        }
+        // Прогреваем страницу 0 на случай прокрутки в начало после Reset — чтобы и там были данные.
+        if (_dataCount > 0 && !_pages.ContainsKey(0)) RebuildPageSync(0);
+
+        CollectionChanged?.Invoke(this,
+            new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Reset));
+    }
+
+    // Перестраивает страницу реальными строками синхронно (offset по индексу) — для тёплого кеша.
+    private void RebuildPageSync(int page)
+    {
+        var skip = page * PageSize;
+        var take = Math.Min(PageSize, _dataCount - skip);
+        if (take <= 0) { DropPage(page); return; }
+
+        _pages[page] = BuildRows(skip, LoadRecordsByOffset(skip, take));   // BuildRows ставит и курсор страницы
+        _pending.Remove(page);
+        if (!_lru.Contains(page)) _lru.AddLast(page);
+    }
+
+    private void DropPage(int page)
+    {
+        _pages.Remove(page);
+        _lru.Remove(page);
+        _pending.Remove(page);
+        _pageEnd.Remove(page);
     }
 
     /// <summary>Сбрасывает кеш и сигнализирует DataGrid о полной перестройке.</summary>

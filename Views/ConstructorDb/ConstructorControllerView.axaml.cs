@@ -54,12 +54,12 @@ public partial class ConstructorControllerView : UserControl
 
         // CRUD для записей — через контекстные меню в TableView/ListView.
         TableViewCtrl.RecordClicked             += (_, rid)  => OpenPage(rid);
-        TableViewCtrl.RecordCreateRequested     += (_, e)    => CreateAndOpen(e.Open, e.AfterId);
+        TableViewCtrl.RecordCreateRequested     += (_, e)    => _ = CreateAndOpen(e.Open, e.AfterId);
         TableViewCtrl.RecordsDeleteRequested    += (_, ids)  => _ = DeleteRecordsWithConfirm(ids);
         TableViewCtrl.RecordDuplicateRequested  += (_, ids)  => _ = DuplicateRecords(ids);
 
         ListViewCtrl.RecordClicked              += (_, rid) => OpenPage(rid);
-        ListViewCtrl.RecordCreateRequested      += (_, _)   => CreateAndOpen();
+        ListViewCtrl.RecordCreateRequested      += (_, _)   => _ = CreateAndOpen();
         ListViewCtrl.RecordDeleteRequested      += (_, rid) => DeleteRecord(rid);
 
         // CRUD для свойств — через контекстное меню заголовков колонок.
@@ -146,13 +146,17 @@ public partial class ConstructorControllerView : UserControl
     // видимость записей): в таблице пересобираем только строки (ReloadRows) — набор колонок
     // не трогаем, поэтому при 1000 свойств нет «моргания» и тяжёлой пересборки. Для режима
     // «Список» (без множества колонок) — пока полный путь Refresh.
-    private void RefreshRows()
+    // structural=true — изменилось ЧИСЛО записей (создание/удаление/дубль): строки обновляем на месте
+    // без пересоздания списка и мелькания «Загрузка…» (ReloadRowsStructural). false — изменилась
+    // ВИДИМОСТЬ записей (окно «Отображение»): набор фильтра по скрытым другой → нужен полный ReloadRows.
+    private void RefreshRows(bool structural = false)
     {
         if (_currentCollectionId is null || _repository is null) return;
 
         if (TableViewCtrl.IsVisible)
         {
-            TableViewCtrl.ReloadRows();
+            if (structural) TableViewCtrl.ReloadRowsStructural();
+            else            TableViewCtrl.ReloadRows();
             ConstructorFooter.SetCount(_repository.CountRecords(_currentCollectionId.Value));
         }
         else
@@ -206,7 +210,7 @@ public partial class ConstructorControllerView : UserControl
     // open=false — создать запись, не открывая правую панель (нажатие «+» в таблице).
     // open=true  — создать и открыть деталь (контекстное «Создать запись»).
     // afterRecordId != null — создать сразу после этой записи (меню строки); иначе в конце.
-    private void CreateAndOpen(bool open = true, int? afterRecordId = null)
+    private async Task CreateAndOpen(bool open = true, int? afterRecordId = null)
     {
         if (_currentCollectionId is null || _repository is null) return;
 
@@ -222,19 +226,12 @@ public partial class ConstructorControllerView : UserControl
             Title        = "Без названия",
         };
 
-        DbRecord rec;
-        if (afterRecordId is { } afterId)
-        {
-            rec = _repository.AddRecordAfter(newRecord, afterId);
-        }
-        else
-        {
-            var count = _repository.CountRecords(_currentCollectionId.Value);
-            newRecord.Position = (count + 1) * 1000;
-            rec = _repository.AddRecord(newRecord);
-        }
+        // Вставку делаем в ФОНЕ (изолированное подключение) — синхронная вставка-плюс-RefreshStructural
+        // в одном кадре UI заставляла грид моргать при добавлении одной строки. Фоновый путь + await
+        // (как у удаления/дубля нескольких) даёт гриду чистый кадр → без мерцания.
+        var rec = await Task.Run(() => _repository.AddRecordIsolated(newRecord, afterRecordId));
 
-        RefreshRows();
+        RefreshRows(structural: true);
         // CollectionsChanged НЕ зовём: новая пустая запись не меняет ни список коллекций/групп в
         // сайдбарах, ни события календаря (даты ещё нет). Прежний кросс-БД рефреш на каждое создание
         // давал заметную задержку (~1 с) на мультибазе. Появится дата — её правка обновит календарь сама.
@@ -269,7 +266,7 @@ public partial class ConstructorControllerView : UserControl
         var keepVertical = TableViewCtrl.IsVisible ? TableViewCtrl.CurrentVerticalOffset() : (double?)null;
 
         _repository.DeleteRecord(recordId);
-        RefreshRows();
+        RefreshRows(structural: true);
         CollectionsChanged?.Invoke(this, EventArgs.Empty);
         RecordPageClosed?.Invoke(this, EventArgs.Empty);
 
@@ -305,7 +302,7 @@ public partial class ConstructorControllerView : UserControl
                 p.Report((ids.Count, ids.Count));   // финал → «Сохранение…»
             });
 
-        RefreshRows();
+        RefreshRows(structural: true);
         CollectionsChanged?.Invoke(this, EventArgs.Empty);
         RecordPageClosed?.Invoke(this, EventArgs.Empty);
 
@@ -314,8 +311,8 @@ public partial class ConstructorControllerView : UserControl
     }
 
     // Дубль выбранных записей. Одна запись (меню строки) — копия сразу после исходной (как было),
-    // мгновенно. Несколько — bulk-SQL в фоне с индикатором (как удаление), копии встают в КОНЕЦ
-    // коллекции; иначе по-записный DuplicateRecord с SaveChanges на каждую вешал бы UI.
+    // мгновенно. Несколько — bulk-SQL в фоне с индикатором (как удаление), копии встают сразу после
+    // нижней выделенной записи; иначе по-записный DuplicateRecord с SaveChanges на каждую вешал бы UI.
     private async Task DuplicateRecords(IReadOnlyList<int> recordIds)
     {
         if (_repository is null || _currentCollectionId is null) return;
@@ -326,7 +323,10 @@ public partial class ConstructorControllerView : UserControl
 
         if (ids.Count == 1)
         {
-            _repository.DuplicateRecord(ids[0]);   // копия сразу после исходной
+            // Копия сразу после исходной (по середине, без сдвига хвоста) — но в ФОНЕ (изолированно)
+            // + await: синхронная вставка одной строки с немедленным refresh моргала; фоновый путь
+            // (как у дубля нескольких) даёт гриду чистый кадр.
+            await Task.Run(() => _repository.DuplicateRecordIsolated(ids[0]));
         }
         else
         {
@@ -340,7 +340,7 @@ public partial class ConstructorControllerView : UserControl
                 });
         }
 
-        RefreshRows();
+        RefreshRows(structural: true);
         CollectionsChanged?.Invoke(this, EventArgs.Empty);
 
         if (keepVertical is { } off && TableViewCtrl.IsVisible)
@@ -370,7 +370,7 @@ public partial class ConstructorControllerView : UserControl
         var keepVertical = TableViewCtrl.IsVisible ? TableViewCtrl.CurrentVerticalOffset() : (double?)null;
 
         _repository.DuplicateRecord(recordId);
-        RefreshRows();
+        RefreshRows(structural: true);
         CollectionsChanged?.Invoke(this, EventArgs.Empty);
 
         if (keepVertical is { } off && TableViewCtrl.IsVisible)
