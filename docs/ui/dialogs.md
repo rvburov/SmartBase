@@ -21,6 +21,14 @@
 | [GroupDialog](../../Controls/Dialogs/GroupDialog.axaml.cs) | создание/правка группы |  |
 | [CreateItemDialog](../../Controls/Dialogs/CreateItemDialog.axaml.cs) | выбор, что создать (группа/коллекция/…) |  |
 | [ImportExportDialog](../../Controls/Dialogs/ImportExportDialog.axaml.cs) | импорт/экспорт данных | см. [../features/import-export.md](../features/import-export.md) |
+| [ProgressDialog](../../Controls/Dialogs/ProgressDialog.axaml.cs) | прогресс долгой фоновой операции (импорт, дубль/удаление/перенос коллекций и групп, удаление/дубль свойств) | закрывается программно (`Done()`) |
+
+`ProgressDialog` — не возвращает результат и не закрывается пользователем (крестик/Alt+F4
+заблокированы до `Done()`). Управляется с UI-потока: `SetProgress(0..1, фаза)` — проценты,
+`SetSaving(фаза)` — бегущая полоса без процентов (коммит большой транзакции, чтобы 100% не
+выглядели зависшими), `SetInfo(текст)` — строка под заголовком. Сама тяжёлая работа идёт на
+ОТДЕЛЬНОМ подключении в фоне, прогресс маршалится на UI через `IProgress<T>` →
+`Dispatcher.UIThread.Post` (см. [[../architecture/performance]], принцип 5 и раздел «Сделано»).
 
 ## Шаблон использования
 

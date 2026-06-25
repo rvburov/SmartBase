@@ -1774,6 +1774,15 @@ public class ConstructorRepository(AppDbContext db)
           .Select(r => (r.Id, r.Title ?? ""))
           .ToList();
 
+    /// <summary>То же, но на ОТДЕЛЬНОМ подключении — чтобы окно «Отображение записей» грузило весь
+    /// список (на больших коллекциях это сотни тысяч строк) в фоновом потоке, не подвешивая UI.</summary>
+    public List<(int Id, string Title)> GetRecordTitlesOrderedIsolated(int collectionId)
+    {
+        using var ctx = new AppDbContext(db.DbPath);
+        ctx.ApplyPerformancePragmas();
+        return new ConstructorRepository(ctx).GetRecordTitlesOrdered(collectionId);
+    }
+
     // excludeHidden=true исключает записи, скрытые в окне «Отображение записей»
     // (record_display.Visible=false). Фильтр уходит в SQL до Count/Skip/Take, поэтому
     // виртуализация и пагинация таблицы сохраняются (см. VirtualRowList).
@@ -2051,6 +2060,158 @@ public class ConstructorRepository(AppDbContext db)
             Title        = copy.Title,
             Description  = copy.Description,
         };
+    }
+
+    // ── Пакетные операции над выбранными записями (мультивыделение в таблице) ────
+    // Удаление/дубль МНОГИХ записей сразу — bulk-SQL мимо EF (как дубль/удаление коллекций),
+    // на ОТДЕЛЬНОМ подключении в фоне (см. принцип 5 в docs/architecture/performance). Прежний
+    // путь — цикл DeleteRecord/DuplicateRecord с SaveChanges на КАЖДУЮ запись — на 1000+ строк
+    // давал сотни/тысячи транзакций и фриз UI.
+
+    /// <summary>Удалить выбранные записи на ОТДЕЛЬНОМ подключении (фон + прогресс).</summary>
+    public void DeleteRecordsIsolated(IReadOnlyList<int> recordIds, IProgress<int>? progress = null)
+    {
+        using var ctx = new AppDbContext(db.DbPath);
+        ctx.ApplyPerformancePragmas();
+        new ConstructorRepository(ctx).DeleteRecordsData(recordIds, progress);
+    }
+
+    /// <summary>Удалить записи ПАКЕТАМИ по списку их Id (значения и calendar_index уходят каскадом по
+    /// FK ON DELETE CASCADE). record_display/ui_row_heights с записью FK-связи НЕ имеют (каскада нет) —
+    /// чистим явно, иначе настройки видимости/высоты «осиротеют» и могут прилипнуть к новой записи с
+    /// тем же rowid. Пакеты — ради гранулярности прогресса.</summary>
+    public void DeleteRecordsData(IReadOnlyList<int> recordIds, IProgress<int>? progress = null, int batchSize = 10000)
+    {
+        if (recordIds.Count == 0) return;
+        var ids = recordIds.Distinct().ToList();
+
+        using var tx = db.Database.BeginTransaction();
+        var done = 0;
+        for (var i = 0; i < ids.Count; i += batchSize)
+        {
+            var inList = string.Join(",", ids.Skip(i).Take(batchSize));
+            db.Database.ExecuteSqlRaw($"DELETE FROM db_records     WHERE Id       IN ({inList})");
+            db.Database.ExecuteSqlRaw($"DELETE FROM record_display WHERE RecordId IN ({inList})");
+            db.Database.ExecuteSqlRaw($"DELETE FROM ui_row_heights WHERE RecordId IN ({inList})");
+            done = Math.Min(ids.Count, i + batchSize);
+            progress?.Report(done);
+        }
+        tx.Commit();
+    }
+
+    /// <summary>Дубль выбранных записей на ОТДЕЛЬНОМ подключении (фон + прогресс).</summary>
+    public void DuplicateRecordsIsolated(int collectionId, IReadOnlyList<int> recordIds, IProgress<int>? progress = null)
+    {
+        using var ctx = new AppDbContext(db.DbPath);
+        ctx.ApplyPerformancePragmas();
+        new ConstructorRepository(ctx).DuplicateRecordsData(collectionId, recordIds, progress);
+    }
+
+    /// <summary>Дубль выбранных записей коллекции bulk-SQL: копии встают СРАЗУ ПОСЛЕ последней (самой
+    /// нижней по порядку Position, Id) выбранной записи — как дубль одной записи ставит копию следом за
+    /// исходной, а не в конец таблицы. Поля те же (одна коллекция) → FieldId не перемэппливаем. Всё в одной
+    /// транзакции: освобождаем count слотов сразу после якоря сдвигом ТОЛЬКО хвоста (без перенумерации всей
+    /// коллекции); 1) записи одним INSERT…SELECT в эти слоты (новые id — непрерывный блок в порядке вставки:
+    /// firstNew = last_insert_rowid − count + 1); 2) значения пакетами по рангу (новый RecordId = firstNew +
+    /// ранг − 1), один INSERT по всем полям на пакет. progress — нарастающее число скопированных записей.</summary>
+    public void DuplicateRecordsData(int collectionId, IReadOnlyList<int> recordIds,
+                                     IProgress<int>? progress = null, int batchSize = 10000)
+    {
+        if (recordIds.Count == 0) return;
+        var ids = recordIds.Distinct().ToList();
+
+        using var tx = db.Database.BeginTransaction();
+
+        // Временный набор выбранных Id — чтобы ранг (ROW_NUMBER по Position,Id) и JOIN значений шли
+        // по одному подмножеству. Живёт на этом подключении; пересоздаём.
+        db.Database.ExecuteSqlRaw("DROP TABLE IF EXISTS temp._dup_recsel");
+        db.Database.ExecuteSqlRaw("CREATE TEMP TABLE _dup_recsel(src_id INTEGER PRIMARY KEY)");
+        foreach (var id in ids)
+            db.Database.ExecuteSqlInterpolated($"INSERT INTO _dup_recsel(src_id) VALUES ({id})");
+
+        // Реально существующие в коллекции из выбранных (мусорные id отсекаем).
+        var count = ScalarInt($@"
+            SELECT COUNT(*) FROM db_records r JOIN _dup_recsel s ON s.src_id = r.Id
+            WHERE r.CollectionId = {collectionId}");
+        if (count == 0)
+        {
+            db.Database.ExecuteSqlRaw("DROP TABLE IF EXISTS temp._dup_recsel");
+            tx.Commit();
+            progress?.Report(0);
+            return;
+        }
+
+        // Якорь — ПОСЛЕДНЯЯ (самая нижняя) выбранная запись в порядке (Position, Id): её Position, и среди
+        // делящих эту Position — максимальный Id. Копии встанут сразу после неё.
+        var anchorPos = ScalarInt($@"
+            SELECT MAX(r.Position) FROM db_records r JOIN _dup_recsel s ON s.src_id = r.Id
+            WHERE r.CollectionId = {collectionId}");
+        var anchorId  = ScalarInt($@"
+            SELECT MAX(r.Id) FROM db_records r JOIN _dup_recsel s ON s.src_id = r.Id
+            WHERE r.CollectionId = {collectionId} AND r.Position = {anchorPos}");
+
+        // Освобождаем count слотов сразу после якоря: всё, что идёт после него в порядке (Position, Id),
+        // сдвигаем на (count+1)*1000 — с запасом, чтобы копии (anchorPos + ранг*1000, ранг 1..count) не
+        // столкнулись даже с записями, делящими Position якоря (Id > anchorId). Перенумерация всей коллекции
+        // не нужна — трогаем только хвост. Сами выбранные (Position ≤ anchorPos, при равенстве Id ≤ anchorId)
+        // НЕ сдвигаются, поэтому их ранг для значений совпадёт с рангом при вставке копий.
+        var shift = (count + 1) * 1000;
+        db.Database.ExecuteSqlInterpolated($@"
+            UPDATE db_records SET Position = Position + {shift}
+            WHERE CollectionId = {collectionId}
+              AND (Position > {anchorPos} OR (Position = {anchorPos} AND Id > {anchorId}))");
+
+        var createdAt = DateTime.Now.ToString("o");
+
+        // 1) Копии записей в освобождённый диапазон сразу после якоря: Position = anchorPos + ранг*1000
+        //    (ранг по Position, Id исходников). Новые rowid — непрерывный блок в этом порядке (мы
+        //    единственный писатель в транзакции).
+        db.Database.ExecuteSqlInterpolated($@"
+            INSERT INTO db_records (CollectionId, CreatedAt, Position, StartDt, EndDt, AllDay, Title, Description)
+            SELECT {collectionId}, {createdAt},
+                   {anchorPos} + ROW_NUMBER() OVER (ORDER BY r.Position, r.Id) * 1000,
+                   r.StartDt, r.EndDt, r.AllDay, r.Title, r.Description
+            FROM db_records r JOIN _dup_recsel s ON s.src_id = r.Id
+            WHERE r.CollectionId = {collectionId}
+            ORDER BY r.Position, r.Id");
+        var firstNew = (int)(LastInsertRowid() - count + 1);
+
+        // 2) Значения пакетами по рангу: новый RecordId = firstNew + ранг − 1, один INSERT по всем полям.
+        var processed = 0;
+        while (processed < count)
+        {
+            var lo = processed;
+            var hi = Math.Min(count, processed + batchSize);
+            db.Database.ExecuteSqlInterpolated($@"
+                INSERT INTO db_field_values (RecordId, FieldId, Value)
+                SELECT {firstNew} + (r.rn - 1), fv.FieldId, fv.Value
+                FROM db_field_values fv
+                JOIN (SELECT s.src_id AS old_id,
+                             ROW_NUMBER() OVER (ORDER BY rr.Position, rr.Id) AS rn
+                      FROM _dup_recsel s JOIN db_records rr ON rr.Id = s.src_id
+                      WHERE rr.CollectionId = {collectionId}) r
+                  ON r.old_id = fv.RecordId
+                WHERE r.rn > {lo} AND r.rn <= {hi}");
+            processed = hi;
+            progress?.Report(processed);
+        }
+
+        db.Database.ExecuteSqlRaw("DROP TABLE IF EXISTS temp._dup_recsel");
+        tx.Commit();
+
+        // Копии могли принести значения видимых полей-дат → наполняем их проекцию календаря
+        // по диапазону новых id (без удаления — строки новые).
+        var lastNew = firstNew + count - 1;
+        FillCalendarIndex(q => q.Where(v => v.RecordId >= firstNew && v.RecordId <= lastNew));
+    }
+
+    // Скалярный int на текущем подключении (в открытой транзакции) — для bulk-операций с temp-таблицами.
+    private int ScalarInt(string sql)
+    {
+        using var c = db.Database.GetDbConnection().CreateCommand();
+        if (db.Database.CurrentTransaction is { } t) c.Transaction = t.GetDbTransaction();
+        c.CommandText = sql;
+        return Convert.ToInt32(c.ExecuteScalar());
     }
 
     // ── Значения полей ────────────────────────────────────────────────────────

@@ -140,7 +140,7 @@ public partial class MainWindow : Window
         // Правая панель «Страница записи»
         ConstructorModule.RecordPageRequested += (_, rid)        => OpenRecordPanel(rid);
         ConstructorModule.RecordPageClosed    += (_, _)          => CloseRecordPanel();
-        RecordPanel.RecordChanged             += (_, _)          => ConstructorModule.Refresh();
+        RecordPanel.RecordChanged             += (_, rid)        => ConstructorModule.RefreshRecordRow(rid);
 
         // Toggle правой панели записи из навбара коллекции.
         // Если запись ранее была открыта (_lastOpenedRecordId есть) — переоткрываем её;

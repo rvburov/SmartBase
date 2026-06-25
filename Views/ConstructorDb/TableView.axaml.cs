@@ -31,7 +31,9 @@ public partial class TableView : UserControl
     // «Удалить» или клавиша Delete) — всегда пакетно, с подтверждением; для одной записи
     // список из одного id (как удаление свойств).
     public event EventHandler<IReadOnlyList<int>>? RecordsDeleteRequested;
-    public event EventHandler<int>? RecordDuplicateRequested;
+    // Дубль записей: список id (как удаление). Одна запись из меню строки — список из одного id;
+    // если строка входит в мультивыделение — дублируется весь набор.
+    public event EventHandler<IReadOnlyList<int>>? RecordDuplicateRequested;
     // Open = открывать ли запись справа после создания. «+»-строка создаёт без
     // открытия (false), контекстное «Создать запись» — с открытием (true).
     // AfterId = id записи-инициатора (меню строки) — создать сразу после неё; null —
@@ -438,10 +440,24 @@ public partial class TableView : UserControl
             _repository.SaveUiSettings(_collectionId, colResize, manual, viewMode);
         }
 
-        // Перестраиваем только строки, чтобы применить/сбросить высоты; колонки не трогаем.
-        var keepV = CurrentVerticalOffset();
-        ReloadRows();
-        RestoreVerticalOffset(keepV);
+        // Применяем/сбрасываем высоту у уже ОТРИСОВАННЫХ строк на месте — без пересоздания
+        // виртуального списка (как при сдвиге строки): нет мелькания «Загрузка…». Невидимые
+        // строки получат правильную высоту в OnLoadingRow при реализации.
+        ApplyRowHeightsToRealizedRows();
+        ScheduleRowHandlesRefresh();   // показать (ручной) / убрать (стандартный) полоски ресайза
+    }
+
+    // Проставляет высоту уже реализованным строкам по текущему режиму/словарю (та же логика, что
+    // в OnLoadingRow): ручной режим + сохранённая высота → она, иначе double.NaN (стандартная/авто).
+    private void ApplyRowHeightsToRealizedRows()
+    {
+        foreach (var rowCtrl in RecordsGrid.GetVisualDescendants().OfType<DataGridRow>())
+        {
+            if (rowCtrl.DataContext is not TableRowVm vm || vm.IsAddRow) continue;
+            rowCtrl.Height = _manualRowResize && _rowHeights.TryGetValue(vm.RecordId, out var h)
+                ? h
+                : double.NaN;
+        }
     }
 
     // Текущий режим высоты строк (для отметки активного пункта в меню).
@@ -788,22 +804,31 @@ public partial class TableView : UserControl
         return left ? idx > 0 : idx < keys.Count - 1;
     }
 
-    // Перемещение записи вверх/вниз: пишем порядок в БД, перестраиваем таблицу.
-    // Вертикальную и горизонтальную прокрутку держим на месте — иначе таблицу
-    // откидывает при каждом сдвиге, и сдвигаемая строка уезжает из зоны видимости.
+    // Перемещение записи вверх/вниз: пишем порядок в БД и обновляем уже загруженные строки НА МЕСТЕ
+    // (Fill), без Reset — меняется только ПОРЯДОК записей, не их число, поэтому пересоздавать
+    // виртуальный список не нужно. Так нет мелькания «Загрузка…» и прокрутка остаётся на месте сама.
     private void MoveRecord(int recordId, bool up)
     {
         if (_repository is null) return;
 
-        var keepV = CurrentVerticalOffset();
-        var keepH = CurrentScrollOffset();
-
         _repository.MoveRecord(_collectionId, recordId, up);
-        ReloadRows();   // меняется порядок записей, не набор колонок — колонки не пересобираем
+        _virtualRows?.RefreshLoadedPages();   // порядок изменился — перечитываем видимые строки на месте
 
-        if (keepH > 0) RestoreScrollOffset(keepH);
-        RestoreVerticalOffset(keepV);
+        // Выделение «следует» за сдвинутой записью. После пере-Fill строки остаются на своих ИНДЕКСАХ,
+        // а запись переехала в соседний VM — поэтому переустанавливаем выделение на VM, который теперь
+        // держит эту запись (иначе голубая подсветка осталась бы на прежней экранной позиции).
+        var moved = _virtualRows?.FindCachedByRecordId(recordId);
+        if (moved is not null)
+        {
+            RecordsGrid.SelectedItems.Clear();
+            RecordsGrid.SelectedItems.Add(moved);
+        }
     }
+
+    // Точечное обновление ОДНОЙ строки (после правки записи в правой панели): перечитываем её данные
+    // и заполняем строку на месте, без пересборки таблицы. Полный Refresh на больших коллекциях с
+    // множеством колонок давал тяжёлую перезагрузку при каждой правке.
+    public void RefreshRecordRow(int recordId) => _virtualRows?.RefreshRecord(recordId);
 
     // Можно ли двигать запись вверх/вниз (не крайняя ли она в порядке коллекции).
     private bool CanMoveRecord(int recordId, bool up)
@@ -1470,7 +1495,7 @@ public partial class TableView : UserControl
         menu.Items.Add(miEdit);
 
         var miDuplicate = new MenuItem { Header = Controls.Components.MenuIcons.DuplicateHeader() };
-        miDuplicate.Click += (_, _) => { var rid = RowRecordId(row); if (rid > 0) RecordDuplicateRequested?.Invoke(this, rid); };
+        miDuplicate.Click += (_, _) => RequestRecordDuplicateFromMenu(row);
         menu.Items.Add(miDuplicate);
 
         // «Отображение» (записей) — глобальное окно видимости/уровней строк (список всех
@@ -1508,6 +1533,19 @@ public partial class TableView : UserControl
         var selected = SelectedRecordIds();
         List<int> ids = selected.Contains(recordId) && selected.Count > 1 ? selected : [recordId];
         RecordsDeleteRequested?.Invoke(this, ids);
+    }
+
+    // Дубль из меню записи (по аналогии с удалением): запись в мультивыделении → дублируем весь
+    // набор; иначе только её. Контроллер сам решает: одна — копия после исходной мгновенно,
+    // несколько — bulk в фоне с индикатором.
+    private void RequestRecordDuplicateFromMenu(DataGridRow row)
+    {
+        var recordId = RowRecordId(row);
+        if (recordId <= 0) return;   // строка-заглушка ещё не заполнена — дублировать нечего
+
+        var selected = SelectedRecordIds();
+        List<int> ids = selected.Contains(recordId) && selected.Count > 1 ? selected : [recordId];
+        RecordDuplicateRequested?.Invoke(this, ids);
     }
 
     // Пункты «Сдвинуть вверх/вниз» (именно в таком порядке) с разделителем перед ними.

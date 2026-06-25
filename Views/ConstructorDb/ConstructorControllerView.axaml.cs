@@ -56,7 +56,7 @@ public partial class ConstructorControllerView : UserControl
         TableViewCtrl.RecordClicked             += (_, rid)  => OpenPage(rid);
         TableViewCtrl.RecordCreateRequested     += (_, e)    => CreateAndOpen(e.Open, e.AfterId);
         TableViewCtrl.RecordsDeleteRequested    += (_, ids)  => _ = DeleteRecordsWithConfirm(ids);
-        TableViewCtrl.RecordDuplicateRequested  += (_, rid)  => DuplicateRecord(rid);
+        TableViewCtrl.RecordDuplicateRequested  += (_, ids)  => _ = DuplicateRecords(ids);
 
         ListViewCtrl.RecordClicked              += (_, rid) => OpenPage(rid);
         ListViewCtrl.RecordCreateRequested      += (_, _)   => CreateAndOpen();
@@ -161,6 +161,17 @@ public partial class ConstructorControllerView : UserControl
         }
     }
 
+    // Точечное обновление ОДНОЙ строки после правки записи в правой панели (имя/описание/значения):
+    // перечитываем только её данные и заполняем строку на месте. Прежде правка дёргала полный
+    // Refresh (пересборка всей таблицы) — на больших коллекциях с множеством колонок это «вешало» UI.
+    // Число записей не меняется → счётчик и набор колонок не трогаем. В «Списке» — полный путь.
+    public void RefreshRecordRow(int recordId)
+    {
+        if (_currentCollectionId is null || _repository is null) return;
+        if (TableViewCtrl.IsVisible) TableViewCtrl.RefreshRecordRow(recordId);
+        else                         Refresh();
+    }
+
     private void ClearView()
     {
         _currentCollectionId = null;
@@ -224,7 +235,9 @@ public partial class ConstructorControllerView : UserControl
         }
 
         RefreshRows();
-        CollectionsChanged?.Invoke(this, EventArgs.Empty);
+        // CollectionsChanged НЕ зовём: новая пустая запись не меняет ни список коллекций/групп в
+        // сайдбарах, ни события календаря (даты ещё нет). Прежний кросс-БД рефреш на каждое создание
+        // давал заметную задержку (~1 с) на мультибазе. Появится дата — её правка обновит календарь сама.
 
         if (rec.Id.HasValue)
         {
@@ -280,10 +293,55 @@ public partial class ConstructorControllerView : UserControl
 
         var keepVertical = TableViewCtrl.IsVisible ? TableViewCtrl.CurrentVerticalOffset() : (double?)null;
 
-        foreach (var id in ids) _repository.DeleteRecord(id);
+        // Bulk-удаление мимо EF (один каскадный DELETE пакетами) в фоне на изолированном подключении —
+        // прежний цикл DeleteRecord с SaveChanges на каждую запись вешал UI на 1000+ строк. Индикатор
+        // (RunBulkOp) появляется отложенно: мелкое удаление проходит без окна.
+        var many = ids.Count > 1;
+        await RunBulkOp(many ? "Удаление записей" : "Удаление записи",
+            (p, setPhase) =>
+            {
+                setPhase(many ? "Удаление записей" : "Удаление записи");
+                _repository.DeleteRecordsIsolated(ids, new IntProgress(done => p.Report((done, ids.Count))));
+                p.Report((ids.Count, ids.Count));   // финал → «Сохранение…»
+            });
+
         RefreshRows();
         CollectionsChanged?.Invoke(this, EventArgs.Empty);
         RecordPageClosed?.Invoke(this, EventArgs.Empty);
+
+        if (keepVertical is { } off && TableViewCtrl.IsVisible)
+            TableViewCtrl.RestoreVerticalOffset(off);
+    }
+
+    // Дубль выбранных записей. Одна запись (меню строки) — копия сразу после исходной (как было),
+    // мгновенно. Несколько — bulk-SQL в фоне с индикатором (как удаление), копии встают в КОНЕЦ
+    // коллекции; иначе по-записный DuplicateRecord с SaveChanges на каждую вешал бы UI.
+    private async Task DuplicateRecords(IReadOnlyList<int> recordIds)
+    {
+        if (_repository is null || _currentCollectionId is null) return;
+        var ids = recordIds.Distinct().ToList();
+        if (ids.Count == 0) return;
+
+        var keepVertical = TableViewCtrl.IsVisible ? TableViewCtrl.CurrentVerticalOffset() : (double?)null;
+
+        if (ids.Count == 1)
+        {
+            _repository.DuplicateRecord(ids[0]);   // копия сразу после исходной
+        }
+        else
+        {
+            var colId = _currentCollectionId.Value;
+            await RunBulkOp("Дублирование записей",
+                (p, setPhase) =>
+                {
+                    setPhase("Дублирование записей");
+                    _repository.DuplicateRecordsIsolated(colId, ids, new IntProgress(done => p.Report((done, ids.Count))));
+                    p.Report((ids.Count, ids.Count));   // финал → «Сохранение…»
+                });
+        }
+
+        RefreshRows();
+        CollectionsChanged?.Invoke(this, EventArgs.Empty);
 
         if (keepVertical is { } off && TableViewCtrl.IsVisible)
             TableViewCtrl.RestoreVerticalOffset(off);
@@ -381,8 +439,27 @@ public partial class ConstructorControllerView : UserControl
         if (_currentCollectionId is null || _repository is null) return;
         if (VisualRoot is not Avalonia.Controls.Window win) return;
 
-        var records = _repository.GetRecordTitlesOrdered(_currentCollectionId.Value);
-        var dlg = new RecordDisplayDialog(_repository, _currentCollectionId.Value, records);
+        // Список записей (полный, в порядке позиций) на больших коллекциях — сотни тысяч строк;
+        // грузим его в ФОНЕ на отдельном подключении, чтобы открытие окна не подвешивало UI.
+        // Если загрузка дольше короткого мгновения — показываем индикатор «Загрузка записей…».
+        var colId = _currentCollectionId.Value;
+        var loadTask = Task.Run(() => _repository.GetRecordTitlesOrderedIsolated(colId));
+
+        ProgressDialog? busy = null;
+        Task? busyClosed = null;
+        if (await Task.WhenAny(loadTask, Task.Delay(FieldOpDialogDelayMs)) != loadTask)
+        {
+            busy = new ProgressDialog { Title = "Отображение записей" };
+            busy.SetSaving("Загрузка записей…");
+            busyClosed = busy.ShowDialog(win);
+        }
+
+        List<(int Id, string Title)> records;
+        try { records = await loadTask; }
+        finally { busy?.Done(); }
+        if (busyClosed is not null) await busyClosed;
+
+        var dlg = new RecordDisplayDialog(_repository, colId, records);
         var ok  = await dlg.ShowDialog<bool?>(win);
         if (ok == true)
             RefreshRows();
@@ -477,7 +554,7 @@ public partial class ConstructorControllerView : UserControl
         // Всю тяжёлую работу (подсчёт значений + копирование) делаем в фоне на изолированных
         // подключениях — на главном потоке ничего не считаем, поэтому UI не «висит» до окна.
         // Окно прогресса покажется само, если работа не уложится в короткий момент (RunFieldOp).
-        await RunFieldOp(many ? "Дублирование столбцов" : "Дублирование столбца",
+        await RunBulkOp(many ? "Дублирование столбцов" : "Дублирование столбца",
             (p, setPhase) =>
             {
                 var counts = _repository.CountFieldValuesIsolated(ids);
@@ -539,7 +616,7 @@ public partial class ConstructorControllerView : UserControl
         // в фоне на изолированных подключениях, на главном потоке ничего не считаем. Окно
         // прогресса покажется само, если работа не уложится в короткий момент (RunFieldOp).
         var manyCols = deletable.Count > 1;
-        await RunFieldOp(manyCols ? "Удаление столбцов" : "Удаление столбца",
+        await RunBulkOp(manyCols ? "Удаление столбцов" : "Удаление столбца",
             (p, setPhase) =>
             {
                 var counts = _repository.CountFieldValuesIsolated(deletable);
@@ -569,19 +646,19 @@ public partial class ConstructorControllerView : UserControl
     // Сентинел для lastShown: фаза «Сохранение…» (коммит) показана. Не пересекается с 0..100.
     private const int SavingPhase = -2;
 
-    // Через сколько мс работы показывать окно прогресса. Мелкие операции (несколько полей по
-    // паре значений) укладываются раньше — для них окно не появляется вовсе. На больших объёмах
-    // окно всплывает почти сразу, но UI при этом НЕ висит: вся работа уже в фоне.
+    // Через сколько мс работы показывать окно прогресса. Мелкие операции (пара значений/записей)
+    // укладываются раньше — для них окно не появляется вовсе. На больших объёмах окно всплывает
+    // почти сразу, но UI при этом НЕ висит: вся работа уже в фоне.
     private const int FieldOpDialogDelayMs = 200;
 
-    // Выполняет тяжёлую операцию со свойствами ПОЛНОСТЬЮ в фоне (подсчёт значений + сама работа —
-    // на изолированных подключениях; главный контекст из фонового потока не трогаем). Окно
-    // прогресса показываем, только если работа не уложилась в FieldOpDialogDelayMs: раньше до
-    // окна на главном потоке шёл подсчёт значений по каждому полю (на сотнях тысяч строк — фриз
-    // на несколько секунд, и лишь потом индикатор). work репортит (готово, всего); пока всего
-    // неизвестно/0 — индикатор крутится «Подсчёт значений…».
-    private async Task RunFieldOp(string windowTitle,
-                                  Action<IProgress<(long Done, long Total)>, Action<string>> work)
+    // Выполняет тяжёлую bulk-операцию (удаление/дубль свойств ИЛИ записей) ПОЛНОСТЬЮ в фоне (подсчёт +
+    // сама работа — на изолированных подключениях; главный контекст из фонового потока не трогаем).
+    // Окно прогресса показываем, только если работа не уложилась в FieldOpDialogDelayMs: раньше счёт/
+    // удаление шли СИНХРОННО на UI-потоке (на сотнях тысяч строк — фриз на несколько секунд, и лишь
+    // потом индикатор). work репортит (готово, всего); пока всего неизвестно/0 — индикатор крутится
+    // «Подсчёт значений…». Окно МОДАЛЬНОЕ — вторую операцию нельзя начать, пока текущая не закрылась.
+    private async Task RunBulkOp(string windowTitle,
+                                 Action<IProgress<(long Done, long Total)>, Action<string>> work)
     {
         ProgressDialog? dlg = null;
         var lastShown = -1;          // -1 ещё не показывали %, -2 «Сохранение…», 0..100 — проценты

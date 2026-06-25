@@ -248,6 +248,59 @@ internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollecti
         return null;
     }
 
+    /// <summary>Перечитывает данные ОДНОЙ записи и обновляет её строку НА МЕСТЕ (если она сейчас в
+    /// кеше) — для точечного обновления после правки записи в правой панели, без пересоздания списка
+    /// и мелькания «Загрузка…». Строки нет в кеше (прокручена) → ничего не делаем (загрузится свежей).</summary>
+    public void RefreshRecord(int recordId)
+    {
+        var row = FindCachedByRecordId(recordId);
+        if (row is null) return;
+
+        var rec = _repo.GetRecord(recordId);
+        if (rec is null) return;                       // запись удалена — оставляем как есть до Reset
+
+        var values = _repo.GetFieldValues(recordId);
+        row.Fill(_repo, recordId, values, rec.Title ?? "", rec.Description);
+    }
+
+    /// <summary>Перечитывает ЗАГРУЖЕННЫЕ страницы из БД и обновляет строки НА МЕСТЕ (Fill), без Reset —
+    /// для операций, меняющих ПОРЯДОК записей, но не их число (сдвиг вверх/вниз): нет мелькания
+    /// «Загрузка…». Новые страницы не грузим; число записей не меняется. Синхронно (страниц в кеше
+    /// немного — видимые + соседние), читаем offset’ом по индексу (CollectionId, Position).</summary>
+    public void RefreshLoadedPages()
+    {
+        foreach (var page in _pages.Keys.ToList())
+        {
+            if (_pending.Contains(page)) continue;                 // ещё грузится — придёт свежей
+            if (!_pages.TryGetValue(page, out var rows)) continue;
+
+            var skip    = page * PageSize;
+            var records = LoadRecordsByOffset(skip, rows.Length);
+            var valMap  = _repo.GetFieldValuesBatch(records.Select(r => r.Id!.Value).ToList());
+
+            for (var i = 0; i < records.Count && i < rows.Length; i++)
+            {
+                var rec    = records[i];
+                var id     = rec.Id!.Value;
+                var values = valMap.TryGetValue(id, out var v) ? v : [];
+                rows[i].Fill(_repo, id, values, rec.Title ?? "", rec.Description);
+            }
+            RememberCursor(page, records);
+        }
+    }
+
+    // Записи страницы строго по offset (без keyset-курсора) — для точечного пере-Fill (RefreshLoadedPages).
+    private List<DbRecord> LoadRecordsByOffset(int skip, int take)
+    {
+        if (_recordIds is not null)
+        {
+            var slice = new List<int>(take);
+            for (var k = 0; k < take && skip + k < _recordIds.Count; k++) slice.Add(_recordIds[skip + k]);
+            return _repo.GetRecordsByIdsOrdered(slice);
+        }
+        return _repo.GetRecordsPage(_collectionId, skip, take, _excludeHidden);
+    }
+
     /// <summary>Сбрасывает кеш и сигнализирует DataGrid о полной перестройке.</summary>
     public void Reset()
     {

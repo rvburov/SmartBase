@@ -185,6 +185,14 @@ public partial class RecordPageView : UserControl
         return grid;
     }
 
+    // Сохранить значение свойства И сообщить наверх (RecordChanged) — чтобы таблица обновила ЭТУ
+    // строку точечно (RefreshRecordRow), а не перезагружалась целиком. Дёшево: одна строка на месте.
+    private void PersistProperty(PropertyRowVm row)
+    {
+        row.Persist();
+        if (_vm is not null) RecordChanged?.Invoke(this, _vm.RecordId);
+    }
+
     private Control MakeInputForField(PropertyRowVm row)
     {
         var f = row.Field;
@@ -195,7 +203,7 @@ public partial class RecordPageView : UserControl
             case "number":
             {
                 var tb = new TextBox { Text = row.Value, BorderThickness = new Thickness(1), Height = 32 };
-                tb.LostFocus += (_, _) => { row.Value = tb.Text ?? ""; row.Persist(); };
+                tb.LostFocus += (_, _) => { row.Value = tb.Text ?? ""; PersistProperty(row); };
                 input = tb;
                 break;
             }
@@ -207,7 +215,7 @@ public partial class RecordPageView : UserControl
                 picker.SelectedDateChanged += (_, _) =>
                 {
                     row.Value = picker.SelectedDate?.ToString("dd.MM.yyyy") ?? "";
-                    row.Persist();
+                    PersistProperty(row);
                 };
                 input = picker;
                 break;
@@ -224,7 +232,7 @@ public partial class RecordPageView : UserControl
                 combo.SelectionChanged += (_, _) =>
                 {
                     row.Value = combo.SelectedItem?.ToString() ?? "";
-                    row.Persist();
+                    PersistProperty(row);
                 };
                 input = combo;
                 break;
@@ -239,7 +247,7 @@ public partial class RecordPageView : UserControl
                 cb.IsCheckedChanged += (_, _) =>
                 {
                     row.Value = cb.IsChecked == true ? "1" : "0";
-                    row.Persist();
+                    PersistProperty(row);
                 };
                 input = cb;
                 break;
@@ -247,14 +255,14 @@ public partial class RecordPageView : UserControl
             case "url":
             {
                 var tb = new TextBox { Text = row.Value, Watermark = "https://", Height = 32 };
-                tb.LostFocus += (_, _) => { row.Value = tb.Text ?? ""; row.Persist(); };
+                tb.LostFocus += (_, _) => { row.Value = tb.Text ?? ""; PersistProperty(row); };
                 input = tb;
                 break;
             }
             default:  // text
             {
                 var tb = new TextBox { Text = row.Value, Height = 32 };
-                tb.LostFocus += (_, _) => { row.Value = tb.Text ?? ""; row.Persist(); };
+                tb.LostFocus += (_, _) => { row.Value = tb.Text ?? ""; PersistProperty(row); };
                 input = tb;
                 break;
             }
