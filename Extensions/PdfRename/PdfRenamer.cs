@@ -97,14 +97,15 @@ public static class PdfRenamer
     }
 
     /// <summary>
-    /// Прогон: строит план и (если <paramref name="dryRun"/> = false) применяет его —
+    /// Прогон по <b>готовому</b> плану (его строит <see cref="BuildPlan"/> заранее — один
+    /// раз и вне UI-потока). Если <paramref name="dryRun"/> = false, применяет план:
     /// переименовывает файлы на диске. Репортит каждый шаг через <paramref name="progress"/>,
     /// прерывается по <paramref name="ct"/>. Возвращает итоговую сводку.
     /// </summary>
-    public static RenameSummary Run(
-        string folder, bool dryRun, IProgress<RenameProgress>? progress, CancellationToken ct)
+    public static RenameSummary Process(
+        string folder, IReadOnlyList<RenameItem> plan, bool dryRun,
+        IProgress<RenameProgress>? progress, CancellationToken ct)
     {
-        var plan  = BuildPlan(folder);
         int total = plan.Count;
         int renamed = 0, planned = 0, unchanged = 0, conflicts = 0, errors = 0;
         bool cancelled = false;
