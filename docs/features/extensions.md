@@ -19,10 +19,10 @@
    выбирает расширение, и оно выполняет свою функцию над таблицей (см. [[constructor-db/tables]]).
 
 > Состояние: реализован раздел (сайдбар + блок + контракт `IExtension` + реестр) и
-> **режим 1** (запуск окна). Есть три расширения — **«Переименование PDF»** (`PdfRename`),
-> **«Сравнение составов изделий»** (`ProductCompare`) и **«Расчёт сборочных единиц»**
-> (`AssemblyCalc`): по «Запустить» каждое открывает отдельное окно в стиле приложения.
-> Режим 2 (точки встраивания) — в планах (см. ниже).
+> **режим 1** (запуск окна). Есть четыре расширения — **«Переименование PDF»** (`PdfRename`),
+> **«Сравнение составов изделий»** (`ProductCompare`), **«Расчёт сборочных единиц»**
+> (`AssemblyCalc`) и **«Анализатор PDF»** (`PdfAnalyzer`): по «Запустить» каждое открывает
+> отдельное окно в стиле приложения. Режим 2 (точки встраивания) — в планах (см. ниже).
 
 ## Где в коде
 
@@ -44,6 +44,11 @@
   [AssemblyCalcExtension.cs](../../Extensions/AssemblyCalc/AssemblyCalcExtension.cs)
   (контракт), [AssemblyCalcEngine.cs](../../Extensions/AssemblyCalc/AssemblyCalcEngine.cs)
   (логика без UI, ClosedXML), [AssemblyCalcWindow.axaml](../../Extensions/AssemblyCalc/AssemblyCalcWindow.axaml) (окно).
+- **Анализатор PDF** ([Extensions/PdfAnalyzer/](../../Extensions/PdfAnalyzer/)):
+  [PdfAnalyzerExtension.cs](../../Extensions/PdfAnalyzer/PdfAnalyzerExtension.cs) (контракт),
+  [DocumentCodes.cs](../../Extensions/PdfAnalyzer/DocumentCodes.cs) (справочники ГОСТ + разбор обозначений),
+  [PdfAnalyzerEngine.cs](../../Extensions/PdfAnalyzer/PdfAnalyzerEngine.cs) (анализ + Excel),
+  [PdfAnalyzerWindow.axaml](../../Extensions/PdfAnalyzer/PdfAnalyzerWindow.axaml) (окно).
 
 Оболочка раздела (по стилю раздела настроек, см. [[settings]]):
 
@@ -150,6 +155,27 @@
   прогон в фоне (`Task.Run`), по завершении — предложение открыть папку через
   [ConfirmDialog](../../Controls/Dialogs/ConfirmDialog.axaml.cs). Путь к шаблону по умолчанию
   (сетевой `P:\…`) показывается в поле всегда; доступность проверяется при запуске.
+
+### Расширение «Анализатор PDF»
+
+По папке с PDF формирует Excel-отчёт (ведомость/опись КД/ТД): разбирает имена файлов
+(номера КД/ПД/ТД по ГОСТ 2.201 / 19.101 + название), считает MD5, число и форматы листов
+(по размерам страниц, допуск 30 мм), «листов формата А4», объём. Порт PyQt-утилиты.
+
+- [DocumentCodes.cs](../../Extensions/PdfAnalyzer/DocumentCodes.cs) — справочники кодов
+  ЕСКД/ЕСПД и разбор обозначений (регэкспы извлечения номеров, базовый номер, полное
+  наименование). Только публичные коды ГОСТ — не секрет.
+- [PdfAnalyzerEngine.cs](../../Extensions/PdfAnalyzer/PdfAnalyzerEngine.cs) — обход папки
+  (рекурсивно/локально), чтение PDF через **PdfPig** (число страниц + размеры), форматы
+  листов, 3 режима сортировки, 4 типа выгрузки, запись отчёта в .xlsx (лист «ОПИСЬ») через
+  ClosedXML со стилем (Times New Roman, границы, ширины колонок); `IProgress`/`CancellationToken`.
+- Окно [PdfAnalyzerWindow](../../Extensions/PdfAnalyzer/PdfAnalyzerWindow.axaml.cs): папка/отчёт
+  (`StorageProvider`), тип выгрузки (`ComboBox`), опции (рекурсия / порядок из папки — взаимно
+  исключающие), прогресс по файлам в фоне (`Task.Run`), по завершении — статистика + открыть папку.
+
+> ⚠️ Зависимости: это расширение добавляет в общий `DataBase.csproj` пакет **PdfPig** (чтение
+> PDF) и использует **ClosedXML** (Excel). Т.е. расширение, которому нужна внешняя библиотека,
+> добавляет NuGet-пакет в проект — в отличие от расширений, обходящихся контролами приложения.
 
 ## Как добавить / удалить расширение
 

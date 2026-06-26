@@ -1,0 +1,106 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="DataBase.Extensions.PdfAnalyzer.PdfAnalyzerWindow"
+        Title="Анализатор PDF файлов"
+        Width="620" MinWidth="620" MaxWidth="620"
+        MinHeight="0"
+        SizeToContent="Height"
+        CanResize="False"
+        WindowStartupLocation="CenterOwner"
+        Background="{StaticResource BrushBg}">
+
+    <StackPanel Margin="24" Spacing="14">
+
+        <!-- Папка с PDF -->
+        <StackPanel Spacing="6">
+            <TextBlock Text="Папка с PDF-файлами"
+                       FontWeight="{StaticResource FontWeightBold}"
+                       Foreground="{StaticResource BrushPrimaryText}" />
+            <Grid ColumnDefinitions="*,10,Auto">
+                <TextBox Grid.Column="0" x:Name="PdfBox"
+                         VerticalContentAlignment="Center"
+                         Watermark="Выберите папку с PDF-файлами…"
+                         TextChanged="OnPathChanged" />
+                <Button Grid.Column="2" x:Name="PdfBtn"
+                        Classes="dialog" Content="Обзор…" Click="OnBrowsePdf" />
+            </Grid>
+        </StackPanel>
+
+        <!-- Сохранить отчёт в -->
+        <StackPanel Spacing="6">
+            <TextBlock Text="Сохранить отчёт в"
+                       FontWeight="{StaticResource FontWeightBold}"
+                       Foreground="{StaticResource BrushPrimaryText}" />
+            <Grid ColumnDefinitions="*,10,Auto">
+                <TextBox Grid.Column="0" x:Name="SaveBox"
+                         VerticalContentAlignment="Center"
+                         Watermark="Файл отчёта (.xlsx) или папка…"
+                         TextChanged="OnPathChanged" />
+                <Button Grid.Column="2" x:Name="SaveBtn"
+                        Classes="dialog" Content="Обзор…" Click="OnBrowseSave" />
+            </Grid>
+        </StackPanel>
+
+        <!-- Тип выгрузки -->
+        <StackPanel Spacing="6">
+            <TextBlock Text="Тип выгрузки"
+                       FontWeight="{StaticResource FontWeightBold}"
+                       Foreground="{StaticResource BrushPrimaryText}" />
+            <ComboBox x:Name="ExportCombo" Height="30" HorizontalAlignment="Stretch" SelectedIndex="0">
+                <ComboBoxItem>Ведомость технологической документации</ComboBoxItem>
+                <ComboBoxItem>Ведомость конструкторской документации</ComboBoxItem>
+                <ComboBoxItem>Опись конструкторской документации</ComboBoxItem>
+                <ComboBoxItem>Все данные</ComboBoxItem>
+            </ComboBox>
+        </StackPanel>
+
+        <!-- Опции -->
+        <CheckBox x:Name="RecursiveCheck" IsChecked="True"
+                  Content="Рекурсивный поиск (включая все подпапки)"
+                  IsCheckedChanged="OnRecursiveChanged" />
+        <CheckBox x:Name="PreserveCheck" IsChecked="False"
+                  Content="Сохранить порядок файлов из папки (только текущая папка, по дате изменения)"
+                  IsCheckedChanged="OnPreserveChanged" />
+
+        <!-- Статус -->
+        <Border Background="{StaticResource BrushSecondaryBg}"
+                BorderBrush="{StaticResource BrushSeparator}"
+                BorderThickness="1"
+                CornerRadius="{StaticResource RadiusMedium}"
+                Padding="12,10">
+            <TextBlock x:Name="StatusText"
+                       Text="Готов к работе"
+                       TextWrapping="Wrap"
+                       HorizontalAlignment="Center"
+                       FontWeight="{StaticResource FontWeightBold}"
+                       Foreground="{StaticResource BrushSecondaryText}" />
+        </Border>
+
+        <!-- Прогресс -->
+        <Grid ColumnDefinitions="*,Auto">
+            <ProgressBar Grid.Column="0" x:Name="Bar"
+                         Minimum="0" Maximum="100" Value="0"
+                         Height="8" VerticalAlignment="Center"
+                         Foreground="{StaticResource BrushAccent}" />
+            <TextBlock Grid.Column="1" x:Name="PercentText"
+                       Text="0%" MinWidth="42" Margin="10,0,0,0"
+                       TextAlignment="Right" VerticalAlignment="Center"
+                       Foreground="{StaticResource BrushSecondaryText}" />
+        </Grid>
+        <TextBlock x:Name="CurrentFileText" Text=""
+                   FontSize="{StaticResource FontSizeSmall}"
+                   TextTrimming="CharacterEllipsis"
+                   Foreground="{StaticResource BrushSecondaryText}" />
+
+        <!-- Запуск -->
+        <Button x:Name="ExecuteBtn"
+                Classes="dialog"
+                Width="NaN" Height="36"
+                HorizontalAlignment="Stretch"
+                IsEnabled="False"
+                Content="Запустить анализ"
+                Click="OnExecuteClick" />
+
+    </StackPanel>
+
+</Window>

@@ -36,6 +36,7 @@
     <PackageReference Include="Markdown.Avalonia"                Version="11.0.3" />
     <PackageReference Include="Markdig"                          Version="0.37.0" />
     <PackageReference Include="ClosedXML"                        Version="0.104.2" />
+    <PackageReference Include="PdfPig"                          Version="0.1.15" />
   </ItemGroup>
 
   <ItemGroup>
