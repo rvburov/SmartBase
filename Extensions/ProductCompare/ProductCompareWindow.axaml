@@ -1,0 +1,123 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="DataBase.Extensions.ProductCompare.ProductCompareWindow"
+        Title="Сравнение составов изделий"
+        Width="520" MinWidth="520" MaxWidth="520"
+        MinHeight="0"
+        SizeToContent="Height"
+        CanResize="False"
+        WindowStartupLocation="CenterOwner"
+        Background="{StaticResource BrushBg}">
+
+    <StackPanel Margin="24" Spacing="14">
+
+        <!-- 1. Файл-шаблон -->
+        <StackPanel Spacing="6">
+            <TextBlock Text="1. Файл-шаблон (.xlsm)"
+                       FontWeight="{StaticResource FontWeightBold}"
+                       Foreground="{StaticResource BrushPrimaryText}" />
+            <Grid ColumnDefinitions="*,10,Auto">
+                <TextBox Grid.Column="0" x:Name="TemplateBox"
+                         IsReadOnly="True"
+                         VerticalContentAlignment="Center"
+                         Watermark="Файл не выбран" />
+                <Button Grid.Column="2" x:Name="TemplateBtn"
+                        Classes="dialog"
+                        Content="Обзор"
+                        Click="OnBrowseTemplate" />
+            </Grid>
+        </StackPanel>
+
+        <!-- 2. Старый файл -->
+        <StackPanel Spacing="6">
+            <TextBlock Text="2. Старый файл (.xlsx / .xlsm)"
+                       FontWeight="{StaticResource FontWeightBold}"
+                       Foreground="{StaticResource BrushPrimaryText}" />
+            <Grid ColumnDefinitions="*,10,Auto">
+                <TextBox Grid.Column="0" x:Name="OldBox"
+                         IsReadOnly="True"
+                         VerticalContentAlignment="Center"
+                         Watermark="Файл не выбран" />
+                <Button Grid.Column="2" x:Name="OldBtn"
+                        Classes="dialog"
+                        Content="Обзор"
+                        Click="OnBrowseOld" />
+            </Grid>
+        </StackPanel>
+
+        <!-- 3. Новый файл -->
+        <StackPanel Spacing="6">
+            <TextBlock Text="3. Новый файл (.xlsx / .xlsm)"
+                       FontWeight="{StaticResource FontWeightBold}"
+                       Foreground="{StaticResource BrushPrimaryText}" />
+            <Grid ColumnDefinitions="*,10,Auto">
+                <TextBox Grid.Column="0" x:Name="NewBox"
+                         IsReadOnly="True"
+                         VerticalContentAlignment="Center"
+                         Watermark="Файл не выбран" />
+                <Button Grid.Column="2" x:Name="NewBtn"
+                        Classes="dialog"
+                        Content="Обзор"
+                        Click="OnBrowseNew" />
+            </Grid>
+        </StackPanel>
+
+        <!-- 4. Папка для сохранения -->
+        <StackPanel Spacing="6">
+            <TextBlock Text="4. Папка для сохранения результата"
+                       FontWeight="{StaticResource FontWeightBold}"
+                       Foreground="{StaticResource BrushPrimaryText}" />
+            <Grid ColumnDefinitions="*,10,Auto">
+                <TextBox Grid.Column="0" x:Name="OutputBox"
+                         IsReadOnly="True"
+                         VerticalContentAlignment="Center"
+                         Watermark="Папка не выбрана" />
+                <Button Grid.Column="2" x:Name="OutputBtn"
+                        Classes="dialog"
+                        Content="Обзор"
+                        Click="OnBrowseOutput" />
+            </Grid>
+        </StackPanel>
+
+        <!-- Статус -->
+        <Border Background="{StaticResource BrushSecondaryBg}"
+                BorderBrush="{StaticResource BrushSeparator}"
+                BorderThickness="1"
+                CornerRadius="{StaticResource RadiusMedium}"
+                Padding="12,10">
+            <TextBlock x:Name="StatusText"
+                       Text="Готов к работе"
+                       TextWrapping="Wrap"
+                       HorizontalAlignment="Center"
+                       FontWeight="{StaticResource FontWeightBold}"
+                       Foreground="{StaticResource BrushSecondaryText}" />
+        </Border>
+
+        <!-- Прогресс -->
+        <Grid ColumnDefinitions="*,Auto">
+            <ProgressBar Grid.Column="0" x:Name="Bar"
+                         Minimum="0" Maximum="100" Value="0"
+                         Height="8"
+                         VerticalAlignment="Center"
+                         Foreground="{StaticResource BrushAccent}" />
+            <TextBlock Grid.Column="1" x:Name="PercentText"
+                       Text="0%"
+                       MinWidth="42"
+                       Margin="10,0,0,0"
+                       TextAlignment="Right"
+                       VerticalAlignment="Center"
+                       Foreground="{StaticResource BrushSecondaryText}" />
+        </Grid>
+
+        <!-- Запуск -->
+        <Button x:Name="ExecuteBtn"
+                Classes="dialog"
+                Width="NaN" Height="36"
+                HorizontalAlignment="Stretch"
+                IsEnabled="False"
+                Content="Запустить"
+                Click="OnExecuteClick" />
+
+    </StackPanel>
+
+</Window>

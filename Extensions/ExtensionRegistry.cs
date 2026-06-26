@@ -1,4 +1,5 @@
 using DataBase.Extensions.PdfRename;
+using DataBase.Extensions.ProductCompare;
 
 namespace DataBase.Extensions;
 
@@ -13,6 +14,7 @@ public static class ExtensionRegistry
     public static IReadOnlyList<IExtension> All { get; } =
     [
         new PdfRenameExtension(),
+        new ProductCompareExtension(),
     ];
 
     /// <summary>Найти расширение по <see cref="IExtension.Id"/> (null, если нет).</summary>

@@ -19,9 +19,9 @@
    выбирает расширение, и оно выполняет свою функцию над таблицей (см. [[constructor-db/tables]]).
 
 > Состояние: реализован раздел (сайдбар + блок + контракт `IExtension` + реестр) и
-> **режим 1** (запуск окна). Пока есть одно расширение — **«Переименование PDF»**
-> (`PdfRename`): по «Запустить» открывает отдельное окно в стиле приложения. Режим 2
-> (точки встраивания) — в планах (см. ниже).
+> **режим 1** (запуск окна). Есть два расширения — **«Переименование PDF»** (`PdfRename`)
+> и **«Сравнение составов изделий»** (`ProductCompare`): по «Запустить» каждое открывает
+> отдельное окно в стиле приложения. Режим 2 (точки встраивания) — в планах (см. ниже).
 
 ## Где в коде
 
@@ -35,6 +35,10 @@
   расширение с окном (и образец структуры): [PdfRenameExtension.cs](../../Extensions/PdfRename/PdfRenameExtension.cs)
   (контракт), [PdfRenamer.cs](../../Extensions/PdfRename/PdfRenamer.cs) (логика без UI),
   [PdfRenameWindow.axaml](../../Extensions/PdfRename/PdfRenameWindow.axaml) (окно).
+- **Сравнение составов изделий** ([Extensions/ProductCompare/](../../Extensions/ProductCompare/)):
+  [ProductCompareExtension.cs](../../Extensions/ProductCompare/ProductCompareExtension.cs)
+  (контракт), [ProductCompareEngine.cs](../../Extensions/ProductCompare/ProductCompareEngine.cs)
+  (логика без UI, ClosedXML), [ProductCompareWindow.axaml](../../Extensions/ProductCompare/ProductCompareWindow.axaml) (окно).
 
 Оболочка раздела (по стилю раздела настроек, см. [[settings]]):
 
@@ -106,6 +110,24 @@
   журнал копится в `StringBuilder` и рендерится пачкой, на реальном прогоне в него пишутся
   **только конфликты/ошибки** (успехи — в счётчик/полосу), число строк ограничено. Поэтому
   окно остаётся отзывчивым на десятках тысяч файлов; узким местом остаётся лишь диск/сеть.
+
+### Расширение «Сравнение составов изделий»
+
+Сравнивает два Excel-состава изделия (старый/новый) и пишет результат в .xlsm-шаблон:
+старые данные слева (столбцы 1–5), новые справа (7–11), начиная с 6-й строки; уникальное в
+старом — красным, в новом — зелёным; стиль ГОСТ. Порт PyQt-утилиты на ClosedXML (тот же
+стек, что и [[import-export]]).
+
+- Логика в [ProductCompareEngine.cs](../../Extensions/ProductCompare/ProductCompareEngine.cs)
+  — без UI: читает оба файла (ключ строки — иерархия в столбце 2; уникальность — обозначение
+  в столбце 11), сортирует и пишет в шаблон через ClosedXML; `IProgress`/`CancellationToken`.
+- Окно [ProductCompareWindow](../../Extensions/ProductCompare/ProductCompareWindow.axaml.cs):
+  выбор шаблона/старого/нового файлов и папки результата (`StorageProvider`), индикатор
+  готовности, прогон в фоне (`Task.Run`), по завершении — предложение открыть папку через
+  [ConfirmDialog](../../Controls/Dialogs/ConfirmDialog.axaml.cs).
+- ⚠️ Допущения порта: используется **первый лист** каждого файла (как «активный» в исходнике);
+  **макросы** .xlsm сохраняются средствами ClosedXML при `SaveAs` — проверить на реальном
+  шаблоне. Путь к шаблону по умолчанию (сетевой `P:\…`) подставляется, только если файл доступен.
 
 ## Как добавить / удалить расширение
 
