@@ -1,4 +1,4 @@
-using DataBase.Extensions.Sample;
+using DataBase.Extensions.PdfRename;
 
 namespace DataBase.Extensions;
 
@@ -12,7 +12,7 @@ public static class ExtensionRegistry
     /// <summary>Все известные расширения в порядке показа.</summary>
     public static IReadOnlyList<IExtension> All { get; } =
     [
-        new SampleExtension(),
+        new PdfRenameExtension(),
     ];
 
     /// <summary>Найти расширение по <see cref="IExtension.Id"/> (null, если нет).</summary>

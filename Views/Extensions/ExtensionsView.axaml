@@ -19,6 +19,7 @@
 
                 <Button x:Name="RunBtn"
                         Grid.Column="1"
+                        Classes="dialog"
                         Content="Запустить"
                         VerticalAlignment="Center"
                         Click="OnRunClick" />

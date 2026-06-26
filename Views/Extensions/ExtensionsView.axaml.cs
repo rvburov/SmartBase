@@ -39,6 +39,16 @@ public partial class ExtensionsView : UserControl
         ToolTip.SetTip(RunBtn, _current.CanRun ? "Запустить расширение" : "Запуск пока недоступен");
     }
 
-    // Заглушка: SampleExtension.Run() — no-op, поэтому ничего не происходит.
-    private void OnRunClick(object? sender, RoutedEventArgs e) => _current?.Run();
+    // Запуск: расширение отдаёт своё окно (в стиле приложения), оболочка показывает его
+    // поверх главного окна. null — расширение окно не открывает (заглушка/надстройка).
+    private void OnRunClick(object? sender, RoutedEventArgs e)
+    {
+        if (_current is null || !_current.CanRun) return;
+
+        var window = _current.CreateWindow();
+        if (window is null) return;
+
+        if (TopLevel.GetTopLevel(this) is Window owner) window.Show(owner);
+        else                                            window.Show();
+    }
 }

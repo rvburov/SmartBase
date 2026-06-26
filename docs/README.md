@@ -22,6 +22,7 @@ EF Core/SQLite). Здесь описано, **как устроено и как 
 - [categories.md](features/categories.md) — категории и цвета.
 - [import-export.md](features/import-export.md) — импорт из Excel, перенос между БД.
 - [settings.md](features/settings.md) — настройки и управление БД.
+- [extensions.md](features/extensions.md) — раздел «Расширения»: плагины, отделимость, два режима.
 - [icons.md](features/icons.md) — иконка приложения на всех ОС.
 
 ### UI ([ui/](ui/))

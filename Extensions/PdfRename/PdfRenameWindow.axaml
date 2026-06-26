@@ -1,0 +1,89 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="DataBase.Extensions.PdfRename.PdfRenameWindow"
+        Title="Переименование PDF-файлов"
+        Width="640" Height="640"
+        MinWidth="520" MinHeight="500"
+        WindowStartupLocation="CenterOwner"
+        Background="{StaticResource BrushBg}">
+
+    <DockPanel Margin="24">
+
+        <!-- Папка -->
+        <Grid DockPanel.Dock="Top" Margin="0,0,0,14" ColumnDefinitions="Auto,*,Auto">
+            <TextBlock Grid.Column="0"
+                       Text="Папка с PDF:"
+                       VerticalAlignment="Center"
+                       FontWeight="{StaticResource FontWeightBold}"
+                       Foreground="{StaticResource BrushPrimaryText}" />
+            <TextBox Grid.Column="1" x:Name="FolderBox"
+                     Margin="10,0"
+                     VerticalContentAlignment="Center"
+                     Watermark="Выберите папку с PDF-файлами…"
+                     TextChanged="OnFolderTextChanged" />
+            <Button Grid.Column="2" x:Name="BrowseBtn"
+                    Classes="dialog"
+                    VerticalAlignment="Center"
+                    Content="Обзор…"
+                    Click="OnBrowseClick" />
+        </Grid>
+
+        <!-- Действия (3 равные кнопки с зазорами 10) -->
+        <Grid DockPanel.Dock="Top" Margin="0,0,0,14"
+              ColumnDefinitions="*,10,*,10,*">
+            <Button Grid.Column="0" x:Name="PreviewBtn"
+                    Classes="dialog"
+                    Width="NaN"
+                    HorizontalAlignment="Stretch"
+                    Content="Проверить"
+                    Click="OnPreviewClick" />
+            <Button Grid.Column="2" x:Name="RunBtn"
+                    Classes="dialog"
+                    Width="NaN"
+                    HorizontalAlignment="Stretch"
+                    Content="Запустить"
+                    Click="OnRunClick" />
+            <Button Grid.Column="4" x:Name="StopBtn"
+                    Classes="dialog"
+                    Width="NaN"
+                    IsEnabled="False"
+                    HorizontalAlignment="Stretch"
+                    Content="Остановить"
+                    Click="OnStopClick" />
+        </Grid>
+
+        <!-- Прогресс -->
+        <Grid DockPanel.Dock="Top" Margin="0,0,0,14" ColumnDefinitions="*,Auto">
+            <ProgressBar Grid.Column="0" x:Name="Bar"
+                         Minimum="0" Maximum="100" Value="0"
+                         Height="8"
+                         VerticalAlignment="Center"
+                         Foreground="{StaticResource BrushAccent}" />
+            <TextBlock Grid.Column="1" x:Name="PercentText"
+                       Text="0%"
+                       MinWidth="42"
+                       Margin="10,0,0,0"
+                       TextAlignment="Right"
+                       VerticalAlignment="Center"
+                       Foreground="{StaticResource BrushSecondaryText}" />
+        </Grid>
+
+        <!-- Заголовок журнала -->
+        <TextBlock DockPanel.Dock="Top" Margin="0,0,0,8"
+                   Text="Операции:"
+                   FontWeight="{StaticResource FontWeightBold}"
+                   Foreground="{StaticResource BrushPrimaryText}" />
+
+        <!-- Журнал (заполняет остаток) -->
+        <TextBox x:Name="LogBox"
+                 IsReadOnly="True"
+                 AcceptsReturn="True"
+                 TextWrapping="Wrap"
+                 FontFamily="Consolas, Menlo, monospace"
+                 FontSize="{StaticResource FontSizeSmall}"
+                 VerticalContentAlignment="Top"
+                 ScrollViewer.VerticalScrollBarVisibility="Auto" />
+
+    </DockPanel>
+
+</Window>
