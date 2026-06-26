@@ -33,12 +33,12 @@ public partial class ProductCompareWindow : Window
     {
         InitializeComponent();
 
-        if (File.Exists(DefaultTemplate))
-        {
-            _template = DefaultTemplate;
-            TemplateBox.Text = DefaultTemplate;
-            ToolTip.SetTip(TemplateBox, DefaultTemplate);
-        }
+        // Путь к шаблону по умолчанию показываем всегда (он фиксирован для рабочих машин,
+        // где смонтирован диск P:). Доступность файла проверяется при запуске сравнения —
+        // если недоступен, движок вернёт «Файл-шаблон не найден».
+        _template = DefaultTemplate;
+        TemplateBox.Text = DefaultTemplate;
+        ToolTip.SetTip(TemplateBox, DefaultTemplate);
 
         UpdateState();
     }

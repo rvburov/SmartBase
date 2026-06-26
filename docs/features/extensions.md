@@ -19,9 +19,10 @@
    выбирает расширение, и оно выполняет свою функцию над таблицей (см. [[constructor-db/tables]]).
 
 > Состояние: реализован раздел (сайдбар + блок + контракт `IExtension` + реестр) и
-> **режим 1** (запуск окна). Есть два расширения — **«Переименование PDF»** (`PdfRename`)
-> и **«Сравнение составов изделий»** (`ProductCompare`): по «Запустить» каждое открывает
-> отдельное окно в стиле приложения. Режим 2 (точки встраивания) — в планах (см. ниже).
+> **режим 1** (запуск окна). Есть три расширения — **«Переименование PDF»** (`PdfRename`),
+> **«Сравнение составов изделий»** (`ProductCompare`) и **«Расчёт сборочных единиц»**
+> (`AssemblyCalc`): по «Запустить» каждое открывает отдельное окно в стиле приложения.
+> Режим 2 (точки встраивания) — в планах (см. ниже).
 
 ## Где в коде
 
@@ -39,6 +40,10 @@
   [ProductCompareExtension.cs](../../Extensions/ProductCompare/ProductCompareExtension.cs)
   (контракт), [ProductCompareEngine.cs](../../Extensions/ProductCompare/ProductCompareEngine.cs)
   (логика без UI, ClosedXML), [ProductCompareWindow.axaml](../../Extensions/ProductCompare/ProductCompareWindow.axaml) (окно).
+- **Расчёт сборочных единиц** ([Extensions/AssemblyCalc/](../../Extensions/AssemblyCalc/)):
+  [AssemblyCalcExtension.cs](../../Extensions/AssemblyCalc/AssemblyCalcExtension.cs)
+  (контракт), [AssemblyCalcEngine.cs](../../Extensions/AssemblyCalc/AssemblyCalcEngine.cs)
+  (логика без UI, ClosedXML), [AssemblyCalcWindow.axaml](../../Extensions/AssemblyCalc/AssemblyCalcWindow.axaml) (окно).
 
 Оболочка раздела (по стилю раздела настроек, см. [[settings]]):
 
@@ -127,7 +132,24 @@
   [ConfirmDialog](../../Controls/Dialogs/ConfirmDialog.axaml.cs).
 - ⚠️ Допущения порта: используется **первый лист** каждого файла (как «активный» в исходнике);
   **макросы** .xlsm сохраняются средствами ClosedXML при `SaveAs` — проверить на реальном
-  шаблоне. Путь к шаблону по умолчанию (сетевой `P:\…`) подставляется, только если файл доступен.
+  шаблоне. Путь к шаблону по умолчанию (сетевой `P:\…`) показывается в поле всегда;
+  доступность файла проверяется при запуске (если недоступен — «Файл-шаблон не найден»).
+
+### Расширение «Расчёт сборочных единиц»
+
+Переносит выбранные столбцы из исходного «Список КД и ТД» (лист «Исходные данные») в
+.xlsm-шаблон (тот же лист), раскрашивает строки по уровню (0–10) и применяет стиль ГОСТ.
+Порт PyQt-утилиты на ClosedXML.
+
+- Логика в [AssemblyCalcEngine.cs](../../Extensions/AssemblyCalc/AssemblyCalcEngine.cs)
+  — без UI: лист берётся **по имени** («Исходные данные»); строки источника читаются с 6-й,
+  пока заполнен столбец «Уровень»; уровень → целое + цвет; результат пишется в копию шаблона
+  (`SaveAs`, макросы сохраняются). `IProgress`/`CancellationToken`.
+- Окно [AssemblyCalcWindow](../../Extensions/AssemblyCalc/AssemblyCalcWindow.axaml.cs): выбор
+  исходного файла, шаблона и папки результата (`StorageProvider`), индикатор готовности,
+  прогон в фоне (`Task.Run`), по завершении — предложение открыть папку через
+  [ConfirmDialog](../../Controls/Dialogs/ConfirmDialog.axaml.cs). Путь к шаблону по умолчанию
+  (сетевой `P:\…`) показывается в поле всегда; доступность проверяется при запуске.
 
 ## Как добавить / удалить расширение
 

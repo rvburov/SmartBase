@@ -1,3 +1,4 @@
+using DataBase.Extensions.AssemblyCalc;
 using DataBase.Extensions.PdfRename;
 using DataBase.Extensions.ProductCompare;
 
@@ -15,6 +16,7 @@ public static class ExtensionRegistry
     [
         new PdfRenameExtension(),
         new ProductCompareExtension(),
+        new AssemblyCalcExtension(),
     ];
 
     /// <summary>Найти расширение по <see cref="IExtension.Id"/> (null, если нет).</summary>
