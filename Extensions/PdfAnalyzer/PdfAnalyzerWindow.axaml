@@ -1,7 +1,7 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         x:Class="DataBase.Extensions.PdfAnalyzer.PdfAnalyzerWindow"
-        Title="Анализатор PDF файлов"
+        Title="Анализ PDF файлов"
         Width="620" MinWidth="620" MaxWidth="620"
         MinHeight="0"
         SizeToContent="Height"
@@ -26,15 +26,15 @@
             </Grid>
         </StackPanel>
 
-        <!-- Сохранить отчёт в -->
+        <!-- Папка для сохранения результата -->
         <StackPanel Spacing="6">
-            <TextBlock Text="Сохранить отчёт в"
+            <TextBlock Text="Папка для сохранения результата"
                        FontWeight="{StaticResource FontWeightBold}"
                        Foreground="{StaticResource BrushPrimaryText}" />
             <Grid ColumnDefinitions="*,10,Auto">
                 <TextBox Grid.Column="0" x:Name="SaveBox"
                          VerticalContentAlignment="Center"
-                         Watermark="Файл отчёта (.xlsx) или папка…"
+                         Watermark="Папка не выбрана"
                          TextChanged="OnPathChanged" />
                 <Button Grid.Column="2" x:Name="SaveBtn"
                         Classes="dialog" Content="Обзор…" Click="OnBrowseSave" />
@@ -88,6 +88,7 @@
                        Foreground="{StaticResource BrushSecondaryText}" />
         </Grid>
         <TextBlock x:Name="CurrentFileText" Text=""
+                   IsVisible="False"
                    FontSize="{StaticResource FontSizeSmall}"
                    TextTrimming="CharacterEllipsis"
                    Foreground="{StaticResource BrushSecondaryText}" />
@@ -98,7 +99,7 @@
                 Width="NaN" Height="36"
                 HorizontalAlignment="Stretch"
                 IsEnabled="False"
-                Content="Запустить анализ"
+                Content="Запустить"
                 Click="OnExecuteClick" />
 
     </StackPanel>

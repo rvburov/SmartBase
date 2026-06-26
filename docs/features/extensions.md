@@ -21,7 +21,7 @@
 > Состояние: реализован раздел (сайдбар + блок + контракт `IExtension` + реестр) и
 > **режим 1** (запуск окна). Есть четыре расширения — **«Переименование PDF»** (`PdfRename`),
 > **«Сравнение составов изделий»** (`ProductCompare`), **«Расчёт сборочных единиц»**
-> (`AssemblyCalc`) и **«Анализатор PDF»** (`PdfAnalyzer`): по «Запустить» каждое открывает
+> (`AssemblyCalc`) и **«Анализ PDF файлов»** (`PdfAnalyzer`): по «Запустить» каждое открывает
 > отдельное окно в стиле приложения. Режим 2 (точки встраивания) — в планах (см. ниже).
 
 ## Где в коде
@@ -44,7 +44,7 @@
   [AssemblyCalcExtension.cs](../../Extensions/AssemblyCalc/AssemblyCalcExtension.cs)
   (контракт), [AssemblyCalcEngine.cs](../../Extensions/AssemblyCalc/AssemblyCalcEngine.cs)
   (логика без UI, ClosedXML), [AssemblyCalcWindow.axaml](../../Extensions/AssemblyCalc/AssemblyCalcWindow.axaml) (окно).
-- **Анализатор PDF** ([Extensions/PdfAnalyzer/](../../Extensions/PdfAnalyzer/)):
+- **Анализ PDF файлов** ([Extensions/PdfAnalyzer/](../../Extensions/PdfAnalyzer/)):
   [PdfAnalyzerExtension.cs](../../Extensions/PdfAnalyzer/PdfAnalyzerExtension.cs) (контракт),
   [DocumentCodes.cs](../../Extensions/PdfAnalyzer/DocumentCodes.cs) (справочники ГОСТ + разбор обозначений),
   [PdfAnalyzerEngine.cs](../../Extensions/PdfAnalyzer/PdfAnalyzerEngine.cs) (анализ + Excel),
@@ -156,7 +156,7 @@
   [ConfirmDialog](../../Controls/Dialogs/ConfirmDialog.axaml.cs). Путь к шаблону по умолчанию
   (сетевой `P:\…`) показывается в поле всегда; доступность проверяется при запуске.
 
-### Расширение «Анализатор PDF»
+### Расширение «Анализ PDF файлов»
 
 По папке с PDF формирует Excel-отчёт (ведомость/опись КД/ТД): разбирает имена файлов
 (номера КД/ПД/ТД по ГОСТ 2.201 / 19.101 + название), считает MD5, число и форматы листов

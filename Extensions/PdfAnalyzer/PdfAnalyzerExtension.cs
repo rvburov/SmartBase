@@ -3,7 +3,7 @@ using Avalonia.Controls;
 namespace DataBase.Extensions.PdfAnalyzer;
 
 /// <summary>
-/// Расширение «Анализатор PDF»: по папке с PDF формирует Excel-отчёт (ведомости/опись КД/ТД)
+/// Расширение «Анализ PDF файлов»: по папке с PDF формирует Excel-отчёт (ведомости/опись КД/ТД)
 /// с разбором обозначений по ГОСТ, MD5, числом и форматами листов. Запускается отдельным окном
 /// (<see cref="PdfAnalyzerWindow"/>) в основном стиле приложения. Логика — в
 /// <see cref="PdfAnalyzerEngine"/> и <see cref="DocumentCodes"/>; зависит от PdfPig (чтение PDF)
@@ -12,7 +12,7 @@ namespace DataBase.Extensions.PdfAnalyzer;
 public sealed class PdfAnalyzerExtension : IExtension
 {
     public string Id   => "pdf-analyzer";
-    public string Name => "Анализатор PDF";
+    public string Name => "Анализ PDF файлов";
 
     public string MarkdownDescription =>
         """

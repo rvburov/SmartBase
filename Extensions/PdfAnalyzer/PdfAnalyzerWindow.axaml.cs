@@ -11,7 +11,7 @@ using DataBase.Controls.Dialogs;
 namespace DataBase.Extensions.PdfAnalyzer;
 
 /// <summary>
-/// Окно расширения «Анализатор PDF» (в основном стиле приложения): папка с PDF, путь отчёта,
+/// Окно расширения «Анализ PDF файлов» (в основном стиле приложения): папка с PDF, путь отчёта,
 /// тип выгрузки, опции поиска и «Запустить анализ». Логика — в <see cref="PdfAnalyzerEngine"/>;
 /// анализ идёт в фоне (<see cref="Task.Run"/>) с прогрессом по файлам и отменой при закрытии окна.
 /// </summary>
@@ -49,21 +49,21 @@ public partial class PdfAnalyzerWindow : Window
     private async void OnBrowseSave(object? sender, RoutedEventArgs e)
     {
         IStorageFolder? start = null;
-        var current = PdfBox.Text?.Trim();
+        var current = SaveBox.Text?.Trim();
+        if (string.IsNullOrEmpty(current)) current = PdfBox.Text?.Trim();
         if (!string.IsNullOrEmpty(current) && Directory.Exists(current))
             start = await StorageProvider.TryGetFolderFromPathAsync(current);
 
-        var file = await StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
+        var folders = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
         {
-            Title                  = "Укажите место для сохранения отчёта",
-            SuggestedFileName      = "pdf_info",
-            DefaultExtension       = "xlsx",
+            Title                  = "Выберите папку для сохранения результата",
+            AllowMultiple          = false,
             SuggestedStartLocation = start,
-            FileTypeChoices        = [new FilePickerFileType("Excel (*.xlsx)") { Patterns = ["*.xlsx"] }],
         });
-        if (file is null) return;
+        var folder = folders.FirstOrDefault();
+        if (folder is null) return;
 
-        SaveBox.Text = file.Path.LocalPath;
+        SaveBox.Text = folder.Path.LocalPath;
         ToolTip.SetTip(SaveBox, SaveBox.Text);
         UpdateState();
     }
@@ -110,7 +110,8 @@ public partial class PdfAnalyzerWindow : Window
 
         SetRunning(true);
         SetStatus("Анализ…", "BrushAccent");
-        Bar.Value = 0; PercentText.Text = "0%"; CurrentFileText.Text = "";
+        Bar.Value = 0; PercentText.Text = "0%";
+        CurrentFileText.Text = ""; CurrentFileText.IsVisible = false;
 
         _cts = new CancellationTokenSource();
         var ct = _cts.Token;
@@ -120,6 +121,7 @@ public partial class PdfAnalyzerWindow : Window
             Bar.Value = p.Current;
             PercentText.Text = p.Total > 0 ? $"{p.Current * 100 / p.Total}%" : "0%";
             CurrentFileText.Text = $"{p.Current} из {p.Total}: {p.File}";
+            CurrentFileText.IsVisible = true;
         });
 
         try
@@ -127,15 +129,16 @@ public partial class PdfAnalyzerWindow : Window
             var result = await Task.Run(
                 () => PdfAnalyzerEngine.Run(folder, savePath, exportType, recursive, preserveOrder, progress, ct), ct);
 
-            Bar.Value = Bar.Maximum; PercentText.Text = "100%"; CurrentFileText.Text = "";
+            Bar.Value = Bar.Maximum; PercentText.Text = "100%";
+            CurrentFileText.Text = ""; CurrentFileText.IsVisible = false;
             SetStatus($"Готово: {Path.GetFileName(result.SavePath)} " +
                       $"(обработано {result.Processed} из {result.TotalFiles}" +
                       (result.Errors > 0 ? $", ошибок: {result.Errors}" : "") + ")", "BrushAccent");
             await OfferResult(result);
         }
-        catch (OperationCanceledException) { SetStatus("Отменено", "BrushSecondaryText"); CurrentFileText.Text = ""; }
-        catch (PdfAnalyzeException ex)     { SetStatus(ex.Message, "BrushRed"); CurrentFileText.Text = ""; }
-        catch (Exception ex)              { SetStatus($"Ошибка: {ex.Message}", "BrushRed"); CurrentFileText.Text = ""; }
+        catch (OperationCanceledException) { SetStatus("Отменено", "BrushSecondaryText"); HideCurrentFile(); }
+        catch (PdfAnalyzeException ex)     { SetStatus(ex.Message, "BrushRed"); HideCurrentFile(); }
+        catch (Exception ex)              { SetStatus($"Ошибка: {ex.Message}", "BrushRed"); HideCurrentFile(); }
         finally { SetRunning(false); }
     }
 
@@ -180,6 +183,12 @@ public partial class PdfAnalyzerWindow : Window
         StatusText.Text = text;
         if (this.TryFindResource(brushKey, out var v) && v is IBrush brush)
             StatusText.Foreground = brush;
+    }
+
+    private void HideCurrentFile()
+    {
+        CurrentFileText.Text = "";
+        CurrentFileText.IsVisible = false;
     }
 
     protected override void OnClosing(WindowClosingEventArgs e)

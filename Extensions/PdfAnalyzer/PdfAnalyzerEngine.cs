@@ -21,7 +21,7 @@ public sealed record AnalyzeProgress(int Current, int Total, string File);
 public sealed record AnalyzeResult(string SavePath, int TotalFiles, int Processed, int Errors, string StatsText);
 
 /// <summary>
-/// Анализатор PDF: рекурсивный/локальный обход папки, разбор имени (КД/ПД/ТД через
+/// Анализ PDF файлов: рекурсивный/локальный обход папки, разбор имени (КД/ПД/ТД через
 /// <see cref="DocumentCodes"/>), MD5, число страниц и форматы листов (PdfPig), сортировка
 /// (3 режима), 4 типа выгрузки и запись отчёта в Excel (ClosedXML). Порт PyQt-утилиты.
 /// Логика без UI: окно вызывает <see cref="Run"/>, репортя прогресс и отменяясь по токену.
@@ -174,9 +174,12 @@ public static class PdfAnalyzerEngine
 
     // ── Форматы листов ────────────────────────────────────────────────────────
 
+    // A5 намеренно НЕ в списке: страница A5 (148×210) не совпадёт ни с базовым, ни с производным
+    // форматом и попадёт в «Доп. форматы» как «148×210» (в оригинале A5 распознавался, но столбца
+    // под него не было — и страница «терялась» в разбивке).
     private static readonly (string Fmt, double W, double H)[] BaseFormats =
     [
-        ("A0", 841, 1189), ("A1", 594, 841), ("A2", 420, 594), ("A3", 297, 420), ("A4", 210, 297), ("A5", 148, 210),
+        ("A0", 841, 1189), ("A1", 594, 841), ("A2", 420, 594), ("A3", 297, 420), ("A4", 210, 297),
     ];
 
     private static readonly (string Fmt, double W, double H)[] AdditionalFormats =

@@ -1,0 +1,2319 @@
+import re
+import os
+import pandas as pd
+import PyPDF2
+import sys
+import hashlib  # Добавлено для MD5
+from PyQt5.QtWidgets import (QApplication, QMainWindow, QLineEdit, QPushButton, 
+                            QLabel, QVBoxLayout, QWidget, QMessageBox, QHBoxLayout,
+                            QFileDialog, QCheckBox, QDialog, QTextEdit, QProgressBar, QComboBox)
+from PyQt5.QtCore import QDir, Qt, QRect
+from PyQt5.QtGui import QIcon, QFont
+from openpyxl import load_workbook
+from openpyxl.utils import get_column_letter
+
+class PDFAnalyzer(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.initUI()
+        self.processing_cancelled = False
+        self.export_type = "Ведомость технологической документации"
+        self.specification_names_cache = {}
+        
+    def get_base_designation(self, designation):
+        """Извлекает базовый номер обозначения без кода документа и без суффикса"""
+        if not designation:
+            return ""
+        
+        # Убираем суффиксы -ЛУ и -УЛ
+        clean_des = designation
+        if clean_des.endswith('-ЛУ'):
+            clean_des = clean_des[:-3]
+        elif clean_des.endswith('-УЛ'):
+            clean_des = clean_des[:-3]
+        
+        # Полный список всех кодов КД и ПД
+        all_codes = []
+        all_codes.extend(self.get_kd_name_mapping().keys())
+        
+        # Добавляем коды ПД
+        for pattern in self.get_pd_name_mapping().keys():
+            code = pattern.replace('XXXXX', '')
+            if code and code not in all_codes:
+                all_codes.append(code)
+        
+        # Убираем суффиксы из списка поиска
+        all_codes = [c for c in all_codes if c not in ['-ЛУ', '-УЛ', 'ЛУ', 'УЛ']]
+        all_codes = sorted(set(all_codes), key=len, reverse=True)
+        
+        # Ищем и удаляем код документа
+        temp_des = clean_des
+        for code in all_codes:
+            if temp_des.endswith(f'-{code}'):
+                temp_des = temp_des[:-len(f'-{code}')]
+                break
+            elif temp_des.endswith(code) and temp_des != code:
+                temp_des = temp_des[:-len(code)]
+                break
+        
+        # Теперь temp_des может содержать номер исполнения вида .024-01
+        # Нужно убрать -01, оставив только .024
+        # Ищем паттерн: точка, три цифры, дефис, цифры
+        match = re.search(r'(\.[0-9]{3,4})-\d+$', temp_des)
+        if match:
+            # Убираем дефис и номер исполнения, оставляем только .024
+            temp_des = temp_des[:match.start(1) + len(match.group(1))]
+        
+        # Убираем лишние дефисы в конце
+        base = temp_des.rstrip('-')
+        
+        return base
+
+    def get_kd_name_mapping(self):
+        """Возвращает словарь соответствия кодов КД и ПД их названиям"""
+        return {
+            # === ТЕХ. ПРОЕКТ ===
+            'ТП': 'Ведомость технического проекта',
+            'ПЗ': 'Пояснительная записка',
+            'Е1': 'Схема деления структурная',
+            'ВО': 'Чертеж общего вида',
+            
+            # === КД (КОНСТРУКТОРСКАЯ ДОКУМЕНТАЦИЯ) ===
+            'СБ': 'Сборочный чертеж',
+            'ГЧ': 'Габаритный чертеж',
+            'МЭ': 'Электромонтажный чертеж',
+            'МЧ': 'Монтажный чертеж',
+            'УЧ': 'Упаковочный чертеж',
+            'Э0': 'Схема электрическая объединения',
+            'Э1': 'Схема электрическая структурная',
+            'Э2': 'Схема электрическая функциональная',
+            'Э3': 'Схема электрическая принципиальная',
+            'Э4': 'Схема электрическая соединений',
+            'Э5': 'Схема электрическая подключения',
+            'Э6': 'Схема электрическая общая',
+            'Э7': 'Схема электрическая расположения',
+            'ПЭ0': 'Перечень элементов',
+            'ПЭ1': 'Перечень элементов',
+            'ПЭ2': 'Перечень элементов',
+            'ПЭ3': 'Перечень элементов',
+            'ПЭ4': 'Перечень элементов',
+            'ПЭ5': 'Перечень элементов',
+            'ПЭ6': 'Перечень элементов',
+            'ПЭ7': 'Перечень элементов',
+            'С7': 'Схема электрокинематическая расположения',
+            'ПС7': 'Перечень элементов',
+            'ВС': 'Ведомость спецификаций',
+            'ВД': 'Ведомость ссылочных документов',
+            'ВП': 'Ведомость покупных изделий',
+            'ДП': 'Ведомость держателей подлинников',
+            'ВДЭ': 'Ведомость электронных документов',
+            'ВЭД': 'Ведомость электронных документов',
+            'ТБ': 'Таблица соединений',
+            'Д23': 'Технические требования',
+            'Д27': 'Перечень параметров',
+            'Д70': 'Карта прокладки кабелей',
+            'Д1': 'Маркировка',
+            'ТУ': 'Технические условия',
+            'ТУ1': 'Технические условия Часть 2',
+            'ТУ2': 'Технические условия Часть 3',
+            'ТУ3': 'Технические условия Часть 4',
+            'ТУ4': 'Технические условия Часть 5',
+            'ТУ5': 'Технические условия Часть 6',
+            'ТУ6': 'Технические условия Часть 7',
+            'ТУ7': 'Технические условия Часть 8',
+            'ТУ8': 'Технические условия Часть 9',
+            'ТУ9': 'Технические условия Часть 10',
+            'РР': 'Расчет надежности',
+            
+            # === ЭД (ЭКСПЛУАТАЦИОННАЯ ДОКУМЕНТАЦИЯ) ===
+            'ВЭ': 'Ведомость эксплуатационных документов',
+            'РЭ': 'Руководство по технической эксплуатации',
+            'РЭ1': 'Руководство по технической эксплуатации Часть 2',
+            'РЭ2': 'Руководство по технической эксплуатации Часть 3',
+            'РЭ3': 'Руководство по технической эксплуатации Часть 4',
+            'РЭ4': 'Руководство по технической эксплуатации Часть 5',
+            'РЭ5': 'Руководство по технической эксплуатации Часть 6',
+            'РЭ6': 'Руководство по технической эксплуатации Часть 7',
+            'РЭ7': 'Руководство по технической эксплуатации Часть 8',
+            'РЭ8': 'Руководство по технической эксплуатации Часть 9',
+            'РЭ9': 'Руководство по технической эксплуатации Часть 10',
+            'РЭ10': 'Руководство по технической эксплуатации Часть 11',
+            'РЭ11': 'Руководство по технической эксплуатации Часть 12',
+            'РЭ12': 'Руководство по технической эксплуатации Часть 13',
+            'РЭ13': 'Руководство по технической эксплуатации Часть 14',
+            'РЭ14': 'Руководство по технической эксплуатации Часть 15',
+            'РЭ15': 'Руководство по технической эксплуатации Часть 16',
+            'РО': 'Регламент технического обслуживания',
+            'ФО': 'Формуляр',
+            'ФО1': 'Формуляр Часть 2',
+            'ФО2': 'Формуляр Часть 3',
+            'ФО3': 'Формуляр Часть 4',
+            'ФО4': 'Формуляр Часть 5',
+            'ФО5': 'Формуляр Часть 6',
+            'ФО6': 'Формуляр Часть 7',
+            'ФО7': 'Формуляр Часть 8',
+            'ФО8': 'Формуляр Часть 9',
+            'ФО9': 'Формуляр Часть 10',
+            'ПС': 'Паспорт',
+            'ЭТ': 'Этикетка',
+            'ЗИ': 'Ведомость ЗИП',
+            'И3': 'Руководство оператора КСЗИ',
+            'ЭД': 'Ведомость эксплуатационных документов',
+            'ВЗ': 'Ведомость ЗИП',
+            'НЗ': 'Нормы расхода запасных частей',
+            'НМ': 'Нормы расхода материалов',
+            'Д90': 'Учебный видеофильм',
+            'УП': 'Учебно-технические плакаты',
+            'ИС': 'Инструкция эксплуатационная специальная',
+            'И10': 'Инструкция по транспортированию',
+            'РЛЭ': 'Руководство по летной эксплуатации',
+            'ВКЭ': 'Ведомость эксплуатационных комплектов запасных частей, инструмента, принадлежностей и материалов',
+            'НЭ': 'Нормы расхода предметов снабжения (эксплуатационные)',
+            'АЭ': 'Альбом электрических схем',
+            'ИС': 'Инструкция эксплуатационная специальная',
+            'ИС1': 'Инструкция эксплуатационная специальная Часть 2',
+            'ИС2': 'Инструкция эксплуатационная специальная Часть 3',
+            'ИС3': 'Инструкция эксплуатационная специальная Часть 4',
+            'ИС4': 'Инструкция эксплуатационная специальная Часть 5',
+            'ИС5': 'Инструкция эксплуатационная специальная Часть 6',
+            'ИС6': 'Инструкция эксплуатационная специальная Часть 7',
+            'ИС7': 'Инструкция эксплуатационная специальная Часть 8',
+            'ИС8': 'Инструкция эксплуатационная специальная Часть 9',
+            'ИС9': 'Инструкция эксплуатационная специальная Часть 10',
+
+            # === УДОСТОВЕРЯЮЩИЕ ЛИСТЫ ===
+            'Э3-УЛ': 'Схема электрическая принципиальная Удостоверяющий лист',
+            'Д33-УЛ': 'Данные проектирования Удостоверяющий лист',
+            'Д42-УЛ': 'Данные программирования Информационно-удостоверяющий лист',
+            'Д42.1-УЛ': 'Данные программирования Информационно-удостоверяющий лист',
+            'Д42.2-УЛ': 'Данные программирования Информационно-удостоверяющий лист',
+            'Д50-УЛ': 'Данные проектирования Информационно-удостоверяющий лист',
+            'МД-УЛ': 'Электронная модель детали Информационно-удостоверяющий лист',
+            'ЭМД-УЛ': 'Электронная модель детали Удостоверяющий лист',
+            'МС-УЛ': 'Электронная модель сборочной единицы Информационно-удостоверяющий лист',
+            'ТУ-ЛУ': 'Технические условия Лист утверждения',
+            'НДЗ-УЛ': 'Загрузочный диск Информационно-удостоверяющий лист',
+            'НД-УЛ': 'Текст программы Информационно-удостоверяющий лист',
+            'Д23-УЛ': 'Технические требования Лист утверждения',
+            'ВЭ-ЛУ': 'Ведомость эксплуатационных документов Лист утверждения',
+            'ПС-ЛУ': 'Паспорт Лист утверждения',
+            'ЭСБ-УЛ': 'Электронная модель сборочной единицы Удостоверяющий лист',
+
+            # === ЛИСТЫ УТВЕРЖДЕНИЯ ===
+            '-ЛУ': 'Лист утверждения',
+            '-УЛ': 'Информационно-удостоверяющий лист',
+            
+            # === ДОПОЛНИТЕЛЬНЫЕ ===
+            'ТЧ': 'Чертеж теоретический',
+            'ЭМ': 'Схема электрическая монтажная',
+            'ПЭ': 'Перечень элементов (общий)',
+            'ПМ': 'Программа и методика испытаний',
+            'Д33': 'Ведомость документов',
+            'Д42': 'Текст программы',
+            'Д50': 'Описание применения',
+            'ЗИП-О': 'Ведомость ЗИП одиночного изделия',
+            'И': 'Инструкция',
+            'А0': 'Альбом чертежей',
+            'А1': 'Спецификация альбома чертежей',
+            'А2': 'Ведомость альбома чертежей',
+            'А3': 'Пояснительная записка альбома чертежей',
+            'А4': 'Технические условия альбома чертежей',
+            'А5': 'Программа и методика испытаний альбома чертежей',
+            'А6': 'Таблицы альбома чертежей',
+            'А7': 'Расчеты альбома чертежей',
+            'А8': 'Документы прочие альбома чертежей',
+            'А9': 'Инструкция альбома чертежей',
+            'РК': 'Руководство по ремонту',
+            'КД': 'Комплект документов',
+            'ДЭ': 'Документация эксплуатационная',
+            'МС': 'Схема монтажная',
+            'ВКР': 'Ведомость ремонтных комплектов запасных частей, инструмента, принадлежностей и материалов',
+            'УЛ': 'Информационно-удостоверяющий лист',
+            'НДЗ': 'Загрузочный диск',
+            'НД': 'Текст программы (на носителе)',
+            'ОП': 'Описание программы',
+        }
+
+    def get_pd_name_mapping(self):
+        """Возвращает словарь соответствия кодов ПД их названиям"""
+        return {
+            'АААА.XXXXX-01-ЛУ': 'Спецификация Лист утверждения',
+            'АААА.XXXXX-01': 'Спецификация',
+            'АААА.XXXXX-01 12 01-ЛУ': 'Текст программы Лист утверждения',
+            'АААА.XXXXX-01 12 01': 'Текст программы',
+            'АААА.XXXXX-01 13 01-ЛУ': 'Описание программы Лист утверждения',
+            'АААА.XXXXX-01 13 01': 'Описание программы',
+            'АААА.XXXXX-01 20 01-ЛУ': 'Ведомость эксплуатационных документов Лист утверждения',
+            'АААА.XXXXX-01 20 01': 'Ведомость эксплуатационных документов',
+            'АААА.XXXXX-01 30 01-ЛУ': 'Формуляр Лист утверждения',
+            'АААА.XXXXX-01 30 01': 'Формуляр',
+            'АААА.XXXXX-01 31 01-ЛУ': 'Описание применения Лист утверждения',
+            'АААА.XXXXX-01 31 01': 'Описание применения',
+            'АААА.XXXXX-01 32 01-ЛУ': 'Руководство системного программиста Лист утверждения',
+            'АААА.XXXXX-01 32 01': 'Руководство системного программиста',
+            'АААА.XXXXX-01 34 01-ЛУ': 'Руководство оператора Лист утверждения',
+            'АААА.XXXXX-01 34 01': 'Руководство оператора',
+            'АААА.XXXXX-01 81 01-ЛУ': 'Пояснительная записка Лист утверждения',
+            'АААА.XXXXX-01 81 01': 'Пояснительная записка',
+            'АААА.XXXXX-01НДЗ': 'Загрузочный диск',
+            'АААА.XXXXX-01НД': 'Текст программы',
+            'АААА.XXXXX-01НДЗ-УЛ': 'Загрузочный диск Информационно-удостоверяющий лист',
+            'АААА.XXXXX-01НД-УЛ': 'Текст программы Информационно-удостоверяющий лист',
+        }
+    
+    def get_document_full_name(self, designation, file_name="", all_designations=None):
+        """
+        Формирует полное наименование документа:
+        - Для КД: [название изделия из спецификации] + [тип документа] + [суффикс]
+        - Для ПД: [тип документа]
+        
+        all_designations: словарь всех обозначений и их названий из файлов
+        """
+        if not designation:
+            return file_name if file_name else ""
+        
+        # Словарь соответствий
+        kd_mapping = self.get_kd_name_mapping()
+        
+        # Получаем список всех исключений (удостоверяющих листов)
+        exceptions = [code for code in kd_mapping.keys() if code.endswith('-УЛ') or code.endswith('-ЛУ')]
+        exceptions.sort(key=len, reverse=True)
+        
+        # === СПЕЦИАЛЬНАЯ ОБРАБОТКА ДЛЯ ИСКЛЮЧЕНИЙ (УДОСТОВЕРЯЮЩИЕ ЛИСТЫ) ===
+        # Проверяем, заканчивается ли обозначение на одно из исключений
+        exception_code = None
+        clean_for_exception = designation
+        
+        for exc in exceptions:
+            if designation.endswith(exc):
+                exception_code = exc
+                # Убираем код исключения из обозначения, чтобы получить базовый номер
+                clean_for_exception = designation[:-len(exc)]
+                break
+        
+        if exception_code:
+            doc_type = kd_mapping[exception_code]
+            # Извлекаем базовый номер
+            base_designation = self.get_base_designation(clean_for_exception)
+            # Убираем номер исполнения
+            if base_designation:
+                base_designation = re.sub(r'-\d+$', '', base_designation)
+            
+            # Ищем название изделия
+            product_name = ""
+            if base_designation and base_designation in self.specification_names_cache:
+                product_name = self.specification_names_cache[base_designation]
+            elif base_designation and all_designations and base_designation in all_designations:
+                product_name = all_designations[base_designation]
+                self.specification_names_cache[base_designation] = product_name
+            elif base_designation and file_name:
+                # Пробуем извлечь из имени файла
+                temp_name = file_name.replace('.pdf', '').strip()
+                temp_name = temp_name.replace(designation, '').strip()
+                temp_name = re.sub(r'[()\[\]_\-]+$', '', temp_name).strip()
+                if temp_name:
+                    product_name = temp_name
+            
+            # Формируем результат
+            if product_name and product_name not in doc_type:
+                return f"{product_name} {doc_type}".strip()
+            return doc_type.strip()
+        
+        # === ОБЫЧНАЯ ОБРАБОТКА ДЛЯ ОСТАЛЬНЫХ ДОКУМЕНТОВ ===
+        
+        # Проверяем наличие суффиксов -ЛУ и -УЛ ТОЛЬКО В КОНЦЕ обозначения
+        suffix_text = ""
+        suffix_code = ""
+        clean_designation = designation
+        
+        if designation.endswith('-ЛУ'):
+            suffix_text = "Лист утверждения"
+            suffix_code = "-ЛУ"
+            clean_designation = designation[:-3]
+        elif designation.endswith('-УЛ'):
+            suffix_text = "Информационно-удостоверяющий лист"
+            suffix_code = "-УЛ"
+            clean_designation = designation[:-3]
+        
+        # Очищаем от номера исполнения для правильного поиска кода
+        clean_designation = re.sub(r'-\d+(?=[A-ZА-Я])', '', clean_designation)
+        
+        # Определяем тип документа
+        doc_type = ""
+        base_designation = ""
+        doc_code = None
+        
+        # Обычная обработка - извлекаем базовый номер и код документа
+        base_designation, doc_code = self.extract_base_and_code(clean_designation)
+        # Убираем номер исполнения из base_designation
+        if base_designation:
+            base_designation = re.sub(r'-\d+$', '', base_designation)
+        doc_type = kd_mapping.get(doc_code, "")
+        
+        # Если код не найден, пробуем поискать в clean_designation
+        if not doc_type and clean_designation:
+            sorted_codes = sorted([c for c in kd_mapping.keys() if c not in ['-ЛУ', '-УЛ', 'ЛУ', 'УЛ']], 
+                                key=len, reverse=True)
+            for code in sorted_codes:
+                if f'-{code}' in clean_designation:
+                    doc_code = code
+                    doc_type = kd_mapping.get(code, "")
+                    break
+                elif clean_designation.endswith(code) and len(code) < len(clean_designation):
+                    doc_code = code
+                    doc_type = kd_mapping.get(code, "")
+                    break
+        
+        # Если тип документа не найден, пробуем ПД
+        if not doc_type:
+            pd_mapping = self.get_pd_name_mapping()
+            for pattern, doc_type_pd in pd_mapping.items():
+                pattern_regex = pattern.replace('XXXXX', r'\d{5}')
+                if re.match(pattern_regex, designation) or re.match(pattern_regex, clean_designation):
+                    doc_type = doc_type_pd
+                    break
+        
+        # Пытаемся найти название изделия из спецификации
+        product_name = ""
+        
+        # 1. Сначала ищем в кэше спецификаций
+        if base_designation and base_designation in self.specification_names_cache:
+            product_name = self.specification_names_cache[base_designation]
+        # 2. Пробуем искать в all_designations по base_designation
+        elif base_designation and all_designations and base_designation in all_designations:
+            product_name = all_designations[base_designation]
+            self.specification_names_cache[base_designation] = product_name
+        # 3. Пробуем искать по полному обозначению
+        elif clean_designation and all_designations and clean_designation in all_designations:
+            product_name = all_designations[clean_designation]
+            if base_designation:
+                self.specification_names_cache[base_designation] = product_name
+        # 4. Пробуем искать исходное обозначение
+        elif designation and all_designations and designation in all_designations:
+            product_name = all_designations[designation]
+            if base_designation:
+                self.specification_names_cache[base_designation] = product_name
+        
+        # 5. Если все еще нет названия, используем имя файла
+        if not product_name and file_name:
+            base_name = file_name.replace('.pdf', '').strip()
+            for des in [designation, clean_designation]:
+                if des and des in base_name:
+                    base_name = base_name.replace(des, '').strip()
+            base_name = base_name.replace('-ЛУ', '').replace('-УЛ', '').strip()
+            base_name = re.sub(r'[()\[\]_\-]+$', '', base_name).strip()
+            base_name = re.sub(r'-\d+', '', base_name).strip()
+            if base_name:
+                product_name = base_name
+        
+        # Формируем результат
+        result = ""
+        
+        if doc_type:
+            if product_name and product_name not in doc_type:
+                result = f"{product_name} {doc_type}"
+            else:
+                result = doc_type
+        elif product_name:
+            result = product_name
+        else:
+            result = file_name.replace('.pdf', '') if file_name else ""
+        
+        # Добавляем суффикс, если он есть и еще не добавлен
+        if suffix_text and suffix_text not in result:
+            if suffix_text not in doc_type:
+                result = f"{result} {suffix_text}"
+        
+        return result.strip()
+
+    def extract_base_and_code(self, designation):
+        """Извлекает базовый номер и код документа из обозначения"""
+        if not designation:
+            return designation, None
+        
+        kd_mapping = self.get_kd_name_mapping()
+        all_codes = [c for c in kd_mapping.keys() if c not in ['-ЛУ', '-УЛ', 'ЛУ', 'УЛ']]
+        all_codes.sort(key=len, reverse=True)
+        
+        # Ищем код документа в конце строки
+        found_code = None
+        base = designation
+        
+        for code in all_codes:
+            if designation.endswith(code):
+                found_code = code
+                base = designation[:-len(code)]
+                break
+            # Проверяем с дефисом
+            if designation.endswith(f'-{code}'):
+                found_code = code
+                base = designation[:-len(f'-{code}')]
+                break
+        
+        # Если код не найден, ищем более сложные паттерны
+        if not found_code:
+            # Формат: АААА.123456.123 или АААА.123456.123-14 (где 14 - это номер исполнения, а не код)
+            # Сначала ищем базовый шаблон с возможным номером исполнения
+            match = re.match(r'([A-ZА-Я]{4}\.\d{6}\.\d{3,4}(?:-\d+)?)', designation)
+            if match:
+                base = match.group(1)
+                # Остаток после базового номера - это код документа
+                remainder = designation[len(base):].lstrip('-')
+                if remainder and remainder in all_codes:
+                    found_code = remainder
+                elif remainder:
+                    # Проверяем, не начинается ли остаток с какого-то кода
+                    for code in all_codes:
+                        if remainder.startswith(code):
+                            found_code = code
+                            # Корректируем base, убирая лишнее
+                            base = designation[:-len(remainder)]
+                            break
+        
+        # Очищаем base от лишних дефисов в конце
+        base = base.rstrip('-')
+        
+        return base, found_code
+
+    def get_kd_order(self):
+        """Возвращает словарь порядка для кодов КД"""
+        base_order = {
+            # === СПЕЦИФИКАЦИИ (без кода) - идут первыми ===
+            'СПЕЦИФИКАЦИЯ': 0,  
+
+            # === ТЕХ. ПРОЕКТ ===
+            'ТП': 1,
+            'ПЗ': 2,
+            'Е1': 3,
+            'ВО': 4,
+            
+            # === КД (КОНСТРУКТОРСКАЯ ДОКУМЕНТАЦИЯ) ===
+            'СБ': 10,
+            'ГЧ': 11,
+            'МЭ': 12,
+            'МЧ': 13,
+            'УЧ': 14,
+            'Э0': 15,
+            'Э1': 16,
+            'Э2': 17,
+            'Э3': 18,
+            'Э4': 19,
+            'Э5': 20,
+            'Э6': 21,
+            'Э7': 23,
+            'ПЭ0': 24,
+            'ПЭ1': 25,
+            'ПЭ2': 26,
+            'ПЭ3': 27,
+            'ПЭ4': 28,
+            'ПЭ5': 29,
+            'ПЭ6': 30,
+            'ПЭ7': 31,
+            'С7': 32,
+            'ПС7': 33,
+            'ВС': 34,
+            'ВД': 35,
+            'ВП': 36,
+            'ДП': 37,
+            'ВДЭ': 38,
+            'ВЭД': 39,
+            'ТБ': 40,
+            'Д23': 41,
+            'Д27': 42,
+            'Д1': 43,
+            'ТУ': 44,
+            'ТУ1': 45,
+            'ТУ2': 46,
+            'ТУ3': 47,
+            'ТУ4': 48,
+            'ТУ5': 49,
+            'ТУ6': 50,
+            'ТУ7': 51,
+            'ТУ8': 52,
+            'ТУ9': 53,
+            'РР': 54,
+            
+            # === ЭД (ЭКСПЛУАТАЦИОННАЯ ДОКУМЕНТАЦИЯ) ===
+            'ВЭ': 60,
+            'РЭ': 61,
+            'РЭ1': 62,
+            'РЭ2': 63,
+            'РЭ3': 64,
+            'РЭ4': 65,
+            'РЭ5': 66,
+            'РЭ6': 67,
+            'РЭ7': 68,
+            'РЭ8': 69,
+            'РЭ9': 70,
+            'РЭ10': 71,
+            'РЭ11': 72,
+            'РЭ12': 73,
+            'РЭ13': 74,
+            'РЭ14': 75,
+            'РЭ15': 76,
+            'РО': 77,
+            'ФО': 78,
+            'ФО1': 79,
+            'ФО2': 80,
+            'ФО3': 81,
+            'ФО4': 82,
+            'ФО5': 83,
+            'ИС': 96,
+            'ИС1': 97,
+            'ИС2': 98,
+            'ИС3': 99,
+            'ИС4': 100,
+            'ИС5': 101,
+            'ИС6': 102,
+            'ИС7': 103,
+            'ИС8': 104,
+            'ИС9': 105,
+        }
+        
+        # Добавляем базовые коды с суффиксами -ЛУ и -УЛ
+        extended_order = base_order.copy()
+        
+        for code, order in list(base_order.items()):
+            if code not in ['-ЛУ', '-УЛ', 'ЛУ', 'УЛ']:
+                extended_order[f"{code}-ЛУ"] = order + 0.1
+                extended_order[f"{code}-УЛ"] = order + 0.2
+        
+        return extended_order
+
+    def get_code_from_designation(self, designation):
+        """Извлекает код документа из обозначения КД"""
+        if not designation:
+            return None
+        
+        # Сначала проверяем полные исключения (например Э3-УЛ)
+        kd_order = self.get_kd_order()
+        
+        if designation in kd_order:
+            return designation
+        
+        # Проверяем без суффикса
+        clean_designation = designation
+        suffix = ""
+        
+        if designation.endswith('-ЛУ'):
+            clean_designation = designation[:-3]
+            suffix = '-ЛУ'
+        elif designation.endswith('-УЛ'):
+            clean_designation = designation[:-3]
+            suffix = '-УЛ'
+        
+        # Ищем код в очищенном обозначении
+        codes = sorted([c for c in kd_order.keys() if c not in ['-ЛУ', '-УЛ']], key=len, reverse=True)
+        
+        for code in codes:
+            if f'-{code}' in clean_designation:
+                # Возвращаем код с суффиксом, если он был
+                return f"{code}{suffix}" if suffix else code
+            if clean_designation.endswith(code) and len(code) < len(clean_designation):
+                return f"{code}{suffix}" if suffix else code
+        
+        # Спецификации
+        return 'СПЕЦИФИКАЦИЯ'
+
+    def initUI(self):
+        # Устанавливаем размер окна
+        self.setFixedSize(700, 720)  # Фиксированный размер окна
+        
+        self.setWindowTitle('Анализатор PDF файлов')
+        self.setWindowIcon(QIcon(self.get_resource_path('icon.png')))
+        
+        # Центрируем главное окно
+        self.center_window()
+        
+        self.centralWidget = QWidget()
+        self.setCentralWidget(self.centralWidget)
+        
+        layout = QVBoxLayout()
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(15)
+        
+        # Инструкция
+        self.instruction_label = QLabel(
+            'Инструкция\n\n'
+            '1. Укажите путь к папке с PDF файлами\n'
+            '2. Укажите место сохранения файла \n'
+            '3. Выберите тип выгрузки из выпадающего списка\n'
+            '4. Нажмите кнопку "Запустить анализ"\n'
+            '5. Программа создаст файл pdf_info.xlsx с информацией о документах\n\n'
+            
+            "Перечень столбцов выгружаемого файла:\n\n"
+            "№ п/п | Наименование документа | Обозначение документа ТД | Обозначение документа КД | Обозначение ЭН | Обозначение файла КД | Обозначение файла ТД | Контрольная сумма | Формат файла | Физических листов | А4 | А3 | А2 | А1 | А0 | Доп. форматы | Листов формата А4 | Объем, МБ | Гриф секретности | Примечание | Путь к файлу | Папка | Имя файла\n\n"
+            
+            "Требования к именованию файлов: в имени файла должны присутствовать номер КД и/или номер ТД, а также название документа\n\n"
+
+            "Порядок строк в выгружаемом файле:\n\n"
+            "• Рекурсивный поиск включён - файлы группируются по папкам, внутри каждой папки сортируются по коду документа КД (спецификации → чертежи → схемы → ЭД и т.д.)\n"
+            "• Рекурсивный поиск выключен - только текущая папка, сортировка по имени файла от А до Я\n"
+            "• Сохранить порядок файлов из папки - только текущая папка, файлы сортируются по дате изменения (от старых к новым). Рекурсивный поиск при этом недоступен\n"
+        )
+        self.instruction_label.setWordWrap(True)
+        self.instruction_label.setStyleSheet("""
+            QLabel {
+                background-color: #f0f0f0;
+                padding: 10px;
+                border-radius: 5px;
+                border: 1px solid #ccc;
+                color: black;
+            }
+        """)
+        layout.addWidget(self.instruction_label)
+        
+        # Поле ввода пути к PDF
+        pdf_path_layout = QHBoxLayout()
+        pdf_path_layout.setSpacing(10)
+        
+        self.pdf_path_label = QLabel('Папка с PDF:')
+        self.pdf_path_label.setFixedWidth(100)
+        pdf_path_layout.addWidget(self.pdf_path_label)
+        
+        self.pdf_path_input = QLineEdit()
+        self.pdf_path_input.setStyleSheet("""
+            QLineEdit {
+                padding: 8px;
+                border: 1px solid #ccc;
+                border-radius: 4px;
+                background-color: white;
+                color: black;
+            }
+            QLineEdit:focus {
+                border: 1px solid #0078d7;
+            }
+        """)
+        pdf_path_layout.addWidget(self.pdf_path_input)
+        
+        self.browse_pdf_button = QPushButton('Обзор...')
+        self.browse_pdf_button.setFixedWidth(100)
+        self.browse_pdf_button.setStyleSheet(self.get_button_style())
+        self.browse_pdf_button.clicked.connect(self.browse_pdf_folder)
+        pdf_path_layout.addWidget(self.browse_pdf_button)
+        
+        layout.addLayout(pdf_path_layout)
+        
+        # Поле ввода пути сохранения
+        save_path_layout = QHBoxLayout()
+        save_path_layout.setSpacing(10)
+        
+        self.save_path_label = QLabel('Сохранить отчет в:')
+        self.save_path_label.setFixedWidth(100)
+        save_path_layout.addWidget(self.save_path_label)
+        
+        self.save_path_input = QLineEdit()
+        self.save_path_input.setStyleSheet("""
+            QLineEdit {
+                padding: 8px;
+                border: 1px solid #ccc;
+                border-radius: 4px;
+                background-color: white;
+                color: black;
+            }
+            QLineEdit:focus {
+                border: 1px solid #0078d7;
+            }
+        """)
+        save_path_layout.addWidget(self.save_path_input)
+        
+        self.browse_save_button = QPushButton('Обзор...')
+        self.browse_save_button.setFixedWidth(100)
+        self.browse_save_button.setStyleSheet(self.get_button_style())
+        self.browse_save_button.clicked.connect(self.browse_save_location)
+        save_path_layout.addWidget(self.browse_save_button)
+        
+        layout.addLayout(save_path_layout)
+
+        # Выпадающий список для выбора типа выгрузки
+        export_layout = QHBoxLayout()
+        export_layout.setSpacing(10)
+        
+        self.export_label = QLabel('Тип выгрузки:')
+        self.export_label.setFixedWidth(100)
+        export_layout.addWidget(self.export_label)
+        
+        self.export_combo = QComboBox()
+        self.export_combo.addItems([
+            'Ведомость технологической документации',
+            'Ведомость конструкторской документации',
+            'Опись конструкторской документации',
+            'Все данные'
+        ])
+        self.export_combo.setCurrentIndex(0)
+        self.export_combo.setStyleSheet("""
+            QComboBox {
+                padding: 8px;
+                border: 1px solid #ccc;
+                border-radius: 4px;
+                background-color: white;
+                color: black;
+                min-width: 300px;
+            }
+            QComboBox:hover {
+                border: 1px solid #0078d7;
+            }
+            QComboBox::down-arrow {
+                width: 16px;  /* Ширина стрелки */
+                height: 16px;  /* Высота стрелки */
+            }
+        """)
+        export_layout.addWidget(self.export_combo)
+        
+        layout.addLayout(export_layout)
+
+        checkbox_style = """
+            QCheckBox {
+                spacing: 8px;
+                color: black;
+            }
+            QCheckBox::indicator {
+                width: 18px;
+                height: 18px;
+            }
+        """
+
+        # Флажок для рекурсивного поиска
+        self.recursive_checkbox = QCheckBox('Рекурсивный поиск (включая все подпапки)')
+        self.recursive_checkbox.setChecked(True)
+        self.recursive_checkbox.setStyleSheet(checkbox_style)
+        layout.addWidget(self.recursive_checkbox)
+
+        # Флажок для сохранения порядка файлов из папки
+        self.preserve_order_checkbox = QCheckBox('Сохранить порядок файлов из папки (только текущая папка, по дате изменения)')
+        self.preserve_order_checkbox.setChecked(False)
+        self.preserve_order_checkbox.setStyleSheet(checkbox_style)
+        layout.addWidget(self.preserve_order_checkbox)
+
+        # Взаимное исключение галочек
+        def on_recursive_changed(state):
+            if state:
+                self.preserve_order_checkbox.setChecked(False)
+                self.preserve_order_checkbox.setEnabled(False)
+            else:
+                self.preserve_order_checkbox.setEnabled(True)
+
+        def on_preserve_order_changed(state):
+            if state:
+                self.recursive_checkbox.setChecked(False)
+                self.recursive_checkbox.setEnabled(False)
+            else:
+                self.recursive_checkbox.setEnabled(True)
+
+        self.recursive_checkbox.stateChanged.connect(on_recursive_changed)
+        self.preserve_order_checkbox.stateChanged.connect(on_preserve_order_changed)
+
+        # Кнопка запуска
+        self.start_button = QPushButton('Запустить анализ')
+        self.start_button.setStyleSheet(self.get_button_style(primary=True))
+        self.start_button.setMinimumHeight(40)
+        self.start_button.clicked.connect(self.analyze_pdf)
+        layout.addWidget(self.start_button)
+        
+        # Добавляем растягивающийся элемент для выравнивания
+        layout.addStretch(1)
+        
+        self.centralWidget.setLayout(layout)
+        
+        # Устанавливаем стандартные цвета для окна
+        self.setStyleSheet("""
+            QMainWindow {
+                background-color: white;
+            }
+            QLabel {
+                color: black;
+            }
+            QWidget {
+                font-family: "Segoe UI", Arial, sans-serif;
+                font-size: 12px;
+                color: black;
+            }
+        """)
+    
+    def center_window(self):
+        """Центрирует окно на экране"""
+        # Получаем геометрию основного экрана
+        screen = QApplication.primaryScreen().geometry()
+        
+        # Получаем геометрию окна
+        window_geometry = self.frameGeometry()
+        
+        # Перемещаем центр окна в центр экрана
+        center_point = screen.center()
+        window_geometry.moveCenter(center_point)
+        
+        # Устанавливаем позицию окна
+        self.move(window_geometry.topLeft())
+        
+    def get_button_style(self, primary=True):
+        """Возвращает стиль для кнопок - все голубые #0078d7"""
+        if primary:
+            return """
+                QPushButton {
+                    background-color: #0078d7;
+                    color: white;
+                    border: none;
+                    padding: 10px;
+                    border-radius: 5px;
+                    font-weight: bold;
+                    font-size: 14px;
+                }
+                QPushButton:hover {
+                    background-color: #106ebe;
+                }
+                QPushButton:pressed {
+                    background-color: #005a9e;
+                }
+                QPushButton:disabled {
+                    background-color: #cccccc;
+                    color: #666666;
+                }
+            """
+        else:
+            # Для отмены тоже используем голубой цвет, но немного другой оттенок
+            return """
+                QPushButton {
+                    background-color: #0078d7;
+                    color: white;
+                    border: none;
+                    padding: 8px 16px;
+                    border-radius: 4px;
+                    font-weight: bold;
+                }
+                QPushButton:hover {
+                    background-color: #106ebe;
+                }
+                QPushButton:pressed {
+                    background-color: #005a9e;
+                }
+                QPushButton:disabled {
+                    background-color: #cccccc;
+                    color: #666666;
+                }
+            """
+        
+    def browse_pdf_folder(self):
+        folder = QFileDialog.getExistingDirectory(self, 'Выберите папку с PDF файлами')
+        if folder:
+            self.pdf_path_input.setText(folder)
+            # По умолчанию предлагаем сохранять в ту же папку
+            self.save_path_input.setText(folder)
+        
+    def browse_save_location(self):
+        options = QFileDialog.Options()
+        
+        # Определяем начальный путь для диалога
+        initial_path = self.save_path_input.text() if self.save_path_input.text() else QDir.homePath()
+        
+        # Если это папка, добавляем имя файла по умолчанию
+        if os.path.isdir(initial_path):
+            initial_path = os.path.join(initial_path, 'pdf_info.xlsx')
+        
+        fileName, _ = QFileDialog.getSaveFileName(self,
+                                                "Укажите место для сохранения отчета",
+                                                initial_path,
+                                                "Excel Files (*.xlsx)",
+                                                options=options)
+        if fileName:
+            if not fileName.endswith('.xlsx'):
+                fileName += '.xlsx'
+            self.save_path_input.setText(fileName)
+    
+    def find_pdf_files(self, folder_path, recursive=True):
+        """Рекурсивно находит все PDF файлы в папке и подпапках"""
+        pdf_files = []
+        
+        if recursive:
+            for root, dirs, files in os.walk(folder_path):
+                for file_name in files:
+                    if file_name.lower().endswith('.pdf'):
+                        full_path = os.path.join(root, file_name)
+                        relative_path = os.path.relpath(root, folder_path)
+                        if relative_path == '.':
+                            relative_path = ''
+                        pdf_files.append({
+                            'full_path': full_path,
+                            'file_name': file_name,
+                            'folder': relative_path,
+                            'mtime': os.path.getmtime(full_path)
+                        })
+        else:
+            for file_name in os.listdir(folder_path):
+                if file_name.lower().endswith('.pdf'):
+                    full_path = os.path.join(folder_path, file_name)
+                    pdf_files.append({
+                        'full_path': full_path,
+                        'file_name': file_name,
+                        'folder': '',
+                        'mtime': os.path.getmtime(full_path)
+                    })
+        
+        return pdf_files
+    
+    def extract_numbers_KD(self, text):
+        """Извлекает номер КД (конструкторской документации) по ГОСТ 2.201 с сохранением суффиксов -ЛУ и -УЛ"""
+        
+        # Базовые коды КД
+        kd_codes = [
+            'ТП', 'ПЗ', 'Е1', 'ВО', 'СБ', 'ГЧ', 'МЭ', 'МЧ', 'УЧ',
+            'Э0', 'Э1', 'Э2', 'Э3', 'Э4', 'Э5', 'Э6', 'Э7',
+            'ПЭ0', 'ПЭ1', 'ПЭ2', 'ПЭ3', 'ПЭ4', 'ПЭ5', 'ПЭ6', 'ПЭ7',
+            'С7', 'ПС7', 'ВС', 'ВД', 'ВП', 'ДП', 'ВДЭ', 'ВЭД', 'ТБ', 'Д23', 'Д27', 'Д70', 'Д1',
+            'ТУ', 'ТУ1', 'ТУ2', 'ТУ3', 'ТУ4', 'ТУ5', 'ТУ6', 'ТУ7', 'ТУ8', 'ТУ9',
+            'РР', 'ВЭ', 'РЭ', 'РЭ1', 'РЭ2', 'РЭ3', 'РЭ4', 'РЭ5', 'РЭ6', 'РЭ7', 
+            'РЭ8', 'РЭ9', 'РЭ10', 'РЭ11', 'РЭ12', 'РЭ13', 'РЭ14', 'РЭ15',
+            'РО', 'ФО', 'ФО1', 'ФО2', 'ФО3', 'ФО4', 'ФО5', 'ФО6', 'ФО7', 'ФО8', 'ФО9',
+            'ПС', 'ЭТ', 'ЗИ', 'И3', 'ЭД', 'ВЗ', 'НЗ', 'НМ', 'Д90', 'УП', 'ИС', 'ИС1', 'ИС2', 'ИС3', 'ИС4', 'ИС5', 'ИС6', 'ИС7', 'ИС8', 'ИС9', 'И10',
+            'РЛЭ', 'ВКЭ', 'НЭ', 'АЭ', 'РК', 'КД', 'ДЭ', 'МС', 'ВКР', 'Д33', 'Д42', 'Д50', 
+            'ОП', 'НД', 'НДЗ',
+            # Исключения с суффиксами
+            'Э3-УЛ', 'Д33-УЛ', 'Д42-УЛ', 'Д42.1-УЛ', 'Д42.2-УЛ', 'Д50-УЛ',
+            'МД-УЛ', 'ЭМД-УЛ', 'МС-УЛ', 'Д23-УЛ', 'НДЗ-УЛ', 'НД-УЛ', 'ТУ-ЛУ', 'ВЭ-ЛУ', 'ПС-ЛУ', 'ЭСБ-УЛ'
+        ]
+        
+        # Удаляем дубликаты и сортируем
+        kd_codes = sorted(set(kd_codes), key=len, reverse=True)
+        kd_pattern = '|'.join(re.escape(code) for code in kd_codes)
+        
+        # Паттерн с дефисом - сохраняем суффиксы
+        pattern_with_hyphen = rf'''
+            \b
+            [A-ZА-Я]{{4}}\.\d{{6}}\.\d{{3,4}}
+            (?:-\d{{2}}\.\d{{2}})?
+            (?:-\d+)?
+            (?:-{kd_pattern})?
+            (?:-ЛУ)?   # Сохраняем суффикс -ЛУ
+            (?:-УЛ)?   # Сохраняем суффикс -УЛ
+            \b
+        '''
+        
+        compiled_with = re.compile(pattern_with_hyphen, re.VERBOSE | re.IGNORECASE)
+        match = compiled_with.search(text)
+        
+        if match:
+            result = match.group(0)
+            result = re.sub(r'\s+', ' ', result)
+            return result.strip()
+        
+        # Паттерн слитный
+        pattern_without_hyphen = rf'''
+            \b
+            [A-ZА-Я]{{4}}\.\d{{6}}\.\d{{3,4}}
+            (?:-\d{{2}}\.\d{{2}})?
+            (?:-\d+)?
+            (?:{kd_pattern})?
+            (?:-ЛУ)?
+            (?:-УЛ)?
+            (?!\d)
+            \b
+        '''
+        
+        compiled_without = re.compile(pattern_without_hyphen, re.VERBOSE | re.IGNORECASE)
+        match = compiled_without.search(text)
+        
+        if match:
+            result = match.group(0)
+            result = re.sub(r'\s+', ' ', result)
+            return result.strip()
+        
+        return ""
+
+
+    def extract_numbers_PD(self, text):
+        """Извлекает номер ПД (программной документации) по ГОСТ 19.101"""
+        
+        # КОДЫ ДОКУМЕНТОВ ЕСПД (ГОСТ 19.101)
+        pd_codes = [
+            'ТЗ', 'ПЗ', 'ПО', 'ПР', 'СП', 'ТК', 'РО', 'РП', 'РС', 'РТ', 'РЭ',
+            'ИО', 'ИП', 'ИС', 'ИТ', 'ВЭ', 'ВД', 'ВМ', 'ВЗ', 'ЗИ', 'ОП', 'ОО', 
+            'ОА', 'ОС', 'ОД', 'ЛУ', 'ЛС', 'АИ', 'АТ', 'АВ', 'РБ', 'ИБ', 'МП', 
+            'БД', 'АП', 'ТМ', 'ТЗ-ЛУ', 'ПЗ-ЛУ', 'ПО-ЛУ', 'ПР-ЛУ', 'РО-ЛУ', 
+            'РП-ЛУ', 'ОП-ЛУ', 'ВЭ-ЛУ', 'НД', 'НДЗ', 'НД-УЛ', 'НДЗ-УЛ',
+        ]
+        
+        pd_codes.sort(key=len, reverse=True)
+        pd_pattern = '|'.join(pd_codes)
+        
+        # Паттерн 1: ПД с цифровым кодом (АБВГ.01401-01 12 01-ЛУ)
+        pattern_numeric = rf'''
+        \b
+        (
+        [A-ZА-Я]{{4}}\.\d{{5}}
+        -\d{{2}}
+        \s+\d{{2}}
+        \s+\d{{2}}
+        (?:-\d)?
+        (?:-ЛУ)?
+        )
+        \b
+        '''
+        
+        # Паттерн 2: ПД с буквенным кодом (АБВГ.01401-01 ТЗ 01-ЛУ)
+        pattern_letter = rf'''
+        \b
+        (
+        [A-ZА-Я]{{4}}\.\d{{5}}
+        -\d{{2}}
+        \s+(?:{pd_pattern})
+        \s+\d{{2}}
+        (?:-\d)?
+        (?:-ЛУ)?
+        )
+        \b
+        '''
+        
+        # Паттерн 3: ПД без кода (АБВГ.01401-01 или АБВГ.01401-01-ЛУ)
+        pattern_simple = rf'''
+        \b
+        (
+        [A-ZА-Я]{{4}}\.\d{{5}}
+        -\d{{2}}
+        (?:-ЛУ)?
+        )
+        \b
+        '''
+        
+        # Паттерн 4: ПД с диском (АБВГ.01401-01НДЗ или АБВГ.01401-01НДЗ-УЛ)
+        pattern_disk = rf'''
+        \b
+        (
+        [A-ZА-Я]{{4}}\.\d{{5}}
+        -\d{{2}}
+        (?:{pd_pattern})
+        (?:-УЛ)?
+        )
+        \b
+        '''
+        
+        # Паттерн 5: Слитный код без дефиса (АБВГ.01401-01ТЗ 01)
+        pattern_combined = rf'''
+        \b
+        (
+        [A-ZА-Я]{{4}}\.\d{{5}}
+        -\d{{2}}
+        (?:{pd_pattern})
+        \s+\d{{2}}
+        (?:-\d)?
+        (?:-ЛУ)?
+        )
+        \b
+        '''
+        
+        for pattern in [pattern_numeric, pattern_letter, pattern_simple, pattern_disk, pattern_combined]:
+            compiled = re.compile(pattern, re.VERBOSE | re.IGNORECASE)
+            match = compiled.search(text)
+            if match:
+                result = match.group(1)
+                result = re.sub(r'\s+', ' ', result)
+                return result.strip()
+        
+        return ""
+    
+    def extract_numbers_TD(self, text):
+        """Извлекает номер ТД по строгому формату АААА.00000.00000, удаляя приставки"""
+        # Паттерн для ТД: 4 буквы, точка, 5 цифр, точка, 5 цифр, опциональные приставки
+        pattern = r'([A-ZА-Я]{4}\.\d{5}\.\d{5})'
+        match = re.search(pattern, text)
+        
+        if match:
+            # Возвращаем только чистый номер без приставок
+            return match.group(1)
+        else:
+            # Попробуем найти номер с приставками и удалить их
+            # Этот паттерн ищет номер с возможными приставками после него
+            pattern_with_suffix = r'([A-ZА-Я]{4}\.\d{5}\.\d{5})(?:[A-ZА-Я]+)?'
+            match_with_suffix = re.search(pattern_with_suffix, text)
+            return match_with_suffix.group(1) if match_with_suffix else ""
+    
+    def parse_filename(self, filename):
+        """Парсит имя файла для извлечения номеров КД, ПД и ТД"""
+        base_name = filename[:-4]  # Убираем .pdf
+        
+        # Ищем номер КД в имени файла
+        numbers_KD = self.extract_numbers_KD(base_name)
+        
+        # Ищем номер ПД в имени файла (программная документация)
+        numbers_PD = self.extract_numbers_PD(base_name)
+        
+        # Ищем номер ТД в имени файла (технологическая документация)
+        numbers_TD = self.extract_numbers_TD(base_name)
+        
+        # ВАЖНО: numbers_KD должен содержать ПОЛНОЕ обозначение (включая -ЛУ, -УЛ)
+        # для этого нужно изменить extract_numbers_KD, чтобы он не обрезал суффиксы
+        
+        # Извлекаем название документа из имени файла
+        name = base_name
+        
+        # Удаляем номера из названия
+        if numbers_TD:
+            name = name.replace(numbers_TD, "").strip()
+        if numbers_PD:
+            name = name.replace(numbers_PD, "").strip()
+        if numbers_KD:
+            name = name.replace(numbers_KD, "").strip()
+        
+        # Убираем суффиксы из названия
+        name = name.replace('-ЛУ', '').replace('-УЛ', '').strip()
+        
+        # Убираем скобки и лишние пробелы
+        name = re.sub(r'[()\[\]]', '', name).strip()
+        name = ' '.join(name.split())
+        
+        return numbers_KD, numbers_PD, numbers_TD, name
+    
+    def calculate_md5(self, filepath):
+        """Вычисляет MD5 хеш-сумму файла"""
+        hash_md5 = hashlib.md5()
+        try:
+            with open(filepath, "rb") as f:
+                for chunk in iter(lambda: f.read(4096), b""):
+                    hash_md5.update(chunk)
+            return hash_md5.hexdigest().upper()
+        except Exception as e:
+            return "Ошибка"
+    
+    # ИЗМЕНЕННЫЙ МЕТОД: Определение формата листа по размерам с погрешностью 30 мм
+    def determine_page_format(self, width, height):
+        """Определяет формат листа по размерам в мм с погрешностью 30 мм"""
+        # Приводим размеры к стандартному порядку (меньшая сторона, большая сторона)
+        w, h = min(width, height), max(width, height)
+                
+        # Основные форматы по ГОСТ (размеры в мм)
+        formats = {
+            'A0': (841, 1189),
+            'A1': (594, 841),
+            'A2': (420, 594),
+            'A3': (297, 420),
+            'A4': (210, 297),
+            'A5': (148, 210),
+        }
+        
+        # Дополнительные форматы (производные)
+        additional_formats = {
+            'A0×2': (1189, 1682),
+            'A0×3': (1189, 2523),
+            'A1×3': (841, 1783),
+            'A1×4': (841, 2378),
+            'A2×3': (594, 1261),
+            'A2×4': (594, 1682),
+            'A2×5': (594, 2102),
+            'A3×3': (420, 891),
+            'A3×4': (420, 1189),
+            'A3×5': (420, 1486),
+            'A3×6': (420, 1783),
+            'A3×7': (420, 2080),
+            'A4×3': (297, 630),
+            'A4×4': (297, 841),
+            'A4×5': (297, 1051),
+            'A4×6': (297, 1261),
+            'A4×7': (297, 1471),
+            'A4×8': (297, 1682),
+            'A4×9': (297, 1982),
+        }
+        
+        # Проверяем основные форматы с погрешностью 30 мм
+        tolerance = 30.0
+        for fmt, (std_w, std_h) in formats.items():
+            if (abs(w - std_w) <= tolerance and abs(h - std_h) <= tolerance) or \
+               (abs(w - std_h) <= tolerance and abs(h - std_w) <= tolerance):
+                return fmt, None
+        
+        # Проверяем дополнительные форматы с погрешностью 30 мм
+        for fmt, (std_w, std_h) in additional_formats.items():
+            if (abs(w - std_w) <= tolerance and abs(h - std_h) <= tolerance) or \
+               (abs(w - std_h) <= tolerance and abs(h - std_w) <= tolerance):
+                return 'Доп. форматы', fmt
+        
+        # Если формат не определен ни по одному из стандартов, возвращаем точный размер
+        return 'Доп. форматы', f"{int(w)}×{int(h)}"
+    
+    # ИЗМЕНЕННЫЙ МЕТОД: Подсчет форматов листов в PDF
+    def count_page_formats(self, pdf_path):
+        """Подсчитывает количество листов каждого формата в PDF документе"""
+        # Инициализируем счетчики для всех форматов
+        format_counts = {
+            'A4': 0,
+            'A3': 0,
+            'A2': 0,
+            'A1': 0,
+            'A0': 0,
+            'Доп. форматы': 0
+        }
+        
+        # Словарь для хранения нестандартных размеров и их количества
+        non_standard_sizes = {}
+        
+        try:
+            with open(pdf_path, 'rb') as file:
+                pdf = PyPDF2.PdfReader(file)
+                
+                for page_num in range(len(pdf.pages)):
+                    page = pdf.pages[page_num]
+                    
+                    # Получаем размер страницы в пунктах (1 пункт = 1/72 дюйма)
+                    # Конвертируем в миллиметры (1 дюйм = 25.4 мм)
+                    media_box = page.mediabox
+                    
+                    # Получаем размеры в пунктах и конвертируем в мм
+                    width_pts = float(media_box.width)
+                    height_pts = float(media_box.height)
+                    
+                    # Конвертация в мм
+                    width_mm = width_pts * 25.4 / 72
+                    height_mm = height_pts * 25.4 / 72
+                    
+                    # Округляем до целых
+                    width_mm = round(width_mm)
+                    height_mm = round(height_mm)
+                    
+                    
+                    # Определяем формат страницы и получаем нестандартный размер если есть
+                    page_format, non_standard_size = self.determine_page_format(width_mm, height_mm)
+                                        
+                    # Увеличиваем соответствующий счетчик
+                    if page_format in format_counts:
+                        format_counts[page_format] += 1
+                    
+                    # Если есть нестандартный размер, записываем его
+                    if non_standard_size:
+                        size_key = non_standard_size
+                        if size_key in non_standard_sizes:
+                            non_standard_sizes[size_key] += 1
+                        else:
+                            non_standard_sizes[size_key] = 1
+                
+        except Exception as e:
+            print(f"Ошибка при подсчете форматов для {pdf_path}: {e}")
+            # В случае ошибки возвращаем пустые значения
+        
+        # Формируем строку с нестандартными размерами
+        non_standard_str = ""
+        if non_standard_sizes:
+            size_strings = []
+            for size, count in non_standard_sizes.items():
+                if count > 1:
+                    size_strings.append(f"{size} ({count} шт.)")
+                else:
+                    size_strings.append(size)
+            non_standard_str = ", ".join(size_strings)
+        
+        return format_counts, non_standard_str
+    
+    def format_excel_file(self, excel_file_path):
+        """Применяет форматирование к Excel файлу: настройка ширины столбцов, шрифт, выравнивание, границы, высота строк"""
+        try:
+            from openpyxl.styles import Alignment, Font, Border, Side
+            from openpyxl.utils import get_column_letter
+            
+            # Загружаем рабочую книгу
+            wb = load_workbook(excel_file_path)
+            ws = wb.active
+            
+            # Настройки шрифта
+            font = Font(name='Times New Roman', size=12)
+            
+            # Настройки выравнивания
+            center_alignment = Alignment(
+                horizontal='center',
+                vertical='center',
+                wrap_text=True  # Перенос текста
+            )
+            
+            # Настройки границ
+            thin_border = Border(
+                left=Side(style='thin'),
+                right=Side(style='thin'),
+                top=Side(style='thin'),
+                bottom=Side(style='thin')
+            )
+
+            # Определяем диапазон таблицы (все ячейки с данными)
+            max_row = ws.max_row
+            max_col = ws.max_column
+            
+            # Применяем форматирование ко всем ячейкам в диапазоне таблицы
+            for row in range(1, max_row + 1):
+                for col in range(1, max_col + 1):
+                    cell = ws.cell(row=row, column=col)
+                    cell.font = font
+                    cell.alignment = center_alignment
+                    cell.border = thin_border
+            
+            # Настраиваем ширину для каждого столбца
+            for column in ws.columns:
+                max_length = 0
+                column_letter = get_column_letter(column[0].column)
+                
+                # Находим максимальную длину текста в столбце
+                for cell in column:
+                    try:
+                        if cell.value:
+                            cell_length = len(str(cell.value))
+                            max_length = max(max_length, cell_length)
+                    except:
+                        pass
+                
+                # Устанавливаем ширину столбца в зависимости от названия
+                column_name = ws.cell(row=1, column=column[0].column).value
+                
+                if column_name == '№ п/п':
+                    adjusted_width = 6
+                elif column_name == 'Наименование документа':
+                    adjusted_width = 27
+                elif column_name == 'Формат файла':
+                    adjusted_width = 10
+                elif column_name == 'Контрольная сумма':
+                    adjusted_width = 44
+                elif column_name == 'Объем, МБ':
+                    adjusted_width = 9
+                elif column_name == 'Физических листов':
+                    adjusted_width = 14
+                elif column_name == 'Обозначение ЭН':
+                    adjusted_width = 19
+                elif column_name == 'Гриф секретности':
+                    adjusted_width = 14
+                elif column_name == 'Примечание':
+                    adjusted_width = 14
+                elif column_name in ['Обозначение файла КД', 'Обозначение файла ТД']:
+                    adjusted_width = 27
+                elif column_name in ['Обозначение документа ТД', 'Обозначение документа КД']:
+                    adjusted_width = 29
+                elif column_name in ['А4', 'А3', 'А2', 'А1', 'А0']:
+                    adjusted_width = 4
+                elif column_name == 'Доп. форматы':
+                    adjusted_width = 11
+                elif column_name == 'Листов формата А4':
+                    adjusted_width = 12
+                else:
+                    adjusted_width = min(max_length + 2, 50)
+                
+                ws.column_dimensions[column_letter].width = adjusted_width
+            
+            # Устанавливаем высоту первой строки (заголовок) - 60
+            ws.row_dimensions[1].height = 60
+            
+            # Устанавливаем высоту остальных строк - 30
+            for row in range(2, ws.max_row + 1):
+                ws.row_dimensions[row].height = 30
+            
+            # Сохраняем изменения
+            wb.save(excel_file_path)
+            
+        except Exception as e:
+            print(f"Ошибка при форматировании Excel файла: {e}")
+    
+    def filter_columns_by_export_type(self, df, export_type):
+        """Фильтрует столбцы DataFrame в зависимости от типа выгрузки"""
+        
+        if export_type == 'Ведомость технологической документации':
+            # Столбцы для ТД
+            return df[[
+                '№ п/п',
+                'Наименование документа',
+                'Обозначение документа ТД',
+                'Обозначение ЭН',
+                'Обозначение файла ТД',
+                'Контрольная сумма',
+                'Формат файла',
+                'Физических листов',
+                'А4', 'А3', 'А2', 'А1', 'А0',
+                'Доп. форматы',
+                'Листов формата А4',
+                'Объем, МБ',
+                'Гриф секретности',
+                'Примечание'
+            ]]
+        
+        elif export_type == 'Ведомость конструкторской документации':
+            # Столбцы для КД/ПД - обновляем Наименование документа
+            # Создаем словарь всех обозначений для поиска спецификаций
+            all_designations = {}
+            for idx, row in df.iterrows():
+                des = row['Обозначение документа КД']
+                name = row['Наименование документа']
+                if des and name:
+                    all_designations[des] = name
+            
+            df['Наименование документа'] = df.apply(
+                lambda row: self.get_document_full_name(
+                    row['Обозначение документа КД'], 
+                    row['Имя файла'],
+                    all_designations
+                ), 
+                axis=1
+            )
+            
+            return df[[
+                '№ п/п',
+                'Наименование документа',
+                'Обозначение документа КД',
+                'Обозначение ЭН',
+                'Обозначение файла КД',
+                'Контрольная сумма',
+                'Формат файла',
+                'Физических листов',
+                'А4', 'А3', 'А2', 'А1', 'А0',
+                'Доп. форматы',
+                'Листов формата А4',
+                'Объем, МБ',
+                'Гриф секретности',
+                'Примечание'
+            ]]
+        
+        elif export_type == 'Опись конструкторской документации':
+            # Столбцы для Описи КД/ПД - упрощенный вариант
+            # Создаем словарь всех обозначений для поиска спецификаций
+            all_designations = {}
+            for idx, row in df.iterrows():
+                des = row['Обозначение документа КД']
+                name = row['Наименование документа']
+                if des and name:
+                    all_designations[des] = name
+            
+            df['Наименование документа'] = df.apply(
+                lambda row: self.get_document_full_name(
+                    row['Обозначение документа КД'], 
+                    row['Имя файла'],
+                    all_designations
+                ), 
+                axis=1
+            )
+            
+            # НОВЫЙ ПОРЯДОК И НАЗВАНИЯ СТОЛБЦОВ
+            return df[[
+                '№ п/п',
+                'Обозначение документа КД',
+                'Наименование документа',
+                'Физических листов',
+                'Примечание'
+            ]].rename(columns={
+                '№ п/п': '№ п/п',
+                'Обозначение документа КД': 'Обозначение',
+                'Наименование документа': 'Наименование',
+                'Физических листов': 'Количество листов в документе',
+                'Примечание': 'Примечание'
+            })
+        
+        else:  # 'Все данные'
+            # Создаем словарь обозначений
+            all_designations = {}
+            for idx, row in df.iterrows():
+                des = row['Обозначение документа КД']
+                name = row['Наименование документа']
+                if des and name:
+                    all_designations[des] = name
+            
+            df['Наименование документа'] = df.apply(
+                lambda row: self.get_document_full_name(
+                    row['Обозначение документа КД'], 
+                    row['Имя файла'],
+                    all_designations
+                ) if row['Обозначение документа КД'] else row['Наименование документа'],
+                axis=1
+            )
+            
+            # Все столбцы
+            return df[[
+                '№ п/п',
+                'Наименование документа',
+                'Обозначение документа ТД',
+                'Обозначение документа КД',
+                'Обозначение ЭН',
+                'Обозначение файла КД',
+                'Обозначение файла ТД',
+                'Контрольная сумма',
+                'Формат файла',
+                'Физических листов',
+                'А4', 'А3', 'А2', 'А1', 'А0',
+                'Доп. форматы',
+                'Листов формата А4',
+                'Объем, МБ',
+                'Гриф секретности',
+                'Примечание',
+                'Путь к файлу',
+                'Папка',
+                'Имя файла'
+            ]]
+
+    def show_progress_dialog(self, total_files):
+        """Показывает диалоговое окно с прогрессом"""
+        self.processing_cancelled = False  # Сбрасываем флаг отмены
+        
+        dialog = QDialog(self)
+        dialog.setWindowTitle('Обработка PDF файлов')
+        dialog.setFixedSize(500, 200)  # Фиксированный размер
+        
+        # Центрируем диалоговое окно
+        self.center_dialog(dialog)
+        
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(15)
+        
+        # Заголовок
+        title_label = QLabel('Обработка PDF файлов')
+        title_label.setStyleSheet("""
+            QLabel {
+                font-size: 14px;
+                font-weight: bold;
+                color: black;
+            }
+        """)
+        layout.addWidget(title_label)
+        
+        # Метка с информацией
+        self.progress_label = QLabel('Подготовка к обработке...')
+        self.progress_label.setStyleSheet("""
+            QLabel {
+                color: black;
+            }
+        """)
+        layout.addWidget(self.progress_label)
+        
+        # Прогресс-бар
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setMinimum(0)
+        self.progress_bar.setMaximum(total_files)
+        self.progress_bar.setValue(0)
+        self.progress_bar.setTextVisible(True)
+        self.progress_bar.setStyleSheet("""
+            QProgressBar {
+                border: 1px solid #ccc;
+                border-radius: 5px;
+                background-color: white;
+                height: 25px;
+                text-align: center;
+                color: black;
+            }
+            QProgressBar::chunk {
+                background-color: #0078d7;
+                border-radius: 5px;
+            }
+        """)
+        layout.addWidget(self.progress_bar)
+        
+        # Кнопка отмены - ГОЛУБАЯ
+        self.cancel_button = QPushButton('Отмена')
+        self.cancel_button.setStyleSheet(self.get_button_style())  # Теперь голубая
+        
+        def cancel_processing():
+            self.processing_cancelled = True
+            self.cancel_button.setEnabled(False)
+            self.cancel_button.setText('Отмена...')
+            self.progress_label.setText('Завершение обработки...')
+            QApplication.processEvents()
+        
+        self.cancel_button.clicked.connect(cancel_processing)
+        layout.addWidget(self.cancel_button)
+        
+        # Сохраняем ссылку на диалог
+        self.progress_dialog = dialog
+        
+        # НЕ блокируем главное окно модально, используем флаг
+        dialog.setModal(False)  # Важно: не модальное окно!
+        
+        # Показываем диалог
+        dialog.show()
+        
+        # Принудительная обработка событий
+        QApplication.processEvents()
+        
+        return dialog
+    
+    def update_progress(self, current, total, current_file=""):
+        """Обновляет прогресс обработки"""
+        if hasattr(self, 'progress_dialog') and self.progress_dialog:
+            percentage = int((current / total) * 100)
+            self.progress_bar.setValue(current)
+            
+            if current_file:
+                # Обрезаем длинное имя файла для отображения
+                display_file = current_file
+                if len(current_file) > 40:
+                    display_file = "..." + current_file[-37:]
+                
+                self.progress_label.setText(
+                    f'Обработка файлов: {current} из {total} ({percentage}%)\n'
+                    f'Текущий файл: {display_file}'
+                )
+            else:
+                self.progress_label.setText(
+                    f'Обработка файлов: {current} из {total} ({percentage}%)'
+                )
+            
+            # Принудительная обработка событий для кнопок
+            QApplication.processEvents()
+            
+            # Возвращаем True если обработка продолжается, False если отменена
+            return not self.processing_cancelled
+        
+        return True
+    
+    def close_progress_dialog(self):
+        """Закрывает диалоговое окно прогресса"""
+        if hasattr(self, 'progress_dialog') and self.progress_dialog:
+            self.progress_dialog.accept()
+            self.progress_dialog = None
+            self.setEnabled(True)
+    
+    def show_stats_dialog(self, stats_text, save_path):
+        """Показывает диалоговое окно со статистикой"""
+        dialog = QDialog(self)
+        dialog.setWindowTitle('Результат анализа')
+        dialog.setFixedSize(600, 400)  # Фиксированный размер диалогового окна
+        
+        # Центрируем диалоговое окно
+        self.center_dialog(dialog)
+        
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(15)
+        
+        # Заголовок
+        title_label = QLabel('Результат анализа')
+        title_label.setStyleSheet("""
+            QLabel {
+                font-size: 14px;
+                font-weight: bold;
+                color: black;
+            }
+        """)
+        layout.addWidget(title_label)
+        
+        # Создаем QTextEdit для отображения статистики
+        stats_display = QTextEdit()
+        stats_display.setPlainText(stats_text)
+        stats_display.setReadOnly(True)
+        stats_display.setStyleSheet("""
+            QTextEdit {
+                background-color: #f0f0f0;
+                padding: 15px;
+                border-radius: 5px;
+                border: 1px solid #ccc;
+                color: black;
+                font-family: "Segoe UI", Arial, sans-serif;
+                font-size: 12px;
+            }
+        """)
+        
+        layout.addWidget(stats_display)
+        
+        # Кнопка "Открыть папку с отчетом" - ГОЛУБАЯ
+        open_folder_button = QPushButton('Открыть папку с отчетом')
+        open_folder_button.setStyleSheet(self.get_button_style(primary=True))
+        open_folder_button.clicked.connect(lambda: self.open_report_folder(save_path, dialog))
+        layout.addWidget(open_folder_button)
+        
+        # Кнопка "Закрыть" - ГОЛУБАЯ
+        close_button = QPushButton('Закрыть')
+        close_button.setStyleSheet(self.get_button_style())
+        close_button.clicked.connect(dialog.accept)
+        layout.addWidget(close_button)
+        
+        dialog.exec_()
+    
+    def center_dialog(self, dialog):
+        """Центрирует диалоговое окно относительно главного окна"""
+        # Получаем геометрию главного окна
+        main_window_geometry = self.frameGeometry()
+        
+        # Получаем геометрию диалогового окна
+        dialog_geometry = dialog.frameGeometry()
+        
+        # Перемещаем центр диалогового окна в центр главного окна
+        center_point = main_window_geometry.center()
+        dialog_geometry.moveCenter(center_point)
+        
+        # Устанавливаем позицию диалогового окна
+        dialog.move(dialog_geometry.topLeft())
+    
+    def open_report_folder(self, save_path, dialog):
+        """Открывает папку с отчетом"""
+        try:
+            folder_path = os.path.dirname(save_path)
+            if os.path.exists(folder_path):
+                os.startfile(folder_path)  # Для Windows
+            else:
+                # Создаем центрированное сообщение об ошибке
+                self.show_message_box('Ошибка', f'Папка {folder_path} не существует', QMessageBox.Warning)
+        except Exception as e:
+            # Создаем центрированное сообщение об ошибке
+            self.show_message_box('Ошибка', f'Не удалось открыть папку: {str(e)}', QMessageBox.Warning)
+    
+    def show_message_box(self, title, text, icon=QMessageBox.Information):
+        """Показывает центрированное сообщение с голубыми кнопками"""
+        msg_box = QMessageBox(self)
+        msg_box.setWindowTitle(title)
+        msg_box.setText(text)
+        msg_box.setIcon(icon)
+        
+        # Применяем стиль к QMessageBox с голубыми кнопками
+        msg_box.setStyleSheet("""
+            QMessageBox {
+                background-color: white;
+            }
+            QLabel {
+                color: black;
+                font-family: "Segoe UI", Arial, sans-serif;
+                font-size: 12px;
+            }
+            QPushButton {
+                background-color: #0078d7;
+                color: white;
+                border: none;
+                padding: 8px 20px;
+                border-radius: 4px;
+                font-weight: bold;
+                min-width: 80px;
+            }
+            QPushButton:hover {
+                background-color: #106ebe;
+            }
+            QPushButton:pressed {
+                background-color: #005a9e;
+            }
+        """)
+        
+        # Центрируем сообщение ОТНОСИТЕЛЬНО ГЛАВНОГО ОКНА
+        main_window_geometry = self.frameGeometry()
+        msg_box_geometry = msg_box.frameGeometry()
+        center_point = main_window_geometry.center()
+        msg_box_geometry.moveCenter(center_point)
+        msg_box.move(msg_box_geometry.topLeft())
+        
+        return msg_box.exec_()
+    
+    def center_window_on_screen(self, window):
+        """Центрирует окно на экране (для QMessageBox)"""
+        # Получаем геометрию основного экрана
+        screen = QApplication.primaryScreen().geometry()
+        
+        # Получаем геометрию окна
+        window_geometry = window.frameGeometry()
+        
+        # Перемещаем центр окна в центр экрана
+        center_point = screen.center()
+        window_geometry.moveCenter(center_point)
+        
+        # Устанавливаем позицию окна
+        window.move(window_geometry.topLeft())
+        
+    def analyze_pdf(self):
+        folder_path = self.pdf_path_input.text()
+        save_path = self.save_path_input.text()
+        recursive = self.recursive_checkbox.isChecked()
+        
+        if not folder_path:
+            self.show_message_box('Ошибка', 'Укажите путь к папке с PDF файлами', QMessageBox.Warning)
+            return
+            
+        if not os.path.exists(folder_path):
+            self.show_message_box('Ошибка', f'Папка {folder_path} не существует', QMessageBox.Warning)
+            return
+        
+        if not save_path:
+            save_path = os.path.join(folder_path, 'pdf_info.xlsx')
+        elif os.path.isdir(save_path):
+            save_path = os.path.join(save_path, 'pdf_info.xlsx')
+        
+        try:
+            # Отключаем кнопку на время обработки
+            self.start_button.setEnabled(False)
+            self.start_button.setText('Поиск файлов...')
+            QApplication.processEvents()
+            
+            # Находим все PDF файлы (первый проход - подсчет)
+            self.start_button.setText('Подсчет файлов...')
+            QApplication.processEvents()
+            
+            pdf_files = self.find_pdf_files(folder_path, recursive)
+            
+            if not pdf_files:
+                self.show_message_box('Ошибка', 'В указанной папке не найдено PDF файлов', QMessageBox.Warning)
+                self.start_button.setEnabled(True)
+                self.start_button.setText('Запустить анализ')
+                return
+            
+            total_files = len(pdf_files)
+            
+            # Показываем диалоговое окно прогресса
+            progress_dialog = self.show_progress_dialog(total_files)
+            
+            # Обрабатываем каждый найденный файл
+            processed_files = 0
+            numbers_KD_list = []
+            numbers_TD_list = []
+            numbers_PD_list = []
+            names = []
+            page_counts = []
+            file_names = []
+            file_paths = []
+            file_mtimes = []
+            insurance_KD = []
+            insurance_TD = []
+            file_sizes = []
+            file_checksums = []
+            folders = []
+            error_files = []
+            number_pp = []
+            file_formats = []
+            en_designations = []
+            secrecy_grades = []
+            notes = []
+
+            # Списки для форматов
+            a4_counts = []
+            a3_counts = []
+            a2_counts = []
+            a1_counts = []
+            a0_counts = []
+            additional_counts = []
+            a4_sheets_counts = []
+            
+            # Обрабатываем каждый найденный файл
+            for idx, file_info in enumerate(pdf_files, 1):
+                file_path = file_info['full_path']
+                file_name = file_info['file_name']
+                folder_name = file_info['folder']
+                
+                # Проверяем, не была ли отменена обработка
+                if self.processing_cancelled:
+                    # Закрываем диалог прогресса
+                    self.close_progress_dialog()
+                    
+                    # Показываем центрированное сообщение об отмене
+                    self.show_message_box('Отменено', 'Обработка файлов была отменена пользователем.', QMessageBox.Information)
+                    
+                    self.start_button.setEnabled(True)
+                    self.start_button.setText('Запустить анализ')
+                    return
+                
+                try:
+                    # Обновляем прогресс
+                    if not self.update_progress(idx, total_files, file_name):
+                        # Если update_progress вернул False (отмена)
+                        self.close_progress_dialog()
+                        self.show_message_box('Отменено', 'Обработка файлов была отменена пользователем.', QMessageBox.Information)
+                        self.start_button.setEnabled(True)
+                        self.start_button.setText('Запустить анализ')
+                        return
+                    
+                    # Получаем размер файла
+                    file_size = os.path.getsize(file_path) / (1024 * 1024)
+                    file_size = round(file_size, 2)
+                    
+                    # Вычисляем MD5 хеш-сумму файла
+                    file_checksum = self.calculate_md5(file_path)
+                    
+                    # Парсим имя файла
+                    numbers_KD, numbers_PD, numbers_TD, name = self.parse_filename(file_name)
+
+                    # В блоке try (успешная обработка)
+                    with open(file_path, 'rb') as file:
+                        pdf = PyPDF2.PdfReader(file)
+                        page_count = len(pdf.pages)
+                        
+                        # Подсчет форматов
+                        format_counts, non_standard_str = self.count_page_formats(file_path)
+                        
+                        # ДОБАВЛЯЕМ КАЖДЫЙ ЭЛЕМЕНТ ТОЛЬКО ОДИН РАЗ
+                        numbers_KD_list.append(numbers_KD)
+                        numbers_TD_list.append(numbers_TD)
+                        numbers_PD_list.append(numbers_PD)
+                        names.append(name)
+                        page_counts.append(page_count)
+                        file_names.append(file_name)
+                        file_paths.append(file_path)
+                        file_mtimes.append(file_info.get('mtime', 0))
+                        folders.append(folder_name)
+                        insurance_KD.append(f"{numbers_KD}.pdf" if numbers_KD else "")
+                        insurance_TD.append(f"{numbers_TD}.pdf" if numbers_TD else "")
+                        file_sizes.append(file_size)
+                        file_checksums.append(file_checksum)
+                        file_formats.append("pdf")
+                        en_designations.append("")
+                        secrecy_grades.append("н/с")
+                        notes.append("")
+                        a4_counts.append(format_counts['A4'] if format_counts['A4'] > 0 else "")
+                        a3_counts.append(format_counts['A3'] if format_counts['A3'] > 0 else "")
+                        a2_counts.append(format_counts['A2'] if format_counts['A2'] > 0 else "")
+                        a1_counts.append(format_counts['A1'] if format_counts['A1'] > 0 else "")
+                        a0_counts.append(format_counts['A0'] if format_counts['A0'] > 0 else "")
+                        
+                        # Обработка дополнительных форматов
+                        if non_standard_str:
+                            if '×' in non_standard_str and not non_standard_str.startswith('A'):
+                                additional_counts.append(non_standard_str)
+                            else:
+                                additional_pages = format_counts['Доп. форматы']
+                                additional_counts.append(additional_pages if additional_pages > 0 else "")
+                        elif format_counts['Доп. форматы'] > 0:
+                            additional_counts.append(format_counts['Доп. форматы'])
+                        else:
+                            additional_counts.append("")
+                        
+                        # Расчет листов А4
+                        a4_sheets = 0
+                        format_to_multiplier = {
+                            'A4×3': 3, 'A4×4': 4, 'A4×5': 5, 'A4×6': 6, 'A4×7': 7, 'A4×8': 8, 'A4×9': 9,
+                            'A3×3': 6, 'A3×4': 8, 'A3×5': 10, 'A3×6': 12, 'A3×7': 14,
+                            'A2×3': 12, 'A2×4': 16, 'A2×5': 20,
+                            'A1×3': 24, 'A1×4': 32,
+                            'A0×2': 32, 'A0×3': 48,
+                        }
+                        
+                        if format_counts['A4'] > 0:
+                            a4_sheets += format_counts['A4']
+                        if format_counts['A3'] > 0:
+                            a4_sheets += format_counts['A3'] * 2
+                        if format_counts['A2'] > 0:
+                            a4_sheets += format_counts['A2'] * 4
+                        if format_counts['A1'] > 0:
+                            a4_sheets += format_counts['A1'] * 8
+                        if format_counts['A0'] > 0:
+                            a4_sheets += format_counts['A0'] * 16
+                        
+                        if format_counts['Доп. форматы'] > 0 and non_standard_str:
+                            parts = non_standard_str.split(', ')
+                            for part in parts:
+                                count = 1
+                                format_name = part
+                                if '(' in part and 'шт.' in part:
+                                    try:
+                                        count_str = part.split('(')[1].split()[0]
+                                        count = int(count_str)
+                                        format_name = part.split('(')[0].strip()
+                                    except:
+                                        pass
+                                if format_name in format_to_multiplier:
+                                    a4_sheets += count * format_to_multiplier[format_name]
+                        
+                        a4_sheets_counts.append(a4_sheets if a4_sheets > 0 else "")
+
+                    processed_files += 1
+                    number_pp.append(processed_files)
+                    
+                except Exception as e:
+                    error_files.append(f"{file_name}: {str(e)}")
+                    # В случае ошибки добавляем пустые значения для ВСЕХ списков
+                    numbers_KD_list.append("")
+                    numbers_TD_list.append("")
+                    numbers_PD_list.append("")
+                    names.append("")
+                    page_counts.append(0)
+                    file_names.append(file_name)
+                    file_paths.append(file_path)
+                    file_mtimes.append(file_info.get('mtime', 0))
+                    folders.append(folder_name)
+                    insurance_KD.append("")
+                    insurance_TD.append("")
+                    file_sizes.append(0)
+                    file_checksums.append("Ошибка")
+                    file_formats.append("pdf")
+                    en_designations.append("")
+                    secrecy_grades.append("н/с")
+                    notes.append("")
+                    a4_counts.append("")
+                    a3_counts.append("")
+                    a2_counts.append("")
+                    a1_counts.append("")
+                    a0_counts.append("")
+                    additional_counts.append("")
+                    a4_sheets_counts.append("")
+                    
+                    processed_files += 1
+                    number_pp.append(processed_files)  # Только один раз!
+                    continue
+            
+            # Закрываем диалоговое окно прогресса
+            self.close_progress_dialog()
+            
+            # Если обработка была отменена
+            if self.processing_cancelled:
+                self.show_message_box('Отменено', 'Обработка файлов была отменена пользователем.', QMessageBox.Information)
+                self.start_button.setEnabled(True)
+                self.start_button.setText('Запустить анализ')
+                return
+            
+            # Если все файлы были пропущены из-за ошибок
+            if processed_files == 0:
+                self.show_message_box('Ошибка', 
+                                    f'Не удалось обработать ни один файл.\nВсего файлов: {total_files}\nОшибок: {len(error_files)}', 
+                                    QMessageBox.Warning)
+                self.start_button.setEnabled(True)
+                self.start_button.setText('Запустить анализ')
+                return
+            
+            # После обработки всех файлов, перед созданием DataFrame
+            designations_map = {}
+
+            # Список всех известных кодов
+            all_known_codes = set()
+            all_known_codes.update(self.get_kd_name_mapping().keys())
+            for pattern in self.get_pd_name_mapping().keys():
+                code = pattern.replace('XXXXX', '')
+                if code:
+                    all_known_codes.add(code)
+            all_known_codes.update(['-ЛУ', '-УЛ', 'ЛУ', 'УЛ', 'НДЗ', 'НД', 'НДЗ-УЛ', 'НД-УЛ', '-01'])
+
+            for i in range(len(file_names)):
+                designation = numbers_KD_list[i] if numbers_KD_list[i] else numbers_PD_list[i]
+                name_from_file = names[i] if names[i] else ""
+                file_name = file_names[i]
+                
+                if designation:
+                    clean_name = name_from_file if name_from_file else ""
+                    if not clean_name:
+                        temp_name = file_name.replace(designation, '').replace('.pdf', '').strip()
+                        temp_name = re.sub(r'[()\[\]_\-]+$', '', temp_name).strip()
+                        clean_name = temp_name
+                    
+                    # Проверка наличия кода документа
+                    has_code = False
+                    for code in all_known_codes:
+                        if not code:
+                            continue
+                        if f'-{code}' in designation or designation.endswith(code):
+                            has_code = True
+                            break
+
+                    if re.search(r'[A-ZА-Я]{4}\.\d{5}-\d{2}\s+\d{2}\s+\d{2}', designation):
+                        has_code = True
+                    
+                    if not has_code and clean_name:
+                        designations_map[designation] = clean_name
+                    elif has_code and clean_name:
+                        base_des = self.get_base_designation(designation)
+                        if base_des not in designations_map:
+                            designations_map[base_des] = clean_name
+            self.specification_names_cache.update(designations_map)
+            
+            # ИЗМЕНЕННЫЙ DataFrame с новым порядком столбцов
+            df = pd.DataFrame({
+                '№ п/п': number_pp,
+                'Наименование документа': ['' if not name else name for name in names],
+                'Обозначение документа ТД': numbers_TD_list,
+                'Обозначение документа КД': [kd if kd else pd for kd, pd in zip(numbers_KD_list, numbers_PD_list)],  # КД или ПД
+                'Обозначение ЭН': en_designations,
+                'Обозначение файла КД': insurance_KD,
+                'Обозначение файла ТД': insurance_TD,
+                'Контрольная сумма': file_checksums,
+                'Формат файла': file_formats,
+                'Физических листов': page_counts,
+                'А4': a4_counts,
+                'А3': a3_counts,
+                'А2': a2_counts,
+                'А1': a1_counts,
+                'А0': a0_counts,
+                'Доп. форматы': additional_counts,
+                'Листов формата А4': a4_sheets_counts,
+                'Объем, МБ': file_sizes,
+                'Гриф секретности': secrecy_grades,
+                'Примечание': notes,
+                'Путь к файлу': file_paths,
+                'Папка': folders,
+                'Имя файла': file_names,
+                '_mtime': file_mtimes
+            })
+            
+            # Получаем выбранный тип выгрузки
+            export_type = self.export_combo.currentText()
+            recursive = self.recursive_checkbox.isChecked()
+
+            # ========== СОРТИРОВКА ==========
+            preserve_order = self.preserve_order_checkbox.isChecked()
+
+            if preserve_order:
+                # РЕЖИМ ПОРЯДКА ИЗ ПАПКИ: сортируем по дате изменения файла (старые → новые)
+                df = df.sort_values('_mtime', ascending=True)
+            elif recursive:
+                # РЕКУРСИВНЫЙ РЕЖИМ: иерархическая сортировка по папкам и порядку КД
+                if export_type in ['Ведомость конструкторской документации', 'Опись конструкторской документации', 'Все данные']:
+                    kd_order = self.get_kd_order()
+
+                    def get_sort_key(row):
+                        folder = row['Папка']
+                        designation = row['Обозначение документа КД']
+
+                        if not designation:
+                            return (folder, "", 999, 0, "", 0)
+
+                        # Извлекаем базовый номер (включая -01, -02 и т.д. как часть базового номера)
+                        base_number = self.get_base_designation(designation)
+
+                        # Извлекаем номер исполнения для сортировки (если есть)
+                        exec_number = 0
+                        exec_match = re.search(r'-(\d+)(?=[A-ZА-Я]|$)', base_number)
+                        if exec_match:
+                            exec_number = int(exec_match.group(1))
+                            # Убираем номер исполнения из base_number для группировки
+                            base_number = re.sub(r'-\d+', '', base_number)
+
+                        # Очищаем обозначение от суффикса для определения кода
+                        clean_for_code = designation
+                        has_suffix = 0
+                        suffix_type = 0
+
+                        if designation.endswith('-ЛУ'):
+                            clean_for_code = designation[:-3]
+                            has_suffix = 1
+                            suffix_type = 1
+                        elif designation.endswith('-УЛ'):
+                            clean_for_code = designation[:-3]
+                            has_suffix = 1
+                            suffix_type = 2
+
+                        # Определяем код документа
+                        kd_mapping_local = self.get_kd_name_mapping()
+                        all_codes = [c for c in kd_mapping_local.keys() if c not in ['-ЛУ', '-УЛ', 'ЛУ', 'УЛ']]
+                        all_codes.sort(key=len, reverse=True)
+
+                        doc_code = None
+                        has_code = False
+
+                        for code in all_codes:
+                            if f'-{code}' in clean_for_code or clean_for_code.endswith(code):
+                                has_code = True
+                                doc_code = code
+                                break
+
+                        # Определяем порядок
+                        if not has_code:
+                            # Спецификация - порядок 0
+                            order = 0
+                            sort_suffix = 0
+                        else:
+                            # Получаем базовый порядок для кода
+                            base_order = kd_order.get(doc_code, 999)
+                            if has_suffix:
+                                order = base_order + 0.5
+                                sort_suffix = suffix_type
+                            else:
+                                order = base_order
+                                sort_suffix = 0
+
+                        # Ключ сортировки: папка, базовый номер (без номера исполнения), номер исполнения, порядок, суффикс
+                        return (folder, base_number, exec_number, order, sort_suffix, designation)
+
+                    df['_sort_key'] = df.apply(get_sort_key, axis=1)
+                    df = df.sort_values('_sort_key')
+                    df = df.drop(columns=['_sort_key'])
+                else:
+                    # Для ТД - сортировка по папкам и имени файла
+                    if 'Папка' in df.columns and 'Имя файла' in df.columns:
+                        df = df.sort_values(['Папка', 'Имя файла'])
+            else:
+                # НЕ РЕКУРСИВНЫЙ РЕЖИМ: простая сортировка по имени файла от А до Я
+                if 'Имя файла' in df.columns:
+                    df = df.sort_values('Имя файла', ascending=True)
+
+            # Удаляем вспомогательную колонку даты изменения
+            df = df.drop(columns=['_mtime'])
+
+            # Обновляем нумерацию после сортировки
+            df = df.reset_index(drop=True)
+            if '№ п/п' in df.columns:
+                df['№ п/п'] = range(1, len(df) + 1)
+
+            # ========== ФИЛЬТРАЦИЯ СТОЛБЦОВ (ДО СОХРАНЕНИЯ!) ==========
+            df = self.filter_columns_by_export_type(df, export_type)
+
+            # ЕЩЕ РАЗ ОБНОВЛЯЕМ НУМЕРАЦИЮ ПОСЛЕ ФИЛЬТРАЦИИ
+            df = df.reset_index(drop=True)
+            if '№ п/п' in df.columns:
+                df['№ п/п'] = range(1, len(df) + 1)
+
+            # Проверка, не открыт ли файл в другой программе
+            try:
+                # Проверяем возможность записи в файл
+                if os.path.exists(save_path):
+                    with open(save_path, 'a') as f:
+                        pass
+            except PermissionError:
+                error_message = f"Невозможно сохранить файл.\n\nФайл {os.path.basename(save_path)} открыт в другой программе (например, Excel).\n\nЗакройте файл и повторите попытку."
+                self.show_message_box('Файл заблокирован', error_message, QMessageBox.Warning)
+                self.start_button.setEnabled(True)
+                self.start_button.setText('Запустить анализ')
+                return
+
+            # Создаем папки, если их нет
+            os.makedirs(os.path.dirname(save_path), exist_ok=True)
+
+            # Сохраняем в Excel с именем листа "ОПИСЬ"
+            with pd.ExcelWriter(save_path, engine='openpyxl') as writer:
+                df.to_excel(writer, sheet_name='ОПИСЬ', index=False)
+
+            # Применяем форматирование к Excel файлу
+            self.format_excel_file(save_path)
+
+            # Формируем текст статистики (используем уже отфильтрованный df)
+            stats_text = (
+                f"Отчет успешно создан!\n\n"
+                f"Сохранен в: {save_path}\n\n"
+                f"Статистика:\n"
+                f"- Всего найдено файлов: {total_files}\n"
+                f"- Успешно обработано: {processed_files}\n"
+            )
+
+            # Добавляем статистику в зависимости от типа выгрузки
+            if export_type == 'Ведомость технологической документации':
+                stats_text += f"- Файлов с обозначением ТД: {df['Обозначение документа ТД'].astype(bool).sum()}\n"
+            elif export_type == 'Ведомость конструкторской документации':
+                stats_text += f"- Файлов с обозначением КД/ПД: {df['Обозначение документа КД'].astype(bool).sum()}\n"
+            elif export_type == 'Опись конструкторской документации':
+                stats_text += f"- Файлов в описи КД/ПД: {len(df)}\n"
+            else:  # 'Все данные'
+                stats_text += f"- Файлов с обозначением КД/ПД: {df['Обозначение документа КД'].astype(bool).sum()}\n"
+                stats_text += f"- Файлов с обозначением ТД: {df['Обозначение документа ТД'].astype(bool).sum()}\n"
+
+            # Добавляем описание типа выгрузки
+            if export_type == 'Ведомость технологической документации':
+                stats_text += f"Выгружен отчет по технологической документации (ТД).\n"
+            elif export_type == 'Ведомость конструкторской документации':
+                stats_text += f"Выгружен отчет по конструкторской/программной документации (КД/ПД).\n"
+            elif export_type == 'Опись конструкторской документации':
+                stats_text += f"Выгружена опись конструкторской/программной документации (КД/ПД) - сокращенный формат.\n"
+            else:
+                stats_text += f"Выгружен полный отчет со всеми данными.\n"
+
+            # Если были ошибки, добавляем информацию о них
+            if error_files:
+                stats_text += f"\n\nФайлы с ошибками ({len(error_files)}):\n"
+                for error in error_files[:5]:  # Показываем только первые 5 ошибок
+                    stats_text += f"- {error}\n"
+                if len(error_files) > 5:
+                    stats_text += f"... и еще {len(error_files) - 5} файлов с ошибками\n"
+
+            # Показываем диалоговое окно со статистикой
+            self.show_stats_dialog(stats_text, save_path)
+            
+        except PermissionError as e:
+            # Специальная обработка ошибки доступа к файлу
+            error_message = f"Ошибка доступа к файлу.\n\nВозможно, файл отчета открыт в другой программе (например, Excel).\n\nЗакройте файл и повторите попытку.\n\nПуть к файлу: {save_path}"
+            self.show_message_box('Ошибка доступа к файлу', error_message, QMessageBox.Critical)
+            
+        except Exception as e:
+            # Закрываем диалоговое окно прогресса если оно открыто
+            if hasattr(self, 'progress_dialog') and self.progress_dialog:
+                self.close_progress_dialog()
+            
+            self.show_message_box('Ошибка', f'Произошла ошибка: {str(e)}', QMessageBox.Critical)
+        finally:
+            # Включаем кнопку обратно
+            self.start_button.setEnabled(True)
+            self.start_button.setText('Запустить анализ')
+            self.processing_cancelled = False  # Сбрасываем флаг отмены
+            
+    def get_resource_path(self, filename):
+        if hasattr(sys, '_MEIPASS'):
+            return os.path.join(sys._MEIPASS, filename)
+        return filename
+
+def main():
+    app = QApplication([])
+    ex = PDFAnalyzer()
+    ex.show()
+    app.exec_()
+
+if __name__ == '__main__':
+    main()
