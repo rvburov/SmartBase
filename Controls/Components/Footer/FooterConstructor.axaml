@@ -21,7 +21,7 @@
                     ToolTip.Tip="Фильтр">
                 <Viewbox Width="18" Height="18">
                     <Canvas Width="24" Height="24">
-                        <Path Data="M10 20a1 1 0 0 0 .553.895l2 1A1 1 0 0 0 14 21v-7a2 2 0 0 1 .517-1.341L21.74 4.67A1 1 0 0 0 21 3H3a1 1 0 0 0-.742 1.67l7.225 7.989A2 2 0 0 1 10 14z"
+                        <Path Data="{StaticResource IconFilter}"
                               Stroke="{Binding $parent[Button].Foreground}"
                               StrokeThickness="1.6"
                               StrokeLineCap="Round" StrokeJoin="Round" />
@@ -37,7 +37,7 @@
                     ToolTip.Tip="Сортировка">
                 <Viewbox Width="18" Height="18">
                     <Canvas Width="24" Height="24">
-                        <Path Data="M3 16 L7 20 L11 16 M7 20 V4 M11 4 H21 M11 8 H18 M11 12 H15"
+                        <Path Data="{StaticResource IconSortDesc}"
                               Stroke="{Binding $parent[Button].Foreground}"
                               StrokeThickness="1.6"
                               StrokeLineCap="Round" StrokeJoin="Round" />
@@ -62,7 +62,7 @@
                         ToolTip.Tip="Предыдущая страница">
                     <Viewbox Width="18" Height="18">
                         <Canvas Width="24" Height="24">
-                            <Path Data="M15 18 L9 12 L15 6"
+                            <Path Data="{StaticResource IconChevronLeft}"
                                   Stroke="{Binding $parent[Button].Foreground}"
                                   StrokeThickness="2"
                                   StrokeLineCap="Round" StrokeJoin="Round" />
@@ -83,7 +83,7 @@
                         ToolTip.Tip="Следующая страница">
                     <Viewbox Width="18" Height="18">
                         <Canvas Width="24" Height="24">
-                            <Path Data="M9 18 L15 12 L9 6"
+                            <Path Data="{StaticResource IconChevronRight}"
                                   Stroke="{Binding $parent[Button].Foreground}"
                                   StrokeThickness="2"
                                   StrokeLineCap="Round" StrokeJoin="Round" />

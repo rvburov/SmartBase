@@ -40,14 +40,14 @@
                     <Canvas Width="24" Height="24">
                         <!-- arrow-right-from-line: коллекция закрыта → клик откроет (→) -->
                         <Path x:Name="CollectionOpenIcon"
-                              Data="M3 5 V19 M21 12 H7 M15 18 L21 12 L15 6"
+                              Data="{StaticResource IconArrowRightFromLine}"
                               Stroke="{Binding $parent[ToggleButton].Foreground}"
                               StrokeThickness="1.6"
                               StrokeLineCap="Round" StrokeJoin="Round" />
                         <!-- arrow-left-to-line: коллекция открыта → клик закроет (←) -->
                         <Path x:Name="CollectionCloseIcon"
                               IsVisible="False"
-                              Data="M3 19 V5 M13 6 L7 12 L13 18 M7 12 H21"
+                              Data="{StaticResource IconArrowLeftToLine}"
                               Stroke="{Binding $parent[ToggleButton].Foreground}"
                               StrokeThickness="1.6"
                               StrokeLineCap="Round" StrokeJoin="Round" />

@@ -50,14 +50,14 @@
                     <Canvas Width="24" Height="24">
                         <!-- arrow-left-from-line: панель закрыта → клик откроет (←) -->
                         <Path x:Name="RecordOpenIcon"
-                              Data="M9 6 L3 12 L9 18 M3 12 H17 M21 19 V5"
+                              Data="{StaticResource IconArrowLeftFromLine}"
                               Stroke="{Binding $parent[ToggleButton].Foreground}"
                               StrokeThickness="1.6"
                               StrokeLineCap="Round" StrokeJoin="Round" />
                         <!-- arrow-right-to-line: панель открыта → клик закроет (→) -->
                         <Path x:Name="RecordCloseIcon"
                               IsVisible="False"
-                              Data="M17 12 H3 M11 18 L17 12 L11 6 M21 5 V19"
+                              Data="{StaticResource IconArrowRightToLine}"
                               Stroke="{Binding $parent[ToggleButton].Foreground}"
                               StrokeThickness="1.6"
                               StrokeLineCap="Round" StrokeJoin="Round" />

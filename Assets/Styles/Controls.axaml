@@ -465,7 +465,7 @@
                 <Grid RowDefinitions="20,4,*,4,20" Background="Transparent">
                     <RepeatButton Grid.Row="0" Name="PART_LineUpButton" Theme="{StaticResource ScrollLineButton}" Margin="2,0">
                         <Viewbox Width="10" Height="7" Stretch="Uniform">
-                            <Path Classes="arrow" Data="M1 6 L7 1 L13 6" />
+                            <Path Classes="arrow" Data="{StaticResource IconScrollUp}" />
                         </Viewbox>
                     </RepeatButton>
                     <Border Grid.Row="2" Background="#EDEDF0" CornerRadius="4" Margin="2,0" Padding="0,2">
@@ -488,7 +488,7 @@
                     </Border>
                     <RepeatButton Grid.Row="4" Name="PART_LineDownButton" Theme="{StaticResource ScrollLineButton}" Margin="2,0">
                         <Viewbox Width="10" Height="7" Stretch="Uniform">
-                            <Path Classes="arrow" Data="M1 1 L7 6 L13 1" />
+                            <Path Classes="arrow" Data="{StaticResource IconScrollDown}" />
                         </Viewbox>
                     </RepeatButton>
                 </Grid>
@@ -505,7 +505,7 @@
                 <Grid ColumnDefinitions="20,4,*,4,20" Background="Transparent">
                     <RepeatButton Grid.Column="0" Name="PART_LineUpButton" Theme="{StaticResource ScrollLineButton}" Margin="0,2">
                         <Viewbox Width="7" Height="10" Stretch="Uniform">
-                            <Path Classes="arrow" Data="M6 1 L1 7 L6 13" />
+                            <Path Classes="arrow" Data="{StaticResource IconScrollLeft}" />
                         </Viewbox>
                     </RepeatButton>
                     <Border Grid.Column="2" Background="#EDEDF0" CornerRadius="4" Margin="0,2" Padding="2,0">
@@ -527,7 +527,7 @@
                     </Border>
                     <RepeatButton Grid.Column="4" Name="PART_LineDownButton" Theme="{StaticResource ScrollLineButton}" Margin="0,2">
                         <Viewbox Width="7" Height="10" Stretch="Uniform">
-                            <Path Classes="arrow" Data="M1 1 L6 7 L1 13" />
+                            <Path Classes="arrow" Data="{StaticResource IconScrollRight}" />
                         </Viewbox>
                     </RepeatButton>
                 </Grid>
@@ -580,7 +580,7 @@
                     <Viewbox Width="16" Height="16"
                              VerticalAlignment="Center" HorizontalAlignment="Center">
                         <Canvas Width="24" Height="24">
-                            <Path Data="M6 9 L12 15 L18 9"
+                            <Path Data="{StaticResource IconChevronDown}"
                                   Stroke="{StaticResource BrushSecondaryText}"
                                   StrokeThickness="2"
                                   StrokeLineCap="Round"

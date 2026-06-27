@@ -19,14 +19,14 @@
                     <Canvas Width="24" Height="24">
                         <!-- pencil-line: режим динамического просмотра (виден в режиме редактора) -->
                         <Path x:Name="IconToPreview"
-                              Data="M13 21 H21 M15 5 L19 9 M21.174 6.812 A1 1 0 0 0 17.188 2.825 L3.842 16.174 A2 2 0 0 0 3.342 17.004 L2.021 21.356 A0.5 0.5 0 0 0 2.644 21.978 L6.997 20.658 A2 2 0 0 0 7.827 20.161 Z"
+                              Data="{StaticResource IconPencil}"
                               Stroke="{Binding $parent[ToggleButton].Foreground}"
                               StrokeThickness="1.6"
                               StrokeLineCap="Round" StrokeJoin="Round" />
                         <!-- code-xml: просмотр исходного текста (виден в режиме просмотра) -->
                         <Path x:Name="IconToSource"
                               IsVisible="False"
-                              Data="M18 16 L22 12 L18 8 M6 8 L2 12 L6 16 M14.5 4 L9.5 20"
+                              Data="{StaticResource IconCode}"
                               Stroke="{Binding $parent[ToggleButton].Foreground}"
                               StrokeThickness="1.6"
                               StrokeLineCap="Round" StrokeJoin="Round" />

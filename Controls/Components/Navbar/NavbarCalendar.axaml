@@ -26,7 +26,7 @@
                 ToolTip.Tip="Добавить запись">
             <Viewbox Width="18" Height="18">
                 <Canvas Width="24" Height="24">
-                    <Path Data="M5 12 H19 M12 5 V19"
+                    <Path Data="{StaticResource IconPlus}"
                           Stroke="{Binding $parent[Button].Foreground}"
                           StrokeThickness="2"
                           StrokeLineCap="Round"
@@ -58,7 +58,7 @@
                 ToolTip.Tip="Назад">
             <Viewbox Width="18" Height="18">
                 <Canvas Width="24" Height="24">
-                    <Path Data="M12 19 L5 12 L12 5 M5 12 H19"
+                    <Path Data="{StaticResource IconArrowLeft}"
                           Stroke="{Binding $parent[Button].Foreground}"
                           StrokeThickness="2"
                           StrokeLineCap="Round"
@@ -77,7 +77,7 @@
                 ToolTip.Tip="Вперёд">
             <Viewbox Width="18" Height="18">
                 <Canvas Width="24" Height="24">
-                    <Path Data="M5 12 H19 M12 5 L19 12 L12 19"
+                    <Path Data="{StaticResource IconArrowRight}"
                           Stroke="{Binding $parent[Button].Foreground}"
                           StrokeThickness="2"
                           StrokeLineCap="Round"

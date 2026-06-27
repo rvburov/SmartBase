@@ -72,7 +72,7 @@
                             <Button Grid.Column="1" x:Name="StartTimeArrow" Classes="timeArrow">
                                 <Viewbox Width="16" Height="16">
                                     <Canvas Width="24" Height="24">
-                                        <Path Data="M6 9 L12 15 L18 9"
+                                        <Path Data="{StaticResource IconChevronDown}"
                                               Stroke="{StaticResource BrushSecondaryText}"
                                               StrokeThickness="2"
                                               StrokeLineCap="Round"
@@ -113,7 +113,7 @@
                             <Button Grid.Column="1" x:Name="EndTimeArrow" Classes="timeArrow">
                                 <Viewbox Width="16" Height="16">
                                     <Canvas Width="24" Height="24">
-                                        <Path Data="M6 9 L12 15 L18 9"
+                                        <Path Data="{StaticResource IconChevronDown}"
                                               Stroke="{StaticResource BrushSecondaryText}"
                                               StrokeThickness="2"
                                               StrokeLineCap="Round"

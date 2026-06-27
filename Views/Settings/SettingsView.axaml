@@ -147,7 +147,7 @@
                                     <Viewbox Width="16" Height="16">
                                         <Canvas Width="24" Height="24">
                                             <!-- rotate-ccw -->
-                                            <Path Data="M3 12 a9 9 0 1 0 9 -9 a9.75 9.75 0 0 0 -6.74 2.74 L3 8 M3 3 V8 H8"
+                                            <Path Data="{StaticResource IconRotateCcw}"
                                                   Stroke="{Binding $parent[Button].Foreground}"
                                                   StrokeThickness="1.8"
                                                   StrokeLineCap="Round" StrokeJoin="Round" />
@@ -175,7 +175,7 @@
                                     <Viewbox Width="16" Height="16">
                                         <Canvas Width="24" Height="24">
                                             <!-- rotate-ccw -->
-                                            <Path Data="M3 12 a9 9 0 1 0 9 -9 a9.75 9.75 0 0 0 -6.74 2.74 L3 8 M3 3 V8 H8"
+                                            <Path Data="{StaticResource IconRotateCcw}"
                                                   Stroke="{Binding $parent[Button].Foreground}"
                                                   StrokeThickness="1.8"
                                                   StrokeLineCap="Round" StrokeJoin="Round" />
@@ -257,7 +257,7 @@
                                                 <Viewbox Width="16" Height="16">
                                                     <Canvas Width="24" Height="24">
                                                         <!-- trash -->
-                                                        <Path Data="M3 6 H21 M8 6 V4 A1 1 0 0 1 9 3 H15 A1 1 0 0 1 16 4 V6 M19 6 V20 A2 2 0 0 1 17 22 H7 A2 2 0 0 1 5 20 V6 M10 11 V17 M14 11 V17"
+                                                        <Path Data="{StaticResource IconTrash}"
                                                               Stroke="{Binding $parent[Button].Foreground}"
                                                               StrokeThickness="1.6"
                                                               StrokeLineCap="Round" StrokeJoin="Round" />
