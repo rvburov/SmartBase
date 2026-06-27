@@ -8,8 +8,7 @@
 
         <!-- Линия-разделитель снизу -->
         <Border DockPanel.Dock="Bottom"
-                Height="1"
-                Background="{StaticResource BrushSeparator}" />
+                Classes="separator h" />
 
         <!-- Заголовок слева, переключатель вида + toggle панели записи справа -->
         <Grid ColumnDefinitions="*,Auto,Auto" Margin="16,0">

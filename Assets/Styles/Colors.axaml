@@ -9,9 +9,8 @@
     <Color x:Key="ColorInactiveBg">#FAFAFA</Color>
     <Color x:Key="ColorActivityBar">#EBEBEB</Color>
 
-    <!-- Разделители -->
+    <!-- Разделители. Единый цвет всех линий в приложении. -->
     <Color x:Key="ColorSeparator">#E5E5EA</Color>
-    <Color x:Key="ColorGridLine">#E8E8E8</Color>
 
     <!-- Текст -->
     <Color x:Key="ColorPrimaryText">#1C1C1E</Color>

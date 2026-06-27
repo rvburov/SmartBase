@@ -10,6 +10,10 @@
         <CornerRadius x:Key="RadiusLarge">12</CornerRadius>
         <CornerRadius x:Key="RadiusPill">15</CornerRadius>
 
+        <!-- Толщина всех разделительных линий (1 DIP). Цвет линий — BrushSeparator.
+             Меняешь здесь — меняется толщина во всём приложении. -->
+        <x:Double x:Key="SeparatorThickness">1</x:Double>
+
         <!-- Цвет скроллбара -->
         <SolidColorBrush x:Key="BrushScrollbar" Color="#C7C7CC" />
 
@@ -55,11 +59,30 @@
     <!-- Window -->
     <Style Selector="Window">
         <Setter Property="Background" Value="{StaticResource BrushBg}" />
+        <!-- Округление координат к физическим пикселям наследуется вниз по дереву:
+             1px-линии остаются ровно 1px и не «толстеют» на дробном масштабе ОС. -->
+        <Setter Property="UseLayoutRounding" Value="True" />
     </Style>
     <!-- Минимальный размер только у главного окна, не у диалогов -->
     <Style Selector="Window.main">
         <Setter Property="MinWidth"  Value="1100" />
         <Setter Property="MinHeight" Value="760" />
+    </Style>
+
+    <!-- ── Разделительная линия ───────────────────────────────────────────
+         Единый цвет (BrushSeparator) + толщина (SeparatorThickness) в одном месте.
+         Использование:
+           <Border Classes="separator h" />   горизонтальная (тянется по ширине)
+           <Border Classes="separator v" />   вертикальная   (тянется по высоте)
+         Позиционирование (VerticalAlignment/Margin/ColumnSpan) задаётся по месту. -->
+    <Style Selector="Border.separator">
+        <Setter Property="Background" Value="{StaticResource BrushSeparator}" />
+    </Style>
+    <Style Selector="Border.separator.h">
+        <Setter Property="Height" Value="{StaticResource SeparatorThickness}" />
+    </Style>
+    <Style Selector="Border.separator.v">
+        <Setter Property="Width" Value="{StaticResource SeparatorThickness}" />
     </Style>
 
     <!-- Button -->

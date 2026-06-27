@@ -71,8 +71,7 @@
 
         <!-- Черта между блоками (на всю высоту) -->
         <Border Grid.Column="1"
-                Width="1"
-                Background="{StaticResource BrushSeparator}" />
+                Classes="separator v" />
 
         <!-- Правый блок: активитибар уровней (на всю высоту, заподлицо).
              Числа — сверху; «+» и «−» прибиты к низу. -->

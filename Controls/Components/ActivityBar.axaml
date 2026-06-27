@@ -36,7 +36,7 @@
 
         <!-- Короткий разделитель на высоте линии сайдбара (Y=56):
              12 (панель) + 32 (бургер) + 8 (Spacing) + 4 = 56 -->
-        <Separator Background="{StaticResource BrushSeparator}" Height="1" Margin="0,4,0,4" />
+        <Border Classes="separator h" Margin="0,4" />
 
         <!-- Модуль: Календарь -->
         <ToggleButton x:Name="CalendarBtn" Classes="icon module"

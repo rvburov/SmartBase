@@ -101,8 +101,11 @@
 
             <!-- ── Общие ─────────────────────────────────────────── -->
             <ScrollViewer x:Name="GeneralPanel" VerticalScrollBarVisibility="Auto">
-                <StackPanel Margin="32,16,32,32" Spacing="12" MaxWidth="720"
-                            HorizontalAlignment="Left">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" MaxWidth="1400" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Margin="32,16,32,32" Spacing="12">
                     <TextBlock Text="Основные параметры приложения."
                                Foreground="{StaticResource BrushSecondaryText}" />
 
@@ -121,13 +124,18 @@
                                       IsCheckedChanged="OnAsyncRowLoadChanged" />
                         </Grid>
                     </Border>
-                </StackPanel>
+                    </StackPanel>
+                </Grid>
             </ScrollViewer>
 
             <!-- ── Оформление ────────────────────────────────────── -->
             <ScrollViewer x:Name="AppearancePanel" IsVisible="False"
                           VerticalScrollBarVisibility="Auto">
-                <StackPanel Margin="32,0,32,32" MaxWidth="720">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" MaxWidth="1400" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Margin="32,0,32,32">
 
                     <!-- Уровень масштабирования -->
                     <Border Classes="settingRow">
@@ -185,13 +193,18 @@
                         </Grid>
                     </Border>
 
-                </StackPanel>
+                    </StackPanel>
+                </Grid>
             </ScrollViewer>
 
             <!-- ── Управление базой данных ───────────────────────── -->
             <ScrollViewer x:Name="DatabasePanel" IsVisible="False"
                           VerticalScrollBarVisibility="Auto">
-                <StackPanel Margin="32,16,32,32" Spacing="16" MaxWidth="720">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" MaxWidth="1400" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Margin="32,16,32,32" Spacing="16">
 
                     <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Left">
                         <Button x:Name="CreateDatabaseBtn"
@@ -264,14 +277,18 @@
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
 
-                </StackPanel>
+                    </StackPanel>
+                </Grid>
             </ScrollViewer>
 
             <!-- ── О программе ───────────────────────────────────── -->
             <ScrollViewer x:Name="AboutPanel" IsVisible="False"
                           VerticalScrollBarVisibility="Auto">
-                <StackPanel Margin="32,16,32,32" Spacing="6" MaxWidth="640"
-                            HorizontalAlignment="Left">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" MaxWidth="1400" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Margin="32,16,32,32" Spacing="6">
                     <TextBlock Text="DataBase"
                                FontSize="{StaticResource FontSizeLarge}"
                                FontWeight="{StaticResource FontWeightBold}"
@@ -279,7 +296,8 @@
                     <TextBlock x:Name="VersionText"
                                Text="Версия 1.0.0"
                                Foreground="{StaticResource BrushSecondaryText}" />
-                </StackPanel>
+                    </StackPanel>
+                </Grid>
             </ScrollViewer>
 
         </Grid>

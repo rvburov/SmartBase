@@ -30,7 +30,7 @@
         </Grid>
 
         <Border DockPanel.Dock="Top"
-                Height="1" Background="{StaticResource BrushSeparator}" />
+                Classes="separator h" />
 
         <!-- Список существующих полей -->
         <StackPanel DockPanel.Dock="Top" Spacing="8" Margin="20,16">
@@ -87,7 +87,7 @@
         </StackPanel>
 
         <Border DockPanel.Dock="Top"
-                Height="1" Background="{StaticResource BrushSeparator}" />
+                Classes="separator h" />
 
         <!-- Добавление нового свойства -->
         <StackPanel DockPanel.Dock="Top"

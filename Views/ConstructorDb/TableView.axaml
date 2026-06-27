@@ -65,6 +65,14 @@
     </UserControl.Styles>
 
     <!-- DataGrid + накладная рамка выделенной колонки (позиционируется в коде). -->
+    <!-- ВНИМАНИЕ по линиям сетки. Остальные линии приложения унифицированы через
+         стиль Border.separator + токены BrushSeparator/SeparatorThickness (см. Controls.axaml).
+         Здесь линии рисует НАТИВНАЯ сетка DataGrid (GridLinesVisibility="All"): цвет уже на
+         BrushSeparator, UseLayoutRounding включён. На Windows с дробным масштабом эта сетка
+         могла выглядеть толще остальных линий.
+         НЕ переводить на линии-Border в ячейках без проверки на Windows: слой подсветки
+         выделенных колонок (RefreshColumnHighlights в code-behind) позиционирует рамки по
+         X-координатам линий сетки — смена механизма сдвинет линии на ~1px и сломает выравнивание. -->
     <Panel>
         <DataGrid x:Name="RecordsGrid"
                   AutoGenerateColumns="False"

@@ -9,7 +9,7 @@
         <!-- Навбар с навигацией и поиском -->
         <comp:Navbar Grid.Row="0" x:Name="NavbarControl" />
 
-        <Border Grid.Row="1" Height="1" Background="{StaticResource BrushSeparator}" />
+        <Border Grid.Row="1" Classes="separator h" />
 
         <!-- Стек вьюх: 0-Расписание, 1-Журнал, 2-День, 3-Неделя, 4-Месяц, 5-Год -->
         <Grid Grid.Row="2">

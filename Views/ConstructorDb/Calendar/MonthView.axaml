@@ -7,7 +7,7 @@
 
         <!-- Заголовки дней недели -->
         <Border Grid.Row="0"
-                BorderBrush="#E8E8E8"
+                BorderBrush="{StaticResource BrushSeparator}"
                 BorderThickness="0">
         <UniformGrid Columns="7"
                      Background="{StaticResource BrushSecondaryBg}">

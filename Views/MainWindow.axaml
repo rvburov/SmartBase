@@ -29,8 +29,7 @@
 
         <!-- Вертикальный разделитель справа от ActivityBar -->
         <Border Grid.Column="1"
-                Width="1"
-                Background="{StaticResource BrushSeparator}" />
+                Classes="separator v" />
 
         <!-- Боковые панели (скрываются/показываются по модулю).
              Разделительная линия — правая граница Border. Ручка вынесена в колонку 3
@@ -57,9 +56,8 @@
         <!-- Вертикальный разделитель слева от панели записи -->
         <Border Grid.Column="4"
                 x:Name="RecordPanelSeparator"
-                Width="1"
-                IsVisible="False"
-                Background="{StaticResource BrushSeparator}" />
+                Classes="separator v"
+                IsVisible="False" />
 
         <!-- Правая панель «Страница записи» (Obsidian-style) -->
         <Grid Grid.Column="5">
@@ -93,16 +91,14 @@
         <!-- Линия под титульной зоной (на высоте навбара = 56px) через сайдбар,
              контент и панель записи. ActivityBar имеет собственный короткий разделитель. -->
         <Border Grid.Column="1" Grid.ColumnSpan="5"
-                Height="1"
+                Classes="separator h"
                 VerticalAlignment="Top"
-                Margin="0,56,0,0"
-                Background="{StaticResource BrushSeparator}" />
+                Margin="0,56,0,0" />
 
         <!-- Самая верхняя линия окна — единой полосой над всеми колонками -->
         <Border Grid.Column="0" Grid.ColumnSpan="6"
-                Height="1"
-                VerticalAlignment="Top"
-                Background="{StaticResource BrushSeparator}" />
+                Classes="separator h"
+                VerticalAlignment="Top" />
 
         <!-- Ручка ресайза сайдбара. Закреплена у правого края колонки сайдбара и висит
              поверх соседнего блока (коллекции или записи) за счёт отрицательного отступа —

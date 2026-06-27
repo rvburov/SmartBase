@@ -14,7 +14,7 @@
 
         <!-- Заголовки дней недели — 72px пустой отступ + 7 равных колонок -->
         <Border Grid.Row="0"
-                BorderBrush="#E8E8E8"
+                BorderBrush="{StaticResource BrushSeparator}"
                 BorderThickness="0,0,0,1">
             <Grid ColumnDefinitions="72,*"
                   Background="{StaticResource BrushSecondaryBg}">
@@ -31,7 +31,7 @@
 
                 <!-- Метки часов: каждая метка прижата к низу 60px-слота,
                      чтобы "01:00" совпадал с линией между 00:xx и 01:xx -->
-                <Border Grid.Column="0" BorderBrush="#E8E8E8" BorderThickness="0">
+                <Border Grid.Column="0" BorderBrush="{StaticResource BrushSeparator}" BorderThickness="0">
                 <ItemsControl x:Name="HourLabels">
                     <ItemsControl.ItemsPanel>
                         <ItemsPanelTemplate>
@@ -70,7 +70,7 @@
                             <DataTemplate>
                                 <Grid Height="60" ClipToBounds="True">
                                     <!-- сплошная линия часа (скрыта для 00:00) -->
-                                    <Border BorderBrush="#E0E0E0"
+                                    <Border BorderBrush="{StaticResource BrushSeparator}"
                                             BorderThickness="{Binding Converter={StaticResource HourBorderConv}}"
                                             VerticalAlignment="Top" />
                                     <!-- пунктирная линия получаса -->
@@ -78,7 +78,7 @@
                                                  Margin="0,30,0,0"
                                                  VerticalAlignment="Top"
                                                  HorizontalAlignment="Left"
-                                                 Stroke="#E0E0E0"
+                                                 Stroke="{StaticResource BrushSeparator}"
                                                  StrokeThickness="1"
                                                  StrokeDashArray="3,3" />
                                 </Grid>

@@ -62,9 +62,8 @@
         </Grid>
 
         <Border Grid.Row="0"
-                Height="1"
-                VerticalAlignment="Bottom"
-                Background="{StaticResource BrushSeparator}" />
+                Classes="separator h"
+                VerticalAlignment="Bottom" />
 
         <!-- Свойства (всё кроме системного «Название» и markdown).
              В ScrollViewer: когда ручкой ниже задана пиксельная высота строки и
@@ -83,9 +82,8 @@
              края с отрицательным нижним отступом, поэтому центрируется на линии, не
              занимает высоту и не отодвигает контент (как ручки сайдбара/панели записи). -->
         <Border Grid.Row="2"
-                Height="1"
-                VerticalAlignment="Center"
-                Background="{StaticResource BrushSeparator}" />
+                Classes="separator h"
+                VerticalAlignment="Center" />
 
         <Border Grid.Row="1"
                 x:Name="PropsResizeGrip"
@@ -142,8 +140,7 @@
         <Border Grid.Row="4" Height="57" Background="{StaticResource BrushBg}">
             <DockPanel>
                 <Border DockPanel.Dock="Top"
-                        Height="1"
-                        Background="{StaticResource BrushSeparator}" />
+                        Classes="separator h" />
 
                 <Grid Margin="16,0">
                     <ToggleButton x:Name="PreviewToggle" Classes="navbtn"
