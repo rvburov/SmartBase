@@ -5,6 +5,7 @@ using Avalonia.Platform.Storage;
 using DataBase.Controls.Dialogs;
 using DataBase.Database;
 using DataBase.Database.Entities;
+using DataBase.Settings;
 using DataBase.Utils;
 
 namespace DataBase.Views.Settings;
@@ -59,13 +60,8 @@ public partial class SettingsView : UserControl
         DatabasePanel.IsVisible   = key == "database";
         AboutPanel.IsVisible      = key == "about";
 
-        HeaderBar.Title = key switch
-        {
-            "appearance" => "Оформление",
-            "database"   => "Управление базой данных",
-            "about"      => "О программе",
-            _            => "Общие",
-        };
+        // Заголовок берём из реестра по ключу — единственный источник подписей разделов.
+        HeaderBar.Title = (SettingsRegistry.FindByKey(key) ?? SettingsRegistry.All[0]).Label;
     }
 
     // ── Управление базой данных ──────────────────────────────────────────────

@@ -7,10 +7,10 @@ namespace DataBase.Database;
 /// <summary>
 /// Реестр пользовательских БД поверх системной app.db. Гарантирует наличие единственной
 /// дефолтной БД (текущий database.db), которую нельзя удалить. Здесь же — хранилище
-/// настроек приложения (<see cref="IAppSettingsStore"/>, таблица app_settings): контекст
+/// настроек приложения (<see cref="ISettingsDatabase"/>, таблица app_settings): контекст
 /// app.db живёт всё время работы приложения, поэтому настройки читаются/пишутся через него.
 /// </summary>
-public sealed class DatabaseRegistry : IDisposable, IAppSettingsStore
+public sealed class DatabaseRegistry : IDisposable, ISettingsDatabase
 {
     private readonly SystemDbContext _db;
 
@@ -36,7 +36,7 @@ public sealed class DatabaseRegistry : IDisposable, IAppSettingsStore
             "\"Key\" TEXT NOT NULL CONSTRAINT \"PK_app_settings\" PRIMARY KEY, " +
             "\"Value\" TEXT NOT NULL);");
 
-    // ── Настройки приложения (IAppSettingsStore поверх app.db) ──────────────────
+    // ── Настройки приложения (ISettingsDatabase поверх app.db) ──────────────────
 
     /// <summary>Значение настройки по ключу или null, если ключа нет.</summary>
     public string? Get(string key) =>
@@ -48,6 +48,15 @@ public sealed class DatabaseRegistry : IDisposable, IAppSettingsStore
         var row = _db.Settings.FirstOrDefault(s => s.Key == key);
         if (row is null) _db.Settings.Add(new AppSettingEntity { Key = key, Value = value });
         else             row.Value = value;
+        _db.SaveChanges();
+    }
+
+    /// <summary>Удалить настройку — значение возвращается к дефолту в коде. Нет строки — no-op.</summary>
+    public void Remove(string key)
+    {
+        var row = _db.Settings.FirstOrDefault(s => s.Key == key);
+        if (row is null) return;
+        _db.Settings.Remove(row);
         _db.SaveChanges();
     }
 

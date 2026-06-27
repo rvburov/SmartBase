@@ -22,4 +22,8 @@ public static class SettingsRegistry
         new("about", "О программе",
             "M12 2 A10 10 0 1 0 12 22 A10 10 0 1 0 12 2 Z M12 16 V11 M11.99 8 H12.01"),
     ];
+
+    /// <summary>Раздел по ключу или null, если такого нет.</summary>
+    public static SettingsCategory? FindByKey(string key) =>
+        All.FirstOrDefault(c => c.Key == key);
 }
