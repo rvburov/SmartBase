@@ -1,11 +1,10 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             x:Class="DataBase.Controls.Components.ExtensionsSidebar"
+             x:Class="DataBase.Controls.Components.SidebarList"
              Background="{StaticResource BrushBg}">
 
     <UserControl.Styles>
-        <!-- Строка раздела — те же метрики, что у строки сайдбара настроек:
-             подсветка во всю ширину без скруглений, hover #F2F2F7, выбор #E5F0FF. -->
+        <!-- Строка списка — подсветка во всю ширину без скруглений, hover/selected. -->
         <Style Selector="Border.navrow">
             <Setter Property="Background" Value="Transparent" />
             <Setter Property="Cursor"     Value="Hand" />
@@ -34,16 +33,16 @@
 
     <DockPanel>
 
-        <!-- Заголовок раздела (высота 56 — выравнивание с линией навбара) -->
+        <!-- Заголовок раздела (высота 56, отступ 16 — как у навбаров) -->
         <Border DockPanel.Dock="Top" Height="56" Padding="16,0">
-            <TextBlock Text="Расширения"
+            <TextBlock x:Name="TitleText"
                        VerticalAlignment="Center"
                        FontSize="{StaticResource FontSizeLarge}"
                        FontWeight="{StaticResource FontWeightBold}"
                        Foreground="{StaticResource BrushPrimaryText}" />
         </Border>
 
-        <!-- Список расширений: строки строятся в code-behind из ExtensionRegistry -->
+        <!-- Пункты: строки строятся в code-behind из SetItems -->
         <StackPanel x:Name="RowsHost" />
 
     </DockPanel>

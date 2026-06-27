@@ -1,0 +1,61 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="DataBase.Controls.Components.NavbarPage"
+             Height="56"
+             Background="{StaticResource BrushBg}">
+
+    <!-- Своей линии-разделителя нет: нижнюю границу титульной зоны рисует общая линия
+         окна на y=56 (MainWindow), иначе линии удваивались бы в 2px. -->
+    <DockPanel>
+
+        <!-- Редактируемое имя записи слева + toggle блока коллекции справа -->
+        <Grid ColumnDefinitions="*,Auto" Margin="16,0">
+
+            <TextBlock Grid.Column="0" x:Name="TitleDisplay"
+                       HorizontalAlignment="Stretch"
+                       VerticalAlignment="Center"
+                       FontSize="{StaticResource FontSizeLarge}"
+                       FontWeight="{StaticResource FontWeightBold}"
+                       Foreground="{StaticResource BrushPrimaryText}"
+                       TextTrimming="CharacterEllipsis"
+                       Cursor="IBeam"
+                       Margin="0,0,12,0" />
+
+            <TextBox Grid.Column="0" x:Name="TitleBox"
+                     Classes="titleEditor"
+                     IsVisible="False"
+                     Watermark="Без названия"
+                     VerticalAlignment="Center"
+                     FontSize="{StaticResource FontSizeLarge}"
+                     FontWeight="{StaticResource FontWeightBold}"
+                     Foreground="{StaticResource BrushPrimaryText}"
+                     Margin="0,0,12,0" />
+
+            <ToggleButton Grid.Column="1" x:Name="CollectionPanelBtn" Classes="navbtn"
+                          Width="30" Height="30"
+                          VerticalAlignment="Center"
+                          CornerRadius="{StaticResource RadiusMedium}"
+                          ToolTip.Tip="Открыть коллекцию">
+                <Viewbox Width="18" Height="18">
+                    <Canvas Width="24" Height="24">
+                        <!-- arrow-right-from-line: коллекция закрыта → клик откроет (→) -->
+                        <Path x:Name="CollectionOpenIcon"
+                              Data="M3 5 V19 M21 12 H7 M15 18 L21 12 L15 6"
+                              Stroke="{Binding $parent[ToggleButton].Foreground}"
+                              StrokeThickness="1.6"
+                              StrokeLineCap="Round" StrokeJoin="Round" />
+                        <!-- arrow-left-to-line: коллекция открыта → клик закроет (←) -->
+                        <Path x:Name="CollectionCloseIcon"
+                              IsVisible="False"
+                              Data="M3 19 V5 M13 6 L7 12 L13 18 M7 12 H21"
+                              Stroke="{Binding $parent[ToggleButton].Foreground}"
+                              StrokeThickness="1.6"
+                              StrokeLineCap="Round" StrokeJoin="Round" />
+                    </Canvas>
+                </Viewbox>
+            </ToggleButton>
+
+        </Grid>
+    </DockPanel>
+
+</UserControl>

@@ -17,7 +17,7 @@ namespace DataBase.Controls.Components;
 
 public enum SidebarMode { Calendar, Constructor }
 
-public partial class Sidebar : UserControl
+public partial class SidebarTree : UserControl
 {
     // Календарь: активные id — по БД (DbId → набор id коллекций), т.к. id не уникальны между БД.
     public event EventHandler<Dictionary<int, HashSet<int>>>? ActiveIdsChanged;
@@ -77,7 +77,7 @@ public partial class Sidebar : UserControl
         ("#FF6B6B", "Коралловый"),
     ];
 
-    public Sidebar()
+    public SidebarTree()
     {
         InitializeComponent();
         RowsHost.ItemsSource = _rows;

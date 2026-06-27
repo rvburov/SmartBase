@@ -5,7 +5,7 @@ using Avalonia.Media;
 
 namespace DataBase.Controls.Components;
 
-public partial class Navbar : UserControl
+public partial class NavbarCalendar : UserControl
 {
     private static readonly string[] ViewNames = ["Расписание", "Журнал", "День", "Неделя", "Месяц", "Год"];
 
@@ -16,7 +16,7 @@ public partial class Navbar : UserControl
     public event EventHandler<int>? ViewChanged;
     public event EventHandler<string>? SearchChanged;
 
-    public Navbar()
+    public NavbarCalendar()
     {
         InitializeComponent();
 

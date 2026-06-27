@@ -6,7 +6,7 @@ using DataBase.Controls.Widgets;
 
 namespace DataBase.Controls.Components;
 
-public partial class ConstructorNavbar : UserControl
+public partial class NavbarConstructor : UserControl
 {
     private static readonly string[] ViewNames = ["Таблица", "Список"];
     private static readonly string[] ViewModes = ["table", "list"];
@@ -19,7 +19,7 @@ public partial class ConstructorNavbar : UserControl
 
     private string _committedTitle = "";
 
-    public ConstructorNavbar()
+    public NavbarConstructor()
     {
         InitializeComponent();
 

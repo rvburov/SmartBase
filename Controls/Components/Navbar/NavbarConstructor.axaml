@@ -1,14 +1,12 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             x:Class="DataBase.Controls.Components.ConstructorNavbar"
-             Height="57"
+             x:Class="DataBase.Controls.Components.NavbarConstructor"
+             Height="56"
              Background="{StaticResource BrushBg}">
 
+    <!-- Своей линии-разделителя нет: нижнюю границу титульной зоны рисует общая линия
+         окна на y=56 (MainWindow), иначе линии удваивались бы в 2px. -->
     <DockPanel>
-
-        <!-- Линия-разделитель снизу -->
-        <Border DockPanel.Dock="Bottom"
-                Classes="separator h" />
 
         <!-- Заголовок слева, переключатель вида + toggle панели записи справа -->
         <Grid ColumnDefinitions="*,Auto,Auto" Margin="16,0">

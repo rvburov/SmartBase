@@ -1,7 +1,10 @@
 using Avalonia.Controls;
 using Avalonia.VisualTree;
+using DataBase.Controls.Components;
 using DataBase.Database;
 using DataBase.Database.Repositories;
+using DataBase.Extensions;
+using DataBase.Settings;
 using DataBase.Utils;
 using DataBase.ViewModels;
 
@@ -25,6 +28,12 @@ public partial class MainWindow : Window
     // ресайза вычисляются из них в одном месте — ApplyColumns().
     private bool _sidebarOpen    = true;   // левый сайдбар (col 2)
     private bool _collectionOpen = true;   // центральный блок коллекции/контента (col 3)
+
+    // Иконка пунктов сайдбара расширений (lucide blocks) — одна на все расширения,
+    // т.к. в ExtensionRegistry своей иконки у расширений нет.
+    private const string ExtensionsIcon =
+        "M10 22V7a1 1 0 0 0-1-1H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-5a1 1 0 0 0-1-1H2 " +
+        "M15 2 H21 A1 1 0 0 1 22 3 V9 A1 1 0 0 1 21 10 H15 A1 1 0 0 1 14 9 V3 A1 1 0 0 1 15 2 Z";
     // _recordPanelLogicalOpen — правая панель записи (col 5), объявлено ниже.
 
     public MainWindow(Workspace workspace)
@@ -87,10 +96,14 @@ public partial class MainWindow : Window
         ActivityBarControl.SidebarToggled += (_, isOpen) => { _sidebarOpen = isOpen; OnSidebarToggled(isOpen); };
         ActivityBarControl.ModuleChanged  += (_, module) => ShowModule(module);
 
-        // Сайдбар настроек: выбор раздела открывает его в основной области.
+        // Сайдбар настроек: пункты из SettingsRegistry; выбор раздела открывает его в основной области.
+        SettingsSidebar.Title = "Настройки";
+        SettingsSidebar.SetItems(SettingsRegistry.All.Select(c => new SidebarListItem(c.Key, c.Label, c.Icon)));
         SettingsSidebar.CategorySelected += (_, key) => SettingsModule.ShowCategory(key);
 
-        // Сайдбар расширений: выбор расширения открывает его блок в основной области.
+        // Сайдбар расширений: пункты из ExtensionRegistry (одна иконка на все); выбор открывает блок.
+        ExtensionsSidebar.Title = "Расширения";
+        ExtensionsSidebar.SetItems(ExtensionRegistry.All.Select(e => new SidebarListItem(e.Id, e.Name, ExtensionsIcon)));
         ExtensionsSidebar.CategorySelected += (_, key) => ExtensionsModule.ShowExtension(key);
 
         // Sidebar коллекций передаёт активные id в CalendarModule

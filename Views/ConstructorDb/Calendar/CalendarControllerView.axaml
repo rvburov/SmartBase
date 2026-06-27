@@ -7,7 +7,7 @@
     <Grid RowDefinitions="Auto,1,*">
 
         <!-- Навбар с навигацией и поиском -->
-        <comp:Navbar Grid.Row="0" x:Name="NavbarControl" />
+        <comp:NavbarCalendar Grid.Row="0" x:Name="NavbarControl" />
 
         <Border Grid.Row="1" Classes="separator h" />
 

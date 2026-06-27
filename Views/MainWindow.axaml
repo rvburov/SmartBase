@@ -38,10 +38,10 @@
                 BorderBrush="{StaticResource BrushSeparator}"
                 BorderThickness="0,0,1,0">
             <Grid>
-                <comp:Sidebar x:Name="CalendarSidebar" />
-                <comp:Sidebar x:Name="ConstructorSidebar" IsVisible="False" />
-                <comp:SettingsSidebar x:Name="SettingsSidebar" IsVisible="False" />
-                <comp:ExtensionsSidebar x:Name="ExtensionsSidebar" IsVisible="False" />
+                <comp:SidebarTree x:Name="CalendarSidebar" />
+                <comp:SidebarTree x:Name="ConstructorSidebar" IsVisible="False" />
+                <comp:SidebarList x:Name="SettingsSidebar" IsVisible="False" />
+                <comp:SidebarList x:Name="ExtensionsSidebar" IsVisible="False" />
             </Grid>
         </Border>
 

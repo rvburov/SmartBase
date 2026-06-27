@@ -7,7 +7,7 @@
     <Grid RowDefinitions="Auto,*,Auto">
 
         <!-- Navbar конструктора -->
-        <comp:ConstructorNavbar Grid.Row="0" x:Name="ConstructorNavbar" />
+        <comp:NavbarConstructor Grid.Row="0" x:Name="NavbarConstructor" />
 
         <!-- Контент: таблица или список -->
         <Grid Grid.Row="1">
@@ -42,7 +42,7 @@
         </Grid>
 
         <!-- Нижняя панель (statusbar): добавление, счётчик, навигация -->
-        <comp:ConstructorFooter Grid.Row="2" x:Name="ConstructorFooter" Margin="0,-1,0,0" />
+        <comp:FooterConstructor Grid.Row="2" x:Name="FooterConstructor" Margin="0,-1,0,0" />
 
     </Grid>
 

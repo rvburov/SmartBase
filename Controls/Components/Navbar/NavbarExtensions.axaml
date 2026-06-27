@@ -1,0 +1,27 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="DataBase.Controls.Components.NavbarExtensions"
+             Height="56"
+             Background="{StaticResource BrushBg}">
+
+    <!-- Слева — имя расширения, справа — кнопка запуска. -->
+    <Border Padding="16,0">
+        <Grid ColumnDefinitions="*,Auto">
+            <TextBlock x:Name="TitleText"
+                       Grid.Column="0"
+                       Text="Расширения"
+                       VerticalAlignment="Center"
+                       FontSize="{StaticResource FontSizeLarge}"
+                       FontWeight="{StaticResource FontWeightBold}"
+                       Foreground="{StaticResource BrushPrimaryText}" />
+
+            <Button x:Name="RunBtn"
+                    Grid.Column="1"
+                    Classes="dialog"
+                    Content="Запустить"
+                    VerticalAlignment="Center"
+                    Click="OnRunClick" />
+        </Grid>
+    </Border>
+
+</UserControl>

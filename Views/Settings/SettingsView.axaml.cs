@@ -59,7 +59,7 @@ public partial class SettingsView : UserControl
         DatabasePanel.IsVisible   = key == "database";
         AboutPanel.IsVisible      = key == "about";
 
-        TitleText.Text = key switch
+        HeaderBar.Title = key switch
         {
             "appearance" => "Оформление",
             "database"   => "Управление базой данных",

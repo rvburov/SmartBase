@@ -1,69 +1,14 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:md="https://github.com/whistyun/Markdown.Avalonia"
+             xmlns:comp="using:DataBase.Controls.Components"
              x:Class="DataBase.Views.ConstructorDb.RecordPageView"
              Background="{StaticResource BrushBg}">
 
     <Grid x:Name="PageGrid" RowDefinitions="Auto,Auto,Auto,*,Auto">
 
-        <!-- Шапка: редактируемое название записи + кнопка «закрыть».
-             Стиль текста — как у заголовка коллекции в навбаре конструктора
-             (FontSizeLarge, Bold, PrimaryText) — высота 57, отступ 16. -->
-        <Grid Grid.Row="0"
-              ColumnDefinitions="*,Auto"
-              Height="57"
-              Margin="16,0">
-
-            <TextBlock Grid.Column="0" x:Name="TitleDisplay"
-                       HorizontalAlignment="Stretch"
-                       VerticalAlignment="Center"
-                       FontSize="{StaticResource FontSizeLarge}"
-                       FontWeight="{StaticResource FontWeightBold}"
-                       Foreground="{StaticResource BrushPrimaryText}"
-                       TextTrimming="CharacterEllipsis"
-                       Cursor="IBeam"
-                       Margin="0,0,12,0" />
-
-            <TextBox Grid.Column="0" x:Name="TitleBox"
-                     Classes="titleEditor"
-                     IsVisible="False"
-                     Watermark="Без названия"
-                     VerticalAlignment="Center"
-                     FontSize="{StaticResource FontSizeLarge}"
-                     FontWeight="{StaticResource FontWeightBold}"
-                     Foreground="{StaticResource BrushPrimaryText}"
-                     Margin="0,0,12,0" />
-
-            <!-- Toggle блока коллекции -->
-            <ToggleButton Grid.Column="1" x:Name="CollectionPanelBtn" Classes="navbtn"
-                          Width="30" Height="30"
-                          VerticalAlignment="Center"
-                          CornerRadius="{StaticResource RadiusMedium}"
-                          ToolTip.Tip="Открыть коллекцию">
-                <Viewbox Width="18" Height="18">
-                    <Canvas Width="24" Height="24">
-                        <!-- arrow-right-from-line: коллекция закрыта → клик откроет (→) -->
-                        <Path x:Name="CollectionOpenIcon"
-                              Data="M3 5 V19 M21 12 H7 M15 18 L21 12 L15 6"
-                              Stroke="{Binding $parent[ToggleButton].Foreground}"
-                              StrokeThickness="1.6"
-                              StrokeLineCap="Round" StrokeJoin="Round" />
-                        <!-- arrow-left-to-line: коллекция открыта → клик закроет (←) -->
-                        <Path x:Name="CollectionCloseIcon"
-                              IsVisible="False"
-                              Data="M3 19 V5 M13 6 L7 12 L13 18 M7 12 H21"
-                              Stroke="{Binding $parent[ToggleButton].Foreground}"
-                              StrokeThickness="1.6"
-                              StrokeLineCap="Round" StrokeJoin="Round" />
-                    </Canvas>
-                </Viewbox>
-            </ToggleButton>
-
-        </Grid>
-
-        <Border Grid.Row="0"
-                Classes="separator h"
-                VerticalAlignment="Bottom" />
+        <!-- Шапка записи (вынесена в компонент NavbarPage). -->
+        <comp:NavbarPage Grid.Row="0" x:Name="HeaderBar" />
 
         <!-- Свойства (всё кроме системного «Название» и markdown).
              В ScrollViewer: когда ручкой ниже задана пиксельная высота строки и
@@ -136,40 +81,8 @@
             </Border>
         </Grid>
 
-        <!-- Нижняя панель записи (как футер коллекции): переключатель режима markdown -->
-        <Border Grid.Row="4" Height="57" Background="{StaticResource BrushBg}">
-            <DockPanel>
-                <Border DockPanel.Dock="Top"
-                        Classes="separator h" />
-
-                <Grid Margin="16,0">
-                    <ToggleButton x:Name="PreviewToggle" Classes="navbtn"
-                                  Width="30" Height="30"
-                                  HorizontalAlignment="Left"
-                                  VerticalAlignment="Center"
-                                  CornerRadius="{StaticResource RadiusMedium}"
-                                  ToolTip.Tip="Динамический просмотр">
-                        <Viewbox Width="18" Height="18">
-                            <Canvas Width="24" Height="24">
-                                <!-- pencil-line: режим динамического просмотра (виден в режиме редактора) -->
-                                <Path x:Name="IconToPreview"
-                                      Data="M13 21 H21 M15 5 L19 9 M21.174 6.812 A1 1 0 0 0 17.188 2.825 L3.842 16.174 A2 2 0 0 0 3.342 17.004 L2.021 21.356 A0.5 0.5 0 0 0 2.644 21.978 L6.997 20.658 A2 2 0 0 0 7.827 20.161 Z"
-                                      Stroke="{Binding $parent[ToggleButton].Foreground}"
-                                      StrokeThickness="1.6"
-                                      StrokeLineCap="Round" StrokeJoin="Round" />
-                                <!-- code-xml: просмотр исходного текста (виден в режиме просмотра) -->
-                                <Path x:Name="IconToSource"
-                                      IsVisible="False"
-                                      Data="M18 16 L22 12 L18 8 M6 8 L2 12 L6 16 M14.5 4 L9.5 20"
-                                      Stroke="{Binding $parent[ToggleButton].Foreground}"
-                                      StrokeThickness="1.6"
-                                      StrokeLineCap="Round" StrokeJoin="Round" />
-                            </Canvas>
-                        </Viewbox>
-                    </ToggleButton>
-                </Grid>
-            </DockPanel>
-        </Border>
+        <!-- Футер записи (вынесен в компонент FooterPage). -->
+        <comp:FooterPage Grid.Row="4" x:Name="FooterBar" />
 
     </Grid>
 

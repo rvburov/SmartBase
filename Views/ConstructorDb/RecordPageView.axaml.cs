@@ -26,44 +26,30 @@ public partial class RecordPageView : UserControl
     private RecordPageViewModel? _vm;
     private ConstructorRepository? _repo;   // для перечитывания записи из БД (ReloadFromDb)
 
-    // Гасит авто-сейв на время служебной установки текста (Show/ReloadFromDb), чтобы
-    // программное TitleBox.Text/MarkdownEditor.Text не приняли за правку пользователя
-    // (иначе перечитанное из БД значение тут же писалось бы обратно и дёргало таблицу).
+    // Гасит авто-сейв описания на время служебной установки текста (Show/ReloadFromDb), чтобы
+    // программное MarkdownEditor.Text не приняли за правку пользователя (иначе перечитанное из БД
+    // значение тут же писалось бы обратно и дёргало таблицу). Имя гасит сам NavbarPage (SetTitle).
     private bool _suppressAutoSave;
 
     public RecordPageView()
     {
         InitializeComponent();
 
-        PreviewToggle.IsCheckedChanged += (_, _) => UpdatePreviewVisibility();
+        FooterBar.PreviewToggled += (_, _) => UpdatePreviewVisibility();
 
-        TitleDisplay.PointerPressed += (_, _) =>
+        // Живая запись имени по символу — как ячейка таблицы: правка имени в навбаре панели
+        // сразу видна в строке таблицы (RecordChanged → RefreshRecordRow). NavbarPage сам гасит
+        // событие при программной установке имени (SetTitle), поэтому здесь — только правки пользователя.
+        HeaderBar.TitleChanged += (_, text) =>
         {
             if (_vm is null) return;
-            TitleDisplay.IsVisible = false;
-            TitleBox.IsVisible     = true;
-            TitleBox.Focus();
-            TitleBox.SelectAll();
-        };
-
-        TitleBox.LostFocus += (_, _) => ExitTitleEdit();
-        TitleBox.KeyDown   += (_, e) =>
-        {
-            if (e.Key is Key.Enter or Key.Escape) { ExitTitleEdit(); e.Handled = true; }
-        };
-
-        // Живая запись по символу — как ячейка таблицы: правка имени/описания в панели сразу
-        // видна в строке таблицы (RecordChanged → RefreshRecordRow). Обработчики висят на
-        // постоянных контролах и читают актуальный _vm, поэтому вешаем их один раз в ctor
-        // (а не в Show — иначе при каждом открытии записи копились бы дубли).
-        TitleBox.TextChanged += (_, _) =>
-        {
-            if (_vm is null || _suppressAutoSave) return;
-            var entered = TitleBox.Text?.Trim() ?? "";
+            var entered = text.Trim();
             _vm.Title = string.IsNullOrEmpty(entered) ? "Без названия" : entered;
             _vm.SaveTitle();
             RecordChanged?.Invoke(this, _vm.RecordId);
         };
+
+        // Живая запись описания по символу (guard _suppressAutoSave — для служебной установки текста).
         MarkdownEditor.TextChanged += (_, _) =>
         {
             if (_vm is null || _suppressAutoSave) return;
@@ -72,28 +58,11 @@ public partial class RecordPageView : UserControl
             RecordChanged?.Invoke(this, _vm.RecordId);
         };
 
-        CollectionPanelBtn.IsCheckedChanged += (_, _) =>
-        {
-            UpdateCollectionPanelIcon();
-            CollectionPanelToggled?.Invoke(this, CollectionPanelBtn.IsChecked == true);
-        };
-
+        HeaderBar.CollectionPanelToggled += (_, open) => CollectionPanelToggled?.Invoke(this, open);
     }
 
     /// <summary>Синхронизирует визуальное состояние кнопки с фактической видимостью блока коллекции.</summary>
-    public void SetCollectionPanelOpen(bool isOpen)
-    {
-        if (CollectionPanelBtn.IsChecked == isOpen) return;
-        CollectionPanelBtn.IsChecked = isOpen;
-    }
-
-    private void UpdateCollectionPanelIcon()
-    {
-        var open = CollectionPanelBtn.IsChecked == true;
-        CollectionOpenIcon.IsVisible  = !open;
-        CollectionCloseIcon.IsVisible = open;
-        ToolTip.SetTip(CollectionPanelBtn, open ? "Закрыть коллекцию" : "Открыть коллекцию");
-    }
+    public void SetCollectionPanelOpen(bool isOpen) => HeaderBar.SetCollectionPanelOpen(isOpen);
 
     public void Show(ConstructorRepository repository, int recordId, int collectionId)
     {
@@ -101,12 +70,13 @@ public partial class RecordPageView : UserControl
         _vm = new RecordPageViewModel(repository, recordId, collectionId);
         DataContext = _vm;
 
+        HeaderBar.SetTitle(_vm.Title == "Без названия" ? "" : _vm.Title);
+
         _suppressAutoSave = true;
-        TitleBox.Text        = _vm.Title == "Без названия" ? "" : _vm.Title;
-        ExitTitleEdit();
-        MarkdownEditor.Text  = _vm.MarkdownText;
+        MarkdownEditor.Text = _vm.MarkdownText;
         _suppressAutoSave = false;
-        PreviewToggle.IsChecked = false;
+
+        FooterBar.IsPreview = false;
         UpdatePreviewVisibility();
 
         BuildProperties();
@@ -126,32 +96,26 @@ public partial class RecordPageView : UserControl
 
         var recordId     = _vm.RecordId;
         var collectionId = _vm.CollectionId;
-        var preview      = PreviewToggle.IsChecked == true;
+        var preview      = FooterBar.IsPreview;
 
         _vm = new RecordPageViewModel(_repo, recordId, collectionId);
         DataContext = _vm;
 
-        // Перечитанные из БД значения ставим под guard'ом — иначе TextChanged принял бы их
-        // за правку и тут же записал обратно (+ лишний RefreshRecordRow по таблице).
+        // Заголовок — только если он не в режиме редактирования (SetTitle сам не дёргает сохранение).
+        if (!HeaderBar.IsTitleEditing)
+            HeaderBar.SetTitle(_vm.Title == "Без названия" ? "" : _vm.Title);
+
+        // Описание ставим под guard'ом — иначе TextChanged принял бы его за правку и записал обратно
+        // (+ лишний RefreshRecordRow). Только если редактор не в фокусе (не затереть набираемый текст).
         _suppressAutoSave = true;
-
-        // Заголовок — только если он не в режиме редактирования.
-        if (!TitleBox.IsVisible)
-        {
-            TitleBox.Text = _vm.Title == "Без названия" ? "" : _vm.Title;
-            ExitTitleEdit();
-        }
-
-        // Описание — только если редактор не в фокусе (иначе затёрли бы набираемый текст).
         if (!MarkdownEditor.IsFocused)
             MarkdownEditor.Text = _vm.MarkdownText;
-
         _suppressAutoSave = false;
 
         BuildProperties();
         ApplyPropsHeight();
 
-        PreviewToggle.IsChecked = preview;
+        FooterBar.IsPreview = preview;
         UpdatePreviewVisibility();
     }
 
@@ -160,41 +124,17 @@ public partial class RecordPageView : UserControl
         _vm = null;
         _repo = null;
         DataContext = null;
-        TitleBox.Text        = "";
-        ExitTitleEdit();
+        HeaderBar.SetTitle("");
         MarkdownEditor.Text  = "";
         MarkdownPreview.Markdown = "";
         PropertiesList.ItemsSource = null;
     }
 
-    private void ExitTitleEdit()
-    {
-        TitleBox.IsVisible     = false;
-        TitleDisplay.IsVisible = true;
-        var title = TitleBox.Text ?? "";
-        if (string.IsNullOrEmpty(title))
-        {
-            TitleDisplay.Text       = "Без названия";
-            TitleDisplay.Foreground = (IBrush)this.FindResource("BrushSecondaryText")!;
-        }
-        else
-        {
-            TitleDisplay.Text       = title;
-            TitleDisplay.Foreground = (IBrush)this.FindResource("BrushPrimaryText")!;
-        }
-    }
-
     private void UpdatePreviewVisibility()
     {
-        var preview = PreviewToggle.IsChecked == true;
+        var preview = FooterBar.IsPreview;
         MarkdownPreviewBox.IsVisible = preview;
         MarkdownEditor.IsVisible     = !preview;
-
-        // В режиме редактора кнопка предлагает перейти к динамическому просмотру (карандаш);
-        // в режиме просмотра — вернуться к исходному тексту (code-xml).
-        IconToPreview.IsVisible = !preview;
-        IconToSource.IsVisible  = preview;
-        ToolTip.SetTip(PreviewToggle, preview ? "Просмотр исходного текста" : "Динамический просмотр");
 
         if (preview)
             MarkdownPreview.Markdown = MarkdownEditor.Text ?? "";

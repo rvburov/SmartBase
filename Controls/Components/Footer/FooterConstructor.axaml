@@ -1,7 +1,7 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             x:Class="DataBase.Controls.Components.ConstructorFooter"
-             Height="57"
+             x:Class="DataBase.Controls.Components.FooterConstructor"
+             Height="56"
              Background="{StaticResource BrushBg}">
 
     <DockPanel>
