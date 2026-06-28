@@ -941,7 +941,8 @@ public partial class TableView : UserControl
     {
         if (def.Key == TableColumnDef.AddPropKey)
         {
-            var plus = MakeCenteredHeader("+", fontSize: 16, addRightBorder: false);
+            // Размер «+» — как у «+» создания записи (add-row), т.е. стандартный FontSizeBase.
+            var plus = MakeCenteredHeader("+", addRightBorder: false);
             plus.Cursor = new Cursor(StandardCursorType.Hand);
             plus.PointerPressed += (_, _) =>
                 PropertyCreateRequested?.Invoke(this, EventArgs.Empty);
@@ -2108,6 +2109,7 @@ public partial class TableView : UserControl
             Watermark    = "Поиск значений...",
             Height       = 30,
             CornerRadius = radius,
+            Background    = Brushes.White,   // белая карточка на серой подложке (как в сайдбаре)
             Margin       = new Thickness(0, 0, 0, 4),
             VerticalContentAlignment = VerticalAlignment.Center,
         };
@@ -2146,9 +2148,28 @@ public partial class TableView : UserControl
         };
         valuesList.Styles.Add(new Style(x => x.OfType<ListBoxItem>())
         {
-            Setters = { new Setter(ListBoxItem.PaddingProperty, new Thickness(0)),
+            // Вертикальный отступ строк — как у списка свойств (StackPanel Spacing=4):
+            // 2px сверху/снизу дают такой же воздух между чекбоксами, иначе они слипаются.
+            Setters = { new Setter(ListBoxItem.PaddingProperty, new Thickness(0, 2)),
                         new Setter(ListBoxItem.MinHeightProperty, 0.0) },
         });
+
+        // Строки без подсветки наведения/выбора (синей/серой) — взаимодействуем только
+        // с чекбоксом, поэтому фон контейнера строки прозрачен во всех состояниях.
+        void FlatRow(params string[] pseudo) =>
+            valuesList.Styles.Add(new Style(x =>
+            {
+                Avalonia.Styling.Selector s = x.OfType<ListBoxItem>();
+                foreach (var p in pseudo) s = s.Class(p);
+                return s.Template().OfType<Avalonia.Controls.Presenters.ContentPresenter>().Name("PART_ContentPresenter");
+            })
+            {
+                Setters = { new Setter(Avalonia.Controls.Presenters.ContentPresenter.BackgroundProperty, Brushes.Transparent) },
+            });
+        FlatRow();
+        FlatRow(":pointerover");
+        FlatRow(":selected");
+        FlatRow(":selected", ":pointerover");
 
         var valuesBox = new StackPanel { Spacing = 4 };
         valuesBox.Children.Add(selectAll);
@@ -2165,6 +2186,7 @@ public partial class TableView : UserControl
         };
         var valuesHost = new Border
         {
+            Background       = Brushes.White,   // белая карточка списка на серой подложке (как в сайдбаре)
             BorderBrush     = (IBrush)this.FindResource("BrushSeparator")!,
             BorderThickness = new Thickness(1),
             CornerRadius    = radius,

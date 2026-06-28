@@ -234,7 +234,9 @@
          до которого локальные стили UserControl не доходят. -->
     <Style Selector="FlyoutPresenter.filterFlyout">
         <Setter Property="Padding"         Value="0" />
-        <Setter Property="Background"      Value="{StaticResource BrushBg}" />
+        <!-- Серая подложка (как у панели свойств в сайдбаре): белые карточки поиска и списка
+             на сером фоне. -->
+        <Setter Property="Background"      Value="{StaticResource BrushSecondaryBg}" />
         <Setter Property="BorderBrush"     Value="{StaticResource BrushSeparator}" />
         <Setter Property="BorderThickness" Value="1" />
         <Setter Property="CornerRadius"    Value="{StaticResource RadiusMedium}" />

@@ -12,9 +12,9 @@
             <Button Grid.Column="1" x:Name="Arrow" Classes="timeArrow">
                 <Viewbox Width="{StaticResource IconSizeSmall}" Height="{StaticResource IconSizeSmall}">
                     <Canvas Width="24" Height="24">
-                        <Path Data="{StaticResource IconCalendar}"
+                        <Path Data="{StaticResource IconCalendarDate}"
                               Stroke="{StaticResource BrushSecondaryText}"
-                              StrokeThickness="2"
+                              StrokeThickness="1.8"
                               StrokeLineCap="Round"
                               StrokeJoin="Round" />
                     </Canvas>

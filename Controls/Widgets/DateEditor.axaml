@@ -10,10 +10,10 @@
             <Button Grid.Column="1" x:Name="Arrow" Classes="timeArrow">
                 <Viewbox Width="{StaticResource IconSizeSmall}" Height="{StaticResource IconSizeSmall}">
                     <Canvas Width="24" Height="24">
-                        <!-- иконка календаря -->
-                        <Path Data="{StaticResource IconCalendar}"
+                        <!-- стандартная иконка «дата» (календарь с цифрой 1), как в шапке колонки -->
+                        <Path Data="{StaticResource IconCalendarDate}"
                               Stroke="{StaticResource BrushSecondaryText}"
-                              StrokeThickness="2"
+                              StrokeThickness="1.8"
                               StrokeLineCap="Round"
                               StrokeJoin="Round" />
                     </Canvas>
