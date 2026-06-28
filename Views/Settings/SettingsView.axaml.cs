@@ -39,6 +39,56 @@ public partial class SettingsView : UserControl
 
         // Слайдер масштаба отражает текущий уровень в процентах (стандарт = 100, диапазон 70…130).
         ScaleSlider.Value = Scaling.Current * 100;
+
+        // Стартовый раздел: выделить сохранённый пункт (по Tag).
+        SelectStartupModule(AppSettings.LoadStartupModule());
+
+        // Стартовый вид календаря: выделить по индексу (Tag = "0".."5").
+        CalendarViewCombo.SelectedIndex = AppSettings.LoadCalendarView();
+
+        // Стартовый вид конструктора: Таблица (0) или Список (1).
+        ConstructorViewCombo.SelectedIndex = AppSettings.LoadConstructorView() == "list" ? 1 : 0;
+    }
+
+    // ── Стартовый раздел ─────────────────────────────────────────────────────
+    //
+    // Какой раздел навигации (ActivityBar) открывается при запуске. Применяется при
+    // следующем запуске — MainWindow читает AppSettings.LoadStartupModule() на старте.
+    private void SelectStartupModule(string module)
+    {
+        foreach (var obj in StartupModuleCombo.Items)
+            if (obj is ComboBoxItem { Tag: string tag } item && tag == module)
+            {
+                StartupModuleCombo.SelectedItem = item;
+                return;
+            }
+    }
+
+    private void OnStartupModuleChanged(object? sender, SelectionChangedEventArgs e)
+    {
+        if (StartupModuleCombo.SelectedItem is ComboBoxItem { Tag: string module })
+            AppSettings.SaveStartupModule(module);
+    }
+
+    // ── Стартовый вид календаря ──────────────────────────────────────────────
+    //
+    // Какой вид (Расписание/Журнал/День/Неделя/Месяц/Год) открывается при переходе в
+    // Календарь. Индекс совпадает с порядком пунктов и ViewSelector навбара (0..5).
+    // Применяется при следующем запуске — календарь читает AppSettings.LoadCalendarView().
+    private void OnCalendarViewChanged(object? sender, SelectionChangedEventArgs e)
+    {
+        if (CalendarViewCombo.SelectedIndex >= 0)
+            AppSettings.SaveCalendarView(CalendarViewCombo.SelectedIndex);
+    }
+
+    // ── Стартовый вид конструктора ───────────────────────────────────────────
+    //
+    // Вид коллекции (Таблица/Список) для коллекций без своего сохранённого режима.
+    // Применяется при следующем открытии коллекции (репозиторий читает его как дефолт).
+    private void OnConstructorViewChanged(object? sender, SelectionChangedEventArgs e)
+    {
+        if (ConstructorViewCombo.SelectedItem is ComboBoxItem { Tag: string mode })
+            AppSettings.SaveConstructorView(mode);
     }
 
     // ── Уровень масштабирования ──────────────────────────────────────────────

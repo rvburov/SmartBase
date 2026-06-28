@@ -2488,7 +2488,11 @@ public class ConstructorRepository(AppDbContext db)
     public (bool ColResize, bool RowResize, string ViewMode) GetUiSettings(int collectionId)
     {
         var s = db.UiCollectionSettings.Find(collectionId);
-        return s is null ? (false, false, "table") : (s.ColResize, s.RowResize, s.ViewMode);
+        // Нет своей записи у коллекции → вид по умолчанию берём из настроек (Оформление).
+        // Свой сохранённый вид коллекции (переключали вручную) имеет приоритет.
+        return s is null
+            ? (false, false, Utils.AppSettings.LoadConstructorView())
+            : (s.ColResize, s.RowResize, s.ViewMode);
     }
 
     public void SaveUiSettings(int collectionId, bool colResize, bool rowResize, string viewMode)

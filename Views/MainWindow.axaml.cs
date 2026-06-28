@@ -85,10 +85,11 @@ public partial class MainWindow : Window
         CalendarSidebar.InitializeWorkspace(workspace.Mounted, Controls.Components.SidebarMode.Calendar);
         ConstructorSidebar.InitializeWorkspace(workspace.Mounted, Controls.Components.SidebarMode.Constructor);
 
-        // Начальное состояние: модуль Календарь
-        ActivityBarControl.SetModuleActive("calendar");
+        // Начальное состояние: раздел при запуске берём из настроек (стандарт — конструктор).
+        var startupModule = AppSettings.LoadStartupModule();
+        ActivityBarControl.SetModuleActive(startupModule);
         ActivityBarControl.SetSidebarOpen(true);
-        ShowModule("calendar");
+        ShowModule(startupModule);
 
         // Связываем ActivityBar
         ActivityBarControl.SidebarToggled += (_, isOpen) => { _sidebarOpen = isOpen; OnSidebarToggled(isOpen); };

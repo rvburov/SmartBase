@@ -133,6 +133,63 @@ public static class AppSettings
         else                           _store?.Set(KeyFontDelta, delta.ToString(CultureInfo.InvariantCulture));
     }
 
+    // ── Стартовый раздел ───────────────────────────────────────────────────────
+    //
+    // Раздел навигации (ActivityBar), открываемый при запуске. Значения совпадают с
+    // ключами модулей: "calendar", "constructor", "extensions". Стандарт — конструктор.
+    public const string StartupModuleDefault = "constructor";
+
+    public static string LoadStartupModule()
+    {
+        var v = _store?.Get(KeyStartupModule);
+        return v is "calendar" or "constructor" or "extensions" ? v : StartupModuleDefault;
+    }
+
+    public static void SaveStartupModule(string module)
+    {
+        if (module == StartupModuleDefault) _store?.Remove(KeyStartupModule);
+        else                                _store?.Set(KeyStartupModule, module);
+    }
+
+    // ── Стартовый вид календаря ──────────────────────────────────────────────────
+    //
+    // Какой вид открывается при переходе в Календарь. Индексы совпадают с ViewSelector
+    // навбара: 0 Расписание, 1 Журнал, 2 День, 3 Неделя, 4 Месяц, 5 Год. Стандарт — Месяц.
+    public const int CalendarViewDefault = 4;
+
+    public static int LoadCalendarView()
+    {
+        if (int.TryParse(_store?.Get(KeyCalendarView), NumberStyles.Integer, CultureInfo.InvariantCulture, out var v)
+            && v is >= 0 and <= 5)
+            return v;
+        return CalendarViewDefault;
+    }
+
+    public static void SaveCalendarView(int index)
+    {
+        if (index == CalendarViewDefault) _store?.Remove(KeyCalendarView);
+        else                              _store?.Set(KeyCalendarView, index.ToString(CultureInfo.InvariantCulture));
+    }
+
+    // ── Стартовый вид конструктора ───────────────────────────────────────────────
+    //
+    // Вид коллекции в Конструкторе для коллекций без собственной сохранённой настройки:
+    // "table" (таблица) или "list" (список). Стандарт — таблица. Если у коллекции уже
+    // сохранён свой режим (переключали вручную), он имеет приоритет над этим значением.
+    public const string ConstructorViewDefault = "table";
+
+    public static string LoadConstructorView()
+    {
+        var v = _store?.Get(KeyConstructorView);
+        return v is "table" or "list" ? v : ConstructorViewDefault;
+    }
+
+    public static void SaveConstructorView(string mode)
+    {
+        if (mode == ConstructorViewDefault) _store?.Remove(KeyConstructorView);
+        else                                _store?.Set(KeyConstructorView, mode);
+    }
+
     // ── Ключи настроек ─────────────────────────────────────────────────────────
 
     private const string KeyScale            = "scale";
@@ -140,6 +197,9 @@ public static class AppSettings
     private const string KeyRecordPanelWidth = "recordPanelWidth";
     private const string KeyAsyncRowLoad     = "asyncRowLoad";
     private const string KeyFontDelta        = "fontDelta";
+    private const string KeyStartupModule    = "startupModule";
+    private const string KeyCalendarView     = "calendarView";
+    private const string KeyConstructorView  = "constructorView";
 
     // ── Приватное ─────────────────────────────────────────────────────────────
 

@@ -113,7 +113,7 @@ public partial class CalendarControllerView : UserControl
         WeekViewCtrl.AllDayCreationRequested   += (_, d)  => _ = OpenAddAllDayDialog(d);
         WeekViewCtrl.TimeSlotCreationRequested += (_, dt) => _ = OpenAddDialog(dt.Date, dt.TimeOfDay);
 
-        SwitchView(4);
+        SwitchView(AppSettings.LoadCalendarView());   // стартовый вид из настроек (стандарт — Месяц)
         SeedIfEmpty();
     }
 

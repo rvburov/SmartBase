@@ -131,6 +131,74 @@
                     </Grid.ColumnDefinitions>
                     <StackPanel Margin="16,0,16,32">
 
+                    <!-- Отображение раздела навигации -->
+                    <Border Classes="settingRow">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <StackPanel Grid.Column="0" Spacing="4"
+                                        VerticalAlignment="Center" Margin="0,0,32,0">
+                                <TextBlock Classes="title" Text="Отображение раздела навигации" />
+                                <TextBlock Classes="desc"
+                                           Text="Какой раздел панели навигации (слева) открывается при запуске программы: Календарь, Конструктор базы данных или Расширения." />
+                            </StackPanel>
+                            <ComboBox Grid.Column="1" x:Name="StartupModuleCombo"
+                                      Width="240" Height="34"
+                                      VerticalAlignment="Center"
+                                      Background="{StaticResource BrushSecondaryBg}"
+                                      CornerRadius="{StaticResource RadiusBase}"
+                                      SelectionChanged="OnStartupModuleChanged">
+                                <ComboBoxItem Tag="calendar"    Content="Календарь" />
+                                <ComboBoxItem Tag="constructor" Content="Конструктор базы данных" />
+                                <ComboBoxItem Tag="extensions"  Content="Расширения" />
+                            </ComboBox>
+                        </Grid>
+                    </Border>
+
+                    <!-- Отображение раздела календаря -->
+                    <Border Classes="settingRow">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <StackPanel Grid.Column="0" Spacing="4"
+                                        VerticalAlignment="Center" Margin="0,0,32,0">
+                                <TextBlock Classes="title" Text="Отображение раздела календаря" />
+                                <TextBlock Classes="desc"
+                                           Text="Какой вид календаря открывается при переходе в раздел: Расписание, Журнал, День, Неделя, Месяц или Год." />
+                            </StackPanel>
+                            <ComboBox Grid.Column="1" x:Name="CalendarViewCombo"
+                                      Width="240" Height="34"
+                                      VerticalAlignment="Center"
+                                      Background="{StaticResource BrushSecondaryBg}"
+                                      CornerRadius="{StaticResource RadiusBase}"
+                                      SelectionChanged="OnCalendarViewChanged">
+                                <ComboBoxItem Tag="0" Content="Расписание" />
+                                <ComboBoxItem Tag="1" Content="Журнал" />
+                                <ComboBoxItem Tag="2" Content="День" />
+                                <ComboBoxItem Tag="3" Content="Неделя" />
+                                <ComboBoxItem Tag="4" Content="Месяц" />
+                                <ComboBoxItem Tag="5" Content="Год" />
+                            </ComboBox>
+                        </Grid>
+                    </Border>
+
+                    <!-- Отображение раздела конструктора -->
+                    <Border Classes="settingRow">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <StackPanel Grid.Column="0" Spacing="4"
+                                        VerticalAlignment="Center" Margin="0,0,32,0">
+                                <TextBlock Classes="title" Text="Отображение раздела конструктора" />
+                                <TextBlock Classes="desc"
+                                           Text="Какой вид коллекции открывается в конструкторе базы данных: Таблица или Список. Если у коллекции выбран свой вид, он сохраняется за ней." />
+                            </StackPanel>
+                            <ComboBox Grid.Column="1" x:Name="ConstructorViewCombo"
+                                      Width="240" Height="34"
+                                      VerticalAlignment="Center"
+                                      Background="{StaticResource BrushSecondaryBg}"
+                                      CornerRadius="{StaticResource RadiusBase}"
+                                      SelectionChanged="OnConstructorViewChanged">
+                                <ComboBoxItem Tag="table" Content="Таблица" />
+                                <ComboBoxItem Tag="list"  Content="Список" />
+                            </ComboBox>
+                        </Grid>
+                    </Border>
+
                     <!-- Уровень масштабирования -->
                     <Border Classes="settingRow">
                         <Grid ColumnDefinitions="*,Auto">
