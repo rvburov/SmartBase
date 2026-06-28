@@ -1,5 +1,7 @@
 using System.Reflection;
 using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
+using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Platform.Storage;
 using DataBase.Controls.Dialogs;
@@ -31,6 +33,57 @@ public partial class SettingsView : UserControl
             VersionText.Text = $"Версия {version.Major}.{version.Minor}.{version.Build}";
 
         AsyncRowLoadCheck.IsChecked = AppSettings.LoadAsyncRowLoad();
+
+        // Слайдер размера шрифта отражает текущую дельту (стандарт = 0, диапазон -3…+3).
+        FontSizeSlider.Value = FontScale.Delta;
+    }
+
+    // Размер шрифта меняется вживую: дельта пишется в Application.Resources (DynamicResource),
+    // C#-виды пересобираются по событию FontScale.Changed.
+    private void OnFontSizeChanged(object? sender, RangeBaseValueChangedEventArgs e)
+    {
+        FontScale.SetDelta((int)Math.Round(e.NewValue));
+        UpdateFontBadge();
+    }
+
+    // Пузырёк со значением показываем при наведении/перетаскивании ползунка.
+    private void OnFontSliderEntered(object? sender, PointerEventArgs e)
+    {
+        UpdateFontBadge();
+        FontValuePopup.IsOpen = true;
+    }
+
+    private void OnFontSliderExited(object? sender, PointerEventArgs e) => FontValuePopup.IsOpen = false;
+
+    // Текст = итоговый базовый размер (стандарт ± дельта); смещение пузырька — под текущий ползунок.
+    private void UpdateFontBadge()
+    {
+        var delta     = (int)Math.Round(FontSizeSlider.Value);
+        var effective = FontScale.BaseFontSize + delta;            // итоговый размер шрифта
+        FontValueText.Text = ((int)Math.Round(effective)).ToString();
+
+        // Квадрат: сторона растёт/уменьшается вместе с размером шрифта.
+        var side = Math.Round(effective * 2.0);
+        FontBadgeBorder.Width  = side;
+        FontBadgeBorder.Height = side;
+
+        var range = FontSizeSlider.Maximum - FontSizeSlider.Minimum;
+        var w     = FontSizeSlider.Bounds.Width;
+        if (range <= 0 || w <= 0) return;
+
+        var frac = (FontSizeSlider.Value - FontSizeSlider.Minimum) / range;
+        const double thumbW = 26;
+        FontValuePopup.HorizontalOffset = frac * (w - thumbW) + thumbW / 2 - w / 2;
+    }
+
+    // Кнопка-стрелка: подтверждение в стандартном диалоге → возврат к стандарту (дельта 0).
+    private async void OnFontSizeReset(object? sender, RoutedEventArgs e)
+    {
+        if (VisualRoot is not Window win) return;
+        var dlg = new ConfirmDialog("Вернуть размер текста по умолчанию?", "Сбросить");
+        if (await dlg.ShowDialog<bool>(win) != true) return;
+
+        FontSizeSlider.Value = AppSettings.FontDeltaDefault;   // → OnFontSizeChanged → SetDelta(0)
     }
 
     // Переключатель фоновой подгрузки строк («Загрузка…»). Применяется при следующем

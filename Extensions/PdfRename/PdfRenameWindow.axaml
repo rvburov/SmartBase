@@ -80,7 +80,7 @@
                  AcceptsReturn="True"
                  TextWrapping="Wrap"
                  FontFamily="{StaticResource FontFamilyBase}"
-                 FontSize="{StaticResource FontSizeSmall}"
+                 FontSize="{DynamicResource FontSizeSmall}"
                  VerticalContentAlignment="Top"
                  ScrollViewer.VerticalScrollBarVisibility="Auto" />
 

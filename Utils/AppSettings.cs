@@ -111,12 +111,35 @@ public static class AppSettings
         else                           _store?.Set(KeyAsyncRowLoad, on ? "true" : "false");
     }
 
+    // ── Размер шрифта ──────────────────────────────────────────────────────────
+    //
+    // Дельта в пикселях к стандартным размерам из Typography.axaml (FontSizeSmall/Base/Large).
+    // 0 = стандарт; диапазон -3…+3, шаг 1. Применяется ко всем трём размерам сразу.
+    public const int FontDeltaMin     = -3;
+    public const int FontDeltaMax     = 3;
+    public const int FontDeltaDefault = 0;
+
+    public static int LoadFontDelta()
+    {
+        if (int.TryParse(_store?.Get(KeyFontDelta), NumberStyles.Integer, CultureInfo.InvariantCulture, out var d)
+            && d >= FontDeltaMin && d <= FontDeltaMax)
+            return d;
+        return FontDeltaDefault;
+    }
+
+    public static void SaveFontDelta(int delta)
+    {
+        if (delta == FontDeltaDefault) _store?.Remove(KeyFontDelta);
+        else                           _store?.Set(KeyFontDelta, delta.ToString(CultureInfo.InvariantCulture));
+    }
+
     // ── Ключи настроек ─────────────────────────────────────────────────────────
 
     private const string KeyScale            = "scale";
     private const string KeyRecordPanelOpen  = "recordPanelOpen";
     private const string KeyRecordPanelWidth = "recordPanelWidth";
     private const string KeyAsyncRowLoad     = "asyncRowLoad";
+    private const string KeyFontDelta        = "fontDelta";
 
     // ── Приватное ─────────────────────────────────────────────────────────────
 

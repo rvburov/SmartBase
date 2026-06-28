@@ -88,19 +88,21 @@
         <!-- Заголовок периода -->
         <TextBlock Grid.Column="4" x:Name="TitleLabel"
                    VerticalAlignment="Center"
-                   FontSize="{StaticResource FontSizeLarge}"
+                   FontSize="{DynamicResource FontSizeLarge}"
                    FontWeight="{StaticResource FontWeightBold}"
  />
 
-        <!-- Поиск -->
+        <!-- Поиск (однострочный): без фиксированной высоты (MinHeight + рост под шрифт) и
+             без вертикальной прокрутки — иначе при крупном шрифте текст переполняет поле и
+             вылезает кнопка-стрелка скроллбара. -->
         <TextBox Grid.Column="5" x:Name="SearchBox"
-                 Width="200" Height="30" MinHeight="30" Margin="0,0,8,0"
+                 Width="200" MinHeight="30" Margin="0,0,8,0"
                  VerticalAlignment="Center"
                  VerticalContentAlignment="Center"
                  Watermark="Поиск..."
                  CornerRadius="{StaticResource RadiusPill}"
                  Background="{StaticResource BrushSecondaryBg}"
-                 />
+                 ScrollViewer.VerticalScrollBarVisibility="Disabled" />
 
         <!-- Вид (Месяц/Неделя/День…) -->
         <ComboBox Grid.Column="6" x:Name="ViewSelector"

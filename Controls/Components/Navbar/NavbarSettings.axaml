@@ -8,7 +8,7 @@
         <TextBlock x:Name="TitleText"
                    Text="Общие"
                    VerticalAlignment="Center"
-                   FontSize="{StaticResource FontSizeLarge}"
+                   FontSize="{DynamicResource FontSizeLarge}"
                    FontWeight="{StaticResource FontWeightBold}"
  />
     </Border>

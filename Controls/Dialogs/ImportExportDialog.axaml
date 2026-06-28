@@ -120,7 +120,7 @@
         <TextBlock x:Name="StandardHelp"
                    Margin="0,0,0,12"
                    TextWrapping="Wrap"
-                   FontSize="{StaticResource FontSizeSmall}"
+                   FontSize="{DynamicResource FontSizeSmall}"
                    Foreground="{StaticResource BrushSecondaryText}"
                    Text="Берется первый лист (для CSV — весь файл). Первая строка — заголовки (имена свойств). Столбец 1 → название записи, остальные столбцы → текстовые свойства. Колонка «Описание» создается пустой в конце. Данные читаются со второй строки. Все значения сохраняются как текст." />
 

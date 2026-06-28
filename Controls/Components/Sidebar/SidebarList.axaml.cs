@@ -3,6 +3,7 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Media;
+using DataBase.Utils;
 
 namespace DataBase.Controls.Components;
 
@@ -21,8 +22,29 @@ public partial class SidebarList : UserControl
     public event EventHandler<string>? CategorySelected;
 
     private readonly List<Border> _rows = [];
+    private IReadOnlyList<SidebarListItem> _items = [];
 
     public SidebarList() => InitializeComponent();
+
+    // Размер шрифта меняется живьём: строки строятся в C# с размером из ресурса, поэтому
+    // перерисовываем список (с сохранением выбранного пункта). Дельта последнего рендера —
+    // чтобы перерисовать при возврате, если размер меняли в другом разделе.
+    private int _renderedFontDelta = FontScale.Delta;
+
+    protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
+    {
+        base.OnAttachedToVisualTree(e);
+        FontScale.Changed += OnFontScaleChanged;
+        if (_items.Count > 0 && _renderedFontDelta != FontScale.Delta) Render();
+    }
+
+    protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
+    {
+        FontScale.Changed -= OnFontScaleChanged;
+        base.OnDetachedFromVisualTree(e);
+    }
+
+    private void OnFontScaleChanged() { if (_items.Count > 0) Render(); }
 
     /// <summary>Заголовок раздела (шапка списка).</summary>
     public string Title { set => TitleText.Text = value; }
@@ -33,17 +55,24 @@ public partial class SidebarList : UserControl
     /// <summary>Задать пункты списка. Первый становится выбранным по умолчанию.</summary>
     public void SetItems(IEnumerable<SidebarListItem> items)
     {
+        _items = items.ToList();
+        SelectedKey = _items.Count > 0 ? _items[0].Id : "";
+        Render();
+    }
+
+    // Перестроить строки из _items под текущий размер шрифта; выбранный пункт сохраняется.
+    private void Render()
+    {
+        _renderedFontDelta = FontScale.Delta;
+
         RowsHost.Children.Clear();
         _rows.Clear();
 
         var rowHeight = TryDouble("RowStepStandard", 37);
         var fontBase  = TryDouble("FontSizeBase", 14);
 
-        var first = true;
-        foreach (var item in items)
+        foreach (var item in _items)
         {
-            if (first) { SelectedKey = item.Id; first = false; }
-
             // Background/Cursor/цвета НЕ задаём в коде — иначе локальное значение перебьёт
             // стили hover/selected; их отдаём стилям navrow.
             var row = new Border

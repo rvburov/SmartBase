@@ -26,20 +26,20 @@
          подписи, названия событий, текст в таблице) -->
     <Style Selector="TextBlock">
         <Setter Property="FontFamily"  Value="{StaticResource FontFamilyBase}" />
-        <Setter Property="FontSize"    Value="{StaticResource FontSizeBase}" />
+        <Setter Property="FontSize"    Value="{DynamicResource FontSizeBase}" />
         <Setter Property="Foreground"  Value="{StaticResource BrushPrimaryText}" />
     </Style>
 
     <!-- TextBox = поле ВВОДА (туда печатают: имя коллекции, поиск, заметки) -->
     <Style Selector="TextBox">
         <Setter Property="FontFamily"  Value="{StaticResource FontFamilyBase}" />
-        <Setter Property="FontSize"    Value="{StaticResource FontSizeBase}" />
+        <Setter Property="FontSize"    Value="{DynamicResource FontSizeBase}" />
     </Style>
 
     <!-- Button = кнопка («Сегодня», «Сохранить», «Отмена») -->
     <Style Selector="Button">
         <Setter Property="FontFamily"  Value="{StaticResource FontFamilyBase}" />
-        <Setter Property="FontSize"    Value="{StaticResource FontSizeBase}" />
+        <Setter Property="FontSize"    Value="{DynamicResource FontSizeBase}" />
     </Style>
 
 </Styles>

@@ -50,7 +50,7 @@
                        Text="Всего: 0"
                        VerticalAlignment="Center"
                        Margin="8,0,0,0"
-                       FontSize="{StaticResource FontSizeSmall}"
+                       FontSize="{DynamicResource FontSizeSmall}"
                        Foreground="{StaticResource BrushSecondaryText}" />
 
             <!-- Навигация по страницам -->
@@ -74,7 +74,7 @@
                            Text="1 / 1"
                            VerticalAlignment="Center"
                            Margin="4,0"
-                           FontSize="{StaticResource FontSizeSmall}"
+                           FontSize="{DynamicResource FontSizeSmall}"
                            Foreground="{StaticResource BrushSecondaryText}" />
 
                 <Button x:Name="NextPageBtn" Classes="navbtn"

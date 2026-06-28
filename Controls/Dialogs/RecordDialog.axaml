@@ -182,6 +182,7 @@
                          AcceptsReturn="True"
                          AcceptsTab="True"
                          TextWrapping="Wrap"
+                         ScrollViewer.VerticalScrollBarVisibility="Auto"
                          CornerRadius="{StaticResource RadiusMedium}" />
             </StackPanel>
 

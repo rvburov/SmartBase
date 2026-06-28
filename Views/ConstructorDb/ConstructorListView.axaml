@@ -50,13 +50,13 @@
                                     Padding="8,1"
                                     Margin="8,0,0,0">
                                 <TextBlock Text="{Binding Status}"
-                                           FontSize="{StaticResource FontSizeSmall}"
+                                           FontSize="{DynamicResource FontSizeSmall}"
                                            Foreground="{StaticResource BrushAccent}" />
                             </Border>
                             <TextBlock Grid.Column="2"
                                        IsVisible="{Binding HasDate}"
                                        Text="{Binding Date}"
-                                       FontSize="{StaticResource FontSizeSmall}"
+                                       FontSize="{DynamicResource FontSizeSmall}"
                                        Foreground="{StaticResource BrushSecondaryText}"
                                        VerticalAlignment="Center"
                                        Margin="8,0,0,0" />

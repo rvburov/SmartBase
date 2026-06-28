@@ -12,6 +12,7 @@ using DataBase.Core.Importers;
 using DataBase.Core.Models;
 using DataBase.Database;
 using DataBase.Database.Repositories;
+using DataBase.Utils;
 
 namespace DataBase.Controls.Components;
 
@@ -116,6 +117,8 @@ public partial class SidebarTree : UserControl
     public void Refresh()
     {
         if (_dbs.Count == 0) return;
+
+        _renderedFontDelta = FontScale.Delta;   // дерево отрисовано с текущим размером
 
         var expandedIds = GetExpandedGroupIds();
         CaptureDbRootStates();
@@ -494,6 +497,11 @@ public partial class SidebarTree : UserControl
     // часто не получает клавишу.
     private TopLevel? _keyHookTopLevel;
 
+    // Дельта последнего рендера дерева — чтобы перерисовать при возврате, если размер
+    // меняли, пока сайдбар был не виден.
+    private int _renderedFontDelta = FontScale.Delta;
+    private void OnFontScaleChanged() => Refresh();
+
     protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
     {
         base.OnAttachedToVisualTree(e);
@@ -501,6 +509,9 @@ public partial class SidebarTree : UserControl
         // Клавиши и клики ловим на уровне окна (туннель): фокус UserControl ненадёжен.
         _keyHookTopLevel?.AddHandler(KeyDownEvent,        OnTopLevelKeyDown,        RoutingStrategies.Tunnel);
         _keyHookTopLevel?.AddHandler(PointerPressedEvent, OnTopLevelPointerPressed, RoutingStrategies.Tunnel);
+
+        FontScale.Changed += OnFontScaleChanged;
+        if (_dbs.Count > 0 && _renderedFontDelta != FontScale.Delta) Refresh();
     }
 
     protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
@@ -508,6 +519,7 @@ public partial class SidebarTree : UserControl
         _keyHookTopLevel?.RemoveHandler(KeyDownEvent,        OnTopLevelKeyDown);
         _keyHookTopLevel?.RemoveHandler(PointerPressedEvent, OnTopLevelPointerPressed);
         _keyHookTopLevel = null;
+        FontScale.Changed -= OnFontScaleChanged;
         base.OnDetachedFromVisualTree(e);
     }
 

@@ -15,7 +15,7 @@
         <Style Selector="DataGridCell">
             <Setter Property="Padding"         Value="0" />
             <Setter Property="BorderThickness" Value="0" />
-            <Setter Property="FontSize"        Value="{StaticResource FontSizeBase}" />
+            <Setter Property="FontSize"        Value="{DynamicResource FontSizeBase}" />
             <Setter Property="Foreground"      Value="{StaticResource BrushPrimaryText}" />
         </Style>
         <Style Selector="DataGridCell:current /template/ Grid#FocusVisual">

@@ -79,7 +79,7 @@
             <Setter Property="Foreground" Value="{StaticResource BrushPrimaryText}" />
         </Style>
         <Style Selector="Border.settingRow TextBlock.desc">
-            <Setter Property="FontSize"     Value="{StaticResource FontSizeSmall}" />
+            <Setter Property="FontSize"     Value="{DynamicResource FontSizeSmall}" />
             <Setter Property="Foreground"   Value="{StaticResource BrushSecondaryText}" />
             <Setter Property="TextWrapping" Value="Wrap" />
         </Style>
@@ -166,11 +166,12 @@
                                         VerticalAlignment="Center" Margin="0,0,32,0">
                                 <TextBlock Classes="title" Text="Размер шрифта" />
                                 <TextBlock Classes="desc"
-                                           Text="Размер шрифта в пикселях в области редактирования и предварительного просмотра." />
+                                           Text="Общий размер текста интерфейса. Диапазон −3…+3 пикселя от стандарта; кнопка-стрелка возвращает стандарт." />
                             </StackPanel>
                             <StackPanel Grid.Column="1" Orientation="Horizontal"
                                         Spacing="14" VerticalAlignment="Center">
                                 <Button Classes="icon" Width="24" Height="24"
+                                        x:Name="FontResetBtn" Click="OnFontSizeReset"
                                         ToolTip.Tip="Сбросить">
                                     <Viewbox Width="{StaticResource IconSizeSmall}" Height="{StaticResource IconSizeSmall}">
                                         <Canvas Width="24" Height="24">
@@ -182,7 +183,37 @@
                                         </Canvas>
                                     </Viewbox>
                                 </Button>
-                                <Slider Classes="setting" Width="200" Value="40" />
+                                <Slider Classes="setting" Width="200"
+                                        x:Name="FontSizeSlider"
+                                        Minimum="-3" Maximum="3"
+                                        TickFrequency="1" IsSnapToTickEnabled="True"
+                                        SmallChange="1" LargeChange="1"
+                                        ValueChanged="OnFontSizeChanged"
+                                        PointerEntered="OnFontSliderEntered"
+                                        PointerExited="OnFontSliderExited" />
+
+                                <!-- Пузырёк со значением над ползунком: показывает итоговый
+                                     базовый размер текста (стандарт ± дельта). -->
+                                <Popup x:Name="FontValuePopup"
+                                       PlacementTarget="{Binding #FontSizeSlider}"
+                                       Placement="Top" VerticalOffset="-6"
+                                       IsLightDismissEnabled="False">
+                                    <!-- Квадратная плашка-индикатор: сторона считается от текущего
+                                         размера шрифта (масштабируется вместе с ним). Стиль — как у
+                                         обычных подсказок (светлый фон + серая рамка). -->
+                                    <Border x:Name="FontBadgeBorder"
+                                            Background="{DynamicResource ToolTipBackground}"
+                                            BorderBrush="{StaticResource BrushSeparator}"
+                                            BorderThickness="1"
+                                            CornerRadius="4"
+                                            BoxShadow="0 2 8 0 #1A000000">
+                                        <TextBlock x:Name="FontValueText" Text="12"
+                                                   Foreground="{DynamicResource ToolTipForeground}"
+                                                   TextAlignment="Center"
+                                                   HorizontalAlignment="Center"
+                                                   VerticalAlignment="Center" />
+                                    </Border>
+                                </Popup>
                             </StackPanel>
                         </Grid>
                     </Border>
@@ -219,12 +250,12 @@
                                             <TextBlock Text="{Binding Name}"
  />
                                             <TextBlock Text="{Binding Path}"
-                                                       FontSize="{StaticResource FontSizeSmall}"
+                                                       FontSize="{DynamicResource FontSizeSmall}"
                                                        Foreground="{StaticResource BrushSecondaryText}"
                                                        TextTrimming="CharacterEllipsis" />
                                             <!-- Файл недоступен / не смонтирована -->
                                             <TextBlock Text="Не подключена (файл недоступен)"
-                                                       FontSize="{StaticResource FontSizeSmall}"
+                                                       FontSize="{DynamicResource FontSizeSmall}"
                                                        Foreground="{StaticResource BrushRed}"
                                                        IsVisible="{Binding ShowNotMounted}" />
                                         </StackPanel>
@@ -235,7 +266,7 @@
                                             <!-- Дефолтная БД: метка -->
                                             <TextBlock Text="По умолчанию"
                                                        VerticalAlignment="Center"
-                                                       FontSize="{StaticResource FontSizeSmall}"
+                                                       FontSize="{DynamicResource FontSizeSmall}"
                                                        Foreground="{StaticResource BrushSecondaryText}"
                                                        IsVisible="{Binding ShowDefaultBadge}" />
 
@@ -284,7 +315,7 @@
                     </Grid.ColumnDefinitions>
                     <StackPanel Margin="16,16,16,32" Spacing="6">
                     <TextBlock Text="DataBase"
-                               FontSize="{StaticResource FontSizeLarge}"
+                               FontSize="{DynamicResource FontSizeLarge}"
                                FontWeight="{StaticResource FontWeightBold}"
  />
                     <TextBlock x:Name="VersionText"

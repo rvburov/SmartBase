@@ -112,7 +112,7 @@
         <Setter Property="CornerRadius"               Value="{StaticResource RadiusMedium}" />
         <Setter Property="Background"                 Value="{StaticResource BrushSecondaryBg}" />
         <Setter Property="Foreground"                 Value="{StaticResource BrushPrimaryText}" />
-        <Setter Property="FontSize"                   Value="{StaticResource FontSizeBase}" />
+        <Setter Property="FontSize"                   Value="{DynamicResource FontSizeBase}" />
         <Setter Property="FontWeight"                 Value="{StaticResource FontWeightNormal}" />
         <Setter Property="BorderBrush"                Value="{StaticResource BrushSeparator}" />
         <Setter Property="BorderThickness"            Value="1.2" />
@@ -371,6 +371,10 @@
         <!-- Выделение текста серым вместо системного синего -->
         <Setter Property="SelectionBrush"           Value="#C7C7CC" />
         <Setter Property="SelectionForegroundBrush" Value="{StaticResource BrushPrimaryText}" />
+        <!-- По умолчанию однострочный: без вертикальной прокрутки — иначе при крупном шрифте
+             текст переполняет поле фикс. высоты и вылезает кнопка-стрелка скроллбара.
+             Многострочным (notesEditor, DescBox, лог) скролл возвращается отдельно. -->
+        <Setter Property="ScrollViewer.VerticalScrollBarVisibility" Value="Disabled" />
     </Style>
 
     <Style Selector="TextBox:pointerover /template/ Border">
@@ -407,7 +411,7 @@
 
     <!-- Watermark копирует размер и жирность с самого TextBox -->
     <Style Selector="TextBox.titleEditor /template/ TextBlock#PART_Watermark">
-        <Setter Property="FontSize"          Value="{StaticResource FontSizeLarge}" />
+        <Setter Property="FontSize"          Value="{DynamicResource FontSizeLarge}" />
         <Setter Property="FontWeight"        Value="{StaticResource FontWeightBold}" />
         <Setter Property="Foreground"        Value="{StaticResource BrushSecondaryText}" />
         <Setter Property="VerticalAlignment" Value="Center" />
@@ -420,6 +424,8 @@
         <Setter Property="BorderThickness"          Value="0" />
         <Setter Property="Padding"                  Value="0" />
         <Setter Property="VerticalContentAlignment" Value="Top" />
+        <!-- Многострочный редактор — вертикальная прокрутка нужна (перебиваем дефолт TextBox). -->
+        <Setter Property="ScrollViewer.VerticalScrollBarVisibility" Value="Auto" />
     </Style>
     <Style Selector="TextBox.notesEditor /template/ Border#PART_BorderElement">
         <Setter Property="Background"      Value="Transparent" />
@@ -645,7 +651,7 @@
     <Style Selector="CalendarItem /template/ Button#PART_HeaderButton">
         <Setter Property="Foreground"  Value="{StaticResource BrushPrimaryText}" />
         <Setter Property="FontWeight"  Value="{StaticResource FontWeightBold}" />
-        <Setter Property="FontSize"    Value="{StaticResource FontSizeBase}" />
+        <Setter Property="FontSize"    Value="{DynamicResource FontSizeBase}" />
         <Setter Property="Background"  Value="{StaticResource BrushBg}" />
         <Setter Property="Padding"     Value="0" />
     </Style>
@@ -672,7 +678,7 @@
     <!-- Дни недели -->
     <Style Selector="Calendar /template/ TextBlock">
         <Setter Property="Foreground" Value="{StaticResource BrushSecondaryText}" />
-        <Setter Property="FontSize"   Value="{StaticResource FontSizeBase}" />
+        <Setter Property="FontSize"   Value="{DynamicResource FontSizeBase}" />
     </Style>
 
     <!-- Обычный день -->
@@ -682,7 +688,7 @@
         <Setter Property="Foreground"   Value="{StaticResource BrushPrimaryText}" />
         <Setter Property="Background"   Value="Transparent" />
         <Setter Property="BorderThickness" Value="0" />
-        <Setter Property="FontSize"     Value="{StaticResource FontSizeBase}" />
+        <Setter Property="FontSize"     Value="{DynamicResource FontSizeBase}" />
         <Setter Property="HorizontalContentAlignment" Value="Center" />
         <Setter Property="VerticalContentAlignment"   Value="Center" />
     </Style>
@@ -751,7 +757,7 @@
         <Setter Property="Foreground"      Value="{StaticResource BrushPrimaryText}" />
         <Setter Property="Background"      Value="Transparent" />
         <Setter Property="BorderThickness" Value="0" />
-        <Setter Property="FontSize"        Value="{StaticResource FontSizeBase}" />
+        <Setter Property="FontSize"        Value="{DynamicResource FontSizeBase}" />
         <Setter Property="HorizontalContentAlignment" Value="Center" />
         <Setter Property="VerticalContentAlignment"   Value="Center" />
     </Style>
@@ -819,6 +825,9 @@
         <Setter Property="Padding"                  Value="10,0" />
         <Setter Property="VerticalContentAlignment" Value="Center" />
         <Setter Property="VerticalAlignment"        Value="Stretch" />
+        <!-- Однострочный ввод даты/времени: без вертикальной прокрутки, иначе при крупном
+             шрифте текст переполняет поле и вылезает кнопка-стрелка скроллбара. -->
+        <Setter Property="ScrollViewer.VerticalScrollBarVisibility" Value="Disabled" />
     </Style>
 
     <Style Selector="TextBox.timeInput /template/ Border#PART_BorderElement">
@@ -877,7 +886,7 @@
     <!-- Элементы списка времени -->
     <Style Selector="ListBox.timeList ListBoxItem">
         <Setter Property="Foreground"   Value="{StaticResource BrushPrimaryText}" />
-        <Setter Property="FontSize"     Value="{StaticResource FontSizeBase}" />
+        <Setter Property="FontSize"     Value="{DynamicResource FontSizeBase}" />
         <Setter Property="Background"   Value="Transparent" />
         <Setter Property="Padding"      Value="10,7" />
         <Setter Property="Margin"       Value="4,2" />
@@ -909,7 +918,7 @@
          Фон/рамка/скругление контейнера повторяют ComboBox Popup, элементы — ComboBoxItem
          (наведение/выделение тем же ресурсом MenuFlyoutItemBackgroundPointerOver). -->
     <Style Selector="ContextMenu">
-        <Setter Property="FontSize"        Value="{StaticResource FontSizeBase}" />
+        <Setter Property="FontSize"        Value="{DynamicResource FontSizeBase}" />
         <Setter Property="Background"      Value="{StaticResource BrushSecondaryBg}" />
         <Setter Property="BorderBrush"     Value="{StaticResource BrushSeparator}" />
         <Setter Property="BorderThickness" Value="1" />
@@ -919,7 +928,7 @@
     </Style>
 
     <Style Selector="MenuItem">
-        <Setter Property="FontSize"                 Value="{StaticResource FontSizeBase}" />
+        <Setter Property="FontSize"                 Value="{DynamicResource FontSizeBase}" />
         <Setter Property="Foreground"               Value="{StaticResource BrushPrimaryText}" />
         <Setter Property="Background"               Value="Transparent" />
         <Setter Property="Padding"                  Value="10,7" />

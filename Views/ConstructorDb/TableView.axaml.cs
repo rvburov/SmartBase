@@ -155,14 +155,24 @@ public partial class TableView : UserControl
         base.OnAttachedToVisualTree(e);
         _keyHookTopLevel = TopLevel.GetTopLevel(this);
         _keyHookTopLevel?.AddHandler(KeyDownEvent, OnTopLevelKeyDown, RoutingStrategies.Tunnel);
+
+        // Размер шрифта меняется живьём: ячейки строятся с размером из ресурса → пересобрать.
+        FontScale.Changed += OnFontScaleChanged;
+        if (_repository is not null && _renderedFontDelta != FontScale.Delta) Reload();
     }
 
     protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
     {
         _keyHookTopLevel?.RemoveHandler(KeyDownEvent, OnTopLevelKeyDown);
         _keyHookTopLevel = null;
+        FontScale.Changed -= OnFontScaleChanged;
         base.OnDetachedFromVisualTree(e);
     }
+
+    // Дельта последнего рендера — чтобы перерисовать таблицу при возврате, если размер
+    // меняли, пока был открыт другой раздел.
+    private int _renderedFontDelta = FontScale.Delta;
+    private void OnFontScaleChanged() { if (_repository is not null) Reload(); }
 
     private void OnTopLevelKeyDown(object? sender, KeyEventArgs e)
     {
@@ -488,6 +498,8 @@ public partial class TableView : UserControl
     private void Reload()
     {
         if (_repository is null) return;
+
+        _renderedFontDelta = FontScale.Delta;   // таблица отрисована с текущим размером
 
         LoadColumnState();
 

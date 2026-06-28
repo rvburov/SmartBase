@@ -37,7 +37,7 @@
         <Border DockPanel.Dock="Top" Height="56" Padding="16,0">
             <TextBlock x:Name="TitleText"
                        VerticalAlignment="Center"
-                       FontSize="{StaticResource FontSizeLarge}"
+                       FontSize="{DynamicResource FontSizeLarge}"
                        FontWeight="{StaticResource FontWeightBold}"
  />
         </Border>

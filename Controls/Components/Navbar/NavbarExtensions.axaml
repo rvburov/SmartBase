@@ -11,7 +11,7 @@
                        Grid.Column="0"
                        Text="Расширения"
                        VerticalAlignment="Center"
-                       FontSize="{StaticResource FontSizeLarge}"
+                       FontSize="{DynamicResource FontSizeLarge}"
                        FontWeight="{StaticResource FontWeightBold}"
  />
 

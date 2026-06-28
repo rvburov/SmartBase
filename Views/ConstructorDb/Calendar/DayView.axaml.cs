@@ -13,7 +13,8 @@ namespace DataBase.Views.ConstructorDb.Calendar;
 public partial class DayView : UserControl
 {
     // Размеры/веса шрифта — из токенов Typography.axaml (резолв ресурса в рантайме).
-    private static readonly double FontSizeBase =
+    // Свежий размер из Application.Resources — меняется живьём при изменении FontScale.
+    private static double FontSizeBase =>
         (double)Application.Current!.FindResource("FontSizeBase")!;
 
     private static readonly FontWeight WeightBold = (FontWeight)Application.Current!.FindResource("FontWeightBold")!;

@@ -21,6 +21,10 @@ public partial class App : Application
             // Настройки приложения хранятся в app.db.
             AppSettings.AttachStore(registry);
 
+            // Размер шрифта: применить сохранённую дельту до создания окна (потребители на
+            // DynamicResource подхватят актуальные размеры сразу при загрузке).
+            FontScale.Init();
+
             // Рабочее пространство: монтирует дефолтную БД (миграции/сидинг внутри DatabaseManager).
             var workspace = Workspace.Open(registry);
 
