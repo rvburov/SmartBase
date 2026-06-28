@@ -36,6 +36,53 @@ public partial class SettingsView : UserControl
 
         // Слайдер размера шрифта отражает текущую дельту (стандарт = 0, диапазон -3…+3).
         FontSizeSlider.Value = FontScale.Delta;
+
+        // Слайдер масштаба отражает текущий уровень в процентах (стандарт = 100, диапазон 70…130).
+        ScaleSlider.Value = Scaling.Current * 100;
+    }
+
+    // ── Уровень масштабирования ──────────────────────────────────────────────
+    //
+    // Масштаб применяется ко всему окну вживую: MainWindow слушает Scaling.ScaleChanged
+    // и ставит LayoutTransform на корень. Слайдер — в процентах, Scaling хранит множитель.
+    private void OnScaleChanged(object? sender, RangeBaseValueChangedEventArgs e)
+    {
+        Scaling.SetScale(Math.Round(e.NewValue) / 100.0);
+        UpdateScaleBadge();
+    }
+
+    private void OnScaleSliderEntered(object? sender, PointerEventArgs e)
+    {
+        UpdateScaleBadge();
+        ScaleValuePopup.IsOpen = true;
+    }
+
+    private void OnScaleSliderExited(object? sender, PointerEventArgs e) => ScaleValuePopup.IsOpen = false;
+
+    // Текст = текущий масштаб в процентах; смещение пузырька — под текущий ползунок.
+    private void UpdateScaleBadge()
+    {
+        ScaleValueText.Text = $"{(int)Math.Round(ScaleSlider.Value)} %";
+
+        var range = ScaleSlider.Maximum - ScaleSlider.Minimum;
+        var w     = ScaleSlider.Bounds.Width;
+        if (range <= 0 || w <= 0) return;
+
+        var frac = (ScaleSlider.Value - ScaleSlider.Minimum) / range;
+        const double thumbW = 26;
+        // Ползунок масштабируется LayoutTransform'ом окна, а попап живёт в немасштабированном
+        // оверлее → смещение домножаем на текущий масштаб, иначе плашка «уезжает» от ползунка.
+        ScaleValuePopup.HorizontalOffset = (frac * (w - thumbW) + thumbW / 2 - w / 2) * Scaling.Current;
+    }
+
+    // Кнопка-стрелка: подтверждение в стандартном диалоге → возврат к 100 %.
+    private async void OnScaleReset(object? sender, RoutedEventArgs e)
+    {
+        if (VisualRoot is not Window win) return;
+        var dlg = new ConfirmDialog("Вернуть уровень масштабирования по умолчанию?", "Сбросить");
+        if (await dlg.ShowDialog<bool>(win) != true) return;
+
+        ScaleSlider.Value = AppSettings.ScaleDefault * 100;   // → OnScaleChanged → SetScale(1.0)
     }
 
     // Размер шрифта меняется вживую: дельта пишется в Application.Resources (DynamicResource),
@@ -73,7 +120,8 @@ public partial class SettingsView : UserControl
 
         var frac = (FontSizeSlider.Value - FontSizeSlider.Minimum) / range;
         const double thumbW = 26;
-        FontValuePopup.HorizontalOffset = frac * (w - thumbW) + thumbW / 2 - w / 2;
+        // Тот же учёт масштаба окна, что и у плашки масштабирования (попап — в оверлее).
+        FontValuePopup.HorizontalOffset = (frac * (w - thumbW) + thumbW / 2 - w / 2) * Scaling.Current;
     }
 
     // Кнопка-стрелка: подтверждение в стандартном диалоге → возврат к стандарту (дельта 0).

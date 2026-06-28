@@ -14,10 +14,10 @@ public static class AppSettings
     public const string AppName    = "DataBase";
     public const string AppVersion = "1.0.0";
 
-    public const double ScaleMin     = 1.0;
-    public const double ScaleMax     = 1.3;
-    public const double ScaleStep    = 0.1;
-    public const double ScaleDefault = 1.0;
+    public const double ScaleMin     = 0.7;   // 70 %
+    public const double ScaleMax     = 1.3;   // 130 %
+    public const double ScaleStep    = 0.1;   // шаг 10 %
+    public const double ScaleDefault = 1.0;   // стандарт 100 %
 
     public const int WindowMinWidth  = 1100;
     public const int WindowMinHeight = 760;

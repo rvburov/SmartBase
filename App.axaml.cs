@@ -25,6 +25,10 @@ public partial class App : Application
             // DynamicResource подхватят актуальные размеры сразу при загрузке).
             FontScale.Init();
 
+            // Уровень масштабирования: прочитать сохранённый масштаб до создания окна
+            // (MainWindow применит его к корню при инициализации).
+            Scaling.Load();
+
             // Рабочее пространство: монтирует дефолтную БД (миграции/сидинг внутри DatabaseManager).
             var workspace = Workspace.Open(registry);
 

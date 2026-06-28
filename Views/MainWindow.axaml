@@ -12,6 +12,9 @@
         Background="{StaticResource BrushBg}"
         WindowStartupLocation="CenterScreen">
 
+    <!-- Хост масштабирования: LayoutTransform на корне → весь интерфейс перекомпоновывается
+         в логических пикселях и заполняет окно (см. Utils/Scaling + MainWindow.ApplyScale). -->
+    <LayoutTransformControl x:Name="ScaleHost">
     <Grid x:Name="RootGrid">
         <Grid.ColumnDefinitions>
             <!-- ActivityBar | разделитель | сайдбар | контент | разделитель | панель записи -->
@@ -127,5 +130,6 @@
         </Border>
 
     </Grid>
+    </LayoutTransformControl>
 
 </Window>

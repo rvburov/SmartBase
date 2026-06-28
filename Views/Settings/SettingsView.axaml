@@ -138,11 +138,12 @@
                                         VerticalAlignment="Center" Margin="0,0,32,0">
                                 <TextBlock Classes="title" Text="Уровень масштабирования" />
                                 <TextBlock Classes="desc"
-                                           Text="Управление общим уровнем масштабирования в приложении." />
+                                           Text="Общий масштаб интерфейса. Диапазон 70…130 %, шаг 10 %; кнопка-стрелка возвращает 100 %." />
                             </StackPanel>
                             <StackPanel Grid.Column="1" Orientation="Horizontal"
                                         Spacing="14" VerticalAlignment="Center">
                                 <Button Classes="icon" Width="24" Height="24"
+                                        x:Name="ScaleResetBtn" Click="OnScaleReset"
                                         ToolTip.Tip="Сбросить">
                                     <Viewbox Width="{StaticResource IconSizeSmall}" Height="{StaticResource IconSizeSmall}">
                                         <Canvas Width="24" Height="24">
@@ -154,7 +155,33 @@
                                         </Canvas>
                                     </Viewbox>
                                 </Button>
-                                <Slider Classes="setting" Width="200" Value="50" />
+                                <Slider Classes="setting" Width="200"
+                                        x:Name="ScaleSlider"
+                                        Minimum="70" Maximum="130"
+                                        TickFrequency="10" IsSnapToTickEnabled="True"
+                                        SmallChange="10" LargeChange="10"
+                                        ValueChanged="OnScaleChanged"
+                                        PointerEntered="OnScaleSliderEntered"
+                                        PointerExited="OnScaleSliderExited" />
+
+                                <!-- Пузырёк со значением над ползунком: текущий масштаб в процентах. -->
+                                <Popup x:Name="ScaleValuePopup"
+                                       PlacementTarget="{Binding #ScaleSlider}"
+                                       Placement="Top" VerticalOffset="-6"
+                                       IsLightDismissEnabled="False">
+                                    <Border Background="{DynamicResource ToolTipBackground}"
+                                            BorderBrush="{StaticResource BrushSeparator}"
+                                            BorderThickness="1"
+                                            CornerRadius="4"
+                                            Padding="8,4"
+                                            BoxShadow="0 2 8 0 #1A000000">
+                                        <TextBlock x:Name="ScaleValueText" Text="100 %"
+                                                   Foreground="{DynamicResource ToolTipForeground}"
+                                                   TextAlignment="Center"
+                                                   HorizontalAlignment="Center"
+                                                   VerticalAlignment="Center" />
+                                    </Border>
+                                </Popup>
                             </StackPanel>
                         </Grid>
                     </Border>

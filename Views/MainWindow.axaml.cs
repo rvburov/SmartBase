@@ -197,7 +197,19 @@ public partial class MainWindow : Window
         // При потере фокуса окном закрываем открытые контекстные меню/flyout —
         // иначе на macOS popup «зависает» поверх других приложений (Avalonia issue).
         Deactivated += (_, _) => CloseOpenPopups();
+
+        // Уровень масштабирования: применяем сохранённый и реагируем на изменения из настроек.
+        ApplyScale(Scaling.Current);
+        Scaling.ScaleChanged += ApplyScale;
+        Closed += (_, _) => Scaling.ScaleChanged -= ApplyScale;
     }
+
+    // Масштаб всего интерфейса: LayoutTransform на корне — содержимое перекомпоновывается в
+    // логических пикселях и заполняет окно. 100 % → без трансформации (быстрый общий путь).
+    private void ApplyScale(double scale) =>
+        ScaleHost.LayoutTransform = Math.Abs(scale - 1.0) < 0.001
+            ? null
+            : new Avalonia.Media.ScaleTransform(scale, scale);
 
     // Закрывает открытые контекстные меню и flyout. Вызывается при потере фокуса окном —
     // иначе на macOS popup «зависает» поверх других окон (Avalonia issue).
@@ -376,7 +388,7 @@ public partial class MainWindow : Window
     {
         var col = RootGrid.ColumnDefinitions[2];
         _gripDragging   = true;
-        _gripStartX     = e.GetPosition(this).X;
+        _gripStartX     = e.GetPosition(RootGrid).X;
         _gripStartWidth = col.Width.IsAbsolute ? col.Width.Value : col.ActualWidth;
         e.Pointer.Capture((Avalonia.Input.IInputElement?)sender);
         e.Handled = true;
@@ -386,7 +398,7 @@ public partial class MainWindow : Window
     {
         if (!_gripDragging) return;
 
-        var dx       = e.GetPosition(this).X - _gripStartX;
+        var dx       = e.GetPosition(RootGrid).X - _gripStartX;
         var newWidth = Math.Clamp(_gripStartWidth + dx, SidebarMin, SidebarMax);
 
         var col = RootGrid.ColumnDefinitions[2];
@@ -465,7 +477,7 @@ public partial class MainWindow : Window
     {
         var col = RootGrid.ColumnDefinitions[5];
         _recordGripDragging   = true;
-        _recordGripStartX     = e.GetPosition(this).X;
+        _recordGripStartX     = e.GetPosition(RootGrid).X;
         _recordGripStartWidth = col.Width.IsAbsolute ? col.Width.Value : col.ActualWidth;
         e.Pointer.Capture((Avalonia.Input.IInputElement?)sender);
         e.Handled = true;
@@ -476,7 +488,7 @@ public partial class MainWindow : Window
         if (!_recordGripDragging) return;
 
         // Тянем за левый край — движение мыши вправо уменьшает ширину панели.
-        var dx       = e.GetPosition(this).X - _recordGripStartX;
+        var dx       = e.GetPosition(RootGrid).X - _recordGripStartX;
         var newWidth = Math.Clamp(
             _recordGripStartWidth - dx,
             AppSettings.RecordPanelWidthMin,
