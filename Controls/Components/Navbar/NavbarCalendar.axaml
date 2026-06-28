@@ -24,7 +24,7 @@
                 HorizontalContentAlignment="Center"
                 VerticalContentAlignment="Center"
                 ToolTip.Tip="Добавить запись">
-            <Viewbox Width="18" Height="18">
+            <Viewbox Width="{StaticResource IconSizeMedium}" Height="{StaticResource IconSizeMedium}">
                 <Canvas Width="24" Height="24">
                     <Path Data="{StaticResource IconPlus}"
                           Stroke="{Binding $parent[Button].Foreground}"
@@ -56,7 +56,7 @@
                 HorizontalContentAlignment="Center"
                 VerticalContentAlignment="Center"
                 ToolTip.Tip="Назад">
-            <Viewbox Width="18" Height="18">
+            <Viewbox Width="{StaticResource IconSizeMedium}" Height="{StaticResource IconSizeMedium}">
                 <Canvas Width="24" Height="24">
                     <Path Data="{StaticResource IconArrowLeft}"
                           Stroke="{Binding $parent[Button].Foreground}"
@@ -75,7 +75,7 @@
                 HorizontalContentAlignment="Center"
                 VerticalContentAlignment="Center"
                 ToolTip.Tip="Вперёд">
-            <Viewbox Width="18" Height="18">
+            <Viewbox Width="{StaticResource IconSizeMedium}" Height="{StaticResource IconSizeMedium}">
                 <Canvas Width="24" Height="24">
                     <Path Data="{StaticResource IconArrowRight}"
                           Stroke="{Binding $parent[Button].Foreground}"

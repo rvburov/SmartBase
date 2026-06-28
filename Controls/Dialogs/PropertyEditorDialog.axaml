@@ -44,7 +44,7 @@
             <ComboBox.ItemTemplate>
                 <DataTemplate>
                     <StackPanel Orientation="Horizontal" Spacing="10">
-                        <Viewbox Width="18" Height="18" VerticalAlignment="Center">
+                        <Viewbox Width="{StaticResource IconSizeMedium}" Height="{StaticResource IconSizeMedium}" VerticalAlignment="Center">
                             <Canvas Width="24" Height="24">
                                 <Path Data="{Binding Icon}"
                                       Stroke="{StaticResource BrushPrimaryText}"

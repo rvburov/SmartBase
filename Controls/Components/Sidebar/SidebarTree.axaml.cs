@@ -1539,15 +1539,9 @@ public partial class SidebarRow : ObservableObject
     private static readonly IBrush Secondary   = new SolidColorBrush(Color.Parse("#8E8E93"));
     private static readonly IBrush Primary     = new SolidColorBrush(Color.Parse("#1C1C1E"));
 
-    // Lucide: folder / grid-2x2-check / database
-    private const string FolderGeo =
-        "M20 20 A2 2 0 0 0 22 18 V8 A2 2 0 0 0 20 6 H12.1 A2 2 0 0 1 10.41 5.1 L9.6 3.9 A2 2 0 0 0 7.93 3 H4 A2 2 0 0 0 2 5 V18 A2 2 0 0 0 4 20 Z";
-    private const string CollectionGeo =
-        "M12 3 V20 A1 1 0 0 1 11 21 H5 A2 2 0 0 1 3 19 V5 A2 2 0 0 1 5 3 H19 A2 2 0 0 1 21 5 V11 A1 1 0 0 1 20 12 H3 M16 19 L18 21 L22 17";
-    private const string DatabaseGeo =
-        "M3 5 A9 3 0 1 0 21 5 A9 3 0 1 0 3 5 Z M3 5 V19 A9 3 0 0 0 21 19 V5 M3 12 A9 3 0 0 0 21 12";
-    private const string ChevronRightGeo = "M9 18 L15 12 L9 6";
-    private const string ChevronDownGeo  = "M6 9 L12 15 L18 9";
+    // Геометрия иконки из общего словаря Assets/Styles/Icons.axaml по ключу x:Key.
+    private static Geometry? Icon(string key) =>
+        Application.Current!.TryFindResource(key, out var res) && res is Geometry g ? g : null;
 
     // «Без цвета»: дефолтный синий → серый чекбокс.
     private const string DefaultColor = "#007AFF";
@@ -1583,9 +1577,9 @@ public partial class SidebarRow : ObservableObject
     public double CheckboxSlot => Mode == SidebarMode.Calendar && !Node.IsGroup && !Node.IsDatabase ? IndentStep : 0;
     public bool   ShowCheckbox => Mode == SidebarMode.Calendar && !Node.IsGroup && !Node.IsDatabase;
 
-    public bool   ShowChevron     => Expandable;
-    public string ChevronGeometry => Node.IsExpanded ? ChevronDownGeo : ChevronRightGeo;
-    public string IconGeometry    => Node.IsDatabase ? DatabaseGeo : Node.IsGroup ? FolderGeo : CollectionGeo;
+    public bool      ShowChevron     => Expandable;
+    public Geometry? ChevronGeometry => Node.IsExpanded ? Icon("IconChevronDown") : Icon("IconChevronRight");
+    public Geometry? IconGeometry    => Node.IsDatabase ? Icon("IconDatabase") : Node.IsGroup ? Icon("IconFolder") : Icon("IconCollection");
 
     private SolidColorBrush ColorBrush
     {

@@ -29,11 +29,9 @@ public partial class MainWindow : Window
     private bool _sidebarOpen    = true;   // левый сайдбар (col 2)
     private bool _collectionOpen = true;   // центральный блок коллекции/контента (col 3)
 
-    // Иконка пунктов сайдбара расширений (lucide blocks) — одна на все расширения,
-    // т.к. в ExtensionRegistry своей иконки у расширений нет.
-    private const string ExtensionsIcon =
-        "M10 22V7a1 1 0 0 0-1-1H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-5a1 1 0 0 0-1-1H2 " +
-        "M15 2 H21 A1 1 0 0 1 22 3 V9 A1 1 0 0 1 21 10 H15 A1 1 0 0 1 14 9 V3 A1 1 0 0 1 15 2 Z";
+    // Иконка пунктов сайдбара расширений (lucide blocks, ключ из Icons.axaml) — одна
+    // на все расширения, т.к. в ExtensionRegistry своей иконки у расширений нет.
+    private const string ExtensionsIcon = "IconBlocks";
     // _recordPanelLogicalOpen — правая панель записи (col 5), объявлено ниже.
 
     public MainWindow(Workspace workspace)

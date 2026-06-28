@@ -9,7 +9,7 @@
             CornerRadius="{StaticResource RadiusBase}"
             Padding="10,7">
         <Grid ColumnDefinitions="Auto,8,*">
-            <Viewbox Grid.Column="0" Width="16" Height="16"
+            <Viewbox Grid.Column="0" Width="{StaticResource IconSizeSmall}" Height="{StaticResource IconSizeSmall}"
                      VerticalAlignment="Center">
                 <Canvas Width="24" Height="24">
                     <Ellipse Width="24" Height="24" Fill="{StaticResource BrushRed}" />

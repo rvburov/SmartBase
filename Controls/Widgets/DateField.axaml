@@ -10,7 +10,7 @@
             <TextBox Grid.Column="0" x:Name="Input" Classes="timeInput"
                      Watermark="дд.мм.гггг" />
             <Button Grid.Column="1" x:Name="Arrow" Classes="timeArrow">
-                <Viewbox Width="16" Height="16">
+                <Viewbox Width="{StaticResource IconSizeSmall}" Height="{StaticResource IconSizeSmall}">
                     <Canvas Width="24" Height="24">
                         <Path Data="{StaticResource IconCalendar}"
                               Stroke="{StaticResource BrushSecondaryText}"

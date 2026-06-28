@@ -347,9 +347,10 @@ public partial class MonthView : UserControl
         // Плюс — как в кнопке «Создать» в сайдбаре (Sidebar.axaml):
         // Path на Canvas 24×24 внутри Viewbox 18×18 — так и геометрия,
         // и толщина штриха масштабируются одинаково (визуально тоньше и компактнее).
+        Application.Current!.TryFindResource("IconPlus", out var plusRes);
         var plusPath = new Avalonia.Controls.Shapes.Path
         {
-            Data            = Geometry.Parse("M5 12 H19 M12 5 V19"),
+            Data            = plusRes as Geometry,
             Stroke          = new SolidColorBrush(Color.Parse("#636366")),
             StrokeThickness = 2,
             StrokeLineCap   = PenLineCap.Round,
@@ -357,10 +358,11 @@ public partial class MonthView : UserControl
         };
         var plusCanvas = new Canvas { Width = 24, Height = 24 };
         plusCanvas.Children.Add(plusPath);
+        var plusSz = Application.Current!.TryFindResource("IconSizeMedium", out var pszR) && pszR is double pszD ? pszD : 18d;
         var plusIcon = new Viewbox
         {
-            Width               = 18,
-            Height              = 18,
+            Width               = plusSz,
+            Height              = plusSz,
             Child               = plusCanvas,
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment   = VerticalAlignment.Center,

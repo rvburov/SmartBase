@@ -70,15 +70,13 @@
                         <Grid ColumnDefinitions="*,Auto">
                             <TextBox Grid.Column="0" x:Name="StartTimeInput" Classes="timeInput" />
                             <Button Grid.Column="1" x:Name="StartTimeArrow" Classes="timeArrow">
-                                <Viewbox Width="16" Height="16">
-                                    <Canvas Width="24" Height="24">
-                                        <Path Data="{StaticResource IconChevronDown}"
-                                              Stroke="{StaticResource BrushSecondaryText}"
-                                              StrokeThickness="2"
-                                              StrokeLineCap="Round"
-                                              StrokeJoin="Round" />
-                                    </Canvas>
-                                </Viewbox>
+                                <Path Data="{StaticResource IconChevronDown}"
+                                      Stretch="Fill" Width="12" Height="8"
+                                      HorizontalAlignment="Center" VerticalAlignment="Center"
+                                      Stroke="{StaticResource BrushSecondaryText}"
+                                      StrokeThickness="2"
+                                      StrokeLineCap="Round"
+                                      StrokeJoin="Round" />
                             </Button>
                             <Popup Grid.Column="0" x:Name="StartTimePopup"
                                    PlacementTarget="{Binding #StartTimeBorder}"
@@ -111,15 +109,13 @@
                         <Grid ColumnDefinitions="*,Auto">
                             <TextBox Grid.Column="0" x:Name="EndTimeInput" Classes="timeInput" />
                             <Button Grid.Column="1" x:Name="EndTimeArrow" Classes="timeArrow">
-                                <Viewbox Width="16" Height="16">
-                                    <Canvas Width="24" Height="24">
-                                        <Path Data="{StaticResource IconChevronDown}"
-                                              Stroke="{StaticResource BrushSecondaryText}"
-                                              StrokeThickness="2"
-                                              StrokeLineCap="Round"
-                                              StrokeJoin="Round" />
-                                    </Canvas>
-                                </Viewbox>
+                                <Path Data="{StaticResource IconChevronDown}"
+                                      Stretch="Fill" Width="12" Height="8"
+                                      HorizontalAlignment="Center" VerticalAlignment="Center"
+                                      Stroke="{StaticResource BrushSecondaryText}"
+                                      StrokeThickness="2"
+                                      StrokeLineCap="Round"
+                                      StrokeJoin="Round" />
                             </Button>
                             <Popup Grid.Column="0" x:Name="EndTimePopup"
                                    PlacementTarget="{Binding #EndTimeBorder}"

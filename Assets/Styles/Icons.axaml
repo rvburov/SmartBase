@@ -15,19 +15,25 @@
 
          Поменять иконку = поменять Data здесь → меняется во всех местах сразу.
 
-         Галочка чекбокса живёт отдельно — ключ CheckBoxGlyphGeometry в
-         Controls/Widgets/AppCheckBox.axaml, рядом с размером/радиусом
-         чекбокса (они одно целое).
+         Глиф галочки чекбокса тоже здесь — ключ CheckBoxGlyphGeometry; его
+         толщина/размер/радиус остаются в Controls/Widgets/AppCheckBox.axaml.
          ════════════════════════════════════════════════════════════════ -->
+
+    <!-- ═══ РАЗМЕРЫ ИКОНОК (сторона Viewbox, px). Меняешь здесь — меняется
+         везде, где иконка этого размера. Сетка самой иконки всегда 24×24. ═══ -->
+    <x:Double x:Key="IconSizeSmall">16</x:Double>   <!-- Маленький -->
+    <x:Double x:Key="IconSizeMedium">18</x:Double>  <!-- Средний -->
+    <x:Double x:Key="IconSizeLarge">24</x:Double>   <!-- Большой -->
+    <x:Double x:Key="IconSizeXLarge">32</x:Double>  <!-- Крупный -->
 
     <!-- ─── Activity bar: модули и кнопка сайдбара ─── -->
 
-    <!-- panel-left-open: сайдбар закрыт (стрелка →) -->
+    <!-- → panel-left-open: сайдбар закрыт, клик откроет -->
     <StreamGeometry x:Key="IconPanelOpen">M5 3 H19 A2 2 0 0 1 21 5 V19 A2 2 0 0 1 19 21 H5 A2 2 0 0 1 3 19 V5 A2 2 0 0 1 5 3 Z M9 3 V21 M14 9 L17 12 L14 15</StreamGeometry>
-    <!-- panel-right-open: сайдбар открыт (стрелка ←) -->
+    <!-- ← panel-right-open: сайдбар открыт, клик закроет -->
     <StreamGeometry x:Key="IconPanelClose">M5 3 H19 A2 2 0 0 1 21 5 V19 A2 2 0 0 1 19 21 H5 A2 2 0 0 1 3 19 V5 A2 2 0 0 1 5 3 Z M15 3 V21 M10 15 L7 12 L10 9</StreamGeometry>
-    <!-- Модуль «Календарь» (с отметкой числа) -->
-    <StreamGeometry x:Key="IconCalendarModule">M5 4 H19 A2 2 0 0 1 21 6 V20 A2 2 0 0 1 19 22 H5 A2 2 0 0 1 3 20 V6 A2 2 0 0 1 5 4 Z M3 10 H21 M8 2 V6 M16 2 V6 M11 14 H12 V18</StreamGeometry>
+    <!-- Календарь с отметкой числа — модуль «Календарь» и тип поля «дата» -->
+    <StreamGeometry x:Key="IconCalendarDate">M5 4 H19 A2 2 0 0 1 21 6 V20 A2 2 0 0 1 19 22 H5 A2 2 0 0 1 3 20 V6 A2 2 0 0 1 5 4 Z M3 10 H21 M8 2 V6 M16 2 V6 M11 14 H12 V18</StreamGeometry>
     <!-- Модуль «Конструктор БД» (tabler database-check) -->
     <StreamGeometry x:Key="IconDatabaseCheck">M4 6c0 1.657 3.582 3 8 3s8 -1.343 8 -3s-3.582 -3 -8 -3s-8 1.343 -8 3 M4 6v6c0 1.657 3.582 3 8 3c1.075 0 2.1 -.08 3.037 -.224 M20 6v8 M4 12v6c0 1.657 3.582 3 8 3c.166 0 .331 -.002 .495 -.006 M15 19l2 2l4 -4</StreamGeometry>
     <!-- Модуль «Расширения» (lucide blocks) -->
@@ -39,9 +45,9 @@
 
     <!-- Создать / добавить (plus) -->
     <StreamGeometry x:Key="IconPlus">M5 12 H19 M12 5 V19</StreamGeometry>
-    <!-- Развернуть всё (chevrons наружу) -->
+    <!-- ⌃⌄ Развернуть всё — двойной chevron наружу -->
     <StreamGeometry x:Key="IconExpandAll">M7 15 L12 20 L17 15 M7 9 L12 4 L17 9</StreamGeometry>
-    <!-- Свернуть всё (chevrons внутрь) -->
+    <!-- ⌄⌃ Свернуть всё — двойной chevron внутрь -->
     <StreamGeometry x:Key="IconCollapseAll">M7 20 L12 15 L17 20 M7 4 L12 9 L17 4</StreamGeometry>
     <!-- Сортировка по возрастанию (arrow-up-narrow-wide) -->
     <StreamGeometry x:Key="IconSortAsc">M3 8 L7 4 L11 8 M7 4 V20 M11 12 H15 M11 16 H18 M11 20 H21</StreamGeometry>
@@ -52,29 +58,53 @@
     <!-- Импорт/экспорт (lucide download) -->
     <StreamGeometry x:Key="IconDownload">M12 15 V3 M21 15 v4 a2 2 0 0 1 -2 2 H5 a2 2 0 0 1 -2 -2 v-4 M7 10 l5 5 5 -5</StreamGeometry>
 
+    <!-- ─── Сайдбар: иконки строк дерева ─── -->
+
+    <!-- Папка / группа (lucide folder) -->
+    <StreamGeometry x:Key="IconFolder">M20 20 A2 2 0 0 0 22 18 V8 A2 2 0 0 0 20 6 H12.1 A2 2 0 0 1 10.41 5.1 L9.6 3.9 A2 2 0 0 0 7.93 3 H4 A2 2 0 0 0 2 5 V18 A2 2 0 0 0 4 20 Z</StreamGeometry>
+    <!-- Таблица / коллекция (lucide grid-2x2-check) -->
+    <StreamGeometry x:Key="IconCollection">M12 3 V20 A1 1 0 0 1 11 21 H5 A2 2 0 0 1 3 19 V5 A2 2 0 0 1 5 3 H19 A2 2 0 0 1 21 5 V11 A1 1 0 0 1 20 12 H3 M16 19 L18 21 L22 17</StreamGeometry>
+    <!-- База данных (lucide database) -->
+    <StreamGeometry x:Key="IconDatabase">M3 5 A9 3 0 1 0 21 5 A9 3 0 1 0 3 5 Z M3 5 V19 A9 3 0 0 0 21 19 V5 M3 12 A9 3 0 0 0 21 12</StreamGeometry>
+
+    <!-- ─── Сайдбар: разделы настроек (расширения = IconBlocks, БД = IconDatabase) ─── -->
+
+    <!-- Общие (sliders-horizontal) -->
+    <StreamGeometry x:Key="IconSliders">M21 4 H14 M10 4 H3 M21 12 H12 M8 12 H3 M21 20 H16 M12 20 H3 M14 2 V6 M8 10 V14 M16 18 V22</StreamGeometry>
+    <!-- Оформление (sun) -->
+    <StreamGeometry x:Key="IconSun">M12 8 A4 4 0 1 0 12 16 A4 4 0 1 0 12 8 Z M12 2 V4 M12 20 V22 M4.93 4.93 L6.34 6.34 M17.66 17.66 L19.07 19.07 M2 12 H4 M20 12 H22 M4.93 19.07 L6.34 17.66 M17.66 6.34 L19.07 4.93</StreamGeometry>
+    <!-- О программе (info) -->
+    <StreamGeometry x:Key="IconInfo">M12 2 A10 10 0 1 0 12 22 A10 10 0 1 0 12 2 Z M12 16 V11 M11.99 8 H12.01</StreamGeometry>
+
     <!-- ─── Навбары: toggle боковых панелей ─── -->
 
-    <!-- arrow-left-from-line: панель закрыта → откроет (←) -->
+    <!-- ←| arrow-left-from-line: панель закрыта, клик откроет -->
     <StreamGeometry x:Key="IconArrowLeftFromLine">M9 6 L3 12 L9 18 M3 12 H17 M21 19 V5</StreamGeometry>
-    <!-- arrow-right-to-line: панель открыта → закроет (→) -->
+    <!-- →| arrow-right-to-line: панель открыта, клик закроет -->
     <StreamGeometry x:Key="IconArrowRightToLine">M17 12 H3 M11 18 L17 12 L11 6 M21 5 V19</StreamGeometry>
-    <!-- arrow-right-from-line: панель закрыта → откроет (→) -->
+    <!-- |→ arrow-right-from-line: панель закрыта, клик откроет -->
     <StreamGeometry x:Key="IconArrowRightFromLine">M3 5 V19 M21 12 H7 M15 18 L21 12 L15 6</StreamGeometry>
-    <!-- arrow-left-to-line: панель открыта → закроет (←) -->
+    <!-- |← arrow-left-to-line: панель открыта, клик закроет -->
     <StreamGeometry x:Key="IconArrowLeftToLine">M3 19 V5 M13 6 L7 12 L13 18 M7 12 H21</StreamGeometry>
 
     <!-- ─── Навигация ─── -->
 
-    <!-- Назад (arrow-left) -->
+    <!-- ← Назад (arrow-left) -->
     <StreamGeometry x:Key="IconArrowLeft">M12 19 L5 12 L12 5 M5 12 H19</StreamGeometry>
-    <!-- Вперёд (arrow-right) -->
+    <!-- → Вперёд (arrow-right) -->
     <StreamGeometry x:Key="IconArrowRight">M5 12 H19 M12 5 L19 12 L12 19</StreamGeometry>
-    <!-- chevron-left -->
+    <!-- ↑ arrow-up (сдвинуть строку вверх) -->
+    <StreamGeometry x:Key="IconArrowUp">M5 12l7-7 7 7 M12 19V5</StreamGeometry>
+    <!-- ↓ arrow-down (сдвинуть строку вниз) -->
+    <StreamGeometry x:Key="IconArrowDown">M12 5v14 M19 12l-7 7-7-7</StreamGeometry>
+    <!-- ‹ chevron-left (предыдущая страница) -->
     <StreamGeometry x:Key="IconChevronLeft">M15 18 L9 12 L15 6</StreamGeometry>
-    <!-- chevron-right -->
+    <!-- › chevron-right (следующая страница) -->
     <StreamGeometry x:Key="IconChevronRight">M9 18 L15 12 L9 6</StreamGeometry>
-    <!-- chevron-down (выпадающие списки, аккордеоны) -->
+    <!-- ⌄ chevron-down (выпадающие списки, аккордеоны) -->
     <StreamGeometry x:Key="IconChevronDown">M6 9 L12 15 L18 9</StreamGeometry>
+    <!-- ⌄ chevron-down ЗАЛИВКОЙ для ComboBox (PathIcon, своя сетка ~12×8) -->
+    <StreamGeometry x:Key="IconChevronDownFilled">M1 1 L6 6 L11 1 L12.4 2.4 L6 8.8 L-0.4 2.4 Z</StreamGeometry>
 
     <!-- ─── Действия ─── -->
 
@@ -88,6 +118,8 @@
     <StreamGeometry x:Key="IconRotateCcw">M3 12 a9 9 0 1 0 9 -9 a9.75 9.75 0 0 0 -6.74 2.74 L3 8 M3 3 V8 H8</StreamGeometry>
     <!-- Удалить (trash) -->
     <StreamGeometry x:Key="IconTrash">M3 6 H21 M8 6 V4 A1 1 0 0 1 9 3 H15 A1 1 0 0 1 16 4 V6 M19 6 V20 A2 2 0 0 1 17 22 H7 A2 2 0 0 1 5 20 V6 M10 11 V17 M14 11 V17</StreamGeometry>
+    <!-- Минус (minus; пара к IconPlus в степпере уровней) -->
+    <StreamGeometry x:Key="IconMinus">M5 12 H19</StreamGeometry>
 
     <!-- ─── Поля и баннеры ─── -->
 
@@ -95,12 +127,56 @@
     <StreamGeometry x:Key="IconCalendar">M7 4 L7 7 M17 4 L17 7 M4 9 L20 9 M5 6 L19 6 A1 1 0 0 1 20 7 L20 19 A1 1 0 0 1 19 20 L5 20 A1 1 0 0 1 4 19 L4 7 A1 1 0 0 1 5 6 Z</StreamGeometry>
     <!-- Восклицательный знак баннера ошибки (тело «!» в красном круге) -->
     <StreamGeometry x:Key="IconAlertMark">M12 6 L12 14 M12 17 L12 18.5</StreamGeometry>
+    <!-- Галочка чекбокса (общая для CheckBox и «ручного» чекбокса в Sidebar).
+         Толщина/размер/радиус — в Controls/Widgets/AppCheckBox.axaml. -->
+    <StreamGeometry x:Key="CheckBoxGlyphGeometry">M5 13 L10 18 L19 7</StreamGeometry>
+
+    <!-- ─── Контекстное меню: иконки пунктов (lucide) ─── -->
+
+    <!-- Дублировать (copy) -->
+    <StreamGeometry x:Key="IconCopy">M8 8 H20 A2 2 0 0 1 22 10 V20 A2 2 0 0 1 20 22 H8 A2 2 0 0 1 6 20 V10 A2 2 0 0 1 8 8 Z M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2</StreamGeometry>
+    <!-- Расположение (folder-tree) -->
+    <StreamGeometry x:Key="IconFolderTree">M20 10a1 1 0 0 0 1-1V6a1 1 0 0 0-1-1h-2.5a1 1 0 0 1-.8-.4l-.9-1.2A1 1 0 0 0 15 3h-2a1 1 0 0 0-1 1v5a1 1 0 0 0 1 1Z M20 21a1 1 0 0 0 1-1v-3a1 1 0 0 0-1-1h-2.9a1 1 0 0 1-.88-.55l-.42-.85a1 1 0 0 0-.92-.6H13a1 1 0 0 0-1 1v5a1 1 0 0 0 1 1Z M3 5a2 2 0 0 0 2 2h3 M3 3v13a2 2 0 0 0 2 2h3</StreamGeometry>
+    <!-- Переключатель ширины столбцов (move-horizontal) -->
+    <StreamGeometry x:Key="IconMoveHorizontal">M18 8l4 4-4 4 M2 12h20 M6 8l-4 4 4 4</StreamGeometry>
+    <!-- Переключатель высоты строк (move-vertical) -->
+    <StreamGeometry x:Key="IconMoveVertical">M12 2v20 M8 18l4 4 4-4 M8 6l4-4 4 4</StreamGeometry>
+    <!-- Отображение (check-check) -->
+    <StreamGeometry x:Key="IconCheckCheck">M18 6 7 17l-5-5 M22 10l-7.5 7.5L13 16</StreamGeometry>
+
+    <!-- ─── Типы полей (lucide; «дата» = IconCalendarDate выше) ─── -->
+
+    <!-- Текст (type) -->
+    <StreamGeometry x:Key="IconFieldText">M2 16 6.039 6.31a.5.5 0 0 1 .923 0L11 16 M22 9v7 M3.304 13h6.392 M22 12.5a3.5 3.5 0 1 1-7 0 3.5 3.5 0 0 1 7 0</StreamGeometry>
+    <!-- Число (hash) -->
+    <StreamGeometry x:Key="IconFieldNumber">M4 9h16 M4 15h16 M10 3 8 21 M16 3 14 21</StreamGeometry>
+    <!-- Список (list) -->
+    <StreamGeometry x:Key="IconFieldSelect">M3 5h.01 M3 12h.01 M3 19h.01 M8 5h13 M8 12h13 M8 19h13</StreamGeometry>
+    <!-- Чекбокс (square-check) -->
+    <StreamGeometry x:Key="IconFieldCheckbox">M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z M9 12l2 2 4-4</StreamGeometry>
+    <!-- Ссылка (link) -->
+    <StreamGeometry x:Key="IconFieldUrl">M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71 M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71</StreamGeometry>
+
+    <!-- ─── Таблица: меню фильтра/сортировки в заголовке ─── -->
+
+    <!-- Сортировка А→Я (arrow-down-a-z) -->
+    <StreamGeometry x:Key="IconSortAz">M3 16 l4 4 4 -4 M7 20 V4 M20 8 h-5 M15 10 V6.5 a2.5 2.5 0 0 1 5 0 V10 M15 14 h5 l-5 6 h5</StreamGeometry>
+    <!-- Сортировка Я→А (arrow-up-z-a) -->
+    <StreamGeometry x:Key="IconSortZa">M3 8 l4 -4 4 4 M7 4 v16 M15 4 h5 l-5 6 h5 M15 20 v-3.5 a2.5 2.5 0 0 1 5 0 V20 M20 18 h-5</StreamGeometry>
+    <!-- ✓ Галочка (check) -->
+    <StreamGeometry x:Key="IconCheck">M20 6 L9 17 l-5 -5</StreamGeometry>
+    <!-- ✕ Крестик / закрыть (x) -->
+    <StreamGeometry x:Key="IconClose">M18 6 L6 18 M6 6 L18 18</StreamGeometry>
 
     <!-- ─── Стрелки скроллбара (сетка ~14px, Classes="arrow") ─── -->
 
+    <!-- ⌃ вверх -->
     <StreamGeometry x:Key="IconScrollUp">M1 6 L7 1 L13 6</StreamGeometry>
+    <!-- ⌄ вниз -->
     <StreamGeometry x:Key="IconScrollDown">M1 1 L7 6 L13 1</StreamGeometry>
+    <!-- ‹ влево -->
     <StreamGeometry x:Key="IconScrollLeft">M6 1 L1 7 L6 13</StreamGeometry>
+    <!-- › вправо -->
     <StreamGeometry x:Key="IconScrollRight">M1 1 L6 7 L1 13</StreamGeometry>
 
 </ResourceDictionary>

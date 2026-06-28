@@ -18,7 +18,7 @@
                         Width="30" Height="30"
                         CornerRadius="{StaticResource RadiusMedium}"
                         ToolTip.Tip="Создать">
-                    <Viewbox Width="18" Height="18">
+                    <Viewbox Width="{StaticResource IconSizeMedium}" Height="{StaticResource IconSizeMedium}">
                         <Canvas Width="24" Height="24">
                             <Path Data="{StaticResource IconPlus}"
                                   Stroke="{Binding $parent[Button].Foreground}"
@@ -33,7 +33,7 @@
                               Width="30" Height="30"
                               CornerRadius="{StaticResource RadiusMedium}"
                               ToolTip.Tip="Развернуть все">
-                    <Viewbox Width="18" Height="18">
+                    <Viewbox Width="{StaticResource IconSizeMedium}" Height="{StaticResource IconSizeMedium}">
                         <Canvas Width="24" Height="24">
                             <Path x:Name="ExpandIcon"
                                   Data="{StaticResource IconExpandAll}"
@@ -55,7 +55,7 @@
                         Width="30" Height="30"
                         CornerRadius="{StaticResource RadiusMedium}"
                         ToolTip.Tip="Сортировка по имени">
-                    <Viewbox Width="18" Height="18">
+                    <Viewbox Width="{StaticResource IconSizeMedium}" Height="{StaticResource IconSizeMedium}">
                         <Canvas Width="24" Height="24">
                             <Path Data="{StaticResource IconSortAsc}"
                                   Stroke="{Binding $parent[Button].Foreground}"
@@ -70,7 +70,7 @@
                         Width="30" Height="30"
                         CornerRadius="{StaticResource RadiusMedium}"
                         ToolTip.Tip="Включить все">
-                    <Viewbox Width="18" Height="18">
+                    <Viewbox Width="{StaticResource IconSizeMedium}" Height="{StaticResource IconSizeMedium}">
                         <Canvas Width="24" Height="24">
                             <Path Data="{StaticResource IconSquareCheck}"
                                   Stroke="{Binding $parent[Button].Foreground}"
@@ -85,7 +85,7 @@
                         Width="30" Height="30"
                         CornerRadius="{StaticResource RadiusMedium}"
                         ToolTip.Tip="Импорт/Экспорт">
-                    <Viewbox Width="18" Height="18">
+                    <Viewbox Width="{StaticResource IconSizeMedium}" Height="{StaticResource IconSizeMedium}">
                         <Canvas Width="24" Height="24">
                             <Path Data="{StaticResource IconDownload}"
                                   Stroke="{Binding $parent[Button].Foreground}"
@@ -131,7 +131,7 @@
                                         VerticalAlignment="Stretch"
                                         Background="Transparent"
                                         Tapped="OnChevronTapped">
-                                    <Viewbox Width="14" Height="14"
+                                    <Viewbox Width="{StaticResource IconSizeSmall}" Height="{StaticResource IconSizeSmall}"
                                              VerticalAlignment="Center"
                                              HorizontalAlignment="Center"
                                              IsVisible="{Binding ShowChevron}">
@@ -173,7 +173,7 @@
                                 </Border>
 
                                 <!-- Иконка папки/файла (24px зона) -->
-                                <Viewbox Grid.Column="2" Width="18" Height="18"
+                                <Viewbox Grid.Column="2" Width="{StaticResource IconSizeMedium}" Height="{StaticResource IconSizeMedium}"
                                          Margin="2,0,0,0"
                                          VerticalAlignment="Center"
                                          HorizontalAlignment="Center">

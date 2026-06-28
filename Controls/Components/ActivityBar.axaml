@@ -15,7 +15,7 @@
                       HorizontalAlignment="Center"
                       CornerRadius="{StaticResource RadiusMedium}"
                       ToolTip.Tip="Сайдбар">
-            <Viewbox Width="32" Height="32">
+            <Viewbox Width="{StaticResource IconSizeXLarge}" Height="{StaticResource IconSizeXLarge}">
                 <Canvas Width="24" Height="24">
                     <!-- panel-left-open: сайдбар закрыт (стрелка →) -->
                     <Path x:Name="PanelOpenIcon"
@@ -45,9 +45,9 @@
                       CornerRadius="{StaticResource RadiusMedium}"
                       IsChecked="True"
                       ToolTip.Tip="Календарь">
-            <Viewbox Width="32" Height="32">
+            <Viewbox Width="{StaticResource IconSizeXLarge}" Height="{StaticResource IconSizeXLarge}">
                 <Canvas Width="24" Height="24">
-                    <Path Data="{StaticResource IconCalendarModule}"
+                    <Path Data="{StaticResource IconCalendarDate}"
                           Stroke="{Binding $parent[ToggleButton].Foreground}"
                           StrokeThickness="1.2"
                           StrokeLineCap="Round"
@@ -62,7 +62,7 @@
                       HorizontalAlignment="Center"
                       CornerRadius="{StaticResource RadiusMedium}"
                       ToolTip.Tip="Конструктор БД">
-            <Viewbox Width="32" Height="32">
+            <Viewbox Width="{StaticResource IconSizeXLarge}" Height="{StaticResource IconSizeXLarge}">
                 <Canvas Width="24" Height="24">
                     <!-- tabler database-check -->
                     <Path Data="{StaticResource IconDatabaseCheck}"
@@ -80,7 +80,7 @@
                       HorizontalAlignment="Center"
                       CornerRadius="{StaticResource RadiusMedium}"
                       ToolTip.Tip="Расширения">
-            <Viewbox Width="32" Height="32">
+            <Viewbox Width="{StaticResource IconSizeXLarge}" Height="{StaticResource IconSizeXLarge}">
                 <Canvas Width="24" Height="24">
                     <!-- lucide blocks -->
                     <Path Data="{StaticResource IconBlocks}"
@@ -102,7 +102,7 @@
                   HorizontalAlignment="Center"
                   CornerRadius="{StaticResource RadiusMedium}"
                   ToolTip.Tip="Настройки">
-        <Viewbox Width="32" Height="32">
+        <Viewbox Width="{StaticResource IconSizeXLarge}" Height="{StaticResource IconSizeXLarge}">
             <Canvas Width="24" Height="24">
                 <!-- lucide settings -->
                 <Path Data="{StaticResource IconSettings}"

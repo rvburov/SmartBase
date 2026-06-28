@@ -15,7 +15,7 @@
                           VerticalAlignment="Center"
                           CornerRadius="{StaticResource RadiusMedium}"
                           ToolTip.Tip="Динамический просмотр">
-                <Viewbox Width="18" Height="18">
+                <Viewbox Width="{StaticResource IconSizeMedium}" Height="{StaticResource IconSizeMedium}">
                     <Canvas Width="24" Height="24">
                         <!-- pencil-line: режим динамического просмотра (виден в режиме редактора) -->
                         <Path x:Name="IconToPreview"

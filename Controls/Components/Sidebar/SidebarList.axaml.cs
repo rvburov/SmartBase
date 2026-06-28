@@ -6,7 +6,7 @@ using Avalonia.Media;
 
 namespace DataBase.Controls.Components;
 
-/// <summary>Пункт списка-сайдбара: ключ + подпись + иконка (геометрия lucide-пути).</summary>
+/// <summary>Пункт списка-сайдбара: ключ + подпись + иконка (ключ x:Key из Icons.axaml).</summary>
 public sealed record SidebarListItem(string Id, string Label, string Icon);
 
 /// <summary>
@@ -58,17 +58,18 @@ public partial class SidebarList : UserControl
 
             var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*") };
 
+            var iconSz = this.TryFindResource("IconSizeMedium", out var szR) && szR is double szD ? szD : 18d;
             var box = new Viewbox
             {
-                Width             = 18,
-                Height            = 18,
+                Width             = iconSz,
+                Height            = iconSz,
                 Margin            = new Thickness(2, 0, 0, 0),
                 VerticalAlignment = VerticalAlignment.Center,
             };
             var canvas = new Canvas { Width = 24, Height = 24 };
             canvas.Children.Add(new Avalonia.Controls.Shapes.Path
             {
-                Data            = Geometry.Parse(item.Icon),
+                Data            = this.TryFindResource(item.Icon, out var ico) && ico is Geometry geo ? geo : null,
                 StrokeThickness = 1.6,
                 StrokeLineCap   = PenLineCap.Round,
                 StrokeJoin      = PenLineJoin.Round,

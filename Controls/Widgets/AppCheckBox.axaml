@@ -26,8 +26,8 @@
         <CornerRadius x:Key="CheckBoxRadius">2</CornerRadius>
         <Thickness x:Key="CheckBoxBorderThickness">1</Thickness>
 
-        <!-- Галочка: форма и толщина — общие, чтобы Sidebar рисовал её так же -->
-        <StreamGeometry x:Key="CheckBoxGlyphGeometry">M5 13 L10 18 L19 7</StreamGeometry>
+        <!-- Форма галочки (CheckBoxGlyphGeometry) — в Assets/Styles/Icons.axaml;
+             здесь только её толщина (общая, чтобы Sidebar рисовал так же). -->
         <x:Double x:Key="CheckBoxGlyphThickness">2.5</x:Double>
 
         <ControlTheme x:Key="{x:Type CheckBox}" TargetType="CheckBox">

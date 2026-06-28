@@ -19,7 +19,7 @@
                     VerticalAlignment="Center"
                     CornerRadius="{StaticResource RadiusMedium}"
                     ToolTip.Tip="Фильтр">
-                <Viewbox Width="18" Height="18">
+                <Viewbox Width="{StaticResource IconSizeMedium}" Height="{StaticResource IconSizeMedium}">
                     <Canvas Width="24" Height="24">
                         <Path Data="{StaticResource IconFilter}"
                               Stroke="{Binding $parent[Button].Foreground}"
@@ -35,7 +35,7 @@
                     VerticalAlignment="Center"
                     CornerRadius="{StaticResource RadiusMedium}"
                     ToolTip.Tip="Сортировка">
-                <Viewbox Width="18" Height="18">
+                <Viewbox Width="{StaticResource IconSizeMedium}" Height="{StaticResource IconSizeMedium}">
                     <Canvas Width="24" Height="24">
                         <Path Data="{StaticResource IconSortDesc}"
                               Stroke="{Binding $parent[Button].Foreground}"
@@ -60,7 +60,7 @@
                         Width="30" Height="30"
                         CornerRadius="{StaticResource RadiusMedium}"
                         ToolTip.Tip="Предыдущая страница">
-                    <Viewbox Width="18" Height="18">
+                    <Viewbox Width="{StaticResource IconSizeMedium}" Height="{StaticResource IconSizeMedium}">
                         <Canvas Width="24" Height="24">
                             <Path Data="{StaticResource IconChevronLeft}"
                                   Stroke="{Binding $parent[Button].Foreground}"
@@ -81,7 +81,7 @@
                         Width="30" Height="30"
                         CornerRadius="{StaticResource RadiusMedium}"
                         ToolTip.Tip="Следующая страница">
-                    <Viewbox Width="18" Height="18">
+                    <Viewbox Width="{StaticResource IconSizeMedium}" Height="{StaticResource IconSizeMedium}">
                         <Canvas Width="24" Height="24">
                             <Path Data="{StaticResource IconChevronRight}"
                                   Stroke="{Binding $parent[Button].Foreground}"

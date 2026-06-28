@@ -144,7 +144,7 @@
                                         Spacing="14" VerticalAlignment="Center">
                                 <Button Classes="icon" Width="24" Height="24"
                                         ToolTip.Tip="Сбросить">
-                                    <Viewbox Width="16" Height="16">
+                                    <Viewbox Width="{StaticResource IconSizeSmall}" Height="{StaticResource IconSizeSmall}">
                                         <Canvas Width="24" Height="24">
                                             <!-- rotate-ccw -->
                                             <Path Data="{StaticResource IconRotateCcw}"
@@ -172,7 +172,7 @@
                                         Spacing="14" VerticalAlignment="Center">
                                 <Button Classes="icon" Width="24" Height="24"
                                         ToolTip.Tip="Сбросить">
-                                    <Viewbox Width="16" Height="16">
+                                    <Viewbox Width="{StaticResource IconSizeSmall}" Height="{StaticResource IconSizeSmall}">
                                         <Canvas Width="24" Height="24">
                                             <!-- rotate-ccw -->
                                             <Path Data="{StaticResource IconRotateCcw}"
@@ -254,7 +254,7 @@
                                                     ToolTip.Tip="Отключить (файл не удаляется)"
                                                     VerticalAlignment="Center"
                                                     IsVisible="{Binding ShowDeleteButton}">
-                                                <Viewbox Width="16" Height="16">
+                                                <Viewbox Width="{StaticResource IconSizeSmall}" Height="{StaticResource IconSizeSmall}">
                                                     <Canvas Width="24" Height="24">
                                                         <!-- trash -->
                                                         <Path Data="{StaticResource IconTrash}"

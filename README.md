@@ -167,7 +167,7 @@ calendar_avalonia/
 │   ├── ViewModelBase.cs
 │   ├── Calendar/               # Day, Week, Month, Year, List, Journal + контроллер
 │   ├── ConstructorDb/          # Конструктор БД: таблицы, строки, страница записи
-│   ├── Dialogs/                # VM диалогов (Collection, Group, Record, PropertyManager)
+│   ├── Dialogs/                # VM диалогов (Collection, Group, Record)
 │   └── Settings/               # SettingsViewModel
 │
 ├── Views/                      # Экраны приложения (.axaml)

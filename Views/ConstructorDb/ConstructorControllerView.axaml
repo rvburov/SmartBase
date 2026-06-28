@@ -25,7 +25,7 @@
                            VerticalAlignment="Center"
                            FontSize="{StaticResource FontSizeBase}"
                            Foreground="{StaticResource BrushSecondaryText}" />
-                <Viewbox Width="22" Height="22" VerticalAlignment="Center">
+                <Viewbox Width="{StaticResource IconSizeLarge}" Height="{StaticResource IconSizeLarge}" VerticalAlignment="Center">
                     <Canvas Width="24" Height="24">
                         <!-- panel-left-open: иконка сайдбара (как в ActivityBar) -->
                         <Path Data="{StaticResource IconPanelOpen}"
