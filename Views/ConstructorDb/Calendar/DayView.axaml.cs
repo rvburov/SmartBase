@@ -12,8 +12,11 @@ namespace DataBase.Views.ConstructorDb.Calendar;
 
 public partial class DayView : UserControl
 {
+    // Размеры/веса шрифта — из токенов Typography.axaml (резолв ресурса в рантайме).
     private static readonly double FontSizeBase =
-        Application.Current!.Resources["FontSizeBase"] is double v ? v : 12;
+        (double)Application.Current!.FindResource("FontSizeBase")!;
+
+    private static readonly FontWeight WeightBold = (FontWeight)Application.Current!.FindResource("FontWeightBold")!;
 
     public event EventHandler<CalendarRecord>?    RecordClicked;
     public event EventHandler<CalendarRecord>?    RecordMoved;
@@ -228,7 +231,7 @@ public partial class DayView : UserControl
                 {
                     Text         = ev.DisplayTitle,
                     FontSize     = FontSizeBase,
-                    FontWeight   = FontWeight.SemiBold,
+                    FontWeight   = WeightBold,
                     Foreground   = darkBrush,
                     TextTrimming = Avalonia.Media.TextTrimming.CharacterEllipsis,
                     TextWrapping = TextWrapping.Wrap,
@@ -969,7 +972,7 @@ public partial class DayView : UserControl
         {
             if (_dragGhostTimeBlock is null && _dragGhostContentStack is not null)
             {
-                _dragGhostTimeBlock = new TextBlock { Text = timeText, FontSize = 13, Foreground = Brushes.White, Margin = new Thickness(0, 1, 0, 0) };
+                _dragGhostTimeBlock = new TextBlock { Text = timeText, FontSize = FontSizeBase, Foreground = Brushes.White, Margin = new Thickness(0, 1, 0, 0) };
                 _dragGhostContentStack.Children.Add(_dragGhostTimeBlock);
             }
             else if (_dragGhostTimeBlock is not null)
@@ -1002,7 +1005,7 @@ public partial class DayView : UserControl
         {
             if (_resizeGhostTimeBlock is null && _resizeGhostContentStack is not null)
             {
-                _resizeGhostTimeBlock = new TextBlock { Text = timeText, FontSize = 13, Foreground = Brushes.White, Margin = new Thickness(0, 1, 0, 0) };
+                _resizeGhostTimeBlock = new TextBlock { Text = timeText, FontSize = FontSizeBase, Foreground = Brushes.White, Margin = new Thickness(0, 1, 0, 0) };
                 _resizeGhostContentStack.Children.Add(_resizeGhostTimeBlock);
             }
             else if (_resizeGhostTimeBlock is not null)
@@ -1036,7 +1039,7 @@ public partial class DayView : UserControl
         {
             Text         = ev.DisplayTitle,
             FontSize     = FontSizeBase,
-            FontWeight   = FontWeight.SemiBold,
+            FontWeight   = WeightBold,
             Foreground   = Brushes.White,
             TextTrimming = Avalonia.Media.TextTrimming.CharacterEllipsis,
             TextWrapping = TextWrapping.Wrap,

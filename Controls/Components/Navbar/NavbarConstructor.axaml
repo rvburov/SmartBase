@@ -16,7 +16,6 @@
                        VerticalAlignment="Center"
                        FontSize="{StaticResource FontSizeLarge}"
                        FontWeight="{StaticResource FontWeightBold}"
-                       Foreground="{StaticResource BrushPrimaryText}"
                        TextTrimming="CharacterEllipsis"
                        Cursor="IBeam"
                        Margin="0,0,12,0" />
@@ -28,7 +27,6 @@
                      VerticalAlignment="Center"
                      FontSize="{StaticResource FontSizeLarge}"
                      FontWeight="{StaticResource FontWeightBold}"
-                     Foreground="{StaticResource BrushPrimaryText}"
                      Margin="0,0,12,0" />
 
             <!-- Переключатель вида (Таблица / Список) -->
@@ -36,7 +34,6 @@
                       Width="130" Height="30"
                       VerticalAlignment="Center"
                       Background="{StaticResource BrushSecondaryBg}"
-                      Foreground="{StaticResource BrushPrimaryText}"
                       CornerRadius="{StaticResource RadiusBase}" />
 
             <!-- Toggle правой панели записи: arrow-right-from-line (открыть) /

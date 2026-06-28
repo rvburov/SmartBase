@@ -188,7 +188,6 @@
                                 <!-- Имя -->
                                 <TextBlock Grid.Column="3"
                                            Text="{Binding Name}"
-                                           FontSize="{StaticResource FontSizeBase}"
                                            Foreground="{Binding NameBrush}"
                                            VerticalAlignment="Center"
                                            TextTrimming="CharacterEllipsis"

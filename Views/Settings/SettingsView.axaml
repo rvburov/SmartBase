@@ -217,7 +217,7 @@
                                         <StackPanel Grid.Column="0" Spacing="3"
                                                     VerticalAlignment="Center" Margin="0,0,16,0">
                                             <TextBlock Text="{Binding Name}"
-                                                       Foreground="{StaticResource BrushPrimaryText}" />
+ />
                                             <TextBlock Text="{Binding Path}"
                                                        FontSize="{StaticResource FontSizeSmall}"
                                                        Foreground="{StaticResource BrushSecondaryText}"
@@ -286,7 +286,7 @@
                     <TextBlock Text="DataBase"
                                FontSize="{StaticResource FontSizeLarge}"
                                FontWeight="{StaticResource FontWeightBold}"
-                               Foreground="{StaticResource BrushPrimaryText}" />
+ />
                     <TextBlock x:Name="VersionText"
                                Text="Версия 1.0.0"
                                Foreground="{StaticResource BrushSecondaryText}" />

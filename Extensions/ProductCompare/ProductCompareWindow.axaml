@@ -15,7 +15,7 @@
         <StackPanel Spacing="6">
             <TextBlock Text="1. Файл-шаблон (.xlsm)"
                        FontWeight="{StaticResource FontWeightBold}"
-                       Foreground="{StaticResource BrushPrimaryText}" />
+ />
             <Grid ColumnDefinitions="*,10,Auto">
                 <TextBox Grid.Column="0" x:Name="TemplateBox"
                          IsReadOnly="True"
@@ -32,7 +32,7 @@
         <StackPanel Spacing="6">
             <TextBlock Text="2. Старый файл (.xlsx / .xlsm)"
                        FontWeight="{StaticResource FontWeightBold}"
-                       Foreground="{StaticResource BrushPrimaryText}" />
+ />
             <Grid ColumnDefinitions="*,10,Auto">
                 <TextBox Grid.Column="0" x:Name="OldBox"
                          IsReadOnly="True"
@@ -49,7 +49,7 @@
         <StackPanel Spacing="6">
             <TextBlock Text="3. Новый файл (.xlsx / .xlsm)"
                        FontWeight="{StaticResource FontWeightBold}"
-                       Foreground="{StaticResource BrushPrimaryText}" />
+ />
             <Grid ColumnDefinitions="*,10,Auto">
                 <TextBox Grid.Column="0" x:Name="NewBox"
                          IsReadOnly="True"
@@ -66,7 +66,7 @@
         <StackPanel Spacing="6">
             <TextBlock Text="4. Папка для сохранения результата"
                        FontWeight="{StaticResource FontWeightBold}"
-                       Foreground="{StaticResource BrushPrimaryText}" />
+ />
             <Grid ColumnDefinitions="*,10,Auto">
                 <TextBox Grid.Column="0" x:Name="OutputBox"
                          IsReadOnly="True"

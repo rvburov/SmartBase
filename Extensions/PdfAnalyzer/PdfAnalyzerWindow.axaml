@@ -15,7 +15,7 @@
         <StackPanel Spacing="6">
             <TextBlock Text="Папка с PDF-файлами"
                        FontWeight="{StaticResource FontWeightBold}"
-                       Foreground="{StaticResource BrushPrimaryText}" />
+ />
             <Grid ColumnDefinitions="*,10,Auto">
                 <TextBox Grid.Column="0" x:Name="PdfBox"
                          VerticalContentAlignment="Center"
@@ -30,7 +30,7 @@
         <StackPanel Spacing="6">
             <TextBlock Text="Папка для сохранения результата"
                        FontWeight="{StaticResource FontWeightBold}"
-                       Foreground="{StaticResource BrushPrimaryText}" />
+ />
             <Grid ColumnDefinitions="*,10,Auto">
                 <TextBox Grid.Column="0" x:Name="SaveBox"
                          VerticalContentAlignment="Center"
@@ -45,7 +45,7 @@
         <StackPanel Spacing="6">
             <TextBlock Text="Тип выгрузки"
                        FontWeight="{StaticResource FontWeightBold}"
-                       Foreground="{StaticResource BrushPrimaryText}" />
+ />
             <ComboBox x:Name="ExportCombo" Height="30" HorizontalAlignment="Stretch" SelectedIndex="0">
                 <ComboBoxItem>Ведомость технологической документации</ComboBoxItem>
                 <ComboBoxItem>Ведомость конструкторской документации</ComboBoxItem>

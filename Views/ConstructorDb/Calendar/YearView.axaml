@@ -31,8 +31,7 @@
                 <StackPanel Spacing="8">
                     <TextBlock x:Name="DayPopupTitle"
                                FontWeight="{StaticResource FontWeightBold}"
-                               FontSize="{StaticResource FontSizeBase}"
-                               Foreground="{StaticResource BrushPrimaryText}" />
+ />
                     <ScrollViewer MaxHeight="220">
                         <StackPanel x:Name="DayPopupList" Spacing="6" />
                     </ScrollViewer>

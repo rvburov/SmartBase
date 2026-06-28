@@ -17,7 +17,6 @@
         <TextBlock Text="Название"
                    Margin="0,0,0,6"
                    FontWeight="{StaticResource FontWeightBold}"
-                   FontSize="{StaticResource FontSizeBase}"
                    Foreground="{StaticResource BrushSecondaryText}" />
 
         <TextBox x:Name="NameBox"
@@ -30,7 +29,6 @@
         <TextBlock Text="База данных"
                    Margin="0,0,0,6"
                    FontWeight="{StaticResource FontWeightBold}"
-                   FontSize="{StaticResource FontSizeBase}"
                    Foreground="{StaticResource BrushSecondaryText}" />
 
         <ComboBox x:Name="DbCombo"
@@ -39,13 +37,11 @@
                   VerticalContentAlignment="Center"
                   Margin="0,0,0,12"
                   Background="{StaticResource BrushSecondaryBg}"
-                  Foreground="{StaticResource BrushPrimaryText}"
                   CornerRadius="{StaticResource RadiusBase}" />
 
         <TextBlock Text="Расположение"
                    Margin="0,0,0,6"
                    FontWeight="{StaticResource FontWeightBold}"
-                   FontSize="{StaticResource FontSizeBase}"
                    Foreground="{StaticResource BrushSecondaryText}" />
 
         <ComboBox x:Name="LocationCombo"
@@ -54,7 +50,6 @@
                   VerticalContentAlignment="Center"
                   Margin="0,0,0,12"
                   Background="{StaticResource BrushSecondaryBg}"
-                  Foreground="{StaticResource BrushPrimaryText}"
                   CornerRadius="{StaticResource RadiusBase}">
             <!-- Длинный путь вложенности обрезается СЛЕВА (видна правая, самая конкретная
                  часть) — и в самом поле, и в пунктах выпадающего списка. -->

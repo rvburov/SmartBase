@@ -23,7 +23,6 @@
                         IsVisible="False">
                 <TextBlock Text="Откройте навигацию, нажмите на"
                            VerticalAlignment="Center"
-                           FontSize="{StaticResource FontSizeBase}"
                            Foreground="{StaticResource BrushSecondaryText}" />
                 <Viewbox Width="{StaticResource IconSizeLarge}" Height="{StaticResource IconSizeLarge}" VerticalAlignment="Center">
                     <Canvas Width="24" Height="24">
@@ -36,7 +35,6 @@
                 </Viewbox>
                 <TextBlock Text="и выберите коллекцию"
                            VerticalAlignment="Center"
-                           FontSize="{StaticResource FontSizeBase}"
                            Foreground="{StaticResource BrushSecondaryText}" />
             </StackPanel>
         </Grid>

@@ -15,7 +15,7 @@
         <StackPanel Spacing="6">
             <TextBlock Text="1. Исходный файл «Список КД и ТД» (.xlsx / .xlsm)"
                        FontWeight="{StaticResource FontWeightBold}"
-                       Foreground="{StaticResource BrushPrimaryText}" />
+ />
             <Grid ColumnDefinitions="*,10,Auto">
                 <TextBox Grid.Column="0" x:Name="SourceBox"
                          IsReadOnly="True"
@@ -32,7 +32,7 @@
         <StackPanel Spacing="6">
             <TextBlock Text="2. Файл-шаблон «Расчёт сборочных единиц» (.xlsm)"
                        FontWeight="{StaticResource FontWeightBold}"
-                       Foreground="{StaticResource BrushPrimaryText}" />
+ />
             <Grid ColumnDefinitions="*,10,Auto">
                 <TextBox Grid.Column="0" x:Name="TemplateBox"
                          IsReadOnly="True"
@@ -49,7 +49,7 @@
         <StackPanel Spacing="6">
             <TextBlock Text="3. Папка для сохранения результата"
                        FontWeight="{StaticResource FontWeightBold}"
-                       Foreground="{StaticResource BrushPrimaryText}" />
+ />
             <Grid ColumnDefinitions="*,10,Auto">
                 <TextBox Grid.Column="0" x:Name="OutputBox"
                          IsReadOnly="True"

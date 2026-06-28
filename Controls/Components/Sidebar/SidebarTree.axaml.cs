@@ -1533,15 +1533,22 @@ public partial class SidebarRow : ObservableObject
 {
     private const double IndentStep = 22;
 
-    private static readonly IBrush Accent      = new SolidColorBrush(Color.Parse("#007AFF"));
-    private static readonly IBrush AccentLight = new SolidColorBrush(Color.Parse("#E5F0FF"));
-    private static readonly IBrush Hover       = new SolidColorBrush(Color.Parse("#F2F2F7"));
-    private static readonly IBrush Secondary   = new SolidColorBrush(Color.Parse("#8E8E93"));
-    private static readonly IBrush Primary     = new SolidColorBrush(Color.Parse("#1C1C1E"));
+    // Кисти из общей палитры Colors.axaml (запасной hex — на случай отсутствия ресурса).
+    private static readonly IBrush Accent      = Brush("BrushAccent",        "#007AFF");
+    private static readonly IBrush AccentLight = Brush("BrushAccentLight",   "#E5F0FF");
+    private static readonly IBrush Hover       = Brush("BrushSecondaryBg",   "#F2F2F7");
+    private static readonly IBrush Secondary   = Brush("BrushSecondaryText", "#8E8E93");
+    private static readonly IBrush Primary     = Brush("BrushPrimaryText",   "#1C1C1E");
 
     // Геометрия иконки из общего словаря Assets/Styles/Icons.axaml по ключу x:Key.
     private static Geometry? Icon(string key) =>
         Application.Current!.TryFindResource(key, out var res) && res is Geometry g ? g : null;
+
+    // Кисть из общей палитры Colors.axaml по ключу x:Key.
+    private static IBrush Brush(string key, string fallbackHex) =>
+        Application.Current!.TryFindResource(key, out var res) && res is IBrush b
+            ? b
+            : new SolidColorBrush(Color.Parse(fallbackHex));
 
     // «Без цвета»: дефолтный синий → серый чекбокс.
     private const string DefaultColor = "#007AFF";

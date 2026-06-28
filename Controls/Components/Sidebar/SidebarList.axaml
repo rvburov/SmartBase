@@ -39,7 +39,7 @@
                        VerticalAlignment="Center"
                        FontSize="{StaticResource FontSizeLarge}"
                        FontWeight="{StaticResource FontWeightBold}"
-                       Foreground="{StaticResource BrushPrimaryText}" />
+ />
         </Border>
 
         <!-- Пункты: строки строятся в code-behind из SetItems -->

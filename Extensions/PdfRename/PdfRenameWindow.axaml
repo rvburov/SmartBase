@@ -15,7 +15,7 @@
                        Text="Папка с PDF:"
                        VerticalAlignment="Center"
                        FontWeight="{StaticResource FontWeightBold}"
-                       Foreground="{StaticResource BrushPrimaryText}" />
+ />
             <TextBox Grid.Column="1" x:Name="FolderBox"
                      Margin="10,0"
                      VerticalContentAlignment="Center"
@@ -72,14 +72,14 @@
         <TextBlock DockPanel.Dock="Top" Margin="0,0,0,8"
                    Text="Операции:"
                    FontWeight="{StaticResource FontWeightBold}"
-                   Foreground="{StaticResource BrushPrimaryText}" />
+ />
 
         <!-- Журнал (заполняет остаток) -->
         <TextBox x:Name="LogBox"
                  IsReadOnly="True"
                  AcceptsReturn="True"
                  TextWrapping="Wrap"
-                 FontFamily="Consolas, Menlo, monospace"
+                 FontFamily="{StaticResource FontFamilyBase}"
                  FontSize="{StaticResource FontSizeSmall}"
                  VerticalContentAlignment="Top"
                  ScrollViewer.VerticalScrollBarVisibility="Auto" />

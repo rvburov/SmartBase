@@ -31,7 +31,6 @@
                         <!-- Начало -->
                         <TextBlock Text="Начало"
                                    FontWeight="{StaticResource FontWeightBold}"
-                                   FontSize="{StaticResource FontSizeBase}"
                                    Foreground="{StaticResource BrushSecondaryText}" />
                         <Grid x:Name="StartRow" ColumnDefinitions="2*,8,*">
                             <w:DateField Grid.Column="0" x:Name="StartDate" />
@@ -42,7 +41,6 @@
                         <TextBlock Text="Конец"
                                    Margin="0,4,0,0"
                                    FontWeight="{StaticResource FontWeightBold}"
-                                   FontSize="{StaticResource FontSizeBase}"
                                    Foreground="{StaticResource BrushSecondaryText}" />
                         <Grid x:Name="EndRow" ColumnDefinitions="2*,8,*">
                             <w:DateField Grid.Column="0" x:Name="EndDate" />
@@ -52,8 +50,7 @@
                         <CheckBox x:Name="AllDayCheck"
                                   Content="Весь день"
                                   Margin="0,6,0,2"
-                                  FontSize="{StaticResource FontSizeBase}"
-                                  Foreground="{StaticResource BrushPrimaryText}" />
+                                  />
 
                         <!-- Уведомление об ошибке валидации (как в RecordDialog) -->
                         <w:ErrorBanner x:Name="ErrorBanner" Margin="0,2,0,2" />

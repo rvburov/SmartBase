@@ -214,7 +214,7 @@ public partial class RecordPageView : UserControl
             Text                = row.Field.Name,
             VerticalAlignment   = VerticalAlignment.Center,
             Foreground          = (IBrush)this.FindResource("BrushSecondaryText")!,
-            FontSize            = 13,
+            FontSize            = (double)this.FindResource("FontSizeBase")!,
         };
         Grid.SetColumn(nameLabel, 0);
 

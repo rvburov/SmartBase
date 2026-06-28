@@ -130,8 +130,8 @@ public static class MenuIcons
         var primary      = Brush("BrushPrimaryText", Brushes.Black);
         var secondary    = Brush("BrushSecondaryText", Brushes.Gray);
 
-        var fontBase  = Application.Current!.TryFindResource("FontSizeBase", out var fb) && fb is double d1 ? d1 : 12d;
-        var fontSmall = Application.Current!.TryFindResource("FontSizeSmall", out var fs) && fs is double d2 ? d2 : 11d;
+        var fontBase  = (double)Application.Current!.FindResource("FontSizeBase")!;
+        var fontSmall = (double)Application.Current!.FindResource("FontSizeSmall")!;
         var radius    = Application.Current!.TryFindResource("RadiusSmall", out var r) && r is CornerRadius cr ? cr : new CornerRadius(5);
 
         // Иконка типа в светло-синем квадрате (как на карточке свойства).
@@ -180,7 +180,7 @@ public static class MenuIcons
         {
             Text         = string.IsNullOrWhiteSpace(name) ? "Без названия" : name,
             FontSize     = fontBase,
-            FontWeight   = FontWeight.SemiBold,
+            FontWeight   = (FontWeight)Application.Current!.FindResource("FontWeightBold")!,
             Foreground   = primary,
             TextTrimming = TextTrimming.CharacterEllipsis,
         });

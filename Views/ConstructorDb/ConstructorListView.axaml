@@ -41,8 +41,6 @@
                         <Grid ColumnDefinitions="*,Auto,Auto">
                             <TextBlock Grid.Column="0"
                                        Text="{Binding Name}"
-                                       FontSize="{StaticResource FontSizeBase}"
-                                       Foreground="{StaticResource BrushPrimaryText}"
                                        VerticalAlignment="Center"
                                        TextTrimming="CharacterEllipsis" />
                             <Border Grid.Column="1"

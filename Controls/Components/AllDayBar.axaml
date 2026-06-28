@@ -19,7 +19,6 @@
                         BorderBrush="{StaticResource BrushSeparator}"
                         BorderThickness="0,0,1,0">
                     <TextBlock Text="весь день"
-                               FontSize="{StaticResource FontSizeBase}"
                                Foreground="{StaticResource BrushSecondaryText}"
                                HorizontalAlignment="Right"
                                VerticalAlignment="Top"

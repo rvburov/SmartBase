@@ -21,7 +21,6 @@
             <TextBlock Grid.Column="2" x:Name="MessageText"
                        VerticalAlignment="Center"
                        TextWrapping="Wrap"
-                       FontSize="{StaticResource FontSizeBase}"
                        Foreground="{StaticResource BrushRed}" />
         </Grid>
     </Border>

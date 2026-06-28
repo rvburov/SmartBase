@@ -14,6 +14,12 @@
              Меняешь здесь — меняется толщина во всём приложении. -->
         <x:Double x:Key="SeparatorThickness">1</x:Double>
 
+        <!-- Единый стандарт высоты строки (таблица + блоки сайдбара + блоки событий). -->
+        <x:Double x:Key="RowHeightStandard">36</x:Double>
+        <!-- Шаг строки = высота + линия-разделитель 1px (как сетка таблицы).
+             Используется в сайдбаре, где линия рисуется внутри высоты Border. -->
+        <x:Double x:Key="RowStepStandard">37</x:Double>
+
         <!-- Цвет скроллбара -->
         <SolidColorBrush x:Key="BrushScrollbar" Color="#C7C7CC" />
 
@@ -146,6 +152,11 @@
     <Style Selector="Button.filterChevron:pointerover /template/ ContentPresenter">
         <Setter Property="Background"     Value="{StaticResource BrushHover}" />
         <Setter Property="CornerRadius"   Value="4" />
+    </Style>
+
+    <!-- Цвет текста таблицы — из общей палитры (единый источник, как у Button/ComboBox/TextBox). -->
+    <Style Selector="DataGrid">
+        <Setter Property="Foreground" Value="{StaticResource BrushPrimaryText}" />
     </Style>
 
     <!-- Заголовок колонки таблицы: серый фон при наведении -->

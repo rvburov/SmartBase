@@ -91,7 +91,7 @@
                   RowBackground="{StaticResource BrushBg}"
                   HorizontalScrollBarVisibility="Auto"
                   VerticalScrollBarVisibility="Auto"
-                  Foreground="{StaticResource BrushPrimaryText}" />
+                  />
 
         <!-- Слой голубых рамок выделенных колонок (по одной на колонку). Рамки
              добавляются в коде (RefreshColumnHighlights). IsHitTestVisible=False —

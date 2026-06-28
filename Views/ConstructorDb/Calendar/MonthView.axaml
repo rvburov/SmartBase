@@ -12,25 +12,18 @@
         <UniformGrid Columns="7"
                      Background="{StaticResource BrushSecondaryBg}">
             <TextBlock Text="Пн" HorizontalAlignment="Center" Padding="0,6"
-                       FontSize="{StaticResource FontSizeBase}"
                        Foreground="{StaticResource BrushSecondaryText}" />
             <TextBlock Text="Вт" HorizontalAlignment="Center" Padding="0,6"
-                       FontSize="{StaticResource FontSizeBase}"
                        Foreground="{StaticResource BrushSecondaryText}" />
             <TextBlock Text="Ср" HorizontalAlignment="Center" Padding="0,6"
-                       FontSize="{StaticResource FontSizeBase}"
                        Foreground="{StaticResource BrushSecondaryText}" />
             <TextBlock Text="Чт" HorizontalAlignment="Center" Padding="0,6"
-                       FontSize="{StaticResource FontSizeBase}"
                        Foreground="{StaticResource BrushSecondaryText}" />
             <TextBlock Text="Пт" HorizontalAlignment="Center" Padding="0,6"
-                       FontSize="{StaticResource FontSizeBase}"
                        Foreground="{StaticResource BrushSecondaryText}" />
             <TextBlock Text="Сб" HorizontalAlignment="Center" Padding="0,6"
-                       FontSize="{StaticResource FontSizeBase}"
                        Foreground="{StaticResource BrushRed}" />
             <TextBlock Text="Вс" HorizontalAlignment="Center" Padding="0,6"
-                       FontSize="{StaticResource FontSizeBase}"
                        Foreground="{StaticResource BrushRed}" />
         </UniformGrid>
         </Border>

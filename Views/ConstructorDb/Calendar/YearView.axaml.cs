@@ -13,8 +13,21 @@ public partial class YearView : UserControl
 {
     public event EventHandler<DateTime>? MonthSelected;
 
+    // Размеры/веса шрифта — из токенов Typography.axaml (резолв ресурса в рантайме).
     private static readonly double FontSizeBase =
-        Application.Current!.Resources["FontSizeBase"] is double v ? v : 12;
+        (double)Application.Current!.FindResource("FontSizeBase")!;
+
+    private static readonly FontWeight WeightBold   = (FontWeight)Application.Current!.FindResource("FontWeightBold")!;
+    private static readonly FontWeight WeightNormal = (FontWeight)Application.Current!.FindResource("FontWeightNormal")!;
+    // Кисти из общей палитры Colors.axaml (запасной hex — на случай отсутствия ресурса).
+    private static readonly IBrush Secondary = Brush("BrushSecondaryText", "#8E8E93");
+    private static readonly IBrush Primary   = Brush("BrushPrimaryText",   "#1C1C1E");
+    private static readonly IBrush Red        = Brush("BrushRed",          "#FF3B30");
+
+    private static IBrush Brush(string key, string fallbackHex) =>
+        Application.Current!.TryFindResource(key, out var r) && r is IBrush b
+            ? b
+            : new SolidColorBrush(Color.Parse(fallbackHex));
 
     private static readonly string[] MonthNames =
         ["Январь", "Февраль", "Март", "Апрель", "Май", "Июнь",
@@ -67,7 +80,7 @@ public partial class YearView : UserControl
             {
                 Text       = "Нет записей",
                 FontSize   = FontSizeBase,
-                Foreground = new SolidColorBrush(Color.Parse("#8E8E93")),
+                Foreground = Secondary,
             });
         }
         else
@@ -96,15 +109,15 @@ public partial class YearView : UserControl
                         {
                             Text       = e.DisplayTitle,
                             FontSize   = FontSizeBase,
-                            FontWeight = FontWeight.SemiBold,
-                            Foreground = new SolidColorBrush(Color.Parse("#1C1C1E")),
+                            FontWeight = WeightBold,
+                            Foreground = Primary,
                             TextWrapping = TextWrapping.Wrap,
                         },
                         new TextBlock
                         {
                             Text       = time,
                             FontSize   = FontSizeBase,
-                            Foreground = new SolidColorBrush(Color.Parse("#8E8E93")),
+                            Foreground = Secondary,
                         },
                     },
                 });
@@ -140,12 +153,10 @@ public partial class YearView : UserControl
         {
             Text                = MonthNames[month - 1],
             FontSize            = FontSizeBase,
-            FontWeight          = FontWeight.SemiBold,
+            FontWeight          = WeightBold,
             Height              = TitleH,
             Padding             = new Avalonia.Thickness(6, 6, 0, 2),
-            Foreground          = isTitleMonth
-                ? new SolidColorBrush(Color.Parse("#FF3B30"))
-                : new SolidColorBrush(Color.Parse("#1C1C1E")),
+            Foreground          = isTitleMonth ? Red : Primary,
         };
 
         // Один UniformGrid: 7 заголовков + 42 ячейки = 49 элементов, 7 строк × 7 колонок
@@ -159,12 +170,10 @@ public partial class YearView : UserControl
             {
                 Text              = DayNames[di],
                 FontSize          = FontSizeBase,
-                FontWeight        = FontWeight.Normal,
+                FontWeight        = WeightNormal,
                 TextAlignment     = Avalonia.Media.TextAlignment.Center,
                 VerticalAlignment = VerticalAlignment.Center,
-                Foreground        = di >= 5
-                    ? new SolidColorBrush(Color.Parse("#FF3B30"))
-                    : new SolidColorBrush(Color.Parse("#8E8E93")),
+                Foreground        = di >= 5 ? Red : Secondary,
             });
 
         // 42 ячейки с числами
@@ -183,7 +192,7 @@ public partial class YearView : UserControl
             {
                 Text                = d.Day.ToString(),
                 FontSize            = FontSizeBase,
-                FontWeight          = FontWeight.Normal,
+                FontWeight          = WeightNormal,
                 TextAlignment       = Avalonia.Media.TextAlignment.Center,
                 HorizontalAlignment = HorizontalAlignment.Center,
                 VerticalAlignment   = VerticalAlignment.Center,
@@ -201,7 +210,7 @@ public partial class YearView : UserControl
                     Width               = 22,
                     Height              = 22,
                     CornerRadius        = new Avalonia.CornerRadius(11),
-                    Background          = new SolidColorBrush(Color.Parse("#FF3B30")),
+                    Background          = Red,
                     Child               = label,
                 };
             }
@@ -226,11 +235,9 @@ public partial class YearView : UserControl
             }
             else
             {
-                label.Foreground = new SolidColorBrush(!isCurrentMonth
-                    ? Color.Parse("#E5E5EA")
-                    : isWeekend
-                        ? Color.Parse("#8E8E93")
-                        : Color.Parse("#1C1C1E"));
+                label.Foreground = !isCurrentMonth
+                    ? new SolidColorBrush(Color.Parse("#E5E5EA"))
+                    : isWeekend ? Secondary : Primary;
                 cell = new Border
                 {
                     HorizontalAlignment = HorizontalAlignment.Center,

@@ -13,8 +13,7 @@
                         <!-- Заголовок даты: высота и отступы как у блока события -->
                         <Border Margin="0,1" Height="36">
                             <TextBlock Text="{Binding DateHeader}"
-                                       FontSize="{StaticResource FontSizeBase}"
-                                       FontWeight="Bold"
+                                       FontWeight="{StaticResource FontWeightBold}"
                                        Foreground="{Binding HeaderBrush}"
                                        VerticalAlignment="Center"
                                        Margin="8,0,0,0" />
@@ -23,7 +22,6 @@
                         <Border Margin="0,1" Height="36"
                                 IsVisible="{Binding ShowEmptyHint}">
                             <TextBlock Text="Нет записей на сегодня"
-                                       FontSize="{StaticResource FontSizeBase}"
                                        Foreground="{StaticResource BrushSecondaryText}"
                                        VerticalAlignment="Center"
                                        Margin="8,0,0,0" />
@@ -54,11 +52,9 @@
                                             <StackPanel Grid.Column="2" Spacing="2"
                                                         VerticalAlignment="Center">
                                                 <TextBlock Text="{Binding Title}"
-                                                           FontSize="{StaticResource FontSizeBase}"
                                                            Foreground="{Binding TitleBrush}"
                                                            TextTrimming="CharacterEllipsis" />
                                                 <TextBlock Text="{Binding TimeText}"
-                                                           FontSize="{StaticResource FontSizeBase}"
                                                            Foreground="{StaticResource BrushSecondaryText}" />
                                             </StackPanel>
                                         </Grid>

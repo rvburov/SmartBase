@@ -9,8 +9,12 @@ namespace DataBase.Views.ConstructorDb.Calendar;
 
 public partial class MonthView : UserControl
 {
+    // Размеры/веса шрифта — из токенов Typography.axaml (резолв ресурса в рантайме).
     private static readonly double FontSizeBase =
-        Application.Current!.Resources["FontSizeBase"] is double v ? v : 12;
+        (double)Application.Current!.FindResource("FontSizeBase")!;
+
+    private static readonly FontWeight WeightBold   = (FontWeight)Application.Current!.FindResource("FontWeightBold")!;
+    private static readonly FontWeight WeightNormal = (FontWeight)Application.Current!.FindResource("FontWeightNormal")!;
 
     public event EventHandler<DateTime>? DaySelected;
     public event EventHandler<DateTime>? DayAddClicked;
@@ -41,7 +45,7 @@ public partial class MonthView : UserControl
     private DateTime  _dragTargetDay;
     private IPointer? _dragPointer;
     private Control?  _dragSrcControl;
-    private Grid?     _dragPreview;
+    private Grid?     _dragGhost;
     private DateTime? _shiftedDay;
     private bool      _srcCounterShifted; // в исходном дне «+N ещё» временно уменьшен на утащенное
     private int       _pressClickCount;
@@ -341,7 +345,7 @@ public partial class MonthView : UserControl
             HorizontalAlignment = HorizontalAlignment.Stretch,
             VerticalAlignment   = VerticalAlignment.Center,
             Foreground          = labelFg,
-            FontWeight          = isToday ? FontWeight.Bold : FontWeight.Normal,
+            FontWeight          = isToday ? WeightBold : WeightNormal,
         };
 
         // Плюс — как в кнопке «Создать» в сайдбаре (Sidebar.axaml):
@@ -521,7 +525,7 @@ public partial class MonthView : UserControl
             {
                 Text              = ev.DisplayTitle,
                 FontSize          = FontSizeBase,
-                FontWeight        = FontWeight.SemiBold,
+                FontWeight        = WeightBold,
                 Foreground        = darkBrush,
                 Margin            = new Thickness(8, 0, 2, 0),
                 TextTrimming      = TextTrimming.CharacterEllipsis,
@@ -544,14 +548,14 @@ public partial class MonthView : UserControl
             {
                 Text       = $"{ev.StartDt:HH:mm} ",
                 FontSize   = FontSizeBase,
-                FontWeight = FontWeight.Normal,
+                FontWeight = WeightNormal,
                 Foreground = darkBrush,
             };
             var titleTb = new TextBlock
             {
                 Text         = ev.DisplayTitle,
                 FontSize     = FontSizeBase,
-                FontWeight   = FontWeight.SemiBold,
+                FontWeight   = WeightBold,
                 Foreground   = darkBrush,
                 TextTrimming = TextTrimming.CharacterEllipsis,
             };
@@ -699,7 +703,7 @@ public partial class MonthView : UserControl
             {
                 Text              = ev.DisplayTitle,
                 FontSize          = FontSizeBase,
-                FontWeight        = FontWeight.SemiBold,
+                FontWeight        = WeightBold,
                 Foreground        = darkBrush,
                 Margin            = new Thickness(8, 0, 4, 0),
                 TextTrimming      = TextTrimming.CharacterEllipsis,
@@ -722,14 +726,14 @@ public partial class MonthView : UserControl
             {
                 Text       = $"{ev.StartDt:HH:mm} ",
                 FontSize   = FontSizeBase,
-                FontWeight = FontWeight.Normal,
+                FontWeight = WeightNormal,
                 Foreground = darkBrush,
             };
             var titleTb = new TextBlock
             {
                 Text         = ev.DisplayTitle,
                 FontSize     = FontSizeBase,
-                FontWeight   = FontWeight.SemiBold,
+                FontWeight   = WeightBold,
                 Foreground   = darkBrush,
                 TextTrimming = TextTrimming.CharacterEllipsis,
             };
@@ -880,9 +884,9 @@ public partial class MonthView : UserControl
         if (_dragTargetDay != _dragSourceDay) _ShiftSourceCounter();
         else                                  _RestoreSourceCounter();
 
-        // Превью рисуем для любого дня под курсором — в т.ч. при возврате в исходный,
+        // Ghost рисуем для любого дня под курсором — в т.ч. при возврате в исходный,
         // чтобы событие там тоже было ярким, а не пропадало.
-        if (changed || _dragPreview is null) _UpdateDragPreview();
+        if (changed || _dragGhost is null) _UpdateDragGhost();
     }
 
     private void _OnDragReleased(PointerReleasedEventArgs e)
@@ -908,7 +912,7 @@ public partial class MonthView : UserControl
         _dragPointer?.Capture(null);
         _dragPointer = null;
         if (_dragSrcControl is not null) { _dragSrcControl.Opacity = 1.0; _dragSrcControl = null; }
-        if (_dragPreview is not null) { SpanCanvas.Children.Remove(_dragPreview); _dragPreview = null; }
+        if (_dragGhost is not null) { SpanCanvas.Children.Remove(_dragGhost); _dragGhost = null; }
         if (_shiftedDay.HasValue) _RestoreShift(_shiftedDay.Value);
         _RestoreSourceCounter();
         _dragEv     = null;
@@ -1005,30 +1009,30 @@ public partial class MonthView : UserControl
         _srcCounterShifted = false;
     }
 
-    // Создаёт превью-плашку (яркая красная, белый текст) при первом обращении.
-    private void _EnsureDragPreview(Color color)
+    // Создаёт ghost-плашку (яркая красная, белый текст) при первом обращении.
+    private void _EnsureDragGhost(Color color)
     {
-        if (_dragPreview is not null || _dragEv is null) return;
-        _dragPreview = new Grid { Height = BarH, IsHitTestVisible = false };
-        _dragPreview.Children.Add(new Border
+        if (_dragGhost is not null || _dragEv is null) return;
+        _dragGhost = new Grid { Height = BarH, IsHitTestVisible = false };
+        _dragGhost.Children.Add(new Border
         {
             Background   = new SolidColorBrush(color),
             CornerRadius = new CornerRadius(4),
         });
-        _dragPreview.Children.Add(new TextBlock
+        _dragGhost.Children.Add(new TextBlock
         {
             Text              = _dragEv.AllDay ? _dragEv.DisplayTitle : $"{_dragEv.StartDt:HH:mm} {_dragEv.DisplayTitle}",
             FontSize          = FontSizeBase,
-            FontWeight        = FontWeight.SemiBold,
+            FontWeight        = WeightBold,
             Foreground        = Brushes.White,
             Margin            = new Thickness(8, 0, 4, 0),
             TextTrimming      = TextTrimming.CharacterEllipsis,
             VerticalAlignment = VerticalAlignment.Center,
         });
-        SpanCanvas.Children.Add(_dragPreview);
+        SpanCanvas.Children.Add(_dragGhost);
     }
 
-    private void _UpdateDragPreview()
+    private void _UpdateDragGhost()
     {
         if (_dragEv is null || GridContainer.Bounds.Width == 0) return;
         var cw  = GridContainer.Bounds.Width  / 7.0;
@@ -1041,7 +1045,7 @@ public partial class MonthView : UserControl
         var bw  = cw - 4;
         var color = Color.Parse(EventColors.Display(_dragEv.Color));
 
-        // Возврат в исходный день: ставим превью ровно на место оригинала (по его
+        // Возврат в исходный день: ставим ghost ровно на место оригинала (по его
         // фактическим координатам), не пересчитывая строку — так яркая плашка
         // садится точно туда, откуда тащим.
         if (_dragTargetDay == _dragSourceDay && _dragSrcControl is not null)
@@ -1050,10 +1054,10 @@ public partial class MonthView : UserControl
             var topLeft = _dragSrcControl.TranslatePoint(new Point(0, 0), SpanCanvas);
             if (topLeft.HasValue)
             {
-                _EnsureDragPreview(color);
-                _dragPreview!.Width = _dragSrcControl.Bounds.Width;
-                Canvas.SetLeft(_dragPreview, topLeft.Value.X);
-                Canvas.SetTop(_dragPreview, topLeft.Value.Y);
+                _EnsureDragGhost(color);
+                _dragGhost!.Width = _dragSrcControl.Bounds.Width;
+                Canvas.SetLeft(_dragGhost, topLeft.Value.X);
+                Canvas.SetTop(_dragGhost, topLeft.Value.Y);
             }
             return;
         }
@@ -1066,7 +1070,7 @@ public partial class MonthView : UserControl
             _RestoreShift(_shiftedDay.Value);
 
         // Первая свободная строка дня: занятые spanning-бары + уже показанные
-        // чипы этого дня (их строки запомнены в _dayUiMap.Occupied). Превью
+        // чипы этого дня (их строки запомнены в _dayUiMap.Occupied). Ghost
         // заполняет верхние дыры так же, как и обычная раскладка.
         var occupied = _dayUiMap.TryGetValue(_dragTargetDay, out var ui)
             ? new HashSet<int>(ui.Occupied)
@@ -1074,16 +1078,16 @@ public partial class MonthView : UserControl
         var freeRow = _FirstFreeRow(occupied);
 
         // +1 — верхняя граница ячейки (BorderThickness top=1): контент ячейки
-        // (и реальные чипы) сдвинут на 1px вниз относительно row*ch, а превью
+        // (и реальные чипы) сдвинут на 1px вниз относительно row*ch, а ghost
         // лежит на Canvas без этой границы.
         var by = row * ch + 1 + DateH + freeRow * BarStep;
 
-        // Свободной строки в пределах ячейки нет — событие не влезает: прячем превью
+        // Свободной строки в пределах ячейки нет — событие не влезает: прячем ghost
         // и показываем «+N ещё», увеличив счётчик на это перетаскиваемое событие
         // (исходные скрытые + 1).
         if (ch > 0 && by + BarH > row * ch + ch - BPad)
         {
-            if (_dragPreview is not null) { SpanCanvas.Children.Remove(_dragPreview); _dragPreview = null; }
+            if (_dragGhost is not null) { SpanCanvas.Children.Remove(_dragGhost); _dragGhost = null; }
             if (_shiftedDay.HasValue && _shiftedDay.Value != _dragTargetDay)
                 _RestoreShift(_shiftedDay.Value);
             if (_dayUiMap.TryGetValue(_dragTargetDay, out var uiHidden))
@@ -1096,16 +1100,16 @@ public partial class MonthView : UserControl
             return;
         }
 
-        // Если превью заняло бы строку «+N ещё» — прячем подпись на время drag.
+        // Если ghost заняло бы строку «+N ещё» — прячем подпись на время drag.
         if (_dayUiMap.TryGetValue(_dragTargetDay, out var ui2))
             ui2.More.IsVisible = false;
         _shiftedDay = _dragTargetDay;
 
-        _EnsureDragPreview(color);
+        _EnsureDragGhost(color);
 
-        _dragPreview!.Width = bw;
-        Canvas.SetLeft(_dragPreview, bx);
-        Canvas.SetTop(_dragPreview, by);
+        _dragGhost!.Width = bw;
+        Canvas.SetLeft(_dragGhost, bx);
+        Canvas.SetTop(_dragGhost, by);
     }
 
     private DateTime? _DayAtPos(Point pos)

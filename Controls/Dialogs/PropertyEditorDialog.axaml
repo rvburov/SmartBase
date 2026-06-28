@@ -17,7 +17,6 @@
         <TextBlock Text="Название"
                    Margin="0,0,0,6"
                    FontWeight="{StaticResource FontWeightBold}"
-                   FontSize="{StaticResource FontSizeBase}"
                    Foreground="{StaticResource BrushSecondaryText}" />
 
         <TextBox x:Name="NameBox"
@@ -30,7 +29,6 @@
         <TextBlock Text="Тип"
                    Margin="0,0,0,6"
                    FontWeight="{StaticResource FontWeightBold}"
-                   FontSize="{StaticResource FontSizeBase}"
                    Foreground="{StaticResource BrushSecondaryText}" />
 
         <ComboBox x:Name="TypeCombo"
@@ -39,7 +37,6 @@
                   VerticalContentAlignment="Center"
                   Margin="0,0,0,12"
                   Background="{StaticResource BrushSecondaryBg}"
-                  Foreground="{StaticResource BrushPrimaryText}"
                   CornerRadius="{StaticResource RadiusBase}">
             <ComboBox.ItemTemplate>
                 <DataTemplate>
@@ -54,8 +51,7 @@
                         </Viewbox>
                         <TextBlock Text="{Binding Label}"
                                    VerticalAlignment="Center"
-                                   FontSize="{StaticResource FontSizeBase}"
-                                   Foreground="{StaticResource BrushPrimaryText}" />
+ />
                     </StackPanel>
                 </DataTemplate>
             </ComboBox.ItemTemplate>
@@ -72,7 +68,6 @@
             <TextBlock Text="Отображать в календаре"
                        VerticalAlignment="Center"
                        FontWeight="{StaticResource FontWeightBold}"
-                       FontSize="{StaticResource FontSizeBase}"
                        Foreground="{StaticResource BrushSecondaryText}" />
         </StackPanel>
 

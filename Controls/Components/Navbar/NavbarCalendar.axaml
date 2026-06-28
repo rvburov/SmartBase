@@ -44,7 +44,6 @@
                 VerticalContentAlignment="Center"
                 CornerRadius="{StaticResource RadiusMedium}"
                 Background="{StaticResource BrushSecondaryBg}"
-                Foreground="{StaticResource BrushPrimaryText}"
                 BorderBrush="{StaticResource BrushSeparator}"
                 BorderThickness="1.2" />
 
@@ -91,7 +90,7 @@
                    VerticalAlignment="Center"
                    FontSize="{StaticResource FontSizeLarge}"
                    FontWeight="{StaticResource FontWeightBold}"
-                   Foreground="{StaticResource BrushPrimaryText}" />
+ />
 
         <!-- Поиск -->
         <TextBox Grid.Column="5" x:Name="SearchBox"
@@ -101,14 +100,13 @@
                  Watermark="Поиск..."
                  CornerRadius="{StaticResource RadiusPill}"
                  Background="{StaticResource BrushSecondaryBg}"
-                 Foreground="{StaticResource BrushPrimaryText}" />
+                 />
 
         <!-- Вид (Месяц/Неделя/День…) -->
         <ComboBox Grid.Column="6" x:Name="ViewSelector"
                   VerticalAlignment="Center"
                   Width="140" Height="30"
                   Background="{StaticResource BrushSecondaryBg}"
-                  Foreground="{StaticResource BrushPrimaryText}"
                   CornerRadius="{StaticResource RadiusBase}" />
     </Grid>
 

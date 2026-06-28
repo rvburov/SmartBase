@@ -13,8 +13,12 @@ namespace DataBase.Views.ConstructorDb.Calendar;
 
 public partial class WeekView : UserControl
 {
+    // Размеры/веса шрифта — из токенов Typography.axaml (резолв ресурса в рантайме).
     private static readonly double FontSizeBase =
-        Application.Current!.Resources["FontSizeBase"] is double v ? v : 12;
+        (double)Application.Current!.FindResource("FontSizeBase")!;
+
+    private static readonly FontWeight WeightBold   = (FontWeight)Application.Current!.FindResource("FontWeightBold")!;
+    private static readonly FontWeight WeightNormal = (FontWeight)Application.Current!.FindResource("FontWeightNormal")!;
 
     public event EventHandler<CalendarRecord>?    RecordClicked;
     public event EventHandler<CalendarRecord>?    RecordMoved;
@@ -242,7 +246,7 @@ public partial class WeekView : UserControl
                     {
                         Text         = ev.DisplayTitle,
                         FontSize     = FontSizeBase,
-                        FontWeight   = FontWeight.SemiBold,
+                        FontWeight   = WeightBold,
                         Foreground   = darkBrush,
                         TextTrimming = Avalonia.Media.TextTrimming.CharacterEllipsis,
                         TextWrapping = TextWrapping.Wrap,
@@ -1384,7 +1388,7 @@ public partial class WeekView : UserControl
         {
             Text         = ev.DisplayTitle,
             FontSize     = FontSizeBase,
-            FontWeight   = FontWeight.SemiBold,
+            FontWeight   = WeightBold,
             Foreground   = Brushes.White,
             TextTrimming = Avalonia.Media.TextTrimming.CharacterEllipsis,
             TextWrapping = TextWrapping.Wrap,
@@ -1537,7 +1541,7 @@ public partial class WeekView : UserControl
             {
                 Text                = $"{DayNames[i]} {d.Day}",
                 FontSize            = FontSizeBase,
-                FontWeight          = isToday ? FontWeight.SemiBold : FontWeight.Normal,
+                FontWeight          = isToday ? WeightBold : WeightNormal,
                 Foreground          = fg,
                 HorizontalAlignment = HorizontalAlignment.Center,
                 TextAlignment       = Avalonia.Media.TextAlignment.Center,
