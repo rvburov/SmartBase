@@ -1,4 +1,6 @@
+using System.Diagnostics;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
 using Avalonia.Input;
@@ -28,9 +30,16 @@ public partial class SettingsView : UserControl
     {
         InitializeComponent();
 
+        // ── О программе ──────────────────────────────────────────────────────
         var version = Assembly.GetExecutingAssembly().GetName().Version;
         if (version is not null)
-            VersionText.Text = $"Версия {version.Major}.{version.Minor}.{version.Build}";
+        {
+            var text = $"Версия {version.Major}.{version.Minor}.{version.Build}";
+            if (BuildDate() is { } built) text += $" · сборка {built:dd.MM.yyyy}";
+            VersionText.Text = text;
+        }
+        DataPathText.Text   = AppSettings.AppDataDir;
+        SystemInfoText.Text = $"{RuntimeInformation.OSDescription.Trim()} · {RuntimeInformation.FrameworkDescription}";
 
         AsyncRowLoadCheck.IsChecked = AppSettings.LoadAsyncRowLoad();
 
@@ -89,6 +98,37 @@ public partial class SettingsView : UserControl
     {
         if (ConstructorViewCombo.SelectedItem is ComboBoxItem { Tag: string mode })
             AppSettings.SaveConstructorView(mode);
+    }
+
+    // ── О программе ──────────────────────────────────────────────────────────
+    //
+    // Дата сборки = время последней записи сборки на диск (детерминированные сборки
+    // обнуляют PE-таймстамп, поэтому берём mtime файла). Может быть недоступна в
+    // single-file-публикации — тогда строку со «сборкой» просто не показываем.
+    private static DateTime? BuildDate()
+    {
+        try
+        {
+            var path = Assembly.GetExecutingAssembly().Location;
+            return string.IsNullOrEmpty(path) ? null : System.IO.File.GetLastWriteTime(path);
+        }
+        catch { return null; }
+    }
+
+    // Открыть папку с данными в системном файловом менеджере. UseShellExecute=true
+    // делегирует системе: open (macOS), explorer (Windows), xdg-open (Linux) — надёжно
+    // работает с путями с пробелами/спецсимволами (Avalonia.Launcher на таких молчал).
+    private void OnOpenDataFolder(object? sender, RoutedEventArgs e)
+    {
+        try
+        {
+            Process.Start(new ProcessStartInfo
+            {
+                FileName        = AppSettings.AppDataDir,
+                UseShellExecute = true,
+            });
+        }
+        catch { /* нет обработчика для папки — молча игнорируем */ }
     }
 
     // ── Уровень масштабирования ──────────────────────────────────────────────

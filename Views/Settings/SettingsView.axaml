@@ -408,14 +408,45 @@
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*" MaxWidth="1400" />
                     </Grid.ColumnDefinitions>
-                    <StackPanel Margin="16,16,16,32" Spacing="6">
-                    <TextBlock Text="DataBase"
-                               FontSize="{DynamicResource FontSizeLarge}"
-                               FontWeight="{StaticResource FontWeightBold}"
- />
-                    <TextBlock x:Name="VersionText"
-                               Text="Версия 1.0.0"
-                               Foreground="{StaticResource BrushSecondaryText}" />
+                    <StackPanel Margin="16,16,16,32" Spacing="0">
+
+                    <!-- Название, версия (со сборкой) и краткое описание -->
+                    <StackPanel Spacing="6" Margin="0,0,0,8">
+                        <TextBlock Text="DataBase"
+                                   FontSize="{DynamicResource FontSizeLarge}"
+                                   FontWeight="{StaticResource FontWeightBold}" />
+                        <TextBlock x:Name="VersionText"
+                                   Text="Версия 1.0.0"
+                                   Foreground="{StaticResource BrushSecondaryText}" />
+                        <TextBlock Text="Локальная база данных с календарём и конструктором коллекций. Все данные хранятся на вашем устройстве — в локальных файлах базы данных."
+                                   Foreground="{StaticResource BrushSecondaryText}"
+                                   TextWrapping="Wrap" MaxWidth="640"
+                                   HorizontalAlignment="Left" />
+                    </StackPanel>
+
+                    <!-- Папка с данными (где лежат database.db / app.db) -->
+                    <Border Classes="settingRow">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <StackPanel Grid.Column="0" Spacing="4"
+                                        VerticalAlignment="Center" Margin="0,0,32,0">
+                                <TextBlock Classes="title" Text="Папка с данными" />
+                                <TextBlock x:Name="DataPathText" Classes="desc"
+                                           Text="—" TextTrimming="CharacterEllipsis" />
+                            </StackPanel>
+                            <Button Grid.Column="1" Classes="dialog" Content="Открыть"
+                                    VerticalAlignment="Center"
+                                    Click="OnOpenDataFolder" />
+                        </Grid>
+                    </Border>
+
+                    <!-- Система (ОС и версия рантайма — пригодится при обращении в поддержку) -->
+                    <Border Classes="settingRow">
+                        <StackPanel Spacing="4">
+                            <TextBlock Classes="title" Text="Система" />
+                            <TextBlock x:Name="SystemInfoText" Classes="desc" Text="—" />
+                        </StackPanel>
+                    </Border>
+
                     </StackPanel>
                 </Grid>
             </ScrollViewer>
