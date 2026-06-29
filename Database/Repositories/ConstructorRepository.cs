@@ -1470,6 +1470,7 @@ public class ConstructorRepository(AppDbContext db)
             throw new InvalidOperationException("Поле с таким именем уже существует.");
 
         // Менялись ли тип/видимость — от этого зависит, надо ли пересобирать проекцию календаря.
+        var oldType            = entity.FieldType;
         var calRelevantChanged = entity.FieldType != field.FieldType || entity.IsCalStart != field.IsCalStart;
 
         entity.Name       = field.Name;
@@ -1482,9 +1483,67 @@ public class ConstructorRepository(AppDbContext db)
         entity.IsRequired = field.IsRequired;
         db.SaveChanges();
 
+        // Тип пересёк границу «дата» → приводим уже сохранённые значения к новому виду
+        // (текст↔дата без потери данных). Делаем ДО пересборки calendar_index, чтобы
+        // индекс строился уже по каноническим значениям.
+        if (oldType != field.FieldType && field.Id is int convFid)
+            ConvertFieldValuesForTypeChange(convFid, oldType, field.FieldType);
+
         // Поле стало/перестало быть видимой датой → пересобрать его строки проекции.
         if (calRelevantChanged && field.Id is int fid)
             RebuildCalendarIndexForField(fid);
+    }
+
+    // При смене типа поля на «дата»/с «даты» приводим уже сохранённые значения к нужному
+    // виду — чтобы перевод текст↔дата шёл без потери данных:
+    //   • текст → дата: разбираем значение и пишем ISO-канон (как пишет редактор даты),
+    //     чтобы дата сразу читалась таблицей, календарём и редактором;
+    //   • дата → текст: разбираем ISO-канон и пишем человекочитаемое дд.MM.гггг,
+    //     чтобы текст сохранил дату в привычном виде, а не как 2026-02-01.
+    // Неразбираемое значение оставляем как есть — это не потеря: произвольный текст просто
+    // не является датой. Пишем сырым ADO.NET пакетом в одной транзакции (значений может быть
+    // сотни тысяч); EF-трекер не задействован — db_field_values этого поля здесь не отслеживаются.
+    private void ConvertFieldValuesForTypeChange(int fieldId, string oldType, string newType)
+    {
+        var toDate   = newType == "date" && oldType != "date";
+        var fromDate = oldType == "date" && newType != "date";
+        if (!toDate && !fromDate) return;
+
+        var rows = db.DbFieldValues.AsNoTracking()
+            .Where(v => v.FieldId == fieldId && v.Value != "")
+            .Select(v => new { v.Id, v.Value })
+            .ToList();
+
+        var updates = new List<(int Id, string Value)>();
+        foreach (var r in rows)
+        {
+            if (!DateValue.TryParse(r.Value, out var dv)) continue;   // не дата — не трогаем
+            var converted = toDate ? dv.ToStorage() : dv.ToDisplay();
+            if (converted != r.Value) updates.Add((r.Id, converted));
+        }
+        if (updates.Count == 0) return;
+
+        var conn    = db.Database.GetDbConnection();
+        var wasOpen = conn.State == System.Data.ConnectionState.Open;
+        if (!wasOpen) conn.Open();
+        using (var tx  = conn.BeginTransaction())
+        using (var upd = conn.CreateCommand())
+        {
+            upd.Transaction = tx;
+            upd.CommandText = "UPDATE db_field_values SET Value = $val WHERE Id = $id";
+            var pVal = AddParam(upd, "$val");
+            var pId  = AddParam(upd, "$id");
+            upd.Prepare();
+
+            foreach (var (id, value) in updates)
+            {
+                pVal.Value = value;
+                pId.Value  = id;
+                upd.ExecuteNonQuery();
+            }
+            tx.Commit();
+        }
+        if (!wasOpen) conn.Close();
     }
 
     public DbField DuplicateField(int fieldId)

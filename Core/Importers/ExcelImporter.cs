@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text;
 using ClosedXML.Excel;
 
@@ -86,7 +87,7 @@ public static class ExcelImporter
             var values = new Dictionary<(int Row, int Col), string>();
             foreach (var cell in used.CellsUsed())
             {
-                var s = cell.GetFormattedString();
+                var s = FormatCell(cell);
                 if (!string.IsNullOrEmpty(s))
                     values[(cell.Address.RowNumber, cell.Address.ColumnNumber)] = s;
             }
@@ -100,6 +101,25 @@ public static class ExcelImporter
             string Cell(int row, int col) => values.TryGetValue((row, col), out var v) ? v : "";
             return BuildImportData(spec, titleCol, firstCol, lastCol, lastRow, Cell, progress);
         }
+    }
+
+    // Текст ячейки для импорта. Даты приводим к фиксированному дд.MM.гггг (со временем —
+    // дд.MM.гггг чч:мм), а НЕ к cell.GetFormattedString(): тот форматирует по числовому
+    // формату ячейки/культуре потока (часто M/d/yyyy — день и месяц меняются местами,
+    // пропадает ведущий ноль) → данные искажаются, и текст потом не разбирается как дата.
+    // Фиксированный вид совпадает с тем, что ждёт DateValue, поэтому такое значение
+    // позже без потерь переводится в тип «дата» («Изменить свойство»). Остальные типы
+    // (числа/строки) берём как отображает Excel.
+    private static string FormatCell(IXLCell cell)
+    {
+        if (cell.Value.IsDateTime)
+        {
+            var dt = cell.Value.GetDateTime();
+            return dt.TimeOfDay == TimeSpan.Zero
+                ? dt.ToString("dd.MM.yyyy", CultureInfo.InvariantCulture)
+                : dt.ToString("dd.MM.yyyy HH:mm", CultureInfo.InvariantCulture);
+        }
+        return cell.GetFormattedString();
     }
 
     // ── CSV ───────────────────────────────────────────────────────────────────
