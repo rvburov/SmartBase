@@ -2,6 +2,7 @@ using Avalonia.Controls;
 using Avalonia.Threading;
 using DataBase.Controls.Dialogs;
 using DataBase.Core.Models;
+using DataBase.Database;
 using DataBase.Database.Repositories;
 
 namespace DataBase.Views.ConstructorDb;
@@ -10,6 +11,10 @@ public partial class ConstructorControllerView : UserControl
 {
     private ConstructorRepository? _repository;
     private int? _currentCollectionId;
+
+    // Все смонтированные БД — для окна «Расположение» записи (выбор целевой БД/коллекции,
+    // в т.ч. перенос между БД). Заполняется из MainWindow (SetDatabases).
+    private readonly List<DbOption> _dbs = [];
 
     public event EventHandler?      CollectionsChanged;
 
@@ -68,6 +73,7 @@ public partial class ConstructorControllerView : UserControl
         TableViewCtrl.RecordCreateRequested     += (_, e)    => _ = CreateAndOpen(e.Open, e.AfterId);
         TableViewCtrl.RecordsDeleteRequested    += (_, ids)  => _ = DeleteRecordsWithConfirm(ids);
         TableViewCtrl.RecordDuplicateRequested  += (_, ids)  => _ = DuplicateRecords(ids);
+        TableViewCtrl.RecordRelocateRequested   += (_, ids)  => _ = RelocateRecords(ids);
 
         ListViewCtrl.RecordClicked              += (_, rid) => OpenPage(rid);
         ListViewCtrl.RecordCreateRequested      += (_, _)   => _ = CreateAndOpen();
@@ -104,6 +110,21 @@ public partial class ConstructorControllerView : UserControl
             ListViewCtrl.IsVisible  = false;
         }
     }
+
+    // Набор смонтированных БД для окна «Расположение» записи (выбор целевой БД/коллекции и
+    // перенос между БД). Вызывается из MainWindow при старте и после монтирования/размонтирования.
+    public void SetDatabases(IReadOnlyList<DatabaseManager> databases)
+    {
+        _dbs.Clear();
+        foreach (var d in databases)
+            _dbs.Add(new DbOption(d.DbId, string.IsNullOrWhiteSpace(d.Name) ? "База данных" : d.Name, d.Constructor));
+    }
+
+    private ConstructorRepository? RepoFor(int dbId) => _dbs.FirstOrDefault(d => d.Id == dbId)?.Repo;
+
+    // БД текущей открытой коллекции — по ссылке на активный репозиторий (его экземпляр стабилен).
+    private int CurrentDbId =>
+        _dbs.FirstOrDefault(d => ReferenceEquals(d.Repo, _repository))?.Id ?? (_dbs.Count > 0 ? _dbs[0].Id : 0);
 
     // Открыть коллекцию из конкретной БД: перенацеливаем модуль на её репозиторий.
     // В основной области одновременно открыта одна коллекция, поэтому достаточно
@@ -369,6 +390,49 @@ public partial class ConstructorControllerView : UserControl
         // Выделяем голубым КОПИИ (а не исходники, которые оставались выделены раньше).
         if (TableViewCtrl.IsVisible)
             TableViewCtrl.SelectRecords(newIds);
+    }
+
+    // «Расположение»: перенос выбранных записей в другую коллекцию/БД. Окно (как у коллекций в
+    // сайдбаре) выбирает целевую БД и коллекцию + «Перенести все свойства». Значения переносятся
+    // грамотно (по имени поля, с приведением типов; см. ConstructorRepository.MoveRecordsToCollectionIsolated).
+    // Перенос идёт на изолированных подключениях в фоне (мелкий объём — без окна прогресса), как
+    // дубль/удаление. Запись исчезает из исходной коллекции (move = copy + delete).
+    private async Task RelocateRecords(IReadOnlyList<int> recordIds)
+    {
+        if (_repository is null || _currentCollectionId is null || _dbs.Count == 0) return;
+        if (VisualRoot is not Avalonia.Controls.Window win) return;
+
+        var ids = recordIds.Distinct().ToList();
+        if (ids.Count == 0) return;
+
+        var dlg = new RecordLocationDialog(_dbs, CurrentDbId, _currentCollectionId);
+        var res = await dlg.ShowDialog<RecordLocationResult?>(win);
+        if (res is null || RepoFor(res.DbId) is not { } targetRepo) return;
+
+        // Та же коллекция — переносить некуда (no-op).
+        if (res.DbId == CurrentDbId && res.CollectionId == _currentCollectionId.Value) return;
+
+        var keepVertical = TableViewCtrl.IsVisible ? TableViewCtrl.CurrentVerticalOffset() : (double?)null;
+
+        var sourcePath = _repository.DbPath;
+        var sourceCollectionId = _currentCollectionId.Value;
+        var many = ids.Count > 1;
+        await RunBulkOp(many ? "Перемещение записей" : "Перемещение записи",
+            (p, setPhase) =>
+            {
+                setPhase(many ? "Перемещение записей" : "Перемещение записи");
+                targetRepo.MoveRecordsToCollectionIsolated(sourcePath, sourceCollectionId, ids, res.CollectionId,
+                    res.CreateMissingFields, new IntProgress(done => p.Report((done, ids.Count))));
+                p.Report((ids.Count, ids.Count));   // финал → «Сохранение…»
+            });
+
+        RefreshRows(structural: true);
+        TableViewCtrl.ClearRecordSelection();   // перенесённые строки исчезли — снимаем подсветку
+        CollectionsChanged?.Invoke(this, EventArgs.Empty);
+        RecordPageClosed?.Invoke(this, EventArgs.Empty);
+
+        if (keepVertical is { } off && TableViewCtrl.IsVisible)
+            TableViewCtrl.RestoreVerticalOffset(off);
     }
 
     // Русское склонение: 1 запись, 2–4 записи, 5+ записей (с учётом 11–14).

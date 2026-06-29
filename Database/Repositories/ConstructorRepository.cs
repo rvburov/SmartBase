@@ -1494,6 +1494,22 @@ public class ConstructorRepository(AppDbContext db)
             RebuildCalendarIndexForField(fid);
     }
 
+    // Приводит одно значение свойства от типа fromType к типу toType. Все типы, кроме «дата»,
+    // хранятся как обычные строки → конверсия нужна только при пересечении границы «дата»
+    // (текст/число/… ↔ дата). Неразбираемое как дата значение оставляем как есть — это не
+    // потеря: произвольный текст просто не является датой. Используется и при смене типа поля
+    // (ConvertFieldValuesForTypeChange), и при переносе записи в коллекцию с другой схемой
+    // (CopyFieldValuesByName).
+    internal static string ConvertValueForType(string value, string fromType, string toType)
+    {
+        if (value.Length == 0 || fromType == toType) return value;
+        var toDate   = toType   == "date" && fromType != "date";
+        var fromDate = fromType == "date" && toType   != "date";
+        if (!toDate && !fromDate) return value;                 // оба не-дата → plain string, как есть
+        if (!DateValue.TryParse(value, out var dv)) return value;
+        return toDate ? dv.ToStorage() : dv.ToDisplay();
+    }
+
     // При смене типа поля на «дата»/с «даты» приводим уже сохранённые значения к нужному
     // виду — чтобы перевод текст↔дата шёл без потери данных:
     //   • текст → дата: разбираем значение и пишем ISO-канон (как пишет редактор даты),
@@ -1517,8 +1533,7 @@ public class ConstructorRepository(AppDbContext db)
         var updates = new List<(int Id, string Value)>();
         foreach (var r in rows)
         {
-            if (!DateValue.TryParse(r.Value, out var dv)) continue;   // не дата — не трогаем
-            var converted = toDate ? dv.ToStorage() : dv.ToDisplay();
+            var converted = ConvertValueForType(r.Value, oldType, newType);
             if (converted != r.Value) updates.Add((r.Id, converted));
         }
         if (updates.Count == 0) return;
@@ -2299,6 +2314,183 @@ public class ConstructorRepository(AppDbContext db)
         return Convert.ToInt32(c.ExecuteScalar());
     }
 
+    // ── Перенос записи в другую коллекцию / БД ──────────────────────────────────
+    // Грамотный перенос: значения сопоставляются с полями целевой коллекции ПО ИМЕНИ (без учёта
+    // регистра) с приведением типов (ConvertValueForType — текст↔дата и т.д.). Совпадающие по
+    // имени поля переносятся; для остальных — createMissingFields решает: создать недостающее
+    // свойство в цели (полное сохранение) или отбросить значение. Общая логика для таблицы
+    // («Расположение») и календаря (смена коллекции/БД в окне записи).
+
+    /// <summary>Переносит значения свойств записи-источника (в репозитории <paramref name="source"/> —
+    /// может быть другой БД) в УЖЕ созданную запись целевой коллекции этого репозитория, сопоставляя
+    /// поля по имени с приведением типов. <paramref name="createMissingFields"/> — создавать в цели
+    /// отсутствующие свойства (иначе их значения отбрасываются). <paramref name="excludeTargetFieldId"/>
+    /// — целевое поле, в которое писать нельзя (например, уже выставленное поле-дата календаря —
+    /// чтобы не затереть отредактированную дату).</summary>
+    public void CopyFieldValuesByName(
+        ConstructorRepository source, int sourceRecordId, int sourceCollectionId,
+        int targetRecordId, int targetCollectionId,
+        bool createMissingFields, int excludeTargetFieldId = 0)
+    {
+        var srcFields = source.GetFields(sourceCollectionId).ToDictionary(f => f.Id!.Value);
+        var srcValues = source.GetFieldValues(sourceRecordId);
+        if (srcValues.Count == 0) return;
+
+        var targetByName = new Dictionary<string, DbField>(StringComparer.OrdinalIgnoreCase);
+        foreach (var tf in GetFields(targetCollectionId))
+            targetByName.TryAdd(tf.Name, tf);
+
+        // Позиция для создаваемых недостающих свойств — в конец схемы цели.
+        var nextPos = (db.DbFields.Where(f => f.CollectionId == targetCollectionId)
+                                  .Select(f => (int?)f.Position).Max() ?? 0) + 1000;
+
+        foreach (var (srcFieldId, value) in srcValues)
+        {
+            if (value.Length == 0 || !srcFields.TryGetValue(srcFieldId, out var meta)) continue;
+
+            if (!targetByName.TryGetValue(meta.Name, out var target))
+            {
+                if (!createMissingFields) continue;
+                target = AddField(new DbField
+                {
+                    CollectionId = targetCollectionId, Name = meta.Name,
+                    FieldType    = meta.FieldType,      ConfigJson = meta.ConfigJson,
+                    Position     = nextPos,             IsCalStart = meta.IsCalStart,
+                    IsCalEnd     = meta.IsCalEnd,       IsRequired = meta.IsRequired,
+                });
+                nextPos += 1000;
+                targetByName[meta.Name] = target;
+            }
+
+            if (target.Id == excludeTargetFieldId) continue;
+            SetFieldValue(targetRecordId, target.Id!.Value, ConvertValueForType(value, meta.FieldType, target.FieldType));
+        }
+    }
+
+    /// <summary>Пакетный перенос записей из коллекции <paramref name="sourceCollectionId"/> в целевую
+    /// коллекцию этого репозитория на ОТДЕЛЬНЫХ подключениях (фон + прогресс) — чтобы не блокировать
+    /// UI-контексты. <paramref name="sourceDbPath"/> — путь БД-источника (совпадает с этим репо при
+    /// переносе внутри одной БД). Возвращает id созданных записей.</summary>
+    public List<int> MoveRecordsToCollectionIsolated(
+        string sourceDbPath, int sourceCollectionId, IReadOnlyList<int> recordIds, int targetCollectionId,
+        bool createMissingFields, IProgress<int>? progress = null)
+    {
+        if (recordIds.Count == 0) return [];
+
+        using var targetCtx = new AppDbContext(DbPath);
+        targetCtx.ApplyPerformancePragmas();
+        var targetRepo = new ConstructorRepository(targetCtx);
+
+        var sameDb = string.Equals(sourceDbPath, DbPath, StringComparison.OrdinalIgnoreCase);
+        AppDbContext? sourceCtx = null;
+        if (!sameDb) { sourceCtx = new AppDbContext(sourceDbPath); sourceCtx.ApplyPerformancePragmas(); }
+        var sourceRepo = sameDb ? targetRepo : new ConstructorRepository(sourceCtx!);
+
+        try { return targetRepo.MoveRecordsCore(sourceRepo, sourceCollectionId, recordIds, targetCollectionId, createMissingFields, progress); }
+        finally { sourceCtx?.Dispose(); }
+    }
+
+    // Перенос записей выполняется на контекстах targetRepo (this) и sourceRepo. Главное про
+    // производительность (как DuplicateRecordsData/DeleteRecordsData, см. docs/architecture/performance):
+    //   • план сопоставления полей считается ОДИН раз — все записи из одной коллекции-источника;
+    //   • значения каждой записи пишутся одним AddRange (без SaveChanges на каждое значение и без
+    //     инкрементной синхронизации индекса);
+    //   • проекция календаря наполняется ОДИН раз по диапазону новых id (новые id непрерывны —
+    //     мы единственный писатель);
+    //   • исходные записи удаляются bulk-ом (DeleteRecordsData, каскад чистит значения и индекс);
+    //   • копирование идёт в одной транзакции (один коммит), трекер EF чистим после каждой записи —
+    //     память ограничена независимо от размера пакета.
+    private List<int> MoveRecordsCore(ConstructorRepository source, int sourceCollectionId,
+        IReadOnlyList<int> recordIds, int targetCollectionId, bool createMissingFields, IProgress<int>? progress)
+    {
+        // 1) План: srcFieldId → (целевое поле, типы). Недостающие свойства создаём ОДИН раз (при флаге),
+        //    до транзакции копирования (AddField коммитит сам).
+        var srcFields    = source.GetFields(sourceCollectionId);
+        var targetByName = new Dictionary<string, DbField>(StringComparer.OrdinalIgnoreCase);
+        foreach (var tf in GetFields(targetCollectionId)) targetByName.TryAdd(tf.Name, tf);
+
+        var nextFieldPos = (db.DbFields.Where(f => f.CollectionId == targetCollectionId)
+                                       .Select(f => (int?)f.Position).Max() ?? 0) + 1000;
+
+        var plan = new Dictionary<int, (int FieldId, string From, string To)>();
+        foreach (var sf in srcFields)
+        {
+            if (!targetByName.TryGetValue(sf.Name, out var tf))
+            {
+                if (!createMissingFields) continue;
+                tf = AddField(new DbField
+                {
+                    CollectionId = targetCollectionId, Name = sf.Name,
+                    FieldType    = sf.FieldType,        ConfigJson = sf.ConfigJson,
+                    Position     = nextFieldPos,        IsCalStart = sf.IsCalStart,
+                    IsCalEnd     = sf.IsCalEnd,         IsRequired = sf.IsRequired,
+                });
+                nextFieldPos += 1000;
+                targetByName[sf.Name] = tf;
+            }
+            plan[sf.Id!.Value] = (tf.Id!.Value, sf.FieldType, tf.FieldType);
+        }
+
+        // 2) Копируем записи (одна транзакция, один коммит). Position новых — в конец, по 1000.
+        var posBase = db.DbRecords.Where(r => r.CollectionId == targetCollectionId)
+                                  .Select(r => (int?)r.Position).Max() ?? 0;
+        var newIds        = new List<int>(recordIds.Count);
+        var copiedSources = new List<int>(recordIds.Count);
+        var done = 0;
+        int firstNew = 0, lastNew = 0;
+
+        using (var tx = db.Database.BeginTransaction())
+        {
+            foreach (var srcId in recordIds)
+            {
+                var header = source.GetRecord(srcId);
+                if (header is null) { progress?.Report(++done); continue; }
+
+                posBase += 1000;
+                var rec = new DbRecordEntity
+                {
+                    CollectionId = targetCollectionId, CreatedAt = DateTime.Now.ToString("o"),
+                    Position     = posBase,            StartDt   = header.StartDt,
+                    EndDt        = header.EndDt,       AllDay    = header.AllDay,
+                    Title        = header.Title,       Description = header.Description,
+                };
+                db.DbRecords.Add(rec);
+                db.SaveChanges();   // нужен Id записи для значений (в рамках транзакции, без коммита)
+
+                var values = source.GetFieldValues(srcId);
+                var rows   = new List<DbFieldValueEntity>(values.Count);
+                foreach (var (srcFieldId, value) in values)
+                {
+                    if (value.Length == 0 || !plan.TryGetValue(srcFieldId, out var t)) continue;
+                    rows.Add(new DbFieldValueEntity
+                    {
+                        RecordId = rec.Id, FieldId = t.FieldId,
+                        Value    = ConvertValueForType(value, t.From, t.To),
+                    });
+                }
+                if (rows.Count > 0) { db.DbFieldValues.AddRange(rows); db.SaveChanges(); }
+
+                if (firstNew == 0) firstNew = rec.Id;
+                lastNew = rec.Id;
+                newIds.Add(rec.Id);
+                copiedSources.Add(srcId);
+
+                db.ChangeTracker.Clear();   // запись и значения уже во вставке транзакции — трекер не нужен
+                progress?.Report(++done);
+            }
+            tx.Commit();
+        }
+
+        // 3) Проекция календаря — один раз по диапазону новых id (как DuplicateRecordsData).
+        if (firstNew != 0)
+            FillCalendarIndex(q => q.Where(v => v.RecordId >= firstNew && v.RecordId <= lastNew));
+
+        // 4) Исходные записи — bulk-удалением (каскад уносит их значения и calendar_index).
+        if (copiedSources.Count > 0) source.DeleteRecordsData(copiedSources);
+
+        return newIds;
+    }
+
     // ── Значения полей ────────────────────────────────────────────────────────
 
     public Dictionary<int, string> GetFieldValues(int recordId) =>
@@ -2865,11 +3057,18 @@ public class ConstructorRepository(AppDbContext db)
 
         if (oldColId != newColId)
         {
-            db.DbRecords.Remove(rec);
-            db.SaveChanges();
+            // Смена коллекции = перенос: создаём новую запись в целевой коллекции (правленый
+            // header + выбранное поле-дата + индекс), затем грамотно переносим остальные значения
+            // свойств (по имени, с приведением типов) — иначе они терялись. Недостающие в цели
+            // свойства НЕ создаём (окно календаря визуально не меняем). Поле-дату исключаем, чтобы
+            // не затереть отредактированную дату.
+            var oldId = rec.Id;
             r.CollectionId = newColId;
             r.Id = null;
             AddCalendarRecord(r);
+            CopyFieldValuesByName(this, oldId, oldColId, r.Id!.Value, newColId,
+                                  createMissingFields: false, excludeTargetFieldId: r.FieldId);
+            DeleteRecord(oldId);
             return;
         }
 

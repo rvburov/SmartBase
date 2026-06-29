@@ -25,7 +25,7 @@
 Контекст [AppDbContext](../../Database/AppDbContext.cs). Таблицы:
 
 - **Контент:** `categories`, `db_groups`, `db_collections`, `db_fields`, `db_records`, `db_field_values`.
-- **Значения полей:** `db_field_values` — пара `(RecordId, FieldId) → Value` (уникальный индекс). Так произвольные поля хранятся «вертикально», а не колонками.
+- **Значения полей:** `db_field_values` — пара `(RecordId, FieldId) → Value` (уникальный индекс). Так произвольные поля хранятся «вертикально», а не колонками. Все типы, кроме `date`, хранятся как обычные строки; `date` — в ISO-каноне (`DateValue.ToStorage`). При **переносе записи в другую коллекцию** (таблица «Расположение» / смена коллекции в окне календаря) значения сопоставляются с полями цели **по имени** с приведением типов (`ConstructorRepository.CopyFieldValuesByName` → `ConvertValueForType`; нетривиально только пересечение границы «дата»).
 - **Проекция календаря:** `calendar_index` — денормализованное «оглавление» событий (строка на каждое видимое поле-дату записи: `RecordId, FieldId, CollectionId, StartIso, EndIso, AllDay`; индекс `(CollectionId, StartIso)`, FK-каскады на `db_records`/`db_fields`). Из неё календарь читает события индексным range-query (см. ниже).
 - **UI-настройки коллекции:** `ui_col_widths`, `ui_row_heights`, `ui_collection_settings` (режим вида, ручной ресайз), `system_field_meta` (подписи «Название»/«Описание»), `column_order`, `column_display`, `record_display`.
 

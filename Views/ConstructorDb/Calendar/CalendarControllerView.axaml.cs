@@ -320,9 +320,16 @@ public partial class CalendarControllerView : UserControl
             }
             else
             {
-                // БД сменили — переносим запись: создаём в целевой базе, удаляем из исходной.
-                RepoOf(rec).AddCalendarRecord(rec);
-                RepoOf(r).DeleteCalendarRecord(r.Id!.Value);
+                // БД сменили — переносим запись: создаём в целевой базе, грамотно переносим значения
+                // свойств (по имени, с приведением типов), удаляем из исходной. Поле-дату исключаем,
+                // чтобы не затереть выставленную AddCalendarRecord дату.
+                var sourceRepo = RepoOf(r);
+                var targetRepo = RepoOf(rec);
+                targetRepo.AddCalendarRecord(rec);
+                targetRepo.CopyFieldValuesByName(sourceRepo, r.Id!.Value, r.CollectionId ?? 0,
+                                                 rec.Id!.Value, rec.CollectionId ?? 0,
+                                                 createMissingFields: false, excludeTargetFieldId: rec.FieldId);
+                sourceRepo.DeleteCalendarRecord(r.Id!.Value);
             }
             CollectionsMayHaveChanged?.Invoke(this, EventArgs.Empty);
         }

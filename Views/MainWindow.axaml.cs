@@ -80,6 +80,8 @@ public partial class MainWindow : Window
         // Календарь агрегирует события из всех смонтированных БД.
         CalendarModule.Initialize(workspace.Mounted, _categories);
         ConstructorModule.Initialize(_constructor);
+        // Все смонтированные БД — для окна «Расположение» записи (перенос в другую коллекцию/БД).
+        ConstructorModule.SetDatabases(workspace.Mounted);
 
         // Боковые панели: и календарь, и конструктор показывают все смонтированные БД корнями.
         CalendarSidebar.InitializeWorkspace(workspace.Mounted, Controls.Components.SidebarMode.Calendar);
@@ -235,6 +237,7 @@ public partial class MainWindow : Window
         ConstructorSidebar.InitializeWorkspace(_workspace.Mounted, Controls.Components.SidebarMode.Constructor);
         CalendarSidebar.InitializeWorkspace(_workspace.Mounted, Controls.Components.SidebarMode.Calendar);
         CalendarModule.SetDatabases(_workspace.Mounted);
+        ConstructorModule.SetDatabases(_workspace.Mounted);
         CalendarModule.SetActiveIds(CalendarSidebar.GetActiveIds());
         SettingsModule.RefreshDatabases();   // обновить статус «подключена/не подключена»
     }

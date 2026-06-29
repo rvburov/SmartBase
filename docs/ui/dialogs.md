@@ -19,6 +19,8 @@
 | [CollectionDialog](../../Controls/Dialogs/CollectionDialog.axaml.cs) | создание/правка коллекции (имя, иконка, цвет, группа) |  |
 | [GroupDialog](../../Controls/Dialogs/GroupDialog.axaml.cs) | создание/правка группы |  |
 | [CreateItemDialog](../../Controls/Dialogs/CreateItemDialog.axaml.cs) | выбор, что создать (группа/коллекция/…) |  |
+| [LocationDialog](../../Controls/Dialogs/LocationDialog.axaml.cs) | «Расположение» коллекции/группы: выбор целевой БД и места (группа/корень), без переименования | `LocationDialogResult?` (целевые `GroupId`, `DbId`) |
+| [RecordLocationDialog](../../Controls/Dialogs/RecordLocationDialog.axaml.cs) | «Расположение» записи: выбор целевой БД и коллекции + «Перенести все свойства» (создавать в цели отсутствующие свойства). Перенос данных грамотный — значения сопоставляются по имени поля с приведением типов (см. [../features/constructor-db/tables.md](../features/constructor-db/tables.md)) | `RecordLocationResult?` (`DbId`, `CollectionId`, `CreateMissingFields`) |
 | [ImportExportDialog](../../Controls/Dialogs/ImportExportDialog.axaml.cs) | импорт/экспорт данных | см. [../features/import-export.md](../features/import-export.md) |
 | [ProgressDialog](../../Controls/Dialogs/ProgressDialog.axaml.cs) | прогресс долгой фоновой операции (импорт, дубль/удаление/перенос коллекций и групп, удаление/дубль свойств) | закрывается программно (`Done()`) |
 

@@ -37,6 +37,9 @@ public partial class TableView : UserControl
     // Дубль записей: список id (как удаление). Одна запись из меню строки — список из одного id;
     // если строка входит в мультивыделение — дублируется весь набор.
     public event EventHandler<IReadOnlyList<int>>? RecordDuplicateRequested;
+    // «Расположение»: перенести записи в другую коллекцию/БД (список id, как дубль/удаление).
+    // Одна запись из меню строки — список из одного id; если строка в мультивыделении — весь набор.
+    public event EventHandler<IReadOnlyList<int>>? RecordRelocateRequested;
     // Open = открывать ли запись справа после создания. «+»-строка создаёт без
     // открытия (false), контекстное «Создать запись» — с открытием (true).
     // AfterId = id записи-инициатора (меню строки) — создать сразу после неё; null —
@@ -1559,6 +1562,10 @@ public partial class TableView : UserControl
         miDuplicate.Click += (_, _) => RequestRecordDuplicateFromMenu(row);
         menu.Items.Add(miDuplicate);
 
+        var miRelocate = new MenuItem { Header = Controls.Components.MenuIcons.LocationHeader() };
+        miRelocate.Click += (_, _) => RequestRecordRelocateFromMenu(row);
+        menu.Items.Add(miRelocate);
+
         // «Отображение» (записей) — глобальное окно видимости/уровней строк (список всех
         // записей), инициатор-строка не важна.
         var miDisplay = new MenuItem { Header = Controls.Components.MenuIcons.DisplayHeader() };
@@ -1607,6 +1614,18 @@ public partial class TableView : UserControl
         var selected = SelectedRecordIds();
         List<int> ids = selected.Contains(recordId) && selected.Count > 1 ? selected : [recordId];
         RecordDuplicateRequested?.Invoke(this, ids);
+    }
+
+    // «Расположение» из меню записи (как дубль/удаление): запись в мультивыделении →
+    // переносим весь набор; иначе только её. Контроллер открывает окно выбора БД/коллекции.
+    private void RequestRecordRelocateFromMenu(DataGridRow row)
+    {
+        var recordId = RowRecordId(row);
+        if (recordId <= 0) return;   // строка-заглушка ещё не заполнена — переносить нечего
+
+        var selected = SelectedRecordIds();
+        List<int> ids = selected.Contains(recordId) && selected.Count > 1 ? selected : [recordId];
+        RecordRelocateRequested?.Invoke(this, ids);
     }
 
     // Пункты «Сдвинуть вверх/вниз» (именно в таком порядке) с разделителем перед ними.
