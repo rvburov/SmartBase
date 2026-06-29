@@ -6,13 +6,16 @@
         <Grid ColumnDefinitions="*,Auto">
             <TextBox Grid.Column="0" x:Name="Input" Classes="timeInput" />
             <Button Grid.Column="1" x:Name="Arrow" Classes="timeArrow">
-                <Path Data="{StaticResource IconChevronDown}"
-                      Stretch="Fill" Width="12" Height="8"
-                      HorizontalAlignment="Center" VerticalAlignment="Center"
-                      Stroke="{StaticResource BrushSecondaryText}"
-                      StrokeThickness="2"
-                      StrokeLineCap="Round"
-                      StrokeJoin="Round" />
+                <Viewbox Width="{StaticResource IconSizeSmall}" Height="{StaticResource IconSizeSmall}">
+                    <Canvas Width="24" Height="24">
+                        <!-- стандартная иконка «время» (часы), в пару к иконке даты -->
+                        <Path Data="{StaticResource IconClock}"
+                              Stroke="{StaticResource BrushSecondaryText}"
+                              StrokeThickness="1.8"
+                              StrokeLineCap="Round"
+                              StrokeJoin="Round" />
+                    </Canvas>
+                </Viewbox>
             </Button>
             <Popup Grid.Column="0" x:Name="Pop"
                    PlacementTarget="{Binding #Box}"

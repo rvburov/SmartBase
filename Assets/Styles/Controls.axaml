@@ -584,8 +584,8 @@
         <Setter Property="BorderBrush" Value="{StaticResource BrushAccent}" />
     </Style>
 
-    <!-- Кнопка справа — полностью свой шаблон с шевроном вниз (как у поля времени),
-         вместо стилизованной иконки календаря с числом дня -->
+    <!-- Кнопка справа — стандартная иконка «дата» (календарь с цифрой 1), как в таблице
+         (DateField/DateEditor): Viewbox → Canvas 24×24 → Path IconCalendarDate -->
     <Style Selector="CalendarDatePicker /template/ Button#PART_Button">
         <Setter Property="Background"      Value="Transparent" />
         <Setter Property="BorderThickness" Value="0" />
@@ -596,13 +596,16 @@
         <Setter Property="Template">
             <ControlTemplate>
                 <Border Background="Transparent" Padding="{TemplateBinding Padding}">
-                    <Path Data="{StaticResource IconChevronDown}"
-                          Stretch="Fill" Width="12" Height="8"
-                          VerticalAlignment="Center" HorizontalAlignment="Center"
-                          Stroke="{StaticResource BrushSecondaryText}"
-                          StrokeThickness="2"
-                          StrokeLineCap="Round"
-                          StrokeJoin="Round" />
+                    <Viewbox Width="{StaticResource IconSizeSmall}" Height="{StaticResource IconSizeSmall}"
+                             VerticalAlignment="Center" HorizontalAlignment="Center">
+                        <Canvas Width="24" Height="24">
+                            <Path Data="{StaticResource IconCalendarDate}"
+                                  Stroke="{StaticResource BrushSecondaryText}"
+                                  StrokeThickness="1.8"
+                                  StrokeLineCap="Round"
+                                  StrokeJoin="Round" />
+                        </Canvas>
+                    </Viewbox>
                 </Border>
             </ControlTemplate>
         </Setter>

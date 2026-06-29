@@ -377,13 +377,49 @@ public partial class CalendarControllerView : UserControl
         };
     }
 
+    // Первый запуск (в БД нет ни одного календарного события) — заводим вводный чек-лист
+    // из трёх задач-инструкций в коллекции «Задачи» основной БД. Цвет события берётся из
+    // цвета коллекции (см. ReadCalendarEvents), поэтому синяя коллекция даёт синие события.
     private void SeedIfEmpty()
     {
         if (DefaultRepo.CountCalendarRecords() > 0) return;
 
+        var colId = (DefaultRepo.GetAllCollections().FirstOrDefault(c => c.Name == "Задачи")
+                     ?? DefaultRepo.AddCollection(new DbCollection { Name = "Задачи", Color = "#007AFF" }))
+                    .Id!.Value;
+
         var today = DateTime.Today;
-        DefaultRepo.AddCalendarRecord(new CalendarRecord { Title = "Стэндап", StartDt = today.AddHours(10), EndDt = today.AddHours(10.5), Color = "#007AFF" });
-        DefaultRepo.AddCalendarRecord(new CalendarRecord { Title = "Обед", StartDt = today.AddHours(13), EndDt = today.AddHours(14), Color = "#34C759" });
-        DefaultRepo.AddCalendarRecord(new CalendarRecord { Title = "Ревью", StartDt = today.AddDays(1).AddHours(15), EndDt = today.AddDays(1).AddHours(16), Color = "#FF9500" });
+        DefaultRepo.AddCalendarRecord(new CalendarRecord
+        {
+            CollectionId = colId,
+            Title        = "Изучить раздел «Календарь»",
+            Description  = "Откройте раздел «Календарь» на боковой панели. Переключайте виды: " +
+                           "Расписание, Журнал, День, Неделя, Месяц, Год. Создайте событие кнопкой «+», " +
+                           "перетащите его на другое время и откройте для редактирования. Слева отмечайте " +
+                           "коллекции, чтобы фильтровать события, и попробуйте поиск.",
+            StartDt      = today.AddHours(10),
+            EndDt        = today.AddHours(11),
+        });
+        DefaultRepo.AddCalendarRecord(new CalendarRecord
+        {
+            CollectionId = colId,
+            Title        = "Изучить раздел «Конструктор БД»",
+            Description  = "Откройте «Конструктор БД». Создайте коллекцию и добавьте свойства " +
+                           "(текст, число, дата, список). Заполните несколько записей, переключайте вид " +
+                           "Таблица/Список, настройте ширину и порядок колонок, сгруппируйте коллекции " +
+                           "в дереве слева.",
+            StartDt      = today.AddDays(1).AddHours(10),
+            EndDt        = today.AddDays(1).AddHours(11),
+        });
+        DefaultRepo.AddCalendarRecord(new CalendarRecord
+        {
+            CollectionId = colId,
+            Title        = "Изучить раздел «Расширения»",
+            Description  = "Откройте раздел «Расширения». Ознакомьтесь с доступными инструментами — " +
+                           "анализ PDF и переименование PDF. Выберите расширение, укажите файлы и запустите " +
+                           "обработку, чтобы увидеть результат.",
+            StartDt      = today.AddDays(2).AddHours(10),
+            EndDt        = today.AddDays(2).AddHours(11),
+        });
     }
 }

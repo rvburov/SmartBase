@@ -39,7 +39,6 @@ public partial class CalendarControllerViewModel : ViewModelBase
         YearVm    = new YearViewModel(records);
 
         UpdateTitle();
-        SeedIfEmpty();
     }
 
     [RelayCommand] public void GoToday()   { CurrentView.GoToday(); UpdateTitle(); }
@@ -85,29 +84,4 @@ public partial class CalendarControllerViewModel : ViewModelBase
         [ListVm, JournalVm, DayVm, WeekVm, MonthVm, YearVm];
 
     private void UpdateTitle() => Title = CurrentView.HeaderText();
-
-    private void SeedIfEmpty()
-    {
-        if (_records.CountCalendarRecords() > 0) return;
-
-        var today = DateTime.Today;
-
-        var seeds = new[]
-        {
-            Make("Планёрка отдела",                         today.AddHours(9),  today.AddHours(10)),
-            Make("Совещание по разработке документации",    today.AddHours(11), today.AddHours(12.5)),
-            Make("Встреча с конструкторским отделом",       today.AddDays(1).AddHours(14), today.AddDays(1).AddHours(15)),
-            Make("Проверка изделий на соответствие",        today.AddDays(3).AddHours(10), today.AddDays(3).AddHours(12)),
-            Make("Подготовка сканов технической документации", today.AddDays(5).AddHours(9), today.AddDays(5).AddHours(11)),
-            Make("День рождения Петров Петрович",           today.AddDays(7), today.AddDays(7).AddHours(23.98), allDay: true),
-        };
-
-        foreach (var r in seeds)
-            _records.AddCalendarRecord(r);
-
-        foreach (var v in AllViews()) v.Refresh();
-    }
-
-    private static CalendarRecord Make(string title, DateTime start, DateTime end, bool allDay = false) =>
-        new() { Title = title, StartDt = start, EndDt = end, AllDay = allDay };
 }
