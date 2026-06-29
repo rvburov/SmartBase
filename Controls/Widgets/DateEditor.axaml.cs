@@ -146,6 +146,26 @@ public partial class DateEditor : UserControl
         set => SetValue(DateValue.Parse(value), raise: false);
     }
 
+    /// <summary>
+    /// Плоский режим: убирает собственную рамку/фон бокса (timeField), чтобы редактор даты
+    /// встраивался в карточку свойства (RecordPageView) без «бокса в боксе». Иконка-календарь
+    /// и поле ввода остаются; левый отступ ввода обнуляется для выравнивания с другими значениями.
+    /// </summary>
+    public bool Flat
+    {
+        set
+        {
+            if (!value) return;
+            Box.Classes.Remove("timeField");
+            Box.Background      = Avalonia.Media.Brushes.Transparent;
+            Box.BorderThickness = default;
+            Input.Padding       = default;
+            // Поле растянуто на всю карточку — выпадашку привязываем к ПРАВОМУ краю (к иконке
+            // календаря), чтобы она появлялась рядом с кнопкой даты, а не у левого края.
+            Pop.Placement = Avalonia.Controls.PlacementMode.BottomEdgeAlignedRight;
+        }
+    }
+
     // ── Внутреннее ────────────────────────────────────────────────────────────
 
     private void SetValue(DateValue? v, bool raise)

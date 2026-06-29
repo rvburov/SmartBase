@@ -14,11 +14,20 @@ public partial class RecordPageViewModel : ObservableObject
 {
     private readonly ConstructorRepository _repository;
 
+    public const string DescKey = "__desc__";
+
     public int RecordId      { get; }
     public int CollectionId  { get; }
 
     /// <summary>Прочие поля для отображения в списке свойств (без Title/Description).</summary>
     public ObservableCollection<PropertyRowVm> Properties { get; } = [];
+
+    /// <summary>
+    /// Свойства и системное «Описание» в ТОМ ЖЕ порядке, что колонки в таблице
+    /// (column_order, иначе дефолт). «Название» сюда не входит — оно в шапке записи;
+    /// «Добавить свойство» добавляет уже представление и всегда стоит последним.
+    /// </summary>
+    public List<PanelItem> OrderedItems { get; } = [];
 
     [ObservableProperty] private string _title = "";
     [ObservableProperty] private string _markdownText = "";
@@ -44,6 +53,21 @@ public partial class RecordPageViewModel : ObservableObject
         {
             Properties.Add(new PropertyRowVm(repository, recordId, f, values.GetValueOrDefault(f.Id!.Value, "")));
         }
+
+        // Порядок как в таблице: эффективная позиция колонки = из column_order, иначе дефолт
+        // (Title=1000 — пропускаем, Desc=2000, поле=3000+Position). Та же логика, что и в TableView.
+        var order = repository.GetColumnOrder(collectionId);
+        int Pos(string key, int fallback) => order.TryGetValue(key, out var p) ? p : fallback;
+
+        var ordered = new List<(int pos, PanelItem item)>
+        {
+            (Pos(DescKey, 2000), new DescriptionItem()),
+        };
+        foreach (var row in Properties)
+            ordered.Add((Pos(row.Field.Id!.Value.ToString(), 3000 + row.Field.Position), new FieldItem(row)));
+
+        foreach (var (_, item) in ordered.OrderBy(x => x.pos))
+            OrderedItems.Add(item);
     }
 
     public void SaveTitle() =>
@@ -52,6 +76,11 @@ public partial class RecordPageViewModel : ObservableObject
     public void SaveMarkdown() =>
         _repository.SetRecordDescription(RecordId, MarkdownText);
 }
+
+/// <summary>Элемент списка панели записи: пользовательское свойство либо системное «Описание».</summary>
+public abstract record PanelItem;
+public sealed record FieldItem(PropertyRowVm Row) : PanelItem;
+public sealed record DescriptionItem : PanelItem;
 
 /// <summary>
 /// Одна строка свойств в RecordPageView — пара «название поля → редактор значения».

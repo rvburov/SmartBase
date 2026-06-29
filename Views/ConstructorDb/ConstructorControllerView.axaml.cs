@@ -467,6 +467,13 @@ public partial class ConstructorControllerView : UserControl
 
     // ── Свойства (поля) ───────────────────────────────────────────────────────
 
+    /// <summary>
+    /// Создать новое свойство из панели записи («Добавить свойство»). Идёт тем же путём,
+    /// что и «+» в таблице: открывает редактор свойства, добавляет колонку в таблицу и
+    /// поднимает FieldsChanged — открытая панель записи перечитывает поля и сразу показывает новое.
+    /// </summary>
+    public void CreatePropertyFromPanel() => _ = OpenPropertyDialog(null);
+
     private async Task OpenPropertyDialog(int? fieldId)
     {
         if (_currentCollectionId is null || _repository is null) return;

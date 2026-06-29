@@ -442,6 +442,52 @@
         <Setter Property="BorderThickness" Value="0" />
     </Style>
 
+    <!-- ===== Значение свойства в карточке RecordPageView ===== -->
+    <!-- Безбордерное во ВСЕХ состояниях (включая фокус/наведение): рамку и подсветку даёт
+         сама карточка, как у поля даты (timeInput). Без этого тема Fluent в фокусе рисует
+         собственную синюю рамку ВНУТРИ карточки — «бокс в боксе», что и просили убрать. -->
+    <Style Selector="TextBox.propValue">
+        <Setter Property="Background"               Value="Transparent" />
+        <Setter Property="Foreground"               Value="{StaticResource BrushPrimaryText}" />
+        <Setter Property="BorderThickness"          Value="0" />
+        <Setter Property="Padding"                  Value="0" />
+        <Setter Property="VerticalContentAlignment" Value="Center" />
+        <Setter Property="ScrollViewer.VerticalScrollBarVisibility" Value="Disabled" />
+    </Style>
+    <Style Selector="TextBox.propValue /template/ Border#PART_BorderElement">
+        <Setter Property="Background"      Value="Transparent" />
+        <Setter Property="BorderThickness" Value="0" />
+    </Style>
+    <Style Selector="TextBox.propValue:pointerover /template/ Border#PART_BorderElement">
+        <Setter Property="Background"      Value="Transparent" />
+        <Setter Property="BorderThickness" Value="0" />
+    </Style>
+    <Style Selector="TextBox.propValue:focus /template/ Border#PART_BorderElement">
+        <Setter Property="Background"      Value="Transparent" />
+        <Setter Property="BorderThickness" Value="0" />
+    </Style>
+
+    <!-- ComboBox-значение свойства (тип «список»): так же без собственной рамки/фона во
+         всех состояниях — рамку даёт карточка. -->
+    <Style Selector="ComboBox.propValue">
+        <Setter Property="Background"      Value="Transparent" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="Padding"         Value="0,0,8,0" />
+        <Setter Property="MinHeight"       Value="0" />
+    </Style>
+    <Style Selector="ComboBox.propValue /template/ Border#Background">
+        <Setter Property="Background"      Value="Transparent" />
+        <Setter Property="BorderThickness" Value="0" />
+    </Style>
+    <Style Selector="ComboBox.propValue:pointerover /template/ Border#Background">
+        <Setter Property="Background"      Value="Transparent" />
+        <Setter Property="BorderThickness" Value="0" />
+    </Style>
+    <Style Selector="ComboBox.propValue:focus /template/ Border#Background">
+        <Setter Property="Background"      Value="Transparent" />
+        <Setter Property="BorderThickness" Value="0" />
+    </Style>
+
     <!-- Классический скроллбар (как в Excel): дорожка всегда видна, сверху/снизу
          кнопки-стрелки, посередине перетаскиваемый ползунок. Собственный шаблон,
          т.к. тема Fluent прячет ползунок. -->

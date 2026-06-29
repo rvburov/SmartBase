@@ -5,6 +5,66 @@
              x:Class="DataBase.Views.ConstructorDb.RecordPageView"
              Background="{StaticResource BrushBg}">
 
+    <UserControl.Styles>
+        <!-- Карточка свойства: иконка типа + название · ручка-разделитель · значение.
+             Hover — лёгкая серая подложка; выделение (клик) — голубой фон + синяя рамка,
+             как выбранная строка сайдбара (BrushAccentLight / BrushAccent). -->
+        <Style Selector="Border.proprow">
+            <Setter Property="Background"      Value="Transparent" />
+            <Setter Property="BorderBrush"     Value="{StaticResource BrushSeparator}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius"    Value="{StaticResource RadiusMedium}" />
+            <Setter Property="Padding"         Value="10,3" />
+            <Setter Property="MinHeight"       Value="40" />
+            <Setter Property="Cursor"          Value="Hand" />
+        </Style>
+        <Style Selector="Border.proprow:pointerover">
+            <Setter Property="Background" Value="{StaticResource BrushSecondaryBg}" />
+        </Style>
+        <Style Selector="Border.proprow.selected, Border.proprow.selected:pointerover">
+            <Setter Property="Background"  Value="{StaticResource BrushAccentLight}" />
+            <Setter Property="BorderBrush" Value="{StaticResource BrushAccent}" />
+        </Style>
+
+        <!-- Иконка типа и подпись свойства: серые по умолчанию, синие в выделенной карточке. -->
+        <Style Selector="Border.proprow TextBlock.propname">
+            <Setter Property="Foreground" Value="{StaticResource BrushSecondaryText}" />
+        </Style>
+        <Style Selector="Border.proprow Path.propicon">
+            <Setter Property="Stroke" Value="{StaticResource BrushSecondaryText}" />
+        </Style>
+        <Style Selector="Border.proprow.selected TextBlock.propname">
+            <Setter Property="Foreground" Value="{StaticResource BrushAccent}" />
+        </Style>
+        <Style Selector="Border.proprow.selected Path.propicon">
+            <Setter Property="Stroke" Value="{StaticResource BrushAccent}" />
+        </Style>
+
+        <!-- Ручка-разделитель (три вертикальные точки ⋮) между названием и значением.
+             Тянем влево/вправо — меняем общую ширину колонки названий у всех свойств. -->
+        <Style Selector="Border.propgrip">
+            <Setter Property="Background"          Value="Transparent" />
+            <Setter Property="Width"               Value="18" />
+            <Setter Property="VerticalAlignment"   Value="Stretch" />
+            <Setter Property="Cursor"              Value="SizeWestEast" />
+        </Style>
+
+        <!-- Строка «Добавить свойство» — такая же карточка, как у свойств (рамка, скругление,
+             высота, отступы), только с иконкой «+» и подписью; подложка по наведению. -->
+        <Style Selector="Border.addprop">
+            <Setter Property="Background"      Value="Transparent" />
+            <Setter Property="BorderBrush"     Value="{StaticResource BrushSeparator}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius"    Value="{StaticResource RadiusMedium}" />
+            <Setter Property="Padding"         Value="10,3" />
+            <Setter Property="MinHeight"       Value="40" />
+            <Setter Property="Cursor"          Value="Hand" />
+        </Style>
+        <Style Selector="Border.addprop:pointerover">
+            <Setter Property="Background" Value="{StaticResource BrushSecondaryBg}" />
+        </Style>
+    </UserControl.Styles>
+
     <Grid x:Name="PageGrid" RowDefinitions="Auto,Auto,Auto,*,Auto">
 
         <!-- Шапка записи (вынесена в компонент NavbarPage). -->
@@ -16,9 +76,9 @@
         <ScrollViewer Grid.Row="1" x:Name="PropertiesScroll"
                       VerticalScrollBarVisibility="Auto"
                       HorizontalScrollBarVisibility="Disabled">
-            <StackPanel Margin="20,16,20,0">
-                <ItemsControl x:Name="PropertiesList" />
-            </StackPanel>
+            <!-- Карточки свойств и строка «Добавить свойство» строятся в code-behind
+                 (BuildProperties). Отступ снизу равен верхнему — блок не липнет к описанию. -->
+            <StackPanel x:Name="PropertiesHost" Margin="20,16,20,16" Spacing="6" />
         </ScrollViewer>
 
         <!-- Ручка перетаскивания: делит свойства (сверху) и описание (снизу).
@@ -54,13 +114,27 @@
         </Border>
 
         <!-- Markdown-описание -->
-        <Grid Grid.Row="3" RowDefinitions="Auto,*" Margin="20,0,20,12">
+        <Grid Grid.Row="3" RowDefinitions="Auto,*" Margin="20,16,20,12">
 
-            <TextBlock Grid.Row="0"
-                       Text="Описание"
-                       Margin="0,0,0,6"
-                       Foreground="{StaticResource BrushSecondaryText}"
-                       VerticalAlignment="Center" />
+            <!-- Заголовок нижнего блока — «хлебная крошка»: «Свойство» › [иконка типа] Имя.
+                 Всё серым (BrushSecondaryText). Часть [иконка типа + имя] (BottomTitleHost)
+                 заполняется в code-behind по активному свойству; «Описание» по умолчанию. -->
+            <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="6"
+                        Margin="0,0,0,6" VerticalAlignment="Center">
+                <TextBlock Text="Свойство"
+                           Foreground="{StaticResource BrushSecondaryText}"
+                           VerticalAlignment="Center" />
+                <Viewbox Width="14" Height="14" VerticalAlignment="Center">
+                    <Canvas Width="24" Height="24">
+                        <Path Data="{StaticResource IconChevronRight}"
+                              Stroke="{StaticResource BrushSecondaryText}"
+                              StrokeThickness="1.6"
+                              StrokeLineCap="Round" StrokeJoin="Round" />
+                    </Canvas>
+                </Viewbox>
+                <StackPanel x:Name="BottomTitleHost" Orientation="Horizontal" Spacing="6"
+                            VerticalAlignment="Center" />
+            </StackPanel>
 
             <!-- Редактор: безбордерный (как письмо в заметках) -->
             <TextBox Grid.Row="1" x:Name="MarkdownEditor"

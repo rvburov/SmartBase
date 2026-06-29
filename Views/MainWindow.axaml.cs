@@ -158,6 +158,10 @@ public partial class MainWindow : Window
         ConstructorModule.RecordPageRequested += (_, rid)        => OpenRecordPanel(rid);
         ConstructorModule.RecordPageClosed    += (_, _)          => CloseRecordPanel();
         RecordPanel.RecordChanged             += (_, rid)        => ConstructorModule.RefreshRecordRow(rid);
+        // «Добавить свойство» из панели записи — тем же путём, что и «+» в таблице:
+        // новое поле создаётся, колонка появляется в таблице, а FieldsChanged ниже
+        // перестраивает список свойств панели (новое поле сразу видно и там, и там).
+        RecordPanel.AddPropertyRequested      += (_, _)          => ConstructorModule.CreatePropertyFromPanel();
         // Обратная синхронизация: правка ячейки в таблице → обновить открытую панель записи,
         // если это та же запись (значения свойств, имя и описание перечитываются из БД).
         ConstructorModule.RecordValueEdited   += (_, rid) =>
