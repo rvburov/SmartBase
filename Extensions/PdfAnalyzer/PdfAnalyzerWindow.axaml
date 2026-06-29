@@ -61,6 +61,8 @@
         <CheckBox x:Name="PreserveCheck" IsChecked="False"
                   Content="Сохранить порядок файлов из папки (только текущая папка, по дате изменения)"
                   IsCheckedChanged="OnPreserveChanged" />
+        <CheckBox x:Name="SplitNameCheck" IsChecked="True"
+                  Content="Наименование документа в несколько строк (изделие / тип / лист)" />
 
         <!-- Статус -->
         <Border Background="{StaticResource BrushSecondaryBg}"

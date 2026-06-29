@@ -55,7 +55,7 @@ public static class PdfAnalyzerEngine
 
     public static AnalyzeResult Run(
         string folderPath, string savePath, ExportType exportType, bool recursive, bool preserveOrder,
-        IProgress<AnalyzeProgress>? progress, CancellationToken ct)
+        bool splitName, IProgress<AnalyzeProgress>? progress, CancellationToken ct)
     {
         if (!Directory.Exists(folderPath)) throw new PdfAnalyzeException($"Папка не существует:\n{folderPath}");
 
@@ -135,7 +135,7 @@ public static class PdfAnalyzerEngine
         var ordered = SortRows(rows, exportType, recursive, preserveOrder);
         for (int i = 0; i < ordered.Count; i++) ordered[i].NumPp = i + 1;
 
-        var columns = BuildColumns(ordered, exportType, cache);
+        var columns = BuildColumns(ordered, exportType, cache, splitName);
         for (int i = 0; i < ordered.Count; i++) ordered[i].NumPp = i + 1;
 
         WriteExcel(savePath, ordered, columns, ct);
@@ -371,7 +371,7 @@ public static class PdfAnalyzerEngine
     // ── Колонки по типу выгрузки ──────────────────────────────────────────────
 
     private static List<(string Header, Func<Row, object?> Value)> BuildColumns(
-        List<Row> rows, ExportType exportType, Dictionary<string, string> cache)
+        List<Row> rows, ExportType exportType, Dictionary<string, string> cache, bool splitName)
     {
         // Для КД/Описи/Всех — пересчёт «Наименование документа» из спецификаций.
         if (exportType is ExportType.Kd or ExportType.Inventory or ExportType.All)
@@ -383,7 +383,10 @@ public static class PdfAnalyzerEngine
             foreach (var r in rows)
             {
                 if (exportType == ExportType.All && r.DesignationKd.Length == 0) continue;   // оставляем как есть
-                r.Name = DocumentCodes.GetDocumentFullName(r.DesignationKd, r.FileName, allDes, cache);
+                // splitName: изделие / тип / лист — каждая часть с новой строки внутри ячейки.
+                r.Name = splitName
+                    ? DocumentCodes.GetDocumentFullNameMultiline(r.DesignationKd, r.FileName, allDes, cache)
+                    : DocumentCodes.GetDocumentFullName(r.DesignationKd, r.FileName, allDes, cache);
             }
         }
 
@@ -493,7 +496,19 @@ public static class PdfAnalyzerEngine
 
         ws.Row(1).Height = 60;
         int last = ws.LastRowUsed()?.RowNumber() ?? 1;
-        for (int r = 2; r <= last; r++) ws.Row(r).Height = 30;
+        for (int r = 2; r <= last; r++)
+        {
+            // Высота под самую «многострочную» ячейку строки (наименование в режиме «в несколько строк»).
+            int maxLines = 1;
+            foreach (var cell in ws.Row(r).CellsUsed())
+            {
+                var s = cell.GetFormattedString();
+                if (s.Length == 0) continue;
+                int lines = s.Count(ch => ch == '\n') + 1;
+                if (lines > maxLines) maxLines = lines;
+            }
+            ws.Row(r).Height = Math.Max(30, maxLines * 15.0);
+        }
     }
 
     private static double ColumnWidth(IXLWorksheet ws, int col, string header) => header switch

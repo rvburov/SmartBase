@@ -106,6 +106,7 @@ public partial class PdfAnalyzerWindow : Window
         };
         var recursive     = RecursiveCheck.IsChecked == true;
         var preserveOrder = PreserveCheck.IsChecked == true;
+        var splitName     = SplitNameCheck.IsChecked == true;
         var savePath      = SaveBox.Text?.Trim() ?? "";
 
         SetRunning(true);
@@ -127,7 +128,7 @@ public partial class PdfAnalyzerWindow : Window
         try
         {
             var result = await Task.Run(
-                () => PdfAnalyzerEngine.Run(folder, savePath, exportType, recursive, preserveOrder, progress, ct), ct);
+                () => PdfAnalyzerEngine.Run(folder, savePath, exportType, recursive, preserveOrder, splitName, progress, ct), ct);
 
             Bar.Value = Bar.Maximum; PercentText.Text = "100%";
             CurrentFileText.Text = ""; CurrentFileText.IsVisible = false;
@@ -173,6 +174,7 @@ public partial class PdfAnalyzerWindow : Window
     {
         _running = running;
         PdfBtn.IsEnabled = SaveBtn.IsEnabled = ExportCombo.IsEnabled = !running;
+        SplitNameCheck.IsEnabled = !running;
         RecursiveCheck.IsEnabled = !running && PreserveCheck.IsChecked != true;
         PreserveCheck.IsEnabled  = !running && RecursiveCheck.IsChecked != true;
         ExecuteBtn.IsEnabled = !running && !string.IsNullOrWhiteSpace(PdfBox.Text);

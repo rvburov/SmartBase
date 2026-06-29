@@ -223,12 +223,31 @@ public static class DocumentCodes
         return (baseStr.TrimEnd('-'), found);
     }
 
-    /// <summary>Полное наименование документа: [название изделия] + [тип документа] + [суффикс].</summary>
+    /// <summary>Полное наименование одной строкой: [название изделия] + [тип документа] + [суффикс].</summary>
     public static string GetDocumentFullName(
         string? designation, string fileName, IReadOnlyDictionary<string, string>? allDesignations,
         Dictionary<string, string> cache)
+        => JoinParts(GetDocumentFullNameParts(designation, fileName, allDesignations, cache), " ");
+
+    /// <summary>То же наименование, но каждая часть (изделие / тип / лист) — с новой строки.</summary>
+    public static string GetDocumentFullNameMultiline(
+        string? designation, string fileName, IReadOnlyDictionary<string, string>? allDesignations,
+        Dictionary<string, string> cache)
+        => JoinParts(GetDocumentFullNameParts(designation, fileName, allDesignations, cache), "\n");
+
+    private static string JoinParts((string Product, string DocType, string Suffix) p, string sep)
+        => string.Join(sep, new[] { p.Product, p.DocType, p.Suffix }.Where(s => s.Length > 0)).Trim();
+
+    /// <summary>
+    /// Три части наименования по отдельности: [название изделия], [тип документа], [суффикс листа].
+    /// Пустые части = "" и пропускаются при склейке; склейка пробелом эквивалентна прежнему
+    /// «полному наименованию» — отсюда же и однострочный, и многострочный варианты.
+    /// </summary>
+    public static (string Product, string DocType, string Suffix) GetDocumentFullNameParts(
+        string? designation, string fileName, IReadOnlyDictionary<string, string>? allDesignations,
+        Dictionary<string, string> cache)
     {
-        if (string.IsNullOrEmpty(designation)) return fileName;
+        if (string.IsNullOrEmpty(designation)) return (fileName, "", "");
 
         // Исключения (удостоверяющие листы) — приоритетная обработка.
         // ВАЖНО: голые "-ЛУ"/"-УЛ" сюда НЕ берём — это не конкретная комбинация «код+лист»,
@@ -243,6 +262,8 @@ public static class DocumentCodes
         {
             if (!designation.EndsWith(exc)) continue;
             var docType = KdNameMapping[exc];
+            // У спец. комбинаций тип и лист хранятся одной строкой — разделяем по известному окончанию.
+            var (excType, excSheet) = SplitSheetSuffix(docType);
             var baseDes = GetBaseDesignation(designation[..^exc.Length]);
             if (baseDes.Length > 0) baseDes = Regex.Replace(baseDes, @"-\d+$", "");
 
@@ -257,8 +278,8 @@ public static class DocumentCodes
                 if (t.Length > 0) prod = t;
             }
 
-            if (prod.Length > 0 && !docType.Contains(prod)) return $"{prod} {docType}".Trim();
-            return docType.Trim();
+            if (prod.Length > 0 && docType.Contains(prod)) prod = "";
+            return (prod, excType, excSheet);
         }
 
         // Обычная обработка.
@@ -311,18 +332,34 @@ public static class DocumentCodes
             if (bn.Length > 0) product = bn;
         }
 
-        string result;
+        // Раскладка по трём частям (склейка пробелом эквивалентна прежнему «полному наименованию»).
+        string prodPart, typePart;
         if (docType2.Length > 0)
-            result = product.Length > 0 && !docType2.Contains(product) ? $"{product} {docType2}" : docType2;
-        else if (product.Length > 0)
-            result = product;
-        else
-            result = fileName.Length > 0 ? fileName.Replace(".pdf", "") : "";
+        {
+            typePart = docType2;
+            prodPart = product.Length > 0 && !docType2.Contains(product) ? product : "";
+        }
+        else if (product.Length > 0) { prodPart = product; typePart = ""; }
+        else { prodPart = fileName.Length > 0 ? fileName.Replace(".pdf", "") : ""; typePart = ""; }
 
-        if (suffixText.Length > 0 && !result.Contains(suffixText) && !docType2.Contains(suffixText))
-            result = $"{result} {suffixText}";
+        var joined = string.Join(" ", new[] { prodPart, typePart }.Where(s => s.Length > 0));
+        var sheetPart = suffixText.Length > 0 && !joined.Contains(suffixText) && !docType2.Contains(suffixText)
+            ? suffixText : "";
 
-        return result.Trim();
+        return (prodPart, typePart, sheetPart);
+    }
+
+    // Названия удостоверяющих листов (от длинного к короткому) — для отделения «листа» от типа документа.
+    private static readonly string[] SheetSuffixNames =
+        ["Информационно-удостоверяющий лист", "Удостоверяющий лист", "Лист утверждения"];
+
+    // Делит «<тип> <лист>» на (тип, лист), если строка оканчивается известным названием листа.
+    private static (string Type, string Suffix) SplitSheetSuffix(string docType)
+    {
+        foreach (var s in SheetSuffixNames)
+            if (docType.Length > s.Length && docType.EndsWith(s, StringComparison.Ordinal))
+                return (docType[..^s.Length].Trim(), s);
+        return (docType, "");
     }
 
     // ── Извлечение номеров из имени файла ──────────────────────────────────────
