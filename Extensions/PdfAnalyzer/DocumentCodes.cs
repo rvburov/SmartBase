@@ -231,8 +231,12 @@ public static class DocumentCodes
         if (string.IsNullOrEmpty(designation)) return fileName;
 
         // Исключения (удостоверяющие листы) — приоритетная обработка.
+        // ВАЖНО: голые "-ЛУ"/"-УЛ" сюда НЕ берём — это не конкретная комбинация «код+лист»,
+        // а общий суффикс. Его должна обработать обычная ветка ниже, чтобы тип основного
+        // документа (напр. «Сборочный чертеж») попал в наименование вместе с «Лист утверждения».
+        // Конкретные же комбинации (Д42-УЛ, ТУ-ЛУ…) остаются приоритетом — у них имена-переопределения.
         var exceptions = KdNameMapping.Keys
-            .Where(c => c.EndsWith("-УЛ") || c.EndsWith("-ЛУ"))
+            .Where(c => (c.EndsWith("-УЛ") || c.EndsWith("-ЛУ")) && Array.IndexOf(SuffixCodes, c) < 0)
             .OrderByDescending(c => c.Length).ToArray();
 
         foreach (var exc in exceptions)
