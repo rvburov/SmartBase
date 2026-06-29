@@ -597,13 +597,13 @@ public partial class SidebarTree : UserControl
         if (node.IsDatabase)
         {
             // Корень-БД: создание группы/коллекции в этой БД. Сама БД управляется в настройках.
-            menu.Items.Add(MenuItemSimple("Создать группу",    () => _ = CreateItem("group", db, parentId: null)));
-            menu.Items.Add(MenuItemSimple("Создать коллекцию", () => _ = CreateItem("collection", db, parentId: null)));
+            menu.Items.Add(MenuItemCreateGroup(()      => _ = CreateItem("group", db, parentId: null)));
+            menu.Items.Add(MenuItemCreateCollection(() => _ = CreateItem("collection", db, parentId: null)));
         }
         else if (node.IsGroup)
         {
-            menu.Items.Add(MenuItemSimple("Создать группу",    () => _ = CreateItem("group", db, parentId: id)));
-            menu.Items.Add(MenuItemSimple("Создать коллекцию", () => _ = CreateItem("collection", db, parentId: id)));
+            menu.Items.Add(MenuItemCreateGroup(()      => _ = CreateItem("group", db, parentId: id)));
+            menu.Items.Add(MenuItemCreateCollection(() => _ = CreateItem("collection", db, parentId: id)));
             menu.Items.Add(new Separator());
             if (!multi) menu.Items.Add(MenuItemEdit(() => _ = EditGroup(db, id)));
             menu.Items.Add(MenuItemLocation(() => RelocateSelectionOrNode(node)));
@@ -634,8 +634,8 @@ public partial class SidebarTree : UserControl
 
         // Создание из пустой области идёт в БД по умолчанию.
         var menu = new ContextMenu();
-        menu.Items.Add(MenuItemSimple("Создать группу",    () => _ = CreateItem("group", DefaultDbId, parentId: null)));
-        menu.Items.Add(MenuItemSimple("Создать коллекцию", () => _ = CreateItem("collection", DefaultDbId, parentId: null)));
+        menu.Items.Add(MenuItemCreateGroup(()      => _ = CreateItem("group", DefaultDbId, parentId: null)));
+        menu.Items.Add(MenuItemCreateCollection(() => _ = CreateItem("collection", DefaultDbId, parentId: null)));
         menu.Open(anchor);
         e.Handled = true;
     }
@@ -652,7 +652,7 @@ public partial class SidebarTree : UserControl
 
     private MenuItem BuildColorMenu(int dbId, int collectionId)
     {
-        var colorItem = new MenuItem { Header = "Изменить цвет" };
+        var colorItem = new MenuItem { Header = MenuIcons.ColorHeader() };
         FixSubmenuGap(colorItem);
 
         var noColor = new MenuItem
@@ -687,9 +687,18 @@ public partial class SidebarTree : UserControl
         return colorItem;
     }
 
-    private static MenuItem MenuItemSimple(string header, Action onClick)
+    // Пункт «Создать группу» с иконкой папки с плюсом.
+    private static MenuItem MenuItemCreateGroup(Action onClick)
     {
-        var item = new MenuItem { Header = header };
+        var item = new MenuItem { Header = MenuIcons.CreateGroupHeader() };
+        item.Click += (_, _) => onClick();
+        return item;
+    }
+
+    // Пункт «Создать коллекцию» с иконкой таблицы с плюсом.
+    private static MenuItem MenuItemCreateCollection(Action onClick)
+    {
+        var item = new MenuItem { Header = MenuIcons.CreateCollectionHeader() };
         item.Click += (_, _) => onClick();
         return item;
     }
@@ -747,7 +756,7 @@ public partial class SidebarTree : UserControl
     // с «Выделить всё», как у фильтра колонок таблицы. Применяется сразу по клику чекбокса.
     private MenuItem BuildDateFieldsMenu(int dbId, int collectionId)
     {
-        var dateItem = new MenuItem { Header = "Отображение свойств даты" };
+        var dateItem = new MenuItem { Header = MenuIcons.DateFieldsHeader() };
         FixSubmenuGap(dateItem);
 
         // Контент в дочернем пункте со StaysOpenOnClick — клики по чекбоксам не закрывают меню.

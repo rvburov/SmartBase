@@ -135,8 +135,8 @@
 
     <!-- ─── Контекстное меню: иконки пунктов (lucide) ─── -->
 
-    <!-- Дублировать (copy) -->
-    <StreamGeometry x:Key="IconCopy">M8 8 H20 A2 2 0 0 1 22 10 V20 A2 2 0 0 1 20 22 H8 A2 2 0 0 1 6 20 V10 A2 2 0 0 1 8 8 Z M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2</StreamGeometry>
+    <!-- Дублировать (copy-plus) -->
+    <StreamGeometry x:Key="IconCopy">M15 12v6 M12 15h6 M10 8 H20 A2 2 0 0 1 22 10 V20 A2 2 0 0 1 20 22 H10 A2 2 0 0 1 8 20 V10 A2 2 0 0 1 10 8 Z M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2</StreamGeometry>
     <!-- Расположение (folder-tree) -->
     <StreamGeometry x:Key="IconFolderTree">M20 10a1 1 0 0 0 1-1V6a1 1 0 0 0-1-1h-2.5a1 1 0 0 1-.8-.4l-.9-1.2A1 1 0 0 0 15 3h-2a1 1 0 0 0-1 1v5a1 1 0 0 0 1 1Z M20 21a1 1 0 0 0 1-1v-3a1 1 0 0 0-1-1h-2.9a1 1 0 0 1-.88-.55l-.42-.85a1 1 0 0 0-.92-.6H13a1 1 0 0 0-1 1v5a1 1 0 0 0 1 1Z M3 5a2 2 0 0 0 2 2h3 M3 3v13a2 2 0 0 0 2 2h3</StreamGeometry>
     <!-- Переключатель ширины столбцов (move-horizontal) -->
@@ -145,6 +145,12 @@
     <StreamGeometry x:Key="IconMoveVertical">M12 2v20 M8 18l4 4 4-4 M8 6l4-4 4 4</StreamGeometry>
     <!-- Отображение (check-check) -->
     <StreamGeometry x:Key="IconCheckCheck">M18 6 7 17l-5-5 M22 10l-7.5 7.5L13 16</StreamGeometry>
+    <!-- Создать группу (folder-plus) -->
+    <StreamGeometry x:Key="IconFolderPlus">M12 10v6 M9 13h6 M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z</StreamGeometry>
+    <!-- Создать коллекцию (grid-2x2-plus) -->
+    <StreamGeometry x:Key="IconCollectionPlus">M12 3v17a1 1 0 0 1-1 1H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v6a1 1 0 0 1-1 1H3 M16 19h6 M19 22v-6</StreamGeometry>
+    <!-- Изменить цвет (palette): контур + 4 точки-кружка (r≈0.5, обводкой выглядят заполненными) -->
+    <StreamGeometry x:Key="IconPalette">M12 22a1 1 0 0 1 0-20 10 9 0 0 1 10 9 5 5 0 0 1-5 5h-2.25a1.75 1.75 0 0 0-1.4 2.8l.3.4a1.75 1.75 0 0 1-1.4 2.8z M13 6.5 A.5 .5 0 1 1 14 6.5 A.5 .5 0 1 1 13 6.5 Z M17 10.5 A.5 .5 0 1 1 18 10.5 A.5 .5 0 1 1 17 10.5 Z M6 12.5 A.5 .5 0 1 1 7 12.5 A.5 .5 0 1 1 6 12.5 Z M8 7.5 A.5 .5 0 1 1 9 7.5 A.5 .5 0 1 1 8 7.5 Z</StreamGeometry>
 
     <!-- ─── Типы полей (lucide; «дата» = IconCalendarDate выше) ─── -->
 

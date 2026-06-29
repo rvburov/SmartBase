@@ -33,6 +33,9 @@ public static class MenuIcons
     private static Geometry MoveVertical   => Icon("IconMoveVertical");
     private static Geometry CheckCheck     => Icon("IconCheckCheck");
     private static Geometry FolderTree     => Icon("IconFolderTree");
+    private static Geometry FolderPlus     => Icon("IconFolderPlus");
+    private static Geometry CollectionPlus => Icon("IconCollectionPlus");
+    private static Geometry Palette        => Icon("IconPalette");
 
     private static SolidColorBrush Red => new(Color.Parse("#FF3B30"));
 
@@ -81,6 +84,15 @@ public static class MenuIcons
     // Заголовок пункта «Расположение»: иконка дерева папок + стандартный текст.
     public static Control LocationHeader() => Header(FolderTree, "Расположение");
 
+    // Заголовок пункта «Создать группу»: иконка папки с плюсом + стандартный текст.
+    public static Control CreateGroupHeader() => Header(FolderPlus, "Создать группу");
+
+    // Заголовок пункта «Создать коллекцию»: иконка таблицы с плюсом + стандартный текст.
+    public static Control CreateCollectionHeader() => Header(CollectionPlus, "Создать коллекцию");
+
+    // Заголовок пункта «Изменить цвет»: иконка палитры + стандартный текст.
+    public static Control ColorHeader() => Header(Palette, "Изменить цвет");
+
     // Заголовки пунктов перемещения колонки.
     public static Control MoveLeftHeader()  => Header(ArrowLeft,  "Сдвинуть влево");
     public static Control MoveRightHeader() => Header(ArrowRight, "Сдвинуть вправо");
@@ -94,6 +106,9 @@ public static class MenuIcons
 
     // Заголовок пункта «Отображение»: иконка check-check + стандартный текст.
     public static Control DisplayHeader() => Header(CheckCheck, "Отображение");
+
+    // Заголовок пункта «Отображение свойств даты»: та же иконка check-check + текст.
+    public static Control DateFieldsHeader() => Header(CheckCheck, "Отображение свойств даты");
 
     // Заголовок пункта «Создать запись»: иконка plus + стандартный текст.
     public static Control CreateRecordHeader() => Header(Plus, "Создать запись");
