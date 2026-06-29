@@ -7,7 +7,7 @@
     <Grid RowDefinitions="Auto,*,Auto">
 
         <!-- Navbar конструктора -->
-        <comp:ConstructorNavbar Grid.Row="0" x:Name="ConstructorNavbar" />
+        <comp:NavbarConstructor Grid.Row="0" x:Name="NavbarConstructor" />
 
         <!-- Контент: таблица или список -->
         <Grid Grid.Row="1">
@@ -23,12 +23,11 @@
                         IsVisible="False">
                 <TextBlock Text="Откройте навигацию, нажмите на"
                            VerticalAlignment="Center"
-                           FontSize="{StaticResource FontSizeBase}"
                            Foreground="{StaticResource BrushSecondaryText}" />
-                <Viewbox Width="22" Height="22" VerticalAlignment="Center">
+                <Viewbox Width="{StaticResource IconSizeLarge}" Height="{StaticResource IconSizeLarge}" VerticalAlignment="Center">
                     <Canvas Width="24" Height="24">
                         <!-- panel-left-open: иконка сайдбара (как в ActivityBar) -->
-                        <Path Data="M5 3 H19 A2 2 0 0 1 21 5 V19 A2 2 0 0 1 19 21 H5 A2 2 0 0 1 3 19 V5 A2 2 0 0 1 5 3 Z M9 3 V21 M14 9 L17 12 L14 15"
+                        <Path Data="{StaticResource IconPanelOpen}"
                               Stroke="{StaticResource BrushSecondaryText}"
                               StrokeThickness="1.4"
                               StrokeLineCap="Round" StrokeJoin="Round" />
@@ -36,13 +35,12 @@
                 </Viewbox>
                 <TextBlock Text="и выберите коллекцию"
                            VerticalAlignment="Center"
-                           FontSize="{StaticResource FontSizeBase}"
                            Foreground="{StaticResource BrushSecondaryText}" />
             </StackPanel>
         </Grid>
 
         <!-- Нижняя панель (statusbar): добавление, счётчик, навигация -->
-        <comp:ConstructorFooter Grid.Row="2" x:Name="ConstructorFooter" Margin="0,-1,0,0" />
+        <comp:FooterConstructor Grid.Row="2" x:Name="FooterConstructor" Margin="0,-1,0,0" />
 
     </Grid>
 

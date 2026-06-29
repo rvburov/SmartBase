@@ -12,6 +12,9 @@
         Background="{StaticResource BrushBg}"
         WindowStartupLocation="CenterScreen">
 
+    <!-- Хост масштабирования: LayoutTransform на корне → весь интерфейс перекомпоновывается
+         в логических пикселях и заполняет окно (см. Utils/Scaling + MainWindow.ApplyScale). -->
+    <LayoutTransformControl x:Name="ScaleHost">
     <Grid x:Name="RootGrid">
         <Grid.ColumnDefinitions>
             <!-- ActivityBar | разделитель | сайдбар | контент | разделитель | панель записи -->
@@ -29,8 +32,7 @@
 
         <!-- Вертикальный разделитель справа от ActivityBar -->
         <Border Grid.Column="1"
-                Width="1"
-                Background="{StaticResource BrushSeparator}" />
+                Classes="separator v" />
 
         <!-- Боковые панели (скрываются/показываются по модулю).
              Разделительная линия — правая граница Border. Ручка вынесена в колонку 3
@@ -39,10 +41,10 @@
                 BorderBrush="{StaticResource BrushSeparator}"
                 BorderThickness="0,0,1,0">
             <Grid>
-                <comp:Sidebar x:Name="CalendarSidebar" />
-                <comp:Sidebar x:Name="ConstructorSidebar" IsVisible="False" />
-                <comp:SettingsSidebar x:Name="SettingsSidebar" IsVisible="False" />
-                <comp:ExtensionsSidebar x:Name="ExtensionsSidebar" IsVisible="False" />
+                <comp:SidebarTree x:Name="CalendarSidebar" />
+                <comp:SidebarTree x:Name="ConstructorSidebar" IsVisible="False" />
+                <comp:SidebarList x:Name="SettingsSidebar" IsVisible="False" />
+                <comp:SidebarList x:Name="ExtensionsSidebar" IsVisible="False" />
             </Grid>
         </Border>
 
@@ -57,9 +59,8 @@
         <!-- Вертикальный разделитель слева от панели записи -->
         <Border Grid.Column="4"
                 x:Name="RecordPanelSeparator"
-                Width="1"
-                IsVisible="False"
-                Background="{StaticResource BrushSeparator}" />
+                Classes="separator v"
+                IsVisible="False" />
 
         <!-- Правая панель «Страница записи» (Obsidian-style) -->
         <Grid Grid.Column="5">
@@ -93,16 +94,14 @@
         <!-- Линия под титульной зоной (на высоте навбара = 56px) через сайдбар,
              контент и панель записи. ActivityBar имеет собственный короткий разделитель. -->
         <Border Grid.Column="1" Grid.ColumnSpan="5"
-                Height="1"
+                Classes="separator h"
                 VerticalAlignment="Top"
-                Margin="0,56,0,0"
-                Background="{StaticResource BrushSeparator}" />
+                Margin="0,56,0,0" />
 
         <!-- Самая верхняя линия окна — единой полосой над всеми колонками -->
         <Border Grid.Column="0" Grid.ColumnSpan="6"
-                Height="1"
-                VerticalAlignment="Top"
-                Background="{StaticResource BrushSeparator}" />
+                Classes="separator h"
+                VerticalAlignment="Top" />
 
         <!-- Ручка ресайза сайдбара. Закреплена у правого края колонки сайдбара и висит
              поверх соседнего блока (коллекции или записи) за счёт отрицательного отступа —
@@ -131,5 +130,6 @@
         </Border>
 
     </Grid>
+    </LayoutTransformControl>
 
 </Window>

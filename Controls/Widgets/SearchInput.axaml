@@ -2,14 +2,17 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              x:Class="DataBase.Controls.Widgets.SearchInput">
 
+    <!-- Однострочный поиск: высота не фиксируется (MinHeight + рост под шрифт), а
+         вертикальная прокрутка отключена — иначе при крупном шрифте текст переполняет
+         поле и вылезает кнопка-стрелка вертикального скроллбара. -->
     <TextBox x:Name="PART_Input"
              Text="{Binding Text, RelativeSource={RelativeSource AncestorType=UserControl}, Mode=TwoWay}"
              Watermark="Поиск..."
              CornerRadius="{StaticResource RadiusPill}"
              Background="{StaticResource BrushSecondaryBg}"
              BorderBrush="{StaticResource BrushSeparator}"
-             Foreground="{StaticResource BrushPrimaryText}"
              Padding="12,6"
-             Height="32" />
+             MinHeight="32"
+             ScrollViewer.VerticalScrollBarVisibility="Disabled" />
 
 </UserControl>

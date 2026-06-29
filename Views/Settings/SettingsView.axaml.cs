@@ -1,10 +1,15 @@
+using System.Diagnostics;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
+using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Platform.Storage;
 using DataBase.Controls.Dialogs;
 using DataBase.Database;
 using DataBase.Database.Entities;
+using DataBase.Settings;
 using DataBase.Utils;
 
 namespace DataBase.Views.Settings;
@@ -25,11 +30,198 @@ public partial class SettingsView : UserControl
     {
         InitializeComponent();
 
+        // ── О программе ──────────────────────────────────────────────────────
         var version = Assembly.GetExecutingAssembly().GetName().Version;
         if (version is not null)
-            VersionText.Text = $"Версия {version.Major}.{version.Minor}.{version.Build}";
+        {
+            var text = $"Версия {version.Major}.{version.Minor}.{version.Build}";
+            if (BuildDate() is { } built) text += $" · сборка {built:dd.MM.yyyy}";
+            VersionText.Text = text;
+        }
+        DataPathText.Text   = AppSettings.AppDataDir;
+        SystemInfoText.Text = $"{RuntimeInformation.OSDescription.Trim()} · {RuntimeInformation.FrameworkDescription}";
 
         AsyncRowLoadCheck.IsChecked = AppSettings.LoadAsyncRowLoad();
+
+        // Слайдер размера шрифта отражает текущую дельту (стандарт = 0, диапазон -3…+3).
+        FontSizeSlider.Value = FontScale.Delta;
+
+        // Слайдер масштаба отражает текущий уровень в процентах (стандарт = 100, диапазон 70…130).
+        ScaleSlider.Value = Scaling.Current * 100;
+
+        // Стартовый раздел: выделить сохранённый пункт (по Tag).
+        SelectStartupModule(AppSettings.LoadStartupModule());
+
+        // Стартовый вид календаря: выделить по индексу (Tag = "0".."5").
+        CalendarViewCombo.SelectedIndex = AppSettings.LoadCalendarView();
+
+        // Стартовый вид конструктора: Таблица (0) или Список (1).
+        ConstructorViewCombo.SelectedIndex = AppSettings.LoadConstructorView() == "list" ? 1 : 0;
+    }
+
+    // ── Стартовый раздел ─────────────────────────────────────────────────────
+    //
+    // Какой раздел навигации (ActivityBar) открывается при запуске. Применяется при
+    // следующем запуске — MainWindow читает AppSettings.LoadStartupModule() на старте.
+    private void SelectStartupModule(string module)
+    {
+        foreach (var obj in StartupModuleCombo.Items)
+            if (obj is ComboBoxItem { Tag: string tag } item && tag == module)
+            {
+                StartupModuleCombo.SelectedItem = item;
+                return;
+            }
+    }
+
+    private void OnStartupModuleChanged(object? sender, SelectionChangedEventArgs e)
+    {
+        if (StartupModuleCombo.SelectedItem is ComboBoxItem { Tag: string module })
+            AppSettings.SaveStartupModule(module);
+    }
+
+    // ── Стартовый вид календаря ──────────────────────────────────────────────
+    //
+    // Какой вид (Расписание/Журнал/День/Неделя/Месяц/Год) открывается при переходе в
+    // Календарь. Индекс совпадает с порядком пунктов и ViewSelector навбара (0..5).
+    // Применяется при следующем запуске — календарь читает AppSettings.LoadCalendarView().
+    private void OnCalendarViewChanged(object? sender, SelectionChangedEventArgs e)
+    {
+        if (CalendarViewCombo.SelectedIndex >= 0)
+            AppSettings.SaveCalendarView(CalendarViewCombo.SelectedIndex);
+    }
+
+    // ── Стартовый вид конструктора ───────────────────────────────────────────
+    //
+    // Вид коллекции (Таблица/Список) для коллекций без своего сохранённого режима.
+    // Применяется при следующем открытии коллекции (репозиторий читает его как дефолт).
+    private void OnConstructorViewChanged(object? sender, SelectionChangedEventArgs e)
+    {
+        if (ConstructorViewCombo.SelectedItem is ComboBoxItem { Tag: string mode })
+            AppSettings.SaveConstructorView(mode);
+    }
+
+    // ── О программе ──────────────────────────────────────────────────────────
+    //
+    // Дата сборки = время последней записи сборки на диск (детерминированные сборки
+    // обнуляют PE-таймстамп, поэтому берём mtime файла). Может быть недоступна в
+    // single-file-публикации — тогда строку со «сборкой» просто не показываем.
+    private static DateTime? BuildDate()
+    {
+        try
+        {
+            var path = Assembly.GetExecutingAssembly().Location;
+            return string.IsNullOrEmpty(path) ? null : System.IO.File.GetLastWriteTime(path);
+        }
+        catch { return null; }
+    }
+
+    // Открыть папку с данными в системном файловом менеджере. UseShellExecute=true
+    // делегирует системе: open (macOS), explorer (Windows), xdg-open (Linux) — надёжно
+    // работает с путями с пробелами/спецсимволами (Avalonia.Launcher на таких молчал).
+    private void OnOpenDataFolder(object? sender, RoutedEventArgs e)
+    {
+        try
+        {
+            Process.Start(new ProcessStartInfo
+            {
+                FileName        = AppSettings.AppDataDir,
+                UseShellExecute = true,
+            });
+        }
+        catch { /* нет обработчика для папки — молча игнорируем */ }
+    }
+
+    // ── Уровень масштабирования ──────────────────────────────────────────────
+    //
+    // Масштаб применяется ко всему окну вживую: MainWindow слушает Scaling.ScaleChanged
+    // и ставит LayoutTransform на корень. Слайдер — в процентах, Scaling хранит множитель.
+    private void OnScaleChanged(object? sender, RangeBaseValueChangedEventArgs e)
+    {
+        Scaling.SetScale(Math.Round(e.NewValue) / 100.0);
+        UpdateScaleBadge();
+    }
+
+    private void OnScaleSliderEntered(object? sender, PointerEventArgs e)
+    {
+        UpdateScaleBadge();
+        ScaleValuePopup.IsOpen = true;
+    }
+
+    private void OnScaleSliderExited(object? sender, PointerEventArgs e) => ScaleValuePopup.IsOpen = false;
+
+    // Текст = текущий масштаб в процентах; смещение пузырька — под текущий ползунок.
+    private void UpdateScaleBadge()
+    {
+        ScaleValueText.Text = $"{(int)Math.Round(ScaleSlider.Value)} %";
+
+        var range = ScaleSlider.Maximum - ScaleSlider.Minimum;
+        var w     = ScaleSlider.Bounds.Width;
+        if (range <= 0 || w <= 0) return;
+
+        var frac = (ScaleSlider.Value - ScaleSlider.Minimum) / range;
+        const double thumbW = 26;
+        // Ползунок масштабируется LayoutTransform'ом окна, а попап живёт в немасштабированном
+        // оверлее → смещение домножаем на текущий масштаб, иначе плашка «уезжает» от ползунка.
+        ScaleValuePopup.HorizontalOffset = (frac * (w - thumbW) + thumbW / 2 - w / 2) * Scaling.Current;
+    }
+
+    // Кнопка-стрелка: подтверждение в стандартном диалоге → возврат к 100 %.
+    private async void OnScaleReset(object? sender, RoutedEventArgs e)
+    {
+        if (VisualRoot is not Window win) return;
+        var dlg = new ConfirmDialog("Вернуть уровень масштабирования по умолчанию?", "Сбросить");
+        if (await dlg.ShowDialog<bool>(win) != true) return;
+
+        ScaleSlider.Value = AppSettings.ScaleDefault * 100;   // → OnScaleChanged → SetScale(1.0)
+    }
+
+    // Размер шрифта меняется вживую: дельта пишется в Application.Resources (DynamicResource),
+    // C#-виды пересобираются по событию FontScale.Changed.
+    private void OnFontSizeChanged(object? sender, RangeBaseValueChangedEventArgs e)
+    {
+        FontScale.SetDelta((int)Math.Round(e.NewValue));
+        UpdateFontBadge();
+    }
+
+    // Пузырёк со значением показываем при наведении/перетаскивании ползунка.
+    private void OnFontSliderEntered(object? sender, PointerEventArgs e)
+    {
+        UpdateFontBadge();
+        FontValuePopup.IsOpen = true;
+    }
+
+    private void OnFontSliderExited(object? sender, PointerEventArgs e) => FontValuePopup.IsOpen = false;
+
+    // Текст = итоговый базовый размер (стандарт ± дельта); смещение пузырька — под текущий ползунок.
+    private void UpdateFontBadge()
+    {
+        var delta     = (int)Math.Round(FontSizeSlider.Value);
+        var effective = FontScale.BaseFontSize + delta;            // итоговый размер шрифта
+        FontValueText.Text = ((int)Math.Round(effective)).ToString();
+
+        // Квадрат: сторона растёт/уменьшается вместе с размером шрифта.
+        var side = Math.Round(effective * 2.0);
+        FontBadgeBorder.Width  = side;
+        FontBadgeBorder.Height = side;
+
+        var range = FontSizeSlider.Maximum - FontSizeSlider.Minimum;
+        var w     = FontSizeSlider.Bounds.Width;
+        if (range <= 0 || w <= 0) return;
+
+        var frac = (FontSizeSlider.Value - FontSizeSlider.Minimum) / range;
+        const double thumbW = 26;
+        // Тот же учёт масштаба окна, что и у плашки масштабирования (попап — в оверлее).
+        FontValuePopup.HorizontalOffset = (frac * (w - thumbW) + thumbW / 2 - w / 2) * Scaling.Current;
+    }
+
+    // Кнопка-стрелка: подтверждение в стандартном диалоге → возврат к стандарту (дельта 0).
+    private async void OnFontSizeReset(object? sender, RoutedEventArgs e)
+    {
+        if (VisualRoot is not Window win) return;
+        var dlg = new ConfirmDialog("Вернуть размер текста по умолчанию?", "Сбросить");
+        if (await dlg.ShowDialog<bool>(win) != true) return;
+
+        FontSizeSlider.Value = AppSettings.FontDeltaDefault;   // → OnFontSizeChanged → SetDelta(0)
     }
 
     // Переключатель фоновой подгрузки строк («Загрузка…»). Применяется при следующем
@@ -59,13 +251,8 @@ public partial class SettingsView : UserControl
         DatabasePanel.IsVisible   = key == "database";
         AboutPanel.IsVisible      = key == "about";
 
-        TitleText.Text = key switch
-        {
-            "appearance" => "Оформление",
-            "database"   => "Управление базой данных",
-            "about"      => "О программе",
-            _            => "Общие",
-        };
+        // Заголовок берём из реестра по ключу — единственный источник подписей разделов.
+        HeaderBar.Title = (SettingsRegistry.FindByKey(key) ?? SettingsRegistry.All[0]).Label;
     }
 
     // ── Управление базой данных ──────────────────────────────────────────────

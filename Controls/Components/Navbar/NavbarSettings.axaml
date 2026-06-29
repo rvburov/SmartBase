@@ -1,0 +1,16 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="DataBase.Controls.Components.NavbarSettings"
+             Height="56"
+             Background="{StaticResource BrushBg}">
+
+    <Border Padding="16,0">
+        <TextBlock x:Name="TitleText"
+                   Text="Общие"
+                   VerticalAlignment="Center"
+                   FontSize="{DynamicResource FontSizeLarge}"
+                   FontWeight="{StaticResource FontWeightBold}"
+ />
+    </Border>
+
+</UserControl>

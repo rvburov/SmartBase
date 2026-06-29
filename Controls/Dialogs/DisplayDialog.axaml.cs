@@ -154,10 +154,20 @@ public partial class DisplayDialog : Window
     private bool IsSearching => !string.IsNullOrEmpty(SearchBox.Text?.Trim());
 
     // ── Перемещение выделенного свойства ───────────────────────────────────────
-    private static readonly Geometry PlusIcon  = Geometry.Parse("M5 12 H19 M12 5 V19");
-    private static readonly Geometry MinusIcon = Geometry.Parse("M5 12 H19");
-    private static readonly Geometry ArrowUp   = Geometry.Parse("M5 12 L12 5 L19 12 M12 19 V5");
-    private static readonly Geometry ArrowDown = Geometry.Parse("M12 5 V19 M5 12 L12 19 L19 12");
+    // Иконки — из общего словаря Assets/Styles/Icons.axaml по ключу x:Key.
+    private static Geometry Icon(string key) =>
+        Application.Current!.TryFindResource(key, out var res) && res is Geometry g
+            ? g
+            : throw new KeyNotFoundException($"Icon resource '{key}' not found in Icons.axaml");
+
+    // Размер иконки (сторона Viewbox) — из токенов Icons.axaml.
+    private static double IconSize(string key) =>
+        Application.Current!.TryFindResource(key, out var r) && r is double d ? d : 16;
+
+    private static Geometry PlusIcon  => Icon("IconPlus");
+    private static Geometry MinusIcon => Icon("IconMinus");
+    private static Geometry ArrowUp   => Icon("IconArrowUp");
+    private static Geometry ArrowDown => Icon("IconArrowDown");
 
     private void RenderMoveButtons()
     {
@@ -174,7 +184,7 @@ public partial class DisplayDialog : Window
             Data = icon, StrokeThickness = 2,
             StrokeLineCap = PenLineCap.Round, StrokeJoin = PenLineJoin.Round,
         };
-        var box = new Viewbox { Width = 16, Height = 16, Child = new Canvas { Width = 24, Height = 24, Children = { path } } };
+        var box = new Viewbox { Width = IconSize("IconSizeSmall"), Height = IconSize("IconSizeSmall"), Child = new Canvas { Width = 24, Height = 24, Children = { path } } };
         return MakeLevelButton(box, br => path.Stroke = br, active: false, onClick, enabled);
     }
 
@@ -230,7 +240,7 @@ public partial class DisplayDialog : Window
             Data = PlusIcon, StrokeThickness = 2,
             StrokeLineCap = PenLineCap.Round, StrokeJoin = PenLineJoin.Round,
         };
-        var plusIcon = new Viewbox { Width = 16, Height = 16, Child = new Canvas { Width = 24, Height = 24, Children = { path } } };
+        var plusIcon = new Viewbox { Width = IconSize("IconSizeSmall"), Height = IconSize("IconSizeSmall"), Child = new Canvas { Width = 24, Height = 24, Children = { path } } };
         LevelActions.Children.Add(MakeLevelButton(plusIcon, br => path.Stroke = br,
             active: false, () => { if (_maxLevel < MaxLevels) { _maxLevel++; RenderLevels(); } },
             enabled: _maxLevel < MaxLevels));
@@ -240,7 +250,7 @@ public partial class DisplayDialog : Window
             Data = MinusIcon, StrokeThickness = 2,
             StrokeLineCap = PenLineCap.Round, StrokeJoin = PenLineJoin.Round,
         };
-        var minusIcon = new Viewbox { Width = 16, Height = 16, Child = new Canvas { Width = 24, Height = 24, Children = { minusPath } } };
+        var minusIcon = new Viewbox { Width = IconSize("IconSizeSmall"), Height = IconSize("IconSizeSmall"), Child = new Canvas { Width = 24, Height = 24, Children = { minusPath } } };
         LevelActions.Children.Add(MakeLevelButton(minusIcon, br => minusPath.Stroke = br,
             active: false, RemoveLevel, enabled: _maxLevel > 1));
     }

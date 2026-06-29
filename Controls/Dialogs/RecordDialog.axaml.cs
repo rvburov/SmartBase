@@ -216,9 +216,9 @@ public partial class RecordDialog : Window
             var label = new TextBlock
             {
                 Text       = field.Name,
-                FontWeight = Avalonia.Media.FontWeight.Bold,
-                FontSize   = 13,
-                Foreground = Avalonia.Media.Brushes.Gray,
+                FontWeight = (Avalonia.Media.FontWeight)this.FindResource("FontWeightBold")!,
+                FontSize   = (double)this.FindResource("FontSizeBase")!,
+                Foreground = (Avalonia.Media.IBrush)this.FindResource("BrushSecondaryText")!,
             };
             FieldsPanel.Children.Add(label);
 

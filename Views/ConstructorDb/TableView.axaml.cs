@@ -155,14 +155,24 @@ public partial class TableView : UserControl
         base.OnAttachedToVisualTree(e);
         _keyHookTopLevel = TopLevel.GetTopLevel(this);
         _keyHookTopLevel?.AddHandler(KeyDownEvent, OnTopLevelKeyDown, RoutingStrategies.Tunnel);
+
+        // Размер шрифта меняется живьём: ячейки строятся с размером из ресурса → пересобрать.
+        FontScale.Changed += OnFontScaleChanged;
+        if (_repository is not null && _renderedFontDelta != FontScale.Delta) Reload();
     }
 
     protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
     {
         _keyHookTopLevel?.RemoveHandler(KeyDownEvent, OnTopLevelKeyDown);
         _keyHookTopLevel = null;
+        FontScale.Changed -= OnFontScaleChanged;
         base.OnDetachedFromVisualTree(e);
     }
+
+    // Дельта последнего рендера — чтобы перерисовать таблицу при возврате, если размер
+    // меняли, пока был открыт другой раздел.
+    private int _renderedFontDelta = FontScale.Delta;
+    private void OnFontScaleChanged() { if (_repository is not null) Reload(); }
 
     private void OnTopLevelKeyDown(object? sender, KeyEventArgs e)
     {
@@ -488,6 +498,8 @@ public partial class TableView : UserControl
     private void Reload()
     {
         if (_repository is null) return;
+
+        _renderedFontDelta = FontScale.Delta;   // таблица отрисована с текущим размером
 
         LoadColumnState();
 
@@ -929,7 +941,8 @@ public partial class TableView : UserControl
     {
         if (def.Key == TableColumnDef.AddPropKey)
         {
-            var plus = MakeCenteredHeader("+", fontSize: 16, addRightBorder: false);
+            // Размер «+» — как у «+» создания записи (add-row), т.е. стандартный FontSizeBase.
+            var plus = MakeCenteredHeader("+", addRightBorder: false);
             plus.Cursor = new Cursor(StandardCursorType.Hand);
             plus.PointerPressed += (_, _) =>
                 PropertyCreateRequested?.Invoke(this, EventArgs.Empty);
@@ -1029,8 +1042,8 @@ public partial class TableView : UserControl
 
         return new Viewbox
         {
-            Width             = 16,
-            Height            = 16,
+            Width             = IconSize("IconSizeSmall"),
+            Height            = IconSize("IconSizeSmall"),
             VerticalAlignment = VerticalAlignment.Center,
             Margin            = new Thickness(0, 0, 6, 0),
             Child = new Canvas
@@ -1075,7 +1088,7 @@ public partial class TableView : UserControl
             Width             = 20,
             Height            = 20,
             VerticalAlignment = VerticalAlignment.Center,
-            Content           = new Viewbox { Width = 12, Height = 12, Child = canvas },
+            Content           = new Viewbox { Width = IconSize("IconSizeSmall"), Height = IconSize("IconSizeSmall"), Child = canvas },
         };
         btn.Classes.Add("icon");
         btn.Classes.Add("filterChevron");
@@ -1084,16 +1097,22 @@ public partial class TableView : UserControl
         return btn;
     }
 
-    // lucide chevron-down, funnel, arrow-down-a-z и arrow-up-z-a в сетке 24×24.
-    private static readonly Geometry ChevronIcon = Geometry.Parse("M6 9 L12 15 L18 9");
-    private static readonly Geometry FunnelIcon  = Geometry.Parse(
-        "M10 20a1 1 0 0 0 .553.895l2 1A1 1 0 0 0 14 21v-7a2 2 0 0 1 .517-1.341L21.74 4.67A1 1 0 0 0 21 3H3a1 1 0 0 0-.742 1.67l7.225 7.989A2 2 0 0 1 10 14z");
-    private static readonly Geometry SortAzIcon  = Geometry.Parse(
-        "M3 16 l4 4 4 -4 M7 20 V4 M20 8 h-5 M15 10 V6.5 a2.5 2.5 0 0 1 5 0 V10 M15 14 h5 l-5 6 h5");
-    private static readonly Geometry SortZaIcon  = Geometry.Parse(
-        "M3 8 l4 -4 4 4 M7 4 v16 M15 4 h5 l-5 6 h5 M15 20 v-3.5 a2.5 2.5 0 0 1 5 0 V20 M20 18 h-5");
-    private static readonly Geometry CheckIcon   = Geometry.Parse("M20 6 L9 17 l-5 -5");
-    private static readonly Geometry XIcon       = Geometry.Parse("M18 6 L6 18 M6 6 L18 18");
+    // Иконки заголовка/меню фильтра — из общего словаря Assets/Styles/Icons.axaml.
+    private static Geometry Icon(string key) =>
+        Application.Current!.TryFindResource(key, out var res) && res is Geometry g
+            ? g
+            : throw new KeyNotFoundException($"Icon resource '{key}' not found in Icons.axaml");
+
+    // Размер иконки (сторона Viewbox) — из токенов Icons.axaml.
+    private static double IconSize(string key) =>
+        Application.Current!.TryFindResource(key, out var r) && r is double d ? d : 16;
+
+    private static Geometry ChevronIcon => Icon("IconChevronDown");
+    private static Geometry FunnelIcon  => Icon("IconFilter");
+    private static Geometry SortAzIcon  => Icon("IconSortAz");
+    private static Geometry SortZaIcon  => Icon("IconSortZa");
+    private static Geometry CheckIcon   => Icon("IconCheck");
+    private static Geometry XIcon       => Icon("IconClose");
 
     private void ApplyChevronState(string key, Avalonia.Controls.Shapes.Path path)
     {
@@ -2090,6 +2109,7 @@ public partial class TableView : UserControl
             Watermark    = "Поиск значений...",
             Height       = 30,
             CornerRadius = radius,
+            Background    = Brushes.White,   // белая карточка на серой подложке (как в сайдбаре)
             Margin       = new Thickness(0, 0, 0, 4),
             VerticalContentAlignment = VerticalAlignment.Center,
         };
@@ -2128,9 +2148,28 @@ public partial class TableView : UserControl
         };
         valuesList.Styles.Add(new Style(x => x.OfType<ListBoxItem>())
         {
-            Setters = { new Setter(ListBoxItem.PaddingProperty, new Thickness(0)),
+            // Вертикальный отступ строк — как у списка свойств (StackPanel Spacing=4):
+            // 2px сверху/снизу дают такой же воздух между чекбоксами, иначе они слипаются.
+            Setters = { new Setter(ListBoxItem.PaddingProperty, new Thickness(0, 2)),
                         new Setter(ListBoxItem.MinHeightProperty, 0.0) },
         });
+
+        // Строки без подсветки наведения/выбора (синей/серой) — взаимодействуем только
+        // с чекбоксом, поэтому фон контейнера строки прозрачен во всех состояниях.
+        void FlatRow(params string[] pseudo) =>
+            valuesList.Styles.Add(new Style(x =>
+            {
+                Avalonia.Styling.Selector s = x.OfType<ListBoxItem>();
+                foreach (var p in pseudo) s = s.Class(p);
+                return s.Template().OfType<Avalonia.Controls.Presenters.ContentPresenter>().Name("PART_ContentPresenter");
+            })
+            {
+                Setters = { new Setter(Avalonia.Controls.Presenters.ContentPresenter.BackgroundProperty, Brushes.Transparent) },
+            });
+        FlatRow();
+        FlatRow(":pointerover");
+        FlatRow(":selected");
+        FlatRow(":selected", ":pointerover");
 
         var valuesBox = new StackPanel { Spacing = 4 };
         valuesBox.Children.Add(selectAll);
@@ -2147,6 +2186,7 @@ public partial class TableView : UserControl
         };
         var valuesHost = new Border
         {
+            Background       = Brushes.White,   // белая карточка списка на серой подложке (как в сайдбаре)
             BorderBrush     = (IBrush)this.FindResource("BrushSeparator")!,
             BorderThickness = new Thickness(1),
             CornerRadius    = radius,
@@ -2268,11 +2308,11 @@ public partial class TableView : UserControl
         return panel;
     }
 
-    // Иконка в стандарте сайдбара: Viewbox 18×18 поверх сетки 24×24.
+    // Иконка в стандарте сайдбара: Viewbox «Средний» поверх сетки 24×24.
     private Viewbox MakeStrokeIcon(Geometry data, IBrush stroke) => new()
     {
-        Width  = 18,
-        Height = 18,
+        Width  = IconSize("IconSizeMedium"),
+        Height = IconSize("IconSizeMedium"),
         VerticalAlignment = VerticalAlignment.Center,
         Child  = new Canvas
         {

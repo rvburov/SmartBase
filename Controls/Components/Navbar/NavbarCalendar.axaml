@@ -1,6 +1,6 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             x:Class="DataBase.Controls.Components.Navbar"
+             x:Class="DataBase.Controls.Components.NavbarCalendar"
              Height="56"
              Background="{StaticResource BrushBg}">
 
@@ -24,9 +24,9 @@
                 HorizontalContentAlignment="Center"
                 VerticalContentAlignment="Center"
                 ToolTip.Tip="Добавить запись">
-            <Viewbox Width="18" Height="18">
+            <Viewbox Width="{StaticResource IconSizeMedium}" Height="{StaticResource IconSizeMedium}">
                 <Canvas Width="24" Height="24">
-                    <Path Data="M5 12 H19 M12 5 V19"
+                    <Path Data="{StaticResource IconPlus}"
                           Stroke="{Binding $parent[Button].Foreground}"
                           StrokeThickness="2"
                           StrokeLineCap="Round"
@@ -44,7 +44,6 @@
                 VerticalContentAlignment="Center"
                 CornerRadius="{StaticResource RadiusMedium}"
                 Background="{StaticResource BrushSecondaryBg}"
-                Foreground="{StaticResource BrushPrimaryText}"
                 BorderBrush="{StaticResource BrushSeparator}"
                 BorderThickness="1.2" />
 
@@ -56,9 +55,9 @@
                 HorizontalContentAlignment="Center"
                 VerticalContentAlignment="Center"
                 ToolTip.Tip="Назад">
-            <Viewbox Width="18" Height="18">
+            <Viewbox Width="{StaticResource IconSizeMedium}" Height="{StaticResource IconSizeMedium}">
                 <Canvas Width="24" Height="24">
-                    <Path Data="M12 19 L5 12 L12 5 M5 12 H19"
+                    <Path Data="{StaticResource IconArrowLeft}"
                           Stroke="{Binding $parent[Button].Foreground}"
                           StrokeThickness="2"
                           StrokeLineCap="Round"
@@ -75,9 +74,9 @@
                 HorizontalContentAlignment="Center"
                 VerticalContentAlignment="Center"
                 ToolTip.Tip="Вперёд">
-            <Viewbox Width="18" Height="18">
+            <Viewbox Width="{StaticResource IconSizeMedium}" Height="{StaticResource IconSizeMedium}">
                 <Canvas Width="24" Height="24">
-                    <Path Data="M5 12 H19 M12 5 L19 12 L12 19"
+                    <Path Data="{StaticResource IconArrowRight}"
                           Stroke="{Binding $parent[Button].Foreground}"
                           StrokeThickness="2"
                           StrokeLineCap="Round"
@@ -89,26 +88,27 @@
         <!-- Заголовок периода -->
         <TextBlock Grid.Column="4" x:Name="TitleLabel"
                    VerticalAlignment="Center"
-                   FontSize="{StaticResource FontSizeLarge}"
+                   FontSize="{DynamicResource FontSizeLarge}"
                    FontWeight="{StaticResource FontWeightBold}"
-                   Foreground="{StaticResource BrushPrimaryText}" />
+ />
 
-        <!-- Поиск -->
+        <!-- Поиск (однострочный): без фиксированной высоты (MinHeight + рост под шрифт) и
+             без вертикальной прокрутки — иначе при крупном шрифте текст переполняет поле и
+             вылезает кнопка-стрелка скроллбара. -->
         <TextBox Grid.Column="5" x:Name="SearchBox"
-                 Width="200" Height="30" MinHeight="30" Margin="0,0,8,0"
+                 Width="200" MinHeight="30" Margin="0,0,8,0"
                  VerticalAlignment="Center"
                  VerticalContentAlignment="Center"
                  Watermark="Поиск..."
                  CornerRadius="{StaticResource RadiusPill}"
                  Background="{StaticResource BrushSecondaryBg}"
-                 Foreground="{StaticResource BrushPrimaryText}" />
+                 ScrollViewer.VerticalScrollBarVisibility="Disabled" />
 
         <!-- Вид (Месяц/Неделя/День…) -->
         <ComboBox Grid.Column="6" x:Name="ViewSelector"
                   VerticalAlignment="Center"
                   Width="140" Height="30"
                   Background="{StaticResource BrushSecondaryBg}"
-                  Foreground="{StaticResource BrushPrimaryText}"
                   CornerRadius="{StaticResource RadiusBase}" />
     </Grid>
 

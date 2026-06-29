@@ -6,15 +6,13 @@
         <Grid ColumnDefinitions="*,Auto">
             <TextBox Grid.Column="0" x:Name="Input" Classes="timeInput" />
             <Button Grid.Column="1" x:Name="Arrow" Classes="timeArrow">
-                <Viewbox Width="16" Height="16">
-                    <Canvas Width="24" Height="24">
-                        <Path Data="M6 9 L12 15 L18 9"
-                              Stroke="{StaticResource BrushSecondaryText}"
-                              StrokeThickness="2"
-                              StrokeLineCap="Round"
-                              StrokeJoin="Round" />
-                    </Canvas>
-                </Viewbox>
+                <Path Data="{StaticResource IconChevronDown}"
+                      Stretch="Fill" Width="12" Height="8"
+                      HorizontalAlignment="Center" VerticalAlignment="Center"
+                      Stroke="{StaticResource BrushSecondaryText}"
+                      StrokeThickness="2"
+                      StrokeLineCap="Round"
+                      StrokeJoin="Round" />
             </Button>
             <Popup Grid.Column="0" x:Name="Pop"
                    PlacementTarget="{Binding #Box}"

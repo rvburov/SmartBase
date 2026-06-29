@@ -9,11 +9,11 @@
             CornerRadius="{StaticResource RadiusBase}"
             Padding="10,7">
         <Grid ColumnDefinitions="Auto,8,*">
-            <Viewbox Grid.Column="0" Width="16" Height="16"
+            <Viewbox Grid.Column="0" Width="{StaticResource IconSizeSmall}" Height="{StaticResource IconSizeSmall}"
                      VerticalAlignment="Center">
                 <Canvas Width="24" Height="24">
                     <Ellipse Width="24" Height="24" Fill="{StaticResource BrushRed}" />
-                    <Path Data="M12 6 L12 14 M12 17 L12 18.5"
+                    <Path Data="{StaticResource IconAlertMark}"
                           Stroke="White" StrokeThickness="2"
                           StrokeLineCap="Round" />
                 </Canvas>
@@ -21,7 +21,6 @@
             <TextBlock Grid.Column="2" x:Name="MessageText"
                        VerticalAlignment="Center"
                        TextWrapping="Wrap"
-                       FontSize="{StaticResource FontSizeBase}"
                        Foreground="{StaticResource BrushRed}" />
         </Grid>
     </Border>

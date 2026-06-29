@@ -1,8 +1,10 @@
+using Avalonia;
 using Avalonia.Controls;
 using DataBase.Controls.Dialogs;
 using DataBase.Core.Models;
 using DataBase.Database;
 using DataBase.Database.Repositories;
+using DataBase.Utils;
 
 namespace DataBase.Views.ConstructorDb.Calendar;
 
@@ -29,6 +31,29 @@ public partial class CalendarControllerView : UserControl
     }
 
     public CalendarControllerView() { InitializeComponent(); }
+
+    // Размер шрифта меняется живьём: C#-виды строят ячейки с размером из ресурса, поэтому
+    // активный вид пересобираем. Дельта последнего рендера — чтобы перерисовать при возврате
+    // к календарю (изменение могло произойти, пока был открыт другой раздел).
+    private int _renderedFontDelta = FontScale.Delta;
+
+    protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
+    {
+        base.OnAttachedToVisualTree(e);
+        FontScale.Changed += OnFontScaleChanged;
+        if (_dbs.Count > 0 && _renderedFontDelta != FontScale.Delta) RefreshCurrent();
+    }
+
+    protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
+    {
+        FontScale.Changed -= OnFontScaleChanged;
+        base.OnDetachedFromVisualTree(e);
+    }
+
+    private void OnFontScaleChanged()
+    {
+        if (_dbs.Count > 0) RefreshCurrent();
+    }
 
     public void Initialize(
         IReadOnlyList<DatabaseManager> databases,
@@ -88,7 +113,7 @@ public partial class CalendarControllerView : UserControl
         WeekViewCtrl.AllDayCreationRequested   += (_, d)  => _ = OpenAddAllDayDialog(d);
         WeekViewCtrl.TimeSlotCreationRequested += (_, dt) => _ = OpenAddDialog(dt.Date, dt.TimeOfDay);
 
-        SwitchView(4);
+        SwitchView(AppSettings.LoadCalendarView());   // стартовый вид из настроек (стандарт — Месяц)
         SeedIfEmpty();
     }
 
@@ -153,6 +178,8 @@ public partial class CalendarControllerView : UserControl
 
     private void RefreshCurrent(bool scrollToNow = false)
     {
+        _renderedFontDelta = FontScale.Delta;   // активный вид отрисован с текущим размером
+
         var (startDt, endDt) = GetDateRange();
 
         // Агрегируем события из всех смонтированных БД, помечая каждое его DbId,

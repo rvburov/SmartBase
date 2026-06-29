@@ -9,7 +9,6 @@
               DisplayMemberBinding="{Binding Label}"
               Background="{StaticResource BrushSecondaryBg}"
               BorderBrush="{StaticResource BrushSeparator}"
-              Foreground="{StaticResource BrushPrimaryText}"
               CornerRadius="{StaticResource RadiusBase}"
               Height="32"
               HorizontalAlignment="Stretch" />

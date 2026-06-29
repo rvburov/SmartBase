@@ -1,15 +1,12 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             x:Class="DataBase.Controls.Components.ConstructorNavbar"
-             Height="57"
+             x:Class="DataBase.Controls.Components.NavbarConstructor"
+             Height="56"
              Background="{StaticResource BrushBg}">
 
+    <!-- Своей линии-разделителя нет: нижнюю границу титульной зоны рисует общая линия
+         окна на y=56 (MainWindow), иначе линии удваивались бы в 2px. -->
     <DockPanel>
-
-        <!-- Линия-разделитель снизу -->
-        <Border DockPanel.Dock="Bottom"
-                Height="1"
-                Background="{StaticResource BrushSeparator}" />
 
         <!-- Заголовок слева, переключатель вида + toggle панели записи справа -->
         <Grid ColumnDefinitions="*,Auto,Auto" Margin="16,0">
@@ -17,9 +14,8 @@
             <TextBlock Grid.Column="0" x:Name="TitleDisplay"
                        HorizontalAlignment="Stretch"
                        VerticalAlignment="Center"
-                       FontSize="{StaticResource FontSizeLarge}"
+                       FontSize="{DynamicResource FontSizeLarge}"
                        FontWeight="{StaticResource FontWeightBold}"
-                       Foreground="{StaticResource BrushPrimaryText}"
                        TextTrimming="CharacterEllipsis"
                        Cursor="IBeam"
                        Margin="0,0,12,0" />
@@ -29,9 +25,8 @@
                      IsVisible="False"
                      Watermark="Выберите коллекцию"
                      VerticalAlignment="Center"
-                     FontSize="{StaticResource FontSizeLarge}"
+                     FontSize="{DynamicResource FontSizeLarge}"
                      FontWeight="{StaticResource FontWeightBold}"
-                     Foreground="{StaticResource BrushPrimaryText}"
                      Margin="0,0,12,0" />
 
             <!-- Переключатель вида (Таблица / Список) -->
@@ -39,7 +34,6 @@
                       Width="130" Height="30"
                       VerticalAlignment="Center"
                       Background="{StaticResource BrushSecondaryBg}"
-                      Foreground="{StaticResource BrushPrimaryText}"
                       CornerRadius="{StaticResource RadiusBase}" />
 
             <!-- Toggle правой панели записи: arrow-right-from-line (открыть) /
@@ -49,18 +43,18 @@
                           VerticalAlignment="Center"
                           CornerRadius="{StaticResource RadiusMedium}"
                           ToolTip.Tip="Открыть запись">
-                <Viewbox Width="18" Height="18">
+                <Viewbox Width="{StaticResource IconSizeMedium}" Height="{StaticResource IconSizeMedium}">
                     <Canvas Width="24" Height="24">
                         <!-- arrow-left-from-line: панель закрыта → клик откроет (←) -->
                         <Path x:Name="RecordOpenIcon"
-                              Data="M9 6 L3 12 L9 18 M3 12 H17 M21 19 V5"
+                              Data="{StaticResource IconArrowLeftFromLine}"
                               Stroke="{Binding $parent[ToggleButton].Foreground}"
                               StrokeThickness="1.6"
                               StrokeLineCap="Round" StrokeJoin="Round" />
                         <!-- arrow-right-to-line: панель открыта → клик закроет (→) -->
                         <Path x:Name="RecordCloseIcon"
                               IsVisible="False"
-                              Data="M17 12 H3 M11 18 L17 12 L11 6 M21 5 V19"
+                              Data="{StaticResource IconArrowRightToLine}"
                               Stroke="{Binding $parent[ToggleButton].Foreground}"
                               StrokeThickness="1.6"
                               StrokeLineCap="Round" StrokeJoin="Round" />

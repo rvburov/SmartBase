@@ -7,6 +7,7 @@
         <ResourceDictionary>
             <ResourceDictionary.MergedDictionaries>
                 <ResourceInclude Source="avares://DataBase/Assets/Styles/Colors.axaml" />
+                <ResourceInclude Source="avares://DataBase/Assets/Styles/Icons.axaml" />
             </ResourceDictionary.MergedDictionaries>
 
         </ResourceDictionary>

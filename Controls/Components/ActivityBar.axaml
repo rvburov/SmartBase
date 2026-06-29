@@ -15,18 +15,18 @@
                       HorizontalAlignment="Center"
                       CornerRadius="{StaticResource RadiusMedium}"
                       ToolTip.Tip="Сайдбар">
-            <Viewbox Width="32" Height="32">
+            <Viewbox Width="{StaticResource IconSizeXLarge}" Height="{StaticResource IconSizeXLarge}">
                 <Canvas Width="24" Height="24">
                     <!-- panel-left-open: сайдбар закрыт (стрелка →) -->
                     <Path x:Name="PanelOpenIcon"
-                          Data="M5 3 H19 A2 2 0 0 1 21 5 V19 A2 2 0 0 1 19 21 H5 A2 2 0 0 1 3 19 V5 A2 2 0 0 1 5 3 Z M9 3 V21 M14 9 L17 12 L14 15"
+                          Data="{StaticResource IconPanelOpen}"
                           Stroke="{Binding $parent[ToggleButton].Foreground}"
                           StrokeThickness="1.2"
                           StrokeLineCap="Round" StrokeJoin="Round" />
                     <!-- panel-right-open: сайдбар открыт (стрелка ←) -->
                     <Path x:Name="PanelCloseIcon"
                           IsVisible="False"
-                          Data="M5 3 H19 A2 2 0 0 1 21 5 V19 A2 2 0 0 1 19 21 H5 A2 2 0 0 1 3 19 V5 A2 2 0 0 1 5 3 Z M15 3 V21 M10 15 L7 12 L10 9"
+                          Data="{StaticResource IconPanelClose}"
                           Stroke="{Binding $parent[ToggleButton].Foreground}"
                           StrokeThickness="1.2"
                           StrokeLineCap="Round" StrokeJoin="Round" />
@@ -36,7 +36,7 @@
 
         <!-- Короткий разделитель на высоте линии сайдбара (Y=56):
              12 (панель) + 32 (бургер) + 8 (Spacing) + 4 = 56 -->
-        <Separator Background="{StaticResource BrushSeparator}" Height="1" Margin="0,4,0,4" />
+        <Border Classes="separator h" Margin="0,4" />
 
         <!-- Модуль: Календарь -->
         <ToggleButton x:Name="CalendarBtn" Classes="icon module"
@@ -45,9 +45,9 @@
                       CornerRadius="{StaticResource RadiusMedium}"
                       IsChecked="True"
                       ToolTip.Tip="Календарь">
-            <Viewbox Width="32" Height="32">
+            <Viewbox Width="{StaticResource IconSizeXLarge}" Height="{StaticResource IconSizeXLarge}">
                 <Canvas Width="24" Height="24">
-                    <Path Data="M5 4 H19 A2 2 0 0 1 21 6 V20 A2 2 0 0 1 19 22 H5 A2 2 0 0 1 3 20 V6 A2 2 0 0 1 5 4 Z M3 10 H21 M8 2 V6 M16 2 V6 M11 14 H12 V18"
+                    <Path Data="{StaticResource IconCalendarDate}"
                           Stroke="{Binding $parent[ToggleButton].Foreground}"
                           StrokeThickness="1.2"
                           StrokeLineCap="Round"
@@ -62,10 +62,10 @@
                       HorizontalAlignment="Center"
                       CornerRadius="{StaticResource RadiusMedium}"
                       ToolTip.Tip="Конструктор БД">
-            <Viewbox Width="32" Height="32">
+            <Viewbox Width="{StaticResource IconSizeXLarge}" Height="{StaticResource IconSizeXLarge}">
                 <Canvas Width="24" Height="24">
                     <!-- tabler database-check -->
-                    <Path Data="M4 6c0 1.657 3.582 3 8 3s8 -1.343 8 -3s-3.582 -3 -8 -3s-8 1.343 -8 3 M4 6v6c0 1.657 3.582 3 8 3c1.075 0 2.1 -.08 3.037 -.224 M20 6v8 M4 12v6c0 1.657 3.582 3 8 3c.166 0 .331 -.002 .495 -.006 M15 19l2 2l4 -4"
+                    <Path Data="{StaticResource IconDatabaseCheck}"
                           Stroke="{Binding $parent[ToggleButton].Foreground}"
                           StrokeThickness="1.2"
                           StrokeLineCap="Round"
@@ -80,10 +80,10 @@
                       HorizontalAlignment="Center"
                       CornerRadius="{StaticResource RadiusMedium}"
                       ToolTip.Tip="Расширения">
-            <Viewbox Width="32" Height="32">
+            <Viewbox Width="{StaticResource IconSizeXLarge}" Height="{StaticResource IconSizeXLarge}">
                 <Canvas Width="24" Height="24">
                     <!-- lucide blocks -->
-                    <Path Data="M10 22V7a1 1 0 0 0-1-1H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-5a1 1 0 0 0-1-1H2 M15 2 H21 A1 1 0 0 1 22 3 V9 A1 1 0 0 1 21 10 H15 A1 1 0 0 1 14 9 V3 A1 1 0 0 1 15 2 Z"
+                    <Path Data="{StaticResource IconBlocks}"
                           Stroke="{Binding $parent[ToggleButton].Foreground}"
                           StrokeThickness="1.2"
                           StrokeLineCap="Round"
@@ -102,10 +102,10 @@
                   HorizontalAlignment="Center"
                   CornerRadius="{StaticResource RadiusMedium}"
                   ToolTip.Tip="Настройки">
-        <Viewbox Width="32" Height="32">
+        <Viewbox Width="{StaticResource IconSizeXLarge}" Height="{StaticResource IconSizeXLarge}">
             <Canvas Width="24" Height="24">
                 <!-- lucide settings -->
-                <Path Data="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1 -2.33 4.033 2.34 2.34 0 0 0 -3.319 1.915 2.34 2.34 0 0 1 -4.659 0 2.34 2.34 0 0 0 -3.32 -1.915 2.34 2.34 0 0 1 -2.33 -4.033 2.34 2.34 0 0 0 0 -3.831 A2.34 2.34 0 0 1 6.35 6.051 a2.34 2.34 0 0 0 3.319 -1.915 Z M15 12 A3 3 0 0 1 9 12 A3 3 0 0 1 15 12 Z"
+                <Path Data="{StaticResource IconSettings}"
                       Stroke="{Binding $parent[ToggleButton].Foreground}"
                       StrokeThickness="1.2"
                       StrokeLineCap="Round"

@@ -2,14 +2,14 @@ using Avalonia.Controls;
 
 namespace DataBase.Controls.Components;
 
-public partial class ConstructorFooter : UserControl
+public partial class FooterConstructor : UserControl
 {
     public event EventHandler?       FilterClicked;
     public event EventHandler?       SortClicked;
     public event EventHandler?       PrevPageClicked;
     public event EventHandler?       NextPageClicked;
 
-    public ConstructorFooter()
+    public FooterConstructor()
     {
         InitializeComponent();
 

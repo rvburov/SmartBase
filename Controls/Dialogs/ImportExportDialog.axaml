@@ -18,7 +18,6 @@
         <TextBlock Text="Режим"
                    Margin="0,0,0,6"
                    FontWeight="{StaticResource FontWeightBold}"
-                   FontSize="{StaticResource FontSizeBase}"
                    Foreground="{StaticResource BrushSecondaryText}" />
 
         <ComboBox x:Name="ModeCombo"
@@ -27,7 +26,6 @@
                   VerticalContentAlignment="Center"
                   Margin="0,0,0,12"
                   Background="{StaticResource BrushSecondaryBg}"
-                  Foreground="{StaticResource BrushPrimaryText}"
                   CornerRadius="{StaticResource RadiusBase}">
             <ComboBoxItem Content="Импорт" />
             <ComboBoxItem Content="Экспорт (скоро)" IsEnabled="False" />
@@ -37,7 +35,6 @@
         <TextBlock Text="Файл"
                    Margin="0,0,0,6"
                    FontWeight="{StaticResource FontWeightBold}"
-                   FontSize="{StaticResource FontSizeBase}"
                    Foreground="{StaticResource BrushSecondaryText}" />
 
         <Grid ColumnDefinitions="*,8,Auto" Margin="0,0,0,12">
@@ -55,7 +52,6 @@
         <TextBlock Text="Название коллекции"
                    Margin="0,0,0,6"
                    FontWeight="{StaticResource FontWeightBold}"
-                   FontSize="{StaticResource FontSizeBase}"
                    Foreground="{StaticResource BrushSecondaryText}" />
 
         <TextBox x:Name="NameBox"
@@ -69,7 +65,6 @@
         <TextBlock Text="База данных"
                    Margin="0,0,0,6"
                    FontWeight="{StaticResource FontWeightBold}"
-                   FontSize="{StaticResource FontSizeBase}"
                    Foreground="{StaticResource BrushSecondaryText}" />
 
         <ComboBox x:Name="DbCombo"
@@ -78,14 +73,12 @@
                   VerticalContentAlignment="Center"
                   Margin="0,0,0,12"
                   Background="{StaticResource BrushSecondaryBg}"
-                  Foreground="{StaticResource BrushPrimaryText}"
                   CornerRadius="{StaticResource RadiusBase}" />
 
         <!-- Расположение (родительская группа) -->
         <TextBlock Text="Расположение"
                    Margin="0,0,0,6"
                    FontWeight="{StaticResource FontWeightBold}"
-                   FontSize="{StaticResource FontSizeBase}"
                    Foreground="{StaticResource BrushSecondaryText}" />
 
         <ComboBox x:Name="LocationCombo"
@@ -94,7 +87,6 @@
                   VerticalContentAlignment="Center"
                   Margin="0,0,0,12"
                   Background="{StaticResource BrushSecondaryBg}"
-                  Foreground="{StaticResource BrushPrimaryText}"
                   CornerRadius="{StaticResource RadiusBase}">
             <ComboBox.ItemTemplate>
                 <DataTemplate>
@@ -114,7 +106,6 @@
         <TextBlock Text="Тип импорта"
                    Margin="0,0,0,6"
                    FontWeight="{StaticResource FontWeightBold}"
-                   FontSize="{StaticResource FontSizeBase}"
                    Foreground="{StaticResource BrushSecondaryText}" />
 
         <ComboBox x:Name="TypeCombo"
@@ -123,14 +114,13 @@
                   VerticalContentAlignment="Center"
                   Margin="0,0,0,10"
                   Background="{StaticResource BrushSecondaryBg}"
-                  Foreground="{StaticResource BrushPrimaryText}"
                   CornerRadius="{StaticResource RadiusBase}" />
 
         <!-- Пояснение к стандартному типу -->
         <TextBlock x:Name="StandardHelp"
                    Margin="0,0,0,12"
                    TextWrapping="Wrap"
-                   FontSize="{StaticResource FontSizeSmall}"
+                   FontSize="{DynamicResource FontSizeSmall}"
                    Foreground="{StaticResource BrushSecondaryText}"
                    Text="Берется первый лист (для CSV — весь файл). Первая строка — заголовки (имена свойств). Столбец 1 → название записи, остальные столбцы → текстовые свойства. Колонка «Описание» создается пустой в конце. Данные читаются со второй строки. Все значения сохраняются как текст." />
 
@@ -147,13 +137,11 @@
                 <TextBlock Text="Параметры ручного импорта"
                            Margin="0,0,0,10"
                            FontWeight="{StaticResource FontWeightBold}"
-                           FontSize="{StaticResource FontSizeBase}"
-                           Foreground="{StaticResource BrushPrimaryText}" />
+ />
 
                 <TextBlock Text="Лист"
                            Margin="0,0,0,6"
                            FontWeight="{StaticResource FontWeightBold}"
-                           FontSize="{StaticResource FontSizeBase}"
                            Foreground="{StaticResource BrushSecondaryText}" />
                 <TextBox x:Name="SheetBox"
                          Watermark="Название листа (пусто — первый)"
@@ -165,7 +153,6 @@
                 <TextBlock Text="Строка заголовков"
                            Margin="0,0,0,6"
                            FontWeight="{StaticResource FontWeightBold}"
-                           FontSize="{StaticResource FontSizeBase}"
                            Foreground="{StaticResource BrushSecondaryText}" />
                 <TextBox x:Name="HeaderRowBox"
                          Watermark="Например, 1"
@@ -177,7 +164,6 @@
                 <TextBlock Text="Строка данных"
                            Margin="0,0,0,6"
                            FontWeight="{StaticResource FontWeightBold}"
-                           FontSize="{StaticResource FontSizeBase}"
                            Foreground="{StaticResource BrushSecondaryText}" />
                 <TextBox x:Name="DataRowBox"
                          Watermark="Например, 2"
@@ -189,7 +175,6 @@
                 <TextBlock Text="Столбец названия"
                            Margin="0,0,0,6"
                            FontWeight="{StaticResource FontWeightBold}"
-                           FontSize="{StaticResource FontSizeBase}"
                            Foreground="{StaticResource BrushSecondaryText}" />
                 <TextBox x:Name="TitleColBox"
                          Watermark="Число или буква, например 1 или A"

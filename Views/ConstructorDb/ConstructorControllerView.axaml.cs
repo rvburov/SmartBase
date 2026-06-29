@@ -36,7 +36,7 @@ public partial class ConstructorControllerView : UserControl
     public int? CurrentCollectionId => _currentCollectionId;
 
     /// <summary>Синхронизирует визуальное состояние toggle-кнопки записи в навбаре.</summary>
-    public void SetRecordPanelOpen(bool isOpen) => ConstructorNavbar.SetRecordPanelOpen(isOpen);
+    public void SetRecordPanelOpen(bool isOpen) => NavbarConstructor.SetRecordPanelOpen(isOpen);
 
     public ConstructorControllerView() { InitializeComponent(); }
 
@@ -51,13 +51,13 @@ public partial class ConstructorControllerView : UserControl
         _repository = repository;
 
         // Переключатель вида остаётся в верхнем навбаре.
-        ConstructorNavbar.ViewChanged += (_, mode) => SwitchView(mode);
+        NavbarConstructor.ViewChanged += (_, mode) => SwitchView(mode);
 
         // Переименование коллекции прямо из заголовка навбара.
-        ConstructorNavbar.TitleEdited += (_, newName) => RenameCurrentCollection(newName);
+        NavbarConstructor.TitleEdited += (_, newName) => RenameCurrentCollection(newName);
 
         // Toggle правой панели записи в навбаре — пробрасываем в MainWindow.
-        ConstructorNavbar.RecordPanelToggled += (_, isOpen) => RecordPanelToggled?.Invoke(this, isOpen);
+        NavbarConstructor.RecordPanelToggled += (_, isOpen) => RecordPanelToggled?.Invoke(this, isOpen);
 
         // Высота строк и ширина столбцов переключаются из контекстных меню таблицы
         // (записи и заголовка колонки соответственно).
@@ -84,7 +84,7 @@ public partial class ConstructorControllerView : UserControl
         TableViewCtrl.RecordDisplayRequested     += (_, _)   => _ = OpenRecordDisplayDialog();
 
         // Стартовое состояние: коллекция не выбрана — заголовок-плейсхолдер и подсказка.
-        ConstructorNavbar.SetTitle("");
+        NavbarConstructor.SetTitle("");
         SetEmptyState(true);
     }
 
@@ -93,8 +93,8 @@ public partial class ConstructorControllerView : UserControl
     private void SetEmptyState(bool empty)
     {
         EmptyStateHint.IsVisible    = empty;
-        ConstructorFooter.IsVisible = !empty;
-        ConstructorNavbar.ShowCollectionControls(!empty);
+        FooterConstructor.IsVisible = !empty;
+        NavbarConstructor.ShowCollectionControls(!empty);
 
         // Скрываем таблицу/список, чтобы пустая шапка DataGrid не висела серой полосой
         // под навбаром. При выборе коллекции SwitchView вернёт нужную видимость.
@@ -134,17 +134,17 @@ public partial class ConstructorControllerView : UserControl
         }
 
         _currentCollectionId = collectionId;
-        ConstructorNavbar.SetTitle(col.Name);
+        NavbarConstructor.SetTitle(col.Name);
         SetEmptyState(false);
 
         var (_, _, viewMode) = _repository.GetUiSettings(collectionId);
-        ConstructorNavbar.SetViewMode(viewMode);
+        NavbarConstructor.SetViewMode(viewMode);
         SwitchView(viewMode);
 
         // Нижняя панель: счётчик записей и страницы (пока 1 страница).
         var count = _repository.CountRecords(collectionId);
-        ConstructorFooter.SetCount(count);
-        ConstructorFooter.SetPage(1, 1);
+        FooterConstructor.SetCount(count);
+        FooterConstructor.SetPage(1, 1);
     }
 
     public void Refresh()
@@ -168,7 +168,7 @@ public partial class ConstructorControllerView : UserControl
         {
             if (structural) TableViewCtrl.ReloadRowsStructural();
             else            TableViewCtrl.ReloadRows();
-            ConstructorFooter.SetCount(_repository.CountRecords(_currentCollectionId.Value));
+            FooterConstructor.SetCount(_repository.CountRecords(_currentCollectionId.Value));
         }
         else
         {
@@ -190,11 +190,11 @@ public partial class ConstructorControllerView : UserControl
     private void ClearView()
     {
         _currentCollectionId = null;
-        ConstructorNavbar.SetTitle("");
+        NavbarConstructor.SetTitle("");
         TableViewCtrl.Clear();
         ListViewCtrl.Clear();
-        ConstructorFooter.SetCount(0);
-        ConstructorFooter.SetPage(1, 1);
+        FooterConstructor.SetCount(0);
+        FooterConstructor.SetPage(1, 1);
         SetEmptyState(true);
         RecordPageClosed?.Invoke(this, EventArgs.Empty);
     }
@@ -554,8 +554,8 @@ public partial class ConstructorControllerView : UserControl
         // возвращаем прежнее имя в заголовке и показываем всплывашку у самого заголовка.
         if (_repository.CollectionNameExists(newName, col.GroupId, excludeId: col.Id))
         {
-            ConstructorNavbar.SetTitle(col.Name);
-            ConstructorNavbar.ShowTitleError("Коллекция с таким названием уже существует");
+            NavbarConstructor.SetTitle(col.Name);
+            NavbarConstructor.ShowTitleError("Коллекция с таким названием уже существует");
             return;
         }
 

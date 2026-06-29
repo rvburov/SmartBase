@@ -1,15 +1,14 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             x:Class="DataBase.Controls.Components.ConstructorFooter"
-             Height="57"
+             x:Class="DataBase.Controls.Components.FooterConstructor"
+             Height="56"
              Background="{StaticResource BrushBg}">
 
     <DockPanel>
 
         <!-- Линия-разделитель сверху -->
         <Border DockPanel.Dock="Top"
-                Height="1"
-                Background="{StaticResource BrushSeparator}" />
+                Classes="separator h" />
 
         <Grid ColumnDefinitions="Auto,Auto,Auto,*,Auto"
               Margin="16,0">
@@ -20,9 +19,9 @@
                     VerticalAlignment="Center"
                     CornerRadius="{StaticResource RadiusMedium}"
                     ToolTip.Tip="Фильтр">
-                <Viewbox Width="18" Height="18">
+                <Viewbox Width="{StaticResource IconSizeMedium}" Height="{StaticResource IconSizeMedium}">
                     <Canvas Width="24" Height="24">
-                        <Path Data="M10 20a1 1 0 0 0 .553.895l2 1A1 1 0 0 0 14 21v-7a2 2 0 0 1 .517-1.341L21.74 4.67A1 1 0 0 0 21 3H3a1 1 0 0 0-.742 1.67l7.225 7.989A2 2 0 0 1 10 14z"
+                        <Path Data="{StaticResource IconFilter}"
                               Stroke="{Binding $parent[Button].Foreground}"
                               StrokeThickness="1.6"
                               StrokeLineCap="Round" StrokeJoin="Round" />
@@ -36,9 +35,9 @@
                     VerticalAlignment="Center"
                     CornerRadius="{StaticResource RadiusMedium}"
                     ToolTip.Tip="Сортировка">
-                <Viewbox Width="18" Height="18">
+                <Viewbox Width="{StaticResource IconSizeMedium}" Height="{StaticResource IconSizeMedium}">
                     <Canvas Width="24" Height="24">
-                        <Path Data="M3 16 L7 20 L11 16 M7 20 V4 M11 4 H21 M11 8 H18 M11 12 H15"
+                        <Path Data="{StaticResource IconSortDesc}"
                               Stroke="{Binding $parent[Button].Foreground}"
                               StrokeThickness="1.6"
                               StrokeLineCap="Round" StrokeJoin="Round" />
@@ -51,7 +50,7 @@
                        Text="Всего: 0"
                        VerticalAlignment="Center"
                        Margin="8,0,0,0"
-                       FontSize="{StaticResource FontSizeSmall}"
+                       FontSize="{DynamicResource FontSizeSmall}"
                        Foreground="{StaticResource BrushSecondaryText}" />
 
             <!-- Навигация по страницам -->
@@ -61,9 +60,9 @@
                         Width="30" Height="30"
                         CornerRadius="{StaticResource RadiusMedium}"
                         ToolTip.Tip="Предыдущая страница">
-                    <Viewbox Width="18" Height="18">
+                    <Viewbox Width="{StaticResource IconSizeMedium}" Height="{StaticResource IconSizeMedium}">
                         <Canvas Width="24" Height="24">
-                            <Path Data="M15 18 L9 12 L15 6"
+                            <Path Data="{StaticResource IconChevronLeft}"
                                   Stroke="{Binding $parent[Button].Foreground}"
                                   StrokeThickness="2"
                                   StrokeLineCap="Round" StrokeJoin="Round" />
@@ -75,16 +74,16 @@
                            Text="1 / 1"
                            VerticalAlignment="Center"
                            Margin="4,0"
-                           FontSize="{StaticResource FontSizeSmall}"
+                           FontSize="{DynamicResource FontSizeSmall}"
                            Foreground="{StaticResource BrushSecondaryText}" />
 
                 <Button x:Name="NextPageBtn" Classes="navbtn"
                         Width="30" Height="30"
                         CornerRadius="{StaticResource RadiusMedium}"
                         ToolTip.Tip="Следующая страница">
-                    <Viewbox Width="18" Height="18">
+                    <Viewbox Width="{StaticResource IconSizeMedium}" Height="{StaticResource IconSizeMedium}">
                         <Canvas Width="24" Height="24">
-                            <Path Data="M9 18 L15 12 L9 6"
+                            <Path Data="{StaticResource IconChevronRight}"
                                   Stroke="{Binding $parent[Button].Foreground}"
                                   StrokeThickness="2"
                                   StrokeLineCap="Round" StrokeJoin="Round" />

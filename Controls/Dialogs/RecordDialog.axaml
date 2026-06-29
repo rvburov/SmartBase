@@ -38,7 +38,6 @@
                 <TextBlock Text="Название"
                            Margin="0,0,0,6"
                            FontWeight="{StaticResource FontWeightBold}"
-                           FontSize="{StaticResource FontSizeBase}"
                            Foreground="{StaticResource BrushSecondaryText}" />
                 <TextBox x:Name="TitleBox"
                          Watermark="Добавить название"
@@ -51,15 +50,13 @@
                 <CheckBox x:Name="AllDayCheck"
                           Content="Весь день"
                           Margin="0,0,0,12"
-                          FontSize="{StaticResource FontSizeBase}"
-                          Foreground="{StaticResource BrushPrimaryText}" />
+                          />
 
                 <!-- Начало -->
                 <TextBlock x:Name="StartLabel"
                            Text="Начало"
                            Margin="0,0,0,6"
                            FontWeight="{StaticResource FontWeightBold}"
-                           FontSize="{StaticResource FontSizeBase}"
                            Foreground="{StaticResource BrushSecondaryText}" />
                 <Grid x:Name="StartRow" ColumnDefinitions="2*,8,*" Margin="0,0,0,12">
                     <CalendarDatePicker Grid.Column="0" x:Name="StartDatePicker"
@@ -70,15 +67,13 @@
                         <Grid ColumnDefinitions="*,Auto">
                             <TextBox Grid.Column="0" x:Name="StartTimeInput" Classes="timeInput" />
                             <Button Grid.Column="1" x:Name="StartTimeArrow" Classes="timeArrow">
-                                <Viewbox Width="16" Height="16">
-                                    <Canvas Width="24" Height="24">
-                                        <Path Data="M6 9 L12 15 L18 9"
-                                              Stroke="{StaticResource BrushSecondaryText}"
-                                              StrokeThickness="2"
-                                              StrokeLineCap="Round"
-                                              StrokeJoin="Round" />
-                                    </Canvas>
-                                </Viewbox>
+                                <Path Data="{StaticResource IconChevronDown}"
+                                      Stretch="Fill" Width="12" Height="8"
+                                      HorizontalAlignment="Center" VerticalAlignment="Center"
+                                      Stroke="{StaticResource BrushSecondaryText}"
+                                      StrokeThickness="2"
+                                      StrokeLineCap="Round"
+                                      StrokeJoin="Round" />
                             </Button>
                             <Popup Grid.Column="0" x:Name="StartTimePopup"
                                    PlacementTarget="{Binding #StartTimeBorder}"
@@ -100,7 +95,6 @@
                            Text="Конец"
                            Margin="0,0,0,6"
                            FontWeight="{StaticResource FontWeightBold}"
-                           FontSize="{StaticResource FontSizeBase}"
                            Foreground="{StaticResource BrushSecondaryText}" />
                 <Grid x:Name="EndRow" ColumnDefinitions="2*,8,*" Margin="0,0,0,12">
                     <CalendarDatePicker Grid.Column="0" x:Name="EndDatePicker"
@@ -111,15 +105,13 @@
                         <Grid ColumnDefinitions="*,Auto">
                             <TextBox Grid.Column="0" x:Name="EndTimeInput" Classes="timeInput" />
                             <Button Grid.Column="1" x:Name="EndTimeArrow" Classes="timeArrow">
-                                <Viewbox Width="16" Height="16">
-                                    <Canvas Width="24" Height="24">
-                                        <Path Data="M6 9 L12 15 L18 9"
-                                              Stroke="{StaticResource BrushSecondaryText}"
-                                              StrokeThickness="2"
-                                              StrokeLineCap="Round"
-                                              StrokeJoin="Round" />
-                                    </Canvas>
-                                </Viewbox>
+                                <Path Data="{StaticResource IconChevronDown}"
+                                      Stretch="Fill" Width="12" Height="8"
+                                      HorizontalAlignment="Center" VerticalAlignment="Center"
+                                      Stroke="{StaticResource BrushSecondaryText}"
+                                      StrokeThickness="2"
+                                      StrokeLineCap="Round"
+                                      StrokeJoin="Round" />
                             </Button>
                             <Popup Grid.Column="0" x:Name="EndTimePopup"
                                    PlacementTarget="{Binding #EndTimeBorder}"
@@ -141,14 +133,12 @@
                     <TextBlock Text="База данных"
                                Margin="0,0,0,6"
                                FontWeight="{StaticResource FontWeightBold}"
-                               FontSize="{StaticResource FontSizeBase}"
                                Foreground="{StaticResource BrushSecondaryText}" />
                     <ComboBox x:Name="DbCombo"
                               HorizontalAlignment="Stretch"
                               Height="34"
                               Margin="0,0,0,12"
                               Background="{StaticResource BrushSecondaryBg}"
-                              Foreground="{StaticResource BrushPrimaryText}"
                               CornerRadius="{StaticResource RadiusBase}" />
                 </StackPanel>
 
@@ -156,14 +146,12 @@
                 <TextBlock Text="Коллекция"
                            Margin="0,0,0,6"
                            FontWeight="{StaticResource FontWeightBold}"
-                           FontSize="{StaticResource FontSizeBase}"
                            Foreground="{StaticResource BrushSecondaryText}" />
                 <ComboBox x:Name="CollectionCombo"
                           HorizontalAlignment="Stretch"
                           Height="34"
                           Margin="0,0,0,12"
                           Background="{StaticResource BrushSecondaryBg}"
-                          Foreground="{StaticResource BrushPrimaryText}"
                           CornerRadius="{StaticResource RadiusBase}" />
 
                 <!-- Дата записи: выбирает, какое поле-дата коллекции показывается в календаре
@@ -172,7 +160,6 @@
                     <TextBlock Text="Дата записи"
                                Margin="0,0,0,6"
                                FontWeight="{StaticResource FontWeightBold}"
-                               FontSize="{StaticResource FontSizeBase}"
                                Foreground="{StaticResource BrushSecondaryText}" />
                     <ComboBox x:Name="EventDateCombo"
                               HorizontalAlignment="Stretch"
@@ -180,7 +167,6 @@
                               Margin="0,0,0,12"
                               PlaceholderText="Выберите дату"
                               Background="{StaticResource BrushSecondaryBg}"
-                              Foreground="{StaticResource BrushPrimaryText}"
                               CornerRadius="{StaticResource RadiusBase}" />
                 </StackPanel>
 
@@ -188,7 +174,6 @@
                 <TextBlock Text="Описание"
                            Margin="0,0,0,6"
                            FontWeight="{StaticResource FontWeightBold}"
-                           FontSize="{StaticResource FontSizeBase}"
                            Foreground="{StaticResource BrushSecondaryText}" />
                 <TextBox x:Name="DescBox"
                          Watermark="Добавить описание в Markdown (необязательно)"
@@ -197,6 +182,7 @@
                          AcceptsReturn="True"
                          AcceptsTab="True"
                          TextWrapping="Wrap"
+                         ScrollViewer.VerticalScrollBarVisibility="Auto"
                          CornerRadius="{StaticResource RadiusMedium}" />
             </StackPanel>
 

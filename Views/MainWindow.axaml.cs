@@ -1,7 +1,10 @@
 using Avalonia.Controls;
 using Avalonia.VisualTree;
+using DataBase.Controls.Components;
 using DataBase.Database;
 using DataBase.Database.Repositories;
+using DataBase.Extensions;
+using DataBase.Settings;
 using DataBase.Utils;
 using DataBase.ViewModels;
 
@@ -25,6 +28,10 @@ public partial class MainWindow : Window
     // ресайза вычисляются из них в одном месте — ApplyColumns().
     private bool _sidebarOpen    = true;   // левый сайдбар (col 2)
     private bool _collectionOpen = true;   // центральный блок коллекции/контента (col 3)
+
+    // Иконка пунктов сайдбара расширений (lucide blocks, ключ из Icons.axaml) — одна
+    // на все расширения, т.к. в ExtensionRegistry своей иконки у расширений нет.
+    private const string ExtensionsIcon = "IconBlocks";
     // _recordPanelLogicalOpen — правая панель записи (col 5), объявлено ниже.
 
     public MainWindow(Workspace workspace)
@@ -78,19 +85,24 @@ public partial class MainWindow : Window
         CalendarSidebar.InitializeWorkspace(workspace.Mounted, Controls.Components.SidebarMode.Calendar);
         ConstructorSidebar.InitializeWorkspace(workspace.Mounted, Controls.Components.SidebarMode.Constructor);
 
-        // Начальное состояние: модуль Календарь
-        ActivityBarControl.SetModuleActive("calendar");
+        // Начальное состояние: раздел при запуске берём из настроек (стандарт — конструктор).
+        var startupModule = AppSettings.LoadStartupModule();
+        ActivityBarControl.SetModuleActive(startupModule);
         ActivityBarControl.SetSidebarOpen(true);
-        ShowModule("calendar");
+        ShowModule(startupModule);
 
         // Связываем ActivityBar
         ActivityBarControl.SidebarToggled += (_, isOpen) => { _sidebarOpen = isOpen; OnSidebarToggled(isOpen); };
         ActivityBarControl.ModuleChanged  += (_, module) => ShowModule(module);
 
-        // Сайдбар настроек: выбор раздела открывает его в основной области.
+        // Сайдбар настроек: пункты из SettingsRegistry; выбор раздела открывает его в основной области.
+        SettingsSidebar.Title = "Настройки";
+        SettingsSidebar.SetItems(SettingsRegistry.All.Select(c => new SidebarListItem(c.Key, c.Label, c.Icon)));
         SettingsSidebar.CategorySelected += (_, key) => SettingsModule.ShowCategory(key);
 
-        // Сайдбар расширений: выбор расширения открывает его блок в основной области.
+        // Сайдбар расширений: пункты из ExtensionRegistry (одна иконка на все); выбор открывает блок.
+        ExtensionsSidebar.Title = "Расширения";
+        ExtensionsSidebar.SetItems(ExtensionRegistry.All.Select(e => new SidebarListItem(e.Id, e.Name, ExtensionsIcon)));
         ExtensionsSidebar.CategorySelected += (_, key) => ExtensionsModule.ShowExtension(key);
 
         // Sidebar коллекций передаёт активные id в CalendarModule
@@ -186,7 +198,19 @@ public partial class MainWindow : Window
         // При потере фокуса окном закрываем открытые контекстные меню/flyout —
         // иначе на macOS popup «зависает» поверх других приложений (Avalonia issue).
         Deactivated += (_, _) => CloseOpenPopups();
+
+        // Уровень масштабирования: применяем сохранённый и реагируем на изменения из настроек.
+        ApplyScale(Scaling.Current);
+        Scaling.ScaleChanged += ApplyScale;
+        Closed += (_, _) => Scaling.ScaleChanged -= ApplyScale;
     }
+
+    // Масштаб всего интерфейса: LayoutTransform на корне — содержимое перекомпоновывается в
+    // логических пикселях и заполняет окно. 100 % → без трансформации (быстрый общий путь).
+    private void ApplyScale(double scale) =>
+        ScaleHost.LayoutTransform = Math.Abs(scale - 1.0) < 0.001
+            ? null
+            : new Avalonia.Media.ScaleTransform(scale, scale);
 
     // Закрывает открытые контекстные меню и flyout. Вызывается при потере фокуса окном —
     // иначе на macOS popup «зависает» поверх других окон (Avalonia issue).
@@ -365,7 +389,7 @@ public partial class MainWindow : Window
     {
         var col = RootGrid.ColumnDefinitions[2];
         _gripDragging   = true;
-        _gripStartX     = e.GetPosition(this).X;
+        _gripStartX     = e.GetPosition(RootGrid).X;
         _gripStartWidth = col.Width.IsAbsolute ? col.Width.Value : col.ActualWidth;
         e.Pointer.Capture((Avalonia.Input.IInputElement?)sender);
         e.Handled = true;
@@ -375,7 +399,7 @@ public partial class MainWindow : Window
     {
         if (!_gripDragging) return;
 
-        var dx       = e.GetPosition(this).X - _gripStartX;
+        var dx       = e.GetPosition(RootGrid).X - _gripStartX;
         var newWidth = Math.Clamp(_gripStartWidth + dx, SidebarMin, SidebarMax);
 
         var col = RootGrid.ColumnDefinitions[2];
@@ -454,7 +478,7 @@ public partial class MainWindow : Window
     {
         var col = RootGrid.ColumnDefinitions[5];
         _recordGripDragging   = true;
-        _recordGripStartX     = e.GetPosition(this).X;
+        _recordGripStartX     = e.GetPosition(RootGrid).X;
         _recordGripStartWidth = col.Width.IsAbsolute ? col.Width.Value : col.ActualWidth;
         e.Pointer.Capture((Avalonia.Input.IInputElement?)sender);
         e.Handled = true;
@@ -465,7 +489,7 @@ public partial class MainWindow : Window
         if (!_recordGripDragging) return;
 
         // Тянем за левый край — движение мыши вправо уменьшает ширину панели.
-        var dx       = e.GetPosition(this).X - _recordGripStartX;
+        var dx       = e.GetPosition(RootGrid).X - _recordGripStartX;
         var newWidth = Math.Clamp(
             _recordGripStartWidth - dx,
             AppSettings.RecordPanelWidthMin,

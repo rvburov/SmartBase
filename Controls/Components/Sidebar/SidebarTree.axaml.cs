@@ -12,12 +12,13 @@ using DataBase.Core.Importers;
 using DataBase.Core.Models;
 using DataBase.Database;
 using DataBase.Database.Repositories;
+using DataBase.Utils;
 
 namespace DataBase.Controls.Components;
 
 public enum SidebarMode { Calendar, Constructor }
 
-public partial class Sidebar : UserControl
+public partial class SidebarTree : UserControl
 {
     // Календарь: активные id — по БД (DbId → набор id коллекций), т.к. id не уникальны между БД.
     public event EventHandler<Dictionary<int, HashSet<int>>>? ActiveIdsChanged;
@@ -77,7 +78,7 @@ public partial class Sidebar : UserControl
         ("#FF6B6B", "Коралловый"),
     ];
 
-    public Sidebar()
+    public SidebarTree()
     {
         InitializeComponent();
         RowsHost.ItemsSource = _rows;
@@ -116,6 +117,8 @@ public partial class Sidebar : UserControl
     public void Refresh()
     {
         if (_dbs.Count == 0) return;
+
+        _renderedFontDelta = FontScale.Delta;   // дерево отрисовано с текущим размером
 
         var expandedIds = GetExpandedGroupIds();
         CaptureDbRootStates();
@@ -494,6 +497,11 @@ public partial class Sidebar : UserControl
     // часто не получает клавишу.
     private TopLevel? _keyHookTopLevel;
 
+    // Дельта последнего рендера дерева — чтобы перерисовать при возврате, если размер
+    // меняли, пока сайдбар был не виден.
+    private int _renderedFontDelta = FontScale.Delta;
+    private void OnFontScaleChanged() => Refresh();
+
     protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
     {
         base.OnAttachedToVisualTree(e);
@@ -501,6 +509,9 @@ public partial class Sidebar : UserControl
         // Клавиши и клики ловим на уровне окна (туннель): фокус UserControl ненадёжен.
         _keyHookTopLevel?.AddHandler(KeyDownEvent,        OnTopLevelKeyDown,        RoutingStrategies.Tunnel);
         _keyHookTopLevel?.AddHandler(PointerPressedEvent, OnTopLevelPointerPressed, RoutingStrategies.Tunnel);
+
+        FontScale.Changed += OnFontScaleChanged;
+        if (_dbs.Count > 0 && _renderedFontDelta != FontScale.Delta) Refresh();
     }
 
     protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
@@ -508,6 +519,7 @@ public partial class Sidebar : UserControl
         _keyHookTopLevel?.RemoveHandler(KeyDownEvent,        OnTopLevelKeyDown);
         _keyHookTopLevel?.RemoveHandler(PointerPressedEvent, OnTopLevelPointerPressed);
         _keyHookTopLevel = null;
+        FontScale.Changed -= OnFontScaleChanged;
         base.OnDetachedFromVisualTree(e);
     }
 
@@ -1533,21 +1545,22 @@ public partial class SidebarRow : ObservableObject
 {
     private const double IndentStep = 22;
 
-    private static readonly IBrush Accent      = new SolidColorBrush(Color.Parse("#007AFF"));
-    private static readonly IBrush AccentLight = new SolidColorBrush(Color.Parse("#E5F0FF"));
-    private static readonly IBrush Hover       = new SolidColorBrush(Color.Parse("#F2F2F7"));
-    private static readonly IBrush Secondary   = new SolidColorBrush(Color.Parse("#8E8E93"));
-    private static readonly IBrush Primary     = new SolidColorBrush(Color.Parse("#1C1C1E"));
+    // Кисти из общей палитры Colors.axaml (запасной hex — на случай отсутствия ресурса).
+    private static readonly IBrush Accent      = Brush("BrushAccent",        "#007AFF");
+    private static readonly IBrush AccentLight = Brush("BrushAccentLight",   "#E5F0FF");
+    private static readonly IBrush Hover       = Brush("BrushSecondaryBg",   "#F2F2F7");
+    private static readonly IBrush Secondary   = Brush("BrushSecondaryText", "#8E8E93");
+    private static readonly IBrush Primary     = Brush("BrushPrimaryText",   "#1C1C1E");
 
-    // Lucide: folder / grid-2x2-check / database
-    private const string FolderGeo =
-        "M20 20 A2 2 0 0 0 22 18 V8 A2 2 0 0 0 20 6 H12.1 A2 2 0 0 1 10.41 5.1 L9.6 3.9 A2 2 0 0 0 7.93 3 H4 A2 2 0 0 0 2 5 V18 A2 2 0 0 0 4 20 Z";
-    private const string CollectionGeo =
-        "M12 3 V20 A1 1 0 0 1 11 21 H5 A2 2 0 0 1 3 19 V5 A2 2 0 0 1 5 3 H19 A2 2 0 0 1 21 5 V11 A1 1 0 0 1 20 12 H3 M16 19 L18 21 L22 17";
-    private const string DatabaseGeo =
-        "M3 5 A9 3 0 1 0 21 5 A9 3 0 1 0 3 5 Z M3 5 V19 A9 3 0 0 0 21 19 V5 M3 12 A9 3 0 0 0 21 12";
-    private const string ChevronRightGeo = "M9 18 L15 12 L9 6";
-    private const string ChevronDownGeo  = "M6 9 L12 15 L18 9";
+    // Геометрия иконки из общего словаря Assets/Styles/Icons.axaml по ключу x:Key.
+    private static Geometry? Icon(string key) =>
+        Application.Current!.TryFindResource(key, out var res) && res is Geometry g ? g : null;
+
+    // Кисть из общей палитры Colors.axaml по ключу x:Key.
+    private static IBrush Brush(string key, string fallbackHex) =>
+        Application.Current!.TryFindResource(key, out var res) && res is IBrush b
+            ? b
+            : new SolidColorBrush(Color.Parse(fallbackHex));
 
     // «Без цвета»: дефолтный синий → серый чекбокс.
     private const string DefaultColor = "#007AFF";
@@ -1583,9 +1596,9 @@ public partial class SidebarRow : ObservableObject
     public double CheckboxSlot => Mode == SidebarMode.Calendar && !Node.IsGroup && !Node.IsDatabase ? IndentStep : 0;
     public bool   ShowCheckbox => Mode == SidebarMode.Calendar && !Node.IsGroup && !Node.IsDatabase;
 
-    public bool   ShowChevron     => Expandable;
-    public string ChevronGeometry => Node.IsExpanded ? ChevronDownGeo : ChevronRightGeo;
-    public string IconGeometry    => Node.IsDatabase ? DatabaseGeo : Node.IsGroup ? FolderGeo : CollectionGeo;
+    public bool      ShowChevron     => Expandable;
+    public Geometry? ChevronGeometry => Node.IsExpanded ? Icon("IconChevronDown") : Icon("IconChevronRight");
+    public Geometry? IconGeometry    => Node.IsDatabase ? Icon("IconDatabase") : Node.IsGroup ? Icon("IconFolder") : Icon("IconCollection");
 
     private SolidColorBrush ColorBrush
     {

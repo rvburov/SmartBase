@@ -17,13 +17,11 @@
         <TextBlock x:Name="PhaseText"
                    Text="Подготовка…"
                    FontWeight="{StaticResource FontWeightBold}"
-                   FontSize="{StaticResource FontSizeBase}"
-                   Foreground="{StaticResource BrushPrimaryText}" />
+ />
 
         <TextBlock x:Name="InfoText"
                    Text=""
                    IsVisible="False"
-                   FontSize="{StaticResource FontSizeBase}"
                    Foreground="{StaticResource BrushSecondaryText}" />
 
         <Grid ColumnDefinitions="*,Auto">
@@ -37,7 +35,6 @@
                        MinWidth="42"
                        Margin="10,0,0,0"
                        TextAlignment="Right"
-                       FontSize="{StaticResource FontSizeBase}"
                        Foreground="{StaticResource BrushSecondaryText}"
                        VerticalAlignment="Center" />
         </Grid>

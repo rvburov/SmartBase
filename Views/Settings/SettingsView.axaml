@@ -1,6 +1,7 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="using:DataBase.Views.Settings"
+             xmlns:comp="using:DataBase.Controls.Components"
              x:Class="DataBase.Views.Settings.SettingsView"
              Background="{StaticResource BrushBg}">
 
@@ -78,7 +79,7 @@
             <Setter Property="Foreground" Value="{StaticResource BrushPrimaryText}" />
         </Style>
         <Style Selector="Border.settingRow TextBlock.desc">
-            <Setter Property="FontSize"     Value="{StaticResource FontSizeSmall}" />
+            <Setter Property="FontSize"     Value="{DynamicResource FontSizeSmall}" />
             <Setter Property="Foreground"   Value="{StaticResource BrushSecondaryText}" />
             <Setter Property="TextWrapping" Value="Wrap" />
         </Style>
@@ -86,23 +87,19 @@
 
     <DockPanel>
 
-        <!-- Шапка раздела (высота 56 — выравнивание с линией навбара) -->
-        <Border DockPanel.Dock="Top" Height="56" Padding="32,0">
-            <TextBlock x:Name="TitleText"
-                       Text="Общие"
-                       VerticalAlignment="Center"
-                       FontSize="{StaticResource FontSizeLarge}"
-                       FontWeight="{StaticResource FontWeightBold}"
-                       Foreground="{StaticResource BrushPrimaryText}" />
-        </Border>
+        <!-- Шапка раздела (вынесена в компонент-навбар). -->
+        <comp:NavbarSettings DockPanel.Dock="Top" x:Name="HeaderBar" />
 
         <!-- Содержимое выбранного раздела -->
         <Grid>
 
             <!-- ── Общие ─────────────────────────────────────────── -->
             <ScrollViewer x:Name="GeneralPanel" VerticalScrollBarVisibility="Auto">
-                <StackPanel Margin="32,16,32,32" Spacing="12" MaxWidth="720"
-                            HorizontalAlignment="Left">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" MaxWidth="1400" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Margin="16,16,16,32" Spacing="12">
                     <TextBlock Text="Основные параметры приложения."
                                Foreground="{StaticResource BrushSecondaryText}" />
 
@@ -121,13 +118,86 @@
                                       IsCheckedChanged="OnAsyncRowLoadChanged" />
                         </Grid>
                     </Border>
-                </StackPanel>
+                    </StackPanel>
+                </Grid>
             </ScrollViewer>
 
             <!-- ── Оформление ────────────────────────────────────── -->
             <ScrollViewer x:Name="AppearancePanel" IsVisible="False"
                           VerticalScrollBarVisibility="Auto">
-                <StackPanel Margin="32,0,32,32" MaxWidth="720">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" MaxWidth="1400" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Margin="16,0,16,32">
+
+                    <!-- Отображение раздела навигации -->
+                    <Border Classes="settingRow">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <StackPanel Grid.Column="0" Spacing="4"
+                                        VerticalAlignment="Center" Margin="0,0,32,0">
+                                <TextBlock Classes="title" Text="Отображение раздела навигации" />
+                                <TextBlock Classes="desc"
+                                           Text="Какой раздел панели навигации (слева) открывается при запуске программы: Календарь, Конструктор базы данных или Расширения." />
+                            </StackPanel>
+                            <ComboBox Grid.Column="1" x:Name="StartupModuleCombo"
+                                      Width="240" Height="34"
+                                      VerticalAlignment="Center"
+                                      Background="{StaticResource BrushSecondaryBg}"
+                                      CornerRadius="{StaticResource RadiusBase}"
+                                      SelectionChanged="OnStartupModuleChanged">
+                                <ComboBoxItem Tag="calendar"    Content="Календарь" />
+                                <ComboBoxItem Tag="constructor" Content="Конструктор базы данных" />
+                                <ComboBoxItem Tag="extensions"  Content="Расширения" />
+                            </ComboBox>
+                        </Grid>
+                    </Border>
+
+                    <!-- Отображение раздела календаря -->
+                    <Border Classes="settingRow">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <StackPanel Grid.Column="0" Spacing="4"
+                                        VerticalAlignment="Center" Margin="0,0,32,0">
+                                <TextBlock Classes="title" Text="Отображение раздела календаря" />
+                                <TextBlock Classes="desc"
+                                           Text="Какой вид календаря открывается при переходе в раздел: Расписание, Журнал, День, Неделя, Месяц или Год." />
+                            </StackPanel>
+                            <ComboBox Grid.Column="1" x:Name="CalendarViewCombo"
+                                      Width="240" Height="34"
+                                      VerticalAlignment="Center"
+                                      Background="{StaticResource BrushSecondaryBg}"
+                                      CornerRadius="{StaticResource RadiusBase}"
+                                      SelectionChanged="OnCalendarViewChanged">
+                                <ComboBoxItem Tag="0" Content="Расписание" />
+                                <ComboBoxItem Tag="1" Content="Журнал" />
+                                <ComboBoxItem Tag="2" Content="День" />
+                                <ComboBoxItem Tag="3" Content="Неделя" />
+                                <ComboBoxItem Tag="4" Content="Месяц" />
+                                <ComboBoxItem Tag="5" Content="Год" />
+                            </ComboBox>
+                        </Grid>
+                    </Border>
+
+                    <!-- Отображение раздела конструктора -->
+                    <Border Classes="settingRow">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <StackPanel Grid.Column="0" Spacing="4"
+                                        VerticalAlignment="Center" Margin="0,0,32,0">
+                                <TextBlock Classes="title" Text="Отображение раздела конструктора" />
+                                <TextBlock Classes="desc"
+                                           Text="Какой вид коллекции открывается в конструкторе базы данных: Таблица или Список. Если у коллекции выбран свой вид, он сохраняется за ней." />
+                            </StackPanel>
+                            <ComboBox Grid.Column="1" x:Name="ConstructorViewCombo"
+                                      Width="240" Height="34"
+                                      VerticalAlignment="Center"
+                                      Background="{StaticResource BrushSecondaryBg}"
+                                      CornerRadius="{StaticResource RadiusBase}"
+                                      SelectionChanged="OnConstructorViewChanged">
+                                <ComboBoxItem Tag="table" Content="Таблица" />
+                                <ComboBoxItem Tag="list"  Content="Список" />
+                            </ComboBox>
+                        </Grid>
+                    </Border>
 
                     <!-- Уровень масштабирования -->
                     <Border Classes="settingRow">
@@ -136,23 +206,50 @@
                                         VerticalAlignment="Center" Margin="0,0,32,0">
                                 <TextBlock Classes="title" Text="Уровень масштабирования" />
                                 <TextBlock Classes="desc"
-                                           Text="Управление общим уровнем масштабирования в приложении." />
+                                           Text="Общий масштаб интерфейса. Диапазон 70…130 %, шаг 10 %; кнопка-стрелка возвращает 100 %." />
                             </StackPanel>
                             <StackPanel Grid.Column="1" Orientation="Horizontal"
                                         Spacing="14" VerticalAlignment="Center">
                                 <Button Classes="icon" Width="24" Height="24"
+                                        x:Name="ScaleResetBtn" Click="OnScaleReset"
                                         ToolTip.Tip="Сбросить">
-                                    <Viewbox Width="16" Height="16">
+                                    <Viewbox Width="{StaticResource IconSizeSmall}" Height="{StaticResource IconSizeSmall}">
                                         <Canvas Width="24" Height="24">
                                             <!-- rotate-ccw -->
-                                            <Path Data="M3 12 a9 9 0 1 0 9 -9 a9.75 9.75 0 0 0 -6.74 2.74 L3 8 M3 3 V8 H8"
+                                            <Path Data="{StaticResource IconRotateCcw}"
                                                   Stroke="{Binding $parent[Button].Foreground}"
                                                   StrokeThickness="1.8"
                                                   StrokeLineCap="Round" StrokeJoin="Round" />
                                         </Canvas>
                                     </Viewbox>
                                 </Button>
-                                <Slider Classes="setting" Width="200" Value="50" />
+                                <Slider Classes="setting" Width="200"
+                                        x:Name="ScaleSlider"
+                                        Minimum="70" Maximum="130"
+                                        TickFrequency="10" IsSnapToTickEnabled="True"
+                                        SmallChange="10" LargeChange="10"
+                                        ValueChanged="OnScaleChanged"
+                                        PointerEntered="OnScaleSliderEntered"
+                                        PointerExited="OnScaleSliderExited" />
+
+                                <!-- Пузырёк со значением над ползунком: текущий масштаб в процентах. -->
+                                <Popup x:Name="ScaleValuePopup"
+                                       PlacementTarget="{Binding #ScaleSlider}"
+                                       Placement="Top" VerticalOffset="-6"
+                                       IsLightDismissEnabled="False">
+                                    <Border Background="{DynamicResource ToolTipBackground}"
+                                            BorderBrush="{StaticResource BrushSeparator}"
+                                            BorderThickness="1"
+                                            CornerRadius="4"
+                                            Padding="8,4"
+                                            BoxShadow="0 2 8 0 #1A000000">
+                                        <TextBlock x:Name="ScaleValueText" Text="100 %"
+                                                   Foreground="{DynamicResource ToolTipForeground}"
+                                                   TextAlignment="Center"
+                                                   HorizontalAlignment="Center"
+                                                   VerticalAlignment="Center" />
+                                    </Border>
+                                </Popup>
                             </StackPanel>
                         </Grid>
                     </Border>
@@ -164,34 +261,70 @@
                                         VerticalAlignment="Center" Margin="0,0,32,0">
                                 <TextBlock Classes="title" Text="Размер шрифта" />
                                 <TextBlock Classes="desc"
-                                           Text="Размер шрифта в пикселях в области редактирования и предварительного просмотра." />
+                                           Text="Общий размер текста интерфейса. Диапазон −3…+3 пикселя от стандарта; кнопка-стрелка возвращает стандарт." />
                             </StackPanel>
                             <StackPanel Grid.Column="1" Orientation="Horizontal"
                                         Spacing="14" VerticalAlignment="Center">
                                 <Button Classes="icon" Width="24" Height="24"
+                                        x:Name="FontResetBtn" Click="OnFontSizeReset"
                                         ToolTip.Tip="Сбросить">
-                                    <Viewbox Width="16" Height="16">
+                                    <Viewbox Width="{StaticResource IconSizeSmall}" Height="{StaticResource IconSizeSmall}">
                                         <Canvas Width="24" Height="24">
                                             <!-- rotate-ccw -->
-                                            <Path Data="M3 12 a9 9 0 1 0 9 -9 a9.75 9.75 0 0 0 -6.74 2.74 L3 8 M3 3 V8 H8"
+                                            <Path Data="{StaticResource IconRotateCcw}"
                                                   Stroke="{Binding $parent[Button].Foreground}"
                                                   StrokeThickness="1.8"
                                                   StrokeLineCap="Round" StrokeJoin="Round" />
                                         </Canvas>
                                     </Viewbox>
                                 </Button>
-                                <Slider Classes="setting" Width="200" Value="40" />
+                                <Slider Classes="setting" Width="200"
+                                        x:Name="FontSizeSlider"
+                                        Minimum="-3" Maximum="3"
+                                        TickFrequency="1" IsSnapToTickEnabled="True"
+                                        SmallChange="1" LargeChange="1"
+                                        ValueChanged="OnFontSizeChanged"
+                                        PointerEntered="OnFontSliderEntered"
+                                        PointerExited="OnFontSliderExited" />
+
+                                <!-- Пузырёк со значением над ползунком: показывает итоговый
+                                     базовый размер текста (стандарт ± дельта). -->
+                                <Popup x:Name="FontValuePopup"
+                                       PlacementTarget="{Binding #FontSizeSlider}"
+                                       Placement="Top" VerticalOffset="-6"
+                                       IsLightDismissEnabled="False">
+                                    <!-- Квадратная плашка-индикатор: сторона считается от текущего
+                                         размера шрифта (масштабируется вместе с ним). Стиль — как у
+                                         обычных подсказок (светлый фон + серая рамка). -->
+                                    <Border x:Name="FontBadgeBorder"
+                                            Background="{DynamicResource ToolTipBackground}"
+                                            BorderBrush="{StaticResource BrushSeparator}"
+                                            BorderThickness="1"
+                                            CornerRadius="4"
+                                            BoxShadow="0 2 8 0 #1A000000">
+                                        <TextBlock x:Name="FontValueText" Text="12"
+                                                   Foreground="{DynamicResource ToolTipForeground}"
+                                                   TextAlignment="Center"
+                                                   HorizontalAlignment="Center"
+                                                   VerticalAlignment="Center" />
+                                    </Border>
+                                </Popup>
                             </StackPanel>
                         </Grid>
                     </Border>
 
-                </StackPanel>
+                    </StackPanel>
+                </Grid>
             </ScrollViewer>
 
             <!-- ── Управление базой данных ───────────────────────── -->
             <ScrollViewer x:Name="DatabasePanel" IsVisible="False"
                           VerticalScrollBarVisibility="Auto">
-                <StackPanel Margin="32,16,32,32" Spacing="16" MaxWidth="720">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" MaxWidth="1400" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Margin="16,16,16,32" Spacing="16">
 
                     <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Left">
                         <Button x:Name="CreateDatabaseBtn"
@@ -210,14 +343,14 @@
                                         <StackPanel Grid.Column="0" Spacing="3"
                                                     VerticalAlignment="Center" Margin="0,0,16,0">
                                             <TextBlock Text="{Binding Name}"
-                                                       Foreground="{StaticResource BrushPrimaryText}" />
+ />
                                             <TextBlock Text="{Binding Path}"
-                                                       FontSize="{StaticResource FontSizeSmall}"
+                                                       FontSize="{DynamicResource FontSizeSmall}"
                                                        Foreground="{StaticResource BrushSecondaryText}"
                                                        TextTrimming="CharacterEllipsis" />
                                             <!-- Файл недоступен / не смонтирована -->
                                             <TextBlock Text="Не подключена (файл недоступен)"
-                                                       FontSize="{StaticResource FontSizeSmall}"
+                                                       FontSize="{DynamicResource FontSizeSmall}"
                                                        Foreground="{StaticResource BrushRed}"
                                                        IsVisible="{Binding ShowNotMounted}" />
                                         </StackPanel>
@@ -228,7 +361,7 @@
                                             <!-- Дефолтная БД: метка -->
                                             <TextBlock Text="По умолчанию"
                                                        VerticalAlignment="Center"
-                                                       FontSize="{StaticResource FontSizeSmall}"
+                                                       FontSize="{DynamicResource FontSizeSmall}"
                                                        Foreground="{StaticResource BrushSecondaryText}"
                                                        IsVisible="{Binding ShowDefaultBadge}" />
 
@@ -247,10 +380,10 @@
                                                     ToolTip.Tip="Отключить (файл не удаляется)"
                                                     VerticalAlignment="Center"
                                                     IsVisible="{Binding ShowDeleteButton}">
-                                                <Viewbox Width="16" Height="16">
+                                                <Viewbox Width="{StaticResource IconSizeSmall}" Height="{StaticResource IconSizeSmall}">
                                                     <Canvas Width="24" Height="24">
                                                         <!-- trash -->
-                                                        <Path Data="M3 6 H21 M8 6 V4 A1 1 0 0 1 9 3 H15 A1 1 0 0 1 16 4 V6 M19 6 V20 A2 2 0 0 1 17 22 H7 A2 2 0 0 1 5 20 V6 M10 11 V17 M14 11 V17"
+                                                        <Path Data="{StaticResource IconTrash}"
                                                               Stroke="{Binding $parent[Button].Foreground}"
                                                               StrokeThickness="1.6"
                                                               StrokeLineCap="Round" StrokeJoin="Round" />
@@ -264,22 +397,58 @@
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
 
-                </StackPanel>
+                    </StackPanel>
+                </Grid>
             </ScrollViewer>
 
             <!-- ── О программе ───────────────────────────────────── -->
             <ScrollViewer x:Name="AboutPanel" IsVisible="False"
                           VerticalScrollBarVisibility="Auto">
-                <StackPanel Margin="32,16,32,32" Spacing="6" MaxWidth="640"
-                            HorizontalAlignment="Left">
-                    <TextBlock Text="DataBase"
-                               FontSize="{StaticResource FontSizeLarge}"
-                               FontWeight="{StaticResource FontWeightBold}"
-                               Foreground="{StaticResource BrushPrimaryText}" />
-                    <TextBlock x:Name="VersionText"
-                               Text="Версия 1.0.0"
-                               Foreground="{StaticResource BrushSecondaryText}" />
-                </StackPanel>
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" MaxWidth="1400" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Margin="16,16,16,32" Spacing="0">
+
+                    <!-- Название, версия (со сборкой) и краткое описание -->
+                    <StackPanel Spacing="6" Margin="0,0,0,8">
+                        <TextBlock Text="DataBase"
+                                   FontSize="{DynamicResource FontSizeLarge}"
+                                   FontWeight="{StaticResource FontWeightBold}" />
+                        <TextBlock x:Name="VersionText"
+                                   Text="Версия 1.0.0"
+                                   Foreground="{StaticResource BrushSecondaryText}" />
+                        <TextBlock Text="Локальная база данных с календарём и конструктором коллекций. Все данные хранятся на вашем устройстве — в локальных файлах базы данных."
+                                   Foreground="{StaticResource BrushSecondaryText}"
+                                   TextWrapping="Wrap" MaxWidth="640"
+                                   HorizontalAlignment="Left" />
+                    </StackPanel>
+
+                    <!-- Папка с данными (где лежат database.db / app.db) -->
+                    <Border Classes="settingRow">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <StackPanel Grid.Column="0" Spacing="4"
+                                        VerticalAlignment="Center" Margin="0,0,32,0">
+                                <TextBlock Classes="title" Text="Папка с данными" />
+                                <TextBlock x:Name="DataPathText" Classes="desc"
+                                           Text="—" TextTrimming="CharacterEllipsis" />
+                            </StackPanel>
+                            <Button Grid.Column="1" Classes="dialog" Content="Открыть"
+                                    VerticalAlignment="Center"
+                                    Click="OnOpenDataFolder" />
+                        </Grid>
+                    </Border>
+
+                    <!-- Система (ОС и версия рантайма — пригодится при обращении в поддержку) -->
+                    <Border Classes="settingRow">
+                        <StackPanel Spacing="4">
+                            <TextBlock Classes="title" Text="Система" />
+                            <TextBlock x:Name="SystemInfoText" Classes="desc" Text="—" />
+                        </StackPanel>
+                    </Border>
+
+                    </StackPanel>
+                </Grid>
             </ScrollViewer>
 
         </Grid>

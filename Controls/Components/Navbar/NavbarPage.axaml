@@ -1,0 +1,59 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="DataBase.Controls.Components.NavbarPage"
+             Height="56"
+             Background="{StaticResource BrushBg}">
+
+    <!-- Своей линии-разделителя нет: нижнюю границу титульной зоны рисует общая линия
+         окна на y=56 (MainWindow), иначе линии удваивались бы в 2px. -->
+    <DockPanel>
+
+        <!-- Редактируемое имя записи слева + toggle блока коллекции справа -->
+        <Grid ColumnDefinitions="*,Auto" Margin="16,0">
+
+            <TextBlock Grid.Column="0" x:Name="TitleDisplay"
+                       HorizontalAlignment="Stretch"
+                       VerticalAlignment="Center"
+                       FontSize="{DynamicResource FontSizeLarge}"
+                       FontWeight="{StaticResource FontWeightBold}"
+                       TextTrimming="CharacterEllipsis"
+                       Cursor="IBeam"
+                       Margin="0,0,12,0" />
+
+            <TextBox Grid.Column="0" x:Name="TitleBox"
+                     Classes="titleEditor"
+                     IsVisible="False"
+                     Watermark="Без названия"
+                     VerticalAlignment="Center"
+                     FontSize="{DynamicResource FontSizeLarge}"
+                     FontWeight="{StaticResource FontWeightBold}"
+                     Margin="0,0,12,0" />
+
+            <ToggleButton Grid.Column="1" x:Name="CollectionPanelBtn" Classes="navbtn"
+                          Width="30" Height="30"
+                          VerticalAlignment="Center"
+                          CornerRadius="{StaticResource RadiusMedium}"
+                          ToolTip.Tip="Открыть коллекцию">
+                <Viewbox Width="{StaticResource IconSizeMedium}" Height="{StaticResource IconSizeMedium}">
+                    <Canvas Width="24" Height="24">
+                        <!-- arrow-right-from-line: коллекция закрыта → клик откроет (→) -->
+                        <Path x:Name="CollectionOpenIcon"
+                              Data="{StaticResource IconArrowRightFromLine}"
+                              Stroke="{Binding $parent[ToggleButton].Foreground}"
+                              StrokeThickness="1.6"
+                              StrokeLineCap="Round" StrokeJoin="Round" />
+                        <!-- arrow-left-to-line: коллекция открыта → клик закроет (←) -->
+                        <Path x:Name="CollectionCloseIcon"
+                              IsVisible="False"
+                              Data="{StaticResource IconArrowLeftToLine}"
+                              Stroke="{Binding $parent[ToggleButton].Foreground}"
+                              StrokeThickness="1.6"
+                              StrokeLineCap="Round" StrokeJoin="Round" />
+                    </Canvas>
+                </Viewbox>
+            </ToggleButton>
+
+        </Grid>
+    </DockPanel>
+
+</UserControl>

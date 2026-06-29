@@ -2,36 +2,44 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
 
     <Styles.Resources>
+        <!-- Семейство шрифтов: единый токен на всё приложение -->
+        <FontFamily x:Key="FontFamilyBase">Helvetica Neue, Arial, sans-serif</FontFamily>
+
         <!-- Размеры шрифтов -->
-        <x:Double x:Key="FontSizeSmall">11</x:Double>
+        
+        <!-- вторичный/мелкий текст: описания настроек, футеры, подписи под
+             основным, тип поля в меню, логи расширений -->
+        <x:Double x:Key="FontSizeSmall">10</x:Double>
+        <!-- ОСНОВНОЙ размер: дефолт всего текста (TextBlock/TextBox/Button),
+             тело таблицы, блоки событий, диалоги -->
         <x:Double x:Key="FontSizeBase">12</x:Double>
+        <!-- крупные заголовки: названия в навбарах, заголовок раздела
+             сайдбара, заголовок страницы настроек -->
         <x:Double x:Key="FontSizeLarge">20</x:Double>
 
         <!-- Веса шрифтов -->
         <FontWeight x:Key="FontWeightNormal">Normal</FontWeight>
         <FontWeight x:Key="FontWeightBold">SemiBold</FontWeight>
-
-        <!-- Единый стандарт высоты строки (таблица + блоки сайдбара + блоки событий). -->
-        <x:Double x:Key="RowHeightStandard">36</x:Double>
-        <!-- Шаг строки = высота + линия-разделитель 1px (как сетка таблицы).
-             Используется в сайдбаре, где линия рисуется внутри высоты Border. -->
-        <x:Double x:Key="RowStepStandard">37</x:Double>
     </Styles.Resources>
 
+    <!-- TextBlock = просто надпись/текст, который НЕ редактируется (заголовки,
+         подписи, названия событий, текст в таблице) -->
     <Style Selector="TextBlock">
-        <Setter Property="FontFamily"  Value="Helvetica Neue, Arial, sans-serif" />
-        <Setter Property="FontSize"    Value="{StaticResource FontSizeBase}" />
+        <Setter Property="FontFamily"  Value="{StaticResource FontFamilyBase}" />
+        <Setter Property="FontSize"    Value="{DynamicResource FontSizeBase}" />
         <Setter Property="Foreground"  Value="{StaticResource BrushPrimaryText}" />
     </Style>
 
+    <!-- TextBox = поле ВВОДА (туда печатают: имя коллекции, поиск, заметки) -->
     <Style Selector="TextBox">
-        <Setter Property="FontFamily"  Value="Helvetica Neue, Arial, sans-serif" />
-        <Setter Property="FontSize"    Value="{StaticResource FontSizeBase}" />
+        <Setter Property="FontFamily"  Value="{StaticResource FontFamilyBase}" />
+        <Setter Property="FontSize"    Value="{DynamicResource FontSizeBase}" />
     </Style>
 
+    <!-- Button = кнопка («Сегодня», «Сохранить», «Отмена») -->
     <Style Selector="Button">
-        <Setter Property="FontFamily"  Value="Helvetica Neue, Arial, sans-serif" />
-        <Setter Property="FontSize"    Value="{StaticResource FontSizeBase}" />
+        <Setter Property="FontFamily"  Value="{StaticResource FontFamilyBase}" />
+        <Setter Property="FontSize"    Value="{DynamicResource FontSizeBase}" />
     </Style>
 
 </Styles>

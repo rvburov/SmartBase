@@ -6,7 +6,7 @@
 
     <!-- Нижняя граница — сплошная разделительная линия (как у сайдбара).
          Контент занимает всю высоту; ручка-«пилюля» висит поверх линии. -->
-    <Border BorderBrush="#E8E8E8" BorderThickness="0,0,0,1">
+    <Border BorderBrush="{StaticResource BrushSeparator}" BorderThickness="0,0,0,1">
         <Grid>
 
             <!-- Основной контент: 72px метка слева + зона колонок справа. Скроллбар сетки
@@ -16,10 +16,9 @@
 
                 <!-- Метка "весь день" слева (правая линия отделяет от зоны событий) -->
                 <Border Grid.Column="0"
-                        BorderBrush="#E8E8E8"
+                        BorderBrush="{StaticResource BrushSeparator}"
                         BorderThickness="0,0,1,0">
                     <TextBlock Text="весь день"
-                               FontSize="{StaticResource FontSizeBase}"
                                Foreground="{StaticResource BrushSecondaryText}"
                                HorizontalAlignment="Right"
                                VerticalAlignment="Top"

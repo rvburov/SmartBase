@@ -10,8 +10,21 @@ namespace DataBase.Controls.Components;
 
 public partial class AllDayBar : UserControl
 {
-    private static readonly double FontSizeBase =
-        Application.Current!.Resources["FontSizeBase"] is double v ? v : 12;
+    // Размеры/веса шрифта — из токенов Typography.axaml (резолв ресурса в рантайме).
+    // Свежий размер из Application.Resources — меняется живьём при изменении FontScale.
+    private static double FontSizeBase =>
+        (double)Application.Current!.FindResource("FontSizeBase")!;
+
+    private static readonly FontWeight WeightBold   = (FontWeight)Application.Current!.FindResource("FontWeightBold")!;
+    private static readonly FontWeight WeightNormal = (FontWeight)Application.Current!.FindResource("FontWeightNormal")!;
+    // Кисти из общей палитры Colors.axaml (запасной hex — на случай отсутствия ресурса).
+    private static readonly IBrush Separator   = Brush("BrushSeparator",   "#E5E5EA");
+    private static readonly IBrush SecondaryBg = Brush("BrushSecondaryBg", "#F2F2F7");
+
+    private static IBrush Brush(string key, string fallbackHex) =>
+        Application.Current!.TryFindResource(key, out var r) && r is IBrush b
+            ? b
+            : new SolidColorBrush(Color.Parse(fallbackHex));
 
     public event EventHandler<CalendarRecord>?    RecordClicked;
     public event EventHandler<CalendarRecord>?    RecordMoved;
@@ -351,7 +364,7 @@ public partial class AllDayBar : UserControl
             EventsPanel.ColumnDefinitions.Add(new ColumnDefinition(new GridLength(1, GridUnitType.Star)));
             DividersPanel.Children.Add(new Border
             {
-                BorderBrush     = new SolidColorBrush(Color.Parse("#E8E8E8")),
+                BorderBrush     = Separator,
                 BorderThickness = new Thickness(i == 0 ? 0 : 1, 0, 0, 0),
             });
         }
@@ -468,7 +481,7 @@ public partial class AllDayBar : UserControl
         {
             Text              = ev.DisplayTitle,
             FontSize          = FontSizeBase,
-            FontWeight        = FontWeight.SemiBold,
+            FontWeight        = WeightBold,
             Foreground        = darkBrush,
             TextTrimming      = Avalonia.Media.TextTrimming.CharacterEllipsis,
             VerticalAlignment = VerticalAlignment.Center,
@@ -489,7 +502,7 @@ public partial class AllDayBar : UserControl
             {
                 Text              = $", {ev.StartDt:HH:mm}",
                 FontSize          = FontSizeBase,
-                FontWeight        = FontWeight.Normal,
+                FontWeight        = WeightNormal,
                 Foreground        = darkBrush,
                 VerticalAlignment = VerticalAlignment.Center,
                 Margin            = new Thickness(0, 0, 4, 0),
@@ -545,7 +558,7 @@ public partial class AllDayBar : UserControl
 
         // white opaque wrapper covers internal divider lines
         var wrapper = new Grid { Height = 24, Margin = margin };
-        wrapper.Children.Add(new Border { Background = new SolidColorBrush(Color.Parse("#F2F2F7")), CornerRadius = cr });
+        wrapper.Children.Add(new Border { Background = SecondaryBg, CornerRadius = cr });
         block.Margin = new Thickness(0);
         wrapper.Children.Add(block);
         return (wrapper, block, title, timeBlock, strip);
@@ -569,7 +582,7 @@ public partial class AllDayBar : UserControl
         {
             Text              = ev.DisplayTitle,
             FontSize          = FontSizeBase,
-            FontWeight        = FontWeight.SemiBold,
+            FontWeight        = WeightBold,
             Foreground        = Brushes.White,
             TextTrimming      = Avalonia.Media.TextTrimming.CharacterEllipsis,
             VerticalAlignment = VerticalAlignment.Center,

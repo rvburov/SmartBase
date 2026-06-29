@@ -1,5 +1,4 @@
 using Avalonia.Controls;
-using Avalonia.Interactivity;
 using DataBase.Extensions;
 
 namespace DataBase.Views.Extensions;
@@ -16,6 +15,7 @@ public partial class ExtensionsView : UserControl
     public ExtensionsView()
     {
         InitializeComponent();
+        HeaderBar.RunClicked += OnRunClick;
         ShowExtension(ExtensionRegistry.All.FirstOrDefault()?.Id ?? "");
     }
 
@@ -26,22 +26,20 @@ public partial class ExtensionsView : UserControl
 
         if (_current is null)
         {
-            TitleText.Text         = "Расширения";
+            HeaderBar.Title        = "Расширения";
             DescriptionMd.Markdown = "_Нет доступных расширений._";
-            RunBtn.IsEnabled       = false;
-            ToolTip.SetTip(RunBtn, "Нет расширения");
+            HeaderBar.SetRunState(false, "Нет расширения");
             return;
         }
 
-        TitleText.Text         = _current.Name;
+        HeaderBar.Title        = _current.Name;
         DescriptionMd.Markdown = _current.MarkdownDescription;
-        RunBtn.IsEnabled       = _current.CanRun;
-        ToolTip.SetTip(RunBtn, _current.CanRun ? "Запустить расширение" : "Запуск пока недоступен");
+        HeaderBar.SetRunState(_current.CanRun, _current.CanRun ? "Запустить расширение" : "Запуск пока недоступен");
     }
 
     // Запуск: расширение отдаёт своё окно (в стиле приложения), оболочка показывает его
     // поверх главного окна. null — расширение окно не открывает (заглушка/надстройка).
-    private void OnRunClick(object? sender, RoutedEventArgs e)
+    private void OnRunClick(object? sender, EventArgs e)
     {
         if (_current is null || !_current.CanRun) return;
 

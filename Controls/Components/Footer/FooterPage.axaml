@@ -1,0 +1,39 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="DataBase.Controls.Components.FooterPage"
+             Height="56"
+             Background="{StaticResource BrushBg}">
+
+    <DockPanel>
+        <!-- Линия-разделитель сверху -->
+        <Border DockPanel.Dock="Top" Classes="separator h" />
+
+        <Grid Margin="16,0">
+            <ToggleButton x:Name="PreviewToggle" Classes="navbtn"
+                          Width="30" Height="30"
+                          HorizontalAlignment="Left"
+                          VerticalAlignment="Center"
+                          CornerRadius="{StaticResource RadiusMedium}"
+                          ToolTip.Tip="Динамический просмотр">
+                <Viewbox Width="{StaticResource IconSizeMedium}" Height="{StaticResource IconSizeMedium}">
+                    <Canvas Width="24" Height="24">
+                        <!-- pencil-line: режим динамического просмотра (виден в режиме редактора) -->
+                        <Path x:Name="IconToPreview"
+                              Data="{StaticResource IconPencil}"
+                              Stroke="{Binding $parent[ToggleButton].Foreground}"
+                              StrokeThickness="1.6"
+                              StrokeLineCap="Round" StrokeJoin="Round" />
+                        <!-- code-xml: просмотр исходного текста (виден в режиме просмотра) -->
+                        <Path x:Name="IconToSource"
+                              IsVisible="False"
+                              Data="{StaticResource IconCode}"
+                              Stroke="{Binding $parent[ToggleButton].Foreground}"
+                              StrokeThickness="1.6"
+                              StrokeLineCap="Round" StrokeJoin="Round" />
+                    </Canvas>
+                </Viewbox>
+            </ToggleButton>
+        </Grid>
+    </DockPanel>
+
+</UserControl>

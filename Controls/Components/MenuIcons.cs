@@ -10,43 +10,29 @@ namespace DataBase.Controls.Components;
 // Иконка — обводочная, в стандарте сайдбара: Viewbox 18×18 поверх сетки 24×24.
 public static class MenuIcons
 {
-    // lucide trash-2
-    private static readonly Geometry Trash = Geometry.Parse(
-        "M10 11v6 M14 11v6 M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6 M3 6h18 M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2");
+    // Геометрии иконок — из общего словаря Assets/Styles/Icons.axaml (единый
+    // источник на всё приложение). Ключ — x:Key соответствующей <StreamGeometry>.
+    private static Geometry Icon(string key) =>
+        Application.Current!.TryFindResource(key, out var res) && res is Geometry g
+            ? g
+            : throw new KeyNotFoundException($"Icon resource '{key}' not found in Icons.axaml");
 
-    // lucide pencil-line
-    private static readonly Geometry Pencil = Geometry.Parse(
-        "M13 21h8 M15 5l4 4 M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z");
+    // Размер иконки (сторона Viewbox) — из тех же токенов Icons.axaml.
+    private static double IconSize(string key) =>
+        Application.Current!.TryFindResource(key, out var r) && r is double d ? d : 18;
 
-    // lucide copy
-    private static readonly Geometry Copy = Geometry.Parse(
-        "M8 8 H20 A2 2 0 0 1 22 10 V20 A2 2 0 0 1 20 22 H8 A2 2 0 0 1 6 20 V10 A2 2 0 0 1 8 8 Z M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2");
-
-    // lucide arrow-left / arrow-right
-    private static readonly Geometry ArrowLeft  = Geometry.Parse("M12 19l-7-7 7-7 M19 12H5");
-    private static readonly Geometry ArrowRight = Geometry.Parse("M5 12h14 M12 5l7 7-7 7");
-
-    // lucide arrow-up / arrow-down
-    private static readonly Geometry ArrowUp   = Geometry.Parse("M5 12l7-7 7 7 M12 19V5");
-    private static readonly Geometry ArrowDown = Geometry.Parse("M12 5v14 M19 12l-7 7-7-7");
-
-    // lucide plus
-    private static readonly Geometry Plus = Geometry.Parse("M5 12h14 M12 5v14");
-
-    // lucide move-horizontal
-    private static readonly Geometry MoveHorizontal = Geometry.Parse("M18 8l4 4-4 4 M2 12h20 M6 8l-4 4 4 4");
-
-    // lucide move-vertical
-    private static readonly Geometry MoveVertical = Geometry.Parse("M12 2v20 M8 18l4 4 4-4 M8 6l4-4 4 4");
-
-    // lucide check-check
-    private static readonly Geometry CheckCheck = Geometry.Parse("M18 6 7 17l-5-5 M22 10l-7.5 7.5L13 16");
-
-    // lucide folder-tree
-    private static readonly Geometry FolderTree = Geometry.Parse(
-        "M20 10a1 1 0 0 0 1-1V6a1 1 0 0 0-1-1h-2.5a1 1 0 0 1-.8-.4l-.9-1.2A1 1 0 0 0 15 3h-2a1 1 0 0 0-1 1v5a1 1 0 0 0 1 1Z " +
-        "M20 21a1 1 0 0 0 1-1v-3a1 1 0 0 0-1-1h-2.9a1 1 0 0 1-.88-.55l-.42-.85a1 1 0 0 0-.92-.6H13a1 1 0 0 0-1 1v5a1 1 0 0 0 1 1Z " +
-        "M3 5a2 2 0 0 0 2 2h3 M3 3v13a2 2 0 0 0 2 2h3");
+    private static Geometry Trash          => Icon("IconTrash");
+    private static Geometry Pencil         => Icon("IconPencil");
+    private static Geometry Copy           => Icon("IconCopy");
+    private static Geometry ArrowLeft      => Icon("IconArrowLeft");
+    private static Geometry ArrowRight     => Icon("IconArrowRight");
+    private static Geometry ArrowUp        => Icon("IconArrowUp");
+    private static Geometry ArrowDown      => Icon("IconArrowDown");
+    private static Geometry Plus           => Icon("IconPlus");
+    private static Geometry MoveHorizontal => Icon("IconMoveHorizontal");
+    private static Geometry MoveVertical   => Icon("IconMoveVertical");
+    private static Geometry CheckCheck     => Icon("IconCheckCheck");
+    private static Geometry FolderTree     => Icon("IconFolderTree");
 
     private static SolidColorBrush Red => new(Color.Parse("#FF3B30"));
 
@@ -65,8 +51,8 @@ public static class MenuIcons
 
     public static Viewbox StrokeIcon(Geometry data, IBrush stroke) => new()
     {
-        Width  = 18,
-        Height = 18,
+        Width  = IconSize("IconSizeMedium"),
+        Height = IconSize("IconSizeMedium"),
         VerticalAlignment = VerticalAlignment.Center,
         Child  = new Canvas
         {
@@ -144,8 +130,8 @@ public static class MenuIcons
         var primary      = Brush("BrushPrimaryText", Brushes.Black);
         var secondary    = Brush("BrushSecondaryText", Brushes.Gray);
 
-        var fontBase  = Application.Current!.TryFindResource("FontSizeBase", out var fb) && fb is double d1 ? d1 : 12d;
-        var fontSmall = Application.Current!.TryFindResource("FontSizeSmall", out var fs) && fs is double d2 ? d2 : 11d;
+        var fontBase  = (double)Application.Current!.FindResource("FontSizeBase")!;
+        var fontSmall = (double)Application.Current!.FindResource("FontSizeSmall")!;
         var radius    = Application.Current!.TryFindResource("RadiusSmall", out var r) && r is CornerRadius cr ? cr : new CornerRadius(5);
 
         // Иконка типа в светло-синем квадрате (как на карточке свойства).
@@ -159,8 +145,8 @@ public static class MenuIcons
             VerticalAlignment = VerticalAlignment.Center,
             Child = geo is null ? null : new Viewbox
             {
-                Width  = 18,
-                Height = 18,
+                Width  = IconSize("IconSizeMedium"),
+                Height = IconSize("IconSizeMedium"),
                 HorizontalAlignment = HorizontalAlignment.Center,
                 VerticalAlignment   = VerticalAlignment.Center,
                 Child = new Canvas
@@ -194,7 +180,7 @@ public static class MenuIcons
         {
             Text         = string.IsNullOrWhiteSpace(name) ? "Без названия" : name,
             FontSize     = fontBase,
-            FontWeight   = FontWeight.SemiBold,
+            FontWeight   = (FontWeight)Application.Current!.FindResource("FontWeightBold")!,
             Foreground   = primary,
             TextTrimming = TextTrimming.CharacterEllipsis,
         });

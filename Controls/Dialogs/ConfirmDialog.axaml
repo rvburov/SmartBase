@@ -15,8 +15,7 @@
 
         <TextBlock x:Name="MessageLabel"
                    TextWrapping="Wrap"
-                   FontSize="{StaticResource FontSizeBase}"
-                   Foreground="{StaticResource BrushPrimaryText}" />
+ />
 
         <Grid ColumnDefinitions="*,Auto,8,Auto">
             <Button Grid.Column="1" x:Name="CancelBtn" Classes="dialog"
