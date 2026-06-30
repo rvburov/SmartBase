@@ -9,6 +9,7 @@ EF Core/SQLite). Здесь описано, **как устроено и как 
 - [user-guide.md](guides/user-guide.md) — руководство пользователя.
 - [developer-guide.md](guides/developer-guide.md) — миграции, соглашения, раскладка вывода.
 - [build.md](guides/build.md) — сборка и запуск: dev-режим, релиз по ОС, версия/дата.
+- [auto-update.md](guides/auto-update.md) — автообновление: сетевая папка + установщик (ТЗ).
 
 ### Архитектура ([architecture/](architecture/))
 - [overview.md](architecture/overview.md) — слои, запуск, MVVM/code-behind.

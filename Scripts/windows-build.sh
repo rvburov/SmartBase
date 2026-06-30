@@ -54,4 +54,14 @@ OUT="$ROOT/dist/Version $EFFVER/$RID"
 echo "==> dotnet publish ($RID, $CONFIG, v$EFFVER)"
 dotnet publish "$csproj" -c "$CONFIG" -r "$RID" "${flags[@]}" -o "$OUT"
 
-echo "Готово: $OUT/DataBase.exe"
+# Установщик (вариант A): тот же бинарь под именем DataBase-Setup.exe — по имени «-Setup»
+# он запускается в режиме установки. Раздаётся одним файлом. См. docs/guides/auto-update.md.
+# Копию иногда на миг блокирует антивирус (свежий .exe) — повтор с паузой.
+for _ in 1 2 3 4 5; do
+  cp "$OUT/DataBase.exe" "$OUT/DataBase-Setup.exe" 2>/dev/null && break
+  sleep 1
+done
+[ -f "$OUT/DataBase-Setup.exe" ] || { echo "Не удалось создать DataBase-Setup.exe (файл занят)" >&2; exit 1; }
+
+echo "Готово:     $OUT/DataBase.exe"
+echo "Установщик: $OUT/DataBase-Setup.exe"

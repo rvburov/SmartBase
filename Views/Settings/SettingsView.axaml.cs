@@ -40,6 +40,7 @@ public partial class SettingsView : UserControl
         }
         DataPathText.Text   = AppSettings.AppDataDir;
         SystemInfoText.Text = $"{RuntimeInformation.OSDescription.Trim()} · {RuntimeInformation.FrameworkDescription}";
+        UpdatePathBox.Text  = AppSettings.LoadUpdatePath();
 
         AsyncRowLoadCheck.IsChecked = AppSettings.LoadAsyncRowLoad();
 
@@ -131,6 +132,201 @@ public partial class SettingsView : UserControl
             });
         }
         catch { /* нет обработчика для папки — молча игнорируем */ }
+    }
+
+    // ── Обновления ───────────────────────────────────────────────────────────
+    //
+    // Этап 1–2 автообновления: путь к папке с новой версией хранится в app.db, кнопка
+    // «Проверить» читает версию удалённого DataBase.exe (FileVersionInfo, без скачивания)
+    // и сравнивает с текущей. Скачивание и замену .exe выполнит отдельный DataBase-Setup.exe
+    // (следующие этапы — см. docs/guides/auto-update.md).
+
+    private enum UpdateCheck { Available, UpToDate, Error }
+
+    // Результат проверки: тип, сообщение и (если есть обновление) путь к файлу и его версия.
+    private sealed record UpdateInfo(UpdateCheck Result, string Message,
+                                     string? RemoteExe = null, Version? Remote = null);
+
+    // Автосохранение пути при потере фокуса полем.
+    private void OnUpdatePathChanged(object? sender, RoutedEventArgs e) =>
+        AppSettings.SaveUpdatePath(UpdatePathBox.Text ?? "");
+
+    private async void OnCheckUpdateClick(object? sender, RoutedEventArgs e)
+    {
+        var folder = (UpdatePathBox.Text ?? "").Trim();
+        AppSettings.SaveUpdatePath(folder);
+
+        if (folder.Length == 0)
+        {
+            SetUpdateStatus("Укажите путь к папке с обновлением.", isError: true);
+            return;
+        }
+
+        UpdateCheckBtn.IsEnabled = false;
+        SetUpdateStatus("Проверка…");
+        try
+        {
+            // Фоном, чтобы UI не подвисал на сетевом пути. Если путь недоступен —
+            // вернётся ошибка с красным уведомлением (как «файл недоступен» в «Управлении БД»).
+            var info = await Task.Run(() => CheckRemoteVersion(folder));
+            SetUpdateStatus(info.Message, isError: info.Result == UpdateCheck.Error);
+            if (info.Result == UpdateCheck.Available && info.RemoteExe is not null && info.Remote is not null)
+                await StartUpdateAsync(info.RemoteExe, info.Remote);
+        }
+        finally
+        {
+            UpdateCheckBtn.IsEnabled = true;
+        }
+    }
+
+    // Читает версию DataBase.exe в папке и сравнивает с текущей (без скачивания).
+    private static UpdateInfo CheckRemoteVersion(string folder)
+    {
+        try
+        {
+            if (!System.IO.Directory.Exists(folder))
+                return new(UpdateCheck.Error, "Папка обновления недоступна — проверьте путь и подключение к сети.");
+
+            // Источник обновления — DataBase-Setup.exe (один файл на сервере работает и как
+            // установщик, и как обновление); если его нет — берём обычный DataBase.exe.
+            var setup     = System.IO.Path.Combine(folder, $"{AppSettings.AppName}-Setup.exe");
+            var plain     = System.IO.Path.Combine(folder, $"{AppSettings.AppName}.exe");
+            var remoteExe = System.IO.File.Exists(setup) ? setup
+                          : System.IO.File.Exists(plain) ? plain : null;
+            if (remoteExe is null)
+                return new(UpdateCheck.Error, $"В папке нет {AppSettings.AppName}-Setup.exe (или {AppSettings.AppName}.exe).");
+
+            if (!Version.TryParse(FileVersionInfo.GetVersionInfo(remoteExe).FileVersion, out var remoteFull))
+                return new(UpdateCheck.Error, "Не удалось прочитать версию файла обновления.");
+
+            var current = Assembly.GetExecutingAssembly().GetName().Version ?? new Version(0, 0, 0);
+            // Сравниваем по Major.Minor.Build — как версия показывается в «О программе».
+            var remote = Normalize(remoteFull);
+            var cur    = Normalize(current);
+
+            if (remote > cur)
+                return new(UpdateCheck.Available, $"Доступна версия {remote} (у вас {cur}).", remoteExe, remote);
+            if (remote < cur)
+                return new(UpdateCheck.UpToDate, $"У вас актуальная версия ({cur}).");
+
+            // Версии равны → сравниваем дату изменения файла: новее на сервере = новая сборка
+            // той же версии (с допуском 2 с против округления меток времени).
+            var localExe = Environment.ProcessPath;
+            if (!string.IsNullOrEmpty(localExe) && System.IO.File.Exists(localExe))
+            {
+                var localTime  = System.IO.File.GetLastWriteTimeUtc(localExe);
+                var remoteTime = System.IO.File.GetLastWriteTimeUtc(remoteExe);
+                if (remoteTime > localTime.AddSeconds(2))
+                    return new(UpdateCheck.Available, $"Доступна новая сборка версии {cur} (файл новее).", remoteExe, remote);
+            }
+            return new(UpdateCheck.UpToDate, $"У вас актуальная версия ({cur}).");
+        }
+        catch (Exception ex)
+        {
+            return new(UpdateCheck.Error, $"Не удалось проверить обновление: {ex.Message}");
+        }
+
+        static Version Normalize(Version v) => new(v.Major, v.Minor, v.Build < 0 ? 0 : v.Build);
+    }
+
+    // Подтверждение → загрузка нового .exe во временную папку с прогрессом → запуск
+    // самозамены (новый .exe в режиме --apply-update) → закрытие приложения.
+    private async Task StartUpdateAsync(string remoteExe, Version remote)
+    {
+        if (VisualRoot is not Window win) return;
+
+        var dlg = new ConfirmDialog(
+            $"Доступна версия {remote}. Приложение закроется, обновится и снова откроется.",
+            "Обновить");
+        if (await dlg.ShowDialog<bool>(win) != true) return;
+
+        var target = Environment.ProcessPath;
+        if (string.IsNullOrEmpty(target))
+        {
+            SetUpdateStatus("Не удалось определить путь к программе для обновления.", isError: true);
+            return;
+        }
+
+        var tempExe = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"{AppSettings.AppName}.update.exe");
+
+        UpdateCheckBtn.IsEnabled = false;
+        UpdateProgress.IsVisible = true;
+        UpdateProgress.Value     = 0;
+        SetUpdateStatus("Загрузка обновления…");
+        try
+        {
+            var progress = new Progress<double>(p =>
+            {
+                UpdateProgress.Value  = p;
+                UpdateStatusText.Text = $"Загрузка обновления… {p * 100:0}%";
+            });
+            if (!await DownloadAsync(remoteExe, tempExe, progress))
+            {
+                SetUpdateStatus("Загрузка прервалась — файл скопирован не полностью. Попробуйте ещё раз.", isError: true);
+                return;
+            }
+        }
+        catch (Exception ex)
+        {
+            SetUpdateStatus($"Не удалось загрузить обновление: {ex.Message}", isError: true);
+            return;
+        }
+        finally
+        {
+            UpdateProgress.IsVisible = false;
+            UpdateCheckBtn.IsEnabled = true;
+        }
+
+        try
+        {
+            Process.Start(new ProcessStartInfo
+            {
+                FileName        = tempExe,
+                UseShellExecute = false,
+                Arguments       = $"--apply-update --target \"{target}\" --pid {Environment.ProcessId}",
+            });
+        }
+        catch (Exception ex)
+        {
+            SetUpdateStatus($"Не удалось запустить обновление: {ex.Message}", isError: true);
+            return;
+        }
+
+        // Закрываем приложение: апдейтер дождётся выхода, заменит файл и перезапустит.
+        (Avalonia.Application.Current?.ApplicationLifetime
+            as Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime)?.Shutdown();
+    }
+
+    // Копирование с прогрессом (сеть → temp). true, если скопировано целиком.
+    private static async Task<bool> DownloadAsync(string sourceExe, string tempExe, IProgress<double> progress)
+    {
+        const int bufferSize = 1 << 20; // 1 МБ
+        await using var src = new System.IO.FileStream(sourceExe, System.IO.FileMode.Open,
+            System.IO.FileAccess.Read, System.IO.FileShare.Read, bufferSize, useAsync: true);
+        await using var dst = new System.IO.FileStream(tempExe, System.IO.FileMode.Create,
+            System.IO.FileAccess.Write, System.IO.FileShare.None, bufferSize, useAsync: true);
+
+        var total  = src.Length;
+        var buffer = new byte[bufferSize];
+        long copied = 0;
+        int read;
+        while ((read = await src.ReadAsync(buffer)) > 0)
+        {
+            await dst.WriteAsync(buffer.AsMemory(0, read));
+            copied += read;
+            if (total > 0) progress.Report((double)copied / total);
+        }
+        await dst.FlushAsync();
+        return total == 0 || copied == total;
+    }
+
+    private void SetUpdateStatus(string text, bool isError = false)
+    {
+        UpdateStatusText.Text      = text;
+        UpdateStatusText.IsVisible = !string.IsNullOrEmpty(text);
+        var key = isError ? "BrushRed" : "BrushSecondaryText";
+        if (this.TryFindResource(key, out var res) && res is Avalonia.Media.IBrush brush)
+            UpdateStatusText.Foreground = brush;
     }
 
     // ── Уровень масштабирования ──────────────────────────────────────────────

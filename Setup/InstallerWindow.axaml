@@ -1,0 +1,95 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="DataBase.Setup.InstallerWindow"
+        Width="500" Height="400"
+        CanResize="False"
+        WindowStartupLocation="CenterScreen"
+        Background="{StaticResource BrushBg}"
+        Title="DataBase — Установка">
+
+    <Window.Styles>
+        <!-- Главная кнопка («Установить»/«Удалить»): размер как у dialog-кнопок приложения,
+             синий фон (accent), тёмно-синий #0062CC при наведении. -->
+        <Style Selector="Button.accent">
+            <Setter Property="Width"                      Value="110" />
+            <Setter Property="Height"                     Value="30" />
+            <Setter Property="HorizontalContentAlignment" Value="Center" />
+            <Setter Property="VerticalContentAlignment"   Value="Center" />
+            <Setter Property="CornerRadius"               Value="{StaticResource RadiusMedium}" />
+        </Style>
+        <Style Selector="Button.accent:pointerover /template/ ContentPresenter">
+            <Setter Property="Background" Value="#0062CC" />
+        </Style>
+    </Window.Styles>
+
+    <DockPanel>
+
+        <!-- Шапка -->
+        <Border DockPanel.Dock="Top" Height="76"
+                Background="{StaticResource BrushSecondaryBg}"
+                BorderBrush="{StaticResource BrushSeparator}" BorderThickness="0,0,0,1">
+            <StackPanel VerticalAlignment="Center" Margin="24,0">
+                <TextBlock Text="DataBase"
+                           FontSize="{DynamicResource FontSizeLarge}"
+                           FontWeight="{StaticResource FontWeightBold}"
+                           Foreground="{StaticResource BrushPrimaryText}" />
+                <TextBlock x:Name="VersionText" Text="Версия"
+                           FontSize="{DynamicResource FontSizeSmall}"
+                           Foreground="{StaticResource BrushSecondaryText}" />
+            </StackPanel>
+        </Border>
+
+        <!-- Футер -->
+        <Border DockPanel.Dock="Bottom" Height="64"
+                Background="{StaticResource BrushSecondaryBg}"
+                BorderBrush="{StaticResource BrushSeparator}" BorderThickness="0,1,0,0">
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right"
+                        VerticalAlignment="Center" Spacing="10" Margin="24,0">
+                <Button x:Name="UninstallBtn" Content="Удалить" Classes="dialog" Click="OnUninstall" IsVisible="False" />
+                <Button x:Name="CancelBtn"    Content="Отмена"  Classes="dialog" Click="OnCancel" />
+                <Button x:Name="PrimaryBtn"   Content="Установить" Classes="accent" Click="OnPrimary" />
+            </StackPanel>
+        </Border>
+
+        <!-- Тело -->
+        <StackPanel Margin="24,18" Spacing="12">
+
+            <TextBlock x:Name="SubtitleText" TextWrapping="Wrap"
+                       Text="Выберите папку для установки приложения"
+                       Foreground="{StaticResource BrushSecondaryText}" />
+
+            <StackPanel x:Name="PathBlock" Spacing="6">
+                <TextBlock Text="Папка установки"
+                           FontSize="{DynamicResource FontSizeSmall}"
+                           FontWeight="{StaticResource FontWeightBold}"
+                           Foreground="{StaticResource BrushPrimaryText}" />
+                <Grid ColumnDefinitions="*,Auto">
+                    <TextBox x:Name="PathBox" Grid.Column="0" Height="30"
+                             VerticalContentAlignment="Center" Margin="0,0,8,0"
+                             Background="{StaticResource BrushSecondaryBg}"
+                             CornerRadius="{StaticResource RadiusBase}" />
+                    <Button Grid.Column="1" Content="Обзор" Classes="dialog" Click="OnBrowse" />
+                </Grid>
+            </StackPanel>
+
+            <Border x:Name="WarnBox" IsVisible="False"
+                    Background="#FFFBEB" BorderBrush="#FDE68A" BorderThickness="1"
+                    CornerRadius="6" Padding="10,8">
+                <TextBlock x:Name="WarnText" TextWrapping="Wrap" Foreground="#B45309"
+                           FontSize="{DynamicResource FontSizeSmall}" />
+            </Border>
+
+            <CheckBox x:Name="ShortcutCheck"  Content="Создать ярлык на рабочем столе" IsChecked="True" />
+            <CheckBox x:Name="RemoveDataCheck" Content="Удалить и данные пользователя"  IsVisible="False" />
+
+            <StackPanel x:Name="ProgressBlock" Spacing="6" IsVisible="False">
+                <ProgressBar x:Name="Progress" Minimum="0" Maximum="1" Height="6" CornerRadius="3" />
+                <TextBlock x:Name="StatusText"
+                           FontSize="{DynamicResource FontSizeSmall}"
+                           Foreground="{StaticResource BrushSecondaryText}" />
+            </StackPanel>
+
+        </StackPanel>
+
+    </DockPanel>
+</Window>

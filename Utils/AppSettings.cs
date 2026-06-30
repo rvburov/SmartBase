@@ -190,6 +190,22 @@ public static class AppSettings
         else                                _store?.Set(KeyConstructorView, mode);
     }
 
+    // ── Путь обновления ──────────────────────────────────────────────────────────
+    //
+    // Папка (сетевая/файловая), где лежит свежий DataBase.exe для обновления. Пусто по
+    // умолчанию — пользователь задаёт сам в «О программе → Обновления»; значение хранится
+    // в app.db. Логика проверки/замены — см. docs/guides/auto-update.md.
+    public const string UpdatePathDefault = "";
+
+    public static string LoadUpdatePath() => _store?.Get(KeyUpdatePath) ?? UpdatePathDefault;
+
+    public static void SaveUpdatePath(string path)
+    {
+        var trimmed = (path ?? "").Trim();
+        if (trimmed.Length == 0) _store?.Remove(KeyUpdatePath);
+        else                     _store?.Set(KeyUpdatePath, trimmed);
+    }
+
     // ── Ключи настроек ─────────────────────────────────────────────────────────
 
     private const string KeyScale            = "scale";
@@ -200,6 +216,7 @@ public static class AppSettings
     private const string KeyStartupModule    = "startupModule";
     private const string KeyCalendarView     = "calendarView";
     private const string KeyConstructorView  = "constructorView";
+    private const string KeyUpdatePath       = "updatePath";
 
     // ── Приватное ─────────────────────────────────────────────────────────────
 

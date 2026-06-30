@@ -66,7 +66,8 @@ Scripts/windows-build.sh win-x64 Release 1.2.3  # с номером версии
 ```
 
 Результат: `dist/Version <X.Y.Z>/win-x64/DataBase.exe`. Иконка вшита в `.exe` (через
-`ApplicationIcon` в csproj), отдельных действий не требует.
+`ApplicationIcon` в csproj), отдельных действий не требует. Рядом — `DataBase-Setup.exe`
+(тот же бинарь в режиме установщика, см. [auto-update.md](auto-update.md)).
 
 ### Linux
 

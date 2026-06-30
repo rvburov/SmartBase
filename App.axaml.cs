@@ -15,6 +15,15 @@ public partial class App : Application
     {
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
+            // Режим установщика/удаления (вариант A): открываем окно установки вместо
+            // приложения, БД не трогаем. Подробности — docs/guides/auto-update.md.
+            if (Program.Mode != Setup.SetupMode.App)
+            {
+                desktop.MainWindow = new Setup.InstallerWindow(Program.Mode == Setup.SetupMode.Uninstall);
+                base.OnFrameworkInitializationCompleted();
+                return;
+            }
+
             // Системный реестр БД (app.db). Регистрирует текущую БД как дефолтную.
             var registry = DatabaseRegistry.Open(AppSettings.DbPath);
 

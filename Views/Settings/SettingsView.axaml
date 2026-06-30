@@ -424,6 +424,36 @@
                                    HorizontalAlignment="Left" />
                     </StackPanel>
 
+                    <!-- Обновления: путь к папке с новой версией + проверка.
+                         Полное ТЗ — docs/guides/auto-update.md. -->
+                    <Border Classes="settingRow">
+                        <StackPanel Spacing="10">
+                            <StackPanel Spacing="4">
+                                <TextBlock Classes="title" Text="Обновления" />
+                                <TextBlock Classes="desc"
+                                           Text="Путь к папке (можно сетевой), где лежит новая версия DataBase.exe. Нажмите «Проверить» — программа сравнит версию файла в папке с текущей. По умолчанию путь не задан." />
+                            </StackPanel>
+                            <Grid ColumnDefinitions="*,Auto">
+                                <TextBox x:Name="UpdatePathBox" Grid.Column="0"
+                                         Height="34" VerticalContentAlignment="Center"
+                                         Margin="0,0,8,0"
+                                         Background="{StaticResource BrushSecondaryBg}"
+                                         CornerRadius="{StaticResource RadiusBase}"
+                                         Watermark="\\server\share\DataBase   или   Z:\DataBase"
+                                         LostFocus="OnUpdatePathChanged" />
+                                <Button x:Name="UpdateCheckBtn" Grid.Column="1"
+                                        Classes="dialog" Content="Проверить"
+                                        VerticalAlignment="Center"
+                                        Click="OnCheckUpdateClick" />
+                            </Grid>
+                            <TextBlock x:Name="UpdateStatusText" Classes="desc"
+                                       Text="" IsVisible="False" />
+                            <ProgressBar x:Name="UpdateProgress" IsVisible="False"
+                                         Minimum="0" Maximum="1" Height="6"
+                                         CornerRadius="3" />
+                        </StackPanel>
+                    </Border>
+
                     <!-- Папка с данными (где лежат database.db / app.db) -->
                     <Border Classes="settingRow">
                         <Grid ColumnDefinitions="*,Auto">

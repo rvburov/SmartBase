@@ -3,7 +3,7 @@
 Многофункциональное desktop-приложение на Avalonia UI с поддержкой категорий,
 шести режимов просмотра и удобным управлением событиями.
 
-![Версия](https://img.shields.io/badge/version-1.0.2-blue)
+![Версия](https://img.shields.io/badge/version-1.0.3-blue)
 ![.NET](https://img.shields.io/badge/.NET-10.0+-purple)
 ![Avalonia](https://img.shields.io/badge/Avalonia-11.x-blue)
 
@@ -137,6 +137,8 @@ Scripts/windows-build.sh win-x64 Release 1.2.3  # с номером версии
 ```
 
 Результат: `dist/Version <версия>/win-x64/DataBase.exe` — иконка уже вшита в `.exe`.
+Рядом кладётся `DataBase-Setup.exe` (тот же бинарь в режиме установщика: установка в
+`%LOCALAPPDATA%`, ярлыки, обновление, удаление) — см. [docs/guides/auto-update.md](docs/guides/auto-update.md).
 
 #### Linux (x64)
 
