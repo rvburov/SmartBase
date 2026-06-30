@@ -51,5 +51,13 @@ echo "==> dotnet publish ($RID, $CONFIG, v$EFFVER)"
 dotnet publish "$csproj" -c "$CONFIG" -r "$RID" "${flags[@]}" -o "$OUT"
 
 chmod +x "$OUT/DataBase"
-echo "Готово: $OUT/DataBase"
-echo "Иконку и пункт меню на целевой машине добавит: Scripts/linux-install.sh"
+
+# Установщик (вариант A): тот же бинарь под именем DataBase-Setup — по имени «-Setup»
+# он запускается в режиме установки (ставит в ~/.local/share/DataBase, .desktop-ярлыки,
+# умеет --uninstall). Раздаётся одним файлом. См. docs/guides/auto-update.md.
+cp "$OUT/DataBase" "$OUT/DataBase-Setup"
+chmod +x "$OUT/DataBase-Setup"
+
+echo "Готово:     $OUT/DataBase"
+echo "Установщик: $OUT/DataBase-Setup"
+echo "Иконку и пункт меню на целевой машине также добавит: Scripts/linux-install.sh"

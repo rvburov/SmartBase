@@ -34,6 +34,8 @@ public partial class InstallerWindow : Window
     private void SetupInstallUi()
     {
         PathBox.Text = InstallService.DefaultInstallDir;
+        // На macOS ярлыков нет (приложение лежит в ~/Applications, видно в Launchpad/Finder).
+        if (InstallService.IsMac) ShortcutCheck.IsVisible = false;
         RefreshInstallState();
         PathBox.TextChanged += (_, _) => RefreshInstallState();
     }

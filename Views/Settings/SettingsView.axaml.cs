@@ -179,7 +179,7 @@ public partial class SettingsView : UserControl
         }
     }
 
-    // Читает версию DataBase.exe в папке и сравнивает с текущей (без скачивания).
+    // Читает версию/дату артефакта обновления в папке и сравнивает с текущей (без скачивания).
     private static UpdateInfo CheckRemoteVersion(string folder)
     {
         try
@@ -187,37 +187,37 @@ public partial class SettingsView : UserControl
             if (!System.IO.Directory.Exists(folder))
                 return new(UpdateCheck.Error, "Папка обновления недоступна — проверьте путь и подключение к сети.");
 
-            // Источник обновления — DataBase-Setup.exe (один файл на сервере работает и как
-            // установщик, и как обновление); если его нет — берём обычный DataBase.exe.
-            var setup     = System.IO.Path.Combine(folder, $"{AppSettings.AppName}-Setup.exe");
-            var plain     = System.IO.Path.Combine(folder, $"{AppSettings.AppName}.exe");
-            var remoteExe = System.IO.File.Exists(setup) ? setup
-                          : System.IO.File.Exists(plain) ? plain : null;
-            if (remoteExe is null)
-                return new(UpdateCheck.Error, $"В папке нет {AppSettings.AppName}-Setup.exe (или {AppSettings.AppName}.exe).");
-
-            if (!Version.TryParse(FileVersionInfo.GetVersionInfo(remoteExe).FileVersion, out var remoteFull))
-                return new(UpdateCheck.Error, "Не удалось прочитать версию файла обновления.");
+            // Источник обновления — DataBase-Setup (один артефакт на сервере работает и как
+            // установщик, и как обновление); если его нет — берём обычный DataBase. На macOS
+            // артефакт — это .app-бандл (папка), а сравниваемый по дате файл — внутренний бинарь.
+            if (!ResolveRemote(folder, out var remoteArtifact, out var remoteTimeFile, out var missing))
+                return new(UpdateCheck.Error, missing);
 
             var current = Assembly.GetExecutingAssembly().GetName().Version ?? new Version(0, 0, 0);
-            // Сравниваем по Major.Minor.Build — как версия показывается в «О программе».
-            var remote = Normalize(remoteFull);
-            var cur    = Normalize(current);
+            var cur     = Normalize(current);   // Major.Minor.Build — как версия в «О программе»
 
-            if (remote > cur)
-                return new(UpdateCheck.Available, $"Доступна версия {remote} (у вас {cur}).", remoteExe, remote);
-            if (remote < cur)
-                return new(UpdateCheck.UpToDate, $"У вас актуальная версия ({cur}).");
+            // Версию читаем из удалённого файла (на Windows — из PE-ресурса .exe). Если версия
+            // прочиталась и отличается — решаем по ней. На Linux/macOS у нативного бинаря
+            // версия из файла недоступна → ниже падаем на сравнение по дате изменения.
+            if (Version.TryParse(FileVersionInfo.GetVersionInfo(remoteTimeFile).FileVersion, out var remoteFull))
+            {
+                var remote = Normalize(remoteFull);
+                if (remote > cur)
+                    return new(UpdateCheck.Available, $"Доступна версия {remote} (у вас {cur}).", remoteArtifact, remote);
+                if (remote < cur)
+                    return new(UpdateCheck.UpToDate, $"У вас актуальная версия ({cur}).");
+                // равны → сравниваем дату изменения файла ниже
+            }
 
-            // Версии равны → сравниваем дату изменения файла: новее на сервере = новая сборка
-            // той же версии (с допуском 2 с против округления меток времени).
+            // Версия недоступна или равна → дата изменения файла: новее на сервере = новая
+            // сборка (с допуском 2 с против округления меток времени).
             var localExe = Environment.ProcessPath;
             if (!string.IsNullOrEmpty(localExe) && System.IO.File.Exists(localExe))
             {
                 var localTime  = System.IO.File.GetLastWriteTimeUtc(localExe);
-                var remoteTime = System.IO.File.GetLastWriteTimeUtc(remoteExe);
+                var remoteTime = System.IO.File.GetLastWriteTimeUtc(remoteTimeFile);
                 if (remoteTime > localTime.AddSeconds(2))
-                    return new(UpdateCheck.Available, $"Доступна новая сборка версии {cur} (файл новее).", remoteExe, remote);
+                    return new(UpdateCheck.Available, $"Доступна новая сборка (файл новее, {cur}).", remoteArtifact, cur);
             }
             return new(UpdateCheck.UpToDate, $"У вас актуальная версия ({cur}).");
         }
@@ -229,8 +229,42 @@ public partial class SettingsView : UserControl
         static Version Normalize(Version v) => new(v.Major, v.Minor, v.Build < 0 ? 0 : v.Build);
     }
 
-    // Подтверждение → загрузка нового .exe во временную папку с прогрессом → запуск
-    // самозамены (новый .exe в режиме --apply-update) → закрытие приложения.
+    // Находит артефакт обновления в папке: на Windows/Linux — один файл (он же сравнивается по
+    // версии/дате), на macOS — .app-бандл (папка) + внутренний бинарь для сравнения по дате.
+    private static bool ResolveRemote(string folder, out string artifact, out string timeFile, out string error)
+    {
+        artifact = timeFile = error = "";
+        if (Setup.InstallService.IsMac)
+        {
+            var setupB = System.IO.Path.Combine(folder, Setup.InstallService.SetupBundleName);
+            var plainB = System.IO.Path.Combine(folder, Setup.InstallService.AppBundleName);
+            var bundle = System.IO.Directory.Exists(setupB) ? setupB
+                       : System.IO.Directory.Exists(plainB) ? plainB : null;
+            if (bundle is null)
+            {
+                error = $"В папке нет {Setup.InstallService.SetupBundleName} (или {Setup.InstallService.AppBundleName}).";
+                return false;
+            }
+            artifact = bundle;
+            timeFile = Setup.InstallService.MacInnerBinary(bundle);
+            return true;
+        }
+
+        var setup = System.IO.Path.Combine(folder, Setup.InstallService.SetupExeName);
+        var plain = System.IO.Path.Combine(folder, Setup.InstallService.AppExeName);
+        var file  = System.IO.File.Exists(setup) ? setup
+                  : System.IO.File.Exists(plain) ? plain : null;
+        if (file is null)
+        {
+            error = $"В папке нет {Setup.InstallService.SetupExeName} (или {Setup.InstallService.AppExeName}).";
+            return false;
+        }
+        artifact = timeFile = file;
+        return true;
+    }
+
+    // Подтверждение → загрузка нового артефакта во временную папку с прогрессом → запуск
+    // самозамены (новый бинарь в режиме --apply-update) → закрытие приложения.
     private async Task StartUpdateAsync(string remoteExe, Version remote)
     {
         if (VisualRoot is not Window win) return;
@@ -240,14 +274,22 @@ public partial class SettingsView : UserControl
             "Обновить");
         if (await dlg.ShowDialog<bool>(win) != true) return;
 
-        var target = Environment.ProcessPath;
+        // Цель замены: на macOS — наш .app-бандл целиком, иначе — сам файл бинаря.
+        var processPath = Environment.ProcessPath;
+        var target = Setup.InstallService.IsMac
+            ? Setup.InstallService.BundleRoot(processPath)
+            : processPath;
         if (string.IsNullOrEmpty(target))
         {
             SetUpdateStatus("Не удалось определить путь к программе для обновления.", isError: true);
             return;
         }
 
-        var tempExe = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"{AppSettings.AppName}.update.exe");
+        // Temp-артефакт: .app-бандл (папка) на macOS, иначе файл.
+        var tempName = OperatingSystem.IsWindows() ? $"{AppSettings.AppName}.update.exe"
+                     : Setup.InstallService.IsMac   ? $"{AppSettings.AppName}.update.app"
+                     : $"{AppSettings.AppName}.update";
+        var tempExe  = System.IO.Path.Combine(System.IO.Path.GetTempPath(), tempName);
 
         UpdateCheckBtn.IsEnabled = false;
         UpdateProgress.IsVisible = true;
@@ -262,9 +304,12 @@ public partial class SettingsView : UserControl
             });
             if (!await DownloadAsync(remoteExe, tempExe, progress))
             {
-                SetUpdateStatus("Загрузка прервалась — файл скопирован не полностью. Попробуйте ещё раз.", isError: true);
+                SetUpdateStatus("Загрузка прервалась — артефакт скопирован не полностью. Попробуйте ещё раз.", isError: true);
                 return;
             }
+            // На Unix temp-копию нужно сделать запускаемой (на macOS — внутренний бинарь бандла).
+            Setup.InstallService.MakeExecutable(
+                Setup.InstallService.IsMac ? Setup.InstallService.MacInnerBinary(tempExe) : tempExe);
         }
         catch (Exception ex)
         {
@@ -279,9 +324,11 @@ public partial class SettingsView : UserControl
 
         try
         {
+            // Запускаем апдейтер: на macOS это внутренний бинарь temp-бандла, иначе сам temp-файл.
+            var helper = Setup.InstallService.IsMac ? Setup.InstallService.MacInnerBinary(tempExe) : tempExe;
             Process.Start(new ProcessStartInfo
             {
-                FileName        = tempExe,
+                FileName        = helper,
                 UseShellExecute = false,
                 Arguments       = $"--apply-update --target \"{target}\" --pid {Environment.ProcessId}",
             });
@@ -292,7 +339,7 @@ public partial class SettingsView : UserControl
             return;
         }
 
-        // Закрываем приложение: апдейтер дождётся выхода, заменит файл и перезапустит.
+        // Закрываем приложение: апдейтер дождётся выхода, заменит артефакт и перезапустит.
         (Avalonia.Application.Current?.ApplicationLifetime
             as Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime)?.Shutdown();
     }
@@ -300,6 +347,14 @@ public partial class SettingsView : UserControl
     // Копирование с прогрессом (сеть → temp). true, если скопировано целиком.
     private static async Task<bool> DownloadAsync(string sourceExe, string tempExe, IProgress<double> progress)
     {
+        // macOS: источник — .app-бандл (папка) → копируем дерево целиком (publish не single-file).
+        if (System.IO.Directory.Exists(sourceExe))
+        {
+            if (System.IO.Directory.Exists(tempExe)) Setup.InstallService.DeleteRecursive(tempExe);
+            await Setup.InstallService.CopyTreeAsync(sourceExe, tempExe, progress.Report);
+            return System.IO.File.Exists(Setup.InstallService.MacInnerBinary(tempExe));
+        }
+
         const int bufferSize = 1 << 20; // 1 МБ
         await using var src = new System.IO.FileStream(sourceExe, System.IO.FileMode.Open,
             System.IO.FileAccess.Read, System.IO.FileShare.Read, bufferSize, useAsync: true);

@@ -76,9 +76,11 @@ Scripts/linux-build.sh                          # linux-x64, версия из c
 Scripts/linux-build.sh linux-x64 Release 1.2.3  # с номером версии 1.2.3
 ```
 
-Результат: `dist/Version <X.Y.Z>/linux-x64/DataBase` (бит запуска выставлен). Иконка и пункт меню —
-**отдельным шагом на целевой Linux-машине**: `Scripts/linux-install.sh` (пишет
-`.desktop` + иконку в XDG-папки текущего пользователя). Это пост-установка, не сборка.
+Результат: `dist/Version <X.Y.Z>/linux-x64/DataBase` (бит запуска выставлен). Рядом —
+`DataBase-Setup` (тот же бинарь в режиме установщика, см. [auto-update.md](auto-update.md)):
+запущенный на целевой машине, он ставит приложение в `~/.local/share/DataBase`, сам пишет
+`.desktop`-ярлыки и иконку в XDG-папки и умеет `--uninstall`. `Scripts/linux-install.sh` —
+ручная альтернатива (только иконка + пункт меню для уже разложенного бинаря).
 
 ### macOS
 
@@ -96,7 +98,9 @@ Scripts/macos-build.sh osx-x64   Release 1.2.3  # Intel
 ```
 
 Результат: `dist/Version <X.Y.Z>/osx-arm64/DataBase.app` и `…/osx-x64/DataBase.app`.
-Подробности про иконки и бандл — [icons.md](../features/icons.md).
+Рядом — `DataBase-Setup.app` (копия бандла в режиме установщика, имя бандла `-Setup`): ставит
+приложение в `~/Applications`, регистрирует в Launchpad/Finder, умеет `--uninstall`
+(см. [auto-update.md](auto-update.md)). Подробности про иконки и бандл — [icons.md](../features/icons.md).
 
 ## Версия и дата сборки
 

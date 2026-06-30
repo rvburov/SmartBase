@@ -61,9 +61,25 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp -R "$PUBLISH/." "$APP/Contents/MacOS/"
 cp "$ICNS" "$APP/Contents/Resources/icon.icns"
 cp "$PLIST" "$APP/Contents/Info.plist"
+# Проставить версию сборки в Info.plist (Finder «Версия»; приложение всё равно читает
+# версию из управляемой сборки). PlistBuddy есть на любой macOS, где и идёт сборка.
+PB="/usr/libexec/PlistBuddy"
+if [ -x "$PB" ]; then
+  "$PB" -c "Set :CFBundleShortVersionString $EFFVER" "$APP/Contents/Info.plist" 2>/dev/null || true
+  "$PB" -c "Set :CFBundleVersion $EFFVER"            "$APP/Contents/Info.plist" 2>/dev/null || true
+fi
 chmod +x "$APP/Contents/MacOS/$APP_NAME"
 rm -rf "$PUBLISH"   # промежуточный publish в бандле не нужен
 touch "$APP"        # сбросить кэш иконок Finder
 
-echo "Готово: $APP"
-echo "Запуск:  open \"$APP\""
+# Установщик (вариант A): тот же бандл под именем DataBase-Setup.app — по имени «-Setup»
+# он запускается в режиме установки (ставит в ~/Applications, lsregister, умеет --uninstall;
+# внутренний бинарь остаётся DataBase, Info.plist не меняется). См. docs/guides/auto-update.md.
+SETUP="$OUTDIR/$APP_NAME-Setup.app"
+rm -rf "$SETUP"
+cp -R "$APP" "$SETUP"
+touch "$SETUP"
+
+echo "Готово:     $APP"
+echo "Установщик: $SETUP"
+echo "Запуск:     open \"$APP\""

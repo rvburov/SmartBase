@@ -27,13 +27,20 @@ internal sealed class Program
         BuildAvaloniaApp().StartWithClassicDesktopLifetime(args);
     }
 
-    // Режим установщика включается аргументом (--install/--uninstall) или именем файла
-    // «…-Setup.exe» (раздаваемый DataBase-Setup.exe). Обычный DataBase.exe → приложение.
+    // Режим установщика включается аргументом (--install/--uninstall) или именем раздачи
+    // «…-Setup»: на Windows/Linux — имя файла бинаря, на macOS — имя `.app`-бандла
+    // (DataBase-Setup.app, внутренний бинарь остаётся DataBase). Иначе → приложение.
     private static SetupMode ResolveMode(string[] args)
     {
         if (Array.Exists(args, a => a == "--uninstall")) return SetupMode.Uninstall;
         if (Array.Exists(args, a => a == "--install"))   return SetupMode.Install;
-        var name = Path.GetFileNameWithoutExtension(Environment.ProcessPath) ?? "";
+
+        string name;
+        if (OperatingSystem.IsMacOS() && InstallService.BundleRoot(Environment.ProcessPath) is { } bundle)
+            name = Path.GetFileNameWithoutExtension(bundle);   // DataBase-Setup(.app)
+        else
+            name = Path.GetFileNameWithoutExtension(Environment.ProcessPath) ?? "";
+
         return name.EndsWith("-Setup", StringComparison.OrdinalIgnoreCase) ? SetupMode.Install : SetupMode.App;
     }
 
@@ -67,15 +74,23 @@ internal sealed class Program
         var self = Environment.ProcessPath;
         if (string.IsNullOrEmpty(self)) return;
 
-        // Перезапись с повторами: антивирус/блокировки могут держать файл пару секунд.
-        for (var attempt = 0; attempt < 30; attempt++)
-        {
-            try { File.Copy(self, target, overwrite: true); break; }
-            catch { Thread.Sleep(500); }
-        }
+        // Источник замены: на macOS — корень нашего .app-бандла (целую папку), иначе — сам файл.
+        var src = OperatingSystem.IsMacOS() ? (InstallService.BundleRoot(self) ?? self) : self;
+
+        // Замена с повторами внутри ReplaceArtifact: на Windows блокировки могут держать файл
+        // пару секунд; на macOS заменяется весь .app-бандл (publish под mac не single-file).
+        InstallService.ReplaceArtifact(src, target);
 
         // Запустить обновлённое приложение.
-        try { Process.Start(new ProcessStartInfo { FileName = target, UseShellExecute = true }); }
+        try
+        {
+            if (OperatingSystem.IsMacOS())
+                // target — это .app-бандл; правильный запуск GUI-приложения на macOS — через open.
+                Process.Start(new ProcessStartInfo { FileName = "open", Arguments = $"\"{target}\"", UseShellExecute = false });
+            else
+                // На Linux запускаем бинарь напрямую (UseShellExecute=true ушёл бы в xdg-open).
+                Process.Start(new ProcessStartInfo { FileName = target, UseShellExecute = OperatingSystem.IsWindows() });
+        }
         catch { /* не удалось перезапустить — пользователь откроет вручную */ }
     }
 }
