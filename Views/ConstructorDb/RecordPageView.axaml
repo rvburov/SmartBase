@@ -78,7 +78,7 @@
                       HorizontalScrollBarVisibility="Disabled">
             <!-- Карточки свойств и строка «Добавить свойство» строятся в code-behind
                  (BuildProperties). Отступ снизу равен верхнему — блок не липнет к описанию. -->
-            <StackPanel x:Name="PropertiesHost" Margin="20,16,20,16" Spacing="6" />
+            <StackPanel x:Name="PropertiesHost" Margin="16,16,16,16" Spacing="6" />
         </ScrollViewer>
 
         <!-- Ручка перетаскивания: делит свойства (сверху) и описание (снизу).
@@ -113,14 +113,17 @@
             </StackPanel>
         </Border>
 
-        <!-- Markdown-описание -->
-        <Grid Grid.Row="3" RowDefinitions="Auto,*" Margin="20,16,20,12">
+        <!-- Markdown-описание: отступы 16px по кругу (крошка «Свойство» и редактор вровень с
+             левым краем блока свойств и заголовком записи). -->
+        <Grid Grid.Row="3" RowDefinitions="Auto,*" Margin="16,16,16,16">
 
             <!-- Заголовок нижнего блока — «хлебная крошка»: «Свойство» › [иконка типа] Имя.
                  Всё серым (BrushSecondaryText). Часть [иконка типа + имя] (BottomTitleHost)
                  заполняется в code-behind по активному свойству; «Описание» по умолчанию. -->
+            <!-- Нижний зазор крошки (до текста) = верхнему отступу блока (Margin.Top=16,
+                 от линии-разделителя до «Свойство»): «Свойство» отбито сверху и снизу одинаково. -->
             <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="6"
-                        Margin="0,0,0,6" VerticalAlignment="Center">
+                        Margin="0,0,0,16" VerticalAlignment="Center">
                 <TextBlock Text="Свойство"
                            Foreground="{StaticResource BrushSecondaryText}"
                            VerticalAlignment="Center" />

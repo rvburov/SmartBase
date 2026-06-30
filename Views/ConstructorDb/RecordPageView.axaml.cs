@@ -317,6 +317,10 @@ public partial class RecordPageView : UserControl
         if (valueContent is not null)
         {
             valueContent.VerticalAlignment = VerticalAlignment.Center;
+            // Отбиваем значение от ручки ⋮ на те же 10px, что иконка отбита от левого края
+            // карточки (Padding=10). Ручка 18px центрирует точки 3px → справа уже есть 7.5px,
+            // добавляем недостающие 2.5px.
+            valueContent.Margin = new Thickness(2.5, 0, 0, 0);
             Grid.SetColumn(valueContent, 2);
             grid.Children.Add(valueContent);
         }
@@ -523,18 +527,20 @@ public partial class RecordPageView : UserControl
 
     private Border BuildColumnGrip()
     {
+        // Размер точки и шаг — целые и равные: при layout-rounding (вкл. по умолчанию) дробные
+        // значения округляются по-разному и зазоры выходят неравномерными (нижние точки ближе).
         var dots = new StackPanel
         {
             Orientation         = Orientation.Vertical,
-            Spacing             = 2.5,
+            Spacing             = 3,
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment   = VerticalAlignment.Center,
         };
         for (var i = 0; i < 3; i++)
             dots.Children.Add(new Ellipse
             {
-                Width  = 2.5,
-                Height = 2.5,
+                Width  = 3,
+                Height = 3,
                 Fill   = (IBrush)this.FindResource("BrushSecondaryText")!,
             });
 
@@ -594,11 +600,14 @@ public partial class RecordPageView : UserControl
 
     // Безбордерное текстовое поле значения внутри карточки. Класс propValue убирает рамку/фон
     // во ВСЕХ состояниях (в т.ч. при фокусе) — иначе Fluent рисует синюю рамку «бокс в боксе».
+    // MaxLines=1 держит инлайн-поле в одну строку: многострочное значение (markdown-абзацы
+    // текстового свойства) не растягивает карточку — полностью правится в нижнем блоке.
     private static TextBox FlatValueBox(string? text, string? watermark = null) => new()
     {
         Text      = text,
         Watermark = watermark,
         Classes   = { "propValue" },
+        MaxLines   = 1,
     };
 
     private Control MakeInputForField(PropertyRowVm row)
