@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Генерирует icon.ico (Windows) и icon.icns (macOS) из мастера
-# Assets/Branding/icon.png. Linux использует сам icon.png (см. install-linux.sh),
+# Assets/Branding/icon.png. Linux использует сам icon.png (см. linux-install.sh),
 # поэтому отдельные PNG ему не нужны.
 #
 # Нужны только штатные macOS-утилиты: sips, iconutil, python3.

@@ -102,14 +102,16 @@ public partial class SettingsView : UserControl
 
     // ── О программе ──────────────────────────────────────────────────────────
     //
-    // Дата сборки = время последней записи сборки на диск (детерминированные сборки
-    // обнуляют PE-таймстамп, поэтому берём mtime файла). Может быть недоступна в
-    // single-file-публикации — тогда строку со «сборкой» просто не показываем.
+    // Дата сборки = время последней записи бинаря на диск (детерминированные сборки
+    // обнуляют PE-таймстамп, поэтому берём mtime файла). Environment.ProcessPath —
+    // путь к запущенному .exe; работает одинаково в обычной и single-file-сборке
+    // (в отличие от Assembly.Location, который в single-file пуст и даёт warning IL3000).
+    // Так дата всегда отражает текущий бинарь и видна в раздаваемой версии — без ручного указания.
     private static DateTime? BuildDate()
     {
         try
         {
-            var path = Assembly.GetExecutingAssembly().Location;
+            var path = Environment.ProcessPath;
             return string.IsNullOrEmpty(path) ? null : System.IO.File.GetLastWriteTime(path);
         }
         catch { return null; }

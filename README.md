@@ -3,7 +3,7 @@
 Многофункциональное desktop-приложение на Avalonia UI с поддержкой категорий,
 шести режимов просмотра и удобным управлением событиями.
 
-![Версия](https://img.shields.io/badge/version-1.0.0-blue)
+![Версия](https://img.shields.io/badge/version-1.0.2-blue)
 ![.NET](https://img.shields.io/badge/.NET-10.0+-purple)
 ![Avalonia](https://img.shields.io/badge/Avalonia-11.x-blue)
 
@@ -87,48 +87,86 @@ sudo port install dotnet-sdk
 
 ```bash
 cd calendar_avalonia
-dotnet run
+dotnet run                 # собрать при необходимости и запустить
 ```
+
+`dotnet run` каждый раз проверяет изменения и при необходимости пересобирает проект
+(первая сборка в сессии — «холодная» и долгая). Чтобы **не пересобирать при повторных
+запусках**, когда код не менялся:
+
+```bash
+dotnet run --no-build      # запустить уже собранное, без пересборки
+```
+
+Ещё быстрее — запускать собранный `.exe` напрямую, вообще без проверки сборки:
+
+```bash
+artifacts/bin/DataBase/debug/DataBase.exe
+```
+
+> ⚠️ `--no-build` и прямой запуск `.exe` стартуют **последнюю собранную** версию.
+> Если ты менял код — сначала собери (`dotnet run` либо `dotnet build`), иначе
+> запустится старый бинарь.
+
+**Правило:** менял код → `dotnet run` (нужна сборка); код не менялся, просто
+перезапустить → `dotnet run --no-build` или прямой `.exe`. Для активной разработки
+с авто-пересборкой и перезапуском при каждом сохранении — `dotnet watch run`.
 
 ### Сборка готового бинарника для раздачи
 
-Все готовые файлы собираются в одну папку **`dist/`** — это и есть то, что
-раздаётся пользователям. Установка .NET им не нужна (self-contained), размер ~100–150 МБ.
+Под каждую ОС — **один короткий скрипт** в `Scripts/` (имя = `<ОС>-build`).
+Он прячет длинную команду `dotnet publish … --self-contained … -p:PublishSingleFile=true …`
+и все особенности сборки этой платформы. Готовые файлы раскладываются по версиям:
+**`dist/Version <версия>/<rid>/`** — та же версия перезаписывает свою папку, новая
+версия создаёт отдельную. Это и есть то, что раздаётся пользователям. Установка .NET
+им не нужна (self-contained), размер ~100–150 МБ.
+
+Аргументы скриптов: `Scripts/<ОС>-build.sh [RID] [Config] [Version]`. Номер версии —
+**третий аргумент** (напр. `Scripts/windows-build.sh win-x64 Release 1.2.3`): он
+**записывается в `<Version>`** в [DataBase.csproj](DataBase.csproj) и становится текущим
+для дальнейших сборок. Без аргумента берётся то, что уже в csproj. Версия и дата
+сборки видны в приложении: **Настройки → О программе**. Полное описание —
+[docs/guides/build.md](docs/guides/build.md).
 
 #### Windows (x64)
 
-**PowerShell, CMD или Git Bash**
-```powershell
+```bash
 cd calendar_avalonia
-dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -o dist/win-x64
+Scripts/windows-build.sh                        # win-x64, версия из csproj
+Scripts/windows-build.sh win-x64 Release 1.2.3  # с номером версии 1.2.3
 ```
 
-Результат: `dist/win-x64/DataBase.exe` — иконка уже вшита в `.exe`.
+Результат: `dist/Version <версия>/win-x64/DataBase.exe` — иконка уже вшита в `.exe`.
 
 #### Linux (x64)
 
 ```bash
 cd calendar_avalonia
-dotnet publish -c Release -r linux-x64 --self-contained true -p:PublishSingleFile=true -o dist/linux-x64
-chmod +x dist/linux-x64/DataBase
+Scripts/linux-build.sh                          # linux-x64, версия из csproj
+Scripts/linux-build.sh linux-x64 Release 1.2.3  # с номером версии 1.2.3
 ```
 
-Результат: `dist/linux-x64/DataBase`. Чтобы в меню приложений появился пункт
-с иконкой, на целевой машине выполните `Scripts/install-linux.sh`.
+Результат: `dist/Version <версия>/linux-x64/DataBase` (бит запуска уже выставлен). Чтобы
+в меню приложений появился пункт с иконкой, на целевой машине выполните `Scripts/linux-install.sh`.
 
 #### macOS (Apple Silicon / Intel)
 
-Здесь одна команда — скрипт сам публикует бинарь **и** упаковывает его в `.app`
-с иконкой (на маке без бандла иконки в Dock не будет):
+Скрипт сам публикует бинарь **и** упаковывает его в `.app` с иконкой (на маке без бандла иконки в Dock не будет):
 
 ```bash
 cd calendar_avalonia
-Scripts/build-macos-app.sh osx-arm64 Release   # Apple Silicon
-Scripts/build-macos-app.sh osx-x64  Release    # Intel
+
+# версия из csproj:
+Scripts/macos-build.sh                          # Apple Silicon (osx-arm64)
+Scripts/macos-build.sh osx-x64                  # Intel        (osx-x64)
+
+# с номером версии 1.2.3 (одна и та же версия для обоих таргетов):
+Scripts/macos-build.sh osx-arm64 Release 1.2.3  # Apple Silicon
+Scripts/macos-build.sh osx-x64   Release 1.2.3  # Intel
 ```
 
-Результат: `dist/osx-arm64/DataBase.app` (или `dist/osx-x64/…` для Intel) —
-готовое приложение с иконкой (`open dist/osx-arm64/DataBase.app`).
+Результат: `dist/Version <версия>/osx-arm64/DataBase.app` (или `…/osx-x64/…` для Intel) —
+готовое приложение с иконкой (`open "dist/Version <версия>/osx-arm64/DataBase.app"`).
 Подробности — [docs/features/icons.md](docs/features/icons.md).
 
 > Все платформы собираются с одной машины (cross-compilation). Папка `dist/`
@@ -193,7 +231,7 @@ calendar_avalonia/
 │   ├── Branding/               # Иконка приложения (icon.png/.ico/.icns, Info.plist, .desktop)
 │   └── Styles/                 # Colors, Controls, Typography
 │
-├── Scripts/                    # generate-icons.sh, build-macos-app.sh, install-linux.sh
+├── Scripts/                    # windows-build.sh, linux-build.sh, macos-build.sh, linux-install.sh, generate-icons.sh
 ├── docs/                       # guides/, architecture/, features/, ui/, plans/, ROADMAP (см. docs/README.md)
 │
 │   # ── Файлы в корне проекта ──

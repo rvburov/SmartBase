@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+#
+# Сборка macOS-дистрибутива DataBase одной короткой командой: publish + упаковка
+# в .app с иконкой. Обычный publish бандл НЕ создаёт, а без бандла на маке нет
+# иконки в Dock/Finder/Launchpad — поэтому здесь отдельный шаг сборки .app.
+#
+#   Scripts/macos-build.sh                         # osx-arm64, Release (Apple Silicon, по умолчанию)
+#   Scripts/macos-build.sh osx-x64                 # Intel
+#   Scripts/macos-build.sh osx-arm64 Debug         # другая конфигурация
+#   Scripts/macos-build.sh osx-arm64 Release 1.2.3 # задать версию (запишется в DataBase.csproj)
+#
+# Особенности macOS-сборки:
+#   • self-contained       — .NET у пользователя не нужен;
+#   • БЕЗ PublishSingleFile — содержимое publish кладётся в .app/Contents/MacOS
+#                            целой папкой (так устроен бандл .app);
+#   • .app-бандл           — icon.icns + Info.plist + сброс кэша иконок Finder (touch).
+#
+# Результат: dist/<RID>/DataBase.app — раздаётся как есть.
+# ── Будущие особенности macOS-сборки добавляйте в массив flags ниже. ──
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+RID="${1:-osx-arm64}"
+CONFIG="${2:-Release}"
+VERSION="${3:-}"
+APP_NAME="DataBase"
+ICNS="$ROOT/Assets/Branding/icon.icns"
+PLIST="$ROOT/Assets/Branding/Info.plist"
+
+[ -f "$ICNS" ] || { echo "Нет $ICNS — запустите Scripts/generate-icons.sh" >&2; exit 1; }
+
+# Общие флаги publish — единая точка правки на будущее.
+# Внимание: PublishSingleFile тут НЕ используется — бандл .app это папка, а не один файл.
+flags=( --self-contained true )
+
+# Номер версии: если передан 3-м аргументом — ЗАПИСЫВАЕМ его в <Version> в
+# DataBase.csproj (становится текущим и для последующих сборок) и в бейдж README.
+# Через временный файл — портативно к GNU/BSD sed (без sed -i).
+csproj="$ROOT/DataBase.csproj"
+if [ -n "$VERSION" ]; then
+  tmp="$(mktemp)"
+  sed -E "s#<Version>[^<]*</Version>#<Version>${VERSION}</Version>#" "$csproj" > "$tmp" && mv "$tmp" "$csproj"
+  readme="$ROOT/README.md"; tmp="$(mktemp)"
+  sed -E "s#version-[^-]*-blue#version-${VERSION}-blue#" "$readme" > "$tmp" && mv "$tmp" "$readme"
+  echo "==> Версия обновлена на $VERSION (DataBase.csproj + бейдж README.md)"
+fi
+
+# Эффективная версия сборки = аргумент или текущая из csproj. Задаёт папку вывода
+# dist/Version <X.Y.Z>/<rid>: та же версия перезаписывается, новая — отдельная папка.
+EFFVER="${VERSION:-$(sed -nE 's#.*<Version>([^<]*)</Version>.*#\1#p' "$csproj" | head -n1)}"
+OUTDIR="$ROOT/dist/Version $EFFVER/$RID"
+PUBLISH="$OUTDIR/.publish-tmp"
+echo "==> dotnet publish ($RID, $CONFIG, v$EFFVER)"
+rm -rf "$PUBLISH"
+dotnet publish "$csproj" -c "$CONFIG" -r "$RID" "${flags[@]}" -o "$PUBLISH"
+
+APP="$OUTDIR/$APP_NAME.app"
+echo "==> Сборка бандла $APP"
+rm -rf "$APP"
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+cp -R "$PUBLISH/." "$APP/Contents/MacOS/"
+cp "$ICNS" "$APP/Contents/Resources/icon.icns"
+cp "$PLIST" "$APP/Contents/Info.plist"
+chmod +x "$APP/Contents/MacOS/$APP_NAME"
+rm -rf "$PUBLISH"   # промежуточный publish в бандле не нужен
+touch "$APP"        # сбросить кэш иконок Finder
+
+echo "Готово: $APP"
+echo "Запуск:  open \"$APP\""

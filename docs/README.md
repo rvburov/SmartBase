@@ -7,7 +7,8 @@ EF Core/SQLite). Здесь описано, **как устроено и как 
 
 ### Гайды ([guides/](guides/))
 - [user-guide.md](guides/user-guide.md) — руководство пользователя.
-- [developer-guide.md](guides/developer-guide.md) — сборка, запуск, миграции, соглашения.
+- [developer-guide.md](guides/developer-guide.md) — миграции, соглашения, раскладка вывода.
+- [build.md](guides/build.md) — сборка и запуск: dev-режим, релиз по ОС, версия/дата.
 
 ### Архитектура ([architecture/](architecture/))
 - [overview.md](architecture/overview.md) — слои, запуск, MVVM/code-behind.

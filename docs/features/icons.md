@@ -58,26 +58,29 @@
   `CFBundleIconFile` → `icon.icns`). Свойство `Window.Icon` на маке иконку окна
   не показывает.
 - **Linux меню/лаунчер:** `DataBase.desktop` + `icon.png`, ставятся через
-  `Scripts/install-linux.sh`.
+  `Scripts/linux-install.sh`.
 
 ## Сборка под каждую ОС
 
 ```bash
 Scripts/generate-icons.sh                        # (только macOS) пересобрать .ico/.icns из icon.png
 
-Scripts/build-macos-app.sh osx-arm64 Release     # macOS → dist/osx-arm64/DataBase.app
-open dist/osx-arm64/DataBase.app
+Scripts/macos-build.sh osx-arm64                 # macOS → dist/Version <X.Y.Z>/osx-arm64/DataBase.app
+open "dist/Version <X.Y.Z>/osx-arm64/DataBase.app"
 
-dotnet publish -c Release -r win-x64 --self-contained   # Windows: иконка вшита в .exe
+Scripts/windows-build.sh                          # Windows → dist/Version <X.Y.Z>/win-x64/DataBase.exe (иконка вшита)
 
-Scripts/install-linux.sh                          # Linux: запускать на самой Linux-машине
+Scripts/linux-build.sh                            # Linux  → dist/Version <X.Y.Z>/linux-x64/DataBase
+Scripts/linux-install.sh                          # Linux: иконку/ярлык ставить на самой Linux-машине
 ```
 
 `dist/` — артефакт сборки, в репозиторий не попадает (см. `.gitignore`).
 
 ## Скрипты (Scripts/)
 
+- `windows-build.sh` — собирает `dist/<rid>/DataBase.exe` (иконка вшита в `.exe`).
+- `linux-build.sh` — собирает `dist/<rid>/DataBase` (бит запуска выставлен).
+- `macos-build.sh` — собирает `dist/<rid>/DataBase.app` с иконкой.
+- `linux-install.sh` — ставит иконку и ярлык в меню Linux.
 - `generate-icons.sh` — генерирует `icon.ico` и `icon.icns` из `icon.png`
   (**только macOS**: нужны штатные `sips`, `iconutil`, `python3`).
-- `build-macos-app.sh` — собирает `dist/<rid>/DataBase.app` с иконкой.
-- `install-linux.sh` — ставит иконку и ярлык в меню Linux.
