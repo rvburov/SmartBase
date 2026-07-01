@@ -3097,67 +3097,324 @@ public class ConstructorRepository(AppDbContext db)
     public List<CalendarRecord> GetCalendarRecordsByRange(DateTime start, DateTime end, ISet<int>? activeIds = null) =>
         ReadCalendarEvents(start, end, activeIds);
 
-    public List<CalendarRecord> GetAllCalendarRecords(ISet<int>? activeIds = null) =>
-        ReadCalendarEvents(null, null, activeIds);
-
     public int CountCalendarRecords() => db.CalendarIndex.Count();
 
-    // Строит события календаря из индексной проекции calendar_index (быстрый индексный
-    // range-query вместо скана значений). Каждая строка проекции = одно событие
-    // (запись × видимое поле-дата). rangeStart/rangeEnd == null → без фильтра по диапазону.
-    private List<CalendarRecord> ReadCalendarEvents(DateTime? rangeStart, DateTime? rangeEnd, ISet<int>? activeIds)
+    // ── Пагинация «Расписания» (ленивая подгрузка списка одного дня) ─────────────
+    // «Расписание» показывает события, НАЧИНАющиеся в этом дне (StartDt.Date == день),
+    // в порядке: all-day первыми, затем по времени начала. Курсор keyset — по этому же
+    // порядку (AllDay DESC, StartIso, RecordId, FieldId), чтобы догрузка была O(limit).
+
+    /// <summary>Число событий, начинающихся в дне [dayStart, dayEnd) (для «показано N из total»).</summary>
+    public int CountCalendarDayEvents(DateTime dayStart, DateTime dayEnd, ISet<int>? activeIds)
     {
-        var q = db.CalendarIndex.AsNoTracking();
-
-        var active = activeIds?.ToList();
-        if (active is not null)
-            q = q.Where(ci => active.Contains(ci.CollectionId));
-
-        // Пересечение с окном по индексу (CollectionId, StartIso): StartIso < конец окна И
-        // EndIso >= начало окна. Сравнение ISO-строк лексикографическое (формат фиксирован).
-        if (rangeStart is { } rs && rangeEnd is { } re)
+        var s = DateTime.SpecifyKind(dayStart, DateTimeKind.Unspecified).ToString("o");
+        var e = DateTime.SpecifyKind(dayEnd,   DateTimeKind.Unspecified).ToString("o");
+        var col = activeIds is { Count: > 0 } ? $" AND CollectionId IN ({string.Join(",", activeIds)})" : "";
+        var conn = db.Database.GetDbConnection();
+        var opened = conn.State != System.Data.ConnectionState.Open;
+        if (opened) conn.Open();
+        try
         {
-            var startIso = DateTime.SpecifyKind(rs, DateTimeKind.Unspecified).ToString("o");
-            var endIso   = DateTime.SpecifyKind(re, DateTimeKind.Unspecified).ToString("o");
-            q = q.Where(ci => ci.StartIso.CompareTo(endIso) < 0 && ci.EndIso.CompareTo(startIso) >= 0);
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = $"SELECT COUNT(*) FROM calendar_index WHERE StartIso >= $s AND StartIso < $e{col}";
+            AddParam(cmd, "$s").Value = s;
+            AddParam(cmd, "$e").Value = e;
+            var o = cmd.ExecuteScalar();
+            return o is null or DBNull ? 0 : Convert.ToInt32(o);
+        }
+        finally { if (opened) conn.Close(); }
+    }
+
+    /// <summary>
+    /// Страница событий дня ОДНОЙ фазы <paramref name="allDay"/> (1 — «весь день»/многодневные,
+    /// 0 — по времени), упорядоченная по StartIso ASC. Такой порядок совпадает с индексом
+    /// (CollectionId, AllDay, StartIso), поэтому выборка идёт seek'ом без сортировки всего дня
+    /// (иначе на дне с миллионами событий SQLite строит TEMP B-TREE и подвешивает UI на секунды).
+    /// Keyset после (<paramref name="afterStartIso"/>, <paramref name="afterRecordId"/>,
+    /// <paramref name="afterFieldId"/>); afterStartIso=null — с начала фазы. До <paramref name="limit"/>
+    /// событий. Порядок «Расписания» (all-day первыми, затем по времени) собирает пейджер, вызывая
+    /// фазу 1, затем фазу 0 (см. <see cref="CalendarDayPager"/>).
+    /// </summary>
+    public List<CalendarRecord> GetCalendarDayEventsPage(
+        DateTime dayStart, DateTime dayEnd, ISet<int>? activeIds,
+        int allDay, string? afterStartIso, int afterRecordId, int afterFieldId, int limit)
+    {
+        var startIso = DateTime.SpecifyKind(dayStart, DateTimeKind.Unspecified).ToString("o");
+        var endIso   = DateTime.SpecifyKind(dayEnd,   DateTimeKind.Unspecified).ToString("o");
+        var col = activeIds is { Count: > 0 } ? $" AND ci.CollectionId IN ({string.Join(",", activeIds)})" : "";
+        var keyset = afterStartIso is null ? "" :
+            @" AND (ci.StartIso > $cs
+                OR (ci.StartIso = $cs AND ci.RecordId > $cr)
+                OR (ci.StartIso = $cs AND ci.RecordId = $cr AND ci.FieldId > $cf))";
+        var sql = $@"SELECT ci.RecordId, ci.FieldId, ci.CollectionId, ci.StartIso, ci.EndIso, ci.AllDay,
+                            r.Title, r.Description, c.Name, c.Color
+                     FROM calendar_index ci
+                     JOIN db_records r ON r.Id = ci.RecordId
+                     JOIN db_collections c ON c.Id = r.CollectionId
+                     WHERE ci.StartIso >= $s AND ci.StartIso < $e AND ci.AllDay = $ad{col}{keyset}
+                     ORDER BY ci.StartIso, ci.RecordId, ci.FieldId
+                     LIMIT $lim";
+
+        var result = new List<CalendarRecord>(limit);
+        var conn = db.Database.GetDbConnection();
+        var opened = conn.State != System.Data.ConnectionState.Open;
+        if (opened) conn.Open();
+        try
+        {
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = sql;
+            AddParam(cmd, "$s").Value = startIso;
+            AddParam(cmd, "$e").Value = endIso;
+            AddParam(cmd, "$ad").Value = allDay;
+            AddParam(cmd, "$lim").Value = limit;
+            if (afterStartIso is not null)
+            {
+                AddParam(cmd, "$cs").Value = afterStartIso;
+                AddParam(cmd, "$cr").Value = afterRecordId;
+                AddParam(cmd, "$cf").Value = afterFieldId;
+            }
+            using var rdr = cmd.ExecuteReader();
+            while (rdr.Read())
+            {
+                if (!DateTime.TryParse(rdr.GetString(3), out var st)) continue;
+                if (!DateTime.TryParse(rdr.GetString(4), out var en)) continue;
+                result.Add(new CalendarRecord
+                {
+                    Id             = rdr.GetInt32(0),
+                    FieldId        = rdr.GetInt32(1),
+                    CollectionId   = rdr.GetInt32(2),
+                    StartDt        = st,
+                    EndDt          = en,
+                    AllDay         = rdr.GetInt32(5) != 0,
+                    Title          = rdr.IsDBNull(6) ? "" : rdr.GetString(6),
+                    Description    = rdr.IsDBNull(7) ? "" : rdr.GetString(7),
+                    CollectionName = rdr.IsDBNull(8) ? "" : rdr.GetString(8),
+                    Color          = rdr.IsDBNull(9) ? "#007AFF" : rdr.GetString(9),
+                });
+            }
+        }
+        finally { if (opened) conn.Close(); }
+        return result;
+    }
+
+    // Число событий дня одной фазы allDay (быстро по индексу (CollectionId, AllDay, StartIso)) —
+    // для стыковки offset all-day→timed и подсчёта.
+    private int CountCalendarDayPhase(DateTime dayStart, DateTime dayEnd, ISet<int>? activeIds, int allDay)
+    {
+        var s = DateTime.SpecifyKind(dayStart, DateTimeKind.Unspecified).ToString("o");
+        var e = DateTime.SpecifyKind(dayEnd,   DateTimeKind.Unspecified).ToString("o");
+        var col = activeIds is { Count: > 0 } ? $" AND CollectionId IN ({string.Join(",", activeIds)})" : "";
+        var conn = db.Database.GetDbConnection();
+        var opened = conn.State != System.Data.ConnectionState.Open;
+        if (opened) conn.Open();
+        try
+        {
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = $"SELECT COUNT(*) FROM calendar_index WHERE StartIso >= $s AND StartIso < $e AND AllDay = $ad{col}";
+            AddParam(cmd, "$s").Value = s;
+            AddParam(cmd, "$e").Value = e;
+            AddParam(cmd, "$ad").Value = allDay;
+            var o = cmd.ExecuteScalar();
+            return o is null or DBNull ? 0 : Convert.ToInt32(o);
+        }
+        finally { if (opened) conn.Close(); }
+    }
+
+    /// <summary>
+    /// Страница событий дня по ГЛОБАЛЬНОМУ смещению <paramref name="skip"/> в порядке «Расписания»
+    /// (all-day первыми, затем timed; внутри — по StartIso). Пропуск идёт по покрывающему индексу
+    /// (подзапрос LIMIT/OFFSET на calendar_index), а join к db_records/db_collections — только для
+    /// строк страницы, поэтому даже прыжок в конец дня с миллионами событий — доли секунды. Нужно
+    /// для произвольного доступа полосой прокрутки (перетаскивание, в т.ч. в самый низ).
+    /// </summary>
+    public List<CalendarRecord> GetCalendarDayEventsByOffset(
+        DateTime dayStart, DateTime dayEnd, ISet<int>? activeIds, int skip, int take)
+    {
+        if (take <= 0 || skip < 0) return new List<CalendarRecord>();
+        var result = new List<CalendarRecord>(take);
+        var allDayCount = CountCalendarDayPhase(dayStart, dayEnd, activeIds, 1);
+        if (skip < allDayCount)
+        {
+            var n = Math.Min(take, allDayCount - skip);
+            result.AddRange(DayPhaseByOffset(dayStart, dayEnd, activeIds, 1, skip, n));
+            if (result.Count < take)   // хвост all-day закончился — добираем timed с начала
+                result.AddRange(DayPhaseByOffset(dayStart, dayEnd, activeIds, 0, 0, take - result.Count));
+        }
+        else
+        {
+            result.AddRange(DayPhaseByOffset(dayStart, dayEnd, activeIds, 0, skip - allDayCount, take));
+        }
+        return result;
+    }
+
+    // Одна фаза окна дня по offset: пропуск на покрывающем индексе (подзапрос), join только к странице.
+    private List<CalendarRecord> DayPhaseByOffset(DateTime dayStart, DateTime dayEnd,
+                                                  ISet<int>? activeIds, int allDay, int offset, int take)
+    {
+        var startIso = DateTime.SpecifyKind(dayStart, DateTimeKind.Unspecified).ToString("o");
+        var endIso   = DateTime.SpecifyKind(dayEnd,   DateTimeKind.Unspecified).ToString("o");
+        var col = activeIds is { Count: > 0 } ? $" AND CollectionId IN ({string.Join(",", activeIds)})" : "";
+        // ORDER BY (StartIso, RecordId, FieldId) — тот же полный ключ, что и в keyset-выборке
+        // (GetCalendarDayEventsPage), чтобы offset-прыжки и keyset-скролл давали ОДИН порядок
+        // (без дублей/пропусков на границах страниц с равным StartIso). Быстрый пропуск идёт по
+        // индексу (CollectionId, AllDay, StartIso, RecordId, FieldId) без временной сортировки.
+        var sql = $@"SELECT ci.RecordId, ci.FieldId, ci.CollectionId, ci.StartIso, ci.EndIso, ci.AllDay,
+                            r.Title, r.Description, c.Name, c.Color
+                     FROM (
+                         SELECT RecordId, FieldId, CollectionId, StartIso, EndIso, AllDay
+                         FROM calendar_index
+                         WHERE StartIso >= $s AND StartIso < $e AND AllDay = $ad{col}
+                         ORDER BY StartIso, RecordId, FieldId
+                         LIMIT $lim OFFSET $off
+                     ) ci
+                     JOIN db_records r ON r.Id = ci.RecordId
+                     JOIN db_collections c ON c.Id = r.CollectionId
+                     ORDER BY ci.StartIso, ci.RecordId, ci.FieldId";
+        var result = new List<CalendarRecord>(take);
+        var conn = db.Database.GetDbConnection();
+        var opened = conn.State != System.Data.ConnectionState.Open;
+        if (opened) conn.Open();
+        try
+        {
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = sql;
+            AddParam(cmd, "$s").Value = startIso;
+            AddParam(cmd, "$e").Value = endIso;
+            AddParam(cmd, "$ad").Value = allDay;
+            AddParam(cmd, "$lim").Value = take;
+            AddParam(cmd, "$off").Value = offset;
+            using var rdr = cmd.ExecuteReader();
+            while (rdr.Read())
+            {
+                if (!DateTime.TryParse(rdr.GetString(3), out var st)) continue;
+                if (!DateTime.TryParse(rdr.GetString(4), out var en)) continue;
+                result.Add(new CalendarRecord
+                {
+                    Id = rdr.GetInt32(0), FieldId = rdr.GetInt32(1), CollectionId = rdr.GetInt32(2),
+                    StartDt = st, EndDt = en, AllDay = rdr.GetInt32(5) != 0,
+                    Title = rdr.IsDBNull(6) ? "" : rdr.GetString(6),
+                    Description = rdr.IsDBNull(7) ? "" : rdr.GetString(7),
+                    CollectionName = rdr.IsDBNull(8) ? "" : rdr.GetString(8),
+                    Color = rdr.IsDBNull(9) ? "#007AFF" : rdr.GetString(9),
+                });
+            }
+        }
+        finally { if (opened) conn.Close(); }
+        return result;
+    }
+
+    /// <summary>Фоновая (изолированное подключение) загрузка страницы дня по offset — для UI без фризов.</summary>
+    public Task<List<CalendarRecord>> LoadCalendarDayPageAsync(
+        DateTime dayStart, DateTime dayEnd, ISet<int>? activeIds, int skip, int take) =>
+        Task.Run(() =>
+        {
+            using var ctx = new AppDbContext(db.DbPath);
+            ctx.ApplyPerformancePragmas();
+            return new ConstructorRepository(ctx).GetCalendarDayEventsByOffset(dayStart, dayEnd, activeIds, skip, take);
+        });
+
+    /// <summary>Фоновая (изолированное подключение) keyset-страница фазы дня — для гладкой
+    /// последовательной прокрутки: O(страницы), не зависит от глубины (см. GetCalendarDayEventsPage).</summary>
+    public Task<List<CalendarRecord>> LoadCalendarDayPageAfterAsync(
+        DateTime dayStart, DateTime dayEnd, ISet<int>? activeIds,
+        int allDay, string? afterStartIso, int afterRecordId, int afterFieldId, int limit) =>
+        Task.Run(() =>
+        {
+            using var ctx = new AppDbContext(db.DbPath);
+            ctx.ApplyPerformancePragmas();
+            return new ConstructorRepository(ctx).GetCalendarDayEventsPage(
+                dayStart, dayEnd, activeIds, allDay, afterStartIso, afterRecordId, afterFieldId, limit);
+        });
+
+    /// <summary>Фоновый подсчёт числа событий дня (для размера полосы прокрутки) — изолированное подключение.</summary>
+    public Task<int> CountCalendarDayEventsAsync(DateTime dayStart, DateTime dayEnd, ISet<int>? activeIds) =>
+        Task.Run(() =>
+        {
+            using var ctx = new AppDbContext(db.DbPath);
+            ctx.ApplyPerformancePragmas();
+            return new ConstructorRepository(ctx).CountCalendarDayEvents(dayStart, dayEnd, activeIds);
+        });
+
+    // Верхняя граница длительности «короткого/timed» события — задаёт, насколько далеко
+    // назад от начала окна сканируется timed-под-запрос (нижняя граница StartIso). Событие
+    // длиннее считается «многодневным» и берётся отдельным all-day-под-запросом без нижней
+    // границы, поэтому НЕ теряется. 62 дня — с большим запасом: не-all-day событий такой
+    // длины в календаре не бывает (длинное — это all-day/«проект»). Влияет только на скорость
+    // timed-под-запроса, не на корректность.
+    private const int CalendarTimedBufferDays = 62;
+
+    // Строит события окна календаря из проекции calendar_index. Чтобы индекс не сканировал
+    // всё «от начала времён» (StartIso имеет верхнюю границу окна, но не нижнюю), окно
+    // берётся ДВУМЯ под-запросами по индексу (CollectionId, AllDay, StartIso):
+    //   • timed (AllDay=0): с нижней границей StartIso = начало окна − буфер → быстрый
+    //     двусторонний seek (основная масса событий);
+    //   • all-day (AllDay=1): без нижней границы (их мало → дёшево) — чтобы многодневные
+    //     события, начавшиеся ДО окна (панель AllDayBar), не потерялись.
+    // Пересечение окна: StartIso < конец И EndIso >= начало (ISO-строки сравниваются
+    // лексикографически — формат фиксирован). Результат объединяется и сортируется по началу
+    // (как раньше). Raw-SQL — чтобы гарантированно использовать индекс по AllDay.
+    private List<CalendarRecord> ReadCalendarEvents(DateTime rangeStart, DateTime rangeEnd, ISet<int>? activeIds)
+    {
+        var startIso = DateTime.SpecifyKind(rangeStart, DateTimeKind.Unspecified).ToString("o");
+        var endIso   = DateTime.SpecifyKind(rangeEnd,   DateTimeKind.Unspecified).ToString("o");
+        var lowerIso = DateTime.SpecifyKind(rangeStart, DateTimeKind.Unspecified)
+                               .AddDays(-CalendarTimedBufferDays).ToString("o");
+
+        // Фильтр активных коллекций (id — целые из приложения, инлайним безопасно).
+        var colFilter = activeIds is { Count: > 0 }
+            ? $" AND ci.CollectionId IN ({string.Join(",", activeIds)})"
+            : "";
+
+        var result = new List<CalendarRecord>();
+
+        void Read(int allDay, bool lowerBound)
+        {
+            var lb = lowerBound ? " AND ci.StartIso >= $lo" : "";
+            var sql = $@"SELECT ci.RecordId, ci.FieldId, ci.CollectionId, ci.StartIso, ci.EndIso, ci.AllDay,
+                                r.Title, r.Description, c.Name, c.Color
+                         FROM calendar_index ci
+                         JOIN db_records r ON r.Id = ci.RecordId
+                         JOIN db_collections c ON c.Id = r.CollectionId
+                         WHERE ci.AllDay = {allDay}{colFilter}{lb}
+                           AND ci.StartIso < $end AND ci.EndIso >= $start";
+
+            var conn = db.Database.GetDbConnection();
+            var opened = conn.State != System.Data.ConnectionState.Open;
+            if (opened) conn.Open();
+            try
+            {
+                using var cmd = conn.CreateCommand();
+                cmd.CommandText = sql;
+                AddParam(cmd, "$end").Value   = endIso;
+                AddParam(cmd, "$start").Value = startIso;
+                if (lowerBound) AddParam(cmd, "$lo").Value = lowerIso;
+                using var rdr = cmd.ExecuteReader();
+                while (rdr.Read())
+                {
+                    if (!DateTime.TryParse(rdr.GetString(3), out var s)) continue;
+                    if (!DateTime.TryParse(rdr.GetString(4), out var e)) continue;
+                    result.Add(new CalendarRecord
+                    {
+                        Id             = rdr.GetInt32(0),
+                        FieldId        = rdr.GetInt32(1),
+                        CollectionId   = rdr.GetInt32(2),
+                        StartDt        = s,
+                        EndDt          = e,
+                        AllDay         = rdr.GetInt32(5) != 0,
+                        Title          = rdr.IsDBNull(6) ? "" : rdr.GetString(6),
+                        Description    = rdr.IsDBNull(7) ? "" : rdr.GetString(7),
+                        CollectionName = rdr.IsDBNull(8) ? "" : rdr.GetString(8),
+                        Color          = rdr.IsDBNull(9) ? "#007AFF" : rdr.GetString(9),
+                    });
+                }
+            }
+            finally { if (opened) conn.Close(); }
         }
 
-        var rows = q
-            .OrderBy(ci => ci.StartIso)
-            .Select(ci => new
-            {
-                ci.RecordId,
-                ci.FieldId,
-                ci.CollectionId,
-                ci.StartIso,
-                ci.EndIso,
-                ci.AllDay,
-                Title          = ci.Record.Title,
-                Description    = ci.Record.Description,
-                CollectionName = ci.Record.Collection.Name,
-                Color          = ci.Record.Collection.Color,
-            })
-            .ToList();
+        Read(allDay: 0, lowerBound: true);   // короткие/timed — с нижней границей
+        Read(allDay: 1, lowerBound: false);  // многодневные/all-day — без нижней границы
 
-        var result = new List<CalendarRecord>(rows.Count);
-        foreach (var row in rows)
-        {
-            if (!DateTime.TryParse(row.StartIso, out var start)) continue;
-            if (!DateTime.TryParse(row.EndIso,   out var end))   continue;
-            result.Add(new CalendarRecord
-            {
-                Id             = row.RecordId,
-                FieldId        = row.FieldId,
-                Title          = row.Title ?? "",
-                Description    = row.Description ?? "",
-                StartDt        = start,
-                EndDt          = end,
-                AllDay         = row.AllDay,
-                CollectionId   = row.CollectionId,
-                CollectionName = row.CollectionName ?? "",
-                Color          = row.Color ?? "#007AFF",
-            });
-        }
+        result.Sort((a, b) => a.StartDt.CompareTo(b.StartDt));
         return result;
     }
 
@@ -3406,6 +3663,13 @@ public class ConstructorRepository(AppDbContext db)
             .Select(f => f.Id)
             .ToList();
         if (calFieldIds.Count == 0) return;
+
+        // Индекс календаря уже построен → БД мигрирована, а новые данные (создание/импорт/
+        // правка) поддерживают StartDt и индекс инкрементально. Значит недобэкафилленных
+        // записей нет — пропускаем тяжёлый скан db_field_values на каждом монтировании
+        // (он нужен ровно один раз, при первом открытии старой БД). Ускоряет подключение
+        // больших БД.
+        if (db.CalendarIndex.Any()) return;
 
         var pending = db.DbFieldValues
             .Where(v => calFieldIds.Contains(v.FieldId) && v.Value != "" && v.Record.StartDt == null)

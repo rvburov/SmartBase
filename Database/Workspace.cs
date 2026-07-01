@@ -23,23 +23,36 @@ public sealed class Workspace : IDisposable
         _mounted.Add(def);
     }
 
-    /// <summary>Открыть рабочее пространство: смонтировать дефолтную БД и все остальные из реестра.</summary>
-    public static Workspace Open(DatabaseRegistry registry)
+    /// <summary>Открыть рабочее пространство: смонтировать дефолтную БД и все остальные из реестра.
+    /// <paramref name="progress"/> — опциональный прогресс (доля 0..1 + текущий этап: какая БД
+    /// открывается) для сплэш-экрана; монтирование может быть долгим (миграции/бэкафилл на больших
+    /// БД), поэтому вызывается в фоне. Доля считается по числу баз (+1 слот под запуск интерфейса).</summary>
+    public static Workspace Open(DatabaseRegistry registry,
+                                 IProgress<(double Fraction, string Message)>? progress = null)
     {
         var all      = registry.GetAll();
         var defEntry = all.First(d => d.IsDefault);
+        var total    = all.Count;
+        var step     = 0;
+        double Frac() => total > 0 ? (double)step / (total + 1) : 0;   // +1 — слот под «Запуск интерфейса…»
 
         // Дефолт всегда открываем по актуальному пути приложения (а не по сохранённому
         // в реестре — на случай переноса), но идентичность (DbId, Name) берём из реестра.
+        progress?.Report((Frac(), $"Открываю базу «{defEntry.Name}»…"));
         var def = DatabaseManager.Open(defEntry.Id, defEntry.Name, AppSettings.DbPath);
         var ws  = new Workspace(registry, def);
+        step++;
 
         // Остальные зарегистрированные БД монтируем по сохранённому пути (файл создаётся
         // и мигрируется при первом монтировании). Сбой одной БД — например, недоступна
         // сетевая папка — не должен ронять старт; полноценная обработка недоступности
         // будет на Этапе 5.
         foreach (var e in all.Where(d => !d.IsDefault))
+        {
+            progress?.Report((Frac(), $"Открываю базу «{e.Name}»…"));
             ws.Mount(e);
+            step++;
+        }
 
         return ws;
     }

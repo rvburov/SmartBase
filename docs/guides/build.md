@@ -58,6 +58,12 @@ Scripts/<ОС>-build.sh [RID] [Config] [Version]
 > Все платформы собираются с одной машины (cross-compilation). Папка `dist/` —
 > в `.gitignore`, пересоздаётся. Скрипты — bash, на Windows запускаются из Git Bash.
 
+> **Windows: ошибка «Нет установленных дистрибутивов подсистемы Windows для Linux».**
+> Значит `.sh` ушёл в WSL-овый `C:\Windows\System32\bash.exe` (когда `System32` в PATH
+> раньше Git). Скрипты используют шебанг `#!/bin/bash` и помечены исполняемыми — обычно
+> хватает `Scripts/windows-build.sh`. Если ошибка всё же появляется, запусти bash из Git
+> по абсолютному пути: `/usr/bin/bash Scripts/windows-build.sh`.
+
 ### Windows
 
 ```bash

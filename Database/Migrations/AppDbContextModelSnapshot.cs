@@ -44,6 +44,8 @@ namespace DataBase.Database.Migrations
 
                     b.HasIndex("CollectionId", "StartIso");
 
+                    b.HasIndex("CollectionId", "AllDay", "StartIso", "RecordId", "FieldId");
+
                     b.ToTable("calendar_index", (string)null);
                 });
 

@@ -23,6 +23,10 @@ public sealed class DatabaseRegistry : IDisposable, ISettingsDatabase
         db.Database.EnsureCreated();   // создаёт app.db и таблицы, если их нет; существующие данные не трогает
         EnsureSettingsTable(db);       // app_settings могло не быть в старых app.db (EnsureCreated её не достроит)
         db.Database.ExecuteSqlRaw("PRAGMA journal_mode=WAL;");  // WAL: параллельные чтения во время записи
+        // Самолечение раздутого app.db: реестр и настройки крошечные, раздуться нечему,
+        // но для полноты — если файл вдруг раздулся свободными страницами, разово ужимаем.
+        // Порог ниже, чем у данных-БД (см. SqliteMaintenance): app.db всегда должен быть мал.
+        SqliteMaintenance.CompactIfBloated(db, 1L * 1024 * 1024);
         var registry = new DatabaseRegistry(db);
         registry.EnsureDefault(defaultDataPath);
         return registry;

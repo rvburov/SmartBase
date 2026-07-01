@@ -182,6 +182,20 @@ public partial class CalendarControllerView : UserControl
 
         var (startDt, endDt) = GetDateRange();
 
+        // Расписание — полная виртуализация: событий в одном дне могут быть миллионы, поэтому
+        // список знает лишь их ЧИСЛО (полоса прокрутки на весь объём), а страницы тянет по
+        // требованию (см. CalendarDayVirtualList) — можно прыгнуть в любой конец без фриза.
+        if (_currentViewIndex == 0)
+        {
+            UpdateTitle();
+            var sources = _dbs.Select(d =>
+                (d.DbId, d.Repo,
+                 (ISet<int>?)(_activeByDb is not null && _activeByDb.TryGetValue(d.DbId, out var s) ? s : null)))
+                .ToList();
+            ListViewCtrl.LoadFrom(sources, startDt, endDt, _currentDate, _searchQuery);
+            return;
+        }
+
         // Агрегируем события из всех смонтированных БД, помечая каждое его DbId,
         // и фильтруем каждую БД по её активным коллекциям.
         var records = new List<CalendarRecord>();
@@ -200,7 +214,6 @@ public partial class CalendarControllerView : UserControl
 
         switch (_currentViewIndex)
         {
-            case 0: ListViewCtrl.Refresh(records, _currentDate); break;
             case 1: JournalViewCtrl.Refresh(records, _currentDate); break;
             case 2: DayViewCtrl.Refresh(records, DateOnly.FromDateTime(_currentDate)); break;
             case 3: WeekViewCtrl.Refresh(records, _currentDate, scrollToNow); break;

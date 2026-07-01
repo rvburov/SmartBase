@@ -1,0 +1,57 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="DataBase.Views.SplashWindow"
+        Width="460" Height="230"
+        CanResize="False"
+        ShowInTaskbar="True"
+        SystemDecorations="None"
+        WindowStartupLocation="CenterScreen"
+        Background="{StaticResource BrushBg}"
+        Title="DataBase">
+
+    <!-- Тонкая рамка вокруг окна (у сплэша нет системной рамки) -->
+    <Border BorderBrush="{StaticResource BrushSeparator}" BorderThickness="1">
+        <DockPanel>
+
+            <!-- Шапка как у установщика: название + версия -->
+            <Border DockPanel.Dock="Top" Height="76"
+                    Background="{StaticResource BrushSecondaryBg}"
+                    BorderBrush="{StaticResource BrushSeparator}" BorderThickness="0,0,0,1">
+                <StackPanel VerticalAlignment="Center" Margin="24,0">
+                    <TextBlock Text="DataBase"
+                               FontSize="{DynamicResource FontSizeLarge}"
+                               FontWeight="{StaticResource FontWeightBold}"
+                               Foreground="{StaticResource BrushPrimaryText}" />
+                    <TextBlock x:Name="VersionText" Text="Версия"
+                               FontSize="{DynamicResource FontSizeSmall}"
+                               Foreground="{StaticResource BrushSecondaryText}" />
+                </StackPanel>
+            </Border>
+
+            <!-- Тело: этап запуска + прогресс с процентами -->
+            <StackPanel Margin="24,20" Spacing="14" VerticalAlignment="Center">
+                <TextBlock Text="Запуск приложения"
+                           Foreground="{StaticResource BrushSecondaryText}" />
+                <StackPanel Spacing="6">
+                    <Grid ColumnDefinitions="*,Auto">
+                        <TextBlock x:Name="StatusText" Grid.Column="0"
+                                   Text="Подготовка…"
+                                   TextTrimming="CharacterEllipsis"
+                                   FontSize="{DynamicResource FontSizeSmall}"
+                                   Foreground="{StaticResource BrushPrimaryText}" />
+                        <TextBlock x:Name="PercentText" Grid.Column="1"
+                                   Text="0%"
+                                   FontWeight="{StaticResource FontWeightBold}"
+                                   FontSize="{DynamicResource FontSizeSmall}"
+                                   Foreground="{StaticResource BrushPrimaryText}" />
+                    </Grid>
+                    <ProgressBar x:Name="Progress"
+                                 Minimum="0" Maximum="1" Value="0"
+                                 Height="6" CornerRadius="3"
+                                 Foreground="#007AFF" />
+                </StackPanel>
+            </StackPanel>
+
+        </DockPanel>
+    </Border>
+</Window>

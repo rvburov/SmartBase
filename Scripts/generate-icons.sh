@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 #
 # Генерирует icon.ico (Windows) и icon.icns (macOS) из мастера
 # Assets/Branding/icon.png. Linux использует сам icon.png (см. linux-install.sh),

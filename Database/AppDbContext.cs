@@ -136,6 +136,15 @@ public class AppDbContext : DbContext
             e.HasKey(x => new { x.RecordId, x.FieldId });
             // Горячий путь календаря: WHERE CollectionId IN(...) AND StartIso < end AND EndIso >= start.
             e.HasIndex(x => new { x.CollectionId, x.StartIso });
+            // Сплит окна на два под-запроса по AllDay: короткие timed — с нижней границей StartIso,
+            // многодневные/all-day — без неё (их мало). Индекс изолирует каждый класс, чтобы
+            // под-запрос не сканировал всё от начала. См. ConstructorRepository.ReadCalendarEvents.
+            // Хвост (RecordId, FieldId) даёт полный порядок (StartIso, RecordId, FieldId) — на нём
+            // «Расписание» согласует offset-прыжки и keyset-скролл (одинаковый порядок → без дублей/
+            // пропусков на границах страниц с равным StartIso), а глубокий offset идёт по индексу без
+            // временной сортировки. Прежний префикс (CollectionId, AllDay, StartIso) остаётся рабочим
+            // для сплит-окон. См. CalendarDayVirtualList / GetCalendarDayEventsByOffset.
+            e.HasIndex(x => new { x.CollectionId, x.AllDay, x.StartIso, x.RecordId, x.FieldId });
             e.HasOne(x => x.Record)
              .WithMany()
              .HasForeignKey(x => x.RecordId)

@@ -31,7 +31,8 @@
 | Таблица коллекции | до ~10 млн записей | `VirtualCollectionView` (DataGrid не материализует источник) + keyset + фоновая подгрузка | [TableView](../../Views/ConstructorDb/TableView.axaml.cs), [VirtualRowList](../../ViewModels/ConstructorDb/VirtualRowList.cs), [VirtualCollectionView](../../ViewModels/ConstructorDb/VirtualCollectionView.cs) |
 | Фильтр / сортировка | до ~10 млн | фильтр в SQL → список id → виртуализация; выпадающий список значений — SQL-агрегат в фоне | [TableView](../../Views/ConstructorDb/TableView.axaml.cs), [ConstructorRepository](../../Database/Repositories/ConstructorRepository.cs) |
 | Импорт таблиц | 100k+ строк | bulk-insert + границы по содержимому | [ExcelImporter](../../Core/Importers/ExcelImporter.cs), `ImportExcelCollection` |
-| Календарь | до ~10 млн записей | индексная проекция `calendar_index` + range-query по `(CollectionId, StartIso)` | [ConstructorRepository](../../Database/Repositories/ConstructorRepository.cs) |
+| Календарь (окна День/Неделя/Месяц/Год) | до ~10 млн записей | индексная проекция `calendar_index` + сплит-запрос окна (timed с нижней границей + all-day) по `(CollectionId, AllDay, StartIso)` | [ConstructorRepository](../../Database/Repositories/ConstructorRepository.cs) |
+| Календарь «Расписание» (день) | миллионы событий в дне | `IList`-виртуализация: полоса на весь объём + offset-страницы в фоне с «Загрузка…» | [CalendarDayVirtualList](../../Views/ConstructorDb/Calendar/CalendarDayVirtualList.cs) |
 
 ### Таблица коллекции
 
@@ -116,9 +117,42 @@ fallback при **выключенной** виртуализации.
 на запись × видимое поле-дата: `RecordId, FieldId, CollectionId, StartIso, EndIso, AllDay`).
 
 `GetCalendarRecordsByRange(start, end)` → `ReadCalendarEvents` читает из `calendar_index`
-индексным range-query по `(CollectionId, StartIso)`: `StartIso < конец` И `EndIso >= начало`
-(ISO-строки сравниваются лексикографически). Трогаются только события окна, а не все значения —
-прежний путь (скан `db_field_values` с разбором в C#) был тяжёл на больших коллекциях.
+индексным range-query: пересечение окна = `StartIso < конец` И `EndIso >= начало` (ISO-строки
+сравниваются лексикографически). Трогаются только события окна, а не все значения — прежний путь
+(скан `db_field_values` с разбором в C#) был тяжёл на больших коллекциях.
+
+**Сплит окна на два под-запроса** (raw-SQL, индекс `(CollectionId, AllDay, StartIso)`), иначе на
+больших объёмах запрос сканировал бы **всё от начала таймлайна**: у `StartIso` есть верхняя
+граница окна, но не нижняя, поэтому индекс перебирал все события до конца окна (на 10 млн один
+«День» открывался и за 0.4 с у начала данных, и за ~9 с у конца). Разбивка:
+- **timed (`AllDay=0`)** — с нижней границей `StartIso >= начало окна − буфер` (`CalendarTimedBufferDays`,
+  62 дня): быстрый двусторонний seek, основная масса событий;
+- **all-day (`AllDay=1`)** — **без** нижней границы (их мало → дёшево): многодневные события,
+  начавшиеся до окна (панель AllDayBar), не теряются.
+
+Буфер 62 дня отсекает только timed-под-запрос (не-all-day событий такой длины не бывает —
+длинное всегда `AllDay`), поэтому корректность сохранена, а не-all-day событие любой реалистичной
+длины попадает в результат. Замер на 10 млн: «День»/«Неделя» — ~50–140 мс (было 4.5–9 с, ×100+),
+результат по строкам **идентичен** старому. «Год» (~900k строк) упирается уже в материализацию,
+не в скан.
+
+**«Расписание» (список одного дня) полностью виртуализировано** ([CalendarDayVirtualList](../../Views/ConstructorDb/Calendar/CalendarDayVirtualList.cs)),
+т.к. в одном дне событий могут быть миллионы (материализация окна разом «вешала» UI). Список
+реализует `IList` — полоса прокрутки на ПОЛНОЕ число событий дня (можно перетащить в самый низ),
+`VirtualizingStackPanel` реализует только видимые строки. Два режима по числу событий дня:
+- **InMemory** (≤ 10 000 или поиск): день грузится сразу, **слияние по времени** между БД (точный
+  порядок); поиск — фильтр по заголовку с ограничением скана;
+- **Offset** (> 10 000): страница грузится на изолированном подключении **в фоне** с заглушками
+  «Загрузка…». Порядок «Расписания» — фаза all-day, затем timed, каждая по `(StartIso, RecordId,
+  FieldId)` (ложится на индекс `(CollectionId, AllDay, StartIso, RecordId, FieldId)` — seek без
+  сортировки; общий `ORDER BY AllDay DESC` заставлял SQLite сортировать все строки дня во временной
+  таблице = секунды фриза). Способ чтения страницы: **прыжок** полосой → offset (пропуск по
+  покрывающему индексу, join к `db_records` только для строк страницы → прыжок в конец дня на
+  миллионы событий доли секунды); **последовательная прокрутка** → keyset от последней строки
+  предыдущей страницы (O(страницы), не зависит от глубины → гладкий скролл колесом). Хвост индекса
+  `(RecordId, FieldId)` даёт общий ключ, поэтому offset и keyset идут ОДНИМ порядком и стыкуются без
+  дублей/пропусков. Загрузка **с дебаунсом** (пауза после скролла): при быстром перетаскивании
+  транзитные страницы вытесняются и запрос не тратят.
 
 Проекция поддерживается **инкрементально** (не пересобирается целиком на каждый чих):
 upsert одной строки при правке значения (`SyncCalendarIndexValue` из
@@ -139,7 +173,7 @@ upsert одной строки при правке значения (`SyncCalend
 |---|---|---|
 | `db_records` | `(CollectionId, Position)` | записи коллекции в порядке отображения (страницы, keyset) |
 | `db_field_values` | `(RecordId, FieldId)` UNIQUE, `(FieldId, Value)` | значения записи / фильтр и подсчёт по значению поля |
-| `calendar_index` | `(RecordId, FieldId)` PK, `(CollectionId, StartIso)`, `(FieldId)` | проекция событий: range-query окна календаря / FK-каскады |
+| `calendar_index` | `(RecordId, FieldId)` PK, `(CollectionId, StartIso)`, `(CollectionId, AllDay, StartIso, RecordId, FieldId)`, `(FieldId)` | проекция событий: range-query окна (сплит по AllDay) / offset+keyset «Расписания» (хвост-ключ) / FK-каскады |
 | `db_fields` | `(CollectionId, Name)` UNIQUE | поля коллекции, уникальность имени |
 | `db_collections` | `(GroupId)` | коллекции группы |
 | `db_groups` | `(ParentId)` | дерево групп |
@@ -149,6 +183,32 @@ upsert одной строки при правке значения (`SyncCalend
 ([DatabaseManager](../../Database/DatabaseManager.cs)): `journal_mode=WAL` (параллельные
 чтения во время записи), `synchronous=NORMAL` (быстрее коммиты при WAL), `temp_store=MEMORY`,
 `mmap_size=256MB`, `cache_size≈64MB`.
+
+### Компактность файла (самолечение VACUUM)
+
+`auto_vacuum` выключен, поэтому после массовых удалений/импортов SQLite **не возвращает**
+освобождённые страницы в ОС — файл раздувается в разы больше реальных данных (наблюдали
+`database.db` = 705 МБ при 0.14 МБ данных, 100% свободных страниц). Общий хелпер
+[SqliteMaintenance](../../Database/SqliteMaintenance.cs)`.CompactIfBloated` при открытии БД
+смотрит `freelist_count`/`page_count` и **разово** запускает `VACUUM`, если свободного
+> 50% файла и больше порога. Порог с запасом — на нормально заполненных БД VACUUM не
+запускается. VACUUM переписывает файл (данные целы), стоит секунды на больших объёмах, но
+после него freelist пуст и на следующем старте условие не срабатывает. Подключено:
+- данные-БД (дефолтная + смонтированные) через [DatabaseManager](../../Database/DatabaseManager.cs), порог **16 МБ**;
+- системная `app.db` через [DatabaseRegistry](../../Database/DatabaseRegistry.cs), порог **1 МБ** (она всегда должна быть мала).
+
+Альтернатива (не выбрана) — `auto_vacuum=INCREMENTAL`: держит файл компактным, но
+добавляет page-map оверхед на запись.
+
+### Стоимость монтирования БД (подключение)
+
+Монтирование гоняет конвейер в [DatabaseManager](../../Database/DatabaseManager.cs)
+(миграции → прагмы → компактизация → бэкафилл календаря → сидинг). `MigrateAndBackfillCalendarDates`
+— **одноразовая** миграция старых данных; её тяжёлый скан `db_field_values` теперь
+пропускается, если индекс календаря уже построен (`if (db.CalendarIndex.Any()) return;`) —
+новые данные (создание/импорт/правка) поддерживают `StartDt` и индекс инкрементально, так
+что повторный скан на каждом подключении не нужен. Размонтирование (`Unmount`) — просто
+`Dispose` контекста.
 
 ## Сделано (перф-итерация June 2026)
 

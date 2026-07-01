@@ -5,6 +5,7 @@ using Avalonia.Media;
 using Avalonia.Interactivity;
 using CommunityToolkit.Mvvm.ComponentModel;
 using DataBase.Core.Models;
+using DataBase.Database.Repositories;
 using DataBase.Utils;
 
 namespace DataBase.Views.ConstructorDb.Calendar;
@@ -16,10 +17,15 @@ public partial class ListView : UserControl
     public event EventHandler<IReadOnlyList<CalendarRecord>>? RecordsDeleteRequested;
     public event EventHandler<DateTime>? CreateRequested;
 
-    private List<EventListItem> _items       = new();
-    private DateTime            _currentDate = DateTime.Today;
+    // Полная виртуализация: список знает ПОЛНОЕ число событий дня (полоса прокрутки на весь объём,
+    // можно перетащить в самый низ), а страницы грузятся по требованию (см. CalendarDayVirtualList).
+    private CalendarDayVirtualList? _list;
+    private DateTime _currentDate = DateTime.Today;
 
-    public ListView() { InitializeComponent(); }
+    public ListView()
+    {
+        InitializeComponent();
+    }
 
     private EventHandler<KeyEventArgs>? _windowKeyHandler;
 
@@ -75,30 +81,36 @@ public partial class ListView : UserControl
 
     private void DeselectAll()
     {
-        foreach (var i in _items)
+        if (_list is null) return;
+        foreach (var i in _list.RealizedItems)
             i.IsSelected = false;
     }
 
     private List<CalendarRecord> SelectedRecords()
-        => _items.Where(i => i.IsSelected).Select(i => i.OriginalEvent).ToList();
+        => _list is null
+            ? new List<CalendarRecord>()
+            : _list.RealizedItems.Where(i => i.IsEvent && i.IsSelected).Select(i => i.OriginalEvent!).ToList();
 
-    public void Refresh(IEnumerable<CalendarRecord> events, DateTime currentDate)
+    /// <summary>
+    /// Открывает день в «Расписании» через полную виртуализацию: события дня из
+    /// <paramref name="dbs"/> (несколько БД) в окне [<paramref name="dayStart"/>,
+    /// <paramref name="dayEnd"/>). Полоса прокрутки — на всё число событий, страницы грузятся по
+    /// требованию (в т.ч. прыжок в самый низ). <paramref name="search"/> фильтрует по заголовку.
+    /// </summary>
+    public void LoadFrom(IReadOnlyList<(int dbId, ConstructorRepository repo, ISet<int>? active)> dbs,
+                         DateTime dayStart, DateTime dayEnd, DateTime currentDate, string search)
     {
         _currentDate = currentDate;
         var isPast = currentDate.Date < DateTime.Today;
-        _items = events
-            .Where(e => e.StartDt.Date == currentDate.Date)
-            .OrderBy(e => e.AllDay ? 0 : 1)
-            .ThenBy(e => e.StartDt)
-            .Select(e => new EventListItem(e, isPast))
-            .ToList();
-        EventsList.ItemsSource = _items;
-        EmptyHint.IsVisible    = _items.Count == 0;
+        _list = new CalendarDayVirtualList(dbs, dayStart, dayEnd, search ?? "", isPast);
+        EventsList.ItemsSource = _list;
+        ListScroll.Offset = new Vector(0, 0);
+        EmptyHint.IsVisible = _list.Count == 0;
     }
 
     private void OnEventPointerEntered(object? sender, PointerEventArgs e)
     {
-        if (sender is Border { Tag: EventListItem item } && !item.IsSelected)
+        if (sender is Border { Tag: EventListItem { IsEvent: true } item } && !item.IsSelected)
             item.IsHovered = true;
     }
 
@@ -110,7 +122,7 @@ public partial class ListView : UserControl
 
     private void OnEventTapped(object? sender, TappedEventArgs e)
     {
-        if (sender is Border { Tag: EventListItem item })
+        if (sender is Border { Tag: EventListItem { IsEvent: true } item })
         {
             var additive = e.KeyModifiers.HasFlag(KeyModifiers.Shift);
             if (additive)
@@ -121,11 +133,9 @@ public partial class ListView : UserControl
             }
             else
             {
-                foreach (var i in _items)
-                {
-                    i.IsSelected = false;
-                    i.IsHovered  = false;
-                }
+                DeselectAll();
+                foreach (var i in _list?.RealizedItems ?? [])
+                    i.IsHovered = false;
                 item.IsSelected = true;
             }
             e.Handled = true;
@@ -136,22 +146,20 @@ public partial class ListView : UserControl
     // (как в других режимах), чтобы меню действовало на видимо выделенное.
     private void OnEventPointerPressed(object? sender, PointerPressedEventArgs e)
     {
-        if (sender is Border { Tag: EventListItem item }
+        if (sender is Border { Tag: EventListItem { IsEvent: true } item }
             && e.GetCurrentPoint(this).Properties.IsRightButtonPressed
             && !item.IsSelected)
         {
-            foreach (var i in _items)
-            {
-                i.IsSelected = false;
-                i.IsHovered  = false;
-            }
+            DeselectAll();
+            foreach (var i in _list?.RealizedItems ?? [])
+                i.IsHovered = false;
             item.IsSelected = true;
         }
     }
 
     private void OnEventContextRequested(object? sender, ContextRequestedEventArgs e)
     {
-        if (sender is not Border { Tag: EventListItem item } border) return;
+        if (sender is not Border { Tag: EventListItem { IsEvent: true } item } border) return;
 
         var selected = SelectedRecords();
         ContextMenu menu;
@@ -163,8 +171,8 @@ public partial class ListView : UserControl
         else
         {
             menu = DataBase.Controls.Components.EventContextMenu.Single(
-                onEdit:   () => { DeselectAll(); RecordClicked?.Invoke(this, item.OriginalEvent); },
-                onDelete: () => { DeselectAll(); RecordDeleteRequested?.Invoke(this, item.OriginalEvent); });
+                onEdit:   () => { DeselectAll(); RecordClicked?.Invoke(this, item.OriginalEvent!); },
+                onDelete: () => { DeselectAll(); RecordDeleteRequested?.Invoke(this, item.OriginalEvent!); });
         }
         menu.Open(border);
         e.Handled = true;
@@ -183,10 +191,10 @@ public partial class ListView : UserControl
 
     private void OnEventDoubleTapped(object? sender, TappedEventArgs e)
     {
-        if (sender is Border { Tag: EventListItem item })
+        if (sender is Border { Tag: EventListItem { IsEvent: true } item })
         {
             e.Handled = true;
-            RecordClicked?.Invoke(this, item.OriginalEvent);
+            RecordClicked?.Invoke(this, item.OriginalEvent!);
         }
     }
 
@@ -194,18 +202,24 @@ public partial class ListView : UserControl
     {
         CreateRequested?.Invoke(this, _currentDate);
     }
-
 }
 
 public partial class EventListItem : ObservableObject
 {
-    public CalendarRecord  OriginalEvent  { get; }
-    public string Title          { get; }
-    public string DateTimeText   { get; }
-    public string Description    { get; }
-    public bool   HasDescription { get; }
-    public IBrush ColorBrush     { get; }
-    public IBrush TitleBrush     { get; }
+    public CalendarRecord? OriginalEvent { get; private set; }
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsEvent))]
+    private bool _isLoadingPlaceholder;
+
+    public bool IsEvent => !IsLoadingPlaceholder;
+
+    [ObservableProperty] private string _title = "";
+    [ObservableProperty] private string _dateTimeText = "";
+    [ObservableProperty] private string _description = "";
+    [ObservableProperty] private bool   _hasDescription;
+    [ObservableProperty] private IBrush _colorBrush = Brushes.Transparent;
+    [ObservableProperty] private IBrush _titleBrush = Brushes.Gray;
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(BackgroundBrush))]
@@ -221,11 +235,14 @@ public partial class EventListItem : ObservableObject
             ? new SolidColorBrush(Color.FromArgb(25, 128, 128, 128))
             : Brushes.Transparent;
 
-    private static readonly string[] Months =
-        ["янв", "фев", "мар", "апр", "май", "июн",
-         "июл", "авг", "сен", "окт", "ноя", "дек"];
+    // Заглушка «Загрузка…» — заполняется реальным событием позже через Fill (в Offset-режиме).
+    private EventListItem() => _isLoadingPlaceholder = true;
+    public static EventListItem Loading() => new();
 
-    public EventListItem(CalendarRecord ev, bool isPast = false)
+    public EventListItem(CalendarRecord ev, bool isPast = false) => Fill(ev, isPast);
+
+    /// <summary>Заполняет строку данными события (заглушка → событие) с уведомлением привязок.</summary>
+    public void Fill(CalendarRecord ev, bool isPast)
     {
         OriginalEvent  = ev;
         Title          = ev.DisplayTitle;
@@ -236,9 +253,9 @@ public partial class EventListItem : ObservableObject
         TitleBrush     = isPast
             ? new SolidColorBrush(Color.Parse("#8E8E93"))
             : new SolidColorBrush(Color.Parse("#1C1C1E"));
-
-        DateTimeText = ev.AllDay
+        DateTimeText   = ev.AllDay
             ? "Весь день"
             : $"{ev.StartDt:HH:mm} – {ev.EndDt:HH:mm}";
+        IsLoadingPlaceholder = false;
     }
 }

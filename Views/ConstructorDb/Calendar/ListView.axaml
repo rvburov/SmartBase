@@ -3,30 +3,38 @@
              x:Class="DataBase.Views.ConstructorDb.Calendar.ListView"
              Background="{StaticResource BrushBg}">
 
-    <ScrollViewer VerticalScrollBarVisibility="Auto"
-                  DoubleTapped="OnBackgroundDoubleTapped"
-                  ContextRequested="OnBackgroundContextRequested">
-        <Border BorderThickness="0"
-                BorderBrush="{StaticResource BrushSeparator}"
-                Margin="0">
-            <Panel>
-                <ItemsControl x:Name="EventsList" Padding="4,4">
-                    <ItemsControl.ItemTemplate>
-                        <DataTemplate>
-                            <Border Margin="0,1"
-                                    Height="36"
-                                    HorizontalAlignment="Stretch"
-                                    CornerRadius="6"
-                                    Background="{Binding BackgroundBrush}"
-                                    Tag="{Binding}"
-                                    Cursor="Hand"
-                                    Tapped="OnEventTapped"
-                                    DoubleTapped="OnEventDoubleTapped"
-                                    PointerEntered="OnEventPointerEntered"
-                                    PointerExited="OnEventPointerExited"
-                                    PointerPressed="OnEventPointerPressed"
-                                    ContextRequested="OnEventContextRequested">
-                                <Grid Margin="0" ColumnDefinitions="Auto,12,*">
+    <!-- Grid: ScrollViewer с ItemsControl (прямое содержимое — обязательно для виртуализации VSP)
+         и поверх него подсказка «Нет записей». -->
+    <Grid>
+        <ScrollViewer x:Name="ListScroll"
+                      VerticalScrollBarVisibility="Auto"
+                      DoubleTapped="OnBackgroundDoubleTapped"
+                      ContextRequested="OnBackgroundContextRequested">
+            <ItemsControl x:Name="EventsList" Padding="4,4">
+                <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate>
+                        <VirtualizingStackPanel />
+                    </ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <Border Margin="0,1"
+                                Height="36"
+                                HorizontalAlignment="Stretch"
+                                CornerRadius="6"
+                                Background="{Binding BackgroundBrush}"
+                                Tag="{Binding}"
+                                Cursor="Hand"
+                                Tapped="OnEventTapped"
+                                DoubleTapped="OnEventDoubleTapped"
+                                PointerEntered="OnEventPointerEntered"
+                                PointerExited="OnEventPointerExited"
+                                PointerPressed="OnEventPointerPressed"
+                                ContextRequested="OnEventContextRequested">
+                            <Panel>
+                                <!-- Обычное событие -->
+                                <Grid IsVisible="{Binding IsEvent}"
+                                      Margin="0" ColumnDefinitions="Auto,12,*">
                                     <!-- Цветная полоска: отступы слева и сверху/снизу -->
                                     <Border Grid.Column="0" Width="4" CornerRadius="2"
                                             Margin="8,4,0,4"
@@ -41,19 +49,27 @@
                                                    Foreground="{StaticResource BrushSecondaryText}" />
                                     </StackPanel>
                                 </Grid>
-                            </Border>
-                        </DataTemplate>
-                    </ItemsControl.ItemTemplate>
-                </ItemsControl>
+                                <!-- Заглушка ленивой подгрузки: слева, вровень с заголовком события -->
+                                <TextBlock IsVisible="{Binding IsLoadingPlaceholder}"
+                                           Text="Загрузка…"
+                                           HorizontalAlignment="Left"
+                                           Margin="24,0,0,0"
+                                           VerticalAlignment="Center"
+                                           Foreground="{StaticResource BrushSecondaryText}" />
+                            </Panel>
+                        </Border>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+        </ScrollViewer>
 
-                <TextBlock x:Name="EmptyHint"
-                           IsVisible="False"
-                           Text="Нет записей"
-                           Foreground="{StaticResource BrushSecondaryText}"
-                           Margin="24,16"
-                           VerticalAlignment="Top" />
-            </Panel>
-        </Border>
-    </ScrollViewer>
+        <TextBlock x:Name="EmptyHint"
+                   IsVisible="False"
+                   Text="Нет записей"
+                   Foreground="{StaticResource BrushSecondaryText}"
+                   Margin="24,16"
+                   HorizontalAlignment="Left"
+                   VerticalAlignment="Top" />
+    </Grid>
 
 </UserControl>

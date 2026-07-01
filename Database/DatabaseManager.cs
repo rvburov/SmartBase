@@ -41,6 +41,11 @@ public sealed class DatabaseManager : IDisposable
         // соединении контекста, которое живёт весь сеанс работы с БД.
         TunePerformancePragmas(Context);
 
+        // Самолечение раздутого файла: остатки массовых импортов/удалений — SQLite без
+        // auto_vacuum не возвращает освобождённые страницы в ОС, файл копится в разы
+        // больше данных. Порог для данных-БД — 16 МБ свободного (см. SqliteMaintenance).
+        SqliteMaintenance.CompactIfBloated(Context, 16L * 1024 * 1024);
+
         Categories  = new CategoryRepository(Context);
         Constructor = new ConstructorRepository(Context);
 

@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 #
 # Сборка Linux-дистрибутива DataBase одной короткой командой вместо длинного
 # `dotnet publish -c Release -r linux-x64 --self-contained true -p:PublishSingleFile=true -o ...`:
