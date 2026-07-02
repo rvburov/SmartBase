@@ -72,5 +72,6 @@ $RECYCLE.BIN/
 logs/
 *.log
 
-# ===== Тестовые большие БД (генератор 10 млн, не коммитить) =====
-Tests/
+# ===== Тестовые большие БД (не коммитить только сами файлы БД) =====
+# Генератор Tests/generate_test_database.py и docs/guides/test-database.md — в репозитории.
+Tests/*.db
