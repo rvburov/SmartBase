@@ -12,19 +12,21 @@ namespace DataBase.Controls.Components;
 // закрывающееся меню — без отсрочки это вызывает мелькание.
 public static class EventContextMenu
 {
-    // Меню одиночного события: «Изменить» + «Удалить».
-    public static ContextMenu Single(Action onEdit, Action onDelete)
+    // Меню одиночного события: «Изменить» (+ «Дублировать») + «Удалить».
+    public static ContextMenu Single(Action onEdit, Action onDelete, Action? onDuplicate = null)
     {
         var menu = new ContextMenu();
         menu.Items.Add(MakeEditItem(onEdit));
+        if (onDuplicate is not null) menu.Items.Add(MakeDuplicateItem(onDuplicate));
         menu.Items.Add(MakeDeleteItem(onDelete));
         return menu;
     }
 
-    // Меню множественного выделения: одна команда «Удалить».
-    public static ContextMenu Multi(Action onDeleteAll)
+    // Меню множественного выделения: («Дублировать») + «Удалить».
+    public static ContextMenu Multi(Action onDeleteAll, Action? onDuplicateAll = null)
     {
         var menu = new ContextMenu();
+        if (onDuplicateAll is not null) menu.Items.Add(MakeDuplicateItem(onDuplicateAll));
         menu.Items.Add(MakeDeleteItem(onDeleteAll));
         return menu;
     }

@@ -60,6 +60,10 @@ internal sealed class CalendarDayVirtualList : IList<EventListItem>, IList, INot
 
     public event NotifyCollectionChangedEventHandler? CollectionChanged;
 
+    // Выделение, пережившее перезагрузку (тихое обновление после правки/дублирования): ключи
+    // записей, которые надо снова подсветить — в готовых строках и при фоновом заполнении.
+    private readonly HashSet<(int DbId, int RecId, int FieldId)>? _preselect;
+
     /// <param name="counts">Число событий дня по источникам, позиционно к <paramref name="dbs"/>.
     /// Считаются АСИНХРОННО до построения списка (см. ListView.LoadFrom): холодный COUNT по дню
     /// с миллионами событий занимает секунды и не должен блокировать UI-поток (например, старт
@@ -67,8 +71,10 @@ internal sealed class CalendarDayVirtualList : IList<EventListItem>, IList, INot
     public CalendarDayVirtualList(
         IReadOnlyList<(int dbId, ConstructorRepository repo, ISet<int>? active)> dbs,
         IReadOnlyList<int> counts,
-        DateTime dayStart, DateTime dayEnd, bool isPast)
+        DateTime dayStart, DateTime dayEnd, bool isPast,
+        HashSet<(int DbId, int RecId, int FieldId)>? preserveSelection = null)
     {
+        _preselect = preserveSelection is { Count: > 0 } ? preserveSelection : null;
         _dayStart = dayStart; _dayEnd = dayEnd; _isPast = isPast;
 
         var srcs  = new List<Src>();
@@ -94,13 +100,20 @@ internal sealed class CalendarDayVirtualList : IList<EventListItem>, IList, INot
 
     /// <summary>Search-режим: строки из ГОТОВЫХ результатов фонового поиска по дню
     /// (SearchCalendarEventsAsync; DbId у событий уже проставлен) в порядке «Расписания».</summary>
-    public CalendarDayVirtualList(List<CalendarRecord> found, bool isPast)
+    public CalendarDayVirtualList(List<CalendarRecord> found, bool isPast,
+                                  HashSet<(int DbId, int RecId, int FieldId)>? preserveSelection = null)
     {
+        _preselect = preserveSelection is { Count: > 0 } ? preserveSelection : null;
         _isPast = isPast;
         _all = found
             .OrderByDescending(e => e.AllDay)
             .ThenBy(e => e.StartDt).ThenBy(e => e.DbId).ThenBy(e => e.Id ?? 0).ThenBy(e => e.FieldId)
-            .Select(e => new EventListItem(e, isPast))
+            .Select(e =>
+            {
+                var item = new EventListItem(e, isPast);
+                ApplyPreselect(item, e);
+                return item;
+            })
             .ToList();
         _total = _all.Count;
     }
@@ -118,9 +131,63 @@ internal sealed class CalendarDayVirtualList : IList<EventListItem>, IList, INot
             var page = pager.Next(PageSize);
             if (page.Count == 0) break;
             foreach (var ev in page)
-                items.Add(new EventListItem(ev, _isPast));
+            {
+                var item = new EventListItem(ev, _isPast);
+                ApplyPreselect(item, ev);
+                items.Add(item);
+            }
         }
         return items;
+    }
+
+    /// <summary>Индекс строки записи — для прокрутки к созданной/изменённой записи или последней
+    /// копии после дублирования. InMemory/Search — точный; Offset-режим гигантского дня — только
+    /// если строка уже реализована (позиция глубокого события без запроса неизвестна — тогда
+    /// null, лента остаётся на месте).</summary>
+    public int? RowOfEvent(int dbId, int recId, int fieldId)
+    {
+        if (_all is not null)
+        {
+            var idx = _all.FindIndex(i => i.OriginalEvent is { } ev &&
+                                          ev.DbId == dbId && ev.Id == recId && ev.FieldId == fieldId);
+            return idx >= 0 ? idx : null;
+        }
+        foreach (var (page, rows) in _pages)
+            for (var s = 0; s < rows.Length; s++)
+                if (rows[s].OriginalEvent is { } ev &&
+                    ev.DbId == dbId && ev.Id == recId && ev.FieldId == fieldId)
+                    return page * PageSize + s;
+        return null;
+    }
+
+    /// <summary>Выделить строки диапазона индексов [a, b] (Ctrl+Shift+клик). Помечаются
+    /// строки из кеша страниц, включая заглушки «Загрузка…» (заполнившись, останутся
+    /// выделенными); страницы вне кеша не трогаем — их выборка означала бы чтение всего
+    /// диапазона из БД.</summary>
+    public void SelectRange(int a, int b)
+    {
+        var lo = Math.Min(a, b);
+        var hi = Math.Max(a, b);
+        if (_all is not null)
+        {
+            for (var i = Math.Max(0, lo); i <= hi && i < _all.Count; i++)
+                _all[i].IsSelected = true;
+            return;
+        }
+        foreach (var (page, rows) in _pages)
+            for (var s = 0; s < rows.Length; s++)
+            {
+                var idx = page * PageSize + s;
+                if (idx >= lo && idx <= hi) rows[s].IsSelected = true;
+            }
+    }
+
+    // Восстановить выделение записи, пережившее перезагрузку списка (см. _preselect).
+    private void ApplyPreselect(EventListItem row, CalendarRecord ev)
+    {
+        if (_preselect is not null && ev.Id is int id &&
+            _preselect.Contains((ev.DbId, id, ev.FieldId)))
+            row.IsSelected = true;
     }
 
     public int Count => _all?.Count ?? _total;
@@ -304,7 +371,10 @@ internal sealed class CalendarDayVirtualList : IList<EventListItem>, IList, INot
         if (!_pending.Remove(page)) return;
         if (!_pages.TryGetValue(page, out var rows)) return;
         for (var i = 0; i < records.Count && i < rows.Length; i++)
+        {
             rows[i].Fill(records[i], _isPast);
+            ApplyPreselect(rows[i], records[i]);
+        }
     }
 
     private void EvictOldestIfFull()

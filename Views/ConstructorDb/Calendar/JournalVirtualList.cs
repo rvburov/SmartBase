@@ -307,6 +307,49 @@ internal sealed class JournalVirtualList : IList<JournalRow>, IList, INotifyColl
         return k2 >= 0 ? d.FirstRow + 1 + b.CumStart + b.SrcCumul[si] + k2 : null;
     }
 
+    /// <summary>Индекс РЕАЛИЗОВАННОЙ строки записи по ключу (для якоря Ctrl+Shift+диапазона) —
+    /// без обращения к БД; null, если строка не в кеше страниц.</summary>
+    public int? RealizedRowOfKey(int dbId, int recId, int fieldId)
+    {
+        if (_all is not null)
+        {
+            var idx = _all.FindIndex(r => r.IsEvent && r.OriginalEvent is { } ev &&
+                                          ev.DbId == dbId && ev.Id == recId && ev.FieldId == fieldId);
+            return idx >= 0 ? idx : null;
+        }
+        foreach (var (page, rows) in _pages)
+            for (var s = 0; s < rows.Length; s++)
+                if (rows[s] is { IsEvent: true, OriginalEvent: { } ev } &&
+                    ev.DbId == dbId && ev.Id == recId && ev.FieldId == fieldId)
+                    return page * PageSize + s;
+        return null;
+    }
+
+    /// <summary>Выделить строки-события диапазона индексов [a, b] (Ctrl+Shift+клик); заголовки
+    /// и подсказки пропускаются. Помечаются строки из кеша страниц, включая заглушки
+    /// «Загрузка…» (заполнившись, останутся выделенными); страницы вне кеша не трогаем —
+    /// их выборка означала бы чтение всего диапазона из БД.</summary>
+    public void SelectRange(int a, int b)
+    {
+        var lo = Math.Min(a, b);
+        var hi = Math.Max(a, b);
+        void Mark(JournalRow r)
+        {
+            if (!r.IsHeader && !r.IsHint) r.IsSelected = true;
+        }
+        if (_all is not null)
+        {
+            for (var i = Math.Max(0, lo); i <= hi && i < _all.Count; i++) Mark(_all[i]);
+            return;
+        }
+        foreach (var (page, rows) in _pages)
+            for (var s = 0; s < rows.Length; s++)
+            {
+                var idx = page * PageSize + s;
+                if (idx >= lo && idx <= hi) Mark(rows[s]);
+            }
+    }
+
     /// <summary>День, которому принадлежит строка (для «Создать запись» по месту клика).</summary>
     public DateTime DateForRow(int row)
     {
@@ -667,10 +710,15 @@ internal sealed class JournalVirtualList : IList<JournalRow>, IList, INotifyColl
     /// удаляемая строка не реализована) — вызывающий пересоберёт список по кешу счётчиков.
     /// </summary>
     public async Task<bool> ApplyDeltaAsync(IReadOnlyList<CalendarRecord> removed,
-                                            IReadOnlyList<CalendarRecord> added)
+                                            IReadOnlyList<CalendarRecord> added,
+                                            bool selectAddedOnly = false)
     {
         if (_all is not null) return false;   // InMemory/Search: пересборка и так дешёвая
         if (removed.Count == 0 && added.Count == 0) return false;
+        // Массовые ВСТАВКИ (дублирование сотен строк): каждый затронутый день вне кеша слитых
+        // перечитывался бы отдельным запросом — быстрее мгновенная пересборка по счётчикам.
+        // Удаления не ограничиваем: они обходятся без БД (индекс реализованных строк).
+        if (added.Count > 100) return false;
         foreach (var r in removed.Concat(added))
             if (r.Id is null || _srcs.FindIndex(s => s.DbId == r.DbId) < 0) return false;
 
@@ -685,6 +733,20 @@ internal sealed class JournalVirtualList : IList<JournalRow>, IList, INotifyColl
 
         // Заливки страниц, летящие по СТАРЫМ позициям, дальше не нужны.
         ++_generation;
+
+        // Индекс реализованных строк по ключу записи — ОДИН проход по кешу страниц вместо
+        // сканирования на каждую удаляемую запись (массовое удаление сотен выделенных строк).
+        Dictionary<(int DbId, int RecId, int FieldId), int>? realizedIdx = null;
+        Dictionary<(int DbId, int RecId, int FieldId), int> RealizedIdx()
+        {
+            if (realizedIdx is not null) return realizedIdx;
+            realizedIdx = new Dictionary<(int DbId, int RecId, int FieldId), int>();
+            foreach (var (page, rows) in _pages)
+                for (var s = 0; s < rows.Length; s++)
+                    if (rows[s] is { IsEvent: true, OriginalEvent: { } ev })
+                        realizedIdx[Key(ev)] = page * PageSize + s;
+            return realizedIdx;
+        }
 
         // 1. План по каждому затронутому дню (структуры пока не трогаем — при любом отказе
         //    список остаётся целым, вызывающий уходит на пересборку).
@@ -709,7 +771,7 @@ internal sealed class JournalVirtualList : IList<JournalRow>, IList, INotifyColl
                 // перечитаются (посекундная карта правится на месте, поэтому это быстро);
                 // удаления переносятся арифметикой смещений по реализованным строкам.
                 if (deltas.Any(x => x.Delta > 0)) { dropDays.Add(day); continue; }
-                if (!CollectRemovedOffsets(d!, deltas, out var offs)) return false;
+                if (!CollectRemovedOffsets(d!, deltas, RealizedIdx(), out var offs)) return false;
                 offsetsPlan[day] = offs;
                 continue;
             }
@@ -720,7 +782,7 @@ internal sealed class JournalVirtualList : IList<JournalRow>, IList, INotifyColl
             else if (d is not null && deltas.All(x => x.Delta < 0))
             {
                 // День не в кеше слитых, только удаления — обходимся без БД.
-                if (!CollectRemovedOffsets(d, deltas, out var offs)) return false;
+                if (!CollectRemovedOffsets(d, deltas, RealizedIdx(), out var offs)) return false;
                 offsetsPlan[day] = offs;
                 continue;
             }
@@ -802,6 +864,8 @@ internal sealed class JournalVirtualList : IList<JournalRow>, IList, INotifyColl
         var moved = new Dictionary<int, JournalRow>(oldRows.Count + added.Count);
         foreach (var (day, evOffset, row) in oldRows)
         {
+            // Дублирование: выделение переходит на копии — с оригиналов снимаем.
+            if (selectAddedOnly && row.IsSelected) row.IsSelected = false;
             if (dropDays.Contains(day)) continue;
             var nd = FindDay(day);
             if (nd is null || nd.EmptyToday) continue;
@@ -872,31 +936,20 @@ internal sealed class JournalVirtualList : IList<JournalRow>, IList, INotifyColl
         return true;
     }
 
-    // Смещения удаляемых событий внутри дня — по реализованным строкам (удаляемые строки
+    // Смещения удаляемых событий внутри дня — по индексу реализованных строк (удаляемые строки
     // пользователь видел/выделял, поэтому они в кеше страниц; иначе позиции без БД не узнать).
-    private bool CollectRemovedOffsets(DayEntry d, List<(CalendarRecord Rec, int Delta)> deltas,
-                                       out List<int> offsets)
+    private static bool CollectRemovedOffsets(DayEntry d, List<(CalendarRecord Rec, int Delta)> deltas,
+                                              Dictionary<(int DbId, int RecId, int FieldId), int> realized,
+                                              out List<int> offsets)
     {
         offsets = new List<int>();
         foreach (var (rec, _) in deltas)
         {
-            var idx = FindRealizedRowIndex(rec);
-            if (idx is null) return false;
-            offsets.Add(idx.Value - d.FirstRow - 1);
+            if (!realized.TryGetValue(Key(rec), out var idx)) return false;
+            offsets.Add(idx - d.FirstRow - 1);
         }
         offsets.Sort();
         return true;
-    }
-
-    // Глобальный индекс реализованной строки записи (по ключу БД/запись/поле).
-    private int? FindRealizedRowIndex(CalendarRecord rec)
-    {
-        var key = Key(rec);
-        foreach (var (page, rows) in _pages)
-            for (var s = 0; s < rows.Length; s++)
-                if (rows[s] is { IsEvent: true, OriginalEvent: { } ev } && Key(ev) == key)
-                    return page * PageSize + s;
-        return null;
     }
 
     // Кладёт/обновляет слитый день в LRU-кеше.

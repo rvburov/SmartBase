@@ -3,6 +3,7 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Media;
 using Avalonia.Interactivity;
+using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using DataBase.Core.Models;
 using DataBase.Database.Repositories;
@@ -15,7 +16,13 @@ public partial class ListView : UserControl
     public event EventHandler<CalendarRecord>?    RecordClicked;
     public event EventHandler<CalendarRecord>?    RecordDeleteRequested;
     public event EventHandler<IReadOnlyList<CalendarRecord>>? RecordsDeleteRequested;
+    public event EventHandler<IReadOnlyList<CalendarRecord>>? RecordsDuplicateRequested;
     public event EventHandler<DateTime>? CreateRequested;
+
+    // Геометрия строки (Border Height=36 + Margin 0,1 → 38) и Padding списка сверху —
+    // позиция строки по индексу считается без обхода визуального дерева (как в «Журнале»).
+    private const double RowHeight = 38.0;
+    private const double PadTop    = 4.0;
 
     // Полная виртуализация: список знает ПОЛНОЕ число событий дня (полоса прокрутки на весь объём,
     // можно перетащить в самый низ), а страницы грузятся по требованию (см. CalendarDayVirtualList).
@@ -44,7 +51,8 @@ public partial class ListView : UserControl
                 if (ke.Source is TextBox or AutoCompleteBox) return;
                 var selected = SelectedRecords();
                 if (selected.Count == 0) return;
-                DeselectAll();
+                // Выделение НЕ снимаем: пока открыт диалог подтверждения, видно, ЧТО удаляется
+                // (после удаления строки исчезнут, после «Отмена» — останутся подсвеченными).
                 if (selected.Count == 1) RecordDeleteRequested?.Invoke(this, selected[0]);
                 else                     RecordsDeleteRequested?.Invoke(this, selected);
                 ke.Handled = true;
@@ -91,8 +99,31 @@ public partial class ListView : UserControl
             ? new List<CalendarRecord>()
             : _list.RealizedItems.Where(i => i.IsEvent && i.IsSelected).Select(i => i.OriginalEvent!).ToList();
 
+    // Якорь диапазона — последняя выделенная кликом запись: Ctrl+Shift+клик выделяет все
+    // строки между якорем и кликнутой (включительно).
+    private (int DbId, int RecId, int FieldId)? _rangeAnchor;
+
+    private void SetRangeAnchor(CalendarRecord? ev)
+    {
+        if (ev is { Id: int id }) _rangeAnchor = (ev.DbId, id, ev.FieldId);
+    }
+
+    // Ctrl+Shift+клик: выделить диапазон от якоря до кликнутой строки. true — диапазон применён.
+    private bool TrySelectRange(KeyModifiers modifiers, CalendarRecord? clicked)
+    {
+        if (!modifiers.HasFlag(KeyModifiers.Shift) || !modifiers.HasFlag(KeyModifiers.Control))
+            return false;
+        if (_rangeAnchor is not { } a || clicked is not { Id: int cid }) return false;
+        if (_list?.RowOfEvent(a.DbId, a.RecId, a.FieldId) is not int ai) return false;
+        if (_list?.RowOfEvent(clicked.DbId, cid, clicked.FieldId) is not int bi) return false;
+        _list!.SelectRange(ai, bi);
+        return true;
+    }
+
     // Поколение загрузки дня: быстрое переключение дат/поиска отменяет устаревший результат.
     private int _loadGeneration;
+    private DateTime? _lastDay;
+    private string    _lastSearch = "";
 
     /// <summary>
     /// Открывает день в «Расписании» через полную виртуализацию: события дня из
@@ -102,26 +133,63 @@ public partial class ListView : UserControl
     /// Подсчёт числа событий (размер полосы) идёт В ФОНЕ на изолированных подключениях: холодный
     /// COUNT по дню с миллионами событий занимает секунды и не должен блокировать UI-поток
     /// (иначе старт приложения выглядел зависшим на «Запуске интерфейса…»).
+    ///
+    /// Первый показ / другой день / смена поиска — «свежая» загрузка с прокруткой наверх. Иначе —
+    /// ТИХОЕ обновление (правка/дублирование/смена коллекций), как в «Журнале»: старый список
+    /// остаётся на экране, пока строится новый, позиция сохраняется, выделение переживает
+    /// перезагрузку; к <paramref name="anchorRecord"/> (созданная/изменённая запись или последняя
+    /// копия) лента едет по центру, только если её строка сейчас не видна;
+    /// <paramref name="selectRecords"/> (копии после дублирования) ЗАМЕНЯЮТ старое выделение.
     /// </summary>
     public void LoadFrom(IReadOnlyList<(int dbId, ConstructorRepository repo, ISet<int>? active)> dbs,
-                         DateTime dayStart, DateTime dayEnd, DateTime currentDate, string search)
+                         DateTime dayStart, DateTime dayEnd, DateTime currentDate, string search,
+                         CalendarRecord? anchorRecord = null,
+                         IReadOnlyList<CalendarRecord>? selectRecords = null)
     {
         _currentDate = currentDate;
         var isPast = currentDate.Date < DateTime.Today;
         var gen    = ++_loadGeneration;
+        search ??= "";
 
-        _list = null;
-        EventsList.ItemsSource = null;
-        EmptyHint.Text      = "Загрузка…";
-        EmptyHint.IsVisible = true;
+        var fresh = _list is null || _lastDay != dayStart ||
+                    !string.Equals(search, _lastSearch, StringComparison.Ordinal);
+        _lastDay = dayStart; _lastSearch = search;
+        var oldOffset = ListScroll.Offset.Y;
+
+        // Выделение переживает перезагрузку: ключи выделенных записей восстанавливаются на
+        // строках нового списка (пользователь видит, какую запись менял).
+        var preserveSelection = fresh ? null : _list?.RealizedItems
+            .Where(i => i.IsEvent && i.IsSelected && i.OriginalEvent is { Id: not null })
+            .Select(i => (i.OriginalEvent!.DbId, i.OriginalEvent!.Id!.Value, i.OriginalEvent!.FieldId))
+            .ToHashSet();
+        if (!fresh && anchorRecord is { Id: int anchorId })
+            (preserveSelection ??= new HashSet<(int, int, int)>())
+                .Add((anchorRecord.DbId, anchorId, anchorRecord.FieldId));
+        // Дублирование: выделение ПЕРЕХОДИТ с оригиналов на копии.
+        if (selectRecords is not null)
+            preserveSelection = selectRecords
+                .Where(r => r.Id is not null)
+                .Select(r => (r.DbId, r.Id!.Value, r.FieldId))
+                .ToHashSet();
+
+        if (fresh)
+        {
+            _list = null;
+            EventsList.ItemsSource = null;
+            EmptyHint.Text      = "Загрузка…";
+            EmptyHint.IsVisible = true;
+        }
         // Порядок источников фиксируем по DbId — он же порядок конкатенации в виртуальном списке.
         _ = LoadCountsThenBuildAsync(gen, dbs.OrderBy(d => d.dbId).ToList(),
-                                     dayStart, dayEnd, search ?? "", isPast);
+                                     dayStart, dayEnd, search, isPast,
+                                     fresh, anchorRecord, oldOffset, preserveSelection);
     }
 
     private async Task LoadCountsThenBuildAsync(
         int gen, List<(int dbId, ConstructorRepository repo, ISet<int>? active)> dbs,
-        DateTime dayStart, DateTime dayEnd, string search, bool isPast)
+        DateTime dayStart, DateTime dayEnd, string search, bool isPast,
+        bool fresh, CalendarRecord? anchorRecord, double oldOffset,
+        HashSet<(int DbId, int RecId, int FieldId)>? preserveSelection)
     {
         CalendarDayVirtualList list;
         try
@@ -138,7 +206,7 @@ public partial class ListView : UserControl
                     found.AddRange(part);
                 }
                 if (gen != _loadGeneration) return;
-                list = new CalendarDayVirtualList(found, isPast);
+                list = new CalendarDayVirtualList(found, isPast, preserveSelection);
             }
             else
             {
@@ -147,7 +215,7 @@ public partial class ListView : UserControl
                     counts[i] = await dbs[i].repo.CountCalendarDayEventsAsync(dayStart, dayEnd, dbs[i].active);
                 if (gen != _loadGeneration) return;   // пока считали — открыли другой день/поиск
                 // Построение списка (для обычных дней — синхронная загрузка в память) — на UI-потоке.
-                list = new CalendarDayVirtualList(dbs, counts, dayStart, dayEnd, isPast);
+                list = new CalendarDayVirtualList(dbs, counts, dayStart, dayEnd, isPast, preserveSelection);
             }
         }
         catch
@@ -159,9 +227,48 @@ public partial class ListView : UserControl
         if (gen != _loadGeneration) return;
         _list = list;
         EventsList.ItemsSource = list;
-        ListScroll.Offset   = new Vector(0, 0);
         EmptyHint.Text      = "Нет записей";
         EmptyHint.IsVisible = list.Count == 0;
+        ApplyPosition(gen, list, fresh, anchorRecord, oldOffset);
+    }
+
+    // Позиция после подмены списка (после отрисовки — нужен Extent): свежая загрузка — наверх;
+    // тихое обновление — остаёмся на месте, а к созданной/изменённой записи или последней копии
+    // едем (плавно, по центру окна), только если её строка сейчас не видна. В Offset-режиме
+    // гигантского дня позиция нереализованной строки без запроса неизвестна — остаёмся на месте.
+    private void ApplyPosition(int gen, CalendarDayVirtualList list, bool fresh,
+                               CalendarRecord? anchorRecord, double oldOffset)
+    {
+        Dispatcher.UIThread.Post(() =>
+        {
+            if (gen != _loadGeneration) return;
+            if (fresh) { ListScroll.Offset = new Vector(0, 0); return; }
+
+            ListScroll.Offset = new Vector(0, oldOffset);   // по умолчанию остаёмся на месте
+            if (anchorRecord is not { Id: int rid }) return;
+            if (list.RowOfEvent(anchorRecord.DbId, rid, anchorRecord.FieldId) is not int r) return;
+
+            // Уже полностью видна — ленту не дёргаем; иначе центрируем строку записи.
+            var y  = PadTop + r * RowHeight;
+            var vh = ListScroll.Viewport.Height;
+            if (y >= ListScroll.Offset.Y && y + RowHeight <= ListScroll.Offset.Y + vh) return;
+            AnimateScroll(Math.Max(0, y - vh / 2 + RowHeight / 2));
+        }, DispatcherPriority.Background);
+    }
+
+    private void AnimateScroll(double targetY)
+    {
+        var startY    = ListScroll.Offset.Y;
+        var startTime = DateTime.Now;
+        var timer     = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(16) };
+        timer.Tick += (_, _) =>
+        {
+            var t     = Math.Min((DateTime.Now - startTime).TotalMilliseconds / 300.0, 1.0);
+            var eased = 1 - Math.Pow(1 - t, 3);
+            ListScroll.Offset = new Vector(0, startY + (targetY - startY) * eased);
+            if (t >= 1.0) timer.Stop();
+        };
+        timer.Start();
     }
 
     private void OnEventPointerEntered(object? sender, PointerEventArgs e)
@@ -180,12 +287,19 @@ public partial class ListView : UserControl
     {
         if (sender is Border { Tag: EventListItem { IsEvent: true } item })
         {
+            // Ctrl+Shift+клик — диапазон от якоря до кликнутой строки.
+            if (TrySelectRange(e.KeyModifiers, item.OriginalEvent))
+            {
+                e.Handled = true;
+                return;
+            }
             var additive = e.KeyModifiers.HasFlag(KeyModifiers.Shift);
             if (additive)
             {
                 // toggle: повторный Shift+клик по выделенному — снять
                 item.IsHovered  = false;
                 item.IsSelected = !item.IsSelected;
+                if (item.IsSelected) SetRangeAnchor(item.OriginalEvent);
             }
             else
             {
@@ -193,6 +307,7 @@ public partial class ListView : UserControl
                 foreach (var i in _list?.RealizedItems ?? [])
                     i.IsHovered = false;
                 item.IsSelected = true;
+                SetRangeAnchor(item.OriginalEvent);
             }
             e.Handled = true;
         }
@@ -210,6 +325,7 @@ public partial class ListView : UserControl
             foreach (var i in _list?.RealizedItems ?? [])
                 i.IsHovered = false;
             item.IsSelected = true;
+            SetRangeAnchor(item.OriginalEvent);
         }
     }
 
@@ -221,14 +337,20 @@ public partial class ListView : UserControl
         ContextMenu menu;
         if (selected.Count > 1 && item.IsSelected)
         {
+            // Выделение НЕ снимаем: во время диалога подтверждения видно, ЧТО удаляется/дублируется.
             menu = DataBase.Controls.Components.EventContextMenu.Multi(
-                () => { DeselectAll(); RecordsDeleteRequested?.Invoke(this, selected); });
+                () => RecordsDeleteRequested?.Invoke(this, selected),
+                onDuplicateAll: () => RecordsDuplicateRequested?.Invoke(this, selected));
         }
         else
         {
+            // «Редактировать»/«Дублировать»/«Удалить» выделение НЕ снимают: после сохранения/
+            // отмены запись остаётся подсвеченной — видно, какую строку меняли/удаляли
+            // (выделение переживает и перезагрузку — см. preserveSelection в LoadFrom).
             menu = DataBase.Controls.Components.EventContextMenu.Single(
-                onEdit:   () => { DeselectAll(); RecordClicked?.Invoke(this, item.OriginalEvent!); },
-                onDelete: () => { DeselectAll(); RecordDeleteRequested?.Invoke(this, item.OriginalEvent!); });
+                onEdit:      () => RecordClicked?.Invoke(this, item.OriginalEvent!),
+                onDelete:    () => RecordDeleteRequested?.Invoke(this, item.OriginalEvent!),
+                onDuplicate: () => RecordsDuplicateRequested?.Invoke(this, [item.OriginalEvent!]));
         }
         menu.Open(border);
         e.Handled = true;
@@ -250,6 +372,15 @@ public partial class ListView : UserControl
         if (sender is Border { Tag: EventListItem { IsEvent: true } item })
         {
             e.Handled = true;
+            // Двойной клик тоже ВЫДЕЛЯЕТ запись (глобальный сброс по второму клику снял
+            // выделение первого): после «Сохранить»/«Отмена» видно, какую запись меняли.
+            foreach (var i in _list?.RealizedItems ?? [])
+            {
+                i.IsSelected = false;
+                i.IsHovered  = false;
+            }
+            item.IsSelected = true;
+            SetRangeAnchor(item.OriginalEvent);
             RecordClicked?.Invoke(this, item.OriginalEvent!);
         }
     }

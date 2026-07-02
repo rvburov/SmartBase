@@ -1,5 +1,6 @@
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Threading;
 using DataBase.Controls.Dialogs;
 using DataBase.Core.Models;
 using DataBase.Database;
@@ -21,15 +22,17 @@ public partial class CalendarControllerView : UserControl
     // Активные коллекции по БД (DbId → набор id). null до первого SetActiveIds.
     private Dictionary<int, HashSet<int>>? _activeByDb;
     private string _searchQuery = "";
-    // Созданная/изменённая запись: Журнал после обновления остаётся на месте, а к САМОЙ записи
-    // (с центрированием) едет, только если её строка сейчас не видна. Одноразовая — сбрасывается
-    // в RefreshCurrent.
+    // Созданная/изменённая запись (или последняя копия после дублирования): Журнал и Расписание
+    // после обновления остаются на месте, а к САМОЙ записи (с центрированием) едут, только если
+    // её строка сейчас не видна. Одноразовая — сбрасывается в RefreshCurrent.
     private CalendarRecord? _journalAnchor;
     // Точечное изменение для Журнала (запись, −1/+1): лента правится НА МЕСТЕ (страницы и кеши
     // дней сохраняются — правка видна в том же кадре) либо мгновенно пересобирается по кешу
     // счётчиков, без полного пересчёта по всем БД (секунды на больших базах, в течение которых
     // была бы видна устаревшая запись). Одноразовое — сбрасывается в RefreshCurrent.
     private List<(CalendarRecord Rec, int Delta)>? _journalDelta;
+    // Дублирование (Журнал/Расписание): выделение ПЕРЕХОДИТ с оригиналов на копии. Одноразовый флаг.
+    private bool _journalSelectAddedOnly;
 
     // Репозиторий БД по умолчанию (новые события, сидинг) и маршрутизация по записи.
     private ConstructorRepository DefaultRepo => _dbs[0].Repo;
@@ -99,10 +102,12 @@ public partial class CalendarControllerView : UserControl
         // Удаление ОДНОЙ записи идёт через то же подтверждение, что и удаление нескольких.
         ListViewCtrl.RecordDeleteRequested  += (_, r) => _ = DeleteRecordsWithConfirm([r]);
         ListViewCtrl.RecordsDeleteRequested += (_, rs) => _ = DeleteRecordsWithConfirm(rs);
+        ListViewCtrl.RecordsDuplicateRequested += (_, rs) => _ = DuplicateRecordsWithConfirm(rs);
         JournalViewCtrl.RecordClicked          += (_, r) => _ = OpenEditDialog(r);
         JournalViewCtrl.CreateRequested        += (_, d) => _ = OpenAddDialog(d);
         JournalViewCtrl.RecordDeleteRequested  += (_, r) => _ = DeleteRecordsWithConfirm([r]);
         JournalViewCtrl.RecordsDeleteRequested += (_, rs) => _ = DeleteRecordsWithConfirm(rs);
+        JournalViewCtrl.RecordsDuplicateRequested += (_, rs) => _ = DuplicateRecordsWithConfirm(rs);
         MonthViewCtrl.RecordClicked          += (_, r) => _ = OpenEditDialog(r);
         MonthViewCtrl.RecordMoved            += (_, r) => { RepoOf(r).UpdateCalendarRecord(r); CollectionsMayHaveChanged?.Invoke(this, EventArgs.Empty); RefreshCurrent(); };
         MonthViewCtrl.RecordDeleteRequested    += (_, r) => _ = DeleteRecordsWithConfirm([r]);
@@ -196,6 +201,7 @@ public partial class CalendarControllerView : UserControl
         // активен другой вид), чтобы устаревшая дельта не применилась к ленте позже.
         var anchor = _journalAnchor; _journalAnchor = null;
         var delta  = _journalDelta;  _journalDelta  = null;
+        var selectAdded = _journalSelectAddedOnly; _journalSelectAddedOnly = false;
 
         // Расписание и Журнал — полная виртуализация: событий в окне могут быть миллионы, поэтому
         // список знает лишь их ЧИСЛО (полоса прокрутки на весь объём), а страницы тянет по
@@ -208,9 +214,16 @@ public partial class CalendarControllerView : UserControl
                  (ISet<int>?)(_activeByDb is not null && _activeByDb.TryGetValue(d.DbId, out var s) ? s : null)))
                 .ToList();
             if (_currentViewIndex == 0)
-                ListViewCtrl.LoadFrom(sources, startDt, endDt, _currentDate, _searchQuery);
+            {
+                // Копии после дублирования: выделение переходит на них (см. LoadFrom Расписания).
+                var selectRecs = selectAdded && delta is not null
+                    ? delta.Where(t => t.Delta > 0).Select(t => t.Rec).ToList()
+                    : null;
+                ListViewCtrl.LoadFrom(sources, startDt, endDt, _currentDate, _searchQuery,
+                                      anchor, selectRecs);
+            }
             else
-                JournalViewCtrl.LoadFrom(sources, _searchQuery, anchor, delta);   // вся история, без окна дат
+                JournalViewCtrl.LoadFrom(sources, _searchQuery, anchor, delta, selectAdded);   // вся история, без окна дат
             return;
         }
 
@@ -375,20 +388,62 @@ public partial class CalendarControllerView : UserControl
 
     private void DuplicateCalendarRecord(CalendarRecord r)
     {
-        var copy = new CalendarRecord
-        {
-            DbId         = r.DbId,
-            CollectionId = r.CollectionId,
-            FieldId      = r.FieldId,   // дубль кладём в то же поле-дату, что и оригинал
-            Title        = r.Title,
-            Description  = r.Description,
-            StartDt      = r.StartDt,
-            EndDt        = r.EndDt,
-            AllDay       = r.AllDay,
-            Color        = r.Color,
-        };
-        RepoOf(r).AddCalendarRecord(copy);
+        RepoOf(r).AddCalendarRecord(CopyOf(r));
         CollectionsMayHaveChanged?.Invoke(this, EventArgs.Empty);
+        RefreshCurrent();
+    }
+
+    private static CalendarRecord CopyOf(CalendarRecord r) => new()
+    {
+        DbId         = r.DbId,
+        CollectionId = r.CollectionId,
+        FieldId      = r.FieldId,   // дубль кладём в то же поле-дату, что и оригинал
+        Title        = r.Title,
+        Description  = r.Description,
+        StartDt      = r.StartDt,
+        EndDt        = r.EndDt,
+        AllDay       = r.AllDay,
+        Color        = r.Color,
+    };
+
+    // Дублирование из Журнала/Расписания — с подтверждением, как удаление. Копии встают в ленту
+    // по порядку времени (тот же ключ сортировки, тай-брейк по новому Id — сразу после оригинала),
+    // выделение ПЕРЕХОДИТ с оригиналов на копии, а лента едет к последней по дате/времени
+    // копии, только если её строка сейчас не видна.
+    private async Task DuplicateRecordsWithConfirm(IReadOnlyList<CalendarRecord> records)
+    {
+        if (VisualRoot is not Avalonia.Controls.Window win) return;
+        var targets = records.Where(r => r.Id.HasValue).ToList();
+        if (targets.Count == 0) return;
+
+        var dlg = new ConfirmDialog($"Вы дублируете {targets.Count} {RecordsPlural(targets.Count)}. Подтвердить?",
+                                    confirmText: "Дублировать");
+        if (await dlg.ShowDialog<bool>(win) != true) return;
+
+        // Немного записей — прежний мгновенный путь (AddCalendarRecord по одной). Много —
+        // bulk-вставки одной транзакцией в фоне с окном прогресса (как массовое удаление):
+        // цикл с двумя SaveChanges и MAX(Position) на КАЖДУЮ запись вешал UI на сотнях/тысячах.
+        List<CalendarRecord> copies;
+        if (targets.Count <= SmallOpCap)
+        {
+            copies = new List<CalendarRecord>(targets.Count);
+            foreach (var r in targets)
+            {
+                var copy = CopyOf(r);
+                RepoOf(r).AddCalendarRecord(copy);   // проставляет Id/FieldId — ключ строки копии
+                copies.Add(copy);
+            }
+        }
+        else
+            copies = await BulkDuplicateWithProgress(win, targets);
+
+        CollectionsMayHaveChanged?.Invoke(this, EventArgs.Empty);
+        if (copies.Count > 0)
+        {
+            _journalAnchor = copies.OrderBy(c => c.StartDt).ThenBy(c => c.Id ?? 0).Last();
+            _journalDelta  = copies.Select(c => (c, +1)).ToList();
+            _journalSelectAddedOnly = true;
+        }
         RefreshCurrent();
     }
 
@@ -401,11 +456,111 @@ public partial class CalendarControllerView : UserControl
         var dlg = new ConfirmDialog($"Вы удаляете {targets.Count} {RecordsPlural(targets.Count)}. Подтвердить?");
         if (await dlg.ShowDialog<bool>(win) != true) return;
 
-        // Каждую запись удаляем в её БД.
-        foreach (var r in targets) RepoOf(r).DeleteCalendarRecord(r.Id!.Value);
+        // Немного записей — прежний мгновенный путь (каждую в её БД). Много — bulk-SQL в фоне
+        // на изолированных подключениях с окном прогресса (как удаление коллекции в сайдбаре):
+        // цикл DeleteCalendarRecord с SaveChanges на КАЖДУЮ запись вешал UI на сотнях/тысячах.
+        if (targets.Count <= SmallOpCap)
+            foreach (var r in targets) RepoOf(r).DeleteCalendarRecord(r.Id!.Value);
+        else
+            await BulkDeleteWithProgress(win, targets);
+
         CollectionsMayHaveChanged?.Invoke(this, EventArgs.Empty);
         _journalDelta = targets.Select(r => (r, -1)).ToList();
         RefreshCurrent();
+    }
+
+    // Порог «мелкой» операции: до этого числа записи удаляются/дублируются мгновенно без окна.
+    private const int SmallOpCap = 100;
+
+    // Массовое удаление: по каждой БД — DeleteRecordsIsolated (bulk-SQL пакетами, мимо EF;
+    // значения и calendar_index уходят каскадом по FK) в фоне с окном прогресса.
+    private Task BulkDeleteWithProgress(Avalonia.Controls.Window win, List<CalendarRecord> targets) =>
+        RunCalendarBulk(win, "Удаление", "Удаление записей…", targets.Count, report =>
+        {
+            long done = 0;
+            foreach (var g in targets.GroupBy(r => r.DbId))
+            {
+                var repo = RepoOf(g.First());
+                var ids  = g.Select(r => r.Id!.Value).ToList();
+                var baseDone = done;
+                repo.DeleteRecordsIsolated(ids, new IntProgress(v => report(baseDone + v)));
+                done += ids.Count;
+            }
+            report(targets.Count);
+        });
+
+    // Массовое дублирование: по каждой БД — DuplicateCalendarRecordsIsolated (одна транзакция,
+    // батчевые вставки шапки/поля-даты/индекса) в фоне с окном прогресса. Возвращает копии
+    // (для выделения, дельты Журнала и якоря прокрутки).
+    private async Task<List<CalendarRecord>> BulkDuplicateWithProgress(
+        Avalonia.Controls.Window win, List<CalendarRecord> targets)
+    {
+        var copies = new List<CalendarRecord>();   // наполняется в фоне, читается после await
+        await RunCalendarBulk(win, "Дублирование", "Дублирование записей…", targets.Count, report =>
+        {
+            long done = 0;
+            foreach (var g in targets.GroupBy(r => r.DbId))
+            {
+                var repo = RepoOf(g.First());
+                var baseDone = done;
+                var part = repo.DuplicateCalendarRecordsIsolated(
+                    g.ToList(), new IntProgress(v => report(baseDone + v)));
+                copies.AddRange(part);
+                done += g.Count();
+            }
+            report(targets.Count);
+        });
+        return copies;
+    }
+
+    // Общий помощник массовых операций календаря: bulk-работа в фоне; окно прогресса
+    // (заголовок, фаза, «Количество записей: N», проценты — как удаление коллекции в сайдбаре)
+    // появляется, только если операция не уложилась в задержку; средние объёмы проходят без
+    // окна. В конце — «Сохранение…» (коммит транзакции). report зовётся из фона — маршалим сами.
+    private async Task RunCalendarBulk(Avalonia.Controls.Window win, string title, string phase,
+                                       int total, Action<Action<long>> work)
+    {
+        ProgressDialog? dlg = null;
+        var lastPct = -1;
+
+        void Update(long done)
+        {
+            if (dlg is null) return;
+            var pct = (int)Math.Min(100, done * 100L / total);
+            if (pct == lastPct) return;
+            lastPct = pct;
+            if (pct >= 100) dlg.SetSaving("Сохранение…");
+            else dlg.SetProgress(pct / 100.0, phase);
+        }
+
+        var bg = Task.Run(() =>
+        {
+            try
+            {
+                work(done => Dispatcher.UIThread.Post(() => Update(done)));
+            }
+            catch
+            {
+                // Фон: ошибку не валим в UI — фактическое состояние покажет обновление ленты.
+            }
+        });
+
+        // Успело быстро — окна не показываем вовсе.
+        if (await Task.WhenAny(bg, Task.Delay(400)) == bg) { await bg; return; }
+
+        dlg = new ProgressDialog { Title = title };
+        dlg.SetInfo($"Количество записей: {total}");
+        dlg.SetProgress(0, phase);
+        var closed = dlg.ShowDialog(win);
+        await bg;
+        dlg.Done();
+        await closed;
+    }
+
+    // Адаптер IProgress<int> для прогресса с фонового потока (передаётся в *Isolated-методы).
+    private sealed class IntProgress(Action<int> report) : IProgress<int>
+    {
+        public void Report(int value) => report(value);
     }
 
     // Русское склонование: 1 запись, 2–4 записи, 5+ записей (с учётом 11–14).

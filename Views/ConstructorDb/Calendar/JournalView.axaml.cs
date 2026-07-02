@@ -15,6 +15,7 @@ public partial class JournalView : UserControl
     public event EventHandler<CalendarRecord>?    RecordClicked;
     public event EventHandler<CalendarRecord>?    RecordDeleteRequested;
     public event EventHandler<IReadOnlyList<CalendarRecord>>? RecordsDeleteRequested;
+    public event EventHandler<IReadOnlyList<CalendarRecord>>? RecordsDuplicateRequested;
     public event EventHandler<DateTime>? CreateRequested;
 
     // Геометрия строки (Border Height=36 + Margin 0,1 → 38) и Padding списка сверху —
@@ -104,6 +105,27 @@ public partial class JournalView : UserControl
             ? new List<CalendarRecord>()
             : _list.RealizedItems.Where(i => i.IsEvent && i.IsSelected).Select(i => i.OriginalEvent!).ToList();
 
+    // Якорь диапазона — последняя выделенная кликом запись: Ctrl+Shift+клик выделяет все
+    // строки-события между якорем и кликнутой (включительно), заголовки дней пропускаются.
+    private (int DbId, int RecId, int FieldId)? _rangeAnchor;
+
+    private void SetRangeAnchor(CalendarRecord? ev)
+    {
+        if (ev is { Id: int id }) _rangeAnchor = (ev.DbId, id, ev.FieldId);
+    }
+
+    // Ctrl+Shift+клик: выделить диапазон от якоря до кликнутой строки. true — диапазон применён.
+    private bool TrySelectRange(KeyModifiers modifiers, CalendarRecord? clicked)
+    {
+        if (!modifiers.HasFlag(KeyModifiers.Shift) || !modifiers.HasFlag(KeyModifiers.Control))
+            return false;
+        if (_rangeAnchor is not { } a || clicked is not { Id: int cid }) return false;
+        if (_list?.RealizedRowOfKey(a.DbId, a.RecId, a.FieldId) is not int ai) return false;
+        if (_list?.RealizedRowOfKey(clicked.DbId, cid, clicked.FieldId) is not int bi) return false;
+        _list!.SelectRange(ai, bi);
+        return true;
+    }
+
     private string _lastSearch = "";
 
     /// <summary>
@@ -126,7 +148,8 @@ public partial class JournalView : UserControl
 
     public void LoadFrom(IReadOnlyList<(int dbId, ConstructorRepository repo, ISet<int>? active)> dbs,
                          string search, CalendarRecord? anchorRecord = null,
-                         IReadOnlyList<(CalendarRecord Rec, int Delta)>? delta = null)
+                         IReadOnlyList<(CalendarRecord Rec, int Delta)>? delta = null,
+                         bool selectAddedOnly = false)
     {
         var gen = ++_loadGeneration;
         search ??= "";
@@ -150,6 +173,13 @@ public partial class JournalView : UserControl
             (preserveSelection ??= new HashSet<(int, int, int)>())
                 .Add((anchorRecord.DbId, anchorId, anchorRecord.FieldId));
 
+        // Дублирование: выделение ПЕРЕХОДИТ с оригиналов на копии (только добавленные записи).
+        if (selectAddedOnly && delta is not null)
+            preserveSelection = delta
+                .Where(t => t.Delta > 0 && t.Rec.Id is not null)
+                .Select(t => (t.Rec.DbId, t.Rec.Id!.Value, t.Rec.FieldId))
+                .ToHashSet();
+
         // МГНОВЕННЫЙ путь: правка/создание/удаление записи. Полный пересчёт (GROUP BY по всем БД)
         // на больших базах занимает секунды, в течение которых лента показывала бы УСТАРЕВШУЮ
         // запись (её можно было снова открыть и править). Вместо этого корректируем кешированные
@@ -168,7 +198,8 @@ public partial class JournalView : UserControl
             }
             if (_countsCache is not null)
             {
-                _ = ApplyDeltaOrRebuildAsync(gen, sorted, delta, preserveSelection, anchorRecord, oldOffset);
+                _ = ApplyDeltaOrRebuildAsync(gen, sorted, delta, preserveSelection,
+                                             anchorRecord, oldOffset, selectAddedOnly);
                 return;
             }
         }
@@ -192,7 +223,7 @@ public partial class JournalView : UserControl
         int gen, List<(int dbId, ConstructorRepository repo, ISet<int>? active)> dbs,
         IReadOnlyList<(CalendarRecord Rec, int Delta)> delta,
         HashSet<(int DbId, int RecId, int FieldId)>? preserveSelection,
-        CalendarRecord? anchorRecord, double oldOffset)
+        CalendarRecord? anchorRecord, double oldOffset, bool selectAddedOnly = false)
     {
         var removed = delta.Where(t => t.Delta < 0).Select(t => t.Rec).ToList();
         var added   = delta.Where(t => t.Delta > 0).Select(t => t.Rec).ToList();
@@ -200,7 +231,7 @@ public partial class JournalView : UserControl
         if (_list is { } cur)
         {
             bool mutated;
-            try { mutated = await cur.ApplyDeltaAsync(removed, added); }
+            try { mutated = await cur.ApplyDeltaAsync(removed, added, selectAddedOnly); }
             catch { mutated = false; }
             if (gen != _loadGeneration) return;
             if (mutated)
@@ -333,12 +364,19 @@ public partial class JournalView : UserControl
     {
         if (sender is Border { Tag: JournalRow { IsEvent: true } item })
         {
+            // Ctrl+Shift+клик — диапазон от якоря до кликнутой строки.
+            if (TrySelectRange(e.KeyModifiers, item.OriginalEvent))
+            {
+                e.Handled = true;
+                return;
+            }
             var additive = e.KeyModifiers.HasFlag(KeyModifiers.Shift);
             if (additive)
             {
                 // toggle: повторный Shift+клик по выделенному — снять
                 item.IsHovered  = false;
                 item.IsSelected = !item.IsSelected;
+                if (item.IsSelected) SetRangeAnchor(item.OriginalEvent);
             }
             else
             {
@@ -348,6 +386,7 @@ public partial class JournalView : UserControl
                     i.IsHovered  = false;
                 }
                 item.IsSelected = true;
+                SetRangeAnchor(item.OriginalEvent);
             }
             e.Handled = true;
         }
@@ -366,6 +405,7 @@ public partial class JournalView : UserControl
                 i.IsHovered  = false;
             }
             item.IsSelected = true;
+            SetRangeAnchor(item.OriginalEvent);
         }
     }
 
@@ -377,18 +417,20 @@ public partial class JournalView : UserControl
         ContextMenu menu;
         if (selected.Count > 1 && item.IsSelected)
         {
-            // Выделение НЕ снимаем: во время диалога подтверждения видно, ЧТО удаляется.
+            // Выделение НЕ снимаем: во время диалога подтверждения видно, ЧТО удаляется/дублируется.
             menu = DataBase.Controls.Components.EventContextMenu.Multi(
-                () => RecordsDeleteRequested?.Invoke(this, selected));
+                () => RecordsDeleteRequested?.Invoke(this, selected),
+                onDuplicateAll: () => RecordsDuplicateRequested?.Invoke(this, selected));
         }
         else
         {
-            // «Редактировать» и «Удалить» выделение НЕ снимают: после сохранения/отмены запись
-            // остаётся подсвеченной — видно, какую строку меняли/удаляли (выделение переживает
-            // и пересборку — см. preserveSelection в LoadFrom).
+            // «Редактировать»/«Дублировать»/«Удалить» выделение НЕ снимают: после сохранения/
+            // отмены запись остаётся подсвеченной — видно, какую строку меняли/удаляли
+            // (выделение переживает и пересборку — см. preserveSelection в LoadFrom).
             menu = DataBase.Controls.Components.EventContextMenu.Single(
-                onEdit:   () => RecordClicked?.Invoke(this, item.OriginalEvent!),
-                onDelete: () => RecordDeleteRequested?.Invoke(this, item.OriginalEvent!));
+                onEdit:      () => RecordClicked?.Invoke(this, item.OriginalEvent!),
+                onDelete:    () => RecordDeleteRequested?.Invoke(this, item.OriginalEvent!),
+                onDuplicate: () => RecordsDuplicateRequested?.Invoke(this, [item.OriginalEvent!]));
         }
         menu.Open(border);
         e.Handled = true;
@@ -419,6 +461,7 @@ public partial class JournalView : UserControl
                 i.IsHovered  = false;
             }
             item.IsSelected = true;
+            SetRangeAnchor(item.OriginalEvent);
             RecordClicked?.Invoke(this, item.OriginalEvent!);
         }
     }

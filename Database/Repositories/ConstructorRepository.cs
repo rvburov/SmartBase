@@ -3045,6 +3045,91 @@ public class ConstructorRepository(AppDbContext db)
         return r;
     }
 
+    /// <summary>Массовый дубль календарных записей на ОТДЕЛЬНОМ подключении (фон + прогресс) —
+    /// см. <see cref="DuplicateCalendarRecordsData"/>. Возвращает копии с проставленными Id/FieldId.</summary>
+    public List<CalendarRecord> DuplicateCalendarRecordsIsolated(
+        IReadOnlyList<CalendarRecord> records, IProgress<int>? progress = null)
+    {
+        using var ctx = new AppDbContext(db.DbPath);
+        ctx.ApplyPerformancePragmas();
+        return new ConstructorRepository(ctx).DuplicateCalendarRecordsData(records, progress);
+    }
+
+    /// <summary>Массовый дубль календарных записей — та же «календарная» копия, что и
+    /// <see cref="AddCalendarRecord"/> (шапка + поле-дата + calendar_index; остальные свойства
+    /// НЕ копируются — как у одиночного дубля календаря), но ОДНОЙ транзакцией с батчевыми
+    /// SaveChanges: цикл AddCalendarRecord с двумя SaveChanges и MAX(Position) на КАЖДУЮ запись
+    /// вешал UI на сотнях/тысячах. Позиция и поле-дата считаются один раз на коллекцию.
+    /// Возвращает копии (Id/FieldId проставлены) — для выделения, дельты Журнала и якоря.</summary>
+    public List<CalendarRecord> DuplicateCalendarRecordsData(
+        IReadOnlyList<CalendarRecord> records, IProgress<int>? progress = null, int batchSize = 500)
+    {
+        var copies = new List<CalendarRecord>(records.Count);
+        if (records.Count == 0) return copies;
+
+        using var tx = db.Database.BeginTransaction();
+        var maxPos    = new Dictionary<int, int>();          // CollectionId → последняя занятая позиция
+        var dateField = new Dictionary<(int Col, int Pref), int>();   // поле-дата коллекции
+        var done = 0;
+
+        foreach (var chunk in records.Chunk(batchSize))
+        {
+            var pairs = new List<(CalendarRecord Src, DbRecordEntity Rec, int FieldId)>(chunk.Length);
+            foreach (var r in chunk)
+            {
+                var colId = r.CollectionId ?? GetOrCreateDefaultCollection();
+                if (!maxPos.TryGetValue(colId, out var pos))
+                    pos = db.DbRecords.Where(x => x.CollectionId == colId)
+                                      .Select(x => (int?)x.Position).Max() ?? 0;
+                pos += 1000;
+                maxPos[colId] = pos;
+
+                if (!dateField.TryGetValue((colId, r.FieldId), out var fid))
+                    dateField[(colId, r.FieldId)] = fid = ResolveCalendarDateField(colId, r.FieldId);
+
+                var rec = new DbRecordEntity
+                {
+                    CollectionId = colId,
+                    StartDt      = DateTime.SpecifyKind(r.StartDt, DateTimeKind.Unspecified).ToString("o"),
+                    EndDt        = DateTime.SpecifyKind(r.EndDt,   DateTimeKind.Unspecified).ToString("o"),
+                    AllDay       = r.AllDay,
+                    CreatedAt    = DateTime.Now.ToString("o"),
+                    Position     = pos,
+                    Title        = r.Title,
+                    Description  = string.IsNullOrEmpty(r.Description) ? null : r.Description,
+                };
+                db.DbRecords.Add(rec);
+                pairs.Add((r, rec, fid));
+            }
+            db.SaveChanges();   // id копий появились — дальше значения и индекс
+
+            foreach (var (src, rec, fid) in pairs)
+                db.DbFieldValues.Add(new DbFieldValueEntity
+                {
+                    RecordId = rec.Id,
+                    FieldId  = fid,
+                    Value    = new DateValue(src.StartDt, src.EndDt, src.AllDay).ToStorage(),
+                });
+            db.SaveChanges();
+
+            foreach (var (src, rec, fid) in pairs)
+            {
+                SyncCalendarIndexValue(rec.Id, fid,
+                    new DateValue(src.StartDt, src.EndDt, src.AllDay).ToStorage());
+                copies.Add(new CalendarRecord
+                {
+                    DbId = src.DbId, Id = rec.Id, CollectionId = rec.CollectionId, FieldId = fid,
+                    Title = src.Title, Description = src.Description,
+                    StartDt = src.StartDt, EndDt = src.EndDt, AllDay = src.AllDay, Color = src.Color,
+                });
+            }
+            done += chunk.Length;
+            progress?.Report(done);
+        }
+        tx.Commit();
+        return copies;
+    }
+
     public void UpdateCalendarRecord(CalendarRecord r)
     {
         if (r.Id is null) return;
