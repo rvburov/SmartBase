@@ -26,7 +26,6 @@ internal sealed class CalendarDayVirtualList : IList<EventListItem>, IList, INot
     private const int PageSize = 200;
     private const int MaxPages = 40;      // 40 × 200 = 8000 строк в кеше
     private const int MemCap   = 10000;   // ≤ этого (без поиска) — грузим весь день сразу (слияние по времени)
-    private const int ScanCap  = 60000;   // предел просмотра при поиске (защита от скана миллионов)
 
     private sealed class Src
     {
@@ -43,7 +42,6 @@ internal sealed class CalendarDayVirtualList : IList<EventListItem>, IList, INot
 
     private readonly DateTime _dayStart, _dayEnd;
     private readonly bool _isPast;
-    private readonly string _search;
 
     // InMemory-режим: весь список сразу.
     private readonly List<EventListItem>? _all;
@@ -69,9 +67,9 @@ internal sealed class CalendarDayVirtualList : IList<EventListItem>, IList, INot
     public CalendarDayVirtualList(
         IReadOnlyList<(int dbId, ConstructorRepository repo, ISet<int>? active)> dbs,
         IReadOnlyList<int> counts,
-        DateTime dayStart, DateTime dayEnd, string search, bool isPast)
+        DateTime dayStart, DateTime dayEnd, bool isPast)
     {
-        _dayStart = dayStart; _dayEnd = dayEnd; _isPast = isPast; _search = search ?? "";
+        _dayStart = dayStart; _dayEnd = dayEnd; _isPast = isPast;
 
         var srcs  = new List<Src>();
         var total = 0;
@@ -83,9 +81,9 @@ internal sealed class CalendarDayVirtualList : IList<EventListItem>, IList, INot
         }
         _total = total;
 
-        if (_search.Length > 0 || total <= MemCap)
+        if (total <= MemCap)
         {
-            _all = LoadAllInMemory(dbs, dayStart, dayEnd);   // слияние по времени + фильтр поиска
+            _all = LoadAllInMemory(dbs, dayStart, dayEnd);   // слияние по времени между БД
         }
         else
         {
@@ -94,26 +92,33 @@ internal sealed class CalendarDayVirtualList : IList<EventListItem>, IList, INot
         }
     }
 
-    // Грузит весь день сразу через пейджер (слияние по времени между БД), фильтруя поиском.
-    // Скан ограничен ScanCap/MemCap, чтобы поиск по огромному дню не сканировал миллионы.
+    /// <summary>Search-режим: строки из ГОТОВЫХ результатов фонового поиска по дню
+    /// (SearchCalendarEventsAsync; DbId у событий уже проставлен) в порядке «Расписания».</summary>
+    public CalendarDayVirtualList(List<CalendarRecord> found, bool isPast)
+    {
+        _isPast = isPast;
+        _all = found
+            .OrderByDescending(e => e.AllDay)
+            .ThenBy(e => e.StartDt).ThenBy(e => e.DbId).ThenBy(e => e.Id ?? 0).ThenBy(e => e.FieldId)
+            .Select(e => new EventListItem(e, isPast))
+            .ToList();
+        _total = _all.Count;
+    }
+
+    // Грузит весь день сразу через пейджер (слияние по времени между БД); зовётся только
+    // при total ≤ MemCap, поэтому объём ограничен.
     private List<EventListItem> LoadAllInMemory(
         IReadOnlyList<(int dbId, ConstructorRepository repo, ISet<int>? active)> dbs,
         DateTime dayStart, DateTime dayEnd)
     {
         var pager = new CalendarDayPager(dbs, dayStart, dayEnd);
         var items = new List<EventListItem>();
-        var scanned = 0;
-        while (pager.HasMore && scanned < ScanCap && items.Count <= MemCap)
+        while (pager.HasMore)
         {
             var page = pager.Next(PageSize);
             if (page.Count == 0) break;
-            scanned += page.Count;
             foreach (var ev in page)
-            {
-                if (_search.Length > 0 &&
-                    !ev.Title.Contains(_search, StringComparison.OrdinalIgnoreCase)) continue;
                 items.Add(new EventListItem(ev, _isPast));
-            }
         }
         return items;
     }

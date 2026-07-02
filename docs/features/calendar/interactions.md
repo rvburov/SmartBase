@@ -15,7 +15,11 @@
 ## Удаление
 
 - Клавиши **Delete / Backspace** удаляют выделенное, пока режим виден (`IsVisible`) и фокус не в текстовом поле (`TextBox`/`AutoCompleteBox`).
-- Одно событие → `RecordDeleteRequested`; несколько → `RecordsDeleteRequested` (контроллер показывает [ConfirmDialog](../../../Controls/Dialogs/ConfirmDialog.axaml.cs) с русским склонением «запись/записи/записей»).
+- Одно событие → `RecordDeleteRequested`; несколько → `RecordsDeleteRequested`. Оба пути идут
+  через ОДНО подтверждение (`DeleteRecordsWithConfirm`): контроллер показывает
+  [ConfirmDialog](../../../Controls/Dialogs/ConfirmDialog.axaml.cs) с русским склонением
+  «запись/записи/записей» — и для одной записи тоже. В Журнале записи остаются выделенными,
+  пока открыт диалог, — видно, что именно удаляется.
 
 ## Контекстное меню
 

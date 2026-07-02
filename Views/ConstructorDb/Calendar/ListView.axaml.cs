@@ -123,11 +123,32 @@ public partial class ListView : UserControl
         int gen, List<(int dbId, ConstructorRepository repo, ISet<int>? active)> dbs,
         DateTime dayStart, DateTime dayEnd, string search, bool isPast)
     {
-        var counts = new int[dbs.Count];
+        CalendarDayVirtualList list;
         try
         {
-            for (var i = 0; i < dbs.Count; i++)
-                counts[i] = await dbs[i].repo.CountCalendarDayEventsAsync(dayStart, dayEnd, dbs[i].active);
+            if (search.Length > 0)
+            {
+                // Поиск — фоновым SQL по всему дню (LIKE на изолированных подключениях):
+                // счётчики не нужны, потолок «от начала» отсутствует — находит в любом месте дня.
+                var found = new List<CalendarRecord>();
+                foreach (var (dbId, repo, active) in dbs)
+                {
+                    var part = await repo.SearchCalendarEventsAsync(dayStart, dayEnd, active, search, 1000);
+                    foreach (var ev in part) ev.DbId = dbId;
+                    found.AddRange(part);
+                }
+                if (gen != _loadGeneration) return;
+                list = new CalendarDayVirtualList(found, isPast);
+            }
+            else
+            {
+                var counts = new int[dbs.Count];
+                for (var i = 0; i < dbs.Count; i++)
+                    counts[i] = await dbs[i].repo.CountCalendarDayEventsAsync(dayStart, dayEnd, dbs[i].active);
+                if (gen != _loadGeneration) return;   // пока считали — открыли другой день/поиск
+                // Построение списка (для обычных дней — синхронная загрузка в память) — на UI-потоке.
+                list = new CalendarDayVirtualList(dbs, counts, dayStart, dayEnd, isPast);
+            }
         }
         catch
         {
@@ -135,10 +156,7 @@ public partial class ListView : UserControl
             if (gen == _loadGeneration) EmptyHint.Text = "Нет записей";
             return;
         }
-        if (gen != _loadGeneration) return;   // пока считали — открыли другой день/поиск
-
-        // Построение списка (для обычных дней — синхронная загрузка в память) — на UI-потоке.
-        var list = new CalendarDayVirtualList(dbs, counts, dayStart, dayEnd, search, isPast);
+        if (gen != _loadGeneration) return;
         _list = list;
         EventsList.ItemsSource = list;
         ListScroll.Offset   = new Vector(0, 0);

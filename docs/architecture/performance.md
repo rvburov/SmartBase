@@ -33,6 +33,8 @@
 | Импорт таблиц | 100k+ строк | bulk-insert + границы по содержимому | [ExcelImporter](../../Core/Importers/ExcelImporter.cs), `ImportExcelCollection` |
 | Календарь (окна День/Неделя/Месяц/Год) | до ~10 млн записей | индексная проекция `calendar_index` + сплит-запрос окна (timed с нижней границей + all-day) по `(CollectionId, AllDay, StartIso)` | [ConstructorRepository](../../Database/Repositories/ConstructorRepository.cs) |
 | Календарь «Расписание» (день) | миллионы событий в дне | `IList`-виртуализация: полоса на весь объём + offset-страницы в фоне с «Загрузка…» | [CalendarDayVirtualList](../../Views/ConstructorDb/Calendar/CalendarDayVirtualList.cs) |
+| Календарь «Журнал» (вся история данных) | миллионы событий | плоская `IList`-виртуализация: карта из счётчиков по дням (async GROUP BY) + страницы дней в фоне; порядок по времени между БД — слитые дни ≤ 10k / посекундная карта гигантских дней; правки — мутацией списка НА МЕСТЕ (`ApplyDeltaAsync`: страницы/кеши дней переживают правку, без волны «Загрузка…») | [JournalVirtualList](../../Views/ConstructorDb/Calendar/JournalVirtualList.cs) |
+| Поиск по заголовкам (Расписание/Журнал) | 10 млн записей ~12 с в фоне | нативный LIKE-скан с регистровыми вариантами (кириллица), первые 1000 совпадений; FTS5-trigram откатили: минуты бэкафилла + деградация на частых подстроках | `SearchCalendarEventsAsync` |
 
 ### Таблица коллекции
 

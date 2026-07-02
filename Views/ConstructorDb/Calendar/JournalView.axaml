@@ -3,69 +3,83 @@
              x:Class="DataBase.Views.ConstructorDb.Calendar.JournalView"
              Background="{StaticResource BrushBg}">
 
-    <ScrollViewer x:Name="JournalScroll" VerticalScrollBarVisibility="Auto"
-                  DoubleTapped="OnBackgroundDoubleTapped"
-                  ContextRequested="OnBackgroundContextRequested">
-        <ItemsControl x:Name="GroupsList" Padding="4,4">
-            <ItemsControl.ItemTemplate>
-                <DataTemplate>
-                    <StackPanel Spacing="0" Margin="0,0,0,0">
-                        <!-- Заголовок даты: высота и отступы как у блока события -->
-                        <Border Margin="0,1" Height="36">
-                            <TextBlock Text="{Binding DateHeader}"
-                                       FontWeight="{StaticResource FontWeightBold}"
-                                       Foreground="{Binding HeaderBrush}"
-                                       VerticalAlignment="Center"
-                                       Margin="8,0,0,0" />
+    <!-- Плоский виртуализированный список: строка = заголовок дня / событие / подсказка /
+         «Загрузка…». ItemsControl — прямое содержимое ScrollViewer (обязательно для VSP);
+         высота строки фиксированная (36 + отступ 1×2) — прокрутка к дню считается по индексу. -->
+    <Grid>
+        <ScrollViewer x:Name="JournalScroll" VerticalScrollBarVisibility="Auto"
+                      DoubleTapped="OnBackgroundDoubleTapped"
+                      ContextRequested="OnBackgroundContextRequested">
+            <ItemsControl x:Name="RowsList" Padding="4,4">
+                <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate>
+                        <VirtualizingStackPanel />
+                    </ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <Border Margin="0,1"
+                                Height="36"
+                                HorizontalAlignment="Stretch"
+                                CornerRadius="6"
+                                Background="{Binding BackgroundBrush}"
+                                Tag="{Binding}"
+                                Tapped="OnEventTapped"
+                                DoubleTapped="OnEventDoubleTapped"
+                                PointerEntered="OnEventPointerEntered"
+                                PointerExited="OnEventPointerExited"
+                                PointerPressed="OnEventPointerPressed"
+                                ContextRequested="OnEventContextRequested">
+                            <Panel>
+                                <!-- Заголовок дня -->
+                                <TextBlock IsVisible="{Binding IsHeader}"
+                                           Text="{Binding DateHeader}"
+                                           FontWeight="{StaticResource FontWeightBold}"
+                                           Foreground="{Binding HeaderBrush}"
+                                           VerticalAlignment="Center"
+                                           Margin="8,0,0,0" />
+                                <!-- Подсказка пустого сегодня -->
+                                <TextBlock IsVisible="{Binding IsHint}"
+                                           Text="Нет записей на сегодня"
+                                           Foreground="{StaticResource BrushSecondaryText}"
+                                           VerticalAlignment="Center"
+                                           Margin="8,0,0,0" />
+                                <!-- Событие -->
+                                <Grid IsVisible="{Binding IsEvent}"
+                                      Margin="0" ColumnDefinitions="Auto,12,*">
+                                    <Border Grid.Column="0" Width="4" CornerRadius="2"
+                                            Margin="8,4,0,4"
+                                            Background="{Binding ColorBrush}" />
+                                    <StackPanel Grid.Column="2" Spacing="2"
+                                                VerticalAlignment="Center">
+                                        <TextBlock Text="{Binding Title}"
+                                                   Foreground="{Binding TitleBrush}"
+                                                   TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Text="{Binding TimeText}"
+                                                   Foreground="{StaticResource BrushSecondaryText}" />
+                                    </StackPanel>
+                                </Grid>
+                                <!-- Заглушка ленивой подгрузки: слева, вровень с заголовком события -->
+                                <TextBlock IsVisible="{Binding IsLoadingPlaceholder}"
+                                           Text="Загрузка…"
+                                           HorizontalAlignment="Left"
+                                           Margin="24,0,0,0"
+                                           VerticalAlignment="Center"
+                                           Foreground="{StaticResource BrushSecondaryText}" />
+                            </Panel>
                         </Border>
-                        <!-- Подсказка для пустого сегодня -->
-                        <Border Margin="0,1" Height="36"
-                                IsVisible="{Binding ShowEmptyHint}">
-                            <TextBlock Text="Нет записей на сегодня"
-                                       Foreground="{StaticResource BrushSecondaryText}"
-                                       VerticalAlignment="Center"
-                                       Margin="8,0,0,0" />
-                        </Border>
-                        <!-- Список событий дня -->
-                        <ItemsControl ItemsSource="{Binding Events}">
-                            <ItemsControl.ItemTemplate>
-                                <DataTemplate>
-                                    <Border Margin="0,1"
-                                            Height="36"
-                                            HorizontalAlignment="Stretch"
-                                            CornerRadius="6"
-                                            Background="{Binding BackgroundBrush}"
-                                            Tag="{Binding}"
-                                            Cursor="Hand"
-                                            Tapped="OnEventTapped"
-                                            DoubleTapped="OnEventDoubleTapped"
-                                            PointerEntered="OnEventPointerEntered"
-                                            PointerExited="OnEventPointerExited"
-                                            PointerPressed="OnEventPointerPressed"
-                                            ContextRequested="OnEventContextRequested">
-                                        <Grid Margin="0" ColumnDefinitions="Auto,12,*">
-                                            <!-- Цветная полоска: отступы слева и сверху/снизу -->
-                                            <Border Grid.Column="0" Width="4" CornerRadius="2"
-                                                    Margin="8,4,0,4"
-                                                    Background="{Binding ColorBrush}" />
-                                            <!-- Информация о событии -->
-                                            <StackPanel Grid.Column="2" Spacing="2"
-                                                        VerticalAlignment="Center">
-                                                <TextBlock Text="{Binding Title}"
-                                                           Foreground="{Binding TitleBrush}"
-                                                           TextTrimming="CharacterEllipsis" />
-                                                <TextBlock Text="{Binding TimeText}"
-                                                           Foreground="{StaticResource BrushSecondaryText}" />
-                                            </StackPanel>
-                                        </Grid>
-                                    </Border>
-                                </DataTemplate>
-                            </ItemsControl.ItemTemplate>
-                        </ItemsControl>
-                    </StackPanel>
-                </DataTemplate>
-            </ItemsControl.ItemTemplate>
-        </ItemsControl>
-    </ScrollViewer>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+        </ScrollViewer>
+
+        <TextBlock x:Name="LoadingHint"
+                   IsVisible="False"
+                   Text="Загрузка…"
+                   Foreground="{StaticResource BrushSecondaryText}"
+                   Margin="24,16"
+                   HorizontalAlignment="Left"
+                   VerticalAlignment="Top" />
+    </Grid>
 
 </UserControl>

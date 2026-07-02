@@ -3126,6 +3126,150 @@ public class ConstructorRepository(AppDbContext db)
     }
 
     /// <summary>
+    /// Число событий ПО ДНЯМ в окне [start, end): "yyyy-MM-dd" → count, только дни с событиями,
+    /// по возрастанию. Для «Журнала»: полоса прокрутки на весь объём окна без материализации
+    /// событий (день с миллионами строк даёт одну строку счётчика). Скан по покрывающему индексу.
+    /// </summary>
+    public List<(string Day, int Count)> GetCalendarDayCountsByRange(
+        DateTime start, DateTime end, ISet<int>? activeIds)
+    {
+        var s = DateTime.SpecifyKind(start, DateTimeKind.Unspecified).ToString("o");
+        var e = DateTime.SpecifyKind(end,   DateTimeKind.Unspecified).ToString("o");
+        var col = activeIds is { Count: > 0 } ? $" AND CollectionId IN ({string.Join(",", activeIds)})" : "";
+        var result = new List<(string, int)>();
+        var conn = db.Database.GetDbConnection();
+        var opened = conn.State != System.Data.ConnectionState.Open;
+        if (opened) conn.Open();
+        try
+        {
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = $@"SELECT substr(StartIso, 1, 10) AS d, COUNT(*)
+                                 FROM calendar_index
+                                 WHERE StartIso >= $s AND StartIso < $e{col}
+                                 GROUP BY d ORDER BY d";
+            AddParam(cmd, "$s").Value = s;
+            AddParam(cmd, "$e").Value = e;
+            using var rdr = cmd.ExecuteReader();
+            while (rdr.Read())
+                result.Add((rdr.GetString(0), rdr.GetInt32(1)));
+        }
+        finally { if (opened) conn.Close(); }
+        return result;
+    }
+
+    /// <summary>Фоновая (изолированное подключение) версия <see cref="GetCalendarDayCountsByRange"/> —
+    /// на большом окне GROUP BY сканирует миллионы строк индекса (секунды) и не должен трогать UI-поток.</summary>
+    public Task<List<(string Day, int Count)>> LoadCalendarDayCountsAsync(
+        DateTime start, DateTime end, ISet<int>? activeIds) =>
+        Task.Run(() =>
+        {
+            using var ctx = new AppDbContext(db.DbPath);
+            ctx.ApplyPerformancePragmas();
+            return new ConstructorRepository(ctx).GetCalendarDayCountsByRange(start, end, activeIds);
+        });
+
+    /// <summary>
+    /// ПОСЕКУНДНАЯ гистограмма событий дня: "HH:MM:SS" → count, по возрастанию времени. Для
+    /// «Журнала» на гигантских днях (миллионы событий): даёт порядок по времени БЕЗ материализации
+    /// дня — карта секунд вместо самих событий. Скан индекса дня — фоново (изолированное подключение).
+    /// </summary>
+    public Task<List<(string Time, int Count)>> LoadCalendarDayTimeHistogramAsync(
+        DateTime dayStart, DateTime dayEnd, ISet<int>? activeIds) =>
+        Task.Run(() =>
+        {
+            using var ctx = new AppDbContext(db.DbPath);
+            ctx.ApplyPerformancePragmas();
+            var repo = new ConstructorRepository(ctx);
+
+            var s = DateTime.SpecifyKind(dayStart, DateTimeKind.Unspecified).ToString("o");
+            var e = DateTime.SpecifyKind(dayEnd,   DateTimeKind.Unspecified).ToString("o");
+            var col = activeIds is { Count: > 0 } ? $" AND CollectionId IN ({string.Join(",", activeIds)})" : "";
+            var result = new List<(string, int)>();
+            var conn = ctx.Database.GetDbConnection();
+            conn.Open();
+            using var cmd = conn.CreateCommand();
+            // StartIso: "yyyy-MM-ddTHH:mm:ss.fffffff" → substr(...,12,8) = "HH:MM:SS".
+            cmd.CommandText = $@"SELECT substr(StartIso, 12, 8) AS t, COUNT(*)
+                                 FROM calendar_index
+                                 WHERE StartIso >= $s AND StartIso < $e{col}
+                                 GROUP BY t ORDER BY t";
+            AddParam(cmd, "$s").Value = s;
+            AddParam(cmd, "$e").Value = e;
+            using var rdr = cmd.ExecuteReader();
+            while (rdr.Read())
+                result.Add((rdr.GetString(0), rdr.GetInt32(1)));
+            return result;
+        });
+
+    /// <summary>
+    /// Поиск событий окна по подстроке заголовка — для «Расписания»/«Журнала». Фильтр — нативным
+    /// SQL LIKE (прогон миллионов строк через приложение на порядок медленнее — замерено).
+    /// LIKE регистронезависим только для ASCII, поэтому ищем регистровые варианты подстроки
+    /// (как ввели / нижний / ВЕРХНИЙ / С заглавной) — это покрывает практический ввод кириллицы.
+    /// До <paramref name="limit"/> совпадений в хронологическом порядке. Фоново на изолированном
+    /// подключении: окно с миллионами событий сканируется секунды и не трогает UI-поток.
+    /// (FTS5-trigram пробовали и откатили: минуты бэкафилла при первом старте больших БД и
+    /// деградация на частых подстроках — см. миграции Add/RemoveRecordsTitleFtsTrigram.)
+    /// </summary>
+    public Task<List<CalendarRecord>> SearchCalendarEventsAsync(
+        DateTime start, DateTime end, ISet<int>? activeIds, string query, int limit) =>
+        Task.Run(() =>
+        {
+            using var ctx = new AppDbContext(db.DbPath);
+            ctx.ApplyPerformancePragmas();
+
+            var s = DateTime.SpecifyKind(start, DateTimeKind.Unspecified).ToString("o");
+            var e = DateTime.SpecifyKind(end,   DateTimeKind.Unspecified).ToString("o");
+            var col = activeIds is { Count: > 0 } ? $" AND ci.CollectionId IN ({string.Join(",", activeIds)})" : "";
+
+            // Регистровые варианты подстроки; спецсимволы LIKE экранируем.
+            static string Esc(string q) =>
+                q.Replace("\\", "\\\\").Replace("%", "\\%").Replace("_", "\\_");
+            var lower = query.ToLowerInvariant();
+            var variants = new HashSet<string>(StringComparer.Ordinal)
+            {
+                query, lower, query.ToUpperInvariant(),
+                lower.Length > 0 ? char.ToUpperInvariant(lower[0]) + lower[1..] : lower,
+            };
+            var like = string.Join(" OR ", variants.Select((_, i) => $"r.Title LIKE $q{i} ESCAPE '\\'"));
+
+            var result = new List<CalendarRecord>();
+            var conn = ctx.Database.GetDbConnection();
+            conn.Open();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = $@"SELECT ci.RecordId, ci.FieldId, ci.CollectionId, ci.StartIso, ci.EndIso, ci.AllDay,
+                                        r.Title, r.Description, c.Name, c.Color
+                                 FROM calendar_index ci
+                                 JOIN db_records r ON r.Id = ci.RecordId
+                                 JOIN db_collections c ON c.Id = r.CollectionId
+                                 WHERE ci.StartIso >= $s AND ci.StartIso < $e{col} AND ({like})
+                                 ORDER BY ci.StartIso, ci.RecordId, ci.FieldId
+                                 LIMIT $lim";
+            AddParam(cmd, "$s").Value = s;
+            AddParam(cmd, "$e").Value = e;
+            AddParam(cmd, "$lim").Value = limit;
+            var vi = 0;
+            foreach (var v in variants) AddParam(cmd, $"$q{vi++}").Value = $"%{Esc(v)}%";
+
+            using var rdr = cmd.ExecuteReader();
+            while (rdr.Read())
+            {
+                if (!DateTime.TryParse(rdr.GetString(3), out var st)) continue;
+                if (!DateTime.TryParse(rdr.GetString(4), out var en)) continue;
+                result.Add(new CalendarRecord
+                {
+                    Id = rdr.GetInt32(0), FieldId = rdr.GetInt32(1), CollectionId = rdr.GetInt32(2),
+                    StartDt = st, EndDt = en, AllDay = rdr.GetInt32(5) != 0,
+                    Title = rdr.IsDBNull(6) ? "" : rdr.GetString(6),
+                    Description = rdr.IsDBNull(7) ? "" : rdr.GetString(7),
+                    CollectionName = rdr.IsDBNull(8) ? "" : rdr.GetString(8),
+                    Color = rdr.IsDBNull(9) ? "#007AFF" : rdr.GetString(9),
+                });
+            }
+            return result;
+        });
+
+    /// <summary>
     /// Страница событий дня ОДНОЙ фазы <paramref name="allDay"/> (1 — «весь день»/многодневные,
     /// 0 — по времени), упорядоченная по StartIso ASC. Такой порядок совпадает с индексом
     /// (CollectionId, AllDay, StartIso), поэтому выборка идёт seek'ом без сортировки всего дня

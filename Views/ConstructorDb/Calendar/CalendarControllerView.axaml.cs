@@ -21,6 +21,15 @@ public partial class CalendarControllerView : UserControl
     // Активные коллекции по БД (DbId → набор id). null до первого SetActiveIds.
     private Dictionary<int, HashSet<int>>? _activeByDb;
     private string _searchQuery = "";
+    // Созданная/изменённая запись: Журнал после обновления остаётся на месте, а к САМОЙ записи
+    // (с центрированием) едет, только если её строка сейчас не видна. Одноразовая — сбрасывается
+    // в RefreshCurrent.
+    private CalendarRecord? _journalAnchor;
+    // Точечное изменение для Журнала (запись, −1/+1): лента правится НА МЕСТЕ (страницы и кеши
+    // дней сохраняются — правка видна в том же кадре) либо мгновенно пересобирается по кешу
+    // счётчиков, без полного пересчёта по всем БД (секунды на больших базах, в течение которых
+    // была бы видна устаревшая запись). Одноразовое — сбрасывается в RefreshCurrent.
+    private List<(CalendarRecord Rec, int Delta)>? _journalDelta;
 
     // Репозиторий БД по умолчанию (новые события, сидинг) и маршрутизация по записи.
     private ConstructorRepository DefaultRepo => _dbs[0].Repo;
@@ -87,27 +96,28 @@ public partial class CalendarControllerView : UserControl
 
         ListViewCtrl.RecordClicked          += (_, r) => _ = OpenEditDialog(r);
         ListViewCtrl.CreateRequested        += (_, d) => _ = OpenAddDialog(d);
-        ListViewCtrl.RecordDeleteRequested  += (_, r) => { if (r.Id.HasValue) { RepoOf(r).DeleteCalendarRecord(r.Id.Value); CollectionsMayHaveChanged?.Invoke(this, EventArgs.Empty); RefreshCurrent(); } };
+        // Удаление ОДНОЙ записи идёт через то же подтверждение, что и удаление нескольких.
+        ListViewCtrl.RecordDeleteRequested  += (_, r) => _ = DeleteRecordsWithConfirm([r]);
         ListViewCtrl.RecordsDeleteRequested += (_, rs) => _ = DeleteRecordsWithConfirm(rs);
         JournalViewCtrl.RecordClicked          += (_, r) => _ = OpenEditDialog(r);
         JournalViewCtrl.CreateRequested        += (_, d) => _ = OpenAddDialog(d);
-        JournalViewCtrl.RecordDeleteRequested  += (_, r) => { if (r.Id.HasValue) { RepoOf(r).DeleteCalendarRecord(r.Id.Value); CollectionsMayHaveChanged?.Invoke(this, EventArgs.Empty); RefreshCurrent(); } };
+        JournalViewCtrl.RecordDeleteRequested  += (_, r) => _ = DeleteRecordsWithConfirm([r]);
         JournalViewCtrl.RecordsDeleteRequested += (_, rs) => _ = DeleteRecordsWithConfirm(rs);
         MonthViewCtrl.RecordClicked          += (_, r) => _ = OpenEditDialog(r);
         MonthViewCtrl.RecordMoved            += (_, r) => { RepoOf(r).UpdateCalendarRecord(r); CollectionsMayHaveChanged?.Invoke(this, EventArgs.Empty); RefreshCurrent(); };
-        MonthViewCtrl.RecordDeleteRequested    += (_, r) => { if (r.Id.HasValue) { RepoOf(r).DeleteCalendarRecord(r.Id.Value); CollectionsMayHaveChanged?.Invoke(this, EventArgs.Empty); RefreshCurrent(); } };
+        MonthViewCtrl.RecordDeleteRequested    += (_, r) => _ = DeleteRecordsWithConfirm([r]);
         MonthViewCtrl.RecordsDeleteRequested   += (_, rs) => _ = DeleteRecordsWithConfirm(rs);
         MonthViewCtrl.RecordDuplicateRequested += (_, r) => DuplicateCalendarRecord(r);
         DayViewCtrl.RecordClicked              += (_, r) => _ = OpenEditDialog(r);
         DayViewCtrl.RecordMoved                += (_, r) => { RepoOf(r).UpdateCalendarRecord(r); CollectionsMayHaveChanged?.Invoke(this, EventArgs.Empty); RefreshCurrent(); };
-        DayViewCtrl.RecordDeleteRequested      += (_, r) => { if (r.Id.HasValue) { RepoOf(r).DeleteCalendarRecord(r.Id.Value); CollectionsMayHaveChanged?.Invoke(this, EventArgs.Empty); RefreshCurrent(); } };
+        DayViewCtrl.RecordDeleteRequested      += (_, r) => _ = DeleteRecordsWithConfirm([r]);
         DayViewCtrl.RecordsDeleteRequested     += (_, rs) => _ = DeleteRecordsWithConfirm(rs);
         DayViewCtrl.RecordDuplicateRequested   += (_, r) => DuplicateCalendarRecord(r);
         DayViewCtrl.AllDayCreationRequested    += (_, d)  => _ = OpenAddAllDayDialog(d);
         DayViewCtrl.TimeSlotCreationRequested  += (_, dt) => _ = OpenAddDialog(dt.Date, dt.TimeOfDay);
         WeekViewCtrl.RecordClicked             += (_, r) => _ = OpenEditDialog(r);
         WeekViewCtrl.RecordMoved               += (_, r) => { RepoOf(r).UpdateCalendarRecord(r); CollectionsMayHaveChanged?.Invoke(this, EventArgs.Empty); RefreshCurrent(); };
-        WeekViewCtrl.RecordDeleteRequested     += (_, r) => { if (r.Id.HasValue) { RepoOf(r).DeleteCalendarRecord(r.Id.Value); CollectionsMayHaveChanged?.Invoke(this, EventArgs.Empty); RefreshCurrent(); } };
+        WeekViewCtrl.RecordDeleteRequested     += (_, r) => _ = DeleteRecordsWithConfirm([r]);
         WeekViewCtrl.RecordsDeleteRequested    += (_, rs) => _ = DeleteRecordsWithConfirm(rs);
         WeekViewCtrl.RecordDuplicateRequested  += (_, r) => DuplicateCalendarRecord(r);
         WeekViewCtrl.AllDayCreationRequested   += (_, d)  => _ = OpenAddAllDayDialog(d);
@@ -182,17 +192,25 @@ public partial class CalendarControllerView : UserControl
 
         var (startDt, endDt) = GetDateRange();
 
-        // Расписание — полная виртуализация: событий в одном дне могут быть миллионы, поэтому
+        // Якорь и дельта Журнала — одноразовые: снимаем их при ЛЮБОМ обновлении (даже если
+        // активен другой вид), чтобы устаревшая дельта не применилась к ленте позже.
+        var anchor = _journalAnchor; _journalAnchor = null;
+        var delta  = _journalDelta;  _journalDelta  = null;
+
+        // Расписание и Журнал — полная виртуализация: событий в окне могут быть миллионы, поэтому
         // список знает лишь их ЧИСЛО (полоса прокрутки на весь объём), а страницы тянет по
-        // требованию (см. CalendarDayVirtualList) — можно прыгнуть в любой конец без фриза.
-        if (_currentViewIndex == 0)
+        // требованию (см. CalendarDayVirtualList / JournalVirtualList) — прыжок в любое место без фриза.
+        if (_currentViewIndex is 0 or 1)
         {
             UpdateTitle();
             var sources = _dbs.Select(d =>
                 (d.DbId, d.Repo,
                  (ISet<int>?)(_activeByDb is not null && _activeByDb.TryGetValue(d.DbId, out var s) ? s : null)))
                 .ToList();
-            ListViewCtrl.LoadFrom(sources, startDt, endDt, _currentDate, _searchQuery);
+            if (_currentViewIndex == 0)
+                ListViewCtrl.LoadFrom(sources, startDt, endDt, _currentDate, _searchQuery);
+            else
+                JournalViewCtrl.LoadFrom(sources, _searchQuery, anchor, delta);   // вся история, без окна дат
             return;
         }
 
@@ -214,7 +232,6 @@ public partial class CalendarControllerView : UserControl
 
         switch (_currentViewIndex)
         {
-            case 1: JournalViewCtrl.Refresh(records, _currentDate); break;
             case 2: DayViewCtrl.Refresh(records, DateOnly.FromDateTime(_currentDate)); break;
             case 3: WeekViewCtrl.Refresh(records, _currentDate, scrollToNow); break;
             case 4: MonthViewCtrl.Refresh(records, _currentDate); break;
@@ -287,6 +304,8 @@ public partial class CalendarControllerView : UserControl
         {
             RepoOf(result.Record).AddCalendarRecord(result.Record);
             CollectionsMayHaveChanged?.Invoke(this, EventArgs.Empty);
+            _journalAnchor = result.Record;   // Журнал: к созданной записи
+            _journalDelta  = [(result.Record, +1)];
             RefreshCurrent();
         }
     }
@@ -301,6 +320,8 @@ public partial class CalendarControllerView : UserControl
         {
             RepoOf(result.Record).AddCalendarRecord(result.Record);
             CollectionsMayHaveChanged?.Invoke(this, EventArgs.Empty);
+            _journalAnchor = result.Record;   // Журнал: к созданной записи
+            _journalDelta  = [(result.Record, +1)];
             RefreshCurrent();
         }
     }
@@ -317,6 +338,7 @@ public partial class CalendarControllerView : UserControl
         if (result.Deleted)
         {
             RepoOf(r).DeleteCalendarRecord(r.Id!.Value);
+            _journalDelta = [(r, -1)];
         }
         else if (result.Record is not null)
         {
@@ -345,6 +367,8 @@ public partial class CalendarControllerView : UserControl
                 sourceRepo.DeleteCalendarRecord(r.Id!.Value);
             }
             CollectionsMayHaveChanged?.Invoke(this, EventArgs.Empty);
+            _journalAnchor = result.Record;   // Журнал: к записи на её новой дате
+            _journalDelta  = [(r, -1), (result.Record, +1)];
         }
         RefreshCurrent();
     }
@@ -380,6 +404,7 @@ public partial class CalendarControllerView : UserControl
         // Каждую запись удаляем в её БД.
         foreach (var r in targets) RepoOf(r).DeleteCalendarRecord(r.Id!.Value);
         CollectionsMayHaveChanged?.Invoke(this, EventArgs.Empty);
+        _journalDelta = targets.Select(r => (r, -1)).ToList();
         RefreshCurrent();
     }
 
