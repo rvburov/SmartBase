@@ -1,5 +1,6 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:components="using:DataBase.Controls.Components"
         x:Class="DataBase.Setup.InstallerWindow"
         Width="500" Height="400"
         CanResize="False"
@@ -82,12 +83,8 @@
             <CheckBox x:Name="ShortcutCheck"  Content="Создать ярлык на рабочем столе" IsChecked="True" />
             <CheckBox x:Name="RemoveDataCheck" Content="Удалить и данные пользователя"  IsVisible="False" />
 
-            <StackPanel x:Name="ProgressBlock" Spacing="6" IsVisible="False">
-                <ProgressBar x:Name="Progress" Minimum="0" Maximum="1" Height="6" CornerRadius="3" />
-                <TextBlock x:Name="StatusText"
-                           FontSize="{DynamicResource FontSizeSmall}"
-                           Foreground="{StaticResource BrushSecondaryText}" />
-            </StackPanel>
+            <!-- Единый индикатор загрузки приложения (полоса + проценты + фаза) -->
+            <components:ProgressIndicator x:Name="ProgressBlock" IsVisible="False" />
 
         </StackPanel>
 

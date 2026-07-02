@@ -1,5 +1,6 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:components="using:DataBase.Controls.Components"
         x:Class="DataBase.Controls.Dialogs.ProgressDialog"
         Title="Импорт данных"
         Width="340"
@@ -12,33 +13,7 @@
         ShowInTaskbar="False"
         Background="{StaticResource BrushBg}">
 
-    <StackPanel Margin="22,20" Spacing="14">
-
-        <TextBlock x:Name="PhaseText"
-                   Text="Подготовка…"
-                   FontWeight="{StaticResource FontWeightBold}"
- />
-
-        <TextBlock x:Name="InfoText"
-                   Text=""
-                   IsVisible="False"
-                   Foreground="{StaticResource BrushSecondaryText}" />
-
-        <Grid ColumnDefinitions="*,Auto">
-            <ProgressBar Grid.Column="0" x:Name="Bar"
-                         Minimum="0" Maximum="100" Value="0"
-                         Height="8"
-                         VerticalAlignment="Center"
-                         Foreground="{StaticResource BrushAccent}" />
-            <TextBlock Grid.Column="1" x:Name="PercentText"
-                       Text="0%"
-                       MinWidth="42"
-                       Margin="10,0,0,0"
-                       TextAlignment="Right"
-                       Foreground="{StaticResource BrushSecondaryText}"
-                       VerticalAlignment="Center" />
-        </Grid>
-
-    </StackPanel>
+    <!-- Вся начинка — единый индикатор загрузки приложения. -->
+    <components:ProgressIndicator x:Name="Indicator" Margin="22,20" />
 
 </Window>

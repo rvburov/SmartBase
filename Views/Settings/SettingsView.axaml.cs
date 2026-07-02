@@ -292,16 +292,15 @@ public partial class SettingsView : UserControl
         var tempExe  = System.IO.Path.Combine(System.IO.Path.GetTempPath(), tempName);
 
         UpdateCheckBtn.IsEnabled = false;
-        UpdateProgress.IsVisible = true;
-        UpdateProgress.Value     = 0;
-        SetUpdateStatus("Загрузка обновления…");
+
+        // Загрузка идёт в отдельном ОКНЕ с процентами (единый ProgressDialog, как импорт),
+        // а не инлайн-полосой в настройках. Окно нельзя закрыть, пока копирование не кончится.
+        var progressDlg = new ProgressDialog { Title = "Обновление" };
+        progressDlg.SetProgress(0, "Загрузка обновления…");
+        var dlgClosed = progressDlg.ShowDialog<object?>(win);
         try
         {
-            var progress = new Progress<double>(p =>
-            {
-                UpdateProgress.Value  = p;
-                UpdateStatusText.Text = $"Загрузка обновления… {p * 100:0}%";
-            });
+            var progress = new Progress<double>(p => progressDlg.SetProgress(p, "Загрузка обновления…"));
             if (!await DownloadAsync(remoteExe, tempExe, progress))
             {
                 SetUpdateStatus("Загрузка прервалась — артефакт скопирован не полностью. Попробуйте ещё раз.", isError: true);
@@ -318,7 +317,8 @@ public partial class SettingsView : UserControl
         }
         finally
         {
-            UpdateProgress.IsVisible = false;
+            progressDlg.Done();
+            await dlgClosed;
             UpdateCheckBtn.IsEnabled = true;
         }
 

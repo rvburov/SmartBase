@@ -1,5 +1,6 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:components="using:DataBase.Controls.Components"
         x:Class="DataBase.Extensions.PdfRename.PdfRenameWindow"
         Title="Переименование PDF-файлов"
         Width="640" Height="640"
@@ -52,21 +53,9 @@
                     Click="OnStopClick" />
         </Grid>
 
-        <!-- Прогресс -->
-        <Grid DockPanel.Dock="Top" Margin="0,0,0,14" ColumnDefinitions="*,Auto">
-            <ProgressBar Grid.Column="0" x:Name="Bar"
-                         Minimum="0" Maximum="100" Value="0"
-                         Height="8"
-                         VerticalAlignment="Center"
-                         Foreground="{StaticResource BrushAccent}" />
-            <TextBlock Grid.Column="1" x:Name="PercentText"
-                       Text="0%"
-                       MinWidth="42"
-                       Margin="10,0,0,0"
-                       TextAlignment="Right"
-                       VerticalAlignment="Center"
-                       Foreground="{StaticResource BrushSecondaryText}" />
-        </Grid>
+        <!-- Прогресс: единый индикатор загрузки приложения -->
+        <components:ProgressIndicator x:Name="Progress"
+                                      DockPanel.Dock="Top" Margin="0,0,0,14" />
 
         <!-- Заголовок журнала -->
         <TextBlock DockPanel.Dock="Top" Margin="0,0,0,8"

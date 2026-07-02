@@ -91,21 +91,59 @@ public partial class ListView : UserControl
             ? new List<CalendarRecord>()
             : _list.RealizedItems.Where(i => i.IsEvent && i.IsSelected).Select(i => i.OriginalEvent!).ToList();
 
+    // Поколение загрузки дня: быстрое переключение дат/поиска отменяет устаревший результат.
+    private int _loadGeneration;
+
     /// <summary>
     /// Открывает день в «Расписании» через полную виртуализацию: события дня из
     /// <paramref name="dbs"/> (несколько БД) в окне [<paramref name="dayStart"/>,
     /// <paramref name="dayEnd"/>). Полоса прокрутки — на всё число событий, страницы грузятся по
     /// требованию (в т.ч. прыжок в самый низ). <paramref name="search"/> фильтрует по заголовку.
+    /// Подсчёт числа событий (размер полосы) идёт В ФОНЕ на изолированных подключениях: холодный
+    /// COUNT по дню с миллионами событий занимает секунды и не должен блокировать UI-поток
+    /// (иначе старт приложения выглядел зависшим на «Запуске интерфейса…»).
     /// </summary>
     public void LoadFrom(IReadOnlyList<(int dbId, ConstructorRepository repo, ISet<int>? active)> dbs,
                          DateTime dayStart, DateTime dayEnd, DateTime currentDate, string search)
     {
         _currentDate = currentDate;
         var isPast = currentDate.Date < DateTime.Today;
-        _list = new CalendarDayVirtualList(dbs, dayStart, dayEnd, search ?? "", isPast);
-        EventsList.ItemsSource = _list;
-        ListScroll.Offset = new Vector(0, 0);
-        EmptyHint.IsVisible = _list.Count == 0;
+        var gen    = ++_loadGeneration;
+
+        _list = null;
+        EventsList.ItemsSource = null;
+        EmptyHint.Text      = "Загрузка…";
+        EmptyHint.IsVisible = true;
+        // Порядок источников фиксируем по DbId — он же порядок конкатенации в виртуальном списке.
+        _ = LoadCountsThenBuildAsync(gen, dbs.OrderBy(d => d.dbId).ToList(),
+                                     dayStart, dayEnd, search ?? "", isPast);
+    }
+
+    private async Task LoadCountsThenBuildAsync(
+        int gen, List<(int dbId, ConstructorRepository repo, ISet<int>? active)> dbs,
+        DateTime dayStart, DateTime dayEnd, string search, bool isPast)
+    {
+        var counts = new int[dbs.Count];
+        try
+        {
+            for (var i = 0; i < dbs.Count; i++)
+                counts[i] = await dbs[i].repo.CountCalendarDayEventsAsync(dayStart, dayEnd, dbs[i].active);
+        }
+        catch
+        {
+            // БД недоступна/повреждена — день показываем пустым (как ведёт себя Workspace.Mount).
+            if (gen == _loadGeneration) EmptyHint.Text = "Нет записей";
+            return;
+        }
+        if (gen != _loadGeneration) return;   // пока считали — открыли другой день/поиск
+
+        // Построение списка (для обычных дней — синхронная загрузка в память) — на UI-потоке.
+        var list = new CalendarDayVirtualList(dbs, counts, dayStart, dayEnd, search, isPast);
+        _list = list;
+        EventsList.ItemsSource = list;
+        ListScroll.Offset   = new Vector(0, 0);
+        EmptyHint.Text      = "Нет записей";
+        EmptyHint.IsVisible = list.Count == 0;
     }
 
     private void OnEventPointerEntered(object? sender, PointerEventArgs e)

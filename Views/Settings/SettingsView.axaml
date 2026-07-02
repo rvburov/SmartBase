@@ -446,11 +446,10 @@
                                         VerticalAlignment="Center"
                                         Click="OnCheckUpdateClick" />
                             </Grid>
+                            <!-- Результат проверки («доступна версия…»/«актуальная»/ошибка).
+                                 Сама загрузка идёт в отдельном ОКНЕ (ProgressDialog), не инлайн. -->
                             <TextBlock x:Name="UpdateStatusText" Classes="desc"
                                        Text="" IsVisible="False" />
-                            <ProgressBar x:Name="UpdateProgress" IsVisible="False"
-                                         Minimum="0" Maximum="1" Height="6"
-                                         CornerRadius="3" />
                         </StackPanel>
                     </Border>
 

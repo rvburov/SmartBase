@@ -111,16 +111,14 @@ public partial class PdfAnalyzerWindow : Window
 
         SetRunning(true);
         SetStatus("Анализ…", "BrushAccent");
-        Bar.Value = 0; PercentText.Text = "0%";
+        Progress.SetProgress(0);
         CurrentFileText.Text = ""; CurrentFileText.IsVisible = false;
 
         _cts = new CancellationTokenSource();
         var ct = _cts.Token;
         var progress = new Progress<AnalyzeProgress>(p =>
         {
-            Bar.Maximum = p.Total;
-            Bar.Value = p.Current;
-            PercentText.Text = p.Total > 0 ? $"{p.Current * 100 / p.Total}%" : "0%";
+            Progress.SetProgress(p.Total > 0 ? (double)p.Current / p.Total : 0);
             CurrentFileText.Text = $"{p.Current} из {p.Total}: {p.File}";
             CurrentFileText.IsVisible = true;
         });
@@ -130,7 +128,7 @@ public partial class PdfAnalyzerWindow : Window
             var result = await Task.Run(
                 () => PdfAnalyzerEngine.Run(folder, savePath, exportType, recursive, preserveOrder, splitName, progress, ct), ct);
 
-            Bar.Value = Bar.Maximum; PercentText.Text = "100%";
+            Progress.SetProgress(1);
             CurrentFileText.Text = ""; CurrentFileText.IsVisible = false;
             SetStatus($"Готово: {Path.GetFileName(result.SavePath)} " +
                       $"(обработано {result.Processed} из {result.TotalFiles}" +

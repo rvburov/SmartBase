@@ -1,5 +1,6 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:components="using:DataBase.Controls.Components"
         x:Class="DataBase.Views.SplashWindow"
         Width="460" Height="230"
         CanResize="False"
@@ -28,28 +29,11 @@
                 </StackPanel>
             </Border>
 
-            <!-- Тело: этап запуска + прогресс с процентами -->
+            <!-- Тело: единый индикатор загрузки (плавный smooth-режим) -->
             <StackPanel Margin="24,20" Spacing="14" VerticalAlignment="Center">
                 <TextBlock Text="Запуск приложения"
                            Foreground="{StaticResource BrushSecondaryText}" />
-                <StackPanel Spacing="6">
-                    <Grid ColumnDefinitions="*,Auto">
-                        <TextBlock x:Name="StatusText" Grid.Column="0"
-                                   Text="Подготовка…"
-                                   TextTrimming="CharacterEllipsis"
-                                   FontSize="{DynamicResource FontSizeSmall}"
-                                   Foreground="{StaticResource BrushPrimaryText}" />
-                        <TextBlock x:Name="PercentText" Grid.Column="1"
-                                   Text="0%"
-                                   FontWeight="{StaticResource FontWeightBold}"
-                                   FontSize="{DynamicResource FontSizeSmall}"
-                                   Foreground="{StaticResource BrushPrimaryText}" />
-                    </Grid>
-                    <ProgressBar x:Name="Progress"
-                                 Minimum="0" Maximum="1" Value="0"
-                                 Height="6" CornerRadius="3"
-                                 Foreground="#007AFF" />
-                </StackPanel>
+                <components:ProgressIndicator x:Name="Indicator" />
             </StackPanel>
 
         </DockPanel>

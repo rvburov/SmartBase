@@ -51,8 +51,11 @@ public partial class App : Application
             var splash = new SplashWindow();
             splash.Show();
 
-            // Прогресс шлёт текст этапа (какая база); полосу двигает сам сплэш (плавная анимация).
-            var progress = new Progress<(double Fraction, string Message)>(t => splash.SetStatus(t.Message));
+            // Каждому этапу — свой сегмент шкалы: монтирование БД занимает 5–85% (доля по числу
+            // баз из Workspace.Open), «Запуск интерфейса…» — 85→100% (добег в Finish). Полосу
+            // внутри сегмента плавно двигает сам индикатор (реальный процент миграции недоступен).
+            var progress = new Progress<(double Fraction, string Message)>(t =>
+                splash.SetStage(0.05 + 0.80 * t.Fraction, t.Message));
 
             _ = Task.Run(() =>
             {

@@ -91,20 +91,18 @@ public partial class AssemblyCalcWindow : Window
 
         SetRunning(true);
         SetStatus("Формирование…", "BrushAccent");
-        Bar.Value = 0;
-        PercentText.Text = "0%";
+        Progress.SetProgress(0);
 
         _cts = new CancellationTokenSource();
         var ct = _cts.Token;
-        var progress = new Progress<int>(p => { Bar.Value = p; PercentText.Text = $"{p}%"; });
+        var progress = new Progress<int>(p => Progress.SetProgress(p / 100.0));
 
         try
         {
             var result = await Task.Run(
                 () => AssemblyCalcEngine.Run(_source!, _template!, _output!, progress, ct), ct);
 
-            Bar.Value = 100;
-            PercentText.Text = "100%";
+            Progress.SetProgress(1);
             SetStatus($"Готово: {Path.GetFileName(result.OutputPath)} (строк: {result.RowCount})", "BrushAccent");
             await OfferOpenFolder(result.OutputPath);
         }

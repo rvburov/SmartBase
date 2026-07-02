@@ -74,11 +74,9 @@ public partial class InstallerWindow : Window
         SubtitleText.Text = "Идёт установка, пожалуйста подождите…";
         try
         {
+            // Проценты рисует сам индикатор — в тексте фазы их не дублируем.
             var progress = new Progress<(double Percent, string Status)>(t =>
-            {
-                Progress.Value  = t.Percent;
-                StatusText.Text = $"{t.Status} {t.Percent * 100:0}%";
-            });
+                ProgressBlock.SetProgress(t.Percent, t.Status));
             await InstallService.InstallAsync(dir, ShortcutCheck.IsChecked == true, progress);
         }
         catch (Exception ex)

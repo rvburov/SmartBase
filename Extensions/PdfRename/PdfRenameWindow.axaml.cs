@@ -223,12 +223,8 @@ public partial class PdfRenameWindow : Window
               $"(без изменений: {s.Unchanged}, конфликтов: {s.Conflicts}, ошибок: {s.Errors})";
     }
 
-    private void UpdateBar()
-    {
-        Bar.Maximum      = _total > 0 ? _total : 1;
-        Bar.Value        = _curr;
-        PercentText.Text = _total > 0 ? $"{_curr * 100 / _total}%" : "0%";
-    }
+    private void UpdateBar() =>
+        Progress.SetProgress(_total > 0 ? (double)_curr / _total : 0);
 
     private void LogLine(string s)            // только в модель (дёшево)
     {
@@ -270,9 +266,7 @@ public partial class PdfRenameWindow : Window
         _total      = 0;
         _shownLines = 0;
         _truncated  = false;
-        Bar.Value   = 0;
-        Bar.Maximum = 1;
-        PercentText.Text = "0%";
+        Progress.SetProgress(0);
     }
 
     private void SetRunning(bool running)

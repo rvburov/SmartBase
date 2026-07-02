@@ -62,21 +62,24 @@ internal sealed class CalendarDayVirtualList : IList<EventListItem>, IList, INot
 
     public event NotifyCollectionChangedEventHandler? CollectionChanged;
 
+    /// <param name="counts">Число событий дня по источникам, позиционно к <paramref name="dbs"/>.
+    /// Считаются АСИНХРОННО до построения списка (см. ListView.LoadFrom): холодный COUNT по дню
+    /// с миллионами событий занимает секунды и не должен блокировать UI-поток (например, старт
+    /// приложения выглядел зависшим на «Запуске интерфейса…»).</param>
     public CalendarDayVirtualList(
         IReadOnlyList<(int dbId, ConstructorRepository repo, ISet<int>? active)> dbs,
+        IReadOnlyList<int> counts,
         DateTime dayStart, DateTime dayEnd, string search, bool isPast)
     {
         _dayStart = dayStart; _dayEnd = dayEnd; _isPast = isPast; _search = search ?? "";
 
-        // Суммарное число событий дня по источникам. Обычные дни — миллисекунды; экстремальный
-        // день на миллионы — разовый счёт (~сотни мс) при открытии дня.
         var srcs  = new List<Src>();
         var total = 0;
-        foreach (var (dbId, repo, active) in dbs.OrderBy(d => d.dbId))
+        for (var i = 0; i < dbs.Count; i++)
         {
-            var cnt = repo.CountCalendarDayEvents(dayStart, dayEnd, active);
-            srcs.Add(new Src { DbId = dbId, Repo = repo, Active = active, Count = cnt, Cumulative = total });
-            total += cnt;
+            var (dbId, repo, active) = dbs[i];
+            srcs.Add(new Src { DbId = dbId, Repo = repo, Active = active, Count = counts[i], Cumulative = total });
+            total += counts[i];
         }
         _total = total;
 

@@ -1,0 +1,39 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="DataBase.Controls.Components.ProgressIndicator">
+
+    <!-- Единый блок индикатора загрузки для всех окон приложения
+         (импорт, сплэш, установщик, обновление, расширения):
+         фаза (жирным) → доп. строка → полоса + проценты справа. -->
+    <StackPanel Spacing="10">
+
+        <TextBlock x:Name="PhaseText"
+                   Text=""
+                   IsVisible="False"
+                   TextTrimming="CharacterEllipsis"
+                   FontWeight="{StaticResource FontWeightBold}"
+                   Foreground="{StaticResource BrushPrimaryText}" />
+
+        <TextBlock x:Name="InfoText"
+                   Text=""
+                   IsVisible="False"
+                   TextTrimming="CharacterEllipsis"
+                   Foreground="{StaticResource BrushSecondaryText}" />
+
+        <Grid ColumnDefinitions="*,Auto">
+            <ProgressBar Grid.Column="0" x:Name="Bar"
+                         Minimum="0" Maximum="1" Value="0"
+                         Height="6" CornerRadius="3"
+                         VerticalAlignment="Center"
+                         Foreground="{StaticResource BrushAccent}" />
+            <TextBlock Grid.Column="1" x:Name="PercentText"
+                       Text="0%"
+                       MinWidth="42"
+                       Margin="10,0,0,0"
+                       TextAlignment="Right"
+                       VerticalAlignment="Center"
+                       Foreground="{StaticResource BrushSecondaryText}" />
+        </Grid>
+
+    </StackPanel>
+</UserControl>
