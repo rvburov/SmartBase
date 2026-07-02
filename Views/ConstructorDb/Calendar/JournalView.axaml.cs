@@ -330,10 +330,11 @@ public partial class JournalView : UserControl
                 row ??= list.DayRowsOf(anchorRecord.StartDt.Date)?.FirstRow;
                 if (gen != _loadGeneration || row is not int r) return;
 
-                // Уже полностью видна — ленту не дёргаем.
+                // Хоть ЧАСТИЧНО видна — ленту не дёргаем (правка видимой записи не должна
+                // двигать экран, даже если строка наполовину срезана краем окна).
                 var y  = OffsetOfRow(r);
                 var vh = _scroll.Viewport.Height;
-                if (y >= _scroll.Offset.Y && y + RowHeight <= _scroll.Offset.Y + vh) return;
+                if (y + RowHeight > _scroll.Offset.Y && y < _scroll.Offset.Y + vh) return;
 
                 // Центрируем строку записи в окне списка.
                 AnimateScroll(Math.Max(0, y - vh / 2 + RowHeight / 2));

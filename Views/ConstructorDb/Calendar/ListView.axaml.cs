@@ -144,7 +144,8 @@ public partial class ListView : UserControl
     public void LoadFrom(IReadOnlyList<(int dbId, ConstructorRepository repo, ISet<int>? active)> dbs,
                          DateTime dayStart, DateTime dayEnd, DateTime currentDate, string search,
                          CalendarRecord? anchorRecord = null,
-                         IReadOnlyList<CalendarRecord>? selectRecords = null)
+                         IReadOnlyList<(CalendarRecord Rec, int Delta)>? delta = null,
+                         bool selectAddedOnly = false)
     {
         _currentDate = currentDate;
         var isPast = currentDate.Date < DateTime.Today;
@@ -165,12 +166,25 @@ public partial class ListView : UserControl
         if (!fresh && anchorRecord is { Id: int anchorId })
             (preserveSelection ??= new HashSet<(int, int, int)>())
                 .Add((anchorRecord.DbId, anchorId, anchorRecord.FieldId));
-        // Дублирование: выделение ПЕРЕХОДИТ с оригиналов на копии.
-        if (selectRecords is not null)
-            preserveSelection = selectRecords
-                .Where(r => r.Id is not null)
-                .Select(r => (r.DbId, r.Id!.Value, r.FieldId))
+        // Дублирование: выделение ПЕРЕХОДИТ с оригиналов на копии (только добавленные записи).
+        if (selectAddedOnly && delta is not null)
+            preserveSelection = delta
+                .Where(t => t.Delta > 0 && t.Rec.Id is not null)
+                .Select(t => (t.Rec.DbId, t.Rec.Id!.Value, t.Rec.FieldId))
                 .ToHashSet();
+
+        // Порядок источников фиксируем по DbId — он же порядок конкатенации в виртуальном списке.
+        var sorted = dbs.OrderBy(d => d.dbId).ToList();
+
+        // Точечная правка (создание/изменение/удаление/дублирование): сперва пробуем мутировать
+        // ТЕКУЩИЙ список НА МЕСТЕ — offset-режим гигантского дня не превращается в «Загрузка…»
+        // и не теряет выделение/якорь; если мутация невозможна — тихая пересборка.
+        if (!fresh && search.Length == 0 && delta is { Count: > 0 } && _list is not null)
+        {
+            _ = ApplyDeltaOrReloadAsync(gen, sorted, dayStart, dayEnd, search, isPast, delta,
+                                        preserveSelection, anchorRecord, oldOffset, selectAddedOnly);
+            return;
+        }
 
         if (fresh)
         {
@@ -179,10 +193,37 @@ public partial class ListView : UserControl
             EmptyHint.Text      = "Загрузка…";
             EmptyHint.IsVisible = true;
         }
-        // Порядок источников фиксируем по DbId — он же порядок конкатенации в виртуальном списке.
-        _ = LoadCountsThenBuildAsync(gen, dbs.OrderBy(d => d.dbId).ToList(),
-                                     dayStart, dayEnd, search, isPast,
+        _ = LoadCountsThenBuildAsync(gen, sorted, dayStart, dayEnd, search, isPast,
                                      fresh, anchorRecord, oldOffset, preserveSelection);
+    }
+
+    // Точечная правка: мутация текущего списка на месте (страницы переживают правку — без
+    // волны «Загрузка…»); не вышло (поиск, строка не в кеше, много вставок) — тихая пересборка.
+    private async Task ApplyDeltaOrReloadAsync(
+        int gen, List<(int dbId, ConstructorRepository repo, ISet<int>? active)> dbs,
+        DateTime dayStart, DateTime dayEnd, string search, bool isPast,
+        IReadOnlyList<(CalendarRecord Rec, int Delta)> delta,
+        HashSet<(int DbId, int RecId, int FieldId)>? preserveSelection,
+        CalendarRecord? anchorRecord, double oldOffset, bool selectAddedOnly)
+    {
+        var removed = delta.Where(t => t.Delta < 0).Select(t => t.Rec).ToList();
+        var added   = delta.Where(t => t.Delta > 0).Select(t => t.Rec).ToList();
+
+        if (_list is { } cur)
+        {
+            bool mutated;
+            try { mutated = await cur.ApplyDeltaAsync(removed, added, selectAddedOnly); }
+            catch { mutated = false; }
+            if (gen != _loadGeneration) return;
+            if (mutated)
+            {
+                EmptyHint.IsVisible = cur.Count == 0;
+                ApplyPosition(gen, cur, fresh: false, anchorRecord, oldOffset);
+                return;
+            }
+        }
+        await LoadCountsThenBuildAsync(gen, dbs, dayStart, dayEnd, search, isPast,
+                                       fresh: false, anchorRecord, oldOffset, preserveSelection);
     }
 
     private async Task LoadCountsThenBuildAsync(
@@ -248,10 +289,11 @@ public partial class ListView : UserControl
             if (anchorRecord is not { Id: int rid }) return;
             if (list.RowOfEvent(anchorRecord.DbId, rid, anchorRecord.FieldId) is not int r) return;
 
-            // Уже полностью видна — ленту не дёргаем; иначе центрируем строку записи.
+            // Хоть ЧАСТИЧНО видна — список не дёргаем (правка видимой записи не должна двигать
+            // экран, даже если её строка наполовину срезана краем); полностью вне — центрируем.
             var y  = PadTop + r * RowHeight;
             var vh = ListScroll.Viewport.Height;
-            if (y >= ListScroll.Offset.Y && y + RowHeight <= ListScroll.Offset.Y + vh) return;
+            if (y + RowHeight > ListScroll.Offset.Y && y < ListScroll.Offset.Y + vh) return;
             AnimateScroll(Math.Max(0, y - vh / 2 + RowHeight / 2));
         }, DispatcherPriority.Background);
     }

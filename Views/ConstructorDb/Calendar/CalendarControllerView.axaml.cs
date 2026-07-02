@@ -214,14 +214,8 @@ public partial class CalendarControllerView : UserControl
                  (ISet<int>?)(_activeByDb is not null && _activeByDb.TryGetValue(d.DbId, out var s) ? s : null)))
                 .ToList();
             if (_currentViewIndex == 0)
-            {
-                // Копии после дублирования: выделение переходит на них (см. LoadFrom Расписания).
-                var selectRecs = selectAdded && delta is not null
-                    ? delta.Where(t => t.Delta > 0).Select(t => t.Rec).ToList()
-                    : null;
                 ListViewCtrl.LoadFrom(sources, startDt, endDt, _currentDate, _searchQuery,
-                                      anchor, selectRecs);
-            }
+                                      anchor, delta, selectAdded);
             else
                 JournalViewCtrl.LoadFrom(sources, _searchQuery, anchor, delta, selectAdded);   // вся история, без окна дат
             return;
@@ -356,6 +350,12 @@ public partial class CalendarControllerView : UserControl
         else if (result.Record is not null)
         {
             var rec = result.Record;
+            // Диалог оперирует МИНУТАМИ — у времени с секундами (импорт/массовые данные) секунды
+            // терялись при каждом сохранении: правка «только названия» молча меняла время
+            // (14:48:37 → 14:48:00), и запись реально переезжала внутри дня — первая правка
+            // «прыгала» с прогрузкой. Минуты не менялись — возвращаем исходные секунды.
+            if (rec.StartDt == MinuteFloor(r.StartDt)) rec.StartDt = r.StartDt;
+            if (rec.EndDt   == MinuteFloor(r.EndDt))   rec.EndDt   = r.EndDt;
             if (rec.DbId == r.DbId)
             {
                 var repo = RepoOf(rec);
@@ -562,6 +562,10 @@ public partial class CalendarControllerView : UserControl
     {
         public void Report(int value) => report(value);
     }
+
+    // Начало минуты — для сравнения времени из диалога (минутная точность) с исходным.
+    private static DateTime MinuteFloor(DateTime d) =>
+        new(d.Year, d.Month, d.Day, d.Hour, d.Minute, 0, d.Kind);
 
     // Русское склонование: 1 запись, 2–4 записи, 5+ записей (с учётом 11–14).
     private static string RecordsPlural(int n)

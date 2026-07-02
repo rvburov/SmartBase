@@ -3564,6 +3564,52 @@ public class ConstructorRepository(AppDbContext db)
             return new ConstructorRepository(ctx).CountCalendarDayEvents(dayStart, dayEnd, activeIds);
         });
 
+    /// <summary>Ранг события внутри дня — число событий строго ДО него в порядке «Расписания»
+    /// (all-day первыми, затем (StartIso, RecordId, FieldId)); изолированное подключение.
+    /// Нужен точечной правке offset-режима: вставить строку созданной/изменённой записи в кеш
+    /// гигантского дня на точное место без перечитывания дня (COUNT по покрывающему индексу).</summary>
+    public Task<int> CountCalendarDayEventsBeforeAsync(DateTime dayStart, DateTime dayEnd,
+        ISet<int>? activeIds, bool allDay, DateTime start, int recordId, int fieldId) =>
+        Task.Run(() =>
+        {
+            using var ctx = new AppDbContext(db.DbPath);
+            ctx.ApplyPerformancePragmas();
+            var repo = new ConstructorRepository(ctx);
+            var before = allDay ? 0 : repo.CountCalendarDayPhase(dayStart, dayEnd, activeIds, 1);
+            return before + repo.CountCalendarDayPhaseBefore(
+                dayStart, dayEnd, activeIds, allDay ? 1 : 0, start, recordId, fieldId);
+        });
+
+    // Число событий фазы дня с ключом (StartIso, RecordId, FieldId) СТРОГО МЕНЬШЕ заданного —
+    // тот же полный ключ, что у offset/keyset-выборок (один порядок, без расхождений).
+    private int CountCalendarDayPhaseBefore(DateTime dayStart, DateTime dayEnd, ISet<int>? activeIds,
+                                            int allDay, DateTime start, int recordId, int fieldId)
+    {
+        var s = DateTime.SpecifyKind(dayStart, DateTimeKind.Unspecified).ToString("o");
+        var e = DateTime.SpecifyKind(dayEnd,   DateTimeKind.Unspecified).ToString("o");
+        var k = DateTime.SpecifyKind(start,    DateTimeKind.Unspecified).ToString("o");
+        var col = activeIds is { Count: > 0 } ? $" AND CollectionId IN ({string.Join(",", activeIds)})" : "";
+        var conn = db.Database.GetDbConnection();
+        var opened = conn.State != System.Data.ConnectionState.Open;
+        if (opened) conn.Open();
+        try
+        {
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = $@"SELECT COUNT(*) FROM calendar_index
+                WHERE StartIso >= $s AND StartIso < $e AND AllDay = $ad{col}
+                  AND (StartIso < $k OR (StartIso = $k AND (RecordId < $r OR (RecordId = $r AND FieldId < $f))))";
+            AddParam(cmd, "$s").Value  = s;
+            AddParam(cmd, "$e").Value  = e;
+            AddParam(cmd, "$ad").Value = allDay;
+            AddParam(cmd, "$k").Value  = k;
+            AddParam(cmd, "$r").Value  = recordId;
+            AddParam(cmd, "$f").Value  = fieldId;
+            var o = cmd.ExecuteScalar();
+            return o is null or DBNull ? 0 : Convert.ToInt32(o);
+        }
+        finally { if (opened) conn.Close(); }
+    }
+
     // Верхняя граница длительности «короткого/timed» события — задаёт, насколько далеко
     // назад от начала окна сканируется timed-под-запрос (нижняя граница StartIso). Событие
     // длиннее считается «многодневным» и берётся отдельным all-day-под-запросом без нижней

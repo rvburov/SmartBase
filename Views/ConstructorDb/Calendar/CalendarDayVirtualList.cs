@@ -49,11 +49,13 @@ internal sealed class CalendarDayVirtualList : IList<EventListItem>, IList, INot
     // Offset-режим: постраничный кеш с фоновой загрузкой.
     private readonly List<Src>? _srcs;
     private readonly Dictionary<int, int> _srcIndexByDbId = new();   // DbId → индекс в _srcs
-    private readonly int _total;
+    // Мутируется точечной правкой на месте (см. ApplyDeltaAsync).
+    private int _total;
     private readonly Dictionary<int, EventListItem[]> _pages = new();
     private readonly LinkedList<int> _lru = new();
     private readonly HashSet<int> _needLoad = new();   // запрошены, но фон ещё не стартовал (ждут дебаунса)
     private readonly HashSet<int> _pending  = new();   // фон в полёте (ждут заполнения)
+    private readonly HashSet<int> _settled  = new();   // загрузка завершена — заглушки не перечитываем по кругу
     private readonly System.Threading.SemaphoreSlim _loadGate = new(4);
     private DispatcherTimer? _loadTimer;               // дебаунс: грузим после паузы скролла
     private int _generation;
@@ -62,7 +64,11 @@ internal sealed class CalendarDayVirtualList : IList<EventListItem>, IList, INot
 
     // Выделение, пережившее перезагрузку (тихое обновление после правки/дублирования): ключи
     // записей, которые надо снова подсветить — в готовых строках и при фоновом заполнении.
-    private readonly HashSet<(int DbId, int RecId, int FieldId)>? _preselect;
+    // Обновляется точечной правкой (ApplyDeltaAsync) актуальным выделением.
+    private HashSet<(int DbId, int RecId, int FieldId)>? _preselect;
+
+    // Search-режим: список построен из результатов поиска — точечная правка не применима.
+    private readonly bool _searchMode;
 
     /// <param name="counts">Число событий дня по источникам, позиционно к <paramref name="dbs"/>.
     /// Считаются АСИНХРОННО до построения списка (см. ListView.LoadFrom): холодный COUNT по дню
@@ -103,7 +109,8 @@ internal sealed class CalendarDayVirtualList : IList<EventListItem>, IList, INot
     public CalendarDayVirtualList(List<CalendarRecord> found, bool isPast,
                                   HashSet<(int DbId, int RecId, int FieldId)>? preserveSelection = null)
     {
-        _preselect = preserveSelection is { Count: > 0 } ? preserveSelection : null;
+        _preselect  = preserveSelection is { Count: > 0 } ? preserveSelection : null;
+        _searchMode = true;
         _isPast = isPast;
         _all = found
             .OrderByDescending(e => e.AllDay)
@@ -160,6 +167,217 @@ internal sealed class CalendarDayVirtualList : IList<EventListItem>, IList, INot
         return null;
     }
 
+    // ── Точечная правка НА МЕСТЕ (без пересборки списка) — как в JournalVirtualList ────────
+
+    private static (int DbId, int RecId, int FieldId) Key(CalendarRecord e) =>
+        (e.DbId, e.Id ?? 0, e.FieldId);
+
+    // Порядок InMemory-режима (слияние по времени между БД): all-day первыми, затем
+    // время/DbId/Id/FieldId. В offset-режиме порядок другой (конкатенация источников).
+    private static readonly Comparer<CalendarRecord> DayComparer =
+        Comparer<CalendarRecord>.Create((a, b) =>
+        {
+            var c = b.AllDay.CompareTo(a.AllDay);   if (c != 0) return c;
+            c = a.StartDt.CompareTo(b.StartDt);     if (c != 0) return c;
+            c = a.DbId.CompareTo(b.DbId);           if (c != 0) return c;
+            c = (a.Id ?? 0).CompareTo(b.Id ?? 0);   if (c != 0) return c;
+            return a.FieldId.CompareTo(b.FieldId);
+        });
+
+    /// <summary>
+    /// Применяет создание/изменение/удаление/дублирование записей к ТЕКУЩЕМУ списку дня без
+    /// пересоздания: реализованные строки переживают правку — день обновляется в том же кадре,
+    /// без волны «Загрузка…» (пересоздание offset-режима на гигантском дне превращало весь
+    /// экран в заглушки и теряло выделение/якорь). Записи вне окна дня игнорируются (перенос
+    /// на другую дату). false — мутация невозможна (поиск, удаляемая строка не в кеше, много
+    /// вставок) — вызывающий делает тихую пересборку.
+    /// </summary>
+    public async Task<bool> ApplyDeltaAsync(IReadOnlyList<CalendarRecord> removed,
+                                            IReadOnlyList<CalendarRecord> added,
+                                            bool selectAddedOnly = false)
+    {
+        if (_searchMode) return false;
+        bool InDay(CalendarRecord r) => r.StartDt >= _dayStart && r.StartDt < _dayEnd;
+        var removedIn = removed.Where(InDay).ToList();
+        var addedIn   = added.Where(InDay).ToList();
+        foreach (var r in removedIn.Concat(addedIn))
+            if (r.Id is null) return false;
+
+        // InMemory: правим готовый список напрямую (без БД).
+        if (_all is not null)
+        {
+            foreach (var r in removedIn)
+            {
+                var key = Key(r);
+                var i = _all.FindIndex(x => x.OriginalEvent is { } ev && Key(ev) == key);
+                if (i >= 0) _all.RemoveAt(i);
+            }
+            foreach (var r in addedIn)
+            {
+                // Копия при дублировании — сразу после последней строки с теми же временем и
+                // названием (прямо под оригиналом); иначе — по порядку времени.
+                var hint = -1;
+                for (var i = 0; i < _all.Count; i++)
+                    if (_all[i].OriginalEvent is { } ev && ev.DbId == r.DbId &&
+                        ev.AllDay == r.AllDay && ev.StartDt == r.StartDt && ev.Title == r.Title)
+                        hint = i;
+                _all.Insert(hint >= 0 ? hint + 1 : LowerBound(r),
+                            new EventListItem(r, _isPast) { IsSelected = true });
+            }
+            FinishSelection(addedIn, selectAddedOnly);
+            CollectionChanged?.Invoke(this,
+                new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Reset));
+            return true;
+        }
+
+        // Offset-режим (гигантский день).
+        foreach (var r in removedIn.Concat(addedIn))
+            if (!_srcIndexByDbId.ContainsKey(r.DbId)) return false;
+
+        // Позиции удаляемых строк — по кешу страниц (их выделяли — они реализованы).
+        var realized = new Dictionary<(int DbId, int RecId, int FieldId), int>();
+        foreach (var (page, rows) in _pages)
+            for (var s = 0; s < rows.Length; s++)
+                if (rows[s].OriginalEvent is { } ev)
+                    realized[Key(ev)] = page * PageSize + s;
+
+        var removedIdx = new List<int>(removedIn.Count);
+        foreach (var r in removedIn)
+        {
+            if (!realized.TryGetValue(Key(r), out var idx)) return false;
+            removedIdx.Add(idx);
+        }
+        removedIdx.Sort();
+
+        // Посекундная карта мультибазного дня строится ПРЯМО СЕЙЧАС — её состояние (до/после
+        // правки в БД) неизвестно, надёжнее пересборка.
+        if (_buckets is null && _bucketsTask is not null) return false;
+
+        ++_generation;   // заливки страниц по СТАРЫМ позициям дальше не нужны
+
+        // Карта секунд правится точечно (полная пересборка — секунды сканирования).
+        if (_buckets is not null) AdjustBuckets(_buckets, removedIn, addedIn);
+
+        // Снимок заполненных строк → новые позиции: сдвиг на число удалённых ДО строки.
+        var mapping = new SortedDictionary<int, EventListItem>();
+        var removedKeys = removedIn.Select(Key).ToHashSet();
+        foreach (var (page, rows) in _pages)
+            for (var s = 0; s < rows.Length; s++)
+            {
+                var row = rows[s];
+                if (row.OriginalEvent is not { } ev) continue;
+                if (removedKeys.Contains(Key(ev))) continue;
+                var idx = page * PageSize + s;
+                mapping[idx - CountBefore(removedIdx, idx)] = row;
+            }
+        var total = _total - removedIdx.Count;
+
+        // Вставки по одной, позиция по приоритету:
+        //  1) правка записи без смены времени — ТА ЖЕ позиция, что у удаляемой строки (ключ
+        //     порядка не изменился): без БД и без сдвигов — страницы остаются полными, даже
+        //     если визуальная позиция строки (копия под оригиналом) отличается от порядка БД;
+        //  2) дубль — СРАЗУ ПОСЛЕ последней строки с теми же временем и названием (копия
+        //     видимой записи появляется прямо под ней, а не в конце группы одинаковых секунд;
+        //     истинный порядок БД восстановится при следующем открытии дня);
+        //  3) иначе — позиция из БД (ранг в дне / в бакете её секунды — COUNT по индексу);
+        //     таких вставок за раз не больше 8 — массовые быстрее пересборкой.
+        var rankBudget = 8;
+        foreach (var rec in addedIn.OrderBy(r => r.StartDt).ThenBy(r => r.Id ?? 0))
+        {
+            int g;
+            var twin = removedIn.FirstOrDefault(x => x.DbId == rec.DbId && x.Id == rec.Id &&
+                                                     x.AllDay == rec.AllDay && x.StartDt == rec.StartDt);
+            if (twin is not null && realized.TryGetValue(Key(twin), out var oldIdx))
+                g = Math.Clamp(oldIdx - CountBefore(removedIdx, oldIdx), 0, total);
+            else
+            {
+                var hint = -1;
+                foreach (var (gi, row) in mapping)
+                    if (row.OriginalEvent is { } ev && ev.DbId == rec.DbId &&
+                        ev.AllDay == rec.AllDay && ev.StartDt == rec.StartDt && ev.Title == rec.Title)
+                        hint = gi;
+                if (hint >= 0) g = hint + 1;
+                else
+                {
+                    if (--rankBudget < 0) return false;
+                    g = Math.Clamp(await RankOfAsync(rec), 0, total);
+                }
+            }
+            foreach (var key in mapping.Keys.Where(k => k >= g).OrderByDescending(k => k).ToList())
+            {
+                mapping[key + 1] = mapping[key];
+                mapping.Remove(key);
+            }
+            mapping[g] = new EventListItem(rec, _isPast) { IsSelected = true };
+            total += 1;
+        }
+
+        // Счётчики источников (нужны offset-срезам одиночного источника) и общий объём.
+        foreach (var r in removedIn) _srcs![_srcIndexByDbId[r.DbId]].Count -= 1;
+        foreach (var r in addedIn)   _srcs![_srcIndexByDbId[r.DbId]].Count += 1;
+        var cum = 0;
+        foreach (var s in _srcs!) { s.Cumulative = cum; cum += s.Count; }
+        _total = total;
+
+        // Страницы заново из пересаженных строк: полные остаются как были; дыры (сдвиги на
+        // границах кешированных диапазонов) дочитываются ПО ТРЕБОВАНИЮ — когда заглушка
+        // реально показана (см. индексатор). Жадная перечитка всех дырявых страниц занимала
+        // фоновую очередь вне экрана, и страница у якоря ждала её секунды.
+        _pages.Clear(); _lru.Clear(); _needLoad.Clear(); _pending.Clear(); _settled.Clear();
+        foreach (var group in mapping.GroupBy(kv => kv.Key / PageSize))
+        {
+            var page  = group.Key;
+            var start = page * PageSize;
+            var take  = Math.Max(0, Math.Min(PageSize, _total - start));
+            if (take <= 0) continue;
+            var rows = new EventListItem[take];
+            foreach (var kv in group)
+                if (kv.Key - start < take) rows[kv.Key - start] = kv.Value;
+            for (var s = 0; s < take; s++)
+                rows[s] ??= EventListItem.Loading();
+            _pages[page] = rows;
+            _lru.AddLast(page);
+        }
+
+        FinishSelection(addedIn, selectAddedOnly);
+
+        // Ключи подсветки для дозагружаемых строк (Fill → ApplyPreselect).
+        _preselect = RealizedItems
+            .Where(i => i.IsEvent && i.IsSelected && i.OriginalEvent is { Id: not null })
+            .Select(i => Key(i.OriginalEvent!))
+            .Concat(addedIn.Select(Key))
+            .ToHashSet();
+        if (_preselect.Count == 0) _preselect = null;
+
+        if (_needLoad.Count > 0) ScheduleLoad();
+        CollectionChanged?.Invoke(this,
+            new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Reset));
+        return true;
+    }
+
+    // Позиция вставки в InMemory-список (порядок DayComparer).
+    private int LowerBound(CalendarRecord rec)
+    {
+        int lo = 0, hi = _all!.Count;
+        while (lo < hi)
+        {
+            var mid = (lo + hi) / 2;
+            if (_all[mid].OriginalEvent is { } ev && DayComparer.Compare(ev, rec) < 0) lo = mid + 1;
+            else hi = mid;
+        }
+        return lo;
+    }
+
+    // Дублирование: выделение ПЕРЕХОДИТ с оригиналов на копии (снимаем со всех, кроме added).
+    private void FinishSelection(List<CalendarRecord> added, bool selectAddedOnly)
+    {
+        if (!selectAddedOnly) return;
+        var keys = added.Select(Key).ToHashSet();
+        foreach (var it in RealizedItems)
+            if (it.IsSelected && (it.OriginalEvent is not { } ev || !keys.Contains(Key(ev))))
+                it.IsSelected = false;
+    }
+
     /// <summary>Выделить строки диапазона индексов [a, b] (Ctrl+Shift+клик). Помечаются
     /// строки из кеша страниц, включая заглушки «Загрузка…» (заполнившись, останутся
     /// выделенными); страницы вне кеша не трогаем — их выборка означала бы чтение всего
@@ -200,7 +418,15 @@ internal sealed class CalendarDayVirtualList : IList<EventListItem>, IList, INot
             var page = index / PageSize;
             if (!_pages.TryGetValue(page, out var rows)) rows = LoadPage(page);
             var slot = index % PageSize;
-            return slot < rows.Length ? rows[slot] : EventListItem.Loading();
+            var row = slot < rows.Length ? rows[slot] : EventListItem.Loading();
+            // Дыра после точечной правки (страница в кеше, но строка — заглушка): дочитываем
+            // ПО ТРЕБОВАНИЮ — только страницы, чьи заглушки реально показываются. Жадная
+            // перечитка всех дырявых страниц забивала фоновую очередь глубокими offset-чтениями
+            // вне экрана, и видимая страница ждала их секунды.
+            if (row.IsLoadingPlaceholder && !_pending.Contains(page) &&
+                !_settled.Contains(page) && _needLoad.Add(page))
+                ScheduleLoad();
+            return row;
         }
         set => throw new NotSupportedException();
     }
@@ -280,10 +506,14 @@ internal sealed class CalendarDayVirtualList : IList<EventListItem>, IList, INot
             if (gen != _generation) return;
             // Пока задача ждала слот, страницу могли вытеснить из кеша — тогда не тратим запрос.
             if (!_pending.Contains(page) || !_pages.ContainsKey(page)) return;
-            // keyset (продолжение за предыдущей страницей) или offset (прыжок) — порядок один и тот же.
-            var records = cursor is { } c
-                ? await ReadForwardAsync(c, take)
-                : await LoadOffsetSlices(skip, take);
+            // Несколько БД — порядок по ВРЕМЕНИ через посекундные бакеты (конкатенация источников
+            // ломала порядок между базами). Одна БД — keyset-продолжение или offset-прыжок
+            // (у одного источника конкатенация и есть порядок времени).
+            var records = _srcs!.Count > 1
+                ? await ReadBucketRangeAsync(skip, take)
+                : cursor is { } c
+                    ? await ReadForwardAsync(c, take)
+                    : await LoadOffsetSlices(skip, take);
             Dispatcher.UIThread.Post(() => Fill(gen, page, records));
         }
         catch
@@ -364,12 +594,204 @@ internal sealed class CalendarDayVirtualList : IList<EventListItem>, IList, INot
         return outp;
     }
 
+    // ── Мультибазный гигантский день: ПОСЕКУНДНАЯ карта (как «Журнал») ────────────
+    // Конкатенация источников ломала порядок времени между БД. Бакет = секунда: счётчики по
+    // источникам + префикс-суммы; события идут строго по секундам, конкатенация остаётся
+    // только внутри одной и той же секунды — визуально неотличимо от полного порядка.
+
+    private sealed class SecondBucket
+    {
+        public TimeSpan Time;
+        public int[] SrcCounts = null!;
+        public int[] SrcCumul  = null!;
+        public int Total;
+        public int CumStart;   // глобальное смещение первого события бакета
+    }
+
+    private List<SecondBucket>? _buckets;
+    private Task<List<SecondBucket>>? _bucketsTask;
+
+    private Task<List<SecondBucket>> BucketsAsync()
+    {
+        if (_buckets is not null) return Task.FromResult(_buckets);
+        return _bucketsTask ??= BuildBucketsAsync();
+    }
+
+    // Гистограммы секунд от каждого источника (фоновые сканы, один раз на список — на это
+    // время строки «Загрузка…») сливаются в упорядоченные бакеты с префикс-суммами.
+    private async Task<List<SecondBucket>> BuildBucketsAsync()
+    {
+        var byTime = new SortedDictionary<string, int[]>(StringComparer.Ordinal);
+        for (var i = 0; i < _srcs!.Count; i++)
+        {
+            if (_srcs[i].Count == 0) continue;
+            var h = await _srcs[i].Repo.LoadCalendarDayTimeHistogramAsync(
+                _dayStart, _dayEnd, _srcs[i].Active);
+            foreach (var (t, c) in h)
+            {
+                if (!byTime.TryGetValue(t, out var arr))
+                    byTime[t] = arr = new int[_srcs.Count];
+                arr[i] += c;
+            }
+        }
+        var buckets = new List<SecondBucket>(byTime.Count);
+        var cum = 0;
+        foreach (var (t, counts) in byTime)
+        {
+            var cumul = new int[counts.Length];
+            var total = 0;
+            for (var i = 0; i < counts.Length; i++) { cumul[i] = total; total += counts[i]; }
+            buckets.Add(new SecondBucket
+            {
+                Time = TimeSpan.Parse(t), SrcCounts = counts, SrcCumul = cumul,
+                Total = total, CumStart = cum,
+            });
+            cum += total;
+        }
+        _buckets = buckets;   // продолжение await — на UI-потоке
+        return buckets;
+    }
+
+    // Срез [skip, skip+take) в порядке по времени — по посекундным бакетам.
+    private async Task<List<CalendarRecord>> ReadBucketRangeAsync(int skip, int take)
+    {
+        var buckets = await BucketsAsync();
+        var outp = new List<CalendarRecord>(take);
+        var bi = FindBucket(buckets, skip);
+        var pos = skip;
+        var remaining = take;
+        while (bi >= 0 && bi < buckets.Count && remaining > 0)
+        {
+            var b = buckets[bi];
+            var from = pos - b.CumStart;
+            if (from >= b.Total) { bi++; continue; }
+            var n = Math.Min(remaining, b.Total - from);
+            var part = await BucketSliceAsync(b, from, n);
+            if (part.Count == 0) break;   // данные изменились под ногами — отдадим что есть
+            outp.AddRange(part);
+            pos += part.Count;
+            remaining -= part.Count;
+            if (part.Count < n) break;
+        }
+        return outp;
+    }
+
+    // Последний бакет с CumStart <= evOffset (бакеты непрерывны по CumStart).
+    private static int FindBucket(List<SecondBucket> buckets, int evOffset)
+    {
+        int lo = 0, hi = buckets.Count - 1, ans = -1;
+        while (lo <= hi)
+        {
+            var mid = (lo + hi) / 2;
+            if (buckets[mid].CumStart <= evOffset) { ans = mid; lo = mid + 1; }
+            else hi = mid - 1;
+        }
+        return ans;
+    }
+
+    // Срез одного бакета [from, from+count): внутри секунды — конкатенация источников,
+    // выборка offset'ом в границах секунды (изолированные подключения).
+    private async Task<List<CalendarRecord>> BucketSliceAsync(SecondBucket b, int from, int count)
+    {
+        var outp = new List<CalendarRecord>(count);
+        var pos = from;
+        var remaining = count;
+        var bs = _dayStart + b.Time;
+        var be = bs + TimeSpan.FromSeconds(1);
+        for (var i = 0; i < _srcs!.Count && remaining > 0; i++)
+        {
+            var end = b.SrcCumul[i] + b.SrcCounts[i];
+            if (pos >= end) continue;
+            var localSkip = pos - b.SrcCumul[i];
+            if (localSkip < 0) break;
+            var localTake = Math.Min(remaining, b.SrcCounts[i] - localSkip);
+            if (localTake <= 0) continue;
+            var part = await _srcs[i].Repo.LoadCalendarDayPageAsync(bs, be, _srcs[i].Active, localSkip, localTake);
+            foreach (var ev in part) ev.DbId = _srcs[i].DbId;
+            outp.AddRange(part);
+            pos += part.Count;
+            remaining -= part.Count;
+            if (part.Count < localTake) break;
+        }
+        return outp;
+    }
+
+    // Точечная правка карты: счётчик секунды записи ± по её источнику, затем пересчёт
+    // префикс-сумм (полная пересборка карты стоила бы секунды сканирования).
+    private void AdjustBuckets(List<SecondBucket> buckets,
+                               List<CalendarRecord> removed, List<CalendarRecord> added)
+    {
+        void Apply(CalendarRecord rec, int delta)
+        {
+            var sec = new TimeSpan(rec.StartDt.Hour, rec.StartDt.Minute, rec.StartDt.Second);
+            var si  = _srcIndexByDbId[rec.DbId];
+            var bi  = buckets.FindIndex(b => b.Time == sec);
+            if (bi < 0)
+            {
+                if (delta <= 0) return;                     // рассинхрон — не ломаемся
+                var at = buckets.FindIndex(b => b.Time > sec);
+                var nb = new SecondBucket { Time = sec, SrcCounts = new int[_srcs!.Count],
+                                            SrcCumul = new int[_srcs.Count] };
+                buckets.Insert(at < 0 ? buckets.Count : at, nb);
+                bi = at < 0 ? buckets.Count - 1 : at;
+            }
+            var b = buckets[bi];
+            b.SrcCounts[si] = Math.Max(0, b.SrcCounts[si] + delta);
+        }
+        foreach (var r in removed) Apply(r, -1);
+        foreach (var r in added)   Apply(r, +1);
+        buckets.RemoveAll(b => b.SrcCounts.Sum() == 0);
+        var cum = 0;
+        foreach (var b in buckets)
+        {
+            var t = 0;
+            for (var i = 0; i < b.SrcCounts.Length; i++) { b.SrcCumul[i] = t; t += b.SrcCounts[i]; }
+            b.Total = t;
+            b.CumStart = cum;
+            cum += t;
+        }
+    }
+
+    // Глобальная позиция записи из БД: одна БД — ранг в дне; несколько — начало бакета её
+    // секунды + смещение источника внутри бакета + ранг в секундном окне (COUNT дёшев —
+    // окно в одну секунду).
+    private async Task<int> RankOfAsync(CalendarRecord rec)
+    {
+        var si  = _srcIndexByDbId[rec.DbId];
+        var src = _srcs![si];
+        if (_srcs.Count == 1)
+            return await src.Repo.CountCalendarDayEventsBeforeAsync(
+                _dayStart, _dayEnd, src.Active, rec.AllDay, rec.StartDt, rec.Id!.Value, rec.FieldId);
+
+        var buckets = await BucketsAsync();
+        var sec = new TimeSpan(rec.StartDt.Hour, rec.StartDt.Minute, rec.StartDt.Second);
+        var b = buckets.FirstOrDefault(x => x.Time == sec);
+        if (b is null)
+        {
+            // Бакета нет (рассинхрон) — к началу следующей секунды; вокруг перечитается по требованию.
+            var next = buckets.FirstOrDefault(x => x.Time > sec);
+            return next?.CumStart ?? _total;
+        }
+        var bs = _dayStart + sec;
+        var rankIn = await src.Repo.CountCalendarDayEventsBeforeAsync(
+            bs, bs + TimeSpan.FromSeconds(1), src.Active, rec.AllDay, rec.StartDt, rec.Id!.Value, rec.FieldId);
+        return b.CumStart + b.SrcCumul[si] + rankIn;
+    }
+
+    // Число элементов отсортированного списка СТРОГО МЕНЬШЕ значения (значения уникальны).
+    private static int CountBefore(List<int> sorted, int value)
+    {
+        var i = sorted.BinarySearch(value);
+        return i >= 0 ? i : ~i;
+    }
+
     // Заполняет ранее созданные заглушки реальными данными НА МЕСТЕ (UI-поток) — без сброса скролла.
     private void Fill(int gen, int page, List<CalendarRecord> records)
     {
         if (gen != _generation) return;
         if (!_pending.Remove(page)) return;
         if (!_pages.TryGetValue(page, out var rows)) return;
+        _settled.Add(page);   // повторную перечитку оставшихся заглушек не заказываем
         for (var i = 0; i < records.Count && i < rows.Length; i++)
         {
             rows[i].Fill(records[i], _isPast);
@@ -385,6 +807,7 @@ internal sealed class CalendarDayVirtualList : IList<EventListItem>, IList, INot
         _pages.Remove(oldest);
         _pending.Remove(oldest);
         _needLoad.Remove(oldest);
+        _settled.Remove(oldest);
     }
 
     // ── IList<T> / IList (нужны ItemsControl/VirtualizingStackPanel) ──────────────
