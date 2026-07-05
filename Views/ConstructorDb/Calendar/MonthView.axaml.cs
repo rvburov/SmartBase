@@ -20,10 +20,13 @@ public partial class MonthView : UserControl
     public event EventHandler<DateTime>? DaySelected;
     public event EventHandler<DateTime>? DayAddClicked;
     public event EventHandler<CalendarRecord>? RecordClicked;
-    public event EventHandler<CalendarRecord>? RecordMoved;
+    // Перенос между днями: запись уже с НОВЫМИ датами + исходные даты — для точечной
+    // дельты в контроллере (−1 старому дню, +1 новому, включая карту счётчиков «+N ещё»).
+    public event EventHandler<(CalendarRecord Rec, DateTime OldStart, DateTime OldEnd)>? RecordMoved;
     public event EventHandler<CalendarRecord>? RecordDeleteRequested;
     public event EventHandler<IReadOnlyList<CalendarRecord>>? RecordsDeleteRequested;
     public event EventHandler<CalendarRecord>? RecordDuplicateRequested;
+    public event EventHandler<IReadOnlyList<CalendarRecord>>? RecordsDuplicateRequested;
 
     // Константы макета (соответствуют PyQt DayCell / MonthOverlay)
     private const int DateH   = 34;
@@ -140,10 +143,18 @@ public partial class MonthView : UserControl
         }
     }
 
-    public void Refresh(IEnumerable<CalendarRecord> events, DateTime currentDate)
+    // Карта счётчиков дней (день → сколько событий СТАРТУЕТ в нём): при ограниченном чтении
+    // окна день-гигант отдаёт сетке только первые GridDayCap строк — недоставленные события
+    // не попадают в _events вовсе, и честный «+N ещё» получается только из карты. null —
+    // чтение без ограничения (или поиск), скрытые считаются от фактически полученного.
+    private IReadOnlyDictionary<DateOnly, int>? _dayTotals;
+
+    public void Refresh(IEnumerable<CalendarRecord> events, DateTime currentDate,
+                        IReadOnlyDictionary<DateOnly, int>? dayTotals = null)
     {
         _events      = events.ToList();
         _currentDate = currentDate;
+        _dayTotals   = dayTotals;
         _BuildAll();
     }
 
@@ -227,6 +238,16 @@ public partial class MonthView : UserControl
 
         var W = GridContainer.Bounds.Width;
         var H = GridContainer.Bounds.Height;
+
+        // Сколько событий на каждый день ДОСТАВЛЕНО (по дню старта): разница с картой
+        // счётчиков — события, обрезанные ограниченным чтением, идут в «+N ещё».
+        Dictionary<DateTime, int>? received = null;
+        if (_dayTotals is not null)
+        {
+            received = new Dictionary<DateTime, int>();
+            foreach (var e in _events)
+                received[e.StartDt.Date] = received.GetValueOrDefault(e.StartDt.Date) + 1;
+        }
 
         var firstDay    = new DateTime(_currentDate.Year, _currentDate.Month, 1);
         var startOffset = ((int)firstDay.DayOfWeek + 6) % 7;
@@ -314,6 +335,10 @@ public partial class MonthView : UserControl
                 }
 
                 var hidden = hiddenSingles + hiddenSpans[col];
+
+                // Обрезанные ограниченным чтением (в _events их нет) — тоже скрытые.
+                if (received is not null && _dayTotals!.TryGetValue(DateOnly.FromDateTime(d), out var total))
+                    hidden += Math.Max(0, total - received.GetValueOrDefault(d.Date));
 
                 DayGrid.Children.Add(
                     _MakeCell(d, isCurrentMonth, isToday, isWeekend,
@@ -897,10 +922,13 @@ public partial class MonthView : UserControl
         {
             var delta  = _dragTargetDay - _dragSourceDay;
             var ev     = _dragEv;
+            var (origS, origE) = (_dragOrigStart, _dragOrigEnd);
             ev.StartDt = _dragOrigStart + delta;
             ev.EndDt   = _dragOrigEnd   + delta;
             _CancelDrag();
-            RecordMoved?.Invoke(this, ev);
+            // Исходные даты — контроллеру: перенос между днями правится дельтой на месте
+            // (−1 старому дню, +1 новому — в т.ч. карта счётчиков «+N ещё»), без перезагрузки.
+            RecordMoved?.Invoke(this, (ev, origS, origE));
         }
         else
         {
@@ -1137,9 +1165,13 @@ public partial class MonthView : UserControl
         menu.Opening += (_, _) =>
         {
             menu.Items.Clear();
+            // Множественное выделение → массовые «Дублировать»/«Удалить» всего набора разом
+            // (подтверждение «Вы дублируете/удаляете N записей» — в контроллере).
             if (_selections.Count > 1 && _selections.ContainsKey(ev))
             {
                 var batch = _selections.Keys.ToList();
+                menu.Items.Add(DataBase.Controls.Components.EventContextMenu.MakeDuplicateItem(
+                    () => { _Deselect(); RecordsDuplicateRequested?.Invoke(this, batch); }));
                 menu.Items.Add(DataBase.Controls.Components.EventContextMenu.MakeDeleteItem(
                     () => { _Deselect(); RecordsDeleteRequested?.Invoke(this, batch); }));
                 return;

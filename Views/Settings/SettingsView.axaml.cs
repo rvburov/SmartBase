@@ -565,7 +565,8 @@ public partial class SettingsView : UserControl
         if (_registry is null) return;
         var name  = System.IO.Path.GetFileNameWithoutExtension(path);
         var entry = _registry.Add(name, path);
-        // Сначала монтируем (синхронно), затем строим список — чтобы статус был актуален.
+        // Монтирование — в фоне (MainWindow, с окном «Подключение…» при >400 мс); список
+        // строим сразу со статусом «не подключена», по завершении его обновит RefreshDatabases.
         DatabaseAdded?.Invoke(this, entry);
         RefreshDatabaseList();
     }

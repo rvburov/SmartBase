@@ -26,6 +26,7 @@ public partial class WeekView : UserControl
     public event EventHandler<CalendarRecord>?    RecordDeleteRequested;
     public event EventHandler<IReadOnlyList<CalendarRecord>>? RecordsDeleteRequested;
     public event EventHandler<CalendarRecord>?    RecordDuplicateRequested;
+    public event EventHandler<IReadOnlyList<CalendarRecord>>? RecordsDuplicateRequested;
     public event EventHandler<DateOnly>? AllDayCreationRequested;
     public event EventHandler<DateTime>? TimeSlotCreationRequested;
 
@@ -116,14 +117,16 @@ public partial class WeekView : UserControl
         AllDayBarCtrl.RecordDeleteRequested    += (_, ev) => RecordDeleteRequested?.Invoke(this, ev);
         AllDayBarCtrl.RecordsDeleteRequested   += (_, rs) => RecordsDeleteRequested?.Invoke(this, rs);
         AllDayBarCtrl.RecordDuplicateRequested += (_, ev) => RecordDuplicateRequested?.Invoke(this, ev);
+        AllDayBarCtrl.RecordsDuplicateRequested += (_, rs) => RecordsDuplicateRequested?.Invoke(this, rs);
         AllDayBarCtrl.RecordCreationRequested  += (_, d)  => AllDayCreationRequested?.Invoke(this, d);
         // Выделили в AllDayBar: при обычном клике снимаем выделение в часовой сетке
         // (одно на экран); при Shift (additive) — не трогаем, чтобы копился общий
         // набор. Обратное направление делает _ClearAllDaySelection.
         AllDayBarCtrl.SelectionRequested       += (_, additive) => { if (!additive) _Deselect(); };
-        // Хуки для общего удаления из контекстного меню бара.
+        // Хуки для общих массовых операций из контекстного меню бара.
         AllDayBarCtrl.ExternalSelectedCount     = () => _selections.Count;
         AllDayBarCtrl.DeleteAllSelected         = _DeleteSelectedAll;
+        AllDayBarCtrl.DuplicateAllSelected      = _DuplicateSelectedAll;
 
         AllDayResizeGrip.PointerPressed += (_, e) =>
         {
@@ -464,6 +467,18 @@ public partial class WeekView : UserControl
         AllDayBarCtrl.ClearSelection();
         if (batch.Count == 1) RecordDeleteRequested?.Invoke(this, batch[0]);
         else                   RecordsDeleteRequested?.Invoke(this, batch);
+    }
+
+    // Снять выделение в обеих зонах и дублировать общий набор разом одним пакетом
+    // (подтверждение «Вы дублируете N записей» — в контроллере, как в «Расписании»).
+    private void _DuplicateSelectedAll()
+    {
+        var batch = _SelectedAll();
+        if (batch.Count == 0) return;
+        _Deselect();
+        AllDayBarCtrl.ClearSelection();
+        if (batch.Count == 1) RecordDuplicateRequested?.Invoke(this, batch[0]);
+        else                   RecordsDuplicateRequested?.Invoke(this, batch);
     }
 
     private void _DeselectOne(CalendarRecord ev)
@@ -1465,22 +1480,32 @@ public partial class WeekView : UserControl
             (byte)(c.B * a + 255 * (1 - a)));
     }
 
+    // Лимит ПАРАЛЛЕЛЬНЫХ под-колонок пересекающихся событий (см. DayView.MaxEventColumns —
+    // здесь жёстче: колонка дня в 7 раз уже). День-гигант давал 2000 под-колонок = тысячи
+    // субпиксельных контролов и подвисание UI на каждую перерисовку.
+    private const int MaxEventColumns = 6;
+
     private static List<List<CalendarRecord>> GroupOverlapping(List<CalendarRecord> events)
     {
         if (events.Count == 0) return [];
         var evs    = events.OrderBy(e => e.StartDt).ThenBy(e => e.Title).ToList();
         var groups = new List<List<CalendarRecord>>();
         var cur    = new List<CalendarRecord> { evs[0] };
+        // Старты отсортированы → «пересекается с кем-то из cur» ⇔ StartDt < max(EndDt по cur):
+        // бегущий максимум конца вместо O(n²)-перебора cur.Any на длинных цепочках.
+        var curMaxEnd = evs[0].EndDt;
         for (var i = 1; i < evs.Count; i++)
         {
             var ev = evs[i];
-            if (cur.Any(g => ev.StartDt < g.EndDt && ev.EndDt > g.StartDt))
+            if (ev.StartDt < curMaxEnd)
                 cur.Add(ev);
             else
             {
                 groups.Add(cur);
                 cur = [ev];
+                curMaxEnd = ev.EndDt;
             }
+            if (ev.EndDt > curMaxEnd) curMaxEnd = ev.EndDt;
         }
         groups.Add(cur);
         return groups;
@@ -1505,18 +1530,20 @@ public partial class WeekView : UserControl
             evCol[ev] = col;
         }
 
-        var nCols  = colEnds.Count;
+        var nCols  = Math.Min(colEnds.Count, MaxEventColumns);
         var result = new List<(CalendarRecord, int, int, int)>();
         foreach (var ev in group)
         {
-            var colIdx     = evCol[ev];
+            var colIdx = evCol[ev];
+            if (colIdx >= MaxEventColumns) continue;   // сверх лимита параллельных — не рисуем
             var rightLimit = nCols;
             foreach (var other in group)
             {
-                if (!ReferenceEquals(other, ev) && evCol[other] > colIdx)
+                var oc = evCol[other];
+                if (!ReferenceEquals(other, ev) && oc > colIdx && oc < nCols)
                 {
                     if (ev.StartDt < other.EndDt && ev.EndDt > other.StartDt)
-                        rightLimit = Math.Min(rightLimit, evCol[other]);
+                        rightLimit = Math.Min(rightLimit, oc);
                 }
             }
             result.Add((ev, colIdx, nCols, rightLimit));
@@ -1562,11 +1589,13 @@ public partial class WeekView : UserControl
         {
             menu.Items.Clear();
 
-            // Множественное выделение (это событие в общем наборе обеих зон и в нём
-            // 2+): только массовое удаление всех выделенных разом — как по Delete.
+            // Множественное выделение (это событие в общем наборе обеих зон и в нём 2+):
+            // массовые «Дублировать»/«Удалить» всех выделенных разом — как по Delete.
             var all = _SelectedAll();
             if (all.Count > 1 && all.Any(r => r.Id == ev.Id))
             {
+                menu.Items.Add(DataBase.Controls.Components.EventContextMenu.MakeDuplicateItem(
+                    _DuplicateSelectedAll));
                 menu.Items.Add(DataBase.Controls.Components.EventContextMenu.MakeDeleteItem(
                     _DeleteSelectedAll));
                 return;

@@ -32,6 +32,11 @@
                     <TextBlock x:Name="DayPopupTitle"
                                FontWeight="{StaticResource FontWeightBold}"
  />
+                    <!-- Поиск по ВСЕМУ дню (фоновый SQL LIKE, как в «Расписании») — попап
+                         показывает лишь первые PopupMaxEvents доставленных записей. -->
+                    <TextBox x:Name="DayPopupSearch"
+                             Watermark="Поиск"
+                             MinHeight="28" Padding="8,4" />
                     <ScrollViewer MaxHeight="220">
                         <StackPanel x:Name="DayPopupList" Spacing="6" />
                     </ScrollViewer>

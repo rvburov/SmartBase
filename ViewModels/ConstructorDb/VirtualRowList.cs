@@ -23,10 +23,13 @@ internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollecti
     private readonly bool                  _excludeHidden;   // исключать скрытые записи (окно «Отображение записей»)
     private readonly Dictionary<int, TableRowVm[]> _pages = [];
     private readonly LinkedList<int> _lru = new();
-    // page → (Position, Id) последней строки страницы: курсор для keyset-загрузки
-    // следующей страницы при последовательном скролле. Храним даже для вытесненных из
-    // _pages страниц (это всего пара int) — курсоры дёшевы и ускоряют скролл по глубине.
-    private readonly Dictionary<int, (int Pos, int Id)> _pageEnd = [];
+    // page → (Position, Id) последней/первой строки страницы: курсоры keyset-загрузки соседних
+    // страниц при последовательном скролле (конец предыдущей → вперёд; начало следующей → назад,
+    // скролл ВВЕРХ, в т.ч. после прыжка вглубь — иначе каждая страница вверх шла бы offset'ом
+    // O(глубины)). Храним даже для вытесненных из _pages страниц (это всего пара int) —
+    // курсоры дёшевы и ускоряют скролл по глубине.
+    private readonly Dictionary<int, (int Pos, int Id)> _pageEnd   = [];
+    private readonly Dictionary<int, (int Pos, int Id)> _pageStart = [];
     // Страницы, ожидающие отложенного заполнения (показывают «Загрузка…»).
     private readonly HashSet<int> _pending = [];
     // Поколение кеша: растёт при Reset; фоновые загрузки со старым поколением отбрасываются.
@@ -136,7 +139,7 @@ internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollecti
     private void BeginBackgroundLoad(int page, int skip, int take)
     {
         List<int>? idSlice = null;
-        int? afterPos = null, afterId = null;
+        int? afterPos = null, afterId = null, beforePos = null, beforeId = null;
         if (_recordIds is not null)
         {
             idSlice = new List<int>(take);
@@ -146,13 +149,19 @@ internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollecti
         {
             afterPos = cur.Pos; afterId = cur.Id;
         }
-        _ = LoadPageBackgroundAsync(_generation, page, idSlice, skip, take, afterPos, afterId);
+        else if (_pageStart.TryGetValue(page + 1, out var nxt))
+        {
+            // Скролл вверх: сик назад от первой строки страницы ниже — O(страницы) на любой глубине.
+            beforePos = nxt.Pos; beforeId = nxt.Id;
+        }
+        _ = LoadPageBackgroundAsync(_generation, page, idSlice, skip, take, afterPos, afterId, beforePos, beforeId);
     }
 
     // Фоновая загрузка страницы с ограничением параллелизма (семафор): при очень быстром
     // драге скроллбара не плодим сотни подключений/задач. Чтение — в фоне, заполнение — на UI.
     private async Task LoadPageBackgroundAsync(int gen, int page, List<int>? idSlice,
-                                               int skip, int take, int? afterPos, int? afterId)
+                                               int skip, int take, int? afterPos, int? afterId,
+                                               int? beforePos, int? beforeId)
     {
         await _loadGate.WaitAsync();
         try
@@ -164,7 +173,8 @@ internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollecti
             // (Возврат на эту страницу запросит загрузку заново.) Чтение полей — на UI-потоке
             // (продолжение после await идёт в захваченном контексте), гонки нет.
             if (!_pending.Contains(page) || !_pages.ContainsKey(page)) return;
-            var data = await _repo.LoadPageAsync(_collectionId, _excludeHidden, idSlice, skip, take, afterPos, afterId);
+            var data = await _repo.LoadPageAsync(_collectionId, _excludeHidden, idSlice, skip, take,
+                                                 afterPos, afterId, beforePos, beforeId);
             Dispatcher.UIThread.Post(() => FillFromData(gen, page, data.Records, data.Values));
         }
         catch
@@ -188,12 +198,15 @@ internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollecti
             return _repo.GetRecordsByIdsOrdered(slice);
         }
 
-        // Keyset, если предыдущая страница уже грузилась (последовательный скролл): запрос
-        // ПОСЛЕ её последней строки — O(take), не зависит от глубины. Иначе offset (прыжок по
-        // скроллбару) — O(offset), но по составному индексу (CollectionId, Position) это быстро.
-        return page > 0 && _pageEnd.TryGetValue(page - 1, out var cur)
-            ? _repo.GetRecordsPageAfter(_collectionId, cur.Pos, cur.Id, take, _excludeHidden)
-            : _repo.GetRecordsPage(_collectionId, skip, take, _excludeHidden);
+        // Keyset, если известен курсор соседней страницы (последовательный скролл): вперёд —
+        // ПОСЛЕ последней строки предыдущей, вверх — ПЕРЕД первой строкой следующей; O(take),
+        // не зависит от глубины. Иначе offset (прыжок по скроллбару) — смещение по покрывающему
+        // индексу (CollectionId, Position), см. GetRecordsPage.
+        if (page > 0 && _pageEnd.TryGetValue(page - 1, out var cur))
+            return _repo.GetRecordsPageAfter(_collectionId, cur.Pos, cur.Id, take, _excludeHidden);
+        if (_pageStart.TryGetValue(page + 1, out var nxt))
+            return _repo.GetRecordsPageBefore(_collectionId, nxt.Pos, nxt.Id, take, _excludeHidden);
+        return _repo.GetRecordsPage(_collectionId, skip, take, _excludeHidden);
     }
 
     // Строит реальные строки из записей + их значений (синхронный путь).
@@ -235,12 +248,15 @@ internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollecti
         RememberCursor(page, records);
     }
 
-    // Сохраняет (Position, Id) последней строки страницы — курсор для keyset следующей.
+    // Сохраняет (Position, Id) крайних строк страницы — курсоры keyset соседних страниц
+    // (конец → следующая вперёд, начало → предыдущая назад при скролле вверх).
     private void RememberCursor(int page, List<DbRecord> records)
     {
         if (records.Count == 0) return;
-        var last = records[^1];
-        _pageEnd[page] = (last.Position, last.Id!.Value);
+        var first = records[0];
+        var last  = records[^1];
+        _pageStart[page] = (first.Position, first.Id!.Value);
+        _pageEnd[page]   = (last.Position,  last.Id!.Value);
     }
 
     private void EvictOldestIfFull()
@@ -326,6 +342,7 @@ internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollecti
         // Курсоры keyset устарели (набор/порядок записей сдвинулся) — сбрасываем, чтобы незагруженные
         // страницы грузились offset’ом по индексу; перестроенные ниже заново проставят свои (BuildRows).
         _pageEnd.Clear();
+        _pageStart.Clear();
 
         // Страницы целиком вне нового диапазона — выкидываем; остальные перестраиваем реальными строками.
         foreach (var page in _pages.Keys.ToList())
@@ -358,6 +375,7 @@ internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollecti
         _lru.Remove(page);
         _pending.Remove(page);
         _pageEnd.Remove(page);
+        _pageStart.Remove(page);
     }
 
     /// <summary>Сбрасывает кеш и сигнализирует DataGrid о полной перестройке.</summary>
@@ -367,6 +385,7 @@ internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollecti
         _pages.Clear();
         _lru.Clear();
         _pageEnd.Clear();
+        _pageStart.Clear();
         _pending.Clear();
         CollectionChanged?.Invoke(this,
             new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Reset));

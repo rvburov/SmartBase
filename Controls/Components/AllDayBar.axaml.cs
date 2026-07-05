@@ -26,11 +26,18 @@ public partial class AllDayBar : UserControl
             ? b
             : new SolidColorBrush(Color.Parse(fallbackHex));
 
+    // Лимит отрисовки: панель строит контрол на КАЖДОЕ событие (плюс поиск свободной строки —
+    // квадратичный), тысячи all-day в окне повесили бы UI. Скрытое сверх лимита — строкой
+    // «+N ещё» внизу; больше и не проскроллить осмысленно. Сами данные окна уже ограничены
+    // чтением (GetCalendarRecordsByRangeCapped), лимит здесь — вторая линия обороны.
+    private const int MaxRenderedEvents = 300;
+
     public event EventHandler<CalendarRecord>?    RecordClicked;
     public event EventHandler<CalendarRecord>?    RecordMoved;
     public event EventHandler<CalendarRecord>?    RecordDeleteRequested;
     public event EventHandler<IReadOnlyList<CalendarRecord>>? RecordsDeleteRequested;
     public event EventHandler<CalendarRecord>?    RecordDuplicateRequested;
+    public event EventHandler<IReadOnlyList<CalendarRecord>>? RecordsDuplicateRequested;
     public event EventHandler<DateOnly>? RecordCreationRequested;
 
     // Сигнал «здесь что-то выделили». Аргумент = additive (Shift): при обычном
@@ -39,12 +46,14 @@ public partial class AllDayBar : UserControl
     // набор через обе зоны.
     public event EventHandler<bool>? SelectionRequested;
 
-    // Хуки для общего (кросс-зонного) удаления. Родитель задаёт:
+    // Хуки для общих (кросс-зонных) массовых операций. Родитель задаёт:
     //  • ExternalSelectedCount — сколько выделено ВНЕ бара (в часовой сетке);
-    //  • DeleteAllSelected      — удалить общий набор обеих зон разом.
-    // Нужны, чтобы контекстное «Удалить» в баре сносило весь набор, как Delete.
+    //  • DeleteAllSelected     — удалить общий набор обеих зон разом;
+    //  • DuplicateAllSelected  — дублировать общий набор обеих зон разом.
+    // Нужны, чтобы контекстные «Удалить»/«Дублировать» в баре действовали на весь набор.
     public Func<int>? ExternalSelectedCount { get; set; }
     public Action?    DeleteAllSelected     { get; set; }
+    public Action?    DuplicateAllSelected  { get; set; }
 
     private const double MinH          = 40;
     private const double MaxH          = 300;
@@ -381,6 +390,11 @@ public partial class AllDayBar : UserControl
             .ThenBy(e => e.Title)
             .ToList();
 
+        // Сверх лимита не рисуем — только строка «+N ещё» внизу (см. MaxRenderedEvents).
+        var hiddenCount = Math.Max(0, allDayEvents.Count - MaxRenderedEvents);
+        if (hiddenCount > 0)
+            allDayEvents = allDayEvents.Take(MaxRenderedEvents).ToList();
+
         var occupied = new Dictionary<(int col, int row), bool>();
         _occupied = occupied;
 
@@ -451,6 +465,25 @@ public partial class AllDayBar : UserControl
             var hoverBg = new SolidColorBrush(Color.FromArgb(90, color.R, color.G, color.B));
             block.PointerEntered += (_, _) => { if (!isSelected) block.Background = hoverBg; };
             block.PointerExited  += (_, _) => { if (!isSelected) block.Background = normalBg; };
+        }
+
+        // «+N ещё» — не отрисованные сверх лимита, строкой на всю ширину внизу
+        // (как подпись в ячейке «Месяца»).
+        if (hiddenCount > 0)
+        {
+            var moreRow = EventsPanel.RowDefinitions.Count;
+            EventsPanel.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
+            var more = new TextBlock
+            {
+                Text       = $"+{hiddenCount} ещё",
+                FontSize   = FontSizeBase,
+                Foreground = Brush("BrushSecondaryText", "#8E8E93"),
+                Margin     = new Thickness(6, 2, 0, 2),
+            };
+            Grid.SetColumn(more, 0);
+            Grid.SetColumnSpan(more, Math.Max(1, _currentDays.Count));
+            Grid.SetRow(more, moreRow);
+            EventsPanel.Children.Add(more);
         }
 
         UpdateAutoHeight();
@@ -705,13 +738,17 @@ public partial class AllDayBar : UserControl
                 // Общий набор обеих зон: в баре + в часовой сетке (ExternalSelectedCount).
                 var totalSelected = _selections.Count + (ExternalSelectedCount?.Invoke() ?? 0);
 
-                // Множественное выделение → массовое удаление всего набора разом
-                // (как по Delete). Делегируем родителю, т.к. он знает обе зоны.
+                // Множественное выделение → массовые «Дублировать»/«Удалить» всего набора
+                // разом (как по Delete). Делегируем родителю, т.к. он знает обе зоны;
+                // резерв без родителя: набор снимается ДО сброса выделения.
                 if (totalSelected > 1 && _selections.ContainsKey(ev))
                 {
+                    menu.Items.Add(EventContextMenu.MakeDuplicateItem(
+                        () => (DuplicateAllSelected ??
+                            (() => { var batch = _selections.Keys.ToList(); _DeselectAll(); RecordsDuplicateRequested?.Invoke(this, batch); }))()));
                     menu.Items.Add(EventContextMenu.MakeDeleteItem(
                         () => (DeleteAllSelected ??
-                            (() => { _DeselectAll(); RecordsDeleteRequested?.Invoke(this, _selections.Keys.ToList()); }))()));
+                            (() => { var batch = _selections.Keys.ToList(); _DeselectAll(); RecordsDeleteRequested?.Invoke(this, batch); }))()));
                     return;
                 }
 

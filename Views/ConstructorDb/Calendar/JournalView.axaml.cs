@@ -154,7 +154,11 @@ public partial class JournalView : UserControl
         var gen = ++_loadGeneration;
         search ??= "";
         var sorted = dbs.OrderBy(d => d.dbId).ToList();
-        var key    = string.Join(",", sorted.Select(d => d.dbId));
+        // Сигнатура кеша счётчиков: набор БД И их активных коллекций — смена любого делает
+        // кеш чужим (ключ только по DbId позволял правке сразу после переключения коллекции
+        // в сайдбаре применить кеш, посчитанный для другого набора).
+        var key = string.Join("|", sorted.Select(d =>
+            $"{d.dbId}:{(d.active is null ? "*" : string.Join(",", d.active.OrderBy(x => x)))}"));
         var fresh  = _list is null || !string.Equals(search, _lastSearch, StringComparison.Ordinal);
         _lastSearch = search;
 
@@ -180,13 +184,10 @@ public partial class JournalView : UserControl
                 .Select(t => (t.Rec.DbId, t.Rec.Id!.Value, t.Rec.FieldId))
                 .ToHashSet();
 
-        // МГНОВЕННЫЙ путь: правка/создание/удаление записи. Полный пересчёт (GROUP BY по всем БД)
-        // на больших базах занимает секунды, в течение которых лента показывала бы УСТАРЕВШУЮ
-        // запись (её можно было снова открыть и править). Вместо этого корректируем кешированные
-        // счётчики дней дельтой (−1 старый день, +1 новый) и правим ленту в этом же кадре.
-        if (!fresh && search.Length == 0 && delta is not null &&
-            _countsCache is not null && _countsKey == key)
-        {
+        // Дельта правит кеш счётчиков ТОЧЕЧНО (−1 старый день, +1 новый) и ДО выбора пути
+        // загрузки: правка при активном поиске тоже меняет счётчики — кеш остаётся источником
+        // правды (БД уже изменена) и годится при выходе из поиска. Незнакомая БД — пересчёт.
+        if (delta is not null && _countsCache is not null && _countsKey == key)
             foreach (var (rec, d) in delta)
             {
                 var idx = sorted.FindIndex(x => x.dbId == rec.DbId);
@@ -196,13 +197,23 @@ public partial class JournalView : UserControl
                 var v = dict.GetValueOrDefault(k) + d;
                 if (v > 0) dict[k] = v; else dict.Remove(k);
             }
-            if (_countsCache is not null)
-            {
-                _ = ApplyDeltaOrRebuildAsync(gen, sorted, delta, preserveSelection,
-                                             anchorRecord, oldOffset, selectAddedOnly);
-                return;
-            }
+
+        // МГНОВЕННЫЙ путь: правка/создание/удаление записи. Полный пересчёт (GROUP BY по всем БД)
+        // на больших базах занимает секунды, в течение которых лента показывала бы УСТАРЕВШУЮ
+        // запись (её можно было снова открыть и править). Кеш уже поправлен дельтой выше —
+        // правим ленту в этом же кадре.
+        if (!fresh && search.Length == 0 && delta is not null &&
+            _countsCache is not null && _countsKey == key)
+        {
+            _ = ApplyDeltaOrRebuildAsync(gen, sorted, delta, preserveSelection,
+                                         anchorRecord, oldOffset, selectAddedOnly);
+            return;
         }
+
+        // Пересборка БЕЗ дельты того же поиска (смена коллекций, возврат в вид, внешняя правка):
+        // что изменилось — неизвестно, кеш недействителен целиком (иначе правка, пришедшая во
+        // время пересчёта, применила бы устаревшие счётчики).
+        if (!fresh && delta is null) _countsCache = null;
 
         if (fresh)
         {
@@ -210,7 +221,7 @@ public partial class JournalView : UserControl
             RowsList.ItemsSource   = null;
             LoadingHint.IsVisible  = true;
         }
-        _ = LoadCountsThenBuildAsync(gen, sorted, search,
+        _ = LoadCountsThenBuildAsync(gen, sorted, key, search,
                                      fresh, anchorRecord, oldOffset, preserveSelection);
     }
 
@@ -251,8 +262,8 @@ public partial class JournalView : UserControl
     }
 
     private async Task LoadCountsThenBuildAsync(
-        int gen, List<(int dbId, ConstructorRepository repo, ISet<int>? active)> dbs, string search,
-        bool fresh, CalendarRecord? anchorRecord, double oldOffset,
+        int gen, List<(int dbId, ConstructorRepository repo, ISet<int>? active)> dbs, string key,
+        string search, bool fresh, CalendarRecord? anchorRecord, double oldOffset,
         HashSet<(int DbId, int RecId, int FieldId)>? preserveSelection)
     {
         var rangeStart = JournalVirtualList.RangeStart;
@@ -274,6 +285,13 @@ public partial class JournalView : UserControl
                 if (gen != _loadGeneration) return;
                 list = new JournalVirtualList(found, preserveSelection);
             }
+            else if (_countsCache is not null && _countsKey == key)
+            {
+                // Кеш счётчиков валиден (дельты держали его актуальным): пересборка без
+                // GROUP BY по всей истории — например, мгновенный выход из поиска.
+                var shaped = _countsCache.Select(m => m.Select(kv => (kv.Key, kv.Value)).ToList()).ToList();
+                list = new JournalVirtualList(dbs, shaped, preserveSelection);
+            }
             else
             {
                 var counts = new List<List<(string Day, int Count)>>(dbs.Count);
@@ -282,7 +300,7 @@ public partial class JournalView : UserControl
                 if (gen != _loadGeneration) return;   // пока считали — сменили поиск/коллекции
                 // Кеш для мгновенных точечных обновлений (см. дельта-путь в LoadFrom).
                 _countsCache = counts.Select(l => l.ToDictionary(t => t.Day, t => t.Count)).ToList();
-                _countsKey   = string.Join(",", dbs.Select(d => d.dbId));
+                _countsKey   = key;
                 // Построение списка (InMemory-режим читает события синхронно) — на UI-потоке.
                 list = new JournalVirtualList(dbs, counts, preserveSelection);
             }

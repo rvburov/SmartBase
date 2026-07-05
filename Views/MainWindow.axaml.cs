@@ -1,7 +1,9 @@
 using Avalonia.Controls;
 using Avalonia.VisualTree;
 using DataBase.Controls.Components;
+using DataBase.Controls.Dialogs;
 using DataBase.Database;
+using DataBase.Database.Entities;
 using DataBase.Database.Repositories;
 using DataBase.Extensions;
 using DataBase.Settings;
@@ -49,11 +51,7 @@ public partial class MainWindow : Window
 
         // Live mount/unmount: добавление/удаление БД в настройках сразу отражается в
         // сайдбаре конструктора без перезапуска.
-        SettingsModule.DatabaseAdded += (_, entry) =>
-        {
-            _workspace.Mount(entry);
-            SyncMountedToUi();
-        };
+        SettingsModule.DatabaseAdded += async (_, entry) => await MountWithProgressAsync(entry);
         SettingsModule.DatabaseRemoved += (_, dbId) =>
         {
             // Если открыта коллекция удаляемой БД — отвязываем модуль на дефолтную БД.
@@ -65,15 +63,11 @@ public partial class MainWindow : Window
             _workspace.Unmount(dbId);
             SyncMountedToUi();
         };
-        SettingsModule.DatabaseReconnectRequested += (_, dbId) =>
+        SettingsModule.DatabaseReconnectRequested += async (_, dbId) =>
         {
             // Повторная попытка монтирования (например, сетевая папка снова доступна).
             var entry = _workspace.Registry.GetAll().FirstOrDefault(d => d.Id == dbId);
-            if (entry is not null)
-            {
-                _workspace.Mount(entry);
-                SyncMountedToUi();
-            }
+            if (entry is not null) await MountWithProgressAsync(entry);
         };
 
         // Инициализируем модули через AXAML-конструкторы.
@@ -233,6 +227,29 @@ public partial class MainWindow : Window
         // Flyout фильтра/сортировки в таблице — он живёт отдельным popup.
         foreach (var table in controls.OfType<ConstructorDb.TableView>())
             table.CloseTransientPopups();
+    }
+
+    // Смонтировать БД В ФОНЕ: открытие большого файла — секунды и более (миграции, WAL,
+    // самолечение раздутого файла, бэкафилл при первом открытии старой БД), UI-поток не
+    // блокируем. Окно «Подключение…» появляется, только если монтирование дольше 400 мс —
+    // как у массовых операций (быстрое подключение маленькой БД не мигает окном).
+    private async Task MountWithProgressAsync(DatabaseRefEntity entry)
+    {
+        var bg = Task.Run(() => _workspace.Mount(entry));
+
+        if (await Task.WhenAny(bg, Task.Delay(400)) != bg)
+        {
+            var dlg = new ProgressDialog { Title = "Подключение базы данных" };
+            dlg.SetInfo($"База данных: {entry.Name}");
+            dlg.SetSaving("Подключение…");
+            var closed = dlg.ShowDialog(this);
+            await bg;
+            dlg.Done();
+            await closed;
+        }
+
+        // Ошибку монтирования Mount() гасит сам (вернёт null) — статус покажет список БД.
+        SyncMountedToUi();
     }
 
     // Пересобрать боковые панели и обновить набор БД календаря после монтирования/размонтирования.

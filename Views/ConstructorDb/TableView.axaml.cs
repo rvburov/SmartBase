@@ -888,13 +888,9 @@ public partial class TableView : UserControl
     public void ClearRecordSelection() => RecordsGrid.SelectedItems.Clear();
 
     // Можно ли двигать запись вверх/вниз (не крайняя ли она в порядке коллекции).
-    private bool CanMoveRecord(int recordId, bool up)
-    {
-        if (_repository is null) return false;
-        var idx = _repository.GetRecordPosition(_collectionId, recordId);   // 0-based
-        if (idx < 0) return false;
-        return up ? idx > 0 : idx < _repository.CountRecords(_collectionId) - 1;
-    }
+    // O(1)-сик соседа: вызывается при открытии контекстного меню — никаких COUNT'ов.
+    private bool CanMoveRecord(int recordId, bool up) =>
+        _repository is not null && _repository.HasNeighborRecord(_collectionId, recordId, up);
 
     private void BuildColumns()
     {
@@ -1657,7 +1653,10 @@ public partial class TableView : UserControl
             sep.IsVisible    = canUp || canDown;
         }
 
-        Refresh();
+        // ТОЛЬКО при открытии меню, БЕЗ жадного вызова при построении: меню строится в
+        // OnLoadingRow на КАЖДУЮ реализацию строки — обращения к БД здесь подвешивали
+        // прокрутку колесом/кнопками скроллбара (каждая пересечённая строка платила
+        // за проверку соседей; Opening же случается только при правом клике).
         menu.Opening += (_, _) => Refresh();
     }
 

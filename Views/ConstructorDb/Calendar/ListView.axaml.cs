@@ -125,6 +125,16 @@ public partial class ListView : UserControl
     private DateTime? _lastDay;
     private string    _lastSearch = "";
 
+    // Кеш счётчиков дня (день → счётчики по источникам, позиционно к отсортированным dbs):
+    // COUNT дня-гиганта — секунды холодным, и без кеша платится при КАЖДОМ визите дня
+    // (навигация Prev/Next/Сегодня, возврат из поиска). Дельта правит кеш точечно по дню
+    // НАЧАЛА записи (та же семантика, что у CountCalendarDayEvents и InDay в ApplyDeltaAsync) —
+    // БД уже изменена, поэтому правленый кеш остаётся источником правды. Сбрасывается целиком
+    // при смене набора источников/активных коллекций (сигнатура) и при пересборке БЕЗ дельты
+    // (внешнее изменение — что поменялось, неизвестно).
+    private readonly Dictionary<DateTime, int[]> _dayCountsCache = [];
+    private string _dayCountsSig = "";
+
     /// <summary>
     /// Открывает день в «Расписании» через полную виртуализацию: события дня из
     /// <paramref name="dbs"/> (несколько БД) в окне [<paramref name="dayStart"/>,
@@ -176,6 +186,22 @@ public partial class ListView : UserControl
         // Порядок источников фиксируем по DbId — он же порядок конкатенации в виртуальном списке.
         var sorted = dbs.OrderBy(d => d.dbId).ToList();
 
+        // Кеш счётчиков дня: другой набор источников/активных коллекций — все записи кеша не о том.
+        var sig = string.Join("|", sorted.Select(d =>
+            $"{d.dbId}:{(d.active is null ? "*" : string.Join(",", d.active.OrderBy(x => x)))}"));
+        if (sig != _dayCountsSig) { _dayCountsCache.Clear(); _dayCountsSig = sig; }
+
+        // Дельта правит кеш точечно — по дню НАЧАЛА записи (в т.ч. чужих дней: перенос даты
+        // правит и старый, и новый день). Делается ДО выбора пути загрузки: правка при активном
+        // поиске тоже меняет счётчики, хотя сама идёт пересборкой поиска.
+        if (delta is { Count: > 0 })
+            foreach (var (rec, d) in delta)
+                if (_dayCountsCache.TryGetValue(rec.StartDt.Date, out var c))
+                {
+                    var i = sorted.FindIndex(x => x.dbId == rec.DbId);
+                    if (i >= 0 && i < c.Length) c[i] = Math.Max(0, c[i] + d);
+                }
+
         // Точечная правка (создание/изменение/удаление/дублирование): сперва пробуем мутировать
         // ТЕКУЩИЙ список НА МЕСТЕ — offset-режим гигантского дня не превращается в «Загрузка…»
         // и не теряет выделение/якорь; если мутация невозможна — тихая пересборка.
@@ -185,6 +211,10 @@ public partial class ListView : UserControl
                                         preserveSelection, anchorRecord, oldOffset, selectAddedOnly);
             return;
         }
+
+        // Пересборка БЕЗ дельты того же дня (смена коллекций, возврат в вид, внешняя правка):
+        // что изменилось — неизвестно, кеш счётчиков недействителен целиком.
+        if (!fresh && delta is null) _dayCountsCache.Clear();
 
         if (fresh)
         {
@@ -251,10 +281,16 @@ public partial class ListView : UserControl
             }
             else
             {
-                var counts = new int[dbs.Count];
-                for (var i = 0; i < dbs.Count; i++)
-                    counts[i] = await dbs[i].repo.CountCalendarDayEventsAsync(dayStart, dayEnd, dbs[i].active);
-                if (gen != _loadGeneration) return;   // пока считали — открыли другой день/поиск
+                // Счётчики дня — из кеша (визит дня уже был, дельты держали его актуальным);
+                // промах — фоновый COUNT по источникам с сохранением в кеш.
+                if (!_dayCountsCache.TryGetValue(dayStart, out var counts))
+                {
+                    counts = new int[dbs.Count];
+                    for (var i = 0; i < dbs.Count; i++)
+                        counts[i] = await dbs[i].repo.CountCalendarDayEventsAsync(dayStart, dayEnd, dbs[i].active);
+                    if (gen != _loadGeneration) return;   // пока считали — открыли другой день/поиск
+                    _dayCountsCache[dayStart] = counts;
+                }
                 // Построение списка (для обычных дней — синхронная загрузка в память) — на UI-потоке.
                 list = new CalendarDayVirtualList(dbs, counts, dayStart, dayEnd, isPast, preserveSelection);
             }

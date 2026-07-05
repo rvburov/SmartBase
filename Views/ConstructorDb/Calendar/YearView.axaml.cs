@@ -36,23 +36,60 @@ public partial class YearView : UserControl
 
     private static readonly string[] DayNames = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
 
-    public YearView() { InitializeComponent(); }
-
-    // События по дате — для попапа со списком при клике на число
-    private readonly Dictionary<DateTime, List<CalendarRecord>> _eventsByDay = new();
-
-    public void Refresh(IEnumerable<CalendarRecord> events, int year)
+    public YearView()
     {
-        _eventsByDay.Clear();
-        foreach (var e in events)
-            foreach (var d in EachDay(e.StartDt.Date, e.EndDt.Date))
-            {
-                if (!_eventsByDay.TryGetValue(d, out var list))
-                    _eventsByDay[d] = list = new List<CalendarRecord>();
-                list.Add(e);
-            }
+        InitializeComponent();
+        DayPopupSearch.TextChanged += (_, _) => { if (!_popupResetting) _ = OnPopupSearchChanged(); };
+    }
 
-        var eventCounts = _eventsByDay.ToDictionary(kv => kv.Key, kv => kv.Value.Count);
+    // Поиск в попапе дня: провайдер — фоновый SQL LIKE по ВСЕМУ дню (инъекция контроллера,
+    // у вида нет доступа к репозиториям): попап показывает лишь первые PopupMaxEvents
+    // доставленных записей, локальный фильтр по ним на дне-гиганте бессмысленен.
+    // null — локальный фильтр по снимку (на всякий случай).
+    public Func<DateTime, string, Task<List<CalendarRecord>>>? DaySearchProvider { get; set; }
+
+    // Список дня для попапа — ПО ТРЕБОВАНИЮ из БД (инъекция контроллера): Год события окна
+    // не читает вовсе (числам достаточно карты счётчиков, а чтение всех событий года —
+    // сотни тысяч строк — показывало оверлей «Загрузка…» при листании лет). Per-day
+    // capped-чтение сиками — миллисекунды даже на дне-гиганте. null — снимок года.
+    public Func<DateTime, Task<List<CalendarRecord>>>? DayEventsProvider { get; set; }
+
+    private DateTime _popupDay;          // день открытого попапа
+    private int      _popupSearchGen;    // дебаунс/отмена устаревших поисков
+    private bool     _popupResetting;    // сброс текста при открытии не запускает поиск
+
+    // Доставленные события года (ограничены чтением окна — GridDayCap на день) и карта
+    // счётчиков дней (доезжает второй фазой; null — ещё едет/поиск). Раскладку по дням НЕ
+    // храним: на сотнях тысяч событий словарь списков перестраивался при КАЖДОЙ перерисовке
+    // (правки сетки перерисовывают Год на месте) — счётчики считаются одним проходом,
+    // а список дня для попапа фильтруется по клику (см. ShowDayEvents).
+    private List<CalendarRecord> _events = [];
+    private IReadOnlyDictionary<DateOnly, int>? _dayTotals;
+
+    public void Refresh(IEnumerable<CalendarRecord> events, int year,
+                        IReadOnlyDictionary<DateOnly, int>? dayTotals = null)
+    {
+        _events    = events as List<CalendarRecord> ?? events.ToList();
+        _dayTotals = dayTotals;
+
+        // Счётчики на числа: событие учитывается в каждом дне своего диапазона; карта
+        // счётчиков (по дню НАЧАЛА) дополняет недоставленное сверх капа чтения — день-гигант
+        // получает честное число, хотя событий пришло только GridDayCap.
+        var eventCounts = new Dictionary<DateTime, int>();
+        var received    = new Dictionary<DateTime, int>();   // доставлено по дню СТАРТА
+        foreach (var e in _events)
+        {
+            received[e.StartDt.Date] = received.GetValueOrDefault(e.StartDt.Date) + 1;
+            foreach (var d in EachDay(e.StartDt.Date, e.EndDt.Date))
+                eventCounts[d] = eventCounts.GetValueOrDefault(d) + 1;
+        }
+        if (dayTotals is not null)
+            foreach (var (d, total) in dayTotals)
+            {
+                var key   = d.ToDateTime(TimeOnly.MinValue);
+                var extra = total - received.GetValueOrDefault(key);
+                if (extra > 0) eventCounts[key] = eventCounts.GetValueOrDefault(key) + extra;
+            }
 
         MonthGrid.Children.Clear();
 
@@ -63,71 +100,172 @@ public partial class YearView : UserControl
         }
     }
 
-    // Открывает попап со списком событий дня, привязанный к ячейке числа
-    private void ShowDayEvents(Control anchor, DateTime day)
+    // Лимит попапа дня: контрол на каждое событие — день-гигант отдаёт сетке до GridDayCap
+    // (2000) записей, столько строк попапу ни к чему (и это секунды построения). Скрытое
+    // сверх лимита — честный «+N ещё» по карте счётчиков; смотреть весь день — «Расписание».
+    private const int PopupMaxEvents = 100;
+
+    // Открывает попап со списком событий дня, привязанный к ячейке числа.
+    // Список дня грузится по требованию (DayEventsProvider, миллисекунды); без провайдера —
+    // фильтром из доставленного снимка года.
+    private async void ShowDayEvents(Control anchor, DateTime day)
     {
         // Переоткрываем, чтобы попап переместился к новому числу
         // (PlacementTarget применяется при открытии).
         if (DayPopup.IsOpen) DayPopup.IsOpen = false;
 
-        var events = _eventsByDay.GetValueOrDefault(day) ?? new List<CalendarRecord>();
+        _popupDay = day;
+        var gen = ++_popupSearchGen;        // отменяет незавершённый поиск/загрузку прошлого дня
+        _popupResetting = true;
+        DayPopupSearch.Text = "";
+        _popupResetting = false;
 
         DayPopupTitle.Text = day.ToString("d MMMM yyyy");
+        if (DayEventsProvider is null)
+            FillPopupList(DayEventsFromSnapshot(day), searchMode: false);
+        else
+            SetPopupHint("Загрузка…");
+
+        DayPopup.PlacementTarget = anchor;
+        DayPopup.IsOpen          = true;
+
+        if (DayEventsProvider is null) return;
+        await FillPopupFromProviderAsync(gen, day);
+    }
+
+    // Список дня из провайдера (по требованию); применяется, только если попап всё ещё
+    // показывает этот день (не переключились/не начали искать).
+    private async Task FillPopupFromProviderAsync(int gen, DateTime day)
+    {
+        List<CalendarRecord> events;
+        try { events = await DayEventsProvider!(day); }
+        catch { if (gen == _popupSearchGen && DayPopup.IsOpen) SetPopupHint("Нет записей"); return; }
+        if (gen != _popupSearchGen || !DayPopup.IsOpen) return;
+        FillPopupList(events.OrderBy(x => x.AllDay ? TimeSpan.Zero : x.StartDt.TimeOfDay).ToList(),
+                      searchMode: false);
+    }
+
+    private void SetPopupHint(string text)
+    {
+        DayPopupList.Children.Clear();
+        DayPopupList.Children.Add(new TextBlock
+        {
+            Text       = text,
+            FontSize   = FontSizeBase,
+            Foreground = Secondary,
+        });
+    }
+
+    // События дня из доставленного снимка года, в порядке попапа.
+    private List<CalendarRecord> DayEventsFromSnapshot(DateTime day) => _events
+        .Where(e => e.StartDt.Date <= day && day <= e.EndDt.Date)
+        .OrderBy(x => x.AllDay ? TimeSpan.Zero : x.StartDt.TimeOfDay)
+        .ToList();
+
+    // Дебаунс поиска в попапе: пустой запрос — снимок дня; иначе — фоновый SQL LIKE по
+    // ВСЕМУ дню через DaySearchProvider (найдёт и то, что не доставлено капом чтения).
+    private async Task OnPopupSearchChanged()
+    {
+        var gen = ++_popupSearchGen;
+        await Task.Delay(250);
+        if (gen != _popupSearchGen || !DayPopup.IsOpen) return;
+
+        var q = DayPopupSearch.Text?.Trim() ?? "";
+        if (q.Length == 0)
+        {
+            // Возврат из поиска: список дня заново (по требованию или из снимка года).
+            if (DayEventsProvider is not null) await FillPopupFromProviderAsync(gen, _popupDay);
+            else FillPopupList(DayEventsFromSnapshot(_popupDay), searchMode: false);
+            return;
+        }
+
+        List<CalendarRecord> found;
+        if (DaySearchProvider is not null)
+        {
+            try { found = await DaySearchProvider(_popupDay, q); }
+            catch { return; }   // БД занята/недоступна — оставляем текущий список
+            if (gen != _popupSearchGen || !DayPopup.IsOpen) return;
+            found = found.OrderBy(x => x.AllDay ? TimeSpan.Zero : x.StartDt.TimeOfDay).ToList();
+        }
+        else
+            found = DayEventsFromSnapshot(_popupDay)
+                .Where(e => e.DisplayTitle.Contains(q, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+
+        FillPopupList(found, searchMode: true);
+    }
+
+    // Наполняет список попапа (не больше PopupMaxEvents строк + «+N ещё»).
+    // searchMode: результат поиска — «+N ещё» только от фактически найденного
+    // (итог по всему дню неизвестен, провайдер лимитирован).
+    private void FillPopupList(List<CalendarRecord> events, bool searchMode)
+    {
         DayPopupList.Children.Clear();
 
         if (events.Count == 0)
         {
             DayPopupList.Children.Add(new TextBlock
             {
-                Text       = "Нет записей",
+                Text       = searchMode ? "Ничего не найдено" : "Нет записей",
                 FontSize   = FontSizeBase,
                 Foreground = Secondary,
             });
-        }
-        else
-        {
-            foreach (var e in events.OrderBy(x => x.AllDay ? TimeSpan.Zero : x.StartDt.TimeOfDay))
-            {
-                var time = e.AllDay ? "весь день" : e.StartDt.ToString("HH:mm");
-                var row = new StackPanel
-                {
-                    Orientation = Orientation.Horizontal,
-                    Spacing     = 8,
-                };
-                row.Children.Add(new Border
-                {
-                    Width             = 4,
-                    CornerRadius      = new Avalonia.CornerRadius(2),
-                    Background         = new SolidColorBrush(Color.Parse(EventColors.Display(e.Color))),
-                    VerticalAlignment = VerticalAlignment.Stretch,
-                });
-                row.Children.Add(new StackPanel
-                {
-                    Spacing  = 1,
-                    Children =
-                    {
-                        new TextBlock
-                        {
-                            Text       = e.DisplayTitle,
-                            FontSize   = FontSizeBase,
-                            FontWeight = WeightBold,
-                            Foreground = Primary,
-                            TextWrapping = TextWrapping.Wrap,
-                        },
-                        new TextBlock
-                        {
-                            Text       = time,
-                            FontSize   = FontSizeBase,
-                            Foreground = Secondary,
-                        },
-                    },
-                });
-                DayPopupList.Children.Add(row);
-            }
+            return;
         }
 
-        DayPopup.PlacementTarget = anchor;
-        DayPopup.IsOpen          = true;
+        foreach (var e in events.Take(PopupMaxEvents))
+        {
+            var time = e.AllDay ? "весь день" : e.StartDt.ToString("HH:mm");
+            var row = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Spacing     = 8,
+            };
+            row.Children.Add(new Border
+            {
+                Width             = 4,
+                CornerRadius      = new Avalonia.CornerRadius(2),
+                Background         = new SolidColorBrush(Color.Parse(EventColors.Display(e.Color))),
+                VerticalAlignment = VerticalAlignment.Stretch,
+            });
+            row.Children.Add(new StackPanel
+            {
+                Spacing  = 1,
+                Children =
+                {
+                    new TextBlock
+                    {
+                        Text       = e.DisplayTitle,
+                        FontSize   = FontSizeBase,
+                        FontWeight = WeightBold,
+                        Foreground = Primary,
+                        TextWrapping = TextWrapping.Wrap,
+                    },
+                    new TextBlock
+                    {
+                        Text       = time,
+                        FontSize   = FontSizeBase,
+                        Foreground = Secondary,
+                    },
+                },
+            });
+            DayPopupList.Children.Add(row);
+        }
+
+        // «+N ещё»: не показанные сверх лимита попапа + (вне поиска) недоставленные капом
+        // чтения — день-гигант: показаны первые 100, всего — из карты счётчиков.
+        var total = !searchMode && _dayTotals is not null &&
+                    _dayTotals.TryGetValue(DateOnly.FromDateTime(_popupDay), out var t)
+            ? Math.Max(t, events.Count)   // карта — по дню начала; перетёкшие мультидни добавляем
+            : events.Count;
+        var hidden = total - Math.Min(events.Count, PopupMaxEvents);
+        if (hidden > 0)
+            DayPopupList.Children.Add(new TextBlock
+            {
+                Text       = $"+{hidden} ещё",
+                FontSize   = FontSizeBase,
+                Foreground = Secondary,
+            });
     }
 
     private static readonly (Color Bg, Color Text)[] EventSteps =

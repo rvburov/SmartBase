@@ -145,6 +145,13 @@ public class AppDbContext : DbContext
             // временной сортировки. Прежний префикс (CollectionId, AllDay, StartIso) остаётся рабочим
             // для сплит-окон. См. CalendarDayVirtualList / GetCalendarDayEventsByOffset.
             e.HasIndex(x => new { x.CollectionId, x.AllDay, x.StartIso, x.RecordId, x.FieldId });
+            // Спилловеры окна сетки: timed-события, начавшиеся ДО окна и пересекающие его, ищутся
+            // сиком по EndIso ∈ [начало окна, начало+буфер) — без этого индекса проверка EndIso шла
+            // чтением строк по всему 62-дневному StartIso-буферу, и день-гигант в буфере стоил
+            // секунд на каждое открытие «Дня»/«Недели» в следующие 62 дня после него. Хвост
+            // (StartIso, RecordId, FieldId) делает запрос покрывающим.
+            // См. GetCalendarRecordsByRangeCapped.
+            e.HasIndex(x => new { x.CollectionId, x.AllDay, x.EndIso, x.StartIso, x.RecordId, x.FieldId });
             e.HasOne(x => x.Record)
              .WithMany()
              .HasForeignKey(x => x.RecordId)

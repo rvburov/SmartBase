@@ -40,7 +40,11 @@
 
 Изменения реестра уходят наверх событиями `DatabaseAdded` / `DatabaseRemoved` /
 `DatabaseReconnectRequested`; MainWindow монтирует/размонтирует БД в
-[Workspace](../../Database/Workspace.cs) и обновляет сайдбар. Подробнее —
+[Workspace](../../Database/Workspace.cs) и обновляет сайдбар. Монтирование (подключение и
+переподключение) идёт **в фоне** (`MountWithProgressAsync`): большой файл открывается
+секунды (миграции/WAL/бэкафилл), UI не блокируется; если дольше 400 мс — модальное окно
+«Подключение базы данных» с бегущей полосой ([ProgressDialog](../../Controls/Dialogs/ProgressDialog.axaml.cs)),
+статус в списке обновляется по завершении. Подробнее —
 [../architecture/multi-database.md](../architecture/multi-database.md).
 
 ## В планах

@@ -34,6 +34,24 @@ public partial class CalendarControllerView : UserControl
     // Дублирование (Журнал/Расписание): выделение ПЕРЕХОДИТ с оригиналов на копии. Одноразовый флаг.
     private bool _journalSelectAddedOnly;
 
+    // Сетка (День/Неделя/Месяц/Год): окно читается В ФОНЕ (изолированные подключения) с
+    // ограничением GridDayCap timed-событий на день — день-гигант (миллионы записей) не морозит
+    // UI и не съедает память, ячейкам больше всё равно не отрисовать; недоставленное показывает
+    // честный «+N ещё» по карте счётчиков дней. Поколение отменяет устаревшие загрузки.
+    private const int GridDayCap = 2000;
+    private long _gridGen;          // текущее поколение загрузки сетки
+    private long _gridAppliedGen;   // последнее применённое поколение (для оверлея «Загрузка…»)
+
+    // Снимок последней ПРИМЕНЁННОЙ загрузки сетки — базис точечной правки НА МЕСТЕ
+    // (TryApplyGridDelta): создание/изменение/удаление/дубль и перенос/растяжение в Дне/Неделе
+    // правят его и перерисовывают вид без чтения окна из БД (полная загрузка окна с
+    // днём-гигантом — секунды фоном с оверлеем «Загрузка…», правка же видна в том же кадре).
+    // null — базиса нет (был поиск: список отфильтрован, к нему дельта неприменима).
+    private List<CalendarRecord>? _gridRecords;
+    private Dictionary<DateOnly, int>? _gridTotals;   // карта счётчиков окна (только Месяц/Год)
+    private DateTime _gridStart, _gridEnd;            // окно снимка
+    private int _gridViewApplied = -1;                // вид снимка
+
     // Репозиторий БД по умолчанию (новые события, сидинг) и маршрутизация по записи.
     private ConstructorRepository DefaultRepo => _dbs[0].Repo;
     private ConstructorRepository RepoOf(CalendarRecord r)
@@ -96,6 +114,34 @@ public partial class CalendarControllerView : UserControl
         MonthViewCtrl.DaySelected   += (_, d)  => { _currentDate = d; SwitchView(2); };
         MonthViewCtrl.DayAddClicked += (_, d)  => _ = OpenAddDialog(d);
         YearViewCtrl.MonthSelected += (_, d)  => { _currentDate = d; SwitchView(4); };
+        // Поиск в попапе дня Года — фоновый SQL LIKE по ВСЕМУ дню (как в «Расписании»):
+        // попап показывает лишь первые записи дня-гиганта, локальный фильтр по ним неполон.
+        YearViewCtrl.DaySearchProvider = async (day, q) =>
+        {
+            var found = new List<CalendarRecord>();
+            foreach (var (dbId, _, repo) in _dbs.ToList())
+            {
+                ISet<int>? active = _activeByDb is not null && _activeByDb.TryGetValue(dbId, out var s) ? s : null;
+                var part = await repo.SearchCalendarEventsAsync(day, day.AddDays(1), active, q, 200);
+                foreach (var ev in part) ev.DbId = dbId;
+                found.AddRange(part);
+            }
+            return found;
+        };
+        // Список дня для попапа Года — ПО ТРЕБОВАНИЮ (Год события окна не читает, см.
+        // LoadGridAsync): per-day capped-чтение сиками — миллисекунды даже на дне-гиганте.
+        YearViewCtrl.DayEventsProvider = async day =>
+        {
+            var found = new List<CalendarRecord>();
+            foreach (var (dbId, _, repo) in _dbs.ToList())
+            {
+                ISet<int>? active = _activeByDb is not null && _activeByDb.TryGetValue(dbId, out var s) ? s : null;
+                var part = await repo.LoadCalendarGridRangeAsync(day, day.AddDays(1), active, 200);
+                foreach (var ev in part) ev.DbId = dbId;
+                found.AddRange(part);
+            }
+            return found;
+        };
 
         ListViewCtrl.RecordClicked          += (_, r) => _ = OpenEditDialog(r);
         ListViewCtrl.CreateRequested        += (_, d) => _ = OpenAddDialog(d);
@@ -109,22 +155,45 @@ public partial class CalendarControllerView : UserControl
         JournalViewCtrl.RecordsDeleteRequested += (_, rs) => _ = DeleteRecordsWithConfirm(rs);
         JournalViewCtrl.RecordsDuplicateRequested += (_, rs) => _ = DuplicateRecordsWithConfirm(rs);
         MonthViewCtrl.RecordClicked          += (_, r) => _ = OpenEditDialog(r);
-        MonthViewCtrl.RecordMoved            += (_, r) => { RepoOf(r).UpdateCalendarRecord(r); CollectionsMayHaveChanged?.Invoke(this, EventArgs.Empty); RefreshCurrent(); };
+        // Перенос в Месяце — дельтой с ИСХОДНЫМИ датами (само событие уже мутировано drag'ом):
+        // −1 старому дню, +1 новому — сетка и карта «+N ещё» правятся на месте, без перезагрузки.
+        MonthViewCtrl.RecordMoved            += (_, m) =>
+        {
+            RepoOf(m.Rec).UpdateCalendarRecord(m.Rec);
+            var old = new CalendarRecord
+            {
+                DbId    = m.Rec.DbId,    Id      = m.Rec.Id,    FieldId = m.Rec.FieldId,
+                CollectionId = m.Rec.CollectionId, AllDay = m.Rec.AllDay,
+                StartDt = m.OldStart,    EndDt   = m.OldEnd,
+                Title   = m.Rec.Title,   Color   = m.Rec.Color,
+            };
+            _journalDelta = [(old, -1), (m.Rec, +1)];
+            NotifyChangedAndRefresh();
+        };
+        // Дублирование ВЕЗДЕ идёт через подтверждение «Вы дублируете N записей» — единый путь
+        // DuplicateRecordsWithConfirm, как в Расписании/Журнале (и для одной записи тоже).
         MonthViewCtrl.RecordDeleteRequested    += (_, r) => _ = DeleteRecordsWithConfirm([r]);
         MonthViewCtrl.RecordsDeleteRequested   += (_, rs) => _ = DeleteRecordsWithConfirm(rs);
-        MonthViewCtrl.RecordDuplicateRequested += (_, r) => DuplicateCalendarRecord(r);
+        MonthViewCtrl.RecordDuplicateRequested += (_, r) => _ = DuplicateRecordsWithConfirm([r]);
+        MonthViewCtrl.RecordsDuplicateRequested += (_, rs) => _ = DuplicateRecordsWithConfirm(rs);
         DayViewCtrl.RecordClicked              += (_, r) => _ = OpenEditDialog(r);
-        DayViewCtrl.RecordMoved                += (_, r) => { RepoOf(r).UpdateCalendarRecord(r); CollectionsMayHaveChanged?.Invoke(this, EventArgs.Empty); RefreshCurrent(); };
+        // Перенос/растяжение времени в Дне/Неделе — дельтой (запись та же, ключ (DbId,Id,FieldId)
+        // не меняется): сетка правится НА МЕСТЕ без чтения окна. Месяц — полной загрузкой:
+        // при переносе между днями старый день записи уже неизвестен (r мутирован drag'ом),
+        // карту счётчиков «+N ещё» точно не поправить.
+        DayViewCtrl.RecordMoved                += (_, r) => { RepoOf(r).UpdateCalendarRecord(r); _journalDelta = [(r, -1), (r, +1)]; NotifyChangedAndRefresh(); };
         DayViewCtrl.RecordDeleteRequested      += (_, r) => _ = DeleteRecordsWithConfirm([r]);
         DayViewCtrl.RecordsDeleteRequested     += (_, rs) => _ = DeleteRecordsWithConfirm(rs);
-        DayViewCtrl.RecordDuplicateRequested   += (_, r) => DuplicateCalendarRecord(r);
+        DayViewCtrl.RecordDuplicateRequested   += (_, r) => _ = DuplicateRecordsWithConfirm([r]);
+        DayViewCtrl.RecordsDuplicateRequested  += (_, rs) => _ = DuplicateRecordsWithConfirm(rs);
         DayViewCtrl.AllDayCreationRequested    += (_, d)  => _ = OpenAddAllDayDialog(d);
         DayViewCtrl.TimeSlotCreationRequested  += (_, dt) => _ = OpenAddDialog(dt.Date, dt.TimeOfDay);
         WeekViewCtrl.RecordClicked             += (_, r) => _ = OpenEditDialog(r);
-        WeekViewCtrl.RecordMoved               += (_, r) => { RepoOf(r).UpdateCalendarRecord(r); CollectionsMayHaveChanged?.Invoke(this, EventArgs.Empty); RefreshCurrent(); };
+        WeekViewCtrl.RecordMoved               += (_, r) => { RepoOf(r).UpdateCalendarRecord(r); _journalDelta = [(r, -1), (r, +1)]; NotifyChangedAndRefresh(); };
         WeekViewCtrl.RecordDeleteRequested     += (_, r) => _ = DeleteRecordsWithConfirm([r]);
         WeekViewCtrl.RecordsDeleteRequested    += (_, rs) => _ = DeleteRecordsWithConfirm(rs);
-        WeekViewCtrl.RecordDuplicateRequested  += (_, r) => DuplicateCalendarRecord(r);
+        WeekViewCtrl.RecordDuplicateRequested  += (_, r) => _ = DuplicateRecordsWithConfirm([r]);
+        WeekViewCtrl.RecordsDuplicateRequested += (_, rs) => _ = DuplicateRecordsWithConfirm(rs);
         WeekViewCtrl.AllDayCreationRequested   += (_, d)  => _ = OpenAddAllDayDialog(d);
         WeekViewCtrl.TimeSlotCreationRequested += (_, dt) => _ = OpenAddDialog(dt.Date, dt.TimeOfDay);
 
@@ -208,6 +277,9 @@ public partial class CalendarControllerView : UserControl
         // требованию (см. CalendarDayVirtualList / JournalVirtualList) — прыжок в любое место без фриза.
         if (_currentViewIndex is 0 or 1)
         {
+            // Отменяем незавершённую загрузку сетки (применять её данные уже некуда) и оверлей.
+            _gridGen++;
+            GridLoadingOverlay.IsVisible = false;
             UpdateTitle();
             var sources = _dbs.Select(d =>
                 (d.DbId, d.Repo,
@@ -221,29 +293,154 @@ public partial class CalendarControllerView : UserControl
             return;
         }
 
-        // Агрегируем события из всех смонтированных БД, помечая каждое его DbId,
-        // и фильтруем каждую БД по её активным коллекциям.
-        var records = new List<CalendarRecord>();
-        foreach (var (dbId, _, repo) in _dbs)
-        {
-            ISet<int>? active = _activeByDb is not null && _activeByDb.TryGetValue(dbId, out var s) ? s : null;
-            var part = repo.GetCalendarRecordsByRange(startDt, endDt, active);
-            foreach (var r in part) r.DbId = dbId;
-            records.AddRange(part);
-        }
-
-        if (!string.IsNullOrEmpty(_searchQuery))
-            records = records.Where(r => r.Title.Contains(_searchQuery, StringComparison.OrdinalIgnoreCase)).ToList();
-
+        // Сетка (День/Неделя/Месяц/Год): точечная правка (создание/изменение/удаление/дубль,
+        // перенос/растяжение времени в Дне/Неделе) правится НА МЕСТЕ из снимка последней
+        // загрузки — без обращения к БД и без оверлея «Загрузка…», как Расписание/Журнал.
         UpdateTitle();
+        if (delta is { Count: > 0 } && TryApplyGridDelta(delta, startDt, endDt))
+            return;
 
-        switch (_currentViewIndex)
+        // Полная фоновая загрузка окна (навигация/переключение вида/внешнее изменение).
+        // Оверлей «Загрузка…» — только если чтение затянулось (>400 мс, холодный день-гигант —
+        // секунды); тёплые окна применяются без мигания.
+        var gen = ++_gridGen;
+        _ = ShowGridLoadingLater(gen);
+        _ = LoadGridAsync(gen, _currentViewIndex, startDt, endDt, _currentDate, _searchQuery, scrollToNow);
+    }
+
+    // Точечная правка сетки НА МЕСТЕ: мутирует снимок последней загрузки и перерисовывает
+    // текущий вид без чтения окна из БД. false — снимок не соответствует текущему окну/виду
+    // (навигация, загрузка в полёте, поиск) — вызывающий делает обычную фоновую загрузку.
+    private bool TryApplyGridDelta(IReadOnlyList<(CalendarRecord Rec, int Delta)> delta,
+                                   DateTime startDt, DateTime endDt)
+    {
+        if (_gridRecords is null || _gridAppliedGen != _gridGen) return false;
+        if (_gridViewApplied != _currentViewIndex || _gridStart != startDt || _gridEnd != endDt) return false;
+        if (!string.IsNullOrEmpty(_searchQuery)) return false;
+
+        foreach (var (rec, d) in delta)
         {
-            case 2: DayViewCtrl.Refresh(records, DateOnly.FromDateTime(_currentDate)); break;
-            case 3: WeekViewCtrl.Refresh(records, _currentDate, scrollToNow); break;
-            case 4: MonthViewCtrl.Refresh(records, _currentDate); break;
-            case 5: YearViewCtrl.Refresh(records, _currentDate.Year); break;
+            if (d < 0)
+            {
+                var i = _gridRecords.FindIndex(x =>
+                    x.DbId == rec.DbId && x.Id == rec.Id && x.FieldId == rec.FieldId);
+                if (i >= 0) _gridRecords.RemoveAt(i);
+            }
+            else if (rec.StartDt < endDt && rec.EndDt >= startDt)   // пересекает окно (и мультидень)
+            {
+                // Вставка по порядку StartDt (как отдаёт репозиторий): виды сортируют сами,
+                // но снимок остаётся корректным базисом для следующих правок.
+                var at = _gridRecords.FindIndex(x => x.StartDt > rec.StartDt);
+                _gridRecords.Insert(at < 0 ? _gridRecords.Count : at, rec);
+            }
+
+            // Карта счётчиков (честный «+N ещё» Месяца/Года) — по дню НАЧАЛА записи;
+            // правится и для записей сверх cap (их нет в снимке, но счётчик дня — о них).
+            if (_gridTotals is not null && rec.StartDt >= startDt && rec.StartDt < endDt)
+            {
+                var day = DateOnly.FromDateTime(rec.StartDt.Date);
+                _gridTotals[day] = Math.Max(0, _gridTotals.GetValueOrDefault(day) + d);
+            }
         }
+
+        ApplyGridData(_currentViewIndex, _gridRecords, _gridTotals, _currentDate, scrollToNow: false);
+        return true;
+    }
+
+    // Фоновая загрузка окна сетки поколения gen; применяется, только если поколение не устарело.
+    // ДВЕ фазы: (1) события окна — индексные сики, миллисекунды, сетка показывается сразу
+    // (оверлей «Загрузка…» не успевает появиться); (2) для Месяца/Года — карта счётчиков дней
+    // («+N ещё»/числа на днях): её GROUP BY на окне с днём-гигантом — секунды, поэтому она
+    // доезжает фоном и ТИХО уточняет уже показанную сетку.
+    private async Task LoadGridAsync(long gen, int viewIdx, DateTime startDt, DateTime endDt,
+                                     DateTime currentDate, string query, bool scrollToNow)
+    {
+        var records   = new List<CalendarRecord>();
+        var hasSearch = !string.IsNullOrEmpty(query);
+        // Год без поиска события окна НЕ читает вовсе: числам достаточно карты счётчиков
+        // (фаза 2), а список дня попап грузит ПО ТРЕБОВАНИЮ (DayEventsProvider). Чтение всех
+        // событий года (сотни тысяч строк, ~0.7–1.5 с) было последним местом сетки, где
+        // оверлей «Загрузка…» ещё успевал появиться при листании.
+        var skipEvents = viewIdx == 5 && !hasSearch;
+        try
+        {
+            if (!skipEvents)
+                foreach (var (dbId, _, repo) in _dbs.ToList())
+                {
+                    ISet<int>? active = _activeByDb is not null && _activeByDb.TryGetValue(dbId, out var s) ? s : null;
+                    var part = await repo.LoadCalendarGridRangeAsync(startDt, endDt, active, GridDayCap);
+                    if (gen != _gridGen) return;           // вид/дата уже другие — не применяем
+                    foreach (var r in part) r.DbId = dbId;
+                    records.AddRange(part);
+                }
+        }
+        catch
+        {
+            // БД недоступна/занята — оставляем прежнее содержимое вида, оверлей снимаем.
+            if (gen == _gridGen) { _gridAppliedGen = gen; GridLoadingOverlay.IsVisible = false; }
+            return;
+        }
+
+        // Поиск фильтрует прочитанное (как раньше); карта счётчиков к отфильтрованному
+        // неприменима — «+N ещё» при поиске считается от фактически показанного.
+        if (hasSearch)
+            records = records.Where(r => r.Title.Contains(query, StringComparison.OrdinalIgnoreCase)).ToList();
+
+        _gridAppliedGen = gen;
+        GridLoadingOverlay.IsVisible = false;
+
+        // Снимок — базис точечных правок (TryApplyGridDelta); при поиске список отфильтрован
+        // и базисом не годится (правка при активном поиске пойдёт полной загрузкой).
+        _gridRecords     = hasSearch ? null : records;
+        _gridTotals      = null;
+        _gridStart       = startDt;
+        _gridEnd         = endDt;
+        _gridViewApplied = viewIdx;
+
+        ApplyGridData(viewIdx, records, null, currentDate, scrollToNow);
+
+        // Фаза 2: карта счётчиков — только Месяц/Год и не при поиске. До её прихода «+N ещё»
+        // считается от фактически полученного; по приходе — тихое повторное применение.
+        if (hasSearch || viewIdx is not (4 or 5)) return;
+        var totals = new Dictionary<DateOnly, int>();
+        try
+        {
+            foreach (var (dbId, _, repo) in _dbs.ToList())
+            {
+                ISet<int>? active = _activeByDb is not null && _activeByDb.TryGetValue(dbId, out var s) ? s : null;
+                foreach (var (dayStr, count) in await repo.LoadCalendarDayCountsAsync(startDt, endDt, active))
+                    if (DateOnly.TryParseExact(dayStr, "yyyy-MM-dd", out var d))
+                        totals[d] = totals.GetValueOrDefault(d) + count;
+                if (gen != _gridGen) return;
+            }
+        }
+        catch { return; }   // карта не критична — «+N ещё» останется от полученного
+
+        _gridTotals = totals;
+        // Между фазами могла пройти точечная правка (TryApplyGridDelta мутирует _gridRecords,
+        // поколение не меняя) — применяем АКТУАЛЬНЫЙ снимок, а не локальный records.
+        ApplyGridData(viewIdx, _gridRecords ?? records, totals, currentDate, scrollToNow: false);
+    }
+
+    // Отдать данные видимому виду сетки — общий финал полной загрузки и точечной правки.
+    private void ApplyGridData(int viewIdx, List<CalendarRecord> records,
+                               Dictionary<DateOnly, int>? totals, DateTime currentDate, bool scrollToNow)
+    {
+        switch (viewIdx)
+        {
+            case 2: DayViewCtrl.Refresh(records, DateOnly.FromDateTime(currentDate)); break;
+            case 3: WeekViewCtrl.Refresh(records, currentDate, scrollToNow); break;
+            case 4: MonthViewCtrl.Refresh(records, currentDate, totals); break;
+            case 5: YearViewCtrl.Refresh(records, currentDate.Year, totals); break;
+        }
+    }
+
+    // Оверлей «Загрузка…» с задержкой: быстрые (тёплые) загрузки сетки им не мигают.
+    private async Task ShowGridLoadingLater(long gen)
+    {
+        await Task.Delay(400);
+        if (gen == _gridGen && gen != _gridAppliedGen)
+            GridLoadingOverlay.IsVisible = true;
     }
 
     private (DateTime start, DateTime end) GetDateRange() => _currentViewIndex switch
@@ -310,10 +507,9 @@ public partial class CalendarControllerView : UserControl
         if (result?.Record is not null)
         {
             RepoOf(result.Record).AddCalendarRecord(result.Record);
-            CollectionsMayHaveChanged?.Invoke(this, EventArgs.Empty);
             _journalAnchor = result.Record;   // Журнал: к созданной записи
             _journalDelta  = [(result.Record, +1)];
-            RefreshCurrent();
+            NotifyChangedAndRefresh();
         }
     }
 
@@ -326,11 +522,22 @@ public partial class CalendarControllerView : UserControl
         if (result?.Record is not null)
         {
             RepoOf(result.Record).AddCalendarRecord(result.Record);
-            CollectionsMayHaveChanged?.Invoke(this, EventArgs.Empty);
             _journalAnchor = result.Record;   // Журнал: к созданной записи
             _journalDelta  = [(result.Record, +1)];
-            RefreshCurrent();
+            NotifyChangedAndRefresh();
         }
+    }
+
+    // ОДИН refresh на операцию: дельта ставится ДО CollectionsMayHaveChanged — его обработчик
+    // (MainWindow: сайдбар → SetActiveIds → RefreshCurrent) потребляет её и правит ленту на
+    // месте; страховочный RefreshCurrent срабатывает, только если дельту никто не съел (нет
+    // подписчика). Прежний порядок (Invoke ДО дельты) запускал холостую пересборку без дельты —
+    // её отменяло поколение, но фоновый пересчёт дня (COUNT дня-гиганта — секунды) уходил
+    // впустую на каждую правку, а кеш счётчиков дня было бы невозможно держать тёплым.
+    private void NotifyChangedAndRefresh()
+    {
+        CollectionsMayHaveChanged?.Invoke(this, EventArgs.Empty);
+        if (_journalDelta is not null) RefreshCurrent();
     }
 
     private async Task OpenEditDialog(CalendarRecord r)
@@ -379,18 +586,12 @@ public partial class CalendarControllerView : UserControl
                                                  createMissingFields: false, excludeTargetFieldId: rec.FieldId);
                 sourceRepo.DeleteCalendarRecord(r.Id!.Value);
             }
-            CollectionsMayHaveChanged?.Invoke(this, EventArgs.Empty);
             _journalAnchor = result.Record;   // Журнал: к записи на её новой дате
             _journalDelta  = [(r, -1), (result.Record, +1)];
+            NotifyChangedAndRefresh();
+            return;
         }
-        RefreshCurrent();
-    }
-
-    private void DuplicateCalendarRecord(CalendarRecord r)
-    {
-        RepoOf(r).AddCalendarRecord(CopyOf(r));
-        CollectionsMayHaveChanged?.Invoke(this, EventArgs.Empty);
-        RefreshCurrent();
+        if (_journalDelta is not null) RefreshCurrent();   // удаление из диалога (Deleted выше)
     }
 
     private static CalendarRecord CopyOf(CalendarRecord r) => new()
@@ -437,14 +638,13 @@ public partial class CalendarControllerView : UserControl
         else
             copies = await BulkDuplicateWithProgress(win, targets);
 
-        CollectionsMayHaveChanged?.Invoke(this, EventArgs.Empty);
         if (copies.Count > 0)
         {
             _journalAnchor = copies.OrderBy(c => c.StartDt).ThenBy(c => c.Id ?? 0).Last();
             _journalDelta  = copies.Select(c => (c, +1)).ToList();
             _journalSelectAddedOnly = true;
         }
-        RefreshCurrent();
+        NotifyChangedAndRefresh();
     }
 
     private async Task DeleteRecordsWithConfirm(IReadOnlyList<CalendarRecord> records)
@@ -464,9 +664,8 @@ public partial class CalendarControllerView : UserControl
         else
             await BulkDeleteWithProgress(win, targets);
 
-        CollectionsMayHaveChanged?.Invoke(this, EventArgs.Empty);
         _journalDelta = targets.Select(r => (r, -1)).ToList();
-        RefreshCurrent();
+        NotifyChangedAndRefresh();
     }
 
     // Порог «мелкой» операции: до этого числа записи удаляются/дублируются мгновенно без окна.

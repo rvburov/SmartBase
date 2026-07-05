@@ -19,6 +19,16 @@
             <cal:WeekView    x:Name="WeekViewCtrl"    IsVisible="False" />
             <cal:MonthView   x:Name="MonthViewCtrl"   IsVisible="True"  />
             <cal:YearView    x:Name="YearViewCtrl"    IsVisible="False" />
+
+            <!-- Оверлей сетки (День/Неделя/Месяц/Год): окно читается в фоне, оверлей появляется,
+                 только если загрузка дольше 400 мс (холодный день-гигант — секунды). -->
+            <Border x:Name="GridLoadingOverlay" IsVisible="False" Background="{StaticResource BrushBg}">
+                <TextBlock Text="Загрузка…"
+                           Foreground="{StaticResource BrushSecondaryText}"
+                           Margin="24,16"
+                           HorizontalAlignment="Left"
+                           VerticalAlignment="Top" />
+            </Border>
         </Grid>
 
     </Grid>

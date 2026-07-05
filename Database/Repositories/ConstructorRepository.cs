@@ -1865,51 +1865,106 @@ public class ConstructorRepository(AppDbContext db)
             && (!excludeHidden || !db.RecordDisplay.Any(d =>
                    d.CollectionId == collectionId && d.RecordId == r.Id && !d.Visible)));
 
-    public List<DbRecord> GetRecordsPage(int collectionId, int skip, int take, bool excludeHidden = false) =>
-        db.DbRecords
-          .Where(r => r.CollectionId == collectionId
-              && (!excludeHidden || !db.RecordDisplay.Any(d =>
-                     d.CollectionId == collectionId && d.RecordId == r.Id && !d.Visible)))
-          .OrderBy(r => r.Position).ThenBy(r => r.Id)
-          .Skip(skip)
-          .Take(take)
-          .Select(r => new DbRecord
-          {
-              Id = r.Id, CollectionId = r.CollectionId, CreatedAt = r.CreatedAt,
-              Position = r.Position, StartDt = r.StartDt, EndDt = r.EndDt, AllDay = r.AllDay,
-              Title = r.Title, Description = r.Description,
-          })
-          .ToList();
+    // Страницы таблицы — raw SQL: EF-формы не масштабируются на миллионы строк. Смещение и
+    // keyset обязаны идти ПО ИНДЕКСУ (CollectionId, Position): row-value сравнение
+    // (Position, Id) > ($p, $id) даёт индексный сик (0 мс на любой глубине), а OR-форма
+    // (Position > $p OR (Position = $p AND Id > $id)), в которую транслируется LINQ, НЕ ложится
+    // на индекс — SQLite сканирует коллекцию с НАЧАЛА (на 10 млн — сотни мс на КАЖДУЮ страницу
+    // скролла, т.е. «keyset» был O(глубины)). Хвост Id в ключе сика бесплатен: Id = rowid,
+    // он неявно завершает каждую запись индекса.
+    private const string RecordCols =
+        "r.Id, r.CollectionId, r.CreatedAt, r.Position, r.StartDt, r.EndDt, r.AllDay, r.Title, r.Description";
+
+    // Фильтр скрытых записей (окно «Отображение записей») для raw SQL страниц таблицы.
+    private static string HiddenFilter(bool excludeHidden, string alias = "r") => excludeHidden
+        ? $" AND NOT EXISTS (SELECT 1 FROM record_display d" +
+          $" WHERE d.CollectionId = {alias}.CollectionId AND d.RecordId = {alias}.Id AND d.Visible = 0)"
+        : "";
+
+    /// <summary>Страница по offset (прыжок скроллбаром). Смещение идёт по ПОКРЫВАЮЩЕМУ индексу
+    /// (CollectionId, Position): подзапрос отбирает только Id — пропускаемые записи не читаются
+    /// из таблицы, join достаёт колонки лишь для строк страницы (~9 млн глубины: 190 мс вместо
+    /// сотен и секунды холодным).</summary>
+    public List<DbRecord> GetRecordsPage(int collectionId, int skip, int take, bool excludeHidden = false)
+    {
+        if (take <= 0) return [];
+        return ReadRecordRows($@"SELECT {RecordCols}
+                                 FROM db_records r
+                                 JOIN (SELECT i.Id FROM db_records i
+                                       WHERE i.CollectionId = $c{HiddenFilter(excludeHidden, "i")}
+                                       ORDER BY i.Position, i.Id LIMIT $take OFFSET $skip) page ON page.Id = r.Id
+                                 ORDER BY r.Position, r.Id",
+                              ("$c", collectionId), ("$take", take), ("$skip", skip));
+    }
 
     /// <summary>
     /// Keyset-пагинация: следующая страница ПОСЛЕ курсора (afterPosition, afterId), упорядочение
     /// по <c>(Position, Id)</c> — тот же ключ, что и составной индекс db_records(CollectionId, Position).
-    /// В отличие от <see cref="GetRecordsPage"/> со <c>Skip(N)</c> (O(offset) — перечитывает N строк),
-    /// здесь стоимость = O(take): нет смещения, индекс сразу позиционируется на курсор. Используется
-    /// при последовательном скролле, когда известна последняя строка предыдущей страницы.
+    /// Стоимость O(take) на любой глубине — row-value сик (см. комментарий у RecordCols).
     /// Курсор null/null — с самого начала. Двойной ключ (Position, Id) устойчив к дублям Position
     /// (после серий вставок/свопов), иначе строки с равной Position могли бы потеряться/повториться.
     /// </summary>
     public List<DbRecord> GetRecordsPageAfter(int collectionId, int? afterPosition, int? afterId,
                                               int take, bool excludeHidden = false)
     {
-        var q = db.DbRecords
-            .Where(r => r.CollectionId == collectionId
-                && (!excludeHidden || !db.RecordDisplay.Any(d =>
-                       d.CollectionId == collectionId && d.RecordId == r.Id && !d.Visible)));
+        if (take <= 0) return [];
+        var cursor = afterPosition is not null && afterId is not null
+            ? " AND (r.Position, r.Id) > ($p, $id)"
+            : "";
+        var args = new List<(string, object)> { ("$c", collectionId), ("$take", take) };
+        if (cursor.Length > 0) { args.Add(("$p", afterPosition!.Value)); args.Add(("$id", afterId!.Value)); }
+        return ReadRecordRows($@"SELECT {RecordCols} FROM db_records r
+                                 WHERE r.CollectionId = $c{cursor}{HiddenFilter(excludeHidden)}
+                                 ORDER BY r.Position, r.Id LIMIT $take",
+                              args.ToArray());
+    }
 
-        if (afterPosition is int p && afterId is int aid)
-            q = q.Where(r => r.Position > p || (r.Position == p && r.Id > aid));
+    /// <summary>Keyset НАЗАД: до take записей НЕПОСРЕДСТВЕННО ПЕРЕД курсором (beforePosition,
+    /// beforeId), в обычном порядке таблицы. Для скролла ВВЕРХ (в т.ч. после прыжка вглубь):
+    /// страница выше грузится сиком от ПЕРВОЙ строки страницы ниже — O(take) на любой глубине,
+    /// вместо offset-запроса O(глубины) на каждую страницу. Реверс-скан индекса + разворот в памяти.</summary>
+    public List<DbRecord> GetRecordsPageBefore(int collectionId, int beforePosition, int beforeId,
+                                               int take, bool excludeHidden = false)
+    {
+        if (take <= 0) return [];
+        var rows = ReadRecordRows($@"SELECT {RecordCols} FROM db_records r
+                                     WHERE r.CollectionId = $c AND (r.Position, r.Id) < ($p, $id){HiddenFilter(excludeHidden)}
+                                     ORDER BY r.Position DESC, r.Id DESC LIMIT $take",
+                                  ("$c", collectionId), ("$p", beforePosition), ("$id", beforeId), ("$take", take));
+        rows.Reverse();
+        return rows;
+    }
 
-        return q.OrderBy(r => r.Position).ThenBy(r => r.Id)
-                .Take(take)
-                .Select(r => new DbRecord
+    // Общий читатель страниц db_records (raw SQL → DbRecord).
+    private List<DbRecord> ReadRecordRows(string sql, params (string Name, object Value)[] args)
+    {
+        var result = new List<DbRecord>();
+        var conn = db.Database.GetDbConnection();
+        var opened = conn.State != System.Data.ConnectionState.Open;
+        if (opened) conn.Open();
+        try
+        {
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = sql;
+            foreach (var (name, value) in args)
+                AddParam(cmd, name).Value = value;
+            using var rdr = cmd.ExecuteReader();
+            while (rdr.Read())
+                result.Add(new DbRecord
                 {
-                    Id = r.Id, CollectionId = r.CollectionId, CreatedAt = r.CreatedAt,
-                    Position = r.Position, StartDt = r.StartDt, EndDt = r.EndDt, AllDay = r.AllDay,
-                    Title = r.Title, Description = r.Description,
-                })
-                .ToList();
+                    Id           = rdr.GetInt32(0),
+                    CollectionId = rdr.GetInt32(1),
+                    CreatedAt    = rdr.IsDBNull(2) ? null : rdr.GetString(2),
+                    Position     = rdr.GetInt32(3),
+                    StartDt      = rdr.IsDBNull(4) ? null : rdr.GetString(4),
+                    EndDt        = rdr.IsDBNull(5) ? null : rdr.GetString(5),
+                    AllDay       = rdr.GetInt32(6) != 0,
+                    Title        = rdr.IsDBNull(7) ? "" : rdr.GetString(7),
+                    Description  = rdr.IsDBNull(8) ? null : rdr.GetString(8),
+                });
+        }
+        finally { if (opened) conn.Close(); }
+        return result;
     }
 
     public Dictionary<int, Dictionary<int, string>> GetFieldValuesBatch(IReadOnlyList<int> recordIds)
@@ -1921,14 +1976,29 @@ public class ConstructorRepository(AppDbContext db)
             .ToDictionary(g => g.Key, g => g.ToDictionary(fv => fv.FieldId, fv => fv.Value));
     }
 
-    public int GetRecordPosition(int collectionId, int recordId)
+    /// <summary>Есть ли у записи сосед выше/ниже в порядке коллекции (Position, Id) — для пунктов
+    /// «Сдвинуть вверх/вниз». Row-value сик по индексу (CollectionId, Position): O(1) на любой
+    /// глубине. Прежний путь считал РАНГ записи (COUNT до её глубины) + полный COUNT коллекции —
+    /// сотни мс на миллионах строк, и вызывался при КАЖДОЙ реализации строки (построение
+    /// контекстного меню в OnLoadingRow) — это подвешивало прокрутку колесом.</summary>
+    public bool HasNeighborRecord(int collectionId, int recordId, bool up)
     {
-        var pos = db.DbRecords
-            .Where(r => r.CollectionId == collectionId && r.Id == recordId)
-            .Select(r => (int?)r.Position)
-            .FirstOrDefault();
-        if (pos is null) return -1;
-        return db.DbRecords.Count(r => r.CollectionId == collectionId && r.Position < pos);
+        var conn = db.Database.GetDbConnection();
+        var opened = conn.State != System.Data.ConnectionState.Open;
+        if (opened) conn.Open();
+        try
+        {
+            using var cmd = conn.CreateCommand();
+            var cmp = up ? "<" : ">";
+            cmd.CommandText = $@"SELECT EXISTS (
+                                   SELECT 1 FROM db_records n
+                                   JOIN db_records r ON r.Id = $id
+                                   WHERE n.CollectionId = $c AND (n.Position, n.Id) {cmp} (r.Position, r.Id))";
+            AddParam(cmd, "$id").Value = recordId;
+            AddParam(cmd, "$c").Value  = collectionId;
+            return Convert.ToInt64(cmd.ExecuteScalar()) != 0;
+        }
+        finally { if (opened) conn.Close(); }
     }
 
     public DbRecord? GetRecord(int recordId)
@@ -2597,11 +2667,12 @@ public class ConstructorRepository(AppDbContext db)
     /// и их значения. Нужно виртуализации таблицы, чтобы подгрузка строк при скролле НЕ блокировала
     /// UI-поток (ноль микроподвисаний даже при экстремально быстром скролле). WAL → фоновое чтение
     /// не конфликтует с основным контекстом. Режим выбирается параметрами: idSlice (фильтр/сортировка),
-    /// иначе keyset по (afterPos, afterId), иначе offset по skip.
+    /// иначе keyset вперёд по (afterPos, afterId), иначе keyset назад по (beforePos, beforeId) —
+    /// скролл вверх, иначе offset по skip (прыжок скроллбаром).
     /// </summary>
     public Task<(List<DbRecord> Records, Dictionary<int, Dictionary<int, string>> Values)> LoadPageAsync(
         int collectionId, bool excludeHidden, IReadOnlyList<int>? idSlice,
-        int skip, int take, int? afterPos, int? afterId) =>
+        int skip, int take, int? afterPos, int? afterId, int? beforePos = null, int? beforeId = null) =>
         Task.Run(() =>
         {
             using var ctx = new AppDbContext(db.DbPath);
@@ -2612,7 +2683,9 @@ public class ConstructorRepository(AppDbContext db)
                 ? repo.GetRecordsByIdsOrdered(idSlice)
                 : afterPos is int p && afterId is int aid
                     ? repo.GetRecordsPageAfter(collectionId, p, aid, take, excludeHidden)
-                    : repo.GetRecordsPage(collectionId, skip, take, excludeHidden);
+                    : beforePos is int bp && beforeId is int bid
+                        ? repo.GetRecordsPageBefore(collectionId, bp, bid, take, excludeHidden)
+                        : repo.GetRecordsPage(collectionId, skip, take, excludeHidden);
 
             var ids    = records.Select(r => r.Id!.Value).ToList();
             var values = repo.GetFieldValuesBatch(ids);
@@ -3641,56 +3714,160 @@ public class ConstructorRepository(AppDbContext db)
             : "";
 
         var result = new List<CalendarRecord>();
-
-        void Read(int allDay, bool lowerBound)
+        var conn = db.Database.GetDbConnection();
+        var opened = conn.State != System.Data.ConnectionState.Open;
+        if (opened) conn.Open();
+        try
         {
-            var lb = lowerBound ? " AND ci.StartIso >= $lo" : "";
-            var sql = $@"SELECT ci.RecordId, ci.FieldId, ci.CollectionId, ci.StartIso, ci.EndIso, ci.AllDay,
-                                r.Title, r.Description, c.Name, c.Color
-                         FROM calendar_index ci
-                         JOIN db_records r ON r.Id = ci.RecordId
-                         JOIN db_collections c ON c.Id = r.CollectionId
-                         WHERE ci.AllDay = {allDay}{colFilter}{lb}
-                           AND ci.StartIso < $end AND ci.EndIso >= $start";
-
-            var conn = db.Database.GetDbConnection();
-            var opened = conn.State != System.Data.ConnectionState.Open;
-            if (opened) conn.Open();
-            try
-            {
-                using var cmd = conn.CreateCommand();
-                cmd.CommandText = sql;
-                AddParam(cmd, "$end").Value   = endIso;
-                AddParam(cmd, "$start").Value = startIso;
-                if (lowerBound) AddParam(cmd, "$lo").Value = lowerIso;
-                using var rdr = cmd.ExecuteReader();
-                while (rdr.Read())
-                {
-                    if (!DateTime.TryParse(rdr.GetString(3), out var s)) continue;
-                    if (!DateTime.TryParse(rdr.GetString(4), out var e)) continue;
-                    result.Add(new CalendarRecord
-                    {
-                        Id             = rdr.GetInt32(0),
-                        FieldId        = rdr.GetInt32(1),
-                        CollectionId   = rdr.GetInt32(2),
-                        StartDt        = s,
-                        EndDt          = e,
-                        AllDay         = rdr.GetInt32(5) != 0,
-                        Title          = rdr.IsDBNull(6) ? "" : rdr.GetString(6),
-                        Description    = rdr.IsDBNull(7) ? "" : rdr.GetString(7),
-                        CollectionName = rdr.IsDBNull(8) ? "" : rdr.GetString(8),
-                        Color          = rdr.IsDBNull(9) ? "#007AFF" : rdr.GetString(9),
-                    });
-                }
-            }
-            finally { if (opened) conn.Close(); }
+            // Короткие/timed — с нижней границей; многодневные/all-day — без неё (их мало).
+            ReadCalendarRows(conn, result,
+                $"ci.AllDay = 0{colFilter} AND ci.StartIso >= $lo AND ci.StartIso < $end AND ci.EndIso >= $start",
+                [("$lo", lowerIso), ("$end", endIso), ("$start", startIso)]);
+            ReadCalendarRows(conn, result,
+                $"ci.AllDay = 1{colFilter} AND ci.StartIso < $end AND ci.EndIso >= $start",
+                [("$end", endIso), ("$start", startIso)]);
         }
-
-        Read(allDay: 0, lowerBound: true);   // короткие/timed — с нижней границей
-        Read(allDay: 1, lowerBound: false);  // многодневные/all-day — без нижней границы
+        finally { if (opened) conn.Close(); }
 
         result.Sort((a, b) => a.StartDt.CompareTo(b.StartDt));
         return result;
+    }
+
+    /// <summary>
+    /// Окно календаря для видов-сеток (День/Неделя/Месяц/Год) с ОГРАНИЧЕНИЕМ числа timed-событий
+    /// на день: гигантский день (миллионы записей) отдаёт сетке первые <paramref name="perDayCap"/>
+    /// строк вместо всех — больше ячейке всё равно не отрисовать, остальное показывает «+N ещё»
+    /// по карте счётчиков (<see cref="GetCalendarDayCountsByRange"/>). Чтение — per-day ×
+    /// per-collection: каждый запрос фиксирует (CollectionId, AllDay) одним значением, ложится
+    /// сиком на индекс (CollectionId, AllDay, StartIso) и обрывается LIMIT'ом, НЕ сканируя день
+    /// целиком (общий ORDER BY с IN по коллекциям заставил бы SQLite сортировать все миллионы
+    /// строк во временной таблице — LIMIT бы не спас). Для дней внутри окна условие EndIso >= start
+    /// выполняется автоматически (событие заканчивается не раньше своего старта) — фильтр целиком
+    /// индексный. Спилловеры (timed, начавшиеся ДО окна, но пересекающие его) — отдельным проходом
+    /// по буферу CalendarTimedBufferDays, как в <see cref="ReadCalendarEvents"/>; all-day — тоже
+    /// per-collection с cap (обычно их мало, но импорт дат «без времени» может дать миллионы).
+    /// </summary>
+    public List<CalendarRecord> GetCalendarRecordsByRangeCapped(
+        DateTime rangeStart, DateTime rangeEnd, ISet<int>? activeIds, int perDayCap)
+    {
+        // Per-collection запросы — нужны явные id (активные или все коллекции БД).
+        var colIds = activeIds is { Count: > 0 }
+            ? activeIds.ToList()
+            : db.DbCollections.Select(c => c.Id).ToList();
+        var colFilter = activeIds is { Count: > 0 }
+            ? $" AND ci.CollectionId IN ({string.Join(",", activeIds)})"
+            : "";
+
+        string Iso(DateTime dt) => DateTime.SpecifyKind(dt, DateTimeKind.Unspecified).ToString("o");
+        var startIso = Iso(rangeStart);
+        var endIso   = Iso(rangeEnd);
+        var lowerIso = Iso(rangeStart.AddDays(-CalendarTimedBufferDays));
+
+        var result = new List<CalendarRecord>();
+        var conn = db.Database.GetDbConnection();
+        var opened = conn.State != System.Data.ConnectionState.Open;
+        if (opened) conn.Open();
+        try
+        {
+            // Timed по дням окна (окна сеток выровнены по дням — см. GetDateRange контроллера).
+            for (var day = rangeStart.Date; day < rangeEnd; day = day.AddDays(1))
+            {
+                var dayIso  = Iso(day);
+                var nextIso = Iso(day.AddDays(1));
+                foreach (var colId in colIds)
+                    ReadCalendarRows(conn, result,
+                        $"ci.CollectionId = {colId} AND ci.AllDay = 0" +
+                        " AND ci.StartIso >= $d AND ci.StartIso < $d2",
+                        [("$d", dayIso), ("$d2", nextIso)], perDayCap);
+            }
+
+            // Timed-спилловеры (начались ДО окна, но пересекают его) — сик по EndIso-индексу:
+            // EndIso ∈ [начало окна, начало+буфер). Верхняя граница следует из того же инварианта
+            // «timed длиннее буфера не бывает», что и нижняя по StartIso (StartIso ≥ lo и
+            // длительность ≤ буфера ⇒ EndIso < win+буфер). Прежний проход сканировал весь
+            // StartIso-буфер с проверкой EndIso чтением строк — день-гигант в буфере стоил секунд
+            // при каждом открытии «Дня»/«Недели» следующие 62 дня (замер на 10 млн: 3.15 с → 7 мс).
+            // Порядок LIMIT'а — по EndIso: его отдаёт сам индекс, скан обрывается на cap.
+            var upperIso = Iso(rangeStart.AddDays(CalendarTimedBufferDays));
+            foreach (var colId in colIds)
+                ReadCalendarRows(conn, result,
+                    $"ci.CollectionId = {colId} AND ci.AllDay = 0" +
+                    " AND ci.EndIso >= $win AND ci.EndIso < $hi" +
+                    " AND ci.StartIso >= $lo AND ci.StartIso < $win",
+                    [("$win", startIso), ("$hi", upperIso), ("$lo", lowerIso)], perDayCap, "ci.EndIso");
+
+            // All-day/многодневные — сик по EndIso-индексу: у StartIso нет нижней границы
+            // (многодневное могло начаться сколь угодно давно), и прежний StartIso-скан шёл от
+            // НАЧАЛА таймлайна с проверкой EndIso чтением строк — миллионы прошлых all-day
+            // (импорт дат «без времени») стоили секунды на каждое окно после них (замер:
+            // 2.2 с → 0 мс). EndIso >= start отсекает прошлое сиком; верхней границы нет —
+            // all-day, в отличие от timed, не ограничен буфером по длительности. Cap тем же
+            // LIMIT: сетке и панели «весь день» больше всё равно не отрисовать.
+            foreach (var colId in colIds)
+                ReadCalendarRows(conn, result,
+                    $"ci.CollectionId = {colId} AND ci.AllDay = 1" +
+                    " AND ci.EndIso >= $start AND ci.StartIso < $end",
+                    [("$start", startIso), ("$end", endIso)], perDayCap, "ci.EndIso");
+        }
+        finally { if (opened) conn.Close(); }
+
+        result.Sort((a, b) => a.StartDt.CompareTo(b.StartDt));
+        return result;
+    }
+
+    /// <summary>Фоновая (изолированное подключение) загрузка окна сетки: только capped-события,
+    /// индексными сиками — миллисекунды на любом окне. Карта счётчиков дней («+N ещё»
+    /// Месяца/Года) сюда сознательно НЕ входит: её GROUP BY по окну с днём-гигантом — секунды,
+    /// поэтому контроллер грузит её ВТОРОЙ фазой (<see cref="LoadCalendarDayCountsAsync"/>)
+    /// и тихо уточняет уже показанную сетку.</summary>
+    public Task<List<CalendarRecord>> LoadCalendarGridRangeAsync(
+        DateTime rangeStart, DateTime rangeEnd, ISet<int>? activeIds, int perDayCap) =>
+        Task.Run(() =>
+        {
+            using var ctx = new AppDbContext(db.DbPath);
+            ctx.ApplyPerformancePragmas();
+            return new ConstructorRepository(ctx)
+                .GetCalendarRecordsByRangeCapped(rangeStart, rangeEnd, activeIds, perDayCap);
+        });
+
+    // Общий читатель окна: строки calendar_index (+заголовок записи и цвет коллекции) по условию
+    // WHERE над ci. limit > 0 добавляет ORDER BY {orderBy} LIMIT n — чтобы порядок отдал индекс
+    // и LIMIT остановил скан, условие обязано фиксировать ci.CollectionId и ci.AllDay одним
+    // значением, а orderBy — совпадать с range-колонкой использованного индекса
+    // (см. GetCalendarRecordsByRangeCapped).
+    private static void ReadCalendarRows(System.Data.Common.DbConnection conn, List<CalendarRecord> into,
+                                         string where, IReadOnlyList<(string Name, string Value)> args,
+                                         int limit = 0, string orderBy = "ci.StartIso")
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = $@"SELECT ci.RecordId, ci.FieldId, ci.CollectionId, ci.StartIso, ci.EndIso, ci.AllDay,
+                                    r.Title, r.Description, c.Name, c.Color
+                             FROM calendar_index ci
+                             JOIN db_records r ON r.Id = ci.RecordId
+                             JOIN db_collections c ON c.Id = r.CollectionId
+                             WHERE {where}"
+                          + (limit > 0 ? $" ORDER BY {orderBy} LIMIT {limit}" : "");
+        foreach (var (name, value) in args)
+            AddParam(cmd, name).Value = value;
+        using var rdr = cmd.ExecuteReader();
+        while (rdr.Read())
+        {
+            if (!DateTime.TryParse(rdr.GetString(3), out var s)) continue;
+            if (!DateTime.TryParse(rdr.GetString(4), out var e)) continue;
+            into.Add(new CalendarRecord
+            {
+                Id             = rdr.GetInt32(0),
+                FieldId        = rdr.GetInt32(1),
+                CollectionId   = rdr.GetInt32(2),
+                StartDt        = s,
+                EndDt          = e,
+                AllDay         = rdr.GetInt32(5) != 0,
+                Title          = rdr.IsDBNull(6) ? "" : rdr.GetString(6),
+                Description    = rdr.IsDBNull(7) ? "" : rdr.GetString(7),
+                CollectionName = rdr.IsDBNull(8) ? "" : rdr.GetString(8),
+                Color          = rdr.IsDBNull(9) ? "#007AFF" : rdr.GetString(9),
+            });
+        }
     }
 
     // ── Поддержка проекции calendar_index ─────────────────────────────────────
