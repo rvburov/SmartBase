@@ -96,7 +96,7 @@ public class ConstructorRepository(AppDbContext db)
     public int DuplicateGroupIsolated(int groupId, IProgress<int>? progress = null, int batchSize = 10000)
     {
         using var ctx = new AppDbContext(db.DbPath);
-        ctx.ApplyPerformancePragmas();
+        ctx.ApplyBulkPerformancePragmas();
         return new ConstructorRepository(ctx).DuplicateGroupCore(groupId, progress, batchSize);
     }
 
@@ -153,6 +153,17 @@ public class ConstructorRepository(AppDbContext db)
         return result;
     }
 
+    /// <summary>Асинхронная версия <see cref="CountGroupSubtree"/> на ОТДЕЛЬНОМ подключении — для
+    /// подсчёта перед массовыми операциями сайдбара: COUNT по ветке с миллионами записей — сотни мс,
+    /// на UI-потоке это фриз перед окном прогресса (множится при мультивыборе).</summary>
+    public Task<(int Collections, long Records)> CountGroupSubtreeAsync(int groupId) =>
+        Task.Run(() =>
+        {
+            using var ctx = new AppDbContext(db.DbPath);
+            ctx.ApplyPerformancePragmas();
+            return new ConstructorRepository(ctx).CountGroupSubtree(groupId);
+        });
+
     /// <summary>Число коллекций во всей ветке группы и суммарное число их записей — для индикатора
     /// (дубль/удаление/перенос группы показывают «Коллекций: X · Записей: Y»).</summary>
     public (int Collections, long Records) CountGroupSubtree(int groupId)
@@ -169,15 +180,15 @@ public class ConstructorRepository(AppDbContext db)
     public void DeleteGroupIsolated(int groupId, IProgress<int>? progress = null)
     {
         using var ctx = new AppDbContext(db.DbPath);
-        ctx.ApplyPerformancePragmas();
+        ctx.ApplyBulkPerformancePragmas();
         new ConstructorRepository(ctx).DeleteGroupData(groupId, progress);
     }
 
     /// <summary>
-    /// Удалить группу со всей веткой ПАКЕТАМИ: записи всех коллекций ветки по 10 000 (значения — каскадом
-    /// по FK), затем строки коллекций (каскад уберёт поля), затем строки групп ветки. Всё в одной
-    /// транзакции. <paramref name="progress"/> — нарастающее число удалённых записей (для %). Каскад
-    /// держится на PRAGMA foreign_keys=ON (см. ApplyPerformancePragmas).
+    /// Удалить группу со всей веткой ПАКЕТАМИ: коллекции ветки по очереди тем же путём, что
+    /// <see cref="DeleteCollectionData"/> (транзакция на пакет, явные bulk-DELETE значений/проекции,
+    /// чистка UI-строк без FK), затем строки групп ветки. <paramref name="progress"/> — нарастающее
+    /// число удалённых записей по всей ветке (для %).
     /// </summary>
     public void DeleteGroupData(int groupId, IProgress<int>? progress = null, int batchSize = 10000)
     {
@@ -186,37 +197,20 @@ public class ConstructorRepository(AppDbContext db)
                          .Select(c => c.Id).ToList();
         var total    = colIds.Count == 0 ? 0L : db.DbRecords.LongCount(r => colIds.Contains(r.CollectionId));
 
-        using var tx = db.Database.BeginTransaction();
-
-        long deleted = 0;
+        long basis = 0;
         foreach (var cid in colIds)
         {
-            int prevId = 0;
-            while (true)
-            {
-                var end = DeleteBatchEndId(cid, prevId, batchSize);
-                if (end is int e)
-                {
-                    db.Database.ExecuteSqlInterpolated(
-                        $"DELETE FROM db_records WHERE CollectionId = {cid} AND Id > {prevId} AND Id <= {e}");
-                    deleted += batchSize; prevId = e;
-                    progress?.Report((int)deleted);
-                }
-                else
-                {
-                    db.Database.ExecuteSqlInterpolated(
-                        $"DELETE FROM db_records WHERE CollectionId = {cid} AND Id > {prevId}");
-                    break;
-                }
-            }
-            db.Database.ExecuteSqlInterpolated($"DELETE FROM db_collections WHERE Id = {cid}");
+            var rc = db.DbRecords.LongCount(r => r.CollectionId == cid);
+            DeleteCollectionRows(cid, basis, progress, batchSize);
+            basis += rc;
         }
 
         // Строки групп ветки (ParentId — SET NULL, не каскад, поэтому удаляем явно весь набор).
+        using var tx = db.Database.BeginTransaction();
         foreach (var gid in groupIds)
             db.Database.ExecuteSqlInterpolated($"DELETE FROM db_groups WHERE Id = {gid}");
-
         tx.Commit();
+
         progress?.Report((int)total);   // финально 100% для этой ветки
     }
 
@@ -407,47 +401,59 @@ public class ConstructorRepository(AppDbContext db)
     public void DeleteCollectionIsolated(int collectionId, IProgress<int>? progress = null)
     {
         using var ctx = new AppDbContext(db.DbPath);
-        ctx.ApplyPerformancePragmas();
+        ctx.ApplyBulkPerformancePragmas();
         new ConstructorRepository(ctx).DeleteCollectionData(collectionId, progress);
     }
 
     /// <summary>
-    /// Удалить записи коллекции ПАКЕТАМИ (значения уходят каскадом по FK ON DELETE CASCADE — его
-    /// включает провайдер EF), затем строку коллекции (каскад уберёт поля и UI-настройки). Всё в
-    /// одной транзакции. Пакеты — только ради гранулярности прогресса (<paramref name="progress"/> —
-    /// нарастающее число удалённых записей); по SQL это та же работа, что один каскадный DELETE.
+    /// Удалить записи коллекции ПАКЕТАМИ, затем строку коллекции и UI-настройки. Каждый пакет —
+    /// СВОЯ транзакция: прежде вся операция шла одной гигантской транзакцией, и WAL разрастался на
+    /// весь объём изменений (десятки ГБ на многомиллионных коллекциях); частичное удаление при сбое
+    /// не страшно — повтор операции доудаляет остаток. Значения и проекция календаря удаляются
+    /// ЯВНЫМ bulk-DELETE до записей (каскаду по FK остаётся проверить пустоту), UI-строки без FK
+    /// (ui_row_heights, record_display и коллекция-level) чистятся явно — иначе они сиротели, а id
+    /// коллекций SQLite переиспользует (фантомные настройки у будущей коллекции с тем же id).
+    /// <paramref name="progress"/> — нарастающее число удалённых записей.
     /// </summary>
     public void DeleteCollectionData(int collectionId, IProgress<int>? progress = null, int batchSize = 10000)
     {
         var recCount = db.DbRecords.Count(r => r.CollectionId == collectionId);
+        DeleteCollectionRows(collectionId, 0, progress, batchSize);
+        progress?.Report(recCount);   // финально 100% для этой коллекции
+    }
 
-        using var tx = db.Database.BeginTransaction();
-
-        // Записи пакетами по Id (порядок не важен): DELETE по диапазону каскадит на значения.
-        int prevId = 0, deleted = 0;
+    // Удаление одной коллекции пакетами (транзакция на пакет, см. DeleteCollectionData): значения и
+    // проекция — bulk-DELETE по срезу записей, затем записи; в конце строка коллекции (каскад уберёт
+    // поля) и UI-строки без FK. progressBase — сдвиг прогресса при удалении ветки группы. Числа в
+    // SQL — int/long, которые мы формируем сами, поэтому интерполяция в Raw безопасна.
+    private void DeleteCollectionRows(int collectionId, long progressBase, IProgress<int>? progress, int batchSize)
+    {
+        long deleted = 0;
+        var  prevId  = 0;
         while (true)
         {
-            var end = DeleteBatchEndId(collectionId, prevId, batchSize);
-            if (end is int e)
-            {
-                db.Database.ExecuteSqlInterpolated(
-                    $"DELETE FROM db_records WHERE CollectionId = {collectionId} AND Id > {prevId} AND Id <= {e}");
-                deleted += batchSize; prevId = e;
-                progress?.Report(deleted);
-            }
-            else
-            {
-                // Последний (неполный) пакет: без верхней границы.
-                db.Database.ExecuteSqlInterpolated(
-                    $"DELETE FROM db_records WHERE CollectionId = {collectionId} AND Id > {prevId}");
-                break;
-            }
+            using var tx = db.Database.BeginTransaction();
+            var end   = DeleteBatchEndId(collectionId, prevId, batchSize);
+            var slice = $"CollectionId = {collectionId} AND Id > {prevId}" + (end is int u ? $" AND Id <= {u}" : "");
+            var ids   = $"(SELECT Id FROM db_records WHERE {slice})";
+            db.Database.ExecuteSqlRaw($"DELETE FROM db_field_values WHERE RecordId IN {ids}");
+            db.Database.ExecuteSqlRaw($"DELETE FROM calendar_index  WHERE RecordId IN {ids}");
+            db.Database.ExecuteSqlRaw($"DELETE FROM db_records WHERE {slice}");
+            tx.Commit();
+
+            if (end is not int e) break;   // последний (неполный) пакет удалён
+            deleted += batchSize; prevId = e;
+            progress?.Report((int)(progressBase + deleted));
         }
 
-        // Строка коллекции: каскад уберёт поля (и UI-настройки, если их FK каскадные).
+        using var tail = db.Database.BeginTransaction();
+        // UI-настройки коллекции: FK-каскада у этих таблиц нет — только явная чистка.
+        foreach (var t in new[] { "ui_row_heights", "record_display", "ui_col_widths",
+                                  "ui_collection_settings", "system_field_meta", "column_order", "column_display" })
+            db.Database.ExecuteSqlRaw($"DELETE FROM {t} WHERE CollectionId = {collectionId}");
+        // Строка коллекции: каскад уберёт поля (их строки calendar_index уже удалены выше).
         db.Database.ExecuteSqlInterpolated($"DELETE FROM db_collections WHERE Id = {collectionId}");
-        tx.Commit();
-        progress?.Report(recCount);   // финально 100% для этой коллекции
+        tail.Commit();
     }
 
     // Id записи на позиции offset−1 в срезе коллекции после prevId (порядок Id) — граница пакета.
@@ -546,7 +552,8 @@ public class ConstructorRepository(AppDbContext db)
     ///  2) значения — КРУПНЫМИ пакетами (по batchSize записей), но ВСЕ поля за один `INSERT` через
     ///     временную карту полей `_dup_fmap` (а не по одному полю с `ROW_NUMBER` на каждом — это было
     ///     в ~3.4× медленнее). Пакеты нужны лишь для гранулярности прогресса (окно с %); внутри
-    ///     пакета новый RecordId = (firstNew + processed) + локальный ранг − 1.
+    ///     пакета новый RecordId = (firstNew + processed) + локальный ранг − 1. Тем же пакетом
+    ///     копируются строки проекции `calendar_index` (1:1 c перемэппингом id, без пересборки).
     /// <paramref name="progress"/> — нарастающее число скопированных записей (для процентов в окне).
     /// </summary>
     public void CopyCollectionData(int srcCollectionId, int newCollectionId,
@@ -591,42 +598,47 @@ public class ConstructorRepository(AppDbContext db)
                 FROM db_records WHERE CollectionId = {srcCollectionId} ORDER BY Position, Id");
             firstNew = LastInsertRowid() - recCount + 1;
 
-            // 2) Значения крупными пакетами по (Position, Id). На каждый пакет — один INSERT по всем полям.
+            // 2) Значения и проекция календаря крупными пакетами по (Position, Id): на пакет — один
+            //    INSERT значений по всем полям и один INSERT строк calendar_index. Проекция источника
+            //    всегда полная (видимость поля — фильтр чтения, см. SetDateFieldVisible), поэтому дубль
+            //    копирует её 1:1 с перемэппингом id — прежняя пересборка (RebuildCalendarIndexForCollection:
+            //    чтение значений EF-страницами + парсинг дат + по-строчный INSERT) на больших коллекциях
+            //    добавляла минуты «висящего» на 100% прогресса ПОСЛЕ копии данных. Числа в SQL — int/long,
+            //    которые мы формируем сами, поэтому интерполяция в Raw безопасна (как в attached-переносе).
+            void CopySlice(long bbase, int fromPos, int fromId, (int Pos, int Id)? upper)
+            {
+                var slice = $"(Position > {fromPos} OR (Position = {fromPos} AND Id > {fromId}))" +
+                            (upper is { } u ? $" AND (Position < {u.Pos} OR (Position = {u.Pos} AND Id <= {u.Id}))" : "");
+                var rank = $@"(SELECT Id AS old_id, ROW_NUMBER() OVER (ORDER BY Position, Id) AS rn
+                              FROM db_records WHERE CollectionId = {srcCollectionId} AND {slice}) r";
+                db.Database.ExecuteSqlRaw($@"
+                    INSERT INTO db_field_values (RecordId, FieldId, Value)
+                    SELECT {bbase} + r.rn - 1, fm.new_fid, fv.Value
+                    FROM db_field_values fv
+                    JOIN {rank} ON r.old_id = fv.RecordId
+                    JOIN _dup_fmap fm ON fm.old_fid = fv.FieldId");
+                db.Database.ExecuteSqlRaw($@"
+                    INSERT INTO calendar_index (RecordId, FieldId, CollectionId, StartIso, EndIso, AllDay)
+                    SELECT {bbase} + r.rn - 1, fm.new_fid, {newCollectionId}, ci.StartIso, ci.EndIso, ci.AllDay
+                    FROM calendar_index ci
+                    JOIN {rank} ON r.old_id = ci.RecordId
+                    JOIN _dup_fmap fm ON fm.old_fid = ci.FieldId");
+            }
+
             int prevPos = int.MinValue, prevId = 0, processed = 0;
             while (processed < recCount)
             {
                 var bbase = firstNew + processed;   // новый RecordId первой записи пакета = bbase
                 var end   = BatchEndCursor(srcCollectionId, prevPos, prevId, batchSize);
+                CopySlice(bbase, prevPos, prevId, end);
                 if (end is { } e)
                 {
-                    db.Database.ExecuteSqlInterpolated($@"
-                        INSERT INTO db_field_values (RecordId, FieldId, Value)
-                        SELECT {bbase} + r.rn - 1, fm.new_fid, fv.Value
-                        FROM db_field_values fv
-                        JOIN (SELECT Id AS old_id, ROW_NUMBER() OVER (ORDER BY Position, Id) AS rn
-                              FROM db_records
-                              WHERE CollectionId = {srcCollectionId}
-                                AND (Position > {prevPos} OR (Position = {prevPos} AND Id > {prevId}))
-                                AND (Position < {e.Pos} OR (Position = {e.Pos} AND Id <= {e.Id}))) r
-                          ON r.old_id = fv.RecordId
-                        JOIN _dup_fmap fm ON fm.old_fid = fv.FieldId");
                     processed += batchSize;
                     prevPos = e.Pos; prevId = e.Id;
                 }
                 else
                 {
-                    // Последний (неполный) пакет: без верхней границы.
-                    db.Database.ExecuteSqlInterpolated($@"
-                        INSERT INTO db_field_values (RecordId, FieldId, Value)
-                        SELECT {bbase} + r.rn - 1, fm.new_fid, fv.Value
-                        FROM db_field_values fv
-                        JOIN (SELECT Id AS old_id, ROW_NUMBER() OVER (ORDER BY Position, Id) AS rn
-                              FROM db_records
-                              WHERE CollectionId = {srcCollectionId}
-                                AND (Position > {prevPos} OR (Position = {prevPos} AND Id > {prevId}))) r
-                          ON r.old_id = fv.RecordId
-                        JOIN _dup_fmap fm ON fm.old_fid = fv.FieldId");
-                    processed = recCount;
+                    processed = recCount;   // последний (неполный) пакет: без верхней границы
                 }
                 progress?.Report(Math.Min(processed, recCount));
             }
@@ -643,9 +655,6 @@ public class ConstructorRepository(AppDbContext db)
 
         db.Database.ExecuteSqlRaw("DROP TABLE IF EXISTS temp._dup_fmap");
         tx.Commit();
-
-        // Дубль мог принести видимые поля-даты со значениями — наполняем их проекцию календаря.
-        RebuildCalendarIndexForCollection(newCollectionId);
     }
 
     // UI-настройки коллекции при дубле В ТОЙ ЖЕ БД: ключи-id полей перемэппливаются через временную
@@ -749,7 +758,7 @@ public class ConstructorRepository(AppDbContext db)
     public int DuplicateCollectionIsolated(int srcCollectionId, IProgress<int>? progress = null)
     {
         using var ctx = new AppDbContext(db.DbPath);
-        ctx.ApplyPerformancePragmas();
+        ctx.ApplyBulkPerformancePragmas();
         var repo  = new ConstructorRepository(ctx);
         var shell = repo.CreateCollectionShell(srcCollectionId);
         if (shell.Collection.Id is not int newId) return 0;
@@ -769,7 +778,7 @@ public class ConstructorRepository(AppDbContext db)
                                              IProgress<double>? progress = null)
     {
         using var ctx = new AppDbContext(db.DbPath);
-        ctx.ApplyPerformancePragmas();   // в т.ч. mmap_size — без него вставка в глобальные индексы db_field_values деградирует
+        ctx.ApplyBulkPerformancePragmas();   // большой кеш+mmap — без них вставка в глобальные индексы db_field_values деградирует
         return new ConstructorRepository(ctx).ImportExcelCollection(collectionName, groupId, data, progress);
     }
 
@@ -1054,7 +1063,7 @@ public class ConstructorRepository(AppDbContext db)
                                       IProgress<int>? progress = null, int batchSize = 10000)
     {
         using var targetCtx = new AppDbContext(db.DbPath);
-        targetCtx.ApplyPerformancePragmas();
+        targetCtx.ApplyBulkPerformancePragmas();
         var target = new ConstructorRepository(targetCtx);
 
         // Прогресс покрывает ОБЕ фазы: копию (0..recCount) и удаление исходника (recCount..2·recCount).
@@ -1069,7 +1078,7 @@ public class ConstructorRepository(AppDbContext db)
         try
         {
             using var srcCtx = new AppDbContext(sourceDbPath);
-            srcCtx.ApplyPerformancePragmas();
+            srcCtx.ApplyBulkPerformancePragmas();
             new ConstructorRepository(srcCtx).DeleteCollectionData(srcCollectionId, new BaseProgress(progress, recCount));
         }
         catch
@@ -1091,7 +1100,7 @@ public class ConstructorRepository(AppDbContext db)
                                  IProgress<int>? progress = null, int batchSize = 10000)
     {
         using var targetCtx = new AppDbContext(db.DbPath);
-        targetCtx.ApplyPerformancePragmas();
+        targetCtx.ApplyBulkPerformancePragmas();
         var target = new ConstructorRepository(targetCtx);
 
         // Прогресс покрывает ОБЕ фазы: копию ветки (0..total) и удаление исходной ветки (total..2·total).
@@ -1105,7 +1114,7 @@ public class ConstructorRepository(AppDbContext db)
         try
         {
             using var srcCtx = new AppDbContext(sourceDbPath);
-            srcCtx.ApplyPerformancePragmas();
+            srcCtx.ApplyBulkPerformancePragmas();
             new ConstructorRepository(srcCtx).DeleteGroupData(srcGroupId, new BaseProgress(progress, total));
         }
         catch
@@ -1122,8 +1131,7 @@ public class ConstructorRepository(AppDbContext db)
     private (int NewRootId, long TotalRecords) CopyGroupFromAttached(string sourceDbPath, int srcGroupId,
                                       int? targetParentId, IProgress<int>? progress, int batchSize)
     {
-        var newColIds = new List<int>();
-        var (newRoot, total) = WithAttachedSource(sourceDbPath, conn =>
+        return WithAttachedSource(sourceDbPath, conn =>
         {
             using var tx = conn.BeginTransaction();
 
@@ -1138,18 +1146,13 @@ public class ConstructorRepository(AppDbContext db)
             long basis = 0;
             foreach (var (colId, oldGroup) in cols)
             {
-                var (newColId, rc) = CopyOneCollectionFromAttached(conn, tx, colId, map[oldGroup], progress, basis, batchSize);
-                newColIds.Add(newColId);
+                var (_, rc) = CopyOneCollectionFromAttached(conn, tx, colId, map[oldGroup], progress, basis, batchSize);
                 basis += rc;
             }
 
             tx.Commit();
             return (root, basis);   // basis = суммарно перенесённых записей ветки (для прогресса удаления)
         });
-
-        // Наполняем проекцию календаря для перенесённых коллекций (вне ATTACH-транзакции).
-        foreach (var cid in newColIds) RebuildCalendarIndexForCollection(cid);
-        return (newRoot, total);
     }
 
     // Рекурсивно копирует структуру групп из src в main (INSERT…SELECT — имя остаётся в SQL, без
@@ -1212,17 +1215,13 @@ public class ConstructorRepository(AppDbContext db)
     private (int NewColId, long RecCount) CopyCollectionFromAttached(string sourceDbPath, int srcCollectionId,
                                            int? targetGroupId, IProgress<int>? progress, int batchSize)
     {
-        var result = WithAttachedSource(sourceDbPath, conn =>
+        return WithAttachedSource(sourceDbPath, conn =>
         {
             using var tx = conn.BeginTransaction();
             var r = CopyOneCollectionFromAttached(conn, tx, srcCollectionId, targetGroupId, progress, 0, batchSize);
             tx.Commit();
             return r;
         });
-
-        // Наполняем проекцию календаря перенесённой коллекции (вне ATTACH-транзакции).
-        RebuildCalendarIndexForCollection(result.NewColId);
-        return result;
     }
 
     // Копия ОДНОЙ коллекции из src в main в УЖЕ открытой транзакции (для переноса группы — много
@@ -1269,41 +1268,38 @@ public class ConstructorRepository(AppDbContext db)
                 FROM src.db_records WHERE CollectionId = {srcCollectionId} ORDER BY Position, Id");
             var firstNew = ScalarLong(conn, tx, "SELECT last_insert_rowid()") - recCount + 1;
 
-            // 4) Значения крупными пакетами по (Position, Id): на пакет — один INSERT по всем полям.
+            // 4) Значения и проекция календаря крупными пакетами по (Position, Id): на пакет — один
+            //    INSERT значений по всем полям и один INSERT строк calendar_index из src (проекция
+            //    источника всегда полная — копируем 1:1 с перемэппингом id вместо пересборки с
+            //    парсингом дат, которая на больших коллекциях добавляла минуты после копии).
+            void CopySlice(long bbase, long fromPos, long fromId, (long Pos, long Id)? upper)
+            {
+                var slice = $"(Position > {fromPos} OR (Position = {fromPos} AND Id > {fromId}))" +
+                            (upper is { } u ? $" AND (Position < {u.Pos} OR (Position = {u.Pos} AND Id <= {u.Id}))" : "");
+                var rank = $@"(SELECT Id AS old_id, ROW_NUMBER() OVER (ORDER BY Position, Id) AS rn
+                              FROM src.db_records WHERE CollectionId = {srcCollectionId} AND {slice}) r";
+                Exec(conn, tx, $@"
+                    INSERT INTO main.db_field_values (RecordId, FieldId, Value)
+                    SELECT {bbase} + r.rn - 1, fm.new_fid, fv.Value
+                    FROM src.db_field_values fv
+                    JOIN {rank} ON r.old_id = fv.RecordId
+                    JOIN _move_fmap fm ON fm.old_fid = fv.FieldId");
+                Exec(conn, tx, $@"
+                    INSERT INTO main.calendar_index (RecordId, FieldId, CollectionId, StartIso, EndIso, AllDay)
+                    SELECT {bbase} + r.rn - 1, fm.new_fid, {newColId}, ci.StartIso, ci.EndIso, ci.AllDay
+                    FROM src.calendar_index ci
+                    JOIN {rank} ON r.old_id = ci.RecordId
+                    JOIN _move_fmap fm ON fm.old_fid = ci.FieldId");
+            }
+
             long prevPos = long.MinValue, prevId = 0, processed = 0;
             while (processed < recCount)
             {
                 var bbase = firstNew + processed;
                 var end   = AttachedBatchEnd(conn, tx, srcCollectionId, prevPos, prevId, batchSize);
-                if (end is { } e)
-                {
-                    Exec(conn, tx, $@"
-                        INSERT INTO main.db_field_values (RecordId, FieldId, Value)
-                        SELECT {bbase} + r.rn - 1, fm.new_fid, fv.Value
-                        FROM src.db_field_values fv
-                        JOIN (SELECT Id AS old_id, ROW_NUMBER() OVER (ORDER BY Position, Id) AS rn
-                              FROM src.db_records
-                              WHERE CollectionId = {srcCollectionId}
-                                AND (Position > {prevPos} OR (Position = {prevPos} AND Id > {prevId}))
-                                AND (Position < {e.Pos} OR (Position = {e.Pos} AND Id <= {e.Id}))) r
-                          ON r.old_id = fv.RecordId
-                        JOIN _move_fmap fm ON fm.old_fid = fv.FieldId");
-                    processed += batchSize; prevPos = e.Pos; prevId = e.Id;
-                }
-                else
-                {
-                    Exec(conn, tx, $@"
-                        INSERT INTO main.db_field_values (RecordId, FieldId, Value)
-                        SELECT {bbase} + r.rn - 1, fm.new_fid, fv.Value
-                        FROM src.db_field_values fv
-                        JOIN (SELECT Id AS old_id, ROW_NUMBER() OVER (ORDER BY Position, Id) AS rn
-                              FROM src.db_records
-                              WHERE CollectionId = {srcCollectionId}
-                                AND (Position > {prevPos} OR (Position = {prevPos} AND Id > {prevId}))) r
-                          ON r.old_id = fv.RecordId
-                        JOIN _move_fmap fm ON fm.old_fid = fv.FieldId");
-                    processed = recCount;
-                }
+                CopySlice(bbase, prevPos, prevId, end);
+                if (end is { } e) { processed += batchSize; prevPos = e.Pos; prevId = e.Id; }
+                else              { processed = recCount; }   // последний (неполный) пакет
                 progress?.Report((int)(progressBase + Math.Min(processed, recCount)));
             }
 
@@ -1859,6 +1855,16 @@ public class ConstructorRepository(AppDbContext db)
         ctx.ApplyPerformancePragmas();
         return new ConstructorRepository(ctx).GetRecordTitlesOrdered(collectionId);
     }
+
+    /// <summary>Асинхронная версия <see cref="CountRecords"/> на ОТДЕЛЬНОМ подключении — для
+    /// подсчёта перед массовыми операциями сайдбара без фриза UI (COUNT на 10 млн — сотни мс).</summary>
+    public Task<int> CountRecordsAsync(int collectionId) =>
+        Task.Run(() =>
+        {
+            using var ctx = new AppDbContext(db.DbPath);
+            ctx.ApplyPerformancePragmas();
+            return new ConstructorRepository(ctx).CountRecords(collectionId);
+        });
 
     // excludeHidden=true исключает записи, скрытые в окне «Отображение записей»
     // (record_display.Visible=false). Фильтр уходит в SQL до Count/Skip/Take, поэтому
@@ -2832,7 +2838,7 @@ public class ConstructorRepository(AppDbContext db)
         Task.Run(() =>
         {
             using var ctx = new AppDbContext(db.DbPath);
-            ctx.ApplyPerformancePragmas();
+            ctx.ApplyBulkPerformancePragmas();
             new ConstructorRepository(ctx).FillCalendarIndex(q => q.Where(v => v.FieldId == fieldId), progress);
         });
 
@@ -4002,12 +4008,6 @@ public class ConstructorRepository(AppDbContext db)
     {
         db.Database.ExecuteSqlInterpolated($"DELETE FROM calendar_index WHERE FieldId = {fieldId}");
         FillCalendarIndex(q => q.Where(v => v.FieldId == fieldId));
-    }
-
-    private void RebuildCalendarIndexForCollection(int collectionId)
-    {
-        db.Database.ExecuteSqlInterpolated($"DELETE FROM calendar_index WHERE CollectionId = {collectionId}");
-        FillCalendarIndex(q => q.Where(v => v.Field.CollectionId == collectionId));
     }
 
     private void RebuildCalendarIndexForRecord(int recordId)

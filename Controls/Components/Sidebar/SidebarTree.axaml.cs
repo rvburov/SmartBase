@@ -1007,6 +1007,7 @@ public partial class SidebarTree : UserControl
             var progress = new ProgressDialog();
             IProgress<double> readP  = new Progress<double>(p => progress.SetProgress(p * 0.5,       "Чтение файла…"));
             IProgress<double> writeP = new Progress<double>(p => progress.SetProgress(0.5 + p * 0.5, "Сохранение записей…"));
+            progress.SetProgress(0, "Чтение файла…");   // фаза до показа — окно не меняет высоту
             var progressClosed = progress.ShowDialog(OwnerWindow);
 
             try
@@ -1074,7 +1075,7 @@ public partial class SidebarTree : UserControl
         // копирует его как есть) — применяем выбранное после переноса.
         if (res.DbId != dbId && RepoFor(res.DbId) is { } target)
         {
-            var (gcols, grecs) = repo.CountGroupSubtree(groupId);
+            var (gcols, grecs) = await repo.CountGroupSubtreeAsync(groupId);
             var move  = new CrossMove(repo, IsGroup: true, groupId, grecs, gcols);
             var moved = await MoveNodesCrossDb(target, res.DbId, res.ParentId, [move], "Перемещение");
             if (moved is { } m)
@@ -1121,7 +1122,7 @@ public partial class SidebarTree : UserControl
         // есть) — применяем выбранное после переноса.
         if (res.DbId != dbId && RepoFor(res.DbId) is { } target)
         {
-            var move  = new CrossMove(repo, IsGroup: false, collectionId, repo.CountRecords(collectionId), Collections: 1);
+            var move  = new CrossMove(repo, IsGroup: false, collectionId, await repo.CountRecordsAsync(collectionId), Collections: 1);
             var moved = await MoveNodesCrossDb(target, res.DbId, res.GroupId, [move], "Перемещение");
             if (moved is { } m)
             {
@@ -1156,12 +1157,14 @@ public partial class SidebarTree : UserControl
 
     // Записей в узле и сколько коллекций он несёт: коллекция — её записи и 1; группа — сумма по всей
     // ветке (подгруппы + коллекции) и число коллекций в ветке. Для порога, % и текста индикатора.
-    private (long Records, int Collections) CountNode(SidebarNode n)
+    // Асинхронно на ОТДЕЛЬНОМ подключении: COUNT по коллекции в 10 млн — сотни мс, на UI-потоке это
+    // был фриз между кликом по меню и окном прогресса (умножался при мультивыборе).
+    private async Task<(long Records, int Collections)> CountNodeAsync(SidebarNode n)
     {
         var r = RepoFor(n.DbId);
         if (r is null || !n.Id.HasValue || n.IsDatabase) return (0, 0);
-        if (n.IsGroup) { var (c, rec) = r.CountGroupSubtree(n.Id.Value); return (rec, c); }
-        return (r.CountRecords(n.Id.Value), 1);
+        if (n.IsGroup) { var (c, rec) = await r.CountGroupSubtreeAsync(n.Id.Value); return (rec, c); }
+        return (await r.CountRecordsAsync(n.Id.Value), 1);
     }
 
     // Текст индикатора: для операций с группами — «Коллекций: X · Записей: Y»; иначе только записи.
@@ -1173,7 +1176,8 @@ public partial class SidebarTree : UserControl
     // записей) — с окном прогресса и копированием в фоне на отдельных подключениях; малые — мгновенно.
     private async void DuplicateSelectionOrNode(SidebarNode node)
     {
-        // Репозитории и счётчики резолвим здесь, на UI-потоке (общий список _dbs не трогаем из Task.Run).
+        // Репозитории резолвим здесь, на UI-потоке (общий список _dbs не трогаем из Task.Run);
+        // счётчики — в фоне на отдельных подключениях (CountNodeAsync), UI не фризится.
         var sel     = _selectedNodes.Contains(node) ? _selectedNodes.ToList() : [node];
         var targets = new List<(int DbId, ConstructorRepository Repo, bool IsGroup, int Id, long Records)>();
         long total = 0; int totalCollections = 0; bool anyGroup = false;
@@ -1181,7 +1185,7 @@ public partial class SidebarTree : UserControl
         {
             var r = RepoFor(n.DbId);
             if (r is null) continue;
-            var (rec, cols) = CountNode(n);
+            var (rec, cols) = await CountNodeAsync(n);
             targets.Add((n.DbId, r, n.IsGroup, n.Id!.Value, rec));
             total += rec; totalCollections += cols; anyGroup |= n.IsGroup;
         }
@@ -1207,6 +1211,11 @@ public partial class SidebarTree : UserControl
         if (OwnerWindow is null) return;
         var dlg = new ProgressDialog { Title = "Дублирование" };
         dlg.SetInfo(BulkInfo(totalCollections, total, anyGroup));
+        // Фаза — ДО показа, тем же текстом, что даст первый процент: иначе жирная строка появлялась
+        // с первым колбэком, окно с SizeToContent меняло высоту и выглядело «вторым окном».
+        dlg.SetProgress(0, targets.Count > 1
+            ? $"Дублирование… (1/{targets.Count})"
+            : targets[0].IsGroup ? "Дублирование группы…" : "Дублирование коллекции…");
         var dlgClosed = dlg.ShowDialog(OwnerWindow);
 
         (int DbId, int Id, bool IsGroup)? madeBig = null;
@@ -1309,6 +1318,10 @@ public partial class SidebarTree : UserControl
         // проценты — общий прогресс по всем целям.
         var dlg = new ProgressDialog { Title = title };
         dlg.SetInfo(BulkInfo(collections, total, anyGroup));
+        // Фаза — ДО показа (см. дубль): окно не меняет высоту с первым процентом.
+        dlg.SetProgress(0, crossDb.Count > 1
+            ? $"{title}… (1/{crossDb.Count})"
+            : crossDb[0].IsGroup ? $"{title} группы…" : $"{title} коллекции…");
         var closed = dlg.ShowDialog(OwnerWindow);
 
         // Прогресс покрывает И копию, И удаление исходника: на каждую цель 2× записей (копия — первая
@@ -1396,7 +1409,7 @@ public partial class SidebarTree : UserControl
             if (n.DbId == res.DbId) sameDb.Add((r, n.IsGroup, n.Id!.Value));
             else
             {
-                var (rec, cols) = CountNode(n);
+                var (rec, cols) = await CountNodeAsync(n);
                 crossDb.Add(new CrossMove(r, n.IsGroup, n.Id!.Value, rec, cols));
             }
         }
@@ -1462,17 +1475,17 @@ public partial class SidebarTree : UserControl
         var confirm = new ConfirmDialog(BuildDeleteMessage(groups.Count, colls.Count));
         if (await confirm.ShowDialog<bool>(OwnerWindow) != true) return;
 
-        // Цели: группа (удаляем ВСЮ ветку) или коллекция. Репозитории и счётчики (для группы —
-        // число коллекций и записей по всей ветке) считаем здесь, на UI-потоке (общий список не
-        // трогаем из Task.Run). Порог и % — по суммарному числу записей; в индикаторе при группах
-        // показываем и число коллекций.
+        // Цели: группа (удаляем ВСЮ ветку) или коллекция. Репозитории резолвим здесь, на UI-потоке
+        // (общий список не трогаем из Task.Run); счётчики (для группы — число коллекций и записей по
+        // всей ветке) — в фоне на отдельных подключениях (CountNodeAsync). Порог и % — по суммарному
+        // числу записей; в индикаторе при группах показываем и число коллекций.
         var targets = new List<(ConstructorRepository Repo, bool IsGroup, int Id, long Records)>();
         long total = 0; int totalCollections = 0;
         foreach (var n in groups.Concat(colls))
         {
             var r = RepoOf(n);
             if (r is null) continue;
-            var (rec, cols) = CountNode(n);
+            var (rec, cols) = await CountNodeAsync(n);
             targets.Add((r, n.IsGroup, n.Id!.Value, rec));
             total += rec; totalCollections += cols;
         }
@@ -1489,6 +1502,10 @@ public partial class SidebarTree : UserControl
             // отдельных подключениях (Delete*Isolated), проценты — общий прогресс по всем целям.
             var dlg = new ProgressDialog { Title = "Удаление" };
             dlg.SetInfo(BulkInfo(totalCollections, total, groups.Count > 0));
+            // Фаза — ДО показа (см. дубль): окно не меняет высоту с первым процентом.
+            dlg.SetProgress(0, targets.Count > 1
+                ? $"Удаление… (1/{targets.Count})"
+                : targets[0].IsGroup ? "Удаление группы…" : "Удаление коллекции…");
             var dlgClosed = dlg.ShowDialog(OwnerWindow);
 
             var lastPct = -1;

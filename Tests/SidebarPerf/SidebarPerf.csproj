@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Замер производительности операций сайдбара на большом стенде (см. docs/guides/test-database.md).
+    Вызывает те же методы ConstructorRepository, что и SidebarTree (дубль/удаление/перенос/видимость
+    полей-дат/CRUD), с секундомером вокруг каждой фазы. Стенд создаёт Tests/DbGenerator.
+    Запуск из корня репозитория: dotnet run -c Release ~project Tests/SidebarPerf
+    (ключи запуска описаны в шапке Program.cs; ~ здесь заменяет двойной дефис,
+    который запрещён внутри XML-комментария).
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>DataBase.Tests.SidebarPerf</RootNamespace>
+    <AssemblyName>SidebarPerf</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\DataBase.csproj" />
+  </ItemGroup>
+
+</Project>

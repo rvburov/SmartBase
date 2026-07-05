@@ -57,6 +57,22 @@ public class AppDbContext : DbContext
         Database.ExecuteSqlRaw("PRAGMA cache_size=-65536;");    // ~64 МБ страничного кеша
     }
 
+    /// <summary>
+    /// Профиль прагм для МАССОВЫХ операций (дубль/перенос/удаление/импорт миллионов строк) на
+    /// изолированном фоновом подключении: поверх <see cref="ApplyPerformancePragmas"/> поднимает
+    /// кеш до ~512 МБ и mmap до 2 ГБ. Глобальные индексы (db_field_values, calendar_index) на
+    /// больших БД (десятки ГБ) не влезают в стандартные 64 МБ — каждая вставка/удаление строки
+    /// деградирует в случайный дисковый ввод-вывод (замер на стенде 10 млн записей: дубль коллекции
+    /// шёл ~35 мин). Только для короткоживущих фоновых подключений — основному контексту держать
+    /// сотни МБ кеша весь сеанс ни к чему (те же значения использует генератор стенда).
+    /// </summary>
+    public void ApplyBulkPerformancePragmas()
+    {
+        ApplyPerformancePragmas();
+        Database.ExecuteSqlRaw("PRAGMA mmap_size=2147483648;");
+        Database.ExecuteSqlRaw("PRAGMA cache_size=-524288;");
+    }
+
     protected override void OnModelCreating(ModelBuilder model)
     {
         model.Entity<CategoryEntity>(e =>
