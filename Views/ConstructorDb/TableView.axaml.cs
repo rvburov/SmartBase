@@ -2464,12 +2464,20 @@ public partial class TableView : UserControl
         return btn;
     }
 
-    private Border MakeSeparator() => new()
+    // Разделитель в попапе фильтра: попапы рендерятся ВНЕ зума приложения → токен
+    // SeparatorThicknessPopup; Border пустой → Aliased защёлкивает линию в целый пиксель.
+    private Border MakeSeparator()
     {
-        Height     = 1,
-        Background = (IBrush)this.FindResource("BrushSeparator")!,
-        Margin     = new Thickness(0, 6),
-    };
+        var sep = new Border
+        {
+            Background = (IBrush)this.FindResource("BrushSeparator")!,
+            Margin     = new Thickness(0, 6),
+        };
+        sep.Bind(HeightProperty, sep.GetResourceObservable("SeparatorThicknessPopup"));
+        sep.Bind(UseLayoutRoundingProperty, sep.GetResourceObservable("LineUseLayoutRounding"));
+        Avalonia.Media.RenderOptions.SetEdgeMode(sep, Avalonia.Media.EdgeMode.Aliased);
+        return sep;
+    }
 
     // Упорядочивает список значений с количеством для панели фильтра. asc задан — сортировка
     // тем же компаратором, что и таблица (text/number/date); null — порядок как в таблице

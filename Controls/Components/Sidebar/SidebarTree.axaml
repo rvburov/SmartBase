@@ -110,13 +110,12 @@
                 </ItemsControl.ItemsPanel>
                 <ItemsControl.ItemTemplate>
                     <DataTemplate x:DataType="comp:SidebarRow">
+                        <Panel>
                         <Border x:Name="RowRoot"
                                 Background="{Binding RowBackground}"
                                 Margin="0"
                                 Padding="10,0,0,0"
                                 Height="{StaticResource RowStepStandard}"
-                                BorderBrush="{StaticResource BrushBg}"
-                                BorderThickness="{DynamicResource BorderLineBottom}"
                                 Tapped="OnRowTapped"
                                 PointerEntered="OnRowEnter"
                                 PointerExited="OnRowExit"
@@ -194,6 +193,16 @@
                                            Margin="6,0,8,0" />
                             </Grid>
                         </Border>
+                        <!-- Зазор между заливками строк — линия цвета фона отдельным
+                             aliased-элементом (не бордер строки с текстом): чёткая
+                             при любом зуме, на всю ширину строки (вне IndentMargin). -->
+                        <Rectangle Fill="{StaticResource BrushBg}"
+                                   Height="{DynamicResource SeparatorThickness}"
+                                   UseLayoutRounding="{DynamicResource LineUseLayoutRounding}"
+                                   RenderOptions.EdgeMode="Aliased"
+                                   VerticalAlignment="Bottom"
+                                   IsHitTestVisible="False" />
+                        </Panel>
                     </DataTemplate>
                 </ItemsControl.ItemTemplate>
             </ItemsControl>

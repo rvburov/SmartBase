@@ -4,9 +4,10 @@
              MinHeight="40"
              Background="{StaticResource BrushSecondaryBg}">
 
-    <!-- Нижняя граница — сплошная разделительная линия (как у сайдбара).
+    <!-- Нижняя граница — отдельный separator (не бордер контейнера с контентом:
+         контейнер алиасить нельзя, отдельная линия чёткая при любом зуме).
          Контент занимает всю высоту; ручка-«пилюля» висит поверх линии. -->
-    <Border BorderBrush="{StaticResource BrushSeparator}" BorderThickness="{DynamicResource BorderLineBottom}">
+    <Grid>
         <Grid>
 
             <!-- Основной контент: 72px метка слева + зона колонок справа. Скроллбар сетки
@@ -14,16 +15,18 @@
                  здесь резерв не нужен — зона колонок занимает всю ширину, как у сетки. -->
             <Grid ColumnDefinitions="72,*">
 
-                <!-- Метка "весь день" слева (правая линия отделяет от зоны событий) -->
-                <Border Grid.Column="0"
-                        BorderBrush="{StaticResource BrushSeparator}"
-                        BorderThickness="{DynamicResource BorderLineRight}">
+                <!-- Метка "весь день" слева (правая линия — отдельный separator,
+                     отделяет от зоны событий) -->
+                <Border Grid.Column="0">
                     <TextBlock Text="весь день"
                                Foreground="{StaticResource BrushSecondaryText}"
                                HorizontalAlignment="Right"
                                VerticalAlignment="Top"
                                Margin="0,4,4,0" />
                 </Border>
+                <Border Grid.Column="0"
+                        Classes="separator v"
+                        HorizontalAlignment="Right" />
 
                 <!-- Плашки all-day событий + оверлей для drag-ghost. Делители — UniformGrid
                      с такими же Border-колонками (левая граница), как WeekColumns в сетке
@@ -46,6 +49,9 @@
             </Grid>
 
         </Grid>
-    </Border>
+
+        <!-- Нижняя разделительная линия поверх контента -->
+        <Border Classes="separator h" VerticalAlignment="Bottom" />
+    </Grid>
 
 </UserControl>

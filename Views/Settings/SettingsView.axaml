@@ -69,11 +69,11 @@
             </Setter>
         </Style>
 
-        <!-- Строка одной настройки -->
+        <!-- Строка одной настройки. Линия под строкой — отдельный separator h ПОСЛЕ
+             каждой строки (не бордер контейнера с текстом: отдельную линию можно
+             алиасить, она чёткая при любом зуме). -->
         <Style Selector="Border.settingRow">
-            <Setter Property="BorderBrush"     Value="{StaticResource BrushSeparator}" />
-            <Setter Property="BorderThickness" Value="{DynamicResource BorderLineBottom}" />
-            <Setter Property="Padding"         Value="0,16" />
+            <Setter Property="Padding" Value="0,16" />
         </Style>
         <Style Selector="Border.settingRow TextBlock.title">
             <Setter Property="Foreground" Value="{StaticResource BrushPrimaryText}" />
@@ -123,6 +123,7 @@
                             </ComboBox>
                         </Grid>
                     </Border>
+                    <Border Classes="separator h" />
 
                     <!-- Отображение раздела календаря -->
                     <Border Classes="settingRow">
@@ -148,6 +149,7 @@
                             </ComboBox>
                         </Grid>
                     </Border>
+                    <Border Classes="separator h" />
 
                     <!-- Отображение раздела конструктора -->
                     <Border Classes="settingRow">
@@ -169,6 +171,7 @@
                             </ComboBox>
                         </Grid>
                     </Border>
+                    <Border Classes="separator h" />
 
                     <!-- Уровень масштабирования -->
                     <Border Classes="settingRow">
@@ -224,6 +227,7 @@
                             </StackPanel>
                         </Grid>
                     </Border>
+                    <Border Classes="separator h" />
 
                     <!-- Размер шрифта -->
                     <Border Classes="settingRow">
@@ -283,6 +287,7 @@
                             </StackPanel>
                         </Grid>
                     </Border>
+                    <Border Classes="separator h" />
 
                     </StackPanel>
                 </Grid>
@@ -309,6 +314,7 @@
                     <ItemsControl x:Name="DatabaseList">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate x:DataType="vm:DatabaseRow">
+                                <StackPanel>
                                 <Border Classes="settingRow">
                                     <Grid ColumnDefinitions="*,Auto">
                                         <StackPanel Grid.Column="0" Spacing="3"
@@ -364,6 +370,8 @@
                                         </StackPanel>
                                     </Grid>
                                 </Border>
+                                <Border Classes="separator h" />
+                                </StackPanel>
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
@@ -423,6 +431,7 @@
                                        Text="" IsVisible="False" />
                         </StackPanel>
                     </Border>
+                    <Border Classes="separator h" />
 
                     <!-- Папка с данными (где лежат database.db / app.db) -->
                     <Border Classes="settingRow">
@@ -438,6 +447,7 @@
                                     Click="OnOpenDataFolder" />
                         </Grid>
                     </Border>
+                    <Border Classes="separator h" />
 
                     <!-- Система (ОС и версия рантайма — пригодится при обращении в поддержку) -->
                     <Border Classes="settingRow">
@@ -446,6 +456,7 @@
                             <TextBlock x:Name="SystemInfoText" Classes="desc" Text="—" />
                         </StackPanel>
                     </Border>
+                    <Border Classes="separator h" />
 
                     </StackPanel>
                 </Grid>

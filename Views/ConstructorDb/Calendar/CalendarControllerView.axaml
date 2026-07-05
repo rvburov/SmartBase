@@ -4,15 +4,15 @@
              xmlns:cal="using:DataBase.Views.ConstructorDb.Calendar"
              x:Class="DataBase.Views.ConstructorDb.Calendar.CalendarControllerView">
 
-    <Grid RowDefinitions="Auto,1,*">
+    <Grid RowDefinitions="Auto,*">
 
-        <!-- Навбар с навигацией и поиском -->
+        <!-- Навбар с навигацией и поиском. Линию под навбаром НЕ рисуем: её уже рисует
+             MainWindow (линия титульной зоны через все колонки) — вторая линия в том же
+             месте давала визуальное удвоение толщины. -->
         <comp:NavbarCalendar Grid.Row="0" x:Name="NavbarControl" />
 
-        <Border Grid.Row="1" Classes="separator h" />
-
         <!-- Стек вьюх: 0-Расписание, 1-Журнал, 2-День, 3-Неделя, 4-Месяц, 5-Год -->
-        <Grid Grid.Row="2">
+        <Grid Grid.Row="1">
             <cal:ListView    x:Name="ListViewCtrl"    IsVisible="False" />
             <cal:JournalView x:Name="JournalViewCtrl" IsVisible="False" />
             <cal:DayView     x:Name="DayViewCtrl"     IsVisible="False" />

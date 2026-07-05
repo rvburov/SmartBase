@@ -45,18 +45,19 @@
                 Classes="separator v" />
 
         <!-- Боковые панели (скрываются/показываются по модулю).
-             Разделительная линия — правая граница Border. Ручка вынесена в колонку 3
-             (как у панели записи) — иначе её резало внешним Border'ом. -->
+             Разделительная линия — отдельный separator v у правого края (не бордер
+             контейнера: контейнер с контентом алиасить нельзя, а отдельная линия
+             защёлкивается в целый пиксель — чёткая при любом зуме).
+             Ручка вынесена в колонку 3 (как у панели записи). -->
+        <Grid Grid.Column="2">
+            <comp:SidebarTree x:Name="CalendarSidebar" />
+            <comp:SidebarTree x:Name="ConstructorSidebar" IsVisible="False" />
+            <comp:SidebarList x:Name="SettingsSidebar" IsVisible="False" />
+            <comp:SidebarList x:Name="ExtensionsSidebar" IsVisible="False" />
+        </Grid>
         <Border Grid.Column="2"
-                BorderBrush="{StaticResource BrushSeparator}"
-                BorderThickness="{DynamicResource BorderLineRight}">
-            <Grid>
-                <comp:SidebarTree x:Name="CalendarSidebar" />
-                <comp:SidebarTree x:Name="ConstructorSidebar" IsVisible="False" />
-                <comp:SidebarList x:Name="SettingsSidebar" IsVisible="False" />
-                <comp:SidebarList x:Name="ExtensionsSidebar" IsVisible="False" />
-            </Grid>
-        </Border>
+                Classes="separator v"
+                HorizontalAlignment="Right" />
 
         <!-- Основная область контента -->
         <Grid Grid.Column="3">
@@ -108,10 +109,13 @@
                 VerticalAlignment="Top"
                 Margin="0,56,0,0" />
 
-        <!-- Самая верхняя линия окна — единой полосой над всеми колонками -->
+        <!-- Самая верхняя линия окна — единой полосой над всеми колонками.
+             На macOS скрыта: системная рамка уже рисует кромку под тайтлбаром,
+             своя линия давала бы двойную. На остальных платформах — как была. -->
         <Border Grid.Column="0" Grid.ColumnSpan="6"
                 Classes="separator h"
-                VerticalAlignment="Top" />
+                VerticalAlignment="Top"
+                IsVisible="{OnPlatform True, macOS=False}" />
 
         <!-- Ручка ресайза сайдбара. Закреплена у правого края колонки сайдбара и висит
              поверх соседнего блока (коллекции или записи) за счёт отрицательного отступа —

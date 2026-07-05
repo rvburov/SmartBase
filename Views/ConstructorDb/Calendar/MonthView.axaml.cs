@@ -220,12 +220,40 @@ public partial class MonthView : UserControl
         return r;
     }
 
+    // Слой линий сетки месяца (GridLines): пустые Border поверх заливок ячеек.
+    // В самих ячейках текст — их алиасить нельзя (EdgeMode наследуется и переключает
+    // сглаживание текста), а пустой слой Aliased защёлкивает линии в целый пиксель
+    // при любом зуме/DPI. Каждая «ячейка» слоя рисует левую (кроме первой колонки —
+    // она граничит с разделителем сайдбара) и верхнюю линии; низ/право не рисуются —
+    // линию в одном месте рисует ровно один элемент, без визуального удвоения.
+    // Толщина — на момент пересборки: месяц перестраивается при каждом
+    // Refresh/навигации/SizeChanged (зум меняет размер → пересборка).
+    private void _BuildGridLines()
+    {
+        GridLines.Children.Clear();
+        var lineT     = LineMetrics.ThicknessFor(this);
+        var lineBrush = new SolidColorBrush(Color.Parse("#E8E8E8"));
+        for (var i = 0; i < 42; i++)
+        {
+            var col       = i % 7;
+            var cellLines = new Border
+            {
+                BorderBrush     = lineBrush,
+                BorderThickness = new Thickness(col == 0 ? 0 : lineT, lineT, 0, 0),
+            };
+            cellLines.Bind(UseLayoutRoundingProperty, cellLines.GetResourceObservable("LineUseLayoutRounding"));
+            RenderOptions.SetEdgeMode(cellLines, EdgeMode.Aliased);
+            GridLines.Children.Add(cellLines);
+        }
+    }
+
     // ── единый построитель: ячейки + Canvas-оверлей ────────────────────────────
 
     private void _BuildAll()
     {
         _Deselect();
         DayGrid.Children.Clear();
+        _BuildGridLines();
         SpanCanvas.Children.Clear();
         _dayUiMap.Clear();
         _spanFrames.Clear();
@@ -480,21 +508,13 @@ public partial class MonthView : UserControl
         IBrush baseBg = new SolidColorBrush(
             isCurrentMonth ? Color.Parse("#FFFFFF") : Color.Parse("#F9F9F9"));
 
-        // Левая граница не нужна у первой колонки (Пн) — она у края контента,
-        // граничит с сайдбаром и дублирует разделитель.
-        var col      = ((int)date.DayOfWeek + 6) % 7;
-        var leftLine = col == 0 ? 0 : 1;
-
-        // Линии сетки месяца — компенсированная толщина LineMetrics (значение на момент
-        // пересборки; месяц перестраивается при каждом Refresh/навигации).
-        var lineT = LineMetrics.ThicknessFor(this);
+        // Линии сетки рисует отдельный слой GridLines (см. _BuildGridLines) —
+        // бордер на ячейке с текстом нельзя алиасить, линии были бы размытыми при зуме.
         var cellBorder = new Border
         {
-            BorderBrush     = new SolidColorBrush(Color.Parse("#E8E8E8")),
-            BorderThickness = new Thickness(leftLine * lineT, lineT, 0, 0),
-            Background      = baseBg,
-            ClipToBounds    = true,
-            Child           = inner,
+            Background   = baseBg,
+            ClipToBounds = true,
+            Child        = inner,
         };
 
         if (isCurrentMonth)

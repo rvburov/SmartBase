@@ -12,15 +12,16 @@
 
     <Grid RowDefinitions="Auto,Auto,*">
 
-        <!-- Заголовки дней недели — 72px пустой отступ + 7 равных колонок -->
-        <Border Grid.Row="0"
-                BorderBrush="{StaticResource BrushSeparator}"
-                BorderThickness="{DynamicResource BorderLineBottom}">
+        <!-- Заголовки дней недели — 72px пустой отступ + 7 равных колонок.
+             Нижняя линия — отдельный separator (не бордер контейнера с текстом):
+             чёткая при любом зуме. -->
+        <Grid Grid.Row="0">
             <Grid ColumnDefinitions="72,*"
                   Background="{StaticResource BrushSecondaryBg}">
                 <UniformGrid Grid.Column="1" x:Name="WeekHeaderDays" Columns="7" />
             </Grid>
-        </Border>
+            <Border Classes="separator h" VerticalAlignment="Bottom" />
+        </Grid>
 
         <!-- AllDayBar -->
         <comp:AllDayBar Grid.Row="1" x:Name="AllDayBarCtrl" />
@@ -31,7 +32,7 @@
 
                 <!-- Метки часов: каждая метка прижата к низу 60px-слота,
                      чтобы "01:00" совпадал с линией между 00:xx и 01:xx -->
-                <Border Grid.Column="0" BorderBrush="{StaticResource BrushSeparator}" BorderThickness="0">
+                <Border Grid.Column="0">
                 <ItemsControl x:Name="HourLabels">
                     <ItemsControl.ItemsPanel>
                         <ItemsPanelTemplate>
@@ -88,6 +89,15 @@
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
+
+                    <!-- Вертикальные линии колонок — отдельный слой пустых Border
+                         (колонки с событиями алиасить нельзя: EdgeMode наследуется и
+                         переключил бы сглаживание текста). Конструкция как у делителей
+                         AllDayBar → линии совпадают пиксель-в-пиксель. -->
+                    <UniformGrid x:Name="ColumnLines"
+                                 Columns="7" Height="1440"
+                                 VerticalAlignment="Top"
+                                 IsHitTestVisible="False" />
 
                     <!-- 7 колонок с событиями -->
                     <UniformGrid x:Name="WeekColumns"

@@ -196,6 +196,22 @@ public partial class WeekView : UserControl
         _todayTimeOverlay = null;
         var gridLineBrush = new SolidColorBrush(Color.Parse("#E8E8E8"));
 
+        // Слой вертикальных линий колонок (ColumnLines): пустые Border без контента,
+        // поэтому Aliased безопасен — линия защёлкивается в целый пиксель при любом
+        // зуме/DPI, а не размазывается сглаживанием. Первая колонка без линии.
+        ColumnLines.Children.Clear();
+        for (var i = 0; i < allDays.Count; i++)
+        {
+            var line = new Border { BorderBrush = gridLineBrush };
+            if (i > 0)
+            {
+                line.Bind(Border.BorderThicknessProperty, line.GetResourceObservable("BorderLineLeft"));
+                line.Bind(UseLayoutRoundingProperty, line.GetResourceObservable("LineUseLayoutRounding"));
+                RenderOptions.SetEdgeMode(line, EdgeMode.Aliased);
+            }
+            ColumnLines.Children.Add(line);
+        }
+
         for (var col = 0; col < allDays.Count; col++)
         {
             var day     = allDays[col];
@@ -415,15 +431,10 @@ public partial class WeekView : UserControl
                 _todayTimeOverlay = overlay;
             }
 
-            var colBorder = new Border
-            {
-                BorderBrush = gridLineBrush,
-                Child       = dayGrid,
-            };
-            // Толщина левой границы — живой токен LineMetrics (как у делителей AllDayBar —
-            // линии остаются пиксель-в-пиксель при любом зуме/DPI). Первая колонка без линии.
-            if (col > 0) colBorder.Bind(Border.BorderThicknessProperty, colBorder.GetResourceObservable("BorderLineLeft"));
-            WeekColumns.Children.Add(colBorder);
+            // Левую линию колонки рисует отдельный слой ColumnLines (см. выше) —
+            // бордер на контейнере с событиями нельзя алиасить (текст внутри).
+            var colHost = new Border { Child = dayGrid };
+            WeekColumns.Children.Add(colHost);
         }
 
         UpdateTimeLine();

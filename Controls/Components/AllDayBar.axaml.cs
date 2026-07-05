@@ -372,9 +372,16 @@ public partial class AllDayBar : UserControl
         {
             EventsPanel.ColumnDefinitions.Add(new ColumnDefinition(new GridLength(1, GridUnitType.Star)));
             var divider = new Border { BorderBrush = Separator };
-            // Толщина левой границы — живой токен LineMetrics (WeekColumns привязан так же —
-            // линии остаются пиксель-в-пиксель при любом зуме/DPI). Первая колонка без линии.
-            if (i > 0) divider.Bind(Border.BorderThicknessProperty, divider.GetResourceObservable("BorderLineLeft"));
+            // Толщина левой границы — живой токен LineMetrics (ColumnLines недели привязан
+            // так же — линии остаются пиксель-в-пиксель при любом зуме/DPI). Первая колонка
+            // без линии. Border пустой (без контента) → Aliased безопасен: линия
+            // защёлкивается в целый пиксель, а не размазывается сглаживанием.
+            if (i > 0)
+            {
+                divider.Bind(Border.BorderThicknessProperty, divider.GetResourceObservable("BorderLineLeft"));
+                divider.Bind(UseLayoutRoundingProperty, divider.GetResourceObservable("LineUseLayoutRounding"));
+                RenderOptions.SetEdgeMode(divider, EdgeMode.Aliased);
+            }
             DividersPanel.Children.Add(divider);
         }
 

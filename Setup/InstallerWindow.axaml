@@ -28,7 +28,7 @@
         <!-- Шапка -->
         <Border DockPanel.Dock="Top" Height="76"
                 Background="{StaticResource BrushSecondaryBg}"
-                BorderBrush="{StaticResource BrushSeparator}" BorderThickness="0,0,0,1">
+                BorderBrush="{StaticResource BrushSeparator}" BorderThickness="{DynamicResource BorderLineBottom}">
             <StackPanel VerticalAlignment="Center" Margin="24,0">
                 <TextBlock Text="DataBase"
                            FontSize="{DynamicResource FontSizeLarge}"
@@ -43,7 +43,7 @@
         <!-- Футер -->
         <Border DockPanel.Dock="Bottom" Height="64"
                 Background="{StaticResource BrushSecondaryBg}"
-                BorderBrush="{StaticResource BrushSeparator}" BorderThickness="0,1,0,0">
+                BorderBrush="{StaticResource BrushSeparator}" BorderThickness="{DynamicResource BorderLineTop}">
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right"
                         VerticalAlignment="Center" Spacing="10" Margin="24,0">
                 <Button x:Name="UninstallBtn" Content="Удалить" Classes="dialog" Click="OnUninstall" IsVisible="False" />
