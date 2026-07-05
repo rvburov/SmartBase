@@ -773,6 +773,40 @@ public partial class SidebarTree : UserControl
         return dateItem;
     }
 
+    // Разовая фоновая заливка проекции включённого поля-даты (наследие старого поведения,
+    // когда выключение удаляло строки calendar_index): изолированное подключение, окно
+    // прогресса при >400 мс — как массовые операции; по завершении календарь обновляется.
+    private async Task FillDateFieldProjectionAsync(ConstructorRepository repo, int fieldId)
+    {
+        var total = 0;
+        try { total = await repo.CountFieldValuesAsync(fieldId); } catch { }
+
+        ProgressDialog? dlg = null;
+        var lastPct = -1;
+        IProgress<int> p = new IntProgress(done =>
+        {
+            if (dlg is null || total == 0) return;
+            var pct = (int)Math.Min(100, done * 100L / total);
+            if (pct == lastPct) return;
+            lastPct = pct;
+            Dispatcher.UIThread.Post(() => dlg.SetProgress(pct / 100.0, "Заполнение календаря…"));
+        });
+
+        var bg = repo.FillCalendarIndexForFieldAsync(fieldId, p);
+        Task? dlgClosed = null;
+        if (await Task.WhenAny(bg, Task.Delay(400)) != bg && OwnerWindow is not null)
+        {
+            dlg = new ProgressDialog { Title = "Отображение свойств даты" };
+            dlg.SetInfo($"Количество значений: {total}");
+            dlg.SetProgress(0, "Заполнение календаря…");
+            dlgClosed = dlg.ShowDialog(OwnerWindow);
+        }
+        try { await bg; } catch { /* фон: недоступная БД не валит UI, состояние покажет refresh */ }
+        if (dlg is not null) { dlg.Done(); if (dlgClosed is not null) await dlgClosed; }
+
+        CalendarsChanged?.Invoke(this, EventArgs.Empty);
+    }
+
     private Control BuildDateFieldsPanel(ConstructorRepository repo, List<DbField> dateFields)
     {
         var secondary = (IBrush)this.FindResource("BrushSecondaryText")!;
@@ -837,8 +871,12 @@ public partial class SidebarTree : UserControl
             cb.IsCheckedChanged += (_, _) =>
             {
                 if (syncing) return;
-                repo.SetDateFieldVisible(fid, cb.IsChecked == true);
-                CalendarsChanged?.Invoke(this, EventArgs.Empty);
+                // Мгновенно: видимость поля — фильтр чтения, проекция не пересобирается.
+                // true — включили поле, чью проекцию удалила старая версия: разовая
+                // фоновая заливка с окном прогресса, calendar обновится по завершении.
+                var needsFill = repo.SetDateFieldVisible(fid, cb.IsChecked == true);
+                if (needsFill) _ = FillDateFieldProjectionAsync(repo, fid);
+                else CalendarsChanged?.Invoke(this, EventArgs.Empty);
                 SyncSelectAll();
             };
             rows.Add((f, cb));

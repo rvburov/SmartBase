@@ -1469,9 +1469,12 @@ public class ConstructorRepository(AppDbContext db)
             db.DbFields.Any(f => f.CollectionId == entity.CollectionId && f.Name == field.Name && f.Id != field.Id))
             throw new InvalidOperationException("Поле с таким именем уже существует.");
 
-        // Менялись ли тип/видимость — от этого зависит, надо ли пересобирать проекцию календаря.
+        // Пересборка проекции нужна только при смене ТИПА (содержимое проекции реально меняется:
+        // текст→дата заливает строки, дата→текст очищает). Видимость (IsCalStart) — чистый
+        // фильтр чтения, пересборки не требует (см. SetDateFieldVisible) — раньше её смена
+        // здесь тоже пересобирала проекцию (минуты фриза на больших коллекциях).
         var oldType            = entity.FieldType;
-        var calRelevantChanged = entity.FieldType != field.FieldType || entity.IsCalStart != field.IsCalStart;
+        var calRelevantChanged = entity.FieldType != field.FieldType;
 
         entity.Name       = field.Name;
         entity.FieldType  = field.FieldType;
@@ -2794,18 +2797,44 @@ public class ConstructorRepository(AppDbContext db)
     /// <summary>
     /// Включает/выключает показ поля-даты в календаре (флаг <c>IsCalStart</c>). Несколько
     /// полей-дат коллекции могут быть включены одновременно — каждое даёт свои события.
+    /// Видимость — ЧИСТЫЙ ФИЛЬТР ЧТЕНИЯ (HiddenFieldsClause во всех читателях calendar_index),
+    /// БЕЗ пересборки проекции: прежний RebuildCalendarIndexForField удалял/заливал строки поля
+    /// синхронно на UI-потоке — на 10 млн записей клик чекбокса вешал приложение на минуты.
+    /// Проекция всегда полная (SyncCalendarIndexValue/FillCalendarIndex пишут ВСЕ date-поля).
+    /// Возвращает true, если при ВКЛЮЧЕНИИ проекция поля пуста при непустых значениях —
+    /// наследие старого поведения (строки удалила прошлая версия): вызывающий должен один раз
+    /// залить её фоном (<see cref="FillCalendarIndexForFieldAsync"/> с окном прогресса).
     /// </summary>
-    public void SetDateFieldVisible(int fieldId, bool visible)
+    public bool SetDateFieldVisible(int fieldId, bool visible)
     {
         var field = db.DbFields.Find(fieldId);
-        if (field is null || field.FieldType != "date" || field.IsCalStart == visible) return;
+        if (field is null || field.FieldType != "date" || field.IsCalStart == visible) return false;
         field.IsCalStart = visible;
         db.SaveChanges();
 
-        // Видимость изменилась → пересобрать строки проекции этого поля (вкл. → наполнить,
-        // выкл. → очистить).
-        RebuildCalendarIndexForField(fieldId);
+        if (!visible) return false;
+        if (db.CalendarIndex.Any(x => x.FieldId == fieldId)) return false;   // проекция уже есть
+        return db.DbFieldValues.Any(v => v.FieldId == fieldId && v.Value != "");
     }
+
+    /// <summary>Число непустых значений поля — для окна прогресса заливки проекции.</summary>
+    public Task<int> CountFieldValuesAsync(int fieldId) =>
+        Task.Run(() =>
+        {
+            using var ctx = new AppDbContext(db.DbPath);
+            ctx.ApplyPerformancePragmas();
+            return ctx.DbFieldValues.Count(v => v.FieldId == fieldId && v.Value != "");
+        });
+
+    /// <summary>Разовая ФОНОВАЯ заливка проекции поля (изолированное подключение) — включение
+    /// поля, чью проекцию удалила старая версия. Прогресс — число обработанных значений.</summary>
+    public Task FillCalendarIndexForFieldAsync(int fieldId, IProgress<int>? progress = null) =>
+        Task.Run(() =>
+        {
+            using var ctx = new AppDbContext(db.DbPath);
+            ctx.ApplyPerformancePragmas();
+            new ConstructorRepository(ctx).FillCalendarIndex(q => q.Where(v => v.FieldId == fieldId), progress);
+        });
 
     // ── UI настройки ──────────────────────────────────────────────────────────
 
@@ -3262,12 +3291,74 @@ public class ConstructorRepository(AppDbContext db)
     // в порядке: all-day первыми, затем по времени начала. Курсор keyset — по этому же
     // порядку (AllDay DESC, StartIso, RecordId, FieldId), чтобы догрузка была O(limit).
 
+    // Фильтр видимости для ВСЕХ читающих запросов calendar_index:
+    //  • активные коллекции: null — без фильтра (все), ПУСТОЙ набор — НИ ОДНОЙ («AND 1=0»).
+    //    Раньше пустой набор «отключал» фильтр, и снятие всех галок БД в сайдбаре показывало
+    //    все события вместо ни одного — галка и события «работали не сообща»;
+    //  • скрытые поля-даты (IsCalStart=0): видимость поля — теперь ЧИСТЫЙ ФИЛЬТР ЧТЕНИЯ,
+    //    проекция не пересобирается (см. SetDateFieldVisible). Обычно скрытых нет — фильтр
+    //    не добавляется вовсе; db_fields крошечная, её запрос копеечный.
+    private string VisibilityFilter(ISet<int>? activeIds, string prefix = "")
+    {
+        // Коллекции, у которых ВСЕ поля-даты скрыты, отсекаются целиком на уровне CollectionId:
+        // фильтр по FieldId — residual (не ложится на индекс), и «галка включена, но поля
+        // скрыты» платила бы полные сканы диапазона (день-гигант — секунды «Загрузки…»)
+        // ради заведомо пустого результата.
+        var dateFields = db.DbFields.Where(f => f.FieldType == "date")
+            .Select(f => new { f.Id, f.CollectionId, f.IsCalStart }).ToList();
+        var fullyHidden = dateFields.GroupBy(f => f.CollectionId)
+            .Where(g => g.All(x => !x.IsCalStart)).Select(g => g.Key).ToHashSet();
+
+        List<int> cols;
+        if (activeIds is null)
+        {
+            // Без фильтра коллекций; если полностью скрытых нет — хватает residual по полям.
+            if (fullyHidden.Count == 0)
+            {
+                var allHidden = dateFields.Where(x => !x.IsCalStart).Select(x => x.Id).ToList();
+                return allHidden.Count == 0 ? "" : $" AND {prefix}FieldId NOT IN ({string.Join(",", allHidden)})";
+            }
+            cols = db.DbCollections.Select(c => c.Id).Where(id => !fullyHidden.Contains(id)).ToList();
+        }
+        else
+            cols = activeIds.Where(id => !fullyHidden.Contains(id)).ToList();
+
+        // Пустой набор (все галки сняты / всё скрыто) — НИ ОДНОЙ, а не «без фильтра».
+        if (cols.Count == 0) return " AND 1=0";
+
+        var f = $" AND {prefix}CollectionId IN ({string.Join(",", cols)})";
+        var restHidden = dateFields
+            .Where(x => !x.IsCalStart && !fullyHidden.Contains(x.CollectionId))
+            .Select(x => x.Id).ToList();
+        if (restHidden.Count > 0) f += $" AND {prefix}FieldId NOT IN ({string.Join(",", restHidden)})";
+        return f;
+    }
+
+    // Часть фильтра по скрытым полям-датам — для запросов, где коллекция уже зафиксирована
+    // (per-collection проходы GetCalendarRecordsByRangeCapped).
+    private string HiddenFieldsClause(string prefix = "")
+    {
+        var hidden = db.DbFields
+            .Where(f => f.FieldType == "date" && !f.IsCalStart)
+            .Select(f => f.Id)
+            .ToList();
+        return hidden.Count == 0 ? "" : $" AND {prefix}FieldId NOT IN ({string.Join(",", hidden)})";
+    }
+
+    // Коллекции, у которых ВСЕ поля-даты скрыты, — per-collection проходы пропускают их целиком.
+    private HashSet<int> FullyHiddenDateCollections() =>
+        db.DbFields.Where(f => f.FieldType == "date")
+            .GroupBy(f => f.CollectionId)
+            .Where(g => g.All(x => !x.IsCalStart))
+            .Select(g => g.Key)
+            .ToHashSet();
+
     /// <summary>Число событий, начинающихся в дне [dayStart, dayEnd) (для «показано N из total»).</summary>
     public int CountCalendarDayEvents(DateTime dayStart, DateTime dayEnd, ISet<int>? activeIds)
     {
         var s = DateTime.SpecifyKind(dayStart, DateTimeKind.Unspecified).ToString("o");
         var e = DateTime.SpecifyKind(dayEnd,   DateTimeKind.Unspecified).ToString("o");
-        var col = activeIds is { Count: > 0 } ? $" AND CollectionId IN ({string.Join(",", activeIds)})" : "";
+        var col = VisibilityFilter(activeIds);
         var conn = db.Database.GetDbConnection();
         var opened = conn.State != System.Data.ConnectionState.Open;
         if (opened) conn.Open();
@@ -3293,7 +3384,7 @@ public class ConstructorRepository(AppDbContext db)
     {
         var s = DateTime.SpecifyKind(start, DateTimeKind.Unspecified).ToString("o");
         var e = DateTime.SpecifyKind(end,   DateTimeKind.Unspecified).ToString("o");
-        var col = activeIds is { Count: > 0 } ? $" AND CollectionId IN ({string.Join(",", activeIds)})" : "";
+        var col = VisibilityFilter(activeIds);
         var result = new List<(string, int)>();
         var conn = db.Database.GetDbConnection();
         var opened = conn.State != System.Data.ConnectionState.Open;
@@ -3341,7 +3432,7 @@ public class ConstructorRepository(AppDbContext db)
 
             var s = DateTime.SpecifyKind(dayStart, DateTimeKind.Unspecified).ToString("o");
             var e = DateTime.SpecifyKind(dayEnd,   DateTimeKind.Unspecified).ToString("o");
-            var col = activeIds is { Count: > 0 } ? $" AND CollectionId IN ({string.Join(",", activeIds)})" : "";
+            var col = repo.VisibilityFilter(activeIds);   // фильтр — на ИЗОЛИРОВАННОМ контексте (мы в фоне)
             var result = new List<(string, int)>();
             var conn = ctx.Database.GetDbConnection();
             conn.Open();
@@ -3378,7 +3469,8 @@ public class ConstructorRepository(AppDbContext db)
 
             var s = DateTime.SpecifyKind(start, DateTimeKind.Unspecified).ToString("o");
             var e = DateTime.SpecifyKind(end,   DateTimeKind.Unspecified).ToString("o");
-            var col = activeIds is { Count: > 0 } ? $" AND ci.CollectionId IN ({string.Join(",", activeIds)})" : "";
+            // Фильтр — на ИЗОЛИРОВАННОМ контексте (мы в фоне, общий db трогать нельзя).
+            var col = new ConstructorRepository(ctx).VisibilityFilter(activeIds, "ci.");
 
             // Регистровые варианты подстроки; спецсимволы LIKE экранируем.
             static string Esc(string q) =>
@@ -3443,7 +3535,7 @@ public class ConstructorRepository(AppDbContext db)
     {
         var startIso = DateTime.SpecifyKind(dayStart, DateTimeKind.Unspecified).ToString("o");
         var endIso   = DateTime.SpecifyKind(dayEnd,   DateTimeKind.Unspecified).ToString("o");
-        var col = activeIds is { Count: > 0 } ? $" AND ci.CollectionId IN ({string.Join(",", activeIds)})" : "";
+        var col = VisibilityFilter(activeIds, "ci.");
         var keyset = afterStartIso is null ? "" :
             @" AND (ci.StartIso > $cs
                 OR (ci.StartIso = $cs AND ci.RecordId > $cr)
@@ -3505,7 +3597,7 @@ public class ConstructorRepository(AppDbContext db)
     {
         var s = DateTime.SpecifyKind(dayStart, DateTimeKind.Unspecified).ToString("o");
         var e = DateTime.SpecifyKind(dayEnd,   DateTimeKind.Unspecified).ToString("o");
-        var col = activeIds is { Count: > 0 } ? $" AND CollectionId IN ({string.Join(",", activeIds)})" : "";
+        var col = VisibilityFilter(activeIds);
         var conn = db.Database.GetDbConnection();
         var opened = conn.State != System.Data.ConnectionState.Open;
         if (opened) conn.Open();
@@ -3555,7 +3647,7 @@ public class ConstructorRepository(AppDbContext db)
     {
         var startIso = DateTime.SpecifyKind(dayStart, DateTimeKind.Unspecified).ToString("o");
         var endIso   = DateTime.SpecifyKind(dayEnd,   DateTimeKind.Unspecified).ToString("o");
-        var col = activeIds is { Count: > 0 } ? $" AND CollectionId IN ({string.Join(",", activeIds)})" : "";
+        var col = VisibilityFilter(activeIds);
         // ORDER BY (StartIso, RecordId, FieldId) — тот же полный ключ, что и в keyset-выборке
         // (GetCalendarDayEventsPage), чтобы offset-прыжки и keyset-скролл давали ОДИН порядок
         // (без дублей/пропусков на границах страниц с равным StartIso). Быстрый пропуск идёт по
@@ -3661,7 +3753,7 @@ public class ConstructorRepository(AppDbContext db)
         var s = DateTime.SpecifyKind(dayStart, DateTimeKind.Unspecified).ToString("o");
         var e = DateTime.SpecifyKind(dayEnd,   DateTimeKind.Unspecified).ToString("o");
         var k = DateTime.SpecifyKind(start,    DateTimeKind.Unspecified).ToString("o");
-        var col = activeIds is { Count: > 0 } ? $" AND CollectionId IN ({string.Join(",", activeIds)})" : "";
+        var col = VisibilityFilter(activeIds);
         var conn = db.Database.GetDbConnection();
         var opened = conn.State != System.Data.ConnectionState.Open;
         if (opened) conn.Open();
@@ -3701,17 +3793,23 @@ public class ConstructorRepository(AppDbContext db)
     // Пересечение окна: StartIso < конец И EndIso >= начало (ISO-строки сравниваются
     // лексикографически — формат фиксирован). Результат объединяется и сортируется по началу
     // (как раньше). Raw-SQL — чтобы гарантированно использовать индекс по AllDay.
+    // AddDays с защитой от выхода за диапазон DateTime: Журнал маленьких баз (InMemory) читает
+    // «всю историю» с rangeStart = 0001-01-01 — вычитание буфера кидало ArgumentOutOfRange,
+    // исключение глотал catch построения, и Журнал показывался ПУСТЫМ.
+    private static DateTime SafeAddDays(DateTime dt, int days) =>
+        days < 0
+            ? (dt.Ticks + (long)days * TimeSpan.TicksPerDay < DateTime.MinValue.Ticks ? DateTime.MinValue : dt.AddDays(days))
+            : (dt.Ticks + (long)days * TimeSpan.TicksPerDay > DateTime.MaxValue.Ticks ? DateTime.MaxValue : dt.AddDays(days));
+
     private List<CalendarRecord> ReadCalendarEvents(DateTime rangeStart, DateTime rangeEnd, ISet<int>? activeIds)
     {
         var startIso = DateTime.SpecifyKind(rangeStart, DateTimeKind.Unspecified).ToString("o");
         var endIso   = DateTime.SpecifyKind(rangeEnd,   DateTimeKind.Unspecified).ToString("o");
-        var lowerIso = DateTime.SpecifyKind(rangeStart, DateTimeKind.Unspecified)
-                               .AddDays(-CalendarTimedBufferDays).ToString("o");
+        var lowerIso = SafeAddDays(DateTime.SpecifyKind(rangeStart, DateTimeKind.Unspecified),
+                                   -CalendarTimedBufferDays).ToString("o");
 
-        // Фильтр активных коллекций (id — целые из приложения, инлайним безопасно).
-        var colFilter = activeIds is { Count: > 0 }
-            ? $" AND ci.CollectionId IN ({string.Join(",", activeIds)})"
-            : "";
+        // Фильтр видимости: активные коллекции + скрытые поля-даты (пустой набор = ничего).
+        var colFilter = VisibilityFilter(activeIds, "ci.");
 
         var result = new List<CalendarRecord>();
         var conn = db.Database.GetDbConnection();
@@ -3750,18 +3848,20 @@ public class ConstructorRepository(AppDbContext db)
     public List<CalendarRecord> GetCalendarRecordsByRangeCapped(
         DateTime rangeStart, DateTime rangeEnd, ISet<int>? activeIds, int perDayCap)
     {
-        // Per-collection запросы — нужны явные id (активные или все коллекции БД).
-        var colIds = activeIds is { Count: > 0 }
-            ? activeIds.ToList()
-            : db.DbCollections.Select(c => c.Id).ToList();
-        var colFilter = activeIds is { Count: > 0 }
-            ? $" AND ci.CollectionId IN ({string.Join(",", activeIds)})"
-            : "";
+        // Per-collection запросы — нужны явные id: null — все коллекции БД, ПУСТОЙ набор —
+        // ни одной (циклы не выполняются). Коллекции, у которых ВСЕ поля-даты скрыты,
+        // пропускаются целиком; частично скрытые поля отсекает residual-фильтр чтения.
+        var fullyHidden = FullyHiddenDateCollections();
+        var colIds = (activeIds is null
+            ? db.DbCollections.Select(c => c.Id).AsEnumerable()
+            : activeIds)
+            .Where(id => !fullyHidden.Contains(id)).ToList();
+        var hidden = HiddenFieldsClause("ci.");
 
         string Iso(DateTime dt) => DateTime.SpecifyKind(dt, DateTimeKind.Unspecified).ToString("o");
         var startIso = Iso(rangeStart);
         var endIso   = Iso(rangeEnd);
-        var lowerIso = Iso(rangeStart.AddDays(-CalendarTimedBufferDays));
+        var lowerIso = Iso(SafeAddDays(rangeStart, -CalendarTimedBufferDays));
 
         var result = new List<CalendarRecord>();
         var conn = db.Database.GetDbConnection();
@@ -3776,7 +3876,7 @@ public class ConstructorRepository(AppDbContext db)
                 var nextIso = Iso(day.AddDays(1));
                 foreach (var colId in colIds)
                     ReadCalendarRows(conn, result,
-                        $"ci.CollectionId = {colId} AND ci.AllDay = 0" +
+                        $"ci.CollectionId = {colId} AND ci.AllDay = 0{hidden}" +
                         " AND ci.StartIso >= $d AND ci.StartIso < $d2",
                         [("$d", dayIso), ("$d2", nextIso)], perDayCap);
             }
@@ -3788,10 +3888,10 @@ public class ConstructorRepository(AppDbContext db)
             // StartIso-буфер с проверкой EndIso чтением строк — день-гигант в буфере стоил секунд
             // при каждом открытии «Дня»/«Недели» следующие 62 дня (замер на 10 млн: 3.15 с → 7 мс).
             // Порядок LIMIT'а — по EndIso: его отдаёт сам индекс, скан обрывается на cap.
-            var upperIso = Iso(rangeStart.AddDays(CalendarTimedBufferDays));
+            var upperIso = Iso(SafeAddDays(rangeStart, CalendarTimedBufferDays));
             foreach (var colId in colIds)
                 ReadCalendarRows(conn, result,
-                    $"ci.CollectionId = {colId} AND ci.AllDay = 0" +
+                    $"ci.CollectionId = {colId} AND ci.AllDay = 0{hidden}" +
                     " AND ci.EndIso >= $win AND ci.EndIso < $hi" +
                     " AND ci.StartIso >= $lo AND ci.StartIso < $win",
                     [("$win", startIso), ("$hi", upperIso), ("$lo", lowerIso)], perDayCap, "ci.EndIso");
@@ -3805,7 +3905,7 @@ public class ConstructorRepository(AppDbContext db)
             // LIMIT: сетке и панели «весь день» больше всё равно не отрисовать.
             foreach (var colId in colIds)
                 ReadCalendarRows(conn, result,
-                    $"ci.CollectionId = {colId} AND ci.AllDay = 1" +
+                    $"ci.CollectionId = {colId} AND ci.AllDay = 1{hidden}" +
                     " AND ci.EndIso >= $start AND ci.StartIso < $end",
                     [("$start", startIso), ("$end", endIso)], perDayCap, "ci.EndIso");
         }
@@ -3877,8 +3977,10 @@ public class ConstructorRepository(AppDbContext db)
     // значения в db_field_values (читаем переданное value, в БД не лезем повторно).
     private void SyncCalendarIndexValue(int recordId, int fieldId, string? value)
     {
+        // Пишем ЛЮБОЕ поле-дату, включая скрытое (IsCalStart=0): видимость — фильтр чтения,
+        // проекция всегда полная — включение поля обратно не требует пересборки.
         var field = db.DbFields.Find(fieldId);
-        if (field is { FieldType: "date", IsCalStart: true } && DateValue.TryParse(value, out var dv))
+        if (field is { FieldType: "date" } && DateValue.TryParse(value, out var dv))
         {
             var (s, e) = dv.ToRecordColumns();
             var allDay = dv.AllDay ? 1 : 0;
@@ -3917,12 +4019,16 @@ public class ConstructorRepository(AppDbContext db)
     // Наполняет calendar_index из значений видимых полей-дат, отобранных scope. Читаем
     // постранично (keyset по Id) через EF и вставляем пакетами подготовленным INSERT —
     // память ограничена размером пакета (важно для бэкафилла на миллионах строк).
-    private void FillCalendarIndex(Func<IQueryable<DbFieldValueEntity>, IQueryable<DbFieldValueEntity>> scope)
+    private void FillCalendarIndex(Func<IQueryable<DbFieldValueEntity>, IQueryable<DbFieldValueEntity>> scope,
+                                   IProgress<int>? progress = null)
     {
         const int batch = 20000;
-        var calFieldIds = db.DbFields.Where(f => f.FieldType == "date" && f.IsCalStart).Select(f => f.Id);
+        // ВСЕ поля-даты, включая скрытые (IsCalStart=0): видимость — фильтр чтения,
+        // проекция держится полной (см. SetDateFieldVisible).
+        var calFieldIds = db.DbFields.Where(f => f.FieldType == "date").Select(f => f.Id);
         var baseQ = scope(db.DbFieldValues.Where(v => calFieldIds.Contains(v.FieldId) && v.Value != ""));
 
+        var done   = 0;
         var lastId = 0;
         while (true)
         {
@@ -3961,6 +4067,8 @@ public class ConstructorRepository(AppDbContext db)
             }
             if (!wasOpen) conn.Close();
 
+            done += page.Count;
+            progress?.Report(done);
             lastId = page[^1].Id;
         }
     }

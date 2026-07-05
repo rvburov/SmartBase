@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Генератор тестовой БД-стенда (см. docs/guides/test-database.md).
+    Схему создаёт EF Core через Database.Migrate() основного проекта: миграции
+    остаются единственным источником правды, генератор не расходится со схемой.
+    Запуск из корня репозитория: dotnet run -c Release ~project Tests/DbGenerator
+    (ключи запуска и профиль данных описаны в шапке Program.cs; ~ здесь заменяет
+    двойной дефис, который запрещён внутри XML-комментария).
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>DataBase.Tests.DbGenerator</RootNamespace>
+    <AssemblyName>DbGenerator</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\DataBase.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -7,6 +7,9 @@ MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DataBase", "DataBase.csproj", "{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}"
 EndProject
 
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DbGenerator", "Tests\DbGenerator\DbGenerator.csproj", "{5D0C7E2A-9F3B-4C41-8A2E-B61A0C3D9F42}"
+EndProject
+
 Global
     GlobalSection(SolutionConfigurationPlatforms) = preSolution
         Debug|Any CPU = Debug|Any CPU
@@ -17,5 +20,9 @@ Global
         {A1B2C3D4-E5F6-7890-ABCD-EF1234567890}.Debug|Any CPU.Build.0 = Debug|Any CPU
         {A1B2C3D4-E5F6-7890-ABCD-EF1234567890}.Release|Any CPU.ActiveCfg = Release|Any CPU
         {A1B2C3D4-E5F6-7890-ABCD-EF1234567890}.Release|Any CPU.Build.0 = Release|Any CPU
+        {5D0C7E2A-9F3B-4C41-8A2E-B61A0C3D9F42}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+        {5D0C7E2A-9F3B-4C41-8A2E-B61A0C3D9F42}.Debug|Any CPU.Build.0 = Debug|Any CPU
+        {5D0C7E2A-9F3B-4C41-8A2E-B61A0C3D9F42}.Release|Any CPU.ActiveCfg = Release|Any CPU
+        {5D0C7E2A-9F3B-4C41-8A2E-B61A0C3D9F42}.Release|Any CPU.Build.0 = Release|Any CPU
     EndGlobalSection
 EndGlobal

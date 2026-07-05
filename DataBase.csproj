@@ -52,4 +52,13 @@
     <EmbeddedResource Remove="calendar_avalonia\**" />
   </ItemGroup>
 
+  <!-- Tests/ — отдельный проект-генератор стенда (Tests/DbGenerator), в приложение не входит -->
+  <ItemGroup>
+    <Compile    Remove="Tests\**" />
+    <AvaloniaXaml Remove="Tests\**" />
+    <AvaloniaResource Remove="Tests\**" />
+    <None       Remove="Tests\**" />
+    <EmbeddedResource Remove="Tests\**" />
+  </ItemGroup>
+
 </Project>
