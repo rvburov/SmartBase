@@ -5,7 +5,7 @@
 
     <Border Background="#1AFF3B30"
             BorderBrush="{StaticResource BrushRed}"
-            BorderThickness="1"
+            BorderThickness="{DynamicResource BorderLine}"
             CornerRadius="{StaticResource RadiusBase}"
             Padding="10,7">
         <Grid ColumnDefinitions="Auto,8,*">

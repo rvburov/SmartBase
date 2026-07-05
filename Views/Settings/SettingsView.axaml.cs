@@ -42,8 +42,6 @@ public partial class SettingsView : UserControl
         SystemInfoText.Text = $"{RuntimeInformation.OSDescription.Trim()} · {RuntimeInformation.FrameworkDescription}";
         UpdatePathBox.Text  = AppSettings.LoadUpdatePath();
 
-        AsyncRowLoadCheck.IsChecked = AppSettings.LoadAsyncRowLoad();
-
         // Слайдер размера шрифта отражает текущую дельту (стандарт = 0, диапазон -3…+3).
         FontSizeSlider.Value = FontScale.Delta;
 
@@ -477,14 +475,6 @@ public partial class SettingsView : UserControl
         FontSizeSlider.Value = AppSettings.FontDeltaDefault;   // → OnFontSizeChanged → SetDelta(0)
     }
 
-    // Переключатель фоновой подгрузки строк («Загрузка…»). Применяется при следующем
-    // открытии коллекции (VirtualRowList читает флаг в конструкторе).
-    private void OnAsyncRowLoadChanged(object? sender, RoutedEventArgs e)
-    {
-        if (sender is CheckBox cb && cb.IsChecked is bool on)
-            AppSettings.SaveAsyncRowLoad(on);
-    }
-
     // Вызывается из MainWindow: реестр + способ узнать, смонтирована ли БД сейчас.
     public void Initialize(DatabaseRegistry registry, Func<int, bool> isMounted)
     {
@@ -499,7 +489,6 @@ public partial class SettingsView : UserControl
     // Переключение раздела: заголовок + видимость соответствующей панели.
     public void ShowCategory(string key)
     {
-        GeneralPanel.IsVisible    = key == "general";
         AppearancePanel.IsVisible = key == "appearance";
         DatabasePanel.IsVisible   = key == "database";
         AboutPanel.IsVisible      = key == "about";

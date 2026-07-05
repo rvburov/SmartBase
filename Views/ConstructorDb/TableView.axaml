@@ -5,10 +5,17 @@
 
     <!-- Переопределяем встроенные кисти линий DataGrid из темы Fluent на единый
          цвет BrushSeparator — иначе тема рисует разделитель под шапкой более тёмным,
-         чем горизонтальные линии между строками. -->
+         чем горизонтальные линии между строками. Локальные копии тем DataGrid
+         (TableViewDataGridThemes.axaml) дают линиям сетки динамическую толщину
+         SeparatorThickness — см. комментарий в том файле. -->
     <UserControl.Resources>
-        <SolidColorBrush x:Key="DataGridGridLinesBrush"             Color="{StaticResource ColorSeparator}" />
-        <SolidColorBrush x:Key="DataGridFillerColumnGridLinesBrush" Color="{StaticResource ColorSeparator}" />
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceInclude Source="avares://DataBase/Views/ConstructorDb/TableViewDataGridThemes.axaml" />
+            </ResourceDictionary.MergedDictionaries>
+            <SolidColorBrush x:Key="DataGridGridLinesBrush"             Color="{StaticResource ColorSeparator}" />
+            <SolidColorBrush x:Key="DataGridFillerColumnGridLinesBrush" Color="{StaticResource ColorSeparator}" />
+        </ResourceDictionary>
     </UserControl.Resources>
 
     <UserControl.Styles>
@@ -20,6 +27,25 @@
         </Style>
         <Style Selector="DataGridCell:current /template/ Grid#FocusVisual">
             <Setter Property="IsVisible" Value="False" />
+        </Style>
+
+        <!-- Толщина линий сетки — динамический токен LineMetrics (визуально ~1 пиксель
+             при любом зуме/DPI). Задаётся стилями, а не в шаблоне: локальные Width/Height
+             из копий тем убраны (TableViewDataGridThemes.axaml, отличие 1).
+             EdgeMode=Aliased (атрибутом в самих шаблонах — сеттеру стиля RenderOptions
+             недоступен) — без сглаживания: на дробных позициях (зум ≠ 1) линия
+             защёлкивается в целый физический пиксель вместо размазывания по соседним. -->
+        <Style Selector="DataGridCell /template/ Rectangle#PART_RightGridLine">
+            <Setter Property="Width"             Value="{DynamicResource SeparatorThickness}" />
+            <Setter Property="UseLayoutRounding" Value="{DynamicResource LineUseLayoutRounding}" />
+        </Style>
+        <Style Selector="DataGridRow /template/ Rectangle#PART_BottomGridLine">
+            <Setter Property="Height"            Value="{DynamicResource SeparatorThickness}" />
+            <Setter Property="UseLayoutRounding" Value="{DynamicResource LineUseLayoutRounding}" />
+        </Style>
+        <Style Selector="DataGrid /template/ Rectangle#PART_ColumnHeadersAndRowsSeparator">
+            <Setter Property="Height"            Value="{DynamicResource SeparatorThickness}" />
+            <Setter Property="UseLayoutRounding" Value="{DynamicResource LineUseLayoutRounding}" />
         </Style>
 
         <Style Selector="DataGridRow:pointerover /template/ Rectangle#BackgroundRectangle">
@@ -38,23 +64,25 @@
             <Setter Property="Foreground" Value="{StaticResource BrushAccent}" />
         </Style>
 
-        <!-- Левый бордер контента совпадает с той же координатой X, где DataGrid рисует
-             вертикальные линии строк — гарантированное выравнивание без субпиксельных артефактов. -->
+        <!-- Заголовки ПРОЗРАЧНЫЕ: фон строки заголовков рисуется одним прямоугольником
+             на всю ширину в шаблоне DataGrid (TableViewDataGridThemes.axaml) — иначе
+             непрозрачный сосед закрашивал правую линию предыдущего заголовка (ячейка
+             при округлении растёт вверх). Линию под шапкой рисует нативный
+             PART_ColumnHeadersAndRowsSeparator той же толщины, что линии строк. -->
         <Style Selector="DataGridColumnHeader">
-            <Setter Property="UseLayoutRounding"          Value="True" />
-            <Setter Property="Background"                 Value="{StaticResource BrushInactiveBg}" />
+            <!-- Округление раскладки — динамическое, СИНХРОННО с ячейками и DataGrid:
+                 при зуме ≠ 1 ширины колонок кратны физическому пикселю (снап), а сетка
+                 округления другая (1/DPI) — округление растягивало бы ячейки вверх,
+                 и непрозрачный сосед закрашивал линию предыдущей колонки. -->
+            <Setter Property="UseLayoutRounding"          Value="{DynamicResource LineUseLayoutRounding}" />
+            <Setter Property="Background"                 Value="Transparent" />
             <Setter Property="Padding"                    Value="0" />
             <Setter Property="Height"                     Value="{StaticResource RowHeightStandard}" />
             <Setter Property="HorizontalContentAlignment" Value="Stretch" />
             <Setter Property="VerticalContentAlignment"   Value="Stretch" />
             <Setter Property="Template">
                 <ControlTemplate>
-                    <!-- Нижнюю линию под шапкой рисуем сами тем же цветом, что и линии сетки
-                         (BrushSeparator), чтобы она не отличалась от межстрочных. Встроенный
-                         разделитель темы Fluent гасится переопределением ресурсов ниже. -->
-                    <Border Background="{TemplateBinding Background}"
-                            BorderBrush="{StaticResource BrushSeparator}"
-                            BorderThickness="0,0,0,1">
+                    <Border Background="{TemplateBinding Background}">
                         <ContentPresenter Content="{TemplateBinding Content}"
                                           HorizontalContentAlignment="{TemplateBinding HorizontalContentAlignment}"
                                           VerticalContentAlignment="{TemplateBinding VerticalContentAlignment}" />
@@ -65,14 +93,16 @@
     </UserControl.Styles>
 
     <!-- DataGrid + накладная рамка выделенной колонки (позиционируется в коде). -->
-    <!-- ВНИМАНИЕ по линиям сетки. Остальные линии приложения унифицированы через
-         стиль Border.separator + токены BrushSeparator/SeparatorThickness (см. Controls.axaml).
-         Здесь линии рисует НАТИВНАЯ сетка DataGrid (GridLinesVisibility="All"): цвет уже на
-         BrushSeparator, UseLayoutRounding включён. На Windows с дробным масштабом эта сетка
-         могла выглядеть толще остальных линий.
+    <!-- ВНИМАНИЕ по линиям сетки. Линии рисует НАТИВНАЯ сетка DataGrid
+         (GridLinesVisibility="All"): цвет — BrushSeparator, толщина — динамический токен
+         SeparatorThickness через локальные копии тем (TableViewDataGridThemes.axaml),
+         те же, что у линий всего приложения (Border.separator, Controls.axaml).
          НЕ переводить на линии-Border в ячейках без проверки на Windows: слой подсветки
          выделенных колонок (RefreshColumnHighlights в code-behind) позиционирует рамки по
-         X-координатам линий сетки — смена механизма сдвинет линии на ~1px и сломает выравнивание. -->
+         X-координатам линий сетки — смена механизма сдвинет линии на ~1px и сломает
+         выравнивание. Вертикальные линии ЗАГОЛОВКОВ — Rectangle в тех же слотах Grid
+         "*,Auto", что и в ячейках (MakeCenteredHeader/MakeTextHeader) — округляются
+         одинаково с линиями строк и совпадают с ними по X при любом зуме/DPI. -->
     <Panel>
         <DataGrid x:Name="RecordsGrid"
                   AutoGenerateColumns="False"
@@ -87,7 +117,7 @@
                   SelectionMode="Extended"
                   IsReadOnly="False"
                   Background="Transparent"
-                  UseLayoutRounding="True"
+                  UseLayoutRounding="{DynamicResource LineUseLayoutRounding}"
                   RowBackground="{StaticResource BrushBg}"
                   HorizontalScrollBarVisibility="Auto"
                   VerticalScrollBarVisibility="Auto"

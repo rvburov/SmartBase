@@ -1,0 +1,284 @@
+<!-- Локальные копии тем DataGrid (только для TableView) — единственный способ управлять
+     толщиной НАТИВНЫХ линий сетки: в теме Fluent Width/Height линий заданы ЛОКАЛЬНЫМИ
+     значениями на элементах шаблона, которые стиль /template/ перебить не может.
+
+     Источник копий: AvaloniaUI/Avalonia, тег 11.2.3 (версия пакета в DataBase.csproj),
+     src/Avalonia.Controls.DataGrid/Themes/Fluent.xaml — темы DataGridCell, DataGridRow,
+     DataGrid скопированы ДОСЛОВНО. При апгрейде Avalonia передиффить с новой версией!
+
+     Отличия от оригинала (и только они):
+       1. У PART_RightGridLine / PART_BottomGridLine / PART_ColumnHeadersAndRowsSeparator
+          УБРАНЫ локальные Width/Height (в оригинале — Width="1"/Height="1"): толщину и
+          UseLayoutRounding задают /template/-стили в TableView.axaml динамическими
+          токенами LineMetrics (локальное значение в шаблоне стилем не перебивается,
+          а DynamicResource в атрибуте шаблона применяется ненадёжно). Добавлен
+          RenderOptions.EdgeMode="Aliased" (только атрибутом: сеттеру стиля RenderOptions
+          недоступен) — линия защёлкивается в целый пиксель, а не размазывается.
+       2. В шаблон DataGrid добавлен фон строки заголовков ОДНИМ прямоугольником на всю
+          ширину: ячейка заголовка при округлении растёт вверх, и непрозрачный фон
+          соседа закрашивал правую линию предыдущей — с общим фоном заголовки могут
+          быть прозрачными (Background=Transparent в стиле TableView.axaml), и линии
+          заголовка больше не исчезают при смене числа/ширины колонок.
+       3. Кросс-файловые ссылки (DataGridTopLeftColumnHeader, BrushInactiveBg) — через
+          DynamicResource: StaticResource из подключаемого ResourceDictionary не видит
+          ресурсы стилей приложения на этапе загрузки.
+
+     Имена частей шаблонов сохранены — код DataGrid (EnsureGridLine и др.), стили
+     /template/ в TableView.axaml и подсветка колонок RefreshColumnHighlights работают
+     без изменений, X-координаты линий не сдвигаются. -->
+<ResourceDictionary xmlns="https://github.com/avaloniaui"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <ControlTheme x:Key="{x:Type DataGridCell}" TargetType="DataGridCell">
+      <Setter Property="Background" Value="{DynamicResource DataGridCellBackgroundBrush}" />
+      <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+      <Setter Property="VerticalContentAlignment" Value="Stretch" />
+      <Setter Property="FontSize" Value="15" />
+      <Setter Property="MinHeight" Value="32" />
+      <Setter Property="Template">
+        <ControlTemplate>
+          <Border x:Name="CellBorder"
+                  Background="{TemplateBinding Background}"
+                  BorderBrush="{TemplateBinding BorderBrush}"
+                  BorderThickness="{TemplateBinding BorderThickness}"
+                  CornerRadius="{TemplateBinding CornerRadius}">
+            <Grid x:Name="PART_CellRoot" ColumnDefinitions="*,Auto">
+
+              <Rectangle x:Name="CurrencyVisual"
+                         IsVisible="False"
+                         HorizontalAlignment="Stretch"
+                         VerticalAlignment="Stretch"
+                         Fill="Transparent"
+                         IsHitTestVisible="False"
+                         Stroke="{DynamicResource DataGridCurrencyVisualPrimaryBrush}"
+                         StrokeThickness="1" />
+              <Grid Grid.Column="0" x:Name="FocusVisual" IsHitTestVisible="False"
+                    IsVisible="False">
+                <Rectangle HorizontalAlignment="Stretch"
+                           VerticalAlignment="Stretch"
+                           Fill="Transparent"
+                           IsHitTestVisible="False"
+                           Stroke="{DynamicResource DataGridCellFocusVisualPrimaryBrush}"
+                           StrokeThickness="2" />
+                <Rectangle Margin="2"
+                           HorizontalAlignment="Stretch"
+                           VerticalAlignment="Stretch"
+                           Fill="Transparent"
+                           IsHitTestVisible="False"
+                           Stroke="{DynamicResource DataGridCellFocusVisualSecondaryBrush}"
+                           StrokeThickness="1" />
+              </Grid>
+
+              <ContentPresenter Grid.Column="0" Margin="{TemplateBinding Padding}"
+                                HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                VerticalAlignment="{TemplateBinding VerticalContentAlignment}"
+                                Content="{TemplateBinding Content}"
+                                ContentTemplate="{TemplateBinding ContentTemplate}"
+                                Foreground="{TemplateBinding Foreground}" />
+
+              <Rectangle Grid.Column="0" x:Name="InvalidVisualElement"
+                         IsVisible="False"
+                         HorizontalAlignment="Stretch"
+                         VerticalAlignment="Stretch"
+                         IsHitTestVisible="False"
+                         Stroke="{DynamicResource DataGridCellInvalidBrush}"
+                         StrokeThickness="1" />
+
+              <Rectangle Name="PART_RightGridLine"
+                         Grid.Column="1"
+                         VerticalAlignment="Stretch"
+                         RenderOptions.EdgeMode="Aliased"
+                         Fill="{DynamicResource DataGridFillerColumnGridLinesBrush}" />
+            </Grid>
+          </Border>
+        </ControlTemplate>
+      </Setter>
+      <Style Selector="^:current /template/ Rectangle#CurrencyVisual">
+        <Setter Property="IsVisible" Value="True" />
+      </Style>
+      <Style Selector="^:focus /template/ Grid#FocusVisual">
+        <Setter Property="IsVisible" Value="True" />
+      </Style>
+      <Style Selector="^:invalid /template/ Rectangle#InvalidVisualElement">
+        <Setter Property="IsVisible" Value="True" />
+      </Style>
+    </ControlTheme>
+
+    <ControlTheme x:Key="{x:Type DataGridRow}" TargetType="DataGridRow">
+      <Setter Property="Background" Value="{Binding $parent[DataGrid].RowBackground}" />
+      <Setter Property="Template">
+        <ControlTemplate>
+          <Border x:Name="RowBorder"
+                  Background="{TemplateBinding Background}"
+                  BorderBrush="{TemplateBinding BorderBrush}"
+                  BorderThickness="{TemplateBinding BorderThickness}"
+                  CornerRadius="{TemplateBinding CornerRadius}">
+            <DataGridFrozenGrid Name="PART_Root"
+                                ColumnDefinitions="Auto,*"
+                                RowDefinitions="*,Auto,Auto">
+
+              <Rectangle Name="BackgroundRectangle"
+                         Fill="{DynamicResource DataGridRowBackgroundBrush}"
+                         Grid.RowSpan="2"
+                         Grid.ColumnSpan="2" />
+              <Rectangle x:Name="InvalidVisualElement"
+                         Opacity="0"
+                         Grid.ColumnSpan="2"
+                         Fill="{DynamicResource DataGridRowInvalidBrush}" />
+
+              <DataGridRowHeader Name="PART_RowHeader"
+                                 Grid.RowSpan="3"
+                                 DataGridFrozenGrid.IsFrozen="True" />
+              <DataGridCellsPresenter Name="PART_CellsPresenter"
+                                      Grid.Column="1"
+                                      DataGridFrozenGrid.IsFrozen="True" />
+              <DataGridDetailsPresenter Name="PART_DetailsPresenter"
+                                        Grid.Row="1"
+                                        Grid.Column="1"
+                                        Background="{DynamicResource DataGridDetailsPresenterBackgroundBrush}" />
+              <Rectangle Name="PART_BottomGridLine"
+                         Grid.Row="2"
+                         Grid.Column="1"
+                         RenderOptions.EdgeMode="Aliased"
+                         HorizontalAlignment="Stretch" />
+
+            </DataGridFrozenGrid>
+          </Border>
+        </ControlTemplate>
+      </Setter>
+
+      <Style Selector="^:invalid">
+        <Style Selector="^ /template/ Rectangle#InvalidVisualElement">
+          <Setter Property="Opacity" Value="0.4" />
+        </Style>
+        <Style Selector="^ /template/ Rectangle#BackgroundRectangle">
+          <Setter Property="Opacity" Value="0" />
+        </Style>
+      </Style>
+
+      <Style Selector="^:pointerover /template/ Rectangle#BackgroundRectangle">
+        <Setter Property="Fill" Value="{DynamicResource DataGridRowHoveredBackgroundColor}" />
+      </Style>
+
+      <Style Selector="^:selected">
+        <Style Selector="^ /template/ Rectangle#BackgroundRectangle">
+          <Setter Property="Fill" Value="{DynamicResource DataGridRowSelectedUnfocusedBackgroundBrush}" />
+          <Setter Property="Opacity" Value="{DynamicResource DataGridRowSelectedUnfocusedBackgroundOpacity}" />
+        </Style>
+        <Style Selector="^:pointerover /template/ Rectangle#BackgroundRectangle">
+          <Setter Property="Fill" Value="{DynamicResource DataGridRowSelectedHoveredUnfocusedBackgroundBrush}" />
+          <Setter Property="Opacity" Value="{DynamicResource DataGridRowSelectedHoveredUnfocusedBackgroundOpacity}" />
+        </Style>
+        <Style Selector="^:focus /template/ Rectangle#BackgroundRectangle">
+          <Setter Property="Fill" Value="{DynamicResource DataGridRowSelectedBackgroundBrush}" />
+          <Setter Property="Opacity" Value="{DynamicResource DataGridRowSelectedBackgroundOpacity}" />
+        </Style>
+        <Style Selector="^:pointerover:focus /template/ Rectangle#BackgroundRectangle">
+          <Setter Property="Fill" Value="{DynamicResource DataGridRowSelectedHoveredBackgroundBrush}" />
+          <Setter Property="Opacity" Value="{DynamicResource DataGridRowSelectedHoveredBackgroundOpacity}" />
+        </Style>
+      </Style>
+    </ControlTheme>
+
+    <ControlTheme x:Key="{x:Type DataGrid}" TargetType="DataGrid">
+      <Setter Property="RowBackground" Value="Transparent" />
+      <Setter Property="HeadersVisibility" Value="Column" />
+      <Setter Property="HorizontalScrollBarVisibility" Value="Auto" />
+      <Setter Property="VerticalScrollBarVisibility" Value="Auto" />
+      <Setter Property="SelectionMode" Value="Extended" />
+      <Setter Property="GridLinesVisibility" Value="None" />
+      <Setter Property="HorizontalGridLinesBrush" Value="{DynamicResource DataGridGridLinesBrush}" />
+      <Setter Property="VerticalGridLinesBrush" Value="{DynamicResource DataGridGridLinesBrush}" />
+      <Setter Property="FocusAdorner" Value="{x:Null}" />
+      <Setter Property="DropLocationIndicatorTemplate">
+        <Template>
+          <Rectangle Fill="{DynamicResource DataGridDropLocationIndicatorBackground}"
+                     Width="2" />
+        </Template>
+      </Setter>
+      <Setter Property="Template">
+        <ControlTemplate>
+          <Border x:Name="DataGridBorder"
+                  Background="{TemplateBinding Background}"
+                  BorderBrush="{TemplateBinding BorderBrush}"
+                  BorderThickness="{TemplateBinding BorderThickness}"
+                  CornerRadius="{TemplateBinding CornerRadius}">
+            <Grid ColumnDefinitions="Auto,*,Auto"
+                  RowDefinitions="Auto,*,Auto,Auto"
+                  ClipToBounds="True">
+              <!-- (Отличие 2) Фон строки заголовков одним прямоугольником на всю ширину —
+                   сами заголовки прозрачные, их линии не закрашиваются соседями. -->
+              <Rectangle Grid.Row="0" Grid.Column="0" Grid.ColumnSpan="3"
+                         Fill="{DynamicResource BrushInactiveBg}" />
+              <DataGridColumnHeader Name="PART_TopLeftCornerHeader"
+                                    Theme="{DynamicResource DataGridTopLeftColumnHeader}" />
+              <DataGridColumnHeadersPresenter Name="PART_ColumnHeadersPresenter"
+                                              Grid.Column="1"
+                                              Grid.Row="0" Grid.ColumnSpan="2" />
+              <Rectangle Name="PART_ColumnHeadersAndRowsSeparator"
+                         Grid.Row="0" Grid.ColumnSpan="3" Grid.Column="0"
+                         VerticalAlignment="Bottom"
+                         RenderOptions.EdgeMode="Aliased"
+                         Fill="{DynamicResource DataGridGridLinesBrush}" />
+
+              <DataGridRowsPresenter Name="PART_RowsPresenter"
+                                     Grid.Row="1"
+                                     Grid.Column="0"
+                                     ScrollViewer.IsScrollInertiaEnabled="{TemplateBinding IsScrollInertiaEnabled}">
+                <DataGridRowsPresenter.GestureRecognizers>
+                  <ScrollGestureRecognizer CanHorizontallyScroll="True"
+                                           CanVerticallyScroll="True"
+                                           IsScrollInertiaEnabled="{Binding (ScrollViewer.IsScrollInertiaEnabled), ElementName=PART_RowsPresenter}" />
+                </DataGridRowsPresenter.GestureRecognizers>
+              </DataGridRowsPresenter>
+              <Rectangle Name="PART_BottomRightCorner"
+                         Fill="{DynamicResource DataGridScrollBarsSeparatorBackground}"
+                         Grid.Column="2"
+                         Grid.Row="2" />
+              <ScrollBar Name="PART_VerticalScrollbar"
+                         Orientation="Vertical"
+                         Grid.Column="2"
+                         Grid.Row="1"
+                         Width="{DynamicResource ScrollBarSize}" />
+
+              <Grid Grid.Column="1"
+                    Grid.Row="2"
+                    ColumnDefinitions="Auto,*">
+                <Rectangle Name="PART_FrozenColumnScrollBarSpacer" />
+                <ScrollBar Name="PART_HorizontalScrollbar"
+                           Grid.Column="1"
+                           Orientation="Horizontal"
+                           Height="{DynamicResource ScrollBarSize}" />
+              </Grid>
+              <Border x:Name="PART_DisabledVisualElement"
+                      Grid.ColumnSpan="3" Grid.Column="0"
+                      Grid.Row="0" Grid.RowSpan="4"
+                      IsHitTestVisible="False"
+                      HorizontalAlignment="Stretch"
+                      VerticalAlignment="Stretch"
+                      CornerRadius="2"
+                      Background="{DynamicResource DataGridDisabledVisualElementBackground}"
+                      IsVisible="{Binding !$parent[DataGrid].IsEnabled}" />
+            </Grid>
+          </Border>
+        </ControlTemplate>
+      </Setter>
+
+      <Style Selector="^:empty-columns">
+        <Style Selector="^ /template/ DataGridColumnHeader#PART_TopLeftCornerHeader">
+          <Setter Property="IsVisible" Value="False" />
+        </Style>
+        <Style Selector="^ /template/ DataGridColumnHeadersPresenter#PART_ColumnHeadersPresenter">
+          <Setter Property="IsVisible" Value="False" />
+        </Style>
+        <Style Selector="^ /template/ Rectangle#PART_ColumnHeadersAndRowsSeparator">
+          <Setter Property="IsVisible" Value="False" />
+        </Style>
+      </Style>
+      <Style Selector="^ /template/ DataGridRowsPresenter#PART_RowsPresenter">
+        <Setter Property="Grid.RowSpan" Value="2" />
+        <Setter Property="Grid.ColumnSpan" Value="3" />
+      </Style>
+    </ControlTheme>
+
+</ResourceDictionary>

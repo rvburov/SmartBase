@@ -371,11 +371,11 @@ public partial class AllDayBar : UserControl
         for (var i = 0; i < _currentDays.Count; i++)
         {
             EventsPanel.ColumnDefinitions.Add(new ColumnDefinition(new GridLength(1, GridUnitType.Star)));
-            DividersPanel.Children.Add(new Border
-            {
-                BorderBrush     = Separator,
-                BorderThickness = new Thickness(i == 0 ? 0 : 1, 0, 0, 0),
-            });
+            var divider = new Border { BorderBrush = Separator };
+            // Толщина левой границы — живой токен LineMetrics (WeekColumns привязан так же —
+            // линии остаются пиксель-в-пиксель при любом зуме/DPI). Первая колонка без линии.
+            if (i > 0) divider.Bind(Border.BorderThicknessProperty, divider.GetResourceObservable("BorderLineLeft"));
+            DividersPanel.Children.Add(divider);
         }
 
         var allDayEvents = events

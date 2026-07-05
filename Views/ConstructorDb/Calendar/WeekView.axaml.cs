@@ -8,6 +8,7 @@ using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Threading;
 using DataBase.Core.Models;
+using DataBase.Utils;
 
 namespace DataBase.Views.ConstructorDb.Calendar;
 
@@ -285,10 +286,11 @@ public partial class WeekView : UserControl
                     var selFrame = new Border
                     {
                         CornerRadius     = new CornerRadius(3),
-                        BorderThickness  = new Thickness(1.5),
                         BorderBrush      = Brushes.Transparent,
                         IsHitTestVisible = false,
                     };
+                    // Рамка выделения — акцент, ровно 2× стандартной линии (была 1.5).
+                    selFrame.Bind(Border.BorderThicknessProperty, selFrame.GetResourceObservable("BorderLineFocus"));
                     Grid.SetColumnSpan(selFrame, 2);
 
                     var innerGrid = new Grid();
@@ -413,12 +415,15 @@ public partial class WeekView : UserControl
                 _todayTimeOverlay = overlay;
             }
 
-            WeekColumns.Children.Add(new Border
+            var colBorder = new Border
             {
-                BorderBrush     = gridLineBrush,
-                BorderThickness = new Thickness(col == 0 ? 0 : 1, 0, 0, 0),
-                Child           = dayGrid,
-            });
+                BorderBrush = gridLineBrush,
+                Child       = dayGrid,
+            };
+            // Толщина левой границы — живой токен LineMetrics (как у делителей AllDayBar —
+            // линии остаются пиксель-в-пиксель при любом зуме/DPI). Первая колонка без линии.
+            if (col > 0) colBorder.Bind(Border.BorderThicknessProperty, colBorder.GetResourceObservable("BorderLineLeft"));
+            WeekColumns.Children.Add(colBorder);
         }
 
         UpdateTimeLine();
@@ -1663,8 +1668,10 @@ public class HourLineBorderConverter : IValueConverter
 {
     public static readonly HourLineBorderConverter Instance = new();
 
+    // Толщина — компенсированный токен главного окна (у конвертера нет визуала);
+    // значение на момент пересборки строк, часы пересоздаются при Refresh.
     public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
-        => value is int h && h == 0 ? new Thickness(0) : new Thickness(0, 1, 0, 0);
+        => value is int h && h == 0 ? new Thickness(0) : new Thickness(0, LineMetrics.MainThickness, 0, 0);
 
     public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
         => throw new NotImplementedException();

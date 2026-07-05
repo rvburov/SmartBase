@@ -74,7 +74,7 @@
             </StackPanel>
 
             <Border x:Name="WarnBox" IsVisible="False"
-                    Background="#FFFBEB" BorderBrush="#FDE68A" BorderThickness="1"
+                    Background="#FFFBEB" BorderBrush="#FDE68A" BorderThickness="{DynamicResource BorderLine}"
                     CornerRadius="6" Padding="10,8">
                 <TextBlock x:Name="WarnText" TextWrapping="Wrap" Foreground="#B45309"
                            FontSize="{DynamicResource FontSizeSmall}" />

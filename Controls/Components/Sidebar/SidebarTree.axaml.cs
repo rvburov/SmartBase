@@ -904,7 +904,6 @@ public partial class SidebarTree : UserControl
         {
             Background       = Brushes.White,
             BorderBrush     = (IBrush)this.FindResource("BrushSeparator")!,
-            BorderThickness = new Thickness(1),
             CornerRadius    = radius,
             Padding         = new Thickness(8, 6),
             Child = new StackPanel
@@ -913,6 +912,8 @@ public partial class SidebarTree : UserControl
                 Children = { selectAll, new ScrollViewer { MaxHeight = 240, Content = list } },
             },
         };
+        // Карточка живёт в попапе меню (вне зума) — толщина рамки из попап-токена, живая.
+        listBox.Bind(Border.BorderThicknessProperty, listBox.GetResourceObservable("BorderLinePopup"));
         panel.Children.Add(listBox);
 
         return panel;

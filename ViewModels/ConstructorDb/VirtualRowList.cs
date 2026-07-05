@@ -61,10 +61,6 @@ internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollecti
         return row;
     }
 
-    // Отложенная подгрузка с заглушками «Загрузка…» (флаг настроек). По умолчанию выкл —
-    // тогда страницы грузятся синхронно (проверенный путь). Вкл — эффект «Загрузка…» при скролле.
-    private readonly bool _asyncLoad;
-
     public VirtualRowList(ConstructorRepository repo, int collectionId, List<DbField> fields,
                           bool excludeHidden = false, IReadOnlyList<int>? recordIds = null)
     {
@@ -73,7 +69,6 @@ internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollecti
         _fields        = fields;
         _excludeHidden = excludeHidden;
         _recordIds     = recordIds;
-        _asyncLoad     = Utils.AppSettings.LoadAsyncRowLoad();
         // Режим списка id (фильтр/сортировка): длина списка. Иначе — считаем из БД.
         _dataCount     = recordIds?.Count ?? repo.CountRecords(collectionId, excludeHidden);
     }
@@ -93,8 +88,7 @@ internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollecti
     }
 
     /// <summary>
-    /// Загружает страницу. При выключенном async-флаге — синхронно (реальные строки сразу).
-    /// При включённом — создаёт строки-заглушки «Загрузка…» и грузит данные в ФОНОВОМ потоке
+    /// Загружает страницу: создаёт строки-заглушки «Загрузка…» и грузит данные в ФОНОВОМ потоке
     /// (отдельное read-only подключение, WAL), затем на UI-потоке заполняет строки. UI-поток
     /// не трогает БД при скролле → ноль микроподвисаний даже при экстремально быстром скролле.
     /// </summary>
@@ -105,17 +99,6 @@ internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollecti
         var skip = page * PageSize;
         var take = Math.Min(PageSize, _dataCount - skip);
 
-        if (!_asyncLoad)
-        {
-            // Синхронный путь: грузим записи и сразу строим реальные строки.
-            var records = LoadRecordsForPage(page, skip, take);
-            var rows    = BuildRows(skip, records);
-            _pages[page] = rows;
-            _lru.AddLast(page);
-            return rows;
-        }
-
-        // Async-путь: заглушки «Загрузка…» сразу, данные — в фоне.
         var placeholders = MakePlaceholders(page, skip, take);
         BeginBackgroundLoad(page, skip, take);
         return placeholders;
@@ -187,29 +170,7 @@ internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollecti
         }
     }
 
-    // Запрос записей страницы из БД (режим списка id / keyset / offset) — общий для обоих путей.
-    private List<DbRecord> LoadRecordsForPage(int page, int skip, int take)
-    {
-        if (_recordIds is not null)
-        {
-            // Режим списка id: страница — срез готового списка, грузим записи по id в его порядке.
-            var slice = new List<int>(take);
-            for (var k = 0; k < take; k++) slice.Add(_recordIds[skip + k]);
-            return _repo.GetRecordsByIdsOrdered(slice);
-        }
-
-        // Keyset, если известен курсор соседней страницы (последовательный скролл): вперёд —
-        // ПОСЛЕ последней строки предыдущей, вверх — ПЕРЕД первой строкой следующей; O(take),
-        // не зависит от глубины. Иначе offset (прыжок по скроллбару) — смещение по покрывающему
-        // индексу (CollectionId, Position), см. GetRecordsPage.
-        if (page > 0 && _pageEnd.TryGetValue(page - 1, out var cur))
-            return _repo.GetRecordsPageAfter(_collectionId, cur.Pos, cur.Id, take, _excludeHidden);
-        if (_pageStart.TryGetValue(page + 1, out var nxt))
-            return _repo.GetRecordsPageBefore(_collectionId, nxt.Pos, nxt.Id, take, _excludeHidden);
-        return _repo.GetRecordsPage(_collectionId, skip, take, _excludeHidden);
-    }
-
-    // Строит реальные строки из записей + их значений (синхронный путь).
+    // Строит реальные строки из записей + их значений (тёплая пересборка страниц, RebuildPageSync).
     private TableRowVm[] BuildRows(int skip, List<DbRecord> records)
     {
         var ids    = records.Select(r => r.Id!.Value).ToList();

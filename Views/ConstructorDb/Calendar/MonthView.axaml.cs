@@ -4,6 +4,7 @@ using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Media;
 using DataBase.Core.Models;
+using DataBase.Utils;
 
 namespace DataBase.Views.ConstructorDb.Calendar;
 
@@ -429,7 +430,7 @@ public partial class MonthView : UserControl
                 plusIcon.IsVisible      = true;
                 dayCircle.Background    = hoverCircleBg;
                 dayCircle.BorderBrush   = hoverBorderBrush;
-                dayCircle.BorderThickness = new Thickness(1);
+                dayCircle.BorderThickness = new Thickness(LineMetrics.ThicknessFor(this));
             },
             () =>
             {
@@ -484,10 +485,13 @@ public partial class MonthView : UserControl
         var col      = ((int)date.DayOfWeek + 6) % 7;
         var leftLine = col == 0 ? 0 : 1;
 
+        // Линии сетки месяца — компенсированная толщина LineMetrics (значение на момент
+        // пересборки; месяц перестраивается при каждом Refresh/навигации).
+        var lineT = LineMetrics.ThicknessFor(this);
         var cellBorder = new Border
         {
             BorderBrush     = new SolidColorBrush(Color.Parse("#E8E8E8")),
-            BorderThickness = new Thickness(leftLine, 1, 0, 0),
+            BorderThickness = new Thickness(leftLine * lineT, lineT, 0, 0),
             Background      = baseBg,
             ClipToBounds    = true,
             Child           = inner,

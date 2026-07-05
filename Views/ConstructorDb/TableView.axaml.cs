@@ -5,6 +5,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Collections;
 using Avalonia.Controls.Primitives;
+using Avalonia.Controls.Shapes;
 using Avalonia.Controls.Templates;
 using Avalonia.Data;
 using Avalonia.Styling;
@@ -162,6 +163,11 @@ public partial class TableView : UserControl
         // Размер шрифта меняется живьём: ячейки строятся с размером из ресурса → пересобрать.
         FontScale.Changed += OnFontScaleChanged;
         if (_repository is not null && _renderedFontDelta != FontScale.Delta) Reload();
+
+        // Токены толщины пересчитаны (зум/переезд на монитор с другим DPI): пересадить
+        // границы колонок на новую физическую сетку. Линии заголовков обновляются сами
+        // (GetResourceObservable в WrapHeaderContent), нативные линии — через DynamicResource.
+        LineMetrics.Changed += OnLineMetricsChanged;
     }
 
     protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
@@ -169,7 +175,13 @@ public partial class TableView : UserControl
         _keyHookTopLevel?.RemoveHandler(KeyDownEvent, OnTopLevelKeyDown);
         _keyHookTopLevel = null;
         FontScale.Changed -= OnFontScaleChanged;
+        LineMetrics.Changed -= OnLineMetricsChanged;
         base.OnDetachedFromVisualTree(e);
+    }
+
+    private void OnLineMetricsChanged()
+    {
+        if (_repository is not null && !_manualColResize) SnapStarColumnWidths();
     }
 
     // Дельта последнего рендера — чтобы перерисовать таблицу при возврате, если размер
@@ -973,24 +985,59 @@ public partial class TableView : UserControl
         return cell;
     }
 
-    private Border MakeCenteredHeader(string text, double fontSize = 0, bool addRightBorder = true) => new()
+    // Ячейка шапки строится КОНСТРУКЦИЕЙ 1-в-1 как шаблон DataGridCell: Grid "*,Auto",
+    // контент в звёздной колонке, вертикальная линия — Rectangle в Auto-колонке (как
+    // PART_RightGridLine, см. TableViewDataGridThemes.axaml). Одинаковые слоты дают
+    // одинаковое округление — линии заголовка совпадают с линиями строк по X и толщине
+    // при любом зуме/DPI и не исчезают при смене числа/ширины колонок. Толщина и
+    // UseLayoutRounding — живые токены LineMetrics через GetResourceObservable.
+    private Control WrapHeaderContent(Control content, bool addRightLine)
     {
-        Background          = Brushes.Transparent,
-        HorizontalAlignment = HorizontalAlignment.Stretch,
-        VerticalAlignment   = VerticalAlignment.Stretch,
-        BorderBrush         = (IBrush)this.FindResource("BrushSeparator")!,
-        BorderThickness     = new Thickness(0, 0, addRightBorder ? 1 : 0, 0),
-        Child = new TextBlock
+        var host = new Grid
         {
-            Text                = text,
-            FontSize            = fontSize > 0 ? fontSize : (double)this.FindResource("FontSizeBase")!,
-            HorizontalAlignment = HorizontalAlignment.Center,
-            VerticalAlignment   = VerticalAlignment.Center,
-            Foreground          = (IBrush)this.FindResource("BrushSecondaryText")!,
-        },
-    };
+            Background          = Brushes.Transparent,   // hit-test всей области (клики/меню)
+            ColumnDefinitions   = new ColumnDefinitions("*,Auto"),
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            VerticalAlignment   = VerticalAlignment.Stretch,
+        };
+        Grid.SetColumn(content, 0);
+        host.Children.Add(content);
 
-    private Border MakeTextHeader(TableColumnDef def)
+        if (addRightLine)
+        {
+            var line = new Rectangle
+            {
+                Fill              = (IBrush)this.FindResource("BrushSeparator")!,
+                VerticalAlignment = VerticalAlignment.Stretch,
+            };
+            line.Bind(Rectangle.WidthProperty,           line.GetResourceObservable("SeparatorThickness"));
+            line.Bind(Layoutable.UseLayoutRoundingProperty, line.GetResourceObservable("LineUseLayoutRounding"));
+            // Без сглаживания — как у нативных линий строк: на дробных позициях (зум ≠ 1)
+            // линия защёлкивается в целый пиксель, а не размазывается.
+            Avalonia.Media.RenderOptions.SetEdgeMode(line, Avalonia.Media.EdgeMode.Aliased);
+            Grid.SetColumn(line, 1);
+            host.Children.Add(line);
+        }
+        return host;
+    }
+
+    private Control MakeCenteredHeader(string text, double fontSize = 0, bool addRightBorder = true) =>
+        WrapHeaderContent(new Border
+        {
+            Background          = Brushes.Transparent,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            VerticalAlignment   = VerticalAlignment.Stretch,
+            Child = new TextBlock
+            {
+                Text                = text,
+                FontSize            = fontSize > 0 ? fontSize : (double)this.FindResource("FontSizeBase")!,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment   = VerticalAlignment.Center,
+                Foreground          = (IBrush)this.FindResource("BrushSecondaryText")!,
+            },
+        }, addRightBorder);
+
+    private Control MakeTextHeader(TableColumnDef def)
     {
         var text = new TextBlock
         {
@@ -1024,12 +1071,10 @@ public partial class TableView : UserControl
             HorizontalAlignment = HorizontalAlignment.Stretch,
             VerticalAlignment   = VerticalAlignment.Stretch,
             Padding             = new Thickness(6, 0),
-            BorderBrush         = (IBrush)this.FindResource("BrushSeparator")!,
-            BorderThickness     = new Thickness(0, 0, 1, 0),
             Child               = grid,
         };
         border.Classes.Add("colHeader");   // hover-фон через стиль (Assets/Styles/Controls.axaml)
-        return border;
+        return WrapHeaderContent(border, addRightLine: true);
     }
 
     // Иконка типа свойства слева от названия колонки (серый цвет шапки). null —
@@ -1461,6 +1506,9 @@ public partial class TableView : UserControl
         if (merged.Count == 0) return;
 
         var accent = (IBrush)this.FindResource("BrushAccent")!;
+        // Акцентная рамка вдвое толще стандартной линии — стабилизирована тем же
+        // токеном (2 DIP визуально при любом зуме/DPI).
+        var accentThickness = 2 * LineMetrics.ThicknessFor(this);
         foreach (var (x, w, h) in merged)
         {
             var border = new Border
@@ -1468,7 +1516,7 @@ public partial class TableView : UserControl
                 Width            = w,
                 Height           = h,
                 BorderBrush      = accent,
-                BorderThickness  = new Thickness(2),
+                BorderThickness  = new Thickness(accentThickness),
                 CornerRadius     = new CornerRadius(2),
                 IsHitTestVisible = false,
             };
@@ -1530,8 +1578,8 @@ public partial class TableView : UserControl
     }
 
     // Меню строится с ЛЕНИВЫМ резолвом RecordId из текущего DataContext строки (см. RowRecordId),
-    // а не с захватом id в момент BuildRowContextMenu. Причина: при async-подгрузке строк
-    // (AppSettings.asyncRowLoad) строка сперва realized как заглушка «Загрузка…» с RecordId=0,
+    // а не с захватом id в момент BuildRowContextMenu. Причина: при фоновой подгрузке строк
+    // строка сперва realized как заглушка «Загрузка…» с RecordId=0,
     // и только потом Fill проставляет реальный id в ТОТ ЖЕ VM — без повторного realized, т.е. без
     // повторного OnLoadingRow. Захваченный id остался бы 0: дубль падал «Record 0 not found»,
     // удаление/изменение/сдвиг — тихий no-op. Чтение на момент клика всегда даёт актуальный id.
@@ -2206,12 +2254,13 @@ public partial class TableView : UserControl
         {
             Background       = Brushes.White,   // белая карточка списка на серой подложке (как в сайдбаре)
             BorderBrush     = (IBrush)this.FindResource("BrushSeparator")!,
-            BorderThickness = new Thickness(1),
             CornerRadius    = radius,
             Padding         = new Thickness(8, 6),
             Height          = 232,   // фикс высота — список не «прыгает» при замене «Загрузка…»
             Child           = loadingText,
         };
+        // Карточка живёт в попапе (вне зума) — толщина рамки из попап-токена, живая.
+        valuesHost.Bind(Border.BorderThicknessProperty, valuesHost.GetResourceObservable("BorderLinePopup"));
         panel.Children.Add(valuesHost);
 
         List<(string Raw, int Count)> Matched()
@@ -2611,10 +2660,12 @@ public partial class TableView : UserControl
 
         if (_snapPending || _manualColResize) return;
 
-        // В авто-режиме снапим Star-колонки до целочисленных весов — иначе DataGrid
-        // не рисует вертикальные грид-линии в сабпиксельных позициях. В ручном режиме
-        // снап не нужен: UseLayoutRounding=True на DataGrid уже округляет рендер до
-        // пикселей, а активный снап во время drag делает перетаскивание «дёрганым».
+        // В авто-режиме снапим Star-колонки к ФИЗИЧЕСКОЙ пиксельной сетке (квант =
+        // 1 физ. пиксель в DIP с учётом DPI и зума; при зуме 1 и DPI 1x — целые DIP,
+        // как раньше) — иначе DataGrid рисует вертикальные грид-линии в сабпиксельных
+        // позициях и они округляются по-разному с линиями заголовков. В ручном режиме
+        // снап не нужен: активный снап во время drag делает перетаскивание «дёрганым».
+        var q = 1.0 / LineMetrics.EffectiveScale(this);
         var hasFractional = false;
         for (var i = 0; i < RecordsGrid.Columns.Count && i < _colDefs.Count; i++)
         {
@@ -2622,7 +2673,8 @@ public partial class TableView : UserControl
             if (!def.IsStarWidth) continue;
             var col = RecordsGrid.Columns[i];
             if (col.ActualWidth <= 0 || !col.Width.IsStar) continue;
-            if (col.ActualWidth != Math.Floor(col.ActualWidth)) { hasFractional = true; break; }
+            var units = col.ActualWidth / q;
+            if (Math.Abs(units - Math.Round(units)) > 0.001) { hasFractional = true; break; }
         }
         if (!hasFractional) return;
 
@@ -2645,15 +2697,18 @@ public partial class TableView : UserControl
         }
         if (starCols.Count == 0) return;
 
-        var total = (int)Math.Round(starCols.Sum(c => c.ActualWidth));
-        var baseW = total / starCols.Count;
-        var extra = total % starCols.Count;
+        // Квант — 1 физический пиксель в DIP (учитывает DPI монитора и зум приложения).
+        var q = 1.0 / LineMetrics.EffectiveScale(this);
+        var totalUnits = (int)Math.Round(starCols.Sum(c => c.ActualWidth) / q);
+        var baseU = totalUnits / starCols.Count;
+        var extra = totalUnits % starCols.Count;
 
-        // Star-вес == целочисленным пикселям: сумма весов равна доступной ширине,
-        // каждая колонка получает ровно weight px, ActualWidth выходит целым,
-        // следующий проход LayoutUpdated уже не видит дробного — снап сходится.
+        // Star-вес == целому числу ФИЗИЧЕСКИХ пикселей: сумма весов равна доступной
+        // ширине, каждая колонка получает ровно weight DIP, границы колонок ложатся на
+        // физическую сетку, следующий проход LayoutUpdated уже не видит дробного —
+        // снап сходится.
         for (var i = 0; i < starCols.Count; i++)
-            starCols[i].Width = new DataGridLength(baseW + (i < extra ? 1 : 0),
+            starCols[i].Width = new DataGridLength((baseU + (i < extra ? 1 : 0)) * q,
                                                    DataGridLengthUnitType.Star);
     }
 

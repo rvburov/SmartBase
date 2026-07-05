@@ -45,7 +45,7 @@
                 CornerRadius="{StaticResource RadiusMedium}"
                 Background="{StaticResource BrushSecondaryBg}"
                 BorderBrush="{StaticResource BrushSeparator}"
-                BorderThickness="1.2" />
+                BorderThickness="{DynamicResource BorderLine}" />
 
         <!-- Назад -->
         <Button Grid.Column="2" x:Name="PrevBtn" Classes="navbtn"

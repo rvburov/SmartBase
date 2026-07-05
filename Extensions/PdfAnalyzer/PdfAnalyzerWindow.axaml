@@ -68,7 +68,7 @@
         <!-- Статус -->
         <Border Background="{StaticResource BrushSecondaryBg}"
                 BorderBrush="{StaticResource BrushSeparator}"
-                BorderThickness="1"
+                BorderThickness="{DynamicResource BorderLine}"
                 CornerRadius="{StaticResource RadiusMedium}"
                 Padding="12,10">
             <TextBlock x:Name="StatusText"

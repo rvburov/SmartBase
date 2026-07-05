@@ -5,12 +5,14 @@
         xmlns:con="using:DataBase.Views.ConstructorDb"
         xmlns:settings="using:DataBase.Views.Settings"
         xmlns:ext="using:DataBase.Views.Extensions"
+        xmlns:u="using:DataBase.Utils"
         x:Class="DataBase.Views.MainWindow"
         Classes="main"
         Title="DataBase"
         Width="1331" Height="813"
         Background="{StaticResource BrushBg}"
-        WindowStartupLocation="CenterScreen">
+        WindowStartupLocation="CenterScreen"
+        u:LineMetrics.FollowsAppZoom="True">
 
     <!-- Хост масштабирования: LayoutTransform на корне → весь интерфейс перекомпоновывается
          в логических пикселях и заполняет окно (см. Utils/Scaling + MainWindow.ApplyScale). -->
@@ -39,7 +41,7 @@
              (как у панели записи) — иначе её резало внешним Border'ом. -->
         <Border Grid.Column="2"
                 BorderBrush="{StaticResource BrushSeparator}"
-                BorderThickness="0,0,1,0">
+                BorderThickness="{DynamicResource BorderLineRight}">
             <Grid>
                 <comp:SidebarTree x:Name="CalendarSidebar" />
                 <comp:SidebarTree x:Name="ConstructorSidebar" IsVisible="False" />
@@ -75,7 +77,7 @@
                     CornerRadius="4"
                     Background="{StaticResource BrushBg}"
                     BorderBrush="{StaticResource BrushSeparator}"
-                    BorderThickness="1"
+                    BorderThickness="{DynamicResource BorderLine}"
                     Cursor="SizeWestEast"
                     IsVisible="False"
                     PointerPressed="OnRecordGripPressed"
@@ -115,7 +117,7 @@
                 CornerRadius="4"
                 Background="{StaticResource BrushBg}"
                 BorderBrush="{StaticResource BrushSeparator}"
-                BorderThickness="1"
+                BorderThickness="{DynamicResource BorderLine}"
                 Cursor="SizeWestEast"
                 PointerPressed="OnGripPressed"
                 PointerMoved="OnGripMoved"

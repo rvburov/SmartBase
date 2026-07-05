@@ -128,7 +128,7 @@
         <Border x:Name="ManualPanel" IsVisible="False"
                 Background="{StaticResource BrushBg}"
                 BorderBrush="{StaticResource BrushSeparator}"
-                BorderThickness="1"
+                BorderThickness="{DynamicResource BorderLine}"
                 CornerRadius="{StaticResource RadiusBase}"
                 Padding="12"
                 Margin="0,0,0,12">

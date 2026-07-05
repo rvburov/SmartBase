@@ -14,7 +14,7 @@
                     <Border CornerRadius="9"
                             Background="White"
                             BorderBrush="{StaticResource BrushSeparator}"
-                            BorderThickness="1"
+                            BorderThickness="{DynamicResource BorderLine}"
                             BoxShadow="0 1 3 0 #22000000" />
                 </ControlTemplate>
             </Setter>
@@ -72,7 +72,7 @@
         <!-- Строка одной настройки -->
         <Style Selector="Border.settingRow">
             <Setter Property="BorderBrush"     Value="{StaticResource BrushSeparator}" />
-            <Setter Property="BorderThickness" Value="0,0,0,1" />
+            <Setter Property="BorderThickness" Value="{DynamicResource BorderLineBottom}" />
             <Setter Property="Padding"         Value="0,16" />
         </Style>
         <Style Selector="Border.settingRow TextBlock.title">
@@ -93,37 +93,8 @@
         <!-- Содержимое выбранного раздела -->
         <Grid>
 
-            <!-- ── Общие ─────────────────────────────────────────── -->
-            <ScrollViewer x:Name="GeneralPanel" VerticalScrollBarVisibility="Auto">
-                <Grid>
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*" MaxWidth="1400" />
-                    </Grid.ColumnDefinitions>
-                    <StackPanel Margin="16,16,16,32" Spacing="12">
-                    <TextBlock Text="Основные параметры приложения."
-                               Foreground="{StaticResource BrushSecondaryText}" />
-
-                    <!-- Подгрузка строк с заглушкой «Загрузка…» -->
-                    <Border Classes="settingRow">
-                        <Grid ColumnDefinitions="*,Auto">
-                            <StackPanel Grid.Column="0" Spacing="4"
-                                        VerticalAlignment="Center" Margin="0,0,32,0">
-                                <TextBlock Classes="title" Text="Фоновая подгрузка строк («Загрузка…»)" />
-                                <TextBlock Classes="desc"
-                                           Text="Данные строк подгружаются в фоновом потоке: при прокрутке строки сначала показывают «Загрузка…», затем заполняются — интерфейс не подвисает даже при очень быстрой прокрутке больших таблиц. Выключите для синхронной загрузки (тоже быстрой, ~мс). Изменение вступает в силу при следующем открытии коллекции." />
-                            </StackPanel>
-                            <CheckBox x:Name="AsyncRowLoadCheck"
-                                      Grid.Column="1"
-                                      VerticalAlignment="Center"
-                                      IsCheckedChanged="OnAsyncRowLoadChanged" />
-                        </Grid>
-                    </Border>
-                    </StackPanel>
-                </Grid>
-            </ScrollViewer>
-
             <!-- ── Оформление ────────────────────────────────────── -->
-            <ScrollViewer x:Name="AppearancePanel" IsVisible="False"
+            <ScrollViewer x:Name="AppearancePanel"
                           VerticalScrollBarVisibility="Auto">
                 <Grid>
                     <Grid.ColumnDefinitions>
@@ -239,7 +210,7 @@
                                        IsLightDismissEnabled="False">
                                     <Border Background="{DynamicResource ToolTipBackground}"
                                             BorderBrush="{StaticResource BrushSeparator}"
-                                            BorderThickness="1"
+                                            BorderThickness="{DynamicResource BorderLinePopup}"
                                             CornerRadius="4"
                                             Padding="8,4"
                                             BoxShadow="0 2 8 0 #1A000000">
@@ -299,7 +270,7 @@
                                     <Border x:Name="FontBadgeBorder"
                                             Background="{DynamicResource ToolTipBackground}"
                                             BorderBrush="{StaticResource BrushSeparator}"
-                                            BorderThickness="1"
+                                            BorderThickness="{DynamicResource BorderLinePopup}"
                                             CornerRadius="4"
                                             BoxShadow="0 2 8 0 #1A000000">
                                         <TextBlock x:Name="FontValueText" Text="12"

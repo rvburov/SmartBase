@@ -116,7 +116,7 @@
                                 Padding="10,0,0,0"
                                 Height="{StaticResource RowStepStandard}"
                                 BorderBrush="{StaticResource BrushBg}"
-                                BorderThickness="0,0,0,1"
+                                BorderThickness="{DynamicResource BorderLineBottom}"
                                 Tapped="OnRowTapped"
                                 PointerEntered="OnRowEnter"
                                 PointerExited="OnRowExit"
@@ -158,7 +158,7 @@
                                             IsVisible="{Binding ShowCheckbox}"
                                             Background="{Binding CheckFill}"
                                             BorderBrush="{Binding CheckBorder}"
-                                            BorderThickness="{StaticResource CheckBoxBorderThickness}">
+                                            BorderThickness="{DynamicResource BorderLine}">
                                         <Viewbox Width="{StaticResource CheckBoxGlyphSize}"
                                                  Height="{StaticResource CheckBoxGlyphSize}"
                                                  IsVisible="{Binding Checked}">

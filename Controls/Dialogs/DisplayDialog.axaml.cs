@@ -288,7 +288,6 @@ public partial class DisplayDialog : Window
         var b = new Border
         {
             Width = size, Height = size, CornerRadius = radius,
-            BorderThickness = new Thickness(1.2),
             Background  = secBg,
             BorderBrush = active ? accent : separator,
             Cursor = new Cursor(enabled ? StandardCursorType.Hand : StandardCursorType.Arrow),
@@ -296,6 +295,8 @@ public partial class DisplayDialog : Window
             HorizontalAlignment = HorizontalAlignment.Center,
             Child = child,
         };
+        // Рамка кнопки — стандартная линия (была 1.2), живой токен окна.
+        b.Bind(Border.BorderThicknessProperty, b.GetResourceObservable("BorderLine"));
 
         if (!enabled) return b;
 

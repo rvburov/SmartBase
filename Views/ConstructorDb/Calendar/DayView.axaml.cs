@@ -270,10 +270,11 @@ public partial class DayView : UserControl
                 var selFrame = new Border
                 {
                     CornerRadius     = new CornerRadius(3),
-                    BorderThickness  = new Thickness(1.5),
                     BorderBrush      = Brushes.Transparent,
                     IsHitTestVisible = false,
                 };
+                // Рамка выделения — акцент, ровно 2× стандартной линии (была 1.5).
+                selFrame.Bind(Border.BorderThicknessProperty, selFrame.GetResourceObservable("BorderLineFocus"));
                 Grid.SetColumnSpan(selFrame, 2);
 
                 var innerGrid = new Grid();

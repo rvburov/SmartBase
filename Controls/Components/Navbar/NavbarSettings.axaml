@@ -6,7 +6,7 @@
 
     <Border Padding="16,0">
         <TextBlock x:Name="TitleText"
-                   Text="Общие"
+                   Text="Оформление"
                    VerticalAlignment="Center"
                    FontSize="{DynamicResource FontSizeLarge}"
                    FontWeight="{StaticResource FontWeightBold}"

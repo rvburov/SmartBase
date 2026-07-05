@@ -87,29 +87,10 @@ public static class AppSettings
         else                                  _store?.Set(KeyRecordPanelWidth, width.ToString(CultureInfo.InvariantCulture));
     }
 
-    // ── Подгрузка строк таблицы ────────────────────────────────────────────────
-    //
-    // Виртуализация таблицы (постраничная подгрузка через VirtualCollectionView) — всегда
-    // включена, это часть программы, переключателя нет (без неё большие коллекции зависают).
-
-    // Фоновая подгрузка строк таблицы с заглушкой «Загрузка…» при прокрутке. По умолчанию ВКЛ:
-    // данные страниц грузятся в фоновом потоке (UI не подвисает даже при очень быстром скролле),
-    // строки до прихода данных показывают «Загрузка…». Выкл — синхронная загрузка на UI-потоке
-    // (тоже быстро, ~мс).
-    public const bool AsyncRowLoadDefault = true;   // стандарт: фоновая подгрузка включена
-
-    public static bool LoadAsyncRowLoad()
-    {
-        var v = _store?.Get(KeyAsyncRowLoad);
-        if (v is null) return AsyncRowLoadDefault;
-        return !bool.TryParse(v, out var on) || on;
-    }
-
-    public static void SaveAsyncRowLoad(bool on)
-    {
-        if (on == AsyncRowLoadDefault) _store?.Remove(KeyAsyncRowLoad);
-        else                           _store?.Set(KeyAsyncRowLoad, on ? "true" : "false");
-    }
+    // Виртуализация таблицы (постраничная подгрузка через VirtualCollectionView) и фоновая
+    // подгрузка строк с заглушкой «Загрузка…» — всегда включены, это часть программы,
+    // переключателей нет (без них большие коллекции зависают). Бывший ключ asyncRowLoad
+    // удалён: оставшиеся в app.db значения игнорируются.
 
     // ── Размер шрифта ──────────────────────────────────────────────────────────
     //
@@ -211,7 +192,6 @@ public static class AppSettings
     private const string KeyScale            = "scale";
     private const string KeyRecordPanelOpen  = "recordPanelOpen";
     private const string KeyRecordPanelWidth = "recordPanelWidth";
-    private const string KeyAsyncRowLoad     = "asyncRowLoad";
     private const string KeyFontDelta        = "fontDelta";
     private const string KeyStartupModule    = "startupModule";
     private const string KeyCalendarView     = "calendarView";

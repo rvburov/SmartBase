@@ -57,15 +57,19 @@
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
                                 <Grid Height="60" ClipToBounds="True">
+                                    <!-- EdgeMode=Aliased: на дробных позициях (зум ≠ 1) линия
+                                         защёлкивается в целый пиксель, а не размазывается. -->
                                     <Border BorderBrush="{StaticResource BrushSeparator}"
                                             BorderThickness="{Binding Converter={StaticResource HourBorderConv}}"
+                                            RenderOptions.EdgeMode="Aliased"
                                             VerticalAlignment="Top" />
                                     <shapes:Line StartPoint="0,0.5" EndPoint="10000,0.5"
                                                  Margin="0,30,0,0"
                                                  VerticalAlignment="Top"
                                                  HorizontalAlignment="Left"
                                                  Stroke="{StaticResource BrushSeparator}"
-                                                 StrokeThickness="1"
+                                                 StrokeThickness="{DynamicResource SeparatorThickness}"
+                                                 RenderOptions.EdgeMode="Aliased"
                                                  StrokeDashArray="3,3" />
                                 </Grid>
                             </DataTemplate>
@@ -100,7 +104,7 @@
                 CornerRadius="4"
                 Background="{StaticResource BrushBg}"
                 BorderBrush="{StaticResource BrushSeparator}"
-                BorderThickness="1"
+                BorderThickness="{DynamicResource BorderLine}"
                 Cursor="SizeNorthSouth">
             <StackPanel Orientation="Horizontal" Spacing="3"
                         HorizontalAlignment="Center"

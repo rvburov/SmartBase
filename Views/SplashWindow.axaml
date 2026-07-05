@@ -11,13 +11,13 @@
         Title="DataBase">
 
     <!-- Тонкая рамка вокруг окна (у сплэша нет системной рамки) -->
-    <Border BorderBrush="{StaticResource BrushSeparator}" BorderThickness="1">
+    <Border BorderBrush="{StaticResource BrushSeparator}" BorderThickness="{DynamicResource BorderLine}">
         <DockPanel>
 
             <!-- Шапка как у установщика: название + версия -->
             <Border DockPanel.Dock="Top" Height="76"
                     Background="{StaticResource BrushSecondaryBg}"
-                    BorderBrush="{StaticResource BrushSeparator}" BorderThickness="0,0,0,1">
+                    BorderBrush="{StaticResource BrushSeparator}" BorderThickness="{DynamicResource BorderLineBottom}">
                 <StackPanel VerticalAlignment="Center" Margin="24,0">
                     <TextBlock Text="DataBase"
                                FontSize="{DynamicResource FontSizeLarge}"

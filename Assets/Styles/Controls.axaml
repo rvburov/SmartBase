@@ -1,5 +1,6 @@
 <Styles xmlns="https://github.com/avaloniaui"
-        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:u="using:DataBase.Utils">
 
     <Styles.Resources>
         <!-- Радиусы скругления -->
@@ -10,14 +11,33 @@
         <CornerRadius x:Key="RadiusLarge">12</CornerRadius>
         <CornerRadius x:Key="RadiusPill">15</CornerRadius>
 
-        <!-- Толщина всех разделительных линий (1 DIP). Цвет линий — BrushSeparator.
-             Меняешь здесь — меняется толщина во всём приложении. -->
+        <!-- ── Толщина линий ────────────────────────────────────────────────
+             ДЕФОЛТЫ токенов толщины. Живые значения пишет LineMetrics (Utils) в
+             Resources каждого окна — визуально ~1 логический пиксель при любом зуме
+             приложения и DPI монитора, снап к целым физическим пикселям. Потребители
+             обязаны ссылаться через DynamicResource. Цвет линий — BrushSeparator. -->
         <x:Double x:Key="SeparatorThickness">1</x:Double>
+        <!-- Для поверхностей в попапах (ContextMenu, выпадашки): попапы рендерятся
+             ВНЕ зума приложения, им нужна толщина без компенсации зума. -->
+        <x:Double x:Key="SeparatorThicknessPopup">1</x:Double>
+        <Thickness x:Key="BorderLine">1</Thickness>
+        <Thickness x:Key="BorderLineFocus">2</Thickness>
+        <Thickness x:Key="BorderLineTop">0,1,0,0</Thickness>
+        <Thickness x:Key="BorderLineBottom">0,0,0,1</Thickness>
+        <Thickness x:Key="BorderLineLeft">1,0,0,0</Thickness>
+        <Thickness x:Key="BorderLineRight">0,0,1,0</Thickness>
+        <Thickness x:Key="BorderLinePopup">1</Thickness>
+        <!-- При зуме ≠ 1 layout rounding пере-округлил бы компенсированную толщину
+             (округление идёт в пре-трансформ координатах) — линии-потребители
+             отключают его динамически этим флагом. -->
+        <x:Boolean x:Key="LineUseLayoutRounding">True</x:Boolean>
 
         <!-- Единый стандарт высоты строки (таблица + блоки сайдбара + блоки событий). -->
         <x:Double x:Key="RowHeightStandard">36</x:Double>
         <!-- Шаг строки = высота + линия-разделитель 1px (как сетка таблицы).
-             Используется в сайдбаре, где линия рисуется внутри высоты Border. -->
+             Используется в сайдбаре, где линия рисуется внутри высоты Border.
+             Остаётся 37 сознательно: компенсированная толщина линии отклоняется от 1
+             не больше чем на ~0.2 DIP, межэлементного выравнивания по строкам нет. -->
         <x:Double x:Key="RowStepStandard">37</x:Double>
 
         <!-- Цвет скроллбара -->
@@ -68,6 +88,9 @@
         <!-- Округление координат к физическим пикселям наследуется вниз по дереву:
              1px-линии остаются ровно 1px и не «толстеют» на дробном масштабе ОС. -->
         <Setter Property="UseLayoutRounding" Value="True" />
+        <!-- Каждое окно (включая диалоги) получает динамические токены толщины линий
+             от LineMetrics: пересчёт при смене зума и переезде между мониторами. -->
+        <Setter Property="(u:LineMetrics.IsManaged)" Value="True" />
     </Style>
     <!-- Минимальный размер только у главного окна, не у диалогов -->
     <Style Selector="Window.main">
@@ -83,12 +106,20 @@
          Позиционирование (VerticalAlignment/Margin/ColumnSpan) задаётся по месту. -->
     <Style Selector="Border.separator">
         <Setter Property="Background" Value="{StaticResource BrushSeparator}" />
+        <!-- Компенсированная толщина при зуме ≠ 1 дробная — штатное округление
+             уничтожило бы её, поэтому флаг выключает его динамически (LineMetrics). -->
+        <Setter Property="UseLayoutRounding" Value="{DynamicResource LineUseLayoutRounding}" />
+        <!-- Без сглаживания: при зуме ≠ 1 линия попадает на дробные физические пиксели
+             и антиалиасинг размазал бы края — Aliased защёлкивает её в целый пиксель.
+             Только для линий: на скруглённых рамках дал бы зазубрины. Через мост
+             LineMetrics.Aliased: у RenderOptions нет полей для сеттера стиля. -->
+        <Setter Property="(u:LineMetrics.Aliased)" Value="True" />
     </Style>
     <Style Selector="Border.separator.h">
-        <Setter Property="Height" Value="{StaticResource SeparatorThickness}" />
+        <Setter Property="Height" Value="{DynamicResource SeparatorThickness}" />
     </Style>
     <Style Selector="Border.separator.v">
-        <Setter Property="Width" Value="{StaticResource SeparatorThickness}" />
+        <Setter Property="Width" Value="{DynamicResource SeparatorThickness}" />
     </Style>
 
     <!-- Button -->
@@ -115,7 +146,7 @@
         <Setter Property="FontSize"                   Value="{DynamicResource FontSizeBase}" />
         <Setter Property="FontWeight"                 Value="{StaticResource FontWeightNormal}" />
         <Setter Property="BorderBrush"                Value="{StaticResource BrushSeparator}" />
-        <Setter Property="BorderThickness"            Value="1.2" />
+        <Setter Property="BorderThickness"            Value="{DynamicResource BorderLine}" />
     </Style>
 
     <Style Selector="Button.dialog:pointerover /template/ ContentPresenter">
@@ -184,7 +215,7 @@
         <Setter Property="Background"                 Value="{StaticResource BrushSecondaryBg}" />
         <Setter Property="Foreground"                 Value="{StaticResource BrushSecondaryText}" />
         <Setter Property="BorderBrush"                Value="{StaticResource BrushSeparator}" />
-        <Setter Property="BorderThickness"            Value="1.2" />
+        <Setter Property="BorderThickness"            Value="{DynamicResource BorderLine}" />
         <Setter Property="Padding"                    Value="0" />
         <Setter Property="HorizontalContentAlignment" Value="Center" />
         <Setter Property="VerticalContentAlignment"   Value="Center" />
@@ -238,7 +269,7 @@
              на сером фоне. -->
         <Setter Property="Background"      Value="{StaticResource BrushSecondaryBg}" />
         <Setter Property="BorderBrush"     Value="{StaticResource BrushSeparator}" />
-        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="BorderThickness" Value="{DynamicResource BorderLinePopup}" />
         <Setter Property="CornerRadius"    Value="{StaticResource RadiusMedium}" />
     </Style>
 
@@ -263,7 +294,7 @@
     <Style Selector="ComboBox">
         <Setter Property="Background"      Value="{StaticResource BrushSecondaryBg}" />
         <Setter Property="Foreground"      Value="{StaticResource BrushPrimaryText}" />
-        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="BorderThickness" Value="{DynamicResource BorderLine}" />
         <Setter Property="BorderBrush"     Value="{StaticResource BrushSeparator}" />
         <Setter Property="CornerRadius"    Value="{StaticResource RadiusMedium}" />
         <!-- Выбранное значение по центру по вертикали; единый внутренний отступ
@@ -355,7 +386,7 @@
     <Style Selector="ComboBox /template/ Popup > Border">
         <Setter Property="Background"      Value="{StaticResource BrushSecondaryBg}" />
         <Setter Property="BorderBrush"     Value="{StaticResource BrushSeparator}" />
-        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="BorderThickness" Value="{DynamicResource BorderLinePopup}" />
         <Setter Property="CornerRadius"    Value="{StaticResource RadiusMedium}" />
         <Setter Property="Padding"         Value="0,2" />
         <!-- Зазор между полем и выпадашкой — как у списка времени (timePopup). -->
@@ -368,7 +399,7 @@
         <Setter Property="Foreground"      Value="{StaticResource BrushPrimaryText}" />
         <Setter Property="CornerRadius"    Value="{StaticResource RadiusBase}" />
         <Setter Property="Padding"         Value="10,6" />
-        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="BorderThickness" Value="{DynamicResource BorderLine}" />
         <Setter Property="BorderBrush"     Value="{StaticResource BrushSeparator}" />
         <!-- Выделение текста серым вместо системного синего -->
         <Setter Property="SelectionBrush"           Value="#C7C7CC" />
@@ -604,7 +635,7 @@
     <Style Selector="CalendarDatePicker">
         <Setter Property="Background"      Value="{StaticResource BrushSecondaryBg}" />
         <Setter Property="BorderBrush"     Value="{StaticResource BrushSeparator}" />
-        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="BorderThickness" Value="{DynamicResource BorderLine}" />
         <Setter Property="CornerRadius"    Value="{StaticResource RadiusMedium}" />
         <Setter Property="Foreground"      Value="{StaticResource BrushPrimaryText}" />
         <Setter Property="Padding"         Value="10,0" />
@@ -661,7 +692,7 @@
     <Style Selector="CalendarDatePicker /template/ Popup > Border">
         <Setter Property="Background"      Value="{StaticResource BrushBg}" />
         <Setter Property="BorderBrush"     Value="{StaticResource BrushSeparator}" />
-        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="BorderThickness" Value="{DynamicResource BorderLinePopup}" />
         <Setter Property="CornerRadius"    Value="{StaticResource RadiusMedium}" />
         <Setter Property="BoxShadow"       Value="0 4 16 0 #1A000000" />
     </Style>
@@ -754,11 +785,12 @@
         <Setter Property="BorderThickness" Value="0" />
     </Style>
 
-    <!-- Сегодня -->
+    <!-- Сегодня. Календарь живёт в попапе CalendarDatePicker — попап-токен
+         (рамка была 1.5 — приведена к стандартной 1, как все линии). -->
     <Style Selector="CalendarDayButton:today /template/ Border#Background">
         <Setter Property="Background"      Value="Transparent" />
         <Setter Property="BorderBrush"     Value="{StaticResource BrushAccent}" />
-        <Setter Property="BorderThickness" Value="1.5" />
+        <Setter Property="BorderThickness" Value="{DynamicResource BorderLinePopup}" />
         <Setter Property="CornerRadius"    Value="{StaticResource RadiusBase}" />
     </Style>
 
@@ -837,7 +869,7 @@
     <Style Selector="CalendarButton:calendarbutton-hasbtn /template/ Border#Background">
         <Setter Property="Background"   Value="Transparent" />
         <Setter Property="BorderBrush"  Value="{StaticResource BrushAccent}" />
-        <Setter Property="BorderThickness" Value="1.5" />
+        <Setter Property="BorderThickness" Value="{DynamicResource BorderLinePopup}" />
         <Setter Property="CornerRadius" Value="{StaticResource RadiusBase}" />
     </Style>
 
@@ -852,7 +884,7 @@
     <Style Selector="Border.timeField">
         <Setter Property="Background"      Value="{StaticResource BrushSecondaryBg}" />
         <Setter Property="BorderBrush"     Value="{StaticResource BrushSeparator}" />
-        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="BorderThickness" Value="{DynamicResource BorderLine}" />
         <Setter Property="CornerRadius"    Value="{StaticResource RadiusMedium}" />
     </Style>
 
@@ -861,11 +893,12 @@
         <Setter Property="BorderBrush" Value="{StaticResource BrushAccent}" />
     </Style>
 
-    <!-- Фокус в поле — белый фон + яркая толстая синяя рамка (как у даты) -->
+    <!-- Фокус в поле — белый фон + яркая толстая синяя рамка (как у даты):
+         акцент = ровно 2× стандартной линии. -->
     <Style Selector="Border.timeField:focus-within">
         <Setter Property="Background"      Value="{StaticResource BrushBg}" />
         <Setter Property="BorderBrush"     Value="{StaticResource BrushAccent}" />
-        <Setter Property="BorderThickness" Value="2" />
+        <Setter Property="BorderThickness" Value="{DynamicResource BorderLineFocus}" />
     </Style>
 
     <!-- Поле ввода внутри бокса: прозрачное, без рамки -->
@@ -921,7 +954,7 @@
     <Style Selector="Border.timePopup">
         <Setter Property="Background"      Value="{StaticResource BrushSecondaryBg}" />
         <Setter Property="BorderBrush"     Value="{StaticResource BrushSeparator}" />
-        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="BorderThickness" Value="{DynamicResource BorderLinePopup}" />
         <Setter Property="CornerRadius"    Value="{StaticResource RadiusMedium}" />
         <Setter Property="BoxShadow"       Value="0 4 16 0 #1A000000" />
         <Setter Property="Padding"         Value="0,2" />
@@ -972,7 +1005,7 @@
         <Setter Property="FontSize"        Value="{DynamicResource FontSizeBase}" />
         <Setter Property="Background"      Value="{StaticResource BrushSecondaryBg}" />
         <Setter Property="BorderBrush"     Value="{StaticResource BrushSeparator}" />
-        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="BorderThickness" Value="{DynamicResource BorderLinePopup}" />
         <Setter Property="CornerRadius"    Value="{StaticResource RadiusMedium}" />
         <Setter Property="Padding"         Value="0,2" />
         <Setter Property="MinWidth"        Value="180" />
@@ -1011,7 +1044,7 @@
     <Style Selector="MenuFlyoutPresenter">
         <Setter Property="Background"      Value="{StaticResource BrushSecondaryBg}" />
         <Setter Property="BorderBrush"     Value="{StaticResource BrushSeparator}" />
-        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="BorderThickness" Value="{DynamicResource BorderLinePopup}" />
         <Setter Property="CornerRadius"    Value="{StaticResource RadiusMedium}" />
         <Setter Property="Padding"         Value="0,2" />
         <Setter Property="MinWidth"        Value="180" />
@@ -1026,7 +1059,7 @@
     <Style Selector="MenuItem /template/ Border#PART_Popup">
         <Setter Property="Background"      Value="{StaticResource BrushSecondaryBg}" />
         <Setter Property="BorderBrush"     Value="{StaticResource BrushSeparator}" />
-        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="BorderThickness" Value="{DynamicResource BorderLinePopup}" />
         <Setter Property="CornerRadius"    Value="{StaticResource RadiusMedium}" />
         <Setter Property="Padding"         Value="0,2" />
     </Style>

@@ -12,7 +12,7 @@
         <Style Selector="Border.proprow">
             <Setter Property="Background"      Value="Transparent" />
             <Setter Property="BorderBrush"     Value="{StaticResource BrushSeparator}" />
-            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="BorderThickness" Value="{DynamicResource BorderLine}" />
             <Setter Property="CornerRadius"    Value="{StaticResource RadiusMedium}" />
             <Setter Property="Padding"         Value="10,3" />
             <Setter Property="MinHeight"       Value="40" />
@@ -54,7 +54,7 @@
         <Style Selector="Border.addprop">
             <Setter Property="Background"      Value="Transparent" />
             <Setter Property="BorderBrush"     Value="{StaticResource BrushSeparator}" />
-            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="BorderThickness" Value="{DynamicResource BorderLine}" />
             <Setter Property="CornerRadius"    Value="{StaticResource RadiusMedium}" />
             <Setter Property="Padding"         Value="10,3" />
             <Setter Property="MinHeight"       Value="40" />
@@ -99,7 +99,7 @@
                 CornerRadius="4"
                 Background="{StaticResource BrushBg}"
                 BorderBrush="{StaticResource BrushSeparator}"
-                BorderThickness="1"
+                BorderThickness="{DynamicResource BorderLine}"
                 Cursor="SizeNorthSouth"
                 PointerPressed="OnPropsGripPressed"
                 PointerMoved="OnPropsGripMoved"

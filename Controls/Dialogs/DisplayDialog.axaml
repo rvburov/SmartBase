@@ -35,7 +35,7 @@
                  сверху/снизу (как строки сайдбара). ClipToBounds — обрезка по скруглению. -->
             <Border Grid.Row="1"
                     BorderBrush="{StaticResource BrushSeparator}"
-                    BorderThickness="1"
+                    BorderThickness="{DynamicResource BorderLine}"
                     CornerRadius="{StaticResource RadiusBase}"
                     ClipToBounds="True"
                     Padding="0">

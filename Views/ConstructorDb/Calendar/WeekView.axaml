@@ -15,7 +15,7 @@
         <!-- Заголовки дней недели — 72px пустой отступ + 7 равных колонок -->
         <Border Grid.Row="0"
                 BorderBrush="{StaticResource BrushSeparator}"
-                BorderThickness="0,0,0,1">
+                BorderThickness="{DynamicResource BorderLineBottom}">
             <Grid ColumnDefinitions="72,*"
                   Background="{StaticResource BrushSecondaryBg}">
                 <UniformGrid Grid.Column="1" x:Name="WeekHeaderDays" Columns="7" />
@@ -68,9 +68,12 @@
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
                                 <Grid Height="60" ClipToBounds="True">
-                                    <!-- сплошная линия часа (скрыта для 00:00) -->
+                                    <!-- сплошная линия часа (скрыта для 00:00). EdgeMode=Aliased:
+                                         на дробных позициях (зум ≠ 1) линия защёлкивается в целый
+                                         пиксель, а не размазывается. -->
                                     <Border BorderBrush="{StaticResource BrushSeparator}"
                                             BorderThickness="{Binding Converter={StaticResource HourBorderConv}}"
+                                            RenderOptions.EdgeMode="Aliased"
                                             VerticalAlignment="Top" />
                                     <!-- пунктирная линия получаса -->
                                     <shapes:Line StartPoint="0,0.5" EndPoint="10000,0.5"
@@ -78,7 +81,8 @@
                                                  VerticalAlignment="Top"
                                                  HorizontalAlignment="Left"
                                                  Stroke="{StaticResource BrushSeparator}"
-                                                 StrokeThickness="1"
+                                                 StrokeThickness="{DynamicResource SeparatorThickness}"
+                                                 RenderOptions.EdgeMode="Aliased"
                                                  StrokeDashArray="3,3" />
                                 </Grid>
                             </DataTemplate>
@@ -113,7 +117,7 @@
                 CornerRadius="4"
                 Background="{StaticResource BrushBg}"
                 BorderBrush="{StaticResource BrushSeparator}"
-                BorderThickness="1"
+                BorderThickness="{DynamicResource BorderLine}"
                 Cursor="SizeNorthSouth">
             <StackPanel Orientation="Horizontal" Spacing="3"
                         HorizontalAlignment="Center"
