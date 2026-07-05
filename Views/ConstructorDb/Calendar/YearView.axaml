@@ -17,13 +17,13 @@
         </Viewbox>
 
         <!-- Попап со списком событий дня, привязывается к ячейке числа -->
-        <Popup x:Name="DayPopup"
+        <Popup x:Name="DayPopup" InheritsTransform="True"
                Placement="Bottom"
                IsLightDismissEnabled="True"
                HorizontalOffset="0" VerticalOffset="4">
             <Border Background="{StaticResource BrushBg}"
                     BorderBrush="{StaticResource BrushSeparator}"
-                    BorderThickness="{DynamicResource BorderLinePopup}"
+                    BorderThickness="{DynamicResource BorderLine}"
                     CornerRadius="{StaticResource RadiusMedium}"
                     BoxShadow="0 4 16 0 #1A000000"
                     Padding="12"

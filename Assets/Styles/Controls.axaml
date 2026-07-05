@@ -17,8 +17,9 @@
              приложения и DPI монитора, снап к целым физическим пикселям. Потребители
              обязаны ссылаться через DynamicResource. Цвет линий — BrushSeparator. -->
         <x:Double x:Key="SeparatorThickness">1</x:Double>
-        <!-- Для поверхностей в попапах (ContextMenu, выпадашки): попапы рендерятся
-             ВНЕ зума приложения, им нужна толщина без компенсации зума. -->
+        <!-- Legacy: толщина без компенсации зума — для контента ВНЕ зум-трансформа.
+             Сейчас зумируется всё (окна — WindowZoom, попапы — обёртки AppZoomTransform),
+             поэтому потребители в попапах тоже используют SeparatorThickness/BorderLine. -->
         <x:Double x:Key="SeparatorThicknessPopup">1</x:Double>
         <Thickness x:Key="BorderLine">1</Thickness>
         <Thickness x:Key="BorderLineFocus">2</Thickness>
@@ -31,6 +32,10 @@
              (округление идёт в пре-трансформ координатах) — линии-потребители
              отключают его динамически этим флагом. -->
         <x:Boolean x:Key="LineUseLayoutRounding">True</x:Boolean>
+
+        <!-- Дефолт трансформа зума приложения для обёрток попапов (живое значение
+             публикует Scaling в Application.Resources при загрузке и смене зума). -->
+        <ScaleTransform x:Key="AppZoomTransform" ScaleX="1" ScaleY="1" />
 
         <!-- Единый стандарт высоты строки (таблица + блоки сайдбара + блоки событий). -->
         <x:Double x:Key="RowHeightStandard">36</x:Double>
@@ -91,6 +96,10 @@
         <!-- Каждое окно (включая диалоги) получает динамические токены толщины линий
              от LineMetrics: пересчёт при смене зума и переезде между мониторами. -->
         <Setter Property="(u:LineMetrics.IsManaged)" Value="True" />
+        <!-- Каждое отдельное окно (диалоги, расширения, сплэш) масштабируется под общий
+             зум приложения: контент — LayoutTransform, габариты — ×зум. MainWindow
+             исключён внутри WindowZoom (у него собственный ScaleHost). -->
+        <Setter Property="(u:WindowZoom.Enabled)" Value="True" />
     </Style>
     <!-- Минимальный размер только у главного окна, не у диалогов -->
     <Style Selector="Window.main">
@@ -383,10 +392,12 @@
         <Setter Property="TextElement.Foreground" Value="{StaticResource BrushPrimaryText}" />
     </Style>
 
+    <!-- Выпадашка наследует зум приложения (Fluent-шаблон ComboBox сам ставит
+         InheritsTransform на PART_Popup) → токены обычные, не Popup-вариант. -->
     <Style Selector="ComboBox /template/ Popup > Border">
         <Setter Property="Background"      Value="{StaticResource BrushSecondaryBg}" />
         <Setter Property="BorderBrush"     Value="{StaticResource BrushSeparator}" />
-        <Setter Property="BorderThickness" Value="{DynamicResource BorderLinePopup}" />
+        <Setter Property="BorderThickness" Value="{DynamicResource BorderLine}" />
         <Setter Property="CornerRadius"    Value="{StaticResource RadiusMedium}" />
         <Setter Property="Padding"         Value="0,2" />
         <!-- Зазор между полем и выпадашкой — как у списка времени (timePopup). -->
@@ -688,11 +699,14 @@
         </Setter>
     </Style>
 
-    <!-- Popup календаря -->
+    <!-- Popup календаря наследует зум приложения (Fluent сам это не ставит) -->
+    <Style Selector="CalendarDatePicker /template/ Popup#PART_Popup">
+        <Setter Property="InheritsTransform" Value="True" />
+    </Style>
     <Style Selector="CalendarDatePicker /template/ Popup > Border">
         <Setter Property="Background"      Value="{StaticResource BrushBg}" />
         <Setter Property="BorderBrush"     Value="{StaticResource BrushSeparator}" />
-        <Setter Property="BorderThickness" Value="{DynamicResource BorderLinePopup}" />
+        <Setter Property="BorderThickness" Value="{DynamicResource BorderLine}" />
         <Setter Property="CornerRadius"    Value="{StaticResource RadiusMedium}" />
         <Setter Property="BoxShadow"       Value="0 4 16 0 #1A000000" />
     </Style>
@@ -785,12 +799,12 @@
         <Setter Property="BorderThickness" Value="0" />
     </Style>
 
-    <!-- Сегодня. Календарь живёт в попапе CalendarDatePicker — попап-токен
-         (рамка была 1.5 — приведена к стандартной 1, как все линии). -->
+    <!-- Сегодня. Календарь живёт в попапе CalendarDatePicker — попап наследует зум,
+         токен обычный (рамка была 1.5 — приведена к стандартной 1, как все линии). -->
     <Style Selector="CalendarDayButton:today /template/ Border#Background">
         <Setter Property="Background"      Value="Transparent" />
         <Setter Property="BorderBrush"     Value="{StaticResource BrushAccent}" />
-        <Setter Property="BorderThickness" Value="{DynamicResource BorderLinePopup}" />
+        <Setter Property="BorderThickness" Value="{DynamicResource BorderLine}" />
         <Setter Property="CornerRadius"    Value="{StaticResource RadiusBase}" />
     </Style>
 
@@ -869,7 +883,7 @@
     <Style Selector="CalendarButton:calendarbutton-hasbtn /template/ Border#Background">
         <Setter Property="Background"   Value="Transparent" />
         <Setter Property="BorderBrush"  Value="{StaticResource BrushAccent}" />
-        <Setter Property="BorderThickness" Value="{DynamicResource BorderLinePopup}" />
+        <Setter Property="BorderThickness" Value="{DynamicResource BorderLine}" />
         <Setter Property="CornerRadius" Value="{StaticResource RadiusBase}" />
     </Style>
 
@@ -950,11 +964,11 @@
         <Setter Property="Background" Value="Transparent" />
     </Style>
 
-    <!-- Popup со списком времени -->
+    <!-- Popup со списком времени (его Popup наследует зум — InheritsTransform в XAML) -->
     <Style Selector="Border.timePopup">
         <Setter Property="Background"      Value="{StaticResource BrushSecondaryBg}" />
         <Setter Property="BorderBrush"     Value="{StaticResource BrushSeparator}" />
-        <Setter Property="BorderThickness" Value="{DynamicResource BorderLinePopup}" />
+        <Setter Property="BorderThickness" Value="{DynamicResource BorderLine}" />
         <Setter Property="CornerRadius"    Value="{StaticResource RadiusMedium}" />
         <Setter Property="BoxShadow"       Value="0 4 16 0 #1A000000" />
         <Setter Property="Padding"         Value="0,2" />
@@ -1001,14 +1015,23 @@
     <!-- ContextMenu / MenuItem: визуально как ComboBox-выпадашка.
          Фон/рамка/скругление контейнера повторяют ComboBox Popup, элементы — ComboBoxItem
          (наведение/выделение тем же ресурсом MenuFlyoutItemBackgroundPointerOver). -->
+    <!-- Меню отмасштабировано зум-обёрткой в своей теме (ZoomPopupThemes) —
+         рамка ВНУТРИ трансформа, токен обычный. -->
     <Style Selector="ContextMenu">
         <Setter Property="FontSize"        Value="{DynamicResource FontSizeBase}" />
         <Setter Property="Background"      Value="{StaticResource BrushSecondaryBg}" />
         <Setter Property="BorderBrush"     Value="{StaticResource BrushSeparator}" />
-        <Setter Property="BorderThickness" Value="{DynamicResource BorderLinePopup}" />
+        <Setter Property="BorderThickness" Value="{DynamicResource BorderLine}" />
         <Setter Property="CornerRadius"    Value="{StaticResource RadiusMedium}" />
         <Setter Property="Padding"         Value="0,2" />
         <Setter Property="MinWidth"        Value="180" />
+    </Style>
+
+    <!-- Сабменю наследует зум приложения: контекстное меню отмасштабировано обёрткой
+         в своей теме (ZoomPopupThemes), а попап сабменю берёт накопленный трансформ
+         плейсмент-таргета (пункта меню) — как выпадашка ComboBox в Fluent. -->
+    <Style Selector="MenuItem /template/ Popup#PART_Popup">
+        <Setter Property="InheritsTransform" Value="True" />
     </Style>
 
     <Style Selector="MenuItem">
@@ -1051,15 +1074,17 @@
     </Style>
 
     <!-- Подменю у вложенного MenuItem (Popup со списком цветов): фон/рамка/радиус
-         как у основного контекстного меню. Шаблон MenuItem кладёт сабменю в
-         Border#PART_Popup + ScrollViewer#PART_ScrollViewer.
+         как у основного контекстного меню. В шаблоне Fluent сабменю лежит в
+         БЕЗЫМЯННОМ Border — прямом ребёнке Popup#PART_Popup (селектор Border#PART_Popup
+         не матчился бы: PART_Popup — имя самого Popup). Попап наследует зум
+         (InheritsTransform выше) → рамка внутри трансформа, токен обычный.
          Зазор от меню (чтобы не наезжало) задаётся в коде: HorizontalOffset попапа правится
          на инстансе (Sidebar.FixSubmenuGap), т.к. шаблон темы ставит его локальным значением,
          которое стиль перебить не может. -->
-    <Style Selector="MenuItem /template/ Border#PART_Popup">
+    <Style Selector="MenuItem /template/ Popup#PART_Popup > Border">
         <Setter Property="Background"      Value="{StaticResource BrushSecondaryBg}" />
         <Setter Property="BorderBrush"     Value="{StaticResource BrushSeparator}" />
-        <Setter Property="BorderThickness" Value="{DynamicResource BorderLinePopup}" />
+        <Setter Property="BorderThickness" Value="{DynamicResource BorderLine}" />
         <Setter Property="CornerRadius"    Value="{StaticResource RadiusMedium}" />
         <Setter Property="Padding"         Value="0,2" />
     </Style>

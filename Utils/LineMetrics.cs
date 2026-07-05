@@ -15,8 +15,11 @@ namespace DataBase.Utils;
 /// скомпенсированные так, чтобы после зума линия занимала целое число физических
 /// пикселей, визуально равное 1 DIP:
 ///   physTarget = max(1, round(RenderScaling))   — целевая толщина в физ. пикселях;
-///   t    = physTarget / RenderScaling / zoom    — для контента под ScaleHost;
-///   tPop = physTarget / RenderScaling           — для попапов (рендерятся вне зума).
+///   t    = physTarget / RenderScaling / zoom    — для контента под зумом;
+///   tPop = physTarget / RenderScaling           — для контента ВНЕ зума (legacy).
+/// Зум применяется КО ВСЕМ окнам (MainWindow — ScaleHost, остальные — WindowZoom) и ко
+/// всем попапам (LayoutTransformControl-обёртки с ресурсом "AppZoomTransform"), поэтому
+/// токен t действует везде; tPop оставлен на случай контента вне трансформа.
 /// Токены (DynamicResource): SeparatorThickness, SeparatorThicknessPopup (double);
 /// BorderLine, BorderLineFocus (=2×), BorderLineTop/Bottom/Left/Right, BorderLinePopup
 /// (Thickness); LineUseLayoutRounding (bool) — при zoom≠1 layout rounding пере-округлил
@@ -82,8 +85,8 @@ public static class LineMetrics
     public static double PhysTarget(double renderScaling) =>
         Math.Max(1.0, Math.Round(renderScaling));
 
-    /// <summary>Толщина линии в локальных DIP для визуала (учитывает DPI его TopLevel и,
-    /// если это контент MainWindow, зум приложения; попапы зуму не подчиняются).</summary>
+    /// <summary>Толщина линии в локальных DIP для визуала (учитывает DPI его TopLevel и
+    /// зум приложения — зумируются все окна и попапы).</summary>
     public static double ThicknessFor(Visual v)
     {
         var (rs, zoom) = ScalesFor(v);
@@ -102,8 +105,9 @@ public static class LineMetrics
     {
         var tl = TopLevel.GetTopLevel(v);
         var rs = tl?.RenderScaling ?? 1.0;
-        var zoom = tl is Window w && w.GetValue(FollowsAppZoomProperty) ? Scaling.Current : 1.0;
-        return (rs, zoom);
+        // Зум приложения действует везде: главное окно (ScaleHost), отдельные окна
+        // (WindowZoom) и попапы (обёртки AppZoomTransform).
+        return (rs, Scaling.Current);
     }
 
     // ── Подключение окна ──────────────────────────────────────────────────────
@@ -121,7 +125,7 @@ public static class LineMetrics
     private static void Apply(Window w)
     {
         var rs   = w.RenderScaling;
-        var zoom = w.GetValue(FollowsAppZoomProperty) ? Scaling.Current : 1.0;
+        var zoom = Scaling.Current;   // зумируются ВСЕ окна (MainWindow — ScaleHost, остальные — WindowZoom)
         var phys = PhysTarget(rs);
         var t    = phys / rs / zoom;
         var tPop = phys / rs;

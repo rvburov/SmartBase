@@ -204,16 +204,17 @@
                                         SmallChange="10" LargeChange="10"
                                         ValueChanged="OnScaleChanged"
                                         PointerEntered="OnScaleSliderEntered"
+                                        PointerMoved="OnScaleSliderMoved"
                                         PointerExited="OnScaleSliderExited" />
 
                                 <!-- Пузырёк со значением над ползунком: текущий масштаб в процентах. -->
-                                <Popup x:Name="ScaleValuePopup"
+                                <Popup x:Name="ScaleValuePopup" InheritsTransform="True"
                                        PlacementTarget="{Binding #ScaleSlider}"
                                        Placement="Top" VerticalOffset="-6"
                                        IsLightDismissEnabled="False">
                                     <Border Background="{DynamicResource ToolTipBackground}"
                                             BorderBrush="{StaticResource BrushSeparator}"
-                                            BorderThickness="{DynamicResource BorderLinePopup}"
+                                            BorderThickness="{DynamicResource BorderLine}"
                                             CornerRadius="4"
                                             Padding="8,4"
                                             BoxShadow="0 2 8 0 #1A000000">
@@ -260,24 +261,27 @@
                                         SmallChange="1" LargeChange="1"
                                         ValueChanged="OnFontSizeChanged"
                                         PointerEntered="OnFontSliderEntered"
+                                        PointerMoved="OnFontSliderMoved"
                                         PointerExited="OnFontSliderExited" />
 
                                 <!-- Пузырёк со значением над ползунком: показывает итоговый
                                      базовый размер текста (стандарт ± дельта). -->
-                                <Popup x:Name="FontValuePopup"
+                                <Popup x:Name="FontValuePopup" InheritsTransform="True"
                                        PlacementTarget="{Binding #FontSizeSlider}"
                                        Placement="Top" VerticalOffset="-6"
                                        IsLightDismissEnabled="False">
-                                    <!-- Квадратная плашка-индикатор: сторона считается от текущего
-                                         размера шрифта (масштабируется вместе с ним). Стиль — как у
-                                         обычных подсказок (светлый фон + серая рамка). -->
+                                    <!-- Плашка-индикатор постоянного размера (как пузырёк масштаба):
+                                         меняется только число. Размер текста пришпилен StaticResource —
+                                         иначе плашка росла бы вместе с применённым размером шрифта. -->
                                     <Border x:Name="FontBadgeBorder"
                                             Background="{DynamicResource ToolTipBackground}"
                                             BorderBrush="{StaticResource BrushSeparator}"
-                                            BorderThickness="{DynamicResource BorderLinePopup}"
+                                            BorderThickness="{DynamicResource BorderLine}"
                                             CornerRadius="4"
+                                            Padding="8,4"
                                             BoxShadow="0 2 8 0 #1A000000">
                                         <TextBlock x:Name="FontValueText" Text="12"
+                                                   FontSize="{StaticResource FontSizeBase}"
                                                    Foreground="{DynamicResource ToolTipForeground}"
                                                    TextAlignment="Center"
                                                    HorizontalAlignment="Center"

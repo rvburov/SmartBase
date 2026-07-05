@@ -912,8 +912,9 @@ public partial class SidebarTree : UserControl
                 Children = { selectAll, new ScrollViewer { MaxHeight = 240, Content = list } },
             },
         };
-        // Карточка живёт в попапе меню (вне зума) — толщина рамки из попап-токена, живая.
-        listBox.Bind(Border.BorderThicknessProperty, listBox.GetResourceObservable("BorderLinePopup"));
+        // Карточка живёт в попапе сабменю — попап наследует зум (InheritsTransform
+        // ставит стиль MenuItem в Controls.axaml), токен обычный.
+        listBox.Bind(Border.BorderThicknessProperty, listBox.GetResourceObservable("BorderLine"));
         panel.Children.Add(listBox);
 
         return panel;

@@ -2103,7 +2103,9 @@ public partial class TableView : UserControl
 
         var flyout = new Flyout { Placement = PlacementMode.BottomEdgeAlignedRight };
         flyout.FlyoutPresenterClasses.Add("filterFlyout");
-        flyout.Content = BuildFilterPanel(def, () => flyout.Hide());
+        // Флайаут рендерится в отдельном попап-окне вне зума приложения — контент
+        // оборачивается в зум-трансформ (плашка-презентер остаётся вне зума).
+        flyout.Content = WindowZoom.WrapPopupContent(BuildFilterPanel(def, () => flyout.Hide()));
         flyout.Closed += (_, _) => { if (ReferenceEquals(_activeFilterFlyout, flyout)) _activeFilterFlyout = null; };
         _activeFilterFlyout = flyout;
         flyout.ShowAt(anchor);
@@ -2271,8 +2273,8 @@ public partial class TableView : UserControl
             Height          = 232,   // фикс высота — список не «прыгает» при замене «Загрузка…»
             Child           = loadingText,
         };
-        // Карточка живёт в попапе (вне зума) — толщина рамки из попап-токена, живая.
-        valuesHost.Bind(Border.BorderThicknessProperty, valuesHost.GetResourceObservable("BorderLinePopup"));
+        // Карточка живёт в контенте флайаута, обёрнутом в зум-трансформ — токен обычный.
+        valuesHost.Bind(Border.BorderThicknessProperty, valuesHost.GetResourceObservable("BorderLine"));
         panel.Children.Add(valuesHost);
 
         List<(string Raw, int Count)> Matched()
@@ -2464,8 +2466,8 @@ public partial class TableView : UserControl
         return btn;
     }
 
-    // Разделитель в попапе фильтра: попапы рендерятся ВНЕ зума приложения → токен
-    // SeparatorThicknessPopup; Border пустой → Aliased защёлкивает линию в целый пиксель.
+    // Разделитель в попапе фильтра: контент флайаута обёрнут в зум-трансформ
+    // (WrapPopupContent) → токен обычный; Border пустой → Aliased защёлкивает линию.
     private Border MakeSeparator()
     {
         var sep = new Border
@@ -2473,7 +2475,7 @@ public partial class TableView : UserControl
             Background = (IBrush)this.FindResource("BrushSeparator")!,
             Margin     = new Thickness(0, 6),
         };
-        sep.Bind(HeightProperty, sep.GetResourceObservable("SeparatorThicknessPopup"));
+        sep.Bind(HeightProperty, sep.GetResourceObservable("SeparatorThickness"));
         sep.Bind(UseLayoutRoundingProperty, sep.GetResourceObservable("LineUseLayoutRounding"));
         Avalonia.Media.RenderOptions.SetEdgeMode(sep, Avalonia.Media.EdgeMode.Aliased);
         return sep;

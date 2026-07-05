@@ -1,5 +1,6 @@
 using Avalonia.Controls;
 using Avalonia.Threading;
+using DataBase.Utils;
 
 namespace DataBase.Controls.Widgets;
 
@@ -35,7 +36,8 @@ public static class Toast
 
         var flyout = new Flyout
         {
-            Content = content,
+            // Всплывашка рендерится вне зума приложения — контент в зум-обёртке.
+            Content = WindowZoom.WrapPopupContent(content),
             Placement = placement,
             ShowMode = FlyoutShowMode.Transient,   // не забирает фокус
         };

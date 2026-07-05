@@ -78,7 +78,7 @@
                                     </Canvas>
                                 </Viewbox>
                             </Button>
-                            <Popup Grid.Column="0" x:Name="StartTimePopup"
+                            <Popup Grid.Column="0" x:Name="StartTimePopup" InheritsTransform="True"
                                    PlacementTarget="{Binding #StartTimeBorder}"
                                    Placement="BottomEdgeAlignedLeft"
                                    IsLightDismissEnabled="True">
@@ -119,7 +119,7 @@
                                     </Canvas>
                                 </Viewbox>
                             </Button>
-                            <Popup Grid.Column="0" x:Name="EndTimePopup"
+                            <Popup Grid.Column="0" x:Name="EndTimePopup" InheritsTransform="True"
                                    PlacementTarget="{Binding #EndTimeBorder}"
                                    Placement="BottomEdgeAlignedLeft"
                                    IsLightDismissEnabled="True">

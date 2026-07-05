@@ -17,7 +17,7 @@
                     </Canvas>
                 </Viewbox>
             </Button>
-            <Popup Grid.Column="0" x:Name="Pop"
+            <Popup Grid.Column="0" x:Name="Pop" InheritsTransform="True"
                    PlacementTarget="{Binding #Box}"
                    Placement="BottomEdgeAlignedLeft"
                    IsLightDismissEnabled="True">

@@ -81,9 +81,34 @@
 
 ## Масштаб интерфейса
 
-Масштаб (1.0–1.3, шаг 0.1) хранится в настройках (`AppSettings.LoadScale/SaveScale`)
-и применяется через [Utils/Scaling.cs](../../Utils/Scaling.cs). Диапазон и шаг —
-константы в [AppSettings](../../Utils/AppSettings.cs).
+Масштаб (0.7–1.3, шаг 0.1) хранится в настройках (`AppSettings.LoadScale/SaveScale`),
+центр — [Utils/Scaling.cs](../../Utils/Scaling.cs); диапазон и шаг — константы в
+[AppSettings](../../Utils/AppSettings.cs). Зумируется ВСЁ приложение, четырьмя
+механизмами (новые поверхности обязаны попадать в один из них):
+
+- **MainWindow** — `LayoutTransform` на ScaleHost (MainWindow.ApplyScale по
+  `Scaling.ScaleChanged`).
+- **Отдельные окна** (диалоги, окна расширений, сплэш, установщик) —
+  [Utils/WindowZoom.cs](../../Utils/WindowZoom.cs), подключается глобальным стилем
+  `Window` в Controls.axaml: контент оборачивается в LayoutTransformControl, конечные
+  габариты окна (Width/Height/Min/Max) умножаются на зум, SizeToContent пересчитывается
+  сам; пересчёт живых окон по `Scaling.ScaleChanged`.
+- **Попапы с доступным Popup** — `Popup.InheritsTransform="True"`: попап берёт
+  накопленный трансформ плейсмент-таргета. Ставится атрибутом у XAML-попапов
+  (TimeField/DateField/DateEditor, время в RecordDialog, пузырьки настроек, попап дня
+  в Годе) и стилями в Controls.axaml для сабменю `MenuItem /template/ Popup#PART_Popup`
+  и `CalendarDatePicker`; ComboBox наследует из коробки (Fluent).
+- **Попапы с недоступным Popup** — ContextMenu и ToolTip (их Popup создаётся внутри
+  Avalonia): локальные копии тем с обёрткой корня шаблона в LayoutTransformControl —
+  [ZoomPopupThemes.axaml](../../Assets/Styles/ZoomPopupThemes.axaml) (пришпилены к
+  Avalonia 11.2.3, паспорт в файле). Flyout-контент из кода — через
+  `WindowZoom.WrapPopupContent(...)` (фильтр таблицы, Toast).
+
+Трансформ зума публикуется ресурсом приложения `AppZoomTransform` (Scaling) — его
+используют все обёртки через DynamicResource. Токены линий: всё, что внутри зума
+(включая контент попапов), использует ОБЫЧНЫЕ токены (`BorderLine`,
+`SeparatorThickness`); `BorderLinePopup`/`SeparatorThicknessPopup` остаются только для
+хрома вне трансформа (плашки FlyoutPresenter: filterFlyout, toast).
 
 ## Связанные документы
 

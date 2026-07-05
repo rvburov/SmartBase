@@ -1,0 +1,108 @@
+<ResourceDictionary xmlns="https://github.com/avaloniaui"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <!-- ═══ ПАСПОРТ ФАЙЛА ══════════════════════════════════════════════════════
+         Локальные копии тем ContextMenu и ToolTip из Avalonia.Themes.Fluent,
+         тег 11.2.3 (src/Avalonia.Themes.Fluent/Controls/{ContextMenu,ToolTip}.xaml).
+         При апгрейде Avalonia — передиффить с новыми исходниками!
+
+         ЗАЧЕМ: контекстные меню и тултипы рендерятся в отдельных попап-окнах и НЕ
+         наследуют зум приложения (LayoutTransform главного окна). Их внутренние
+         Popup создаются в коде Avalonia без InheritsTransform и снаружи недоступны,
+         поэтому единственный способ отмасштабировать — обернуть корень ШАБЛОНА в
+         LayoutTransformControl с трансформом зума (ресурс "AppZoomTransform",
+         публикует Utils/Scaling). Попап-хост сам подстраивается под итоговый размер.
+
+         Отличия от оригинала:
+         1) корень шаблона обёрнут в LayoutTransformControl (зум);
+         2) ScrollViewer без Theme="FluentMenuScrollViewer" (приватный StaticResource
+            Fluent недоступен из копии; меню приложения короткие);
+         3) у ContextMenu убран Design.PreviewWith; у MenuItem копий нет — сабменю
+            наследуют зум через стиль Popup#PART_Popup InheritsTransform=True
+            (Controls.axaml), т.к. сами лежат внутри уже отмасштабированного меню.
+
+         Выпадашки ComboBox отдельной копии не требуют: Fluent-шаблон ComboBox сам
+         ставит InheritsTransform="True" на PART_Popup.
+         ════════════════════════════════════════════════════════════════════ -->
+
+    <Thickness x:Key="MenuFlyoutScrollerMargin">0,4,0,4</Thickness>
+    <x:Double x:Key="ToolTipContentMaxWidth">320</x:Double>
+
+    <ControlTheme x:Key="{x:Type ContextMenu}" TargetType="ContextMenu">
+        <Setter Property="Background" Value="{DynamicResource MenuFlyoutPresenterBackground}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource MenuFlyoutPresenterBorderBrush}" />
+        <Setter Property="BorderThickness" Value="{DynamicResource MenuFlyoutPresenterBorderThemeThickness}" />
+        <Setter Property="CornerRadius" Value="{DynamicResource OverlayCornerRadius}" />
+        <Setter Property="Focusable" Value="True" />
+        <Setter Property="MaxWidth" Value="{DynamicResource FlyoutThemeMaxWidth}" />
+        <Setter Property="MinHeight" Value="{DynamicResource MenuFlyoutThemeMinHeight}" />
+        <Setter Property="Padding" Value="{DynamicResource MenuFlyoutPresenterThemePadding}" />
+        <Setter Property="HorizontalAlignment" Value="Stretch" />
+        <Setter Property="WindowManagerAddShadowHint" Value="False" />
+        <Setter Property="Template">
+            <ControlTemplate>
+                <!-- ЗУМ: единственное структурное отличие от Fluent -->
+                <LayoutTransformControl LayoutTransform="{DynamicResource AppZoomTransform}">
+                    <Border Background="{TemplateBinding Background}"
+                            BorderBrush="{TemplateBinding BorderBrush}"
+                            BorderThickness="{TemplateBinding BorderThickness}"
+                            Padding="{TemplateBinding Padding}"
+                            MaxWidth="{TemplateBinding MaxWidth}"
+                            MinHeight="{TemplateBinding MinHeight}"
+                            HorizontalAlignment="{TemplateBinding HorizontalAlignment}"
+                            CornerRadius="{TemplateBinding CornerRadius}">
+                        <ScrollViewer VerticalScrollBarVisibility="Auto"
+                                      HorizontalScrollBarVisibility="Disabled">
+                            <ItemsPresenter Name="PART_ItemsPresenter"
+                                            ItemsPanel="{TemplateBinding ItemsPanel}"
+                                            Margin="{DynamicResource MenuFlyoutScrollerMargin}"
+                                            KeyboardNavigation.TabNavigation="Continue"
+                                            Grid.IsSharedSizeScope="True" />
+                        </ScrollViewer>
+                    </Border>
+                </LayoutTransformControl>
+            </ControlTemplate>
+        </Setter>
+    </ControlTheme>
+
+    <ControlTheme x:Key="{x:Type ToolTip}" TargetType="ToolTip">
+        <Setter Property="Foreground" Value="{DynamicResource ToolTipForeground}" />
+        <Setter Property="Background" Value="{DynamicResource ToolTipBackground}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource ToolTipBorderBrush}" />
+        <Setter Property="BorderThickness" Value="{DynamicResource ToolTipBorderThemeThickness}" />
+        <Setter Property="FontSize" Value="{DynamicResource ToolTipContentThemeFontSize}" />
+        <Setter Property="Padding" Value="{DynamicResource ToolTipBorderThemePadding}" />
+        <Setter Property="MaxWidth" Value="{DynamicResource ToolTipContentMaxWidth}" />
+        <Setter Property="CornerRadius" Value="{DynamicResource OverlayCornerRadius}" />
+        <Setter Property="Opacity" Value="0" />
+        <Setter Property="Transitions">
+            <Transitions>
+                <DoubleTransition Property="Opacity" Duration="0:0:0.15" />
+            </Transitions>
+        </Setter>
+        <Setter Property="Template">
+            <ControlTemplate>
+                <!-- ЗУМ: единственное структурное отличие от Fluent -->
+                <LayoutTransformControl LayoutTransform="{DynamicResource AppZoomTransform}">
+                    <Border Name="PART_LayoutRoot"
+                            BorderThickness="{TemplateBinding BorderThickness}"
+                            Background="{TemplateBinding Background}"
+                            BorderBrush="{TemplateBinding BorderBrush}"
+                            Padding="{TemplateBinding Padding}"
+                            CornerRadius="{TemplateBinding CornerRadius}">
+                        <ContentPresenter Name="PART_ContentPresenter"
+                                          MaxWidth="{TemplateBinding MaxWidth}"
+                                          Content="{TemplateBinding Content}"
+                                          ContentTemplate="{TemplateBinding ContentTemplate}"
+                                          TextBlock.TextWrapping="Wrap" />
+                    </Border>
+                </LayoutTransformControl>
+            </ControlTemplate>
+        </Setter>
+
+        <Style Selector="^:open">
+            <Setter Property="Opacity" Value="1" />
+        </Style>
+    </ControlTheme>
+
+</ResourceDictionary>

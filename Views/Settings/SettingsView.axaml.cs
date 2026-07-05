@@ -20,6 +20,11 @@ public partial class SettingsView : UserControl
     // Признак «БД сейчас смонтирована» (даёт MainWindow по рабочему пространству).
     private Func<int, bool>?  _isMounted;
 
+    // Ползунок удерживается мышью: применение масштаба/шрифта отложено до отпускания
+    // (живое применение перекладывает окно, и ползунок «уезжает» из-под курсора).
+    private bool _scaleDragging;
+    private bool _fontDragging;
+
     // Реестр изменён — MainWindow монтирует/размонтирует БД и обновляет сайдбар.
     public event EventHandler<DatabaseRefEntity>? DatabaseAdded;
     public event EventHandler<int>?               DatabaseRemoved;
@@ -47,6 +52,16 @@ public partial class SettingsView : UserControl
 
         // Слайдер масштаба отражает текущий уровень в процентах (стандарт = 100, диапазон 70…130).
         ScaleSlider.Value = Scaling.Current * 100;
+
+        // Применение — только после отпускания ползунка. Tunnel-обработчики видят
+        // нажатие/отпускание даже когда Thumb/трек помечают событие обработанным;
+        // Thumb.DragCompleted (всплывает) страхует отпускание вне окна/потерю захвата.
+        ScaleSlider.AddHandler(PointerPressedEvent,  (_, _) => _scaleDragging = true, RoutingStrategies.Tunnel);
+        ScaleSlider.AddHandler(PointerReleasedEvent, (_, _) => EndScaleDrag(),        RoutingStrategies.Tunnel);
+        ScaleSlider.AddHandler(Thumb.DragCompletedEvent, (_, _) => EndScaleDrag());
+        FontSizeSlider.AddHandler(PointerPressedEvent,  (_, _) => _fontDragging = true, RoutingStrategies.Tunnel);
+        FontSizeSlider.AddHandler(PointerReleasedEvent, (_, _) => EndFontDrag(),        RoutingStrategies.Tunnel);
+        FontSizeSlider.AddHandler(Thumb.DragCompletedEvent, (_, _) => EndFontDrag());
 
         // Стартовый раздел: выделить сохранённый пункт (по Tag).
         SelectStartupModule(AppSettings.LoadStartupModule());
@@ -384,11 +399,27 @@ public partial class SettingsView : UserControl
 
     // ── Уровень масштабирования ──────────────────────────────────────────────
     //
-    // Масштаб применяется ко всему окну вживую: MainWindow слушает Scaling.ScaleChanged
+    // Масштаб применяется ко всему окну: MainWindow слушает Scaling.ScaleChanged
     // и ставит LayoutTransform на корень. Слайдер — в процентах, Scaling хранит множитель.
+    // Во время перетаскивания НЕ применяем (окно перекладывается и ползунок «уезжает»
+    // из-под курсора) — только двигаем пузырёк; применение — в EndScaleDrag.
     private void OnScaleChanged(object? sender, RangeBaseValueChangedEventArgs e)
     {
+        if (_scaleDragging)
+        {
+            UpdateScaleBadge();
+            return;
+        }
         Scaling.SetScale(Math.Round(e.NewValue) / 100.0);
+        UpdateScaleBadge();
+    }
+
+    // Отпускание ползунка (или клика по треку): применяем итоговое значение.
+    private void EndScaleDrag()
+    {
+        if (!_scaleDragging) return;
+        _scaleDragging = false;
+        Scaling.SetScale(Math.Round(ScaleSlider.Value) / 100.0);
         UpdateScaleBadge();
     }
 
@@ -400,20 +431,44 @@ public partial class SettingsView : UserControl
 
     private void OnScaleSliderExited(object? sender, PointerEventArgs e) => ScaleValuePopup.IsOpen = false;
 
-    // Текст = текущий масштаб в процентах; смещение пузырька — под текущий ползунок.
-    private void UpdateScaleBadge()
+    // Движение по слайдеру: при перетаскивании пузырёк следует за ползунком, при
+    // простом наведении — показывает масштаб, который БЫЛ БЫ в точке под курсором.
+    private void OnScaleSliderMoved(object? sender, PointerEventArgs e)
     {
-        ScaleValueText.Text = $"{(int)Math.Round(ScaleSlider.Value)} %";
+        if (_scaleDragging) UpdateScaleBadge();
+        else                ShowScaleBadge(ValueAtPointer(ScaleSlider, e, step: 10));
+    }
+
+    private void UpdateScaleBadge() => ShowScaleBadge(ScaleSlider.Value);
+
+    // Текст = масштаб в процентах; смещение пузырька — под точку этого значения на треке.
+    private void ShowScaleBadge(double value)
+    {
+        ScaleValueText.Text = $"{(int)Math.Round(value)} %";
 
         var range = ScaleSlider.Maximum - ScaleSlider.Minimum;
         var w     = ScaleSlider.Bounds.Width;
         if (range <= 0 || w <= 0) return;
 
-        var frac = (ScaleSlider.Value - ScaleSlider.Minimum) / range;
+        var frac = (value - ScaleSlider.Minimum) / range;
         const double thumbW = 26;
         // Ползунок масштабируется LayoutTransform'ом окна, а попап живёт в немасштабированном
         // оверлее → смещение домножаем на текущий масштаб, иначе плашка «уезжает» от ползунка.
         ScaleValuePopup.HorizontalOffset = (frac * (w - thumbW) + thumbW / 2 - w / 2) * Scaling.Current;
+    }
+
+    // Значение слайдера в точке под курсором: обратная формула к смещению пузырька
+    // (трек = ширина минус ползунок), с защёлкиванием на шаг слайдера.
+    private static double ValueAtPointer(Slider s, PointerEventArgs e, double step)
+    {
+        var w = s.Bounds.Width;
+        const double thumbW = 26;
+        if (w <= thumbW) return s.Value;
+
+        var x    = e.GetPosition(s).X;
+        var frac = Math.Clamp((x - thumbW / 2) / (w - thumbW), 0, 1);
+        var raw  = s.Minimum + frac * (s.Maximum - s.Minimum);
+        return Math.Clamp(Math.Round(raw / step) * step, s.Minimum, s.Maximum);
     }
 
     // Кнопка-стрелка: подтверждение в стандартном диалоге → возврат к 100 %.
@@ -426,11 +481,27 @@ public partial class SettingsView : UserControl
         ScaleSlider.Value = AppSettings.ScaleDefault * 100;   // → OnScaleChanged → SetScale(1.0)
     }
 
-    // Размер шрифта меняется вживую: дельта пишется в Application.Resources (DynamicResource),
-    // C#-виды пересобираются по событию FontScale.Changed.
+    // Размер шрифта: дельта пишется в Application.Resources (DynamicResource),
+    // C#-виды пересобираются по событию FontScale.Changed. Во время перетаскивания
+    // НЕ применяем (перекладка интерфейса дёргает ползунок) — только пузырёк;
+    // применение — в EndFontDrag.
     private void OnFontSizeChanged(object? sender, RangeBaseValueChangedEventArgs e)
     {
+        if (_fontDragging)
+        {
+            UpdateFontBadge();
+            return;
+        }
         FontScale.SetDelta((int)Math.Round(e.NewValue));
+        UpdateFontBadge();
+    }
+
+    // Отпускание ползунка (или клика по треку): применяем итоговую дельту.
+    private void EndFontDrag()
+    {
+        if (!_fontDragging) return;
+        _fontDragging = false;
+        FontScale.SetDelta((int)Math.Round(FontSizeSlider.Value));
         UpdateFontBadge();
     }
 
@@ -443,23 +514,30 @@ public partial class SettingsView : UserControl
 
     private void OnFontSliderExited(object? sender, PointerEventArgs e) => FontValuePopup.IsOpen = false;
 
-    // Текст = итоговый базовый размер (стандарт ± дельта); смещение пузырька — под текущий ползунок.
-    private void UpdateFontBadge()
+    // Движение по слайдеру: при перетаскивании пузырёк следует за ползунком, при
+    // наведении — показывает размер, который БЫЛ БЫ в точке под курсором.
+    private void OnFontSliderMoved(object? sender, PointerEventArgs e)
     {
-        var delta     = (int)Math.Round(FontSizeSlider.Value);
+        if (_fontDragging) UpdateFontBadge();
+        else               ShowFontBadge(ValueAtPointer(FontSizeSlider, e, step: 1));
+    }
+
+    private void UpdateFontBadge() => ShowFontBadge(FontSizeSlider.Value);
+
+    // Текст = итоговый базовый размер (стандарт ± дельта); смещение пузырька — под
+    // точку этого значения на треке. Плашка постоянного размера (как у масштаба) —
+    // меняется только число.
+    private void ShowFontBadge(double deltaValue)
+    {
+        var delta     = (int)Math.Round(deltaValue);
         var effective = FontScale.BaseFontSize + delta;            // итоговый размер шрифта
         FontValueText.Text = ((int)Math.Round(effective)).ToString();
-
-        // Квадрат: сторона растёт/уменьшается вместе с размером шрифта.
-        var side = Math.Round(effective * 2.0);
-        FontBadgeBorder.Width  = side;
-        FontBadgeBorder.Height = side;
 
         var range = FontSizeSlider.Maximum - FontSizeSlider.Minimum;
         var w     = FontSizeSlider.Bounds.Width;
         if (range <= 0 || w <= 0) return;
 
-        var frac = (FontSizeSlider.Value - FontSizeSlider.Minimum) / range;
+        var frac = (deltaValue - FontSizeSlider.Minimum) / range;
         const double thumbW = 26;
         // Тот же учёт масштаба окна, что и у плашки масштабирования (попап — в оверлее).
         FontValuePopup.HorizontalOffset = (frac * (w - thumbW) + thumbW / 2 - w / 2) * Scaling.Current;

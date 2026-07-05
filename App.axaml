@@ -8,6 +8,9 @@
             <ResourceDictionary.MergedDictionaries>
                 <ResourceInclude Source="avares://DataBase/Assets/Styles/Colors.axaml" />
                 <ResourceInclude Source="avares://DataBase/Assets/Styles/Icons.axaml" />
+                <!-- Копии тем ContextMenu/ToolTip с зум-обёрткой (см. паспорт файла):
+                     попапы меню и тултипов иначе не масштабируются зумом приложения. -->
+                <ResourceInclude Source="avares://DataBase/Assets/Styles/ZoomPopupThemes.axaml" />
             </ResourceDictionary.MergedDictionaries>
 
         </ResourceDictionary>
