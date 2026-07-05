@@ -28,6 +28,14 @@
             <ColumnDefinition Width="0" />
         </Grid.ColumnDefinitions>
 
+        <!-- Подложка под ActivityBar и разделитель ЕДИНОЙ заливкой (Aliased): заливка
+             панели и защёлкнутая в целый пиксель линия — разные элементы, на дробных
+             позициях (зум ≠ 1) их края расходились и между ними оставалась белая щель.
+             Подложка снапится к тому же пикселю, что и линия, — стык закрыт. -->
+        <Rectangle Grid.Column="0" Grid.ColumnSpan="2"
+                   RenderOptions.EdgeMode="Aliased"
+                   Fill="{StaticResource BrushSecondaryBg}" />
+
         <!-- Левая панель активности (48px) -->
         <comp:ActivityBar Grid.Column="0"
                           x:Name="ActivityBarControl" />

@@ -207,8 +207,10 @@
                   RowDefinitions="Auto,*,Auto,Auto"
                   ClipToBounds="True">
               <!-- (Отличие 2) Фон строки заголовков одним прямоугольником на всю ширину —
-                   сами заголовки прозрачные, их линии не закрашиваются соседями. -->
+                   сами заголовки прозрачные, их линии не закрашиваются соседями.
+                   Aliased: края заливки не размазываются на дробных позициях (зум ≠ 1). -->
               <Rectangle Grid.Row="0" Grid.Column="0" Grid.ColumnSpan="3"
+                         RenderOptions.EdgeMode="Aliased"
                          Fill="{DynamicResource BrushInactiveBg}" />
               <DataGridColumnHeader Name="PART_TopLeftCornerHeader"
                                     Theme="{DynamicResource DataGridTopLeftColumnHeader}" />

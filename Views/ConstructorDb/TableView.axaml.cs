@@ -1178,28 +1178,40 @@ public partial class TableView : UserControl
     private IDataTemplate BuildCellTemplate(TableColumnDef def) =>
         new FuncDataTemplate<TableRowVm>((row, _) =>
         {
+            // Серые заливки «№»/«+» — без сглаживания (Aliased): на дробных позициях
+            // (зум ≠ 1) верх/низ непрозрачной заливки размазывался бы рядом с чёткими
+            // линиями сетки и линией под шапкой (в прозрачных колонках смаз не виден —
+            // белое по белому). ВАЖНО: Aliased — только на прямоугольнике заливки, ТЕКСТ
+            // вне его поддерева: EdgeMode наследуется и переключает сглаживание текста
+            // (цифры становились тонкими).
             if (def.Key == TableColumnDef.NumKey)
-                return new Border
+            {
+                var fill = new Rectangle { Fill = (IBrush)this.FindResource("BrushInactiveBg")! };
+                Avalonia.Media.RenderOptions.SetEdgeMode(fill, Avalonia.Media.EdgeMode.Aliased);
+
+                var num = new Panel();
+                num.Children.Add(fill);
+                num.Children.Add(new TextBlock
                 {
-                    Background          = (IBrush)this.FindResource("BrushInactiveBg")!,
-                    HorizontalAlignment = HorizontalAlignment.Stretch,
-                    VerticalAlignment   = VerticalAlignment.Stretch,
-                    Child = new TextBlock
-                    {
-                        Text                = row.IsAddRow ? "+" : row.RowNumber.ToString(),
-                        HorizontalAlignment = HorizontalAlignment.Center,
-                        VerticalAlignment   = VerticalAlignment.Center,
-                        Foreground          = (IBrush)this.FindResource("BrushSecondaryText")!,
-                    },
-                };
+                    Text                = row.IsAddRow ? "+" : row.RowNumber.ToString(),
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    VerticalAlignment   = VerticalAlignment.Center,
+                    Foreground          = (IBrush)this.FindResource("BrushSecondaryText")!,
+                });
+                return num;
+            }
 
             if (def.Key == TableColumnDef.AddPropKey)
-                return new Border
+            {
+                var plusCell = new Border
                 {
                     Background          = (IBrush)this.FindResource("BrushInactiveBg")!,
                     HorizontalAlignment = HorizontalAlignment.Stretch,
                     VerticalAlignment   = VerticalAlignment.Stretch,
                 };
+                Avalonia.Media.RenderOptions.SetEdgeMode(plusCell, Avalonia.Media.EdgeMode.Aliased);
+                return plusCell;
+            }
 
             if (row.IsAddRow) return new Border();
 
