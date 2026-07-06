@@ -481,6 +481,7 @@ public partial class RecordPageView : UserControl
         "select"   => "IconFieldSelect",
         "checkbox" => "IconFieldCheckbox",
         "url"      => "IconFieldUrl",
+        "user"     => "IconUser",
         _          => "IconFieldText",
     };
 
@@ -643,12 +644,15 @@ public partial class RecordPageView : UserControl
                 break;
             }
             case "select":
+            case "user":   // как select: опции — допущенные пользователи базы
             {
                 var combo = new ComboBox
                 {
                     HorizontalAlignment = HorizontalAlignment.Stretch,
                     Classes             = { "propValue" },
-                    ItemsSource         = SelectOptions(f),
+                    ItemsSource         = f.FieldType == "user"
+                        ? _repo?.GetUserOptions() ?? []
+                        : SelectOptions(f),
                     SelectedItem        = row.Value,
                 };
                 combo.SelectionChanged += (_, _) =>

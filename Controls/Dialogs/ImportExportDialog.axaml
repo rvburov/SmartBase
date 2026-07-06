@@ -3,141 +3,152 @@
         xmlns:w="clr-namespace:DataBase.Controls.Widgets"
         x:Class="DataBase.Controls.Dialogs.ImportExportDialog"
         Title="Импорт/Экспорт"
-        Width="420"
-        MinWidth="420"
-        MaxWidth="420"
         MinHeight="0"
-        SizeToContent="Height"
+        SizeToContent="WidthAndHeight"
         WindowStartupLocation="CenterOwner"
         CanResize="False"
         Background="{StaticResource BrushBg}">
 
-    <StackPanel Spacing="0" Margin="20,16" Width="380">
+    <!-- Строки: колонки формы / полоса на всю ширину / кнопки под полосой -->
+    <Grid RowDefinitions="*,Auto,Auto">
 
-        <!-- Режим: импорт (по умолчанию) / экспорт (пока отключён) -->
-        <TextBlock Text="Режим"
-                   Margin="0,0,0,6"
-                   FontWeight="{StaticResource FontWeightBold}"
-                   Foreground="{StaticResource BrushSecondaryText}" />
+        <!-- Две колонки: слева основные параметры, справа (только у ручного типа)
+             параметры ручного импорта; между ними вертикальная линия.
+             Окно расширяется вправо, форма и кнопки не уезжают вниз. -->
+        <Grid Grid.Row="0" ColumnDefinitions="Auto,Auto,Auto">
 
-        <ComboBox x:Name="ModeCombo"
-                  HorizontalAlignment="Stretch"
-                  Height="34"
-                  VerticalContentAlignment="Center"
-                  Margin="0,0,0,12"
-                  Background="{StaticResource BrushSecondaryBg}"
-                  CornerRadius="{StaticResource RadiusBase}">
-            <ComboBoxItem Content="Импорт" />
-            <ComboBoxItem Content="Экспорт (скоро)" IsEnabled="False" />
-        </ComboBox>
+            <StackPanel Grid.Column="0" Width="380" Margin="20,16" Spacing="0">
 
-        <!-- Файл: ручной ввод пути + выбор файла -->
-        <TextBlock Text="Файл"
-                   Margin="0,0,0,6"
-                   FontWeight="{StaticResource FontWeightBold}"
-                   Foreground="{StaticResource BrushSecondaryText}" />
+                <!-- Заголовок колонки — виден, только когда колонок две (ручной тип) -->
+                <TextBlock x:Name="MainHeader" IsVisible="False"
+                           Text="Основные параметры"
+                           Margin="0,0,0,10"
+                           HorizontalAlignment="Center"
+                           FontWeight="{StaticResource FontWeightBold}" />
 
-        <Grid ColumnDefinitions="*,8,Auto" Margin="0,0,0,8">
-            <TextBox Grid.Column="0" x:Name="PathBox"
-                     Watermark="Путь к файлу (Excel, CSV, JSON)"
-                     Height="34"
-                     VerticalContentAlignment="Center"
-                     CornerRadius="{StaticResource RadiusMedium}" />
-            <Button Grid.Column="2" x:Name="BrowseBtn" Classes="dialog"
-                    Content="Обзор…"
-                    Width="100" Height="34" />
-        </Grid>
+                <!-- Режим: импорт (по умолчанию) / экспорт (пока отключён) -->
+                <TextBlock Text="Режим"
+                           Margin="0,0,0,6"
+                           FontWeight="{StaticResource FontWeightBold}"
+                           Foreground="{StaticResource BrushSecondaryText}" />
 
-        <!-- Импорт папки целиком: меняет смысл поля выше (файл ↔ папка), поэтому живёт при нём,
-             а не в параметрах ручного типа — работает и со стандартным типом. -->
-        <CheckBox x:Name="FolderCheck"
-                  Content="Все файлы из папки (включая подпапки)"
-                  Margin="0,0,0,12" />
+                <ComboBox x:Name="ModeCombo"
+                          HorizontalAlignment="Stretch"
+                          Height="34"
+                          VerticalContentAlignment="Center"
+                          Margin="0,0,0,12"
+                          Background="{StaticResource BrushSecondaryBg}"
+                          CornerRadius="{StaticResource RadiusBase}">
+                    <ComboBoxItem Content="Импорт" />
+                    <ComboBoxItem Content="Экспорт (скоро)" IsEnabled="False" />
+                </ComboBox>
 
-        <!-- Название создаваемой коллекции -->
-        <TextBlock Text="Название коллекции"
-                   Margin="0,0,0,6"
-                   FontWeight="{StaticResource FontWeightBold}"
-                   Foreground="{StaticResource BrushSecondaryText}" />
+                <!-- Файл: ручной ввод пути + выбор файла -->
+                <TextBlock Text="Файл"
+                           Margin="0,0,0,6"
+                           FontWeight="{StaticResource FontWeightBold}"
+                           Foreground="{StaticResource BrushSecondaryText}" />
 
-        <TextBox x:Name="NameBox"
-                 Watermark="Введите название"
-                 Height="34"
-                 VerticalContentAlignment="Center"
-                 Margin="0,0,0,12"
-                 CornerRadius="{StaticResource RadiusMedium}" />
+                <Grid ColumnDefinitions="*,8,Auto" Margin="0,0,0,8">
+                    <TextBox Grid.Column="0" x:Name="PathBox"
+                             Watermark="Путь к файлу (Excel, CSV, JSON)"
+                             Height="34"
+                             VerticalContentAlignment="Center"
+                             CornerRadius="{StaticResource RadiusMedium}" />
+                    <Button Grid.Column="2" x:Name="BrowseBtn" Classes="dialog"
+                            Content="Обзор…"
+                            Width="100" Height="34" />
+                </Grid>
 
-        <!-- База данных -->
-        <TextBlock Text="База данных"
-                   Margin="0,0,0,6"
-                   FontWeight="{StaticResource FontWeightBold}"
-                   Foreground="{StaticResource BrushSecondaryText}" />
+                <!-- Импорт папки целиком: меняет смысл поля выше (файл ↔ папка), поэтому живёт при нём,
+                     а не в параметрах ручного типа — работает и со стандартным типом. -->
+                <CheckBox x:Name="FolderCheck"
+                          Content="Все файлы из папки (включая подпапки)"
+                          Margin="0,0,0,12" />
 
-        <ComboBox x:Name="DbCombo"
-                  HorizontalAlignment="Stretch"
-                  Height="34"
-                  VerticalContentAlignment="Center"
-                  Margin="0,0,0,12"
-                  Background="{StaticResource BrushSecondaryBg}"
-                  CornerRadius="{StaticResource RadiusBase}" />
+                <!-- Название создаваемой коллекции -->
+                <TextBlock Text="Название коллекции"
+                           Margin="0,0,0,6"
+                           FontWeight="{StaticResource FontWeightBold}"
+                           Foreground="{StaticResource BrushSecondaryText}" />
 
-        <!-- Расположение (родительская группа) -->
-        <TextBlock Text="Расположение"
-                   Margin="0,0,0,6"
-                   FontWeight="{StaticResource FontWeightBold}"
-                   Foreground="{StaticResource BrushSecondaryText}" />
+                <TextBox x:Name="NameBox"
+                         Watermark="Введите название"
+                         Height="34"
+                         VerticalContentAlignment="Center"
+                         Margin="0,0,0,12"
+                         CornerRadius="{StaticResource RadiusMedium}" />
 
-        <ComboBox x:Name="LocationCombo"
-                  HorizontalAlignment="Stretch"
-                  Height="34"
-                  VerticalContentAlignment="Center"
-                  Margin="0,0,0,12"
-                  Background="{StaticResource BrushSecondaryBg}"
-                  CornerRadius="{StaticResource RadiusBase}">
-            <ComboBox.ItemTemplate>
-                <DataTemplate>
-                    <TextBlock Text="{Binding}"
-                               TextTrimming="LeadingCharacterEllipsis"
-                               VerticalAlignment="Center" />
-                </DataTemplate>
-            </ComboBox.ItemTemplate>
-            <ComboBox.Styles>
-                <Style Selector="ComboBoxItem">
-                    <Setter Property="MaxWidth" Value="{Binding $parent[ComboBox].Bounds.Width}" />
-                </Style>
-            </ComboBox.Styles>
-        </ComboBox>
+                <!-- База данных -->
+                <TextBlock Text="База данных"
+                           Margin="0,0,0,6"
+                           FontWeight="{StaticResource FontWeightBold}"
+                           Foreground="{StaticResource BrushSecondaryText}" />
 
-        <!-- Тип импорта -->
-        <TextBlock Text="Тип импорта"
-                   Margin="0,0,0,6"
-                   FontWeight="{StaticResource FontWeightBold}"
-                   Foreground="{StaticResource BrushSecondaryText}" />
+                <ComboBox x:Name="DbCombo"
+                          HorizontalAlignment="Stretch"
+                          Height="34"
+                          VerticalContentAlignment="Center"
+                          Margin="0,0,0,12"
+                          Background="{StaticResource BrushSecondaryBg}"
+                          CornerRadius="{StaticResource RadiusBase}" />
 
-        <ComboBox x:Name="TypeCombo"
-                  HorizontalAlignment="Stretch"
-                  Height="34"
-                  VerticalContentAlignment="Center"
-                  Margin="0,0,0,10"
-                  Background="{StaticResource BrushSecondaryBg}"
-                  CornerRadius="{StaticResource RadiusBase}" />
+                <!-- Расположение (родительская группа) -->
+                <TextBlock Text="Расположение"
+                           Margin="0,0,0,6"
+                           FontWeight="{StaticResource FontWeightBold}"
+                           Foreground="{StaticResource BrushSecondaryText}" />
 
-        <!-- Пояснение к стандартному типу: текст подбирается под формат файла (код) -->
-        <TextBlock x:Name="StandardHelp"
-                   Margin="0,0,0,12"
-                   TextWrapping="Wrap"
-                   FontSize="{DynamicResource FontSizeSmall}"
-                   Foreground="{StaticResource BrushSecondaryText}" />
+                <ComboBox x:Name="LocationCombo"
+                          HorizontalAlignment="Stretch"
+                          Height="34"
+                          VerticalContentAlignment="Center"
+                          Margin="0,0,0,12"
+                          Background="{StaticResource BrushSecondaryBg}"
+                          CornerRadius="{StaticResource RadiusBase}">
+                    <ComboBox.ItemTemplate>
+                        <DataTemplate>
+                            <TextBlock Text="{Binding}"
+                                       TextTrimming="LeadingCharacterEllipsis"
+                                       VerticalAlignment="Center" />
+                        </DataTemplate>
+                    </ComboBox.ItemTemplate>
+                    <ComboBox.Styles>
+                        <Style Selector="ComboBoxItem">
+                            <Setter Property="MaxWidth" Value="{Binding $parent[ComboBox].Bounds.Width}" />
+                        </Style>
+                    </ComboBox.Styles>
+                </ComboBox>
 
-        <!-- Параметры ручного типа — отдельный блок (белая карточка с рамкой) -->
-        <Border x:Name="ManualPanel" IsVisible="False"
-                Background="{StaticResource BrushCardBg}"
-                BorderBrush="{StaticResource BrushSeparator}"
-                BorderThickness="{DynamicResource BorderLine}"
-                CornerRadius="{StaticResource RadiusBase}"
-                Padding="12"
-                Margin="0,0,0,12">
-            <StackPanel Spacing="0">
+                <!-- Тип импорта -->
+                <TextBlock Text="Тип импорта"
+                           Margin="0,0,0,6"
+                           FontWeight="{StaticResource FontWeightBold}"
+                           Foreground="{StaticResource BrushSecondaryText}" />
+
+                <ComboBox x:Name="TypeCombo"
+                          HorizontalAlignment="Stretch"
+                          Height="34"
+                          VerticalContentAlignment="Center"
+                          Margin="0,0,0,10"
+                          Background="{StaticResource BrushSecondaryBg}"
+                          CornerRadius="{StaticResource RadiusBase}" />
+
+                <!-- Пояснение к стандартному типу: текст подбирается под формат файла (код) -->
+                <TextBlock x:Name="StandardHelp"
+                           Margin="0,0,0,2"
+                           TextWrapping="Wrap"
+                           FontSize="{DynamicResource FontSizeSmall}"
+                           Foreground="{StaticResource BrushSecondaryText}" />
+
+            </StackPanel>
+
+            <!-- Вертикальная линия между колонками — только когда колонок две -->
+            <Border Grid.Column="1" x:Name="ColumnSeparator" Classes="separator v" IsVisible="False" />
+
+            <!-- Параметры ручного типа — правая колонка, тем же стилем, что и левая -->
+            <StackPanel Grid.Column="2" x:Name="ManualPanel" IsVisible="False"
+                        Width="380" Margin="20,16" Spacing="0">
 
                 <TextBlock Text="Параметры ручного импорта"
                            Margin="0,0,0,10"
@@ -148,7 +159,7 @@
                            Margin="0,0,0,6"
                            FontWeight="{StaticResource FontWeightBold}"
                            Foreground="{StaticResource BrushSecondaryText}" />
-                <TextBox x:Name="SheetBox" Classes="onCard"
+                <TextBox x:Name="SheetBox"
                          Watermark="Название листа (пусто — первый)"
                          Height="34"
                          VerticalContentAlignment="Center"
@@ -165,12 +176,12 @@
                                Margin="0,0,0,6"
                                FontWeight="{StaticResource FontWeightBold}"
                                Foreground="{StaticResource BrushSecondaryText}" />
-                    <TextBox Grid.Row="1" Grid.Column="0" x:Name="HeaderRowBox" Classes="onCard"
+                    <TextBox Grid.Row="1" Grid.Column="0" x:Name="HeaderRowBox"
                              Watermark="Например, 1"
                              Height="34"
                              VerticalContentAlignment="Center"
                              CornerRadius="{StaticResource RadiusMedium}" />
-                    <TextBox Grid.Row="1" Grid.Column="2" x:Name="DataRowBox" Classes="onCard"
+                    <TextBox Grid.Row="1" Grid.Column="2" x:Name="DataRowBox"
                              Watermark="Например, 2"
                              Height="34"
                              VerticalContentAlignment="Center"
@@ -181,7 +192,7 @@
                            Margin="0,0,0,6"
                            FontWeight="{StaticResource FontWeightBold}"
                            Foreground="{StaticResource BrushSecondaryText}" />
-                <TextBox x:Name="TitleColBox" Classes="onCard"
+                <TextBox x:Name="TitleColBox"
                          Watermark="Число или буква, например 1 или A"
                          Height="34"
                          VerticalContentAlignment="Center"
@@ -201,12 +212,12 @@
                                Margin="0,0,0,6"
                                FontWeight="{StaticResource FontWeightBold}"
                                Foreground="{StaticResource BrushSecondaryText}" />
-                    <TextBox Grid.Row="1" Grid.Column="0" x:Name="ExcludeColsBox" Classes="onCard"
+                    <TextBox Grid.Row="1" Grid.Column="0" x:Name="ExcludeColsBox"
                              Watermark="C, F или 3, 6"
                              Height="34"
                              VerticalContentAlignment="Center"
                              CornerRadius="{StaticResource RadiusMedium}" />
-                    <TextBox Grid.Row="1" Grid.Column="2" x:Name="ExcludeRowsBox" Classes="onCard"
+                    <TextBox Grid.Row="1" Grid.Column="2" x:Name="ExcludeRowsBox"
                              Watermark="3, 5-8"
                              Height="34"
                              VerticalContentAlignment="Center"
@@ -217,36 +228,38 @@
                            Margin="0,0,0,6"
                            FontWeight="{StaticResource FontWeightBold}"
                            Foreground="{StaticResource BrushSecondaryText}" />
-                <TextBox x:Name="ExcludeSheetsBox" Classes="onCard"
+                <TextBox x:Name="ExcludeSheetsBox"
                          Watermark="Итоги, Служебный"
                          Height="34"
                          VerticalContentAlignment="Center"
-                         Margin="0,0,0,14"
+                         Margin="0,0,0,12"
                          CornerRadius="{StaticResource RadiusMedium}" />
 
-                <Border Classes="separator h" Margin="0,0,0,12" />
-
                 <!-- Раскладка листов Excel (взаимоисключающие) -->
-                <CheckBox x:Name="MergeSheetsCheck" Classes="onCard"
+                <CheckBox x:Name="MergeSheetsCheck"
                           Content="Все листы в одну коллекцию"
                           Margin="0,0,0,4" />
-                <CheckBox x:Name="SplitSheetsCheck" Classes="onCard"
+                <CheckBox x:Name="SplitSheetsCheck"
                           Content="Все листы в разные коллекции" />
 
             </StackPanel>
-        </Border>
 
-        <!-- Уведомление об ошибке -->
-        <w:ErrorBanner x:Name="ErrorBanner" Margin="0,0,0,12" />
-
-        <!-- Кнопки -->
-        <Grid ColumnDefinitions="*,Auto,8,Auto" Margin="0,4,0,0">
-            <Button Grid.Column="1" x:Name="CancelBtn" Classes="dialog"
-                    Content="Отмена" />
-            <Button Grid.Column="3" x:Name="ConfirmBtn" Classes="dialog"
-                    Content="Импортировать" Width="150" />
         </Grid>
 
-    </StackPanel>
+        <!-- Полоса над кнопками — на всю ширину окна -->
+        <Border Grid.Row="1" Classes="separator h" />
+
+        <!-- Уведомление об ошибке и кнопки — под полосой -->
+        <StackPanel Grid.Row="2" Margin="20,12,20,16" Spacing="0">
+            <w:ErrorBanner x:Name="ErrorBanner" Margin="0,0,0,12" />
+            <Grid ColumnDefinitions="*,Auto,8,Auto">
+                <Button Grid.Column="1" x:Name="CancelBtn" Classes="dialog"
+                        Content="Отмена" />
+                <Button Grid.Column="3" x:Name="ConfirmBtn" Classes="dialog"
+                        Content="Импортировать" Width="150" />
+            </Grid>
+        </StackPanel>
+
+    </Grid>
 
 </Window>

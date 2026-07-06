@@ -114,6 +114,26 @@
         </Viewbox>
     </ToggleButton>
 
+    <!-- Модуль: Профиль — над Настройками (второй Bottom-элемент DockPanel ложится ВЫШЕ первого) -->
+    <ToggleButton x:Name="ProfileBtn" Classes="icon module"
+                  DockPanel.Dock="Bottom"
+                  Width="32" Height="32"
+                  Margin="8,0,8,8"
+                  HorizontalAlignment="Center"
+                  CornerRadius="{StaticResource RadiusMedium}"
+                  ToolTip.Tip="Профиль">
+        <Viewbox Width="{StaticResource IconSizeXLarge}" Height="{StaticResource IconSizeXLarge}">
+            <Canvas Width="24" Height="24">
+                <!-- lucide circle-user-round -->
+                <Path Data="{StaticResource IconUser}"
+                      Stroke="{Binding $parent[ToggleButton].Foreground}"
+                      StrokeThickness="1.2"
+                      StrokeLineCap="Round"
+                      StrokeJoin="Round" />
+            </Canvas>
+        </Viewbox>
+    </ToggleButton>
+
     </DockPanel>
 
 </UserControl>

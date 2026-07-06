@@ -1,0 +1,306 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:comp="using:DataBase.Controls.Components"
+             x:Class="DataBase.Views.Profile.ProfileView"
+             Background="{StaticResource BrushBg}">
+
+    <UserControl.Styles>
+        <!-- Строка одного пункта. Линия под строкой — отдельный separator h ПОСЛЕ каждой
+             строки (не бордер контейнера с текстом: отдельную линию можно алиасить,
+             она чёткая при любом зуме). Стили — как settingRow в SettingsView. -->
+        <Style Selector="Border.settingRow">
+            <Setter Property="Padding" Value="0,16" />
+        </Style>
+        <Style Selector="Border.settingRow TextBlock.title">
+            <Setter Property="Foreground" Value="{StaticResource BrushPrimaryText}" />
+        </Style>
+        <Style Selector="Border.settingRow TextBlock.desc">
+            <Setter Property="FontSize"     Value="{DynamicResource FontSizeSmall}" />
+            <Setter Property="Foreground"   Value="{StaticResource BrushSecondaryText}" />
+            <Setter Property="TextWrapping" Value="Wrap" />
+        </Style>
+    </UserControl.Styles>
+
+    <DockPanel>
+
+        <!-- Шапка раздела (вынесена в компонент-навбар). -->
+        <comp:NavbarProfile DockPanel.Dock="Top" x:Name="HeaderBar" />
+
+        <!-- Содержимое выбранного раздела -->
+        <Grid>
+
+            <!-- ── Общие данные ──────────────────────────────────── -->
+            <ScrollViewer x:Name="GeneralPanel"
+                          VerticalScrollBarVisibility="Auto">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" MaxWidth="1400" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Margin="16,0,16,32">
+
+                    <!-- Имя компьютера (определяется автоматически) -->
+                    <Border Classes="settingRow">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <StackPanel Grid.Column="0" Spacing="4"
+                                        VerticalAlignment="Center" Margin="0,0,32,0">
+                                <TextBlock Classes="title" Text="Имя компьютера" />
+                                <TextBlock Classes="desc"
+                                           Text="Определяется автоматически и вместе с учётной записью системы служит идентификатором пользователя в базах данных и истории изменений." />
+                            </StackPanel>
+                            <StackPanel Grid.Column="1" Spacing="3"
+                                        VerticalAlignment="Center">
+                                <TextBlock x:Name="MachineNameText" Text="—"
+                                           HorizontalAlignment="Right" />
+                                <TextBlock x:Name="UserKeyText" Text="—"
+                                           HorizontalAlignment="Right"
+                                           FontSize="{DynamicResource FontSizeSmall}"
+                                           Foreground="{StaticResource BrushSecondaryText}" />
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+                    <Border Classes="separator h" />
+
+                    <!-- Фамилия -->
+                    <Border Classes="settingRow">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <StackPanel Grid.Column="0" Spacing="4"
+                                        VerticalAlignment="Center" Margin="0,0,32,0">
+                                <TextBlock Classes="title" Text="Фамилия" />
+                            </StackPanel>
+                            <TextBox Grid.Column="1" x:Name="LastNameBox"
+                                     Width="240" Height="34"
+                                     VerticalAlignment="Center"
+                                     VerticalContentAlignment="Center"
+                                     Background="{StaticResource BrushSecondaryBg}"
+                                     CornerRadius="{StaticResource RadiusBase}"
+                                     Watermark="Не указана"
+                                     LostFocus="OnProfileFieldChanged" />
+                        </Grid>
+                    </Border>
+                    <Border Classes="separator h" />
+
+                    <!-- Имя -->
+                    <Border Classes="settingRow">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <StackPanel Grid.Column="0" Spacing="4"
+                                        VerticalAlignment="Center" Margin="0,0,32,0">
+                                <TextBlock Classes="title" Text="Имя" />
+                            </StackPanel>
+                            <TextBox Grid.Column="1" x:Name="FirstNameBox"
+                                     Width="240" Height="34"
+                                     VerticalAlignment="Center"
+                                     VerticalContentAlignment="Center"
+                                     Background="{StaticResource BrushSecondaryBg}"
+                                     CornerRadius="{StaticResource RadiusBase}"
+                                     Watermark="Не указано"
+                                     LostFocus="OnProfileFieldChanged" />
+                        </Grid>
+                    </Border>
+                    <Border Classes="separator h" />
+
+                    <!-- Отчество -->
+                    <Border Classes="settingRow">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <StackPanel Grid.Column="0" Spacing="4"
+                                        VerticalAlignment="Center" Margin="0,0,32,0">
+                                <TextBlock Classes="title" Text="Отчество" />
+                            </StackPanel>
+                            <TextBox Grid.Column="1" x:Name="MiddleNameBox"
+                                     Width="240" Height="34"
+                                     VerticalAlignment="Center"
+                                     VerticalContentAlignment="Center"
+                                     Background="{StaticResource BrushSecondaryBg}"
+                                     CornerRadius="{StaticResource RadiusBase}"
+                                     Watermark="Не указано"
+                                     LostFocus="OnProfileFieldChanged" />
+                        </Grid>
+                    </Border>
+                    <Border Classes="separator h" />
+
+                    <!-- Как пользователь будет подписан в базах и истории -->
+                    <Border Classes="settingRow">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <StackPanel Grid.Column="0" Spacing="4"
+                                        VerticalAlignment="Center" Margin="0,0,32,0">
+                                <TextBlock Classes="title" Text="Отображаемое имя" />
+                                <TextBlock Classes="desc"
+                                           Text="Под этим именем пользователь виден другим участникам базы данных и в истории изменений. Пока ФИО не заполнено, используется идентификатор." />
+                            </StackPanel>
+                            <TextBlock Grid.Column="1" x:Name="DisplayNameText" Text="—"
+                                       VerticalAlignment="Center" />
+                        </Grid>
+                    </Border>
+                    <Border Classes="separator h" />
+
+                    </StackPanel>
+                </Grid>
+            </ScrollViewer>
+
+            <!-- ── Панель администратора ─────────────────────────── -->
+            <ScrollViewer x:Name="AdminPanel" IsVisible="False"
+                          VerticalScrollBarVisibility="Auto">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" MaxWidth="1400" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Margin="16,0,16,32">
+
+                    <!-- Пользователь не администрирует ни одну базу -->
+                    <Border Classes="settingRow" x:Name="AdminNoAccessRow" IsVisible="False">
+                        <StackPanel Spacing="4">
+                            <TextBlock Classes="title" Text="Нет прав администратора" />
+                            <TextBlock Classes="desc"
+                                       Text="Вы не являетесь администратором ни одной из подключённых баз данных. Администратор — тот, кто создал базу (открыл её первым); он выдаёт допуск и настраивает права остальных пользователей." />
+                        </StackPanel>
+                    </Border>
+
+                    <StackPanel x:Name="AdminContent">
+
+                    <!-- Выбор базы данных -->
+                    <Border Classes="settingRow">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <StackPanel Grid.Column="0" Spacing="4"
+                                        VerticalAlignment="Center" Margin="0,0,32,0">
+                                <TextBlock Classes="title" Text="База данных" />
+                                <TextBlock Classes="desc"
+                                           Text="Панель управляет доступом к выбранной базе. В списке — базы, где вы администратор." />
+                            </StackPanel>
+                            <ComboBox Grid.Column="1" x:Name="AdminDbCombo"
+                                      Width="240" Height="34"
+                                      VerticalAlignment="Center"
+                                      Background="{StaticResource BrushSecondaryBg}"
+                                      CornerRadius="{StaticResource RadiusBase}"
+                                      SelectionChanged="OnAdminDbChanged" />
+                        </Grid>
+                    </Border>
+                    <Border Classes="separator h" />
+
+                    <!-- Пароль базы -->
+                    <Border Classes="settingRow">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <StackPanel Grid.Column="0" Spacing="4"
+                                        VerticalAlignment="Center" Margin="0,0,32,0">
+                                <TextBlock Classes="title" Text="Пароль базы данных" />
+                                <TextBlock Classes="desc"
+                                           Text="Пароль позволяет новому пользователю получить доступ к базе самостоятельно, не дожидаясь подтверждения администратором." />
+                                <TextBlock x:Name="PasswordStateText" Classes="desc" Text="" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="1" Orientation="Horizontal"
+                                        Spacing="8" VerticalAlignment="Center">
+                                <!-- Width=NaN: подписи длиннее фикс-ширины стиля dialog (110px) —
+                                     кнопка растёт под текст, узкие добирают MinWidth. -->
+                                <Button x:Name="PasswordSetBtn" Classes="dialog"
+                                        Width="NaN" MinWidth="110" Padding="14,0"
+                                        Content="Установить пароль"
+                                        Click="OnPasswordSet" />
+                                <Button x:Name="PasswordRemoveBtn" Classes="dialog"
+                                        Width="NaN" MinWidth="110" Padding="14,0"
+                                        Content="Убрать"
+                                        Click="OnPasswordRemove" />
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+                    <Border Classes="separator h" />
+
+                    <!-- Пользователи базы -->
+                    <Border Classes="settingRow">
+                        <StackPanel Spacing="4">
+                            <TextBlock Classes="title" Text="Пользователи" />
+                            <TextBlock Classes="desc"
+                                       Text="Все, кто открывал эту базу данных. Новые пользователи ждут допуска. Выберите пользователя, чтобы настроить его права." />
+                        </StackPanel>
+                    </Border>
+                    <StackPanel x:Name="UsersHost" Margin="0,0,0,8" />
+                    <Border Classes="separator h" />
+
+                    <!-- Права выбранного пользователя -->
+                    <StackPanel x:Name="RightsBlock" IsVisible="False">
+                        <Border Classes="settingRow">
+                            <Grid ColumnDefinitions="*,Auto">
+                                <StackPanel Grid.Column="0" Spacing="4"
+                                            VerticalAlignment="Center" Margin="0,0,32,0">
+                                    <TextBlock Classes="title" x:Name="RightsTitle"
+                                               Text="Права пользователя" />
+                                    <TextBlock Classes="desc"
+                                               Text="Область действия: вся база данных или отдельная коллекция. Настройки коллекции имеют приоритет над настройками базы." />
+                                </StackPanel>
+                                <ComboBox Grid.Column="1" x:Name="ScopeCombo"
+                                          Width="240" Height="34"
+                                          VerticalAlignment="Center"
+                                          Background="{StaticResource BrushSecondaryBg}"
+                                          CornerRadius="{StaticResource RadiusBase}"
+                                          SelectionChanged="OnScopeChanged" />
+                            </Grid>
+                        </Border>
+
+                        <!-- Сетка чекбоксов: три группы действий (строится в коде) -->
+                        <Grid x:Name="ChecksGrid" ColumnDefinitions="*,*,*" Margin="0,4,0,16" />
+                        <Border Classes="separator h" />
+                    </StackPanel>
+
+                    </StackPanel>
+
+                    </StackPanel>
+                </Grid>
+            </ScrollViewer>
+
+            <!-- ── История изменений ─────────────────────────────── -->
+            <ScrollViewer x:Name="HistoryPanel" IsVisible="False"
+                          VerticalScrollBarVisibility="Auto">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" MaxWidth="1400" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Margin="16,0,16,32">
+
+                    <!-- Выбор базы и фильтр по типу объекта -->
+                    <Border Classes="settingRow">
+                        <Grid ColumnDefinitions="*,Auto,8,Auto">
+                            <StackPanel Grid.Column="0" Spacing="4"
+                                        VerticalAlignment="Center" Margin="0,0,32,0">
+                                <TextBlock Classes="title" Text="Журнал базы данных" />
+                                <TextBlock Classes="desc"
+                                           Text="Кто и когда создавал, изменял и удалял коллекции, записи и свойства выбранной базы. Новые события сверху." />
+                            </StackPanel>
+                            <ComboBox Grid.Column="1" x:Name="HistoryTypeCombo"
+                                      Width="200" Height="34"
+                                      VerticalAlignment="Center"
+                                      Background="{StaticResource BrushSecondaryBg}"
+                                      CornerRadius="{StaticResource RadiusBase}"
+                                      SelectionChanged="OnHistoryFilterChanged">
+                                <ComboBoxItem Tag="all"        Content="Все действия" />
+                                <ComboBoxItem Tag="structure"  Content="Коллекции и группы" />
+                                <ComboBoxItem Tag="records"    Content="Записи" />
+                                <ComboBoxItem Tag="fields"     Content="Свойства" />
+                            </ComboBox>
+                            <ComboBox Grid.Column="3" x:Name="HistoryDbCombo"
+                                      Width="240" Height="34"
+                                      VerticalAlignment="Center"
+                                      Background="{StaticResource BrushSecondaryBg}"
+                                      CornerRadius="{StaticResource RadiusBase}"
+                                      SelectionChanged="OnHistoryFilterChanged" />
+                        </Grid>
+                    </Border>
+                    <Border Classes="separator h" />
+
+                    <!-- Строки журнала (строятся в коде; keyset-страницы по 200) -->
+                    <StackPanel x:Name="HistoryHost" Margin="0,8,0,0" />
+                    <TextBlock x:Name="HistoryEmptyText" Classes="desc"
+                               Foreground="{StaticResource BrushSecondaryText}"
+                               Margin="0,16" IsVisible="False"
+                               Text="Записей в журнале пока нет." />
+                    <Button x:Name="HistoryMoreBtn" Classes="dialog"
+                            Content="Показать ещё"
+                            HorizontalAlignment="Center" Margin="0,12"
+                            IsVisible="False"
+                            Click="OnHistoryMore" />
+
+                    </StackPanel>
+                </Grid>
+            </ScrollViewer>
+
+        </Grid>
+
+    </DockPanel>
+
+</UserControl>

@@ -39,6 +39,9 @@ public partial class App : Application
             // Настройки приложения хранятся в app.db.
             AppSettings.AttachStore(registry);
 
+            // Профиль пользователя (ФИО для модуля «Профиль») — тоже в app.db.
+            CurrentUser.AttachStore(registry);
+
             // Размер шрифта: применить сохранённую дельту до создания окна (потребители на
             // DynamicResource подхватят актуальные размеры сразу при загрузке).
             FontScale.Init();

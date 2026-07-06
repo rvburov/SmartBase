@@ -17,6 +17,7 @@ EF Core/SQLite). Здесь описано, **как устроено и как 
 - [data-model.md](architecture/data-model.md) — модели и таблицы.
 - [databases.md](architecture/databases.md) — два SQLite-файла, миграции, пути, WAL.
 - [multi-database.md](architecture/multi-database.md) — несколько БД одновременно.
+- [users-permissions.md](architecture/users-permissions.md) — пользователи, допуск, права, пароль базы, журнал изменений.
 - [performance.md](architecture/performance.md) — горячие пути, виртуализация, индексы, узкие места.
 
 ### Фичи ([features/](features/))
@@ -25,6 +26,7 @@ EF Core/SQLite). Здесь описано, **как устроено и как 
 - [categories.md](features/categories.md) — категории и цвета.
 - [import-export.md](features/import-export.md) — импорт из Excel, перенос между БД.
 - [settings.md](features/settings.md) — настройки и управление БД.
+- [profile.md](features/profile.md) — модуль «Профиль»: общие данные, панель администратора, история изменений.
 - [extensions.md](features/extensions.md) — раздел «Расширения»: плагины, отделимость, два режима.
 - [icons.md](features/icons.md) — иконка приложения на всех ОС.
 
@@ -32,6 +34,10 @@ EF Core/SQLite). Здесь описано, **как устроено и как 
 - [widgets.md](ui/widgets.md) — виджеты и компоненты.
 - [dialogs.md](ui/dialogs.md) — модальные диалоги.
 - [theming.md](ui/theming.md) — цвета, типографика, масштаб.
+
+### Чеклисты проверки ([checklists/](checklists/))
+Ручные прогоны фич: что нажать и что должно получиться (см. [checklists/README.md](checklists/README.md)).
+- [profile.md](checklists/profile.md) — модуль «Профиль»: допуск, права, пароль, история, тип «Пользователь».
 
 ### Планы
 - [ROADMAP.md](ROADMAP.md) — этапы, заглушки в коде, масштабирование, риски.

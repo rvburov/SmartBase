@@ -228,7 +228,7 @@ public partial class RecordDialog : Window
         }
     }
 
-    private static Control MakeInput(DbField field)
+    private Control MakeInput(DbField field)
     {
         Dictionary<string, object> config = [];
         try { config = JsonSerializer.Deserialize<Dictionary<string, object>>(field.ConfigJson ?? "{}") ?? []; }
@@ -239,10 +239,28 @@ public partial class RecordDialog : Window
             "number" => new NumericUpDown { Minimum = decimal.MinValue, Maximum = decimal.MaxValue, Height = 36 },
             "date"   => new DateEditor(),
             "select" => BuildSelectCombo(config),
+            "user"   => BuildUserCombo(),
             "checkbox" => new CheckBox { VerticalAlignment = VerticalAlignment.Center },
             "url"    => new TextBox { Watermark = "https://", Height = 36 },
             _        => new TextBox { Height = 36 },  // text, default
         };
+    }
+
+    // Тип «пользователь»: опции — допущенные пользователи базы, по умолчанию текущий.
+    // В личной базе допущен только владелец — выбрать можно лишь себя.
+    private ComboBox BuildUserCombo()
+    {
+        var opts = _repository.GetUserOptions();
+        if (opts.Count == 0) opts = [Utils.CurrentUser.DisplayName];
+        var combo = new ComboBox
+        {
+            ItemsSource         = opts,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            Height              = 36,
+        };
+        var me = opts.IndexOf(Utils.CurrentUser.DisplayName);
+        combo.SelectedIndex = me >= 0 ? me : 0;
+        return combo;
     }
 
     private static ComboBox BuildSelectCombo(Dictionary<string, object> config)
@@ -279,6 +297,18 @@ public partial class RecordDialog : Window
                     var idx = (cb.ItemsSource as List<string>)?.IndexOf(val) ?? -1;
                     if (idx >= 0) cb.SelectedIndex = idx;
                     break;
+                case "user":
+                    // Существующая запись показывает СВОЁ значение (в т.ч. пустое или имя
+                    // пользователя, которого уже нет в базе, — добавляем его в опции сырым).
+                    var ucb  = (ComboBox)input;
+                    var opts = ucb.ItemsSource as List<string> ?? [];
+                    if (val.Length > 0 && !opts.Contains(val))
+                    {
+                        opts = [.. opts, val];
+                        ucb.ItemsSource = opts;
+                    }
+                    ucb.SelectedIndex = val.Length > 0 ? opts.IndexOf(val) : -1;
+                    break;
                 case "number":
                     if (decimal.TryParse(val, out var num))
                         ((NumericUpDown)input).Value = num;
@@ -294,21 +324,31 @@ public partial class RecordDialog : Window
     {
         "checkbox" => ((CheckBox)input).IsChecked == true ? "1" : "0",
         "date"     => ((DateEditor)input).Storage ?? "",
-        "select"   => ((ComboBox)input).SelectedItem?.ToString() ?? "",
+        "select" or "user" => ((ComboBox)input).SelectedItem?.ToString() ?? "",
         "number"   => ((NumericUpDown)input).Value?.ToString() ?? "",
         _          => ((TextBox)input).Text ?? "",
     };
 
     private void TrySaveSchema()
     {
-        if (_recordId is null)
+        try
         {
-            var record = _repository.AddRecord(new DbRecord { CollectionId = _collectionId });
-            _recordId = record.Id;
-        }
+            if (_recordId is null)
+            {
+                var record = _repository.AddRecord(new DbRecord { CollectionId = _collectionId });
+                _recordId = record.Id;
+            }
 
-        foreach (var (fieldId, (field, input)) in _fieldWidgets)
-            _repository.SetFieldValue(_recordId!.Value, fieldId, GetValue(field, input));
+            foreach (var (fieldId, (field, input)) in _fieldWidgets)
+                _repository.SetFieldValue(_recordId!.Value, fieldId, GetValue(field, input));
+        }
+        catch (InvalidOperationException ex)
+        {
+            // Права отозвали, пока окно было открыто (PermissionDeniedException и т.п.) —
+            // причину показываем баннером, ввод пользователя не теряется.
+            ShowError(ex.Message);
+            return;
+        }
 
         Close(true);
     }

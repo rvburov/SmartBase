@@ -22,6 +22,7 @@ public static class FieldTypeIcons
         "select"   => Icon("IconFieldSelect"),
         "checkbox" => Icon("IconFieldCheckbox"),
         "url"      => Icon("IconFieldUrl"),
+        "user"     => Icon("IconUser"),
         _          => null,
     };
 }

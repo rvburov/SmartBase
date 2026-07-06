@@ -19,6 +19,10 @@ public class AppDbContext : DbContext
     public DbSet<ColumnOrderEntity>        ColumnOrder          { get; set; } = null!;
     public DbSet<ColumnDisplayEntity>      ColumnDisplay        { get; set; } = null!;
     public DbSet<RecordDisplayEntity>      RecordDisplay        { get; set; } = null!;
+    public DbSet<DbUserEntity>             DbUsers              { get; set; } = null!;
+    public DbSet<DbPermissionEntity>       DbPermissions        { get; set; } = null!;
+    public DbSet<DbMetaEntity>             DbMeta               { get; set; } = null!;
+    public DbSet<ChangeLogEntity>          ChangeLog            { get; set; } = null!;
 
     private readonly string _dbPath;
 
@@ -218,6 +222,43 @@ public class AppDbContext : DbContext
         {
             e.ToTable("record_display");
             e.HasKey(x => new { x.CollectionId, x.RecordId });
+        });
+
+        model.Entity<DbUserEntity>(e =>
+        {
+            e.ToTable("db_users");
+            e.HasKey(x => x.Id);
+            e.HasIndex(x => x.UserKey).IsUnique();
+        });
+
+        model.Entity<DbPermissionEntity>(e =>
+        {
+            e.ToTable("db_permissions");
+            e.HasKey(x => x.Id);
+            // Одна маска на пользователя и «область» (вся база / конкретная коллекция).
+            e.HasIndex(x => new { x.UserId, x.CollectionId }).IsUnique();
+            e.HasOne(x => x.User)
+             .WithMany(x => x.Permissions)
+             .HasForeignKey(x => x.UserId)
+             .OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(x => x.Collection)
+             .WithMany()
+             .HasForeignKey(x => x.CollectionId)
+             .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        model.Entity<DbMetaEntity>(e =>
+        {
+            e.ToTable("db_meta");
+            e.HasKey(x => x.Key);
+        });
+
+        model.Entity<ChangeLogEntity>(e =>
+        {
+            e.ToTable("change_log");
+            e.HasKey(x => x.Id);
+            // Без FK: журнал переживает удаление коллекций/записей/пользователей.
+            // Чтение идёт keyset-пагинацией по Id (rowid) DESC — индексы не нужны.
         });
     }
 }

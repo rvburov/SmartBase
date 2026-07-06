@@ -71,15 +71,17 @@ public partial class MainWindow : Window
         };
 
         // Инициализируем модули через AXAML-конструкторы.
-        // Календарь агрегирует события из всех смонтированных БД.
-        CalendarModule.Initialize(workspace.Mounted, _categories);
+        // Календарь агрегирует события только из ДОПУЩЕННЫХ БД (без допуска — данные не видны).
+        CalendarModule.Initialize(GrantedDbs(), _categories);
         ConstructorModule.Initialize(_constructor);
-        // Все смонтированные БД — для окна «Расположение» записи (перенос в другую коллекцию/БД).
-        ConstructorModule.SetDatabases(workspace.Mounted);
+        // Допущенные БД — для окна «Расположение» записи (перенос в другую коллекцию/БД).
+        ConstructorModule.SetDatabases(GrantedDbs());
 
-        // Боковые панели: и календарь, и конструктор показывают все смонтированные БД корнями.
-        CalendarSidebar.InitializeWorkspace(workspace.Mounted, Controls.Components.SidebarMode.Calendar);
+        // Боковые панели: календарь — только допущенные БД; конструктор — все смонтированные
+        // (недопущенные показываются замком, клик по замку — запрос доступа).
+        CalendarSidebar.InitializeWorkspace(GrantedDbs(), Controls.Components.SidebarMode.Calendar);
         ConstructorSidebar.InitializeWorkspace(workspace.Mounted, Controls.Components.SidebarMode.Constructor);
+        ConstructorSidebar.DatabaseUnlockRequested += async (_, dbId) => await RequestDatabaseUnlock(dbId);
 
         // Начальное состояние: раздел при запуске берём из настроек (стандарт — конструктор).
         var startupModule = AppSettings.LoadStartupModule();
@@ -100,6 +102,13 @@ public partial class MainWindow : Window
         ExtensionsSidebar.Title = "Расширения";
         ExtensionsSidebar.SetItems(ExtensionRegistry.All.Select(e => new SidebarListItem(e.Id, e.Name, ExtensionsIcon)));
         ExtensionsSidebar.CategorySelected += (_, key) => ExtensionsModule.ShowExtension(key);
+
+        // Сайдбар профиля: пункты из ProfileRegistry; выбор раздела открывает его в основной области.
+        ProfileSidebar.Title = "Профиль";
+        ProfileSidebar.SetItems(ProfileRegistry.All.Select(c => new SidebarListItem(c.Key, c.Label, c.Icon)));
+        ProfileSidebar.CategorySelected += (_, key) => ProfileModule.ShowCategory(key);
+        // Панели администратора и истории работают со смонтированными БД рабочего пространства.
+        ProfileModule.Initialize(workspace);
 
         // Sidebar коллекций передаёт активные id в CalendarModule
         CalendarSidebar.ActiveIdsChanged += (_, ids) =>
@@ -252,15 +261,47 @@ public partial class MainWindow : Window
         SyncMountedToUi();
     }
 
-    // Пересобрать боковые панели и обновить набор БД календаря после монтирования/размонтирования.
+    // Допущенные БД: календарь, цели переноса и списки диалогов видят только их.
+    // Недопущенные (замок) показывает лишь сайдбар конструктора.
+    private List<DatabaseManager> GrantedDbs() =>
+        _workspace.Mounted.Where(m => m.Permissions.AccessGranted).ToList();
+
+    // Пересобрать боковые панели и обновить набор БД календаря после монтирования/
+    // размонтирования/получения допуска.
     private void SyncMountedToUi()
     {
         ConstructorSidebar.InitializeWorkspace(_workspace.Mounted, Controls.Components.SidebarMode.Constructor);
-        CalendarSidebar.InitializeWorkspace(_workspace.Mounted, Controls.Components.SidebarMode.Calendar);
-        CalendarModule.SetDatabases(_workspace.Mounted);
-        ConstructorModule.SetDatabases(_workspace.Mounted);
+        CalendarSidebar.InitializeWorkspace(GrantedDbs(), Controls.Components.SidebarMode.Calendar);
+        CalendarModule.SetDatabases(GrantedDbs());
+        ConstructorModule.SetDatabases(GrantedDbs());
         CalendarModule.SetActiveIds(CalendarSidebar.GetActiveIds());
         SettingsModule.RefreshDatabases();   // обновить статус «подключена/не подключена»
+    }
+
+    // Клик по запертой базе в сайдбаре: с паролем — диалог ввода (верный пароль даёт
+    // допуск сразу), без пароля — пояснение про подтверждение администратором (запрос
+    // на доступ уже создан при монтировании).
+    private async Task RequestDatabaseUnlock(int dbId)
+    {
+        var db = _workspace.Get(dbId);
+        if (db is null) return;
+        if (db.Permissions.AccessGranted) { SyncMountedToUi(); return; }
+
+        if (db.Permissions.HasPassword)
+        {
+            var unlocked = await PasswordDialog
+                .ForUnlock(db.Name, db.Permissions.TryUnlock)
+                .ShowDialog<bool>(this);
+            if (unlocked) SyncMountedToUi();
+        }
+        else
+        {
+            await ConfirmDialog.Info(
+                $"База данных «{db.Name}» станет доступна после подтверждения администратором. " +
+                "Запрос на доступ уже отправлен — администратор увидит его в своей панели " +
+                "администратора при следующем открытии этой базы.")
+                .ShowDialog(this);
+        }
     }
 
     private void ShowModule(string module)
@@ -270,6 +311,7 @@ public partial class MainWindow : Window
         CalendarModule.IsVisible   = module == "calendar";
         SettingsModule.IsVisible   = module == "settings";
         ExtensionsModule.IsVisible = module == "extensions";
+        ProfileModule.IsVisible    = module == "profile";
         // Видимость ConstructorModule зависит ещё и от _collectionOpen — её ставит ApplyColumns.
 
         if (module == "calendar")
@@ -296,6 +338,13 @@ public partial class MainWindow : Window
             SettingsSidebar.IsVisible    = _sidebarOpen;
             SettingsModule.ShowCategory(SettingsSidebar.SelectedKey);
         }
+        else if (module == "profile") // собственный сайдбар со списком разделов, без панели записи
+        {
+            CalendarSidebar.IsVisible    = false;
+            ConstructorSidebar.IsVisible = false;
+            ProfileSidebar.IsVisible     = _sidebarOpen;
+            ProfileModule.ShowCategory(ProfileSidebar.SelectedKey);
+        }
         else // extensions — собственный сайдбар со списком расширений, без панели записи
         {
             CalendarSidebar.IsVisible    = false;
@@ -307,6 +356,7 @@ public partial class MainWindow : Window
         // Сайдбары мета-разделов видны только в своём режиме.
         if (module != "settings")   SettingsSidebar.IsVisible   = false;
         if (module != "extensions") ExtensionsSidebar.IsVisible = false;
+        if (module != "profile")    ProfileSidebar.IsVisible    = false;
 
         ApplyColumns();
     }
@@ -321,6 +371,8 @@ public partial class MainWindow : Window
             ConstructorSidebar.IsVisible = isOpen;
         else if (_activeModule == "settings")
             SettingsSidebar.IsVisible = isOpen;
+        else if (_activeModule == "profile")
+            ProfileSidebar.IsVisible = isOpen;
         else // extensions
             ExtensionsSidebar.IsVisible = isOpen;
 

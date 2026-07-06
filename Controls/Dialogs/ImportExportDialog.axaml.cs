@@ -110,13 +110,17 @@ public partial class ImportExportDialog : Window
         LocationCombo.SelectedIndex = idx >= 0 ? idx : 0;
     }
 
-    // Переключаем пояснение (стандартный) и панель параметров (ручной); держим позицию окна.
+    // Переключаем пояснение (стандартный) и колонку параметров (ручной, справа — окно
+    // расширяется вправо); заголовок левой колонки и линия между колонками видны,
+    // только когда колонок две. Держим позицию окна.
     private void UpdateTypeVisibility(bool keepPosition)
     {
         var pos    = Position;
         var manual = TypeCombo.SelectedIndex == 1;
-        ManualPanel.IsVisible  = manual;
-        StandardHelp.IsVisible = !manual;
+        ManualPanel.IsVisible     = manual;
+        MainHeader.IsVisible      = manual;
+        ColumnSeparator.IsVisible = manual;
+        StandardHelp.IsVisible    = !manual;
         if (keepPosition) KeepWindowPosition(pos);
     }
 

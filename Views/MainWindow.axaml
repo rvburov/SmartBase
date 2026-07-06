@@ -5,6 +5,7 @@
         xmlns:con="using:DataBase.Views.ConstructorDb"
         xmlns:settings="using:DataBase.Views.Settings"
         xmlns:ext="using:DataBase.Views.Extensions"
+        xmlns:profile="using:DataBase.Views.Profile"
         xmlns:u="using:DataBase.Utils"
         x:Class="DataBase.Views.MainWindow"
         Classes="main"
@@ -54,6 +55,7 @@
             <comp:SidebarTree x:Name="ConstructorSidebar" IsVisible="False" />
             <comp:SidebarList x:Name="SettingsSidebar" IsVisible="False" />
             <comp:SidebarList x:Name="ExtensionsSidebar" IsVisible="False" />
+            <comp:SidebarList x:Name="ProfileSidebar" IsVisible="False" />
         </Grid>
         <Border Grid.Column="2"
                 Classes="separator v"
@@ -65,6 +67,7 @@
             <con:ConstructorControllerView x:Name="ConstructorModule" IsVisible="False" />
             <settings:SettingsView x:Name="SettingsModule" IsVisible="False" />
             <ext:ExtensionsView x:Name="ExtensionsModule" IsVisible="False" />
+            <profile:ProfileView x:Name="ProfileModule" IsVisible="False" />
         </Grid>
 
         <!-- Вертикальный разделитель слева от панели записи -->

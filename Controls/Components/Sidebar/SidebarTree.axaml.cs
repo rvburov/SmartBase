@@ -29,10 +29,14 @@ public partial class SidebarTree : UserControl
     public event EventHandler<EntityRef>? CollectionSelected;
     public event EventHandler<int>?       CollectionDeleted;
     public event EventHandler?            RequestRefresh;
+    // Клик по запертой базе (без допуска) — MainWindow предлагает ввести пароль.
+    public event EventHandler<int>?       DatabaseUnlockRequested;
 
     // Смонтированные БД сайдбара. В режиме календаря — одна (дефолт). В конструкторе —
     // все из рабочего пространства, и каждая показывается корневым узлом (_showRoots).
-    private sealed record MountedDb(int DbId, string Name, ConstructorRepository Repo);
+    // Locked — база смонтирована, но текущий пользователь не допущен (нет IsApproved и
+    // не админ): корень показывается с замком, дети не строятся, клик — запрос доступа.
+    private sealed record MountedDb(int DbId, string Name, ConstructorRepository Repo, bool Locked = false);
     private readonly List<MountedDb> _dbs = [];
     private bool _showRoots;
 
@@ -53,9 +57,11 @@ public partial class SidebarTree : UserControl
     private ConstructorRepository? RepoOf(SidebarNode node) => RepoFor(node.DbId);
     private int DefaultDbId => _dbs.Count > 0 ? _dbs[0].DbId : 0;
 
-    // Описатели всех смонтированных БД для диалогов (выбор целевой БД + перенос).
+    // Описатели смонтированных БД для диалогов (выбор целевой БД + перенос).
+    // Запертые базы (без допуска) целями не предлагаются.
     private List<DbOption> DbOptions() =>
-        _dbs.Select(d => new DbOption(
+        _dbs.Where(d => !d.Locked)
+            .Select(d => new DbOption(
             d.DbId,
             string.IsNullOrWhiteSpace(d.Name) ? "База данных" : d.Name,
             d.Repo)).ToList();
@@ -104,11 +110,12 @@ public partial class SidebarTree : UserControl
     }
 
     // Конструктор: несколько БД из рабочего пространства, каждая — корневой узел.
+    // База без допуска (Permissions.AccessGranted=false) отображается замком без содержимого.
     public void InitializeWorkspace(IReadOnlyList<DatabaseManager> databases, SidebarMode mode)
     {
         _dbs.Clear();
         foreach (var d in databases)
-            _dbs.Add(new MountedDb(d.DbId, d.Name, d.Constructor));
+            _dbs.Add(new MountedDb(d.DbId, d.Name, d.Constructor, !d.Permissions.AccessGranted));
         _showRoots = true;
         _mode = mode;
         ToggleAllBtn.IsVisible = mode == SidebarMode.Calendar;
@@ -157,6 +164,8 @@ public partial class SidebarTree : UserControl
         var result = new Dictionary<int, HashSet<int>>();
         foreach (var db in _dbs)
         {
+            // Запертая база событий не даёт (календарь получает только допущенные, но страхуемся).
+            if (db.Locked) { result[db.DbId] = []; continue; }
             var ids = db.Repo.GetAllCollections()
                 .Where(c => c.Id.HasValue).Select(c => c.Id!.Value)
                 .Where(id => !_uncheckedIds.Contains((db.DbId, id)))
@@ -217,10 +226,13 @@ public partial class SidebarTree : UserControl
                     DbId       = db.DbId,
                     Id         = db.DbId,
                     Name       = db.Name,
-                    IsExpanded = !_collapsedDbRoots.Contains(db.DbId),
+                    IsLocked   = db.Locked,
+                    IsExpanded = !db.Locked && !_collapsedDbRoots.Contains(db.DbId),
                 };
-                foreach (var child in BuildDbChildren(db))
-                    rootNode.Children.Add(child);
+                // Содержимое запертой базы не строится — данные недоступны до допуска.
+                if (!db.Locked)
+                    foreach (var child in BuildDbChildren(db))
+                        rootNode.Children.Add(child);
                 roots.Add(rootNode);
             }
             return roots;
@@ -448,6 +460,13 @@ public partial class SidebarTree : UserControl
             return;
         }
 
+        // Запертая база: вместо раскрытия — запрос доступа (пароль/ожидание допуска).
+        if (node.IsDatabase && node.IsLocked)
+        {
+            DatabaseUnlockRequested?.Invoke(this, node.DbId);
+            return;
+        }
+
         // Обычный клик по раскрываемому узлу (группа или корень-БД) — раскрыть/свернуть.
         if (node.IsGroup || node.IsDatabase)
         {
@@ -584,6 +603,8 @@ public partial class SidebarTree : UserControl
     {
         if (sender is not Control { DataContext: SidebarRow row } anchor) return;
         if (!row.Node.Id.HasValue) return;
+        // У запертой базы меню нет — содержимое недоступно до допуска.
+        if (row.Node.IsLocked) { e.Handled = true; return; }
 
         var menu = new ContextMenu();
         var node = row.Node;
@@ -595,34 +616,41 @@ public partial class SidebarTree : UserControl
         // множественном выборе его скрываем (иначе пункт некорректен — правил бы только этот узел).
         var multi = _selectedNodes.Contains(node) && _selectedNodes.Count > 1;
 
+        // Права текущего пользователя в БД узла: запрещённые пункты видны, но недоступны
+        // (пользователь понимает, что действие существует, но закрыто администратором).
+        var perms = RepoOf(node)?.Permissions;
+        bool Can(PermAction a, int? cid = null) => perms?.Can(a, cid) ?? true;
+        static MenuItem Gate(MenuItem m, bool allowed) { m.IsEnabled = allowed; return m; }
+
         if (node.IsDatabase)
         {
             // Корень-БД: создание группы/коллекции в этой БД. Сама БД управляется в настройках.
-            menu.Items.Add(MenuItemCreateGroup(()      => _ = CreateItem("group", db, parentId: null)));
-            menu.Items.Add(MenuItemCreateCollection(() => _ = CreateItem("collection", db, parentId: null)));
+            menu.Items.Add(Gate(MenuItemCreateGroup(()      => _ = CreateItem("group", db, parentId: null)), Can(PermAction.CreateCollection)));
+            menu.Items.Add(Gate(MenuItemCreateCollection(() => _ = CreateItem("collection", db, parentId: null)), Can(PermAction.CreateCollection)));
         }
         else if (node.IsGroup)
         {
-            menu.Items.Add(MenuItemCreateGroup(()      => _ = CreateItem("group", db, parentId: id)));
-            menu.Items.Add(MenuItemCreateCollection(() => _ = CreateItem("collection", db, parentId: id)));
+            menu.Items.Add(Gate(MenuItemCreateGroup(()      => _ = CreateItem("group", db, parentId: id)), Can(PermAction.CreateCollection)));
+            menu.Items.Add(Gate(MenuItemCreateCollection(() => _ = CreateItem("collection", db, parentId: id)), Can(PermAction.CreateCollection)));
             menu.Items.Add(new Separator());
-            if (!multi) menu.Items.Add(MenuItemEdit(() => _ = EditGroup(db, id)));
-            menu.Items.Add(MenuItemLocation(() => RelocateSelectionOrNode(node)));
-            menu.Items.Add(MenuItemDuplicate(() => DuplicateSelectionOrNode(node)));
-            menu.Items.Add(MenuItemDelete(() => _ = DeleteSelectionOrNode(node)));
+            if (!multi) menu.Items.Add(Gate(MenuItemEdit(() => _ = EditGroup(db, id)), Can(PermAction.EditCollection)));
+            // Перенос = изъятие из текущего места: право как у удаления.
+            menu.Items.Add(Gate(MenuItemLocation(() => RelocateSelectionOrNode(node)), Can(PermAction.DeleteCollection)));
+            menu.Items.Add(Gate(MenuItemDuplicate(() => DuplicateSelectionOrNode(node)), Can(PermAction.DuplicateCollection)));
+            menu.Items.Add(Gate(MenuItemDelete(() => _ = DeleteSelectionOrNode(node)), Can(PermAction.DeleteCollection)));
         }
         else
         {
             if (_mode == SidebarMode.Calendar)
             {
-                menu.Items.Add(BuildColorMenu(db, id));
-                menu.Items.Add(BuildDateFieldsMenu(db, id));
+                menu.Items.Add(Gate(BuildColorMenu(db, id), Can(PermAction.EditCollection, id)));
+                menu.Items.Add(Gate(BuildDateFieldsMenu(db, id), Can(PermAction.EditField, id)));
                 menu.Items.Add(new Separator());
             }
-            if (!multi) menu.Items.Add(MenuItemEdit(() => _ = EditCollection(db, id)));
-            menu.Items.Add(MenuItemLocation(() => RelocateSelectionOrNode(node)));
-            menu.Items.Add(MenuItemDuplicate(() => DuplicateSelectionOrNode(node)));
-            menu.Items.Add(MenuItemDelete(() => _ = DeleteSelectionOrNode(node)));
+            if (!multi) menu.Items.Add(Gate(MenuItemEdit(() => _ = EditCollection(db, id)), Can(PermAction.EditCollection, id)));
+            menu.Items.Add(Gate(MenuItemLocation(() => RelocateSelectionOrNode(node)), Can(PermAction.DeleteCollection, id)));
+            menu.Items.Add(Gate(MenuItemDuplicate(() => DuplicateSelectionOrNode(node)), Can(PermAction.DuplicateCollection, id)));
+            menu.Items.Add(Gate(MenuItemDelete(() => _ = DeleteSelectionOrNode(node)), Can(PermAction.DeleteCollection, id)));
         }
 
         menu.Open(anchor);
@@ -634,9 +662,14 @@ public partial class SidebarTree : UserControl
         if (sender is not Control anchor) return;
 
         // Создание из пустой области идёт в БД по умолчанию.
+        var canCreate = RepoFor(DefaultDbId)?.Permissions?.Can(PermAction.CreateCollection) ?? true;
         var menu = new ContextMenu();
-        menu.Items.Add(MenuItemCreateGroup(()      => _ = CreateItem("group", DefaultDbId, parentId: null)));
-        menu.Items.Add(MenuItemCreateCollection(() => _ = CreateItem("collection", DefaultDbId, parentId: null)));
+        var g = MenuItemCreateGroup(()      => _ = CreateItem("group", DefaultDbId, parentId: null));
+        var c = MenuItemCreateCollection(() => _ = CreateItem("collection", DefaultDbId, parentId: null));
+        g.IsEnabled = canCreate;
+        c.IsEnabled = canCreate;
+        menu.Items.Add(g);
+        menu.Items.Add(c);
         menu.Open(anchor);
         e.Handled = true;
     }
@@ -1659,6 +1692,7 @@ public class SidebarNode
     public int?    Id       { get; init; }
     public string  Name     { get; init; } = "";
     public string  Color    { get; init; } = "#007AFF";
+    public bool    IsLocked { get; init; }        // база без допуска: замок, без содержимого
     public bool    IsExpanded { get; set; }
     public bool    IsGroup    => NodeType == "group";
     public bool    IsDatabase => NodeType == "database";
@@ -1712,8 +1746,8 @@ public partial class SidebarRow : ObservableObject
 
     public void SetHovered(bool v) => Hovered = v;
 
-    // Раскрываемые узлы — группы и корни-БД.
-    private bool Expandable => Node.IsGroup || Node.IsDatabase;
+    // Раскрываемые узлы — группы и корни-БД (запертая база не раскрывается).
+    private bool Expandable => Node.IsGroup || (Node.IsDatabase && !Node.IsLocked);
 
     public Thickness IndentMargin => new(Depth * IndentStep, 0, 0, 0);
     public double    ChevronSlot  => Expandable ? IndentStep : 0;
@@ -1724,7 +1758,7 @@ public partial class SidebarRow : ObservableObject
 
     public bool      ShowChevron     => Expandable;
     public Geometry? ChevronGeometry => Node.IsExpanded ? Icon("IconChevronDown") : Icon("IconChevronRight");
-    public Geometry? IconGeometry    => Node.IsDatabase ? Icon("IconDatabase") : Node.IsGroup ? Icon("IconFolder") : Icon("IconCollection");
+    public Geometry? IconGeometry    => Node.IsLocked ? Icon("IconLock") : Node.IsDatabase ? Icon("IconDatabase") : Node.IsGroup ? Icon("IconFolder") : Icon("IconCollection");
 
     private SolidColorBrush ColorBrush
     {

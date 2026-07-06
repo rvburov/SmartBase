@@ -6,6 +6,7 @@ using Microsoft.EntityFrameworkCore.Storage;
 using DataBase.Core.Importers;
 using DataBase.Core.Models;
 using DataBase.Database.Entities;
+using DataBase.Utils;
 
 namespace DataBase.Database.Repositories;
 
@@ -19,6 +20,102 @@ public class ConstructorRepository(AppDbContext db)
     /// (ATTACH источника на подключении целевой БД, см. MoveCollectionIsolated).</summary>
     public string DbPath => db.DbPath;
 
+    /// <summary>
+    /// Права текущего пользователя в этой базе (ставит DatabaseManager). Публичные мутаторы
+    /// первой строкой зовут <see cref="Demand"/> — страховку к скрытым кнопкам UI: запрещённое
+    /// действие кидает PermissionDeniedException. Внутренние изолированные клоны репозитория
+    /// (фоновые подключения массовых операций) прав не несут — их работа уже разрешена
+    /// проверкой публичной точки входа. UI читает это же свойство для видимости кнопок
+    /// (Permissions.Can); null — репозиторий без менеджера (тесты, генераторы) без ограничений.
+    /// </summary>
+    public PermissionService? Permissions { get; init; }
+
+    private void Demand(PermAction action, int? collectionId = null) =>
+        Permissions?.Demand(action, collectionId);
+
+    // Владелец-коллекция записи/поля — для проверки прав с per-collection переопределением.
+    private int? CollectionOfRecord(int recordId) =>
+        db.DbRecords.Where(r => r.Id == recordId).Select(r => (int?)r.CollectionId).FirstOrDefault();
+    private int? CollectionOfField(int fieldId) =>
+        db.DbFields.Where(f => f.Id == fieldId).Select(f => (int?)f.CollectionId).FirstOrDefault();
+
+    // ── Журнал изменений (change_log) ─────────────────────────────────────────
+    //
+    // Только факты, без значений: кто (снапшот CurrentUser), когда, что сделал. Пишется
+    // через ТОТ ЖЕ контекст, что и операция — в т.ч. изолированный фоновый (строка
+    // журнала не конкурирует с общим контекстом и коммитится вместе с операцией, если
+    // вызвана до SaveChanges). Пакетные пути пишут ОДНУ строку с Count — массовые
+    // операции журналом не замедляются.
+
+    // Добавить строку журнала (без SaveChanges — коммитится ближайшим сохранением).
+    private void Log(string action, string targetType, string targetName,
+                     string? collectionName = null, long? count = null) =>
+        db.ChangeLog.Add(new ChangeLogEntity
+        {
+            Ts             = DateTime.UtcNow.ToString("o"),
+            UserKey        = CurrentUser.Key,
+            UserName       = CurrentUser.DisplayName,
+            Action         = action,
+            TargetType     = targetType,
+            TargetName     = targetName,
+            CollectionName = collectionName,
+            Count          = count,
+        });
+
+    // Log + немедленный SaveChanges — для bulk-путей, где своего SaveChanges рядом нет.
+    private void LogNow(string action, string targetType, string targetName,
+                        string? collectionName = null, long? count = null)
+    {
+        Log(action, targetType, targetName, collectionName, count);
+        db.SaveChanges();
+    }
+
+    private string? CollectionNameOf(int? collectionId) =>
+        collectionId is int cid
+            ? db.DbCollections.Where(c => c.Id == cid).Select(c => c.Name).FirstOrDefault()
+            : null;
+
+    /// <summary>
+    /// Опции типа свойства «пользователь»: отображаемые имена ДОПУЩЕННЫХ пользователей
+    /// базы (db_users). В личной базе допущен только владелец — выбрать можно лишь себя.
+    /// Значение хранится строкой-именем (как select): фильтр/сортировка/экспорт работают
+    /// без доработок, а старые значения остаются историческим снапшотом.
+    /// </summary>
+    public List<string> GetUserOptions() =>
+        db.DbUsers.Where(u => u.IsApproved)
+                  .OrderBy(u => u.DisplayName)
+                  .Select(u => u.DisplayName)
+                  .ToList();
+
+    /// <summary>Строка журнала для панели «История изменений».</summary>
+    public sealed record ChangeLogRow(long Id, string Ts, string UserName, string Action,
+                                      string TargetType, string TargetName,
+                                      string? CollectionName, long? Count);
+
+    /// <summary>
+    /// Страница журнала (новые сверху) keyset-пагинацией по Id: beforeId — Id последней
+    /// показанной строки (null — с начала). Отдельное подключение — безопасно из фона.
+    /// targetTypes — фильтр по типам объектов (null/пусто — все).
+    /// </summary>
+    public Task<List<ChangeLogRow>> GetChangeLogPageAsync(long? beforeId, int take,
+                                                          IReadOnlyList<string>? targetTypes = null)
+    {
+        var path = db.DbPath;
+        return Task.Run(() =>
+        {
+            using var ctx = new AppDbContext(path);
+            ctx.ApplyPerformancePragmas();
+            IQueryable<ChangeLogEntity> q = ctx.ChangeLog.AsNoTracking();
+            if (beforeId is long b) q = q.Where(e => e.Id < b);
+            if (targetTypes is { Count: > 0 }) q = q.Where(e => targetTypes.Contains(e.TargetType));
+            return q.OrderByDescending(e => e.Id)
+                    .Take(take)
+                    .Select(e => new ChangeLogRow(e.Id, e.Ts, e.UserName, e.Action,
+                                                  e.TargetType, e.TargetName, e.CollectionName, e.Count))
+                    .ToList();
+        });
+    }
+
     // ── Группы ────────────────────────────────────────────────────────────────
 
     public List<DbGroup> GetAllGroups() =>
@@ -29,8 +126,10 @@ public class ConstructorRepository(AppDbContext db)
 
     public DbGroup AddGroup(DbGroup group)
     {
+        Demand(PermAction.CreateCollection);
         var entity = new DbGroupEntity { Name = group.Name, ParentId = group.ParentId, Position = group.Position };
         db.DbGroups.Add(entity);
+        Log("create", "group", group.Name);
         db.SaveChanges();
         group.Id = entity.Id;
         return group;
@@ -38,8 +137,12 @@ public class ConstructorRepository(AppDbContext db)
 
     public void UpdateGroup(DbGroup group)
     {
+        Demand(PermAction.EditCollection);
         var entity = db.DbGroups.Find(group.Id);
         if (entity is null) return;
+        // Перестановки (drag/сортировка) журнал не засоряют — только переименование/перенос.
+        if (entity.Name != group.Name || entity.ParentId != group.ParentId)
+            Log("update", "group", group.Name);
         entity.Name     = group.Name;
         entity.ParentId = group.ParentId;
         entity.Position = group.Position;
@@ -64,6 +167,7 @@ public class ConstructorRepository(AppDbContext db)
     /// </summary>
     public int DuplicateGroupCore(int groupId, IProgress<int>? progress = null, int batchSize = 10000)
     {
+        Demand(PermAction.DuplicateCollection);
         var src = db.DbGroups.Find(groupId);
         if (src is null) throw new InvalidOperationException($"Group {groupId} not found");
 
@@ -88,6 +192,7 @@ public class ConstructorRepository(AppDbContext db)
                 CopyCollectionData(c.Id, newColId, new BaseProgress(progress, basis), batchSize);
             basis += rc;
         }
+        LogNow("duplicate", "group", src.Name, count: basis);
         progress?.Report((int)basis);
         return newRootId;
     }
@@ -96,6 +201,7 @@ public class ConstructorRepository(AppDbContext db)
     /// не трогает общий Context (см. правило об общем AppDbContext), безопасно из Task.Run.</summary>
     public int DuplicateGroupIsolated(int groupId, IProgress<int>? progress = null, int batchSize = 10000)
     {
+        Demand(PermAction.DuplicateCollection);
         using var ctx = new AppDbContext(db.DbPath);
         ctx.ApplyBulkPerformancePragmas();
         return new ConstructorRepository(ctx).DuplicateGroupCore(groupId, progress, batchSize);
@@ -124,10 +230,19 @@ public class ConstructorRepository(AppDbContext db)
 
     public void DeleteGroup(int groupId)
     {
+        Demand(PermAction.DeleteCollection);
+        // Одна строка журнала на ветку (рекурсия по подгруппам — внутри core).
+        var name = db.DbGroups.Where(g => g.Id == groupId).Select(g => g.Name).FirstOrDefault();
+        DeleteGroupCore(groupId);
+        if (name is not null) LogNow("delete", "group", name);
+    }
+
+    private void DeleteGroupCore(int groupId)
+    {
         // Рекурсивно удаляем все вложенные группы.
         var childIds = db.DbGroups.Where(g => g.ParentId == groupId).Select(g => g.Id).ToList();
         foreach (var childId in childIds)
-            DeleteGroup(childId);
+            DeleteGroupCore(childId);
 
         // Удаляем коллекции этой группы; поля/записи/значения уйдут каскадно.
         db.DbCollections.RemoveRange(db.DbCollections.Where(c => c.GroupId == groupId));
@@ -180,6 +295,7 @@ public class ConstructorRepository(AppDbContext db)
     /// веток. Не трогает общий Context (см. правило об общем AppDbContext), безопасно из Task.Run.</summary>
     public void DeleteGroupIsolated(int groupId, IProgress<int>? progress = null)
     {
+        Demand(PermAction.DeleteCollection);
         using var ctx = new AppDbContext(db.DbPath);
         ctx.ApplyBulkPerformancePragmas();
         new ConstructorRepository(ctx).DeleteGroupData(groupId, progress);
@@ -193,6 +309,7 @@ public class ConstructorRepository(AppDbContext db)
     /// </summary>
     public void DeleteGroupData(int groupId, IProgress<int>? progress = null, int batchSize = 10000)
     {
+        var groupName = db.DbGroups.Where(g => g.Id == groupId).Select(g => g.Name).FirstOrDefault();
         var groupIds = SubtreeGroupIds(groupId);
         var colIds   = db.DbCollections.Where(c => c.GroupId != null && groupIds.Contains(c.GroupId.Value))
                          .Select(c => c.Id).ToList();
@@ -212,6 +329,7 @@ public class ConstructorRepository(AppDbContext db)
             db.Database.ExecuteSqlInterpolated($"DELETE FROM db_groups WHERE Id = {gid}");
         tx.Commit();
 
+        if (groupName is not null) LogNow("delete", "group", groupName, count: total);
         progress?.Report((int)total);   // финально 100% для этой ветки
     }
 
@@ -253,12 +371,14 @@ public class ConstructorRepository(AppDbContext db)
 
     public DbCollection AddCollection(DbCollection col)
     {
+        Demand(PermAction.CreateCollection);
         var entity = new DbCollectionEntity
         {
             Name = col.Name, GroupId = col.GroupId,
             Position = col.Position, Icon = col.Icon, Color = col.Color,
         };
         db.DbCollections.Add(entity);
+        Log("create", "collection", col.Name);
         db.SaveChanges();
         col.Id = entity.Id;
 
@@ -289,6 +409,7 @@ public class ConstructorRepository(AppDbContext db)
         IEnumerable<ImportRow> rows, CancellationToken ct,
         IProgress<long>? rowsWritten = null, int batchSize = 20_000)
     {
+        Demand(PermAction.CreateCollection);
         collectionName = UniqueCollectionName(collectionName, groupId);
 
         int colId;
@@ -345,14 +466,17 @@ public class ConstructorRepository(AppDbContext db)
             throw;
         }
 
+        LogNow("import", "collection", collectionName,
+               count: db.DbRecords.LongCount(r => r.CollectionId == colId));
         return colId;
     }
 
     // Недолитая коллекция удаляется целиком (батч-удаление, перезапускаемое). Ошибку удаления
     // глотаем — важнее показать исходную причину; при сбое хвост доудалит повторное удаление.
+    // Без строки журнала: пользователь этой коллекции не видел (сбой/отмена импорта).
     private void TryDeleteImported(int collectionId)
     {
-        try { DeleteCollectionData(collectionId); }
+        try { DeleteCollectionData(collectionId, log: false); }
         catch { /* best-effort */ }
     }
 
@@ -435,8 +559,13 @@ public class ConstructorRepository(AppDbContext db)
 
     public void UpdateCollection(DbCollection col)
     {
+        Demand(PermAction.EditCollection, col.Id);
         var entity = db.DbCollections.Find(col.Id);
         if (entity is null) return;
+        // Перестановки (Position) журнал не засоряют — только смысловые изменения.
+        if (entity.Name != col.Name || entity.GroupId != col.GroupId ||
+            entity.Icon != col.Icon || entity.Color   != col.Color)
+            Log("update", "collection", col.Name);
         entity.Name     = col.Name;
         entity.GroupId  = col.GroupId;
         entity.Position = col.Position;
@@ -447,8 +576,13 @@ public class ConstructorRepository(AppDbContext db)
 
     public void DeleteCollection(int collectionId)
     {
+        Demand(PermAction.DeleteCollection, collectionId);
         var entity = db.DbCollections.Find(collectionId);
-        if (entity is not null) db.DbCollections.Remove(entity);
+        if (entity is not null)
+        {
+            Log("delete", "collection", entity.Name);
+            db.DbCollections.Remove(entity);
+        }
         db.SaveChanges();
     }
 
@@ -458,6 +592,7 @@ public class ConstructorRepository(AppDbContext db)
     /// </summary>
     public void DeleteCollectionIsolated(int collectionId, IProgress<int>? progress = null)
     {
+        Demand(PermAction.DeleteCollection, collectionId);
         using var ctx = new AppDbContext(db.DbPath);
         ctx.ApplyBulkPerformancePragmas();
         new ConstructorRepository(ctx).DeleteCollectionData(collectionId, progress);
@@ -473,10 +608,13 @@ public class ConstructorRepository(AppDbContext db)
     /// коллекций SQLite переиспользует (фантомные настройки у будущей коллекции с тем же id).
     /// <paramref name="progress"/> — нарастающее число удалённых записей.
     /// </summary>
-    public void DeleteCollectionData(int collectionId, IProgress<int>? progress = null, int batchSize = 10000)
+    public void DeleteCollectionData(int collectionId, IProgress<int>? progress = null, int batchSize = 10000,
+                                     bool log = true)
     {
+        var name     = CollectionNameOf(collectionId);
         var recCount = db.DbRecords.Count(r => r.CollectionId == collectionId);
         DeleteCollectionRows(collectionId, 0, progress, batchSize);
+        if (log && name is not null) LogNow("delete", "collection", name, count: recCount);
         progress?.Report(recCount);   // финально 100% для этой коллекции
     }
 
@@ -533,9 +671,11 @@ public class ConstructorRepository(AppDbContext db)
 
     public DbCollection DuplicateCollection(int collectionId)
     {
+        Demand(PermAction.DuplicateCollection, collectionId);
         var shell = CreateCollectionShell(collectionId);
         if (shell.Collection.Id is int newId)
             CopyCollectionData(collectionId, newId);
+        LogNow("duplicate", "collection", shell.Collection.Name, count: shell.SourceRecordCount);
         return shell.Collection;
     }
 
@@ -815,12 +955,19 @@ public class ConstructorRepository(AppDbContext db)
     /// </summary>
     public int DuplicateCollectionIsolated(int srcCollectionId, IProgress<int>? progress = null)
     {
+        Demand(PermAction.DuplicateCollection, srcCollectionId);
+        return DuplicateCollectionIsolatedCore(srcCollectionId, progress);
+    }
+
+    private int DuplicateCollectionIsolatedCore(int srcCollectionId, IProgress<int>? progress = null)
+    {
         using var ctx = new AppDbContext(db.DbPath);
         ctx.ApplyBulkPerformancePragmas();
         var repo  = new ConstructorRepository(ctx);
         var shell = repo.CreateCollectionShell(srcCollectionId);
         if (shell.Collection.Id is not int newId) return 0;
         repo.CopyCollectionData(srcCollectionId, newId, progress);
+        repo.LogNow("duplicate", "collection", shell.Collection.Name, count: shell.SourceRecordCount);
         return newId;
     }
 
@@ -835,6 +982,7 @@ public class ConstructorRepository(AppDbContext db)
     public int ImportStreamedCollectionIsolated(string collectionName, int? groupId, ImportSchema schema,
         IEnumerable<ImportRow> rows, CancellationToken ct, IProgress<long>? rowsWritten = null)
     {
+        Demand(PermAction.CreateCollection);
         using var ctx = new AppDbContext(db.DbPath);
         ctx.ApplyBulkPerformancePragmas();   // большой кеш+mmap — без них вставка в глобальные индексы db_field_values деградирует
         return new ConstructorRepository(ctx).ImportStreamedCollection(collectionName, groupId, schema, rows, ct, rowsWritten);
@@ -1066,6 +1214,9 @@ public class ConstructorRepository(AppDbContext db)
     public static DbCollection MoveCollection(ConstructorRepository source, ConstructorRepository target,
                                               int collectionId, int? targetGroupId, string newName)
     {
+        // Перенос = изъятие из источника + создание в целевой: проверяем права ОБЕИХ баз.
+        source.Demand(PermAction.DeleteCollection, collectionId);
+        target.Demand(PermAction.CreateCollection);
         var snap = source.ExportCollection(collectionId);
         snap.Collection.Name = newName;
         var moved = target.ImportCollection(snap, targetGroupId);
@@ -1078,6 +1229,7 @@ public class ConstructorRepository(AppDbContext db)
             if (moved.Id is int newId) target.DeleteCollection(newId);   // откат копии — без дубля
             throw;
         }
+        target.LogNow("move", "collection", newName);
         return moved;
     }
 
@@ -1085,6 +1237,9 @@ public class ConstructorRepository(AppDbContext db)
     public static DbGroup MoveGroup(ConstructorRepository source, ConstructorRepository target,
                                     int groupId, int? targetParentId, string newName)
     {
+        // Перенос = изъятие из источника + создание в целевой: проверяем права ОБЕИХ баз.
+        source.Demand(PermAction.DeleteCollection);
+        target.Demand(PermAction.CreateCollection);
         var snap = source.ExportGroup(groupId);
         snap.Group.Name = newName;
         var moved = target.ImportGroup(snap, targetParentId);
@@ -1097,6 +1252,7 @@ public class ConstructorRepository(AppDbContext db)
             if (moved.Id is int newId) target.DeleteGroup(newId);   // откат копии — без дубля
             throw;
         }
+        target.LogNow("move", "group", newName);
         return moved;
     }
 
@@ -1120,6 +1276,9 @@ public class ConstructorRepository(AppDbContext db)
     public int MoveCollectionIsolated(string sourceDbPath, int srcCollectionId, int? targetGroupId,
                                       IProgress<int>? progress = null, int batchSize = 10000)
     {
+        // this — ЦЕЛЕВАЯ база: проверяем право создавать в ней. Право удаления в источнике
+        // проверяет UI по репозиторию источника (его PermissionService здесь недоступен).
+        Demand(PermAction.CreateCollection);
         using var targetCtx = new AppDbContext(db.DbPath);
         targetCtx.ApplyBulkPerformancePragmas();
         var target = new ConstructorRepository(targetCtx);
@@ -1133,6 +1292,7 @@ public class ConstructorRepository(AppDbContext db)
         target.UniquifyCollectionName(newColId, targetGroupId);
 
         // Источник чистим на отдельном подключении (каскад: записи→значения, коллекция→поля).
+        // Журнал: в источнике «удалил» пишет DeleteCollectionData, в целевой — «перенёс» ниже.
         try
         {
             using var srcCtx = new AppDbContext(sourceDbPath);
@@ -1141,9 +1301,10 @@ public class ConstructorRepository(AppDbContext db)
         }
         catch
         {
-            try { target.DeleteCollectionData(newColId); } catch { /* копию убрать не удалось — данные целы в обеих БД */ }
+            try { target.DeleteCollectionData(newColId, log: false); } catch { /* копию убрать не удалось — данные целы в обеих БД */ }
             throw;
         }
+        target.LogNow("move", "collection", target.CollectionNameOf(newColId) ?? "", count: recCount);
         return newColId;
     }
 
@@ -1157,6 +1318,8 @@ public class ConstructorRepository(AppDbContext db)
     public int MoveGroupIsolated(string sourceDbPath, int srcGroupId, int? targetParentId,
                                  IProgress<int>? progress = null, int batchSize = 10000)
     {
+        // this — ЦЕЛЕВАЯ база (см. MoveCollectionIsolated: источник проверяет UI).
+        Demand(PermAction.CreateCollection);
         using var targetCtx = new AppDbContext(db.DbPath);
         targetCtx.ApplyBulkPerformancePragmas();
         var target = new ConstructorRepository(targetCtx);
@@ -1180,6 +1343,9 @@ public class ConstructorRepository(AppDbContext db)
             try { target.DeleteGroupData(newRootId); } catch { /* копию убрать не удалось — данные целы в обеих БД */ }
             throw;
         }
+        var movedName = targetCtx.DbGroups.Where(g => g.Id == newRootId)
+                                          .Select(g => g.Name).FirstOrDefault() ?? "";
+        target.LogNow("move", "group", movedName, count: total);
         return newRootId;
     }
 
@@ -1492,6 +1658,7 @@ public class ConstructorRepository(AppDbContext db)
 
     public DbField AddField(DbField field)
     {
+        Demand(PermAction.CreateField, field.CollectionId);
         if (db.DbFields.Any(f => f.CollectionId == field.CollectionId && f.Name == field.Name))
             throw new InvalidOperationException("Поле с таким именем уже существует.");
 
@@ -1510,6 +1677,7 @@ public class ConstructorRepository(AppDbContext db)
             IsRequired   = field.IsRequired,
         };
         db.DbFields.Add(entity);
+        Log("create", "field", field.Name, CollectionNameOf(field.CollectionId));
         db.SaveChanges();
         field.Id = entity.Id;
         return field;
@@ -1517,6 +1685,7 @@ public class ConstructorRepository(AppDbContext db)
 
     public void UpdateField(DbField field)
     {
+        Demand(PermAction.EditField, field.CollectionId);
         var entity = db.DbFields.Find(field.Id);
         if (entity is null) return;
         if (entity.Name != field.Name &&
@@ -1529,6 +1698,11 @@ public class ConstructorRepository(AppDbContext db)
         // здесь тоже пересобирала проекцию (минуты фриза на больших коллекциях).
         var oldType            = entity.FieldType;
         var calRelevantChanged = entity.FieldType != field.FieldType;
+
+        // Перестановки (Position) журнал не засоряют — только смысловые изменения.
+        if (entity.Name != field.Name || entity.FieldType != field.FieldType ||
+            entity.ConfigJson != field.ConfigJson || entity.IsRequired != field.IsRequired)
+            Log("update", "field", field.Name, CollectionNameOf(field.CollectionId));
 
         entity.Name       = field.Name;
         entity.FieldType  = field.FieldType;
@@ -1620,6 +1794,7 @@ public class ConstructorRepository(AppDbContext db)
 
     public DbField DuplicateField(int fieldId)
     {
+        Demand(PermAction.CreateField, CollectionOfField(fieldId));
         var copy = CreateFieldCopyEntity(fieldId);
 
         // Копируем значения ячеек исходного свойства во всех записях ОДНИМ bulk-SQL —
@@ -1629,6 +1804,7 @@ public class ConstructorRepository(AppDbContext db)
             INSERT INTO db_field_values (RecordId, FieldId, Value)
             SELECT RecordId, {copy.Id}, Value FROM db_field_values WHERE FieldId = {fieldId}");
 
+        LogNow("duplicate", "field", copy.Name, CollectionNameOf(copy.CollectionId));
         return ToDbField(copy);
     }
 
@@ -1702,7 +1878,11 @@ public class ConstructorRepository(AppDbContext db)
     {
         using var ctx = new AppDbContext(db.DbPath);
         ctx.ApplyPerformancePragmas();
-        return new ConstructorRepository(ctx).DuplicateFieldData(fieldId, progress);
+        var repo = new ConstructorRepository(ctx);
+        // Владельца-коллекцию ищем через СВЕЖИЙ контекст: обёртку зовут из фонового
+        // потока, а общий контекст — только для UI-потока (сама Demand читает кеш).
+        Demand(PermAction.CreateField, repo.CollectionOfField(fieldId));
+        return repo.DuplicateFieldData(fieldId, progress);
     }
 
     /// <summary>Удаление ОДНОГО поля на ОТДЕЛЬНОМ подключении (для фона) с прогрессом по его значениям.
@@ -1711,7 +1891,10 @@ public class ConstructorRepository(AppDbContext db)
     {
         using var ctx = new AppDbContext(db.DbPath);
         ctx.ApplyPerformancePragmas();
-        new ConstructorRepository(ctx).DeleteFieldData(fieldId, progress);
+        var repo = new ConstructorRepository(ctx);
+        // Лукап через свежий контекст — обёртка работает в фоне (см. DuplicateFieldIsolated).
+        Demand(PermAction.DeleteField, repo.CollectionOfField(fieldId));
+        repo.DeleteFieldData(fieldId, progress);
     }
 
 
@@ -1734,6 +1917,7 @@ public class ConstructorRepository(AppDbContext db)
             progress?.Report(Math.Min(ids.Count, i + batchSize));
         }
         tx.Commit();
+        LogNow("duplicate", "field", copy.Name, CollectionNameOf(copy.CollectionId));
         return ToDbField(copy);
     }
 
@@ -1761,6 +1945,7 @@ public class ConstructorRepository(AppDbContext db)
         db.Database.ExecuteSqlInterpolated(
             $"DELETE FROM column_order WHERE CollectionId = {colId} AND Key = {key}");
         tx.Commit();
+        LogNow("delete", "field", field.Name, CollectionNameOf(colId));
     }
 
     // Id всех значений поля одним индексным запросом ((FieldId,Value) — без скана чужих полей),
@@ -1852,10 +2037,12 @@ public class ConstructorRepository(AppDbContext db)
 
     public void DeleteField(int fieldId)
     {
+        Demand(PermAction.DeleteField, CollectionOfField(fieldId));
         var entity = db.DbFields.Find(fieldId);
         if (entity is null) { db.SaveChanges(); return; }
 
         var colId = entity.CollectionId;
+        Log("delete", "field", entity.Name, CollectionNameOf(colId));
         db.DbFields.Remove(entity);
 
         // Чистим строку порядка для этого поля, чтобы в column_order не копились
@@ -2082,22 +2269,30 @@ public class ConstructorRepository(AppDbContext db)
 
     public void SetRecordTitle(int recordId, string title)
     {
+        Demand(PermAction.EditRecord, CollectionOfRecord(recordId));
         var rec = db.DbRecords.Find(recordId);
         if (rec is null) return;
+        if (rec.Title != title)
+            Log("update", "record", title, CollectionNameOf(rec.CollectionId));
         rec.Title = title;
         db.SaveChanges();
     }
 
     public void SetRecordDescription(int recordId, string? description)
     {
+        Demand(PermAction.EditRecord, CollectionOfRecord(recordId));
         var rec = db.DbRecords.Find(recordId);
         if (rec is null) return;
-        rec.Description = string.IsNullOrEmpty(description) ? null : description;
+        var normalized = string.IsNullOrEmpty(description) ? null : description;
+        if (rec.Description != normalized)
+            Log("update", "record", rec.Title, CollectionNameOf(rec.CollectionId));
+        rec.Description = normalized;
         db.SaveChanges();
     }
 
     public DbRecord AddRecord(DbRecord record)
     {
+        Demand(PermAction.CreateRecord, record.CollectionId);
         var entity = new DbRecordEntity
         {
             CollectionId = record.CollectionId,
@@ -2110,8 +2305,25 @@ public class ConstructorRepository(AppDbContext db)
             Description  = record.Description,
         };
         db.DbRecords.Add(entity);
+        Log("create", "record", record.Title, CollectionNameOf(record.CollectionId));
         db.SaveChanges();
         record.Id = entity.Id;
+
+        // Поля типа «пользователь»: новая запись по умолчанию получает текущего
+        // пользователя (диалог записи может тут же перезаписать значение выбором).
+        var userFields = db.DbFields
+            .Where(f => f.CollectionId == record.CollectionId && f.FieldType == "user")
+            .Select(f => f.Id).ToList();
+        if (userFields.Count > 0)
+        {
+            foreach (var fid in userFields)
+                db.DbFieldValues.Add(new DbFieldValueEntity
+                {
+                    RecordId = entity.Id, FieldId = fid, Value = CurrentUser.DisplayName,
+                });
+            db.SaveChanges();
+        }
+
         return record;
     }
 
@@ -2175,9 +2387,16 @@ public class ConstructorRepository(AppDbContext db)
 
     public void UpdateRecord(DbRecord record)
     {
+        Demand(PermAction.EditRecord, record.CollectionId);
         if (record.Id is null) return;
         var entity = db.DbRecords.Find(record.Id.Value);
         if (entity is null) return;
+
+        // Перестановки (Position) журнал не засоряют — только смысловые изменения.
+        if (entity.Title != record.Title || entity.Description != record.Description ||
+            entity.StartDt != record.StartDt || entity.EndDt != record.EndDt ||
+            entity.AllDay != record.AllDay || entity.CollectionId != record.CollectionId)
+            Log("update", "record", record.Title, CollectionNameOf(record.CollectionId));
 
         entity.CollectionId = record.CollectionId;
         entity.Position     = record.Position;
@@ -2204,6 +2423,7 @@ public class ConstructorRepository(AppDbContext db)
     // зависание), затем меняем местами Position двух записей. Крайняя запись — no-op.
     public void MoveRecord(int collectionId, int recordId, bool up)
     {
+        Demand(PermAction.EditRecord, collectionId);
         var rec = db.DbRecords.Find(recordId);
         if (rec is null || rec.CollectionId != collectionId) return;
         var p = rec.Position;
@@ -2231,13 +2451,19 @@ public class ConstructorRepository(AppDbContext db)
 
     public void DeleteRecord(int recordId)
     {
+        Demand(PermAction.DeleteRecord, CollectionOfRecord(recordId));
         var entity = db.DbRecords.Find(recordId);
-        if (entity is not null) db.DbRecords.Remove(entity);
+        if (entity is not null)
+        {
+            Log("delete", "record", entity.Title, CollectionNameOf(entity.CollectionId));
+            db.DbRecords.Remove(entity);
+        }
         db.SaveChanges();
     }
 
     public DbRecord DuplicateRecord(int recordId)
     {
+        Demand(PermAction.DuplicateRecord, CollectionOfRecord(recordId));
         var src = db.DbRecords.Find(recordId);
         if (src is null) throw new InvalidOperationException($"Record {recordId} not found");
 
@@ -2253,6 +2479,7 @@ public class ConstructorRepository(AppDbContext db)
             Description  = src.Description,
         };
         db.DbRecords.Add(copy);
+        Log("duplicate", "record", src.Title, CollectionNameOf(src.CollectionId));
         db.SaveChanges();
 
         var fieldValues = db.DbFieldValues.Where(fv => fv.RecordId == recordId).ToList();
@@ -2280,13 +2507,18 @@ public class ConstructorRepository(AppDbContext db)
     {
         using var ctx = new AppDbContext(db.DbPath);
         ctx.ApplyPerformancePragmas();
-        return new ConstructorRepository(ctx).DuplicateRecord(recordId);
+        var repo = new ConstructorRepository(ctx);
+        // Лукап через свежий контекст: обёртку зовут из фонового потока, общий контекст —
+        // только для UI-потока (Demand читает кеш, потокобезопасна).
+        Demand(PermAction.DuplicateRecord, repo.CollectionOfRecord(recordId));
+        return repo.DuplicateRecord(recordId);
     }
 
     /// <summary>Создать запись (в конце или сразу после afterRecordId) на ОТДЕЛЬНОМ подключении —
     /// чтобы контроллер вставлял в фоне (Task.Run) и обновлял таблицу уже после, без «моргания».</summary>
     public DbRecord AddRecordIsolated(DbRecord record, int? afterRecordId)
     {
+        Demand(PermAction.CreateRecord, record.CollectionId);
         using var ctx = new AppDbContext(db.DbPath);
         ctx.ApplyPerformancePragmas();
         var repo = new ConstructorRepository(ctx);
@@ -2306,17 +2538,27 @@ public class ConstructorRepository(AppDbContext db)
     {
         using var ctx = new AppDbContext(db.DbPath);
         ctx.ApplyPerformancePragmas();
-        new ConstructorRepository(ctx).DeleteRecordsData(recordIds, progress);
+        var repo = new ConstructorRepository(ctx);
+        // Право проверяем по коллекции ПЕРВОЙ записи (мультивыделение таблицы всегда
+        // в одной коллекции); лукап — через свежий контекст (обёртка работает в фоне).
+        if (recordIds.Count > 0)
+            Demand(PermAction.DeleteRecord, repo.CollectionOfRecord(recordIds[0]));
+        repo.DeleteRecordsData(recordIds, progress);
     }
 
     /// <summary>Удалить записи ПАКЕТАМИ по списку их Id (значения и calendar_index уходят каскадом по
     /// FK ON DELETE CASCADE). record_display/ui_row_heights с записью FK-связи НЕ имеют (каскада нет) —
     /// чистим явно, иначе настройки видимости/высоты «осиротеют» и могут прилипнуть к новой записи с
     /// тем же rowid. Пакеты — ради гранулярности прогресса.</summary>
-    public void DeleteRecordsData(IReadOnlyList<int> recordIds, IProgress<int>? progress = null, int batchSize = 10000)
+    public void DeleteRecordsData(IReadOnlyList<int> recordIds, IProgress<int>? progress = null, int batchSize = 10000,
+                                  bool log = true)
     {
         if (recordIds.Count == 0) return;
         var ids = recordIds.Distinct().ToList();
+
+        // Одна строка журнала на пакет; имя коллекции — до удаления (мультивыделение
+        // таблицы всегда в одной коллекции).
+        var colName = log ? CollectionNameOf(CollectionOfRecord(ids[0])) : null;
 
         using var tx = db.Database.BeginTransaction();
         var done = 0;
@@ -2330,12 +2572,14 @@ public class ConstructorRepository(AppDbContext db)
             progress?.Report(done);
         }
         tx.Commit();
+        if (log) LogNow("delete", "records", "", colName, ids.Count);
     }
 
     /// <summary>Дубль выбранных записей на ОТДЕЛЬНОМ подключении (фон + прогресс). Возвращает id копий
     /// (для выделения их голубым после операции).</summary>
     public List<int> DuplicateRecordsIsolated(int collectionId, IReadOnlyList<int> recordIds, IProgress<int>? progress = null)
     {
+        Demand(PermAction.DuplicateRecord, collectionId);
         using var ctx = new AppDbContext(db.DbPath);
         ctx.ApplyPerformancePragmas();
         return new ConstructorRepository(ctx).DuplicateRecordsData(collectionId, recordIds, progress);
@@ -2439,6 +2683,7 @@ public class ConstructorRepository(AppDbContext db)
         var lastNew = firstNew + count - 1;
         FillCalendarIndex(q => q.Where(v => v.RecordId >= firstNew && v.RecordId <= lastNew));
 
+        LogNow("duplicate", "records", "", CollectionNameOf(collectionId), count);
         return Enumerable.Range(firstNew, count).ToList();   // id копий (для выделения)
     }
 
@@ -2513,6 +2758,12 @@ public class ConstructorRepository(AppDbContext db)
         bool createMissingFields, IProgress<int>? progress = null)
     {
         if (recordIds.Count == 0) return [];
+        // this — ЦЕЛЕВАЯ база: создание записей в целевой коллекции. Право удаления в
+        // источнике проверяет UI по репозиторию источника (перенос в одной базе покрыт:
+        // this и есть источник — проверяем и удаление).
+        Demand(PermAction.CreateRecord, targetCollectionId);
+        if (string.Equals(sourceDbPath, DbPath, StringComparison.OrdinalIgnoreCase))
+            Demand(PermAction.DeleteRecord, sourceCollectionId);
 
         using var targetCtx = new AppDbContext(DbPath);
         targetCtx.ApplyPerformancePragmas();
@@ -2623,8 +2874,11 @@ public class ConstructorRepository(AppDbContext db)
             FillCalendarIndex(q => q.Where(v => v.RecordId >= firstNew && v.RecordId <= lastNew));
 
         // 4) Исходные записи — bulk-удалением (каскад уносит их значения и calendar_index).
-        if (copiedSources.Count > 0) source.DeleteRecordsData(copiedSources);
+        // Без строки «удалил» в журнале — это перенос, одна строка «перенёс» ниже.
+        if (copiedSources.Count > 0) source.DeleteRecordsData(copiedSources, log: false);
 
+        if (newIds.Count > 0)
+            LogNow("move", "records", "", CollectionNameOf(targetCollectionId), newIds.Count);
         return newIds;
     }
 
@@ -2846,7 +3100,21 @@ public class ConstructorRepository(AppDbContext db)
 
     public void SetFieldValue(int recordId, int fieldId, string value)
     {
+        Demand(PermAction.EditRecord, CollectionOfRecord(recordId));
         var fv = db.DbFieldValues.FirstOrDefault(x => x.RecordId == recordId && x.FieldId == fieldId);
+
+        // Журнал — только при реальном изменении значения (правка ячейки — ручное
+        // действие, но сохранение записи прогоняет ВСЕ поля через этот метод).
+        if (fv is null ? value.Length > 0 : fv.Value != value)
+        {
+            var rec = db.DbRecords.AsNoTracking()
+                .Where(r => r.Id == recordId)
+                .Select(r => new { r.Title, r.CollectionId })
+                .FirstOrDefault();
+            if (rec is not null)
+                Log("update", "record", rec.Title, CollectionNameOf(rec.CollectionId));
+        }
+
         if (fv is null)
             db.DbFieldValues.Add(new DbFieldValueEntity { RecordId = recordId, FieldId = fieldId, Value = value });
         else
@@ -2871,6 +3139,7 @@ public class ConstructorRepository(AppDbContext db)
     /// </summary>
     public bool SetDateFieldVisible(int fieldId, bool visible)
     {
+        Demand(PermAction.EditField, CollectionOfField(fieldId));
         var field = db.DbFields.Find(fieldId);
         if (field is null || field.FieldType != "date" || field.IsCalStart == visible) return false;
         field.IsCalStart = visible;
@@ -2942,6 +3211,12 @@ public class ConstructorRepository(AppDbContext db)
     // Upsert подписи. Пустое имя или совпадение с дефолтом — удаляем строку
     // (колонка возвращается к имени по умолчанию).
     public void SetSystemFieldName(int collectionId, string key, string? displayName, string defaultName)
+    {
+        Demand(PermAction.EditField, collectionId);
+        SetSystemFieldNameCore(collectionId, key, displayName, defaultName);
+    }
+
+    private void SetSystemFieldNameCore(int collectionId, string key, string? displayName, string defaultName)
     {
         var trimmed = displayName?.Trim();
         var reset   = string.IsNullOrEmpty(trimmed) || trimmed == defaultName;
@@ -3181,6 +3456,7 @@ public class ConstructorRepository(AppDbContext db)
 
     public CalendarRecord AddCalendarRecord(CalendarRecord r)
     {
+        Demand(PermAction.CreateRecord, r.CollectionId);
         var colId = r.CollectionId ?? GetOrCreateDefaultCollection();
         var dateFieldId = ResolveCalendarDateField(colId, r.FieldId);
 
@@ -3201,6 +3477,7 @@ public class ConstructorRepository(AppDbContext db)
             Description  = string.IsNullOrEmpty(r.Description) ? null : r.Description,
         };
         db.DbRecords.Add(rec);
+        Log("create", "record", r.Title, CollectionNameOf(colId));
         db.SaveChanges();
 
         SetCalendarDateValue(rec.Id, dateFieldId, r);
@@ -3299,6 +3576,7 @@ public class ConstructorRepository(AppDbContext db)
     public void UpdateCalendarRecord(CalendarRecord r)
     {
         if (r.Id is null) return;
+        Demand(PermAction.EditRecord, CollectionOfRecord(r.Id.Value));
 
         var rec = db.DbRecords.Find(r.Id.Value);
         if (rec is null) return;
@@ -3328,6 +3606,7 @@ public class ConstructorRepository(AppDbContext db)
         rec.AllDay      = r.AllDay;
         rec.Title       = r.Title;
         rec.Description = string.IsNullOrEmpty(r.Description) ? null : r.Description;
+        Log("update", "record", r.Title, CollectionNameOf(newColId));
         db.SaveChanges();
 
         var dateFieldId = ResolveCalendarDateField(newColId, r.FieldId);
@@ -3337,9 +3616,11 @@ public class ConstructorRepository(AppDbContext db)
 
     public void DeleteCalendarRecord(int id)
     {
+        Demand(PermAction.DeleteRecord, CollectionOfRecord(id));
         var rec = db.DbRecords.Find(id);
         if (rec is not null)
         {
+            Log("delete", "record", rec.Title, CollectionNameOf(rec.CollectionId));
             db.DbRecords.Remove(rec);
             db.SaveChanges();
         }

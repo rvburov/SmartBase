@@ -31,6 +31,7 @@ public partial class PropertyEditorDialog : Window
         new() { Type = "select",   Label = "Список",  Icon = Components.FieldTypeIcons.ForType("select")!   },
         new() { Type = "checkbox", Label = "Чекбокс", Icon = Components.FieldTypeIcons.ForType("checkbox")! },
         new() { Type = "url",      Label = "Ссылка",  Icon = Components.FieldTypeIcons.ForType("url")!      },
+        new() { Type = "user",     Label = "Пользователь", Icon = Components.FieldTypeIcons.ForType("user")! },
     ];
 
     private readonly ConstructorRepository _repository;

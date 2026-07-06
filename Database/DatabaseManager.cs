@@ -19,6 +19,7 @@ public sealed class DatabaseManager : IDisposable
     public AppDbContext          Context     { get; }
     public CategoryRepository    Categories  { get; }
     public ConstructorRepository Constructor { get; }
+    public PermissionService     Permissions { get; }
 
     private DatabaseManager(int dbId, string name, string path)
     {
@@ -46,8 +47,14 @@ public sealed class DatabaseManager : IDisposable
         // больше данных. Порог для данных-БД — 16 МБ свободного (см. SqliteMaintenance).
         SqliteMaintenance.CompactIfBloated(Context, 16L * 1024 * 1024);
 
+        // Пользователи/права этой базы: регистрируем текущего пользователя (первый
+        // открывший базу без админов становится администратором) и строим кеш прав.
+        // Репозиторий получает сервис прав — его мутаторы проверяют права первой строкой.
+        Permissions = new PermissionService(Context);
+        Permissions.EnsureCurrentUserRegistered();
+
         Categories  = new CategoryRepository(Context);
-        Constructor = new ConstructorRepository(Context);
+        Constructor = new ConstructorRepository(Context) { Permissions = Permissions };
 
         // Системное поле «Дата» → тип date + источник календаря; бэкафилл StartDt
         // для записей, у которых дата задана только в поле конструктора.

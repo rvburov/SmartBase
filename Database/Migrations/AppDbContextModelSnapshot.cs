@@ -73,6 +73,47 @@ namespace DataBase.Database.Migrations
                     b.ToTable("categories", (string)null);
                 });
 
+            modelBuilder.Entity("DataBase.Database.Entities.ChangeLogEntity", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Action")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("CollectionName")
+                        .HasColumnType("TEXT");
+
+                    b.Property<long?>("Count")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("TargetName")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("TargetType")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Ts")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("UserKey")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("UserName")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("change_log", (string)null);
+                });
+
             modelBuilder.Entity("DataBase.Database.Entities.ColumnDisplayEntity", b =>
                 {
                     b.Property<int>("CollectionId")
@@ -232,6 +273,45 @@ namespace DataBase.Database.Migrations
                     b.ToTable("db_groups", (string)null);
                 });
 
+            modelBuilder.Entity("DataBase.Database.Entities.DbMetaEntity", b =>
+                {
+                    b.Property<string>("Key")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Value")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Key");
+
+                    b.ToTable("db_meta", (string)null);
+                });
+
+            modelBuilder.Entity("DataBase.Database.Entities.DbPermissionEntity", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("ActionsMask")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("CollectionId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("UserId")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CollectionId");
+
+                    b.HasIndex("UserId", "CollectionId")
+                        .IsUnique();
+
+                    b.ToTable("db_permissions", (string)null);
+                });
+
             modelBuilder.Entity("DataBase.Database.Entities.DbRecordEntity", b =>
                 {
                     b.Property<int>("Id")
@@ -269,6 +349,38 @@ namespace DataBase.Database.Migrations
                     b.HasIndex("CollectionId", "Position");
 
                     b.ToTable("db_records", (string)null);
+                });
+
+            modelBuilder.Entity("DataBase.Database.Entities.DbUserEntity", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("CreatedAt")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("DisplayName")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("IsAdmin")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("IsApproved")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("UserKey")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserKey")
+                        .IsUnique();
+
+                    b.ToTable("db_users", (string)null);
                 });
 
             modelBuilder.Entity("DataBase.Database.Entities.RecordDisplayEntity", b =>
@@ -431,6 +543,24 @@ namespace DataBase.Database.Migrations
                     b.Navigation("Parent");
                 });
 
+            modelBuilder.Entity("DataBase.Database.Entities.DbPermissionEntity", b =>
+                {
+                    b.HasOne("DataBase.Database.Entities.DbCollectionEntity", "Collection")
+                        .WithMany()
+                        .HasForeignKey("CollectionId")
+                        .OnDelete(DeleteBehavior.Cascade);
+
+                    b.HasOne("DataBase.Database.Entities.DbUserEntity", "User")
+                        .WithMany("Permissions")
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Collection");
+
+                    b.Navigation("User");
+                });
+
             modelBuilder.Entity("DataBase.Database.Entities.DbRecordEntity", b =>
                 {
                     b.HasOne("DataBase.Database.Entities.DbCollectionEntity", "Collection")
@@ -464,6 +594,11 @@ namespace DataBase.Database.Migrations
             modelBuilder.Entity("DataBase.Database.Entities.DbRecordEntity", b =>
                 {
                     b.Navigation("FieldValues");
+                });
+
+            modelBuilder.Entity("DataBase.Database.Entities.DbUserEntity", b =>
+                {
+                    b.Navigation("Permissions");
                 });
 #pragma warning restore 612, 618
         }

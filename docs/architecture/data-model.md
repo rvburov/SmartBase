@@ -13,7 +13,7 @@
 |---|---|
 | `DbGroup` | группа коллекций (может быть вложенной) |
 | `DbCollection` | коллекция/таблица: имя, иконка, цвет, группа |
-| `DbField` | поле: тип (`text/number/date/select/checkbox/url`), `ConfigJson`, флаги `IsCalStart` (= «показывать поле-дату в календаре»; может быть включён у нескольких полей-дат коллекции), `IsCalEnd` (не используется), `IsSystem/IsRequired` |
+| `DbField` | поле: тип (`text/number/date/select/checkbox/url/user`), `ConfigJson`, флаги `IsCalStart` (= «показывать поле-дату в календаре»; может быть включён у нескольких полей-дат коллекции), `IsCalEnd` (не используется), `IsSystem/IsRequired` |
 | `DbRecord` | запись: `Title`, `Description`, позиция; колонки `StartDt/EndDt/AllDay` — устаревший след (календарём больше не читаются, см. ниже) |
 | `CalendarRecord` | одно событие календаря (`DbId`, `Id`, **`FieldId`** — из какого поля-даты получено событие, `Title`, `StartDt/EndDt`, `AllDay`, `Color`, `CollectionId`). Идентичность события — пара `(Id, FieldId)`: одна запись даёт по событию на каждое видимое поле-дату |
 | `Category` | категория (имя + цвет) |
@@ -28,6 +28,8 @@
 - **Значения полей:** `db_field_values` — пара `(RecordId, FieldId) → Value` (уникальный индекс). Так произвольные поля хранятся «вертикально», а не колонками. Все типы, кроме `date`, хранятся как обычные строки; `date` — в ISO-каноне (`DateValue.ToStorage`). При **переносе записи в другую коллекцию** (таблица «Расположение» / смена коллекции в окне календаря) значения сопоставляются с полями цели **по имени** с приведением типов (`ConstructorRepository.CopyFieldValuesByName` → `ConvertValueForType`; нетривиально только пересечение границы «дата»).
 - **Проекция календаря:** `calendar_index` — денормализованное «оглавление» событий (строка на каждое видимое поле-дату записи: `RecordId, FieldId, CollectionId, StartIso, EndIso, AllDay`; индекс `(CollectionId, StartIso)`, FK-каскады на `db_records`/`db_fields`). Из неё календарь читает события индексным range-query (см. ниже).
 - **UI-настройки коллекции:** `ui_col_widths`, `ui_row_heights`, `ui_collection_settings` (режим вида, ручной ресайз), `system_field_meta` (подписи «Название»/«Описание»), `column_order`, `column_display`, `record_display`.
+- **Пользователи и права (модуль «Профиль»):** `db_users` (кто открывал базу: ключ «учётка@компьютер», снапшот ФИО, `IsAdmin/IsApproved`), `db_permissions` (битовые маски `PermAction` per-пользователь: строка с `CollectionId=NULL` — вся база, с коллекцией — переопределение), `db_meta` (ключ-значение базы; PBKDF2-хеш пароля), `change_log` (журнал фактов: кто/когда/что, `Count` у пакетных операций; без FK — переживает удаление объектов). Подробно — [users-permissions.md](users-permissions.md).
+- Тип поля `user` хранится в `db_field_values` строкой-отображаемым именем (как `select`); опции — допущенные пользователи базы (`ConstructorRepository.GetUserOptions`), новая запись по умолчанию получает текущего пользователя.
 
 Связи каскадные: удаление коллекции уносит её поля, записи и значения; группа/коллекция
 при удалении родителя — `SetNull`.
@@ -60,7 +62,8 @@
 Контекст [SystemDbContext](../../Database/SystemDbContext.cs). Две таблицы:
 
 - `databases` — реестр подключённых БД (`DatabaseRefEntity`: имя, путь, провайдер, `IsDefault`);
-- `app_settings` — настройки приложения «ключ → значение» (`AppSettingEntity`).
+- `app_settings` — настройки приложения «ключ → значение» (`AppSettingEntity`); здесь же ФИО
+  профиля пользователя (ключи `profile.*`, читает/пишет `Utils/CurrentUser`).
 
 Подробнее про два файла и миграции — [databases.md](databases.md).
 
