@@ -11,6 +11,10 @@ internal sealed class Program
     // OnFrameworkInitializationCompleted и открывает нужное окно. Подробности — docs/guides/auto-update.md.
     internal static SetupMode Mode { get; private set; } = SetupMode.App;
 
+    // Самозамена при обновлении не удалась (файл был занят) — апдейтер перезапустил нас с этим
+    // флагом. App покажет разовое уведомление, что версия осталась прежней.
+    internal static bool UpdateFailed { get; private set; }
+
     [STAThread]
     public static void Main(string[] args)
     {
@@ -21,6 +25,9 @@ internal sealed class Program
             ApplyUpdate(args);
             return;
         }
+
+        // Перезапуск после НЕудавшейся самозамены — App-режим, но с уведомлением пользователю.
+        UpdateFailed = Array.Exists(args, a => a == "--update-failed");
 
         Mode = ResolveMode(args);
         if (Mode == SetupMode.App) AppSettings.EnsureCreated();
@@ -79,17 +86,25 @@ internal sealed class Program
 
         // Замена с повторами внутри ReplaceArtifact: на Windows блокировки могут держать файл
         // пару секунд; на macOS заменяется весь .app-бандл (publish под mac не single-file).
-        InstallService.ReplaceArtifact(src, target);
+        // Если так и не удалось (файл занят) — перезапустим старую версию с --update-failed,
+        // чтобы приложение сообщило: обновление не применилось, версия прежняя.
+        var replaced = InstallService.ReplaceArtifact(src, target);
+        var flag     = replaced ? "" : "--update-failed";
 
         // Запустить обновлённое приложение.
         try
         {
             if (OperatingSystem.IsMacOS())
                 // target — это .app-бандл; правильный запуск GUI-приложения на macOS — через open.
-                Process.Start(new ProcessStartInfo { FileName = "open", Arguments = $"\"{target}\"", UseShellExecute = false });
+                Process.Start(new ProcessStartInfo
+                {
+                    FileName = "open",
+                    Arguments = flag.Length > 0 ? $"\"{target}\" --args {flag}" : $"\"{target}\"",
+                    UseShellExecute = false,
+                });
             else
                 // На Linux запускаем бинарь напрямую (UseShellExecute=true ушёл бы в xdg-open).
-                Process.Start(new ProcessStartInfo { FileName = target, UseShellExecute = OperatingSystem.IsWindows() });
+                Process.Start(new ProcessStartInfo { FileName = target, Arguments = flag, UseShellExecute = OperatingSystem.IsWindows() });
         }
         catch { /* не удалось перезапустить — пользователь откроет вручную */ }
     }

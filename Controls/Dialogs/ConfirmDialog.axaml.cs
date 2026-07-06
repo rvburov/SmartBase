@@ -18,4 +18,13 @@ public partial class ConfirmDialog : Window
         ConfirmBtn.Content = confirmText;
         CancelBtn.Content  = cancelText;
     }
+
+    /// <summary>Информационное окно с ОДНОЙ кнопкой (без «Отмена») — для уведомлений,
+    /// которые нужно просто подтвердить прочтение.</summary>
+    public static ConfirmDialog Info(string message, string okText = "Понятно")
+    {
+        var d = new ConfirmDialog(message, okText);
+        d.CancelBtn.IsVisible = false;
+        return d;
+    }
 }

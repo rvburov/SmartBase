@@ -63,6 +63,49 @@ public static class InstallService
         return IsMac ? Directory.Exists(p) : File.Exists(p);
     }
 
+    /// <summary>
+    /// Приводит выбранную пользователем папку к «выделенной»: дописывает подпапку с именем
+    /// приложения, если её там ещё нет. Нужно, чтобы удаление не задело чужое содержимое общей
+    /// папки — удаление чистит папку установки. На macOS не применяется: единица установки —
+    /// `.app`-бандл внутри `~/Applications`, отдельная подпапка не нужна.
+    /// </summary>
+    public static string EnsureDedicatedDir(string chosenDir)
+    {
+        if (IsMac || string.IsNullOrWhiteSpace(chosenDir)) return chosenDir;
+        var trimmed = chosenDir.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        // Уже наша выделенная папка (по имени) или уже содержит установленное приложение — не двоим.
+        if (string.Equals(Path.GetFileName(trimmed), AppSettings.AppName, StringComparison.OrdinalIgnoreCase)
+            || IsAppPresent(trimmed))
+            return trimmed;
+        return Path.Combine(trimmed, AppSettings.AppName);
+    }
+
+    /// <summary>
+    /// Есть ли права на запись в папку (можно ли установить/обновить туда приложение). Саму
+    /// папку НЕ создаёт — пробует записать временный файл в ближайший существующий каталог-предок
+    /// (проверка вызывается на каждый ввод пути). Ловит защищённые пути без прав: Program Files,
+    /// корень диска, чужие каталоги.
+    /// </summary>
+    public static bool CanCreateOrWrite(string dir)
+    {
+        if (string.IsNullOrWhiteSpace(dir)) return false;
+        try
+        {
+            var probeDir = Path.GetFullPath(dir);
+            while (!Directory.Exists(probeDir))
+            {
+                var parent = Path.GetDirectoryName(probeDir);
+                if (string.IsNullOrEmpty(parent) || parent == probeDir) return false;
+                probeDir = parent;
+            }
+            var probe = Path.Combine(probeDir, $"{AppSettings.AppName}.wtest.{Guid.NewGuid():N}");
+            using (File.Create(probe)) { }
+            File.Delete(probe);
+            return true;
+        }
+        catch { return false; }
+    }
+
     /// <summary>Корень `.app`-бандла для пути к внутреннему бинарю (…/X.app/Contents/MacOS/bin → …/X.app).</summary>
     public static string? BundleRoot(string? innerBinary)
     {
@@ -147,10 +190,12 @@ public static class InstallService
         var full    = Path.GetFullPath(installDir);
         // На Windows нельзя удалить каталог запущенного .exe → отложенный bat.
         // На Linux файл запущенного бинаря можно unlink на ходу → удаляем сразу.
+        // В обоих случаях сносим только СВОИ файлы и папку лишь если она осталась пустой —
+        // если приложение поставили в общую папку, чужое содержимое не пострадает.
         if (OperatingSystem.IsWindows() && running.StartsWith(full, StringComparison.OrdinalIgnoreCase))
             ScheduleDirDelete(full);
         else
-            TryDeleteDir(full);
+            RemoveOwnedFilesAndPrune(full);
     }
 
     // macOS: удаляем сам бандл (а не папку установки ~/Applications!). Файл запущенного
@@ -228,8 +273,10 @@ public static class InstallService
         if (total == 0) onProgress(1);
     }
 
-    /// <summary>Синхронная замена артефакта (для самозамены без UI): файл или каталог-бандл.</summary>
-    public static void ReplaceArtifact(string src, string target)
+    /// <summary>Синхронная замена артефакта (для самозамены без UI): файл или каталог-бандл.
+    /// Возвращает true, если замена удалась в пределах попыток; false — если файл всё время
+    /// занят (антивирус/старый процесс не отпустил): вызывающий покажет это пользователю.</summary>
+    public static bool ReplaceArtifact(string src, string target)
     {
         var isDir = Directory.Exists(src) || Directory.Exists(target);   // macOS .app
         for (var attempt = 0; attempt < 30; attempt++)
@@ -247,10 +294,11 @@ public static class InstallService
                     File.Copy(src, target, overwrite: true);
                     MakeExecutable(target);
                 }
-                return;
+                return true;
             }
             catch { Thread.Sleep(500); }
         }
+        return false;
     }
 
     private static void CopyTreeSync(string srcDir, string dstDir)
@@ -270,6 +318,17 @@ public static class InstallService
     public static void DeleteRecursive(string path) => TryDeleteDir(path);
 
     private static long SafeLength(string path) { try { return new FileInfo(path).Length; } catch { return 0; } }
+
+    /// <summary>Убрать залежавшийся temp-артефакт обновления (best-effort, при старте приложения).
+    /// Апдейтер копирует новую версию в <c>%TEMP%\DataBase.update.exe</c> (или <c>.update.app</c>) и
+    /// после перезапуска его не удаляет. Если апдейтер ещё выполняется — файл занят, молча
+    /// пропустим, уберётся при следующем старте.</summary>
+    public static void CleanStaleUpdateArtifacts()
+    {
+        var temp = Path.GetTempPath();
+        TryDeleteFile(Path.Combine(temp, $"{AppSettings.AppName}.update.exe"));
+        TryDeleteDir(Path.Combine(temp,  $"{AppSettings.AppName}.update.app"));   // macOS-бандл (папка)
+    }
 
     // ── Ярлыки ─────────────────────────────────────────────────────────────────
     private static void CreateShortcuts(string installDir, bool desktop)
@@ -315,10 +374,10 @@ public static class InstallService
         var workDir = Path.GetDirectoryName(targetExe) ?? "";
         var script =
             "$w = New-Object -ComObject WScript.Shell; " +
-            $"$s = $w.CreateShortcut('{lnkPath}'); " +
-            $"$s.TargetPath = '{targetExe}'; " +
-            (arguments.Length > 0 ? $"$s.Arguments = '{arguments}'; " : "") +
-            $"$s.WorkingDirectory = '{workDir}'; " +
+            $"$s = $w.CreateShortcut({PsQuote(lnkPath)}); " +
+            $"$s.TargetPath = {PsQuote(targetExe)}; " +
+            (arguments.Length > 0 ? $"$s.Arguments = {PsQuote(arguments)}; " : "") +
+            $"$s.WorkingDirectory = {PsQuote(workDir)}; " +
             "$s.Save()";
         RunHidden("powershell", $"-NoProfile -NonInteractive -Command \"{script}\"", wait: true);
     }
@@ -334,20 +393,20 @@ public static class InstallService
 
         Directory.CreateDirectory(AppsDir);
         WriteDesktopEntry(Path.Combine(AppsDir, $"{AppSettings.AppName}.desktop"),
-            AppSettings.AppName, Quote(exe), icon);
+            AppSettings.AppName, DesktopExecQuote(exe), icon);
         WriteDesktopEntry(Path.Combine(AppsDir, $"{AppSettings.AppName}-uninstall.desktop"),
-            $"Uninstall {AppSettings.AppName}", $"{Quote(exe)} --uninstall", icon);
+            $"Uninstall {AppSettings.AppName}", $"{DesktopExecQuote(exe)} --uninstall", icon);
 
         // Скрипт удаления в самой папке установки (аналог ярлыка «Uninstall» в папке на Windows).
         var uninstallSh = Path.Combine(installDir, "uninstall.sh");
-        File.WriteAllText(uninstallSh, $"#!/usr/bin/env bash\nexec {Quote(exe)} --uninstall\n");
+        File.WriteAllText(uninstallSh, $"#!/usr/bin/env bash\nexec {ShQuote(exe)} --uninstall\n");
         MakeExecutable(uninstallSh);
 
         if (desktop)
         {
             Directory.CreateDirectory(DesktopDir);
             var lnk = Path.Combine(DesktopDir, $"{AppSettings.AppName}.desktop");
-            WriteDesktopEntry(lnk, AppSettings.AppName, Quote(exe), icon);
+            WriteDesktopEntry(lnk, AppSettings.AppName, DesktopExecQuote(exe), icon);
             MakeExecutable(lnk);   // GNOME требует +x у запускаемого ярлыка на рабочем столе
         }
 
@@ -385,6 +444,20 @@ public static class InstallService
 
     private static string Quote(string s) => "\"" + s + "\"";
 
+    // Экранирование пути под конкретную «границу», куда он подставляется КАК ТЕКСТ скрипта.
+    // (Для аргументов процесса — RunHidden/lsregister/update-desktop-database — остаётся Quote:
+    //  там нет интерпретатора, экранировать $/` было бы ошибкой.)
+    //   • PsQuote          — строковый литерал PowerShell в одинарных кавычках (' → ''); ярлыки .lnk,
+    //                        запись в реестр. Внутри '…' спецсимвол только сам '; " в путях Windows невозможен.
+    //   • BatEscape        — путь в .bat: % → %% (иначе cmd примет %…% за переменную); кавычки ставит вызывающий.
+    //   • ShQuote          — аргумент bash в одинарных кавычках (' → '\''); экранирует всё: $, `, ", \, пробел.
+    //   • DesktopExecQuote — поле Exec в .desktop (freedesktop): двойные кавычки, внутри \ ` $ " с обратным слэшем.
+    private static string PsQuote(string s) => "'" + s.Replace("'", "''") + "'";
+    private static string BatEscape(string s) => s.Replace("%", "%%");
+    private static string ShQuote(string s) => "'" + s.Replace("'", "'\\''") + "'";
+    private static string DesktopExecQuote(string s) =>
+        "\"" + s.Replace("\\", "\\\\").Replace("`", "\\`").Replace("$", "\\$").Replace("\"", "\\\"") + "\"";
+
     // ── macOS: LaunchServices + .command-удалятор ──────────────────────────────
     private const string Lsregister =
         "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister";
@@ -406,7 +479,7 @@ public static class InstallService
     private static void CreateUninstallCommandMac(string installDir, string bundle)
     {
         var cmd = Path.Combine(installDir, $"Uninstall {AppSettings.AppName}.command");
-        File.WriteAllText(cmd, $"#!/bin/bash\nexec {Quote(MacInnerBinary(bundle))} --uninstall\n");
+        File.WriteAllText(cmd, $"#!/bin/bash\nexec {ShQuote(MacInnerBinary(bundle))} --uninstall\n");
         MakeExecutable(cmd);
     }
 
@@ -423,7 +496,7 @@ public static class InstallService
         var exe     = Path.Combine(installDir, AppExeName);
         var version = Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "1.0.0";
 
-        static string Q(string s) => "'" + s.Replace("'", "''") + "'";   // одинарные кавычки PowerShell
+        static string Q(string s) => PsQuote(s);   // строковый литерал PowerShell (' → '')
 
         var sb = new StringBuilder();
         sb.AppendLine("$ErrorActionPreference='SilentlyContinue'");
@@ -454,25 +527,75 @@ public static class InstallService
             wait: true);
     }
 
-    // Отложенное удаление папки (только Windows): bat повторяет rmdir, пока не исчезнет САМ
-    // каталог (ждёт освобождения запущенного .exe; гасит гонку «содержимое удалено, а пустой
-    // каталог с первого раза не снёсся»). До 30 попыток (~30 с), затем самоудаляется.
+    // Файлы, которые установщик создаёт В САМОЙ папке установки (Win/Linux). Нужны для точечного
+    // удаления: сносим только своё, а папку — лишь если она осталась пустой. Ярлыки Пуск/рабочего
+    // стола и .desktop лежат вне папки установки — их убирает RemoveShortcuts.
+    private static string[] OwnedInstallFiles(string installDir) =>
+        OperatingSystem.IsWindows()
+            ? new[]
+            {
+                Path.Combine(installDir, AppExeName),                               // DataBase.exe
+                Path.Combine(installDir, $"Uninstall {AppSettings.AppName}.lnk"),
+            }
+            : new[]
+            {
+                Path.Combine(installDir, AppExeName),                               // DataBase
+                Path.Combine(installDir, "icon.png"),
+                Path.Combine(installDir, "uninstall.sh"),
+            };
+
+    // Linux (и Windows, когда удаляют не запущенную копию): убираем свои файлы и сносим папку
+    // ТОЛЬКО если после этого она пуста (rmdir без рекурсии) — чужое содержимое общей папки цело.
+    private static void RemoveOwnedFilesAndPrune(string installDir)
+    {
+        foreach (var f in OwnedInstallFiles(installDir)) TryDeleteFile(f);
+        try
+        {
+            if (Directory.Exists(installDir) && Directory.GetFileSystemEntries(installDir).Length == 0)
+                Directory.Delete(installDir, recursive: false);
+        }
+        catch { /* не пусто (чужие файлы) или занято — папку оставляем */ }
+    }
+
+    // Отложенное удаление (только Windows): запущенный .exe нельзя снести самому себе → bat ждёт
+    // его освобождения (до 30 попыток, ~30 с). Удаляем ТОЛЬКО свои файлы, затем rmdir БЕЗ /S —
+    // папка исчезнет, лишь если пуста; при установке в общую папку чужие файлы уцелеют. Затем
+    // bat самоудаляется. Последний rmdir с парой повторов — гасит гонку с асинхронным удалением.
     private static void ScheduleDirDelete(string dir)
     {
+        var exe  = Path.Combine(dir, AppExeName);
+        var exeB = BatEscape(exe);   // % → %% для .bat (в имени папки % легален и иначе съест cmd)
+        var dirB = BatEscape(dir);
+
+        var sb = new StringBuilder();
+        sb.Append("@echo off\r\n");
+        sb.Append("cd /d \"%~dp0\"\r\n");                 // уйти из удаляемой папки: нельзя снести текущий каталог
+        sb.Append("set n=0\r\n");
+        sb.Append(":loop\r\n");
+        sb.Append("ping -n 2 127.0.0.1 >nul\r\n");
+        sb.Append($"del /F /Q \"{exeB}\" 2>nul\r\n");     // ждём освобождения запущенного .exe
+        sb.Append($"if not exist \"{exeB}\" goto cleanup\r\n");
+        sb.Append("set /a n+=1\r\n");
+        sb.Append("if %n% lss 30 goto loop\r\n");
+        sb.Append(":cleanup\r\n");
+        foreach (var f in OwnedInstallFiles(dir))
+        {
+            if (string.Equals(f, exe, StringComparison.OrdinalIgnoreCase)) continue;   // .exe уже удалён в цикле
+            sb.Append($"del /F /Q \"{BatEscape(f)}\" 2>nul\r\n");
+        }
+        sb.Append("set m=0\r\n");
+        sb.Append(":rmloop\r\n");
+        sb.Append($"rmdir \"{dirB}\" 2>nul\r\n");         // без /S — только пустую папку; чужое не тронет
+        sb.Append($"if not exist \"{dirB}\" goto done\r\n");
+        sb.Append("set /a m+=1\r\n");
+        sb.Append("if %m% geq 3 goto done\r\n");
+        sb.Append("ping -n 2 127.0.0.1 >nul\r\n");
+        sb.Append("goto rmloop\r\n");
+        sb.Append(":done\r\n");
+        sb.Append("del /F /Q \"%~f0\"\r\n");
+
         var bat = Path.Combine(Path.GetTempPath(), $"{AppSettings.AppName}.uninstall.bat");
-        var content =
-            "@echo off\r\n" +
-            "cd /d \"%~dp0\"\r\n" +   // уйти из удаляемой папки: нельзя снести каталог, что является текущим
-            "set n=0\r\n" +
-            ":loop\r\n" +
-            "ping -n 2 127.0.0.1 >nul\r\n" +
-            $"rmdir /S /Q \"{dir}\" 2>nul\r\n" +
-            $"if not exist \"{dir}\" goto done\r\n" +
-            "set /a n+=1\r\n" +
-            "if %n% lss 30 goto loop\r\n" +
-            ":done\r\n" +
-            "del /F /Q \"%~f0\"\r\n";
-        File.WriteAllText(bat, content);
+        File.WriteAllText(bat, sb.ToString());
         RunHidden("cmd.exe", $"/c \"{bat}\"", wait: false);
     }
 

@@ -222,14 +222,21 @@ public partial class SettingsView : UserControl
                 // равны → сравниваем дату изменения файла ниже
             }
 
-            // Версия недоступна или равна → дата изменения файла: новее на сервере = новая
-            // сборка (с допуском 2 с против округления меток времени).
+            // Версия недоступна или равна → ловим изменённый файл по СОДЕРЖИМОМУ, чтобы можно
+            // было раздавать сборки без смены версии:
+            //   • другой размер = точно другая сборка (дёшево, только метаданные, надёжнее даты —
+            //     не зависит от часов машин и от копирования с сохранением атрибутов);
+            //   • иначе — дата изменения новее на сервере (допуск 2 с против округления меток).
+            // После штатного обновления размер установленного == серверному, а дата установленного
+            // (время загрузки) уже позже сборки — ложных «есть обновление» не будет.
             var localExe = Environment.ProcessPath;
             if (!string.IsNullOrEmpty(localExe) && System.IO.File.Exists(localExe))
             {
-                var localTime  = System.IO.File.GetLastWriteTimeUtc(localExe);
-                var remoteTime = System.IO.File.GetLastWriteTimeUtc(remoteTimeFile);
-                if (remoteTime > localTime.AddSeconds(2))
+                var local  = new System.IO.FileInfo(localExe);
+                var remote = new System.IO.FileInfo(remoteTimeFile);
+                if (remote.Length != local.Length)
+                    return new(UpdateCheck.Available, $"Доступна новая сборка (файл изменён, {cur}).", remoteArtifact, cur);
+                if (remote.LastWriteTimeUtc > local.LastWriteTimeUtc.AddSeconds(2))
                     return new(UpdateCheck.Available, $"Доступна новая сборка (файл новее, {cur}).", remoteArtifact, cur);
             }
             return new(UpdateCheck.UpToDate, $"У вас актуальная версия ({cur}).");
@@ -282,10 +289,15 @@ public partial class SettingsView : UserControl
     {
         if (VisualRoot is not Window win) return;
 
-        var dlg = new ConfirmDialog(
-            $"Доступна версия {remote}. Приложение закроется, обновится и снова откроется.",
-            "Обновить");
-        if (await dlg.ShowDialog<bool>(win) != true) return;
+        // Текущая версия (Major.Minor.Build — как в «О программе»). При обновлении «по дате»
+        // remote == текущей: не пишем «Доступна версия {та же}», а честно — «новая сборка».
+        var current  = Assembly.GetExecutingAssembly().GetName().Version ?? new Version(0, 0, 0);
+        var currentN = new Version(current.Major, current.Minor, Math.Max(current.Build, 0));
+
+        var msg = remote > currentN
+            ? $"Доступна версия {remote}. Приложение закроется, обновится и снова откроется."
+            : "Доступна новая сборка приложения. Приложение закроется, обновится и снова откроется.";
+        if (await new ConfirmDialog(msg, "Обновить").ShowDialog<bool>(win) != true) return;
 
         // Цель замены: на macOS — наш .app-бандл целиком, иначе — сам файл бинаря.
         var processPath = Environment.ProcessPath;
@@ -295,6 +307,16 @@ public partial class SettingsView : UserControl
         if (string.IsNullOrEmpty(target))
         {
             SetUpdateStatus("Не удалось определить путь к программе для обновления.", isError: true);
+            return;
+        }
+
+        // Обновление перезапишет артефакт в папке установки — без прав на запись (напр. Program
+        // Files без администратора) самозамена молча не сработает. Проверяем заранее: не качаем и
+        // НЕ закрываем приложение, показываем понятную ошибку.
+        var installDir = System.IO.Path.GetDirectoryName(target);
+        if (string.IsNullOrEmpty(installDir) || !Setup.InstallService.CanCreateOrWrite(installDir))
+        {
+            SetUpdateStatus("Обновление невозможно: нет прав на запись в папку установки. Переустановите приложение в доступную папку или запустите от имени администратора.", isError: true);
             return;
         }
 
@@ -333,6 +355,18 @@ public partial class SettingsView : UserControl
             progressDlg.Done();
             await dlgClosed;
             UpdateCheckBtn.IsEnabled = true;
+        }
+
+        // Сверяем скачанный артефакт перед заменой (размер уже проверен в DownloadAsync). На
+        // Windows — версия из PE: не даём «обновиться» на файл СТАРЕЕ текущего (файл в папке мог
+        // смениться между проверкой и загрузкой). У нативных бинарей Linux/macOS версия из файла
+        // недоступна — там полагаемся на размер/дату, как в CheckRemoteVersion.
+        if (OperatingSystem.IsWindows()
+            && Version.TryParse(FileVersionInfo.GetVersionInfo(tempExe).FileVersion, out var downloaded)
+            && new Version(downloaded.Major, downloaded.Minor, Math.Max(downloaded.Build, 0)) < currentN)
+        {
+            SetUpdateStatus("Скачанный файл оказался старее текущей версии — обновление отменено.", isError: true);
+            return;
         }
 
         try

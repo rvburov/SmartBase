@@ -42,18 +42,33 @@ public partial class InstallerWindow : Window
 
     private void RefreshInstallState()
     {
-        if (InstallService.IsAppPresent(PathBox.Text ?? ""))
+        var dir = (PathBox.Text ?? "").Trim();
+
+        // Уже установлено сюда → режим обновления (данные пользователя сохранятся).
+        if (InstallService.IsAppPresent(dir))
         {
             WarnText.Text          = "Приложение уже установлено в этой папке — файлы будут обновлены, данные пользователя сохранятся.";
             WarnBox.IsVisible      = true;
             PrimaryBtn.Content     = "Обновить";
+            PrimaryBtn.IsEnabled   = true;
             UninstallBtn.IsVisible = true;
+            return;
+        }
+
+        PrimaryBtn.Content     = "Установить";
+        UninstallBtn.IsVisible = false;
+
+        // Нет прав на запись (напр. Program Files без администратора) → предупреждаем и не даём ставить.
+        if (dir.Length > 0 && !InstallService.CanCreateOrWrite(dir))
+        {
+            WarnText.Text        = "В эту папку нет прав на запись. Выберите другую (например, предложенную по умолчанию). Установка в «Program Files» требует прав администратора.";
+            WarnBox.IsVisible    = true;
+            PrimaryBtn.IsEnabled = false;
         }
         else
         {
-            WarnBox.IsVisible      = false;
-            PrimaryBtn.Content     = "Установить";
-            UninstallBtn.IsVisible = false;
+            WarnBox.IsVisible    = false;
+            PrimaryBtn.IsEnabled = true;
         }
     }
 
@@ -62,7 +77,9 @@ public partial class InstallerWindow : Window
         var folders = await StorageProvider.OpenFolderPickerAsync(
             new FolderPickerOpenOptions { Title = "Папка установки", AllowMultiple = false });
         if (folders.Count > 0 && folders[0].TryGetLocalPath() is { } p)
-            PathBox.Text = p;
+            // Дописываем выделенную подпапку (…\DataBase), чтобы удаление не задело чужие файлы
+            // общей папки — удаление чистит папку установки. На macOS путь остаётся как есть.
+            PathBox.Text = InstallService.EnsureDedicatedDir(p);
     }
 
     private async Task DoInstallAsync()

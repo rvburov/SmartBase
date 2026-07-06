@@ -5,6 +5,7 @@ using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
 using Avalonia.Threading;
+using DataBase.Controls.Dialogs;
 using DataBase.Database;
 using DataBase.Utils;
 using DataBase.Views;
@@ -27,6 +28,10 @@ public partial class App : Application
                 base.OnFrameworkInitializationCompleted();
                 return;
             }
+
+            // Прибрать залежавшийся temp-артефакт обновления (~122 МБ) — фоном, чтобы не
+            // задерживать старт. См. docs/guides/auto-update.md.
+            _ = Task.Run(Setup.InstallService.CleanStaleUpdateArtifacts);
 
             // Системный реестр БД (app.db). Регистрирует текущую БД как дефолтную.
             var registry = DatabaseRegistry.Open(AppSettings.DbPath);
@@ -73,6 +78,15 @@ public partial class App : Application
                             splash.Close();
                             // Норма восстановлена: закрытие главного окна завершает приложение.
                             desktop.ShutdownMode = ShutdownMode.OnMainWindowClose;
+
+                            // Самозамена при обновлении не удалась (файл был занят) — версия
+                            // осталась прежней. Разовое уведомление, чтобы пользователь не думал,
+                            // что обновился. Подробности — docs/guides/auto-update.md.
+                            if (Program.UpdateFailed)
+                                _ = ConfirmDialog.Info(
+                                    "Обновление не удалось применить — файл был занят другим процессом. " +
+                                    "Приложение осталось на прежней версии, попробуйте обновиться ещё раз.")
+                                    .ShowDialog(main);
 
                             desktop.Exit += (_, _) =>
                             {
