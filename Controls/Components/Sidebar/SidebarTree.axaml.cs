@@ -9,6 +9,7 @@ using Avalonia.VisualTree;
 using CommunityToolkit.Mvvm.ComponentModel;
 using DataBase.Controls.Dialogs;
 using DataBase.Core.Importers;
+using DataBase.Core.Importers.TableSources;
 using DataBase.Core.Models;
 using DataBase.Database;
 using DataBase.Database.Repositories;
@@ -970,9 +971,12 @@ public partial class SidebarTree : UserControl
         }
     }
 
-    // Импорт таблицы в новую коллекцию. Окно собирает заявку (ImportRequest), затем здесь
-    // показываем окно загрузки с процентами и выполняем чтение+запись в фоне. При ошибке —
-    // снова открываем окно с теми же значениями и текстом ошибки; при отмене — выходим.
+    // Импорт таблиц в новые коллекции. Окно собирает заявку (ImportRequest), планировщик
+    // разворачивает её в юниты «одна коллекция — один источник» (файл/лист/файлы папки), затем
+    // здесь показываем окно загрузки с процентами и отменой и выполняем юниты по очереди в фоне
+    // (проход-анализ 0–30 % юнита, потоковая запись 30–100 %). При ошибке — снова открываем окно
+    // с теми же значениями и текстом ошибки (готовые коллекции остаются, сбойная удалена
+    // репозиторием); при отмене пользователем — просто выходим.
     private async Task OpenImportExport()
     {
         if (OwnerWindow is null || RepoFor(DefaultDbId) is null) return;
@@ -1005,40 +1009,96 @@ public partial class SidebarTree : UserControl
             // её завершения после закрытия — иначе повторный показ окна импорта (при ошибке)
             // стартует поверх ещё не закрытого модального окна и падает.
             var progress = new ProgressDialog();
-            IProgress<double> readP  = new Progress<double>(p => progress.SetProgress(p * 0.5,       "Чтение файла…"));
-            IProgress<double> writeP = new Progress<double>(p => progress.SetProgress(0.5 + p * 0.5, "Сохранение записей…"));
-            progress.SetProgress(0, "Чтение файла…");   // фаза до показа — окно не меняет высоту
+            using var cts = new CancellationTokenSource();
+            progress.EnableCancel(() => cts.Cancel());
+            IProgress<(double F, string Phase, string Info)> ui =
+                new Progress<(double F, string Phase, string Info)>(t =>
+                {
+                    progress.SetProgress(t.F, t.Phase);
+                    progress.SetInfo(t.Info);
+                });
+            progress.SetProgress(0, "Анализ файла…");   // фаза до показа — окно не меняет высоту
             var progressClosed = progress.ShowDialog(OwnerWindow);
 
+            var created = new List<int>();
             try
             {
-                var colId = await Task.Run(() =>
+                await Task.Run(() =>
                 {
-                    var data = ExcelImporter.Parse(req.Spec, readP);
-                    // Импорт на ОТДЕЛЬНОМ контексте: с фонового потока нельзя трогать общий Context
-                    // (его параллельно использует UI: дерево/календарь) — иначе EF «second operation».
-                    return repo.ImportExcelCollectionIsolated(req.Name, req.ParentId, data, writeP);
+                    var units = ImportPlanner.Plan(req.Spec);
+                    for (var u = 0; u < units.Count; u++)
+                    {
+                        var unit = units[u];
+                        var info = units.Count > 1
+                            ? $"Файл {u + 1} из {units.Count}: {unit.CollectionName}" : "";
+                        var baseF = (double)u / units.Count;
+                        var slice = 1.0 / units.Count;
+
+                        try
+                        {
+                            var src = unit.OpenSource();
+                            var schema = src.Analyze(
+                                new Progress<double>(p =>
+                                    ui.Report((baseF + slice * p * 0.3, "Анализ файла…", info))),
+                                cts.Token);
+
+                            var rows = SourceHelpers.WithTitles(src.ReadRows(cts.Token), schema.EmptyTitleCount);
+
+                            // Импорт на ОТДЕЛЬНОМ контексте: с фонового потока нельзя трогать общий
+                            // Context (его параллельно использует UI) — иначе EF «second operation».
+                            var colId = repo.ImportStreamedCollectionIsolated(
+                                unit.CollectionName, req.ParentId, schema, rows, cts.Token,
+                                new Progress<long>(n => ui.Report((
+                                    baseF + slice * (0.3 + 0.7 * Math.Min(1.0,
+                                        schema.RowCount == 0 ? 1.0 : n / (double)schema.RowCount)),
+                                    "Импорт записей…", info))));
+                            created.Add(colId);
+                        }
+                        catch (Exception ex) when (ex is not OperationCanceledException)
+                        {
+                            // Дружелюбный текст + в мульти-режиме имя файла и сколько успели.
+                            var friendly = ImportErrors.Map(ex, unit.FilePath);
+                            throw units.Count > 1
+                                ? new ImportException(
+                                    $"{System.IO.Path.GetFileName(unit.FilePath)}: {friendly.Message} " +
+                                    $"Импортировано коллекций до ошибки: {created.Count}.")
+                                : friendly;
+                        }
+                    }
                 });
 
                 progress.Done();
                 await progressClosed;
                 ReloadAndNotify();
-                if (_mode == SidebarMode.Constructor) OpenCollection(req.DbId, colId);
+                if (created.Count == 1 && _mode == SidebarMode.Constructor)
+                    OpenCollection(req.DbId, created[0]);
+                else if (created.Count > 1 && req.ParentId is int gid)
+                    ExpandGroup(req.DbId, gid);
                 return;
             }
-            catch (ExcelImportException ex)
+            catch (OperationCanceledException)
+            {
+                // Отмена пользователем: сбойный юнит уже удалён репозиторием, готовые остаются.
+                progress.Done();
+                await progressClosed;
+                if (created.Count > 0) ReloadAndNotify();
+                return;
+            }
+            catch (ImportException ex)
             {
                 progress.Done();
                 await progressClosed;
+                if (created.Count > 0) ReloadAndNotify();
                 prefill = req.Draft;
                 error   = ex.Message;
             }
-            catch
+            catch (Exception ex)
             {
                 progress.Done();
                 await progressClosed;
+                if (created.Count > 0) ReloadAndNotify();
                 prefill = req.Draft;
-                error   = "Не удалось импортировать данные.";
+                error   = ImportErrors.Map(ex, req.Spec.Path).Message;
             }
         }
     }

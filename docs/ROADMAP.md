@@ -27,7 +27,7 @@
 | Календарь как представление над коллекциями                | ✅ 6 режимов; несколько видимых полей-дат (`IsCalStart`) на запись → проекция `calendar_index` (до ~10 млн) |
 | Виртуализация больших таблиц                               | ✅ `VirtualCollectionView`/`VirtualRowList` — keyset + фоновая подгрузка, фильтр/сортировка в SQL (до ~10 млн) |
 | Настройки UI per-collection (ширины, высоты, view mode)    | ✅                                                               |
-| Импорт / экспорт календаря                                 | ❌ `CalendarExporter` / `CalendarImporter`                       |
+| Импорт / экспорт календаря                                 | ❌ Нет (например, CSV/iCal)                                      |
 | **Связи между записями (relations)**                       | ❌ Нет — главный блокер видения                                  |
 | Фильтры / сортировка / сохранённые представления           | ❌ Нет                                                           |
 | Rollup / lookup / формулы                                  | ❌ Нет                                                           |
@@ -173,10 +173,9 @@
 
 - **Автозапуск при входе в систему** — [Utils/Autostart.cs](../Utils/Autostart.cs) пока
   заглушка. См. [features/settings.md](features/settings.md).
-- **Экспорт/импорт календаря** (например, CSV/iCal) — [CalendarExporter.cs](../Core/Exporters/CalendarExporter.cs)
-  и [CalendarImporter.cs](../Core/Importers/CalendarImporter.cs) пусты. Импорт таблиц
-  в коллекции уже есть (см. [features/import-export.md](features/import-export.md));
-  общий экспорт/импорт календаря — нет (отражено в «Текущее состояние» выше).
+- **Экспорт/импорт календаря** (например, CSV/iCal) — не реализован; пустые
+  файлы-заглушки удалены, отправная точка — [Core/Importers/Importer.cs](../Core/Importers/Importer.cs)
+  (импорт таблиц в коллекции уже есть, см. [features/import-export.md](features/import-export.md)).
 - **Мультибаза, дальнейшие этапы** — см. «Что дальше (мультибаза)» выше.
 
 ## Масштабирование: цель 10+ млн записей

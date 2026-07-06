@@ -187,8 +187,8 @@ calendar_avalonia/
 ├── Core/                       # Бизнес-логика (без UI и БД)
 │   ├── Models/                 # CalendarRecord, Category, Task, Constructor, EventColors
 │   ├── Validators/             # CalendarRecordValidator
-│   ├── Exporters/              # CalendarExporter — экспорт данных
-│   └── Importers/              # CalendarImporter — импорт данных
+│   └── Importers/              # Импорт таблиц (Excel/CSV/JSON): типы, ImportPlanner,
+│       └── TableSources/       #   потоковые источники форматов (двухпроходные)
 │
 ├── Database/                   # Слой данных (EF Core + SQLite)
 │   ├── AppDbContext.cs         # EF Core контекст пользовательской БД (database.db)

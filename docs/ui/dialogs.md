@@ -21,7 +21,7 @@
 | [CreateItemDialog](../../Controls/Dialogs/CreateItemDialog.axaml.cs) | выбор, что создать (группа/коллекция/…) |  |
 | [LocationDialog](../../Controls/Dialogs/LocationDialog.axaml.cs) | «Расположение» коллекции/группы: выбор целевой БД и места (группа/корень), без переименования | `LocationDialogResult?` (целевые `GroupId`, `DbId`) |
 | [RecordLocationDialog](../../Controls/Dialogs/RecordLocationDialog.axaml.cs) | «Расположение» записи: выбор целевой БД и коллекции + «Перенести все свойства» (создавать в цели отсутствующие свойства). Перенос данных грамотный — значения сопоставляются по имени поля с приведением типов (см. [../features/constructor-db/tables.md](../features/constructor-db/tables.md)) | `RecordLocationResult?` (`DbId`, `CollectionId`, `CreateMissingFields`) |
-| [ImportExportDialog](../../Controls/Dialogs/ImportExportDialog.axaml.cs) | импорт/экспорт данных | см. [../features/import-export.md](../features/import-export.md) |
+| [ImportExportDialog](../../Controls/Dialogs/ImportExportDialog.axaml.cs) | импорт таблиц (Excel/CSV/JSON) в новые коллекции: файл или папка, стандартный/ручной тип, чекбоксы раскладки листов; пояснение стандартного типа меняется под формат файла | `ImportRequest?`, см. [../features/import-export.md](../features/import-export.md) |
 | [ProgressDialog](../../Controls/Dialogs/ProgressDialog.axaml.cs) | прогресс долгой фоновой операции (импорт, дубль/удаление/перенос коллекций и групп, удаление/дубль свойств) | закрывается программно (`Done()`) |
 
 `ProgressDialog` — не возвращает результат и не закрывается пользователем (крестик/Alt+F4
@@ -30,6 +30,10 @@
 выглядели зависшими), `SetInfo(текст)` — строка под заголовком. Сама тяжёлая работа идёт на
 ОТДЕЛЬНОМ подключении в фоне, прогресс маршалится на UI через `IProgress<T>` →
 `Dispatcher.UIThread.Post` (см. [[../architecture/performance]], принцип 5 и раздел «Сделано»).
+Отменяемые операции (сейчас — только импорт) включают кнопку «Отмена» через
+`EnableCancel(колбэк)`: по клику кнопка гаснет, полоса переходит в «Отмена…», дальнейшие
+`SetProgress` игнорируются; окно по-прежнему закрывает только `Done()` — вызывающий делает
+это после отката/очистки. Остальные операции кнопку не включают и не меняются.
 
 ## Шаблон использования
 

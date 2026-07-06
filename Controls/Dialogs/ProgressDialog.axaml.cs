@@ -9,19 +9,59 @@ namespace DataBase.Controls.Dialogs;
 /// </summary>
 public partial class ProgressDialog : Window
 {
-    private bool _allowClose;
+    private bool    _allowClose;
+    private bool    _cancelling;
+    private Action? _onCancel;
 
-    public ProgressDialog() => InitializeComponent();
+    public ProgressDialog()
+    {
+        InitializeComponent();
+        CancelBtn.Click += (_, _) =>
+        {
+            if (_cancelling) return;
+            _cancelling = true;
+            CancelBtn.IsEnabled = false;
+            Indicator.SetIndeterminate("Отмена…");
+            var cb = _onCancel;
+            _onCancel = null;
+            cb?.Invoke();
+        };
+    }
 
-    /// <summary>Обновить прогресс. fraction — 0..1. Вызывается на UI-потоке (через Progress&lt;T&gt;).</summary>
-    public void SetProgress(double fraction, string phase) => Indicator.SetProgress(fraction, phase);
+    /// <summary>
+    /// Включить отмену (opt-in; по умолчанию окна прогресса без неё — существующие операции не
+    /// меняются). По клику кнопка гаснет, полоса переходит в «Отмена…», колбэк вызывается один
+    /// раз (обычно CancellationTokenSource.Cancel). Окно, как и прежде, закрывает только Done() —
+    /// вызывающий делает это после отката/очистки.
+    /// </summary>
+    public void EnableCancel(Action onCancel)
+    {
+        _onCancel = onCancel;
+        CancelBtn.IsVisible = true;
+    }
+
+    /// <summary>Обновить прогресс. fraction — 0..1. Вызывается на UI-потоке (через Progress&lt;T&gt;).
+    /// После нажатия «Отмена» игнорируется (полоса остаётся в «Отмена…»).</summary>
+    public void SetProgress(double fraction, string phase)
+    {
+        if (_cancelling) return;
+        Indicator.SetProgress(fraction, phase);
+    }
 
     /// <summary>Финальная фаза без процентов (запись на диск/коммит большой транзакции): бегущая
     /// полоса + текст фазы — чтобы 100% не выглядели «зависшими».</summary>
-    public void SetSaving(string phase) => Indicator.SetIndeterminate(phase);
+    public void SetSaving(string phase)
+    {
+        if (_cancelling) return;
+        Indicator.SetIndeterminate(phase);
+    }
 
     /// <summary>Доп. строка под заголовком (напр. «Количество записей: 235000»). Пусто — скрыта.</summary>
-    public void SetInfo(string text) => Indicator.SetInfo(text);
+    public void SetInfo(string text)
+    {
+        if (_cancelling) return;
+        Indicator.SetInfo(text);
+    }
 
     /// <summary>Закрыть окно загрузки (после завершения или ошибки операции).</summary>
     public void Done()

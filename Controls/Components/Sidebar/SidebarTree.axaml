@@ -80,7 +80,7 @@
                     </Viewbox>
                 </Button>
 
-                <!-- Импорт/экспорт данных (заглушка, lucide download) -->
+                <!-- Импорт таблиц (Excel/CSV/JSON) в новые коллекции; экспорт пока отключён (lucide download) -->
                 <Button x:Name="ImportExportBtn" Classes="navbtn"
                         Width="30" Height="30"
                         CornerRadius="{StaticResource RadiusMedium}"

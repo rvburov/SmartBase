@@ -80,6 +80,12 @@
                 </ControlTemplate>
             </Setter>
 
+            <!-- На серой карточке (BrushCardBg): незакрашенный квадрат — белый, чтобы не
+                 сливался с фоном (стоит ДО :checked — отмеченный остаётся акцентным). -->
+            <Style Selector="^.onCard /template/ Border#NormalRectangle">
+                <Setter Property="Background" Value="{StaticResource BrushBg}" />
+            </Style>
+
             <!-- Отмечено: заливка акцентом, рамка под цвет заливки, галочка видна -->
             <Style Selector="^:checked /template/ Border#NormalRectangle">
                 <Setter Property="Background"  Value="{StaticResource BrushAccent}" />

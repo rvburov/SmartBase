@@ -30,7 +30,7 @@
 |---|---|---|---|
 | Таблица коллекции | до ~10 млн записей | `VirtualCollectionView` (DataGrid не материализует источник) + keyset + фоновая подгрузка | [TableView](../../Views/ConstructorDb/TableView.axaml.cs), [VirtualRowList](../../ViewModels/ConstructorDb/VirtualRowList.cs), [VirtualCollectionView](../../ViewModels/ConstructorDb/VirtualCollectionView.cs) |
 | Фильтр / сортировка | до ~10 млн | фильтр в SQL → список id → виртуализация; выпадающий список значений — SQL-агрегат в фоне | [TableView](../../Views/ConstructorDb/TableView.axaml.cs), [ConstructorRepository](../../Database/Repositories/ConstructorRepository.cs) |
-| Импорт таблиц | 100k+ строк | bulk-insert + границы по содержимому | [ExcelImporter](../../Core/Importers/ExcelImporter.cs), `ImportExcelCollection` |
+| Импорт таблиц | 10 млн+ строк | двухпроходный стриминг + пакет=транзакция | [TableSources](../../Core/Importers/TableSources/), `ImportStreamedCollection` |
 | Календарь (окна День/Неделя/Месяц/Год) | до ~10 млн записей | индексная проекция `calendar_index` + сплит-запрос окна (timed с нижней границей + all-day) по `(CollectionId, AllDay, StartIso)` | [ConstructorRepository](../../Database/Repositories/ConstructorRepository.cs) |
 | Календарь «Расписание» (день) | миллионы событий в дне | `IList`-виртуализация: полоса на весь объём + offset/keyset-страницы в фоне с «Загрузка…»; несколько БД — порядок по времени через посекундную карту (как «Журнал»); правки — мутацией списка НА МЕСТЕ (`ApplyDeltaAsync`: удаления без БД, вставка — ранг записи одним COUNT по индексу) | [CalendarDayVirtualList](../../Views/ConstructorDb/Calendar/CalendarDayVirtualList.cs) |
 | Календарь «Журнал» (вся история данных) | миллионы событий | плоская `IList`-виртуализация: карта из счётчиков по дням (async GROUP BY) + страницы дней в фоне; порядок по времени между БД — слитые дни ≤ 10k / посекундная карта гигантских дней; правки — мутацией списка НА МЕСТЕ (`ApplyDeltaAsync`: страницы/кеши дней переживают правку, без волны «Загрузка…») | [JournalVirtualList](../../Views/ConstructorDb/Calendar/JournalVirtualList.cs) |
@@ -113,22 +113,32 @@ fallback при **выключенной** виртуализации.
 
 ### Импорт таблиц
 
-[ExcelImporter](../../Core/Importers/ExcelImporter.cs):
-- Excel — заполненные ячейки читаются одним проходом `RangeUsed().CellsUsed()` в
-  словарь (быстрее, чем `sheet.Cell(r,c)` в цикле, и без материализации пустых).
-- Границы (`lastCol`/`lastRow`) берутся по **реальному непустому содержимому**, а не
-  по адресу `RangeUsed` (Excel) и не по максимальной длине строки (CSV). Без этого
-  хвост пустых столбцов превращал 526×10 в ~1 млн пустых значений полей.
+Конвейер **двухпроходный и потоковый** ([TableSources](../../Core/Importers/TableSources/)):
+проход 1 (`Analyze`) читает файл целиком, но в память складывает только схему и счётчики
+(точное число записей — для процентов, счётчик пустых названий); проход 2 (`ReadRows`)
+переоткрывает файл и отдаёт записи `IEnumerable`-потоком прямо в запись. Память O(1) на
+любом объёме — старый путь материализовал ВСЕ строки (10 млн строк CSV ≈ гигабайты).
+Excel читается ExcelDataReader (строка за строкой, книга в память не поднимается),
+CSV — свой StreamReader-автомат, JSON — `Utf8JsonReader` поверх FileStream.
+Границы (`lastCol`/`lastRow`) — по **реальному непустому содержимому**, а не по dimension
+листа и не по максимальной длине строки CSV: иначе хвост пустых столбцов превращал
+526×10 в ~1 млн пустых значений полей.
 
-`ImportExcelCollection` (в [ConstructorRepository](../../Database/Repositories/ConstructorRepository.cs)):
-записи и значения пишутся **сырым ADO.NET** через подготовленные `INSERT` (prepared, переиспользуемые
-параметры) в одной транзакции — НЕ через EF. EF на каждую из миллионов сущностей тратит построение
-графа и чтение сгенерированного Id → импорт 425k×N колонок деградирует до минут (≈60× медленнее).
-Сырой путь — секунды (бенч: 300k значений с двумя индексами ≈0.7 с). Id новых записей идут непрерывным
-блоком (импорт — единственный писатель в транзакции), поэтому `RecordId` значения = `firstNew + индекс
-строки` (`firstNew = last_insert_rowid − число_записей + 1`), как в bulk-копии дубля. Сама коллекция и
-колонки (их мало) создаются через EF. Импорт идёт на **отдельном** контексте (`ImportExcelCollectionIsolated`,
-см. принцип 5) на фоновом потоке.
+`ImportStreamedCollection` (в [ConstructorRepository](../../Database/Repositories/ConstructorRepository.cs)):
+маленькая shell-транзакция (коллекция + поля через EF), затем строки пакетами по 20k —
+**каждый пакет в своей транзакции** (модель батч-удаления: WAL не разрастается на весь
+объём, отмена срабатывает между пакетами; отмена/ошибка → коллекция удаляется целиком).
+Записи и значения — **сырым ADO.NET** prepared-`INSERT`, НЕ через EF: EF на каждую из
+миллионов сущностей тратит построение графа и чтение сгенерированного Id (≈60× медленнее).
+В своей транзакции импорт — единственный писатель, id пакета непрерывны: `RecordId =
+firstNew + индекс` (`firstNew = last_insert_rowid − размер_пакета + 1`), как в bulk-копии
+дубля. Шаг `Position` при > 2 млн строк — 1 вместо 1000 (`(idx+1)*1000` в `int`
+переполнялся после ~2,1 млн). Импорт идёт на **отдельном** контексте с bulk-прагмами
+(`ImportStreamedCollectionIsolated`, см. принцип 5) на фоновом потоке.
+
+Замер ([Tests/ImportPerf](../../Tests/ImportPerf/Program.cs) `--perf`): CSV 1 млн строк ×
+8 колонок — 116 с; 10 млн (1 ГБ) — 21 мин (~70 тыс. INSERT/с, скорость не падает с ростом
+объёма; пик памяти — mmap-окно SQLite, не строки).
 
 Подробнее: [[../features/import-export]].
 

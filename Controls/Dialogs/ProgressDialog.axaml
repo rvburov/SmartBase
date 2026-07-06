@@ -13,7 +13,15 @@
         ShowInTaskbar="False"
         Background="{StaticResource BrushBg}">
 
-    <!-- Вся начинка — единый индикатор загрузки приложения. -->
-    <components:ProgressIndicator x:Name="Indicator" Margin="22,20" />
+    <!-- Вся начинка — единый индикатор загрузки приложения; кнопка отмены появляется
+         только у операций, которые её включили (EnableCancel). -->
+    <StackPanel Margin="22,20" Spacing="14">
+        <components:ProgressIndicator x:Name="Indicator" />
+        <Button x:Name="CancelBtn" Classes="dialog"
+                Content="Отмена"
+                IsVisible="False"
+                Width="100" Height="34"
+                HorizontalAlignment="Right" />
+    </StackPanel>
 
 </Window>

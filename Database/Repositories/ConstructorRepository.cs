@@ -1,5 +1,6 @@
 using System.Data.Common;
 using System.Text.RegularExpressions;
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using DataBase.Core.Importers;
@@ -272,107 +273,164 @@ public class ConstructorRepository(AppDbContext db)
     private const string DescKey  = "__desc__";
 
     /// <summary>
-    /// Создать новую коллекцию из распарсенного листа Excel: текстовые свойства по столбцам,
-    /// записи со значениями, подпись системной колонки «Название» из заголовка. Колонка
-    /// «Описание» создаётся пустой и ставится в конец (данные в неё не импортируются).
-    /// Всё в одной транзакции. Возвращает id созданной коллекции.
+    /// Создать коллекцию и залить записи ПОТОКОМ: маленькая shell-транзакция (коллекция + текстовые
+    /// поля + подпись «Название» + порядок колонок, «Описание» пустое в конце), затем строки
+    /// пакетами по <paramref name="batchSize"/> — каждый пакет в СВОЕЙ транзакции (WAL не
+    /// разрастается на весь объём, отмена срабатывает между пакетами). Записи и значения пишутся
+    /// сырым ADO.NET (prepared INSERT), а НЕ через EF: EF на каждую из миллионов сущностей тратит
+    /// построение графа и чтение сгенерированного Id — ≈60× медленнее сырого пути. Внутри своей
+    /// транзакции мы единственный писатель → id пакета непрерывны: RecordId = firstNew + индекс.
+    /// Отмена или любая ошибка после shell-транзакции (включая ошибки источника строк) → созданная
+    /// коллекция удаляется целиком (батч-удаление), исключение пробрасывается (SqliteException —
+    /// дружелюбной ImportException). Имя занято → «(копия)»-вариант (мульти-файловый импорт).
+    /// Возвращает id коллекции. <paramref name="rowsWritten"/> — нарастающее число строк, раз в пакет.
     /// </summary>
-    public int ImportExcelCollection(string collectionName, int? groupId, ExcelImportData data,
-                                     IProgress<double>? progress = null)
+    public int ImportStreamedCollection(string collectionName, int? groupId, ImportSchema schema,
+        IEnumerable<ImportRow> rows, CancellationToken ct,
+        IProgress<long>? rowsWritten = null, int batchSize = 20_000)
     {
-        using var tx = db.Database.BeginTransaction();
+        collectionName = UniqueCollectionName(collectionName, groupId);
 
-        var maxPos = db.DbCollections.Select(c => (int?)c.Position).Max() ?? 0;
-        var col = new DbCollectionEntity
+        int colId;
+        List<int> fieldIds;
+        using (var tx = db.Database.BeginTransaction())
         {
-            Name = collectionName, GroupId = groupId, Position = maxPos + 1000,
-            Icon = "table", Color = "#007AFF",
-        };
-        db.DbCollections.Add(col);
-        db.SaveChanges();
-
-        // Свойства по столбцам — текстовые, в порядке столбцов. Имена уже уникальны.
-        var fields = data.FieldNames
-            .Select((name, i) => new DbFieldEntity
+            var maxPos = db.DbCollections.Select(c => (int?)c.Position).Max() ?? 0;
+            var col = new DbCollectionEntity
             {
-                CollectionId = col.Id, Name = name, FieldType = "text", Position = (i + 1) * 1000,
-            })
-            .ToList();
-        db.DbFields.AddRange(fields);
-        db.SaveChanges();
-        var fieldIds = fields.Select(f => f.Id).ToList();
+                Name = collectionName, GroupId = groupId, Position = maxPos + 1000,
+                Icon = "table", Color = "#007AFF",
+            };
+            db.DbCollections.Add(col);
+            db.SaveChanges();
+            colId = col.Id;
 
-        // Подпись колонки «Название» из заголовка (пусто/дефолт → имя по умолчанию).
-        SetSystemFieldName(col.Id, TitleKey, data.TitleHeader, "Название");
+            // Свойства по столбцам — текстовые, в порядке схемы. Имена уже уникальны.
+            var fields = schema.FieldNames
+                .Select((name, i) => new DbFieldEntity
+                {
+                    CollectionId = col.Id, Name = name, FieldType = "text", Position = (i + 1) * 1000,
+                })
+                .ToList();
+            db.DbFields.AddRange(fields);
+            db.SaveChanges();
+            fieldIds = fields.Select(f => f.Id).ToList();
 
-        // Порядок колонок: «Название», затем свойства, «Описание» — в конце.
-        var order = new List<string> { TitleKey };
-        order.AddRange(fieldIds.Select(id => id.ToString()));
-        order.Add(DescKey);
-        SaveColumnOrder(col.Id, order);
+            // Подпись колонки «Название» из заголовка (пусто/дефолт → имя по умолчанию).
+            SetSystemFieldName(col.Id, TitleKey, schema.TitleHeader, "Название");
 
-        // Записи + значения свойств (Описание не импортируется). Пишем СЫРЫМ ADO.NET через
-        // подготовленные команды, а НЕ через EF: EF на каждую из миллионов сущностей тратит
-        // построение графа и чтение сгенерированного Id — импорт 425k×N колонок деградирует до
-        // минут (≈60× медленнее сырого пути). Подготовленные INSERT в одной транзакции —
-        // секунды (как bulk-копия дубля). Мы единственный писатель в транзакции → id новых
-        // записей идут непрерывным блоком, поэтому RecordId значения = firstNew + индекс строки.
-        var now   = DateTime.Now.ToString("o");
-        var total = Math.Max(1, data.Rows.Count);
-        var conn  = db.Database.GetDbConnection();
-        var dbTx  = db.Database.CurrentTransaction!.GetDbTransaction();
+            // Порядок колонок: «Название», затем свойства, «Описание» — в конце.
+            var order = new List<string> { TitleKey };
+            order.AddRange(fieldIds.Select(id => id.ToString()));
+            order.Add(DescKey);
+            SaveColumnOrder(col.Id, order);
 
-        long firstNew = 0;
-        using (var insRec = conn.CreateCommand())
-        {
-            insRec.Transaction = dbTx;
-            insRec.CommandText =
-                "INSERT INTO db_records (CollectionId, CreatedAt, Position, AllDay, Title, Description) " +
-                "VALUES ($cid, $created, $pos, 0, $title, NULL)";
-            var pCid     = AddParam(insRec, "$cid");
-            var pCreated = AddParam(insRec, "$created");
-            var pPos     = AddParam(insRec, "$pos");
-            var pTitle   = AddParam(insRec, "$title");
-            pCid.Value     = col.Id;
-            pCreated.Value = now;
-            insRec.Prepare();
-
-            for (var idx = 0; idx < data.Rows.Count; idx++)
-            {
-                pPos.Value   = (idx + 1) * 1000;
-                pTitle.Value = data.Rows[idx].Title ?? "";
-                insRec.ExecuteNonQuery();
-                if (progress is not null && idx % 2000 == 0) progress.Report((idx + 1) / (double)total * 0.3);
-            }
-            if (data.Rows.Count > 0) firstNew = LastInsertRowid() - data.Rows.Count + 1;
+            tx.Commit();
         }
 
-        using (var insVal = conn.CreateCommand())
+        try
         {
-            insVal.Transaction = dbTx;
-            insVal.CommandText = "INSERT INTO db_field_values (RecordId, FieldId, Value) VALUES ($rid, $fid, $val)";
-            var pRid = AddParam(insVal, "$rid");
-            var pFid = AddParam(insVal, "$fid");
-            var pVal = AddParam(insVal, "$val");
-            insVal.Prepare();
+            WriteRowsBatched(colId, fieldIds, schema, rows, ct, rowsWritten, batchSize);
+        }
+        catch (SqliteException ex)
+        {
+            TryDeleteImported(colId);
+            throw ex.SqliteErrorCode == 13   // SQLITE_FULL
+                ? new ImportException("Недостаточно места на диске — импорт отменён, частичные данные удалены.")
+                : new ImportException("Ошибка записи в базу данных. Импорт отменён.");
+        }
+        catch
+        {
+            TryDeleteImported(colId);
+            throw;
+        }
 
-            for (var idx = 0; idx < data.Rows.Count; idx++)
+        return colId;
+    }
+
+    // Недолитая коллекция удаляется целиком (батч-удаление, перезапускаемое). Ошибку удаления
+    // глотаем — важнее показать исходную причину; при сбое хвост доудалит повторное удаление.
+    private void TryDeleteImported(int collectionId)
+    {
+        try { DeleteCollectionData(collectionId); }
+        catch { /* best-effort */ }
+    }
+
+    // Батч-цикл записи (модель транзакций — DeleteCollectionRows): prepared-команды создаются один
+    // раз, на каждый пакет переприсваивается транзакция. Прогресс — раз в пакет.
+    private void WriteRowsBatched(int collectionId, List<int> fieldIds, ImportSchema schema,
+        IEnumerable<ImportRow> rows, CancellationToken ct, IProgress<long>? rowsWritten, int batchSize)
+    {
+        // Шаг Position: 1000 (есть куда вставлять строки между импортированными), но на
+        // многомиллионных объёмах — 1: (idx+1)*1000 в int переполняется после ~2,1 млн строк.
+        var posStep = schema.RowCount > 2_000_000 ? 1L : 1000L;
+        var now     = DateTime.Now.ToString("o");
+        var conn    = db.Database.GetDbConnection();
+
+        using var insRec = conn.CreateCommand();
+        insRec.CommandText =
+            "INSERT INTO db_records (CollectionId, CreatedAt, Position, AllDay, Title, Description) " +
+            "VALUES ($cid, $created, $pos, 0, $title, NULL)";
+        var rCid     = AddParam(insRec, "$cid");
+        var rCreated = AddParam(insRec, "$created");
+        var rPos     = AddParam(insRec, "$pos");
+        var rTitle   = AddParam(insRec, "$title");
+        rCid.Value     = collectionId;
+        rCreated.Value = now;
+
+        using var insVal = conn.CreateCommand();
+        insVal.CommandText = "INSERT INTO db_field_values (RecordId, FieldId, Value) VALUES ($rid, $fid, $val)";
+        var vRid = AddParam(insVal, "$rid");
+        var vFid = AddParam(insVal, "$fid");
+        var vVal = AddParam(insVal, "$val");
+
+        long written  = 0;
+        var  prepared = false;
+        var  batch    = new List<ImportRow>(Math.Min(batchSize, 4096));
+        using var e   = rows.GetEnumerator();
+        var  more     = true;
+
+        while (more)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            batch.Clear();
+            while (batch.Count < batchSize && (more = e.MoveNext()))
+                batch.Add(e.Current);
+            if (batch.Count == 0) break;
+
+            using var tx = db.Database.BeginTransaction();
+            var dbTx = tx.GetDbTransaction();
+            insRec.Transaction = dbTx;
+            insVal.Transaction = dbTx;
+            if (!prepared) { insRec.Prepare(); insVal.Prepare(); prepared = true; }
+
+            for (var i = 0; i < batch.Count; i++)
             {
-                var row = data.Rows[idx];
-                pRid.Value = firstNew + idx;
-                for (var i = 0; i < fieldIds.Count; i++)
+                rPos.Value   = (written + i + 1) * posStep;
+                rTitle.Value = batch[i].Title ?? "";
+                insRec.ExecuteNonQuery();
+            }
+            var firstNew = LastInsertRowid() - batch.Count + 1;
+
+            for (var i = 0; i < batch.Count; i++)
+            {
+                var row = batch[i];
+                vRid.Value = firstNew + i;
+                for (var f = 0; f < fieldIds.Count; f++)
                 {
-                    pFid.Value = fieldIds[i];
-                    pVal.Value = (i < row.FieldValues.Count ? row.FieldValues[i] : "") ?? "";
+                    vFid.Value = fieldIds[f];
+                    vVal.Value = (f < row.FieldValues.Count ? row.FieldValues[f] : "") ?? "";
                     insVal.ExecuteNonQuery();
                 }
-                if (progress is not null && idx % 2000 == 0) progress.Report(0.3 + (idx + 1) / (double)total * 0.7);
             }
-        }
-        progress?.Report(1.0);
 
-        tx.Commit();
-        return col.Id;
+            tx.Commit();
+            written += batch.Count;
+            rowsWritten?.Report(written);
+        }
+
+        rowsWritten?.Report(written);
     }
 
     public void UpdateCollection(DbCollection col)
@@ -767,19 +825,19 @@ public class ConstructorRepository(AppDbContext db)
     }
 
     /// <summary>
-    /// Импорт Excel-листа в новую коллекцию на ОТДЕЛЬНОМ подключении (не общий <c>Context</c>).
-    /// Вызывается уже с фонового потока (после `ExcelImporter.Parse`), поэтому работает синхронно.
+    /// Потоковый импорт в новую коллекцию на ОТДЕЛЬНОМ подключении (не общий <c>Context</c>).
+    /// Вызывается уже с фонового потока (источник читается по ходу записи), поэтому синхронно.
     /// Главное — НЕ трогать общий контекст с фонового потока: иначе параллельное обращение к нему
     /// из UI (дерево/календарь) или фоновое копирование дубля валит EF («A second operation was
     /// started on this context instance»). Свежий контекст + WAL + busy_timeout делают импорт
     /// безопасным рядом с любыми другими операциями над той же БД.
     /// </summary>
-    public int ImportExcelCollectionIsolated(string collectionName, int? groupId, ExcelImportData data,
-                                             IProgress<double>? progress = null)
+    public int ImportStreamedCollectionIsolated(string collectionName, int? groupId, ImportSchema schema,
+        IEnumerable<ImportRow> rows, CancellationToken ct, IProgress<long>? rowsWritten = null)
     {
         using var ctx = new AppDbContext(db.DbPath);
         ctx.ApplyBulkPerformancePragmas();   // большой кеш+mmap — без них вставка в глобальные индексы db_field_values деградирует
-        return new ConstructorRepository(ctx).ImportExcelCollection(collectionName, groupId, data, progress);
+        return new ConstructorRepository(ctx).ImportStreamedCollection(collectionName, groupId, schema, rows, ct, rowsWritten);
     }
 
     // ── Перенос между БД (мульти-маунт) ───────────────────────────────────────

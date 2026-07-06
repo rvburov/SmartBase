@@ -18,6 +18,10 @@ internal sealed class Program
     [STAThread]
     public static void Main(string[] args)
     {
+        // Legacy-кодировки (Windows-1251 для CSV, кодировки старых .xls): в .NET их нет из
+        // коробки, провайдер регистрируется один раз на процесс. Нужен импорту таблиц.
+        Core.Importers.TableSources.EncodingSetup.Ensure();
+
         // Режим самозамены: новый .exe (из %TEMP%) запущен с --apply-update, чтобы
         // дождаться выхода старого приложения, заменить его собой и перезапустить.
         if (args.Length > 0 && args[0] == "--apply-update")

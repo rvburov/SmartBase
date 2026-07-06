@@ -429,6 +429,21 @@
         <Setter Property="BorderBrush" Value="{StaticResource BrushAccent}" />
     </Style>
 
+    <!-- Поле ввода на серой карточке (BrushCardBg, например «Параметры ручного импорта»):
+         белый фон во всех состояниях — стандартный серый сливался бы с фоном карточки. -->
+    <Style Selector="TextBox.onCard">
+        <Setter Property="Background" Value="{StaticResource BrushBg}" />
+    </Style>
+    <Style Selector="TextBox.onCard /template/ Border#PART_BorderElement">
+        <Setter Property="Background" Value="{StaticResource BrushBg}" />
+    </Style>
+    <Style Selector="TextBox.onCard:pointerover /template/ Border#PART_BorderElement">
+        <Setter Property="Background" Value="{StaticResource BrushBg}" />
+    </Style>
+    <Style Selector="TextBox.onCard:focus /template/ Border#PART_BorderElement">
+        <Setter Property="Background" Value="{StaticResource BrushBg}" />
+    </Style>
+
     <!-- Заголовок «в строку» (имя коллекции в навбаре, имя записи в RecordPageView).
          Не показывает рамку/фон ни в одном состоянии. Watermark наследует
          текущие FontSize/FontWeight, чтобы плейсхолдер выглядел как сам заголовок,

@@ -8,6 +8,10 @@
     <Color x:Key="ColorSecondaryBg">#F2F2F7</Color>
     <Color x:Key="ColorInactiveBg">#FAFAFA</Color>
     <Color x:Key="ColorActivityBar">#EBEBEB</Color>
+    <!-- Фон карточки-блока внутри диалога (например, «Параметры ручного импорта»):
+         серый как у полей ввода; сами поля НА карточке — белые (TextBox.onCard),
+         иначе инпуты сливаются с фоном карточки. -->
+    <Color x:Key="ColorCardBg">#F2F2F7</Color>
 
     <!-- Разделители. Единый цвет всех линий в приложении. -->
     <Color x:Key="ColorSeparator">#E5E5EA</Color>
@@ -33,6 +37,7 @@
     <SolidColorBrush x:Key="BrushBg"           Color="{StaticResource ColorBg}" />
     <SolidColorBrush x:Key="BrushInactiveBg"   Color="{StaticResource ColorInactiveBg}" />
     <SolidColorBrush x:Key="BrushSecondaryBg"  Color="{StaticResource ColorSecondaryBg}" />
+    <SolidColorBrush x:Key="BrushCardBg"       Color="{StaticResource ColorCardBg}" />
     <SolidColorBrush x:Key="BrushSeparator"    Color="{StaticResource ColorSeparator}" />
     <SolidColorBrush x:Key="BrushPrimaryText"  Color="{StaticResource ColorPrimaryText}" />
     <SolidColorBrush x:Key="BrushSecondaryText" Color="{StaticResource ColorSecondaryText}" />
