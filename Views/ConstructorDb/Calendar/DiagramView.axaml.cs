@@ -10,11 +10,16 @@ using DataBase.Utils;
 
 namespace DataBase.Views.ConstructorDb.Calendar;
 
-// Диаграмма (гант на месяц): строки — коллекции и их записи, ось X — дни месяца.
-// Раскладка императивная (Canvas + Border/TextBlock, пересборка на Refresh/SizeChanged),
-// как в остальных видах календаря. Drag/resize — целодневный шаг: при ширине дня в
-// десятки пикселей минутная точность недостижима, а время суток события сохраняется
-// (семантика горизонтального drag в AllDayBar).
+// Диаграмма (гант): строки — коллекции и их записи, ось X — дни показанного периода.
+// Масштабы — лесенка месяц → год → 5 лет → 10 лет (кнопки «−»/«+» в шапке);
+// геометрия одна и та же — по ячейкам дней, на крупных шкалах ячейки просто узкие,
+// а шапка и линии сетки идут по месяцам (год) или по годам (5, 10 лет).
+// Многолетние окна выровнены по календарю (5 лет — с кратного пяти,
+// 10 — десятилетие), как месяц и год. Раскладка императивная (Canvas +
+// Border/TextBlock, пересборка на Refresh/SizeChanged), как в остальных видах
+// календаря. Drag/resize — целодневный шаг: минутная точность при таких ячейках
+// недостижима, а время суток события сохраняется (семантика горизонтального
+// drag в AllDayBar).
 public partial class DiagramView : UserControl
 {
     // Размеры/веса шрифта — из токенов Typography.axaml (резолв ресурса в рантайме).
@@ -34,6 +39,8 @@ public partial class DiagramView : UserControl
     public event EventHandler<IReadOnlyList<CalendarRecord>>? RecordsDeleteRequested;
     public event EventHandler<CalendarRecord>? RecordDuplicateRequested;
     public event EventHandler<IReadOnlyList<CalendarRecord>>? RecordsDuplicateRequested;
+    // Смена масштаба (месяц/год): окно данных меняется — контроллер перезагружает вид.
+    public event EventHandler? ScaleChanged;
 
     private static readonly string[] DayNames = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
 
@@ -50,21 +57,70 @@ public partial class DiagramView : UserControl
     private const double EdgeHit    = 6;    // зона захвата ресайза по краям бара
     private const double LeftIndent = 24;   // отступ строк записей в левой панели
 
-    // Кэпы строк: окно месяца при днях-гигантах может отдать до 31×GridDayCap событий —
-    // десятки тысяч строк по RowH означают десятки тысяч контролов и фриз. Сверх кэпа —
-    // серые строки «+N ещё»; смотреть всё — Расписание/Журнал (у них виртуализация).
-    private const int MaxRecordsPerCollection = 200;
+    // Кэпы строк: сверх кэпа — серые строки «+N ещё»; смотреть всё — Расписание/Журнал
+    // (у них виртуализация). MaxRecordsPerCollection публичен: контроллер передаёт его
+    // загрузчику окна как cap чтения (репозиторий отдаёт не больше, чем вид нарисует).
+    public  const int MaxRecordsPerCollection = 200;
     private const int MaxTotalRows            = 1000;
 
     private List<CalendarRecord> _events = [];
     private DateTime _currentDate = DateTime.Today;
-    private DateTime _monthStart;
-    private int      _daysInMonth;
+
+    // Лесенка масштабов; Years = 0 — календарный месяц. Ключи хранятся в app.db.
+    private static readonly (string Key, string Label, int Years)[] Scales =
+    [
+        ("month",   "месяц",  0),
+        ("year",    "год",    1),
+        ("5years",  "5 лет",  5),
+        ("10years", "10 лет", 10),
+    ];
+    private int _scaleIdx;
+
+    // Показанный период. Вся геометрия считает от его начала и числа дней —
+    // построители масштаба не знают, различаются только шапка, линии сетки
+    // и отступы блоков.
+    private DateTime _rangeStart;
+    private int      _rangeDays;
+
+    // ── масштаб: API для контроллера (окно данных, навигация, заголовок) ────────
+
+    // Годы показанного периода; 0 — месяц.
+    public int ScaleYears => Scales[_scaleIdx].Years;
+
+    // Окно данных для даты d: календарный месяц или N лет, выровненных по
+    // календарю (5 лет — с кратного пяти, 10 — десятилетие) — страницы
+    // таймлайна стабильны, как у месяца и года.
+    public (DateTime Start, DateTime End) RangeFor(DateTime d)
+    {
+        var n = ScaleYears;
+        if (n == 0)
+        {
+            var s = new DateTime(d.Year, d.Month, 1);
+            return (s, s.AddMonths(1));
+        }
+        var a = AlignYear(d.Year, n);
+        return (new DateTime(a, 1, 1), new DateTime(a + n, 1, 1));
+    }
+
+    // Заголовок навбара: «июль 2026» / «2026» / «2020–2029».
+    public string TitleFor(DateTime d) => ScaleYears switch
+    {
+        0 => d.ToString("MMMM yyyy", new System.Globalization.CultureInfo("ru-RU")),
+        1 => d.Year.ToString(),
+        var n => $"{AlignYear(d.Year, n)}–{AlignYear(d.Year, n) + n - 1}",
+    };
+
+    private static int AlignYear(int year, int span) => year - ((year % span) + span) % span;
 
     // Отмеченные коллекции всех допущенных БД (порядок сайдбара) — каркас групп:
-    // коллекция видна строкой даже без событий в показанном месяце.
+    // коллекция видна строкой даже без событий в показанном периоде.
     private IReadOnlyList<(int DbId, DbCollection Col)>? _collections;
     private bool _hideEmptyGroups;   // при активном поиске пустые группы — шум
+
+    // Точные агрегаты окна по коллекциям (фаза 2 контроллера): чтение окна обрезано
+    // cap'ом на коллекцию, поэтому счётчик, «+N ещё» и охват суммарного бара берутся
+    // отсюда; до прихода агрегатов (и при поиске) — от фактически доставленного.
+    private IReadOnlyDictionary<(int DbId, int ColId), DiagramGroupStat>? _stats;
 
     private List<GroupRow> _groups = [];
     // Свёрнутость групп переживает Refresh (пересборку), но не перезапуск приложения.
@@ -85,6 +141,8 @@ public partial class DiagramView : UserControl
         public string Name  = "";
         public string Color = "";
         public List<CalendarRecord> Records = [];   // все доставленные, по StartDt
+        public DiagramGroupStat? Stat;              // точные агрегаты окна (фаза 2)
+        public int    Total;                        // событий в окне: Stat.Count или доставленные
         public bool   Collapsed;
     }
 
@@ -119,7 +177,7 @@ public partial class DiagramView : UserControl
         public double Y;          // верх строки
         public double X1, X2;     // клампленная геометрия бара/кольца
         public bool   IsRing;
-        public bool   ClipL, ClipR;   // край обрезан границей месяца — ресайз с него запрещён
+        public bool   ClipL, ClipR;   // край обрезан границей периода — ресайз с него запрещён
         public EventVisual? Vis;
         public List<Control> Visuals = [];   // для приглушения на время drag
     }
@@ -158,6 +216,13 @@ public partial class DiagramView : UserControl
     {
         InitializeComponent();
 
+        // Масштаб переживает перезапуск (app.db). Кнопки «−»/«+» шагают по
+        // лесенке масштабов, между ними подпись текущего; крайняя кнопка гаснет.
+        _scaleIdx = Math.Max(0, Array.FindIndex(Scales, s => s.Key == AppSettings.LoadDiagramScale()));
+        ScaleMinusBtn.Click += (_, _) => StepScale(-1);
+        ScalePlusBtn.Click  += (_, _) => StepScale(+1);
+        UpdateScaleButtons();
+
         SizeChanged += (_, _) => BuildAll();
 
         _timeLineTimer = new DispatcherTimer { Interval = TimeSpan.FromMinutes(1) };
@@ -174,6 +239,27 @@ public partial class DiagramView : UserControl
             SetRowHover(-1);
             TimelinePane.Cursor = Cursor.Default;
         };
+    }
+
+    private void StepScale(int step)
+    {
+        var idx = Math.Clamp(_scaleIdx + step, 0, Scales.Length - 1);
+        if (idx == _scaleIdx) return;
+        _scaleIdx = idx;
+        AppSettings.SaveDiagramScale(Scales[idx].Key);
+        UpdateScaleButtons();
+        ScaleChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void UpdateScaleButtons()
+    {
+        ScaleMinusBtn.IsEnabled = _scaleIdx > 0;
+        ScalePlusBtn.IsEnabled  = _scaleIdx < Scales.Length - 1;
+        // Тултип называет масштаб, КУДА ведёт нажатие («Масштаб: 10 лет»).
+        ToolTip.SetTip(ScaleMinusBtn, _scaleIdx > 0
+            ? $"Масштаб: {Scales[_scaleIdx - 1].Label}" : null);
+        ToolTip.SetTip(ScalePlusBtn, _scaleIdx < Scales.Length - 1
+            ? $"Масштаб: {Scales[_scaleIdx + 1].Label}" : null);
     }
 
     // Delete/Backspace удаляют выделенное, пока вид видим и фокус не в текстовом
@@ -220,14 +306,17 @@ public partial class DiagramView : UserControl
     public void Refresh(IEnumerable<CalendarRecord> events, DateTime currentDate,
                         bool scrollToNow = false,
                         IReadOnlyList<(int DbId, DbCollection Col)>? collections = null,
-                        bool hideEmptyGroups = false)
+                        bool hideEmptyGroups = false,
+                        IReadOnlyDictionary<(int DbId, int ColId), DiagramGroupStat>? stats = null)
     {
         _events          = events.ToList();
         _currentDate     = currentDate;
-        _monthStart      = new DateTime(currentDate.Year, currentDate.Month, 1);
-        _daysInMonth     = DateTime.DaysInMonth(currentDate.Year, currentDate.Month);
+        var (rs, re)     = RangeFor(currentDate);
+        _rangeStart      = rs;
+        _rangeDays       = (int)(re - rs).TotalDays;
         _collections     = collections;
         _hideEmptyGroups = hideEmptyGroups;
+        _stats           = stats;
 
         BuildGroups();
         BuildAll();
@@ -281,6 +370,10 @@ public partial class DiagramView : UserControl
                 .OrderBy(e => e.StartDt)
                 .ThenBy(e => e.Title, StringComparer.OrdinalIgnoreCase)
                 .ToList();
+            // Точные агрегаты (чтение окна обрезано cap'ом на коллекцию); до их прихода
+            // и при поиске — от доставленного. Агрегаты не могут знать меньше доставленного.
+            g.Stat  = _stats?.GetValueOrDefault((g.DbId, g.ColId));
+            g.Total = Math.Max(g.Stat?.Count ?? 0, g.Records.Count);
             g.Collapsed = _collapsed.TryGetValue((g.DbId, g.ColId), out var c) && c;
         }
 
@@ -294,7 +387,7 @@ public partial class DiagramView : UserControl
         foreach (var g in _groups)
         {
             var shown = Math.Min(g.Records.Count, MaxRecordsPerCollection);
-            var need  = 1 + (g.Collapsed ? 0 : shown + (g.Records.Count > shown ? 1 : 0));
+            var need  = 1 + (g.Collapsed ? 0 : shown + (g.Total > shown ? 1 : 0));
             if (groupsShown > 0 && rows.Count + need > MaxTotalRows)
             {
                 var left = _groups.Count - groupsShown;
@@ -308,8 +401,8 @@ public partial class DiagramView : UserControl
 
             for (var i = 0; i < shown; i++)
                 rows.Add(new RowItem { Group = g, Ev = g.Records[i] });
-            if (g.Records.Count > shown)
-                rows.Add(new RowItem { Group = g, Note = $"+{g.Records.Count - shown} ещё" });
+            if (g.Total > shown)
+                rows.Add(new RowItem { Group = g, Note = $"+{g.Total - shown} ещё" });
         }
         return rows;
     }
@@ -332,8 +425,8 @@ public partial class DiagramView : UserControl
         EmptyHint.IsVisible = _groups.Count == 0;
 
         var timelineW = Bounds.Width - LeftW;
-        if (timelineW <= 0 || _daysInMonth <= 0) return;
-        var dayW = timelineW / _daysInMonth;
+        if (timelineW <= 0 || _rangeDays <= 0) return;
+        var dayW = timelineW / _rangeDays;
         _lastTimelineW = timelineW;
 
         BuildDayHeader(dayW);
@@ -368,20 +461,28 @@ public partial class DiagramView : UserControl
 
     private void BuildDayHeader(double dayW)
     {
+        // Ячейки шапки по масштабу: месяц — дни, год — месяцы, 5/10 лет — годы
+        // (ячейки месяцев там уже нечитаемы).
+        if (ScaleYears >= 5) { BuildYearHeader(dayW);  return; }
+        if (ScaleYears >= 1) { BuildMonthHeader(dayW); return; }
+
         var secondary = BrushOf("BrushSecondaryText");
         var primary   = BrushOf("BrushPrimaryText");
         var red       = BrushOf("BrushRed");
+        var accent    = BrushOf("BrushAccent");
 
-        for (var i = 0; i < _daysInMonth; i++)
+        for (var i = 0; i < _rangeDays; i++)
         {
-            var d         = _monthStart.AddDays(i);
+            var d         = _rangeStart.AddDays(i);
+            var isToday   = d.Date == DateTime.Today;   // синим и жирным — как шапка Недели
             var isWeekend = d.DayOfWeek is DayOfWeek.Saturday or DayOfWeek.Sunday;
 
             var name = new TextBlock
             {
                 Text       = DayNames[((int)d.DayOfWeek + 6) % 7],
                 FontSize   = FontSizeSmall,
-                Foreground = isWeekend ? red : secondary,
+                FontWeight = isToday ? WeightBold : FontWeight.Normal,
+                Foreground = isToday ? accent : isWeekend ? red : secondary,
             };
             name.Measure(Size.Infinity);
             Canvas.SetLeft(name, i * dayW + (dayW - name.DesiredSize.Width) / 2);
@@ -392,7 +493,8 @@ public partial class DiagramView : UserControl
             {
                 Text       = d.Day.ToString(),
                 FontSize   = FontSizeBase,
-                Foreground = isWeekend ? red : primary,
+                FontWeight = isToday ? WeightBold : FontWeight.Normal,
+                Foreground = isToday ? accent : isWeekend ? red : primary,
             };
             num.Measure(Size.Infinity);
             Canvas.SetLeft(num, i * dayW + (dayW - num.DesiredSize.Width) / 2);
@@ -401,20 +503,97 @@ public partial class DiagramView : UserControl
         }
     }
 
+    // Шапка масштаба «год»: ячейки месяцев (границы — по реальному числу дней).
+    // Полное имя месяца, не влезло в ячейку — трёхбуквенное («Янв»). Текущий
+    // месяц — синим и жирным, как «сегодня» в шапке Недели.
+    private void BuildMonthHeader(double dayW)
+    {
+        var primary = BrushOf("BrushPrimaryText");
+        var accent  = BrushOf("BrushAccent");
+        var ru      = new System.Globalization.CultureInfo("ru-RU");
+        var today   = DateTime.Today;
+
+        for (var m = _rangeStart; m < RangeEnd; m = m.AddMonths(1))
+        {
+            var x1 = (m - _rangeStart).Days * dayW;
+            var x2 = (m.AddMonths(1) - _rangeStart).Days * dayW;
+
+            var isCurrent = m.Year == today.Year && m.Month == today.Month;
+            var tb = new TextBlock
+            {
+                Text       = Capitalize(ru.DateTimeFormat.MonthNames[m.Month - 1]),
+                FontSize   = FontSizeBase,
+                FontWeight = isCurrent ? WeightBold : FontWeight.Normal,
+                Foreground = isCurrent ? accent : primary,
+            };
+            tb.Measure(Size.Infinity);
+            if (tb.DesiredSize.Width > x2 - x1 - 6)
+            {
+                tb.Text = Capitalize(ru.DateTimeFormat.AbbreviatedMonthNames[m.Month - 1]);
+                tb.Measure(Size.Infinity);
+            }
+            Canvas.SetLeft(tb, x1 + (x2 - x1 - tb.DesiredSize.Width) / 2);
+            Canvas.SetTop(tb, (44 - tb.DesiredSize.Height) / 2);
+            DayHeaderCanvas.Children.Add(tb);
+        }
+    }
+
+    // Шапка масштабов «5 лет»/«10 лет»: ячейки годов, текущий — синим и жирным.
+    private void BuildYearHeader(double dayW)
+    {
+        var primary = BrushOf("BrushPrimaryText");
+        var accent  = BrushOf("BrushAccent");
+        var today   = DateTime.Today;
+
+        for (var y = _rangeStart.Year; y < RangeEnd.Year; y++)
+        {
+            var x1 = (new DateTime(y, 1, 1) - _rangeStart).Days * dayW;
+            var x2 = (new DateTime(y + 1, 1, 1) - _rangeStart).Days * dayW;
+            var tb = new TextBlock
+            {
+                Text       = y.ToString(),
+                FontSize   = FontSizeBase,
+                FontWeight = y == today.Year ? WeightBold : FontWeight.Normal,
+                Foreground = y == today.Year ? accent : primary,
+            };
+            tb.Measure(Size.Infinity);
+            Canvas.SetLeft(tb, x1 + (x2 - x1 - tb.DesiredSize.Width) / 2);
+            Canvas.SetTop(tb, (44 - tb.DesiredSize.Height) / 2);
+            DayHeaderCanvas.Children.Add(tb);
+        }
+    }
+
+    // Индексы дней, где начинается новый месяц/год внутри периода (без нулевого) —
+    // границы ячеек шапки и вертикальные линии сетки крупных масштабов.
+    private IEnumerable<int> BoundaryIndices(bool byYear)
+    {
+        var d = byYear ? _rangeStart.AddYears(1) : _rangeStart.AddMonths(1);
+        for (; d < RangeEnd; d = byYear ? d.AddYears(1) : d.AddMonths(1))
+            yield return (d - _rangeStart).Days;
+    }
+
+    private static string Capitalize(string s)
+        => s.Length == 0 ? s : char.ToUpper(s[0]) + s[1..];
+
     // Фон таймлайна: заливка выходных → тинты строк групп → линии дней → линии строк.
     // Всё обрывается на последней строке (contentH), ниже — чистый фон.
     // Линии — пустые Border с Aliased + LayoutRounding (защёлкиваются в целый пиксель,
     // текста в поддереве нет — сглаживанию текста не мешают), см. docs/ui/theming.md.
     private void BuildBackground(List<RowItem> rows, double dayW, double timelineW, double contentH)
     {
-        var weekendBg = BrushOf("BrushSecondaryBg");
-        for (var i = 0; i < _daysInMonth; i++)
+        // Заливка выходных — только на месячном масштабе: уже на годовом ячейка
+        // дня ~3 px, и 52 пары серых полос сливаются в рябь.
+        if (ScaleYears == 0)
         {
-            var d = _monthStart.AddDays(i);
-            if (d.DayOfWeek is not (DayOfWeek.Saturday or DayOfWeek.Sunday)) continue;
-            var fill = new Border { Width = dayW, Height = contentH, Background = weekendBg };
-            Canvas.SetLeft(fill, i * dayW);
-            BgCanvas.Children.Add(fill);
+            var weekendBg = BrushOf("BrushSecondaryBg");
+            for (var i = 0; i < _rangeDays; i++)
+            {
+                var d = _rangeStart.AddDays(i);
+                if (d.DayOfWeek is not (DayOfWeek.Saturday or DayOfWeek.Sunday)) continue;
+                var fill = new Border { Width = dayW, Height = contentH, Background = weekendBg };
+                Canvas.SetLeft(fill, i * dayW);
+                BgCanvas.Children.Add(fill);
+            }
         }
 
         for (var i = 0; i < rows.Count; i++)
@@ -445,8 +624,17 @@ public partial class DiagramView : UserControl
         paneLine.Bind(UseLayoutRoundingProperty, paneLine.GetResourceObservable("LineUseLayoutRounding"));
         RenderOptions.SetEdgeMode(paneLine, EdgeMode.Aliased);
         BgCanvas.Children.Add(paneLine);
-        // Вертикальные линии дней; x=0 не рисуется — там разделитель левой панели.
-        for (var i = 1; i < _daysInMonth; i++)
+        // Вертикальные линии: на месяце — по дням, на годе — по границам месяцев
+        // (дневные линии при ячейке ~3 px — сплошная серость), на 5/10 годах —
+        // по границам годов (месячные ячейки уже нечитаемы). x=0 не рисуется —
+        // там разделитель левой панели.
+        var vlines = ScaleYears switch
+        {
+            0 => Enumerable.Range(1, _rangeDays - 1),
+            1 => BoundaryIndices(byYear: false),
+            _ => BoundaryIndices(byYear: true),
+        };
+        foreach (var i in vlines)
         {
             var line = new Border { Width = lineT, Height = contentH, Background = lineBrush };
             line.Bind(UseLayoutRoundingProperty, line.GetResourceObservable("LineUseLayoutRounding"));
@@ -536,7 +724,7 @@ public partial class DiagramView : UserControl
 
         var count = new TextBlock
         {
-            Text       = g.Records.Count.ToString(),
+            Text       = g.Total.ToString(),
             FontSize   = FontSizeSmall,
             Foreground = BrushOf("BrushSecondaryText"),
             Margin     = new Thickness(0, 0, 10, 0),
@@ -556,22 +744,39 @@ public partial class DiagramView : UserControl
         };
         LeftRowsCanvas.Children.Add(row);
 
-        // Пустая в этом месяце коллекция — только строка слева, без суммарного бара.
-        if (g.Records.Count == 0) return;
+        // Пустая в этом периоде коллекция — только строка слева, без суммарного бара.
+        if (g.Total == 0) return;
 
-        // Суммарный бар: min(начало)…max(конец) по ВСЕМ записям группы (включая
-        // обрезанные кэпом строк — их строки скрыты, но диапазон о них знает).
-        // Диапазон группы рисуется КАК СОБЫТИЕ (тот же рендер, что у записей):
-        // min(начало)…max(конец) записей — блок по ячейкам дней, однодневный охват —
-        // кольцо по центру ячейки; подпись — суммарный охват дней И времени
-        // («30 минут», «1 день 3 часа 30 минут»). Полностью all-day группа считается
-        // как all-day («N дней»/«24 часа»); в смешанной all-day-конец берётся концом
-        // суток, чтобы длительность не засорялась хвостом «23 часа 59 минут».
-        var allDayGroup = g.Records.All(e => e.AllDay);
-        var spanStart   = g.Records.Min(e => e.StartDt);
-        var spanEnd     = allDayGroup
-            ? g.Records.Max(e => e.EndDt)
-            : g.Records.Max(e => e.AllDay ? e.EndDt.Date.AddDays(1) : e.EndDt);
+        // Суммарный бар: min(начало)…max(конец) по ВСЕМ событиям группы в окне.
+        // Источник — агрегаты фазы 2 (чтение окна обрезано cap'ом на коллекцию, охват
+        // должен знать и про необрезанное); до их прихода и при поиске — доставленные
+        // записи. Диапазон группы рисуется КАК СОБЫТИЕ (тот же рендер, что у записей):
+        // блок по ячейкам дней, однодневный охват — кольцо по центру ячейки; подпись —
+        // суммарный охват дней И времени («30 минут», «1 день 3 часа 30 минут»).
+        // Полностью all-day группа считается как all-day («N дней»/«24 часа»);
+        // в смешанной all-day-конец берётся концом суток, чтобы длительность не
+        // засорялась хвостом «23 часа 59 минут».
+        bool allDayGroup;
+        DateTime spanStart, spanEnd;
+        if (g.Stat is { } st)
+        {
+            allDayGroup = st.AllDayCount == st.Count;
+            spanStart   = st.MinStart;
+            spanEnd     = allDayGroup
+                ? st.MaxEndAllDay ?? spanStart
+                : new[] { st.MaxEndTimed ?? DateTime.MinValue,
+                          st.MaxEndAllDay?.Date.AddDays(1) ?? DateTime.MinValue }.Max();
+        }
+        else if (g.Records.Count > 0)
+        {
+            allDayGroup = g.Records.All(e => e.AllDay);
+            spanStart   = g.Records.Min(e => e.StartDt);
+            spanEnd     = allDayGroup
+                ? g.Records.Max(e => e.EndDt)
+                : g.Records.Max(e => e.AllDay ? e.EndDt.Date.AddDays(1) : e.EndDt);
+        }
+        else return;   // счётчик есть, а строк и агрегатов нет — бар нарисует фаза 2
+
         RenderEventVisual(BarsCanvas, [], y, spanStart, spanEnd, allDayGroup,
                           color, dayW, timelineW);
     }
@@ -660,17 +865,21 @@ public partial class DiagramView : UserControl
         // Геометрия — ПО ЯЧЕЙКАМ ДНЕЙ, как бары Месяца: блок занимает колонки от
         // первого до последнего дня события целиком, время суток на позицию не
         // влияет. Однодневное событие (timed или all-day) — кольцо по центру ячейки.
-        var startIdx = (int)(start.Date - _monthStart).TotalDays;
-        var endIdx   = (int)(LastIncludedDay(start, end, allDay) - _monthStart).TotalDays;
+        var startIdx = (int)(start.Date - _rangeStart).TotalDays;
+        var endIdx   = (int)(LastIncludedDay(start, end, allDay) - _rangeStart).TotalDays;
         if (endIdx < startIdx) endIdx = startIdx;
         var clipL = startIdx < 0;
-        var clipR = endIdx > _daysInMonth - 1;
-        var i1    = Math.Clamp(startIdx, 0, _daysInMonth - 1);
-        var i2    = Math.Clamp(endIdx,   0, _daysInMonth - 1);
+        var clipR = endIdx > _rangeDays - 1;
+        var i1    = Math.Clamp(startIdx, 0, _rangeDays - 1);
+        var i2    = Math.Clamp(endIdx,   0, _rangeDays - 1);
         // Небольшие отступы блока от границ ячеек — только на реальных краях события
-        // (insetL/insetR как у баров Месяца); обрезанный месяцем край — вплотную.
-        var x1    = i1 * dayW + (clipL ? 0 : 3);
-        var x2    = (i2 + 1) * dayW - (clipR ? 0 : 2);
+        // (insetL/insetR как у баров Месяца) и только при широкой ячейке: на годовом
+        // масштабе (ячейка ~3 px) отступы съедали бы целые дни. Обрезанный краем
+        // периода край — вплотную.
+        var insetL = dayW >= 8 ? 3.0 : 0.0;
+        var insetR = dayW >= 8 ? 2.0 : 0.0;
+        var x1     = i1 * dayW + (clipL ? 0 : insetL);
+        var x2     = (i2 + 1) * dayW - (clipR ? 0 : insetR);
 
         var dark  = new SolidColorBrush(Darken(color));
         var label = new TextBlock
@@ -786,10 +995,10 @@ public partial class DiagramView : UserControl
     {
         TodayOverlay.Children.Clear();
         var now = DateTime.Now;
-        if (_daysInMonth <= 0 || now < _monthStart || now >= MonthEnd) return;
+        if (_rangeDays <= 0 || now < _rangeStart || now >= RangeEnd) return;
         if (_lastTimelineW <= 0) return;
 
-        var x    = (now - _monthStart).TotalDays * (_lastTimelineW / _daysInMonth);
+        var x    = (now - _rangeStart).TotalDays * (_lastTimelineW / _rangeDays);
         var line = new Border { Width = 2, Height = _lastBgH, Background = BrushOf("BrushRed") };
         Canvas.SetLeft(line, x - 1);
         TodayOverlay.Children.Add(line);
@@ -827,8 +1036,11 @@ public partial class DiagramView : UserControl
         _pressClickCount = e.ClickCount;
         _pressModifiers  = e.KeyModifiers;
         _isDragging      = false;
-        _resizeLeft  = !hit.IsRing && !hit.ClipL && Math.Abs(p.X - hit.X1) <= EdgeHit;
-        _resizeRight = !_resizeLeft && !hit.IsRing && !hit.ClipR && Math.Abs(p.X - hit.X2) <= EdgeHit;
+        // Узкий бар (короткое событие на годовом масштабе) не ресайзится: зоны краёв
+        // накрыли бы его целиком, не оставив места для переноса.
+        var canResize = !hit.IsRing && hit.X2 - hit.X1 >= EdgeHit * 3;
+        _resizeLeft  = canResize && !hit.ClipL && Math.Abs(p.X - hit.X1) <= EdgeHit;
+        _resizeRight = canResize && !_resizeLeft && !hit.ClipR && Math.Abs(p.X - hit.X2) <= EdgeHit;
         _origStart   = hit.Ev.StartDt;
         _origEnd     = hit.Ev.EndDt;
         _newStart    = _origStart;
@@ -843,7 +1055,7 @@ public partial class DiagramView : UserControl
         var p = e.GetPosition(TimelinePane);
         if (_pressEntry is null) { UpdateCursor(p); return; }
 
-        var dayW = _daysInMonth > 0 ? _lastTimelineW / _daysInMonth : 0;
+        var dayW = _rangeDays > 0 ? _lastTimelineW / _rangeDays : 0;
         if (dayW <= 0) return;
 
         if (!_isDragging)
@@ -857,16 +1069,16 @@ public partial class DiagramView : UserControl
 
         if (_resizeLeft || _resizeRight)
         {
-            var dayIdx = Math.Clamp((int)(p.X / dayW), 0, _daysInMonth - 1);
+            var dayIdx = Math.Clamp((int)(p.X / dayW), 0, _rangeDays - 1);
             if (_resizeRight)
             {
                 // Новый день конца + исходное время суток; конец не раньше начала.
-                var candidate = _monthStart.AddDays(dayIdx) + _origEnd.TimeOfDay;
+                var candidate = _rangeStart.AddDays(dayIdx) + _origEnd.TimeOfDay;
                 if (candidate > _newStart) _newEnd = candidate;
             }
             else
             {
-                var candidate = _monthStart.AddDays(dayIdx) + _origStart.TimeOfDay;
+                var candidate = _rangeStart.AddDays(dayIdx) + _origStart.TimeOfDay;
                 if (candidate < _newEnd) _newStart = candidate;
             }
         }
@@ -875,8 +1087,8 @@ public partial class DiagramView : UserControl
             // Перенос целыми днями: время суток и длительность сохраняются.
             var delta   = (int)Math.Round((p.X - _pressPos.X) / dayW);
             var center0 = _origStart + (_origEnd - _origStart) / 2;
-            var minD    = Math.Min(0, (int)Math.Ceiling((_monthStart - center0).TotalDays));
-            var maxD    = Math.Max(0, (int)Math.Floor((MonthEnd - center0).TotalDays));
+            var minD    = Math.Min(0, (int)Math.Ceiling((_rangeStart - center0).TotalDays));
+            var maxD    = Math.Max(0, (int)Math.Floor((RangeEnd - center0).TotalDays));
             delta       = Math.Clamp(delta, minD, maxD);
             _newStart   = _origStart.AddDays(delta);
             _newEnd     = _origEnd.AddDays(delta);
@@ -949,7 +1161,7 @@ public partial class DiagramView : UserControl
         }
 
         if (hit is null) { TimelinePane.Cursor = Cursor.Default; return; }
-        var onEdge = !hit.IsRing &&
+        var onEdge = !hit.IsRing && hit.X2 - hit.X1 >= EdgeHit * 3 &&
                      ((!hit.ClipL && Math.Abs(p.X - hit.X1) <= EdgeHit) ||
                       (!hit.ClipR && Math.Abs(p.X - hit.X2) <= EdgeHit));
         TimelinePane.Cursor = onEdge ? CursorResize : CursorHand;
@@ -1086,7 +1298,7 @@ public partial class DiagramView : UserControl
 
     // ── геометрия/дата-хелперы ──────────────────────────────────────────────────
 
-    private DateTime MonthEnd => _monthStart.AddDays(_daysInMonth);
+    private DateTime RangeEnd => _rangeStart.AddDays(_rangeDays);
 
     // Последний день, который событие реально занимает (timed-конец ровно в 00:00
     // следующего дня этот день не занимает).

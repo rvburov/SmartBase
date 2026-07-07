@@ -3,20 +3,59 @@
              x:Class="DataBase.Views.ConstructorDb.Calendar.DiagramView"
              Background="{StaticResource BrushBg}">
 
-    <!-- Диаграмма (гант на месяц): слева панель коллекций, справа таймлайн.
+
+    <!-- Диаграмма (гант на месяц или год — комбобокс масштаба в шапке): слева панель
+         коллекций, справа таймлайн.
          Ширина левой панели 230 продублирована константой LeftW в code-behind. -->
     <Grid RowDefinitions="Auto,*">
 
-        <!-- Фиксированная шапка: заголовок панели + дни месяца. Нижняя линия — отдельный
-             separator (не бордер контейнера с текстом): чёткая при любом зуме. -->
+        <!-- Фиксированная шапка: заголовок панели + шкала (дни месяца или месяцы года).
+             Нижняя линия — отдельный separator (не бордер контейнера с текстом):
+             чёткая при любом зуме. -->
         <Grid Grid.Row="0">
             <Grid ColumnDefinitions="230,*" Background="{StaticResource BrushSecondaryBg}">
-                <TextBlock Grid.Column="0"
-                           Text="ВСЕ КОЛЛЕКЦИИ"
-                           FontSize="{DynamicResource FontSizeSmall}"
-                           Foreground="{StaticResource BrushSecondaryText}"
-                           VerticalAlignment="Center"
-                           Margin="12,0,0,0" />
+                <Grid Grid.Column="0" ColumnDefinitions="*,Auto,Auto">
+                    <TextBlock Text="ВСЕ КОЛЛЕКЦИИ"
+                               FontSize="{DynamicResource FontSizeSmall}"
+                               Foreground="{StaticResource BrushSecondaryText}"
+                               VerticalAlignment="Center"
+                               Margin="12,0,4,0" />
+                    <!-- Масштаб таймлайна — лесенка месяц → год → 5 лет → 10 лет:
+                         «−» мельче, «+» крупнее (кнопки в стиле «+» навбара); крайняя
+                         кнопка гаснет, тултип называет масштаб, куда ведёт нажатие. -->
+                    <Button Grid.Column="1" x:Name="ScaleMinusBtn" Classes="navbtn"
+                            Width="28" Height="28" Margin="0,0,4,0"
+                            VerticalAlignment="Center"
+                            CornerRadius="{StaticResource RadiusMedium}"
+                            HorizontalContentAlignment="Center"
+                            VerticalContentAlignment="Center">
+                        <Viewbox Width="{StaticResource IconSizeMedium}" Height="{StaticResource IconSizeMedium}">
+                            <Canvas Width="24" Height="24">
+                                <Path Data="{StaticResource IconMinus}"
+                                      Stroke="{Binding $parent[Button].Foreground}"
+                                      StrokeThickness="2"
+                                      StrokeLineCap="Round"
+                                      StrokeJoin="Round" />
+                            </Canvas>
+                        </Viewbox>
+                    </Button>
+                    <Button Grid.Column="2" x:Name="ScalePlusBtn" Classes="navbtn"
+                            Width="28" Height="28" Margin="0,0,8,0"
+                            VerticalAlignment="Center"
+                            CornerRadius="{StaticResource RadiusMedium}"
+                            HorizontalContentAlignment="Center"
+                            VerticalContentAlignment="Center">
+                        <Viewbox Width="{StaticResource IconSizeMedium}" Height="{StaticResource IconSizeMedium}">
+                            <Canvas Width="24" Height="24">
+                                <Path Data="{StaticResource IconPlus}"
+                                      Stroke="{Binding $parent[Button].Foreground}"
+                                      StrokeThickness="2"
+                                      StrokeLineCap="Round"
+                                      StrokeJoin="Round" />
+                            </Canvas>
+                        </Viewbox>
+                    </Button>
+                </Grid>
                 <Canvas Grid.Column="1" x:Name="DayHeaderCanvas"
                         Height="44" ClipToBounds="True" />
             </Grid>
@@ -24,8 +63,8 @@
         </Grid>
 
         <!-- Тело: ОДИН вертикальный ScrollViewer — левая панель и таймлайн едут вместе,
-             шапка дней и заголовок панели стоят. Горизонтального скролла нет: месяц
-             всегда растянут на всю ширину (dayW = ширина / дней в месяце). -->
+             шапка шкалы и заголовок панели стоят. Горизонтального скролла нет: период
+             всегда растянут на всю ширину (dayW = ширина / дней периода). -->
         <Grid Grid.Row="1">
             <ScrollViewer x:Name="RowsScroll" HorizontalScrollBarVisibility="Disabled">
                 <Grid ColumnDefinitions="230,*" VerticalAlignment="Top">

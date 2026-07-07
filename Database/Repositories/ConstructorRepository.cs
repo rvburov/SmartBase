@@ -4404,6 +4404,192 @@ public class ConstructorRepository(AppDbContext db)
                 .GetCalendarRecordsByRangeCapped(rangeStart, rangeEnd, activeIds, perDayCap);
         });
 
+    /// <summary>Фоновая загрузка окна Диаграммы (изолированное подключение) —
+    /// см. <see cref="GetDiagramRecordsCapped"/>.</summary>
+    public Task<List<CalendarRecord>> LoadDiagramWindowAsync(
+        DateTime rangeStart, DateTime rangeEnd, ISet<int>? activeIds, int perCollectionCap) =>
+        Task.Run(() =>
+        {
+            using var ctx = new AppDbContext(db.DbPath);
+            ctx.ApplyPerformancePragmas();
+            return new ConstructorRepository(ctx)
+                .GetDiagramRecordsCapped(rangeStart, rangeEnd, activeIds, perCollectionCap);
+        });
+
+    /// <summary>Фоновая загрузка агрегатов окна Диаграммы (изолированное подключение) —
+    /// см. <see cref="GetDiagramStats"/>.</summary>
+    public Task<Dictionary<int, DiagramGroupStat>> LoadDiagramStatsAsync(
+        DateTime rangeStart, DateTime rangeEnd, ISet<int>? activeIds) =>
+        Task.Run(() =>
+        {
+            using var ctx = new AppDbContext(db.DbPath);
+            ctx.ApplyPerformancePragmas();
+            return new ConstructorRepository(ctx)
+                .GetDiagramStats(rangeStart, rangeEnd, activeIds);
+        });
+
+    /// <summary>
+    /// Окно Диаграммы: не более <paramref name="perCollectionCap"/> событий каждого класса
+    /// (timed в окне / timed-спилловеры / all-day) НА КОЛЛЕКЦИЮ — Диаграмма всё равно рисует
+    /// максимум ~200 строк на группу, а её окно может быть годом или десятилетием.
+    /// Per-day чтение сеток (<see cref="GetCalendarRecordsByRangeCapped"/>) здесь не годится:
+    /// на 10-летнем окне это 3653 дня × коллекции запросов и до perDayCap строк с КАЖДОГО
+    /// дня — десятки секунд и миллионы строк в памяти при том, что показана будет тысяча.
+    /// Здесь — 3 индексных сика с LIMIT на коллекцию: память и время не зависят от длины окна
+    /// и объёма БД. Какие именно события попали под cap — «первые» в порядке своего индекса
+    /// (по StartIso / EndIso); точные счётчики и охват групп считает <see cref="GetDiagramStats"/>.
+    /// </summary>
+    public List<CalendarRecord> GetDiagramRecordsCapped(
+        DateTime rangeStart, DateTime rangeEnd, ISet<int>? activeIds, int perCollectionCap)
+    {
+        var fullyHidden = FullyHiddenDateCollections();
+        var colIds = (activeIds is null
+            ? db.DbCollections.Select(c => c.Id).AsEnumerable()
+            : activeIds)
+            .Where(id => !fullyHidden.Contains(id)).ToList();
+        var hidden = HiddenFieldsClause("ci.");
+
+        string Iso(DateTime dt) => DateTime.SpecifyKind(dt, DateTimeKind.Unspecified).ToString("o");
+        var startIso = Iso(rangeStart);
+        var endIso   = Iso(rangeEnd);
+        var lowerIso = Iso(SafeAddDays(rangeStart, -CalendarTimedBufferDays));
+        var upperIso = Iso(SafeAddDays(rangeStart, CalendarTimedBufferDays));
+
+        var result = new List<CalendarRecord>();
+        var conn = db.Database.GetDbConnection();
+        var opened = conn.State != System.Data.ConnectionState.Open;
+        if (opened) conn.Open();
+        try
+        {
+            foreach (var colId in colIds)
+            {
+                // Timed, начавшиеся в окне: порядок отдаёт индекс (CollectionId, AllDay,
+                // StartIso), residual-фильтра нет (EndIso ≥ StartIso ≥ start автоматически).
+                ReadCalendarRows(conn, result,
+                    $"ci.CollectionId = {colId} AND ci.AllDay = 0{hidden}" +
+                    " AND ci.StartIso >= $start AND ci.StartIso < $end",
+                    [("$start", startIso), ("$end", endIso)], perCollectionCap);
+
+                // Timed-спилловеры — сик по EndIso-индексу, как в окне сеток.
+                ReadCalendarRows(conn, result,
+                    $"ci.CollectionId = {colId} AND ci.AllDay = 0{hidden}" +
+                    " AND ci.EndIso >= $win AND ci.EndIso < $hi" +
+                    " AND ci.StartIso >= $lo AND ci.StartIso < $win",
+                    [("$win", startIso), ("$hi", upperIso), ("$lo", lowerIso)], perCollectionCap, "ci.EndIso");
+
+                // All-day/многодневные — сик по EndIso-индексу (у StartIso нет нижней границы).
+                ReadCalendarRows(conn, result,
+                    $"ci.CollectionId = {colId} AND ci.AllDay = 1{hidden}" +
+                    " AND ci.EndIso >= $start AND ci.StartIso < $end",
+                    [("$start", startIso), ("$end", endIso)], perCollectionCap, "ci.EndIso");
+            }
+        }
+        finally { if (opened) conn.Close(); }
+
+        result.Sort((a, b) => a.StartDt.CompareTo(b.StartDt));
+        return result;
+    }
+
+    /// <summary>
+    /// Точные агрегаты окна Диаграммы по коллекциям: число событий, min(начало), max(конец)
+    /// по классам timed/all-day — для счётчиков групп, «+N ещё» и суммарных баров, которые
+    /// должны считаться по ВСЕМ событиям окна, а не по обрезанным cap'ом. Все запросы —
+    /// покрывающие индексные сканы (в таблицу не ходят): COUNT пропорционален строкам окна
+    /// (индексный, ~миллионы/с), MIN/MAX — сик до первой подходящей строки. Контроллер зовёт
+    /// это ФОНОВОЙ фазой 2 (как карту счётчиков Месяца/Года) и тихо уточняет уже показанное.
+    /// </summary>
+    public Dictionary<int, DiagramGroupStat> GetDiagramStats(
+        DateTime rangeStart, DateTime rangeEnd, ISet<int>? activeIds)
+    {
+        var fullyHidden = FullyHiddenDateCollections();
+        var colIds = (activeIds is null
+            ? db.DbCollections.Select(c => c.Id).AsEnumerable()
+            : activeIds)
+            .Where(id => !fullyHidden.Contains(id)).ToList();
+        var hidden = HiddenFieldsClause();
+
+        string Iso(DateTime dt) => DateTime.SpecifyKind(dt, DateTimeKind.Unspecified).ToString("o");
+        var startIso = Iso(rangeStart);
+        var endIso   = Iso(rangeEnd);
+        var lowerIso = Iso(SafeAddDays(rangeStart, -CalendarTimedBufferDays));
+        var upperIso = Iso(SafeAddDays(rangeStart, CalendarTimedBufferDays));
+        // Timed длиннее буфера не бывает ⇒ их EndIso < конец окна + буфер.
+        var endHiIso = Iso(SafeAddDays(rangeEnd, CalendarTimedBufferDays));
+
+        var result = new Dictionary<int, DiagramGroupStat>();
+        var conn = db.Database.GetDbConnection();
+        var opened = conn.State != System.Data.ConnectionState.Open;
+        if (opened) conn.Open();
+        try
+        {
+            foreach (var colId in colIds)
+            {
+                // (count, minStart[, maxEnd]) одним сканом соответствующего диапазона индекса.
+                (int Count, DateTime? Min, DateTime? Max) Agg(string select, string where,
+                    params (string Name, string Value)[] args)
+                {
+                    using var cmd = conn.CreateCommand();
+                    cmd.CommandText = $"SELECT {select} FROM calendar_index WHERE CollectionId = {colId}{where}{hidden}";
+                    foreach (var (name, value) in args) AddParam(cmd, name).Value = value;
+                    using var rdr = cmd.ExecuteReader();
+                    if (!rdr.Read()) return (0, null, null);
+                    var count = rdr.IsDBNull(0) ? 0 : rdr.GetInt32(0);
+                    DateTime? At(int i) =>
+                        rdr.FieldCount > i && !rdr.IsDBNull(i) && DateTime.TryParse(rdr.GetString(i), out var d)
+                            ? d : null;
+                    return (count, At(1), At(2));
+                }
+
+                // Timed, начавшиеся в окне: диапазон StartIso ∈ [start, end) индекса
+                // (CollectionId, AllDay, StartIso, …) — без residual.
+                var tWin = Agg("COUNT(*), MIN(StartIso)",
+                    " AND AllDay = 0 AND StartIso >= $start AND StartIso < $end",
+                    ("$start", startIso), ("$end", endIso));
+                // Только MAX(EndIso) — единственный агрегат включает min/max-оптимизацию
+                // SQLite: обратный сик по EndIso-индексу до первой строки, прошедшей
+                // residual (он тоже в индексе). COUNT рядом заставил бы сканировать
+                // весь диапазон.
+                DateTime? AggMaxEnd(string where, params (string Name, string Value)[] args)
+                {
+                    using var cmd = conn.CreateCommand();
+                    cmd.CommandText = $"SELECT MAX(EndIso) FROM calendar_index WHERE CollectionId = {colId}{where}{hidden}";
+                    foreach (var (name, value) in args) AddParam(cmd, name).Value = value;
+                    var v = cmd.ExecuteScalar();
+                    return v is string s && DateTime.TryParse(s, out var d) ? d : null;
+                }
+
+                // Timed-спилловеры — тот же EndIso-сик, что у чтения строк.
+                var tSpill = Agg("COUNT(*), MIN(StartIso)",
+                    " AND AllDay = 0 AND EndIso >= $win AND EndIso < $hi" +
+                    " AND StartIso >= $lo AND StartIso < $win",
+                    ("$win", startIso), ("$hi", upperIso), ("$lo", lowerIso));
+                // Max(конец) timed.
+                var tMaxEnd = AggMaxEnd(
+                    " AND AllDay = 0 AND EndIso >= $win AND EndIso < $endHi" +
+                    " AND StartIso >= $lo AND StartIso < $end",
+                    ("$win", startIso), ("$endHi", endHiIso), ("$lo", lowerIso), ("$end", endIso));
+                // All-day: count/min/max одним сканом EndIso-диапазона (residual StartIso — в индексе).
+                var aday = Agg("COUNT(*), MIN(StartIso), MAX(EndIso)",
+                    " AND AllDay = 1 AND EndIso >= $start AND StartIso < $end",
+                    ("$start", startIso), ("$end", endIso));
+
+                var count = tWin.Count + tSpill.Count + aday.Count;
+                if (count == 0) continue;
+                var mins = new[] { tWin.Min, tSpill.Min, aday.Min }.Where(d => d.HasValue).ToList();
+                result[colId] = new DiagramGroupStat
+                {
+                    Count        = count,
+                    AllDayCount  = aday.Count,
+                    MinStart     = mins.Min()!.Value,
+                    MaxEndTimed  = tMaxEnd,
+                    MaxEndAllDay = aday.Max,
+                };
+            }
+        }
+        finally { if (opened) conn.Close(); }
+        return result;
+    }
+
     // Общий читатель окна: строки calendar_index (+заголовок записи и цвет коллекции) по условию
     // WHERE над ci. limit > 0 добавляет ORDER BY {orderBy} LIMIT n — чтобы порядок отдал индекс
     // и LIMIT остановил скан, условие обязано фиксировать ci.CollectionId и ci.AllDay одним

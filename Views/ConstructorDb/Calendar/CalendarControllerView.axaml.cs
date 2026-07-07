@@ -49,6 +49,8 @@ public partial class CalendarControllerView : UserControl
     // null — базиса нет (был поиск: список отфильтрован, к нему дельта неприменима).
     private List<CalendarRecord>? _gridRecords;
     private Dictionary<DateOnly, int>? _gridTotals;   // карта счётчиков окна (только Месяц/Год)
+    // Точные агрегаты групп Диаграммы (фаза 2): счётчик/охват по всем событиям окна.
+    private Dictionary<(int DbId, int ColId), DiagramGroupStat>? _diagramStats;
     private DateTime _gridStart, _gridEnd;            // окно снимка
     private int _gridViewApplied = -1;                // вид снимка
 
@@ -208,6 +210,8 @@ public partial class CalendarControllerView : UserControl
         DiagramViewCtrl.RecordsDeleteRequested    += (_, rs) => _ = DeleteRecordsWithConfirm(rs);
         DiagramViewCtrl.RecordDuplicateRequested  += (_, r)  => _ = DuplicateRecordsWithConfirm([r]);
         DiagramViewCtrl.RecordsDuplicateRequested += (_, rs) => _ = DuplicateRecordsWithConfirm(rs);
+        // Смена масштаба Диаграммы (месяц…10 лет) меняет окно данных — полная перезагрузка.
+        DiagramViewCtrl.ScaleChanged              += (_, _) => RefreshCurrent();
 
         SwitchView(AppSettings.LoadCalendarView());   // стартовый вид из настроек (стандарт — Месяц)
         SeedIfEmpty();
@@ -256,7 +260,8 @@ public partial class CalendarControllerView : UserControl
             3 => _currentDate.AddDays(-7),
             4 => _currentDate.AddMonths(-1),
             5 => _currentDate.AddYears(-1),
-            6 => _currentDate.AddMonths(-1),
+            6 => DiagramViewCtrl.ScaleYears > 0 ? _currentDate.AddYears(-DiagramViewCtrl.ScaleYears)
+                                                : _currentDate.AddMonths(-1),
             _ => _currentDate.AddDays(-1),
         };
     }
@@ -270,7 +275,8 @@ public partial class CalendarControllerView : UserControl
             3 => _currentDate.AddDays(7),
             4 => _currentDate.AddMonths(1),
             5 => _currentDate.AddYears(1),
-            6 => _currentDate.AddMonths(1),
+            6 => DiagramViewCtrl.ScaleYears > 0 ? _currentDate.AddYears(DiagramViewCtrl.ScaleYears)
+                                                : _currentDate.AddMonths(1),
             _ => _currentDate.AddDays(1),
         };
     }
@@ -356,6 +362,31 @@ public partial class CalendarControllerView : UserControl
                 var day = DateOnly.FromDateTime(rec.StartDt.Date);
                 _gridTotals[day] = Math.Max(0, _gridTotals.GetValueOrDefault(day) + d);
             }
+
+            // Агрегаты Диаграммы: счётчик группы ±1; охват на вставке расширяется,
+            // на удалении не сжимается (точное сжатие требует пересчёта — устаканится
+            // следующей полной загрузкой, бар лишь временно шире).
+            if (_diagramStats is not null && rec.CollectionId is int cid
+                && rec.StartDt < endDt && rec.EndDt >= startDt)
+            {
+                var key = (rec.DbId, cid);
+                if (!_diagramStats.TryGetValue(key, out var stat))
+                {
+                    if (d <= 0) continue;
+                    _diagramStats[key] = stat = new DiagramGroupStat { MinStart = rec.StartDt };
+                }
+                stat.Count = Math.Max(0, stat.Count + d);
+                if (rec.AllDay) stat.AllDayCount = Math.Max(0, stat.AllDayCount + d);
+                if (d > 0)
+                {
+                    if (rec.StartDt < stat.MinStart) stat.MinStart = rec.StartDt;
+                    if (rec.AllDay)  stat.MaxEndAllDay = Max(stat.MaxEndAllDay, rec.EndDt);
+                    else             stat.MaxEndTimed  = Max(stat.MaxEndTimed,  rec.EndDt);
+                }
+                if (stat.Count == 0) _diagramStats.Remove(key);
+
+                static DateTime? Max(DateTime? a, DateTime b) => a is null || b > a ? b : a;
+            }
         }
 
         ApplyGridData(_currentViewIndex, _gridRecords, _gridTotals, _currentDate, scrollToNow: false);
@@ -383,7 +414,12 @@ public partial class CalendarControllerView : UserControl
                 foreach (var (dbId, _, repo) in _dbs.ToList())
                 {
                     ISet<int>? active = _activeByDb is not null && _activeByDb.TryGetValue(dbId, out var s) ? s : null;
-                    var part = await repo.LoadCalendarGridRangeAsync(startDt, endDt, active, GridDayCap);
+                    // Диаграмма — свой загрузчик «по коллекциям» (cap на коллекцию, а не на
+                    // день): её окно бывает десятилетием, и per-day чтение сеток стоило бы
+                    // тысяч запросов и миллионов строк при потолке отрисовки ~200 на группу.
+                    var part = viewIdx == 6
+                        ? await repo.LoadDiagramWindowAsync(startDt, endDt, active, DiagramView.MaxRecordsPerCollection)
+                        : await repo.LoadCalendarGridRangeAsync(startDt, endDt, active, GridDayCap);
                     if (gen != _gridGen) return;           // вид/дата уже другие — не применяем
                     foreach (var r in part) r.DbId = dbId;
                     records.AddRange(part);
@@ -408,6 +444,7 @@ public partial class CalendarControllerView : UserControl
         // и базисом не годится (правка при активном поиске пойдёт полной загрузкой).
         _gridRecords     = hasSearch ? null : records;
         _gridTotals      = null;
+        _diagramStats    = null;
         _gridStart       = startDt;
         _gridEnd         = endDt;
         _gridViewApplied = viewIdx;
@@ -416,6 +453,31 @@ public partial class CalendarControllerView : UserControl
         if (viewIdx == 6) _diagramCollections = LoadDiagramCollections();
 
         ApplyGridData(viewIdx, records, null, currentDate, scrollToNow);
+
+        // Фаза 2 Диаграммы: точные агрегаты групп (счётчик, «+N ещё», охват суммарного
+        // бара по ВСЕМ событиям окна, а не по обрезанным cap'ом) — индексные сканы,
+        // на больших окнах секунды, поэтому фоном и тихо, как карта счётчиков Месяца/Года.
+        // При поиске не считаются — счётчики идут от фактически показанного.
+        if (viewIdx == 6)
+        {
+            if (hasSearch) return;
+            var stats = new Dictionary<(int DbId, int ColId), DiagramGroupStat>();
+            try
+            {
+                foreach (var (dbId, _, repo) in _dbs.ToList())
+                {
+                    ISet<int>? active = _activeByDb is not null && _activeByDb.TryGetValue(dbId, out var s) ? s : null;
+                    foreach (var (colId, stat) in await repo.LoadDiagramStatsAsync(startDt, endDt, active))
+                        stats[(dbId, colId)] = stat;
+                    if (gen != _gridGen) return;
+                }
+            }
+            catch { return; }   // агрегаты не критичны — счётчики останутся от полученного
+
+            _diagramStats = stats;
+            ApplyGridData(viewIdx, _gridRecords ?? records, null, currentDate, scrollToNow: false);
+            return;
+        }
 
         // Фаза 2: карта счётчиков — только Месяц/Год и не при поиске. До её прихода «+N ещё»
         // считается от фактически полученного; по приходе — тихое повторное применение.
@@ -452,7 +514,8 @@ public partial class CalendarControllerView : UserControl
             case 5: YearViewCtrl.Refresh(records, currentDate.Year, totals); break;
             case 6: DiagramViewCtrl.Refresh(records, currentDate, scrollToNow,
                                             _diagramCollections,
-                                            hideEmptyGroups: !string.IsNullOrEmpty(_searchQuery)); break;
+                                            hideEmptyGroups: !string.IsNullOrEmpty(_searchQuery),
+                                            stats: _diagramStats); break;
         }
     }
 
@@ -486,9 +549,12 @@ public partial class CalendarControllerView : UserControl
         4 => (StartOfWeek(new DateTime(_currentDate.Year, _currentDate.Month, 1)),
               StartOfWeek(new DateTime(_currentDate.Year, _currentDate.Month, 1)).AddDays(42)),
         5 => (new DateTime(_currentDate.Year, 1, 1), new DateTime(_currentDate.Year + 1, 1, 1)),
-        // Диаграмма — ровно календарный месяц (не 42-дневная сетка Месяца).
-        6 => (new DateTime(_currentDate.Year, _currentDate.Month, 1),
-              new DateTime(_currentDate.Year, _currentDate.Month, 1).AddMonths(1)),
+        // Диаграмма — окно по масштабу (RangeFor): календарный месяц (не
+        // 42-дневная сетка Месяца) либо 1/2/5/10 лет, выровненных по календарю.
+        // В отличие от вида «Год», события многолетнего окна ЧИТАЮТСЯ (бары нужны
+        // целиком) — на больших стендах это сотни тысяч строк и секунды фоном
+        // под оверлеем «Загрузка…».
+        6 => DiagramViewCtrl.RangeFor(_currentDate),
         0 => (_currentDate.Date, _currentDate.Date.AddDays(1)),
         _ => (DateTime.Today.AddDays(-365), DateTime.Today.AddDays(365)),
     };
@@ -530,7 +596,7 @@ public partial class CalendarControllerView : UserControl
             3 => $"{StartOfWeek(_currentDate):d MMM} – {StartOfWeek(_currentDate).AddDays(6):d MMM yyyy}",
             4 => _currentDate.ToString("MMMM yyyy", ru),
             5 => _currentDate.Year.ToString(),
-            6 => _currentDate.ToString("MMMM yyyy", ru),
+            6 => DiagramViewCtrl.TitleFor(_currentDate),   // «июль 2026» / «2026» / «2020–2029»
             _ => "Все записи",
         });
     }

@@ -153,6 +153,24 @@ public static class AppSettings
         else                              _store?.Set(KeyCalendarView, index.ToString(CultureInfo.InvariantCulture));
     }
 
+    // ── Масштаб Диаграммы ────────────────────────────────────────────────────────
+    //
+    // Шкала таймлайна вида «Диаграмма»: месяц, год, 5 или 10 лет.
+    // Переключается кнопками «−»/«+» в шапке самой Диаграммы. Стандарт — месяц.
+    public const string DiagramScaleDefault = "month";
+
+    public static string LoadDiagramScale()
+    {
+        var v = _store?.Get(KeyDiagramScale);
+        return v is "month" or "year" or "5years" or "10years" ? v : DiagramScaleDefault;
+    }
+
+    public static void SaveDiagramScale(string scale)
+    {
+        if (scale == DiagramScaleDefault) _store?.Remove(KeyDiagramScale);
+        else                              _store?.Set(KeyDiagramScale, scale);
+    }
+
     // ── Стартовый вид конструктора ───────────────────────────────────────────────
     //
     // Вид коллекции в Конструкторе для коллекций без собственной сохранённой настройки:
@@ -196,6 +214,7 @@ public static class AppSettings
     private const string KeyFontDelta        = "fontDelta";
     private const string KeyStartupModule    = "startupModule";
     private const string KeyCalendarView     = "calendarView";
+    private const string KeyDiagramScale     = "diagramScale";
     private const string KeyConstructorView  = "constructorView";
     private const string KeyUpdatePath       = "updatePath";
 

@@ -97,7 +97,7 @@ MVVM-слой (`CalendarControllerViewModel` и `*ViewModel`) с такой же
 | Неделя | 3 | 7 дней, сетка часов | [week.md](week.md) |
 | Месяц | 4 | сетка 6×7 | [month.md](month.md) |
 | Год | 5 | 12 мини-месяцев | [year.md](year.md) |
-| Диаграмма | 6 | календарный месяц, гант по коллекциям | [diagram.md](diagram.md) |
+| Диаграмма | 6 | месяц/год/5/10 лет (кнопки −/+ в шапке), гант по коллекциям | [diagram.md](diagram.md) |
 
 Общие для всех режимов жесты (выделение, контекстное меню, удаление, drag & drop)
 вынесены в [interactions.md](interactions.md).
