@@ -1,0 +1,61 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="DataBase.Views.ConstructorDb.Calendar.DiagramView"
+             Background="{StaticResource BrushBg}">
+
+    <!-- Диаграмма (гант на месяц): слева панель коллекций, справа таймлайн.
+         Ширина левой панели 230 продублирована константой LeftW в code-behind. -->
+    <Grid RowDefinitions="Auto,*">
+
+        <!-- Фиксированная шапка: заголовок панели + дни месяца. Нижняя линия — отдельный
+             separator (не бордер контейнера с текстом): чёткая при любом зуме. -->
+        <Grid Grid.Row="0">
+            <Grid ColumnDefinitions="230,*" Background="{StaticResource BrushSecondaryBg}">
+                <TextBlock Grid.Column="0"
+                           Text="ВСЕ КОЛЛЕКЦИИ"
+                           FontSize="{DynamicResource FontSizeSmall}"
+                           Foreground="{StaticResource BrushSecondaryText}"
+                           VerticalAlignment="Center"
+                           Margin="12,0,0,0" />
+                <Canvas Grid.Column="1" x:Name="DayHeaderCanvas"
+                        Height="44" ClipToBounds="True" />
+            </Grid>
+            <Border Classes="separator h" VerticalAlignment="Bottom" />
+        </Grid>
+
+        <!-- Тело: ОДИН вертикальный ScrollViewer — левая панель и таймлайн едут вместе,
+             шапка дней и заголовок панели стоят. Горизонтального скролла нет: месяц
+             всегда растянут на всю ширину (dayW = ширина / дней в месяце). -->
+        <Grid Grid.Row="1">
+            <ScrollViewer x:Name="RowsScroll" HorizontalScrollBarVisibility="Disabled">
+                <Grid ColumnDefinitions="230,*" VerticalAlignment="Top">
+                    <Canvas Grid.Column="0" x:Name="LeftRowsCanvas" ClipToBounds="True" />
+                    <!-- Приёмник указателя таймлайна: слои под ним не хит-тестятся,
+                         попадание в бары ищется вручную по хит-листу (как в Неделе). -->
+                    <Grid Grid.Column="1" x:Name="TimelinePane"
+                          Background="Transparent" ClipToBounds="True">
+                        <Canvas x:Name="BgCanvas"     IsHitTestVisible="False" />
+                        <Canvas x:Name="BarsCanvas"   IsHitTestVisible="False" />
+                        <Canvas x:Name="TodayOverlay" IsHitTestVisible="False" />
+                        <Canvas x:Name="DragOverlay"  IsHitTestVisible="False" />
+                    </Grid>
+                </Grid>
+            </ScrollViewer>
+
+            <TextBlock x:Name="EmptyHint"
+                       IsVisible="False"
+                       Text="Нет записей"
+                       Foreground="{StaticResource BrushSecondaryText}"
+                       Margin="24,16"
+                       HorizontalAlignment="Left"
+                       VerticalAlignment="Top" />
+        </Grid>
+
+        <!-- Вертикальный разделитель панели и таймлайна — в шапке. Продолжение в теле
+             рисует BuildBackground: оно обрывается на последней строке. -->
+        <Border Classes="separator v" Grid.Row="0"
+                HorizontalAlignment="Left" Margin="230,0,0,0" />
+
+    </Grid>
+
+</UserControl>

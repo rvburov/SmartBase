@@ -7,7 +7,7 @@ namespace DataBase.Controls.Components;
 
 public partial class NavbarCalendar : UserControl
 {
-    private static readonly string[] ViewNames = ["Расписание", "Журнал", "День", "Неделя", "Месяц", "Год"];
+    private static readonly string[] ViewNames = ["Расписание", "Журнал", "День", "Неделя", "Месяц", "Год", "Диаграмма"];
 
     public event EventHandler? TodayClicked;
     public event EventHandler? PrevClicked;

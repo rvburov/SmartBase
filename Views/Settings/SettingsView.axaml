@@ -132,7 +132,7 @@
                                         VerticalAlignment="Center" Margin="0,0,32,0">
                                 <TextBlock Classes="title" Text="Отображение раздела календаря" />
                                 <TextBlock Classes="desc"
-                                           Text="Какой вид календаря открывается при переходе в раздел: Расписание, Журнал, День, Неделя, Месяц или Год." />
+                                           Text="Какой вид календаря открывается при переходе в раздел: Расписание, Журнал, День, Неделя, Месяц, Год или Диаграмма." />
                             </StackPanel>
                             <ComboBox Grid.Column="1" x:Name="CalendarViewCombo"
                                       Width="240" Height="34"
@@ -146,6 +146,7 @@
                                 <ComboBoxItem Tag="3" Content="Неделя" />
                                 <ComboBoxItem Tag="4" Content="Месяц" />
                                 <ComboBoxItem Tag="5" Content="Год" />
+                                <ComboBoxItem Tag="6" Content="Диаграмма" />
                             </ComboBox>
                         </Grid>
                     </Border>

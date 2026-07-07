@@ -11,7 +11,7 @@
              месте давала визуальное удвоение толщины. -->
         <comp:NavbarCalendar Grid.Row="0" x:Name="NavbarControl" />
 
-        <!-- Стек вьюх: 0-Расписание, 1-Журнал, 2-День, 3-Неделя, 4-Месяц, 5-Год -->
+        <!-- Стек вьюх: 0-Расписание, 1-Журнал, 2-День, 3-Неделя, 4-Месяц, 5-Год, 6-Диаграмма -->
         <Grid Grid.Row="1">
             <cal:ListView    x:Name="ListViewCtrl"    IsVisible="False" />
             <cal:JournalView x:Name="JournalViewCtrl" IsVisible="False" />
@@ -19,8 +19,9 @@
             <cal:WeekView    x:Name="WeekViewCtrl"    IsVisible="False" />
             <cal:MonthView   x:Name="MonthViewCtrl"   IsVisible="True"  />
             <cal:YearView    x:Name="YearViewCtrl"    IsVisible="False" />
+            <cal:DiagramView x:Name="DiagramViewCtrl" IsVisible="False" />
 
-            <!-- Оверлей сетки (День/Неделя/Месяц/Год): окно читается в фоне, оверлей появляется,
+            <!-- Оверлей сетки (День/Неделя/Месяц/Год/Диаграмма): окно читается в фоне, оверлей появляется,
                  только если загрузка дольше 400 мс (холодный день-гигант — секунды). -->
             <Border x:Name="GridLoadingOverlay" IsVisible="False" Background="{StaticResource BrushBg}">
                 <TextBlock Text="Загрузка…"

@@ -52,6 +52,11 @@ public partial class CalendarControllerView : UserControl
     private DateTime _gridStart, _gridEnd;            // окно снимка
     private int _gridViewApplied = -1;                // вид снимка
 
+    // Каркас групп Диаграммы — отмеченные коллекции всех БД (порядок сайдбара):
+    // коллекция видна строкой даже без событий в месяце. Обновляется при каждой
+    // полной загрузке вида 6; дельта-путь переиспользует последний список.
+    private List<(int DbId, DbCollection Col)>? _diagramCollections;
+
     // Репозиторий БД по умолчанию (новые события, сидинг) и маршрутизация по записи.
     private ConstructorRepository DefaultRepo => _dbs[0].Repo;
     private ConstructorRepository RepoOf(CalendarRecord r)
@@ -196,6 +201,9 @@ public partial class CalendarControllerView : UserControl
         WeekViewCtrl.RecordsDuplicateRequested += (_, rs) => _ = DuplicateRecordsWithConfirm(rs);
         WeekViewCtrl.AllDayCreationRequested   += (_, d)  => _ = OpenAddAllDayDialog(d);
         WeekViewCtrl.TimeSlotCreationRequested += (_, dt) => _ = OpenAddDialog(dt.Date, dt.TimeOfDay);
+        DiagramViewCtrl.RecordClicked          += (_, r) => _ = OpenEditDialog(r);
+        // Перенос/растяжение дат в Диаграмме — дельтой, как в Дне/Неделе (ключ не меняется).
+        DiagramViewCtrl.RecordMoved            += (_, r) => { RepoOf(r).UpdateCalendarRecord(r); _journalDelta = [(r, -1), (r, +1)]; NotifyChangedAndRefresh(); };
 
         SwitchView(AppSettings.LoadCalendarView());   // стартовый вид из настроек (стандарт — Месяц)
         SeedIfEmpty();
@@ -229,6 +237,7 @@ public partial class CalendarControllerView : UserControl
         WeekViewCtrl.IsVisible    = idx == 3;
         MonthViewCtrl.IsVisible   = idx == 4;
         YearViewCtrl.IsVisible    = idx == 5;
+        DiagramViewCtrl.IsVisible = idx == 6;
 
         NavbarControl.SetView(idx);
         RefreshCurrent(scrollToNow: true);
@@ -243,6 +252,7 @@ public partial class CalendarControllerView : UserControl
             3 => _currentDate.AddDays(-7),
             4 => _currentDate.AddMonths(-1),
             5 => _currentDate.AddYears(-1),
+            6 => _currentDate.AddMonths(-1),
             _ => _currentDate.AddDays(-1),
         };
     }
@@ -256,6 +266,7 @@ public partial class CalendarControllerView : UserControl
             3 => _currentDate.AddDays(7),
             4 => _currentDate.AddMonths(1),
             5 => _currentDate.AddYears(1),
+            6 => _currentDate.AddMonths(1),
             _ => _currentDate.AddDays(1),
         };
     }
@@ -397,6 +408,9 @@ public partial class CalendarControllerView : UserControl
         _gridEnd         = endDt;
         _gridViewApplied = viewIdx;
 
+        // Каркас групп Диаграммы: коллекции — крошечная таблица, читается на месте.
+        if (viewIdx == 6) _diagramCollections = LoadDiagramCollections();
+
         ApplyGridData(viewIdx, records, null, currentDate, scrollToNow);
 
         // Фаза 2: карта счётчиков — только Месяц/Год и не при поиске. До её прихода «+N ещё»
@@ -432,7 +446,25 @@ public partial class CalendarControllerView : UserControl
             case 3: WeekViewCtrl.Refresh(records, currentDate, scrollToNow); break;
             case 4: MonthViewCtrl.Refresh(records, currentDate, totals); break;
             case 5: YearViewCtrl.Refresh(records, currentDate.Year, totals); break;
+            case 6: DiagramViewCtrl.Refresh(records, currentDate, scrollToNow,
+                                            _diagramCollections,
+                                            hideEmptyGroups: !string.IsNullOrEmpty(_searchQuery)); break;
         }
+    }
+
+    // Отмеченные коллекции всех БД — каркас групп Диаграммы (пустой набор активных = ни одной,
+    // как у фильтра чтения событий).
+    private List<(int DbId, DbCollection Col)> LoadDiagramCollections()
+    {
+        var result = new List<(int, DbCollection)>();
+        foreach (var (dbId, _, repo) in _dbs.ToList())
+        {
+            ISet<int>? active = _activeByDb is not null && _activeByDb.TryGetValue(dbId, out var s) ? s : null;
+            foreach (var col in repo.GetAllCollections())
+                if (active is null || (col.Id.HasValue && active.Contains(col.Id.Value)))
+                    result.Add((dbId, col));
+        }
+        return result;
     }
 
     // Оверлей «Загрузка…» с задержкой: быстрые (тёплые) загрузки сетки им не мигают.
@@ -450,6 +482,9 @@ public partial class CalendarControllerView : UserControl
         4 => (StartOfWeek(new DateTime(_currentDate.Year, _currentDate.Month, 1)),
               StartOfWeek(new DateTime(_currentDate.Year, _currentDate.Month, 1)).AddDays(42)),
         5 => (new DateTime(_currentDate.Year, 1, 1), new DateTime(_currentDate.Year + 1, 1, 1)),
+        // Диаграмма — ровно календарный месяц (не 42-дневная сетка Месяца).
+        6 => (new DateTime(_currentDate.Year, _currentDate.Month, 1),
+              new DateTime(_currentDate.Year, _currentDate.Month, 1).AddMonths(1)),
         0 => (_currentDate.Date, _currentDate.Date.AddDays(1)),
         _ => (DateTime.Today.AddDays(-365), DateTime.Today.AddDays(365)),
     };
@@ -491,6 +526,7 @@ public partial class CalendarControllerView : UserControl
             3 => $"{StartOfWeek(_currentDate):d MMM} – {StartOfWeek(_currentDate).AddDays(6):d MMM yyyy}",
             4 => _currentDate.ToString("MMMM yyyy", ru),
             5 => _currentDate.Year.ToString(),
+            6 => _currentDate.ToString("MMMM yyyy", ru),
             _ => "Все записи",
         });
     }

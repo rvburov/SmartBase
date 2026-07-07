@@ -215,7 +215,7 @@ calendar_avalonia/
 ├── Views/                      # Экраны приложения (.axaml)
 │   ├── MainWindow.axaml        # Главное окно
 │   ├── ConstructorDb/          # Конструктор БД (список, таблица, страница записи)
-│   │   └── Calendar/           # Day, Week, Month, Year, List, Journal + контроллер
+│   │   └── Calendar/           # Day, Week, Month, Year, Diagram, List, Journal + контроллер
 │   └── Settings/               # SettingsView
 │
 ├── Controls/                   # Переиспользуемые UI компоненты

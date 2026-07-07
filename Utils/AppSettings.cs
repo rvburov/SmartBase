@@ -135,13 +135,14 @@ public static class AppSettings
     // ── Стартовый вид календаря ──────────────────────────────────────────────────
     //
     // Какой вид открывается при переходе в Календарь. Индексы совпадают с ViewSelector
-    // навбара: 0 Расписание, 1 Журнал, 2 День, 3 Неделя, 4 Месяц, 5 Год. Стандарт — Месяц.
+    // навбара: 0 Расписание, 1 Журнал, 2 День, 3 Неделя, 4 Месяц, 5 Год, 6 Диаграмма.
+    // Стандарт — Месяц.
     public const int CalendarViewDefault = 4;
 
     public static int LoadCalendarView()
     {
         if (int.TryParse(_store?.Get(KeyCalendarView), NumberStyles.Integer, CultureInfo.InvariantCulture, out var v)
-            && v is >= 0 and <= 5)
+            && v is >= 0 and <= 6)
             return v;
         return CalendarViewDefault;
     }

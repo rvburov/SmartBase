@@ -1,0 +1,940 @@
+using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Input;
+using Avalonia.Interactivity;
+using Avalonia.Media;
+using Avalonia.Threading;
+using DataBase.Core.Models;
+using DataBase.Utils;
+
+namespace DataBase.Views.ConstructorDb.Calendar;
+
+// Диаграмма (гант на месяц): строки — коллекции и их записи, ось X — дни месяца.
+// Раскладка императивная (Canvas + Border/TextBlock, пересборка на Refresh/SizeChanged),
+// как в остальных видах календаря. Drag/resize — целодневный шаг: при ширине дня в
+// десятки пикселей минутная точность недостижима, а время суток события сохраняется
+// (семантика горизонтального drag в AllDayBar).
+public partial class DiagramView : UserControl
+{
+    // Размеры/веса шрифта — из токенов Typography.axaml (резолв ресурса в рантайме).
+    // Свежий размер из Application.Resources — меняется живьём при изменении FontScale.
+    private static double FontSizeBase =>
+        (double)Application.Current!.FindResource("FontSizeBase")!;
+    private static double FontSizeSmall =>
+        (double)Application.Current!.FindResource("FontSizeSmall")!;
+
+    private static readonly FontWeight WeightBold = (FontWeight)Application.Current!.FindResource("FontWeightBold")!;
+
+    private static IBrush BrushOf(string key) => (IBrush)Application.Current!.FindResource(key)!;
+
+    public event EventHandler<CalendarRecord>? RecordClicked;
+    public event EventHandler<CalendarRecord>? RecordMoved;
+
+    private static readonly string[] DayNames = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
+
+    // Константы макета. LeftW продублирована в ColumnDefinitions="230,*" разметки.
+    private const double LeftW      = 230;  // ширина левой панели
+
+    // Высота строки (и группы, и записи) — как у строк таблицы конструктора:
+    // единый токен RowHeightStandard (Controls.axaml), резолв как в TableView.
+    private static double RowH =>
+        Application.Current!.TryFindResource("RowHeightStandard", out var r) && r is double d ? d : 36;
+    private const double BarH       = 20;   // высота блока (запись и группа) — как у баров Месяца
+    private const double RingD      = 10;   // диаметр кольца однодневного события
+    private const double LabelGap   = 6;    // зазор бар ↔ подпись
+    private const double EdgeHit    = 6;    // зона захвата ресайза по краям бара
+    private const double LeftIndent = 24;   // отступ строк записей в левой панели
+
+    // Кэпы строк: окно месяца при днях-гигантах может отдать до 31×GridDayCap событий —
+    // десятки тысяч строк по RowH означают десятки тысяч контролов и фриз. Сверх кэпа —
+    // серые строки «+N ещё»; смотреть всё — Расписание/Журнал (у них виртуализация).
+    private const int MaxRecordsPerCollection = 200;
+    private const int MaxTotalRows            = 1000;
+
+    private List<CalendarRecord> _events = [];
+    private DateTime _currentDate = DateTime.Today;
+    private DateTime _monthStart;
+    private int      _daysInMonth;
+
+    // Отмеченные коллекции всех допущенных БД (порядок сайдбара) — каркас групп:
+    // коллекция видна строкой даже без событий в показанном месяце.
+    private IReadOnlyList<(int DbId, DbCollection Col)>? _collections;
+    private bool _hideEmptyGroups;   // при активном поиске пустые группы — шум
+
+    private List<GroupRow> _groups = [];
+    // Свёрнутость групп переживает Refresh (пересборку), но не перезапуск приложения.
+    private readonly Dictionary<(int DbId, int ColId), bool> _collapsed = new();
+
+    // Геометрия последней сборки — для линии «сейчас» и пересчёта drag.
+    private double _lastTimelineW;
+    private double _lastBgH;
+
+    private readonly DispatcherTimer _timeLineTimer;
+
+    // ── модель строк ────────────────────────────────────────────────────────────
+
+    private sealed class GroupRow
+    {
+        public int    DbId;
+        public int    ColId;
+        public string Name  = "";
+        public string Color = "";
+        public List<CalendarRecord> Records = [];   // все доставленные, по StartDt
+        public bool   Collapsed;
+    }
+
+    // Плоский план строк: Ev == null && Note == null — строка группы;
+    // Ev != null — строка записи; Note != null — серая инфо-строка («+N ещё»).
+    private sealed class RowItem
+    {
+        public GroupRow        Group = null!;
+        public CalendarRecord? Ev;
+        public string?         Note;
+    }
+
+    // ── hit-testing ─────────────────────────────────────────────────────────────
+
+    // Слои отрисованного события — для ховера/выделения (эффекты как в Месяце).
+    private sealed class EventVisual
+    {
+        public double X1, X2;
+        public bool   IsRing;
+        public bool   ClipL, ClipR;
+        public Border? BlockBg;                              // полупрозрачный слой блока
+        public Border? Stripe;                               // цветной акцент слева
+        public Avalonia.Controls.Shapes.Ellipse? Ring;
+        public TextBlock Label = null!;
+        public bool LabelInside;                             // подпись внутри блока
+    }
+
+    private sealed class BarEntry
+    {
+        public CalendarRecord Ev = null!;
+        public double Y;          // верх строки
+        public double X1, X2;     // клампленная геометрия бара/кольца
+        public bool   IsRing;
+        public bool   ClipL, ClipR;   // край обрезан границей месяца — ресайз с него запрещён
+        public EventVisual? Vis;
+        public List<Control> Visuals = [];   // для приглушения на время drag
+    }
+    private readonly List<BarEntry> _barEntries = [];
+
+    // Выделение/ховер — как в Месяце: клик выделяет (заливка цветом), повторный
+    // клик по выделенному открывает, drag и клик мимо снимают выделение.
+    private BarEntry? _selected;
+    private BarEntry? _hover;
+
+    // drag/resize state
+    private BarEntry? _pressEntry;
+    private Point     _pressPos;
+    private int       _pressClickCount;
+    private bool      _isDragging;
+    private bool      _resizeLeft;
+    private bool      _resizeRight;
+    private DateTime  _origStart, _origEnd;
+    private DateTime  _newStart,  _newEnd;
+
+    private static readonly Cursor CursorResize = new(StandardCursorType.SizeWestEast);
+    private static readonly Cursor CursorHand   = new(StandardCursorType.Hand);
+
+    public DiagramView()
+    {
+        InitializeComponent();
+
+        SizeChanged += (_, _) => BuildAll();
+
+        _timeLineTimer = new DispatcherTimer { Interval = TimeSpan.FromMinutes(1) };
+        _timeLineTimer.Tick += (_, _) => UpdateTodayLine();
+        _timeLineTimer.Start();
+
+        TimelinePane.AddHandler(PointerPressedEvent,  OnPanePressed,  RoutingStrategies.Bubble, handledEventsToo: true);
+        TimelinePane.AddHandler(PointerMovedEvent,    OnPaneMoved,    RoutingStrategies.Bubble, handledEventsToo: true);
+        TimelinePane.AddHandler(PointerReleasedEvent, OnPaneReleased, RoutingStrategies.Bubble, handledEventsToo: true);
+        TimelinePane.PointerExited += (_, _) =>
+        {
+            if (_pressEntry is not null) return;
+            if (_hover is not null) { ApplyHover(_hover, on: false); _hover = null; }
+            TimelinePane.Cursor = Cursor.Default;
+        };
+    }
+
+    // ── публичный API ───────────────────────────────────────────────────────────
+
+    public void Refresh(IEnumerable<CalendarRecord> events, DateTime currentDate,
+                        bool scrollToNow = false,
+                        IReadOnlyList<(int DbId, DbCollection Col)>? collections = null,
+                        bool hideEmptyGroups = false)
+    {
+        _events          = events.ToList();
+        _currentDate     = currentDate;
+        _monthStart      = new DateTime(currentDate.Year, currentDate.Month, 1);
+        _daysInMonth     = DateTime.DaysInMonth(currentDate.Year, currentDate.Month);
+        _collections     = collections;
+        _hideEmptyGroups = hideEmptyGroups;
+
+        BuildGroups();
+        BuildAll();
+
+        if (scrollToNow)
+            Dispatcher.UIThread.Post(() => RowsScroll.Offset = default, DispatcherPriority.Loaded);
+    }
+
+    // ── группировка ─────────────────────────────────────────────────────────────
+
+    private void BuildGroups()
+    {
+        // Каркас групп — отмеченные коллекции всех БД (порядок сайдбара: БД по порядку
+        // монтирования, коллекции по Position), даже без событий в показанном месяце.
+        // События раскладываются по своим группам; события коллекций вне каркаса
+        // (нет CollectionId и т.п.) образуют группы в конце.
+        var groups = new List<GroupRow>();
+        var byKey  = new Dictionary<(int DbId, int ColId), GroupRow>();
+
+        if (_collections is not null)
+            foreach (var (dbId, col) in _collections)
+            {
+                var g = new GroupRow { DbId = dbId, ColId = col.Id ?? 0, Name = col.Name, Color = col.Color };
+                if (byKey.TryAdd((g.DbId, g.ColId), g)) groups.Add(g);
+            }
+
+        foreach (var e in _events)
+        {
+            var key = (DbId: e.DbId, ColId: e.CollectionId ?? 0);
+            if (!byKey.TryGetValue(key, out var g))
+            {
+                g = new GroupRow
+                {
+                    DbId  = key.DbId,
+                    ColId = key.ColId,
+                    Name  = string.IsNullOrWhiteSpace(e.CollectionName) ? "Без коллекции" : e.CollectionName,
+                    Color = e.Color,
+                };
+                byKey[key] = g;
+                groups.Add(g);
+            }
+            g.Records.Add(e);
+        }
+
+        if (_hideEmptyGroups)
+            groups = groups.Where(g => g.Records.Count > 0).ToList();
+
+        foreach (var g in groups)
+        {
+            g.Records = g.Records
+                .OrderBy(e => e.StartDt)
+                .ThenBy(e => e.Title, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            g.Collapsed = _collapsed.TryGetValue((g.DbId, g.ColId), out var c) && c;
+        }
+
+        _groups = groups;
+    }
+
+    private List<RowItem> BuildRowPlan()
+    {
+        var rows = new List<RowItem>();
+        var groupsShown = 0;
+        foreach (var g in _groups)
+        {
+            var shown = Math.Min(g.Records.Count, MaxRecordsPerCollection);
+            var need  = 1 + (g.Collapsed ? 0 : shown + (g.Records.Count > shown ? 1 : 0));
+            if (groupsShown > 0 && rows.Count + need > MaxTotalRows)
+            {
+                var left = _groups.Count - groupsShown;
+                rows.Add(new RowItem { Group = g, Note = $"+{left} {Plural(left, "коллекция", "коллекции", "коллекций")} ещё" });
+                break;
+            }
+
+            rows.Add(new RowItem { Group = g });
+            groupsShown++;
+            if (g.Collapsed) continue;
+
+            for (var i = 0; i < shown; i++)
+                rows.Add(new RowItem { Group = g, Ev = g.Records[i] });
+            if (g.Records.Count > shown)
+                rows.Add(new RowItem { Group = g, Note = $"+{g.Records.Count - shown} ещё" });
+        }
+        return rows;
+    }
+
+    // ── единый построитель ──────────────────────────────────────────────────────
+
+    private void BuildAll()
+    {
+        CancelDrag();
+        DayHeaderCanvas.Children.Clear();
+        LeftRowsCanvas.Children.Clear();
+        BgCanvas.Children.Clear();
+        BarsCanvas.Children.Clear();
+        DragOverlay.Children.Clear();
+        _barEntries.Clear();
+        _selected = null;   // визуалы пересоздаются — выделение/ховер не переживают пересборку
+        _hover    = null;
+
+        EmptyHint.IsVisible = _groups.Count == 0;
+
+        var timelineW = Bounds.Width - LeftW;
+        if (timelineW <= 0 || _daysInMonth <= 0) return;
+        var dayW = timelineW / _daysInMonth;
+        _lastTimelineW = timelineW;
+
+        BuildDayHeader(dayW);
+
+        var rows     = _groups.Count == 0 ? [] : BuildRowPlan();
+        var contentH = rows.Count * RowH;
+        _lastBgH     = contentH;
+
+        // Явные высоты слоёв задают extent прокрутки; фон, линии дней и линия
+        // «сейчас» заканчиваются на последней строке, а не тянутся до низа окна.
+        LeftRowsCanvas.Height = contentH;
+        BgCanvas.Height       = contentH;
+        BarsCanvas.Height     = contentH;
+        TodayOverlay.Height   = contentH;
+        DragOverlay.Height    = contentH;
+
+        BuildBackground(rows, dayW, timelineW, contentH);
+
+        for (var i = 0; i < rows.Count; i++)
+        {
+            var y = i * RowH;
+            var r = rows[i];
+            if      (r.Ev is not null)   BuildRecordRow(r.Group, r.Ev, y, dayW, timelineW);
+            else if (r.Note is not null) BuildNoteRow(r.Note, y);
+            else                         BuildGroupRow(r.Group, y, dayW, timelineW);
+        }
+
+        UpdateTodayLine();
+    }
+
+    private void BuildDayHeader(double dayW)
+    {
+        var secondary = BrushOf("BrushSecondaryText");
+        var primary   = BrushOf("BrushPrimaryText");
+        var red       = BrushOf("BrushRed");
+
+        for (var i = 0; i < _daysInMonth; i++)
+        {
+            var d         = _monthStart.AddDays(i);
+            var isWeekend = d.DayOfWeek is DayOfWeek.Saturday or DayOfWeek.Sunday;
+
+            var name = new TextBlock
+            {
+                Text       = DayNames[((int)d.DayOfWeek + 6) % 7],
+                FontSize   = FontSizeSmall,
+                Foreground = isWeekend ? red : secondary,
+            };
+            name.Measure(Size.Infinity);
+            Canvas.SetLeft(name, i * dayW + (dayW - name.DesiredSize.Width) / 2);
+            Canvas.SetTop(name, 6);
+            DayHeaderCanvas.Children.Add(name);
+
+            var num = new TextBlock
+            {
+                Text       = d.Day.ToString(),
+                FontSize   = FontSizeBase,
+                Foreground = isWeekend ? red : primary,
+            };
+            num.Measure(Size.Infinity);
+            Canvas.SetLeft(num, i * dayW + (dayW - num.DesiredSize.Width) / 2);
+            Canvas.SetTop(num, 21);
+            DayHeaderCanvas.Children.Add(num);
+        }
+    }
+
+    // Фон таймлайна: заливка выходных → тинты строк групп → линии дней → линии строк.
+    // Всё обрывается на последней строке (contentH), ниже — чистый фон.
+    // Линии — пустые Border с Aliased + LayoutRounding (защёлкиваются в целый пиксель,
+    // текста в поддереве нет — сглаживанию текста не мешают), см. docs/ui/theming.md.
+    private void BuildBackground(List<RowItem> rows, double dayW, double timelineW, double contentH)
+    {
+        var weekendBg = BrushOf("BrushSecondaryBg");
+        for (var i = 0; i < _daysInMonth; i++)
+        {
+            var d = _monthStart.AddDays(i);
+            if (d.DayOfWeek is not (DayOfWeek.Saturday or DayOfWeek.Sunday)) continue;
+            var fill = new Border { Width = dayW, Height = contentH, Background = weekendBg };
+            Canvas.SetLeft(fill, i * dayW);
+            BgCanvas.Children.Add(fill);
+        }
+
+        for (var i = 0; i < rows.Count; i++)
+        {
+            if (rows[i].Ev is not null || rows[i].Note is not null) continue;
+            var tint = new SolidColorBrush(BlendWithWhite(DisplayColor(rows[i].Group.Color), 14));
+            var band = new Border { Width = timelineW, Height = RowH, Background = tint };
+            Canvas.SetTop(band, i * RowH);
+            BgCanvas.Children.Add(band);
+            var bandL = new Border { Width = LeftW, Height = RowH, Background = tint, IsHitTestVisible = false };
+            Canvas.SetTop(bandL, i * RowH);
+            LeftRowsCanvas.Children.Add(bandL);
+        }
+
+        var lineT     = LineMetrics.ThicknessFor(this);
+        var lineBrush = new SolidColorBrush(Color.Parse("#E8E8E8"));
+        // Разделитель левой панели в теле (продолжение separator'а шапки) — до
+        // последней строки, как и остальные линии.
+        var paneLine = new Border { Width = lineT, Height = contentH, Background = BrushOf("BrushSeparator") };
+        paneLine.Bind(UseLayoutRoundingProperty, paneLine.GetResourceObservable("LineUseLayoutRounding"));
+        RenderOptions.SetEdgeMode(paneLine, EdgeMode.Aliased);
+        BgCanvas.Children.Add(paneLine);
+        // Вертикальные линии дней; x=0 не рисуется — там разделитель левой панели.
+        for (var i = 1; i < _daysInMonth; i++)
+        {
+            var line = new Border { Width = lineT, Height = contentH, Background = lineBrush };
+            line.Bind(UseLayoutRoundingProperty, line.GetResourceObservable("LineUseLayoutRounding"));
+            RenderOptions.SetEdgeMode(line, EdgeMode.Aliased);
+            Canvas.SetLeft(line, i * dayW);
+            BgCanvas.Children.Add(line);
+        }
+        // Горизонтальные разделители строк — по низу каждой строки, слева и справа встык.
+        for (var i = 0; i < rows.Count; i++)
+        {
+            var y = (i + 1) * RowH - lineT;
+            foreach (var (canvas, w) in new[] { (BgCanvas, timelineW), (LeftRowsCanvas, LeftW) })
+            {
+                var line = new Border { Width = w, Height = lineT, Background = lineBrush };
+                line.Bind(UseLayoutRoundingProperty, line.GetResourceObservable("LineUseLayoutRounding"));
+                RenderOptions.SetEdgeMode(line, EdgeMode.Aliased);
+                Canvas.SetTop(line, y);
+                canvas.Children.Add(line);
+            }
+        }
+    }
+
+    // ── строки ──────────────────────────────────────────────────────────────────
+
+    private void BuildGroupRow(GroupRow g, double y, double dayW, double timelineW)
+    {
+        var color = DisplayColor(g.Color);
+
+        // Левая панель: шеврон + цветная точка + имя + счётчик. Клик — свернуть/развернуть.
+        var row = new Grid
+        {
+            Width      = LeftW,
+            Height     = RowH,
+            Background = Brushes.Transparent,
+            Cursor     = CursorHand,
+            ColumnDefinitions = new ColumnDefinitions("24,14,*,Auto"),
+        };
+        Canvas.SetTop(row, y);
+
+        var chevron = new Viewbox
+        {
+            Width  = 12, Height = 12,
+            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Center,
+            VerticalAlignment   = Avalonia.Layout.VerticalAlignment.Center,
+            IsHitTestVisible    = false,
+            Child = new Canvas
+            {
+                Width = 24, Height = 24,
+                Children =
+                {
+                    new Avalonia.Controls.Shapes.Path
+                    {
+                        Data            = (Geometry)Application.Current!.FindResource(g.Collapsed ? "IconChevronRight" : "IconChevronDown")!,
+                        Stroke          = BrushOf("BrushSecondaryText"),
+                        StrokeThickness = 2,
+                        StrokeLineCap   = PenLineCap.Round,
+                        StrokeJoin      = PenLineJoin.Round,
+                    },
+                },
+            },
+        };
+        row.Children.Add(chevron);
+
+        var dot = new Avalonia.Controls.Shapes.Ellipse
+        {
+            Width = 8, Height = 8,
+            Fill  = new SolidColorBrush(color),
+            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
+            IsHitTestVisible  = false,
+        };
+        Grid.SetColumn(dot, 1);
+        row.Children.Add(dot);
+
+        var name = new TextBlock
+        {
+            Text         = g.Name,
+            FontSize     = FontSizeBase,
+            FontWeight   = WeightBold,
+            Foreground   = BrushOf("BrushPrimaryText"),
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            Margin       = new Thickness(4, 0, 4, 0),
+            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
+            IsHitTestVisible  = false,
+        };
+        Grid.SetColumn(name, 2);
+        row.Children.Add(name);
+
+        var count = new TextBlock
+        {
+            Text       = g.Records.Count.ToString(),
+            FontSize   = FontSizeSmall,
+            Foreground = BrushOf("BrushSecondaryText"),
+            Margin     = new Thickness(0, 0, 10, 0),
+            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
+            IsHitTestVisible  = false,
+        };
+        Grid.SetColumn(count, 3);
+        row.Children.Add(count);
+
+        row.PointerPressed += (_, e) =>
+        {
+            if (!e.GetCurrentPoint(row).Properties.IsLeftButtonPressed) return;
+            _collapsed[(g.DbId, g.ColId)] = !g.Collapsed;
+            g.Collapsed = !g.Collapsed;
+            BuildAll();
+            e.Handled = true;
+        };
+        LeftRowsCanvas.Children.Add(row);
+
+        // Пустая в этом месяце коллекция — только строка слева, без суммарного бара.
+        if (g.Records.Count == 0) return;
+
+        // Суммарный бар: min(начало)…max(конец) по ВСЕМ записям группы (включая
+        // обрезанные кэпом строк — их строки скрыты, но диапазон о них знает).
+        // Диапазон группы рисуется КАК СОБЫТИЕ (тот же рендер, что у записей):
+        // min(начало)…max(конец) записей — блок по ячейкам дней, однодневный охват —
+        // кольцо по центру ячейки; подпись — суммарный охват дней И времени
+        // («30 минут», «1 день 3 часа 30 минут»). Полностью all-day группа считается
+        // как all-day («N дней»/«24 часа»); в смешанной all-day-конец берётся концом
+        // суток, чтобы длительность не засорялась хвостом «23 часа 59 минут».
+        var allDayGroup = g.Records.All(e => e.AllDay);
+        var spanStart   = g.Records.Min(e => e.StartDt);
+        var spanEnd     = allDayGroup
+            ? g.Records.Max(e => e.EndDt)
+            : g.Records.Max(e => e.AllDay ? e.EndDt.Date.AddDays(1) : e.EndDt);
+        RenderEventVisual(BarsCanvas, [], y, spanStart, spanEnd, allDayGroup,
+                          color, dayW, timelineW);
+    }
+
+    private void BuildRecordRow(GroupRow g, CalendarRecord ev, double y, double dayW, double timelineW)
+    {
+        // Левая панель: только название записи.
+        var row = new Grid
+        {
+            Width      = LeftW,
+            Height     = RowH,
+            Background = Brushes.Transparent,
+            Cursor     = CursorHand,
+            ColumnDefinitions = new ColumnDefinitions($"{LeftIndent},*"),
+        };
+        Canvas.SetTop(row, y);
+
+        var title = new TextBlock
+        {
+            Text         = ev.DisplayTitle,
+            FontSize     = FontSizeBase,
+            Foreground   = BrushOf("BrushPrimaryText"),
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            Margin       = new Thickness(0, 0, 10, 0),
+            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
+            IsHitTestVisible  = false,
+        };
+        Grid.SetColumn(title, 1);
+        row.Children.Add(title);
+
+        row.PointerPressed += (_, e) =>
+        {
+            if (!e.GetCurrentPoint(row).Properties.IsLeftButtonPressed) return;
+            RecordClicked?.Invoke(this, ev);
+            e.Handled = true;
+        };
+        LeftRowsCanvas.Children.Add(row);
+
+        // Таймлайн: бар или кольцо + хит-запись для drag/resize.
+        var entry = new BarEntry { Ev = ev, Y = y };
+        var vis = RenderEventVisual(
+            BarsCanvas, entry.Visuals, y, ev.StartDt, ev.EndDt, ev.AllDay,
+            DisplayColor(ev.Color), dayW, timelineW);
+        entry.X1 = vis.X1; entry.X2 = vis.X2; entry.IsRing = vis.IsRing;
+        entry.ClipL = vis.ClipL; entry.ClipR = vis.ClipR;
+        entry.Vis = vis;
+        _barEntries.Add(entry);
+    }
+
+    private void BuildNoteRow(string note, double y)
+    {
+        var tb = new TextBlock
+        {
+            Text       = note,
+            FontSize   = FontSizeSmall,
+            Foreground = BrushOf("BrushSecondaryText"),
+        };
+        tb.Measure(Size.Infinity);
+        Canvas.SetLeft(tb, LeftIndent);
+        Canvas.SetTop(tb, y + (RowH - tb.DesiredSize.Height) / 2);
+        LeftRowsCanvas.Children.Add(tb);
+    }
+
+    // Рисует событие (блок или кольцо) в строке y и возвращает геометрию + слои
+    // для эффектов. Используется для записей, диапазона группы и ghost при drag.
+    private EventVisual RenderEventVisual(
+        Canvas canvas, List<Control> visuals, double y,
+        DateTime start, DateTime end, bool allDay, Color color,
+        double dayW, double timelineW)
+    {
+        // Геометрия — ПО ЯЧЕЙКАМ ДНЕЙ, как бары Месяца: блок занимает колонки от
+        // первого до последнего дня события целиком, время суток на позицию не
+        // влияет. Однодневное событие (timed или all-day) — кольцо по центру ячейки.
+        var startIdx = (int)(start.Date - _monthStart).TotalDays;
+        var endIdx   = (int)(LastIncludedDay(start, end, allDay) - _monthStart).TotalDays;
+        if (endIdx < startIdx) endIdx = startIdx;
+        var clipL = startIdx < 0;
+        var clipR = endIdx > _daysInMonth - 1;
+        var i1    = Math.Clamp(startIdx, 0, _daysInMonth - 1);
+        var i2    = Math.Clamp(endIdx,   0, _daysInMonth - 1);
+        // Небольшие отступы блока от границ ячеек — только на реальных краях события
+        // (insetL/insetR как у баров Месяца); обрезанный месяцем край — вплотную.
+        var x1    = i1 * dayW + (clipL ? 0 : 3);
+        var x2    = (i2 + 1) * dayW - (clipR ? 0 : 2);
+
+        var dark  = new SolidColorBrush(Darken(color));
+        var label = new TextBlock
+        {
+            Text       = RuDuration(start, end, allDay),
+            FontSize   = FontSizeBase,
+            Foreground = dark,
+        };
+        label.Measure(Size.Infinity);
+        var tw = label.DesiredSize.Width;
+        var ty = y + (RowH - label.DesiredSize.Height) / 2;
+
+        if (startIdx == endIdx)
+        {
+            var cx   = (i1 + 0.5) * dayW;   // центр ячейки дня — по ширине и высоте строки
+            var ring = new Avalonia.Controls.Shapes.Ellipse
+            {
+                Width = RingD, Height = RingD,
+                Stroke = new SolidColorBrush(color), StrokeThickness = 2,
+            };
+            Canvas.SetLeft(ring, cx - RingD / 2);
+            Canvas.SetTop(ring, y + (RowH - RingD) / 2);
+            canvas.Children.Add(ring);
+            visuals.Add(ring);
+
+            var lx = cx + RingD / 2 + LabelGap;
+            if (lx + tw > timelineW) lx = cx - RingD / 2 - LabelGap - tw;
+            Canvas.SetLeft(label, Math.Max(0, lx));
+            Canvas.SetTop(label, ty);
+            canvas.Children.Add(label);
+            visuals.Add(label);
+            return new EventVisual
+            {
+                X1 = cx - RingD / 2, X2 = cx + RingD / 2, IsRing = true,
+                Ring = ring, Label = label,
+            };
+        }
+
+        var w    = x2 - x1;
+        var barY = y + (RowH - BarH) / 2;
+        var bar  = MakeBlock(w, color, clipL, clipR, out var blockBg, out var stripe);
+        Canvas.SetLeft(bar, x1);
+        Canvas.SetTop(bar, barY);
+        canvas.Children.Add(bar);
+        visuals.Add(bar);
+
+        var inside = tw <= w - 16;
+        var lx2 = inside                          ? x1 + 8
+                : x2 + LabelGap + tw <= timelineW ? x2 + LabelGap
+                :                                   x1 - LabelGap - tw;
+        Canvas.SetLeft(label, Math.Max(0, lx2));
+        Canvas.SetTop(label, ty);
+        canvas.Children.Add(label);
+        visuals.Add(label);
+        return new EventVisual
+        {
+            X1 = x1, X2 = x2, ClipL = clipL, ClipR = clipR,
+            BlockBg = blockBg, Stripe = stripe, Label = label, LabelInside = inside,
+        };
+    }
+
+    // Блок в стиле баров Месяца (_AddSpanBar): белая подложка глушит линии сетки и
+    // заливку выходных под баром, поверх — полупрозрачный цвет; скругление только
+    // на реальных краях события; цветной акцент слева — только у его начала.
+    private static Grid MakeBlock(double w, Color color, bool clipL, bool clipR,
+                                  out Border bg, out Border? stripe)
+    {
+        var cr  = new CornerRadius(clipL ? 0 : 5, clipR ? 0 : 5, clipR ? 0 : 5, clipL ? 0 : 5);
+        var bar = new Grid { Width = w, Height = BarH };
+        bar.Children.Add(new Border { Background = Brushes.White, CornerRadius = cr });
+        bg = new Border
+        {
+            Background   = new SolidColorBrush(Color.FromArgb(50, color.R, color.G, color.B)),
+            CornerRadius = cr,
+        };
+        bar.Children.Add(bg);
+        stripe = null;
+        if (!clipL)
+        {
+            stripe = new Border
+            {
+                Width               = 4,
+                Background          = new SolidColorBrush(color),
+                CornerRadius        = new CornerRadius(2, 0, 0, 2),
+                HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Left,
+            };
+            bar.Children.Add(stripe);
+        }
+        return bar;
+    }
+
+    // ── линия «сейчас» ──────────────────────────────────────────────────────────
+
+    private void UpdateTodayLine()
+    {
+        TodayOverlay.Children.Clear();
+        var now = DateTime.Now;
+        if (_daysInMonth <= 0 || now < _monthStart || now >= MonthEnd) return;
+        if (_lastTimelineW <= 0) return;
+
+        var x    = (now - _monthStart).TotalDays * (_lastTimelineW / _daysInMonth);
+        var line = new Border { Width = 2, Height = _lastBgH, Background = BrushOf("BrushRed") };
+        Canvas.SetLeft(line, x - 1);
+        TodayOverlay.Children.Add(line);
+    }
+
+    // ── drag / resize ───────────────────────────────────────────────────────────
+
+    private void OnPanePressed(object? sender, PointerPressedEventArgs e)
+    {
+        if (!e.GetCurrentPoint(TimelinePane).Properties.IsLeftButtonPressed) return;
+        var p   = e.GetPosition(TimelinePane);
+        var hit = HitTest(p);
+        if (hit is null) { DeselectAll(); return; }   // клик мимо — снять выделение
+
+        _pressEntry      = hit;
+        _pressPos        = p;
+        _pressClickCount = e.ClickCount;
+        _isDragging      = false;
+        _resizeLeft  = !hit.IsRing && !hit.ClipL && Math.Abs(p.X - hit.X1) <= EdgeHit;
+        _resizeRight = !_resizeLeft && !hit.IsRing && !hit.ClipR && Math.Abs(p.X - hit.X2) <= EdgeHit;
+        _origStart   = hit.Ev.StartDt;
+        _origEnd     = hit.Ev.EndDt;
+        _newStart    = _origStart;
+        _newEnd      = _origEnd;
+
+        e.Pointer.Capture(TimelinePane);
+        e.Handled = true;
+    }
+
+    private void OnPaneMoved(object? sender, PointerEventArgs e)
+    {
+        var p = e.GetPosition(TimelinePane);
+        if (_pressEntry is null) { UpdateCursor(p); return; }
+
+        var dayW = _daysInMonth > 0 ? _lastTimelineW / _daysInMonth : 0;
+        if (dayW <= 0) return;
+
+        if (!_isDragging)
+        {
+            if (Math.Abs(p.X - _pressPos.X) + Math.Abs(p.Y - _pressPos.Y) < 5) return;
+            _isDragging = true;
+            DeselectAll();   // drag отменяет выделение — как в Месяце
+            foreach (var v in _pressEntry.Visuals) v.Opacity = 0.45;
+        }
+
+        if (_resizeLeft || _resizeRight)
+        {
+            var dayIdx = Math.Clamp((int)(p.X / dayW), 0, _daysInMonth - 1);
+            if (_resizeRight)
+            {
+                // Новый день конца + исходное время суток; конец не раньше начала.
+                var candidate = _monthStart.AddDays(dayIdx) + _origEnd.TimeOfDay;
+                if (candidate > _newStart) _newEnd = candidate;
+            }
+            else
+            {
+                var candidate = _monthStart.AddDays(dayIdx) + _origStart.TimeOfDay;
+                if (candidate < _newEnd) _newStart = candidate;
+            }
+        }
+        else
+        {
+            // Перенос целыми днями: время суток и длительность сохраняются.
+            var delta   = (int)Math.Round((p.X - _pressPos.X) / dayW);
+            var center0 = _origStart + (_origEnd - _origStart) / 2;
+            var minD    = Math.Min(0, (int)Math.Ceiling((_monthStart - center0).TotalDays));
+            var maxD    = Math.Max(0, (int)Math.Floor((MonthEnd - center0).TotalDays));
+            delta       = Math.Clamp(delta, minD, maxD);
+            _newStart   = _origStart.AddDays(delta);
+            _newEnd     = _origEnd.AddDays(delta);
+        }
+
+        DragOverlay.Children.Clear();
+        var ghostVisuals = new List<Control>();
+        RenderEventVisual(DragOverlay, ghostVisuals, _pressEntry.Y,
+                          _newStart, _newEnd, _pressEntry.Ev.AllDay,
+                          DisplayColor(_pressEntry.Ev.Color), dayW, _lastTimelineW);
+    }
+
+    private void OnPaneReleased(object? sender, PointerReleasedEventArgs e)
+    {
+        if (_pressEntry is null) return;
+        var entry       = _pressEntry;
+        var wasDragging = _isDragging;
+
+        e.Pointer.Capture(null);
+        DragOverlay.Children.Clear();
+        foreach (var v in entry.Visuals) v.Opacity = 1.0;
+        _pressEntry = null;
+        _isDragging = false;
+
+        if (!wasDragging)
+        {
+            // Как в Месяце: одиночный клик только выделяет, открывает ТОЛЬКО
+            // настоящий двойной клик (ClickCount ≥ 2) — даже по уже выделенному.
+            if (_pressClickCount >= 2) { DeselectAll(); RecordClicked?.Invoke(this, entry.Ev); }
+            else                       SelectEntry(entry);
+            return;
+        }
+
+        if (_newStart != _origStart || _newEnd != _origEnd)
+        {
+            entry.Ev.StartDt = _newStart;
+            entry.Ev.EndDt   = _newEnd;
+            RecordMoved?.Invoke(this, entry.Ev);
+        }
+    }
+
+    private void CancelDrag()
+    {
+        // Пересборка на живом drag: визуалы всё равно пересоздаются — только сбросить состояние.
+        _pressEntry = null;
+        _isDragging = false;
+    }
+
+    private BarEntry? HitTest(Point p)
+    {
+        foreach (var b in _barEntries)
+        {
+            if (p.Y < b.Y || p.Y > b.Y + RowH) continue;
+            var pad = b.IsRing ? 4 : EdgeHit;
+            if (p.X >= b.X1 - pad && p.X <= b.X2 + pad) return b;
+        }
+        return null;
+    }
+
+    private void UpdateCursor(Point p)
+    {
+        var hit = HitTest(p);
+
+        // Ховер — как в Месяце: подсветка блока/кольца под курсором.
+        if (!ReferenceEquals(hit, _hover))
+        {
+            if (_hover is not null) ApplyHover(_hover, on: false);
+            _hover = hit;
+            if (_hover is not null) ApplyHover(_hover, on: true);
+        }
+
+        if (hit is null) { TimelinePane.Cursor = Cursor.Default; return; }
+        var onEdge = !hit.IsRing &&
+                     ((!hit.ClipL && Math.Abs(p.X - hit.X1) <= EdgeHit) ||
+                      (!hit.ClipR && Math.Abs(p.X - hit.X2) <= EdgeHit));
+        TimelinePane.Cursor = onEdge ? CursorResize : CursorHand;
+    }
+
+    // ── эффекты (ховер/выделение — как в Месяце) ────────────────────────────────
+
+    private void ApplyHover(BarEntry e, bool on)
+    {
+        if (ReferenceEquals(e, _selected) || e.Vis is null) return;
+        var color = DisplayColor(e.Ev.Color);
+        if (e.Vis.Ring is not null)
+            e.Vis.Ring.Fill = on ? new SolidColorBrush(Color.FromArgb(60, color.R, color.G, color.B)) : null;
+        else if (e.Vis.BlockBg is not null)
+            e.Vis.BlockBg.Background =
+                new SolidColorBrush(Color.FromArgb(on ? (byte)90 : (byte)50, color.R, color.G, color.B));
+    }
+
+    private void SelectEntry(BarEntry e)
+    {
+        DeselectAll();
+        _selected = e;
+        if (e.Vis is null) return;
+        var color = DisplayColor(e.Ev.Color);
+        if (e.Vis.Ring is not null)
+            e.Vis.Ring.Fill = new SolidColorBrush(color);
+        else if (e.Vis.BlockBg is not null)
+        {
+            e.Vis.BlockBg.Background = new SolidColorBrush(color);
+            // Полоска прячется, чтобы не квадратить скруглённый левый край (как в Месяце).
+            if (e.Vis.Stripe is not null) e.Vis.Stripe.IsVisible = false;
+            // Белый текст только внутри залитого блока; подпись снаружи остаётся тёмной.
+            if (e.Vis.LabelInside) e.Vis.Label.Foreground = Brushes.White;
+        }
+    }
+
+    private void DeselectAll()
+    {
+        var e = _selected;
+        _selected = null;
+        if (e?.Vis is null) return;
+        var color = DisplayColor(e.Ev.Color);
+        if (e.Vis.Ring is not null)
+            e.Vis.Ring.Fill = null;
+        else if (e.Vis.BlockBg is not null)
+        {
+            e.Vis.BlockBg.Background = new SolidColorBrush(Color.FromArgb(50, color.R, color.G, color.B));
+            if (e.Vis.Stripe is not null) e.Vis.Stripe.IsVisible = true;
+            e.Vis.Label.Foreground = new SolidColorBrush(Darken(color));
+        }
+    }
+
+    // ── геометрия/дата-хелперы ──────────────────────────────────────────────────
+
+    private DateTime MonthEnd => _monthStart.AddDays(_daysInMonth);
+
+    // Последний день, который событие реально занимает (timed-конец ровно в 00:00
+    // следующего дня этот день не занимает).
+    private static DateTime LastIncludedDay(DateTime start, DateTime end, bool allDay)
+        => allDay ? end.Date
+         : end.TimeOfDay == TimeSpan.Zero && end > start ? end.Date.AddDays(-1)
+         : end.Date;
+
+    // ── длительность по-русски ──────────────────────────────────────────────────
+
+    private static string Plural(int n, string one, string few, string many)
+    {
+        var n100 = Math.Abs(n) % 100;
+        if (n100 is >= 11 and <= 14) return many;
+        return (n100 % 10) switch { 1 => one, 2 or 3 or 4 => few, _ => many };
+    }
+
+    private static string RuDuration(DateTime start, DateTime end, bool allDay)
+    {
+        if (allDay)
+        {
+            var days = (end.Date - start.Date).Days + 1;
+            return days <= 1 ? "24 часа" : $"{days} {Plural(days, "день", "дня", "дней")}";
+        }
+
+        var ts = end - start;
+        if (ts <= TimeSpan.Zero) return "";
+        var d = (int)ts.TotalDays;
+        var h = ts.Hours;
+        var m = ts.Minutes;
+        var parts = new List<string>(3);
+        if (d > 0) parts.Add($"{d} {Plural(d, "день", "дня", "дней")}");
+        if (h > 0) parts.Add($"{h} {Plural(h, "час", "часа", "часов")}");
+        if (m > 0) parts.Add($"{m} {Plural(m, "минута", "минуты", "минут")}");
+        return parts.Count == 0 ? "меньше минуты" : string.Join(" ", parts);
+    }
+
+    // ── цвета ───────────────────────────────────────────────────────────────────
+
+    private static Color DisplayColor(string? hex) => Color.Parse(EventColors.Display(hex));
+
+    private static Color Darken(Color c, double f = 0.6)
+        => Color.FromArgb(c.A, (byte)(c.R * f), (byte)(c.G * f), (byte)(c.B * f));
+
+    // смешивает цвет с белым фоном чтобы убрать прозрачность (alpha blending)
+    private static Color BlendWithWhite(Color c, byte alpha)
+    {
+        var a = alpha / 255.0;
+        return Color.FromRgb(
+            (byte)(c.R * a + 255 * (1 - a)),
+            (byte)(c.G * a + 255 * (1 - a)),
+            (byte)(c.B * a + 255 * (1 - a)));
+    }
+}
