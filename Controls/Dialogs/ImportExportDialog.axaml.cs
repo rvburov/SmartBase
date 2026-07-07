@@ -1,8 +1,11 @@
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Platform.Storage;
+using DataBase.Controls.Components;
+using DataBase.Core.Exporters;
 using DataBase.Core.Importers;
 using DataBase.Core.Importers.TableSources;
+using DataBase.Core.Models;
 using DataBase.Database.Repositories;
 
 namespace DataBase.Controls.Dialogs;
@@ -16,32 +19,53 @@ public record ImportDraft(string Path, string Name, int DbId, int? ParentId,
 /// <summary>Готовая заявка на импорт: спецификация чтения + куда создавать коллекцию + черновик формы.</summary>
 public record ImportRequest(ImportSpec Spec, int DbId, int? ParentId, string Name, ImportDraft Draft);
 
+/// <summary>Введённые значения формы экспорта — для переоткрытия окна после ошибки.</summary>
+public record ExportDraft(string Folder, string FileName, int FormatIndex,
+                          IReadOnlyList<(int DbId, int ColId)> Selected,
+                          bool Manual, string SheetName, string ExcludeColumns,
+                          bool NoHeader, bool IncludeHidden, bool SingleFile);
+
+/// <summary>Готовая заявка на экспорт: спецификация выгрузки + черновик формы.</summary>
+public record ExportRequest(ExportSpec Spec, ExportDraft Draft);
+
 /// <summary>
-/// Окно «Импорт/Экспорт». Импорт таблиц (.xlsx/.xlsm/.xlsb/.xls/.csv/.json) в новые коллекции;
-/// режим «Экспорт» виден, но отключён. Тип «Стандартный» показывает правила импорта под формат
-/// выбранного файла; «Ручной» — только для Excel (лист/строки/столбец + чекбоксы: все листы в
-/// одну/разные коллекции, все файлы из папки). Сам импорт окно не выполняет: по «Импортировать»
-/// оно валидирует ввод и возвращает <see cref="ImportRequest"/> — чтение/запись делает вызывающий
-/// (с окном загрузки). При ошибке окно открывается заново с теми же значениями (prefill) и текстом.
+/// Окно «Импорт/Экспорт». Комбобокс «Режим» переключает набор полей. Импорт таблиц
+/// (.xlsx/.xlsm/.xlsb/.xls/.csv/.json) в новые коллекции; экспорт коллекций (одной,
+/// нескольких или всех — выпадающий выбор с поиском и чекбоксами) в файлы
+/// .xlsx/.xlsm/.csv/.json. У обоих режимов тип «Стандартный» показывает правила под
+/// формат, а «Ручной» раскрывает правую колонку параметров (импорт — лист/строки/
+/// столбец/исключения; экспорт — лист/исключение столбцов/чекбоксы). Само действие окно
+/// не выполняет: по кнопке оно валидирует ввод и возвращает <see cref="ImportRequest"/>
+/// или <see cref="ExportRequest"/> — чтение/запись делает вызывающий (с окном загрузки).
+/// При ошибке окно открывается заново с теми же значениями (prefill) и текстом.
 /// </summary>
 public partial class ImportExportDialog : Window
 {
     private readonly IReadOnlyList<DbOption> _dbs;
     private List<(string Label, int? Id)> _groups = [];
 
+    // Пикер коллекций (экспорт): доступные строки и текущий выбор.
+    private readonly List<CollectionPickerFlyout.Item> _pickerItems;
+    private readonly HashSet<(int Db, int Col)> _selectedCols = [];
+
     private ConstructorRepository CurrentRepo => _dbs[Math.Max(0, DbCombo.SelectedIndex)].Repo;
     private int                   CurrentDbId => _dbs[Math.Max(0, DbCombo.SelectedIndex)].Id;
 
     public ImportExportDialog(IReadOnlyList<DbOption> dbs, int currentDbId,
-                              ImportDraft? prefill = null, string? error = null)
+                              ImportDraft? prefill = null, string? error = null,
+                              ExportDraft? exportPrefill = null)
     {
         InitializeComponent();
         _dbs = dbs;
 
-        ModeCombo.SelectedIndex = 0;   // Импорт (Экспорт отключён)
+        ModeCombo.SelectedIndex = exportPrefill is not null ? 1 : 0;
 
         TypeCombo.ItemsSource   = new[] { "Стандартный", "Ручной (только Excel)" };
         TypeCombo.SelectedIndex = prefill?.Manual == true ? 1 : 0;
+
+        ExportTypeCombo.ItemsSource   = new[] { "Стандартный", "Ручная выгрузка Excel" };
+        ExportTypeCombo.SelectedIndex = exportPrefill?.Manual == true ? 1 : 0;
+        FormatCombo.SelectedIndex     = Math.Clamp(exportPrefill?.FormatIndex ?? 0, 0, 3);
 
         DbCombo.ItemsSource   = _dbs.Select(d => d.Name).ToList();
         DbCombo.SelectedIndex = IndexOfDb(prefill?.DbId ?? currentDbId);
@@ -50,8 +74,13 @@ public partial class ImportExportDialog : Window
         if (prefill is not null) SelectLocation(prefill.ParentId);
         DbCombo.SelectionChanged += (_, _) => RebuildLocation();
 
-        UpdateTypeVisibility(keepPosition: false);
-        TypeCombo.SelectionChanged += (_, _) => UpdateTypeVisibility(keepPosition: true);
+        // Коллекции для экспорта: все допущенные базы (запертые отфильтрованы вызывающим),
+        // из каждой — коллекции, разрешённые к просмотру (право ViewCollection).
+        _pickerItems = _dbs
+            .SelectMany(d => d.Repo.GetAllCollections()
+                .Where(c => c.Id is int cid && (d.Repo.Permissions?.Can(PermAction.ViewCollection, cid) ?? true))
+                .Select(c => new CollectionPickerFlyout.Item(d.Id, c.Id!.Value, c.Name, d.Name)))
+            .ToList();
 
         // «В одну» и «в разные» коллекции взаимоисключающие: отметка одного снимает другой.
         MergeSheetsCheck.IsCheckedChanged += (_, _) =>
@@ -77,15 +106,44 @@ public partial class ImportExportDialog : Window
             SplitSheetsCheck.IsChecked = prefill.SplitSheets;
             FolderCheck.IsChecked      = prefill.FolderMode;
         }
+        if (exportPrefill is not null)
+        {
+            ExportFolderBox.Text      = exportPrefill.Folder;
+            ExportNameBox.Text        = exportPrefill.FileName;
+            ExportSheetBox.Text       = exportPrefill.SheetName;
+            ExportExcludeColsBox.Text = exportPrefill.ExcludeColumns;
+
+            NoHeaderCheck.IsChecked      = exportPrefill.NoHeader;
+            IncludeHiddenCheck.IsChecked = exportPrefill.IncludeHidden;
+            SingleFileCheck.IsChecked    = exportPrefill.SingleFile;
+
+            // Восстанавливаем только ещё существующие коллекции (могли удалить).
+            foreach (var key in exportPrefill.Selected)
+                if (_pickerItems.Any(i => (i.DbId, i.CollectionId) == key))
+                    _selectedCols.Add(key);
+        }
         UpdateStandardHelp();
+        UpdateExportHelp(keepPosition: false);
+        UpdatePickerDependent();
+        UpdateMode(keepPosition: false);
+
+        ModeCombo.SelectionChanged       += (_, _) => UpdateMode(keepPosition: true);
+        TypeCombo.SelectionChanged       += (_, _) => UpdateTypeVisibility(keepPosition: true);
+        ExportTypeCombo.SelectionChanged += (_, _) => UpdateTypeVisibility(keepPosition: true);
+        FormatCombo.SelectionChanged     += (_, _) => { HideError(); UpdateExportHelp(keepPosition: true); };
+        SingleFileCheck.IsCheckedChanged += (_, _) => UpdatePickerDependent();
 
         BrowseBtn.Click  += async (_, _) =>
-        { if (FolderCheck.IsChecked == true) await PickFolder(); else await PickFile(); };
+        { if (FolderCheck.IsChecked == true) await PickFolder(PathBox); else await PickFile(); };
+        ExportBrowseBtn.Click += async (_, _) => await PickFolder(ExportFolderBox);
+        CollectionPickerBtn.Click += (_, _) => ShowCollectionPicker();
         CancelBtn.Click  += (_, _) => Close(null);
         ConfirmBtn.Click += (_, _) => TryConfirm();
 
-        NameBox.TextChanged += (_, _) => HideError();
-        PathBox.TextChanged += (_, _) => { HideError(); UpdateStandardHelp(); };
+        NameBox.TextChanged         += (_, _) => HideError();
+        PathBox.TextChanged         += (_, _) => { HideError(); UpdateStandardHelp(); };
+        ExportFolderBox.TextChanged += (_, _) => HideError();
+        ExportNameBox.TextChanged   += (_, _) => HideError();
 
         if (!string.IsNullOrEmpty(error)) ErrorBanner.Show(error);
     }
@@ -110,17 +168,35 @@ public partial class ImportExportDialog : Window
         LocationCombo.SelectedIndex = idx >= 0 ? idx : 0;
     }
 
+    // Режим «Импорт»/«Экспорт»: переключаем набор полей левой колонки и подпись кнопки,
+    // затем пересчитываем правую колонку (у каждого режима своя панель ручного типа).
+    private void UpdateMode(bool keepPosition)
+    {
+        var pos    = Position;
+        var export = ModeCombo.SelectedIndex == 1;
+        ImportFields.IsVisible = !export;
+        ExportFields.IsVisible = export;
+        ConfirmBtn.Content     = export ? "Экспортировать" : "Импортировать";
+        if (ErrorBanner.IsVisible) ErrorBanner.Hide();
+        UpdateTypeVisibility(keepPosition: false);
+        if (keepPosition) KeepWindowPosition(pos);
+    }
+
     // Переключаем пояснение (стандартный) и колонку параметров (ручной, справа — окно
     // расширяется вправо); заголовок левой колонки и линия между колонками видны,
-    // только когда колонок две. Держим позицию окна.
+    // только когда колонок две. Правая колонка своя у каждого режима. Держим позицию окна.
     private void UpdateTypeVisibility(bool keepPosition)
     {
         var pos    = Position;
-        var manual = TypeCombo.SelectedIndex == 1;
-        ManualPanel.IsVisible     = manual;
-        MainHeader.IsVisible      = manual;
-        ColumnSeparator.IsVisible = manual;
-        StandardHelp.IsVisible    = !manual;
+        var export = ModeCombo.SelectedIndex == 1;
+        var manual = export ? ExportTypeCombo.SelectedIndex == 1 : TypeCombo.SelectedIndex == 1;
+
+        ManualPanel.IsVisible       = manual && !export;
+        ExportManualPanel.IsVisible = manual && export;
+        MainHeader.IsVisible        = manual;
+        ColumnSeparator.IsVisible   = manual;
+        StandardHelp.IsVisible      = !manual;
+        ExportHelp.IsVisible        = !manual;
         if (keepPosition) KeepWindowPosition(pos);
     }
 
@@ -161,6 +237,73 @@ public partial class ImportExportDialog : Window
         KeepWindowPosition(pos);   // высота пояснения меняется — окно не должно «прыгать»
     }
 
+    // Пояснение стандартного типа экспорта — под выбранный формат.
+    private void UpdateExportHelp(bool keepPosition)
+    {
+        var pos = Position;
+        ExportHelp.Text = FormatCombo.SelectedIndex switch
+        {
+            0 or 1 =>
+                "Excel: каждая коллекция — свой файл, лист назван по коллекции. Выгружаются " +
+                "видимые столбцы в порядке таблицы; числа и даты — настоящими ячейками, " +
+                "чекбоксы — ИСТИНА/ЛОЖЬ. Коллекции длиннее 1 048 576 строк продолжаются " +
+                "на листах «Имя 2», «Имя 3»… Занятые имена файлов получают суффикс «(2)».",
+            2 =>
+                "CSV: разделитель «;», кодировка UTF-8 с BOM — Excel открывает кириллицу " +
+                "корректно. Каждая коллекция — свой файл; выгружаются видимые столбцы в порядке " +
+                "таблицы, даты — как дд.мм.гггг, отмеченные чекбоксы — 1. Занятые имена файлов " +
+                "получают суффикс «(2)».",
+            _ =>
+                "JSON: массив объектов, ключи — названия столбцов. Числа и чекбоксы — " +
+                "настоящими типами, даты — в формате хранения (ISO). Каждая коллекция — свой " +
+                "файл; выгружаются видимые столбцы. Занятые имена файлов получают суффикс «(2)».",
+        };
+        if (keepPosition) KeepWindowPosition(pos);
+    }
+
+    // ── Пикер коллекций ───────────────────────────────────────────────────────
+
+    private void ShowCollectionPicker()
+    {
+        var picker = new CollectionPickerFlyout(_pickerItems, _selectedCols);
+        picker.Done += (_, _) => { HideError(); UpdatePickerDependent(); };
+        picker.ShowAt(CollectionPickerBtn);
+    }
+
+    // Текст кнопки-комбо и доступность полей, зависящих от числа выбранных коллекций:
+    // «Название файла» — когда файл один (одна коллекция или «в один файл»),
+    // «Лист» — только при одной коллекции.
+    private void UpdatePickerDependent()
+    {
+        CollectionPickerText.Text = _selectedCols.Count switch
+        {
+            0 => "Выберите коллекции",
+            1 => _pickerItems.FirstOrDefault(i => _selectedCols.Contains((i.DbId, i.CollectionId)))?.Name ?? "1 коллекция",
+            _ when _selectedCols.Count == _pickerItems.Count && _pickerItems.Count > 0 => "Все коллекции",
+            var n => $"{n} {PluralCollections(n)}",
+        };
+
+        var single     = _selectedCols.Count == 1;
+        var singleFile = SingleFileCheck.IsChecked == true;
+
+        ExportNameBox.IsEnabled = single || singleFile;
+        ExportNameBox.Watermark = single || singleFile
+            ? (singleFile && !single ? "Введите название (пусто — «Экспорт»)" : "Введите название (пусто — имя коллекции)")
+            : "Названия — из имён коллекций";
+
+        ExportSheetBox.IsEnabled = single;
+        ExportSheetBox.Watermark = single ? "Название листа (пусто — имя коллекции)" : "Доступно при одной коллекции";
+    }
+
+    private static string PluralCollections(int n) => (n % 100 is >= 11 and <= 14 ? 0 : n % 10) switch
+    {
+        1           => "коллекция",
+        2 or 3 or 4 => "коллекции",
+        _           => "коллекций",
+    };
+
+    // ── Пикеры файлов/папок ───────────────────────────────────────────────────
+
     private async Task PickFile()
     {
         var top = TopLevel.GetTopLevel(this);
@@ -180,7 +323,7 @@ public partial class ImportExportDialog : Window
         if (file is not null) PathBox.Text = file.Path.LocalPath;
     }
 
-    private async Task PickFolder()
+    private async Task PickFolder(TextBox target)
     {
         var top = TopLevel.GetTopLevel(this);
         if (top is null) return;
@@ -191,12 +334,16 @@ public partial class ImportExportDialog : Window
             AllowMultiple = false,
         });
         var folder = folders.FirstOrDefault();
-        if (folder is not null) PathBox.Text = folder.Path.LocalPath;
+        if (folder is not null) target.Text = folder.Path.LocalPath;
     }
 
-    // Валидируем ввод и возвращаем заявку на импорт. Ошибки ввода показываем в баннере (окно остаётся).
+    // ── Подтверждение ─────────────────────────────────────────────────────────
+
+    // Валидируем ввод и возвращаем заявку. Ошибки ввода показываем в баннере (окно остаётся).
     private void TryConfirm()
     {
+        if (ModeCombo.SelectedIndex == 1) { TryConfirmExport(); return; }
+
         var manual = TypeCombo.SelectedIndex == 1;
         // Режим папки — общий (живёт при поле «Файл»); листовые чекбоксы — часть ручного
         // типа, в стандартном их состояние игнорируется.
@@ -283,6 +430,49 @@ public partial class ImportExportDialog : Window
                                     merge, split, folder,
                                     excludeSheetsText, excludeRowsText, excludeColsText);
         Close(new ImportRequest(spec, dbId, parentId, name, draft));
+    }
+
+    // Валидируем ввод экспорта и возвращаем заявку. Чекбоксы и поля ручной панели
+    // действуют только в ручном типе (в стандартном их состояние игнорируется).
+    private void TryConfirmExport()
+    {
+        var manual   = ExportTypeCombo.SelectedIndex == 1;
+        var folder   = ExportFolderBox.Text?.Trim() ?? "";
+        var fileName = ExportNameBox.Text?.Trim() ?? "";
+        var format   = (ExportFormat)Math.Max(0, FormatCombo.SelectedIndex);
+
+        var single        = manual && SingleFileCheck.IsChecked == true;
+        var noHeader      = manual && NoHeaderCheck.IsChecked == true;
+        var includeHidden = manual && IncludeHiddenCheck.IsChecked == true;
+        var sheet         = manual ? ExportSheetBox.Text?.Trim() ?? "" : "";
+        var exclude       = manual ? ExportExcludeColsBox.Text?.Trim() ?? "" : "";
+
+        if (folder.Length == 0)        { ShowError("Укажите папку для экспорта"); return; }
+        if (!Directory.Exists(folder)) { ShowError("Папка не найдена"); return; }
+        if (_selectedCols.Count == 0)  { ShowError("Выберите хотя бы одну коллекцию"); return; }
+        if (manual && !ExportPlanner.IsExcel(format))
+        { ShowError("Ручная выгрузка доступна только для форматов Excel"); return; }
+        if (fileName.Length > 0 && fileName.IndexOfAny(System.IO.Path.GetInvalidFileNameChars()) >= 0)
+        { ShowError("Недопустимые символы в названии файла: \\ / : * ? \" < > |"); return; }
+        if (sheet.Length > 31 || sheet.IndexOfAny(['[', ']', ':', '*', '?', '/', '\\']) >= 0)
+        { ShowError("Название листа: до 31 символа, без символов [ ] : * ? / \\"); return; }
+
+        // Коллекции — в порядке пикера (базы и их коллекции как в списке выбора).
+        var refs = _pickerItems
+            .Where(i => _selectedCols.Contains((i.DbId, i.CollectionId)))
+            .Select(i => new ExportCollectionRef(i.DbId, i.CollectionId, i.Name, i.DbName))
+            .ToList();
+
+        var spec = new ExportSpec(folder, format, refs,
+            fileName.Length > 0 && (refs.Count == 1 || single) ? fileName : null,
+            manual,
+            sheet.Length > 0 && refs.Count == 1 ? sheet : null,
+            exclude, noHeader, includeHidden, single);
+
+        var draft = new ExportDraft(folder, fileName, FormatCombo.SelectedIndex,
+                                    _selectedCols.ToList(), manual, sheet, exclude,
+                                    noHeader, includeHidden, single);
+        Close(new ExportRequest(spec, draft));
     }
 
     private void ShowError(string message)

@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Функциональная матрица и замер производительности экспорта таблиц (Excel/CSV/JSON).
+    Вызывает те же методы, что и приложение: ExportPlanner.Plan → GetExportColumnsIsolated →
+    ReadExportRowsIsolated → ITableWriter; ключевые проверки — round-trip (экспорт → импорт
+    нашим же конвейером → сравнение). Файлы читаются назад ClosedXML (проверка типов ячеек).
+    Запуск из корня репозитория:
+      dotnet run -c Release ~project Tests/ExportPerf                     → селф-тест матрицы
+      dotnet run -c Release ~project Tests/ExportPerf ~ ~perf ~rows N     → замер на большой коллекции
+    (~ здесь заменяет двойной дефис, запрещённый внутри XML-комментария).
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>DataBase.Tests.ExportPerf</RootNamespace>
+    <AssemblyName>ExportPerf</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\DataBase.csproj" />
+  </ItemGroup>
+
+</Project>

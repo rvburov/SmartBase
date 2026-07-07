@@ -8,6 +8,7 @@ using Avalonia.Threading;
 using Avalonia.VisualTree;
 using CommunityToolkit.Mvvm.ComponentModel;
 using DataBase.Controls.Dialogs;
+using DataBase.Core.Exporters;
 using DataBase.Core.Importers;
 using DataBase.Core.Importers.TableSources;
 using DataBase.Core.Models;
@@ -1004,136 +1005,302 @@ public partial class SidebarTree : UserControl
         }
     }
 
-    // Импорт таблиц в новые коллекции. Окно собирает заявку (ImportRequest), планировщик
-    // разворачивает её в юниты «одна коллекция — один источник» (файл/лист/файлы папки), затем
-    // здесь показываем окно загрузки с процентами и отменой и выполняем юниты по очереди в фоне
-    // (проход-анализ 0–30 % юнита, потоковая запись 30–100 %). При ошибке — снова открываем окно
-    // с теми же значениями и текстом ошибки (готовые коллекции остаются, сбойная удалена
-    // репозиторием); при отмене пользователем — просто выходим.
+    // Импорт/экспорт таблиц. Окно собирает заявку (ImportRequest или ExportRequest), здесь —
+    // общий retry-цикл: показываем окно, выполняем заявку с окном загрузки (проценты + отмена),
+    // при ошибке открываем окно заново с теми же значениями и текстом ошибки, при отмене — выходим.
     private async Task OpenImportExport()
     {
         if (OwnerWindow is null || RepoFor(DefaultDbId) is null) return;
 
-        ImportDraft? prefill = null;
-        string?      error   = null;
+        ImportDraft? prefill       = null;
+        ExportDraft? exportPrefill = null;
+        string?      error         = null;
 
         while (true)
         {
             // Тултип кнопки не должен мерцать поверх модального окна (как в CreateItem).
             ToolTip.SetIsOpen(ImportExportBtn, false);
             ToolTip.SetServiceEnabled(ImportExportBtn, false);
-            ImportRequest? req;
+            object? req;
             try
             {
-                var dlg = new ImportExportDialog(DbOptions(), DefaultDbId, prefill, error);
-                req = await dlg.ShowDialog<ImportRequest?>(OwnerWindow);
+                var dlg = new ImportExportDialog(DbOptions(), DefaultDbId, prefill, error, exportPrefill);
+                req = await dlg.ShowDialog<object?>(OwnerWindow);
             }
             finally
             {
                 ToolTip.SetServiceEnabled(ImportExportBtn, true);
             }
 
-            if (req is null) return;   // отмена
-
-            var repo = RepoFor(req.DbId);
-            if (repo is null) return;
-
-            // Окно загрузки: показываем модально. Задачу ShowDialog запоминаем и дожидаемся
-            // её завершения после закрытия — иначе повторный показ окна импорта (при ошибке)
-            // стартует поверх ещё не закрытого модального окна и падает.
-            var progress = new ProgressDialog();
-            using var cts = new CancellationTokenSource();
-            progress.EnableCancel(() => cts.Cancel());
-            IProgress<(double F, string Phase, string Info)> ui =
-                new Progress<(double F, string Phase, string Info)>(t =>
-                {
-                    progress.SetProgress(t.F, t.Phase);
-                    progress.SetInfo(t.Info);
-                });
-            progress.SetProgress(0, "Анализ файла…");   // фаза до показа — окно не меняет высоту
-            var progressClosed = progress.ShowDialog(OwnerWindow);
-
-            var created = new List<int>();
-            try
+            switch (req)
             {
-                await Task.Run(() =>
-                {
-                    var units = ImportPlanner.Plan(req.Spec);
-                    for (var u = 0; u < units.Count; u++)
-                    {
-                        var unit = units[u];
-                        var info = units.Count > 1
-                            ? $"Файл {u + 1} из {units.Count}: {unit.CollectionName}" : "";
-                        var baseF = (double)u / units.Count;
-                        var slice = 1.0 / units.Count;
-
-                        try
-                        {
-                            var src = unit.OpenSource();
-                            var schema = src.Analyze(
-                                new Progress<double>(p =>
-                                    ui.Report((baseF + slice * p * 0.3, "Анализ файла…", info))),
-                                cts.Token);
-
-                            var rows = SourceHelpers.WithTitles(src.ReadRows(cts.Token), schema.EmptyTitleCount);
-
-                            // Импорт на ОТДЕЛЬНОМ контексте: с фонового потока нельзя трогать общий
-                            // Context (его параллельно использует UI) — иначе EF «second operation».
-                            var colId = repo.ImportStreamedCollectionIsolated(
-                                unit.CollectionName, req.ParentId, schema, rows, cts.Token,
-                                new Progress<long>(n => ui.Report((
-                                    baseF + slice * (0.3 + 0.7 * Math.Min(1.0,
-                                        schema.RowCount == 0 ? 1.0 : n / (double)schema.RowCount)),
-                                    "Импорт записей…", info))));
-                            created.Add(colId);
-                        }
-                        catch (Exception ex) when (ex is not OperationCanceledException)
-                        {
-                            // Дружелюбный текст + в мульти-режиме имя файла и сколько успели.
-                            var friendly = ImportErrors.Map(ex, unit.FilePath);
-                            throw units.Count > 1
-                                ? new ImportException(
-                                    $"{System.IO.Path.GetFileName(unit.FilePath)}: {friendly.Message} " +
-                                    $"Импортировано коллекций до ошибки: {created.Count}.")
-                                : friendly;
-                        }
-                    }
-                });
-
-                progress.Done();
-                await progressClosed;
-                ReloadAndNotify();
-                if (created.Count == 1 && _mode == SidebarMode.Constructor)
-                    OpenCollection(req.DbId, created[0]);
-                else if (created.Count > 1 && req.ParentId is int gid)
-                    ExpandGroup(req.DbId, gid);
-                return;
-            }
-            catch (OperationCanceledException)
-            {
-                // Отмена пользователем: сбойный юнит уже удалён репозиторием, готовые остаются.
-                progress.Done();
-                await progressClosed;
-                if (created.Count > 0) ReloadAndNotify();
-                return;
-            }
-            catch (ImportException ex)
-            {
-                progress.Done();
-                await progressClosed;
-                if (created.Count > 0) ReloadAndNotify();
-                prefill = req.Draft;
-                error   = ex.Message;
-            }
-            catch (Exception ex)
-            {
-                progress.Done();
-                await progressClosed;
-                if (created.Count > 0) ReloadAndNotify();
-                prefill = req.Draft;
-                error   = ImportErrors.Map(ex, req.Spec.Path).Message;
+                case ImportRequest ir:
+                    (prefill, error) = await RunImport(ir);
+                    if (error is null) return;
+                    exportPrefill = null;
+                    break;
+                case ExportRequest er:
+                    (exportPrefill, error) = await RunExport(er);
+                    if (error is null) return;
+                    prefill = null;
+                    break;
+                default:
+                    return;   // отмена
             }
         }
+    }
+
+    // Импорт таблиц в новые коллекции. Планировщик разворачивает заявку в юниты «одна
+    // коллекция — один источник» (файл/лист/файлы папки), юниты выполняются по очереди в фоне
+    // (проход-анализ 0–30 % юнита, потоковая запись 30–100 %). Ошибка → (черновик, текст) для
+    // переоткрытия окна (готовые коллекции остаются, сбойная удалена репозиторием);
+    // успех или отмена пользователем → (null, null).
+    private async Task<(ImportDraft? Prefill, string? Error)> RunImport(ImportRequest req)
+    {
+        var repo = RepoFor(req.DbId);
+        if (repo is null) return (null, null);
+
+        // Окно загрузки: показываем модально. Задачу ShowDialog запоминаем и дожидаемся
+        // её завершения после закрытия — иначе повторный показ окна импорта (при ошибке)
+        // стартует поверх ещё не закрытого модального окна и падает.
+        var progress = new ProgressDialog();
+        using var cts = new CancellationTokenSource();
+        progress.EnableCancel(() => cts.Cancel());
+        IProgress<(double F, string Phase, string Info)> ui =
+            new Progress<(double F, string Phase, string Info)>(t =>
+            {
+                progress.SetProgress(t.F, t.Phase);
+                progress.SetInfo(t.Info);
+            });
+        progress.SetProgress(0, "Анализ файла…");   // фаза до показа — окно не меняет высоту
+        var progressClosed = progress.ShowDialog(OwnerWindow);
+
+        var created = new List<int>();
+        try
+        {
+            await Task.Run(() =>
+            {
+                var units = ImportPlanner.Plan(req.Spec);
+                for (var u = 0; u < units.Count; u++)
+                {
+                    var unit = units[u];
+                    var info = units.Count > 1
+                        ? $"Файл {u + 1} из {units.Count}: {unit.CollectionName}" : "";
+                    var baseF = (double)u / units.Count;
+                    var slice = 1.0 / units.Count;
+
+                    try
+                    {
+                        var src = unit.OpenSource();
+                        var schema = src.Analyze(
+                            new Progress<double>(p =>
+                                ui.Report((baseF + slice * p * 0.3, "Анализ файла…", info))),
+                            cts.Token);
+
+                        var rows = SourceHelpers.WithTitles(src.ReadRows(cts.Token), schema.EmptyTitleCount);
+
+                        // Импорт на ОТДЕЛЬНОМ контексте: с фонового потока нельзя трогать общий
+                        // Context (его параллельно использует UI) — иначе EF «second operation».
+                        var colId = repo.ImportStreamedCollectionIsolated(
+                            unit.CollectionName, req.ParentId, schema, rows, cts.Token,
+                            new Progress<long>(n => ui.Report((
+                                baseF + slice * (0.3 + 0.7 * Math.Min(1.0,
+                                    schema.RowCount == 0 ? 1.0 : n / (double)schema.RowCount)),
+                                "Импорт записей…", info))));
+                        created.Add(colId);
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        // Дружелюбный текст + в мульти-режиме имя файла и сколько успели.
+                        var friendly = ImportErrors.Map(ex, unit.FilePath);
+                        throw units.Count > 1
+                            ? new ImportException(
+                                $"{System.IO.Path.GetFileName(unit.FilePath)}: {friendly.Message} " +
+                                $"Импортировано коллекций до ошибки: {created.Count}.")
+                            : friendly;
+                    }
+                }
+            });
+
+            progress.Done();
+            await progressClosed;
+            ReloadAndNotify();
+            if (created.Count == 1 && _mode == SidebarMode.Constructor)
+                OpenCollection(req.DbId, created[0]);
+            else if (created.Count > 1 && req.ParentId is int gid)
+                ExpandGroup(req.DbId, gid);
+            return (null, null);
+        }
+        catch (OperationCanceledException)
+        {
+            // Отмена пользователем: сбойный юнит уже удалён репозиторием, готовые остаются.
+            progress.Done();
+            await progressClosed;
+            if (created.Count > 0) ReloadAndNotify();
+            return (null, null);
+        }
+        catch (ImportException ex)
+        {
+            progress.Done();
+            await progressClosed;
+            if (created.Count > 0) ReloadAndNotify();
+            return (req.Draft, ex.Message);
+        }
+        catch (Exception ex)
+        {
+            progress.Done();
+            await progressClosed;
+            if (created.Count > 0) ReloadAndNotify();
+            return (req.Draft, ImportErrors.Map(ex, req.Spec.Path).Message);
+        }
+    }
+
+    // Экспорт коллекций в файлы. Планировщик разворачивает заявку в юниты «один файл»
+    // (обычно коллекция на файл; «в один файл» — книга с листом на коллекцию). Чтение —
+    // keyset-страницами на отдельных подключениях, запись — потоковыми писателями
+    // (Core/Exporters); подсчёт записей — первые 5 % слайса таблицы, строки — остальные 95 %.
+    // Ошибка/отмена: недописанный файл удаляется, готовые остаются. Успех — открываем папку
+    // выгрузки в проводнике; БД не менялась, сайдбар не перечитываем.
+    private async Task<(ExportDraft? Prefill, string? Error)> RunExport(ExportRequest req)
+    {
+        var progress = new ProgressDialog();
+        using var cts = new CancellationTokenSource();
+        progress.EnableCancel(() => cts.Cancel());
+        IProgress<(double F, string Phase, string Info)> ui =
+            new Progress<(double F, string Phase, string Info)>(t =>
+            {
+                progress.SetProgress(t.F, t.Phase);
+                progress.SetInfo(t.Info);
+            });
+        progress.SetProgress(0, "Подготовка…");   // фаза до показа — окно не меняет высоту
+        var progressClosed = progress.ShowDialog(OwnerWindow);
+
+        var completed = 0;
+        try
+        {
+            await Task.Run(() =>
+            {
+                var units = ExportPlanner.Plan(req.Spec);   // уникализация путей — здесь (трогает диск)
+                var excl  = ExportPlanner.ParseColumnExclusions(req.Spec.ExcludeColumns);
+                for (var u = 0; u < units.Count; u++)
+                {
+                    var unit = units[u];
+                    var info = units.Count > 1
+                        ? $"Файл {u + 1} из {units.Count}: {System.IO.Path.GetFileName(unit.FilePath)}" : "";
+                    var baseF = (double)u / units.Count;
+                    var slice = 1.0 / units.Count;
+
+                    try
+                    {
+                        var fileCreated = false;
+                        try
+                        {
+                            // Создание файла — первым: права/диск падают до чтения данных.
+                            using var writer = unit.OpenWriter();
+                            fileCreated = true;
+                            for (var i = 0; i < unit.Tables.Count; i++)
+                            {
+                                var tbl    = unit.Tables[i];
+                                var tBase  = baseF + slice * i / unit.Tables.Count;
+                                var tSlice = slice / unit.Tables.Count;
+
+                                // Юниты могут охватывать РАЗНЫЕ базы — репозиторий по коллекции.
+                                var repo = RepoFor(tbl.Collection.DbId)
+                                    ?? throw new ExportException(
+                                        $"База данных коллекции «{tbl.Collection.CollectionName}» недоступна.");
+                                // Страховка к фильтру пикера: права могли отозвать после открытия окна.
+                                if (!(repo.Permissions?.Can(PermAction.ViewCollection, tbl.Collection.CollectionId) ?? true))
+                                    throw new ExportException(
+                                        $"Недостаточно прав: просмотр коллекции «{tbl.Collection.CollectionName}» " +
+                                        "запрещён администратором базы данных.");
+
+                                ui.Report((tBase, "Подготовка…", info));
+                                var cols = repo.GetExportColumnsIsolated(
+                                        tbl.Collection.CollectionId, req.Spec.IncludeHidden)
+                                    .Where(c => !excl.Contains(c.Header)).ToList();
+                                if (cols.Count == 0)
+                                    throw new ExportException(
+                                        $"Все столбцы коллекции «{tbl.Collection.CollectionName}» исключены — " +
+                                        "нет данных для экспорта.");
+                                var total = repo.CountRecordsIsolated(
+                                    tbl.Collection.CollectionId, excludeHidden: !req.Spec.IncludeHidden);
+
+                                writer.BeginTable(tbl.TableName, cols, !req.Spec.NoHeaderRow);
+                                foreach (var row in repo.ReadExportRowsIsolated(
+                                             tbl.Collection.CollectionId, cols, !req.Spec.IncludeHidden, cts.Token,
+                                             new Progress<long>(n => ui.Report((
+                                                 tBase + tSlice * (0.05 + 0.95 * Math.Min(1.0,
+                                                     total == 0 ? 1.0 : n / (double)total)),
+                                                 "Экспорт записей…", info)))))
+                                    writer.WriteRow(row);
+                                writer.EndTable();
+                                repo.LogExportIsolated(tbl.Collection.CollectionName, total);
+                            }
+                            writer.Finish();
+                            completed++;
+                        }
+                        catch
+                        {
+                            // Писатель уже закрыт (using) — недописанный файл удаляем; готовые
+                            // остаются. Удаляем ТОЛЬКО свой файл: если упало само создание
+                            // (файл появился извне между Plan и CreateNew), чужое не трогаем.
+                            if (fileCreated)
+                                try { File.Delete(unit.FilePath); } catch { /* best-effort */ }
+                            throw;
+                        }
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        // Дружелюбный текст + в мульти-режиме имя файла и сколько успели.
+                        var friendly = ExportErrors.Map(ex, unit.FilePath);
+                        throw units.Count > 1
+                            ? new ExportException(
+                                $"{System.IO.Path.GetFileName(unit.FilePath)}: {friendly.Message} " +
+                                $"Экспортировано файлов до ошибки: {completed}.")
+                            : friendly;
+                    }
+                }
+            });
+
+            progress.Done();
+            await progressClosed;
+            OpenExportFolder(req.Spec.Folder);
+            return (null, null);
+        }
+        catch (OperationCanceledException)
+        {
+            // Отмена пользователем: недописанный файл удалён в фоне, готовые остаются.
+            progress.Done();
+            await progressClosed;
+            return (null, null);
+        }
+        catch (ExportException ex)
+        {
+            progress.Done();
+            await progressClosed;
+            return (req.Draft, ex.Message);
+        }
+        catch (Exception ex)
+        {
+            progress.Done();
+            await progressClosed;
+            return (req.Draft, ExportErrors.Map(ex, req.Spec.Folder).Message);
+        }
+    }
+
+    // Показ результата экспорта: открываем папку в проводнике (как SettingsView открывает
+    // папку данных приложения). Сбой открытия не критичен — файлы уже на диске.
+    private static void OpenExportFolder(string folder)
+    {
+        try
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName        = folder,
+                UseShellExecute = true,
+            });
+        }
+        catch { /* best-effort */ }
     }
 
     private void ExpandGroup(int dbId, int groupId)

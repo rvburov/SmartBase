@@ -3,6 +3,7 @@ using System.Text.RegularExpressions;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
+using DataBase.Core.Exporters;
 using DataBase.Core.Importers;
 using DataBase.Core.Models;
 using DataBase.Database.Entities;
@@ -986,6 +987,131 @@ public class ConstructorRepository(AppDbContext db)
         using var ctx = new AppDbContext(db.DbPath);
         ctx.ApplyBulkPerformancePragmas();   // большой кеш+mmap — без них вставка в глобальные индексы db_field_values деградирует
         return new ConstructorRepository(ctx).ImportStreamedCollection(collectionName, groupId, schema, rows, ct, rowsWritten);
+    }
+
+    // ── Экспорт таблиц (Core/Exporters, см. docs/features/import-export.md) ──
+    //
+    // Экспорт — чистое чтение: все методы работают на ОТДЕЛЬНЫХ подключениях (вызовы
+    // идут с фонового потока оркестрации, общий Context трогать нельзя — правило
+    // однопоточности), WAL допускает такое чтение рядом с любыми операциями. Demand не
+    // зовётся: изолированные клоны прав не несут (см. Permissions), проверку
+    // ViewCollection делает оркестрация по кешу прав до начала чтения.
+
+    /// <summary>
+    /// Колонки экспорта в порядке таблицы: сохранённый column_order, иначе дефолт как у
+    /// TableView.EffectiveColumnPosition (Название=1000, Описание=2000, поле=3000+Position).
+    /// markdown-поля исключаются (они не колонки таблицы). includeHidden=false — только
+    /// видимые колонки (column_display; отсутствие ключа = видима). Подписи системных
+    /// колонок — из system_field_meta (дефолты «Название»/«Описание»).
+    /// </summary>
+    public List<ExportColumn> GetExportColumns(int collectionId, bool includeHidden)
+    {
+        var fields = GetFields(collectionId).Where(f => f.FieldType != "markdown").ToList();
+        var names  = GetSystemFieldNames(collectionId);
+        var order  = GetColumnOrder(collectionId);
+        HashSet<string> hidden = includeHidden
+            ? []
+            : GetColumnDisplay(collectionId).Where(kv => !kv.Value.Visible).Select(kv => kv.Key).ToHashSet();
+
+        int Pos(string key, int fieldPos) =>
+            order.TryGetValue(key, out var p) ? p
+            : key == TitleKey ? 1000
+            : key == DescKey  ? 2000
+            : 3000 + fieldPos;
+
+        var cols = new List<(ExportColumn Col, int Pos)>
+        {
+            (new ExportColumn(TitleKey, names.GetValueOrDefault(TitleKey, "Название"), null, "text"), Pos(TitleKey, 0)),
+            (new ExportColumn(DescKey,  names.GetValueOrDefault(DescKey,  "Описание"), null, "text"), Pos(DescKey, 0)),
+        };
+        foreach (var f in fields)
+        {
+            var key = f.Id!.Value.ToString();
+            cols.Add((new ExportColumn(key, f.Name, f.Id, f.FieldType), Pos(key, f.Position)));
+        }
+
+        // Стабильная сортировка: у колонок с равными позициями сохраняется порядок добавления.
+        return cols
+            .Where(c => !hidden.Contains(c.Col.Key))
+            .OrderBy(c => c.Pos)
+            .Select(c => c.Col)
+            .ToList();
+    }
+
+    /// <summary>То же на ОТДЕЛЬНОМ подключении — для вызова с фонового потока оркестрации.</summary>
+    public List<ExportColumn> GetExportColumnsIsolated(int collectionId, bool includeHidden)
+    {
+        using var ctx = new AppDbContext(db.DbPath);
+        ctx.ApplyPerformancePragmas();
+        return new ConstructorRepository(ctx).GetExportColumns(collectionId, includeHidden);
+    }
+
+    /// <summary>Синхронный COUNT на ОТДЕЛЬНОМ подключении (оркестрация уже в Task.Run) —
+    /// точный total для процентов фазы записи.</summary>
+    public int CountRecordsIsolated(int collectionId, bool excludeHidden = false)
+    {
+        using var ctx = new AppDbContext(db.DbPath);
+        ctx.ApplyPerformancePragmas();
+        return new ConstructorRepository(ctx).CountRecords(collectionId, excludeHidden);
+    }
+
+    /// <summary>
+    /// Строки коллекции ПОТОКОМ для экспорта на ОТДЕЛЬНОМ подключении: keyset-страницы
+    /// <see cref="GetRecordsPageAfter"/> (row-value сик, O(take) на любой глубине) +
+    /// значения пакетом <see cref="GetFieldValuesBatch"/> (EF9 транслирует Contains в
+    /// json_each — один параметр, лимита 999 нет). Память O(страницы). Bulk-прагмы:
+    /// чтение db_field_values на десятках ГБ в стандартные 64 МБ кеша не влезает.
+    /// Значения — string[] в порядке columns: Название → Title, Описание → Description,
+    /// поле → значение (отсутствующее → ""). rowsRead — нарастающий итог раз в страницу.
+    /// </summary>
+    public IEnumerable<string[]> ReadExportRowsIsolated(int collectionId,
+        IReadOnlyList<ExportColumn> columns, bool excludeHidden, CancellationToken ct,
+        IProgress<long>? rowsRead = null, int pageSize = 2000)
+    {
+        using var ctx = new AppDbContext(db.DbPath);
+        ctx.ApplyBulkPerformancePragmas();
+        var repo = new ConstructorRepository(ctx);
+
+        long total = 0;
+        int? afterPos = null, afterId = null;
+        while (true)
+        {
+            ct.ThrowIfCancellationRequested();
+            var page = repo.GetRecordsPageAfter(collectionId, afterPos, afterId, pageSize, excludeHidden);
+            if (page.Count == 0) yield break;
+
+            var values = repo.GetFieldValuesBatch(
+                page.Where(r => r.Id.HasValue).Select(r => r.Id!.Value).ToList());
+
+            foreach (var r in page)
+            {
+                var vals = r.Id is int rid ? values.GetValueOrDefault(rid) : null;
+                var row  = new string[columns.Count];
+                for (var i = 0; i < columns.Count; i++)
+                {
+                    var c = columns[i];
+                    row[i] = c.Key == TitleKey ? r.Title
+                           : c.Key == DescKey  ? r.Description ?? ""
+                           : c.FieldId is int fid && vals is not null ? vals.GetValueOrDefault(fid, "") : "";
+                }
+                yield return row;
+            }
+
+            total += page.Count;
+            rowsRead?.Report(total);
+            var last = page[^1];
+            afterPos = last.Position;
+            afterId  = last.Id;
+        }
+    }
+
+    /// <summary>Строка журнала «экспортировал коллекцию …» на ОТДЕЛЬНОМ подключении
+    /// (LogNow пишет через тот же контекст, что и операция — здесь операция фоновая).</summary>
+    public void LogExportIsolated(string collectionName, long count)
+    {
+        using var ctx = new AppDbContext(db.DbPath);
+        ctx.ApplyPerformancePragmas();
+        new ConstructorRepository(ctx).LogNow("export", "collection", collectionName, count: count);
     }
 
     // ── Перенос между БД (мульти-маунт) ───────────────────────────────────────
@@ -2221,10 +2347,13 @@ public class ConstructorRepository(AppDbContext db)
         return result;
     }
 
+    // AsNoTracking обязателен: читатели зовут метод постранично на ОДНОМ контексте
+    // (потоковый экспорт — сотни раз подряд), и без него change tracker копил бы ВСЕ
+    // материализованные значения до конца операции (на 1 млн записей — гигабайты).
     public Dictionary<int, Dictionary<int, string>> GetFieldValuesBatch(IReadOnlyList<int> recordIds)
     {
         if (recordIds.Count == 0) return [];
-        return db.DbFieldValues
+        return db.DbFieldValues.AsNoTracking()
             .Where(fv => recordIds.Contains(fv.RecordId))
             .GroupBy(fv => fv.RecordId)
             .ToDictionary(g => g.Key, g => g.ToDictionary(fv => fv.FieldId, fv => fv.Value));

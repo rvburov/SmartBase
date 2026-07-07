@@ -483,6 +483,7 @@ public partial class ProfileView : UserControl
             "delete"    => "удалил",
             "duplicate" => "дублировал",
             "import"    => "импортировал",
+            "export"    => "экспортировал",
             "move"      => "перенёс",
             _           => r.Action,
         };

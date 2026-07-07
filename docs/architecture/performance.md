@@ -31,6 +31,7 @@
 | Таблица коллекции | до ~10 млн записей | `VirtualCollectionView` (DataGrid не материализует источник) + keyset + фоновая подгрузка | [TableView](../../Views/ConstructorDb/TableView.axaml.cs), [VirtualRowList](../../ViewModels/ConstructorDb/VirtualRowList.cs), [VirtualCollectionView](../../ViewModels/ConstructorDb/VirtualCollectionView.cs) |
 | Фильтр / сортировка | до ~10 млн | фильтр в SQL → список id → виртуализация; выпадающий список значений — SQL-агрегат в фоне | [TableView](../../Views/ConstructorDb/TableView.axaml.cs), [ConstructorRepository](../../Database/Repositories/ConstructorRepository.cs) |
 | Импорт таблиц | 10 млн+ строк | двухпроходный стриминг + пакет=транзакция | [TableSources](../../Core/Importers/TableSources/), `ImportStreamedCollection` |
+| Экспорт таблиц | 10 млн+ строк | keyset-страницы чтения + SAX/поток-писатели, память O(страницы) | [TableWriters](../../Core/Exporters/TableWriters/), `ReadExportRowsIsolated` |
 | Календарь (окна День/Неделя/Месяц/Год) | до ~10 млн записей | индексная проекция `calendar_index` + сплит-запрос окна (timed с нижней границей + all-day) по `(CollectionId, AllDay, StartIso)` | [ConstructorRepository](../../Database/Repositories/ConstructorRepository.cs) |
 | Календарь «Расписание» (день) | миллионы событий в дне | `IList`-виртуализация: полоса на весь объём + offset/keyset-страницы в фоне с «Загрузка…»; несколько БД — порядок по времени через посекундную карту (как «Журнал»); правки — мутацией списка НА МЕСТЕ (`ApplyDeltaAsync`: удаления без БД, вставка — ранг записи одним COUNT по индексу) | [CalendarDayVirtualList](../../Views/ConstructorDb/Calendar/CalendarDayVirtualList.cs) |
 | Календарь «Журнал» (вся история данных) | миллионы событий | плоская `IList`-виртуализация: карта из счётчиков по дням (async GROUP BY) + страницы дней в фоне; порядок по времени между БД — слитые дни ≤ 10k / посекундная карта гигантских дней; правки — мутацией списка НА МЕСТЕ (`ApplyDeltaAsync`: страницы/кеши дней переживают правку, без волны «Загрузка…») | [JournalVirtualList](../../Views/ConstructorDb/Calendar/JournalVirtualList.cs) |
@@ -141,6 +142,33 @@ firstNew + индекс` (`firstNew = last_insert_rowid − размер_пак�
 объёма; пик памяти — mmap-окно SQLite, не строки).
 
 Подробнее: [[../features/import-export]].
+
+### Экспорт таблиц
+
+Чтение — **keyset-страницами** (`ReadExportRowsIsolated` в
+[ConstructorRepository](../../Database/Repositories/ConstructorRepository.cs)): страницы
+`GetRecordsPageAfter` по 2000 записей (row-value сик по индексу `(CollectionId, Position)` —
+O(страницы) на любой глубине) + значения пакетом `GetFieldValuesBatch` (EF9 транслирует
+`Contains` в `json_each` — один параметр, лимита 999 нет). Отдельное подключение с
+bulk-прагмами (принцип 5): чтение `db_field_values` на десятках ГБ в стандартный кеш не
+влезает.
+
+Запись — потоковые писатели ([TableWriters](../../Core/Exporters/TableWriters/)):
+xlsx/xlsm — `OpenXmlWriter` (SAX; ClosedXML — DOM, миллионы строк не переживает), без
+shared strings (каждая строка inline — память O(1)), пустые ячейки не пишутся (сетку
+держат ссылки `r=`); CSV — StreamWriter с буфером 1 МБ; JSON — `Utf8JsonWriter` с
+принудительным `Flush` каждые 500 строк (иначе он копит ВЕСЬ вывод в памяти — O(n)).
+Переполнение листа Excel (1 048 576 строк) писатель обрабатывает сам — продолжение
+«Имя 2», «Имя 3»… Память процесса не растёт с объёмом: страница чтения + буферы писателя.
+`GetFieldValuesBatch` при этом обязан быть `AsNoTracking`: экспорт зовёт его сотни раз
+на одном контексте, и change tracker копил бы все значения до конца операции (до фикса —
+пик 7,9 ГБ и вдвое медленнее).
+
+Замер ([Tests/ExportPerf](../../Tests/ExportPerf/Program.cs) `--perf`, коллекция 1 млн
+строк × 8 столбцов): CSV — 53 с (~19 тыс. строк/с), JSON — 48 с (~21 тыс.),
+XLSX/XLSM — 73–78 с (~13 тыс.); пик памяти процесса ~1,6 ГБ (фикстура-импорт + mmap).
+
+Подробнее: [[../features/import-export]] (раздел «Экспорт таблиц»).
 
 ### Календарь
 

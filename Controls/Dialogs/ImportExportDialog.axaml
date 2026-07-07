@@ -13,7 +13,7 @@
     <Grid RowDefinitions="*,Auto,Auto">
 
         <!-- Две колонки: слева основные параметры, справа (только у ручного типа)
-             параметры ручного импорта; между ними вертикальная линия.
+             параметры ручного импорта/выгрузки; между ними вертикальная линия.
              Окно расширяется вправо, форма и кнопки не уезжают вниз. -->
         <Grid Grid.Row="0" ColumnDefinitions="Auto,Auto,Auto">
 
@@ -26,7 +26,7 @@
                            HorizontalAlignment="Center"
                            FontWeight="{StaticResource FontWeightBold}" />
 
-                <!-- Режим: импорт (по умолчанию) / экспорт (пока отключён) -->
+                <!-- Режим: импорт (по умолчанию) / экспорт — переключает набор полей ниже -->
                 <TextBlock Text="Режим"
                            Margin="0,0,0,6"
                            FontWeight="{StaticResource FontWeightBold}"
@@ -40,113 +40,222 @@
                           Background="{StaticResource BrushSecondaryBg}"
                           CornerRadius="{StaticResource RadiusBase}">
                     <ComboBoxItem Content="Импорт" />
-                    <ComboBoxItem Content="Экспорт (скоро)" IsEnabled="False" />
+                    <ComboBoxItem Content="Экспорт" />
                 </ComboBox>
 
-                <!-- Файл: ручной ввод пути + выбор файла -->
-                <TextBlock Text="Файл"
-                           Margin="0,0,0,6"
-                           FontWeight="{StaticResource FontWeightBold}"
-                           Foreground="{StaticResource BrushSecondaryText}" />
+                <!-- ── Поля импорта ─────────────────────────────────────────── -->
+                <StackPanel x:Name="ImportFields" Spacing="0">
 
-                <Grid ColumnDefinitions="*,8,Auto" Margin="0,0,0,8">
-                    <TextBox Grid.Column="0" x:Name="PathBox"
-                             Watermark="Путь к файлу (Excel, CSV, JSON)"
+                    <!-- Файл: ручной ввод пути + выбор файла -->
+                    <TextBlock Text="Файл"
+                               Margin="0,0,0,6"
+                               FontWeight="{StaticResource FontWeightBold}"
+                               Foreground="{StaticResource BrushSecondaryText}" />
+
+                    <Grid ColumnDefinitions="*,8,Auto" Margin="0,0,0,8">
+                        <TextBox Grid.Column="0" x:Name="PathBox"
+                                 Watermark="Путь к файлу (Excel, CSV, JSON)"
+                                 Height="34"
+                                 VerticalContentAlignment="Center"
+                                 CornerRadius="{StaticResource RadiusMedium}" />
+                        <Button Grid.Column="2" x:Name="BrowseBtn" Classes="dialog"
+                                Content="Обзор…"
+                                Width="100" Height="34" />
+                    </Grid>
+
+                    <!-- Импорт папки целиком: меняет смысл поля выше (файл ↔ папка), поэтому живёт при нём,
+                         а не в параметрах ручного типа — работает и со стандартным типом. -->
+                    <CheckBox x:Name="FolderCheck"
+                              Content="Все файлы из папки (включая подпапки)"
+                              Margin="0,0,0,12" />
+
+                    <!-- Название создаваемой коллекции -->
+                    <TextBlock Text="Название коллекции"
+                               Margin="0,0,0,6"
+                               FontWeight="{StaticResource FontWeightBold}"
+                               Foreground="{StaticResource BrushSecondaryText}" />
+
+                    <TextBox x:Name="NameBox"
+                             Watermark="Введите название"
                              Height="34"
                              VerticalContentAlignment="Center"
+                             Margin="0,0,0,12"
                              CornerRadius="{StaticResource RadiusMedium}" />
-                    <Button Grid.Column="2" x:Name="BrowseBtn" Classes="dialog"
-                            Content="Обзор…"
-                            Width="100" Height="34" />
-                </Grid>
 
-                <!-- Импорт папки целиком: меняет смысл поля выше (файл ↔ папка), поэтому живёт при нём,
-                     а не в параметрах ручного типа — работает и со стандартным типом. -->
-                <CheckBox x:Name="FolderCheck"
-                          Content="Все файлы из папки (включая подпапки)"
-                          Margin="0,0,0,12" />
+                    <!-- База данных -->
+                    <TextBlock Text="База данных"
+                               Margin="0,0,0,6"
+                               FontWeight="{StaticResource FontWeightBold}"
+                               Foreground="{StaticResource BrushSecondaryText}" />
 
-                <!-- Название создаваемой коллекции -->
-                <TextBlock Text="Название коллекции"
-                           Margin="0,0,0,6"
-                           FontWeight="{StaticResource FontWeightBold}"
-                           Foreground="{StaticResource BrushSecondaryText}" />
+                    <ComboBox x:Name="DbCombo"
+                              HorizontalAlignment="Stretch"
+                              Height="34"
+                              VerticalContentAlignment="Center"
+                              Margin="0,0,0,12"
+                              Background="{StaticResource BrushSecondaryBg}"
+                              CornerRadius="{StaticResource RadiusBase}" />
 
-                <TextBox x:Name="NameBox"
-                         Watermark="Введите название"
-                         Height="34"
-                         VerticalContentAlignment="Center"
-                         Margin="0,0,0,12"
-                         CornerRadius="{StaticResource RadiusMedium}" />
+                    <!-- Расположение (родительская группа) -->
+                    <TextBlock Text="Расположение"
+                               Margin="0,0,0,6"
+                               FontWeight="{StaticResource FontWeightBold}"
+                               Foreground="{StaticResource BrushSecondaryText}" />
 
-                <!-- База данных -->
-                <TextBlock Text="База данных"
-                           Margin="0,0,0,6"
-                           FontWeight="{StaticResource FontWeightBold}"
-                           Foreground="{StaticResource BrushSecondaryText}" />
+                    <ComboBox x:Name="LocationCombo"
+                              HorizontalAlignment="Stretch"
+                              Height="34"
+                              VerticalContentAlignment="Center"
+                              Margin="0,0,0,12"
+                              Background="{StaticResource BrushSecondaryBg}"
+                              CornerRadius="{StaticResource RadiusBase}">
+                        <ComboBox.ItemTemplate>
+                            <DataTemplate>
+                                <TextBlock Text="{Binding}"
+                                           TextTrimming="LeadingCharacterEllipsis"
+                                           VerticalAlignment="Center" />
+                            </DataTemplate>
+                        </ComboBox.ItemTemplate>
+                        <ComboBox.Styles>
+                            <Style Selector="ComboBoxItem">
+                                <Setter Property="MaxWidth" Value="{Binding $parent[ComboBox].Bounds.Width}" />
+                            </Style>
+                        </ComboBox.Styles>
+                    </ComboBox>
 
-                <ComboBox x:Name="DbCombo"
-                          HorizontalAlignment="Stretch"
-                          Height="34"
-                          VerticalContentAlignment="Center"
-                          Margin="0,0,0,12"
-                          Background="{StaticResource BrushSecondaryBg}"
-                          CornerRadius="{StaticResource RadiusBase}" />
+                    <!-- Тип импорта -->
+                    <TextBlock Text="Тип импорта"
+                               Margin="0,0,0,6"
+                               FontWeight="{StaticResource FontWeightBold}"
+                               Foreground="{StaticResource BrushSecondaryText}" />
 
-                <!-- Расположение (родительская группа) -->
-                <TextBlock Text="Расположение"
-                           Margin="0,0,0,6"
-                           FontWeight="{StaticResource FontWeightBold}"
-                           Foreground="{StaticResource BrushSecondaryText}" />
+                    <ComboBox x:Name="TypeCombo"
+                              HorizontalAlignment="Stretch"
+                              Height="34"
+                              VerticalContentAlignment="Center"
+                              Margin="0,0,0,10"
+                              Background="{StaticResource BrushSecondaryBg}"
+                              CornerRadius="{StaticResource RadiusBase}" />
 
-                <ComboBox x:Name="LocationCombo"
-                          HorizontalAlignment="Stretch"
-                          Height="34"
-                          VerticalContentAlignment="Center"
-                          Margin="0,0,0,12"
-                          Background="{StaticResource BrushSecondaryBg}"
-                          CornerRadius="{StaticResource RadiusBase}">
-                    <ComboBox.ItemTemplate>
-                        <DataTemplate>
-                            <TextBlock Text="{Binding}"
-                                       TextTrimming="LeadingCharacterEllipsis"
-                                       VerticalAlignment="Center" />
-                        </DataTemplate>
-                    </ComboBox.ItemTemplate>
-                    <ComboBox.Styles>
-                        <Style Selector="ComboBoxItem">
-                            <Setter Property="MaxWidth" Value="{Binding $parent[ComboBox].Bounds.Width}" />
-                        </Style>
-                    </ComboBox.Styles>
-                </ComboBox>
+                    <!-- Пояснение к стандартному типу: текст подбирается под формат файла (код) -->
+                    <TextBlock x:Name="StandardHelp"
+                               Margin="0,0,0,2"
+                               TextWrapping="Wrap"
+                               FontSize="{DynamicResource FontSizeSmall}"
+                               Foreground="{StaticResource BrushSecondaryText}" />
 
-                <!-- Тип импорта -->
-                <TextBlock Text="Тип импорта"
-                           Margin="0,0,0,6"
-                           FontWeight="{StaticResource FontWeightBold}"
-                           Foreground="{StaticResource BrushSecondaryText}" />
+                </StackPanel>
 
-                <ComboBox x:Name="TypeCombo"
-                          HorizontalAlignment="Stretch"
-                          Height="34"
-                          VerticalContentAlignment="Center"
-                          Margin="0,0,0,10"
-                          Background="{StaticResource BrushSecondaryBg}"
-                          CornerRadius="{StaticResource RadiusBase}" />
+                <!-- ── Поля экспорта ─────────────────────────────────────────── -->
+                <StackPanel x:Name="ExportFields" IsVisible="False" Spacing="0">
 
-                <!-- Пояснение к стандартному типу: текст подбирается под формат файла (код) -->
-                <TextBlock x:Name="StandardHelp"
-                           Margin="0,0,0,2"
-                           TextWrapping="Wrap"
-                           FontSize="{DynamicResource FontSizeSmall}"
-                           Foreground="{StaticResource BrushSecondaryText}" />
+                    <!-- Папка выгрузки: ручной ввод пути + выбор папки -->
+                    <TextBlock Text="Выгрузить в папку"
+                               Margin="0,0,0,6"
+                               FontWeight="{StaticResource FontWeightBold}"
+                               Foreground="{StaticResource BrushSecondaryText}" />
+
+                    <Grid ColumnDefinitions="*,8,Auto" Margin="0,0,0,12">
+                        <TextBox Grid.Column="0" x:Name="ExportFolderBox"
+                                 Watermark="Путь к папке"
+                                 Height="34"
+                                 VerticalContentAlignment="Center"
+                                 CornerRadius="{StaticResource RadiusMedium}" />
+                        <Button Grid.Column="2" x:Name="ExportBrowseBtn" Classes="dialog"
+                                Content="Обзор…"
+                                Width="100" Height="34" />
+                    </Grid>
+
+                    <!-- Название файла: активно при одной коллекции или «в один файл» (код) -->
+                    <TextBlock Text="Название файла"
+                               Margin="0,0,0,6"
+                               FontWeight="{StaticResource FontWeightBold}"
+                               Foreground="{StaticResource BrushSecondaryText}" />
+
+                    <TextBox x:Name="ExportNameBox"
+                             Watermark="Введите название"
+                             Height="34"
+                             VerticalContentAlignment="Center"
+                             Margin="0,0,0,12"
+                             CornerRadius="{StaticResource RadiusMedium}" />
+
+                    <!-- Формат файла -->
+                    <TextBlock Text="Формат файла"
+                               Margin="0,0,0,6"
+                               FontWeight="{StaticResource FontWeightBold}"
+                               Foreground="{StaticResource BrushSecondaryText}" />
+
+                    <ComboBox x:Name="FormatCombo"
+                              HorizontalAlignment="Stretch"
+                              Height="34"
+                              VerticalContentAlignment="Center"
+                              Margin="0,0,0,12"
+                              Background="{StaticResource BrushSecondaryBg}"
+                              CornerRadius="{StaticResource RadiusBase}">
+                        <ComboBoxItem Content=".xlsx — книга Excel" />
+                        <ComboBoxItem Content=".xlsm — книга Excel с поддержкой макросов" />
+                        <ComboBoxItem Content=".csv — текст с разделителями" />
+                        <ComboBoxItem Content=".json — массив объектов" />
+                    </ComboBox>
+
+                    <!-- Коллекции: кнопка-комбо, открывает выпадающий выбор с поиском
+                         и чекбоксами (CollectionPickerFlyout); текст ставит код -->
+                    <TextBlock Text="Коллекция"
+                               Margin="0,0,0,6"
+                               FontWeight="{StaticResource FontWeightBold}"
+                               Foreground="{StaticResource BrushSecondaryText}" />
+
+                    <Button x:Name="CollectionPickerBtn" Classes="dialog"
+                            Width="NaN" Height="34"
+                            HorizontalAlignment="Stretch"
+                            HorizontalContentAlignment="Stretch"
+                            CornerRadius="{StaticResource RadiusBase}"
+                            Padding="12,0,10,0"
+                            Margin="0,0,0,12">
+                        <Grid ColumnDefinitions="*,8,Auto">
+                            <TextBlock Grid.Column="0" x:Name="CollectionPickerText"
+                                       VerticalAlignment="Center"
+                                       TextTrimming="CharacterEllipsis" />
+                            <Viewbox Grid.Column="2" Width="14" Height="14" VerticalAlignment="Center">
+                                <Canvas Width="24" Height="24">
+                                    <Path Data="{StaticResource IconChevronDown}"
+                                          Stroke="{StaticResource BrushSecondaryText}"
+                                          StrokeThickness="2"
+                                          StrokeLineCap="Round" StrokeJoin="Round" />
+                                </Canvas>
+                            </Viewbox>
+                        </Grid>
+                    </Button>
+
+                    <!-- Тип экспорта -->
+                    <TextBlock Text="Тип экспорта"
+                               Margin="0,0,0,6"
+                               FontWeight="{StaticResource FontWeightBold}"
+                               Foreground="{StaticResource BrushSecondaryText}" />
+
+                    <ComboBox x:Name="ExportTypeCombo"
+                              HorizontalAlignment="Stretch"
+                              Height="34"
+                              VerticalContentAlignment="Center"
+                              Margin="0,0,0,10"
+                              Background="{StaticResource BrushSecondaryBg}"
+                              CornerRadius="{StaticResource RadiusBase}" />
+
+                    <!-- Пояснение к стандартному типу: текст подбирается под формат (код) -->
+                    <TextBlock x:Name="ExportHelp"
+                               Margin="0,0,0,2"
+                               TextWrapping="Wrap"
+                               FontSize="{DynamicResource FontSizeSmall}"
+                               Foreground="{StaticResource BrushSecondaryText}" />
+
+                </StackPanel>
 
             </StackPanel>
 
             <!-- Вертикальная линия между колонками — только когда колонок две -->
             <Border Grid.Column="1" x:Name="ColumnSeparator" Classes="separator v" IsVisible="False" />
 
-            <!-- Параметры ручного типа — правая колонка, тем же стилем, что и левая -->
+            <!-- Параметры ручного типа ИМПОРТА — правая колонка, тем же стилем, что и левая -->
             <StackPanel Grid.Column="2" x:Name="ManualPanel" IsVisible="False"
                         Width="380" Margin="20,16" Spacing="0">
 
@@ -241,6 +350,52 @@
                           Margin="0,0,0,4" />
                 <CheckBox x:Name="SplitSheetsCheck"
                           Content="Все листы в разные коллекции" />
+
+            </StackPanel>
+
+            <!-- Параметры ручного типа ЭКСПОРТА — та же правая колонка (видима одна из двух) -->
+            <StackPanel Grid.Column="2" x:Name="ExportManualPanel" IsVisible="False"
+                        Width="380" Margin="20,16" Spacing="0">
+
+                <TextBlock Text="Параметры ручной выгрузки"
+                           Margin="0,0,0,10"
+                           HorizontalAlignment="Center"
+                           FontWeight="{StaticResource FontWeightBold}" />
+
+                <TextBlock Text="Лист"
+                           Margin="0,0,0,6"
+                           FontWeight="{StaticResource FontWeightBold}"
+                           Foreground="{StaticResource BrushSecondaryText}" />
+                <TextBox x:Name="ExportSheetBox"
+                         Watermark="Название листа (пусто — имя коллекции)"
+                         Height="34"
+                         VerticalContentAlignment="Center"
+                         Margin="0,0,0,12"
+                         CornerRadius="{StaticResource RadiusMedium}" />
+
+                <!-- Имена свойств через запятую; несовпавшие имена молча игнорируются
+                     (выбор может охватывать коллекции с разными наборами полей) -->
+                <TextBlock Text="Исключить столбцы"
+                           Margin="0,0,0,6"
+                           FontWeight="{StaticResource FontWeightBold}"
+                           Foreground="{StaticResource BrushSecondaryText}" />
+                <TextBox x:Name="ExportExcludeColsBox"
+                         Watermark="Цена, Комментарий"
+                         Height="34"
+                         VerticalContentAlignment="Center"
+                         Margin="0,0,0,14"
+                         CornerRadius="{StaticResource RadiusMedium}" />
+
+                <Border Classes="separator h" Margin="0,0,0,12" />
+
+                <CheckBox x:Name="NoHeaderCheck"
+                          Content="Без строки заголовков"
+                          Margin="0,0,0,4" />
+                <CheckBox x:Name="IncludeHiddenCheck"
+                          Content="Включать скрытые записи и столбцы"
+                          Margin="0,0,0,4" />
+                <CheckBox x:Name="SingleFileCheck"
+                          Content="Все коллекции в один файл (лист на коллекцию)" />
 
             </StackPanel>
 
