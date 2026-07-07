@@ -204,6 +204,10 @@ public partial class CalendarControllerView : UserControl
         DiagramViewCtrl.RecordClicked          += (_, r) => _ = OpenEditDialog(r);
         // Перенос/растяжение дат в Диаграмме — дельтой, как в Дне/Неделе (ключ не меняется).
         DiagramViewCtrl.RecordMoved            += (_, r) => { RepoOf(r).UpdateCalendarRecord(r); _journalDelta = [(r, -1), (r, +1)]; NotifyChangedAndRefresh(); };
+        DiagramViewCtrl.RecordDeleteRequested     += (_, r)  => _ = DeleteRecordsWithConfirm([r]);
+        DiagramViewCtrl.RecordsDeleteRequested    += (_, rs) => _ = DeleteRecordsWithConfirm(rs);
+        DiagramViewCtrl.RecordDuplicateRequested  += (_, r)  => _ = DuplicateRecordsWithConfirm([r]);
+        DiagramViewCtrl.RecordsDuplicateRequested += (_, rs) => _ = DuplicateRecordsWithConfirm(rs);
 
         SwitchView(AppSettings.LoadCalendarView());   // стартовый вид из настроек (стандарт — Месяц)
         SeedIfEmpty();

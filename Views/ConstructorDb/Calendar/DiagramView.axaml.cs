@@ -4,6 +4,7 @@ using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Media;
 using Avalonia.Threading;
+using DataBase.Controls.Components;
 using DataBase.Core.Models;
 using DataBase.Utils;
 
@@ -29,6 +30,10 @@ public partial class DiagramView : UserControl
 
     public event EventHandler<CalendarRecord>? RecordClicked;
     public event EventHandler<CalendarRecord>? RecordMoved;
+    public event EventHandler<CalendarRecord>? RecordDeleteRequested;
+    public event EventHandler<IReadOnlyList<CalendarRecord>>? RecordsDeleteRequested;
+    public event EventHandler<CalendarRecord>? RecordDuplicateRequested;
+    public event EventHandler<IReadOnlyList<CalendarRecord>>? RecordsDuplicateRequested;
 
     private static readonly string[] DayNames = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
 
@@ -110,6 +115,7 @@ public partial class DiagramView : UserControl
     private sealed class BarEntry
     {
         public CalendarRecord Ev = null!;
+        public int    RowIdx;     // индекс строки — для выделения диапазона
         public double Y;          // верх строки
         public double X1, X2;     // клампленная геометрия бара/кольца
         public bool   IsRing;
@@ -119,16 +125,27 @@ public partial class DiagramView : UserControl
     }
     private readonly List<BarEntry> _barEntries = [];
 
-    // Выделение/ховер — как в Месяце: клик выделяет (заливка цветом), повторный
-    // клик по выделенному открывает, drag и клик мимо снимают выделение.
-    private BarEntry? _selected;
+    // Выделение — как в Месяце/Расписании: клик выделяет одно (заливка цветом),
+    // Shift+клик — аддитивно, Ctrl+Shift+клик — диапазон строк от якоря, двойной
+    // клик открывает, drag и клик мимо снимают. Якорь — последняя выделенная
+    // кликом запись. Набор и якорь не переживают пересборку (визуалы пересоздаются).
+    private readonly List<BarEntry> _selection = [];
+    private BarEntry? _rangeAnchor;
     private BarEntry? _hover;
 
+    // Голубая подсветка строки записи под курсором (как ховер строки таблицы
+    // конструктора, BrushAccentLight) — две полосы: левая панель и таймлайн.
+    private List<RowItem> _rowPlan = [];
+    private Border? _hoverBandLeft;
+    private Border? _hoverBandRight;
+    private int     _hoverRowIdx = -1;
+
     // drag/resize state
-    private BarEntry? _pressEntry;
-    private Point     _pressPos;
-    private int       _pressClickCount;
-    private bool      _isDragging;
+    private BarEntry?    _pressEntry;
+    private Point        _pressPos;
+    private int          _pressClickCount;
+    private KeyModifiers _pressModifiers;
+    private bool         _isDragging;
     private bool      _resizeLeft;
     private bool      _resizeRight;
     private DateTime  _origStart, _origEnd;
@@ -154,8 +171,48 @@ public partial class DiagramView : UserControl
         {
             if (_pressEntry is not null) return;
             if (_hover is not null) { ApplyHover(_hover, on: false); _hover = null; }
+            SetRowHover(-1);
             TimelinePane.Cursor = Cursor.Default;
         };
+    }
+
+    // Delete/Backspace удаляют выделенное, пока вид видим и фокус не в текстовом
+    // поле — оконный обработчик, как в Месяце.
+    private EventHandler<KeyEventArgs>? _windowKeyHandler;
+
+    protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
+    {
+        base.OnAttachedToVisualTree(e);
+        if (e.Root is not Window win) return;
+        _windowKeyHandler = (_, ke) =>
+        {
+            if (ke.Key != Key.Delete && ke.Key != Key.Back) return;
+            if (!IsVisible) return;
+            if (_selection.Count == 0) return;
+            if (ke.Source is TextBox or AutoCompleteBox) return;
+            if (_selection.Count == 1)
+            {
+                var only = _selection[0].Ev;
+                DeselectAll();
+                RecordDeleteRequested?.Invoke(this, only);
+            }
+            else
+            {
+                var batch = _selection.Select(b => b.Ev).ToList();
+                DeselectAll();
+                RecordsDeleteRequested?.Invoke(this, batch);
+            }
+            ke.Handled = true;
+        };
+        win.AddHandler(KeyDownEvent, _windowKeyHandler, handledEventsToo: true);
+    }
+
+    protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
+    {
+        base.OnDetachedFromVisualTree(e);
+        if (e.Root is Window win && _windowKeyHandler is not null)
+            win.RemoveHandler(KeyDownEvent, _windowKeyHandler);
+        _windowKeyHandler = null;
     }
 
     // ── публичный API ───────────────────────────────────────────────────────────
@@ -268,8 +325,9 @@ public partial class DiagramView : UserControl
         BarsCanvas.Children.Clear();
         DragOverlay.Children.Clear();
         _barEntries.Clear();
-        _selected = null;   // визуалы пересоздаются — выделение/ховер не переживают пересборку
-        _hover    = null;
+        _selection.Clear();   // визуалы пересоздаются — выделение/якорь/ховер не переживают пересборку
+        _rangeAnchor = null;
+        _hover       = null;
 
         EmptyHint.IsVisible = _groups.Count == 0;
 
@@ -280,7 +338,9 @@ public partial class DiagramView : UserControl
 
         BuildDayHeader(dayW);
 
-        var rows     = _groups.Count == 0 ? [] : BuildRowPlan();
+        var rows     = _groups.Count == 0 ? new List<RowItem>() : BuildRowPlan();
+        _rowPlan     = rows;
+        _hoverRowIdx = -1;
         var contentH = rows.Count * RowH;
         _lastBgH     = contentH;
 
@@ -368,6 +428,14 @@ public partial class DiagramView : UserControl
             Canvas.SetTop(bandL, i * RowH);
             LeftRowsCanvas.Children.Add(bandL);
         }
+
+        // Полоса наведения строки записи — голубая, как ховер строки таблицы
+        // конструктора; под линиями сетки, поверх заливок. Позиционирует SetRowHover.
+        var hoverBrush  = BrushOf("BrushAccentLight");
+        _hoverBandRight = new Border { Width = timelineW, Height = RowH, Background = hoverBrush, IsVisible = false };
+        BgCanvas.Children.Add(_hoverBandRight);
+        _hoverBandLeft  = new Border { Width = LeftW, Height = RowH, Background = hoverBrush, IsVisible = false };
+        LeftRowsCanvas.Children.Add(_hoverBandLeft);
 
         var lineT     = LineMetrics.ThicknessFor(this);
         var lineBrush = new SolidColorBrush(Color.Parse("#E8E8E8"));
@@ -534,12 +602,9 @@ public partial class DiagramView : UserControl
         Grid.SetColumn(title, 1);
         row.Children.Add(title);
 
-        row.PointerPressed += (_, e) =>
-        {
-            if (!e.GetCurrentPoint(row).Properties.IsLeftButtonPressed) return;
-            RecordClicked?.Invoke(this, ev);
-            e.Handled = true;
-        };
+        var rowIdx = (int)(y / RowH);
+        row.PointerEntered += (_, _) => SetRowHover(rowIdx);
+        row.PointerExited  += (_, _) => SetRowHover(-1);
         LeftRowsCanvas.Children.Add(row);
 
         // Таймлайн: бар или кольцо + хит-запись для drag/resize.
@@ -551,6 +616,24 @@ public partial class DiagramView : UserControl
         entry.ClipL = vis.ClipL; entry.ClipR = vis.ClipR;
         entry.Vis = vis;
         _barEntries.Add(entry);
+
+        entry.RowIdx = rowIdx;
+
+        // Клик по строке слева — как по блоку: одиночный выделяет (Shift/Ctrl+Shift —
+        // аддитивно/диапазон), двойной открывает; правый — меню по выделению.
+        row.PointerPressed += (_, e) =>
+        {
+            var props = e.GetCurrentPoint(row).Properties;
+            if (props.IsRightButtonPressed)
+            {
+                if (!_selection.Contains(entry)) SelectOnly(entry);
+                row.ContextMenu = BuildSelectionMenu();
+                return;
+            }
+            if (!props.IsLeftButtonPressed) return;
+            HandleEntryClick(entry, e.ClickCount, e.KeyModifiers);
+            e.Handled = true;
+        };
     }
 
     private void BuildNoteRow(string note, double y)
@@ -598,7 +681,19 @@ public partial class DiagramView : UserControl
         };
         label.Measure(Size.Infinity);
         var tw = label.DesiredSize.Width;
-        var ty = y + (RowH - label.DesiredSize.Height) / 2;
+
+        // Подпись ВНЕ блока — в хосте высотой в строку: вертикальный центр считает
+        // layout по реальным метрикам шрифта (ручной расчёт от предварительного
+        // Measure давал сдвиг — до подключения к дереву метрики немного другие).
+        void AddOutside(double lx)
+        {
+            label.VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center;
+            var host = new Border { Height = RowH, Child = label };
+            Canvas.SetLeft(host, Math.Max(0, lx));
+            Canvas.SetTop(host, y);
+            canvas.Children.Add(host);
+            visuals.Add(host);
+        }
 
         if (startIdx == endIdx)
         {
@@ -615,10 +710,7 @@ public partial class DiagramView : UserControl
 
             var lx = cx + RingD / 2 + LabelGap;
             if (lx + tw > timelineW) lx = cx - RingD / 2 - LabelGap - tw;
-            Canvas.SetLeft(label, Math.Max(0, lx));
-            Canvas.SetTop(label, ty);
-            canvas.Children.Add(label);
-            visuals.Add(label);
+            AddOutside(lx);
             return new EventVisual
             {
                 X1 = cx - RingD / 2, X2 = cx + RingD / 2, IsRing = true,
@@ -635,13 +727,19 @@ public partial class DiagramView : UserControl
         visuals.Add(bar);
 
         var inside = tw <= w - 16;
-        var lx2 = inside                          ? x1 + 8
-                : x2 + LabelGap + tw <= timelineW ? x2 + LabelGap
-                :                                   x1 - LabelGap - tw;
-        Canvas.SetLeft(label, Math.Max(0, lx2));
-        Canvas.SetTop(label, ty);
-        canvas.Children.Add(label);
-        visuals.Add(label);
+        if (inside)
+        {
+            // Внутри блока — как в Месяце: ребёнок блока, центр по вертикали.
+            label.VerticalAlignment   = Avalonia.Layout.VerticalAlignment.Center;
+            label.HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Left;
+            label.Margin              = new Thickness(8, 0, 4, 0);
+            bar.Children.Add(label);   // приглушение на drag наследуется от блока
+        }
+        else
+        {
+            AddOutside(x2 + LabelGap + tw <= timelineW ? x2 + LabelGap
+                                                       : x1 - LabelGap - tw);
+        }
         return new EventVisual
         {
             X1 = x1, X2 = x2, ClipL = clipL, ClipR = clipR,
@@ -655,7 +753,7 @@ public partial class DiagramView : UserControl
     private static Grid MakeBlock(double w, Color color, bool clipL, bool clipR,
                                   out Border bg, out Border? stripe)
     {
-        var cr  = new CornerRadius(clipL ? 0 : 5, clipR ? 0 : 5, clipR ? 0 : 5, clipL ? 0 : 5);
+        var cr  = new CornerRadius(clipL ? 0 : 4, clipR ? 0 : 4, clipR ? 0 : 4, clipL ? 0 : 4);
         var bar = new Grid { Width = w, Height = BarH };
         bar.Children.Add(new Border { Background = Brushes.White, CornerRadius = cr });
         bg = new Border
@@ -667,11 +765,14 @@ public partial class DiagramView : UserControl
         stripe = null;
         if (!clipL)
         {
+            // Утоплена внутрь блока (как в Неделе/Месяце) — прижатая к краю
+            // выступала «усиками» за скруглённый силуэт.
             stripe = new Border
             {
-                Width               = 4,
+                Width               = 3,
+                Margin              = new Thickness(2, 2, 0, 2),
                 Background          = new SolidColorBrush(color),
-                CornerRadius        = new CornerRadius(2, 0, 0, 2),
+                CornerRadius        = new CornerRadius(2),
                 HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Left,
             };
             bar.Children.Add(stripe);
@@ -698,14 +799,33 @@ public partial class DiagramView : UserControl
 
     private void OnPanePressed(object? sender, PointerPressedEventArgs e)
     {
-        if (!e.GetCurrentPoint(TimelinePane).Properties.IsLeftButtonPressed) return;
-        var p   = e.GetPosition(TimelinePane);
+        var p     = e.GetPosition(TimelinePane);
+        var props = e.GetCurrentPoint(TimelinePane).Properties;
+
+        // Правый клик: по невыделенной записи — выделить её одну (как в Месяце),
+        // меню собирается по актуальному выделению и откроется на отпускании.
+        if (props.IsRightButtonPressed)
+        {
+            var rHit = HitTest(p);
+            if (rHit is null) { TimelinePane.ContextMenu = null; return; }
+            if (!_selection.Contains(rHit)) SelectOnly(rHit);
+            TimelinePane.ContextMenu = BuildSelectionMenu();
+            return;
+        }
+
+        if (!props.IsLeftButtonPressed) return;
         var hit = HitTest(p);
-        if (hit is null) { DeselectAll(); return; }   // клик мимо — снять выделение
+        // Клик мимо — снять выделение (Shift-клики набор не сбрасывают, как в Расписании).
+        if (hit is null)
+        {
+            if (!e.KeyModifiers.HasFlag(KeyModifiers.Shift)) DeselectAll();
+            return;
+        }
 
         _pressEntry      = hit;
         _pressPos        = p;
         _pressClickCount = e.ClickCount;
+        _pressModifiers  = e.KeyModifiers;
         _isDragging      = false;
         _resizeLeft  = !hit.IsRing && !hit.ClipL && Math.Abs(p.X - hit.X1) <= EdgeHit;
         _resizeRight = !_resizeLeft && !hit.IsRing && !hit.ClipR && Math.Abs(p.X - hit.X2) <= EdgeHit;
@@ -730,7 +850,8 @@ public partial class DiagramView : UserControl
         {
             if (Math.Abs(p.X - _pressPos.X) + Math.Abs(p.Y - _pressPos.Y) < 5) return;
             _isDragging = true;
-            DeselectAll();   // drag отменяет выделение — как в Месяце
+            DeselectAll();      // drag отменяет выделение — как в Месяце
+            SetRowHover(-1);    // и прячет подсветку строки
             foreach (var v in _pressEntry.Visuals) v.Opacity = 0.45;
         }
 
@@ -782,10 +903,9 @@ public partial class DiagramView : UserControl
 
         if (!wasDragging)
         {
-            // Как в Месяце: одиночный клик только выделяет, открывает ТОЛЬКО
-            // настоящий двойной клик (ClickCount ≥ 2) — даже по уже выделенному.
-            if (_pressClickCount >= 2) { DeselectAll(); RecordClicked?.Invoke(this, entry.Ev); }
-            else                       SelectEntry(entry);
+            // Как в Месяце: одиночный клик выделяет (Shift — аддитивно,
+            // Ctrl+Shift — диапазон), открывает только двойной клик.
+            HandleEntryClick(entry, _pressClickCount, _pressModifiers);
             return;
         }
 
@@ -818,6 +938,7 @@ public partial class DiagramView : UserControl
     private void UpdateCursor(Point p)
     {
         var hit = HitTest(p);
+        SetRowHover((int)(p.Y / RowH));
 
         // Ховер — как в Месяце: подсветка блока/кольца под курсором.
         if (!ReferenceEquals(hit, _hover))
@@ -836,9 +957,28 @@ public partial class DiagramView : UserControl
 
     // ── эффекты (ховер/выделение — как в Месяце) ────────────────────────────────
 
+    // Подсветить строку записи idx (обе полосы); -1 или не-запись — спрятать.
+    private void SetRowHover(int idx)
+    {
+        if (idx >= 0 && (idx >= _rowPlan.Count || _rowPlan[idx].Ev is null)) idx = -1;
+        if (idx == _hoverRowIdx) return;
+        _hoverRowIdx = idx;
+        var on = idx >= 0;
+        if (_hoverBandLeft is not null)
+        {
+            _hoverBandLeft.IsVisible = on;
+            if (on) Canvas.SetTop(_hoverBandLeft, idx * RowH);
+        }
+        if (_hoverBandRight is not null)
+        {
+            _hoverBandRight.IsVisible = on;
+            if (on) Canvas.SetTop(_hoverBandRight, idx * RowH);
+        }
+    }
+
     private void ApplyHover(BarEntry e, bool on)
     {
-        if (ReferenceEquals(e, _selected) || e.Vis is null) return;
+        if (_selection.Contains(e) || e.Vis is null) return;
         var color = DisplayColor(e.Ev.Color);
         if (e.Vis.Ring is not null)
             e.Vis.Ring.Fill = on ? new SolidColorBrush(Color.FromArgb(60, color.R, color.G, color.B)) : null;
@@ -847,38 +987,101 @@ public partial class DiagramView : UserControl
                 new SolidColorBrush(Color.FromArgb(on ? (byte)90 : (byte)50, color.R, color.G, color.B));
     }
 
-    private void SelectEntry(BarEntry e)
+    // Визуал выделения одной записи (заливка цветом / сплошное кольцо — как в Месяце).
+    private void ApplySelectedVisual(BarEntry e, bool on)
     {
-        DeselectAll();
-        _selected = e;
         if (e.Vis is null) return;
         var color = DisplayColor(e.Ev.Color);
         if (e.Vis.Ring is not null)
-            e.Vis.Ring.Fill = new SolidColorBrush(color);
+        {
+            e.Vis.Ring.Fill = on ? new SolidColorBrush(color) : null;
+        }
         else if (e.Vis.BlockBg is not null)
         {
-            e.Vis.BlockBg.Background = new SolidColorBrush(color);
-            // Полоска прячется, чтобы не квадратить скруглённый левый край (как в Месяце).
-            if (e.Vis.Stripe is not null) e.Vis.Stripe.IsVisible = false;
-            // Белый текст только внутри залитого блока; подпись снаружи остаётся тёмной.
-            if (e.Vis.LabelInside) e.Vis.Label.Foreground = Brushes.White;
+            e.Vis.BlockBg.Background = on
+                ? new SolidColorBrush(color)
+                : new SolidColorBrush(Color.FromArgb(50, color.R, color.G, color.B));
+            // Полоска прячется, чтобы не квадратить скруглённый левый край (как в Месяце);
+            // белый текст — только внутри залитого блока, подпись снаружи остаётся тёмной.
+            if (e.Vis.Stripe is not null) e.Vis.Stripe.IsVisible = !on;
+            if (e.Vis.LabelInside) e.Vis.Label.Foreground = on ? Brushes.White : new SolidColorBrush(Darken(color));
         }
+    }
+
+    private void AddToSelection(BarEntry e)
+    {
+        if (_selection.Contains(e)) return;
+        _selection.Add(e);
+        ApplySelectedVisual(e, on: true);
+        _rangeAnchor = e;
+    }
+
+    private void SelectOnly(BarEntry e)
+    {
+        DeselectAll();
+        AddToSelection(e);
+    }
+
+    // Shift+клик: добавить/снять запись из набора, не трогая остальные.
+    private void ToggleAdditive(BarEntry e)
+    {
+        if (_selection.Remove(e)) { ApplySelectedVisual(e, on: false); return; }
+        AddToSelection(e);
+    }
+
+    // Ctrl+Shift+клик: выделить все записи между якорем и кликнутой включительно
+    // (строки групп и «+N ещё» пропускаются — их записей нет в хит-листе).
+    private void SelectRange(BarEntry e)
+    {
+        if (_rangeAnchor is null || !_barEntries.Contains(_rangeAnchor)) { SelectOnly(e); return; }
+        var lo = Math.Min(_rangeAnchor.RowIdx, e.RowIdx);
+        var hi = Math.Max(_rangeAnchor.RowIdx, e.RowIdx);
+        foreach (var b in _barEntries)
+            if (b.RowIdx >= lo && b.RowIdx <= hi && !_selection.Contains(b))
+            {
+                _selection.Add(b);
+                ApplySelectedVisual(b, on: true);
+            }
     }
 
     private void DeselectAll()
     {
-        var e = _selected;
-        _selected = null;
-        if (e?.Vis is null) return;
-        var color = DisplayColor(e.Ev.Color);
-        if (e.Vis.Ring is not null)
-            e.Vis.Ring.Fill = null;
-        else if (e.Vis.BlockBg is not null)
+        foreach (var e in _selection) ApplySelectedVisual(e, on: false);
+        _selection.Clear();
+    }
+
+    // Общая обработка клика по записи (блок/кольцо на таймлайне и строка слева).
+    private void HandleEntryClick(BarEntry entry, int clickCount, KeyModifiers mods)
+    {
+        if (clickCount >= 2)
         {
-            e.Vis.BlockBg.Background = new SolidColorBrush(Color.FromArgb(50, color.R, color.G, color.B));
-            if (e.Vis.Stripe is not null) e.Vis.Stripe.IsVisible = true;
-            e.Vis.Label.Foreground = new SolidColorBrush(Darken(color));
+            DeselectAll();
+            RecordClicked?.Invoke(this, entry.Ev);
         }
+        else if (mods.HasFlag(KeyModifiers.Shift) && mods.HasFlag(KeyModifiers.Control))
+            SelectRange(entry);
+        else if (mods.HasFlag(KeyModifiers.Shift))
+            ToggleAdditive(entry);
+        else
+            SelectOnly(entry);
+    }
+
+    // Контекстное меню по текущему выделению: одна запись — Изменить/Дублировать/
+    // Удалить, несколько — Дублировать/Удалить на весь набор (фабрика EventContextMenu).
+    private ContextMenu BuildSelectionMenu()
+    {
+        if (_selection.Count > 1)
+        {
+            var batch = _selection.Select(b => b.Ev).ToList();
+            return EventContextMenu.Multi(
+                onDeleteAll:    () => { DeselectAll(); RecordsDeleteRequested?.Invoke(this, batch); },
+                onDuplicateAll: () => { DeselectAll(); RecordsDuplicateRequested?.Invoke(this, batch); });
+        }
+        var ev = _selection[0].Ev;
+        return EventContextMenu.Single(
+            onEdit:      () => { DeselectAll(); RecordClicked?.Invoke(this, ev); },
+            onDelete:    () => { DeselectAll(); RecordDeleteRequested?.Invoke(this, ev); },
+            onDuplicate: () => { DeselectAll(); RecordDuplicateRequested?.Invoke(this, ev); });
     }
 
     // ── геометрия/дата-хелперы ──────────────────────────────────────────────────

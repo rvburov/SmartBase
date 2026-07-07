@@ -558,11 +558,14 @@ public partial class MonthView : UserControl
         var selectedBg = new SolidColorBrush(color);
         var darkBrush  = new SolidColorBrush(_Darken(color));
 
+        // Полоска утоплена внутрь плашки (как в Неделе): прижатая к краю она
+        // выступала «усиками» за скруглённый силуэт — её радиус меньше радиуса плашки.
         var leftStripe = new Border
         {
-            Width               = 4,
+            Width               = 3,
+            Margin              = new Thickness(2, 2, 0, 2),
             Background          = new SolidColorBrush(color),
-            CornerRadius        = new CornerRadius(2, 0, 0, 2),
+            CornerRadius        = new CornerRadius(2),
             HorizontalAlignment = HorizontalAlignment.Left,
         };
         var content = new Grid();
@@ -709,8 +712,8 @@ public partial class MonthView : UserControl
     {
         var color      = Color.Parse(EventColors.Display(ev.Color));
         var cr         = new CornerRadius(
-            leftCap  ? 5 : 0, rightCap ? 5 : 0,
-            rightCap ? 5 : 0, leftCap  ? 5 : 0);
+            leftCap  ? 4 : 0, rightCap ? 4 : 0,
+            rightCap ? 4 : 0, leftCap  ? 4 : 0);
         var normalBg   = new SolidColorBrush(Color.FromArgb(50, color.R, color.G, color.B));
         var hoverBg    = new SolidColorBrush(Color.FromArgb(90, color.R, color.G, color.B));
         var selectedBg = new SolidColorBrush(color);
@@ -736,11 +739,14 @@ public partial class MonthView : UserControl
         Border? leftStripeBar = null;
         if (leftCap)
         {
+            // Утоплена внутрь бара (как в Неделе) — прижатая к краю выступала
+            // «усиками» за скруглённый силуэт.
             leftStripeBar = new Border
             {
-                Width               = 4,
+                Width               = 3,
+                Margin              = new Thickness(2, 2, 0, 2),
                 Background          = new SolidColorBrush(color),
-                CornerRadius        = new CornerRadius(2, 0, 0, 2),
+                CornerRadius        = new CornerRadius(2),
                 HorizontalAlignment = HorizontalAlignment.Left,
             };
             bar.Children.Add(leftStripeBar);
