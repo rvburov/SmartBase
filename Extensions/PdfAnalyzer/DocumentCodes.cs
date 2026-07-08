@@ -3,17 +3,44 @@ using System.Text.RegularExpressions;
 namespace DataBase.Extensions.PdfAnalyzer;
 
 /// <summary>
-/// Справочные данные ЕСКД/ЕСПД (ГОСТ 2.201 / 19.101) и разбор обозначений документов —
+/// Справочные данные ЕСКД/ЕСПД (ГОСТ 2.201 / 19.101 / 19.103) и разбор обозначений документов —
 /// порт логики PyQt-утилиты «Анализ PDF файлов». Только публичные коды/правила (не секрет):
 /// коды КД/ПД и их названия, порядок сортировки, извлечение номеров КД/ПД/ТД из имени файла
 /// и формирование полного наименования документа. Чистая логика без UI и состояния, кроме
 /// кэша названий изделий, который передаётся явно.
+///
+/// <para>Как формируется децимальный номер (по нему определяется ТИП документа):</para>
+/// <code>
+///   ТД (технолог.):   АААА . 00000 . 00000 
+///                     └─┬─┘  └──┬─┘  └──┬─┘      строгий формат, без кодов-приставок
+///                     орг.    номер   номер
+///
+///   КД (ГОСТ 2.201):  АААА . 000000 . 000 [-исполн.] [КОД] [-ЛУ|-УЛ]
+///                     └─┬─┘  └──┬──┘ └┬┘             └─┬─┘  └───┬───┘
+///                     орг.    номер  версия      КОД документа  лист утв./
+///                                                (СБ, Э3, ПЗ…)  удост. лист
+///                                                      └ определяет тип → KdNameMapping / KdOrder
+///
+///   ПД (ГОСТ 19.103): КОДО . 00000 - ИИ  ВВ  ДД [-Ч] [-ЛУ|-УЛ]
+///                     └─┬─┘  └──┬─┘ └┬┘ └┬┘ └┬┘  └┬┘  └───┬───┘
+///                     орг.    рег.№ ред. ВИД  №   часть  лист утв./
+///                     (4 симв)(5 цф)(01-99)│ док-та(1-9) удост. лист
+///                                          │  (01-99)
+///                                          └ КОД ВИДА документа (ГОСТ 19.101) → PdVidCodes
+/// </code>
 /// </summary>
 public static class DocumentCodes
 {
     private static readonly string[] SuffixCodes = ["-ЛУ", "-УЛ", "ЛУ", "УЛ"];
 
-    /// <summary>Коды КД/ПД → название документа. Индексатор-инициализатор: дубликат ключа перезаписывает (как в Python).</summary>
+    // ══════════════════════════════════════════════════════════════════════════
+    //  КД — конструкторская документация (ЕСКД, ГОСТ 2.201/2.102)
+    // ──────────────────────────────────────────────────────────────────────────
+    //  Тип документа задаётся КОДом-приставкой в конце номера АААА.000000.000[…КОД]
+    //  (см. шпаргалку в summary класса). Ниже — коды сгруппированы по классам
+    //  документов (тех. проект → чертежи → схемы → перечни → ведомости → ТУ →
+    //  эксплуатационные → удостоверяющие/утверждающие листы → дополнительные).
+    /// <summary>Коды КД → название документа. Индексатор-инициализатор: дубликат ключа перезаписывает (как в Python).</summary>
     public static readonly Dictionary<string, string> KdNameMapping = new()
     {
         // === ТЕХ. ПРОЕКТ ===
@@ -101,24 +128,83 @@ public static class DocumentCodes
         ["НД"] = "Текст программы (на носителе)", ["ОП"] = "Описание программы",
     };
 
-    /// <summary>Коды ПД (шаблоны с XXXXX) → название.</summary>
-    public static readonly Dictionary<string, string> PdNameMapping = new()
+    // ══════════════════════════════════════════════════════════════════════════
+    //  ПД — программная документация (ЕСПД, ГОСТ 19.101 / 19.103)
+    // ──────────────────────────────────────────────────────────────────────────
+    //  Тип документа задаётся 2-значным «кодом вида» ВВ в номере
+    //  КОДО.РРРРР-ИИ ВВ ДД (см. шпаргалку в summary класса). Номер БЕЗ кода вида
+    //  (КОДО.РРРРР-ИИ) — это сама программа → PdBaseTypeName. Носители …НД/…НДЗ
+    //  описаны кодами НД/НДЗ в KdNameMapping (тип берётся оттуда как у КД-кода).
+
+    /// <summary>Наименование документа для номера без кода вида (сама программа/спецификация).</summary>
+    public const string PdBaseTypeName = "Спецификация";
+
+    /// <summary>Наименование для кодов вида 90–99 (прочие документы, ГОСТ 19.101).</summary>
+    public const string PdOtherTypeName = "Прочие документы";
+
+    /// <summary>Коды видов программных документов (ГОСТ 19.101, поле «ВВ») → наименование.</summary>
+    public static readonly Dictionary<string, string> PdVidCodes = new()
     {
-        ["АААА.XXXXX-01-ЛУ"] = "Спецификация Лист утверждения", ["АААА.XXXXX-01"] = "Спецификация",
-        ["АААА.XXXXX-01 12 01-ЛУ"] = "Текст программы Лист утверждения", ["АААА.XXXXX-01 12 01"] = "Текст программы",
-        ["АААА.XXXXX-01 13 01-ЛУ"] = "Описание программы Лист утверждения", ["АААА.XXXXX-01 13 01"] = "Описание программы",
-        ["АААА.XXXXX-01 20 01-ЛУ"] = "Ведомость эксплуатационных документов Лист утверждения",
-        ["АААА.XXXXX-01 20 01"] = "Ведомость эксплуатационных документов",
-        ["АААА.XXXXX-01 30 01-ЛУ"] = "Формуляр Лист утверждения", ["АААА.XXXXX-01 30 01"] = "Формуляр",
-        ["АААА.XXXXX-01 31 01-ЛУ"] = "Описание применения Лист утверждения", ["АААА.XXXXX-01 31 01"] = "Описание применения",
-        ["АААА.XXXXX-01 32 01-ЛУ"] = "Руководство системного программиста Лист утверждения",
-        ["АААА.XXXXX-01 32 01"] = "Руководство системного программиста",
-        ["АААА.XXXXX-01 34 01-ЛУ"] = "Руководство оператора Лист утверждения", ["АААА.XXXXX-01 34 01"] = "Руководство оператора",
-        ["АААА.XXXXX-01 81 01-ЛУ"] = "Пояснительная записка Лист утверждения", ["АААА.XXXXX-01 81 01"] = "Пояснительная записка",
-        ["АААА.XXXXX-01НДЗ"] = "Загрузочный диск", ["АААА.XXXXX-01НД"] = "Текст программы",
-        ["АААА.XXXXX-01НДЗ-УЛ"] = "Загрузочный диск Информационно-удостоверяющий лист",
-        ["АААА.XXXXX-01НД-УЛ"] = "Текст программы Информационно-удостоверяющий лист",
+        ["05"] = "Ведомость держателей подлинников",
+        ["12"] = "Текст программы",
+        ["13"] = "Описание программы",
+        ["20"] = "Ведомость эксплуатационных документов",
+        ["30"] = "Формуляр",
+        ["31"] = "Описание применения",
+        ["32"] = "Руководство системного программиста",
+        ["33"] = "Руководство программиста",
+        ["34"] = "Руководство оператора",
+        ["35"] = "Описание языка",
+        ["46"] = "Руководство по техническому обслуживанию",
+        ["51"] = "Программа и методика испытаний",
+        ["81"] = "Пояснительная записка",
+        // 90–99 — прочие документы (обрабатываются диапазоном, см. PdOtherTypeName).
     };
+
+    // Разбор ПД-номера на части: базовый номер программы (КОДО.РРРРР-ИИ) + опц. код вида «ВВ»
+    // (за ним идёт номер документа ДД), опц. номер части «-Ч», опц. лист «-ЛУ/-УЛ».
+    // Носители …НД/…НДЗ сюда НЕ подходят (после ред. идут буквы) — их тип даёт KdNameMapping.
+    private static readonly Regex PdDesignationRx = new(
+        @"^(?<base>[A-ZА-Я]{4}\.\d{5}-\d{2})(?:\s+(?<vid>\d{2})\s+\d{2})?(?:-\d)?(?:-(?:ЛУ|УЛ))?$",
+        RegexOptions.Compiled);
+
+    /// <summary>Тип программного документа (ГОСТ 19.101) по его децимальному номеру; "" — если это не ПД.</summary>
+    public static string ResolvePdType(string? designation)
+    {
+        if (string.IsNullOrEmpty(designation)) return "";
+        var m = PdDesignationRx.Match(designation);
+        if (!m.Success) return "";
+        var vid = m.Groups["vid"].Value;
+        if (vid.Length == 0) return PdBaseTypeName;                       // без кода вида → спецификация
+        if (PdVidCodes.TryGetValue(vid, out var name)) return name;       // известный вид
+        if (int.TryParse(vid, out var n) && n is >= 90 and <= 99) return PdOtherTypeName;
+        return "";                                                        // неизвестный код вида
+    }
+
+    /// <summary>Базовый номер программы КОДО.РРРРР-ИИ (без вида/номера/части/листа); "" — если это не ПД.</summary>
+    public static string GetPdProgramBase(string? designation)
+    {
+        if (string.IsNullOrEmpty(designation)) return "";
+        var m = PdDesignationRx.Match(designation);
+        return m.Success ? m.Groups["base"].Value : "";
+    }
+
+    // Все известные НАЗВАНИЯ ВИДОВ документов (КД + ПД) — имя изделия не может им совпадать
+    // (иначе тип «протёк» бы в слот изделия: напр. файл «…12 01 Текст программы.pdf»).
+    private static readonly HashSet<string> KnownDocTypeNames = BuildKnownDocTypeNames();
+
+    private static HashSet<string> BuildKnownDocTypeNames()
+    {
+        var set = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var v in KdNameMapping.Values) set.Add(v);
+        foreach (var v in PdVidCodes.Values) set.Add(v);
+        set.Add(PdBaseTypeName);
+        set.Add(PdOtherTypeName);
+        return set;
+    }
+
+    /// <summary>Является ли строка названием вида документа (а не именем изделия).</summary>
+    public static bool IsDocTypeName(string? name) => name is not null && KnownDocTypeNames.Contains(name);
 
     /// <summary>Порядок кодов КД для сортировки (с производными -ЛУ/-УЛ = order+0.1/+0.2).</summary>
     public static readonly Dictionary<string, double> KdOrder = BuildKdOrder();
@@ -153,18 +239,15 @@ public static class DocumentCodes
         return ext;
     }
 
-    // Все коды КД/ПД (без суффиксов), отсортированные по длине убыв. — для срезания кода с конца обозначения.
+    // Коды КД (без суффиксов), отсортированные по длине убыв. — для срезания кода с конца обозначения.
+    // ПД-номера (в т.ч. носители НД/НДЗ) обрабатываются отдельно: их коды-носители уже есть в
+    // KdNameMapping, а «программные» части номера — через PdDesignationRx / GetPdProgramBase.
     private static readonly string[] AllCodesByLenDesc = BuildAllCodes();
 
     private static string[] BuildAllCodes()
     {
-        var all = new List<string>(KdNameMapping.Keys);
-        foreach (var pattern in PdNameMapping.Keys)
-        {
-            var code = pattern.Replace("XXXXX", "");
-            if (code.Length > 0 && !all.Contains(code)) all.Add(code);
-        }
-        return all.Where(c => Array.IndexOf(SuffixCodes, c) < 0)
+        return KdNameMapping.Keys
+                  .Where(c => Array.IndexOf(SuffixCodes, c) < 0)
                   .Distinct()
                   .OrderByDescending(c => c.Length)
                   .ToArray();
@@ -174,6 +257,10 @@ public static class DocumentCodes
     public static string GetBaseDesignation(string? designation)
     {
         if (string.IsNullOrEmpty(designation)) return "";
+
+        // ПД (ГОСТ 19.103): базовый номер программы = КОДО.РРРРР-ИИ (без вида/номера/части/листа).
+        var pdBase = GetPdProgramBase(designation);
+        if (pdBase.Length > 0) return pdBase;
 
         var clean = designation;
         if (clean.EndsWith("-ЛУ") || clean.EndsWith("-УЛ")) clean = clean[..^3];
@@ -303,12 +390,18 @@ public static class DocumentCodes
             }
         }
 
+        // ПД (ГОСТ 19.101): тип — по коду вида документа в децимальном номере.
+        // Ветка ПД-гейтована (ResolvePdType != "" только для ПД-номеров), поэтому КД/ТД не затрагивает.
         if (docType2.Length == 0)
         {
-            foreach (var (pattern, dtPd) in PdNameMapping)
+            var pdType = ResolvePdType(cleanDes);
+            if (pdType.Length == 0) pdType = ResolvePdType(designation);
+            if (pdType.Length > 0)
             {
-                var rx = "^" + pattern.Replace("XXXXX", @"\d{5}");
-                if (Regex.IsMatch(designation, rx) || Regex.IsMatch(cleanDes, rx)) { docType2 = dtPd; break; }
+                docType2 = pdType;
+                var pdBase = GetPdProgramBase(cleanDes);
+                if (pdBase.Length == 0) pdBase = GetPdProgramBase(designation);
+                if (pdBase.Length > 0) baseDesignation = pdBase;   // изделие берём по базе программы
             }
         }
 
@@ -329,8 +422,15 @@ public static class DocumentCodes
             bn = bn.Replace("-ЛУ", "").Replace("-УЛ", "").Trim();
             bn = Regex.Replace(bn, @"[()\[\]_\-]+$", "").Trim();
             bn = Regex.Replace(bn, @"-\d+", "").Trim();
+            // Если тип документа уже прописан в имени файла — не дублируем его в наименовании.
+            if (docType2.Length > 0 && bn.Contains(docType2)) bn = bn.Replace(docType2, "");
+            bn = Regex.Replace(bn, @"\s{2,}", " ").Trim();
             if (bn.Length > 0) product = bn;
         }
+
+        // Изделие не может быть названием вида документа — иначе тип «протёк» в слот изделия
+        // (частый случай для ПД: имя файла содержит и номер, и словами тот же тип документа).
+        if (docType2.Length > 0 && IsDocTypeName(product)) product = "";
 
         // Раскладка по трём частям (склейка пробелом эквивалентна прежнему «полному наименованию»).
         string prodPart, typePart;

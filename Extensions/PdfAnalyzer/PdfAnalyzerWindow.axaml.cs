@@ -102,7 +102,8 @@ public partial class PdfAnalyzerWindow : Window
 
         var exportType = ExportCombo.SelectedIndex switch
         {
-            0 => ExportType.Td, 1 => ExportType.Kd, 2 => ExportType.Inventory, _ => ExportType.All,
+            0 => ExportType.Td, 1 => ExportType.Kd, 2 => ExportType.Inventory,
+            3 => ExportType.PdRegister, 4 => ExportType.PdInventory, _ => ExportType.All,
         };
         var recursive     = RecursiveCheck.IsChecked == true;
         var preserveOrder = PreserveCheck.IsChecked == true;

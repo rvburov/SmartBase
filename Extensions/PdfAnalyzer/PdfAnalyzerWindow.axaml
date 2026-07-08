@@ -51,6 +51,8 @@
                 <ComboBoxItem>Ведомость технологической документации</ComboBoxItem>
                 <ComboBoxItem>Ведомость конструкторской документации</ComboBoxItem>
                 <ComboBoxItem>Опись конструкторской документации</ComboBoxItem>
+                <ComboBoxItem>Ведомость программной документации</ComboBoxItem>
+                <ComboBoxItem>Опись программной документации</ComboBoxItem>
                 <ComboBoxItem>Все данные</ComboBoxItem>
             </ComboBox>
         </StackPanel>

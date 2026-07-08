@@ -8,8 +8,16 @@ using UglyToad.PdfPig;
 
 namespace DataBase.Extensions.PdfAnalyzer;
 
-/// <summary>Тип выгрузки (как в выпадающем списке оригинала).</summary>
-public enum ExportType { Td, Kd, Inventory, All }
+/// <summary>Тип выгрузки (порядок = порядок пунктов комбобокса окна).</summary>
+public enum ExportType
+{
+    Td,           // Ведомость технологической документации
+    Kd,           // Ведомость конструкторской документации (только КД)
+    Inventory,    // Опись конструкторской документации (только КД)
+    PdRegister,   // Ведомость программной документации (только ПД)
+    PdInventory,  // Опись программной документации (только ПД)
+    All,          // Все данные
+}
 
 /// <summary>Ошибка анализа с дружелюбным текстом.</summary>
 public sealed class PdfAnalyzeException(string message) : Exception(message);
@@ -33,9 +41,11 @@ public static class PdfAnalyzerEngine
         public int    NumPp;
         public string Name = "";
         public string DesignationTd = "";
-        public string DesignationKd = "";       // КД, иначе ПД
+        public string DesignationKd = "";       // только КД (ГОСТ 2.201)
+        public string DesignationPd = "";       // только ПД (ГОСТ 19.103)
         public string DesignationEn = "";
         public string FileKd = "";
+        public string FilePd = "";
         public string FileTd = "";
         public string Checksum = "";
         public string FileFormat = "pdf";
@@ -94,8 +104,10 @@ public static class PdfAnalyzerEngine
                 {
                     Name = name,
                     DesignationTd = td,
-                    DesignationKd = kd.Length > 0 ? kd : pd,
+                    DesignationKd = kd,
+                    DesignationPd = pd,
                     FileKd = kd.Length > 0 ? $"{kd}.pdf" : "",
+                    FilePd = pd.Length > 0 ? $"{pd}.pdf" : "",
                     FileTd = td.Length > 0 ? $"{td}.pdf" : "",
                     Checksum = checksum,
                     PageCount = pageCount,
@@ -132,7 +144,11 @@ public static class PdfAnalyzerEngine
 
         BuildDesignationCache(rows, cache);
 
-        var ordered = SortRows(rows, exportType, recursive, preserveOrder);
+        var scoped = ScopeRows(rows, exportType);
+        if (scoped.Count == 0)
+            throw new PdfAnalyzeException(NothingToExportMessage(exportType));
+
+        var ordered = SortRows(scoped, exportType, recursive, preserveOrder);
         for (int i = 0; i < ordered.Count; i++) ordered[i].NumPp = i + 1;
 
         var columns = BuildColumns(ordered, exportType, cache, splitName);
@@ -271,11 +287,7 @@ public static class PdfAnalyzerEngine
     private static void BuildDesignationCache(List<Row> rows, Dictionary<string, string> cache)
     {
         var known = new HashSet<string>(DocumentCodes.KdNameMapping.Keys, StringComparer.Ordinal);
-        foreach (var pattern in DocumentCodes.PdNameMapping.Keys)
-        {
-            var code = pattern.Replace("XXXXX", "");
-            if (code.Length > 0) known.Add(code);
-        }
+        // Коды-носители ПД (НД/НДЗ) и суффиксы; ПД-документы с кодом вида ловит регэксп ниже.
         foreach (var c in new[] { "-ЛУ", "-УЛ", "ЛУ", "УЛ", "НДЗ", "НД", "НДЗ-УЛ", "НД-УЛ", "-01" }) known.Add(c);
 
         var map = new Dictionary<string, string>(StringComparer.Ordinal);
@@ -290,13 +302,24 @@ public static class PdfAnalyzerEngine
                 var t = r.FileName.Replace(designation, "").Replace(".pdf", "").Trim();
                 cleanName = Regex.Replace(t, @"[()\[\]_\-]+$", "").Trim();
             }
+            if (cleanName.Length == 0) continue;
+            // Имя изделия не может быть названием вида документа (иначе тип «протёк» бы в изделие).
+            if (DocumentCodes.IsDocTypeName(cleanName)) continue;
 
-            var hasCode = known.Any(code => code.Length > 0 && (designation.Contains($"-{code}") || designation.EndsWith(code)));
-            if (Regex.IsMatch(designation, @"[A-ZА-Я]{4}\.\d{5}-\d{2}\s+\d{2}\s+\d{2}")) hasCode = true;
+            // ПД: спецификация (номер без кода вида, КОДО.РРРРР-ИИ) — авторитетное имя изделия
+            // для всей программы; документы (с кодом вида) лишь резервно заполняют базу.
+            var pdBase = DocumentCodes.GetPdProgramBase(designation);
+            var isPdSpec = pdBase.Length > 0 && pdBase == designation;
+            var isPdDoc  = pdBase.Length > 0 && pdBase != designation;
 
-            if (!hasCode && cleanName.Length > 0)
+            var hasCode = isPdDoc
+                || known.Any(code => code.Length > 0 && (designation.Contains($"-{code}") || designation.EndsWith(code)));
+
+            if (isPdSpec)
+                map[designation] = cleanName;                 // спецификация ПД — перезаписывает
+            else if (!hasCode)
                 map[designation] = cleanName;
-            else if (hasCode && cleanName.Length > 0)
+            else
             {
                 var baseDes = DocumentCodes.GetBaseDesignation(designation);
                 if (!map.ContainsKey(baseDes)) map[baseDes] = cleanName;
@@ -304,6 +327,30 @@ public static class PdfAnalyzerEngine
         }
         foreach (var (k, v) in map) cache[k] = v;
     }
+
+    // ── Отбор строк по типу выгрузки (полное разделение КД и ПД) ───────────────
+
+    // Чисто программный документ (ПД) — есть ПД-обозначение и нет КД-обозначения.
+    private static bool IsPd(Row r) => r.DesignationPd.Length > 0 && r.DesignationKd.Length == 0;
+
+    private static List<Row> ScopeRows(List<Row> rows, ExportType exportType) => exportType switch
+    {
+        // Ведомость/Опись КД — всё, КРОМЕ чисто программной документации.
+        ExportType.Kd or ExportType.Inventory     => rows.Where(r => !IsPd(r)).ToList(),
+        // Ведомость/Опись ПД — только программная документация.
+        ExportType.PdRegister or ExportType.PdInventory => rows.Where(IsPd).ToList(),
+        // ТД и «Все данные» — без отбора.
+        _ => rows,
+    };
+
+    private static string NothingToExportMessage(ExportType exportType) => exportType switch
+    {
+        ExportType.PdRegister or ExportType.PdInventory =>
+            "В папке не найдено программной документации (ПД) — файлов с обозначением по ГОСТ 19.103.",
+        ExportType.Kd or ExportType.Inventory =>
+            "В папке не найдено конструкторской документации (КД).",
+        _ => "Нет данных для выгрузки.",
+    };
 
     // ── Сортировка ────────────────────────────────────────────────────────────
 
@@ -322,6 +369,21 @@ public static class PdfAnalyzerEngine
                     .ThenBy(x => x.Key.Base, StringComparer.Ordinal)
                     .ThenBy(x => x.Key.Exec)
                     .ThenBy(x => x.Key.Order)
+                    .ThenBy(x => x.Key.Suffix)
+                    .ThenBy(x => x.Key.Designation, StringComparer.Ordinal)
+                    .Select(x => x.Row).ToList();
+            }
+            if (exportType is ExportType.PdRegister or ExportType.PdInventory)
+            {
+                // ПД по децимальному номеру: база программы → редакция → вид → № док-та → часть → лист.
+                return rows
+                    .Select(r => (Row: r, Key: PdSortKey(r)))
+                    .OrderBy(x => x.Key.Folder, StringComparer.Ordinal)
+                    .ThenBy(x => x.Key.Base, StringComparer.Ordinal)
+                    .ThenBy(x => x.Key.Edition)
+                    .ThenBy(x => x.Key.Vid)
+                    .ThenBy(x => x.Key.DocNum)
+                    .ThenBy(x => x.Key.Part)
                     .ThenBy(x => x.Key.Suffix)
                     .ThenBy(x => x.Key.Designation, StringComparer.Ordinal)
                     .Select(x => x.Row).ToList();
@@ -368,25 +430,55 @@ public static class PdfAnalyzerEngine
         return new SortKeyData(folder, baseNumber, exec, order, sortSuffix, designation);
     }
 
+    // Ключ сортировки ПД (ГОСТ 19.103): разбор номера КОДО.РРРРР-ИИ [ВВ ДД][-Ч][-ЛУ/-УЛ].
+    private sealed record PdSortKeyData(
+        string Folder, string Base, int Edition, int Vid, int DocNum, int Part, int Suffix, string Designation);
+
+    private static readonly Regex PdSortRx = new(
+        @"^(?<org>[A-ZА-Я]{4}\.\d{5})-(?<ed>\d{2})(?:\s+(?<vid>\d{2})\s+(?<num>\d{2}))?(?:-(?<part>\d))?(?<suf>-ЛУ|-УЛ)?");
+
+    private static PdSortKeyData PdSortKey(Row row)
+    {
+        var d = row.DesignationPd;
+        if (d.Length == 0) return new PdSortKeyData(row.Folder, "", 999, 999, 999, 0, 0, "");
+
+        var m = PdSortRx.Match(d);
+        if (!m.Success) return new PdSortKeyData(row.Folder, d, 999, 999, 999, 0, 0, d);
+
+        var baseNum = m.Groups["org"].Value;
+        int ed  = int.Parse(m.Groups["ed"].Value);
+        int vid = m.Groups["vid"].Length > 0 ? int.Parse(m.Groups["vid"].Value) : -1;   // без вида (спецификация) — раньше документов
+        int num = m.Groups["num"].Length > 0 ? int.Parse(m.Groups["num"].Value) : 0;
+        int part = m.Groups["part"].Length > 0 ? int.Parse(m.Groups["part"].Value) : 0;
+        int suf = m.Groups["suf"].Value switch { "-ЛУ" => 1, "-УЛ" => 2, _ => 0 };
+        return new PdSortKeyData(row.Folder, baseNum, ed, vid, num, part, suf, d);
+    }
+
     // ── Колонки по типу выгрузки ──────────────────────────────────────────────
 
     private static List<(string Header, Func<Row, object?> Value)> BuildColumns(
         List<Row> rows, ExportType exportType, Dictionary<string, string> cache, bool splitName)
     {
-        // Для КД/Описи/Всех — пересчёт «Наименование документа» из спецификаций.
-        if (exportType is ExportType.Kd or ExportType.Inventory or ExportType.All)
+        // Пересчёт «Наименование документа» из спецификаций — для всех выгрузок с наименованием
+        // (КД/Опись КД/ПД/Опись ПД/Все). КД берёт обозначение из DesignationKd, ПД — из DesignationPd.
+        if (exportType is ExportType.Kd or ExportType.Inventory or ExportType.All
+                       or ExportType.PdRegister or ExportType.PdInventory)
         {
             var allDes = new Dictionary<string, string>(StringComparer.Ordinal);
             foreach (var r in rows)
+            {
                 if (r.DesignationKd.Length > 0 && r.Name.Length > 0) allDes[r.DesignationKd] = r.Name;
+                if (r.DesignationPd.Length > 0 && r.Name.Length > 0) allDes[r.DesignationPd] = r.Name;
+            }
 
             foreach (var r in rows)
             {
-                if (exportType == ExportType.All && r.DesignationKd.Length == 0) continue;   // оставляем как есть
+                var des = r.DesignationKd.Length > 0 ? r.DesignationKd : r.DesignationPd;
+                if (des.Length == 0) continue;   // нет обозначения — оставляем имя как есть
                 // splitName: изделие / тип / лист — каждая часть с новой строки внутри ячейки.
                 r.Name = splitName
-                    ? DocumentCodes.GetDocumentFullNameMultiline(r.DesignationKd, r.FileName, allDes, cache)
-                    : DocumentCodes.GetDocumentFullName(r.DesignationKd, r.FileName, allDes, cache);
+                    ? DocumentCodes.GetDocumentFullNameMultiline(des, r.FileName, allDes, cache)
+                    : DocumentCodes.GetDocumentFullName(des, r.FileName, allDes, cache);
             }
         }
 
@@ -419,6 +511,22 @@ public static class PdfAnalyzerEngine
             ExportType.Inventory =>
             [
                 ("№ п/п", r => r.NumPp), ("Обозначение", r => r.DesignationKd), ("Наименование", r => r.Name),
+                ("Количество листов в документе", r => r.PageCount), ("Примечание", r => r.Note),
+            ],
+            ExportType.PdRegister =>   // Ведомость программной документации (зеркало КД, но обозначение ПД)
+            [
+                ("№ п/п", r => r.NumPp), ("Наименование документа", r => r.Name),
+                ("Обозначение документа ПД", r => r.DesignationPd), ("Обозначение ЭН", r => r.DesignationEn),
+                ("Обозначение файла ПД", r => r.FilePd), ("Контрольная сумма", r => r.Checksum),
+                ("Формат файла", r => r.FileFormat), ("Физических листов", r => r.PageCount),
+                ("А4", r => Count(r.A4)), ("А3", r => Count(r.A3)), ("А2", r => Count(r.A2)),
+                ("А1", r => Count(r.A1)), ("А0", r => Count(r.A0)),
+                ("Доп. форматы", r => r.Additional), ("Листов формата А4", r => Count(r.A4Sheets)),
+                ("Объем, МБ", r => r.SizeMb), ("Гриф секретности", r => r.Secrecy), ("Примечание", r => r.Note),
+            ],
+            ExportType.PdInventory =>   // Опись программной документации (сокращённый формат)
+            [
+                ("№ п/п", r => r.NumPp), ("Обозначение", r => r.DesignationPd), ("Наименование", r => r.Name),
                 ("Количество листов в документе", r => r.PageCount), ("Примечание", r => r.Note),
             ],
             _ =>   // All
@@ -522,8 +630,8 @@ public static class PdfAnalyzerEngine
         "Обозначение ЭН" => 19,
         "Гриф секретности" => 14,
         "Примечание" => 14,
-        "Обозначение файла КД" or "Обозначение файла ТД" => 27,
-        "Обозначение документа ТД" or "Обозначение документа КД" => 29,
+        "Обозначение файла КД" or "Обозначение файла ТД" or "Обозначение файла ПД" => 27,
+        "Обозначение документа ТД" or "Обозначение документа КД" or "Обозначение документа ПД" => 29,
         "А4" or "А3" or "А2" or "А1" or "А0" => 4,
         "Доп. форматы" => 11,
         "Листов формата А4" => 12,
@@ -564,15 +672,24 @@ public static class PdfAnalyzerEngine
                 sb.AppendLine("Выгружен отчёт по технологической документации (ТД).");
                 break;
             case ExportType.Kd:
-                sb.AppendLine($"- Файлов с обозначением КД/ПД: {rows.Count(r => r.DesignationKd.Length > 0)}");
-                sb.AppendLine("Выгружен отчёт по конструкторской/программной документации (КД/ПД).");
+                sb.AppendLine($"- Файлов с обозначением КД: {rows.Count(r => r.DesignationKd.Length > 0)}");
+                sb.AppendLine("Выгружен отчёт по конструкторской документации (КД).");
                 break;
             case ExportType.Inventory:
-                sb.AppendLine($"- Файлов в описи КД/ПД: {rows.Count}");
-                sb.AppendLine("Выгружена опись конструкторской/программной документации (КД/ПД) — сокращённый формат.");
+                sb.AppendLine($"- Файлов в описи КД: {rows.Count}");
+                sb.AppendLine("Выгружена опись конструкторской документации (КД) — сокращённый формат.");
+                break;
+            case ExportType.PdRegister:
+                sb.AppendLine($"- Файлов с обозначением ПД: {rows.Count(r => r.DesignationPd.Length > 0)}");
+                sb.AppendLine("Выгружен отчёт по программной документации (ПД).");
+                break;
+            case ExportType.PdInventory:
+                sb.AppendLine($"- Файлов в описи ПД: {rows.Count}");
+                sb.AppendLine("Выгружена опись программной документации (ПД) — сокращённый формат.");
                 break;
             default:
-                sb.AppendLine($"- Файлов с обозначением КД/ПД: {rows.Count(r => r.DesignationKd.Length > 0)}");
+                sb.AppendLine($"- Файлов с обозначением КД: {rows.Count(r => r.DesignationKd.Length > 0)}");
+                sb.AppendLine($"- Файлов с обозначением ПД: {rows.Count(r => r.DesignationPd.Length > 0)}");
                 sb.AppendLine($"- Файлов с обозначением ТД: {rows.Count(r => r.DesignationTd.Length > 0)}");
                 sb.AppendLine("Выгружен полный отчёт со всеми данными.");
                 break;
