@@ -51,8 +51,7 @@ public partial class DiagramView : UserControl
     // единый токен RowHeightStandard (Controls.axaml), резолв как в TableView.
     private static double RowH =>
         Application.Current!.TryFindResource("RowHeightStandard", out var r) && r is double d ? d : 36;
-    private const double BarH       = 20;   // высота блока (запись и группа) — как у баров Месяца
-    private const double RingD      = 10;   // диаметр кольца однодневного события
+    private const double BarH       = 20;   // высота блока и диаметр круга однодневного события
     private const double LabelGap   = 6;    // зазор бар ↔ подпись
     private const double EdgeHit    = 6;    // зона захвата ресайза по краям бара
     private const double LeftIndent = 24;   // отступ строк записей в левой панели
@@ -161,11 +160,10 @@ public partial class DiagramView : UserControl
     private sealed class EventVisual
     {
         public double X1, X2;
-        public bool   IsRing;
+        public bool   IsDot;
         public bool   ClipL, ClipR;
         public Border? BlockBg;                              // полупрозрачный слой блока
-        public Border? Stripe;                               // цветной акцент слева
-        public Avalonia.Controls.Shapes.Ellipse? Ring;
+        public Avalonia.Controls.Shapes.Ellipse? Dot;        // сплошной круг однодневного события
         public TextBlock Label = null!;
         public bool LabelInside;                             // подпись внутри блока
     }
@@ -175,11 +173,11 @@ public partial class DiagramView : UserControl
         public CalendarRecord Ev = null!;
         public int    RowIdx;     // индекс строки — для выделения диапазона
         public double Y;          // верх строки
-        public double X1, X2;     // клампленная геометрия бара/кольца
-        public bool   IsRing;
+        public double X1, X2;     // клампленная геометрия бара/круга
+        public bool   IsDot;
         public bool   ClipL, ClipR;   // край обрезан границей периода — ресайз с него запрещён
         public EventVisual? Vis;
-        public List<Control> Visuals = [];   // для приглушения на время drag
+        public List<Control> Visuals = [];   // прячутся на время drag (виден только ghost)
     }
     private readonly List<BarEntry> _barEntries = [];
 
@@ -751,7 +749,7 @@ public partial class DiagramView : UserControl
         // Источник — агрегаты фазы 2 (чтение окна обрезано cap'ом на коллекцию, охват
         // должен знать и про необрезанное); до их прихода и при поиске — доставленные
         // записи. Диапазон группы рисуется КАК СОБЫТИЕ (тот же рендер, что у записей):
-        // блок по ячейкам дней, однодневный охват — кольцо по центру ячейки; подпись —
+        // блок по ячейкам дней, однодневный охват — круг по центру ячейки; подпись —
         // суммарный охват дней И времени («30 минут», «1 день 3 часа 30 минут»).
         // Полностью all-day группа считается как all-day («N дней»/«24 часа»);
         // в смешанной all-day-конец берётся концом суток, чтобы длительность не
@@ -812,12 +810,12 @@ public partial class DiagramView : UserControl
         row.PointerExited  += (_, _) => SetRowHover(-1);
         LeftRowsCanvas.Children.Add(row);
 
-        // Таймлайн: бар или кольцо + хит-запись для drag/resize.
+        // Таймлайн: бар или круг + хит-запись для drag/resize.
         var entry = new BarEntry { Ev = ev, Y = y };
         var vis = RenderEventVisual(
             BarsCanvas, entry.Visuals, y, ev.StartDt, ev.EndDt, ev.AllDay,
             DisplayColor(ev.Color), dayW, timelineW);
-        entry.X1 = vis.X1; entry.X2 = vis.X2; entry.IsRing = vis.IsRing;
+        entry.X1 = vis.X1; entry.X2 = vis.X2; entry.IsDot = vis.IsDot;
         entry.ClipL = vis.ClipL; entry.ClipR = vis.ClipR;
         entry.Vis = vis;
         _barEntries.Add(entry);
@@ -855,7 +853,7 @@ public partial class DiagramView : UserControl
         LeftRowsCanvas.Children.Add(tb);
     }
 
-    // Рисует событие (блок или кольцо) в строке y и возвращает геометрию + слои
+    // Рисует событие (блок или круг) в строке y и возвращает геометрию + слои
     // для эффектов. Используется для записей, диапазона группы и ghost при drag.
     private EventVisual RenderEventVisual(
         Canvas canvas, List<Control> visuals, double y,
@@ -864,7 +862,8 @@ public partial class DiagramView : UserControl
     {
         // Геометрия — ПО ЯЧЕЙКАМ ДНЕЙ, как бары Месяца: блок занимает колонки от
         // первого до последнего дня события целиком, время суток на позицию не
-        // влияет. Однодневное событие (timed или all-day) — кольцо по центру ячейки.
+        // влияет. Однодневное событие (timed или all-day) — сплошной круг по центру
+        // ячейки, диаметром в высоту блока.
         var startIdx = (int)(start.Date - _rangeStart).TotalDays;
         var endIdx   = (int)(LastIncludedDay(start, end, allDay) - _rangeStart).TotalDays;
         if (endIdx < startIdx) endIdx = startIdx;
@@ -886,6 +885,7 @@ public partial class DiagramView : UserControl
         {
             Text       = RuDuration(start, end, allDay),
             FontSize   = FontSizeBase,
+            FontWeight = WeightBold,   // как заголовок события в Месяце
             Foreground = dark,
         };
         label.Measure(Size.Infinity);
@@ -906,63 +906,69 @@ public partial class DiagramView : UserControl
 
         if (startIdx == endIdx)
         {
-            var cx   = (i1 + 0.5) * dayW;   // центр ячейки дня — по ширине и высоте строки
-            var ring = new Avalonia.Controls.Shapes.Ellipse
+            var cx  = (i1 + 0.5) * dayW;   // центр ячейки дня — по ширине и высоте строки
+            var dot = new Avalonia.Controls.Shapes.Ellipse
             {
-                Width = RingD, Height = RingD,
-                Stroke = new SolidColorBrush(color), StrokeThickness = 2,
+                Width = BarH, Height = BarH,
+                Fill  = new SolidColorBrush(color),
             };
-            Canvas.SetLeft(ring, cx - RingD / 2);
-            Canvas.SetTop(ring, y + (RowH - RingD) / 2);
-            canvas.Children.Add(ring);
-            visuals.Add(ring);
+            Canvas.SetLeft(dot, cx - BarH / 2);
+            Canvas.SetTop(dot, y + (RowH - BarH) / 2);
+            canvas.Children.Add(dot);
+            visuals.Add(dot);
 
-            var lx = cx + RingD / 2 + LabelGap;
-            if (lx + tw > timelineW) lx = cx - RingD / 2 - LabelGap - tw;
+            var lx = cx + BarH / 2 + LabelGap;
+            if (lx + tw > timelineW) lx = cx - BarH / 2 - LabelGap - tw;
             AddOutside(lx);
             return new EventVisual
             {
-                X1 = cx - RingD / 2, X2 = cx + RingD / 2, IsRing = true,
-                Ring = ring, Label = label,
+                X1 = cx - BarH / 2, X2 = cx + BarH / 2, IsDot = true,
+                Dot = dot, Label = label,
             };
         }
 
         var w    = x2 - x1;
         var barY = y + (RowH - BarH) / 2;
-        var bar  = MakeBlock(w, color, clipL, clipR, out var blockBg, out var stripe);
+        var bar  = MakeBlock(w, color, clipL, clipR, out var blockBg, out var circle);
         Canvas.SetLeft(bar, x1);
         Canvas.SetTop(bar, barY);
         canvas.Children.Add(bar);
         visuals.Add(bar);
 
-        var inside = tw <= w - 16;
+        // Подпись предпочитает место ВНЕ блока: справа, не влезла — слева; внутрь
+        // (в начало, сразу после круга) уходит только когда снаружи места нет —
+        // блок почти во всю ширину таймлайна.
+        var fitsR  = x2 + LabelGap + tw <= timelineW;
+        var fitsL  = x1 - LabelGap - tw >= 0;
+        var inside = !fitsR && !fitsL;
         if (inside)
         {
-            // Внутри блока — как в Месяце: ребёнок блока, центр по вертикали.
             label.VerticalAlignment   = Avalonia.Layout.VerticalAlignment.Center;
             label.HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Left;
-            label.Margin              = new Thickness(8, 0, 4, 0);
-            bar.Children.Add(label);   // приглушение на drag наследуется от блока
+            label.Margin              = new Thickness(circle is null ? 8 : BarH + LabelGap, 0, 8, 0);
+            bar.Children.Add(label);   // скрытие на drag наследуется от блока
         }
         else
         {
-            AddOutside(x2 + LabelGap + tw <= timelineW ? x2 + LabelGap
-                                                       : x1 - LabelGap - tw);
+            AddOutside(fitsR ? x2 + LabelGap : x1 - LabelGap - tw);
         }
         return new EventVisual
         {
             X1 = x1, X2 = x2, ClipL = clipL, ClipR = clipR,
-            BlockBg = blockBg, Stripe = stripe, Label = label, LabelInside = inside,
+            BlockBg = blockBg, Label = label, LabelInside = inside,
         };
     }
 
-    // Блок в стиле баров Месяца (_AddSpanBar): белая подложка глушит линии сетки и
-    // заливку выходных под баром, поверх — полупрозрачный цвет; скругление только
-    // на реальных краях события; цветной акцент слева — только у его начала.
+    // Блок-«пилюля»: белая подложка глушит линии сетки и заливку выходных под
+    // баром, поверх — полупрозрачный цвет; скругление в половину высоты — силуэт
+    // совпадает с кругом у начала. Скругление и круг — только на реальных краях
+    // события; в блок уже круга (короткое событие на крупном масштабе) круг
+    // не рисуется.
     private static Grid MakeBlock(double w, Color color, bool clipL, bool clipR,
-                                  out Border bg, out Border? stripe)
+                                  out Border bg, out Border? circle)
     {
-        var cr  = new CornerRadius(clipL ? 0 : 4, clipR ? 0 : 4, clipR ? 0 : 4, clipL ? 0 : 4);
+        var r   = BarH / 2;
+        var cr  = new CornerRadius(clipL ? 0 : r, clipR ? 0 : r, clipR ? 0 : r, clipL ? 0 : r);
         var bar = new Grid { Width = w, Height = BarH };
         bar.Children.Add(new Border { Background = Brushes.White, CornerRadius = cr });
         bg = new Border
@@ -971,20 +977,17 @@ public partial class DiagramView : UserControl
             CornerRadius = cr,
         };
         bar.Children.Add(bg);
-        stripe = null;
-        if (!clipL)
+        circle = null;
+        if (!clipL && w >= BarH)
         {
-            // Утоплена внутрь блока (как в Неделе/Месяце) — прижатая к краю
-            // выступала «усиками» за скруглённый силуэт.
-            stripe = new Border
+            circle = new Border
             {
-                Width               = 3,
-                Margin              = new Thickness(2, 2, 0, 2),
+                Width               = BarH,
                 Background          = new SolidColorBrush(color),
-                CornerRadius        = new CornerRadius(2),
+                CornerRadius        = new CornerRadius(r),
                 HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Left,
             };
-            bar.Children.Add(stripe);
+            bar.Children.Add(circle);
         }
         return bar;
     }
@@ -1038,7 +1041,7 @@ public partial class DiagramView : UserControl
         _isDragging      = false;
         // Узкий бар (короткое событие на годовом масштабе) не ресайзится: зоны краёв
         // накрыли бы его целиком, не оставив места для переноса.
-        var canResize = !hit.IsRing && hit.X2 - hit.X1 >= EdgeHit * 3;
+        var canResize = !hit.IsDot && hit.X2 - hit.X1 >= EdgeHit * 3;
         _resizeLeft  = canResize && !hit.ClipL && Math.Abs(p.X - hit.X1) <= EdgeHit;
         _resizeRight = canResize && !_resizeLeft && !hit.ClipR && Math.Abs(p.X - hit.X2) <= EdgeHit;
         _origStart   = hit.Ev.StartDt;
@@ -1064,7 +1067,9 @@ public partial class DiagramView : UserControl
             _isDragging = true;
             DeselectAll();      // drag отменяет выделение — как в Месяце
             SetRowHover(-1);    // и прячет подсветку строки
-            foreach (var v in _pressEntry.Visuals) v.Opacity = 0.45;
+            // Исходник прячется целиком (в Месяце он приглушается, здесь полупрозрачный
+            // остаток на старом месте не нужен) — виден только ghost на новой позиции.
+            foreach (var v in _pressEntry.Visuals) v.IsVisible = false;
         }
 
         if (_resizeLeft || _resizeRight)
@@ -1109,7 +1114,7 @@ public partial class DiagramView : UserControl
 
         e.Pointer.Capture(null);
         DragOverlay.Children.Clear();
-        foreach (var v in entry.Visuals) v.Opacity = 1.0;
+        foreach (var v in entry.Visuals) v.IsVisible = true;
         _pressEntry = null;
         _isDragging = false;
 
@@ -1141,7 +1146,7 @@ public partial class DiagramView : UserControl
         foreach (var b in _barEntries)
         {
             if (p.Y < b.Y || p.Y > b.Y + RowH) continue;
-            var pad = b.IsRing ? 4 : EdgeHit;
+            var pad = b.IsDot ? 4 : EdgeHit;
             if (p.X >= b.X1 - pad && p.X <= b.X2 + pad) return b;
         }
         return null;
@@ -1152,7 +1157,7 @@ public partial class DiagramView : UserControl
         var hit = HitTest(p);
         SetRowHover((int)(p.Y / RowH));
 
-        // Ховер — как в Месяце: подсветка блока/кольца под курсором.
+        // Ховер — как в Месяце: подсветка блока/круга под курсором.
         if (!ReferenceEquals(hit, _hover))
         {
             if (_hover is not null) ApplyHover(_hover, on: false);
@@ -1161,7 +1166,7 @@ public partial class DiagramView : UserControl
         }
 
         if (hit is null) { TimelinePane.Cursor = Cursor.Default; return; }
-        var onEdge = !hit.IsRing && hit.X2 - hit.X1 >= EdgeHit * 3 &&
+        var onEdge = !hit.IsDot && hit.X2 - hit.X1 >= EdgeHit * 3 &&
                      ((!hit.ClipL && Math.Abs(p.X - hit.X1) <= EdgeHit) ||
                       (!hit.ClipR && Math.Abs(p.X - hit.X2) <= EdgeHit));
         TimelinePane.Cursor = onEdge ? CursorResize : CursorHand;
@@ -1192,30 +1197,29 @@ public partial class DiagramView : UserControl
     {
         if (_selection.Contains(e) || e.Vis is null) return;
         var color = DisplayColor(e.Ev.Color);
-        if (e.Vis.Ring is not null)
-            e.Vis.Ring.Fill = on ? new SolidColorBrush(Color.FromArgb(60, color.R, color.G, color.B)) : null;
+        if (e.Vis.Dot is not null)
+            e.Vis.Dot.Fill = new SolidColorBrush(on ? Darken(color, 0.85) : color);
         else if (e.Vis.BlockBg is not null)
             e.Vis.BlockBg.Background =
                 new SolidColorBrush(Color.FromArgb(on ? (byte)90 : (byte)50, color.R, color.G, color.B));
     }
 
-    // Визуал выделения одной записи (заливка цветом / сплошное кольцо — как в Месяце).
+    // Визуал выделения одной записи: блок заливается цветом (круг у начала сливается
+    // с заливкой — прятать не нужно), круг однодневного события темнеет.
     private void ApplySelectedVisual(BarEntry e, bool on)
     {
         if (e.Vis is null) return;
         var color = DisplayColor(e.Ev.Color);
-        if (e.Vis.Ring is not null)
+        if (e.Vis.Dot is not null)
         {
-            e.Vis.Ring.Fill = on ? new SolidColorBrush(color) : null;
+            e.Vis.Dot.Fill = new SolidColorBrush(on ? Darken(color) : color);
         }
         else if (e.Vis.BlockBg is not null)
         {
             e.Vis.BlockBg.Background = on
                 ? new SolidColorBrush(color)
                 : new SolidColorBrush(Color.FromArgb(50, color.R, color.G, color.B));
-            // Полоска прячется, чтобы не квадратить скруглённый левый край (как в Месяце);
-            // белый текст — только внутри залитого блока, подпись снаружи остаётся тёмной.
-            if (e.Vis.Stripe is not null) e.Vis.Stripe.IsVisible = !on;
+            // Белый текст — только внутри залитого блока, подпись снаружи остаётся тёмной.
             if (e.Vis.LabelInside) e.Vis.Label.Foreground = on ? Brushes.White : new SolidColorBrush(Darken(color));
         }
     }
@@ -1262,7 +1266,7 @@ public partial class DiagramView : UserControl
         _selection.Clear();
     }
 
-    // Общая обработка клика по записи (блок/кольцо на таймлайне и строка слева).
+    // Общая обработка клика по записи (блок/круг на таймлайне и строка слева).
     private void HandleEntryClick(BarEntry entry, int clickCount, KeyModifiers mods)
     {
         if (clickCount >= 2)
