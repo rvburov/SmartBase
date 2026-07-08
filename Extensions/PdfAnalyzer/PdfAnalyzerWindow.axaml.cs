@@ -100,10 +100,11 @@ public partial class PdfAnalyzerWindow : Window
         if (string.IsNullOrEmpty(folder)) { SetStatus("Укажите папку с PDF-файлами", "BrushRed"); return; }
         if (!Directory.Exists(folder))    { SetStatus("Папка не существует", "BrushRed"); return; }
 
+        // Порядок пунктов: сначала все Ведомости (ТД/КД/ПД), затем Описи (КД/ПД), затем «Все данные».
         var exportType = ExportCombo.SelectedIndex switch
         {
-            0 => ExportType.Td, 1 => ExportType.Kd, 2 => ExportType.Inventory,
-            3 => ExportType.PdRegister, 4 => ExportType.PdInventory, _ => ExportType.All,
+            0 => ExportType.Td, 1 => ExportType.Kd, 2 => ExportType.PdRegister,
+            3 => ExportType.Inventory, 4 => ExportType.PdInventory, _ => ExportType.All,
         };
         var recursive     = RecursiveCheck.IsChecked == true;
         var preserveOrder = PreserveCheck.IsChecked == true;

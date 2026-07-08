@@ -8,7 +8,7 @@ using UglyToad.PdfPig;
 
 namespace DataBase.Extensions.PdfAnalyzer;
 
-/// <summary>Тип выгрузки (порядок = порядок пунктов комбобокса окна).</summary>
+/// <summary>Тип выгрузки. Порядок пунктов комбобокса задаётся в окне (сопоставление в OnExecuteClick).</summary>
 public enum ExportType
 {
     Td,           // Ведомость технологической документации
@@ -375,15 +375,15 @@ public static class PdfAnalyzerEngine
             }
             if (exportType is ExportType.PdRegister or ExportType.PdInventory)
             {
-                // ПД по децимальному номеру: база программы → редакция → вид → № док-та → часть → лист.
+                // ПД по децимальному номеру: база программы → редакция → ГРУППА (спецификация →
+                // документы по видам → носители НД/НДЗ в конце) → порядок внутри группы → лист.
                 return rows
                     .Select(r => (Row: r, Key: PdSortKey(r)))
                     .OrderBy(x => x.Key.Folder, StringComparer.Ordinal)
                     .ThenBy(x => x.Key.Base, StringComparer.Ordinal)
                     .ThenBy(x => x.Key.Edition)
-                    .ThenBy(x => x.Key.Vid)
-                    .ThenBy(x => x.Key.DocNum)
-                    .ThenBy(x => x.Key.Part)
+                    .ThenBy(x => x.Key.Group)
+                    .ThenBy(x => x.Key.Order)
                     .ThenBy(x => x.Key.Suffix)
                     .ThenBy(x => x.Key.Designation, StringComparer.Ordinal)
                     .Select(x => x.Row).ToList();
@@ -430,28 +430,47 @@ public static class PdfAnalyzerEngine
         return new SortKeyData(folder, baseNumber, exec, order, sortSuffix, designation);
     }
 
-    // Ключ сортировки ПД (ГОСТ 19.103): разбор номера КОДО.РРРРР-ИИ [ВВ ДД][-Ч][-ЛУ/-УЛ].
+    // Ключ сортировки ПД (ГОСТ 19.103): разбор номера КОДО.РРРРР-ИИ<хвост>.
+    // Group: 0 — спецификация (сама программа), 1 — документы по коду вида, 2 — НОСИТЕЛИ (в конец).
+    // Order: внутри группы (для видов = вид*1000 + номер*10 + часть; для носителей 0=НД, 1=НДЗ).
     private sealed record PdSortKeyData(
-        string Folder, string Base, int Edition, int Vid, int DocNum, int Part, int Suffix, string Designation);
+        string Folder, string Base, int Edition, int Group, int Order, int Suffix, string Designation);
 
-    private static readonly Regex PdSortRx = new(
-        @"^(?<org>[A-ZА-Я]{4}\.\d{5})-(?<ed>\d{2})(?:\s+(?<vid>\d{2})\s+(?<num>\d{2}))?(?:-(?<part>\d))?(?<suf>-ЛУ|-УЛ)?");
+    private static readonly Regex PdSortRx = new(@"^(?<org>[A-ZА-Я]{4}\.\d{5})-(?<ed>\d{2})(?<rest>.*)$");
+    private static readonly Regex PdVidRx  = new(@"^\s+(\d{2})\s+(\d{2})(?:-(\d))?$");
 
     private static PdSortKeyData PdSortKey(Row row)
     {
         var d = row.DesignationPd;
-        if (d.Length == 0) return new PdSortKeyData(row.Folder, "", 999, 999, 999, 0, 0, "");
+        if (d.Length == 0) return new PdSortKeyData(row.Folder, "", 999, 9, 0, 0, "");
 
         var m = PdSortRx.Match(d);
-        if (!m.Success) return new PdSortKeyData(row.Folder, d, 999, 999, 999, 0, 0, d);
+        if (!m.Success) return new PdSortKeyData(row.Folder, d, 999, 9, 0, 0, d);
 
         var baseNum = m.Groups["org"].Value;
-        int ed  = int.Parse(m.Groups["ed"].Value);
-        int vid = m.Groups["vid"].Length > 0 ? int.Parse(m.Groups["vid"].Value) : -1;   // без вида (спецификация) — раньше документов
-        int num = m.Groups["num"].Length > 0 ? int.Parse(m.Groups["num"].Value) : 0;
-        int part = m.Groups["part"].Length > 0 ? int.Parse(m.Groups["part"].Value) : 0;
-        int suf = m.Groups["suf"].Value switch { "-ЛУ" => 1, "-УЛ" => 2, _ => 0 };
-        return new PdSortKeyData(row.Folder, baseNum, ed, vid, num, part, suf, d);
+        int ed = int.Parse(m.Groups["ed"].Value);
+        var rest = m.Groups["rest"].Value;                     // после "-ИИ": "", " 12 01", " 12 01-1", "НД", "НДЗ-УЛ", "-ЛУ"…
+
+        int suffix = 0;                                        // 0 — без листа, 1 — -ЛУ, 2 — -УЛ
+        if (rest.EndsWith("-ЛУ")) { suffix = 1; rest = rest[..^3]; }
+        else if (rest.EndsWith("-УЛ")) { suffix = 2; rest = rest[..^3]; }
+
+        // Носители данных — В КОНЕЦ (группа 2): НД → НД-УЛ → НДЗ → НДЗ-УЛ (порядок обеспечивают Order+Suffix).
+        if (rest == "НД")  return new PdSortKeyData(row.Folder, baseNum, ed, 2, 0, suffix, d);
+        if (rest == "НДЗ") return new PdSortKeyData(row.Folder, baseNum, ed, 2, 1, suffix, d);
+
+        // Документ по коду вида " ВВ ДД[-Ч]" — группа 1.
+        var vm = PdVidRx.Match(rest);
+        if (vm.Success)
+        {
+            int vid = int.Parse(vm.Groups[1].Value);
+            int num = int.Parse(vm.Groups[2].Value);
+            int part = vm.Groups[3].Length > 0 ? int.Parse(vm.Groups[3].Value) : 0;
+            return new PdSortKeyData(row.Folder, baseNum, ed, 1, vid * 1000 + num * 10 + part, suffix, d);
+        }
+
+        // Голая спецификация (rest == "") и всё прочее — группа 0 (начало).
+        return new PdSortKeyData(row.Folder, baseNum, ed, 0, 0, suffix, d);
     }
 
     // ── Колонки по типу выгрузки ──────────────────────────────────────────────
