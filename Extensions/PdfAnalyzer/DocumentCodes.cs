@@ -161,11 +161,17 @@ public static class DocumentCodes
         // 90–99 — прочие документы (обрабатываются диапазоном, см. PdOtherTypeName).
     };
 
-    // Разбор ПД-номера на части: базовый номер программы (КОДО.РРРРР-ИИ) + опц. код вида «ВВ»
-    // (за ним идёт номер документа ДД), опц. номер части «-Ч», опц. лист «-ЛУ/-УЛ».
-    // Носители …НД/…НДЗ сюда НЕ подходят (после ред. идут буквы) — их тип даёт KdNameMapping.
+    // Разбор ПД-номера ДЛЯ ТИПА (ResolvePdType): базовый номер + опц. код вида «ВВ» (за ним номер
+    // документа ДД), опц. часть «-Ч», опц. лист «-ЛУ/-УЛ». Носители …НД/…НДЗ сюда НЕ подходят —
+    // их тип даёт код НД/НДЗ из KdNameMapping, поэтому здесь они (намеренно) не матчатся.
     private static readonly Regex PdDesignationRx = new(
         @"^(?<base>[A-ZА-Я]{4}\.\d{5}-\d{2})(?:\s+(?<vid>\d{2})\s+\d{2})?(?:-\d)?(?:-(?:ЛУ|УЛ))?$",
+        RegexOptions.Compiled);
+
+    // Разбор ДЛЯ БАЗЫ ИЗДЕЛИЯ (GetPdProgramBase): то же, но ВКЛЮЧАЯ носители …НД/…НДЗ(-УЛ) —
+    // изделие у носителей общее с программой, поэтому база = КОДО.РРРРР-ИИ (с редакцией!).
+    private static readonly Regex PdProgramBaseRx = new(
+        @"^(?<base>[A-ZА-Я]{4}\.\d{5}-\d{2})(?:\s+\d{2}\s+\d{2})?(?:НДЗ|НД)?(?:-\d)?(?:-(?:ЛУ|УЛ))?$",
         RegexOptions.Compiled);
 
     /// <summary>Тип программного документа (ГОСТ 19.101) по его децимальному номеру; "" — если это не ПД.</summary>
@@ -181,11 +187,12 @@ public static class DocumentCodes
         return "";                                                        // неизвестный код вида
     }
 
-    /// <summary>Базовый номер программы КОДО.РРРРР-ИИ (без вида/номера/части/листа); "" — если это не ПД.</summary>
+    /// <summary>Базовый номер программы КОДО.РРРРР-ИИ (без вида/номера/части/листа, но с редакцией);
+    /// "" — если это не ПД. Матчит и носители …НД/…НДЗ — у них изделие общее с программой.</summary>
     public static string GetPdProgramBase(string? designation)
     {
         if (string.IsNullOrEmpty(designation)) return "";
-        var m = PdDesignationRx.Match(designation);
+        var m = PdProgramBaseRx.Match(designation);
         return m.Success ? m.Groups["base"].Value : "";
     }
 
@@ -351,8 +358,15 @@ public static class DocumentCodes
             var docType = KdNameMapping[exc];
             // У спец. комбинаций тип и лист хранятся одной строкой — разделяем по известному окончанию.
             var (excType, excSheet) = SplitSheetSuffix(docType);
-            var baseDes = GetBaseDesignation(designation[..^exc.Length]);
-            if (baseDes.Length > 0) baseDes = Regex.Replace(baseDes, @"-\d+$", "");
+            var head = designation[..^exc.Length];
+            // ПД (в т.ч. носители НД-УЛ/НДЗ-УЛ): база изделия = программный номер КОДО.РРРРР-ИИ (с
+            // редакцией). Для КД — прежняя логика: базовый номер минус исполнение «-\d».
+            var baseDes = GetPdProgramBase(head);
+            if (baseDes.Length == 0)
+            {
+                baseDes = GetBaseDesignation(head);
+                if (baseDes.Length > 0) baseDes = Regex.Replace(baseDes, @"-\d+$", "");
+            }
 
             var prod = "";
             if (baseDes.Length > 0 && cache.TryGetValue(baseDes, out var c1)) prod = c1;
@@ -381,6 +395,13 @@ public static class DocumentCodes
         if (baseDesignation.Length > 0) baseDesignation = Regex.Replace(baseDesignation, @"-\d+$", "");
         var docType2 = docCode is not null && KdNameMapping.TryGetValue(docCode, out var dt) ? dt : "";
 
+        // Для ПД (в т.ч. НОСИТЕЛЕЙ НД/НДЗ) база изделия = программный номер КОДО.РРРРР-ИИ (с редакцией).
+        // Иначе у носителей тип берётся кодом КД, а номер обрезается до КОДО.РРРРР — и имя изделия из
+        // спецификации (лежит под ключом с редакцией) не подтягивается. ПД-гейтовано → КД/ТД не трогает.
+        var pdProgramBase = GetPdProgramBase(designation);
+        if (pdProgramBase.Length == 0) pdProgramBase = GetPdProgramBase(cleanDes);
+        if (pdProgramBase.Length > 0) baseDesignation = pdProgramBase;
+
         if (docType2.Length == 0 && cleanDes.Length > 0)
         {
             foreach (var code in KdNameMapping.Keys.Where(c => Array.IndexOf(SuffixCodes, c) < 0).OrderByDescending(c => c.Length))
@@ -390,19 +411,12 @@ public static class DocumentCodes
             }
         }
 
-        // ПД (ГОСТ 19.101): тип — по коду вида документа в децимальном номере.
-        // Ветка ПД-гейтована (ResolvePdType != "" только для ПД-номеров), поэтому КД/ТД не затрагивает.
+        // ПД (ГОСТ 19.101): тип — по коду вида документа в децимальном номере (для видовых документов).
         if (docType2.Length == 0)
         {
             var pdType = ResolvePdType(cleanDes);
             if (pdType.Length == 0) pdType = ResolvePdType(designation);
-            if (pdType.Length > 0)
-            {
-                docType2 = pdType;
-                var pdBase = GetPdProgramBase(cleanDes);
-                if (pdBase.Length == 0) pdBase = GetPdProgramBase(designation);
-                if (pdBase.Length > 0) baseDesignation = pdBase;   // изделие берём по базе программы
-            }
+            if (pdType.Length > 0) docType2 = pdType;
         }
 
         var product = "";
