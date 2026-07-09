@@ -37,9 +37,11 @@ public static class AssemblyCalcEngine
         (346, 10),  // «Состояние ТД (согласно ОГТ)»
         (362, 11),  // «Состояние ТД (согласно данным различных источников)»
         (284, 12),  // «Не входит в состав МК»
+        (248, 13),  // «ВЭ»
     ];
 
-    private const int SrcLevel = 1;   // «Уровень» → столбец 1 шаблона (целое + цвет)
+    private const int SrcLevel = 1;                        // «Уровень» → столбец 1 шаблона (целое + цвет)
+    private static readonly int LastCol = Map.Max(m => m.Dst);   // последний столбец назначения — по нему чистим и форматируем
 
     // Цвета заливки по уровню (как в оригинале).
     private static readonly Dictionary<int, XLColor> LevelColors = new()
@@ -67,10 +69,10 @@ public static class AssemblyCalcEngine
         var tws = Sheet(twb, "шаблоне");
         progress?.Report(30);
 
-        // Очистка прежних данных шаблона (с 6-й строки, столбцы 1–12) — только содержимое.
+        // Очистка прежних данных шаблона (с 6-й строки, столбцы 1–LastCol) — только содержимое.
         int tlast = tws.LastRowUsed()?.RowNumber() ?? 0;
         for (int row = FirstDataRow; row <= tlast; row++)
-            for (int col = 1; col <= 12; col++)
+            for (int col = 1; col <= LastCol; col++)
                 tws.Cell(row, col).Clear(XLClearOptions.Contents);
         progress?.Report(40);
 
@@ -109,9 +111,9 @@ public static class AssemblyCalcEngine
             foreach (var (src, dst) in Map)
                 tws.Cell(target, dst).Value = sws.Cell(srow, src).Value;
 
-            // Форматирование строки (столбцы 1–12, включая пустой 6 — как в оригинале).
+            // Форматирование строки (столбцы 1–LastCol, включая пустой 6 — как в оригинале).
             XLColor? fill = colorLevel is int cl && LevelColors.TryGetValue(cl, out var c) ? c : null;
-            for (int col = 1; col <= 12; col++)
+            for (int col = 1; col <= LastCol; col++)
             {
                 var cell = tws.Cell(target, col);
                 ApplyGost(cell);
