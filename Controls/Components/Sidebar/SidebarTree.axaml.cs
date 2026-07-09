@@ -45,7 +45,7 @@ public partial class SidebarTree : UserControl
     private SortState _sortState = SortState.None;
     private bool _expandedAll;
 
-    // Логика как в PyQt: активны все коллекции, кроме явно отключённых пользователем.
+    // Активны все коллекции, кроме явно отключённых пользователем.
     // Ключ — (DbId, CollectionId): id коллекций не уникальны между БД.
     private readonly HashSet<(int Db, int Id)> _uncheckedIds = [];
     // Свёрнутые корни-БД (по DbId) — чтобы состояние раскрытия переживало Refresh.

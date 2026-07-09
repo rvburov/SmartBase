@@ -29,7 +29,7 @@ public partial class MonthView : UserControl
     public event EventHandler<CalendarRecord>? RecordDuplicateRequested;
     public event EventHandler<IReadOnlyList<CalendarRecord>>? RecordsDuplicateRequested;
 
-    // Константы макета (соответствуют PyQt DayCell / MonthOverlay)
+    // Константы макета (высоты элементов ячейки дня и полос событий).
     private const int DateH   = 34;
     private const int BarH    = 20;
     private const int BarStep = 22;
@@ -161,7 +161,6 @@ public partial class MonthView : UserControl
 
     // ── алгоритм раскладки многодневных событий по строкам ────────────────────
     // Жадный алгоритм: для каждого события берём первую строку, где ec < sc.
-    // Порт _compute_week_layout из PyQt.
 
     private readonly record struct LayoutEntry(int RowIdx, int Sc, int Ec);
 

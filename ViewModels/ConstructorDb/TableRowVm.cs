@@ -7,7 +7,7 @@ namespace DataBase.ViewModels.ConstructorDb;
 
 /// <summary>
 /// Одна строка таблицы конструктора. Хранит значения полей по field.Id и
-/// пишет изменения сразу в БД (аналог set_field_value по itemChanged в PyQt).
+/// пишет изменения сразу в БД.
 /// Последняя строка-«плюс» представлена IsAddRow=true и не имеет RecordId.
 /// </summary>
 public class TableRowVm : INotifyPropertyChanged

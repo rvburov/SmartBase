@@ -31,7 +31,7 @@ public sealed record AnalyzeResult(string SavePath, int TotalFiles, int Processe
 /// <summary>
 /// Анализ PDF файлов: рекурсивный/локальный обход папки, разбор имени (КД/ПД/ТД через
 /// <see cref="DocumentCodes"/>), MD5, число страниц и форматы листов (PdfPig), сортировка
-/// (3 режима), 4 типа выгрузки и запись отчёта в Excel (ClosedXML). Порт PyQt-утилиты.
+/// (3 режима), 4 типа выгрузки и запись отчёта в Excel (ClosedXML).
 /// Логика без UI: окно вызывает <see cref="Run"/>, репортя прогресс и отменяясь по токену.
 /// </summary>
 public static class PdfAnalyzerEngine
