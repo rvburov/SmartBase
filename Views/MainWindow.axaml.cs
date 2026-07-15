@@ -241,6 +241,14 @@ public partial class MainWindow : Window
         ApplyScale(Scaling.Current);
         Scaling.ScaleChanged += ApplyScale;
         Closed += (_, _) => Scaling.ScaleChanged -= ApplyScale;
+
+        // Автообновление: тихая проверка после открытия окна (уже показанное окно —
+        // владелец модалки «Обновить/Отмена»). Проверка папки идёт в фоне, UI не блокирует.
+        Opened += async (_, _) =>
+        {
+            if (AppSettings.LoadAutoUpdate())
+                await SettingsModule.CheckForUpdatesOnStartupAsync();
+        };
     }
 
     // Масштаб всего интерфейса: LayoutTransform на корне — содержимое перекомпоновывается в

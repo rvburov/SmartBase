@@ -206,6 +206,22 @@ public static class AppSettings
         else                     _store?.Set(KeyUpdatePath, trimmed);
     }
 
+    // ── Автообновление ───────────────────────────────────────────────────────────
+    //
+    // Если включено — при запуске приложение тихо проверяет папку обновления и при
+    // наличии новой версии показывает ту же модалку «Обновить/Отмена», что и кнопка
+    // «Проверить» в «О программе → Обновления».
+    public const bool AutoUpdateDefault = false;
+
+    public static bool LoadAutoUpdate() =>
+        bool.TryParse(_store?.Get(KeyAutoUpdate), out var on) ? on : AutoUpdateDefault;
+
+    public static void SaveAutoUpdate(bool on)
+    {
+        if (on == AutoUpdateDefault) _store?.Remove(KeyAutoUpdate);
+        else                         _store?.Set(KeyAutoUpdate, on.ToString());
+    }
+
     // ── Ключи настроек ─────────────────────────────────────────────────────────
 
     private const string KeyScale            = "scale";
@@ -217,6 +233,7 @@ public static class AppSettings
     private const string KeyDiagramScale     = "diagramScale";
     private const string KeyConstructorView  = "constructorView";
     private const string KeyUpdatePath       = "updatePath";
+    private const string KeyAutoUpdate       = "autoUpdate";
 
     // ── Приватное ─────────────────────────────────────────────────────────────
 

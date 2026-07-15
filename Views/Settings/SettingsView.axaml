@@ -430,6 +430,21 @@
                                         VerticalAlignment="Center"
                                         Click="OnCheckUpdateClick" />
                             </Grid>
+                            <!-- Автообновление: тихая проверка папки при запуске приложения;
+                                 при наличии новой версии — та же модалка «Обновить/Отмена». -->
+                            <StackPanel Orientation="Horizontal" Spacing="10" Margin="0,2,0,0">
+                                <ToggleSwitch x:Name="AutoUpdateToggle"
+                                              OnContent="" OffContent=""
+                                              VerticalAlignment="Center"
+                                              IsCheckedChanged="OnAutoUpdateToggled" />
+                                <StackPanel VerticalAlignment="Center" Spacing="2">
+                                    <TextBlock Text="Автообновление"
+                                               FontWeight="{StaticResource FontWeightBold}"
+                                               Foreground="{StaticResource BrushSecondaryText}" />
+                                    <TextBlock Classes="desc"
+                                               Text="При запуске программа проверит наличие обновления и предложит установить его." />
+                                </StackPanel>
+                            </StackPanel>
                             <!-- Результат проверки («доступна версия…»/«актуальная»/ошибка).
                                  Сама загрузка идёт в отдельном ОКНЕ (ProgressDialog), не инлайн. -->
                             <TextBlock x:Name="UpdateStatusText" Classes="desc"

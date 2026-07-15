@@ -46,6 +46,7 @@ public partial class SettingsView : UserControl
         DataPathText.Text   = AppSettings.AppDataDir;
         SystemInfoText.Text = $"{RuntimeInformation.OSDescription.Trim()} · {RuntimeInformation.FrameworkDescription}";
         UpdatePathBox.Text  = AppSettings.LoadUpdatePath();
+        AutoUpdateToggle.IsChecked = AppSettings.LoadAutoUpdate();
 
         // Слайдер размера шрифта отражает текущую дельту (стандарт = 0, диапазон -3…+3).
         FontSizeSlider.Value = FontScale.Delta;
@@ -163,6 +164,25 @@ public partial class SettingsView : UserControl
     // Автосохранение пути при потере фокуса полем.
     private void OnUpdatePathChanged(object? sender, RoutedEventArgs e) =>
         AppSettings.SaveUpdatePath(UpdatePathBox.Text ?? "");
+
+    // Тумблер «Автообновление»: сохраняем сразу при переключении.
+    private void OnAutoUpdateToggled(object? sender, RoutedEventArgs e) =>
+        AppSettings.SaveAutoUpdate(AutoUpdateToggle.IsChecked == true);
+
+    // Тихая проверка при запуске (тумблер «Автообновление», вызывает MainWindow.Opened):
+    // путь пуст/папка недоступна/версия актуальна — никаких окон, приложение стартует как
+    // обычно (статус всё же пишем — виден, если открыть настройки); есть обновление — та же
+    // модалка «Обновить/Отмена» и штатный поток загрузки/самозамены, что и по кнопке.
+    public async Task CheckForUpdatesOnStartupAsync()
+    {
+        var folder = AppSettings.LoadUpdatePath().Trim();
+        if (folder.Length == 0) return;
+
+        var info = await Task.Run(() => CheckRemoteVersion(folder));
+        SetUpdateStatus(info.Message, isError: info.Result == UpdateCheck.Error);
+        if (info.Result == UpdateCheck.Available && info.RemoteExe is not null && info.Remote is not null)
+            await StartUpdateAsync(info.RemoteExe, info.Remote);
+    }
 
     private async void OnCheckUpdateClick(object? sender, RoutedEventArgs e)
     {
