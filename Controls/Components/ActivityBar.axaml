@@ -56,6 +56,24 @@
             </Viewbox>
         </ToggleButton>
 
+        <!-- Модуль: Задачи -->
+        <ToggleButton x:Name="TasksBtn" Classes="icon module"
+                      Width="32" Height="32"
+                      HorizontalAlignment="Center"
+                      CornerRadius="{StaticResource RadiusMedium}"
+                      ToolTip.Tip="Задачи">
+            <Viewbox Width="{StaticResource IconSizeXLarge}" Height="{StaticResource IconSizeXLarge}">
+                <Canvas Width="24" Height="24">
+                    <!-- lucide square-check-big -->
+                    <Path Data="{StaticResource IconSquareCheck}"
+                          Stroke="{Binding $parent[ToggleButton].Foreground}"
+                          StrokeThickness="1.2"
+                          StrokeLineCap="Round"
+                          StrokeJoin="Round" />
+                </Canvas>
+            </Viewbox>
+        </ToggleButton>
+
         <!-- Модуль: Конструктор БД -->
         <ToggleButton x:Name="ConstructorBtn" Classes="icon module"
                       Width="32" Height="32"

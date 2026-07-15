@@ -6,6 +6,7 @@
         xmlns:settings="using:DataBase.Views.Settings"
         xmlns:ext="using:DataBase.Views.Extensions"
         xmlns:profile="using:DataBase.Views.Profile"
+        xmlns:tasks="using:DataBase.Views.Tasks"
         xmlns:u="using:DataBase.Utils"
         x:Class="DataBase.Views.MainWindow"
         Classes="main"
@@ -52,6 +53,7 @@
              Ручка вынесена в колонку 3 (как у панели записи). -->
         <Grid Grid.Column="2">
             <comp:SidebarTree x:Name="CalendarSidebar" />
+            <comp:SidebarTree x:Name="TasksSidebar" IsVisible="False" />
             <comp:SidebarTree x:Name="ConstructorSidebar" IsVisible="False" />
             <comp:SidebarList x:Name="SettingsSidebar" IsVisible="False" />
             <comp:SidebarList x:Name="ExtensionsSidebar" IsVisible="False" />
@@ -64,6 +66,7 @@
         <!-- Основная область контента -->
         <Grid Grid.Column="3">
             <cal:CalendarControllerView x:Name="CalendarModule" />
+            <tasks:TasksControllerView x:Name="TasksModule" IsVisible="False" />
             <con:ConstructorControllerView x:Name="ConstructorModule" IsVisible="False" />
             <settings:SettingsView x:Name="SettingsModule" IsVisible="False" />
             <ext:ExtensionsView x:Name="ExtensionsModule" IsVisible="False" />

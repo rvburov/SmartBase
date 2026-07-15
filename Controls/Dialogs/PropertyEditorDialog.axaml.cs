@@ -59,6 +59,8 @@ public partial class PropertyEditorDialog : Window
 
         // По умолчанию новое поле-дата отображается в календаре (включено).
         CalDateToggle.IsChecked = true;
+        // Задачи — наоборот, только по явному включению (иначе любое user-поле плодило бы задачи).
+        TaskToggle.IsChecked = false;
 
         if (editFieldId.HasValue)
         {
@@ -69,6 +71,7 @@ public partial class PropertyEditorDialog : Window
                 NameBox.Text  = field.Name;
                 _selectedType = field.FieldType;
                 CalDateToggle.IsChecked = field.IsCalStart;
+                TaskToggle.IsChecked    = field.IsTaskExec;
             }
         }
 
@@ -88,8 +91,13 @@ public partial class PropertyEditorDialog : Window
         NameBox.TextChanged += (_, _) => HideError();
     }
 
-    // Переключатель «Отображать в календаре» виден только для типа «Дата».
-    private void UpdateCalDateVisibility() => CalDateSection.IsVisible = _selectedType == "date";
+    // Переключатель «Отображать в календаре» виден только для типа «Дата»,
+    // «Добавить в раздел задач» — только для типа «Пользователь».
+    private void UpdateCalDateVisibility()
+    {
+        CalDateSection.IsVisible = _selectedType == "date";
+        TaskSection.IsVisible    = _selectedType == "user";
+    }
 
     /// <summary>
     /// Конструктор для системной колонки «Название»/«Описание». Визуально как
@@ -206,6 +214,18 @@ public partial class PropertyEditorDialog : Window
         // Для типа «Дата» применяем переключатель «Отображать в календаре».
         if (_selectedType == "date")
             _repository.SetDateFieldVisible(savedFieldId, CalDateToggle.IsChecked == true);
+
+        // Для типа «Пользователь» — «Добавить в раздел задач» (может авто-создать
+        // «Назначил»/«Статус»; нет права на создание полей — покажем причину баннером).
+        if (_selectedType == "user")
+        {
+            try { _repository.SetUserFieldTaskExec(savedFieldId, TaskToggle.IsChecked == true); }
+            catch (InvalidOperationException ex)
+            {
+                ShowError(ex.Message);
+                return;
+            }
+        }
 
         Close(true);
     }

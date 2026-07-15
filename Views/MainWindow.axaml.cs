@@ -73,6 +73,7 @@ public partial class MainWindow : Window
         // Инициализируем модули через AXAML-конструкторы.
         // Календарь агрегирует события только из ДОПУЩЕННЫХ БД (без допуска — данные не видны).
         CalendarModule.Initialize(GrantedDbs(), _categories);
+        TasksModule.Initialize(GrantedDbs());
         ConstructorModule.Initialize(_constructor);
         // Допущенные БД — для окна «Расположение» записи (перенос в другую коллекцию/БД).
         ConstructorModule.SetDatabases(GrantedDbs());
@@ -80,6 +81,7 @@ public partial class MainWindow : Window
         // Боковые панели: календарь — только допущенные БД; конструктор — все смонтированные
         // (недопущенные показываются замком, клик по замку — запрос доступа).
         CalendarSidebar.InitializeWorkspace(GrantedDbs(), Controls.Components.SidebarMode.Calendar);
+        TasksSidebar.InitializeWorkspace(GrantedDbs(), Controls.Components.SidebarMode.Tasks);
         ConstructorSidebar.InitializeWorkspace(workspace.Mounted, Controls.Components.SidebarMode.Constructor);
         ConstructorSidebar.DatabaseUnlockRequested += async (_, dbId) => await RequestDatabaseUnlock(dbId);
 
@@ -126,6 +128,33 @@ public partial class MainWindow : Window
         {
             CalendarSidebar.Refresh();
             CalendarModule.SetActiveIds(CalendarSidebar.GetActiveIds());
+        };
+
+        // Сайдбар задач: чекбоксы фильтруют агрегат, клик по коллекции открывает/закрывает её,
+        // тумблеры user-полей и смена цвета приходят событием CalendarsChanged.
+        TasksSidebar.ActiveIdsChanged += (_, ids) => TasksModule.SetActiveIds(ids);
+        TasksSidebar.CalendarsChanged += (_, _) =>
+        {
+            TasksModule.SetActiveIds(TasksSidebar.GetActiveIds());
+            ConstructorSidebar.Refresh();
+        };
+        TasksSidebar.CollectionOpened += (_, sel) => TasksModule.SetOpenCollection(sel);
+        // CRUD коллекций из сайдбара задач → обновить календарь и конструктор.
+        TasksSidebar.RequestRefresh += (_, _) =>
+        {
+            CalendarSidebar.Refresh();
+            CalendarModule.SetActiveIds(CalendarSidebar.GetActiveIds());
+            ConstructorSidebar.Refresh();
+            ConstructorModule.Refresh();
+        };
+        // Создание/правка задачи могли создать коллекцию или авто-поля («Назначил»/«Статус»).
+        TasksModule.CollectionsMayHaveChanged += (_, _) =>
+        {
+            TasksSidebar.Refresh();
+            CalendarSidebar.Refresh();
+            CalendarModule.SetActiveIds(CalendarSidebar.GetActiveIds());
+            ConstructorSidebar.Refresh();
+            ConstructorModule.Refresh();
         };
 
         // Дерево конструктора: выбор коллекции открывает её в ConstructorModule из её БД.
@@ -272,9 +301,12 @@ public partial class MainWindow : Window
     {
         ConstructorSidebar.InitializeWorkspace(_workspace.Mounted, Controls.Components.SidebarMode.Constructor);
         CalendarSidebar.InitializeWorkspace(GrantedDbs(), Controls.Components.SidebarMode.Calendar);
+        TasksSidebar.InitializeWorkspace(GrantedDbs(), Controls.Components.SidebarMode.Tasks);
         CalendarModule.SetDatabases(GrantedDbs());
+        TasksModule.SetDatabases(GrantedDbs());
         ConstructorModule.SetDatabases(GrantedDbs());
         CalendarModule.SetActiveIds(CalendarSidebar.GetActiveIds());
+        TasksModule.SetActiveIds(TasksSidebar.GetActiveIds());
         SettingsModule.RefreshDatabases();   // обновить статус «подключена/не подключена»
     }
 
@@ -309,6 +341,7 @@ public partial class MainWindow : Window
         _activeModule = module;
 
         CalendarModule.IsVisible   = module == "calendar";
+        TasksModule.IsVisible      = module == "tasks";
         SettingsModule.IsVisible   = module == "settings";
         ExtensionsModule.IsVisible = module == "extensions";
         ProfileModule.IsVisible    = module == "profile";
@@ -320,6 +353,14 @@ public partial class MainWindow : Window
             ConstructorSidebar.IsVisible = false;
             CalendarSidebar.Refresh();
             CalendarModule.SetActiveIds(CalendarSidebar.GetActiveIds());
+        }
+        else if (module == "tasks")
+        {
+            CalendarSidebar.IsVisible    = false;
+            ConstructorSidebar.IsVisible = false;
+            TasksSidebar.IsVisible       = _sidebarOpen;
+            TasksSidebar.Refresh();
+            TasksModule.SetActiveIds(TasksSidebar.GetActiveIds());
         }
         else if (module == "constructor")
         {
@@ -353,7 +394,8 @@ public partial class MainWindow : Window
             ExtensionsModule.ShowExtension(ExtensionsSidebar.SelectedKey);
         }
 
-        // Сайдбары мета-разделов видны только в своём режиме.
+        // Сайдбары мета-разделов и задач видны только в своём режиме.
+        if (module != "tasks")      TasksSidebar.IsVisible      = false;
         if (module != "settings")   SettingsSidebar.IsVisible   = false;
         if (module != "extensions") ExtensionsSidebar.IsVisible = false;
         if (module != "profile")    ProfileSidebar.IsVisible    = false;
@@ -367,6 +409,8 @@ public partial class MainWindow : Window
 
         if (_activeModule == "calendar")
             CalendarSidebar.IsVisible = isOpen;
+        else if (_activeModule == "tasks")
+            TasksSidebar.IsVisible = isOpen;
         else if (_activeModule == "constructor")
             ConstructorSidebar.IsVisible = isOpen;
         else if (_activeModule == "settings")

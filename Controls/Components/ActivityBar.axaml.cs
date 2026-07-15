@@ -18,6 +18,7 @@ public partial class ActivityBar : UserControl
         };
 
         CalendarBtn.Click += (_, _) => SwitchModule("calendar");
+        TasksBtn.Click += (_, _) => SwitchModule("tasks");
         ConstructorBtn.Click += (_, _) => SwitchModule("constructor");
         ExtensionsBtn.Click += (_, _) => SwitchModule("extensions");
         ProfileBtn.Click += (_, _) => SwitchModule("profile");
@@ -42,6 +43,7 @@ public partial class ActivityBar : UserControl
     public void SetModuleActive(string module)
     {
         CalendarBtn.IsChecked = module == "calendar";
+        TasksBtn.IsChecked = module == "tasks";
         ConstructorBtn.IsChecked = module == "constructor";
         ExtensionsBtn.IsChecked = module == "extensions";
         ProfileBtn.IsChecked = module == "profile";

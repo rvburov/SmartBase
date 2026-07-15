@@ -50,6 +50,9 @@ public class DbFieldEntity
     public bool   IsCalEnd     { get; set; } = false;
     public bool   IsSystem     { get; set; } = false;
     public bool   IsRequired   { get; set; } = false;
+    public bool   IsTaskExec     { get; set; } = false; // user-поле — источник задач (исполнитель)
+    public bool   IsTaskAssigner { get; set; } = false; // поле «Назначил»
+    public bool   IsTaskStatus   { get; set; } = false; // поле «Статус»
 
     [ForeignKey(nameof(CollectionId))]
     public DbCollectionEntity              Collection  { get; set; } = null!;

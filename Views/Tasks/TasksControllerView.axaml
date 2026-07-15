@@ -1,0 +1,28 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:comp="using:DataBase.Controls.Components"
+             xmlns:tasks="using:DataBase.Views.Tasks"
+             x:Class="DataBase.Views.Tasks.TasksControllerView">
+
+    <Grid RowDefinitions="Auto,*">
+
+        <!-- Навбар: заголовок («Задачи» / открытая коллекция), поиск, вид. Линию под
+             навбаром не рисуем — её рисует MainWindow (как в календаре). -->
+        <comp:NavbarTasks Grid.Row="0" x:Name="NavbarControl" />
+
+        <Grid Grid.Row="1">
+            <tasks:TaskListView x:Name="TaskList" />
+
+            <!-- Оверлей: список читается в фоне, оверлей появляется при загрузке дольше 400 мс. -->
+            <Border x:Name="LoadingOverlay" IsVisible="False" Background="{StaticResource BrushBg}">
+                <TextBlock Text="Загрузка…"
+                           Foreground="{StaticResource BrushSecondaryText}"
+                           Margin="24,16"
+                           HorizontalAlignment="Left"
+                           VerticalAlignment="Top" />
+            </Border>
+        </Grid>
+
+    </Grid>
+
+</UserControl>

@@ -27,6 +27,9 @@
     <Color x:Key="ColorAccentLight">#E5F0FF</Color>
     <Color x:Key="ColorRed">#FF3B30</Color>
     <Color x:Key="ColorGreen">#34C759</Color>
+    <!-- Светлые подложки чипов (статусы задач): по образцу ColorAccentLight. -->
+    <Color x:Key="ColorRedLight">#FFE9E7</Color>
+    <Color x:Key="ColorGreenLight">#E3F7E9</Color>
 
     <!-- Прочее -->
     <Color x:Key="ColorHover">#E5E5EA</Color>
@@ -44,6 +47,9 @@
     <SolidColorBrush x:Key="BrushAccent"       Color="{StaticResource ColorAccent}" />
     <SolidColorBrush x:Key="BrushAccentLight"  Color="{StaticResource ColorAccentLight}" />
     <SolidColorBrush x:Key="BrushRed"          Color="{StaticResource ColorRed}" />
+    <SolidColorBrush x:Key="BrushRedLight"     Color="{StaticResource ColorRedLight}" />
+    <SolidColorBrush x:Key="BrushGreen"        Color="{StaticResource ColorGreen}" />
+    <SolidColorBrush x:Key="BrushGreenLight"   Color="{StaticResource ColorGreenLight}" />
     <SolidColorBrush x:Key="BrushHover"        Color="{StaticResource ColorHover}" />
 
     <!-- Фон вложенного меню (Popup у MenuItem с сабпунктами): Fluent по умолчанию

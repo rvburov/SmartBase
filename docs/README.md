@@ -22,6 +22,7 @@ EF Core/SQLite). Здесь описано, **как устроено и как 
 
 ### Фичи ([features/](features/))
 - **Календарь** ([features/calendar/](features/calendar/)): [overview](features/calendar/overview.md) · [month](features/calendar/month.md) · [week](features/calendar/week.md) · [day](features/calendar/day.md) · [year](features/calendar/year.md) · [schedule](features/calendar/schedule.md) · [journal](features/calendar/journal.md) · [interactions](features/calendar/interactions.md)
+- **Задачи** ([features/tasks/](features/tasks/)): [overview](features/tasks/overview.md) — список задач по user-полю «исполнитель», статусы, сроки из календарных дат.
 - **Конструктор БД** ([features/constructor-db/](features/constructor-db/)): [overview](features/constructor-db/overview.md) · [tables](features/constructor-db/tables.md) · [record-page](features/constructor-db/record-page.md)
 - [categories.md](features/categories.md) — категории и цвета.
 - [import-export.md](features/import-export.md) — импорт из Excel, перенос между БД.

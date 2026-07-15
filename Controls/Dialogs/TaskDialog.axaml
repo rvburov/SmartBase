@@ -1,0 +1,219 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:w="clr-namespace:DataBase.Controls.Widgets"
+        x:Class="DataBase.Controls.Dialogs.TaskDialog"
+        Title="Новая задача"
+        Width="520"
+        MinWidth="520"
+        MaxWidth="520"
+        MinHeight="0"
+        SizeToContent="Height"
+        WindowStartupLocation="CenterOwner"
+        CanResize="False"
+        Background="{StaticResource BrushBg}">
+
+    <DockPanel Margin="20,16">
+
+        <!-- Кнопки внизу -->
+        <Grid DockPanel.Dock="Bottom"
+              ColumnDefinitions="Auto,*,Auto,8,Auto"
+              Margin="0,16,0,4">
+            <Button Grid.Column="0" x:Name="DeleteBtn" Classes="dialog"
+                    Content="Удалить" IsVisible="False" />
+            <Button Grid.Column="2" x:Name="CancelBtn" Classes="dialog"
+                    Content="Отмена" />
+            <Button Grid.Column="4" x:Name="SaveBtn" Classes="dialog"
+                    Content="Сохранить" />
+        </Grid>
+
+        <!-- Уведомление об ошибке валидации -->
+        <w:ErrorBanner x:Name="ErrorBanner" DockPanel.Dock="Bottom" Margin="0,0,0,12" />
+
+        <StackPanel Spacing="0">
+
+            <!-- Название -->
+            <TextBlock Text="Название"
+                       Margin="0,0,0,6"
+                       FontWeight="{StaticResource FontWeightBold}"
+                       Foreground="{StaticResource BrushSecondaryText}" />
+            <TextBox x:Name="TitleBox"
+                     Watermark="Добавить название"
+                     Height="34"
+                     VerticalContentAlignment="Center"
+                     Margin="0,0,0,12"
+                     CornerRadius="{StaticResource RadiusMedium}" />
+
+            <!-- Статус -->
+            <TextBlock Text="Статус"
+                       Margin="0,0,0,6"
+                       FontWeight="{StaticResource FontWeightBold}"
+                       Foreground="{StaticResource BrushSecondaryText}" />
+            <ComboBox x:Name="StatusCombo"
+                      HorizontalAlignment="Stretch"
+                      Height="34"
+                      Margin="0,0,0,12"
+                      Background="{StaticResource BrushSecondaryBg}"
+                      CornerRadius="{StaticResource RadiusBase}" />
+
+            <!-- Исполнитель -->
+            <TextBlock Text="Исполнитель"
+                       Margin="0,0,0,6"
+                       FontWeight="{StaticResource FontWeightBold}"
+                       Foreground="{StaticResource BrushSecondaryText}" />
+            <ComboBox x:Name="ExecutorCombo"
+                      HorizontalAlignment="Stretch"
+                      Height="34"
+                      Margin="0,0,0,12"
+                      Background="{StaticResource BrushSecondaryBg}"
+                      CornerRadius="{StaticResource RadiusBase}" />
+
+            <!-- Назначил -->
+            <TextBlock Text="Назначил"
+                       Margin="0,0,0,6"
+                       FontWeight="{StaticResource FontWeightBold}"
+                       Foreground="{StaticResource BrushSecondaryText}" />
+            <ComboBox x:Name="AssignerCombo"
+                      HorizontalAlignment="Stretch"
+                      Height="34"
+                      Margin="0,0,0,12"
+                      Background="{StaticResource BrushSecondaryBg}"
+                      CornerRadius="{StaticResource RadiusBase}" />
+
+            <!-- Срок: задача может быть без даты -->
+            <StackPanel Orientation="Horizontal" Spacing="16" Margin="0,0,0,12">
+                <CheckBox x:Name="NoDateCheck" Content="Без даты" />
+                <CheckBox x:Name="AllDayCheck" Content="Весь день" />
+            </StackPanel>
+
+            <!-- Начало -->
+            <StackPanel x:Name="StartSection" Spacing="0">
+                <TextBlock x:Name="StartLabel"
+                           Text="Начало"
+                           Margin="0,0,0,6"
+                           FontWeight="{StaticResource FontWeightBold}"
+                           Foreground="{StaticResource BrushSecondaryText}" />
+                <Grid x:Name="StartRow" ColumnDefinitions="2*,8,*" Margin="0,0,0,12">
+                    <CalendarDatePicker Grid.Column="0" x:Name="StartDatePicker"
+                                        Height="34" HorizontalAlignment="Stretch"
+                                        SelectedDateFormat="Custom"
+                                        CustomDateFormatString="dd.MM.yyyy" />
+                    <Border Grid.Column="2" x:Name="StartTimeBorder" Classes="timeField" Height="34">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <TextBox Grid.Column="0" x:Name="StartTimeInput" Classes="timeInput" />
+                            <Button Grid.Column="1" x:Name="StartTimeArrow" Classes="timeArrow">
+                                <Viewbox Width="{StaticResource IconSizeSmall}" Height="{StaticResource IconSizeSmall}">
+                                    <Canvas Width="24" Height="24">
+                                        <!-- стандартная иконка «время» (часы), в пару к иконке даты -->
+                                        <Path Data="{StaticResource IconClock}"
+                                              Stroke="{StaticResource BrushSecondaryText}"
+                                              StrokeThickness="1.8"
+                                              StrokeLineCap="Round"
+                                              StrokeJoin="Round" />
+                                    </Canvas>
+                                </Viewbox>
+                            </Button>
+                            <Popup Grid.Column="0" x:Name="StartTimePopup" InheritsTransform="True"
+                                   PlacementTarget="{Binding #StartTimeBorder}"
+                                   Placement="BottomEdgeAlignedLeft"
+                                   IsLightDismissEnabled="True">
+                                <Border Classes="timePopup"
+                                        MinWidth="{Binding #StartTimeBorder.Bounds.Width}">
+                                    <ScrollViewer MaxHeight="240">
+                                        <ListBox x:Name="StartTimeList" Classes="timeList" />
+                                    </ScrollViewer>
+                                </Border>
+                            </Popup>
+                        </Grid>
+                    </Border>
+                </Grid>
+            </StackPanel>
+
+            <!-- Конец -->
+            <StackPanel x:Name="EndSection" Spacing="0">
+                <TextBlock x:Name="EndLabel"
+                           Text="Конец"
+                           Margin="0,0,0,6"
+                           FontWeight="{StaticResource FontWeightBold}"
+                           Foreground="{StaticResource BrushSecondaryText}" />
+                <Grid x:Name="EndRow" ColumnDefinitions="2*,8,*" Margin="0,0,0,12">
+                    <CalendarDatePicker Grid.Column="0" x:Name="EndDatePicker"
+                                        Height="34" HorizontalAlignment="Stretch"
+                                        SelectedDateFormat="Custom"
+                                        CustomDateFormatString="dd.MM.yyyy" />
+                    <Border Grid.Column="2" x:Name="EndTimeBorder" Classes="timeField" Height="34">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <TextBox Grid.Column="0" x:Name="EndTimeInput" Classes="timeInput" />
+                            <Button Grid.Column="1" x:Name="EndTimeArrow" Classes="timeArrow">
+                                <Viewbox Width="{StaticResource IconSizeSmall}" Height="{StaticResource IconSizeSmall}">
+                                    <Canvas Width="24" Height="24">
+                                        <!-- стандартная иконка «время» (часы), в пару к иконке даты -->
+                                        <Path Data="{StaticResource IconClock}"
+                                              Stroke="{StaticResource BrushSecondaryText}"
+                                              StrokeThickness="1.8"
+                                              StrokeLineCap="Round"
+                                              StrokeJoin="Round" />
+                                    </Canvas>
+                                </Viewbox>
+                            </Button>
+                            <Popup Grid.Column="0" x:Name="EndTimePopup" InheritsTransform="True"
+                                   PlacementTarget="{Binding #EndTimeBorder}"
+                                   Placement="BottomEdgeAlignedLeft"
+                                   IsLightDismissEnabled="True">
+                                <Border Classes="timePopup"
+                                        MinWidth="{Binding #EndTimeBorder.Bounds.Width}">
+                                    <ScrollViewer MaxHeight="240">
+                                        <ListBox x:Name="EndTimeList" Classes="timeList" />
+                                    </ScrollViewer>
+                                </Border>
+                            </Popup>
+                        </Grid>
+                    </Border>
+                </Grid>
+            </StackPanel>
+
+            <!-- База данных (видна только при создании, когда смонтировано несколько БД) -->
+            <StackPanel x:Name="DbSection" IsVisible="False" Spacing="0">
+                <TextBlock Text="База данных"
+                           Margin="0,0,0,6"
+                           FontWeight="{StaticResource FontWeightBold}"
+                           Foreground="{StaticResource BrushSecondaryText}" />
+                <ComboBox x:Name="DbCombo"
+                          HorizontalAlignment="Stretch"
+                          Height="34"
+                          Margin="0,0,0,12"
+                          Background="{StaticResource BrushSecondaryBg}"
+                          CornerRadius="{StaticResource RadiusBase}" />
+            </StackPanel>
+
+            <!-- Коллекция -->
+            <TextBlock Text="Коллекция"
+                       Margin="0,0,0,6"
+                       FontWeight="{StaticResource FontWeightBold}"
+                       Foreground="{StaticResource BrushSecondaryText}" />
+            <ComboBox x:Name="CollectionCombo"
+                      HorizontalAlignment="Stretch"
+                      Height="34"
+                      Margin="0,0,0,12"
+                      Background="{StaticResource BrushSecondaryBg}"
+                      CornerRadius="{StaticResource RadiusBase}" />
+
+            <!-- Описание -->
+            <TextBlock Text="Описание"
+                       Margin="0,0,0,6"
+                       FontWeight="{StaticResource FontWeightBold}"
+                       Foreground="{StaticResource BrushSecondaryText}" />
+            <TextBox x:Name="DescBox"
+                     Watermark="Добавить описание в Markdown (необязательно)"
+                     Height="100"
+                     Margin="0,0,0,4"
+                     AcceptsReturn="True"
+                     AcceptsTab="True"
+                     TextWrapping="Wrap"
+                     ScrollViewer.VerticalScrollBarVisibility="Auto"
+                     CornerRadius="{StaticResource RadiusMedium}" />
+
+        </StackPanel>
+
+    </DockPanel>
+
+</Window>

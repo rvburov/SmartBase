@@ -11,7 +11,7 @@ using DataBase.Utils;
 
 namespace DataBase.Database.Repositories;
 
-public class ConstructorRepository(AppDbContext db)
+public partial class ConstructorRepository(AppDbContext db)
 {
     // Системное поле «Дата» — единственное, что осталось schema-driven.
     // Название и Описание подняты до колонок Title/Description в db_records.
@@ -729,6 +729,7 @@ public class ConstructorRepository(AppDbContext db)
                 ConfigJson = f.ConfigJson, Position = f.Position,
                 IsCalStart = f.IsCalStart, IsCalEnd = f.IsCalEnd,
                 IsSystem = f.IsSystem, IsRequired = f.IsRequired,
+                IsTaskExec = f.IsTaskExec, IsTaskAssigner = f.IsTaskAssigner, IsTaskStatus = f.IsTaskStatus,
             });
         }
         db.SaveChanges();
@@ -1209,6 +1210,7 @@ public class ConstructorRepository(AppDbContext db)
                 ConfigJson = f.ConfigJson, Position = f.Position,
                 IsCalStart = f.IsCalStart, IsCalEnd = f.IsCalEnd,
                 IsSystem = f.IsSystem, IsRequired = f.IsRequired,
+                IsTaskExec = f.IsTaskExec, IsTaskAssigner = f.IsTaskAssigner, IsTaskStatus = f.IsTaskStatus,
             };
             db.DbFields.Add(nf);
             db.SaveChanges();
@@ -1597,8 +1599,8 @@ public class ConstructorRepository(AppDbContext db)
 
         // 2) Поля (Position копируем дословно — по нему строим карту old→new).
         Exec(conn, tx, $@"
-            INSERT INTO main.db_fields (CollectionId, Name, FieldType, ConfigJson, Position, IsCalStart, IsCalEnd, IsSystem, IsRequired)
-            SELECT {newColId}, Name, FieldType, ConfigJson, Position, IsCalStart, IsCalEnd, IsSystem, IsRequired
+            INSERT INTO main.db_fields (CollectionId, Name, FieldType, ConfigJson, Position, IsCalStart, IsCalEnd, IsSystem, IsRequired, IsTaskExec, IsTaskAssigner, IsTaskStatus)
+            SELECT {newColId}, Name, FieldType, ConfigJson, Position, IsCalStart, IsCalEnd, IsSystem, IsRequired, IsTaskExec, IsTaskAssigner, IsTaskStatus
             FROM src.db_fields WHERE CollectionId = {srcCollectionId} ORDER BY Id");
 
         Exec(conn, tx, "DROP TABLE IF EXISTS temp._move_fmap");
@@ -1779,6 +1781,7 @@ public class ConstructorRepository(AppDbContext db)
               FieldType = f.FieldType, ConfigJson = f.ConfigJson, Position = f.Position,
               IsCalStart = f.IsCalStart, IsCalEnd = f.IsCalEnd,
               IsSystem = f.IsSystem, IsRequired = f.IsRequired,
+              IsTaskExec = f.IsTaskExec, IsTaskAssigner = f.IsTaskAssigner, IsTaskStatus = f.IsTaskStatus,
           })
           .ToList();
 
@@ -1801,6 +1804,8 @@ public class ConstructorRepository(AppDbContext db)
             Position     = field.Position,     IsCalStart = field.IsCalStart,
             IsCalEnd     = field.IsCalEnd,     IsSystem = field.IsSystem,
             IsRequired   = field.IsRequired,
+            IsTaskExec   = field.IsTaskExec,   IsTaskAssigner = field.IsTaskAssigner,
+            IsTaskStatus = field.IsTaskStatus,
         };
         db.DbFields.Add(entity);
         Log("create", "field", field.Name, CollectionNameOf(field.CollectionId));
@@ -1838,6 +1843,9 @@ public class ConstructorRepository(AppDbContext db)
         entity.IsCalEnd   = field.IsCalEnd;
         entity.IsSystem   = field.IsSystem;
         entity.IsRequired = field.IsRequired;
+        entity.IsTaskExec     = field.IsTaskExec;
+        entity.IsTaskAssigner = field.IsTaskAssigner;
+        entity.IsTaskStatus   = field.IsTaskStatus;
         db.SaveChanges();
 
         // Тип пересёк границу «дата» → приводим уже сохранённые значения к новому виду
@@ -1959,6 +1967,7 @@ public class ConstructorRepository(AppDbContext db)
             Position     = src.Position + 1000,  IsCalStart = false,
             IsCalEnd     = false,                IsSystem = false,
             IsRequired   = false,
+            IsTaskExec   = false, IsTaskAssigner = false, IsTaskStatus = false,
         };
         db.DbFields.Add(copy);
         db.SaveChanges();
@@ -2868,6 +2877,8 @@ public class ConstructorRepository(AppDbContext db)
                     FieldType    = meta.FieldType,      ConfigJson = meta.ConfigJson,
                     Position     = nextPos,             IsCalStart = meta.IsCalStart,
                     IsCalEnd     = meta.IsCalEnd,       IsRequired = meta.IsRequired,
+                    IsTaskExec   = meta.IsTaskExec,     IsTaskAssigner = meta.IsTaskAssigner,
+                    IsTaskStatus = meta.IsTaskStatus,
                 });
                 nextPos += 1000;
                 targetByName[meta.Name] = target;
@@ -2941,6 +2952,8 @@ public class ConstructorRepository(AppDbContext db)
                     FieldType    = sf.FieldType,        ConfigJson = sf.ConfigJson,
                     Position     = nextFieldPos,        IsCalStart = sf.IsCalStart,
                     IsCalEnd     = sf.IsCalEnd,         IsRequired = sf.IsRequired,
+                    IsTaskExec   = sf.IsTaskExec,       IsTaskAssigner = sf.IsTaskAssigner,
+                    IsTaskStatus = sf.IsTaskStatus,
                 });
                 nextFieldPos += 1000;
                 targetByName[sf.Name] = tf;

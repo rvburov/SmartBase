@@ -209,6 +209,15 @@ namespace DataBase.Database.Migrations
                     b.Property<bool>("IsSystem")
                         .HasColumnType("INTEGER");
 
+                    b.Property<bool>("IsTaskAssigner")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("IsTaskExec")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("IsTaskStatus")
+                        .HasColumnType("INTEGER");
+
                     b.Property<string>("Name")
                         .IsRequired()
                         .HasColumnType("TEXT");

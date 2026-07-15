@@ -1,0 +1,37 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="DataBase.Controls.Components.NavbarTasks"
+             Height="56"
+             Background="{StaticResource BrushBg}">
+
+    <Grid ColumnDefinitions="Auto,*,Auto,Auto"
+          Margin="16,0"
+          VerticalAlignment="Center">
+
+        <!-- Заголовок: «Задачи» либо имя открытой коллекции -->
+        <TextBlock Grid.Column="0" x:Name="TitleLabel"
+                   Text="Задачи"
+                   VerticalAlignment="Center"
+                   FontSize="{DynamicResource FontSizeLarge}"
+                   FontWeight="{StaticResource FontWeightBold}" />
+
+        <!-- Поиск (однострочный): без фиксированной высоты (MinHeight + рост под шрифт) и
+             без вертикальной прокрутки — как в навбаре календаря. -->
+        <TextBox Grid.Column="2" x:Name="SearchBox"
+                 Width="200" MinHeight="30" Margin="0,0,8,0"
+                 VerticalAlignment="Center"
+                 VerticalContentAlignment="Center"
+                 Watermark="Поиск..."
+                 CornerRadius="{StaticResource RadiusPill}"
+                 Background="{StaticResource BrushSecondaryBg}"
+                 ScrollViewer.VerticalScrollBarVisibility="Disabled" />
+
+        <!-- Вид (пока единственный «Список») -->
+        <ComboBox Grid.Column="3" x:Name="ViewSelector"
+                  VerticalAlignment="Center"
+                  Width="140" Height="30"
+                  Background="{StaticResource BrushSecondaryBg}"
+                  CornerRadius="{StaticResource RadiusBase}" />
+    </Grid>
+
+</UserControl>

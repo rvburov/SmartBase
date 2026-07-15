@@ -71,6 +71,21 @@
                        Foreground="{StaticResource BrushSecondaryText}" />
         </StackPanel>
 
+        <!-- Добавить в раздел задач: виден только для типа «Пользователь». Если включено —
+             записи с непустым значением этого поля показываются в разделе задач (значение =
+             исполнитель). При первом включении в коллекции авто-создаются недостающие поля
+             «Назначил» и «Статус». -->
+        <StackPanel x:Name="TaskSection" IsVisible="False"
+                    Orientation="Horizontal" Spacing="10" Margin="0,0,0,12">
+            <ToggleSwitch x:Name="TaskToggle"
+                          OnContent="" OffContent=""
+                          VerticalAlignment="Center" />
+            <TextBlock Text="Добавить в раздел задач"
+                       VerticalAlignment="Center"
+                       FontWeight="{StaticResource FontWeightBold}"
+                       Foreground="{StaticResource BrushSecondaryText}" />
+        </StackPanel>
+
         <!-- Уведомление об ошибке валидации -->
         <w:ErrorBanner x:Name="ErrorBanner" Margin="0,0,0,12" />
 

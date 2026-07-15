@@ -1,0 +1,108 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:w="clr-namespace:DataBase.Controls.Widgets"
+             x:Class="DataBase.Views.Tasks.TaskListView"
+             Background="{StaticResource BrushBg}">
+
+    <Grid RowDefinitions="Auto,Auto,*" Margin="16,8,16,0">
+
+        <!-- Ошибка (нет прав и т.п.) — тот же баннер, что в диалогах -->
+        <w:ErrorBanner Grid.Row="0" x:Name="ErrorBanner" Margin="0,0,0,8" />
+
+        <!-- Строка быстрого добавления: название + Enter, срок, исполнитель, «Добавить» -->
+        <Border Grid.Row="1"
+                Background="{StaticResource BrushBg}"
+                BorderBrush="{StaticResource BrushSeparator}"
+                BorderThickness="{DynamicResource BorderLine}"
+                CornerRadius="{StaticResource RadiusMedium}"
+                Padding="12,8"
+                Margin="0,0,0,12">
+            <Grid ColumnDefinitions="*,12,Auto,6,Auto,6,Auto,12,Auto,6,Auto,12,Auto"
+                  VerticalAlignment="Center">
+
+                <TextBox Grid.Column="0" x:Name="QuickTitle"
+                         Watermark="Новая задача — название и Enter"
+                         BorderThickness="0"
+                         Background="Transparent"
+                         VerticalContentAlignment="Center"
+                         MinHeight="30"
+                         ScrollViewer.VerticalScrollBarVisibility="Disabled" />
+
+                <TextBlock Grid.Column="2" Text="Срок"
+                           VerticalAlignment="Center"
+                           Foreground="{StaticResource BrushSecondaryText}" />
+
+                <CalendarDatePicker Grid.Column="4" x:Name="QuickDatePicker"
+                                    Width="130" Height="30"
+                                    Watermark="без даты"
+                                    SelectedDateFormat="Custom"
+                                    CustomDateFormatString="dd.MM.yyyy" />
+
+                <Border Grid.Column="6" x:Name="QuickTimeBorder" Classes="timeField"
+                        Width="76" Height="30">
+                    <Grid ColumnDefinitions="*,Auto">
+                        <TextBox Grid.Column="0" x:Name="QuickTimeInput" Classes="timeInput" />
+                        <Button Grid.Column="1" x:Name="QuickTimeArrow" Classes="timeArrow">
+                            <Viewbox Width="{StaticResource IconSizeSmall}" Height="{StaticResource IconSizeSmall}">
+                                <Canvas Width="24" Height="24">
+                                    <Path Data="{StaticResource IconClock}"
+                                          Stroke="{StaticResource BrushSecondaryText}"
+                                          StrokeThickness="1.8"
+                                          StrokeLineCap="Round"
+                                          StrokeJoin="Round" />
+                                </Canvas>
+                            </Viewbox>
+                        </Button>
+                        <Popup Grid.Column="0" x:Name="QuickTimePopup" InheritsTransform="True"
+                               PlacementTarget="{Binding #QuickTimeBorder}"
+                               Placement="BottomEdgeAlignedLeft"
+                               IsLightDismissEnabled="True">
+                            <Border Classes="timePopup"
+                                    MinWidth="{Binding #QuickTimeBorder.Bounds.Width}">
+                                <ScrollViewer MaxHeight="240">
+                                    <ListBox x:Name="QuickTimeList" Classes="timeList" />
+                                </ScrollViewer>
+                            </Border>
+                        </Popup>
+                    </Grid>
+                </Border>
+
+                <TextBlock Grid.Column="8" Text="Исполнитель"
+                           VerticalAlignment="Center"
+                           Foreground="{StaticResource BrushSecondaryText}" />
+
+                <ComboBox Grid.Column="10" x:Name="QuickExecutor"
+                          Width="150" Height="30"
+                          Background="{StaticResource BrushSecondaryBg}"
+                          CornerRadius="{StaticResource RadiusBase}" />
+
+                <Button Grid.Column="12" x:Name="QuickAddBtn" Classes="accent"
+                        Content="Добавить" Height="30"
+                        Padding="14,0"
+                        VerticalContentAlignment="Center"
+                        CornerRadius="{StaticResource RadiusPill}" />
+            </Grid>
+        </Border>
+
+        <!-- Список карточек задач (виртуализация — как список сайдбара) -->
+        <ScrollViewer Grid.Row="2" HorizontalScrollBarVisibility="Disabled">
+            <StackPanel>
+                <ItemsControl x:Name="CardsHost">
+                    <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <VirtualizingStackPanel />
+                        </ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                </ItemsControl>
+                <TextBlock x:Name="EmptyLabel"
+                           Text="Нет задач"
+                           IsVisible="False"
+                           Foreground="{StaticResource BrushSecondaryText}"
+                           HorizontalAlignment="Center"
+                           Margin="0,32,0,16" />
+            </StackPanel>
+        </ScrollViewer>
+
+    </Grid>
+
+</UserControl>

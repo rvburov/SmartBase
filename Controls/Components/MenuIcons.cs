@@ -110,6 +110,9 @@ public static class MenuIcons
     // Заголовок пункта «Отображение свойств даты»: та же иконка check-check + текст.
     public static Control DateFieldsHeader() => Header(CheckCheck, "Отображение свойств даты");
 
+    // Заголовок пункта «Отображение свойств исполнителя» (раздел задач): та же иконка.
+    public static Control UserFieldsHeader() => Header(CheckCheck, "Отображение свойств исполнителя");
+
     // Заголовок пункта «Создать запись»: иконка plus + стандартный текст.
     public static Control CreateRecordHeader() => Header(Plus, "Создать запись");
 

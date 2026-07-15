@@ -18,7 +18,7 @@ using DataBase.Utils;
 
 namespace DataBase.Controls.Components;
 
-public enum SidebarMode { Calendar, Constructor }
+public enum SidebarMode { Calendar, Constructor, Tasks }
 
 public partial class SidebarTree : UserControl
 {
@@ -28,6 +28,9 @@ public partial class SidebarTree : UserControl
 
     // Конструктор: выбор несёт (DbId, CollectionId) — при мульти-маунте id не уникален между БД.
     public event EventHandler<EntityRef>? CollectionSelected;
+    // Задачи: клик по коллекции открывает её (список сужается до неё), повторный клик или
+    // пропажа коллекции — null (агрегат по отмеченным чекбоксами).
+    public event EventHandler<EntityRef?>? CollectionOpened;
     public event EventHandler<int>?       CollectionDeleted;
     public event EventHandler?            RequestRefresh;
     // Клик по запертой базе (без допуска) — MainWindow предлагает ввести пароль.
@@ -44,6 +47,9 @@ public partial class SidebarTree : UserControl
     private SidebarMode _mode = SidebarMode.Calendar;
     private SortState _sortState = SortState.None;
     private bool _expandedAll;
+
+    // Режимы с чекбоксами видимости коллекций (календарь и задачи ведут себя одинаково).
+    private bool ChecksMode => _mode is SidebarMode.Calendar or SidebarMode.Tasks;
 
     // Активны все коллекции, кроме явно отключённых пользователем.
     // Ключ — (DbId, CollectionId): id коллекций не уникальны между БД.
@@ -106,7 +112,7 @@ public partial class SidebarTree : UserControl
         _dbs.Add(new MountedDb(0, "", repository));
         _showRoots = false;
         _mode = mode;
-        ToggleAllBtn.IsVisible = mode == SidebarMode.Calendar;
+        ToggleAllBtn.IsVisible = ChecksMode;
         Refresh();
     }
 
@@ -119,7 +125,7 @@ public partial class SidebarTree : UserControl
             _dbs.Add(new MountedDb(d.DbId, d.Name, d.Constructor, !d.Permissions.AccessGranted));
         _showRoots = true;
         _mode = mode;
-        ToggleAllBtn.IsVisible = mode == SidebarMode.Calendar;
+        ToggleAllBtn.IsVisible = ChecksMode;
         Refresh();
     }
 
@@ -136,13 +142,19 @@ public partial class SidebarTree : UserControl
         RestoreExpanded(_roots, expandedIds);
 
         // Мультивыделение не переживает перестройку дерева; восстанавливаем только
-        // подсветку открытой коллекции по (DbId, Id) (в режиме конструктора).
+        // подсветку открытой коллекции по (DbId, Id) (в режимах конструктора и задач).
         _selectedNodes.Clear();
-        if (_mode == SidebarMode.Constructor && _open is { } open)
+        if (_mode is SidebarMode.Constructor or SidebarMode.Tasks && _open is { } open)
         {
             var node = FindNode(_roots, "collection", open.DbId, open.Id);
             if (node is not null) { _selectedNodes.Add(node); ExpandAncestors(_roots, node); }
-            else _open = null;
+            else
+            {
+                _open = null;
+                // Открытая в задачах коллекция пропала (удалена/БД размонтирована) —
+                // модуль задач должен вернуться к агрегатному списку.
+                if (_mode == SidebarMode.Tasks) CollectionOpened?.Invoke(this, null);
+            }
         }
 
         RebuildRows();
@@ -435,7 +447,7 @@ public partial class SidebarTree : UserControl
 
     private void UpdateToggleAllIcon()
     {
-        if (_mode != SidebarMode.Calendar) return;
+        if (!ChecksMode) return;
         var on = AllChecked();
         ToolTip.SetTip(ToggleAllBtn, on ? "Выключить все" : "Включить все");
     }
@@ -487,6 +499,29 @@ public partial class SidebarTree : UserControl
             _selectedNodes.Clear();
             ToggleCollection(node);   // RebuildRows внутри
         }
+        else if (_mode == SidebarMode.Tasks)
+        {
+            // Клик по коллекции — открыть её (список задач сужается до неё, быстрые
+            // задачи создаются в ней); повторный клик по открытой — назад к агрегату.
+            _selectedNodes.Clear();
+            if (node.Id.HasValue)
+            {
+                if (_open is { } cur && cur.DbId == node.DbId && cur.Id == node.Id.Value)
+                {
+                    _open = null;
+                    RebuildRows();
+                    CollectionOpened?.Invoke(this, null);
+                }
+                else
+                {
+                    _open = new EntityRef(node.DbId, node.Id.Value);
+                    _selectedNodes.Add(node);
+                    RebuildRows();
+                    CollectionOpened?.Invoke(this, _open);
+                }
+            }
+            else RebuildRows();
+        }
         else
         {
             _selectedNodes.Clear();
@@ -506,7 +541,7 @@ public partial class SidebarTree : UserControl
     private void ResetSelectionToOpen()
     {
         _selectedNodes.Clear();
-        if (_mode == SidebarMode.Constructor && _open is { } open)
+        if (_mode is SidebarMode.Constructor or SidebarMode.Tasks && _open is { } open)
         {
             var node = FindNode(_roots, "collection", open.DbId, open.Id);
             if (node is not null) _selectedNodes.Add(node);
@@ -582,7 +617,7 @@ public partial class SidebarTree : UserControl
 
     private void OnCheckboxTapped(object? sender, TappedEventArgs e)
     {
-        if (_mode != SidebarMode.Calendar) return;
+        if (!ChecksMode) return;
         if (sender is not Control { DataContext: SidebarRow row } || row.Node.IsGroup) return;
         ToggleCollection(row.Node);
         e.Handled = true;
@@ -642,10 +677,12 @@ public partial class SidebarTree : UserControl
         }
         else
         {
-            if (_mode == SidebarMode.Calendar)
+            if (ChecksMode)
             {
                 menu.Items.Add(Gate(BuildColorMenu(db, id), Can(PermAction.EditCollection, id)));
-                menu.Items.Add(Gate(BuildDateFieldsMenu(db, id), Can(PermAction.EditField, id)));
+                menu.Items.Add(_mode == SidebarMode.Calendar
+                    ? Gate(BuildDateFieldsMenu(db, id), Can(PermAction.EditField, id))
+                    : Gate(BuildUserFieldsMenu(db, id), Can(PermAction.EditField, id)));
                 menu.Items.Add(new Separator());
             }
             if (!multi) menu.Items.Add(Gate(MenuItemEdit(() => _ = EditCollection(db, id)), Can(PermAction.EditCollection, id)));
@@ -949,6 +986,144 @@ public partial class SidebarTree : UserControl
         };
         // Карточка живёт в попапе сабменю — попап наследует зум (InheritsTransform
         // ставит стиль MenuItem в Controls.axaml), токен обычный.
+        listBox.Bind(Border.BorderThicknessProperty, listBox.GetResourceObservable("BorderLine"));
+        panel.Children.Add(listBox);
+
+        return panel;
+    }
+
+    // ── «Отображение свойств исполнителя» (режим задач) ──────────────────────────
+
+    // Зеркало BuildDateFieldsMenu для раздела задач: какие user-поля коллекции дают
+    // задачи (вкл/выкл IsTaskExec). Первое включение авто-создаёт «Назначил»/«Статус» —
+    // тогда обновляем и другие сайдбары/таблицу (RequestRefresh).
+    private MenuItem BuildUserFieldsMenu(int dbId, int collectionId)
+    {
+        var userItem = new MenuItem { Header = MenuIcons.UserFieldsHeader() };
+        FixSubmenuGap(userItem);
+
+        var host = new MenuItem { StaysOpenOnClick = true, Classes = { "dateFieldsHost" } };
+        var repo = RepoFor(dbId);
+        if (repo is not null)
+        {
+            var userFields = repo.GetFields(collectionId).Where(f => f.FieldType == "user").ToList();
+            host.Header = BuildUserFieldsPanel(repo, userFields);
+        }
+        userItem.Items.Add(host);
+        return userItem;
+    }
+
+    private Control BuildUserFieldsPanel(ConstructorRepository repo, List<DbField> userFields)
+    {
+        var secondary = (IBrush)this.FindResource("BrushSecondaryText")!;
+        var fontBase  = (double)this.FindResource("FontSizeBase")!;
+        var radius    = (CornerRadius)this.FindResource("RadiusBase")!;
+
+        var panel = new StackPanel
+        {
+            Width = 240, Margin = new Thickness(10, 8), Spacing = 6,
+            Cursor = new Cursor(StandardCursorType.Arrow),
+        };
+
+        var search = new TextBox
+        {
+            Watermark = "Поиск свойств...",
+            Height = 30, CornerRadius = radius,
+            Background = Brushes.White,
+            VerticalContentAlignment = Avalonia.Layout.VerticalAlignment.Center,
+        };
+        panel.Children.Add(search);
+
+        if (userFields.Count == 0)
+        {
+            panel.Children.Add(new TextBlock
+            {
+                Text = "Нет свойств типа «Пользователь»", Foreground = secondary, FontSize = fontBase,
+                Margin = new Thickness(2, 2, 0, 0),
+            });
+            return panel;
+        }
+
+        var syncing   = false;
+        var selectAll = new CheckBox
+        {
+            Content = "(Выделить всё)", FontSize = fontBase,
+            Cursor = new Cursor(StandardCursorType.Hand),
+        };
+
+        var list = new StackPanel { Spacing = 4 };
+        var rows = new List<(DbField Field, CheckBox Box)>();
+
+        bool Matches(DbField f) =>
+            string.IsNullOrWhiteSpace(search.Text) ||
+            f.Name.Contains(search.Text!.Trim(), StringComparison.OrdinalIgnoreCase);
+
+        void SyncSelectAll()
+        {
+            syncing = true;
+            var vis = rows.Where(r => Matches(r.Field)).ToList();
+            selectAll.IsChecked = vis.Count > 0 && vis.All(r => r.Box.IsChecked == true);
+            syncing = false;
+        }
+
+        foreach (var f in userFields)
+        {
+            var fid = f.Id!.Value;
+            var cb = new CheckBox
+            {
+                Content = f.Name, FontSize = fontBase, IsChecked = f.IsTaskExec,
+                Cursor = new Cursor(StandardCursorType.Hand),
+            };
+            cb.IsCheckedChanged += (_, _) =>
+            {
+                if (syncing) return;
+                bool fieldsCreated;
+                try { fieldsCreated = repo.SetUserFieldTaskExec(fid, cb.IsChecked == true); }
+                catch (InvalidOperationException)
+                {
+                    // Нет права создать авто-поля («Назначил»/«Статус») — откатываем галку.
+                    syncing = true;
+                    cb.IsChecked = !cb.IsChecked;
+                    syncing = false;
+                    return;
+                }
+                CalendarsChanged?.Invoke(this, EventArgs.Empty);
+                if (fieldsCreated) RequestRefresh?.Invoke(this, EventArgs.Empty);
+                SyncSelectAll();
+            };
+            rows.Add((f, cb));
+            list.Children.Add(cb);
+        }
+
+        // «Выделить всё» действует на видимое (после поиска) подмножество.
+        selectAll.IsCheckedChanged += (_, _) =>
+        {
+            if (syncing) return;
+            var on = selectAll.IsChecked == true;
+            foreach (var (f, box) in rows.Where(r => Matches(r.Field)))
+                if ((box.IsChecked == true) != on) box.IsChecked = on;   // дёргает обработчик чекбокса
+        };
+
+        search.TextChanged += (_, _) =>
+        {
+            foreach (var (f, box) in rows) box.IsVisible = Matches(f);
+            SyncSelectAll();
+        };
+
+        SyncSelectAll();
+
+        var listBox = new Border
+        {
+            Background       = Brushes.White,
+            BorderBrush     = (IBrush)this.FindResource("BrushSeparator")!,
+            CornerRadius    = radius,
+            Padding         = new Thickness(8, 6),
+            Child = new StackPanel
+            {
+                Spacing = 4,
+                Children = { selectAll, new ScrollViewer { MaxHeight = 240, Content = list } },
+            },
+        };
         listBox.Bind(Border.BorderThicknessProperty, listBox.GetResourceObservable("BorderLine"));
         panel.Children.Add(listBox);
 
@@ -1841,7 +2016,7 @@ public partial class SidebarTree : UserControl
     {
         Refresh();
         RequestRefresh?.Invoke(this, EventArgs.Empty);
-        if (_mode == SidebarMode.Calendar)
+        if (ChecksMode)
         {
             CalendarsChanged?.Invoke(this, EventArgs.Empty);
             ActiveIdsChanged?.Invoke(this, GetActiveIds());
@@ -1919,9 +2094,9 @@ public partial class SidebarRow : ObservableObject
     public Thickness IndentMargin => new(Depth * IndentStep, 0, 0, 0);
     public double    ChevronSlot  => Expandable ? IndentStep : 0;
 
-    // Чекбокс есть только в режиме календаря и только у коллекций.
-    public double CheckboxSlot => Mode == SidebarMode.Calendar && !Node.IsGroup && !Node.IsDatabase ? IndentStep : 0;
-    public bool   ShowCheckbox => Mode == SidebarMode.Calendar && !Node.IsGroup && !Node.IsDatabase;
+    // Чекбокс есть только в режимах календаря/задач и только у коллекций.
+    public double CheckboxSlot => Mode is SidebarMode.Calendar or SidebarMode.Tasks && !Node.IsGroup && !Node.IsDatabase ? IndentStep : 0;
+    public bool   ShowCheckbox => Mode is SidebarMode.Calendar or SidebarMode.Tasks && !Node.IsGroup && !Node.IsDatabase;
 
     public bool      ShowChevron     => Expandable;
     public Geometry? ChevronGeometry => Node.IsExpanded ? Icon("IconChevronDown") : Icon("IconChevronRight");
