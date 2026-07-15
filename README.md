@@ -31,16 +31,19 @@
 #### Windows
 
 **winget** (встроен в Windows 10/11):
+
 ```powershell
 winget install Microsoft.DotNet.SDK.10
 ```
 
 **Chocolatey:**
+
 ```powershell
 choco install dotnet-sdk
 ```
 
 **Scoop:**
+
 ```powershell
 scoop install dotnet-sdk
 ```
@@ -48,16 +51,19 @@ scoop install dotnet-sdk
 #### Linux
 
 **apt** (Ubuntu / Debian):
+
 ```bash
 sudo apt-get install -y dotnet-sdk-10.0
 ```
 
 **dnf** (Fedora):
+
 ```bash
 sudo dnf install dotnet-sdk-10.0
 ```
 
 **snap:**
+
 ```bash
 sudo snap install dotnet-sdk --classic --channel=10.0
 ```
@@ -65,11 +71,13 @@ sudo snap install dotnet-sdk --classic --channel=10.0
 #### macOS
 
 **Homebrew:**
+
 ```bash
 brew install --cask dotnet-sdk
 ```
 
 **MacPorts:**
+
 ```bash
 sudo port install dotnet-sdk
 ```
