@@ -1,16 +1,16 @@
 <Application xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             x:Class="DataBase.App"
+             x:Class="SmartBase.App"
              RequestedThemeVariant="Light">
 
     <Application.Resources>
         <ResourceDictionary>
             <ResourceDictionary.MergedDictionaries>
-                <ResourceInclude Source="avares://DataBase/Assets/Styles/Colors.axaml" />
-                <ResourceInclude Source="avares://DataBase/Assets/Styles/Icons.axaml" />
+                <ResourceInclude Source="avares://SmartBase/Assets/Styles/Colors.axaml" />
+                <ResourceInclude Source="avares://SmartBase/Assets/Styles/Icons.axaml" />
                 <!-- Копии тем ContextMenu/ToolTip с зум-обёрткой (см. паспорт файла):
                      попапы меню и тултипов иначе не масштабируются зумом приложения. -->
-                <ResourceInclude Source="avares://DataBase/Assets/Styles/ZoomPopupThemes.axaml" />
+                <ResourceInclude Source="avares://SmartBase/Assets/Styles/ZoomPopupThemes.axaml" />
             </ResourceDictionary.MergedDictionaries>
 
         </ResourceDictionary>
@@ -31,9 +31,9 @@
         <Style Selector="Window">
             <Setter Property="Icon" Value="/Assets/Branding/icon.ico" />
         </Style>
-        <StyleInclude Source="avares://DataBase/Assets/Styles/Typography.axaml" />
-        <StyleInclude Source="avares://DataBase/Assets/Styles/Controls.axaml" />
-        <StyleInclude Source="avares://DataBase/Controls/Widgets/AppCheckBox.axaml" />
+        <StyleInclude Source="avares://SmartBase/Assets/Styles/Typography.axaml" />
+        <StyleInclude Source="avares://SmartBase/Assets/Styles/Controls.axaml" />
+        <StyleInclude Source="avares://SmartBase/Controls/Widgets/AppCheckBox.axaml" />
     </Application.Styles>
 
 </Application>

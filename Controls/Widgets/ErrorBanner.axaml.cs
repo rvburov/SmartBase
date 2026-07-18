@@ -1,6 +1,6 @@
 using Avalonia.Controls;
 
-namespace DataBase.Controls.Widgets;
+namespace SmartBase.Controls.Widgets;
 
 /// <summary>
 /// Красный баннер с уведомлением об ошибке валидации. Скрыт, пока нет текста.

@@ -3,10 +3,10 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Media;
-using DataBase.Core.Models;
-using DataBase.Utils;
+using SmartBase.Core.Models;
+using SmartBase.Utils;
 
-namespace DataBase.Views.ConstructorDb.Calendar;
+namespace SmartBase.Views.ConstructorDb.Calendar;
 
 public partial class MonthView : UserControl
 {
@@ -1199,17 +1199,17 @@ public partial class MonthView : UserControl
             if (_selections.Count > 1 && _selections.ContainsKey(ev))
             {
                 var batch = _selections.Keys.ToList();
-                menu.Items.Add(DataBase.Controls.Components.EventContextMenu.MakeDuplicateItem(
+                menu.Items.Add(SmartBase.Controls.Components.EventContextMenu.MakeDuplicateItem(
                     () => { _Deselect(); RecordsDuplicateRequested?.Invoke(this, batch); }));
-                menu.Items.Add(DataBase.Controls.Components.EventContextMenu.MakeDeleteItem(
+                menu.Items.Add(SmartBase.Controls.Components.EventContextMenu.MakeDeleteItem(
                     () => { _Deselect(); RecordsDeleteRequested?.Invoke(this, batch); }));
                 return;
             }
-            menu.Items.Add(DataBase.Controls.Components.EventContextMenu.MakeEditItem(
+            menu.Items.Add(SmartBase.Controls.Components.EventContextMenu.MakeEditItem(
                 () => { _Deselect(); RecordClicked?.Invoke(this, ev); }));
-            menu.Items.Add(DataBase.Controls.Components.EventContextMenu.MakeDuplicateItem(
+            menu.Items.Add(SmartBase.Controls.Components.EventContextMenu.MakeDuplicateItem(
                 () => { _Deselect(); RecordDuplicateRequested?.Invoke(this, ev); }));
-            menu.Items.Add(DataBase.Controls.Components.EventContextMenu.MakeDeleteItem(
+            menu.Items.Add(SmartBase.Controls.Components.EventContextMenu.MakeDeleteItem(
                 () => { _Deselect(); RecordDeleteRequested?.Invoke(this, ev); }));
         };
         return menu;
@@ -1222,7 +1222,7 @@ public partial class MonthView : UserControl
         {
             _Deselect();
             menu.Items.Clear();
-            menu.Items.Add(DataBase.Controls.Components.EventContextMenu.MakeCreateItem(
+            menu.Items.Add(SmartBase.Controls.Components.EventContextMenu.MakeCreateItem(
                 () => DayAddClicked?.Invoke(this, date)));
         };
         return menu;

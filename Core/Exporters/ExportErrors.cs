@@ -1,4 +1,4 @@
-namespace DataBase.Core.Exporters;
+namespace SmartBase.Core.Exporters;
 
 /// <summary>
 /// Создание файлов экспорта и перевод системных исключений записи в дружелюбные

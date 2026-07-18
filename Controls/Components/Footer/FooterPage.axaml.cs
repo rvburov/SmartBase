@@ -1,6 +1,6 @@
 using Avalonia.Controls;
 
-namespace DataBase.Controls.Components;
+namespace SmartBase.Controls.Components;
 
 /// <summary>Футер панели «Страница записи»: переключатель режима markdown (редактор ↔ просмотр).
 /// Высота/отступы — как у остальных полос (56 / 16). Сам контент режима применяет родитель

@@ -1,6 +1,6 @@
 using ExcelDataReader;
 
-namespace DataBase.Core.Importers.TableSources;
+namespace SmartBase.Core.Importers.TableSources;
 
 /// <summary>
 /// «Все листы в одну коллекцию»: столбцы сопоставляются по итоговому имени заголовка (после

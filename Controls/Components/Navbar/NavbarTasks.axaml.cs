@@ -2,7 +2,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Media;
 
-namespace DataBase.Controls.Components;
+namespace SmartBase.Controls.Components;
 
 public partial class NavbarTasks : UserControl
 {

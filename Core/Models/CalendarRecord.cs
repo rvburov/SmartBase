@@ -1,4 +1,4 @@
-namespace DataBase.Core.Models;
+namespace SmartBase.Core.Models;
 
 public class CalendarRecord
 {

@@ -16,10 +16,10 @@
 
 ## Пути ([AppSettings](../../Utils/AppSettings.cs))
 
-- **Release:** `%AppData%\Roaming\DataBase\` (Windows); на Linux/macOS .NET
-  `ApplicationData` указывает на `~/.config/DataBase/`.
+- **Release:** `%AppData%\Roaming\SmartBase\` (Windows); на Linux/macOS .NET
+  `ApplicationData` указывает на `~/.config/SmartBase/`.
 - **Debug:** папка `.localdata/` в корне проекта (находится по маркеру
-  `DataBase.csproj`) — изолированно «как venv», переживает `dotnet clean` и снос
+  `SmartBase.csproj`) — изолированно «как venv», переживает `dotnet clean` и снос
   `artifacts/`.
 
 `database.db` → `AppSettings.DbPath`, `app.db` → `AppSettings.SystemDbPath`.

@@ -3,11 +3,11 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
-using DataBase.Database;
+using SmartBase.Database;
 
 #nullable disable
 
-namespace DataBase.Database.Migrations
+namespace SmartBase.Database.Migrations
 {
     [DbContext(typeof(AppDbContext))]
     [Migration("20260612141652_AddColumnOrder")]
@@ -19,7 +19,7 @@ namespace DataBase.Database.Migrations
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "9.0.0");
 
-            modelBuilder.Entity("DataBase.Database.Entities.CategoryEntity", b =>
+            modelBuilder.Entity("SmartBase.Database.Entities.CategoryEntity", b =>
                 {
                     b.Property<int>("Id")
                         .ValueGeneratedOnAdd()
@@ -41,7 +41,7 @@ namespace DataBase.Database.Migrations
                     b.ToTable("categories", (string)null);
                 });
 
-            modelBuilder.Entity("DataBase.Database.Entities.ColumnOrderEntity", b =>
+            modelBuilder.Entity("SmartBase.Database.Entities.ColumnOrderEntity", b =>
                 {
                     b.Property<int>("CollectionId")
                         .HasColumnType("INTEGER");
@@ -57,7 +57,7 @@ namespace DataBase.Database.Migrations
                     b.ToTable("column_order", (string)null);
                 });
 
-            modelBuilder.Entity("DataBase.Database.Entities.DbCollectionEntity", b =>
+            modelBuilder.Entity("SmartBase.Database.Entities.DbCollectionEntity", b =>
                 {
                     b.Property<int>("Id")
                         .ValueGeneratedOnAdd()
@@ -88,7 +88,7 @@ namespace DataBase.Database.Migrations
                     b.ToTable("db_collections", (string)null);
                 });
 
-            modelBuilder.Entity("DataBase.Database.Entities.DbFieldEntity", b =>
+            modelBuilder.Entity("SmartBase.Database.Entities.DbFieldEntity", b =>
                 {
                     b.Property<int>("Id")
                         .ValueGeneratedOnAdd()
@@ -132,7 +132,7 @@ namespace DataBase.Database.Migrations
                     b.ToTable("db_fields", (string)null);
                 });
 
-            modelBuilder.Entity("DataBase.Database.Entities.DbFieldValueEntity", b =>
+            modelBuilder.Entity("SmartBase.Database.Entities.DbFieldValueEntity", b =>
                 {
                     b.Property<int>("Id")
                         .ValueGeneratedOnAdd()
@@ -158,7 +158,7 @@ namespace DataBase.Database.Migrations
                     b.ToTable("db_field_values", (string)null);
                 });
 
-            modelBuilder.Entity("DataBase.Database.Entities.DbGroupEntity", b =>
+            modelBuilder.Entity("SmartBase.Database.Entities.DbGroupEntity", b =>
                 {
                     b.Property<int>("Id")
                         .ValueGeneratedOnAdd()
@@ -181,7 +181,7 @@ namespace DataBase.Database.Migrations
                     b.ToTable("db_groups", (string)null);
                 });
 
-            modelBuilder.Entity("DataBase.Database.Entities.DbRecordEntity", b =>
+            modelBuilder.Entity("SmartBase.Database.Entities.DbRecordEntity", b =>
                 {
                     b.Property<int>("Id")
                         .ValueGeneratedOnAdd()
@@ -220,7 +220,7 @@ namespace DataBase.Database.Migrations
                     b.ToTable("db_records", (string)null);
                 });
 
-            modelBuilder.Entity("DataBase.Database.Entities.SystemFieldMetaEntity", b =>
+            modelBuilder.Entity("SmartBase.Database.Entities.SystemFieldMetaEntity", b =>
                 {
                     b.Property<int>("CollectionId")
                         .HasColumnType("INTEGER");
@@ -239,7 +239,7 @@ namespace DataBase.Database.Migrations
                     b.ToTable("system_field_meta", (string)null);
                 });
 
-            modelBuilder.Entity("DataBase.Database.Entities.UiColWidthEntity", b =>
+            modelBuilder.Entity("SmartBase.Database.Entities.UiColWidthEntity", b =>
                 {
                     b.Property<int>("CollectionId")
                         .HasColumnType("INTEGER");
@@ -255,7 +255,7 @@ namespace DataBase.Database.Migrations
                     b.ToTable("ui_col_widths", (string)null);
                 });
 
-            modelBuilder.Entity("DataBase.Database.Entities.UiCollectionSettingEntity", b =>
+            modelBuilder.Entity("SmartBase.Database.Entities.UiCollectionSettingEntity", b =>
                 {
                     b.Property<int>("CollectionId")
                         .ValueGeneratedOnAdd()
@@ -276,7 +276,7 @@ namespace DataBase.Database.Migrations
                     b.ToTable("ui_collection_settings", (string)null);
                 });
 
-            modelBuilder.Entity("DataBase.Database.Entities.UiRowHeightEntity", b =>
+            modelBuilder.Entity("SmartBase.Database.Entities.UiRowHeightEntity", b =>
                 {
                     b.Property<int>("CollectionId")
                         .HasColumnType("INTEGER");
@@ -292,9 +292,9 @@ namespace DataBase.Database.Migrations
                     b.ToTable("ui_row_heights", (string)null);
                 });
 
-            modelBuilder.Entity("DataBase.Database.Entities.DbCollectionEntity", b =>
+            modelBuilder.Entity("SmartBase.Database.Entities.DbCollectionEntity", b =>
                 {
-                    b.HasOne("DataBase.Database.Entities.DbGroupEntity", "Group")
+                    b.HasOne("SmartBase.Database.Entities.DbGroupEntity", "Group")
                         .WithMany("Collections")
                         .HasForeignKey("GroupId")
                         .OnDelete(DeleteBehavior.SetNull);
@@ -302,9 +302,9 @@ namespace DataBase.Database.Migrations
                     b.Navigation("Group");
                 });
 
-            modelBuilder.Entity("DataBase.Database.Entities.DbFieldEntity", b =>
+            modelBuilder.Entity("SmartBase.Database.Entities.DbFieldEntity", b =>
                 {
-                    b.HasOne("DataBase.Database.Entities.DbCollectionEntity", "Collection")
+                    b.HasOne("SmartBase.Database.Entities.DbCollectionEntity", "Collection")
                         .WithMany("Fields")
                         .HasForeignKey("CollectionId")
                         .OnDelete(DeleteBehavior.Cascade)
@@ -313,15 +313,15 @@ namespace DataBase.Database.Migrations
                     b.Navigation("Collection");
                 });
 
-            modelBuilder.Entity("DataBase.Database.Entities.DbFieldValueEntity", b =>
+            modelBuilder.Entity("SmartBase.Database.Entities.DbFieldValueEntity", b =>
                 {
-                    b.HasOne("DataBase.Database.Entities.DbFieldEntity", "Field")
+                    b.HasOne("SmartBase.Database.Entities.DbFieldEntity", "Field")
                         .WithMany("FieldValues")
                         .HasForeignKey("FieldId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
-                    b.HasOne("DataBase.Database.Entities.DbRecordEntity", "Record")
+                    b.HasOne("SmartBase.Database.Entities.DbRecordEntity", "Record")
                         .WithMany("FieldValues")
                         .HasForeignKey("RecordId")
                         .OnDelete(DeleteBehavior.Cascade)
@@ -332,9 +332,9 @@ namespace DataBase.Database.Migrations
                     b.Navigation("Record");
                 });
 
-            modelBuilder.Entity("DataBase.Database.Entities.DbGroupEntity", b =>
+            modelBuilder.Entity("SmartBase.Database.Entities.DbGroupEntity", b =>
                 {
-                    b.HasOne("DataBase.Database.Entities.DbGroupEntity", "Parent")
+                    b.HasOne("SmartBase.Database.Entities.DbGroupEntity", "Parent")
                         .WithMany("Children")
                         .HasForeignKey("ParentId")
                         .OnDelete(DeleteBehavior.SetNull);
@@ -342,9 +342,9 @@ namespace DataBase.Database.Migrations
                     b.Navigation("Parent");
                 });
 
-            modelBuilder.Entity("DataBase.Database.Entities.DbRecordEntity", b =>
+            modelBuilder.Entity("SmartBase.Database.Entities.DbRecordEntity", b =>
                 {
-                    b.HasOne("DataBase.Database.Entities.DbCollectionEntity", "Collection")
+                    b.HasOne("SmartBase.Database.Entities.DbCollectionEntity", "Collection")
                         .WithMany("Records")
                         .HasForeignKey("CollectionId")
                         .OnDelete(DeleteBehavior.Cascade)
@@ -353,26 +353,26 @@ namespace DataBase.Database.Migrations
                     b.Navigation("Collection");
                 });
 
-            modelBuilder.Entity("DataBase.Database.Entities.DbCollectionEntity", b =>
+            modelBuilder.Entity("SmartBase.Database.Entities.DbCollectionEntity", b =>
                 {
                     b.Navigation("Fields");
 
                     b.Navigation("Records");
                 });
 
-            modelBuilder.Entity("DataBase.Database.Entities.DbFieldEntity", b =>
+            modelBuilder.Entity("SmartBase.Database.Entities.DbFieldEntity", b =>
                 {
                     b.Navigation("FieldValues");
                 });
 
-            modelBuilder.Entity("DataBase.Database.Entities.DbGroupEntity", b =>
+            modelBuilder.Entity("SmartBase.Database.Entities.DbGroupEntity", b =>
                 {
                     b.Navigation("Children");
 
                     b.Navigation("Collections");
                 });
 
-            modelBuilder.Entity("DataBase.Database.Entities.DbRecordEntity", b =>
+            modelBuilder.Entity("SmartBase.Database.Entities.DbRecordEntity", b =>
                 {
                     b.Navigation("FieldValues");
                 });

@@ -4,7 +4,7 @@ using System.Globalization;
 using Avalonia.Collections;
 using Avalonia.Controls;
 
-namespace DataBase.ViewModels.ConstructorDb;
+namespace SmartBase.ViewModels.ConstructorDb;
 
 /// <summary>
 /// Виртуализирующее представление строк для <c>DataGrid</c>.

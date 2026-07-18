@@ -2,7 +2,7 @@ using System.Collections.ObjectModel;
 using Avalonia;
 using Avalonia.Controls;
 
-namespace DataBase.Controls.Widgets;
+namespace SmartBase.Controls.Widgets;
 
 public record SelectorItem(string Label, object? Data = null);
 

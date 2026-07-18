@@ -3,10 +3,10 @@ using System.Reflection;
 using Avalonia.Controls;
 using Avalonia.Interactivity;
 using Avalonia.Platform.Storage;
-using DataBase.Controls.Dialogs;
-using DataBase.Utils;
+using SmartBase.Controls.Dialogs;
+using SmartBase.Utils;
 
-namespace DataBase.Setup;
+namespace SmartBase.Setup;
 
 /// <summary>
 /// Окно установщика (вариант A). В обычном режиме — установка/обновление в выбранную
@@ -77,7 +77,7 @@ public partial class InstallerWindow : Window
         var folders = await StorageProvider.OpenFolderPickerAsync(
             new FolderPickerOpenOptions { Title = "Папка установки", AllowMultiple = false });
         if (folders.Count > 0 && folders[0].TryGetLocalPath() is { } p)
-            // Дописываем выделенную подпапку (…\DataBase), чтобы удаление не задело чужие файлы
+            // Дописываем выделенную подпапку (…\SmartBase), чтобы удаление не задело чужие файлы
             // общей папки — удаление чистит папку установки. На macOS путь остаётся как есть.
             PathBox.Text = InstallService.EnsureDedicatedDir(p);
     }
@@ -113,8 +113,8 @@ public partial class InstallerWindow : Window
     // ── Удаление ───────────────────────────────────────────────────────────
     private void SetupUninstallUi()
     {
-        Title                     = "DataBase — Удаление";
-        SubtitleText.Text         = $"Удалить DataBase из:\n{InstallService.CurrentDir}";
+        Title                     = $"{AppSettings.DisplayName} — Удаление";
+        SubtitleText.Text         = $"Удалить {AppSettings.DisplayName} из:\n{InstallService.CurrentDir}";
         PathBlock.IsVisible       = false;
         ShortcutCheck.IsVisible   = false;
         RemoveDataCheck.IsVisible = true;
@@ -126,7 +126,7 @@ public partial class InstallerWindow : Window
     {
         var dir = (PathBox.Text ?? "").Trim();
         if (!InstallService.IsAppPresent(dir)) return;
-        if (await Confirm($"Удалить DataBase из:\n{dir}") != true) return;
+        if (await Confirm($"Удалить {AppSettings.DisplayName} из:\n{dir}") != true) return;
 
         InstallService.Uninstall(dir, removeData: false);
         Close();
@@ -135,7 +135,7 @@ public partial class InstallerWindow : Window
     private async Task DoUninstallAsync()
     {
         var dir = InstallService.CurrentDir;
-        if (await Confirm($"Удалить DataBase из:\n{dir}") != true) return;
+        if (await Confirm($"Удалить {AppSettings.DisplayName} из:\n{dir}") != true) return;
 
         SetBusy(true);
         SubtitleText.Text = "Удаление…";

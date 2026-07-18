@@ -1,9 +1,9 @@
-using DataBase.Extensions.AssemblyCalc;
-using DataBase.Extensions.PdfAnalyzer;
-using DataBase.Extensions.PdfRename;
-using DataBase.Extensions.ProductCompare;
+using SmartBase.Extensions.AssemblyCalc;
+using SmartBase.Extensions.PdfAnalyzer;
+using SmartBase.Extensions.PdfRename;
+using SmartBase.Extensions.ProductCompare;
 
-namespace DataBase.Extensions;
+namespace SmartBase.Extensions;
 
 /// <summary>
 /// Реестр доступных расширений. Пока — статический список зарегистрированных вручную.

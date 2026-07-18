@@ -1,6 +1,6 @@
 using Avalonia.Controls;
 
-namespace DataBase.Controls.Dialogs;
+namespace SmartBase.Controls.Dialogs;
 
 /// <summary>
 /// Окно загрузки с процентами (импорт, массовые операции, загрузка обновления).

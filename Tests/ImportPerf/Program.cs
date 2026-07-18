@@ -1,12 +1,12 @@
 using System.Diagnostics;
 using System.Text;
 using ClosedXML.Excel;
-using DataBase.Core.Importers;
-using DataBase.Core.Importers.TableSources;
-using DataBase.Database;
-using DataBase.Database.Repositories;
+using SmartBase.Core.Importers;
+using SmartBase.Core.Importers.TableSources;
+using SmartBase.Database;
+using SmartBase.Database.Repositories;
 
-namespace DataBase.Tests.ImportPerf;
+namespace SmartBase.Tests.ImportPerf;
 
 /// <summary>
 /// Функциональная матрица и замер производительности импорта таблиц.

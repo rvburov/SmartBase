@@ -1,7 +1,7 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             xmlns:w="clr-namespace:DataBase.Controls.Widgets"
-             x:Class="DataBase.Views.Tasks.TaskListView"
+             xmlns:w="clr-namespace:SmartBase.Controls.Widgets"
+             x:Class="SmartBase.Views.Tasks.TaskListView"
              Background="{StaticResource BrushBg}">
 
     <Grid RowDefinitions="Auto,Auto,*" Margin="16,8,16,0">

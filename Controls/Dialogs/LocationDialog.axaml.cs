@@ -1,7 +1,7 @@
 using Avalonia.Controls;
-using DataBase.Database.Repositories;
+using SmartBase.Database.Repositories;
 
-namespace DataBase.Controls.Dialogs;
+namespace SmartBase.Controls.Dialogs;
 
 // Результат окна «Расположение»: целевая БД и группа (null — корневой уровень). Название
 // коллекции не меняется (в отличие от CollectionDialog) — окно только перемещает.

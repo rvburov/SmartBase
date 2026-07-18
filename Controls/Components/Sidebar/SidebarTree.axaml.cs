@@ -7,16 +7,16 @@ using Avalonia.Media;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
 using CommunityToolkit.Mvvm.ComponentModel;
-using DataBase.Controls.Dialogs;
-using DataBase.Core.Exporters;
-using DataBase.Core.Importers;
-using DataBase.Core.Importers.TableSources;
-using DataBase.Core.Models;
-using DataBase.Database;
-using DataBase.Database.Repositories;
-using DataBase.Utils;
+using SmartBase.Controls.Dialogs;
+using SmartBase.Core.Exporters;
+using SmartBase.Core.Importers;
+using SmartBase.Core.Importers.TableSources;
+using SmartBase.Core.Models;
+using SmartBase.Database;
+using SmartBase.Database.Repositories;
+using SmartBase.Utils;
 
-namespace DataBase.Controls.Components;
+namespace SmartBase.Controls.Components;
 
 public enum SidebarMode { Calendar, Constructor, Tasks }
 

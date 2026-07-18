@@ -1,7 +1,7 @@
 using Avalonia;
 using Avalonia.Media;
 
-namespace DataBase.Utils;
+namespace SmartBase.Utils;
 
 /// <summary>
 /// Уровень масштабирования всего интерфейса (хранится в app.db).

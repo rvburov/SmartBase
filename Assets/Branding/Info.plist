@@ -3,11 +3,11 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleName</key>
-    <string>DataBase</string>
+    <string>SmartBase</string>
     <key>CFBundleDisplayName</key>
-    <string>DataBase</string>
+    <string>SmartBase</string>
     <key>CFBundleIdentifier</key>
-    <string>com.romanburov.database</string>
+    <string>com.romanburov.smartbase</string>
     <key>CFBundleVersion</key>
     <string>1.0.0</string>
     <key>CFBundleShortVersionString</key>
@@ -15,7 +15,7 @@
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleExecutable</key>
-    <string>DataBase</string>
+    <string>SmartBase</string>
     <!-- Имя файла иконки в Contents/Resources (без расширения .icns) -->
     <key>CFBundleIconFile</key>
     <string>icon</string>

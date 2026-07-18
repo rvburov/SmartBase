@@ -1,6 +1,6 @@
 using System.Text.Json;
 
-namespace DataBase.Core.Importers.TableSources;
+namespace SmartBase.Core.Importers.TableSources;
 
 /// <summary>
 /// JSON-источник: массив объектов <c>[{…},{…}]</c> или NDJSON (объект в каждой строке) —

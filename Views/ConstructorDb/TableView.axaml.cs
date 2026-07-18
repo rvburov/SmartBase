@@ -16,13 +16,13 @@ using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
-using DataBase.Controls.Widgets;
-using DataBase.Core.Models;
-using DataBase.Database.Repositories;
-using DataBase.ViewModels.ConstructorDb;
-using DataBase.Utils;
+using SmartBase.Controls.Widgets;
+using SmartBase.Core.Models;
+using SmartBase.Database.Repositories;
+using SmartBase.ViewModels.ConstructorDb;
+using SmartBase.Utils;
 
-namespace DataBase.Views.ConstructorDb;
+namespace SmartBase.Views.ConstructorDb;
 
 public partial class TableView : UserControl
 {

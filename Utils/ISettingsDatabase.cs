@@ -1,4 +1,4 @@
-namespace DataBase.Utils;
+namespace SmartBase.Utils;
 
 /// <summary>
 /// Хранилище настроек приложения (ключ-значение). Реализуется поверх системной app.db

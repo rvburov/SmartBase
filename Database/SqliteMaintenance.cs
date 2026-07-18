@@ -1,6 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 
-namespace DataBase.Database;
+namespace SmartBase.Database;
 
 /// <summary>
 /// Обслуживание SQLite-файла. Сейчас — разовое сжатие раздутого файла: после массовых

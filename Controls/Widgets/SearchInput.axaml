@@ -1,6 +1,6 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             x:Class="DataBase.Controls.Widgets.SearchInput">
+             x:Class="SmartBase.Controls.Widgets.SearchInput">
 
     <!-- Однострочный поиск: высота не фиксируется (MinHeight + рост под шрифт), а
          вертикальная прокрутка отключена — иначе при крупном шрифте текст переполняет

@@ -2,14 +2,14 @@ using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using ClosedXML.Excel;
-using DataBase.Core.Exporters;
-using DataBase.Core.Exporters.TableWriters;
-using DataBase.Core.Importers;
-using DataBase.Core.Importers.TableSources;
-using DataBase.Database;
-using DataBase.Database.Repositories;
+using SmartBase.Core.Exporters;
+using SmartBase.Core.Exporters.TableWriters;
+using SmartBase.Core.Importers;
+using SmartBase.Core.Importers.TableSources;
+using SmartBase.Database;
+using SmartBase.Database.Repositories;
 
-namespace DataBase.Tests.ExportPerf;
+namespace SmartBase.Tests.ExportPerf;
 
 /// <summary>
 /// Функциональная матрица и замер производительности экспорта таблиц.

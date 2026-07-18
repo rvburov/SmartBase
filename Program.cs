@@ -1,9 +1,9 @@
 using System.Diagnostics;
 using Avalonia;
-using DataBase.Setup;
-using DataBase.Utils;
+using SmartBase.Setup;
+using SmartBase.Utils;
 
-namespace DataBase;
+namespace SmartBase;
 
 internal sealed class Program
 {
@@ -40,7 +40,7 @@ internal sealed class Program
 
     // Режим установщика включается аргументом (--install/--uninstall) или именем раздачи
     // «…-Setup»: на Windows/Linux — имя файла бинаря, на macOS — имя `.app`-бандла
-    // (DataBase-Setup.app, внутренний бинарь остаётся DataBase). Иначе → приложение.
+    // (SmartBase-Setup.app, внутренний бинарь остаётся SmartBase). Иначе → приложение.
     private static SetupMode ResolveMode(string[] args)
     {
         if (Array.Exists(args, a => a == "--uninstall")) return SetupMode.Uninstall;
@@ -48,7 +48,7 @@ internal sealed class Program
 
         string name;
         if (OperatingSystem.IsMacOS() && InstallService.BundleRoot(Environment.ProcessPath) is { } bundle)
-            name = Path.GetFileNameWithoutExtension(bundle);   // DataBase-Setup(.app)
+            name = Path.GetFileNameWithoutExtension(bundle);   // SmartBase-Setup(.app)
         else
             name = Path.GetFileNameWithoutExtension(Environment.ProcessPath) ?? "";
 

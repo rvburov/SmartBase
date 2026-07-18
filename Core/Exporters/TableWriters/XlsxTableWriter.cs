@@ -2,9 +2,9 @@ using System.Globalization;
 using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Spreadsheet;
-using DataBase.Core.Models;
+using SmartBase.Core.Models;
 
-namespace DataBase.Core.Exporters.TableWriters;
+namespace SmartBase.Core.Exporters.TableWriters;
 
 /// <summary>
 /// Потоковая запись .xlsx/.xlsm через OpenXmlWriter (SAX): строки уходят в архив по мере

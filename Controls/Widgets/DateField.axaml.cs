@@ -3,7 +3,7 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Threading;
 
-namespace DataBase.Controls.Widgets;
+namespace SmartBase.Controls.Widgets;
 
 /// <summary>
 /// Поле ввода даты: ручной ввод (дд.мм.гггг) + выпадающий <see cref="Calendar"/>.

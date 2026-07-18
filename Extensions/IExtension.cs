@@ -1,6 +1,6 @@
 using Avalonia.Controls;
 
-namespace DataBase.Extensions;
+namespace SmartBase.Extensions;
 
 /// <summary>
 /// Контракт самостоятельного расширения. Каждое расширение лежит в своей папке

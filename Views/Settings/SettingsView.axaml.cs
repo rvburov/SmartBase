@@ -6,13 +6,13 @@ using Avalonia.Controls.Primitives;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Platform.Storage;
-using DataBase.Controls.Dialogs;
-using DataBase.Database;
-using DataBase.Database.Entities;
-using DataBase.Settings;
-using DataBase.Utils;
+using SmartBase.Controls.Dialogs;
+using SmartBase.Database;
+using SmartBase.Database.Entities;
+using SmartBase.Settings;
+using SmartBase.Utils;
 
-namespace DataBase.Views.Settings;
+namespace SmartBase.Views.Settings;
 
 public partial class SettingsView : UserControl
 {
@@ -151,8 +151,8 @@ public partial class SettingsView : UserControl
     // ── Обновления ───────────────────────────────────────────────────────────
     //
     // Этап 1–2 автообновления: путь к папке с новой версией хранится в app.db, кнопка
-    // «Проверить» читает версию удалённого DataBase.exe (FileVersionInfo, без скачивания)
-    // и сравнивает с текущей. Скачивание и замену .exe выполнит отдельный DataBase-Setup.exe
+    // «Проверить» читает версию удалённого SmartBase.exe (FileVersionInfo, без скачивания)
+    // и сравнивает с текущей. Скачивание и замену .exe выполнит отдельный SmartBase-Setup.exe
     // (следующие этапы — см. docs/guides/auto-update.md).
 
     private enum UpdateCheck { Available, UpToDate, Error }
@@ -220,8 +220,8 @@ public partial class SettingsView : UserControl
             if (!System.IO.Directory.Exists(folder))
                 return new(UpdateCheck.Error, "Папка обновления недоступна — проверьте путь и подключение к сети.");
 
-            // Источник обновления — DataBase-Setup (один артефакт на сервере работает и как
-            // установщик, и как обновление); если его нет — берём обычный DataBase. На macOS
+            // Источник обновления — SmartBase-Setup (один артефакт на сервере работает и как
+            // установщик, и как обновление); если его нет — берём обычный SmartBase. На macOS
             // артефакт — это .app-бандл (папка), а сравниваемый по дате файл — внутренний бинарь.
             if (!ResolveRemote(folder, out var remoteArtifact, out var remoteTimeFile, out var missing))
                 return new(UpdateCheck.Error, missing);

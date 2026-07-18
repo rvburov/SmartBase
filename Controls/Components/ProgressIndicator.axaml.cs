@@ -2,7 +2,7 @@ using System;
 using Avalonia.Controls;
 using Avalonia.Threading;
 
-namespace DataBase.Controls.Components;
+namespace SmartBase.Controls.Components;
 
 /// <summary>
 /// Единый индикатор загрузки приложения: строка фазы + доп. строка + полоса с процентами.

@@ -1,6 +1,6 @@
-using DataBase.Core.Models;
+using SmartBase.Core.Models;
 
-namespace DataBase.Controls.Dialogs;
+namespace SmartBase.Controls.Dialogs;
 
 // Построение вариантов выпадающего списка «Расположение» с полным путём вложенности
 // групп — «1», «1 / 1», «1 (копия) / 2» … — чтобы одноимённые группы на разных

@@ -1,6 +1,6 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             x:Class="DataBase.Controls.Widgets.TimeField">
+             x:Class="SmartBase.Controls.Widgets.TimeField">
 
     <Border x:Name="Box" Classes="timeField" Height="34">
         <Grid ColumnDefinitions="*,Auto">

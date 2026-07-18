@@ -2,7 +2,7 @@ using System.IO;
 using System.Threading;
 using ClosedXML.Excel;
 
-namespace DataBase.Extensions.ProductCompare;
+namespace SmartBase.Extensions.ProductCompare;
 
 /// <summary>Ошибка сравнения с дружелюбным текстом — показывается пользователю в статусе окна.</summary>
 public sealed class ProductCompareException(string message) : Exception(message);

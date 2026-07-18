@@ -5,12 +5,12 @@ using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
 using Avalonia.Threading;
-using DataBase.Controls.Dialogs;
-using DataBase.Database;
-using DataBase.Utils;
-using DataBase.Views;
+using SmartBase.Controls.Dialogs;
+using SmartBase.Database;
+using SmartBase.Utils;
+using SmartBase.Views;
 
-namespace DataBase;
+namespace SmartBase;
 
 public partial class App : Application
 {

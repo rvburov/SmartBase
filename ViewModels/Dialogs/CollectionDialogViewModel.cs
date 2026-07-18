@@ -1,10 +1,10 @@
 using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
-using DataBase.Core.Models;
-using DataBase.Database.Repositories;
+using SmartBase.Core.Models;
+using SmartBase.Database.Repositories;
 
-namespace DataBase.ViewModels.Dialogs;
+namespace SmartBase.ViewModels.Dialogs;
 
 public partial class CollectionDialogViewModel : ViewModelBase
 {

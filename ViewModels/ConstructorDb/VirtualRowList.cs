@@ -1,10 +1,10 @@
 using System.Collections;
 using System.Collections.Specialized;
 using Avalonia.Threading;
-using DataBase.Core.Models;
-using DataBase.Database.Repositories;
+using SmartBase.Core.Models;
+using SmartBase.Database.Repositories;
 
-namespace DataBase.ViewModels.ConstructorDb;
+namespace SmartBase.ViewModels.ConstructorDb;
 
 /// <summary>
 /// Виртуальная коллекция строк таблицы с LRU-кешем страниц.

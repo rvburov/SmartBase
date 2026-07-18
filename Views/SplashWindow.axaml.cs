@@ -2,7 +2,7 @@ using System;
 using System.Reflection;
 using Avalonia.Controls;
 
-namespace DataBase.Views;
+namespace SmartBase.Views;
 
 /// <summary>
 /// Стартовый сплэш-экран (в стиле установщика: название + версия). Показывается сразу, пока в

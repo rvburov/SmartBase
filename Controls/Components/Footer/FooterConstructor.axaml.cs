@@ -1,6 +1,6 @@
 using Avalonia.Controls;
 
-namespace DataBase.Controls.Components;
+namespace SmartBase.Controls.Components;
 
 public partial class FooterConstructor : UserControl
 {

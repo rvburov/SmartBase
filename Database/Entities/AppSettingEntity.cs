@@ -1,6 +1,6 @@
 using System.ComponentModel.DataAnnotations;
 
-namespace DataBase.Database.Entities;
+namespace SmartBase.Database.Entities;
 
 /// <summary>
 /// Пара «ключ-значение» настроек приложения (системная БД app.db, таблица «app_settings»).

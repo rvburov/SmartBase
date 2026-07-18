@@ -3,9 +3,9 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Media;
-using DataBase.Utils;
+using SmartBase.Utils;
 
-namespace DataBase.Controls.Components;
+namespace SmartBase.Controls.Components;
 
 /// <summary>Пункт списка-сайдбара: ключ + подпись + иконка (ключ x:Key из Icons.axaml).</summary>
 public sealed record SidebarListItem(string Id, string Label, string Icon);

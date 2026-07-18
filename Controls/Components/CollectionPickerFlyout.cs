@@ -2,9 +2,9 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Media;
-using DataBase.Utils;
+using SmartBase.Utils;
 
-namespace DataBase.Controls.Components;
+namespace SmartBase.Controls.Components;
 
 /// <summary>
 /// Выпадающий выбор коллекций для экспорта: поиск + чекбоксы + «(Выделить всё)» —

@@ -1,14 +1,14 @@
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Platform.Storage;
-using DataBase.Controls.Components;
-using DataBase.Core.Exporters;
-using DataBase.Core.Importers;
-using DataBase.Core.Importers.TableSources;
-using DataBase.Core.Models;
-using DataBase.Database.Repositories;
+using SmartBase.Controls.Components;
+using SmartBase.Core.Exporters;
+using SmartBase.Core.Importers;
+using SmartBase.Core.Importers.TableSources;
+using SmartBase.Core.Models;
+using SmartBase.Database.Repositories;
 
-namespace DataBase.Controls.Dialogs;
+namespace SmartBase.Controls.Dialogs;
 
 /// <summary>Введённые значения формы — чтобы переоткрыть окно с теми же данными после ошибки.</summary>
 public record ImportDraft(string Path, string Name, int DbId, int? ParentId,

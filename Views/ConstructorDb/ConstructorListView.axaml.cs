@@ -1,9 +1,9 @@
 using Avalonia.Controls;
 using CommunityToolkit.Mvvm.Input;
-using DataBase.Database.Repositories;
+using SmartBase.Database.Repositories;
 using System.Windows.Input;
 
-namespace DataBase.Views.ConstructorDb;
+namespace SmartBase.Views.ConstructorDb;
 
 public partial class ConstructorListView : UserControl
 {

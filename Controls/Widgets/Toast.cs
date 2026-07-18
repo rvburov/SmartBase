@@ -1,8 +1,8 @@
 using Avalonia.Controls;
 using Avalonia.Threading;
-using DataBase.Utils;
+using SmartBase.Utils;
 
-namespace DataBase.Controls.Widgets;
+namespace SmartBase.Controls.Widgets;
 
 /// <summary>
 /// Переиспользуемое всплывающее уведомление, привязанное к контролу — всплывает рядом с ним,

@@ -1,10 +1,10 @@
 using System.Security.Cryptography;
 using System.Text;
-using DataBase.Core.Models;
-using DataBase.Database.Entities;
-using DataBase.Utils;
+using SmartBase.Core.Models;
+using SmartBase.Database.Entities;
+using SmartBase.Utils;
 
-namespace DataBase.Database.Repositories;
+namespace SmartBase.Database.Repositories;
 
 /// <summary>
 /// Права и допуск пользователей одной базы конструктора (экземпляр — на DatabaseManager).

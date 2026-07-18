@@ -1,12 +1,12 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        xmlns:components="using:DataBase.Controls.Components"
-        x:Class="DataBase.Setup.InstallerWindow"
+        xmlns:components="using:SmartBase.Controls.Components"
+        x:Class="SmartBase.Setup.InstallerWindow"
         Width="500" Height="400"
         CanResize="False"
         WindowStartupLocation="CenterScreen"
         Background="{StaticResource BrushBg}"
-        Title="DataBase — Установка">
+        Title="SmartBase — Установка">
 
     <Window.Styles>
         <!-- Главная кнопка («Установить»/«Удалить»): размер как у dialog-кнопок приложения,
@@ -30,7 +30,7 @@
                 Background="{StaticResource BrushSecondaryBg}"
                 BorderBrush="{StaticResource BrushSeparator}" BorderThickness="{DynamicResource BorderLineBottom}">
             <StackPanel VerticalAlignment="Center" Margin="24,0">
-                <TextBlock Text="DataBase"
+                <TextBlock Text="SmartBase"
                            FontSize="{DynamicResource FontSizeLarge}"
                            FontWeight="{StaticResource FontWeightBold}"
                            Foreground="{StaticResource BrushPrimaryText}" />

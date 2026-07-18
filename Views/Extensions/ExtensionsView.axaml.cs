@@ -1,7 +1,7 @@
 using Avalonia.Controls;
-using DataBase.Extensions;
+using SmartBase.Extensions;
 
-namespace DataBase.Views.Extensions;
+namespace SmartBase.Views.Extensions;
 
 /// <summary>
 /// Блок раздела «Расширения» (по стилю блока настроек): навбар с именем расширения и

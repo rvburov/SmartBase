@@ -1,6 +1,6 @@
 using System.Text.RegularExpressions;
 
-namespace DataBase.Extensions.PdfAnalyzer;
+namespace SmartBase.Extensions.PdfAnalyzer;
 
 /// <summary>
 /// Справочные данные ЕСКД/ЕСПД (ГОСТ 2.201 / 19.101 / 19.103) и разбор обозначений документов

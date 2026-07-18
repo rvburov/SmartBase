@@ -1,4 +1,4 @@
-namespace DataBase.Core.Models;
+namespace SmartBase.Core.Models;
 
 /// <summary>
 /// Точные агрегаты окна Диаграммы по одной коллекции: число событий и охват

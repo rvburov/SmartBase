@@ -2,7 +2,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 
-namespace DataBase.Controls.Dialogs;
+namespace SmartBase.Controls.Dialogs;
 
 /// <summary>
 /// Пароль базы данных, два режима.

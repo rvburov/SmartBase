@@ -3,7 +3,7 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Media;
 
-namespace DataBase.Controls.Components;
+namespace SmartBase.Controls.Components;
 
 /// <summary>Навбар панели «Страница записи»: редактируемое имя записи слева + кнопка
 /// открыть/закрыть блок коллекции справа. Высота/отступы — как у остальных навбаров (56 / 16).

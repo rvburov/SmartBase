@@ -3,13 +3,13 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
 using Avalonia.Layout;
-using DataBase.Controls.Widgets;
-using DataBase.Core.Models;
-using DataBase.Core.Validators;
-using DataBase.Database.Repositories;
-using DataBase.Utils;
+using SmartBase.Controls.Widgets;
+using SmartBase.Core.Models;
+using SmartBase.Core.Validators;
+using SmartBase.Database.Repositories;
+using SmartBase.Utils;
 
-namespace DataBase.Controls.Dialogs;
+namespace SmartBase.Controls.Dialogs;
 
 // Record.FieldId — выбранное поле-дата (куда кладётся дата события). Контроллер при
 // изменении сравнивает его с прежним полем и при смене переносит дату (очищает старое).

@@ -2,9 +2,9 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Media;
 using Avalonia.Threading;
-using DataBase.Controls.Widgets;
+using SmartBase.Controls.Widgets;
 
-namespace DataBase.Controls.Components;
+namespace SmartBase.Controls.Components;
 
 public partial class NavbarConstructor : UserControl
 {

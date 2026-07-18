@@ -1,7 +1,7 @@
 using Avalonia;
 using Avalonia.Controls;
 
-namespace DataBase.Utils;
+namespace SmartBase.Utils;
 
 /// <summary>
 /// Живой размер шрифта приложения. Хранит стандартные размеры из Typography.axaml

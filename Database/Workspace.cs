@@ -1,7 +1,7 @@
-using DataBase.Database.Entities;
-using DataBase.Utils;
+using SmartBase.Database.Entities;
+using SmartBase.Utils;
 
-namespace DataBase.Database;
+namespace SmartBase.Database;
 
 /// <summary>
 /// Рабочее пространство: набор смонтированных баз данных. Сейчас монтирует только

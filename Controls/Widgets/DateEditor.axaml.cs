@@ -3,9 +3,9 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.VisualTree;
-using DataBase.Core.Models;
+using SmartBase.Core.Models;
 
-namespace DataBase.Controls.Widgets;
+namespace SmartBase.Controls.Widgets;
 
 /// <summary>
 /// Редактор свойства типа «дата». Ручной ввод (с подсказкой) + выпадашка с

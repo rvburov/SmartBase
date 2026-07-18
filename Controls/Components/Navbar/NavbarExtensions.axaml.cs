@@ -1,7 +1,7 @@
 using Avalonia.Controls;
 using Avalonia.Interactivity;
 
-namespace DataBase.Controls.Components;
+namespace SmartBase.Controls.Components;
 
 /// <summary>Навбар раздела «Расширения»: имя расширения слева + кнопка «Запустить» справа.
 /// Высота/отступы — как у остальных навбаров (56 / 16). Логику запуска решает родитель

@@ -1,7 +1,7 @@
 using Avalonia.Controls;
-using DataBase.Database.Repositories;
+using SmartBase.Database.Repositories;
 
-namespace DataBase.Controls.Dialogs;
+namespace SmartBase.Controls.Dialogs;
 
 // Результат окна «Расположение» записи: целевая БД, целевая коллекция и флаг переноса всех
 // свойств (создавать в цели отсутствующие свойства). Аналог LocationDialogResult, но для записи

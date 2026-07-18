@@ -1,7 +1,7 @@
 using System.Text.Encodings.Web;
 using System.Text.Json;
 
-namespace DataBase.Core.Exporters.TableWriters;
+namespace SmartBase.Core.Exporters.TableWriters;
 
 /// <summary>
 /// JSON: массив объектов, UTF-8 без отступов (на 10 млн строк отступы — +30–50 % объёма).

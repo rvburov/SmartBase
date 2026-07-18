@@ -2,7 +2,7 @@ using Microsoft.EntityFrameworkCore.Migrations;
 
 #nullable disable
 
-namespace DataBase.Database.Migrations
+namespace SmartBase.Database.Migrations
 {
     /// <summary>
     /// Индекс под спилловеры окна сетки календаря: timed-события, начавшиеся ДО окна и

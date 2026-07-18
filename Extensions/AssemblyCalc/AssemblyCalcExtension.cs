@@ -1,6 +1,6 @@
 using Avalonia.Controls;
 
-namespace DataBase.Extensions.AssemblyCalc;
+namespace SmartBase.Extensions.AssemblyCalc;
 
 /// <summary>
 /// Расширение «Расчёт сборочных единиц в изделии»: переносит данные из исходного «Список КД и ТД»

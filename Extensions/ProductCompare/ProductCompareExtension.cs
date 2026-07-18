@@ -1,6 +1,6 @@
 using Avalonia.Controls;
 
-namespace DataBase.Extensions.ProductCompare;
+namespace SmartBase.Extensions.ProductCompare;
 
 /// <summary>
 /// Расширение «Сравнение составов изделий»: сравнивает два Excel-состава (старый/новый) и

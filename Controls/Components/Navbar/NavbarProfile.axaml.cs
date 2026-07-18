@@ -1,6 +1,6 @@
 using Avalonia.Controls;
 
-namespace DataBase.Controls.Components;
+namespace SmartBase.Controls.Components;
 
 /// <summary>Навбар раздела «Профиль»: заголовок выбранного раздела. Высота/отступы — как у
 /// остальных навбаров (56 / 16).</summary>

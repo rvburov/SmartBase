@@ -2,7 +2,7 @@ using Microsoft.EntityFrameworkCore.Migrations;
 
 #nullable disable
 
-namespace DataBase.Database.Migrations
+namespace SmartBase.Database.Migrations
 {
     /// <inheritdoc />
     public partial class AddRecordTitleAndDescription : Migration

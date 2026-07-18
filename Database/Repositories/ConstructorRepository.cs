@@ -3,13 +3,13 @@ using System.Text.RegularExpressions;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
-using DataBase.Core.Exporters;
-using DataBase.Core.Importers;
-using DataBase.Core.Models;
-using DataBase.Database.Entities;
-using DataBase.Utils;
+using SmartBase.Core.Exporters;
+using SmartBase.Core.Importers;
+using SmartBase.Core.Models;
+using SmartBase.Database.Entities;
+using SmartBase.Utils;
 
-namespace DataBase.Database.Repositories;
+namespace SmartBase.Database.Repositories;
 
 public partial class ConstructorRepository(AppDbContext db)
 {

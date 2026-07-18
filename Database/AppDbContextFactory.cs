@@ -1,7 +1,7 @@
 using Microsoft.EntityFrameworkCore.Design;
-using DataBase.Utils;
+using SmartBase.Utils;
 
-namespace DataBase.Database;
+namespace SmartBase.Database;
 
 public class AppDbContextFactory : IDesignTimeDbContextFactory<AppDbContext>
 {

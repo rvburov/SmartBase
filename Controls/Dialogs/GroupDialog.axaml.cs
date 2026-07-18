@@ -1,10 +1,10 @@
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
-using DataBase.Core.Models;
-using DataBase.Database.Repositories;
+using SmartBase.Core.Models;
+using SmartBase.Database.Repositories;
 
-namespace DataBase.Controls.Dialogs;
+namespace SmartBase.Controls.Dialogs;
 
 public record GroupDialogResult(string Name, int? ParentId, int DbId);
 

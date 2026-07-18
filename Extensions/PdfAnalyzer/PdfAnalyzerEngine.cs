@@ -6,7 +6,7 @@ using System.Threading;
 using ClosedXML.Excel;
 using UglyToad.PdfPig;
 
-namespace DataBase.Extensions.PdfAnalyzer;
+namespace SmartBase.Extensions.PdfAnalyzer;
 
 /// <summary>Тип выгрузки. Порядок пунктов комбобокса задаётся в окне (сопоставление в OnExecuteClick).</summary>
 public enum ExportType

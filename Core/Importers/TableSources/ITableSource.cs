@@ -1,4 +1,4 @@
-namespace DataBase.Core.Importers.TableSources;
+namespace SmartBase.Core.Importers.TableSources;
 
 /// <summary>
 /// Источник табличных данных для импорта (Excel/CSV/JSON). Двухпроходный: <see cref="Analyze"/>

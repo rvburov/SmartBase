@@ -6,11 +6,11 @@ using Avalonia.Controls.Templates;
 using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Media;
-using DataBase.Core.Models;
-using DataBase.Database.Repositories;
-using DataBase.Utils;
+using SmartBase.Core.Models;
+using SmartBase.Database.Repositories;
+using SmartBase.Utils;
 
-namespace DataBase.Views.Tasks;
+namespace SmartBase.Views.Tasks;
 
 public record QuickAddRequest(string Title, DateValue? Due, string Executor);
 

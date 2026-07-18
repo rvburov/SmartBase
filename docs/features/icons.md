@@ -12,7 +12,7 @@
 | `icon.ico` | ICO, слои 16/24/32/48/64/128/256 | иконка окна (Windows/Linux) **и** иконка Windows `.exe` |
 | `icon.icns` | ICNS | иконка macOS-бандла `.app` |
 | `Info.plist` | — | метаданные macOS `.app` (ссылается на `icon.icns`) |
-| `DataBase.desktop` | — | пункт меню приложения для Linux |
+| `SmartBase.desktop` | — | пункт меню приложения для Linux |
 
 `icon.ico` и `icon.icns` **генерируются из `icon.png`** — править их вручную не нужно.
 
@@ -52,12 +52,12 @@
   Windows готовый кадр нужного размера (чётко в заголовке окна и таскбаре), а не
   масштабирует 512px PNG на лету. На Linux Avalonia декодирует `.ico` в bitmap для
   значка окна.
-- **Windows `.exe`:** `<ApplicationIcon>` = `icon.ico` в [DataBase.csproj](../../DataBase.csproj) —
+- **Windows `.exe`:** `<ApplicationIcon>` = `icon.ico` в [SmartBase.csproj](../../SmartBase.csproj) —
   значок в Проводнике, ярлыке и закрепе на таскбаре.
 - **macOS Dock/Finder/Launchpad:** только через `.app`-бандл (`Info.plist` →
   `CFBundleIconFile` → `icon.icns`). Свойство `Window.Icon` на маке иконку окна
   не показывает.
-- **Linux меню/лаунчер:** `DataBase.desktop` + `icon.png`, ставятся через
+- **Linux меню/лаунчер:** `SmartBase.desktop` + `icon.png`, ставятся через
   `Scripts/linux-install.sh`.
 
 ## Сборка под каждую ОС
@@ -65,12 +65,12 @@
 ```bash
 Scripts/generate-icons.sh                        # (только macOS) пересобрать .ico/.icns из icon.png
 
-Scripts/macos-build.sh osx-arm64                 # macOS → dist/Version <X.Y.Z>/osx-arm64/DataBase.app
-open "dist/Version <X.Y.Z>/osx-arm64/DataBase.app"
+Scripts/macos-build.sh osx-arm64                 # macOS → dist/Version <X.Y.Z>/osx-arm64/SmartBase.app
+open "dist/Version <X.Y.Z>/osx-arm64/SmartBase.app"
 
-Scripts/windows-build.sh                          # Windows → dist/Version <X.Y.Z>/win-x64/DataBase.exe (иконка вшита)
+Scripts/windows-build.sh                          # Windows → dist/Version <X.Y.Z>/win-x64/SmartBase.exe (иконка вшита)
 
-Scripts/linux-build.sh                            # Linux  → dist/Version <X.Y.Z>/linux-x64/DataBase
+Scripts/linux-build.sh                            # Linux  → dist/Version <X.Y.Z>/linux-x64/SmartBase
 Scripts/linux-install.sh                          # Linux: иконку/ярлык ставить на самой Linux-машине
 ```
 
@@ -78,9 +78,9 @@ Scripts/linux-install.sh                          # Linux: иконку/ярлы
 
 ## Скрипты (Scripts/)
 
-- `windows-build.sh` — собирает `dist/<rid>/DataBase.exe` (иконка вшита в `.exe`).
-- `linux-build.sh` — собирает `dist/<rid>/DataBase` (бит запуска выставлен).
-- `macos-build.sh` — собирает `dist/<rid>/DataBase.app` с иконкой.
+- `windows-build.sh` — собирает `dist/<rid>/SmartBase.exe` (иконка вшита в `.exe`).
+- `linux-build.sh` — собирает `dist/<rid>/SmartBase` (бит запуска выставлен).
+- `macos-build.sh` — собирает `dist/<rid>/SmartBase.app` с иконкой.
 - `linux-install.sh` — ставит иконку и ярлык в меню Linux.
 - `generate-icons.sh` — генерирует `icon.ico` и `icon.icns` из `icon.png`
   (**только macOS**: нужны штатные `sips`, `iconutil`, `python3`).

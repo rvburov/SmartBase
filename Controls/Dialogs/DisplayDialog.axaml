@@ -1,6 +1,6 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        x:Class="DataBase.Controls.Dialogs.DisplayDialog"
+        x:Class="SmartBase.Controls.Dialogs.DisplayDialog"
         Title="Отображение свойств"
         Width="600"
         MinWidth="600"

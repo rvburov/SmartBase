@@ -1,8 +1,8 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             xmlns:vm="using:DataBase.Views.Settings"
-             xmlns:comp="using:DataBase.Controls.Components"
-             x:Class="DataBase.Views.Settings.SettingsView"
+             xmlns:vm="using:SmartBase.Views.Settings"
+             xmlns:comp="using:SmartBase.Controls.Components"
+             x:Class="SmartBase.Views.Settings.SettingsView"
              Background="{StaticResource BrushBg}">
 
     <UserControl.Resources>
@@ -396,7 +396,7 @@
 
                     <!-- Название, версия (со сборкой) и краткое описание -->
                     <StackPanel Spacing="6" Margin="0,0,0,8">
-                        <TextBlock Text="DataBase"
+                        <TextBlock Text="SmartBase"
                                    FontSize="{DynamicResource FontSizeLarge}"
                                    FontWeight="{StaticResource FontWeightBold}" />
                         <TextBlock x:Name="VersionText"
@@ -415,7 +415,7 @@
                             <StackPanel Spacing="4">
                                 <TextBlock Classes="title" Text="Обновления" />
                                 <TextBlock Classes="desc"
-                                           Text="Путь к папке (можно сетевой), где лежит новая версия DataBase.exe. Нажмите «Проверить» — программа сравнит версию файла в папке с текущей. По умолчанию путь не задан." />
+                                           Text="Путь к папке (можно сетевой), где лежит новая версия SmartBase.exe. Нажмите «Проверить» — программа сравнит версию файла в папке с текущей. По умолчанию путь не задан." />
                             </StackPanel>
                             <Grid ColumnDefinitions="*,Auto">
                                 <TextBox x:Name="UpdatePathBox" Grid.Column="0"
@@ -423,7 +423,7 @@
                                          Margin="0,0,8,0"
                                          Background="{StaticResource BrushSecondaryBg}"
                                          CornerRadius="{StaticResource RadiusBase}"
-                                         Watermark="\\server\share\DataBase   или   Z:\DataBase"
+                                         Watermark="\\server\share\SmartBase   или   Z:\SmartBase"
                                          LostFocus="OnUpdatePathChanged" />
                                 <Button x:Name="UpdateCheckBtn" Grid.Column="1"
                                         Classes="dialog" Content="Проверить"

@@ -1,6 +1,6 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             x:Class="DataBase.Controls.Widgets.AppLabel">
+             x:Class="SmartBase.Controls.Widgets.AppLabel">
 
     <TextBlock Text="{Binding Text, RelativeSource={RelativeSource AncestorType=UserControl}}"
                Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=UserControl}}"

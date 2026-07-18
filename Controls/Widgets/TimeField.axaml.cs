@@ -1,7 +1,7 @@
 using Avalonia.Controls;
-using DataBase.Utils;
+using SmartBase.Utils;
 
-namespace DataBase.Controls.Widgets;
+namespace SmartBase.Controls.Widgets;
 
 /// <summary>
 /// Поле ввода времени: ручной ввод + выпадающий список с шагом 15 минут.

@@ -1,6 +1,6 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             x:Class="DataBase.Controls.Widgets.Selector">
+             x:Class="SmartBase.Controls.Widgets.Selector">
 
     <!-- Аналог DropdownSelector / ViewButton + ViewDropdown из selector.py -->
     <ComboBox x:Name="PART_Combo"

@@ -32,7 +32,7 @@ dotnet build -c Debug          # сборка
 ## База данных при разработке
 
 В Debug файлы БД лежат в `.localdata/` в корне проекта (путь вычисляется по маркеру
-`DataBase.csproj`, см. [AppSettings](../../Utils/AppSettings.cs)) — изолированно,
+`SmartBase.csproj`, см. [AppSettings](../../Utils/AppSettings.cs)) — изолированно,
 переживает `dotnet clean` и снос `artifacts/`. В Release — в папке данных
 пользователя ОС. Подробнее — [databases.md](../architecture/databases.md).
 
@@ -43,11 +43,11 @@ dotnet build -c Debug          # сборка
 
 ```bash
 dotnet tool restore
-dotnet ef migrations add ИмяМиграции --msbuildprojectextensionspath artifacts/obj/DataBase
+dotnet ef migrations add ИмяМиграции --msbuildprojectextensionspath artifacts/obj/SmartBase
 ```
 
 > Флаг `--msbuildprojectextensionspath` нужен из-за `UseArtifactsOutput`: `obj`
-> лежит в `artifacts/obj/DataBase`, и без указания пути EF CLI не находит проект.
+> лежит в `artifacts/obj/SmartBase`, и без указания пути EF CLI не находит проект.
 
 **Правило:** миграции только сохраняют данные — без drop/recreate и потери строк
 (то же для системной app.db — изменения аддитивно). См. [databases.md](../architecture/databases.md).

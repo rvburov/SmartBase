@@ -1,6 +1,6 @@
 using ExcelDataReader;
 
-namespace DataBase.Core.Importers.TableSources;
+namespace SmartBase.Core.Importers.TableSources;
 
 /// <summary>
 /// Excel-источник (.xlsx/.xlsm/.xlsb/.xls) на ExcelDataReader: потоковое чтение строк без

@@ -2,7 +2,7 @@ using Microsoft.EntityFrameworkCore.Migrations;
 
 #nullable disable
 
-namespace DataBase.Database.Migrations
+namespace SmartBase.Database.Migrations
 {
     /// <summary>
     /// Сносит триграммный FTS5-индекс заголовков (records_fts + триггеры синхронизации),

@@ -1,7 +1,7 @@
 using System.Globalization;
 using System.Text;
 
-namespace DataBase.Core.Importers.TableSources;
+namespace SmartBase.Core.Importers.TableSources;
 
 /// <summary>
 /// Регистрация legacy-кодировок (Windows-1251 для CSV, кодировки старых .xls) — в .NET их нет из

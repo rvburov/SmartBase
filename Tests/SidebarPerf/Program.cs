@@ -1,9 +1,9 @@
 using System.Diagnostics;
-using DataBase.Core.Models;
-using DataBase.Database;
-using DataBase.Database.Repositories;
+using SmartBase.Core.Models;
+using SmartBase.Database;
+using SmartBase.Database.Repositories;
 
-namespace DataBase.Tests.SidebarPerf;
+namespace SmartBase.Tests.SidebarPerf;
 
 /// <summary>
 /// Замер производительности операций сайдбара (SidebarTree) на большом стенде.

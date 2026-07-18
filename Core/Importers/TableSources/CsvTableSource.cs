@@ -1,6 +1,6 @@
 using System.Text;
 
-namespace DataBase.Core.Importers.TableSources;
+namespace SmartBase.Core.Importers.TableSources;
 
 /// <summary>
 /// CSV-источник (потоковый, RFC 4180: кавычки экранируют разделитель и перенос строки, "" → ").

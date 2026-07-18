@@ -1,6 +1,6 @@
-using DataBase.Database.Repositories;
+using SmartBase.Database.Repositories;
 
-namespace DataBase.Controls.Dialogs;
+namespace SmartBase.Controls.Dialogs;
 
 /// <summary>
 /// Описатель смонтированной БД для диалогов создания/изменения: id, имя и репозиторий

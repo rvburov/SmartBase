@@ -109,7 +109,7 @@ dotnet run --no-build      # запустить уже собранное, бе�
 Ещё быстрее — запускать собранный `.exe` напрямую, вообще без проверки сборки:
 
 ```bash
-artifacts/bin/DataBase/debug/DataBase.exe
+artifacts/bin/SmartBase/debug/SmartBase.exe
 ```
 
 > ⚠️ `--no-build` и прямой запуск `.exe` стартуют **последнюю собранную** версию.
@@ -131,7 +131,7 @@ artifacts/bin/DataBase/debug/DataBase.exe
 
 Аргументы скриптов: `Scripts/<ОС>-build.sh [RID] [Config] [Version]`. Номер версии —
 **третий аргумент** (напр. `Scripts/windows-build.sh win-x64 Release 1.2.3`): он
-**записывается в `<Version>`** в [DataBase.csproj](DataBase.csproj) и становится текущим
+**записывается в `<Version>`** в [SmartBase.csproj](SmartBase.csproj) и становится текущим
 для дальнейших сборок. Без аргумента берётся то, что уже в csproj. Версия и дата
 сборки видны в приложении: **Настройки → О программе**. Полное описание —
 [docs/guides/build.md](docs/guides/build.md).
@@ -144,8 +144,8 @@ Scripts/windows-build.sh                        # win-x64, версия из csp
 Scripts/windows-build.sh win-x64 Release 1.2.3  # с номером версии 1.2.3
 ```
 
-Результат: `dist/Version <версия>/win-x64/DataBase.exe` — иконка уже вшита в `.exe`.
-Рядом кладётся `DataBase-Setup.exe` (тот же бинарь в режиме установщика: установка в
+Результат: `dist/Version <версия>/win-x64/SmartBase.exe` — иконка уже вшита в `.exe`.
+Рядом кладётся `SmartBase-Setup.exe` (тот же бинарь в режиме установщика: установка в
 `%LOCALAPPDATA%`, ярлыки, обновление, удаление) — см. [docs/guides/auto-update.md](docs/guides/auto-update.md).
 
 #### Linux (x64)
@@ -156,7 +156,7 @@ Scripts/linux-build.sh                          # linux-x64, версия из c
 Scripts/linux-build.sh linux-x64 Release 1.2.3  # с номером версии 1.2.3
 ```
 
-Результат: `dist/Version <версия>/linux-x64/DataBase` (бит запуска уже выставлен). Чтобы
+Результат: `dist/Version <версия>/linux-x64/SmartBase` (бит запуска уже выставлен). Чтобы
 в меню приложений появился пункт с иконкой, на целевой машине выполните `Scripts/linux-install.sh`.
 
 #### macOS (Apple Silicon / Intel)
@@ -175,8 +175,8 @@ Scripts/macos-build.sh osx-arm64 Release 1.2.3  # Apple Silicon
 Scripts/macos-build.sh osx-x64   Release 1.2.3  # Intel
 ```
 
-Результат: `dist/Version <версия>/osx-arm64/DataBase.app` (или `…/osx-x64/…` для Intel) —
-готовое приложение с иконкой (`open "dist/Version <версия>/osx-arm64/DataBase.app"`).
+Результат: `dist/Version <версия>/osx-arm64/SmartBase.app` (или `…/osx-x64/…` для Intel) —
+готовое приложение с иконкой (`open "dist/Version <версия>/osx-arm64/SmartBase.app"`).
 Подробности — [docs/features/icons.md](docs/features/icons.md).
 
 > Все платформы собираются с одной машины (cross-compilation). Папка `dist/`
@@ -247,8 +247,8 @@ calendar_avalonia/
 ├── docs/                       # guides/, architecture/, features/, ui/, plans/, ROADMAP (см. docs/README.md)
 │
 │   # ── Файлы в корне проекта ──
-├── DataBase.csproj             # Проект
-├── DataBase.sln                # Solution
+├── SmartBase.csproj             # Проект
+├── SmartBase.sln                # Solution
 ├── Directory.Build.props       # Вывод сборки → artifacts\ (а не bin\/obj\)
 ├── nuget.config                # Кэш NuGet-пакетов → packages\ внутри проекта
 ├── dotnet-tools.json           # Локальные dotnet-инструменты (например, EF CLI)
@@ -280,22 +280,22 @@ calendar_avalonia/
 - **`database.db`** — пользовательские данные (коллекции, поля, записи, события календаря).
 - **`app.db`** — системная: реестр подключённых БД + настройки приложения.
 
-**В продакшене (Release)** файлы лежат в стандартной папке данных пользователя ОС — `…/DataBase/`:
+**В продакшене (Release)** файлы лежат в стандартной папке данных пользователя ОС — `…/SmartBase/`:
 
 - **Windows** (`%APPDATA%`, Roaming):
-  - `C:\Users\<Имя>\AppData\Roaming\DataBase\database.db`
-  - `C:\Users\<Имя>\AppData\Roaming\DataBase\app.db`
+  - `C:\Users\<Имя>\AppData\Roaming\SmartBase\database.db`
+  - `C:\Users\<Имя>\AppData\Roaming\SmartBase\app.db`
 - **Linux** (`~/.config`):
-  - `/home/<имя>/.config/DataBase/database.db`
-  - `/home/<имя>/.config/DataBase/app.db`
+  - `/home/<имя>/.config/SmartBase/database.db`
+  - `/home/<имя>/.config/SmartBase/app.db`
 - **macOS** (`~/.config` — в .NET `ApplicationData` указывает на `~/.config`, а не на `~/Library/Application Support`):
-  - `/Users/<имя>/.config/DataBase/database.db`
-  - `/Users/<имя>/.config/DataBase/app.db`
+  - `/Users/<имя>/.config/SmartBase/database.db`
+  - `/Users/<имя>/.config/SmartBase/app.db`
 
 Во время работы рядом появляются временные файлы SQLite: `*.db-wal`, `*.db-shm`.
 
 **При разработке (Debug)** — папка `.localdata/` в корне проекта (находится по маркеру
-`DataBase.csproj`, поэтому не зависит от раскладки вывода):
+`SmartBase.csproj`, поэтому не зависит от раскладки вывода):
 `calendar_avalonia/.localdata/database.db` и `.localdata/app.db` (в `.gitignore`).
 
 > Дополнительные `.db`-файлы (в т.ч. общие в сетевых папках) подключаются через

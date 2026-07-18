@@ -1,4 +1,4 @@
-namespace DataBase.Utils;
+namespace SmartBase.Utils;
 
 /// <summary>
 /// Текущий пользователь приложения. Идентичность определяется автоматически, без входа:

@@ -1,10 +1,10 @@
 using System.Collections;
 using System.Collections.Specialized;
 using Avalonia.Threading;
-using DataBase.Core.Models;
-using DataBase.Database.Repositories;
+using SmartBase.Core.Models;
+using SmartBase.Database.Repositories;
 
-namespace DataBase.Views.ConstructorDb.Calendar;
+namespace SmartBase.Views.ConstructorDb.Calendar;
 
 /// <summary>
 /// Виртуальный список событий ОДНОГО дня для «Расписания». Реализует <see cref="IList"/>, поэтому

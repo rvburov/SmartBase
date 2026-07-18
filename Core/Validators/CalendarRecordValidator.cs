@@ -1,6 +1,6 @@
-using DataBase.Core.Models;
+using SmartBase.Core.Models;
 
-namespace DataBase.Core.Validators;
+namespace SmartBase.Core.Validators;
 
 public static class CalendarRecordValidator
 {

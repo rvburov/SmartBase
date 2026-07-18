@@ -1,7 +1,7 @@
 using System.Globalization;
-using DataBase.Core.Models;
+using SmartBase.Core.Models;
 
-namespace DataBase.Core.Exporters.TableWriters;
+namespace SmartBase.Core.Exporters.TableWriters;
 
 /// <summary>Общие правила типизации значений для писателей (см. таблицу в
 /// docs/features/import-export.md). Хранение в db_field_values: числа — сырой ввод

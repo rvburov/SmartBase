@@ -1,4 +1,4 @@
-namespace DataBase.Views.Settings;
+namespace SmartBase.Views.Settings;
 
 /// <summary>
 /// Строка списка «Управление базой данных»: запись реестра + признак, смонтирована ли

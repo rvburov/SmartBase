@@ -1,9 +1,9 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             xmlns:comp="using:DataBase.Controls.Components"
+             xmlns:comp="using:SmartBase.Controls.Components"
              xmlns:shapes="using:Avalonia.Controls.Shapes"
-             xmlns:local="using:DataBase.Views.ConstructorDb.Calendar"
-             x:Class="DataBase.Views.ConstructorDb.Calendar.WeekView"
+             xmlns:local="using:SmartBase.Views.ConstructorDb.Calendar"
+             x:Class="SmartBase.Views.ConstructorDb.Calendar.WeekView"
              Background="{StaticResource BrushBg}">
 
     <UserControl.Resources>

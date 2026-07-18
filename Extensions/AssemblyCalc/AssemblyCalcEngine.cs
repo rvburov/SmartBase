@@ -3,7 +3,7 @@ using System.IO;
 using System.Threading;
 using ClosedXML.Excel;
 
-namespace DataBase.Extensions.AssemblyCalc;
+namespace SmartBase.Extensions.AssemblyCalc;
 
 /// <summary>Ошибка формирования с дружелюбным текстом — показывается в статусе окна.</summary>
 public sealed class AssemblyCalcException(string message) : Exception(message);

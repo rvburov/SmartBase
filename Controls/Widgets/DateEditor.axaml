@@ -1,7 +1,7 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             xmlns:w="clr-namespace:DataBase.Controls.Widgets"
-             x:Class="DataBase.Controls.Widgets.DateEditor">
+             xmlns:w="clr-namespace:SmartBase.Controls.Widgets"
+             x:Class="SmartBase.Controls.Widgets.DateEditor">
 
     <Border x:Name="Box" Classes="timeField" Height="34">
         <Grid ColumnDefinitions="*,Auto">

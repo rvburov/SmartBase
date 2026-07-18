@@ -6,9 +6,9 @@ using Avalonia.Controls;
 using Avalonia.Interactivity;
 using Avalonia.Media;
 using Avalonia.Platform.Storage;
-using DataBase.Controls.Dialogs;
+using SmartBase.Controls.Dialogs;
 
-namespace DataBase.Extensions.AssemblyCalc;
+namespace SmartBase.Extensions.AssemblyCalc;
 
 /// <summary>
 /// Окно расширения «Расчёт сборочных единиц в изделии» (в основном стиле приложения): выбор

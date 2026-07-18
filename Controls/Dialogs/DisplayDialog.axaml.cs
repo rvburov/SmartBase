@@ -9,9 +9,9 @@ using Avalonia.Data;
 using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Media;
-using DataBase.Database.Repositories;
+using SmartBase.Database.Repositories;
 
-namespace DataBase.Controls.Dialogs;
+namespace SmartBase.Controls.Dialogs;
 
 /// <summary>
 /// Окно «Отображение» — менеджер видимости колонок таблицы. Список свойств в порядке

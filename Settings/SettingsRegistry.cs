@@ -1,4 +1,4 @@
-namespace DataBase.Settings;
+namespace SmartBase.Settings;
 
 /// <summary>Раздел настроек для сайдбара: ключ (для ShowCategory) + подпись + иконка
 /// (ключ x:Key из Assets/Styles/Icons.axaml, рисуется в SidebarList).</summary>

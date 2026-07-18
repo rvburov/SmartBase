@@ -1,6 +1,6 @@
 using System.Globalization;
 
-namespace DataBase.Utils;
+namespace SmartBase.Utils;
 
 /// <summary>
 /// Разбор/формат времени и список вариантов с шагом 15 минут. Общий код для

@@ -1,4 +1,4 @@
-namespace DataBase.Core.Models;
+namespace SmartBase.Core.Models;
 
 /// <summary>
 /// Действия, на которые администратор базы выдаёт права (панель администратора модуля

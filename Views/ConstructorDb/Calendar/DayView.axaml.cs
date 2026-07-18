@@ -6,9 +6,9 @@ using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Threading;
-using DataBase.Core.Models;
+using SmartBase.Core.Models;
 
-namespace DataBase.Views.ConstructorDb.Calendar;
+namespace SmartBase.Views.ConstructorDb.Calendar;
 
 public partial class DayView : UserControl
 {
@@ -1212,17 +1212,17 @@ public partial class DayView : UserControl
             var all = _SelectedAll();
             if (all.Count > 1 && all.Any(r => r.Id == ev.Id))
             {
-                menu.Items.Add(DataBase.Controls.Components.EventContextMenu.MakeDuplicateItem(
+                menu.Items.Add(SmartBase.Controls.Components.EventContextMenu.MakeDuplicateItem(
                     _DuplicateSelectedAll));
-                menu.Items.Add(DataBase.Controls.Components.EventContextMenu.MakeDeleteItem(
+                menu.Items.Add(SmartBase.Controls.Components.EventContextMenu.MakeDeleteItem(
                     _DeleteSelectedAll));
                 return;
             }
-            menu.Items.Add(DataBase.Controls.Components.EventContextMenu.MakeEditItem(
+            menu.Items.Add(SmartBase.Controls.Components.EventContextMenu.MakeEditItem(
                 () => { _Deselect(); RecordClicked?.Invoke(this, ev); }));
-            menu.Items.Add(DataBase.Controls.Components.EventContextMenu.MakeDuplicateItem(
+            menu.Items.Add(SmartBase.Controls.Components.EventContextMenu.MakeDuplicateItem(
                 () => { _Deselect(); _ClearAllDaySelection(); RecordDuplicateRequested?.Invoke(this, ev); }));
-            menu.Items.Add(DataBase.Controls.Components.EventContextMenu.MakeDeleteItem(
+            menu.Items.Add(SmartBase.Controls.Components.EventContextMenu.MakeDeleteItem(
                 () => { _Deselect(); _ClearAllDaySelection(); RecordDeleteRequested?.Invoke(this, ev); }));
         };
         return menu;
@@ -1265,7 +1265,7 @@ public partial class DayView : UserControl
             var dt      = new DateTime(day.Year, day.Month, day.Day, minutes / 60, minutes % 60, 0);
 
             menu.Items.Clear();
-            menu.Items.Add(DataBase.Controls.Components.EventContextMenu.MakeCreateItem(
+            menu.Items.Add(SmartBase.Controls.Components.EventContextMenu.MakeCreateItem(
                 () => TimeSlotCreationRequested?.Invoke(this, dt)));
         };
         return menu;

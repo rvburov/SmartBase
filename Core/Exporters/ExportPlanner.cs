@@ -1,7 +1,7 @@
 using System.Text;
-using DataBase.Core.Exporters.TableWriters;
+using SmartBase.Core.Exporters.TableWriters;
 
-namespace DataBase.Core.Exporters;
+namespace SmartBase.Core.Exporters;
 
 /// <summary>Одна таблица юнита: коллекция и имя листа (Excel; CSV/JSON имя не используют).</summary>
 public sealed record ExportTable(ExportCollectionRef Collection, string TableName);

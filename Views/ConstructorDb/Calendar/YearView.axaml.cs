@@ -4,10 +4,10 @@ using Avalonia.Controls.Primitives;
 using Avalonia.Layout;
 using Avalonia.Media;
 using CommunityToolkit.Mvvm.Input;
-using DataBase.Core.Models;
+using SmartBase.Core.Models;
 using System.Windows.Input;
 
-namespace DataBase.Views.ConstructorDb.Calendar;
+namespace SmartBase.Views.ConstructorDb.Calendar;
 
 public partial class YearView : UserControl
 {

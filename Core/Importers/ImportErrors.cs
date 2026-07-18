@@ -1,4 +1,4 @@
-namespace DataBase.Core.Importers;
+namespace SmartBase.Core.Importers;
 
 /// <summary>
 /// Открытие файлов импорта и перевод системных исключений в дружелюбные <see cref="ImportException"/>

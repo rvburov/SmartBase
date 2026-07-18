@@ -1,10 +1,10 @@
 using System.Diagnostics;
 using System.Globalization;
-using DataBase.Database;
+using SmartBase.Database;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 
-namespace DataBase.Tests.DbGenerator;
+namespace SmartBase.Tests.DbGenerator;
 
 /// <summary>
 /// Генератор тестовой БД Tests/test_database.db — стенд для проверки производительности

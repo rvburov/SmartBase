@@ -4,11 +4,11 @@ using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Media;
 using Avalonia.Threading;
-using DataBase.Controls.Components;
-using DataBase.Core.Models;
-using DataBase.Utils;
+using SmartBase.Controls.Components;
+using SmartBase.Core.Models;
+using SmartBase.Utils;
 
-namespace DataBase.Views.ConstructorDb.Calendar;
+namespace SmartBase.Views.ConstructorDb.Calendar;
 
 // Диаграмма (гант): строки — коллекции и их записи, ось X — дни показанного периода.
 // Масштабы — лесенка месяц → год → 5 лет → 10 лет (кнопки «−»/«+» в шапке);

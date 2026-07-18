@@ -1,11 +1,11 @@
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
-using DataBase.Core.Models;
-using DataBase.Database.Repositories;
-using DataBase.Utils;
+using SmartBase.Core.Models;
+using SmartBase.Database.Repositories;
+using SmartBase.Utils;
 
-namespace DataBase.Controls.Dialogs;
+namespace SmartBase.Controls.Dialogs;
 
 // Кандидат-задача собирается окном, персистит её контроллер (AddTaskRecord /
 // UpdateTaskRecord / DeleteCalendarRecord) — как RecordDialog в календаре.

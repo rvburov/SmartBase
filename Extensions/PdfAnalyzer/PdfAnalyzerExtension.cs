@@ -1,6 +1,6 @@
 using Avalonia.Controls;
 
-namespace DataBase.Extensions.PdfAnalyzer;
+namespace SmartBase.Extensions.PdfAnalyzer;
 
 /// <summary>
 /// Расширение «Анализ PDF файлов»: по папке с PDF формирует Excel-отчёт (ведомости/опись КД/ТД)

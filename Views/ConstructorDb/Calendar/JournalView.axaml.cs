@@ -5,10 +5,10 @@ using Avalonia.Interactivity;
 using Avalonia.Media;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
-using DataBase.Core.Models;
-using DataBase.Database.Repositories;
+using SmartBase.Core.Models;
+using SmartBase.Database.Repositories;
 
-namespace DataBase.Views.ConstructorDb.Calendar;
+namespace SmartBase.Views.ConstructorDb.Calendar;
 
 public partial class JournalView : UserControl
 {
@@ -437,7 +437,7 @@ public partial class JournalView : UserControl
         if (selected.Count > 1 && item.IsSelected)
         {
             // Выделение НЕ снимаем: во время диалога подтверждения видно, ЧТО удаляется/дублируется.
-            menu = DataBase.Controls.Components.EventContextMenu.Multi(
+            menu = SmartBase.Controls.Components.EventContextMenu.Multi(
                 () => RecordsDeleteRequested?.Invoke(this, selected),
                 onDuplicateAll: () => RecordsDuplicateRequested?.Invoke(this, selected));
         }
@@ -446,7 +446,7 @@ public partial class JournalView : UserControl
             // «Редактировать»/«Дублировать»/«Удалить» выделение НЕ снимают: после сохранения/
             // отмены запись остаётся подсвеченной — видно, какую строку меняли/удаляли
             // (выделение переживает и пересборку — см. preserveSelection в LoadFrom).
-            menu = DataBase.Controls.Components.EventContextMenu.Single(
+            menu = SmartBase.Controls.Components.EventContextMenu.Single(
                 onEdit:      () => RecordClicked?.Invoke(this, item.OriginalEvent!),
                 onDelete:    () => RecordDeleteRequested?.Invoke(this, item.OriginalEvent!),
                 onDuplicate: () => RecordsDuplicateRequested?.Invoke(this, [item.OriginalEvent!]));
@@ -461,7 +461,7 @@ public partial class JournalView : UserControl
         // сработает OnEventContextRequested и пометит e.Handled).
         DeselectAll();
         var date = GetDateForY(_lastContextY);
-        var menu = DataBase.Controls.Components.EventContextMenu.Background(
+        var menu = SmartBase.Controls.Components.EventContextMenu.Background(
             () => CreateRequested?.Invoke(this, date));
         if (sender is Control c) menu.Open(c);
         e.Handled = true;

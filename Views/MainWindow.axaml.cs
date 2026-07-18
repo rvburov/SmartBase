@@ -1,16 +1,16 @@
 using Avalonia.Controls;
 using Avalonia.VisualTree;
-using DataBase.Controls.Components;
-using DataBase.Controls.Dialogs;
-using DataBase.Database;
-using DataBase.Database.Entities;
-using DataBase.Database.Repositories;
-using DataBase.Extensions;
-using DataBase.Settings;
-using DataBase.Utils;
-using DataBase.ViewModels;
+using SmartBase.Controls.Components;
+using SmartBase.Controls.Dialogs;
+using SmartBase.Database;
+using SmartBase.Database.Entities;
+using SmartBase.Database.Repositories;
+using SmartBase.Extensions;
+using SmartBase.Settings;
+using SmartBase.Utils;
+using SmartBase.ViewModels;
 
-namespace DataBase.Views;
+namespace SmartBase.Views;
 
 public partial class MainWindow : Window
 {

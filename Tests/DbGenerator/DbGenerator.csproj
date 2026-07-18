@@ -13,12 +13,12 @@
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <RootNamespace>DataBase.Tests.DbGenerator</RootNamespace>
+    <RootNamespace>SmartBase.Tests.DbGenerator</RootNamespace>
     <AssemblyName>DbGenerator</AssemblyName>
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\DataBase.csproj" />
+    <ProjectReference Include="..\..\SmartBase.csproj" />
   </ItemGroup>
 
 </Project>

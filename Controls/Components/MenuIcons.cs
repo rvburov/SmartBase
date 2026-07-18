@@ -4,7 +4,7 @@ using Avalonia.Layout;
 using Avalonia.Media;
 using Path = Avalonia.Controls.Shapes.Path;
 
-namespace DataBase.Controls.Components;
+namespace SmartBase.Controls.Components;
 
 // Общие иконки и заголовки для контекстных меню (единый стиль во всём приложении).
 // Иконка — обводочная, в стандарте сайдбара: Viewbox 18×18 поверх сетки 24×24.

@@ -1,4 +1,4 @@
-namespace DataBase.Utils;
+namespace SmartBase.Utils;
 
 /// <summary>
 /// Утилиты для работы с Markdown.

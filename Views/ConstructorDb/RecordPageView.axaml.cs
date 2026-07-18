@@ -6,13 +6,13 @@ using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Media;
-using DataBase.Controls.Widgets;
-using DataBase.Core.Models;
-using DataBase.Database.Repositories;
-using DataBase.ViewModels.ConstructorDb;
+using SmartBase.Controls.Widgets;
+using SmartBase.Core.Models;
+using SmartBase.Database.Repositories;
+using SmartBase.ViewModels.ConstructorDb;
 using Path = Avalonia.Controls.Shapes.Path;
 
-namespace DataBase.Views.ConstructorDb;
+namespace SmartBase.Views.ConstructorDb;
 
 /// <summary>
 /// Правая панель «Страница записи» (Obsidian-стиль): свойства сверху + markdown снизу.

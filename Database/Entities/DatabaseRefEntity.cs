@@ -1,6 +1,6 @@
 using System.ComponentModel.DataAnnotations;
 
-namespace DataBase.Database.Entities;
+namespace SmartBase.Database.Entities;
 
 /// <summary>
 /// Запись реестра баз данных (системная БД app.db, таблица «databases»).

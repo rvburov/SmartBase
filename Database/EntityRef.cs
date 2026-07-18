@@ -1,4 +1,4 @@
-namespace DataBase.Database;
+namespace SmartBase.Database;
 
 /// <summary>
 /// Составной идентификатор сущности при мульти-маунте: какая БД (DbId) + локальный Id.

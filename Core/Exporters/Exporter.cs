@@ -1,4 +1,4 @@
-namespace DataBase.Core.Exporters;
+namespace SmartBase.Core.Exporters;
 
 /// <summary>Ошибка экспорта с дружелюбным текстом — показывается пользователю в баннере диалога.</summary>
 public sealed class ExportException(string message) : Exception(message);

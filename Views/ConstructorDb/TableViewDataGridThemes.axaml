@@ -2,7 +2,7 @@
      толщиной НАТИВНЫХ линий сетки: в теме Fluent Width/Height линий заданы ЛОКАЛЬНЫМИ
      значениями на элементах шаблона, которые стиль /template/ перебить не может.
 
-     Источник копий: AvaloniaUI/Avalonia, тег 11.2.3 (версия пакета в DataBase.csproj),
+     Источник копий: AvaloniaUI/Avalonia, тег 11.2.3 (версия пакета в SmartBase.csproj),
      src/Avalonia.Controls.DataGrid/Themes/Fluent.xaml — темы DataGridCell, DataGridRow,
      DataGrid скопированы ДОСЛОВНО. При апгрейде Avalonia передиффить с новой версией!
 

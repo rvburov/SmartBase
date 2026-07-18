@@ -1,6 +1,6 @@
 using System.Globalization;
 
-namespace DataBase.Utils;
+namespace SmartBase.Utils;
 
 /// <summary>
 /// Пути к БД и типизированный доступ к настройкам приложения.
@@ -11,8 +11,12 @@ namespace DataBase.Utils;
 /// </summary>
 public static class AppSettings
 {
-    public const string AppName    = "DataBase";
-    public const string AppVersion = "1.0.0";
+    // Технический идентификатор: имя папки данных (%AppData%\…\SmartBase), сборки, бандла.
+    // НЕ МЕНЯТЬ — иначе программа станет искать данные в другой папке и «потеряет» базы.
+    public const string AppName     = "SmartBase";
+    // Отображаемое имя (бренд) — то, что видит пользователь: заголовки окон, сплэш, «О программе».
+    public const string DisplayName = "SmartBase";
+    public const string AppVersion  = "1.0.0";
 
     public const double ScaleMin     = 0.7;   // 70 %
     public const double ScaleMax     = 1.3;   // 130 %
@@ -192,7 +196,7 @@ public static class AppSettings
 
     // ── Путь обновления ──────────────────────────────────────────────────────────
     //
-    // Папка (сетевая/файловая), где лежит свежий DataBase.exe для обновления. Пусто по
+    // Папка (сетевая/файловая), где лежит свежий SmartBase.exe для обновления. Пусто по
     // умолчанию — пользователь задаёт сам в «О программе → Обновления»; значение хранится
     // в app.db. Логика проверки/замены — см. docs/guides/auto-update.md.
     public const string UpdatePathDefault = "";
@@ -239,8 +243,8 @@ public static class AppSettings
 
     private static string ResolveAppDataDir()
     {
-        // Release (publish) — стабильно в %AppData%\Roaming\DataBase.
-        // Debug — локальная папка .localdata в корне проекта (рядом с DataBase.csproj):
+        // Release (publish) — стабильно в %AppData%\Roaming\SmartBase.
+        // Debug — локальная папка .localdata в корне проекта (рядом с SmartBase.csproj):
         // изолировано «как venv», переживает dotnet clean и снос artifacts\, не мешается
         // с исходниками. Корень ищем по маркеру, а не счётом «..» — не зависит от
         // раскладки вывода (classic bin\Debug или artifacts\bin\...).
@@ -249,16 +253,34 @@ public static class AppSettings
         return Path.Combine(root, ".localdata");
 #else
         var roaming = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
-        return Path.Combine(roaming, AppName);
+        var dir = Path.Combine(roaming, AppName);
+        MigrateLegacyDataDir(roaming, dir);
+        return dir;
 #endif
     }
 
+#if !DEBUG
+    // Одноразовый переезд данных со старого имени приложения (DataBase) на новое (SmartBase):
+    // если новой папки ещё нет, а старая есть — переносим её целиком, чтобы не потерять базы.
+    private static void MigrateLegacyDataDir(string roaming, string newDir)
+    {
+        try
+        {
+            if (Directory.Exists(newDir)) return;
+            var legacy = Path.Combine(roaming, "DataBase");
+            if (Directory.Exists(legacy))
+                Directory.Move(legacy, newDir);
+        }
+        catch { /* переезд не критичен: при неудаче создастся чистая папка данных */ }
+    }
+#endif
+
 #if DEBUG
-    // Каталог с DataBase.csproj вверх от каталога сборки (корень проекта).
+    // Каталог с SmartBase.csproj вверх от каталога сборки (корень проекта).
     private static string? FindProjectRoot()
     {
         for (var dir = new DirectoryInfo(AppContext.BaseDirectory); dir is not null; dir = dir.Parent)
-            if (dir.GetFiles("DataBase.csproj").Length > 0)
+            if (dir.GetFiles("SmartBase.csproj").Length > 0)
                 return dir.FullName;
         return null;
     }

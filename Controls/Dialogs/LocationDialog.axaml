@@ -1,6 +1,6 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        x:Class="DataBase.Controls.Dialogs.LocationDialog"
+        x:Class="SmartBase.Controls.Dialogs.LocationDialog"
         Title="Расположение"
         Width="420"
         MinWidth="420"

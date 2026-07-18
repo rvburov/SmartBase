@@ -2,7 +2,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Media;
 
-namespace DataBase.Utils;
+namespace SmartBase.Utils;
 
 /// <summary>
 /// Единая визуальная толщина линий (~1 логический пиксель) при любом зуме приложения

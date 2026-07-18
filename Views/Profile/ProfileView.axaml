@@ -1,7 +1,7 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             xmlns:comp="using:DataBase.Controls.Components"
-             x:Class="DataBase.Views.Profile.ProfileView"
+             xmlns:comp="using:SmartBase.Controls.Components"
+             x:Class="SmartBase.Views.Profile.ProfileView"
              Background="{StaticResource BrushBg}">
 
     <UserControl.Styles>

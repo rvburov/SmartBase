@@ -1,6 +1,6 @@
 using Avalonia.Controls;
 
-namespace DataBase.ViewModels.ConstructorDb;
+namespace SmartBase.ViewModels.ConstructorDb;
 
 /// <summary>
 /// Описание колонки виртуальной таблицы.

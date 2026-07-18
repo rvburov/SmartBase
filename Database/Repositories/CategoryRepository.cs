@@ -1,7 +1,7 @@
-using DataBase.Core.Models;
-using DataBase.Database.Entities;
+using SmartBase.Core.Models;
+using SmartBase.Database.Entities;
 
-namespace DataBase.Database.Repositories;
+namespace SmartBase.Database.Repositories;
 
 public class CategoryRepository(AppDbContext db)
 {

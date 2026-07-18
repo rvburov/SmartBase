@@ -1,9 +1,9 @@
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
-using DataBase.Database.Repositories;
+using SmartBase.Database.Repositories;
 
-namespace DataBase.Controls.Dialogs;
+namespace SmartBase.Controls.Dialogs;
 
 // Type: "collection" | "group"
 public record CreateItemResult(string Type, string Name, int? ParentId, int DbId);

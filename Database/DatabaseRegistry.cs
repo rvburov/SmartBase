@@ -1,8 +1,8 @@
 using Microsoft.EntityFrameworkCore;
-using DataBase.Database.Entities;
-using DataBase.Utils;
+using SmartBase.Database.Entities;
+using SmartBase.Utils;
 
-namespace DataBase.Database;
+namespace SmartBase.Database;
 
 /// <summary>
 /// Реестр пользовательских БД поверх системной app.db. Гарантирует наличие единственной

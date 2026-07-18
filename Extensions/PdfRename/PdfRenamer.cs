@@ -1,7 +1,7 @@
 using System.IO;
 using System.Threading;
 
-namespace DataBase.Extensions.PdfRename;
+namespace SmartBase.Extensions.PdfRename;
 
 /// <summary>Что произойдёт (или произошло) с конкретным файлом.</summary>
 public enum RenameOutcome

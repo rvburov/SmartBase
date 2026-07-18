@@ -1,13 +1,13 @@
 #!/bin/bash
 #
-# Сборка macOS-дистрибутива DataBase одной короткой командой: publish + упаковка
+# Сборка macOS-дистрибутива SmartBase одной короткой командой: publish + упаковка
 # в .app с иконкой. Обычный publish бандл НЕ создаёт, а без бандла на маке нет
 # иконки в Dock/Finder/Launchpad — поэтому здесь отдельный шаг сборки .app.
 #
 #   Scripts/macos-build.sh                         # osx-arm64, Release (Apple Silicon, по умолчанию)
 #   Scripts/macos-build.sh osx-x64                 # Intel
 #   Scripts/macos-build.sh osx-arm64 Debug         # другая конфигурация
-#   Scripts/macos-build.sh osx-arm64 Release 1.2.3 # задать версию (запишется в DataBase.csproj)
+#   Scripts/macos-build.sh osx-arm64 Release 1.2.3 # задать версию (запишется в SmartBase.csproj)
 #
 # Особенности macOS-сборки:
 #   • self-contained       — .NET у пользователя не нужен;
@@ -15,7 +15,7 @@
 #                            целой папкой (так устроен бандл .app);
 #   • .app-бандл           — icon.icns + Info.plist + сброс кэша иконок Finder (touch).
 #
-# Результат: dist/<RID>/DataBase.app — раздаётся как есть.
+# Результат: dist/<RID>/SmartBase.app — раздаётся как есть.
 # ── Будущие особенности macOS-сборки добавляйте в массив flags ниже. ──
 set -euo pipefail
 
@@ -23,7 +23,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 RID="${1:-osx-arm64}"
 CONFIG="${2:-Release}"
 VERSION="${3:-}"
-APP_NAME="DataBase"
+APP_NAME="SmartBase"
 ICNS="$ROOT/Assets/Branding/icon.icns"
 PLIST="$ROOT/Assets/Branding/Info.plist"
 
@@ -34,15 +34,15 @@ PLIST="$ROOT/Assets/Branding/Info.plist"
 flags=( --self-contained true )
 
 # Номер версии: если передан 3-м аргументом — ЗАПИСЫВАЕМ его в <Version> в
-# DataBase.csproj (становится текущим и для последующих сборок) и в бейдж README.
+# SmartBase.csproj (становится текущим и для последующих сборок) и в бейдж README.
 # Через временный файл — портативно к GNU/BSD sed (без sed -i).
-csproj="$ROOT/DataBase.csproj"
+csproj="$ROOT/SmartBase.csproj"
 if [ -n "$VERSION" ]; then
   tmp="$(mktemp)"
   sed -E "s#<Version>[^<]*</Version>#<Version>${VERSION}</Version>#" "$csproj" > "$tmp" && mv "$tmp" "$csproj"
   readme="$ROOT/README.md"; tmp="$(mktemp)"
   sed -E "s#version-[^-]*-blue#version-${VERSION}-blue#" "$readme" > "$tmp" && mv "$tmp" "$readme"
-  echo "==> Версия обновлена на $VERSION (DataBase.csproj + бейдж README.md)"
+  echo "==> Версия обновлена на $VERSION (SmartBase.csproj + бейдж README.md)"
 fi
 
 # Эффективная версия сборки = аргумент или текущая из csproj. Задаёт папку вывода
@@ -72,9 +72,9 @@ chmod +x "$APP/Contents/MacOS/$APP_NAME"
 rm -rf "$PUBLISH"   # промежуточный publish в бандле не нужен
 touch "$APP"        # сбросить кэш иконок Finder
 
-# Установщик (вариант A): тот же бандл под именем DataBase-Setup.app — по имени «-Setup»
+# Установщик (вариант A): тот же бандл под именем SmartBase-Setup.app — по имени «-Setup»
 # он запускается в режиме установки (ставит в ~/Applications, lsregister, умеет --uninstall;
-# внутренний бинарь остаётся DataBase, Info.plist не меняется). См. docs/guides/auto-update.md.
+# внутренний бинарь остаётся SmartBase, Info.plist не меняется). См. docs/guides/auto-update.md.
 SETUP="$OUTDIR/$APP_NAME-Setup.app"
 rm -rf "$SETUP"
 cp -R "$APP" "$SETUP"

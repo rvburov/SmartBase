@@ -1,9 +1,9 @@
 [Desktop Entry]
 Type=Application
-Name=DataBase
+Name=SmartBase
 Comment=Calendar / database application
-Exec=DataBase
-Icon=database
+Exec=SmartBase
+Icon=smartbase
 Terminal=false
 Categories=Office;Utility;Database;
-StartupWMClass=DataBase
+StartupWMClass=SmartBase

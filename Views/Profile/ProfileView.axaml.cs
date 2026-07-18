@@ -3,14 +3,14 @@ using Avalonia.Controls;
 using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Media;
-using DataBase.Controls.Dialogs;
-using DataBase.Core.Models;
-using DataBase.Database;
-using DataBase.Database.Entities;
-using DataBase.Settings;
-using DataBase.Utils;
+using SmartBase.Controls.Dialogs;
+using SmartBase.Core.Models;
+using SmartBase.Database;
+using SmartBase.Database.Entities;
+using SmartBase.Settings;
+using SmartBase.Utils;
 
-namespace DataBase.Views.Profile;
+namespace SmartBase.Views.Profile;
 
 /// <summary>
 /// Модуль «Профиль»: общие данные пользователя (имя компьютера — автоматически, ФИО — вручную),

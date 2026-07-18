@@ -3,7 +3,7 @@ using Avalonia.Controls;
 using Avalonia.Layout;
 using Avalonia.Media;
 
-namespace DataBase.Utils;
+namespace SmartBase.Utils;
 
 /// <summary>
 /// Масштабирует ОТДЕЛЬНЫЕ окна (диалоги, окна расширений, сплэш, установщик) под общий

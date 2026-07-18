@@ -6,9 +6,9 @@ using Avalonia.Controls;
 using Avalonia.Interactivity;
 using Avalonia.Media;
 using Avalonia.Platform.Storage;
-using DataBase.Controls.Dialogs;
+using SmartBase.Controls.Dialogs;
 
-namespace DataBase.Extensions.ProductCompare;
+namespace SmartBase.Extensions.ProductCompare;
 
 /// <summary>
 /// Окно расширения «Сравнение составов изделий» (в основном стиле приложения): выбор

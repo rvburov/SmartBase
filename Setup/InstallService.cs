@@ -2,9 +2,9 @@ using System.Diagnostics;
 using System.Reflection;
 using System.Text;
 using Avalonia.Platform;
-using DataBase.Utils;
+using SmartBase.Utils;
 
-namespace DataBase.Setup;
+namespace SmartBase.Setup;
 
 /// <summary>Режим запуска бинаря: приложение / установщик / удаление (вариант A).</summary>
 public enum SetupMode { App, Install, Uninstall }
@@ -13,16 +13,16 @@ public enum SetupMode { App, Install, Uninstall }
 /// Установка / обновление / удаление приложения (вариант A: тот же бинарь под именем
 /// `…-Setup` работает установщиком и копирует приложение в папку установки). ОС-зависимые
 /// куски разведены по Windows / Linux / macOS:
-///   • Windows/Linux — single-file бинарь (`DataBase[.exe]`), ярлыки .lnk/.desktop;
+///   • Windows/Linux — single-file бинарь (`SmartBase[.exe]`), ярлыки .lnk/.desktop;
 ///   • macOS — `.app`-бандл (папка): установка/обновление копируют бандл целиком,
-///     режим определяется по имени бандла `DataBase-Setup.app`.
+///     режим определяется по имени бандла `SmartBase-Setup.app`.
 /// Подробности — docs/guides/auto-update.md.
 /// </summary>
 public static class InstallService
 {
     public static bool IsMac => OperatingSystem.IsMacOS();
 
-    /// <summary>Имя бинаря приложения: Windows — `DataBase.exe`, иначе — `DataBase`.</summary>
+    /// <summary>Имя бинаря приложения: Windows — `SmartBase.exe`, иначе — `SmartBase`.</summary>
     public static string AppExeName =>
         OperatingSystem.IsWindows() ? AppSettings.AppName + ".exe" : AppSettings.AppName;
 
@@ -31,11 +31,11 @@ public static class InstallService
         OperatingSystem.IsWindows() ? AppSettings.AppName + "-Setup.exe" : AppSettings.AppName + "-Setup";
 
     /// <summary>Имя бандла приложения/установщика на macOS.</summary>
-    public static string AppBundleName   => AppSettings.AppName + ".app";          // DataBase.app
-    public static string SetupBundleName => AppSettings.AppName + "-Setup.app";     // DataBase-Setup.app
+    public static string AppBundleName   => AppSettings.AppName + ".app";          // SmartBase.app
+    public static string SetupBundleName => AppSettings.AppName + "-Setup.app";     // SmartBase-Setup.app
 
     /// <summary>Папка установки по умолчанию (без прав админа):
-    /// Windows — %LOCALAPPDATA%\DataBase, Linux — ~/.local/share/DataBase, macOS — ~/Applications.</summary>
+    /// Windows — %LOCALAPPDATA%\SmartBase, Linux — ~/.local/share/SmartBase, macOS — ~/Applications.</summary>
     public static string DefaultInstallDir =>
         OperatingSystem.IsWindows()
             ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), AppSettings.AppName)
@@ -114,7 +114,7 @@ public static class InstallService
         return app is not null && app.EndsWith(".app", StringComparison.OrdinalIgnoreCase) ? app : null;
     }
 
-    /// <summary>Внутренний бинарь `.app`-бандла: …/X.app/Contents/MacOS/DataBase.</summary>
+    /// <summary>Внутренний бинарь `.app`-бандла: …/X.app/Contents/MacOS/SmartBase.</summary>
     public static string MacInnerBinary(string bundle) =>
         Path.Combine(bundle, "Contents", "MacOS", AppSettings.AppName);
 
@@ -157,13 +157,13 @@ public static class InstallService
     }
 
     // macOS: копируем `.app`-бандл целиком (publish под mac не single-file — внутри DLL),
-    // переименовывая верхний каталог DataBase-Setup.app → DataBase.app (внутренний бинарь и
-    // Info.plist уже зовутся DataBase, патчить не нужно).
+    // переименовывая верхний каталог SmartBase-Setup.app → SmartBase.app (внутренний бинарь и
+    // Info.plist уже зовутся SmartBase, патчить не нужно).
     private static async Task InstallMacAsync(string installDir, IProgress<(double, string)> progress)
     {
         var srcBundle = BundleRoot(Environment.ProcessPath)
                         ?? throw new InvalidOperationException("Установщик macOS должен запускаться из .app-бандла.");
-        var targetBundle = InstalledPath(installDir);   // <dir>/DataBase.app
+        var targetBundle = InstalledPath(installDir);   // <dir>/SmartBase.app
 
         progress.Report((0, "Копирование приложения…"));
         if (Directory.Exists(targetBundle)) DeleteRecursive(targetBundle);
@@ -202,7 +202,7 @@ public static class InstallService
     // бинаря на macOS можно unlink на ходу → сносим каталог бандла сразу.
     private static void UninstallMac(string installDir, bool removeData)
     {
-        var bundle = InstalledPath(installDir);   // <dir>/DataBase.app
+        var bundle = InstalledPath(installDir);   // <dir>/SmartBase.app
         UnregisterLaunchServices(bundle);
         TryDeleteFile(Path.Combine(installDir, $"Uninstall {AppSettings.AppName}.command"));
         if (removeData) TryDeleteDir(DataDir);
@@ -320,7 +320,7 @@ public static class InstallService
     private static long SafeLength(string path) { try { return new FileInfo(path).Length; } catch { return 0; } }
 
     /// <summary>Убрать залежавшийся temp-артефакт обновления (best-effort, при старте приложения).
-    /// Апдейтер копирует новую версию в <c>%TEMP%\DataBase.update.exe</c> (или <c>.update.app</c>) и
+    /// Апдейтер копирует новую версию в <c>%TEMP%\SmartBase.update.exe</c> (или <c>.update.app</c>) и
     /// после перезапуска его не удаляет. Если апдейтер ещё выполняется — файл занят, молча
     /// пропустим, уберётся при следующем старте.</summary>
     public static void CleanStaleUpdateArtifacts()
@@ -474,8 +474,8 @@ public static class InstallService
         RunHidden(Lsregister, $"-u {Quote(bundle)}", wait: false);
     }
 
-    // Удалятор рядом с приложением: «Uninstall DataBase.command» открывается двойным кликом
-    // (Terminal) и запускает DataBase.app --uninstall (аналог ярлыка «Uninstall» на Win/Linux).
+    // Удалятор рядом с приложением: «Uninstall SmartBase.command» открывается двойным кликом
+    // (Terminal) и запускает SmartBase.app --uninstall (аналог ярлыка «Uninstall» на Win/Linux).
     private static void CreateUninstallCommandMac(string installDir, string bundle)
     {
         var cmd = Path.Combine(installDir, $"Uninstall {AppSettings.AppName}.command");
@@ -485,7 +485,7 @@ public static class InstallService
 
     // ── «Параметры → Приложения» (HKCU\…\Uninstall), только Windows ───────────
     // Регистрируем программу в стандартном списке Windows с кнопкой «Удалить»
-    // (= DataBase.exe --uninstall). Через PowerShell, чтобы не тянуть пакет реестра.
+    // (= SmartBase.exe --uninstall). Через PowerShell, чтобы не тянуть пакет реестра.
     private const string UninstallKey =
         @"HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\" + AppSettings.AppName;
 
@@ -534,12 +534,12 @@ public static class InstallService
         OperatingSystem.IsWindows()
             ? new[]
             {
-                Path.Combine(installDir, AppExeName),                               // DataBase.exe
+                Path.Combine(installDir, AppExeName),                               // SmartBase.exe
                 Path.Combine(installDir, $"Uninstall {AppSettings.AppName}.lnk"),
             }
             : new[]
             {
-                Path.Combine(installDir, AppExeName),                               // DataBase
+                Path.Combine(installDir, AppExeName),                               // SmartBase
                 Path.Combine(installDir, "icon.png"),
                 Path.Combine(installDir, "uninstall.sh"),
             };

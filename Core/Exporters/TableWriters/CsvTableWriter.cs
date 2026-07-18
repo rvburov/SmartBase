@@ -1,6 +1,6 @@
 using System.Text;
 
-namespace DataBase.Core.Exporters.TableWriters;
+namespace SmartBase.Core.Exporters.TableWriters;
 
 /// <summary>
 /// CSV: разделитель «;», CRLF, кавычки RFC 4180, UTF-8 С BOM — Excel открывает кириллицу

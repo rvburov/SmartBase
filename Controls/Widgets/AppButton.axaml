@@ -1,6 +1,6 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             x:Class="DataBase.Controls.Widgets.AppButton">
+             x:Class="SmartBase.Controls.Widgets.AppButton">
 
     <Button x:Name="PART_Button"
             Classes.accent="{Binding IsAccent, RelativeSource={RelativeSource AncestorType=UserControl}}"

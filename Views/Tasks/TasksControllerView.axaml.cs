@@ -1,12 +1,12 @@
 using Avalonia;
 using Avalonia.Controls;
-using DataBase.Controls.Dialogs;
-using DataBase.Core.Models;
-using DataBase.Database;
-using DataBase.Database.Repositories;
-using DataBase.Utils;
+using SmartBase.Controls.Dialogs;
+using SmartBase.Core.Models;
+using SmartBase.Database;
+using SmartBase.Database.Repositories;
+using SmartBase.Utils;
 
-namespace DataBase.Views.Tasks;
+namespace SmartBase.Views.Tasks;
 
 // Оркестратор раздела «Задачи» (упрощённый CalendarControllerView): агрегат задач по
 // отмеченным коллекциям всех допущенных БД либо одна открытая коллекция; поиск и

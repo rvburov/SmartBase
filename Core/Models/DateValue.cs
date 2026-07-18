@@ -1,7 +1,7 @@
 using System.Globalization;
 using System.Text.RegularExpressions;
 
-namespace DataBase.Core.Models;
+namespace SmartBase.Core.Models;
 
 /// <summary>
 /// Каноническое значение свойства типа «дата». Покрывает все формы, с которыми

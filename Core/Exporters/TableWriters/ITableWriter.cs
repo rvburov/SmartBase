@@ -1,4 +1,4 @@
-namespace DataBase.Core.Exporters.TableWriters;
+namespace SmartBase.Core.Exporters.TableWriters;
 
 /// <summary>
 /// Писатель одного файла экспорта. Excel поддерживает несколько таблиц (лист на таблицу),

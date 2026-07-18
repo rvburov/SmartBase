@@ -1,6 +1,6 @@
 using Avalonia.Controls;
 
-namespace DataBase.Extensions.PdfRename;
+namespace SmartBase.Extensions.PdfRename;
 
 /// <summary>
 /// Расширение «Переименование PDF»: пакетно переименовывает PDF-файлы в выбранной папке

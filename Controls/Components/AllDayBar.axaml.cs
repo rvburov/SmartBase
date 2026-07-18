@@ -4,9 +4,9 @@ using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Media;
-using DataBase.Core.Models;
+using SmartBase.Core.Models;
 
-namespace DataBase.Controls.Components;
+namespace SmartBase.Controls.Components;
 
 public partial class AllDayBar : UserControl
 {

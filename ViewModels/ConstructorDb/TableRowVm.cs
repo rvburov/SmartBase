@@ -1,9 +1,9 @@
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
-using DataBase.Core.Models;
-using DataBase.Database.Repositories;
+using SmartBase.Core.Models;
+using SmartBase.Database.Repositories;
 
-namespace DataBase.ViewModels.ConstructorDb;
+namespace SmartBase.ViewModels.ConstructorDb;
 
 /// <summary>
 /// Одна строка таблицы конструктора. Хранит значения полей по field.Id и

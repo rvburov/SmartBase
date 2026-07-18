@@ -1,9 +1,9 @@
 using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
-using DataBase.Core.Models;
-using DataBase.Database.Repositories;
+using SmartBase.Core.Models;
+using SmartBase.Database.Repositories;
 
-namespace DataBase.ViewModels.ConstructorDb;
+namespace SmartBase.ViewModels.ConstructorDb;
 
 /// <summary>
 /// Модель состояния правой панели «Страница записи» (Obsidian-стиль):

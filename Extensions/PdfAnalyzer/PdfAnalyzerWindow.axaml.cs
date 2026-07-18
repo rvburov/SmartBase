@@ -6,9 +6,9 @@ using Avalonia.Controls;
 using Avalonia.Interactivity;
 using Avalonia.Media;
 using Avalonia.Platform.Storage;
-using DataBase.Controls.Dialogs;
+using SmartBase.Controls.Dialogs;
 
-namespace DataBase.Extensions.PdfAnalyzer;
+namespace SmartBase.Extensions.PdfAnalyzer;
 
 /// <summary>
 /// Окно расширения «Анализ PDF файлов» (в основном стиле приложения): папка с PDF, путь отчёта,

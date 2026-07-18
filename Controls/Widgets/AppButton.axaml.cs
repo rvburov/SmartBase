@@ -3,7 +3,7 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using System.Windows.Input;
 
-namespace DataBase.Controls.Widgets;
+namespace SmartBase.Controls.Widgets;
 
 public partial class AppButton : UserControl
 {

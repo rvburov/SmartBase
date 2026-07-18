@@ -1,4 +1,4 @@
-namespace DataBase.Core.Importers;
+namespace SmartBase.Core.Importers;
 
 /// <summary>Ошибка импорта с дружелюбным текстом — показывается пользователю в баннере диалога.</summary>
 public sealed class ImportException(string message) : Exception(message);

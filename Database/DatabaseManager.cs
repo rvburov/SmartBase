@@ -1,7 +1,7 @@
 using Microsoft.EntityFrameworkCore;
-using DataBase.Database.Repositories;
+using SmartBase.Database.Repositories;
 
-namespace DataBase.Database;
+namespace SmartBase.Database;
 
 /// <summary>
 /// Открытая база данных: контекст + репозитории + путь к файлу.

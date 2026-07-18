@@ -2,7 +2,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Media;
 
-namespace DataBase.Controls.Components;
+namespace SmartBase.Controls.Components;
 
 // Иконки типов свойств (lucide, сетка 24×24) — единый источник для диалога
 // создания/изменения свойства и заголовков колонок таблицы.

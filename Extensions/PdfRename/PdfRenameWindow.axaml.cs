@@ -7,9 +7,9 @@ using System.Threading.Tasks;
 using Avalonia.Controls;
 using Avalonia.Interactivity;
 using Avalonia.Platform.Storage;
-using DataBase.Controls.Dialogs;
+using SmartBase.Controls.Dialogs;
 
-namespace DataBase.Extensions.PdfRename;
+namespace SmartBase.Extensions.PdfRename;
 
 /// <summary>
 /// Окно расширения «Переименование PDF» (в основном стиле приложения): выбор папки,

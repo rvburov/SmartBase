@@ -1,7 +1,7 @@
 using Microsoft.EntityFrameworkCore;
-using DataBase.Database.Entities;
+using SmartBase.Database.Entities;
 
-namespace DataBase.Database;
+namespace SmartBase.Database;
 
 public class AppDbContext : DbContext
 {

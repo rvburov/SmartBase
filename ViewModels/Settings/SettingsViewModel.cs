@@ -1,8 +1,8 @@
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
-using DataBase.Utils;
+using SmartBase.Utils;
 
-namespace DataBase.ViewModels.Settings;
+namespace SmartBase.ViewModels.Settings;
 
 public partial class SettingsViewModel : ViewModelBase
 {

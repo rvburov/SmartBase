@@ -1,6 +1,6 @@
-using DataBase.Core.Importers.TableSources;
+using SmartBase.Core.Importers.TableSources;
 
-namespace DataBase.Core.Importers;
+namespace SmartBase.Core.Importers;
 
 /// <summary>Единица импорта: одна будущая коллекция (файл, лист книги или файл из папки).</summary>
 public sealed record ImportUnit(string CollectionName, string FilePath, Func<ITableSource> OpenSource);

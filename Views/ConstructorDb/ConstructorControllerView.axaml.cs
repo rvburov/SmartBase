@@ -1,11 +1,11 @@
 using Avalonia.Controls;
 using Avalonia.Threading;
-using DataBase.Controls.Dialogs;
-using DataBase.Core.Models;
-using DataBase.Database;
-using DataBase.Database.Repositories;
+using SmartBase.Controls.Dialogs;
+using SmartBase.Core.Models;
+using SmartBase.Database;
+using SmartBase.Database.Repositories;
 
-namespace DataBase.Views.ConstructorDb;
+namespace SmartBase.Views.ConstructorDb;
 
 public partial class ConstructorControllerView : UserControl
 {
