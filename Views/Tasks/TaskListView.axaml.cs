@@ -113,6 +113,10 @@ public partial class TaskListView : UserControl
 
     private Control BuildCard(TaskCardVm vm)
     {
+        // При переиспользовании контейнера виртуализацией контент временно = null
+        // (ContentPresenter строит по явному ItemTemplate без проверки типа) — отдаём пустую карточку.
+        if (vm is null) return new Control();
+
         var bold      = (FontWeight)this.FindResource("FontWeightBold")!;
         var secondary = (IBrush)this.FindResource("BrushSecondaryText")!;
         var primary   = (IBrush)this.FindResource("BrushPrimaryText")!;
