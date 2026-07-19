@@ -30,7 +30,26 @@ public sealed class DatabaseRegistry : IDisposable, ISettingsDatabase
         SqliteMaintenance.CompactIfBloated(db, 1L * 1024 * 1024);
         var registry = new DatabaseRegistry(db);
         registry.EnsureDefault(defaultDataPath);
+        registry.ProtectLegacyPasswords();
         return registry;
+    }
+
+    // Пароли PG, сохранённые до появления защищённого хранилища (или на другой ОС),
+    // разово переводим в SecretProtector. На Linux Protect возвращает строку как есть —
+    // сравнение оберегает от вечной перезаписи.
+    private void ProtectLegacyPasswords()
+    {
+        var dirty = false;
+        foreach (var d in _db.Databases.Where(d => d.Provider == "postgres").ToList())
+        {
+            if (string.IsNullOrEmpty(d.PgPassword) || SecretProtector.IsProtected(d.PgPassword))
+                continue;
+            var stored = SecretProtector.Protect(d.PgPassword);
+            if (stored == d.PgPassword) continue;
+            d.PgPassword = stored;
+            dirty = true;
+        }
+        if (dirty) _db.SaveChanges();
     }
 
     // EnsureCreated() не изменяет уже существующую БД, поэтому в app.db, созданных до
@@ -155,7 +174,7 @@ public sealed class DatabaseRegistry : IDisposable, ISettingsDatabase
             PgPort     = info.Port,
             PgDatabase = info.Database,
             PgUser     = info.User,
-            PgPassword = info.Password,
+            PgPassword = SecretProtector.Protect(info.Password),
             PgSslMode  = info.SslMode,
         };
         _db.Databases.Add(entity);
@@ -168,6 +187,7 @@ public sealed class DatabaseRegistry : IDisposable, ISettingsDatabase
     {
         var entity = _db.Databases.FirstOrDefault(d => d.Id == id);
         if (entity is null || entity.IsDefault) return;
+        if (entity.IsPostgres) SecretProtector.Delete(entity.PgPassword ?? "");
         _db.Databases.Remove(entity);
         _db.SaveChanges();
     }

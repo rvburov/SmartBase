@@ -99,7 +99,8 @@ public sealed class DbHealthMonitor : IDisposable
 
     /// <summary>«База недоступна/повреждена». SQLite: IOERR(10), CORRUPT(11), CANTOPEN(14),
     /// NOTADB(26) + файловые исключения ОС. PostgreSQL: обрыв соединения (класс 08*),
-    /// сервер гасится/недоступен (57P01–57P03), базы нет (3D000), отказ аутентификации (28*) —
+    /// сервер гасится/недоступен (57P01–57P03), базы нет (3D000), отказ аутентификации (28*),
+    /// переполнение max_connections (53300 — сервер насыщен, лечится тем же backoff-ремонтом) —
     /// плюс сетевые SocketException/TimeoutException и транзиентные ошибки Npgsql.
     /// Через этот фильтр DbErrors и монитор работают для обоих провайдеров.</summary>
     public static bool IsUnavailableError(Exception ex) =>
@@ -109,7 +110,7 @@ public sealed class DbHealthMonitor : IDisposable
         || (ex is PostgresException pe &&
             (pe.SqlState.StartsWith("08", StringComparison.Ordinal)
              || pe.SqlState.StartsWith("28", StringComparison.Ordinal)
-             || pe.SqlState is "57P01" or "57P02" or "57P03" or "3D000"))
+             || pe.SqlState is "57P01" or "57P02" or "57P03" or "3D000" or "53300"))
         || (ex is NpgsqlException { InnerException: null } ne && ne.IsTransient)
         || (ex.InnerException is not null && IsUnavailableError(ex.InnerException));
 
