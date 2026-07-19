@@ -98,7 +98,8 @@
 
         <!-- Кнопки -->
         <Grid ColumnDefinitions="Auto,*,Auto,8,Auto" Margin="0,4,0,0">
-            <Button Grid.Column="0" x:Name="TestBtn" Classes="dialog"
+            <!-- Шире стандартных 110: полный текст иначе обрезается -->
+            <Button Grid.Column="0" x:Name="TestBtn" Classes="dialog" Width="170"
                     Content="Проверить соединение" />
             <Button Grid.Column="2" x:Name="CancelBtn" Classes="dialog"
                     Content="Отмена" />
