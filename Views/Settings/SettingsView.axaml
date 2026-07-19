@@ -314,6 +314,9 @@
                         <Button x:Name="ConnectDatabaseBtn"
                                 Content="Подключить существующую"
                                 Click="OnConnectDatabaseClick" />
+                        <Button x:Name="ConnectPostgresBtn"
+                                Content="Подключить PostgreSQL…"
+                                Click="OnConnectPostgresClick" />
                     </StackPanel>
 
                     <ItemsControl x:Name="DatabaseList">
@@ -341,6 +344,13 @@
 
                                         <StackPanel Grid.Column="1" Orientation="Horizontal"
                                                     Spacing="8" VerticalAlignment="Center">
+
+                                            <!-- Серверная БД PostgreSQL: метка провайдера -->
+                                            <TextBlock Text="PostgreSQL"
+                                                       VerticalAlignment="Center"
+                                                       FontSize="{DynamicResource FontSizeSmall}"
+                                                       Foreground="{StaticResource BrushSecondaryText}"
+                                                       IsVisible="{Binding IsPostgres}" />
 
                                             <!-- Дефолтная БД: метка -->
                                             <TextBlock Text="По умолчанию"

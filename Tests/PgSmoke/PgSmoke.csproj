@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Смоук-стенд провайдера PostgreSQL (см. docs/architecture/databases.md, раздел «Провайдеры»).
+    Требует запущенный сервер (docker run ~name sb-pg -e POSTGRES_PASSWORD=postgres -p 5455:5432 -d postgres:16
+    + CREATE DATABASE smartbase; CREATE DATABASE smartbase2;) и прогоняет сквозной сценарий:
+    монтирование (миграция InitialCreatePg + сиды), CRUD с календарной проекцией, гонка записи
+    одной ячейки с двух подключений, PG-ветки дубля записей/коллекции (nextval-карта),
+    generic-перенос коллекции SQLite→PG→SQLite и PG→PG, свип crossmove.pending.
+    Запуск из корня: dotnet run -c Release ~project Tests/PgSmoke [строка подключения]
+    (~ здесь заменяет двойной дефис, запрещённый в XML-комментарии).
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>SmartBase.Tests.PgSmoke</RootNamespace>
+    <AssemblyName>PgSmoke</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\SmartBase.csproj" />
+  </ItemGroup>
+
+</Project>

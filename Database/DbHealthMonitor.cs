@@ -1,4 +1,5 @@
 using Microsoft.Data.Sqlite;
+using Npgsql;
 using SmartBase.Database.Entities;
 
 namespace SmartBase.Database;
@@ -96,16 +97,28 @@ public sealed class DbHealthMonitor : IDisposable
         }
     }
 
-    /// <summary>SQLite-коды «база недоступна/повреждена»: IOERR(10), CORRUPT(11),
-    /// CANTOPEN(14), NOTADB(26) + файловые исключения ОС.</summary>
+    /// <summary>«База недоступна/повреждена». SQLite: IOERR(10), CORRUPT(11), CANTOPEN(14),
+    /// NOTADB(26) + файловые исключения ОС. PostgreSQL: обрыв соединения (класс 08*),
+    /// сервер гасится/недоступен (57P01–57P03), базы нет (3D000), отказ аутентификации (28*) —
+    /// плюс сетевые SocketException/TimeoutException и транзиентные ошибки Npgsql.
+    /// Через этот фильтр DbErrors и монитор работают для обоих провайдеров.</summary>
     public static bool IsUnavailableError(Exception ex) =>
         ex is IOException or FileNotFoundException or DirectoryNotFoundException
+          or System.Net.Sockets.SocketException or TimeoutException
         || (ex is SqliteException se && se.SqliteErrorCode is 10 or 11 or 14 or 26)
+        || (ex is PostgresException pe &&
+            (pe.SqlState.StartsWith("08", StringComparison.Ordinal)
+             || pe.SqlState.StartsWith("28", StringComparison.Ordinal)
+             || pe.SqlState is "57P01" or "57P02" or "57P03" or "3D000"))
+        || (ex is NpgsqlException { InnerException: null } ne && ne.IsTransient)
         || (ex.InnerException is not null && IsUnavailableError(ex.InnerException));
 
-    /// <summary>BUSY(5)/LOCKED(6) — файл занят другим писателем, не потеря.</summary>
+    /// <summary>«Занято, не потеря»: SQLite BUSY(5)/LOCKED(6) — файл держит другой писатель;
+    /// PostgreSQL 40001 (serialization), 40P01 (deadlock), 55P03 (lock timeout) — штатная
+    /// конкуренция транзакций, повтор действия обычно проходит.</summary>
     public static bool IsBusyError(Exception ex) =>
         (ex is SqliteException se && se.SqliteErrorCode is 5 or 6)
+        || (ex is PostgresException pe && pe.SqlState is "40001" or "40P01" or "55P03")
         || (ex.InnerException is not null && IsBusyError(ex.InnerException));
 
     // ── Основной цикл ───────────────────────────────────────────────────────────
@@ -139,7 +152,7 @@ public sealed class DbHealthMonitor : IDisposable
         }
         foreach (var (dbId, entry) in retry)
         {
-            if (ProbePath(entry.Path))
+            if (ProbePath(ProbeTarget(entry)))
             {
                 lock (_gate) _lost.Remove(dbId);
                 // Дальше — существующий конвейер: монтирование, Completed → SyncMountedToUi,
@@ -177,7 +190,10 @@ public sealed class DbHealthMonitor : IDisposable
                 // кроме случая urgent: рабочий код уже словил CANTOPEN/IOERR — не тянем.
                 if (!gone && !urgent && streak < FailsToDeclare) return;
             }
-            DeclareLost(dbId, name, path, gone ? "файл не найден" : "связь потеряна");
+            DeclareLost(dbId, name, path,
+                PgConnectionInfo.IsPostgresConnectionString(path) ? "сервер недоступен"
+                : gone                                            ? "файл не найден"
+                                                                  : "связь потеряна");
         }
         finally
         {
@@ -189,7 +205,15 @@ public sealed class DbHealthMonitor : IDisposable
     {
         // Идентичность для ретраев собираем из уже известного (реестр из фонового потока
         // не трогаем — его контекст живёт на UI-потоке); Enqueue нужны только Id/Name/Path.
-        var entry = new DatabaseRefEntity { Id = dbId, Name = name, Path = path };
+        // Для PG path — строка подключения (Workspace.Mount монтирует по ней напрямую,
+        // когда Pg*-полей у синтетической записи нет).
+        var entry = new DatabaseRefEntity
+        {
+            Id       = dbId,
+            Name     = name,
+            Path     = path,
+            Provider = PgConnectionInfo.IsPostgresConnectionString(path) ? "postgres" : "sqlite",
+        };
         lock (_gate)
         {
             _failStreak.Remove(dbId);
@@ -205,6 +229,12 @@ public sealed class DbHealthMonitor : IDisposable
         _ => 60,
     };
 
+    // Цель пробы для записи реестра/синтетической записи ретраев: у PG-записи реестра
+    // Path — отображаемая строка без пароля, подключаться надо по собранной из Pg*-полей;
+    // у синтетической записи монитора Path — уже готовая строка подключения.
+    private static string ProbeTarget(DatabaseRefEntity entry) =>
+        entry.IsPostgres ? entry.ToPgInfo()?.ToConnectionString() ?? entry.Path : entry.Path;
+
     // Быстрая проба пути: файл существует и открывается на чтение.
     private static bool ProbePath(string path)
     {
@@ -215,8 +245,27 @@ public sealed class DbHealthMonitor : IDisposable
     // Проба: File.Exists ОБЯЗАТЕЛЕН отдельно от открытия — на POSIX удалённый файл
     // продолжает «работать» через уже открытый хендл долгоживущего контекста, записи
     // молча уходят в отвязанный inode. Затем одноразовое read-only подключение + SELECT 1.
+    // Для PostgreSQL (path — строка подключения) проба сервера: короткое подключение
+    // (Timeout=5 уже в строке) + SELECT 1; понятия «файл исчез» у сервера нет.
     private static (bool Ok, bool FileExists) ProbePathDetailed(string path)
     {
+        if (PgConnectionInfo.IsPostgresConnectionString(path))
+        {
+            try
+            {
+                using var pg = new NpgsqlConnection(path);
+                pg.Open();
+                using var ping = pg.CreateCommand();
+                ping.CommandText = "SELECT 1;";
+                ping.ExecuteScalar();
+                return (true, true);
+            }
+            catch
+            {
+                return (false, true);
+            }
+        }
+
         try
         {
             if (!File.Exists(path)) return (false, false);

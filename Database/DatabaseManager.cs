@@ -17,41 +17,63 @@ public sealed partial class DatabaseManager : IDisposable
     // и служит «префиксом» для изоляции id при мульти-маунте (Этап 3).
     public int                   DbId        { get; }
     public string                Name        { get; }
+    // Для SQLite — путь к файлу; для PostgreSQL — строка подключения Npgsql
+    // (фоновые контексты открываются по ней же: new AppDbContext(db.DbPath)).
     public string                Path        { get; }
-    // Файл на сетевом пути (SMB/NFS/внешний том) — общая БД нескольких пользователей:
-    // журнал DELETE вместо WAL, консервативные прагмы, мониторинг доступности.
+    // Провайдер записи реестра: "sqlite" | "postgres".
+    public string                Provider    { get; }
+    // Общая БД нескольких пользователей: файл на сетевом пути (SMB/NFS/внешний том —
+    // журнал DELETE вместо WAL, консервативные прагмы) или серверная PostgreSQL
+    // (многопользовательская по природе). Влияет на мониторинг и тексты сообщений.
     public bool                  IsShared    { get; }
     public AppDbContext          Context     { get; }
     public CategoryRepository    Categories  { get; }
     public ConstructorRepository Constructor { get; }
     public PermissionService     Permissions { get; }
 
-    private DatabaseManager(int dbId, string name, string path, Action<string, double?>? stage)
+    private DatabaseManager(int dbId, string name, string path, string provider, Action<string, double?>? stage)
     {
         DbId     = dbId;
         Name     = name;
         Path     = path;
-        IsShared = NetworkPath.IsNetwork(path);
-        Context  = new AppDbContext(path);
+        Provider = provider;
 
-        // Все изменения схемы применяются автоматически через EF Core Migrations.
-        // Любая будущая правка сущностей → `dotnet ef migrations add ...` →
-        // при следующем запуске Migrate() накатит её, не трогая существующие данные.
-        ApplySchemaMigrations(Context, path, name, stage);
+        if (provider == "postgres")
+        {
+            // Серверная БД: журнал/прагмы/VACUUM — забота сервера (MVCC, autovacuum).
+            // Схему внутри уже созданной администратором базы строит Migrate() —
+            // набор миграций PgAppDbContext (Database/Migrations/Pg). Замок миграций
+            // на PG — advisory-lock сессии: смерть убитого процесса снимает его сама,
+            // аналог ClearStaleMigrationsLock не нужен.
+            IsShared = true;
+            Context  = new PgAppDbContext(path);
+            stage?.Invoke($"Подключаюсь к серверу «{name}»…", null);
+            Context.Database.Migrate();
+        }
+        else
+        {
+            IsShared = NetworkPath.IsNetwork(path);
+            Context  = new AppDbContext(path);
 
-        // Режим журнала — по типу пути (WAL локально / DELETE на сети, см. ApplyJournalMode).
-        ApplyJournalMode(Context, IsShared);
+            // Все изменения схемы применяются автоматически через EF Core Migrations.
+            // Любая будущая правка сущностей → `dotnet ef migrations add ...` →
+            // при следующем запуске Migrate() накатит её, не трогая существующие данные.
+            ApplySchemaMigrations(Context, path, name, stage);
 
-        // Настройки скорости под большие коллекции (100k–10M строк). В отличие от WAL
-        // (живёт в заголовке файла) эти прагмы — на соединение; ставим на основном
-        // соединении контекста, которое живёт весь сеанс работы с БД.
-        TunePerformancePragmas(Context);
+            // Режим журнала — по типу пути (WAL локально / DELETE на сети, см. ApplyJournalMode).
+            ApplyJournalMode(Context, IsShared);
 
-        // Самолечение раздутого файла: остатки массовых импортов/удалений — SQLite без
-        // auto_vacuum не возвращает освобождённые страницы в ОС, файл копится в разы
-        // больше данных. Порог: >50% файла свободно И >16 МБ. С этапом и живым прогрессом
-        // на сплэше — разовый VACUUM большого файла не должен выглядеть зависанием.
-        CompactWithProgress(Context, path, name, stage, minFreeBytes: 16L * 1024 * 1024, minFreeRatio: 0.5);
+            // Настройки скорости под большие коллекции (100k–10M строк). В отличие от WAL
+            // (живёт в заголовке файла) эти прагмы — на соединение; ставим на основном
+            // соединении контекста, которое живёт весь сеанс работы с БД.
+            TunePerformancePragmas(Context);
+
+            // Самолечение раздутого файла: остатки массовых импортов/удалений — SQLite без
+            // auto_vacuum не возвращает освобождённые страницы в ОС, файл копится в разы
+            // больше данных. Порог: >50% файла свободно И >16 МБ. С этапом и живым прогрессом
+            // на сплэше — разовый VACUUM большого файла не должен выглядеть зависанием.
+            CompactWithProgress(Context, path, name, stage, minFreeBytes: 16L * 1024 * 1024, minFreeRatio: 0.5);
+        }
 
         // Пользователи/права этой базы: регистрируем текущего пользователя (первый
         // открывший базу без админов становится администратором) и строим кеш прав.
@@ -61,6 +83,11 @@ public sealed partial class DatabaseManager : IDisposable
 
         Categories  = new CategoryRepository(Context);
         Constructor = new ConstructorRepository(Context) { Permissions = Permissions };
+
+        // Незавершённый generic-перенос (kill посреди пакетной заливки из БД другого
+        // провайдера) оставляет частичную копию под маркером crossmove.pending.* —
+        // доудаляем её при монтировании (источник переносом не тронут).
+        Constructor.SweepUnfinishedCrossMove();
 
         // Системное поле «Дата» → тип date + источник календаря; бэкафилл StartDt
         // для записей, у которых дата задана только в поле конструктора. На старых больших
@@ -75,12 +102,15 @@ public sealed partial class DatabaseManager : IDisposable
         Categories.SeedDefaults();
     }
 
-    /// <summary>Смонтировать SQLite-БД с её идентичностью из реестра (DbId, имя, путь).
+    /// <summary>Смонтировать БД с её идентичностью из реестра (DbId, имя, путь/строка подключения).
+    /// <paramref name="provider"/> — "sqlite" (по умолчанию) или "postgres" (тогда
+    /// <paramref name="path"/> — строка подключения Npgsql, см. PgConnectionInfo).
     /// <paramref name="stage"/> — опциональный прогресс долгих этапов (разовая миграция/сжатие)
     /// для сплэша: текст + доля этапа 0..1 (null = доля неизвестна). Без него пользователь
     /// видит «зависший» прогресс десятки секунд.</summary>
-    public static DatabaseManager Open(int dbId, string name, string path, Action<string, double?>? stage = null)
-        => new(dbId, name, path, stage);
+    public static DatabaseManager Open(int dbId, string name, string path,
+        string provider = "sqlite", Action<string, double?>? stage = null)
+        => new(dbId, name, path, provider, stage);
 
     public void Dispose() => Context.Dispose();
 

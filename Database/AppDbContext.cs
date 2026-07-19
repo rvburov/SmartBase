@@ -25,16 +25,31 @@ public class AppDbContext : DbContext
     private readonly string _dbPath;
 
     /// <summary>Путь к файлу БД — нужен, чтобы открыть параллельное read-only подключение
-    /// (фоновые запросы, WAL допускает одновременное чтение) без общего контекста.</summary>
+    /// (фоновые запросы, WAL допускает одновременное чтение) без общего контекста.
+    /// Для PostgreSQL здесь строка подключения Npgsql — фоновые места
+    /// (<c>new AppDbContext(db.DbPath)</c>) продолжают работать без правок.</summary>
     public string DbPath => _dbPath;
+
+    /// <summary>Провайдер этой БД: строка подключения PostgreSQL вместо пути к файлу SQLite.
+    /// Признак — «Host=» в строке (см. PgConnectionInfo.IsPostgresConnectionString).</summary>
+    public bool IsPostgres { get; }
 
     public AppDbContext(string dbPath)
     {
-        _dbPath = dbPath;
+        _dbPath    = dbPath;
+        IsPostgres = PgConnectionInfo.IsPostgresConnectionString(dbPath);
     }
 
     protected override void OnConfiguring(DbContextOptionsBuilder options)
-        => options.UseSqlite($"Data Source={_dbPath}");
+    {
+        if (IsPostgres) options.UseNpgsql(_dbPath);
+        else            options.UseSqlite($"Data Source={_dbPath}");
+        // Один тип контекста обслуживает два провайдера: без своего ключа кеша EF отдал бы
+        // модель первого открытого провайдера второму (у PG имена колонок lowercase — см.
+        // ApplyLowercaseNames), что молча ломало бы SQL. Ключ учитывает IsPostgres.
+        options.ReplaceService<Microsoft.EntityFrameworkCore.Infrastructure.IModelCacheKeyFactory,
+                               ProviderModelCacheKeyFactory>();
+    }
 
     /// <summary>
     /// Прагмы скорости на ПОДКЛЮЧЕНИЕ (не на файл). Применять и к основному контексту, и к КАЖДОМУ
@@ -47,6 +62,10 @@ public class AppDbContext : DbContext
     /// </summary>
     public void ApplyPerformancePragmas()
     {
+        // PostgreSQL: PRAGMA не существует, тюнинг (shared_buffers, work_mem) — забота сервера;
+        // FK enforcement и MVCC включены всегда. Один guard нейтрализует все вызовы из репозиториев.
+        if (IsPostgres) return;
+
         // Сетевой путь (SMB/NFS, см. NetworkPath): другой профиль надёжности — БД общая,
         // с ней могут работать несколько пользователей с разных машин:
         //  • busy_timeout 15 с — чужие писатели по сети держат замок дольше;
@@ -85,6 +104,8 @@ public class AppDbContext : DbContext
     /// </summary>
     public void ApplyBulkPerformancePragmas()
     {
+        if (IsPostgres) return;   // см. ApplyPerformancePragmas
+
         ApplyPerformancePragmas();
         // На сетевом пути mmap остаётся выключенным (см. ApplyPerformancePragmas) —
         // поднимаем только страничный кеш.
@@ -105,6 +126,8 @@ public class AppDbContext : DbContext
     /// </summary>
     public void ApplyMigrationPragmas()
     {
+        if (IsPostgres) return;   // см. ApplyPerformancePragmas
+
         var shared = NetworkPath.IsNetwork(_dbPath);
         Database.ExecuteSqlRaw("PRAGMA busy_timeout=10000;");
         // На сетевом пути — FULL и без mmap (те же причины, что в ApplyPerformancePragmas):
@@ -288,5 +311,31 @@ public class AppDbContext : DbContext
             // Без FK: журнал переживает удаление коллекций/записей/пользователей.
             // Чтение идёт keyset-пагинацией по Id (rowid) DESC — индексы не нужны.
         });
+
+        if (IsPostgres) ApplyLowercaseNames(model);
+    }
+
+    /// <summary>
+    /// PG-модель: все имена колонок в lowercase (таблицы уже lowercase). PostgreSQL сворачивает
+    /// неэкранированные идентификаторы к нижнему регистру — благодаря этому весь общий raw SQL
+    /// репозиториев (<c>WHERE CollectionId = @c</c> и т.п.) работает на обоих провайдерах без
+    /// правок: SQLite матчит имена без учёта регистра, PG находит колонку <c>collectionid</c>.
+    /// Флаги (bool) маппятся в integer 0/1, как SQLite хранит их физически: иначе boolean-колонки
+    /// PG сломали бы общий raw SQL (`IsCalStart = 1`, `AllDay = 0`, конкатенации, int-биндинги).
+    /// SQLite-модель не трогаем — имена колонок там исторически PascalCase.
+    /// </summary>
+    private static void ApplyLowercaseNames(ModelBuilder model)
+    {
+        var boolToInt = new Microsoft.EntityFrameworkCore.Storage.ValueConversion.BoolToZeroOneConverter<int>();
+        foreach (var entity in model.Model.GetEntityTypes())
+            foreach (var property in entity.GetProperties())
+            {
+                property.SetColumnName(property.GetColumnName().ToLowerInvariant());
+                if (property.ClrType == typeof(bool) || property.ClrType == typeof(bool?))
+                {
+                    property.SetValueConverter(boolToInt);   // null (bool?) проходит мимо конвертера
+                    property.SetColumnType("integer");
+                }
+            }
     }
 }

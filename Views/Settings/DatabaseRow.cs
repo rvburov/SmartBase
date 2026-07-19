@@ -14,11 +14,13 @@ namespace SmartBase.Views.Settings;
 /// </summary>
 public sealed partial class DatabaseRow : ObservableObject
 {
-    public int    Id        { get; init; }
-    public string Name      { get; init; } = "";
-    public string Path      { get; init; } = "";
-    public bool   IsDefault { get; init; }
-    public bool   IsMounted { get; init; }
+    public int    Id         { get; init; }
+    public string Name       { get; init; } = "";
+    public string Path       { get; init; } = "";
+    public bool   IsDefault  { get; init; }
+    public bool   IsMounted  { get; init; }
+    /// <summary>Серверная БД PostgreSQL: бейдж в строке, Path — вид без пароля.</summary>
+    public bool   IsPostgres { get; init; }
 
     /// <summary>Статусная строка (null — подключена, строки нет).</summary>
     [ObservableProperty] private string? _statusText;

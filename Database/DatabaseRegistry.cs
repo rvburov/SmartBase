@@ -22,6 +22,7 @@ public sealed class DatabaseRegistry : IDisposable, ISettingsDatabase
         var db = new SystemDbContext(AppSettings.SystemDbPath);
         db.Database.EnsureCreated();   // создаёт app.db и таблицы, если их нет; существующие данные не трогает
         EnsureSettingsTable(db);       // app_settings могло не быть в старых app.db (EnsureCreated её не достроит)
+        EnsurePgColumns(db);           // Pg*-колонки реестра появились позже — достраиваем аддитивно
         db.Database.ExecuteSqlRaw("PRAGMA journal_mode=WAL;");  // WAL: параллельные чтения во время записи
         // Самолечение раздутого app.db: реестр и настройки крошечные, раздуться нечему,
         // но для полноты — если файл вдруг раздулся свободными страницами, разово ужимаем.
@@ -39,6 +40,31 @@ public sealed class DatabaseRegistry : IDisposable, ISettingsDatabase
             "CREATE TABLE IF NOT EXISTS \"app_settings\" (" +
             "\"Key\" TEXT NOT NULL CONSTRAINT \"PK_app_settings\" PRIMARY KEY, " +
             "\"Value\" TEXT NOT NULL);");
+
+    // Колонки PG-подключений появились позже таблицы databases: в старых app.db их нет,
+    // а EnsureCreated() существующую таблицу не достраивает. Правило app.db — только
+    // аддитивные изменения (ALTER ADD), чтобы не терять реестр и настройки.
+    private static void EnsurePgColumns(SystemDbContext db)
+    {
+        var have = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var conn = db.Database.GetDbConnection();
+        if (conn.State != System.Data.ConnectionState.Open) conn.Open();
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = "PRAGMA table_info(\"databases\");";
+            using var r = cmd.ExecuteReader();
+            while (r.Read()) have.Add(r.GetString(1));
+        }
+
+        foreach (var (name, type) in new[]
+        {
+            ("PgHost", "TEXT"), ("PgPort", "INTEGER"), ("PgDatabase", "TEXT"),
+            ("PgUser", "TEXT"), ("PgPassword", "TEXT"), ("PgSslMode", "TEXT"),
+        })
+            if (!have.Contains(name))
+                db.Database.ExecuteSqlRaw(
+                    $"ALTER TABLE \"databases\" ADD COLUMN \"{name}\" {type} NULL;");
+    }
 
     // ── Настройки приложения (ISettingsDatabase поверх app.db) ──────────────────
 
@@ -100,6 +126,37 @@ public sealed class DatabaseRegistry : IDisposable, ISettingsDatabase
             Path      = full,
             Provider  = "sqlite",
             IsDefault = false,
+        };
+        _db.Databases.Add(entity);
+        _db.SaveChanges();
+        return entity;
+    }
+
+    /// <summary>
+    /// Зарегистрировать подключение к PostgreSQL. Если сервер+порт+база уже есть в реестре —
+    /// возвращаем существующую запись (без дублей), как <see cref="Add"/> для путей.
+    /// </summary>
+    public DatabaseRefEntity AddPostgres(string name, PgConnectionInfo info)
+    {
+        var existing = _db.Databases.AsEnumerable().FirstOrDefault(d =>
+            d.IsPostgres
+            && string.Equals(d.PgHost, info.Host, StringComparison.OrdinalIgnoreCase)
+            && (d.PgPort ?? PgConnectionInfo.DefaultPort) == info.Port
+            && d.PgDatabase == info.Database);
+        if (existing is not null) return existing;
+
+        var entity = new DatabaseRefEntity
+        {
+            Name       = string.IsNullOrWhiteSpace(name) ? info.Database : name.Trim(),
+            Path       = info.ToDisplayString(),
+            Provider   = "postgres",
+            IsDefault  = false,
+            PgHost     = info.Host,
+            PgPort     = info.Port,
+            PgDatabase = info.Database,
+            PgUser     = info.User,
+            PgPassword = info.Password,
+            PgSslMode  = info.SslMode,
         };
         _db.Databases.Add(entity);
         _db.SaveChanges();

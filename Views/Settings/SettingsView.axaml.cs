@@ -665,10 +665,13 @@ public partial class SettingsView : UserControl
             {
                 Id            = d.Id,
                 Name          = d.Name,
-                Path          = d.Path,
+                Path          = d.Path,   // у PG-записей — «postgres://host:port/db», без пароля
                 IsDefault     = d.IsDefault,
                 IsMounted     = mounted,
-                StatusText    = mounted ? null : queue?.Text ?? "Не подключена (файл недоступен)",
+                IsPostgres    = d.IsPostgres,
+                StatusText    = mounted ? null : queue?.Text
+                    ?? (d.IsPostgres ? "Не подключена (сервер недоступен)"
+                                     : "Не подключена (файл недоступен)"),
                 StatusIsError = !mounted && (queue is null || queue.Value.Failed),
             };
         }).ToList();
@@ -734,6 +737,32 @@ public partial class SettingsView : UserControl
         RefreshDatabaseList();
     }
 
+    // Подключить серверную базу PostgreSQL: русский диалог с проверкой соединения
+    // (см. PgConnectDialog). Пара сервер+порт+база уже в реестре — честное «уже подключена».
+    private async void OnConnectPostgresClick(object? sender, RoutedEventArgs e)
+    {
+        if (_registry is null || VisualRoot is not Window win) return;
+
+        var result = await new PgConnectDialog().ShowDialog<PgConnectResult?>(win);
+        if (result is null) return;
+
+        var info = result.Info;
+        if (_registry.GetAll().Any(d => d.IsPostgres
+                && string.Equals(d.PgHost, info.Host, StringComparison.OrdinalIgnoreCase)
+                && (d.PgPort ?? PgConnectionInfo.DefaultPort) == info.Port
+                && d.PgDatabase == info.Database))
+        {
+            await ConfirmDialog.Info(
+                $"База данных «{info.Database}» на сервере {info.Host}:{info.Port} уже подключена.")
+                .ShowDialog(win);
+            return;
+        }
+
+        var entry = _registry.AddPostgres(result.Name, info);
+        DatabaseAdded?.Invoke(this, entry);
+        RefreshDatabaseList();
+    }
+
     private async void OnRemoveDatabaseClick(object? sender, RoutedEventArgs e)
     {
         if (_registry is null) return;
@@ -743,8 +772,9 @@ public partial class SettingsView : UserControl
         if (entry is null || entry.IsDefault) return;   // дефолт не отключаем
 
         if (VisualRoot is not Window win) return;
-        var dlg = new ConfirmDialog(
-            $"Отключить базу данных «{entry.Name}»? Файл на диске не удаляется — её можно подключить снова.");
+        var dlg = new ConfirmDialog(entry.IsPostgres
+            ? $"Отключить базу данных «{entry.Name}»? Данные на сервере не удаляются — её можно подключить снова."
+            : $"Отключить базу данных «{entry.Name}»? Файл на диске не удаляется — её можно подключить снова.");
         if (await dlg.ShowDialog<bool>(win) != true) return;
 
         _registry.Remove(id);

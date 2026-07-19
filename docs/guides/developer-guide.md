@@ -43,11 +43,21 @@ dotnet build -c Debug          # сборка
 
 ```bash
 dotnet tool restore
-dotnet ef migrations add ИмяМиграции --msbuildprojectextensionspath artifacts/obj/SmartBase
+dotnet ef migrations add ИмяМиграции --context AppDbContext --msbuildprojectextensionspath artifacts/obj/SmartBase
 ```
 
 > Флаг `--msbuildprojectextensionspath` нужен из-за `UseArtifactsOutput`: `obj`
 > лежит в `artifacts/obj/SmartBase`, и без указания пути EF CLI не находит проект.
+
+**Два набора миграций.** У пользовательской БД два провайдера: SQLite
+(`AppDbContext`, `Database/Migrations/`) и PostgreSQL (`PgAppDbContext`,
+`Database/Migrations/Pg/`). EF привязывает миграции к типу контекста, поэтому
+каждое изменение сущностей = **два** запуска `migrations add` — по одному на контекст:
+
+```bash
+dotnet ef migrations add ИмяМиграции   --context AppDbContext   --msbuildprojectextensionspath artifacts/obj/SmartBase
+dotnet ef migrations add ИмяМиграцииPg --context PgAppDbContext --output-dir Database/Migrations/Pg --msbuildprojectextensionspath artifacts/obj/SmartBase
+```
 
 **Правило:** миграции только сохраняют данные — без drop/recreate и потери строк
 (то же для системной app.db — изменения аддитивно). См. [databases.md](../architecture/databases.md).

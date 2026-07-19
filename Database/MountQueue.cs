@@ -43,7 +43,9 @@ public sealed class MountQueue
 
     private static long FileSize(DatabaseRefEntity e)
     {
-        try { return new FileInfo(e.Path).Length; }
+        // PG-записи (и недоступные файлы) — нулевой «размер»: монтируются первыми,
+        // таймаут подключения к серверу 5 с (см. PgConnectionInfo) очередь не задержит.
+        try { return e.IsPostgres ? 0 : new FileInfo(e.Path).Length; }
         catch { return 0; }
     }
 
@@ -136,8 +138,9 @@ public sealed class MountQueue
             {
                 if (m is not null) _status.Remove(entry.Id);
                 else _status[entry.Id] = new ItemStatus(entry.Id, entry.Name, ItemState.Failed,
-                    File.Exists(entry.Path) ? "недоступна (не удалось открыть)"
-                                            : "недоступна (файл не найден)");
+                    entry.IsPostgres          ? "недоступна (сервер не отвечает)"
+                    : File.Exists(entry.Path) ? "недоступна (не удалось открыть)"
+                                              : "недоступна (файл не найден)");
             }
             Changed?.Invoke(entry.Id, true);
             Completed?.Invoke(entry.Id, m);

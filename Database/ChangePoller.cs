@@ -1,4 +1,6 @@
+using System.Data.Common;
 using Microsoft.Data.Sqlite;
+using Npgsql;
 using SmartBase.Utils;
 
 namespace SmartBase.Database;
@@ -33,10 +35,13 @@ public sealed class ChangePoller : IDisposable
     private const int BackgroundMs = 15_000;  // окно в фоне — экономный режим
 
     // Наблюдение за одной БД: постоянное соединение + последняя версия + курсор журнала.
+    // Для PostgreSQL (Path — строка подключения) data_version не существует; дешёвый
+    // детектор — MAX(id) журнала обратным сканом PK (микросекунды на тик).
     private sealed class Watch
     {
-        public SqliteConnection? Conn;
+        public DbConnection? Conn;
         public string Path        = "";
+        public bool   IsPostgres;
         public long   DataVersion = -1;
         public long   LastLogId   = -1;
     }
@@ -103,19 +108,30 @@ public sealed class ChangePoller : IDisposable
         if (!_watch.TryGetValue(dbId, out var w) || w.Path != path)
         {
             _watch.GetValueOrDefault(dbId)?.Conn?.Dispose();
-            w = new Watch { Path = path };
-            w.Conn = new SqliteConnection($"Data Source={path};Mode=ReadOnly;Pooling=False");
+            w = new Watch { Path = path, IsPostgres = PgConnectionInfo.IsPostgresConnectionString(path) };
+            w.Conn = w.IsPostgres
+                ? new NpgsqlConnection(path)
+                : new SqliteConnection($"Data Source={path};Mode=ReadOnly;Pooling=False");
             w.Conn.Open();
             // Первое знакомство: историю не проигрываем — курсор на текущий хвост журнала.
-            w.DataVersion = ReadLong(w.Conn, "PRAGMA data_version;");
-            w.LastLogId   = ReadLong(w.Conn, "SELECT COALESCE(MAX(\"Id\"), 0) FROM \"change_log\";");
-            _watch[dbId]  = w;
+            if (!w.IsPostgres) w.DataVersion = ReadLong(w.Conn, "PRAGMA data_version;");
+            w.LastLogId  = ReadLong(w.Conn, MaxLogIdSql(w.IsPostgres));
+            _watch[dbId] = w;
             return;
         }
 
-        var version = ReadLong(w.Conn!, "PRAGMA data_version;");
-        if (version == w.DataVersion) return;   // с прошлого тика БД никто не менял
-        w.DataVersion = version;
+        if (w.IsPostgres)
+        {
+            // PG: дешёвый детектор — вырос ли журнал (обратный скан PK). Правки без записи
+            // в change_log (только UI-таблицы) сосед и не должен подхватывать.
+            if (ReadLong(w.Conn!, MaxLogIdSql(true)) <= w.LastLogId) return;
+        }
+        else
+        {
+            var version = ReadLong(w.Conn!, "PRAGMA data_version;");
+            if (version == w.DataVersion) return;   // с прошлого тика БД никто не менял
+            w.DataVersion = version;
+        }
 
         // Кто-то коммитил: читаем хвост журнала. Курсор двигаем ВСЕГДА (и на своих правках),
         // чтобы не перечитывать один хвост по кругу. Хвост ограничен: при огромном отставании
@@ -123,9 +139,14 @@ public sealed class ChangePoller : IDisposable
         var changes = new List<RemoteChange>();
         using (var cmd = w.Conn!.CreateCommand())
         {
-            cmd.CommandText = "SELECT \"Id\", \"UserKey\", \"Action\", \"TargetType\", \"CollectionName\" " +
-                              "FROM \"change_log\" WHERE \"Id\" > $last ORDER BY \"Id\" LIMIT 500;";
-            cmd.Parameters.AddWithValue("$last", w.LastLogId);
+            // Идентификаторы без кавычек: SQLite матчит PascalCase-колонки без учёта регистра,
+            // PG сворачивает в lowercase — совпадает с PG-моделью (см. ApplyLowercaseNames).
+            cmd.CommandText = "SELECT Id, UserKey, Action, TargetType, CollectionName " +
+                              "FROM change_log WHERE Id > @last ORDER BY Id LIMIT 500;";
+            var p = cmd.CreateParameter();
+            p.ParameterName = "@last";
+            p.Value = w.LastLogId;
+            cmd.Parameters.Add(p);
             using var r = cmd.ExecuteReader();
             while (r.Read())
             {
@@ -142,7 +163,11 @@ public sealed class ChangePoller : IDisposable
             RemoteChanges?.Invoke(dbId, changes);
     }
 
-    private static long ReadLong(SqliteConnection conn, string sql)
+    private static string MaxLogIdSql(bool postgres) =>
+        postgres ? "SELECT COALESCE(MAX(id), 0) FROM change_log;"
+                 : "SELECT COALESCE(MAX(\"Id\"), 0) FROM \"change_log\";";
+
+    private static long ReadLong(DbConnection conn, string sql)
     {
         using var cmd = conn.CreateCommand();
         cmd.CommandText = sql;

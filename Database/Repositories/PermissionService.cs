@@ -68,7 +68,15 @@ public sealed class PermissionService(AppDbContext db)
                 CreatedAt   = DateTime.UtcNow.ToString("o"),
             };
             _db.DbUsers.Add(me);
-            _db.SaveChanges();
+            try { _db.SaveChanges(); }
+            catch (Microsoft.EntityFrameworkCore.DbUpdateException ex) when (ex.InnerException
+                is Microsoft.Data.Sqlite.SqliteException { SqliteErrorCode: 19 }
+                or Npgsql.PostgresException { SqlState: "23505" })
+            {
+                // Гонка регистрации одного пользователя из двух процессов (уникальный индекс
+                // UserKey): сосед успел первым — строку не дублируем, работаем с его версией.
+                _db.Entry(me).State = Microsoft.EntityFrameworkCore.EntityState.Detached;
+            }
         }
         else
         {

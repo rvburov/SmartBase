@@ -45,7 +45,7 @@ public sealed class Workspace : IDisposable
         // зависшим (замерший процент неотличим от зависания).
         progress?.Report((0, $"Открываю базу «{defEntry.Name}»…"));
         var def = DatabaseManager.Open(defEntry.Id, defEntry.Name, AppSettings.DbPath,
-            (msg, inner) => progress?.Report((Math.Clamp(inner ?? 0, 0, 1), msg)));
+            stage: (msg, inner) => progress?.Report((Math.Clamp(inner ?? 0, 0, 1), msg)));
         return new Workspace(registry, def);
     }
 
@@ -59,9 +59,22 @@ public sealed class Workspace : IDisposable
         }
         try
         {
+            // PG-запись: монтируем по строке подключения, собранной из Pg*-полей реестра
+            // (entry.Path хранит только отображаемый вид без пароля). У синтетической записи
+            // ретраев DbHealthMonitor Pg*-полей нет — там Path уже строка подключения.
+            string mountPath;
+            if (entry.IsPostgres)
+            {
+                var info = entry.ToPgInfo();
+                if (info is not null) mountPath = info.ToConnectionString();
+                else if (PgConnectionInfo.IsPostgresConnectionString(entry.Path)) mountPath = entry.Path;
+                else return null;   // повреждённая запись реестра
+            }
+            else mountPath = entry.Path;
+
             // Открытие вне замка: миграция большой базы может идти минуты, UI в это время
             // свободно читает Mounted (у каждого SQLite-файла свои блокировки).
-            var manager = DatabaseManager.Open(entry.Id, entry.Name, entry.Path, stage);
+            var manager = DatabaseManager.Open(entry.Id, entry.Name, mountPath, entry.Provider, stage);
             lock (_gate)
             {
                 // Гонка двух монтирований одной БД: оставляем первый, лишний закрываем.

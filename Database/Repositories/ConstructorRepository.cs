@@ -321,7 +321,8 @@ public partial class ConstructorRepository(AppDbContext db)
     /// чистка UI-строк без FK), затем строки групп ветки. <paramref name="progress"/> — нарастающее
     /// число удалённых записей по всей ветке (для %).
     /// </summary>
-    public void DeleteGroupData(int groupId, IProgress<int>? progress = null, int batchSize = 10000)
+    public void DeleteGroupData(int groupId, IProgress<int>? progress = null, int batchSize = 10000,
+                                bool log = true)
     {
         var groupName = db.DbGroups.Where(g => g.Id == groupId).Select(g => g.Name).FirstOrDefault();
         var groupIds = SubtreeGroupIds(groupId);
@@ -343,7 +344,7 @@ public partial class ConstructorRepository(AppDbContext db)
             db.Database.ExecuteSqlInterpolated($"DELETE FROM db_groups WHERE Id = {gid}");
         tx.Commit();
 
-        if (groupName is not null) LogNow("delete", "group", groupName, count: total);
+        if (log && groupName is not null) LogNow("delete", "group", groupName, count: total);
         progress?.Report((int)total);   // финально 100% для этой ветки
     }
 
@@ -474,6 +475,13 @@ public partial class ConstructorRepository(AppDbContext db)
                 ? new ImportException("Недостаточно места на диске — импорт отменён, частичные данные удалены.")
                 : new ImportException("Ошибка записи в базу данных. Импорт отменён.");
         }
+        catch (Npgsql.PostgresException ex)
+        {
+            TryDeleteImported(colId);
+            throw ex.SqlState == "53100"   // disk_full
+                ? new ImportException("Недостаточно места на диске — импорт отменён, частичные данные удалены.")
+                : new ImportException("Ошибка записи в базу данных. Импорт отменён.");
+        }
         catch
         {
             TryDeleteImported(colId);
@@ -506,25 +514,28 @@ public partial class ConstructorRepository(AppDbContext db)
         var conn    = db.Database.GetDbConnection();
 
         using var insRec = conn.CreateCommand();
+        // RETURNING Id (SQLite ≥3.35 и PG): id каждой записи получаем из самой вставки — без
+        // допущения «новые id непрерывны» (на PG identity-последовательность делят все клиенты).
         insRec.CommandText =
             "INSERT INTO db_records (CollectionId, CreatedAt, Position, AllDay, Title, Description) " +
-            "VALUES ($cid, $created, $pos, 0, $title, NULL)";
-        var rCid     = AddParam(insRec, "$cid");
-        var rCreated = AddParam(insRec, "$created");
-        var rPos     = AddParam(insRec, "$pos");
-        var rTitle   = AddParam(insRec, "$title");
+            "VALUES (@cid, @created, @pos, 0, @title, NULL) RETURNING Id";
+        var rCid     = AddParam(insRec, "@cid",     System.Data.DbType.Int32);
+        var rCreated = AddParam(insRec, "@created", System.Data.DbType.String);
+        var rPos     = AddParam(insRec, "@pos",     System.Data.DbType.Int64);
+        var rTitle   = AddParam(insRec, "@title",   System.Data.DbType.String);
         rCid.Value     = collectionId;
         rCreated.Value = now;
 
         using var insVal = conn.CreateCommand();
-        insVal.CommandText = "INSERT INTO db_field_values (RecordId, FieldId, Value) VALUES ($rid, $fid, $val)";
-        var vRid = AddParam(insVal, "$rid");
-        var vFid = AddParam(insVal, "$fid");
-        var vVal = AddParam(insVal, "$val");
+        insVal.CommandText = "INSERT INTO db_field_values (RecordId, FieldId, Value) VALUES (@rid, @fid, @val)";
+        var vRid = AddParam(insVal, "@rid", System.Data.DbType.Int64);
+        var vFid = AddParam(insVal, "@fid", System.Data.DbType.Int32);
+        var vVal = AddParam(insVal, "@val", System.Data.DbType.String);
 
         long written  = 0;
         var  prepared = false;
         var  batch    = new List<ImportRow>(Math.Min(batchSize, 4096));
+        var  newIds   = new List<long>(Math.Min(batchSize, 4096));
         using var e   = rows.GetEnumerator();
         var  more     = true;
 
@@ -543,18 +554,18 @@ public partial class ConstructorRepository(AppDbContext db)
             insVal.Transaction = dbTx;
             if (!prepared) { insRec.Prepare(); insVal.Prepare(); prepared = true; }
 
+            newIds.Clear();
             for (var i = 0; i < batch.Count; i++)
             {
                 rPos.Value   = (written + i + 1) * posStep;
                 rTitle.Value = batch[i].Title ?? "";
-                insRec.ExecuteNonQuery();
+                newIds.Add(Convert.ToInt64(insRec.ExecuteScalar()!));
             }
-            var firstNew = LastInsertRowid() - batch.Count + 1;
 
             for (var i = 0; i < batch.Count; i++)
             {
                 var row = batch[i];
-                vRid.Value = firstNew + i;
+                vRid.Value = newIds[i];
                 for (var f = 0; f < fieldIds.Count; f++)
                 {
                     vFid.Value = fieldIds[f];
@@ -771,20 +782,19 @@ public partial class ConstructorRepository(AppDbContext db)
     public void CopyCollectionData(int srcCollectionId, int newCollectionId,
                                    IProgress<int>? progress = null, int batchSize = 10000)
     {
+        // PG: непрерывного блока id не существует (identity-последовательность делят все
+        // клиенты) — карта id строится явно через nextval, см. CopyCollectionDataPg.
+        if (db.IsPostgres)
+        {
+            CopyCollectionDataPg(srcCollectionId, newCollectionId, progress, batchSize);
+            return;
+        }
+
         var recCount = db.DbRecords.Count(r => r.CollectionId == srcCollectionId);
 
-        // old FieldId → new FieldId по Position: скелет копирует Position полей дословно, а Position
-        // уникален в пределах коллекции — надёжнее, чем полагаться на порядок вставки/нумерации Id.
-        // Карта нужна и для значений, и для перемэппинга ключей UI-колонок (ширины/порядок/видимость).
-        var oldFields = db.DbFields.AsNoTracking().Where(f => f.CollectionId == srcCollectionId)
-            .Select(f => new { f.Id, f.Position }).ToList();
-        var newByPos = new Dictionary<int, int>();
-        foreach (var nf in db.DbFields.AsNoTracking().Where(f => f.CollectionId == newCollectionId)
-                     .Select(f => new { f.Id, f.Position }))
-            newByPos[nf.Position] = nf.Id;
-        var fieldMap = new Dictionary<int, int>(oldFields.Count);
-        foreach (var of in oldFields)
-            if (newByPos.TryGetValue(of.Position, out var newFid)) fieldMap[of.Id] = newFid;
+        // old FieldId → new FieldId по Position (см. BuildFieldMap). Карта нужна и для значений,
+        // и для перемэппинга ключей UI-колонок (ширины/порядок/видимость).
+        var fieldMap = BuildFieldMap(srcCollectionId, newCollectionId);
 
         using var tx = db.Database.BeginTransaction();
 
@@ -912,6 +922,128 @@ public partial class ConstructorRepository(AppDbContext db)
         }
     }
 
+    // PG-вариант дубля данных коллекции (см. CopyCollectionData — SQLite-путь). Арифметика
+    // «firstNew + ранг − 1» на PG неприменима: identity-последовательность db_records общая
+    // для всех клиентов, соседние id может занять чужая вставка. Вместо этого карта id строится
+    // явно: временная _dup_rmap(old_id, new_id, rn), где new_id — nextval() последовательности
+    // (конкурентно-безопасно: выданные значения никому больше не достанутся), записи вставляются
+    // с ЯВНЫМИ id по карте (identity BY DEFAULT это допускает и не рассинхронизируется — id взяты
+    // из самой последовательности), значения/проекция/UI-строки джойнятся через карту. Одна
+    // транзакция, батчи по rn — только ради гранулярности прогресса, как в SQLite-пути.
+    private void CopyCollectionDataPg(int srcCollectionId, int newCollectionId,
+                                      IProgress<int>? progress, int batchSize)
+    {
+        var recCount = db.DbRecords.Count(r => r.CollectionId == srcCollectionId);
+
+        var fieldMap = BuildFieldMap(srcCollectionId, newCollectionId);
+
+        using var tx = db.Database.BeginTransaction();
+
+        db.Database.ExecuteSqlRaw("DROP TABLE IF EXISTS _dup_fmap");
+        db.Database.ExecuteSqlRaw("CREATE TEMP TABLE _dup_fmap(old_fid INTEGER PRIMARY KEY, new_fid INTEGER)");
+        foreach (var (oldFid, newFid) in fieldMap)
+            db.Database.ExecuteSqlInterpolated($"INSERT INTO _dup_fmap(old_fid, new_fid) VALUES ({oldFid}, {newFid})");
+
+        db.Database.ExecuteSqlRaw("DROP TABLE IF EXISTS _dup_rmap");
+        db.Database.ExecuteSqlRaw($@"
+            CREATE TEMP TABLE _dup_rmap AS
+            SELECT Id AS old_id,
+                   nextval(pg_get_serial_sequence('db_records', 'id')) AS new_id,
+                   ROW_NUMBER() OVER (ORDER BY Position, Id) AS rn
+            FROM db_records WHERE CollectionId = {srcCollectionId}");
+
+        if (recCount > 0)
+        {
+            var createdAt = DateTime.Now.ToString("o");
+            db.Database.ExecuteSqlInterpolated($@"
+                INSERT INTO db_records (Id, CollectionId, CreatedAt, Position, StartDt, EndDt, AllDay, Title, Description)
+                SELECT m.new_id, {newCollectionId}, {createdAt}, r.Position, r.StartDt, r.EndDt, r.AllDay, r.Title, r.Description
+                FROM db_records r JOIN _dup_rmap m ON m.old_id = r.Id");
+
+            var processed = 0;
+            while (processed < recCount)
+            {
+                var lo = processed;
+                var hi = Math.Min(recCount, processed + batchSize);
+                db.Database.ExecuteSqlInterpolated($@"
+                    INSERT INTO db_field_values (RecordId, FieldId, Value)
+                    SELECT m.new_id, fm.new_fid, fv.Value
+                    FROM db_field_values fv
+                    JOIN _dup_rmap m  ON m.old_id  = fv.RecordId
+                    JOIN _dup_fmap fm ON fm.old_fid = fv.FieldId
+                    WHERE m.rn > {lo} AND m.rn <= {hi}");
+                db.Database.ExecuteSqlInterpolated($@"
+                    INSERT INTO calendar_index (RecordId, FieldId, CollectionId, StartIso, EndIso, AllDay)
+                    SELECT m.new_id, fm.new_fid, {newCollectionId}, ci.StartIso, ci.EndIso, ci.AllDay
+                    FROM calendar_index ci
+                    JOIN _dup_rmap m  ON m.old_id  = ci.RecordId
+                    JOIN _dup_fmap fm ON fm.old_fid = ci.FieldId
+                    WHERE m.rn > {lo} AND m.rn <= {hi}");
+                processed = hi;
+                progress?.Report(processed);
+            }
+        }
+        else
+        {
+            progress?.Report(0);
+        }
+
+        // UI-настройки коллекции — зеркало CopyDuplicatedUi, записи через карту _dup_rmap.
+        db.Database.ExecuteSqlInterpolated($@"
+            INSERT INTO ui_col_widths (CollectionId, FieldId, Width)
+            SELECT {newCollectionId}, fm.new_fid, w.Width FROM ui_col_widths w
+            JOIN _dup_fmap fm ON fm.old_fid = w.FieldId WHERE w.CollectionId = {srcCollectionId}");
+
+        db.Database.ExecuteSqlInterpolated($@"
+            INSERT INTO ui_collection_settings (CollectionId, ColResize, RowResize, ViewMode)
+            SELECT {newCollectionId}, ColResize, RowResize, ViewMode FROM ui_collection_settings
+            WHERE CollectionId = {srcCollectionId}");
+
+        // Числовой ключ column_meta сопоставляется текстом (Key = CAST(old_fid AS TEXT)) —
+        // без GLOB (его в PG нет) и без CAST(Key AS INTEGER), падающего на '__title__'.
+        db.Database.ExecuteSqlInterpolated($@"
+            INSERT INTO column_meta (CollectionId, Key, Position, Visible, Level, DisplayName)
+            SELECT {newCollectionId},
+                   CASE WHEN fm.new_fid IS NOT NULL THEN CAST(fm.new_fid AS TEXT) ELSE cm.Key END,
+                   cm.Position, cm.Visible, cm.Level, cm.DisplayName
+            FROM column_meta cm
+            LEFT JOIN _dup_fmap fm ON cm.Key = CAST(fm.old_fid AS TEXT)
+            WHERE cm.CollectionId = {srcCollectionId}");
+
+        if (recCount > 0)
+        {
+            db.Database.ExecuteSqlInterpolated($@"
+                INSERT INTO ui_row_heights (CollectionId, RecordId, Height)
+                SELECT {newCollectionId}, m.new_id, h.Height FROM ui_row_heights h
+                JOIN _dup_rmap m ON m.old_id = h.RecordId WHERE h.CollectionId = {srcCollectionId}");
+
+            db.Database.ExecuteSqlInterpolated($@"
+                INSERT INTO record_display (CollectionId, RecordId, Visible, Level)
+                SELECT {newCollectionId}, m.new_id, d.Visible, d.Level FROM record_display d
+                JOIN _dup_rmap m ON m.old_id = d.RecordId WHERE d.CollectionId = {srcCollectionId}");
+        }
+
+        db.Database.ExecuteSqlRaw("DROP TABLE IF EXISTS _dup_rmap");
+        db.Database.ExecuteSqlRaw("DROP TABLE IF EXISTS _dup_fmap");
+        tx.Commit();
+    }
+
+    // Карта полей old→new по Position (скелет копирует Position дословно, Position уникален
+    // в пределах коллекции) — общая для SQLite- и PG-путей дубля.
+    private Dictionary<int, int> BuildFieldMap(int srcCollectionId, int newCollectionId)
+    {
+        var oldFields = db.DbFields.AsNoTracking().Where(f => f.CollectionId == srcCollectionId)
+            .Select(f => new { f.Id, f.Position }).ToList();
+        var newByPos = new Dictionary<int, int>();
+        foreach (var nf in db.DbFields.AsNoTracking().Where(f => f.CollectionId == newCollectionId)
+                     .Select(f => new { f.Id, f.Position }))
+            newByPos[nf.Position] = nf.Id;
+        var fieldMap = new Dictionary<int, int>(oldFields.Count);
+        foreach (var of in oldFields)
+            if (newByPos.TryGetValue(of.Position, out var newFid)) fieldMap[of.Id] = newFid;
+        return fieldMap;
+    }
+
     // id последней вставленной строки на текущем подключении (в открытой транзакции).
     private long LastInsertRowid()
     {
@@ -921,11 +1053,15 @@ public partial class ConstructorRepository(AppDbContext db)
         return (long)c.ExecuteScalar()!;
     }
 
-    // Именованный параметр для сырых ADO.NET-команд (bulk-импорт). Имя — как плейсхолдер ($name).
-    private static System.Data.Common.DbParameter AddParam(System.Data.Common.DbCommand cmd, string name)
+    // Именованный параметр для сырых ADO.NET-команд (bulk-импорт). Имя — как плейсхолдер (@name).
+    // Тип обязателен для команд с Prepare(): Npgsql должен знать типы параметров ДО присвоения
+    // значений (SQLite безразличен) — иначе Prepare падает «must have its NpgsqlDbType … set».
+    private static System.Data.Common.DbParameter AddParam(System.Data.Common.DbCommand cmd, string name,
+                                                           System.Data.DbType? type = null)
     {
         var p = cmd.CreateParameter();
         p.ParameterName = name;
+        if (type is { } t) p.DbType = t;
         cmd.Parameters.Add(p);
         return p;
     }
@@ -1389,6 +1525,12 @@ public partial class ConstructorRepository(AppDbContext db)
         // this — ЦЕЛЕВАЯ база: проверяем право создавать в ней. Право удаления в источнике
         // проверяет UI по репозиторию источника (его PermissionService здесь недоступен).
         Demand(PermAction.CreateCollection);
+
+        // Пара с PostgreSQL (или PG→PG): ATTACH существует только у SQLite — переносим
+        // generic-путём на двух независимых подключениях (см. ConstructorRepository.CrossMove).
+        if (db.IsPostgres || PgConnectionInfo.IsPostgresConnectionString(sourceDbPath))
+            return MoveCollectionGeneric(sourceDbPath, srcCollectionId, targetGroupId, progress, batchSize);
+
         using var targetCtx = new AppDbContext(db.DbPath);
         targetCtx.ApplyBulkPerformancePragmas();
         var target = new ConstructorRepository(targetCtx);
@@ -1430,6 +1572,11 @@ public partial class ConstructorRepository(AppDbContext db)
     {
         // this — ЦЕЛЕВАЯ база (см. MoveCollectionIsolated: источник проверяет UI).
         Demand(PermAction.CreateCollection);
+
+        // Пара с PostgreSQL (или PG→PG): generic-путь вместо ATTACH (см. CrossMove).
+        if (db.IsPostgres || PgConnectionInfo.IsPostgresConnectionString(sourceDbPath))
+            return MoveGroupGeneric(sourceDbPath, srcGroupId, targetParentId, progress, batchSize);
+
         using var targetCtx = new AppDbContext(db.DbPath);
         targetCtx.ApplyBulkPerformancePragmas();
         var target = new ConstructorRepository(targetCtx);
@@ -1527,8 +1674,8 @@ public partial class ConstructorRepository(AppDbContext db)
         {
             using (var att = conn.CreateCommand())
             {
-                att.CommandText = "ATTACH DATABASE $src AS src";
-                var p = att.CreateParameter(); p.ParameterName = "$src"; p.Value = sourceDbPath; att.Parameters.Add(p);
+                att.CommandText = "ATTACH DATABASE @src AS src";
+                var p = att.CreateParameter(); p.ParameterName = "@src"; p.Value = sourceDbPath; att.Parameters.Add(p);
                 att.ExecuteNonQuery();
             }
             try { return body(conn); }
@@ -1879,9 +2026,9 @@ public partial class ConstructorRepository(AppDbContext db)
         using (var upd = conn.CreateCommand())
         {
             upd.Transaction = tx;
-            upd.CommandText = $"UPDATE db_field_values SET Value = $val WHERE RecordId = $rid AND FieldId = {fieldId}";
-            var pVal = AddParam(upd, "$val");
-            var pRid = AddParam(upd, "$rid");
+            upd.CommandText = $"UPDATE db_field_values SET Value = @val WHERE RecordId = @rid AND FieldId = {fieldId}";
+            var pVal = AddParam(upd, "@val");
+            var pRid = AddParam(upd, "@rid");
             upd.Prepare();
 
             foreach (var (recordId, value) in updates)
@@ -2228,8 +2375,8 @@ public partial class ConstructorRepository(AppDbContext db)
 
     // Страницы таблицы — raw SQL: EF-формы не масштабируются на миллионы строк. Смещение и
     // keyset обязаны идти ПО ИНДЕКСУ (CollectionId, Position): row-value сравнение
-    // (Position, Id) > ($p, $id) даёт индексный сик (0 мс на любой глубине), а OR-форма
-    // (Position > $p OR (Position = $p AND Id > $id)), в которую транслируется LINQ, НЕ ложится
+    // (Position, Id) > (@p, @id) даёт индексный сик (0 мс на любой глубине), а OR-форма
+    // (Position > @p OR (Position = @p AND Id > @id)), в которую транслируется LINQ, НЕ ложится
     // на индекс — SQLite сканирует коллекцию с НАЧАЛА (на 10 млн — сотни мс на КАЖДУЮ страницу
     // скролла, т.е. «keyset» был O(глубины)). Хвост Id в ключе сика бесплатен: Id = rowid,
     // он неявно завершает каждую запись индекса.
@@ -2252,10 +2399,10 @@ public partial class ConstructorRepository(AppDbContext db)
         return ReadRecordRows($@"SELECT {RecordCols}
                                  FROM db_records r
                                  JOIN (SELECT i.Id FROM db_records i
-                                       WHERE i.CollectionId = $c{HiddenFilter(excludeHidden, "i")}
-                                       ORDER BY i.Position, i.Id LIMIT $take OFFSET $skip) page ON page.Id = r.Id
+                                       WHERE i.CollectionId = @c{HiddenFilter(excludeHidden, "i")}
+                                       ORDER BY i.Position, i.Id LIMIT @take OFFSET @skip) page ON page.Id = r.Id
                                  ORDER BY r.Position, r.Id",
-                              ("$c", collectionId), ("$take", take), ("$skip", skip));
+                              ("@c", collectionId), ("@take", take), ("@skip", skip));
     }
 
     /// <summary>
@@ -2270,13 +2417,13 @@ public partial class ConstructorRepository(AppDbContext db)
     {
         if (take <= 0) return [];
         var cursor = afterPosition is not null && afterId is not null
-            ? " AND (r.Position, r.Id) > ($p, $id)"
+            ? " AND (r.Position, r.Id) > (@p, @id)"
             : "";
-        var args = new List<(string, object)> { ("$c", collectionId), ("$take", take) };
-        if (cursor.Length > 0) { args.Add(("$p", afterPosition!.Value)); args.Add(("$id", afterId!.Value)); }
+        var args = new List<(string, object)> { ("@c", collectionId), ("@take", take) };
+        if (cursor.Length > 0) { args.Add(("@p", afterPosition!.Value)); args.Add(("@id", afterId!.Value)); }
         return ReadRecordRows($@"SELECT {RecordCols} FROM db_records r
-                                 WHERE r.CollectionId = $c{cursor}{HiddenFilter(excludeHidden)}
-                                 ORDER BY r.Position, r.Id LIMIT $take",
+                                 WHERE r.CollectionId = @c{cursor}{HiddenFilter(excludeHidden)}
+                                 ORDER BY r.Position, r.Id LIMIT @take",
                               args.ToArray());
     }
 
@@ -2289,9 +2436,9 @@ public partial class ConstructorRepository(AppDbContext db)
     {
         if (take <= 0) return [];
         var rows = ReadRecordRows($@"SELECT {RecordCols} FROM db_records r
-                                     WHERE r.CollectionId = $c AND (r.Position, r.Id) < ($p, $id){HiddenFilter(excludeHidden)}
-                                     ORDER BY r.Position DESC, r.Id DESC LIMIT $take",
-                                  ("$c", collectionId), ("$p", beforePosition), ("$id", beforeId), ("$take", take));
+                                     WHERE r.CollectionId = @c AND (r.Position, r.Id) < (@p, @id){HiddenFilter(excludeHidden)}
+                                     ORDER BY r.Position DESC, r.Id DESC LIMIT @take",
+                                  ("@c", collectionId), ("@p", beforePosition), ("@id", beforeId), ("@take", take));
         rows.Reverse();
         return rows;
     }
@@ -2356,10 +2503,10 @@ public partial class ConstructorRepository(AppDbContext db)
             var cmp = up ? "<" : ">";
             cmd.CommandText = $@"SELECT EXISTS (
                                    SELECT 1 FROM db_records n
-                                   JOIN db_records r ON r.Id = $id
-                                   WHERE n.CollectionId = $c AND (n.Position, n.Id) {cmp} (r.Position, r.Id))";
-            AddParam(cmd, "$id").Value = recordId;
-            AddParam(cmd, "$c").Value  = collectionId;
+                                   JOIN db_records r ON r.Id = @id
+                                   WHERE n.CollectionId = @c AND (n.Position, n.Id) {cmp} (r.Position, r.Id))";
+            AddParam(cmd, "@id").Value = recordId;
+            AddParam(cmd, "@c").Value  = collectionId;
             return Convert.ToInt64(cmd.ExecuteScalar()) != 0;
         }
         finally { if (opened) conn.Close(); }
@@ -2722,6 +2869,10 @@ public partial class ConstructorRepository(AppDbContext db)
         if (recordIds.Count == 0) return [];
         var ids = recordIds.Distinct().ToList();
 
+        // PG: явная карта id через nextval вместо арифметики непрерывного блока
+        // (см. CopyCollectionDataPg — та же причина: identity-последовательность общая).
+        if (db.IsPostgres) return DuplicateRecordsDataPg(collectionId, ids, progress, batchSize);
+
         using var tx = db.Database.BeginTransaction();
 
         // Временный набор выбранных Id — чтобы ранг (ROW_NUMBER по Position,Id) и JOIN значений шли
@@ -2808,6 +2959,101 @@ public partial class ConstructorRepository(AppDbContext db)
 
         LogNow("duplicate", "records", "", CollectionNameOf(collectionId), count);
         return Enumerable.Range(firstNew, count).ToList();   // id копий (для выделения)
+    }
+
+    // PG-вариант дубля выбранных записей (см. DuplicateRecordsData — SQLite-путь): вместо
+    // арифметики «firstNew + ранг − 1» — явная карта id через nextval (identity-последовательность
+    // общая для всех клиентов, непрерывного блока не существует). Логика та же: якорь, сдвиг
+    // хвоста, копии сразу после якоря, значения пакетами, проекция календаря по списку новых id.
+    private List<int> DuplicateRecordsDataPg(int collectionId, List<int> ids,
+                                             IProgress<int>? progress, int batchSize)
+    {
+        List<int> newIds;
+        using (var tx = db.Database.BeginTransaction())
+        {
+            db.Database.ExecuteSqlRaw("DROP TABLE IF EXISTS _dup_recsel");
+            db.Database.ExecuteSqlRaw("CREATE TEMP TABLE _dup_recsel(src_id INTEGER PRIMARY KEY)");
+            foreach (var id in ids)
+                db.Database.ExecuteSqlInterpolated($"INSERT INTO _dup_recsel(src_id) VALUES ({id})");
+
+            var count = ScalarInt($@"
+                SELECT COUNT(*) FROM db_records r JOIN _dup_recsel s ON s.src_id = r.Id
+                WHERE r.CollectionId = {collectionId}");
+            if (count == 0)
+            {
+                db.Database.ExecuteSqlRaw("DROP TABLE IF EXISTS _dup_recsel");
+                tx.Commit();
+                progress?.Report(0);
+                return [];
+            }
+
+            var anchorPos = ScalarInt($@"
+                SELECT MAX(r.Position) FROM db_records r JOIN _dup_recsel s ON s.src_id = r.Id
+                WHERE r.CollectionId = {collectionId}");
+            var anchorId  = ScalarInt($@"
+                SELECT MAX(r.Id) FROM db_records r JOIN _dup_recsel s ON s.src_id = r.Id
+                WHERE r.CollectionId = {collectionId} AND r.Position = {anchorPos}");
+
+            var shift = (count + 1) * 1000;
+            db.Database.ExecuteSqlInterpolated($@"
+                UPDATE db_records SET Position = Position + {shift}
+                WHERE CollectionId = {collectionId}
+                  AND (Position > {anchorPos} OR (Position = {anchorPos} AND Id > {anchorId}))");
+
+            db.Database.ExecuteSqlRaw("DROP TABLE IF EXISTS _dup_rmap");
+            db.Database.ExecuteSqlRaw($@"
+                CREATE TEMP TABLE _dup_rmap AS
+                SELECT r.Id AS old_id,
+                       nextval(pg_get_serial_sequence('db_records', 'id')) AS new_id,
+                       ROW_NUMBER() OVER (ORDER BY r.Position, r.Id) AS rn
+                FROM db_records r JOIN _dup_recsel s ON s.src_id = r.Id
+                WHERE r.CollectionId = {collectionId}");
+
+            var createdAt = DateTime.Now.ToString("o");
+            db.Database.ExecuteSqlInterpolated($@"
+                INSERT INTO db_records (Id, CollectionId, CreatedAt, Position, StartDt, EndDt, AllDay, Title, Description)
+                SELECT m.new_id, {collectionId}, {createdAt}, {anchorPos} + m.rn * 1000,
+                       r.StartDt, r.EndDt, r.AllDay, r.Title, r.Description
+                FROM db_records r JOIN _dup_rmap m ON m.old_id = r.Id");
+
+            var processed = 0;
+            while (processed < count)
+            {
+                var lo = processed;
+                var hi = Math.Min(count, processed + batchSize);
+                db.Database.ExecuteSqlInterpolated($@"
+                    INSERT INTO db_field_values (RecordId, FieldId, Value)
+                    SELECT m.new_id, fv.FieldId, fv.Value
+                    FROM db_field_values fv
+                    JOIN _dup_rmap m ON m.old_id = fv.RecordId
+                    WHERE m.rn > {lo} AND m.rn <= {hi}");
+                processed = hi;
+                progress?.Report(processed);
+            }
+
+            newIds = new List<int>(count);
+            using (var c = db.Database.GetDbConnection().CreateCommand())
+            {
+                c.Transaction = db.Database.CurrentTransaction!.GetDbTransaction();
+                c.CommandText = "SELECT new_id FROM _dup_rmap ORDER BY rn";
+                using var rdr = c.ExecuteReader();
+                while (rdr.Read()) newIds.Add(Convert.ToInt32(rdr.GetValue(0)));
+            }
+
+            db.Database.ExecuteSqlRaw("DROP TABLE IF EXISTS _dup_rmap");
+            db.Database.ExecuteSqlRaw("DROP TABLE IF EXISTS _dup_recsel");
+            tx.Commit();
+        }
+
+        // Копии могли принести значения видимых полей-дат → наполняем их проекцию по списку id.
+        if (newIds.Count > 0)
+        {
+            var idsForFill = newIds;
+            FillCalendarIndex(q => q.Where(v => idsForFill.Contains(v.RecordId)));
+        }
+
+        LogNow("duplicate", "records", "", CollectionNameOf(collectionId), newIds.Count);
+        return newIds;
     }
 
     // Скалярный int на текущем подключении (в открытой транзакции) — для bulk-операций с temp-таблицами.
@@ -2952,7 +3198,6 @@ public partial class ConstructorRepository(AppDbContext db)
         var newIds        = new List<int>(recordIds.Count);
         var copiedSources = new List<int>(recordIds.Count);
         var done = 0;
-        int firstNew = 0, lastNew = 0;
 
         using (var tx = db.Database.BeginTransaction())
         {
@@ -2985,8 +3230,6 @@ public partial class ConstructorRepository(AppDbContext db)
                 }
                 if (rows.Count > 0) { db.DbFieldValues.AddRange(rows); db.SaveChanges(); }
 
-                if (firstNew == 0) firstNew = rec.Id;
-                lastNew = rec.Id;
                 newIds.Add(rec.Id);
                 copiedSources.Add(srcId);
 
@@ -2996,9 +3239,11 @@ public partial class ConstructorRepository(AppDbContext db)
             tx.Commit();
         }
 
-        // 3) Проекция календаря — один раз по диапазону новых id (как DuplicateRecordsData).
-        if (firstNew != 0)
-            FillCalendarIndex(q => q.Where(v => v.RecordId >= firstNew && v.RecordId <= lastNew));
+        // 3) Проекция календаря — один раз по СПИСКУ новых id (EF переведёт Contains в IN):
+        // диапазон firstNew..lastNew полагался на непрерывность новых id — на PG соседние id
+        // могли достаться другим клиентам (общая identity-последовательность).
+        if (newIds.Count > 0)
+            FillCalendarIndex(q => q.Where(v => newIds.Contains(v.RecordId)));
 
         // 4) Исходные записи — bulk-удалением (каскад уносит их значения и calendar_index).
         // Без строки «удалил» в журнале — это перенос, одна строка «перенёс» ниже.
@@ -3245,7 +3490,8 @@ public partial class ConstructorRepository(AppDbContext db)
         // Многопользовательский режим: между нашей проверкой и записью ту же ячейку мог
         // изменить другой пользователь (другой процесс). Политика — «последний побеждает»:
         //  • гонка на ПЕРВОЕ значение (оба увидели «строки нет», оба INSERT) — проигравший
-        //    ловит PK-конфликт (SQLITE_CONSTRAINT=19) и превращает вставку в UPDATE;
+        //    ловит PK-конфликт (SQLITE_CONSTRAINT=19 / PG unique_violation 23505)
+        //    и превращает вставку в UPDATE;
         //  • строку/запись успели удалить — UPDATE попадает в 0 строк
         //    (DbUpdateConcurrencyException): значение не воскрешаем, синхронизация вскоре
         //    уберёт запись и из нашего UI.
@@ -3255,11 +3501,15 @@ public partial class ConstructorRepository(AppDbContext db)
             var added = new DbFieldValueEntity { RecordId = recordId, FieldId = fieldId, Value = value };
             db.DbFieldValues.Add(added);
             try { db.SaveChanges(); }
-            catch (DbUpdateException ex) when ((ex.InnerException as SqliteException)?.SqliteErrorCode == 19)
+            catch (DbUpdateException ex) when (ex.InnerException
+                is SqliteException { SqliteErrorCode: 19 }
+                or Npgsql.PostgresException { SqlState: "23505" })
             {
                 db.Entry(added).State = EntityState.Detached;
+                // Идентификаторы в кавычках нижним регистром: SQLite матчит их без учёта
+                // регистра, PG-модель и так lowercase — одна строка на оба провайдера.
                 db.Database.ExecuteSqlRaw(
-                    "UPDATE \"db_field_values\" SET \"Value\" = {0} WHERE \"RecordId\" = {1} AND \"FieldId\" = {2}",
+                    "UPDATE \"db_field_values\" SET \"value\" = {0} WHERE \"recordid\" = {1} AND \"fieldid\" = {2}",
                     value, recordId, fieldId);
                 db.SaveChanges();   // дожать строку журнала, не сохранённую упавшим SaveChanges
             }
@@ -3581,9 +3831,9 @@ public partial class ConstructorRepository(AppDbContext db)
             using (var ins = conn.CreateCommand())
             {
                 ins.Transaction = tx;
-                ins.CommandText = "INSERT INTO _ord (Id, Pos) VALUES ($id, $pos)";
-                var pId  = ins.CreateParameter(); pId.ParameterName  = "$id";  ins.Parameters.Add(pId);
-                var pPos = ins.CreateParameter(); pPos.ParameterName = "$pos"; ins.Parameters.Add(pPos);
+                ins.CommandText = "INSERT INTO _ord (Id, Pos) VALUES (@id, @pos)";
+                var pId  = ins.CreateParameter(); pId.ParameterName  = "@id";  ins.Parameters.Add(pId);
+                var pPos = ins.CreateParameter(); pPos.ParameterName = "@pos"; ins.Parameters.Add(pPos);
                 for (var i = 0; i < orderedRecordIds.Count; i++)
                 {
                     pId.Value  = orderedRecordIds[i];
@@ -3597,8 +3847,8 @@ public partial class ConstructorRepository(AppDbContext db)
                 upd.Transaction = tx;
                 upd.CommandText =
                     "UPDATE db_records SET Position = (SELECT Pos FROM _ord WHERE _ord.Id = db_records.Id) " +
-                    "WHERE CollectionId = $c AND Id IN (SELECT Id FROM _ord)";
-                var pC = upd.CreateParameter(); pC.ParameterName = "$c"; pC.Value = collectionId; upd.Parameters.Add(pC);
+                    "WHERE CollectionId = @c AND Id IN (SELECT Id FROM _ord)";
+                var pC = upd.CreateParameter(); pC.ParameterName = "@c"; pC.Value = collectionId; upd.Parameters.Add(pC);
                 upd.ExecuteNonQuery();
             }
 
@@ -3887,9 +4137,9 @@ public partial class ConstructorRepository(AppDbContext db)
         try
         {
             using var cmd = conn.CreateCommand();
-            cmd.CommandText = $"SELECT COUNT(*) FROM calendar_index WHERE StartIso >= $s AND StartIso < $e{col}";
-            AddParam(cmd, "$s").Value = s;
-            AddParam(cmd, "$e").Value = e;
+            cmd.CommandText = $"SELECT COUNT(*) FROM calendar_index WHERE StartIso >= @s AND StartIso < @e{col}";
+            AddParam(cmd, "@s").Value = s;
+            AddParam(cmd, "@e").Value = e;
             var o = cmd.ExecuteScalar();
             return o is null or DBNull ? 0 : Convert.ToInt32(o);
         }
@@ -3916,10 +4166,10 @@ public partial class ConstructorRepository(AppDbContext db)
             using var cmd = conn.CreateCommand();
             cmd.CommandText = $@"SELECT substr(StartIso, 1, 10) AS d, COUNT(*)
                                  FROM calendar_index
-                                 WHERE StartIso >= $s AND StartIso < $e{col}
+                                 WHERE StartIso >= @s AND StartIso < @e{col}
                                  GROUP BY d ORDER BY d";
-            AddParam(cmd, "$s").Value = s;
-            AddParam(cmd, "$e").Value = e;
+            AddParam(cmd, "@s").Value = s;
+            AddParam(cmd, "@e").Value = e;
             using var rdr = cmd.ExecuteReader();
             while (rdr.Read())
                 result.Add((rdr.GetString(0), rdr.GetInt32(1)));
@@ -3962,10 +4212,10 @@ public partial class ConstructorRepository(AppDbContext db)
             // StartIso: "yyyy-MM-ddTHH:mm:ss.fffffff" → substr(...,12,8) = "HH:MM:SS".
             cmd.CommandText = $@"SELECT substr(StartIso, 12, 8) AS t, COUNT(*)
                                  FROM calendar_index
-                                 WHERE StartIso >= $s AND StartIso < $e{col}
+                                 WHERE StartIso >= @s AND StartIso < @e{col}
                                  GROUP BY t ORDER BY t";
-            AddParam(cmd, "$s").Value = s;
-            AddParam(cmd, "$e").Value = e;
+            AddParam(cmd, "@s").Value = s;
+            AddParam(cmd, "@e").Value = e;
             using var rdr = cmd.ExecuteReader();
             while (rdr.Read())
                 result.Add((rdr.GetString(0), rdr.GetInt32(1)));
@@ -4003,7 +4253,7 @@ public partial class ConstructorRepository(AppDbContext db)
                 query, lower, query.ToUpperInvariant(),
                 lower.Length > 0 ? char.ToUpperInvariant(lower[0]) + lower[1..] : lower,
             };
-            var like = string.Join(" OR ", variants.Select((_, i) => $"r.Title LIKE $q{i} ESCAPE '\\'"));
+            var like = string.Join(" OR ", variants.Select((_, i) => $"r.Title LIKE @q{i} ESCAPE '\\'"));
 
             var result = new List<CalendarRecord>();
             var conn = ctx.Database.GetDbConnection();
@@ -4014,14 +4264,14 @@ public partial class ConstructorRepository(AppDbContext db)
                                  FROM calendar_index ci
                                  JOIN db_records r ON r.Id = ci.RecordId
                                  JOIN db_collections c ON c.Id = r.CollectionId
-                                 WHERE ci.StartIso >= $s AND ci.StartIso < $e{col} AND ({like})
+                                 WHERE ci.StartIso >= @s AND ci.StartIso < @e{col} AND ({like})
                                  ORDER BY ci.StartIso, ci.RecordId, ci.FieldId
-                                 LIMIT $lim";
-            AddParam(cmd, "$s").Value = s;
-            AddParam(cmd, "$e").Value = e;
-            AddParam(cmd, "$lim").Value = limit;
+                                 LIMIT @lim";
+            AddParam(cmd, "@s").Value = s;
+            AddParam(cmd, "@e").Value = e;
+            AddParam(cmd, "@lim").Value = limit;
             var vi = 0;
-            foreach (var v in variants) AddParam(cmd, $"$q{vi++}").Value = $"%{Esc(v)}%";
+            foreach (var v in variants) AddParam(cmd, $"@q{vi++}").Value = $"%{Esc(v)}%";
 
             using var rdr = cmd.ExecuteReader();
             while (rdr.Read())
@@ -4059,17 +4309,17 @@ public partial class ConstructorRepository(AppDbContext db)
         var endIso   = DateTime.SpecifyKind(dayEnd,   DateTimeKind.Unspecified).ToString("o");
         var col = VisibilityFilter(activeIds, "ci.");
         var keyset = afterStartIso is null ? "" :
-            @" AND (ci.StartIso > $cs
-                OR (ci.StartIso = $cs AND ci.RecordId > $cr)
-                OR (ci.StartIso = $cs AND ci.RecordId = $cr AND ci.FieldId > $cf))";
+            @" AND (ci.StartIso > @cs
+                OR (ci.StartIso = @cs AND ci.RecordId > @cr)
+                OR (ci.StartIso = @cs AND ci.RecordId = @cr AND ci.FieldId > @cf))";
         var sql = $@"SELECT ci.RecordId, ci.FieldId, ci.CollectionId, ci.StartIso, ci.EndIso, ci.AllDay,
                             r.Title, r.Description, c.Name, c.Color
                      FROM calendar_index ci
                      JOIN db_records r ON r.Id = ci.RecordId
                      JOIN db_collections c ON c.Id = r.CollectionId
-                     WHERE ci.StartIso >= $s AND ci.StartIso < $e AND ci.AllDay = $ad{col}{keyset}
+                     WHERE ci.StartIso >= @s AND ci.StartIso < @e AND ci.AllDay = @ad{col}{keyset}
                      ORDER BY ci.StartIso, ci.RecordId, ci.FieldId
-                     LIMIT $lim";
+                     LIMIT @lim";
 
         var result = new List<CalendarRecord>(limit);
         var conn = db.Database.GetDbConnection();
@@ -4079,15 +4329,15 @@ public partial class ConstructorRepository(AppDbContext db)
         {
             using var cmd = conn.CreateCommand();
             cmd.CommandText = sql;
-            AddParam(cmd, "$s").Value = startIso;
-            AddParam(cmd, "$e").Value = endIso;
-            AddParam(cmd, "$ad").Value = allDay;
-            AddParam(cmd, "$lim").Value = limit;
+            AddParam(cmd, "@s").Value = startIso;
+            AddParam(cmd, "@e").Value = endIso;
+            AddParam(cmd, "@ad").Value = allDay;
+            AddParam(cmd, "@lim").Value = limit;
             if (afterStartIso is not null)
             {
-                AddParam(cmd, "$cs").Value = afterStartIso;
-                AddParam(cmd, "$cr").Value = afterRecordId;
-                AddParam(cmd, "$cf").Value = afterFieldId;
+                AddParam(cmd, "@cs").Value = afterStartIso;
+                AddParam(cmd, "@cr").Value = afterRecordId;
+                AddParam(cmd, "@cf").Value = afterFieldId;
             }
             using var rdr = cmd.ExecuteReader();
             while (rdr.Read())
@@ -4126,10 +4376,10 @@ public partial class ConstructorRepository(AppDbContext db)
         try
         {
             using var cmd = conn.CreateCommand();
-            cmd.CommandText = $"SELECT COUNT(*) FROM calendar_index WHERE StartIso >= $s AND StartIso < $e AND AllDay = $ad{col}";
-            AddParam(cmd, "$s").Value = s;
-            AddParam(cmd, "$e").Value = e;
-            AddParam(cmd, "$ad").Value = allDay;
+            cmd.CommandText = $"SELECT COUNT(*) FROM calendar_index WHERE StartIso >= @s AND StartIso < @e AND AllDay = @ad{col}";
+            AddParam(cmd, "@s").Value = s;
+            AddParam(cmd, "@e").Value = e;
+            AddParam(cmd, "@ad").Value = allDay;
             var o = cmd.ExecuteScalar();
             return o is null or DBNull ? 0 : Convert.ToInt32(o);
         }
@@ -4179,9 +4429,9 @@ public partial class ConstructorRepository(AppDbContext db)
                      FROM (
                          SELECT RecordId, FieldId, CollectionId, StartIso, EndIso, AllDay
                          FROM calendar_index
-                         WHERE StartIso >= $s AND StartIso < $e AND AllDay = $ad{col}
+                         WHERE StartIso >= @s AND StartIso < @e AND AllDay = @ad{col}
                          ORDER BY StartIso, RecordId, FieldId
-                         LIMIT $lim OFFSET $off
+                         LIMIT @lim OFFSET @off
                      ) ci
                      JOIN db_records r ON r.Id = ci.RecordId
                      JOIN db_collections c ON c.Id = r.CollectionId
@@ -4194,11 +4444,11 @@ public partial class ConstructorRepository(AppDbContext db)
         {
             using var cmd = conn.CreateCommand();
             cmd.CommandText = sql;
-            AddParam(cmd, "$s").Value = startIso;
-            AddParam(cmd, "$e").Value = endIso;
-            AddParam(cmd, "$ad").Value = allDay;
-            AddParam(cmd, "$lim").Value = take;
-            AddParam(cmd, "$off").Value = offset;
+            AddParam(cmd, "@s").Value = startIso;
+            AddParam(cmd, "@e").Value = endIso;
+            AddParam(cmd, "@ad").Value = allDay;
+            AddParam(cmd, "@lim").Value = take;
+            AddParam(cmd, "@off").Value = offset;
             using var rdr = cmd.ExecuteReader();
             while (rdr.Read())
             {
@@ -4283,14 +4533,14 @@ public partial class ConstructorRepository(AppDbContext db)
         {
             using var cmd = conn.CreateCommand();
             cmd.CommandText = $@"SELECT COUNT(*) FROM calendar_index
-                WHERE StartIso >= $s AND StartIso < $e AND AllDay = $ad{col}
-                  AND (StartIso < $k OR (StartIso = $k AND (RecordId < $r OR (RecordId = $r AND FieldId < $f))))";
-            AddParam(cmd, "$s").Value  = s;
-            AddParam(cmd, "$e").Value  = e;
-            AddParam(cmd, "$ad").Value = allDay;
-            AddParam(cmd, "$k").Value  = k;
-            AddParam(cmd, "$r").Value  = recordId;
-            AddParam(cmd, "$f").Value  = fieldId;
+                WHERE StartIso >= @s AND StartIso < @e AND AllDay = @ad{col}
+                  AND (StartIso < @k OR (StartIso = @k AND (RecordId < @r OR (RecordId = @r AND FieldId < @f))))";
+            AddParam(cmd, "@s").Value  = s;
+            AddParam(cmd, "@e").Value  = e;
+            AddParam(cmd, "@ad").Value = allDay;
+            AddParam(cmd, "@k").Value  = k;
+            AddParam(cmd, "@r").Value  = recordId;
+            AddParam(cmd, "@f").Value  = fieldId;
             var o = cmd.ExecuteScalar();
             return o is null or DBNull ? 0 : Convert.ToInt32(o);
         }
@@ -4341,11 +4591,11 @@ public partial class ConstructorRepository(AppDbContext db)
         {
             // Короткие/timed — с нижней границей; многодневные/all-day — без неё (их мало).
             ReadCalendarRows(conn, result,
-                $"ci.AllDay = 0{colFilter} AND ci.StartIso >= $lo AND ci.StartIso < $end AND ci.EndIso >= $start",
-                [("$lo", lowerIso), ("$end", endIso), ("$start", startIso)]);
+                $"ci.AllDay = 0{colFilter} AND ci.StartIso >= @lo AND ci.StartIso < @end AND ci.EndIso >= @start",
+                [("@lo", lowerIso), ("@end", endIso), ("@start", startIso)]);
             ReadCalendarRows(conn, result,
-                $"ci.AllDay = 1{colFilter} AND ci.StartIso < $end AND ci.EndIso >= $start",
-                [("$end", endIso), ("$start", startIso)]);
+                $"ci.AllDay = 1{colFilter} AND ci.StartIso < @end AND ci.EndIso >= @start",
+                [("@end", endIso), ("@start", startIso)]);
         }
         finally { if (opened) conn.Close(); }
 
@@ -4399,8 +4649,8 @@ public partial class ConstructorRepository(AppDbContext db)
                 foreach (var colId in colIds)
                     ReadCalendarRows(conn, result,
                         $"ci.CollectionId = {colId} AND ci.AllDay = 0{hidden}" +
-                        " AND ci.StartIso >= $d AND ci.StartIso < $d2",
-                        [("$d", dayIso), ("$d2", nextIso)], perDayCap);
+                        " AND ci.StartIso >= @d AND ci.StartIso < @d2",
+                        [("@d", dayIso), ("@d2", nextIso)], perDayCap);
             }
 
             // Timed-спилловеры (начались ДО окна, но пересекают его) — сик по EndIso-индексу:
@@ -4414,9 +4664,9 @@ public partial class ConstructorRepository(AppDbContext db)
             foreach (var colId in colIds)
                 ReadCalendarRows(conn, result,
                     $"ci.CollectionId = {colId} AND ci.AllDay = 0{hidden}" +
-                    " AND ci.EndIso >= $win AND ci.EndIso < $hi" +
-                    " AND ci.StartIso >= $lo AND ci.StartIso < $win",
-                    [("$win", startIso), ("$hi", upperIso), ("$lo", lowerIso)], perDayCap, "ci.EndIso");
+                    " AND ci.EndIso >= @win AND ci.EndIso < @hi" +
+                    " AND ci.StartIso >= @lo AND ci.StartIso < @win",
+                    [("@win", startIso), ("@hi", upperIso), ("@lo", lowerIso)], perDayCap, "ci.EndIso");
 
             // All-day/многодневные — сик по EndIso-индексу: у StartIso нет нижней границы
             // (многодневное могло начаться сколь угодно давно), и прежний StartIso-скан шёл от
@@ -4428,8 +4678,8 @@ public partial class ConstructorRepository(AppDbContext db)
             foreach (var colId in colIds)
                 ReadCalendarRows(conn, result,
                     $"ci.CollectionId = {colId} AND ci.AllDay = 1{hidden}" +
-                    " AND ci.EndIso >= $start AND ci.StartIso < $end",
-                    [("$start", startIso), ("$end", endIso)], perDayCap, "ci.EndIso");
+                    " AND ci.EndIso >= @start AND ci.StartIso < @end",
+                    [("@start", startIso), ("@end", endIso)], perDayCap, "ci.EndIso");
         }
         finally { if (opened) conn.Close(); }
 
@@ -4515,21 +4765,21 @@ public partial class ConstructorRepository(AppDbContext db)
                 // StartIso), residual-фильтра нет (EndIso ≥ StartIso ≥ start автоматически).
                 ReadCalendarRows(conn, result,
                     $"ci.CollectionId = {colId} AND ci.AllDay = 0{hidden}" +
-                    " AND ci.StartIso >= $start AND ci.StartIso < $end",
-                    [("$start", startIso), ("$end", endIso)], perCollectionCap);
+                    " AND ci.StartIso >= @start AND ci.StartIso < @end",
+                    [("@start", startIso), ("@end", endIso)], perCollectionCap);
 
                 // Timed-спилловеры — сик по EndIso-индексу, как в окне сеток.
                 ReadCalendarRows(conn, result,
                     $"ci.CollectionId = {colId} AND ci.AllDay = 0{hidden}" +
-                    " AND ci.EndIso >= $win AND ci.EndIso < $hi" +
-                    " AND ci.StartIso >= $lo AND ci.StartIso < $win",
-                    [("$win", startIso), ("$hi", upperIso), ("$lo", lowerIso)], perCollectionCap, "ci.EndIso");
+                    " AND ci.EndIso >= @win AND ci.EndIso < @hi" +
+                    " AND ci.StartIso >= @lo AND ci.StartIso < @win",
+                    [("@win", startIso), ("@hi", upperIso), ("@lo", lowerIso)], perCollectionCap, "ci.EndIso");
 
                 // All-day/многодневные — сик по EndIso-индексу (у StartIso нет нижней границы).
                 ReadCalendarRows(conn, result,
                     $"ci.CollectionId = {colId} AND ci.AllDay = 1{hidden}" +
-                    " AND ci.EndIso >= $start AND ci.StartIso < $end",
-                    [("$start", startIso), ("$end", endIso)], perCollectionCap, "ci.EndIso");
+                    " AND ci.EndIso >= @start AND ci.StartIso < @end",
+                    [("@start", startIso), ("@end", endIso)], perCollectionCap, "ci.EndIso");
             }
         }
         finally { if (opened) conn.Close(); }
@@ -4591,8 +4841,8 @@ public partial class ConstructorRepository(AppDbContext db)
                 // Timed, начавшиеся в окне: диапазон StartIso ∈ [start, end) индекса
                 // (CollectionId, AllDay, StartIso, …) — без residual.
                 var tWin = Agg("COUNT(*), MIN(StartIso)",
-                    " AND AllDay = 0 AND StartIso >= $start AND StartIso < $end",
-                    ("$start", startIso), ("$end", endIso));
+                    " AND AllDay = 0 AND StartIso >= @start AND StartIso < @end",
+                    ("@start", startIso), ("@end", endIso));
                 // Только MAX(EndIso) — единственный агрегат включает min/max-оптимизацию
                 // SQLite: обратный сик по EndIso-индексу до первой строки, прошедшей
                 // residual (он тоже в индексе). COUNT рядом заставил бы сканировать
@@ -4608,18 +4858,18 @@ public partial class ConstructorRepository(AppDbContext db)
 
                 // Timed-спилловеры — тот же EndIso-сик, что у чтения строк.
                 var tSpill = Agg("COUNT(*), MIN(StartIso)",
-                    " AND AllDay = 0 AND EndIso >= $win AND EndIso < $hi" +
-                    " AND StartIso >= $lo AND StartIso < $win",
-                    ("$win", startIso), ("$hi", upperIso), ("$lo", lowerIso));
+                    " AND AllDay = 0 AND EndIso >= @win AND EndIso < @hi" +
+                    " AND StartIso >= @lo AND StartIso < @win",
+                    ("@win", startIso), ("@hi", upperIso), ("@lo", lowerIso));
                 // Max(конец) timed.
                 var tMaxEnd = AggMaxEnd(
-                    " AND AllDay = 0 AND EndIso >= $win AND EndIso < $endHi" +
-                    " AND StartIso >= $lo AND StartIso < $end",
-                    ("$win", startIso), ("$endHi", endHiIso), ("$lo", lowerIso), ("$end", endIso));
+                    " AND AllDay = 0 AND EndIso >= @win AND EndIso < @endHi" +
+                    " AND StartIso >= @lo AND StartIso < @end",
+                    ("@win", startIso), ("@endHi", endHiIso), ("@lo", lowerIso), ("@end", endIso));
                 // All-day: count/min/max одним сканом EndIso-диапазона (residual StartIso — в индексе).
                 var aday = Agg("COUNT(*), MIN(StartIso), MAX(EndIso)",
-                    " AND AllDay = 1 AND EndIso >= $start AND StartIso < $end",
-                    ("$start", startIso), ("$end", endIso));
+                    " AND AllDay = 1 AND EndIso >= @start AND StartIso < @end",
+                    ("@start", startIso), ("@end", endIso));
 
                 var count = tWin.Count + tSpill.Count + aday.Count;
                 if (count == 0) continue;
@@ -4751,12 +5001,20 @@ public partial class ConstructorRepository(AppDbContext db)
             using (var ins = conn.CreateCommand())
             {
                 ins.Transaction = tx;
-                ins.CommandText = @"INSERT OR REPLACE INTO calendar_index
+                // ON CONFLICT DO UPDATE вместо INSERT OR REPLACE: работает на обоих провайдерах
+                // (SQLite ≥3.24 и PG) и не пересоздаёт строку (REPLACE = DELETE+INSERT с каскадами).
+                ins.CommandText = @"INSERT INTO calendar_index
                     (RecordId, FieldId, CollectionId, StartIso, EndIso, AllDay)
-                    VALUES ($rid, $fid, $cid, $s, $e, $a)";
-                var pRid = AddParam(ins, "$rid"); var pFid = AddParam(ins, "$fid");
-                var pCid = AddParam(ins, "$cid"); var pS = AddParam(ins, "$s");
-                var pE = AddParam(ins, "$e");     var pA = AddParam(ins, "$a");
+                    VALUES (@rid, @fid, @cid, @s, @e, @a)
+                    ON CONFLICT(RecordId, FieldId) DO UPDATE SET
+                        CollectionId = excluded.CollectionId, StartIso = excluded.StartIso,
+                        EndIso = excluded.EndIso, AllDay = excluded.AllDay";
+                var pRid = AddParam(ins, "@rid", System.Data.DbType.Int32);
+                var pFid = AddParam(ins, "@fid", System.Data.DbType.Int32);
+                var pCid = AddParam(ins, "@cid", System.Data.DbType.Int32);
+                var pS   = AddParam(ins, "@s",   System.Data.DbType.String);
+                var pE   = AddParam(ins, "@e",   System.Data.DbType.String);
+                var pA   = AddParam(ins, "@a",   System.Data.DbType.Int32);
                 ins.Prepare();
 
                 foreach (var row in page)
