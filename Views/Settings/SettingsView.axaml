@@ -305,20 +305,12 @@
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*" MaxWidth="1400" />
                     </Grid.ColumnDefinitions>
-                    <StackPanel Margin="16,16,16,32" Spacing="16">
+                    <!-- Отступ сверху — как в «Оформлении»: его даёт Padding самих
+                         settingRow-строк, у StackPanel верхнего отступа нет. -->
+                    <StackPanel Margin="16,0,16,32">
 
-                    <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Left">
-                        <Button x:Name="CreateDatabaseBtn"
-                                Content="Создать базу данных"
-                                Click="OnCreateDatabaseClick" />
-                        <Button x:Name="ConnectDatabaseBtn"
-                                Content="Подключить существующую"
-                                Click="OnConnectDatabaseClick" />
-                        <Button x:Name="ConnectPostgresBtn"
-                                Content="Подключить PostgreSQL…"
-                                Click="OnConnectPostgresClick" />
-                    </StackPanel>
-
+                    <!-- Добавление БД — кнопка «Добавить базу данных» с меню в навбаре
+                         (NavbarSettings, видна только в этом разделе): здесь только список. -->
                     <ItemsControl x:Name="DatabaseList">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate x:DataType="vm:DatabaseRow">
@@ -368,7 +360,7 @@
                                                     IsVisible="{Binding ShowReconnect}" />
 
                                             <!-- Удалить из реестра (файл не удаляется) -->
-                                            <Button Classes="icon"
+                                            <Button Classes="icon red"
                                                     Width="28" Height="28"
                                                     Tag="{Binding Id}"
                                                     Click="OnRemoveDatabaseClick"

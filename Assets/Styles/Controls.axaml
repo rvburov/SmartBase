@@ -189,6 +189,16 @@
         <Setter Property="Foreground" Value="{StaticResource BrushAccent}" />
     </Style>
 
+    <!-- Иконка-кнопка разрушительного действия (корзина и т.п.): при наведении
+         краснеет, а не синеет — как красный пункт «Удалить» в контекстных меню.
+         Класс намеренно НЕ «danger»: Button.danger (ниже) — залитая красная кнопка
+         диалогов с белым текстом, для прозрачной иконки-кнопки он делал бы обводку
+         белой (иконка «исчезала» на белом фоне). -->
+    <Style Selector="Button.icon.red:pointerover,
+                     ToggleButton.icon.red:pointerover">
+        <Setter Property="Foreground" Value="{StaticResource BrushRed}" />
+    </Style>
+
     <Style Selector="Button.filterChevron:pointerover /template/ ContentPresenter">
         <Setter Property="Background"     Value="{StaticResource BrushHover}" />
         <Setter Property="CornerRadius"   Value="4" />

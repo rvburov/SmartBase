@@ -75,6 +75,12 @@ public partial class SettingsView : UserControl
 
         // Стартовый вид конструктора: Таблица (0) или Список (1).
         ConstructorViewCombo.SelectedIndex = AppSettings.LoadConstructorView() == "list" ? 1 : 0;
+
+        // Меню «Добавить базу данных» живёт в навбаре (видно только в разделе БД,
+        // см. ShowCategory) — пункты ведут на те же обработчики, что прежние кнопки.
+        HeaderBar.CreateSqliteRequested    += (_, _) => OnCreateDatabaseClick(this, new RoutedEventArgs());
+        HeaderBar.ConnectSqliteRequested   += (_, _) => OnConnectDatabaseClick(this, new RoutedEventArgs());
+        HeaderBar.ConnectPostgresRequested += (_, _) => OnConnectPostgresClick(this, new RoutedEventArgs());
     }
 
     // ── Стартовый раздел ─────────────────────────────────────────────────────
@@ -647,6 +653,8 @@ public partial class SettingsView : UserControl
 
         // Заголовок берём из реестра по ключу — единственный источник подписей разделов.
         HeaderBar.Title = (SettingsRegistry.FindByKey(key) ?? SettingsRegistry.All[0]).Label;
+        // Кнопка «Добавить базу данных» в навбаре осмысленна только в разделе БД.
+        HeaderBar.ShowDatabaseActions = key == "database";
     }
 
     // ── Управление базой данных ──────────────────────────────────────────────

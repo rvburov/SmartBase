@@ -4,13 +4,32 @@
              Height="56"
              Background="{StaticResource BrushBg}">
 
-    <Border Padding="16,0">
-        <TextBlock x:Name="TitleText"
+    <!-- Заголовок слева, действия раздела справа — как в остальных навбарах
+         (NavbarConstructor: переключатель вида справа тем же стилем). -->
+    <Grid ColumnDefinitions="*,Auto" Margin="16,0">
+
+        <TextBlock Grid.Column="0" x:Name="TitleText"
                    Text="Оформление"
                    VerticalAlignment="Center"
                    FontSize="{DynamicResource FontSizeLarge}"
                    FontWeight="{StaticResource FontWeightBold}"
  />
-    </Border>
+
+        <!-- «Добавить базу данных» — только в разделе «Управление базой данных».
+             Это стандартный ComboBox (та же выпадашка, что у переключателей вида в
+             навбарах), работающий как меню действий: выбранный пункт открывает своё
+             окно, а выбор тут же сбрасывается (см. код-behind) — состояния у меню нет. -->
+        <ComboBox Grid.Column="1" x:Name="AddDatabaseCombo"
+                  IsVisible="False"
+                  Width="210" Height="30"
+                  VerticalAlignment="Center"
+                  PlaceholderText="Добавить базу данных"
+                  PlaceholderForeground="{StaticResource BrushPrimaryText}">
+            <ComboBoxItem Content="Создать базу данных SQLite" />
+            <ComboBoxItem Content="Подключить базу данных SQLite" />
+            <ComboBoxItem Content="Подключить сервер PostgreSQL" />
+        </ComboBox>
+
+    </Grid>
 
 </UserControl>
