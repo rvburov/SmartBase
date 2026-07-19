@@ -22,12 +22,14 @@
 
 ## Хранилище database.db (пользовательские данные)
 
-Контекст [AppDbContext](../../Database/AppDbContext.cs). Таблицы:
+Контекст [AppDbContext](../../Database/AppDbContext.cs). Ниже — смысловая карта;
+поколоночный справочник всех таблиц (типы, ключи, индексы) — [db-schema.md](db-schema.md).
+Таблицы:
 
 - **Контент:** `categories`, `db_groups`, `db_collections`, `db_fields`, `db_records`, `db_field_values`.
-- **Значения полей:** `db_field_values` — пара `(RecordId, FieldId) → Value` (уникальный индекс). Так произвольные поля хранятся «вертикально», а не колонками. Все типы, кроме `date`, хранятся как обычные строки; `date` — в ISO-каноне (`DateValue.ToStorage`). При **переносе записи в другую коллекцию** (таблица «Расположение» / смена коллекции в окне календаря) значения сопоставляются с полями цели **по имени** с приведением типов (`ConstructorRepository.CopyFieldValuesByName` → `ConvertValueForType`; нетривиально только пересечение границы «дата»).
-- **Проекция календаря:** `calendar_index` — денормализованное «оглавление» событий (строка на каждое видимое поле-дату записи: `RecordId, FieldId, CollectionId, StartIso, EndIso, AllDay`; индекс `(CollectionId, StartIso)`, FK-каскады на `db_records`/`db_fields`). Из неё календарь читает события индексным range-query (см. ниже).
-- **UI-настройки коллекции:** `ui_col_widths`, `ui_row_heights`, `ui_collection_settings` (режим вида, ручной ресайз), `system_field_meta` (подписи «Название»/«Описание»), `column_order`, `column_display`, `record_display`.
+- **Значения полей:** `db_field_values` — пара `(RecordId, FieldId) → Value`; это естественный **PK**, суррогатного Id нет, таблица `WITHOUT ROWID` (кластеризована по PK: значения одной записи лежат физически рядом, отдельный уникальный индекс пары не нужен — см. миграцию `SchemaCompact`). Так произвольные поля хранятся «вертикально», а не колонками. Все типы, кроме `date`, хранятся как обычные строки; `date` — в ISO-каноне (`DateValue.ToStorage`). При **переносе записи в другую коллекцию** (таблица «Расположение» / смена коллекции в окне календаря) значения сопоставляются с полями цели **по имени** с приведением типов (`ConstructorRepository.CopyFieldValuesByName` → `ConvertValueForType`; нетривиально только пересечение границы «дата»).
+- **Проекция календаря:** `calendar_index` — денормализованное «оглавление» событий (строка на каждое видимое поле-дату записи: `RecordId, FieldId, CollectionId, StartIso, EndIso, AllDay`; PK `(RecordId, FieldId)`, тоже `WITHOUT ROWID`; индекс `(CollectionId, StartIso)`, FK-каскады на `db_records`/`db_fields`). Из неё календарь читает события индексным range-query (см. ниже).
+- **UI-настройки коллекции:** `ui_col_widths`, `ui_row_heights`, `ui_collection_settings` (режим вида, ручной ресайз), `column_meta` — все метаданные колонки одной строкой на `(CollectionId, Key)`: аспекты `Position` (порядок), `Visible`/`Level` (окно «Отображение»), `DisplayName` (подписи «Название»/«Описание»); аспект `NULL` = дефолт, строка живёт, пока задан хоть один аспект. `record_display` — то же для строк-записей.
 - **Пользователи и права (модуль «Профиль»):** `db_users` (кто открывал базу: ключ «учётка@компьютер», снапшот ФИО, `IsAdmin/IsApproved`), `db_permissions` (битовые маски `PermAction` per-пользователь: строка с `CollectionId=NULL` — вся база, с коллекцией — переопределение), `db_meta` (ключ-значение базы; PBKDF2-хеш пароля), `change_log` (журнал фактов: кто/когда/что, `Count` у пакетных операций; без FK — переживает удаление объектов). Подробно — [users-permissions.md](users-permissions.md).
 - Тип поля `user` хранится в `db_field_values` строкой-отображаемым именем (как `select`); опции — допущенные пользователи базы (`ConstructorRepository.GetUserOptions`), новая запись по умолчанию получает текущего пользователя.
 
@@ -54,8 +56,17 @@
 - удаления (запись/поле/коллекция/группа, в т.ч. bulk) — авто-очистка через FK `ON DELETE CASCADE`;
 - однократный потоковый бэкафилл при первом запуске (`MigrateAndBackfillCalendarDates`).
 
-Колонки `db_records.StartDt/EndDt/AllDay` остались от прежней модели «одна дата на запись»
-и календарём больше не читаются (пишутся, но не авторитетны).
+### Двойная система дат (важно понимать)
+
+Даты живут в двух местах, и авторитетно только одно:
+
+1. **Поля-даты** (`db_field_values` + проекция `calendar_index`) — **источник правды**.
+   Календарь, «Расписание» и «Задачи» читают только отсюда.
+2. **Колонки `db_records.StartDt/EndDt/AllDay`** — след прежней модели «одна дата на
+   запись». Они **пишутся** при правке даты (`ToRecordColumns`, бэкафилл в
+   `MigrateAndBackfillCalendarDates`), но календарём **не читаются** и не авторитетны.
+   Стратегически модель сводится к полям-датам; колонки остаются ради обратной
+   совместимости старых БД и переноса записей.
 
 ## Хранилище app.db (системное)
 
@@ -69,4 +80,4 @@
 
 ## Связанные документы
 
-[[databases]], [[multi-database]], [[../features/constructor-db/overview]], [[../features/categories]]
+[[db-schema]], [[databases]], [[multi-database]], [[../features/constructor-db/overview]], [[../features/categories]]

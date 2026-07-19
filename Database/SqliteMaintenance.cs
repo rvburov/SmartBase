@@ -19,15 +19,21 @@ internal static class SqliteMaintenance
     /// </summary>
     public static void CompactIfBloated(DbContext db, long minFreeBytes)
     {
+        var (freeBytes, freeRatio) = ReadFreeSpace(db);
+        if (freeRatio > 0.5 && freeBytes > minFreeBytes)
+            db.Database.ExecuteSqlRaw("VACUUM;");
+    }
+
+    /// <summary>Свободное место файла: (байты freelist, доля freelist от всех страниц).
+    /// Наружу — для DatabaseManager.CompactWithProgress: сжатие данных-БД идёт с этапом
+    /// и живым прогрессом на сплэше, здесь остаётся только «тихий» вариант для app.db.</summary>
+    internal static (long FreeBytes, double FreeRatio) ReadFreeSpace(DbContext db)
+    {
         var pageSize  = ReadPragmaLong(db, "PRAGMA page_size;");
         var pageCount = ReadPragmaLong(db, "PRAGMA page_count;");
         var freeList  = ReadPragmaLong(db, "PRAGMA freelist_count;");
-        if (pageCount == 0 || pageSize == 0) return;
-
-        var freeBytes = freeList * pageSize;
-        var freeRatio = (double)freeList / pageCount;
-        if (freeRatio > 0.5 && freeBytes > minFreeBytes)
-            db.Database.ExecuteSqlRaw("VACUUM;");
+        if (pageCount == 0 || pageSize == 0) return (0, 0);
+        return (freeList * pageSize, (double)freeList / pageCount);
     }
 
     // Прочитать скалярное значение PRAGMA (напр. page_count) через соединение контекста.

@@ -245,12 +245,25 @@ public partial class ConstructorRepository(AppDbContext db)
         foreach (var childId in childIds)
             DeleteGroupCore(childId);
 
-        // Удаляем коллекции этой группы; поля/записи/значения уйдут каскадно.
+        // Удаляем коллекции этой группы; поля/записи/значения уйдут каскадно, UI-строки без FK — явно.
+        var colIds = db.DbCollections.Where(c => c.GroupId == groupId).Select(c => c.Id).ToList();
         db.DbCollections.RemoveRange(db.DbCollections.Where(c => c.GroupId == groupId));
 
         var entity = db.DbGroups.Find(groupId);
         if (entity is not null) db.DbGroups.Remove(entity);
         db.SaveChanges();
+        foreach (var colId in colIds)
+            DeleteCollectionUiRows(colId);
+    }
+
+    // UI-настройки коллекции без FK (ui_*, record_display, column_meta) чистим явно при ЛЮБОМ
+    // удалении коллекции: каскада на них нет, строки сиротеют, а id коллекций SQLite
+    // переиспользует — фантомные настройки достались бы будущей коллекции с тем же id.
+    private void DeleteCollectionUiRows(int collectionId)
+    {
+        foreach (var t in new[] { "ui_row_heights", "record_display", "ui_col_widths",
+                                  "ui_collection_settings", "column_meta" })
+            db.Database.ExecuteSqlRaw($"DELETE FROM {t} WHERE CollectionId = {collectionId}");
     }
 
     // Id всех групп ветки (сама группа + потомки на любой глубине). Один проход по таблице групп.
@@ -585,6 +598,7 @@ public partial class ConstructorRepository(AppDbContext db)
             db.DbCollections.Remove(entity);
         }
         db.SaveChanges();
+        DeleteCollectionUiRows(collectionId);
     }
 
     /// <summary>
@@ -645,9 +659,7 @@ public partial class ConstructorRepository(AppDbContext db)
 
         using var tail = db.Database.BeginTransaction();
         // UI-настройки коллекции: FK-каскада у этих таблиц нет — только явная чистка.
-        foreach (var t in new[] { "ui_row_heights", "record_display", "ui_col_widths",
-                                  "ui_collection_settings", "system_field_meta", "column_order", "column_display" })
-            db.Database.ExecuteSqlRaw($"DELETE FROM {t} WHERE CollectionId = {collectionId}");
+        DeleteCollectionUiRows(collectionId);
         // Строка коллекции: каскад уберёт поля (их строки calendar_index уже удалены выше).
         db.Database.ExecuteSqlInterpolated($"DELETE FROM db_collections WHERE Id = {collectionId}");
         tail.Commit();
@@ -859,7 +871,7 @@ public partial class ConstructorRepository(AppDbContext db)
 
     // UI-настройки коллекции при дубле В ТОЙ ЖЕ БД: ключи-id полей перемэппливаются через временную
     // карту _dup_fmap (та же, что для значений), записи — по рангу (Position, Id) → firstNew + ранг − 1
-    // (новые id непрерывны). Ключи column_order/display: числовой id поля → новый, системные
+    // (новые id непрерывны). Ключи column_meta: числовой id поля → новый, системные
     // (__title__/__desc__) — как есть. Поле-/коллекция-level копируем всегда; строки (row_heights,
     // record_display) — только при наличии записей. Зеркало CopyMovedUi для одной БД (без ATTACH).
     private void CopyDuplicatedUi(int srcCol, int newCol, long firstNew, long recCount)
@@ -874,26 +886,13 @@ public partial class ConstructorRepository(AppDbContext db)
             SELECT {newCol}, ColResize, RowResize, ViewMode FROM ui_collection_settings WHERE CollectionId = {srcCol}");
 
         db.Database.ExecuteSqlInterpolated($@"
-            INSERT INTO system_field_meta (CollectionId, Key, DisplayName, Position)
-            SELECT {newCol}, Key, DisplayName, Position FROM system_field_meta WHERE CollectionId = {srcCol}");
-
-        db.Database.ExecuteSqlInterpolated($@"
-            INSERT INTO column_order (CollectionId, Key, Position)
+            INSERT INTO column_meta (CollectionId, Key, Position, Visible, Level, DisplayName)
             SELECT {newCol},
-                   CASE WHEN fm.new_fid IS NOT NULL THEN CAST(fm.new_fid AS TEXT) ELSE co.Key END,
-                   co.Position
-            FROM column_order co
-            LEFT JOIN _dup_fmap fm ON co.Key GLOB '[0-9]*' AND CAST(co.Key AS INTEGER) = fm.old_fid
-            WHERE co.CollectionId = {srcCol}");
-
-        db.Database.ExecuteSqlInterpolated($@"
-            INSERT INTO column_display (CollectionId, Key, Visible, Level)
-            SELECT {newCol},
-                   CASE WHEN fm.new_fid IS NOT NULL THEN CAST(fm.new_fid AS TEXT) ELSE cd.Key END,
-                   cd.Visible, cd.Level
-            FROM column_display cd
-            LEFT JOIN _dup_fmap fm ON cd.Key GLOB '[0-9]*' AND CAST(cd.Key AS INTEGER) = fm.old_fid
-            WHERE cd.CollectionId = {srcCol}");
+                   CASE WHEN fm.new_fid IS NOT NULL THEN CAST(fm.new_fid AS TEXT) ELSE cm.Key END,
+                   cm.Position, cm.Visible, cm.Level, cm.DisplayName
+            FROM column_meta cm
+            LEFT JOIN _dup_fmap fm ON cm.Key GLOB '[0-9]*' AND CAST(cm.Key AS INTEGER) = fm.old_fid
+            WHERE cm.CollectionId = {srcCol}");
 
         if (recCount > 0)
         {
@@ -1134,9 +1133,7 @@ public partial class ConstructorRepository(AppDbContext db)
         List<(int FieldId, int Width)>                        ColWidths,
         List<(int RecordId, int Height)>                      RowHeights,
         (bool ColResize, bool RowResize, string ViewMode)?    Settings,
-        List<(string Key, string? DisplayName, int Position)> SystemMeta,
-        List<(string Key, int Position)>                      ColumnOrder,
-        List<(string Key, bool Visible, int Level)>           ColumnDisplay,
+        List<(string Key, int? Position, bool? Visible, int? Level, string? DisplayName)> ColumnMeta,
         List<(int RecordId, bool Visible, int Level)>         RecordDisplay);
 
     // Снимок группы со всей вложенной веткой (подгруппы + коллекции).
@@ -1171,12 +1168,8 @@ public partial class ConstructorRepository(AppDbContext db)
             RowHeights:    db.UiRowHeights.AsNoTracking().Where(h => h.CollectionId == collectionId).ToList()
                              .Select(h => (h.RecordId, h.Height)).ToList(),
             Settings:      settings is null ? null : (settings.ColResize, settings.RowResize, settings.ViewMode),
-            SystemMeta:    db.SystemFieldMeta.AsNoTracking().Where(m => m.CollectionId == collectionId).ToList()
-                             .Select(m => (m.Key, m.DisplayName, m.Position)).ToList(),
-            ColumnOrder:   db.ColumnOrder.AsNoTracking().Where(o => o.CollectionId == collectionId).ToList()
-                             .Select(o => (o.Key, o.Position)).ToList(),
-            ColumnDisplay: db.ColumnDisplay.AsNoTracking().Where(d => d.CollectionId == collectionId).ToList()
-                             .Select(d => (d.Key, d.Visible, d.Level)).ToList(),
+            ColumnMeta:    db.ColumnMeta.AsNoTracking().Where(m => m.CollectionId == collectionId).ToList()
+                             .Select(m => (m.Key, m.Position, m.Visible, m.Level, m.DisplayName)).ToList(),
             RecordDisplay: db.RecordDisplay.AsNoTracking().Where(d => d.CollectionId == collectionId).ToList()
                              .Select(d => (d.RecordId, d.Visible, d.Level)).ToList());
     }
@@ -1265,22 +1258,11 @@ public partial class ConstructorRepository(AppDbContext db)
                 CollectionId = newCollectionId, ColResize = st.ColResize, RowResize = st.RowResize, ViewMode = st.ViewMode,
             });
 
-        foreach (var (key, name, pos) in ui.SystemMeta)
-            db.SystemFieldMeta.Add(new SystemFieldMetaEntity
+        foreach (var (key, pos, vis, lvl, name) in ui.ColumnMeta)
+            db.ColumnMeta.Add(new ColumnMetaEntity
             {
-                CollectionId = newCollectionId, Key = key, DisplayName = name, Position = pos,
-            });
-
-        foreach (var (key, pos) in ui.ColumnOrder)
-            db.ColumnOrder.Add(new ColumnOrderEntity
-            {
-                CollectionId = newCollectionId, Key = RemapColKey(key, fieldMap), Position = pos,
-            });
-
-        foreach (var (key, vis, lvl) in ui.ColumnDisplay)
-            db.ColumnDisplay.Add(new ColumnDisplayEntity
-            {
-                CollectionId = newCollectionId, Key = RemapColKey(key, fieldMap), Visible = vis, Level = lvl,
+                CollectionId = newCollectionId, Key = RemapColKey(key, fieldMap),
+                Position = pos, Visible = vis, Level = lvl, DisplayName = name,
             });
 
         foreach (var (oldRid, vis, lvl) in ui.RecordDisplay)
@@ -1669,7 +1651,7 @@ public partial class ConstructorRepository(AppDbContext db)
 
     // UI-настройки переносимой коллекции: ключи-id полей/записей перемэппливаются (поля — через
     // _move_fmap; записи — по рангу в порядке Position,Id → firstNew + ранг − 1). Ключи колонок
-    // (column_order/display) числовые → новый id поля, системные (__title__/__desc__) — как есть.
+    // (column_meta) числовые → новый id поля, системные (__title__/__desc__) — как есть.
     private static void CopyMovedUi(DbConnection conn, DbTransaction tx, int srcCol, int newCol, long firstNew, long recCount)
     {
         Exec(conn, tx, $@"
@@ -1682,26 +1664,13 @@ public partial class ConstructorRepository(AppDbContext db)
             SELECT {newCol}, ColResize, RowResize, ViewMode FROM src.ui_collection_settings WHERE CollectionId = {srcCol}");
 
         Exec(conn, tx, $@"
-            INSERT INTO main.system_field_meta (CollectionId, Key, DisplayName, Position)
-            SELECT {newCol}, Key, DisplayName, Position FROM src.system_field_meta WHERE CollectionId = {srcCol}");
-
-        Exec(conn, tx, $@"
-            INSERT INTO main.column_order (CollectionId, Key, Position)
+            INSERT INTO main.column_meta (CollectionId, Key, Position, Visible, Level, DisplayName)
             SELECT {newCol},
-                   CASE WHEN fm.new_fid IS NOT NULL THEN CAST(fm.new_fid AS TEXT) ELSE co.Key END,
-                   co.Position
-            FROM src.column_order co
-            LEFT JOIN _move_fmap fm ON co.Key GLOB '[0-9]*' AND CAST(co.Key AS INTEGER) = fm.old_fid
-            WHERE co.CollectionId = {srcCol}");
-
-        Exec(conn, tx, $@"
-            INSERT INTO main.column_display (CollectionId, Key, Visible, Level)
-            SELECT {newCol},
-                   CASE WHEN fm.new_fid IS NOT NULL THEN CAST(fm.new_fid AS TEXT) ELSE cd.Key END,
-                   cd.Visible, cd.Level
-            FROM src.column_display cd
-            LEFT JOIN _move_fmap fm ON cd.Key GLOB '[0-9]*' AND CAST(cd.Key AS INTEGER) = fm.old_fid
-            WHERE cd.CollectionId = {srcCol}");
+                   CASE WHEN fm.new_fid IS NOT NULL THEN CAST(fm.new_fid AS TEXT) ELSE cm.Key END,
+                   cm.Position, cm.Visible, cm.Level, cm.DisplayName
+            FROM src.column_meta cm
+            LEFT JOIN _move_fmap fm ON cm.Key GLOB '[0-9]*' AND CAST(cm.Key AS INTEGER) = fm.old_fid
+            WHERE cm.CollectionId = {srcCol}");
 
         if (recCount > 0)
         {
@@ -1892,14 +1861,14 @@ public partial class ConstructorRepository(AppDbContext db)
 
         var rows = db.DbFieldValues.AsNoTracking()
             .Where(v => v.FieldId == fieldId && v.Value != "")
-            .Select(v => new { v.Id, v.Value })
+            .Select(v => new { v.RecordId, v.Value })
             .ToList();
 
-        var updates = new List<(int Id, string Value)>();
+        var updates = new List<(int RecordId, string Value)>();
         foreach (var r in rows)
         {
             var converted = ConvertValueForType(r.Value, oldType, newType);
-            if (converted != r.Value) updates.Add((r.Id, converted));
+            if (converted != r.Value) updates.Add((r.RecordId, converted));
         }
         if (updates.Count == 0) return;
 
@@ -1910,15 +1879,15 @@ public partial class ConstructorRepository(AppDbContext db)
         using (var upd = conn.CreateCommand())
         {
             upd.Transaction = tx;
-            upd.CommandText = "UPDATE db_field_values SET Value = $val WHERE Id = $id";
+            upd.CommandText = $"UPDATE db_field_values SET Value = $val WHERE RecordId = $rid AND FieldId = {fieldId}";
             var pVal = AddParam(upd, "$val");
-            var pId  = AddParam(upd, "$id");
+            var pRid = AddParam(upd, "$rid");
             upd.Prepare();
 
-            foreach (var (id, value) in updates)
+            foreach (var (recordId, value) in updates)
             {
                 pVal.Value = value;
-                pId.Value  = id;
+                pRid.Value = recordId;
                 upd.ExecuteNonQuery();
             }
             tx.Commit();
@@ -2033,22 +2002,23 @@ public partial class ConstructorRepository(AppDbContext db)
     }
 
 
-    /// <summary>Дубль поля ПАКЕТАМИ: метаданные мгновенно, значения — порциями по списку их Id.</summary>
+    /// <summary>Дубль поля ПАКЕТАМИ: метаданные мгновенно, значения — порциями по списку RecordId.</summary>
     public DbField DuplicateFieldData(int fieldId, IProgress<int>? progress = null, int batchSize = 10000)
     {
         var copy   = CreateFieldCopyEntity(fieldId);
         var copyId = copy.Id;
 
-        var ids = FieldValueIdsSorted(fieldId);   // Id-порядок → последовательные обновления индексов
+        var ids = FieldValueRecordIdsSorted(fieldId);   // PK-порядок → последовательные обновления
         using var tx = db.Database.BeginTransaction();
         for (var i = 0; i < ids.Count; i += batchSize)
         {
             var inList = JoinIdRange(ids, i, batchSize);
-            // Копируем строго по PK (Id IN …) — без скана значений чужих полей. ExecuteSqlRaw:
-            // в готовой строке нет фигурных скобок (copyId — число, inList — «1,2,3»).
+            // Копируем строго по PK (FieldId + RecordId IN …) — без скана значений чужих полей.
+            // ExecuteSqlRaw: в готовой строке нет фигурных скобок (числа и список «1,2,3»).
             db.Database.ExecuteSqlRaw(
                 $"INSERT INTO db_field_values (RecordId, FieldId, Value) " +
-                $"SELECT RecordId, {copyId}, Value FROM db_field_values WHERE Id IN ({inList})");
+                $"SELECT RecordId, {copyId}, Value FROM db_field_values " +
+                $"WHERE FieldId = {fieldId} AND RecordId IN ({inList})");
             progress?.Report(Math.Min(ids.Count, i + batchSize));
         }
         tx.Commit();
@@ -2056,38 +2026,40 @@ public partial class ConstructorRepository(AppDbContext db)
         return ToDbField(copy);
     }
 
-    /// <summary>Удаление поля ПАКЕТАМИ: значения порциями по списку их Id (прогресс), затем строка
-    /// поля (каскад на calendar_index по FK) и чистка column_order — как в DeleteField.</summary>
+    /// <summary>Удаление поля ПАКЕТАМИ: значения порциями по списку RecordId (прогресс), затем строка
+    /// поля (каскад на calendar_index по FK) и чистка column_meta — как в DeleteField.</summary>
     public void DeleteFieldData(int fieldId, IProgress<int>? progress = null, int batchSize = 10000)
     {
         var field = db.DbFields.Find(fieldId);
         if (field is null) return;
         var colId = field.CollectionId;
 
-        var ids = FieldValueIdsSorted(fieldId);
+        var ids = FieldValueRecordIdsSorted(fieldId);
         using var tx = db.Database.BeginTransaction();
         for (var i = 0; i < ids.Count; i += batchSize)
         {
             var inList = JoinIdRange(ids, i, batchSize);
-            db.Database.ExecuteSqlRaw($"DELETE FROM db_field_values WHERE Id IN ({inList})");
+            db.Database.ExecuteSqlRaw(
+                $"DELETE FROM db_field_values WHERE FieldId = {fieldId} AND RecordId IN ({inList})");
             progress?.Report(Math.Min(ids.Count, i + batchSize));
         }
 
-        // Строка поля (FK ON DELETE CASCADE уберёт calendar_index) + чистка column_order
-        // (его FK не каскадит — ключ строковый), как в синхронном DeleteField.
+        // Строка поля (FK ON DELETE CASCADE уберёт calendar_index) + чистка column_meta
+        // (FK нет — ключ строковый), как в синхронном DeleteField.
         var key = fieldId.ToString();
         db.Database.ExecuteSqlInterpolated($"DELETE FROM db_fields WHERE Id = {fieldId}");
         db.Database.ExecuteSqlInterpolated(
-            $"DELETE FROM column_order WHERE CollectionId = {colId} AND Key = {key}");
+            $"DELETE FROM column_meta WHERE CollectionId = {colId} AND Key = {key}");
         tx.Commit();
         LogNow("delete", "field", field.Name, CollectionNameOf(colId));
     }
 
-    // Id всех значений поля одним индексным запросом ((FieldId,Value) — без скана чужих полей),
-    // отсортированные по Id. Id-порядок ≈ порядок создания записей ≈ порядок RecordId, поэтому
-    // удаление/вставка по нему дают ПОСЛЕДОВАТЕЛЬНЫЕ обновления индексов (на больших полях это
-    // в разы быстрее случайного порядка, который давал бы один общий DELETE по (FieldId,Value)).
-    private List<long> FieldValueIdsSorted(int fieldId)
+    // RecordId всех значений поля одним индексным запросом ((FieldId,Value) покрывает: RecordId —
+    // часть PK, лежит в хвосте индекса), отсортированные. RecordId-порядок = порядок PK
+    // (RecordId, FieldId), поэтому удаление/вставка по нему дают ПОСЛЕДОВАТЕЛЬНЫЕ обновления
+    // таблицы и индексов (на больших полях это в разы быстрее случайного порядка, который
+    // давал бы один общий DELETE по (FieldId,Value)).
+    private List<long> FieldValueRecordIdsSorted(int fieldId)
     {
         var ids = new List<long>();
         var conn = db.Database.GetDbConnection();
@@ -2097,7 +2069,7 @@ public partial class ConstructorRepository(AppDbContext db)
         {
             using var c = conn.CreateCommand();
             if (db.Database.CurrentTransaction is { } t) c.Transaction = t.GetDbTransaction();
-            c.CommandText = $"SELECT Id FROM db_field_values WHERE FieldId = {fieldId}";
+            c.CommandText = $"SELECT RecordId FROM db_field_values WHERE FieldId = {fieldId}";
             using var rdr = c.ExecuteReader();
             while (rdr.Read()) ids.Add(rdr.GetInt64(0));
         }
@@ -2180,11 +2152,11 @@ public partial class ConstructorRepository(AppDbContext db)
         Log("delete", "field", entity.Name, CollectionNameOf(colId));
         db.DbFields.Remove(entity);
 
-        // Чистим строку порядка для этого поля, чтобы в column_order не копились
-        // мёртвые ключи (иначе перемещение колонок начинает «не работать»).
-        var key      = fieldId.ToString();
-        var orderRow = db.ColumnOrder.FirstOrDefault(o => o.CollectionId == colId && o.Key == key);
-        if (orderRow is not null) db.ColumnOrder.Remove(orderRow);
+        // Чистим метаданные колонки этого поля (порядок/видимость), чтобы в column_meta не
+        // копились мёртвые ключи (иначе перемещение колонок начинает «не работать»).
+        var key     = fieldId.ToString();
+        var metaRow = db.ColumnMeta.FirstOrDefault(m => m.CollectionId == colId && m.Key == key);
+        if (metaRow is not null) db.ColumnMeta.Remove(metaRow);
 
         db.SaveChanges();
     }
@@ -2413,7 +2385,7 @@ public partial class ConstructorRepository(AppDbContext db)
         if (rec.Title != title)
             Log("update", "record", title, CollectionNameOf(rec.CollectionId));
         rec.Title = title;
-        db.SaveChanges();
+        SaveIgnoringRemoteDelete(rec);
     }
 
     public void SetRecordDescription(int recordId, string? description)
@@ -2425,7 +2397,20 @@ public partial class ConstructorRepository(AppDbContext db)
         if (rec.Description != normalized)
             Log("update", "record", rec.Title, CollectionNameOf(rec.CollectionId));
         rec.Description = normalized;
-        db.SaveChanges();
+        SaveIgnoringRemoteDelete(rec);
+    }
+
+    // Многопользовательский режим: сущность мог удалить другой пользователь между нашим
+    // чтением и записью — UPDATE попадает в 0 строк (DbUpdateConcurrencyException). Удалённое
+    // не воскрешаем: отцепляем от трекера и дожимаем остальное (строку журнала).
+    private void SaveIgnoringRemoteDelete(object entity)
+    {
+        try { db.SaveChanges(); }
+        catch (DbUpdateConcurrencyException)
+        {
+            db.Entry(entity).State = EntityState.Detached;
+            db.SaveChanges();
+        }
     }
 
     public DbRecord AddRecord(DbRecord record)
@@ -3257,12 +3242,38 @@ public partial class ConstructorRepository(AppDbContext db)
                 Log("update", "record", rec.Title, CollectionNameOf(rec.CollectionId));
         }
 
+        // Многопользовательский режим: между нашей проверкой и записью ту же ячейку мог
+        // изменить другой пользователь (другой процесс). Политика — «последний побеждает»:
+        //  • гонка на ПЕРВОЕ значение (оба увидели «строки нет», оба INSERT) — проигравший
+        //    ловит PK-конфликт (SQLITE_CONSTRAINT=19) и превращает вставку в UPDATE;
+        //  • строку/запись успели удалить — UPDATE попадает в 0 строк
+        //    (DbUpdateConcurrencyException): значение не воскрешаем, синхронизация вскоре
+        //    уберёт запись и из нашего UI.
+        // Оба случая воспроизведены стендом Tests/MultiUserHarness (--contend).
         if (fv is null)
-            db.DbFieldValues.Add(new DbFieldValueEntity { RecordId = recordId, FieldId = fieldId, Value = value });
+        {
+            var added = new DbFieldValueEntity { RecordId = recordId, FieldId = fieldId, Value = value };
+            db.DbFieldValues.Add(added);
+            try { db.SaveChanges(); }
+            catch (DbUpdateException ex) when ((ex.InnerException as SqliteException)?.SqliteErrorCode == 19)
+            {
+                db.Entry(added).State = EntityState.Detached;
+                db.Database.ExecuteSqlRaw(
+                    "UPDATE \"db_field_values\" SET \"Value\" = {0} WHERE \"RecordId\" = {1} AND \"FieldId\" = {2}",
+                    value, recordId, fieldId);
+                db.SaveChanges();   // дожать строку журнала, не сохранённую упавшим SaveChanges
+            }
+        }
         else
+        {
             fv.Value = value;
-
-        db.SaveChanges();
+            try { db.SaveChanges(); }
+            catch (DbUpdateConcurrencyException)
+            {
+                db.Entry(fv).State = EntityState.Detached;
+                db.SaveChanges();   // дожать строку журнала
+            }
+        }
 
         // Поддерживаем индексную проекцию календаря (для видимых полей-дат).
         SyncCalendarIndexValue(recordId, fieldId, value);
@@ -3343,10 +3354,19 @@ public partial class ConstructorRepository(AppDbContext db)
         db.SaveChanges();
     }
 
+    // Строка column_meta живёт, пока задан хоть один аспект (порядок/видимость/подпись);
+    // сброс последнего удаляет её, чтобы «отсутствие строки = дефолт» оставалось верным
+    // и таблица не копила пустых строк.
+    private void RemoveColumnMetaIfEmpty(ColumnMetaEntity m)
+    {
+        if (m.Position is null && m.Visible is null && m.Level is null && m.DisplayName is null)
+            db.ColumnMeta.Remove(m);
+    }
+
     // Подписи системных колонок «Название»/«Описание» (только заданные пользователем).
     // Ключ — TableRowVm.TitleKey / DescKey; значение — отображаемое имя.
     public Dictionary<string, string> GetSystemFieldNames(int collectionId) =>
-        db.SystemFieldMeta
+        db.ColumnMeta
           .Where(m => m.CollectionId == collectionId && m.DisplayName != null)
           .ToDictionary(m => m.Key, m => m.DisplayName!);
 
@@ -3363,15 +3383,19 @@ public partial class ConstructorRepository(AppDbContext db)
         var trimmed = displayName?.Trim();
         var reset   = string.IsNullOrEmpty(trimmed) || trimmed == defaultName;
 
-        var row = db.SystemFieldMeta.FirstOrDefault(m => m.CollectionId == collectionId && m.Key == key);
+        var row = db.ColumnMeta.FirstOrDefault(m => m.CollectionId == collectionId && m.Key == key);
 
         if (reset)
         {
-            if (row is not null) db.SystemFieldMeta.Remove(row);
+            if (row is not null)
+            {
+                row.DisplayName = null;
+                RemoveColumnMetaIfEmpty(row);
+            }
         }
         else if (row is null)
         {
-            db.SystemFieldMeta.Add(new SystemFieldMetaEntity
+            db.ColumnMeta.Add(new ColumnMetaEntity
             {
                 CollectionId = collectionId, Key = key, DisplayName = trimmed,
             });
@@ -3388,31 +3412,49 @@ public partial class ConstructorRepository(AppDbContext db)
 
     // Сохранённый порядок (key -> position); пусто, если в коллекции ещё не двигали.
     public Dictionary<string, int> GetColumnOrder(int collectionId) =>
-        db.ColumnOrder
-          .Where(o => o.CollectionId == collectionId)
-          .ToDictionary(o => o.Key, o => o.Position);
+        db.ColumnMeta
+          .Where(m => m.CollectionId == collectionId && m.Position != null)
+          .ToDictionary(m => m.Key, m => m.Position!.Value);
+
+    // Перезаписать аспект «порядок» в column_meta из заданной последовательности ключей:
+    // позиции устаревших ключей сбрасываются (строки-сироты без других аспектов удаляются),
+    // остальные аспекты (видимость/уровень, подпись) не трогаем.
+    private void WriteColumnOrder(int collectionId, IReadOnlyList<string> orderedKeys)
+    {
+        var rows  = db.ColumnMeta.Where(m => m.CollectionId == collectionId).ToList();
+        var byKey = rows.ToDictionary(m => m.Key);
+        var keep  = orderedKeys.ToHashSet();
+        foreach (var m in rows)
+            if (!keep.Contains(m.Key))
+            {
+                m.Position = null;
+                RemoveColumnMetaIfEmpty(m);
+            }
+        for (var i = 0; i < orderedKeys.Count; i++)
+        {
+            if (byKey.TryGetValue(orderedKeys[i], out var m)) m.Position = (i + 1) * 1000;
+            else db.ColumnMeta.Add(new ColumnMetaEntity
+            {
+                CollectionId = collectionId, Key = orderedKeys[i], Position = (i + 1) * 1000,
+            });
+        }
+        db.SaveChanges();
+    }
 
     // Переместить колонку key на одну позицию влево/вправо в общем ряду движимых
     // колонок. movableKeys — текущий порядок всех движимых колонок (как их строит
     // TableView); нужен для ленивой материализации дефолтного порядка.
     public void MoveColumn(int collectionId, string key, bool left, IReadOnlyList<string> movableKeys)
     {
-        // Синхронизируем column_order с актуальным набором колонок (movableKeys):
-        // удаляем строки с устаревшими ключами (поля могли быть удалены) и
-        // перезаписываем порядок целиком в текущей раскладке. Это убирает рассинхрон,
-        // из-за которого своп не находил ключ и молча ничего не делал.
-        var existing = db.ColumnOrder.Where(o => o.CollectionId == collectionId).ToList();
-        db.ColumnOrder.RemoveRange(existing);
-        for (var i = 0; i < movableKeys.Count; i++)
-            db.ColumnOrder.Add(new ColumnOrderEntity
-            {
-                CollectionId = collectionId, Key = movableKeys[i], Position = (i + 1) * 1000,
-            });
-        db.SaveChanges();
+        // Синхронизируем порядок с актуальным набором колонок (movableKeys): сбрасываем
+        // устаревшие ключи (поля могли быть удалены) и перезаписываем порядок целиком в
+        // текущей раскладке. Это убирает рассинхрон, из-за которого своп не находил ключ
+        // и молча ничего не делал.
+        WriteColumnOrder(collectionId, movableKeys);
 
-        var rows = db.ColumnOrder
-            .Where(o => o.CollectionId == collectionId)
-            .OrderBy(o => o.Position)
+        var rows = db.ColumnMeta
+            .Where(m => m.CollectionId == collectionId && m.Position != null)
+            .OrderBy(m => m.Position)
             .ToList();
 
         var idx = rows.FindIndex(o => o.Key == key);
@@ -3427,7 +3469,7 @@ public partial class ConstructorRepository(AppDbContext db)
 
     // Поставить колонку newKey сразу после afterKey в общем порядке. movableKeys —
     // актуальный порядок колонок ДО вставки (newKey там в конце, как создаёт AddField).
-    // Перезаписываем column_order из movableKeys, затем перемещаем newKey за afterKey.
+    // Перезаписываем порядок из movableKeys, затем перемещаем newKey за afterKey.
     public void MoveColumnAfter(int collectionId, string newKey, string afterKey, IReadOnlyList<string> movableKeys)
     {
         // Целевой порядок: как movableKeys, но newKey вынут и вставлен после afterKey.
@@ -3436,29 +3478,13 @@ public partial class ConstructorRepository(AppDbContext db)
         if (at < 0) order.Add(newKey);              // afterKey не найден — оставляем в конце
         else        order.Insert(at + 1, newKey);
 
-        var existing = db.ColumnOrder.Where(o => o.CollectionId == collectionId).ToList();
-        db.ColumnOrder.RemoveRange(existing);
-        for (var i = 0; i < order.Count; i++)
-            db.ColumnOrder.Add(new ColumnOrderEntity
-            {
-                CollectionId = collectionId, Key = order[i], Position = (i + 1) * 1000,
-            });
-        db.SaveChanges();
+        WriteColumnOrder(collectionId, order);
     }
 
     // Перезаписать порядок колонок целиком из заданной последовательности ключей
     // (как они идут слева-направо). Используется окном «Отображение» при сохранении.
-    public void SaveColumnOrder(int collectionId, IReadOnlyList<string> orderedKeys)
-    {
-        var existing = db.ColumnOrder.Where(o => o.CollectionId == collectionId).ToList();
-        db.ColumnOrder.RemoveRange(existing);
-        for (var i = 0; i < orderedKeys.Count; i++)
-            db.ColumnOrder.Add(new ColumnOrderEntity
-            {
-                CollectionId = collectionId, Key = orderedKeys[i], Position = (i + 1) * 1000,
-            });
-        db.SaveChanges();
-    }
+    public void SaveColumnOrder(int collectionId, IReadOnlyList<string> orderedKeys) =>
+        WriteColumnOrder(collectionId, orderedKeys);
 
     public Dictionary<int, int> GetColWidths(int collectionId) =>
         db.UiColWidths
@@ -3479,23 +3505,32 @@ public partial class ConstructorRepository(AppDbContext db)
 
     // key → (Visible, Level). Только сохранённые строки; отсутствие ключа = (видима, 1).
     public Dictionary<string, (bool Visible, int Level)> GetColumnDisplay(int collectionId) =>
-        db.ColumnDisplay
-          .Where(d => d.CollectionId == collectionId)
-          .ToDictionary(d => d.Key, d => (d.Visible, d.Level));
+        db.ColumnMeta
+          .Where(m => m.CollectionId == collectionId && m.Visible != null)
+          .ToDictionary(m => m.Key, m => (m.Visible!.Value, m.Level ?? 1));
 
-    // Перезаписываем отображение колонок целиком. Дефолтные строки (видима, уровень 1)
-    // не храним — так таблица не разрастается, а новые колонки по умолчанию видимы.
+    // Перезаписываем аспект «отображение» (Visible/Level) целиком. Дефолт (видима, уровень 1)
+    // не храним — так таблица не разрастается, а новые колонки по умолчанию видимы. Прочие
+    // аспекты (порядок, подпись) не трогаем; строки-сироты без аспектов удаляются.
     public void SaveColumnDisplay(int collectionId, IEnumerable<(string Key, bool Visible, int Level)> entries)
     {
-        db.ColumnDisplay.RemoveRange(db.ColumnDisplay.Where(d => d.CollectionId == collectionId));
+        var rows  = db.ColumnMeta.Where(m => m.CollectionId == collectionId).ToList();
+        var byKey = rows.ToDictionary(m => m.Key);
+        foreach (var m in rows) { m.Visible = null; m.Level = null; }
         foreach (var (key, visible, level) in entries)
         {
             if (visible && level <= 1) continue;   // дефолт — не храним
-            db.ColumnDisplay.Add(new ColumnDisplayEntity
+            if (byKey.TryGetValue(key, out var m))
+            {
+                m.Visible = visible;
+                m.Level   = Math.Max(1, level);
+            }
+            else db.ColumnMeta.Add(new ColumnMetaEntity
             {
                 CollectionId = collectionId, Key = key, Visible = visible, Level = Math.Max(1, level),
             });
         }
+        foreach (var m in rows) RemoveColumnMetaIfEmpty(m);
         db.SaveChanges();
     }
 
@@ -4684,8 +4719,9 @@ public partial class ConstructorRepository(AppDbContext db)
     }
 
     // Наполняет calendar_index из значений видимых полей-дат, отобранных scope. Читаем
-    // постранично (keyset по Id) через EF и вставляем пакетами подготовленным INSERT —
-    // память ограничена размером пакета (важно для бэкафилла на миллионах строк).
+    // постранично (keyset по PK (RecordId, FieldId)) через EF и вставляем пакетами
+    // подготовленным INSERT — память ограничена размером пакета (важно для бэкафилла
+    // на миллионах строк).
     private void FillCalendarIndex(Func<IQueryable<DbFieldValueEntity>, IQueryable<DbFieldValueEntity>> scope,
                                    IProgress<int>? progress = null)
     {
@@ -4695,14 +4731,15 @@ public partial class ConstructorRepository(AppDbContext db)
         var calFieldIds = db.DbFields.Where(f => f.FieldType == "date").Select(f => f.Id);
         var baseQ = scope(db.DbFieldValues.Where(v => calFieldIds.Contains(v.FieldId) && v.Value != ""));
 
-        var done   = 0;
-        var lastId = 0;
+        var done    = 0;
+        var lastRid = 0;
+        var lastFid = 0;
         while (true)
         {
             var page = baseQ
-                .Where(v => v.Id > lastId)
-                .OrderBy(v => v.Id)
-                .Select(v => new { v.Id, v.RecordId, v.FieldId, v.Value, v.Field.CollectionId })
+                .Where(v => v.RecordId > lastRid || (v.RecordId == lastRid && v.FieldId > lastFid))
+                .OrderBy(v => v.RecordId).ThenBy(v => v.FieldId)
+                .Select(v => new { v.RecordId, v.FieldId, v.Value, v.Field.CollectionId })
                 .Take(batch)
                 .ToList();
             if (page.Count == 0) break;
@@ -4736,7 +4773,8 @@ public partial class ConstructorRepository(AppDbContext db)
 
             done += page.Count;
             progress?.Report(done);
-            lastId = page[^1].Id;
+            lastRid = page[^1].RecordId;
+            lastFid = page[^1].FieldId;
         }
     }
 
@@ -4854,7 +4892,10 @@ public partial class ConstructorRepository(AppDbContext db)
     ///    календарным полем-датой, но пустыми StartDt — проецирует значение на колонки,
     ///    чтобы такие записи появились в календаре. Идемпотентно и дёшево.
     /// </summary>
-    public void MigrateAndBackfillCalendarDates()
+    /// <param name="progress">Прогресс тяжёлой фазы (первое открытие старой базы): (обработано,
+    /// всего) строк-значений дат; (0, 0) — фаза началась, объём ещё не посчитан. Быстрый путь
+    /// (индекс уже построен) колбэк не дёргает — на обычных запусках этап не мелькает.</param>
+    public void MigrateAndBackfillCalendarDates(Action<long, long>? progress = null)
     {
         var legacy = db.DbFields.Where(f => f.Name == FieldDate && f.FieldType == "text").ToList();
         foreach (var f in legacy)
@@ -4898,6 +4939,8 @@ public partial class ConstructorRepository(AppDbContext db)
         // больших БД.
         if (db.CalendarIndex.Any()) return;
 
+        progress?.Invoke(0, 0);   // тяжёлая фаза началась (скан значений; объём ещё не посчитан)
+
         var pending = db.DbFieldValues
             .Where(v => calFieldIds.Contains(v.FieldId) && v.Value != "" && v.Record.StartDt == null)
             .Select(v => new { v.RecordId, v.Value })
@@ -4920,6 +4963,19 @@ public partial class ConstructorRepository(AppDbContext db)
         // Индексная проекция календаря: строим один раз, если пуста (первый запуск после
         // обновления). Дальше поддерживается инкрементально при записи/копировании.
         if (!db.CalendarIndex.Any())
-            FillCalendarIndex(q => q);
+        {
+            // Общее число значений полей-дат — знаменатель процентов на сплэше (по индексу
+            // (FieldId, Value), без скана таблицы).
+            var dateFieldIds = db.DbFields.Where(f => f.FieldType == "date").Select(f => f.Id).ToList();
+            var total = db.DbFieldValues.LongCount(v => dateFieldIds.Contains(v.FieldId) && v.Value != "");
+            FillCalendarIndex(q => q, new SyncProgress<int>(done => progress?.Invoke(done, total)));
+        }
+    }
+
+    // IProgress без маршалинга в SynchronizationContext (стандартный Progress<T> постит
+    // асинхронно): бэкафилл идёт в фоне старта, колбэк должен дёргаться синхронно и по порядку.
+    private sealed class SyncProgress<T>(Action<T> handler) : IProgress<T>
+    {
+        public void Report(T value) => handler(value);
     }
 }

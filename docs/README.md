@@ -15,6 +15,7 @@ EF Core/SQLite). Здесь описано, **как устроено и как 
 ### Архитектура ([architecture/](architecture/))
 - [overview.md](architecture/overview.md) — слои, запуск, MVVM/code-behind.
 - [data-model.md](architecture/data-model.md) — модели и таблицы.
+- [db-schema.md](architecture/db-schema.md) — справочник схемы: оба файла, все таблицы и колонки, ключи, индексы.
 - [databases.md](architecture/databases.md) — два SQLite-файла, миграции, пути, WAL.
 - [multi-database.md](architecture/multi-database.md) — несколько БД одновременно.
 - [users-permissions.md](architecture/users-permissions.md) — пользователи, допуск, права, пароль базы, журнал изменений.

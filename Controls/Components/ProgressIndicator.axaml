@@ -7,9 +7,13 @@
          фаза (жирным) → доп. строка → полоса + проценты справа. -->
     <StackPanel Spacing="10">
 
+        <!-- Перенос до двух строк: имена баз в фазе — пользовательские, любой длины;
+             обрезание среди фразы делало сообщение нечитаемым (дальше — многоточие). -->
         <TextBlock x:Name="PhaseText"
                    Text=""
                    IsVisible="False"
+                   TextWrapping="Wrap"
+                   MaxLines="2"
                    TextTrimming="CharacterEllipsis"
                    FontWeight="{StaticResource FontWeightBold}"
                    Foreground="{StaticResource BrushPrimaryText}" />

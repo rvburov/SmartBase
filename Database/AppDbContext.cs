@@ -15,9 +15,7 @@ public class AppDbContext : DbContext
     public DbSet<UiColWidthEntity>         UiColWidths          { get; set; } = null!;
     public DbSet<UiRowHeightEntity>        UiRowHeights         { get; set; } = null!;
     public DbSet<UiCollectionSettingEntity> UiCollectionSettings { get; set; } = null!;
-    public DbSet<SystemFieldMetaEntity>    SystemFieldMeta      { get; set; } = null!;
-    public DbSet<ColumnOrderEntity>        ColumnOrder          { get; set; } = null!;
-    public DbSet<ColumnDisplayEntity>      ColumnDisplay        { get; set; } = null!;
+    public DbSet<ColumnMetaEntity>         ColumnMeta           { get; set; } = null!;
     public DbSet<RecordDisplayEntity>      RecordDisplay        { get; set; } = null!;
     public DbSet<DbUserEntity>             DbUsers              { get; set; } = null!;
     public DbSet<DbPermissionEntity>       DbPermissions        { get; set; } = null!;
@@ -49,15 +47,30 @@ public class AppDbContext : DbContext
     /// </summary>
     public void ApplyPerformancePragmas()
     {
+        // Сетевой путь (SMB/NFS, см. NetworkPath): другой профиль надёжности — БД общая,
+        // с ней могут работать несколько пользователей с разных машин:
+        //  • busy_timeout 15 с — чужие писатели по сети держат замок дольше;
+        //  • synchronous=FULL — журнал DELETE (не WAL, см. DatabaseManager.ApplyJournalMode),
+        //    NORMAL в rollback-режиме допускает порчу при сбое питания сервера;
+        //  • mmap_size=0 — mmap поверх сетевой ФС прямо не рекомендован SQLite
+        //    (когерентность кеша страниц между машинами не гарантируется).
+        var shared = NetworkPath.IsNetwork(_dbPath);
+
         // Каскадное удаление (записи→значения, коллекция→поля/настройки) держится на FK ON DELETE
         // CASCADE — а оно работает только при включённом enforcement. Включаем явно на КАЖДОМ
         // подключении (и фоновом), чтобы batched-удаление и удаление группы/коллекции не оставляли
         // «осиротевшие» значения/поля. PRAGMA вне транзакции (вызываем сразу после создания контекста).
         Database.ExecuteSqlRaw("PRAGMA foreign_keys=ON;");
-        Database.ExecuteSqlRaw("PRAGMA busy_timeout=10000;");   // ждать чужого писателя, не падать SQLITE_BUSY
-        Database.ExecuteSqlRaw("PRAGMA synchronous=NORMAL;");   // с WAL безопасно и быстрее коммитов
+        Database.ExecuteSqlRaw(shared
+            ? "PRAGMA busy_timeout=15000;"
+            : "PRAGMA busy_timeout=10000;");   // ждать чужого писателя, не падать SQLITE_BUSY
+        Database.ExecuteSqlRaw(shared
+            ? "PRAGMA synchronous=FULL;"
+            : "PRAGMA synchronous=NORMAL;");   // с WAL локально безопасно и быстрее коммитов
         Database.ExecuteSqlRaw("PRAGMA temp_store=MEMORY;");
-        Database.ExecuteSqlRaw("PRAGMA mmap_size=268435456;");  // чтение индексов через mmap, а не syscalls
+        Database.ExecuteSqlRaw(shared
+            ? "PRAGMA mmap_size=0;"
+            : "PRAGMA mmap_size=268435456;");  // локально: чтение индексов через mmap, а не syscalls
         Database.ExecuteSqlRaw("PRAGMA cache_size=-65536;");    // ~64 МБ страничного кеша
     }
 
@@ -73,8 +86,33 @@ public class AppDbContext : DbContext
     public void ApplyBulkPerformancePragmas()
     {
         ApplyPerformancePragmas();
-        Database.ExecuteSqlRaw("PRAGMA mmap_size=2147483648;");
+        // На сетевом пути mmap остаётся выключенным (см. ApplyPerformancePragmas) —
+        // поднимаем только страничный кеш.
+        if (!NetworkPath.IsNetwork(_dbPath))
+            Database.ExecuteSqlRaw("PRAGMA mmap_size=2147483648;");
         Database.ExecuteSqlRaw("PRAGMA cache_size=-524288;");
+    }
+
+    /// <summary>
+    /// Прагмы для РАЗОВЫХ миграций схемы — вызывать ДО <c>Database.Migrate()</c>, когда есть
+    /// ожидающие миграции. Table-rebuild миграции (пример: SchemaCompact) перекладывают миллионы
+    /// строк, а с дефолтным кешем SQLite ~2 МБ и без mmap это часы вместо минут. Отличия от
+    /// <see cref="ApplyBulkPerformancePragmas"/>: <c>foreign_keys</c> НЕ включаем (дефолтный OFF —
+    /// перекладка идёт без FK-проверки на каждую строку, сами объявления FK копируются в DDL);
+    /// <c>temp_store</c> оставляем дисковым (внешняя сортировка ORDER BY на гигабайтах не должна
+    /// раздувать память). После Migrate() основной контекст возвращается к обычному профилю —
+    /// TunePerformancePragmas перезаписывает кеш/mmap штатными значениями.
+    /// </summary>
+    public void ApplyMigrationPragmas()
+    {
+        var shared = NetworkPath.IsNetwork(_dbPath);
+        Database.ExecuteSqlRaw("PRAGMA busy_timeout=10000;");
+        // На сетевом пути — FULL и без mmap (те же причины, что в ApplyPerformancePragmas):
+        // разовая миграция общей базы медленнее, но не рискует файлом при сбое сервера.
+        Database.ExecuteSqlRaw(shared ? "PRAGMA synchronous=FULL;" : "PRAGMA synchronous=NORMAL;");
+        if (!shared) Database.ExecuteSqlRaw("PRAGMA mmap_size=2147483648;");
+        Database.ExecuteSqlRaw("PRAGMA cache_size=-524288;");
+        Database.ExecuteSqlRaw("PRAGMA threads=4;");   // воркеры сортировщика (no-op, если сборка SQLite без них)
     }
 
     protected override void OnModelCreating(ModelBuilder model)
@@ -135,8 +173,10 @@ public class AppDbContext : DbContext
         model.Entity<DbFieldValueEntity>(e =>
         {
             e.ToTable("db_field_values");
-            e.HasKey(x => x.Id);
-            e.HasIndex(x => new { x.RecordId, x.FieldId }).IsUnique();
+            // Естественный PK (RecordId, FieldId): физически таблица WITHOUT ROWID (см. миграцию
+            // SchemaCompact) — кластеризована по PK, значения одной записи лежат рядом, и отдельный
+            // уникальный индекс пары не нужен (минус целое B-дерево на самой большой таблице).
+            e.HasKey(x => new { x.RecordId, x.FieldId });
             // Фильтр по значению поля (Value IN ...) и подсчёт уникальных значений (GROUP BY Value)
             // идут по этому индексу — иначе скан всех значений поля. См. GetFilteredRecordIds.
             e.HasIndex(x => new { x.FieldId, x.Value });
@@ -200,21 +240,9 @@ public class AppDbContext : DbContext
             e.HasKey(x => x.CollectionId);
         });
 
-        model.Entity<SystemFieldMetaEntity>(e =>
+        model.Entity<ColumnMetaEntity>(e =>
         {
-            e.ToTable("system_field_meta");
-            e.HasKey(x => new { x.CollectionId, x.Key });
-        });
-
-        model.Entity<ColumnOrderEntity>(e =>
-        {
-            e.ToTable("column_order");
-            e.HasKey(x => new { x.CollectionId, x.Key });
-        });
-
-        model.Entity<ColumnDisplayEntity>(e =>
-        {
-            e.ToTable("column_display");
+            e.ToTable("column_meta");
             e.HasKey(x => new { x.CollectionId, x.Key });
         });
 
