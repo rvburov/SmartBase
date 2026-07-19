@@ -174,6 +174,15 @@ public partial class ConstructorControllerView : UserControl
             SelectCollection(_currentCollectionId.Value);
     }
 
+    /// <summary>Пользователь сейчас редактирует ячейку таблицы — фоновая синхронизация
+    /// чужих правок (ChangePoller) откладывает обновление, чтобы не затирать ввод.</summary>
+    public bool IsCellEditing => TableViewCtrl.IsVisible && TableViewCtrl.IsCellEditing;
+
+    /// <summary>Чужие правки записей из другой копии приложения (мультипользовательская
+    /// синхронизация): обновить строки открытой коллекции на месте — без пересборки
+    /// колонок и мелькания (число записей могло измениться → структурный путь).</summary>
+    public void RefreshRowsRemote() => RefreshRows(structural: true);
+
     // Лёгкое обновление при изменении ТОЛЬКО строк (создание/удаление/дубль/сдвиг записей,
     // видимость записей): в таблице пересобираем только строки (ReloadRows) — набор колонок
     // не трогаем, поэтому при 1000 свойств нет «моргания» и тяжёлой пересборки. Для режима

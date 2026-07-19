@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using SmartBase.Core.Models;
 using SmartBase.Database.Repositories;
+using SmartBase.Utils;
 
 namespace SmartBase.ViewModels.ConstructorDb;
 
@@ -70,11 +71,19 @@ public partial class RecordPageViewModel : ObservableObject
             OrderedItems.Add(item);
     }
 
-    public void SaveTitle() =>
-        _repository.SetRecordTitle(RecordId, Title ?? "");
+    // Ошибки записи (файл занят/пропал в многопользовательском режиме) гасятся тостом —
+    // панель не падает, значение останется в буфере до следующего сохранения.
+    public void SaveTitle()
+    {
+        try { _repository.SetRecordTitle(RecordId, Title ?? ""); }
+        catch (Exception ex) when (DbErrors.Handle(ex, _repository.DbPath)) { }
+    }
 
-    public void SaveMarkdown() =>
-        _repository.SetRecordDescription(RecordId, MarkdownText);
+    public void SaveMarkdown()
+    {
+        try { _repository.SetRecordDescription(RecordId, MarkdownText); }
+        catch (Exception ex) when (DbErrors.Handle(ex, _repository.DbPath)) { }
+    }
 }
 
 /// <summary>Элемент списка панели записи: пользовательское свойство либо системное «Описание».</summary>
@@ -104,6 +113,7 @@ public partial class PropertyRowVm : ObservableObject
 
     public void Persist()
     {
-        _repository.SetFieldValue(_recordId, Field.Id!.Value, Value ?? "");
+        try { _repository.SetFieldValue(_recordId, Field.Id!.Value, Value ?? ""); }
+        catch (Exception ex) when (DbErrors.Handle(ex, _repository.DbPath)) { }
     }
 }

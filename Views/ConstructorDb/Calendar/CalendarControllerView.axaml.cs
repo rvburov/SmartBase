@@ -67,6 +67,15 @@ public partial class CalendarControllerView : UserControl
         return DefaultRepo;
     }
 
+    // Запись в БД календаря с обработкой ошибок многопользовательского режима: файл занят
+    // чужим писателем дольше busy_timeout или пропал → тост (Utils/DbErrors), возврат false —
+    // вызывающий перечитывает вид, чтобы событие «отпрыгнуло» к фактическому состоянию БД.
+    private static bool TryWrite(ConstructorRepository repo, Action write)
+    {
+        try { write(); return true; }
+        catch (Exception ex) when (SmartBase.Utils.DbErrors.Handle(ex, repo.DbPath)) { return false; }
+    }
+
     public CalendarControllerView() { InitializeComponent(); }
 
     // Размер шрифта меняется живьём: C#-виды строят ячейки с размером из ресурса, поэтому
@@ -166,7 +175,9 @@ public partial class CalendarControllerView : UserControl
         // −1 старому дню, +1 новому — сетка и карта «+N ещё» правятся на месте, без перезагрузки.
         MonthViewCtrl.RecordMoved            += (_, m) =>
         {
-            RepoOf(m.Rec).UpdateCalendarRecord(m.Rec);
+            // Не записалось (база занята/пропала) — перечитываем вид, событие «отпрыгивает».
+            if (!TryWrite(RepoOf(m.Rec), () => RepoOf(m.Rec).UpdateCalendarRecord(m.Rec)))
+            { RefreshCurrent(); return; }
             var old = new CalendarRecord
             {
                 DbId    = m.Rec.DbId,    Id      = m.Rec.Id,    FieldId = m.Rec.FieldId,
@@ -188,7 +199,7 @@ public partial class CalendarControllerView : UserControl
         // не меняется): сетка правится НА МЕСТЕ без чтения окна. Месяц — полной загрузкой:
         // при переносе между днями старый день записи уже неизвестен (r мутирован drag'ом),
         // карту счётчиков «+N ещё» точно не поправить.
-        DayViewCtrl.RecordMoved                += (_, r) => { RepoOf(r).UpdateCalendarRecord(r); _journalDelta = [(r, -1), (r, +1)]; NotifyChangedAndRefresh(); };
+        DayViewCtrl.RecordMoved                += (_, r) => { if (!TryWrite(RepoOf(r), () => RepoOf(r).UpdateCalendarRecord(r))) { RefreshCurrent(); return; } _journalDelta = [(r, -1), (r, +1)]; NotifyChangedAndRefresh(); };
         DayViewCtrl.RecordDeleteRequested      += (_, r) => _ = DeleteRecordsWithConfirm([r]);
         DayViewCtrl.RecordsDeleteRequested     += (_, rs) => _ = DeleteRecordsWithConfirm(rs);
         DayViewCtrl.RecordDuplicateRequested   += (_, r) => _ = DuplicateRecordsWithConfirm([r]);
@@ -196,7 +207,7 @@ public partial class CalendarControllerView : UserControl
         DayViewCtrl.AllDayCreationRequested    += (_, d)  => _ = OpenAddAllDayDialog(d);
         DayViewCtrl.TimeSlotCreationRequested  += (_, dt) => _ = OpenAddDialog(dt.Date, dt.TimeOfDay);
         WeekViewCtrl.RecordClicked             += (_, r) => _ = OpenEditDialog(r);
-        WeekViewCtrl.RecordMoved               += (_, r) => { RepoOf(r).UpdateCalendarRecord(r); _journalDelta = [(r, -1), (r, +1)]; NotifyChangedAndRefresh(); };
+        WeekViewCtrl.RecordMoved               += (_, r) => { if (!TryWrite(RepoOf(r), () => RepoOf(r).UpdateCalendarRecord(r))) { RefreshCurrent(); return; } _journalDelta = [(r, -1), (r, +1)]; NotifyChangedAndRefresh(); };
         WeekViewCtrl.RecordDeleteRequested     += (_, r) => _ = DeleteRecordsWithConfirm([r]);
         WeekViewCtrl.RecordsDeleteRequested    += (_, rs) => _ = DeleteRecordsWithConfirm(rs);
         WeekViewCtrl.RecordDuplicateRequested  += (_, r) => _ = DuplicateRecordsWithConfirm([r]);
@@ -205,7 +216,7 @@ public partial class CalendarControllerView : UserControl
         WeekViewCtrl.TimeSlotCreationRequested += (_, dt) => _ = OpenAddDialog(dt.Date, dt.TimeOfDay);
         DiagramViewCtrl.RecordClicked          += (_, r) => _ = OpenEditDialog(r);
         // Перенос/растяжение дат в Диаграмме — дельтой, как в Дне/Неделе (ключ не меняется).
-        DiagramViewCtrl.RecordMoved            += (_, r) => { RepoOf(r).UpdateCalendarRecord(r); _journalDelta = [(r, -1), (r, +1)]; NotifyChangedAndRefresh(); };
+        DiagramViewCtrl.RecordMoved            += (_, r) => { if (!TryWrite(RepoOf(r), () => RepoOf(r).UpdateCalendarRecord(r))) { RefreshCurrent(); return; } _journalDelta = [(r, -1), (r, +1)]; NotifyChangedAndRefresh(); };
         DiagramViewCtrl.RecordDeleteRequested     += (_, r)  => _ = DeleteRecordsWithConfirm([r]);
         DiagramViewCtrl.RecordsDeleteRequested    += (_, rs) => _ = DeleteRecordsWithConfirm(rs);
         DiagramViewCtrl.RecordDuplicateRequested  += (_, r)  => _ = DuplicateRecordsWithConfirm([r]);
@@ -408,11 +419,13 @@ public partial class CalendarControllerView : UserControl
         // событий года (сотни тысяч строк, ~0.7–1.5 с) было последним местом сетки, где
         // оверлей «Загрузка…» ещё успевал появиться при листании.
         var skipEvents = viewIdx == 5 && !hasSearch;
+        string? loadingPath = null;   // путь читаемой БД — для сигнала монитору при сбое
         try
         {
             if (!skipEvents)
                 foreach (var (dbId, _, repo) in _dbs.ToList())
                 {
+                    loadingPath = repo.DbPath;
                     ISet<int>? active = _activeByDb is not null && _activeByDb.TryGetValue(dbId, out var s) ? s : null;
                     // Диаграмма — свой загрузчик «по коллекциям» (cap на коллекцию, а не на
                     // день): её окно бывает десятилетием, и per-day чтение сеток стоило бы
@@ -425,9 +438,12 @@ public partial class CalendarControllerView : UserControl
                     records.AddRange(part);
                 }
         }
-        catch
+        catch (Exception ex)
         {
             // БД недоступна/занята — оставляем прежнее содержимое вида, оверлей снимаем.
+            // «Файл пропал» дополнительно сигналит монитору доступности (DbErrors) —
+            // иначе календарь молча показывал бы устаревшие данные до следующей пробы.
+            SmartBase.Utils.DbErrors.HandleRead(ex, loadingPath);
             if (gen == _gridGen) { _gridAppliedGen = gen; GridLoadingOverlay.IsVisible = false; }
             return;
         }
@@ -612,7 +628,7 @@ public partial class CalendarControllerView : UserControl
         var result = await dlg.ShowDialog<RecordDialogResult?>(win);
         if (result?.Record is not null)
         {
-            RepoOf(result.Record).AddCalendarRecord(result.Record);
+            if (!TryWrite(RepoOf(result.Record), () => RepoOf(result.Record).AddCalendarRecord(result.Record))) return;
             _journalAnchor = result.Record;   // Журнал: к созданной записи
             _journalDelta  = [(result.Record, +1)];
             NotifyChangedAndRefresh();
@@ -627,7 +643,7 @@ public partial class CalendarControllerView : UserControl
         var result = await dlg.ShowDialog<RecordDialogResult?>(win);
         if (result?.Record is not null)
         {
-            RepoOf(result.Record).AddCalendarRecord(result.Record);
+            if (!TryWrite(RepoOf(result.Record), () => RepoOf(result.Record).AddCalendarRecord(result.Record))) return;
             _journalAnchor = result.Record;   // Журнал: к созданной записи
             _journalDelta  = [(result.Record, +1)];
             NotifyChangedAndRefresh();
@@ -657,7 +673,7 @@ public partial class CalendarControllerView : UserControl
 
         if (result.Deleted)
         {
-            RepoOf(r).DeleteCalendarRecord(r.Id!.Value);
+            if (!TryWrite(RepoOf(r), () => RepoOf(r).DeleteCalendarRecord(r.Id!.Value))) return;
             _journalDelta = [(r, -1)];
         }
         else if (result.Record is not null)
@@ -672,12 +688,16 @@ public partial class CalendarControllerView : UserControl
             if (rec.DbId == r.DbId)
             {
                 var repo = RepoOf(rec);
-                // Перенос даты в другое поле той же записи (та же коллекция): очищаем старое
-                // поле, чтобы дата не осталась в обоих — событие переезжает целиком.
-                if (rec.CollectionId == r.CollectionId && r.FieldId > 0 &&
-                    rec.FieldId != r.FieldId && r.Id is int rid)
-                    repo.SetFieldValue(rid, r.FieldId, "");
-                repo.UpdateCalendarRecord(rec);
+                var ok = TryWrite(repo, () =>
+                {
+                    // Перенос даты в другое поле той же записи (та же коллекция): очищаем старое
+                    // поле, чтобы дата не осталась в обоих — событие переезжает целиком.
+                    if (rec.CollectionId == r.CollectionId && r.FieldId > 0 &&
+                        rec.FieldId != r.FieldId && r.Id is int rid)
+                        repo.SetFieldValue(rid, r.FieldId, "");
+                    repo.UpdateCalendarRecord(rec);
+                });
+                if (!ok) return;
             }
             else
             {
@@ -686,11 +706,15 @@ public partial class CalendarControllerView : UserControl
                 // чтобы не затереть выставленную AddCalendarRecord дату.
                 var sourceRepo = RepoOf(r);
                 var targetRepo = RepoOf(rec);
-                targetRepo.AddCalendarRecord(rec);
-                targetRepo.CopyFieldValuesByName(sourceRepo, r.Id!.Value, r.CollectionId ?? 0,
-                                                 rec.Id!.Value, rec.CollectionId ?? 0,
-                                                 createMissingFields: false, excludeTargetFieldId: rec.FieldId);
-                sourceRepo.DeleteCalendarRecord(r.Id!.Value);
+                var ok = TryWrite(targetRepo, () =>
+                {
+                    targetRepo.AddCalendarRecord(rec);
+                    targetRepo.CopyFieldValuesByName(sourceRepo, r.Id!.Value, r.CollectionId ?? 0,
+                                                     rec.Id!.Value, rec.CollectionId ?? 0,
+                                                     createMissingFields: false, excludeTargetFieldId: rec.FieldId);
+                    sourceRepo.DeleteCalendarRecord(r.Id!.Value);
+                });
+                if (!ok) { RefreshCurrent(); return; }
             }
             _journalAnchor = result.Record;   // Журнал: к записи на её новой дате
             _journalDelta  = [(r, -1), (result.Record, +1)];
@@ -737,7 +761,9 @@ public partial class CalendarControllerView : UserControl
             foreach (var r in targets)
             {
                 var copy = CopyOf(r);
-                RepoOf(r).AddCalendarRecord(copy);   // проставляет Id/FieldId — ключ строки копии
+                // Не записалось (база занята/пропала) — показываем тост и останавливаемся:
+                // уже созданные копии остаются, вид перечитается ниже.
+                if (!TryWrite(RepoOf(r), () => RepoOf(r).AddCalendarRecord(copy))) break;
                 copies.Add(copy);
             }
         }
@@ -766,7 +792,11 @@ public partial class CalendarControllerView : UserControl
         // на изолированных подключениях с окном прогресса (как удаление коллекции в сайдбаре):
         // цикл DeleteCalendarRecord с SaveChanges на КАЖДУЮ запись вешал UI на сотнях/тысячах.
         if (targets.Count <= SmallOpCap)
-            foreach (var r in targets) RepoOf(r).DeleteCalendarRecord(r.Id!.Value);
+        {
+            foreach (var r in targets)
+                // Не удалилось (база занята/пропала) — тост и стоп; вид перечитается ниже.
+                if (!TryWrite(RepoOf(r), () => RepoOf(r).DeleteCalendarRecord(r.Id!.Value))) break;
+        }
         else
             await BulkDeleteWithProgress(win, targets);
 

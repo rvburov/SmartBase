@@ -58,6 +58,17 @@ dotnet ef migrations add ИмяМиграции --msbuildprojectextensionspath a
 - Модель данных — [architecture/data-model.md](../architecture/data-model.md).
 - Как работают фичи — [features/](../features/).
 
+## Диагностика сбоев (crash.log)
+
+Необработанные исключения пишутся в `crash.log` рядом с данными приложения
+(`AppSettings.AppDataDir`): глобальные предохранители в [Program.cs](../../Program.cs)
+ловят `AppDomain.UnhandledException`, упавшие fire-and-forget задачи
+(`TaskScheduler.UnobservedTaskException` — паттерн `_ = Task.Run(...)` перестаёт
+убивать процесс) и исключения, выбившие UI-цикл Avalonia (у 11.2.3 нет публичного
+dispatcher-хука, поэтому это последний рубеж — основная защита остаётся за точечными
+catch в UI, см. [Utils/DbErrors](../../Utils/DbErrors.cs)). У пользователя вылет
+больше не бесследный: просите файл `crash.log` из папки данных.
+
 ## Связанные документы
 
 [[../architecture/overview]], [[../architecture/databases]], [[user-guide]]

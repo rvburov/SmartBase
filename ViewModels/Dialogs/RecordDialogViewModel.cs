@@ -42,24 +42,33 @@ public partial class RecordDialogViewModel : ViewModelBase
             return;
         }
 
-        int recordId;
-        if (_recordId is null)
+        // Ошибки записи (файл занят чужим писателем/пропал) гасятся тостом (DbErrors) —
+        // окно остаётся открытым, введённые значения не теряются, можно повторить.
+        try
         {
-            var maxPos = _constructor.GetRecords(_collectionId).Select(r => r.Position).DefaultIfEmpty(0).Max();
-            var rec = _constructor.AddRecord(new DbRecord
+            int recordId;
+            if (_recordId is null)
             {
-                CollectionId = _collectionId,
-                Position     = maxPos + 1000,
-            });
-            recordId = rec.Id!.Value;
-        }
-        else
-        {
-            recordId = _recordId.Value;
-        }
+                var maxPos = _constructor.GetRecords(_collectionId).Select(r => r.Position).DefaultIfEmpty(0).Max();
+                var rec = _constructor.AddRecord(new DbRecord
+                {
+                    CollectionId = _collectionId,
+                    Position     = maxPos + 1000,
+                });
+                recordId = rec.Id!.Value;
+            }
+            else
+            {
+                recordId = _recordId.Value;
+            }
 
-        foreach (var (fieldId, value) in Values)
-            _constructor.SetFieldValue(recordId, fieldId, value);
+            foreach (var (fieldId, value) in Values)
+                _constructor.SetFieldValue(recordId, fieldId, value);
+        }
+        catch (Exception ex) when (SmartBase.Utils.DbErrors.Handle(ex, _constructor.DbPath))
+        {
+            return;
+        }
 
         Accepted?.Invoke();
     }
@@ -67,8 +76,15 @@ public partial class RecordDialogViewModel : ViewModelBase
     [RelayCommand]
     private void Delete()
     {
-        if (_recordId.HasValue)
-            _constructor.DeleteRecord(_recordId.Value);
+        try
+        {
+            if (_recordId.HasValue)
+                _constructor.DeleteRecord(_recordId.Value);
+        }
+        catch (Exception ex) when (SmartBase.Utils.DbErrors.Handle(ex, _constructor.DbPath))
+        {
+            return;
+        }
         DeleteRequested?.Invoke();
     }
 }

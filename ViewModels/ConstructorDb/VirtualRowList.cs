@@ -160,9 +160,12 @@ internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollecti
                                                  afterPos, afterId, beforePos, beforeId);
             Dispatcher.UIThread.Post(() => FillFromData(gen, page, data.Records, data.Values));
         }
-        catch
+        catch (Exception ex)
         {
-            // Фоновая загрузка: ошибку проглатываем — строки останутся «Загрузка…» до повторного запроса.
+            // Фоновая загрузка: ошибку проглатываем — строки останутся «Загрузка…» до повторного
+            // запроса. Но «файл пропал» сигналит монитору доступности (DbErrors.HandleRead) —
+            // иначе таблица висела бы в вечной «Загрузке…» вместо честного «база недоступна».
+            SmartBase.Utils.DbErrors.HandleRead(ex, _repo.DbPath);
         }
         finally
         {

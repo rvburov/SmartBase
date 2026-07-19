@@ -142,10 +142,17 @@ public partial class TableView : UserControl
         // не рисует вертикальные грид-линии в сабпиксельных позициях. Снап сходится
         // за один шаг (Σ весов = доступная ширина → каждая колонка == вес px).
         RecordsGrid.LayoutUpdated      += OnGridLayoutUpdated;
+        // Открыт ли редактор ячейки — фоновая синхронизация чужих правок (ChangePoller)
+        // не обновляет строки, пока пользователь печатает, чтобы не затирать ввод.
+        RecordsGrid.BeginningEdit      += (_, _) => IsCellEditing = true;
+        RecordsGrid.CellEditEnded      += (_, _) => IsCellEditing = false;
         // Delete по выделенным колонкам. Tunnel — чтобы перехватить раньше, чем
         // DataGrid обработает клавишу для редактирования/навигации.
         AddHandler(KeyDownEvent, OnTableKeyDown, RoutingStrategies.Tunnel);
     }
+
+    /// <summary>Пользователь сейчас редактирует ячейку (открыт cell-editor DataGrid).</summary>
+    public bool IsCellEditing { get; private set; }
 
     // Окно, на которое навешен обработчик Delete для записей (см. OnTopLevelKeyDown).
     private TopLevel? _keyHookTopLevel;

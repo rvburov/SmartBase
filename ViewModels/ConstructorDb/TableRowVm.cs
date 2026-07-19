@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using SmartBase.Core.Models;
 using SmartBase.Database.Repositories;
+using SmartBase.Utils;
 
 namespace SmartBase.ViewModels.ConstructorDb;
 
@@ -119,11 +120,15 @@ public class TableRowVm : INotifyPropertyChanged
             if (IsAddRow || IsLoading) return;
             var newVal = value ?? "";
 
+            // Запись в БД может не пройти в многопользовательском режиме (файл занят чужим
+            // писателем дольше busy_timeout / база пропала): известные ошибки гасим тостом
+            // (DbErrors), буфер строки не меняем — ячейка показывает прежнее значение.
             if (key == TitleKey)
             {
                 if (_title == newVal) return;
+                try { _repository?.SetRecordTitle(RecordId, newVal); }
+                catch (Exception ex) when (DbErrors.Handle(ex, _repository?.DbPath)) { NotifyAllCells(); return; }
                 _title = newVal;
-                _repository?.SetRecordTitle(RecordId, newVal);
                 NotifyAllCells();
                 Edited?.Invoke(this, RecordId);
                 return;
@@ -131,8 +136,9 @@ public class TableRowVm : INotifyPropertyChanged
             if (key == DescKey)
             {
                 if (_description == newVal) return;
+                try { _repository?.SetRecordDescription(RecordId, newVal); }
+                catch (Exception ex) when (DbErrors.Handle(ex, _repository?.DbPath)) { NotifyAllCells(); return; }
                 _description = newVal;
-                _repository?.SetRecordDescription(RecordId, newVal);
                 NotifyAllCells();
                 Edited?.Invoke(this, RecordId);
                 return;
@@ -140,8 +146,9 @@ public class TableRowVm : INotifyPropertyChanged
             if (!int.TryParse(key, out var id)) return;
             if (_values.TryGetValue(id, out var old) && old == newVal) return;
 
+            try { _repository?.SetFieldValue(RecordId, id, newVal); }
+            catch (Exception ex) when (DbErrors.Handle(ex, _repository?.DbPath)) { NotifyAllCells(); return; }
             _values[id] = newVal;
-            _repository?.SetFieldValue(RecordId, id, newVal);
             NotifyAllCells();
             Edited?.Invoke(this, RecordId);
         }

@@ -18,6 +18,19 @@ internal sealed class Program
     [STAThread]
     public static void Main(string[] args)
     {
+        // Глобальные предохранители: НЕобработанные исключения пишутся в crash.log рядом с
+        // данными приложения (иначе у конечного пользователя вылет бесследный, диагностировать
+        // нечего). Основная защита — точечные catch в UI (Utils/DbErrors и др.), это последний рубеж.
+        AppDomain.CurrentDomain.UnhandledException += (_, e) =>
+            LogCrash("unhandled", e.ExceptionObject as Exception);
+        // Упавшие fire-and-forget задачи (паттерн `_ = Task.Run(...)`): фиксируем в лог и
+        // помечаем наблюдёнными — иначе финализатор может завершить процесс.
+        TaskScheduler.UnobservedTaskException += (_, e) =>
+        {
+            LogCrash("unobserved-task", e.Exception);
+            e.SetObserved();
+        };
+
         // Legacy-кодировки (Windows-1251 для CSV, кодировки старых .xls): в .NET их нет из
         // коробки, провайдер регистрируется один раз на процесс. Нужен импорту таблиц.
         Core.Importers.TableSources.EncodingSetup.Ensure();
@@ -35,7 +48,32 @@ internal sealed class Program
 
         Mode = ResolveMode(args);
         if (Mode == SetupMode.App) AppSettings.EnsureCreated();
-        BuildAvaloniaApp().StartWithClassicDesktopLifetime(args);
+        try
+        {
+            BuildAvaloniaApp().StartWithClassicDesktopLifetime(args);
+        }
+        catch (Exception ex)
+        {
+            // В Avalonia 11 нет публичного dispatcher-хука: исключение из UI-обработчика
+            // валит цикл и приходит сюда. Восстановить сеанс нельзя — но причина останется
+            // в crash.log для диагностики.
+            LogCrash("ui-loop", ex);
+            throw;
+        }
+    }
+
+    // Дозапись в crash.log (best-effort: сбой логирования не должен маскировать исходную ошибку).
+    private static void LogCrash(string source, Exception? ex)
+    {
+        try
+        {
+            var path = Path.Combine(AppSettings.AppDataDir, "crash.log");
+            Directory.CreateDirectory(AppSettings.AppDataDir);
+            File.AppendAllText(path,
+                $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {source} v{AppSettings.AppVersion}{Environment.NewLine}" +
+                $"{ex}{Environment.NewLine}{Environment.NewLine}");
+        }
+        catch { }
     }
 
     // Режим установщика включается аргументом (--install/--uninstall) или именем раздачи

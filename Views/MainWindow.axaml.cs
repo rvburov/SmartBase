@@ -1,4 +1,5 @@
 using Avalonia.Controls;
+using Avalonia.Threading;
 using Avalonia.VisualTree;
 using SmartBase.Controls.Components;
 using SmartBase.Controls.Dialogs;
@@ -15,6 +16,18 @@ namespace SmartBase.Views;
 public partial class MainWindow : Window
 {
     private readonly Workspace _workspace;
+    // Фоновая очередь монтирования: старт открывает только дефолтную БД, остальные
+    // догружаются здесь по одной; сайдбар показывает их заглушками со статусом.
+    private readonly MountQueue _mountQueue;
+    // Монитор доступности: общая база в сетевой папке может пропасть на ходу (сервер
+    // выключили, файл удалили) — база размонтируется со статусом «недоступна» и
+    // уведомлением, монитор сам ретраит и возвращает её, когда файл снова доступен.
+    private readonly DbHealthMonitor _health;
+    // Фоновая проверка чужих правок (~3 с): другие пользователи общей базы (сетевая папка)
+    // или другая копия приложения меняют данные — сайдбары/таблица/календарь обновляются сами.
+    private readonly ChangePoller _changes;
+    // БД, потерянные на ходу — чтобы при возврате показать «снова доступна».
+    private readonly HashSet<int> _lostDbIds = [];
     private readonly CategoryRepository _categories;
     private readonly ConstructorRepository _constructor;
     private string _activeModule = "calendar";
@@ -41,17 +54,80 @@ public partial class MainWindow : Window
         InitializeComponent();
 
         _workspace   = workspace;
+        _mountQueue  = new MountQueue(workspace);
+        _health      = new DbHealthMonitor(workspace, _mountQueue);
+        _changes     = new ChangePoller(workspace, _health);
+
+        // Ошибки записи на пользовательских действиях (правка ячейки, CRUD): «занята» —
+        // тост, «недоступна» — тост + сигнал монитору. См. Utils/DbErrors.
+        DbErrors.Notify        = Notify;
+        DbErrors.ReportFailure = _health.ReportFailureByPath;
         // Календарь и панель записи пока работают с дефолтной БД (мульти-БД календаря — Этап 3.3).
         _categories  = workspace.Default.Categories;
         _constructor = workspace.Default.Constructor;
         _currentConstructorDbId = workspace.Default.DbId;
 
-        // Раздел настроек «Управление базой данных»: реестр + статус монтирования.
-        SettingsModule.Initialize(workspace.Registry, dbId => _workspace.Get(dbId) is not null);
+        // Живой статус очереди: процент/оценка времени — только текст заглушки в сайдбарах
+        // (без перестройки дерева), смена состояния — ещё и список БД в настройках.
+        // События очереди приходят из фонового потока — маршалим в UI.
+        _mountQueue.Changed += (dbId, stateChanged) => Dispatcher.UIThread.Post(() =>
+        {
+            if (_mountQueue.StatusOf(dbId) is { } st)
+            {
+                var failed = st.State == MountQueue.ItemState.Failed;
+                ConstructorSidebar.UpdatePendingStatus(dbId, st.Text, failed);
+                CalendarSidebar.UpdatePendingStatus(dbId, st.Text, failed);
+                TasksSidebar.UpdatePendingStatus(dbId, st.Text, failed);
+                // Список БД в настройках живёт теми же процентами/временем, что и сайдбар.
+                SettingsModule.UpdateQueueStatus(dbId, st.Text, failed);
+            }
+            if (stateChanged) SettingsModule.RefreshDatabases();
+        });
+        _mountQueue.Completed += (dbId, manager) => Dispatcher.UIThread.Post(() =>
+        {
+            // Базу отключили в настройках, пока она монтировалась, — запись из реестра
+            // уже удалена: тихо размонтируем, чтобы не осталось «призрака».
+            if (manager is not null && _workspace.Registry.GetAll().All(d => d.Id != dbId))
+            {
+                _workspace.Unmount(dbId);
+                return;
+            }
+            if (manager is null)
+            {
+                // Не смонтировалась (нет сети/файла) — отдаём монитору под фоновые ретраи:
+                // сервер включится — база подключится сама, без действий пользователя.
+                var entry = _workspace.Registry.GetAll().FirstOrDefault(d => d.Id == dbId);
+                if (entry is not null) _health.TrackFailed(entry);
+            }
+            else if (_lostDbIds.Remove(dbId))
+                Notify($"База данных «{manager.Name}» снова доступна.");
+            SyncMountedToUi();   // узел «оживает»: календарь/задачи подхватывают данные
+        });
+
+        // Потеря БД на ходу: размонтировать (как при отключении, но без удаления из
+        // реестра), показать заглушку «недоступна» и уведомление; ретраит монитор.
+        _health.DatabaseLost += (dbId, reason) =>
+            Dispatcher.UIThread.Post(() => OnDatabaseLost(dbId, reason));
+
+        // Чужие правки из другой копии приложения → обновить затронутые части UI.
+        _changes.RemoteChanges += (dbId, rows) =>
+            Dispatcher.UIThread.Post(() => OnRemoteChanges(dbId, rows));
+
+        // Раздел настроек «Управление базой данных»: реестр + статус монтирования/очереди.
+        SettingsModule.Initialize(workspace.Registry,
+            dbId => _workspace.Get(dbId) is not null,
+            dbId => _mountQueue.StatusOf(dbId) is { } st
+                ? (st.Text, st.State == MountQueue.ItemState.Failed)
+                : null);
 
         // Live mount/unmount: добавление/удаление БД в настройках сразу отражается в
-        // сайдбаре конструктора без перезапуска.
-        SettingsModule.DatabaseAdded += async (_, entry) => await MountWithProgressAsync(entry);
+        // сайдбаре конструктора без перезапуска. Новая база встаёт в хвост очереди —
+        // даже если сейчас мигрирует другая, ничего не блокируется.
+        SettingsModule.DatabaseAdded += (_, entry) =>
+        {
+            _mountQueue.Enqueue(entry);
+            SyncMountedToUi();   // заглушка «в очереди…» появляется сразу
+        };
         SettingsModule.DatabaseRemoved += (_, dbId) =>
         {
             // Если открыта коллекция удаляемой БД — отвязываем модуль на дефолтную БД.
@@ -60,14 +136,19 @@ public partial class MainWindow : Window
                 _currentConstructorDbId = _workspace.Default.DbId;
                 ConstructorModule.DetachDatabase(_workspace.Default.Constructor);
             }
+            _mountQueue.Forget(dbId);
+            _health.Forget(dbId);
+            _lostDbIds.Remove(dbId);
             _workspace.Unmount(dbId);
             SyncMountedToUi();
         };
-        SettingsModule.DatabaseReconnectRequested += async (_, dbId) =>
+        SettingsModule.DatabaseReconnectRequested += (_, dbId) =>
         {
             // Повторная попытка монтирования (например, сетевая папка снова доступна).
             var entry = _workspace.Registry.GetAll().FirstOrDefault(d => d.Id == dbId);
-            if (entry is not null) await MountWithProgressAsync(entry);
+            if (entry is null) return;
+            _mountQueue.Enqueue(entry);
+            SyncMountedToUi();
         };
 
         // Инициализируем модули через AXAML-конструкторы.
@@ -84,6 +165,11 @@ public partial class MainWindow : Window
         TasksSidebar.InitializeWorkspace(GrantedDbs(), Controls.Components.SidebarMode.Tasks);
         ConstructorSidebar.InitializeWorkspace(workspace.Mounted, Controls.Components.SidebarMode.Constructor);
         ConstructorSidebar.DatabaseUnlockRequested += async (_, dbId) => await RequestDatabaseUnlock(dbId);
+
+        // Клик по заглушке немонтированной базы — подсказка с текущим статусом.
+        ConstructorSidebar.PendingDatabaseTapped += async (_, dbId) => await ShowPendingDatabaseInfo(dbId);
+        CalendarSidebar.PendingDatabaseTapped    += async (_, dbId) => await ShowPendingDatabaseInfo(dbId);
+        TasksSidebar.PendingDatabaseTapped       += async (_, dbId) => await ShowPendingDatabaseInfo(dbId);
 
         // Начальное состояние: раздел при запуске берём из настроек (стандарт — конструктор).
         var startupModule = AppSettings.LoadStartupModule();
@@ -235,7 +321,12 @@ public partial class MainWindow : Window
 
         // При потере фокуса окном закрываем открытые контекстные меню/flyout —
         // иначе на macOS popup «зависает» поверх других приложений (Avalonia issue).
-        Deactivated += (_, _) => CloseOpenPopups();
+        // Заодно переводим синхронизацию чужих правок в экономный режим.
+        Deactivated += (_, _) =>
+        {
+            CloseOpenPopups();
+            _changes.SetForeground(false);
+        };
 
         // Уровень масштабирования: применяем сохранённый и реагируем на изменения из настроек.
         ApplyScale(Scaling.Current);
@@ -244,12 +335,52 @@ public partial class MainWindow : Window
 
         // Автообновление: тихая проверка после открытия окна (уже показанное окно —
         // владелец модалки «Обновить/Отмена»). Проверка папки идёт в фоне, UI не блокирует.
+        // В фоне (окно неактивно) частота проверки чужих правок снижается.
+        Activated += (_, _) => _changes.SetForeground(true);
+
         Opened += async (_, _) =>
         {
+            // Остальные БД реестра — в фоновую очередь (мелкие первыми): окно уже показано,
+            // пользователь работает с дефолтной базой, остальные оживают по мере готовности.
+            // Затем — монитор доступности (пропажа сервера/файла) и синхронизация чужих правок.
+            StartBackgroundMounts();
+            _health.Start();
+            _changes.Start();
+
             if (AppSettings.LoadAutoUpdate())
                 await SettingsModule.CheckForUpdatesOnStartupAsync();
         };
+        // Выход во время фонового обновления базы: прогресс перекладки сохраняется
+        // (возобновляемая миграция — см. DatabaseManager.SchemaCompact), но честно
+        // предупреждаем, что обновление продолжится при следующем запуске.
+        Closing += async (_, e) =>
+        {
+            if (_closeConfirmed) return;
+            var busy = _mountQueue.Pending().FirstOrDefault(p => p.State == MountQueue.ItemState.Mounting);
+            if (busy is null) return;
+
+            e.Cancel = true;
+            var ok = await new ConfirmDialog(
+                $"База данных «{busy.Name}» сейчас обновляется ({busy.Text}). " +
+                "Можно выйти: прогресс сохранён, обновление продолжится с этого места " +
+                "при следующем запуске.", "Выйти")
+                .ShowDialog<bool>(this);
+            if (ok)
+            {
+                _closeConfirmed = true;
+                Close();
+            }
+        };
+
+        Closed += (_, _) =>
+        {
+            _changes.Dispose();
+            _health.Dispose();
+        };
     }
+
+    // Выход уже подтверждён диалогом «база обновляется» — повторно не спрашиваем.
+    private bool _closeConfirmed;
 
     // Масштаб всего интерфейса: LayoutTransform на корне — содержимое перекомпоновывается в
     // логических пикселях и заполняет окно. 100 % → без трансформации (быстрый общий путь).
@@ -275,28 +406,124 @@ public partial class MainWindow : Window
             table.CloseTransientPopups();
     }
 
-    // Смонтировать БД В ФОНЕ: открытие большого файла — секунды и более (миграции, WAL,
-    // самолечение раздутого файла, бэкафилл при первом открытии старой БД), UI-поток не
-    // блокируем. Окно «Подключение…» появляется, только если монтирование дольше 400 мс —
-    // как у массовых операций (быстрое подключение маленькой БД не мигает окном).
-    private async Task MountWithProgressAsync(DatabaseRefEntity entry)
+    // Поставить в фоновую очередь все БД реестра, кроме уже смонтированных (стартовая
+    // партия сортируется по размеру файла — мелкие оживают почти сразу). Вызывается после
+    // показа окна: пользователь сразу работает с дефолтной базой, остальные догружаются
+    // по одной, их узлы в сайдбаре показывают живой статус.
+    private void StartBackgroundMounts()
     {
-        var bg = Task.Run(() => _workspace.Mount(entry));
-
-        if (await Task.WhenAny(bg, Task.Delay(400)) != bg)
+        var rest = _workspace.Registry.GetAll()
+            .Where(d => !d.IsDefault && _workspace.Get(d.Id) is null)
+            .ToList();
+        if (rest.Count == 0) return;
+        // Сортировка партии по размеру статит файлы — зависший сетевой путь не должен
+        // держать UI-поток, поэтому постановка в очередь тоже в фоне.
+        _ = Task.Run(() =>
         {
-            var dlg = new ProgressDialog { Title = "Подключение базы данных" };
-            dlg.SetInfo($"База данных: {entry.Name}");
-            dlg.SetSaving("Подключение…");
-            var closed = dlg.ShowDialog(this);
-            await bg;
-            dlg.Done();
-            await closed;
+            _mountQueue.EnqueueStartupBatch(rest);
+            Dispatcher.UIThread.Post(SyncMountedToUi);   // заглушки «в очереди…»
+        });
+    }
+
+    // Клик по заглушке немонтированной базы: короткая подсказка, что с ней происходит.
+    private async Task ShowPendingDatabaseInfo(int dbId)
+    {
+        var st = _mountQueue.StatusOf(dbId);
+        if (st is null) return;
+        var text = st.State switch
+        {
+            MountQueue.ItemState.Queued =>
+                $"База данных «{st.Name}» в очереди на подключение — она откроется автоматически, " +
+                "работать с остальными базами можно уже сейчас.",
+            MountQueue.ItemState.Mounting =>
+                $"База данных «{st.Name}» подключается: {st.Text}. Она откроется автоматически, " +
+                "работать с остальными базами можно уже сейчас.",
+            _ =>
+                $"База данных «{st.Name}» {st.Text}. Приложение периодически пытается " +
+                "переподключиться — как только файл снова станет доступен, база откроется сама. " +
+                "Можно также подключить её заново вручную в настройках («Управление базой данных»).",
+        };
+        await ConfirmDialog.Info(text).ShowDialog(this);
+    }
+
+    // Потеря смонтированной БД на ходу (сервер выключился, файл удалили): зеркало
+    // отключения из настроек, но запись реестра остаётся — монитор будет ретраить,
+    // при возврате файла база оживёт сама (очередь → Completed → SyncMountedToUi).
+    private void OnDatabaseLost(int dbId, string reason)
+    {
+        var db = _workspace.Get(dbId);
+        if (db is null) return;   // уже размонтирована (гонка с отключением из настроек)
+        var name = db.Name;
+
+        if (_currentConstructorDbId == dbId)
+        {
+            _currentConstructorDbId = _workspace.Default.DbId;
+            ConstructorModule.DetachDatabase(_workspace.Default.Constructor);
+        }
+        _workspace.Unmount(dbId);
+        _mountQueue.MarkFailed(dbId, name, $"недоступна ({reason})");
+        _lostDbIds.Add(dbId);
+        SyncMountedToUi();
+        Notify($"База данных «{name}» недоступна ({reason}) — приложение переподключится автоматически.");
+    }
+
+    // Чужие правки в БД (другой пользователь общей базы / другая копия приложения):
+    // обновить только затронутое. Невидимые модули не трогаем — они и так перечитывают
+    // данные при переключении на них (ShowModule → Refresh).
+    private void OnRemoteChanges(int dbId, IReadOnlyList<ChangePoller.RemoteChange> changes)
+    {
+        if (_workspace.Get(dbId) is null) return;   // база уже размонтирована/потеряна
+
+        // Пользователь печатает в ячейке — не затираем ввод, повторяем через пару секунд
+        // (refresh идемпотентен, лишний повтор безвреден).
+        if (ConstructorModule.IsCellEditing)
+        {
+            DispatcherTimer.RunOnce(() => OnRemoteChanges(dbId, changes), TimeSpan.FromSeconds(3));
+            return;
         }
 
-        // Ошибку монтирования Mount() гасит сам (вернёт null) — статус покажет список БД.
-        SyncMountedToUi();
+        // Структурные изменения (группы/коллекции/поля) перестраивают деревья сайдбаров.
+        var structural = changes.Any(c => c.TargetType is "collection" or "group" or "field");
+        if (structural)
+        {
+            CalendarSidebar.Refresh();
+            TasksSidebar.Refresh();
+            ConstructorSidebar.Refresh();
+        }
+
+        // Открытая коллекция конструктора из этой БД: структура → полная пересборка,
+        // только записи → строки на месте (без пересборки колонок и мелькания).
+        if (_currentConstructorDbId == dbId && ConstructorModule.IsVisible)
+        {
+            if (structural) ConstructorModule.Refresh();
+            else            ConstructorModule.RefreshRowsRemote();
+        }
+
+        // Видимый агрегатный модуль перечитывает события/задачи затронутой БД.
+        if (_activeModule == "calendar")
+            CalendarModule.SetActiveIds(CalendarSidebar.GetActiveIds());
+        else if (_activeModule == "tasks")
+            TasksModule.SetActiveIds(TasksSidebar.GetActiveIds());
+
+        // Открытая панель записи могла показывать изменённую запись — перечитать значения.
+        if (_recordPanelLogicalOpen && _currentConstructorDbId == dbId)
+            RecordPanel.ReloadFromDb();
     }
+
+    // Ненавязчивое уведомление в углу окна (якорь — панель модулей: стабильна и видима
+    // в любом разделе). Тем же тостом пользуются ошибки записи (DbErrors).
+    private void Notify(string message) =>
+        Controls.Widgets.Toast.Show(ActivityBarControl, new TextBlock
+        {
+            Text = message, TextWrapping = Avalonia.Media.TextWrapping.Wrap, MaxWidth = 340,
+        }, PlacementMode.RightEdgeAlignedBottom, seconds: 6);
+
+    // Заглушки немонтированных БД для сайдбаров (очередь/обновление/недоступна).
+    private List<Controls.Components.PendingDb> PendingDbs() =>
+        _mountQueue.Pending()
+            .Select(s => new Controls.Components.PendingDb(
+                s.DbId, s.Name, s.Text, s.State == MountQueue.ItemState.Failed))
+            .ToList();
 
     // Допущенные БД: календарь, цели переноса и списки диалогов видят только их.
     // Недопущенные (замок) показывает лишь сайдбар конструктора.
@@ -304,12 +531,14 @@ public partial class MainWindow : Window
         _workspace.Mounted.Where(m => m.Permissions.AccessGranted).ToList();
 
     // Пересобрать боковые панели и обновить набор БД календаря после монтирования/
-    // размонтирования/получения допуска.
+    // размонтирования/получения допуска. Немонтированные БД очереди показываются
+    // заглушками со статусом во всех трёх сайдбарах.
     private void SyncMountedToUi()
     {
-        ConstructorSidebar.InitializeWorkspace(_workspace.Mounted, Controls.Components.SidebarMode.Constructor);
-        CalendarSidebar.InitializeWorkspace(GrantedDbs(), Controls.Components.SidebarMode.Calendar);
-        TasksSidebar.InitializeWorkspace(GrantedDbs(), Controls.Components.SidebarMode.Tasks);
+        var pending = PendingDbs();
+        ConstructorSidebar.InitializeWorkspace(_workspace.Mounted, Controls.Components.SidebarMode.Constructor, pending);
+        CalendarSidebar.InitializeWorkspace(GrantedDbs(), Controls.Components.SidebarMode.Calendar, pending);
+        TasksSidebar.InitializeWorkspace(GrantedDbs(), Controls.Components.SidebarMode.Tasks, pending);
         CalendarModule.SetDatabases(GrantedDbs());
         TasksModule.SetDatabases(GrantedDbs());
         ConstructorModule.SetDatabases(GrantedDbs());
