@@ -32,6 +32,16 @@
   пароль базы** (self-service): `TryUnlock` ставит `IsApproved=1`, повторно пароль
   не спрашивается.
 
+**События пользователей разносятся живьём** через тот же журнал `change_log`
+(`PermissionService.LogUser`, `TargetType="user"`, действия
+`user.join/approve/revoke/rights/unlock/rename`): поллер соседа видит строку, и
+`MainWindow.OnRemoteChanges` перечитывает права (`Permissions.Reload`) и открытую
+панель администратора (`ProfileView.OnRemoteUserChanges`). Итог без перезапусков:
+у администратора новый пользователь появляется в панели через пару секунд после
+монтирования его базы; у ожидающего допуск «Допустить» сам снимает замок в сайдбаре
+(с тостом), отзыв — возвращает. Первый пользователь новой базы `user.join` не пишет
+(сам себе не сигналит); гонка регистрации отцепляет и строку журнала.
+
 Пароль — программный замок на уровне приложения (файл НЕ шифруется): PBKDF2
 (`Rfc2898DeriveBytes`, SHA-256, 100k итераций), хеш/соль в `db_meta` — их видят все
 машины, открывающие файл. Устанавливает/меняет/убирает только администратор.
@@ -66,8 +76,9 @@
 ## Журнал изменений (change_log)
 
 Только **факты**, без старых/новых значений: `Ts` (ISO UTC), снапшоты `UserKey/UserName`,
-`Action` (`create/update/delete/duplicate/import/move`), `TargetType`
-(`collection/group/field/record/records`), `TargetName`, `CollectionName`, `Count`.
+`Action` (`create/update/delete/duplicate/import/move` + `user.*` — см. «Допуск к базе»),
+`TargetType` (`collection/group/field/record/records/user`), `TargetName`,
+`CollectionName`, `Count`.
 
 - пишется через **тот же контекст**, что и операция (в т.ч. изолированный фоновый) —
   `Log` до `SaveChanges` коммитится вместе с операцией, `LogNow` — для bulk-путей;

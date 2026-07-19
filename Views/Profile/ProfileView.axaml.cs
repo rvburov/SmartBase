@@ -45,6 +45,29 @@ public partial class ProfileView : UserControl
         FirstNameBox.Text  = CurrentUser.FirstName;
         MiddleNameBox.Text = CurrentUser.MiddleName;
         DisplayNameText.Text = CurrentUser.DisplayName;
+
+        // Фиксация ФИО не должна зависеть от LostFocus (клик по пустому месту фокус
+        // не забирает — ввод терялся бы молча): каждая буква сразу в app.db, Enter —
+        // полная фиксация, клик мимо полей снимает фокус (LostFocus дозакрепляет).
+        foreach (var box in new[] { LastNameBox, FirstNameBox, MiddleNameBox })
+        {
+            box.TextChanged += (_, _) => SaveProfileFields();
+            box.KeyDown += (_, e) =>
+            {
+                if (e.Key != Avalonia.Input.Key.Enter) return;
+                CommitProfile();
+                TopLevel.GetTopLevel(this)?.FocusManager?.ClearFocus();
+                e.Handled = true;
+            };
+        }
+        GeneralPanel.PointerPressed += (_, e) =>
+        {
+            // Клик по самим полям сюда не доходит (TextBox гасит событие) — страховка.
+            if (e.Source is Control c &&
+                Avalonia.VisualTree.VisualExtensions.FindAncestorOfType<TextBox>(c, includeSelf: true) is not null)
+                return;
+            TopLevel.GetTopLevel(this)?.FocusManager?.ClearFocus();
+        };
     }
 
     /// <summary>Рабочее пространство для панелей администратора и истории.</summary>
@@ -53,6 +76,9 @@ public partial class ProfileView : UserControl
     /// <summary>Показать раздел профиля по ключу из ProfileRegistry.</summary>
     public void ShowCategory(string key)
     {
+        // Уход из «Общих данных» с полем в фокусе — тоже точка фиксации ФИО.
+        if (GeneralPanel.IsVisible && key != "general") CommitProfile();
+
         GeneralPanel.IsVisible = key == "general";
         AdminPanel.IsVisible   = key == "admin";
         HistoryPanel.IsVisible = key == "history";
@@ -64,20 +90,34 @@ public partial class ProfileView : UserControl
 
     // ── ФИО ──────────────────────────────────────────────────────────────────
     //
-    // Автосохранение при уходе фокуса (как путь обновления в настройках): пустое
-    // значение = «не задано» (ключ удаляется из app.db). Отображаемое имя обновляется
-    // сразу — оно же уйдёт снапшотом в db_users открытых баз при следующем запуске.
-    private void OnProfileFieldChanged(object? sender, RoutedEventArgs e)
+    // Два уровня. Каждая буква (TextChanged) — сразу в app.db через CurrentUser
+    // (пустое значение = «не задано», ключ удаляется): закрытие приложения без
+    // расфокуса ничего не теряет. Точка фиксации (расфокус/Enter/уход из раздела) —
+    // нормализация полей + снапшот имени в db_users всех смонтированных баз с
+    // событием user.rename: соседи видят новое имя сразу, не «при следующем запуске».
+    private void SaveProfileFields()
     {
         CurrentUser.LastName   = LastNameBox.Text   ?? "";
         CurrentUser.FirstName  = FirstNameBox.Text  ?? "";
         CurrentUser.MiddleName = MiddleNameBox.Text ?? "";
+        DisplayNameText.Text   = CurrentUser.DisplayName;
+    }
+
+    private void OnProfileFieldChanged(object? sender, RoutedEventArgs e) => CommitProfile();
+
+    private void CommitProfile()
+    {
+        SaveProfileFields();
 
         // Показать нормализованные значения (обрезка пробелов) и свежее отображаемое имя.
         LastNameBox.Text   = CurrentUser.LastName;
         FirstNameBox.Text  = CurrentUser.FirstName;
         MiddleNameBox.Text = CurrentUser.MiddleName;
         DisplayNameText.Text = CurrentUser.DisplayName;
+
+        if (_workspace is null) return;
+        foreach (var db in _workspace.Mounted)
+            db.Permissions.SyncDisplayName();
     }
 
     // ── Панель администратора ─────────────────────────────────────────────────
@@ -102,6 +142,22 @@ public partial class ProfileView : UserControl
     }
 
     private void OnAdminDbChanged(object? sender, SelectionChangedEventArgs e) => LoadAdminDb();
+
+    /// <summary>Чужие события пользователей этой базы (присоединение, допуск, права —
+    /// принёс поллер через MainWindow): перечитать список открытой панели администратора,
+    /// сохранив выбор. Панель закрыта или база другая — не трогаем (откроется свежей).</summary>
+    public void OnRemoteUserChanges(int dbId)
+    {
+        if (!AdminPanel.IsVisible || _adminDb is null || _adminDb.DbId != dbId) return;
+
+        RebuildUsers();
+        // Выбранная строка могла исчезнуть/смениться — пересинхронизировать блок прав.
+        _selectedUser = _selectedUser is null
+            ? null
+            : _users.FirstOrDefault(u => u.Id == _selectedUser.Id && !u.IsAdmin);
+        if (_selectedUser is null) RightsBlock.IsVisible = false;
+        else if (RightsBlock.IsVisible) LoadChecks();
+    }
 
     // Загрузить выбранную базу: пароль, пользователи; блок прав сворачивается.
     private void LoadAdminDb()
@@ -476,6 +532,19 @@ public partial class ProfileView : UserControl
     // «создал коллекцию «X»», «удалил 10 000 записей в коллекции «Y»» и т.п.
     private static string HistoryPhrase(Database.Repositories.ConstructorRepository.ChangeLogRow r)
     {
+        // События пользователей (PermissionService.LogUser) — готовые фразы без объекта.
+        if (r.TargetType == "user")
+            return r.Action switch
+            {
+                "user.join"    => "присоединился к базе данных",
+                "user.approve" => $"допустил пользователя «{r.TargetName}»",
+                "user.revoke"  => $"отозвал допуск пользователя «{r.TargetName}»",
+                "user.rights"  => $"изменил права пользователя «{r.TargetName}»",
+                "user.unlock"  => "получил доступ по паролю базы данных",
+                "user.rename"  => $"изменил свои данные — теперь «{r.TargetName}»",
+                _              => $"{r.Action} «{r.TargetName}»",
+            };
+
         var verb = r.Action switch
         {
             "create"    => "создал",

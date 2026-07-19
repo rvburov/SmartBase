@@ -28,6 +28,21 @@ public sealed class PermissionService(AppDbContext db)
 {
     private readonly AppDbContext _db = db;
 
+    // События пользователей идут в общий журнал change_log (targetType "user"):
+    // это транспорт живого обновления между машинами — поллер соседа видит строку
+    // и перечитывает права/панель администратора (MainWindow.OnRemoteChanges).
+    // Без SaveChanges: строка коммитится вместе с операцией.
+    private void LogUser(string action, string targetName) =>
+        _db.ChangeLog.Add(new ChangeLogEntity
+        {
+            Ts         = DateTime.UtcNow.ToString("o"),
+            UserKey    = CurrentUser.Key,
+            UserName   = CurrentUser.DisplayName,
+            Action     = action,
+            TargetType = "user",
+            TargetName = targetName,
+        });
+
     // ── Снапшот текущего пользователя (кеш; обновляет Reload) ────────────────
     public int  CurrentUserId { get; private set; }
     public bool IsAdmin       { get; private set; }
@@ -68,6 +83,10 @@ public sealed class PermissionService(AppDbContext db)
                 CreatedAt   = DateTime.UtcNow.ToString("o"),
             };
             _db.DbUsers.Add(me);
+            // Присоединение к чужой базе (админ уже есть) — событие в журнал: у админа
+            // «в моменте» появится строка «Ожидает допуска» в панели администратора.
+            // Первый пользователь новой базы сам себе не сигналит.
+            if (hasAdmin) LogUser("user.join", CurrentUser.DisplayName);
             try { _db.SaveChanges(); }
             catch (Microsoft.EntityFrameworkCore.DbUpdateException ex) when (ex.InnerException
                 is Microsoft.Data.Sqlite.SqliteException { SqliteErrorCode: 19 }
@@ -75,7 +94,12 @@ public sealed class PermissionService(AppDbContext db)
             {
                 // Гонка регистрации одного пользователя из двух процессов (уникальный индекс
                 // UserKey): сосед успел первым — строку не дублируем, работаем с его версией.
-                _db.Entry(me).State = Microsoft.EntityFrameworkCore.EntityState.Detached;
+                // Отцепляем ВСЁ несохранённое, включая строку журнала user.join, — иначе она
+                // уехала бы в БД с чужим ближайшим SaveChanges.
+                foreach (var entry in _db.ChangeTracker.Entries()
+                             .Where(en => en.State == Microsoft.EntityFrameworkCore.EntityState.Added)
+                             .ToList())
+                    entry.State = Microsoft.EntityFrameworkCore.EntityState.Detached;
             }
         }
         else
@@ -84,6 +108,9 @@ public sealed class PermissionService(AppDbContext db)
             if (me.DisplayName != CurrentUser.DisplayName)
             {
                 me.DisplayName = CurrentUser.DisplayName;
+                // Имя сменилось между сессиями — сигналим соседям (открытые панели
+                // администратора и опции полей «пользователь» обновятся без перезахода).
+                LogUser("user.rename", CurrentUser.DisplayName);
                 dirty = true;
             }
             if (!hasAdmin && !me.IsAdmin)
@@ -97,6 +124,21 @@ public sealed class PermissionService(AppDbContext db)
         }
 
         Reload(notify: false);
+    }
+
+    /// <summary>
+    /// Синхронизировать снапшот ФИО текущего пользователя в db_users этой базы —
+    /// вызывается при правке профиля (точка фиксации в ProfileView), чтобы имя
+    /// разошлось по соседям сразу, а не при следующем монтировании. Имя не менялось —
+    /// no-op (ни записи, ни события). UI-поток (общий контекст).
+    /// </summary>
+    public void SyncDisplayName()
+    {
+        var me = _db.DbUsers.FirstOrDefault(u => u.UserKey == CurrentUser.Key);
+        if (me is null || me.DisplayName == CurrentUser.DisplayName) return;
+        me.DisplayName = CurrentUser.DisplayName;
+        LogUser("user.rename", CurrentUser.DisplayName);
+        _db.SaveChanges();
     }
 
     // ── Проверки прав (по кешу, можно из фоновых потоков) ─────────────────────
@@ -153,6 +195,9 @@ public sealed class PermissionService(AppDbContext db)
         var user = _db.DbUsers.Find(userId);
         if (user is null || user.IsAdmin) return;   // допуск админа не трогаем
         user.IsApproved = approved;
+        // Событие в журнал: у затронутого пользователя замок снимется/появится сам,
+        // без перезапуска (его поллер увидит строку и перечитает права).
+        LogUser(approved ? "user.approve" : "user.revoke", user.DisplayName);
         _db.SaveChanges();
         Reload();
     }
@@ -186,6 +231,7 @@ public sealed class PermissionService(AppDbContext db)
             });
         else
             row.ActionsMask = mask;
+        LogUser("user.rights", _db.DbUsers.Find(userId)?.DisplayName ?? "");
         _db.SaveChanges();
         Reload();
     }
@@ -251,6 +297,9 @@ public sealed class PermissionService(AppDbContext db)
         if (me is not null && !me.IsApproved)
         {
             me.IsApproved = true;
+            // Событие в журнал: в открытой панели администратора строка пользователя
+            // сменит «Ожидает допуска» на допущенного без перезахода.
+            LogUser("user.unlock", CurrentUser.DisplayName);
             _db.SaveChanges();
         }
         Reload();

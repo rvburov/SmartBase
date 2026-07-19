@@ -472,7 +472,27 @@ public partial class MainWindow : Window
     // данные при переключении на них (ShowModule → Refresh).
     private void OnRemoteChanges(int dbId, IReadOnlyList<ChangePoller.RemoteChange> changes)
     {
-        if (_workspace.Get(dbId) is null) return;   // база уже размонтирована/потеряна
+        var changedDb = _workspace.Get(dbId);
+        if (changedDb is null) return;   // база уже размонтирована/потеряна
+
+        // События пользователей (присоединение/допуск/права, targetType "user"):
+        // перечитать свой снапшот прав и открытую панель администратора — у админа
+        // новый пользователь появляется «в моменте», у ожидающего допуск снимает замок
+        // без перезапуска. До проверки IsCellEditing: правку ячеек эти события не трогают,
+        // а задерживать допуск на ретраи незачем (повтор идемпотентен).
+        if (changes.Any(c => c.TargetType == "user"))
+        {
+            var wasGranted = changedDb.Permissions.AccessGranted;
+            changedDb.Permissions.Reload();
+            if (changedDb.Permissions.AccessGranted != wasGranted)
+            {
+                SyncMountedToUi();   // замок в сайдбарах, наборы БД календаря/задач
+                Notify(changedDb.Permissions.AccessGranted
+                    ? $"Администратор подтвердил доступ к базе данных «{changedDb.Name}»."
+                    : $"Доступ к базе данных «{changedDb.Name}» отозван администратором.");
+            }
+            ProfileModule.OnRemoteUserChanges(dbId);
+        }
 
         // Пользователь печатает в ячейке — не затираем ввод, повторяем через пару секунд
         // (refresh идемпотентен, лишний повтор безвреден).
@@ -567,8 +587,8 @@ public partial class MainWindow : Window
         {
             await ConfirmDialog.Info(
                 $"База данных «{db.Name}» станет доступна после подтверждения администратором. " +
-                "Запрос на доступ уже отправлен — администратор увидит его в своей панели " +
-                "администратора при следующем открытии этой базы.")
+                "Запрос на доступ уже отправлен и виден администратору в панели администратора. " +
+                "Как только доступ подтвердят, база откроется сама.")
                 .ShowDialog(this);
         }
     }
