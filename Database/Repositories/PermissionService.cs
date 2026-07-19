@@ -32,7 +32,7 @@ public sealed class PermissionService(AppDbContext db)
     // это транспорт живого обновления между машинами — поллер соседа видит строку
     // и перечитывает права/панель администратора (MainWindow.OnRemoteChanges).
     // Без SaveChanges: строка коммитится вместе с операцией.
-    private void LogUser(string action, string targetName) =>
+    private void LogUser(string action, string targetName, string? detail = null) =>
         _db.ChangeLog.Add(new ChangeLogEntity
         {
             Ts         = DateTime.UtcNow.ToString("o"),
@@ -41,6 +41,7 @@ public sealed class PermissionService(AppDbContext db)
             Action     = action,
             TargetType = "user",
             TargetName = targetName,
+            Detail     = detail,
         });
 
     // ── Снапшот текущего пользователя (кеш; обновляет Reload) ────────────────
@@ -107,10 +108,11 @@ public sealed class PermissionService(AppDbContext db)
             var dirty = false;
             if (me.DisplayName != CurrentUser.DisplayName)
             {
-                me.DisplayName = CurrentUser.DisplayName;
                 // Имя сменилось между сессиями — сигналим соседям (открытые панели
                 // администратора и опции полей «пользователь» обновятся без перезахода).
-                LogUser("user.rename", CurrentUser.DisplayName);
+                LogUser("user.rename", CurrentUser.DisplayName,
+                        Utils.ChangeDetail.Rename(me.DisplayName, CurrentUser.DisplayName));
+                me.DisplayName = CurrentUser.DisplayName;
                 dirty = true;
             }
             if (!hasAdmin && !me.IsAdmin)
@@ -136,8 +138,9 @@ public sealed class PermissionService(AppDbContext db)
     {
         var me = _db.DbUsers.FirstOrDefault(u => u.UserKey == CurrentUser.Key);
         if (me is null || me.DisplayName == CurrentUser.DisplayName) return;
+        LogUser("user.rename", CurrentUser.DisplayName,
+                Utils.ChangeDetail.Rename(me.DisplayName, CurrentUser.DisplayName));
         me.DisplayName = CurrentUser.DisplayName;
-        LogUser("user.rename", CurrentUser.DisplayName);
         _db.SaveChanges();
     }
 

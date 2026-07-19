@@ -68,6 +68,9 @@ public partial class ProfileView : UserControl
                 return;
             TopLevel.GetTopLevel(this)?.FocusManager?.ClearFocus();
         };
+
+        // Выбор базы журнала живёт в навбаре (правый край «Истории изменений»).
+        HeaderBar.HistoryDbChanged += (_, _) => OnHistoryDbChanged();
     }
 
     /// <summary>Рабочее пространство для панелей администратора и истории.</summary>
@@ -83,6 +86,7 @@ public partial class ProfileView : UserControl
         AdminPanel.IsVisible   = key == "admin";
         HistoryPanel.IsVisible = key == "history";
         HeaderBar.Title = (ProfileRegistry.FindByKey(key) ?? ProfileRegistry.All[0]).Label;
+        HeaderBar.ShowHistoryActions = key == "history";
 
         if (key == "admin")   RebuildAdminPanel();
         if (key == "history") RebuildHistoryPanel();
@@ -421,176 +425,6 @@ public partial class ProfileView : UserControl
 
         _adminDb.Permissions.SetMask(_selectedUser.Id, CurrentScope, mask);
     }
-
-    // ── История изменений ─────────────────────────────────────────────────────
-    //
-    // Журнал per-база: выпадающий список допущенных баз + фильтр по типу объекта.
-    // Строки — keyset-страницами по 200 (Id DESC, «Показать ещё»), читаются на
-    // отдельном подключении (GetChangeLogPageAsync) — миллионы строк не фризят UI.
-
-    private const int HistoryPageSize = 200;
-    private List<DatabaseManager> _historyDbs = [];
-    private DatabaseManager? _historyDb;
-    private long? _historyLastId;
-    private bool _historyLoading;
-
-    private void RebuildHistoryPanel()
-    {
-        _historyDbs = _workspace?.Mounted.Where(m => m.Permissions.AccessGranted).ToList() ?? [];
-
-        var keepDbId = _historyDb?.DbId;
-        HistoryDbCombo.ItemsSource = _historyDbs
-            .Select(d => string.IsNullOrWhiteSpace(d.Name) ? "База данных" : d.Name)
-            .ToList();
-        if (HistoryTypeCombo.SelectedIndex < 0) HistoryTypeCombo.SelectedIndex = 0;
-        var idx = keepDbId is int id ? _historyDbs.FindIndex(d => d.DbId == id) : -1;
-        HistoryDbCombo.SelectedIndex = idx >= 0 ? idx : (_historyDbs.Count > 0 ? 0 : -1);
-        ResetHistory();
-    }
-
-    private void OnHistoryFilterChanged(object? sender, SelectionChangedEventArgs e) => ResetHistory();
-
-    // Фильтр типов объектов журнала по выбранному пункту (null — все).
-    private List<string>? HistoryTypes() =>
-        (HistoryTypeCombo.SelectedItem as ComboBoxItem)?.Tag as string switch
-        {
-            "structure" => ["collection", "group"],
-            "records"   => ["record", "records"],
-            "fields"    => ["field"],
-            _           => null,
-        };
-
-    private void ResetHistory()
-    {
-        var i = HistoryDbCombo.SelectedIndex;
-        _historyDb     = i >= 0 && i < _historyDbs.Count ? _historyDbs[i] : null;
-        _historyLastId = null;
-        HistoryHost.Children.Clear();
-        HistoryMoreBtn.IsVisible   = false;
-        HistoryEmptyText.IsVisible = false;
-        _ = LoadMoreHistoryAsync();
-    }
-
-    private void OnHistoryMore(object? sender, RoutedEventArgs e) => _ = LoadMoreHistoryAsync();
-
-    private async Task LoadMoreHistoryAsync()
-    {
-        if (_historyDb is null || _historyLoading) return;
-        _historyLoading = true;
-        var requestDb = _historyDb;
-        try
-        {
-            var page = await requestDb.Constructor.GetChangeLogPageAsync(
-                _historyLastId, HistoryPageSize, HistoryTypes());
-
-            // Пока читали страницу, могли переключить базу/фильтр — результат уже не наш.
-            if (!ReferenceEquals(requestDb, _historyDb)) return;
-
-            foreach (var row in page)
-                HistoryHost.Children.Add(BuildHistoryRow(row));
-
-            if (page.Count > 0) _historyLastId = page[^1].Id;
-            HistoryMoreBtn.IsVisible   = page.Count == HistoryPageSize;
-            HistoryEmptyText.IsVisible = HistoryHost.Children.Count == 0;
-        }
-        finally { _historyLoading = false; }
-    }
-
-    // Строка журнала: «{Имя} {действие}» слева, дата-время справа, серая линия снизу.
-    private Control BuildHistoryRow(Database.Repositories.ConstructorRepository.ChangeLogRow row)
-    {
-        var text = new TextBlock
-        {
-            Text = $"{row.UserName} {HistoryPhrase(row)}",
-            TextWrapping = TextWrapping.Wrap,
-            VerticalAlignment = VerticalAlignment.Center,
-            Margin = new Thickness(0, 0, 16, 0),
-        };
-        var when = new TextBlock
-        {
-            Text = FormatHistoryTs(row.Ts),
-            VerticalAlignment = VerticalAlignment.Center,
-            FontSize = FontSize("FontSizeSmall", 11),
-            Foreground = Brush("BrushSecondaryText", "#8E8E93"),
-        };
-
-        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto") };
-        Grid.SetColumn(text, 0);
-        Grid.SetColumn(when, 1);
-        grid.Children.Add(text);
-        grid.Children.Add(when);
-
-        var stack = new StackPanel();
-        stack.Children.Add(new Border { Padding = new Thickness(0, 10), Child = grid });
-        var sep = new Border();
-        sep.Classes.Add("separator");
-        sep.Classes.Add("h");
-        stack.Children.Add(sep);
-        return stack;
-    }
-
-    // «создал коллекцию «X»», «удалил 10 000 записей в коллекции «Y»» и т.п.
-    private static string HistoryPhrase(Database.Repositories.ConstructorRepository.ChangeLogRow r)
-    {
-        // События пользователей (PermissionService.LogUser) — готовые фразы без объекта.
-        if (r.TargetType == "user")
-            return r.Action switch
-            {
-                "user.join"    => "присоединился к базе данных",
-                "user.approve" => $"допустил пользователя «{r.TargetName}»",
-                "user.revoke"  => $"отозвал допуск пользователя «{r.TargetName}»",
-                "user.rights"  => $"изменил права пользователя «{r.TargetName}»",
-                "user.unlock"  => "получил доступ по паролю базы данных",
-                "user.rename"  => $"изменил свои данные — теперь «{r.TargetName}»",
-                _              => $"{r.Action} «{r.TargetName}»",
-            };
-
-        var verb = r.Action switch
-        {
-            "create"    => "создал",
-            "update"    => "изменил",
-            "delete"    => "удалил",
-            "duplicate" => "дублировал",
-            "import"    => "импортировал",
-            "export"    => "экспортировал",
-            "move"      => "перенёс",
-            _           => r.Action,
-        };
-        var obj = r.TargetType switch
-        {
-            "collection" => $"коллекцию «{r.TargetName}»",
-            "group"      => $"группу «{r.TargetName}»",
-            "field"      => $"свойство «{r.TargetName}»",
-            "record"     => r.TargetName.Length > 0 ? $"запись «{r.TargetName}»" : "запись",
-            "records"    => RecordsCount(r.Count ?? 0),
-            _            => $"«{r.TargetName}»",
-        };
-
-        var text = $"{verb} {obj}";
-        if (r.TargetType is "record" or "records" or "field" && !string.IsNullOrEmpty(r.CollectionName))
-            text += $" в коллекции «{r.CollectionName}»";
-        if (r.TargetType is "collection" or "group" && r.Count is > 0)
-            text += $" ({RecordsCount(r.Count.Value)})";
-        return text;
-    }
-
-    // Русское склонение: 1 запись, 2 записи, 10 000 записей.
-    private static string RecordsCount(long n)
-    {
-        var word = (n % 100 is >= 11 and <= 14) ? "записей" : (n % 10) switch
-        {
-            1        => "запись",
-            2 or 3 or 4 => "записи",
-            _        => "записей",
-        };
-        return $"{n:N0} {word}";
-    }
-
-    // ISO UTC → локальное «дд.MM.гггг HH:mm».
-    private static string FormatHistoryTs(string iso) =>
-        DateTime.TryParse(iso, null, System.Globalization.DateTimeStyles.RoundtripKind, out var dt)
-            ? dt.ToLocalTime().ToString("dd.MM.yyyy HH:mm")
-            : iso;
 
     // ── Хелперы ресурсов (fallback — как в SidebarRow) ────────────────────────
 

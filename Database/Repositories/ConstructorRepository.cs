@@ -1,4 +1,5 @@
 using System.Data.Common;
+using System.Linq.Expressions;
 using System.Text.RegularExpressions;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
@@ -42,16 +43,20 @@ public partial class ConstructorRepository(AppDbContext db)
 
     // ── Журнал изменений (change_log) ─────────────────────────────────────────
     //
-    // Только факты, без значений: кто (снапшот CurrentUser), когда, что сделал. Пишется
-    // через ТОТ ЖЕ контекст, что и операция — в т.ч. изолированный фоновый (строка
-    // журнала не конкурирует с общим контекстом и коммитится вместе с операцией, если
-    // вызвана до SaveChanges). Пакетные пути пишут ОДНУ строку с Count — массовые
-    // операции журналом не замедляются.
+    // Факты: кто (снапшот CurrentUser), когда, что сделал; у правок — компактное
+    // «до → после» (Detail, Utils/ChangeDetail), длинные тексты свёрнуты ещё при
+    // записи. Пишется через ТОТ ЖЕ контекст, что и операция — в т.ч. изолированный
+    // фоновый (строка журнала не конкурирует с общим контекстом и коммитится вместе
+    // с операцией, если вызвана до SaveChanges). Пакетные пути пишут ОДНУ строку
+    // с Count — массовые операции журналом не замедляются.
 
     // Добавить строку журнала (без SaveChanges — коммитится ближайшим сохранением).
-    private void Log(string action, string targetType, string targetName,
-                     string? collectionName = null, long? count = null) =>
-        db.ChangeLog.Add(new ChangeLogEntity
+    // detail — готовый компактный текст «до → после» (Utils/ChangeDetail) для правок.
+    // Возвращает строку — для слияния побуквенных правок (BeginEditMerge/EndEditMerge).
+    private ChangeLogEntity Log(string action, string targetType, string targetName,
+                                string? collectionName = null, long? count = null, string? detail = null)
+    {
+        var row = new ChangeLogEntity
         {
             Ts             = DateTime.UtcNow.ToString("o"),
             UserKey        = CurrentUser.Key,
@@ -61,7 +66,48 @@ public partial class ConstructorRepository(AppDbContext db)
             TargetName     = targetName,
             CollectionName = collectionName,
             Count          = count,
-        });
+            Detail         = detail,
+        };
+        db.ChangeLog.Add(row);
+        return row;
+    }
+
+    // ── Слияние побуквенных правок ────────────────────────────────────────────
+    //
+    // Заголовок/описание/поля в панели записи сохраняются на каждую букву (защита от
+    // потери ввода) — без слияния журнал фиксировал бы промежуточные состояния
+    // («Проверка» → «3Проверка», «3Проверка» → «35Проверка», …). Недавняя строка журнала
+    // той же цели помнится в памяти: следующая правка УДАЛЯЕТ её и пишет новую от
+    // ИСХОДНОГО «до» к последнему «после» — в журнале остаётся конечный результат.
+    // Именно удаление+вставка, не UPDATE строки: новый Id будит поллер соседей на каждое
+    // изменение (UPDATE старой строки они бы не увидели). Правка вернула исходное
+    // значение — строка убирается совсем (события нет).
+    private sealed record EditMerge(ChangeLogEntity Row, string OriginalOld, DateTime LastAt);
+    private readonly Dictionary<(string Kind, int RecordId, int SubId), EditMerge> _editMerges = [];
+    private static readonly TimeSpan EditMergeWindow = TimeSpan.FromSeconds(30);
+
+    // Исходное «до» для цели: недавняя строка той же цели снимается (её заменит новая);
+    // правка после паузы (окно истекло) — обычная новая строка с oldValue как есть.
+    private string BeginEditMerge((string Kind, int RecordId, int SubId) key, string oldValue)
+    {
+        if (_editMerges.Count > 256)
+            foreach (var stale in _editMerges
+                         .Where(kv => DateTime.UtcNow - kv.Value.LastAt >= EditMergeWindow)
+                         .Select(kv => kv.Key).ToList())
+                _editMerges.Remove(stale);
+
+        if (!_editMerges.TryGetValue(key, out var merge)) return oldValue;
+        _editMerges.Remove(key);
+        if (DateTime.UtcNow - merge.LastAt >= EditMergeWindow) return oldValue;
+
+        if (db.Entry(merge.Row).State is not (EntityState.Deleted or EntityState.Detached))
+            db.ChangeLog.Remove(merge.Row);
+        return merge.OriginalOld;
+    }
+
+    private void EndEditMerge((string Kind, int RecordId, int SubId) key,
+                              ChangeLogEntity row, string originalOld) =>
+        _editMerges[key] = new EditMerge(row, originalOld, DateTime.UtcNow);
 
     // Log + немедленный SaveChanges — для bulk-путей, где своего SaveChanges рядом нет.
     private void LogNow(string action, string targetType, string targetName,
@@ -91,15 +137,34 @@ public partial class ConstructorRepository(AppDbContext db)
     /// <summary>Строка журнала для панели «История изменений».</summary>
     public sealed record ChangeLogRow(long Id, string Ts, string UserName, string Action,
                                       string TargetType, string TargetName,
-                                      string? CollectionName, long? Count);
+                                      string? CollectionName, long? Count, string? Detail);
 
     /// <summary>
-    /// Страница журнала (новые сверху) keyset-пагинацией по Id: beforeId — Id последней
-    /// показанной строки (null — с начала). Отдельное подключение — безопасно из фона.
-    /// targetTypes — фильтр по типам объектов (null/пусто — все).
+    /// Параметры страницы журнала для таблицы «История изменений». Колонки журнала
+    /// адресуются ключами: user/action/type/object/collection/date (date — день,
+    /// префикс Ts «yyyy-MM-dd»). Filters — колонка → допустимые СЫРЫЕ значения
+    /// (пустой словарь — без фильтра). Сортировка — по одной колонке; для date
+    /// хронология = порядок Id (журнал только дописывается), отдельного ORDER BY
+    /// по строке Ts не нужно. AfterValue/AfterId — keyset-курсор: значение
+    /// сорт-колонки и Id последней показанной строки (null — с начала).
     /// </summary>
-    public Task<List<ChangeLogRow>> GetChangeLogPageAsync(long? beforeId, int take,
-                                                          IReadOnlyList<string>? targetTypes = null)
+    public sealed record ChangeLogQuery
+    {
+        public IReadOnlyDictionary<string, IReadOnlyCollection<string>> Filters { get; init; }
+            = new Dictionary<string, IReadOnlyCollection<string>>();
+        public string? SortColumn { get; init; }
+        public bool    SortAsc    { get; init; }
+        public string? AfterValue { get; init; }
+        public long?   AfterId    { get; init; }
+    }
+
+    /// <summary>
+    /// Страница журнала для таблицы истории: фильтры и сортировка считаются в SQL,
+    /// страницы — keyset (по Id, при сортировке — по паре «значение колонки + Id»),
+    /// поэтому миллионы строк листаются без загрузки в память. Отдельное подключение —
+    /// безопасно из фона.
+    /// </summary>
+    public Task<List<ChangeLogRow>> GetChangeLogPageAsync(ChangeLogQuery query, int take)
     {
         var path = db.DbPath;
         return Task.Run(() =>
@@ -107,13 +172,110 @@ public partial class ConstructorRepository(AppDbContext db)
             using var ctx = new AppDbContext(path);
             ctx.ApplyPerformancePragmas();
             IQueryable<ChangeLogEntity> q = ctx.ChangeLog.AsNoTracking();
-            if (beforeId is long b) q = q.Where(e => e.Id < b);
-            if (targetTypes is { Count: > 0 }) q = q.Where(e => targetTypes.Contains(e.TargetType));
-            return q.OrderByDescending(e => e.Id)
-                    .Take(take)
+
+            foreach (var (column, values) in query.Filters)
+            {
+                var set = values as HashSet<string> ?? [.. values];
+                q = column switch
+                {
+                    "user"       => q.Where(e => set.Contains(e.UserName)),
+                    "action"     => q.Where(e => set.Contains(e.Action)),
+                    "type"       => q.Where(e => set.Contains(e.TargetType)),
+                    "object"     => q.Where(e => set.Contains(e.TargetName)),
+                    "collection" => q.Where(e => set.Contains(e.CollectionName ?? "")),
+                    "date"       => q.Where(e => set.Contains(e.Ts.Substring(0, 10))),
+                    _            => q,
+                };
+            }
+
+            if (query.SortColumn is null or "date")
+            {
+                // Хронология = порядок Id; «Сначала старые» — Id ASC, иначе новые сверху.
+                var asc = query.SortColumn == "date" && query.SortAsc;
+                if (query.AfterId is long a) q = asc ? q.Where(e => e.Id > a) : q.Where(e => e.Id < a);
+                q = asc ? q.OrderBy(e => e.Id) : q.OrderByDescending(e => e.Id);
+            }
+            else
+            {
+                q = SortChangeLog(q, query.SortColumn, query.SortAsc, query.AfterValue, query.AfterId);
+            }
+
+            return q.Take(take)
                     .Select(e => new ChangeLogRow(e.Id, e.Ts, e.UserName, e.Action,
-                                                  e.TargetType, e.TargetName, e.CollectionName, e.Count))
+                                                  e.TargetType, e.TargetName, e.CollectionName,
+                                                  e.Count, e.Detail))
                     .ToList();
+        });
+    }
+
+    // Сортировка журнала по строковой колонке + keyset-срез после курсора. Селектор
+    // колонки один, предикат среза собирается Expression-ами из него же — сравнение
+    // строк уходит в SQL тем же ORDER BY-компаратором (string.Compare → «>»/«<»),
+    // поэтому страницы не теряют и не дублируют строки. Равные значения добираются
+    // по Id DESC (ThenByDescending — вторая компонента курсора).
+    private static IQueryable<ChangeLogEntity> SortChangeLog(IQueryable<ChangeLogEntity> q,
+        string column, bool asc, string? afterValue, long? afterId)
+    {
+        Expression<Func<ChangeLogEntity, string>> sel = column switch
+        {
+            "user"       => e => e.UserName,
+            "action"     => e => e.Action,
+            "type"       => e => e.TargetType,
+            "object"     => e => e.TargetName,
+            "collection" => e => e.CollectionName ?? "",
+            _            => e => e.UserName,
+        };
+
+        if (afterValue is not null && afterId is long id)
+        {
+            // (значение после курсора) ИЛИ (то же значение И Id < курсора).
+            var p     = sel.Parameters[0];
+            var value = sel.Body;
+            var after = Expression.Constant(afterValue);
+            var cmp   = Expression.Call(typeof(string), nameof(string.Compare), null, value, after);
+            var zero  = Expression.Constant(0);
+            var ahead = asc ? Expression.GreaterThan(cmp, zero) : Expression.LessThan(cmp, zero);
+            var same  = Expression.Equal(value, after);
+            var older = Expression.LessThan(
+                Expression.Property(p, nameof(ChangeLogEntity.Id)), Expression.Constant(id));
+            var body  = Expression.OrElse(ahead, Expression.AndAlso(same, older));
+            q = q.Where(Expression.Lambda<Func<ChangeLogEntity, bool>>(body, p));
+        }
+
+        var ordered = asc ? q.OrderBy(sel) : q.OrderByDescending(sel);
+        return ordered.ThenByDescending(e => e.Id);
+    }
+
+    /// <summary>
+    /// Значения колонки журнала с количеством — для окна фильтра таблицы истории
+    /// (SQL-агрегат на фоновом потоке, отдельное подключение — как GetColumnCountsAsync).
+    /// Ключи колонок — как в <see cref="ChangeLogQuery"/>; date группируется по дню.
+    /// </summary>
+    public Task<List<(string Value, int Count)>> GetChangeLogCountsAsync(string column)
+    {
+        var path = db.DbPath;
+        return Task.Run(() =>
+        {
+            using var ctx = new AppDbContext(path);
+            ctx.ApplyPerformancePragmas();
+            var src = ctx.ChangeLog.AsNoTracking();
+            var groups = column switch
+            {
+                "user"       => src.GroupBy(e => e.UserName),
+                "action"     => src.GroupBy(e => e.Action),
+                "type"       => src.GroupBy(e => e.TargetType),
+                "object"     => src.GroupBy(e => e.TargetName),
+                "collection" => src.GroupBy(e => e.CollectionName ?? ""),
+                "date"       => src.GroupBy(e => e.Ts.Substring(0, 10)),
+                _            => null,
+            };
+            return groups is null
+                ? []
+                : groups.Select(g => new { g.Key, Cnt = g.Count() })
+                        .OrderBy(x => x.Key)
+                        .AsEnumerable()
+                        .Select(x => (x.Key, x.Cnt))
+                        .ToList();
         });
     }
 
@@ -143,7 +305,8 @@ public partial class ConstructorRepository(AppDbContext db)
         if (entity is null) return;
         // Перестановки (drag/сортировка) журнал не засоряют — только переименование/перенос.
         if (entity.Name != group.Name || entity.ParentId != group.ParentId)
-            Log("update", "group", group.Name);
+            Log("update", "group", group.Name,
+                detail: entity.Name != group.Name ? ChangeDetail.Rename(entity.Name, group.Name) : null);
         entity.Name     = group.Name;
         entity.ParentId = group.ParentId;
         entity.Position = group.Position;
@@ -590,7 +753,8 @@ public partial class ConstructorRepository(AppDbContext db)
         // Перестановки (Position) журнал не засоряют — только смысловые изменения.
         if (entity.Name != col.Name || entity.GroupId != col.GroupId ||
             entity.Icon != col.Icon || entity.Color   != col.Color)
-            Log("update", "collection", col.Name);
+            Log("update", "collection", col.Name,
+                detail: entity.Name != col.Name ? ChangeDetail.Rename(entity.Name, col.Name) : null);
         entity.Name     = col.Name;
         entity.GroupId  = col.GroupId;
         entity.Position = col.Position;
@@ -1949,7 +2113,8 @@ public partial class ConstructorRepository(AppDbContext db)
         // Перестановки (Position) журнал не засоряют — только смысловые изменения.
         if (entity.Name != field.Name || entity.FieldType != field.FieldType ||
             entity.ConfigJson != field.ConfigJson || entity.IsRequired != field.IsRequired)
-            Log("update", "field", field.Name, CollectionNameOf(field.CollectionId));
+            Log("update", "field", field.Name, CollectionNameOf(field.CollectionId),
+                detail: entity.Name != field.Name ? ChangeDetail.Rename(entity.Name, field.Name) : null);
 
         entity.Name       = field.Name;
         entity.FieldType  = field.FieldType;
@@ -2530,7 +2695,14 @@ public partial class ConstructorRepository(AppDbContext db)
         var rec = db.DbRecords.Find(recordId);
         if (rec is null) return;
         if (rec.Title != title)
-            Log("update", "record", title, CollectionNameOf(rec.CollectionId));
+        {
+            // Побуквенное сохранение панели записи — сливаем в одну строку журнала.
+            var key = (Kind: "title", RecordId: recordId, SubId: 0);
+            var old = BeginEditMerge(key, rec.Title);
+            if (old != title)
+                EndEditMerge(key, Log("update", "record", title, CollectionNameOf(rec.CollectionId),
+                                      detail: ChangeDetail.Rename(old, title)), old);
+        }
         rec.Title = title;
         SaveIgnoringRemoteDelete(rec);
     }
@@ -2542,7 +2714,15 @@ public partial class ConstructorRepository(AppDbContext db)
         if (rec is null) return;
         var normalized = string.IsNullOrEmpty(description) ? null : description;
         if (rec.Description != normalized)
-            Log("update", "record", rec.Title, CollectionNameOf(rec.CollectionId));
+        {
+            // Побуквенное сохранение панели записи — сливаем в одну строку журнала.
+            var key = (Kind: "desc", RecordId: recordId, SubId: 0);
+            var old = BeginEditMerge(key, rec.Description ?? "");
+            if (old != (normalized ?? ""))
+                EndEditMerge(key, Log("update", "record", rec.Title, CollectionNameOf(rec.CollectionId),
+                                      detail: ChangeDetail.Value(rec.Title, "Описание", old, normalized ?? "")),
+                             old);
+        }
         rec.Description = normalized;
         SaveIgnoringRemoteDelete(rec);
     }
@@ -2663,10 +2843,17 @@ public partial class ConstructorRepository(AppDbContext db)
         if (entity is null) return;
 
         // Перестановки (Position) журнал не засоряют — только смысловые изменения.
+        // «до → после» — для переименования и правки описания (даты видны в самой записи).
         if (entity.Title != record.Title || entity.Description != record.Description ||
             entity.StartDt != record.StartDt || entity.EndDt != record.EndDt ||
             entity.AllDay != record.AllDay || entity.CollectionId != record.CollectionId)
-            Log("update", "record", record.Title, CollectionNameOf(record.CollectionId));
+            Log("update", "record", record.Title, CollectionNameOf(record.CollectionId),
+                detail: entity.Title != record.Title
+                    ? ChangeDetail.Rename(entity.Title, record.Title)
+                    : entity.Description != record.Description
+                        ? ChangeDetail.Value(record.Title, "Описание",
+                                             entity.Description ?? "", record.Description ?? "")
+                        : null);
 
         entity.CollectionId = record.CollectionId;
         entity.Position     = record.Position;
@@ -3484,7 +3671,20 @@ public partial class ConstructorRepository(AppDbContext db)
                 .Select(r => new { r.Title, r.CollectionId })
                 .FirstOrDefault();
             if (rec is not null)
-                Log("update", "record", rec.Title, CollectionNameOf(rec.CollectionId));
+            {
+                // «до → после»: имя свойства + компактный дифф значения (старое уже в fv).
+                // Побуквенное сохранение панели записи — сливаем в одну строку журнала.
+                var key = (Kind: "field", RecordId: recordId, SubId: fieldId);
+                var old = BeginEditMerge(key, fv?.Value ?? "");
+                if (old != value)
+                {
+                    var fieldName = db.DbFields.AsNoTracking()
+                        .Where(f => f.Id == fieldId).Select(f => f.Name).FirstOrDefault() ?? "";
+                    EndEditMerge(key, Log("update", "record", rec.Title, CollectionNameOf(rec.CollectionId),
+                                          detail: ChangeDetail.Value(rec.Title, fieldName, old, value)),
+                                 old);
+                }
+            }
         }
 
         // Многопользовательский режим: между нашей проверкой и записью ту же ячейку мог

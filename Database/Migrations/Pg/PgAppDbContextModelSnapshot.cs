@@ -111,6 +111,10 @@ namespace SmartBase.Database.Migrations.Pg
                         .HasColumnType("bigint")
                         .HasColumnName("count");
 
+                    b.Property<string>("Detail")
+                        .HasColumnType("text")
+                        .HasColumnName("detail");
+
                     b.Property<string>("TargetName")
                         .IsRequired()
                         .HasColumnType("text")

@@ -4,6 +4,19 @@
              x:Class="SmartBase.Views.Profile.ProfileView"
              Background="{StaticResource BrushBg}">
 
+    <!-- Таблица «Истории изменений» — тот же вид, что таблица конструктора (TableView):
+         локальные копии тем DataGrid и переопределение кистей линий на BrushSeparator.
+         Подробные комментарии по линиям/округлению — в TableView.axaml. -->
+    <UserControl.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceInclude Source="avares://SmartBase/Views/ConstructorDb/TableViewDataGridThemes.axaml" />
+            </ResourceDictionary.MergedDictionaries>
+            <SolidColorBrush x:Key="DataGridGridLinesBrush"             Color="{StaticResource ColorSeparator}" />
+            <SolidColorBrush x:Key="DataGridFillerColumnGridLinesBrush" Color="{StaticResource ColorSeparator}" />
+        </ResourceDictionary>
+    </UserControl.Resources>
+
     <UserControl.Styles>
         <!-- Строка одного пункта. Линия под строкой — отдельный separator h ПОСЛЕ каждой
              строки (не бордер контейнера с текстом: отдельную линию можно алиасить,
@@ -18,6 +31,62 @@
             <Setter Property="FontSize"     Value="{DynamicResource FontSizeSmall}" />
             <Setter Property="Foreground"   Value="{StaticResource BrushSecondaryText}" />
             <Setter Property="TextWrapping" Value="Wrap" />
+        </Style>
+
+        <!-- Стили DataGrid таблицы истории — копии стилей TableView.axaml (там же
+             объяснено, почему линии/шапка устроены именно так). -->
+        <Style Selector="DataGridCell">
+            <Setter Property="Padding"         Value="0" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="FontSize"        Value="{DynamicResource FontSizeBase}" />
+            <Setter Property="Foreground"      Value="{StaticResource BrushPrimaryText}" />
+        </Style>
+        <Style Selector="DataGridCell:current /template/ Grid#FocusVisual">
+            <Setter Property="IsVisible" Value="False" />
+        </Style>
+        <Style Selector="DataGridCell /template/ Rectangle#PART_RightGridLine">
+            <Setter Property="Width"             Value="{DynamicResource SeparatorThickness}" />
+            <Setter Property="UseLayoutRounding" Value="{DynamicResource LineUseLayoutRounding}" />
+        </Style>
+        <Style Selector="DataGridRow /template/ Rectangle#PART_BottomGridLine">
+            <Setter Property="Height"            Value="{DynamicResource SeparatorThickness}" />
+            <Setter Property="UseLayoutRounding" Value="{DynamicResource LineUseLayoutRounding}" />
+        </Style>
+        <Style Selector="DataGrid /template/ Rectangle#PART_ColumnHeadersAndRowsSeparator">
+            <Setter Property="Height"            Value="{DynamicResource SeparatorThickness}" />
+            <Setter Property="UseLayoutRounding" Value="{DynamicResource LineUseLayoutRounding}" />
+        </Style>
+        <Style Selector="DataGridRow:pointerover /template/ Rectangle#BackgroundRectangle">
+            <Setter Property="Fill"    Value="{StaticResource BrushSecondaryBg}" />
+            <Setter Property="Opacity" Value="1" />
+        </Style>
+        <Style Selector="DataGridRow:selected /template/ Rectangle#BackgroundRectangle">
+            <Setter Property="Fill"    Value="{StaticResource BrushAccentLight}" />
+            <Setter Property="Opacity" Value="1" />
+        </Style>
+        <Style Selector="DataGridRow:selected:pointerover /template/ Rectangle#BackgroundRectangle">
+            <Setter Property="Fill"    Value="{StaticResource BrushAccentLight}" />
+            <Setter Property="Opacity" Value="1" />
+        </Style>
+        <Style Selector="DataGridRow:selected DataGridCell">
+            <Setter Property="Foreground" Value="{StaticResource BrushAccent}" />
+        </Style>
+        <Style Selector="DataGridColumnHeader">
+            <Setter Property="UseLayoutRounding"          Value="{DynamicResource LineUseLayoutRounding}" />
+            <Setter Property="Background"                 Value="Transparent" />
+            <Setter Property="Padding"                    Value="0" />
+            <Setter Property="Height"                     Value="{StaticResource RowHeightStandard}" />
+            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+            <Setter Property="VerticalContentAlignment"   Value="Stretch" />
+            <Setter Property="Template">
+                <ControlTemplate>
+                    <Border Background="{TemplateBinding Background}">
+                        <ContentPresenter Content="{TemplateBinding Content}"
+                                          HorizontalContentAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                          VerticalContentAlignment="{TemplateBinding VerticalContentAlignment}" />
+                    </Border>
+                </ControlTemplate>
+            </Setter>
         </Style>
     </UserControl.Styles>
 
@@ -244,60 +313,38 @@
                 </Grid>
             </ScrollViewer>
 
-            <!-- ── История изменений ─────────────────────────────── -->
-            <ScrollViewer x:Name="HistoryPanel" IsVisible="False"
-                          VerticalScrollBarVisibility="Auto">
-                <Grid>
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*" MaxWidth="1400" />
-                    </Grid.ColumnDefinitions>
-                    <StackPanel Margin="16,0,16,32">
-
-                    <!-- Выбор базы и фильтр по типу объекта -->
-                    <Border Classes="settingRow">
-                        <Grid ColumnDefinitions="*,Auto,8,Auto">
-                            <StackPanel Grid.Column="0" Spacing="4"
-                                        VerticalAlignment="Center" Margin="0,0,32,0">
-                                <TextBlock Classes="title" Text="Журнал базы данных" />
-                                <TextBlock Classes="desc"
-                                           Text="Кто и когда создавал, изменял и удалял коллекции, записи и свойства выбранной базы. Новые события сверху." />
-                            </StackPanel>
-                            <ComboBox Grid.Column="1" x:Name="HistoryTypeCombo"
-                                      Width="200" Height="34"
-                                      VerticalAlignment="Center"
-                                      Background="{StaticResource BrushSecondaryBg}"
-                                      CornerRadius="{StaticResource RadiusBase}"
-                                      SelectionChanged="OnHistoryFilterChanged">
-                                <ComboBoxItem Tag="all"        Content="Все действия" />
-                                <ComboBoxItem Tag="structure"  Content="Коллекции и группы" />
-                                <ComboBoxItem Tag="records"    Content="Записи" />
-                                <ComboBoxItem Tag="fields"     Content="Свойства" />
-                            </ComboBox>
-                            <ComboBox Grid.Column="3" x:Name="HistoryDbCombo"
-                                      Width="240" Height="34"
-                                      VerticalAlignment="Center"
-                                      Background="{StaticResource BrushSecondaryBg}"
-                                      CornerRadius="{StaticResource RadiusBase}"
-                                      SelectionChanged="OnHistoryFilterChanged" />
-                        </Grid>
-                    </Border>
-                    <Border Classes="separator h" />
-
-                    <!-- Строки журнала (строятся в коде; keyset-страницы по 200) -->
-                    <StackPanel x:Name="HistoryHost" Margin="0,8,0,0" />
-                    <TextBlock x:Name="HistoryEmptyText" Classes="desc"
-                               Foreground="{StaticResource BrushSecondaryText}"
-                               Margin="0,16" IsVisible="False"
-                               Text="Записей в журнале пока нет." />
-                    <Button x:Name="HistoryMoreBtn" Classes="dialog"
-                            Content="Показать ещё"
-                            HorizontalAlignment="Center" Margin="0,12"
-                            IsVisible="False"
-                            Click="OnHistoryMore" />
-
-                    </StackPanel>
-                </Grid>
-            </ScrollViewer>
+            <!-- ── История изменений ─────────────────────────────────
+                 Таблица журнала как в конструкторе: колонки с фильтром/сортировкой
+                 в шапке (строятся в коде — ProfileHistoryTable.cs), страницы
+                 подгружаются при прокрутке. Выбор базы — в навбаре (NavbarProfile).
+                 Без боковых полей и MaxWidth остальных панелей — таблица от края
+                 до края, как TableView в конструкторе. -->
+            <Panel x:Name="HistoryPanel" IsVisible="False">
+                <DataGrid x:Name="HistoryGrid"
+                          AutoGenerateColumns="False"
+                          RowHeight="{StaticResource RowHeightStandard}"
+                          CanUserResizeColumns="False"
+                          CanUserReorderColumns="False"
+                          CanUserSortColumns="False"
+                          GridLinesVisibility="All"
+                          HorizontalGridLinesBrush="{StaticResource BrushSeparator}"
+                          VerticalGridLinesBrush="{StaticResource BrushSeparator}"
+                          HeadersVisibility="Column"
+                          SelectionMode="Single"
+                          IsReadOnly="True"
+                          Background="Transparent"
+                          UseLayoutRounding="{DynamicResource LineUseLayoutRounding}"
+                          RowBackground="{StaticResource BrushBg}"
+                          HorizontalScrollBarVisibility="Auto"
+                          VerticalScrollBarVisibility="Auto" />
+                <TextBlock x:Name="HistoryEmptyText"
+                           Text="Записей в журнале пока нет."
+                           IsVisible="False"
+                           FontSize="{DynamicResource FontSizeSmall}"
+                           Foreground="{StaticResource BrushSecondaryText}"
+                           HorizontalAlignment="Center"
+                           Margin="0,48,0,0" />
+            </Panel>
 
         </Grid>
 

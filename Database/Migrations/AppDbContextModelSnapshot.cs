@@ -14,7 +14,7 @@ namespace SmartBase.Database.Migrations
         protected override void BuildModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
-            modelBuilder.HasAnnotation("ProductVersion", "9.0.0");
+            modelBuilder.HasAnnotation("ProductVersion", "9.0.1");
 
             modelBuilder.Entity("SmartBase.Database.Entities.CalendarIndexEntity", b =>
                 {
@@ -88,6 +88,9 @@ namespace SmartBase.Database.Migrations
 
                     b.Property<long?>("Count")
                         .HasColumnType("INTEGER");
+
+                    b.Property<string>("Detail")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("TargetName")
                         .IsRequired()

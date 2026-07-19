@@ -4,13 +4,25 @@
              Height="56"
              Background="{StaticResource BrushBg}">
 
-    <Border Padding="16,0">
-        <TextBlock x:Name="TitleText"
+    <!-- Заголовок слева, действия раздела справа — как в остальных навбарах
+         (NavbarSettings: «Добавить базу данных» тем же стилем). -->
+    <Grid ColumnDefinitions="*,Auto" Margin="16,0">
+
+        <TextBlock Grid.Column="0" x:Name="TitleText"
                    Text="Общие данные"
                    VerticalAlignment="Center"
                    FontSize="{DynamicResource FontSizeLarge}"
                    FontWeight="{StaticResource FontWeightBold}"
  />
-    </Border>
+
+        <!-- Выбор базы журнала — только в разделе «История изменений». Обычный
+             стейтфул-ComboBox: выбранная база остаётся видимой (в отличие от
+             меню-действий NavbarSettings). Наполняет ProfileView. -->
+        <ComboBox Grid.Column="1" x:Name="HistoryDbCombo"
+                  IsVisible="False"
+                  Width="240" Height="30"
+                  VerticalAlignment="Center" />
+
+    </Grid>
 
 </UserControl>
