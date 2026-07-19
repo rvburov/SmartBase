@@ -35,6 +35,9 @@ public partial class SidebarTree : UserControl
     public event EventHandler?            RequestRefresh;
     // Клик по запертой базе (без допуска) — MainWindow предлагает ввести пароль.
     public event EventHandler<int>?       DatabaseUnlockRequested;
+    // Клик по ещё не смонтированной базе (в очереди/обновляется/недоступна) —
+    // MainWindow показывает подсказку с текущим статусом.
+    public event EventHandler<int>?       PendingDatabaseTapped;
 
     // Смонтированные БД сайдбара. В режиме календаря — одна (дефолт). В конструкторе —
     // все из рабочего пространства, и каждая показывается корневым узлом (_showRoots).
@@ -43,6 +46,12 @@ public partial class SidebarTree : UserControl
     private sealed record MountedDb(int DbId, string Name, ConstructorRepository Repo, bool Locked = false);
     private readonly List<MountedDb> _dbs = [];
     private bool _showRoots;
+
+    // Ещё не смонтированные БД (фоновая очередь): узел-заглушка с именем и статусной
+    // строкой («в очереди…» / «Обновление · 45% · ≈ 2 мин» / «недоступна…»). Содержимое
+    // не строится — до готовности ни один модуль в базу не лезет. Статус обновляется
+    // живьём через UpdatePendingStatus без перестройки дерева.
+    private readonly List<PendingDb> _pending = [];
 
     private SidebarMode _mode = SidebarMode.Calendar;
     private SortState _sortState = SortState.None;
@@ -118,20 +127,38 @@ public partial class SidebarTree : UserControl
 
     // Конструктор: несколько БД из рабочего пространства, каждая — корневой узел.
     // База без допуска (Permissions.AccessGranted=false) отображается замком без содержимого.
-    public void InitializeWorkspace(IReadOnlyList<DatabaseManager> databases, SidebarMode mode)
+    // pending — ещё не смонтированные БД фоновой очереди: узлы-заглушки со статусом.
+    public void InitializeWorkspace(IReadOnlyList<DatabaseManager> databases, SidebarMode mode,
+                                    IReadOnlyList<PendingDb>? pending = null)
     {
         _dbs.Clear();
         foreach (var d in databases)
             _dbs.Add(new MountedDb(d.DbId, d.Name, d.Constructor, !d.Permissions.AccessGranted));
+        _pending.Clear();
+        if (pending is not null) _pending.AddRange(pending);
         _showRoots = true;
         _mode = mode;
         ToggleAllBtn.IsVisible = ChecksMode;
         Refresh();
     }
 
+    // Живое обновление статуса заглушки (каждые полсекунды во время миграции): меняем только
+    // текст строки, без перестройки дерева — иначе сайдбар мигал бы и терял раскрытие/выделение.
+    public void UpdatePendingStatus(int dbId, string status, bool failed)
+    {
+        var p = _pending.FirstOrDefault(p => p.DbId == dbId);
+        if (p is null) return;
+        p.Status = status;
+        p.Failed = failed;
+
+        foreach (var row in _rows)
+            if (row.Node.IsPending && row.Node.DbId == dbId)
+                row.SetStatus(status, failed);
+    }
+
     public void Refresh()
     {
-        if (_dbs.Count == 0) return;
+        if (_dbs.Count == 0 && _pending.Count == 0) return;
 
         _renderedFontDelta = FontScale.Delta;   // дерево отрисовано с текущим размером
 
@@ -162,9 +189,11 @@ public partial class SidebarTree : UserControl
     }
 
     // Запоминаем, какие корни-БД свёрнуты, чтобы состояние пережило перестройку дерева.
+    // Заглушки очереди не считаются: они всегда «свёрнуты», но после монтирования база
+    // должна открыться раскрытой.
     private void CaptureDbRootStates()
     {
-        foreach (var n in _roots.Where(n => n.IsDatabase))
+        foreach (var n in _roots.Where(n => n.IsDatabase && !n.IsPending))
         {
             if (n.IsExpanded) _collapsedDbRoots.Remove(n.DbId);
             else              _collapsedDbRoots.Add(n.DbId);
@@ -225,7 +254,7 @@ public partial class SidebarTree : UserControl
 
     private List<SidebarNode> BuildTree()
     {
-        if (_dbs.Count == 0) return [];
+        if (_dbs.Count == 0 && _pending.Count == 0) return [];
 
         // Конструктор: каждая БД — корневой узел, под ним её дерево.
         if (_showRoots)
@@ -248,11 +277,29 @@ public partial class SidebarTree : UserControl
                         rootNode.Children.Add(child);
                 roots.Add(rootNode);
             }
-            return roots;
+
+            // Немонтированные БД — узлы-заглушки: имя приглушено, под ним статусная строка,
+            // содержимого нет (модули не видят базу до готовности). Клик — подсказка о статусе.
+            foreach (var p in _pending)
+                roots.Add(new SidebarNode
+                {
+                    NodeType  = "database",
+                    DbId      = p.DbId,
+                    Id        = p.DbId,
+                    Name      = p.Name,
+                    IsPending = true,
+                    Status    = p.Status,
+                    Failed    = p.Failed,
+                });
+
+            // Порядок реестра (дефолтная первой, дальше по Id), а не порядок завершения
+            // монтирования: базы не прыгают по списку, когда очередь их догружает.
+            var defaultDbId = _dbs.Count > 0 ? _dbs[0].DbId : -1;
+            return roots.OrderBy(r => r.DbId == defaultDbId ? -1 : r.DbId).ToList();
         }
 
         // Календарь: одна БД без корня.
-        return BuildDbChildren(_dbs[0]);
+        return _dbs.Count > 0 ? BuildDbChildren(_dbs[0]) : [];
     }
 
     private List<SidebarNode> BuildDbChildren(MountedDb db)
@@ -473,6 +520,14 @@ public partial class SidebarTree : UserControl
             return;
         }
 
+        // Немонтированная база (очередь/обновление/недоступна): вместо раскрытия —
+        // подсказка с текущим статусом (раскрывать нечего, содержимое ещё не готово).
+        if (node.IsPending)
+        {
+            PendingDatabaseTapped?.Invoke(this, node.DbId);
+            return;
+        }
+
         // Запертая база: вместо раскрытия — запрос доступа (пароль/ожидание допуска).
         if (node.IsDatabase && node.IsLocked)
         {
@@ -605,6 +660,7 @@ public partial class SidebarTree : UserControl
         if (sender is not Control { DataContext: SidebarRow row }) return;
         var node = row.Node;
         if (!node.IsGroup && !node.IsDatabase) return;
+        if (node.IsPending) return;   // у заглушки раскрывать нечего
         node.IsExpanded = !node.IsExpanded;
         if (node.IsDatabase)
         {
@@ -640,7 +696,8 @@ public partial class SidebarTree : UserControl
         if (sender is not Control { DataContext: SidebarRow row } anchor) return;
         if (!row.Node.Id.HasValue) return;
         // У запертой базы меню нет — содержимое недоступно до допуска.
-        if (row.Node.IsLocked) { e.Handled = true; return; }
+        // У немонтированной (очередь/обновление/недоступна) — тоже: база ещё не готова.
+        if (row.Node.IsLocked || row.Node.IsPending) { e.Handled = true; return; }
 
         var menu = new ContextMenu();
         var node = row.Node;
@@ -811,11 +868,15 @@ public partial class SidebarTree : UserControl
     {
         var repo = RepoFor(dbId);
         if (repo is null) return;
-        var col = repo.GetAllCollections().FirstOrDefault(c => c.Id == collectionId);
-        if (col is null) return;
+        try
+        {
+            var col = repo.GetAllCollections().FirstOrDefault(c => c.Id == collectionId);
+            if (col is null) return;
 
-        col.Color = hex;
-        repo.UpdateCollection(col);
+            col.Color = hex;
+            repo.UpdateCollection(col);
+        }
+        catch (Exception ex) when (DbErrors.Handle(ex, repo.DbPath)) { return; }
         Refresh();
         CalendarsChanged?.Invoke(this, EventArgs.Empty);
     }
@@ -1160,24 +1221,29 @@ public partial class SidebarTree : UserControl
         var repo = RepoFor(res.DbId);
         if (repo is null) return;
 
-        if (res.Type == "group")
+        // Файл занят чужим писателем/пропал — тост (DbErrors), создание не применяется.
+        try
         {
-            var pos = repo.GetAllGroups().Select(g => g.Position).DefaultIfEmpty(0).Max() + 1000;
-            var group = repo.AddGroup(new DbGroup { Name = res.Name, ParentId = res.ParentId, Position = pos });
-            ReloadAndNotify();
-            if (group.Id.HasValue) ExpandGroup(res.DbId, group.Id.Value);
+            if (res.Type == "group")
+            {
+                var pos = repo.GetAllGroups().Select(g => g.Position).DefaultIfEmpty(0).Max() + 1000;
+                var group = repo.AddGroup(new DbGroup { Name = res.Name, ParentId = res.ParentId, Position = pos });
+                ReloadAndNotify();
+                if (group.Id.HasValue) ExpandGroup(res.DbId, group.Id.Value);
+            }
+            else
+            {
+                var pos = repo.GetAllCollections().Select(c => c.Position).DefaultIfEmpty(0).Max() + 1000;
+                var col = repo.AddCollection(new DbCollection { Name = res.Name, GroupId = res.ParentId, Position = pos });
+                if (col.Id.HasValue)
+                    // Title задаём реальным текстом «Без названия» (как кнопка «+»),
+                    // а не оставляем пустым с одним плейсхолдером в ячейке.
+                    repo.AddRecord(new DbRecord { CollectionId = col.Id.Value, Title = "Без названия" });
+                ReloadAndNotify();
+                if (col.Id.HasValue && _mode == SidebarMode.Constructor) OpenCollection(res.DbId, col.Id.Value);
+            }
         }
-        else
-        {
-            var pos = repo.GetAllCollections().Select(c => c.Position).DefaultIfEmpty(0).Max() + 1000;
-            var col = repo.AddCollection(new DbCollection { Name = res.Name, GroupId = res.ParentId, Position = pos });
-            if (col.Id.HasValue)
-                // Title задаём реальным текстом «Без названия» (как кнопка «+»),
-                // а не оставляем пустым с одним плейсхолдером в ячейке.
-                repo.AddRecord(new DbRecord { CollectionId = col.Id.Value, Title = "Без названия" });
-            ReloadAndNotify();
-            if (col.Id.HasValue && _mode == SidebarMode.Constructor) OpenCollection(res.DbId, col.Id.Value);
-        }
+        catch (Exception ex) when (DbErrors.Handle(ex, repo.DbPath)) { }
     }
 
     // Импорт/экспорт таблиц. Окно собирает заявку (ImportRequest или ExportRequest), здесь —
@@ -1928,8 +1994,13 @@ public partial class SidebarTree : UserControl
         if (total <= BulkProgressThreshold)
         {
             // Малый объём — мгновенно, синхронно (без окна): каскадный DELETE быстрый.
-            foreach (var t in targets)
-                if (t.IsGroup) t.Repo.DeleteGroup(t.Id); else t.Repo.DeleteCollection(t.Id);
+            // Файл занят чужим писателем/пропал — тост (DbErrors), UI не валим.
+            try
+            {
+                foreach (var t in targets)
+                    if (t.IsGroup) t.Repo.DeleteGroup(t.Id); else t.Repo.DeleteCollection(t.Id);
+            }
+            catch (Exception ex) when (DbErrors.Handle(ex, targets.FirstOrDefault().Repo?.DbPath)) { }
         }
         else
         {
@@ -1969,9 +2040,11 @@ public partial class SidebarTree : UserControl
                     }
                 });
             }
-            catch
+            catch (Exception ex)
             {
                 // Ошибку фона проглатываем: узел либо удалён, либо нет — UI не валим.
+                // Известные ошибки БД (занята/пропала) при этом дают тост и сигнал монитору.
+                DbErrors.Handle(ex, targets.FirstOrDefault().Repo?.DbPath);
             }
 
             dlg.Done();
@@ -2026,6 +2099,15 @@ public partial class SidebarTree : UserControl
     private enum SortState { None, Asc, Desc }
 }
 
+// ── Немонтированная БД фоновой очереди (для узла-заглушки) ────────────────────
+public sealed class PendingDb(int dbId, string name, string status, bool failed)
+{
+    public int    DbId   { get; } = dbId;
+    public string Name   { get; } = name;
+    public string Status { get; set; } = status;
+    public bool   Failed { get; set; } = failed;
+}
+
 // ── Узел дерева ────────────────────────────────────────────────────────────────
 public class SidebarNode
 {
@@ -2035,6 +2117,9 @@ public class SidebarNode
     public string  Name     { get; init; } = "";
     public string  Color    { get; init; } = "#007AFF";
     public bool    IsLocked { get; init; }        // база без допуска: замок, без содержимого
+    public bool    IsPending { get; init; }       // база ещё не смонтирована (очередь/ошибка)
+    public string? Status    { get; init; }       // статусная строка заглушки
+    public bool    Failed    { get; init; }       // статус — ошибка (красный)
     public bool    IsExpanded { get; set; }
     public bool    IsGroup    => NodeType == "group";
     public bool    IsDatabase => NodeType == "database";
@@ -2053,6 +2138,7 @@ public partial class SidebarRow : ObservableObject
     private static readonly IBrush Hover       = Brush("BrushSecondaryBg",   "#F2F2F7");
     private static readonly IBrush Secondary   = Brush("BrushSecondaryText", "#8E8E93");
     private static readonly IBrush Primary     = Brush("BrushPrimaryText",   "#1C1C1E");
+    private static readonly IBrush Red         = Brush("BrushRed",           "#FF3B30");
 
     // Геометрия иконки из общего словаря Assets/Styles/Icons.axaml по ключу x:Key.
     private static Geometry? Icon(string key) =>
@@ -2077,6 +2163,11 @@ public partial class SidebarRow : ObservableObject
     [ObservableProperty] private bool _checked;
     [ObservableProperty] private bool _selected;
 
+    // Статусная строка заглушки очереди («в очереди…» / «Обновление · 45% · ≈ 2 мин»):
+    // обновляется живьём (раз в полсекунды при миграции) без перестройки дерева.
+    [ObservableProperty] private string? _status;
+    [ObservableProperty] private bool    _statusFailed;
+
     public SidebarRow(SidebarNode node, int depth, SidebarMode mode, bool isChecked, bool selected)
     {
         Node     = node;
@@ -2084,12 +2175,23 @@ public partial class SidebarRow : ObservableObject
         Mode     = mode;
         _checked = isChecked;
         _selected = selected;
+        _status       = node.Status;
+        _statusFailed = node.Failed;
     }
 
     public void SetHovered(bool v) => Hovered = v;
 
-    // Раскрываемые узлы — группы и корни-БД (запертая база не раскрывается).
-    private bool Expandable => Node.IsGroup || (Node.IsDatabase && !Node.IsLocked);
+    public void SetStatus(string status, bool failed)
+    {
+        Status       = status;
+        StatusFailed = failed;
+    }
+
+    public bool   HasStatus   => !string.IsNullOrEmpty(Status);
+    public IBrush StatusBrush => StatusFailed ? Red : Secondary;
+
+    // Раскрываемые узлы — группы и корни-БД (запертая и немонтированная не раскрываются).
+    private bool Expandable => Node.IsGroup || (Node.IsDatabase && !Node.IsLocked && !Node.IsPending);
 
     public Thickness IndentMargin => new(Depth * IndentStep, 0, 0, 0);
     public double    ChevronSlot  => Expandable ? IndentStep : 0;
@@ -2117,13 +2219,16 @@ public partial class SidebarRow : ObservableObject
     public IBrush CheckBorder => ColorBrush;
 
     public IBrush IconBrush => Selected ? Accent : Secondary;
-    public IBrush NameBrush => Selected ? Accent : Primary;
+    // Имя немонтированной базы приглушено — узел «неживой», пока очередь её не догрузит.
+    public IBrush NameBrush => Node.IsPending ? Secondary : Selected ? Accent : Primary;
 
     public IBrush RowBackground =>
         Selected ? AccentLight :
         Hovered  ? Hover       : Brushes.Transparent;
 
     partial void OnHoveredChanged(bool value)  => OnPropertyChanged(nameof(RowBackground));
+    partial void OnStatusChanged(string? value)     => OnPropertyChanged(nameof(HasStatus));
+    partial void OnStatusFailedChanged(bool value)  => OnPropertyChanged(nameof(StatusBrush));
     partial void OnCheckedChanged(bool value)
     {
         OnPropertyChanged(nameof(CheckFill));

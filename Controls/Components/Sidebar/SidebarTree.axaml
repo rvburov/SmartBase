@@ -111,11 +111,13 @@
                 <ItemsControl.ItemTemplate>
                     <DataTemplate x:DataType="comp:SidebarRow">
                         <Panel>
+                        <!-- Высота — MinHeight, а не Height: у заглушек очереди под именем
+                             живёт вторая строка статуса, обычные строки остаются стандартными. -->
                         <Border x:Name="RowRoot"
                                 Background="{Binding RowBackground}"
                                 Margin="0"
                                 Padding="10,0,0,0"
-                                Height="{StaticResource RowStepStandard}"
+                                MinHeight="{StaticResource RowStepStandard}"
                                 Tapped="OnRowTapped"
                                 PointerEntered="OnRowEnter"
                                 PointerExited="OnRowExit"
@@ -184,13 +186,21 @@
                                     </Canvas>
                                 </Viewbox>
 
-                                <!-- Имя -->
-                                <TextBlock Grid.Column="3"
-                                           Text="{Binding Name}"
-                                           Foreground="{Binding NameBrush}"
-                                           VerticalAlignment="Center"
-                                           TextTrimming="CharacterEllipsis"
-                                           Margin="6,0,8,0" />
+                                <!-- Имя (+ статусная строка у немонтированных баз:
+                                     «в очереди…» / «Обновление · 45% · ≈ 2 мин» / «недоступна…») -->
+                                <StackPanel Grid.Column="3"
+                                            VerticalAlignment="Center"
+                                            Margin="6,4,8,4"
+                                            Spacing="1">
+                                    <TextBlock Text="{Binding Name}"
+                                               Foreground="{Binding NameBrush}"
+                                               TextTrimming="CharacterEllipsis" />
+                                    <TextBlock Text="{Binding Status}"
+                                               IsVisible="{Binding HasStatus}"
+                                               Foreground="{Binding StatusBrush}"
+                                               FontSize="{DynamicResource FontSizeSmall}"
+                                               TextTrimming="CharacterEllipsis" />
+                                </StackPanel>
                             </Grid>
                         </Border>
                         <!-- Зазор между заливками строк — линия цвета фона отдельным
