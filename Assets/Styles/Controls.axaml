@@ -419,6 +419,25 @@
              текст переполняет поле фикс. высоты и вылезает кнопка-стрелка скроллбара.
              Многострочным (notesEditor, DescBox, лог) скролл возвращается отдельно. -->
         <Setter Property="ScrollViewer.VerticalScrollBarVisibility" Value="Disabled" />
+        <!-- Контекстное меню по-русски: дефолт темы Fluent — английские Cut/Copy/Paste
+             (Avalonia не локализуется сама). Команды/жесты — те же, что у дефолтного
+             флайаута темы ($parent[TextBox] в попапе резолвится, это паттерн самой темы). -->
+        <Setter Property="ContextFlyout">
+            <MenuFlyout>
+                <MenuItem Header="Вырезать"
+                          Command="{Binding $parent[TextBox].Cut}"
+                          IsEnabled="{Binding $parent[TextBox].CanCut}"
+                          InputGesture="{x:Static TextBox.CutGesture}" />
+                <MenuItem Header="Копировать"
+                          Command="{Binding $parent[TextBox].Copy}"
+                          IsEnabled="{Binding $parent[TextBox].CanCopy}"
+                          InputGesture="{x:Static TextBox.CopyGesture}" />
+                <MenuItem Header="Вставить"
+                          Command="{Binding $parent[TextBox].Paste}"
+                          IsEnabled="{Binding $parent[TextBox].CanPaste}"
+                          InputGesture="{x:Static TextBox.PasteGesture}" />
+            </MenuFlyout>
+        </Setter>
     </Style>
 
     <Style Selector="TextBox:pointerover /template/ Border">

@@ -17,6 +17,9 @@ namespace SmartBase.Views.Settings;
 public partial class SettingsView : UserControl
 {
     private DatabaseRegistry? _registry;
+    // Статус БД в фоновой очереди монтирования (текст + признак ошибки) или null,
+    // если базы в очереди нет; поставляет MainWindow из MountQueue.
+    private Func<int, (string Text, bool Failed)?>? _queueStatus;
     // Признак «БД сейчас смонтирована» (даёт MainWindow по рабочему пространству).
     private Func<int, bool>?  _isMounted;
 
@@ -607,16 +610,33 @@ public partial class SettingsView : UserControl
         FontSizeSlider.Value = AppSettings.FontDeltaDefault;   // → OnFontSizeChanged → SetDelta(0)
     }
 
-    // Вызывается из MainWindow: реестр + способ узнать, смонтирована ли БД сейчас.
-    public void Initialize(DatabaseRegistry registry, Func<int, bool> isMounted)
+    // Вызывается из MainWindow: реестр + способ узнать, смонтирована ли БД сейчас,
+    // + статус фоновой очереди монтирования для ещё не подключённых.
+    public void Initialize(DatabaseRegistry registry, Func<int, bool> isMounted,
+                           Func<int, (string Text, bool Failed)?>? queueStatus = null)
     {
-        _registry  = registry;
-        _isMounted = isMounted;
+        _registry    = registry;
+        _isMounted   = isMounted;
+        _queueStatus = queueStatus;
         RefreshDatabaseList();
     }
 
     // Перестроить список (статус монтирования мог измениться). Вызывается из MainWindow.
     public void RefreshDatabases() => RefreshDatabaseList();
+
+    // Живое обновление статуса строки БД из очереди монтирования: проценты и время
+    // («Обновление · 45% · ≈ 2 мин») меняются каждые полсекунды НА МЕСТЕ, без пересборки
+    // списка — как у заглушек сайдбара. Вызывается из MainWindow на каждый тик очереди.
+    public void UpdateQueueStatus(int dbId, string text, bool failed)
+    {
+        if (DatabaseList.ItemsSource is not IEnumerable<DatabaseRow> rows) return;
+        foreach (var r in rows)
+            if (r.Id == dbId && !r.IsMounted)
+            {
+                r.SetStatus(text, failed);
+                break;
+            }
+    }
 
     // Переключение раздела: заголовок + видимость соответствующей панели.
     public void ShowCategory(string key)
@@ -635,32 +655,42 @@ public partial class SettingsView : UserControl
     {
         if (_registry is null) { DatabaseList.ItemsSource = null; return; }
 
-        DatabaseList.ItemsSource = _registry.GetAll().Select(d => new DatabaseRow
+        DatabaseList.ItemsSource = _registry.GetAll().Select(d =>
         {
-            Id        = d.Id,
-            Name      = d.Name,
-            Path      = d.Path,
-            IsDefault = d.IsDefault,
-            IsMounted = _isMounted?.Invoke(d.Id) ?? true,
+            var mounted = _isMounted?.Invoke(d.Id) ?? true;
+            // Не смонтирована: либо ждёт/монтируется в фоновой очереди (живой статус),
+            // либо недоступна (нет в очереди или очередь пометила ошибкой).
+            var queue = mounted ? null : _queueStatus?.Invoke(d.Id);
+            return new DatabaseRow
+            {
+                Id            = d.Id,
+                Name          = d.Name,
+                Path          = d.Path,
+                IsDefault     = d.IsDefault,
+                IsMounted     = mounted,
+                StatusText    = mounted ? null : queue?.Text ?? "Не подключена (файл недоступен)",
+                StatusIsError = !mounted && (queue is null || queue.Value.Failed),
+            };
         }).ToList();
     }
 
-    // Создать новую БД: выбрать имя/расположение файла (схема создаётся при монтировании).
+    // Создать новую БД: собственное русское окно (имя + папка) вместо системного
+    // save-диалога — тот говорит на языке ОС и предлагает ПЕРЕЗАПИСАТЬ существующий
+    // файл; здесь занятое имя даёт ошибку «уже существует», перезаписи нет в принципе.
+    // Схема создаётся при монтировании.
     private async void OnCreateDatabaseClick(object? sender, RoutedEventArgs e)
     {
-        var top = TopLevel.GetTopLevel(this);
-        if (_registry is null || top is null) return;
+        if (_registry is null || VisualRoot is not Window win) return;
 
-        var file = await top.StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
-        {
-            Title             = "Создать базу данных",
-            SuggestedFileName = "database",
-            DefaultExtension  = "db",
-            FileTypeChoices   = [new FilePickerFileType("База данных SQLite") { Patterns = ["*.db"] }],
-        });
-        if (file is null) return;
+        // Стартовая папка — «Документы» (или домашняя, если «Документов» нет).
+        var docs = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+        if (string.IsNullOrEmpty(docs) || !Directory.Exists(docs))
+            docs = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
 
-        RegisterDatabase(file.Path.LocalPath);
+        var path = await new CreateDatabaseDialog(docs).ShowDialog<string?>(win);
+        if (path is null) return;
+
+        RegisterDatabase(path);
     }
 
     // Подключить существующий .db-файл (например, общий в сетевой папке).
@@ -678,7 +708,19 @@ public partial class SettingsView : UserControl
         var file = files.FirstOrDefault();
         if (file is null) return;
 
-        RegisterDatabase(file.Path.LocalPath);
+        // Уже в реестре — не создаём дубль и честно говорим об этом (раньше клик
+        // просто «ничего не делал»).
+        var full = System.IO.Path.GetFullPath(file.Path.LocalPath);
+        if (_registry.GetAll().Any(d => string.Equals(d.Path, full, StringComparison.OrdinalIgnoreCase)))
+        {
+            if (VisualRoot is Window win)
+                await ConfirmDialog.Info(
+                    $"База данных «{System.IO.Path.GetFileNameWithoutExtension(full)}» уже подключена.")
+                    .ShowDialog(win);
+            return;
+        }
+
+        RegisterDatabase(full);
     }
 
     private void RegisterDatabase(string path)

@@ -330,11 +330,13 @@
                                                        FontSize="{DynamicResource FontSizeSmall}"
                                                        Foreground="{StaticResource BrushSecondaryText}"
                                                        TextTrimming="CharacterEllipsis" />
-                                            <!-- Файл недоступен / не смонтирована -->
-                                            <TextBlock Text="Не подключена (файл недоступен)"
+                                            <!-- Статус: очередь фонового монтирования (серым,
+                                                 «в очереди…» / «Обновление · 45% · ≈ 2 мин»)
+                                                 либо недоступна (красным) -->
+                                            <TextBlock Text="{Binding StatusText}"
                                                        FontSize="{DynamicResource FontSizeSmall}"
-                                                       Foreground="{StaticResource BrushRed}"
-                                                       IsVisible="{Binding ShowNotMounted}" />
+                                                       Foreground="{Binding StatusBrush}"
+                                                       IsVisible="{Binding ShowStatus}" />
                                         </StackPanel>
 
                                         <StackPanel Grid.Column="1" Orientation="Horizontal"
@@ -347,12 +349,13 @@
                                                        Foreground="{StaticResource BrushSecondaryText}"
                                                        IsVisible="{Binding ShowDefaultBadge}" />
 
-                                            <!-- Недоступна → попытка переподключения -->
+                                            <!-- Недоступна → попытка переподключения (ждущим
+                                                 в очереди кнопка не нужна — подключатся сами) -->
                                             <Button Content="Подключить заново"
                                                     Tag="{Binding Id}"
                                                     Click="OnReconnectDatabaseClick"
                                                     VerticalAlignment="Center"
-                                                    IsVisible="{Binding ShowNotMounted}" />
+                                                    IsVisible="{Binding ShowReconnect}" />
 
                                             <!-- Удалить из реестра (файл не удаляется) -->
                                             <Button Classes="icon"
