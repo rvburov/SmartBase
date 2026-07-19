@@ -7,6 +7,7 @@ EF Core/SQLite). Здесь описано, **как устроено и как 
 
 ### Гайды ([guides/](guides/))
 - [user-guide.md](guides/user-guide.md) — руководство пользователя.
+- [postgresql-setup.md](guides/postgresql-setup.md) — PostgreSQL: установка сервера, создание базы, подключение из приложения.
 - [developer-guide.md](guides/developer-guide.md) — миграции, соглашения, раскладка вывода.
 - [build.md](guides/build.md) — сборка и запуск: dev-режим, релиз по ОС, версия/дата.
 - [auto-update.md](guides/auto-update.md) — автообновление: сетевая папка + установщик (ТЗ).
