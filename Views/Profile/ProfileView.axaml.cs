@@ -7,6 +7,7 @@ using SmartBase.Controls.Dialogs;
 using SmartBase.Core.Models;
 using SmartBase.Database;
 using SmartBase.Database.Entities;
+using SmartBase.Database.Repositories;
 using SmartBase.Settings;
 using SmartBase.Utils;
 
@@ -163,7 +164,7 @@ public partial class ProfileView : UserControl
         else if (RightsBlock.IsVisible) LoadChecks();
     }
 
-    // Загрузить выбранную базу: пароль, пользователи; блок прав сворачивается.
+    // Загрузить выбранную базу: пароль, автоочистка, пользователи; блок прав сворачивается.
     private void LoadAdminDb()
     {
         var i = AdminDbCombo.SelectedIndex;
@@ -173,6 +174,7 @@ public partial class ProfileView : UserControl
         if (_adminDb is null) return;
 
         RefreshPasswordRow();
+        RefreshRetentionRow();
         RebuildUsers();
     }
 
@@ -183,6 +185,75 @@ public partial class ProfileView : UserControl
         PasswordStateText.Text     = has ? "Пароль установлен." : "Пароль не установлен.";
         PasswordSetBtn.Content     = has ? "Сменить пароль" : "Установить пароль";
         PasswordRemoveBtn.IsVisible = has;
+    }
+
+    // ── Очистка журнала ────────────────────────────────────────────────────────
+
+    // Программное выставление тумблера/периода не должно писать конфиг в БД.
+    private bool _suppressRetention;
+
+    // Отразить сохранённую в базе политику автоочистки (RetentionEnabled/Months).
+    private void RefreshRetentionRow()
+    {
+        if (_adminDb is null) return;
+        _suppressRetention = true;
+        RetentionToggle.IsChecked = _adminDb.Permissions.RetentionEnabled;
+        var months = _adminDb.Permissions.RetentionMonths.ToString();
+        var idx = -1;
+        for (var i = 0; i < RetentionPeriodCombo.Items.Count; i++)
+            if ((RetentionPeriodCombo.Items[i] as ComboBoxItem)?.Tag as string == months) { idx = i; break; }
+        RetentionPeriodCombo.SelectedIndex = idx >= 0 ? idx : 2;   // 12 месяцев по умолчанию
+        _suppressRetention = false;
+    }
+
+    private void OnRetentionToggled(object? sender, RoutedEventArgs e) => SaveRetention();
+    private void OnRetentionPeriodChanged(object? sender, SelectionChangedEventArgs e) => SaveRetention();
+
+    private void SaveRetention()
+    {
+        if (_suppressRetention || _adminDb is null) return;
+        var enabled = RetentionToggle.IsChecked == true;
+        var months  = int.TryParse((RetentionPeriodCombo.SelectedItem as ComboBoxItem)?.Tag as string, out var m)
+            ? m : PermissionService.DefaultRetentionMonths;
+        _adminDb.Permissions.SetChangeLogRetention(enabled, months);
+    }
+
+    private async void OnPurgeChangeLog(object? sender, RoutedEventArgs e)
+    {
+        if (_adminDb is null || TopLevel.GetTopLevel(this) is not Window owner) return;
+
+        var tag = (PurgePeriodCombo.SelectedItem as ComboBoxItem)?.Tag as string;
+        if (tag is null)
+        {
+            await ConfirmDialog.Info("Выберите период очистки.").ShowDialog(owner);
+            return;
+        }
+
+        DateTime? cutoff;
+        string    periodText;
+        if (tag == "all") { cutoff = null; periodText = "весь журнал"; }
+        else
+        {
+            var months = int.Parse(tag);
+            cutoff = DateTime.UtcNow.AddMonths(-months);
+            periodText = $"записи старше {months} мес.";
+        }
+
+        var confirmed = await new ConfirmDialog(
+                $"Очистить {periodText} в истории изменений выбранной базы данных? " +
+                "Это действие нельзя отменить.", confirmText: "Очистить")
+            .ShowDialog<bool>(owner);
+        if (!confirmed) return;
+
+        int deleted;
+        try { deleted = _adminDb.Constructor.PurgeChangeLog(cutoff); }
+        catch (Exception ex) when (DbErrors.Handle(ex, _adminDb.Constructor.DbPath)) { return; }
+
+        await ConfirmDialog.Info($"Удалено записей журнала: {deleted:N0}.").ShowDialog(owner);
+
+        // Открыта история этой базы — перечитать, чтобы удалённое исчезло из таблицы.
+        if (HistoryPanel.IsVisible && ReferenceEquals(_historyDb, _adminDb))
+            ReloadHistoryRows();
     }
 
     private async void OnPasswordSet(object? sender, RoutedEventArgs e)
@@ -288,7 +359,7 @@ public partial class ProfileView : UserControl
         var row = new Border
         {
             Padding = new Thickness(10, 8),
-            CornerRadius = new CornerRadius(6),
+            CornerRadius = Radius("RadiusBase", 6),
             Background = _selectedUser?.Id == user.Id
                 ? Brush("BrushAccentLight", "#E5F0FF")
                 : Brushes.Transparent,
@@ -435,4 +506,9 @@ public partial class ProfileView : UserControl
 
     private static double FontSize(string key, double fallback) =>
         Application.Current!.TryFindResource(key, out var res) && res is double d ? d : fallback;
+
+    // Скругление из токена Radius* (fallback — как в Brush/FontSize).
+    private static CornerRadius Radius(string key, double fallback) =>
+        Application.Current!.TryFindResource(key, out var res) && res is CornerRadius r
+            ? r : new CornerRadius(fallback);
 }

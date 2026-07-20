@@ -245,7 +245,7 @@ FK-каскадов у этих таблиц нет — при удалении 
 
 | Колонка | Тип | Описание |
 |---|---|---|
-| `Key` | TEXT, PK | `password.hash` / `password.salt` / `password.iterations`, … |
+| `Key` | TEXT, PK | `password.hash` / `password.salt` / `password.iterations` / `changelog.retention.enabled` / `changelog.retention.months`, … |
 | `Value` | TEXT | |
 
 #### `change_log` — журнал изменений

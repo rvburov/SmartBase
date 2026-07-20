@@ -20,7 +20,7 @@
              меню-действий NavbarSettings). Наполняет ProfileView. -->
         <ComboBox Grid.Column="1" x:Name="HistoryDbCombo"
                   IsVisible="False"
-                  Width="240" Height="30"
+                  Width="240" Height="{StaticResource ControlHeightStandard}"
                   VerticalAlignment="Center" />
 
     </Grid>

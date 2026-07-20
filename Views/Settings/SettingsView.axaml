@@ -112,7 +112,7 @@
                                            Text="Какой раздел панели навигации (слева) открывается при запуске программы: Календарь, Конструктор базы данных или Расширения." />
                             </StackPanel>
                             <ComboBox Grid.Column="1" x:Name="StartupModuleCombo"
-                                      Width="240" Height="34"
+                                      Width="240" Height="{StaticResource ControlHeightStandard}"
                                       VerticalAlignment="Center"
                                       Background="{StaticResource BrushSecondaryBg}"
                                       CornerRadius="{StaticResource RadiusBase}"
@@ -135,7 +135,7 @@
                                            Text="Какой вид календаря открывается при переходе в раздел: Расписание, Журнал, День, Неделя, Месяц, Год или Диаграмма." />
                             </StackPanel>
                             <ComboBox Grid.Column="1" x:Name="CalendarViewCombo"
-                                      Width="240" Height="34"
+                                      Width="240" Height="{StaticResource ControlHeightStandard}"
                                       VerticalAlignment="Center"
                                       Background="{StaticResource BrushSecondaryBg}"
                                       CornerRadius="{StaticResource RadiusBase}"
@@ -162,7 +162,7 @@
                                            Text="Какой вид коллекции открывается в конструкторе базы данных: Таблица или Список. Если у коллекции выбран свой вид, он сохраняется за ней." />
                             </StackPanel>
                             <ComboBox Grid.Column="1" x:Name="ConstructorViewCombo"
-                                      Width="240" Height="34"
+                                      Width="240" Height="{StaticResource ControlHeightStandard}"
                                       VerticalAlignment="Center"
                                       Background="{StaticResource BrushSecondaryBg}"
                                       CornerRadius="{StaticResource RadiusBase}"
@@ -216,7 +216,7 @@
                                     <Border Background="{DynamicResource ToolTipBackground}"
                                             BorderBrush="{StaticResource BrushSeparator}"
                                             BorderThickness="{DynamicResource BorderLine}"
-                                            CornerRadius="4"
+                                            CornerRadius="{StaticResource RadiusXS}"
                                             Padding="8,4"
                                             BoxShadow="0 2 8 0 #1A000000">
                                         <TextBlock x:Name="ScaleValueText" Text="100 %"
@@ -278,7 +278,7 @@
                                             Background="{DynamicResource ToolTipBackground}"
                                             BorderBrush="{StaticResource BrushSeparator}"
                                             BorderThickness="{DynamicResource BorderLine}"
-                                            CornerRadius="4"
+                                            CornerRadius="{StaticResource RadiusXS}"
                                             Padding="8,4"
                                             BoxShadow="0 2 8 0 #1A000000">
                                         <TextBlock x:Name="FontValueText" Text="12"
@@ -423,8 +423,10 @@
                                            Text="Путь к папке (можно сетевой), где лежит новая версия SmartBase.exe. Нажмите «Проверить» — программа сравнит версию файла в папке с текущей. По умолчанию путь не задан." />
                             </StackPanel>
                             <Grid ColumnDefinitions="*,Auto">
+                                <!-- MinHeight=30 снимает дефолтную min-высоту Fluent (~32px),
+                                     иначе поле выше кнопки «Проверить» (30px). Как у ComboBox. -->
                                 <TextBox x:Name="UpdatePathBox" Grid.Column="0"
-                                         Height="34" VerticalContentAlignment="Center"
+                                         Height="{StaticResource ControlHeightStandard}" VerticalContentAlignment="Center"
                                          Margin="0,0,8,0"
                                          Background="{StaticResource BrushSecondaryBg}"
                                          CornerRadius="{StaticResource RadiusBase}"

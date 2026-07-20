@@ -11,6 +11,14 @@
         <CornerRadius x:Key="RadiusLarge">12</CornerRadius>
         <CornerRadius x:Key="RadiusPill">15</CornerRadius>
 
+        <!-- ── Единая высота элементов формы ───────────────────────────────────
+             Один стандарт высоты для полей ввода (TextBox), выпадающих списков
+             (ComboBox) и кнопок-действий (Button.dialog): в строках настроек/диалогов
+             они стоят рядом и обязаны совпадать. Меняется в ОДНОМ месте.
+             Тема Fluent навязывает TextBox/ComboBox свою min-высоту (~32px) — стили
+             ниже перебивают её этим значением, поэтому Height у контролов honored. -->
+        <x:Double x:Key="ControlHeightStandard">30</x:Double>
+
         <!-- ── Толщина линий ────────────────────────────────────────────────
              ДЕФОЛТЫ токенов толщины. Живые значения пишет LineMetrics (Utils) в
              Resources каждого окна — визуально ~1 логический пиксель при любом зуме
@@ -146,7 +154,7 @@
 
     <Style Selector="Button.dialog">
         <Setter Property="Width"                      Value="110" />
-        <Setter Property="Height"                     Value="30" />
+        <Setter Property="Height"                     Value="{StaticResource ControlHeightStandard}" />
         <Setter Property="HorizontalContentAlignment" Value="Center" />
         <Setter Property="VerticalContentAlignment"   Value="Center" />
         <Setter Property="CornerRadius"               Value="{StaticResource RadiusMedium}" />
@@ -320,9 +328,9 @@
              (последнее число — отступ справа до стрелки одинаков везде). -->
         <Setter Property="VerticalContentAlignment" Value="Center" />
         <Setter Property="Padding"                  Value="10,0,8,0" />
-        <!-- Снимаем дефолтный Fluent MinHeight (~32px), чтобы Height=30
-             совпадал по высоте с навигационными кнопками. -->
-        <Setter Property="MinHeight"                Value="30" />
+        <!-- Снимаем дефолтный Fluent MinHeight (~32px), чтобы заданный Height
+             (ControlHeightStandard) совпадал по высоте с кнопками и полями ввода. -->
+        <Setter Property="MinHeight"                Value="{StaticResource ControlHeightStandard}" />
     </Style>
 
     <!-- Текст выбранного значения: по центру + обрезка многоточием при длинном тексте. -->
@@ -422,6 +430,12 @@
         <Setter Property="Padding"         Value="10,6" />
         <Setter Property="BorderThickness" Value="{DynamicResource BorderLine}" />
         <Setter Property="BorderBrush"     Value="{StaticResource BrushSeparator}" />
+        <!-- Единый стандарт высоты (как у ComboBox): снимаем дефолтный Fluent MinHeight
+             (~32px), чтобы однострочные поля с Height=ControlHeightStandard были 30px
+             вровень с кнопками и списками. Многострочные (notesEditor/DescBox) растут
+             выше — это только нижняя граница; поле-значение карточки (propValue) сбрасывает
+             её обратно в 0, там высоту задаёт строка карточки. -->
+        <Setter Property="MinHeight"       Value="{StaticResource ControlHeightStandard}" />
         <!-- Выделение текста серым вместо системного синего -->
         <Setter Property="SelectionBrush"           Value="#C7C7CC" />
         <Setter Property="SelectionForegroundBrush" Value="{StaticResource BrushPrimaryText}" />
@@ -539,6 +553,9 @@
         <Setter Property="Padding"                  Value="0" />
         <Setter Property="VerticalContentAlignment" Value="Center" />
         <Setter Property="ScrollViewer.VerticalScrollBarVisibility" Value="Disabled" />
+        <!-- Высоту в карточке задаёт строка (RowHeightStandard/ручная), а не стандарт
+             формы: сбрасываем нижнюю границу базового TextBox обратно в 0. -->
+        <Setter Property="MinHeight"                Value="0" />
     </Style>
     <Style Selector="TextBox.propValue /template/ Border#PART_BorderElement">
         <Setter Property="Background"      Value="Transparent" />

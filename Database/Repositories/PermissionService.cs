@@ -50,6 +50,10 @@ public sealed class PermissionService(AppDbContext db)
     public bool IsApproved    { get; private set; }
     /// <summary>У базы установлен пароль (хеш в db_meta).</summary>
     public bool HasPassword   { get; private set; }
+    /// <summary>Автоочистка журнала включена (политика в db_meta, применяется при монтировании).</summary>
+    public bool RetentionEnabled { get; private set; }
+    /// <summary>Сколько месяцев журнала хранить при включённой автоочистке.</summary>
+    public int  RetentionMonths  { get; private set; } = DefaultRetentionMonths;
     private int _dbMask = (int)PermAction.All;
     private Dictionary<int, int> _collectionMasks = [];
 
@@ -172,6 +176,9 @@ public sealed class PermissionService(AppDbContext db)
         IsAdmin       = me?.IsAdmin    ?? false;
         IsApproved    = me?.IsApproved ?? false;
         HasPassword   = _db.DbMeta.Any(m => m.Key == MetaPasswordHash);
+        RetentionEnabled = GetMeta(MetaRetentionEnabled) == "1";
+        RetentionMonths  = int.TryParse(GetMeta(MetaRetentionMonths), out var rm) && rm > 0
+            ? rm : DefaultRetentionMonths;
 
         _dbMask = (int)PermAction.All;
         _collectionMasks = [];
@@ -256,6 +263,24 @@ public sealed class PermissionService(AppDbContext db)
     private const string MetaPasswordSalt       = "password.salt";
     private const string MetaPasswordIterations = "password.iterations";
     private const int    PasswordIterations     = 100_000;
+
+    // Политика автоочистки журнала — в db_meta самой базы (как пароль): её видят все
+    // машины, открывающие файл, и чистят одинаково. Применяет ConstructorRepository
+    // при монтировании (DatabaseManager). Задаёт только администратор.
+    private const string MetaRetentionEnabled   = "changelog.retention.enabled";
+    private const string MetaRetentionMonths    = "changelog.retention.months";
+    public  const int    DefaultRetentionMonths = 12;
+
+    /// <summary>Включить/выключить автоочистку журнала и задать срок хранения (месяцев).
+    /// Только администратор. Применяется при следующем монтировании базы.</summary>
+    public void SetChangeLogRetention(bool enabled, int months)
+    {
+        DemandAdmin();
+        SetMeta(MetaRetentionEnabled, enabled ? "1" : "0");
+        SetMeta(MetaRetentionMonths, months.ToString());
+        _db.SaveChanges();
+        Reload();
+    }
 
     /// <summary>Установить/сменить пароль базы. Только администратор.</summary>
     public void SetPassword(string password)

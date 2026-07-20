@@ -99,6 +99,10 @@ public sealed partial class DatabaseManager : IDisposable
                 : $"Индексирую календарь «{name}»…",
             total > 0 ? Math.Min(0.99, done / (double)total) : null));
 
+        // Автоочистка журнала по возрасту (политика в db_meta, задаётся администратором):
+        // в фоне на свежем подключении — старт не блокируется.
+        Constructor.ApplyChangeLogRetention(Permissions.RetentionEnabled, Permissions.RetentionMonths);
+
         Categories.SeedDefaults();
     }
 

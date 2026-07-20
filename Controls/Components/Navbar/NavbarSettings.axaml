@@ -21,7 +21,7 @@
              окно, а выбор тут же сбрасывается (см. код-behind) — состояния у меню нет. -->
         <ComboBox Grid.Column="1" x:Name="AddDatabaseCombo"
                   IsVisible="False"
-                  Width="210" Height="30"
+                  Width="210" Height="{StaticResource ControlHeightStandard}"
                   VerticalAlignment="Center"
                   PlaceholderText="Добавить базу данных"
                   PlaceholderForeground="{StaticResource BrushPrimaryText}">

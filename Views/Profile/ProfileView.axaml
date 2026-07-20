@@ -137,7 +137,7 @@
                                 <TextBlock Classes="title" Text="Фамилия" />
                             </StackPanel>
                             <TextBox Grid.Column="1" x:Name="LastNameBox"
-                                     Width="240" Height="34"
+                                     Width="240" Height="{StaticResource ControlHeightStandard}"
                                      VerticalAlignment="Center"
                                      VerticalContentAlignment="Center"
                                      Background="{StaticResource BrushSecondaryBg}"
@@ -156,7 +156,7 @@
                                 <TextBlock Classes="title" Text="Имя" />
                             </StackPanel>
                             <TextBox Grid.Column="1" x:Name="FirstNameBox"
-                                     Width="240" Height="34"
+                                     Width="240" Height="{StaticResource ControlHeightStandard}"
                                      VerticalAlignment="Center"
                                      VerticalContentAlignment="Center"
                                      Background="{StaticResource BrushSecondaryBg}"
@@ -175,7 +175,7 @@
                                 <TextBlock Classes="title" Text="Отчество" />
                             </StackPanel>
                             <TextBox Grid.Column="1" x:Name="MiddleNameBox"
-                                     Width="240" Height="34"
+                                     Width="240" Height="{StaticResource ControlHeightStandard}"
                                      VerticalAlignment="Center"
                                      VerticalContentAlignment="Center"
                                      Background="{StaticResource BrushSecondaryBg}"
@@ -235,7 +235,7 @@
                                            Text="Панель управляет доступом к выбранной базе. В списке — базы, где вы администратор." />
                             </StackPanel>
                             <ComboBox Grid.Column="1" x:Name="AdminDbCombo"
-                                      Width="240" Height="34"
+                                      Width="240" Height="{StaticResource ControlHeightStandard}"
                                       VerticalAlignment="Center"
                                       Background="{StaticResource BrushSecondaryBg}"
                                       CornerRadius="{StaticResource RadiusBase}"
@@ -271,6 +271,76 @@
                     </Border>
                     <Border Classes="separator h" />
 
+                    <!-- Автоочистка журнала (политика хранится в самой базе, применяется
+                         при открытии на любой машине). -->
+                    <Border Classes="settingRow">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <StackPanel Grid.Column="0" Spacing="4"
+                                        VerticalAlignment="Center" Margin="0,0,32,0">
+                                <TextBlock Classes="title" Text="Автоочистка журнала" />
+                                <TextBlock Classes="desc"
+                                           Text="Старые записи истории изменений автоматически удаляются при открытии базы. Настройка хранится в базе — действует на всех машинах." />
+                            </StackPanel>
+                            <StackPanel Grid.Column="1" Orientation="Horizontal"
+                                        Spacing="10" VerticalAlignment="Center">
+                                <!-- SelectedIndex по умолчанию — 12 месяцев (индекс 2);
+                                     при загрузке базы RefreshRetentionRow синхронизирует
+                                     со значением из db_meta. Список никогда не пуст. -->
+                                <ComboBox x:Name="RetentionPeriodCombo"
+                                          Width="180" Height="{StaticResource ControlHeightStandard}"
+                                          SelectedIndex="2"
+                                          VerticalAlignment="Center"
+                                          Background="{StaticResource BrushSecondaryBg}"
+                                          CornerRadius="{StaticResource RadiusBase}"
+                                          SelectionChanged="OnRetentionPeriodChanged">
+                                    <ComboBoxItem Tag="3"  Content="Хранить 3 месяца" />
+                                    <ComboBoxItem Tag="6"  Content="Хранить 6 месяцев" />
+                                    <ComboBoxItem Tag="12" Content="Хранить 12 месяцев" />
+                                    <ComboBoxItem Tag="24" Content="Хранить 24 месяца" />
+                                </ComboBox>
+                                <ToggleSwitch x:Name="RetentionToggle"
+                                              OnContent="" OffContent=""
+                                              VerticalAlignment="Center"
+                                              IsCheckedChanged="OnRetentionToggled" />
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+                    <Border Classes="separator h" />
+
+                    <!-- Разовая очистка журнала за выбранный период. -->
+                    <Border Classes="settingRow">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <StackPanel Grid.Column="0" Spacing="4"
+                                        VerticalAlignment="Center" Margin="0,0,32,0">
+                                <TextBlock Classes="title" Text="Очистить журнал" />
+                                <TextBlock Classes="desc"
+                                           Text="Разово удалить историю изменений выбранной базы за выбранный период. Отменить нельзя." />
+                            </StackPanel>
+                            <StackPanel Grid.Column="1" Orientation="Horizontal"
+                                        Spacing="10" VerticalAlignment="Center">
+                                <!-- SelectedIndex по умолчанию — «Старше 12 месяцев» (индекс 3);
+                                     список никогда не пуст. -->
+                                <ComboBox x:Name="PurgePeriodCombo"
+                                          Width="200" Height="{StaticResource ControlHeightStandard}"
+                                          SelectedIndex="3"
+                                          VerticalAlignment="Center"
+                                          Background="{StaticResource BrushSecondaryBg}"
+                                          CornerRadius="{StaticResource RadiusBase}">
+                                    <ComboBoxItem Tag="1"   Content="Старше 1 месяца" />
+                                    <ComboBoxItem Tag="3"   Content="Старше 3 месяцев" />
+                                    <ComboBoxItem Tag="6"   Content="Старше 6 месяцев" />
+                                    <ComboBoxItem Tag="12"  Content="Старше 12 месяцев" />
+                                    <ComboBoxItem Tag="all" Content="Весь журнал" />
+                                </ComboBox>
+                                <Button x:Name="PurgeBtn" Classes="dialog"
+                                        Width="NaN" MinWidth="110" Padding="14,0"
+                                        Content="Очистить"
+                                        Click="OnPurgeChangeLog" />
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+                    <Border Classes="separator h" />
+
                     <!-- Пользователи базы -->
                     <Border Classes="settingRow">
                         <StackPanel Spacing="4">
@@ -294,7 +364,7 @@
                                                Text="Область действия: вся база данных или отдельная коллекция. Настройки коллекции имеют приоритет над настройками базы." />
                                 </StackPanel>
                                 <ComboBox Grid.Column="1" x:Name="ScopeCombo"
-                                          Width="240" Height="34"
+                                          Width="240" Height="{StaticResource ControlHeightStandard}"
                                           VerticalAlignment="Center"
                                           Background="{StaticResource BrushSecondaryBg}"
                                           CornerRadius="{StaticResource RadiusBase}"

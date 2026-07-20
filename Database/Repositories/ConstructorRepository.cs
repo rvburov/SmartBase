@@ -279,6 +279,54 @@ public partial class ConstructorRepository(AppDbContext db)
         });
     }
 
+    // ── Очистка журнала (change_log) ──────────────────────────────────────────
+    //
+    // Разовая очистка (панель администратора) и автоочистка по возрасту при
+    // монтировании. Оба пути — bulk `ExecuteDelete`: DELETE уходит в SQL одним
+    // запросом (без загрузки строк в память), провайдеро-независимо (SQLite/PG).
+
+    /// <summary>
+    /// Удаляет строки журнала старше <paramref name="olderThanUtc"/> (UTC); null —
+    /// весь журнал. Только администратор. Возвращает число удалённых строк.
+    /// </summary>
+    public int PurgeChangeLog(DateTime? olderThanUtc)
+    {
+        if (Permissions is { IsAdmin: false })
+            throw new InvalidOperationException(
+                "Очистить журнал может только администратор базы данных.");
+
+        // Кеш слияния побуквенных правок мог держать ссылки на удаляемые строки —
+        // сбрасываем, иначе следующая правка попыталась бы удалить уже удалённую строку.
+        _editMerges.Clear();
+
+        return olderThanUtc is DateTime cut
+            ? db.ChangeLog.Where(e => string.Compare(e.Ts, cut.ToString("o")) < 0).ExecuteDelete()
+            : db.ChangeLog.ExecuteDelete();
+    }
+
+    /// <summary>
+    /// Автоочистка журнала при монтировании: удаляет строки старше <paramref name="months"/>
+    /// месяцев на СВЕЖЕМ подключении в фоне (не блокирует старт, не трогает общий контекст).
+    /// Это настроенная администратором политика самой базы (db_meta) — прав не требует.
+    /// Best-effort: файл занят/недоступен — очистка повторится при следующем монтировании.
+    /// </summary>
+    public void ApplyChangeLogRetention(bool enabled, int months)
+    {
+        if (!enabled || months <= 0) return;
+        var cutoff = DateTime.UtcNow.AddMonths(-months).ToString("o");
+        var path   = db.DbPath;
+        _ = Task.Run(() =>
+        {
+            try
+            {
+                using var ctx = new AppDbContext(path);
+                ctx.ApplyPerformancePragmas();
+                ctx.ChangeLog.Where(e => string.Compare(e.Ts, cutoff) < 0).ExecuteDelete();
+            }
+            catch { /* автоочистка не критична: повторится при следующем запуске */ }
+        });
+    }
+
     // ── Группы ────────────────────────────────────────────────────────────────
 
     public List<DbGroup> GetAllGroups() =>
