@@ -5,6 +5,7 @@ using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
 using Avalonia.Threading;
+using Serilog;
 using SmartBase.Controls.Dialogs;
 using SmartBase.Database;
 using SmartBase.Utils;
@@ -105,6 +106,7 @@ public partial class App : Application
                 {
                     // Сбой открытия дефолтной БД (сбои остальных проглатывает Workspace.Mount):
                     // показываем причину на сплэше и корректно завершаемся, а не висим пустым окном.
+                    Log.Error(ex, "Не удалось открыть дефолтную базу данных на старте");
                     Dispatcher.UIThread.Post(() =>
                     {
                         splash.SetError($"Не удалось открыть базу данных:\n{ex.Message}");

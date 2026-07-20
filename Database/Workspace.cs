@@ -1,3 +1,4 @@
+using Serilog;
 using SmartBase.Database.Entities;
 using SmartBase.Utils;
 
@@ -84,9 +85,11 @@ public sealed class Workspace : IDisposable
             }
             return manager;
         }
-        catch
+        catch (Exception ex)
         {
             // Недоступная/повреждённая БД — статус покажут сайдбар и список БД в настройках.
+            // Единая точка сбоя открытия БД — здесь же диагностический лог (имя + путь без пароля).
+            Log.Warning(ex, "Не удалось смонтировать БД «{Name:l}» ({Path:l})", entry.Name, entry.Path);
             return null;
         }
     }

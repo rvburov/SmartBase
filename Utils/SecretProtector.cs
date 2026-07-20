@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using Serilog;
 
 namespace SmartBase.Utils;
 
@@ -51,10 +52,11 @@ public static class SecretProtector
                 return DpapiPrefix + Convert.ToBase64String(bytes);
             }
         }
-        catch
+        catch (Exception ex)
         {
             // Хранилище ОС недоступно (заблокированная связка, политика домена…) —
-            // не валим подключение базы, храним по-старому.
+            // не валим подключение базы, храним по-старому. Сам секрет НЕ логируем.
+            Log.Warning(ex, "Хранилище ОС недоступно — пароль сохранён без защиты");
         }
         return secret;
     }
@@ -66,7 +68,7 @@ public static class SecretProtector
         {
             if (!OperatingSystem.IsMacOS()) return "";
             try { return MacKeychain.Load(KeychainService, stored[KeychainPrefix.Length..]) ?? ""; }
-            catch { return ""; }
+            catch (Exception ex) { Log.Warning(ex, "Не удалось прочитать пароль из Связки ключей"); return ""; }
         }
         if (stored.StartsWith(DpapiPrefix, StringComparison.Ordinal))
         {
@@ -79,7 +81,7 @@ public static class SecretProtector
                     scope: System.Security.Cryptography.DataProtectionScope.CurrentUser);
                 return System.Text.Encoding.UTF8.GetString(bytes);
             }
-            catch { return ""; }
+            catch (Exception ex) { Log.Warning(ex, "Не удалось расшифровать пароль (DPAPI)"); return ""; }
         }
         return stored;   // открытый текст (legacy / Linux)
     }

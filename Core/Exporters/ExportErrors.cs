@@ -1,3 +1,5 @@
+using Serilog;
+
 namespace SmartBase.Core.Exporters;
 
 /// <summary>
@@ -28,13 +30,17 @@ public static class ExportErrors
     /// <summary>Перевод исключения в ExportException. Уже дружелюбные возвращаются как есть.</summary>
     public static ExportException Map(Exception ex, string path)
     {
+        // Уже дружелюбное — прошло логирование при первом переводе, не дублируем.
+        if (ex is ExportException ee) return ee;
+        // Единая точка перевода файловых ошибок экспорта → сюда же и единый лог.
+        Log.Warning(ex, "Ошибка экспорта файла {Path:l}", path);
+
         var name = string.IsNullOrEmpty(path)
             ? ""
             : $" «{System.IO.Path.GetFileName(System.IO.Path.TrimEndingDirectorySeparator(path))}»";
 
         return ex switch
         {
-            ExportException ee => ee,
             DirectoryNotFoundException =>
                 new ExportException("Папка не найдена или была удалена во время экспорта."),
             PathTooLongException =>

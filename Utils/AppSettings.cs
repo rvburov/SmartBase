@@ -32,6 +32,8 @@ public static class AppSettings
     public static string DbPath     { get; } = Path.Combine(AppDataDir, "database.db");
     // Системная БД (реестр БД + настройки приложения) — независимое хранилище, не показывается.
     public static string SystemDbPath { get; } = Path.Combine(AppDataDir, "app.db");
+    // Диагностический лог (Serilog → SQLite): единый файл на приложение, не per-database.
+    public static string LogsDbPath { get; } = Path.Combine(AppDataDir, "logs.db");
 
     public static void EnsureCreated() =>
         Directory.CreateDirectory(AppDataDir);

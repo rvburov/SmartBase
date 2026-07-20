@@ -1,5 +1,7 @@
 using System.Diagnostics;
 using Avalonia;
+using Serilog;
+using SmartBase.Logging;
 using SmartBase.Setup;
 using SmartBase.Utils;
 
@@ -22,7 +24,13 @@ internal sealed class Program
         // данными приложения (иначе у конечного пользователя вылет бесследный, диагностировать
         // нечего). Основная защита — точечные catch в UI (Utils/DbErrors и др.), это последний рубеж.
         AppDomain.CurrentDomain.UnhandledException += (_, e) =>
+        {
             LogCrash("unhandled", e.ExceptionObject as Exception);
+            // Процесс сейчас завершится, и finally в Main может не выполниться (падение с
+            // фонового потока). Форсируем сброс буфера Serilog в logs.db, чтобы фатальная
+            // запись не потерялась. crash.log уже записан синхронно внутри LogCrash.
+            AppLog.Shutdown();
+        };
         // Упавшие fire-and-forget задачи (паттерн `_ = Task.Run(...)`): фиксируем в лог и
         // помечаем наблюдёнными — иначе финализатор может завершить процесс.
         TaskScheduler.UnobservedTaskException += (_, e) =>
@@ -47,7 +55,16 @@ internal sealed class Program
         UpdateFailed = Array.Exists(args, a => a == "--update-failed");
 
         Mode = ResolveMode(args);
-        if (Mode == SetupMode.App) AppSettings.EnsureCreated();
+        if (Mode == SetupMode.App)
+        {
+            AppSettings.EnsureCreated();
+            // Диагностический лог в logs.db. Только App-режим: установщику/удалению он не нужен.
+            AppLog.Init();
+            // Точка отсчёта сессии: в logs.db всегда есть версия и старт, даже без ошибок.
+            // :l — литеральный вывод строк без кавычек (иначе Serilog пишет v"1.0.3").
+            Log.Information("Запуск SmartBase v{Version:l} ({OS:l})",
+                AppSettings.AppVersion, System.Runtime.InteropServices.RuntimeInformation.OSDescription);
+        }
         try
         {
             BuildAvaloniaApp().StartWithClassicDesktopLifetime(args);
@@ -60,11 +77,23 @@ internal sealed class Program
             LogCrash("ui-loop", ex);
             throw;
         }
+        finally
+        {
+            // Дописать буфер приёмника при любом выходе (штатном или по исключению).
+            // Если Init не вызывали (установщик) — no-op на «тихом» логгере по умолчанию.
+            AppLog.Shutdown();
+        }
     }
 
     // Дозапись в crash.log (best-effort: сбой логирования не должен маскировать исходную ошибку).
+    // Дублируем в Serilog (logs.db) — но crash.log остаётся независимым резервом: он работает,
+    // даже если Serilog ещё не инициализирован (сбой на старте) или его приёмник недоступен.
     private static void LogCrash(string source, Exception? ex)
     {
+        // На «тихом» логгере по умолчанию (до AppLog.Init) — безопасный no-op.
+        try { Log.Fatal(ex, "Crash: {Source:l} v{Version:l}", source, AppSettings.AppVersion); }
+        catch { }
+
         try
         {
             var path = Path.Combine(AppSettings.AppDataDir, "crash.log");

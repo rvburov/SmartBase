@@ -3,6 +3,7 @@ using System.Reflection;
 using Avalonia.Controls;
 using Avalonia.Interactivity;
 using Avalonia.Platform.Storage;
+using Serilog;
 using SmartBase.Controls.Dialogs;
 using SmartBase.Utils;
 
@@ -98,6 +99,7 @@ public partial class InstallerWindow : Window
         }
         catch (Exception ex)
         {
+            Log.Error(ex, "Ошибка установки в папку {Dir:l}", dir);
             SetBusy(false);
             SubtitleText.Text = $"Ошибка установки: {ex.Message}";
             return;

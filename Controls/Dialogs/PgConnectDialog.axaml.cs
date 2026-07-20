@@ -3,6 +3,7 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Media;
 using Npgsql;
+using Serilog;
 using SmartBase.Database;
 
 namespace SmartBase.Controls.Dialogs;
@@ -93,6 +94,8 @@ public partial class PgConnectDialog : Window
         }
         catch (Exception ex)
         {
+            Log.Warning(ex, "Не удалось подключиться к PostgreSQL {Host:l}:{Port}/{Db:l}",
+                info.Host, info.Port, info.Database);
             HideStatus();
             ShowError(DescribeError(ex));
             return null;

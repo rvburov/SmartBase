@@ -1,3 +1,5 @@
+using Serilog;
+
 namespace SmartBase.Core.Importers;
 
 /// <summary>
@@ -21,13 +23,17 @@ public static class ImportErrors
     /// <summary>Перевод исключения в ImportException. Уже дружелюбные возвращаются как есть.</summary>
     public static ImportException Map(Exception ex, string path)
     {
+        // Уже дружелюбное — прошло логирование при первом переводе, не дублируем.
+        if (ex is ImportException ie) return ie;
+        // Единая точка перевода файловых ошибок импорта → сюда же и единый лог.
+        Log.Warning(ex, "Ошибка импорта файла {Path:l}", path);
+
         var name = string.IsNullOrEmpty(path)
             ? ""
             : $" «{System.IO.Path.GetFileName(System.IO.Path.TrimEndingDirectorySeparator(path))}»";
 
         return ex switch
         {
-            ImportException ie => ie,
             FileNotFoundException or DirectoryNotFoundException =>
                 new ImportException($"Файл{name} не найден или был удалён во время импорта."),
             PathTooLongException =>

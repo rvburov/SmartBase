@@ -1,4 +1,5 @@
 using ExcelDataReader;
+using Serilog;
 
 namespace SmartBase.Core.Importers.TableSources;
 
@@ -84,6 +85,9 @@ public sealed class ExcelTableSource(string path, string? sheetName, int headerR
         try { return ExcelReaderFactory.CreateReader(fs); }
         catch (Exception ex) when (ex is not ImportException)
         {
+            // Сырая ошибка открытия оборачивается в дружелюбную мимо ImportErrors.Map —
+            // поэтому логируем здесь, иначе причина (повреждение/формат) нигде не осталась бы.
+            Log.Warning(ex, "Не удалось открыть файл Excel для импорта");
             throw new ImportException(
                 "Не удалось открыть файл. Проверьте, что это корректный файл Excel " +
                 "(.xlsx, .xlsm, .xlsb, .xls) и он не повреждён.");

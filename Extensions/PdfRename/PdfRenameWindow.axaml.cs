@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using Avalonia.Controls;
 using Avalonia.Interactivity;
 using Avalonia.Platform.Storage;
+using Serilog;
 using SmartBase.Controls.Dialogs;
 
 namespace SmartBase.Extensions.PdfRename;
@@ -77,7 +78,7 @@ public partial class PdfRenameWindow : Window
 
         List<string> pdfs;
         try { pdfs = await Task.Run(() => PdfRenamer.ListPdfFiles(folder)); }
-        catch (Exception ex) { LogLineNow($"❌ Нет доступа к папке: {ex.Message}"); return; }
+        catch (Exception ex) { Log.Warning(ex, "Переименование PDF: нет доступа к папке {Folder:l}", folder); LogLineNow($"❌ Нет доступа к папке: {ex.Message}"); return; }
 
         if (pdfs.Count == 0) { LogLineNow("⚠️ В папке нет PDF-файлов"); return; }
 
@@ -108,6 +109,7 @@ public partial class PdfRenameWindow : Window
         }
         catch (Exception ex)
         {
+            if (ex is not OperationCanceledException) Log.Warning(ex, "Переименование PDF: не удалось построить план для {Folder:l}", folder);
             LogLineNow($"❌ Ошибка: {ex.Message}");
             SetRunning(false);
             return;
@@ -155,6 +157,7 @@ public partial class PdfRenameWindow : Window
         }
         catch (Exception ex)
         {
+            if (ex is not OperationCanceledException) Log.Error(ex, "Переименование PDF: сбой при обработке папки {Folder:l}", folder);
             RenderLog();
             LogLineNow($"❌ Ошибка: {ex.Message}");
             SetRunning(false);

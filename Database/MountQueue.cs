@@ -1,3 +1,4 @@
+using Serilog;
 using SmartBase.Database.Entities;
 
 namespace SmartBase.Database;
@@ -132,7 +133,7 @@ public sealed class MountQueue
             // Mount() гасит ошибки сам (вернёт null); страхуемся на случай неожиданных.
             DatabaseManager? m = null;
             try { m = _ws.Mount(entry, (msg, frac) => OnStage(entry, msg, frac)); }
-            catch { }
+            catch (Exception ex) { Log.Error(ex, "Неожиданный сбой монтирования БД «{Name:l}»", entry.Name); }
 
             lock (_gate)
             {

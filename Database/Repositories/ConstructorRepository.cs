@@ -681,6 +681,9 @@ public partial class ConstructorRepository(AppDbContext db)
         }
         catch (SqliteException ex)
         {
+            // Оборачиваем в дружелюбную ImportException мимо ImportErrors.Map — логируем здесь.
+            // Serilog.Log полностью, т.к. у репозитория есть свой метод Log (журнал изменений).
+            Serilog.Log.Error(ex, "Ошибка записи в БД при импорте коллекции «{Name:l}»", collectionName);
             TryDeleteImported(colId);
             throw ex.SqliteErrorCode == 13   // SQLITE_FULL
                 ? new ImportException("Недостаточно места на диске — импорт отменён, частичные данные удалены.")
@@ -688,6 +691,7 @@ public partial class ConstructorRepository(AppDbContext db)
         }
         catch (Npgsql.PostgresException ex)
         {
+            Serilog.Log.Error(ex, "Ошибка записи в PostgreSQL при импорте коллекции «{Name:l}»", collectionName);
             TryDeleteImported(colId);
             throw ex.SqlState == "53100"   // disk_full
                 ? new ImportException("Недостаточно места на диске — импорт отменён, частичные данные удалены.")

@@ -31,6 +31,7 @@ EF Core/SQLite). Здесь описано, **как устроено и как 
 - [settings.md](features/settings.md) — настройки и управление БД.
 - [profile.md](features/profile.md) — модуль «Профиль»: общие данные, панель администратора, история изменений.
 - [extensions.md](features/extensions.md) — раздел «Расширения»: плагины, отделимость, два режима.
+- [logging.md](features/logging.md) — диагностический лог (Serilog → logs.db), раздел «Профиль → Диагностика», что логируется.
 - [icons.md](features/icons.md) — иконка приложения на всех ОС.
 
 ### UI ([ui/](ui/))

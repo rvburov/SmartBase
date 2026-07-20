@@ -6,6 +6,7 @@ using Avalonia.Controls;
 using Avalonia.Interactivity;
 using Avalonia.Media;
 using Avalonia.Platform.Storage;
+using Serilog;
 using SmartBase.Controls.Dialogs;
 
 namespace SmartBase.Extensions.ProductCompare;
@@ -125,10 +126,12 @@ public partial class ProductCompareWindow : Window
         }
         catch (ProductCompareException ex)
         {
+            Log.Warning(ex, "Сравнение прайсов не выполнено");
             SetStatus(ex.Message, "BrushRed");
         }
         catch (Exception ex)
         {
+            Log.Error(ex, "Сравнение прайсов: непредвиденная ошибка");
             SetStatus($"Ошибка: {ex.Message}", "BrushRed");
         }
         finally

@@ -16,6 +16,7 @@ public static class ProfileRegistry
         new("general", "Общие данные",           "IconUser"),
         new("admin",   "Панель администратора",  "IconShieldUser"),
         new("history", "История изменений",      "IconHistory"),
+        new("logs",    "Диагностика",            "IconCode"),
     ];
 
     /// <summary>Раздел по ключу или null, если такого нет.</summary>

@@ -12,6 +12,7 @@ using SmartBase.Core.Exporters;
 using SmartBase.Core.Importers;
 using SmartBase.Core.Importers.TableSources;
 using SmartBase.Core.Models;
+using Serilog;
 using SmartBase.Database;
 using SmartBase.Database.Repositories;
 using SmartBase.Utils;
@@ -1747,9 +1748,10 @@ public partial class SidebarTree : UserControl
                 }
             });
         }
-        catch
+        catch (Exception ex)
         {
             // Ошибку фона проглатываем: узел либо скопирован, либо нет — UI не валим.
+            Log.Warning(ex, "Сбой фонового копирования узла (дублирование)");
         }
 
         dlg.Done();
@@ -1862,9 +1864,10 @@ public partial class SidebarTree : UserControl
                 }
             });
         }
-        catch
+        catch (Exception ex)
         {
             // Ошибку фона проглатываем: узел либо перенесён, либо нет — UI не валим.
+            Log.Warning(ex, "Сбой фонового переноса узла");
         }
 
         dlg.Done();
@@ -2043,8 +2046,10 @@ public partial class SidebarTree : UserControl
             catch (Exception ex)
             {
                 // Ошибку фона проглатываем: узел либо удалён, либо нет — UI не валим.
-                // Известные ошибки БД (занята/пропала) при этом дают тост и сигнал монитору.
-                DbErrors.Handle(ex, targets.FirstOrDefault().Repo?.DbPath);
+                // Известные ошибки БД (занята/пропала) дают тост, сигнал монитору и лог внутри
+                // Handle; непредвиденное (Handle вернёт false) логируем здесь, иначе — тишина.
+                if (!DbErrors.Handle(ex, targets.FirstOrDefault().Repo?.DbPath))
+                    Log.Warning(ex, "Сбой фонового удаления узла");
             }
 
             dlg.Done();

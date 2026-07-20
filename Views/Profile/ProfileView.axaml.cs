@@ -86,11 +86,14 @@ public partial class ProfileView : UserControl
         GeneralPanel.IsVisible = key == "general";
         AdminPanel.IsVisible   = key == "admin";
         HistoryPanel.IsVisible = key == "history";
+        LogsPanel.IsVisible    = key == "logs";
         HeaderBar.Title = (ProfileRegistry.FindByKey(key) ?? ProfileRegistry.All[0]).Label;
+        // Действия истории (выбор базы, очистка журнала) — только для истории.
         HeaderBar.ShowHistoryActions = key == "history";
 
         if (key == "admin")   RebuildAdminPanel();
         if (key == "history") RebuildHistoryPanel();
+        if (key == "logs")    RebuildLogsPanel();
     }
 
     // ── ФИО ──────────────────────────────────────────────────────────────────

@@ -1,4 +1,5 @@
 using Avalonia.Threading;
+using Serilog;
 using SmartBase.Database;
 
 namespace SmartBase.Utils;
@@ -30,11 +31,14 @@ public static class DbErrors
     {
         if (DbHealthMonitor.IsBusyError(ex))
         {
+            // Штатная конкуренция — не ошибка приложения, поэтому Warning, не Error.
+            Log.Warning(ex, "БД занята при записи: {Path:l}", dbPath);
             Post("База данных занята другим пользователем — изменение не сохранено, попробуйте ещё раз.");
             return true;
         }
         if (DbHealthMonitor.IsUnavailableError(ex))
         {
+            Log.Error(ex, "БД недоступна при записи: {Path:l}", dbPath);
             if (dbPath is not null) ReportFailure?.Invoke(dbPath, ex);
             Post("База данных недоступна — изменение не сохранено.");
             return true;
@@ -48,7 +52,10 @@ public static class DbErrors
     public static void HandleRead(Exception ex, string? dbPath)
     {
         if (dbPath is not null && DbHealthMonitor.IsUnavailableError(ex))
+        {
+            Log.Warning(ex, "БД недоступна при чтении: {Path:l}", dbPath);
             ReportFailure?.Invoke(dbPath, ex);
+        }
     }
 
     // Ошибки прилетают и с фоновых потоков — уведомление маршалим на UI.
