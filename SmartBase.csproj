@@ -72,4 +72,15 @@
     <EmbeddedResource Remove="Tests\**" />
   </ItemGroup>
 
+  <!-- packages/ — локальный кэш NuGet внутри репозитория (см. nuget.config). Пакеты
+       вроде Microsoft.NET.Test.Sdk несут .cs-файлы в build/, которые иначе попадают
+       в default-глоб «**/*.cs» этого проекта и ломают сборку. Исключаем как Tests\**. -->
+  <ItemGroup>
+    <Compile    Remove="packages\**" />
+    <AvaloniaXaml Remove="packages\**" />
+    <AvaloniaResource Remove="packages\**" />
+    <None       Remove="packages\**" />
+    <EmbeddedResource Remove="packages\**" />
+  </ItemGroup>
+
 </Project>

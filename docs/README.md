@@ -11,7 +11,9 @@ EF Core/SQLite). Здесь описано, **как устроено и как 
 - [developer-guide.md](guides/developer-guide.md) — миграции, соглашения, раскладка вывода.
 - [build.md](guides/build.md) — сборка и запуск: dev-режим, релиз по ОС, версия/дата.
 - [auto-update.md](guides/auto-update.md) — автообновление: сетевая папка + установщик (ТЗ).
-- [test-database.md](guides/test-database.md) — тестовая БД на 10 млн записей (Tests/): профиль данных и генератор.
+
+### Тестирование ([testing/](testing/))
+- [README.md](testing/README.md) — единая точка входа: автотесты (Unit/Integration), бенчмарки, многопроцессные проверки, генератор стенда.
 
 ### Архитектура ([architecture/](architecture/))
 - [overview.md](architecture/overview.md) — слои, запуск, MVVM/code-behind.

@@ -3,7 +3,7 @@
   <!--
     Стенд многопользовательской работы с одним SQLite-файлом (см.
     docs/architecture/multi-database.md, раздел «Многопользовательский режим»).
-    Режимы (запуск из корня: dotnet run -c Release ~project Tests/MultiUserHarness ~ <режим>):
+    Режимы (запуск из корня: dotnet run -c Release ~project Tests/MultiProcess ~ <режим>):
       ~check-pragmas          профиль журнала/прагм: локально WAL, «сеть» DELETE+FULL+mmap=0
       ~contend <db>           два процесса бьют в одну ячейку: без падений, integrity ok
       ~writer <db>            «второй пользователь» правит ячейку раз в 2 с (для живой
@@ -16,8 +16,8 @@
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <RootNamespace>SmartBase.Tests.MultiUserHarness</RootNamespace>
-    <AssemblyName>MultiUserHarness</AssemblyName>
+    <RootNamespace>SmartBase.Tests.MultiProcess</RootNamespace>
+    <AssemblyName>MultiProcess</AssemblyName>
   </PropertyGroup>
 
   <ItemGroup>

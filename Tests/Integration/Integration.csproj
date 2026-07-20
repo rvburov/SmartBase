@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Интеграционные тесты на temp SQLite + PostgreSQL (медленнее unit): репозитории,
+       keyset, календарь, cross-move, import/export, гонки, прагмы. Вся тестовая обвязка
+       (TempDatabase, PgTestServer, SampleData, ImportExport) — здесь. PG-тесты —
+       [SkippableFact] (без стенда Skipped). Запуск: dotnet test Tests/Integration. -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+    <RootNamespace>SmartBase.Tests.Integration</RootNamespace>
+    <AssemblyName>SmartBase.Tests.Integration</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="coverlet.collector" Version="6.0.4" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
+    <PackageReference Include="Xunit.SkippableFact" Version="1.5.61" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\SmartBase.csproj" />
+  </ItemGroup>
+
+</Project>

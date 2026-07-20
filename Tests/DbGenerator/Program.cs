@@ -8,7 +8,7 @@ namespace SmartBase.Tests.DbGenerator;
 
 /// <summary>
 /// Генератор тестовой БД Tests/test_database.db — стенд для проверки производительности
-/// календаря и таблицы (см. docs/guides/test-database.md).
+/// календаря и таблицы (см. docs/testing/test-database.md).
 ///
 /// Схема НЕ дублируется руками: файл создаёт <see cref="AppDbContext"/> через
 /// Database.Migrate() — ровно те же миграции, что применяет само приложение.

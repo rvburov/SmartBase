@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <!--
-    Генератор тестовой БД-стенда (см. docs/guides/test-database.md).
+    Генератор тестовой БД-стенда (см. docs/testing/test-database.md).
     Схему создаёт EF Core через Database.Migrate() основного проекта: миграции
     остаются единственным источником правды, генератор не расходится со схемой.
     Запуск из корня репозитория: dotnet run -c Release ~project Tests/DbGenerator
