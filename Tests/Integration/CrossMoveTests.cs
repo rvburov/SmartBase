@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using SmartBase.Database;
+using SmartBase.Utils;
 
 namespace SmartBase.Tests.Integration;
 
@@ -49,6 +50,10 @@ public sealed class CrossMoveTests
         Assert.Equal("b1", byTitle["one"][fieldB]);
         Assert.Equal("a2", byTitle["two"][fieldA]);
         Assert.Equal("b2", byTitle["two"][fieldB]);
+
+        // Перенос сохраняет аудит-метаданные записи (созд./изм. дата/пользователь), а не обнуляет их.
+        Assert.All(recs, r => Assert.False(string.IsNullOrEmpty(r.CreatedAt)));
+        Assert.All(recs, r => Assert.Equal(CurrentUser.DisplayName, r.CreatedBy));
 
         // Источник: коллекция удалена (свежий контекст — без кеша трекера).
         using var srcCheck = new AppDbContext(src.Path);

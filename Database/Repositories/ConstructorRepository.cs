@@ -3813,12 +3813,23 @@ public partial class ConstructorRepository(AppDbContext db)
         }
 
         // Аудит «последней правки» записи (для типов «Дата/Изменение …») — только при реальном
-        // изменении значения. Запись не трекается EF в этом методе → правим db_records сырым SQL
-        // (кавычки-lowercase матчатся обоими провайдерами, как в conflict-ветке выше).
+        // изменении значения. Правим db_records сырым SQL (кавычки-lowercase матчатся обоими
+        // провайдерами, как в conflict-ветке выше), т.к. сущность записи здесь не грузится.
         if (changed)
+        {
+            var now    = DateTime.Now.ToString("o");
+            var author = CurrentUser.DisplayName;
             db.Database.ExecuteSqlRaw(
                 "UPDATE \"db_records\" SET \"updatedat\" = {0}, \"updatedby\" = {1} WHERE \"id\" = {2}",
-                DateTime.Now.ToString("o"), CurrentUser.DisplayName, recordId);
+                now, author, recordId);
+            // Если запись уже в трекере (её грузили через GetRecord/Find) — синхронизируем, иначе
+            // сырой UPDATE прошёл бы мимо кеша и GetRecord вернул бы старое «изменено».
+            if (db.DbRecords.Local.FirstOrDefault(x => x.Id == recordId) is { } trackedRec)
+            {
+                trackedRec.UpdatedAt = now;
+                trackedRec.UpdatedBy = author;
+            }
+        }
 
         // Поддерживаем индексную проекцию календаря (для видимых полей-дат).
         SyncCalendarIndexValue(recordId, fieldId, value);

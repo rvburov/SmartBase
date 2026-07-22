@@ -85,7 +85,7 @@
 | `Id` | INTEGER, PK | |
 | `CollectionId` | INTEGER, FK→`db_collections.Id`, CASCADE | |
 | `Name` | TEXT | уникально в коллекции — индекс `(CollectionId, Name)` UNIQUE |
-| `FieldType` | TEXT | `text` / `number` / `date` / `select` / `checkbox` / `url` / `user` / `markdown` |
+| `FieldType` | TEXT | `text` / `number` / `date` / `select` / `checkbox` / `url` / `user` / `markdown`; **вычисляемые** (read-only, значение из метаданных записи, НЕ из `db_field_values`): `created_at` / `updated_at` / `created_by` / `updated_by` |
 | `ConfigJson` | TEXT | JSON-настройки типа (дефолт `{}`) |
 | `Position` | INTEGER | внутренний порядок; порядок колонок таблицы — в `column_meta`. Назначается вызывающим кодом (`max + 1000`) и **обязан быть уникален** в коллекции — по нему строится карта полей при дубле/переносе |
 | `IsCalStart` | INTEGER 0/1 | поле-дата видно в календаре (может быть у нескольких полей) |
@@ -104,7 +104,10 @@
 | `CollectionId` | INTEGER, FK→`db_collections.Id`, CASCADE | |
 | `Title` | TEXT | системная колонка «Название» |
 | `Description` | TEXT, NULL | системная колонка «Описание» |
-| `CreatedAt` | TEXT | ISO-дата создания |
+| `CreatedAt` | TEXT | ISO-дата создания (источник типа `created_at`) |
+| `UpdatedAt` | TEXT | ISO-дата последней правки данных записи (источник типа `updated_at`); при создании = `CreatedAt`, у старых записей бэкфилл = `CreatedAt` |
+| `CreatedBy` | TEXT | снимок имени автора создания (`CurrentUser.DisplayName`; источник `created_by`); пусто у записей, созданных до фичи |
+| `UpdatedBy` | TEXT | снимок имени автора последней правки (источник `updated_by`) |
 | `Position` | INTEGER | порядок строк; составной индекс `(CollectionId, Position)` — горячий путь открытия/скролла таблицы (keyset-пагинация) |
 | `StartDt` | TEXT, NULL | legacy-дата записи: пишется, но календарём **не читается** (см. «Двойная система дат» в [data-model.md](data-model.md)) |
 | `EndDt` | TEXT, NULL | то же |

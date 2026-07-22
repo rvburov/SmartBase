@@ -1,4 +1,5 @@
 using SmartBase.Core.Models;
+using SmartBase.Utils;
 
 namespace SmartBase.Tests.Integration;
 
@@ -92,6 +93,66 @@ public sealed class ConstructorRepositoryCrudTests
 
         var values = repo.GetFieldValuesBatch([rec.Id!.Value]);
         Assert.Equal("привет", values[rec.Id!.Value][field.Id!.Value]);
+    }
+
+    [Fact]
+    public void Record_create_stamps_audit_metadata()
+    {
+        // Аудит-метаданные для «вычисляемых» типов свойств (дата/пользователь создания-изменения):
+        // при создании автор/время правки = автору/времени создания.
+        using var db = new TempDatabase();
+        var repo = db.Constructor;
+        var col = SampleData.AddCollection(repo);
+
+        var r = SampleData.AddRecord(repo, col.Id!.Value, "Запись");
+        var loaded = repo.GetRecord(r.Id!.Value)!;
+
+        Assert.False(string.IsNullOrEmpty(loaded.CreatedAt));
+        Assert.Equal(loaded.CreatedAt, loaded.UpdatedAt);            // создано == изменено
+        Assert.False(string.IsNullOrEmpty(loaded.CreatedBy));       // стенд регистрирует текущего пользователя
+        Assert.Equal(CurrentUser.DisplayName, loaded.CreatedBy);
+        Assert.Equal(CurrentUser.DisplayName, loaded.UpdatedBy);
+    }
+
+    [Fact]
+    public void Editing_record_bumps_updated_metadata_but_keeps_created()
+    {
+        using var db = new TempDatabase();
+        var repo = db.Constructor;
+        var col = SampleData.AddCollection(repo);
+        var field = SampleData.AddField(repo, col.Id!.Value, "Текст", "text");
+        var rec = SampleData.AddRecord(repo, col.Id!.Value, "До");
+
+        var created = repo.GetRecord(rec.Id!.Value)!;
+        System.Threading.Thread.Sleep(10);   // гарантируем строго больший timestamp «изменено»
+
+        repo.SetFieldValue(rec.Id!.Value, field.Id!.Value, "значение");
+
+        var after = repo.GetRecord(rec.Id!.Value)!;
+        Assert.Equal(created.CreatedAt, after.CreatedAt);                                    // «создано» не трогаем
+        Assert.Equal(created.CreatedBy, after.CreatedBy);
+        Assert.True(string.CompareOrdinal(after.UpdatedAt, created.UpdatedAt) > 0);          // «изменено» подвинулось
+        Assert.Equal(CurrentUser.DisplayName, after.UpdatedBy);
+    }
+
+    [Fact]
+    public void SetFieldValue_no_change_does_not_bump_updated()
+    {
+        // Сохранение записи прогоняет ВСЕ поля через SetFieldValue — стамп «изменено» только
+        // при РЕАЛЬНОЙ смене значения (иначе любое открытие/сохранение двигало бы дату изменения).
+        using var db = new TempDatabase();
+        var repo = db.Constructor;
+        var col = SampleData.AddCollection(repo);
+        var field = SampleData.AddField(repo, col.Id!.Value, "Текст", "text");
+        var rec = SampleData.AddRecord(repo, col.Id!.Value, "Запись");
+        repo.SetFieldValue(rec.Id!.Value, field.Id!.Value, "значение");
+
+        var before = repo.GetRecord(rec.Id!.Value)!;
+        System.Threading.Thread.Sleep(10);
+        repo.SetFieldValue(rec.Id!.Value, field.Id!.Value, "значение");   // то же значение — не изменение
+
+        var after = repo.GetRecord(rec.Id!.Value)!;
+        Assert.Equal(before.UpdatedAt, after.UpdatedAt);
     }
 
     [Fact]

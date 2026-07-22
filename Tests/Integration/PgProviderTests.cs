@@ -161,4 +161,33 @@ public sealed class PgProviderTests
         Assert.Equal(0, PgScalar(cs, $"SELECT COUNT(*) FROM db_collections WHERE id = {orphanId}"));
         Assert.Equal(0, PgScalar(cs, "SELECT COUNT(*) FROM db_meta WHERE key = 'crossmove.pending.collection'"));
     }
+
+    [SkippableFact]
+    public void Audit_metadata_stamped_on_create_and_edit()
+    {
+        // Аудит-метаданные записи на PG: миграция AddRecordAuditMetaPg (колонки lowercase) +
+        // сырой UPDATE db_records в SetFieldValue должен матчить lowercase-идентификаторы обоих
+        // провайдеров (кавычки-lowercase). Проверяем стамп при создании и сдвиг при правке.
+        Skip.IfNot(PgTestServer.IsAvailable, "Стенд PostgreSQL sb-pg (порт 5455) не поднят");
+        var cs = PgTestServer.ConnectionString(PgTestServer.Database1);
+        ResetSchema(cs);
+
+        using var m = DatabaseManager.Open(101, "pg-test", cs, provider: "postgres");
+        var repo  = m.Constructor;
+        var col   = SampleData.AddCollection(repo, "PG");
+        var field = SampleData.AddField(repo, col.Id!.Value, "Текст", "text");
+        var rec   = SampleData.AddRecord(repo, col.Id!.Value, "R");
+
+        var created = repo.GetRecord(rec.Id!.Value)!;
+        Assert.False(string.IsNullOrEmpty(created.CreatedBy));
+        Assert.Equal(created.CreatedAt, created.UpdatedAt);
+
+        System.Threading.Thread.Sleep(10);
+        repo.SetFieldValue(rec.Id!.Value, field.Id!.Value, "v");   // raw UPDATE db_records по lowercase-колонкам
+
+        var after = repo.GetRecord(rec.Id!.Value)!;
+        Assert.Equal(created.CreatedAt, after.CreatedAt);                              // «создано» не трогаем
+        Assert.True(string.CompareOrdinal(after.UpdatedAt, created.UpdatedAt) > 0);    // «изменено» подвинулось
+        Assert.Equal(created.CreatedBy, after.UpdatedBy);                             // один пользователь на стенде
+    }
 }
