@@ -72,6 +72,27 @@
 Связи каскадные: удаление коллекции уносит её поля, записи и значения; группа/коллекция
 при удалении родителя — `SetNull`.
 
+### Жизненный цикл записей и свойств
+
+Запись и свойство — две параллельные «единицы» с полным набором операций (репозиторий
+`ConstructorRepository`; покрытие — `RecordLifecycleTests` / `FieldLifecycleTests`, ключевые
+PG-пути — `PgProviderTests`):
+
+| Операция | Запись | Свойство (поле) |
+|---|---|---|
+| Создать | `AddRecord` / `AddRecordAfter` (авто-стамп аудита) | `AddField` |
+| Изменить | значение — `SetFieldValue`; шапка — `SetRecordTitle/Description` | `UpdateField` (+ приведение значений при смене типа) |
+| Дублировать | `DuplicateRecord` (копия сразу после источника) / `DuplicateRecordsData` (пакет; **PG — отдельный путь** через `nextval`) | `DuplicateField` (bulk-копия значений во всех записях) |
+| Удалить | `DeleteRecord` / `DeleteRecordsData` (пакет) | `DeleteField` |
+| Переместить | `MoveRecord` (своп с соседом) / `ReorderRecords` | `MoveColumn` / `MoveColumnAfter` (порядок в `column_meta`) |
+| Перенести в др. коллекцию/базу | `MoveCollectionIsolated` (ATTACH, см. [multi-database.md](multi-database.md)) | вместе с коллекцией |
+
+Общее правило: удаление каскадит значения (`db_field_values` по FK `ON DELETE CASCADE`);
+дубль записи копирует все её значения, дубль поля — значения поля во всех записях; перенос
+между коллекциями сопоставляет поля **по имени** с приведением типов. Порядок записей —
+`db_records.Position`, порядок колонок — `column_meta.Position` (не путать). Табличные
+жесты/события — [tables.md](../features/constructor-db/tables.md#взаимодействия-события-наверх).
+
 ### Где календарь
 
 Источник правды для дат — **значения полей-дат** в `db_field_values`. Поле-дата с флагом

@@ -211,4 +211,56 @@ public sealed class PgProviderTests
         var stored = repo.GetFieldValuesBatch([rec.Id!.Value])[rec.Id!.Value][field.Id!.Value];
         Assert.Equal(value, stored);
     }
+
+    [SkippableFact]
+    public void Duplicate_and_delete_records_batch_pg()
+    {
+        // PG-путь дубля записей — ОТДЕЛЬНЫЙ код (DuplicateRecordsDataPg: карта id через nextval,
+        // непрерывного блока rowid нет). Проверяем дубль пакета (со значениями) и пакетное удаление.
+        Skip.IfNot(PgTestServer.IsAvailable, "Стенд PostgreSQL sb-pg (порт 5455) не поднят");
+        var cs = PgTestServer.ConnectionString(PgTestServer.Database1);
+        ResetSchema(cs);
+
+        using var m = DatabaseManager.Open(101, "pg-test", cs, provider: "postgres");
+        var repo  = m.Constructor;
+        var col   = SampleData.AddCollection(repo, "PG");
+        var field = SampleData.AddField(repo, col.Id!.Value, "A", "text");
+        var recs  = SampleData.AddRecords(repo, col.Id!.Value, count: 3, step: 1000);
+        foreach (var (r, i) in recs.Select((r, i) => (r, i + 1)))
+            repo.SetFieldValue(r.Id!.Value, field.Id!.Value, $"v{i}");
+
+        var newIds = repo.DuplicateRecordsData(col.Id!.Value, [recs[0].Id!.Value, recs[1].Id!.Value]);
+        Assert.Equal(2, newIds.Count);
+        Assert.Equal(5, repo.CountRecords(col.Id!.Value));
+        var copied = repo.GetFieldValuesBatch(newIds);
+        Assert.Equal(["v1", "v2"], newIds.Select(id => copied[id][field.Id!.Value]).OrderBy(v => v).ToList());
+
+        repo.DeleteRecordsData(newIds);
+        Assert.Equal(3, repo.CountRecords(col.Id!.Value));
+        Assert.Empty(repo.GetFieldValuesBatch(newIds));   // значения копий ушли каскадом
+    }
+
+    [SkippableFact]
+    public void Duplicate_and_delete_field_pg()
+    {
+        Skip.IfNot(PgTestServer.IsAvailable, "Стенд PostgreSQL sb-pg (порт 5455) не поднят");
+        var cs = PgTestServer.ConnectionString(PgTestServer.Database1);
+        ResetSchema(cs);
+
+        using var m = DatabaseManager.Open(101, "pg-test", cs, provider: "postgres");
+        var repo  = m.Constructor;
+        var col   = SampleData.AddCollection(repo, "PG");
+        var field = SampleData.AddField(repo, col.Id!.Value, "Поле", "text");
+        var rec   = SampleData.AddRecord(repo, col.Id!.Value, "R");
+        repo.SetFieldValue(rec.Id!.Value, field.Id!.Value, "a");
+
+        var copy = repo.DuplicateField(field.Id!.Value);   // bulk INSERT…SELECT значений
+        Assert.Equal("a", repo.GetFieldValuesBatch([rec.Id!.Value])[rec.Id!.Value][copy.Id!.Value]);
+
+        repo.DeleteField(field.Id!.Value);                 // каскад значений исходного поля
+        var fields = repo.GetFields(col.Id!.Value);
+        Assert.DoesNotContain(fields, f => f.Id == field.Id);
+        Assert.Contains(fields, f => f.Id == copy.Id);
+        Assert.False(repo.GetFieldValuesBatch([rec.Id!.Value])[rec.Id!.Value].ContainsKey(field.Id!.Value));
+    }
 }
