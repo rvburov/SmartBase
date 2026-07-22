@@ -190,4 +190,25 @@ public sealed class PgProviderTests
         Assert.True(string.CompareOrdinal(after.UpdatedAt, created.UpdatedAt) > 0);    // «изменено» подвинулось
         Assert.Equal(created.CreatedBy, after.UpdatedBy);                             // один пользователь на стенде
     }
+
+    [SkippableTheory]
+    [MemberData(nameof(FieldTypeMatrixTests.TypeValues), MemberType = typeof(FieldTypeMatrixTests))]
+    public void Value_round_trips_for_every_type_pg(string fieldType, string value)
+    {
+        // Зеркало FieldTypeMatrixTests.Value_round_trips_for_every_type на PostgreSQL.
+        Skip.IfNot(PgTestServer.IsAvailable, "Стенд PostgreSQL sb-pg (порт 5455) не поднят");
+        var cs = PgTestServer.ConnectionString(PgTestServer.Database1);
+        ResetSchema(cs);
+
+        using var m = DatabaseManager.Open(101, "pg-test", cs, provider: "postgres");
+        var repo  = m.Constructor;
+        var col   = SampleData.AddCollection(repo, "PG");
+        var field = SampleData.AddField(repo, col.Id!.Value, "F", fieldType);
+        var rec   = SampleData.AddRecord(repo, col.Id!.Value, "R");
+
+        repo.SetFieldValue(rec.Id!.Value, field.Id!.Value, value);
+
+        var stored = repo.GetFieldValuesBatch([rec.Id!.Value])[rec.Id!.Value][field.Id!.Value];
+        Assert.Equal(value, stored);
+    }
 }
