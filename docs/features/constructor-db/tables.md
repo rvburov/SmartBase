@@ -48,6 +48,7 @@
 | `number` | текстовое поле с фильтром ввода |
 | `date` | `DateEditor` (диапазоны, время, «весь день») |
 | `select` | ComboBox из опций |
+| `status` | ComboBox из опций (как `select`) |
 | `checkbox` | чекбокс (показ `✓`/пусто) |
 | `url` | текстовое поле (watermark `https://`) |
 | `user` | ComboBox из `GetUserOptions()` |

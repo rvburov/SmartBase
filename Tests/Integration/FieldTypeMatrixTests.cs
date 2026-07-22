@@ -1,5 +1,6 @@
 using SmartBase.Core.Exporters.TableWriters;
 using SmartBase.Core.Models;
+using SmartBase.Database.Repositories;
 using SmartBase.Utils;
 
 namespace SmartBase.Tests.Integration;
@@ -21,6 +22,7 @@ public sealed class FieldTypeMatrixTests
         ["number",   "42,5"],
         ["date",     "2026-02-01"],
         ["select",   "Вариант Б"],
+        ["status",   "В работе"],
         ["checkbox", "1"],
         ["url",      "https://example.com"],
         ["user",     "Иван Иванов"],
@@ -47,12 +49,43 @@ public sealed class FieldTypeMatrixTests
     [InlineData("number",   "Число")]
     [InlineData("date",     "Дата")]
     [InlineData("select",   "Список")]
+    [InlineData("status",   "Статус")]
     [InlineData("checkbox", "Чекбокс")]
     [InlineData("url",      "Ссылка")]
     [InlineData("user",     "Пользователь")]
     public void Label_is_defined_for_every_type(string fieldType, string label)
     {
         Assert.Equal(label, FieldTypeInfo.Label(fieldType));
+    }
+
+    [Theory]
+    [InlineData("select", true)]
+    [InlineData("status", true)]
+    [InlineData("text",   false)]
+    [InlineData("user",   false)]
+    public void IsOptionList_covers_select_and_status(string fieldType, bool expected) =>
+        Assert.Equal(expected, FieldTypeInfo.IsOptionList(fieldType));
+
+    [Fact]
+    public void Enabling_tasks_creates_status_typed_field_without_duplicates()
+    {
+        using var db = new TempDatabase();
+        var repo = db.Constructor;
+        var col = SampleData.AddCollection(repo);
+        var exec = SampleData.AddField(repo, col.Id!.Value, "Исполнитель", "user");
+
+        // Включение задач авто-создаёт «Назначил» (user) и «Статус» (новый тип status).
+        repo.SetUserFieldTaskExec(exec.Id!.Value, true);
+
+        var status = repo.GetFields(col.Id!.Value).Single(f => f.IsTaskStatus);
+        Assert.Equal("status", status.FieldType);
+        // Опции хранятся в ConfigJson (кириллица JSON-эскейпится — сверяем после разбора).
+        var opts = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string[]>>(status.ConfigJson);
+        Assert.Contains(ConstructorRepository.TaskStatusPlanned, opts!["options"]);
+
+        // Повторное «обеспечение» коллекции задачами не плодит второй «Статус».
+        repo.EnsureTaskCollection(col.Id!.Value);
+        Assert.Single(repo.GetFields(col.Id!.Value).Where(f => f.IsTaskStatus));
     }
 
     [Fact]

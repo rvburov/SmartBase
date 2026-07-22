@@ -1326,6 +1326,7 @@ public partial class TableView : UserControl
                 }
 
                 case "select":
+                case "status":  // как select: значение — строка из опций (ConfigJson)
                 case "user":   // как select: значение — отображаемое имя пользователя
                 {
                     var combo = new ComboBox

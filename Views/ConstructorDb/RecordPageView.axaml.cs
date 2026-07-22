@@ -479,6 +479,7 @@ public partial class RecordPageView : UserControl
         "number"   => "IconFieldNumber",
         "date"     => "IconCalendarDate",
         "select"   => "IconFieldSelect",
+        "status"   => "IconFieldStatus",
         "checkbox" => "IconFieldCheckbox",
         "url"      => "IconFieldUrl",
         "user"     => "IconUser",
@@ -658,6 +659,7 @@ public partial class RecordPageView : UserControl
                 break;
             }
             case "select":
+            case "status":  // как select: опции — строки из ConfigJson
             case "user":   // как select: опции — допущенные пользователи базы
             {
                 var combo = new ComboBox

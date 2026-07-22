@@ -173,6 +173,8 @@
     <StreamGeometry x:Key="IconFieldNumber">M4 9h16 M4 15h16 M10 3 8 21 M16 3 14 21</StreamGeometry>
     <!-- Список (list) -->
     <StreamGeometry x:Key="IconFieldSelect">M3 5h.01 M3 12h.01 M3 19h.01 M8 5h13 M8 12h13 M8 19h13</StreamGeometry>
+    <!-- Статус (goal) -->
+    <StreamGeometry x:Key="IconFieldStatus">M12 13 V2 l8 4 -8 4 M20.561 10.222 a9 9 0 1 1 -12.55 -5.29 M8.002 9.997 a5 5 0 1 0 8.9 2.02</StreamGeometry>
     <!-- Чекбокс (square-check) -->
     <StreamGeometry x:Key="IconFieldCheckbox">M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z M9 12l2 2 4-4</StreamGeometry>
     <!-- Ссылка (link) -->

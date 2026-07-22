@@ -13,7 +13,7 @@
 |---|---|---|
 | [RecordDialog](../../Controls/Dialogs/RecordDialog.axaml.cs) | создание/редактирование события календаря (заголовок, даты, all-day, описание, коллекция; «База данных» при мультибазе; «Дата записи» — выбор/перенос поля-даты при нескольких видимых датах); пресеты даты/времени | `RecordDialogResult?` (запись или флаг удаления) |
 | [ConfirmDialog](../../Controls/Dialogs/ConfirmDialog.axaml.cs) | подтверждение действия (например, удаление N записей) | `bool` |
-| [PropertyEditorDialog](../../Controls/Dialogs/PropertyEditorDialog.axaml.cs) | создание/редактирование свойства (поля) коллекции; для типа «Дата» — тумблер «Отображать в календаре» (`IsCalStart`); режим переименования системной колонки | `bool?` + `ResultName` |
+| [PropertyEditorDialog](../../Controls/Dialogs/PropertyEditorDialog.axaml.cs) | создание/редактирование свойства (поля) коллекции; для типа «Дата» — тумблер «Отображать в календаре» (`IsCalStart`); для «Список»/«Статус» — блок «Пункты списка» (опции `ConfigJson`, у «Статуса» три статуса по умолчанию); режим переименования системной колонки | `bool?` + `ResultName` |
 | [DisplayDialog](../../Controls/Dialogs/DisplayDialog.axaml.cs) | «Отображение»: видимость и уровни колонок | `bool?` |
 | [RecordDisplayDialog](../../Controls/Dialogs/RecordDisplayDialog.axaml.cs) | «Отображение записей»: видимость/порядок строк | `bool?` |
 | [CollectionDialog](../../Controls/Dialogs/CollectionDialog.axaml.cs) | создание/правка коллекции (имя, иконка, цвет, группа) |  |

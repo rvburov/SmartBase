@@ -23,7 +23,7 @@ public class DbField
     public int?   Id           { get; set; }
     public int    CollectionId { get; set; }
     public string Name         { get; set; } = "";
-    public string FieldType    { get; set; } = "text";  // text | number | date | select | checkbox | url
+    public string FieldType    { get; set; } = "text";  // text | number | date | select | status | checkbox | url | user | created_*/updated_*
     public string ConfigJson   { get; set; } = "{}";
     public int    Position     { get; set; } = 1000;
     public bool   IsCalStart   { get; set; } = false;

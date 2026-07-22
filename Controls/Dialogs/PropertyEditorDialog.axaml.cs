@@ -1,5 +1,7 @@
+using System.Text.Json;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Layout;
 using Avalonia.Media;
 using SmartBase.Core.Models;
 using SmartBase.Database.Repositories;
@@ -32,6 +34,7 @@ public partial class PropertyEditorDialog : Window
         new() { Type = "number",   Label = "Число",   Icon = Components.FieldTypeIcons.ForType("number")!   },
         new() { Type = "date",     Label = "Дата",    Icon = Components.FieldTypeIcons.ForType("date")!     },
         new() { Type = "select",   Label = "Список",  Icon = Components.FieldTypeIcons.ForType("select")!   },
+        new() { Type = "status",   Label = "Статус",  Icon = Components.FieldTypeIcons.ForType("status")!   },
         new() { Type = "checkbox", Label = "Чекбокс", Icon = Components.FieldTypeIcons.ForType("checkbox")! },
         new() { Type = "url",      Label = "Ссылка",  Icon = Components.FieldTypeIcons.ForType("url")!      },
         new() { Type = "user",     Label = "Пользователь", Icon = Components.FieldTypeIcons.ForType("user")! },
@@ -52,6 +55,10 @@ public partial class PropertyEditorDialog : Window
     private readonly bool _systemMode;
 
     private string _selectedType = "text";
+
+    // Текстовые поля пунктов списка (типы «Список»/«Статус»). Собираются в ConfigJson при
+    // сохранении; строки строятся в BuildOptionRow и живут в OptionsList.
+    private readonly List<TextBox> _optionBoxes = [];
 
     /// <summary>В системном режиме — введённая подпись (после Сохранить); иначе null.</summary>
     public string? ResultName { get; private set; }
@@ -81,8 +88,13 @@ public partial class PropertyEditorDialog : Window
                 _selectedType = field.FieldType;
                 CalDateToggle.IsChecked = field.IsCalStart;
                 TaskToggle.IsChecked    = field.IsTaskExec;
+                // Существующие опции «Списка»/«Статуса» — в редактор пунктов.
+                if (FieldTypeInfo.IsOptionList(field.FieldType))
+                    foreach (var o in ParseOptions(field.ConfigJson)) AddOptionRow(o);
             }
         }
+
+        AddOptionBtn.Click += (_, _) => AddOptionRow("").Focus();
 
         var idx = Array.FindIndex(FieldTypes, t => t.Type == _selectedType);
         TypeCombo.SelectedIndex = idx >= 0 ? idx : 0;
@@ -101,11 +113,100 @@ public partial class PropertyEditorDialog : Window
     }
 
     // Переключатель «Отображать в календаре» виден только для типа «Дата»,
-    // «Добавить в раздел задач» — только для типа «Пользователь».
+    // «Добавить в раздел задач» — только для типа «Пользователь», редактор пунктов —
+    // для «Список»/«Статус». Новый «Статус» с пустым набором засеивается тремя статусами
+    // по умолчанию (при переключении/открытии) — как у авто-поля задач.
     private void UpdateCalDateVisibility()
     {
         CalDateSection.IsVisible = _selectedType == "date";
         TaskSection.IsVisible    = _selectedType == "user";
+        OptionsSection.IsVisible = FieldTypeInfo.IsOptionList(_selectedType);
+
+        if (_selectedType == "status" && _optionBoxes.Count == 0)
+            foreach (var o in ConstructorRepository.TaskStatusOptions) AddOptionRow(o);
+    }
+
+    // Одна строка редактора пунктов: поле ввода + кнопка удаления. Возвращает TextBox
+    // (чтобы сфокусировать вновь добавленный). Значения собираются в BuildOptionsConfigJson.
+    private TextBox AddOptionRow(string value)
+    {
+        var box = new TextBox
+        {
+            Text                     = value,
+            Watermark                = "Название пункта",
+            Height                   = 34,
+            VerticalContentAlignment = VerticalAlignment.Center,
+        };
+        if (this.TryFindResource("RadiusMedium", out var r) && r is CornerRadius cr) box.CornerRadius = cr;
+
+        var del = new Button
+        {
+            Background        = Brushes.Transparent,
+            BorderThickness   = new Thickness(0),
+            Padding           = new Thickness(6),
+            VerticalAlignment = VerticalAlignment.Center,
+            Content           = BuildDeleteGlyph(),
+        };
+
+        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto") };
+        del.Margin = new Thickness(6, 0, 0, 0);
+        Grid.SetColumn(box, 0);
+        Grid.SetColumn(del, 1);
+        grid.Children.Add(box);
+        grid.Children.Add(del);
+
+        del.Click += (_, _) =>
+        {
+            _optionBoxes.Remove(box);
+            OptionsList.Children.Remove(grid);
+        };
+
+        _optionBoxes.Add(box);
+        OptionsList.Children.Add(grid);
+        return box;
+    }
+
+    private Control BuildDeleteGlyph()
+    {
+        var geo = this.TryFindResource("IconClose", out var g) && g is Geometry geom ? geom : null;
+        return new Avalonia.Controls.Shapes.Path
+        {
+            Data            = geo,
+            Stroke          = this.TryFindResource("BrushSecondaryText", out var b) && b is IBrush br ? br : Brushes.Gray,
+            StrokeThickness = 1.6,
+            Stretch         = Stretch.Uniform,
+            Width           = 14,
+            Height          = 14,
+        };
+    }
+
+    // Разбор опций из ConfigJson поля (как MergeSelectOptions в репозитории): {"options":[...]}.
+    private static IEnumerable<string> ParseOptions(string? configJson)
+    {
+        var result = new List<string>();
+        try
+        {
+            using var doc = JsonDocument.Parse(string.IsNullOrWhiteSpace(configJson) ? "{}" : configJson);
+            if (doc.RootElement.TryGetProperty("options", out var arr) && arr.ValueKind == JsonValueKind.Array)
+                foreach (var el in arr.EnumerateArray())
+                    if (el.ValueKind == JsonValueKind.String && el.GetString() is { Length: > 0 } s)
+                        result.Add(s);
+        }
+        catch (JsonException) { /* нечитаемый конфиг — пустой набор */ }
+        return result;
+    }
+
+    // Сборка ConfigJson из редактора пунктов: непустые, обрезанные, без дублей (регистр игнор.).
+    private string BuildOptionsConfigJson()
+    {
+        var seen    = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var options = new List<string>();
+        foreach (var b in _optionBoxes)
+        {
+            var v = b.Text?.Trim() ?? "";
+            if (v.Length > 0 && seen.Add(v)) options.Add(v);
+        }
+        return JsonSerializer.Serialize(new { options });
     }
 
     /// <summary>
@@ -198,6 +299,8 @@ public partial class PropertyEditorDialog : Window
                 field.Name = name;
                 // Системные поля имеют фиксированный тип (markdown/title), их тип не меняем.
                 if (!field.IsSystem) field.FieldType = _selectedType;
+                // Пункты «Списка»/«Статуса» — в ConfigJson (иные типы конфиг не трогают).
+                if (FieldTypeInfo.IsOptionList(_selectedType)) field.ConfigJson = BuildOptionsConfigJson();
                 _repository.UpdateField(field);
                 savedFieldId = _editFieldId.Value;
             }
@@ -212,6 +315,7 @@ public partial class PropertyEditorDialog : Window
                     Name         = name,
                     FieldType    = _selectedType,
                     Position     = maxPos + 1000,
+                    ConfigJson   = FieldTypeInfo.IsOptionList(_selectedType) ? BuildOptionsConfigJson() : "{}",
                 });
                 savedFieldId = added.Id!.Value;
             }

@@ -238,7 +238,7 @@ public partial class RecordDialog : Window
         {
             "number" => new NumericUpDown { Minimum = decimal.MinValue, Maximum = decimal.MaxValue, Height = 36 },
             "date"   => new DateEditor(),
-            "select" => BuildSelectCombo(config),
+            "select" or "status" => BuildSelectCombo(config),
             "user"   => BuildUserCombo(),
             "checkbox" => new CheckBox { VerticalAlignment = VerticalAlignment.Center },
             "url"    => new TextBox { Watermark = "https://", Height = 36 },
@@ -293,6 +293,7 @@ public partial class RecordDialog : Window
                     ((DateEditor)input).Storage = val;
                     break;
                 case "select":
+                case "status":
                     var cb = (ComboBox)input;
                     var idx = (cb.ItemsSource as List<string>)?.IndexOf(val) ?? -1;
                     if (idx >= 0) cb.SelectedIndex = idx;
@@ -324,7 +325,7 @@ public partial class RecordDialog : Window
     {
         "checkbox" => ((CheckBox)input).IsChecked == true ? "1" : "0",
         "date"     => ((DateEditor)input).Storage ?? "",
-        "select" or "user" => ((ComboBox)input).SelectedItem?.ToString() ?? "",
+        "select" or "status" or "user" => ((ComboBox)input).SelectedItem?.ToString() ?? "",
         "number"   => ((NumericUpDown)input).Value?.ToString() ?? "",
         _          => ((TextBox)input).Text ?? "",
     };

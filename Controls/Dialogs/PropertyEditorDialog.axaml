@@ -113,6 +113,28 @@
                        Foreground="{StaticResource BrushSecondaryText}" />
         </StackPanel>
 
+        <!-- Пункты списка: видны для типов «Список» и «Статус». Пользователь сам формирует
+             набор опций (добавить/переименовать/удалить). Хранится в ConfigJson поля как
+             {"options":[...]}. Для нового «Статуса» засеиваются три статуса по умолчанию.
+             Строки-опции добавляются из code-behind в OptionsList. -->
+        <StackPanel x:Name="OptionsSection" IsVisible="False" Spacing="0" Margin="0,0,0,12">
+            <TextBlock Text="Пункты списка"
+                       Margin="0,0,0,6"
+                       FontWeight="{StaticResource FontWeightBold}"
+                       Foreground="{StaticResource BrushSecondaryText}" />
+            <ScrollViewer MaxHeight="180" HorizontalScrollBarVisibility="Disabled">
+                <StackPanel x:Name="OptionsList" Spacing="6" />
+            </ScrollViewer>
+            <Button x:Name="AddOptionBtn"
+                    Content="+ Добавить пункт"
+                    HorizontalAlignment="Left"
+                    Margin="0,8,0,0"
+                    Padding="0"
+                    Background="Transparent"
+                    BorderThickness="0"
+                    Foreground="{StaticResource BrushAccent}" />
+        </StackPanel>
+
         <!-- Пояснение для системных колонок «Название»/«Описание»: скрыто по умолчанию,
              показывается только в системном режиме (см. code-behind). Объясняет, почему
              тип заблокирован и свойство нельзя удалить. -->

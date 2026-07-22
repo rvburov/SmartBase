@@ -138,8 +138,12 @@ public partial class ConstructorRepository
 
         if (!db.DbFields.Any(f => f.CollectionId == collectionId && f.IsTaskStatus))
         {
+            // Одноимённое поле-список («Список» ИЛИ новый «Статус») — помечаем флагом и
+            // дополняем опциями. Иначе создаём поле нового типа «status» (раньше — select).
+            // Условие типа — инлайн (FieldTypeInfo.IsOptionList не транслируется в SQL).
             var existing = db.DbFields.FirstOrDefault(f =>
-                f.CollectionId == collectionId && f.Name == FieldStatus && f.FieldType == "select");
+                f.CollectionId == collectionId && f.Name == FieldStatus &&
+                (f.FieldType == "select" || f.FieldType == "status"));
             if (existing is not null)
             {
                 existing.IsTaskStatus = true;
@@ -152,7 +156,7 @@ public partial class ConstructorRepository
                 {
                     CollectionId = collectionId,
                     Name         = FreeFieldName(collectionId, FieldStatus),
-                    FieldType    = "select",
+                    FieldType    = "status",
                     ConfigJson   = TaskStatusConfigJson,
                     Position     = NextFieldPosition(collectionId),
                     IsTaskStatus = true,

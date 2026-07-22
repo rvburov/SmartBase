@@ -38,9 +38,10 @@ public partial class ConstructorListView : UserControl
         var fields  = _repository.GetFields(_collectionId);
         var records = _repository.GetRecords(_collectionId);
 
-        // Заголовок берём из колонки записи Title; статус — из первого select-поля,
-        // дата — из первого date-поля схемы коллекции.
-        var statusField = fields.FirstOrDefault(f => f.FieldType == "select");
+        // Заголовок берём из колонки записи Title; статус — из первого поля-«Статуса»
+        // (а если его нет — из первого «Списка»), дата — из первого date-поля схемы коллекции.
+        var statusField = fields.FirstOrDefault(f => f.FieldType == "status")
+                       ?? fields.FirstOrDefault(f => f.FieldType == "select");
         var dateField   = fields.FirstOrDefault(f => f.FieldType == "date");
 
         var items = new List<ListRecordItem>();

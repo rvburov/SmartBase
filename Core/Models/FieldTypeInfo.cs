@@ -17,6 +17,12 @@ public static class FieldTypeInfo
     public static bool IsDateLike(string? fieldType) => fieldType is
         "date" or "created_at" or "updated_at";
 
+    /// <summary>true — тип-«список опций» (обычный «select» или «status»): значение — строка из
+    /// набора опций (ConfigJson), редактор — выпадающий список. «status» отличается лишь тем,
+    /// что новое поле сразу получает три опции-статуса по умолчанию (см. диалог свойства).</summary>
+    public static bool IsOptionList(string? fieldType) => fieldType is
+        "select" or "status";
+
     /// <summary>Русская подпись типа свойства — единый источник для диалога свойства, шапки
     /// меню свойства и т.п. Неизвестный тип → «Текст».</summary>
     public static string Label(string? fieldType) => fieldType switch
@@ -25,6 +31,7 @@ public static class FieldTypeInfo
         "number"     => "Число",
         "date"       => "Дата",
         "select"     => "Список",
+        "status"     => "Статус",
         "checkbox"   => "Чекбокс",
         "url"        => "Ссылка",
         "user"       => "Пользователь",

@@ -20,6 +20,7 @@ public static class FieldTypeIcons
         "number"   => Icon("IconFieldNumber"),
         "date"     => Icon("IconCalendarDate"),
         "select"   => Icon("IconFieldSelect"),
+        "status"   => Icon("IconFieldStatus"),
         "checkbox" => Icon("IconFieldCheckbox"),
         "url"      => Icon("IconFieldUrl"),
         "user"     => Icon("IconUser"),

@@ -32,7 +32,7 @@
 | `text` / `url` | `TextBox` (у url — watermark `https://`) |
 | `number` | `TextBox` |
 | `date` | `DateEditor` (тот же виджет, что и в таблице: канон `DateValue` — диапазоны, дата+время, «весь день») |
-| `select` | `ComboBox` с вариантами из `ConfigJson` → `options` |
+| `select` / `status` | `ComboBox` с вариантами из `ConfigJson` → `options` (у `status` — три статуса по умолчанию) |
 | `checkbox` | `CheckBox` (хранится как `1`/`0`) |
 
 Каждый ввод сохраняется по потере фокуса/изменению через `row.Persist()`
