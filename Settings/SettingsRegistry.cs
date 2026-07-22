@@ -13,7 +13,7 @@ public static class SettingsRegistry
 {
     public static IReadOnlyList<SettingsCategory> All { get; } =
     [
-        new("general",    "Общее",                     "IconBell"),
+        new("general",    "Общее",                     "IconSliders"),
         new("appearance", "Оформление",                "IconSun"),
         new("database",   "Управление базой данных",   "IconDatabase"),
         new("about",      "О программе",               "IconInfo"),
