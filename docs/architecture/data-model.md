@@ -13,12 +13,48 @@
 |---|---|
 | `DbGroup` | группа коллекций (может быть вложенной) |
 | `DbCollection` | коллекция/таблица: имя, иконка, цвет, группа |
-| `DbField` | поле: тип (`text/number/date/select/checkbox/url/user`), `ConfigJson`, флаги `IsCalStart` (= «показывать поле-дату в календаре»; может быть включён у нескольких полей-дат коллекции), `IsCalEnd` (не используется), `IsSystem/IsRequired` |
+| `DbField` | поле: тип (базовые `text/number/date/select/checkbox/url/user` + вычисляемые `created_at/updated_at/created_by/updated_by`, см. [«Типы полей»](#типы-полей-свойств)), `ConfigJson`, флаги `IsCalStart` (= «показывать поле-дату в календаре»; может быть включён у нескольких полей-дат коллекции), `IsCalEnd` (не используется), `IsSystem/IsRequired` |
 | `DbRecord` | запись: `Title`, `Description`, позиция; колонки `StartDt/EndDt/AllDay` — устаревший след (календарём больше не читаются, см. ниже) |
 | `CalendarRecord` | одно событие календаря (`DbId`, `Id`, **`FieldId`** — из какого поля-даты получено событие, `Title`, `StartDt/EndDt`, `AllDay`, `Color`, `CollectionId`). Идентичность события — пара `(Id, FieldId)`: одна запись даёт по событию на каждое видимое поле-дату |
 | `Category` | категория (имя + цвет) |
 | `DateValue` | разбор/форматирование дат полей-`date` |
 | `EventColors` | правило «дефолтный синий = без цвета → серый» |
+
+## Типы полей (свойств)
+
+Тип свойства — **сквозная** сущность: одни и те же поля видны в **таблице**, в **панели
+записи**, питают **календарь** (поля-даты) и **задачи** (user-поля). Классификация, подписи и
+формат — единый источник [`FieldTypeInfo`](../../Core/Models/FieldTypeInfo.cs) (`Label` /
+`IsComputed` / `IsDateLike` / `ComputedValue` / `FormatComputedDisplay`); за рендер (какой
+редактор, read-only) отвечает каждый режим отдельно — таблица
+([tables.md](../features/constructor-db/tables.md)), панель
+([record-page.md](../features/constructor-db/record-page.md)).
+
+**Базовые** — значение правит пользователь, хранится строкой в `db_field_values`:
+
+| Тип | Хранение / семантика |
+|---|---|
+| `text` | строка как есть |
+| `number` | сырой ввод (`42,5`/`42.5`); типизация `WriterHelpers.TryNumber` (запятая → точка) |
+| `date` | ISO-канон `DateValue.ToStorage`; показ `DateValue.ToDisplay`; при `IsCalStart` проецируется в календарь (см. «Где календарь») |
+| `select` | строка-значение из опций (`ConfigJson`) |
+| `checkbox` | `1`/`0` (+легаси `true`); показ `✓`/пусто (`WriterHelpers.IsChecked`) |
+| `url` | строка |
+| `user` | строка-имя (снимок, как `select`); опции — `GetUserOptions` (допущенные пользователи), новая запись = текущий пользователь; флаги задач `IsTaskExec/IsTaskAssigner/IsTaskStatus` (см. [tasks/overview.md](../features/tasks/overview.md)) |
+
+**Вычисляемые** — read-only, значение НЕ в `db_field_values`, а из аудит-метаданных `db_records`
+(автор — снимок `CurrentUser.DisplayName`, стамп при создании/правке; подробности —
+[tables.md](../features/constructor-db/tables.md#вычисляемые-типы-авто-метаданные-записи)):
+
+| Тип | Источник (`db_records`) |
+|---|---|
+| `created_at` | `CreatedAt` |
+| `updated_at` | `UpdatedAt` |
+| `created_by` | `CreatedBy` |
+| `updated_by` | `UpdatedBy` |
+
+Смена типа между «дата» и остальными приводит значения без потери (`ConvertValueForType`).
+Покрытие — `FieldTypeMatrixTests` (реестр типов) и `ConstructorRepositoryCrudTests` (метаданные).
 
 ## Хранилище database.db (пользовательские данные)
 
@@ -27,7 +63,7 @@
 Таблицы:
 
 - **Контент:** `categories`, `db_groups`, `db_collections`, `db_fields`, `db_records`, `db_field_values`.
-- **Значения полей:** `db_field_values` — пара `(RecordId, FieldId) → Value`; это естественный **PK**, суррогатного Id нет, таблица `WITHOUT ROWID` (кластеризована по PK: значения одной записи лежат физически рядом, отдельный уникальный индекс пары не нужен — см. миграцию `SchemaCompact`). Так произвольные поля хранятся «вертикально», а не колонками. Все типы, кроме `date`, хранятся как обычные строки; `date` — в ISO-каноне (`DateValue.ToStorage`). При **переносе записи в другую коллекцию** (таблица «Расположение» / смена коллекции в окне календаря) значения сопоставляются с полями цели **по имени** с приведением типов (`ConstructorRepository.CopyFieldValuesByName` → `ConvertValueForType`; нетривиально только пересечение границы «дата»).
+- **Значения полей:** `db_field_values` — пара `(RecordId, FieldId) → Value`; это естественный **PK**, суррогатного Id нет, таблица `WITHOUT ROWID` (кластеризована по PK: значения одной записи лежат физически рядом, отдельный уникальный индекс пары не нужен — см. миграцию `SchemaCompact`). Так произвольные поля хранятся «вертикально», а не колонками. Все базовые типы, кроме `date`, хранятся как обычные строки; `date` — в ISO-каноне (`DateValue.ToStorage`). **Вычисляемые** типы (`created_*/updated_*`) значения здесь НЕ имеют — читаются из аудит-колонок `db_records` (см. [«Типы полей»](#типы-полей-свойств)). При **переносе записи в другую коллекцию** (таблица «Расположение» / смена коллекции в окне календаря) значения сопоставляются с полями цели **по имени** с приведением типов (`ConstructorRepository.CopyFieldValuesByName` → `ConvertValueForType`; нетривиально только пересечение границы «дата»).
 - **Проекция календаря:** `calendar_index` — денормализованное «оглавление» событий (строка на каждое видимое поле-дату записи: `RecordId, FieldId, CollectionId, StartIso, EndIso, AllDay`; PK `(RecordId, FieldId)`, тоже `WITHOUT ROWID`; индекс `(CollectionId, StartIso)`, FK-каскады на `db_records`/`db_fields`). Из неё календарь читает события индексным range-query (см. ниже).
 - **UI-настройки коллекции:** `ui_col_widths`, `ui_row_heights`, `ui_collection_settings` (режим вида, ручной ресайз), `column_meta` — все метаданные колонки одной строкой на `(CollectionId, Key)`: аспекты `Position` (порядок), `Visible`/`Level` (окно «Отображение»), `DisplayName` (подписи «Название»/«Описание»); аспект `NULL` = дефолт, строка живёт, пока задан хоть один аспект. `record_display` — то же для строк-записей.
 - **Пользователи и права (модуль «Профиль»):** `db_users` (кто открывал базу: ключ «учётка@компьютер», снапшот ФИО, `IsAdmin/IsApproved`), `db_permissions` (битовые маски `PermAction` per-пользователь: строка с `CollectionId=NULL` — вся база, с коллекцией — переопределение), `db_meta` (ключ-значение базы; PBKDF2-хеш пароля), `change_log` (журнал фактов: кто/когда/что, `Count` у пакетных операций; без FK — переживает удаление объектов). Подробно — [users-permissions.md](users-permissions.md).
