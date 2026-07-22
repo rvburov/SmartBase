@@ -228,6 +228,59 @@ public static class AppSettings
         else                         _store?.Set(KeyAutoUpdate, on.ToString());
     }
 
+    // ── Уведомления ──────────────────────────────────────────────────────────────
+    //
+    // Тумблер «Общее → Уведомления»: показывать нативные баннеры ОС о наступивших
+    // событиях календаря (в момент StartDt, пока приложение открыто; пропущенные —
+    // при следующем запуске) и значок-счётчик на иконке приложения. Стандарт — включено.
+    public const bool NotificationsEnabledDefault = true;
+
+    public static bool LoadNotificationsEnabled() =>
+        bool.TryParse(_store?.Get(KeyNotificationsEnabled), out var on) ? on : NotificationsEnabledDefault;
+
+    public static void SaveNotificationsEnabled(bool on)
+    {
+        if (on == NotificationsEnabledDefault) _store?.Remove(KeyNotificationsEnabled);
+        else                                   _store?.Set(KeyNotificationsEnabled, on.ToString());
+    }
+
+    // Водяная метка службы уведомлений: инстант, до которого события уже обработаны
+    // (ISO-8601, круговой формат "o"). Это СОСТОЯНИЕ, а не пользовательская настройка,
+    // но живёт в том же key-value app.db. null → служба ещё не запускалась (первый старт),
+    // тогда метку инициализируем текущим временем, чтобы не показать историю разом.
+    public static DateTime? LoadNotifyWatermark() =>
+        DateTime.TryParse(_store?.Get(KeyNotifyWatermark), CultureInfo.InvariantCulture,
+            DateTimeStyles.RoundtripKind, out var dt) ? dt : null;
+
+    public static void SaveNotifyWatermark(DateTime instant) =>
+        _store?.Set(KeyNotifyWatermark, instant.ToString("o", CultureInfo.InvariantCulture));
+
+    // ── Автозапуск и фоновый режим ────────────────────────────────────────────────
+    //
+    // Оба служат уведомлениям, но независимы от тумблера «Уведомления». Стандарт — выключено
+    // (без них поведение приложения не меняется). Автозапуск дополнительно требует установленного
+    // приложения (.app/.exe) — в dev-режиме (dotnet run) недоступен, см. Utils/Autostart.
+    public const bool AutostartEnabledDefault  = false;
+    public const bool BackgroundEnabledDefault = false;
+
+    public static bool LoadAutostartEnabled() =>
+        bool.TryParse(_store?.Get(KeyAutostartEnabled), out var on) ? on : AutostartEnabledDefault;
+
+    public static void SaveAutostartEnabled(bool on)
+    {
+        if (on == AutostartEnabledDefault) _store?.Remove(KeyAutostartEnabled);
+        else                               _store?.Set(KeyAutostartEnabled, on.ToString());
+    }
+
+    public static bool LoadBackgroundEnabled() =>
+        bool.TryParse(_store?.Get(KeyBackgroundEnabled), out var on) ? on : BackgroundEnabledDefault;
+
+    public static void SaveBackgroundEnabled(bool on)
+    {
+        if (on == BackgroundEnabledDefault) _store?.Remove(KeyBackgroundEnabled);
+        else                                _store?.Set(KeyBackgroundEnabled, on.ToString());
+    }
+
     // ── Ключи настроек ─────────────────────────────────────────────────────────
 
     private const string KeyScale            = "scale";
@@ -240,6 +293,10 @@ public static class AppSettings
     private const string KeyConstructorView  = "constructorView";
     private const string KeyUpdatePath       = "updatePath";
     private const string KeyAutoUpdate       = "autoUpdate";
+    private const string KeyNotificationsEnabled = "notificationsEnabled";
+    private const string KeyNotifyWatermark      = "notifyWatermark";
+    private const string KeyAutostartEnabled     = "autostartEnabled";
+    private const string KeyBackgroundEnabled    = "backgroundEnabled";
 
     // ── Приватное ─────────────────────────────────────────────────────────────
 

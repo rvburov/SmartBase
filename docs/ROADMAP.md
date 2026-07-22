@@ -174,8 +174,6 @@
 
 Незавершённое, видимое прямо из кода, — хорошие точки входа для небольших задач:
 
-- **Автозапуск при входе в систему** — [Utils/Autostart.cs](../Utils/Autostart.cs) пока
-  заглушка. См. [features/settings.md](features/settings.md).
 - **Экспорт/импорт календаря как календаря** (например, iCal) — не реализован;
   импорт и экспорт ТАБЛИЦ уже есть ([Core/Importers](../Core/Importers/Importer.cs) /
   [Core/Exporters](../Core/Exporters/Exporter.cs), см.

@@ -1,4 +1,8 @@
+using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.ApplicationLifetimes;
+using Avalonia.Input;
+using Avalonia.Platform;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
 using SmartBase.Controls.Components;
@@ -7,6 +11,7 @@ using SmartBase.Database;
 using SmartBase.Database.Entities;
 using SmartBase.Database.Repositories;
 using SmartBase.Extensions;
+using SmartBase.Notifications;
 using SmartBase.Settings;
 using SmartBase.Utils;
 using SmartBase.ViewModels;
@@ -28,6 +33,15 @@ public partial class MainWindow : Window
     private readonly ChangePoller _changes;
     // БД, потерянные на ходу — чтобы при возврате показать «снова доступна».
     private readonly HashSet<int> _lostDbIds = [];
+    // Служба уведомлений: пока окно открыто, показывает нативные баннеры о наступивших
+    // событиях календаря и ведёт значок-счётчик на иконке приложения.
+    private readonly NotificationService _notifications;
+
+    // Фоновый режим: значок в трее/меню-баре + скрытие окна вместо выхода. Значок виден, когда
+    // фон включён; _explicitQuit — явный выход (трей «Выход» / ⌘Q), чтобы не скрывать окно.
+    private TrayIcon? _tray;
+    private bool _backgroundEnabled;
+    private bool _explicitQuit;
     private readonly CategoryRepository _categories;
     private readonly ConstructorRepository _constructor;
     private string _activeModule = "calendar";
@@ -66,6 +80,20 @@ public partial class MainWindow : Window
         _categories  = workspace.Default.Categories;
         _constructor = workspace.Default.Constructor;
         _currentConstructorDbId = workspace.Default.DbId;
+
+        // Служба уведомлений: события собираем по видимым БД (CollectDueEvents), баннеры и
+        // значок — нативные (фабрика по ОС; хэндл окна нужен только Windows для overlay-иконки).
+        _notifications = new NotificationService(
+            PlatformNotifications.CreateNotifier(Program.NotificationManager),
+            PlatformNotifications.CreateBadge(() => TryGetPlatformHandle()?.Handle ?? nint.Zero),
+            CollectDueEvents,
+            AppSettings.SaveNotifyWatermark);
+        // Клик по баннеру (может прийти из фонового потока библиотеки/делегата) → активировать
+        // окно и показать запись с кнопкой «Принято». Маршалим в UI-поток.
+        _notifications.RecordActivated += r => Dispatcher.UIThread.Post(() => OnNotificationClicked(r));
+
+        // Фоновый режим и значок в трее/меню-баре (по настройке «Фоновый режим»).
+        InitBackgroundMode();
 
         // Живой статус очереди: процент/оценка времени — только текст заглушки в сайдбарах
         // (без перестройки дерева), смена состояния — ещё и список БД в настройках.
@@ -150,6 +178,11 @@ public partial class MainWindow : Window
             _mountQueue.Enqueue(entry);
             SyncMountedToUi();
         };
+
+        // Тумблер «Общее → Уведомления»: включаем/выключаем службу на лету.
+        SettingsModule.NotificationsEnabledChanged += (_, on) => _notifications.SetEnabled(on);
+        // Тумблер «Общее → Фоновый режим»: показать/скрыть значок в трее (и вернуть окно при выкл).
+        SettingsModule.BackgroundEnabledChanged += (_, on) => OnBackgroundChanged(on);
 
         // Инициализируем модули через AXAML-конструкторы.
         // Календарь агрегирует события только из ДОПУЩЕННЫХ БД (без допуска — данные не видны).
@@ -336,7 +369,12 @@ public partial class MainWindow : Window
         // Автообновление: тихая проверка после открытия окна (уже показанное окно —
         // владелец модалки «Обновить/Отмена»). Проверка папки идёт в фоне, UI не блокирует.
         // В фоне (окно неактивно) частота проверки чужих правок снижается.
-        Activated += (_, _) => _changes.SetForeground(true);
+        // Активация окна = пользователь «увидел» уведомления → гасим значок-счётчик.
+        Activated += (_, _) =>
+        {
+            _changes.SetForeground(true);
+            _notifications.NotifyWindowActivated();
+        };
 
         Opened += async (_, _) =>
         {
@@ -346,6 +384,8 @@ public partial class MainWindow : Window
             StartBackgroundMounts();
             _health.Start();
             _changes.Start();
+            // Служба уведомлений: таймер + догон событий, наступивших при закрытом приложении.
+            _notifications.Start();
 
             if (AppSettings.LoadAutoUpdate())
                 await SettingsModule.CheckForUpdatesOnStartupAsync();
@@ -355,6 +395,17 @@ public partial class MainWindow : Window
         // предупреждаем, что обновление продолжится при следующем запуске.
         Closing += async (_, e) =>
         {
+            // Фоновый режим: нажатие на «крестик» окна не завершает приложение, а СКРЫВАЕТ его
+            // (служба уведомлений и трей продолжают работать). Явный выход (трей «Выход», ⌘Q/OS
+            // shutdown) идёт с другим CloseReason и проходит дальше.
+            if (e.CloseReason == WindowCloseReason.WindowClosing
+                && BackgroundBehavior.ShouldHideOnClose(_backgroundEnabled, _explicitQuit))
+            {
+                e.Cancel = true;
+                Hide();
+                return;
+            }
+
             if (_closeConfirmed) return;
             var busy = _mountQueue.Pending().FirstOrDefault(p => p.State == MountQueue.ItemState.Mounting);
             if (busy is null) return;
@@ -376,6 +427,7 @@ public partial class MainWindow : Window
         {
             _changes.Dispose();
             _health.Dispose();
+            _notifications.Dispose();
         };
     }
 
@@ -549,6 +601,110 @@ public partial class MainWindow : Window
     // Недопущенные (замок) показывает лишь сайдбар конструктора.
     private List<DatabaseManager> GrantedDbs() =>
         _workspace.Mounted.Where(m => m.Permissions.AccessGranted).ToList();
+
+    // Источник событий для службы уведомлений: события со стартом в окне [from, to) по всем
+    // допущенным БД (то же, что показывает календарь: activeIds=null → все видимые поля-даты,
+    // без учёта временных галок сайдбара). Зовётся из UI-потока (таймер службы), поэтому
+    // читаем общий контекст напрямую — правило «общий AppDbContext только из UI-потока».
+    private IReadOnlyList<Core.Models.CalendarRecord> CollectDueEvents(DateTime from, DateTime to)
+    {
+        var list = new List<Core.Models.CalendarRecord>();
+        foreach (var m in GrantedDbs())
+        {
+            try { list.AddRange(m.Constructor.GetCalendarRecordsByRange(from, to, null)); }
+            catch { /* БД могла отвалиться на ходу — пропускаем, монитор переподключит */ }
+        }
+        return list;
+    }
+
+    // Клик по уведомлению: вынести окно на передний план и показать запись с кнопкой «Принято».
+    private void OnNotificationClicked(Core.Models.CalendarRecord record)
+    {
+        Show();   // покажет окно, если оно было скрыто фоновым режимом
+        if (WindowState == WindowState.Minimized) WindowState = WindowState.Normal;
+        Activate();
+        // Значок гаснет: активация окна = «увидел» (Activated может не прийти при программном Activate).
+        _notifications.NotifyWindowActivated();
+        _ = new NotificationRecordDialog(record).ShowDialog(this);
+    }
+
+    // ── Фоновый режим и значок в трее/меню-баре ──────────────────────────────────
+
+    private void InitBackgroundMode()
+    {
+        _backgroundEnabled = AppSettings.LoadBackgroundEnabled();
+        SetupTray();
+        if (_tray is not null) _tray.IsVisible = _backgroundEnabled;
+
+        // ⌘Q (macOS — через штатное меню Avalonia, CloseReason=ApplicationShutdown) уже завершает
+        // приложение; для Windows/Linux добавляем Ctrl+Q как явный выход, когда окно в фокусе.
+        KeyDown += (_, e) =>
+        {
+            if (e.Key == Key.Q && e.KeyModifiers.HasFlag(KeyModifiers.Control)) QuitExplicit();
+        };
+    }
+
+    // Значок в системной области с меню «Открыть»/«Выход». Иконка — та же, что у окна (icon.ico).
+    private void SetupTray()
+    {
+        if (Application.Current is null) return;
+        try
+        {
+            var open = new NativeMenuItem("Открыть SmartBase");
+            open.Click += (_, _) => ShowFromTray();
+            var quit = new NativeMenuItem("Выход");
+            quit.Click += (_, _) => QuitExplicit();
+            var menu = new NativeMenu();
+            menu.Items.Add(open);
+            menu.Items.Add(quit);
+
+            _tray = new TrayIcon
+            {
+                Icon        = LoadAppIcon(),
+                ToolTipText = AppSettings.DisplayName,
+                IsVisible   = false,
+                Menu        = menu,
+            };
+            _tray.Clicked += (_, _) => ShowFromTray();
+            TrayIcon.SetIcons(Application.Current, new TrayIcons { _tray });
+        }
+        catch { /* трей недоступен (напр. GNOME без расширения) — остаются запасные пути */ }
+    }
+
+    private static WindowIcon? LoadAppIcon()
+    {
+        try
+        {
+            using var s = AssetLoader.Open(new Uri("avares://SmartBase/Assets/Branding/icon.ico"));
+            return new WindowIcon(s);
+        }
+        catch { return null; }
+    }
+
+    // Пункт трея «Открыть» / клик по значку: вернуть и активировать окно.
+    private void ShowFromTray()
+    {
+        Show();
+        if (WindowState == WindowState.Minimized) WindowState = WindowState.Normal;
+        Activate();
+        _notifications.NotifyWindowActivated();
+    }
+
+    // Явный выход (трей «Выход», Ctrl+Q): не скрывать окно, а завершить приложение.
+    private void QuitExplicit()
+    {
+        _explicitQuit = true;
+        (Application.Current?.ApplicationLifetime as IClassicDesktopStyleApplicationLifetime)?.Shutdown();
+    }
+
+    // Тумблер «Фоновый режим»: показать/скрыть значок; при выключении вернуть окно, чтобы оно
+    // не осталось скрытым без точки возврата.
+    private void OnBackgroundChanged(bool on)
+    {
+        _backgroundEnabled = on;
+        if (_tray is not null) _tray.IsVisible = on;
+        if (!on && !IsVisible) ShowFromTray();
+    }
 
     // Пересобрать боковые панели и обновить набор БД календаря после монтирования/
     // размонтирования/получения допуска. Немонтированные БД очереди показываются

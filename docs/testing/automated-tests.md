@@ -33,8 +33,8 @@ dotnet test Tests/Integration --collect:"XPlat Code Coverage"   # покрыти
 
 | Проект | Что внутри |
 |--------|-----------|
-| **Tests/Unit** | Чистые юнит-тесты без БД и IO: `DateValueTests`, `CalendarRecordValidatorTests`, `PermissionsTests`, `PlannerTests`. Ноль внешних зависимостей, параллельные, миллисекунды. |
-| **Tests/Integration** | На temp SQLite + PostgreSQL: CRUD, `KeysetPaginationTests`, `CalendarProjectionTests`, `ChangeLogTests`, `PermissionServiceTests`, `CrossMoveTests`, `ImportMatrixTests`/`ExportMatrixTests` (round-trip), `ContentionTests`, `PragmaTests`, `PgProviderTests`. Здесь же обвязка: `TempDatabase` (SQLite через настоящий `DatabaseManager.Open`), `SampleData`, `ImportExport`, `FakeSettingsDatabase`, `PgTestServer`. Прогон **последовательный** (см. ниже). |
+| **Tests/Unit** | Чистые юнит-тесты без БД и IO: `DateValueTests`, `CalendarRecordValidatorTests`, `PermissionsTests`, `PlannerTests`, `NotificationSchedulerTests` (ядро уведомлений), `NotificationSettingsTests` (дельты тумблера/метки), `AutostartTests` (построение записи автозапуска, «скрывать при закрытии?», дельты автозапуска/фона). Ноль внешних зависимостей, параллельные, миллисекунды. |
+| **Tests/Integration** | На temp SQLite + PostgreSQL: CRUD, `KeysetPaginationTests`, `CalendarProjectionTests`, `ChangeLogTests`, `PermissionServiceTests`, `CrossMoveTests`, `ImportMatrixTests`/`ExportMatrixTests` (round-trip), `ContentionTests`, `PragmaTests`, `PgProviderTests`, `NotificationServiceTests` (служба уведомлений на календарной проекции), `SingleInstanceTests` (лок единственного экземпляра на temp-папке). Здесь же обвязка: `TempDatabase` (SQLite через настоящий `DatabaseManager.Open`), `SampleData`, `ImportExport`, `FakeSettingsDatabase`, `PgTestServer`. Прогон **последовательный** (см. ниже). |
 
 Ключевые принципы обвязки:
 

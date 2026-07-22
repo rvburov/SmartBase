@@ -31,6 +31,8 @@ EF Core/SQLite). Здесь описано, **как устроено и как 
 - [categories.md](features/categories.md) — категории и цвета.
 - [import-export.md](features/import-export.md) — импорт из Excel, перенос между БД.
 - [settings.md](features/settings.md) — настройки и управление БД.
+- [notifications.md](features/notifications.md) — уведомления о событиях: нативные баннеры ОС + значок-счётчик, раздел «Общее».
+- [autostart-background.md](features/autostart-background.md) — автозапуск при входе в систему и фоновый режим (значок в трее), тумблеры в «Общее».
 - [profile.md](features/profile.md) — модуль «Профиль»: общие данные, панель администратора, история изменений.
 - [extensions.md](features/extensions.md) — раздел «Расширения»: плагины, отделимость, два режима.
 - [logging.md](features/logging.md) — диагностический лог (Serilog → logs.db), раздел «Профиль → Диагностика», что логируется.

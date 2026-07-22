@@ -33,6 +33,14 @@ public partial class SettingsView : UserControl
     public event EventHandler<int>?               DatabaseRemoved;
     // Попытка переподключить недоступную БД (по DbId).
     public event EventHandler<int>?               DatabaseReconnectRequested;
+    // Тумблер «Общее → Уведомления» переключён — MainWindow сообщает службе уведомлений.
+    public event EventHandler<bool>?              NotificationsEnabledChanged;
+    // Тумблер «Общее → Фоновый режим» переключён — MainWindow показывает/прячет значок в трее.
+    public event EventHandler<bool>?              BackgroundEnabledChanged;
+
+    // Тумблеры раздела «Общее» инициализированы — до этого IsCheckedChanged не обрабатываем
+    // (иначе присвоение IsChecked на старте записало бы автозапуск в ОС на каждом запуске).
+    private bool _generalLoaded;
 
     public SettingsView()
     {
@@ -50,6 +58,13 @@ public partial class SettingsView : UserControl
         SystemInfoText.Text = $"{RuntimeInformation.OSDescription.Trim()} · {RuntimeInformation.FrameworkDescription}";
         UpdatePathBox.Text  = AppSettings.LoadUpdatePath();
         AutoUpdateToggle.IsChecked = AppSettings.LoadAutoUpdate();
+
+        // ── Общее ────────────────────────────────────────────────────────────
+        NotificationsToggle.IsChecked = AppSettings.LoadNotificationsEnabled();
+        AutostartToggle.IsChecked     = AppSettings.LoadAutostartEnabled();
+        AutostartToggle.IsEnabled     = Autostart.IsSupported;   // в dev-режиме (без бандла/exe) недоступно
+        BackgroundToggle.IsChecked    = AppSettings.LoadBackgroundEnabled();
+        _generalLoaded = true;
 
         // Слайдер размера шрифта отражает текущую дельту (стандарт = 0, диапазон -3…+3).
         FontSizeSlider.Value = FontScale.Delta;
@@ -122,6 +137,37 @@ public partial class SettingsView : UserControl
     {
         if (ConstructorViewCombo.SelectedItem is ComboBoxItem { Tag: string mode })
             AppSettings.SaveConstructorView(mode);
+    }
+
+    // ── Общее ────────────────────────────────────────────────────────────────
+    //
+    // Тумблер «Уведомления»: сохраняем сразу и сообщаем службе (MainWindow), чтобы
+    // включение/выключение действовало на лету — без перезапуска.
+    private void OnNotificationsToggled(object? sender, RoutedEventArgs e)
+    {
+        var on = NotificationsToggle.IsChecked == true;
+        AppSettings.SaveNotificationsEnabled(on);
+        NotificationsEnabledChanged?.Invoke(this, on);
+    }
+
+    // Автозапуск: сохраняем + пишем/удаляем запись в ОС (с учётом фонового режима для --background).
+    private void OnAutostartToggled(object? sender, RoutedEventArgs e)
+    {
+        if (!_generalLoaded) return;
+        var on = AutostartToggle.IsChecked == true;
+        AppSettings.SaveAutostartEnabled(on);
+        Autostart.Set(on, AppSettings.LoadBackgroundEnabled());
+    }
+
+    // Фоновый режим: сохраняем + сообщаем MainWindow (значок в трее). Если автозапуск включён —
+    // обновляем его команду, т.к. --background зависит от этого тумблера.
+    private void OnBackgroundToggled(object? sender, RoutedEventArgs e)
+    {
+        if (!_generalLoaded) return;
+        var on = BackgroundToggle.IsChecked == true;
+        AppSettings.SaveBackgroundEnabled(on);
+        BackgroundEnabledChanged?.Invoke(this, on);
+        if (AppSettings.LoadAutostartEnabled()) Autostart.Set(true, on);
     }
 
     // ── О программе ──────────────────────────────────────────────────────────
@@ -647,6 +693,7 @@ public partial class SettingsView : UserControl
     // Переключение раздела: заголовок + видимость соответствующей панели.
     public void ShowCategory(string key)
     {
+        GeneralPanel.IsVisible    = key == "general";
         AppearancePanel.IsVisible = key == "appearance";
         DatabasePanel.IsVisible   = key == "database";
         AboutPanel.IsVisible      = key == "about";

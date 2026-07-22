@@ -1,0 +1,40 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="SmartBase.Controls.Dialogs.NotificationRecordDialog"
+        Title="Напоминание"
+        Width="420"
+        MinWidth="420"
+        MaxWidth="420"
+        MinHeight="0"
+        SizeToContent="Height"
+        WindowStartupLocation="CenterOwner"
+        CanResize="False"
+        Background="{StaticResource BrushBg}">
+
+    <StackPanel Spacing="14" Margin="24" Width="372">
+
+        <TextBlock x:Name="TitleLabel"
+                   FontSize="{DynamicResource FontSizeLarge}"
+                   FontWeight="{StaticResource FontWeightBold}"
+                   TextWrapping="Wrap" />
+
+        <StackPanel Spacing="4">
+            <TextBlock x:Name="WhenLabel"
+                       Foreground="{StaticResource BrushSecondaryText}" />
+            <TextBlock x:Name="CollectionLabel"
+                       Foreground="{StaticResource BrushSecondaryText}"
+                       IsVisible="False" />
+        </StackPanel>
+
+        <TextBlock x:Name="DescriptionLabel"
+                   TextWrapping="Wrap"
+                   IsVisible="False" />
+
+        <Grid ColumnDefinitions="*,Auto">
+            <Button Grid.Column="1" x:Name="AcceptBtn" Classes="dialog"
+                    Content="Принято" />
+        </Grid>
+
+    </StackPanel>
+
+</Window>

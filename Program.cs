@@ -17,6 +17,14 @@ internal sealed class Program
     // флагом. App покажет разовое уведомление, что версия осталась прежней.
     internal static bool UpdateFailed { get; private set; }
 
+    // Тихий старт из автозапуска (--background): App создаёт окно скрытым — работают только
+    // служба уведомлений и значок в трее (см. настройку «Фоновый режим»).
+    internal static bool LaunchBackground { get; private set; }
+
+    // Единственный экземпляр на локальную папку данных: фоновый режим не должен поднять второй
+    // процесс (двойные уведомления). В режимах установщика/удаления не используется.
+    internal static SingleInstance? Instance { get; private set; }
+
     [STAThread]
     public static void Main(string[] args)
     {
@@ -58,6 +66,17 @@ internal sealed class Program
         if (Mode == SetupMode.App)
         {
             AppSettings.EnsureCreated();
+
+            // Один экземпляр на папку данных: второй запуск просит работающий показать окно и
+            // выходит (иначе фоновый режим поднял бы второй процесс — двойные уведомления).
+            LaunchBackground = Array.Exists(args, a => a == Autostart.BackgroundArg);
+            Instance = SingleInstance.TryAcquire(AppSettings.AppDataDir);
+            if (Instance is null)
+            {
+                SingleInstance.SignalShow(AppSettings.AppDataDir);
+                return;
+            }
+
             // Диагностический лог в logs.db. Только App-режим: установщику/удалению он не нужен.
             AppLog.Init();
             // Точка отсчёта сессии: в logs.db всегда есть версия и старт, даже без ошибок.
@@ -122,11 +141,43 @@ internal sealed class Program
         return name.EndsWith("-Setup", StringComparison.OrdinalIgnoreCase) ? SetupMode.Install : SetupMode.App;
     }
 
-    public static AppBuilder BuildAvaloniaApp() =>
-        AppBuilder.Configure<App>()
-                  .UsePlatformDetect()
-                  .WithInterFont()
-                  .LogToTrace();
+    // Менеджер библиотеки DesktopNotifications для Windows/Linux (баннеры с иконкой приложения
+    // и колбэком клика). macOS его не использует — там свой бэкенд (MacNotifier). Создаётся один
+    // раз на процесс; MainWindow берёт его через фабрику PlatformNotifications.CreateNotifier.
+    internal static DesktopNotifications.INotificationManager? NotificationManager { get; private set; }
+
+    public static AppBuilder BuildAvaloniaApp()
+    {
+        NotificationManager = CreateNotificationManager();
+        return AppBuilder.Configure<App>()
+                         .UsePlatformDetect()
+                         .WithInterFont()
+                         .LogToTrace();
+    }
+
+    // Платформенный менеджер: Windows — WinRT-тосты (нужен ярлык/AUMID, создаётся контекстом),
+    // Linux — freedesktop D-Bus. macOS/прочее — null (используется MacNotifier / no-op).
+    private static DesktopNotifications.INotificationManager? CreateNotificationManager()
+    {
+        try
+        {
+            DesktopNotifications.INotificationManager? m = null;
+            if (OperatingSystem.IsWindows())
+                m = new DesktopNotifications.Windows.WindowsNotificationManager(
+                        DesktopNotifications.Windows.WindowsApplicationContext.FromCurrentProcess());
+            else if (OperatingSystem.IsLinux())
+                m = new DesktopNotifications.FreeDesktop.FreeDesktopNotificationManager(
+                        DesktopNotifications.FreeDesktop.FreeDesktopApplicationContext.FromCurrentProcess());
+            m?.Initialize().GetAwaiter().GetResult();
+            return m;
+        }
+        catch
+        {
+            // Нет D-Bus / WinRT / ярлыка — уведомления Windows/Linux просто не показываются
+            // (фабрика вернёт no-op). Приложение стартует как обычно.
+            return null;
+        }
+    }
 
     // Ждёт выхода старого процесса (--pid), копирует себя поверх --target и запускает
     // обновлённое приложение заново. Запущенный .exe нельзя перезаписать собой, поэтому

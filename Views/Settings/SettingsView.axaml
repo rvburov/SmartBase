@@ -93,8 +93,72 @@
         <!-- Содержимое выбранного раздела -->
         <Grid>
 
+            <!-- ── Общее ─────────────────────────────────────────── -->
+            <ScrollViewer x:Name="GeneralPanel"
+                          VerticalScrollBarVisibility="Auto">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" MaxWidth="1400" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Margin="16,0,16,32">
+
+                    <!-- Уведомления: системные баннеры о событиях календаря + значок на иконке -->
+                    <Border Classes="settingRow">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <StackPanel Grid.Column="0" Spacing="4"
+                                        VerticalAlignment="Center" Margin="0,0,32,0">
+                                <TextBlock Classes="title" Text="Уведомления" />
+                                <TextBlock Classes="desc"
+                                           Text="Показывать системные уведомления о событиях календаря в момент их наступления и число уведомлений на значке приложения. Работают, пока программа запущена; пропущенные, пока она была закрыта, покажутся при следующем запуске." />
+                            </StackPanel>
+                            <ToggleSwitch Grid.Column="1" x:Name="NotificationsToggle"
+                                          OnContent="" OffContent=""
+                                          VerticalAlignment="Center"
+                                          IsCheckedChanged="OnNotificationsToggled" />
+                        </Grid>
+                    </Border>
+                    <Border Classes="separator h" />
+
+                    <!-- Автозапуск при входе в систему -->
+                    <Border Classes="settingRow">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <StackPanel Grid.Column="0" Spacing="4"
+                                        VerticalAlignment="Center" Margin="0,0,32,0">
+                                <TextBlock Classes="title" Text="Автозапуск при входе в систему" />
+                                <TextBlock Classes="desc"
+                                           Text="Запускать программу автоматически при входе в систему, чтобы напоминания приходили без ручного запуска. Доступно в установленном приложении." />
+                            </StackPanel>
+                            <ToggleSwitch Grid.Column="1" x:Name="AutostartToggle"
+                                          OnContent="" OffContent=""
+                                          VerticalAlignment="Center"
+                                          IsCheckedChanged="OnAutostartToggled" />
+                        </Grid>
+                    </Border>
+                    <Border Classes="separator h" />
+
+                    <!-- Фоновый режим -->
+                    <Border Classes="settingRow">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <StackPanel Grid.Column="0" Spacing="4"
+                                        VerticalAlignment="Center" Margin="0,0,32,0">
+                                <TextBlock Classes="title" Text="Фоновый режим" />
+                                <TextBlock Classes="desc"
+                                           Text="Не закрывать программу при закрытии окна, а сворачивать её в значок (трей / строку меню), чтобы напоминания продолжали приходить. Открыть снова — из значка или по клику на уведомление; выход — пункт «Выход»." />
+                            </StackPanel>
+                            <ToggleSwitch Grid.Column="1" x:Name="BackgroundToggle"
+                                          OnContent="" OffContent=""
+                                          VerticalAlignment="Center"
+                                          IsCheckedChanged="OnBackgroundToggled" />
+                        </Grid>
+                    </Border>
+                    <Border Classes="separator h" />
+
+                    </StackPanel>
+                </Grid>
+            </ScrollViewer>
+
             <!-- ── Оформление ────────────────────────────────────── -->
-            <ScrollViewer x:Name="AppearancePanel"
+            <ScrollViewer x:Name="AppearancePanel" IsVisible="False"
                           VerticalScrollBarVisibility="Auto">
                 <Grid>
                     <Grid.ColumnDefinitions>

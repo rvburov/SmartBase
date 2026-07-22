@@ -59,13 +59,17 @@ public partial class App : Application
             // окна — держим OnExplicitShutdown, вернём после.
             desktop.ShutdownMode = ShutdownMode.OnExplicitShutdown;
 
-            var splash = new SplashWindow();
-            splash.Show();
+            // Тихий старт из автозапуска (--background): без сплэша, окно создаётся скрытым —
+            // видны только служба уведомлений и значок в трее.
+            var background = Program.LaunchBackground;
+
+            var splash = background ? null : new SplashWindow();
+            splash?.Show();
 
             // Шкала: монтирование дефолтной БД — 5–85% (живая доля этапа из stage-колбэков
             // DatabaseManager: миграция/сжатие/индексация), «Запуск интерфейса…» — 85→100%
             // (добег в Finish).
-            var progress = new Progress<(double Fraction, string Message)>(t =>
+            var progress = splash is null ? null : new Progress<(double Fraction, string Message)>(t =>
                 splash.SetStage(0.05 + 0.80 * t.Fraction, t.Message));
 
             _ = Task.Run(() =>
@@ -75,31 +79,52 @@ public partial class App : Application
                     var workspace = Workspace.Open(registry, progress);
                     Dispatcher.UIThread.Post(() =>
                     {
-                        // Плавно добегаем до 100%, и ТОЛЬКО потом строим/показываем главное окно.
-                        splash.Finish("Запуск интерфейса…", () =>
+                        // Строим главное окно. При фоновом старте окно ПОКАЗЫВАЕМ и сразу
+                        // СКРЫВАЕМ — чтобы отработал Opened (монтирование, служба уведомлений,
+                        // трей), но окно не мозолило глаза при входе в систему.
+                        void Build()
                         {
                             var main = new MainWindow(workspace);
                             desktop.MainWindow = main;
                             main.Show();
-                            splash.Close();
-                            // Норма восстановлена: закрытие главного окна завершает приложение.
+                            if (background) main.Hide();
+                            splash?.Close();
+                            // Норма восстановлена: закрытие главного окна завершает приложение
+                            // (в фоновом режиме окно не закрывается, а скрывается — см. MainWindow).
                             desktop.ShutdownMode = ShutdownMode.OnMainWindowClose;
 
                             // Самозамена при обновлении не удалась (файл был занят) — версия
                             // осталась прежней. Разовое уведомление, чтобы пользователь не думал,
                             // что обновился. Подробности — docs/guides/auto-update.md.
-                            if (Program.UpdateFailed)
+                            if (!background && Program.UpdateFailed)
                                 _ = ConfirmDialog.Info(
                                     "Обновление не удалось применить — файл был занят другим процессом. " +
                                     "Приложение осталось на прежней версии, попробуйте обновиться ещё раз.")
                                     .ShowDialog(main);
 
+                            // Повторный запуск (второй экземпляр) просит показать окно.
+                            if (Program.Instance is { } instance)
+                            {
+                                instance.StartListening();
+                                instance.ShowRequested += () => Dispatcher.UIThread.Post(() =>
+                                {
+                                    main.Show();
+                                    main.Activate();
+                                });
+                            }
+
                             desktop.Exit += (_, _) =>
                             {
                                 workspace.Dispose();
                                 registry.Dispose();
+                                Program.NotificationManager?.Dispose();
+                                Program.Instance?.Dispose();
                             };
-                        });
+                        }
+
+                        // Плавно добегаем до 100%, и ТОЛЬКО потом строим/показываем главное окно.
+                        if (background) Build();
+                        else            splash!.Finish("Запуск интерфейса…", Build);
                     });
                 }
                 catch (Exception ex)
@@ -109,8 +134,12 @@ public partial class App : Application
                     Log.Error(ex, "Не удалось открыть дефолтную базу данных на старте");
                     Dispatcher.UIThread.Post(() =>
                     {
-                        splash.SetError($"Не удалось открыть базу данных:\n{ex.Message}");
-                        DispatcherTimer.RunOnce(() => desktop.Shutdown(1), TimeSpan.FromSeconds(6));
+                        if (splash is not null)
+                        {
+                            splash.SetError($"Не удалось открыть базу данных:\n{ex.Message}");
+                            DispatcherTimer.RunOnce(() => desktop.Shutdown(1), TimeSpan.FromSeconds(6));
+                        }
+                        else desktop.Shutdown(1);
                     });
                 }
             });
