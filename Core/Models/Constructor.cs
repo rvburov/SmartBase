@@ -40,6 +40,11 @@ public class DbRecord
     public int?     Id           { get; set; }
     public int      CollectionId { get; set; }
     public string?  CreatedAt    { get; set; }
+    // Аудит-метаданные записи (типы свойств «Дата/Создание/Изменение …»). Могут быть пусты
+    // у старых записей (бэкфилл проставил только UpdatedAt = CreatedAt).
+    public string?  UpdatedAt    { get; set; }
+    public string?  CreatedBy    { get; set; }
+    public string?  UpdatedBy    { get; set; }
     public int      Position     { get; set; } = 1000;
     public string?  StartDt      { get; set; }
     public string?  EndDt        { get; set; }

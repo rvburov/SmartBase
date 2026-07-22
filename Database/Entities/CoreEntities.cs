@@ -66,6 +66,13 @@ public class DbRecordEntity
     [Key] public int     Id           { get; set; }
     public int     CollectionId { get; set; }
     public string  CreatedAt    { get; set; } = "";
+    // Аудит-метаданные записи (для типов свойств «Дата/Создание/Изменение …»):
+    // UpdatedAt — время последней правки записи; CreatedBy/UpdatedBy — снимок имени
+    // пользователя (CurrentUser.DisplayName, как ChangeLogEntity.UserName), переживает
+    // переименование/удаление автора. Заполняются при создании и правках записи.
+    public string  UpdatedAt    { get; set; } = "";
+    public string  CreatedBy    { get; set; } = "";
+    public string  UpdatedBy    { get; set; } = "";
     public int     Position     { get; set; } = 1000;
     public string? StartDt      { get; set; }
     public string? EndDt        { get; set; }

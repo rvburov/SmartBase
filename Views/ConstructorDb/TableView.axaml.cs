@@ -713,7 +713,9 @@ public partial class TableView : UserControl
                 FieldType   = f.FieldType,
                 IsStarWidth = true,
                 MinWidth    = MinColWidth,
-                IsReadOnly  = f.FieldType == "checkbox",
+                // Чекбоксы и «вычисляемые» типы (дата/автор создания-изменения) правятся не текстовым
+                // редактором — read-only на уровне колонки (CellEditingTemplate не строится).
+                IsReadOnly  = f.FieldType == "checkbox" || FieldTypeInfo.IsComputed(f.FieldType),
                 // «Пользователь» — как select, только опции живые: допущенные пользователи базы.
                 Options     = f.FieldType == "user"
                     ? _repository?.GetUserOptions() ?? []
@@ -1073,7 +1075,12 @@ public partial class TableView : UserControl
         // Слева — иконка типа свойства (если тип известен). Сетка: [иконка][текст][шеврон].
         var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto") };
 
-        var typeIcon = BuildTypeIcon(def.FieldType);
+        // «Название»/«Описание» — базовые свойства целостности: их нельзя удалить и сменить тип.
+        // Их иконку типа красим красным, чтобы визуально выделять среди обычных свойств
+        // (полезно, когда колонок много и легко перепутать).
+        var isSystemColumn = def.Key == TableRowVm.TitleKey || def.Key == TableRowVm.DescKey;
+        var iconStroke     = isSystemColumn ? (IBrush)this.FindResource("BrushRed")! : null;
+        var typeIcon = BuildTypeIcon(def.FieldType, iconStroke);
         if (typeIcon is not null)
         {
             Grid.SetColumn(typeIcon, 0);
@@ -1100,8 +1107,9 @@ public partial class TableView : UserControl
     }
 
     // Иконка типа свойства слева от названия колонки (серый цвет шапки). null —
-    // если тип неизвестен (тогда колонка без иконки).
-    private Control? BuildTypeIcon(string? fieldType)
+    // если тип неизвестен (тогда колонка без иконки). stroke — цвет обводки: по умолчанию
+    // серый как у шапки, для системных колонок передаётся красный (BrushRed).
+    private Control? BuildTypeIcon(string? fieldType, IBrush? stroke = null)
     {
         var geo = Controls.Components.FieldTypeIcons.ForType(fieldType);
         if (geo is null) return null;
@@ -1121,7 +1129,7 @@ public partial class TableView : UserControl
                     new Avalonia.Controls.Shapes.Path
                     {
                         Data            = geo,
-                        Stroke          = (IBrush)this.FindResource("BrushSecondaryText")!,
+                        Stroke          = stroke ?? (IBrush)this.FindResource("BrushSecondaryText")!,
                         StrokeThickness = 1.8,
                         StrokeLineCap   = PenLineCap.Round,
                         StrokeJoin      = PenLineJoin.Round,
@@ -1249,6 +1257,26 @@ public partial class TableView : UserControl
                 return cb;
             }
 
+            // «Вычисляемые» типы: значение — из аудит-метаданных записи (свойства строки
+            // CreatedAt/UpdatedAt/CreatedBy/UpdatedBy), а не из индексатора значений полей.
+            // Read-only: биндим Text к именованному свойству через формат-конвертер.
+            if (FieldTypeInfo.IsComputed(def.FieldType))
+            {
+                var metaBinding = new Binding(ComputedBindingPath(def.FieldType))
+                {
+                    Converter = new ComputedFieldDisplayConverter(def.FieldType),
+                };
+                return new TextBlock
+                {
+                    Margin              = new Thickness(6, 0, 6, 0),
+                    VerticalAlignment   = VerticalAlignment.Center,
+                    HorizontalAlignment = HorizontalAlignment.Left,
+                    TextTrimming        = TextTrimming.CharacterEllipsis,
+                    Foreground          = (IBrush)this.FindResource("BrushSecondaryText")!,   // авто-значение — приглушённо
+                    [!TextBlock.TextProperty] = metaBinding,
+                };
+            }
+
             var binding = new Binding($"[{def.Key}]")
             {
                 Converter = def.Key == TableRowVm.TitleKey
@@ -1268,6 +1296,16 @@ public partial class TableView : UserControl
                 [!TextBlock.TextProperty] = binding,
             };
         });
+
+    // Имя свойства TableRowVm-источника для «вычисляемого» типа свойства (аудит-метаданные).
+    private static string ComputedBindingPath(string? fieldType) => fieldType switch
+    {
+        "created_at" => nameof(TableRowVm.CreatedAt),
+        "updated_at" => nameof(TableRowVm.UpdatedAt),
+        "created_by" => nameof(TableRowVm.CreatedBy),
+        "updated_by" => nameof(TableRowVm.UpdatedBy),
+        _            => nameof(TableRowVm.CreatedAt),
+    };
 
     private IDataTemplate BuildEditTemplate(TableColumnDef def) =>
         new FuncDataTemplate<TableRowVm>((row, _) =>
@@ -2812,6 +2850,19 @@ internal sealed class FieldDisplayConverter(string fieldType) : IValueConverter
             _          => s,
         };
     }
+
+    public object? ConvertBack(object? v, Type t, object? p, CultureInfo c) =>
+        v?.ToString() ?? "";
+}
+
+// Отображение «вычисляемых» типов (аудит-метаданные записи). Даты создания/изменения хранятся
+// как ISO "o" (полный момент с долями секунды и смещением — DateValue его не парсит), поэтому
+// разбираем round-trip и показываем «дд.MM.гггг чч:мм»; создатель/изменивший — снимок имени,
+// показываем как есть. Пустое (старые записи без автора) — пустая ячейка.
+internal sealed class ComputedFieldDisplayConverter(string fieldType) : IValueConverter
+{
+    public object? Convert(object? v, Type t, object? p, CultureInfo c) =>
+        FieldTypeInfo.FormatComputedDisplay(v?.ToString(), fieldType);
 
     public object? ConvertBack(object? v, Type t, object? p, CultureInfo c) =>
         v?.ToString() ?? "";

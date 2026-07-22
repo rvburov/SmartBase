@@ -482,6 +482,9 @@ public partial class RecordPageView : UserControl
         "checkbox" => "IconFieldCheckbox",
         "url"      => "IconFieldUrl",
         "user"     => "IconUser",
+        // Вычисляемые типы: та же иконка, что и у дат/пользователя (различаются подписью).
+        "created_at" or "updated_at" => "IconCalendarDate",
+        "created_by" or "updated_by" => "IconUser",
         _          => "IconFieldText",
     };
 
@@ -615,6 +618,17 @@ public partial class RecordPageView : UserControl
     {
         var f = row.Field;
         Control input;
+
+        // «Вычисляемые» типы (дата/автор создания-изменения) read-only: показываем
+        // отформатированное значение из аудит-метаданных, без редактора. Значение в row.Value
+        // уже сырое из метаданных (см. RecordPageViewModel), форматируем для показа.
+        if (FieldTypeInfo.IsComputed(f.FieldType))
+        {
+            var box = FlatValueBox(FieldTypeInfo.FormatComputedDisplay(row.Value, f.FieldType));
+            box.IsReadOnly  = true;
+            box.Foreground  = (IBrush)this.FindResource("BrushSecondaryText")!;   // авто-значение — приглушённо
+            return box;
+        }
 
         switch (f.FieldType)
         {

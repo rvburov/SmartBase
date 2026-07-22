@@ -732,14 +732,16 @@ public partial class ConstructorRepository(AppDbContext db)
         // RETURNING Id (SQLite ≥3.35 и PG): id каждой записи получаем из самой вставки — без
         // допущения «новые id непрерывны» (на PG identity-последовательность делят все клиенты).
         insRec.CommandText =
-            "INSERT INTO db_records (CollectionId, CreatedAt, Position, AllDay, Title, Description) " +
-            "VALUES (@cid, @created, @pos, 0, @title, NULL) RETURNING Id";
+            "INSERT INTO db_records (CollectionId, CreatedAt, UpdatedAt, CreatedBy, UpdatedBy, Position, AllDay, Title, Description) " +
+            "VALUES (@cid, @created, @created, @author, @author, @pos, 0, @title, NULL) RETURNING Id";
         var rCid     = AddParam(insRec, "@cid",     System.Data.DbType.Int32);
         var rCreated = AddParam(insRec, "@created", System.Data.DbType.String);
+        var rAuthor  = AddParam(insRec, "@author",  System.Data.DbType.String);
         var rPos     = AddParam(insRec, "@pos",     System.Data.DbType.Int64);
         var rTitle   = AddParam(insRec, "@title",   System.Data.DbType.String);
         rCid.Value     = collectionId;
         rCreated.Value = now;
+        rAuthor.Value  = CurrentUser.DisplayName;
 
         using var insVal = conn.CreateCommand();
         insVal.CommandText = "INSERT INTO db_field_values (RecordId, FieldId, Value) VALUES (@rid, @fid, @val)";
@@ -1027,12 +1029,13 @@ public partial class ConstructorRepository(AppDbContext db)
         if (recCount > 0)
         {
             var createdAt = DateTime.Now.ToString("o");
+            var createdBy = CurrentUser.DisplayName;   // дубль коллекции = новые записи (свой автор/время)
 
             // 1) Все записи одним INSERT … SELECT в порядке (Position, Id). Новые id — непрерывный блок
             //    в этом порядке (SQLite присваивает rowid по порядку SELECT, мы единственный писатель).
             db.Database.ExecuteSqlInterpolated($@"
-                INSERT INTO db_records (CollectionId, CreatedAt, Position, StartDt, EndDt, AllDay, Title, Description)
-                SELECT {newCollectionId}, {createdAt}, Position, StartDt, EndDt, AllDay, Title, Description
+                INSERT INTO db_records (CollectionId, CreatedAt, UpdatedAt, CreatedBy, UpdatedBy, Position, StartDt, EndDt, AllDay, Title, Description)
+                SELECT {newCollectionId}, {createdAt}, {createdAt}, {createdBy}, {createdBy}, Position, StartDt, EndDt, AllDay, Title, Description
                 FROM db_records WHERE CollectionId = {srcCollectionId} ORDER BY Position, Id");
             firstNew = LastInsertRowid() - recCount + 1;
 
@@ -1171,9 +1174,10 @@ public partial class ConstructorRepository(AppDbContext db)
         if (recCount > 0)
         {
             var createdAt = DateTime.Now.ToString("o");
+            var createdBy = CurrentUser.DisplayName;   // дубль коллекции = новые записи (свой автор/время)
             db.Database.ExecuteSqlInterpolated($@"
-                INSERT INTO db_records (Id, CollectionId, CreatedAt, Position, StartDt, EndDt, AllDay, Title, Description)
-                SELECT m.new_id, {newCollectionId}, {createdAt}, r.Position, r.StartDt, r.EndDt, r.AllDay, r.Title, r.Description
+                INSERT INTO db_records (Id, CollectionId, CreatedAt, UpdatedAt, CreatedBy, UpdatedBy, Position, StartDt, EndDt, AllDay, Title, Description)
+                SELECT m.new_id, {newCollectionId}, {createdAt}, {createdAt}, {createdBy}, {createdBy}, r.Position, r.StartDt, r.EndDt, r.AllDay, r.Title, r.Description
                 FROM db_records r JOIN _dup_rmap m ON m.old_id = r.Id");
 
             var processed = 0;
@@ -1960,8 +1964,8 @@ public partial class ConstructorRepository(AppDbContext db)
         {
             // 3) Записи одним INSERT … SELECT в порядке (Position, Id) — новые id непрерывным блоком.
             Exec(conn, tx, $@"
-                INSERT INTO main.db_records (CollectionId, CreatedAt, Position, StartDt, EndDt, AllDay, Title, Description)
-                SELECT {newColId}, CreatedAt, Position, StartDt, EndDt, AllDay, Title, Description
+                INSERT INTO main.db_records (CollectionId, CreatedAt, UpdatedAt, CreatedBy, UpdatedBy, Position, StartDt, EndDt, AllDay, Title, Description)
+                SELECT {newColId}, CreatedAt, UpdatedAt, CreatedBy, UpdatedBy, Position, StartDt, EndDt, AllDay, Title, Description
                 FROM src.db_records WHERE CollectionId = {srcCollectionId} ORDER BY Position, Id");
             var firstNew = ScalarLong(conn, tx, "SELECT last_insert_rowid()") - recCount + 1;
 
@@ -2544,6 +2548,7 @@ public partial class ConstructorRepository(AppDbContext db)
           .Select(r => new DbRecord
           {
               Id = r.Id, CollectionId = r.CollectionId, CreatedAt = r.CreatedAt,
+              UpdatedAt = r.UpdatedAt, CreatedBy = r.CreatedBy, UpdatedBy = r.UpdatedBy,
               Position = r.Position, StartDt = r.StartDt, EndDt = r.EndDt, AllDay = r.AllDay,
               Title = r.Title, Description = r.Description,
           })
@@ -2598,7 +2603,8 @@ public partial class ConstructorRepository(AppDbContext db)
     // скролла, т.е. «keyset» был O(глубины)). Хвост Id в ключе сика бесплатен: Id = rowid,
     // он неявно завершает каждую запись индекса.
     private const string RecordCols =
-        "r.Id, r.CollectionId, r.CreatedAt, r.Position, r.StartDt, r.EndDt, r.AllDay, r.Title, r.Description";
+        "r.Id, r.CollectionId, r.CreatedAt, r.Position, r.StartDt, r.EndDt, r.AllDay, r.Title, r.Description, " +
+        "r.UpdatedAt, r.CreatedBy, r.UpdatedBy";
 
     // Фильтр скрытых записей (окно «Отображение записей») для raw SQL страниц таблицы.
     private static string HiddenFilter(bool excludeHidden, string alias = "r") => excludeHidden
@@ -2686,6 +2692,9 @@ public partial class ConstructorRepository(AppDbContext db)
                     AllDay       = rdr.GetInt32(6) != 0,
                     Title        = rdr.IsDBNull(7) ? "" : rdr.GetString(7),
                     Description  = rdr.IsDBNull(8) ? null : rdr.GetString(8),
+                    UpdatedAt    = rdr.IsDBNull(9)  ? null : rdr.GetString(9),
+                    CreatedBy    = rdr.IsDBNull(10) ? null : rdr.GetString(10),
+                    UpdatedBy    = rdr.IsDBNull(11) ? null : rdr.GetString(11),
                 });
         }
         finally { if (opened) conn.Close(); }
@@ -2736,6 +2745,7 @@ public partial class ConstructorRepository(AppDbContext db)
         return new DbRecord
         {
             Id = r.Id, CollectionId = r.CollectionId, CreatedAt = r.CreatedAt,
+            UpdatedAt = r.UpdatedAt, CreatedBy = r.CreatedBy, UpdatedBy = r.UpdatedBy,
             Position = r.Position, StartDt = r.StartDt, EndDt = r.EndDt, AllDay = r.AllDay,
             Title = r.Title, Description = r.Description,
         };
@@ -2756,6 +2766,7 @@ public partial class ConstructorRepository(AppDbContext db)
                                       detail: ChangeDetail.Rename(old, title)), old);
         }
         rec.Title = title;
+        TouchUpdated(rec);
         SaveIgnoringRemoteDelete(rec);
     }
 
@@ -2776,7 +2787,17 @@ public partial class ConstructorRepository(AppDbContext db)
                              old);
         }
         rec.Description = normalized;
+        TouchUpdated(rec);
         SaveIgnoringRemoteDelete(rec);
+    }
+
+    // Проставляет аудит «последней правки» записи (для типов свойств «Дата/Изменение …»):
+    // время = сейчас, автор = снимок имени текущего пользователя. Вызывать в путях правки
+    // данных записи (значение поля, название, описание, даты) перед SaveChanges.
+    private static void TouchUpdated(DbRecordEntity rec)
+    {
+        rec.UpdatedAt = DateTime.Now.ToString("o");
+        rec.UpdatedBy = CurrentUser.DisplayName;
     }
 
     // Многопользовательский режим: сущность мог удалить другой пользователь между нашим
@@ -2795,10 +2816,16 @@ public partial class ConstructorRepository(AppDbContext db)
     public DbRecord AddRecord(DbRecord record)
     {
         Demand(PermAction.CreateRecord, record.CollectionId);
+        var createdAt = record.CreatedAt ?? DateTime.Now.ToString("o");
+        var author    = CurrentUser.DisplayName;
         var entity = new DbRecordEntity
         {
             CollectionId = record.CollectionId,
-            CreatedAt    = record.CreatedAt ?? DateTime.Now.ToString("o"),
+            CreatedAt    = createdAt,
+            // Аудит-метаданные: при создании автор/время правки = автор/время создания.
+            UpdatedAt    = createdAt,
+            CreatedBy    = author,
+            UpdatedBy    = author,
             Position     = record.Position,
             StartDt      = record.StartDt,
             EndDt        = record.EndDt,
@@ -2896,9 +2923,11 @@ public partial class ConstructorRepository(AppDbContext db)
 
         // Перестановки (Position) журнал не засоряют — только смысловые изменения.
         // «до → после» — для переименования и правки описания (даты видны в самой записи).
-        if (entity.Title != record.Title || entity.Description != record.Description ||
+        var meaningfulChange =
+            entity.Title != record.Title || entity.Description != record.Description ||
             entity.StartDt != record.StartDt || entity.EndDt != record.EndDt ||
-            entity.AllDay != record.AllDay || entity.CollectionId != record.CollectionId)
+            entity.AllDay != record.AllDay || entity.CollectionId != record.CollectionId;
+        if (meaningfulChange)
             Log("update", "record", record.Title, CollectionNameOf(record.CollectionId),
                 detail: entity.Title != record.Title
                     ? ChangeDetail.Rename(entity.Title, record.Title)
@@ -2914,6 +2943,7 @@ public partial class ConstructorRepository(AppDbContext db)
         entity.AllDay       = record.AllDay;
         entity.Title        = record.Title;
         entity.Description  = record.Description;
+        if (meaningfulChange) TouchUpdated(entity);   // аудит «последней правки» (не для чистых перестановок)
         db.SaveChanges();
     }
 
@@ -3154,13 +3184,14 @@ public partial class ConstructorRepository(AppDbContext db)
               AND (Position > {anchorPos} OR (Position = {anchorPos} AND Id > {anchorId}))");
 
         var createdAt = DateTime.Now.ToString("o");
+        var createdBy = CurrentUser.DisplayName;   // дубль = новая запись (свой автор/время)
 
         // 1) Копии записей в освобождённый диапазон сразу после якоря: Position = anchorPos + ранг*1000
         //    (ранг по Position, Id исходников). Новые rowid — непрерывный блок в этом порядке (мы
         //    единственный писатель в транзакции).
         db.Database.ExecuteSqlInterpolated($@"
-            INSERT INTO db_records (CollectionId, CreatedAt, Position, StartDt, EndDt, AllDay, Title, Description)
-            SELECT {collectionId}, {createdAt},
+            INSERT INTO db_records (CollectionId, CreatedAt, UpdatedAt, CreatedBy, UpdatedBy, Position, StartDt, EndDt, AllDay, Title, Description)
+            SELECT {collectionId}, {createdAt}, {createdAt}, {createdBy}, {createdBy},
                    {anchorPos} + ROW_NUMBER() OVER (ORDER BY r.Position, r.Id) * 1000,
                    r.StartDt, r.EndDt, r.AllDay, r.Title, r.Description
             FROM db_records r JOIN _dup_recsel s ON s.src_id = r.Id
@@ -3249,9 +3280,10 @@ public partial class ConstructorRepository(AppDbContext db)
                 WHERE r.CollectionId = {collectionId}");
 
             var createdAt = DateTime.Now.ToString("o");
+            var createdBy = CurrentUser.DisplayName;   // дубль = новая запись (свой автор/время)
             db.Database.ExecuteSqlInterpolated($@"
-                INSERT INTO db_records (Id, CollectionId, CreatedAt, Position, StartDt, EndDt, AllDay, Title, Description)
-                SELECT m.new_id, {collectionId}, {createdAt}, {anchorPos} + m.rn * 1000,
+                INSERT INTO db_records (Id, CollectionId, CreatedAt, UpdatedAt, CreatedBy, UpdatedBy, Position, StartDt, EndDt, AllDay, Title, Description)
+                SELECT m.new_id, {collectionId}, {createdAt}, {createdAt}, {createdBy}, {createdBy}, {anchorPos} + m.rn * 1000,
                        r.StartDt, r.EndDt, r.AllDay, r.Title, r.Description
                 FROM db_records r JOIN _dup_rmap m ON m.old_id = r.Id");
 
@@ -3714,9 +3746,12 @@ public partial class ConstructorRepository(AppDbContext db)
         Demand(PermAction.EditRecord, CollectionOfRecord(recordId));
         var fv = db.DbFieldValues.FirstOrDefault(x => x.RecordId == recordId && x.FieldId == fieldId);
 
-        // Журнал — только при реальном изменении значения (правка ячейки — ручное
-        // действие, но сохранение записи прогоняет ВСЕ поля через этот метод).
-        if (fv is null ? value.Length > 0 : fv.Value != value)
+        // Реальное изменение значения (правка ячейки — ручное действие, но сохранение записи
+        // прогоняет ВСЕ поля через этот метод): им гейтим и журнал, и аудит «последней правки».
+        var changed = fv is null ? value.Length > 0 : fv.Value != value;
+
+        // Журнал — только при реальном изменении значения.
+        if (changed)
         {
             var rec = db.DbRecords.AsNoTracking()
                 .Where(r => r.Id == recordId)
@@ -3776,6 +3811,14 @@ public partial class ConstructorRepository(AppDbContext db)
                 db.SaveChanges();   // дожать строку журнала
             }
         }
+
+        // Аудит «последней правки» записи (для типов «Дата/Изменение …») — только при реальном
+        // изменении значения. Запись не трекается EF в этом методе → правим db_records сырым SQL
+        // (кавычки-lowercase матчатся обоими провайдерами, как в conflict-ветке выше).
+        if (changed)
+            db.Database.ExecuteSqlRaw(
+                "UPDATE \"db_records\" SET \"updatedat\" = {0}, \"updatedby\" = {1} WHERE \"id\" = {2}",
+                DateTime.Now.ToString("o"), CurrentUser.DisplayName, recordId);
 
         // Поддерживаем индексную проекцию календаря (для видимых полей-дат).
         SyncCalendarIndexValue(recordId, fieldId, value);

@@ -23,6 +23,10 @@ public static class FieldTypeIcons
         "checkbox" => Icon("IconFieldCheckbox"),
         "url"      => Icon("IconFieldUrl"),
         "user"     => Icon("IconUser"),
+        // Вычисляемые типы: значение авто из метаданных записи. Иконку переиспользуем
+        // (дата — календарь, пользователь — человек), различаются подписью.
+        "created_at" or "updated_at" => Icon("IconCalendarDate"),
+        "created_by" or "updated_by" => Icon("IconUser"),
         _          => null,
     };
 }

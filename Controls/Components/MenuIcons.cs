@@ -124,17 +124,8 @@ public static class MenuIcons
     // Текст задаёт вызывающий (показывает режим, в который переключит клик).
     public static Control HeightModeHeader(string text) => Header(MoveVertical, text);
 
-    // Русская подпись типа поля — для шапки контекстного меню свойства.
-    private static string TypeLabel(string? fieldType) => fieldType switch
-    {
-        "text"     => "Текст",
-        "number"   => "Число",
-        "date"     => "Дата",
-        "select"   => "Список",
-        "checkbox" => "Чекбокс",
-        "url"      => "Ссылка",
-        _          => "Текст",
-    };
+    // Русская подпись типа поля — для шапки контекстного меню свойства (единый источник в Core).
+    private static string TypeLabel(string? fieldType) => Core.Models.FieldTypeInfo.Label(fieldType);
 
     private static IBrush Brush(string key, IBrush fallback) =>
         Application.Current!.TryFindResource(key, out var res) && res is IBrush b ? b : fallback;

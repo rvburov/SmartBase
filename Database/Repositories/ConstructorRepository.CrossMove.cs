@@ -348,7 +348,8 @@ public partial class ConstructorRepository
 
     private sealed record RecPage(long OldId, string CreatedAt, int Position,
                                   string? StartDt, string? EndDt, int AllDay,
-                                  string Title, string? Description);
+                                  string Title, string? Description,
+                                  string UpdatedAt, string CreatedBy, string UpdatedBy);
 
     private static List<RecPage> ReadRecordsPage(System.Data.Common.DbConnection conn,
         System.Data.Common.DbTransaction tx, int collectionId, int afterPos, int afterId, int take)
@@ -357,7 +358,8 @@ public partial class ConstructorRepository
         cmd.Transaction = tx;
         // Числа в SQL — int, которые мы формируем сами, поэтому интерполяция безопасна.
         cmd.CommandText = $@"
-            SELECT Id, CreatedAt, Position, StartDt, EndDt, AllDay, Title, Description
+            SELECT Id, CreatedAt, Position, StartDt, EndDt, AllDay, Title, Description,
+                   UpdatedAt, CreatedBy, UpdatedBy
             FROM db_records
             WHERE CollectionId = {collectionId} AND (Position, Id) > ({afterPos}, {afterId})
             ORDER BY Position, Id LIMIT {take}";
@@ -370,7 +372,10 @@ public partial class ConstructorRepository
                 r.IsDBNull(3) ? null : r.GetString(3),
                 r.IsDBNull(4) ? null : r.GetString(4),
                 r.GetInt32(5), r.GetString(6),
-                r.IsDBNull(7) ? null : r.GetString(7)));
+                r.IsDBNull(7) ? null : r.GetString(7),
+                r.IsDBNull(8) ? "" : r.GetString(8),
+                r.IsDBNull(9) ? "" : r.GetString(9),
+                r.IsDBNull(10) ? "" : r.GetString(10)));
         return list;
     }
 
@@ -442,8 +447,8 @@ public partial class ConstructorRepository
         using var ins = conn.CreateCommand();
         ins.Transaction = tgt.Database.CurrentTransaction!.GetDbTransaction();
         ins.CommandText =
-            "INSERT INTO db_records (CollectionId, CreatedAt, Position, StartDt, EndDt, AllDay, Title, Description) " +
-            "VALUES (@cid, @created, @pos, @s, @e, @a, @t, @d) RETURNING Id";
+            "INSERT INTO db_records (CollectionId, CreatedAt, Position, StartDt, EndDt, AllDay, Title, Description, UpdatedAt, CreatedBy, UpdatedBy) " +
+            "VALUES (@cid, @created, @pos, @s, @e, @a, @t, @d, @ua, @cb, @ub) RETURNING Id";
         var pCid     = AddParam(ins, "@cid",     DbType.Int32);
         var pCreated = AddParam(ins, "@created", DbType.String);
         var pPos     = AddParam(ins, "@pos",     DbType.Int32);
@@ -452,6 +457,9 @@ public partial class ConstructorRepository
         var pA       = AddParam(ins, "@a",       DbType.Int32);
         var pT       = AddParam(ins, "@t",       DbType.String);
         var pD       = AddParam(ins, "@d",       DbType.String);
+        var pUa      = AddParam(ins, "@ua",      DbType.String);   // перенос сохраняет аудит-метаданные
+        var pCb      = AddParam(ins, "@cb",      DbType.String);
+        var pUb      = AddParam(ins, "@ub",      DbType.String);
         ins.Prepare();
 
         var map = new Dictionary<long, long>(page.Count);
@@ -465,6 +473,9 @@ public partial class ConstructorRepository
             pA.Value       = rec.AllDay;
             pT.Value       = rec.Title;
             pD.Value       = (object?)rec.Description ?? DBNull.Value;
+            pUa.Value      = rec.UpdatedAt;
+            pCb.Value      = rec.CreatedBy;
+            pUb.Value      = rec.UpdatedBy;
             map[rec.OldId] = Convert.ToInt64(ins.ExecuteScalar()!);
         }
         return map;

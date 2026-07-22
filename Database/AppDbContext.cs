@@ -40,6 +40,46 @@ public class AppDbContext : DbContext
         IsPostgres = PgConnectionInfo.IsPostgresConnectionString(dbPath);
     }
 
+    // ── Аудит-метаданные записей (для типов свойств «Дата/Создание/Изменение …») ──
+    // Централизованно проставляем автора/время СОЗДАНИЯ новым записям (Added) прямо перед
+    // сохранением: покрывает все EF-пути создания через инициализаторы объектов (одиночный
+    // дубль, релокация, календарные копии, восстановление снапшота) — вызывающему коду не
+    // нужно заполнять поля вручную. Явно заданные значения (см. ConstructorRepository.AddRecord)
+    // не перетираем. Сырые INSERT мимо EF (импорт/пакетный дубль/перенос) стампят метаданные в
+    // своём SQL. «Изменение» стампится точечно в методах правки (TouchUpdated/SetFieldValue).
+    public override int SaveChanges()
+    {
+        StampNewRecordAudit();
+        return base.SaveChanges();
+    }
+
+    public override int SaveChanges(bool acceptAllChangesOnSuccess)
+    {
+        StampNewRecordAudit();
+        return base.SaveChanges(acceptAllChangesOnSuccess);
+    }
+
+    public override System.Threading.Tasks.Task<int> SaveChangesAsync(
+        bool acceptAllChangesOnSuccess,
+        System.Threading.CancellationToken cancellationToken = default)
+    {
+        StampNewRecordAudit();
+        return base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
+    }
+
+    private void StampNewRecordAudit()
+    {
+        foreach (var entry in ChangeTracker.Entries<DbRecordEntity>())
+        {
+            if (entry.State != EntityState.Added) continue;
+            var r = entry.Entity;
+            if (string.IsNullOrEmpty(r.CreatedBy)) r.CreatedBy = Utils.CurrentUser.DisplayName;
+            if (string.IsNullOrEmpty(r.UpdatedBy)) r.UpdatedBy = r.CreatedBy;
+            if (string.IsNullOrEmpty(r.UpdatedAt))
+                r.UpdatedAt = string.IsNullOrEmpty(r.CreatedAt) ? System.DateTime.Now.ToString("o") : r.CreatedAt;
+        }
+    }
+
     protected override void OnConfiguring(DbContextOptionsBuilder options)
     {
         if (IsPostgres) options.UseNpgsql(_dbPath);

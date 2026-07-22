@@ -185,7 +185,8 @@ internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollecti
             var rec    = records[i];
             var id     = rec.Id!.Value;
             var values = valMap.TryGetValue(id, out var v) ? v : [];
-            rows[i]    = Track(new TableRowVm(_repo, id, skip + i + 1, values, rec.Title ?? "", rec.Description));
+            rows[i]    = Track(new TableRowVm(_repo, id, skip + i + 1, values, rec.Title ?? "", rec.Description,
+                                              rec.CreatedAt ?? "", rec.UpdatedAt ?? "", rec.CreatedBy ?? "", rec.UpdatedBy ?? ""));
         }
         RememberCursor(skip / PageSize, records);
         return rows;
@@ -206,7 +207,8 @@ internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollecti
             var rec    = records[i];
             var id     = rec.Id!.Value;
             var values = valMap.TryGetValue(id, out var v) ? v : [];
-            rows[i].Fill(_repo, id, values, rec.Title ?? "", rec.Description);
+            rows[i].Fill(_repo, id, values, rec.Title ?? "", rec.Description,
+                         rec.CreatedAt ?? "", rec.UpdatedAt ?? "", rec.CreatedBy ?? "", rec.UpdatedBy ?? "");
         }
 
         RememberCursor(page, records);
@@ -253,7 +255,8 @@ internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollecti
         if (rec is null) return;                       // запись удалена — оставляем как есть до Reset
 
         var values = _repo.GetFieldValues(recordId);
-        row.Fill(_repo, recordId, values, rec.Title ?? "", rec.Description);
+        row.Fill(_repo, recordId, values, rec.Title ?? "", rec.Description,
+                 rec.CreatedAt ?? "", rec.UpdatedAt ?? "", rec.CreatedBy ?? "", rec.UpdatedBy ?? "");
     }
 
     /// <summary>Перечитывает ЗАГРУЖЕННЫЕ страницы из БД и обновляет строки НА МЕСТЕ (Fill), без Reset —
@@ -276,7 +279,8 @@ internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollecti
                 var rec    = records[i];
                 var id     = rec.Id!.Value;
                 var values = valMap.TryGetValue(id, out var v) ? v : [];
-                rows[i].Fill(_repo, id, values, rec.Title ?? "", rec.Description);
+                rows[i].Fill(_repo, id, values, rec.Title ?? "", rec.Description,
+                         rec.CreatedAt ?? "", rec.UpdatedAt ?? "", rec.CreatedBy ?? "", rec.UpdatedBy ?? "");
             }
             RememberCursor(page, records);
         }

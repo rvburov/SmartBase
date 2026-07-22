@@ -403,6 +403,11 @@ namespace SmartBase.Database.Migrations.Pg
                         .HasColumnType("text")
                         .HasColumnName("createdat");
 
+                    b.Property<string>("CreatedBy")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("createdby");
+
                     b.Property<string>("Description")
                         .HasColumnType("text")
                         .HasColumnName("description");
@@ -423,6 +428,16 @@ namespace SmartBase.Database.Migrations.Pg
                         .IsRequired()
                         .HasColumnType("text")
                         .HasColumnName("title");
+
+                    b.Property<string>("UpdatedAt")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("updatedat");
+
+                    b.Property<string>("UpdatedBy")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("updatedby");
 
                     b.HasKey("Id");
 

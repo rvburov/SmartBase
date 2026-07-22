@@ -22,10 +22,23 @@ public class TableRowVm : INotifyPropertyChanged
     private Dictionary<int, string> _values;
     private string _title;
     private string _description;
+    // Аудит-метаданные записи — источник для «вычисляемых» типов свойств
+    // (created_at/updated_at/created_by/updated_by). Ячейки этих типов биндятся
+    // к одноимённым свойствам ниже, а не к индексатору значений полей.
+    private string _createdAt;
+    private string _updatedAt;
+    private string _createdBy;
+    private string _updatedBy;
 
     public int  RecordId    { get; private set; }
     public int  RowNumber   { get; private set; }
     public bool IsAddRow    { get; }
+
+    /// <summary>Аудит-метаданные записи для «вычисляемых» типов свойств (read-only).</summary>
+    public string CreatedAt => _createdAt;
+    public string UpdatedAt => _updatedAt;
+    public string CreatedBy => _createdBy;
+    public string UpdatedBy => _updatedBy;
     // Строка-заглушка: данные страницы ещё не пришли (async-подгрузка), ячейки показывают
     // «Загрузка…». Заполняется методом Fill, который обновляет ячейки.
     public bool IsLoading   { get; private set; }
@@ -40,7 +53,9 @@ public class TableRowVm : INotifyPropertyChanged
 
     /// <summary>Обычная строка с данными.</summary>
     public TableRowVm(ConstructorRepository repository, int recordId, int rowNumber,
-                     Dictionary<int, string> values, string title, string? description)
+                     Dictionary<int, string> values, string title, string? description,
+                     string createdAt = "", string updatedAt = "",
+                     string createdBy = "", string updatedBy = "")
     {
         _repository  = repository;
         RecordId     = recordId;
@@ -48,6 +63,10 @@ public class TableRowVm : INotifyPropertyChanged
         _values      = values;
         _title       = title       ?? "";
         _description = description ?? "";
+        _createdAt   = createdAt   ?? "";
+        _updatedAt   = updatedAt   ?? "";
+        _createdBy   = createdBy   ?? "";
+        _updatedBy   = updatedBy   ?? "";
     }
 
     /// <summary>Строка-«плюс» в конце таблицы.</summary>
@@ -57,6 +76,10 @@ public class TableRowVm : INotifyPropertyChanged
         _values      = [];
         _title       = "";
         _description = "";
+        _createdAt   = "";
+        _updatedAt   = "";
+        _createdBy   = "";
+        _updatedBy   = "";
     }
 
     public static TableRowVm AddRow() => new();
@@ -71,29 +94,60 @@ public class TableRowVm : INotifyPropertyChanged
         _values      = [];
         _title       = "";
         _description = "";
+        _createdAt   = "";
+        _updatedAt   = "";
+        _createdBy   = "";
+        _updatedBy   = "";
     }
 
     /// <summary>
     /// Заполнить строку-заглушку реальными данными и обновить ячейки.
     /// </summary>
     public void Fill(ConstructorRepository repository, int recordId,
-                     Dictionary<int, string> values, string title, string? description)
+                     Dictionary<int, string> values, string title, string? description,
+                     string createdAt = "", string updatedAt = "",
+                     string createdBy = "", string updatedBy = "")
     {
         _repository  = repository;
         RecordId     = recordId;
         _values      = values;
         _title       = title       ?? "";
         _description = description ?? "";
+        _createdAt   = createdAt   ?? "";
+        _updatedAt   = updatedAt   ?? "";
+        _createdBy   = createdBy   ?? "";
+        _updatedBy   = updatedBy   ?? "";
         IsLoading    = false;
 
         // Уведомляем именем индексатора "Item": Avalonia ReflectionIndexerNode.ShouldUpdate
         // реагирует на имя самого индексатора (GetDeclaredProperty("Item")), а НЕ на WPF-стиль
         // "Item[key]" — тот он молча игнорирует. Одно "Item" перечитывает все ячейки строки.
         NotifyAllCells();
+        NotifyMeta();
     }
 
     // Перечитать все привязки ячеек строки (каждая по своему ключу): см. комментарий в Fill.
     private void NotifyAllCells() => OnPropertyChanged("Item");
+
+    // Обновить привязки «вычисляемых» ячеек (created_at/updated_at/created_by/updated_by),
+    // которые биндятся к именованным свойствам, а не к индексатору значений.
+    private void NotifyMeta()
+    {
+        OnPropertyChanged(nameof(CreatedAt));
+        OnPropertyChanged(nameof(UpdatedAt));
+        OnPropertyChanged(nameof(CreatedBy));
+        OnPropertyChanged(nameof(UpdatedBy));
+    }
+
+    // Локально отражаем «последнюю правку» записи (БД её проставила в SetFieldValue/TouchUpdated),
+    // чтобы «вычисляемые» ячейки «Дата/Изменение пользователем» обновились сразу, без перечитывания
+    // строки из БД. Значения совпадают с записанными в БД с точностью до момента правки.
+    private void BumpUpdatedLocal()
+    {
+        _updatedAt = System.DateTime.Now.ToString("o");
+        _updatedBy = CurrentUser.DisplayName;
+        NotifyMeta();
+    }
 
     public void SetRowNumber(int n)
     {
@@ -129,6 +183,7 @@ public class TableRowVm : INotifyPropertyChanged
                 try { _repository?.SetRecordTitle(RecordId, newVal); }
                 catch (Exception ex) when (DbErrors.Handle(ex, _repository?.DbPath)) { NotifyAllCells(); return; }
                 _title = newVal;
+                BumpUpdatedLocal();
                 NotifyAllCells();
                 Edited?.Invoke(this, RecordId);
                 return;
@@ -139,6 +194,7 @@ public class TableRowVm : INotifyPropertyChanged
                 try { _repository?.SetRecordDescription(RecordId, newVal); }
                 catch (Exception ex) when (DbErrors.Handle(ex, _repository?.DbPath)) { NotifyAllCells(); return; }
                 _description = newVal;
+                BumpUpdatedLocal();
                 NotifyAllCells();
                 Edited?.Invoke(this, RecordId);
                 return;
@@ -149,6 +205,7 @@ public class TableRowVm : INotifyPropertyChanged
             try { _repository?.SetFieldValue(RecordId, id, newVal); }
             catch (Exception ex) when (DbErrors.Handle(ex, _repository?.DbPath)) { NotifyAllCells(); return; }
             _values[id] = newVal;
+            BumpUpdatedLocal();
             NotifyAllCells();
             Edited?.Invoke(this, RecordId);
         }

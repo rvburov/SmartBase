@@ -49,12 +49,39 @@
                                       StrokeLineCap="Round" StrokeJoin="Round" />
                             </Canvas>
                         </Viewbox>
-                        <TextBlock Text="{Binding Label}"
-                                   VerticalAlignment="Center"
- />
+                        <TextBlock Text="{Binding Label}" VerticalAlignment="Center" />
                     </StackPanel>
                 </DataTemplate>
             </ComboBox.ItemTemplate>
+
+            <!-- Контейнер элементов списка: применяется ТОЛЬКО к пунктам выпадашки (не к
+                 свёрнутому боксу выбора), поэтому разделитель над «вычисляемой» группой
+                 никогда не попадает в поле выбора. Черта вынесена НАД подсвечиваемым
+                 ContentPresenter (в зазор между пунктами), поэтому hover/выбор её не
+                 захватывает. Видна только у первого элемента группы (StartsGroup). -->
+            <ComboBox.ItemContainerTheme>
+                <ControlTheme TargetType="ComboBoxItem" BasedOn="{StaticResource {x:Type ComboBoxItem}}">
+                    <Setter Property="Template">
+                        <ControlTemplate>
+                            <StackPanel Spacing="0">
+                                <Border Height="1" Margin="6,0,6,6"
+                                        Background="{StaticResource BrushSeparator}"
+                                        IsVisible="{Binding StartsGroup}" />
+                                <ContentPresenter Name="ContentPresenter"
+                                                  Background="{TemplateBinding Background}"
+                                                  BorderBrush="{TemplateBinding BorderBrush}"
+                                                  BorderThickness="{TemplateBinding BorderThickness}"
+                                                  CornerRadius="{TemplateBinding CornerRadius}"
+                                                  Padding="{TemplateBinding Padding}"
+                                                  Content="{TemplateBinding Content}"
+                                                  ContentTemplate="{TemplateBinding ContentTemplate}"
+                                                  HorizontalContentAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                                  VerticalContentAlignment="{TemplateBinding VerticalContentAlignment}" />
+                            </StackPanel>
+                        </ControlTemplate>
+                    </Setter>
+                </ControlTheme>
+            </ComboBox.ItemContainerTheme>
         </ComboBox>
 
         <!-- Отображать в календаре: виден только для типа «Дата». Если включено — значения
@@ -85,6 +112,20 @@
                        FontWeight="{StaticResource FontWeightBold}"
                        Foreground="{StaticResource BrushSecondaryText}" />
         </StackPanel>
+
+        <!-- Пояснение для системных колонок «Название»/«Описание»: скрыто по умолчанию,
+             показывается только в системном режиме (см. code-behind). Объясняет, почему
+             тип заблокирован и свойство нельзя удалить. -->
+        <Border x:Name="SystemNote" IsVisible="False"
+                Background="{StaticResource BrushRedLight}"
+                CornerRadius="{StaticResource RadiusMedium}"
+                Padding="12,10"
+                Margin="0,0,0,12">
+            <TextBlock TextWrapping="Wrap"
+                       LineHeight="18"
+                       Foreground="{StaticResource BrushRed}"
+                       Text="Это базовое свойство записи — на нём держится целостность коллекции. Его нельзя удалить, а тип изменить: доступно только переименование." />
+        </Border>
 
         <!-- Уведомление об ошибке валидации -->
         <w:ErrorBanner x:Name="ErrorBanner" Margin="0,0,0,12" />

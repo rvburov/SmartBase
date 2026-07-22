@@ -12,6 +12,9 @@ public sealed class FieldTypeItem
     public required string   Type  { get; init; }
     public required string   Label { get; init; }
     public required Geometry Icon  { get; init; }
+    /// <summary>Первый элемент «системной» группы (вычисляемые типы) — над ним рисуется
+    /// разделительная черта в выпадающем списке.</summary>
+    public bool StartsGroup { get; init; }
 }
 
 /// <summary>
@@ -32,6 +35,12 @@ public partial class PropertyEditorDialog : Window
         new() { Type = "checkbox", Label = "Чекбокс", Icon = Components.FieldTypeIcons.ForType("checkbox")! },
         new() { Type = "url",      Label = "Ссылка",  Icon = Components.FieldTypeIcons.ForType("url")!      },
         new() { Type = "user",     Label = "Пользователь", Icon = Components.FieldTypeIcons.ForType("user")! },
+        // Вычисляемые типы (значение авто из метаданных записи, ячейка read-only). Идут внизу
+        // отдельной группой — StartsGroup у первого рисует разделительную черту над ней.
+        new() { Type = "created_at", Label = "Дата создания",          Icon = Components.FieldTypeIcons.ForType("created_at")!, StartsGroup = true },
+        new() { Type = "updated_at", Label = "Дата изменения",         Icon = Components.FieldTypeIcons.ForType("updated_at")! },
+        new() { Type = "created_by", Label = "Создание пользователем",  Icon = Components.FieldTypeIcons.ForType("created_by")! },
+        new() { Type = "updated_by", Label = "Изменение пользователем", Icon = Components.FieldTypeIcons.ForType("updated_by")! },
     ];
 
     private readonly ConstructorRepository _repository;
@@ -118,6 +127,10 @@ public partial class PropertyEditorDialog : Window
         TypeCombo.ItemsSource   = FieldTypes;
         TypeCombo.SelectedIndex = Array.FindIndex(FieldTypes, t => t.Type == "text");
         TypeCombo.IsEnabled     = false;   // тип «Текст» нельзя изменить
+
+        // Пояснение: «Название»/«Описание» — базовые свойства целостности, их нельзя
+        // удалить и сменить тип. Показываем только в этом (системном) режиме.
+        SystemNote.IsVisible = true;
 
         NameBox.Text = currentName;
 
