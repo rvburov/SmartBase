@@ -130,4 +130,29 @@ public sealed class NotificationServiceTests
         Assert.NotNull(activated);
         Assert.Equal("Событие1", activated!.Title);
     }
+
+    // Фоновый тик (TickBackground) читает наступившие события НЕ на UI-потоке, через свежее
+    // подключение (GetCalendarRecordsByRangeIsolated) — иначе скан calendar_index «морозит»
+    // интерфейс на больших БД. Здесь фиксируем контракт этого чтения: с фонового потока оно
+    // отдаёт ровно тот же результат, что и обычное чтение с общего контекста.
+    [Fact]
+    public async Task Isolated_read_matches_shared_and_runs_off_thread()
+    {
+        using var db = new TempDatabase();
+        var col  = SampleData.AddCollection(db.Constructor, "Дела");
+        var date = SampleData.AddField(db.Constructor, col.Id!.Value, "Дата", "date");
+        AddEvent(db, col.Id!.Value, date.Id!.Value, "Событие1", new DateTime(2026, 7, 1, 10, 0, 0));
+        AddEvent(db, col.Id!.Value, date.Id!.Value, "Событие2", new DateTime(2026, 7, 1, 11, 0, 0));
+
+        var from = new DateTime(2026, 7, 1, 0, 0, 0);
+        var to   = new DateTime(2026, 7, 2, 0, 0, 0);
+
+        var shared = db.Constructor.GetCalendarRecordsByRange(from, to, null);
+        // Свежее подключение с фонового потока — общий однопоточный контекст не трогаем.
+        var isolated = await Task.Run(() => db.Constructor.GetCalendarRecordsByRangeIsolated(from, to, null));
+
+        Assert.Equal(2, isolated.Count);
+        Assert.Equal(shared.Select(r => r.Id), isolated.Select(r => r.Id));
+        Assert.Equal(shared.Select(r => r.StartDt), isolated.Select(r => r.StartDt));
+    }
 }

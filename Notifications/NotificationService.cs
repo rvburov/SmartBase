@@ -1,3 +1,4 @@
+using System.Threading.Tasks;
 using Avalonia.Threading;
 using SmartBase.Core.Models;
 using SmartBase.Utils;
@@ -8,15 +9,18 @@ namespace SmartBase.Notifications;
 /// Оркестратор уведомлений: пока приложение открыто, раз в <see cref="TickSeconds"/> секунд
 /// (и один раз на старте — догон пропущенного) собирает наступившие события календаря,
 /// показывает нативные баннеры (<see cref="INativeNotifier"/>) и ведёт значок-счётчик на
-/// иконке (<see cref="IAppBadge"/>). Фонового режима нет: служба живёт вместе с окном.
+/// иконке (<see cref="IAppBadge"/>). Служба живёт весь сеанс вместе с процессом — в фоновом
+/// режиме и при скрытом окне тоже.
 ///
 /// Логику отбора держит чистый <see cref="NotificationScheduler"/>, поэтому сам сервис
 /// покрывается интеграционным тестом через прямой вызов <see cref="Tick"/> (без таймера/UI):
 /// зависимости — источник событий, часы и запись метки — внедряются.
 ///
-/// Поток БД: <see cref="Tick"/> зовётся из UI-потока (DispatcherTimer / Opened), а
-/// источник событий читает общий контекст — так соблюдается правило «общий AppDbContext
-/// только из UI-потока».
+/// Поток БД: продакшн-тик (<see cref="TickBackground"/> из таймера/старта) уводит тяжёлое
+/// чтение источника на пул потоков, а показ плашек, значок и метку возвращает в UI-поток —
+/// чтобы тик не «морозил» интерфейс на больших БД. Источник при этом читает СВЕЖЕЕ подключение
+/// (new AppDbContext), а не общий контекст (он однопоточный). Синхронный <see cref="Tick"/>
+/// остаётся для интеграционных тестов (прямой вызов без таймера/UI).
 /// </summary>
 public sealed class NotificationService : IDisposable
 {
@@ -33,6 +37,9 @@ public sealed class NotificationService : IDisposable
     private DispatcherTimer? _timer;
     private bool     _enabled  = true;
     private DateTime _watermark;
+    // Идёт фоновое чтение тика — второй поверх не запускаем (чтение обычно десятки мс, но на
+    // холодном кеше может затянуться дольше интервала таймера). Читается/пишется на UI-потоке.
+    private bool _ticking;
     // Показано, но ещё «не увидено» (окно не активировали) — это и есть число на значке.
     private int _unseen;
 
@@ -84,14 +91,16 @@ public sealed class NotificationService : IDisposable
         if (saved is null) Persist(_watermark);   // первый старт — зафиксировать точку отсчёта
 
         _timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(TickSeconds) };
-        _timer.Tick += (_, _) => Tick();
+        _timer.Tick += (_, _) => TickBackground();
         _timer.Start();
 
-        Tick();   // догон пропущенного (если включено)
+        TickBackground();   // догон пропущенного (если включено) — тоже вне UI-потока
     }
 
-    /// <summary>Один проход: собрать наступившие, показать плашки, обновить значок и метку.
-    /// Возвращает решение планировщика — для интеграционных тестов.</summary>
+    /// <summary>Синхронный проход: собрать наступившие, показать плашки, обновить значок и метку.
+    /// ЧИТАЕТ источник на вызывающем потоке — используется интеграционными тестами напрямую;
+    /// в приложении тик идёт через <see cref="TickBackground"/> (чтение вне UI-потока).
+    /// Возвращает решение планировщика.</summary>
     public NotificationScheduler.Decision Tick()
     {
         var now = _clock();
@@ -102,7 +111,40 @@ public sealed class NotificationService : IDisposable
         // делает планировщик. Небольшой заглляд вперёд, чтобы событие ровно на границе now
         // не проскочило мимо (SQL-верхняя граница строгая).
         var candidates = _eventSource(_watermark, now.AddMinutes(1));
-        var decision   = NotificationScheduler.Decide(candidates, _watermark, now, _maxBanners);
+        return Apply(candidates, _watermark, now);
+    }
+
+    /// <summary>Продакшн-тик: тяжёлое чтение источника (скан calendar_index) уводим с UI-потока
+    /// на пул, а показ плашек, значок и запись метки возвращаем в UI-поток — так интерфейс не
+    /// «морозит» даже на больших БД. Пересекающиеся запуски отсекаем (<see cref="_ticking"/>):
+    /// чтение обычно десятки мс, но на холодном кеше может затянуться дольше интервала таймера.</summary>
+    private void TickBackground()
+    {
+        if (!_enabled || _ticking) return;
+        _ticking = true;
+        var now       = _clock();
+        var watermark = _watermark;   // снимок на UI-потоке; окно чтения — (watermark, now+1мин]
+        Task.Run(() =>
+        {
+            IReadOnlyList<CalendarRecord>? candidates = null;
+            try { candidates = _eventSource(watermark, now.AddMinutes(1)); }
+            catch { /* БД могла отвалиться — пропускаем тик, метку не двигаем */ }
+            Dispatcher.UIThread.Post(() =>
+            {
+                // За время чтения тумблер мог выключиться — уважаем актуальное состояние.
+                try { if (candidates is not null && _enabled) Apply(candidates, watermark, now); }
+                finally { _ticking = false; }
+            });
+        });
+    }
+
+    // Применить решение планировщика: показать плашки, накопить значок, сдвинуть и (при показе)
+    // сохранить метку. Меняет состояние службы — обязан идти на UI-потоке (Tick напрямую или
+    // UI-пост из TickBackground).
+    private NotificationScheduler.Decision Apply(
+        IReadOnlyList<CalendarRecord> candidates, DateTime watermark, DateTime now)
+    {
+        var decision = NotificationScheduler.Decide(candidates, watermark, now, _maxBanners);
 
         foreach (var b in decision.Banners)
         {

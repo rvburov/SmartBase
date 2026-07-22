@@ -4308,6 +4308,19 @@ public partial class ConstructorRepository(AppDbContext db)
     public List<CalendarRecord> GetCalendarRecordsByRange(DateTime start, DateTime end, ISet<int>? activeIds = null) =>
         ReadCalendarEvents(start, end, activeIds);
 
+    /// <summary>То же, что <see cref="GetCalendarRecordsByRange"/>, но на ОТДЕЛЬНОМ свежем
+    /// подключении. Для фонового тика службы уведомлений: чтение наступивших событий не должно
+    /// идти на UI-потоке — на больших БД скан 62-дневного буфера calendar_index стоит десятки мс
+    /// и «морозит» интерфейс. Общий контекст однопоточный, поэтому читаем через
+    /// <c>new AppDbContext</c> (та же схема, что <see cref="LoadTasksAsync"/>). Вызывать из
+    /// фонового потока; на шаред-репо трогается только неизменяемый <c>db.DbPath</c>.</summary>
+    public List<CalendarRecord> GetCalendarRecordsByRangeIsolated(DateTime start, DateTime end, ISet<int>? activeIds = null)
+    {
+        using var ctx = new AppDbContext(db.DbPath);
+        ctx.ApplyPerformancePragmas();
+        return new ConstructorRepository(ctx).GetCalendarRecordsByRange(start, end, activeIds);
+    }
+
     public int CountCalendarRecords() => db.CalendarIndex.Count();
 
     // ── Пагинация «Расписания» (ленивая подгрузка списка одного дня) ─────────────

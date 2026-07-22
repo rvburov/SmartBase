@@ -604,14 +604,16 @@ public partial class MainWindow : Window
 
     // Источник событий для службы уведомлений: события со стартом в окне [from, to) по всем
     // допущенным БД (то же, что показывает календарь: activeIds=null → все видимые поля-даты,
-    // без учёта временных галок сайдбара). Зовётся из UI-потока (таймер службы), поэтому
-    // читаем общий контекст напрямую — правило «общий AppDbContext только из UI-потока».
+    // без учёта временных галок сайдбара). Зовётся из ФОНОВОГО потока (NotificationService.
+    // TickBackground), поэтому читает КАЖДУЮ БД на свежем подключении
+    // (GetCalendarRecordsByRangeIsolated), а не общий однопоточный контекст. GrantedDbs()
+    // безопасен вне UI-потока: Workspace.Mounted отдаёт снимок под локом.
     private IReadOnlyList<Core.Models.CalendarRecord> CollectDueEvents(DateTime from, DateTime to)
     {
         var list = new List<Core.Models.CalendarRecord>();
         foreach (var m in GrantedDbs())
         {
-            try { list.AddRange(m.Constructor.GetCalendarRecordsByRange(from, to, null)); }
+            try { list.AddRange(m.Constructor.GetCalendarRecordsByRangeIsolated(from, to, null)); }
             catch { /* БД могла отвалиться на ходу — пропускаем, монитор переподключит */ }
         }
         return list;
