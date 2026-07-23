@@ -277,7 +277,13 @@ public partial class RecordDialog : Window
     }
 
     private static Components.MultiSelectBox BuildMultiSelect(Dictionary<string, object> config) =>
-        new(SelectOptions(config), "") { HorizontalAlignment = HorizontalAlignment.Stretch };
+        new(SelectOptions(config), "", separator: MultiSeparator(config)) { HorizontalAlignment = HorizontalAlignment.Stretch };
+
+    // Формат склейки значений «Мультисписка» из ConfigJson поля ({"separator":"..."}); по умолчанию запятая.
+    private static string MultiSeparator(Dictionary<string, object> config) =>
+        config.TryGetValue("separator", out var raw) && raw is JsonElement e && e.ValueKind == JsonValueKind.String
+            ? MultiSelectValue.SeparatorFor(e.GetString())
+            : MultiSelectValue.SeparatorFor(null);
 
     private static List<string> SelectOptions(Dictionary<string, object> config)
     {

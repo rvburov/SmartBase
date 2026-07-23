@@ -90,7 +90,7 @@ public sealed class XlsxTableWriter : ITableWriter
                     WriteDateCell(i, raw);
                     break;
                 case "multiselect":
-                    WriteStringCell(i, MultiSelectValue.Display(raw));
+                    WriteStringCell(i, MultiSelectValue.Display(raw, MultiSelectValue.SeparatorFromConfig(cols[i].ConfigJson)));
                     break;
                 default:
                     WriteStringCell(i, raw);

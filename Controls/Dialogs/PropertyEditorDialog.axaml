@@ -188,9 +188,10 @@
                             BorderThickness="{DynamicResource BorderLine}"
                             CornerRadius="{StaticResource RadiusBase}"
                             Padding="8,6">
-                        <!-- Мин. высота списка — чтобы блок не «схлопывался» при пустом/коротком
-                             списке; правый отступ — чтобы иконка удаления не пряталась за скроллбаром. -->
-                        <ScrollViewer MinHeight="140" MaxHeight="220" HorizontalScrollBarVisibility="Disabled">
+                        <!-- Фиксированная высота ровно на 4 строки (30px строка + 6px зазор):
+                             блок не «схлопывается» на коротком списке и не растёт на длинном —
+                             дальше прокрутка. Правый отступ — чтобы крестик не прятался за скроллбаром. -->
+                        <ScrollViewer Height="138" HorizontalScrollBarVisibility="Disabled">
                             <StackPanel x:Name="OptionsList" Spacing="6" Margin="0,0,8,0" />
                         </ScrollViewer>
                     </Border>
@@ -200,6 +201,26 @@
                             HorizontalAlignment="Left" />
                 </StackPanel>
             </Border>
+
+            <!-- Формат записи значений «Мультисписка»: чем склеиваются выбранные пункты в
+                 текстовом виде (ячейка таблицы, панель записи, экспорт CSV/XLSX). Виден только
+                 для мультисписка — у «Списка»/«Статуса» значение одно, склеивать нечего. -->
+            <StackPanel x:Name="SeparatorSection" IsVisible="False" Spacing="6" Margin="0,10,0,0">
+                <TextBlock Text="Формат записи значений"
+                           FontWeight="{StaticResource FontWeightBold}"
+                           Foreground="{StaticResource BrushSecondaryText}" />
+                <ComboBox x:Name="SeparatorCombo"
+                          HorizontalAlignment="Stretch"
+                          Height="34"
+                          VerticalContentAlignment="Center"
+                          Background="{StaticResource BrushSecondaryBg}"
+                          CornerRadius="{StaticResource RadiusBase}">
+                    <ComboBoxItem Content="Через запятую" />
+                    <ComboBoxItem Content="Через пробел" />
+                    <ComboBoxItem Content="Через точку с запятой" />
+                    <ComboBoxItem Content="С новой строки" />
+                </ComboBox>
+            </StackPanel>
         </StackPanel>
 
         <!-- Пояснение для системных колонок «Название»/«Описание»: скрыто по умолчанию,

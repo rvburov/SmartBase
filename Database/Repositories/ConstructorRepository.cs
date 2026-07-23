@@ -1383,7 +1383,7 @@ public partial class ConstructorRepository(AppDbContext db)
         foreach (var f in fields)
         {
             var key = f.Id!.Value.ToString();
-            cols.Add((new ExportColumn(key, f.Name, f.Id, f.FieldType), Pos(key, f.Position)));
+            cols.Add((new ExportColumn(key, f.Name, f.Id, f.FieldType, f.ConfigJson), Pos(key, f.Position)));
         }
 
         // Стабильная сортировка: у колонок с равными позициями сохраняется порядок добавления.

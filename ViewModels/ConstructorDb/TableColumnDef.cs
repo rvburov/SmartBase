@@ -27,6 +27,9 @@ public sealed class TableColumnDef
     // Данные для select-поля
     public IReadOnlyList<string> Options { get; init; } = [];
 
+    // Строка-склейка значений «Мультисписка» (из ConfigJson поля: {"separator":"..."}); по умолчанию «, ».
+    public string Separator { get; init; } = ", ";
+
     // Произвольный тег для идентификации (например, field.Id)
     public object? Tag { get; init; }
 

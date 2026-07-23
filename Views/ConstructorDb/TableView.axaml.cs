@@ -720,6 +720,8 @@ public partial class TableView : UserControl
                 Options     = f.FieldType == "user"
                     ? _repository?.GetUserOptions() ?? []
                     : ParseSelectOptions(f),
+                // Формат склейки «Мультисписка» (запятая/пробел/«;»/перенос) — из ConfigJson поля.
+                Separator   = MultiSelectValue.SeparatorFromConfig(f.ConfigJson),
                 Tag         = fid,
                 BuildHeaderMenu = _ => BuildHeaderContextMenu(fid, f.IsRequired, f.Name, f.FieldType),
             });
@@ -1283,7 +1285,7 @@ public partial class TableView : UserControl
             {
                 Converter = def.Key == TableRowVm.TitleKey
                     ? EmptyTitleConverter.Instance
-                    : new FieldDisplayConverter(def.FieldType),
+                    : new FieldDisplayConverter(def.FieldType, def.Separator),
             };
 
             // Числа выравниваем вправо (для этого TextBlock должен занять всю ширину ячейки).
@@ -1345,7 +1347,7 @@ public partial class TableView : UserControl
 
                 case "multiselect":   // несколько опций: чипы + выпадающий чеклист, значение — JSON-массив
                 {
-                    var box = new Controls.Components.MultiSelectBox(def.Options, row[def.Key], flat: true);
+                    var box = new Controls.Components.MultiSelectBox(def.Options, row[def.Key], flat: true, separator: def.Separator);
                     box.Changed += (_, _) => row[def.Key] = box.Storage;
                     return box;
                 }
@@ -2297,7 +2299,7 @@ public partial class TableView : UserControl
         var vmCache  = new Dictionary<string, FilterValueVm>();
         FilterValueVm Vm(string raw, int count) =>
             vmCache.TryGetValue(raw, out var v) ? v
-                : vmCache[raw] = new FilterValueVm(raw, DisplayValue(raw, def.FieldType), count,
+                : vmCache[raw] = new FilterValueVm(raw, DisplayValue(raw, def.FieldType, def.Separator), count,
                                                    checkedSet, () => SyncSelectAll());
 
         var valuesList = new ListBox
@@ -2365,7 +2367,7 @@ public partial class TableView : UserControl
             var q = search.Text?.Trim() ?? "";
             return q.Length == 0
                 ? counts
-                : counts.Where(c => DisplayValue(c.Raw, def.FieldType)
+                : counts.Where(c => DisplayValue(c.Raw, def.FieldType, def.Separator)
                     .Contains(q, StringComparison.OrdinalIgnoreCase)).ToList();
         }
 
@@ -2647,11 +2649,11 @@ public partial class TableView : UserControl
         public event System.ComponentModel.PropertyChangedEventHandler? PropertyChanged;
     }
 
-    private static string DisplayValue(string raw, string fieldType)
+    private static string DisplayValue(string raw, string fieldType, string separator = ", ")
     {
         if (raw == "") return "(Пусто)";
         if (fieldType == "checkbox") return IsTruthy(raw) ? "✓" : "—";
-        if (fieldType == "multiselect") return MultiSelectValue.Display(raw);
+        if (fieldType == "multiselect") return MultiSelectValue.Display(raw, separator);
         return raw;
     }
 
@@ -2849,7 +2851,7 @@ internal sealed class EmptyTitleConverter : IValueConverter
         v?.ToString() ?? "";
 }
 
-internal sealed class FieldDisplayConverter(string fieldType) : IValueConverter
+internal sealed class FieldDisplayConverter(string fieldType, string separator = ", ") : IValueConverter
 {
     public object? Convert(object? v, Type t, object? p, CultureInfo c)
     {
@@ -2858,7 +2860,7 @@ internal sealed class FieldDisplayConverter(string fieldType) : IValueConverter
         {
             "checkbox"    => s is "1" or "true" or "True" ? "✓" : "",
             "date"        => DateValue.TryParse(s, out var dv) ? dv.ToDisplay() : s,
-            "multiselect" => MultiSelectValue.Display(s),
+            "multiselect" => MultiSelectValue.Display(s, separator),
             _             => s,
         };
     }

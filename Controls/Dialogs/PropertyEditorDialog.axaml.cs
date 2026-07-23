@@ -1,8 +1,11 @@
 using System.Text.Json;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Input;
+using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Media;
+using Avalonia.VisualTree;
 using SmartBase.Core.Models;
 using SmartBase.Database.Repositories;
 
@@ -61,6 +64,13 @@ public partial class PropertyEditorDialog : Window
     // сохранении; строки строятся в BuildOptionRow и живут в OptionsList.
     private readonly List<TextBox> _optionBoxes = [];
 
+    // Формат склейки значений «Мультисписка» — порядок совпадает с пунктами SeparatorCombo в XAML.
+    private static readonly string[] SeparatorKeys = ["comma", "space", "semicolon", "newline"];
+
+    // Строка пунктов, которая сейчас в режиме ввода (поле + действие фиксации). Клик мимо неё
+    // (в т.ч. по неинтерактивному фону) фиксирует ввод — см. DismissOptionEditor.
+    private (TextBox Box, Action Commit)? _editingOption;
+
     /// <summary>В системном режиме — введённая подпись (после Сохранить); иначе null.</summary>
     public string? ResultName { get; private set; }
 
@@ -78,6 +88,8 @@ public partial class PropertyEditorDialog : Window
         CalDateToggle.IsChecked = true;
         // Задачи — наоборот, только по явному включению (иначе любое user-поле плодило бы задачи).
         TaskToggle.IsChecked = false;
+        // Формат «Мультисписка» по умолчанию — запятая (первый пункт).
+        SeparatorCombo.SelectedIndex = 0;
 
         if (editFieldId.HasValue)
         {
@@ -92,6 +104,12 @@ public partial class PropertyEditorDialog : Window
                 // Существующие опции «Списка»/«Статуса» — в редактор пунктов.
                 if (FieldTypeInfo.IsOptionList(field.FieldType))
                     foreach (var o in ParseOptions(field.ConfigJson)) AddOptionRow(o);
+                // «Мультисписок» — восстановить выбранный формат склейки значений.
+                if (field.FieldType == "multiselect")
+                {
+                    var sepIdx = Array.IndexOf(SeparatorKeys, MultiSelectValue.SeparatorKeyFromConfig(field.ConfigJson));
+                    SeparatorCombo.SelectedIndex = sepIdx >= 0 ? sepIdx : 0;
+                }
             }
         }
 
@@ -99,6 +117,11 @@ public partial class PropertyEditorDialog : Window
         // добавляем строку и ставим в неё фокус.
         AddOptionBtn.Click   += (_, _) => { OptionsSearch.Text = ""; AddOptionRow("").Focus(); };
         OptionsSearch.TextChanged += (_, _) => FilterOptionRows();
+
+        // Клик в любое место диалога мимо активного поля пункта фиксирует его (снимает фокус —
+        // каретка гаснет). Tunnel: срабатывает раньше обработчиков строк, поэтому клик по другой
+        // строке сперва зафиксирует текущую, затем откроет ту.
+        AddHandler(PointerPressedEvent, DismissOptionEditor, RoutingStrategies.Tunnel);
 
         var idx = Array.FindIndex(FieldTypes, t => t.Type == _selectedType);
         TypeCombo.SelectedIndex = idx >= 0 ? idx : 0;
@@ -125,25 +148,74 @@ public partial class PropertyEditorDialog : Window
         CalDateSection.IsVisible = _selectedType == "date";
         TaskSection.IsVisible    = _selectedType == "user";
         OptionsSection.IsVisible = FieldTypeInfo.IsOptionList(_selectedType);
+        // Формат склейки нужен только «Мультисписку» (у select/status значение одно).
+        SeparatorSection.IsVisible = _selectedType == "multiselect";
 
         if (_selectedType == "status" && _optionBoxes.Count == 0)
             foreach (var o in ConstructorRepository.TaskStatusOptions) AddOptionRow(o);
     }
 
-    // Одна строка редактора пунктов: поле ввода + кнопка удаления. Возвращает TextBox
-    // (чтобы сфокусировать вновь добавленный). Значения собираются в BuildOptionsConfigJson.
+    // Одна строка редактора пунктов: показ значения (с многоточием) + поле ввода + удаление.
+    // Показ и ввод — ДВА контрола, видим всегда ровно один (переключаются), поэтому нет ни
+    // «прыжка» размера, ни просвечивания текста. Возвращает TextBox (чтобы сфокусировать
+    // вновь добавленный). Значения собираются в BuildOptionsConfigJson из этого же TextBox.
     private TextBox AddOptionRow(string value)
     {
-        // Плоская строка (класс optionRow — прозрачный фон, без рамки во всех состояниях):
-        // чистый список внутри белой карточки, клик по тексту сразу редактирует.
+        var primary   = ResourceBrush("BrushPrimaryText", Brushes.Black);
+        var secondary = ResourceBrush("BrushSecondaryText", Brushes.Gray);
+
+        // Поле ввода (авторитетное значение) — плоское, видно только при редактировании.
         var box = new TextBox
         {
             Text                     = value,
             Watermark                = "Название пункта",
             Height                   = 30,
             VerticalContentAlignment = VerticalAlignment.Center,
+            IsVisible                = false,
         };
         box.Classes.Add("optionRow");
+
+        // Показ значения — TextBlock с многоточием в конце (TextBox сам «…» не умеет). Клик по нему
+        // переключает строку в режим ввода. Шрифт привязан к полю → при переключении размер тот же.
+        var display = new TextBlock
+        {
+            // Левый отступ = Padding поля optionRow («2,0») — чтобы при клике текст не сдвигался.
+            Margin            = new Thickness(2, 0, 6, 0),
+            VerticalAlignment = VerticalAlignment.Center,
+            TextTrimming      = TextTrimming.CharacterEllipsis,
+            Cursor            = new Cursor(StandardCursorType.Ibeam),
+        };
+        display.Bind(TextBlock.FontSizeProperty,   box.GetObservable(TextBox.FontSizeProperty));
+        display.Bind(TextBlock.FontFamilyProperty, box.GetObservable(TextBox.FontFamilyProperty));
+
+        // Показ: пустое значение — приглушённый плейсхолдер (как watermark поля).
+        void ShowDisplay()
+        {
+            var v = box.Text ?? "";
+            display.Text       = v.Length > 0 ? v : "Название пункта";
+            display.Foreground = v.Length > 0 ? primary : secondary;
+            display.IsVisible  = true;
+            box.IsVisible      = false;
+            if (_editingOption?.Box == box) _editingOption = null;
+        }
+        // Ввод: показать поле, курсор в конец. Фиксация — по уходу фокуса или клику мимо строки.
+        void ShowEditor()
+        {
+            display.IsVisible = false;
+            box.IsVisible     = true;
+            box.Focus();
+            box.CaretIndex    = (box.Text ?? "").Length;
+            _editingOption    = (box, ShowDisplay);
+        }
+        display.PointerPressed += (_, _) => ShowEditor();
+        box.LostFocus          += (_, _) => ShowDisplay();
+        box.KeyDown            += (_, e) => { if (e.Key is Key.Enter or Key.Escape) ShowDisplay(); };
+
+        // Панель фиксированной высоты строки (30) — чтобы список не «дёргался» при переключении
+        // показ/ввод (скрытое поле в измерение не входит).
+        var editArea = new Panel { Height = 30 };
+        editArea.Children.Add(display);
+        editArea.Children.Add(box);
 
         var del = new Button
         {
@@ -156,16 +228,23 @@ public partial class PropertyEditorDialog : Window
 
         var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto") };
         del.Margin = new Thickness(6, 0, 0, 0);
-        Grid.SetColumn(box, 0);
+        Grid.SetColumn(editArea, 0);
         Grid.SetColumn(del, 1);
-        grid.Children.Add(box);
+        grid.Children.Add(editArea);
         grid.Children.Add(del);
 
         del.Click += (_, _) =>
         {
+            if (_editingOption?.Box == box) _editingOption = null;
             _optionBoxes.Remove(box);
             OptionsList.Children.Remove(grid);
         };
+
+        box.Tag = grid;   // строка-контейнер для фильтра (box лежит внутри editArea, не прямо в grid)
+
+        // Заполненная строка стартует в показе, новая (пустая) — сразу в вводе (её фокусирует вызвавший).
+        if (value.Length > 0) ShowDisplay();
+        else ShowEditor();
 
         _optionBoxes.Add(box);
         OptionsList.Children.Add(grid);
@@ -178,8 +257,25 @@ public partial class PropertyEditorDialog : Window
     {
         var q = OptionsSearch.Text?.Trim() ?? "";
         foreach (var box in _optionBoxes)
-            if (box.Parent is Control row)
+            if (box.Tag is Control row)
                 row.IsVisible = q.Length == 0 || (box.Text ?? "").Contains(q, StringComparison.OrdinalIgnoreCase);
+    }
+
+    // Клик мимо активного поля пункта — фиксирует ввод (прячет поле → фокус снимается, каретка
+    // гаснет). Клик по самому полю (правка курсора) не трогаем.
+    private void DismissOptionEditor(object? sender, PointerPressedEventArgs e)
+    {
+        if (_editingOption is not { } ed) return;
+        if (IsWithin(e.Source, ed.Box)) return;
+        ed.Commit();
+    }
+
+    // Является ли source самим target или его потомком в визуальном дереве.
+    private static bool IsWithin(object? source, Visual target)
+    {
+        for (var v = source as Visual; v is not null; v = v.GetVisualParent())
+            if (ReferenceEquals(v, target)) return true;
+        return false;
     }
 
     private Control BuildDeleteGlyph()
@@ -205,6 +301,10 @@ public partial class PropertyEditorDialog : Window
         return new Viewbox { Width = size, Height = size, Child = canvas };
     }
 
+    // Кисть из ресурсов окна с запасным значением (для контролов, создаваемых в коде).
+    private IBrush ResourceBrush(string key, IBrush fallback) =>
+        this.TryFindResource(key, out var r) && r is IBrush b ? b : fallback;
+
     // Разбор опций из ConfigJson поля (как MergeSelectOptions в репозитории): {"options":[...]}.
     private static IEnumerable<string> ParseOptions(string? configJson)
     {
@@ -222,6 +322,7 @@ public partial class PropertyEditorDialog : Window
     }
 
     // Сборка ConfigJson из редактора пунктов: непустые, обрезанные, без дублей (регистр игнор.).
+    // Для «Мультисписка» дополнительно сохраняется формат склейки значений (separator).
     private string BuildOptionsConfigJson()
     {
         var seen    = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -230,6 +331,11 @@ public partial class PropertyEditorDialog : Window
         {
             var v = b.Text?.Trim() ?? "";
             if (v.Length > 0 && seen.Add(v)) options.Add(v);
+        }
+        if (_selectedType == "multiselect")
+        {
+            var separator = SeparatorKeys[Math.Clamp(SeparatorCombo.SelectedIndex, 0, SeparatorKeys.Length - 1)];
+            return JsonSerializer.Serialize(new { options, separator });
         }
         return JsonSerializer.Serialize(new { options });
     }

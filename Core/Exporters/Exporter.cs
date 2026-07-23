@@ -42,6 +42,7 @@ public sealed record ExportSpec(
 /// Колонка экспорта (строит репозиторий по column_order/дефолтному порядку таблицы):
 /// Key — «__title__»/«__desc__»/id поля строкой, Header — отображаемое имя,
 /// FieldId — id свойства (null у системных), FieldType — тип свойства для
-/// типизации значений писателями («text» у системных).
+/// типизации значений писателями («text» у системных), ConfigJson — конфиг поля
+/// (нужен, например, для формата склейки «Мультисписка»; null у системных).
 /// </summary>
-public sealed record ExportColumn(string Key, string Header, int? FieldId, string FieldType);
+public sealed record ExportColumn(string Key, string Header, int? FieldId, string FieldType, string? ConfigJson = null);

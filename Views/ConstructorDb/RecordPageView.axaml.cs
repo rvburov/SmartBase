@@ -682,7 +682,8 @@ public partial class RecordPageView : UserControl
             }
             case "multiselect":   // несколько опций: чипы + выпадающий чеклист (значение — JSON-массив)
             {
-                var box = new Controls.Components.MultiSelectBox(SelectOptions(f), row.Value, flat: true)
+                var box = new Controls.Components.MultiSelectBox(SelectOptions(f), row.Value, flat: true,
+                    separator: MultiSelectValue.SeparatorFromConfig(f.ConfigJson))
                 {
                     HorizontalAlignment = HorizontalAlignment.Stretch,
                 };

@@ -85,6 +85,30 @@ public sealed class FieldTypeMatrixTests
     }
 
     [Fact]
+    public void MultiSelectValue_display_uses_field_separator()
+    {
+        const string raw = "[\"Дизайн\",\"Backend\"]";
+
+        // Ключ формата → строка-склейка.
+        Assert.Equal(", ",  MultiSelectValue.SeparatorFor("comma"));
+        Assert.Equal(" ",   MultiSelectValue.SeparatorFor("space"));
+        Assert.Equal("; ",  MultiSelectValue.SeparatorFor("semicolon"));
+        Assert.Equal("\n",  MultiSelectValue.SeparatorFor("newline"));
+        Assert.Equal(", ",  MultiSelectValue.SeparatorFor(null));      // дефолт — запятая
+        Assert.Equal(", ",  MultiSelectValue.SeparatorFor("garbage")); // неизвестный → дефолт
+
+        // Разбор ключа из ConfigJson поля (дефолт — запятая для отсутствующего/битого).
+        Assert.Equal("newline", MultiSelectValue.SeparatorKeyFromConfig("{\"options\":[\"A\"],\"separator\":\"newline\"}"));
+        Assert.Equal("comma",   MultiSelectValue.SeparatorKeyFromConfig("{\"options\":[\"A\"]}"));
+        Assert.Equal("comma",   MultiSelectValue.SeparatorKeyFromConfig("не json"));
+
+        // Показ склеивает выбранным разделителем поля.
+        Assert.Equal("Дизайн Backend",  MultiSelectValue.Display(raw, MultiSelectValue.SeparatorFromConfig("{\"separator\":\"space\"}")));
+        Assert.Equal("Дизайн; Backend", MultiSelectValue.Display(raw, MultiSelectValue.SeparatorFromConfig("{\"separator\":\"semicolon\"}")));
+        Assert.Equal("Дизайн\nBackend", MultiSelectValue.Display(raw, MultiSelectValue.SeparatorFromConfig("{\"separator\":\"newline\"}")));
+    }
+
+    [Fact]
     public void Enabling_tasks_creates_status_typed_field_without_duplicates()
     {
         using var db = new TempDatabase();

@@ -35,6 +35,37 @@ public static class MultiSelectValue
     public static string Serialize(IEnumerable<string> values) =>
         JsonSerializer.Serialize(values.Where(v => !string.IsNullOrEmpty(v)).ToList());
 
-    /// <summary>Человекочитаемый показ: значения через запятую (таблица read-cell fallback, экспорт).</summary>
-    public static string Display(string? raw) => string.Join(", ", Parse(raw));
+    /// <summary>Человекочитаемый показ: выбранные значения, склеенные <paramref name="separator"/>
+    /// (по умолчанию «, »). Разделитель — настройка поля из ConfigJson (см. <see cref="SeparatorFromConfig"/>).</summary>
+    public static string Display(string? raw, string separator = ", ") => string.Join(separator, Parse(raw));
+
+    /// <summary>Ключ формата (хранится в ConfigJson поля) по умолчанию — запятая.</summary>
+    public const string DefaultSeparatorKey = "comma";
+
+    /// <summary>Ключ формата разделителя → строка-склейка для показа/экспорта.</summary>
+    public static string SeparatorFor(string? key) => key switch
+    {
+        "space"     => " ",
+        "semicolon" => "; ",
+        "newline"   => "\n",
+        _           => ", ",   // comma — по умолчанию
+    };
+
+    /// <summary>Строка-склейка из ConfigJson поля (<c>{"separator":"..."}</c>); по умолчанию запятая.</summary>
+    public static string SeparatorFromConfig(string? configJson) => SeparatorFor(SeparatorKeyFromConfig(configJson));
+
+    /// <summary>Ключ формата из ConfigJson поля; для отсутствующего/нечитаемого — запятая.</summary>
+    public static string SeparatorKeyFromConfig(string? configJson)
+    {
+        if (string.IsNullOrWhiteSpace(configJson)) return DefaultSeparatorKey;
+        try
+        {
+            using var doc = JsonDocument.Parse(configJson);
+            if (doc.RootElement.TryGetProperty("separator", out var el) && el.ValueKind == JsonValueKind.String &&
+                el.GetString() is { Length: > 0 } s)
+                return s;
+        }
+        catch (JsonException) { /* нечитаемый конфиг — дефолт */ }
+        return DefaultSeparatorKey;
+    }
 }
