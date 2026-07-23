@@ -22,7 +22,7 @@
                         <Canvas Width="24" Height="24">
                             <Path Data="{StaticResource IconPlus}"
                                   Stroke="{Binding $parent[Button].Foreground}"
-                                  StrokeThickness="2"
+                                  StrokeThickness="{StaticResource IconStrokeMediumBold}"
                                   StrokeLineCap="Round" StrokeJoin="Round" />
                         </Canvas>
                     </Viewbox>
@@ -38,13 +38,13 @@
                             <Path x:Name="ExpandIcon"
                                   Data="{StaticResource IconExpandAll}"
                                   Stroke="{Binding $parent[ToggleButton].Foreground}"
-                                  StrokeThickness="1.6"
+                                  StrokeThickness="{StaticResource IconStrokeMedium}"
                                   StrokeLineCap="Round" StrokeJoin="Round" />
                             <Path x:Name="CollapseIcon"
                                   IsVisible="False"
                                   Data="{StaticResource IconCollapseAll}"
                                   Stroke="{Binding $parent[ToggleButton].Foreground}"
-                                  StrokeThickness="1.6"
+                                  StrokeThickness="{StaticResource IconStrokeMedium}"
                                   StrokeLineCap="Round" StrokeJoin="Round" />
                         </Canvas>
                     </Viewbox>
@@ -59,7 +59,7 @@
                         <Canvas Width="24" Height="24">
                             <Path Data="{StaticResource IconSortAsc}"
                                   Stroke="{Binding $parent[Button].Foreground}"
-                                  StrokeThickness="1.6"
+                                  StrokeThickness="{StaticResource IconStrokeMedium}"
                                   StrokeLineCap="Round" StrokeJoin="Round" />
                         </Canvas>
                     </Viewbox>
@@ -74,7 +74,7 @@
                         <Canvas Width="24" Height="24">
                             <Path Data="{StaticResource IconSquareCheck}"
                                   Stroke="{Binding $parent[Button].Foreground}"
-                                  StrokeThickness="1.8"
+                                  StrokeThickness="{StaticResource IconStrokeMedium}"
                                   StrokeLineCap="Round" StrokeJoin="Round" />
                         </Canvas>
                     </Viewbox>
@@ -89,7 +89,7 @@
                         <Canvas Width="24" Height="24">
                             <Path Data="{StaticResource IconDownload}"
                                   Stroke="{Binding $parent[Button].Foreground}"
-                                  StrokeThickness="1.8"
+                                  StrokeThickness="{StaticResource IconStrokeMedium}"
                                   StrokeLineCap="Round" StrokeJoin="Round" />
                         </Canvas>
                     </Viewbox>
@@ -139,7 +139,7 @@
                                         <Canvas Width="24" Height="24">
                                             <Path Data="{Binding ChevronGeometry}"
                                                   Stroke="{StaticResource BrushSecondaryText}"
-                                                  StrokeThickness="2"
+                                                  StrokeThickness="{StaticResource IconStrokeSmall}"
                                                   StrokeLineCap="Round" StrokeJoin="Round" />
                                         </Canvas>
                                     </Viewbox>
@@ -181,7 +181,7 @@
                                     <Canvas Width="24" Height="24">
                                         <Path Data="{Binding IconGeometry}"
                                               Stroke="{Binding IconBrush}"
-                                              StrokeThickness="1.6"
+                                              StrokeThickness="{StaticResource IconStrokeMedium}"
                                               StrokeLineCap="Round" StrokeJoin="Round" />
                                     </Canvas>
                                 </Viewbox>

@@ -49,14 +49,14 @@
                         <Path x:Name="RecordOpenIcon"
                               Data="{StaticResource IconArrowLeftFromLine}"
                               Stroke="{Binding $parent[ToggleButton].Foreground}"
-                              StrokeThickness="1.6"
+                              StrokeThickness="{StaticResource IconStrokeMedium}"
                               StrokeLineCap="Round" StrokeJoin="Round" />
                         <!-- arrow-right-to-line: панель открыта → клик закроет (→) -->
                         <Path x:Name="RecordCloseIcon"
                               IsVisible="False"
                               Data="{StaticResource IconArrowRightToLine}"
                               Stroke="{Binding $parent[ToggleButton].Foreground}"
-                              StrokeThickness="1.6"
+                              StrokeThickness="{StaticResource IconStrokeMedium}"
                               StrokeLineCap="Round" StrokeJoin="Round" />
                     </Canvas>
                 </Viewbox>

@@ -239,6 +239,7 @@ public partial class RecordDialog : Window
             "number" => new NumericUpDown { Minimum = decimal.MinValue, Maximum = decimal.MaxValue, Height = 36 },
             "date"   => new DateEditor(),
             "select" or "status" => BuildSelectCombo(config),
+            "multiselect" => BuildMultiSelect(config),
             "user"   => BuildUserCombo(),
             "checkbox" => new CheckBox { VerticalAlignment = VerticalAlignment.Center },
             "url"    => new TextBox { Watermark = "https://", Height = 36 },
@@ -265,10 +266,7 @@ public partial class RecordDialog : Window
 
     private static ComboBox BuildSelectCombo(Dictionary<string, object> config)
     {
-        var opts = new List<string>();
-        if (config.TryGetValue("options", out var raw) && raw is JsonElement elem && elem.ValueKind == JsonValueKind.Array)
-            opts = elem.EnumerateArray().Select(o => o.ToString()).ToList();
-
+        var opts = SelectOptions(config);
         return new ComboBox
         {
             ItemsSource    = opts.Count > 0 ? opts : ["—"],
@@ -276,6 +274,17 @@ public partial class RecordDialog : Window
             HorizontalAlignment = HorizontalAlignment.Stretch,
             Height         = 36,
         };
+    }
+
+    private static Components.MultiSelectBox BuildMultiSelect(Dictionary<string, object> config) =>
+        new(SelectOptions(config), "") { HorizontalAlignment = HorizontalAlignment.Stretch };
+
+    private static List<string> SelectOptions(Dictionary<string, object> config)
+    {
+        var opts = new List<string>();
+        if (config.TryGetValue("options", out var raw) && raw is JsonElement elem && elem.ValueKind == JsonValueKind.Array)
+            opts = elem.EnumerateArray().Select(o => o.ToString()).ToList();
+        return opts;
     }
 
     private void FillValues(int recordId)
@@ -297,6 +306,9 @@ public partial class RecordDialog : Window
                     var cb = (ComboBox)input;
                     var idx = (cb.ItemsSource as List<string>)?.IndexOf(val) ?? -1;
                     if (idx >= 0) cb.SelectedIndex = idx;
+                    break;
+                case "multiselect":
+                    ((Components.MultiSelectBox)input).SetStorage(val);
                     break;
                 case "user":
                     // Существующая запись показывает СВОЁ значение (в т.ч. пустое или имя
@@ -326,6 +338,7 @@ public partial class RecordDialog : Window
         "checkbox" => ((CheckBox)input).IsChecked == true ? "1" : "0",
         "date"     => ((DateEditor)input).Storage ?? "",
         "select" or "status" or "user" => ((ComboBox)input).SelectedItem?.ToString() ?? "",
+        "multiselect" => ((Components.MultiSelectBox)input).Storage,
         "number"   => ((NumericUpDown)input).Value?.ToString() ?? "",
         _          => ((TextBox)input).Text ?? "",
     };

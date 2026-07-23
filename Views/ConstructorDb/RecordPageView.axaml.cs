@@ -480,6 +480,7 @@ public partial class RecordPageView : UserControl
         "date"     => "IconCalendarDate",
         "select"   => "IconFieldSelect",
         "status"   => "IconFieldStatus",
+        "multiselect" => "IconFieldMultiSelect",
         "checkbox" => "IconFieldCheckbox",
         "url"      => "IconFieldUrl",
         "user"     => "IconUser",
@@ -499,7 +500,7 @@ public partial class RecordPageView : UserControl
         var path = new Path
         {
             Data            = (Geometry)this.FindResource(key)!,
-            StrokeThickness = 1.6,
+            StrokeThickness = (double)this.FindResource("IconStrokeSmall")!,
             StrokeLineCap   = PenLineCap.Round,
             StrokeJoin      = PenLineJoin.Round,
         };
@@ -677,6 +678,16 @@ public partial class RecordPageView : UserControl
                     PersistProperty(row);
                 };
                 input = combo;
+                break;
+            }
+            case "multiselect":   // несколько опций: чипы + выпадающий чеклист (значение — JSON-массив)
+            {
+                var box = new Controls.Components.MultiSelectBox(SelectOptions(f), row.Value, flat: true)
+                {
+                    HorizontalAlignment = HorizontalAlignment.Stretch,
+                };
+                box.Changed += (_, _) => { row.Value = box.Storage; PersistProperty(row); };
+                input = box;
                 break;
             }
             case "checkbox":

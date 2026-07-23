@@ -87,7 +87,8 @@ public partial class SidebarList : UserControl
 
             var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*") };
 
-            var iconSz = this.TryFindResource("IconSizeMedium", out var szR) && szR is double szD ? szD : 18d;
+            var iconSz     = this.TryFindResource("IconSizeMedium", out var szR) && szR is double szD ? szD : 18d;
+            var iconStroke = this.TryFindResource("IconStrokeMedium", out var stR) && stR is double stD ? stD : 1.6d;
             var box = new Viewbox
             {
                 Width             = iconSz,
@@ -99,7 +100,7 @@ public partial class SidebarList : UserControl
             canvas.Children.Add(new Avalonia.Controls.Shapes.Path
             {
                 Data            = this.TryFindResource(item.Icon, out var ico) && ico is Geometry geo ? geo : null,
-                StrokeThickness = 1.6,
+                StrokeThickness = iconStroke,
                 StrokeLineCap   = PenLineCap.Round,
                 StrokeJoin      = PenLineJoin.Round,
             });

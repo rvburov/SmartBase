@@ -89,6 +89,9 @@ public sealed class XlsxTableWriter : ITableWriter
                 case "date":
                     WriteDateCell(i, raw);
                     break;
+                case "multiselect":
+                    WriteStringCell(i, MultiSelectValue.Display(raw));
+                    break;
                 default:
                     WriteStringCell(i, raw);
                     break;

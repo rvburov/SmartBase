@@ -26,6 +26,25 @@
     <x:Double x:Key="IconSizeLarge">24</x:Double>   <!-- Большой -->
     <x:Double x:Key="IconSizeXLarge">32</x:Double>  <!-- Крупный -->
 
+    <!-- ═══ ТОЛЩИНА ЛИНИЙ ИКОНОК (StrokeThickness обводочного Path). СТАНДАРТ.
+         Толщина задаётся В СЕТКЕ 24, а Viewbox потом ужимает иконку до размера, поэтому на
+         экране реальная толщина = значение × размер / 24. Чтобы ЛИНИЯ ВЫГЛЯДЕЛА ОДИНАКОВОЙ при
+         разных размерах, для каждого размера — своё значение (посчитано под видимую толщину):
+           • Regular ≈ 1.2 px — по умолчанию (почти все иконки);
+           • Bold    ≈ 1.5 px — акцентные (активная вкладка навбара, кнопка сайдбара и т.п.).
+         ПРАВИЛО: взял размер IconSizeX → бери толщину IconStrokeX (или …Bold для акцентных).
+         Не писать «сырые» числа в разметке — только эти токены.
+         ИСКЛЮЧЕНИЯ (сырые числа допустимы): шевроны/стрелки-индикаторы (часто нестандартного
+         размера 12/14), линии сетки DataGrid и белая галочка тоста — это не контент-иконки. ═══ -->
+    <x:Double x:Key="IconStrokeSmall">1.8</x:Double>       <!-- 16px → ~1.2px -->
+    <x:Double x:Key="IconStrokeMedium">1.6</x:Double>      <!-- 18px → ~1.2px -->
+    <x:Double x:Key="IconStrokeLarge">1.2</x:Double>       <!-- 24px → ~1.2px -->
+    <x:Double x:Key="IconStrokeXLarge">0.9</x:Double>      <!-- 32px → ~1.2px -->
+    <x:Double x:Key="IconStrokeSmallBold">2.2</x:Double>   <!-- 16px → ~1.5px -->
+    <x:Double x:Key="IconStrokeMediumBold">2</x:Double>    <!-- 18px → ~1.5px -->
+    <x:Double x:Key="IconStrokeLargeBold">1.5</x:Double>   <!-- 24px → ~1.5px -->
+    <x:Double x:Key="IconStrokeXLargeBold">1.1</x:Double>  <!-- 32px → ~1.5px -->
+
     <!-- ─── Activity bar: модули и кнопка сайдбара ─── -->
 
     <!-- → panel-left-open: сайдбар закрыт, клик откроет -->
@@ -175,6 +194,8 @@
     <StreamGeometry x:Key="IconFieldSelect">M3 5h.01 M3 12h.01 M3 19h.01 M8 5h13 M8 12h13 M8 19h13</StreamGeometry>
     <!-- Статус (goal) -->
     <StreamGeometry x:Key="IconFieldStatus">M12 13 V2 l8 4 -8 4 M20.561 10.222 a9 9 0 1 1 -12.55 -5.29 M8.002 9.997 a5 5 0 1 0 8.9 2.02</StreamGeometry>
+    <!-- Мультисписок (list-checks) -->
+    <StreamGeometry x:Key="IconFieldMultiSelect">M3 17 l2 2 4 -4 M3 7 l2 2 4 -4 M13 6 h8 M13 12 h8 M13 18 h8</StreamGeometry>
     <!-- Чекбокс (square-check) -->
     <StreamGeometry x:Key="IconFieldCheckbox">M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z M9 12l2 2 4-4</StreamGeometry>
     <!-- Ссылка (link) -->

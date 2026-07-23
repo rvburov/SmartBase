@@ -1,4 +1,5 @@
 using System.Text;
+using SmartBase.Core.Models;
 
 namespace SmartBase.Core.Exporters.TableWriters;
 
@@ -41,9 +42,10 @@ public sealed class CsvTableWriter : ITableWriter
             if (i > 0) _line.Append(';');
             AppendField(cols[i].FieldType switch
             {
-                "date"     => WriterHelpers.DateDisplay(values[i]),
-                "checkbox" => WriterHelpers.IsChecked(values[i]) ? "1" : "",
-                _          => values[i],
+                "date"        => WriterHelpers.DateDisplay(values[i]),
+                "checkbox"    => WriterHelpers.IsChecked(values[i]) ? "1" : "",
+                "multiselect" => MultiSelectValue.Display(values[i]),
+                _             => values[i],
             });
         }
         _w.WriteLine(_line);

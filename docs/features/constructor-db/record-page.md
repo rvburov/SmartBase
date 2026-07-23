@@ -33,6 +33,7 @@
 | `number` | `TextBox` |
 | `date` | `DateEditor` (тот же виджет, что и в таблице: канон `DateValue` — диапазоны, дата+время, «весь день») |
 | `select` / `status` | `ComboBox` с вариантами из `ConfigJson` → `options` (у `status` — три статуса по умолчанию) |
+| `multiselect` | `MultiSelectBox` — текст через запятую + выпадающий чеклист с поиском; значение — JSON-массив |
 | `checkbox` | `CheckBox` (хранится как `1`/`0`) |
 
 Каждый ввод сохраняется по потере фокуса/изменению через `row.Persist()`

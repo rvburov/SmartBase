@@ -21,14 +21,14 @@
                     <Path x:Name="PanelOpenIcon"
                           Data="{StaticResource IconPanelOpen}"
                           Stroke="{Binding $parent[ToggleButton].Foreground}"
-                          StrokeThickness="1.2"
+                          StrokeThickness="{StaticResource IconStrokeXLargeBold}"
                           StrokeLineCap="Round" StrokeJoin="Round" />
                     <!-- panel-right-open: сайдбар открыт (стрелка ←) -->
                     <Path x:Name="PanelCloseIcon"
                           IsVisible="False"
                           Data="{StaticResource IconPanelClose}"
                           Stroke="{Binding $parent[ToggleButton].Foreground}"
-                          StrokeThickness="1.2"
+                          StrokeThickness="{StaticResource IconStrokeXLargeBold}"
                           StrokeLineCap="Round" StrokeJoin="Round" />
                 </Canvas>
             </Viewbox>
@@ -49,7 +49,7 @@
                 <Canvas Width="24" Height="24">
                     <Path Data="{StaticResource IconCalendarDate}"
                           Stroke="{Binding $parent[ToggleButton].Foreground}"
-                          StrokeThickness="1.2"
+                          StrokeThickness="{StaticResource IconStrokeXLargeBold}"
                           StrokeLineCap="Round"
                           StrokeJoin="Round" />
                 </Canvas>
@@ -67,7 +67,7 @@
                     <!-- lucide square-check-big -->
                     <Path Data="{StaticResource IconSquareCheck}"
                           Stroke="{Binding $parent[ToggleButton].Foreground}"
-                          StrokeThickness="1.2"
+                          StrokeThickness="{StaticResource IconStrokeXLargeBold}"
                           StrokeLineCap="Round"
                           StrokeJoin="Round" />
                 </Canvas>
@@ -85,7 +85,7 @@
                     <!-- tabler database-check -->
                     <Path Data="{StaticResource IconDatabaseCheck}"
                           Stroke="{Binding $parent[ToggleButton].Foreground}"
-                          StrokeThickness="1.2"
+                          StrokeThickness="{StaticResource IconStrokeXLargeBold}"
                           StrokeLineCap="Round"
                           StrokeJoin="Round" />
                 </Canvas>
@@ -103,7 +103,7 @@
                     <!-- lucide blocks -->
                     <Path Data="{StaticResource IconBlocks}"
                           Stroke="{Binding $parent[ToggleButton].Foreground}"
-                          StrokeThickness="1.2"
+                          StrokeThickness="{StaticResource IconStrokeXLargeBold}"
                           StrokeLineCap="Round"
                           StrokeJoin="Round" />
                 </Canvas>
@@ -125,7 +125,7 @@
                 <!-- lucide settings -->
                 <Path Data="{StaticResource IconSettings}"
                       Stroke="{Binding $parent[ToggleButton].Foreground}"
-                      StrokeThickness="1.2"
+                      StrokeThickness="{StaticResource IconStrokeXLargeBold}"
                       StrokeLineCap="Round"
                       StrokeJoin="Round" />
             </Canvas>
@@ -145,7 +145,7 @@
                 <!-- lucide circle-user-round -->
                 <Path Data="{StaticResource IconUser}"
                       Stroke="{Binding $parent[ToggleButton].Foreground}"
-                      StrokeThickness="1.2"
+                      StrokeThickness="{StaticResource IconStrokeXLargeBold}"
                       StrokeLineCap="Round"
                       StrokeJoin="Round" />
             </Canvas>

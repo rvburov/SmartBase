@@ -406,11 +406,12 @@ public partial class MonthView : UserControl
         // Path на Canvas 24×24 внутри Viewbox 18×18 — так и геометрия,
         // и толщина штриха масштабируются одинаково (визуально тоньше и компактнее).
         Application.Current!.TryFindResource("IconPlus", out var plusRes);
+        Application.Current!.TryFindResource("IconStrokeMediumBold", out var plusStroke);
         var plusPath = new Avalonia.Controls.Shapes.Path
         {
             Data            = plusRes as Geometry,
             Stroke          = new SolidColorBrush(Color.Parse("#636366")),
-            StrokeThickness = 2,
+            StrokeThickness = plusStroke is double ps ? ps : 2,
             StrokeLineCap   = PenLineCap.Round,
             StrokeJoin      = PenLineJoin.Round,
         };

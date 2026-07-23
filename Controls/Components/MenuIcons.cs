@@ -67,7 +67,7 @@ public static class MenuIcons
                 {
                     Data            = data,
                     Stroke          = stroke,
-                    StrokeThickness = 1.6,
+                    StrokeThickness = IconSize("IconStrokeMedium"),
                     StrokeLineCap   = PenLineCap.Round,
                     StrokeJoin      = PenLineJoin.Round,
                 },
@@ -168,7 +168,7 @@ public static class MenuIcons
                         {
                             Data            = geo,
                             Stroke          = accent,
-                            StrokeThickness = 1.8,
+                            StrokeThickness = IconSize("IconStrokeMedium"),
                             StrokeLineCap   = PenLineCap.Round,
                             StrokeJoin      = PenLineJoin.Round,
                         },

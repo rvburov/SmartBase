@@ -1,5 +1,6 @@
 using System.Text.Encodings.Web;
 using System.Text.Json;
+using SmartBase.Core.Models;
 
 namespace SmartBase.Core.Exporters.TableWriters;
 
@@ -57,6 +58,11 @@ public sealed class JsonTableWriter : ITableWriter
                     break;
                 case "number" when raw.Length > 0 && WriterHelpers.TryNumber(raw, out var num):
                     _w.WriteNumber(_keys[i], num);
+                    break;
+                case "multiselect":
+                    _w.WriteStartArray(_keys[i]);
+                    foreach (var s in MultiSelectValue.Parse(raw)) _w.WriteStringValue(s);
+                    _w.WriteEndArray();
                     break;
                 default:
                     _w.WriteString(_keys[i], raw);

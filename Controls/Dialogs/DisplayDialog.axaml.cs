@@ -181,7 +181,7 @@ public partial class DisplayDialog : Window
     {
         var path = new Avalonia.Controls.Shapes.Path
         {
-            Data = icon, StrokeThickness = 2,
+            Data = icon, StrokeThickness = IconSize("IconStrokeSmallBold"),
             StrokeLineCap = PenLineCap.Round, StrokeJoin = PenLineJoin.Round,
         };
         var box = new Viewbox { Width = IconSize("IconSizeSmall"), Height = IconSize("IconSizeSmall"), Child = new Canvas { Width = 24, Height = 24, Children = { path } } };
@@ -237,7 +237,7 @@ public partial class DisplayDialog : Window
 
         var path = new Avalonia.Controls.Shapes.Path
         {
-            Data = PlusIcon, StrokeThickness = 2,
+            Data = PlusIcon, StrokeThickness = IconSize("IconStrokeSmallBold"),
             StrokeLineCap = PenLineCap.Round, StrokeJoin = PenLineJoin.Round,
         };
         var plusIcon = new Viewbox { Width = IconSize("IconSizeSmall"), Height = IconSize("IconSizeSmall"), Child = new Canvas { Width = 24, Height = 24, Children = { path } } };
@@ -247,7 +247,7 @@ public partial class DisplayDialog : Window
 
         var minusPath = new Avalonia.Controls.Shapes.Path
         {
-            Data = MinusIcon, StrokeThickness = 2,
+            Data = MinusIcon, StrokeThickness = IconSize("IconStrokeSmallBold"),
             StrokeLineCap = PenLineCap.Round, StrokeJoin = PenLineJoin.Round,
         };
         var minusIcon = new Viewbox { Width = IconSize("IconSizeSmall"), Height = IconSize("IconSizeSmall"), Child = new Canvas { Width = 24, Height = 24, Children = { minusPath } } };

@@ -11,7 +11,7 @@
                         <!-- стандартная иконка «время» (часы), в пару к иконке даты -->
                         <Path Data="{StaticResource IconClock}"
                               Stroke="{StaticResource BrushSecondaryText}"
-                              StrokeThickness="1.8"
+                              StrokeThickness="{StaticResource IconStrokeSmall}"
                               StrokeLineCap="Round"
                               StrokeJoin="Round" />
                     </Canvas>

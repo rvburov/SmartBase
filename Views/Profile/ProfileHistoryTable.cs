@@ -707,7 +707,7 @@ public partial class ProfileView
                 {
                     Data            = data,
                     Stroke          = stroke,
-                    StrokeThickness = 1.6,
+                    StrokeThickness = (double)this.FindResource("IconStrokeMedium")!,
                     StrokeLineCap   = PenLineCap.Round,
                     StrokeJoin      = PenLineJoin.Round,
                 },

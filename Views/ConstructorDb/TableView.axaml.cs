@@ -1130,7 +1130,7 @@ public partial class TableView : UserControl
                     {
                         Data            = geo,
                         Stroke          = stroke ?? (IBrush)this.FindResource("BrushSecondaryText")!,
-                        StrokeThickness = 1.8,
+                        StrokeThickness = IconSize("IconStrokeSmall"),
                         StrokeLineCap   = PenLineCap.Round,
                         StrokeJoin      = PenLineJoin.Round,
                     },
@@ -1277,6 +1277,8 @@ public partial class TableView : UserControl
                 };
             }
 
+            // «Мультисписок»: read-ячейка — выбранные значения обычным текстом через запятую
+            // (FieldDisplayConverter → MultiSelectValue.Display); чипы/чеклист — только в edit.
             var binding = new Binding($"[{def.Key}]")
             {
                 Converter = def.Key == TableRowVm.TitleKey
@@ -1339,6 +1341,13 @@ public partial class TableView : UserControl
                     combo.SelectionChanged += (_, _) =>
                         row[def.Key] = combo.SelectedItem?.ToString() ?? "";
                     return combo;
+                }
+
+                case "multiselect":   // несколько опций: чипы + выпадающий чеклист, значение — JSON-массив
+                {
+                    var box = new Controls.Components.MultiSelectBox(def.Options, row[def.Key], flat: true);
+                    box.Changed += (_, _) => row[def.Key] = box.Storage;
+                    return box;
                 }
 
                 case "number":
@@ -2479,7 +2488,7 @@ public partial class TableView : UserControl
                 {
                     Data            = data,
                     Stroke          = stroke,
-                    StrokeThickness = 1.6,
+                    StrokeThickness = IconSize("IconStrokeMedium"),
                     StrokeLineCap   = PenLineCap.Round,
                     StrokeJoin      = PenLineJoin.Round,
                 },
@@ -2642,6 +2651,7 @@ public partial class TableView : UserControl
     {
         if (raw == "") return "(Пусто)";
         if (fieldType == "checkbox") return IsTruthy(raw) ? "✓" : "—";
+        if (fieldType == "multiselect") return MultiSelectValue.Display(raw);
         return raw;
     }
 
@@ -2846,9 +2856,10 @@ internal sealed class FieldDisplayConverter(string fieldType) : IValueConverter
         var s = v?.ToString() ?? "";
         return fieldType switch
         {
-            "checkbox" => s is "1" or "true" or "True" ? "✓" : "",
-            "date"     => DateValue.TryParse(s, out var dv) ? dv.ToDisplay() : s,
-            _          => s,
+            "checkbox"    => s is "1" or "true" or "True" ? "✓" : "",
+            "date"        => DateValue.TryParse(s, out var dv) ? dv.ToDisplay() : s,
+            "multiselect" => MultiSelectValue.Display(s),
+            _             => s,
         };
     }
 

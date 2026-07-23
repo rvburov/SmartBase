@@ -29,7 +29,7 @@
                         <!-- panel-left-open: иконка сайдбара (как в ActivityBar) -->
                         <Path Data="{StaticResource IconPanelOpen}"
                               Stroke="{StaticResource BrushSecondaryText}"
-                              StrokeThickness="1.4"
+                              StrokeThickness="{StaticResource IconStrokeLarge}"
                               StrokeLineCap="Round" StrokeJoin="Round" />
                     </Canvas>
                 </Viewbox>

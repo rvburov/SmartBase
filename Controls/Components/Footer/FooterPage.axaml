@@ -21,14 +21,14 @@
                         <Path x:Name="IconToPreview"
                               Data="{StaticResource IconPencil}"
                               Stroke="{Binding $parent[ToggleButton].Foreground}"
-                              StrokeThickness="1.6"
+                              StrokeThickness="{StaticResource IconStrokeMedium}"
                               StrokeLineCap="Round" StrokeJoin="Round" />
                         <!-- code-xml: просмотр исходного текста (виден в режиме просмотра) -->
                         <Path x:Name="IconToSource"
                               IsVisible="False"
                               Data="{StaticResource IconCode}"
                               Stroke="{Binding $parent[ToggleButton].Foreground}"
-                              StrokeThickness="1.6"
+                              StrokeThickness="{StaticResource IconStrokeMedium}"
                               StrokeLineCap="Round" StrokeJoin="Round" />
                     </Canvas>
                 </Viewbox>

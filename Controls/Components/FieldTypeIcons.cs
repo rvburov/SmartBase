@@ -21,6 +21,7 @@ public static class FieldTypeIcons
         "date"     => Icon("IconCalendarDate"),
         "select"   => Icon("IconFieldSelect"),
         "status"   => Icon("IconFieldStatus"),
+        "multiselect" => Icon("IconFieldMultiSelect"),
         "checkbox" => Icon("IconFieldCheckbox"),
         "url"      => Icon("IconFieldUrl"),
         "user"     => Icon("IconUser"),

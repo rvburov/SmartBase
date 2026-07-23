@@ -40,14 +40,14 @@
                         <Path x:Name="CollectionOpenIcon"
                               Data="{StaticResource IconArrowRightFromLine}"
                               Stroke="{Binding $parent[ToggleButton].Foreground}"
-                              StrokeThickness="1.6"
+                              StrokeThickness="{StaticResource IconStrokeMedium}"
                               StrokeLineCap="Round" StrokeJoin="Round" />
                         <!-- arrow-left-to-line: коллекция открыта → клик закроет (←) -->
                         <Path x:Name="CollectionCloseIcon"
                               IsVisible="False"
                               Data="{StaticResource IconArrowLeftToLine}"
                               Stroke="{Binding $parent[ToggleButton].Foreground}"
-                              StrokeThickness="1.6"
+                              StrokeThickness="{StaticResource IconStrokeMedium}"
                               StrokeLineCap="Round" StrokeJoin="Round" />
                     </Canvas>
                 </Viewbox>

@@ -257,7 +257,7 @@
                                             <!-- rotate-ccw -->
                                             <Path Data="{StaticResource IconRotateCcw}"
                                                   Stroke="{Binding $parent[Button].Foreground}"
-                                                  StrokeThickness="1.8"
+                                                  StrokeThickness="{StaticResource IconStrokeSmall}"
                                                   StrokeLineCap="Round" StrokeJoin="Round" />
                                         </Canvas>
                                     </Viewbox>
@@ -314,7 +314,7 @@
                                             <!-- rotate-ccw -->
                                             <Path Data="{StaticResource IconRotateCcw}"
                                                   Stroke="{Binding $parent[Button].Foreground}"
-                                                  StrokeThickness="1.8"
+                                                  StrokeThickness="{StaticResource IconStrokeSmall}"
                                                   StrokeLineCap="Round" StrokeJoin="Round" />
                                         </Canvas>
                                     </Viewbox>
@@ -436,7 +436,7 @@
                                                         <!-- trash -->
                                                         <Path Data="{StaticResource IconTrash}"
                                                               Stroke="{Binding $parent[Button].Foreground}"
-                                                              StrokeThickness="1.6"
+                                                              StrokeThickness="{StaticResource IconStrokeSmall}"
                                                               StrokeLineCap="Round" StrokeJoin="Round" />
                                                     </Canvas>
                                                 </Viewbox>

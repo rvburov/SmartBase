@@ -23,6 +23,7 @@ public sealed class FieldTypeMatrixTests
         ["date",     "2026-02-01"],
         ["select",   "Вариант Б"],
         ["status",   "В работе"],
+        ["multiselect", "[\"Дизайн\",\"Backend\"]"],
         ["checkbox", "1"],
         ["url",      "https://example.com"],
         ["user",     "Иван Иванов"],
@@ -50,6 +51,7 @@ public sealed class FieldTypeMatrixTests
     [InlineData("date",     "Дата")]
     [InlineData("select",   "Список")]
     [InlineData("status",   "Статус")]
+    [InlineData("multiselect", "Мультисписок")]
     [InlineData("checkbox", "Чекбокс")]
     [InlineData("url",      "Ссылка")]
     [InlineData("user",     "Пользователь")]
@@ -59,12 +61,28 @@ public sealed class FieldTypeMatrixTests
     }
 
     [Theory]
-    [InlineData("select", true)]
-    [InlineData("status", true)]
-    [InlineData("text",   false)]
-    [InlineData("user",   false)]
-    public void IsOptionList_covers_select_and_status(string fieldType, bool expected) =>
+    [InlineData("select",      true)]
+    [InlineData("status",      true)]
+    [InlineData("multiselect", true)]
+    [InlineData("text",        false)]
+    [InlineData("user",        false)]
+    public void IsOptionList_covers_select_status_multiselect(string fieldType, bool expected) =>
         Assert.Equal(expected, FieldTypeInfo.IsOptionList(fieldType));
+
+    [Fact]
+    public void MultiSelectValue_roundtrips_array_and_migrates_legacy_single()
+    {
+        // Пусто → пустой список; массив → тот же набор в том же порядке.
+        Assert.Empty(MultiSelectValue.Parse(""));
+        Assert.Equal(["Дизайн", "Backend"], MultiSelectValue.Parse("[\"Дизайн\",\"Backend\"]"));
+
+        // Сериализация отбрасывает пустые; показ — через запятую.
+        Assert.Equal("[\"A\",\"B\"]", MultiSelectValue.Serialize(["A", "", "B"]));
+        Assert.Equal("Дизайн, Backend", MultiSelectValue.Display("[\"Дизайн\",\"Backend\"]"));
+
+        // Мягкая миграция из select/status: не-JSON строка = одно значение.
+        Assert.Equal(["В работе"], MultiSelectValue.Parse("В работе"));
+    }
 
     [Fact]
     public void Enabling_tasks_creates_status_typed_field_without_duplicates()

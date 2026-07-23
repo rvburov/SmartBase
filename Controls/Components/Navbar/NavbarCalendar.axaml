@@ -28,7 +28,7 @@
                 <Canvas Width="24" Height="24">
                     <Path Data="{StaticResource IconPlus}"
                           Stroke="{Binding $parent[Button].Foreground}"
-                          StrokeThickness="2"
+                          StrokeThickness="{StaticResource IconStrokeMediumBold}"
                           StrokeLineCap="Round"
                           StrokeJoin="Round" />
                 </Canvas>
@@ -59,7 +59,7 @@
                 <Canvas Width="24" Height="24">
                     <Path Data="{StaticResource IconArrowLeft}"
                           Stroke="{Binding $parent[Button].Foreground}"
-                          StrokeThickness="2"
+                          StrokeThickness="{StaticResource IconStrokeMediumBold}"
                           StrokeLineCap="Round"
                           StrokeJoin="Round" />
                 </Canvas>
@@ -78,7 +78,7 @@
                 <Canvas Width="24" Height="24">
                     <Path Data="{StaticResource IconArrowRight}"
                           Stroke="{Binding $parent[Button].Foreground}"
-                          StrokeThickness="2"
+                          StrokeThickness="{StaticResource IconStrokeMediumBold}"
                           StrokeLineCap="Round"
                           StrokeJoin="Round" />
                 </Canvas>

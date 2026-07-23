@@ -35,6 +35,7 @@ public partial class PropertyEditorDialog : Window
         new() { Type = "date",     Label = "Дата",    Icon = Components.FieldTypeIcons.ForType("date")!     },
         new() { Type = "select",   Label = "Список",  Icon = Components.FieldTypeIcons.ForType("select")!   },
         new() { Type = "status",   Label = "Статус",  Icon = Components.FieldTypeIcons.ForType("status")!   },
+        new() { Type = "multiselect", Label = "Мультисписок", Icon = Components.FieldTypeIcons.ForType("multiselect")! },
         new() { Type = "checkbox", Label = "Чекбокс", Icon = Components.FieldTypeIcons.ForType("checkbox")! },
         new() { Type = "url",      Label = "Ссылка",  Icon = Components.FieldTypeIcons.ForType("url")!      },
         new() { Type = "user",     Label = "Пользователь", Icon = Components.FieldTypeIcons.ForType("user")! },
@@ -94,7 +95,10 @@ public partial class PropertyEditorDialog : Window
             }
         }
 
-        AddOptionBtn.Click += (_, _) => AddOptionRow("").Focus();
+        // Добавление пункта: сбрасываем поиск (иначе новая пустая строка не пройдёт фильтр),
+        // добавляем строку и ставим в неё фокус.
+        AddOptionBtn.Click   += (_, _) => { OptionsSearch.Text = ""; AddOptionRow("").Focus(); };
+        OptionsSearch.TextChanged += (_, _) => FilterOptionRows();
 
         var idx = Array.FindIndex(FieldTypes, t => t.Type == _selectedType);
         TypeCombo.SelectedIndex = idx >= 0 ? idx : 0;
@@ -130,14 +134,16 @@ public partial class PropertyEditorDialog : Window
     // (чтобы сфокусировать вновь добавленный). Значения собираются в BuildOptionsConfigJson.
     private TextBox AddOptionRow(string value)
     {
+        // Плоская строка (класс optionRow — прозрачный фон, без рамки во всех состояниях):
+        // чистый список внутри белой карточки, клик по тексту сразу редактирует.
         var box = new TextBox
         {
             Text                     = value,
             Watermark                = "Название пункта",
-            Height                   = 34,
+            Height                   = 30,
             VerticalContentAlignment = VerticalAlignment.Center,
         };
-        if (this.TryFindResource("RadiusMedium", out var r) && r is CornerRadius cr) box.CornerRadius = cr;
+        box.Classes.Add("optionRow");
 
         var del = new Button
         {
@@ -166,18 +172,37 @@ public partial class PropertyEditorDialog : Window
         return box;
     }
 
+    // Фильтр строк-пунктов по полю поиска: строка видна, если её текст содержит запрос
+    // (пустой запрос — видны все). Совпадение по текущему тексту строки.
+    private void FilterOptionRows()
+    {
+        var q = OptionsSearch.Text?.Trim() ?? "";
+        foreach (var box in _optionBoxes)
+            if (box.Parent is Control row)
+                row.IsVisible = q.Length == 0 || (box.Text ?? "").Contains(q, StringComparison.OrdinalIgnoreCase);
+    }
+
     private Control BuildDeleteGlyph()
     {
-        var geo = this.TryFindResource("IconClose", out var g) && g is Geometry geom ? geom : null;
-        return new Avalonia.Controls.Shapes.Path
+        // Крестик удаления строки — как остальные иконки приложения: Viewbox стандартного
+        // размера (IconSizeSmall=16) + Canvas 24×24 + Path, чтобы сохранить «сетку 24» и
+        // естественные поля глифа (иначе Stretch растягивал крестик на весь бокс — выглядел
+        // крупным). Масштаб зума наследуется от LayoutTransform окна.
+        var geo    = this.TryFindResource("IconClose", out var g) && g is Geometry geom ? geom : null;
+        var size   = this.TryFindResource("IconSizeSmall", out var s) && s is double d ? d : 16.0;
+        var thick  = this.TryFindResource("IconStrokeSmall", out var t) && t is double td ? td : 1.8;
+        var stroke = this.TryFindResource("BrushSecondaryText", out var b) && b is IBrush br ? br : Brushes.Gray;
+
+        var canvas = new Canvas { Width = 24, Height = 24 };
+        canvas.Children.Add(new Avalonia.Controls.Shapes.Path
         {
             Data            = geo,
-            Stroke          = this.TryFindResource("BrushSecondaryText", out var b) && b is IBrush br ? br : Brushes.Gray,
-            StrokeThickness = 1.6,
-            Stretch         = Stretch.Uniform,
-            Width           = 14,
-            Height          = 14,
-        };
+            Stroke          = stroke,
+            StrokeThickness = thick,   // стандарт: IconStrokeSmall (как иконки-оглавления колонок)
+            StrokeLineCap   = PenLineCap.Round,
+            StrokeJoin      = PenLineJoin.Round,
+        });
+        return new Viewbox { Width = size, Height = size, Child = canvas };
     }
 
     // Разбор опций из ConfigJson поля (как MergeSelectOptions в репозитории): {"options":[...]}.

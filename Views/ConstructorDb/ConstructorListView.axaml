@@ -26,7 +26,7 @@
                                                 <Canvas Width="24" Height="24">
                                                     <Path Data="{StaticResource IconTrash}"
                                                           Stroke="{StaticResource BrushRed}"
-                                                          StrokeThickness="1.6"
+                                                          StrokeThickness="{StaticResource IconStrokeMedium}"
                                                           StrokeLineCap="Round" StrokeJoin="Round" />
                                                 </Canvas>
                                             </Viewbox>

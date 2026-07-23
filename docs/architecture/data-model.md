@@ -13,7 +13,7 @@
 |---|---|
 | `DbGroup` | группа коллекций (может быть вложенной) |
 | `DbCollection` | коллекция/таблица: имя, иконка, цвет, группа |
-| `DbField` | поле: тип (базовые `text/number/date/select/status/checkbox/url/user` + вычисляемые `created_at/updated_at/created_by/updated_by`, см. [«Типы полей»](#типы-полей-свойств)), `ConfigJson`, флаги `IsCalStart` (= «показывать поле-дату в календаре»; может быть включён у нескольких полей-дат коллекции), `IsCalEnd` (не используется), `IsSystem/IsRequired` |
+| `DbField` | поле: тип (базовые `text/number/date/select/status/multiselect/checkbox/url/user` + вычисляемые `created_at/updated_at/created_by/updated_by`, см. [«Типы полей»](#типы-полей-свойств)), `ConfigJson`, флаги `IsCalStart` (= «показывать поле-дату в календаре»; может быть включён у нескольких полей-дат коллекции), `IsCalEnd` (не используется), `IsSystem/IsRequired` |
 | `DbRecord` | запись: `Title`, `Description`, позиция; колонки `StartDt/EndDt/AllDay` — устаревший след (календарём больше не читаются, см. ниже) |
 | `CalendarRecord` | одно событие календаря (`DbId`, `Id`, **`FieldId`** — из какого поля-даты получено событие, `Title`, `StartDt/EndDt`, `AllDay`, `Color`, `CollectionId`). Идентичность события — пара `(Id, FieldId)`: одна запись даёт по событию на каждое видимое поле-дату |
 | `Category` | категория (имя + цвет) |
@@ -39,6 +39,7 @@
 | `date` | ISO-канон `DateValue.ToStorage`; показ `DateValue.ToDisplay`; при `IsCalStart` проецируется в календарь (см. «Где календарь») |
 | `select` | строка-значение из опций (`ConfigJson`); опции задаёт пользователь в диалоге свойства |
 | `status` | как `select` (строка из опций `ConfigJson`); новое поле сразу с тремя статусами по умолчанию; тип авто-поля «Статус» в разделе задач |
+| `multiselect` | **несколько** опций из `ConfigJson`; значение — JSON-массив (`MultiSelectValue`); показ — текст через запятую, редактор — выпадающий чеклист с поиском |
 | `checkbox` | `1`/`0` (+легаси `true`); показ `✓`/пусто (`WriterHelpers.IsChecked`) |
 | `url` | строка |
 | `user` | строка-имя (снимок, как `select`); опции — `GetUserOptions` (допущенные пользователи), новая запись = текущий пользователь; флаги задач `IsTaskExec/IsTaskAssigner/IsTaskStatus` (см. [tasks/overview.md](../features/tasks/overview.md)) |
@@ -104,6 +105,17 @@
 - это **тип авто-поля «Статус»** в разделе задач: при включении задач в коллекции недостающее поле
   «Статус» создаётся типом `status` (роль определяется флагом `IsTaskStatus`; старые поля-статусы типа
   `select` продолжают работать) — см. [tasks/overview.md](../features/tasks/overview.md).
+
+#### `multiselect` — Мультисписок
+
+Набор опций определяется как у `select` (тот же блок «Пункты списка», опции в `ConfigJson`), но
+хранит **несколько** значений — JSON-массивом в `db_field_values` ([`MultiSelectValue`](../../Core/Models/MultiSelectValue.cs)):
+пусто → пустой массив; непустая **не-JSON** строка трактуется как одно значение, поэтому смена типа
+из `select`/`status` не теряет данные (при следующем сохранении перепишется массивом). Выбранное
+показывается **текстом через запятую** (и в таблице, и в панели записи); редактор
+([`MultiSelectBox`](../../Controls/Components/MultiSelectBox.cs)) — выпадающий чеклист с полем поиска
+(чекбокс на опцию) в стиле дропдауна фильтра таблицы. Экспорт: CSV/XLSX — значения через запятую,
+JSON — массивом.
 
 #### `checkbox` — Чекбокс
 
