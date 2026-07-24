@@ -141,7 +141,7 @@ checkbox — `1`/`0`, остальное — строки.
 - Запись: SAX/поток во всех форматах; xlsx — без shared strings (inline), пустые ячейки
   не пишутся; JSON — принудительный `Flush` каждые 500 строк (иначе `Utf8JsonWriter`
   копит весь вывод в памяти). Память процесса — O(страницы), не растёт с объёмом.
-- Замер ([Tests/Benchmarks/ExportBench](../../../../Tests/Benchmarks/ExportBench.cs), `--perf --rows N`,
+- Замер ([Tests/Benchmarks/ExportBench](../../../../Tests/Benchmarks/ExportBench.cs), команда `export --rows N`,
   рабочий ноутбук, коллекция 1 млн строк × 8 столбцов): CSV — 53 с (~19 тыс. строк/с,
   файл 98 МБ), JSON — 48 с (~21 тыс., 260 МБ), XLSX/XLSM — 73–78 с (~13 тыс., 46 МБ);
   пик памяти процесса ~1,6 ГБ — это фикстура-импорт и mmap-окно SQLite, память не
@@ -152,10 +152,14 @@ checkbox — `1`/`0`, остальное — строки.
 
 ### Проверки
 
-[Tests/Benchmarks/ExportBench](../../../../Tests/Benchmarks/ExportBench.cs) (в решении, как ImportPerf) —
+[Tests/Benchmarks/ExportBench](../../../../Tests/Benchmarks/ExportBench.cs) (в решении, как ImportBench) —
 селф-тест матрицы из 62 проверок: вызывает те же методы, что приложение, и главное —
 **round-trip**: экспорт → импорт нашим же конвейером → сравнение значений; плюс типы
 ячеек xlsx (чтение назад ClosedXML), скрытые записи/столбцы, порядок колонок, ручные
 параметры, мульти-коллекция и «в один файл», переполнение листа (инъекция лимита),
 санитайз/уникализация имён, отмена посреди второго файла, карта ошибок, журнал.
-Запуск: `dotnet run -c Release --project Tests/ExportPerf`.
+Запуск: `dotnet run -c Release --project Tests/Benchmarks -- export`.
+
+## Связанные документы
+
+[overview](overview.md) · [import](import.md) · [cross-database-move](cross-database-move.md) · [performance/hot-paths](../../architecture/performance/hot-paths.md)

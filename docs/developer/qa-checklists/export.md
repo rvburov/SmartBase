@@ -6,7 +6,7 @@
 производительность — [architecture/performance.md](../architecture/performance/overview.md).
 
 Автоматическая матрица (62 проверки той же логики, включая round-trip) —
-`Tests/ExportPerf` (`dotnet run -c Release --project Tests/ExportPerf`); вручную важнее
+`Tests/Benchmarks` (`dotnet run -c Release --project Tests/Benchmarks -- export`); вручную важнее
 всего визуальные сценарии (окно, пикер, прогресс) и открытие файлов в реальном Excel.
 
 ## 1. Окно и режим
@@ -112,4 +112,4 @@
 ## 10. Объём (по желанию — уже замерено харнессом)
 
 - [ ] Коллекция ~1 млн строк: экспорт каждого формата идёт с живым прогрессом, память
-      процесса не растёт с объёмом (`Tests/ExportPerf -- --perf --rows 1000000`).
+      процесса не растёт с объёмом (`Tests/Benchmarks -- export --rows 1000000`).

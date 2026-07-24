@@ -7,3 +7,7 @@
 в `ConfigJson` поля (ключ `options`), **формируется пользователем** в диалоге «Создать/Изменить свойство»
 (блок «Пункты списка»). Редактор — `ComboBox`. Нюанс: переименование опции не мигрирует уже сохранённые
 значения (в записях остаётся старый текст).
+
+## Связанные документы
+
+[overview](overview.md) · [features/constructor/table](../../features/constructor/table.md) · [features/constructor/record-page](../../features/constructor/record-page.md)

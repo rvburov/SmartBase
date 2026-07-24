@@ -5,8 +5,8 @@
 [features/import-export.md](../features/import-export/overview.md), производительность —
 [architecture/performance.md](../architecture/performance/overview.md).
 
-Автоматическая матрица (38 проверок той же логики) — `Tests/ImportPerf`
-(`dotnet run --project Tests/ImportPerf`); вручную важнее всего визуальные и файловые
+Автоматическая матрица (38 проверок той же логики) — `Tests/Benchmarks` (команда `import`)
+(`dotnet run -c Release --project Tests/Benchmarks -- import`); вручную важнее всего визуальные и файловые
 сценарии: разделы 5–10.
 
 ## 1. Форматы (тип «Стандартный»)

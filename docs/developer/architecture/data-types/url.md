@@ -4,3 +4,7 @@
 
 
 Хранится строкой, **без валидации** URL. Редактор — `TextBox` с watermark `https://`.
+
+## Связанные документы
+
+[overview](overview.md) · [features/constructor/table](../../features/constructor/table.md) · [features/constructor/record-page](../../features/constructor/record-page.md)

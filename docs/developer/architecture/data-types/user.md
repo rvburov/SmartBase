@@ -11,3 +11,7 @@
 - `IsTaskExec` — исполнитель; включает user-поле в раздел задач (задача = «запись × user-поле с непустым значением»);
 - `IsTaskAssigner` — роль «Назначил» (тоже user-поле);
 - `IsTaskStatus` — роль «Статус» (поле типа `status`; старые коллекции — `select`). «Назначил»/«Статус» авто-создаются при включении задач.
+
+## Связанные документы
+
+[overview](overview.md) · [features/constructor/table](../../features/constructor/table.md) · [features/constructor/record-page](../../features/constructor/record-page.md)

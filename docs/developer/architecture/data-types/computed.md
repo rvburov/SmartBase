@@ -10,3 +10,7 @@
 `TouchUpdated` (название/описание/дата) и сырой `UPDATE db_records` в `SetFieldValue`, но **только при
 реальной смене значения**. Ограничения: фильтр/сортировка по этим колонкам пока не функциональны (значений
 нет в `db_field_values`); у старых записей автор может быть неизвестен (метаданных нет → пусто).
+
+## Связанные документы
+
+[overview](overview.md) · [features/constructor/table](../../features/constructor/table.md) · [features/constructor/record-page](../../features/constructor/record-page.md)

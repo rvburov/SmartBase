@@ -50,3 +50,7 @@
 
 Смена типа между «дата» и остальными приводит значения без потери (`ConvertValueForType`).
 Покрытие — `FieldTypeMatrixTests` (реестр типов) и `ConstructorRepositoryCrudTests` (метаданные).
+
+## Связанные документы
+
+[data-model](../data-model.md) · [features/constructor/table](../../features/constructor/table.md) · [features/constructor/record-page](../../features/constructor/record-page.md)

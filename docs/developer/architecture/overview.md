@@ -62,7 +62,7 @@ DI-контейнера нет — зависимости собираются �
 - Модель данных и таблицы — [data-model.md](data-model.md).
 - Хранилище, миграции, пути — [databases.md](database/storage-and-migrations.md).
 - Несколько БД одновременно — [multi-database.md](database/multi-database.md).
-- Фичи — [../features/](../../features/).
+- Фичи — [../features/](../features/).
 
 ## Связанные документы
 

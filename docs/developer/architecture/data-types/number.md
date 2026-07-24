@@ -29,3 +29,7 @@
 **Сортировка/фильтр-сравнение и экспорт** работают с хранимой строкой (число канонизировано по
 разделителю поля): CSV сохраняет её как есть, XLSX/JSON — числовую ячейку/значение через
 `WriterHelpers.TryNumber` (Этап 4 типизации остаётся отдельно).
+
+## Связанные документы
+
+[overview](overview.md) · [features/constructor/table](../../features/constructor/table.md) · [features/constructor/record-page](../../features/constructor/record-page.md)

@@ -19,3 +19,7 @@
 > конвейер Core/Exporters (см. «Экспорт таблиц»). Если будешь их подключать, добавь
 > пересборку проекции `calendar_index` — сейчас они её не делают, и скопированные события
 > не попали бы в календарь.
+
+## Связанные документы
+
+[overview](overview.md) · [import](import.md) · [export](export.md) · [architecture/database/multi-database](../../architecture/database/multi-database.md) · [features/constructor/table](../constructor/table.md)

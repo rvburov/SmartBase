@@ -66,7 +66,7 @@ dotnet ef migrations add ИмяМиграцииPg --context PgAppDbContext --out
 
 - Общая архитектура и запуск — [architecture/overview.md](../architecture/overview.md).
 - Модель данных — [architecture/data-model.md](../architecture/data-model.md).
-- Как работают фичи — [features/](../../features/).
+- Как работают фичи — [features/](../features/).
 
 ## Диагностика сбоев (crash.log)
 

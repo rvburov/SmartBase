@@ -16,3 +16,7 @@
 - **Календарь**: при флаге `IsCalStart=true` поле проецируется в календарь; таких полей-дат в коллекции
   может быть несколько, каждое непустое значение = отдельное событие (см. [«Где календарь»](#где-календарь)).
 - Редактор — `DateEditor` (диапазоны, дата+время, «весь день»), один и тот же в таблице и панели.
+
+## Связанные документы
+
+[overview](overview.md) · [features/constructor/table](../../features/constructor/table.md) · [features/constructor/record-page](../../features/constructor/record-page.md)

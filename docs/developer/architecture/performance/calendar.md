@@ -136,3 +136,7 @@ upsert одной строки при правке значения (`SyncCalend
 
 > Колонки `db_records.StartDt/EndDt` остались от модели «одна дата на запись» и больше
 > не читаются календарём.
+
+## Связанные документы
+
+[overview](overview.md) · [hot-paths](hot-paths.md) · [features/calendar](../../features/calendar/overview.md)

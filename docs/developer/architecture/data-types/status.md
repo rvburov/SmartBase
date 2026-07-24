@@ -10,3 +10,7 @@
 - это **тип авто-поля «Статус»** в разделе задач: при включении задач в коллекции недостающее поле
   «Статус» создаётся типом `status` (роль определяется флагом `IsTaskStatus`; старые поля-статусы типа
   `select` продолжают работать) — см. [tasks/overview.md](../../features/tasks.md).
+
+## Связанные документы
+
+[overview](overview.md) · [features/constructor/table](../../features/constructor/table.md) · [features/constructor/record-page](../../features/constructor/record-page.md)
