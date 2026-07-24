@@ -180,9 +180,11 @@ public class TableRowVm : INotifyPropertyChanged
             if (key == TitleKey)
             {
                 if (_title == newVal) return;
-                try { _repository?.SetRecordTitle(RecordId, newVal); }
+                IReadOnlyList<(int FieldId, string Value)> autoTitle;
+                try { autoTitle = _repository?.SetRecordTitle(RecordId, newVal) ?? []; }
                 catch (Exception ex) when (DbErrors.Handle(ex, _repository?.DbPath)) { NotifyAllCells(); return; }
                 _title = newVal;
+                ApplyAutoFileChanges(autoTitle);   // «Название» — источник авто-file: файл-ячейка обновится
                 BumpUpdatedLocal();
                 NotifyAllCells();
                 Edited?.Invoke(this, RecordId);
@@ -191,9 +193,11 @@ public class TableRowVm : INotifyPropertyChanged
             if (key == DescKey)
             {
                 if (_description == newVal) return;
-                try { _repository?.SetRecordDescription(RecordId, newVal); }
+                IReadOnlyList<(int FieldId, string Value)> autoDesc;
+                try { autoDesc = _repository?.SetRecordDescription(RecordId, newVal) ?? []; }
                 catch (Exception ex) when (DbErrors.Handle(ex, _repository?.DbPath)) { NotifyAllCells(); return; }
                 _description = newVal;
+                ApplyAutoFileChanges(autoDesc);   // «Описание» — источник авто-file: файл-ячейка обновится
                 BumpUpdatedLocal();
                 NotifyAllCells();
                 Edited?.Invoke(this, RecordId);
@@ -209,14 +213,22 @@ public class TableRowVm : INotifyPropertyChanged
             // Побочные изменения авто-привязки файлов (правка столбца-источника пересчитала
             // файл-столбец этой записи) — отражаем в кеше, чтобы файл-ячейка обновилась сразу.
             // Само редактируемое поле (id) не трогаем — каретка ввода не сбивается.
-            foreach (var (fid, val) in autoChanges)
-            {
-                if (fid == id) continue;
-                if (val.Length == 0) _values.Remove(fid); else _values[fid] = val;
-            }
+            ApplyAutoFileChanges(autoChanges, skipFieldId: id);
             BumpUpdatedLocal();
             NotifyAllCells();
             Edited?.Invoke(this, RecordId);
+        }
+    }
+
+    // Отразить побочные изменения авто-привязки файлов в кеше строки (пустой путь → удаляем).
+    // skipFieldId — редактируемое поле (не трогаем, чтобы не сбить каретку ввода); для правки
+    // «Названия»/«Описания» пропуск не нужен (файл-поле не совпадает с системной колонкой).
+    private void ApplyAutoFileChanges(IReadOnlyList<(int FieldId, string Value)> changes, int skipFieldId = 0)
+    {
+        foreach (var (fid, val) in changes)
+        {
+            if (fid == skipFieldId) continue;
+            if (val.Length == 0) _values.Remove(fid); else _values[fid] = val;
         }
     }
 

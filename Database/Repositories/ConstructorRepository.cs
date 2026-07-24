@@ -2302,9 +2302,15 @@ public partial class ConstructorRepository(AppDbContext db)
 
         if (!TryScanFolder(rule.Folder, out var files)) return FileAutoResolveResult.FolderInaccessible;
 
+        // Источник значений: числовое текст-поле → db_field_values по (FieldId, Value); системная
+        // колонка «Название»/«Описание» → db_records по (Id, Title/Description) этой коллекции
+        // (в db_field_values их нет). SQL — некавыченный PascalCase: PG складывает в нижний регистр
+        // своих колонок, SQLite регистронезависим.
+        var (countSql, selectSql) = SourceStreamSql(rule, field.CollectionId);
+
         // Значения столбца-источника СТРИМИМ сырым reader'ом (без EF-материализации всех строк —
         // на миллионах записей это критично по памяти) и буферим ТОЛЬКО совпадения. Затем
-        // перезаписываем файл-поле. Чтение по индексу (FieldId, Value).
+        // перезаписываем файл-поле.
         var matches = new List<(int RecordId, string Value)>();
         var conn    = db.Database.GetDbConnection();
         var wasOpen = conn.State == System.Data.ConnectionState.Open;
@@ -2315,13 +2321,13 @@ public partial class ConstructorRepository(AppDbContext db)
             long total;
             using (var cnt = conn.CreateCommand())
             {
-                cnt.CommandText = $"SELECT COUNT(*) FROM db_field_values WHERE FieldId = {rule.SourceFieldId} AND Value <> ''";
+                cnt.CommandText = countSql;
                 total = Convert.ToInt64(cnt.ExecuteScalar() ?? 0L);
             }
 
             using (var sel = conn.CreateCommand())
             {
-                sel.CommandText = $"SELECT RecordId, Value FROM db_field_values WHERE FieldId = {rule.SourceFieldId} AND Value <> ''";
+                sel.CommandText = selectSql;
                 using var reader = sel.ExecuteReader();
                 long read = 0;
                 while (reader.Read())
@@ -2340,6 +2346,34 @@ public partial class ConstructorRepository(AppDbContext db)
             return FileAutoResolveResult.Ok;
         }
         finally { if (!wasOpen) conn.Close(); }
+    }
+
+    // SQL потоковой выборки значений источника (COUNT + SELECT (RecordId, Value)). Текст-поле —
+    // из db_field_values по FieldId; системные «Название»/«Описание» — из db_records этой коллекции
+    // (Title/Description). Некавыченные PascalCase-идентификаторы работают в SQLite и PG (см. выше).
+    private static (string Count, string Select) SourceStreamSql(FileAutoRule rule, int collectionId)
+    {
+        if (rule.SourceFieldId is var fid && fid > 0)
+            return ($"SELECT COUNT(*) FROM db_field_values WHERE FieldId = {fid} AND Value <> ''",
+                    $"SELECT RecordId, Value FROM db_field_values WHERE FieldId = {fid} AND Value <> ''");
+
+        var col = rule.SourceIsDesc ? "Description" : "Title";   // NULL <> '' → строка отсеивается
+        return ($"SELECT COUNT(*) FROM db_records WHERE CollectionId = {collectionId} AND {col} <> ''",
+                $"SELECT Id, {col} FROM db_records WHERE CollectionId = {collectionId} AND {col} <> ''");
+    }
+
+    // Значение столбца-источника для ОДНОЙ записи (точечный пересчёт). Текст-поле — из
+    // db_field_values; системные «Название»/«Описание» — из самой записи.
+    private string ReadSourceValue(FileAutoRule rule, int recordId)
+    {
+        if (rule.SourceFieldId is var fid && fid > 0)
+            return db.DbFieldValues.AsNoTracking()
+                .Where(v => v.FieldId == fid && v.RecordId == recordId)
+                .Select(v => v.Value).FirstOrDefault() ?? "";
+
+        var rec = db.DbRecords.AsNoTracking().FirstOrDefault(r => r.Id == recordId);
+        if (rec is null) return "";
+        return (rule.SourceIsDesc ? rec.Description : rec.Title) ?? "";
     }
 
     // Скан папки в словарь имя→путь (только верхний уровень, регистр учитывается — Ordinal).
@@ -2414,10 +2448,7 @@ public partial class ConstructorRepository(AppDbContext db)
             var rule = FileAutoRule.FromConfig(af.ConfigJson);
             if (rule is null) continue;
 
-            var srcVal = db.DbFieldValues.AsNoTracking()
-                .Where(v => v.FieldId == rule.SourceFieldId && v.RecordId == recordId)
-                .Select(v => v.Value).FirstOrDefault() ?? "";
-            var matched = MatchSingle(rule, srcVal);
+            var matched = MatchSingle(rule, ReadSourceValue(rule, recordId));
             SetAutoFileValue(af.Id, recordId, matched);
         }
     }
@@ -3007,12 +3038,15 @@ public partial class ConstructorRepository(AppDbContext db)
         };
     }
 
-    public void SetRecordTitle(int recordId, string title)
+    /// <summary>Записать название. Возвращает побочные изменения авто-привязки файлов (если
+    /// «Название» — источник авто-file поля, его ячейка пересчитывается) — для мгновенного показа.</summary>
+    public IReadOnlyList<(int FieldId, string Value)> SetRecordTitle(int recordId, string title)
     {
         Demand(PermAction.EditRecord, CollectionOfRecord(recordId));
         var rec = db.DbRecords.Find(recordId);
-        if (rec is null) return;
-        if (rec.Title != title)
+        if (rec is null) return [];
+        var changed = rec.Title != title;
+        if (changed)
         {
             // Побуквенное сохранение панели записи — сливаем в одну строку журнала.
             var key = (Kind: "title", RecordId: recordId, SubId: 0);
@@ -3024,15 +3058,20 @@ public partial class ConstructorRepository(AppDbContext db)
         rec.Title = title;
         TouchUpdated(rec);
         SaveIgnoringRemoteDelete(rec);
+        // «Название» как источник авто-привязки — пересчитать файл-поля этой записи.
+        return changed ? ReactToSourceEdit(recordId, r => r.SourceIsTitle) : [];
     }
 
-    public void SetRecordDescription(int recordId, string? description)
+    /// <summary>Записать описание. Возвращает побочные изменения авто-привязки файлов (если
+    /// «Описание» — источник авто-file поля) — для мгновенного показа.</summary>
+    public IReadOnlyList<(int FieldId, string Value)> SetRecordDescription(int recordId, string? description)
     {
         Demand(PermAction.EditRecord, CollectionOfRecord(recordId));
         var rec = db.DbRecords.Find(recordId);
-        if (rec is null) return;
+        if (rec is null) return [];
         var normalized = string.IsNullOrEmpty(description) ? null : description;
-        if (rec.Description != normalized)
+        var changed = rec.Description != normalized;
+        if (changed)
         {
             // Побуквенное сохранение панели записи — сливаем в одну строку журнала.
             var key = (Kind: "desc", RecordId: recordId, SubId: 0);
@@ -3045,6 +3084,8 @@ public partial class ConstructorRepository(AppDbContext db)
         rec.Description = normalized;
         TouchUpdated(rec);
         SaveIgnoringRemoteDelete(rec);
+        // «Описание» как источник авто-привязки — пересчитать файл-поля этой записи.
+        return changed ? ReactToSourceEdit(recordId, r => r.SourceIsDesc) : [];
     }
 
     // Проставляет аудит «последней правки» записи (для типов свойств «Дата/Изменение …»):
@@ -4121,9 +4162,15 @@ public partial class ConstructorRepository(AppDbContext db)
         return changed ? ReactToSourceEditForAutoFile(recordId, fieldId) : [];
     }
 
-    // Если editedFieldId — источник авто-file полей этой записи, пересчитать их. Возвращает список
-    // изменённых (FieldId файл-поля, новое значение — путь или "" при отсутствии совпадения).
-    private List<(int FieldId, string Value)> ReactToSourceEditForAutoFile(int recordId, int editedFieldId)
+    // Если правили текст-поле editedFieldId, служащее источником авто-file полей — пересчитать их.
+    private List<(int FieldId, string Value)> ReactToSourceEditForAutoFile(int recordId, int editedFieldId) =>
+        ReactToSourceEdit(recordId, rule => rule.SourceFieldId == editedFieldId);
+
+    // Пересчитать авто-file поля записи, чей источник подходит под <paramref name="isSource"/>
+    // (правка текст-столбца-источника, «Названия» или «Описания»). Возвращает список изменённых
+    // (FieldId файл-поля, новое значение — путь или "" при отсутствии совпадения) — для мгновенного
+    // обновления файл-ячеек в UI без перезагрузки.
+    private List<(int FieldId, string Value)> ReactToSourceEdit(int recordId, Func<FileAutoRule, bool> isSource)
     {
         var changes = new List<(int FieldId, string Value)>();
         var collectionId = CollectionOfRecord(recordId);
@@ -4134,11 +4181,8 @@ public partial class ConstructorRepository(AppDbContext db)
         foreach (var ff in fileFields)
         {
             var rule = FileAutoRule.FromConfig(ff.ConfigJson);
-            if (rule is null || rule.SourceFieldId != editedFieldId) continue;
-            var srcVal = db.DbFieldValues.AsNoTracking()
-                .Where(v => v.FieldId == editedFieldId && v.RecordId == recordId)
-                .Select(v => v.Value).FirstOrDefault() ?? "";
-            var matched = MatchSingle(rule, srcVal);
+            if (rule is null || !isSource(rule)) continue;
+            var matched = MatchSingle(rule, ReadSourceValue(rule, recordId));
             SetAutoFileValue(ff.Id, recordId, matched);
             changes.Add((ff.Id, matched));
         }

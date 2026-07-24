@@ -188,22 +188,37 @@ public partial class PropertyEditorDialog : Window
 
     // ── Авто-привязка файлов ────────────────────────────────────────────────────
 
-    /// <summary>Пункт выпадашки столбца-источника (Id=0 — «без авто», ручной выбор).</summary>
-    private sealed class SourceFieldItem
+    /// <summary>Пункт выпадашки столбца-источника. Key — строковый ключ колонки (пустой —
+    /// ручной выбор/без авто; «__title__»/«__desc__» — системные; число — Id текст-поля).
+    /// Foreground: приглушённый для пункта-заглушки «Выбрать…».</summary>
+    public sealed class SourceFieldItem
     {
-        public int    Id   { get; init; }
-        public string Name { get; init; } = "";
+        public string  Key        { get; init; } = "";
+        public string  Name       { get; init; } = "";
+        public IBrush? Foreground { get; init; }
         public override string ToString() => Name;
     }
 
-    // Заполнить список столбцов-источников: «без авто» + поля типа «Текст» этой коллекции.
+    // Заполнить список столбцов-источников: серая заглушка «Выбрать…» (= без авто, ручной выбор),
+    // системные «Название»/«Описание» (на них тоже можно ссылаться — их значения в db_records) и
+    // поля типа «Текст» этой коллекции.
     private void PopulateFileSources()
     {
         if (_systemMode || _repository is null) return;
-        var items = new List<SourceFieldItem> { new() { Id = 0, Name = "— Без авто-привязки (ручной выбор) —" } };
+        var grey    = ResourceBrush("BrushSecondaryText", Brushes.Gray);
+        var primary = ResourceBrush("BrushPrimaryText", Brushes.Black);
+        var names   = _repository.GetSystemFieldNames(_collectionId);
+
+        var items = new List<SourceFieldItem>
+        {
+            new() { Key = "", Name = "Выбрать…", Foreground = grey },
+            new() { Key = FileAutoRule.TitleSource, Name = names.GetValueOrDefault(FileAutoRule.TitleSource, "Название"), Foreground = primary },
+            new() { Key = FileAutoRule.DescSource,  Name = names.GetValueOrDefault(FileAutoRule.DescSource,  "Описание"), Foreground = primary },
+        };
         foreach (var f in _repository.GetFields(_collectionId))
             if (f.FieldType == "text" && f.Id is int fid)
-                items.Add(new SourceFieldItem { Id = fid, Name = f.Name });
+                items.Add(new SourceFieldItem { Key = fid.ToString(), Name = f.Name, Foreground = primary });
+
         FileSourceCombo.ItemsSource   = items;
         FileSourceCombo.SelectedIndex = 0;
     }
@@ -216,7 +231,7 @@ public partial class PropertyEditorDialog : Window
 
         if (FileSourceCombo.ItemsSource is IEnumerable<SourceFieldItem> items)
         {
-            var idx = items.ToList().FindIndex(i => i.Id == rule.SourceFieldId);
+            var idx = items.ToList().FindIndex(i => i.Key == rule.SourceKey);
             FileSourceCombo.SelectedIndex = idx >= 0 ? idx : 0;
         }
         FileFolderText.Text = rule.Folder;
@@ -238,7 +253,7 @@ public partial class PropertyEditorDialog : Window
 
     // Папка/формат нужны только когда выбран реальный столбец-источник (авто-режим).
     private void UpdateFileAutoVisibility() =>
-        FileAutoOptions.IsVisible = SelectedSource() is { Id: > 0 };
+        FileAutoOptions.IsVisible = SelectedSource() is { Key.Length: > 0 };
 
     // «Свой формат…» открывает поле ручного ввода расширения.
     private void UpdateFileFormatCustomVisibility() =>
@@ -280,14 +295,14 @@ public partial class PropertyEditorDialog : Window
     private string? BuildFileConfigJson()
     {
         var src = SelectedSource();
-        if (src is not { Id: > 0 }) return "{}";   // ручной режим
+        if (src is not { Key.Length: > 0 }) return "{}";   // ручной режим
 
         var folder = FileFolderText.Text?.Trim() ?? "";
         var format = SelectedFormat();
         if (folder.Length == 0) { ShowError("Выберите папку с файлами"); return null; }
         if (!Directory.Exists(folder)) { ShowError("Папка недоступна"); return null; }
         if (format.Length == 0) { ShowError("Выберите формат файла"); return null; }
-        return new FileAutoRule(src.Id, folder, format).ToConfigJson();
+        return new FileAutoRule(src.Key, folder, format).ToConfigJson();
     }
 
     // Под-опции формата числа: блок опций (точность/разряды/валюта) скрыт для «Обычного числа»

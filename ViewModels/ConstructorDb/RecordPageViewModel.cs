@@ -76,17 +76,19 @@ public partial class RecordPageViewModel : ObservableObject
     }
 
     // Ошибки записи (файл занят/пропал в многопользовательском режиме) гасятся тостом —
-    // панель не падает, значение останется в буфере до следующего сохранения.
-    public void SaveTitle()
+    // панель не падает, значение останется в буфере до следующего сохранения. Возвращают побочные
+    // изменения авто-привязки файлов (если «Название»/«Описание» — источник авто-file поля),
+    // чтобы панель обновила файл-редакторы сразу.
+    public IReadOnlyList<(int FieldId, string Value)> SaveTitle()
     {
-        try { _repository.SetRecordTitle(RecordId, Title ?? ""); }
-        catch (Exception ex) when (DbErrors.Handle(ex, _repository.DbPath)) { }
+        try { return _repository.SetRecordTitle(RecordId, Title ?? ""); }
+        catch (Exception ex) when (DbErrors.Handle(ex, _repository.DbPath)) { return []; }
     }
 
-    public void SaveMarkdown()
+    public IReadOnlyList<(int FieldId, string Value)> SaveMarkdown()
     {
-        try { _repository.SetRecordDescription(RecordId, MarkdownText); }
-        catch (Exception ex) when (DbErrors.Handle(ex, _repository.DbPath)) { }
+        try { return _repository.SetRecordDescription(RecordId, MarkdownText); }
+        catch (Exception ex) when (DbErrors.Handle(ex, _repository.DbPath)) { return []; }
     }
 }
 

@@ -74,7 +74,7 @@ public partial class RecordPageView : UserControl
             if (_vm is null) return;
             var entered = text.Trim();
             _vm.Title = string.IsNullOrEmpty(entered) ? "Без названия" : entered;
-            _vm.SaveTitle();
+            ApplyFileSideEffects(_vm.SaveTitle());   // «Название» — источник авто-file: обновить файл-ячейки
             RecordChanged?.Invoke(this, _vm.RecordId);
         };
 
@@ -386,7 +386,7 @@ public partial class RecordPageView : UserControl
             {
                 if (_vm is null) return;
                 _vm.MarkdownText = t;
-                _vm.SaveMarkdown();
+                ApplyFileSideEffects(_vm.SaveMarkdown());   // «Описание» — источник авто-file: обновить файл-ячейки
                 RecordChanged?.Invoke(this, _vm.RecordId);
             },
             Preview = preview,
@@ -605,12 +605,16 @@ public partial class RecordPageView : UserControl
     // строку точечно (RefreshRecordRow), а не перезагружалась целиком. Дёшево: одна строка на месте.
     private void PersistProperty(PropertyRowVm row)
     {
-        var autoChanges = row.Persist();
-        // Авто-привязка пересчитала файл-столбцы этой записи — обновляем их редакторы сразу
-        // (правка столбца-источника → файл-ячейка меняется без перезагрузки панели).
-        foreach (var (fid, val) in autoChanges)
-            if (_fileEditors.TryGetValue(fid, out var ed)) ed.SyncStorage(val);
+        ApplyFileSideEffects(row.Persist());
         if (_vm is not null) RecordChanged?.Invoke(this, _vm.RecordId);
+    }
+
+    // Авто-привязка пересчитала файл-столбцы этой записи (правка столбца-источника, в т.ч.
+    // «Названия»/«Описания») — обновляем их редакторы сразу, без перезагрузки панели.
+    private void ApplyFileSideEffects(IReadOnlyList<(int FieldId, string Value)> changes)
+    {
+        foreach (var (fid, val) in changes)
+            if (_fileEditors.TryGetValue(fid, out var ed)) ed.SyncStorage(val);
     }
 
     // Безбордерное текстовое поле значения внутри карточки. Класс propValue убирает рамку/фон

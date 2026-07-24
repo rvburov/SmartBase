@@ -29,7 +29,8 @@ public sealed class FileAutoLinkTests : IDisposable
     }
 
     private static string FileVal(ConstructorRepository repo, int recordId, int fieldId) =>
-        repo.GetFieldValuesBatch([recordId])[recordId].TryGetValue(fieldId, out var v) ? v : "";
+        repo.GetFieldValuesBatch([recordId]).TryGetValue(recordId, out var m)
+            && m.TryGetValue(fieldId, out var v) ? v : "";   // запись без значений вовсе → ""
 
     [Fact]
     public void Resolve_materializes_exact_case_sensitive_matches_by_format()
@@ -46,7 +47,7 @@ public sealed class FileAutoLinkTests : IDisposable
         repo.SetFieldValue(r2.Id!.Value, src.Id!.Value, "отчёт");   // регистр иной → не найдено
         repo.SetFieldValue(r3.Id!.Value, src.Id!.Value, "Нет");     // файла нет
 
-        file.ConfigJson = new FileAutoRule(src.Id!.Value, _folder, "pdf").ToConfigJson();
+        file.ConfigJson = new FileAutoRule(src.Id!.Value.ToString(), _folder, "pdf").ToConfigJson();
         repo.UpdateField(file);
         var result = repo.ResolveAutoFileField(file.Id!.Value);
 
@@ -69,13 +70,13 @@ public sealed class FileAutoLinkTests : IDisposable
         repo.SetFieldValue(r1.Id!.Value, file.Id!.Value, "/старый/путь/вручную.pdf");   // ручное значение
 
         // Применение правила затирает ручное значение авто-подстановкой.
-        file.ConfigJson = new FileAutoRule(src.Id!.Value, _folder, "pdf").ToConfigJson();
+        file.ConfigJson = new FileAutoRule(src.Id!.Value.ToString(), _folder, "pdf").ToConfigJson();
         repo.UpdateField(file);
         repo.ResolveAutoFileField(file.Id!.Value);
         Assert.EndsWith("Смета.pdf", FileVal(repo, r1.Id!.Value, file.Id!.Value));
 
         // Недоступная папка → статус, значения не трогаем.
-        file.ConfigJson = new FileAutoRule(src.Id!.Value, Path.Combine(_folder, "нет-такой"), "pdf").ToConfigJson();
+        file.ConfigJson = new FileAutoRule(src.Id!.Value.ToString(), Path.Combine(_folder, "нет-такой"), "pdf").ToConfigJson();
         repo.UpdateField(file);
         Assert.Equal(ConstructorRepository.FileAutoResolveResult.FolderInaccessible,
                      repo.ResolveAutoFileField(file.Id!.Value));
@@ -89,7 +90,7 @@ public sealed class FileAutoLinkTests : IDisposable
         var col  = SampleData.AddCollection(repo);
         var src  = SampleData.AddField(repo, col.Id!.Value, "Имя", "text");
         var file = SampleData.AddField(repo, col.Id!.Value, "Файл", "file");
-        file.ConfigJson = new FileAutoRule(src.Id!.Value, _folder, "pdf").ToConfigJson();
+        file.ConfigJson = new FileAutoRule(src.Id!.Value.ToString(), _folder, "pdf").ToConfigJson();
         repo.UpdateField(file);
         var r = SampleData.AddRecord(repo, col.Id!.Value, "R");
 
@@ -112,7 +113,7 @@ public sealed class FileAutoLinkTests : IDisposable
         var col  = SampleData.AddCollection(repo);
         var src  = SampleData.AddField(repo, col.Id!.Value, "Имя", "text");
         var file = SampleData.AddField(repo, col.Id!.Value, "Файл", "file");
-        file.ConfigJson = new FileAutoRule(src.Id!.Value, _folder, "pdf").ToConfigJson();
+        file.ConfigJson = new FileAutoRule(src.Id!.Value.ToString(), _folder, "pdf").ToConfigJson();
         repo.UpdateField(file);
         var r = SampleData.AddRecord(repo, col.Id!.Value, "R");
 
@@ -128,6 +129,33 @@ public sealed class FileAutoLinkTests : IDisposable
     }
 
     [Fact]
+    public void Resolve_by_record_title_source_materializes_and_reacts_to_rename()
+    {
+        using var db = new TempDatabase();
+        var repo = db.Constructor;
+        var col  = SampleData.AddCollection(repo);
+        var file = SampleData.AddField(repo, col.Id!.Value, "Файл", "file");
+        // Источник — системная колонка «Название» (в db_field_values её нет — читается из db_records).
+        file.ConfigJson = new FileAutoRule(FileAutoRule.TitleSource, _folder, "pdf").ToConfigJson();
+        repo.UpdateField(file);
+
+        var r1 = SampleData.AddRecord(repo, col.Id!.Value, "Отчёт");   // → Отчёт.pdf
+        var r2 = SampleData.AddRecord(repo, col.Id!.Value, "Нет");     // файла нет
+
+        // Bulk-резолв материализует пути по названиям записей.
+        Assert.Equal(ConstructorRepository.FileAutoResolveResult.Ok, repo.ResolveAutoFileField(file.Id!.Value));
+        Assert.EndsWith("Отчёт.pdf", FileVal(repo, r1.Id!.Value, file.Id!.Value));
+        Assert.Equal("", FileVal(repo, r2.Id!.Value, file.Id!.Value));
+
+        // Переименование записи реактивно пересчитывает её файл (без bulk-резолва).
+        var effects = repo.SetRecordTitle(r2.Id!.Value, "Смета");
+        var change  = Assert.Single(effects);
+        Assert.Equal(file.Id!.Value, change.FieldId);
+        Assert.EndsWith("Смета.pdf", change.Value);
+        Assert.EndsWith("Смета.pdf", FileVal(repo, r2.Id!.Value, file.Id!.Value));
+    }
+
+    [Fact]
     public async Task Cancelled_resolve_leaves_values_unchanged()
     {
         using var db = new TempDatabase();
@@ -138,7 +166,7 @@ public sealed class FileAutoLinkTests : IDisposable
         var r = SampleData.AddRecord(repo, col.Id!.Value, "R");
         repo.SetFieldValue(r.Id!.Value, src.Id!.Value, "Отчёт");   // совпало бы с Отчёт.pdf
 
-        file.ConfigJson = new FileAutoRule(src.Id!.Value, _folder, "pdf").ToConfigJson();
+        file.ConfigJson = new FileAutoRule(src.Id!.Value.ToString(), _folder, "pdf").ToConfigJson();
         repo.UpdateField(file);
 
         // Отменённый заранее токен → операция не трогает значения, статус Cancelled.

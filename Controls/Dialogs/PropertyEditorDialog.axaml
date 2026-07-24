@@ -330,7 +330,8 @@
                        Foreground="{StaticResource BrushSecondaryText}"
                        Text="Файл подбирается автоматически из папки по имени «значение столбца.формат». Столбец становится только для чтения." />
 
-            <!-- Столбец-источник (только поля типа «Текст»). Первый пункт — без авто (ручной выбор). -->
+            <!-- Столбец-источник: «Название»/«Описание» и поля типа «Текст». Первый пункт — серая
+                 заглушка «Выбрать…» (без авто, ручной выбор). Цвет пункта задаёт item.Foreground. -->
             <StackPanel Spacing="6">
                 <TextBlock Text="Столбец-источник"
                            FontWeight="{StaticResource FontWeightBold}"
@@ -339,7 +340,14 @@
                           HorizontalAlignment="Stretch" Height="34"
                           VerticalContentAlignment="Center"
                           Background="{StaticResource BrushSecondaryBg}"
-                          CornerRadius="{StaticResource RadiusBase}" />
+                          CornerRadius="{StaticResource RadiusBase}">
+                    <ComboBox.ItemTemplate>
+                        <DataTemplate>
+                            <TextBlock Text="{Binding Name}" Foreground="{Binding Foreground}"
+                                       VerticalAlignment="Center" />
+                        </DataTemplate>
+                    </ComboBox.ItemTemplate>
+                </ComboBox>
             </StackPanel>
 
             <!-- Папка + формат: нужны только когда выбран столбец-источник (авто-режим). -->
