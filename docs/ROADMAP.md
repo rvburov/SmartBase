@@ -71,8 +71,9 @@
 
 - [x] **PostgreSQL-провайдер** для общих БД с одновременной записью нескольких пользователей.
       Реализован: `AppDbContext.OnConfiguring` ветвит `UseNpgsql`/`UseSqlite` (`IsPostgres`),
-      заведён параллельный набор миграций под Postgres (`Database/Migrations/Pg`), есть смоук
-      `Tests/PgSmoke` + регресс-харнесы SQLite.
+      заведён параллельный набор миграций под Postgres (`Database/Migrations/Pg`), покрытие —
+      `Tests/Integration` (`PgProviderTests`, SkippableFact на стенде `sb-pg`) + нагрузка `pgload`
+      в `Tests/Benchmarks`.
       ⚠️ SQLite-файл в сетевой папке при одновременной записи несколькими **ненадёжен** (риск
       повреждения) — именно для этого сценария нужен Postgres.
 - [ ] Переименование БД в списке настроек
