@@ -42,7 +42,7 @@ EF Core/SQLite). Документация разделена на два раз�
 
 ### Фичи ([developer/features/](developer/features/))
 
-- **Календарь** ([calendar/](developer/features/calendar/)): [overview](developer/features/calendar/overview.md) · month · week · day · year · schedule · journal · interactions · diagram.
+- **Календарь** ([calendar/](developer/features/calendar/)): [overview](developer/features/calendar/overview.md) · [month](developer/features/calendar/month.md) · [week](developer/features/calendar/week.md) · [day](developer/features/calendar/day.md) · [year](developer/features/calendar/year.md) · [schedule](developer/features/calendar/schedule.md) · [journal](developer/features/calendar/journal.md) · [interactions](developer/features/calendar/interactions.md) · [diagram](developer/features/calendar/diagram.md).
 - **Конструктор** ([constructor/](developer/features/constructor/)): [overview](developer/features/constructor/overview.md) · [table](developer/features/constructor/table.md) · [record-page](developer/features/constructor/record-page.md).
 - **Импорт/экспорт** ([import-export/](developer/features/import-export/)): [overview](developer/features/import-export/overview.md) · [import](developer/features/import-export/import.md) · [export](developer/features/import-export/export.md) · [cross-database-move](developer/features/import-export/cross-database-move.md).
 - [tasks.md](developer/features/tasks.md) — раздел «Задачи».
