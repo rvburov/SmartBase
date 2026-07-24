@@ -60,6 +60,26 @@ public sealed class ChangeLogTests
     }
 
     [Fact]
+    public async Task File_field_change_logs_file_name_not_path()
+    {
+        using var db = new TempDatabase();
+        var repo = db.Constructor;
+        var col  = SampleData.AddCollection(repo, "Документы");
+        var f    = SampleData.AddField(repo, col.Id!.Value, "Файл", "file");
+        var r    = SampleData.AddRecord(repo, col.Id!.Value, "Запись");
+
+        const string path = "/Users/roman/Downloads/Проценты_по_месяцам-2.xlsx";
+        repo.SetFieldValue(r.Id!.Value, f.Id!.Value, path);
+
+        var page = await repo.GetChangeLogPageAsync(new ConstructorRepository.ChangeLogQuery(), take: 100);
+        var upd  = page.Single(x => x.Action == "update" && x.TargetType == "record");
+
+        // В журнале — имя файла, а не абсолютный путь (как в ячейке и фильтре).
+        Assert.Contains("Проценты_по_месяцам-2.xlsx", upd.Detail);
+        Assert.DoesNotContain("/Users/roman/Downloads", upd.Detail);
+    }
+
+    [Fact]
     public async Task Purge_removes_all_entries()
     {
         using var db = new TempDatabase();

@@ -55,6 +55,8 @@ public partial class RecordPageView : UserControl
     private BottomTextTarget? _bottomTarget;
     private int?              _bottomFieldId;    // null = «Описание» (что открыто снизу — для восстановления)
     private readonly Dictionary<int, BottomTextTarget> _fieldTargets = new();
+    // Файл-редакторы по FieldId — чтобы обновить показ авто-file поля сразу при правке столбца-источника.
+    private readonly Dictionary<int, Controls.Widgets.FileEditor> _fileEditors = new();
     private BottomTextTarget? _descTarget;
     private bool _suppressBottomSync;            // гасит обратную синхронизацию инлайн↔нижний при программной установке
 
@@ -167,6 +169,7 @@ public partial class RecordPageView : UserControl
         _bottomFieldId = null;
         _descTarget = null;
         _fieldTargets.Clear();
+        _fileEditors.Clear();
     }
 
     private void UpdatePreviewVisibility()
@@ -248,6 +251,7 @@ public partial class RecordPageView : UserControl
         PropertiesHost.Children.Clear();
         _nameCols.Clear();
         _fieldTargets.Clear();
+        _fileEditors.Clear();
         _descTarget   = null;
         _bottomTarget = null;
         _selectedCard = null;
@@ -601,7 +605,11 @@ public partial class RecordPageView : UserControl
     // строку точечно (RefreshRecordRow), а не перезагружалась целиком. Дёшево: одна строка на месте.
     private void PersistProperty(PropertyRowVm row)
     {
-        row.Persist();
+        var autoChanges = row.Persist();
+        // Авто-привязка пересчитала файл-столбцы этой записи — обновляем их редакторы сразу
+        // (правка столбца-источника → файл-ячейка меняется без перезагрузки панели).
+        foreach (var (fid, val) in autoChanges)
+            if (_fileEditors.TryGetValue(fid, out var ed)) ed.SyncStorage(val);
         if (_vm is not null) RecordChanged?.Invoke(this, _vm.RecordId);
     }
 
@@ -735,9 +743,12 @@ public partial class RecordPageView : UserControl
                 {
                     HorizontalAlignment = HorizontalAlignment.Stretch,
                     Flat                = true,
+                    AutoFolder          = FileAutoRule.FromConfig(f.ConfigJson)?.Folder ?? "",   // read-only, если авто
                     Storage             = row.Value,
                 };
+                // Ручную правку сохраняем только в ручном режиме (в авто значения ведёт правило).
                 editor.Changed += (_, _) => { row.Value = editor.Storage ?? ""; PersistProperty(row); };
+                if (f.Id is int ffid) _fileEditors[ffid] = editor;   // для мгновенного обновления при правке источника
                 input = editor;
                 break;
             }

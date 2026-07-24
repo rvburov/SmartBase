@@ -725,8 +725,11 @@ public partial class TableView : UserControl
                 Separator   = MultiSelectValue.SeparatorFromConfig(f.ConfigJson),
                 // Формат показа «Числа» (валюта/проценты/разряды) — из ConfigJson поля.
                 NumberFormat = NumberFormatValue.FromConfig(f.ConfigJson),
+                // Папка авто-привязки «Файла» (если правило задано) → ячейка read-only.
+                FileAutoFolder = FileAutoRule.FromConfig(f.ConfigJson)?.Folder ?? "",
                 Tag         = fid,
-                BuildHeaderMenu = _ => BuildHeaderContextMenu(fid, f.IsRequired, f.Name, f.FieldType),
+                BuildHeaderMenu = _ => BuildHeaderContextMenu(fid, f.IsRequired, f.Name, f.FieldType,
+                    fileAuto: FileAutoRule.FromConfig(f.ConfigJson) is not null),
             });
         }
 
@@ -1272,6 +1275,7 @@ public partial class TableView : UserControl
                     Flat               = true,
                     ContentLeftPadding = 6,   // как Margin(6,…) у TextBlock-ячеек — общий левый отступ колонок
                     VerticalAlignment  = VerticalAlignment.Center,
+                    AutoFolder         = def.FileAutoFolder,   // непусто → read-only авто-режим
                 };
                 // Запись правки — в СТРОКУ ИЗ DataContext (контейнеры переиспользуются между строками),
                 // а не в захваченную при построении шаблона.
@@ -1972,7 +1976,8 @@ public partial class TableView : UserControl
     // Меню заголовка пользовательского поля:
     //   Изменить · Дублировать · Создать новое свойство · — · Сдвинуть вправо ·
     //   Сдвинуть влево · — · Удалить
-    private ContextMenu BuildHeaderContextMenu(int fieldId, bool isRequired, string name, string fieldType)
+    private ContextMenu BuildHeaderContextMenu(int fieldId, bool isRequired, string name, string fieldType,
+                                               bool fileAuto = false)
     {
         var menu = new ContextMenu();
 
@@ -1999,6 +2004,16 @@ public partial class TableView : UserControl
         miDisplay.Click += (_, _) => ColumnDisplayRequested?.Invoke(this, EventArgs.Empty);
         menu.Items.Add(miDisplay);
 
+        // «Файл» с авто-привязкой: пересканировать папку и пересобрать значения (файлы на диске
+        // могли поменяться / появились новые). Значения read-only ведёт правило.
+        if (fileAuto)
+        {
+            var miRefresh = new MenuItem { Header = "Обновить привязку" };
+            miRefresh.Click += (_, _) => RefreshAutoFileFromMenu(fieldId);
+            miRefresh.IsEnabled = Can(PermAction.EditRecord);
+            menu.Items.Add(miRefresh);
+        }
+
         AddMoveItems(menu, fieldId.ToString());
         AddWidthModeItems(menu);
 
@@ -2009,6 +2024,33 @@ public partial class TableView : UserControl
         menu.Items.Add(miDelete);
 
         return menu;
+    }
+
+    // «Обновить привязку» файла: пересканировать папку, пересобрать значения и перечитать строки.
+    // Окно прогресса — только если долго (маленькая коллекция обновляется без мелькания).
+    private async void RefreshAutoFileFromMenu(int fieldId)
+    {
+        if (_repository is null) return;
+        var win = VisualRoot as Avalonia.Controls.Window;
+
+        using var cts = new System.Threading.CancellationTokenSource();
+        Controls.Dialogs.ProgressDialog? dlg = null;
+        var progress = new Progress<double>(f => dlg?.SetProgress(f, "Поиск файлов…"));
+        var bg = _repository.ResolveAutoFileFieldAsync(fieldId, progress, cts.Token);
+        if (win is not null && await System.Threading.Tasks.Task.WhenAny(bg, System.Threading.Tasks.Task.Delay(400)) != bg)
+        {
+            dlg = new Controls.Dialogs.ProgressDialog { Title = "Привязка файлов" };
+            dlg.SetProgress(0, "Поиск файлов…");
+            dlg.EnableCancel(() => cts.Cancel());
+            var closed = dlg.ShowDialog(win);
+            await bg;
+            dlg.Done();
+            await closed;
+        }
+        var result = await bg;
+        ReloadRows();
+        if (result == ConstructorRepository.FileAutoResolveResult.FolderInaccessible && win is not null)
+            await Controls.Dialogs.ConfirmDialog.Info("Папка недоступна").ShowDialog(win);
     }
 
     // Удаление из контекстного меню «Удалить». Если поле входит в текущее выделение

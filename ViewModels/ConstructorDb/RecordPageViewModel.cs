@@ -115,9 +115,12 @@ public partial class PropertyRowVm : ObservableObject
         _value      = initialValue;
     }
 
-    public void Persist()
+    /// <summary>Сохранить значение. Возвращает побочные изменения авто-привязки файлов
+    /// (файл-столбцы этой записи пересчитались из-за правки источника) — панель записи применяет
+    /// их к соответствующим файл-редакторам, чтобы обновить показ сразу.</summary>
+    public IReadOnlyList<(int FieldId, string Value)> Persist()
     {
-        try { _repository.SetFieldValue(_recordId, Field.Id!.Value, Value ?? ""); }
-        catch (Exception ex) when (DbErrors.Handle(ex, _repository.DbPath)) { }
+        try { return _repository.SetFieldValue(_recordId, Field.Id!.Value, Value ?? ""); }
+        catch (Exception ex) when (DbErrors.Handle(ex, _repository.DbPath)) { return []; }
     }
 }

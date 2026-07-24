@@ -22,10 +22,12 @@ namespace SmartBase.Controls.Widgets;
 public partial class FileEditor : UserControl
 {
     private string _path = "";        // хранимое значение: полный путь или ""
+    private string _autoFolder = "";  // непусто → авто-режим (read-only, значения ведёт правило)
     private bool   _editing;
     private bool   _suppress;
     private Window? _window;
     private readonly DispatcherTimer _clickTimer;
+    private DispatcherTimer? _errFlash;
 
     /// <summary>Поднимается при изменении значения пользователем.</summary>
     public event EventHandler? Changed;
@@ -45,7 +47,8 @@ public partial class FileEditor : UserControl
         {
             if (!e.GetCurrentPoint(LinkHost).Properties.IsLeftButtonPressed) return;
             e.Handled = true;
-            if (e.ClickCount >= 2) { _clickTimer.Stop(); BeginEdit(); return; }
+            // Авто-режим: ручной правки нет (двойной клик не редактирует), только одиночное действие.
+            if (!IsAuto && e.ClickCount >= 2) { _clickTimer.Stop(); BeginEdit(); return; }
             _clickTimer.Stop();
             _clickTimer.Start();
         };
@@ -92,6 +95,22 @@ public partial class FileEditor : UserControl
         set { _path = value?.Trim() ?? ""; EndEdit(); UpdateVisual(); }
     }
 
+    /// <summary>Папка авто-привязки. Непусто → ячейка read-only (правило ведёт значения): скрепки
+    /// и ручного ввода нет, недоступная папка показывается как «папка недоступна». Пусто — обычный
+    /// ручной режим.</summary>
+    public string AutoFolder
+    {
+        set
+        {
+            _autoFolder = value ?? "";
+            Pick.IsVisible = _autoFolder.Length == 0;   // в авто-режиме скрепки нет
+            EndEdit();
+            UpdateVisual();
+        }
+    }
+
+    private bool IsAuto => _autoFolder.Length > 0;
+
     /// <summary>Обновить показ из модели (async-дозагрузка строки таблицы / правка из другого
     /// места) — без поднятия <see cref="Changed"/> и не прерывая текущую ручную правку.</summary>
     public void SyncStorage(string? path)
@@ -134,6 +153,13 @@ public partial class FileEditor : UserControl
 
     private void OnSingleClick()
     {
+        if (IsAuto)
+        {
+            // Авто-режим read-only: папка недоступна → плашка; файл есть → открыть; иначе — ничего.
+            if (!System.IO.Directory.Exists(_autoFolder)) { FlashError("Папка недоступна"); return; }
+            if (_path.Length > 0 && File.Exists(_path)) OpenFile();
+            return;
+        }
         if (_path.Length == 0) return;              // «Выбрать файл…» — не кликабельно
         if (File.Exists(_path)) OpenFile();
         else BeginEdit();                           // файла нет — даём поправить путь руками
@@ -225,6 +251,33 @@ public partial class FileEditor : UserControl
     {
         if (_editing) return;
 
+        // Авто-режим (read-only): «папка недоступна» / имя-ссылка / «файл не найден».
+        if (IsAuto)
+        {
+            if (!System.IO.Directory.Exists(_autoFolder))
+            {
+                Link.Text            = "папка недоступна";
+                Link.Foreground      = Secondary();
+                Link.TextDecorations = null;
+                LinkHost.Cursor      = new Cursor(StandardCursorType.Hand);
+            }
+            else if (_path.Length > 0 && File.Exists(_path))
+            {
+                Link.Text            = SafeFileName(_path);
+                Link.Foreground      = Accent();
+                Link.TextDecorations = TextDecorations.Underline;
+                LinkHost.Cursor      = new Cursor(StandardCursorType.Hand);
+            }
+            else
+            {
+                Link.Text            = _path.Length > 0 ? SafeFileName(_path) + " — файл не найден" : "файл не найден";
+                Link.Foreground      = Secondary();
+                Link.TextDecorations = null;
+                LinkHost.Cursor      = Cursor.Default;
+            }
+            return;
+        }
+
         if (_path.Length == 0)
         {
             Link.Text            = "Выбрать файл…";     // серое, некликабельное
@@ -249,6 +302,16 @@ public partial class FileEditor : UserControl
             Link.TextDecorations = null;
             LinkHost.Cursor      = new Cursor(StandardCursorType.Hand);
         }
+    }
+
+    // Показать плашку на пару секунд (клик по «папка недоступна»): та же плашка-оверлей.
+    private void FlashError(string message)
+    {
+        ShowError(message);
+        _errFlash?.Stop();
+        _errFlash = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2.5) };
+        _errFlash.Tick += (_, _) => { _errFlash?.Stop(); HideError(); };
+        _errFlash.Start();
     }
 
     // Имя для показа — общий источник с фильтром таблицы (валидный путь → базовое имя,

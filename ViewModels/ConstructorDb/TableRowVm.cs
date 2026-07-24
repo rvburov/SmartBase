@@ -202,9 +202,18 @@ public class TableRowVm : INotifyPropertyChanged
             if (!int.TryParse(key, out var id)) return;
             if (_values.TryGetValue(id, out var old) && old == newVal) return;
 
-            try { _repository?.SetFieldValue(RecordId, id, newVal); }
+            IReadOnlyList<(int FieldId, string Value)> autoChanges;
+            try { autoChanges = _repository?.SetFieldValue(RecordId, id, newVal) ?? []; }
             catch (Exception ex) when (DbErrors.Handle(ex, _repository?.DbPath)) { NotifyAllCells(); return; }
             _values[id] = newVal;
+            // Побочные изменения авто-привязки файлов (правка столбца-источника пересчитала
+            // файл-столбец этой записи) — отражаем в кеше, чтобы файл-ячейка обновилась сразу.
+            // Само редактируемое поле (id) не трогаем — каретка ввода не сбивается.
+            foreach (var (fid, val) in autoChanges)
+            {
+                if (fid == id) continue;
+                if (val.Length == 0) _values.Remove(fid); else _values[fid] = val;
+            }
             BumpUpdatedLocal();
             NotifyAllCells();
             Edited?.Invoke(this, RecordId);

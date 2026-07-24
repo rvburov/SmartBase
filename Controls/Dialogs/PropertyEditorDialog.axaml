@@ -319,6 +319,85 @@
             </StackPanel>
         </StackPanel>
 
+        <!-- Авто-привязка файлов: видна только для типа «Файл». Файл берётся из папки по
+             совпадению имени со значением текст-столбца, столбец становится read-only.
+             Хранится в ConfigJson поля как {"auto":{sourceFieldId,folder,format}}. -->
+        <StackPanel x:Name="FileSection" IsVisible="False" Spacing="10" Margin="0,0,0,12">
+            <TextBlock Text="Авто-привязка файлов"
+                       FontWeight="{StaticResource FontWeightBold}"
+                       Foreground="{StaticResource BrushSecondaryText}" />
+            <TextBlock TextWrapping="Wrap" LineHeight="16"
+                       Foreground="{StaticResource BrushSecondaryText}"
+                       Text="Файл подбирается автоматически из папки по имени «значение столбца.формат». Столбец становится только для чтения." />
+
+            <!-- Столбец-источник (только поля типа «Текст»). Первый пункт — без авто (ручной выбор). -->
+            <StackPanel Spacing="6">
+                <TextBlock Text="Столбец-источник"
+                           FontWeight="{StaticResource FontWeightBold}"
+                           Foreground="{StaticResource BrushSecondaryText}" />
+                <ComboBox x:Name="FileSourceCombo"
+                          HorizontalAlignment="Stretch" Height="34"
+                          VerticalContentAlignment="Center"
+                          Background="{StaticResource BrushSecondaryBg}"
+                          CornerRadius="{StaticResource RadiusBase}" />
+            </StackPanel>
+
+            <!-- Папка + формат: нужны только когда выбран столбец-источник (авто-режим). -->
+            <StackPanel x:Name="FileAutoOptions" Spacing="10" IsVisible="False">
+                <StackPanel Spacing="6">
+                    <TextBlock Text="Папка с файлами"
+                               FontWeight="{StaticResource FontWeightBold}"
+                               Foreground="{StaticResource BrushSecondaryText}" />
+                    <Grid ColumnDefinitions="*,8,Auto">
+                        <TextBox Grid.Column="0" x:Name="FileFolderText"
+                                 IsReadOnly="True" Height="34"
+                                 Watermark="Папка не выбрана"
+                                 VerticalContentAlignment="Center"
+                                 CornerRadius="{StaticResource RadiusBase}" />
+                        <Button Grid.Column="2" x:Name="FileFolderBtn" Classes="dialog"
+                                Content="Выбрать…" />
+                    </Grid>
+                </StackPanel>
+
+                <StackPanel Spacing="6">
+                    <TextBlock Text="Формат файла"
+                               FontWeight="{StaticResource FontWeightBold}"
+                               Foreground="{StaticResource BrushSecondaryText}" />
+                    <ComboBox x:Name="FileFormatCombo"
+                              HorizontalAlignment="Stretch" Height="34"
+                              VerticalContentAlignment="Center"
+                              Background="{StaticResource BrushSecondaryBg}"
+                              CornerRadius="{StaticResource RadiusBase}">
+                        <ComboBoxItem Content="pdf" />
+                        <ComboBoxItem Content="doc" />
+                        <ComboBoxItem Content="docx" />
+                        <ComboBoxItem Content="xls" />
+                        <ComboBoxItem Content="xlsx" />
+                        <ComboBoxItem Content="csv" />
+                        <ComboBoxItem Content="txt" />
+                        <ComboBoxItem Content="rtf" />
+                        <ComboBoxItem Content="ppt" />
+                        <ComboBoxItem Content="pptx" />
+                        <ComboBoxItem Content="png" />
+                        <ComboBoxItem Content="jpg" />
+                        <ComboBoxItem Content="jpeg" />
+                        <ComboBoxItem Content="gif" />
+                        <ComboBoxItem Content="svg" />
+                        <ComboBoxItem Content="heic" />
+                        <ComboBoxItem Content="zip" />
+                        <ComboBoxItem Content="rar" />
+                        <ComboBoxItem Content="7z" />
+                        <ComboBoxItem Content="json" />
+                        <ComboBoxItem Content="Свой формат…" />
+                    </ComboBox>
+                    <TextBox x:Name="FileFormatCustom" IsVisible="False" Height="34"
+                             Watermark="например: dwg"
+                             VerticalContentAlignment="Center"
+                             CornerRadius="{StaticResource RadiusBase}" />
+                </StackPanel>
+            </StackPanel>
+        </StackPanel>
+
         <!-- Пояснение для системных колонок «Название»/«Описание»: скрыто по умолчанию,
              показывается только в системном режиме (см. code-behind). Объясняет, почему
              тип заблокирован и свойство нельзя удалить. -->

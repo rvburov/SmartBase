@@ -34,6 +34,10 @@ public sealed class TableColumnDef
     // Формат показа поля «Число» (из ConfigJson поля); по умолчанию «Обычное число» (показ = сырому вводу).
     public NumberFormat NumberFormat { get; init; } = NumberFormat.Default;
 
+    // Папка авто-привязки поля «Файл» (из ConfigJson: {"auto":{folder}}); пусто — ручной режим.
+    // Непусто → ячейка файла read-only (правило ведёт значения), нужна для статуса «папка недоступна».
+    public string FileAutoFolder { get; init; } = "";
+
     // Произвольный тег для идентификации (например, field.Id)
     public object? Tag { get; init; }
 

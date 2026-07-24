@@ -1,10 +1,14 @@
+using System.IO;
 using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Media;
+using Avalonia.Platform.Storage;
 using Avalonia.VisualTree;
 using SmartBase.Core.Models;
 using SmartBase.Database.Repositories;
@@ -101,6 +105,13 @@ public partial class PropertyEditorDialog : Window
         // блок опций скрыт для «Обычного числа»).
         NumberFormatCombo.SelectionChanged += (_, _) => UpdateNumberOptionsVisibility();
 
+        // Авто-привязка файлов: выбор столбца-источника открывает блок «папка/формат»;
+        // «Свой формат…» — поле ручного расширения; кнопка — системный выбор папки.
+        FileSourceCombo.SelectionChanged += (_, _) => UpdateFileAutoVisibility();
+        FileFormatCombo.SelectionChanged += (_, _) => UpdateFileFormatCustomVisibility();
+        FileFolderBtn.Click              += async (_, _) => await PickFolderAsync();
+        PopulateFileSources();
+
         if (editFieldId.HasValue)
         {
             Title = "Изменение свойства";
@@ -123,6 +134,9 @@ public partial class PropertyEditorDialog : Window
                 // «Число» — восстановить выбранный формат показа (валюта/проценты/разряды).
                 if (field.FieldType == "number")
                     ApplyNumberFormat(NumberFormatValue.FromConfig(field.ConfigJson));
+                // «Файл» — восстановить правило авто-привязки (столбец/папка/формат), если есть.
+                if (field.FieldType == "file")
+                    RestoreFileAutoRule(field.ConfigJson);
             }
         }
 
@@ -165,9 +179,115 @@ public partial class PropertyEditorDialog : Window
         SeparatorSection.IsVisible = _selectedType == "multiselect";
         // Формат числа — только для типа «Число».
         NumberSection.IsVisible = _selectedType == "number";
+        // Авто-привязка файлов — только для типа «Файл».
+        FileSection.IsVisible = _selectedType == "file";
 
         if (_selectedType == "status" && _optionBoxes.Count == 0)
             foreach (var o in ConstructorRepository.TaskStatusOptions) AddOptionRow(o);
+    }
+
+    // ── Авто-привязка файлов ────────────────────────────────────────────────────
+
+    /// <summary>Пункт выпадашки столбца-источника (Id=0 — «без авто», ручной выбор).</summary>
+    private sealed class SourceFieldItem
+    {
+        public int    Id   { get; init; }
+        public string Name { get; init; } = "";
+        public override string ToString() => Name;
+    }
+
+    // Заполнить список столбцов-источников: «без авто» + поля типа «Текст» этой коллекции.
+    private void PopulateFileSources()
+    {
+        if (_systemMode || _repository is null) return;
+        var items = new List<SourceFieldItem> { new() { Id = 0, Name = "— Без авто-привязки (ручной выбор) —" } };
+        foreach (var f in _repository.GetFields(_collectionId))
+            if (f.FieldType == "text" && f.Id is int fid)
+                items.Add(new SourceFieldItem { Id = fid, Name = f.Name });
+        FileSourceCombo.ItemsSource   = items;
+        FileSourceCombo.SelectedIndex = 0;
+    }
+
+    // Разобрать сохранённое правило и выставить контролы (столбец/папку/формат).
+    private void RestoreFileAutoRule(string? configJson)
+    {
+        var rule = FileAutoRule.FromConfig(configJson);
+        if (rule is null) { FileSourceCombo.SelectedIndex = 0; return; }
+
+        if (FileSourceCombo.ItemsSource is IEnumerable<SourceFieldItem> items)
+        {
+            var idx = items.ToList().FindIndex(i => i.Id == rule.SourceFieldId);
+            FileSourceCombo.SelectedIndex = idx >= 0 ? idx : 0;
+        }
+        FileFolderText.Text = rule.Folder;
+
+        // Формат: выбрать из списка либо «Свой формат…» + поле.
+        var found = false;
+        foreach (var it in FileFormatCombo.Items)
+            if (it is ComboBoxItem { Content: string c } && string.Equals(c, rule.Format, StringComparison.Ordinal))
+            {
+                FileFormatCombo.SelectedItem = it; found = true; break;
+            }
+        if (!found)
+        {
+            SelectFormatCustom();
+            FileFormatCustom.Text = rule.Format;
+        }
+        UpdateFileAutoVisibility();
+    }
+
+    // Папка/формат нужны только когда выбран реальный столбец-источник (авто-режим).
+    private void UpdateFileAutoVisibility() =>
+        FileAutoOptions.IsVisible = SelectedSource() is { Id: > 0 };
+
+    // «Свой формат…» открывает поле ручного ввода расширения.
+    private void UpdateFileFormatCustomVisibility() =>
+        FileFormatCustom.IsVisible = SelectedFormatIsCustom();
+
+    private SourceFieldItem? SelectedSource() => FileSourceCombo.SelectedItem as SourceFieldItem;
+
+    private bool SelectedFormatIsCustom() =>
+        (FileFormatCombo.SelectedItem as ComboBoxItem)?.Content?.ToString() == "Свой формат…";
+
+    private void SelectFormatCustom()
+    {
+        foreach (var it in FileFormatCombo.Items)
+            if (it is ComboBoxItem { Content: "Свой формат…" }) { FileFormatCombo.SelectedItem = it; break; }
+    }
+
+    // Итоговый формат (расширение без точки): из списка или из поля «Свой формат…».
+    private string SelectedFormat()
+    {
+        if (SelectedFormatIsCustom()) return (FileFormatCustom.Text ?? "").Trim().TrimStart('.');
+        return ((FileFormatCombo.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? "").Trim().TrimStart('.');
+    }
+
+    private async System.Threading.Tasks.Task PickFolderAsync()
+    {
+        var folders = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
+        {
+            Title = "Выберите папку с файлами", AllowMultiple = false,
+        });
+        if (folders.Count == 0) return;
+        var path = folders[0].Path.LocalPath;
+        FileFolderText.Text = path;
+        if (!Directory.Exists(path)) ShowError("Папка недоступна");
+        else HideError();
+    }
+
+    // Собрать ConfigJson поля «Файл»: правило авто-привязки, если выбран столбец-источник и
+    // корректно заданы папка+формат. Иначе — пустой конфиг (ручной режим). null → ошибка показана.
+    private string? BuildFileConfigJson()
+    {
+        var src = SelectedSource();
+        if (src is not { Id: > 0 }) return "{}";   // ручной режим
+
+        var folder = FileFolderText.Text?.Trim() ?? "";
+        var format = SelectedFormat();
+        if (folder.Length == 0) { ShowError("Выберите папку с файлами"); return null; }
+        if (!Directory.Exists(folder)) { ShowError("Папка недоступна"); return null; }
+        if (format.Length == 0) { ShowError("Выберите формат файла"); return null; }
+        return new FileAutoRule(src.Id, folder, format).ToConfigJson();
     }
 
     // Под-опции формата числа: блок опций (точность/разряды/валюта) скрыт для «Обычного числа»
@@ -450,7 +570,7 @@ public partial class PropertyEditorDialog : Window
         LayoutUpdated += Restore;
     }
 
-    private void TrySave()
+    private async void TrySave()
     {
         var name = NameBox.Text?.Trim() ?? "";
         if (string.IsNullOrEmpty(name))
@@ -469,6 +589,26 @@ public partial class PropertyEditorDialog : Window
             return;
         }
 
+        // «Файл»: собрать конфиг авто-привязки (или пустой «{}» для ручного режима).
+        // null — валидация не прошла (ошибка уже показана баннером).
+        var fileConfig = "{}";
+        if (_selectedType == "file")
+        {
+            var cfg = BuildFileConfigJson();
+            if (cfg is null) return;
+            fileConfig = cfg;
+        }
+        var fileAuto = _selectedType == "file" && FileAutoRule.FromConfig(fileConfig) is not null;
+
+        // Включение авто-привязки на поле с уже сохранёнными значениями — подтверждаем затирание.
+        if (fileAuto && _editFieldId is int existId && _repository.FieldHasValues(existId))
+        {
+            var ok = await new ConfirmDialog(
+                "Значения столбца будут заменены авто-подстановкой. Продолжить?", "Продолжить")
+                .ShowDialog<bool>(this);
+            if (!ok) return;
+        }
+
         int savedFieldId;
         try
         {
@@ -480,9 +620,10 @@ public partial class PropertyEditorDialog : Window
                 field.Name = name;
                 // Системные поля имеют фиксированный тип (markdown/title), их тип не меняем.
                 if (!field.IsSystem) field.FieldType = _selectedType;
-                // Пункты «Списка»/«Статуса» и формат «Числа» — в ConfigJson (иные типы не трогают).
+                // Пункты «Списка»/«Статуса», формат «Числа», правило «Файла» — в ConfigJson.
                 if (FieldTypeInfo.IsOptionList(_selectedType)) field.ConfigJson = BuildOptionsConfigJson();
                 else if (_selectedType == "number")           field.ConfigJson = BuildNumberConfigJson();
+                else if (_selectedType == "file")             field.ConfigJson = fileConfig;
                 _repository.UpdateField(field);
                 savedFieldId = _editFieldId.Value;
             }
@@ -499,6 +640,7 @@ public partial class PropertyEditorDialog : Window
                     Position     = maxPos + 1000,
                     ConfigJson   = FieldTypeInfo.IsOptionList(_selectedType) ? BuildOptionsConfigJson()
                                  : _selectedType == "number"                 ? BuildNumberConfigJson()
+                                 : _selectedType == "file"                   ? fileConfig
                                  : "{}",
                 });
                 savedFieldId = added.Id!.Value;
@@ -526,6 +668,28 @@ public partial class PropertyEditorDialog : Window
                 ShowError(ex.Message);
                 return;
             }
+        }
+
+        // Авто-привязка файлов: материализуем пути. Окно прогресса — только если операция
+        // не успела быстро (маленькая коллекция закрывает диалог без мелькания окна).
+        if (fileAuto)
+        {
+            using var cts = new CancellationTokenSource();
+            ProgressDialog? dlg = null;
+            var progress = new Progress<double>(f => dlg?.SetProgress(f, "Поиск файлов…"));
+            var bg = _repository.ResolveAutoFileFieldAsync(savedFieldId, progress, cts.Token);
+            if (await Task.WhenAny(bg, Task.Delay(400)) != bg)
+            {
+                dlg = new ProgressDialog { Title = "Привязка файлов" };
+                dlg.SetProgress(0, "Поиск файлов…");
+                dlg.EnableCancel(() => cts.Cancel());   // Отмена → значения не меняются
+                var closed = dlg.ShowDialog(this);
+                await bg;
+                dlg.Done();
+                await closed;
+            }
+            if (await bg == ConstructorRepository.FileAutoResolveResult.FolderInaccessible)
+                await ConfirmDialog.Info("Папка недоступна").ShowDialog(this);
         }
 
         Close(true);

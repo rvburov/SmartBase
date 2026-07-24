@@ -502,6 +502,11 @@ public partial class ConstructorControllerView : UserControl
         {
             // Изменение свойства (имя/тип/опции) — перестраиваем только эту колонку.
             TableViewCtrl.RebuildColumn(editId.ToString());
+            // Авто-привязка файлов материализовала значения поля — перечитать строки, чтобы
+            // подставленные файлы отобразились сразу (RebuildColumn обновляет лишь UI колонки).
+            var edited = _repository.GetFields(_currentCollectionId.Value).FirstOrDefault(x => x.Id == editId);
+            if (edited?.FieldType == "file" && FileAutoRule.FromConfig(edited.ConfigJson) is not null)
+                TableViewCtrl.ReloadRows();
         }
         else
         {

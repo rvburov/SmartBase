@@ -1,6 +1,7 @@
 using System.Data.Common;
 using System.Linq.Expressions;
 using System.Text.RegularExpressions;
+using System.Threading;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
@@ -2248,6 +2249,209 @@ public partial class ConstructorRepository(AppDbContext db)
         if (!wasOpen) conn.Close();
     }
 
+    /// <summary>Итог применения авто-привязки файлов.</summary>
+    public enum FileAutoResolveResult { Ok, FolderInaccessible, NoRule, Cancelled }
+
+    /// <summary>Есть ли у поля хоть одно непустое значение (для подтверждения затирания при
+    /// включении авто-привязки).</summary>
+    public bool FieldHasValues(int fieldId) =>
+        db.DbFieldValues.AsNoTracking().Any(v => v.FieldId == fieldId && v.Value != "");
+
+    /// <summary>
+    /// Материализует авто-привязку файлов поля «файл»: сканирует папку (верхний уровень, регистр
+    /// учитывается), сопоставляет по «значение_текст-столбца.формат», и ПЕРЕЗАПИСЫВАЕТ значения поля
+    /// найденными путями (существующие значения очищаются — теперь столбец ведёт правило). Значения
+    /// материализуются в db_field_values, поэтому фильтр/сортировка работают штатно.
+    /// Папка недоступна → значения не трогаем, возвращаем статус (UI покажет плашку).
+    /// </summary>
+    public FileAutoResolveResult ResolveAutoFileField(int fieldId)
+    {
+        var field = db.DbFields.AsNoTracking().FirstOrDefault(f => f.Id == fieldId);
+        if (field is null || field.FieldType != "file") return FileAutoResolveResult.NoRule;
+        Demand(PermAction.EditRecord, field.CollectionId);
+        return ResolveAutoFileFieldCore(fieldId, null, default);
+    }
+
+    /// <summary>Фоновый вариант применения авто-привязки (для окна прогресса): проверка прав — на
+    /// общем репозитории, работа — на изолированном подключении (общий Context однопоточный, см.
+    /// правило об AppDbContext), поэтому безопасно из Task.Run. <paramref name="progress"/> — доля
+    /// 0..1; <paramref name="ct"/> — отмена (при отмене значения не меняются, статус Cancelled).</summary>
+    public Task<FileAutoResolveResult> ResolveAutoFileFieldAsync(
+        int fieldId, IProgress<double>? progress = null, CancellationToken ct = default)
+    {
+        var field = db.DbFields.AsNoTracking().FirstOrDefault(f => f.Id == fieldId);
+        if (field is null || field.FieldType != "file") return Task.FromResult(FileAutoResolveResult.NoRule);
+        Demand(PermAction.EditRecord, field.CollectionId);
+        var path = db.DbPath;
+        // ct в Task.Run НЕ передаём: задача всегда стартует и обрабатывает отмену кооперативно
+        // (возвращает Cancelled), чтобы await у вызывающего не бросал TaskCanceledException.
+        return Task.Run(() =>
+        {
+            using var ctx = new AppDbContext(path);
+            return new ConstructorRepository(ctx).ResolveAutoFileFieldCore(fieldId, progress, ct);
+        });
+    }
+
+    private FileAutoResolveResult ResolveAutoFileFieldCore(int fieldId, IProgress<double>? progress, CancellationToken ct)
+    {
+        var field = db.DbFields.AsNoTracking().FirstOrDefault(f => f.Id == fieldId);
+        if (field is null || field.FieldType != "file") return FileAutoResolveResult.NoRule;
+
+        var rule = FileAutoRule.FromConfig(field.ConfigJson);
+        if (rule is null) return FileAutoResolveResult.NoRule;
+
+        if (!TryScanFolder(rule.Folder, out var files)) return FileAutoResolveResult.FolderInaccessible;
+
+        // Значения столбца-источника СТРИМИМ сырым reader'ом (без EF-материализации всех строк —
+        // на миллионах записей это критично по памяти) и буферим ТОЛЬКО совпадения. Затем
+        // перезаписываем файл-поле. Чтение по индексу (FieldId, Value).
+        var matches = new List<(int RecordId, string Value)>();
+        var conn    = db.Database.GetDbConnection();
+        var wasOpen = conn.State == System.Data.ConnectionState.Open;
+        if (!wasOpen) conn.Open();
+        try
+        {
+            // Всего значений источника — для процентов (чтение = 0..90% прогресса).
+            long total;
+            using (var cnt = conn.CreateCommand())
+            {
+                cnt.CommandText = $"SELECT COUNT(*) FROM db_field_values WHERE FieldId = {rule.SourceFieldId} AND Value <> ''";
+                total = Convert.ToInt64(cnt.ExecuteScalar() ?? 0L);
+            }
+
+            using (var sel = conn.CreateCommand())
+            {
+                sel.CommandText = $"SELECT RecordId, Value FROM db_field_values WHERE FieldId = {rule.SourceFieldId} AND Value <> ''";
+                using var reader = sel.ExecuteReader();
+                long read = 0;
+                while (reader.Read())
+                {
+                    if (ct.IsCancellationRequested) return FileAutoResolveResult.Cancelled;   // ничего не записано
+                    var target = rule.TargetFileName(reader.GetString(1));
+                    if (target.Length > 0 && files.TryGetValue(target, out var full))
+                        matches.Add((reader.GetInt32(0), full));
+                    if (++read % 5000 == 0 && total > 0) progress?.Report(0.9 * read / total);
+                }
+            }
+            // reader закрыт → нет конфликта параллельных команд на соединении (важно для Npgsql).
+            // Запись = 90..100%. Отмена внутри → откат транзакции (значения не меняются).
+            if (!RewriteFieldValues(fieldId, matches, progress, ct)) return FileAutoResolveResult.Cancelled;
+            progress?.Report(1.0);
+            return FileAutoResolveResult.Ok;
+        }
+        finally { if (!wasOpen) conn.Close(); }
+    }
+
+    // Скан папки в словарь имя→путь (только верхний уровень, регистр учитывается — Ordinal).
+    // false — папки нет или нет доступа.
+    private static bool TryScanFolder(string folder, out Dictionary<string, string> files)
+    {
+        files = new Dictionary<string, string>(StringComparer.Ordinal);
+        try
+        {
+            if (!System.IO.Directory.Exists(folder)) return false;
+            foreach (var path in System.IO.Directory.EnumerateFiles(folder))
+                files[System.IO.Path.GetFileName(path)] = path;   // имена в папке уникальны
+            return true;
+        }
+        catch (Exception ex) when (ex is System.IO.IOException or UnauthorizedAccessException)
+        {
+            files = new Dictionary<string, string>(StringComparer.Ordinal);
+            return false;
+        }
+    }
+
+    // Перезаписать ВСЕ значения поля: удалить прежние + вставить переданные (одна транзакция,
+    // сырой ADO.NET — значений могут быть сотни тысяч). PK db_field_values — (RecordId, FieldId).
+    // false — операцию отменили (ct): транзакция откатана, значения НЕ изменены. progress — 0.9..1.0.
+    private bool RewriteFieldValues(int fieldId, IReadOnlyList<(int RecordId, string Value)> rows,
+                                    IProgress<double>? progress = null, CancellationToken ct = default)
+    {
+        var conn    = db.Database.GetDbConnection();
+        var wasOpen = conn.State == System.Data.ConnectionState.Open;
+        if (!wasOpen) conn.Open();
+        try
+        {
+            using var tx = conn.BeginTransaction();
+            using (var del = conn.CreateCommand())
+            {
+                del.Transaction = tx;
+                del.CommandText = $"DELETE FROM db_field_values WHERE FieldId = {fieldId}";
+                del.ExecuteNonQuery();
+            }
+            if (rows.Count > 0)
+            {
+                using var ins = conn.CreateCommand();
+                ins.Transaction = tx;
+                ins.CommandText = $"INSERT INTO db_field_values (RecordId, FieldId, Value) VALUES (@rid, {fieldId}, @val)";
+                var pRid = AddParam(ins, "@rid");
+                var pVal = AddParam(ins, "@val");
+                ins.Prepare();
+                for (var i = 0; i < rows.Count; i++)
+                {
+                    if (ct.IsCancellationRequested) { tx.Rollback(); return false; }
+                    pRid.Value = rows[i].RecordId;
+                    pVal.Value = rows[i].Value;
+                    ins.ExecuteNonQuery();
+                    if ((i & 8191) == 0) progress?.Report(0.9 + 0.1 * i / rows.Count);
+                }
+            }
+            tx.Commit();
+            return true;
+        }
+        finally { if (!wasOpen) conn.Close(); }
+    }
+
+    // Пересчитать авто-file поля коллекции для ОДНОЙ записи (добавление записи / правка
+    // столбца-источника). Дёшево: точечная проверка файла на диске, без bulk-скана.
+    private void ResolveAutoFileForRecord(int collectionId, int recordId)
+    {
+        var autoFields = db.DbFields.AsNoTracking()
+            .Where(f => f.CollectionId == collectionId && f.FieldType == "file")
+            .Select(f => new { f.Id, f.ConfigJson }).ToList();
+        foreach (var af in autoFields)
+        {
+            var rule = FileAutoRule.FromConfig(af.ConfigJson);
+            if (rule is null) continue;
+
+            var srcVal = db.DbFieldValues.AsNoTracking()
+                .Where(v => v.FieldId == rule.SourceFieldId && v.RecordId == recordId)
+                .Select(v => v.Value).FirstOrDefault() ?? "";
+            var matched = MatchSingle(rule, srcVal);
+            SetAutoFileValue(af.Id, recordId, matched);
+        }
+    }
+
+    // Точечное совпадение файла для записи (регистр учитывается). "" — не найден/пусто.
+    private static string MatchSingle(FileAutoRule rule, string sourceValue)
+    {
+        var target = rule.TargetFileName(sourceValue);
+        if (target.Length == 0) return "";
+        try
+        {
+            foreach (var path in System.IO.Directory.EnumerateFiles(rule.Folder, target))
+                if (string.Equals(System.IO.Path.GetFileName(path), target, StringComparison.Ordinal))
+                    return path;
+        }
+        catch (Exception ex) when (ex is System.IO.IOException or UnauthorizedAccessException) { }
+        return "";
+    }
+
+    // Записать значение авто-file ячейки напрямую (мимо SetFieldValue: без прав-повторов и без
+    // журнала — это авто-подстановка, а не ручная правка). Пустое → строку удаляем.
+    private void SetAutoFileValue(int fieldId, int recordId, string value)
+    {
+        var fv = db.DbFieldValues.FirstOrDefault(x => x.RecordId == recordId && x.FieldId == fieldId);
+        if (value.Length == 0)
+        {
+            if (fv is not null) { db.DbFieldValues.Remove(fv); db.SaveChanges(); }
+            return;
+        }
+        if (fv is null) db.DbFieldValues.Add(new DbFieldValueEntity { RecordId = recordId, FieldId = fieldId, Value = value });
+        else            fv.Value = value;
+        db.SaveChanges();
+    }
+
     // Приводит одно значение свойства от типа fromType к типу toType. Все типы, кроме «дата»,
     // хранятся как обычные строки → конверсия нужна только при пересечении границы «дата»
     // (текст/число/… ↔ дата). Неразбираемое как дата значение оставляем как есть — это не
@@ -3804,7 +4008,10 @@ public partial class ConstructorRepository(AppDbContext db)
         return NumberFormatValue.NormalizeStorage(value, NumberFormatValue.FromConfig(f.ConfigJson).DecimalSeparator);
     }
 
-    public void SetFieldValue(int recordId, int fieldId, string value)
+    /// <summary>Записать значение ячейки. Возвращает побочные изменения авто-привязки файлов
+    /// (пересчитанные файл-столбцы этой записи: FieldId → путь/"") — UI применяет их к строке,
+    /// чтобы файл-ячейка обновилась мгновенно. Обычно пусто.</summary>
+    public IReadOnlyList<(int FieldId, string Value)> SetFieldValue(int recordId, int fieldId, string value)
     {
         Demand(PermAction.EditRecord, CollectionOfRecord(recordId));
 
@@ -3833,10 +4040,16 @@ public partial class ConstructorRepository(AppDbContext db)
                 var old = BeginEditMerge(key, fv?.Value ?? "");
                 if (old != value)
                 {
-                    var fieldName = db.DbFields.AsNoTracking()
-                        .Where(f => f.Id == fieldId).Select(f => f.Name).FirstOrDefault() ?? "";
+                    var f = db.DbFields.AsNoTracking()
+                        .Where(x => x.Id == fieldId).Select(x => new { x.Name, x.FieldType }).FirstOrDefault();
+                    var fieldName = f?.Name ?? "";
+                    // «Файл»: в журнале показываем имя файла, а не абсолютный путь (как в ячейке
+                    // и фильтре). Слияние правок идёт по сырым old/value — свёртка только для показа.
+                    var (detailOld, detailNew) = f?.FieldType == "file"
+                        ? (FileValue.DisplayName(old), FileValue.DisplayName(value))
+                        : (old, value);
                     EndEditMerge(key, Log("update", "record", rec.Title, CollectionNameOf(rec.CollectionId),
-                                          detail: ChangeDetail.Value(rec.Title, fieldName, old, value)),
+                                          detail: ChangeDetail.Value(rec.Title, fieldName, detailOld, detailNew)),
                                  old);
                 }
             }
@@ -3901,6 +4114,35 @@ public partial class ConstructorRepository(AppDbContext db)
 
         // Поддерживаем индексную проекцию календаря (для видимых полей-дат).
         SyncCalendarIndexValue(recordId, fieldId, value);
+
+        // Реактивная авто-привязка: если правили текст-столбец, служащий источником авто-file
+        // поля — пересчитать файл для этой записи. Возвращаем побочные изменения (fieldId → новое
+        // значение файла), чтобы UI мгновенно обновил именно файл-ячейку этой строки.
+        return changed ? ReactToSourceEditForAutoFile(recordId, fieldId) : [];
+    }
+
+    // Если editedFieldId — источник авто-file полей этой записи, пересчитать их. Возвращает список
+    // изменённых (FieldId файл-поля, новое значение — путь или "" при отсутствии совпадения).
+    private List<(int FieldId, string Value)> ReactToSourceEditForAutoFile(int recordId, int editedFieldId)
+    {
+        var changes = new List<(int FieldId, string Value)>();
+        var collectionId = CollectionOfRecord(recordId);
+        if (collectionId is null) return changes;
+        var fileFields = db.DbFields.AsNoTracking()
+            .Where(f => f.CollectionId == collectionId && f.FieldType == "file")
+            .Select(f => new { f.Id, f.ConfigJson }).ToList();
+        foreach (var ff in fileFields)
+        {
+            var rule = FileAutoRule.FromConfig(ff.ConfigJson);
+            if (rule is null || rule.SourceFieldId != editedFieldId) continue;
+            var srcVal = db.DbFieldValues.AsNoTracking()
+                .Where(v => v.FieldId == editedFieldId && v.RecordId == recordId)
+                .Select(v => v.Value).FirstOrDefault() ?? "";
+            var matched = MatchSingle(rule, srcVal);
+            SetAutoFileValue(ff.Id, recordId, matched);
+            changes.Add((ff.Id, matched));
+        }
+        return changes;
     }
 
     /// <summary>
