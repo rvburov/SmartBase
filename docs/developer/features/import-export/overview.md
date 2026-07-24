@@ -19,7 +19,7 @@
 - Файловые ошибки: [ImportErrors.cs](../../../../Core/Importers/ImportErrors.cs)
 - Запись в БД: `ConstructorRepository.ImportStreamedCollection(Isolated)`
   в [ConstructorRepository](../../../../Database/Repositories/ConstructorRepository.cs)
-- Проверки и замеры: [Tests/ImportPerf](../../../../Tests/ImportPerf/Program.cs)
+- Проверки и замеры: [Tests/Benchmarks/ImportBench](../../../../Tests/Benchmarks/ImportBench.cs)
 
 Экспорт:
 
@@ -34,7 +34,7 @@
 - Чтение из БД: `ConstructorRepository.GetExportColumnsIsolated` /
   `ReadExportRowsIsolated` / `CountRecordsIsolated` / `LogExportIsolated`
 - Пикер коллекций: [CollectionPickerFlyout](../../../../Controls/Components/CollectionPickerFlyout.cs)
-- Проверки и замеры: [Tests/ExportPerf](../../../../Tests/ExportPerf/Program.cs)
+- Проверки и замеры: [Tests/Benchmarks/ExportBench](../../../../Tests/Benchmarks/ExportBench.cs)
 
 Общее:
 

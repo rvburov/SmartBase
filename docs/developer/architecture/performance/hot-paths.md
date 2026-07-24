@@ -116,7 +116,7 @@ firstNew + индекс` (`firstNew = last_insert_rowid − размер_пак�
 переполнялся после ~2,1 млн). Импорт идёт на **отдельном** контексте с bulk-прагмами
 (`ImportStreamedCollectionIsolated`, см. принцип 5) на фоновом потоке.
 
-Замер ([Tests/ImportPerf](../../../../Tests/ImportPerf/Program.cs) `--perf`): CSV 1 млн строк ×
+Замер ([Tests/Benchmarks/ImportBench](../../../../Tests/Benchmarks/ImportBench.cs) `--perf`): CSV 1 млн строк ×
 8 колонок — 116 с; 10 млн (1 ГБ) — 21 мин (~70 тыс. INSERT/с, скорость не падает с ростом
 объёма; пик памяти — mmap-окно SQLite, не строки).
 
@@ -143,7 +143,7 @@ shared strings (каждая строка inline — память O(1)), пус�
 на одном контексте, и change tracker копил бы все значения до конца операции (до фикса —
 пик 7,9 ГБ и вдвое медленнее).
 
-Замер ([Tests/ExportPerf](../../../../Tests/ExportPerf/Program.cs) `--perf`, коллекция 1 млн
+Замер ([Tests/Benchmarks/ExportBench](../../../../Tests/Benchmarks/ExportBench.cs) `--perf`, коллекция 1 млн
 строк × 8 столбцов): CSV — 53 с (~19 тыс. строк/с), JSON — 48 с (~21 тыс.),
 XLSX/XLSM — 73–78 с (~13 тыс.); пик памяти процесса ~1,6 ГБ (фикстура-импорт + mmap).
 

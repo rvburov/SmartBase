@@ -55,7 +55,7 @@
 - Блок: [ExtensionsView.axaml](../../../Views/Extensions/ExtensionsView.axaml) +
   [.axaml.cs](../../../Views/Extensions/ExtensionsView.axaml.cs) — навбар (имя + «Запустить»)
   и Markdown-описание.
-- Сайдбар: [ExtensionsSidebar.axaml.cs](../../../Controls/Components/ExtensionsSidebar.axaml.cs)
+- Сайдбар: [SidebarList.axaml.cs](../../../Controls/Components/Sidebar/SidebarList.axaml.cs)
   — список расширений из реестра, строки в стиле сайдбара настроек.
 - Интеграция: [ActivityBar](../../../Controls/Components/ActivityBar.axaml.cs) (иконка
   `blocks`) и [MainWindow](../../../Views/MainWindow.axaml.cs) (модуль `extensions`:

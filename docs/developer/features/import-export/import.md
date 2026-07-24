@@ -128,7 +128,7 @@ ImportPlanner.Plan(ImportSpec) → список ImportUnit (1 юнит = 1 бу�
   Excel-экспорта иначе раздували импорт тысячами колонок «Без названия».
 - **Изолированное подключение** + `ApplyBulkPerformancePragmas` (кеш ~512 МБ,
   mmap 2 ГБ) — без них вставка в глобальные индексы `db_field_values` деградирует.
-- Замер ([Tests/ImportPerf](../../../../Tests/ImportPerf/Program.cs), `--perf --rows N`;
+- Замер ([Tests/Benchmarks/ImportBench](../../../../Tests/Benchmarks/ImportBench.cs), `--perf --rows N`;
   рабочий ноутбук, свежая БД): CSV 1 млн строк × 8 колонок (97 МБ) — анализ 1,3 с +
   импорт 115 с; CSV 10 млн (1 ГБ) — анализ 9 с + импорт 1232 с (~8,1 тыс. строк/с ≈
   70 тыс. INSERT/с, скорость НЕ падает с ростом объёма). Пик памяти процесса
@@ -199,7 +199,7 @@ ImportPlanner.Plan(ImportSpec) → список ImportUnit (1 юнит = 1 бу�
 
 ### Проверки
 
-[Tests/ImportPerf](../../../../Tests/ImportPerf/Program.cs) (в решении, как SidebarPerf) —
+[Tests/Benchmarks/ImportBench](../../../../Tests/Benchmarks/ImportBench.cs) (в решении, как SidebarPerf) —
 селф-тест матрицы: вызывает те же методы, что приложение, на сгенерированных файлах
 (кодировки/кавычки CSV, JSON/NDJSON/вложенность, скрытые строки/столбцы/листы, merge/split,
 ручные параметры, папка с подпапкой и битым файлом, отмена, занятые имена, карта ошибок) и

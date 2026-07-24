@@ -34,11 +34,11 @@
 | Компонент | Назначение |
 |---|---|
 | [ActivityBar](../../../Controls/Components/ActivityBar.axaml) | левая узкая панель режимов приложения |
-| [Sidebar](../../../Controls/Components/Sidebar.axaml) | боковая панель: дерево групп/коллекций, чекбоксы активных коллекций |
-| [SettingsSidebar](../../../Controls/Components/SettingsSidebar.axaml) | боковая навигация в настройках |
-| [Navbar](../../../Controls/Components/Navbar.axaml) | верхний навбар календаря: ← Сегодня →, переключатель режимов, поиск, «+» |
-| [ConstructorNavbar](../../../Controls/Components/ConstructorNavbar.axaml) | навбар конструктора: заголовок-коллекция (редактируемый), переключатель вида, toggle панели записи |
-| [ConstructorFooter](../../../Controls/Components/ConstructorFooter.axaml) | нижняя панель: счётчик записей, страницы |
+| [Sidebar](../../../Controls/Components/Sidebar/SidebarTree.axaml) | боковая панель: дерево групп/коллекций, чекбоксы активных коллекций |
+| [SettingsSidebar](../../../Controls/Components/Sidebar/SidebarList.axaml) | боковая навигация в настройках |
+| [Navbar](../../../Controls/Components/Navbar/NavbarCalendar.axaml) | верхний навбар календаря: ← Сегодня →, переключатель режимов, поиск, «+» |
+| [ConstructorNavbar](../../../Controls/Components/Navbar/NavbarConstructor.axaml) | навбар конструктора: заголовок-коллекция (редактируемый), переключатель вида, toggle панели записи |
+| [ConstructorFooter](../../../Controls/Components/Footer/FooterConstructor.axaml) | нижняя панель: счётчик записей, страницы |
 | [AllDayBar](../../../Controls/Components/AllDayBar.axaml) | полоса событий «весь день» в режимах «День»/«Неделя» |
 | [EventContextMenu](../../../Controls/Components/EventContextMenu.cs) | фабрика контекстных меню событий: `Single` / `Multi` / `Background` |
 

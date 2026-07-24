@@ -9,7 +9,7 @@
 
 - View: [SettingsView.axaml.cs](../../../Views/Settings/SettingsView.axaml.cs)
 - Строка списка БД: [DatabaseRow.cs](../../../Views/Settings/DatabaseRow.cs)
-- Боковая навигация: [SettingsSidebar](../../../Controls/Components/SettingsSidebar.axaml)
+- Боковая навигация: [SettingsSidebar](../../../Controls/Components/Sidebar/SidebarList.axaml)
 - Хранилище значений: app.db через [AppSettings](../../../Utils/AppSettings.cs) (см. [../architecture/databases.md](../architecture/database/storage-and-migrations.md))
 
 ## Разделы

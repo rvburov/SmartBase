@@ -9,8 +9,7 @@
 ## Где в коде
 
 - Оркестратор (то, что реально работает в окне): [CalendarControllerView.axaml.cs](../../../../Views/ConstructorDb/Calendar/CalendarControllerView.axaml.cs)
-- Вью-контролы режимов: [Views/ConstructorDb/Calendar/](../../../../Views/ConstructorDb/Calendar/) — `ListView`, `JournalView`, `DayView`, `WeekView`, `MonthView`, `YearView`, `DiagramView`
-- Параллельный MVVM-слой: [ViewModels/Calendar/](../../../../ViewModels/Calendar/) — `CalendarControllerViewModel` + по одному `*ViewModel` на режим, общая база `CalendarViewModelBase`
+- Вью-контролы режимов: [Views/ConstructorDb/Calendar/](../../../../Views/ConstructorDb/Calendar/) — `ListView`, `JournalView`, `DayView`, `WeekView`, `MonthView`, `YearView`, `DiagramView` (логика — в code-behind этих контролов)
 - Модель события: [CalendarRecord.cs](../../../../Core/Models/CalendarRecord.cs)
 
 ## Как работает
