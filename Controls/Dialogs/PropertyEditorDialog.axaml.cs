@@ -67,6 +67,10 @@ public partial class PropertyEditorDialog : Window
     // Формат склейки значений «Мультисписка» — порядок совпадает с пунктами SeparatorCombo в XAML.
     private static readonly string[] SeparatorKeys = ["comma", "space", "semicolon", "newline"];
 
+    // Формат числа: порядок пунктов NumberFormatCombo в XAML.
+    private static readonly NumberFormatKind[] NumberFormatKinds =
+        [NumberFormatKind.Plain, NumberFormatKind.Grouped, NumberFormatKind.Currency, NumberFormatKind.Percent];
+
     // Строка пунктов, которая сейчас в режиме ввода (поле + действие фиксации). Клик мимо неё
     // (в т.ч. по неинтерактивному фону) фиксирует ввод — см. DismissOptionEditor.
     private (TextBox Box, Action Commit)? _editingOption;
@@ -90,6 +94,11 @@ public partial class PropertyEditorDialog : Window
         TaskToggle.IsChecked = false;
         // Формат «Мультисписка» по умолчанию — запятая (первый пункт).
         SeparatorCombo.SelectedIndex = 0;
+        // Формат «Числа» по умолчанию — «Обычное число» (показ = сырому вводу).
+        ApplyNumberFormat(NumberFormat.Default);
+        // Смена формата числа переключает видимость под-опций (валюта — только для «Денег»,
+        // блок опций скрыт для «Обычного числа»).
+        NumberFormatCombo.SelectionChanged += (_, _) => UpdateNumberOptionsVisibility();
 
         if (editFieldId.HasValue)
         {
@@ -110,6 +119,9 @@ public partial class PropertyEditorDialog : Window
                     var sepIdx = Array.IndexOf(SeparatorKeys, MultiSelectValue.SeparatorKeyFromConfig(field.ConfigJson));
                     SeparatorCombo.SelectedIndex = sepIdx >= 0 ? sepIdx : 0;
                 }
+                // «Число» — восстановить выбранный формат показа (валюта/проценты/разряды).
+                if (field.FieldType == "number")
+                    ApplyNumberFormat(NumberFormatValue.FromConfig(field.ConfigJson));
             }
         }
 
@@ -150,9 +162,46 @@ public partial class PropertyEditorDialog : Window
         OptionsSection.IsVisible = FieldTypeInfo.IsOptionList(_selectedType);
         // Формат склейки нужен только «Мультисписку» (у select/status значение одно).
         SeparatorSection.IsVisible = _selectedType == "multiselect";
+        // Формат числа — только для типа «Число».
+        NumberSection.IsVisible = _selectedType == "number";
 
         if (_selectedType == "status" && _optionBoxes.Count == 0)
             foreach (var o in ConstructorRepository.TaskStatusOptions) AddOptionRow(o);
+    }
+
+    // Под-опции формата числа: блок опций (точность/разряды/валюта) скрыт для «Обычного числа»
+    // (показ = сырому вводу), поле валюты — только для формата «Деньги».
+    private void UpdateNumberOptionsVisibility()
+    {
+        var idx  = Math.Clamp(NumberFormatCombo.SelectedIndex, 0, NumberFormatKinds.Length - 1);
+        var kind = NumberFormatKinds[idx];
+        NumberOptions.IsVisible   = kind != NumberFormatKind.Plain;
+        CurrencySection.IsVisible = kind == NumberFormatKind.Currency;
+    }
+
+    // Разложить формат числа по контролам диалога (обратное к BuildNumberConfigJson).
+    private void ApplyNumberFormat(NumberFormat fmt)
+    {
+        NumberFormatCombo.SelectedIndex     = Math.Max(0, Array.IndexOf(NumberFormatKinds, fmt.Kind));
+        DecimalsCombo.SelectedIndex         = fmt.Decimals < 0 ? 0 : Math.Clamp(fmt.Decimals + 1, 1, 5);
+        ThousandsToggle.IsChecked           = fmt.Thousands;
+        CurrencyBox.Text                    = fmt.CurrencySymbol;
+        SymbolPosCombo.SelectedIndex        = fmt.SymbolSuffix ? 0 : 1;
+        DecimalSeparatorCombo.SelectedIndex = fmt.DecimalSeparator == DecimalMark.Dot ? 1 : 0;
+        UpdateNumberOptionsVisibility();
+    }
+
+    // Собрать формат числа из контролов диалога → ConfigJson поля.
+    private string BuildNumberConfigJson()
+    {
+        var idx      = Math.Clamp(NumberFormatCombo.SelectedIndex, 0, NumberFormatKinds.Length - 1);
+        var kind     = NumberFormatKinds[idx];
+        var decimals = DecimalsCombo.SelectedIndex <= 0 ? -1 : DecimalsCombo.SelectedIndex - 1;   // «Авто» = -1
+        var symbol   = CurrencyBox.Text?.Trim() is { Length: > 0 } s ? s : "₽";
+        var mark     = DecimalSeparatorCombo.SelectedIndex == 1 ? DecimalMark.Dot : DecimalMark.Comma;
+        var fmt = new NumberFormat(kind, decimals, ThousandsToggle.IsChecked == true, symbol,
+            SymbolPosCombo.SelectedIndex != 1, mark);
+        return JsonSerializer.Serialize(NumberFormatValue.ToConfigObject(fmt));
     }
 
     // Одна строка редактора пунктов: показ значения (с многоточием) + поле ввода + удаление.
@@ -430,8 +479,9 @@ public partial class PropertyEditorDialog : Window
                 field.Name = name;
                 // Системные поля имеют фиксированный тип (markdown/title), их тип не меняем.
                 if (!field.IsSystem) field.FieldType = _selectedType;
-                // Пункты «Списка»/«Статуса» — в ConfigJson (иные типы конфиг не трогают).
+                // Пункты «Списка»/«Статуса» и формат «Числа» — в ConfigJson (иные типы не трогают).
                 if (FieldTypeInfo.IsOptionList(_selectedType)) field.ConfigJson = BuildOptionsConfigJson();
+                else if (_selectedType == "number")           field.ConfigJson = BuildNumberConfigJson();
                 _repository.UpdateField(field);
                 savedFieldId = _editFieldId.Value;
             }
@@ -446,7 +496,9 @@ public partial class PropertyEditorDialog : Window
                     Name         = name,
                     FieldType    = _selectedType,
                     Position     = maxPos + 1000,
-                    ConfigJson   = FieldTypeInfo.IsOptionList(_selectedType) ? BuildOptionsConfigJson() : "{}",
+                    ConfigJson   = FieldTypeInfo.IsOptionList(_selectedType) ? BuildOptionsConfigJson()
+                                 : _selectedType == "number"                 ? BuildNumberConfigJson()
+                                 : "{}",
                 });
                 savedFieldId = added.Id!.Value;
             }

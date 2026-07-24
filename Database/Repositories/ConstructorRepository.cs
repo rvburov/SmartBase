@@ -2166,6 +2166,12 @@ public partial class ConstructorRepository(AppDbContext db)
         var oldType            = entity.FieldType;
         var calRelevantChanged = entity.FieldType != field.FieldType;
 
+        // Число с выбранным десятичным разделителем: если поле стало числом или сменился разделитель —
+        // приведём уже сохранённые значения к нему (канон хранения). Считаем ДО перезаписи ConfigJson.
+        var newMark      = NumberFormatValue.FromConfig(field.ConfigJson).DecimalSeparator;
+        var oldMark      = NumberFormatValue.FromConfig(entity.ConfigJson).DecimalSeparator;
+        var sepMigration = field.FieldType == "number" && (oldType != "number" || oldMark != newMark);
+
         // Перестановки (Position) журнал не засоряют — только смысловые изменения.
         if (entity.Name != field.Name || entity.FieldType != field.FieldType ||
             entity.ConfigJson != field.ConfigJson || entity.IsRequired != field.IsRequired)
@@ -2191,9 +2197,55 @@ public partial class ConstructorRepository(AppDbContext db)
         if (oldType != field.FieldType && field.Id is int convFid)
             ConvertFieldValuesForTypeChange(convFid, oldType, field.FieldType);
 
+        // Число: привести десятичный разделитель уже сохранённых значений к выбранному
+        // (после конверсии типа — чтобы нормализовать итоговые числовые строки).
+        if (sepMigration && field.Id is int sepFid)
+            NormalizeNumberSeparatorValues(sepFid, newMark);
+
         // Поле стало/перестало быть видимой датой → пересобрать его строки проекции.
         if (calRelevantChanged && field.Id is int fid)
             RebuildCalendarIndexForField(fid);
+    }
+
+    // Приводит десятичный разделитель всех значений числового поля к выбранному (канон хранения):
+    // одиночная замена символа, цифры сохраняются; нечисловые значения не трогаются. Пишем сырым
+    // ADO.NET пакетом в одной транзакции (значений может быть сотни тысяч) — как смена типа.
+    private void NormalizeNumberSeparatorValues(int fieldId, DecimalMark mark)
+    {
+        var rows = db.DbFieldValues.AsNoTracking()
+            .Where(v => v.FieldId == fieldId && v.Value != "")
+            .Select(v => new { v.RecordId, v.Value })
+            .ToList();
+
+        var updates = new List<(int RecordId, string Value)>();
+        foreach (var r in rows)
+        {
+            var converted = NumberFormatValue.NormalizeStorage(r.Value, mark);
+            if (converted != r.Value) updates.Add((r.RecordId, converted));
+        }
+        if (updates.Count == 0) return;
+
+        var conn    = db.Database.GetDbConnection();
+        var wasOpen = conn.State == System.Data.ConnectionState.Open;
+        if (!wasOpen) conn.Open();
+        using (var tx  = conn.BeginTransaction())
+        using (var upd = conn.CreateCommand())
+        {
+            upd.Transaction = tx;
+            upd.CommandText = $"UPDATE db_field_values SET Value = @val WHERE RecordId = @rid AND FieldId = {fieldId}";
+            var pVal = AddParam(upd, "@val");
+            var pRid = AddParam(upd, "@rid");
+            upd.Prepare();
+
+            foreach (var (recordId, value) in updates)
+            {
+                pVal.Value = value;
+                pRid.Value = recordId;
+                upd.ExecuteNonQuery();
+            }
+            tx.Commit();
+        }
+        if (!wasOpen) conn.Close();
     }
 
     // Приводит одно значение свойства от типа fromType к типу toType. Все типы, кроме «дата»,
@@ -3741,9 +3793,25 @@ public partial class ConstructorRepository(AppDbContext db)
         return result;
     }
 
+    // Канон хранения для поля «Число»: приводит десятичный разделитель значения к выбранному в
+    // ConfigJson поля. Для не-числовых полей и нечисловых значений — возвращает как есть.
+    private string NormalizeNumberValueForField(int fieldId, string value)
+    {
+        if (value.Length == 0) return value;
+        var f = db.DbFields.AsNoTracking().Where(x => x.Id == fieldId)
+            .Select(x => new { x.FieldType, x.ConfigJson }).FirstOrDefault();
+        if (f is null || f.FieldType != "number") return value;
+        return NumberFormatValue.NormalizeStorage(value, NumberFormatValue.FromConfig(f.ConfigJson).DecimalSeparator);
+    }
+
     public void SetFieldValue(int recordId, int fieldId, string value)
     {
         Demand(PermAction.EditRecord, CollectionOfRecord(recordId));
+
+        // Число: приводим десятичный разделитель к выбранному в свойстве (канон хранения).
+        // Нечисловое значение и не-числовые поля остаются как есть.
+        value = NormalizeNumberValueForField(fieldId, value);
+
         var fv = db.DbFieldValues.FirstOrDefault(x => x.RecordId == recordId && x.FieldId == fieldId);
 
         // Реальное изменение значения (правка ячейки — ручное действие, но сохранение записи

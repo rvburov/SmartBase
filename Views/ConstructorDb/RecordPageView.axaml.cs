@@ -636,12 +636,25 @@ public partial class RecordPageView : UserControl
         {
             case "number":
             {
-                var tb = FlatValueBox(row.Value);
+                // Показ по формату поля (валюта/проценты/разряды), пока поле не в фокусе; при
+                // фокусе показываем сырое число для правки, на уходе — снова отформатированное.
+                // row.Value всегда сырое; программная подмена Text помечается флагом, чтобы не
+                // записать отформатированную строку обратно в значение.
+                var fmt = NumberFormatValue.FromConfig(f.ConfigJson);
+                var tb  = FlatValueBox(NumberFormatValue.Format(row.Value, fmt));
+                var suppress = false;
                 // Тот же фильтр ввода, что и в ячейке таблицы: пускаем только цифры, один
                 // разделитель и ведущий минус — иначе живая запись по символу клала бы в БД
                 // промежуточный мусор («-», «12,»).
                 tb.AddHandler(InputElement.TextInputEvent, OnNumberTextInput, RoutingStrategies.Tunnel);
-                tb.TextChanged += (_, _) => { row.Value = tb.Text ?? ""; PersistProperty(row); };
+                tb.GotFocus  += (_, _) => { suppress = true; tb.Text = row.Value; suppress = false; };
+                tb.LostFocus += (_, _) => { suppress = true; tb.Text = NumberFormatValue.Format(row.Value, fmt); suppress = false; };
+                tb.TextChanged += (_, _) =>
+                {
+                    if (suppress) return;   // программная подмена показа/сырого — не значение
+                    row.Value = tb.Text ?? "";
+                    PersistProperty(row);
+                };
                 input = tb;
                 break;
             }

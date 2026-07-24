@@ -1,4 +1,5 @@
 using Avalonia.Controls;
+using SmartBase.Core.Models;
 
 namespace SmartBase.ViewModels.ConstructorDb;
 
@@ -29,6 +30,9 @@ public sealed class TableColumnDef
 
     // Строка-склейка значений «Мультисписка» (из ConfigJson поля: {"separator":"..."}); по умолчанию «, ».
     public string Separator { get; init; } = ", ";
+
+    // Формат показа поля «Число» (из ConfigJson поля); по умолчанию «Обычное число» (показ = сырому вводу).
+    public NumberFormat NumberFormat { get; init; } = NumberFormat.Default;
 
     // Произвольный тег для идентификации (например, field.Id)
     public object? Tag { get; init; }

@@ -223,6 +223,102 @@
             </StackPanel>
         </StackPanel>
 
+        <!-- Формат числа: виден только для типа «Число». Меняет ТОЛЬКО показ (ячейка таблицы,
+             панель записи, значения фильтра) — в БД по-прежнему лежит сырое число; переключение
+             формата обратимо и данные не трогает. Хранится в ConfigJson поля (ключи numberFormat/
+             decimals/thousands/currency/symbolSuffix), не пересекается с опциями списка. -->
+        <StackPanel x:Name="NumberSection" IsVisible="False" Spacing="10" Margin="0,0,0,12">
+            <StackPanel Spacing="6">
+                <TextBlock Text="Формат числа"
+                           FontWeight="{StaticResource FontWeightBold}"
+                           Foreground="{StaticResource BrushSecondaryText}" />
+                <ComboBox x:Name="NumberFormatCombo"
+                          HorizontalAlignment="Stretch"
+                          Height="34"
+                          VerticalContentAlignment="Center"
+                          Background="{StaticResource BrushSecondaryBg}"
+                          CornerRadius="{StaticResource RadiusBase}">
+                    <ComboBoxItem Content="Обычное число" />
+                    <ComboBoxItem Content="Число с разрядами" />
+                    <ComboBoxItem Content="Деньги" />
+                    <ComboBoxItem Content="Проценты" />
+                </ComboBox>
+            </StackPanel>
+
+            <!-- Десятичный разделитель: влияет и на показ, и на хранение (значения приводятся к
+                 выбранному символу). Виден для любого формата числа (в т.ч. «Обычное число»). -->
+            <StackPanel Spacing="6">
+                <TextBlock Text="Десятичный разделитель"
+                           FontWeight="{StaticResource FontWeightBold}"
+                           Foreground="{StaticResource BrushSecondaryText}" />
+                <ComboBox x:Name="DecimalSeparatorCombo"
+                          HorizontalAlignment="Stretch"
+                          Height="34"
+                          VerticalContentAlignment="Center"
+                          Background="{StaticResource BrushSecondaryBg}"
+                          CornerRadius="{StaticResource RadiusBase}">
+                    <ComboBoxItem Content="Запятая" />
+                    <ComboBoxItem Content="Точка" />
+                </ComboBox>
+            </StackPanel>
+
+            <!-- Опции формата (кроме «Обычное число», где показ = сырому вводу). -->
+            <StackPanel x:Name="NumberOptions" Spacing="10">
+                <StackPanel Spacing="6">
+                    <TextBlock Text="Знаков после запятой"
+                               FontWeight="{StaticResource FontWeightBold}"
+                               Foreground="{StaticResource BrushSecondaryText}" />
+                    <ComboBox x:Name="DecimalsCombo"
+                              HorizontalAlignment="Stretch"
+                              Height="34"
+                              VerticalContentAlignment="Center"
+                              Background="{StaticResource BrushSecondaryBg}"
+                              CornerRadius="{StaticResource RadiusBase}">
+                        <ComboBoxItem Content="Авто" />
+                        <ComboBoxItem Content="0" />
+                        <ComboBoxItem Content="1" />
+                        <ComboBoxItem Content="2" />
+                        <ComboBoxItem Content="3" />
+                        <ComboBoxItem Content="4" />
+                    </ComboBox>
+                </StackPanel>
+
+                <StackPanel Orientation="Horizontal" Spacing="10">
+                    <ToggleSwitch x:Name="ThousandsToggle"
+                                  OnContent="" OffContent=""
+                                  VerticalAlignment="Center" />
+                    <TextBlock Text="Разделять разряды"
+                               VerticalAlignment="Center"
+                               FontWeight="{StaticResource FontWeightBold}"
+                               Foreground="{StaticResource BrushSecondaryText}" />
+                </StackPanel>
+
+                <!-- Валюта: символ и его положение — только для формата «Деньги». -->
+                <StackPanel x:Name="CurrencySection" IsVisible="False" Spacing="6">
+                    <TextBlock Text="Валюта"
+                               FontWeight="{StaticResource FontWeightBold}"
+                               Foreground="{StaticResource BrushSecondaryText}" />
+                    <Grid ColumnDefinitions="Auto,8,*">
+                        <TextBox Grid.Column="0" x:Name="CurrencyBox"
+                                 Width="72" Height="34"
+                                 MaxLength="3"
+                                 Watermark="₽"
+                                 VerticalContentAlignment="Center"
+                                 CornerRadius="{StaticResource RadiusBase}" />
+                        <ComboBox Grid.Column="2" x:Name="SymbolPosCombo"
+                                  HorizontalAlignment="Stretch"
+                                  Height="34"
+                                  VerticalContentAlignment="Center"
+                                  Background="{StaticResource BrushSecondaryBg}"
+                                  CornerRadius="{StaticResource RadiusBase}">
+                            <ComboBoxItem Content="Символ после числа" />
+                            <ComboBoxItem Content="Символ перед числом" />
+                        </ComboBox>
+                    </Grid>
+                </StackPanel>
+            </StackPanel>
+        </StackPanel>
+
         <!-- Пояснение для системных колонок «Название»/«Описание»: скрыто по умолчанию,
              показывается только в системном режиме (см. code-behind). Объясняет, почему
              тип заблокирован и свойство нельзя удалить. -->
