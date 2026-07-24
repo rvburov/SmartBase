@@ -31,7 +31,7 @@
 
 | Категория | Типы |
 |---|---|
-| Базовые (значение правит пользователь) | `text` · `number` · `date` · `select` · `status` · `multiselect` · `checkbox` · `url` · `user` |
+| Базовые (значение правит пользователь) | `text` · `number` · `date` · `select` · `status` · `multiselect` · `checkbox` · `url` · `file` · `user` |
 | Вычисляемые (read-only, из аудит-метаданных) | `created_at` · `updated_at` · `created_by` · `updated_by` |
 
 Смена типа между «дата» и остальными приводит значения без потери (`ConvertValueForType`);

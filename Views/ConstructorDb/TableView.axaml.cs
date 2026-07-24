@@ -713,9 +713,10 @@ public partial class TableView : UserControl
                 FieldType   = f.FieldType,
                 IsStarWidth = true,
                 MinWidth    = MinColWidth,
-                // Чекбоксы и «вычисляемые» типы (дата/автор создания-изменения) правятся не текстовым
-                // редактором — read-only на уровне колонки (CellEditingTemplate не строится).
-                IsReadOnly  = f.FieldType == "checkbox" || FieldTypeInfo.IsComputed(f.FieldType),
+                // Чекбоксы, «файл» и «вычисляемые» типы (дата/автор создания-изменения) правятся не
+                // текстовым редактором — read-only на уровне колонки (CellEditingTemplate не строится);
+                // их собственный редактор живёт прямо в ячейке показа.
+                IsReadOnly  = f.FieldType is "checkbox" or "file" || FieldTypeInfo.IsComputed(f.FieldType),
                 // «Пользователь» — как select, только опции живые: допущенные пользователи базы.
                 Options     = f.FieldType == "user"
                     ? _repository?.GetUserOptions() ?? []
@@ -1259,6 +1260,51 @@ public partial class TableView : UserControl
                 };
                 cb.IsCheckedChanged += (_, _) => row[def.Key] = cb.IsChecked == true ? "1" : "0";
                 return cb;
+            }
+
+            // «Файл»: ссылка на файл (клик — открыть через ОС), ручной ввод пути + иконка-скрепка
+            // (системный выбор файла). Колонка read-only на уровне DataGrid (см. IsReadOnly ниже) —
+            // редактор живёт прямо в ячейке показа, отдельного CellEditingTemplate нет (как у чекбокса).
+            if (def.FieldType == "file")
+            {
+                var editor = new FileEditor
+                {
+                    Flat               = true,
+                    ContentLeftPadding = 6,   // как Margin(6,…) у TextBlock-ячеек — общий левый отступ колонок
+                    VerticalAlignment  = VerticalAlignment.Center,
+                };
+                // Запись правки — в СТРОКУ ИЗ DataContext (контейнеры переиспользуются между строками),
+                // а не в захваченную при построении шаблона.
+                editor.Changed += (_, _) =>
+                {
+                    if (editor.DataContext is TableRowVm r) r[def.Key] = editor.Storage ?? "";
+                };
+                // Значение приходит асинхронно (виртуализация: заглушка «Загрузка…» → Fill → "Item")
+                // и меняется из панели записи. FileEditor читает Storage разово, поэтому обновляем
+                // показ по уведомлению строки; при смене DataContext переподписываемся.
+                System.ComponentModel.INotifyPropertyChanged? bound = null;
+                void OnRowProp(object? _, System.ComponentModel.PropertyChangedEventArgs e)
+                {
+                    if ((e.PropertyName is "Item" or null) && editor.DataContext is TableRowVm r)
+                        editor.SyncStorage(r[def.Key]);
+                }
+                void Rebind()
+                {
+                    if (bound is not null) bound.PropertyChanged -= OnRowProp;
+                    bound = editor.DataContext as System.ComponentModel.INotifyPropertyChanged;
+                    if (bound is not null) bound.PropertyChanged += OnRowProp;
+                    editor.SyncStorage((editor.DataContext as TableRowVm)?[def.Key] ?? "");
+                }
+                editor.DataContextChanged += (_, _) => Rebind();
+                editor.DetachedFromVisualTree += (_, _) =>
+                {
+                    if (bound is not null) { bound.PropertyChanged -= OnRowProp; bound = null; }
+                };
+                // DataContext ставит фреймворк (наследование от строки) — не задаём его явно,
+                // иначе переиспользование контейнера не переприсвоит строку. Первичный показ —
+                // из строки шаблона; дальше ведёт DataContextChanged.
+                editor.SyncStorage(row[def.Key]);
+                return editor;
             }
 
             // «Вычисляемые» типы: значение — из аудит-метаданных записи (свойства строки
@@ -2657,6 +2703,7 @@ public partial class TableView : UserControl
         if (fieldType == "checkbox") return IsTruthy(raw) ? "✓" : "—";
         if (fieldType == "multiselect") return MultiSelectValue.Display(raw, separator);
         if (fieldType == "number") return NumberFormatValue.Format(raw, numberFormat ?? NumberFormat.Default);
+        if (fieldType == "file") return FileValue.DisplayName(raw);   // имя файла, а не абсолютный путь
         return raw;
     }
 

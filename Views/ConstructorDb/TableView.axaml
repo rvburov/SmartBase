@@ -28,6 +28,12 @@
         <Style Selector="DataGridCell:current /template/ Grid#FocusVisual">
             <Setter Property="IsVisible" Value="False" />
         </Style>
+        <!-- Фокус-рамку ячейки не показываем и когда ячейка получает клавиатурный фокус
+             (интерактивный контент read-only-колонок: «файл» и т.п. — иначе тема рисует
+             чёрный прямоугольник вокруг ячейки). -->
+        <Style Selector="DataGridCell:focus /template/ Grid#FocusVisual">
+            <Setter Property="IsVisible" Value="False" />
+        </Style>
 
         <!-- Толщина линий сетки — динамический токен LineMetrics (визуально ~1 пиксель
              при любом зуме/DPI). Задаётся стилями, а не в шаблоне: локальные Width/Height

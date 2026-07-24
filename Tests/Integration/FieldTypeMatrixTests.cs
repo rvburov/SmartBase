@@ -26,6 +26,7 @@ public sealed class FieldTypeMatrixTests
         ["multiselect", "[\"Дизайн\",\"Backend\"]"],
         ["checkbox", "1"],
         ["url",      "https://example.com"],
+        ["file",     "/Users/ivan/Документы/Договор.pdf"],   // путь хранится строкой как есть
         ["user",     "Иван Иванов"],
     ];
 
@@ -54,6 +55,7 @@ public sealed class FieldTypeMatrixTests
     [InlineData("multiselect", "Мультисписок")]
     [InlineData("checkbox", "Чекбокс")]
     [InlineData("url",      "Ссылка")]
+    [InlineData("file",     "Файл")]
     [InlineData("user",     "Пользователь")]
     public void Label_is_defined_for_every_type(string fieldType, string label)
     {
@@ -65,6 +67,7 @@ public sealed class FieldTypeMatrixTests
     [InlineData("status",      true)]
     [InlineData("multiselect", true)]
     [InlineData("text",        false)]
+    [InlineData("file",        false)]
     [InlineData("user",        false)]
     public void IsOptionList_covers_select_status_multiselect(string fieldType, bool expected) =>
         Assert.Equal(expected, FieldTypeInfo.IsOptionList(fieldType));
@@ -152,6 +155,37 @@ public sealed class FieldTypeMatrixTests
         repo.UpdateField(field);
         var asText = repo.GetFieldValuesBatch([rec.Id!.Value])[rec.Id!.Value][field.Id!.Value];
         Assert.Equal("01.02.2026", asText);
+    }
+
+    // Смена типа ЛЮБОГО поля на «файл» сохраняет значение (не очищает) — тогда ячейка показывает
+    // «имя — файл не найден» (значение не является существующим путём). Дата при этом приводится к
+    // человекочитаемому виду (как текст), остальные типы — как есть.
+    [Theory]
+    [InlineData("text",     "какой-то текст",             "какой-то текст")]
+    [InlineData("number",   "42,5",                       "42,5")]
+    [InlineData("select",   "Вариант Б",                  "Вариант Б")]
+    [InlineData("status",   "В работе",                   "В работе")]
+    [InlineData("checkbox", "1",                          "1")]
+    [InlineData("url",      "https://example.com",        "https://example.com")]
+    [InlineData("user",     "romanburov@macbook-pro-m4",  "romanburov@macbook-pro-m4")]
+    [InlineData("date",     "2026-02-01",                 "01.02.2026")]
+    public void Converting_any_type_to_file_preserves_value_for_not_found_display(
+        string fromType, string value, string expected)
+    {
+        using var db = new TempDatabase();
+        var repo = db.Constructor;
+        var col = SampleData.AddCollection(repo);
+        var field = SampleData.AddField(repo, col.Id!.Value, "F", fromType);
+        var rec = SampleData.AddRecord(repo, col.Id!.Value, "R");
+        repo.SetFieldValue(rec.Id!.Value, field.Id!.Value, value);
+
+        // Тип → «файл».
+        field.FieldType = "file";
+        repo.UpdateField(field);
+
+        var stored = repo.GetFieldValuesBatch([rec.Id!.Value])[rec.Id!.Value][field.Id!.Value];
+        Assert.Equal(expected, stored);   // значение сохранено, не очищено
+        Assert.NotEqual("", stored);      // непустое → ячейка покажет «имя — файл не найден» (см. FileValueTests)
     }
 
     [Fact]

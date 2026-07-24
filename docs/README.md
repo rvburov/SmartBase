@@ -27,6 +27,7 @@ EF Core/SQLite). Документация разделена на два раз�
   [multiselect](developer/architecture/data-types/multiselect.md) ·
   [checkbox](developer/architecture/data-types/checkbox.md) ·
   [url](developer/architecture/data-types/url.md) ·
+  [file](developer/architecture/data-types/file.md) ·
   [user](developer/architecture/data-types/user.md) ·
   [computed](developer/architecture/data-types/computed.md).
 - **База данных** ([database/](developer/architecture/database/)):

@@ -1,0 +1,52 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:w="clr-namespace:SmartBase.Controls.Widgets"
+             x:Class="SmartBase.Controls.Widgets.FileEditor">
+
+    <Border x:Name="Box" Classes="timeField" Height="34">
+        <Grid ColumnDefinitions="*,Auto">
+
+            <!-- Левая часть: либо ссылка/статус (показ), либо поле ввода пути (ручная правка) -->
+            <Panel Grid.Column="0" VerticalAlignment="Stretch">
+                <!-- Показ: имя файла синей ссылкой / «файл не найден» / «Выбрать файл…» -->
+                <Border x:Name="LinkHost" Padding="10,0" Background="Transparent"
+                        VerticalAlignment="Stretch">
+                    <TextBlock x:Name="Link" VerticalAlignment="Center"
+                               TextTrimming="CharacterEllipsis" />
+                </Border>
+                <!-- Правка: ручной ввод полного пути -->
+                <TextBox x:Name="Input" Classes="timeInput" IsVisible="False"
+                         Watermark="Путь к файлу" />
+            </Panel>
+
+            <!-- Правая иконка-скрепка: всегда кликабельна → системный выбор файла -->
+            <Button Grid.Column="1" x:Name="Pick" Classes="timeArrow"
+                    ToolTip.Tip="Выбрать файл">
+                <Viewbox Width="{StaticResource IconSizeSmall}" Height="{StaticResource IconSizeSmall}">
+                    <Canvas Width="24" Height="24">
+                        <Path Data="{StaticResource IconFieldFile}"
+                              Stroke="{StaticResource BrushSecondaryText}"
+                              StrokeThickness="{StaticResource IconStrokeSmall}"
+                              StrokeLineCap="Round"
+                              StrokeJoin="Round" />
+                    </Canvas>
+                </Viewbox>
+            </Button>
+
+            <!-- Плашка ошибки пути — оверлеем (не раздвигает ячейку), пока путь неверный.
+                 По умолчанию снизу; Avalonia сам перевернёт её вверх, если снизу не хватает
+                 места (окно на весь экран). Непрозрачная подложка — чтобы сквозь плашку не
+                 просвечивал текст под ней. -->
+            <Popup Grid.Column="0" x:Name="ErrPop" InheritsTransform="True"
+                   PlacementTarget="{Binding #Box}"
+                   Placement="BottomEdgeAlignedLeft" VerticalOffset="2"
+                   IsLightDismissEnabled="False">
+                <Border Background="{StaticResource BrushBg}"
+                        CornerRadius="{StaticResource RadiusBase}">
+                    <w:ErrorBanner x:Name="ErrorBanner" MinWidth="220" />
+                </Border>
+            </Popup>
+        </Grid>
+    </Border>
+
+</UserControl>

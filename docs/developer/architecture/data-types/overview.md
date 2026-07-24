@@ -20,6 +20,7 @@
 | `multiselect` | **несколько** опций из `ConfigJson`; значение — JSON-массив (`MultiSelectValue`); показ — текст через выбранный разделитель (`separator` в `ConfigJson`), редактор — виртуализированный выпадающий чеклист с поиском |
 | `checkbox` | `1`/`0` (+легаси `true`); показ `✓`/пусто (`WriterHelpers.IsChecked`) |
 | `url` | строка |
+| `file` | абсолютный путь к файлу строкой (ничего не копируется); показ — имя файла синей ссылкой (клик — открыть через ОС) / «файл не найден» / «Выбрать файл…»; правка — ручной ввод пути + иконка-скрепка (системный выбор), редактор `FileEditor` |
 | `user` | строка-имя (снимок, как `select`); опции — `GetUserOptions` (допущенные пользователи), новая запись = текущий пользователь; флаги задач `IsTaskExec/IsTaskAssigner/IsTaskStatus` (см. [tasks/overview.md](../../features/tasks.md)) |
 
 **Вычисляемые** — read-only, значение НЕ в `db_field_values`, а из аудит-метаданных `db_records`
@@ -45,6 +46,7 @@
 - [`multiselect` — «Мультисписок»](multiselect.md)
 - [`checkbox` — «Чекбокс»](checkbox.md)
 - [`url` — «Ссылка»](url.md)
+- [`file` — «Файл»](file.md)
 - [`user` — «Пользователь»](user.md)
 - [Вычисляемые — `created_*`/`updated_*`](computed.md)
 

@@ -483,6 +483,7 @@ public partial class RecordPageView : UserControl
         "multiselect" => "IconFieldMultiSelect",
         "checkbox" => "IconFieldCheckbox",
         "url"      => "IconFieldUrl",
+        "file"     => "IconFieldFile",
         "user"     => "IconUser",
         // Вычисляемые типы: та же иконка, что и у дат/пользователя (различаются подписью).
         "created_at" or "updated_at" => "IconCalendarDate",
@@ -724,6 +725,20 @@ public partial class RecordPageView : UserControl
                 var tb = FlatValueBox(row.Value, "https://");
                 tb.TextChanged += (_, _) => { row.Value = tb.Text ?? ""; PersistProperty(row); };
                 input = tb;
+                break;
+            }
+            case "file":
+            {
+                // Тот же редактор, что и в таблице: путь к файлу, ссылка-открытие, ручной ввод +
+                // иконка-скрепка (системный выбор). Flat — без собственной рамки (её даёт карточка).
+                var editor = new FileEditor
+                {
+                    HorizontalAlignment = HorizontalAlignment.Stretch,
+                    Flat                = true,
+                    Storage             = row.Value,
+                };
+                editor.Changed += (_, _) => { row.Value = editor.Storage ?? ""; PersistProperty(row); };
+                input = editor;
                 break;
             }
             default:  // text

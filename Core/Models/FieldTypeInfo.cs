@@ -36,6 +36,7 @@ public static class FieldTypeInfo
         "multiselect"=> "Мультисписок",
         "checkbox"   => "Чекбокс",
         "url"        => "Ссылка",
+        "file"       => "Файл",
         "user"       => "Пользователь",
         "created_at" => "Дата создания",
         "updated_at" => "Дата изменения",

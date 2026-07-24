@@ -24,6 +24,7 @@ public static class FieldTypeIcons
         "multiselect" => Icon("IconFieldMultiSelect"),
         "checkbox" => Icon("IconFieldCheckbox"),
         "url"      => Icon("IconFieldUrl"),
+        "file"     => Icon("IconFieldFile"),
         "user"     => Icon("IconUser"),
         // Вычисляемые типы: значение авто из метаданных записи. Иконку переиспользуем
         // (дата — календарь, пользователь — человек), различаются подписью.

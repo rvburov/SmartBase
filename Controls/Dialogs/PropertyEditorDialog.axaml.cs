@@ -41,6 +41,7 @@ public partial class PropertyEditorDialog : Window
         new() { Type = "multiselect", Label = "Мультисписок", Icon = Components.FieldTypeIcons.ForType("multiselect")! },
         new() { Type = "checkbox", Label = "Чекбокс", Icon = Components.FieldTypeIcons.ForType("checkbox")! },
         new() { Type = "url",      Label = "Ссылка",  Icon = Components.FieldTypeIcons.ForType("url")!      },
+        new() { Type = "file",     Label = "Файл",    Icon = Components.FieldTypeIcons.ForType("file")!     },
         new() { Type = "user",     Label = "Пользователь", Icon = Components.FieldTypeIcons.ForType("user")! },
         // Вычисляемые типы (значение авто из метаданных записи, ячейка read-only). Идут внизу
         // отдельной группой — StartsGroup у первого рисует разделительную черту над ней.
