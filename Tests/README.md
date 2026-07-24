@@ -1,7 +1,7 @@
 # Tests/
 
-Документация по тестам вынесена в **[docs/testing/](../docs/testing/)** —
-обзор и запуск: [docs/testing/README.md](../docs/testing/README.md).
+Команды запуска тестов — в корневом [README.md → «Тесты»](../README.md#тесты).
+Обзор и принципы — [docs/developer/testing/overview.md](../docs/developer/testing/overview.md).
 
 Кратко (проекты этой папки):
 

@@ -120,6 +120,25 @@ artifacts/bin/SmartBase/debug/SmartBase.exe
 перезапустить → `dotnet run --no-build` или прямой `.exe`. Для активной разработки
 с авто-пересборкой и перезапуском при каждом сохранении — `dotnet watch run`.
 
+### Тесты
+
+```bash
+dotnet test Tests/Unit          # быстрый гейт (мс), без внешних зависимостей
+dotnet test Tests/Integration   # репозитории на SQLite + PostgreSQL (если поднят стенд sb-pg)
+dotnet test SmartBase.sln       # оба набора
+./Tests/run-all.sh              # оба набора (+ --with-bench для быстрых бенчмарков)
+```
+
+Инструменты (консольные, не автотесты):
+
+```bash
+dotnet run -c Release --project Tests/Benchmarks  -- <команда>   # перф-замеры
+dotnet run -c Release --project Tests/DbGenerator                # генератор большого стенда
+dotnet run -c Release --project Tests/MultiProcess -- <режим>    # многопроцессные проверки
+```
+
+Обзор и принципы разделения тестов — [docs/developer/testing/overview.md](docs/developer/testing/overview.md).
+
 ### Сборка готового бинарника для раздачи
 
 Под каждую ОС — **один короткий скрипт** в `Scripts/` (имя = `<ОС>-build`).
@@ -134,7 +153,7 @@ artifacts/bin/SmartBase/debug/SmartBase.exe
 **записывается в `<Version>`** в [SmartBase.csproj](SmartBase.csproj) и становится текущим
 для дальнейших сборок. Без аргумента берётся то, что уже в csproj. Версия и дата
 сборки видны в приложении: **Настройки → О программе**. Полное описание —
-[docs/guides/build.md](docs/guides/build.md).
+[docs/developer/guides/build-and-run.md](docs/developer/guides/build-and-run.md).
 
 #### Windows (x64)
 
@@ -146,7 +165,7 @@ Scripts/windows-build.sh win-x64 Release 1.2.3  # с номером версии
 
 Результат: `dist/Version <версия>/win-x64/SmartBase.exe` — иконка уже вшита в `.exe`.
 Рядом кладётся `SmartBase-Setup.exe` (тот же бинарь в режиме установщика: установка в
-`%LOCALAPPDATA%`, ярлыки, обновление, удаление) — см. [docs/guides/auto-update.md](docs/guides/auto-update.md).
+`%LOCALAPPDATA%`, ярлыки, обновление, удаление) — см. [docs/developer/guides/auto-update.md](docs/developer/guides/auto-update.md).
 
 #### Linux (x64)
 
@@ -177,7 +196,7 @@ Scripts/macos-build.sh osx-x64   Release 1.2.3  # Intel
 
 Результат: `dist/Version <версия>/osx-arm64/SmartBase.app` (или `…/osx-x64/…` для Intel) —
 готовое приложение с иконкой (`open "dist/Version <версия>/osx-arm64/SmartBase.app"`).
-Подробности — [docs/features/icons.md](docs/features/icons.md).
+Подробности — [docs/developer/features/icons.md](docs/developer/features/icons.md).
 
 > Все платформы собираются с одной машины (cross-compilation). Папка `dist/`
 > в `.gitignore` — это артефакты раздачи, пересоздаются.
@@ -244,7 +263,7 @@ calendar_avalonia/
 │   └── Styles/                 # Colors, Controls, Typography
 │
 ├── Scripts/                    # windows-build.sh, linux-build.sh, macos-build.sh, linux-install.sh, generate-icons.sh
-├── docs/                       # guides/, architecture/, features/, ui/, plans/, ROADMAP (см. docs/README.md)
+├── docs/                       # developer/ (architecture, features, ui, guides, testing, qa-checklists), user/, ROADMAP (см. docs/README.md)
 │
 │   # ── Файлы в корне проекта ──
 ├── SmartBase.csproj             # Проект

@@ -184,7 +184,7 @@
 - **Экспорт/импорт календаря как календаря** (например, iCal) — не реализован;
   импорт и экспорт ТАБЛИЦ уже есть ([Core/Importers](../Core/Importers/Importer.cs) /
   [Core/Exporters](../Core/Exporters/Exporter.cs), см.
-  [features/import-export.md](features/import-export.md)).
+  [features/import-export.md](developer/features/import-export/overview.md)).
 - **Мультибаза, дальнейшие этапы** — см. «Что дальше (мультибаза)» выше.
 
 ## Масштабирование: цель 10+ млн записей
