@@ -13,6 +13,7 @@ using Avalonia.Styling;
 using SmartBase.Core.Models;
 using SmartBase.Database.Repositories;
 using SmartBase.Utils;
+using SmartBase.ViewModels.ConstructorDb;
 
 namespace SmartBase.Controls.Widgets;
 
@@ -37,6 +38,9 @@ public sealed class RelationSelectBox : Panel
     private readonly RelationConfig _cfg;
     private readonly string _separator;
     private readonly bool _editing;
+    // Табличный кеш связей (батч видимой страницы): при установке RecordId читаем из него, минуя
+    // точечный GetLinks. null — вне таблицы (панель записи): всегда прямое чтение из БД.
+    private readonly RelationLinksCache? _cache;
 
     private readonly List<int>                     _selected = [];
     private readonly Dictionary<int, string>       _titles   = new();
@@ -53,13 +57,15 @@ public sealed class RelationSelectBox : Panel
     public event EventHandler<int>? Navigate;
 
     public RelationSelectBox(ConstructorRepository repo, int fieldId, RelationConfig cfg,
-                             bool editing = false, double contentLeftPadding = 0)
+                             bool editing = false, double contentLeftPadding = 0,
+                             RelationLinksCache? cache = null)
     {
         _repo      = repo;
         _fieldId   = fieldId;
         _cfg       = cfg;
         _separator = cfg.SeparatorString;
         _editing   = editing;
+        _cache     = cache;
 
         _valueText = new TextBlock
         {
@@ -123,31 +129,38 @@ public sealed class RelationSelectBox : Panel
             Children.Add(_popup);
         }
 
-        // Повторный показ (после выхода из правки ячейки) — перечитать связи, чтобы текст был свежим.
-        AttachedToVisualTree += (_, _) => { if (_recordId > 0) ReloadSelected(); };
+        // Повторный показ (после выхода из правки ячейки) — перечитать связи СВЕЖИМИ (мимо кеша),
+        // чтобы текст отражал только что сделанную правку.
+        AttachedToVisualTree += (_, _) => { if (_recordId > 0) ReloadSelected(preferCache: false); };
 
         RefreshDisplay();
     }
 
-    /// <summary>Запись-источник. Смена → перечитать связи и перерисовать показ.</summary>
+    /// <summary>Запись-источник. Смена → перечитать связи и перерисовать показ. Это горячий путь
+    /// наполнения страницы таблицы — читаем из батч-кеша, если он прогрет.</summary>
     public int RecordId
     {
         get => _recordId;
-        set { if (_recordId == value) return; _recordId = value; ReloadSelected(); }
+        set { if (_recordId == value) return; _recordId = value; ReloadSelected(preferCache: true); }
     }
 
     /// <summary>Перечитать связи из БД (после внешних изменений).</summary>
-    public void Reload() => ReloadSelected();
+    public void Reload() => ReloadSelected(preferCache: false);
 
-    private void ReloadSelected()
+    private void ReloadSelected(bool preferCache)
     {
         _selected.Clear();
         if (_recordId > 0)
-            foreach (var (id, title) in _repo.GetLinks(_fieldId, _recordId))
+        {
+            var links = preferCache && _cache is not null && _cache.TryGet(_fieldId, _recordId, out var cached)
+                ? cached
+                : _repo.GetLinks(_fieldId, _recordId);
+            foreach (var (id, title) in links)
             {
                 _selected.Add(id);
                 _titles[id] = title;
             }
+        }
         RefreshDisplay();
         if (_popup is { IsOpen: true }) RefreshList(_search?.Text);
     }
@@ -345,7 +358,11 @@ public sealed class RelationSelectBox : Panel
             _selected.Remove(id);
         }
 
-        if (_recordId > 0) _repo.SetLinks(_fieldId, _recordId, _selected);
+        if (_recordId > 0)
+        {
+            _repo.SetLinks(_fieldId, _recordId, _selected);
+            _cache?.Invalidate(_fieldId, _recordId);   // кеш устарел — следующее чтение возьмёт свежее
+        }
         RefreshDisplay();
         Changed?.Invoke(this, EventArgs.Empty);
     }

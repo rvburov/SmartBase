@@ -3323,6 +3323,19 @@ public partial class ConstructorRepository(AppDbContext db)
             db.DbFieldValues.Add(new DbFieldValueEntity { RecordId = copy.Id, FieldId = fv.FieldId, Value = fv.Value });
         db.SaveChanges();
 
+        // Исходящие связи (relation): копия ссылается на те же записи-цели (ToRecordId/Position без
+        // изменений), FromRecordId — новая копия. Входящие ссылки на исходную запись НЕ копируются.
+        var links = db.DbRecordLinks.AsNoTracking().Where(l => l.FromRecordId == recordId).ToList();
+        if (links.Count > 0)
+        {
+            foreach (var l in links)
+                db.DbRecordLinks.Add(new DbRecordLinkEntity
+                {
+                    FieldId = l.FieldId, FromRecordId = copy.Id, ToRecordId = l.ToRecordId, Position = l.Position,
+                });
+            db.SaveChanges();
+        }
+
         // Копия записи могла принести значения видимых полей-дат — наполняем проекцию календаря.
         RebuildCalendarIndexForRecord(copy.Id);
 
@@ -3516,6 +3529,18 @@ public partial class ConstructorRepository(AppDbContext db)
             progress?.Report(processed);
         }
 
+        // Связи (relation) одним INSERT…SELECT: FromRecordId → новый id по тому же рангу, что и значения
+        // ({firstNew} + ранг − 1); ToRecordId/Position без изменений — копия ссылается на те же цели.
+        db.Database.ExecuteSqlInterpolated($@"
+            INSERT INTO db_record_links (FieldId, FromRecordId, ToRecordId, Position)
+            SELECT l.FieldId, {firstNew} + (r.rn - 1), l.ToRecordId, l.Position
+            FROM db_record_links l
+            JOIN (SELECT s.src_id AS old_id,
+                         ROW_NUMBER() OVER (ORDER BY rr.Position, rr.Id) AS rn
+                  FROM _dup_recsel s JOIN db_records rr ON rr.Id = s.src_id
+                  WHERE rr.CollectionId = {collectionId}) r
+              ON r.old_id = l.FromRecordId");
+
         db.Database.ExecuteSqlRaw("DROP TABLE IF EXISTS temp._dup_recsel");
         tx.Commit();
 
@@ -3598,6 +3623,13 @@ public partial class ConstructorRepository(AppDbContext db)
                 processed = hi;
                 progress?.Report(processed);
             }
+
+            // Связи (relation): FromRecordId → new_id по карте _dup_rmap; цели/позиции без изменений.
+            db.Database.ExecuteSqlRaw(@"
+                INSERT INTO db_record_links (FieldId, FromRecordId, ToRecordId, Position)
+                SELECT l.FieldId, m.new_id, l.ToRecordId, l.Position
+                FROM db_record_links l
+                JOIN _dup_rmap m ON m.old_id = l.FromRecordId");
 
             newIds = new List<int>(count);
             using (var c = db.Database.GetDbConnection().CreateCommand())
@@ -3760,6 +3792,21 @@ public partial class ConstructorRepository(AppDbContext db)
             plan[sf.Id!.Value] = (tf.Id!.Value, sf.FieldType, tf.FieldType);
         }
 
+        // Связи (relation) переносятся только ВНУТРИ одной базы: цель-коллекция связи должна быть в
+        // этой же БД. При межбазовом переносе связи отбрасываются (цель в другом .db недостижима).
+        // Переносим лишь там, где исходное И целевое поле — «Связь» на ОДНУ И ТУ ЖЕ коллекцию.
+        var sameDb  = ReferenceEquals(source, this);
+        var relPlan = new List<(int SrcFieldId, int TgtFieldId)>();
+        if (sameDb)
+            foreach (var sf in srcFields)
+            {
+                if (sf.FieldType != "relation" || !targetByName.TryGetValue(sf.Name, out var tf) || tf.FieldType != "relation") continue;
+                var sc = RelationConfig.FromConfig(sf.ConfigJson);
+                var tc = RelationConfig.FromConfig(tf.ConfigJson);
+                if (sc is null || tc is null || sc.TargetCollectionId != tc.TargetCollectionId) continue;
+                relPlan.Add((sf.Id!.Value, tf.Id!.Value));
+            }
+
         // 2) Копируем записи (одна транзакция, один коммит). Position новых — в конец, по 1000.
         var posBase = db.DbRecords.Where(r => r.CollectionId == targetCollectionId)
                                   .Select(r => (int?)r.Position).Max() ?? 0;
@@ -3797,6 +3844,22 @@ public partial class ConstructorRepository(AppDbContext db)
                     });
                 }
                 if (rows.Count > 0) { db.DbFieldValues.AddRange(rows); db.SaveChanges(); }
+
+                // Связи-relation переносимых полей: цели/порядок исходной записи → на новую запись.
+                if (relPlan.Count > 0)
+                {
+                    var linkRows = new List<DbRecordLinkEntity>();
+                    foreach (var (srcFid, tgtFid) in relPlan)
+                    {
+                        var toIds = source.GetLinkTargetIds(srcFid, srcId);
+                        for (var i = 0; i < toIds.Count; i++)
+                            linkRows.Add(new DbRecordLinkEntity
+                            {
+                                FieldId = tgtFid, FromRecordId = rec.Id, ToRecordId = toIds[i], Position = (i + 1) * 1000,
+                            });
+                    }
+                    if (linkRows.Count > 0) { db.DbRecordLinks.AddRange(linkRows); db.SaveChanges(); }
+                }
 
                 newIds.Add(rec.Id);
                 copiedSources.Add(srcId);

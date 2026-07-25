@@ -131,4 +131,59 @@ public sealed class RelationLinkTests
         repo.RemoveLink(rel, t, p1);
         Assert.Equal([p2], repo.GetLinkTargetIds(rel, t));
     }
+
+    [Fact]
+    public void Duplicating_record_copies_outgoing_links()
+    {
+        using var db = new TempDatabase();
+        var (repo, taskCol, rel, projCol) = Setup(db);
+        var p1 = SampleData.AddRecord(repo, projCol, "A").Id!.Value;
+        var p2 = SampleData.AddRecord(repo, projCol, "B").Id!.Value;
+        var t  = SampleData.AddRecord(repo, taskCol, "T").Id!.Value;
+        repo.SetLinks(rel, t, [p1, p2]);
+
+        var copy = repo.DuplicateRecord(t);
+
+        Assert.Equal([p1, p2], repo.GetLinkTargetIds(rel, copy.Id!.Value));   // копия ссылается на те же цели
+        Assert.Equal([p1, p2], repo.GetLinkTargetIds(rel, t));         // оригинал не тронут
+    }
+
+    [Fact]
+    public void Bulk_duplicate_copies_links_per_record()
+    {
+        using var db = new TempDatabase();
+        var (repo, taskCol, rel, projCol) = Setup(db);
+        var p1 = SampleData.AddRecord(repo, projCol, "A").Id!.Value;
+        var p2 = SampleData.AddRecord(repo, projCol, "B").Id!.Value;
+        var t1 = SampleData.AddRecord(repo, taskCol, "T1").Id!.Value;
+        var t2 = SampleData.AddRecord(repo, taskCol, "T2").Id!.Value;   // без связей
+        repo.SetLinks(rel, t1, [p2, p1]);   // порядок p2, p1 — должен сохраниться в копии
+
+        // Копии возвращаются в порядке ранга (Position, Id) — t1 создана раньше t2.
+        var newIds = repo.DuplicateRecordsData(taskCol, [t1, t2]);
+
+        Assert.Equal([p2, p1], repo.GetLinkTargetIds(rel, newIds[0]));   // копия t1 — те же цели и порядок
+        Assert.Empty(repo.GetLinkTargetIds(rel, newIds[1]));             // копия t2 — связей не было
+    }
+
+    [Fact]
+    public void Moving_record_within_same_db_transfers_links()
+    {
+        using var db = new TempDatabase();
+        var (repo, taskCol, rel, projCol) = Setup(db);
+        // Целевая коллекция с таким же полем-связью «Проект» → projCol (сопоставление по имени).
+        var archive = SampleData.AddCollection(repo, "Архив").Id!.Value;
+        var rel2 = SampleData.AddField(repo, archive, "Проект", "relation");
+        rel2.ConfigJson = new RelationConfig(projCol, false).ToConfigJson();
+        repo.UpdateField(rel2);
+
+        var p1 = SampleData.AddRecord(repo, projCol, "A").Id!.Value;
+        var p2 = SampleData.AddRecord(repo, projCol, "B").Id!.Value;
+        var t  = SampleData.AddRecord(repo, taskCol, "T").Id!.Value;
+        repo.SetLinks(rel, t, [p2, p1]);
+
+        var newIds = repo.MoveRecordsToCollectionIsolated(db.Path, taskCol, [t], archive, createMissingFields: false);
+
+        Assert.Equal([p2, p1], repo.GetLinkTargetIds(rel2.Id!.Value, newIds[0]));   // перенесены с порядком
+    }
 }

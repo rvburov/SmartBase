@@ -40,6 +40,10 @@ internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollecti
     // и грузятся по id в его порядке, а не keyset/offset по Position. null — обычный режим.
     private readonly IReadOnlyList<int>? _recordIds;
     private int _dataCount;   // меняется при структурном обновлении (создание/удаление/дубль записей)
+    // Кеш связей-relation (батч-префетч видимой страницы вместо N точечных GetLinks) и id полей-связей
+    // коллекции. null-кеш → префетч выключен (ячейки читают связи сами).
+    private readonly RelationLinksCache? _relLinks;
+    private readonly int[] _relationFieldIds;
 
     // Постоянный экземпляр add-row — DataGrid сравнивает по ссылке при ScrollIntoView.
     public TableRowVm AddRowItem { get; } = TableRowVm.AddRow();
@@ -62,15 +66,28 @@ internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollecti
     }
 
     public VirtualRowList(ConstructorRepository repo, int collectionId, List<DbField> fields,
-                          bool excludeHidden = false, IReadOnlyList<int>? recordIds = null)
+                          bool excludeHidden = false, IReadOnlyList<int>? recordIds = null,
+                          RelationLinksCache? relLinks = null)
     {
         _repo          = repo;
         _collectionId  = collectionId;
         _fields        = fields;
         _excludeHidden = excludeHidden;
         _recordIds     = recordIds;
+        _relLinks      = relLinks;
+        _relationFieldIds = fields.Where(f => f.FieldType == "relation" && f.Id is not null)
+                                  .Select(f => f.Id!.Value).ToArray();
         // Режим списка id (фильтр/сортировка): длина списка. Иначе — считаем из БД.
         _dataCount     = recordIds?.Count ?? repo.CountRecords(collectionId, excludeHidden);
+    }
+
+    // Батч-префетч связей видимой страницы: по одному GetLinksBatch на каждое поле-связь вместо N
+    // точечных GetLinks (по строке). Только UI-поток (общий _repo) — зовём из путей наполнения строк.
+    private void PrimeRelationLinks(IReadOnlyList<int> recordIds)
+    {
+        if (_relLinks is null || _relationFieldIds.Length == 0 || recordIds.Count == 0) return;
+        foreach (var fid in _relationFieldIds)
+            _relLinks.Prime(fid, recordIds, _repo.GetLinksBatch(fid, recordIds));
     }
 
     public TableRowVm this[int index]
@@ -178,6 +195,7 @@ internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollecti
     {
         var ids    = records.Select(r => r.Id!.Value).ToList();
         var valMap = _repo.GetFieldValuesBatch(ids);
+        PrimeRelationLinks(ids);
 
         var rows = new TableRowVm[records.Count];
         for (var i = 0; i < records.Count; i++)
@@ -202,6 +220,7 @@ internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollecti
 
         // Строки-заглушки заполняем реальными данными; на будущее (редактирование ячеек)
         // отдаём ОСНОВНОЙ репозиторий — фоновый контекст использовался только для чтения.
+        PrimeRelationLinks(records.Select(r => r.Id!.Value).ToList());
         for (var i = 0; i < records.Count && i < rows.Length; i++)
         {
             var rec    = records[i];
@@ -255,6 +274,7 @@ internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollecti
         if (rec is null) return;                       // запись удалена — оставляем как есть до Reset
 
         var values = _repo.GetFieldValues(recordId);
+        PrimeRelationLinks([recordId]);   // связи записи могли измениться (правка в панели записи)
         row.Fill(_repo, recordId, values, rec.Title ?? "", rec.Description,
                  rec.CreatedAt ?? "", rec.UpdatedAt ?? "", rec.CreatedBy ?? "", rec.UpdatedBy ?? "");
     }
@@ -272,7 +292,9 @@ internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollecti
 
             var skip    = page * PageSize;
             var records = LoadRecordsByOffset(skip, rows.Length);
-            var valMap  = _repo.GetFieldValuesBatch(records.Select(r => r.Id!.Value).ToList());
+            var pageIds = records.Select(r => r.Id!.Value).ToList();
+            var valMap  = _repo.GetFieldValuesBatch(pageIds);
+            PrimeRelationLinks(pageIds);
 
             for (var i = 0; i < records.Count && i < rows.Length; i++)
             {

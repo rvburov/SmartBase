@@ -83,6 +83,10 @@ public partial class TableView : UserControl
     private List<DbField>        _fields  = [];
     private List<TableColumnDef> _colDefs = [];
     private VirtualRowList?      _virtualRows;
+    // Кеш связей-relation таблицы: батч видимой страницы вместо N точечных GetLinks. Общий для
+    // виртуального списка (пишет при наполнении страниц) и ячеек-связей (читают). Чистится при смене
+    // источника строк (ReloadRows/фильтр). Стабильный экземпляр — шаблоны ячеек ссылаются на него.
+    private readonly RelationLinksCache _relLinks = new();
     // Виртуализирующая обёртка над _virtualRows: кладётся в ItemsSource — DataGrid берёт её
     // как IDataGridCollectionView без материализации и тянет только видимые строки.
     // Виртуализация всегда включена (часть программы), переключателя нет.
@@ -562,8 +566,9 @@ public partial class TableView : UserControl
             .ToHashSet();
         _rowHeights = _repository.GetRowHeights(_collectionId);
 
+        _relLinks.Clear();   // новый источник строк — прежний прогрев связей неактуален
         _virtualRows = new VirtualRowList(_repository, _collectionId, _fields,
-                                         excludeHidden: _hiddenRecords.Count > 0);
+                                         excludeHidden: _hiddenRecords.Count > 0, relLinks: _relLinks);
         _virtualRows.RecordEdited += (_, rid) => RecordValueEdited?.Invoke(this, rid);
         // Виртуализирующая обёртка: DataGrid не материализует источник, тянет только видимые
         // строки → большие коллекции открываются мгновенно. Всегда включена.
@@ -1274,7 +1279,7 @@ public partial class TableView : UserControl
             // DataContext) и меняется при переиспользовании контейнера — переустанавливаем RecordId.
             if (def.FieldType == "relation" && def.Relation is not null && _repository is not null && def.Tag is int relFid)
             {
-                var rel = new RelationSelectBox(_repository, relFid, def.Relation, editing: false, contentLeftPadding: 6);
+                var rel = new RelationSelectBox(_repository, relFid, def.Relation, editing: false, contentLeftPadding: 6, cache: _relLinks);
                 BindRelationRow(rel, row);
                 return rel;
             }
@@ -1446,7 +1451,7 @@ public partial class TableView : UserControl
                     // Правка ячейки: текст + иконка-связь справа, по клику по иконке — чеклист выбора
                     // (как чеклист «Мультисписка»). «→» у пункта → открыть цель. По выходе из правки
                     // read-ячейка (editing:false) переустановится и перечитает связи (AttachedToVisualTree).
-                    var rel = new RelationSelectBox(_repository, relFid, def.Relation, editing: true, contentLeftPadding: 6);
+                    var rel = new RelationSelectBox(_repository, relFid, def.Relation, editing: true, contentLeftPadding: 6, cache: _relLinks);
                     rel.Navigate += (_, targetId) => RecordClicked?.Invoke(this, targetId);
                     rel.Changed  += (_, _) =>
                     {
@@ -2839,7 +2844,8 @@ public partial class TableView : UserControl
             ids.Sort((a, b) => cmp(vals.GetValueOrDefault(a, ""), vals.GetValueOrDefault(b, "")));
         }
 
-        var filteredRows = new VirtualRowList(_repository, _collectionId, _fields, recordIds: ids);
+        _relLinks.Clear();   // новый срез строк (фильтр/сортировка) — прежний прогрев связей неактуален
+        var filteredRows = new VirtualRowList(_repository, _collectionId, _fields, recordIds: ids, relLinks: _relLinks);
         filteredRows.RecordEdited += (_, rid) => RecordValueEdited?.Invoke(this, rid);
         RecordsGrid.ItemsSource = new VirtualCollectionView(filteredRows);
     }
