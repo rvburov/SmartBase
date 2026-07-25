@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using SmartBase.Core.Models;
+using SmartBase.Database;
 using SmartBase.Database.Repositories;
 
 namespace SmartBase.Tests.Integration;
@@ -183,7 +184,8 @@ public sealed class RelationLinkTests
         var t  = SampleData.AddRecord(repo, taskCol, "T").Id!.Value;
         repo.SetLinks(rel, t, [p2, p1]);
 
-        var newIds = repo.MoveRecordsToCollectionIsolated(db.Path, taskCol, [t], archive, createMissingFields: false);
+        var newIds = repo.MoveRecordsToCollectionIsolated(db.Path, taskCol, [t], archive, createMissingFields: false,
+                                                          sourceDbId: 1, targetDbId: 1);
 
         Assert.Equal([p2, p1], repo.GetLinkTargetIds(rel2.Id!.Value, newIds[0]));   // перенесены с порядком
     }
@@ -301,5 +303,38 @@ public sealed class RelationLinkTests
         Assert.Equal([b1], repoA.GetLinkTargetIds(rel.Id!.Value, t));   // single межбазовый — записалась
         repoA.SetLinks(rel.Id!.Value, t, [b2]);
         Assert.Equal([b2], repoA.GetLinkTargetIds(rel.Id!.Value, t));   // и заменилась
+    }
+
+    [Fact]
+    public void Cross_db_move_rewrites_same_db_link_to_cross_db_origin()
+    {
+        using var dbA = new TempDatabase(dbId: 1, name: "A");
+        using var dbB = new TempDatabase(dbId: 2, name: "B");
+        var repoA = dbA.Constructor;
+        var repoB = dbB.Constructor;
+
+        // dbA: «Проекты» + «Задачи» с ВНУТРИБАЗОВОЙ связью «Проект» → Проекты(dbA) (TargetDbId=0).
+        var projA = SampleData.AddCollection(repoA, "Проекты").Id!.Value;
+        var p1 = SampleData.AddRecord(repoA, projA, "Проект-A").Id!.Value;
+        var taskA = SampleData.AddCollection(repoA, "Задачи").Id!.Value;
+        var relA = SampleData.AddField(repoA, taskA, "Проект", "relation");
+        relA.ConfigJson = new RelationConfig(projA, false).ToConfigJson();
+        repoA.UpdateField(relA);
+        var t = SampleData.AddRecord(repoA, taskA, "Задача").Id!.Value;
+        repoA.SetLinks(relA.Id!.Value, t, [p1]);
+
+        // Переносим запись t из dbA в новую «Задачи» dbB (создаём недостающие поля).
+        var taskB = SampleData.AddCollection(repoB, "Задачи").Id!.Value;
+        var newIds = repoB.MoveRecordsToCollectionIsolated(dbA.Path, taskA, [t], taskB,
+            createMissingFields: true, sourceDbId: 1, targetDbId: 2);
+
+        // В dbB поле-связь «Проект» стало МЕЖБАЗОВЫМ на dbA (TargetDbId=1), ребро — на p1 (в dbA).
+        using var verifyCtx = new AppDbContext(dbB.Path);
+        var verify = new ConstructorRepository(verifyCtx);
+        var relB = verify.GetFields(taskB).Single(f => f.Name == "Проект");
+        var cfgB = RelationConfig.FromConfig(relB.ConfigJson)!;
+        Assert.Equal(1,     cfgB.TargetDbId);          // внутрибазовая связь на источник → межбазовая на dbA
+        Assert.Equal(projA, cfgB.TargetCollectionId);
+        Assert.Equal([(p1, 1)], verify.GetLinkEdges(relB.Id!.Value, newIds[0]));   // ребро на p1 с TargetDbId=1
     }
 }

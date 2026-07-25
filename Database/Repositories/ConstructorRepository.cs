@@ -3737,7 +3737,7 @@ public partial class ConstructorRepository(AppDbContext db)
     /// переносе внутри одной БД). Возвращает id созданных записей.</summary>
     public List<int> MoveRecordsToCollectionIsolated(
         string sourceDbPath, int sourceCollectionId, IReadOnlyList<int> recordIds, int targetCollectionId,
-        bool createMissingFields, IProgress<int>? progress = null)
+        bool createMissingFields, int sourceDbId, int targetDbId, IProgress<int>? progress = null)
     {
         if (recordIds.Count == 0) return [];
         // this — ЦЕЛЕВАЯ база: создание записей в целевой коллекции. Право удаления в
@@ -3756,7 +3756,7 @@ public partial class ConstructorRepository(AppDbContext db)
         if (!sameDb) { sourceCtx = new AppDbContext(sourceDbPath); sourceCtx.ApplyPerformancePragmas(); }
         var sourceRepo = sameDb ? targetRepo : new ConstructorRepository(sourceCtx!);
 
-        try { return targetRepo.MoveRecordsCore(sourceRepo, sourceCollectionId, recordIds, targetCollectionId, createMissingFields, progress); }
+        try { return targetRepo.MoveRecordsCore(sourceRepo, sourceCollectionId, recordIds, targetCollectionId, createMissingFields, sourceDbId, targetDbId, progress); }
         finally { sourceCtx?.Dispose(); }
     }
 
@@ -3771,8 +3771,25 @@ public partial class ConstructorRepository(AppDbContext db)
     //   • копирование идёт в одной транзакции (один коммит), трекер EF чистим после каждой записи —
     //     память ограничена независимо от размера пакета.
     private List<int> MoveRecordsCore(ConstructorRepository source, int sourceCollectionId,
-        IReadOnlyList<int> recordIds, int targetCollectionId, bool createMissingFields, IProgress<int>? progress)
+        IReadOnlyList<int> recordIds, int targetCollectionId, bool createMissingFields,
+        int sourceDbId, int targetDbId, IProgress<int>? progress)
     {
+        // Переинтерпретация целевой БД связи под целевую базу переноса. «Абсолютная» БД цели: 0 в
+        // конфиге/ребре означает БД ИСТОЧНИКА (sourceDbId). В целевой базе она снова 0, если совпала
+        // с назначением (стала внутрибазовой), иначе — межбазовая на ту же абсолютную БД. Одна формула
+        // покрывает и внутрибазовый перенос (source==target: 0→0), и межбазовый (0→sourceDbId и т.д.).
+        var canMoveLinks = sourceDbId > 0 && targetDbId > 0;
+        int RelTargetDb(int cfgOrLinkDb)
+        {
+            var abs = cfgOrLinkDb == 0 ? sourceDbId : cfgOrLinkDb;
+            return abs == targetDbId ? 0 : abs;
+        }
+        string RewriteRelConfig(DbField sf)
+        {
+            if (RelationConfig.FromConfig(sf.ConfigJson) is not { } sc) return sf.ConfigJson;
+            return new RelationConfig(sc.TargetCollectionId, sc.Single, sc.Separator, RelTargetDb(sc.TargetDbId)).ToConfigJson();
+        }
+
         // 1) План: srcFieldId → (целевое поле, типы). Недостающие свойства создаём ОДИН раз (при флаге),
         //    до транзакции копирования (AddField коммитит сам).
         var srcFields    = source.GetFields(sourceCollectionId);
@@ -3788,10 +3805,13 @@ public partial class ConstructorRepository(AppDbContext db)
             if (!targetByName.TryGetValue(sf.Name, out var tf))
             {
                 if (!createMissingFields) continue;
+                // Для создаваемого поля-связи переписываем целевую БД под целевую базу переноса
+                // (иначе TargetDbId «поедет»: внутрибазовая связь на источник станет ссылкой в никуда).
+                var cfgJson = canMoveLinks && sf.FieldType == "relation" ? RewriteRelConfig(sf) : sf.ConfigJson;
                 tf = AddField(new DbField
                 {
                     CollectionId = targetCollectionId, Name = sf.Name,
-                    FieldType    = sf.FieldType,        ConfigJson = sf.ConfigJson,
+                    FieldType    = sf.FieldType,        ConfigJson = cfgJson,
                     Position     = nextFieldPos,        IsCalStart = sf.IsCalStart,
                     IsCalEnd     = sf.IsCalEnd,         IsRequired = sf.IsRequired,
                     IsTaskExec   = sf.IsTaskExec,       IsTaskAssigner = sf.IsTaskAssigner,
@@ -3803,18 +3823,18 @@ public partial class ConstructorRepository(AppDbContext db)
             plan[sf.Id!.Value] = (tf.Id!.Value, sf.FieldType, tf.FieldType);
         }
 
-        // Связи (relation) переносятся только ВНУТРИ одной базы: цель-коллекция связи должна быть в
-        // этой же БД. При межбазовом переносе связи отбрасываются (цель в другом .db недостижима).
-        // Переносим лишь там, где исходное И целевое поле — «Связь» на ОДНУ И ТУ ЖЕ коллекцию.
-        var sameDb  = ReferenceEquals(source, this);
+        // Связи (relation): переносим там, где исходное И целевое поле — «Связь», а конфиг цели указывает
+        // на ту же коллекцию И ту же (переписанную под целевую базу) целевую БД. Созданные выше поля уже
+        // с переписанным конфигом; для существующих полей-совпадений по имени проверяем совместимость.
         var relPlan = new List<(int SrcFieldId, int TgtFieldId)>();
-        if (sameDb)
+        if (canMoveLinks)
             foreach (var sf in srcFields)
             {
                 if (sf.FieldType != "relation" || !targetByName.TryGetValue(sf.Name, out var tf) || tf.FieldType != "relation") continue;
                 var sc = RelationConfig.FromConfig(sf.ConfigJson);
                 var tc = RelationConfig.FromConfig(tf.ConfigJson);
-                if (sc is null || tc is null || sc.TargetCollectionId != tc.TargetCollectionId) continue;
+                if (sc is null || tc is null) continue;
+                if (tc.TargetCollectionId != sc.TargetCollectionId || tc.TargetDbId != RelTargetDb(sc.TargetDbId)) continue;
                 relPlan.Add((sf.Id!.Value, tf.Id!.Value));
             }
 
@@ -3856,17 +3876,20 @@ public partial class ConstructorRepository(AppDbContext db)
                 }
                 if (rows.Count > 0) { db.DbFieldValues.AddRange(rows); db.SaveChanges(); }
 
-                // Связи-relation переносимых полей: цели/порядок исходной записи → на новую запись.
+                // Связи-relation переносимых полей: цели/порядок исходной записи → на новую запись,
+                // TargetDbId переписан под целевую базу (внутрибазовая связь на источник становится
+                // межбазовой, связь на базу-назначение — внутрибазовой, на третью базу — без изменений).
                 if (relPlan.Count > 0)
                 {
                     var linkRows = new List<DbRecordLinkEntity>();
                     foreach (var (srcFid, tgtFid) in relPlan)
                     {
-                        var toIds = source.GetLinkTargetIds(srcFid, srcId);
-                        for (var i = 0; i < toIds.Count; i++)
+                        var edges = source.GetLinkEdges(srcFid, srcId);
+                        for (var i = 0; i < edges.Count; i++)
                             linkRows.Add(new DbRecordLinkEntity
                             {
-                                FieldId = tgtFid, FromRecordId = rec.Id, ToRecordId = toIds[i], Position = (i + 1) * 1000,
+                                FieldId = tgtFid, FromRecordId = rec.Id, ToRecordId = edges[i].ToRecordId,
+                                TargetDbId = RelTargetDb(edges[i].TargetDbId), Position = (i + 1) * 1000,
                             });
                     }
                     if (linkRows.Count > 0) { db.DbRecordLinks.AddRange(linkRows); db.SaveChanges(); }

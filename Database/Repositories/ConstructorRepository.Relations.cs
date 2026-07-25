@@ -66,6 +66,17 @@ public partial class ConstructorRepository
           .Select(l => l.ToRecordId)
           .ToList();
 
+    /// <summary>Рёбра ячейки в порядке Position: (ToRecordId, TargetDbId). Нужны переносу записей —
+    /// чтобы переписать TargetDbId под целевую базу (см. MoveRecordsCore).</summary>
+    public List<(int ToRecordId, int TargetDbId)> GetLinkEdges(int fieldId, int fromRecordId) =>
+        db.DbRecordLinks.AsNoTracking()
+          .Where(l => l.FieldId == fieldId && l.FromRecordId == fromRecordId)
+          .OrderBy(l => l.Position).ThenBy(l => l.Id)
+          .Select(l => new { l.ToRecordId, l.TargetDbId })
+          .ToList()
+          .Select(x => (x.ToRecordId, x.TargetDbId))
+          .ToList();
+
     /// <summary>
     /// Заменить ВЕСЬ набор связей ячейки на <paramref name="toRecordIds"/> (основной путь записи из
     /// пикера). Порядок сохраняется (Position), дубли/само-ссылки/чужие коллекции отсеиваются, для

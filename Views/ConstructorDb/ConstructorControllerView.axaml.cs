@@ -435,7 +435,7 @@ public partial class ConstructorControllerView : UserControl
             {
                 setPhase(many ? "Перемещение записей" : "Перемещение записи");
                 targetRepo.MoveRecordsToCollectionIsolated(sourcePath, sourceCollectionId, ids, res.CollectionId,
-                    res.CreateMissingFields, new IntProgress(done => p.Report((done, ids.Count))));
+                    res.CreateMissingFields, CurrentDbId, res.DbId, new IntProgress(done => p.Report((done, ids.Count))));
                 p.Report((ids.Count, ids.Count));   // финал → «Сохранение…»
             });
 
