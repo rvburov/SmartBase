@@ -1,3 +1,4 @@
+using Microsoft.EntityFrameworkCore;
 using SmartBase.Core.Models;
 using SmartBase.Database.Repositories;
 
@@ -240,5 +241,42 @@ public sealed class RelationLinkTests
 
         var vals = repo.GetColumnValues(taskCol, rel.ToString());
         Assert.Equal("Бета, Альфа", vals[t1]);   // названия через разделитель поля (comma → ", ")
+    }
+
+    [Fact]
+    public void Cross_db_links_store_target_db_id_and_resolve_titles_from_target_repo()
+    {
+        using var dbA = new TempDatabase(dbId: 1, name: "A");
+        using var dbB = new TempDatabase(dbId: 2, name: "B");
+        var repoA = dbA.Constructor;
+        var repoB = dbB.Constructor;
+
+        // БД-B: коллекция «Проекты» с записями (цели межбазовой связи).
+        var projB = SampleData.AddCollection(repoB, "Проекты").Id!.Value;
+        var b1 = SampleData.AddRecord(repoB, projB, "Инфра B").Id!.Value;
+        var b2 = SampleData.AddRecord(repoB, projB, "Сайт B").Id!.Value;
+
+        // БД-A: «Задачи» с межбазовым полем-связью на коллекцию БД-B (TargetDbId = 2).
+        var taskA = SampleData.AddCollection(repoA, "Задачи").Id!.Value;
+        var rel = SampleData.AddField(repoA, taskA, "Проект", "relation");
+        rel.ConfigJson = new RelationConfig(projB, false, "comma", 2).ToConfigJson();
+        repoA.UpdateField(rel);
+        var t = SampleData.AddRecord(repoA, taskA, "Задача").Id!.Value;
+
+        repoA.SetLinks(rel.Id!.Value, t, [b2, b1]);   // цели — Id из БД-B
+
+        // Рёбра лежат в БД-A с порядком; TargetDbId=2. Само-ссылку НЕ отсеиваем (b1 может совпасть с t
+        // по Id, но это разные записи в разных БД).
+        Assert.Equal([b2, b1], repoA.GetLinkTargetIds(rel.Id!.Value, t));
+        Assert.Equal([2], dbA.Context.DbRecordLinks.AsNoTracking().Select(l => l.TargetDbId).Distinct().ToList());
+
+        // Названия целей резолвятся с репозитория БД-B.
+        var titles = repoB.GetRecordTitles([b1, b2]);
+        Assert.Equal("Инфра B", titles[b1]);
+        Assert.Equal("Сайт B",  titles[b2]);
+
+        // Удаление записи-источника в БД-A уносит её межбазовые рёбра (FK FromRecordId цел).
+        repoA.DeleteRecord(t);
+        Assert.Empty(repoA.GetLinkTargetIds(rel.Id!.Value, t));
     }
 }

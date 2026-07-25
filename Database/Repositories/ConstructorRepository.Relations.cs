@@ -47,6 +47,17 @@ public partial class ConstructorRepository
         return result;
     }
 
+    /// <summary>Названия записей по их Id (Id → Title). Для резолва названий целей МЕЖБАЗОВОЙ связи:
+    /// вызывается на репозитории ЦЕЛЕВОЙ базы (UI берёт его через Workspace/реестр по TargetDbId).
+    /// Отсутствующие Id (удалённые цели) в словарь не попадают — вызывающий покажет «(запись удалена)».</summary>
+    public Dictionary<int, string> GetRecordTitles(IReadOnlyList<int> ids)
+    {
+        if (ids.Count == 0) return new();
+        return db.DbRecords.AsNoTracking().Where(r => ids.Contains(r.Id))
+                 .Select(r => new { r.Id, r.Title }).ToList()
+                 .ToDictionary(x => x.Id, x => x.Title ?? "");
+    }
+
     /// <summary>Id связанных записей ячейки в порядке Position (без резолва Title).</summary>
     public List<int> GetLinkTargetIds(int fieldId, int fromRecordId) =>
         db.DbRecordLinks.AsNoTracking()
@@ -70,16 +81,18 @@ public partial class ConstructorRepository
         if (field is null || field.FieldType != "relation") return;
         var cfg = RelationConfig.FromConfig(field.ConfigJson);
         if (cfg is null) return;
+        var targetDbId = cfg.TargetDbId;   // 0 = та же БД; >0 = цель в другом .db (реестровый DbId)
 
-        // Нормализуем желаемый набор: без само-ссылки и дублей, порядок выбора сохраняем.
+        // Нормализуем желаемый набор: без дублей, порядок выбора сохраняем. Само-ссылку отсеиваем
+        // только для внутрибазовой связи (в другой БД тот же Id — уже иная запись).
         var wanted = new List<int>();
         var seen   = new HashSet<int>();
         foreach (var to in toRecordIds)
-            if (to != fromRecordId && seen.Add(to)) wanted.Add(to);
+            if ((targetDbId != 0 || to != fromRecordId) && seen.Add(to)) wanted.Add(to);
 
-        // Оставляем только существующие записи целевой коллекции (пикер и так их предлагает —
-        // это страховка от гонок/битых Id).
-        if (wanted.Count > 0)
+        // Внутрибазовая связь: оставляем только существующие записи целевой коллекции (страховка от
+        // гонок/битых Id). Межбазовую проверить отсюда нельзя (цель в другом файле) — доверяем пикеру.
+        if (targetDbId == 0 && wanted.Count > 0)
         {
             var valid = db.DbRecords.AsNoTracking()
                 .Where(r => r.CollectionId == cfg.TargetCollectionId && wanted.Contains(r.Id))
@@ -104,7 +117,8 @@ public partial class ConstructorRepository
             var titles   = db.DbRecords.AsNoTracking()
                 .Where(r => titleIds.Contains(r.Id))
                 .ToDictionary(r => r.Id, r => r.Title ?? "");
-            string Join(IEnumerable<int> ids) => string.Join(", ", ids.Select(id => titles.GetValueOrDefault(id, "")));
+            // Межбазовые цели локально не резолвятся (другой файл) — в журнале показываем «#id».
+            string Join(IEnumerable<int> ids) => string.Join(", ", ids.Select(id => titles.GetValueOrDefault(id, targetDbId == 0 ? "" : $"#{id}")));
             Log("update", "record", fromRec.Title, CollectionNameOf(fromRec.CollectionId),
                 detail: ChangeDetail.Value(fromRec.Title, field.Name, Join(existingOrdered), Join(wanted)));
         }
@@ -123,7 +137,8 @@ public partial class ConstructorRepository
             if (byTo.TryGetValue(wanted[i], out var l)) l.Position = pos;
             else db.DbRecordLinks.Add(new DbRecordLinkEntity
             {
-                FieldId = fieldId, FromRecordId = fromRecordId, ToRecordId = wanted[i], Position = pos,
+                FieldId = fieldId, FromRecordId = fromRecordId, ToRecordId = wanted[i],
+                TargetDbId = targetDbId, Position = pos,
             });
         }
 
