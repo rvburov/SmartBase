@@ -1744,7 +1744,8 @@ public partial class ConstructorRepository(AppDbContext db)
     /// id новой коллекции в целевой БД (0 — если копировать нечего). Бросает при сбое (после отката копии).
     /// </summary>
     public int MoveCollectionIsolated(string sourceDbPath, int srcCollectionId, int? targetGroupId,
-                                      IProgress<int>? progress = null, int batchSize = 10000)
+                                      IProgress<int>? progress = null, int batchSize = 10000,
+                                      int sourceDbId = 0, int targetDbId = 0)
     {
         // this — ЦЕЛЕВАЯ база: проверяем право создавать в ней. Право удаления в источнике
         // проверяет UI по репозиторию источника (его PermissionService здесь недоступен).
@@ -1752,6 +1753,7 @@ public partial class ConstructorRepository(AppDbContext db)
 
         // Пара с PostgreSQL (или PG→PG): ATTACH существует только у SQLite — переносим
         // generic-путём на двух независимых подключениях (см. ConstructorRepository.CrossMove).
+        // Связи через generic-путь пока НЕ переносятся (bulk по двум подключениям — отдельным заходом).
         if (db.IsPostgres || PgConnectionInfo.IsPostgresConnectionString(sourceDbPath))
             return MoveCollectionGeneric(sourceDbPath, srcCollectionId, targetGroupId, progress, batchSize);
 
@@ -1761,8 +1763,12 @@ public partial class ConstructorRepository(AppDbContext db)
 
         // Прогресс покрывает ОБЕ фазы: копию (0..recCount) и удаление исходника (recCount..2·recCount).
         // Иначе бар замирал на 100% на всё время удаления (каскад записей/значений — минуты на больших).
-        var (newColId, recCount) = target.CopyCollectionFromAttached(sourceDbPath, srcCollectionId, targetGroupId, progress, batchSize);
+        var (newColId, recCount) = target.CopyCollectionFromAttached(sourceDbPath, srcCollectionId, targetGroupId, progress, batchSize, sourceDbId, targetDbId);
         if (newColId == 0) return 0;
+
+        // Конфиги полей-связей перенесены дословно — переписываем под целевую базу (согласованно с
+        // переписыванием рёбер в копии): внешняя цель → межбазовая на источник, само-связь → на новую коллекцию.
+        target.RewriteMovedRelationConfigs(newColId, srcCollectionId, sourceDbId, targetDbId);
 
         // Имя копируется как есть → если в целевой группе уже есть одноимённая коллекция, даём «(копия)».
         target.UniquifyCollectionName(newColId, targetGroupId);
@@ -1792,12 +1798,13 @@ public partial class ConstructorRepository(AppDbContext db)
     /// нарастающее число перенесённых записей. Возвращает id новой верхней группы (0 — нечего копировать).
     /// </summary>
     public int MoveGroupIsolated(string sourceDbPath, int srcGroupId, int? targetParentId,
-                                 IProgress<int>? progress = null, int batchSize = 10000)
+                                 IProgress<int>? progress = null, int batchSize = 10000,
+                                 int sourceDbId = 0, int targetDbId = 0)
     {
         // this — ЦЕЛЕВАЯ база (см. MoveCollectionIsolated: источник проверяет UI).
         Demand(PermAction.CreateCollection);
 
-        // Пара с PostgreSQL (или PG→PG): generic-путь вместо ATTACH (см. CrossMove).
+        // Пара с PostgreSQL (или PG→PG): generic-путь вместо ATTACH (см. CrossMove). Связи не переносим.
         if (db.IsPostgres || PgConnectionInfo.IsPostgresConnectionString(sourceDbPath))
             return MoveGroupGeneric(sourceDbPath, srcGroupId, targetParentId, progress, batchSize);
 
@@ -1806,7 +1813,7 @@ public partial class ConstructorRepository(AppDbContext db)
         var target = new ConstructorRepository(targetCtx);
 
         // Прогресс покрывает ОБЕ фазы: копию ветки (0..total) и удаление исходной ветки (total..2·total).
-        var (newRootId, total) = target.CopyGroupFromAttached(sourceDbPath, srcGroupId, targetParentId, progress, batchSize);
+        var (newRootId, total) = target.CopyGroupFromAttached(sourceDbPath, srcGroupId, targetParentId, progress, batchSize, sourceDbId, targetDbId);
         if (newRootId == 0) return 0;
 
         // Имя корня ветки копируется как есть → если на целевом уровне уже есть одноимённая группа,
@@ -1834,7 +1841,8 @@ public partial class ConstructorRepository(AppDbContext db)
     // (CloneGroupTreeAttached, имена через INSERT…SELECT, без материализации в C#), затем все коллекции
     // ветки по очереди с общим % (progressBase накапливает перенесённые записи).
     private (int NewRootId, long TotalRecords) CopyGroupFromAttached(string sourceDbPath, int srcGroupId,
-                                      int? targetParentId, IProgress<int>? progress, int batchSize)
+                                      int? targetParentId, IProgress<int>? progress, int batchSize,
+                                      int sourceDbId = 0, int targetDbId = 0)
     {
         return WithAttachedSource(sourceDbPath, conn =>
         {
@@ -1848,10 +1856,13 @@ public partial class ConstructorRepository(AppDbContext db)
             var cols = ReadIntPairs(conn, tx,
                 $"SELECT Id, GroupId FROM src.db_collections WHERE GroupId IN ({oldGroupIds}) ORDER BY GroupId, Position");
 
+            // Перенос группы: связи пока НЕ копируем (0,0) — конфиги полей-связей ветки требуют
+            // ГРУППОВОГО ремапа целевых коллекций (связь на другую коллекцию той же ветки), отдельным
+            // заходом. Одиночная коллекция переносит связи (MoveCollectionIsolated).
             long basis = 0;
             foreach (var (colId, oldGroup) in cols)
             {
-                var (_, rc) = CopyOneCollectionFromAttached(conn, tx, colId, map[oldGroup], progress, basis, batchSize);
+                var (_, rc) = CopyOneCollectionFromAttached(conn, tx, colId, map[oldGroup], progress, basis, batchSize, 0, 0);
                 basis += rc;
             }
 
@@ -1918,12 +1929,13 @@ public partial class ConstructorRepository(AppDbContext db)
 
     // Перенос одной коллекции из присоединённой БД: одна транзакция целевой БД.
     private (int NewColId, long RecCount) CopyCollectionFromAttached(string sourceDbPath, int srcCollectionId,
-                                           int? targetGroupId, IProgress<int>? progress, int batchSize)
+                                           int? targetGroupId, IProgress<int>? progress, int batchSize,
+                                           int sourceDbId = 0, int targetDbId = 0)
     {
         return WithAttachedSource(sourceDbPath, conn =>
         {
             using var tx = conn.BeginTransaction();
-            var r = CopyOneCollectionFromAttached(conn, tx, srcCollectionId, targetGroupId, progress, 0, batchSize);
+            var r = CopyOneCollectionFromAttached(conn, tx, srcCollectionId, targetGroupId, progress, 0, batchSize, sourceDbId, targetDbId);
             tx.Commit();
             return r;
         });
@@ -1937,8 +1949,12 @@ public partial class ConstructorRepository(AppDbContext db)
     // (для общего % по группе). Возвращает (id новой коллекции, число её записей). Числа в SQL — int/
     // long, которые мы формируем сами (не пользовательский ввод), поэтому интерполяция безопасна.
     private (int NewColId, long RecCount) CopyOneCollectionFromAttached(DbConnection conn, DbTransaction tx,
-        int srcCollectionId, int? targetGroupId, IProgress<int>? progress, long progressBase, int batchSize)
+        int srcCollectionId, int? targetGroupId, IProgress<int>? progress, long progressBase, int batchSize,
+        int sourceDbId = 0, int targetDbId = 0)
     {
+        // Связи-relation переносим, только зная реестровые DbId (для переписывания TargetDbId под целевую
+        // базу). 0 — путь без переноса связей (PG-generic пока их не копирует).
+        var canMoveLinks = sourceDbId > 0 && targetDbId > 0;
         var recCount = ScalarLong(conn, tx, $"SELECT COUNT(*) FROM src.db_records WHERE CollectionId = {srcCollectionId}");
 
         var maxPos   = ScalarLong(conn, tx, "SELECT COALESCE(MAX(Position), 0) FROM main.db_collections");
@@ -2009,6 +2025,35 @@ public partial class ConstructorRepository(AppDbContext db)
             }
 
             CopyMovedUi(conn, tx, srcCollectionId, newColId, firstNew, recCount);
+
+            // 5) Связи (relation) переносимых полей: FieldId→new (_move_fmap), FromRecordId→new (rank).
+            //    Цель: САМО-связь (TargetDbId=0 и ToRecordId в ЭТОЙ коллекции) → внутрибазовая, ToRecordId→new;
+            //    иначе абсолютная БД = (TargetDbId=0?sourceDbId:TargetDbId), в целевой базе → 0 если совпала
+            //    с назначением, иначе межбазовая (ToRecordId без изменений — цель осталась в исходной/третьей БД).
+            //    Оговорка: связь на ДРУГУЮ коллекцию той же переносимой ГРУППЫ станет межбазовой на источник
+            //    (её цель тоже уедет — станет висячей). Групповой ремап целей — отдельным заходом.
+            if (canMoveLinks)
+            {
+                Exec(conn, tx, "DROP TABLE IF EXISTS temp._move_rmap");
+                Exec(conn, tx, "CREATE TEMP TABLE _move_rmap(old_rid INTEGER PRIMARY KEY, new_rid INTEGER)");
+                Exec(conn, tx, $@"
+                    INSERT INTO _move_rmap(old_rid, new_rid)
+                    SELECT Id, {firstNew} + ROW_NUMBER() OVER (ORDER BY Position, Id) - 1
+                    FROM src.db_records WHERE CollectionId = {srcCollectionId}");
+                Exec(conn, tx, $@"
+                    INSERT INTO main.db_record_links (FieldId, FromRecordId, ToRecordId, TargetDbId, Position)
+                    SELECT fm.new_fid, frm.new_rid,
+                           CASE WHEN l.TargetDbId = 0 AND trm.new_rid IS NOT NULL THEN trm.new_rid ELSE l.ToRecordId END,
+                           CASE WHEN l.TargetDbId = 0 AND trm.new_rid IS NOT NULL THEN 0
+                                WHEN (CASE WHEN l.TargetDbId = 0 THEN {sourceDbId} ELSE l.TargetDbId END) = {targetDbId} THEN 0
+                                ELSE (CASE WHEN l.TargetDbId = 0 THEN {sourceDbId} ELSE l.TargetDbId END) END,
+                           l.Position
+                    FROM src.db_record_links l
+                    JOIN _move_fmap fm  ON fm.old_fid = l.FieldId
+                    JOIN _move_rmap frm ON frm.old_rid = l.FromRecordId
+                    LEFT JOIN _move_rmap trm ON trm.old_rid = l.ToRecordId AND l.TargetDbId = 0");
+                Exec(conn, tx, "DROP TABLE IF EXISTS temp._move_rmap");
+            }
         }
         else
         {

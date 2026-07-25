@@ -337,4 +337,51 @@ public sealed class RelationLinkTests
         Assert.Equal(projA, cfgB.TargetCollectionId);
         Assert.Equal([(p1, 1)], verify.GetLinkEdges(relB.Id!.Value, newIds[0]));   // ребро на p1 с TargetDbId=1
     }
+
+    [Fact]
+    public void Cross_db_collection_move_rewrites_external_and_self_links()
+    {
+        using var dbA = new TempDatabase(dbId: 1, name: "A");
+        using var dbB = new TempDatabase(dbId: 2, name: "B");
+        var repoA = dbA.Constructor;
+        var repoB = dbB.Constructor;
+
+        // dbA: «Проекты» (ОСТАНЕТСЯ) и «Задачи» с внешней связью на Проекты и САМО-связью на Задачи.
+        var projA = SampleData.AddCollection(repoA, "Проекты").Id!.Value;
+        var p1 = SampleData.AddRecord(repoA, projA, "Проект-1").Id!.Value;
+        var taskA = SampleData.AddCollection(repoA, "Задачи").Id!.Value;
+        var relProj = SampleData.AddField(repoA, taskA, "Проект", "relation", position: 1000);
+        relProj.ConfigJson = new RelationConfig(projA, false).ToConfigJson();     // → Проекты(dbA), внутрибазовая
+        repoA.UpdateField(relProj);
+        var relSelf = SampleData.AddField(repoA, taskA, "Похожая", "relation", position: 2000);
+        relSelf.ConfigJson = new RelationConfig(taskA, false).ToConfigJson();     // → Задачи(dbA), само-связь
+        repoA.UpdateField(relSelf);
+        var t1 = SampleData.AddRecord(repoA, taskA, "T1").Id!.Value;
+        var t2 = SampleData.AddRecord(repoA, taskA, "T2").Id!.Value;
+        repoA.SetLinks(relProj.Id!.Value, t1, [p1]);   // внешняя
+        repoA.SetLinks(relSelf.Id!.Value, t1, [t2]);   // само-связь
+
+        // Переносим коллекцию «Задачи» из dbA в dbB (ATTACH-путь).
+        var newColB = repoB.MoveCollectionIsolated(dbA.Path, taskA, null, null, 10000, sourceDbId: 1, targetDbId: 2);
+        Assert.NotEqual(0, newColB);
+
+        using var verifyCtx = new AppDbContext(dbB.Path);
+        var verify = new ConstructorRepository(verifyCtx);
+        var fProj = verify.GetFields(newColB).Single(f => f.Name == "Проект");
+        var fSelf = verify.GetFields(newColB).Single(f => f.Name == "Похожая");
+        var newT1 = verifyCtx.DbRecords.AsNoTracking().First(r => r.CollectionId == newColB && r.Title == "T1").Id;
+        var newT2 = verifyCtx.DbRecords.AsNoTracking().First(r => r.CollectionId == newColB && r.Title == "T2").Id;
+
+        // Внешняя связь на «Проекты» (осталась в dbA): стала МЕЖБАЗОВОЙ на dbA (TargetDbId=1), цель = p1.
+        var cProj = RelationConfig.FromConfig(fProj.ConfigJson)!;
+        Assert.Equal(1, cProj.TargetDbId);
+        Assert.Equal(projA, cProj.TargetCollectionId);
+        Assert.Equal([(p1, 1)], verify.GetLinkEdges(fProj.Id!.Value, newT1));
+
+        // Само-связь: осталась ВНУТРИБАЗОВОЙ (TargetDbId=0), цель-коллекция и ребро перемэплены на dbB.
+        var cSelf = RelationConfig.FromConfig(fSelf.ConfigJson)!;
+        Assert.Equal(0, cSelf.TargetDbId);
+        Assert.Equal(newColB, cSelf.TargetCollectionId);
+        Assert.Equal([(newT2, 0)], verify.GetLinkEdges(fSelf.Id!.Value, newT1));
+    }
 }

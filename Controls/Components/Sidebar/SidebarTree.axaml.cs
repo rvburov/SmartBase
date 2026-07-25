@@ -1578,7 +1578,7 @@ public partial class SidebarTree : UserControl
         if (res.DbId != dbId && RepoFor(res.DbId) is { } target)
         {
             var (gcols, grecs) = await repo.CountGroupSubtreeAsync(groupId);
-            var move  = new CrossMove(repo, IsGroup: true, groupId, grecs, gcols);
+            var move  = new CrossMove(dbId, repo, IsGroup: true, groupId, grecs, gcols);
             var moved = await MoveNodesCrossDb(target, res.DbId, res.ParentId, [move], "Перемещение");
             if (moved is { } m)
             {
@@ -1624,7 +1624,7 @@ public partial class SidebarTree : UserControl
         // есть) — применяем выбранное после переноса.
         if (res.DbId != dbId && RepoFor(res.DbId) is { } target)
         {
-            var move  = new CrossMove(repo, IsGroup: false, collectionId, await repo.CountRecordsAsync(collectionId), Collections: 1);
+            var move  = new CrossMove(dbId, repo, IsGroup: false, collectionId, await repo.CountRecordsAsync(collectionId), Collections: 1);
             var moved = await MoveNodesCrossDb(target, res.DbId, res.GroupId, [move], "Перемещение");
             if (moved is { } m)
             {
@@ -1778,7 +1778,7 @@ public partial class SidebarTree : UserControl
 
     // Одна цель кросс-БД переноса: репозиторий-ИСТОЧНИК, что переносим (группа/коллекция), его id,
     // и счётчики (записей в ветке/коллекции и число коллекций — для порога, % и текста индикатора).
-    private sealed record CrossMove(ConstructorRepository SrcRepo, bool IsGroup, int Id, long Records, int Collections);
+    private sealed record CrossMove(int SrcDbId, ConstructorRepository SrcRepo, bool IsGroup, int Id, long Records, int Collections);
 
     // Перенести набор узлов в ДРУГУЮ БД быстрым путём (Move*Isolated: ATTACH + bulk INSERT…SELECT на
     // отдельных подключениях, не трогая общий Context). targetLocation — расположение в целевой БД:
@@ -1797,8 +1797,8 @@ public partial class SidebarTree : UserControl
         bool anyGroup    = crossDb.Any(t => t.IsGroup);
 
         int MoveOne(CrossMove t, IProgress<int>? p) => t.IsGroup
-            ? targetRepo.MoveGroupIsolated(t.SrcRepo.DbPath, t.Id, targetLocation, p)
-            : targetRepo.MoveCollectionIsolated(t.SrcRepo.DbPath, t.Id, targetLocation, p);
+            ? targetRepo.MoveGroupIsolated(t.SrcRepo.DbPath, t.Id, targetLocation, p, sourceDbId: t.SrcDbId, targetDbId: targetDbId)
+            : targetRepo.MoveCollectionIsolated(t.SrcRepo.DbPath, t.Id, targetLocation, p, sourceDbId: t.SrcDbId, targetDbId: targetDbId);
 
         (int DbId, int Id, bool IsGroup)? reveal = null;
 
@@ -1914,7 +1914,7 @@ public partial class SidebarTree : UserControl
             else
             {
                 var (rec, cols) = await CountNodeAsync(n);
-                crossDb.Add(new CrossMove(r, n.IsGroup, n.Id!.Value, rec, cols));
+                crossDb.Add(new CrossMove(n.DbId, r, n.IsGroup, n.Id!.Value, rec, cols));
             }
         }
 

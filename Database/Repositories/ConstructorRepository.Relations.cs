@@ -181,6 +181,40 @@ public partial class ConstructorRepository
     }
 
     /// <summary>
+    /// Переписать конфиги полей-связей ПЕРЕНЕСЁННОЙ (ATTACH) коллекции под целевую базу: копия полей
+    /// идёт дословным INSERT…SELECT, поэтому TargetDbId/TargetCollectionId остаются от источника —
+    /// правим после. TargetDbId по формуле (абсолютная БД цели = TargetDbId==0?sourceDbId; в целевой
+    /// базе → 0 если == targetDbId, иначе межбазовая). Для САМО-связи (цель = сама перенесённая
+    /// коллекция) — TargetDbId=0 и TargetCollectionId=новый id (цель уехала вместе с полем). Должно
+    /// быть согласовано с переписыванием рёбер в CopyOneCollectionFromAttached.
+    /// </summary>
+    private void RewriteMovedRelationConfigs(int newColId, int srcCollectionId, int sourceDbId, int targetDbId)
+    {
+        if (sourceDbId <= 0 || targetDbId <= 0) return;
+        var fields  = db.DbFields.Where(f => f.CollectionId == newColId && f.FieldType == "relation").ToList();
+        var changed = false;
+        foreach (var f in fields)
+        {
+            if (RelationConfig.FromConfig(f.ConfigJson) is not { } c) continue;
+            int newDb, newCol;
+            if (c.TargetDbId == 0 && c.TargetCollectionId == srcCollectionId)   // само-связь на эту коллекцию
+            {
+                newDb  = 0;
+                newCol = newColId;
+            }
+            else                                                                // внешняя цель (осталась в исходной/третьей БД)
+            {
+                var abs = c.TargetDbId == 0 ? sourceDbId : c.TargetDbId;
+                newDb  = abs == targetDbId ? 0 : abs;
+                newCol = c.TargetCollectionId;
+            }
+            var updated = new RelationConfig(newCol, c.Single, c.Separator, newDb).ToConfigJson();
+            if (updated != f.ConfigJson) { f.ConfigJson = updated; changed = true; }
+        }
+        if (changed) db.SaveChanges();
+    }
+
+    /// <summary>
     /// Кандидаты для пикера связи: записи коллекции с непустым/любым Title, отсортированные по
     /// Position, с поиском по подстроке Title (регистронезависимо) и ограничением количества.
     /// excludeRecordId — убрать саму текущую запись (для self-relation, чтобы не связать с собой).
