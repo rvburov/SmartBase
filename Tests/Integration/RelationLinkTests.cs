@@ -279,4 +279,27 @@ public sealed class RelationLinkTests
         repoA.DeleteRecord(t);
         Assert.Empty(repoA.GetLinkTargetIds(rel.Id!.Value, t));
     }
+
+    [Fact]
+    public void Cross_db_single_link_replaces_and_persists()
+    {
+        using var dbA = new TempDatabase(dbId: 1, name: "A");
+        using var dbB = new TempDatabase(dbId: 2, name: "B");
+        var repoA = dbA.Constructor;
+        var repoB = dbB.Constructor;
+        var projB = SampleData.AddCollection(repoB, "Проекты").Id!.Value;
+        var b1 = SampleData.AddRecord(repoB, projB, "B1").Id!.Value;
+        var b2 = SampleData.AddRecord(repoB, projB, "B2").Id!.Value;
+
+        var taskA = SampleData.AddCollection(repoA, "Задачи").Id!.Value;
+        var rel = SampleData.AddField(repoA, taskA, "Проект", "relation");
+        rel.ConfigJson = new RelationConfig(projB, true, "comma", 2).ToConfigJson();
+        repoA.UpdateField(rel);
+        var t = SampleData.AddRecord(repoA, taskA, "T1").Id!.Value;
+
+        repoA.SetLinks(rel.Id!.Value, t, [b1]);
+        Assert.Equal([b1], repoA.GetLinkTargetIds(rel.Id!.Value, t));   // single межбазовый — записалась
+        repoA.SetLinks(rel.Id!.Value, t, [b2]);
+        Assert.Equal([b2], repoA.GetLinkTargetIds(rel.Id!.Value, t));   // и заменилась
+    }
 }

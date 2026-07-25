@@ -1392,7 +1392,7 @@ public partial class TableView : UserControl
         TableRowVm? bound = null;
         void OnRowProp(object? _, System.ComponentModel.PropertyChangedEventArgs e)
         {
-            if ((e.PropertyName is "Item" or null) && bound is not null) rel.RecordId = bound.RecordId;
+            if ((e.PropertyName is "Item" or null) && bound is not null) rel.OnRowFilled(bound.RecordId);
         }
         void Bind(TableRowVm? r)
         {

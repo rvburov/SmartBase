@@ -50,7 +50,8 @@ public sealed class RelationSelectBox : Panel
     private readonly TextBlock _valueText;
     private readonly TextBlock _placeholder;
     private readonly Popup?    _popup;
-    private TextBox? _search;
+    private TextBox?   _search;
+    private TextBlock? _moreHint;
     private int _recordId;
 
     /// <summary>Поднимается после изменения набора связей.</summary>
@@ -153,6 +154,15 @@ public sealed class RelationSelectBox : Panel
 
     /// <summary>Перечитать связи из БД (после внешних изменений).</summary>
     public void Reload() => ReloadSelected(preferCache: false);
+
+    /// <summary>Строка таблицы наполнилась данными (уведомление "Item"). Смена записи → перечитать.
+    /// Тот же RecordId, но МЕЖБАЗОВАЯ связь → тоже перечитать СВЕЖИМ: её нет в батч-кеше, поэтому
+    /// правка/фон иначе не видны (внутрибазовую держит свежей батч-кеш, лишний раз не дёргаем).</summary>
+    public void OnRowFilled(int recordId)
+    {
+        if (recordId != _recordId) { RecordId = recordId; return; }
+        if (_cfg.IsCrossDb && _recordId > 0) ReloadSelected(preferCache: false);
+    }
 
     private void ReloadSelected(bool preferCache)
     {
@@ -288,9 +298,19 @@ public sealed class RelationSelectBox : Panel
             Child           = valuesList,
         };
 
+        // Подсказка «показаны первые N — уточните в поиске» (видна, когда кандидатов больше капа).
+        _moreHint = new TextBlock
+        {
+            FontSize   = Res("FontSizeSmall", 11.0),
+            Foreground = Brush("BrushSecondaryText", Colors.Gray),
+            Margin     = new Thickness(2, 4, 2, 0),
+            IsVisible  = false,
+        };
+
         var stack = new StackPanel { Spacing = 2, MinWidth = 260 };
         stack.Children.Add(_search);
         stack.Children.Add(valuesCard);
+        stack.Children.Add(_moreHint);
 
         return new Border
         {
@@ -348,13 +368,20 @@ public sealed class RelationSelectBox : Panel
             return grid;
         });
 
+    // Показываем не более Cap кандидатов (на огромных коллекциях полный список невозможен — память/
+    // зависание UI). Тянем Cap+1: если пришло больше — есть ещё, показываем подсказку «уточните в поиске»
+    // (точный остаток не считаем — COUNT по 10 млн на каждый ввод недопустим).
+    private const int PickerCap = 200;
+
     private void RefreshList(string? query)
     {
         var q       = query?.Trim() ?? "";
         // Кандидаты — из ЦЕЛЕВОЙ БД (для межбазовой связи чужой). Само-исключение только внутри
         // своей БД (в другой БД тот же Id — иная запись).
-        var results = TargetRepo()?.SearchRecordTitles(_cfg.TargetCollectionId, q, 200, _cfg.IsCrossDb ? 0 : _recordId)
+        var results = TargetRepo()?.SearchRecordTitles(_cfg.TargetCollectionId, q, PickerCap + 1, _cfg.IsCrossDb ? 0 : _recordId)
                       ?? [];
+        var hasMore = results.Count > PickerCap;
+        if (hasMore) results = results.Take(PickerCap).ToList();
         foreach (var (id, title) in results) _titles[id] = title;
 
         var list = new List<RelationOptionVm>();
@@ -371,6 +398,12 @@ public sealed class RelationSelectBox : Panel
         }
         _shown.Clear();
         _shown.AddRange(list);
+
+        if (_moreHint is not null)
+        {
+            _moreHint.Text      = $"Показаны первые {PickerCap} — уточните в поиске";
+            _moreHint.IsVisible = hasMore;
+        }
     }
 
     private void Toggle(int id, bool on)
