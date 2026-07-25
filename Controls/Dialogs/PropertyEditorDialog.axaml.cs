@@ -11,6 +11,7 @@ using Avalonia.Media;
 using Avalonia.Platform.Storage;
 using Avalonia.VisualTree;
 using SmartBase.Core.Models;
+using SmartBase.Database;
 using SmartBase.Database.Repositories;
 
 namespace SmartBase.Controls.Dialogs;
@@ -59,6 +60,8 @@ public partial class PropertyEditorDialog : Window
     private readonly ConstructorRepository _repository;
     private readonly int  _collectionId;
     private readonly int? _editFieldId;
+    // Реестровый DbId базы этого поля — чтобы отличить «своя БД» (пишем TargetDbId=0) от межбазовой.
+    private readonly int  _currentDbId;
 
     // Режим системной колонки («Название»/«Описание»): тип зафиксирован «Текст»,
     // запись идёт не в DbFields, а через результат диалога (см. ResultName).
@@ -84,13 +87,15 @@ public partial class PropertyEditorDialog : Window
     /// <summary>В системном режиме — введённая подпись (после Сохранить); иначе null.</summary>
     public string? ResultName { get; private set; }
 
-    public PropertyEditorDialog(ConstructorRepository repository, int collectionId, int? editFieldId = null)
+    public PropertyEditorDialog(ConstructorRepository repository, int collectionId, int? editFieldId = null,
+                                int currentDbId = 0)
     {
         InitializeComponent();
 
         _repository   = repository;
         _collectionId = collectionId;
         _editFieldId  = editFieldId;
+        _currentDbId  = currentDbId;
 
         TypeCombo.ItemsSource = FieldTypes;
 
@@ -112,7 +117,7 @@ public partial class PropertyEditorDialog : Window
         FileFormatCombo.SelectionChanged += (_, _) => UpdateFileFormatCustomVisibility();
         FileFolderBtn.Click              += async (_, _) => await PickFolderAsync();
         PopulateFileSources();
-        PopulateRelationTargets();
+        PopulateRelationDatabases();
 
         if (editFieldId.HasValue)
         {
@@ -322,25 +327,65 @@ public partial class PropertyEditorDialog : Window
         public override string ToString() => Name;
     }
 
-    // Список целевых коллекций (включая текущую — self-relation допустима).
+    /// <summary>Пункт выпадашки целевой БД связи (реестровый DbId + имя).</summary>
+    private sealed class RelationDbItem
+    {
+        public int    Id   { get; init; }
+        public string Name { get; init; } = "";
+        public override string ToString() => Name;
+    }
+
+    // Репозиторий выбранной целевой БД: своя (_repository) или чужая (через резолвер реестра).
+    private ConstructorRepository? RepoForDb(int dbId) =>
+        dbId == _currentDbId || dbId <= 0 ? _repository : RelationDbResolver.RepoFor(dbId);
+
+    // Список целевых БД (реестр). Резолвер не настроен (тесты/безоконный) → одна «своя» база.
+    // Смена БД перезаполняет список коллекций (PopulateRelationTargets).
+    private void PopulateRelationDatabases()
+    {
+        if (_systemMode || _repository is null) return;
+        var dbs = RelationDbResolver.Databases()
+            .Select(d => new RelationDbItem { Id = d.DbId, Name = d.Name }).ToList();
+        if (dbs.Count == 0) dbs = [new RelationDbItem { Id = _currentDbId, Name = "Текущая база" }];
+
+        RelationCardinalityCombo.SelectedIndex = 0;  // дефолты (один раз, не сбрасываются при смене БД)
+        RelationSeparatorCombo.SelectedIndex   = 0;
+
+        RelationDbCombo.ItemsSource        = dbs;
+        RelationDbCombo.SelectionChanged  -= OnRelationDbChanged;
+        RelationDbCombo.SelectionChanged  += OnRelationDbChanged;
+        RelationDbCombo.SelectedIndex      = Math.Max(0, dbs.FindIndex(d => d.Id == _currentDbId));  // → targets
+        PopulateRelationTargets();
+    }
+
+    private void OnRelationDbChanged(object? sender, Avalonia.Controls.SelectionChangedEventArgs e) => PopulateRelationTargets();
+
+    // Список целевых коллекций ВЫБРАННОЙ базы (для своей БД — self-relation допустима).
     private void PopulateRelationTargets()
     {
         if (_systemMode || _repository is null) return;
-        var items = _repository.GetAllCollections()
-            .Where(c => c.Id.HasValue)
-            .Select(c => new TargetCollectionItem { Id = c.Id!.Value, Name = c.Name })
-            .ToList();
+        var dbId = (RelationDbCombo.SelectedItem as RelationDbItem)?.Id ?? _currentDbId;
+        var repo = RepoForDb(dbId);
+        var items = new List<TargetCollectionItem>();
+        if (repo is not null)
+            foreach (var c in repo.GetAllCollections())
+                if (c.Id.HasValue) items.Add(new TargetCollectionItem { Id = c.Id.Value, Name = c.Name });
         RelationTargetCombo.ItemsSource   = items;
-        RelationTargetCombo.SelectedIndex = -1;      // цель нужно выбрать явно
-        RelationCardinalityCombo.SelectedIndex = 0;  // по умолчанию — «Несколько»
-        RelationSeparatorCombo.SelectedIndex   = 0;  // разделитель по умолчанию — запятая
+        RelationTargetCombo.SelectedIndex = -1;      // цель нужно выбрать явно (список сменился)
     }
 
-    // Восстановить сохранённое правило связи (целевая коллекция + one/many + разделитель).
+    // Восстановить сохранённое правило связи (целевая БД + коллекция + one/many + разделитель).
     private void RestoreRelationConfig(string? configJson)
     {
         var cfg = RelationConfig.FromConfig(configJson);
         if (cfg is null) return;
+        // Целевая БД (0 → своя). Смена комбо перезаполнит список коллекций до выбора цели ниже.
+        var dbId = cfg.TargetDbId > 0 ? cfg.TargetDbId : _currentDbId;
+        if (RelationDbCombo.ItemsSource is IEnumerable<RelationDbItem> dbs)
+        {
+            var idx = dbs.ToList().FindIndex(d => d.Id == dbId);
+            if (idx >= 0) RelationDbCombo.SelectedIndex = idx;
+        }
         if (RelationTargetCombo.ItemsSource is IEnumerable<TargetCollectionItem> items)
             RelationTargetCombo.SelectedIndex = items.ToList().FindIndex(i => i.Id == cfg.TargetCollectionId);
         RelationCardinalityCombo.SelectedIndex = cfg.Single ? 1 : 0;
@@ -356,9 +401,11 @@ public partial class PropertyEditorDialog : Window
             ShowError("Выберите целевую коллекцию");
             return null;
         }
-        var single    = RelationCardinalityCombo.SelectedIndex == 1;   // 0 — Несколько, 1 — Одну
-        var separator = SeparatorKeys[Math.Clamp(RelationSeparatorCombo.SelectedIndex, 0, SeparatorKeys.Length - 1)];
-        return new RelationConfig(t.Id, single, separator).ToConfigJson();
+        var single     = RelationCardinalityCombo.SelectedIndex == 1;   // 0 — Несколько, 1 — Одну
+        var separator  = SeparatorKeys[Math.Clamp(RelationSeparatorCombo.SelectedIndex, 0, SeparatorKeys.Length - 1)];
+        var dbId       = (RelationDbCombo.SelectedItem as RelationDbItem)?.Id ?? _currentDbId;
+        var targetDbId = dbId == _currentDbId ? 0 : dbId;   // своя БД → 0 (внутрибазовая связь)
+        return new RelationConfig(t.Id, single, separator, targetDbId).ToConfigJson();
     }
 
     // Под-опции формата числа: блок опций (точность/разряды/валюта) скрыт для «Обычного числа»

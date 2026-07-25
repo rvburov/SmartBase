@@ -413,7 +413,18 @@
                        Foreground="{StaticResource BrushSecondaryText}" />
             <TextBlock TextWrapping="Wrap" LineHeight="16"
                        Foreground="{StaticResource BrushSecondaryText}"
-                       Text="Ячейка ссылается на записи выбранной коллекции. Название связанной записи показывается «чипом»; по клику — переход к ней." />
+                       Text="Ячейка ссылается на записи выбранной коллекции. Название связанной записи показывается «чипом»; по клику — переход к ней. Целевая коллекция может быть в другой базе данных." />
+
+            <StackPanel Spacing="6">
+                <TextBlock Text="Целевая база"
+                           FontWeight="{StaticResource FontWeightBold}"
+                           Foreground="{StaticResource BrushSecondaryText}" />
+                <ComboBox x:Name="RelationDbCombo"
+                          HorizontalAlignment="Stretch" Height="34"
+                          VerticalContentAlignment="Center"
+                          Background="{StaticResource BrushSecondaryBg}"
+                          CornerRadius="{StaticResource RadiusBase}" />
+            </StackPanel>
 
             <StackPanel Spacing="6">
                 <TextBlock Text="Целевая коллекция"

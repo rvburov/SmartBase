@@ -11,6 +11,7 @@ using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Styling;
 using SmartBase.Core.Models;
+using SmartBase.Database;
 using SmartBase.Database.Repositories;
 using SmartBase.Utils;
 using SmartBase.ViewModels.ConstructorDb;
@@ -44,6 +45,7 @@ public sealed class RelationSelectBox : Panel
 
     private readonly List<int>                     _selected = [];
     private readonly Dictionary<int, string>       _titles   = new();
+    private readonly HashSet<int>                  _dangling = [];   // межбазовые цели, которых уже нет
     private readonly AvaloniaList<RelationOptionVm> _shown    = [];
     private readonly TextBlock _valueText;
     private readonly TextBlock _placeholder;
@@ -53,8 +55,13 @@ public sealed class RelationSelectBox : Panel
 
     /// <summary>Поднимается после изменения набора связей.</summary>
     public event EventHandler? Changed;
-    /// <summary>Переход к связанной записи (её Id) — стрелка «→» у пункта списка.</summary>
-    public event EventHandler<int>? Navigate;
+    /// <summary>Переход к связанной записи — (DbId цели, Id записи). DbId=0 — та же БД, &gt;0 —
+    /// межбазовая цель (открыть из её БД). Пункт «карандаш» у строки списка.</summary>
+    public event EventHandler<(int DbId, int RecordId)>? Navigate;
+
+    // Репозиторий целевой БД: та же (внутрибазовая связь) или чужая (межбазовая — через резолвер
+    // реестра). null для межбазовой — целевая БД недоступна (показ/пикер деградируют мягко).
+    private ConstructorRepository? TargetRepo() => _cfg.IsCrossDb ? RelationDbResolver.RepoFor(_cfg.TargetDbId) : _repo;
 
     public RelationSelectBox(ConstructorRepository repo, int fieldId, RelationConfig cfg,
                              bool editing = false, double contentLeftPadding = 0,
@@ -150,19 +157,41 @@ public sealed class RelationSelectBox : Panel
     private void ReloadSelected(bool preferCache)
     {
         _selected.Clear();
+        _dangling.Clear();
         if (_recordId > 0)
         {
-            var links = preferCache && _cache is not null && _cache.TryGet(_fieldId, _recordId, out var cached)
-                ? cached
-                : _repo.GetLinks(_fieldId, _recordId);
-            foreach (var (id, title) in links)
+            if (_cfg.IsCrossDb) LoadCrossDbSelected();
+            else
             {
-                _selected.Add(id);
-                _titles[id] = title;
+                var links = preferCache && _cache is not null && _cache.TryGet(_fieldId, _recordId, out var cached)
+                    ? cached
+                    : _repo.GetLinks(_fieldId, _recordId);
+                foreach (var (id, title) in links)
+                {
+                    _selected.Add(id);
+                    _titles[id] = title;
+                }
             }
         }
         RefreshDisplay();
         if (_popup is { IsOpen: true }) RefreshList(_search?.Text);
+    }
+
+    // Межбазовая связь: рёбра лежат в НАШЕЙ БД (_repo, только Id целей), названия резолвим из ЦЕЛЕВОЙ
+    // БД (реестр). Пропавшая цель → «(запись удалена)» и в _dangling (чистим при правке); целевая БД
+    // недоступна → «(база недоступна)» без пометки на удаление (база может вернуться).
+    private void LoadCrossDbSelected()
+    {
+        var ids = _repo.GetLinkTargetIds(_fieldId, _recordId);
+        if (ids.Count == 0) return;
+        var titles = TargetRepo()?.GetRecordTitles(ids);
+        foreach (var id in ids)
+        {
+            _selected.Add(id);
+            if (titles is null)                          _titles[id] = "(база недоступна)";
+            else if (titles.TryGetValue(id, out var t))  _titles[id] = t;
+            else { _titles[id] = "(запись удалена)"; _dangling.Add(id); }
+        }
     }
 
     private void OpenPopup()
@@ -307,7 +336,7 @@ public sealed class RelationSelectBox : Panel
                 if ((s as Control)?.DataContext is RelationOptionVm vm)
                 {
                     if (_popup is not null) _popup.IsOpen = false;
-                    Navigate?.Invoke(this, vm.Id);
+                    Navigate?.Invoke(this, (_cfg.TargetDbId, vm.Id));
                 }
             };
 
@@ -322,7 +351,10 @@ public sealed class RelationSelectBox : Panel
     private void RefreshList(string? query)
     {
         var q       = query?.Trim() ?? "";
-        var results = _repo.SearchRecordTitles(_cfg.TargetCollectionId, q, 200, _recordId);
+        // Кандидаты — из ЦЕЛЕВОЙ БД (для межбазовой связи чужой). Само-исключение только внутри
+        // своей БД (в другой БД тот же Id — иная запись).
+        var results = TargetRepo()?.SearchRecordTitles(_cfg.TargetCollectionId, q, 200, _cfg.IsCrossDb ? 0 : _recordId)
+                      ?? [];
         foreach (var (id, title) in results) _titles[id] = title;
 
         var list = new List<RelationOptionVm>();
@@ -360,6 +392,9 @@ public sealed class RelationSelectBox : Panel
 
         if (_recordId > 0)
         {
+            // «Чистить при правке»: висячие межбазовые ссылки (цель удалена) при любой правке ячейки
+            // отбрасываем — обратно не переписываем.
+            if (_dangling.Count > 0) { _selected.RemoveAll(_dangling.Contains); _dangling.Clear(); }
             _repo.SetLinks(_fieldId, _recordId, _selected);
             _cache?.Invalidate(_fieldId, _recordId);   // кеш устарел — следующее чтение возьмёт свежее
         }

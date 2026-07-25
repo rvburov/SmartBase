@@ -71,6 +71,8 @@ public partial class MainWindow : Window
         _mountQueue  = new MountQueue(workspace);
         _health      = new DbHealthMonitor(workspace, _mountQueue);
         _changes     = new ChangePoller(workspace, _health);
+        // Резолвер чужих баз для межбазовых связей (тип «relation» с TargetDbId>0).
+        RelationDbResolver.Configure(workspace);
 
         // Ошибки записи на пользовательских действиях (правка ячейки, CRUD): «занята» —
         // тост, «недоступна» — тост + сигнал монитору. См. Utils/DbErrors.
@@ -312,6 +314,9 @@ public partial class MainWindow : Window
         // Клик по чипу связи в панели записи → открыть связанную запись (её коллекция резолвится
         // в OpenRecordPanel по самой записи, поэтому переход между коллекциями работает).
         RecordPanel.RelatedRecordRequested    += (_, rid)        => OpenRecordPanel(rid);
+        // Переход по чипу МЕЖБАЗОВОЙ связи (из таблицы и из панели записи): открыть запись из её БД.
+        ConstructorModule.CrossDbRecordPageRequested += (_, t)   => OpenRecordPanel(t.DbId, t.RecordId);
+        RecordPanel.CrossDbRelatedRecordRequested    += (_, t)   => OpenRecordPanel(t.DbId, t.RecordId);
         // «Добавить свойство» из панели записи — тем же путём, что и «+» в таблице:
         // новое поле создаётся, колонка появляется в таблице, а FieldsChanged ниже
         // перестраивает список свойств панели (новое поле сразу видно и там, и там).
@@ -970,17 +975,24 @@ public partial class MainWindow : Window
         return first?.Id;
     }
 
-    private void OpenRecordPanel(int recordId)
+    private void OpenRecordPanel(int recordId) => OpenRecordPanel(0, recordId);
+
+    // dbId>0 — межбазовый переход (по чипу связи на запись в ДРУГОЙ .db): панель открывается из
+    // репозитория ЦЕЛЕВОЙ БД (её схема/правки), активную коллекцию НЕ переключаем — панель
+    // самодостаточна. dbId=0 — обычный переход в текущей БД.
+    private void OpenRecordPanel(int dbId, int recordId)
     {
+        var repo = dbId > 0 ? RelationDbResolver.RepoFor(dbId) : CurrentConstructorRepo;
+        if (repo is null) return;   // целевая БД недоступна — переход невозможен
+
         // Коллекцию берём У САМОЙ ЗАПИСИ (переход по чипу связи открывает запись ДРУГОЙ
         // коллекции — панель должна показать её собственную схему полей), с фолбэком на
         // текущую активную коллекцию.
-        var collectionId = CurrentConstructorRepo?.GetRecord(recordId)?.CollectionId
+        var collectionId = repo.GetRecord(recordId)?.CollectionId
                            ?? ConstructorModule.CurrentCollectionId;
         if (collectionId is null) return;
 
-        // Панель записи открывается из репозитория той БД, чья коллекция сейчас активна.
-        RecordPanel.Show(CurrentConstructorRepo, recordId, collectionId.Value);
+        RecordPanel.Show(repo, recordId, collectionId.Value);
         _recordPanelLogicalOpen = true;
         _lastOpenedRecordId     = recordId;
         ConstructorModule.SetRecordPanelOpen(true);

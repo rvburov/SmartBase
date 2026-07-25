@@ -21,6 +21,9 @@ public partial class ConstructorControllerView : UserControl
     /// <summary>Запрос открыть запись в правой панели (RecordPageView в MainWindow).</summary>
     public event EventHandler<int>? RecordPageRequested;
 
+    /// <summary>Запрос открыть запись в ДРУГОЙ БД (чип межбазовой связи): (DbId цели, Id записи).</summary>
+    public event EventHandler<(int DbId, int RecordId)>? CrossDbRecordPageRequested;
+
     /// <summary>Запрос закрыть правую панель (например, при удалении открытой записи).</summary>
     public event EventHandler?      RecordPageClosed;
 
@@ -69,6 +72,7 @@ public partial class ConstructorControllerView : UserControl
 
         // CRUD для записей — через контекстные меню в TableView/ListView.
         TableViewCtrl.RecordClicked             += (_, rid)  => OpenPage(rid);
+        TableViewCtrl.CrossDbRecordRequested    += (_, t)    => CrossDbRecordPageRequested?.Invoke(this, t);
         TableViewCtrl.RecordValueEdited         += (_, rid)  => RecordValueEdited?.Invoke(this, rid);
         TableViewCtrl.RecordCreateRequested     += (_, e)    => _ = CreateAndOpen(e.Open, e.AfterId);
         TableViewCtrl.RecordsDeleteRequested    += (_, ids)  => _ = DeleteRecordsWithConfirm(ids);
@@ -494,7 +498,7 @@ public partial class ConstructorControllerView : UserControl
             ? _repository.GetFields(_currentCollectionId.Value).Select(f => f.Id).ToHashSet()
             : null;
 
-        var dlg = new PropertyEditorDialog(_repository, _currentCollectionId.Value, fieldId);
+        var dlg = new PropertyEditorDialog(_repository, _currentCollectionId.Value, fieldId, CurrentDbId);
         var ok  = await dlg.ShowDialog<bool?>(win);
         if (ok != true) return;
 
@@ -587,7 +591,7 @@ public partial class ConstructorControllerView : UserControl
         var orderBefore = TableViewCtrl.MovableKeysInOrder();
         var idsBefore   = _repository.GetFields(_currentCollectionId.Value).Select(f => f.Id).ToHashSet();
 
-        var dlg = new PropertyEditorDialog(_repository, _currentCollectionId.Value, null);
+        var dlg = new PropertyEditorDialog(_repository, _currentCollectionId.Value, null, CurrentDbId);
         var ok  = await dlg.ShowDialog<bool?>(win);
         if (ok != true) return;
 

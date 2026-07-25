@@ -27,6 +27,9 @@ public partial class RecordPageView : UserControl
     /// другой). Обрабатывает MainWindow → OpenRecordPanel (коллекция резолвится у самой записи).</summary>
     public event EventHandler<int>? RelatedRecordRequested;
 
+    /// <summary>Переход к записи в ДРУГОЙ БД (чип межбазовой связи): (DbId цели, Id записи).</summary>
+    public event EventHandler<(int DbId, int RecordId)>? CrossDbRelatedRecordRequested;
+
     /// <summary>Клик по «Добавить свойство»: создать новое поле текущей коллекции.
     /// Обрабатывает MainWindow → контроллер (тот же путь, что и «+» в таблице),
     /// чтобы новое поле сразу появилось и в таблице, и в панели.</summary>
@@ -779,7 +782,11 @@ public partial class RecordPageView : UserControl
                     HorizontalAlignment = HorizontalAlignment.Stretch,
                     RecordId            = _vm?.RecordId ?? 0,
                 };
-                rel.Navigate += (_, targetId) => RelatedRecordRequested?.Invoke(this, targetId);
+                rel.Navigate += (_, t) =>
+                {
+                    if (t.DbId > 0) CrossDbRelatedRecordRequested?.Invoke(this, t);   // межбазовый переход
+                    else RelatedRecordRequested?.Invoke(this, t.RecordId);            // в текущей БД
+                };
                 rel.Changed  += (_, _) => { if (_vm is not null) RecordChanged?.Invoke(this, _vm.RecordId); };
                 input = rel;
                 break;

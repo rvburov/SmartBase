@@ -28,6 +28,8 @@ public partial class TableView : UserControl
 {
     // ── Публичные события ─────────────────────────────────────────────────────
     public event EventHandler<int>? RecordClicked;
+    // Переход к записи в ДРУГОЙ БД (чип межбазовой связи): (DbId цели, Id записи).
+    public event EventHandler<(int DbId, int RecordId)>? CrossDbRecordRequested;
     // Значение записи изменено прямо в таблице (правка ячейки: имя/описание/поле). Аргумент —
     // RecordId. MainWindow обновляет открытую панель «Страница записи», если это та же запись.
     public event EventHandler<int>? RecordValueEdited;
@@ -1452,7 +1454,11 @@ public partial class TableView : UserControl
                     // (как чеклист «Мультисписка»). «→» у пункта → открыть цель. По выходе из правки
                     // read-ячейка (editing:false) переустановится и перечитает связи (AttachedToVisualTree).
                     var rel = new RelationSelectBox(_repository, relFid, def.Relation, editing: true, contentLeftPadding: 6, cache: _relLinks);
-                    rel.Navigate += (_, targetId) => RecordClicked?.Invoke(this, targetId);
+                    rel.Navigate += (_, t) =>
+                    {
+                        if (t.DbId > 0) CrossDbRecordRequested?.Invoke(this, t);   // межбазовый переход
+                        else RecordClicked?.Invoke(this, t.RecordId);              // в текущей БД
+                    };
                     rel.Changed  += (_, _) =>
                     {
                         if (rel.DataContext is TableRowVm r) RecordValueEdited?.Invoke(this, r.RecordId);
