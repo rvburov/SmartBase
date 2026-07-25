@@ -3922,6 +3922,11 @@ public partial class ConstructorRepository(AppDbContext db)
                 && (!excludeHidden || !db.RecordDisplay.Any(d =>
                        d.CollectionId == collectionId && d.RecordId == r.Id && !d.Visible)));
 
+        // Ключи-связи (db_record_links, а не db_field_values) — своя ветка фильтра.
+        var relFieldIds = db.DbFields.AsNoTracking()
+            .Where(f => f.CollectionId == collectionId && f.FieldType == "relation")
+            .Select(f => f.Id).ToHashSet();
+
         foreach (var (key, allowed) in filters)
         {
             var allow = allowed.ToList();   // EF переведёт Contains → SQL IN (...)
@@ -3932,9 +3937,23 @@ public partial class ConstructorRepository(AppDbContext db)
             else if (int.TryParse(key, out var fid))
             {
                 var hasEmpty = allowed.Contains("");
-                q = q.Where(r =>
-                    db.DbFieldValues.Any(fv => fv.RecordId == r.Id && fv.FieldId == fid && allow.Contains(fv.Value))
-                    || (hasEmpty && !db.DbFieldValues.Any(fv => fv.RecordId == r.Id && fv.FieldId == fid && fv.Value != "")));
+                if (relFieldIds.Contains(fid))
+                {
+                    // Связь: строка проходит, если есть ребро к цели с Title ∈ allowed (семантика ИЛИ —
+                    // хотя бы одна отмеченная). «(нет связей)» "" — нет ребра ни к одной ИМЕНОВАННОЙ
+                    // цели (как в GetRelationValueCounts: безымянные цели тоже относятся к «нет связей»).
+                    q = q.Where(r =>
+                        db.DbRecordLinks.Any(l => l.FieldId == fid && l.FromRecordId == r.Id
+                            && db.DbRecords.Any(t => t.Id == l.ToRecordId && allow.Contains(t.Title ?? "")))
+                        || (hasEmpty && !db.DbRecordLinks.Any(l => l.FieldId == fid && l.FromRecordId == r.Id
+                            && db.DbRecords.Any(t => t.Id == l.ToRecordId && (t.Title ?? "") != ""))));
+                }
+                else
+                {
+                    q = q.Where(r =>
+                        db.DbFieldValues.Any(fv => fv.RecordId == r.Id && fv.FieldId == fid && allow.Contains(fv.Value))
+                        || (hasEmpty && !db.DbFieldValues.Any(fv => fv.RecordId == r.Id && fv.FieldId == fid && fv.Value != "")));
+                }
             }
         }
 
@@ -3957,10 +3976,28 @@ public partial class ConstructorRepository(AppDbContext db)
                      .Select(r => new { r.Id, r.Description }).ToList()
                      .ToDictionary(x => x.Id, x => x.Description ?? "");
         if (int.TryParse(key, out var fid))
+        {
+            var field = db.DbFields.AsNoTracking().FirstOrDefault(f => f.Id == fid);
+            if (field?.FieldType == "relation")
+            {
+                // Сортировка «по показанному тексту»: значение = названия связанных записей через
+                // разделитель поля (как в ячейке). Записи без связей → "" (в конец при А→Я).
+                var sep  = RelationConfig.FromConfig(field.ConfigJson)?.SeparatorString ?? ", ";
+                var rows = (from l in db.DbRecordLinks.AsNoTracking()
+                            where l.FieldId == fid
+                            join src in db.DbRecords on l.FromRecordId equals src.Id
+                            where src.CollectionId == collectionId
+                            join tgt in db.DbRecords on l.ToRecordId equals tgt.Id
+                            orderby l.Position, l.Id
+                            select new { l.FromRecordId, Title = tgt.Title ?? "" }).ToList();
+                return rows.GroupBy(x => x.FromRecordId)
+                           .ToDictionary(g => g.Key, g => string.Join(sep, g.Select(x => x.Title)));
+            }
             return db.DbFieldValues.AsNoTracking()
                      .Where(fv => fv.FieldId == fid && fv.Record.CollectionId == collectionId)
                      .Select(fv => new { fv.RecordId, fv.Value }).ToList()
                      .ToDictionary(x => x.RecordId, x => x.Value);
+        }
         return new();
     }
 
@@ -4067,12 +4104,50 @@ public partial class ConstructorRepository(AppDbContext db)
         return result;
     }
 
-    // Счётчики значений колонки (Title/Desc/поле) по ключу — диспетчер для фона.
+    /// <summary>
+    /// Значения столбца-связи с количеством для панели фильтра (Excel-стиль): каждый пункт —
+    /// НАЗВАНИЕ связанной записи (Title цели), счётчик — сколько записей-источников коллекции
+    /// ссылаются хотя бы на одну запись с этим названием. «(нет связей)» = "" — источники без связей
+    /// (либо связанные только с безымянными записями), последним. Порядок непустых — по первой позиции
+    /// источника (порядок таблицы), как у прочих типов. Связи лежат в db_record_links, а не в
+    /// db_field_values, поэтому у типа своя ветка (нельзя переиспользовать GetFieldValueCounts).
+    /// </summary>
+    public List<(string Value, int Count)> GetRelationValueCounts(int collectionId, int fieldId)
+    {
+        // Уникальные пары (источник, название цели): мульти-связь на одно название не задваивает счётчик.
+        var pairs = (from l in db.DbRecordLinks.AsNoTracking()
+                     where l.FieldId == fieldId
+                     join src in db.DbRecords on l.FromRecordId equals src.Id
+                     where src.CollectionId == collectionId
+                     join tgt in db.DbRecords on l.ToRecordId equals tgt.Id
+                     select new { l.FromRecordId, src.Position, Title = tgt.Title ?? "" })
+                    .Distinct()
+                    .ToList();
+
+        var named = pairs.Where(p => p.Title.Length > 0)
+            .GroupBy(p => p.Title)
+            .Select(g => (Value: g.Key, Count: g.Select(p => p.FromRecordId).Distinct().Count(), FirstPos: g.Min(p => p.Position)))
+            .OrderBy(g => g.FirstPos)
+            .Select(g => (g.Value, g.Count))
+            .ToList();
+
+        var totalSrc  = db.DbRecords.Count(r => r.CollectionId == collectionId);
+        var withNamed = pairs.Where(p => p.Title.Length > 0).Select(p => p.FromRecordId).Distinct().Count();
+        var noLinks   = totalSrc - withNamed;
+        if (noLinks > 0) named.Add(("", noLinks));
+        return named;
+    }
+
+    private bool IsRelationField(int fieldId) =>
+        db.DbFields.AsNoTracking().Any(f => f.Id == fieldId && f.FieldType == "relation");
+
+    // Счётчики значений колонки (Title/Desc/поле/связь) по ключу — диспетчер для фона.
     private List<(string Value, int Count)> ColumnCounts(int collectionId, string key) =>
         key == TitleKey ? GetTitleCounts(collectionId)
         : key == DescKey ? GetDescriptionCounts(collectionId)
-        : int.TryParse(key, out var fid) ? GetFieldValueCounts(collectionId, fid)
-        : [];
+        : int.TryParse(key, out var fid)
+            ? (IsRelationField(fid) ? GetRelationValueCounts(collectionId, fid) : GetFieldValueCounts(collectionId, fid))
+            : [];
 
     /// <summary>
     /// Асинхронно (на фоновом потоке, отдельное read-only подключение) считает значения колонки

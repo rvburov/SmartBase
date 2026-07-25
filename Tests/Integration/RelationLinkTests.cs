@@ -186,4 +186,59 @@ public sealed class RelationLinkTests
 
         Assert.Equal([p2, p1], repo.GetLinkTargetIds(rel2.Id!.Value, newIds[0]));   // перенесены с порядком
     }
+
+    [Fact]
+    public void Relation_value_counts_group_by_title_with_no_links_bucket()
+    {
+        using var db = new TempDatabase();
+        var (repo, taskCol, rel, projCol) = Setup(db);
+        var a  = SampleData.AddRecord(repo, projCol, "Альфа").Id!.Value;
+        var b  = SampleData.AddRecord(repo, projCol, "Бета").Id!.Value;
+        var t1 = SampleData.AddRecord(repo, taskCol, "T1").Id!.Value;
+        var t2 = SampleData.AddRecord(repo, taskCol, "T2").Id!.Value;
+        SampleData.AddRecord(repo, taskCol, "T3");   // без связей
+        repo.SetLinks(rel, t1, [a, b]);
+        repo.SetLinks(rel, t2, [a]);
+
+        var counts = repo.GetRelationValueCounts(taskCol, rel);
+
+        Assert.Equal(("Альфа", 2), counts.Single(c => c.Value == "Альфа"));   // t1, t2
+        Assert.Equal(("Бета",  1), counts.Single(c => c.Value == "Бета"));    // t1
+        Assert.Equal(("", 1),      counts[^1]);                               // «(нет связей)» — T3, последним
+    }
+
+    [Fact]
+    public void Filter_by_relation_uses_or_semantics_and_empty_bucket()
+    {
+        using var db = new TempDatabase();
+        var (repo, taskCol, rel, projCol) = Setup(db);
+        var a  = SampleData.AddRecord(repo, projCol, "Альфа").Id!.Value;
+        var b  = SampleData.AddRecord(repo, projCol, "Бета").Id!.Value;
+        var t1 = SampleData.AddRecord(repo, taskCol, "T1").Id!.Value;
+        var t2 = SampleData.AddRecord(repo, taskCol, "T2").Id!.Value;
+        var t3 = SampleData.AddRecord(repo, taskCol, "T3").Id!.Value;   // без связей
+        repo.SetLinks(rel, t1, [a, b]);
+        repo.SetLinks(rel, t2, [b]);
+
+        var key = rel.ToString();
+        Dictionary<string, HashSet<string>> F(params string[] vals) => new() { [key] = [.. vals] };
+
+        Assert.Equal([t1],     repo.GetFilteredRecordIds(taskCol, F("Альфа")));           // только t1
+        Assert.Equal([t1, t2], repo.GetFilteredRecordIds(taskCol, F("Альфа", "Бета")));   // ИЛИ — обе
+        Assert.Equal([t3],     repo.GetFilteredRecordIds(taskCol, F("")));                // «(нет связей)»
+    }
+
+    [Fact]
+    public void Column_values_for_relation_join_titles_for_sort()
+    {
+        using var db = new TempDatabase();
+        var (repo, taskCol, rel, projCol) = Setup(db);
+        var a  = SampleData.AddRecord(repo, projCol, "Альфа").Id!.Value;
+        var b  = SampleData.AddRecord(repo, projCol, "Бета").Id!.Value;
+        var t1 = SampleData.AddRecord(repo, taskCol, "T1").Id!.Value;
+        repo.SetLinks(rel, t1, [b, a]);   // порядок b, a сохраняется в склейке
+
+        var vals = repo.GetColumnValues(taskCol, rel.ToString());
+        Assert.Equal("Бета, Альфа", vals[t1]);   // названия через разделитель поля (comma → ", ")
+    }
 }

@@ -2798,6 +2798,8 @@ public partial class TableView : UserControl
 
     private static string DisplayValue(string raw, string fieldType, string separator = ", ", NumberFormat? numberFormat = null)
     {
+        // Связь: значение фильтра = название связанной записи (Title); пусто → «(нет связей)».
+        if (fieldType == "relation") return raw == "" ? "(нет связей)" : raw;
         if (raw == "") return "(Пусто)";
         if (fieldType == "checkbox") return IsTruthy(raw) ? "✓" : "—";
         if (fieldType == "multiselect") return MultiSelectValue.Display(raw, separator);
