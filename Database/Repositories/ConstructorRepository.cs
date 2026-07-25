@@ -879,6 +879,9 @@ public partial class ConstructorRepository(AppDbContext db)
             var ids   = $"(SELECT Id FROM db_records WHERE {slice})";
             db.Database.ExecuteSqlRaw($"DELETE FROM db_field_values WHERE RecordId IN {ids}");
             db.Database.ExecuteSqlRaw($"DELETE FROM calendar_index  WHERE RecordId IN {ids}");
+            // Входящие связи в этой же БД на удаляемые записи (в т.ч. из других коллекций): FK на
+            // ToRecordId снят — чистим явно. Исходящие уходят каскадом FromRecordId с db_records.
+            db.Database.ExecuteSqlRaw($"DELETE FROM db_record_links WHERE TargetDbId = 0 AND ToRecordId IN {ids}");
             db.Database.ExecuteSqlRaw($"DELETE FROM db_records WHERE {slice}");
             tx.Commit();
 
@@ -3292,6 +3295,10 @@ public partial class ConstructorRepository(AppDbContext db)
         if (entity is not null)
         {
             Log("delete", "record", entity.Title, CollectionNameOf(entity.CollectionId));
+            // Входящие связи в этой же БД (цель = удаляемая запись): FK на ToRecordId снят (цель
+            // может быть межбазовой), чистим прикладно. Исходящие уходят каскадом FromRecordId.
+            var incoming = db.DbRecordLinks.Where(l => l.TargetDbId == 0 && l.ToRecordId == recordId).ToList();
+            db.DbRecordLinks.RemoveRange(incoming);
             db.DbRecords.Remove(entity);
         }
         db.SaveChanges();
@@ -3331,7 +3338,8 @@ public partial class ConstructorRepository(AppDbContext db)
             foreach (var l in links)
                 db.DbRecordLinks.Add(new DbRecordLinkEntity
                 {
-                    FieldId = l.FieldId, FromRecordId = copy.Id, ToRecordId = l.ToRecordId, Position = l.Position,
+                    FieldId = l.FieldId, FromRecordId = copy.Id, ToRecordId = l.ToRecordId,
+                    TargetDbId = l.TargetDbId, Position = l.Position,
                 });
             db.SaveChanges();
         }
@@ -3414,6 +3422,9 @@ public partial class ConstructorRepository(AppDbContext db)
         for (var i = 0; i < ids.Count; i += batchSize)
         {
             var inList = string.Join(",", ids.Skip(i).Take(batchSize));
+            // Входящие связи в этой же БД (цель ∈ удаляемых): FK на ToRecordId снят — чистим явно.
+            // Исходящие связи удаляемых записей уходят каскадом FromRecordId вместе с db_records.
+            db.Database.ExecuteSqlRaw($"DELETE FROM db_record_links WHERE TargetDbId = 0 AND ToRecordId IN ({inList})");
             db.Database.ExecuteSqlRaw($"DELETE FROM db_records     WHERE Id       IN ({inList})");
             db.Database.ExecuteSqlRaw($"DELETE FROM record_display WHERE RecordId IN ({inList})");
             db.Database.ExecuteSqlRaw($"DELETE FROM ui_row_heights WHERE RecordId IN ({inList})");
@@ -3532,8 +3543,8 @@ public partial class ConstructorRepository(AppDbContext db)
         // Связи (relation) одним INSERT…SELECT: FromRecordId → новый id по тому же рангу, что и значения
         // ({firstNew} + ранг − 1); ToRecordId/Position без изменений — копия ссылается на те же цели.
         db.Database.ExecuteSqlInterpolated($@"
-            INSERT INTO db_record_links (FieldId, FromRecordId, ToRecordId, Position)
-            SELECT l.FieldId, {firstNew} + (r.rn - 1), l.ToRecordId, l.Position
+            INSERT INTO db_record_links (FieldId, FromRecordId, ToRecordId, TargetDbId, Position)
+            SELECT l.FieldId, {firstNew} + (r.rn - 1), l.ToRecordId, l.TargetDbId, l.Position
             FROM db_record_links l
             JOIN (SELECT s.src_id AS old_id,
                          ROW_NUMBER() OVER (ORDER BY rr.Position, rr.Id) AS rn
@@ -3626,8 +3637,8 @@ public partial class ConstructorRepository(AppDbContext db)
 
             // Связи (relation): FromRecordId → new_id по карте _dup_rmap; цели/позиции без изменений.
             db.Database.ExecuteSqlRaw(@"
-                INSERT INTO db_record_links (FieldId, FromRecordId, ToRecordId, Position)
-                SELECT l.FieldId, m.new_id, l.ToRecordId, l.Position
+                INSERT INTO db_record_links (FieldId, FromRecordId, ToRecordId, TargetDbId, Position)
+                SELECT l.FieldId, m.new_id, l.ToRecordId, l.TargetDbId, l.Position
                 FROM db_record_links l
                 JOIN _dup_rmap m ON m.old_id = l.FromRecordId");
 

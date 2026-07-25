@@ -260,17 +260,17 @@ public class AppDbContext : DbContext
             e.HasKey(x => x.Id);
             // Чипы ячейки: связи одного поля одной записи в порядке Position (горячий путь показа).
             e.HasIndex(x => new { x.FieldId, x.FromRecordId, x.Position });
-            // Обратные ссылки (backlinks) и очистка при удалении цели: кто ссылается на запись.
+            // Очистка при удалении цели В ЭТОЙ ЖЕ БД (TargetDbId=0): кто ссылается на запись.
             e.HasIndex(x => x.ToRecordId);
-            // Не даём задвоить одну и ту же связь в одном поле.
-            e.HasIndex(x => new { x.FieldId, x.FromRecordId, x.ToRecordId }).IsUnique();
-            // Каскады: удаление поля-связи или любого конца (запись-источник/цель) чистит рёбра.
+            // Не даём задвоить связь; TargetDbId в ключе различает одинаковые id в разных целевых БД.
+            e.HasIndex(x => new { x.FieldId, x.FromRecordId, x.TargetDbId, x.ToRecordId }).IsUnique();
+            // Каскады на поле-связь и запись-источник (всегда в этой же БД). FK на ToRecordId НЕТ:
+            // цель может быть в другом файле (межбазовая связь), а FK между файлами невозможен —
+            // удаление цели в этой же БД (TargetDbId=0) чистит прикладной код в путях удаления.
             e.HasOne<DbFieldEntity>().WithMany()
              .HasForeignKey(x => x.FieldId).OnDelete(DeleteBehavior.Cascade);
             e.HasOne<DbRecordEntity>().WithMany()
              .HasForeignKey(x => x.FromRecordId).OnDelete(DeleteBehavior.Cascade);
-            e.HasOne<DbRecordEntity>().WithMany()
-             .HasForeignKey(x => x.ToRecordId).OnDelete(DeleteBehavior.Cascade);
         });
 
         model.Entity<CalendarIndexEntity>(e =>

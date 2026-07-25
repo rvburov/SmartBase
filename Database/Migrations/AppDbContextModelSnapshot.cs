@@ -373,6 +373,9 @@ namespace SmartBase.Database.Migrations
                     b.Property<int>("Position")
                         .HasColumnType("INTEGER");
 
+                    b.Property<int>("TargetDbId")
+                        .HasColumnType("INTEGER");
+
                     b.Property<int>("ToRecordId")
                         .HasColumnType("INTEGER");
 
@@ -384,7 +387,7 @@ namespace SmartBase.Database.Migrations
 
                     b.HasIndex("FieldId", "FromRecordId", "Position");
 
-                    b.HasIndex("FieldId", "FromRecordId", "ToRecordId")
+                    b.HasIndex("FieldId", "FromRecordId", "TargetDbId", "ToRecordId")
                         .IsUnique();
 
                     b.ToTable("db_record_links", (string)null);
@@ -603,12 +606,6 @@ namespace SmartBase.Database.Migrations
                     b.HasOne("SmartBase.Database.Entities.DbRecordEntity", null)
                         .WithMany()
                         .HasForeignKey("FromRecordId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.HasOne("SmartBase.Database.Entities.DbRecordEntity", null)
-                        .WithMany()
-                        .HasForeignKey("ToRecordId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });

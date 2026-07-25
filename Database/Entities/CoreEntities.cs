@@ -88,16 +88,22 @@ public class DbRecordEntity
 
 // Связь между записями (тип поля «relation»): ребро графа «из записи FromRecordId в запись
 // ToRecordId по полю-связи FieldId». Many-to-many из коробки (one-to-many/one — ограничения в
-// логике/UI). Значения связи НЕ в db_field_values — здесь, чтобы работали каскады и обратные
-// ссылки (backlinks = запрос по ToRecordId). Position — порядок чипов в ячейке. FK-каскады на
-// поле и обе записи (удаление любого конца чистит ребро). Уникальность (FieldId, From, To) — не
-// даёт задвоить одну и ту же связь.
+// логике/UI). Значения связи НЕ в db_field_values — здесь, чтобы работали каскады. Position —
+// порядок чипов в ячейке.
+//
+// TargetDbId — межбазовая цель: 0 = цель в ЭТОЙ же БД (обычный случай, FK-каскад на ToRecordId
+// работает); >0 = стабильный DbId цели из реестра app.db, тогда ToRecordId — id записи в ДРУГОМ
+// файле (FK на него невозможен между файлами — снят; чистку при удалении цели делает прикладной
+// код). FK-каскады на поле и запись-источник остаются (они всегда в этой же БД). Уникальность
+// (FieldId, FromRecordId, TargetDbId, ToRecordId) — не даёт задвоить связь и различает одинаковые
+// id в разных целевых БД.
 public class DbRecordLinkEntity
 {
     [Key] public int Id           { get; set; }
     public int        FieldId      { get; set; }
     public int        FromRecordId { get; set; }
     public int        ToRecordId   { get; set; }
+    public int        TargetDbId   { get; set; }   // 0 = та же БД; >0 = DbId цели в реестре
     public int        Position     { get; set; } = 1000;
 }
 
