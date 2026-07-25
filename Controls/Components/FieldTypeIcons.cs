@@ -25,6 +25,7 @@ public static class FieldTypeIcons
         "checkbox" => Icon("IconFieldCheckbox"),
         "url"      => Icon("IconFieldUrl"),
         "file"     => Icon("IconFieldFile"),
+        "relation" => Icon("IconFieldRelation"),
         "user"     => Icon("IconUser"),
         // Вычисляемые типы: значение авто из метаданных записи. Иконку переиспользуем
         // (дата — календарь, пользователь — человек), различаются подписью.

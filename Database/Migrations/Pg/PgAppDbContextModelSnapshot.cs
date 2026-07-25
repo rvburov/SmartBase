@@ -446,6 +446,45 @@ namespace SmartBase.Database.Migrations.Pg
                     b.ToTable("db_records", (string)null);
                 });
 
+            modelBuilder.Entity("SmartBase.Database.Entities.DbRecordLinkEntity", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasColumnName("id");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<int>("FieldId")
+                        .HasColumnType("integer")
+                        .HasColumnName("fieldid");
+
+                    b.Property<int>("FromRecordId")
+                        .HasColumnType("integer")
+                        .HasColumnName("fromrecordid");
+
+                    b.Property<int>("Position")
+                        .HasColumnType("integer")
+                        .HasColumnName("position");
+
+                    b.Property<int>("ToRecordId")
+                        .HasColumnType("integer")
+                        .HasColumnName("torecordid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("FromRecordId");
+
+                    b.HasIndex("ToRecordId");
+
+                    b.HasIndex("FieldId", "FromRecordId", "Position");
+
+                    b.HasIndex("FieldId", "FromRecordId", "ToRecordId")
+                        .IsUnique();
+
+                    b.ToTable("db_record_links", (string)null);
+                });
+
             modelBuilder.Entity("SmartBase.Database.Entities.DbUserEntity", b =>
                 {
                     b.Property<int>("Id")
@@ -670,6 +709,27 @@ namespace SmartBase.Database.Migrations.Pg
                         .IsRequired();
 
                     b.Navigation("Collection");
+                });
+
+            modelBuilder.Entity("SmartBase.Database.Entities.DbRecordLinkEntity", b =>
+                {
+                    b.HasOne("SmartBase.Database.Entities.DbFieldEntity", null)
+                        .WithMany()
+                        .HasForeignKey("FieldId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("SmartBase.Database.Entities.DbRecordEntity", null)
+                        .WithMany()
+                        .HasForeignKey("FromRecordId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("SmartBase.Database.Entities.DbRecordEntity", null)
+                        .WithMany()
+                        .HasForeignKey("ToRecordId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("SmartBase.Database.Entities.DbCollectionEntity", b =>

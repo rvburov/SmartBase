@@ -23,6 +23,13 @@
 | `file` | абсолютный путь к файлу строкой (ничего не копируется); показ — имя файла синей ссылкой (клик — открыть через ОС) / «файл не найден» / «Выбрать файл…»; правка — ручной ввод пути + иконка-скрепка (системный выбор), редактор `FileEditor` |
 | `user` | строка-имя (снимок, как `select`); опции — `GetUserOptions` (допущенные пользователи), новая запись = текущий пользователь; флаги задач `IsTaskExec/IsTaskAssigner/IsTaskStatus` (см. [tasks/overview.md](../../features/tasks.md)) |
 
+**Связь** (`relation`) — значение НЕ в `db_field_values`, а в таблице рёбер `db_record_links`
+([`DbRecordLinkEntity`](../../../../Database/Entities/CoreEntities.cs)); ячейка read-only, правится
+выбором в списке. Настройка (целевая коллекция + one/many + разделитель) —
+[`RelationConfig`](../../../../Core/Models/RelationConfig.cs) в ConfigJson. Показ — в стиле
+«Мультисписка»: названия связанных записей текстом через разделитель, справа иконка-стрелка
+открывает чеклист. Подробности — [relation.md](relation.md).
+
 **Вычисляемые** — read-only, значение НЕ в `db_field_values`, а из аудит-метаданных `db_records`
 (автор — снимок `CurrentUser.DisplayName`, стамп при создании/правке; подробности —
 [tables.md](../../features/constructor/table.md#вычисляемые-типы-авто-метаданные-записи)):
@@ -47,6 +54,7 @@
 - [`checkbox` — «Чекбокс»](checkbox.md)
 - [`url` — «Ссылка»](url.md)
 - [`file` — «Файл»](file.md)
+- [`relation` — «Связь»](relation.md)
 - [`user` — «Пользователь»](user.md)
 - [Вычисляемые — `created_*`/`updated_*`](computed.md)
 

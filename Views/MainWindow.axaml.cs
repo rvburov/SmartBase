@@ -309,6 +309,9 @@ public partial class MainWindow : Window
         ConstructorModule.RecordPageRequested += (_, rid)        => OpenRecordPanel(rid);
         ConstructorModule.RecordPageClosed    += (_, _)          => CloseRecordPanel();
         RecordPanel.RecordChanged             += (_, rid)        => ConstructorModule.RefreshRecordRow(rid);
+        // Клик по чипу связи в панели записи → открыть связанную запись (её коллекция резолвится
+        // в OpenRecordPanel по самой записи, поэтому переход между коллекциями работает).
+        RecordPanel.RelatedRecordRequested    += (_, rid)        => OpenRecordPanel(rid);
         // «Добавить свойство» из панели записи — тем же путём, что и «+» в таблице:
         // новое поле создаётся, колонка появляется в таблице, а FieldsChanged ниже
         // перестраивает список свойств панели (новое поле сразу видно и там, и там).
@@ -969,7 +972,11 @@ public partial class MainWindow : Window
 
     private void OpenRecordPanel(int recordId)
     {
-        var collectionId = ConstructorModule.CurrentCollectionId;
+        // Коллекцию берём У САМОЙ ЗАПИСИ (переход по чипу связи открывает запись ДРУГОЙ
+        // коллекции — панель должна показать её собственную схему полей), с фолбэком на
+        // текущую активную коллекцию.
+        var collectionId = CurrentConstructorRepo?.GetRecord(recordId)?.CollectionId
+                           ?? ConstructorModule.CurrentCollectionId;
         if (collectionId is null) return;
 
         // Панель записи открывается из репозитория той БД, чья коллекция сейчас активна.

@@ -46,6 +46,7 @@ public partial class PropertyEditorDialog : Window
         new() { Type = "checkbox", Label = "Чекбокс", Icon = Components.FieldTypeIcons.ForType("checkbox")! },
         new() { Type = "url",      Label = "Ссылка",  Icon = Components.FieldTypeIcons.ForType("url")!      },
         new() { Type = "file",     Label = "Файл",    Icon = Components.FieldTypeIcons.ForType("file")!     },
+        new() { Type = "relation", Label = "Связь",   Icon = Components.FieldTypeIcons.ForType("relation")! },
         new() { Type = "user",     Label = "Пользователь", Icon = Components.FieldTypeIcons.ForType("user")! },
         // Вычисляемые типы (значение авто из метаданных записи, ячейка read-only). Идут внизу
         // отдельной группой — StartsGroup у первого рисует разделительную черту над ней.
@@ -111,6 +112,7 @@ public partial class PropertyEditorDialog : Window
         FileFormatCombo.SelectionChanged += (_, _) => UpdateFileFormatCustomVisibility();
         FileFolderBtn.Click              += async (_, _) => await PickFolderAsync();
         PopulateFileSources();
+        PopulateRelationTargets();
 
         if (editFieldId.HasValue)
         {
@@ -137,6 +139,9 @@ public partial class PropertyEditorDialog : Window
                 // «Файл» — восстановить правило авто-привязки (столбец/папка/формат), если есть.
                 if (field.FieldType == "file")
                     RestoreFileAutoRule(field.ConfigJson);
+                // «Связь» — восстановить целевую коллекцию + кардинальность.
+                if (field.FieldType == "relation")
+                    RestoreRelationConfig(field.ConfigJson);
             }
         }
 
@@ -181,6 +186,8 @@ public partial class PropertyEditorDialog : Window
         NumberSection.IsVisible = _selectedType == "number";
         // Авто-привязка файлов — только для типа «Файл».
         FileSection.IsVisible = _selectedType == "file";
+        // Настройка связи — только для типа «Связь».
+        RelationSection.IsVisible = _selectedType == "relation";
 
         if (_selectedType == "status" && _optionBoxes.Count == 0)
             foreach (var o in ConstructorRepository.TaskStatusOptions) AddOptionRow(o);
@@ -303,6 +310,55 @@ public partial class PropertyEditorDialog : Window
         if (!Directory.Exists(folder)) { ShowError("Папка недоступна"); return null; }
         if (format.Length == 0) { ShowError("Выберите формат файла"); return null; }
         return new FileAutoRule(src.Key, folder, format).ToConfigJson();
+    }
+
+    // ── Связь (relation) ─────────────────────────────────────────────────────────
+
+    /// <summary>Пункт выпадашки целевой коллекции связи (Id + имя).</summary>
+    private sealed class TargetCollectionItem
+    {
+        public int    Id   { get; init; }
+        public string Name { get; init; } = "";
+        public override string ToString() => Name;
+    }
+
+    // Список целевых коллекций (включая текущую — self-relation допустима).
+    private void PopulateRelationTargets()
+    {
+        if (_systemMode || _repository is null) return;
+        var items = _repository.GetAllCollections()
+            .Where(c => c.Id.HasValue)
+            .Select(c => new TargetCollectionItem { Id = c.Id!.Value, Name = c.Name })
+            .ToList();
+        RelationTargetCombo.ItemsSource   = items;
+        RelationTargetCombo.SelectedIndex = -1;      // цель нужно выбрать явно
+        RelationCardinalityCombo.SelectedIndex = 0;  // по умолчанию — «Несколько»
+        RelationSeparatorCombo.SelectedIndex   = 0;  // разделитель по умолчанию — запятая
+    }
+
+    // Восстановить сохранённое правило связи (целевая коллекция + one/many + разделитель).
+    private void RestoreRelationConfig(string? configJson)
+    {
+        var cfg = RelationConfig.FromConfig(configJson);
+        if (cfg is null) return;
+        if (RelationTargetCombo.ItemsSource is IEnumerable<TargetCollectionItem> items)
+            RelationTargetCombo.SelectedIndex = items.ToList().FindIndex(i => i.Id == cfg.TargetCollectionId);
+        RelationCardinalityCombo.SelectedIndex = cfg.Single ? 1 : 0;
+        var sepIdx = Array.IndexOf(SeparatorKeys, cfg.Separator);
+        RelationSeparatorCombo.SelectedIndex = sepIdx >= 0 ? sepIdx : 0;
+    }
+
+    // Собрать ConfigJson поля-связи. null — целевая коллекция не выбрана (ошибка показана).
+    private string? BuildRelationConfigJson()
+    {
+        if (RelationTargetCombo.SelectedItem is not TargetCollectionItem t)
+        {
+            ShowError("Выберите целевую коллекцию");
+            return null;
+        }
+        var single    = RelationCardinalityCombo.SelectedIndex == 1;   // 0 — Несколько, 1 — Одну
+        var separator = SeparatorKeys[Math.Clamp(RelationSeparatorCombo.SelectedIndex, 0, SeparatorKeys.Length - 1)];
+        return new RelationConfig(t.Id, single, separator).ToConfigJson();
     }
 
     // Под-опции формата числа: блок опций (точность/разряды/валюта) скрыт для «Обычного числа»
@@ -615,6 +671,15 @@ public partial class PropertyEditorDialog : Window
         }
         var fileAuto = _selectedType == "file" && FileAutoRule.FromConfig(fileConfig) is not null;
 
+        // «Связь»: собрать конфиг (целевая коллекция + one/many). null — цель не выбрана.
+        var relationConfig = "{}";
+        if (_selectedType == "relation")
+        {
+            var cfg = BuildRelationConfigJson();
+            if (cfg is null) return;
+            relationConfig = cfg;
+        }
+
         // Включение авто-привязки на поле с уже сохранёнными значениями — подтверждаем затирание.
         if (fileAuto && _editFieldId is int existId && _repository.FieldHasValues(existId))
         {
@@ -639,6 +704,7 @@ public partial class PropertyEditorDialog : Window
                 if (FieldTypeInfo.IsOptionList(_selectedType)) field.ConfigJson = BuildOptionsConfigJson();
                 else if (_selectedType == "number")           field.ConfigJson = BuildNumberConfigJson();
                 else if (_selectedType == "file")             field.ConfigJson = fileConfig;
+                else if (_selectedType == "relation")         field.ConfigJson = relationConfig;
                 _repository.UpdateField(field);
                 savedFieldId = _editFieldId.Value;
             }
@@ -656,6 +722,7 @@ public partial class PropertyEditorDialog : Window
                     ConfigJson   = FieldTypeInfo.IsOptionList(_selectedType) ? BuildOptionsConfigJson()
                                  : _selectedType == "number"                 ? BuildNumberConfigJson()
                                  : _selectedType == "file"                   ? fileConfig
+                                 : _selectedType == "relation"               ? relationConfig
                                  : "{}",
                 });
                 savedFieldId = added.Id!.Value;

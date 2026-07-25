@@ -11,6 +11,7 @@ public class AppDbContext : DbContext
     public DbSet<DbFieldEntity>            DbFields             { get; set; } = null!;
     public DbSet<DbRecordEntity>           DbRecords            { get; set; } = null!;
     public DbSet<DbFieldValueEntity>       DbFieldValues        { get; set; } = null!;
+    public DbSet<DbRecordLinkEntity>       DbRecordLinks        { get; set; } = null!;
     public DbSet<CalendarIndexEntity>      CalendarIndex        { get; set; } = null!;
     public DbSet<UiColWidthEntity>         UiColWidths          { get; set; } = null!;
     public DbSet<UiRowHeightEntity>        UiRowHeights         { get; set; } = null!;
@@ -251,6 +252,25 @@ public class AppDbContext : DbContext
              .WithMany(x => x.FieldValues)
              .HasForeignKey(x => x.FieldId)
              .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        model.Entity<DbRecordLinkEntity>(e =>
+        {
+            e.ToTable("db_record_links");
+            e.HasKey(x => x.Id);
+            // Чипы ячейки: связи одного поля одной записи в порядке Position (горячий путь показа).
+            e.HasIndex(x => new { x.FieldId, x.FromRecordId, x.Position });
+            // Обратные ссылки (backlinks) и очистка при удалении цели: кто ссылается на запись.
+            e.HasIndex(x => x.ToRecordId);
+            // Не даём задвоить одну и ту же связь в одном поле.
+            e.HasIndex(x => new { x.FieldId, x.FromRecordId, x.ToRecordId }).IsUnique();
+            // Каскады: удаление поля-связи или любого конца (запись-источник/цель) чистит рёбра.
+            e.HasOne<DbFieldEntity>().WithMany()
+             .HasForeignKey(x => x.FieldId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne<DbRecordEntity>().WithMany()
+             .HasForeignKey(x => x.FromRecordId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne<DbRecordEntity>().WithMany()
+             .HasForeignKey(x => x.ToRecordId).OnDelete(DeleteBehavior.Cascade);
         });
 
         model.Entity<CalendarIndexEntity>(e =>

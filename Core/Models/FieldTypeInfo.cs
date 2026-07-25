@@ -17,6 +17,11 @@ public static class FieldTypeInfo
     public static bool IsDateLike(string? fieldType) => fieldType is
         "date" or "created_at" or "updated_at";
 
+    /// <summary>true — поле-связь: значение (набор ссылок на записи) хранится не в
+    /// db_field_values, а в db_record_links; ячейка правится через пикер записей, не текстом.
+    /// Настройка поля — <see cref="RelationConfig"/> в ConfigJson.</summary>
+    public static bool IsRelation(string? fieldType) => fieldType is "relation";
+
     /// <summary>true — тип с редактируемым набором опций в ConfigJson: «select»/«status» (одно
     /// значение) и «multiselect» (несколько). Управляет показом блока «Пункты списка» в диалоге
     /// свойства. «status» отличается тремя опциями по умолчанию; «multiselect» хранит значение
@@ -37,6 +42,7 @@ public static class FieldTypeInfo
         "checkbox"   => "Чекбокс",
         "url"        => "Ссылка",
         "file"       => "Файл",
+        "relation"   => "Связь",
         "user"       => "Пользователь",
         "created_at" => "Дата создания",
         "updated_at" => "Дата изменения",

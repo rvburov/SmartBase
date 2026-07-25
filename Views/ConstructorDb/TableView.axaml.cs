@@ -727,6 +727,8 @@ public partial class TableView : UserControl
                 NumberFormat = NumberFormatValue.FromConfig(f.ConfigJson),
                 // Папка авто-привязки «Файла» (если правило задано) → ячейка read-only.
                 FileAutoFolder = FileAutoRule.FromConfig(f.ConfigJson)?.Folder ?? "",
+                // Настройка связи (целевая коллекция + one/many), если задана → ячейка рисует чипы.
+                Relation    = f.FieldType == "relation" ? RelationConfig.FromConfig(f.ConfigJson) : null,
                 Tag         = fid,
                 BuildHeaderMenu = _ => BuildHeaderContextMenu(fid, f.IsRequired, f.Name, f.FieldType,
                     fileAuto: FileAutoRule.FromConfig(f.ConfigJson) is not null),
@@ -1265,6 +1267,18 @@ public partial class TableView : UserControl
                 return cb;
             }
 
+            // «Связь»: read-ячейка — названия связанных записей ТЕКСТОМ через разделитель (пусто →
+            // «связи нет»), фон прозрачный. Иконка/список — только в РЕЖИМЕ ПРАВКИ ячейки (как чеклист
+            // «Мультисписка», см. BuildEditTemplate). Данные тянет сам по RecordId строки (GetLinks);
+            // строка приходит асинхронно (виртуализация: заглушка → Fill → "Item", без смены
+            // DataContext) и меняется при переиспользовании контейнера — переустанавливаем RecordId.
+            if (def.FieldType == "relation" && def.Relation is not null && _repository is not null && def.Tag is int relFid)
+            {
+                var rel = new RelationSelectBox(_repository, relFid, def.Relation, editing: false, contentLeftPadding: 6);
+                BindRelationRow(rel, row);
+                return rel;
+            }
+
             // «Файл»: ссылка на файл (клик — открыть через ОС), ручной ввод пути + иконка-скрепка
             // (системный выбор файла). Колонка read-only на уровне DataGrid (см. IsReadOnly ниже) —
             // редактор живёт прямо в ячейке показа, отдельного CellEditingTemplate нет (как у чекбокса).
@@ -1363,6 +1377,29 @@ public partial class TableView : UserControl
         _            => nameof(TableRowVm.CreatedAt),
     };
 
+    // Привязать поле-связь к строке: RecordId берётся у строки (в шаблоне DataContext ещё может быть
+    // не проставлен), обновляется по её уведомлению "Item" (Fill заглушки / правка) и при
+    // переиспользовании контейнера (DataContextChanged). Отписка при отсоединении.
+    private static void BindRelationRow(RelationSelectBox rel, TableRowVm initialRow)
+    {
+        TableRowVm? bound = null;
+        void OnRowProp(object? _, System.ComponentModel.PropertyChangedEventArgs e)
+        {
+            if ((e.PropertyName is "Item" or null) && bound is not null) rel.RecordId = bound.RecordId;
+        }
+        void Bind(TableRowVm? r)
+        {
+            if (ReferenceEquals(bound, r)) { if (r is not null) rel.RecordId = r.RecordId; return; }
+            if (bound is not null) bound.PropertyChanged -= OnRowProp;
+            bound = r;
+            if (bound is not null) bound.PropertyChanged += OnRowProp;
+            rel.RecordId = bound?.RecordId ?? 0;
+        }
+        rel.DataContextChanged     += (_, _) => Bind(rel.DataContext as TableRowVm);
+        rel.DetachedFromVisualTree += (_, _) => { if (bound is not null) { bound.PropertyChanged -= OnRowProp; bound = null; } };
+        Bind(initialRow);
+    }
+
     private IDataTemplate BuildEditTemplate(TableColumnDef def) =>
         new FuncDataTemplate<TableRowVm>((row, _) =>
         {
@@ -1402,6 +1439,21 @@ public partial class TableView : UserControl
                     var box = new Controls.Components.MultiSelectBox(def.Options, row[def.Key], flat: true, separator: def.Separator);
                     box.Changed += (_, _) => row[def.Key] = box.Storage;
                     return box;
+                }
+
+                case "relation" when def.Relation is not null && _repository is not null && def.Tag is int relFid:
+                {
+                    // Правка ячейки: текст + иконка-связь справа, по клику по иконке — чеклист выбора
+                    // (как чеклист «Мультисписка»). «→» у пункта → открыть цель. По выходе из правки
+                    // read-ячейка (editing:false) переустановится и перечитает связи (AttachedToVisualTree).
+                    var rel = new RelationSelectBox(_repository, relFid, def.Relation, editing: true, contentLeftPadding: 6);
+                    rel.Navigate += (_, targetId) => RecordClicked?.Invoke(this, targetId);
+                    rel.Changed  += (_, _) =>
+                    {
+                        if (rel.DataContext is TableRowVm r) RecordValueEdited?.Invoke(this, r.RecordId);
+                    };
+                    BindRelationRow(rel, row);
+                    return rel;
                 }
 
                 case "number":

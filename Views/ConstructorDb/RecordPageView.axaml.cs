@@ -23,6 +23,10 @@ public partial class RecordPageView : UserControl
     public event EventHandler<int>? RecordChanged;
     public event EventHandler<bool>? CollectionPanelToggled;
 
+    /// <summary>Клик по чипу поля-связи: открыть связанную запись (её Id; коллекция может быть
+    /// другой). Обрабатывает MainWindow → OpenRecordPanel (коллекция резолвится у самой записи).</summary>
+    public event EventHandler<int>? RelatedRecordRequested;
+
     /// <summary>Клик по «Добавить свойство»: создать новое поле текущей коллекции.
     /// Обрабатывает MainWindow → контроллер (тот же путь, что и «+» в таблице),
     /// чтобы новое поле сразу появилось и в таблице, и в панели.</summary>
@@ -488,6 +492,7 @@ public partial class RecordPageView : UserControl
         "checkbox" => "IconFieldCheckbox",
         "url"      => "IconFieldUrl",
         "file"     => "IconFieldFile",
+        "relation" => "IconFieldRelation",
         "user"     => "IconUser",
         // Вычисляемые типы: та же иконка, что и у дат/пользователя (различаются подписью).
         "created_at" or "updated_at" => "IconCalendarDate",
@@ -754,6 +759,29 @@ public partial class RecordPageView : UserControl
                 editor.Changed += (_, _) => { row.Value = editor.Storage ?? ""; PersistProperty(row); };
                 if (f.Id is int ffid) _fileEditors[ffid] = editor;   // для мгновенного обновления при правке источника
                 input = editor;
+                break;
+            }
+            case "relation":
+            {
+                // Названия связанных записей текстом + иконка-стрелка справа (чеклист выбора) — тот
+                // же контрол, что и в таблице, без рамки (её даёт карточка). «→» у пункта → переход.
+                var cfg = RelationConfig.FromConfig(f.ConfigJson);
+                if (cfg is null || _repo is null || f.Id is not int relFid)
+                {
+                    var note = FlatValueBox("Связь не настроена");
+                    note.IsReadOnly = true;
+                    note.Foreground = (IBrush)this.FindResource("BrushSecondaryText")!;
+                    input = note;
+                    break;
+                }
+                var rel = new RelationSelectBox(_repo, relFid, cfg, editing: true)
+                {
+                    HorizontalAlignment = HorizontalAlignment.Stretch,
+                    RecordId            = _vm?.RecordId ?? 0,
+                };
+                rel.Navigate += (_, targetId) => RelatedRecordRequested?.Invoke(this, targetId);
+                rel.Changed  += (_, _) => { if (_vm is not null) RecordChanged?.Invoke(this, _vm.RecordId); };
+                input = rel;
                 break;
             }
             default:  // text

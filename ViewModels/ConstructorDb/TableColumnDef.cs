@@ -38,6 +38,10 @@ public sealed class TableColumnDef
     // Непусто → ячейка файла read-only (правило ведёт значения), нужна для статуса «папка недоступна».
     public string FileAutoFolder { get; init; } = "";
 
+    // Настройка поля-связи «relation» (целевая коллекция + one/many) из ConfigJson; null — не связь
+    // или цель не выбрана. Непусто → ячейка рисует чипы связанных записей (read-only колонка).
+    public RelationConfig? Relation { get; init; }
+
     // Произвольный тег для идентификации (например, field.Id)
     public object? Tag { get; init; }
 

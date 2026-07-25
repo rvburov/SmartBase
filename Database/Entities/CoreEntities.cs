@@ -86,6 +86,21 @@ public class DbRecordEntity
     public ICollection<DbFieldValueEntity> FieldValues { get; set; } = [];
 }
 
+// Связь между записями (тип поля «relation»): ребро графа «из записи FromRecordId в запись
+// ToRecordId по полю-связи FieldId». Many-to-many из коробки (one-to-many/one — ограничения в
+// логике/UI). Значения связи НЕ в db_field_values — здесь, чтобы работали каскады и обратные
+// ссылки (backlinks = запрос по ToRecordId). Position — порядок чипов в ячейке. FK-каскады на
+// поле и обе записи (удаление любого конца чистит ребро). Уникальность (FieldId, From, To) — не
+// даёт задвоить одну и ту же связь.
+public class DbRecordLinkEntity
+{
+    [Key] public int Id           { get; set; }
+    public int        FieldId      { get; set; }
+    public int        FromRecordId { get; set; }
+    public int        ToRecordId   { get; set; }
+    public int        Position     { get; set; } = 1000;
+}
+
 // Значение поля записи (EAV): одна строка на пару «запись × поле». Ключ — естественный
 // (RecordId, FieldId), он же PK; суррогатного Id нет. Физически таблица пересоздана
 // WITHOUT ROWID (см. миграцию SchemaCompact): сама таблица кластеризована по PK — значения

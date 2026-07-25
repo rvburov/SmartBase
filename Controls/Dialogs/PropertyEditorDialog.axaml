@@ -406,6 +406,57 @@
             </StackPanel>
         </StackPanel>
 
+        <!-- Связь (relation): целевая коллекция + сколько записей можно связать. -->
+        <StackPanel x:Name="RelationSection" IsVisible="False" Spacing="10" Margin="0,0,0,12">
+            <TextBlock Text="Связь"
+                       FontWeight="{StaticResource FontWeightBold}"
+                       Foreground="{StaticResource BrushSecondaryText}" />
+            <TextBlock TextWrapping="Wrap" LineHeight="16"
+                       Foreground="{StaticResource BrushSecondaryText}"
+                       Text="Ячейка ссылается на записи выбранной коллекции. Название связанной записи показывается «чипом»; по клику — переход к ней." />
+
+            <StackPanel Spacing="6">
+                <TextBlock Text="Целевая коллекция"
+                           FontWeight="{StaticResource FontWeightBold}"
+                           Foreground="{StaticResource BrushSecondaryText}" />
+                <ComboBox x:Name="RelationTargetCombo"
+                          HorizontalAlignment="Stretch" Height="34"
+                          VerticalContentAlignment="Center"
+                          Background="{StaticResource BrushSecondaryBg}"
+                          CornerRadius="{StaticResource RadiusBase}" />
+            </StackPanel>
+
+            <StackPanel Spacing="6">
+                <TextBlock Text="Сколько записей можно связать"
+                           FontWeight="{StaticResource FontWeightBold}"
+                           Foreground="{StaticResource BrushSecondaryText}" />
+                <ComboBox x:Name="RelationCardinalityCombo"
+                          HorizontalAlignment="Stretch" Height="34"
+                          VerticalContentAlignment="Center"
+                          Background="{StaticResource BrushSecondaryBg}"
+                          CornerRadius="{StaticResource RadiusBase}">
+                    <ComboBoxItem Content="Несколько" />
+                    <ComboBoxItem Content="Одну" />
+                </ComboBox>
+            </StackPanel>
+
+            <StackPanel Spacing="6">
+                <TextBlock Text="Разделитель названий"
+                           FontWeight="{StaticResource FontWeightBold}"
+                           Foreground="{StaticResource BrushSecondaryText}" />
+                <ComboBox x:Name="RelationSeparatorCombo"
+                          HorizontalAlignment="Stretch" Height="34"
+                          VerticalContentAlignment="Center"
+                          Background="{StaticResource BrushSecondaryBg}"
+                          CornerRadius="{StaticResource RadiusBase}">
+                    <ComboBoxItem Content="Через запятую" />
+                    <ComboBoxItem Content="Через пробел" />
+                    <ComboBoxItem Content="Через точку с запятой" />
+                    <ComboBoxItem Content="С новой строки" />
+                </ComboBox>
+            </StackPanel>
+        </StackPanel>
+
         <!-- Пояснение для системных колонок «Название»/«Описание»: скрыто по умолчанию,
              показывается только в системном режиме (см. code-behind). Объясняет, почему
              тип заблокирован и свойство нельзя удалить. -->

@@ -213,6 +213,8 @@
     <StreamGeometry x:Key="IconFieldUrl">M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71 M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71</StreamGeometry>
     <!-- Файл (paperclip) -->
     <StreamGeometry x:Key="IconFieldFile">m16 6-8.414 8.586a2 2 0 0 0 2.829 2.829l8.414-8.586a4 4 0 1 0-5.657-5.657l-8.379 8.551a6 6 0 1 0 8.485 8.485l8.379-8.551</StreamGeometry>
+    <!-- Связь между записями (link-2) -->
+    <StreamGeometry x:Key="IconFieldRelation">M9 17H7A5 5 0 0 1 7 7h2 M15 7h2a5 5 0 0 1 0 10h-2 M8 12h8</StreamGeometry>
 
     <!-- ─── Таблица: меню фильтра/сортировки в заголовке ─── -->
 

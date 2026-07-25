@@ -81,19 +81,26 @@
 
 ---
 
-## Этап 1 — Связи между записями (relations) 🔴 приоритет
+## Этап 1 — Связи между записями (relations) ✅ базово реализовано
 
-Разблокирует всё остальное: CRM, PLM, backlinks, rollup.
+Разблокирует всё остальное: CRM, PLM, backlinks, rollup. См.
+[data-types/relation.md](developer/architecture/data-types/relation.md).
 
-- [ ] Сущность `DbRecordLinkEntity (Id, FieldId, FromRecordId, ToRecordId)`
-      — many-to-many «из коробки», one-to-many — частный случай.
-- [ ] Новый тип поля `relation`; в `ConfigJson`:
-      `{ "targetCollectionId": N, "single": false }`.
-- [ ] Миграция EF + методы репозитория:
-      `GetLinks / AddLink / RemoveLink / GetBacklinks`.
-- [ ] UI: чипы связанных записей в ячейке таблицы и на странице записи.
-- [ ] Диалог-пикер записей целевой коллекции (поиск по Title).
-- [ ] Каскады: при удалении записи/поля чистить связи.
+- [x] Сущность `DbRecordLinkEntity (Id, FieldId, FromRecordId, ToRecordId, Position)`
+      — many-to-many «из коробки», one-to-many/one — кардинальность в конфиге.
+- [x] Новый тип поля `relation`; в `ConfigJson` — `RelationConfig`:
+      `{ "targetCollectionId": N, "single": false, "separator": "comma" }`.
+- [x] Миграции EF (SQLite + PG) + методы репозитория
+      (`ConstructorRepository.Relations`): `GetLinks / GetLinksBatch / SetLinks /
+      AddLink / RemoveLink / SearchRecordTitles`.
+- [x] UI (стиль «Мультисписка»): `RelationSelectBox` — названия связей текстом через
+      разделитель + иконка-стрелка справа открывает чеклист с поиском (one/many);
+      пусто → «связи нет». Read-only колонка, тот же контрол в таблице и панели записи.
+- [x] Каскады: при удалении записи/поля/коллекции связи чистятся FK `ON DELETE CASCADE`.
+- [x] Переход к связанной записи по «→» у пункта списка (в т.ч. другой коллекции —
+      `OpenRecordPanel` резолвит коллекцию у самой записи).
+- [ ] Осталось (v2): фильтр/сортировка по связи, батч связей таблицы, копирование связей
+      при дублировании/переносе записи, создание записи прямо из списка выбора.
 
 ## Этап 2 — Обратные ссылки (backlinks)
 
