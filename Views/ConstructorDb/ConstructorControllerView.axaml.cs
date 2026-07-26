@@ -81,7 +81,7 @@ public partial class ConstructorControllerView : UserControl
 
         ListViewCtrl.RecordClicked              += (_, rid) => OpenPage(rid);
         ListViewCtrl.RecordCreateRequested      += (_, _)   => _ = CreateAndOpen();
-        ListViewCtrl.RecordDeleteRequested      += (_, rid) => DeleteRecord(rid);
+        ListViewCtrl.RecordDeleteRequested      += (_, rid) => _ = DeleteRecord(rid);
 
         // CRUD для свойств — через контекстное меню заголовков колонок.
         TableViewCtrl.PropertyCreateRequested    += (_, _)   => _ = OpenPropertyDialog(null);
@@ -307,9 +307,18 @@ public partial class ConstructorControllerView : UserControl
         }
     }
 
-    private void DeleteRecord(int recordId)
+    private async Task DeleteRecord(int recordId)
     {
         if (_repository is null) return;
+
+        // Предупреждаем ТОЛЬКО если удаление оборвёт входящие связи (иначе — мгновенно, как раньше):
+        // на эту запись ссылались другие → у них станет «связи нет».
+        if (RelationDeleteImpact.ForRecords(_repository, CurrentDbId, [recordId])
+            && VisualRoot is Avalonia.Controls.Window confirmWin)
+        {
+            var warnDlg = new ConfirmDialog("Удалить запись? На неё ссылаются связи — они будут удалены.");
+            if (await warnDlg.ShowDialog<bool>(confirmWin) != true) return;
+        }
 
         // Удаление в середине таблицы — сохраняем вертикальную позицию, чтобы при
         // тысячах записей таблицу не откидывало в начало (снимаем offset ДО пересборки).
@@ -336,7 +345,11 @@ public partial class ConstructorControllerView : UserControl
         var ids = recordIds.Distinct().ToList();
         if (ids.Count == 0) return;
 
-        var dlg = new ConfirmDialog($"Вы удаляете {ids.Count} {RecordsPlural(ids.Count)}. Подтвердить?");
+        // Предупреждаем, что удаление оборвёт ВХОДЯЩИЕ связи на эти записи (внутрибазовые + межбазовые
+        // из открытых баз). Best-effort: связи из закрытых баз чистятся лениво. Показываем лишь ФАКТ.
+        var linkWarn = RelationDeleteImpact.ForRecords(_repository, CurrentDbId, ids)
+            ? " На них ссылаются связи из других записей — они будут удалены." : "";
+        var dlg = new ConfirmDialog($"Вы удаляете {ids.Count} {RecordsPlural(ids.Count)}.{linkWarn} Подтвердить?");
         if (await dlg.ShowDialog<bool>(win) != true) return;
 
         var keepVertical = TableViewCtrl.IsVisible ? TableViewCtrl.CurrentVerticalOffset() : (double?)null;
@@ -424,6 +437,14 @@ public partial class ConstructorControllerView : UserControl
 
         // Та же коллекция — переносить некуда (no-op).
         if (res.DbId == CurrentDbId && res.CollectionId == _currentCollectionId.Value) return;
+
+        // Перенос = копия + удаление (у записи новый id), поэтому ВХОДЯЩИЕ связи на неё обрываются
+        // (за записью не следуют). Предупреждаем, если такие есть.
+        if (RelationDeleteImpact.ForRecords(_repository, CurrentDbId, ids))
+        {
+            var warnDlg = new ConfirmDialog("Перенос оборвёт связи, ссылающиеся на переносимые записи (станут «связи нет»). Продолжить?");
+            if (await warnDlg.ShowDialog<bool>(win) != true) return;
+        }
 
         var keepVertical = TableViewCtrl.IsVisible ? TableViewCtrl.CurrentVerticalOffset() : (double?)null;
 

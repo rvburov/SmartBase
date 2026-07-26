@@ -58,7 +58,19 @@ public partial class RecordDialog : Window
         if (recordId.HasValue) FillValues(recordId.Value);
 
         CancelBtn.Click += (_, _) => Close(null);
-        DeleteBtn.Click += (_, _) => { _repository.DeleteRecord(_recordId!.Value); Close(false); };
+        DeleteBtn.Click += async (_, _) =>
+        {
+            if (_recordId is not { } rid) return;
+            // Предупреждаем, если на запись ссылаются связи (внутрибазовые — их и покажем; окно только
+            // при наличии). Межбазовые входящие из других баз здесь не проверяем (окну не передан DbId).
+            if (_repository.HasIncomingLinks([rid], 0))
+            {
+                var warn = new ConfirmDialog("Удалить запись? На неё ссылаются связи — они будут удалены.");
+                if (await warn.ShowDialog<bool>(this) != true) return;
+            }
+            _repository.DeleteRecord(rid);
+            Close(false);
+        };
         SaveBtn.Click   += (_, _) => TrySaveSchema();
     }
 

@@ -45,7 +45,6 @@ public sealed class RelationSelectBox : Panel
 
     private readonly List<int>                     _selected = [];
     private readonly Dictionary<int, string>       _titles   = new();
-    private readonly HashSet<int>                  _dangling = [];   // межбазовые цели, которых уже нет
     private readonly AvaloniaList<RelationOptionVm> _shown    = [];
     private readonly TextBlock _valueText;
     private readonly TextBlock _placeholder;
@@ -167,41 +166,54 @@ public sealed class RelationSelectBox : Panel
     private void ReloadSelected(bool preferCache)
     {
         _selected.Clear();
-        _dangling.Clear();
         if (_recordId > 0)
         {
-            if (_cfg.IsCrossDb) LoadCrossDbSelected();
-            else
+            // Быстрый путь таблицы: батч-кеш держит ТОЛЬКО внутрибазовые рёбра (TargetDbId=0) с уже
+            // резолвнутыми названиями. Годится лишь для внутрибазового поля при прогретом кеше; иначе
+            // (и всегда для межбазового поля) — резолвим по рёбрам, КАЖДОЕ по своему TargetDbId.
+            if (!_cfg.IsCrossDb && preferCache && _cache is not null
+                && _cache.TryGet(_fieldId, _recordId, out var cached))
             {
-                var links = preferCache && _cache is not null && _cache.TryGet(_fieldId, _recordId, out var cached)
-                    ? cached
-                    : _repo.GetLinks(_fieldId, _recordId);
-                foreach (var (id, title) in links)
-                {
-                    _selected.Add(id);
-                    _titles[id] = title;
-                }
+                foreach (var (id, title) in cached) { _selected.Add(id); _titles[id] = title; }
             }
+            else LoadSelected();
         }
         RefreshDisplay();
         if (_popup is { IsOpen: true }) RefreshList(_search?.Text);
     }
 
-    // Межбазовая связь: рёбра лежат в НАШЕЙ БД (_repo, только Id целей), названия резолвим из ЦЕЛЕВОЙ
-    // БД (реестр). Пропавшая цель → «(запись удалена)» и в _dangling (чистим при правке); целевая БД
-    // недоступна → «(база недоступна)» без пометки на удаление (база может вернуться).
-    private void LoadCrossDbSelected()
+    // Резолв КАЖДОГО ребра по ЕГО СОБСТВЕННОМУ TargetDbId (а не по цели текущего конфига поля): ребро,
+    // созданное на другую БД, всегда резолвится ИЗ ТОЙ БД — даже если позже цель поля пере-настроили.
+    // Так показ остаётся честным: нет ложных совпадений Id с чужой локальной записью.
+    //
+    // Единая логика обрыва (как внутри базы, так и межбазы):
+    //  • БД цели ДОСТУПНА, но записи в ней нет (удалена/перенесена) → чип пропадает (не в _selected):
+    //    пусто → «связи нет». На правке ячейки такое ребро вычищается само (SetLinks по _selected).
+    //  • БД цели НЕДОСТУПНА (сервер лёг / путь-файл пропал / грузится / отключена) → показываем
+    //    «(база недоступна)» и ДЕРЖИМ ребро (база вернётся — связь восстановится).
+    private void LoadSelected()
     {
-        var ids = _repo.GetLinkTargetIds(_fieldId, _recordId);
-        if (ids.Count == 0) return;
-        var titles = TargetRepo()?.GetRecordTitles(ids);
-        foreach (var id in ids)
+        var edges = _repo.GetLinkEdges(_fieldId, _recordId);   // (ToRecordId, TargetDbId) в порядке Position
+        if (edges.Count == 0) return;
+
+        // Обрыв решаем по ПАРЕ (ToRecordId, TargetDbId), а не по голому id: осиротевшее межбазовое
+        // ребро (TargetDbId>0), чей id СЛУЧАЙНО совпал с живой внутрибазовой записью, не должно
+        // прятать валидную внутрибазовую связь (и убивать её на следующей правке через SetLinks).
+        var gone = new HashSet<(int To, int Db)>();   // база доступна, но цели нет → обрыв → «связи нет»
+        foreach (var grp in edges.GroupBy(e => e.TargetDbId))
         {
-            _selected.Add(id);
-            if (titles is null)                          _titles[id] = "(база недоступна)";
-            else if (titles.TryGetValue(id, out var t))  _titles[id] = t;
-            else { _titles[id] = "(запись удалена)"; _dangling.Add(id); }
+            var repo = grp.Key == 0 ? _repo : RelationDbResolver.RepoFor(grp.Key);
+            var ids  = grp.Select(e => e.ToRecordId).Distinct().ToList();
+            var map  = repo?.GetRecordTitles(ids);   // null → БД цели недоступна (временно)
+            foreach (var id in ids)
+            {
+                if (map is null)                          _titles[id] = "(база недоступна)";
+                else if (map.TryGetValue(id, out var t))  _titles[id] = t;
+                else                                      gone.Add((id, grp.Key));
+            }
         }
+        foreach (var (toId, dbId) in edges)
+            if (!gone.Contains((toId, dbId))) _selected.Add(toId);
     }
 
     private void OpenPopup()
@@ -425,9 +437,8 @@ public sealed class RelationSelectBox : Panel
 
         if (_recordId > 0)
         {
-            // «Чистить при правке»: висячие межбазовые ссылки (цель удалена) при любой правке ячейки
-            // отбрасываем — обратно не переписываем.
-            if (_dangling.Count > 0) { _selected.RemoveAll(_dangling.Contains); _dangling.Clear(); }
+            // Оборванные ссылки (цель удалена при живой базе) в _selected не попадают (LoadSelected),
+            // поэтому SetLinks по _selected сам вычищает их рёбра — «чистка при правке».
             _repo.SetLinks(_fieldId, _recordId, _selected);
             _cache?.Invalidate(_fieldId, _recordId);   // кеш устарел — следующее чтение возьмёт свежее
         }

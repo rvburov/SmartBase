@@ -384,4 +384,127 @@ public sealed class RelationLinkTests
         Assert.Equal(newColB, cSelf.TargetCollectionId);
         Assert.Equal([(newT2, 0)], verify.GetLinkEdges(fSelf.Id!.Value, newT1));
     }
+
+    // Регресс: пере-настройка цели поля оставляет «осиротевшие» рёбра с ЧУЖИМ TargetDbId, чей
+    // ToRecordId может СЛУЧАЙНО совпасть с локальной записью. GetLinks/GetLinksBatch (внутрибазовый
+    // резолв JOIN'ом к своим db_records) НЕ должны их подхватывать — иначе показ покажет чужую запись
+    // («Событие 5»/«Проверка»). Каждое ребро резолвит ячейка по СВОЕМУ TargetDbId (GetLinkEdges).
+    [Fact]
+    public void Get_links_excludes_cross_db_edges_even_when_id_collides_locally()
+    {
+        using var db = new TempDatabase(dbId: 1, name: "A");
+        var (repo, taskCol, rel, projCol) = Setup(db);
+        var p1 = SampleData.AddRecord(repo, projCol, "Локальная цель").Id!.Value;
+        var t  = SampleData.AddRecord(repo, taskCol, "Задача").Id!.Value;
+
+        repo.SetLinks(rel, t, [p1]);   // нормальная ВНУТРИБАЗОВАЯ связь на p1 (TargetDbId=0)
+
+        // Осиротевшее МЕЖБАЗОВОЕ ребро (TargetDbId=2), чей ToRecordId совпал с локальной p1.
+        db.Context.DbRecordLinks.Add(new SmartBase.Database.Entities.DbRecordLinkEntity
+        {
+            FieldId = rel, FromRecordId = t, ToRecordId = p1, TargetDbId = 2, Position = 5000,
+        });
+        db.Context.SaveChanges();
+
+        // Внутрибазовые резолверы видят ТОЛЬКО ребро TargetDbId=0 (чужое не приклеивается к db_records).
+        Assert.Equal([(p1, "Локальная цель")], repo.GetLinks(rel, t));
+        Assert.Equal([p1], repo.GetLinksBatch(rel, [t])[t].Select(x => x.Id));
+
+        // Полный набор рёбер — со своими TargetDbId (ячейка резолвит каждое в своей БД).
+        Assert.Equal([(p1, 0), (p1, 2)], repo.GetLinkEdges(rel, t));
+    }
+
+    // Наличие ВХОДЯЩИХ связей перед удалением (окно «связи будут удалены») — внутрибазовый.
+    [Fact]
+    public void Incoming_links_presence_same_db_for_records_and_collection()
+    {
+        using var db = new TempDatabase();
+        var (repo, taskCol, rel, projCol) = Setup(db);
+        var p1 = SampleData.AddRecord(repo, projCol, "P1").Id!.Value;
+        var t1 = SampleData.AddRecord(repo, taskCol, "T1").Id!.Value;
+        SampleData.AddRecord(repo, taskCol, "T2");
+        repo.SetLinks(rel, t1, [p1]);   // t1 → p1
+
+        Assert.True(repo.HasIncomingLinks([p1], 0));                  // на p1 ссылаются
+        Assert.False(repo.HasIncomingLinks([t1], 0));                // на t1 — нет
+        Assert.True(repo.HasIncomingLinksToCollections([projCol]));  // на «Проекты» есть входящие
+        Assert.False(repo.HasIncomingLinksToCollections([taskCol])); // на «Задачи» — нет
+        Assert.False(repo.HasIncomingLinks([p1], 5));                // межбазовый параметр в своей БД — нет
+    }
+
+    // Наличие ВХОДЯЩИХ межбазовых связей: из чужой базы (HasIncomingLinks с targetDbId) и карта+пересечение.
+    [Fact]
+    public void Incoming_links_presence_cross_db_and_intersect()
+    {
+        using var dbA = new TempDatabase(dbId: 1, name: "A");
+        using var dbB = new TempDatabase(dbId: 2, name: "B");
+        var repoA = dbA.Constructor;
+        var repoB = dbB.Constructor;
+
+        var targetsA = SampleData.AddCollection(repoA, "Цели").Id!.Value;
+        var a1 = SampleData.AddRecord(repoA, targetsA, "A1").Id!.Value;
+        var otherA = SampleData.AddCollection(repoA, "Прочее").Id!.Value;
+        var a2 = SampleData.AddRecord(repoA, otherA, "A2").Id!.Value;
+
+        var taskB = SampleData.AddCollection(repoB, "Задачи").Id!.Value;
+        var rel = SampleData.AddField(repoB, taskB, "Цель", "relation");
+        rel.ConfigJson = new RelationConfig(targetsA, false, "comma", 1).ToConfigJson();   // → dbA (TargetDbId=1)
+        repoB.UpdateField(rel);
+        var b1 = SampleData.AddRecord(repoB, taskB, "B1").Id!.Value;
+        repoB.SetLinks(rel.Id!.Value, b1, [a1]);   // b1(dbB) → a1(dbA)
+
+        Assert.True(repoB.HasIncomingLinks([a1], 1));    // из dbB видно входящее в dbA на a1
+        Assert.False(repoB.HasIncomingLinks([a2], 1));   // на a2 — нет
+
+        // Карта целей dbB→dbA + пересечение с коллекцией на стороне dbA.
+        var map = repoB.IncomingLinkCountsByTarget(1);
+        Assert.True(map.ContainsKey(a1));
+        Assert.Equal([a1], repoA.RecordIdsInCollections(map.Keys.ToList(), [targetsA]));   // a1 в «Цели»
+        Assert.Empty(repoA.RecordIdsInCollections(map.Keys.ToList(), [otherA]));           // но не в «Прочее»
+    }
+
+    // CollectionIdsInGroup — вся ветка группы (сама + вложенные), для подсчёта/удаления группы.
+    [Fact]
+    public void CollectionIdsInGroup_returns_whole_branch()
+    {
+        using var db = new TempDatabase();
+        var repo = db.Constructor;
+        var g   = repo.AddGroup(new DbGroup { Name = "G" }).Id!.Value;
+        var sub = repo.AddGroup(new DbGroup { Name = "Sub", ParentId = g }).Id!.Value;
+        var c1  = SampleData.AddCollection(repo, "C1", g).Id!.Value;
+        var c2  = SampleData.AddCollection(repo, "C2", sub).Id!.Value;
+        SampleData.AddCollection(repo, "Снаружи");   // вне группы — не должна попасть
+
+        Assert.Equal([c1, c2], repo.CollectionIdsInGroup(g).OrderBy(x => x).ToList());
+    }
+
+    // Межбазовый перенос ОДНОЙ коллекции: теряются только ВНЕШНИЕ входящие; само-связи внутри целы.
+    [Fact]
+    public void External_incoming_presence_excludes_within_collection_self_links()
+    {
+        using var db = new TempDatabase();
+        var repo = db.Constructor;
+        var colC = SampleData.AddCollection(repo, "C").Id!.Value;
+        var c1 = SampleData.AddRecord(repo, colC, "c1").Id!.Value;
+        var c2 = SampleData.AddRecord(repo, colC, "c2").Id!.Value;
+
+        var relSelf = SampleData.AddField(repo, colC, "Похожая", "relation", position: 1000);
+        relSelf.ConfigJson = new RelationConfig(colC, false).ToConfigJson();   // само-связь C→C
+        repo.UpdateField(relSelf);
+        repo.SetLinks(relSelf.Id!.Value, c1, [c2]);   // c1 → c2 (внутри C)
+
+        // Входящие в C ЕСТЬ (само-связь), но ВНЕШНИХ нет — перенос коллекции их не теряет.
+        Assert.True(repo.HasIncomingLinksToCollections([colC]));
+        Assert.False(repo.HasExternalIncomingLinksToCollection(colC));
+
+        // Добавляем ссылку ИЗВНЕ (из D) — внешние появились.
+        var colD = SampleData.AddCollection(repo, "D").Id!.Value;
+        var d1 = SampleData.AddRecord(repo, colD, "d1").Id!.Value;
+        var relD = SampleData.AddField(repo, colD, "Цель", "relation", position: 1000);
+        relD.ConfigJson = new RelationConfig(colC, false).ToConfigJson();      // D→C
+        repo.UpdateField(relD);
+        repo.SetLinks(relD.Id!.Value, d1, [c1]);      // d1 → c1 (извне)
+
+        Assert.True(repo.HasExternalIncomingLinksToCollection(colC));
+    }
 }

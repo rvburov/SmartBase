@@ -9,7 +9,7 @@ namespace SmartBase.Database;
 ///
 /// Резолв «из реестра»: если целевая БД не смонтирована, монтируем её из реестра (приложение и так
 /// монтирует все базы реестра в фоне) — названия целей появляются, даже если базы ещё нет в сайдбаре.
-/// null — базы нет в реестре или монтирование сорвалось (UI покажет «(запись удалена)»/заглушку).
+/// null — базы нет в реестре или монтирование сорвалось (UI покажет «(база недоступна)»).
 /// </summary>
 public static class RelationDbResolver
 {
@@ -41,4 +41,20 @@ public static class RelationDbResolver
             .Select(d => (d.Id, Name: string.IsNullOrWhiteSpace(d.Name) ? "База данных" : d.Name))
             .ToList()
         ?? [];
+
+    /// <summary>Уже СМОНТИРОВАННЫЕ базы (DbId + их репозиторий), кроме <paramref name="excludeDbId"/>.
+    /// Ничего не монтирует (в отличие от <see cref="RepoFor"/>) — для best-effort подсчёта межбазовых
+    /// ВХОДЯЩИХ связей перед удалением: закрытые базы не считаем, их рёбра вычистятся лениво при
+    /// открытии. Репозитории общие → звать только с UI-потока.</summary>
+    public static IReadOnlyList<(int DbId, ConstructorRepository Repo)> MountedReposExcept(int excludeDbId)
+    {
+        if (_ws is null) return [];
+        var list = new List<(int, ConstructorRepository)>();
+        foreach (var d in _ws.Registry.GetAll())
+        {
+            if (d.Id == excludeDbId) continue;
+            if (_ws.Get(d.Id)?.Constructor is { } repo) list.Add((d.Id, repo));
+        }
+        return list;
+    }
 }

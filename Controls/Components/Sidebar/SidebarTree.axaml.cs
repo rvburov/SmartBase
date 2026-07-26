@@ -1918,6 +1918,22 @@ public partial class SidebarTree : UserControl
             }
         }
 
+        // Межбазовый перенос = новые id у записей → ВХОДЯЩИЕ связи на переносимое обрываются (за
+        // объектом не следуют). Для КОЛЛЕКЦИИ теряются лишь ВНЕШНИЕ входящие (само-связи внутри
+        // переписываются); для ГРУППЫ (v1) отбрасываются ВСЕ связи ветки. Внутрибазовый перенос
+        // (sameDb) id не меняет — потерь нет, туда не считаем.
+        var hasLinks = false;
+        foreach (var t in crossDb)
+            if (t.IsGroup
+                    ? RelationDeleteImpact.ForGroup(t.SrcRepo, t.SrcDbId, t.Id)
+                    : RelationDeleteImpact.ForCollectionExternalCrossMove(t.SrcRepo, t.SrcDbId, t.Id))
+            { hasLinks = true; break; }
+        if (hasLinks)
+        {
+            var warn = new ConfirmDialog("Межбазовый перенос оборвёт связи, ссылающиеся на переносимое (станут «связи нет»). Продолжить?");
+            if (await warn.ShowDialog<bool>(OwnerWindow) != true) return;
+        }
+
         // Та же БД — только метаданные: группа меняет ParentId, коллекция — GroupId (ветка/записи на
         // месте). Если в целевой группе/уровне уже есть одноимённый узел — даём «(копия)» (как дубль).
         foreach (var (r, isGroup, id) in sameDb)
@@ -1976,7 +1992,23 @@ public partial class SidebarTree : UserControl
         var colls  = nodes.Where(n => !n.IsGroup && !n.IsDatabase && n.Id.HasValue).ToList();
         if (groups.Count == 0 && colls.Count == 0) return;
 
-        var confirm = new ConfirmDialog(BuildDeleteMessage(groups.Count, colls.Count));
+        // Есть ли входящие связи, которые оборвёт удаление (best-effort: внутрибазовые + межбазовые из
+        // ОТКРЫТЫХ баз; из закрытых — не проверяем, вычистятся лениво). Разворачиваем группы в их ветки
+        // и объединяем с одиночными коллекциями по базе (одну коллекцию не проверяем дважды), обрываемся
+        // на первой найденной связи.
+        var hasLinks = false;
+        foreach (var byDb in groups.Concat(colls).Where(n => n.Id.HasValue && RepoOf(n) is not null)
+                                    .GroupBy(n => n.DbId))
+        {
+            if (RepoOf(byDb.First()) is not { } r) continue;
+            var cols = new HashSet<int>();
+            foreach (var n in byDb)
+                if (n.IsGroup) cols.UnionWith(r.CollectionIdsInGroup(n.Id!.Value));
+                else           cols.Add(n.Id!.Value);
+            if (RelationDeleteImpact.ForCollections(r, byDb.Key, cols)) { hasLinks = true; break; }
+        }
+
+        var confirm = new ConfirmDialog(BuildDeleteMessage(groups.Count, colls.Count, hasLinks));
         if (await confirm.ShowDialog<bool>(OwnerWindow) != true) return;
 
         // Цели: группа (удаляем ВСЮ ветку) или коллекция. Репозитории резолвим здесь, на UI-потоке
@@ -2063,7 +2095,7 @@ public partial class SidebarTree : UserControl
     }
 
     // Текст подтверждения с подсчётом: только группы / только коллекции / и то и другое.
-    private static string BuildDeleteMessage(int groups, int colls)
+    private static string BuildDeleteMessage(int groups, int colls, bool hasLinks)
     {
         var parts = new List<string>();
         if (groups > 0) parts.Add($"{groups} {GroupsPlural(groups)}");
@@ -2071,7 +2103,8 @@ public partial class SidebarTree : UserControl
         var warn = groups > 0
             ? "Вложенные группы и коллекции также будут удалены без возможности восстановления."
             : "Данные будут удалены без возможности восстановления.";
-        return $"Вы удаляете {string.Join(" и ", parts)}. {warn} Подтвердить?";
+        var linkWarn = hasLinks ? " Также будут удалены связи, ссылающиеся на удаляемое." : "";
+        return $"Вы удаляете {string.Join(" и ", parts)}. {warn}{linkWarn} Подтвердить?";
     }
 
     // Винительный падеж: 1 группу, 2–4 группы, 5+ групп (11–14 → групп).

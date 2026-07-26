@@ -14,10 +14,12 @@ namespace SmartBase.Database.Repositories;
 public partial class ConstructorRepository
 {
     /// <summary>Связанные записи (Id + Title) для ячейки поля-связи одной записи, в порядке
-    /// Position. Title резолвится из db_records (в самой связи хранится только Id).</summary>
+    /// Position. Только ВНУТРИБАЗОВЫЕ рёбра (<c>TargetDbId=0</c>) — Title резолвится JOIN'ом к
+    /// локальным db_records; межбазовые рёбра резолвятся отдельно по своим БД (см.
+    /// <c>RelationSelectBox.LoadSelected</c>), иначе их Id совпал бы с чужой локальной записью.</summary>
     public List<(int Id, string Title)> GetLinks(int fieldId, int fromRecordId) =>
         (from l in db.DbRecordLinks.AsNoTracking()
-         where l.FieldId == fieldId && l.FromRecordId == fromRecordId
+         where l.FieldId == fieldId && l.FromRecordId == fromRecordId && l.TargetDbId == 0
          join r in db.DbRecords on l.ToRecordId equals r.Id
          orderby l.Position, l.Id
          select new { r.Id, r.Title })
@@ -26,14 +28,16 @@ public partial class ConstructorRepository
         .ToList();
 
     /// <summary>Связи для НАБОРА записей-источников (горячий путь виртуализированной таблицы:
-    /// тянем чипы только видимых строк): fromRecordId → список (Id, Title) в порядке Position.</summary>
+    /// тянем чипы только видимых строк): fromRecordId → список (Id, Title) в порядке Position.
+    /// Только ВНУТРИБАЗОВЫЕ рёбра (<c>TargetDbId=0</c>) — как <see cref="GetLinks"/>; межбазовые в
+    /// табличный батч-кеш не попадают (резолвятся ячейкой отдельно по своим БД).</summary>
     public Dictionary<int, List<(int Id, string Title)>> GetLinksBatch(int fieldId, IReadOnlyList<int> fromRecordIds)
     {
         var result = new Dictionary<int, List<(int Id, string Title)>>();
         if (fromRecordIds.Count == 0) return result;
 
         var rows = (from l in db.DbRecordLinks.AsNoTracking()
-                    where l.FieldId == fieldId && fromRecordIds.Contains(l.FromRecordId)
+                    where l.FieldId == fieldId && fromRecordIds.Contains(l.FromRecordId) && l.TargetDbId == 0
                     join r in db.DbRecords on l.ToRecordId equals r.Id
                     orderby l.Position, l.Id
                     select new { l.FromRecordId, r.Id, r.Title })
@@ -49,7 +53,8 @@ public partial class ConstructorRepository
 
     /// <summary>Названия записей по их Id (Id → Title). Для резолва названий целей МЕЖБАЗОВОЙ связи:
     /// вызывается на репозитории ЦЕЛЕВОЙ базы (UI берёт его через Workspace/реестр по TargetDbId).
-    /// Отсутствующие Id (удалённые цели) в словарь не попадают — вызывающий покажет «(запись удалена)».</summary>
+    /// Отсутствующие Id (удалённые цели) в словарь не попадают — при ДОСТУПНОЙ базе вызывающий трактует
+    /// это как обрыв (чип пропадает → «связи нет»); недоступная база (repo=null) → «(база недоступна)».</summary>
     public Dictionary<int, string> GetRecordTitles(IReadOnlyList<int> ids)
     {
         if (ids.Count == 0) return new();
@@ -235,5 +240,60 @@ public partial class ConstructorRepository
                 .ToList()
                 .Select(x => (x.Id, x.Title ?? ""))
                 .ToList();
+    }
+
+    // ── Наличие ВХОДЯЩИХ связей перед удалением/переносом (окно «связи будут удалены») ──────
+    // Удаление/перенос записи/коллекции/группы обрывает связи, которые НА НИХ ссылаются: внутрибазовые
+    // (TargetDbId=0) — чистятся сразу; межбазовые (в ДРУГИХ базах, TargetDbId=нашей базы) — лениво.
+    // Нужен лишь ФАКТ наличия (не число) — Any/EXISTS обрывается на первом ребре (без полного скана).
+
+    /// <summary>Есть ли ребро, указывающее на записи <paramref name="toRecordIds"/> с данным
+    /// <paramref name="targetDbId"/>. Внутрибазовые входящие → зовут на СВОЕЙ базе с targetDbId=0;
+    /// межбазовые → на ЧУЖОЙ базе с targetDbId = реестровый DbId удаляемой базы.</summary>
+    public bool HasIncomingLinks(IReadOnlyCollection<int> toRecordIds, int targetDbId) =>
+        toRecordIds.Count > 0
+        && db.DbRecordLinks.Any(l => l.TargetDbId == targetDbId && toRecordIds.Contains(l.ToRecordId));
+
+    /// <summary>Есть ли ВНУТРИбазовое входящее ребро (TargetDbId=0) на записи коллекций
+    /// <paramref name="collectionIds"/> — для удаления коллекции/группы (перечислять все id записей
+    /// нельзя). EXISTS обрывается на первом совпадении.</summary>
+    public bool HasIncomingLinksToCollections(IReadOnlyCollection<int> collectionIds) =>
+        collectionIds.Count > 0
+        && db.DbRecordLinks.Any(l => l.TargetDbId == 0
+            && db.DbRecords.Any(r => r.Id == l.ToRecordId && collectionIds.Contains(r.CollectionId)));
+
+    /// <summary>Есть ли ВНЕШНЕЕ входящее внутрибазовое ребро (TargetDbId=0) на записи коллекции
+    /// <paramref name="collectionId"/>: ToRecordId В коллекции, а FromRecordId — НЕ в ней. Для
+    /// межбазового переноса ОДНОЙ коллекции: само-связи внутри переписываются (целы), теряются лишь
+    /// ссылки ИЗВНЕ.</summary>
+    public bool HasExternalIncomingLinksToCollection(int collectionId) =>
+        db.DbRecordLinks.Any(l => l.TargetDbId == 0
+            && db.DbRecords.Any(r => r.Id == l.ToRecordId   && r.CollectionId == collectionId)
+            && !db.DbRecords.Any(r => r.Id == l.FromRecordId && r.CollectionId == collectionId));
+
+    /// <summary>Межбазовые цели ЭТОЙ базы в базу <paramref name="targetDbId"/>: recordId (в той базе) →
+    /// число рёбер. Множество целей межбазовых связей мало (их не заводят миллионами) — вернуть карту
+    /// безопасно; вызывающий пересечёт ключи с удаляемыми записями/коллекциями.</summary>
+    public Dictionary<int, int> IncomingLinkCountsByTarget(int targetDbId) =>
+        db.DbRecordLinks.Where(l => l.TargetDbId == targetDbId)
+          .GroupBy(l => l.ToRecordId)
+          .Select(g => new { g.Key, C = g.Count() })
+          .ToList()
+          .ToDictionary(x => x.Key, x => x.C);
+
+    /// <summary>Из <paramref name="recordIds"/> оставить те, что принадлежат коллекциям
+    /// <paramref name="collectionIds"/> (пересечение межбазовой карты целей с удаляемой
+    /// коллекцией/группой).</summary>
+    public List<int> RecordIdsInCollections(IReadOnlyCollection<int> recordIds, IReadOnlyCollection<int> collectionIds) =>
+        recordIds.Count == 0 || collectionIds.Count == 0 ? []
+        : db.DbRecords.Where(r => recordIds.Contains(r.Id) && collectionIds.Contains(r.CollectionId))
+                      .Select(r => r.Id).ToList();
+
+    /// <summary>Id коллекций всей ветки группы (сама группа + вложенные) — цель удаления группы.</summary>
+    public List<int> CollectionIdsInGroup(int groupId)
+    {
+        var groupIds = SubtreeGroupIds(groupId);
+        return db.DbCollections.Where(c => c.GroupId != null && groupIds.Contains(c.GroupId.Value))
+                               .Select(c => c.Id).ToList();
     }
 }
