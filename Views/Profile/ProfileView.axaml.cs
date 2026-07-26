@@ -87,6 +87,9 @@ public partial class ProfileView : UserControl
         AdminPanel.IsVisible   = key == "admin";
         HistoryPanel.IsVisible = key == "history";
         LogsPanel.IsVisible    = key == "logs";
+        // Панель деталей журнала живёт в корне (во всю высоту) — при уходе из «Диагностики»
+        // её нужно закрыть явно (она не вложена в LogsPanel).
+        if (key != "logs") CloseLogsDetail();
         HeaderBar.Title = (ProfileRegistry.FindByKey(key) ?? ProfileRegistry.All[0]).Label;
         // Действия истории (выбор базы, очистка журнала) — только для истории.
         HeaderBar.ShowHistoryActions = key == "history";

@@ -54,6 +54,19 @@ public partial class ProfileView
     private Flyout? _logsFlyout;
     private ScrollBar? _logsScroll;
 
+    // ── Панель деталей выбранной строки ─────────────────────────────────────────
+    // Поля-карточки в панели деталей: ключ (как в LogsColumns), подпись, иконка типа.
+    private static readonly (string Key, string Name, string IconKey)[] LogsDetailFields =
+    [
+        ("date",      "Время",     "IconClock"),
+        ("level",     "Уровень",   "IconFieldStatus"),
+        ("message",   "Сообщение", "IconFieldText"),
+        ("exception", "Ошибка",    "IconAlertMark"),
+    ];
+
+    private bool _logsSelectionHooked;
+    private string _logsDetailFieldKey = "message";   // какое поле открыто снизу (запоминается между строками)
+
     // ── Панель ────────────────────────────────────────────────────────────────
 
     private void RebuildLogsPanel()
@@ -63,6 +76,16 @@ public partial class ProfileView
             BuildLogsColumns();
             LogsGrid.ItemsSource = _logsRows;
         }
+        if (!_logsSelectionHooked)
+        {
+            LogsGrid.SelectionChanged += OnLogsSelectionChanged;
+            LogsDetailCloseBtn.Click  += (_, _) => CloseLogsDetail();
+            LogsDetailCopyBtn.Click   += (_, _) => CopyLogsDetailField();
+            LogsPropsResizeGrip.PointerPressed  += OnLogsGripPressed;
+            LogsPropsResizeGrip.PointerMoved    += OnLogsGripMoved;
+            LogsPropsResizeGrip.PointerReleased += OnLogsGripReleased;
+            _logsSelectionHooked = true;
+        }
         UpdateLogsChevrons();
         ReloadLogsRows();
     }
@@ -70,6 +93,8 @@ public partial class ProfileView
     // Перечитать строки с текущими фильтрами/сортировкой (скролл возвращается к началу).
     private void ReloadLogsRows()
     {
+        // Выбранная строка после смены фильтра могла исчезнуть — закрываем детали.
+        CloseLogsDetail();
         _logsGen++;
         _logsRows.Clear();
         _logsEnd = false;
@@ -141,11 +166,17 @@ public partial class ProfileView
     private void BuildLogsColumns()
     {
         _logsChevrons.Clear();
-        foreach (var def in LogsColumns)
+        for (var i = 0; i < LogsColumns.Length; i++)
         {
+            var def = LogsColumns[i];
+            // Последняя колонка («Ошибка») не рисует правую линию заголовка: её правый край
+            // и так очерчен краем таблицы/скроллом, а вторая линия давала «двойную/толстую».
+            // Так же поступает таблица конструктора (WrapHeaderContent addRightLine=false
+            // для последней колонки «+»).
+            var addRightLine = i < LogsColumns.Length - 1;
             LogsGrid.Columns.Add(new DataGridTemplateColumn
             {
-                Header       = BuildLogsHeader(def.Key, def.Header),
+                Header       = BuildLogsHeader(def.Key, def.Header, addRightLine),
                 Width        = new DataGridLength(1, DataGridLengthUnitType.Star),
                 MinWidth     = 110,
                 CellTemplate = BuildLogsCellTemplate(def.Key),
@@ -153,7 +184,7 @@ public partial class ProfileView
         }
     }
 
-    private Control BuildLogsHeader(string key, string header)
+    private Control BuildLogsHeader(string key, string header, bool addRightLine)
     {
         var text = new TextBlock
         {
@@ -192,16 +223,19 @@ public partial class ProfileView
         Grid.SetColumn(border, 0);
         host.Children.Add(border);
 
-        var line = new Rectangle
+        if (addRightLine)
         {
-            Fill              = (IBrush)this.FindResource("BrushSeparator")!,
-            VerticalAlignment = VerticalAlignment.Stretch,
-        };
-        line.Bind(Rectangle.WidthProperty,              line.GetResourceObservable("SeparatorThickness"));
-        line.Bind(Layoutable.UseLayoutRoundingProperty, line.GetResourceObservable("LineUseLayoutRounding"));
-        RenderOptions.SetEdgeMode(line, EdgeMode.Aliased);
-        Grid.SetColumn(line, 1);
-        host.Children.Add(line);
+            var line = new Rectangle
+            {
+                Fill              = (IBrush)this.FindResource("BrushSeparator")!,
+                VerticalAlignment = VerticalAlignment.Stretch,
+            };
+            line.Bind(Rectangle.WidthProperty,              line.GetResourceObservable("SeparatorThickness"));
+            line.Bind(Layoutable.UseLayoutRoundingProperty, line.GetResourceObservable("LineUseLayoutRounding"));
+            RenderOptions.SetEdgeMode(line, EdgeMode.Aliased);
+            Grid.SetColumn(line, 1);
+            host.Children.Add(line);
+        }
 
         return host;
     }
@@ -734,6 +768,193 @@ public partial class ProfileView
             Grid.SetColumn(cnt, 1); row.Children.Add(cnt);
             return row;
         });
+
+    // ── Детали выбранной строки (карточки полей + полный текст) ─────────────────
+    //
+    // Клик по строке таблицы открывает правую панель с карточками полей (как карточки
+    // свойств «Страницы записи»); клик по карточке раскрывает полный текст поля снизу.
+    // Крестик в шапке закрывает панель. Оформление зеркалит RecordPageView.
+
+    private void OnLogsSelectionChanged(object? sender, SelectionChangedEventArgs e)
+    {
+        if (LogsGrid.SelectedItem is LogRow row) OpenLogsDetail(row);
+    }
+
+    private void OpenLogsDetail(LogRow row)
+    {
+        BuildLogsDetailCards(row);
+        ApplyLogsCardsHeight();
+        LogsDetailDivider.IsVisible = true;
+        LogsDetailPanel.IsVisible   = true;
+    }
+
+    private void CloseLogsDetail()
+    {
+        LogsDetailPanel.IsVisible   = false;
+        LogsDetailDivider.IsVisible = false;
+        LogsDetailCardsHost.Children.Clear();
+        LogsDetailFullText.Text = "";
+        // Снять выделение — иначе повторный клик по той же строке не даст SelectionChanged.
+        LogsGrid.SelectedItem = null;
+    }
+
+    private void CopyLogsDetailField()
+    {
+        var text = LogsDetailFullText.Text;
+        if (string.IsNullOrEmpty(text)) return;
+        _ = TopLevel.GetTopLevel(this)?.Clipboard?.SetTextAsync(text);
+    }
+
+    // ── Ручка-разделитель: делит карточки (сверху) и полный текст (снизу) ────────
+    // По умолчанию строки делят место поровну (обе 1*). Перетаскивание задаёт строке
+    // карточек пиксельную высоту; выбранная высота помнится в пределах сессии и
+    // переносится между строками — как PropsResizeGrip «Страницы записи».
+    private bool    _logsGripDragging;
+    private double  _logsGripStartY;
+    private double  _logsGripStartHeight;
+    private double? _logsCardsHeight;   // высота блока карточек (null = поровну, 1*)
+
+    private const double LogsCardsHeightMin = 48;
+
+    // Строка карточек в LogsDetailGrid (Auto,*,Auto,*): индекс 1.
+    private RowDefinition LogsCardsRow => LogsDetailGrid.RowDefinitions[1];
+
+    private void ApplyLogsCardsHeight() =>
+        LogsCardsRow.Height = _logsCardsHeight is double h
+            ? new GridLength(h, GridUnitType.Pixel)
+            : new GridLength(1, GridUnitType.Star);
+
+    private void OnLogsGripPressed(object? sender, PointerPressedEventArgs e)
+    {
+        _logsGripDragging    = true;
+        _logsGripStartY      = e.GetPosition(LogsDetailPanel).Y;
+        _logsGripStartHeight = LogsCardsRow.ActualHeight;
+        e.Pointer.Capture((IInputElement?)sender);
+        e.Handled = true;
+    }
+
+    private void OnLogsGripMoved(object? sender, PointerEventArgs e)
+    {
+        if (!_logsGripDragging) return;
+
+        var dy  = e.GetPosition(LogsDetailPanel).Y - _logsGripStartY;
+        // Не даём карточкам съесть весь текст: оставляем нижнему блоку запас (шапка+крошка+минимум).
+        var max = Math.Max(LogsCardsHeightMin, LogsDetailPanel.Bounds.Height - 180);
+        var newHeight = Math.Clamp(_logsGripStartHeight + dy, LogsCardsHeightMin, max);
+
+        LogsCardsRow.Height = new GridLength(newHeight, GridUnitType.Pixel);
+        _logsCardsHeight = newHeight;
+    }
+
+    private void OnLogsGripReleased(object? sender, PointerReleasedEventArgs e)
+    {
+        _logsGripDragging = false;
+        e.Pointer.Capture(null);
+        e.Handled = true;
+    }
+
+    // Построить карточки полей выбранной строки; открыть снизу ранее выбранное поле
+    // (или «Сообщение» по умолчанию) — как RestoreBottom в «Странице записи».
+    private void BuildLogsDetailCards(LogRow row)
+    {
+        LogsDetailCardsHost.Children.Clear();
+
+        foreach (var (key, name, iconKey) in LogsDetailFields)
+            LogsDetailCardsHost.Children.Add(BuildLogsDetailCard(key, name, iconKey, row));
+
+        var openKey = LogsDetailFields.Any(f => f.Key == _logsDetailFieldKey)
+            ? _logsDetailFieldKey : "message";
+        OpenLogsDetailField(openKey, row);
+    }
+
+    // Карточка поля: [иконка типа + подпись] · [значение-превью в одну строку].
+    private Border BuildLogsDetailCard(string key, string name, string iconKey, LogRow row)
+    {
+        var nameLabel = new TextBlock
+        {
+            Text              = name,
+            VerticalAlignment = VerticalAlignment.Center,
+            TextTrimming      = TextTrimming.CharacterEllipsis,
+            Margin            = new Thickness(8, 0, 8, 0),
+            FontSize          = (double)this.FindResource("FontSizeBase")!,
+        };
+        nameLabel.Classes.Add("logname");
+
+        var nameRow = new Grid
+        {
+            ColumnDefinitions = new ColumnDefinitions("Auto,*"),
+            VerticalAlignment = VerticalAlignment.Center,
+            ClipToBounds      = true,
+        };
+        var icon = MakeLogsCardIcon(iconKey);
+        Grid.SetColumn(icon, 0);      nameRow.Children.Add(icon);
+        Grid.SetColumn(nameLabel, 1); nameRow.Children.Add(nameLabel);
+
+        var full    = LogsDetailFullValue(key, row);
+        var preview = new TextBlock
+        {
+            Text              = full.Length == 0 ? "—" : full.ReplaceLineEndings(" ").Trim(),
+            Foreground        = (IBrush)this.FindResource(full.Length == 0
+                                    ? "BrushSecondaryText" : "BrushPrimaryText")!,
+            VerticalAlignment = VerticalAlignment.Center,
+            TextTrimming      = TextTrimming.CharacterEllipsis,
+            Margin            = new Thickness(2.5, 0, 0, 0),
+        };
+
+        var grid = new Grid
+        {
+            ColumnDefinitions = new ColumnDefinitions
+            {
+                new ColumnDefinition(new GridLength(120, GridUnitType.Pixel)),
+                new ColumnDefinition(new GridLength(1, GridUnitType.Star)),
+            },
+        };
+        Grid.SetColumn(nameRow, 0); grid.Children.Add(nameRow);
+        Grid.SetColumn(preview, 1); grid.Children.Add(preview);
+
+        var card = new Border { Classes = { "logrow" }, Child = grid };
+        card.PointerPressed += (_, _) => OpenLogsDetailField(key, row);
+        return card;
+    }
+
+    // Раскрыть поле снизу: заполнить крошку «Поле › Имя» и полный текст.
+    private void OpenLogsDetailField(string key, LogRow row)
+    {
+        _logsDetailFieldKey      = key;
+        LogsDetailFieldName.Text = LogsDetailFields.First(f => f.Key == key).Name;
+        LogsDetailFullText.Text  = LogsDetailFullValue(key, row);
+    }
+
+    // Полное значение поля: время/уровень — отформатированные, сообщение и ошибка — как есть.
+    private static string LogsDetailFullValue(string key, LogRow row) => key switch
+    {
+        "date"      => FormatLogsTs(row.Timestamp),
+        "level"     => LogsLevelLabel(row.Level),
+        "message"   => row.Message,
+        "exception" => row.Exception ?? "",
+        _           => "",
+    };
+
+    // Обводочная иконка 16×16 из реестра Icons.axaml с классом logicon (синеет в выбранной карточке).
+    private Control MakeLogsCardIcon(string key)
+    {
+        var path = new Path
+        {
+            Data            = LogsIcon(key),
+            StrokeThickness = LogsIconSize("IconStrokeSmall"),
+            StrokeLineCap   = PenLineCap.Round,
+            StrokeJoin      = PenLineJoin.Round,
+        };
+        path.Classes.Add("logicon");
+
+        return new Viewbox
+        {
+            Width             = 16,
+            Height            = 16,
+            VerticalAlignment = VerticalAlignment.Center,
+            Child             = new Canvas { Width = 24, Height = 24, Children = { path } },
+        };
+    }
 
     private sealed class LogsFilterValueVm : System.ComponentModel.INotifyPropertyChanged
     {
