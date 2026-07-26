@@ -696,12 +696,18 @@ public partial class SettingsView : UserControl
         GeneralPanel.IsVisible    = key == "general";
         AppearancePanel.IsVisible = key == "appearance";
         DatabasePanel.IsVisible   = key == "database";
+        LogsPanel.IsVisible       = key == "logs";
         AboutPanel.IsVisible      = key == "about";
+        // Панель деталей журнала живёт в корне (во всю высоту) — при уходе из «Диагностики»
+        // её нужно закрыть явно (она не вложена в LogsPanel).
+        if (key != "logs") CloseLogsDetail();
 
         // Заголовок берём из реестра по ключу — единственный источник подписей разделов.
         HeaderBar.Title = (SettingsRegistry.FindByKey(key) ?? SettingsRegistry.All[0]).Label;
         // Кнопка «Добавить базу данных» в навбаре осмысленна только в разделе БД.
         HeaderBar.ShowDatabaseActions = key == "database";
+
+        if (key == "logs") RebuildLogsPanel();
     }
 
     // ── Управление базой данных ──────────────────────────────────────────────

@@ -16,17 +16,16 @@ using SmartBase.Utils;
 using LogRow = SmartBase.Logging.LogReader.LogRow;
 using Path = Avalonia.Controls.Shapes.Path;
 
-namespace SmartBase.Views.Profile;
+namespace SmartBase.Views.Settings;
 
 /// <summary>
-/// «Логи» — таблица диагностического журнала logs.db (Serilog) в том же стиле, что и
-/// «История изменений» (<see cref="ProfileView"/> в ProfileHistoryTable.cs): те же
-/// линии/шапка и тот же Excel-фильтр с сортировкой в заголовке колонки. Отличие: logs.db —
-/// единый файл на приложение (не per-database), поэтому выбора базы в навбаре нет, а данные
-/// читаются через <see cref="LogReader"/> (raw SQL по logs.db), а не через репозиторий.
-/// Строки подгружаются keyset-страницами по 200 при прокрутке к концу.
+/// «Диагностика» — таблица журнала logs.db (Serilog) с панелью деталей выбранной строки.
+/// Раздел «Настройки» (единый файл на приложение — системная, а не пользовательская вещь,
+/// поэтому здесь, а не в «Профиле»). Тот же Excel-фильтр с сортировкой в заголовке колонки,
+/// что и в «Истории изменений»; данные читаются через <see cref="LogReader"/> (raw SQL по
+/// logs.db). Строки подгружаются keyset-страницами по 200 при прокрутке к концу.
 /// </summary>
-public partial class ProfileView
+public partial class SettingsView
 {
     private const int LogsPageSize = 200;
 
@@ -60,12 +59,24 @@ public partial class ProfileView
     [
         ("date",      "Время",     "IconClock"),
         ("level",     "Уровень",   "IconFieldStatus"),
-        ("message",   "Сообщение", "IconFieldText"),
-        ("exception", "Ошибка",    "IconAlertMark"),
+        ("message",   "Сообщение", "IconMessageWarning"),
+        ("exception", "Ошибка",    "IconTriangleAlert"),
     ];
 
     private bool _logsSelectionHooked;
     private string _logsDetailFieldKey = "message";   // какое поле открыто снизу (запоминается между строками)
+    private Border? _logsDetailSelectedCard;
+    private readonly Dictionary<string, Border> _logsDetailCards = [];
+
+    // Ширина панели деталей (px) — тянется ручкой LogsDetailResizeGrip; помнится в пределах сессии.
+    private double _logsDetailWidth = 440;
+    private const double LogsDetailWidthMin = 320;
+    private const double LogsDetailWidthMax = 900;
+
+    // Общая ширина колонки названий у всех карточек — тянется ручкой ⋮ (как в записи).
+    private readonly List<ColumnDefinition> _logsNameCols = [];
+    private double _logsNameColWidth = 120;
+    private const double LogsNameColMin = 70;
 
     // ── Панель ────────────────────────────────────────────────────────────────
 
@@ -84,6 +95,9 @@ public partial class ProfileView
             LogsPropsResizeGrip.PointerPressed  += OnLogsGripPressed;
             LogsPropsResizeGrip.PointerMoved    += OnLogsGripMoved;
             LogsPropsResizeGrip.PointerReleased += OnLogsGripReleased;
+            LogsDetailResizeGrip.PointerPressed  += OnLogsDetailGripPressed;
+            LogsDetailResizeGrip.PointerMoved    += OnLogsDetailGripMoved;
+            LogsDetailResizeGrip.PointerReleased += OnLogsDetailGripReleased;
             _logsSelectionHooked = true;
         }
         UpdateLogsChevrons();
@@ -174,9 +188,11 @@ public partial class ProfileView
             // Так же поступает таблица конструктора (WrapHeaderContent addRightLine=false
             // для последней колонки «+»).
             var addRightLine = i < LogsColumns.Length - 1;
+            // Иконка типа колонки — та же, что у поля в панели деталей (LogsDetailFields).
+            var iconKey = LogsDetailFields.First(f => f.Key == def.Key).IconKey;
             LogsGrid.Columns.Add(new DataGridTemplateColumn
             {
-                Header       = BuildLogsHeader(def.Key, def.Header, addRightLine),
+                Header       = BuildLogsHeader(def.Key, def.Header, iconKey, addRightLine),
                 Width        = new DataGridLength(1, DataGridLengthUnitType.Star),
                 MinWidth     = 110,
                 CellTemplate = BuildLogsCellTemplate(def.Key),
@@ -184,7 +200,7 @@ public partial class ProfileView
         }
     }
 
-    private Control BuildLogsHeader(string key, string header, bool addRightLine)
+    private Control BuildLogsHeader(string key, string header, string iconKey, bool addRightLine)
     {
         var text = new TextBlock
         {
@@ -195,12 +211,19 @@ public partial class ProfileView
             Foreground        = (IBrush)this.FindResource("BrushSecondaryText")!,
         };
 
-        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto") };
-        Grid.SetColumn(text, 0);
+        // Сетка [иконка типа][текст][шеврон] — 1-в-1 как шапка таблицы конструктора
+        // (TableView.MakeTextHeader): иконка IconSizeSmall с отступом 6px справа.
+        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto") };
+
+        var icon = BuildLogsHeaderIcon(iconKey);
+        Grid.SetColumn(icon, 0);
+        grid.Children.Add(icon);
+
+        Grid.SetColumn(text, 1);
         grid.Children.Add(text);
 
         var chevron = BuildLogsChevron(key);
-        Grid.SetColumn(chevron, 1);
+        Grid.SetColumn(chevron, 2);
         grid.Children.Add(chevron);
 
         var border = new Border
@@ -239,6 +262,32 @@ public partial class ProfileView
 
         return host;
     }
+
+    // Иконка типа в шапке колонки — как в таблице конструктора (TableView.BuildTypeIcon):
+    // Viewbox IconSizeSmall, отступ 6px справа, обводка BrushSecondaryText / IconStrokeSmall.
+    private Control BuildLogsHeaderIcon(string iconKey) => new Viewbox
+    {
+        Width             = LogsIconSize("IconSizeSmall"),
+        Height            = LogsIconSize("IconSizeSmall"),
+        VerticalAlignment = VerticalAlignment.Center,
+        Margin            = new Thickness(0, 0, 6, 0),
+        Child = new Canvas
+        {
+            Width  = 24,
+            Height = 24,
+            Children =
+            {
+                new Path
+                {
+                    Data            = LogsIcon(iconKey),
+                    Stroke          = (IBrush)this.FindResource("BrushSecondaryText")!,
+                    StrokeThickness = LogsIconSize("IconStrokeSmall"),
+                    StrokeLineCap   = PenLineCap.Round,
+                    StrokeJoin      = PenLineJoin.Round,
+                },
+            },
+        },
+    };
 
     private Control BuildLogsChevron(string key)
     {
@@ -302,17 +351,15 @@ public partial class ProfileView
         new FuncDataTemplate<LogRow>((row, _) =>
         {
             if (row is null) return new TextBlock();
-            var text = new TextBlock
+            // Полный текст сообщения/ошибки показывает панель деталей (клик по строке),
+            // поэтому тултипа с полным текстом в ячейке больше нет.
+            return new TextBlock
             {
                 Text              = LogsCellText(key, row),
                 Margin            = new Thickness(8, 0),
                 VerticalAlignment = VerticalAlignment.Center,
                 TextTrimming      = TextTrimming.CharacterEllipsis,
             };
-            // Сообщение и стектрейс часто длиннее колонки — полный текст в тултипе.
-            if (key is "message" or "exception" && text.Text.Length > 0)
-                ToolTip.SetTip(text, LogsTooltipText(key, row));
-            return text;
         });
 
     private static string LogsCellText(string key, LogRow row) => key switch
@@ -321,14 +368,6 @@ public partial class ProfileView
         "level"     => LogsLevelLabel(row.Level),
         "message"   => row.Message,
         "exception" => LogsExceptionSummary(row.Exception),
-        _           => "",
-    };
-
-    // В ячейке — первая строка исключения; в тултипе — полный текст (тип + стектрейс).
-    private static string LogsTooltipText(string key, LogRow row) => key switch
-    {
-        "message"   => row.Message,
-        "exception" => row.Exception ?? "",
         _           => "",
     };
 
@@ -784,15 +823,21 @@ public partial class ProfileView
     {
         BuildLogsDetailCards(row);
         ApplyLogsCardsHeight();
-        LogsDetailDivider.IsVisible = true;
-        LogsDetailPanel.IsVisible   = true;
+        LogsDetailPanel.Width         = _logsDetailWidth;
+        LogsDetailDivider.IsVisible   = true;
+        LogsDetailPanel.IsVisible     = true;
+        LogsDetailResizeGrip.IsVisible = true;
     }
 
     private void CloseLogsDetail()
     {
-        LogsDetailPanel.IsVisible   = false;
-        LogsDetailDivider.IsVisible = false;
+        LogsDetailPanel.IsVisible      = false;
+        LogsDetailDivider.IsVisible    = false;
+        LogsDetailResizeGrip.IsVisible = false;
         LogsDetailCardsHost.Children.Clear();
+        _logsDetailCards.Clear();
+        _logsNameCols.Clear();
+        _logsDetailSelectedCard = null;
         LogsDetailFullText.Text = "";
         // Снять выделение — иначе повторный клик по той же строке не даст SelectionChanged.
         LogsGrid.SelectedItem = null;
@@ -853,21 +898,62 @@ public partial class ProfileView
         e.Handled = true;
     }
 
+    // ── Ручка ширины панели деталей (между «Диагностикой» и «Деталями») ─────────
+    // Тянем за левый край панели: движение вправо сужает панель (она справа) — как
+    // ручка панели записи (MainWindow.OnRecordGrip*). Ширина помнится в пределах сессии.
+    private bool   _logsDetailGripDragging;
+    private double _logsDetailGripStartX;
+    private double _logsDetailGripStartWidth;
+
+    private void OnLogsDetailGripPressed(object? sender, PointerPressedEventArgs e)
+    {
+        _logsDetailGripDragging   = true;
+        _logsDetailGripStartX     = e.GetPosition(this).X;
+        _logsDetailGripStartWidth = _logsDetailWidth;
+        e.Pointer.Capture((IInputElement?)sender);
+        e.Handled = true;
+    }
+
+    private void OnLogsDetailGripMoved(object? sender, PointerEventArgs e)
+    {
+        if (!_logsDetailGripDragging) return;
+
+        var dx = e.GetPosition(this).X - _logsDetailGripStartX;
+        _logsDetailWidth = Math.Clamp(_logsDetailGripStartWidth - dx,
+                                      LogsDetailWidthMin, LogsDetailWidthMax);
+        LogsDetailPanel.Width = _logsDetailWidth;
+    }
+
+    private void OnLogsDetailGripReleased(object? sender, PointerReleasedEventArgs e)
+    {
+        _logsDetailGripDragging = false;
+        e.Pointer.Capture(null);
+        e.Handled = true;
+    }
+
     // Построить карточки полей выбранной строки; открыть снизу ранее выбранное поле
     // (или «Сообщение» по умолчанию) — как RestoreBottom в «Странице записи».
     private void BuildLogsDetailCards(LogRow row)
     {
         LogsDetailCardsHost.Children.Clear();
+        _logsDetailCards.Clear();
+        _logsNameCols.Clear();
+        _logsDetailSelectedCard = null;
 
         foreach (var (key, name, iconKey) in LogsDetailFields)
-            LogsDetailCardsHost.Children.Add(BuildLogsDetailCard(key, name, iconKey, row));
+        {
+            var card = BuildLogsDetailCard(key, name, iconKey, row);
+            _logsDetailCards[key] = card;
+            LogsDetailCardsHost.Children.Add(card);
+        }
 
         var openKey = LogsDetailFields.Any(f => f.Key == _logsDetailFieldKey)
             ? _logsDetailFieldKey : "message";
         OpenLogsDetailField(openKey, row);
     }
 
-    // Карточка поля: [иконка типа + подпись] · [значение-превью в одну строку].
+    // Карточка поля 1-в-1 как карточка свойства записи (RecordPageView.BuildCardShell):
+    // [иконка типа + подпись] · [ручка ⋮] · [значение-превью]. Клик выделяет карточку.
     private Border BuildLogsDetailCard(string key, string name, string iconKey, LogRow row)
     {
         var nameLabel = new TextBlock
@@ -875,7 +961,7 @@ public partial class ProfileView
             Text              = name,
             VerticalAlignment = VerticalAlignment.Center,
             TextTrimming      = TextTrimming.CharacterEllipsis,
-            Margin            = new Thickness(8, 0, 8, 0),
+            Margin            = new Thickness(8, 0, 4, 0),
             FontSize          = (double)this.FindResource("FontSizeBase")!,
         };
         nameLabel.Classes.Add("logname");
@@ -901,28 +987,102 @@ public partial class ProfileView
             Margin            = new Thickness(2.5, 0, 0, 0),
         };
 
+        // 3 колонки: [название (общая ширина, ресайз ⋮)] · [ручка ⋮] · [значение *].
         var grid = new Grid
         {
             ColumnDefinitions = new ColumnDefinitions
             {
-                new ColumnDefinition(new GridLength(120, GridUnitType.Pixel)),
+                new ColumnDefinition(new GridLength(_logsNameColWidth, GridUnitType.Pixel)),
+                new ColumnDefinition(GridLength.Auto),
                 new ColumnDefinition(new GridLength(1, GridUnitType.Star)),
             },
         };
+        _logsNameCols.Add(grid.ColumnDefinitions[0]);
+
+        var grip = BuildLogsColumnGrip();
         Grid.SetColumn(nameRow, 0); grid.Children.Add(nameRow);
-        Grid.SetColumn(preview, 1); grid.Children.Add(preview);
+        Grid.SetColumn(grip,    1); grid.Children.Add(grip);
+        Grid.SetColumn(preview, 2); grid.Children.Add(preview);
 
         var card = new Border { Classes = { "logrow" }, Child = grid };
+        // Клик по карточке выделяет её. Нажатие на ручку ⋮ обработчик грипа помечает
+        // Handled (пузырьком, раньше карточки) — поэтому drag ручки карточку не выделяет.
         card.PointerPressed += (_, _) => OpenLogsDetailField(key, row);
         return card;
     }
 
-    // Раскрыть поле снизу: заполнить крошку «Поле › Имя» и полный текст.
+    // Раскрыть поле снизу: подсветить карточку (синяя, как в записи), заполнить крошку и текст.
     private void OpenLogsDetailField(string key, LogRow row)
     {
-        _logsDetailFieldKey      = key;
+        _logsDetailFieldKey = key;
+
+        _logsDetailSelectedCard?.Classes.Remove("selected");
+        if (_logsDetailCards.TryGetValue(key, out var card))
+        {
+            card.Classes.Add("selected");
+            _logsDetailSelectedCard = card;
+        }
+
         LogsDetailFieldName.Text = LogsDetailFields.First(f => f.Key == key).Name;
         LogsDetailFullText.Text  = LogsDetailFullValue(key, row);
+    }
+
+    // Ручка ⋮ карточки: три вертикальные точки; drag меняет общую ширину колонки названий.
+    private Border BuildLogsColumnGrip()
+    {
+        var dots = new StackPanel
+        {
+            Orientation         = Orientation.Vertical,
+            Spacing             = 3,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment   = VerticalAlignment.Center,
+        };
+        for (var i = 0; i < 3; i++)
+            dots.Children.Add(new Ellipse
+            {
+                Width  = 3,
+                Height = 3,
+                Fill   = (IBrush)this.FindResource("BrushSecondaryText")!,
+            });
+
+        var grip = new Border { Classes = { "loggrip" }, Child = dots };
+        grip.PointerPressed  += OnLogsColGripPressed;
+        grip.PointerMoved    += OnLogsColGripMoved;
+        grip.PointerReleased += OnLogsColGripReleased;
+        return grip;
+    }
+
+    // ── Ручка ⋮: общая ширина колонки названий у всех карточек (как в записи) ────
+    private bool   _logsColGripDragging;
+    private double _logsColGripStartX;
+    private double _logsColGripStartWidth;
+
+    private void OnLogsColGripPressed(object? sender, PointerPressedEventArgs e)
+    {
+        _logsColGripDragging   = true;
+        _logsColGripStartX     = e.GetPosition(this).X;
+        _logsColGripStartWidth = _logsNameColWidth;
+        e.Pointer.Capture((IInputElement?)sender);
+        e.Handled = true;
+    }
+
+    private void OnLogsColGripMoved(object? sender, PointerEventArgs e)
+    {
+        if (!_logsColGripDragging) return;
+
+        var dx  = e.GetPosition(this).X - _logsColGripStartX;
+        // Названиям не даём съесть всё значение: значению оставляем минимум места.
+        var max = Math.Max(LogsNameColMin, LogsDetailCardsHost.Bounds.Width - 160);
+        _logsNameColWidth = Math.Clamp(_logsColGripStartWidth + dx, LogsNameColMin, max);
+        foreach (var col in _logsNameCols)
+            col.Width = new GridLength(_logsNameColWidth, GridUnitType.Pixel);
+    }
+
+    private void OnLogsColGripReleased(object? sender, PointerReleasedEventArgs e)
+    {
+        _logsColGripDragging = false;
+        e.Pointer.Capture(null);
+        e.Handled = true;
     }
 
     // Полное значение поля: время/уровень — отформатированные, сообщение и ошибка — как есть.

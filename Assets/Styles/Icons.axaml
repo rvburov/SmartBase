@@ -172,6 +172,10 @@
     <StreamGeometry x:Key="IconClock">M2 12 A10 10 0 0 1 22 12 A10 10 0 0 1 2 12 Z M12 6 V12 L16 14</StreamGeometry>
     <!-- Восклицательный знак баннера ошибки (тело «!» в красном круге) -->
     <StreamGeometry x:Key="IconAlertMark">M12 6 L12 14 M12 17 L12 18.5</StreamGeometry>
+    <!-- Треугольник с «!» (lucide triangle-alert) — поле «Ошибка» в деталях журнала -->
+    <StreamGeometry x:Key="IconTriangleAlert">M21.73 18 l-8 -14 a2 2 0 0 0 -3.48 0 l-8 14 A2 2 0 0 0 4 21 h16 a2 2 0 0 0 1.73 -3 M12 9 v4 M12 17 h0.01</StreamGeometry>
+    <!-- Пузырь сообщения с «!» (lucide message-circle-warning) — поле «Сообщение» в деталях журнала -->
+    <StreamGeometry x:Key="IconMessageWarning">M2.992 16.342 a2 2 0 0 1 0.094 1.167 l-1.065 3.29 a1 1 0 0 0 1.236 1.168 l3.413 -0.998 a2 2 0 0 1 1.099 0.092 a10 10 0 1 0 -4.777 -4.719 M12 8 v4 M12 16 h0.01</StreamGeometry>
     <!-- Галочка чекбокса (общая для CheckBox и «ручного» чекбокса в Sidebar).
          Толщина/размер/радиус — в Controls/Widgets/AppCheckBox.axaml. -->
     <StreamGeometry x:Key="CheckBoxGlyphGeometry">M5 13 L10 18 L19 7</StreamGeometry>
