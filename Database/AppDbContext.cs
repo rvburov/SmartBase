@@ -48,16 +48,36 @@ public class AppDbContext : DbContext
     // нужно заполнять поля вручную. Явно заданные значения (см. ConstructorRepository.AddRecord)
     // не перетираем. Сырые INSERT мимо EF (импорт/пакетный дубль/перенос) стампят метаданные в
     // своём SQL. «Изменение» стампится точечно в методах правки (TouchUpdated/SetFieldValue).
-    public override int SaveChanges()
-    {
-        StampNewRecordAudit();
-        return base.SaveChanges();
-    }
+    public override int SaveChanges() => SaveChanges(acceptAllChangesOnSuccess: true);
 
     public override int SaveChanges(bool acceptAllChangesOnSuccess)
     {
         StampNewRecordAudit();
-        return base.SaveChanges(acceptAllChangesOnSuccess);
+        return SaveReconcilingPhantomDeletes(() => base.SaveChanges(acceptAllChangesOnSuccess));
+    }
+
+    // Общий контекст живёт всё время работы с БД. Если SaveChanges падает concurrency-исключением
+    // «ожидалась 1 строка, затронуто 0» на УДАЛЯЕМОЙ строке — этой строки уже нет: её снёс каскад в
+    // ЭТОМ же контексте (удалили группу/коллекцию → дочерние коллекции/записи/значения ушли по FK, а
+    // EF всё ещё держал их в трекере как отслеживаемые) или другой писатель. Для удаления это УСПЕХ.
+    // Критично не оставить «фантом» в трекере: иначе он повисает Deleted и роняет КАЖДЫЙ следующий
+    // (даже несвязанный) SaveChanges — отсюда каскад ошибок в диагностике на создание/удаление групп.
+    // Отцепляем конфликтные строки и до-сохраняем остальное; на чужую правку изменяемой строки (не
+    // все Deleted) — чистим трекер и пробрасываем наверх (там DbErrors уведомит «изменено другим»).
+    private int SaveReconcilingPhantomDeletes(Func<int> save)
+    {
+        for (var attempt = 0; ; attempt++)
+        {
+            try { return save(); }
+            catch (DbUpdateConcurrencyException ex) when (attempt < 5)
+            {
+                var allPhantomDeletes = ex.Entries.Count > 0
+                    && ex.Entries.All(e => e.State == EntityState.Deleted);
+                foreach (var e in ex.Entries) e.State = EntityState.Detached;
+                if (allPhantomDeletes) continue;   // строк уже нет — до-сохраняем реальные изменения
+                throw;                             // чужая правка изменяемой строки — наверх (уведомление)
+            }
+        }
     }
 
     public override System.Threading.Tasks.Task<int> SaveChangesAsync(

@@ -43,6 +43,15 @@ public static class DbErrors
             Post("База данных недоступна — изменение не сохранено.");
             return true;
         }
+        if (ex is Microsoft.EntityFrameworkCore.DbUpdateConcurrencyException)
+        {
+            // Строку, которую мы правили/удаляли, уже изменил или удалил другой писатель (фантомные
+            // удаления гасятся раньше — в AppDbContext.SaveChanges; сюда доходит правка чужой строки).
+            // Не баг приложения → Warning, а не Error; изменение не применилось, вид переоткроют.
+            Log.Warning(ex, "Конкурентная правка при записи: {Path:l}", dbPath);
+            Post("Запись изменил другой пользователь — изменение не сохранено, откройте заново.");
+            return true;
+        }
         return false;
     }
 

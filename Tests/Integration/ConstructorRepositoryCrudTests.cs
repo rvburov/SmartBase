@@ -172,4 +172,32 @@ public sealed class ConstructorRepositoryCrudTests
         Assert.DoesNotContain(db.Context.DbFieldValues, v => v.RecordId == rec.Id!.Value);
         Assert.DoesNotContain(db.Context.DbFields, f => f.CollectionId == col.Id!.Value);
     }
+
+    // Регресс: после каскадного удаления общий контекст мог держать «фантомную» строку (её уже нет
+    // в БД). Повторное её удаление даёт «ожидалась 1 строка, затронуто 0» → DbUpdateConcurrencyException,
+    // и раньше строка ЗАВИСАЛА в трекере, роняя КАЖДЫЙ следующий SaveChanges (в т.ч. несвязанное
+    // создание группы) — отсюда всплеск ошибок в диагностике. Теперь SaveChanges сам примиряет фантом.
+    [Fact]
+    public void SaveChanges_reconciles_phantom_delete_so_context_stays_usable()
+    {
+        using var db = new TempDatabase();
+        var repo = db.Constructor;
+        var ctx  = db.Context;
+
+        var col = SampleData.AddCollection(repo, "Задачи").Id!.Value;
+        var rec = SampleData.AddRecord(repo, col, "Строка").Id!.Value;
+        var tracked = ctx.DbRecords.Find(rec);   // держим запись в трекере (как будто открыли/правили)
+        Assert.NotNull(tracked);
+
+        repo.DeleteCollection(col);               // каскад сносит запись в БД; трекер о ней не знает
+
+        // Явно удаляем уже снесённую строку → фантомное Deleted. Примирение внутри SaveChanges: без throw.
+        ctx.DbRecords.Remove(tracked!);
+        Assert.Null(Record.Exception(() => ctx.SaveChanges()));
+
+        // Контекст не «отравлен»: следующее НЕсвязанное сохранение проходит (раньше падало «affected 0»).
+        var g = repo.AddGroup(new DbGroup { Name = "Новая группа" });
+        Assert.NotNull(g.Id);
+        Assert.Contains(repo.GetAllGroups(), x => x.Id == g.Id);
+    }
 }
