@@ -3994,7 +3994,8 @@ public partial class ConstructorRepository(AppDbContext db)
     /// excludeHidden — исключить скрытые в окне «Отображение записей».
     /// </summary>
     public List<int> GetFilteredRecordIds(int collectionId,
-        IReadOnlyDictionary<string, HashSet<string>> filters, bool excludeHidden = false)
+        IReadOnlyDictionary<string, HashSet<string>> filters, bool excludeHidden = false,
+        Func<int, IReadOnlyList<int>, Dictionary<int, string>?>? resolveForeign = null)
     {
         var q = db.DbRecords.AsNoTracking()
             .Where(r => r.CollectionId == collectionId
@@ -4018,14 +4019,32 @@ public partial class ConstructorRepository(AppDbContext db)
                 var hasEmpty = allowed.Contains("");
                 if (relFieldIds.Contains(fid))
                 {
-                    // Связь: строка проходит, если есть ребро к цели с Title ∈ allowed (семантика ИЛИ —
-                    // хотя бы одна отмеченная). «(нет связей)» "" — нет ребра ни к одной ИМЕНОВАННОЙ
-                    // цели (как в GetRelationValueCounts: безымянные цели тоже относятся к «нет связей»).
-                    q = q.Where(r =>
-                        db.DbRecordLinks.Any(l => l.FieldId == fid && l.FromRecordId == r.Id
-                            && db.DbRecords.Any(t => t.Id == l.ToRecordId && allow.Contains(t.Title ?? "")))
-                        || (hasEmpty && !db.DbRecordLinks.Any(l => l.FieldId == fid && l.FromRecordId == r.Id
-                            && db.DbRecords.Any(t => t.Id == l.ToRecordId && (t.Title ?? "") != ""))));
+                    // Связь: строка проходит, если есть ребро к ИМЕНОВАННОЙ цели с Title ∈ allowed
+                    // (семантика ИЛИ). «(нет связей)» "" — нет ребра ни к одной именованной цели.
+                    var hasCrossDb = db.DbRecordLinks.Any(l => l.FieldId == fid && l.TargetDbId != 0);
+                    if (!hasCrossDb)
+                    {
+                        // Чисто внутрибазовое поле — серверный EXISTS (индекс-дружественный, без
+                        // материализации рёбер). TargetDbId==0 обязателен: иначе осиротевшее межбазовое
+                        // ребро с коллизией id могло бы совпасть с чужим локальным Title.
+                        q = q.Where(r =>
+                            db.DbRecordLinks.Any(l => l.FieldId == fid && l.FromRecordId == r.Id && l.TargetDbId == 0
+                                && db.DbRecords.Any(t => t.Id == l.ToRecordId && allow.Contains(t.Title ?? "")))
+                            || (hasEmpty && !db.DbRecordLinks.Any(l => l.FieldId == fid && l.FromRecordId == r.Id && l.TargetDbId == 0
+                                && db.DbRecords.Any(t => t.Id == l.ToRecordId && (t.Title ?? "") != ""))));
+                    }
+                    else
+                    {
+                        // Есть межбазовые рёбра — цели (в т.ч. из ДРУГОЙ базы) резолвим тем же путём, что
+                        // ячейка/счётчики (иначе межбазовые ссылки не фильтровались бы). Множества ограничены
+                        // связанными записями.
+                        var bySource     = RelationTitlesBySource(collectionId, fid, resolveForeign);
+                        var matchIds     = bySource.Where(kv => kv.Value.Any(t => t.Length > 0 && allowed.Contains(t)))
+                                                   .Select(kv => kv.Key).ToHashSet();
+                        var namedSources = bySource.Where(kv => kv.Value.Any(t => t.Length > 0))
+                                                   .Select(kv => kv.Key).ToHashSet();
+                        q = q.Where(r => matchIds.Contains(r.Id) || (hasEmpty && !namedSources.Contains(r.Id)));
+                    }
                 }
                 else
                 {
@@ -4044,7 +4063,8 @@ public partial class ConstructorRepository(AppDbContext db)
     /// отфильтрованного списка в UI тем же компаратором, что и раньше. Грузит ровно одну
     /// колонку, а не все поля (в отличие от GetFieldValuesByCollection).
     /// </summary>
-    public Dictionary<int, string> GetColumnValues(int collectionId, string key)
+    public Dictionary<int, string> GetColumnValues(int collectionId, string key,
+        Func<int, IReadOnlyList<int>, Dictionary<int, string>?>? resolveForeign = null)
     {
         if (key == TitleKey)
             return db.DbRecords.AsNoTracking().Where(r => r.CollectionId == collectionId)
@@ -4059,18 +4079,11 @@ public partial class ConstructorRepository(AppDbContext db)
             var field = db.DbFields.AsNoTracking().FirstOrDefault(f => f.Id == fid);
             if (field?.FieldType == "relation")
             {
-                // Сортировка «по показанному тексту»: значение = названия связанных записей через
-                // разделитель поля (как в ячейке). Записи без связей → "" (в конец при А→Я).
-                var sep  = RelationConfig.FromConfig(field.ConfigJson)?.SeparatorString ?? ", ";
-                var rows = (from l in db.DbRecordLinks.AsNoTracking()
-                            where l.FieldId == fid
-                            join src in db.DbRecords on l.FromRecordId equals src.Id
-                            where src.CollectionId == collectionId
-                            join tgt in db.DbRecords on l.ToRecordId equals tgt.Id
-                            orderby l.Position, l.Id
-                            select new { l.FromRecordId, Title = tgt.Title ?? "" }).ToList();
-                return rows.GroupBy(x => x.FromRecordId)
-                           .ToDictionary(g => g.Key, g => string.Join(sep, g.Select(x => x.Title)));
+                // Сортировка «по показанному тексту»: значение = названия связанных записей (в т.ч. из
+                // ДРУГОЙ базы) через разделитель поля, как в ячейке. Записи без связей → "" (в конец при А→Я).
+                var sep = RelationConfig.FromConfig(field.ConfigJson)?.SeparatorString ?? ", ";
+                return RelationTitlesBySource(collectionId, fid, resolveForeign)
+                    .ToDictionary(kv => kv.Key, kv => string.Join(sep, kv.Value));
             }
             return db.DbFieldValues.AsNoTracking()
                      .Where(fv => fv.FieldId == fid && fv.Record.CollectionId == collectionId)
@@ -4183,49 +4196,131 @@ public partial class ConstructorRepository(AppDbContext db)
         return result;
     }
 
+    // Названия связанных записей по каждому источнику коллекции, В ПОРЯДКЕ рёбер (Position, Id), с
+    // резолвом МЕЖБАЗОВЫХ целей из их баз — как в ячейке (RelationSelectBox). Единая основа для
+    // сортировки/фильтра/счётчиков столбца-связи: раньше все три джойнили db_record_links с ЛОКАЛЬНОЙ
+    // db_records по ToRecordId → межбазовые цели не находились (падали в «(нет связей)») или при
+    // коллизии id клеили чужой заголовок. resolveForeign: (dbId, ids) → Id→Title целевой базы (null —
+    // база недоступна); по умолчанию из реестра (RelationDbResolver, только UI-поток). Фон (счётчики)
+    // передаёт свой резолвер поверх свежих изолированных подключений (пути сняты заранее на UI).
+    private Dictionary<int, List<string>> RelationTitlesBySource(
+        int collectionId, int fieldId,
+        Func<int, IReadOnlyList<int>, Dictionary<int, string>?>? resolveForeign = null)
+    {
+        resolveForeign ??= (dbId, ids) => RelationDbResolver.RepoFor(dbId)?.GetRecordTitles(ids);
+
+        // Все рёбра поля от записей этой коллекции, в порядке ребра; TargetDbId различает базу-цель.
+        var edges = (from l in db.DbRecordLinks.AsNoTracking()
+                     where l.FieldId == fieldId
+                     join src in db.DbRecords.AsNoTracking() on l.FromRecordId equals src.Id
+                     where src.CollectionId == collectionId
+                     orderby l.Position, l.Id
+                     select new { l.FromRecordId, l.ToRecordId, l.TargetDbId }).ToList();
+        if (edges.Count == 0) return new();
+
+        // Внутрибазовые цели — JOIN (без гигантского IN на тысячах id): ToRecordId → Title.
+        var sameDb = (from l in db.DbRecordLinks.AsNoTracking()
+                      where l.FieldId == fieldId && l.TargetDbId == 0
+                      join src in db.DbRecords.AsNoTracking() on l.FromRecordId equals src.Id
+                      where src.CollectionId == collectionId
+                      join tgt in db.DbRecords.AsNoTracking() on l.ToRecordId equals tgt.Id
+                      select new { l.ToRecordId, Title = tgt.Title ?? "" })
+                     .Distinct().ToList()
+                     .ToDictionary(x => x.ToRecordId, x => x.Title);
+
+        // Межбазовые цели — резолвим из их баз пакетно по (dbId → набор id); id межбазовых целей мало.
+        var crossDb = new Dictionary<(int To, int Db), string?>();
+        foreach (var grp in edges.Where(e => e.TargetDbId != 0).GroupBy(e => e.TargetDbId))
+        {
+            var ids = grp.Select(e => e.ToRecordId).Distinct().ToList();
+            var map = resolveForeign(grp.Key, ids);
+            foreach (var id in ids)
+                crossDb[(id, grp.Key)] =
+                    map is null                        ? "(база недоступна)"
+                  : map.TryGetValue(id, out var t)     ? t
+                  :                                      null;   // записи нет → ребро пропускаем («связи нет»)
+        }
+
+        var bySource = new Dictionary<int, List<string>>();
+        foreach (var e in edges)   // рёбра уже в порядке (Position, Id)
+        {
+            var title = e.TargetDbId == 0
+                ? (sameDb.TryGetValue(e.ToRecordId, out var t) ? t : null)     // нет строки → цель удалена
+                : crossDb.GetValueOrDefault((e.ToRecordId, e.TargetDbId));
+            if (title is null) continue;
+            if (!bySource.TryGetValue(e.FromRecordId, out var list))
+                bySource[e.FromRecordId] = list = new();
+            list.Add(title);
+        }
+        return bySource;
+    }
+
+    // Пути (для AppDbContext) к чужим базам, на которые ссылается поле-связь из этой коллекции.
+    // Снимается на UI-потоке (реестр/общие репозитории — только оттуда): фон затем открывает по этим
+    // путям СВЕЖИЕ изолированные подключения и читает Title целей, не трогая общий контекст чужой базы.
+    private Dictionary<int, string> CrossDbPathsForField(int collectionId, int fieldId)
+    {
+        var dbIds = (from l in db.DbRecordLinks.AsNoTracking()
+                     where l.FieldId == fieldId && l.TargetDbId != 0
+                     join src in db.DbRecords.AsNoTracking() on l.FromRecordId equals src.Id
+                     where src.CollectionId == collectionId
+                     select l.TargetDbId).Distinct().ToList();
+        var map = new Dictionary<int, string>();
+        foreach (var dbId in dbIds)
+            if (RelationDbResolver.RepoFor(dbId)?.DbPath is { } p) map[dbId] = p;
+        return map;
+    }
+
     /// <summary>
     /// Значения столбца-связи с количеством для панели фильтра (Excel-стиль): каждый пункт —
-    /// НАЗВАНИЕ связанной записи (Title цели), счётчик — сколько записей-источников коллекции
-    /// ссылаются хотя бы на одну запись с этим названием. «(нет связей)» = "" — источники без связей
-    /// (либо связанные только с безымянными записями), последним. Порядок непустых — по первой позиции
-    /// источника (порядок таблицы), как у прочих типов. Связи лежат в db_record_links, а не в
-    /// db_field_values, поэтому у типа своя ветка (нельзя переиспользовать GetFieldValueCounts).
+    /// НАЗВАНИЕ связанной записи (Title цели, в т.ч. из ДРУГОЙ базы), счётчик — сколько записей-
+    /// источников коллекции ссылаются хотя бы на одну запись с этим названием. «(нет связей)» = "" —
+    /// источники без связей (либо связанные только с безымянными/удалёнными целями), последним. Порядок
+    /// непустых — по первой позиции источника (порядок таблицы). resolveForeign — см. RelationTitlesBySource.
     /// </summary>
-    public List<(string Value, int Count)> GetRelationValueCounts(int collectionId, int fieldId)
+    public List<(string Value, int Count)> GetRelationValueCounts(
+        int collectionId, int fieldId,
+        Func<int, IReadOnlyList<int>, Dictionary<int, string>?>? resolveForeign = null)
     {
-        // Уникальные пары (источник, название цели): мульти-связь на одно название не задваивает счётчик.
-        var pairs = (from l in db.DbRecordLinks.AsNoTracking()
-                     where l.FieldId == fieldId
-                     join src in db.DbRecords on l.FromRecordId equals src.Id
-                     where src.CollectionId == collectionId
-                     join tgt in db.DbRecords on l.ToRecordId equals tgt.Id
-                     select new { l.FromRecordId, src.Position, Title = tgt.Title ?? "" })
-                    .Distinct()
-                    .ToList();
+        var bySource = RelationTitlesBySource(collectionId, fieldId, resolveForeign);
+        var pos = db.DbRecords.AsNoTracking().Where(r => r.CollectionId == collectionId)
+                    .Select(r => new { r.Id, r.Position }).ToList()
+                    .ToDictionary(x => x.Id, x => x.Position);
 
-        var named = pairs.Where(p => p.Title.Length > 0)
-            .GroupBy(p => p.Title)
-            .Select(g => (Value: g.Key, Count: g.Select(p => p.FromRecordId).Distinct().Count(), FirstPos: g.Min(p => p.Position)))
-            .OrderBy(g => g.FirstPos)
-            .Select(g => (g.Value, g.Count))
+        // value → (уникальные источники, минимальная позиция); мульти-связь на одно имя не дублирует счётчик.
+        var byValue = new Dictionary<string, (HashSet<int> Sources, int MinPos)>();
+        foreach (var (src, titles) in bySource)
+            foreach (var title in titles.Where(t => t.Length > 0).Distinct())
+            {
+                var p = pos.GetValueOrDefault(src, int.MaxValue);
+                if (byValue.TryGetValue(title, out var agg))
+                {
+                    agg.Sources.Add(src);
+                    byValue[title] = (agg.Sources, Math.Min(agg.MinPos, p));
+                }
+                else byValue[title] = (new HashSet<int> { src }, p);
+            }
+
+        var result = byValue.OrderBy(kv => kv.Value.MinPos)
+            .Select(kv => (Value: kv.Key, Count: kv.Value.Sources.Count))
             .ToList();
 
         var totalSrc  = db.DbRecords.Count(r => r.CollectionId == collectionId);
-        var withNamed = pairs.Where(p => p.Title.Length > 0).Select(p => p.FromRecordId).Distinct().Count();
-        var noLinks   = totalSrc - withNamed;
-        if (noLinks > 0) named.Add(("", noLinks));
-        return named;
+        var withNamed = bySource.Count(kv => kv.Value.Any(t => t.Length > 0));   // источники с ИМЕНОВАННОЙ целью
+        if (totalSrc - withNamed > 0) result.Add(("", totalSrc - withNamed));
+        return result;
     }
 
     private bool IsRelationField(int fieldId) =>
         db.DbFields.AsNoTracking().Any(f => f.Id == fieldId && f.FieldType == "relation");
 
     // Счётчики значений колонки (Title/Desc/поле/связь) по ключу — диспетчер для фона.
-    private List<(string Value, int Count)> ColumnCounts(int collectionId, string key) =>
+    private List<(string Value, int Count)> ColumnCounts(int collectionId, string key,
+        Func<int, IReadOnlyList<int>, Dictionary<int, string>?>? resolveForeign = null) =>
         key == TitleKey ? GetTitleCounts(collectionId)
         : key == DescKey ? GetDescriptionCounts(collectionId)
         : int.TryParse(key, out var fid)
-            ? (IsRelationField(fid) ? GetRelationValueCounts(collectionId, fid) : GetFieldValueCounts(collectionId, fid))
+            ? (IsRelationField(fid) ? GetRelationValueCounts(collectionId, fid, resolveForeign) : GetFieldValueCounts(collectionId, fid))
             : [];
 
     /// <summary>
@@ -4233,13 +4328,36 @@ public partial class ConstructorRepository(AppDbContext db)
     /// с количеством — чтобы окно фильтра открывалось мгновенно, а UI не подвисал на подсчёте.
     /// WAL допускает одновременное чтение, поэтому фоновое подключение не конфликтует с основным.
     /// </summary>
-    public Task<List<(string Value, int Count)>> GetColumnCountsAsync(int collectionId, string key) =>
-        Task.Run(() =>
+    public Task<List<(string Value, int Count)>> GetColumnCountsAsync(int collectionId, string key)
+    {
+        // Столбец-связь может ссылаться на ДРУГИЕ базы: их пути снимаем здесь, на UI-потоке (реестр/общие
+        // репозитории — только отсюда), а фон читает Title целей по этим путям СВЕЖИМИ изолированными
+        // подключениями — общий контекст чужой базы не трогаем (см. правило об общем AppDbContext).
+        Dictionary<int, string>? crossPaths = null;
+        if (int.TryParse(key, out var fid) && IsRelationField(fid))
+            crossPaths = CrossDbPathsForField(collectionId, fid);
+
+        return Task.Run(() =>
         {
             using var ctx = new AppDbContext(db.DbPath);
             ctx.ApplyPerformancePragmas();
-            return new ConstructorRepository(ctx).ColumnCounts(collectionId, key);
+            var repo = new ConstructorRepository(ctx);
+            // Для поля-связи crossPaths НЕ null (даже пустой): всегда отдаём этот резолвер, чтобы
+            // дефолт RelationTitlesBySource (RelationDbResolver.RepoFor → общий контекст чужой базы)
+            // НИКОГДА не выполнялся из фона. Путь не снят на UI → dbId нет в карте → null →
+            // «(база недоступна)», как в ячейке при недоступной базе (реестр из фона не трогаем).
+            Func<int, IReadOnlyList<int>, Dictionary<int, string>?>? resolveForeign =
+                crossPaths is null ? null
+                : (dbId, ids) =>
+                {
+                    if (!crossPaths.TryGetValue(dbId, out var path)) return null;
+                    using var fctx = new AppDbContext(path);
+                    fctx.ApplyPerformancePragmas();
+                    return new ConstructorRepository(fctx).GetRecordTitles(ids);
+                };
+            return repo.ColumnCounts(collectionId, key, resolveForeign);
         });
+    }
 
     // Упорядочить группы значений по первой позиции (порядок таблицы); пустое — последним.
     private static List<(string Value, int Count)> OrderValueGroups(

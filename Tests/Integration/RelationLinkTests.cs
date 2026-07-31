@@ -283,6 +283,81 @@ public sealed class RelationLinkTests
     }
 
     [Fact]
+    public void Cross_db_relation_resolves_titles_for_sort_filter_and_counts()
+    {
+        using var dbA = new TempDatabase(dbId: 1, name: "A");
+        using var dbB = new TempDatabase(dbId: 2, name: "B");
+        var repoA = dbA.Constructor;
+        var repoB = dbB.Constructor;
+
+        // БД-B: цели межбазовой связи.
+        var projB = SampleData.AddCollection(repoB, "Проекты").Id!.Value;
+        var b1 = SampleData.AddRecord(repoB, projB, "Инфра B").Id!.Value;
+        var b2 = SampleData.AddRecord(repoB, projB, "Сайт B").Id!.Value;
+
+        // БД-A: «Задачи» с межбазовой связью на БД-B (TargetDbId=2, разделитель — запятая).
+        var taskA = SampleData.AddCollection(repoA, "Задачи").Id!.Value;
+        var rel   = SampleData.AddField(repoA, taskA, "Проект", "relation");
+        rel.ConfigJson = new RelationConfig(projB, false, "comma", 2).ToConfigJson();
+        repoA.UpdateField(rel);
+        var relId = rel.Id!.Value;
+        var t1 = SampleData.AddRecord(repoA, taskA, "T1").Id!.Value;
+        var t2 = SampleData.AddRecord(repoA, taskA, "T2").Id!.Value;
+        var t3 = SampleData.AddRecord(repoA, taskA, "T3").Id!.Value;   // без связей
+        repoA.SetLinks(relId, t1, [b1]);
+        repoA.SetLinks(relId, t2, [b1, b2]);   // порядок b1, b2
+
+        // Резолвер названий целей БД-B (в проде — RelationDbResolver; Workspace в тестах не поднят).
+        Dictionary<int, string>? Resolve(int dbId, IReadOnlyList<int> ids) =>
+            dbId == 2 ? repoB.GetRecordTitles(ids) : null;
+
+        // Сортировка: значение = названия целей из БД-B через разделитель поля.
+        var vals = repoA.GetColumnValues(taskA, relId.ToString(), Resolve);
+        Assert.Equal("Инфра B",          vals[t1]);
+        Assert.Equal("Инфра B, Сайт B",  vals[t2]);   // порядок рёбер сохранён
+
+        // Счётчики фильтра: межбазовые названия видны, t3 → «(нет связей)» последним.
+        var counts = repoA.GetRelationValueCounts(taskA, relId, Resolve);
+        Assert.Equal(("Инфра B", 2), counts.Single(c => c.Value == "Инфра B"));   // t1, t2
+        Assert.Equal(("Сайт B",  1), counts.Single(c => c.Value == "Сайт B"));    // t2
+        Assert.Equal(("", 1),        counts[^1]);                                 // T3
+
+        // Применение фильтра по межбазовому названию и по «(нет связей)».
+        Dictionary<string, HashSet<string>> F(params string[] v) => new() { [relId.ToString()] = [.. v] };
+        Assert.Equal([t2],     repoA.GetFilteredRecordIds(taskA, F("Сайт B"), false, Resolve));
+        Assert.Equal([t1, t2], repoA.GetFilteredRecordIds(taskA, F("Инфра B"), false, Resolve));
+        Assert.Equal([t3],     repoA.GetFilteredRecordIds(taskA, F(""), false, Resolve));
+
+        // Без резолвера (база-цель недоступна) — показ как в ячейке: «(база недоступна)», не «(нет связей)».
+        Assert.Equal("(база недоступна)", repoA.GetColumnValues(taskA, relId.ToString())[t1]);
+    }
+
+    [Fact]
+    public async Task Cross_db_filter_counts_background_degrade_to_unavailable_without_paths()
+    {
+        using var dbA = new TempDatabase(dbId: 1, name: "A");
+        using var dbB = new TempDatabase(dbId: 2, name: "B");
+        var repoA = dbA.Constructor;
+        var repoB = dbB.Constructor;
+        var projB = SampleData.AddCollection(repoB, "Проекты").Id!.Value;
+        var b1    = SampleData.AddRecord(repoB, projB, "Инфра B").Id!.Value;
+
+        var taskA = SampleData.AddCollection(repoA, "Задачи").Id!.Value;
+        var rel   = SampleData.AddField(repoA, taskA, "Проект", "relation");
+        rel.ConfigJson = new RelationConfig(projB, false, "comma", 2).ToConfigJson();
+        repoA.UpdateField(rel);
+        var t1 = SampleData.AddRecord(repoA, taskA, "T1").Id!.Value;
+        repoA.SetLinks(rel.Id!.Value, t1, [b1]);
+
+        // Счётчики считаются в фоне на изолированном подключении; Workspace не поднят → путей к БД-B нет.
+        // Цель обязана деградировать в «(база недоступна)» БЕЗ падения и БЕЗ ухода в RelationDbResolver.RepoFor
+        // (общий контекст чужой базы) из фонового потока — иначе нарушилось бы правило «общий контекст — только UI».
+        var counts = await repoA.GetColumnCountsAsync(taskA, rel.Id!.Value.ToString());
+        Assert.Contains(counts, c => c.Value == "(база недоступна)");
+        Assert.DoesNotContain(counts, c => c.Value == "Инфра B");   // без снятого пути заголовок недоступен
+    }
+
+    [Fact]
     public void Cross_db_single_link_replaces_and_persists()
     {
         using var dbA = new TempDatabase(dbId: 1, name: "A");
