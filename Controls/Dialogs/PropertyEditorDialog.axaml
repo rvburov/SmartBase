@@ -216,9 +216,12 @@
                           Background="{StaticResource BrushSecondaryBg}"
                           CornerRadius="{StaticResource RadiusBase}">
                     <ComboBoxItem Content="Через запятую" />
+                    <ComboBoxItem Content="Через точку" />
                     <ComboBoxItem Content="Через пробел" />
                     <ComboBoxItem Content="Через точку с запятой" />
                     <ComboBoxItem Content="С новой строки" />
+                    <ComboBoxItem Content="Через запятую без пробела" />
+                    <ComboBoxItem Content="Через точку без пробела" />
                 </ComboBox>
             </StackPanel>
         </StackPanel>
@@ -438,7 +441,7 @@
             </StackPanel>
 
             <StackPanel Spacing="6">
-                <TextBlock Text="Сколько записей можно связать"
+                <TextBlock Text="Количество связей"
                            FontWeight="{StaticResource FontWeightBold}"
                            Foreground="{StaticResource BrushSecondaryText}" />
                 <ComboBox x:Name="RelationCardinalityCombo"
@@ -461,9 +464,12 @@
                           Background="{StaticResource BrushSecondaryBg}"
                           CornerRadius="{StaticResource RadiusBase}">
                     <ComboBoxItem Content="Через запятую" />
+                    <ComboBoxItem Content="Через точку" />
                     <ComboBoxItem Content="Через пробел" />
                     <ComboBoxItem Content="Через точку с запятой" />
                     <ComboBoxItem Content="С новой строки" />
+                    <ComboBoxItem Content="Через запятую без пробела" />
+                    <ComboBoxItem Content="Через точку без пробела" />
                 </ComboBox>
             </StackPanel>
         </StackPanel>

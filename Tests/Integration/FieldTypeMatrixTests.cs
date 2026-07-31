@@ -94,9 +94,12 @@ public sealed class FieldTypeMatrixTests
 
         // Ключ формата → строка-склейка.
         Assert.Equal(", ",  MultiSelectValue.SeparatorFor("comma"));
+        Assert.Equal(". ",  MultiSelectValue.SeparatorFor("dot"));
         Assert.Equal(" ",   MultiSelectValue.SeparatorFor("space"));
         Assert.Equal("; ",  MultiSelectValue.SeparatorFor("semicolon"));
         Assert.Equal("\n",  MultiSelectValue.SeparatorFor("newline"));
+        Assert.Equal(",",   MultiSelectValue.SeparatorFor("comma_tight")); // запятая без пробела
+        Assert.Equal(".",   MultiSelectValue.SeparatorFor("dot_tight"));   // точка без пробела
         Assert.Equal(", ",  MultiSelectValue.SeparatorFor(null));      // дефолт — запятая
         Assert.Equal(", ",  MultiSelectValue.SeparatorFor("garbage")); // неизвестный → дефолт
 

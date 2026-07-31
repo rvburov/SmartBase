@@ -73,8 +73,11 @@ public partial class PropertyEditorDialog : Window
     // сохранении; строки строятся в BuildOptionRow и живут в OptionsList.
     private readonly List<TextBox> _optionBoxes = [];
 
-    // Формат склейки значений «Мультисписка» — порядок совпадает с пунктами SeparatorCombo в XAML.
-    private static readonly string[] SeparatorKeys = ["comma", "space", "semicolon", "newline"];
+    // Формат склейки значений «Мультисписка»/«Связи» — порядок совпадает с пунктами
+    // SeparatorCombo и RelationSeparatorCombo в XAML (общий список; ключ хранится в ConfigJson,
+    // не индекс, поэтому порядок можно менять без миграции сохранённых полей).
+    private static readonly string[] SeparatorKeys =
+        ["comma", "dot", "space", "semicolon", "newline", "comma_tight", "dot_tight"];
 
     // Формат числа: порядок пунктов NumberFormatCombo в XAML.
     private static readonly NumberFormatKind[] NumberFormatKinds =
@@ -348,7 +351,7 @@ public partial class PropertyEditorDialog : Window
             .Select(d => new RelationDbItem { Id = d.DbId, Name = d.Name }).ToList();
         if (dbs.Count == 0) dbs = [new RelationDbItem { Id = _currentDbId, Name = "Текущая база" }];
 
-        RelationCardinalityCombo.SelectedIndex = 0;  // дефолты (один раз, не сбрасываются при смене БД)
+        RelationCardinalityCombo.SelectedIndex = 1;  // дефолт «Одну» (0 — Несколько); не сбрасывается при смене БД
         RelationSeparatorCombo.SelectedIndex   = 0;
 
         RelationDbCombo.ItemsSource        = dbs;

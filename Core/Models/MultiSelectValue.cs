@@ -45,10 +45,13 @@ public static class MultiSelectValue
     /// <summary>Ключ формата разделителя → строка-склейка для показа/экспорта.</summary>
     public static string SeparatorFor(string? key) => key switch
     {
-        "space"     => " ",
-        "semicolon" => "; ",
-        "newline"   => "\n",
-        _           => ", ",   // comma — по умолчанию
+        "dot"         => ". ",
+        "space"       => " ",
+        "semicolon"   => "; ",
+        "newline"     => "\n",
+        "comma_tight" => ",",
+        "dot_tight"   => ".",
+        _             => ", ",   // comma — по умолчанию
     };
 
     /// <summary>Строка-склейка из ConfigJson поля (<c>{"separator":"..."}</c>); по умолчанию запятая.</summary>
