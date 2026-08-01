@@ -85,6 +85,10 @@ public partial class TableView : UserControl
     private List<DbField>        _fields  = [];
     private List<TableColumnDef> _colDefs = [];
     private VirtualRowList?      _virtualRows;
+    // ВИДИМЫЙ список строк: = _virtualRows без фильтра/сортировки, = временный filteredRows при них.
+    // Точечные обновления (RefreshRecordRow) адресуем ему — иначе в фильтр-режиме они били бы по
+    // скрытому _virtualRows и не доходили до видимых строк.
+    private VirtualRowList?      _activeRows;
     // Кеш связей-relation таблицы: батч видимой страницы вместо N точечных GetLinks. Общий для
     // виртуального списка (пишет при наполнении страниц) и ячеек-связей (читают). Чистится при смене
     // источника строк (ReloadRows/фильтр). Стабильный экземпляр — шаблоны ячеек ссылаются на него.
@@ -575,6 +579,7 @@ public partial class TableView : UserControl
         // Виртуализирующая обёртка: DataGrid не материализует источник, тянет только видимые
         // строки → большие коллекции открываются мгновенно. Всегда включена.
         _virtualView = new VirtualCollectionView(_virtualRows);
+        _activeRows  = _virtualRows;   // без фильтра видимый список — он (ApplyFilters заменит при фильтре)
 
         RecordsGrid.ItemsSource = DefaultItemsSource;
 
@@ -918,7 +923,11 @@ public partial class TableView : UserControl
         // редактор показывал бы устаревшее значение, а при коммите ещё и затёр бы свежее из панели.
         // CancelEdit отменяет (не коммитит) правку, после чего ячейка показывает биндинг-дисплей.
         RecordsGrid.CancelEdit();
-        _virtualRows?.RefreshRecord(recordId);
+        _activeRows?.RefreshRecord(recordId);
+        // Строки, чьи связи ссылаются на изменённую запись, тоже обновляем — иначе название цели в их
+        // ячейке-связи оставалось бы старым до прокрутки/перезагрузки. Адресуем ВИДИМОМУ списку
+        // (_activeRows), чтобы работало и в режиме фильтра/сортировки.
+        _activeRows?.RefreshRelationTargets(recordId);
     }
 
     // Выделить голубым ровно заданные записи (по id), сняв прежнее выделение. Используется после
@@ -2835,6 +2844,7 @@ public partial class TableView : UserControl
         {
             if (!ReferenceEquals(RecordsGrid.ItemsSource, DefaultItemsSource))
                 RecordsGrid.ItemsSource = DefaultItemsSource;
+            _activeRows = _virtualRows;   // вернулись к нефильтрованному видимому списку
             return;
         }
 
@@ -2855,6 +2865,7 @@ public partial class TableView : UserControl
         _relLinks.Clear();   // новый срез строк (фильтр/сортировка) — прежний прогрев связей неактуален
         var filteredRows = new VirtualRowList(_repository, _collectionId, _fields, recordIds: ids, relLinks: _relLinks);
         filteredRows.RecordEdited += (_, rid) => RecordValueEdited?.Invoke(this, rid);
+        _activeRows = filteredRows;   // видимый список теперь отфильтрованный — точечные рефреши сюда
         RecordsGrid.ItemsSource = new VirtualCollectionView(filteredRows);
     }
 

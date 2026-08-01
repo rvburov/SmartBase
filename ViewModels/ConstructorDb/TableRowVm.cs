@@ -129,6 +129,10 @@ public class TableRowVm : INotifyPropertyChanged
     // Перечитать все привязки ячеек строки (каждая по своему ключу): см. комментарий в Fill.
     private void NotifyAllCells() => OnPropertyChanged("Item");
 
+    /// <summary>Поднять "Item" извне — перечитать привязки ячеек строки без смены данных (напр., у
+    /// строки-источника изменилось название ЦЕЛИ её связи: read-ячейка-связь перечитает показ из кеша).</summary>
+    public void NotifyCellsChanged() => NotifyAllCells();
+
     // Обновить привязки «вычисляемых» ячеек (created_at/updated_at/created_by/updated_by),
     // которые биндятся к именованным свойствам, а не к индексатору значений.
     private void NotifyMeta()

@@ -44,6 +44,10 @@ public sealed class RelationSelectBox : Panel
     private readonly RelationLinksCache? _cache;
 
     private readonly List<int>                     _selected = [];
+    // id выбранной цели → TargetDbId ЕГО ребра: переход по «карандашу» идёт в СВОЮ базу ребра, а не в
+    // цель текущего конфига поля (иначе после пере-настройки/смешанных рёбер открылась бы пустая/чужая
+    // запись). Для кандидатов из пикера используется _cfg.TargetDbId (они из текущей целевой базы).
+    private readonly Dictionary<int, int>          _selectedDb = new();
     private readonly Dictionary<int, string>       _titles   = new();
     private readonly AvaloniaList<RelationOptionVm> _shown    = [];
     private readonly TextBlock _valueText;
@@ -160,12 +164,24 @@ public sealed class RelationSelectBox : Panel
     public void OnRowFilled(int recordId)
     {
         if (recordId != _recordId) { RecordId = recordId; return; }
-        if (_cfg.IsCrossDb && _recordId > 0) ReloadSelected(preferCache: false);
+        if (_recordId <= 0) return;
+        // Тот же RecordId, но строку пере-Fill'или. Read-ячейка (editing:false) перечитывает показ,
+        // чтобы ВНЕШНЕЕ изменение отразилось сразу — в т.ч. переименование ЦЕЛИ: VirtualRowList
+        // пере-праймил батч-кеш свежими названиями (RefreshRelationTargets), и здесь мы их подхватываем.
+        // Межбазовую читаем свежей (её нет в кеше), внутрибазовую — из обновлённого кеша (дёшево).
+        // Edit-ячейку (editing:true) не трогаем на тот же RecordId — там может идти правка выбора;
+        // ей достаточно прежнего поведения (межбазовую освежить, внутрибазовую держит кеш/правка).
+        if (_editing)
+        {
+            if (_cfg.IsCrossDb) ReloadSelected(preferCache: false);
+        }
+        else ReloadSelected(preferCache: !_cfg.IsCrossDb);
     }
 
     private void ReloadSelected(bool preferCache)
     {
         _selected.Clear();
+        _selectedDb.Clear();
         if (_recordId > 0)
         {
             // Быстрый путь таблицы: батч-кеш держит ТОЛЬКО внутрибазовые рёбра (TargetDbId=0) с уже
@@ -174,7 +190,7 @@ public sealed class RelationSelectBox : Panel
             if (!_cfg.IsCrossDb && preferCache && _cache is not null
                 && _cache.TryGet(_fieldId, _recordId, out var cached))
             {
-                foreach (var (id, title) in cached) { _selected.Add(id); _titles[id] = title; }
+                foreach (var (id, title) in cached) { _selected.Add(id); _selectedDb[id] = 0; _titles[id] = title; }
             }
             else LoadSelected();
         }
@@ -213,7 +229,7 @@ public sealed class RelationSelectBox : Panel
             }
         }
         foreach (var (toId, dbId) in edges)
-            if (!gone.Contains((toId, dbId))) _selected.Add(toId);
+            if (!gone.Contains((toId, dbId))) { _selected.Add(toId); _selectedDb[toId] = dbId; }
     }
 
     private void OpenPopup()
@@ -368,7 +384,7 @@ public sealed class RelationSelectBox : Panel
                 if ((s as Control)?.DataContext is RelationOptionVm vm)
                 {
                     if (_popup is not null) _popup.IsOpen = false;
-                    Navigate?.Invoke(this, (_cfg.TargetDbId, vm.Id));
+                    Navigate?.Invoke(this, (vm.DbId, vm.Id));   // база ЭТОГО пункта, не текущего конфига
                 }
             };
 
@@ -394,19 +410,26 @@ public sealed class RelationSelectBox : Panel
                       ?? [];
         var hasMore = results.Count > PickerCap;
         if (hasMore) results = results.Take(PickerCap).ToList();
-        foreach (var (id, title) in results) _titles[id] = title;
+        // Кандидаты всегда из ТЕКУЩЕЙ целевой базы (_cfg.TargetDbId). Не затираем название выбранного
+        // ребра, чья база ОТЛИЧАЕТСЯ (межбазовое/смешанное — см. C4): при коллизии id кандидатское имя
+        // из целевой базы подменило бы имя из чужой базы (навигация-DbId осталась бы верной, а текст — нет).
+        foreach (var (id, title) in results)
+            if (!(_selectedDb.TryGetValue(id, out var edgeDb) && edgeDb != _cfg.TargetDbId))
+                _titles[id] = title;
 
         var list = new List<RelationOptionVm>();
         if (q.Length == 0)
         {
+            // Уже выбранные — с базой СВОЕГО ребра (переход туда, откуда связь реально идёт).
             foreach (var id in _selected)
-                list.Add(new RelationOptionVm(id, _titles.GetValueOrDefault(id, ""), this));
+                list.Add(new RelationOptionVm(id, _titles.GetValueOrDefault(id, ""), _selectedDb.GetValueOrDefault(id, _cfg.TargetDbId), this));
+            // Кандидаты — из ТЕКУЩЕЙ целевой базы поля.
             foreach (var (id, title) in results)
-                if (!_selected.Contains(id)) list.Add(new RelationOptionVm(id, title, this));
+                if (!_selected.Contains(id)) list.Add(new RelationOptionVm(id, title, _cfg.TargetDbId, this));
         }
         else
         {
-            foreach (var (id, title) in results) list.Add(new RelationOptionVm(id, title, this));
+            foreach (var (id, title) in results) list.Add(new RelationOptionVm(id, title, _cfg.TargetDbId, this));
         }
         _shown.Clear();
         _shown.AddRange(list);
@@ -455,9 +478,10 @@ public sealed class RelationSelectBox : Panel
     private static double Res(string key, double fallback) =>
         Application.Current!.TryFindResource(key, out var r) && r is double d ? d : fallback;
 
-    private sealed class RelationOptionVm(int id, string title, RelationSelectBox owner) : INotifyPropertyChanged
+    private sealed class RelationOptionVm(int id, string title, int dbId, RelationSelectBox owner) : INotifyPropertyChanged
     {
         public int    Id    => id;
+        public int    DbId  => dbId;   // база цели этого пункта (0 — та же БД, >0 — межбазовая)
         public string Title => title;
 
         public bool Checked

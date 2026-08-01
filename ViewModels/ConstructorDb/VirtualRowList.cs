@@ -279,6 +279,30 @@ internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollecti
                  rec.CreatedAt ?? "", rec.UpdatedAt ?? "", rec.CreatedBy ?? "", rec.UpdatedBy ?? "");
     }
 
+    /// <summary>Запись <paramref name="targetId"/> изменилась (напр., переименована в панели): строки,
+    /// чьи связи ССЫЛАЮТСЯ на неё, показывают устаревшее название из батч-кеша. Пере-праймим связи этих
+    /// строк свежими названиями и уведомляем — их read-ячейки-связи перечитают показ. Точечно, без Reset
+    /// и без мелькания «Загрузка…»; если на targetId никто из загруженных строк не ссылается — ничего.</summary>
+    public void RefreshRelationTargets(int targetId)
+    {
+        if (_relLinks is null || _relationFieldIds.Length == 0) return;
+
+        // Ссылающиеся строки ищем по ТЕКУЩЕМУ кешу: id целей в нём верны, устарел лишь Title.
+        var referencing = new List<TableRowVm>();
+        foreach (var rows in _pages.Values)
+            foreach (var row in rows)
+            {
+                if (row.RecordId <= 0) continue;
+                if (_relationFieldIds.Any(fid => _relLinks.TryGet(fid, row.RecordId, out var links)
+                                                 && links.Any(l => l.Id == targetId)))
+                    referencing.Add(row);
+            }
+        if (referencing.Count == 0) return;
+
+        PrimeRelationLinks(referencing.Select(r => r.RecordId).ToList());   // свежие названия целей
+        foreach (var row in referencing) row.NotifyCellsChanged();
+    }
+
     /// <summary>Перечитывает ЗАГРУЖЕННЫЕ страницы из БД и обновляет строки НА МЕСТЕ (Fill), без Reset —
     /// для операций, меняющих ПОРЯДОК записей, но не их число (сдвиг вверх/вниз): нет мелькания
     /// «Загрузка…». Новые страницы не грузим; число записей не меняется. Синхронно (страниц в кеше
