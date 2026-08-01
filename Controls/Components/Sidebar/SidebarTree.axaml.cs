@@ -236,6 +236,9 @@ public partial class SidebarTree : UserControl
     {
         _rows.Clear();
         Flatten(_roots, 0);
+        // Первая строка стоит на месте шапки колонок таблицы (высота 36), остальные — на месте
+        // строк данных (37). См. SidebarRow.RowHeight.
+        if (_rows.Count > 0) _rows[0].IsFirstRow = true;
     }
 
     private void Flatten(IEnumerable<SidebarNode> nodes, int depth)
@@ -2228,6 +2231,32 @@ public partial class SidebarRow : ObservableObject
     public bool   HasStatus   => !string.IsNullOrEmpty(Status);
     public IBrush StatusBrush => StatusFailed ? Red : Secondary;
 
+    // Строка повторяет СТРУКТУРУ строки таблицы: контент = высота ячейки (RowHeightStandard = 36),
+    // а линия-разделитель ДОБАВЛЯЕТСЯ снизу отдельным элементом толщиной SeparatorThickness (тот же
+    // зум-компенсированный токен, что у линий сетки таблицы = ровно 1 физ. пиксель). Итог: шаг строки
+    // данных = 36 + линия, ровно как у DataGrid (RowHeight задаёт только ячейки, линия сетки — отдельная
+    // Auto-строка сверх них), поэтому белые линии сайдбара садятся на линии сетки при ЛЮБОМ зуме.
+    // ПЕРВАЯ строка сайдбара стоит на месте ШАПКИ колонок (высота ровно 36, линия НЕ добавляется).
+    private bool _isFirstRow;
+    public bool IsFirstRow
+    {
+        get => _isFirstRow;
+        set { if (_isFirstRow == value) return; _isFirstRow = value;
+              OnPropertyChanged(nameof(LineGridRow)); OnPropertyChanged(nameof(LineRowHeight)); }
+    }
+    // Контент строки = высота ячейки таблицы (RowHeightStandard = 36). Заглушки очереди со статусом
+    // растут: NaN → работает MinHeight.
+    public double RowContentHeight => HasStatus ? double.NaN : CellHeight;
+    // Линия-разделитель (толщина = компенсированный SeparatorThickness = 1 физ. пиксель, как линия сетки
+    // DataGrid). У строк ДАННЫХ она в своей Auto-строке (Row 1) → ДОБАВЛЯЕТСЯ к высоте: 36 + линия, ровно
+    // как строка данных таблицы. У ПЕРВОЙ строки (стоит на месте ШАПКИ колонок) строка линии схлопнута в 0,
+    // а линия лежит ПОВЕРХ контента (Row 0, снизу) → высота ровно 36 (как шапка), но линия видна.
+    public int       LineGridRow  => IsFirstRow ? 0 : 1;
+    public GridLength LineRowHeight => IsFirstRow ? new GridLength(0) : GridLength.Auto;
+
+    private static double CellHeight =>
+        Application.Current!.TryFindResource("RowHeightStandard", out var v) && v is double d ? d : 36;
+
     // Раскрываемые узлы — группы и корни-БД (запертая и немонтированная не раскрываются).
     private bool Expandable => Node.IsGroup || (Node.IsDatabase && !Node.IsLocked && !Node.IsPending);
 
@@ -2265,7 +2294,11 @@ public partial class SidebarRow : ObservableObject
         Hovered  ? Hover       : Brushes.Transparent;
 
     partial void OnHoveredChanged(bool value)  => OnPropertyChanged(nameof(RowBackground));
-    partial void OnStatusChanged(string? value)     => OnPropertyChanged(nameof(HasStatus));
+    partial void OnStatusChanged(string? value)
+    {
+        OnPropertyChanged(nameof(HasStatus));
+        OnPropertyChanged(nameof(RowContentHeight));   // появился/исчез статус → контент растёт/зажимается
+    }
     partial void OnStatusFailedChanged(bool value)  => OnPropertyChanged(nameof(StatusBrush));
     partial void OnCheckedChanged(bool value)
     {

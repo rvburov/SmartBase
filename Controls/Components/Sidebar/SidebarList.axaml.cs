@@ -68,7 +68,7 @@ public partial class SidebarList : UserControl
         RowsHost.Children.Clear();
         _rows.Clear();
 
-        var rowHeight = TryDouble("RowStepStandard", 37);
+        var rowHeight = TryDouble("RowHeightStandard", 36);
         var fontBase  = TryDouble("FontSizeBase", 14);
 
         foreach (var item in _items)

@@ -102,7 +102,10 @@
         <ScrollViewer VerticalScrollBarVisibility="Auto"
                       Background="Transparent"
                       ContextRequested="OnEmptyContextRequested">
-            <ItemsControl x:Name="RowsHost" Padding="0">
+            <!-- UseLayoutRounding отключается при зуме≠1 (тот же токен, что у DataGrid): иначе
+                 округление раздувает толщину линии-разделителя и копит сдвиг строк вниз. -->
+            <ItemsControl x:Name="RowsHost" Padding="0"
+                          UseLayoutRounding="{DynamicResource LineUseLayoutRounding}">
                 <ItemsControl.ItemsPanel>
                     <ItemsPanelTemplate>
                         <VirtualizingStackPanel />
@@ -110,14 +113,24 @@
                 </ItemsControl.ItemsPanel>
                 <ItemsControl.ItemTemplate>
                     <DataTemplate x:DataType="comp:SidebarRow">
-                        <Panel>
-                        <!-- Высота — MinHeight, а не Height: у заглушек очереди под именем
-                             живёт вторая строка статуса, обычные строки остаются стандартными. -->
+                        <!-- Строка повторяет структуру строки DataGrid. Контент = высота ячейки
+                             (RowHeightStandard = 36) в Row 0. Линия-разделитель — компенсированный по
+                             зуму SeparatorThickness (ровно 1 физ. пиксель, как линия сетки таблицы):
+                             у строк ДАННЫХ она в Auto-строке Row 1 → ДОБАВЛЯЕТСЯ (36 + линия); у ПЕРВОЙ
+                             строки (= шапка колонок) Row 1 схлопнут в 0, а линия лежит ПОВЕРХ контента
+                             (Row 0, снизу) → высота ровно 36, но линия видна. MinHeight держит нижний
+                             предел, чтобы заглушки очереди со статусом могли вырасти под вторую строку. -->
+                        <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="{Binding LineRowHeight}" />
+                        </Grid.RowDefinitions>
                         <Border x:Name="RowRoot"
+                                Grid.Row="0"
                                 Background="{Binding RowBackground}"
-                                Margin="0"
                                 Padding="10,0,0,0"
-                                MinHeight="{StaticResource RowStepStandard}"
+                                Height="{Binding RowContentHeight}"
+                                MinHeight="{StaticResource RowHeightStandard}"
                                 Tapped="OnRowTapped"
                                 PointerEntered="OnRowEnter"
                                 PointerExited="OnRowExit"
@@ -203,16 +216,17 @@
                                 </StackPanel>
                             </Grid>
                         </Border>
-                        <!-- Зазор между заливками строк — линия цвета фона отдельным
-                             aliased-элементом (не бордер строки с текстом): чёткая
-                             при любом зуме, на всю ширину строки (вне IndentMargin). -->
-                        <Rectangle Fill="{StaticResource BrushBg}"
+                        <!-- Линия-разделитель: белая (цвет фона), aliased, толщина = компенсированный
+                             SeparatorThickness (1 физ. пиксель), на всю ширину. Row 1 у строк данных
+                             (добавляется под контент), Row 0 у первой строки (поверх контента снизу). -->
+                        <Rectangle Grid.Row="{Binding LineGridRow}"
+                                   Fill="{StaticResource BrushBg}"
                                    Height="{DynamicResource SeparatorThickness}"
+                                   VerticalAlignment="Bottom"
                                    UseLayoutRounding="{DynamicResource LineUseLayoutRounding}"
                                    RenderOptions.EdgeMode="Aliased"
-                                   VerticalAlignment="Bottom"
                                    IsHitTestVisible="False" />
-                        </Panel>
+                        </Grid>
                     </DataTemplate>
                 </ItemsControl.ItemTemplate>
             </ItemsControl>
