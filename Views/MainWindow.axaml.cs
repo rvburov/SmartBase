@@ -1015,7 +1015,9 @@ public partial class MainWindow : Window
         var collectionId = ownCollectionId ?? ConstructorModule.CurrentCollectionId;
         if (collectionId is null) return;
 
-        RecordPanel.Show(repo, recordId, collectionId.Value);
+        // dbId прокидываем в панель: её внутрибазовые связи должны резолвиться в базе ПОКАЗЫВАЕМОЙ
+        // записи, а не в активной (панель могла быть открыта межбазовым переходом).
+        RecordPanel.Show(repo, recordId, collectionId.Value, dbId);
         _recordPanelLogicalOpen = true;
         // Запоминаем ВМЕСТЕ С БАЗОЙ: SetRecordPanelOpen ниже переключает кнопку навбара, та поднимает
         // RecordPanelToggled, и его обработчик переоткрывает запись по _lastOpened. Пока хранился

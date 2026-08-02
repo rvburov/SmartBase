@@ -38,6 +38,11 @@ public partial class RecordPageView : UserControl
     private RecordPageViewModel? _vm;
     private ConstructorRepository? _repo;   // для перечитывания записи из БД (ReloadFromDb)
 
+    // База ПОКАЗЫВАЕМОЙ записи (0 — активная). Панель может быть открыта межбазовым переходом, и тогда
+    // «текущая база» для неё и для приложения — РАЗНЫЕ. Без этого внутрибазовая связь чужой записи
+    // уводила бы в активную базу (см. Navigate ниже).
+    private int _dbId;
+
     // Гасит авто-сейв описания на время служебной установки текста (Show/ReloadFromDb), чтобы
     // программное MarkdownEditor.Text не приняли за правку пользователя (иначе перечитанное из БД
     // значение тут же писалось бы обратно и дёргало таблицу). Имя гасит сам NavbarPage (SetTitle).
@@ -110,9 +115,11 @@ public partial class RecordPageView : UserControl
     /// <summary>Синхронизирует визуальное состояние кнопки с фактической видимостью блока коллекции.</summary>
     public void SetCollectionPanelOpen(bool isOpen) => HeaderBar.SetCollectionPanelOpen(isOpen);
 
-    public void Show(ConstructorRepository repository, int recordId, int collectionId)
+    /// <param name="dbId">База показываемой записи: 0 — активная, &gt;0 — открыта межбазовым переходом.</param>
+    public void Show(ConstructorRepository repository, int recordId, int collectionId, int dbId = 0)
     {
         _repo = repository;
+        _dbId = dbId;
         _vm = new RecordPageViewModel(repository, recordId, collectionId);
         DataContext = _vm;
 
@@ -784,8 +791,12 @@ public partial class RecordPageView : UserControl
                 };
                 rel.Navigate += (_, t) =>
                 {
-                    if (t.DbId > 0) CrossDbRelatedRecordRequested?.Invoke(this, t);   // межбазовый переход
-                    else RelatedRecordRequested?.Invoke(this, t.RecordId);            // в текущей БД
+                    // t.DbId = 0 означает «в базе ЭТОЙ записи», а она не обязательно активная: панель
+                    // могла быть открыта межбазовым переходом. Подставляем базу панели (_dbId), иначе
+                    // внутрибазовая связь чужой записи открывалась бы в АКТИВНОЙ базе — чужая/пустая.
+                    var db = t.DbId > 0 ? t.DbId : _dbId;
+                    if (db > 0) CrossDbRelatedRecordRequested?.Invoke(this, (db, t.RecordId));
+                    else RelatedRecordRequested?.Invoke(this, t.RecordId);            // панель в активной БД
                 };
                 rel.Changed  += (_, _) => { if (_vm is not null) RecordChanged?.Invoke(this, _vm.RecordId); };
                 input = rel;
