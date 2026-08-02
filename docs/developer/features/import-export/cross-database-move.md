@@ -20,6 +20,27 @@
 > пересборку проекции `calendar_index` — сейчас они её не делают, и скопированные события
 > не попали бы в календарь.
 
+## Связи (`relation`) при переносе
+
+Перенос **одиночной коллекции** SQLite↔SQLite связи переносит и переписывает: само-связи внутри
+коллекции остаются внутрибазовыми (ремап `ToRecordId` по карте `_move_rmap` в
+`CopyOneCollectionFromAttached`), ссылки на записи вне коллекции становятся межбазовыми на
+базу-источник; конфиги полей-связей правятся согласованно (`RewriteMovedRelationConfigs`).
+
+Если на записи переносимой коллекции ссылались **извне**, UI сперва показывает окно «Межбазовый
+перенос оборвёт связи…» (`RelationDeleteImpact.ForCollectionExternalCrossMove`). При переносе
+**внутри** одной базы окна нет — id не меняются, связи целы. Только само-связи внутри коллекции — тоже
+без окна: они переписываются, а не рвутся.
+
+Перенос **ветки-группы** между базами рёбра НЕ переносит (нужен межколлекционный ремап `ToRecordId` в
+пределах ветки — отдельным заходом; окно предупреждает об обрыве), но **конфиги полей-связей правит**
+(`RewriteMovedGroupRelationConfigs`): цель внутри ветки → на новую коллекцию, цель снаружи → межбазовая
+на источник. Иначе конфиг приезжал бы дословно и поле показывало бы ЧУЖИЕ записи целевой базы.
+
+**PG-generic**-путь `CopyCollectionGeneric` не копирует ни рёбра, ни конфиги — и окно там не
+показывается даже для коллекции с одними само-связями. Подробности —
+[data-types/relation.md](../../architecture/data-types/relation.md).
+
 ## Связанные документы
 
-[overview](overview.md) · [import](import.md) · [export](export.md) · [architecture/database/multi-database](../../architecture/database/multi-database.md) · [features/constructor/table](../constructor/table.md)
+[overview](overview.md) · [import](import.md) · [export](export.md) · [architecture/database/multi-database](../../architecture/database/multi-database.md) · [architecture/data-types/relation](../../architecture/data-types/relation.md) · [features/constructor/table](../constructor/table.md)

@@ -46,9 +46,13 @@
 - **Контент:** `categories`, `db_groups`, `db_collections`, `db_fields`, `db_records`, `db_field_values`, `db_record_links`.
 - **Значения полей:** `db_field_values` — пара `(RecordId, FieldId) → Value`; это естественный **PK**, суррогатного Id нет, таблица `WITHOUT ROWID` (кластеризована по PK: значения одной записи лежат физически рядом, отдельный уникальный индекс пары не нужен — см. миграцию `SchemaCompact`). Так произвольные поля хранятся «вертикально», а не колонками. Все базовые типы, кроме `date`, хранятся как обычные строки; `date` — в ISO-каноне (`DateValue.ToStorage`). **Вычисляемые** типы (`created_*/updated_*`) значения здесь НЕ имеют — читаются из аудит-колонок `db_records` (см. [«Типы полей»](#типы-полей-свойств)). При **переносе записи в другую коллекцию** (таблица «Расположение» / смена коллекции в окне календаря) значения сопоставляются с полями цели **по имени** с приведением типов (`ConstructorRepository.CopyFieldValuesByName` → `ConvertValueForType`; нетривиально только пересечение границы «дата»).
 - **Связи записей:** `db_record_links` — рёбра «из записи в запись по полю-связи» (тип свойства
-  `relation`): `Id, FieldId, FromRecordId, ToRecordId, Position`. Значения связи здесь, а НЕ в
-  `db_field_values` — так работают FK-каскады (удаление поля/записи-конца чистит рёбра) и обратные
-  ссылки (запрос по `ToRecordId`). Уникальность `(FieldId, FromRecordId, ToRecordId)`. Подробности —
+  `relation`): `Id, FieldId, FromRecordId, ToRecordId, TargetDbId, Position`. Значения связи здесь, а
+  НЕ в `db_field_values` — так работают FK-каскады (удаление поля-связи или записи-источника чистит
+  рёбра) и запрос входящих по `ToRecordId` (окно «связи будут удалены» перед удалением/переносом).
+  `TargetDbId` — база цели: `0` = эта же БД, `>0` = стабильный DbId другого `.db` из реестра
+  (межбазовая связь); FK на `ToRecordId` поэтому **снят** — между файлами он невозможен, и удаление
+  цели чистит прикладной код. Уникальность `(FieldId, FromRecordId, TargetDbId, ToRecordId)` —
+  различает одинаковые id в разных целевых БД. Подробности —
   [data-types/relation.md](data-types/relation.md).
 - **Проекция календаря:** `calendar_index` — денормализованное «оглавление» событий (строка на каждое видимое поле-дату записи: `RecordId, FieldId, CollectionId, StartIso, EndIso, AllDay`; PK `(RecordId, FieldId)`, тоже `WITHOUT ROWID`; индекс `(CollectionId, StartIso)`, FK-каскады на `db_records`/`db_fields`). Из неё календарь читает события индексным range-query (см. ниже).
 - **UI-настройки коллекции:** `ui_col_widths`, `ui_row_heights`, `ui_collection_settings` (режим вида, ручной ресайз), `column_meta` — все метаданные колонки одной строкой на `(CollectionId, Key)`: аспекты `Position` (порядок), `Visible`/`Level` (окно «Отображение»), `DisplayName` (подписи «Название»/«Описание»); аспект `NULL` = дефолт, строка живёт, пока задан хоть один аспект. `record_display` — то же для строк-записей.

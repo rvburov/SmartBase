@@ -12,8 +12,9 @@ namespace SmartBase.Core.Models;
 /// <see cref="TargetDbId"/> — межбазовая цель: 0 = целевая коллекция в ЭТОЙ же БД (обычный случай);
 /// &gt;0 = стабильный DbId целевой БД из реестра app.db (коллекция и записи — в другом файле).
 /// <see cref="Single"/> — true: ровно одна связанная запись (выбор заменяет прежнюю); false:
-/// несколько (many-to-many). <see cref="Separator"/> — ключ формата склейки названий (как у
-/// «Мультисписка»: comma/space/semicolon/newline; см. <see cref="MultiSelectValue.SeparatorFor"/>).
+/// несколько (many-to-many); дефолт диалога — «Одну» (true). <see cref="Separator"/> — ключ формата
+/// склейки названий (общий с «Мультисписком», 7 вариантов: comma/dot/space/semicolon/newline/
+/// comma_tight/dot_tight; см. <see cref="MultiSelectValue.SeparatorFor"/>).
 /// </summary>
 public sealed record RelationConfig(int TargetCollectionId, bool Single, string Separator = "comma", int TargetDbId = 0)
 {
