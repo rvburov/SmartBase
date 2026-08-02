@@ -418,19 +418,20 @@ public sealed class RelationSelectBox : Panel
                 _titles[id] = title;
 
         var list = new List<RelationOptionVm>();
-        if (q.Length == 0)
+        // Уже выбранные — ВСЕГДА с базой СВОЕГО ребра (переход туда, откуда связь реально идёт), и в
+        // пустом списке, И В ПОИСКЕ: иначе при коллизии id «→» уводил бы в базу текущего конфига поля
+        // (исходный симптом C4). Кандидаты приходят только из целевой базы поля, поэтому выбранная
+        // цель в ЧУЖОЙ базе в results не попадает — отбираем её по уже известному названию, чтобы при
+        // поиске она не исчезала из списка.
+        foreach (var id in _selected)
         {
-            // Уже выбранные — с базой СВОЕГО ребра (переход туда, откуда связь реально идёт).
-            foreach (var id in _selected)
-                list.Add(new RelationOptionVm(id, _titles.GetValueOrDefault(id, ""), _selectedDb.GetValueOrDefault(id, _cfg.TargetDbId), this));
-            // Кандидаты — из ТЕКУЩЕЙ целевой базы поля.
-            foreach (var (id, title) in results)
-                if (!_selected.Contains(id)) list.Add(new RelationOptionVm(id, title, _cfg.TargetDbId, this));
+            var title = _titles.GetValueOrDefault(id, "");
+            if (q.Length > 0 && title.IndexOf(q, StringComparison.CurrentCultureIgnoreCase) < 0) continue;
+            list.Add(new RelationOptionVm(id, title, _selectedDb.GetValueOrDefault(id, _cfg.TargetDbId), this));
         }
-        else
-        {
-            foreach (var (id, title) in results) list.Add(new RelationOptionVm(id, title, _cfg.TargetDbId, this));
-        }
+        // Кандидаты — из ТЕКУЩЕЙ целевой базы поля.
+        foreach (var (id, title) in results)
+            if (!_selected.Contains(id)) list.Add(new RelationOptionVm(id, title, _cfg.TargetDbId, this));
         _shown.Clear();
         _shown.AddRange(list);
 
