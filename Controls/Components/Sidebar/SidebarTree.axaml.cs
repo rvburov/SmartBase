@@ -1808,7 +1808,9 @@ public partial class SidebarTree : UserControl
             { hasLinks = true; break; }
         if (!hasLinks) return true;
 
-        var warn = new ConfirmDialog("Межбазовый перенос оборвёт связи, ссылающиеся на переносимое (станут «связи нет»). Продолжить?");
+        var warn = new ConfirmDialog(
+            "Межбазовый перенос оборвёт связи, ссылающиеся на переносимое (станут «связи нет»). Продолжить?",
+            confirmText: "Перенести");
         return await warn.ShowDialog<bool>(OwnerWindow) == true;
     }
 

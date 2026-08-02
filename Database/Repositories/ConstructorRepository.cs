@@ -3813,6 +3813,65 @@ public partial class ConstructorRepository(AppDbContext db)
         finally { sourceCtx?.Dispose(); }
     }
 
+    /// <summary>
+    /// Что ПОТЕРЯЕТСЯ при переносе записей в другую коллекцию — для окна подтверждения ДО старта.
+    /// <c>this</c> — ЦЕЛЕВОЙ репозиторий (как у <see cref="MoveRecordsCore"/>), источник передаётся.
+    ///
+    /// Считается по СХЕМЕ — два списка полей (<c>db_fields</c>, десятки строк), а не по данным:
+    /// стоимость не зависит от числа переносимых записей, скана значений и рёбер нет. Поэтому здесь,
+    /// в отличие от проверки входящих связей (<see cref="RelationDeleteImpact"/>, миллионы рёбер →
+    /// только ФАКТ через EXISTS), можно позволить себе полный список ИМЁН: решение «отменять ли
+    /// перенос» зависит именно от того, какие свойства пропадут.
+    ///
+    /// ВАЖНО: правила обязаны совпадать с планом в <see cref="MoveRecordsCore"/> (сопоставление по
+    /// имени + для связей совместимость целевой коллекции и ПЕРЕПИСАННОЙ целевой БД) — иначе окно
+    /// соврёт. Меняешь план — меняй и здесь.
+    /// </summary>
+    /// <returns>
+    /// Dropped — свойств нет в целевой коллекции и создавать их не просили (значения не переедут);
+    /// LinksDropped — поле-связь есть, но несовместимо (само поле переедет, связи — нет).
+    /// </returns>
+    public (List<string> Dropped, List<string> LinksDropped) FieldsLostOnMove(
+        ConstructorRepository source, int sourceCollectionId, int targetCollectionId,
+        bool createMissingFields, int sourceDbId, int targetDbId)
+    {
+        // Те же формулы, что в MoveRecordsCore.
+        var canMoveLinks = sourceDbId > 0 && targetDbId > 0;
+        int RelTargetDb(int cfgOrLinkDb)
+        {
+            var abs = cfgOrLinkDb == 0 ? sourceDbId : cfgOrLinkDb;
+            return abs == targetDbId ? 0 : abs;
+        }
+
+        var targetByName = new Dictionary<string, DbField>(StringComparer.OrdinalIgnoreCase);
+        foreach (var tf in GetFields(targetCollectionId)) targetByName.TryAdd(tf.Name, tf);
+
+        var dropped      = new List<string>();
+        var linksDropped = new List<string>();
+        foreach (var sf in source.GetFields(sourceCollectionId))
+        {
+            if (!targetByName.TryGetValue(sf.Name, out var tf))
+            {
+                // Поля в цели нет: либо создадим (переедет всё), либо свойство молча пропадёт.
+                if (!createMissingFields) dropped.Add(sf.Name);
+                // Созданное поле-связь получает переписанный конфиг — но без известных DbId рёбра
+                // всё равно не копируются.
+                else if (sf.FieldType == "relation" && !canMoveLinks) linksDropped.Add(sf.Name);
+                continue;
+            }
+            // Не-связь: значение переносится по имени с приведением типа (CopyFieldValuesByName).
+            if (sf.FieldType != "relation") continue;
+
+            var sc = RelationConfig.FromConfig(sf.ConfigJson);
+            var tc = RelationConfig.FromConfig(tf.ConfigJson);
+            var ok = canMoveLinks && tf.FieldType == "relation" && sc is not null && tc is not null
+                     && tc.TargetCollectionId == sc.TargetCollectionId
+                     && tc.TargetDbId == RelTargetDb(sc.TargetDbId);
+            if (!ok) linksDropped.Add(sf.Name);
+        }
+        return (dropped, linksDropped);
+    }
+
     // Перенос записей выполняется на контекстах targetRepo (this) и sourceRepo. Главное про
     // производительность (как DuplicateRecordsData/DeleteRecordsData, см. docs/architecture/performance):
     //   • план сопоставления полей считается ОДИН раз — все записи из одной коллекции-источника;

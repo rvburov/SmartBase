@@ -460,6 +460,53 @@ public sealed class RelationLinkTests
         Assert.Equal([(newT2, 0)], verify.GetLinkEdges(fSelf.Id!.Value, newT1));
     }
 
+    // Окно «что потеряется» перед переносом записи. Правила ОБЯЗАНЫ совпадать с планом MoveRecordsCore:
+    // свойство без одноимённого поля в цели теряет значения, несовместимая одноимённая связь — рёбра.
+    [Fact]
+    public void FieldsLostOnMove_reports_missing_fields_and_incompatible_relations()
+    {
+        using var db = new TempDatabase(dbId: 1, name: "A");
+        var repo     = db.Constructor;
+        var projCol  = SampleData.AddCollection(repo, "Проекты").Id!.Value;
+        var otherCol = SampleData.AddCollection(repo, "Прочее").Id!.Value;
+        var taskCol  = SampleData.AddCollection(repo, "Задачи").Id!.Value;
+        var archCol  = SampleData.AddCollection(repo, "Архив").Id!.Value;
+
+        // Источник: связь «Проект» → Проекты и текстовая «Заметка».
+        var srcRel = SampleData.AddField(repo, taskCol, "Проект", "relation", position: 1000);
+        srcRel.ConfigJson = new RelationConfig(projCol, false).ToConfigJson();
+        repo.UpdateField(srcRel);
+        SampleData.AddField(repo, taskCol, "Заметка", "text", position: 2000);
+
+        // Цель: совместимая связь «Проект»; поля «Заметка» нет.
+        var tgtRel = SampleData.AddField(repo, archCol, "Проект", "relation", position: 1000);
+        tgtRel.ConfigJson = new RelationConfig(projCol, false).ToConfigJson();
+        repo.UpdateField(tgtRel);
+
+        // Без создания недостающих: пропадёт «Заметка», связи целы.
+        var (dropped, links) = repo.FieldsLostOnMove(repo, taskCol, archCol, createMissingFields: false, 1, 1);
+        Assert.Equal(["Заметка"], dropped);
+        Assert.Empty(links);
+
+        // С созданием недостающих не теряется ничего.
+        var withCreate = repo.FieldsLostOnMove(repo, taskCol, archCol, createMissingFields: true, 1, 1);
+        Assert.Empty(withCreate.Dropped);
+        Assert.Empty(withCreate.LinksDropped);
+
+        // Одноимённая связь смотрит на ДРУГУЮ коллекцию → поле переедет, рёбра нет.
+        tgtRel.ConfigJson = new RelationConfig(otherCol, false).ToConfigJson();
+        repo.UpdateField(tgtRel);
+        Assert.Equal(["Проект"],
+            repo.FieldsLostOnMove(repo, taskCol, archCol, createMissingFields: true, 1, 1).LinksDropped);
+
+        // Одноимённое поле НЕ «Связь» (текст) — тот же исход: рёбра не переносятся.
+        var textCol = SampleData.AddCollection(repo, "Текстовый архив").Id!.Value;
+        SampleData.AddField(repo, textCol, "Проект", "text", position: 1000);
+        SampleData.AddField(repo, textCol, "Заметка", "text", position: 2000);
+        Assert.Equal(["Проект"],
+            repo.FieldsLostOnMove(repo, taskCol, textCol, createMissingFields: false, 1, 1).LinksDropped);
+    }
+
     // Регресс: МЕЖБАЗОВЫЙ перенос ГРУППЫ. Сами рёбра ветки не копируются (v1), но конфиги полей-связей
     // раньше уезжали ДОСЛОВНО: TargetDbId=0 + TargetCollectionId из dbA читались в dbB как ссылка на
     // ЛОКАЛЬНУЮ коллекцию с этим id — поле молча показывало ЧУЖИЕ записи. Цель ВНУТРИ ветки должна

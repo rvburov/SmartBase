@@ -438,11 +438,30 @@ public partial class ConstructorControllerView : UserControl
         // Та же коллекция — переносить некуда (no-op).
         if (res.DbId == CurrentDbId && res.CollectionId == _currentCollectionId.Value) return;
 
+        // Все потери — в ОДНО окно: два-три подтверждения подряд просто «прокликивают».
+        var warnings = new List<string>();
+
+        // Свойства без пары в целевой коллекции значения не переносят, а несовместимое одноимённое
+        // поле-связь теряет связи — раньше и то и другое происходило МОЛЧА. Считается по схеме
+        // (два списка полей), поэтому дёшево независимо от числа переносимых записей.
+        var (dropped, linksDropped) = targetRepo.FieldsLostOnMove(
+            _repository, _currentCollectionId.Value, res.CollectionId,
+            res.CreateMissingFields, CurrentDbId, res.DbId);
+        if (dropped.Count > 0)
+            warnings.Add($"• не перенесутся свойства: {NameList(dropped)}");
+        if (linksDropped.Count > 0)
+            warnings.Add($"• потеряются связи в полях: {NameList(linksDropped)}");
+
         // Перенос = копия + удаление (у записи новый id), поэтому ВХОДЯЩИЕ связи на неё обрываются
-        // (за записью не следуют). Предупреждаем, если такие есть.
+        // (за записью не следуют).
         if (RelationDeleteImpact.ForRecords(_repository, CurrentDbId, ids))
+            warnings.Add("• оборвутся связи, ссылающиеся на переносимые записи (станут «связи нет»)");
+
+        if (warnings.Count > 0)
         {
-            var warnDlg = new ConfirmDialog("Перенос оборвёт связи, ссылающиеся на переносимые записи (станут «связи нет»). Продолжить?");
+            var warnDlg = new ConfirmDialog(
+                "При переносе:\n" + string.Join("\n", warnings) + "\n\nПродолжить?",
+                confirmText: "Перенести");
             if (await warnDlg.ShowDialog<bool>(win) != true) return;
         }
 
@@ -468,6 +487,13 @@ public partial class ConstructorControllerView : UserControl
         if (keepVertical is { } off && TableViewCtrl.IsVisible)
             TableViewCtrl.RestoreVerticalOffset(off);
     }
+
+    // Имена свойств для окна: первые 8 + «и ещё N». Ограничение чисто визуальное (при коллекции на
+    // сотню полей окно растянулось бы на экран) — на стоимость проверки не влияет.
+    private static string NameList(IReadOnlyList<string> names) =>
+        names.Count <= 8
+            ? string.Join(", ", names)
+            : string.Join(", ", names.Take(8)) + $" и ещё {names.Count - 8}";
 
     // Русское склонение: 1 запись, 2–4 записи, 5+ записей (с учётом 11–14).
     private static string RecordsPlural(int n)
