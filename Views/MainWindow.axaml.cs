@@ -325,7 +325,9 @@ public partial class MainWindow : Window
         // если это та же запись (значения свойств, имя и описание перечитываются из БД).
         ConstructorModule.RecordValueEdited   += (_, rid) =>
         {
-            if (_recordPanelLogicalOpen && rid == _lastOpenedRecordId)
+            // Только для записи ТЕКУЩЕЙ базы (DbId=0): правка в таблице к межбазовой записи в панели
+            // отношения не имеет, а id в разных базах могут совпасть.
+            if (_recordPanelLogicalOpen && _lastOpened is { DbId: 0 } l && rid == l.RecordId)
                 RecordPanel.ReloadFromDb();
         };
         // Состав/имена свойств изменились в таблице (добавили/удалили/переименовали/дублировали поле) —
@@ -336,15 +338,20 @@ public partial class MainWindow : Window
         };
 
         // Toggle правой панели записи из навбара коллекции.
-        // Если запись ранее была открыта (_lastOpenedRecordId есть) — переоткрываем её;
+        // Если запись ранее была открыта (_lastOpened есть) — переоткрываем её;
         // иначе берём первую запись текущей коллекции (на первом запуске
-        // _lastOpenedRecordId ещё null, но коллекция уже выбрана).
+        // _lastOpened ещё null, но коллекция уже выбрана).
         ConstructorModule.RecordPanelToggled += (_, isOpen) =>
         {
             if (isOpen)
             {
-                var rid = _lastOpenedRecordId ?? FirstRecordIdOfCurrentCollection();
-                if (rid is int id) OpenRecordPanel(id);
+                // Переоткрываем ИМЕННО ту запись и в ТОЙ базе, что была открыта (межбазовую — в её
+                // БД); если открывать нечего — первая запись текущей коллекции (DbId=0).
+                var last = _lastOpened
+                           ?? (FirstRecordIdOfCurrentCollection() is int f
+                               ? (DbId: 0, RecordId: f)
+                               : ((int DbId, int RecordId)?)null);
+                if (last is { } l) OpenRecordPanel(l.DbId, l.RecordId);
                 else ConstructorModule.SetRecordPanelOpen(false); // нечего открывать → откат
             }
             else CloseRecordPanel();
@@ -965,7 +972,9 @@ public partial class MainWindow : Window
     private bool _recordPanelLogicalOpen;
     // Последняя открытая запись — нужна toggle-кнопке в навбаре коллекции,
     // чтобы повторно открыть ту же запись после закрытия панели.
-    private int? _lastOpenedRecordId;
+    // Последняя открытая в панели запись — ВМЕСТЕ с её базой (DbId=0 — текущая). База обязательна:
+    // переоткрытие по toggle навбара иначе теряло бы её и искало межбазовую запись в текущей БД.
+    private (int DbId, int RecordId)? _lastOpened;
 
     private int? FirstRecordIdOfCurrentCollection()
     {
@@ -983,18 +992,36 @@ public partial class MainWindow : Window
     private void OpenRecordPanel(int dbId, int recordId)
     {
         var repo = dbId > 0 ? RelationDbResolver.RepoFor(dbId) : CurrentConstructorRepo;
-        if (repo is null) return;   // целевая БД недоступна — переход невозможен
+        if (repo is null)
+        {
+            // Раньше — молчаливый return: клик по «→» выглядел как «кнопка не работает».
+            Notify("База связанной записи недоступна — открыть её нельзя.");
+            return;
+        }
 
         // Коллекцию берём У САМОЙ ЗАПИСИ (переход по чипу связи открывает запись ДРУГОЙ
-        // коллекции — панель должна показать её собственную схему полей), с фолбэком на
-        // текущую активную коллекцию.
-        var collectionId = repo.GetRecord(recordId)?.CollectionId
-                           ?? ConstructorModule.CurrentCollectionId;
+        // коллекции — панель должна показать её собственную схему полей).
+        var ownCollectionId = repo.GetRecord(recordId)?.CollectionId;
+
+        // МЕЖБАЗОВЫЙ переход к несуществующей записи фолбэка иметь НЕ МОЖЕТ: id активной коллекции
+        // относится к ДРУГОЙ базе, и панель открывалась бы с чужой схемой и пустыми полями — снаружи
+        // это выглядит как «ничего не произошло». Внутри своей базы фолбэк оставляем прежним.
+        if (ownCollectionId is null && dbId > 0)
+        {
+            Notify("Связанная запись не найдена в своей базе — возможно, она удалена.");
+            return;
+        }
+
+        var collectionId = ownCollectionId ?? ConstructorModule.CurrentCollectionId;
         if (collectionId is null) return;
 
         RecordPanel.Show(repo, recordId, collectionId.Value);
         _recordPanelLogicalOpen = true;
-        _lastOpenedRecordId     = recordId;
+        // Запоминаем ВМЕСТЕ С БАЗОЙ: SetRecordPanelOpen ниже переключает кнопку навбара, та поднимает
+        // RecordPanelToggled, и его обработчик переоткрывает запись по _lastOpened. Пока хранился
+        // голый id, переоткрытие шло через перегрузку с dbId=0 — межбазовая запись искалась в ТЕКУЩЕЙ
+        // базе, не находилась и панель перерисовывалась пустой поверх уже правильно открытой.
+        _lastOpened             = (dbId, recordId);
         ConstructorModule.SetRecordPanelOpen(true);
         AppSettings.SaveRecordPanelOpen(true);
         ApplyColumns();
