@@ -1800,31 +1800,35 @@ public partial class SidebarTree : UserControl
     {
         if (crossDb.Count == 0 || OwnerWindow is null) return true;
 
-        // Перенос с участием PostgreSQL идёт generic-путём (ATTACH только у SQLite) и рёбра НЕ копирует
-        // вовсе. Там проверяем ЛЮБЫЕ связи: обычная смотрит только внешние входящие и на коллекции
-        // с одними само-связями ответила бы «нет» — связи исчезли бы без предупреждения.
+        // Два пути НЕ копируют рёбра вовсе: любой перенос с участием PostgreSQL (generic вместо ATTACH)
+        // и перенос ВЕТКИ ГРУППЫ даже на SQLite (v1). Там теряются и связи ВНУТРИ переносимого, и
+        // исходящие наружу — обычная проверка смотрит только внешние ВХОДЯЩИЕ и их не видит.
         var pg = targetRepo.IsPostgres || crossDb.Any(t => t.SrcRepo.IsPostgres);
 
-        var hasLinks = false;
+        var hasLinks   = false;
+        string? severe = null;   // непустое → рёбра не переедут вовсе (текст строже)
         foreach (var t in crossDb)
         {
+            var dropsAll = pg || t.IsGroup;
             bool hit;
-            if (pg)
+            if (dropsAll)
             {
                 IReadOnlyCollection<int> cols = t.IsGroup ? t.SrcRepo.CollectionIdsInGroup(t.Id) : [t.Id];
-                hit = RelationDeleteImpact.ForPgCrossMove(t.SrcRepo, t.SrcDbId, cols);
+                hit = RelationDeleteImpact.ForCrossMoveDroppingAllLinks(t.SrcRepo, t.SrcDbId, cols);
             }
-            else hit = t.IsGroup
-                ? RelationDeleteImpact.ForGroup(t.SrcRepo, t.SrcDbId, t.Id)
-                : RelationDeleteImpact.ForCollectionExternalCrossMove(t.SrcRepo, t.SrcDbId, t.Id);
-            if (hit) { hasLinks = true; break; }
+            else hit = RelationDeleteImpact.ForCollectionExternalCrossMove(t.SrcRepo, t.SrcDbId, t.Id);
+            if (!hit) continue;
+
+            hasLinks = true;
+            if (!dropsAll) continue;
+            severe = pg ? "Перенос с участием PostgreSQL" : "Перенос ветки группы между базами";
+            break;   // строгий текст уже определён, остальные узлы не важны
         }
         if (!hasLinks) return true;
 
         var warn = new ConfirmDialog(
-            pg
-                ? "Перенос с участием PostgreSQL связи НЕ переносит: все связи переносимого будут потеряны, "
-                  + "включая связи внутри него. Продолжить?"
+            severe is not null
+                ? $"{severe} связи НЕ переносит: будут потеряны и связи ВНУТРИ переносимого, и ссылки на него. Продолжить?"
                 : "Межбазовый перенос оборвёт связи, ссылающиеся на переносимое (станут «связи нет»). Продолжить?",
             confirmText: "Перенести");
         return await warn.ShowDialog<bool>(OwnerWindow) == true;
