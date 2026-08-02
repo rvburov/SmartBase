@@ -1,13 +1,11 @@
 using System.Text.Json;
 using Avalonia;
 using Avalonia.Controls;
-using Avalonia.Controls.Primitives;
 using Avalonia.Layout;
 using SmartBase.Controls.Widgets;
 using SmartBase.Core.Models;
 using SmartBase.Core.Validators;
 using SmartBase.Database.Repositories;
-using SmartBase.Utils;
 
 namespace SmartBase.Controls.Dialogs;
 
@@ -114,20 +112,17 @@ public partial class RecordDialog : Window
 
         LoadCollections(CurrentRepo);
 
-        StartTimeList.ItemsSource = TimeText.Options;
-        EndTimeList.ItemsSource   = TimeText.Options;
-
         var now = presetDate ?? DateTime.Today;
-        StartDatePicker.SelectedDate = now;
-        EndDatePicker.SelectedDate   = now;
+        StartDateField.Date = now;
+        EndDateField.Date   = now;
 
         if (presetTime.HasValue)
         {
             _savedStartTime = presetTime.Value;
             _savedEndTime   = presetTime.Value + TimeSpan.FromHours(1);
         }
-        StartTimeInput.Text = TimeText.Format(_savedStartTime);
-        EndTimeInput.Text   = TimeText.Format(_savedEndTime);
+        StartTimeField.Time = _savedStartTime;
+        EndTimeField.Time   = _savedEndTime;
 
         if (editRecord is not null)
         {
@@ -148,17 +143,15 @@ public partial class RecordDialog : Window
             KeepWindowPosition(pos);
         };
 
-        WireTimeField(StartTimeInput, StartTimeArrow, StartTimePopup, StartTimeList,
-                      () => _savedStartTime, t => _savedStartTime = t);
-        WireTimeField(EndTimeInput, EndTimeArrow, EndTimePopup, EndTimeList,
-                      () => _savedEndTime, t => _savedEndTime = t);
+        WireTimeField(StartTimeField, t => _savedStartTime = t);
+        WireTimeField(EndTimeField,   t => _savedEndTime   = t);
 
         CancelBtn.Click += (_, _) => Close(null);
         DeleteBtn.Click += (_, _) => Close(new RecordDialogResult(null, Deleted: true));
         SaveBtn.Click   += (_, _) => TrySaveCalendar(editRecord?.Id);
 
-        Deactivated += (_, _) => CloseTimePopups();
-        Closing     += (_, _) => CloseTimePopups();
+        Deactivated += (_, _) => ClosePopups();
+        Closing     += (_, _) => ClosePopups();
 
         // Список «Дата события» зависит от выбранной коллекции — обновляем при её смене
         // (смена БД тоже сюда приводит: LoadCollections сбрасывает выбор коллекции).
@@ -389,10 +382,14 @@ public partial class RecordDialog : Window
     // ─── Календарь-режим ──────────────────────────────────────────────────────
     // ══════════════════════════════════════════════════════════════════════════
 
-    private void CloseTimePopups()
+    // Выпадашки полей даты и времени — свои Popup'ы виджетов; закрываем их вместе,
+    // когда окно теряет фокус или закрывается.
+    private void ClosePopups()
     {
-        StartTimePopup.IsOpen = false;
-        EndTimePopup.IsOpen   = false;
+        StartDateField.ClosePopup();
+        EndDateField.ClosePopup();
+        StartTimeField.ClosePopup();
+        EndTimeField.ClosePopup();
     }
 
     // Восстанавливает позицию окна после пересчёта высоты (SizeToContent),
@@ -407,64 +404,31 @@ public partial class RecordDialog : Window
         LayoutUpdated += Restore;
     }
 
-    private void WireTimeField(
-        TextBox input, Button arrow, Popup popup, ListBox list,
-        Func<TimeSpan> getSaved, Action<TimeSpan> setSaved)
+    // Запоминаем последнее осмысленное время: при «Весь день» поля времени скрыты,
+    // и при возврате переключателя их надо восстановить.
+    private void WireTimeField(TimeField field, Action<TimeSpan> setSaved)
     {
-        input.TextChanged += (_, _) =>
+        field.TimeChanged += (_, _) =>
         {
-            if (AllDayCheck.IsChecked != true && TimeText.TryParse(input.Text, out var t))
-                setSaved(t);
+            if (AllDayCheck.IsChecked != true) setSaved(field.Time);
         };
-
-        arrow.Click += (_, _) =>
-        {
-            var wasOpen = popup.IsOpen;
-            CloseTimePopups();
-            if (wasOpen) return;
-            SelectInList(list, getSaved());
-            popup.IsOpen = true;
-            list.ScrollIntoView(list.SelectedItem);
-        };
-
-        list.SelectionChanged += (_, _) =>
-        {
-            if (!popup.IsOpen) return;
-            if (list.SelectedItem is string s && TimeText.TryParse(s, out var t))
-            {
-                setSaved(t);
-                input.Text = s;
-            }
-            popup.IsOpen = false;
-        };
-    }
-
-    private static void SelectInList(ListBox list, TimeSpan time)
-    {
-        var idx = TimeText.Options.ToList().IndexOf(TimeText.Format(time));
-        if (idx < 0)
-        {
-            var quarter = (time.Hours * 60 + time.Minutes) / 15;
-            idx = Math.Clamp(quarter, 0, TimeText.Options.Count - 1);
-        }
-        list.SelectedIndex = idx;
     }
 
     private void FillFromRecord(CalendarRecord r)
     {
-        TitleBox.Text                = r.Title;
-        DescBox.Text                 = r.Description;
-        AllDayCheck.IsChecked        = r.AllDay;
-        StartDatePicker.SelectedDate = r.StartDt.Date;
-        EndDatePicker.SelectedDate   = r.EndDt.Date;
+        TitleBox.Text         = r.Title;
+        DescBox.Text          = r.Description;
+        AllDayCheck.IsChecked = r.AllDay;
+        StartDateField.Date   = r.StartDt.Date;
+        EndDateField.Date     = r.EndDt.Date;
 
         if (!r.AllDay)
         {
             _savedStartTime = r.StartDt.TimeOfDay;
             _savedEndTime   = r.EndDt.TimeOfDay;
         }
-        StartTimeInput.Text = TimeText.Format(_savedStartTime);
-        EndTimeInput.Text   = TimeText.Format(_savedEndTime);
+        StartTimeField.Time = _savedStartTime;
+        EndTimeField.Time   = _savedEndTime;
 
         if (r.CollectionId.HasValue)
         {
@@ -477,19 +441,19 @@ public partial class RecordDialog : Window
     {
         var isAllDay = AllDayCheck.IsChecked == true;
 
-        StartLabel.IsVisible      = !isAllDay;
-        StartTimeBorder.IsVisible = !isAllDay;
-        EndLabel.IsVisible        = !isAllDay;
-        EndTimeBorder.IsVisible   = !isAllDay;
+        StartLabel.IsVisible     = !isAllDay;
+        StartTimeField.IsVisible = !isAllDay;
+        EndLabel.IsVisible       = !isAllDay;
+        EndTimeField.IsVisible   = !isAllDay;
 
         var span = isAllDay ? 3 : 1;
-        Grid.SetColumnSpan(StartDatePicker, span);
-        Grid.SetColumnSpan(EndDatePicker, span);
+        Grid.SetColumnSpan(StartDateField, span);
+        Grid.SetColumnSpan(EndDateField, span);
 
         if (!isAllDay)
         {
-            StartTimeInput.Text = TimeText.Format(_savedStartTime);
-            EndTimeInput.Text   = TimeText.Format(_savedEndTime);
+            StartTimeField.Time = _savedStartTime;
+            EndTimeField.Time   = _savedEndTime;
         }
     }
 
@@ -505,10 +469,10 @@ public partial class RecordDialog : Window
             return;
         }
 
-        var startDate = StartDatePicker.SelectedDate ?? DateTime.Today;
-        var endDate   = EndDatePicker.SelectedDate   ?? DateTime.Today;
-        var startTime = TimeText.TryParse(StartTimeInput.Text, out var st) ? st : _savedStartTime;
-        var endTime   = TimeText.TryParse(EndTimeInput.Text,   out var et) ? et : _savedEndTime;
+        var startDate = StartDateField.Date ?? DateTime.Today;
+        var endDate   = EndDateField.Date   ?? DateTime.Today;
+        var startTime = StartTimeField.Time;
+        var endTime   = EndTimeField.Time;
 
         var isAllDay = AllDayCheck.IsChecked == true;
         var startDt  = startDate.Date + (isAllDay ? TimeSpan.Zero : startTime);

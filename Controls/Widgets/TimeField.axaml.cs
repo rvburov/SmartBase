@@ -64,6 +64,12 @@ public partial class TimeField : UserControl
         }
     }
 
+    /// <summary>
+    /// Время, если поле читается; <c>null</c> — пусто или мусор. Нужно там, где пустое
+    /// время значит «весь день» (строка быстрого добавления задачи).
+    /// </summary>
+    public TimeSpan? TimeOrNull => TimeText.TryParse(Input.Text, out var t) ? t : null;
+
     /// <summary>Открыт ли выпадающий список (для внешней выпадашки — не закрываться, пока открыт).</summary>
     public bool IsPopupOpen => Pop.IsOpen;
 

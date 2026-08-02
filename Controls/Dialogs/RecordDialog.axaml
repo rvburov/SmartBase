@@ -59,38 +59,8 @@
                            FontWeight="{StaticResource FontWeightBold}"
                            Foreground="{StaticResource BrushSecondaryText}" />
                 <Grid x:Name="StartRow" ColumnDefinitions="2*,8,*" Margin="0,0,0,12">
-                    <CalendarDatePicker Grid.Column="0" x:Name="StartDatePicker"
-                                        Height="34" HorizontalAlignment="Stretch"
-                                        SelectedDateFormat="Custom"
-                                        CustomDateFormatString="dd.MM.yyyy" />
-                    <Border Grid.Column="2" x:Name="StartTimeBorder" Classes="timeField" Height="34">
-                        <Grid ColumnDefinitions="*,Auto">
-                            <TextBox Grid.Column="0" x:Name="StartTimeInput" Classes="timeInput" />
-                            <Button Grid.Column="1" x:Name="StartTimeArrow" Classes="timeArrow">
-                                <Viewbox Width="{StaticResource IconSizeSmall}" Height="{StaticResource IconSizeSmall}">
-                                    <Canvas Width="24" Height="24">
-                                        <!-- стандартная иконка «время» (часы), в пару к иконке даты -->
-                                        <Path Data="{StaticResource IconClock}"
-                                              Stroke="{StaticResource BrushSecondaryText}"
-                                              StrokeThickness="{StaticResource IconStrokeSmall}"
-                                              StrokeLineCap="Round"
-                                              StrokeJoin="Round" />
-                                    </Canvas>
-                                </Viewbox>
-                            </Button>
-                            <Popup Grid.Column="0" x:Name="StartTimePopup" InheritsTransform="True"
-                                   PlacementTarget="{Binding #StartTimeBorder}"
-                                   Placement="BottomEdgeAlignedLeft"
-                                   IsLightDismissEnabled="True">
-                                <Border Classes="timePopup"
-                                        MinWidth="{Binding #StartTimeBorder.Bounds.Width}">
-                                    <ScrollViewer MaxHeight="240">
-                                        <ListBox x:Name="StartTimeList" Classes="timeList" />
-                                    </ScrollViewer>
-                                </Border>
-                            </Popup>
-                        </Grid>
-                    </Border>
+                    <w:DateField Grid.Column="0" x:Name="StartDateField" />
+                    <w:TimeField Grid.Column="2" x:Name="StartTimeField" />
                 </Grid>
 
                 <!-- Конец -->
@@ -100,38 +70,8 @@
                            FontWeight="{StaticResource FontWeightBold}"
                            Foreground="{StaticResource BrushSecondaryText}" />
                 <Grid x:Name="EndRow" ColumnDefinitions="2*,8,*" Margin="0,0,0,12">
-                    <CalendarDatePicker Grid.Column="0" x:Name="EndDatePicker"
-                                        Height="34" HorizontalAlignment="Stretch"
-                                        SelectedDateFormat="Custom"
-                                        CustomDateFormatString="dd.MM.yyyy" />
-                    <Border Grid.Column="2" x:Name="EndTimeBorder" Classes="timeField" Height="34">
-                        <Grid ColumnDefinitions="*,Auto">
-                            <TextBox Grid.Column="0" x:Name="EndTimeInput" Classes="timeInput" />
-                            <Button Grid.Column="1" x:Name="EndTimeArrow" Classes="timeArrow">
-                                <Viewbox Width="{StaticResource IconSizeSmall}" Height="{StaticResource IconSizeSmall}">
-                                    <Canvas Width="24" Height="24">
-                                        <!-- стандартная иконка «время» (часы), в пару к иконке даты -->
-                                        <Path Data="{StaticResource IconClock}"
-                                              Stroke="{StaticResource BrushSecondaryText}"
-                                              StrokeThickness="{StaticResource IconStrokeSmall}"
-                                              StrokeLineCap="Round"
-                                              StrokeJoin="Round" />
-                                    </Canvas>
-                                </Viewbox>
-                            </Button>
-                            <Popup Grid.Column="0" x:Name="EndTimePopup" InheritsTransform="True"
-                                   PlacementTarget="{Binding #EndTimeBorder}"
-                                   Placement="BottomEdgeAlignedLeft"
-                                   IsLightDismissEnabled="True">
-                                <Border Classes="timePopup"
-                                        MinWidth="{Binding #EndTimeBorder.Bounds.Width}">
-                                    <ScrollViewer MaxHeight="240">
-                                        <ListBox x:Name="EndTimeList" Classes="timeList" />
-                                    </ScrollViewer>
-                                </Border>
-                            </Popup>
-                        </Grid>
-                    </Border>
+                    <w:DateField Grid.Column="0" x:Name="EndDateField" />
+                    <w:TimeField Grid.Column="2" x:Name="EndTimeField" />
                 </Grid>
 
                 <!-- База данных (видна только при создании, когда смонтировано несколько БД) -->

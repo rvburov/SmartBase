@@ -25,59 +25,28 @@
                          BorderThickness="0"
                          Background="Transparent"
                          VerticalContentAlignment="Center"
-                         MinHeight="30"
+                         MinHeight="34"
                          ScrollViewer.VerticalScrollBarVisibility="Disabled" />
 
                 <TextBlock Grid.Column="2" Text="Срок"
                            VerticalAlignment="Center"
                            Foreground="{StaticResource BrushSecondaryText}" />
 
-                <CalendarDatePicker Grid.Column="4" x:Name="QuickDatePicker"
-                                    Width="130" Height="30"
-                                    Watermark="без даты"
-                                    SelectedDateFormat="Custom"
-                                    CustomDateFormatString="dd.MM.yyyy" />
+                <w:DateField Grid.Column="4" x:Name="QuickDateField" Width="130" />
 
-                <Border Grid.Column="6" x:Name="QuickTimeBorder" Classes="timeField"
-                        Width="76" Height="30">
-                    <Grid ColumnDefinitions="*,Auto">
-                        <TextBox Grid.Column="0" x:Name="QuickTimeInput" Classes="timeInput" />
-                        <Button Grid.Column="1" x:Name="QuickTimeArrow" Classes="timeArrow">
-                            <Viewbox Width="{StaticResource IconSizeSmall}" Height="{StaticResource IconSizeSmall}">
-                                <Canvas Width="24" Height="24">
-                                    <Path Data="{StaticResource IconClock}"
-                                          Stroke="{StaticResource BrushSecondaryText}"
-                                          StrokeThickness="{StaticResource IconStrokeSmall}"
-                                          StrokeLineCap="Round"
-                                          StrokeJoin="Round" />
-                                </Canvas>
-                            </Viewbox>
-                        </Button>
-                        <Popup Grid.Column="0" x:Name="QuickTimePopup" InheritsTransform="True"
-                               PlacementTarget="{Binding #QuickTimeBorder}"
-                               Placement="BottomEdgeAlignedLeft"
-                               IsLightDismissEnabled="True">
-                            <Border Classes="timePopup"
-                                    MinWidth="{Binding #QuickTimeBorder.Bounds.Width}">
-                                <ScrollViewer MaxHeight="240">
-                                    <ListBox x:Name="QuickTimeList" Classes="timeList" />
-                                </ScrollViewer>
-                            </Border>
-                        </Popup>
-                    </Grid>
-                </Border>
+                <w:TimeField Grid.Column="6" x:Name="QuickTimeField" Width="90" />
 
                 <TextBlock Grid.Column="8" Text="Исполнитель"
                            VerticalAlignment="Center"
                            Foreground="{StaticResource BrushSecondaryText}" />
 
                 <ComboBox Grid.Column="10" x:Name="QuickExecutor"
-                          Width="150" Height="30"
+                          Width="150" Height="34"
                           Background="{StaticResource BrushSecondaryBg}"
                           CornerRadius="{StaticResource RadiusBase}" />
 
                 <Button Grid.Column="12" x:Name="QuickAddBtn" Classes="accent"
-                        Content="Добавить" Height="30"
+                        Content="Добавить" Height="34"
                         Padding="14,0"
                         VerticalContentAlignment="Center"
                         CornerRadius="{StaticResource RadiusPill}" />

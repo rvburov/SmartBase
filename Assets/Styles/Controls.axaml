@@ -703,74 +703,8 @@
         </Setter>
     </Style>
 
-    <!-- CalendarDatePicker -->
-    <Style Selector="CalendarDatePicker">
-        <Setter Property="Background"      Value="{StaticResource BrushSecondaryBg}" />
-        <Setter Property="BorderBrush"     Value="{StaticResource BrushSeparator}" />
-        <Setter Property="BorderThickness" Value="{DynamicResource BorderLine}" />
-        <Setter Property="CornerRadius"    Value="{StaticResource RadiusMedium}" />
-        <Setter Property="Foreground"      Value="{StaticResource BrushPrimaryText}" />
-        <Setter Property="Padding"         Value="10,0" />
-    </Style>
-
-    <!-- Текст даты: прозрачный фон, вертикальный центр, отступ как у времени -->
-    <Style Selector="CalendarDatePicker /template/ TextBox#PART_TextBox">
-        <Setter Property="VerticalContentAlignment" Value="Center" />
-    </Style>
-
-    <Style Selector="CalendarDatePicker /template/ TextBox#PART_TextBox /template/ Border#PART_BorderElement">
-        <Setter Property="Background"      Value="Transparent" />
-        <Setter Property="BorderThickness" Value="0" />
-    </Style>
-
-    <Style Selector="CalendarDatePicker:pointerover /template/ Border#Background">
-        <Setter Property="Background"  Value="{StaticResource BrushSecondaryBg}" />
-        <Setter Property="BorderBrush" Value="{StaticResource BrushAccent}" />
-    </Style>
-
-    <Style Selector="CalendarDatePicker:focus /template/ Border#Background">
-        <Setter Property="Background"  Value="{StaticResource BrushSecondaryBg}" />
-        <Setter Property="BorderBrush" Value="{StaticResource BrushAccent}" />
-    </Style>
-
-    <!-- Кнопка справа — стандартная иконка «дата» (календарь с цифрой 1), как в таблице
-         (DateField/DateEditor): Viewbox → Canvas 24×24 → Path IconCalendarDate -->
-    <Style Selector="CalendarDatePicker /template/ Button#PART_Button">
-        <Setter Property="Background"      Value="Transparent" />
-        <Setter Property="BorderThickness" Value="0" />
-        <Setter Property="Width"           Value="NaN" />
-        <Setter Property="MinWidth"        Value="0" />
-        <Setter Property="Padding"         Value="4,0,8,0" />
-        <Setter Property="Cursor"          Value="Hand" />
-        <Setter Property="Template">
-            <ControlTemplate>
-                <Border Background="Transparent" Padding="{TemplateBinding Padding}">
-                    <Viewbox Width="{StaticResource IconSizeSmall}" Height="{StaticResource IconSizeSmall}"
-                             VerticalAlignment="Center" HorizontalAlignment="Center">
-                        <Canvas Width="24" Height="24">
-                            <Path Data="{StaticResource IconCalendarDate}"
-                                  Stroke="{StaticResource BrushSecondaryText}"
-                                  StrokeThickness="{StaticResource IconStrokeSmall}"
-                                  StrokeLineCap="Round"
-                                  StrokeJoin="Round" />
-                        </Canvas>
-                    </Viewbox>
-                </Border>
-            </ControlTemplate>
-        </Setter>
-    </Style>
-
-    <!-- Popup календаря наследует зум приложения (Fluent сам это не ставит) -->
-    <Style Selector="CalendarDatePicker /template/ Popup#PART_Popup">
-        <Setter Property="InheritsTransform" Value="True" />
-    </Style>
-    <Style Selector="CalendarDatePicker /template/ Popup > Border">
-        <Setter Property="Background"      Value="{StaticResource BrushBg}" />
-        <Setter Property="BorderBrush"     Value="{StaticResource BrushSeparator}" />
-        <Setter Property="BorderThickness" Value="{DynamicResource BorderLine}" />
-        <Setter Property="CornerRadius"    Value="{StaticResource RadiusMedium}" />
-        <Setter Property="BoxShadow"       Value="0 4 16 0 #1A000000" />
-    </Style>
+    <!-- Календарь-выпадашка поля даты (DateField создаёт Calendar сам; попап и рамку
+         даёт Border.timePopup, поэтому стилей CalendarDatePicker здесь больше нет). -->
 
     <!-- Фон всего календаря -->
     <Style Selector="Calendar">
@@ -860,7 +794,7 @@
         <Setter Property="BorderThickness" Value="0" />
     </Style>
 
-    <!-- Сегодня. Календарь живёт в попапе CalendarDatePicker — попап наследует зум,
+    <!-- Сегодня. Календарь живёт в попапе поля даты (DateField) — попап наследует зум,
          токен обычный (рамка была 1.5 — приведена к стандартной 1, как все линии). -->
     <Style Selector="CalendarDayButton:today /template/ Border#Background">
         <Setter Property="Background"      Value="Transparent" />
@@ -953,7 +887,7 @@
         <Setter Property="FontWeight" Value="{StaticResource FontWeightBold}" />
     </Style>
 
-    <!-- ===== Кастомное поле времени (editable combobox, как CalendarDatePicker) ===== -->
+    <!-- ===== Единый бокс полей даты и времени (DateField / TimeField / DateEditor) ===== -->
 
     <!-- Внешний бокс: фон, рамка, скругление как у даты -->
     <Style Selector="Border.timeField">

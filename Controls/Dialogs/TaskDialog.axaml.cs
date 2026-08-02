@@ -1,6 +1,6 @@
 using Avalonia;
 using Avalonia.Controls;
-using Avalonia.Controls.Primitives;
+using SmartBase.Controls.Widgets;
 using SmartBase.Core.Models;
 using SmartBase.Database.Repositories;
 using SmartBase.Utils;
@@ -58,13 +58,10 @@ public partial class TaskDialog : Window
         StatusCombo.ItemsSource   = ConstructorRepository.TaskStatusOptions.ToList();
         StatusCombo.SelectedIndex = 0;
 
-        StartTimeList.ItemsSource = TimeText.Options;
-        EndTimeList.ItemsSource   = TimeText.Options;
-
-        StartDatePicker.SelectedDate = DateTime.Today;
-        EndDatePicker.SelectedDate   = DateTime.Today;
-        StartTimeInput.Text = TimeText.Format(_savedStartTime);
-        EndTimeInput.Text   = TimeText.Format(_savedEndTime);
+        StartDateField.Date = DateTime.Today;
+        EndDateField.Date   = DateTime.Today;
+        StartTimeField.Time = _savedStartTime;
+        EndTimeField.Time   = _savedEndTime;
 
         if (editTask is not null)
         {
@@ -99,17 +96,15 @@ public partial class TaskDialog : Window
             KeepWindowPosition(pos);
         };
 
-        WireTimeField(StartTimeInput, StartTimeArrow, StartTimePopup, StartTimeList,
-                      () => _savedStartTime, t => _savedStartTime = t);
-        WireTimeField(EndTimeInput, EndTimeArrow, EndTimePopup, EndTimeList,
-                      () => _savedEndTime, t => _savedEndTime = t);
+        WireTimeField(StartTimeField, t => _savedStartTime = t);
+        WireTimeField(EndTimeField,   t => _savedEndTime   = t);
 
         CancelBtn.Click += (_, _) => Close(null);
         DeleteBtn.Click += (_, _) => Close(new TaskDialogResult(null, Deleted: true));
         SaveBtn.Click   += (_, _) => TrySave();
 
-        Deactivated += (_, _) => CloseTimePopups();
-        Closing     += (_, _) => CloseTimePopups();
+        Deactivated += (_, _) => ClosePopups();
+        Closing     += (_, _) => ClosePopups();
 
         UpdateDateVisibility();
     }
@@ -173,16 +168,16 @@ public partial class TaskDialog : Window
         if (t.DueStart is DateTime start)
         {
             var end = t.DueEnd ?? start;
-            AllDayCheck.IsChecked        = t.AllDay;
-            StartDatePicker.SelectedDate = start.Date;
-            EndDatePicker.SelectedDate   = end.Date;
+            AllDayCheck.IsChecked = t.AllDay;
+            StartDateField.Date   = start.Date;
+            EndDateField.Date     = end.Date;
             if (!t.AllDay)
             {
                 _savedStartTime = start.TimeOfDay;
                 _savedEndTime   = end.TimeOfDay;
             }
-            StartTimeInput.Text = TimeText.Format(_savedStartTime);
-            EndTimeInput.Text   = TimeText.Format(_savedEndTime);
+            StartTimeField.Time = _savedStartTime;
+            EndTimeField.Time   = _savedEndTime;
         }
         else NoDateCheck.IsChecked = true;
 
@@ -205,19 +200,19 @@ public partial class TaskDialog : Window
         StartSection.IsVisible = !noDate;
         EndSection.IsVisible   = !noDate;
 
-        StartLabel.IsVisible      = !isAllDay;
-        StartTimeBorder.IsVisible = !isAllDay;
-        EndLabel.IsVisible        = !isAllDay;
-        EndTimeBorder.IsVisible   = !isAllDay;
+        StartLabel.IsVisible     = !isAllDay;
+        StartTimeField.IsVisible = !isAllDay;
+        EndLabel.IsVisible       = !isAllDay;
+        EndTimeField.IsVisible   = !isAllDay;
 
         var span = isAllDay ? 3 : 1;
-        Grid.SetColumnSpan(StartDatePicker, span);
-        Grid.SetColumnSpan(EndDatePicker, span);
+        Grid.SetColumnSpan(StartDateField, span);
+        Grid.SetColumnSpan(EndDateField, span);
 
         if (!isAllDay)
         {
-            StartTimeInput.Text = TimeText.Format(_savedStartTime);
-            EndTimeInput.Text   = TimeText.Format(_savedEndTime);
+            StartTimeField.Time = _savedStartTime;
+            EndTimeField.Time   = _savedEndTime;
         }
 
         CollectionCombo.IsEnabled = _editTask is null || !noDate;
@@ -242,10 +237,10 @@ public partial class TaskDialog : Window
         var isAllDay = false;
         if (!noDate)
         {
-            var startDate = StartDatePicker.SelectedDate ?? DateTime.Today;
-            var endDate   = EndDatePicker.SelectedDate   ?? DateTime.Today;
-            var startTime = TimeText.TryParse(StartTimeInput.Text, out var st) ? st : _savedStartTime;
-            var endTime   = TimeText.TryParse(EndTimeInput.Text,   out var et) ? et : _savedEndTime;
+            var startDate = StartDateField.Date ?? DateTime.Today;
+            var endDate   = EndDateField.Date   ?? DateTime.Today;
+            var startTime = StartTimeField.Time;
+            var endTime   = EndTimeField.Time;
 
             isAllDay = AllDayCheck.IsChecked == true;
             dueStart = startDate.Date + (isAllDay ? TimeSpan.Zero : startTime);
@@ -279,12 +274,16 @@ public partial class TaskDialog : Window
         Close(new TaskDialogResult(candidate));
     }
 
-    // ── Обвязка полей времени (копия календарного RecordDialog) ────────────────
+    // ── Обвязка полей срока (те же виджеты, что в календарном RecordDialog) ────
 
-    private void CloseTimePopups()
+    // Выпадашки полей даты и времени — свои Popup'ы виджетов; закрываем их вместе,
+    // когда окно теряет фокус или закрывается.
+    private void ClosePopups()
     {
-        StartTimePopup.IsOpen = false;
-        EndTimePopup.IsOpen   = false;
+        StartDateField.ClosePopup();
+        EndDateField.ClosePopup();
+        StartTimeField.ClosePopup();
+        EndTimeField.ClosePopup();
     }
 
     // Восстанавливает позицию окна после пересчёта высоты (SizeToContent),
@@ -299,47 +298,14 @@ public partial class TaskDialog : Window
         LayoutUpdated += Restore;
     }
 
-    private void WireTimeField(
-        TextBox input, Button arrow, Popup popup, ListBox list,
-        Func<TimeSpan> getSaved, Action<TimeSpan> setSaved)
+    // Запоминаем последнее осмысленное время: при «Весь день» поля времени скрыты,
+    // и при возврате переключателя их надо восстановить.
+    private void WireTimeField(TimeField field, Action<TimeSpan> setSaved)
     {
-        input.TextChanged += (_, _) =>
+        field.TimeChanged += (_, _) =>
         {
-            if (AllDayCheck.IsChecked != true && TimeText.TryParse(input.Text, out var t))
-                setSaved(t);
+            if (AllDayCheck.IsChecked != true) setSaved(field.Time);
         };
-
-        arrow.Click += (_, _) =>
-        {
-            var wasOpen = popup.IsOpen;
-            CloseTimePopups();
-            if (wasOpen) return;
-            SelectInList(list, getSaved());
-            popup.IsOpen = true;
-            list.ScrollIntoView(list.SelectedItem);
-        };
-
-        list.SelectionChanged += (_, _) =>
-        {
-            if (!popup.IsOpen) return;
-            if (list.SelectedItem is string s && TimeText.TryParse(s, out var t))
-            {
-                setSaved(t);
-                input.Text = s;
-            }
-            popup.IsOpen = false;
-        };
-    }
-
-    private static void SelectInList(ListBox list, TimeSpan time)
-    {
-        var idx = TimeText.Options.ToList().IndexOf(TimeText.Format(time));
-        if (idx < 0)
-        {
-            var quarter = (time.Hours * 60 + time.Minutes) / 15;
-            idx = Math.Clamp(quarter, 0, TimeText.Options.Count - 1);
-        }
-        list.SelectedIndex = idx;
     }
 
     private void ShowError(string message)

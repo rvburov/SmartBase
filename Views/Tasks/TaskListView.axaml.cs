@@ -19,40 +19,14 @@ public partial class TaskListView : UserControl
     public event EventHandler<TaskRecord>?      TaskActivated;
     public event EventHandler<QuickAddRequest>? QuickAddRequested;
 
-    private TimeSpan _quickTime = new(18, 0, 0);
-
     public TaskListView()
     {
         InitializeComponent();
 
         CardsHost.ItemTemplate = new FuncDataTemplate<TaskCardVm>((vm, _) => BuildCard(vm), supportsRecycling: false);
 
-        QuickTimeList.ItemsSource = TimeText.Options;
-        QuickTimeInput.Text = TimeText.Format(_quickTime);
-        QuickTimeInput.TextChanged += (_, _) =>
-        {
-            if (TimeText.TryParse(QuickTimeInput.Text, out var t)) _quickTime = t;
-        };
-        QuickTimeArrow.Click += (_, _) =>
-        {
-            var wasOpen = QuickTimePopup.IsOpen;
-            QuickTimePopup.IsOpen = false;
-            if (wasOpen) return;
-            var idx = TimeText.Options.ToList().IndexOf(TimeText.Format(_quickTime));
-            QuickTimeList.SelectedIndex = idx >= 0 ? idx : 0;
-            QuickTimePopup.IsOpen = true;
-            if (QuickTimeList.SelectedItem is { } sel) QuickTimeList.ScrollIntoView(sel);
-        };
-        QuickTimeList.SelectionChanged += (_, _) =>
-        {
-            if (!QuickTimePopup.IsOpen) return;
-            if (QuickTimeList.SelectedItem is string s && TimeText.TryParse(s, out var t))
-            {
-                _quickTime = t;
-                QuickTimeInput.Text = s;
-            }
-            QuickTimePopup.IsOpen = false;
-        };
+        // Срок по умолчанию — вечер текущего дня; сама дата пуста («без даты»).
+        QuickTimeField.Time = new TimeSpan(18, 0, 0);
 
         QuickTitle.KeyDown += (_, e) =>
         {
@@ -97,9 +71,9 @@ public partial class TaskListView : UserControl
 
         // Дата не выбрана — задача «без даты». Время пустое/нечитаемое — весь день.
         DateValue? due = null;
-        if (QuickDatePicker.SelectedDate is DateTime day)
+        if (QuickDateField.Date is DateTime day)
         {
-            due = TimeText.TryParse(QuickTimeInput.Text, out var t)
+            due = QuickTimeField.TimeOrNull is TimeSpan t
                 ? new DateValue(day.Date + t, day.Date + t + TimeSpan.FromHours(1), false)
                 : new DateValue(day.Date, day.Date + new TimeSpan(23, 59, 0), true);
         }
