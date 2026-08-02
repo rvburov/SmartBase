@@ -147,11 +147,12 @@
   в фоне, сгруппировав записи по их БД, с окном прогресса (фаза «Удаление записей…»/«Дублирование
   записей…» + «Количество записей: N» + %, как удаление коллекции в сайдбаре); окно появляется,
   только если операция не уложилась в 400 мс. Удаление — тот же `DeleteRecordsIsolated` (bulk-SQL
-  пакетами, каскад по FK); дублирование — `DuplicateCalendarRecordsIsolated` (та же «календарная»
-  копия, что `AddCalendarRecord`: шапка + поле-дата + calendar_index, но ОДНОЙ транзакцией с
-  батчевыми SaveChanges — цикл с двумя SaveChanges и MAX(Position) на каждую запись вешал UI;
-  позиция и поле-дата считаются один раз на коллекцию). До 100 записей — прежний мгновенный путь
-  без окна. См. `RunCalendarBulk`/`BulkDeleteWithProgress`/`BulkDuplicateWithProgress` в
+  пакетами, каскад по FK); дублирование — `DuplicateRecordsMappedIsolated`, тот же bulk-SQL, что у
+  таблицы (шапка + ВСЕ значения + исходящие связи + проекция календаря), с группировкой по
+  «база + коллекция» и картой «источник → копия» для событий. Прежний `DuplicateCalendarRecordsData`
+  (шапка + только поле-дата) убран: копия из календаря отличалась от копии той же записи из таблицы.
+  До 100 записей — мгновенный путь без окна, по одной `DuplicateRecord`.
+  См. `RunCalendarBulk`/`BulkDeleteWithProgress`/`BulkDuplicateWithProgress` в
   [CalendarControllerView](../../../../Views/ConstructorDb/Calendar/CalendarControllerView.axaml.cs).
 - ✅ Перенос ВЫБРАННЫХ записей в другую коллекцию/БД (контекстное меню «Расположение», окно
   [`RecordLocationDialog`](../../../../Controls/Dialogs/RecordLocationDialog.axaml.cs)) — тем же помощником `RunBulkOp`

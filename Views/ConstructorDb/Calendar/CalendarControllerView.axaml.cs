@@ -662,6 +662,20 @@ public partial class CalendarControllerView : UserControl
         if (_journalDelta is not null) RefreshCurrent();
     }
 
+    // Окно «входящие связи оборвутся» для ОДНОЙ записи из окна редактирования — те же проверки, что у
+    // DeleteRecordsWithConfirm (удаление списком) и RelocateRecords таблицы, но кнопки «Удалить»/смены
+    // коллекции в самом окне записи шли мимо них. Репозиторий берём прямым поиском по _dbs, а не через
+    // RepoOf: тот подставляет DefaultRepo и проверил бы чужую базу по коллизии id. Нет связей — окна
+    // нет (правка записи не должна каждый раз спрашивать). true — можно продолжать.
+    private async Task<bool> ConfirmIncomingLinkBreak(
+        Avalonia.Controls.Window win, CalendarRecord r, string message, string confirmText)
+    {
+        if (r.Id is not int id) return true;
+        var repo = _dbs.FirstOrDefault(d => d.DbId == r.DbId).Repo;
+        if (repo is null || !RelationDeleteImpact.ForRecords(repo, r.DbId, [id])) return true;
+        return await new ConfirmDialog(message, confirmText).ShowDialog<bool>(win) == true;
+    }
+
     private async Task OpenEditDialog(CalendarRecord r)
     {
         if (VisualRoot is not Avalonia.Controls.Window win || _dbs.Count == 0) return;
@@ -673,6 +687,9 @@ public partial class CalendarControllerView : UserControl
 
         if (result.Deleted)
         {
+            if (!await ConfirmIncomingLinkBreak(win, r,
+                    "Удалить запись? На неё ссылаются связи из других записей — они будут удалены.",
+                    "Удалить")) return;
             if (!TryWrite(RepoOf(r), () => RepoOf(r).DeleteCalendarRecord(r.Id!.Value))) return;
             _journalDelta = [(r, -1)];
         }
@@ -685,6 +702,15 @@ public partial class CalendarControllerView : UserControl
             // «прыгала» с прогрузкой. Минуты не менялись — возвращаем исходные секунды.
             if (rec.StartDt == MinuteFloor(r.StartDt)) rec.StartDt = r.StartDt;
             if (rec.EndDt   == MinuteFloor(r.EndDt))   rec.EndDt   = r.EndDt;
+
+            // Смена коллекции или базы = перенос: запись ПЕРЕСОЗДАЁТСЯ с новым Id, поэтому входящие
+            // связи на неё оборвутся (исходящие переносятся, см. CopyRelationLinksByName). Правка без
+            // смены места (дата, название, поле-дата) Id не меняет — там предупреждать не о чем.
+            if ((rec.DbId != r.DbId || rec.CollectionId != r.CollectionId)
+                && !await ConfirmIncomingLinkBreak(win, r,
+                        "Перенос пересоздаёт запись: связи из других записей на неё оборвутся "
+                      + "(станут «связи нет»). Перенести?", "Перенести")) return;
+
             if (rec.DbId == r.DbId)
             {
                 var repo = RepoOf(rec);
@@ -702,8 +728,9 @@ public partial class CalendarControllerView : UserControl
             else
             {
                 // БД сменили — переносим запись: создаём в целевой базе, грамотно переносим значения
-                // свойств (по имени, с приведением типов), удаляем из исходной. Поле-дату исключаем,
-                // чтобы не затереть выставленную AddCalendarRecord дату.
+                // свойств (по имени, с приведением типов) и исходящие связи (с пересчётом TargetDbId
+                // под целевую базу — как MoveRecordsCore у таблицы), удаляем из исходной. Поле-дату
+                // исключаем, чтобы не затереть выставленную AddCalendarRecord дату.
                 var sourceRepo = RepoOf(r);
                 var targetRepo = RepoOf(rec);
                 var ok = TryWrite(targetRepo, () =>
@@ -712,6 +739,8 @@ public partial class CalendarControllerView : UserControl
                     targetRepo.CopyFieldValuesByName(sourceRepo, r.Id!.Value, r.CollectionId ?? 0,
                                                      rec.Id!.Value, rec.CollectionId ?? 0,
                                                      createMissingFields: false, excludeTargetFieldId: rec.FieldId);
+                    targetRepo.CopyRelationLinksByName(sourceRepo, r.Id!.Value, r.CollectionId ?? 0,
+                                                       rec.Id!.Value, rec.CollectionId ?? 0, r.DbId, rec.DbId);
                     sourceRepo.DeleteCalendarRecord(r.Id!.Value);
                 });
                 if (!ok) { RefreshCurrent(); return; }
@@ -747,24 +776,37 @@ public partial class CalendarControllerView : UserControl
         var targets = records.Where(r => r.Id.HasValue).ToList();
         if (targets.Count == 0) return;
 
-        var dlg = new ConfirmDialog($"Вы дублируете {targets.Count} {RecordsPlural(targets.Count)}. Подтвердить?",
+        // Дублируется ЗАПИСЬ, а не событие: запись с двумя видимыми полями-датами даёт два события,
+        // и раньше выбор обоих создавал две копии. Копия несёт все даты оригинала сразу, поэтому
+        // группируем по (база, запись) — одна копия на запись, а событий-копий отдаём столько же,
+        // сколько было выбрано у оригинала. Счёт в окне — тоже по записям.
+        var byRecord = targets.GroupBy(r => (r.DbId, Id: r.Id!.Value)).ToList();
+
+        var dlg = new ConfirmDialog($"Вы дублируете {byRecord.Count} {RecordsPlural(byRecord.Count)}. Подтвердить?",
                                     confirmText: "Дублировать");
         if (await dlg.ShowDialog<bool>(win) != true) return;
 
-        // Немного записей — прежний мгновенный путь (AddCalendarRecord по одной). Много —
-        // bulk-вставки одной транзакцией в фоне с окном прогресса (как массовое удаление):
-        // цикл с двумя SaveChanges и MAX(Position) на КАЖДУЮ запись вешал UI на сотнях/тысячах.
+        // Немного записей — мгновенный путь (DuplicateRecord по одной). Много — bulk-SQL в фоне с
+        // окном прогресса (как массовое удаление): цикл с SaveChanges на КАЖДУЮ запись вешал UI на
+        // сотнях/тысячах. Оба пути — ОБЩИЕ с таблицей: копия несёт все свойства и исходящие связи.
         List<CalendarRecord> copies;
-        if (targets.Count <= SmallOpCap)
+        if (byRecord.Count <= SmallOpCap)
         {
             copies = new List<CalendarRecord>(targets.Count);
-            foreach (var r in targets)
+            foreach (var g in byRecord)
             {
-                var copy = CopyOf(r);
+                var repo = RepoOf(g.First());
+                DbRecord? made = null;
                 // Не записалось (база занята/пропала) — показываем тост и останавливаемся:
                 // уже созданные копии остаются, вид перечитается ниже.
-                if (!TryWrite(RepoOf(r), () => RepoOf(r).AddCalendarRecord(copy))) break;
-                copies.Add(copy);
+                if (!TryWrite(repo, () => made = repo.DuplicateRecord(g.Key.Id))) break;
+                if (made?.Id is not int newId) continue;
+                foreach (var src in g)
+                {
+                    var copy = CopyOf(src);
+                    copy.Id = newId;
+                    copies.Add(copy);
+                }
             }
         }
         else
@@ -839,26 +881,42 @@ public partial class CalendarControllerView : UserControl
             report(targets.Count);
         });
 
-    // Массовое дублирование: по каждой БД — DuplicateCalendarRecordsIsolated (одна транзакция,
-    // батчевые вставки шапки/поля-даты/индекса) в фоне с окном прогресса. Возвращает копии
-    // (для выделения, дельты Журнала и якоря прокрутки).
+    // Массовое дублирование: тот же bulk-SQL, что у таблицы (DuplicateRecordsMappedIsolated —
+    // шапка + ВСЕ значения + исходящие связи + проекция календаря), в фоне с окном прогресса.
+    // Группируем по (база, коллекция): bulk считает позиции копий относительно якоря ОДНОЙ
+    // коллекции. Возвращает события-копии (для выделения, дельты Журнала и якоря прокрутки).
     private async Task<List<CalendarRecord>> BulkDuplicateWithProgress(
         Avalonia.Controls.Window win, List<CalendarRecord> targets)
     {
+        var groups = targets
+            .GroupBy(r => (r.DbId, ColId: r.CollectionId ?? 0))
+            .Select(g => (Events: g.ToList(), SrcIds: g.Select(e => e.Id!.Value).Distinct().ToList(), g.Key.ColId))
+            .ToList();
+        var total = groups.Sum(g => g.SrcIds.Count);   // единица прогресса — ЗАПИСЬ, не событие
+
         var copies = new List<CalendarRecord>();   // наполняется в фоне, читается после await
-        await RunCalendarBulk(win, "Дублирование", "Дублирование записей…", targets.Count, report =>
+        await RunCalendarBulk(win, "Дублирование", "Дублирование записей…", total, report =>
         {
             long done = 0;
-            foreach (var g in targets.GroupBy(r => r.DbId))
+            foreach (var (events, srcIds, colId) in groups)
             {
-                var repo = RepoOf(g.First());
+                var repo = RepoOf(events[0]);
                 var baseDone = done;
-                var part = repo.DuplicateCalendarRecordsIsolated(
-                    g.ToList(), new IntProgress(v => report(baseDone + v)));
-                copies.AddRange(part);
-                done += g.Count();
+                var map = repo.DuplicateRecordsMappedIsolated(
+                    colId, srcIds, new IntProgress(v => report(baseDone + v)));
+                var bySrc = map.ToDictionary(p => p.SrcId, p => p.NewId);
+                // Событий у записи может быть несколько (по полю-дате на каждое) — копия несёт все
+                // даты сразу, поэтому на каждое исходное событие отдаём событие-копию с новым Id.
+                foreach (var e in events)
+                    if (bySrc.TryGetValue(e.Id!.Value, out var newId))
+                    {
+                        var copy = CopyOf(e);
+                        copy.Id = newId;
+                        copies.Add(copy);
+                    }
+                done += srcIds.Count;
             }
-            report(targets.Count);
+            report(total);
         });
         return copies;
     }

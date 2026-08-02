@@ -720,4 +720,96 @@ public sealed class RelationLinkTests
 
         Assert.True(repo.HasExternalIncomingLinksToCollection(colC));
     }
+
+    // Смена коллекции в окне записи КАЛЕНДАРЯ и ЗАДАЧ идёт через UpdateCalendarRecord, а он
+    // пересоздаёт запись. Раньше переносились только db_field_values — рёбра (db_record_links)
+    // терялись молча, хотя тот же перенос из таблицы (MoveRecordsCore) их сохраняет.
+    [Fact]
+    public void Calendar_collection_change_carries_outgoing_links()
+    {
+        using var db = new TempDatabase();
+        var (repo, taskCol, rel, projCol) = Setup(db);
+        var p1 = SampleData.AddRecord(repo, projCol, "Сайт").Id!.Value;
+        var p2 = SampleData.AddRecord(repo, projCol, "Инфра").Id!.Value;
+
+        // Цель переноса — «Архив» с ОДНОИМЁННЫМ полем-связью на те же «Проекты» (условие переезда рёбер).
+        var archCol = SampleData.AddCollection(repo, "Архив").Id!.Value;
+        var relArch = SampleData.AddField(repo, archCol, "Проект", "relation", position: 1000);
+        relArch.ConfigJson = new RelationConfig(projCol, false).ToConfigJson();
+        repo.UpdateField(relArch);
+
+        var t = SampleData.AddRecord(repo, taskCol, "Задача").Id!.Value;
+        repo.SetLinks(rel, t, [p2, p1]);
+
+        var moved = new CalendarRecord
+        {
+            Id = t, CollectionId = archCol, Title = "Задача",
+            StartDt = DateTime.Today, EndDt = DateTime.Today, AllDay = true,
+        };
+        repo.UpdateCalendarRecord(moved);
+
+        Assert.NotEqual(t, moved.Id);                    // запись пересоздана — Id новый
+        Assert.Null(repo.GetRecord(t));                  // оригинал удалён
+        // Порядок рёбер сохранён вместе с целями.
+        Assert.Equal([(p2, "Инфра"), (p1, "Сайт")], repo.GetLinks(relArch.Id!.Value, moved.Id!.Value));
+    }
+
+    // Удаление из календаря/задач (DeleteCalendarRecord) обязано чистить ВХОДЯЩИЕ рёбра так же, как
+    // табличные DeleteRecord/DeleteRecordsData: FK на ToRecordId снят (цель может быть межбазовой),
+    // без явной чистки в db_record_links оставался висяк — в ячейке невидимый, но живой.
+    [Fact]
+    public void Calendar_delete_removes_incoming_links()
+    {
+        using var db = new TempDatabase();
+        var (repo, taskCol, rel, projCol) = Setup(db);
+        var p = SampleData.AddRecord(repo, projCol, "Сайт").Id!.Value;
+        var t = SampleData.AddRecord(repo, taskCol, "Задача").Id!.Value;
+        repo.SetLinks(rel, t, [p]);
+
+        repo.DeleteCalendarRecord(p);
+
+        Assert.Empty(repo.GetLinks(rel, t));
+        using var ctx = new AppDbContext(db.Path);
+        Assert.Empty(ctx.DbRecordLinks.AsNoTracking().Where(l => l.ToRecordId == p).ToList());
+    }
+
+    // Смена БАЗЫ в окне записи календаря: рёбра переезжают с пересчётом TargetDbId под целевую базу
+    // (внутрибазовая связь на источник становится межбазовой) — как у MoveRecordsCore. Ребро переезжает
+    // только при совпадении пересчитанной цели, иначе указывало бы в чужую коллекцию.
+    [Fact]
+    public void Cross_db_record_move_carries_links_and_rewrites_target_db()
+    {
+        using var dbA = new TempDatabase(dbId: 1, name: "A");
+        using var dbB = new TempDatabase(dbId: 2, name: "B");
+        var repoA = dbA.Constructor;
+        var repoB = dbB.Constructor;
+
+        var projA = SampleData.AddCollection(repoA, "Проекты").Id!.Value;
+        var taskA = SampleData.AddCollection(repoA, "Задачи").Id!.Value;
+        var relA  = SampleData.AddField(repoA, taskA, "Проект", "relation", position: 1000);
+        relA.ConfigJson = new RelationConfig(projA, false).ToConfigJson();          // внутрибазовая в A
+        repoA.UpdateField(relA);
+        var p = SampleData.AddRecord(repoA, projA, "Сайт").Id!.Value;
+        var t = SampleData.AddRecord(repoA, taskA, "Задача").Id!.Value;
+        repoA.SetLinks(relA.Id!.Value, t, [p]);
+
+        // В B — одноимённые коллекция и поле, цель уже МЕЖБАЗОВАЯ на «Проекты» из A: ровно так конфиг
+        // выглядит после переноса поля, и ровно при таком совпадении ребро имеет право переехать.
+        var taskB = SampleData.AddCollection(repoB, "Задачи").Id!.Value;
+        var relB  = SampleData.AddField(repoB, taskB, "Проект", "relation", position: 1000);
+        relB.ConfigJson = new RelationConfig(projA, false, TargetDbId: 1).ToConfigJson();
+        repoB.UpdateField(relB);
+
+        var tb = SampleData.AddRecord(repoB, taskB, "Задача").Id!.Value;
+        repoB.CopyRelationLinksByName(repoA, t, taskA, tb, taskB, sourceDbId: 1, targetDbId: 2);
+        Assert.Equal([(p, 1)], repoB.GetLinkEdges(relB.Id!.Value, tb));   // TargetDbId 0 → 1 (база A)
+
+        // Несовпадающий конфиг цели (здесь — внутрибазовый в B): ребро НЕ переезжает.
+        var projB = SampleData.AddCollection(repoB, "Проекты").Id!.Value;
+        relB.ConfigJson = new RelationConfig(projB, false).ToConfigJson();
+        repoB.UpdateField(relB);
+        var tb2 = SampleData.AddRecord(repoB, taskB, "Задача 2").Id!.Value;
+        repoB.CopyRelationLinksByName(repoA, t, taskA, tb2, taskB, sourceDbId: 1, targetDbId: 2);
+        Assert.Empty(repoB.GetLinkEdges(relB.Id!.Value, tb2));
+    }
 }

@@ -241,6 +241,23 @@ public partial class TasksControllerView : UserControl
         if (res is null) return;
 
         var repo = RepoFor(t.DbId) ?? _dbs[0].Repo;
+
+        // Входящие связи на задачу: удаление их убивает, смена коллекции пересоздаёт задачу с новым Id
+        // (см. UpdateCalendarRecord) — рёбра на старый Id умирают. Раньше и то и другое проходило молча,
+        // тогда как те же действия в таблице спрашивают. Смены БД тут нет: в окне задачи выбор базы при
+        // редактировании скрыт, а DbId ниже принудительно возвращается исходный.
+        var movingCollection = res is { Deleted: false, Task: { } m } && m.CollectionId != t.CollectionId;
+        if ((res.Deleted || movingCollection) && t.Id is int rid && RepoFor(t.DbId) is { } own
+            && RelationDeleteImpact.ForRecords(own, t.DbId, [rid]))
+        {
+            var warn = res.Deleted
+                ? new ConfirmDialog("Удалить задачу? На неё ссылаются связи из других записей — "
+                                  + "они будут удалены.", "Удалить")
+                : new ConfirmDialog("Перенос пересоздаёт задачу: связи из других записей на неё "
+                                  + "оборвутся (станут «связи нет»). Перенести?", "Перенести");
+            if (await warn.ShowDialog<bool>(win) != true) return;
+        }
+
         try
         {
             if (res.Deleted)

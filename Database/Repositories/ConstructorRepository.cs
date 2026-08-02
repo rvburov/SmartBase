@@ -3502,6 +3502,40 @@ public partial class ConstructorRepository(AppDbContext db)
         return new ConstructorRepository(ctx).DuplicateRecordsData(collectionId, recordIds, progress);
     }
 
+    /// <summary>То же, что <see cref="DuplicateRecordsIsolated"/>, но возвращает СООТВЕТСТВИЕ
+    /// «исходная запись → её копия». Нужно календарю: он строит из копий события (дельта Журнала,
+    /// якорь прокрутки, перенос выделения) и обязан знать, какому источнику какая копия досталась;
+    /// таблице хватает голого списка id для выделения.
+    ///
+    /// Опирается на общий контракт обоих bulk-путей (<see cref="DuplicateRecordsData"/> и его
+    /// PG-вариант): id копий возвращаются в порядке РАНГА источников — <c>ORDER BY Position, Id</c>.
+    /// Тем же ключом сортируем источники и сшиваем попарно. Мусорные id обе стороны отсекают
+    /// одинаково (фильтр по коллекции), поэтому длины совпадают.</summary>
+    public List<(int SrcId, int NewId)> DuplicateRecordsMappedIsolated(
+        int collectionId, IReadOnlyList<int> recordIds, IProgress<int>? progress = null)
+    {
+        Demand(PermAction.DuplicateRecord, collectionId);
+        using var ctx = new AppDbContext(db.DbPath);
+        ctx.ApplyPerformancePragmas();
+        var repo = new ConstructorRepository(ctx);
+        var ids  = recordIds.Distinct().ToList();
+
+        // Порядок источников снимаем ДО дубля: сами выбранные записи он не двигает (сдвигается только
+        // хвост коллекции), но зависеть от этого незачем.
+        var ordered = repo.RecordIdsInDuplicateOrder(collectionId, ids);
+        var newIds  = repo.DuplicateRecordsData(collectionId, ids, progress);
+        return ordered.Zip(newIds, (src, created) => (src, created)).ToList();
+    }
+
+    // Id записей коллекции из набора в порядке (Position, Id) — том самом ранге, в котором оба
+    // bulk-пути дубля раскладывают копии.
+    private List<int> RecordIdsInDuplicateOrder(int collectionId, IReadOnlyList<int> ids) =>
+        db.DbRecords.AsNoTracking()
+          .Where(r => r.CollectionId == collectionId && ids.Contains(r.Id))
+          .OrderBy(r => r.Position).ThenBy(r => r.Id)
+          .Select(r => r.Id)
+          .ToList();
+
     /// <summary>Дубль выбранных записей коллекции bulk-SQL: копии встают СРАЗУ ПОСЛЕ последней (самой
     /// нижней по порядку Position, Id) выбранной записи — как дубль одной записи ставит копию следом за
     /// исходной, а не в конец таблицы. Поля те же (одна коллекция) → FieldId не перемэппливаем. Всё в одной
@@ -4981,90 +5015,9 @@ public partial class ConstructorRepository(AppDbContext db)
         return r;
     }
 
-    /// <summary>Массовый дубль календарных записей на ОТДЕЛЬНОМ подключении (фон + прогресс) —
-    /// см. <see cref="DuplicateCalendarRecordsData"/>. Возвращает копии с проставленными Id/FieldId.</summary>
-    public List<CalendarRecord> DuplicateCalendarRecordsIsolated(
-        IReadOnlyList<CalendarRecord> records, IProgress<int>? progress = null)
-    {
-        using var ctx = new AppDbContext(db.DbPath);
-        ctx.ApplyPerformancePragmas();
-        return new ConstructorRepository(ctx).DuplicateCalendarRecordsData(records, progress);
-    }
-
-    /// <summary>Массовый дубль календарных записей — та же «календарная» копия, что и
-    /// <see cref="AddCalendarRecord"/> (шапка + поле-дата + calendar_index; остальные свойства
-    /// НЕ копируются — как у одиночного дубля календаря), но ОДНОЙ транзакцией с батчевыми
-    /// SaveChanges: цикл AddCalendarRecord с двумя SaveChanges и MAX(Position) на КАЖДУЮ запись
-    /// вешал UI на сотнях/тысячах. Позиция и поле-дата считаются один раз на коллекцию.
-    /// Возвращает копии (Id/FieldId проставлены) — для выделения, дельты Журнала и якоря.</summary>
-    public List<CalendarRecord> DuplicateCalendarRecordsData(
-        IReadOnlyList<CalendarRecord> records, IProgress<int>? progress = null, int batchSize = 500)
-    {
-        var copies = new List<CalendarRecord>(records.Count);
-        if (records.Count == 0) return copies;
-
-        using var tx = db.Database.BeginTransaction();
-        var maxPos    = new Dictionary<int, int>();          // CollectionId → последняя занятая позиция
-        var dateField = new Dictionary<(int Col, int Pref), int>();   // поле-дата коллекции
-        var done = 0;
-
-        foreach (var chunk in records.Chunk(batchSize))
-        {
-            var pairs = new List<(CalendarRecord Src, DbRecordEntity Rec, int FieldId)>(chunk.Length);
-            foreach (var r in chunk)
-            {
-                var colId = r.CollectionId ?? GetOrCreateDefaultCollection();
-                if (!maxPos.TryGetValue(colId, out var pos))
-                    pos = db.DbRecords.Where(x => x.CollectionId == colId)
-                                      .Select(x => (int?)x.Position).Max() ?? 0;
-                pos += 1000;
-                maxPos[colId] = pos;
-
-                if (!dateField.TryGetValue((colId, r.FieldId), out var fid))
-                    dateField[(colId, r.FieldId)] = fid = ResolveCalendarDateField(colId, r.FieldId);
-
-                var rec = new DbRecordEntity
-                {
-                    CollectionId = colId,
-                    StartDt      = DateTime.SpecifyKind(r.StartDt, DateTimeKind.Unspecified).ToString("o"),
-                    EndDt        = DateTime.SpecifyKind(r.EndDt,   DateTimeKind.Unspecified).ToString("o"),
-                    AllDay       = r.AllDay,
-                    CreatedAt    = DateTime.Now.ToString("o"),
-                    Position     = pos,
-                    Title        = r.Title,
-                    Description  = string.IsNullOrEmpty(r.Description) ? null : r.Description,
-                };
-                db.DbRecords.Add(rec);
-                pairs.Add((r, rec, fid));
-            }
-            db.SaveChanges();   // id копий появились — дальше значения и индекс
-
-            foreach (var (src, rec, fid) in pairs)
-                db.DbFieldValues.Add(new DbFieldValueEntity
-                {
-                    RecordId = rec.Id,
-                    FieldId  = fid,
-                    Value    = new DateValue(src.StartDt, src.EndDt, src.AllDay).ToStorage(),
-                });
-            db.SaveChanges();
-
-            foreach (var (src, rec, fid) in pairs)
-            {
-                SyncCalendarIndexValue(rec.Id, fid,
-                    new DateValue(src.StartDt, src.EndDt, src.AllDay).ToStorage());
-                copies.Add(new CalendarRecord
-                {
-                    DbId = src.DbId, Id = rec.Id, CollectionId = rec.CollectionId, FieldId = fid,
-                    Title = src.Title, Description = src.Description,
-                    StartDt = src.StartDt, EndDt = src.EndDt, AllDay = src.AllDay, Color = src.Color,
-                });
-            }
-            done += chunk.Length;
-            progress?.Report(done);
-        }
-        tx.Commit();
-        return copies;
-    }
+    // Отдельного «календарного» дубля больше нет: он копировал только шапку и поле-дату, и копия
+    // из календаря отличалась от копии той же записи из таблицы (ни прочих свойств, ни связей).
+    // Календарь ходит в общие DuplicateRecord / DuplicateRecordsMappedIsolated.
 
     public void UpdateCalendarRecord(CalendarRecord r)
     {
@@ -5084,12 +5037,19 @@ public partial class ConstructorRepository(AppDbContext db)
             // свойств (по имени, с приведением типов) — иначе они терялись. Недостающие в цели
             // свойства НЕ создаём (окно календаря визуально не меняем). Поле-дату исключаем, чтобы
             // не затереть отредактированную дату.
+            //
+            // Связи лежат не в db_field_values, а в db_record_links — CopyFieldValuesByName их не
+            // видит, и без CopyRelationLinksByName исходящие связи записи пропадали молча (тогда как
+            // тот же перенос из таблицы, через MoveRecordsCore, их сохраняет). Перенос здесь всегда
+            // ВНУТРИ одной базы, поэтому DbId не передаём: TargetDbId рёбер не пересчитывается.
+            // Входящие связи всё равно оборвутся (у копии новый Id) — предупреждает UI.
             var oldId = rec.Id;
             r.CollectionId = newColId;
             r.Id = null;
             AddCalendarRecord(r);
             CopyFieldValuesByName(this, oldId, oldColId, r.Id!.Value, newColId,
                                   createMissingFields: false, excludeTargetFieldId: r.FieldId);
+            CopyRelationLinksByName(this, oldId, oldColId, r.Id!.Value, newColId);
             DeleteRecord(oldId);
             return;
         }
@@ -5114,6 +5074,12 @@ public partial class ConstructorRepository(AppDbContext db)
         if (rec is not null)
         {
             Log("delete", "record", rec.Title, CollectionNameOf(rec.CollectionId));
+            // Входящие связи в этой же БД: FK на ToRecordId снят (цель может быть межбазовой) —
+            // чистим прикладно, как DeleteRecord/DeleteRecordsData. Без этого удаление из календаря
+            // и задач оставляло висячие рёбра (невидимые в ячейке, но живущие в db_record_links).
+            // Исходящие уходят каскадом FromRecordId вместе с записью.
+            var incoming = db.DbRecordLinks.Where(l => l.TargetDbId == 0 && l.ToRecordId == id).ToList();
+            db.DbRecordLinks.RemoveRange(incoming);
             db.DbRecords.Remove(rec);
             db.SaveChanges();
         }

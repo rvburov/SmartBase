@@ -83,6 +83,73 @@ public partial class ConstructorRepository
           .ToList();
 
     /// <summary>
+    /// Перенести исходящие рёбра ОДНОЙ записи на её новую копию в другой коллекции — то же, что
+    /// <c>MoveRecordsCore</c> делает при переносе записей из таблицы, но для «пересоздающих» путей
+    /// календаря и задач (<see cref="UpdateCalendarRecord"/>, смена БД в окне записи). Зовётся сразу
+    /// после <see cref="CopyFieldValuesByName"/>: тот копирует только db_field_values, а рёбра живут
+    /// в db_record_links и без этого вызова терялись молча. <c>this</c> — репозиторий ЦЕЛИ.
+    ///
+    /// ВАЖНО: правила обязаны совпадать с <c>MoveRecordsCore</c> — ребро переезжает, только если
+    /// исходное и целевое поля одноимённые, оба «Связь», и конфиг цели смотрит на ту же коллекцию и ту
+    /// же (пересчитанную под целевую базу) целевую БД. Иначе ребро указывало бы в чужую коллекцию.
+    /// Недостающие в цели поля здесь не создаются (как и у зовущих: createMissingFields=false).
+    ///
+    /// <paramref name="sourceDbId"/>/<paramref name="targetDbId"/> — реестровые DbId баз. Равны
+    /// (в т.ч. 0,0 — перенос внутри одной базы) → TargetDbId рёбер не трогаем. Разные и оба валидные →
+    /// пересчитываем по формуле MoveRecordsCore. Разные, но хотя бы один неизвестен (≤0) — рёбра НЕ
+    /// переносим: без DbId внутрибазовое ребро нельзя честно превратить в межбазовое.
+    ///
+    /// Входящие связи на исходную запись не сохраняются (у копии новый Id) — за это отвечает окно
+    /// предупреждения у вызывающего, как и при переносе из таблицы.
+    /// </summary>
+    public void CopyRelationLinksByName(
+        ConstructorRepository source, int sourceRecordId, int sourceCollectionId,
+        int targetRecordId, int targetCollectionId, int sourceDbId = 0, int targetDbId = 0)
+    {
+        var sameBase = sourceDbId == targetDbId;
+        if (!sameBase && (sourceDbId <= 0 || targetDbId <= 0)) return;
+
+        // «Абсолютная» БД цели ребра: 0 означает базу ИСТОЧНИКА. В целевой базе она снова 0, если
+        // совпала с назначением, иначе — межбазовая на ту же абсолютную БД (формула MoveRecordsCore).
+        int RelTargetDb(int linkDb)
+        {
+            if (sameBase) return linkDb;
+            var abs = linkDb == 0 ? sourceDbId : linkDb;
+            return abs == targetDbId ? 0 : abs;
+        }
+
+        var srcRel = source.GetFields(sourceCollectionId).Where(f => f.FieldType == "relation").ToList();
+        if (srcRel.Count == 0) return;
+
+        var targetByName = new Dictionary<string, DbField>(StringComparer.OrdinalIgnoreCase);
+        foreach (var tf in GetFields(targetCollectionId))
+            if (tf.FieldType == "relation") targetByName.TryAdd(tf.Name, tf);
+        if (targetByName.Count == 0) return;
+
+        var rows = new List<DbRecordLinkEntity>();
+        foreach (var sf in srcRel)
+        {
+            if (!targetByName.TryGetValue(sf.Name, out var tf)) continue;
+            var sc = RelationConfig.FromConfig(sf.ConfigJson);
+            var tc = RelationConfig.FromConfig(tf.ConfigJson);
+            if (sc is null || tc is null) continue;
+            if (tc.TargetCollectionId != sc.TargetCollectionId || tc.TargetDbId != RelTargetDb(sc.TargetDbId)) continue;
+
+            var edges = source.GetLinkEdges(sf.Id!.Value, sourceRecordId);
+            for (var i = 0; i < edges.Count; i++)
+                rows.Add(new DbRecordLinkEntity
+                {
+                    FieldId    = tf.Id!.Value,                 FromRecordId = targetRecordId,
+                    ToRecordId = edges[i].ToRecordId,          Position     = (i + 1) * 1000,
+                    TargetDbId = RelTargetDb(edges[i].TargetDbId),
+                });
+        }
+        if (rows.Count == 0) return;
+        db.DbRecordLinks.AddRange(rows);
+        db.SaveChanges();
+    }
+
+    /// <summary>
     /// Заменить ВЕСЬ набор связей ячейки на <paramref name="toRecordIds"/> (основной путь записи из
     /// пикера). Порядок сохраняется (Position), дубли/само-ссылки/чужие коллекции отсеиваются, для
     /// single берётся максимум одна связь. Разница применяется точечно (лишние — удалить, новые —

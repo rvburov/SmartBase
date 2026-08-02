@@ -60,6 +60,32 @@ public sealed class RecordLifecycleTests
         Assert.Equal(["v1", "v2"], copied);
     }
 
+    // Календарь дублирует теми же методами, что и таблица, но ему нужна ПАРА «источник → копия»:
+    // из копий строятся события (дельта Журнала, якорь, перенос выделения). Сшивка держится на
+    // контракте «id копий приходят в порядке ранга источников (Position, Id)» — проверяем, что
+    // пара действительно указывает на свой источник, а не просто совпала по длине.
+    [Fact]
+    public void DuplicateRecordsMapped_pairs_each_source_with_its_copy()
+    {
+        using var db = new TempDatabase();
+        var (repo, colId, fieldId) = Seed(db, 4);
+        var page = OrderIds(repo, colId);
+        // Порядок В ЗАПРОСЕ намеренно перемешан и с пропуском: сшивка обязана идти по рангу
+        // (Position, Id), а не по порядку переданного списка.
+        var ids = new[] { page[3], page[0], page[2] };   // R4, R1, R3
+
+        var map = repo.DuplicateRecordsMappedIsolated(colId, ids);
+
+        Assert.Equal(3, map.Count);
+        Assert.Equal([page[0], page[2], page[3]], map.Select(p => p.SrcId).ToList());   // по рангу
+        var vals = repo.GetFieldValuesBatch(map.Select(p => p.NewId).ToList());
+        foreach (var (srcId, newId) in map)
+        {
+            var expected = "v" + (page.IndexOf(srcId) + 1);
+            Assert.Equal(expected, vals[newId][fieldId]);   // копия несёт значение СВОЕГО источника
+        }
+    }
+
     [Fact]
     public void MoveRecord_swaps_with_neighbor()
     {
