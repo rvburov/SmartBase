@@ -1582,6 +1582,8 @@ public partial class SidebarTree : UserControl
         {
             var (gcols, grecs) = await repo.CountGroupSubtreeAsync(groupId);
             var move  = new CrossMove(dbId, repo, IsGroup: true, groupId, grecs, gcols);
+            // Отказ отменяет всю правку (в т.ч. переименование) — ничего не тронуто.
+            if (!await ConfirmCrossDbLinkBreak([move])) return;
             var moved = await MoveNodesCrossDb(target, res.DbId, res.ParentId, [move], "Перемещение");
             if (moved is { } m)
             {
@@ -1628,6 +1630,8 @@ public partial class SidebarTree : UserControl
         if (res.DbId != dbId && RepoFor(res.DbId) is { } target)
         {
             var move  = new CrossMove(dbId, repo, IsGroup: false, collectionId, await repo.CountRecordsAsync(collectionId), Collections: 1);
+            // Отказ отменяет всю правку (в т.ч. переименование) — ничего не тронуто.
+            if (!await ConfirmCrossDbLinkBreak([move])) return;
             var moved = await MoveNodesCrossDb(target, res.DbId, res.GroupId, [move], "Перемещение");
             if (moved is { } m)
             {
@@ -1783,6 +1787,31 @@ public partial class SidebarTree : UserControl
     // и счётчики (записей в ветке/коллекции и число коллекций — для порога, % и текста индикатора).
     private sealed record CrossMove(int SrcDbId, ConstructorRepository SrcRepo, bool IsGroup, int Id, long Records, int Collections);
 
+    // Межбазовый перенос = новые id у записей → ВХОДЯЩИЕ связи на переносимое обрываются (за объектом
+    // не следуют). Для КОЛЛЕКЦИИ теряются лишь ВНЕШНИЕ входящие (само-связи внутри переписываются);
+    // для ГРУППЫ (v1) отбрасываются ВСЕ связи ветки. Внутрибазовый перенос id не меняет — потерь нет,
+    // туда не зовём. Возвращает false, если пользователь отказался (переносить нельзя).
+    //
+    // ВАЖНО: звать перед КАЖДЫМ вызовом MoveNodesCrossDb и ДО любых изменений. Точек входа в
+    // межбазовый перенос три — «Расположение» (RelocateSelectionOrNode), «Изменение» коллекции
+    // (EditCollection) и «Изменение» группы (EditGroup); раньше проверка стояла только в первой, и
+    // смена базы через «Изменение» рвала связи молча.
+    private async Task<bool> ConfirmCrossDbLinkBreak(IReadOnlyList<CrossMove> crossDb)
+    {
+        if (crossDb.Count == 0 || OwnerWindow is null) return true;
+
+        var hasLinks = false;
+        foreach (var t in crossDb)
+            if (t.IsGroup
+                    ? RelationDeleteImpact.ForGroup(t.SrcRepo, t.SrcDbId, t.Id)
+                    : RelationDeleteImpact.ForCollectionExternalCrossMove(t.SrcRepo, t.SrcDbId, t.Id))
+            { hasLinks = true; break; }
+        if (!hasLinks) return true;
+
+        var warn = new ConfirmDialog("Межбазовый перенос оборвёт связи, ссылающиеся на переносимое (станут «связи нет»). Продолжить?");
+        return await warn.ShowDialog<bool>(OwnerWindow) == true;
+    }
+
     // Перенести набор узлов в ДРУГУЮ БД быстрым путём (Move*Isolated: ATTACH + bulk INSERT…SELECT на
     // отдельных подключениях, не трогая общий Context). targetLocation — расположение в целевой БД:
     // для коллекции это её группа, для группы — родитель. Малый суммарный объём (≤ порога) — синхронно
@@ -1921,21 +1950,8 @@ public partial class SidebarTree : UserControl
             }
         }
 
-        // Межбазовый перенос = новые id у записей → ВХОДЯЩИЕ связи на переносимое обрываются (за
-        // объектом не следуют). Для КОЛЛЕКЦИИ теряются лишь ВНЕШНИЕ входящие (само-связи внутри
-        // переписываются); для ГРУППЫ (v1) отбрасываются ВСЕ связи ветки. Внутрибазовый перенос
-        // (sameDb) id не меняет — потерь нет, туда не считаем.
-        var hasLinks = false;
-        foreach (var t in crossDb)
-            if (t.IsGroup
-                    ? RelationDeleteImpact.ForGroup(t.SrcRepo, t.SrcDbId, t.Id)
-                    : RelationDeleteImpact.ForCollectionExternalCrossMove(t.SrcRepo, t.SrcDbId, t.Id))
-            { hasLinks = true; break; }
-        if (hasLinks)
-        {
-            var warn = new ConfirmDialog("Межбазовый перенос оборвёт связи, ссылающиеся на переносимое (станут «связи нет»). Продолжить?");
-            if (await warn.ShowDialog<bool>(OwnerWindow) != true) return;
-        }
+        // Спрашиваем ДО переносов внутри той же БД ниже: отказ должен оставить всё как было.
+        if (!await ConfirmCrossDbLinkBreak(crossDb)) return;
 
         // Та же БД — только метаданные: группа меняет ParentId, коллекция — GroupId (ветка/записи на
         // месте). Если в целевой группе/уровне уже есть одноимённый узел — даём «(копия)» (как дубль).
