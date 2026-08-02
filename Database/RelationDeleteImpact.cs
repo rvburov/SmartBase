@@ -39,6 +39,17 @@ public static class RelationDeleteImpact
     public static bool ForGroup(ConstructorRepository owner, int ownerDbId, int groupId) =>
         ForCollections(owner, ownerDbId, owner.CollectionIdsInGroup(groupId));
 
+    /// <summary>Перенос с участием PostgreSQL (generic-путь вместо ATTACH): рёбра НЕ копируются вовсе —
+    /// ни входящие, ни исходящие, ни само-связи внутри переносимого. Поэтому предупреждаем при наличии
+    /// ЛЮБЫХ связей, а не только внешних входящих: коллекция с одними само-связями прошла бы обычную
+    /// проверку («внешних нет») и потеряла бы связи молча.</summary>
+    public static bool ForPgCrossMove(ConstructorRepository owner, int ownerDbId, IReadOnlyCollection<int> collectionIds)
+    {
+        if (collectionIds.Count == 0) return false;
+        if (owner.HasAnyLinksInCollections(collectionIds)) return true;
+        return HasCrossDbIncoming(owner, ownerDbId, collectionIds);
+    }
+
     /// <summary>МЕЖБАЗОВЫЙ перенос ОДНОЙ коллекции: теряются только ВНЕШНИЕ входящие (само-связи внутри
     /// переписываются на новую копию). Межбазовые из других баз — всегда внешние.</summary>
     public static bool ForCollectionExternalCrossMove(ConstructorRepository owner, int ownerDbId, int collectionId)

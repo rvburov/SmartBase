@@ -318,6 +318,16 @@ public partial class ConstructorRepository
             && db.DbRecords.Any(r => r.Id == l.ToRecordId   && r.CollectionId == collectionId)
             && !db.DbRecords.Any(r => r.Id == l.FromRecordId && r.CollectionId == collectionId));
 
+    /// <summary>Есть ли у записей коллекций <paramref name="collectionIds"/> ЛЮБЫЕ рёбра — ИСХОДЯЩИЕ
+    /// (FromRecordId в них) или ВХОДЯЩИЕ внутрибазовые (ToRecordId в них). Для PG-пути переноса,
+    /// который рёбра не копирует ВООБЩЕ: проверка «только внешние входящие» пропустила бы коллекцию
+    /// с одними само-связями, и они исчезли бы молча. EXISTS обрывается на первом ребре.</summary>
+    public bool HasAnyLinksInCollections(IReadOnlyCollection<int> collectionIds) =>
+        collectionIds.Count > 0
+        && (db.DbRecordLinks.Any(l => db.DbRecords.Any(r => r.Id == l.FromRecordId
+                                                            && collectionIds.Contains(r.CollectionId)))
+            || HasIncomingLinksToCollections(collectionIds));
+
     /// <summary>Межбазовые цели ЭТОЙ базы в базу <paramref name="targetDbId"/>: recordId (в той базе) →
     /// число рёбер. Множество целей межбазовых связей мало (их не заводят миллионами) — вернуть карту
     /// безопасно; вызывающий пересечёт ключи с удаляемыми записями/коллекциями.</summary>

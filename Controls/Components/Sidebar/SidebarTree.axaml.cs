@@ -1583,7 +1583,7 @@ public partial class SidebarTree : UserControl
             var (gcols, grecs) = await repo.CountGroupSubtreeAsync(groupId);
             var move  = new CrossMove(dbId, repo, IsGroup: true, groupId, grecs, gcols);
             // Отказ отменяет всю правку (в т.ч. переименование) — ничего не тронуто.
-            if (!await ConfirmCrossDbLinkBreak([move])) return;
+            if (!await ConfirmCrossDbLinkBreak(target, [move])) return;
             var moved = await MoveNodesCrossDb(target, res.DbId, res.ParentId, [move], "Перемещение");
             if (moved is { } m)
             {
@@ -1631,7 +1631,7 @@ public partial class SidebarTree : UserControl
         {
             var move  = new CrossMove(dbId, repo, IsGroup: false, collectionId, await repo.CountRecordsAsync(collectionId), Collections: 1);
             // Отказ отменяет всю правку (в т.ч. переименование) — ничего не тронуто.
-            if (!await ConfirmCrossDbLinkBreak([move])) return;
+            if (!await ConfirmCrossDbLinkBreak(target, [move])) return;
             var moved = await MoveNodesCrossDb(target, res.DbId, res.GroupId, [move], "Перемещение");
             if (moved is { } m)
             {
@@ -1796,20 +1796,36 @@ public partial class SidebarTree : UserControl
     // межбазовый перенос три — «Расположение» (RelocateSelectionOrNode), «Изменение» коллекции
     // (EditCollection) и «Изменение» группы (EditGroup); раньше проверка стояла только в первой, и
     // смена базы через «Изменение» рвала связи молча.
-    private async Task<bool> ConfirmCrossDbLinkBreak(IReadOnlyList<CrossMove> crossDb)
+    private async Task<bool> ConfirmCrossDbLinkBreak(ConstructorRepository targetRepo, IReadOnlyList<CrossMove> crossDb)
     {
         if (crossDb.Count == 0 || OwnerWindow is null) return true;
 
+        // Перенос с участием PostgreSQL идёт generic-путём (ATTACH только у SQLite) и рёбра НЕ копирует
+        // вовсе. Там проверяем ЛЮБЫЕ связи: обычная смотрит только внешние входящие и на коллекции
+        // с одними само-связями ответила бы «нет» — связи исчезли бы без предупреждения.
+        var pg = targetRepo.IsPostgres || crossDb.Any(t => t.SrcRepo.IsPostgres);
+
         var hasLinks = false;
         foreach (var t in crossDb)
-            if (t.IsGroup
-                    ? RelationDeleteImpact.ForGroup(t.SrcRepo, t.SrcDbId, t.Id)
-                    : RelationDeleteImpact.ForCollectionExternalCrossMove(t.SrcRepo, t.SrcDbId, t.Id))
-            { hasLinks = true; break; }
+        {
+            bool hit;
+            if (pg)
+            {
+                IReadOnlyCollection<int> cols = t.IsGroup ? t.SrcRepo.CollectionIdsInGroup(t.Id) : [t.Id];
+                hit = RelationDeleteImpact.ForPgCrossMove(t.SrcRepo, t.SrcDbId, cols);
+            }
+            else hit = t.IsGroup
+                ? RelationDeleteImpact.ForGroup(t.SrcRepo, t.SrcDbId, t.Id)
+                : RelationDeleteImpact.ForCollectionExternalCrossMove(t.SrcRepo, t.SrcDbId, t.Id);
+            if (hit) { hasLinks = true; break; }
+        }
         if (!hasLinks) return true;
 
         var warn = new ConfirmDialog(
-            "Межбазовый перенос оборвёт связи, ссылающиеся на переносимое (станут «связи нет»). Продолжить?",
+            pg
+                ? "Перенос с участием PostgreSQL связи НЕ переносит: все связи переносимого будут потеряны, "
+                  + "включая связи внутри него. Продолжить?"
+                : "Межбазовый перенос оборвёт связи, ссылающиеся на переносимое (станут «связи нет»). Продолжить?",
             confirmText: "Перенести");
         return await warn.ShowDialog<bool>(OwnerWindow) == true;
     }
@@ -1953,7 +1969,7 @@ public partial class SidebarTree : UserControl
         }
 
         // Спрашиваем ДО переносов внутри той же БД ниже: отказ должен оставить всё как было.
-        if (!await ConfirmCrossDbLinkBreak(crossDb)) return;
+        if (!await ConfirmCrossDbLinkBreak(targetRepo, crossDb)) return;
 
         // Та же БД — только метаданные: группа меняет ParentId, коллекция — GroupId (ветка/записи на
         // месте). Если в целевой группе/уровне уже есть одноимённый узел — даём «(копия)» (как дубль).

@@ -23,6 +23,10 @@ public partial class ConstructorRepository(AppDbContext db)
     /// (ATTACH источника на подключении целевой БД, см. MoveCollectionIsolated).</summary>
     public string DbPath => db.DbPath;
 
+    /// <summary>Провайдер этой БД — PostgreSQL. Нужен UI: перенос с участием PG идёт generic-путём
+    /// (ATTACH есть только у SQLite) и связи НЕ переносит — предупреждение там строже.</summary>
+    public bool IsPostgres => db.IsPostgres;
+
     /// <summary>
     /// Права текущего пользователя в этой базе (ставит DatabaseManager). Публичные мутаторы
     /// первой строкой зовут <see cref="Demand"/> — страховку к скрытым кнопкам UI: запрещённое

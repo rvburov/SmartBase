@@ -460,6 +460,33 @@ public sealed class RelationLinkTests
         Assert.Equal([(newT2, 0)], verify.GetLinkEdges(fSelf.Id!.Value, newT1));
     }
 
+    // PG-путь переноса рёбра не копирует ВООБЩЕ, поэтому предупреждать надо и при одних само-связях —
+    // ровно там, где обычная проверка («есть ли ВНЕШНИЕ входящие») молчит, и потеря шла бы без окна.
+    [Fact]
+    public void Pg_cross_move_check_catches_self_links_that_external_check_ignores()
+    {
+        using var db = new TempDatabase(dbId: 1, name: "A");
+        var repo = db.Constructor;
+        var colC = SampleData.AddCollection(repo, "C").Id!.Value;
+        var c1   = SampleData.AddRecord(repo, colC, "c1").Id!.Value;
+        var c2   = SampleData.AddRecord(repo, colC, "c2").Id!.Value;
+
+        var relSelf = SampleData.AddField(repo, colC, "Похожая", "relation", position: 1000);
+        relSelf.ConfigJson = new RelationConfig(colC, false).ToConfigJson();
+        repo.UpdateField(relSelf);
+        repo.SetLinks(relSelf.Id!.Value, c1, [c2]);   // само-связь внутри C
+
+        // ATTACH-путь: внешних входящих нет → окна нет, и это ВЕРНО (само-связи переписываются).
+        Assert.False(RelationDeleteImpact.ForCollectionExternalCrossMove(repo, 1, colC));
+        // PG-путь: рёбра не копируются — предупреждать обязаны.
+        Assert.True(RelationDeleteImpact.ForPgCrossMove(repo, 1, [colC]));
+
+        // Коллекция без связей не тревожит ни один путь.
+        var empty = SampleData.AddCollection(repo, "Пустая").Id!.Value;
+        SampleData.AddRecord(repo, empty, "e1");
+        Assert.False(RelationDeleteImpact.ForPgCrossMove(repo, 1, [empty]));
+    }
+
     // Окно «что потеряется» перед переносом записи. Правила ОБЯЗАНЫ совпадать с планом MoveRecordsCore:
     // свойство без одноимённого поля в цели теряет значения, несовместимая одноимённая связь — рёбра.
     [Fact]
