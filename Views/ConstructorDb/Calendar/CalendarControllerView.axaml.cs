@@ -785,7 +785,22 @@ public partial class CalendarControllerView : UserControl
         var targets = records.Where(r => r.Id.HasValue).ToList();
         if (targets.Count == 0) return;
 
-        var dlg = new ConfirmDialog($"Вы удаляете {targets.Count} {RecordsPlural(targets.Count)}. Подтвердить?");
+        // Предупреждаем, что удаление оборвёт ВХОДЯЩИЕ связи на эти записи (внутрибазовые + межбазовые
+        // из открытых баз) — как в таблице (ConstructorControllerView.DeleteRecordsWithConfirm).
+        // Календарь агрегирует события ИЗ ВСЕХ смонтированных БД, поэтому проверяем по каждой базе
+        // отдельно; репозиторий берём прямым поиском по _dbs (не RepoOf: он подставляет DefaultRepo и
+        // проверил бы чужую базу). Одна запись даёт по событию на каждое поле-дату → id дедуплицируем.
+        var hasLinks = false;
+        foreach (var g in targets.GroupBy(r => r.DbId))
+        {
+            var repo = _dbs.FirstOrDefault(d => d.DbId == g.Key).Repo;
+            if (repo is null) continue;
+            var ids = g.Select(r => r.Id!.Value).Distinct().ToList();
+            if (RelationDeleteImpact.ForRecords(repo, g.Key, ids)) { hasLinks = true; break; }
+        }
+        var linkWarn = hasLinks ? " На них ссылаются связи из других записей — они будут удалены." : "";
+
+        var dlg = new ConfirmDialog($"Вы удаляете {targets.Count} {RecordsPlural(targets.Count)}.{linkWarn} Подтвердить?");
         if (await dlg.ShowDialog<bool>(win) != true) return;
 
         // Немного записей — прежний мгновенный путь (каждую в её БД). Много — bulk-SQL в фоне
