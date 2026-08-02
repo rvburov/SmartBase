@@ -1813,8 +1813,13 @@ public partial class ConstructorRepository(AppDbContext db)
         var target = new ConstructorRepository(targetCtx);
 
         // Прогресс покрывает ОБЕ фазы: копию ветки (0..total) и удаление исходной ветки (total..2·total).
-        var (newRootId, total) = target.CopyGroupFromAttached(sourceDbPath, srcGroupId, targetParentId, progress, batchSize, sourceDbId, targetDbId);
+        var (newRootId, total, colMap) = target.CopyGroupFromAttached(sourceDbPath, srcGroupId, targetParentId, progress, batchSize, sourceDbId, targetDbId);
         if (newRootId == 0) return 0;
+
+        // Конфиги полей-связей ветки перенесены дословно — правим под целевую базу. Рёбра ветки не
+        // копируются (v1), но без этой правки TargetCollectionId источника читался бы как ЛОКАЛЬНАЯ
+        // коллекция целевой базы, и поле показывало бы ЧУЖИЕ записи вместо пустой связи.
+        target.RewriteMovedGroupRelationConfigs(colMap, sourceDbId, targetDbId);
 
         // Имя корня ветки копируется как есть → если на целевом уровне уже есть одноимённая группа,
         // даём «(копия)». Вложенные группы/коллекции легли в новую (пустую) ветку — там конфликтов нет.
@@ -1840,7 +1845,7 @@ public partial class ConstructorRepository(AppDbContext db)
     // Перенос группы из присоединённой БД: одна транзакция целевой БД — сначала структура групп
     // (CloneGroupTreeAttached, имена через INSERT…SELECT, без материализации в C#), затем все коллекции
     // ветки по очереди с общим % (progressBase накапливает перенесённые записи).
-    private (int NewRootId, long TotalRecords) CopyGroupFromAttached(string sourceDbPath, int srcGroupId,
+    private (int NewRootId, long TotalRecords, Dictionary<int, int> ColMap) CopyGroupFromAttached(string sourceDbPath, int srcGroupId,
                                       int? targetParentId, IProgress<int>? progress, int batchSize,
                                       int sourceDbId = 0, int targetDbId = 0)
     {
@@ -1856,18 +1861,21 @@ public partial class ConstructorRepository(AppDbContext db)
             var cols = ReadIntPairs(conn, tx,
                 $"SELECT Id, GroupId FROM src.db_collections WHERE GroupId IN ({oldGroupIds}) ORDER BY GroupId, Position");
 
-            // Перенос группы: связи пока НЕ копируем (0,0) — конфиги полей-связей ветки требуют
-            // ГРУППОВОГО ремапа целевых коллекций (связь на другую коллекцию той же ветки), отдельным
-            // заходом. Одиночная коллекция переносит связи (MoveCollectionIsolated).
+            // Перенос группы: сами РЁБРА пока НЕ копируем (0,0) — межколлекционный ремап ToRecordId в
+            // пределах ветки отдельным заходом. Но карту коллекций собираем: по ней вызывающий чинит
+            // КОНФИГИ полей-связей (RewriteMovedGroupRelationConfigs), иначе они уехали бы дословно и
+            // TargetCollectionId источника читался бы как ЛОКАЛЬНАЯ коллекция целевой базы (чужие записи).
+            var colMap = new Dictionary<int, int>();   // старый id коллекции → новый
             long basis = 0;
             foreach (var (colId, oldGroup) in cols)
             {
-                var (_, rc) = CopyOneCollectionFromAttached(conn, tx, colId, map[oldGroup], progress, basis, batchSize, 0, 0);
+                var (newColId, rc) = CopyOneCollectionFromAttached(conn, tx, colId, map[oldGroup], progress, basis, batchSize, 0, 0);
+                colMap[colId] = newColId;
                 basis += rc;
             }
 
             tx.Commit();
-            return (root, basis);   // basis = суммарно перенесённых записей ветки (для прогресса удаления)
+            return (root, basis, colMap);   // basis = суммарно перенесённых записей ветки (для прогресса удаления)
         });
     }
 

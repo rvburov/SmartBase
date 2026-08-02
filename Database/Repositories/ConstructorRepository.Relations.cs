@@ -220,6 +220,53 @@ public partial class ConstructorRepository
     }
 
     /// <summary>
+    /// То же для МЕЖБАЗОВОГО переноса ГРУППЫ (ветки целиком). Рёбра ветки не копируются (v1), но
+    /// конфиги полей-связей приезжают ДОСЛОВНО, и без правки TargetCollectionId источника читался бы
+    /// как id ЛОКАЛЬНОЙ коллекции целевой базы — поле молча показывало бы ЧУЖИЕ записи. Разбор целей:
+    /// <list type="bullet">
+    /// <item>цель — коллекция ТОЙ ЖЕ перенесённой ветки (есть в <paramref name="colMap"/>): уехала
+    /// вместе с полем → внутрибазовая на новый id;</item>
+    /// <item>внешняя цель: по формуле MoveCollectionIsolated (абсолютная БД цели = TargetDbId==0 ?
+    /// sourceDbId; в целевой базе → 0 если == targetDbId, иначе межбазовая);</item>
+    /// <item>база источника неизвестна (<paramref name="sourceDbId"/>/<paramref name="targetDbId"/>
+    /// ≤ 0 — цель не восстановить): сбрасываем в «не настроено» (TargetCollectionId=0). Лучше пустое
+    /// поле, чем ссылка на чужие записи.</item>
+    /// </list>
+    /// Сами связи ветки при этом всё равно пусты — поле лишь показывает верную цель для нового выбора.
+    /// </summary>
+    private void RewriteMovedGroupRelationConfigs(IReadOnlyDictionary<int, int> colMap, int sourceDbId, int targetDbId)
+    {
+        if (colMap.Count == 0) return;
+        var newColIds = colMap.Values.ToList();
+        var fields    = db.DbFields.Where(f => newColIds.Contains(f.CollectionId) && f.FieldType == "relation").ToList();
+        var changed   = false;
+        foreach (var f in fields)
+        {
+            if (RelationConfig.FromConfig(f.ConfigJson) is not { } c) continue;
+            int newDb, newCol;
+            if (c.TargetDbId == 0 && colMap.TryGetValue(c.TargetCollectionId, out var movedCol))
+            {
+                newDb  = 0;
+                newCol = movedCol;
+            }
+            else if (sourceDbId > 0 && targetDbId > 0)
+            {
+                var abs = c.TargetDbId == 0 ? sourceDbId : c.TargetDbId;
+                newDb  = abs == targetDbId ? 0 : abs;
+                newCol = c.TargetCollectionId;
+            }
+            else
+            {
+                newDb  = 0;
+                newCol = 0;   // «не настроено» — FromConfig вернёт null, поле ничего не связывает
+            }
+            var updated = new RelationConfig(newCol, c.Single, c.Separator, newDb).ToConfigJson();
+            if (updated != f.ConfigJson) { f.ConfigJson = updated; changed = true; }
+        }
+        if (changed) db.SaveChanges();
+    }
+
+    /// <summary>
     /// Кандидаты для пикера связи: записи коллекции с непустым/любым Title, отсортированные по
     /// Position, с поиском по подстроке Title (регистронезависимо) и ограничением количества.
     /// excludeRecordId — убрать саму текущую запись (для self-relation, чтобы не связать с собой).

@@ -460,6 +460,57 @@ public sealed class RelationLinkTests
         Assert.Equal([(newT2, 0)], verify.GetLinkEdges(fSelf.Id!.Value, newT1));
     }
 
+    // Регресс: МЕЖБАЗОВЫЙ перенос ГРУППЫ. Сами рёбра ветки не копируются (v1), но конфиги полей-связей
+    // раньше уезжали ДОСЛОВНО: TargetDbId=0 + TargetCollectionId из dbA читались в dbB как ссылка на
+    // ЛОКАЛЬНУЮ коллекцию с этим id — поле молча показывало ЧУЖИЕ записи. Цель ВНУТРИ ветки должна
+    // перемэпиться на новую коллекцию, цель СНАРУЖИ — стать межбазовой на источник.
+    [Fact]
+    public void Cross_db_group_move_rewrites_relation_configs()
+    {
+        using var dbA = new TempDatabase(dbId: 1, name: "A");
+        using var dbB = new TempDatabase(dbId: 2, name: "B");
+        var repoA = dbA.Constructor;
+        var repoB = dbB.Constructor;
+
+        // dbB заранее занят «мусорными» коллекциями: новые id ветки НЕ совпадут с исходными, иначе
+        // дословный конфиг случайно указал бы на верный id и регресс не был бы виден.
+        SampleData.AddCollection(repoB, "Мусор-1");
+        SampleData.AddCollection(repoB, "Мусор-2");
+
+        // dbA: группа G с «Этапами» и «Задачами»; «Проекты» — СНАРУЖИ группы (останутся в dbA).
+        var projA  = SampleData.AddCollection(repoA, "Проекты").Id!.Value;
+        var g      = repoA.AddGroup(new DbGroup { Name = "G" }).Id!.Value;
+        var stageA = SampleData.AddCollection(repoA, "Этапы", g).Id!.Value;
+        var taskA  = SampleData.AddCollection(repoA, "Задачи", g).Id!.Value;
+
+        var relStage = SampleData.AddField(repoA, taskA, "Этап", "relation", position: 1000);
+        relStage.ConfigJson = new RelationConfig(stageA, false).ToConfigJson();   // цель ВНУТРИ ветки
+        repoA.UpdateField(relStage);
+        var relProj = SampleData.AddField(repoA, taskA, "Проект", "relation", position: 2000);
+        relProj.ConfigJson = new RelationConfig(projA, false).ToConfigJson();     // цель СНАРУЖИ ветки
+        repoA.UpdateField(relProj);
+        SampleData.AddRecord(repoA, taskA, "T1");
+
+        var newRoot = repoB.MoveGroupIsolated(dbA.Path, g, null, null, 10000, sourceDbId: 1, targetDbId: 2);
+        Assert.NotEqual(0, newRoot);
+
+        using var verifyCtx = new AppDbContext(dbB.Path);
+        var verify   = new ConstructorRepository(verifyCtx);
+        var newTask  = verifyCtx.DbCollections.AsNoTracking().Single(c => c.Name == "Задачи").Id;
+        var newStage = verifyCtx.DbCollections.AsNoTracking().Single(c => c.Name == "Этапы").Id;
+
+        // Цель ВНУТРИ ветки уехала вместе с полем → внутрибазовая на НОВЫЙ id «Этапов».
+        var cStage = RelationConfig.FromConfig(verify.GetFields(newTask).Single(f => f.Name == "Этап").ConfigJson)!;
+        Assert.Equal(0, cStage.TargetDbId);
+        Assert.Equal(newStage, cStage.TargetCollectionId);
+        Assert.NotEqual(stageA, cStage.TargetCollectionId);   // перемэплено, а не скопировано дословно
+
+        // Цель СНАРУЖИ осталась в dbA → межбазовая на dbA с исходным id коллекции.
+        var cProj = RelationConfig.FromConfig(verify.GetFields(newTask).Single(f => f.Name == "Проект").ConfigJson)!;
+        Assert.Equal(1, cProj.TargetDbId);
+        Assert.Equal(projA, cProj.TargetCollectionId);
+    }
+
     // Регресс: пере-настройка цели поля оставляет «осиротевшие» рёбра с ЧУЖИМ TargetDbId, чей
     // ToRecordId может СЛУЧАЙНО совпасть с локальной записью. GetLinks/GetLinksBatch (внутрибазовый
     // резолв JOIN'ом к своим db_records) НЕ должны их подхватывать — иначе показ покажет чужую запись
