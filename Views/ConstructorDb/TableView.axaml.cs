@@ -729,7 +729,9 @@ public partial class TableView : UserControl
                 // текстовым редактором — read-only на уровне колонки (CellEditingTemplate не строится);
                 // их собственный редактор живёт прямо в ячейке показа.
                 IsReadOnly  = f.FieldType is "checkbox" or "file" || FieldTypeInfo.IsComputed(f.FieldType),
-                // «Пользователь» — как select, только опции живые: допущенные пользователи базы.
+                // «Пользователь» — как select, только опции живые: допущенные пользователи
+                // базы. Снимок на момент построения колонок; редактор ячейки перечитывает
+                // их сам (состав пользователей меняется, пока таблица открыта).
                 Options     = f.FieldType == "user"
                     ? _repository?.GetUserOptions() ?? []
                     : ParseSelectOptions(f),
@@ -1438,11 +1440,19 @@ public partial class TableView : UserControl
                 case "status":  // как select: значение — строка из опций (ConfigJson)
                 case "user":   // как select: значение — отображаемое имя пользователя
                 {
+                    // «Пользователь»: опции берём в момент входа в правку, а не из
+                    // построенных колонок, — состав пользователей базы меняют соседи
+                    // (присоединился/допущен/отозван), список обязан быть свежим.
+                    // Плюс текущее значение остаётся в опциях, даже если такого
+                    // пользователя в базе больше нет (исторический снапшот).
+                    var options = def.FieldType == "user" && _repository is not null
+                        ? _repository.GetUserOptions(row[def.Key])
+                        : def.Options;
                     var combo = new ComboBox
                     {
                         BorderThickness     = new Thickness(0),
                         HorizontalAlignment = HorizontalAlignment.Stretch,
-                        ItemsSource         = def.Options,
+                        ItemsSource         = options,
                         SelectedItem        = row[def.Key],
                     };
                     combo.SelectionChanged += (_, _) =>

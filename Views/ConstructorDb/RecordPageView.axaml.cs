@@ -702,14 +702,17 @@ public partial class RecordPageView : UserControl
             }
             case "select":
             case "status":  // как select: опции — строки из ConfigJson
-            case "user":   // как select: опции — допущенные пользователи базы
+            case "user":   // как select: опции — допущенные пользователи базы (живые)
             {
+                // Опции пользователей читаются при каждом построении поля: состав меняют
+                // соседи. Текущее значение добавляется к ним, даже если такого пользователя
+                // в базе уже нет, — историческое имя остаётся видимым и не затирается.
                 var combo = new ComboBox
                 {
                     HorizontalAlignment = HorizontalAlignment.Stretch,
                     Classes             = { "propValue" },
                     ItemsSource         = f.FieldType == "user"
-                        ? _repo?.GetUserOptions() ?? []
+                        ? _repo?.GetUserOptions(row.Value) ?? []
                         : SelectOptions(f),
                     SelectedItem        = row.Value,
                 };

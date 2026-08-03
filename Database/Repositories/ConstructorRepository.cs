@@ -132,12 +132,27 @@ public partial class ConstructorRepository(AppDbContext db)
     /// базы (db_users). В личной базе допущен только владелец — выбрать можно лишь себя.
     /// Значение хранится строкой-именем (как select): фильтр/сортировка/экспорт работают
     /// без доработок, а старые значения остаются историческим снапшотом.
+    ///
+    /// Читается КАЖДЫЙ раз при построении редактора (запрос дешёвый — десятки строк):
+    /// состав пользователей меняют соседи, и выпадающий список обязан быть живым —
+    /// допущенный появляется, потерявший допуск исчезает без перезапуска.
+    ///
+    /// <paramref name="includeValue"/> — текущее значение ячейки: оно попадает в опции,
+    /// даже если такого пользователя среди допущенных уже нет (ушёл из базы, переименовался).
+    /// Иначе редактор показал бы пустоту вместо исторического снапшота, а первый же клик
+    /// затёр бы значение. Историческое значение идёт последним — «живые» опции сверху.
     /// </summary>
-    public List<string> GetUserOptions() =>
-        db.DbUsers.Where(u => u.IsApproved)
-                  .OrderBy(u => u.DisplayName)
-                  .Select(u => u.DisplayName)
-                  .ToList();
+    public List<string> GetUserOptions(string? includeValue = null)
+    {
+        var options = db.DbUsers.AsNoTracking()
+                                .Where(u => u.IsApproved)
+                                .OrderBy(u => u.DisplayName)
+                                .Select(u => u.DisplayName)
+                                .ToList();
+        if (!string.IsNullOrEmpty(includeValue) && !options.Contains(includeValue))
+            options.Add(includeValue);
+        return options;
+    }
 
     /// <summary>Строка журнала для панели «История изменений».</summary>
     public sealed record ChangeLogRow(long Id, string Ts, string UserName, string Action,

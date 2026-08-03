@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using Microsoft.EntityFrameworkCore;
 using SmartBase.Core.Models;
 using SmartBase.Database.Entities;
 using SmartBase.Utils;
@@ -57,11 +58,31 @@ public sealed class PermissionService(AppDbContext db)
     private int _dbMask = (int)PermAction.All;
     private Dictionary<int, int> _collectionMasks = [];
 
-    /// <summary>Права пересчитаны (допуск, маски, пароль) — UI перечитывает кнопки.</summary>
+    /// <summary>Права пересчитаны (допуск, маски, пароль) — UI перечитывает кнопки
+    /// и списки пользователей (опции полей «пользователь»).</summary>
     public event EventHandler? Changed;
 
     /// <summary>Текущему пользователю доступно содержимое базы.</summary>
     public bool AccessGranted => IsAdmin || IsApproved;
+
+    // ── Свежие чтения (мимо кеша EF) ──────────────────────────────────────────
+    //
+    // Строки db_users/db_permissions/db_meta меняют СОСЕДИ (другая машина общей базы,
+    // вторая копия приложения): выдали допуск, сменили ФИО, поправили права. Общий
+    // контекст живёт весь сеанс, и обычный трекинг-запрос вернул бы уже загруженный
+    // экземпляр со СТАРЫМИ значениями (EF не перетирает загруженное данными из БД) —
+    // допуск «не доезжал» бы до перезапуска, а панель администратора показывала бы
+    // устаревший статус. Поэтому все чтения этой службы — AsNoTracking (свежий снимок),
+    // а строку, которую собираемся ПРАВИТЬ, перед правкой перечитываем (Entry.Reload).
+    private IQueryable<DbUserEntity>       FreshUsers  => _db.DbUsers.AsNoTracking();
+    private IQueryable<DbPermissionEntity> FreshPerms  => _db.DbPermissions.AsNoTracking();
+
+    // Отслеживаемая (правимая) строка с актуальными значениями из БД.
+    private T? Tracked<T>(T? entity) where T : class
+    {
+        if (entity is not null) _db.Entry(entity).Reload();
+        return entity;
+    }
 
     // ── Регистрация при монтировании ──────────────────────────────────────────
 
@@ -140,8 +161,11 @@ public sealed class PermissionService(AppDbContext db)
     /// </summary>
     public void SyncDisplayName()
     {
-        var me = _db.DbUsers.FirstOrDefault(u => u.UserKey == CurrentUser.Key);
-        if (me is null || me.DisplayName == CurrentUser.DisplayName) return;
+        // Перед правкой перечитываем строку: соседский допуск/права, изменённые за сеанс,
+        // иначе уехали бы обратно вместе с UPDATE по устаревшему снапшоту.
+        var me = Tracked(_db.DbUsers.FirstOrDefault(u => u.UserKey == CurrentUser.Key));
+        if (me is null || me.DisplayName == CurrentUser.DisplayName ||
+            _db.Entry(me).State == Microsoft.EntityFrameworkCore.EntityState.Detached) return;
         LogUser("user.rename", CurrentUser.DisplayName,
                 Utils.ChangeDetail.Rename(me.DisplayName, CurrentUser.DisplayName));
         me.DisplayName = CurrentUser.DisplayName;
@@ -171,7 +195,7 @@ public sealed class PermissionService(AppDbContext db)
     /// <summary>Перечитать снапшот прав текущего пользователя из БД.</summary>
     public void Reload(bool notify = true)
     {
-        var me = _db.DbUsers.FirstOrDefault(u => u.UserKey == CurrentUser.Key);
+        var me = FreshUsers.FirstOrDefault(u => u.UserKey == CurrentUser.Key);
         CurrentUserId = me?.Id ?? 0;
         IsAdmin       = me?.IsAdmin    ?? false;
         IsApproved    = me?.IsApproved ?? false;
@@ -183,7 +207,7 @@ public sealed class PermissionService(AppDbContext db)
         _dbMask = (int)PermAction.All;
         _collectionMasks = [];
         if (me is not null)
-            foreach (var p in _db.DbPermissions.Where(p => p.UserId == me.Id).ToList())
+            foreach (var p in FreshPerms.Where(p => p.UserId == me.Id).ToList())
             {
                 if (p.CollectionId is int cid) _collectionMasks[cid] = p.ActionsMask;
                 else                           _dbMask               = p.ActionsMask;
@@ -196,14 +220,16 @@ public sealed class PermissionService(AppDbContext db)
 
     /// <summary>Все пользователи базы (сначала ожидающие допуска, затем по имени).</summary>
     public List<DbUserEntity> GetUsers() =>
-        _db.DbUsers.OrderBy(u => u.IsApproved).ThenBy(u => u.DisplayName).ToList();
+        FreshUsers.OrderBy(u => u.IsApproved).ThenBy(u => u.DisplayName).ToList();
 
     /// <summary>Выдать/отозвать допуск. Только администратор.</summary>
     public void SetApproved(int userId, bool approved)
     {
         DemandAdmin();
-        var user = _db.DbUsers.Find(userId);
+        var user = Tracked(_db.DbUsers.Find(userId));
         if (user is null || user.IsAdmin) return;   // допуск админа не трогаем
+        // Строку снёс сосед, пока панель была открыта, — Reload отцепил её от контекста.
+        if (_db.Entry(user).State == Microsoft.EntityFrameworkCore.EntityState.Detached) return;
         user.IsApproved = approved;
         // Событие в журнал: у затронутого пользователя замок снимется/появится сам,
         // без перезапуска (его поллер увидит строку и перечитает права).
@@ -218,7 +244,7 @@ public sealed class PermissionService(AppDbContext db)
     /// </summary>
     public int GetMask(int userId, int? collectionId)
     {
-        var rows = _db.DbPermissions.Where(p => p.UserId == userId).ToList();
+        var rows = FreshPerms.Where(p => p.UserId == userId).ToList();
         if (collectionId is int cid &&
             rows.FirstOrDefault(p => p.CollectionId == cid) is { } perCol)
             return perCol.ActionsMask;
@@ -230,9 +256,9 @@ public sealed class PermissionService(AppDbContext db)
     public void SetMask(int userId, int? collectionId, int mask)
     {
         DemandAdmin();
-        var row = _db.DbPermissions
-            .FirstOrDefault(p => p.UserId == userId && p.CollectionId == collectionId);
-        if (row is null)
+        var row = Tracked(_db.DbPermissions
+            .FirstOrDefault(p => p.UserId == userId && p.CollectionId == collectionId));
+        if (row is null || _db.Entry(row).State == Microsoft.EntityFrameworkCore.EntityState.Detached)
             _db.DbPermissions.Add(new DbPermissionEntity
             {
                 UserId       = userId,
@@ -241,7 +267,8 @@ public sealed class PermissionService(AppDbContext db)
             });
         else
             row.ActionsMask = mask;
-        LogUser("user.rights", _db.DbUsers.Find(userId)?.DisplayName ?? "");
+        LogUser("user.rights",
+                FreshUsers.Where(u => u.Id == userId).Select(u => u.DisplayName).FirstOrDefault() ?? "");
         _db.SaveChanges();
         Reload();
     }
@@ -321,8 +348,9 @@ public sealed class PermissionService(AppDbContext db)
         var actual   = Pbkdf2(password, Convert.FromBase64String(salt), iterations);
         if (!CryptographicOperations.FixedTimeEquals(expected, actual)) return false;
 
-        var me = _db.DbUsers.FirstOrDefault(u => u.UserKey == CurrentUser.Key);
-        if (me is not null && !me.IsApproved)
+        var me = Tracked(_db.DbUsers.FirstOrDefault(u => u.UserKey == CurrentUser.Key));
+        if (me is not null && !me.IsApproved &&
+            _db.Entry(me).State != Microsoft.EntityFrameworkCore.EntityState.Detached)
         {
             me.IsApproved = true;
             // Событие в журнал: в открытой панели администратора строка пользователя
@@ -339,11 +367,13 @@ public sealed class PermissionService(AppDbContext db)
                                   HashAlgorithmName.SHA256, 32);
 
     private string? GetMeta(string key) =>
-        _db.DbMeta.FirstOrDefault(m => m.Key == key)?.Value;
+        _db.DbMeta.AsNoTracking().FirstOrDefault(m => m.Key == key)?.Value;
 
     private void SetMeta(string key, string value)
     {
-        var row = _db.DbMeta.Find(key);
+        var row = Tracked(_db.DbMeta.Find(key));
+        if (row is not null &&
+            _db.Entry(row).State == Microsoft.EntityFrameworkCore.EntityState.Detached) row = null;
         if (row is null) _db.DbMeta.Add(new DbMetaEntity { Key = key, Value = value });
         else             row.Value = value;
     }

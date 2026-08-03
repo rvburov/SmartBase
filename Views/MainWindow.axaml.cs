@@ -206,6 +206,9 @@ public partial class MainWindow : Window
         CalendarSidebar.PendingDatabaseTapped    += async (_, dbId) => await ShowPendingDatabaseInfo(dbId);
         TasksSidebar.PendingDatabaseTapped       += async (_, dbId) => await ShowPendingDatabaseInfo(dbId);
 
+        // Живой состав пользователей уже смонтированных баз (дальше — из SyncMountedToUi).
+        HookPermissionEvents();
+
         // Начальное состояние: раздел при запуске берём из настроек (стандарт — конструктор).
         var startupModule = AppSettings.LoadStartupModule();
         ActivityBarControl.SetModuleActive(startupModule);
@@ -728,6 +731,7 @@ public partial class MainWindow : Window
     // заглушками со статусом во всех трёх сайдбарах.
     private void SyncMountedToUi()
     {
+        HookPermissionEvents();
         var pending = PendingDbs();
         ConstructorSidebar.InitializeWorkspace(_workspace.Mounted, Controls.Components.SidebarMode.Constructor, pending);
         CalendarSidebar.InitializeWorkspace(GrantedDbs(), Controls.Components.SidebarMode.Calendar, pending);
@@ -738,6 +742,44 @@ public partial class MainWindow : Window
         CalendarModule.SetActiveIds(CalendarSidebar.GetActiveIds());
         TasksModule.SetActiveIds(TasksSidebar.GetActiveIds());
         SettingsModule.RefreshDatabases();   // обновить статус «подключена/не подключена»
+    }
+
+    // ── Живой состав пользователей базы ───────────────────────────────────────
+    //
+    // Пользователи базы — источник опций типа свойства «пользователь» (исполнитель
+    // задачи, «Назначил», любые user-поля коллекции). Состав меняется на ходу:
+    // сосед присоединился к базе, администратор допустил/отозвал допуск, кто-то
+    // сменил ФИО. PermissionService.Changed — единый сигнал обеих сторон: у админа
+    // он приходит от его же действия в панели, у остальных — из поллера чужих правок
+    // (OnRemoteChanges → Reload). По нему перечитываем открытые списки, чтобы
+    // выпадающие не приходилось «оживлять» перезапуском.
+    private readonly HashSet<int> _permHooked = [];
+
+    private void HookPermissionEvents()
+    {
+        // База размонтирована (отключили/потеряли) — забываем: при повторном
+        // монтировании будет новый DatabaseManager со своим сервисом прав.
+        _permHooked.RemoveWhere(id => _workspace.Get(id) is null);
+
+        foreach (var db in _workspace.Mounted)
+        {
+            if (!_permHooked.Add(db.DbId)) continue;
+            var dbId = db.DbId;
+            db.Permissions.Changed += (_, _) =>
+                Dispatcher.UIThread.Post(() => OnDbUsersChanged(dbId));
+        }
+    }
+
+    // Состав пользователей/прав базы изменился: обновить то, что уже построено.
+    // Таблица конструктора и панель записи перечитывают опции при построении
+    // редактора сами (ConstructorRepository.GetUserOptions) — им нужен только
+    // повод перерисоваться, а задачи держат список исполнителей быстрого добавления.
+    private void OnDbUsersChanged(int dbId)
+    {
+        if (_workspace.Get(dbId) is null) return;
+
+        if (_activeModule == "tasks") TasksModule.Refresh();
+        if (_recordPanelLogicalOpen && _currentConstructorDbId == dbId) RecordPanel.ReloadFromDb();
     }
 
     // Клик по запертой базе в сайдбаре: с паролем — диалог ввода (верный пароль даёт
