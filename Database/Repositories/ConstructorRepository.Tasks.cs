@@ -75,8 +75,13 @@ public partial class ConstructorRepository
         }
 
         // Помечаем существующее user-поле (кроме «Назначил») либо создаём «Исполнитель».
+        // Роль «Назначил» отсекаем И по флагу, И по имени: у поля, которое пользователь
+        // завёл руками до включения задач, флага ещё нет, а ниже EnsureTaskSupportFields
+        // найдёт его ПО ИМЕНИ и пометит ролью — одно поле получило бы обе роли, и
+        // AddTaskRecord затёр бы исполнителя назначившим (оба пишутся в один FieldId).
         var candidate = db.DbFields.FirstOrDefault(f =>
-            f.CollectionId == collectionId && f.FieldType == "user" && !f.IsTaskAssigner);
+            f.CollectionId == collectionId && f.FieldType == "user" &&
+            !f.IsTaskAssigner && f.Name != FieldAssigner);
         if (candidate is not null)
         {
             Demand(PermAction.EditField, collectionId);
@@ -109,17 +114,43 @@ public partial class ConstructorRepository
     // опциями). Роли ищутся ПО ФЛАГУ, не по имени; одноимённое поле подходящего типа
     // просто помечается флагом, неподходящего — имя новой роли получает суффикс « 2».
     // Возвращает true, если состав полей изменился (создание/пометка).
+    //
+    // Права спрашиваем ЗДЕСЬ, а не у вызывающих: пометка ЧУЖОГО поля ролью и правка его
+    // опций — изменение схемы коллекции, а приходят сюда двумя путями (тумблер задач в
+    // сайдбаре и «между делом» из AddTaskRecord, где проверен только CreateRecord). Обе
+    // проверки идут ДО первой записи: отказ не должен оставить коллекцию наполовину
+    // включённой. Пометка существующего поля = EditField, создание недостающего =
+    // CreateField (AddField проверит его и сам, но нам нужен отказ ДО правки чужих опций).
     private bool EnsureTaskSupportFields(int collectionId)
     {
-        var changed = false;
+        var needAssigner = !db.DbFields.Any(f => f.CollectionId == collectionId && f.IsTaskAssigner);
+        var needStatus   = !db.DbFields.Any(f => f.CollectionId == collectionId && f.IsTaskStatus);
+        if (!needAssigner && !needStatus) return false;
 
-        if (!db.DbFields.Any(f => f.CollectionId == collectionId && f.IsTaskAssigner))
+        var assigner = needAssigner
+            ? db.DbFields.FirstOrDefault(f =>
+                  f.CollectionId == collectionId && f.Name == FieldAssigner && f.FieldType == "user")
+            : null;
+        // Одноимённое поле-список («Список» ИЛИ новый «Статус») — помечаем флагом и
+        // дополняем опциями. Иначе создаём поле нового типа «status» (раньше — select).
+        // Условие типа — инлайн (FieldTypeInfo.IsOptionList не транслируется в SQL).
+        var status = needStatus
+            ? db.DbFields.FirstOrDefault(f =>
+                  f.CollectionId == collectionId && f.Name == FieldStatus &&
+                  (f.FieldType == "select" || f.FieldType == "status"))
+            : null;
+
+        if (assigner is not null || status is not null)
+            Demand(PermAction.EditField, collectionId);
+        if ((needAssigner && assigner is null) || (needStatus && status is null))
+            Demand(PermAction.CreateField, collectionId);
+
+        if (needAssigner)
         {
-            var existing = db.DbFields.FirstOrDefault(f =>
-                f.CollectionId == collectionId && f.Name == FieldAssigner && f.FieldType == "user");
-            if (existing is not null)
+            if (assigner is not null)
             {
-                existing.IsTaskAssigner = true;
+                assigner.IsTaskAssigner = true;
+                Log("update", "field", assigner.Name, CollectionNameOf(collectionId));
                 db.SaveChanges();
             }
             else
@@ -133,21 +164,15 @@ public partial class ConstructorRepository
                     IsTaskAssigner = true,
                 });
             }
-            changed = true;
         }
 
-        if (!db.DbFields.Any(f => f.CollectionId == collectionId && f.IsTaskStatus))
+        if (needStatus)
         {
-            // Одноимённое поле-список («Список» ИЛИ новый «Статус») — помечаем флагом и
-            // дополняем опциями. Иначе создаём поле нового типа «status» (раньше — select).
-            // Условие типа — инлайн (FieldTypeInfo.IsOptionList не транслируется в SQL).
-            var existing = db.DbFields.FirstOrDefault(f =>
-                f.CollectionId == collectionId && f.Name == FieldStatus &&
-                (f.FieldType == "select" || f.FieldType == "status"));
-            if (existing is not null)
+            if (status is not null)
             {
-                existing.IsTaskStatus = true;
-                existing.ConfigJson   = MergeSelectOptions(existing.ConfigJson, TaskStatusOptions);
+                status.IsTaskStatus = true;
+                status.ConfigJson   = MergeSelectOptions(status.ConfigJson, TaskStatusOptions);
+                Log("update", "field", status.Name, CollectionNameOf(collectionId));
                 db.SaveChanges();
             }
             else
@@ -162,10 +187,9 @@ public partial class ConstructorRepository
                     IsTaskStatus = true,
                 });
             }
-            changed = true;
         }
 
-        return changed;
+        return true;
     }
 
     private int NextFieldPosition(int collectionId) =>
@@ -390,6 +414,15 @@ public partial class ConstructorRepository
 
         var colId = CollectionOfRecord(recordId);
         if (colId is not int cid) return;
+
+        // Смена коллекции пересоздала запись в цели, а t.ExecFieldId остался полем ИСХОДНОЙ
+        // коллекции: значение легло бы на чужое поле (в таблице и панели записи такой ячейки
+        // не видно — данные есть, но их не достать), а задача пропала бы из раздела, потому
+        // что задача = «запись × ЕЁ user-поле с IsTaskExec». Включаем цель в задачи —
+        // EnsureTaskCollection вернёт её собственное exec-поле и доведёт роли «Назначил»/«Статус»
+        // (без этого назначивший и статус тоже терялись молча).
+        if (CollectionOfField(t.ExecFieldId) != cid) t.ExecFieldId = EnsureTaskCollection(cid);
+
         SetFieldValue(recordId, t.ExecFieldId, t.Executor);
         var roles = TaskRoleFields(cid);
         if (roles.AssignerId is int aid) SetFieldValue(recordId, aid, t.Assigner);
