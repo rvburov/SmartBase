@@ -25,6 +25,12 @@ public partial class ConstructorRepository
     private const string FieldAssigner = "Назначил";
     private const string FieldStatus   = "Статус";
 
+    // Имена ролей сравниваются без учёта регистра — как занятые имена в FreeFieldName.
+    // Иначе «назначил» с маленькой буквы считался бы обычным полем: его взяли бы в
+    // исполнители, а разметка ролей всё равно нашла бы его и добавила вторую роль.
+    private static bool IsRoleName(string? name, string role) =>
+        string.Equals(name, role, StringComparison.OrdinalIgnoreCase);
+
     private static readonly string TaskStatusConfigJson =
         JsonSerializer.Serialize(new { options = TaskStatusOptions });
 
@@ -42,6 +48,14 @@ public partial class ConstructorRepository
         Demand(PermAction.EditField, CollectionOfField(fieldId));
         var field = db.DbFields.Find(fieldId);
         if (field is null || field.FieldType != "user" || field.IsTaskExec == enabled) return false;
+
+        // Роль «Назначил» исполнителем быть не может: оба значения писались бы в один
+        // FieldId и затирали друг друга. Отсекаем и помеченное флагом поле, и ещё не
+        // размеченное — его EnsureTaskSupportFields найдёт ПО ИМЕНИ и сделает назначившим.
+        if (enabled && (field.IsTaskAssigner || IsRoleName(field.Name, FieldAssigner)))
+            throw new InvalidOperationException(
+                $"Свойство «{field.Name}» — это роль назначившего задачу, исполнителем оно быть не может. " +
+                "Заведите для исполнителя отдельное свойство типа «Пользователь».");
 
         // Авто-поля потребуют права создания — проверяем ДО записи флага, чтобы
         // отказ не оставил коллекцию наполовину включённой.
@@ -64,10 +78,22 @@ public partial class ConstructorRepository
     /// (существующее помечается, иначе создаётся «Исполнитель») + «Назначил»/«Статус».
     /// Возвращает id exec-поля. Для быстрого добавления задач в коллекцию без задач.
     /// </summary>
-    public int EnsureTaskCollection(int collectionId)
+    /// <param name="adoptExisting">
+    /// Разрешено ли «усыновить» под исполнителя уже существующее user-поле коллекции.
+    /// Так работает включение задач в коллекции, которую пользователь для этого и открыл
+    /// (быстрое добавление задачи). Но для ПЕРЕНОСА задачи в постороннюю коллекцию это
+    /// недопустимо: там своё user-поле («Менеджер», «Согласующий») с сотнями заполненных
+    /// значений молча стало бы полем задач и залило раздел чужими карточками —
+    /// в таком случае передаётся false и заводится собственное поле «Исполнитель».
+    /// </param>
+    public int EnsureTaskCollection(int collectionId, bool adoptExisting = true)
     {
-        var exec = db.DbFields.FirstOrDefault(f =>
-            f.CollectionId == collectionId && f.FieldType == "user" && f.IsTaskExec);
+        // Поля коллекции — в память: имена ролей сравниваются БЕЗ учёта регистра
+        // (как в FreeFieldName), а SQL-сравнение строк регистрозависимо и мимо кириллицы
+        // lower() в SQLite всё равно не работает.
+        var fields = db.DbFields.Where(f => f.CollectionId == collectionId).ToList();
+
+        var exec = fields.FirstOrDefault(f => f.FieldType == "user" && f.IsTaskExec);
         if (exec is not null)
         {
             EnsureTaskSupportFields(collectionId);
@@ -79,9 +105,10 @@ public partial class ConstructorRepository
         // завёл руками до включения задач, флага ещё нет, а ниже EnsureTaskSupportFields
         // найдёт его ПО ИМЕНИ и пометит ролью — одно поле получило бы обе роли, и
         // AddTaskRecord затёр бы исполнителя назначившим (оба пишутся в один FieldId).
-        var candidate = db.DbFields.FirstOrDefault(f =>
-            f.CollectionId == collectionId && f.FieldType == "user" &&
-            !f.IsTaskAssigner && f.Name != FieldAssigner);
+        var candidate = adoptExisting
+            ? fields.FirstOrDefault(f => f.FieldType == "user" &&
+                                         !f.IsTaskAssigner && !IsRoleName(f.Name, FieldAssigner))
+            : null;
         if (candidate is not null)
         {
             Demand(PermAction.EditField, collectionId);
@@ -127,17 +154,19 @@ public partial class ConstructorRepository
         var needStatus   = !db.DbFields.Any(f => f.CollectionId == collectionId && f.IsTaskStatus);
         if (!needAssigner && !needStatus) return false;
 
+        // Поля — в память: имя роли ищем БЕЗ учёта регистра (SQL-сравнение строк
+        // регистрозависимо, а lower() в SQLite кириллицу не трогает), иначе «назначил»
+        // с маленькой буквы проходил бы мимо роли и получал вторую.
+        var fields = db.DbFields.Where(f => f.CollectionId == collectionId).ToList();
+
         var assigner = needAssigner
-            ? db.DbFields.FirstOrDefault(f =>
-                  f.CollectionId == collectionId && f.Name == FieldAssigner && f.FieldType == "user")
+            ? fields.FirstOrDefault(f => f.FieldType == "user" && IsRoleName(f.Name, FieldAssigner))
             : null;
         // Одноимённое поле-список («Список» ИЛИ новый «Статус») — помечаем флагом и
         // дополняем опциями. Иначе создаём поле нового типа «status» (раньше — select).
-        // Условие типа — инлайн (FieldTypeInfo.IsOptionList не транслируется в SQL).
         var status = needStatus
-            ? db.DbFields.FirstOrDefault(f =>
-                  f.CollectionId == collectionId && f.Name == FieldStatus &&
-                  (f.FieldType == "select" || f.FieldType == "status"))
+            ? fields.FirstOrDefault(f => (f.FieldType == "select" || f.FieldType == "status") &&
+                                         IsRoleName(f.Name, FieldStatus))
             : null;
 
         if (assigner is not null || status is not null)
@@ -388,6 +417,16 @@ public partial class ConstructorRepository
     {
         if (t.Id is not int recordId) return;
 
+        // Роли ЦЕЛИ готовим ДО переноса. Смена коллекции пересоздаёт запись календарным
+        // путём (AddCalendarRecord + копия значений + удаление исходной, каждый со своим
+        // SaveChanges и без общей транзакции). Если спросить права после него, отказ
+        // застанет перенос уже закоммиченным: запись в цели, а исполнителя/назначившего
+        // и статуса нет — задача исчезла из раздела вместе со значениями. Поля,
+        // созданные заранее, при отказе остаются пустыми — это безобидно.
+        int? targetExecFieldId = null;
+        if (t.CollectionId is int target && target != CollectionOfRecord(recordId))
+            targetExecFieldId = EnsureTaskCollection(target, adoptExisting: false);
+
         if (t.DueStart is DateTime start)
         {
             var cal = new CalendarRecord
@@ -418,10 +457,11 @@ public partial class ConstructorRepository
         // Смена коллекции пересоздала запись в цели, а t.ExecFieldId остался полем ИСХОДНОЙ
         // коллекции: значение легло бы на чужое поле (в таблице и панели записи такой ячейки
         // не видно — данные есть, но их не достать), а задача пропала бы из раздела, потому
-        // что задача = «запись × ЕЁ user-поле с IsTaskExec». Включаем цель в задачи —
-        // EnsureTaskCollection вернёт её собственное exec-поле и доведёт роли «Назначил»/«Статус»
-        // (без этого назначивший и статус тоже терялись молча).
-        if (CollectionOfField(t.ExecFieldId) != cid) t.ExecFieldId = EnsureTaskCollection(cid);
+        // что задача = «запись × ЕЁ user-поле с IsTaskExec». Берём exec-поле цели,
+        // подготовленное выше; второй случай — exec-поле удалили, пока диалог был открыт
+        // (CollectionOfField вернёт null), тогда заводим исполнителя здесь.
+        if (targetExecFieldId is int prepared)              t.ExecFieldId = prepared;
+        else if (CollectionOfField(t.ExecFieldId) != cid)   t.ExecFieldId = EnsureTaskCollection(cid, adoptExisting: false);
 
         SetFieldValue(recordId, t.ExecFieldId, t.Executor);
         var roles = TaskRoleFields(cid);
