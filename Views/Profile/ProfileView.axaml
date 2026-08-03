@@ -202,6 +202,48 @@
                     </Border>
                     <Border Classes="separator h" />
 
+                    <!-- Подразделение (по желанию) -->
+                    <Border Classes="settingRow">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <StackPanel Grid.Column="0" Spacing="4"
+                                        VerticalAlignment="Center" Margin="0,0,32,0">
+                                <TextBlock Classes="title" Text="Подразделение" />
+                                <TextBlock Classes="desc"
+                                           Text="Необязательное справочное поле: отдел, служба или филиал. На доступ к базам данных и отображаемое имя не влияет." />
+                            </StackPanel>
+                            <TextBox Grid.Column="1" x:Name="DepartmentBox"
+                                     Width="240" Height="{StaticResource ControlHeightStandard}"
+                                     VerticalAlignment="Center"
+                                     VerticalContentAlignment="Center"
+                                     Background="{StaticResource BrushSecondaryBg}"
+                                     CornerRadius="{StaticResource RadiusBase}"
+                                     Watermark="Не указано"
+                                     LostFocus="OnProfileFieldChanged" />
+                        </Grid>
+                    </Border>
+                    <Border Classes="separator h" />
+
+                    <!-- Должность (по желанию) -->
+                    <Border Classes="settingRow">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <StackPanel Grid.Column="0" Spacing="4"
+                                        VerticalAlignment="Center" Margin="0,0,32,0">
+                                <TextBlock Classes="title" Text="Должность" />
+                                <TextBlock Classes="desc"
+                                           Text="Необязательное справочное поле. На доступ к базам данных и отображаемое имя не влияет." />
+                            </StackPanel>
+                            <TextBox Grid.Column="1" x:Name="PositionBox"
+                                     Width="240" Height="{StaticResource ControlHeightStandard}"
+                                     VerticalAlignment="Center"
+                                     VerticalContentAlignment="Center"
+                                     Background="{StaticResource BrushSecondaryBg}"
+                                     CornerRadius="{StaticResource RadiusBase}"
+                                     Watermark="Не указана"
+                                     LostFocus="OnProfileFieldChanged" />
+                        </Grid>
+                    </Border>
+                    <Border Classes="separator h" />
+
                     </StackPanel>
                 </Grid>
             </ScrollViewer>

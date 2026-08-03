@@ -14,7 +14,8 @@ using SmartBase.Utils;
 namespace SmartBase.Views.Profile;
 
 /// <summary>
-/// Модуль «Профиль»: общие данные пользователя (имя компьютера — автоматически, ФИО — вручную),
+/// Модуль «Профиль»: общие данные пользователя (имя компьютера — автоматически, ФИО,
+/// подразделение и должность — вручную и по желанию),
 /// панель администратора (допуск и права пользователей, пароль базы) и история изменений.
 /// Разделы переключает сайдбар (SidebarList в MainWindow) через <see cref="ShowCategory"/> —
 /// зеркало SettingsView. Данные админ-панели перечитываются при каждом открытии раздела.
@@ -45,12 +46,14 @@ public partial class ProfileView : UserControl
         LastNameBox.Text   = CurrentUser.LastName;
         FirstNameBox.Text  = CurrentUser.FirstName;
         MiddleNameBox.Text = CurrentUser.MiddleName;
+        DepartmentBox.Text = CurrentUser.Department;
+        PositionBox.Text   = CurrentUser.Position;
         DisplayNameText.Text = CurrentUser.DisplayName;
 
-        // Фиксация ФИО не должна зависеть от LostFocus (клик по пустому месту фокус
-        // не забирает — ввод терялся бы молча): каждая буква сразу в app.db, Enter —
+        // Фиксация полей профиля не должна зависеть от LostFocus (клик по пустому месту
+        // фокус не забирает — ввод терялся бы молча): каждая буква сразу в app.db, Enter —
         // полная фиксация, клик мимо полей снимает фокус (LostFocus дозакрепляет).
-        foreach (var box in new[] { LastNameBox, FirstNameBox, MiddleNameBox })
+        foreach (var box in new[] { LastNameBox, FirstNameBox, MiddleNameBox, DepartmentBox, PositionBox })
         {
             box.TextChanged += (_, _) => SaveProfileFields();
             box.KeyDown += (_, e) =>
@@ -94,18 +97,22 @@ public partial class ProfileView : UserControl
         if (key == "history") RebuildHistoryPanel();
     }
 
-    // ── ФИО ──────────────────────────────────────────────────────────────────
+    // ── Поля профиля (ФИО, подразделение, должность) ──────────────────────────
     //
-    // Два уровня. Каждая буква (TextChanged) — сразу в app.db через CurrentUser
-    // (пустое значение = «не задано», ключ удаляется): закрытие приложения без
-    // расфокуса ничего не теряет. Точка фиксации (расфокус/Enter/уход из раздела) —
-    // нормализация полей + снапшот имени в db_users всех смонтированных баз с
-    // событием user.rename: соседи видят новое имя сразу, не «при следующем запуске».
+    // Все — по желанию: пустое значение = «не задано» (ключ из app.db удаляется).
+    // Два уровня. Каждая буква (TextChanged) — сразу в app.db через CurrentUser:
+    // закрытие приложения без расфокуса ничего не теряет. Точка фиксации
+    // (расфокус/Enter/уход из раздела) — нормализация полей + снапшот ИМЕНИ в db_users
+    // всех смонтированных баз с событием user.rename: соседи видят новое имя сразу,
+    // не «при следующем запуске». Подразделение и должность в базы не уезжают —
+    // они справочные, на идентичность и права не влияют.
     private void SaveProfileFields()
     {
         CurrentUser.LastName   = LastNameBox.Text   ?? "";
         CurrentUser.FirstName  = FirstNameBox.Text  ?? "";
         CurrentUser.MiddleName = MiddleNameBox.Text ?? "";
+        CurrentUser.Department = DepartmentBox.Text ?? "";
+        CurrentUser.Position   = PositionBox.Text   ?? "";
         DisplayNameText.Text   = CurrentUser.DisplayName;
     }
 
@@ -119,6 +126,8 @@ public partial class ProfileView : UserControl
         LastNameBox.Text   = CurrentUser.LastName;
         FirstNameBox.Text  = CurrentUser.FirstName;
         MiddleNameBox.Text = CurrentUser.MiddleName;
+        DepartmentBox.Text = CurrentUser.Department;
+        PositionBox.Text   = CurrentUser.Position;
         DisplayNameText.Text = CurrentUser.DisplayName;
 
         if (_workspace is null) return;
