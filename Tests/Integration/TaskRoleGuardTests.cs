@@ -123,6 +123,40 @@ public sealed class TaskRoleGuardTests
     }
 
     [Fact]
+    public void Dateless_task_ignores_collection_change_and_touches_nothing_in_target()
+    {
+        using var db = new TempDatabase();
+        var repo = db.Constructor;
+
+        var source = SampleData.AddCollection(repo, "Заявки").Id!.Value;
+        var exec   = SampleData.AddField(repo, source, "Исполнитель", "user", position: 1000);
+        repo.SetUserFieldTaskExec(exec.Id!.Value, true);
+        repo.AddTaskRecord(source, "Разобрать архив", "Иванов Иван", "Петров Пётр",
+                           ConstructorRepository.TaskStatusPlanned, due: null);
+
+        var target       = SampleData.AddCollection(repo, "Ремонты").Id!.Value;
+        var fieldsBefore = repo.GetFields(target).Count;
+
+        // Диалог гасит выбор коллекции у задачи «без даты», но выбранное значение всё равно
+        // приезжает в кандидате (пользователь мог выбрать коллекцию, а потом снять срок).
+        // Переносить нечем — календарного пути нет, и трогать цель мы не имеем права.
+        var task = Assert.Single(repo.GetTaskRecords());
+        task.CollectionId = target;
+        repo.UpdateTaskRecord(task);
+
+        Assert.Equal(1, repo.CountRecords(source));
+        Assert.Equal(0, repo.CountRecords(target));
+        Assert.Equal(fieldsBefore, repo.GetFields(target).Count);   // в цели не создано ни одного поля
+
+        // Значения остались на полях СВОЕЙ коллекции — задача цела и видна в разделе.
+        var after = Assert.Single(repo.GetTaskRecords());
+        Assert.Equal(source, after.CollectionId);
+        Assert.Equal(exec.Id!.Value, after.ExecFieldId);
+        Assert.Equal("Иванов Иван", after.Executor);
+        Assert.Equal("Петров Пётр", after.Assigner);
+    }
+
+    [Fact]
     public void Move_is_refused_before_the_record_leaves_its_collection()
     {
         using var db = new TempDatabase();

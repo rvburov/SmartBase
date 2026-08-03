@@ -423,8 +423,13 @@ public partial class ConstructorRepository
         // застанет перенос уже закоммиченным: запись в цели, а исполнителя/назначившего
         // и статуса нет — задача исчезла из раздела вместе со значениями. Поля,
         // созданные заранее, при отказе остаются пустыми — это безобидно.
+        // Только когда перенос ДЕЙСТВИТЕЛЬНО будет: коллекцию меняет календарный путь, а у
+        // задачи без даты его нет (диалог гасит комбо, но выбранное значение всё равно
+        // приезжает в кандидате). Иначе запись осталась бы в своей коллекции, а исполнитель
+        // ушёл бы в поле чужой — ровно та порча, которую этот метод и чинит.
         int? targetExecFieldId = null;
-        if (t.CollectionId is int target && target != CollectionOfRecord(recordId))
+        if (t.DueStart is not null &&
+            t.CollectionId is int target && target != CollectionOfRecord(recordId))
             targetExecFieldId = EnsureTaskCollection(target, adoptExisting: false);
 
         if (t.DueStart is DateTime start)
