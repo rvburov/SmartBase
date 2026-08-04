@@ -9,13 +9,17 @@
 
 ```bash
 cd calendar_avalonia
-dotnet run                     # запуск из исходников (Debug)
-dotnet build -c Debug          # сборка
+dotnet run -f net10.0-windows10.0.17763   # запуск из исходников (Debug), Windows
+dotnet run -f net10.0                     # то же на macOS/Linux
+dotnet build -c Debug                     # сборка (оба таргета)
 ```
 
-Полное описание — [build.md](build-and-run.md): dev-режим (`--no-build`, `watch`), сборка
-готовых бинарников по ОС через `Scripts/*-build.sh` (RID, Config, версия), раскладка
-вывода.
+Проект многотаргетный, поэтому `dotnet run` требует явного `-f`; на Windows берите
+windows-таргет — только под ним работают нативные уведомления.
+
+Полное описание — [build.md](build-and-run.md): dev-режим (`--no-build`, `watch`), два
+таргета и зачем они, сборка готовых бинарников по ОС через `Scripts/*-build.sh`
+(RID, Config, версия), раскладка вывода.
 
 ## Раскладка вывода
 

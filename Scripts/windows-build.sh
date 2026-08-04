@@ -28,8 +28,15 @@ RID="${1:-win-x64}"
 CONFIG="${2:-Release}"
 VERSION="${3:-}"
 
+# Целевая платформа сборки. Проект многотаргетный (см. TargetFrameworks в SmartBase.csproj),
+# и Windows собирается ТОЛЬКО этим таргетом: лишь под ним NuGet отдаёт WinRT-версии
+# DesktopNotifications.Windows и Microsoft.Toolkit.Uwp.Notifications. Собранный под голым
+# net10.0 дистрибутив выглядит рабочим, но нативных уведомлений в нём нет.
+TFM="net10.0-windows10.0.17763"
+
 # Общие флаги publish — единая точка правки на будущее.
 flags=(
+  -f "$TFM"
   --self-contained true
   -p:PublishSingleFile=true
 )

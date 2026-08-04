@@ -2,7 +2,19 @@
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <TargetFramework>net10.0</TargetFramework>
+    <!--
+      Два таргета. Базовый net10.0 — macOS, Linux, тесты и утилиты (Tests/* ссылаются на
+      проект и собираются под него). Windows-таргет net10.0-windows10.0.17763 нужен ровно
+      ради нативных тостов: только под ним NuGet отдаёт WinRT-ассеты DesktopNotifications.
+      Windows (lib/net6.0-windows10.0.17763) и Microsoft.Toolkit.Uwp.Notifications
+      (lib/net5.0-windows10.0.17763). Под голым net10.0 подтягивались сборки БЕЗ WinRT, и
+      менеджер уведомлений падал с TypeLoadException (ToastNotificationManagerCompat не
+      найден) — баннеры на Windows молча не показывались. Windows собирать только вторым
+      таргетом: Scripts/windows-build.sh передаёт -f.
+    -->
+    <TargetFrameworks>net10.0;net10.0-windows10.0.17763</TargetFrameworks>
+    <!-- Разрешает собирать Windows-таргет на macOS/Linux (ref-паки тянутся с nuget). -->
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>SmartBase</RootNamespace>

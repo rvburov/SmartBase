@@ -157,6 +157,11 @@ internal sealed class Program
 
     // Платформенный менеджер: Windows — WinRT-тосты (нужен ярлык/AUMID, создаётся контекстом),
     // Linux — freedesktop D-Bus. macOS/прочее — null (используется MacNotifier / no-op).
+    //
+    // Сбой здесь стоит дорого: приложение стартует как ни в чём не бывало, значок-счётчик
+    // растёт, а баннеров нет — и понять это снаружи нечем. Поэтому и удача, и провал попадают
+    // в logs.db (AppLog.Init уже отработал выше, в App-режиме). Ровно так пряталась поломка
+    // Windows-тостов: под таргетом без WinRT менеджер падал с TypeLoadException, а catch молчал.
     private static DesktopNotifications.INotificationManager? CreateNotificationManager()
     {
         try
@@ -169,12 +174,15 @@ internal sealed class Program
                 m = new DesktopNotifications.FreeDesktop.FreeDesktopNotificationManager(
                         DesktopNotifications.FreeDesktop.FreeDesktopApplicationContext.FromCurrentProcess());
             m?.Initialize().GetAwaiter().GetResult();
+            if (m is not null)
+                Log.Information("Менеджер нативных уведомлений создан: {Backend:l}", m.GetType().Name);
             return m;
         }
-        catch
+        catch (Exception ex)
         {
-            // Нет D-Bus / WinRT / ярлыка — уведомления Windows/Linux просто не показываются
-            // (фабрика вернёт no-op). Приложение стартует как обычно.
+            // Нет D-Bus / WinRT / ярлыка — уведомления Windows/Linux показываться не будут
+            // (фабрика вернёт no-op). Приложение стартует как обычно, но след остаётся.
+            Log.Warning(ex, "Не удалось создать менеджер нативных уведомлений — баннеры ОС показываться не будут");
             return null;
         }
     }

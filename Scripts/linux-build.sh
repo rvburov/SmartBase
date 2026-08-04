@@ -24,8 +24,14 @@ RID="${1:-linux-x64}"
 CONFIG="${2:-Release}"
 VERSION="${3:-}"
 
+# Целевая платформа: проект многотаргетный (см. TargetFrameworks в SmartBase.csproj), и
+# publish требует явно выбрать один таргет. Всё, кроме Windows, собирается базовым net10.0 —
+# Windows-таргет существует только ради WinRT-ассетов нативных тостов.
+TFM="net10.0"
+
 # Общие флаги publish — единая точка правки на будущее.
 flags=(
+  -f "$TFM"
   --self-contained true
   -p:PublishSingleFile=true
 )

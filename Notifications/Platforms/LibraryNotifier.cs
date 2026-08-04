@@ -12,7 +12,9 @@ internal sealed class LibraryNotifier : INativeNotifier
 {
     private readonly INotificationManager _manager;
     // Метка (tag) по показанному уведомлению; ограничено, чтобы не расти в долгих сессиях.
+    // Show идёт с UI-потока, событие активации библиотека поднимает со своего — под локом.
     private readonly Dictionary<Notification, string> _tags = new();
+    private readonly Lock _lock = new();
     private const int Limit = 200;
 
     public event Action<string>? Activated;
@@ -28,8 +30,11 @@ internal sealed class LibraryNotifier : INativeNotifier
         try
         {
             var n = new Notification { Title = title, Body = body };
-            if (_tags.Count >= Limit) _tags.Clear();
-            _tags[n] = tag;
+            lock (_lock)
+            {
+                if (_tags.Count >= Limit) _tags.Clear();
+                _tags[n] = tag;
+            }
             _ = _manager.ShowNotification(n);
         }
         catch { /* сбой библиотеки/ОС не ломает цикл */ }
@@ -38,7 +43,8 @@ internal sealed class LibraryNotifier : INativeNotifier
     // Любая активация (клик по телу = ActionId "default") открывает запись.
     private void OnActivated(object? sender, NotificationActivatedEventArgs e)
     {
-        if (_tags.TryGetValue(e.Notification, out var tag) && !string.IsNullOrEmpty(tag))
-            Activated?.Invoke(tag);
+        string? tag;
+        lock (_lock) tag = _tags.TryGetValue(e.Notification, out var t) ? t : null;
+        if (!string.IsNullOrEmpty(tag)) Activated?.Invoke(tag);
     }
 }

@@ -29,9 +29,14 @@ PLIST="$ROOT/Assets/Branding/Info.plist"
 
 [ -f "$ICNS" ] || { echo "Нет $ICNS — запустите Scripts/generate-icons.sh" >&2; exit 1; }
 
+# Целевая платформа: проект многотаргетный (см. TargetFrameworks в SmartBase.csproj), и
+# publish требует явно выбрать один таргет. Всё, кроме Windows, собирается базовым net10.0 —
+# Windows-таргет существует только ради WinRT-ассетов нативных тостов.
+TFM="net10.0"
+
 # Общие флаги publish — единая точка правки на будущее.
 # Внимание: PublishSingleFile тут НЕ используется — бандл .app это папка, а не один файл.
-flags=( --self-contained true )
+flags=( -f "$TFM" --self-contained true )
 
 # Номер версии: если передан 3-м аргументом — ЗАПИСЫВАЕМ его в <Version> в
 # SmartBase.csproj (становится текущим и для последующих сборок) и в бейдж README.

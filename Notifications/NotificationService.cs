@@ -45,7 +45,10 @@ public sealed class NotificationService : IDisposable
 
     // Недавно показанные записи по метке (tag) — чтобы по клику отдать полную запись в окно
     // без повторного запроса в БД. Ограничено, чтобы не расти в долгих сессиях.
+    // Пишется с UI-потока (Remember), читается из потока нотифайера (клик по баннеру) —
+    // поэтому под локом: одновременный доступ к Dictionary портит его внутреннее состояние.
     private readonly Dictionary<string, CalendarRecord> _recent = new();
+    private readonly Lock _recentLock = new();
     private const int RecentLimit = 200;
 
     /// <summary>Пользователь кликнул по баннеру записи — MainWindow активирует окно и открывает
@@ -75,8 +78,10 @@ public sealed class NotificationService : IDisposable
     // Сводка (пустая метка / запись не в кэше) — только активирует приложение, окна нет.
     private void OnNotifierActivated(string tag)
     {
-        if (!string.IsNullOrEmpty(tag) && _recent.TryGetValue(tag, out var rec))
-            RecordActivated?.Invoke(rec);
+        if (string.IsNullOrEmpty(tag)) return;
+        CalendarRecord? rec;
+        lock (_recentLock) rec = _recent.TryGetValue(tag, out var r) ? r : null;
+        if (rec is not null) RecordActivated?.Invoke(rec);
     }
 
     /// <summary>Запуск из UI-потока (MainWindow.Opened): читает тумблер и метку из app.db,
@@ -211,8 +216,11 @@ public sealed class NotificationService : IDisposable
     private void Remember(string tag, CalendarRecord rec)
     {
         if (string.IsNullOrEmpty(tag)) return;
-        if (_recent.Count >= RecentLimit) _recent.Clear();
-        _recent[tag] = rec;
+        lock (_recentLock)
+        {
+            if (_recent.Count >= RecentLimit) _recent.Clear();
+            _recent[tag] = rec;
+        }
     }
 
     private void Persist(DateTime w)
