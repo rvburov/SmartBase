@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Reflection;
 
 namespace SmartBase.Utils;
 
@@ -16,7 +17,25 @@ public static class AppSettings
     public const string AppName     = "SmartBase";
     // Отображаемое имя (бренд) — то, что видит пользователь: заголовки окон, сплэш, «О программе».
     public const string DisplayName = "SmartBase";
-    public const string AppVersion  = "1.0.0";
+    // Версия — из самой сборки, а НЕ константой: скрипты сборки правят <Version> в
+    // SmartBase.csproj, и константа неизбежно отставала (в логах годами значилось 1.0.0
+    // при 1.0.3 в проекте). Теперь одно место правды — csproj.
+    public static string AppVersion { get; } = ResolveVersion();
+
+    private static string ResolveVersion()
+    {
+        // InformationalVersion — это <Version> дословно; SDK может дописать «+<хеш коммита>»,
+        // в логах и «О программе» он лишний.
+        var info = typeof(AppSettings).Assembly
+            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
+        if (!string.IsNullOrWhiteSpace(info))
+        {
+            var plus = info.IndexOf('+');
+            return plus >= 0 ? info[..plus] : info;
+        }
+        // Атрибута нет (сборка без версии) — берём числовую, без служебного 4-го компонента.
+        return typeof(AppSettings).Assembly.GetName().Version?.ToString(3) ?? "0.0.0";
+    }
 
     public const double ScaleMin     = 0.7;   // 70 %
     public const double ScaleMax     = 1.3;   // 130 %
