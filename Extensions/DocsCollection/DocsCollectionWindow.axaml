@@ -1,0 +1,91 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:components="using:SmartBase.Controls.Components"
+        x:Class="SmartBase.Extensions.DocsCollection.DocsCollectionWindow"
+        Title="Документы в коллекцию"
+        Width="620" MinWidth="620" MaxWidth="620"
+        MinHeight="0"
+        SizeToContent="Height"
+        CanResize="False"
+        WindowStartupLocation="CenterOwner"
+        Background="{StaticResource BrushBg}">
+
+    <StackPanel Margin="24" Spacing="14">
+
+        <!-- Папка с документами -->
+        <StackPanel Spacing="6">
+            <TextBlock Text="Папка с документами"
+                       FontWeight="{StaticResource FontWeightBold}" />
+            <Grid ColumnDefinitions="*,10,Auto">
+                <TextBox Grid.Column="0" x:Name="FolderBox"
+                         VerticalContentAlignment="Center"
+                         Watermark="Выберите папку с документами…"
+                         TextChanged="OnPathChanged" />
+                <Button Grid.Column="2" x:Name="BrowseBtn"
+                        Classes="dialog" Content="Обзор…" Click="OnBrowseFolder" />
+            </Grid>
+        </StackPanel>
+
+        <!-- Опции поиска -->
+        <CheckBox x:Name="RecursiveCheck" IsChecked="False"
+                  Content="Рекурсивный поиск (включая все подпапки)" />
+
+        <!-- Фильтр расширений -->
+        <StackPanel Spacing="6">
+            <TextBlock Text="Расширения файлов"
+                       FontWeight="{StaticResource FontWeightBold}" />
+            <TextBox x:Name="ExtBox"
+                     VerticalContentAlignment="Center"
+                     Watermark="Например: pdf, docx, xlsx — пусто: все файлы" />
+        </StackPanel>
+
+        <!-- Куда создавать коллекцию -->
+        <StackPanel Spacing="6">
+            <TextBlock Text="База данных"
+                       FontWeight="{StaticResource FontWeightBold}" />
+            <ComboBox x:Name="DbCombo" Height="30" HorizontalAlignment="Stretch" />
+        </StackPanel>
+
+        <!-- Статус -->
+        <Border Background="{StaticResource BrushSecondaryBg}"
+                BorderBrush="{StaticResource BrushSeparator}"
+                BorderThickness="{DynamicResource BorderLine}"
+                CornerRadius="{StaticResource RadiusMedium}"
+                Padding="12,10">
+            <TextBlock x:Name="StatusText"
+                       Text="Готов к работе"
+                       TextWrapping="Wrap"
+                       HorizontalAlignment="Center"
+                       FontWeight="{StaticResource FontWeightBold}"
+                       Foreground="{StaticResource BrushSecondaryText}" />
+        </Border>
+
+        <!-- Прогресс: единый индикатор загрузки приложения -->
+        <components:ProgressIndicator x:Name="Progress" />
+        <TextBlock x:Name="CurrentFileText" Text=""
+                   IsVisible="False"
+                   FontSize="{DynamicResource FontSizeSmall}"
+                   TextTrimming="CharacterEllipsis"
+                   Foreground="{StaticResource BrushSecondaryText}" />
+
+        <!-- Действия (2 равные кнопки с зазором 10) -->
+        <Grid ColumnDefinitions="*,10,*">
+            <Button Grid.Column="0" x:Name="ExecuteBtn"
+                    Classes="dialog"
+                    Width="NaN" Height="36"
+                    HorizontalAlignment="Stretch"
+                    IsEnabled="False"
+                    Content="Запустить"
+                    Click="OnExecuteClick" />
+            <Button Grid.Column="2" x:Name="StopBtn"
+                    Classes="dialog"
+                    Width="NaN" Height="36"
+                    HorizontalAlignment="Stretch"
+                    IsEnabled="False"
+                    Content="Остановить"
+                    Click="OnStopClick" />
+        </Grid>
+
+    </StackPanel>
+
+</Window>
