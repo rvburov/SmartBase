@@ -3819,14 +3819,14 @@ public partial class ConstructorRepository(AppDbContext db)
             if (!targetByName.TryGetValue(meta.Name, out var target))
             {
                 if (!createMissingFields) continue;
+                // Флаги ролей задач не копируем — см. MoveRecordsCore: перенос записи не должен
+                // молча включать коллекцию-приёмник в раздел «Задачи».
                 target = AddField(new DbField
                 {
                     CollectionId = targetCollectionId, Name = meta.Name,
                     FieldType    = meta.FieldType,      ConfigJson = meta.ConfigJson,
                     Position     = nextPos,             IsCalStart = meta.IsCalStart,
                     IsCalEnd     = meta.IsCalEnd,       IsRequired = meta.IsRequired,
-                    IsTaskExec   = meta.IsTaskExec,     IsTaskAssigner = meta.IsTaskAssigner,
-                    IsTaskStatus = meta.IsTaskStatus,
                 });
                 nextPos += 1000;
                 targetByName[meta.Name] = target;
@@ -3973,14 +3973,19 @@ public partial class ConstructorRepository(AppDbContext db)
                 // Для создаваемого поля-связи переписываем целевую БД под целевую базу переноса
                 // (иначе TargetDbId «поедет»: внутрибазовая связь на источник станет ссылкой в никуда).
                 var cfgJson = canMoveLinks && sf.FieldType == "relation" ? RewriteRelConfig(sf) : sf.ConfigJson;
+                // Флаги ролей задач (IsTaskExec/IsTaskAssigner/IsTaskStatus) НЕ копируем:
+                // они включают в раздел «Задачи» всю коллекцию-приёмник, а пользователь просил
+                // перенести записи, а не превращать «Клиентов» в задачи. Роль — свойство
+                // коллекции, а не переносимых значений; перенос ЦЕЛОЙ коллекции (DuplicateCollection,
+                // CrossMove) её сохраняет — там коллекция и остаётся собой. Календарные IsCalStart/
+                // IsCalEnd копируются намеренно: они делают видимой дату САМОЙ записи, а не
+                // подписывают цель на чужой раздел.
                 tf = AddField(new DbField
                 {
                     CollectionId = targetCollectionId, Name = sf.Name,
                     FieldType    = sf.FieldType,        ConfigJson = cfgJson,
                     Position     = nextFieldPos,        IsCalStart = sf.IsCalStart,
                     IsCalEnd     = sf.IsCalEnd,         IsRequired = sf.IsRequired,
-                    IsTaskExec   = sf.IsTaskExec,       IsTaskAssigner = sf.IsTaskAssigner,
-                    IsTaskStatus = sf.IsTaskStatus,
                 });
                 nextFieldPos += 1000;
                 targetByName[sf.Name] = tf;
@@ -4018,9 +4023,18 @@ public partial class ConstructorRepository(AppDbContext db)
                 if (header is null) { progress?.Report(++done); continue; }
 
                 posBase += 1000;
+                // Аудит переносим ЦЕЛИКОМ (четыре поля): «Расположение» перекладывает запись,
+                // а не создаёт новую. Иначе StampNewRecordAudit (пустые CreatedBy/UpdatedBy) и
+                // CreatedAt = «сейчас» показывали бы запись коллеги созданной вами сегодня —
+                // при том что перенос КОЛЛЕКЦИИ аудит сохраняет (INSERT … SELECT CreatedAt,
+                // UpdatedAt, CreatedBy, UpdatedBy), и продукт противоречил сам себе.
+                // У старых записей поля могут быть пусты — тогда штамп сработает как раньше.
                 var rec = new DbRecordEntity
                 {
-                    CollectionId = targetCollectionId, CreatedAt = DateTime.Now.ToString("o"),
+                    CollectionId = targetCollectionId, CreatedAt = header.CreatedAt ?? DateTime.Now.ToString("o"),
+                    UpdatedAt    = header.UpdatedAt ?? "",
+                    CreatedBy    = header.CreatedBy ?? "",
+                    UpdatedBy    = header.UpdatedBy ?? "",
                     Position     = posBase,            StartDt   = header.StartDt,
                     EndDt        = header.EndDt,       AllDay    = header.AllDay,
                     Title        = header.Title,       Description = header.Description,
@@ -5059,12 +5073,14 @@ public partial class ConstructorRepository(AppDbContext db)
             // ВНУТРИ одной базы, поэтому DbId не передаём: TargetDbId рёбер не пересчитывается.
             // Входящие связи всё равно оборвутся (у копии новый Id) — предупреждает UI.
             var oldId = rec.Id;
+            var audit = (rec.CreatedAt, rec.UpdatedAt, rec.CreatedBy, rec.UpdatedBy);
             r.CollectionId = newColId;
             r.Id = null;
             AddCalendarRecord(r);
             CopyFieldValuesByName(this, oldId, oldColId, r.Id!.Value, newColId,
                                   createMissingFields: false, excludeTargetFieldId: r.FieldId);
             CopyRelationLinksByName(this, oldId, oldColId, r.Id!.Value, newColId);
+            RestoreMovedRecordAudit(r.Id!.Value, audit);
             DeleteRecord(oldId);
             return;
         }
@@ -5080,6 +5096,30 @@ public partial class ConstructorRepository(AppDbContext db)
         var dateFieldId = ResolveCalendarDateField(newColId, r.FieldId);
         SetCalendarDateValue(rec.Id, dateFieldId, r);
         r.FieldId = dateFieldId;
+    }
+
+    /// <summary>
+    /// Возвращает перенесённой записи аудит источника (четыре поля). Смена коллекции у события
+    /// ПЕРЕСОЗДАЁТ строку <c>db_records</c>, и запись обрастает чужим аудитом трижды:
+    /// <see cref="AddCalendarRecord"/> ставит <c>CreatedAt</c> = «сейчас», <c>StampNewRecordAudit</c>
+    /// (AppDbContext) — текущего пользователя автором, а копирование значений и связей
+    /// (<c>SetFieldValue</c>/<c>TouchUpdated</c>) добивает «изменено». Для ПЕРЕНОСА всё это ложь:
+    /// событие коллеги выглядело бы созданным вами сегодня — ровно тот дефект, что закрыт в
+    /// <see cref="MoveRecordsCore"/> для переноса из таблицы; правка события БЕЗ смены коллекции
+    /// аудит тоже не трогает. Поэтому вызывать нужно ПОСЛЕ копирования значений и связей —
+    /// до него штампы легли бы поверх восстановленного.
+    /// Пустые поля источника (старые записи) не трогаем: там штамп — единственное, что есть.
+    /// </summary>
+    private void RestoreMovedRecordAudit(
+        int recordId, (string CreatedAt, string UpdatedAt, string CreatedBy, string UpdatedBy) source)
+    {
+        var rec = db.DbRecords.Find(recordId);
+        if (rec is null) return;
+        if (source.CreatedAt.Length > 0) rec.CreatedAt = source.CreatedAt;
+        if (source.UpdatedAt.Length > 0) rec.UpdatedAt = source.UpdatedAt;
+        if (source.CreatedBy.Length > 0) rec.CreatedBy = source.CreatedBy;
+        if (source.UpdatedBy.Length > 0) rec.UpdatedBy = source.UpdatedBy;
+        db.SaveChanges();
     }
 
     public void DeleteCalendarRecord(int id)
@@ -6102,6 +6142,12 @@ public partial class ConstructorRepository(AppDbContext db)
     {
         var col = db.DbCollections.FirstOrDefault(c => c.Name == "Без названия");
         if (col is not null) return col.Id;
+
+        // Создание — только с правом на коллекции. Спрашиваем именно здесь и только в ветке
+        // создания: вызывающие (AddTaskRecord/AddCalendarRecord с collection = null) проверили
+        // лишь CreateRecord, и без этой строки «Без названия» заводилась в обход прав. Когда
+        // коллекция уже есть, права на неё не нужны — там достаточно CreateRecord.
+        Demand(PermAction.CreateCollection);
 
         var maxPos = db.DbCollections.Select(c => (int?)c.Position).Max() ?? 0;
         col = new DbCollectionEntity { Name = "Без названия", Position = maxPos + 1000, Color = "#007AFF" };

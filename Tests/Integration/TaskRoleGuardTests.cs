@@ -84,6 +84,169 @@ public sealed class TaskRoleGuardTests
     }
 
     [Fact]
+    public void Status_role_field_cannot_be_switched_into_executor()
+    {
+        using var db = new TempDatabase();
+        var repo = db.Constructor;
+        var col  = SampleData.AddCollection(repo, "Поручения").Id!.Value;
+        var field = SampleData.AddField(repo, col, "Состояние", "user", position: 1000).Id!.Value;
+
+        // Роль «Статус» на user-поле бывает от ручной пометки или копирования коллекции:
+        // по имени такое поле не усыновляют (там ищут select/status), а по флагу — брали.
+        db.Context.DbFields.Single(f => f.Id == field).IsTaskStatus = true;
+        db.Context.SaveChanges();
+
+        var ex = Assert.Throws<InvalidOperationException>(() => repo.SetUserFieldTaskExec(field, true));
+        Assert.Contains("исполнителем", ex.Message);
+        Assert.False(repo.GetFields(col).Single(f => f.Id == field).IsTaskExec);
+    }
+
+    [Fact]
+    public void Quick_add_skips_status_role_field_and_creates_its_own_executor()
+    {
+        using var db = new TempDatabase();
+        var repo = db.Constructor;
+        var col  = SampleData.AddCollection(repo, "Поручения").Id!.Value;
+        var field = SampleData.AddField(repo, col, "Состояние", "user", position: 1000).Id!.Value;
+        db.Context.DbFields.Single(f => f.Id == field).IsTaskStatus = true;
+        db.Context.SaveChanges();
+
+        repo.AddTaskRecord(col, "Проверить насос", "Иванов Иван", "Петров Пётр",
+                           ConstructorRepository.TaskStatusPlanned, due: null);
+
+        // Единственное user-поле коллекции занято ролью статуса — усыновлять его нельзя,
+        // заводится собственный «Исполнитель».
+        var exec = Assert.Single(repo.GetFields(col).Where(f => f.IsTaskExec));
+        Assert.NotEqual(field, exec.Id);
+        Assert.Equal("Иванов Иван", ValueOf(repo, Assert.Single(repo.GetTaskRecords()).Id!.Value, exec.Id!.Value));
+    }
+
+    [Fact]
+    public void Two_fields_with_the_same_role_flag_resolve_to_the_same_one_everywhere()
+    {
+        using var db = new TempDatabase();
+        var repo = db.Constructor;
+        var col  = SampleData.AddCollection(repo, "Поручения").Id!.Value;
+        var exec = SampleData.AddField(repo, col, "Исполнитель", "user", position: 1000).Id!.Value;
+        repo.SetUserFieldTaskExec(exec, true);
+
+        // Два поля с одним флагом — так выглядит коллекция после копирования или ручной
+        // правки. Раньше выбор шёл через FirstOrDefault/LIMIT 1 без порядка: запись значения
+        // и его чтение могли разойтись по разным полям, и раздел показывал то одно, то другое.
+        var auto  = db.Context.DbFields.Single(f => f.CollectionId == col && f.IsTaskAssigner);
+        var extra = SampleData.AddField(repo, col, "Назначил 2", "user", position: auto.Position - 100).Id!.Value;
+        db.Context.DbFields.Single(f => f.Id == extra).IsTaskAssigner = true;
+        db.Context.SaveChanges();
+
+        // Правило одно на весь модуль — первое по (Position, Id).
+        Assert.Equal(extra, repo.TaskRoleFields(col).AssignerId);
+
+        repo.AddTaskRecord(col, "Проверить насос", "Иванов Иван", "Петров Пётр",
+                           ConstructorRepository.TaskStatusPlanned, due: null);
+
+        var task = Assert.Single(repo.GetTaskRecords());
+        Assert.Equal("Петров Пётр", task.Assigner);                       // чтение раздела…
+        Assert.Equal("Петров Пётр", ValueOf(repo, task.Id!.Value, extra)); // …и запись сошлись
+        // Во второе поле с тем же флагом назначивший не попал (там своё значение —
+        // AddRecord заполняет user-поля текущим пользователем).
+        Assert.NotEqual("Петров Пётр", ValueOf(repo, task.Id!.Value, auto.Id));
+    }
+
+    [Fact]
+    public void Moving_task_records_does_not_enroll_target_collection_into_tasks()
+    {
+        using var db = new TempDatabase();
+        var repo = db.Constructor;
+
+        var tasks = SampleData.AddCollection(repo, "Заявки").Id!.Value;
+        var exec  = SampleData.AddField(repo, tasks, "Исполнитель", "user", position: 1000).Id!.Value;
+        repo.SetUserFieldTaskExec(exec, true);
+        repo.AddTaskRecord(tasks, "Течь в подвале", "Иванов Иван", "Петров Пётр",
+                           ConstructorRepository.TaskStatusActive, due: null);
+
+        var archive = SampleData.AddCollection(repo, "Архив").Id!.Value;
+        var rec     = Assert.Single(repo.GetTaskRecords()).Id!.Value;
+
+        repo.MoveRecordsToCollectionIsolated(db.Path, tasks, [rec], archive,
+                                             createMissingFields: true, sourceDbId: 1, targetDbId: 1);
+
+        // Свойства созданы и значения приехали, но «Архив» — обычная коллекция: перенос
+        // записей не включает приёмник в раздел задач (раньше флаги ролей копировались,
+        // и коллекция внезапно оказывалась там со всеми своими записями).
+        var fields = repo.GetFields(archive);
+        Assert.Contains(fields, f => f.Name == "Исполнитель");
+        Assert.All(fields, f => Assert.False(f.IsTaskExec || f.IsTaskAssigner || f.IsTaskStatus));
+        Assert.Empty(repo.GetTaskRecords());
+    }
+
+    [Fact]
+    public void Auto_collection_is_not_created_without_the_collection_right()
+    {
+        using var db = new TempDatabase();
+
+        // Допущенный не-админ: записи создавать можно, коллекции — нет.
+        db.Permissions.SetMask(db.Permissions.CurrentUserId, null,
+                               (int)(PermAction.All & ~PermAction.CreateCollection));
+        var me = db.Context.DbUsers.First(u => u.UserKey == CurrentUser.Key);
+        me.IsAdmin    = false;
+        me.IsApproved = true;
+        db.Context.SaveChanges();
+        db.Permissions.Reload(notify: false);
+
+        // Задача «без коллекции» заводила «Без названия» в обход прав — дыра того же класса,
+        // что закрыта в EnsureTaskSupportFields.
+        Assert.Throws<PermissionDeniedException>(() =>
+            db.Constructor.AddTaskRecord(null, "Задача из ниоткуда", "Иванов Иван", "Петров Пётр",
+                                         ConstructorRepository.TaskStatusPlanned, due: null));
+
+        Assert.DoesNotContain(db.Constructor.GetAllCollections(), c => c.Name == "Без названия");
+    }
+
+    [Fact]
+    public void Mounting_heals_a_field_that_carries_both_roles()
+    {
+        var path = TempDatabase.NewTempPath();
+        try
+        {
+            int col, exec;
+            using (var old = DatabaseManager.Open(1, "старая", path))
+            {
+                var repo = old.Constructor;
+                col  = SampleData.AddCollection(repo, "Поручения").Id!.Value;
+                exec = SampleData.AddField(repo, col, "Исполнитель", "user", position: 1000).Id!.Value;
+                repo.SetUserFieldTaskExec(exec, true);
+
+                // Состояние базы, открытой ДО запрета: отдельного «Назначил» нет, обе роли
+                // висят на одном поле — исполнитель и назначивший затирали друг друга.
+                var assigner = old.Context.DbFields.Single(f => f.CollectionId == col && f.IsTaskAssigner);
+                old.Context.DbFields.Remove(assigner);
+                old.Context.DbFields.Single(f => f.Id == exec).IsTaskAssigner = true;
+                old.Context.SaveChanges();
+            }
+
+            using (var healed = DatabaseManager.Open(1, "старая", path))
+            {
+                var fields = healed.Constructor.GetFields(col);
+
+                // Исполнитель остался исполнителем и больше не несёт чужую роль…
+                var execField = fields.Single(f => f.Id == exec);
+                Assert.True(execField.IsTaskExec);
+                Assert.False(execField.IsTaskAssigner);
+
+                // …а «Назначил» — снова отдельное поле.
+                var assigner = Assert.Single(fields.Where(f => f.IsTaskAssigner));
+                Assert.NotEqual(exec, assigner.Id);
+                Assert.Equal("Назначил", assigner.Name);
+                Assert.Equal("user", assigner.FieldType);
+
+                // Повторное монтирование уже ничего не чинит.
+                Assert.Equal(0, healed.Constructor.RepairDoubleRoleTaskFields());
+            }
+        }
+        finally { TempDatabase.Cleanup(path); }
+    }
+
+    [Fact]
     public void Moving_task_into_foreign_collection_does_not_hijack_its_user_field()
     {
         using var db = new TempDatabase();

@@ -34,6 +34,18 @@ public partial class ConstructorRepository
     private static readonly string TaskStatusConfigJson =
         JsonSerializer.Serialize(new { options = TaskStatusOptions });
 
+    // Роль ищется ПО ФЛАГУ, но флаг может оказаться сразу у двух полей коллекции
+    // (дубль коллекции, ручная правка, старые базы). Без явного порядка SQLite волен
+    // отдать любую строку, и раздел показывает то одно поле, то другое — а запись
+    // значения и его чтение могут разойтись по разным полям. Правило одно на весь
+    // модуль: «первое по (Position, Id)». Ровно его повторяет ORDER BY в подзапросах
+    // GetTaskRecords — иначе прочитали бы не то поле, в которое писали.
+    private static IQueryable<DbFieldEntity> RoleOrder(IQueryable<DbFieldEntity> fields) =>
+        fields.OrderBy(f => f.Position).ThenBy(f => f.Id);
+
+    private static IEnumerable<DbFieldEntity> RoleOrder(IEnumerable<DbFieldEntity> fields) =>
+        fields.OrderBy(f => f.Position).ThenBy(f => f.Id);
+
     // ── Включение задач ───────────────────────────────────────────────────────
 
     /// <summary>
@@ -49,12 +61,19 @@ public partial class ConstructorRepository
         var field = db.DbFields.Find(fieldId);
         if (field is null || field.FieldType != "user" || field.IsTaskExec == enabled) return false;
 
-        // Роль «Назначил» исполнителем быть не может: оба значения писались бы в один
-        // FieldId и затирали друг друга. Отсекаем и помеченное флагом поле, и ещё не
-        // размеченное — его EnsureTaskSupportFields найдёт ПО ИМЕНИ и сделает назначившим.
+        // Чужая роль задач исполнителем быть не может: два значения писались бы в один
+        // FieldId и затирали друг друга. «Назначил» отсекаем и по флагу, и по имени —
+        // у ещё не размеченного поля флага нет, но EnsureTaskSupportFields найдёт его
+        // ПО ИМЕНИ и сделает назначившим. «Статус» — только по флагу: по имени его
+        // усыновляют лишь среди select/status-полей, а сюда доходят одни user-поля,
+        // так что флаг у user-поля бывает только от ручной пометки или копирования.
         if (enabled && (field.IsTaskAssigner || IsRoleName(field.Name, FieldAssigner)))
             throw new InvalidOperationException(
                 $"Свойство «{field.Name}» — это роль назначившего задачу, исполнителем оно быть не может. " +
+                "Заведите для исполнителя отдельное свойство типа «Пользователь».");
+        if (enabled && field.IsTaskStatus)
+            throw new InvalidOperationException(
+                $"Свойство «{field.Name}» — это роль статуса задачи, исполнителем оно быть не может. " +
                 "Заведите для исполнителя отдельное свойство типа «Пользователь».");
 
         // Авто-поля потребуют права создания — проверяем ДО записи флага, чтобы
@@ -90,8 +109,9 @@ public partial class ConstructorRepository
     {
         // Поля коллекции — в память: имена ролей сравниваются БЕЗ учёта регистра
         // (как в FreeFieldName), а SQL-сравнение строк регистрозависимо и мимо кириллицы
-        // lower() в SQLite всё равно не работает.
-        var fields = db.DbFields.Where(f => f.CollectionId == collectionId).ToList();
+        // lower() в SQLite всё равно не работает. Порядок — RoleOrder: при двух полях
+        // с одним флагом берём то же самое, что и остальной модуль.
+        var fields = RoleOrder(db.DbFields.Where(f => f.CollectionId == collectionId).ToList()).ToList();
 
         var exec = fields.FirstOrDefault(f => f.FieldType == "user" && f.IsTaskExec);
         if (exec is not null)
@@ -100,13 +120,15 @@ public partial class ConstructorRepository
             return exec.Id;
         }
 
-        // Помечаем существующее user-поле (кроме «Назначил») либо создаём «Исполнитель».
+        // Помечаем существующее user-поле (кроме чужих ролей) либо создаём «Исполнитель».
         // Роль «Назначил» отсекаем И по флагу, И по имени: у поля, которое пользователь
         // завёл руками до включения задач, флага ещё нет, а ниже EnsureTaskSupportFields
         // найдёт его ПО ИМЕНИ и пометит ролью — одно поле получило бы обе роли, и
         // AddTaskRecord затёр бы исполнителя назначившим (оба пишутся в один FieldId).
+        // «Статус» на user-поле — только по флагу (ручная пометка/копирование), тот же
+        // запрет, что и в SetUserFieldTaskExec.
         var candidate = adoptExisting
-            ? fields.FirstOrDefault(f => f.FieldType == "user" &&
+            ? fields.FirstOrDefault(f => f.FieldType == "user" && !f.IsTaskStatus &&
                                          !f.IsTaskAssigner && !IsRoleName(f.Name, FieldAssigner))
             : null;
         if (candidate is not null)
@@ -156,8 +178,8 @@ public partial class ConstructorRepository
 
         // Поля — в память: имя роли ищем БЕЗ учёта регистра (SQL-сравнение строк
         // регистрозависимо, а lower() в SQLite кириллицу не трогает), иначе «назначил»
-        // с маленькой буквы проходил бы мимо роли и получал вторую.
-        var fields = db.DbFields.Where(f => f.CollectionId == collectionId).ToList();
+        // с маленькой буквы проходил бы мимо роли и получал вторую. Порядок — RoleOrder.
+        var fields = RoleOrder(db.DbFields.Where(f => f.CollectionId == collectionId).ToList()).ToList();
 
         var assigner = needAssigner
             ? fields.FirstOrDefault(f => f.FieldType == "user" && IsRoleName(f.Name, FieldAssigner))
@@ -174,51 +196,121 @@ public partial class ConstructorRepository
         if ((needAssigner && assigner is null) || (needStatus && status is null))
             Demand(PermAction.CreateField, collectionId);
 
-        if (needAssigner)
+        // Обе роли — одной транзакцией. Раньше «Назначил» и «Статус» уходили раздельными
+        // SaveChanges: сбой между ними НЕ по правам (гонка за именем поля, DbUpdateException)
+        // оставлял коллекцию с одной ролью из двух, а следующий вызов видел набор уже
+        // «полным» по флагу первой роли — вторая не появлялась никогда, и раздел задач
+        // молча жил без статуса или без назначившего.
+        using var tx = db.Database.BeginTransaction();
+        try
         {
-            if (assigner is not null)
+            if (needAssigner)
             {
-                assigner.IsTaskAssigner = true;
-                Log("update", "field", assigner.Name, CollectionNameOf(collectionId));
-                db.SaveChanges();
-            }
-            else
-            {
-                AddField(new DbField
+                if (assigner is not null)
                 {
-                    CollectionId   = collectionId,
-                    Name           = FreeFieldName(collectionId, FieldAssigner),
-                    FieldType      = "user",
-                    Position       = NextFieldPosition(collectionId),
-                    IsTaskAssigner = true,
-                });
+                    assigner.IsTaskAssigner = true;
+                    Log("update", "field", assigner.Name, CollectionNameOf(collectionId));
+                    db.SaveChanges();
+                }
+                else
+                {
+                    AddField(new DbField
+                    {
+                        CollectionId   = collectionId,
+                        Name           = FreeFieldName(collectionId, FieldAssigner),
+                        FieldType      = "user",
+                        Position       = NextFieldPosition(collectionId),
+                        IsTaskAssigner = true,
+                    });
+                }
             }
-        }
 
-        if (needStatus)
+            if (needStatus)
+            {
+                if (status is not null)
+                {
+                    status.IsTaskStatus = true;
+                    status.ConfigJson   = MergeSelectOptions(status.ConfigJson, TaskStatusOptions);
+                    Log("update", "field", status.Name, CollectionNameOf(collectionId));
+                    db.SaveChanges();
+                }
+                else
+                {
+                    AddField(new DbField
+                    {
+                        CollectionId = collectionId,
+                        Name         = FreeFieldName(collectionId, FieldStatus),
+                        FieldType    = "status",
+                        ConfigJson   = TaskStatusConfigJson,
+                        Position     = NextFieldPosition(collectionId),
+                        IsTaskStatus = true,
+                    });
+                }
+            }
+
+            tx.Commit();
+        }
+        catch
         {
-            if (status is not null)
-            {
-                status.IsTaskStatus = true;
-                status.ConfigJson   = MergeSelectOptions(status.ConfigJson, TaskStatusOptions);
-                Log("update", "field", status.Name, CollectionNameOf(collectionId));
-                db.SaveChanges();
-            }
-            else
-            {
-                AddField(new DbField
-                {
-                    CollectionId = collectionId,
-                    Name         = FreeFieldName(collectionId, FieldStatus),
-                    FieldType    = "status",
-                    ConfigJson   = TaskStatusConfigJson,
-                    Position     = NextFieldPosition(collectionId),
-                    IsTaskStatus = true,
-                });
-            }
+            // Откат вернул флаги в БД, но трекер держит их выставленными: следующее чтение
+            // отдало бы «размеченную» роль, которой в базе нет (и повторная попытка ушла бы
+            // в ранний возврат). Сбрасываем — состояние перечитается из базы.
+            tx.Rollback();
+            db.ChangeTracker.Clear();
+            throw;
         }
-
         return true;
+    }
+
+    /// <summary>
+    /// Разовая починка при монтировании: поле, несущее СРАЗУ две роли задач. Такие поля
+    /// остались в базах, открытых до запрета (роль «Назначил» усыновлялась исполнителем):
+    /// оба значения писались в один <c>FieldId</c> и затирали друг друга. Сам запрет их не
+    /// лечит — <see cref="EnsureTaskCollection"/> находит exec по флагу и уходит в ранний
+    /// возврат, а <see cref="EnsureTaskSupportFields"/> видит роль уже помеченной, поэтому
+    /// заметивший дефект пользователь так и остался бы с ним.
+    ///
+    /// Чиним по правилу «исполнитель остаётся, чужая роль снимается»: раздел задач построен
+    /// вокруг exec-поля, и его значения пользователь видит именно как исполнителя. Затёртых
+    /// исполнителей не вернуть — их перезаписали значения второй роли; «Назначил»/«Статус»
+    /// заводятся отдельными пустыми полями.
+    ///
+    /// Возвращает число вылеченных коллекций. Монтирование не срывает: у пользователя без
+    /// прав на схему починка просто не происходит (её сделает следующий, у кого права есть).
+    /// </summary>
+    public int RepairDoubleRoleTaskFields()
+    {
+        // Быстрый путь обычной базы — один запрос, ни одной записи.
+        var broken = db.DbFields
+                       .Where(f => f.IsTaskExec && (f.IsTaskAssigner || f.IsTaskStatus))
+                       .ToList();
+        if (broken.Count == 0) return 0;
+
+        var healed = 0;
+        foreach (var group in broken.GroupBy(f => f.CollectionId))
+        {
+            try
+            {
+                foreach (var f in group)
+                {
+                    f.IsTaskAssigner = false;
+                    f.IsTaskStatus   = false;
+                    Log("update", "field", f.Name, CollectionNameOf(group.Key));
+                }
+                db.SaveChanges();
+
+                // Освободившиеся роли заводятся заново — обычным путём, со своими правами
+                // и транзакцией. Упадёт по правам — коллекция остаётся без роли, но уже
+                // БЕЗ двойной: следующее действие с задачами доведёт набор до полного.
+                EnsureTaskSupportFields(group.Key);
+                healed++;
+            }
+            catch (Exception ex) when (ex is PermissionDeniedException or DbUpdateException)
+            {
+                db.ChangeTracker.Clear();   // несохранённые флаги не должны утечь в следующие чтения
+            }
+        }
+        return healed;
     }
 
     private int NextFieldPosition(int collectionId) =>
@@ -283,17 +375,22 @@ public partial class ConstructorRepository
             // Срок — одной строкой «FieldId|StartIso|EndIso|AllDay» (в ISO-датах «|» не
             // бывает): первая по началу календарная дата записи. Фильтр fd.IsCalStart = 1
             // обязателен — проекция полная, скрытая дата сроком быть не должна.
+            // ORDER BY у ролей повторяет RoleOrder: при двух полях с одним флагом читаем
+            // ровно то поле, в которое пишет TaskRoleFields (без порядка SQLite отдавал
+            // произвольное — раздел показывал то одно значение, то другое).
             cmd.CommandText = $@"
                 SELECT v.RecordId, f.Id, f.CollectionId, c.Name, c.Color,
                        r.Title, r.Description, v.Value,
                        (SELECT va.Value FROM db_field_values va
                           JOIN db_fields fa ON fa.Id = va.FieldId
                          WHERE va.RecordId = v.RecordId AND fa.CollectionId = f.CollectionId
-                           AND fa.IsTaskAssigner = 1 LIMIT 1),
+                           AND fa.IsTaskAssigner = 1
+                         ORDER BY fa.Position, fa.Id LIMIT 1),
                        (SELECT vs.Value FROM db_field_values vs
                           JOIN db_fields fs ON fs.Id = vs.FieldId
                          WHERE vs.RecordId = v.RecordId AND fs.CollectionId = f.CollectionId
-                           AND fs.IsTaskStatus = 1 LIMIT 1),
+                           AND fs.IsTaskStatus = 1
+                         ORDER BY fs.Position, fs.Id LIMIT 1),
                        (SELECT ci.FieldId || '|' || ci.StartIso || '|' || ci.EndIso || '|' || ci.AllDay
                           FROM calendar_index ci
                           JOIN db_fields fd ON fd.Id = ci.FieldId
@@ -474,13 +571,16 @@ public partial class ConstructorRepository
         if (roles.StatusId   is int sid) SetFieldValue(recordId, sid, t.Status);
     }
 
-    /// <summary>Id полей-ролей задач коллекции («Назначил», «Статус») — по флагам.</summary>
+    /// <summary>
+    /// Id полей-ролей задач коллекции («Назначил», «Статус») — по флагам, в порядке
+    /// <see cref="RoleOrder"/> (первое по (Position, Id)).
+    /// </summary>
     public (int? AssignerId, int? StatusId) TaskRoleFields(int collectionId)
     {
-        int? assigner = db.DbFields.Where(f => f.CollectionId == collectionId && f.IsTaskAssigner)
-                                   .Select(f => (int?)f.Id).FirstOrDefault();
-        int? status   = db.DbFields.Where(f => f.CollectionId == collectionId && f.IsTaskStatus)
-                                   .Select(f => (int?)f.Id).FirstOrDefault();
+        int? assigner = RoleOrder(db.DbFields.Where(f => f.CollectionId == collectionId && f.IsTaskAssigner))
+                        .Select(f => (int?)f.Id).FirstOrDefault();
+        int? status   = RoleOrder(db.DbFields.Where(f => f.CollectionId == collectionId && f.IsTaskStatus))
+                        .Select(f => (int?)f.Id).FirstOrDefault();
         return (assigner, status);
     }
 

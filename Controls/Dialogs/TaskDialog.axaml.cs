@@ -189,8 +189,10 @@ public partial class TaskDialog : Window
     }
 
     // «Без даты» прячет блоки срока; «Весь день» — только поля времени. Смена коллекции
-    // у задачи без даты не поддерживается (перенос идёт календарным путём, которому нужна
-    // дата) — комбо гасится.
+    // у существующей задачи без даты не поддерживается (перенос идёт календарным путём,
+    // которому нужна дата) — комбо гасится, выбор ВОЗВРАЩАЕТСЯ к своей коллекции и рядом
+    // появляется подсказка. Раньше комбо только гасилось: пользователь выбирал коллекцию,
+    // снимал срок — и сохранение проходило «успешно», ничего не перенеся.
     private void UpdateDateVisibility()
     {
         var noDate   = NoDateCheck.IsChecked == true;
@@ -215,7 +217,20 @@ public partial class TaskDialog : Window
             EndTimeField.Time   = _savedEndTime;
         }
 
-        CollectionCombo.IsEnabled = _editTask is null || !noDate;
+        var lockCollection = _editTask is not null && noDate;
+        CollectionCombo.IsEnabled    = !lockCollection;
+        CollectionLockHint.IsVisible = lockCollection;
+        if (lockCollection) SelectTaskCollection();
+    }
+
+    // Возвращает комбо к коллекции редактируемой задачи. Нужен там, где перенос невозможен:
+    // показать выбор, который реально уйдёт в сохранение, а не тот, что пользователь успел
+    // сделать до снятия срока.
+    private void SelectTaskCollection()
+    {
+        if (_editTask?.CollectionId is not int own) return;
+        var idx = _collections.FindIndex(c => c.Id == own);
+        if (idx >= 0 && idx != CollectionCombo.SelectedIndex) CollectionCombo.SelectedIndex = idx;
     }
 
     private void TrySave()
@@ -229,10 +244,17 @@ public partial class TaskDialog : Window
             return;
         }
 
-        var colIdx = CollectionCombo.SelectedIndex;
-        var colId  = colIdx >= 0 ? _collections[colIdx].Id : null;
-
         var noDate = NoDateCheck.IsChecked == true;
+
+        // Задачу без срока переносить нечем — календарного пути нет, и репозиторий такой
+        // выбор осознанно игнорирует. Берём её собственную коллекцию, чтобы сохранённое
+        // совпало с показанным: комбо в этом режиме и так возвращено к ней (см.
+        // UpdateDateVisibility), это защита от рассинхрона состояния окна.
+        var colIdx = CollectionCombo.SelectedIndex;
+        var colId  = _editTask is not null && noDate
+            ? _editTask.CollectionId
+            : colIdx >= 0 ? _collections[colIdx].Id : null;
+
         DateTime? dueStart = null, dueEnd = null;
         var isAllDay = false;
         if (!noDate)

@@ -1,5 +1,6 @@
 using System.Globalization;
 using Microsoft.EntityFrameworkCore;
+using SmartBase.Core.Models;
 using SmartBase.Database;
 using SmartBase.Database.Entities;
 using SmartBase.Database.Repositories;
@@ -191,23 +192,57 @@ public sealed class UserValueTests
         Assert.Equal("Иванов Иван", db.Constructor.GetFieldValuesBatch([moved])[moved][execB]);
     }
 
-    [Fact(Skip = "дефект продукта: MoveRecordsCore (ConstructorRepository.cs:4020-4027) создаёт запись " +
-                 "без CreatedBy/CreatedAt источника — StampNewRecordAudit штампует переносящего, " +
-                 "тогда как перенос коллекции аудит сохраняет")]
+    [Fact]
     public void Moving_record_to_another_collection_keeps_original_author()
     {
         using var db = new TempDatabase();
         var (moved, _) = MoveRecordWithForeignAuthor(db);
 
-        // КРАСНЫЙ ТЕСТ: MoveRecordsCore создаёт новую строку db_records без CreatedBy/CreatedAt
-        // источника, и StampNewRecordAudit (AppDbContext) проставляет переносящего и «сейчас» —
-        // после переноса запись выглядит созданной тем, кто её перетащил, и сегодня. Колонки
-        // «Создание пользователем»/«Дата создания» врут, журнал при этом честно пишет «перенёс».
-        // Перенос КОЛЛЕКЦИИ аудит уже сохраняет (CrossMoveTests.Move_copies_to_target_with_values_and_clears_source),
-        // и приложение не должно противоречить само себе: перенос записи обязан вести себя так же.
+        // MoveRecordsCore переносит все четыре поля аудита: «Расположение» перекладывает
+        // запись, а не создаёт новую. Раньше строка создавалась пустой, StampNewRecordAudit
+        // (AppDbContext) штамповал переносящего и «сейчас» — запись коллеги выглядела созданной
+        // вами сегодня, колонки «Создание пользователем»/«Дата создания» врали, а журнал при
+        // этом честно писал «перенёс». Перенос КОЛЛЕКЦИИ аудит сохранял всегда
+        // (CrossMoveTests.Move_copies_to_target_with_values_and_clears_source) — приложение
+        // не должно противоречить само себе.
         var header = db.Constructor.GetRecord(moved)!;
         Assert.Equal("Сидоров Семён", header.CreatedBy);
         Assert.Equal(OldCreatedAt,    header.CreatedAt);
+    }
+
+    [Fact]
+    public void Moving_event_to_another_collection_in_calendar_keeps_original_author()
+    {
+        using var db = new TempDatabase();
+        var repo = db.Constructor;
+
+        var colA = SampleData.AddCollection(repo, "Заявки").Id!.Value;
+        var colB = SampleData.AddCollection(repo, "Архив").Id!.Value;
+
+        var ev = repo.AddCalendarRecord(new CalendarRecord
+        {
+            CollectionId = colA, Title = "Осмотр насосной",
+            StartDt = new DateTime(2026, 4, 1, 9, 0, 0),
+            EndDt   = new DateTime(2026, 4, 1, 10, 0, 0),
+        });
+
+        StampAuthor(db.Path, ev.Id!.Value, "Сидоров Семён", OldCreatedAt);
+        // Правку соседа наш контекст не видит — запись он держит в трекере с момента создания.
+        // Чистим, как это делает новый сеанс: иначе тест мерил бы кеш, а не поведение переноса.
+        db.Context.ChangeTracker.Clear();
+
+        // Смена коллекции у события ПЕРЕСОЗДАЁТ запись (AddCalendarRecord + копия значений и
+        // связей + удаление исходной) — тот же перенос, что «Расположение» в таблице, и аудит
+        // он обязан сохранять так же. Раньше CreatedAt = «сейчас», а StampNewRecordAudit и
+        // SetFieldValue проставляли переносящего: событие коллеги выглядело созданным вами.
+        ev.CollectionId = colB;
+        repo.UpdateCalendarRecord(ev);
+
+        var moved = Assert.Single(ReadRecords(db.Path, colB));
+        Assert.Equal("Сидоров Семён", moved.CreatedBy);
+        Assert.Equal("Сидоров Семён", moved.UpdatedBy);
+        Assert.Equal(OldCreatedAt,    moved.CreatedAt);
+        Assert.Empty(ReadRecords(db.Path, colA));
     }
 
     [Fact]

@@ -133,9 +133,18 @@
             <ComboBox x:Name="CollectionCombo"
                       HorizontalAlignment="Stretch"
                       Height="34"
-                      Margin="0,0,0,12"
+                      Margin="0,0,0,6"
                       Background="{StaticResource BrushSecondaryBg}"
                       CornerRadius="{StaticResource RadiusBase}" />
+
+            <!-- Видна, когда у существующей задачи снят срок: переноса не будет, и об этом
+                 надо сказать прямо — раньше выбор молча пропадал при сохранении. -->
+            <TextBlock x:Name="CollectionLockHint"
+                       IsVisible="False"
+                       TextWrapping="Wrap" LineHeight="16"
+                       Margin="0,0,0,12"
+                       Foreground="{StaticResource BrushSecondaryText}"
+                       Text="Задачу без срока перенести в другую коллекцию нельзя — она останется в текущей. Укажите срок, чтобы сменить коллекцию." />
 
             <!-- Описание -->
             <TextBlock Text="Описание"
