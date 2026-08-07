@@ -2508,9 +2508,9 @@ public partial class TableView : UserControl
         FlatRow(":selected");
         FlatRow(":selected", ":pointerover");
 
-        var valuesBox = new StackPanel { Spacing = 4 };
-        valuesBox.Children.Add(selectAll);
-        valuesBox.Children.Add(valuesList);
+        // «Выделить всё» — закреплённая шапка списка; полоса прокрутки стоит на её уровне
+        // (отдельной колонкой), как вертикальная полоса таблицы стоит на уровне шапки колонок.
+        var valuesBox = ScrollBarLink.HeaderedList(selectAll, valuesList);
 
         // До прихода данных — «Загрузка…»; по готовности заменяется на список значений.
         var loadingText = new TextBlock
@@ -2783,7 +2783,11 @@ public partial class TableView : UserControl
                 Foreground          = secondary,
                 VerticalAlignment   = VerticalAlignment.Center,
                 HorizontalAlignment = HorizontalAlignment.Right,
-                Margin              = new Thickness(0, 0, 12, 0),
+                // Отступ СЛЕВА — воздух между названием значения и счётчиком. Раньше он
+                // стоял справа: полоса прокрутки лежала поверх списка и закрывала счётчик.
+                // Теперь полоса — отдельная колонка (ScrollBarLink.HeaderedList), справа
+                // отступ даёт она сама.
+                Margin              = new Thickness(8, 0, 0, 0),
             };
             cnt.Bind(TextBlock.TextProperty, new Binding(nameof(FilterValueVm.CountText)));
 

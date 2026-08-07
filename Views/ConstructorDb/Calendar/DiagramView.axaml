@@ -1,13 +1,15 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:u="clr-namespace:SmartBase.Utils"
              x:Class="SmartBase.Views.ConstructorDb.Calendar.DiagramView"
              Background="{StaticResource BrushBg}">
 
 
     <!-- Диаграмма (гант на месяц или год — комбобокс масштаба в шапке): слева панель
          коллекций, справа таймлайн.
-         Ширина левой панели 230 продублирована константой LeftW в code-behind. -->
-    <Grid RowDefinitions="Auto,*">
+         Ширина левой панели 230 продублирована константой LeftW в code-behind.
+         Колонка 1 — полоса прокрутки на всю высоту, вместе с шапкой шкалы. -->
+    <Grid RowDefinitions="Auto,*" ColumnDefinitions="*,Auto">
 
         <!-- Фиксированная шапка: заголовок панели + шкала (дни месяца или месяцы года).
              Нижняя линия — отдельный separator (не бордер контейнера с текстом):
@@ -66,7 +68,10 @@
              шапка шкалы и заголовок панели стоят. Горизонтального скролла нет: период
              всегда растянут на всю ширину (dayW = ширина / дней периода). -->
         <Grid Grid.Row="1">
-            <ScrollViewer x:Name="RowsScroll" HorizontalScrollBarVisibility="Disabled">
+            <!-- Своей полосы нет (Hidden): её роль играет ScrollBar в колонке 1, стоящий
+                 и на строке шапки, — полоса начинается сверху, как в таблице. -->
+            <ScrollViewer x:Name="RowsScroll" HorizontalScrollBarVisibility="Disabled"
+                          VerticalScrollBarVisibility="Hidden">
                 <Grid ColumnDefinitions="230,*" VerticalAlignment="Top">
                     <Canvas Grid.Column="0" x:Name="LeftRowsCanvas" ClipToBounds="True" />
                     <!-- Приёмник указателя таймлайна: слои под ним не хит-тестятся,
@@ -94,6 +99,11 @@
              рисует BuildBackground: оно обрывается на последней строке. -->
         <Border Classes="separator v" Grid.Row="0"
                 HorizontalAlignment="Left" Margin="230,0,0,0" />
+
+        <!-- Полоса прокрутки строк — на всю высоту, включая шапку шкалы. -->
+        <ScrollBar Grid.Column="1" Grid.Row="0" Grid.RowSpan="2"
+                   Orientation="Vertical"
+                   u:ScrollBarLink.Source="{Binding #RowsScroll}" />
 
     </Grid>
 

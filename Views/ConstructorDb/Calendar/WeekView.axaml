@@ -3,6 +3,7 @@
              xmlns:comp="using:SmartBase.Controls.Components"
              xmlns:shapes="using:Avalonia.Controls.Shapes"
              xmlns:local="using:SmartBase.Views.ConstructorDb.Calendar"
+             xmlns:u="clr-namespace:SmartBase.Utils"
              x:Class="SmartBase.Views.ConstructorDb.Calendar.WeekView"
              Background="{StaticResource BrushBg}">
 
@@ -10,7 +11,8 @@
         <local:HourLineBorderConverter x:Key="HourBorderConv" />
     </UserControl.Resources>
 
-    <Grid RowDefinitions="Auto,Auto,*">
+    <!-- Колонка 1 — полоса прокрутки на всю высоту, вместе с шапкой дней и AllDayBar. -->
+    <Grid RowDefinitions="Auto,Auto,*" ColumnDefinitions="*,Auto">
 
         <!-- Заголовки дней недели — 72px пустой отступ + 7 равных колонок.
              Нижняя линия — отдельный separator (не бордер контейнера с текстом):
@@ -26,8 +28,11 @@
         <!-- AllDayBar -->
         <comp:AllDayBar Grid.Row="1" x:Name="AllDayBarCtrl" />
 
-        <!-- Прокручиваемая сетка событий -->
-        <ScrollViewer Grid.Row="2" x:Name="TimeScroll">
+        <!-- Прокручиваемая сетка событий. Своей полосы нет (Hidden) — её роль играет
+             ScrollBar ниже, стоящий и на строках шапки, чтобы полоса начиналась сверху,
+             как в таблице. -->
+        <ScrollViewer Grid.Row="2" x:Name="TimeScroll"
+                      VerticalScrollBarVisibility="Hidden">
             <Grid ColumnDefinitions="72,*">
 
                 <!-- Метки часов: каждая метка прижата к низу 60px-слота,
@@ -114,6 +119,11 @@
 
             </Grid>
         </ScrollViewer>
+
+        <!-- Полоса прокрутки сетки событий — на всю высоту, включая шапку дней. -->
+        <ScrollBar Grid.Column="1" Grid.Row="0" Grid.RowSpan="3"
+                   Orientation="Vertical"
+                   u:ScrollBarLink.Source="{Binding #TimeScroll}" />
 
         <!-- Ручка ресайза AllDayBar — «пилюля» как у сайдбара. Вынесена на уровень
              вида и объявлена последней → рисуется поверх сетки и наезжает на

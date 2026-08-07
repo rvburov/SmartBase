@@ -1,18 +1,22 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:w="clr-namespace:SmartBase.Controls.Widgets"
+             xmlns:u="clr-namespace:SmartBase.Utils"
              x:Class="SmartBase.Views.Tasks.TaskListView"
              Background="{StaticResource BrushBg}">
 
-    <!-- Правого отступа у Grid нет: он вернулся отдельным Margin строкам 0-1 и содержимому
-         списка, чтобы полоса прокрутки прилегала к краю панели, а не висела в 16px от него. -->
-    <Grid RowDefinitions="Auto,Auto,*" Margin="16,8,0,0">
+    <!-- Правого отступа у Grid нет: он вернулся отдельным Margin строкам 1-2 и содержимому
+         списка, чтобы полоса прокрутки прилегала к краю панели, а не висела в 16px от него.
+         Колонка 1 — полоса прокрутки на всю высоту панели (см. ScrollBar ниже).
+         Верхний отступ — пустой строкой 0, а не Margin сетки: иначе полоса начиналась бы
+         на 8px ниже верхнего края панели, а по стандарту она идёт от самого края. -->
+    <Grid RowDefinitions="8,Auto,Auto,*" ColumnDefinitions="*,Auto" Margin="16,0,0,0">
 
         <!-- Ошибка (нет прав и т.п.) — тот же баннер, что в диалогах -->
-        <w:ErrorBanner Grid.Row="0" x:Name="ErrorBanner" Margin="0,0,16,8" />
+        <w:ErrorBanner Grid.Row="1" x:Name="ErrorBanner" Margin="0,0,16,8" />
 
         <!-- Строка быстрого добавления: название + Enter, срок, исполнитель, «Добавить» -->
-        <Border Grid.Row="1"
+        <Border Grid.Row="2"
                 Background="{StaticResource BrushBg}"
                 BorderBrush="{StaticResource BrushSeparator}"
                 BorderThickness="{DynamicResource BorderLine}"
@@ -55,8 +59,12 @@
             </Grid>
         </Border>
 
-        <!-- Список карточек задач (виртуализация — как список сайдбара) -->
-        <ScrollViewer Grid.Row="2" HorizontalScrollBarVisibility="Disabled">
+        <!-- Список карточек задач (виртуализация — как список сайдбара).
+             Своей полосы нет (Hidden) — её роль играет ScrollBar ниже, стоящий на всю
+             высоту панели, чтобы полоса начиналась сверху, как в таблице. -->
+        <ScrollViewer Grid.Row="3" x:Name="CardsScroll"
+                      HorizontalScrollBarVisibility="Disabled"
+                      VerticalScrollBarVisibility="Hidden">
             <StackPanel Margin="0,0,16,0">
                 <ItemsControl x:Name="CardsHost">
                     <ItemsControl.ItemsPanel>
@@ -73,6 +81,13 @@
                            Margin="0,32,0,16" />
             </StackPanel>
         </ScrollViewer>
+
+        <!-- Полоса прокрутки списка — отдельной колонкой на всю высоту панели (строка
+             быстрого добавления + список), как вертикальная полоса таблицы стоит на
+             уровне шапки колонок. -->
+        <ScrollBar Grid.Column="1" Grid.Row="0" Grid.RowSpan="4"
+                   Orientation="Vertical"
+                   u:ScrollBarLink.Source="{Binding #CardsScroll}" />
 
     </Grid>
 

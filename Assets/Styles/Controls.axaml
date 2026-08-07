@@ -57,11 +57,19 @@
              и локальные копии тем DataGrid ссылаются только на них, литералов в разметке
              быть не должно (общее правило — docs/developer/ui/theming.md). -->
         <x:Double x:Key="ScrollBarThickness">14</x:Double>
-        <SolidColorBrush x:Key="BrushScrollbarTrack"         Color="#EDEDF0" />
+        <Color x:Key="ColorScrollbarTrack">#EDEDF0</Color>
+        <SolidColorBrush x:Key="BrushScrollbarTrack"         Color="{StaticResource ColorScrollbarTrack}" />
         <SolidColorBrush x:Key="BrushScrollbarThumb"         Color="#A0A0A6" />
         <SolidColorBrush x:Key="BrushScrollbarThumbHover"    Color="#7A7A80" />
         <SolidColorBrush x:Key="BrushScrollbarThumbPressed"  Color="#5A5A5E" />
         <SolidColorBrush x:Key="BrushScrollbarArrow"         Color="#7A7A80" />
+
+        <!-- Квадрат на пересечении двух полос у обычного ScrollViewer (в теме Fluent —
+             Panel#PART_ScrollBarsSeparator). Белый по умолчанию, перекрашиваем в цвет
+             дорожки, чтобы угол не выбивался пятном. То же, что сделано для таблицы
+             ключом DataGridScrollBarsSeparatorBackground. -->
+        <SolidColorBrush x:Key="ScrollViewerScrollBarsSeparatorBackground"
+                         Color="{StaticResource ColorScrollbarTrack}" />
 
         <!-- Тема кнопки-стрелки скроллбара: своя отрисовка без Fluent-обводки,
              контент строго по центру. -->
@@ -593,6 +601,19 @@
     <Style Selector="ComboBox.propValue:focus /template/ Border#Background">
         <Setter Property="Background"      Value="Transparent" />
         <Setter Property="BorderThickness" Value="0" />
+    </Style>
+
+    <!-- ПОЛОСА — ОТДЕЛЬНЫЙ БЛОК, А НЕ НАКЛАДКА. Шаблон ScrollViewer темы Fluent кладёт
+         содержимое в ячейку 0,0 сетки "*,Auto"/"*,Auto" (полосы — в колонку 1 и строку 1),
+         но при AllowAutoHide=True добавляет стилем Grid.ColumnSpan=2 и Grid.RowSpan=2:
+         содержимое растягивается ПОД обе полосы, и правые 14px данных не видно.
+         AllowAutoHide=False у САМОГО ScrollViewer этот стиль отключает — содержимое
+         сужается на толщину полосы везде разом. Одноимённый сеттер ниже (у ScrollBar)
+         этого не делает: селектор темы читает свойство ScrollViewer, не полосы. -->
+    <!-- :is() обязателен — селектор по имени типа в Avalonia ловит ТОЛЬКО точный тип,
+         а прокрутку наследуют и производные (виджеты сторонних пакетов). -->
+    <Style Selector=":is(ScrollViewer)">
+        <Setter Property="ScrollViewer.AllowAutoHide" Value="False" />
     </Style>
 
     <!-- Классический скроллбар (как в Excel): дорожка всегда видна, сверху/снизу
