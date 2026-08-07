@@ -3,6 +3,7 @@ using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Media;
 using SmartBase.Utils;
+using SmartBase.Controls.Behaviors;
 
 namespace SmartBase.Controls.Components;
 

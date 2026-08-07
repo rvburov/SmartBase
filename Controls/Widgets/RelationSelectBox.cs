@@ -15,6 +15,7 @@ using SmartBase.Database;
 using SmartBase.Database.Repositories;
 using SmartBase.Utils;
 using SmartBase.ViewModels.ConstructorDb;
+using SmartBase.Controls.Behaviors;
 
 namespace SmartBase.Controls.Widgets;
 

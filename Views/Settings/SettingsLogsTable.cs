@@ -13,6 +13,7 @@ using Avalonia.Threading;
 using Avalonia.VisualTree;
 using SmartBase.Logging;
 using SmartBase.Utils;
+using SmartBase.Controls.Behaviors;
 using LogRow = SmartBase.Logging.LogReader.LogRow;
 using Path = Avalonia.Controls.Shapes.Path;
 

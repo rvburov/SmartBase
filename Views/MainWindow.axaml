@@ -7,14 +7,14 @@
         xmlns:ext="using:SmartBase.Views.Extensions"
         xmlns:profile="using:SmartBase.Views.Profile"
         xmlns:tasks="using:SmartBase.Views.Tasks"
-        xmlns:u="using:SmartBase.Utils"
+        xmlns:b="using:SmartBase.Controls.Behaviors"
         x:Class="SmartBase.Views.MainWindow"
         Classes="main"
         Title="SmartBase"
         Width="1331" Height="813"
         Background="{StaticResource BrushBg}"
         WindowStartupLocation="CenterScreen"
-        u:LineMetrics.FollowsAppZoom="True">
+        b:LineMetrics.FollowsAppZoom="True">
 
     <!-- Хост масштабирования: LayoutTransform на корне → весь интерфейс перекомпоновывается
          в логических пикселях и заполняет окно (см. Utils/Scaling + MainWindow.ApplyScale). -->

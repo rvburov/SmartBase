@@ -246,11 +246,15 @@ calendar_avalonia/
 │   └── Settings/               # SettingsView
 │
 ├── Controls/                   # Переиспользуемые UI компоненты
+│   ├── Behaviors/              # Поведения на attached-свойствах (навешиваются на чужие контролы, сами ничего не рисуют)
+│   │   ├── LineMetrics.cs      # Единая толщина линий при любом зуме и DPI
+│   │   ├── WindowZoom.cs       # Зум приложения для отдельных окон (диалоги, расширения)
+│   │   └── ScrollBarLink.cs    # Полоса прокрутки, вынесенная из ScrollViewer наружу (начинается на уровне шапки)
 │   ├── Components/             # Navbar, Sidebar, ActivityBar, AllDayBar, Footer, ContextMenu
 │   ├── Dialogs/                # Record, Collection, Group, Confirm, Property*, CreateItem
 │   └── Widgets/                # AppButton, AppCheckBox, AppLabel, Selector, SearchInput, DateEditor, TimeField, ErrorBanner
 │
-├── Utils/                      # Вспомогательные утилиты
+├── Utils/                      # Вспомогательные утилиты (без привязки к контролам)
 │   ├── AppSettings.cs          # Пути к БД (.localdata / %AppData%) + доступ к настройкам
 │   ├── IAppSettingsStore.cs    # Интерфейс хранилища настроек (реализован поверх app.db)
 │   ├── Autostart.cs            # Автозапуск приложения

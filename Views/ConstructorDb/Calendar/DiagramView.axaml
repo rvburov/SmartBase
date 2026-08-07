@@ -1,6 +1,6 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             xmlns:u="clr-namespace:SmartBase.Utils"
+             xmlns:b="clr-namespace:SmartBase.Controls.Behaviors"
              x:Class="SmartBase.Views.ConstructorDb.Calendar.DiagramView"
              Background="{StaticResource BrushBg}">
 
@@ -103,7 +103,7 @@
         <!-- Полоса прокрутки строк — на всю высоту, включая шапку шкалы. -->
         <ScrollBar Grid.Column="1" Grid.Row="0" Grid.RowSpan="2"
                    Orientation="Vertical"
-                   u:ScrollBarLink.Source="{Binding #RowsScroll}" />
+                   b:ScrollBarLink.Source="{Binding #RowsScroll}" />
 
     </Grid>
 

@@ -14,6 +14,7 @@ using Avalonia.VisualTree;
 using SmartBase.Database;
 using SmartBase.Database.Repositories;
 using SmartBase.Utils;
+using SmartBase.Controls.Behaviors;
 using ChangeLogRow = SmartBase.Database.Repositories.ConstructorRepository.ChangeLogRow;
 using Path = Avalonia.Controls.Shapes.Path;
 

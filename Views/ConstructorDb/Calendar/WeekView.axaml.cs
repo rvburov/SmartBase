@@ -9,6 +9,7 @@ using Avalonia.Media;
 using Avalonia.Threading;
 using SmartBase.Core.Models;
 using SmartBase.Utils;
+using SmartBase.Controls.Behaviors;
 
 namespace SmartBase.Views.ConstructorDb.Calendar;
 

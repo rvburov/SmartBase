@@ -7,7 +7,7 @@ namespace SmartBase.Utils;
 /// Уровень масштабирования всего интерфейса (хранится в app.db).
 /// Применяется как LayoutTransform: к корню MainWindow (окно слушает
 /// <see cref="ScaleChanged"/>), к остальным окнам (диалоги, расширения) — через
-/// <see cref="WindowZoom"/>, к попапам (меню, тултипы, выпадашки) — через ресурс
+/// <see cref="Controls.Behaviors.WindowZoom"/>, к попапам (меню, тултипы, выпадашки) — через ресурс
 /// приложения "AppZoomTransform" (DynamicResource у LayoutTransformControl-обёрток
 /// контента попапов). Диапазон/шаг/дефолт — в <see cref="AppSettings"/>
 /// (70…130 %, шаг 10 %, стандарт 100 %).

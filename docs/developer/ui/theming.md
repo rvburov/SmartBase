@@ -218,7 +218,7 @@
 
 Собственная полоса `ScrollViewer`'а живёт внутри его шаблона и выше своих границ подняться
 не может. Поэтому там, где над прокруткой есть закреплённая шапка, полоса **выносится
-наружу** — [Utils/ScrollBarLink.cs](../../../Utils/ScrollBarLink.cs):
+наружу** — [Controls/Behaviors/ScrollBarLink.cs](../../../Controls/Behaviors/ScrollBarLink.cs):
 
 ```xml
 <Grid RowDefinitions="Auto,*" ColumnDefinitions="*,Auto">
@@ -277,7 +277,7 @@ Fluent: иначе между двумя полосами белое пятно.
 ## Линии: единая толщина при любом зуме и DPI (стандарт)
 
 Толщина ВСЕХ линий (разделители, рамки, сетка таблицы) — ДИНАМИЧЕСКИЕ токены, которые
-[Utils/LineMetrics.cs](../../../Utils/LineMetrics.cs) пишет в `Resources` каждого окна
+[Controls/Behaviors/LineMetrics.cs](../../../Controls/Behaviors/LineMetrics.cs) пишет в `Resources` каждого окна
 (пересчёт при смене зума приложения и переезде окна на монитор с другим DPI):
 
 - формула: `physTarget = max(1, round(RenderScaling))`, `t = physTarget / RenderScaling / зум` —
@@ -355,7 +355,7 @@ Fluent: иначе между двумя полосами белое пятно.
 - **MainWindow** — `LayoutTransform` на ScaleHost (MainWindow.ApplyScale по
   `Scaling.ScaleChanged`).
 - **Отдельные окна** (диалоги, окна расширений, сплэш, установщик) —
-  [Utils/WindowZoom.cs](../../../Utils/WindowZoom.cs), подключается глобальным стилем
+  [Controls/Behaviors/WindowZoom.cs](../../../Controls/Behaviors/WindowZoom.cs), подключается глобальным стилем
   `Window` в Controls.axaml: контент оборачивается в LayoutTransformControl, конечные
   габариты окна (Width/Height/Min/Max) умножаются на зум, SizeToContent пересчитывается
   сам; пересчёт живых окон по `Scaling.ScaleChanged`.

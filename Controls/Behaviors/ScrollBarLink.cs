@@ -3,7 +3,7 @@ using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
 using Avalonia.Layout;
 
-namespace SmartBase.Utils;
+namespace SmartBase.Controls.Behaviors;
 
 /// <summary>
 /// Внешняя полоса прокрутки для <see cref="ScrollViewer"/> — та, что лежит НЕ внутри его

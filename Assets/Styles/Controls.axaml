@@ -1,6 +1,6 @@
 <Styles xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        xmlns:u="using:SmartBase.Utils">
+        xmlns:b="using:SmartBase.Controls.Behaviors">
 
     <Styles.Resources>
         <!-- Радиусы скругления -->
@@ -115,11 +115,11 @@
         <Setter Property="UseLayoutRounding" Value="True" />
         <!-- Каждое окно (включая диалоги) получает динамические токены толщины линий
              от LineMetrics: пересчёт при смене зума и переезде между мониторами. -->
-        <Setter Property="(u:LineMetrics.IsManaged)" Value="True" />
+        <Setter Property="(b:LineMetrics.IsManaged)" Value="True" />
         <!-- Каждое отдельное окно (диалоги, расширения, сплэш) масштабируется под общий
              зум приложения: контент — LayoutTransform, габариты — ×зум. MainWindow
              исключён внутри WindowZoom (у него собственный ScaleHost). -->
-        <Setter Property="(u:WindowZoom.Enabled)" Value="True" />
+        <Setter Property="(b:WindowZoom.Enabled)" Value="True" />
     </Style>
     <!-- Минимальный размер только у главного окна, не у диалогов -->
     <Style Selector="Window.main">
@@ -142,7 +142,7 @@
              и антиалиасинг размазал бы края — Aliased защёлкивает её в целый пиксель.
              Только для линий: на скруглённых рамках дал бы зазубрины. Через мост
              LineMetrics.Aliased: у RenderOptions нет полей для сеттера стиля. -->
-        <Setter Property="(u:LineMetrics.Aliased)" Value="True" />
+        <Setter Property="(b:LineMetrics.Aliased)" Value="True" />
     </Style>
     <Style Selector="Border.separator.h">
         <Setter Property="Height" Value="{DynamicResource SeparatorThickness}" />

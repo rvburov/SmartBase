@@ -5,6 +5,7 @@ using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Media;
 using SmartBase.Core.Models;
+using SmartBase.Controls.Behaviors;
 
 namespace SmartBase.Controls.Components;
 

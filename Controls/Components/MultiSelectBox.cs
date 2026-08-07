@@ -12,6 +12,7 @@ using Avalonia.Media;
 using Avalonia.Styling;
 using SmartBase.Core.Models;
 using SmartBase.Utils;
+using SmartBase.Controls.Behaviors;
 
 namespace SmartBase.Controls.Components;
 

@@ -3,7 +3,7 @@
              xmlns:comp="using:SmartBase.Controls.Components"
              xmlns:shapes="using:Avalonia.Controls.Shapes"
              xmlns:local="using:SmartBase.Views.ConstructorDb.Calendar"
-             xmlns:u="clr-namespace:SmartBase.Utils"
+             xmlns:b="clr-namespace:SmartBase.Controls.Behaviors"
              x:Class="SmartBase.Views.ConstructorDb.Calendar.DayView"
              Background="{StaticResource BrushBg}">
 
@@ -100,7 +100,7 @@
         <!-- Полоса прокрутки сетки событий — на всю высоту, включая полосу «весь день». -->
         <ScrollBar Grid.Column="1" Grid.Row="0" Grid.RowSpan="2"
                    Orientation="Vertical"
-                   u:ScrollBarLink.Source="{Binding #TimeScroll}" />
+                   b:ScrollBarLink.Source="{Binding #TimeScroll}" />
 
         <!-- Ручка ресайза AllDayBar — «пилюля» как у сайдбара. Вынесена на уровень
              вида и объявлена последней → рисуется поверх сетки и наезжает на

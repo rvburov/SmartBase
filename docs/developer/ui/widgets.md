@@ -51,6 +51,20 @@ SearchChanged`, которые ловит [CalendarControllerView](../../../View
 `EventContextMenu` собирает пункты «Создать/Редактировать/Дублировать/Удалить» —
 им пользуются все режимы календаря (см. [../features/calendar/interactions.md](../features/calendar/interactions.md)).
 
+## Поведения ([Controls/Behaviors/](../../../Controls/Behaviors/))
+
+Не контролы: ничего не рисуют и не имеют шаблона. Это статические классы с
+attached-свойствами, которые навешивают поведение на ЧУЖИЕ контролы — обычно глобальным
+стилем в `Controls.axaml` или одним атрибутом в разметке вида.
+
+| Поведение | Навешивается на | Назначение |
+|---|---|---|
+| [LineMetrics](../../../Controls/Behaviors/LineMetrics.cs) | `Window` (`IsManaged`, `FollowsAppZoom`), `Visual` (`Aliased`) | единая толщина линий ~1px при любом зуме и DPI — токены в `Resources` окна |
+| [WindowZoom](../../../Controls/Behaviors/WindowZoom.cs) | `Window` (`Enabled`) | зум приложения для отдельных окон: диалоги, окна расширений, сплэш |
+| [ScrollBarLink](../../../Controls/Behaviors/ScrollBarLink.cs) | `ScrollBar` (`Source`) | связывает вынесенную наружу полосу прокрутки со `ScrollViewer` — полоса начинается на уровне закреплённой шапки |
+
+Подробности по каждому — в [theming.md](theming.md) (линии, зум, скроллбар).
+
 ## Связанные документы
 
 [[dialogs]], [[theming]], [[../features/calendar/interactions]]

@@ -21,6 +21,7 @@ using SmartBase.Core.Models;
 using SmartBase.Database.Repositories;
 using SmartBase.ViewModels.ConstructorDb;
 using SmartBase.Utils;
+using SmartBase.Controls.Behaviors;
 
 namespace SmartBase.Views.ConstructorDb;
 

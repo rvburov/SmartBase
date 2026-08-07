@@ -1,7 +1,7 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:w="clr-namespace:SmartBase.Controls.Widgets"
-             xmlns:u="clr-namespace:SmartBase.Utils"
+             xmlns:b="clr-namespace:SmartBase.Controls.Behaviors"
              x:Class="SmartBase.Views.Tasks.TaskListView"
              Background="{StaticResource BrushBg}">
 
@@ -87,7 +87,7 @@
              уровне шапки колонок. -->
         <ScrollBar Grid.Column="1" Grid.Row="0" Grid.RowSpan="4"
                    Orientation="Vertical"
-                   u:ScrollBarLink.Source="{Binding #CardsScroll}" />
+                   b:ScrollBarLink.Source="{Binding #CardsScroll}" />
 
     </Grid>
 
