@@ -79,6 +79,7 @@ Avalonia.BuildServices 0.0.29 (AvaloniaUI, MIT), HtmlAgilityPack 1.11.42
       Copyright 2013-2024 © The AvaloniaUI Project
       https://avaloniaui.net/
   Avalonia.AvaloniaEdit 11.0.0
+      Авторы: AvaloniaEdit
   Avalonia.Controls.DataGrid 11.2.3
       Copyright 2013-2024 © The AvaloniaUI Project
       https://avaloniaui.net/
@@ -113,8 +114,10 @@ Avalonia.BuildServices 0.0.29 (AvaloniaUI, MIT), HtmlAgilityPack 1.11.42
       Copyright 2013-2024 © The AvaloniaUI Project
       https://avaloniaui.net/
   ClosedXML 0.104.2
+      Авторы: Jan Havlíček, Francois Botha, Aleksei Pankratev, Manuel de Leon, Amir Ghezelbash
       https://github.com/ClosedXML/ClosedXML
   ClosedXML.Parser 1.2.0
+      Авторы: Jan Havlíček
       https://github.com/ClosedXML/ClosedXML.Parser
   ColorDocument.Avalonia 11.0.3
       Copyright (c) 2024 whistyun
@@ -126,10 +129,13 @@ Avalonia.BuildServices 0.0.29 (AvaloniaUI, MIT), HtmlAgilityPack 1.11.42
       (c) .NET Foundation and Contributors. All rights reserved.
       https://github.com/CommunityToolkit/dotnet
   DesktopNotifications 1.3.1
+      Авторы: DesktopNotifications
       https://github.com/pr8x/DesktopNotifications
   DesktopNotifications.FreeDesktop 1.3.1
+      Авторы: DesktopNotifications.FreeDesktop
       https://github.com/pr8x/DesktopNotifications
   DesktopNotifications.Windows 1.3.1
+      Авторы: DesktopNotifications.Windows
       https://github.com/pr8x/DesktopNotifications
   DocumentFormat.OpenXml 3.1.1
       © Microsoft Corporation. All rights reserved.
@@ -138,10 +144,13 @@ Avalonia.BuildServices 0.0.29 (AvaloniaUI, MIT), HtmlAgilityPack 1.11.42
       © Microsoft Corporation. All rights reserved.
       https://github.com/dotnet/Open-XML-SDK
   ExcelDataReader 3.7.0
+      Авторы: ExcelDataReader developers
       https://github.com/ExcelDataReader/ExcelDataReader
   ExcelNumberFormat 1.1.0
+      Авторы: ExcelNumberFormat developers
       https://github.com/andersnm/ExcelNumberFormat
   ExCSS 4.1.4
+      Авторы: Tyler Brinks
   HarfBuzzSharp 7.3.0.3
       © Microsoft Corporation. All rights reserved.
       https://go.microsoft.com/fwlink/?linkid=868515
@@ -217,6 +226,9 @@ Avalonia.BuildServices 0.0.29 (AvaloniaUI, MIT), HtmlAgilityPack 1.11.42
       © Microsoft Corporation. All rights reserved.
       https://docs.microsoft.com/ef/core/
   Microsoft.EntityFrameworkCore.Design 9.0.1
+      © Microsoft Corporation. All rights reserved.
+      https://docs.microsoft.com/ef/core/
+      [метаданные пакета 9.0.0 (у 9.0.1 они не опубликованы)]
   Microsoft.EntityFrameworkCore.Relational 9.0.1
       © Microsoft Corporation. All rights reserved.
       https://docs.microsoft.com/ef/core/
@@ -260,6 +272,7 @@ Avalonia.BuildServices 0.0.29 (AvaloniaUI, MIT), HtmlAgilityPack 1.11.42
       (c) .NET Foundation and Contributors.  All rights reserved.
       https://github.com/CommunityToolkit/WindowsCommunityToolkit
   Mono.TextTemplating 3.0.0
+      Авторы: Mikayla Hutchinson
       https://github.com/mono/t4
   RBush 4.0.0
       Copyright © 2017-2024 Turning Code, LLC (and others)
@@ -319,6 +332,7 @@ Avalonia.BuildServices 0.0.29 (AvaloniaUI, MIT), HtmlAgilityPack 1.11.42
 ### Apache-2.0 — компонентов: 8
 
   PdfPig 0.1.15
+      Авторы: UglyToad
       https://github.com/UglyToad/PdfPig
   Serilog 4.4.0
       Copyright © Serilog Contributors
@@ -374,6 +388,13 @@ Avalonia.BuildServices 0.0.29 (AvaloniaUI, MIT), HtmlAgilityPack 1.11.42
 ==============================================================================
 3. ПОЛНЫЕ ТЕКСТЫ ЛИЦЕНЗИЙ
 ==============================================================================
+
+Ниже приведены КАНОНИЧЕСКИЕ тексты лицензий — по одному на лицензию, а не по
+копии на каждый компонент. Поэтому в шаблонах MIT, BSD и в приложениях
+«How to apply» у Apache-2.0 и GPL-3.0 строка копирайта оставлена в виде
+заполнителя (<year>, <copyright holders>, [yyyy] и т. п.) — так они и выглядят
+в первоисточниках. Это не пропуск: конкретные правообладатели каждого
+компонента перечислены выше, в разделе 2.
 
 ------------------------------------------------------------------------------
 3.1. MIT License
