@@ -63,11 +63,14 @@
                    FontWeight="{StaticResource FontWeightBold}"
  />
 
-        <!-- Журнал (заполняет остаток) -->
+        <!-- Журнал (заполняет остаток). Правый Padding — 0 (базовый стиль TextBox даёт 10,6):
+             в шаблоне поля Padding охватывает и ScrollViewer, иначе полоса прокрутки висела
+             бы в 10px от рамки. -->
         <TextBox x:Name="LogBox"
                  IsReadOnly="True"
                  AcceptsReturn="True"
                  TextWrapping="Wrap"
+                 Padding="10,6,0,6"
                  FontFamily="{StaticResource FontFamilyBase}"
                  FontSize="{DynamicResource FontSizeSmall}"
                  VerticalContentAlignment="Top"

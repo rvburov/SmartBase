@@ -187,10 +187,13 @@
                             BorderBrush="{StaticResource BrushSeparator}"
                             BorderThickness="{DynamicResource BorderLine}"
                             CornerRadius="{StaticResource RadiusBase}"
-                            Padding="8,6">
+                            Padding="8,6,0,6"
+                            ClipToBounds="True">
                         <!-- Фиксированная высота ровно на 4 строки (30px строка + 6px зазор):
                              блок не «схлопывается» на коротком списке и не растёт на длинном —
-                             дальше прокрутка. Правый отступ — чтобы крестик не прятался за скроллбаром. -->
+                             дальше прокрутка. Правый Padding рамки — 0, чтобы полоса прокрутки
+                             прилегала к ней без зазора; воздух между крестиком и полосой даёт
+                             Margin самого списка. -->
                         <ScrollViewer Height="138" HorizontalScrollBarVisibility="Disabled">
                             <StackPanel x:Name="OptionsList" Spacing="6" Margin="0,0,8,0" />
                         </ScrollViewer>

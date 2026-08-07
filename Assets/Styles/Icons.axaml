@@ -231,15 +231,20 @@
     <!-- ✕ Крестик / закрыть (x) -->
     <StreamGeometry x:Key="IconClose">M18 6 L6 18 M6 6 L18 18</StreamGeometry>
 
-    <!-- ─── Стрелки скроллбара (сетка ~14px, Classes="arrow") ─── -->
+    <!-- ─── Стрелки скроллбара (Classes="arrow") ───
+         Рисуются в рамке 16×8 (вертикальные) и 8×16 (горизонтальные) — это размер Canvas
+         в шаблоне полосы. Чертёж отступает от края рамки на 2 единицы, обводка (толщина 2,
+         круглые торцы) съедает 1 → между краской и краем рамки остаётся запас в 1 единицу.
+         Запас обязателен: раньше чертёж стоял впритык, и Viewbox при дробном масштабе
+         срезал торцы шевронов. Меняете геометрию — сохраняйте отступ 2 от всех краёв. -->
 
     <!-- ⌃ вверх -->
-    <StreamGeometry x:Key="IconScrollUp">M1 6 L7 1 L13 6</StreamGeometry>
+    <StreamGeometry x:Key="IconScrollUp">M2 6 L8 2 L14 6</StreamGeometry>
     <!-- ⌄ вниз -->
-    <StreamGeometry x:Key="IconScrollDown">M1 1 L7 6 L13 1</StreamGeometry>
+    <StreamGeometry x:Key="IconScrollDown">M2 2 L8 6 L14 2</StreamGeometry>
     <!-- ‹ влево -->
-    <StreamGeometry x:Key="IconScrollLeft">M6 1 L1 7 L6 13</StreamGeometry>
+    <StreamGeometry x:Key="IconScrollLeft">M6 2 L2 8 L6 14</StreamGeometry>
     <!-- › вправо -->
-    <StreamGeometry x:Key="IconScrollRight">M1 1 L6 7 L1 13</StreamGeometry>
+    <StreamGeometry x:Key="IconScrollRight">M2 2 L6 8 L2 14</StreamGeometry>
 
 </ResourceDictionary>

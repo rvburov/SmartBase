@@ -97,7 +97,10 @@ public sealed class CollectionPickerFlyout
             Background   = Brushes.White,
             BorderBrush  = separator,
             CornerRadius = radius,
-            Padding      = new Avalonia.Thickness(8, 6),
+            // Справа 0: полоса прокрутки списка прилегает к рамке карточки без белого зазора.
+            // ClipToBounds — квадратные углы полосы срезаются скруглением карточки.
+            Padding      = new Avalonia.Thickness(8, 6, 0, 6),
+            ClipToBounds = true,
             Child        = valuesBox,
         };
         valuesHost.Bind(Border.BorderThicknessProperty, valuesHost.GetResourceObservable("BorderLine"));

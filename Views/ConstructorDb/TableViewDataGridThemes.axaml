@@ -22,6 +22,25 @@
        3. Кросс-файловые ссылки (DataGridTopLeftColumnHeader, BrushInactiveBg) — через
           DynamicResource: StaticResource из подключаемого ResourceDictionary не видит
           ресурсы стилей приложения на этапе загрузки.
+       4. У PART_VerticalScrollbar / PART_HorizontalScrollbar УБРАНЫ локальные
+          Width/Height (в оригинале — "{DynamicResource ScrollBarSize}", ресурс темы
+          Fluent пакета DataGrid, ~12px). Локальное значение перебивало проектный стиль
+          ScrollBar:vertical/:horizontal, из-за чего полоса таблицы отличалась по толщине
+          от остальных в приложении, а квадратные кнопки-стрелки в ней поджимались. Без
+          локального значения толщину задаёт токен ScrollBarThickness (Controls.axaml).
+       5. Полоса прокрутки — самостоятельный блок, а не слой поверх данных. Три правки:
+          - PART_RowsPresenter: RowSpan=2/ColumnSpan=3 → RowSpan=1/ColumnSpan=2 (стиль в
+            конце темы; локальных span'ов в шаблоне у него нет, поэтому стиль работает).
+            В оригинале презентер растянут ПОД обе полосы и данные последней колонки/строки
+            уезжают под скролл;
+          - PART_ColumnHeadersPresenter: УБРАН локальный Grid.ColumnSpan="2" — иначе шапка
+            шире строк на толщину полосы и заголовки разъезжаются с ячейками. Только из
+            шаблона: локальное значение сеттер стиля не перебивает (как в отличии 1);
+          - PART_VerticalScrollbar: Grid.Row="1" → Grid.Row="0" + RowSpan=2, чтобы полоса
+            начиналась на уровне шапки колонок (вровень с кнопкой «+»), а не под ней.
+       6. PART_BottomRightCorner залит BrushScrollbarTrack вместо белого
+          DataGridScrollBarsSeparatorBackground — квадрат на пересечении полос был
+          белым пятном между ними.
 
      Имена частей шаблонов сохранены — код DataGrid (EnsureGridLine и др.), стили
      /template/ в TableView.axaml и подсветка колонок RefreshColumnHighlights работают
@@ -214,9 +233,13 @@
                          Fill="{DynamicResource BrushInactiveBg}" />
               <DataGridColumnHeader Name="PART_TopLeftCornerHeader"
                                     Theme="{DynamicResource DataGridTopLeftColumnHeader}" />
+              <!-- (Отличие 5) УБРАН локальный Grid.ColumnSpan="2": шапка не должна заходить
+                   в колонку вертикальной полосы, иначе она шире строк на толщину полосы и
+                   заголовки разъезжаются с ячейками. Стилем это не перебить — локальное
+                   значение в шаблоне сильнее сеттера (та же причина, что в отличии 1). -->
               <DataGridColumnHeadersPresenter Name="PART_ColumnHeadersPresenter"
                                               Grid.Column="1"
-                                              Grid.Row="0" Grid.ColumnSpan="2" />
+                                              Grid.Row="0" />
               <Rectangle Name="PART_ColumnHeadersAndRowsSeparator"
                          Grid.Row="0" Grid.ColumnSpan="3" Grid.Column="0"
                          VerticalAlignment="Bottom"
@@ -233,24 +256,31 @@
                                            IsScrollInertiaEnabled="{Binding (ScrollViewer.IsScrollInertiaEnabled), ElementName=PART_RowsPresenter}" />
                 </DataGridRowsPresenter.GestureRecognizers>
               </DataGridRowsPresenter>
+              <!-- (Отличие 6) Квадрат на пересечении полос: вместо белого
+                   DataGridScrollBarsSeparatorBackground из темы Fluent — цвет дорожки
+                   скроллбара, чтобы угол не выбивался белым пятном между двумя полосами. -->
               <Rectangle Name="PART_BottomRightCorner"
-                         Fill="{DynamicResource DataGridScrollBarsSeparatorBackground}"
+                         Fill="{DynamicResource BrushScrollbarTrack}"
                          Grid.Column="2"
                          Grid.Row="2" />
+              <!-- (Отличие 4) УБРАН локальный Width="{DynamicResource ScrollBarSize}" —
+                   толщину задаёт проектный стиль ScrollBar:vertical (ScrollBarThickness).
+                   (Отличие 5) Строка 0 + RowSpan=2 вместо строки 1: полоса начинается на
+                   уровне шапки колонок (вровень с кнопкой «+»), а не под ней. Объявлена
+                   после шапки и разделителя, поэтому рисуется поверх них. -->
               <ScrollBar Name="PART_VerticalScrollbar"
                          Orientation="Vertical"
                          Grid.Column="2"
-                         Grid.Row="1"
-                         Width="{DynamicResource ScrollBarSize}" />
+                         Grid.Row="0" Grid.RowSpan="2" />
 
               <Grid Grid.Column="1"
                     Grid.Row="2"
                     ColumnDefinitions="Auto,*">
                 <Rectangle Name="PART_FrozenColumnScrollBarSpacer" />
+                <!-- (Отличие 4) УБРАН локальный Height="{DynamicResource ScrollBarSize}". -->
                 <ScrollBar Name="PART_HorizontalScrollbar"
                            Grid.Column="1"
-                           Orientation="Horizontal"
-                           Height="{DynamicResource ScrollBarSize}" />
+                           Orientation="Horizontal" />
               </Grid>
               <Border x:Name="PART_DisabledVisualElement"
                       Grid.ColumnSpan="3" Grid.Column="0"
@@ -277,9 +307,15 @@
           <Setter Property="IsVisible" Value="False" />
         </Style>
       </Style>
+      <!-- (Отличие 5) В оригинале RowSpan=2 / ColumnSpan=3 — презентер строк растянут ПОД обе
+           полосы прокрутки (колонка 2 и строка 2), и данные последней колонки/строки уезжают
+           под скролл. Полоса у нас — самостоятельный блок, поэтому презентер занимает только
+           колонки 0-1 и строку 1. Шапка сужена в самом шаблоне (там ColumnSpan локальный,
+           стилем его не перебить) — см. PART_ColumnHeadersPresenter выше.
+           Здесь стиль работает: у PART_RowsPresenter локальных span'ов в шаблоне нет. -->
       <Style Selector="^ /template/ DataGridRowsPresenter#PART_RowsPresenter">
-        <Setter Property="Grid.RowSpan" Value="2" />
-        <Setter Property="Grid.ColumnSpan" Value="3" />
+        <Setter Property="Grid.RowSpan" Value="1" />
+        <Setter Property="Grid.ColumnSpan" Value="2" />
       </Style>
     </ControlTheme>
 

@@ -15,13 +15,17 @@
 | [AppCheckBox](../../../Controls/Widgets/AppCheckBox.axaml) | чекбокс (стиль подключён глобально в [App.axaml](../../../App.axaml)) |
 | [SearchInput](../../../Controls/Widgets/SearchInput.axaml) | поле поиска (используется в навбаре календаря) |
 | [Selector](../../../Controls/Widgets/Selector.axaml) | выпадающий/сегментный выбор |
-| [ScrollArea](../../../Controls/Widgets/ScrollArea.axaml) | прокручиваемая область с оформлением проекта |
 | [DateEditor](../../../Controls/Widgets/DateEditor.axaml) | ввод даты; событие `Changed` |
 | [TimeField](../../../Controls/Widgets/TimeField.axaml) | ввод времени; событие `TimeChanged` |
 | [ErrorBanner](../../../Controls/Widgets/ErrorBanner.axaml) | красный баннер ошибки валидации; методы `Show(msg)` / `Hide()` |
 
 `DateEditor` и `TimeField` используются в диалоге события ([RecordDialog](dialogs.md))
 для выбора начала/конца.
+
+Виджета-обёртки для прокрутки НЕТ и не нужно: прокручиваемые области — обычный
+`ScrollViewer`, оформление полосы даёт глобальный шаблон `ScrollBar`
+(см. [theming.md](theming.md#скроллбар)). Бывшая обёртка `ScrollArea` (наследие
+Python-версии) удалена — её не использовал ни один экран.
 
 `ErrorBanner` — единый контрол для уведомлений об ошибках валидации (раньше вёрстка
 дублировалась в каждом диалоге). Скрыт, пока нет текста; `Show(msg)` показывает и

@@ -10,10 +10,13 @@
         <!-- Навбар (вынесен в компонент NavbarExtensions). -->
         <comp:NavbarExtensions DockPanel.Dock="Top" x:Name="HeaderBar" />
 
-        <!-- Тело блока: описание расширения в Markdown -->
+        <!-- Тело блока: описание расширения в Markdown.
+             Правого отступа нет — полоса прокрутки прилегает к краю панели. Отбить только
+             текст, оставив полосу у края, нечем: MarkdownScrollViewer не имеет Padding
+             (свойства для отступа содержимого у типа нет вовсе). -->
         <md:MarkdownScrollViewer x:Name="DescriptionMd"
                                  Markdown=""
-                                 Margin="16,16,16,32" />
+                                 Margin="16,16,0,32" />
 
     </DockPanel>
 

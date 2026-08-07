@@ -4,10 +4,12 @@
              x:Class="SmartBase.Views.Tasks.TaskListView"
              Background="{StaticResource BrushBg}">
 
-    <Grid RowDefinitions="Auto,Auto,*" Margin="16,8,16,0">
+    <!-- Правого отступа у Grid нет: он вернулся отдельным Margin строкам 0-1 и содержимому
+         списка, чтобы полоса прокрутки прилегала к краю панели, а не висела в 16px от него. -->
+    <Grid RowDefinitions="Auto,Auto,*" Margin="16,8,0,0">
 
         <!-- Ошибка (нет прав и т.п.) — тот же баннер, что в диалогах -->
-        <w:ErrorBanner Grid.Row="0" x:Name="ErrorBanner" Margin="0,0,0,8" />
+        <w:ErrorBanner Grid.Row="0" x:Name="ErrorBanner" Margin="0,0,16,8" />
 
         <!-- Строка быстрого добавления: название + Enter, срок, исполнитель, «Добавить» -->
         <Border Grid.Row="1"
@@ -16,7 +18,7 @@
                 BorderThickness="{DynamicResource BorderLine}"
                 CornerRadius="{StaticResource RadiusMedium}"
                 Padding="12,8"
-                Margin="0,0,0,12">
+                Margin="0,0,16,12">
             <Grid ColumnDefinitions="*,12,Auto,6,Auto,6,Auto,12,Auto,6,Auto,12,Auto"
                   VerticalAlignment="Center">
 
@@ -55,7 +57,7 @@
 
         <!-- Список карточек задач (виртуализация — как список сайдбара) -->
         <ScrollViewer Grid.Row="2" HorizontalScrollBarVisibility="Disabled">
-            <StackPanel>
+            <StackPanel Margin="0,0,16,0">
                 <ItemsControl x:Name="CardsHost">
                     <ItemsControl.ItemsPanel>
                         <ItemsPanelTemplate>

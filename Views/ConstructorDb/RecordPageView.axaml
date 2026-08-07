@@ -114,8 +114,10 @@
         </Border>
 
         <!-- Markdown-описание: отступы 16px по кругу (крошка «Свойство» и редактор вровень с
-             левым краем блока свойств и заголовком записи). -->
-        <Grid Grid.Row="3" RowDefinitions="Auto,*" Margin="16,16,16,16">
+             левым краем блока свойств и заголовком записи). Правого отступа у Grid нет — он
+             вернулся крошке и превью отдельно, чтобы полоса прокрутки редактора/превью
+             прилегала к краю панели. -->
+        <Grid Grid.Row="3" RowDefinitions="Auto,*" Margin="16,16,0,16">
 
             <!-- Заголовок нижнего блока — «хлебная крошка»: «Свойство» › [иконка типа] Имя.
                  Всё серым (BrushSecondaryText). Часть [иконка типа + имя] (BottomTitleHost)
@@ -123,7 +125,7 @@
             <!-- Нижний зазор крошки (до текста) = верхнему отступу блока (Margin.Top=16,
                  от линии-разделителя до «Свойство»): «Свойство» отбито сверху и снизу одинаково. -->
             <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="6"
-                        Margin="0,0,0,16" VerticalAlignment="Center">
+                        Margin="0,0,16,16" VerticalAlignment="Center">
                 <TextBlock Text="Свойство"
                            Foreground="{StaticResource BrushSecondaryText}"
                            VerticalAlignment="Center" />
@@ -151,6 +153,8 @@
             <Border Grid.Row="1" x:Name="MarkdownPreviewBox"
                     IsVisible="False"
                     Background="Transparent">
+                <!-- Без правого отступа: полоса прокрутки превью прилегает к краю панели
+                     (Padding у MarkdownScrollViewer нет — отбить только текст нечем). -->
                 <md:MarkdownScrollViewer x:Name="MarkdownPreview"
                                         Markdown="" />
             </Border>

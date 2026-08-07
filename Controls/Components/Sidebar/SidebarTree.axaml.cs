@@ -1042,7 +1042,10 @@ public partial class SidebarTree : UserControl
             Background       = Brushes.White,
             BorderBrush     = (IBrush)this.FindResource("BrushSeparator")!,
             CornerRadius    = radius,
-            Padding         = new Thickness(8, 6),
+            // Справа 0: полоса прокрутки списка прилегает к рамке карточки без белого зазора.
+            // ClipToBounds — квадратные углы полосы срезаются скруглением карточки.
+            Padding         = new Thickness(8, 6, 0, 6),
+            ClipToBounds    = true,
             Child = new StackPanel
             {
                 Spacing = 4,
@@ -1182,7 +1185,10 @@ public partial class SidebarTree : UserControl
             Background       = Brushes.White,
             BorderBrush     = (IBrush)this.FindResource("BrushSeparator")!,
             CornerRadius    = radius,
-            Padding         = new Thickness(8, 6),
+            // Справа 0: полоса прокрутки списка прилегает к рамке карточки без белого зазора.
+            // ClipToBounds — квадратные углы полосы срезаются скруглением карточки.
+            Padding         = new Thickness(8, 6, 0, 6),
+            ClipToBounds    = true,
             Child = new StackPanel
             {
                 Spacing = 4,

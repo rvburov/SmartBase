@@ -17,6 +17,9 @@
         </Viewbox>
 
         <!-- Попап со списком событий дня, привязывается к ячейке числа -->
+        <!-- Правый Padding рамки — 0: полоса прокрутки списка прилегает к ней без зазора.
+             Заголовку, поиску и содержимому списка правый отступ возвращён их собственным
+             Margin (ClipToBounds тут нельзя — срежет BoxShadow). -->
         <Popup x:Name="DayPopup" InheritsTransform="True"
                Placement="Bottom"
                IsLightDismissEnabled="True"
@@ -26,19 +29,20 @@
                     BorderThickness="{DynamicResource BorderLine}"
                     CornerRadius="{StaticResource RadiusMedium}"
                     BoxShadow="0 4 16 0 #1A000000"
-                    Padding="12"
+                    Padding="12,12,0,12"
                     MinWidth="200" MaxWidth="280">
                 <StackPanel Spacing="8">
                     <TextBlock x:Name="DayPopupTitle"
                                FontWeight="{StaticResource FontWeightBold}"
- />
+                               Margin="0,0,12,0" />
                     <!-- Поиск по ВСЕМУ дню (фоновый SQL LIKE, как в «Расписании») — попап
                          показывает лишь первые PopupMaxEvents доставленных записей. -->
                     <TextBox x:Name="DayPopupSearch"
                              Watermark="Поиск"
-                             MinHeight="28" Padding="8,4" />
+                             MinHeight="28" Padding="8,4"
+                             Margin="0,0,12,0" />
                     <ScrollViewer MaxHeight="220">
-                        <StackPanel x:Name="DayPopupList" Spacing="6" />
+                        <StackPanel x:Name="DayPopupList" Spacing="6" Margin="0,0,12,0" />
                     </ScrollViewer>
                 </StackPanel>
             </Border>

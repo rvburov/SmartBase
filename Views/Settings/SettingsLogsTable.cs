@@ -559,7 +559,10 @@ public partial class SettingsView
             Background   = Brushes.White,
             BorderBrush  = (IBrush)this.FindResource("BrushSeparator")!,
             CornerRadius = radius,
-            Padding      = new Thickness(8, 6),
+            // Справа 0: полоса прокрутки списка прилегает к рамке карточки без белого зазора.
+            // ClipToBounds — квадратные углы полосы срезаются скруглением карточки.
+            Padding      = new Thickness(8, 6, 0, 6),
+            ClipToBounds = true,
             Height       = 232,
             Child        = loadingText,
         };

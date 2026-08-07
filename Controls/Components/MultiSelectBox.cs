@@ -188,7 +188,10 @@ public sealed class MultiSelectBox : Panel
             BorderBrush     = Brush("BrushSeparator", Colors.LightGray),
             BorderThickness = new Thickness(1),
             CornerRadius    = Radius("RadiusBase", 6),
-            Padding         = new Thickness(8, 6),
+            // Справа 0: полоса прокрутки списка прилегает к рамке карточки без белого зазора.
+            // ClipToBounds — квадратные углы полосы срезаются скруглением карточки.
+            Padding         = new Thickness(8, 6, 0, 6),
+            ClipToBounds    = true,
             Height          = 232,
             Child           = valuesList,
         };

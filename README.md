@@ -95,26 +95,21 @@ sudo port install dotnet-sdk
 
 ```bash
 cd calendar_avalonia
-dotnet run -f net10.0-windows10.0.17763    # Windows
-dotnet run -f net10.0                      # macOS, Linux
+dotnet run                 # собрать при необходимости и запустить
 ```
-
-Проект многотаргетный, поэтому таргет указывается явно. **На Windows запускайте только
-windows-таргет** — под `net10.0` приложение работает, но нативных уведомлений в нём нет
-(почему — [build-and-run.md](docs/developer/guides/build-and-run.md#два-таргета-и-почему-их-два)).
 
 `dotnet run` каждый раз проверяет изменения и при необходимости пересобирает проект
 (первая сборка в сессии — «холодная» и долгая). Чтобы **не пересобирать при повторных
 запусках**, когда код не менялся:
 
 ```bash
-dotnet run -f net10.0-windows10.0.17763 --no-build   # запустить уже собранное, без пересборки
+dotnet run --no-build      # запустить уже собранное, без пересборки
 ```
 
 Ещё быстрее — запускать собранный `.exe` напрямую, вообще без проверки сборки:
 
 ```bash
-artifacts/bin/SmartBase/debug_net10.0-windows10.0.17763/SmartBase.exe
+artifacts/bin/SmartBase/debug/SmartBase.exe
 ```
 
 > ⚠️ `--no-build` и прямой запуск `.exe` стартуют **последнюю собранную** версию.
@@ -123,7 +118,7 @@ artifacts/bin/SmartBase/debug_net10.0-windows10.0.17763/SmartBase.exe
 
 **Правило:** менял код → `dotnet run` (нужна сборка); код не менялся, просто
 перезапустить → `dotnet run --no-build` или прямой `.exe`. Для активной разработки
-с авто-пересборкой и перезапуском при каждом сохранении — `dotnet watch run -f <таргет>`.
+с авто-пересборкой и перезапуском при каждом сохранении — `dotnet watch run`.
 
 ### Тесты
 
@@ -253,7 +248,7 @@ calendar_avalonia/
 ├── Controls/                   # Переиспользуемые UI компоненты
 │   ├── Components/             # Navbar, Sidebar, ActivityBar, AllDayBar, Footer, ContextMenu
 │   ├── Dialogs/                # Record, Collection, Group, Confirm, Property*, CreateItem
-│   └── Widgets/                # AppButton, AppCheckBox, AppLabel, Selector, SearchInput, ScrollArea
+│   └── Widgets/                # AppButton, AppCheckBox, AppLabel, Selector, SearchInput, DateEditor, TimeField, ErrorBanner
 │
 ├── Utils/                      # Вспомогательные утилиты
 │   ├── AppSettings.cs          # Пути к БД (.localdata / %AppData%) + доступ к настройкам

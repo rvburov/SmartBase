@@ -53,32 +53,36 @@
              см. SidebarRow.RowHeight. Белые линии сайдбара тогда садятся на линии сетки таблицы. -->
         <x:Double x:Key="RowHeightStandard">36</x:Double>
 
-        <!-- Цвет скроллбара -->
-        <SolidColorBrush x:Key="BrushScrollbar" Color="#C7C7CC" />
+        <!-- Палитра и толщина скроллбара — одним набором токенов: шаблон полосы (ниже)
+             и локальные копии тем DataGrid ссылаются только на них, литералов в разметке
+             быть не должно (общее правило — docs/developer/ui/theming.md). -->
+        <x:Double x:Key="ScrollBarThickness">14</x:Double>
+        <SolidColorBrush x:Key="BrushScrollbarTrack"         Color="#EDEDF0" />
+        <SolidColorBrush x:Key="BrushScrollbarThumb"         Color="#A0A0A6" />
+        <SolidColorBrush x:Key="BrushScrollbarThumbHover"    Color="#7A7A80" />
+        <SolidColorBrush x:Key="BrushScrollbarThumbPressed"  Color="#5A5A5E" />
+        <SolidColorBrush x:Key="BrushScrollbarArrow"         Color="#7A7A80" />
 
         <!-- Тема кнопки-стрелки скроллбара: своя отрисовка без Fluent-обводки,
              контент строго по центру. -->
         <ControlTheme x:Key="ScrollLineButton" TargetType="RepeatButton">
-            <Setter Property="Background"       Value="#EDEDF0" />
+            <Setter Property="Background"       Value="{StaticResource BrushScrollbarTrack}" />
             <Setter Property="BorderThickness"  Value="0" />
             <Setter Property="Padding"          Value="0" />
             <Setter Property="MinWidth"         Value="0" />
             <Setter Property="MinHeight"        Value="0" />
             <Setter Property="Template">
                 <ControlTemplate>
-                    <Border Background="{TemplateBinding Background}" CornerRadius="4">
+                    <!-- Фон совпадает с дорожкой, скругления нет — кнопка неотличима от полосы
+                         и стыкуется с ней без шва. Реакции на наведение и нажатие у кнопки
+                         нет намеренно: видимым остаётся только шеврон. -->
+                    <Border Background="{TemplateBinding Background}">
                         <ContentPresenter HorizontalAlignment="Center"
                                           VerticalAlignment="Center"
                                           Content="{TemplateBinding Content}" />
                     </Border>
                 </ControlTemplate>
             </Setter>
-            <Style Selector="^:pointerover">
-                <Setter Property="Background" Value="#DADADE" />
-            </Style>
-            <Style Selector="^:pressed">
-                <Setter Property="Background" Value="#C2C2C8" />
-            </Style>
         </ControlTheme>
 
         <!-- Тема постраничной области (прозрачная, без визуала). -->
@@ -600,63 +604,101 @@
         <Setter Property="Background"     Value="Transparent" />
     </Style>
 
-    <!-- Стрелка в Viewbox — всегда влезает и одинакового размера. -->
+    <!-- Стрелка: Path ВСЕГДА кладётся в Canvas фиксированного размера, а Canvas — в Viewbox.
+         Без Canvas Path меряется по габаритам геометрии (у IconScrollUp это 12×5), а обводка
+         толщиной 2 с круглыми торцами выходит за них на 1 единицу с каждой стороны — Viewbox
+         масштабирует только измеренный прямоугольник и срезает торцы. Canvas 14×7 (для
+         горизонтальных стрелок 7×14) = габариты геометрии + припуск на обводку, поэтому
+         шеврон виден целиком. Размер Canvas от толщины полосы НЕ зависит — итоговый
+         масштаб стрелки задаёт Viewbox. Тот же приём, что у иконок в RecordPageView. -->
     <Style Selector="ScrollBar Path.arrow">
-        <Setter Property="Stroke"          Value="#7A7A80" />
+        <Setter Property="Stroke"          Value="{StaticResource BrushScrollbarArrow}" />
         <Setter Property="StrokeThickness" Value="2" />
         <Setter Property="StrokeLineCap"   Value="Round" />
         <Setter Property="StrokeJoin"      Value="Round" />
     </Style>
 
-    <!-- Ползунок: собственный шаблон (залитый прямоугольник) — не зависит от темы Fluent. -->
+    <!-- Ползунок — пилюля в стиле Google/Chrome: уже дорожки, с полями по бокам и круглыми
+         торцами. Собственный шаблон, не зависит от темы Fluent. -->
     <Style Selector="ScrollBar Thumb">
-        <Setter Property="Background" Value="#A0A0A6" />
+        <Setter Property="Background" Value="{StaticResource BrushScrollbarThumb}" />
         <Setter Property="Template">
             <ControlTemplate>
-                <Border Background="{TemplateBinding Background}" CornerRadius="3" />
+                <!-- Радиус = половине толщины пилюли (14 − 2×2)/2 = 5 → торцы полукруглые. -->
+                <Border Background="{TemplateBinding Background}" CornerRadius="5" />
             </ControlTemplate>
         </Setter>
     </Style>
+    <!-- Поля пилюли внутри дорожки — по 2px с боков (поперёк прокрутки). Вдоль прокрутки
+         полей нет: длина ползунка и стыки кнопок с дорожкой остаются как были. -->
+    <Style Selector="ScrollBar:vertical Thumb">
+        <Setter Property="Margin" Value="2,0" />
+    </Style>
+    <Style Selector="ScrollBar:horizontal Thumb">
+        <Setter Property="Margin" Value="0,2" />
+    </Style>
+    <!-- Покой задаётся отдельным правилом с псевдоклассами, а не только базовым сеттером
+         выше: базовый проигрывает правилу темы Fluent и ползунок в покое рисовался её
+         светло-серым (#BEBEC0) вместо нашего #A0A0A6. Правила с псевдоклассом (как
+         :pointerover ниже) тему перебивают — отсюда такая форма селектора. -->
+    <Style Selector="ScrollBar Thumb:not(:pointerover):not(:pressed)">
+        <Setter Property="Background" Value="{StaticResource BrushScrollbarThumb}" />
+    </Style>
     <Style Selector="ScrollBar Thumb:pointerover">
-        <Setter Property="Background" Value="#7A7A80" />
+        <Setter Property="Background" Value="{StaticResource BrushScrollbarThumbHover}" />
     </Style>
     <Style Selector="ScrollBar Thumb:pressed">
-        <Setter Property="Background" Value="#5A5A5E" />
+        <Setter Property="Background" Value="{StaticResource BrushScrollbarThumbPressed}" />
     </Style>
 
     <!-- Вертикальный -->
     <Style Selector="ScrollBar:vertical">
-        <Setter Property="Width" Value="20" />
+        <Setter Property="Width" Value="{StaticResource ScrollBarThickness}" />
+        <!-- Тема Fluent держит свой MinWidth (шире нашей полосы) — иначе Width не сработает:
+             в Avalonia MinWidth сильнее Width. -->
+        <Setter Property="MinWidth" Value="{StaticResource ScrollBarThickness}" />
         <Setter Property="Template">
             <ControlTemplate>
-                <!-- 3 отдельных блока: кнопка-вверх, дорожка с ползунком, кнопка-вниз; разделены зазорами -->
-                <Grid RowDefinitions="20,4,*,4,20" Background="Transparent">
-                    <RepeatButton Grid.Row="0" Name="PART_LineUpButton" Theme="{StaticResource ScrollLineButton}" Margin="2,0">
-                        <Viewbox Width="10" Height="7" Stretch="Uniform">
-                            <Path Classes="arrow" Data="{StaticResource IconScrollUp}" />
+                <!-- Три блока ВПЛОТНУЮ: кнопка-вверх, дорожка с ползунком, кнопка-вниз.
+                     Пустых ячеек-зазоров нет, у блоков нет Margin/Padding — фон дорожки
+                     лежит на корневом Grid, поэтому полоса читается сплошной лентой во
+                     всю толщину, а стык кнопки и дорожки не виден. -->
+                <Grid RowDefinitions="Auto,*,Auto" Background="{StaticResource BrushScrollbarTrack}">
+                    <RepeatButton Grid.Row="0" Name="PART_LineUpButton" Theme="{StaticResource ScrollLineButton}"
+                                  Width="{StaticResource ScrollBarThickness}"
+                                  Height="{StaticResource ScrollBarThickness}">
+                        <Viewbox Width="12" Height="6" Stretch="Uniform">
+                            <Canvas Width="16" Height="8">
+                                <Path Classes="arrow" Data="{StaticResource IconScrollUp}" />
+                            </Canvas>
                         </Viewbox>
                     </RepeatButton>
-                    <Border Grid.Row="2" Background="#EDEDF0" CornerRadius="4" Margin="2,0" Padding="0,2">
-                        <Track Name="PART_Track" Orientation="Vertical"
-                               IsDirectionReversed="True"
-                               Minimum="{TemplateBinding Minimum}"
-                               Maximum="{TemplateBinding Maximum}"
-                               Value="{TemplateBinding Value, Mode=TwoWay}"
-                               ViewportSize="{TemplateBinding ViewportSize}">
-                            <Track.DecreaseButton>
-                                <RepeatButton Name="PART_PageUpButton" Theme="{StaticResource ScrollPageButton}" />
-                            </Track.DecreaseButton>
-                            <Track.IncreaseButton>
-                                <RepeatButton Name="PART_PageDownButton" Theme="{StaticResource ScrollPageButton}" />
-                            </Track.IncreaseButton>
-                            <Track.Thumb>
-                                <Thumb MinHeight="28" />
-                            </Track.Thumb>
-                        </Track>
-                    </Border>
-                    <RepeatButton Grid.Row="4" Name="PART_LineDownButton" Theme="{StaticResource ScrollLineButton}" Margin="2,0">
-                        <Viewbox Width="10" Height="7" Stretch="Uniform">
-                            <Path Classes="arrow" Data="{StaticResource IconScrollDown}" />
+                    <Track Grid.Row="1" Name="PART_Track" Orientation="Vertical"
+                           IsDirectionReversed="True"
+                           Minimum="{TemplateBinding Minimum}"
+                           Maximum="{TemplateBinding Maximum}"
+                           Value="{TemplateBinding Value, Mode=TwoWay}"
+                           ViewportSize="{TemplateBinding ViewportSize}">
+                        <Track.DecreaseButton>
+                            <RepeatButton Name="PART_PageUpButton" Theme="{StaticResource ScrollPageButton}" />
+                        </Track.DecreaseButton>
+                        <Track.IncreaseButton>
+                            <RepeatButton Name="PART_PageDownButton" Theme="{StaticResource ScrollPageButton}" />
+                        </Track.IncreaseButton>
+                        <Track.Thumb>
+                            <!-- MinHeight — минимальная ДЛИНА пилюли (чтобы было за что схватить).
+                                 MinWidth=0 обязателен: у темы Fluent он свой и распирал полосу
+                                 шире заданной толщины. Локальные значения перебивают тему. -->
+                            <Thumb MinHeight="28" MinWidth="0" />
+                        </Track.Thumb>
+                    </Track>
+                    <RepeatButton Grid.Row="2" Name="PART_LineDownButton" Theme="{StaticResource ScrollLineButton}"
+                                  Width="{StaticResource ScrollBarThickness}"
+                                  Height="{StaticResource ScrollBarThickness}">
+                        <Viewbox Width="12" Height="6" Stretch="Uniform">
+                            <Canvas Width="16" Height="8">
+                                <Path Classes="arrow" Data="{StaticResource IconScrollDown}" />
+                            </Canvas>
                         </Viewbox>
                     </RepeatButton>
                 </Grid>
@@ -666,36 +708,44 @@
 
     <!-- Горизонтальный -->
     <Style Selector="ScrollBar:horizontal">
-        <Setter Property="Height" Value="20" />
+        <Setter Property="Height" Value="{StaticResource ScrollBarThickness}" />
+        <Setter Property="MinHeight" Value="{StaticResource ScrollBarThickness}" />
         <Setter Property="Template">
             <ControlTemplate>
-                <!-- 3 отдельных блока: кнопка-влево, дорожка с ползунком, кнопка-вправо; разделены зазорами -->
-                <Grid ColumnDefinitions="20,4,*,4,20" Background="Transparent">
-                    <RepeatButton Grid.Column="0" Name="PART_LineUpButton" Theme="{StaticResource ScrollLineButton}" Margin="0,2">
-                        <Viewbox Width="7" Height="10" Stretch="Uniform">
-                            <Path Classes="arrow" Data="{StaticResource IconScrollLeft}" />
+                <!-- Зеркально вертикальному: три блока вплотную, фон на корневом Grid. -->
+                <Grid ColumnDefinitions="Auto,*,Auto" Background="{StaticResource BrushScrollbarTrack}">
+                    <RepeatButton Grid.Column="0" Name="PART_LineUpButton" Theme="{StaticResource ScrollLineButton}"
+                                  Width="{StaticResource ScrollBarThickness}"
+                                  Height="{StaticResource ScrollBarThickness}">
+                        <Viewbox Width="6" Height="12" Stretch="Uniform">
+                            <Canvas Width="8" Height="16">
+                                <Path Classes="arrow" Data="{StaticResource IconScrollLeft}" />
+                            </Canvas>
                         </Viewbox>
                     </RepeatButton>
-                    <Border Grid.Column="2" Background="#EDEDF0" CornerRadius="4" Margin="0,2" Padding="2,0">
-                        <Track Name="PART_Track" Orientation="Horizontal"
-                               Minimum="{TemplateBinding Minimum}"
-                               Maximum="{TemplateBinding Maximum}"
-                               Value="{TemplateBinding Value, Mode=TwoWay}"
-                               ViewportSize="{TemplateBinding ViewportSize}">
-                            <Track.DecreaseButton>
-                                <RepeatButton Name="PART_PageUpButton" Theme="{StaticResource ScrollPageButton}" />
-                            </Track.DecreaseButton>
-                            <Track.IncreaseButton>
-                                <RepeatButton Name="PART_PageDownButton" Theme="{StaticResource ScrollPageButton}" />
-                            </Track.IncreaseButton>
-                            <Track.Thumb>
-                                <Thumb MinWidth="28" />
-                            </Track.Thumb>
-                        </Track>
-                    </Border>
-                    <RepeatButton Grid.Column="4" Name="PART_LineDownButton" Theme="{StaticResource ScrollLineButton}" Margin="0,2">
-                        <Viewbox Width="7" Height="10" Stretch="Uniform">
-                            <Path Classes="arrow" Data="{StaticResource IconScrollRight}" />
+                    <Track Grid.Column="1" Name="PART_Track" Orientation="Horizontal"
+                           Minimum="{TemplateBinding Minimum}"
+                           Maximum="{TemplateBinding Maximum}"
+                           Value="{TemplateBinding Value, Mode=TwoWay}"
+                           ViewportSize="{TemplateBinding ViewportSize}">
+                        <Track.DecreaseButton>
+                            <RepeatButton Name="PART_PageUpButton" Theme="{StaticResource ScrollPageButton}" />
+                        </Track.DecreaseButton>
+                        <Track.IncreaseButton>
+                            <RepeatButton Name="PART_PageDownButton" Theme="{StaticResource ScrollPageButton}" />
+                        </Track.IncreaseButton>
+                        <Track.Thumb>
+                            <!-- MinWidth — минимальная ДЛИНА пилюли; MinHeight=0 — см. вертикальную. -->
+                            <Thumb MinWidth="28" MinHeight="0" />
+                        </Track.Thumb>
+                    </Track>
+                    <RepeatButton Grid.Column="2" Name="PART_LineDownButton" Theme="{StaticResource ScrollLineButton}"
+                                  Width="{StaticResource ScrollBarThickness}"
+                                  Height="{StaticResource ScrollBarThickness}">
+                        <Viewbox Width="6" Height="12" Stretch="Uniform">
+                            <Canvas Width="8" Height="16">
+                                <Path Classes="arrow" Data="{StaticResource IconScrollRight}" />
+                            </Canvas>
                         </Viewbox>
                     </RepeatButton>
                 </Grid>
