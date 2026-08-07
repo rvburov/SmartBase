@@ -228,15 +228,27 @@ public partial class SettingsView : UserControl
     // путь пуст/папка недоступна/версия актуальна — никаких окон, приложение стартует как
     // обычно (статус всё же пишем — виден, если открыть настройки); есть обновление — та же
     // модалка «Обновить/Отмена» и штатный поток загрузки/самозамены, что и по кнопке.
+    //
+    // Метод НИКОГДА не бросает: его зовут из обработчика Opened (async void), и любое
+    // исключение оттуда прилетает пользователю крэш-окном вместо тихого старта — так
+    // «Cannot show window with non-visible owner» и вылезал при автозапуске в фоне.
     public async Task CheckForUpdatesOnStartupAsync()
     {
-        var folder = AppSettings.LoadUpdatePath().Trim();
-        if (folder.Length == 0) return;
+        try
+        {
+            var folder = AppSettings.LoadUpdatePath().Trim();
+            if (folder.Length == 0) return;
 
-        var info = await Task.Run(() => CheckRemoteVersion(folder));
-        SetUpdateStatus(info.Message, isError: info.Result == UpdateCheck.Error);
-        if (info.Result == UpdateCheck.Available && info.RemoteExe is not null && info.Remote is not null)
-            await StartUpdateAsync(info.RemoteExe, info.Remote);
+            var info = await Task.Run(() => CheckRemoteVersion(folder));
+            SetUpdateStatus(info.Message, isError: info.Result == UpdateCheck.Error);
+            if (info.Result == UpdateCheck.Available && info.RemoteExe is not null && info.Remote is not null)
+                await StartUpdateAsync(info.RemoteExe, info.Remote);
+        }
+        catch (Exception ex)
+        {
+            Serilog.Log.Error(ex, "Автопроверка обновления при запуске не удалась");
+            SetUpdateStatus($"Не удалось проверить обновление: {ex.Message}", isError: true);
+        }
     }
 
     private async void OnCheckUpdateClick(object? sender, RoutedEventArgs e)
@@ -363,6 +375,17 @@ public partial class SettingsView : UserControl
     private async Task StartUpdateAsync(string remoteExe, Version remote)
     {
         if (VisualRoot is not Window win) return;
+
+        // Модалке нужен ВИДИМЫЙ владелец, иначе Avalonia бросает «Cannot show window with
+        // non-visible owner». Окно могло уехать в трей (фоновый режим), пока шла проверка
+        // сетевой папки, — возвращаем его: пользователю всё равно подтверждать обновление,
+        // после которого приложение закроется и откроется заново.
+        if (!win.IsVisible)
+        {
+            win.Show();
+            if (win.WindowState == WindowState.Minimized) win.WindowState = WindowState.Normal;
+            win.Activate();
+        }
 
         // Текущая версия (Major.Minor.Build — как в «О программе»). При обновлении «по дате»
         // remote == текущей: не пишем «Доступна версия {та же}», а честно — «новая сборка».

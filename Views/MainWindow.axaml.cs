@@ -42,6 +42,9 @@ public partial class MainWindow : Window
     private TrayIcon? _tray;
     private bool _backgroundEnabled;
     private bool _explicitQuit;
+    // Автопроверка обновления уже выполнялась в этой сессии (Opened приходит повторно при
+    // возврате окна из трея — см. CheckUpdatesOnceAsync).
+    private bool _updateChecked;
     private readonly CategoryRepository _categories;
     private readonly ConstructorRepository _constructor;
     private string _activeModule = "calendar";
@@ -394,6 +397,12 @@ public partial class MainWindow : Window
             _notifications.NotifyWindowActivated();
         };
 
+        // ВНИМАНИЕ: Opened приходит не только на старте. В фоновом режиме «крестик» скрывает
+        // окно (Hide), а возврат из трея — это снова Window.Show(), который заново поднимает
+        // Opened. Поэтому всё здесь обязано быть идемпотентным: очередь монтирования сама
+        // отсеивает уже смонтированные/ждущие БД (MountQueue.Enqueue), мониторы просто
+        // переставляют период таймера, служба уведомлений выходит на повторном Start, а
+        // автопроверка обновления держит флаг _updateChecked.
         Opened += async (_, _) =>
         {
             // Остальные БД реестра — в фоновую очередь (мелкие первыми): окно уже показано,
@@ -405,8 +414,15 @@ public partial class MainWindow : Window
             // Служба уведомлений: таймер + догон событий, наступивших при закрытом приложении.
             _notifications.Start();
 
-            if (AppSettings.LoadAutoUpdate())
-                await SettingsModule.CheckForUpdatesOnStartupAsync();
+            // Автообновление. Обычный старт — проверяем сразу (окно показано и будет владельцем
+            // модалки «Обновить/Отмена»). Тихий старт из автозапуска (--background) — окно
+            // скрывается сразу после Show(), поэтому проверку откладываем до первого показа окна:
+            // иначе модалка получит невидимого владельца и ShowDialog упадёт.
+            if (AppSettings.LoadAutoUpdate() && !_updateChecked)
+            {
+                if (Program.LaunchBackground) CheckUpdatesWhenShown();
+                else                          await CheckUpdatesOnceAsync();
+            }
         };
         // Выход во время фонового обновления базы: прогресс перекладки сохраняется
         // (возобновляемая миграция — см. DatabaseManager.SchemaCompact), но честно
@@ -708,6 +724,33 @@ public partial class MainWindow : Window
         if (WindowState == WindowState.Minimized) WindowState = WindowState.Normal;
         Activate();
         _notifications.NotifyWindowActivated();
+    }
+
+    // Автопроверка обновления — ОДИН раз за сессию. Показ окна из трея — это повторный
+    // Window.Show(), а он снова поднимает Opened, поэтому одного вызова из обработчика мало.
+    private async Task CheckUpdatesOnceAsync()
+    {
+        if (_updateChecked) return;
+        _updateChecked = true;   // ставим ДО await — второй вход не должен начать вторую проверку
+        await SettingsModule.CheckForUpdatesOnStartupAsync();   // не бросает — см. SettingsView
+    }
+
+    // Автообновление при тихом старте из автозапуска (--background): окно скрыто сразу после
+    // Show() (см. App.axaml.cs), а модалке «Обновить/Отмена» нужен ВИДИМЫЙ владелец — иначе
+    // Avalonia бросает «Cannot show window with non-visible owner». Поэтому ждём, когда окно
+    // реально покажут (трей «Открыть», клик по значку/уведомлению, повторный запуск): Window.Show()
+    // выставляет IsVisible=true, на него и подписываемся. Обновление предлагается не при входе в
+    // систему, а когда пользователь сам открыл приложение — там и уместно подтверждать перезапуск.
+    private void CheckUpdatesWhenShown()
+    {
+        PropertyChanged += OnShown;
+
+        async void OnShown(object? _, AvaloniaPropertyChangedEventArgs e)
+        {
+            if (e.Property != IsVisibleProperty || !e.GetNewValue<bool>()) return;
+            PropertyChanged -= OnShown;   // дальше показ/скрытие окна ничего не запускает
+            await CheckUpdatesOnceAsync();
+        }
     }
 
     // Явный выход (трей «Выход», Ctrl+Q): не скрывать окно, а завершить приложение.

@@ -86,9 +86,17 @@ public sealed class NotificationService : IDisposable
 
     /// <summary>Запуск из UI-потока (MainWindow.Opened): читает тумблер и метку из app.db,
     /// заводит таймер и делает первый проход — догон событий, наступивших при закрытом
-    /// приложении. Первый запуск (метки нет) фиксирует «сейчас», чтобы не показать историю.</summary>
+    /// приложении. Первый запуск (метки нет) фиксирует «сейчас», чтобы не показать историю.
+    ///
+    /// Идемпотентен: <c>Opened</c> приходит СНОВА при каждом возврате окна из трея (после
+    /// <c>Hide()</c> следующий <c>Window.Show()</c> заново поднимает это событие), а служба
+    /// живёт весь сеанс. Без проверки каждое открытие заводило бы ЕЩЁ один таймер поверх
+    /// работающего (старый никто не останавливал) — тики множились бы, а метка откатывалась
+    /// к последней сохранённой на диск.</summary>
     public void Start()
     {
+        if (_timer is not null) return;   // уже запущены — повторный Opened ничего не меняет
+
         _enabled = AppSettings.LoadNotificationsEnabled();
 
         var saved = AppSettings.LoadNotifyWatermark();
@@ -208,6 +216,7 @@ public sealed class NotificationService : IDisposable
     public void Dispose()
     {
         _timer?.Stop();
+        _timer = null;   // симметрично Start(): служба остановлена — её можно запустить заново
         _notifier.Activated -= OnNotifierActivated;
     }
 
