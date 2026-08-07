@@ -164,11 +164,17 @@ sudo port install dotnet-sdk
 
 ### Запуск из исходников (для разработки)
 
+Сначала клонируем репозиторий:
+
+```bash
+git clone https://github.com/rvburov/SmartBase.git
+```
+
 Проект многотаргетный, поэтому `dotnet run` требует явно указать таргет флагом `-f`
 (без него — ошибка «Проект предназначен для нескольких платформ»):
 
 ```bash
-cd calendar_avalonia
+cd SmartBase
 dotnet run -f net10.0-windows10.0.17763   # Windows
 dotnet run -f net10.0                     # macOS, Linux
 ```
@@ -243,7 +249,7 @@ dotnet run -c Release --project Tests/MultiProcess -- <режим>    # мног
 #### Windows (x64)
 
 ```bash
-cd calendar_avalonia
+cd SmartBase
 Scripts/windows-build.sh                        # win-x64, версия из csproj
 Scripts/windows-build.sh win-x64 Release 1.2.3  # с номером версии 1.2.3
 ```
@@ -260,7 +266,7 @@ Scripts/windows-build.sh win-x64 Release 1.2.3  # с номером версии
 #### Linux (x64)
 
 ```bash
-cd calendar_avalonia
+cd SmartBase
 Scripts/linux-build.sh                          # linux-x64, версия из csproj
 Scripts/linux-build.sh linux-x64 Release 1.2.3  # с номером версии 1.2.3
 ```
@@ -273,7 +279,7 @@ Scripts/linux-build.sh linux-x64 Release 1.2.3  # с номером версии
 Скрипт сам публикует бинарь **и** упаковывает его в `.app` с иконкой (на маке без бандла иконки в Dock не будет):
 
 ```bash
-cd calendar_avalonia
+cd SmartBase
 
 # версия из csproj:
 Scripts/macos-build.sh                          # Apple Silicon (osx-arm64)
@@ -296,7 +302,7 @@ Scripts/macos-build.sh osx-x64   Release 1.2.3  # Intel
 ## Структура проекта
 
 ```
-calendar_avalonia/
+SmartBase/
 ├── Program.cs                  # Точка входа
 ├── App.axaml / App.axaml.cs    # Application definition
 ├── app.manifest                # Манифест (DPI-awareness для Windows)
@@ -435,7 +441,7 @@ calendar_avalonia/
 
 **При разработке (Debug)** — папка `.localdata/` в корне проекта (находится по маркеру
 `SmartBase.csproj`, поэтому не зависит от раскладки вывода):
-`calendar_avalonia/.localdata/database.db` и `.localdata/app.db` (в `.gitignore`).
+`SmartBase/.localdata/database.db` и `.localdata/app.db` (в `.gitignore`).
 
 ### Мультибаза и PostgreSQL
 

@@ -7,7 +7,7 @@
 ## Запуск для разработки
 
 ```bash
-cd calendar_avalonia
+cd SmartBase
 dotnet run -f net10.0-windows10.0.17763    # Windows
 dotnet run -f net10.0                      # macOS, Linux
 ```

@@ -8,7 +8,7 @@
 ## Запуск и сборка
 
 ```bash
-cd calendar_avalonia
+cd SmartBase
 dotnet run -f net10.0-windows10.0.17763   # запуск из исходников (Debug), Windows
 dotnet run -f net10.0                     # то же на macOS/Linux
 dotnet build -c Debug                     # сборка (оба таргета)

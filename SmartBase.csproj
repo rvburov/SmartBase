@@ -75,15 +75,6 @@
     <AvaloniaResource Include="Assets\**" />
   </ItemGroup>
 
-  <!-- Исключить старый скаффолд, который не является частью проекта -->
-  <ItemGroup>
-    <Compile    Remove="calendar_avalonia\**" />
-    <AvaloniaXaml Remove="calendar_avalonia\**" />
-    <AvaloniaResource Remove="calendar_avalonia\**" />
-    <None       Remove="calendar_avalonia\**" />
-    <EmbeddedResource Remove="calendar_avalonia\**" />
-  </ItemGroup>
-
   <!-- Tests/ — отдельный проект-генератор стенда (Tests/DbGenerator), в приложение не входит -->
   <ItemGroup>
     <Compile    Remove="Tests\**" />
