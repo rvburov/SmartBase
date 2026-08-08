@@ -315,7 +315,7 @@ public partial class ProfileView : UserControl
         info.Children.Add(new TextBlock
         {
             Text = user.UserKey,
-            FontSize = FontSize("FontSizeSmall", 11),
+            FontSize = FontSizeToken("FontSizeSmall", 11),
             Foreground = Brush("BrushSecondaryText", "#8E8E93"),
         });
 
@@ -331,7 +331,7 @@ public partial class ProfileView : UserControl
             {
                 Text = "Администратор",
                 VerticalAlignment = VerticalAlignment.Center,
-                FontSize = FontSize("FontSizeSmall", 11),
+                FontSize = FontSizeToken("FontSizeSmall", 11),
                 Foreground = Brush("BrushSecondaryText", "#8E8E93"),
             });
         }
@@ -341,7 +341,7 @@ public partial class ProfileView : UserControl
             {
                 Text = "Ожидает допуска",
                 VerticalAlignment = VerticalAlignment.Center,
-                FontSize = FontSize("FontSizeSmall", 11),
+                FontSize = FontSizeToken("FontSizeSmall", 11),
                 Foreground = Brush("BrushRed", "#FF3B30"),
             });
             var approve = MakeRowButton("Допустить");
@@ -514,7 +514,9 @@ public partial class ProfileView : UserControl
             ? b
             : new SolidColorBrush(Color.Parse(fallbackHex));
 
-    private static double FontSize(string key, double fallback) =>
+    // Имя FontSizeToken, а не FontSize: короткое имя скрыло бы унаследованное
+    // TemplatedControl.FontSize (CS0108).
+    private static double FontSizeToken(string key, double fallback) =>
         Application.Current!.TryFindResource(key, out var res) && res is double d ? d : fallback;
 
     // Скругление из токена Radius* (fallback — как в Brush/FontSize).

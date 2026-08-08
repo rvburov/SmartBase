@@ -342,12 +342,18 @@ public partial class TableView : UserControl
     {
         if (offset <= 0 || VScrollBarProp is null || ProcessVScrollMethod is null) return;
 
+        // Копии в ненулевые локальные переменные: проверка выше не «доезжает» внутрь Handler —
+        // он локальная функция, и компилятор не берётся утверждать, что поля не изменятся
+        // между её вызовами. Обращаться к полям напрямую пришлось бы через «!».
+        PropertyInfo scrollBarProp  = VScrollBarProp;
+        MethodInfo   processVScroll = ProcessVScrollMethod;
+
         var attempts = 0;
 
         void Handler(object? _, EventArgs __)
         {
             attempts++;
-            if (VScrollBarProp.GetValue(RecordsGrid) is not ScrollBar sb)
+            if (scrollBarProp.GetValue(RecordsGrid) is not ScrollBar sb)
             {
                 if (attempts > 20) RecordsGrid.LayoutUpdated -= Handler;
                 return;
@@ -357,7 +363,7 @@ public partial class TableView : UserControl
             if (sb.Maximum < offset && attempts <= 20) return;
 
             sb.Value = Math.Min(offset, sb.Maximum);
-            ProcessVScrollMethod.Invoke(RecordsGrid, [ScrollEventType.ThumbTrack]);
+            processVScroll.Invoke(RecordsGrid, [ScrollEventType.ThumbTrack]);
             RecordsGrid.LayoutUpdated -= Handler;
         }
 
@@ -389,6 +395,10 @@ public partial class TableView : UserControl
     {
         if (HOffsetProp is null || UpdateHOffsetMethod is null) return;
 
+        // См. RestoreVerticalOffset: копии ради того, чтобы Handler видел их ненулевыми.
+        PropertyInfo hOffsetProp     = HOffsetProp;
+        MethodInfo   updateHOffset   = UpdateHOffsetMethod;
+
         // Отменяем предыдущее незавершённое восстановление (его offset устарел).
         if (_scrollRestoreHandler is not null)
             RecordsGrid.LayoutUpdated -= _scrollRestoreHandler;
@@ -406,8 +416,8 @@ public partial class TableView : UserControl
 
             // Setter клампит до (VisibleEdgedColumnsWidth - CellsWidth); пока ширины
             // не дорастут, offset «осядет» ниже цели — пробуем на следующем проходе.
-            UpdateHOffsetMethod.Invoke(RecordsGrid, [offsetX]);
-            var actual = HOffsetProp.GetValue(RecordsGrid) is double a ? a : 0;
+            updateHOffset.Invoke(RecordsGrid, [offsetX]);
+            var actual = hOffsetProp.GetValue(RecordsGrid) is double a ? a : 0;
 
             if (actual > 0.5) grew = true;
 

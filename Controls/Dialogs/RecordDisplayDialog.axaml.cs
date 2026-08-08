@@ -167,7 +167,8 @@ public partial class RecordDisplayDialog : Window
 
     // ── Перемещение выделенной записи ──────────────────────────────────────────
     // Иконки — из общего словаря Assets/Styles/Icons.axaml по ключу x:Key.
-    private static Geometry Icon(string key) =>
+    // Имя IconGeometry, а не Icon: короткое Icon скрыло бы унаследованное Window.Icon (CS0108).
+    private static Geometry IconGeometry(string key) =>
         Application.Current!.TryFindResource(key, out var res) && res is Geometry g
             ? g
             : throw new KeyNotFoundException($"Icon resource '{key}' not found in Icons.axaml");
@@ -176,10 +177,10 @@ public partial class RecordDisplayDialog : Window
     private static double IconSize(string key) =>
         Application.Current!.TryFindResource(key, out var r) && r is double d ? d : 16;
 
-    private static Geometry PlusIcon  => Icon("IconPlus");
-    private static Geometry MinusIcon => Icon("IconMinus");
-    private static Geometry ArrowUp   => Icon("IconArrowUp");
-    private static Geometry ArrowDown => Icon("IconArrowDown");
+    private static Geometry PlusIcon  => IconGeometry("IconPlus");
+    private static Geometry MinusIcon => IconGeometry("IconMinus");
+    private static Geometry ArrowUp   => IconGeometry("IconArrowUp");
+    private static Geometry ArrowDown => IconGeometry("IconArrowDown");
 
     // Перемещение доступно только без активного поиска (двигаем в полном порядке коллекции).
     private void RenderMoveButtons()

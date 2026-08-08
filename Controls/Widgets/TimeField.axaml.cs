@@ -37,7 +37,9 @@ public partial class TimeField : UserControl
             if (wasOpen) return;
             SelectInList(_time);
             Pop.IsOpen = true;
-            List.ScrollIntoView(List.SelectedItem);
+            // SelectInList мог ничего не подобрать (произвольное время в поле) —
+            // тогда SelectedItem пуст, и прокручивать не к чему.
+            if (List.SelectedItem is { } selected) List.ScrollIntoView(selected);
         };
 
         List.SelectionChanged += (_, _) =>

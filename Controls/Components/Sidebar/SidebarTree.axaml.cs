@@ -1311,6 +1311,12 @@ public partial class SidebarTree : UserControl
         var repo = RepoFor(req.DbId);
         if (repo is null) return (null, null);
 
+        // OwnerWindow — вычисляемое свойство (VisualRoot as Window), каждое обращение читает
+        // визуальное дерево заново. Берём значение один раз: и владелец гарантированно тот же,
+        // и ShowDialog ниже не получит null, если панель успели отцепить от окна.
+        var owner = OwnerWindow;
+        if (owner is null) return (null, null);
+
         // Окно загрузки: показываем модально. Задачу ShowDialog запоминаем и дожидаемся
         // её завершения после закрытия — иначе повторный показ окна импорта (при ошибке)
         // стартует поверх ещё не закрытого модального окна и падает.
@@ -1324,7 +1330,7 @@ public partial class SidebarTree : UserControl
                 progress.SetInfo(t.Info);
             });
         progress.SetProgress(0, "Анализ файла…");   // фаза до показа — окно не меняет высоту
-        var progressClosed = progress.ShowDialog(OwnerWindow);
+        var progressClosed = progress.ShowDialog(owner);
 
         var created = new List<int>();
         try
@@ -1414,6 +1420,10 @@ public partial class SidebarTree : UserControl
     // выгрузки в проводнике; БД не менялась, сайдбар не перечитываем.
     private async Task<(ExportDraft? Prefill, string? Error)> RunExport(ExportRequest req)
     {
+        // См. комментарий в RunImport: OwnerWindow вычисляется при каждом обращении.
+        var owner = OwnerWindow;
+        if (owner is null) return (null, null);
+
         var progress = new ProgressDialog();
         using var cts = new CancellationTokenSource();
         progress.EnableCancel(() => cts.Cancel());
@@ -1424,7 +1434,7 @@ public partial class SidebarTree : UserControl
                 progress.SetInfo(t.Info);
             });
         progress.SetProgress(0, "Подготовка…");   // фаза до показа — окно не меняет высоту
-        var progressClosed = progress.ShowDialog(OwnerWindow);
+        var progressClosed = progress.ShowDialog(owner);
 
         var completed = 0;
         try

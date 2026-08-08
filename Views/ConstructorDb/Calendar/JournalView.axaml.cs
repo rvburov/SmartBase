@@ -607,7 +607,7 @@ public partial class JournalRow : ObservableObject
     public static JournalRow Hint() => new() { IsHint = true };
 
     /// <summary>Заглушка «Загрузка…» — заполняется через <see cref="Fill"/> из фоновой загрузки.</summary>
-    public static JournalRow Loading() => new() { _isLoadingPlaceholder = true };
+    public static JournalRow Loading() => new() { IsLoadingPlaceholder = true };
 
     public JournalRow(CalendarRecord ev, bool isPast) => Fill(ev, isPast);
 
