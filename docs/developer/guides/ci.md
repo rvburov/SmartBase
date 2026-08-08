@@ -7,34 +7,60 @@
 
 ## Где в коде
 
-| Файл                                                                | Роль                                        |
-|---------------------------------------------------------------------|---------------------------------------------|
-| [.github/workflows/build.yml](../../../.github/workflows/build.yml) | сам прогон: три job'а, шесть раннеров        |
-| [Scripts/ci/setup-remote.sh](../../../Scripts/ci/setup-remote.sh)   | заводит команду `git push actions`, один раз |
-| [Scripts/ci/ci-test.sh](../../../Scripts/ci/ci-test.sh)             | тесты модуля, чистый bash                    |
-| `docs/developer/guides/ci.md`                                       | этот файл                                    |
+| Файл | Роль |
+| --- | --- |
+| [.github/workflows/build.yml](../../../.github/workflows/build.yml) | сам прогон: три job'а, шесть раннеров |
+| [Scripts/ci/setup-remote.sh](../../../Scripts/ci/setup-remote.sh) | заводит команду `git push actions`, один раз |
+| [Scripts/ci/ci-test.sh](../../../Scripts/ci/ci-test.sh) | тесты модуля, чистый bash |
+| `docs/developer/guides/ci.md` | этот файл |
 
 Существующие файлы проекта модуль не меняет.
 
 ## Как запустить
 
-Один раз в копии репозитория:
+**1. Один раз в копии репозитория**
 
 ```bash
 Scripts/ci/setup-remote.sh
 ```
 
-Дальше:
+Заводит удалённый репозиторий `actions`. Настройка лежит в `.git/config`, он не под версионным
+контролем — на новой машине шаг повторяется. Без него `git push actions` отвечает
+`'actions' does not appear to be a git repository`.
+
+**2. Проверить, что локально чисто**
 
 ```bash
-git push            # отправить main, проверка не запускается
-git push actions    # отправить main и запустить проверку
+Scripts/ci/ci-test.sh
+git status --porcelain
 ```
 
-Результат — вкладка **Actions**: шесть строк, по одной на раннер.
+Ожидается 7 из 7 и пустой вывод второй команды.
 
-Если код не менялся, `git push actions` отработает молча — двигать нечего. Перезапуск в этом
-случае — кнопка **Run workflow** там же.
+**3. Отправить и запустить**
+
+```bash
+git push actions
+```
+
+Уходит `main`, следом обновляется ветка `ci` — её пуш и есть триггер. В выводе две строки:
+`main -> main` и `main -> ci`.
+
+**4. Смотреть прогон**
+
+Вкладка **Actions** → запуск **Build**: шесть строк, по одной на раннер, около десяти минут.
+
+**5. Починить и повторить**
+
+```bash
+git commit -am "fix: ..."
+git push actions
+```
+
+Обычный `git push` не запускает ничего — им отправляют мелкие правки и документацию.
+
+Если код не менялся, `git push actions` отработает молча: двигать нечего. Перезапуск в этом
+случае — кнопка **Run workflow** на вкладке Actions.
 
 ## Какие проверки идут
 
