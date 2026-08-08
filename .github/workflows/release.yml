@@ -1,0 +1,290 @@
+# Сборка и публикация релиза SmartBase.
+#
+# Запускается ТОЛЬКО пушем тега вида v1.0.4 или вручную с вкладки Actions. Обычный push в
+# ветку не запускает ничего: триггеров `push: branches` и `pull_request` здесь нет намеренно.
+#
+# Локальная половина процесса — Scripts/github-release/release.sh (правит версию, ставит тег, пушит).
+# Полное описание — docs/developer/guides/release.md.
+name: Release
+
+on:
+  push:
+    tags: ['v[0-9]+.[0-9]+.[0-9]+']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Существующий тег, например v1.0.4 — пересборка без сдвига тега'
+        required: true
+      draft:
+        description: 'Создать черновик вместо публикации'
+        type: boolean
+        default: true
+
+# Права по умолчанию — только чтение. Запись включается ровно в одном job — publish.
+permissions:
+  contents: read
+
+# Два прогона одного тега не идут параллельно, но и не отменяют друг друга: прерванная
+# на середине публикация хуже, чем ожидание.
+concurrency:
+  group: release-${{ inputs.tag || github.ref }}
+  cancel-in-progress: false
+
+env:
+  DOTNET_NOLOGO: 'true'
+  DOTNET_CLI_TELEMETRY_OPTOUT: 'true'
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: 'true'
+
+jobs:
+  # ── Гейт: дешёвые проверки до дорогой сборки ────────────────────────────────
+  gate:
+    name: Проверки
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.ver.outputs.tag }}
+      version: ${{ steps.ver.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          fetch-depth: 0          # нужен для проверки «тег — предок main»
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+          # cache НЕ включаем: он выставляет NUGET_PACKAGES и перебивает globalPackagesFolder
+          # из nuget.config — поведение CI разошлось бы с локальным.
+
+      # Тег приходит либо из события push, либо из поля ручного запуска. Второе — свободный
+      # текст от человека, поэтому он проходит через env, а не подставляется в тело скрипта,
+      # и сразу проверяется по формату.
+      - name: Разобрать тег
+        id: ver
+        env:
+          RAW_TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          if ! printf '%s' "$RAW_TAG" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::Тег «$RAW_TAG» не в формате vX.Y.Z"
+            exit 1
+          fi
+          echo "tag=$RAW_TAG"          >> "$GITHUB_OUTPUT"
+          echo "version=${RAW_TAG#v}"  >> "$GITHUB_OUTPUT"
+
+      # Единственное место, где сверяется «тег == код». Локальный release.sh этого сделать
+      # не может: он тег и создаёт. Расхождение — отказ, без попыток что-то починить: иначе
+      # опубликованный релиз перестанет соответствовать коммиту, на который указывает тег.
+      - name: Согласованность версий
+        env:
+          VER: ${{ steps.ver.outputs.version }}
+          TAG: ${{ steps.ver.outputs.tag }}
+        run: |
+          bash Scripts/github-release/check-version.sh "$VER" || {
+            echo "::error::Тег $TAG не соответствует версии в коде. Удалите тег и перевыпустите:"
+            echo "::error::git push --delete origin $TAG && git tag -d $TAG && Scripts/github-release/release.sh $VER"
+            exit 1
+          }
+
+      - name: Тег указывает на коммит из main
+        run: |
+          git fetch --quiet origin main
+          git merge-base --is-ancestor HEAD origin/main \
+            || { echo "::error::Тег стоит на коммите, которого нет в main"; exit 1; }
+
+      - name: Модульные тесты
+        run: dotnet test Tests/Unit --configuration Release --logger 'console;verbosity=minimal'
+
+      # PostgreSQL-стенд не поднимаем: тесты провайдера сами уходят в Skipped
+      # (Tests/Integration/PgTestServer.cs проверяет localhost:5455 и отдаёт «стенд не поднят»).
+      - name: Интеграционные тесты
+        run: dotnet test Tests/Integration --configuration Release --logger 'console;verbosity=minimal'
+
+  # ── Сборка: четыре платформы параллельно ────────────────────────────────────
+  build:
+    name: Сборка ${{ matrix.rid }}
+    needs: gate
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # Без fail-fast: одна упавшая платформа не должна отменять остальные, иначе за прогон
+      # видно только первую поломку.
+      fail-fast: false
+      matrix:
+        include:
+          - { rid: win-x64,   os: windows-latest, script: windows-build.sh }
+          - { rid: linux-x64, os: ubuntu-latest,  script: linux-build.sh }
+          - { rid: osx-arm64, os: macos-latest,   script: macos-build.sh }
+          - { rid: osx-x64,   os: macos-latest,   script: macos-build.sh }
+    defaults:
+      run:
+        shell: bash        # одинаковый шелл на всех трёх ОС; *.sh лежат в LF (.gitattributes)
+    env:
+      VER: ${{ needs.gate.outputs.version }}
+      RID: ${{ matrix.rid }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      # Версию скрипту НЕ передаём третьим аргументом: он взял бы её из аргумента и заодно
+      # переписал csproj и README прямо здесь — и гейт перестал бы что-либо гарантировать.
+      # Версия уже лежит в csproj и уже сверена с тегом.
+      - name: Сборка
+        run: bash "Scripts/${{ matrix.script }}" "$RID" Release
+
+      - name: Проверка сборки — Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $out = "dist/Version ${env:VER}/${env:RID}"
+          if (-not (Test-Path -LiteralPath "$out/SmartBase.exe"))       { throw "Нет SmartBase.exe" }
+          if (-not (Test-Path -LiteralPath "$out/SmartBase-Setup.exe")) { throw "Нет SmartBase-Setup.exe" }
+          $exe = Get-Item -LiteralPath "$out/SmartBase.exe"
+          if ($exe.Length -lt 50MB) { throw "Слишком маленький .exe: $($exe.Length) байт" }
+          $pv = $exe.VersionInfo.ProductVersion
+          # SDK может дописать «+<хеш коммита>» — сравниваем по началу строки.
+          if ($pv -notlike "${env:VER}*") { throw "ProductVersion = $pv, ожидалось ${env:VER}" }
+          Write-Host "SmartBase.exe $pv, $([math]::Round($exe.Length/1MB)) МБ"
+
+      - name: Проверка сборки — macOS
+        if: runner.os == 'macOS'
+        run: |
+          APP="dist/Version $VER/$RID/SmartBase.app"
+          SETUP="dist/Version $VER/$RID/SmartBase-Setup.app"
+          [ -d "$APP" ] && [ -d "$SETUP" ] || { echo "::error::нет .app-бандлов"; exit 1; }
+          V="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Contents/Info.plist")"
+          [ "$V" = "$VER" ] || { echo "::error::Info.plist: $V, ожидалось $VER"; exit 1; }
+          [ -x "$APP/Contents/MacOS/SmartBase" ] || { echo "::error::нет бита +x"; exit 1; }
+          # Матрица могла собрать не тот RID — сверяем архитектуру бинаря.
+          ARCH="$(lipo -archs "$APP/Contents/MacOS/SmartBase")"
+          case "$RID" in
+            osx-arm64) [ "$ARCH" = "arm64" ]  || { echo "::error::$RID собран как $ARCH"; exit 1; } ;;
+            osx-x64)   [ "$ARCH" = "x86_64" ] || { echo "::error::$RID собран как $ARCH"; exit 1; } ;;
+          esac
+          echo "SmartBase.app $V, $ARCH"
+
+      - name: Проверка сборки — Linux
+        if: runner.os == 'Linux'
+        run: |
+          OUT="dist/Version $VER/linux-x64"
+          [ -x "$OUT/SmartBase" ] && [ -x "$OUT/SmartBase-Setup" ] \
+            || { echo "::error::нет исполняемых файлов"; exit 1; }
+          file "$OUT/SmartBase" | grep -q ELF || { echo "::error::это не ELF"; exit 1; }
+          SIZE="$(stat -c%s "$OUT/SmartBase")"
+          [ "$SIZE" -gt 52428800 ] || { echo "::error::слишком маленький бинарь: $SIZE байт"; exit 1; }
+          # Точной проверки версии на Linux нет: у single-file ELF нет штатных метаданных
+          # версии, а читать её из приложения было бы можно только флагом --version, которого
+          # намеренно не добавляли (модуль не правит боевой код). Мягкий поиск строки —
+          # предупреждение, не отказ. Windows и macOS сверяют версию точно, и все четыре
+          # платформы собираются из одного коммита с уже проверенным <Version>.
+          grep -aq "$VER" "$OUT/SmartBase" || echo "::warning::версия $VER не найдена в бинаре"
+          echo "SmartBase $(( SIZE / 1048576 )) МБ"
+
+      # Ad-hoc подпись бандлов. Карантин она не снимает, но отличает «неизвестный
+      # разработчик» (обходится) от «приложение повреждено» (не обходится вовсе).
+      # Делается здесь, а не в Scripts/macos-build.sh: модуль не правит существующие файлы.
+      - name: Упаковка — macOS
+        if: runner.os == 'macOS'
+        run: |
+          OUT="dist/Version $VER/$RID"
+          codesign --force --deep --sign - "$OUT/SmartBase.app" "$OUT/SmartBase-Setup.app"
+          mkdir -p pkg-stage pkg
+          cp -R "$OUT/SmartBase.app" "$OUT/SmartBase-Setup.app" pkg-stage/
+          cp LICENSE THIRD-PARTY-NOTICES.txt pkg-stage/
+          # Только ditto: zip -r теряет расширенные атрибуты и биты запуска внутри бандла,
+          # после чего .app не стартует. Без --keepParent, чтобы корень архива был плоским:
+          # архив распаковывают прямо в сетевую папку обновлений.
+          ditto -c -k --sequesterRsrc pkg-stage "pkg/SmartBase-$VER-$RID.zip"
+          # Контрольная распаковка: права переживают архивацию.
+          ditto -x -k "pkg/SmartBase-$VER-$RID.zip" /tmp/verify
+          [ -x "/tmp/verify/SmartBase-Setup.app/Contents/MacOS/SmartBase" ] \
+            || { echo "::error::после распаковки потерян бит +x"; exit 1; }
+
+      - name: Упаковка — Linux
+        if: runner.os == 'Linux'
+        run: |
+          OUT="dist/Version $VER/linux-x64"
+          mkdir -p pkg-stage pkg
+          cp "$OUT/SmartBase" "$OUT/SmartBase-Setup" LICENSE THIRD-PARTY-NOTICES.txt pkg-stage/
+          chmod +x pkg-stage/SmartBase pkg-stage/SmartBase-Setup
+          # tar, а не zip: zip теряет права, и после распаковки штатным «Извлечь» в GNOME
+          # бинарь оказывается без бита запуска.
+          tar -czf "pkg/SmartBase-$VER-linux-x64.tar.gz" -C pkg-stage .
+          tar -tvzf "pkg/SmartBase-$VER-linux-x64.tar.gz" | grep -qE '^-rwx.*SmartBase-Setup$' \
+            || { echo "::error::в архиве потерян бит +x"; exit 1; }
+
+      - name: Упаковка — Windows
+        if: runner.os == 'Windows'
+        run: |
+          OUT="dist/Version $VER/win-x64"
+          mkdir -p pkg-stage pkg
+          cp "$OUT/SmartBase.exe" "$OUT/SmartBase-Setup.exe" LICENSE THIRD-PARTY-NOTICES.txt pkg-stage/
+          # 7-Zip предустановлен на runner'е и заметно быстрее Compress-Archive на 150 МБ.
+          7z a -tzip -mx=5 "pkg/SmartBase-$VER-win-x64.zip" "./pkg-stage/*" > /dev/null
+          7z l "pkg/SmartBase-$VER-win-x64.zip" | grep -q "SmartBase-Setup.exe" \
+            || { echo "::error::установщик не попал в архив"; exit 1; }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pkg-${{ matrix.rid }}
+          path: pkg/*
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0     # содержимое уже сжато, повторное сжатие только жжёт время
+
+  # ── Публикация: единственный job с правом записи ────────────────────────────
+  publish:
+    name: Публикация
+    needs: [gate, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      TAG: ${{ needs.gate.outputs.tag }}
+      VER: ${{ needs.gate.outputs.version }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: assets
+          pattern: pkg-*
+          merge-multiple: true     # четыре архива ложатся в одну плоскую папку
+
+      - name: Контрольные суммы
+        run: |
+          cd assets
+          sha256sum SmartBase-* > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Тело релиза
+        run: bash Scripts/github-release/release-notes.sh "$VER" > notes.md
+
+      # Создание и обновление одной командой: повторный прогон на существующем теге
+      # перезаписывает файлы и заметки, но НЕ трогает тег и коммит — GitHub привязывает
+      # опубликованный релиз к тегу навсегда.
+      - name: Создать или обновить релиз
+        env:
+          # Пусто при пуше тега (публикуем сразу), true при ручном запуске (черновик).
+          IS_DRAFT: ${{ inputs.draft }}
+        run: |
+          DRAFT=""
+          if [ "$IS_DRAFT" = "true" ]; then DRAFT="--draft"; fi
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Релиз $TAG уже есть — обновляю заметки и перезаписываю файлы"
+            gh release edit   "$TAG" --title "SmartBase $VER" --notes-file notes.md
+            gh release upload "$TAG" assets/* --clobber
+          else
+            gh release create "$TAG" assets/* \
+              --title "SmartBase $VER" --notes-file notes.md $DRAFT
+          fi
+          {
+            echo "## SmartBase $VER"
+            echo
+            echo "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/tag/$TAG"
+          } >> "$GITHUB_STEP_SUMMARY"
