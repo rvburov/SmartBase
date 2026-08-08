@@ -4,7 +4,7 @@
 //
 //   swift Scripts/github-release/dmg-background.swift <папка-вывода>
 //
-// Пишет background.png (640×420) и background@2x.png (1280×840); в образ кладётся
+// Пишет background.png (640×470) и background@2x.png (1280×940); в образ кладётся
 // склеенный из них TIFF, иначе на retina текст выходит мылом.
 //
 // Рисуется кодом, а не лежит картинкой в репозитории: текст инструкции правится как
@@ -14,52 +14,50 @@ import AppKit
 
 let W: CGFloat = 640, H: CGFloat = 470
 
-// Верхняя треть отдана значку установщика — его туда ставит Finder (см. osascript
-// в шаге упаковки). Рисовать здесь ничего нельзя, иначе перекроется.
-let iconZoneBottom: CGFloat = 165
+// Значок ставит Finder (см. osascript в шаге упаковки), позиция {320, 78}. При размере 128
+// он занимает примерно 14…142, подпись под ним — до 164. Рисовать здесь нечего.
+let iconLabelBottom: CGFloat = 164
 
-let ink       = NSColor(calibratedRed: 0.11, green: 0.12, blue: 0.14, alpha: 1)
-let inkSoft   = NSColor(calibratedRed: 0.40, green: 0.42, blue: 0.46, alpha: 1)
-let accent    = NSColor(calibratedRed: 0.15, green: 0.42, blue: 0.85, alpha: 1)
-let hairline  = NSColor(calibratedRed: 0.85, green: 0.86, blue: 0.88, alpha: 1)
-let backdrop  = NSColor(calibratedRed: 0.98, green: 0.98, blue: 0.99, alpha: 1)
+// Разделитель и заголовок отбиты от подписи значка на одинаковое расстояние — иначе линия
+// наезжает на «SmartBase-Setup.app», а блоки выглядят слипшимися.
+let gap: CGFloat        = 24
+let hairlineTop         = iconLabelBottom + gap        // 188
+let headingTop          = hairlineTop + gap            // 212
 
-// Координаты в тексте задаются от ВЕРХА окна — так же, как их задаёт Finder значку.
-// NSGraphicsContext считает от низа, поэтому каждая координата переворачивается.
+// Весь текст умещается в верхние ~360 точек, ниже — namеренно пустой запас.
+// Причина: Finder показывает панель вкладок и панель пути, если они включены у пользователя,
+// и они съедают высоту окна. Управлять ими из AppleScript нельзя. Поэтому картинка выше
+// видимой области, и обрезается только пустое место, а не инструкция.
+let firstStepTop: CGFloat = 252
+let stepStride: CGFloat   = 30
+
+let ink      = NSColor(calibratedRed: 0.11, green: 0.12, blue: 0.14, alpha: 1)
+let hairline = NSColor(calibratedRed: 0.85, green: 0.86, blue: 0.88, alpha: 1)
+let backdrop = NSColor(calibratedRed: 0.98, green: 0.98, blue: 0.99, alpha: 1)
+
+// Координаты задаются от ВЕРХА окна — так же, как их задаёт Finder значку.
+// NSGraphicsContext считает от низа, поэтому каждая переворачивается.
 func fromTop(_ y: CGFloat) -> CGFloat { H - y }
 
-func text(_ s: String, _ font: NSFont, _ color: NSColor,
-          x: CGFloat, top: CGFloat, width: CGFloat, centered: Bool = false) {
+func text(_ s: String, _ font: NSFont, x: CGFloat, top: CGFloat, width: CGFloat) {
     let p = NSMutableParagraphStyle()
-    p.alignment = centered ? .center : .left
     p.lineSpacing = 3
-    let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: color, .paragraphStyle: p]
-    let a = NSAttributedString(string: s, attributes: attrs)
-    let h = a.boundingRect(with: NSSize(width: width, height: 400), options: [.usesLineFragmentOrigin]).height
+    let a = NSAttributedString(string: s, attributes: [
+        .font: font, .foregroundColor: ink, .paragraphStyle: p,
+    ])
+    let h = a.boundingRect(with: NSSize(width: width, height: 400),
+                           options: [.usesLineFragmentOrigin]).height
     a.draw(with: NSRect(x: x, y: fromTop(top) - h, width: width, height: h),
            options: [.usesLineFragmentOrigin])
 }
 
+// Обычный нумерованный список: «1.» и текст, без кружков и прочей графики.
+// Номер и текст рисуются отдельно, чтобы перенос строки вставал под текст, а не под номер.
 func step(_ n: Int, _ s: String, top: CGFloat) {
-    let d: CGFloat = 22, x: CGFloat = 56
-    let circle = NSRect(x: x, y: fromTop(top + 18), width: d, height: d)
-    accent.setFill()
-    NSBezierPath(ovalIn: circle).fill()
-
-    // Цифру нельзя просто положить по центру строки: в строку заложено место под нижние
-    // выносные элементы (у «р», «у»), а у цифр их нет — глиф всплывает над серединой.
-    // Считаем по метрикам шрифта: низ цифры — на базовой линии, верх — на высоте прописной,
-    // значит видимый центр лежит на capHeight/2 выше базовой линии.
-    let f = NSFont.systemFont(ofSize: 12, weight: .semibold)
-    let p = NSMutableParagraphStyle(); p.alignment = .center
-    let glyph = NSAttributedString(string: "\(n)",
-        attributes: [.font: f, .foregroundColor: NSColor.white, .paragraphStyle: p])
-    let lineHeight = glyph.size().height
-    glyph.draw(in: NSRect(x: circle.minX, y: circle.midY + f.descender - f.capHeight / 2,
-                          width: d, height: lineHeight))
-
-    text(s, .systemFont(ofSize: 14, weight: .regular), ink,
-         x: x + d + 14, top: top, width: W - x - d - 14 - 56)
+    let x: CGFloat = 56, numWidth: CGFloat = 22
+    let font = NSFont.systemFont(ofSize: 14, weight: .regular)
+    text("\(n).", font, x: x, top: top, width: numWidth)
+    text(s, font, x: x + numWidth, top: top, width: W - x - numWidth - 56)
 }
 
 func render(scale: CGFloat) -> Data {
@@ -76,16 +74,22 @@ func render(scale: CGFloat) -> Data {
     NSRect(x: 0, y: 0, width: W, height: H).fill()
 
     hairline.setFill()
-    NSRect(x: 56, y: fromTop(iconZoneBottom), width: W - 112, height: 1).fill()
+    NSRect(x: 56, y: fromTop(hairlineTop), width: W - 112, height: 1).fill()
 
-    text("Как запустить", .systemFont(ofSize: 17, weight: .semibold), ink,
-         x: 56, top: iconZoneBottom + 30, width: W - 112)
+    text("Как запустить", .systemFont(ofSize: 17, weight: .semibold),
+         x: 56, top: headingTop, width: W - 112)
 
-    // Формулировки и названия кнопок — дословно те, что показывает macOS 26.
-    step(1, "Двойной клик по значку выше.", top: 244)
-    step(2, "Появится окно про проверку программы.\nНажмите «Готово».", top: 280)
-    step(3, "Откройте Системные настройки ▸ Конфиденциальность\nи безопасность и прокрутите вниз до «Безопасность».", top: 340)
-    step(4, "Там будет строка с названием программы —\nнажмите рядом «Все равно открыть» и подтвердите.", top: 400)
+    // Каждый пункт — одна строка: так список не разъезжается по высоте и целиком
+    // помещается в видимую часть окна. Названия кнопок дословно из интерфейса macOS 26.
+    let steps = [
+        "Двойной клик по значку выше.",
+        "Появится окно про проверку — нажмите «Готово».",
+        "Системные настройки ▸ Конфиденциальность и безопасность.",
+        "Прокрутите вниз до «Безопасность» → «Все равно открыть».",
+    ]
+    for (i, s) in steps.enumerated() {
+        step(i + 1, s, top: firstStepTop + CGFloat(i) * stepStride)
+    }
 
     NSGraphicsContext.restoreGraphicsState()
     return rep.representation(using: .png, properties: [:])!
