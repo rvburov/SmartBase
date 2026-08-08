@@ -171,6 +171,7 @@ public static class InstallService
         MakeExecutable(MacInnerBinary(targetBundle));
 
         progress.Report((0.93, "Регистрация…"));
+        ClearQuarantine(targetBundle);   // строго до lsregister, см. комментарий у метода
         RegisterLaunchServices(targetBundle);
         CreateUninstallCommandMac(installDir, targetBundle);
 
@@ -461,6 +462,21 @@ public static class InstallService
     // ── macOS: LaunchServices + .command-удалятор ──────────────────────────────
     private const string Lsregister =
         "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister";
+
+    // Скачанный из интернета установщик несёт метку карантина, и macOS переносит её на всё,
+    // что он записывает, — установленное приложение тоже оказывается заблокированным. Без
+    // этого человек проходит «Настройки → Конфиденциальность и безопасность → Все равно
+    // открыть» дважды: сначала для установщика, потом для самой программы.
+    //
+    // Ждём завершения: снять метку надо до того, как бандл увидит LaunchServices, иначе
+    // блокировка успевает закешироваться. Ошибку глотаем — установку она не отменяет,
+    // в худшем случае вернётся лишнее предупреждение (при установке из сетевой папки
+    // метки нет вовсе и снимать нечего).
+    private static void ClearQuarantine(string bundle)
+    {
+        if (!IsMac) return;
+        RunHidden("/usr/bin/xattr", $"-dr com.apple.quarantine {Quote(bundle)}", wait: true);
+    }
 
     private static void RegisterLaunchServices(string bundle)
     {
