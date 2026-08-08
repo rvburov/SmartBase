@@ -392,50 +392,57 @@ public sealed class DbAccessLifecycleTests
     [Fact]
     public void Access_actions_are_written_to_change_log()
     {
-        using var db = new TempDatabase();
-        var id = JoinUser(db.Path, "ivanov@pc2", "Иванов Иван");
-
-        db.Permissions.SetApproved(id, true);
-        db.Permissions.SetApproved(id, false);
-        db.Permissions.SetMask(id, null, (int)PermAction.ViewCollection);
-
-        string oldName;
-        using (var before = new AppDbContext(db.Path))
-            oldName = before.DbUsers.Single(u => u.UserKey == CurrentUser.Key).DisplayName;
-
         var original = CurrentUser.LastName;
-        string newName;
         try
         {
+            // Короткое имя фиксируется ДО создания базы. Без него DisplayName падает на ключ
+            // «учётка@компьютер», и на машине с длинным именем — раннеры GitHub зовутся
+            // «runner@iad20-fj925-92b8e719-f0a8-4837-…» — строка перешагивает ChangeDetail
+            // .FullLimit, после чего «было → стало» ОСОЗНАННО сворачивается в «…». Проверка
+            // ниже ищет имя целиком и падала бы ровно там, где сборка идёт не на ноутбуке
+            // разработчика. Проверяем поведение журнала, а не длину имени хоста.
+            CurrentUser.LastName = "Петров";
+
+            using var db = new TempDatabase();
+            var id = JoinUser(db.Path, "ivanov@pc2", "Иванов Иван");
+
+            db.Permissions.SetApproved(id, true);
+            db.Permissions.SetApproved(id, false);
+            db.Permissions.SetMask(id, null, (int)PermAction.ViewCollection);
+
+            string oldName;
+            using (var before = new AppDbContext(db.Path))
+                oldName = before.DbUsers.Single(u => u.UserKey == CurrentUser.Key).DisplayName;
+
             CurrentUser.LastName = "Тестов";
-            newName = CurrentUser.DisplayName;
+            var newName = CurrentUser.DisplayName;
             db.Permissions.SyncDisplayName();
+
+            using var check = new AppDbContext(db.Path);
+            var userRows = check.ChangeLog.Where(e => e.Action.StartsWith("user.")).ToList();
+
+            var approve = Assert.Single(userRows.Where(e => e.Action == "user.approve"));
+            Assert.Equal("Иванов Иван", approve.TargetName);
+
+            var revoke = Assert.Single(userRows.Where(e => e.Action == "user.revoke"));
+            Assert.Equal("Иванов Иван", revoke.TargetName);
+
+            var rights = Assert.Single(userRows.Where(e => e.Action == "user.rights"));
+            Assert.Equal("Иванов Иван", rights.TargetName);
+
+            var rename = Assert.Single(userRows.Where(e => e.Action == "user.rename"));
+            Assert.Equal(newName, rename.TargetName);
+            Assert.NotNull(rename.Detail);
+            Assert.Contains(oldName, rename.Detail);   // «было → стало» читается целиком
+            Assert.Contains(newName, rename.Detail);
+
+            foreach (var row in new[] { approve, revoke, rights, rename })
+            {
+                Assert.Equal("user", row.TargetType);     // признак «перечитай права» для соседа
+                Assert.Equal(CurrentUser.Key, row.UserKey);
+            }
         }
         finally { CurrentUser.LastName = original; }
-
-        using var check = new AppDbContext(db.Path);
-        var userRows = check.ChangeLog.Where(e => e.Action.StartsWith("user.")).ToList();
-
-        var approve = Assert.Single(userRows.Where(e => e.Action == "user.approve"));
-        Assert.Equal("Иванов Иван", approve.TargetName);
-
-        var revoke = Assert.Single(userRows.Where(e => e.Action == "user.revoke"));
-        Assert.Equal("Иванов Иван", revoke.TargetName);
-
-        var rights = Assert.Single(userRows.Where(e => e.Action == "user.rights"));
-        Assert.Equal("Иванов Иван", rights.TargetName);
-
-        var rename = Assert.Single(userRows.Where(e => e.Action == "user.rename"));
-        Assert.Equal(newName, rename.TargetName);
-        Assert.NotNull(rename.Detail);
-        Assert.Contains(oldName, rename.Detail);   // «было → стало» читается в истории целиком
-        Assert.Contains(newName, rename.Detail);
-
-        foreach (var row in new[] { approve, revoke, rights, rename })
-        {
-            Assert.Equal("user", row.TargetType);     // признак «перечитай права» для соседа
-            Assert.Equal(CurrentUser.Key, row.UserKey);
-        }
     }
 
     // ── 7. Событие Changed — живое обновление внутри процесса ─────────────────
