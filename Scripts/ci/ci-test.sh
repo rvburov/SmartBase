@@ -117,9 +117,11 @@ for t in "SmartBase.csproj" "Tests/Unit" "Tests/Integration" \
   grep -qF "$t" <<< "$WF_CODE" || prob+=("workflow не упоминает $t")
   [ -e "$t" ]                  || prob+=("в репозитории нет $t")
 done
-# Фильтр тестов PostgreSQL — строка, которую легко осиротить переименованием класса.
+# Фильтры тестов заданы строками с именами классов — их легко осиротить переименованием.
 [ -f "Tests/Integration/PgProviderTests.cs" ] \
   || prob+=("нет Tests/Integration/PgProviderTests.cs — фильтр в job postgres ничего не найдёт")
+[ -f "Tests/Integration/LinuxNotificationsTests.cs" ] \
+  || prob+=("нет Tests/Integration/LinuxNotificationsTests.cs — шаг про D-Bus ничего не найдёт")
 
 if [ ${#prob[@]} -eq 0 ]; then
   ok "5. Все проекты и наборы тестов из workflow на месте"

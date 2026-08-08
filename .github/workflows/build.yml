@@ -107,6 +107,30 @@ jobs:
       - name: Интеграционные тесты
         run: dotnet test Tests/Integration --configuration Release --logger 'console;verbosity=minimal'
 
+      # Единственное место, где вообще выполняется связка с D-Bus. Пакеты
+      # DesktopNotifications.FreeDesktop и Tmds.DBus разъезжаются по версиям молча: сборка
+      # проходит, а на машине пользователя менеджер падает, и Program.CreateNotificationManager
+      # это исключение проглатывает — приложение стартует, баннеров нет, снаружи не видно.
+      #
+      # dbus-run-session поднимает шину сеанса на время команды; без неё тест ушёл бы в Skipped
+      # вместе с обычным прогоном выше. Демон уведомлений не нужен: проверяется, что вызовы
+      # доходят до Tmds.DBus, а не что баннер нарисовался.
+      - name: Уведомления Linux
+        if: runner.os == 'Linux'
+        run: |
+          command -v dbus-run-session > /dev/null || sudo apt-get install -y -qq dbus
+          dbus-run-session -- dotnet test Tests/Integration --configuration Release \
+            --filter 'FullyQualifiedName~LinuxNotificationsTests' \
+            --logger 'console;verbosity=minimal' | tee dbus.log
+
+      # Тест помечен SkippableFact: без этой проверки не поднявшаяся шина дала бы зелёный шаг,
+      # ничего не проверивший, — а именно ради него шаг и добавлен.
+      - name: Убедиться, что связка с D-Bus проверена
+        if: runner.os == 'Linux'
+        run: |
+          grep -qE 'Skipped: *0' dbus.log \
+            || { echo "::error::тест уведомлений ушёл в Skipped — шина D-Bus не поднялась"; exit 1; }
+
   # ── Тесты провайдера PostgreSQL на живой базе ───────────────────────────────
   # Единственное место, где эти девять тестов вообще выполняются: локально нужен поднятый
   # docker-контейнер, а на остальных раннерах сервисы недоступны.
