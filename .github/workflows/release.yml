@@ -347,16 +347,21 @@ jobs:
           # Пусто при пуше тега (публикуем сразу), true при ручном запуске (черновик).
           IS_DRAFT: ${{ inputs.draft }}
         run: |
-          DRAFT=""
-          if [ "$IS_DRAFT" = "true" ]; then DRAFT="--draft"; fi
+          DRAFT=false
+          [ "$IS_DRAFT" = "true" ] && DRAFT=true
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "Релиз $TAG уже есть — обновляю заметки и перезаписываю файлы"
-            gh release edit   "$TAG" --title "SmartBase $VER" --notes-file notes.md
+            # --draft=$DRAFT обязателен именно здесь: без него релиз, once созданный
+            # черновиком, останется черновиком навсегда — снаружи его не видно, а прогон
+            # при этом зелёный. Ровно так застрял первый релиз.
+            gh release edit   "$TAG" --title "SmartBase $VER" --notes-file notes.md --draft=$DRAFT
             gh release upload "$TAG" assets/* --clobber
+          elif [ "$DRAFT" = true ]; then
+            gh release create "$TAG" assets/* --title "SmartBase $VER" --notes-file notes.md --draft
           else
-            gh release create "$TAG" assets/* \
-              --title "SmartBase $VER" --notes-file notes.md $DRAFT
+            gh release create "$TAG" assets/* --title "SmartBase $VER" --notes-file notes.md
           fi
+          gh release view "$TAG" --json isDraft,url --jq '"черновик: \(.isDraft)  \(.url)"'
           {
             echo "## SmartBase $VER"
             echo
