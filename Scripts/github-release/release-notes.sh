@@ -47,13 +47,21 @@ cat <<EOF
 
 | ОС | Файл | Что делать |
 |---|---|---|
-| Windows | \`SmartBase-$VERSION-win-x64.zip\` | распаковать, запустить \`SmartBase-Setup.exe\` |
+| Windows | \`SmartBase-Setup.exe\` | скачать и запустить |
 | macOS, Apple Silicon | \`SmartBase-$VERSION-osx-arm64.zip\` | распаковать, запустить \`SmartBase-Setup.app\` |
 | macOS, Intel | \`SmartBase-$VERSION-osx-x64.zip\` | то же |
 | Linux | \`SmartBase-$VERSION-linux-x64.tar.gz\` | \`tar -xzf …\`, затем \`./SmartBase-Setup\` |
 
+Скачивается **один файл** — установщик \`SmartBase-Setup\`, и папка при распаковке
+не создаётся. Он ставит программу (Windows — в \`%LOCALAPPDATA%\`, macOS — в
+\`~/Applications\`, Linux — в \`~/.local/share\`), создаёт ярлыки и умеет удалять себя
+ключом \`--uninstall\`.
+
 .NET ставить не нужно: сборки self-contained, среда выполнения внутри.
-В каждом архиве, кроме программы, лежат \`LICENSE\` и \`THIRD-PARTY-NOTICES.txt\`.
+
+> Не переименовывайте установщик. Режим установки включается по окончанию имени
+> \`-Setup\`; файл \`SmartBase-Setup (1).exe\`, который создаёт браузер при повторном
+> скачивании, запустится как обычная программа, а не как установщик.
 
 > **Бинарники не подписаны цифровым сертификатом.**
 > **Windows:** SmartScreen покажет синее окно → «Подробнее» → «Выполнить в любом случае».
@@ -71,6 +79,11 @@ cat <<EOF
 
 \`SHA256SUMS.txt\` во вложениях. Проверка: \`sha256sum -c SHA256SUMS.txt\` (Linux, macOS)
 или \`Get-FileHash файл\` (Windows).
+
+## Лицензия
+
+Apache-2.0. \`LICENSE\` и \`THIRD-PARTY-NOTICES.txt\` — отдельными файлами во вложениях,
+чтобы не мешаться в скачиваемом архиве.
 EOF
 
 # ── Полный список коммитов ────────────────────────────────────────────────────

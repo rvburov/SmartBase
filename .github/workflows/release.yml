@@ -148,89 +148,109 @@ jobs:
           if ($pv -notlike "${env:VER}*") { throw "ProductVersion = $pv, ожидалось ${env:VER}" }
           Write-Host "SmartBase.exe $pv, $([math]::Round($exe.Length/1MB)) МБ"
 
+      # Проверяется именно то, что уедет пользователю, — бандл установщика.
       - name: Проверка сборки — macOS
         if: runner.os == 'macOS'
         run: |
-          APP="dist/Version $VER/$RID/SmartBase.app"
           SETUP="dist/Version $VER/$RID/SmartBase-Setup.app"
-          [ -d "$APP" ] && [ -d "$SETUP" ] || { echo "::error::нет .app-бандлов"; exit 1; }
-          V="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Contents/Info.plist")"
+          [ -d "$SETUP" ] || { echo "::error::нет бандла установщика"; exit 1; }
+          V="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$SETUP/Contents/Info.plist")"
           [ "$V" = "$VER" ] || { echo "::error::Info.plist: $V, ожидалось $VER"; exit 1; }
-          [ -x "$APP/Contents/MacOS/SmartBase" ] || { echo "::error::нет бита +x"; exit 1; }
+          [ -x "$SETUP/Contents/MacOS/SmartBase" ] || { echo "::error::нет бита +x"; exit 1; }
           # Матрица могла собрать не тот RID — сверяем архитектуру бинаря.
-          ARCH="$(lipo -archs "$APP/Contents/MacOS/SmartBase")"
+          ARCH="$(lipo -archs "$SETUP/Contents/MacOS/SmartBase")"
           case "$RID" in
             osx-arm64) [ "$ARCH" = "arm64" ]  || { echo "::error::$RID собран как $ARCH"; exit 1; } ;;
             osx-x64)   [ "$ARCH" = "x86_64" ] || { echo "::error::$RID собран как $ARCH"; exit 1; } ;;
           esac
-          echo "SmartBase.app $V, $ARCH"
+          echo "SmartBase-Setup.app $V, $ARCH"
 
       - name: Проверка сборки — Linux
         if: runner.os == 'Linux'
         run: |
           OUT="dist/Version $VER/linux-x64"
-          [ -x "$OUT/SmartBase" ] && [ -x "$OUT/SmartBase-Setup" ] \
-            || { echo "::error::нет исполняемых файлов"; exit 1; }
-          file "$OUT/SmartBase" | grep ELF > /dev/null || { echo "::error::это не ELF"; exit 1; }
-          SIZE="$(stat -c%s "$OUT/SmartBase")"
+          [ -x "$OUT/SmartBase-Setup" ] || { echo "::error::нет установщика"; exit 1; }
+          file "$OUT/SmartBase-Setup" | grep ELF > /dev/null || { echo "::error::это не ELF"; exit 1; }
+          SIZE="$(stat -c%s "$OUT/SmartBase-Setup")"
           [ "$SIZE" -gt 52428800 ] || { echo "::error::слишком маленький бинарь: $SIZE байт"; exit 1; }
           # Точной проверки версии на Linux нет: у single-file ELF нет штатных метаданных
           # версии, а читать её из приложения было бы можно только флагом --version, которого
           # намеренно не добавляли (модуль не правит боевой код). Мягкий поиск строки —
           # предупреждение, не отказ. Windows и macOS сверяют версию точно, и все четыре
           # платформы собираются из одного коммита с уже проверенным <Version>.
-          grep -aq "$VER" "$OUT/SmartBase" || echo "::warning::версия $VER не найдена в бинаре"
-          echo "SmartBase $(( SIZE / 1048576 )) МБ"
+          grep -aq "$VER" "$OUT/SmartBase-Setup" || echo "::warning::версия $VER не найдена в бинаре"
+          echo "SmartBase-Setup $(( SIZE / 1048576 )) МБ"
 
-      # Ad-hoc подпись бандлов. Карантин она не снимает, но отличает «неизвестный
-      # разработчик» (обходится) от «приложение повреждено» (не обходится вовсе).
-      # Делается здесь, а не в Scripts/macos-build.sh: модуль не правит существующие файлы.
+      # ── Упаковка ──────────────────────────────────────────────────────────
+      # Раздаётся РОВНО ОДИН файл на платформу — установщик SmartBase-Setup. Обычный
+      # SmartBase из dist/ не публикуется: это тот же бинарь, и установщик ставит его сам.
+      #
+      # Имя менять нельзя ни при каких обстоятельствах: режим установки включается по
+      # окончанию имени «-Setup» (Program.cs, ResolveMode). Поэтому версия и платформа
+      # уходят в имя АРХИВА, а файл внутри остаётся SmartBase-Setup.
+      #
+      # В архиве ровно один элемент — тогда распаковка не создаёт папку-обёртку. Именно
+      # из-за нескольких элементов macOS раньше делал каталог «SmartBase-1» (Archive
+      # Utility обрезает имя архива по первой точке).
+      #
+      # LICENSE и THIRD-PARTY-NOTICES.txt в архивы не кладутся — они идут отдельными
+      # вложениями релиза (см. job publish), чтобы не мешаться в скачанной папке.
+
+      # Ad-hoc подпись. Карантин она не снимает, но отличает «неизвестный разработчик»
+      # (обходится) от «приложение повреждено» (не обходится вовсе). Делается здесь,
+      # а не в Scripts/macos-build.sh: модуль не правит существующие файлы.
       - name: Упаковка — macOS
         if: runner.os == 'macOS'
         run: |
-          OUT="dist/Version $VER/$RID"
-          codesign --force --deep --sign - "$OUT/SmartBase.app" "$OUT/SmartBase-Setup.app"
-          mkdir -p pkg-stage pkg
-          cp -R "$OUT/SmartBase.app" "$OUT/SmartBase-Setup.app" pkg-stage/
-          cp LICENSE THIRD-PARTY-NOTICES.txt pkg-stage/
+          SETUP="dist/Version $VER/$RID/SmartBase-Setup.app"
+          ZIP="pkg/SmartBase-$VER-$RID.zip"
+          mkdir -p pkg
+          # Обязательно перед подписью: codesign отказывается работать, если на файлах бандла
+          # остались расширенные атрибуты («resource fork, Finder information, or similar
+          # detritus not allowed»). Достаточно одного com.apple.provenance, который macOS
+          # вешает при копировании файлов.
+          xattr -cr "$SETUP"
+          codesign --force --deep --sign - "$SETUP"
           # Только ditto: zip -r теряет расширенные атрибуты и биты запуска внутри бандла,
-          # после чего .app не стартует. Без --keepParent, чтобы корень архива был плоским:
-          # архив распаковывают прямо в сетевую папку обновлений.
-          ditto -c -k --sequesterRsrc pkg-stage "pkg/SmartBase-$VER-$RID.zip"
-          # Контрольная распаковка: права переживают архивацию.
-          ditto -x -k "pkg/SmartBase-$VER-$RID.zip" /tmp/verify
+          # после чего .app не стартует. --keepParent кладёт сам бандл верхним элементом.
+          # БЕЗ --sequesterRsrc: он заводит в архиве служебную папку __MACOSX, и верхних
+          # элементов становится два — распаковка снова создаст папку-обёртку.
+          ditto -c -k --keepParent "$SETUP" "$ZIP"
+          # Контрольная распаковка: один верхний элемент, бит +x и подпись на месте.
+          # Счёт через find, а не ls: не зависит от того, чем ls подменён в окружении.
+          ditto -x -k "$ZIP" /tmp/verify
+          [ "$(find /tmp/verify -mindepth 1 -maxdepth 1 | wc -l | tr -d ' ')" = "1" ] \
+            || { echo "::error::в архиве не один элемент — распаковка создаст папку"; exit 1; }
           [ -x "/tmp/verify/SmartBase-Setup.app/Contents/MacOS/SmartBase" ] \
             || { echo "::error::после распаковки потерян бит +x"; exit 1; }
+          codesign -v "/tmp/verify/SmartBase-Setup.app" \
+            || { echo "::error::подпись не пережила упаковку"; exit 1; }
 
       - name: Упаковка — Linux
         if: runner.os == 'Linux'
         run: |
           OUT="dist/Version $VER/linux-x64"
-          mkdir -p pkg-stage pkg
-          cp "$OUT/SmartBase" "$OUT/SmartBase-Setup" LICENSE THIRD-PARTY-NOTICES.txt pkg-stage/
-          chmod +x pkg-stage/SmartBase pkg-stage/SmartBase-Setup
-          # tar, а не zip: zip теряет права, и после распаковки штатным «Извлечь» в GNOME
-          # бинарь оказывается без бита запуска.
-          tar -czf "pkg/SmartBase-$VER-linux-x64.tar.gz" -C pkg-stage .
+          TGZ="pkg/SmartBase-$VER-linux-x64.tar.gz"
+          mkdir -p pkg
+          # tar, а не zip: zip теряет бит запуска, и после распаковки штатным «Извлечь»
+          # в GNOME бинарь оказывается незапускаемым. -C + имя файла → в архиве один элемент.
+          tar -czf "$TGZ" -C "$OUT" SmartBase-Setup
           # Проверка через awk, а не «| grep -q»: grep закрывает канал на первом совпадении,
           # tar получает SIGPIPE, и pipefail роняет весь шаг при найденном совпадении.
           # awk дочитывает поток до конца, а разбор по полям не зависит от раскладки колонок.
-          tar -tvzf "pkg/SmartBase-$VER-linux-x64.tar.gz" \
-            | awk '$1 ~ /^-rwx/ && $NF ~ /SmartBase-Setup$/ { f = 1 } END { exit !f }' \
+          tar -tvzf "$TGZ" \
+            | awk '$1 ~ /^-rwx/ && $NF == "SmartBase-Setup" { f = 1 } END { exit !f }' \
             || { echo "::error::в архиве потерян бит +x"; exit 1; }
+          [ "$(tar -tzf "$TGZ" | wc -l | tr -d ' ')" = "1" ] \
+            || { echo "::error::в архиве не один элемент"; exit 1; }
 
+      # Windows-установщик кладётся как есть, без архива: это единственный файл, он
+      # запускается сразу после скачивания, и имя доезжает до пользователя нетронутым.
       - name: Упаковка — Windows
         if: runner.os == 'Windows'
         run: |
-          OUT="dist/Version $VER/win-x64"
-          mkdir -p pkg-stage pkg
-          cp "$OUT/SmartBase.exe" "$OUT/SmartBase-Setup.exe" LICENSE THIRD-PARTY-NOTICES.txt pkg-stage/
-          # 7-Zip предустановлен на runner'е и заметно быстрее Compress-Archive на 150 МБ.
-          7z a -tzip -mx=5 "pkg/SmartBase-$VER-win-x64.zip" "./pkg-stage/*" > /dev/null
-          # Без -q: grep должен дочитать вывод до конца, иначе 7z ловит SIGPIPE и pipefail
-          # роняет шаг на успешной проверке.
-          7z l "pkg/SmartBase-$VER-win-x64.zip" | grep -F "SmartBase-Setup.exe" > /dev/null \
-            || { echo "::error::установщик не попал в архив"; exit 1; }
+          mkdir -p pkg
+          cp "dist/Version $VER/win-x64/SmartBase-Setup.exe" pkg/
 
       - uses: actions/upload-artifact@v4
         with:
@@ -262,10 +282,15 @@ jobs:
           pattern: pkg-*
           merge-multiple: true     # четыре архива ложатся в одну плоскую папку
 
-      - name: Контрольные суммы
+      # LICENSE и THIRD-PARTY-NOTICES.txt едут отдельными вложениями, а не внутри архивов:
+      # требование MIT/BSD/Apache — чтобы уведомления сопровождали распространяемую копию,
+      # и файл на странице релиза его выполняет, не засоряя скачанную папку.
+      - name: Вложения и контрольные суммы
         run: |
+          cp LICENSE THIRD-PARTY-NOTICES.txt assets/
           cd assets
-          sha256sum SmartBase-* > SHA256SUMS.txt
+          sha256sum SmartBase-* LICENSE THIRD-PARTY-NOTICES.txt > SHA256SUMS.txt
+          ls -lh
           cat SHA256SUMS.txt
 
       - name: Тело релиза

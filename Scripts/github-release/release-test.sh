@@ -99,7 +99,8 @@ if [ $? -ne 0 ]; then
   bad "5. release-notes.sh завершился с ошибкой" "$notes"
 else
   miss=""
-  for marker in "## Что нового" "## Установка" "SmartBase-$VER-win-x64.zip" \
+  for marker in "## Что нового" "## Установка" "SmartBase-Setup.exe" \
+                "SmartBase-$VER-osx-arm64.zip" "SmartBase-$VER-linux-x64.tar.gz" \
                 "не подписаны" "## Автообновление" "SHA256SUMS.txt"; do
     printf '%s\n' "$notes" | grep -F "$marker" > /dev/null || miss="$miss «$marker»"
   done
