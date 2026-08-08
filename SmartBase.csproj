@@ -71,6 +71,30 @@
     <PackageReference Include="DesktopNotifications.FreeDesktop" Version="1.3.1" />
   </ItemGroup>
 
+  <!--
+    Пины транзитивных зависимостей с известными уязвимостями. Сами по себе в коде не
+    используются — прямая ссылка нужна ровно затем, чтобы поднять версию, которую тянет
+    кто-то другой: NuGet берёт наибольшую из затребованных.
+
+    Проверять актуальность: «dotnet list package» с ключами vulnerable и include-transitive
+    (два дефиса подряд в XML-комментарий вписать нельзя). Когда зависимость обновится сама —
+    например, выйдет Avalonia с новым Tmds.DBus.Protocol, — строку отсюда надо убрать,
+    а не оставлять навечно.
+  -->
+  <ItemGroup>
+    <!-- CVE-2025-6965, SQLite до 3.50.2: повреждение памяти. Тянут EF Core Sqlite и
+         Serilog.Sinks.SQLite. Уязвимы версии по 2.1.11 включительно. -->
+    <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="2.1.12" />
+    <!-- CVE-2021-24112, удалённое выполнение кода при разборе графики. Тянет
+         Microsoft.Toolkit.Uwp.Notifications (только Windows-таргет). Уязвимы 4.0.0–4.7.1. -->
+    <PackageReference Include="System.Drawing.Common" Version="4.7.2" />
+    <!-- GHSA-xrw6-gwf8-vvr9: подмена сигналов D-Bus и исчерпание дескрипторов.
+         Protocol тянет Avalonia.FreeDesktop, сам Tmds.DBus — DesktopNotifications.FreeDesktop.
+         Для Protocol достаточно 0.21.3, для Tmds.DBus исправления есть только с 0.92.0. -->
+    <PackageReference Include="Tmds.DBus.Protocol" Version="0.21.3" />
+    <PackageReference Include="Tmds.DBus" Version="0.92.0" />
+  </ItemGroup>
+
   <ItemGroup>
     <AvaloniaResource Include="Assets\**" />
   </ItemGroup>
