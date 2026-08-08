@@ -82,12 +82,12 @@ code=$?
 if [ $code -ne 0 ]; then
   # Секция под следующую версию в CHANGELOG ещё не написана — это штатное состояние
   # между релизами, а не поломка: именно её отсутствие и должно останавливать выпуск.
-  if printf '%s\n' "$out" | grep -q "CHANGELOG.md не готов"; then
+  if printf '%s\n' "$out" | grep "CHANGELOG.md не готов" > /dev/null; then
     ok "4. release.sh --dry-run $NEXT: остановлен из-за незаполненного CHANGELOG (так и задумано)"
   else
     bad "4. release.sh --dry-run $NEXT завершился с ошибкой" "$out"
   fi
-elif printf '%s\n' "$out" | grep -q "проверки пройдены"; then
+elif printf '%s\n' "$out" | grep "проверки пройдены" > /dev/null; then
   ok "4. release.sh --dry-run $NEXT: план напечатан, файлы не тронуты"
 else
   bad "4. release.sh --dry-run $NEXT не напечатал итог" "$out"
@@ -101,7 +101,7 @@ else
   miss=""
   for marker in "## Что нового" "## Установка" "SmartBase-$VER-win-x64.zip" \
                 "не подписаны" "## Автообновление" "SHA256SUMS.txt"; do
-    printf '%s\n' "$notes" | grep -qF "$marker" || miss="$miss «$marker»"
+    printf '%s\n' "$notes" | grep -F "$marker" > /dev/null || miss="$miss «$marker»"
   done
   # Незаполненные заготовки: <версия>, TODO, XXX, {{…}}. Латиница в угловых скобках не
   # ищется намеренно — в теле релиза законно встречается <details>/<summary>.
@@ -124,24 +124,35 @@ fi
 
 # ── 7. Workflow ───────────────────────────────────────────────────────────────
 WF=".github/workflows/release.yml"
+wf_problems=""
+
+# Триггеры: релиз не должен запускаться обычным push в ветку или пул-реквестом.
+if [ -f "$WF" ]; then
+  grep -q "tags:" "$WF"              || wf_problems="$wf_problems нет триггера по тегам;"
+  grep -q "workflow_dispatch:" "$WF" || wf_problems="$wf_problems нет workflow_dispatch;"
+  grep -qE "^\s+branches:" "$WF"     && wf_problems="$wf_problems ЛИШНИЙ триггер по веткам;"
+  grep -q "pull_request:" "$WF"      && wf_problems="$wf_problems ЛИШНИЙ триггер pull_request;"
+
+  # Шаги workflow идут в шелле с `-o pipefail`, где «команда | grep -q …» ломается:
+  # grep закрывает канал на первом совпадении, источник получает SIGPIPE и падает, и шаг
+  # объявляется неуспешным ИМЕННО ПОТОМУ, что совпадение нашлось. На этом уже сломалась
+  # сборка linux-x64 в прогоне #1. В конвейере grep должен дочитывать поток: без -q,
+  # с перенаправлением в /dev/null, либо awk.
+  # Строки-комментарии пропускаем: в них конструкция упоминается как раз для объяснения.
+  if grep -nE '^[[:space:]]*[^#[:space:]].*\|[[:space:]]*grep[[:space:]]+-[A-Za-z]*q' "$WF" > /dev/null; then
+    wf_problems="$wf_problems «| grep -q» ломается о pipefail — уберите -q;"
+  fi
+fi
+
 if [ ! -f "$WF" ]; then
   bad "7. Нет файла $WF"
+elif [ -n "$wf_problems" ]; then
+  bad "7. Проблемы в $WF" "$wf_problems"
 elif command -v actionlint >/dev/null 2>&1; then
   out="$(actionlint "$WF" 2>&1)"
   [ $? -eq 0 ] && ok "7. actionlint: $WF без замечаний" || bad "7. actionlint нашёл проблемы" "$out"
 else
-  # actionlint не установлен (brew install actionlint) — проверяем хотя бы то, что триггеры
-  # именно такие, как задумано: релиз не должен запускаться обычным push в ветку.
-  miss=""
-  grep -q "tags:" "$WF"             || miss="$miss триггер по тегам"
-  grep -q "workflow_dispatch:" "$WF" || miss="$miss workflow_dispatch"
-  grep -qE "^\s+branches:" "$WF"     && miss="$miss ЛИШНИЙ триггер по веткам"
-  grep -q "pull_request:" "$WF"      && miss="$miss ЛИШНИЙ триггер pull_request"
-  if [ -z "$miss" ]; then
-    skip "7. actionlint не установлен; триггеры проверены вручную — только теги и ручной запуск"
-  else
-    bad "7. Триггеры workflow не те, что задуманы:$miss"
-  fi
+  skip "7. actionlint не установлен; триггеры и конвейеры проверены вручную"
 fi
 
 # ── 8. Отделяемость модуля ────────────────────────────────────────────────────

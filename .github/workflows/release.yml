@@ -63,7 +63,7 @@ jobs:
         env:
           RAW_TAG: ${{ inputs.tag || github.ref_name }}
         run: |
-          if ! printf '%s' "$RAW_TAG" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+          if ! printf '%s' "$RAW_TAG" | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' > /dev/null; then
             echo "::error::Тег «$RAW_TAG» не в формате vX.Y.Z"
             exit 1
           fi
@@ -171,7 +171,7 @@ jobs:
           OUT="dist/Version $VER/linux-x64"
           [ -x "$OUT/SmartBase" ] && [ -x "$OUT/SmartBase-Setup" ] \
             || { echo "::error::нет исполняемых файлов"; exit 1; }
-          file "$OUT/SmartBase" | grep -q ELF || { echo "::error::это не ELF"; exit 1; }
+          file "$OUT/SmartBase" | grep ELF > /dev/null || { echo "::error::это не ELF"; exit 1; }
           SIZE="$(stat -c%s "$OUT/SmartBase")"
           [ "$SIZE" -gt 52428800 ] || { echo "::error::слишком маленький бинарь: $SIZE байт"; exit 1; }
           # Точной проверки версии на Linux нет: у single-file ELF нет штатных метаданных
@@ -212,7 +212,11 @@ jobs:
           # tar, а не zip: zip теряет права, и после распаковки штатным «Извлечь» в GNOME
           # бинарь оказывается без бита запуска.
           tar -czf "pkg/SmartBase-$VER-linux-x64.tar.gz" -C pkg-stage .
-          tar -tvzf "pkg/SmartBase-$VER-linux-x64.tar.gz" | grep -qE '^-rwx.*SmartBase-Setup$' \
+          # Проверка через awk, а не «| grep -q»: grep закрывает канал на первом совпадении,
+          # tar получает SIGPIPE, и pipefail роняет весь шаг при найденном совпадении.
+          # awk дочитывает поток до конца, а разбор по полям не зависит от раскладки колонок.
+          tar -tvzf "pkg/SmartBase-$VER-linux-x64.tar.gz" \
+            | awk '$1 ~ /^-rwx/ && $NF ~ /SmartBase-Setup$/ { f = 1 } END { exit !f }' \
             || { echo "::error::в архиве потерян бит +x"; exit 1; }
 
       - name: Упаковка — Windows
@@ -223,7 +227,9 @@ jobs:
           cp "$OUT/SmartBase.exe" "$OUT/SmartBase-Setup.exe" LICENSE THIRD-PARTY-NOTICES.txt pkg-stage/
           # 7-Zip предустановлен на runner'е и заметно быстрее Compress-Archive на 150 МБ.
           7z a -tzip -mx=5 "pkg/SmartBase-$VER-win-x64.zip" "./pkg-stage/*" > /dev/null
-          7z l "pkg/SmartBase-$VER-win-x64.zip" | grep -q "SmartBase-Setup.exe" \
+          # Без -q: grep должен дочитать вывод до конца, иначе 7z ловит SIGPIPE и pipefail
+          # роняет шаг на успешной проверке.
+          7z l "pkg/SmartBase-$VER-win-x64.zip" | grep -F "SmartBase-Setup.exe" > /dev/null \
             || { echo "::error::установщик не попал в архив"; exit 1; }
 
       - uses: actions/upload-artifact@v4
