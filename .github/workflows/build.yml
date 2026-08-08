@@ -7,6 +7,10 @@
 # перематывает ветку `ci`; удалённый репозиторий `actions` заводит Scripts/ci/setup-remote.sh,
 # один раз в копии репозитория.
 #
+# Ветка `ci` живёт только на время прогона: GitHub умеет ловить push ветки или тега и ничего
+# больше, поэтому без неё запуска не сделать, — но последний job её удаляет, и в репозитории
+# постоянно висит одна main. Все checkout'ы поэтому пришпилены к github.sha, а не к ссылке.
+#
 # С выпуском релиза не пересекается ни во времени, ни по файлам:
 #   • выпуск пушит main и тег `v*` — под фильтр `branches: [ci]` не подпадает ни то, ни другое;
 #   • отсюда не вызывается ни один скрипт репозитория, только `dotnet` и `psql`.
@@ -61,7 +65,12 @@ jobs:
           # SkiaSharp. Образ рано или поздно выведут — тогда убрать эту строку.
           - { os: macos-13,       name: macOS Intel }
     steps:
+      # Пришпилено к коммиту, а не к ссылке: ветка `ci` удаляется в конце прогона, и checkout
+      # по `refs/heads/ci` стал бы зависеть от того, кто успел раньше. Коммит же остаётся
+      # достижим из main всегда.
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
 
       - uses: actions/setup-dotnet@v4
         with:
@@ -111,7 +120,12 @@ jobs:
           --health-timeout 5s
           --health-retries 10
     steps:
+      # Пришпилено к коммиту, а не к ссылке: ветка `ci` удаляется в конце прогона, и checkout
+      # по `refs/heads/ci` стал бы зависеть от того, кто успел раньше. Коммит же остаётся
+      # достижим из main всегда.
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
 
       - uses: actions/setup-dotnet@v4
         with:
@@ -149,7 +163,12 @@ jobs:
     name: Вспомогательные проекты
     runs-on: ubuntu-latest
     steps:
+      # Пришпилено к коммиту, а не к ссылке: ветка `ci` удаляется в конце прогона, и checkout
+      # по `refs/heads/ci` стал бы зависеть от того, кто успел раньше. Коммит же остаётся
+      # достижим из main всегда.
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
 
       - uses: actions/setup-dotnet@v4
         with:
@@ -160,3 +179,36 @@ jobs:
           dotnet build Tests/Benchmarks   --configuration Release
           dotnet build Tests/DbGenerator  --configuration Release
           dotnet build Tests/MultiProcess --configuration Release
+
+  # ── Уборка служебной ветки ──────────────────────────────────────────────────
+  # Ветка `ci` нужна ровно затем, чтобы у запуска был сигнал: GitHub ловит push ветки или тега
+  # и ничего больше. Существовать после прогона ей незачем — в репозитории должна оставаться
+  # одна main.
+  #
+  # Единственный job с правом записи, и право узкое: удалить одну ссылку. Ни релиз, ни код,
+  # ни настройки ему недоступны.
+  cleanup:
+    name: Убрать ветку ci
+    needs: [test, postgres, tools]
+    # always(): ветка должна исчезнуть и после красного прогона, и после отменённого — иначе
+    # ровно неудачные запуски и оставляли бы за собой мусор.
+    # Проверка ссылки: при ручном запуске с main удалять нечего и не нужно.
+    if: always() && github.ref == 'refs/heads/ci'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      # Через API, а не `git push --delete`: checkout здесь не нужен вовсе — ни одного файла
+      # репозитория этот job не читает.
+      - name: Удалить ветку
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/heads/ci" 2>err.log; then
+            echo "ветка ci удалена"
+          else
+            # Не ошибка: ветку мог уже убрать предыдущий прогон, отменённый по concurrency.
+            # Валить из-за этого зелёную проверку кода нельзя — предупреждения достаточно,
+            # а следующий `git push actions` пересоздаст ветку и уберёт её снова.
+            echo "::warning::не удалось удалить ветку ci: $(cat err.log)"
+          fi
