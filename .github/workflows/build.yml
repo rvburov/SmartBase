@@ -50,6 +50,7 @@ jobs:
   test:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
     strategy:
       # Без fail-fast: упавшая платформа не отменяет остальные, иначе за прогон видно одну
       # поломку из четырёх — а смысл прогона ровно в том, чтобы увидеть все сразу.
@@ -59,11 +60,14 @@ jobs:
           - { os: ubuntu-latest,  name: Linux }
           - { os: windows-latest, name: Windows }
           - { os: macos-latest,   name: macOS Apple Silicon }
-          # Последний Intel-образ GitHub. Единственное место, где код вообще ЗАПУСКАЕТСЯ под
-          # x86_64-macOS: сборка osx-x64 в релизе кросс-компилируется на arm64-раннере, и там
-          # проверяется только архитектура бинаря. Здесь под x64 работают нативные SQLite и
-          # SkiaSharp. Образ рано или поздно выведут — тогда убрать эту строку.
-          - { os: macos-13,       name: macOS Intel }
+          # Единственное место, где код вообще ЗАПУСКАЕТСЯ под x86_64-macOS: сборка osx-x64
+          # в релизе кросс-компилируется на arm64-раннере, и там проверяется только архитектура
+          # бинаря. Здесь под x64 работают нативные SQLite и SkiaSharp.
+          #
+          # Метка macos-15-intel, а НЕ macos-13: тот образ GitHub вывел в декабре 2025, и job
+          # с ним не падает, а бесконечно висит в очереди — раннера с такой меткой просто нет.
+          # Нынешняя метка живёт до августа 2027, дальше Intel-раннеров у GitHub не будет вовсе.
+          - { os: macos-15-intel, name: macOS Intel }
     steps:
       # Пришпилено к коммиту, а не к ссылке: ветка `ci` удаляется в конце прогона, и checkout
       # по `refs/heads/ci` стал бы зависеть от того, кто успел раньше. Коммит же остаётся
@@ -106,6 +110,7 @@ jobs:
   postgres:
     name: PostgreSQL
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     services:
       postgres:
         image: postgres:16
@@ -162,6 +167,7 @@ jobs:
   tools:
     name: Вспомогательные проекты
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       # Пришпилено к коммиту, а не к ссылке: ветка `ci` удаляется в конце прогона, и checkout
       # по `refs/heads/ci` стал бы зависеть от того, кто успел раньше. Коммит же остаётся
@@ -195,6 +201,7 @@ jobs:
     # Проверка ссылки: при ручном запуске с main удалять нечего и не нужно.
     if: always() && github.ref == 'refs/heads/ci'
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     permissions:
       contents: write
     steps:

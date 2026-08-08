@@ -129,7 +129,7 @@ fi
 
 # ── 6. Покрыты все операционные системы ───────────────────────────────────────
 prob=()
-for r in "ubuntu-latest" "windows-latest" "macos-latest" "macos-13"; do
+for r in "ubuntu-latest" "windows-latest" "macos-latest" "macos-15-intel"; do
   grep -qF "$r" <<< "$WF_CODE" || prob+=("в матрице нет $r")
 done
 [ ${#prob[@]} -eq 0 ] \
