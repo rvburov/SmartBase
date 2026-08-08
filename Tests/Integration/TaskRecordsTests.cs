@@ -302,7 +302,7 @@ public sealed class TaskRecordsTests
         Assert.False(assignerField.IsTaskExec,
                      "«Назначил» не может быть одновременно исполнителем: это два разных человека");
 
-        var execField = Assert.Single(fields.Where(f => f.IsTaskExec));
+        var execField = Assert.Single(fields, f => f.IsTaskExec);
         Assert.NotEqual(assignerField.Id, execField.Id);
 
         var task = Assert.Single(repo.GetTaskRecords());

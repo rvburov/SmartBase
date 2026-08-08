@@ -133,7 +133,7 @@ public sealed class FieldTypeMatrixTests
 
         // Повторное «обеспечение» коллекции задачами не плодит второй «Статус».
         repo.EnsureTaskCollection(col.Id!.Value);
-        Assert.Single(repo.GetFields(col.Id!.Value).Where(f => f.IsTaskStatus));
+        Assert.Single(repo.GetFields(col.Id!.Value), f => f.IsTaskStatus);
     }
 
     [Fact]

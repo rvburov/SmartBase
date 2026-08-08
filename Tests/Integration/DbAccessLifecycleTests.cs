@@ -421,16 +421,16 @@ public sealed class DbAccessLifecycleTests
             using var check = new AppDbContext(db.Path);
             var userRows = check.ChangeLog.Where(e => e.Action.StartsWith("user.")).ToList();
 
-            var approve = Assert.Single(userRows.Where(e => e.Action == "user.approve"));
+            var approve = Assert.Single(userRows, e => e.Action == "user.approve");
             Assert.Equal("Иванов Иван", approve.TargetName);
 
-            var revoke = Assert.Single(userRows.Where(e => e.Action == "user.revoke"));
+            var revoke = Assert.Single(userRows, e => e.Action == "user.revoke");
             Assert.Equal("Иванов Иван", revoke.TargetName);
 
-            var rights = Assert.Single(userRows.Where(e => e.Action == "user.rights"));
+            var rights = Assert.Single(userRows, e => e.Action == "user.rights");
             Assert.Equal("Иванов Иван", rights.TargetName);
 
-            var rename = Assert.Single(userRows.Where(e => e.Action == "user.rename"));
+            var rename = Assert.Single(userRows, e => e.Action == "user.rename");
             Assert.Equal(newName, rename.TargetName);
             Assert.NotNull(rename.Detail);
             Assert.Contains(oldName, rename.Detail);   // «было → стало» читается целиком

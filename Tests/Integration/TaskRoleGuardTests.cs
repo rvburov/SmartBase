@@ -71,7 +71,7 @@ public sealed class TaskRoleGuardTests
 
         var fields   = repo.GetFields(col);
         var assigner = fields.Single(f => string.Equals(f.Name, name, StringComparison.OrdinalIgnoreCase));
-        var exec     = Assert.Single(fields.Where(f => f.IsTaskExec));
+        var exec     = Assert.Single(fields, f => f.IsTaskExec);
 
         Assert.True(assigner.IsTaskAssigner);
         Assert.False(assigner.IsTaskExec);
@@ -116,7 +116,7 @@ public sealed class TaskRoleGuardTests
 
         // Единственное user-поле коллекции занято ролью статуса — усыновлять его нельзя,
         // заводится собственный «Исполнитель».
-        var exec = Assert.Single(repo.GetFields(col).Where(f => f.IsTaskExec));
+        var exec = Assert.Single(repo.GetFields(col), f => f.IsTaskExec);
         Assert.NotEqual(field, exec.Id);
         Assert.Equal("Иванов Иван", ValueOf(repo, Assert.Single(repo.GetTaskRecords()).Id!.Value, exec.Id!.Value));
     }
@@ -234,7 +234,7 @@ public sealed class TaskRoleGuardTests
                 Assert.False(execField.IsTaskAssigner);
 
                 // …а «Назначил» — снова отдельное поле.
-                var assigner = Assert.Single(fields.Where(f => f.IsTaskAssigner));
+                var assigner = Assert.Single(fields, f => f.IsTaskAssigner);
                 Assert.NotEqual(exec, assigner.Id);
                 Assert.Equal("Назначил", assigner.Name);
                 Assert.Equal("user", assigner.FieldType);
