@@ -72,11 +72,14 @@ jobs:
       # Пришпилено к коммиту, а не к ссылке: ветка `ci` удаляется в конце прогона, и checkout
       # по `refs/heads/ci` стал бы зависеть от того, кто успел раньше. Коммит же остаётся
       # достижим из main всегда.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           ref: ${{ github.sha }}
 
-      - uses: actions/setup-dotnet@v4
+      # Версии v5 у обоих действий, а не v4: те собраны под Node 20, который GitHub объявил
+      # устаревшим, и раннер уже принудительно гонит их на Node 24, ругаясь в каждый прогон.
+      # v5 собраны под Node 24 штатно.
+      - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: '10.0.x'
           # cache НЕ включаем: он выставляет NUGET_PACKAGES и перебивает globalPackagesFolder
@@ -128,11 +131,11 @@ jobs:
       # Пришпилено к коммиту, а не к ссылке: ветка `ci` удаляется в конце прогона, и checkout
       # по `refs/heads/ci` стал бы зависеть от того, кто успел раньше. Коммит же остаётся
       # достижим из main всегда.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           ref: ${{ github.sha }}
 
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: '10.0.x'
 
@@ -172,11 +175,11 @@ jobs:
       # Пришпилено к коммиту, а не к ссылке: ветка `ci` удаляется в конце прогона, и checkout
       # по `refs/heads/ci` стал бы зависеть от того, кто успел раньше. Коммит же остаётся
       # достижим из main всегда.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           ref: ${{ github.sha }}
 
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: '10.0.x'
 
