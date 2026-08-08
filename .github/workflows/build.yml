@@ -1,0 +1,159 @@
+# Полная проверка кода на всех операционных системах: сборка, тесты, живой PostgreSQL.
+#
+# Запускается ТОЛЬКО по команде — пушем ветки `ci` или кнопкой на вкладке Actions.
+# Обычный `git push` не запускает ничего: триггера на main здесь нет намеренно.
+# Команда на стороне разработчика — `git push actions` (настраивается Scripts/ci/setup-remote.sh).
+#
+# С выпуском релиза не пересекается ни во времени, ни по файлам:
+#   • выпуск пушит main и тег `v*` — под фильтр `branches: [ci]` не подпадает ни то, ни другое;
+#   • отсюда не вызывается ни один скрипт репозитория, только `dotnet` и `psql`.
+# Поэтому любой из двух модулей удаляется, не задевая другой.
+#
+# Описание и порядок удаления — docs/developer/guides/ci.md.
+name: Build
+
+on:
+  push:
+    branches: [ci]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Отправили ветку `ci` второй раз, пока идёт первый прогон, — старый отменяется, проверяется
+# только последний код. Отменять здесь безопасно: прогон ничего не публикует и никуда не пишет.
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DOTNET_NOLOGO: 'true'
+  DOTNET_CLI_TELEMETRY_OPTOUT: 'true'
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: 'true'
+
+# Явный `shell: bash` на весь файл, а не только ради одинакового шелла на трёх ОС. Умолчание
+# GitHub — `bash -e`, БЕЗ pipefail: в шаге `dotnet test … | tee` код возврата взялся бы от tee,
+# и упавшие тесты уехали бы в зелёный прогон. С этой строкой шелл везде `bash -eo pipefail`.
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  # ── Сборка и тесты на каждой операционной системе ───────────────────────────
+  test:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # Без fail-fast: упавшая платформа не отменяет остальные, иначе за прогон видно одну
+      # поломку из четырёх — а смысл прогона ровно в том, чтобы увидеть все сразу.
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest,  name: Linux }
+          - { os: windows-latest, name: Windows }
+          - { os: macos-latest,   name: macOS Apple Silicon }
+          # Последний Intel-образ GitHub. Единственное место, где код вообще ЗАПУСКАЕТСЯ под
+          # x86_64-macOS: сборка osx-x64 в релизе кросс-компилируется на arm64-раннере, и там
+          # проверяется только архитектура бинаря. Здесь под x64 работают нативные SQLite и
+          # SkiaSharp. Образ рано или поздно выведут — тогда убрать эту строку.
+          - { os: macos-13,       name: macOS Intel }
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+          # cache НЕ включаем: он выставляет NUGET_PACKAGES и перебивает globalPackagesFolder
+          # из nuget.config — поведение CI разошлось бы с локальным. Плата — restore на каждом
+          # прогоне, примерно полторы минуты.
+
+      # Собираются ОБА таргета — net10.0 и net10.0-windows10.0.17763. Второй нужен ради нативных
+      # тостов и на Linux с macOS компилируется благодаря EnableWindowsTargeting. Тесты его не
+      # трогают (Tests/* ссылаются на базовый net10.0), поэтому шаг отдельный.
+      #
+      # Публикации (single-file, self-contained) здесь нет намеренно: упаковка продукта — работа
+      # выпуска релиза, а не проверки кода.
+      - name: Сборка приложения
+        run: dotnet build SmartBase.csproj --configuration Release
+
+      # Прогон идёт на ЧИСТОМ checkout — без artifacts/, без packages/ и без iCloud. Локально
+      # `dotnet build` умеет отрапортовать «Ошибок: 0», ничего не перекомпилировав: iCloud
+      # откатывает время файлов, и MSBuild считает сборку свежей. Здесь это невозможно.
+      - name: Модульные тесты
+        run: dotnet test Tests/Unit --configuration Release --logger 'console;verbosity=minimal'
+
+      # PostgreSQL-стенд здесь не поднимаем — контейнеры-сервисы работают только на Linux-раннерах.
+      # Тесты провайдера сами уходят в Skipped (Tests/Integration/PgTestServer.cs проверяет
+      # localhost:5455), а по-настоящему их гоняет отдельный job ниже.
+      - name: Интеграционные тесты
+        run: dotnet test Tests/Integration --configuration Release --logger 'console;verbosity=minimal'
+
+  # ── Тесты провайдера PostgreSQL на живой базе ───────────────────────────────
+  # Единственное место, где эти девять тестов вообще выполняются: локально нужен поднятый
+  # docker-контейнер, а на остальных раннерах сервисы недоступны.
+  postgres:
+    name: PostgreSQL
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        # 5455 снаружи — тот же порт, что у локального стенда, чтобы тесты не знали разницы
+        # и в коде не заводилось второй настройки.
+        ports: ['5455:5432']
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      # Контейнер поднимается с одной базой postgres; тестам нужны две рабочие.
+      - name: Базы стенда
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h localhost -p 5455 -U postgres -c 'CREATE DATABASE smartbase'
+          psql -h localhost -p 5455 -U postgres -c 'CREATE DATABASE smartbase2'
+
+      # Фильтр по классу, а не весь набор: остальное уже прогнано матрицей на четырёх ОС,
+      # повторять его здесь — впустую жечь минуты.
+      - name: Тесты провайдера
+        run: |
+          dotnet test Tests/Integration --configuration Release \
+            --filter 'FullyQualifiedName~PgProviderTests' \
+            --logger 'console;verbosity=minimal' | tee pg.log
+
+      # Без этой проверки job был бы зелёным и в том случае, когда база не поднялась: тесты
+      # помечены SkippableFact и молча уходят в Skipped. Зелёный прогон, не проверивший ничего,
+      # хуже красного.
+      - name: Убедиться, что тесты не пропущены
+        run: |
+          grep -qE 'Skipped: *0' pg.log \
+            || { echo "::error::тесты PostgreSQL ушли в Skipped — база не поднялась"; exit 1; }
+
+  # ── Вспомогательные проекты ─────────────────────────────────────────────────
+  # Генератор стенда, бенчмарки и многопроцессный харнесс в приложение не входят и обычной
+  # сборкой не затрагиваются. Из-за этого они тихо гниют: правка в модели ломает их, и это
+  # выясняется через полгода, когда стенд понадобился срочно. Один Linux-раннер, четыре минуты.
+  tools:
+    name: Вспомогательные проекты
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Сборка
+        run: |
+          dotnet build Tests/Benchmarks   --configuration Release
+          dotnet build Tests/DbGenerator  --configuration Release
+          dotnet build Tests/MultiProcess --configuration Release

@@ -463,8 +463,9 @@ variables → Actions**, два шага в `release.yml` после сборк�
 
 ### Прочее
 
-- **CI на каждый push** — отдельный `build.yml`: сборка и тесты на каждый коммит, зелёный бейдж
-  в README. Сознательно не делали: задача была развести релиз и обычный push.
+- **Полная проверка кода на всех ОС** — сделана, но отдельным независимым модулем: свой workflow,
+  свой гайд, свои тесты, ни одного общего файла с этим. Запускается не на каждый push, а
+  по команде, и с выпуском не пересекается — её триггер не ловит ни main, ни теги.
 - **Шаблоны issue** — форма «версия / ОС / что делали» появится, когда появятся пользователи.
 - **PostgreSQL в гейте** — тесты провайдера уходят в Skipped. Поднять `services: postgres`
   можно, но это минута на прогон ради кода, который в релизной сборке не меняется.
@@ -472,10 +473,14 @@ variables → Actions**, два шага в `release.yml` после сборк�
 ## Как удалить модуль
 
 ```bash
-rm -rf .github Scripts/github-release
-rm docs/developer/guides/release.md CHANGELOG.md
-git status --porcelain     # только строки «D» — ни одного «M»
+rm -rf Scripts/github-release
+rm .github/workflows/release.yml docs/developer/guides/release.md CHANGELOG.md
+rmdir -p .github/workflows 2>/dev/null   # если других workflow не осталось
+git status --porcelain                   # только строки «D» — ни одного «M»
 ```
+
+Удаляется именно `workflows/release.yml`, а не папка `.github` целиком: рядом может лежать
+чужой workflow, и `rm -rf .github` унёс бы его вместе с релизным модулем.
 
 Проект возвращается в состояние байт в байт: модуль не менял ни одного существующего файла и
 ничто вне него на модуль не ссылается (проверка 8 в `release-test.sh` следит именно за этим).
