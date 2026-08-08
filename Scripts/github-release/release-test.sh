@@ -103,7 +103,7 @@ else
   for marker in "## Что нового" "## Установка" "### Первый запуск" "SmartBase-Setup.exe" \
                 "SmartBase-$VER-osx-arm64.dmg" "SmartBase-$VER-linux-x64.tar.gz" \
                 "Все равно открыть" "Выполнить в любом случае" \
-                "## Автообновление" "SHA256SUMS.txt"; do
+                "## Автообновление" "## Лицензия"; do
     printf '%s\n' "$notes" | grep -F "$marker" > /dev/null || miss="$miss «$marker»"
   done
   # Незаполненные заготовки: <версия>, TODO, XXX, {{…}}. Латиница в угловых скобках не

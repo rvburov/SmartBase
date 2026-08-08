@@ -5,20 +5,16 @@
 #   Scripts/github-release/release-notes.sh 1.0.4              # посмотреть, что получится
 #   Scripts/github-release/release-notes.sh 1.0.4 > notes.md   # так вызывает workflow
 #
-# Состав: описание версии из CHANGELOG.md → как поставить → предупреждение о неподписанных
-# бинарниках → как обновить сетевую папку → контрольные суммы → полный список коммитов
-# под спойлером.
+# Состав: описание версии из CHANGELOG.md → какой файл качать → что нажать при первом
+# запуске → как обновить сетевую папку → лицензия. Ничего лишнего: страница релиза — это
+# место, где человек скачивает программу, а не читает отчёт о работе.
 #
-# Список коммитов берётся у GitHub API (эндпоинт releases/generate-notes), а не флагом
-# `gh release create --generate-notes`: так текст собирается здесь и целиком виден в этом
-# файле, а не зависит от того, как конкретная версия gh склеит его со своим шаблоном.
-# Без GH_TOKEN блок просто опускается — скрипт остаётся запускаемым локально.
+# Сети и gh не требует: собирается целиком из файлов репозитория.
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 CHANGELOG="$ROOT/CHANGELOG.md"
 VERSION="${1:-}"
-REPO="${GITHUB_REPOSITORY:-rvburov/SmartBase}"
 
 [ -n "$VERSION" ] || { echo "Использование: release-notes.sh <версия>" >&2; exit 1; }
 [ -f "$CHANGELOG" ] || { echo "Нет файла CHANGELOG.md" >&2; exit 1; }
@@ -27,6 +23,10 @@ REPO="${GITHUB_REPOSITORY:-rvburov/SmartBase}"
 BODY="$(awk -v v="${VERSION//./\\.}" '
   $0 ~ "^## \\[" v "\\]" { found = 1; next }
   found && /^## \[/      { exit }
+  # Сноски-ссылки в конце файла («[1.0.3]: https://…») — часть разметки CHANGELOG, а не
+  # описания версии. Секция самой свежей версии идёт последней, и без этой строки они
+  # каждый раз утекали бы в тело релиза.
+  found && /^\[[^]]*\]:/ { next }
   found                  { print }
 ' "$CHANGELOG")"
 
@@ -87,29 +87,11 @@ cat <<EOF
 Чтобы обновить пользователей, распакуйте архив в эту папку так, чтобы \`SmartBase-Setup*\`
 оказался **в её корне**. Подробности — \`docs/developer/guides/auto-update.md\`.
 
-## Контрольные суммы
-
-\`SHA256SUMS.txt\` во вложениях. Проверка: \`sha256sum -c SHA256SUMS.txt\` (Linux, macOS)
-или \`Get-FileHash файл\` (Windows).
-
 ## Лицензия
 
 Apache-2.0. \`LICENSE\` и \`THIRD-PARTY-NOTICES.txt\` — отдельными файлами во вложениях,
 чтобы не мешаться в скачиваемом архиве.
 EOF
 
-# ── Полный список коммитов ────────────────────────────────────────────────────
-# GitHub сам находит предыдущий тег; для самого первого релиза previous_tag_name не
-# передаётся — эндпоинт корректно отдаёт всё от начала истории.
-if [ -n "${GH_TOKEN:-${GITHUB_TOKEN:-}}" ] && command -v gh >/dev/null 2>&1; then
-  COMMITS="$(gh api --method POST "repos/$REPO/releases/generate-notes" \
-    -f tag_name="v$VERSION" --jq .body 2>/dev/null)"
-  if [ -n "$COMMITS" ]; then
-    echo
-    echo "<details><summary>Все изменения</summary>"
-    echo
-    printf '%s\n' "$COMMITS"
-    echo
-    echo "</details>"
-  fi
-fi
+# Списка коммитов в теле нет намеренно: что изменилось — сказано человеческим языком
+# в разделе выше, а полная история и так на расстоянии одной ссылки со страницы релиза.

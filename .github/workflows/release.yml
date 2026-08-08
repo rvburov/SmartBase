@@ -331,13 +331,13 @@ jobs:
       # LICENSE и THIRD-PARTY-NOTICES.txt едут отдельными вложениями, а не внутри архивов:
       # требование MIT/BSD/Apache — чтобы уведомления сопровождали распространяемую копию,
       # и файл на странице релиза его выполняет, не засоряя скачанную папку.
-      - name: Вложения и контрольные суммы
+      #
+      # Файла с контрольными суммами нет намеренно: GitHub сам показывает sha256 рядом
+      # с каждым вложением релиза, и отдельный SHA256SUMS.txt только дублировал бы его.
+      - name: Вложения
         run: |
           cp LICENSE THIRD-PARTY-NOTICES.txt assets/
-          cd assets
-          sha256sum SmartBase-* LICENSE THIRD-PARTY-NOTICES.txt > SHA256SUMS.txt
-          ls -lh
-          cat SHA256SUMS.txt
+          ls -lh assets/
 
       - name: Тело релиза
         run: bash Scripts/github-release/release-notes.sh "$VER" > notes.md
