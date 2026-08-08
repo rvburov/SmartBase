@@ -75,6 +75,10 @@ public sealed class DatabaseRegistry : IDisposable, ISettingsDatabase
             while (r.Read()) have.Add(r.GetString(1));
         }
 
+        // EF1002 «возможная SQL-инъекция»: имя и тип колонки берутся из списка прямо над этой
+        // строкой, значений от пользователя в запросе нет. Параметром имя колонки сделать
+        // нельзя — это идентификатор, а не значение.
+        #pragma warning disable EF1002
         foreach (var (name, type) in new[]
         {
             ("PgHost", "TEXT"), ("PgPort", "INTEGER"), ("PgDatabase", "TEXT"),
@@ -83,6 +87,7 @@ public sealed class DatabaseRegistry : IDisposable, ISettingsDatabase
             if (!have.Contains(name))
                 db.Database.ExecuteSqlRaw(
                     $"ALTER TABLE \"databases\" ADD COLUMN \"{name}\" {type} NULL;");
+        #pragma warning restore EF1002
     }
 
     // ── Настройки приложения (ISettingsDatabase поверх app.db) ──────────────────

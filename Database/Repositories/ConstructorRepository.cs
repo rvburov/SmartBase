@@ -492,9 +492,15 @@ public partial class ConstructorRepository(AppDbContext db)
     // переиспользует — фантомные настройки достались бы будущей коллекции с тем же id.
     private void DeleteCollectionUiRows(int collectionId)
     {
+        // EF1002 «возможная SQL-инъекция»: в строку подставляются только целые идентификаторы
+        // и имена таблиц, заданные здесь же в коде. Значений от пользователя в ней нет — те
+        // уходят параметрами. Сырой SQL намеренно: пакетные DELETE и INSERT…SELECT на тысячах
+        // строк параметрами не выражаются.
+        #pragma warning disable EF1002
         foreach (var t in new[] { "ui_row_heights", "record_display", "ui_col_widths",
                                   "ui_collection_settings", "column_meta" })
             db.Database.ExecuteSqlRaw($"DELETE FROM {t} WHERE CollectionId = {collectionId}");
+        #pragma warning restore EF1002
     }
 
     // Id всех групп ветки (сама группа + потомки на любой глубине). Один проход по таблице групп.
@@ -896,12 +902,18 @@ public partial class ConstructorRepository(AppDbContext db)
             var end   = DeleteBatchEndId(collectionId, prevId, batchSize);
             var slice = $"CollectionId = {collectionId} AND Id > {prevId}" + (end is int u ? $" AND Id <= {u}" : "");
             var ids   = $"(SELECT Id FROM db_records WHERE {slice})";
+            // EF1002 «возможная SQL-инъекция»: в строку подставляются только целые идентификаторы
+            // и имена таблиц, заданные здесь же в коде. Значений от пользователя в ней нет — те
+            // уходят параметрами. Сырой SQL намеренно: пакетные DELETE и INSERT…SELECT на тысячах
+            // строк параметрами не выражаются.
+            #pragma warning disable EF1002
             db.Database.ExecuteSqlRaw($"DELETE FROM db_field_values WHERE RecordId IN {ids}");
             db.Database.ExecuteSqlRaw($"DELETE FROM calendar_index  WHERE RecordId IN {ids}");
             // Входящие связи в этой же БД на удаляемые записи (в т.ч. из других коллекций): FK на
             // ToRecordId снят — чистим явно. Исходящие уходят каскадом FromRecordId с db_records.
             db.Database.ExecuteSqlRaw($"DELETE FROM db_record_links WHERE TargetDbId = 0 AND ToRecordId IN {ids}");
             db.Database.ExecuteSqlRaw($"DELETE FROM db_records WHERE {slice}");
+            #pragma warning restore EF1002
             tx.Commit();
 
             if (end is not int e) break;   // последний (неполный) пакет удалён
@@ -1075,6 +1087,11 @@ public partial class ConstructorRepository(AppDbContext db)
                             (upper is { } u ? $" AND (Position < {u.Pos} OR (Position = {u.Pos} AND Id <= {u.Id}))" : "");
                 var rank = $@"(SELECT Id AS old_id, ROW_NUMBER() OVER (ORDER BY Position, Id) AS rn
                               FROM db_records WHERE CollectionId = {srcCollectionId} AND {slice}) r";
+                // EF1002 «возможная SQL-инъекция»: в строку подставляются только целые идентификаторы
+                // и имена таблиц, заданные здесь же в коде. Значений от пользователя в ней нет — те
+                // уходят параметрами. Сырой SQL намеренно: пакетные DELETE и INSERT…SELECT на тысячах
+                // строк параметрами не выражаются.
+                #pragma warning disable EF1002
                 db.Database.ExecuteSqlRaw($@"
                     INSERT INTO db_field_values (RecordId, FieldId, Value)
                     SELECT {bbase} + r.rn - 1, fm.new_fid, fv.Value
@@ -1087,6 +1104,7 @@ public partial class ConstructorRepository(AppDbContext db)
                     FROM calendar_index ci
                     JOIN {rank} ON r.old_id = ci.RecordId
                     JOIN _dup_fmap fm ON fm.old_fid = ci.FieldId");
+                #pragma warning restore EF1002
             }
 
             int prevPos = int.MinValue, prevId = 0, processed = 0;
@@ -1187,12 +1205,18 @@ public partial class ConstructorRepository(AppDbContext db)
             db.Database.ExecuteSqlInterpolated($"INSERT INTO _dup_fmap(old_fid, new_fid) VALUES ({oldFid}, {newFid})");
 
         db.Database.ExecuteSqlRaw("DROP TABLE IF EXISTS _dup_rmap");
+        // EF1002 «возможная SQL-инъекция»: в строку подставляются только целые идентификаторы
+        // и имена таблиц, заданные здесь же в коде. Значений от пользователя в ней нет — те
+        // уходят параметрами. Сырой SQL намеренно: пакетные DELETE и INSERT…SELECT на тысячах
+        // строк параметрами не выражаются.
+        #pragma warning disable EF1002
         db.Database.ExecuteSqlRaw($@"
             CREATE TEMP TABLE _dup_rmap AS
             SELECT Id AS old_id,
                    nextval(pg_get_serial_sequence('db_records', 'id')) AS new_id,
                    ROW_NUMBER() OVER (ORDER BY Position, Id) AS rn
             FROM db_records WHERE CollectionId = {srcCollectionId}");
+        #pragma warning restore EF1002
 
         if (recCount > 0)
         {
@@ -2769,8 +2793,14 @@ public partial class ConstructorRepository(AppDbContext db)
         for (var i = 0; i < ids.Count; i += batchSize)
         {
             var inList = JoinIdRange(ids, i, batchSize);
+            // EF1002 «возможная SQL-инъекция»: в строку подставляются только целые идентификаторы
+            // и имена таблиц, заданные здесь же в коде. Значений от пользователя в ней нет — те
+            // уходят параметрами. Сырой SQL намеренно: пакетные DELETE и INSERT…SELECT на тысячах
+            // строк параметрами не выражаются.
+            #pragma warning disable EF1002
             db.Database.ExecuteSqlRaw(
                 $"DELETE FROM db_field_values WHERE FieldId = {fieldId} AND RecordId IN ({inList})");
+            #pragma warning restore EF1002
             progress?.Report(Math.Min(ids.Count, i + batchSize));
         }
 
@@ -3496,10 +3526,16 @@ public partial class ConstructorRepository(AppDbContext db)
             var inList = string.Join(",", ids.Skip(i).Take(batchSize));
             // Входящие связи в этой же БД (цель ∈ удаляемых): FK на ToRecordId снят — чистим явно.
             // Исходящие связи удаляемых записей уходят каскадом FromRecordId вместе с db_records.
+            // EF1002 «возможная SQL-инъекция»: в строку подставляются только целые идентификаторы
+            // и имена таблиц, заданные здесь же в коде. Значений от пользователя в ней нет — те
+            // уходят параметрами. Сырой SQL намеренно: пакетные DELETE и INSERT…SELECT на тысячах
+            // строк параметрами не выражаются.
+            #pragma warning disable EF1002
             db.Database.ExecuteSqlRaw($"DELETE FROM db_record_links WHERE TargetDbId = 0 AND ToRecordId IN ({inList})");
             db.Database.ExecuteSqlRaw($"DELETE FROM db_records     WHERE Id       IN ({inList})");
             db.Database.ExecuteSqlRaw($"DELETE FROM record_display WHERE RecordId IN ({inList})");
             db.Database.ExecuteSqlRaw($"DELETE FROM ui_row_heights WHERE RecordId IN ({inList})");
+            #pragma warning restore EF1002
             done = Math.Min(ids.Count, i + batchSize);
             progress?.Report(done);
         }
@@ -3710,6 +3746,11 @@ public partial class ConstructorRepository(AppDbContext db)
                   AND (Position > {anchorPos} OR (Position = {anchorPos} AND Id > {anchorId}))");
 
             db.Database.ExecuteSqlRaw("DROP TABLE IF EXISTS _dup_rmap");
+            // EF1002 «возможная SQL-инъекция»: в строку подставляются только целые идентификаторы
+            // и имена таблиц, заданные здесь же в коде. Значений от пользователя в ней нет — те
+            // уходят параметрами. Сырой SQL намеренно: пакетные DELETE и INSERT…SELECT на тысячах
+            // строк параметрами не выражаются.
+            #pragma warning disable EF1002
             db.Database.ExecuteSqlRaw($@"
                 CREATE TEMP TABLE _dup_rmap AS
                 SELECT r.Id AS old_id,
@@ -3717,6 +3758,7 @@ public partial class ConstructorRepository(AppDbContext db)
                        ROW_NUMBER() OVER (ORDER BY r.Position, r.Id) AS rn
                 FROM db_records r JOIN _dup_recsel s ON s.src_id = r.Id
                 WHERE r.CollectionId = {collectionId}");
+            #pragma warning restore EF1002
 
             var createdAt = DateTime.Now.ToString("o");
             var createdBy = CurrentUser.DisplayName;   // дубль = новая запись (свой автор/время)
