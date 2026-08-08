@@ -8,12 +8,12 @@
 
 ## Где в коде
 
-| Файл | Роль |
-| --- | --- |
+| Файл                                                           | Роль                                                            |
+| ------------------------------------------------------------------ | ------------------------------------------------------------------- |
 | [.github/workflows/build.yml](../../../.github/workflows/build.yml) | сам прогон: четыре job'а, семь раннеров |
-| [Scripts/ci/setup-remote.sh](../../../Scripts/ci/setup-remote.sh) | заводит команду `git push actions`, один раз |
-| [Scripts/ci/ci-test.sh](../../../Scripts/ci/ci-test.sh) | тесты модуля, чистый bash |
-| `docs/developer/guides/ci.md` | этот файл |
+| [Scripts/ci/setup-remote.sh](../../../Scripts/ci/setup-remote.sh)   | заводит команду`git push actions`, один раз  |
+| [Scripts/ci/ci-test.sh](../../../Scripts/ci/ci-test.sh)             | тесты модуля, чистый bash                          |
+| `docs/developer/guides/ci.md`                                    | этот файл                                                   |
 
 Существующие файлы проекта модуль не меняет.
 
@@ -34,8 +34,13 @@ Scripts/ci/setup-remote.sh
 **1. Закоммитить изменения**
 
 ```bash
-git commit -am "fix: ..."
+git add -A
+git commit -m "fix: ..."
 ```
+
+`git add -A`, а не `git commit -am`: флаг `-a` берёт только те файлы, которые git уже
+отслеживает, и новые в коммит не попадают. Работать нужно в `main` — команда ниже отправляет
+именно её, и коммит на другой ветке она молча не заметит.
 
 **2. Отправить и запустить**
 
