@@ -199,32 +199,78 @@ jobs:
       # Ad-hoc подпись. Карантин она не снимает, но отличает «неизвестный разработчик»
       # (обходится) от «приложение повреждено» (не обходится вовсе). Делается здесь,
       # а не в Scripts/macos-build.sh: модуль не правит существующие файлы.
+      # macOS раздаётся образом .dmg, а не архивом. Смысл не в формате: окно образа —
+      # единственное место, где можно показать инструкцию ДО того, как Gatekeeper заблокирует
+      # запуск. Само приложение этого сделать не может — его к тому моменту ещё не запустили.
       - name: Упаковка — macOS
         if: runner.os == 'macOS'
         run: |
           SETUP="dist/Version $VER/$RID/SmartBase-Setup.app"
-          ZIP="pkg/SmartBase-$VER-$RID.zip"
-          mkdir -p pkg
+          DMG="pkg/SmartBase-$VER-$RID.dmg"
+          # Имя тома без версии и без пробелов: Finder адресует том по имени, а не по точке
+          # монтирования, и это же имя становится заголовком окна. Версия и так в имени .dmg.
+          VOL="SmartBase"
+          mkdir -p pkg stage/.background
+
           # Обязательно перед подписью: codesign отказывается работать, если на файлах бандла
           # остались расширенные атрибуты («resource fork, Finder information, or similar
           # detritus not allowed»). Достаточно одного com.apple.provenance, который macOS
           # вешает при копировании файлов.
           xattr -cr "$SETUP"
           codesign --force --deep --sign - "$SETUP"
-          # Только ditto: zip -r теряет расширенные атрибуты и биты запуска внутри бандла,
-          # после чего .app не стартует. --keepParent кладёт сам бандл верхним элементом.
-          # БЕЗ --sequesterRsrc: он заводит в архиве служебную папку __MACOSX, и верхних
-          # элементов становится два — распаковка снова создаст папку-обёртку.
-          ditto -c -k --keepParent "$SETUP" "$ZIP"
-          # Контрольная распаковка: один верхний элемент, бит +x и подпись на месте.
-          # Счёт через find, а не ls: не зависит от того, чем ls подменён в окружении.
-          ditto -x -k "$ZIP" /tmp/verify
-          [ "$(find /tmp/verify -mindepth 1 -maxdepth 1 | wc -l | tr -d ' ')" = "1" ] \
-            || { echo "::error::в архиве не один элемент — распаковка создаст папку"; exit 1; }
-          [ -x "/tmp/verify/SmartBase-Setup.app/Contents/MacOS/SmartBase" ] \
-            || { echo "::error::после распаковки потерян бит +x"; exit 1; }
-          codesign -v "/tmp/verify/SmartBase-Setup.app" \
-            || { echo "::error::подпись не пережила упаковку"; exit 1; }
+          cp -R "$SETUP" stage/
+
+          # Фон окна с инструкцией. Рисуется кодом, картинок в репозитории нет.
+          # Две плотности склеиваются в один TIFF, иначе на retina текст выходит мылом.
+          swift Scripts/github-release/dmg-background.swift stage/.background
+          tiffutil -cathidpicheck stage/.background/background.png \
+                                  stage/.background/background@2x.png \
+                   -out stage/.background/background.tiff
+          rm stage/.background/background.png stage/.background/background@2x.png
+
+          # Образ собирается в два приёма: сначала записываемый (UDRW), чтобы Finder мог
+          # разложить окно, потом сжатый только для чтения (UDZO) — он и уезжает в релиз.
+          hdiutil create -quiet -srcfolder stage -volname "$VOL" -fs HFS+ -format UDRW -ov rw.dmg
+          hdiutil attach -quiet -mountpoint "/Volumes/$VOL" rw.dmg
+
+          # Оформление окна. Разговор с Finder через AppleScript — единственное здесь, что
+          # может не сработать на раннере без полноценного графического сеанса. Поэтому шаг
+          # не валит сборку: без оформления образ остаётся рабочим, просто без инструкции.
+          osascript <<'APPLESCRIPT' || echo "::warning::Finder не оформил окно — образ собран без инструкции"
+            tell application "Finder"
+              tell disk "SmartBase"
+                open
+                set current view of container window to icon view
+                set toolbar visible of container window to false
+                set statusbar visible of container window to false
+                set the bounds of container window to {200, 120, 840, 590}
+                set opts to the icon view options of container window
+                set arrangement of opts to not arranged
+                set icon size of opts to 128
+                set label position of opts to bottom
+                set background picture of opts to file ".background:background.tiff"
+                set position of item "SmartBase-Setup.app" of container window to {320, 78}
+                close
+                open
+                update without registering applications
+                delay 2
+              end tell
+            end tell
+          APPLESCRIPT
+
+          hdiutil detach -quiet "/Volumes/$VOL"
+          hdiutil convert -quiet rw.dmg -format UDZO -imagekey zlib-level=9 -o "$DMG"
+          rm -f rw.dmg
+
+          # Контрольное монтирование: внутри ровно один видимый элемент, бит +x и подпись целы.
+          hdiutil attach -quiet -nobrowse -mountpoint /Volumes/sb-check "$DMG"
+          [ "$(find /Volumes/sb-check -mindepth 1 -maxdepth 1 -not -name '.*' | wc -l | tr -d ' ')" = "1" ] \
+            || { echo "::error::в образе не один элемент"; hdiutil detach -quiet /Volumes/sb-check; exit 1; }
+          [ -x "/Volumes/sb-check/SmartBase-Setup.app/Contents/MacOS/SmartBase" ] \
+            || { echo "::error::в образе потерян бит +x"; hdiutil detach -quiet /Volumes/sb-check; exit 1; }
+          codesign -v "/Volumes/sb-check/SmartBase-Setup.app" \
+            || { echo "::error::подпись не пережила упаковку"; hdiutil detach -quiet /Volumes/sb-check; exit 1; }
+          hdiutil detach -quiet /Volumes/sb-check
 
       - name: Упаковка — Linux
         if: runner.os == 'Linux'

@@ -21,6 +21,7 @@ MODULE_PATHS=(
   "Scripts/github-release/check-version.sh"
   "Scripts/github-release/release-notes.sh"
   "Scripts/github-release/release-test.sh"
+  "Scripts/github-release/dmg-background.swift"
   "docs/developer/guides/release.md"
   "CHANGELOG.md"
 )
@@ -99,9 +100,10 @@ if [ $? -ne 0 ]; then
   bad "5. release-notes.sh завершился с ошибкой" "$notes"
 else
   miss=""
-  for marker in "## Что нового" "## Установка" "SmartBase-Setup.exe" \
-                "SmartBase-$VER-osx-arm64.zip" "SmartBase-$VER-linux-x64.tar.gz" \
-                "не подписаны" "## Автообновление" "SHA256SUMS.txt"; do
+  for marker in "## Что нового" "## Установка" "### Первый запуск" "SmartBase-Setup.exe" \
+                "SmartBase-$VER-osx-arm64.dmg" "SmartBase-$VER-linux-x64.tar.gz" \
+                "Все равно открыть" "Выполнить в любом случае" \
+                "## Автообновление" "SHA256SUMS.txt"; do
     printf '%s\n' "$notes" | grep -F "$marker" > /dev/null || miss="$miss «$marker»"
   done
   # Незаполненные заготовки: <версия>, TODO, XXX, {{…}}. Латиница в угловых скобках не
@@ -179,7 +181,7 @@ refs="$(git ls-files -z -- . ':(exclude).github' ':(exclude)Scripts/github-relea
   || prob+=("прогон тестов изменил рабочее дерево")
 
 if [ ${#prob[@]} -eq 0 ]; then
-  ok "8. Модуль отделяем: 7 файлов на месте, ссылок извне нет, дерево не тронуто"
+  ok "8. Модуль отделяем: 8 файлов на месте, ссылок извне нет, дерево не тронуто"
 else
   bad "8. Отделяемость нарушена" "${prob[@]}"
 fi
