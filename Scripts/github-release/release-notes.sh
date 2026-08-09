@@ -5,7 +5,7 @@
 #   Scripts/github-release/release-notes.sh 1.0.4              # посмотреть, что получится
 #   Scripts/github-release/release-notes.sh 1.0.4 > notes.md   # так вызывает workflow
 #
-# Состав: описание версии из CHANGELOG.md → какой файл качать → что нажать при первом
+# Состав: описание версии из release-history.md → какой файл качать → что нажать при первом
 # запуске → как обновить сетевую папку → лицензия. Ничего лишнего: страница релиза — это
 # место, где человек скачивает программу, а не читает отчёт о работе.
 #
@@ -13,28 +13,28 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-CHANGELOG="$ROOT/CHANGELOG.md"
+HISTORY="$ROOT/Scripts/github-release/release-history.md"
 VERSION="${1:-}"
 
 [ -n "$VERSION" ] || { echo "Использование: release-notes.sh <версия>" >&2; exit 1; }
-[ -f "$CHANGELOG" ] || { echo "Нет файла CHANGELOG.md" >&2; exit 1; }
+[ -f "$HISTORY" ] || { echo "Нет файла release-history.md" >&2; exit 1; }
 
 # ── Что нового: секция «## [версия]» до следующего «## [» ─────────────────────
 BODY="$(awk -v v="${VERSION//./\\.}" '
   $0 ~ "^## \\[" v "\\]" { found = 1; next }
   found && /^## \[/      { exit }
-  # Сноски-ссылки в конце файла («[1.0.3]: https://…») — часть разметки CHANGELOG, а не
+  # Сноски-ссылки в конце файла («[1.0.3]: https://…») — часть разметки истории, а не
   # описания версии. Секция самой свежей версии идёт последней, и без этой строки они
   # каждый раз утекали бы в тело релиза.
   found && /^\[[^]]*\]:/ { next }
   found                  { print }
-' "$CHANGELOG")"
+' "$HISTORY")"
 
 # Обрезать пустые строки в начале секции; в конце их уже съела подстановка $(...).
 BODY="$(printf '%s\n' "$BODY" | sed -e '/./,$!d')"
 
 if [ -z "$BODY" ]; then
-  echo "В CHANGELOG.md нет непустой секции «## [$VERSION]»" >&2
+  echo "В release-history.md нет непустой секции «## [$VERSION]»" >&2
   exit 1
 fi
 

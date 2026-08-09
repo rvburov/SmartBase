@@ -8,8 +8,9 @@
 #   Scripts/github-release/release.sh 1.0.4 --allow-dirty   # разрешить незакоммиченные правки
 #
 # Что делает: проверяет предусловия → правит версию в SmartBase.csproj и бейдж в README.md →
-# проставляет дату в секции CHANGELOG → коммитит `release: v1.0.4` → ставит аннотированный тег
-# v1.0.4 → пушит ветку и тег. Собирает и публикует уже GitHub — .github/workflows/release.yml
+# проставляет дату в секции release-history.md → коммитит `release: v1.0.4` → ставит тег
+# v1.0.4 (аннотированный) → пушит ветку и тег. Собирает и публикует уже GitHub —
+# .github/workflows/release.yml
 # ловит push тега. Обычный `git push` релиз не запускает.
 #
 # Сам скрипт ничего не собирает и не требует gh CLI — только git.
@@ -20,7 +21,7 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 CSPROJ="$ROOT/SmartBase.csproj"
 README="$ROOT/README.md"
-CHANGELOG="$ROOT/CHANGELOG.md"
+HISTORY="$HERE/release-history.md"
 REPO_URL="https://github.com/rvburov/SmartBase"
 
 VERSION=""
@@ -113,11 +114,11 @@ ver_gt() {   # 0, если $1 строго больше $2 покомпонен�
 }
 ver_gt "$VERSION" "$CURRENT" || die "версия $VERSION не больше текущей $CURRENT"
 
-# ── 6. Согласованность текущего состояния и готовность CHANGELOG ──────────────
+# ── 6. Согласованность текущего состояния и готовность истории релизов ────────
 "$HERE/check-version.sh" >/dev/null \
   || die "текущее состояние рассогласовано — запустите Scripts/github-release/check-version.sh"
 
-"$HERE/check-version.sh" --changelog-only "$VERSION" || die "CHANGELOG.md не готов к выпуску.
+"$HERE/check-version.sh" --changelog-only "$VERSION" || die "release-history.md не готов к выпуску.
     Переименуйте секцию «## [Не выпущено]» в «## [$VERSION]» и опишите изменения."
 
 # ── 7. Быстрый гейт: модульные тесты ──────────────────────────────────────────
@@ -135,7 +136,7 @@ echo
 echo "Релиз SmartBase $VERSION (сейчас $CURRENT)"
 info "SmartBase.csproj   <Version> → $VERSION"
 info "README.md          бейдж → version-$VERSION-blue"
-info "CHANGELOG.md       ## [$VERSION] → ## [$VERSION] — $TODAY"
+info "release-history.md ## [$VERSION] → ## [$VERSION] — $TODAY"
 info "коммит             release: $TAG"
 info "тег                $TAG (аннотированный)"
 info "push               origin main, затем origin $TAG"
@@ -167,11 +168,11 @@ sed -E "s#version-[^-]*-blue#version-${VERSION}-blue#" "$README" > "$tmp" && mv 
 # Точки в номере версии экранируются — иначе «1.0.4» совпало бы и с «1a0b4».
 VERSION_RE="${VERSION//./\\.}"
 tmp="$(mktemp)"
-sed -E "s@^## \[${VERSION_RE}\].*\$@## [${VERSION}] — ${TODAY}@" "$CHANGELOG" > "$tmp" && mv "$tmp" "$CHANGELOG"
+sed -E "s@^## \[${VERSION_RE}\].*\$@## [${VERSION}] — ${TODAY}@" "$HISTORY" > "$tmp" && mv "$tmp" "$HISTORY"
 
-# Ссылки-сноски внизу CHANGELOG: сдвинуть «Не выпущено» на новую версию и добавить строку
+# Ссылки-сноски внизу истории: сдвинуть «Не выпущено» на новую версию и добавить строку
 # сравнения для неё. Если сносок нет — молча пропускаем, файл остаётся валидным.
-if grep -q '^\[Не выпущено\]:' "$CHANGELOG"; then
+if grep -q '^\[Не выпущено\]:' "$HISTORY"; then
   tmp="$(mktemp)"
   awk -v new="$VERSION" -v old="$CURRENT" -v url="$REPO_URL" '
     /^\[Не выпущено\]:/ {
@@ -180,14 +181,14 @@ if grep -q '^\[Не выпущено\]:' "$CHANGELOG"; then
       next
     }
     { print }
-  ' "$CHANGELOG" > "$tmp" && mv "$tmp" "$CHANGELOG"
+  ' "$HISTORY" > "$tmp" && mv "$tmp" "$HISTORY"
 fi
 
 "$HERE/check-version.sh" "$VERSION" || die "после правки версии остались расхождения"
 
 # ── 10. Коммит, тег, отправка ─────────────────────────────────────────────────
 step "коммит и тег"
-git add "$CSPROJ" "$README" "$CHANGELOG"
+git add "$CSPROJ" "$README" "$HISTORY"
 git commit -q -m "release: $TAG"
 git tag -a "$TAG" -m "SmartBase $VERSION"
 

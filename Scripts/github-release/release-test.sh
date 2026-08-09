@@ -23,7 +23,7 @@ MODULE_PATHS=(
   "Scripts/github-release/release-test.sh"
   "Scripts/github-release/dmg-background.swift"
   "docs/developer/guides/release.md"
-  "CHANGELOG.md"
+  "Scripts/github-release/release-history.md"
 )
 
 passed=0
@@ -85,10 +85,10 @@ reject "1.0.4.5"    || bad3="$bad3 «1.0.4.5» (четыре компонент�
 out="$("$HERE/release.sh" "$NEXT" --dry-run --skip-tests --allow-dirty 2>&1)"
 code=$?
 if [ $code -ne 0 ]; then
-  # Секция под следующую версию в CHANGELOG ещё не написана — это штатное состояние
+  # Секция под следующую версию в истории релизов ещё не написана — это штатное состояние
   # между релизами, а не поломка: именно её отсутствие и должно останавливать выпуск.
-  if printf '%s\n' "$out" | grep "CHANGELOG.md не готов" > /dev/null; then
-    ok "4. release.sh --dry-run $NEXT: остановлен из-за незаполненного CHANGELOG (так и задумано)"
+  if printf '%s\n' "$out" | grep "release-history.md не готов" > /dev/null; then
+    ok "4. release.sh --dry-run $NEXT: остановлен из-за незаполненной истории релизов (так и задумано)"
   else
     bad "4. release.sh --dry-run $NEXT завершился с ошибкой" "$out"
   fi
@@ -122,11 +122,11 @@ else
   fi
 fi
 
-# ── 6. CHANGELOG под текущую версию ───────────────────────────────────────────
+# ── 6. История релизов под текущую версию ─────────────────────────────────────
 if "$HERE/check-version.sh" --changelog-only "$VER" >/dev/null 2>&1; then
-  ok "6. CHANGELOG.md: секция «## [$VER]» на месте и непуста"
+  ok "6. release-history.md: секция «## [$VER]» на месте и непуста"
 else
-  bad "6. CHANGELOG.md: нет непустой секции «## [$VER]»"
+  bad "6. release-history.md: нет непустой секции «## [$VER]»"
 fi
 
 # ── 7. Workflow ───────────────────────────────────────────────────────────────
@@ -176,8 +176,8 @@ done
 
 # Ищем упоминания модуля в отслеживаемых файлах ВНЕ модуля. Внутри модуля ссылки свободны.
 refs="$(git ls-files -z -- . ':(exclude).github' ':(exclude)Scripts/github-release' \
-        ':(exclude)docs/developer/guides/release.md' ':(exclude)CHANGELOG.md' \
-        | xargs -0 grep -lIE 'Scripts/github-release|CHANGELOG\.md|guides/release\.md|workflows/release\.yml' \
+        ':(exclude)docs/developer/guides/release.md' \
+        | xargs -0 grep -lIE 'Scripts/github-release|release-history\.md|guides/release\.md|workflows/release\.yml' \
           2>/dev/null)"
 [ -n "$refs" ] && prob+=("на модуль ссылаются файлы вне него: $(echo "$refs" | tr '\n' ' ')")
 
