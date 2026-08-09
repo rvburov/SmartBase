@@ -1,12 +1,30 @@
 # SmartBase — календарь-планировщик на конструкторе данных
 
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/rvburov/SmartBase/main/docs/assets/banner-dark.png">
+    <img src="https://raw.githubusercontent.com/rvburov/SmartBase/main/docs/assets/banner-light.png" alt="SmartBase — календарь, задачи и конструктор данных в одном desktop-приложении. Без сервера и учётных записей — данные в ваших файлах.">
+  </picture>
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/version-1.0.4-blue" alt="Версия">
+  <img src="https://img.shields.io/badge/.NET-10.0+-512BD4?logo=dotnet&logoColor=white" alt=".NET">
+  <img src="https://img.shields.io/badge/C%23-14-239120?logo=csharp&logoColor=white" alt="C#">
+  <img src="https://img.shields.io/badge/Avalonia_UI-11.2-8B44AC" alt="Avalonia">
+  <img src="https://img.shields.io/badge/EF_Core-9.0-512BD4" alt="EF Core">
+  <img src="https://img.shields.io/badge/SQLite-003B57?logo=sqlite&logoColor=white" alt="SQLite">
+  <img src="https://img.shields.io/badge/PostgreSQL-14+-4169E1?logo=postgresql&logoColor=white" alt="PostgreSQL">
+  <img src="https://img.shields.io/badge/Windows-0078D4?logo=data:image/svg%2Bxml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI%2BPHBhdGggZmlsbD0id2hpdGUiIGQ9Ik0wIDMuNDQ5TDkuNzUgMi4xdjkuNDUxSDBtMTAuOTQ5LTkuNkwyNCAwdjExLjRIMTAuOTQ5TTAgMTIuNmg5Ljc1djkuNDUxTDAgMjAuNjk5TTEwLjk0OSAxMi42SDI0VjI0bC0xMi45LTEuODAxIi8%2BPC9zdmc%2B" alt="Windows">
+  <img src="https://img.shields.io/badge/macOS-000000?logo=apple&logoColor=white" alt="macOS">
+  <img src="https://img.shields.io/badge/Linux-FCC624?logo=linux&logoColor=black" alt="Linux">
+</p>
+
 Кросс-платформенное desktop-приложение (Windows / macOS / Linux): **универсальный
 конструктор данных** — коллекции с произвольными полями, как в Notion/Airtable — и
 построенные поверх него **календарь**, **задачи** и **расширения**. Сервер и учётные
 записи не нужны: данные лежат в файлах SQLite (в том числе общих в сетевой папке),
 а когда пишущих становится много — в PostgreSQL.
-
-![Версия](https://img.shields.io/badge/version-1.0.4-blue) ![.NET](https://img.shields.io/badge/.NET-10.0+-512BD4?logo=dotnet&logoColor=white) ![C#](https://img.shields.io/badge/C%23-14-239120?logo=csharp&logoColor=white) ![Avalonia](https://img.shields.io/badge/Avalonia_UI-11.2-8B44AC) ![EF Core](https://img.shields.io/badge/EF_Core-9.0-512BD4) ![SQLite](https://img.shields.io/badge/SQLite-003B57?logo=sqlite&logoColor=white) ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-14+-4169E1?logo=postgresql&logoColor=white) ![Windows](https://img.shields.io/badge/Windows-0078D4?logo=data:image/svg%2Bxml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI%2BPHBhdGggZmlsbD0id2hpdGUiIGQ9Ik0wIDMuNDQ5TDkuNzUgMi4xdjkuNDUxSDBtMTAuOTQ5LTkuNkwyNCAwdjExLjRIMTAuOTQ5TTAgMTIuNmg5Ljc1djkuNDUxTDAgMjAuNjk5TTEwLjk0OSAxMi42SDI0VjI0bC0xMi45LTEuODAxIi8%2BPC9zdmc%2B) ![macOS](https://img.shields.io/badge/macOS-000000?logo=apple&logoColor=white) ![Linux](https://img.shields.io/badge/Linux-FCC624?logo=linux&logoColor=black)
 
 ---
 
@@ -388,6 +406,7 @@ SmartBase/
 ├── Scripts/                    # windows-build.sh, linux-build.sh, macos-build.sh, linux-install.sh, generate-icons.sh
 ├── Tests/                      # Unit, Integration (xUnit) + Benchmarks, DbGenerator, MultiProcess
 ├── docs/                       # developer/ (architecture, features, ui, guides, testing, qa-checklists), user/, ROADMAP (см. docs/README.md)
+│   └── assets/                 # Картинки документации: баннер README (светлый и тёмный)
 │
 │   # ── Файлы в корне проекта ──
 ├── SmartBase.csproj             # Проект
