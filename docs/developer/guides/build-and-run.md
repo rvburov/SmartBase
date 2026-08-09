@@ -178,7 +178,7 @@ Scripts/macos-build.sh osx-x64   Release 1.2.3  # Intel
 | `linux-build.sh` | сборка Linux → `dist/<rid>/SmartBase` |
 | `macos-build.sh` | сборка macOS → `dist/<rid>/SmartBase.app` |
 | `linux-install.sh` | установка иконки/ярлыка на Linux-машине (пост-установка) |
-| `generate-icons.sh` | генерация `icon.ico`/`icon.icns` из `icon.png` (только macOS) |
+| `generate-icons.sh` | проверка мастеров и генерация `icon.ico`/`icon.icns` (только macOS) |
 
 ## Связанные документы
 

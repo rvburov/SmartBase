@@ -382,7 +382,7 @@ SmartBase/
 │   └── MarkdownUtils.cs        # Работа с Markdown
 │
 ├── Assets/                     # Ресурсы
-│   ├── Branding/               # Иконка приложения (icon.png/.ico/.icns, Info.plist, .desktop)
+│   ├── Branding/               # Иконка: мастера icon-windows/macos/linux.png → icon.ico/.icns, Info.plist, .desktop
 │   └── Styles/                 # Colors, Typography, Icons, темы контролов
 │
 ├── Scripts/                    # windows-build.sh, linux-build.sh, macos-build.sh, linux-install.sh, generate-icons.sh

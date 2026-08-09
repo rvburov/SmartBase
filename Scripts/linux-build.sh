@@ -13,7 +13,7 @@
 #   • PublishSingleFile   — всё в одном файле (нативные .so вшиваются);
 #   • chmod +x            — бинарю выставляется бит запуска;
 #   • иконка/ярлык в меню — отдельным шагом на целевой машине через
-#                           Scripts/linux-install.sh (использует icon.png из Assets/Branding).
+#                           Scripts/linux-install.sh (использует icon-linux.png из Assets/Branding).
 #
 # Результат: dist/<RID>/SmartBase — раздаётся как есть.
 # ── Будущие особенности Linux-сборки добавляйте в массив flags ниже. ──

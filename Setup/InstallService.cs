@@ -508,11 +508,15 @@ public static partial class InstallService
     }
 
     // Иконку приложения достаём из вшитого Avalonia-ресурса (avares://) в файл .png.
+    // Мастеров три, по одному на систему (см. Scripts/generate-icons.sh) — сюда идёт тот,
+    // что нарисован под рабочие столы Linux. Имя файла на диске остаётся icon.png:
+    // на него ссылаются уже созданные ярлыки .desktop.
     private static void ExtractIcon(string destPng)
     {
         try
         {
-            using var s = AssetLoader.Open(new Uri($"avares://{AppSettings.AppName}/Assets/Branding/icon.png"));
+            using var s = AssetLoader.Open(
+                new Uri($"avares://{AppSettings.AppName}/Assets/Branding/icon-linux.png"));
             using var f = File.Create(destPng);
             s.CopyTo(f);
         }

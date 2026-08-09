@@ -1,48 +1,72 @@
 # Иконка приложения
 
 Всё, что относится к иконке, лежит в **одной папке** `Assets/Branding/`.
-Каждая ОС берёт иконку из своего файла и формата, но все они делаются из
-одного мастера — `icon.png`.
+
+Мастеров **три — по одному на систему**. Одним обойтись нельзя: Windows, macOS и Linux
+рисуют иконку по-разному, и картинка, правильная для одной, в другой выглядит чужеродно.
+
+| Система | Как рисует | Что нужно от мастера |
+|---|---|---|
+| Windows | показывает файл как есть, ничего не обрезает и не добавляет | во всю площадь холста, скругление ~10 % стороны |
+| macOS | показывает как есть, но у всех системных иконок одна сетка | плашка **824×824 по центру холста 1024×1024**, поля прозрачные, скругление-«суперэллипс» |
+| Linux | показывает как есть; в GNOME/KDE принято скругление заметнее | во всю площадь холста, скругление ~16 % стороны |
 
 ## Папка Assets/Branding/
 
 | Файл | Формат | Для чего |
 |---|---|---|
-| `icon.png` | PNG-32 (RGBA), мастер 1024×1024 (мин. 512) | исходник для генерации `.ico`/`.icns` + иконка меню на Linux |
+| `icon-windows.png` | PNG-32 (RGBA) 1024×1024 | мастер Windows → из него генерируется `icon.ico` |
+| `icon-macos.png` | PNG-32 (RGBA) 1024×1024, плашка 824×824 | мастер macOS → из него генерируется `icon.icns` |
+| `icon-linux.png` | PNG-32 (RGBA) 1024×1024 | иконка меню и ярлыка на Linux, используется **как есть** |
 | `icon.ico` | ICO, слои 16/32/48/64/128/256 | иконка окна (Windows/Linux) **и** иконка Windows `.exe` |
-| `icon.icns` | ICNS | иконка macOS-бандла `.app` |
+| `icon.icns` | ICNS, слоты 16…1024 | иконка macOS-бандла `.app` |
 | `Info.plist` | — | метаданные macOS `.app` (ссылается на `icon.icns`) |
 | `SmartBase.desktop` | — | пункт меню приложения для Linux |
 
-`icon.ico` и `icon.icns` **генерируются из `icon.png`** — править их вручную не нужно.
+`icon.ico` и `icon.icns` **генерируются** из мастеров — править их вручную не нужно.
+
+В сам бинарь вшиваются только два файла: `icon.ico` (окно и значок в трее) и
+`icon-linux.png` (иконка ярлыка `.desktop`). Мастера Windows/macOS, `.icns`, `Info.plist`
+и `.desktop` читают только сборочные скрипты — с диска, поэтому в `AvaloniaResource` они
+не входят (см. исключения в [SmartBase.csproj](../../../SmartBase.csproj)).
+
+## Чего в мастере быть не должно
+
+**Светлой обводки или свечения по краю плашки.** Это выглядит безобидно в редакторе, но в
+Finder и на панели задач читается как белая рамка вокруг иконки — в версиях до 1.0.4 такая
+рамка шириной 25 px и была. [generate-icons.sh](../../../Scripts/generate-icons.sh) теперь
+проверяет мастера перед сборкой и отказывается работать, если находит:
+
+- размер не 1024×1024 или отсутствие альфа-канала;
+- сплошную светлую полосу (≥ 235 по всем каналам) шире 2 px вдоль края плашки;
+- закрашенные точки в 100-пиксельном поле у мастера macOS.
+
+Помните и про мелкие размеры: та же картинка показывается на 16 px, где тонкие линии и
+мелкие детали сливаются в кашу. Простой силуэт с толстыми штрихами читается лучше.
 
 ## Как поменять иконку
 
-Подготовьте квадратный мастер: **PNG-32 (RGBA), прозрачный фон, 1024×1024**
-(минимум 512×512, иначе retina-слот macOS будет нечётким). Помните, что та же
-картинка показывается и на 16px — тонкие линии и мелкие детали там сливаются в
-кашу, поэтому лучше простой силуэт с толстыми штрихами.
+**1. Замените нужные мастера** в `Assets/Branding/`. Если правка касается всех систем —
+все три; если только Windows — один `icon-windows.png`.
 
-**1. Замените мастер** `Assets/Branding/icon.png`.
+**2. Перегенерируйте `icon.ico` и `icon.icns`:**
 
-**2. Перегенерируйте `icon.ico` и `icon.icns` из мастера:**
-
-- **на Windows** — через ImageMagick (`winget install ImageMagick.ImageMagick`):
-  ```powershell
-  cd Assets/Branding
-  magick icon.png -define icon:auto-resize=256,128,64,48,32,24,16 icon.ico
-  magick icon.png icon.icns
-  ```
 - **на macOS** — штатным скриптом (использует `sips`, `iconutil`, `python3`):
   ```bash
   Scripts/generate-icons.sh
   ```
-  > ⚠️ `generate-icons.sh` работает **только на macOS**. На Windows запускайте
-  > команды ImageMagick выше.
+- **на Windows** — через ImageMagick (`winget install ImageMagick.ImageMagick`);
+  проверки мастеров при этом не будет, следите за кромкой сами:
+  ```powershell
+  cd Assets/Branding
+  magick icon-windows.png -define icon:auto-resize=256,128,64,48,32,24,16 icon.ico
+  magick icon-macos.png icon.icns
+  ```
+  > ⚠️ `generate-icons.sh` работает **только на macOS**.
 
-**3. Если правите иконку только под Windows** — достаточно заменить один
-`icon.ico` (это сразу и значок окна, и значок `.exe`). Мастер `.png` и `.icns`
-нужны лишь для сборок под Linux/macOS.
+**3. Обновите уже установленную копию.** Windows и macOS кешируют иконки: после
+переустановки может остаться старая картинка. На macOS помогает `touch` по бандлу (его
+делает [macos-build.sh](../../../Scripts/macos-build.sh)) и перезапуск Finder.
 
 ## Как подключено
 
@@ -50,20 +74,23 @@
   задаёт `Icon` = `Assets/Branding/icon.ico` для всех окон, включая будущие диалоги.
   Указан именно `.ico`, а не `.png`: на Windows backend разбирает слои ICO и отдаёт
   Windows готовый кадр нужного размера (чётко в заголовке окна и таскбаре), а не
-  масштабирует 512px PNG на лету. На Linux Avalonia декодирует `.ico` в bitmap для
-  значка окна.
+  масштабирует 1024px PNG на лету. На Linux Avalonia декодирует `.ico` в bitmap для
+  значка окна — то есть в заголовке окна Linux показывает вариант Windows. Разница
+  между мастерами только в радиусе скругления, и на 16–24 px она не видна.
 - **Windows `.exe`:** `<ApplicationIcon>` = `icon.ico` в [SmartBase.csproj](../../../SmartBase.csproj) —
   значок в Проводнике, ярлыке и закрепе на таскбаре.
 - **macOS Dock/Finder/Launchpad:** только через `.app`-бандл (`Info.plist` →
   `CFBundleIconFile` → `icon.icns`). Свойство `Window.Icon` на маке иконку окна
   не показывает.
-- **Linux меню/лаунчер:** `SmartBase.desktop` + `icon.png`, ставятся через
-  `Scripts/linux-install.sh`.
+- **Linux меню/лаунчер:** `SmartBase.desktop` + `icon-linux.png`, ставятся через
+  `Scripts/linux-install.sh`. Установщик достаёт тот же `icon-linux.png` из вшитых
+  ресурсов и кладёт рядом с приложением под именем `icon.png` — на это имя ссылаются
+  уже созданные ярлыки `.desktop` (см. `InstallService.ExtractIcon`).
 
 ## Сборка под каждую ОС
 
 ```bash
-Scripts/generate-icons.sh                        # (только macOS) пересобрать .ico/.icns из icon.png
+Scripts/generate-icons.sh                        # (только macOS) пересобрать .ico/.icns из мастеров
 
 Scripts/macos-build.sh osx-arm64                 # macOS → dist/Version <X.Y.Z>/osx-arm64/SmartBase.app
 open "dist/Version <X.Y.Z>/osx-arm64/SmartBase.app"
@@ -82,5 +109,5 @@ Scripts/linux-install.sh                          # Linux: иконку/ярлы
 - `linux-build.sh` — собирает `dist/<rid>/SmartBase` (бит запуска выставлен).
 - `macos-build.sh` — собирает `dist/<rid>/SmartBase.app` с иконкой.
 - `linux-install.sh` — ставит иконку и ярлык в меню Linux.
-- `generate-icons.sh` — генерирует `icon.ico` и `icon.icns` из `icon.png`
+- `generate-icons.sh` — проверяет мастера и генерирует `icon.ico` и `icon.icns`
   (**только macOS**: нужны штатные `sips`, `iconutil`, `python3`).

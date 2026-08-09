@@ -112,6 +112,16 @@
 
   <ItemGroup>
     <AvaloniaResource Include="Assets\**" />
+    <!-- В сборку попадают только те файлы бренда, что читаются в работе программы:
+         icon.ico (иконка окна и значка в трее) и icon-linux.png (иконка ярлыка .desktop,
+         см. InstallService.ExtractIcon). Остальное нужно лишь сборочным скриптам, и они
+         берут файлы с диска, а не из ресурсов, — вшивать их значит носить лишние ~1.6 МБ
+         в бинаре каждой платформы. -->
+    <AvaloniaResource Remove="Assets\Branding\icon-windows.png" />
+    <AvaloniaResource Remove="Assets\Branding\icon-macos.png" />
+    <AvaloniaResource Remove="Assets\Branding\icon.icns" />
+    <AvaloniaResource Remove="Assets\Branding\Info.plist" />
+    <AvaloniaResource Remove="Assets\Branding\SmartBase.desktop" />
   </ItemGroup>
 
   <!-- Tests/ — отдельный проект-генератор стенда (Tests/DbGenerator), в приложение не входит -->
