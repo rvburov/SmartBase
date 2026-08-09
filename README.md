@@ -400,7 +400,7 @@ SmartBase/
 ├── README.md                   # Этот файл
 │
 │   # ── Служебные папки (в .gitignore, пересоздаются автоматически) ──
-├── .localdata/                 # ⚙ Dev-данные (Debug): database.db, app.db
+├── .localdata/                 # ⚙ Dev-данные (Debug): database.db, app.db, logs.db + instance.lock, show.signal, crash.log
 ├── artifacts/                  # ⚙ Вся сборка: bin / obj / publish
 ├── packages/                   # ⚙ Кэш NuGet-пакетов
 └── obj/                        # ⚙ Промежуточные файлы restore
@@ -430,18 +430,34 @@ SmartBase/
 - **Windows** (`%APPDATA%`, Roaming):
   - `C:\Users\<Имя>\AppData\Roaming\SmartBase\database.db`
   - `C:\Users\<Имя>\AppData\Roaming\SmartBase\app.db`
+  - `C:\Users\<Имя>\AppData\Roaming\SmartBase\logs.db`
 - **Linux** (`~/.config`):
   - `/home/<имя>/.config/SmartBase/database.db`
   - `/home/<имя>/.config/SmartBase/app.db`
+  - `/home/<имя>/.config/SmartBase/logs.db`
 - **macOS** (`~/.config` — в .NET `ApplicationData` указывает на `~/.config`, а не на `~/Library/Application Support`):
   - `/Users/<имя>/.config/SmartBase/database.db`
   - `/Users/<имя>/.config/SmartBase/app.db`
+  - `/Users/<имя>/.config/SmartBase/logs.db`
 
 Во время работы рядом появляются временные файлы SQLite: `*.db-wal`, `*.db-shm`.
 
+### Служебные файлы в папке данных
+
+Кроме трёх баз там же лежат три служебных файла. Они **остаются на диске после выхода
+из приложения** — это норма, а не мусор:
+
+| Файл | Кто создаёт | Когда появляется |
+|---|---|---|
+| `instance.lock` | [Utils/SingleInstance.cs](Utils/SingleInstance.cs) | при каждом запуске; пустой (0 байт) — защита от второго экземпляра держится на эксклюзивном дескрипторе `FileShare.None`, а не на наличии файла |
+| `show.signal` | [Utils/SingleInstance.cs](Utils/SingleInstance.cs) | только при запуске второй копии поверх работающей: второй процесс пишет метку времени и выходит, работающий показывает окно |
+| `crash.log` | [Program.cs](Program.cs) | только при необработанном исключении; синхронный резерв к `logs.db`, время в нём локальное (в `logs.db` — UTC) |
+
+Подробнее — [storage-and-migrations.md](docs/developer/architecture/database/storage-and-migrations.md).
+
 **При разработке (Debug)** — папка `.localdata/` в корне проекта (находится по маркеру
-`SmartBase.csproj`, поэтому не зависит от раскладки вывода):
-`SmartBase/.localdata/database.db` и `.localdata/app.db` (в `.gitignore`).
+`SmartBase.csproj`, поэтому не зависит от раскладки вывода): `.localdata/database.db`,
+`.localdata/app.db`, `.localdata/logs.db` и те же служебные файлы (вся папка в `.gitignore`).
 
 ### Мультибаза и PostgreSQL
 

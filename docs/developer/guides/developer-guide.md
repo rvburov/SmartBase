@@ -31,7 +31,7 @@ windows-таргет — только под ним работают натив�
 | `artifacts/` | вся сборка (`bin`/`obj`/`publish`), `UseArtifactsOutput` | нет |
 | `packages/` | локальный кэш NuGet (аналог venv) | нет |
 | `dist/` | готовые сборки для раздачи | нет |
-| `.localdata/` | dev-данные при Debug (`database.db`, `app.db`) | нет |
+| `.localdata/` | dev-данные при Debug: `database.db`, `app.db`, `logs.db` + служебные `instance.lock`, `show.signal`, `crash.log` | нет |
 
 ## База данных при разработке
 

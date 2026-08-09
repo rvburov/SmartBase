@@ -165,7 +165,7 @@ Scripts/macos-build.sh osx-x64   Release 1.2.3  # Intel
 | `artifacts/` | вся сборка (`bin`/`obj`/`publish`) | нет |
 | `packages/` | локальный кэш NuGet (аналог venv) | нет |
 | `dist/` | готовые сборки для раздачи, по версиям `Version <X.Y.Z>/<rid>/` | нет |
-| `.localdata/` | dev-данные при Debug (`database.db`, `app.db`) | нет |
+| `.localdata/` | dev-данные при Debug: `database.db`, `app.db`, `logs.db` + служебные `instance.lock`, `show.signal`, `crash.log` | нет |
 
 Очистить только сборку — удалить `artifacts/` и `packages/`. Папку `.localdata/` при
 очистке не трогают (там dev-база). Подробнее — [databases.md](../architecture/database/storage-and-migrations.md).
