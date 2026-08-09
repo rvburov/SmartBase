@@ -9,7 +9,7 @@
 | Файл | Формат | Для чего |
 |---|---|---|
 | `icon.png` | PNG-32 (RGBA), мастер 1024×1024 (мин. 512) | исходник для генерации `.ico`/`.icns` + иконка меню на Linux |
-| `icon.ico` | ICO, слои 16/24/32/48/64/128/256 | иконка окна (Windows/Linux) **и** иконка Windows `.exe` |
+| `icon.ico` | ICO, слои 16/32/48/64/128/256 | иконка окна (Windows/Linux) **и** иконка Windows `.exe` |
 | `icon.icns` | ICNS | иконка macOS-бандла `.app` |
 | `Info.plist` | — | метаданные macOS `.app` (ссылается на `icon.icns`) |
 | `SmartBase.desktop` | — | пункт меню приложения для Linux |

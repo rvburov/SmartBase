@@ -60,7 +60,7 @@ g 256  icon_128x128@2x.png
 g 256  icon_256x256.png
 g 512  icon_256x256@2x.png
 g 512  icon_512x512.png
-g 1024 icon_512x512@2x.png   # апскейл из 512 — единственный неидеальный слот
+g 1024 icon_512x512@2x.png   # retina-слот Dock: настоящий 1024, пока мастер 1024×1024
 iconutil -c icns "$SET" -o "$DIR/icon.icns"
 echo "  $DIR/icon.icns"
 
