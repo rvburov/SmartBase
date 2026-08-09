@@ -95,9 +95,9 @@ jobs:
       - name: Сборка приложения
         run: dotnet build SmartBase.csproj --configuration Release
 
-      # Прогон идёт на ЧИСТОМ checkout — без artifacts/, без packages/ и без iCloud. Локально
-      # `dotnet build` умеет отрапортовать «Ошибок: 0», ничего не перекомпилировав: iCloud
-      # откатывает время файлов, и MSBuild считает сборку свежей. Здесь это невозможно.
+      # Прогон идёт на ЧИСТОМ checkout — без artifacts/ и без packages/. Локально `dotnet build`
+      # умеет отрапортовать «Ошибок: 0», ничего не перекомпилировав: стоит времени файлов уехать
+      # назад (перенос папки, облачный диск), и MSBuild считает сборку свежей. Здесь это невозможно.
       - name: Модульные тесты
         run: dotnet test Tests/Unit --configuration Release --logger 'console;verbosity=minimal'
 

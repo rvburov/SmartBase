@@ -37,8 +37,8 @@ namespace SmartBase.Tests.DbGenerator;
 ///   dotnet run -c Release --project Tests/DbGenerator -- --out /Volumes/Disk/big.db --force
 ///
 /// ВНИМАНИЕ: 20 млн записей — это ~240 млн строк и файл ~30 ГБ (100 млн — ~1,2 млрд
-/// строк и ~150 ГБ). Папка репозитория лежит в iCloud Drive — большие объёмы
-/// задавайте через --out ВНЕ iCloud, иначе macOS будет выгружать файл в облако.
+/// строк и ~150 ГБ). Такому файлу не место в рабочей папке — большие объёмы задавайте
+/// через --out ВНЕ репозитория (внешний диск /Volumes/… или ~/TestData/).
 /// </summary>
 internal static class Program
 {

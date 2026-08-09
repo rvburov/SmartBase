@@ -1951,7 +1951,7 @@ public partial class ConstructorRepository(AppDbContext db)
 
     // ATTACH источника (src) на подключение целевой БД, выполнить body, DETACH. Подключение держим
     // открытым на всё время: ATTACH живёт на подключении. Путь источника — через параметр (в пути
-    // iCloud пробелы и спецсимволы). Используется и переносом коллекции, и переносом группы.
+    // пользователя пробелы и спецсимволы). Используется и переносом коллекции, и переносом группы.
     private T WithAttachedSource<T>(string sourceDbPath, Func<DbConnection, T> body)
     {
         var conn = db.Database.GetDbConnection();
