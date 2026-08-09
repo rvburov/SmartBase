@@ -29,10 +29,36 @@
 | Установленное приложение  | `%LOCALAPPDATA%\SmartBase\SmartBase.exe`           | `~/.local/share/SmartBase/SmartBase`                     | `~/Applications/SmartBase.app`                       |
 | Установщик (та же раздача)| `SmartBase-Setup.exe` (имя файла `-Setup`)        | `SmartBase-Setup` (имя файла `-Setup`)                  | `SmartBase-Setup.app` (имя бандла `-Setup`)          |
 | Регистрация               | `HKCU\…\Uninstall\SmartBase` («Приложения»)       | `.desktop` в `~/.local/share/applications`             | `lsregister` (Launchpad/Finder)                     |
-| Ярлык удаления            | «Uninstall SmartBase» (Пуск + папка, `.lnk`)      | `…-uninstall.desktop` + `uninstall.sh` в папке         | `Uninstall SmartBase.command` рядом с бандлом         |
+| Установщик рядом с приложением | `SmartBase-Setup.exe` в папке установки      | `SmartBase-Setup` в папке установки                    | `SmartBase-Setup.app` рядом с бандлом                 |
+| Ярлык удаления            | «Uninstall SmartBase» (Пуск + папка, `.lnk`)      | `…-uninstall.desktop` + `uninstall.sh` в папке         | нет — двойной клик по `SmartBase-Setup.app`           |
 | Данные пользователя       | `%APPDATA%\SmartBase\` (`database.db`, `app.db`)  | `~/.config/SmartBase/`                                  | `~/.config/SmartBase/` — **отдельно**, не трогаются   |
 | Путь обновления           | ключ `UpdatePath` в `app.db` (см. [AppSettings](../../../Utils/AppSettings.cs)) | то же                       | то же                                               |
 | Папка обновлений (сеть)   | `…\SmartBase-Setup.exe`                           | `…/SmartBase-Setup`                                     | `…/SmartBase-Setup.app` (бандл)                       |
+
+## Установщик лежит рядом с приложением
+
+С 1.0.5 установка кладёт установщик **в ту же папку**, что и приложение: `SmartBase.app`
+и `SmartBase-Setup.app` (на Windows/Linux — `SmartBase[.exe]` и `SmartBase-Setup[.exe]`).
+Это одна и та же программа: режим выбирается по имени, см. `Program.ResolveMode`.
+
+Зачем: одна точка входа на установку, обновление и удаление. Отдельного деинсталлятора
+больше нет — на macOS исчез `Uninstall SmartBase.command`, который открывался через
+Terminal и выглядел чужеродно рядом с приложением.
+
+Цена — вторая копия бинаря: на macOS это примерно +145 МБ к установке. Решение осознанное,
+принято владельцем: одна понятная программа важнее места на диске.
+
+Окно установщика само ищет установленные копии, поэтому путь не надо помнить —
+см. [InstallService.Discovery.cs](../../../Setup/InstallService.Discovery.cs). Источники по
+убыванию надёжности: `installs.json` в папке данных (пишется при установке), затем штатные
+записи ОС (реестр Windows, `.desktop` на Linux, Spotlight по `CFBundleIdentifier` на macOS),
+затем обычные места. Полного обхода диска нет: на большом томе это минуты. Результаты
+Spotlight фильтруются — бандл в `dist/`, в Корзине и на смонтированном образе установкой
+не является.
+
+Удаление снимает: приложение, установщик, автозапуск (`Autostart.Disable`), регистрацию в
+ОС, запись в `installs.json` и — только по галочке — папку данных. Базы вне папки данных
+и на сервере PostgreSQL не трогаются никогда.
 
 ## Архитектура: две программы
 
@@ -175,7 +201,7 @@ self-contained установщик ~120 МБ) отклонена из-за уд
    - ✅ **6b — macOS** (реализовано, не протестировано на устройстве). Единица — `.app`-бандл:
      установщик `SmartBase-Setup.app` (режим по имени бандла, внутренний бинарь остаётся `SmartBase`)
      копирует бандл в `~/Applications/SmartBase.app`, регистрирует в Launchpad/Finder (`lsregister`),
-     кладёт рядом `Uninstall SmartBase.command`. Обновление/самозамена работают **с бандлом целиком**
+     кладёт рядом второй бандл `SmartBase-Setup.app` (см. ниже). Обновление/самозамена работают **с бандлом целиком**
      (publish не single-file): загрузка дерева в `/tmp/SmartBase.update.app`, замена установленного
      бандла, перезапуск через `open`. Сравнение версий — по дате внутреннего бинаря.
      Данные — `~/.config/SmartBase`. Каверзы: Gatekeeper/quarantine при ручном скачивании из браузера

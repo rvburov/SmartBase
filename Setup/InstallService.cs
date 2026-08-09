@@ -18,7 +18,7 @@ public enum SetupMode { App, Install, Uninstall }
 ///     режим определяется по имени бандла `SmartBase-Setup.app`.
 /// Подробности — docs/guides/auto-update.md.
 /// </summary>
-public static class InstallService
+public static partial class InstallService
 {
     public static bool IsMac => OperatingSystem.IsMacOS();
 
@@ -46,6 +46,13 @@ public static class InstallService
     /// <summary>Установленное приложение внутри папки: файл (Win/Linux) или `.app`-бандл (macOS).</summary>
     public static string InstalledPath(string installDir) =>
         Path.Combine(installDir, IsMac ? AppBundleName : AppExeName);
+
+    /// <summary>
+    /// Установщик рядом с приложением, в той же папке. Кладётся при установке и служит
+    /// единственной точкой входа для обновления и удаления: отдельного деинсталлятора нет.
+    /// </summary>
+    public static string SetupInstalledPath(string installDir) =>
+        Path.Combine(installDir, IsMac ? SetupBundleName : SetupExeName);
 
     /// <summary>Папка, из которой запущено приложение (для самоудаления):
     /// каталог бинаря, а на macOS — папка над `.app`-бандлом (напр. ~/Applications).</summary>
@@ -147,13 +154,38 @@ public static class InstallService
         await CopyFileWithProgressAsync(self, targetExe, p => progress.Report((p * 0.9, "Копирование файлов…")));
         MakeExecutable(targetExe);
 
-        progress.Report((0.92, "Создание ярлыков…"));
+        progress.Report((0.90, "Копирование установщика…"));
+        CopySetupBesideApp(installDir, self);
+
+        progress.Report((0.94, "Создание ярлыков…"));
         CreateShortcuts(installDir, desktopShortcut);
 
         progress.Report((0.97, "Регистрация…"));
         RegisterUninstall(installDir);   // запись в «Параметры → Приложения» (только Windows)
+        RegisterInstallPath(installDir);
 
         progress.Report((1.0, "Готово"));
+    }
+
+    // Установщик кладётся рядом с приложением: одна программа на установку, обновление и
+    // удаление, отдельного деинсталлятора нет. Пропускаем, если запущены уже оттуда —
+    // копировать файл сам в себя нельзя.
+    private static void CopySetupBesideApp(string installDir, string self)
+    {
+        var target = SetupInstalledPath(installDir);
+        if (PathsEqual(self, target)) return;
+        try
+        {
+            File.Copy(self, target, overwrite: true);
+            MakeExecutable(target);
+        }
+        catch { /* не легло — приложение всё равно установлено, удаление доступно из ярлыка */ }
+    }
+
+    private static bool PathsEqual(string a, string b)
+    {
+        try { return string.Equals(Path.GetFullPath(a), Path.GetFullPath(b), StringComparison.OrdinalIgnoreCase); }
+        catch { return false; }
     }
 
     // macOS: копируем `.app`-бандл целиком (publish под mac не single-file — внутри DLL),
@@ -170,12 +202,33 @@ public static class InstallService
         await CopyTreeAsync(srcBundle, targetBundle, p => progress.Report((p * 0.9, "Копирование приложения…")));
         MakeExecutable(MacInnerBinary(targetBundle));
 
-        progress.Report((0.93, "Регистрация…"));
+        progress.Report((0.90, "Копирование установщика…"));
+        await CopySetupBundleBesideAppAsync(installDir, srcBundle);
+
+        progress.Report((0.95, "Регистрация…"));
         ClearQuarantine(targetBundle);   // строго до lsregister, см. комментарий у метода
         RegisterLaunchServices(targetBundle);
-        CreateUninstallCommandMac(installDir, targetBundle);
+        RegisterInstallPath(installDir);
 
         progress.Report((1.0, "Готово"));
+    }
+
+    // macOS: рядом с SmartBase.app кладём SmartBase-Setup.app — ту же программу под именем
+    // установщика (режим выбирается по имени бандла, см. Program.ResolveMode). Двойной клик
+    // по нему открывает окно обновления и удаления. Пропускаем, если установщик уже запущен
+    // из этой самой папки: копировать каталог сам в себя нельзя.
+    private static async Task CopySetupBundleBesideAppAsync(string installDir, string srcBundle)
+    {
+        var target = SetupInstalledPath(installDir);
+        if (PathsEqual(srcBundle, target)) return;
+        try
+        {
+            if (Directory.Exists(target)) DeleteRecursive(target);
+            await CopyTreeAsync(srcBundle, target, _ => { });
+            MakeExecutable(MacInnerBinary(target));
+            ClearQuarantine(target);
+        }
+        catch { /* не легло — приложение всё равно установлено */ }
     }
 
     // ── Удаление ────────────────────────────────────────────────────────────
@@ -183,8 +236,10 @@ public static class InstallService
     {
         if (IsMac) { UninstallMac(installDir, removeData); return; }
 
+        Autostart.Disable();     // иначе система будет пытаться стартовать снесённый бинарь
         UnregisterUninstall();   // убрать из «Параметры → Приложения» (Windows)
         RemoveShortcuts();
+        UnregisterInstallPath(installDir);
         if (removeData) TryDeleteDir(DataDir);
 
         var running = Environment.ProcessPath ?? "";
@@ -194,7 +249,7 @@ public static class InstallService
         // В обоих случаях сносим только СВОИ файлы и папку лишь если она осталась пустой —
         // если приложение поставили в общую папку, чужое содержимое не пострадает.
         if (OperatingSystem.IsWindows() && running.StartsWith(full, StringComparison.OrdinalIgnoreCase))
-            ScheduleDirDelete(full);
+            ScheduleDirDelete(full, running);
         else
             RemoveOwnedFilesAndPrune(full);
     }
@@ -204,10 +259,34 @@ public static class InstallService
     private static void UninstallMac(string installDir, bool removeData)
     {
         var bundle = InstalledPath(installDir);   // <dir>/SmartBase.app
+        Autostart.Disable();                      // LaunchAgent указывал бы на снесённый бинарь
         UnregisterLaunchServices(bundle);
+        UnregisterInstallPath(installDir);
+        // Хвост версий до 1.0.4: тогда рядом клался .command-удалятор, теперь его роль
+        // исполняет SmartBase-Setup.app. При обновлении со старой версии файл надо убрать.
         TryDeleteFile(Path.Combine(installDir, $"Uninstall {AppSettings.AppName}.command"));
         if (removeData) TryDeleteDir(DataDir);
         TryDeleteDir(bundle);
+        // Установщик сносим последним и только если удаляем не из него самого: каталог
+        // запущенного бандла на macOS отвязывается на ходу, но окно ещё живёт до Close().
+        var setup = SetupInstalledPath(installDir);
+        if (!PathsEqual(setup, BundleRoot(Environment.ProcessPath) ?? "")) TryDeleteDir(setup);
+        else ScheduleSelfBundleDelete(setup);
+    }
+
+    // macOS: снести собственный бандл после выхода процесса. Каталог запущенного приложения
+    // отвязывается на лету, но пока окно не закрыто, внутри него ещё читаются ресурсы —
+    // поэтому ждём завершения процесса отдельной командой и только потом удаляем.
+    private static void ScheduleSelfBundleDelete(string bundle)
+    {
+        try
+        {
+            var pid = Environment.ProcessId;
+            RunHidden("/bin/sh",
+                $"-c {ShQuote($"while kill -0 {pid} 2>/dev/null; do sleep 0.5; done; rm -rf {ShQuote(bundle)}")}",
+                wait: false);
+        }
+        catch { /* не удалось — останется один бандл установщика, приложение уже удалено */ }
     }
 
     // ── Пути ─────────────────────────────────────────────────────────────────
@@ -490,15 +569,6 @@ public static class InstallService
         RunHidden(Lsregister, $"-u {Quote(bundle)}", wait: false);
     }
 
-    // Удалятор рядом с приложением: «Uninstall SmartBase.command» открывается двойным кликом
-    // (Terminal) и запускает SmartBase.app --uninstall (аналог ярлыка «Uninstall» на Win/Linux).
-    private static void CreateUninstallCommandMac(string installDir, string bundle)
-    {
-        var cmd = Path.Combine(installDir, $"Uninstall {AppSettings.AppName}.command");
-        File.WriteAllText(cmd, $"#!/bin/bash\nexec {ShQuote(MacInnerBinary(bundle))} --uninstall\n");
-        MakeExecutable(cmd);
-    }
-
     // ── «Параметры → Приложения» (HKCU\…\Uninstall), только Windows ───────────
     // Регистрируем программу в стандартном списке Windows с кнопкой «Удалить»
     // (= SmartBase.exe --uninstall). Через PowerShell, чтобы не тянуть пакет реестра.
@@ -551,11 +621,13 @@ public static class InstallService
             ? new[]
             {
                 Path.Combine(installDir, AppExeName),                               // SmartBase.exe
+                Path.Combine(installDir, SetupExeName),                             // SmartBase-Setup.exe
                 Path.Combine(installDir, $"Uninstall {AppSettings.AppName}.lnk"),
             }
             : new[]
             {
                 Path.Combine(installDir, AppExeName),                               // SmartBase
+                Path.Combine(installDir, SetupExeName),                             // SmartBase-Setup
                 Path.Combine(installDir, "icon.png"),
                 Path.Combine(installDir, "uninstall.sh"),
             };
@@ -577,9 +649,12 @@ public static class InstallService
     // его освобождения (до 30 попыток, ~30 с). Удаляем ТОЛЬКО свои файлы, затем rmdir БЕЗ /S —
     // папка исчезнет, лишь если пуста; при установке в общую папку чужие файлы уцелеют. Затем
     // bat самоудаляется. Последний rmdir с парой повторов — гасит гонку с асинхронным удалением.
-    private static void ScheduleDirDelete(string dir)
+    // runningExe — файл, из которого удаление и запущено: с 1.0.5 это обычно SmartBase-Setup.exe
+    // (установщик лежит рядом с приложением), а при запуске из ярлыка «Uninstall» — SmartBase.exe.
+    // Ждать надо именно его: остальные наши файлы не заняты и удалятся сразу.
+    private static void ScheduleDirDelete(string dir, string runningExe)
     {
-        var exe  = Path.Combine(dir, AppExeName);
+        var exe  = runningExe;
         var exeB = BatEscape(exe);   // % → %% для .bat (в имени папки % легален и иначе съест cmd)
         var dirB = BatEscape(dir);
 

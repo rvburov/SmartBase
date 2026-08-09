@@ -1,15 +1,16 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:components="using:SmartBase.Controls.Components"
+        xmlns:setup="using:SmartBase.Setup"
         x:Class="SmartBase.Setup.InstallerWindow"
-        Width="500" Height="400"
+        Width="500" Height="440"
         CanResize="False"
         WindowStartupLocation="CenterScreen"
         Background="{StaticResource BrushBg}"
         Title="SmartBase — Установка">
 
     <Window.Styles>
-        <!-- Главная кнопка («Установить»/«Удалить»): размер как у dialog-кнопок приложения,
+        <!-- Главная кнопка («Установить»/«Обновить»): размер как у dialog-кнопок приложения,
              синий фон (accent), тёмно-синий #0062CC при наведении. -->
         <Style Selector="Button.accent">
             <Setter Property="Width"                      Value="110" />
@@ -20,6 +21,21 @@
         </Style>
         <Style Selector="Button.accent:pointerover /template/ ContentPresenter">
             <Setter Property="Background" Value="#0062CC" />
+        </Style>
+
+        <!-- Ссылка «Установить в другую папку…»: кнопка без рамки и фона. -->
+        <Style Selector="Button.link">
+            <Setter Property="Background"  Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Padding"     Value="0" />
+            <Setter Property="Foreground"  Value="{StaticResource BrushAccent}" />
+            <Setter Property="Cursor"      Value="Hand" />
+            <Setter Property="FontSize"    Value="{DynamicResource FontSizeSmall}" />
+            <Setter Property="HorizontalAlignment" Value="Left" />
+        </Style>
+        <Style Selector="Button.link:pointerover /template/ ContentPresenter">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="TextBlock.TextDecorations" Value="Underline" />
         </Style>
     </Window.Styles>
 
@@ -40,15 +56,20 @@
             </StackPanel>
         </Border>
 
-        <!-- Футер -->
-        <Border DockPanel.Dock="Bottom" Height="64"
+        <!-- Футер: галочка данных стоит НАД кнопками и относится только к «Удалить» —
+             так однозначно читается, к какому действию она применяется. -->
+        <Border DockPanel.Dock="Bottom"
                 Background="{StaticResource BrushSecondaryBg}"
                 BorderBrush="{StaticResource BrushSeparator}" BorderThickness="{DynamicResource BorderLineTop}">
-            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right"
-                        VerticalAlignment="Center" Spacing="10" Margin="24,0">
-                <Button x:Name="UninstallBtn" Content="Удалить" Classes="dialog" Click="OnUninstall" IsVisible="False" />
-                <Button x:Name="CancelBtn"    Content="Отмена"  Classes="dialog" Click="OnCancel" />
-                <Button x:Name="PrimaryBtn"   Content="Установить" Classes="accent" Click="OnPrimary" />
+            <StackPanel Margin="24,12" Spacing="10">
+                <CheckBox x:Name="RemoveDataCheck" IsVisible="False"
+                          Content="вместе с данными пользователя"
+                          FontSize="{DynamicResource FontSizeSmall}" />
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="10">
+                    <Button x:Name="UninstallBtn" Content="Удалить"    Classes="dialog" Click="OnUninstall" IsVisible="False" />
+                    <Button x:Name="CancelBtn"    Content="Отмена"     Classes="dialog" Click="OnCancel" />
+                    <Button x:Name="PrimaryBtn"   Content="Установить" Classes="accent" Click="OnPrimary" />
+                </StackPanel>
             </StackPanel>
         </Border>
 
@@ -56,8 +77,38 @@
         <StackPanel Margin="24,18" Spacing="12">
 
             <TextBlock x:Name="SubtitleText" TextWrapping="Wrap"
-                       Text="Выберите папку для установки приложения"
+                       Text="Поиск установленных копий…"
                        Foreground="{StaticResource BrushSecondaryText}" />
+
+            <!-- Одна найденная копия: путь и версия строкой -->
+            <StackPanel x:Name="SingleBlock" IsVisible="False" Spacing="2">
+                <TextBlock x:Name="SinglePathText" TextWrapping="Wrap"
+                           Foreground="{StaticResource BrushPrimaryText}" />
+                <TextBlock x:Name="SingleVersionText"
+                           FontSize="{DynamicResource FontSizeSmall}"
+                           Foreground="{StaticResource BrushSecondaryText}" />
+            </StackPanel>
+
+            <!-- Несколько копий: выбор, к какой относятся кнопки -->
+            <ListBox x:Name="InstallsList" IsVisible="False" MaxHeight="130"
+                     Background="{StaticResource BrushSecondaryBg}"
+                     CornerRadius="{StaticResource RadiusBase}"
+                     SelectionChanged="OnInstallSelected">
+                <ListBox.ItemTemplate>
+                    <DataTemplate x:DataType="setup:Installation">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <TextBlock Grid.Column="0" Text="{Binding Dir}"
+                                       TextTrimming="CharacterEllipsis" Margin="0,0,10,0" />
+                            <TextBlock Grid.Column="1" Text="{Binding VersionText}"
+                                       FontSize="{DynamicResource FontSizeSmall}"
+                                       Foreground="{StaticResource BrushSecondaryText}" />
+                        </Grid>
+                    </DataTemplate>
+                </ListBox.ItemTemplate>
+            </ListBox>
+
+            <Button x:Name="OtherFolderBtn" Classes="link" IsVisible="False"
+                    Content="Установить в другую папку…" Click="OnOtherFolder" />
 
             <StackPanel x:Name="PathBlock" Spacing="6">
                 <TextBlock Text="Папка установки"
@@ -80,8 +131,7 @@
                            FontSize="{DynamicResource FontSizeSmall}" />
             </Border>
 
-            <CheckBox x:Name="ShortcutCheck"  Content="Создать ярлык на рабочем столе" IsChecked="True" />
-            <CheckBox x:Name="RemoveDataCheck" Content="Удалить и данные пользователя"  IsVisible="False" />
+            <CheckBox x:Name="ShortcutCheck" Content="Создать ярлык на рабочем столе" IsChecked="True" />
 
             <!-- Единый индикатор загрузки приложения (полоса + проценты + фаза) -->
             <components:ProgressIndicator x:Name="ProgressBlock" IsVisible="False" />

@@ -10,67 +10,140 @@ using SmartBase.Utils;
 namespace SmartBase.Setup;
 
 /// <summary>
-/// Окно установщика (вариант A). В обычном режиме — установка/обновление в выбранную
-/// папку; в режиме удаления (`--uninstall`) — подтверждение и снос установленной копии.
+/// Единственное окно установщика: установка, обновление и удаление в одном месте.
+/// Отдельного деинсталлятора нет — эта же программа кладётся рядом с приложением как
+/// `SmartBase-Setup`, и двойной клик по ней открывает это окно.
+///
+/// При открытии окно само ищет установленные копии на машине (см. FindInstallations),
+/// поэтому папку установки не нужно помнить и вводить руками. Состояний три: копий нет,
+/// найдена одна, найдено несколько.
 /// </summary>
 public partial class InstallerWindow : Window
 {
-    private readonly bool _uninstallMode;
+    private readonly bool _preselectCurrent;   // запуск из ярлыка «Удалить»: показать свою копию
+    private List<Installation> _found = [];
+    private bool _manualPath;                  // пользователь ушёл в «другую папку»
+    private bool _busy;
+    private readonly string _myVersion;
 
     public InstallerWindow() : this(false) { }
 
     public InstallerWindow(bool uninstallMode)
     {
         InitializeComponent();
-        _uninstallMode = uninstallMode;
+        _preselectCurrent = uninstallMode;
 
         var v = Assembly.GetExecutingAssembly().GetName().Version;
-        VersionText.Text = v is null ? "" : $"Версия {v.Major}.{v.Minor}.{v.Build}";
+        _myVersion       = v is null ? "" : $"{v.Major}.{v.Minor}.{v.Build}";
+        VersionText.Text = v is null ? "" : $"Версия {_myVersion}";
 
-        if (_uninstallMode) SetupUninstallUi();
-        else                SetupInstallUi();
-    }
-
-    // ── Установка ──────────────────────────────────────────────────────────
-    private void SetupInstallUi()
-    {
-        PathBox.Text = InstallService.DefaultInstallDir;
         // На macOS ярлыков нет (приложение лежит в ~/Applications, видно в Launchpad/Finder).
-        if (InstallService.IsMac) ShortcutCheck.IsVisible = false;
-        RefreshInstallState();
-        PathBox.TextChanged += (_, _) => RefreshInstallState();
+        ShortcutCheck.IsVisible = !InstallService.IsMac;
+        PathBox.Text            = InstallService.DefaultInstallDir;
+        PathBox.TextChanged    += (_, _) => RefreshState();
+
+        _ = LoadInstallationsAsync();
     }
 
-    private void RefreshInstallState()
-    {
-        var dir = (PathBox.Text ?? "").Trim();
+    // ── Поиск копий ────────────────────────────────────────────────────────
 
-        // Уже установлено сюда → режим обновления (данные пользователя сохранятся).
-        if (InstallService.IsAppPresent(dir))
+    // Spotlight и реестр отвечают не мгновенно — ищем в фоне, чтобы окно открылось сразу.
+    private async Task LoadInstallationsAsync()
+    {
+        SetBusyControls(true);
+        try   { _found = await Task.Run(InstallService.FindInstallations); }
+        catch (Exception ex) { Log.Error(ex, "Поиск установленных копий не удался"); _found = []; }
+        SetBusyControls(false);
+
+        InstallsList.ItemsSource = _found;
+        if (_found.Count > 1)
         {
-            WarnText.Text          = "Приложение уже установлено в этой папке — файлы будут обновлены, данные пользователя сохранятся.";
-            WarnBox.IsVisible      = true;
-            PrimaryBtn.Content     = "Обновить";
-            PrimaryBtn.IsEnabled   = true;
-            UninstallBtn.IsVisible = true;
+            // Из ярлыка «Удалить» пришли ради конкретной копии — она и должна быть выбрана.
+            var own = _found.FirstOrDefault(f =>
+                string.Equals(f.Dir, InstallService.CurrentDir, StringComparison.OrdinalIgnoreCase));
+            InstallsList.SelectedItem = (_preselectCurrent ? own : null) ?? _found[0];
+        }
+        RefreshState();
+    }
+
+    /// <summary>Копия, к которой относятся кнопки: единственная найденная либо выбранная в списке.</summary>
+    private Installation? Selected =>
+        _manualPath      ? null
+        : _found.Count == 1 ? _found[0]
+        : InstallsList.SelectedItem as Installation;
+
+    /// <summary>Папка, с которой работают кнопки.</summary>
+    private string TargetDir =>
+        Selected?.Dir ?? (PathBox.Text ?? "").Trim();
+
+    // ── Состояние окна ─────────────────────────────────────────────────────
+
+    private void RefreshState()
+    {
+        if (_busy) return;
+
+        var showFound  = !_manualPath && _found.Count > 0;
+        var showList   = showFound && _found.Count > 1;
+        var showSingle = showFound && _found.Count == 1;
+
+        SingleBlock.IsVisible     = showSingle;
+        InstallsList.IsVisible    = showList;
+        PathBlock.IsVisible       = !showFound;
+        OtherFolderBtn.IsVisible  = _found.Count > 0;
+        OtherFolderBtn.Content    = _manualPath ? "← К найденным копиям" : "Установить в другую папку…";
+
+        if (showSingle)
+        {
+            SinglePathText.Text    = _found[0].Dir;
+            SingleVersionText.Text = _found[0].VersionText;
+        }
+
+        SubtitleText.Text =
+            _manualPath        ? "Выберите папку для установки приложения"
+            : _found.Count == 0 ? "Установленных копий не найдено"
+            : _found.Count == 1 ? "Найдена установленная копия"
+                                : "Найдено несколько установленных копий";
+
+        var dir      = TargetDir;
+        var isUpdate = InstallService.IsAppPresent(dir);
+
+        UninstallBtn.IsVisible    = isUpdate;
+        RemoveDataCheck.IsVisible = isUpdate;
+        PrimaryBtn.IsEnabled      = true;
+
+        if (isUpdate)
+        {
+            // Та же версия — это переустановка поверх, а не обновление: называем честно.
+            var same = Selected?.Version is { } sv && sv == _myVersion;
+            PrimaryBtn.Content = same ? "Переустановить" : "Обновить";
+            WarnText.Text      = "Приложение уже установлено в этой папке — файлы будут обновлены, "
+                               + "данные пользователя сохранятся.";
+            WarnBox.IsVisible  = true;
             return;
         }
 
-        PrimaryBtn.Content     = "Установить";
-        UninstallBtn.IsVisible = false;
+        PrimaryBtn.Content = "Установить";
 
         // Нет прав на запись (напр. Program Files без администратора) → предупреждаем и не даём ставить.
         if (dir.Length > 0 && !InstallService.CanCreateOrWrite(dir))
         {
-            WarnText.Text        = "В эту папку нет прав на запись. Выберите другую (например, предложенную по умолчанию). Установка в «Program Files» требует прав администратора.";
+            WarnText.Text        = "В эту папку нет прав на запись. Выберите другую (например, предложенную "
+                                 + "по умолчанию). Установка в «Program Files» требует прав администратора.";
             WarnBox.IsVisible    = true;
             PrimaryBtn.IsEnabled = false;
         }
         else
         {
-            WarnBox.IsVisible    = false;
-            PrimaryBtn.IsEnabled = true;
+            WarnBox.IsVisible = false;
         }
+    }
+
+    private void OnInstallSelected(object? sender, SelectionChangedEventArgs e) => RefreshState();
+
+    private void OnOtherFolder(object? sender, RoutedEventArgs e)
+    {
+        _manualPath = !_manualPath;
+        RefreshState();
     }
 
     private async void OnBrowse(object? sender, RoutedEventArgs e)
@@ -83,9 +156,11 @@ public partial class InstallerWindow : Window
             PathBox.Text = InstallService.EnsureDedicatedDir(p);
     }
 
+    // ── Установка / обновление ─────────────────────────────────────────────
+
     private async Task DoInstallAsync()
     {
-        var dir = (PathBox.Text ?? "").Trim();
+        var dir = TargetDir;
         if (dir.Length == 0) return;
 
         SetBusy(true);
@@ -108,63 +183,74 @@ public partial class InstallerWindow : Window
         var launch = await new ConfirmDialog(
             "Установка завершена. Запустить приложение?", "Запустить", "Закрыть").ShowDialog<bool>(this);
         if (launch)
-            TryStart(Path.Combine(dir, InstallService.AppExeName));
+            TryStart(InstallService.InstalledPath(dir));   // macOS — .app-бандл, иначе бинарь
         Close();
     }
 
     // ── Удаление ───────────────────────────────────────────────────────────
-    private void SetupUninstallUi()
-    {
-        Title                     = $"{AppSettings.DisplayName} — Удаление";
-        SubtitleText.Text         = $"Удалить {AppSettings.DisplayName} из:\n{InstallService.CurrentDir}";
-        PathBlock.IsVisible       = false;
-        ShortcutCheck.IsVisible   = false;
-        RemoveDataCheck.IsVisible = true;
-        PrimaryBtn.Content        = "Удалить";
-    }
 
-    // Кнопка «Удалить» в режиме установки: сносит установленную копию по выбранному пути.
     private async void OnUninstall(object? sender, RoutedEventArgs e)
     {
-        var dir = (PathBox.Text ?? "").Trim();
+        var dir = TargetDir;
         if (!InstallService.IsAppPresent(dir)) return;
-        if (await Confirm($"Удалить {AppSettings.DisplayName} из:\n{dir}") != true) return;
 
-        InstallService.Uninstall(dir, removeData: false);
-        Close();
-    }
-
-    private async Task DoUninstallAsync()
-    {
-        var dir = InstallService.CurrentDir;
-        if (await Confirm($"Удалить {AppSettings.DisplayName} из:\n{dir}") != true) return;
+        var withData = RemoveDataCheck.IsChecked == true;
+        var message  = $"Удалить {AppSettings.DisplayName} из:\n{dir}"
+                     + (withData
+                        ? "\n\nВместе с данными пользователя: коллекции, записи, настройки и журнал "
+                          + "будут стёрты безвозвратно. Базы, подключённые из других папок и с сервера "
+                          + "PostgreSQL, не затрагиваются."
+                        : "\n\nДанные пользователя сохранятся.");
+        if (await new ConfirmDialog(message, "Удалить").ShowDialog<bool>(this) != true) return;
 
         SetBusy(true);
         SubtitleText.Text = "Удаление…";
-        InstallService.Uninstall(dir, RemoveDataCheck.IsChecked == true);
-        Close(); // приложение закроется → отложенный bat удалит папку
+        try { InstallService.Uninstall(dir, withData); }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Ошибка удаления из папки {Dir:l}", dir);
+            SetBusy(false);
+            SubtitleText.Text = $"Ошибка удаления: {ex.Message}";
+            return;
+        }
+
+        // Снесли копию, из которой сами и запущены → закрываемся: остальное доделает
+        // отложенное удаление. Чужую копию удалили — остаёмся и обновляем список.
+        if (string.Equals(Path.GetFullPath(dir), Path.GetFullPath(InstallService.CurrentDir),
+                          StringComparison.OrdinalIgnoreCase))
+        {
+            Close();
+            return;
+        }
+
+        SetBusy(false);
+        _manualPath = false;
+        await LoadInstallationsAsync();
     }
 
     // ── Общее ──────────────────────────────────────────────────────────────
-    private async void OnPrimary(object? sender, RoutedEventArgs e)
-    {
-        if (_uninstallMode) await DoUninstallAsync();
-        else                await DoInstallAsync();
-    }
+
+    private async void OnPrimary(object? sender, RoutedEventArgs e) => await DoInstallAsync();
 
     private void OnCancel(object? sender, RoutedEventArgs e) => Close();
 
-    private Task<bool> Confirm(string message) =>
-        new ConfirmDialog(message, "Удалить").ShowDialog<bool>(this);
-
     private void SetBusy(bool busy)
     {
-        PrimaryBtn.IsEnabled    = !busy;
-        CancelBtn.IsEnabled     = !busy;
-        UninstallBtn.IsEnabled  = !busy;
-        PathBlock.IsEnabled     = !busy;
-        ShortcutCheck.IsEnabled = !busy;
+        _busy = busy;
+        SetBusyControls(busy);
         ProgressBlock.IsVisible = busy;
+    }
+
+    private void SetBusyControls(bool busy)
+    {
+        PrimaryBtn.IsEnabled     = !busy;
+        CancelBtn.IsEnabled      = !busy;
+        UninstallBtn.IsEnabled   = !busy;
+        PathBlock.IsEnabled      = !busy;
+        InstallsList.IsEnabled   = !busy;
+        OtherFolderBtn.IsEnabled = !busy;
+        ShortcutCheck.IsEnabled  = !busy;
+        RemoveDataCheck.IsEnabled = !busy;
     }
 
     private static void TryStart(string exe)

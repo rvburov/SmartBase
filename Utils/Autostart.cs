@@ -18,7 +18,7 @@ namespace SmartBase.Utils;
 public static class Autostart
 {
     public const string BackgroundArg = "--background";
-    private const string BundleId       = "com.romanburov.smartbase";
+    internal const string BundleId      = "com.romanburov.smartbase";
     private const string WindowsRunKey  = @"Software\Microsoft\Windows\CurrentVersion\Run";
     private const string WindowsValue   = AppSettings.AppName;   // "SmartBase"
 
@@ -80,6 +80,17 @@ public static class Autostart
             Directory.CreateDirectory(Path.GetDirectoryName(LinuxDesktopPath)!);
             File.WriteAllText(LinuxDesktopPath, BuildLinuxDesktop(target, background));
         }
+    }
+
+    /// <summary>
+    /// Снять автозапуск безусловно — для удаления программы. В отличие от <see cref="Set"/>
+    /// не смотрит на <see cref="LaunchTarget"/>: при удалении бинарь может быть уже недоступен,
+    /// а запись автозапуска убрать всё равно надо, иначе система будет пытаться стартовать
+    /// снесённое приложение.
+    /// </summary>
+    public static void Disable()
+    {
+        try { Remove(); } catch { /* нечего снимать или нет доступа */ }
     }
 
     private static void Remove()
