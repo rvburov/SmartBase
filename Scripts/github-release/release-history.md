@@ -19,7 +19,7 @@
 
 ## [Не выпущено]
 
-## [1.0.4]
+## [1.0.4] — 2026-08-09
 
 ### Изменено
 - Новая иконка приложения — одна для Windows, macOS и Linux. Retina-слот в Dock теперь
@@ -45,5 +45,6 @@
 - Работа с несколькими базами одновременно, SQLite и PostgreSQL, пользователи и права.
 - Импорт и экспорт, автообновление из сетевой папки, нативные уведомления, автозапуск.
 
-[Не выпущено]: https://github.com/rvburov/SmartBase/compare/v1.0.3...HEAD
+[Не выпущено]: https://github.com/rvburov/SmartBase/compare/v1.0.4...HEAD
+[1.0.4]: https://github.com/rvburov/SmartBase/compare/v1.0.3...v1.0.4
 [1.0.3]: https://github.com/rvburov/SmartBase/releases/tag/v1.0.3
