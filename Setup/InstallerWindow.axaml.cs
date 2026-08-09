@@ -72,9 +72,17 @@ public partial class InstallerWindow : Window
         : _found.Count == 1 ? _found[0]
         : InstallsList.SelectedItem as Installation;
 
-    /// <summary>Папка, с которой работают кнопки.</summary>
+    /// <summary>Папка, с которой работают кнопки, как её задал человек.</summary>
     private string TargetDir =>
         Selected?.Dir ?? (PathBox.Text ?? "").Trim();
+
+    /// <summary>
+    /// Папка, куда установка ляжет на самом деле. Путь, вписанный руками, приводится к
+    /// «выделенному» так же, как выбранный кнопкой «Обзор»: на Windows/Linux дописывается
+    /// подпапка SmartBase. Иначе бинарь лёг бы прямо в «Документы», а удаление потом искало
+    /// бы свои файлы посреди чужих. Для уже установленной копии и на macOS — без изменений.
+    /// </summary>
+    private string EffectiveDir => InstallService.EnsureDedicatedDir(TargetDir);
 
     // ── Состояние окна ─────────────────────────────────────────────────────
 
@@ -104,8 +112,14 @@ public partial class InstallerWindow : Window
             : _found.Count == 1 ? "Найдена установленная копия"
                                 : "Найдено несколько установленных копий";
 
-        var dir      = TargetDir;
+        var dir      = EffectiveDir;
         var isUpdate = InstallService.IsAppPresent(dir);
+
+        // Подсказка появляется, только когда путь вписали руками и он будет изменён.
+        var typed = TargetDir;
+        EffectivePathText.IsVisible = !showFound && typed.Length > 0
+                                      && !string.Equals(dir, typed, StringComparison.Ordinal);
+        EffectivePathText.Text      = $"Будет установлено в: {dir}";
 
         UninstallBtn.IsVisible    = isUpdate;
         RemoveDataCheck.IsVisible = isUpdate;
@@ -160,7 +174,7 @@ public partial class InstallerWindow : Window
 
     private async Task DoInstallAsync()
     {
-        var dir = TargetDir;
+        var dir = EffectiveDir;   // вписанный руками путь приводится к «выделенной» подпапке
         if (dir.Length == 0) return;
 
         SetBusy(true);
@@ -191,7 +205,7 @@ public partial class InstallerWindow : Window
 
     private async void OnUninstall(object? sender, RoutedEventArgs e)
     {
-        var dir = TargetDir;
+        var dir = EffectiveDir;
         if (!InstallService.IsAppPresent(dir)) return;
 
         var withData = RemoveDataCheck.IsChecked == true;

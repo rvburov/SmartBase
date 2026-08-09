@@ -613,10 +613,13 @@ public static partial class InstallService
             wait: true);
     }
 
-    // Файлы, которые установщик создаёт В САМОЙ папке установки (Win/Linux). Нужны для точечного
-    // удаления: сносим только своё, а папку — лишь если она осталась пустой. Ярлыки Пуск/рабочего
-    // стола и .desktop лежат вне папки установки — их убирает RemoveShortcuts.
-    private static string[] OwnedInstallFiles(string installDir) =>
+    /// <summary>
+    /// Файлы, которые установщик создаёт В САМОЙ папке установки (Win/Linux). Нужны для точечного
+    /// удаления: сносим только своё, а папку — лишь если она осталась пустой. Ярлыки Пуск/рабочего
+    /// стола и .desktop лежат вне папки установки — их убирает RemoveShortcuts.
+    /// Публичный, чтобы тест мог убедиться: список не выходит за пределы папки установки.
+    /// </summary>
+    public static string[] OwnedInstallFiles(string installDir) =>
         OperatingSystem.IsWindows()
             ? new[]
             {
@@ -632,9 +635,13 @@ public static partial class InstallService
                 Path.Combine(installDir, "uninstall.sh"),
             };
 
-    // Linux (и Windows, когда удаляют не запущенную копию): убираем свои файлы и сносим папку
-    // ТОЛЬКО если после этого она пуста (rmdir без рекурсии) — чужое содержимое общей папки цело.
-    private static void RemoveOwnedFilesAndPrune(string installDir)
+    /// <summary>
+    /// Linux (и Windows, когда удаляют не запущенную копию): убираем свои файлы и сносим папку
+    /// ТОЛЬКО если после этого она пуста (rmdir без рекурсии) — чужое содержимое общей папки цело.
+    /// Публичный отдельно от <see cref="Uninstall"/> ради теста: сам Uninstall трогает систему
+    /// (автозапуск, ярлыки меню), и в тесте его вызывать нельзя — он испортил бы машину.
+    /// </summary>
+    public static void RemoveOwnedFilesAndPrune(string installDir)
     {
         foreach (var f in OwnedInstallFiles(installDir)) TryDeleteFile(f);
         try
