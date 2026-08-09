@@ -14,7 +14,8 @@ namespace SmartBase.Tests.Integration;
 ///
 /// Требует шину сеанса D-Bus, поэтому в обычном прогоне уходит в Skipped. По-настоящему
 /// выполняется на Linux-раннере под `dbus-run-session` — см. шаг «Уведомления Linux»
-/// в .github/workflows/build.yml.
+/// в рабочем процессе сборки на GitHub. Путь к нему здесь намеренно не назван: тот модуль
+/// удаляется отдельно, и ссылка на его файл осталась бы висеть.
 /// </summary>
 public sealed class LinuxNotificationsTests
 {

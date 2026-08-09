@@ -164,8 +164,13 @@ for p in "${MODULE_PATHS[@]}"; do
   git check-ignore -q "$p" 2>/dev/null && prob+=("$p игнорируется git — файл не попадёт в репозиторий")
 done
 
-# Ищем упоминания модуля в отслеживаемых файлах ВНЕ модуля. Внутри модуля ссылки свободны.
-refs="$(git ls-files -z -- . ':(exclude).github/workflows/build.yml' ':(exclude)Scripts/ci' \
+# Ищем упоминания модуля в файлах ВНЕ модуля. Внутри модуля ссылки свободны.
+#
+# --others --exclude-standard добавляет к отслеживаемым ещё и новые файлы, которые git пока
+# не видел, но и не игнорирует. Без них проверка слепа ровно в тот момент, когда нужна: файл
+# только что создан, ссылка на модуль в нём уже есть, а замечено это будет лишь после коммита.
+# Игнорируемое (artifacts/, packages/) не попадает — иначе обход занял бы минуты.
+refs="$(git ls-files -z --cached --others --exclude-standard -- . ':(exclude).github/workflows/build.yml' ':(exclude)Scripts/ci' \
         ':(exclude)docs/developer/guides/ci.md' \
         | xargs -0 grep -lIE 'Scripts/ci|guides/ci\.md|workflows/build\.yml' 2>/dev/null)"
 [ -n "$refs" ] && prob+=("на модуль ссылаются файлы вне него: $(echo "$refs" | tr '\n' ' ')")
