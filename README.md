@@ -37,14 +37,14 @@
 
 Разделы переключаются иконками слева (Activity bar):
 
-| Раздел | Что делает |
-|---|---|
-| **Конструктор БД** | коллекции, поля, записи: таблица или карточки + панель записи |
-| **Календарь** | 7 режимов: Расписание, Журнал, День, Неделя, Месяц, Год, Диаграмма |
-| **Задачи** | карточки задач: исполнитель, назначил, статус, срок, остаток времени |
-| **Расширения** | подключаемые плагины, каждый в своём окне (PDF, составы изделий, документы) |
-| **Профиль** | свои данные, допуск пользователей к базам, история изменений |
-| **Настройки** | общее, оформление, управление базами, диагностика, о программе |
+| Раздел                          | Что делает                                                                                                                   |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| **Конструктор БД** | коллекции, поля, записи: таблица или карточки + панель записи                        |
+| **Календарь**          | 7 режимов: Расписание, Журнал, День, Неделя, Месяц, Год, Диаграмма                  |
+| **Задачи**                | карточки задач: исполнитель, назначил, статус, срок, остаток времени          |
+| **Расширения**        | подключаемые плагины, каждый в своём окне (PDF, составы изделий, документы) |
+| **Профиль**              | свои данные, допуск пользователей к базам, история изменений                       |
+| **Настройки**          | общее, оформление, управление базами, диагностика, о программе                    |
 
 ## Возможности
 
@@ -84,16 +84,16 @@
 
 ## Технологии
 
-| Что | Чем |
-|---|---|
-| UI | **Avalonia UI 11.2** (тема Fluent, DataGrid), .NET 10, собственные токены стилей |
-| MVVM | **CommunityToolkit.Mvvm**; крупные интерактивные модули — намеренно code-behind |
-| Данные | **EF Core 9** + **SQLite**, **Npgsql** для PostgreSQL, миграции EF |
-| Таблицы | **ClosedXML** и **DocumentFormat.OpenXml** (потоковая SAX-запись), **ExcelDataReader** |
-| Текст | **Markdig** + **Markdown.Avalonia** — описания записей |
-| Уведомления | **DesktopNotifications** (Windows/Linux), macOS — свой код |
-| Логи | **Serilog** + приёмник SQLite (`logs.db`) |
-| Расширения | **PdfPig** — разбор PDF |
+| Что                 | Чем                                                                                                                    |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| UI                     | **Avalonia UI 11.2** (тема Fluent, DataGrid), .NET 10, собственные токены стилей         |
+| MVVM                   | **CommunityToolkit.Mvvm**; крупные интерактивные модули — намеренно code-behind |
+| Данные           | **EF Core 9** + **SQLite**, **Npgsql** для PostgreSQL, миграции EF                           |
+| Таблицы         | **ClosedXML** и **DocumentFormat.OpenXml** (потоковая SAX-запись), **ExcelDataReader**  |
+| Текст             | **Markdig** + **Markdown.Avalonia** — описания записей                                        |
+| Уведомления | **DesktopNotifications** (Windows/Linux), macOS — свой код                                                  |
+| Логи               | **Serilog** + приёмник SQLite (`logs.db`)                                                                 |
+| Расширения   | **PdfPig** — разбор PDF                                                                                      |
 
 ## Как устроено
 
@@ -466,11 +466,11 @@ SmartBase/
 Кроме трёх баз там же лежат три служебных файла. Они **остаются на диске после выхода
 из приложения** — это норма, а не мусор:
 
-| Файл | Кто создаёт | Когда появляется |
-|---|---|---|
-| `instance.lock` | [Utils/SingleInstance.cs](Utils/SingleInstance.cs) | при каждом запуске; пустой (0 байт) — защита от второго экземпляра держится на эксклюзивном дескрипторе `FileShare.None`, а не на наличии файла |
-| `show.signal` | [Utils/SingleInstance.cs](Utils/SingleInstance.cs) | только при запуске второй копии поверх работающей: второй процесс пишет метку времени и выходит, работающий показывает окно |
-| `crash.log` | [Program.cs](Program.cs) | только при необработанном исключении; синхронный резерв к `logs.db`, время в нём локальное (в `logs.db` — UTC) |
+| Файл          | Кто создаёт                             | Когда появляется                                                                                                                                                                                                                        |
+| ----------------- | ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `instance.lock` | [Utils/SingleInstance.cs](Utils/SingleInstance.cs) | при каждом запуске; пустой (0 байт) — защита от второго экземпляра держится на эксклюзивном дескрипторе`FileShare.None`, а не на наличии файла |
+| `show.signal`   | [Utils/SingleInstance.cs](Utils/SingleInstance.cs) | только при запуске второй копии поверх работающей: второй процесс пишет метку времени и выходит, работающий показывает окно                   |
+| `crash.log`     | [Program.cs](Program.cs)                           | только при необработанном исключении; синхронный резерв к`logs.db`, время в нём локальное (в `logs.db` — UTC)                                                                |
 
 Подробнее — [storage-and-migrations.md](docs/developer/architecture/database/storage-and-migrations.md).
 
@@ -497,14 +497,14 @@ SmartBase/
 
 Полная карта — [docs/README.md](docs/README.md). Точки входа:
 
-| Раздел | Про что |
-|---|---|
-| [architecture/overview.md](docs/developer/architecture/overview.md) | слои, запуск, MVVM и code-behind |
-| [architecture/data-model.md](docs/developer/architecture/data-model.md) | доменные модели и таблицы |
-| [architecture/data-types/](docs/developer/architecture/data-types/) | типы полей — файл на тип |
-| [architecture/users-permissions.md](docs/developer/architecture/users-permissions.md) | пользователи, допуск, права, журнал |
-| [features/](docs/developer/features/) | календарь, конструктор, задачи, импорт/экспорт, уведомления, расширения |
-| [guides/build-and-run.md](docs/developer/guides/build-and-run.md) | сборка и запуск во всех режимах |
-| [guides/developer-guide.md](docs/developer/guides/developer-guide.md) | миграции EF, соглашения, раскладка вывода |
-| [testing/overview.md](docs/developer/testing/overview.md) | автотесты, бенчмарки, стенды |
-| [ROADMAP.md](docs/ROADMAP.md) | планы развития |
+| Раздел                                                                         | Про что                                                                                                                       |
+| ------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------- |
+| [architecture/overview.md](docs/developer/architecture/overview.md)                   | слои, запуск, MVVM и code-behind                                                                                         |
+| [architecture/data-model.md](docs/developer/architecture/data-model.md)               | доменные модели и таблицы                                                                                     |
+| [architecture/data-types/](docs/developer/architecture/data-types/)                   | типы полей — файл на тип                                                                                         |
+| [architecture/users-permissions.md](docs/developer/architecture/users-permissions.md) | пользователи, допуск, права, журнал                                                                    |
+| [features/](docs/developer/features/)                                                 | календарь, конструктор, задачи, импорт/экспорт, уведомления, расширения |
+| [guides/build-and-run.md](docs/developer/guides/build-and-run.md)                     | сборка и запуск во всех режимах                                                                           |
+| [guides/developer-guide.md](docs/developer/guides/developer-guide.md)                 | миграции EF, соглашения, раскладка вывода                                                          |
+| [testing/overview.md](docs/developer/testing/overview.md)                             | автотесты, бенчмарки, стенды                                                                                |
+| [ROADMAP.md](docs/ROADMAP.md)                                                         | планы развития                                                                                                         |

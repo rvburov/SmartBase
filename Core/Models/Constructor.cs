@@ -33,6 +33,7 @@ public class DbField
     public bool   IsTaskExec     { get; set; } = false; // user-поле — источник задач (исполнитель)
     public bool   IsTaskAssigner { get; set; } = false; // поле «Назначил»
     public bool   IsTaskStatus   { get; set; } = false; // поле «Статус»
+    public bool   IsDescription  { get; set; } = false; // поле «Описание» (markdown-блок панели записи)
 }
 
 public class DbRecord
@@ -50,7 +51,6 @@ public class DbRecord
     public string?  EndDt        { get; set; }
     public bool     AllDay       { get; set; } = false;
     public string   Title        { get; set; } = "";
-    public string?  Description  { get; set; }
 
     public string   DisplayTitle => string.IsNullOrWhiteSpace(Title) ? "Без названия" : Title;
 }

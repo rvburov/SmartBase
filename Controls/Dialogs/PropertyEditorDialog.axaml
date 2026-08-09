@@ -130,6 +130,20 @@
             </ComboBox.ItemContainerTheme>
         </ComboBox>
 
+        <!-- Привязка к разделу: столбец несёт роль («Исполнитель», «Назначил», «Статус»,
+             «Дата», «Описание») — данные из него подтягиваются в календарь или задачи.
+             Текст собирается по флагам поля в code-behind; роли нет — блока нет. -->
+        <Border x:Name="RoleNote" IsVisible="False"
+                Background="{StaticResource BrushRedLight}"
+                CornerRadius="{StaticResource RadiusMedium}"
+                Padding="12,10"
+                Margin="0,0,0,12">
+            <TextBlock x:Name="RoleNoteText"
+                       TextWrapping="Wrap"
+                       LineHeight="18"
+                       Foreground="{StaticResource BrushRed}" />
+        </Border>
+
         <!-- Отображать в календаре: виден только для типа «Дата». Если включено — значения
              этого поля показываются в календаре как события. Несколько полей-дат коллекции
              могут быть включены одновременно (запись появится в календаре несколько раз). -->

@@ -13,6 +13,7 @@ using Avalonia.VisualTree;
 using SmartBase.Core.Models;
 using SmartBase.Database;
 using SmartBase.Database.Repositories;
+using SmartBase.Utils;
 
 namespace SmartBase.Controls.Dialogs;
 
@@ -66,6 +67,10 @@ public partial class PropertyEditorDialog : Window
     // Режим системной колонки («Название»/«Описание»): тип зафиксирован «Текст»,
     // запись идёт не в DbFields, а через результат диалога (см. ResultName).
     private readonly bool _systemMode;
+
+    // Редактируемое поле целиком — из его флагов собирается плашка «привязано к разделу»
+    // (см. UpdateRoleNote). Для нового свойства null: ролей у него ещё нет.
+    private readonly DbField? _editField;
 
     private string _selectedType = "text";
 
@@ -126,6 +131,7 @@ public partial class PropertyEditorDialog : Window
         {
             Title = "Изменение свойства";
             var field = repository.GetFields(collectionId).FirstOrDefault(f => f.Id == editFieldId);
+            _editField = field;
             if (field is not null)
             {
                 NameBox.Text  = field.Name;
@@ -173,6 +179,11 @@ public partial class PropertyEditorDialog : Window
         };
         UpdateCalDateVisibility();
 
+        // Плашка «привязано к разделу» показывает ТЕКУЩЕЕ состояние окна: снял тумблер —
+        // привязки уже нет, и надпись пропадает, не дожидаясь «Сохранить».
+        CalDateToggle.IsCheckedChanged += (_, _) => UpdateRoleNote();
+        TaskToggle.IsCheckedChanged    += (_, _) => UpdateRoleNote();
+
         CancelBtn.Click += (_, _) => Close(false);
         SaveBtn.Click   += (_, _) => TrySave();
         NameBox.KeyDown += (_, e) => { if (e.Key == Avalonia.Input.Key.Enter) TrySave(); };
@@ -199,12 +210,90 @@ public partial class PropertyEditorDialog : Window
 
         if (_selectedType == "status" && _optionBoxes.Count == 0)
             foreach (var o in ConstructorRepository.TaskStatusOptions) AddOptionRow(o);
+
+        // Смена типа рвёт привязку даты (календарь строится только по полям типа «Дата») —
+        // плашка обязана это отразить сразу.
+        UpdateRoleNote();
+    }
+
+    // ── Привязка к разделу ──────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Красная плашка «привязано к разделу»: столбец несёт роль, и данные из него подтягиваются
+    /// в календарь или задачи. Ни в таблице, ни в панели записи этого не видно — значения просто
+    /// «сами» оказываются в разделе, поэтому называем привязку там же, где её теряют (смена типа,
+    /// снятый тумблер, удаление свойства). Собирается по флагам поля: роли нет — блока нет.
+    /// </summary>
+    private void UpdateRoleNote()
+    {
+        if (_systemMode || _editField is null || _repository is null)
+        {
+            RoleNote.IsVisible = false;
+            return;
+        }
+
+        // Дата и исполнитель управляются тумблерами ЭТОГО окна, поэтому смотрим не на
+        // сохранённый флаг, а на положение тумблера и выбранный тип. Остальные роли отсюда не
+        // снимаются и от типа не зависят: раздел читает значение по флагу, каким бы ни был тип.
+        var effective = new DbField
+        {
+            IsCalStart     = _editField.IsCalStart && _selectedType == "date" && CalDateToggle.IsChecked == true,
+            IsTaskExec     = _editField.IsTaskExec && _selectedType == "user" && TaskToggle.IsChecked == true,
+            IsTaskAssigner = _editField.IsTaskAssigner,
+            IsTaskStatus   = _editField.IsTaskStatus,
+            IsDescription  = _editField.IsDescription,
+        };
+
+        // Поле-дата коллекции с задачами — ещё и срок задачи, поэтому разделов у неё два.
+        var binding = FieldRoleText.Binding(effective, _repository.HasTaskExecField(_collectionId));
+
+        RoleNote.IsVisible = binding is not null;
+        if (binding is null) return;
+
+        RoleNoteText.Text =
+            $"Это свойство привязано {binding}. Раздел берёт данные отсюда: " +
+            "если удалить свойство или снять привязку, они перестанут в нём отображаться.";
+    }
+
+    // ── Роли раздела: подтягивание одноимённых столбцов ─────────────────────────
+
+    /// <summary>
+    /// Спрашивает, использовать ли существующие столбцы коллекции для ролей раздела. Совпадение
+    /// ищется ТОЛЬКО по имени («Назначил», «Статус», «Дата», «Описание»), поэтому решение за
+    /// пользователем: подтянуть их (данные поедут в раздел) или оставить нетронутыми и завести
+    /// отдельные поля. Совпадений нет — спрашивать не о чем, разметка идёт молча (true).
+    /// </summary>
+    private async Task<bool> ConfirmRoleAdoption(IReadOnlyList<FieldRole> roles, int excludeFieldId,
+                                                 string sectionName)
+    {
+        if (_repository is null) return true;
+
+        var plan = _repository.PlanRoles(_collectionId, roles, excludeFieldId);
+        if (!plan.NeedsConfirmation) return true;
+
+        var found = string.Join("\n", plan.Candidates.Select(c => $"    • «{c.FieldName}»"));
+        var text  = $"В коллекции уже есть столбцы с подходящими названиями:\n{found}\n\n" +
+                    $"«Подтвердить» — они станут полями раздела ({sectionName}), " +
+                    "и данные из них будут подтягиваться туда.";
+
+        if (plan.FieldsToCreateIfDeclined.Count > 0)
+        {
+            var created = string.Join(", ", plan.FieldsToCreateIfDeclined.Select(n => $"«{n}»"));
+            text += $"\n«Отменить» — столбцы останутся нетронутыми, а для раздела будут созданы " +
+                    $"новые поля: {created}.";
+        }
+        else
+        {
+            text += "\n«Отменить» — столбцы останутся нетронутыми.";
+        }
+
+        return await new ConfirmDialog(text, "Подтвердить", "Отменить").ShowDialog<bool>(this);
     }
 
     // ── Авто-привязка файлов ────────────────────────────────────────────────────
 
     /// <summary>Пункт выпадашки столбца-источника. Key — строковый ключ колонки (пустой —
-    /// ручной выбор/без авто; «__title__»/«__desc__» — системные; число — Id текст-поля).
+    /// ручной выбор/без авто; «__title__» — системная колонка; число — Id текст-поля).
     /// Foreground: приглушённый для пункта-заглушки «Выбрать…».</summary>
     public sealed class SourceFieldItem
     {
@@ -215,8 +304,8 @@ public partial class PropertyEditorDialog : Window
     }
 
     // Заполнить список столбцов-источников: серая заглушка «Выбрать…» (= без авто, ручной выбор),
-    // системные «Название»/«Описание» (на них тоже можно ссылаться — их значения в db_records) и
-    // поля типа «Текст» этой коллекции.
+    // системное «Название» (на него тоже можно ссылаться — значение в db_records) и поля типа
+    // «Текст» этой коллекции (в том числе «Описание» — оно обычное текстовое поле).
     private void PopulateFileSources()
     {
         if (_systemMode || _repository is null) return;
@@ -228,7 +317,6 @@ public partial class PropertyEditorDialog : Window
         {
             new() { Key = "", Name = "Выбрать…", Foreground = grey },
             new() { Key = FileAutoRule.TitleSource, Name = names.GetValueOrDefault(FileAutoRule.TitleSource, "Название"), Foreground = primary },
-            new() { Key = FileAutoRule.DescSource,  Name = names.GetValueOrDefault(FileAutoRule.DescSource,  "Описание"), Foreground = primary },
         };
         foreach (var f in _repository.GetFields(_collectionId))
             if (f.FieldType == "text" && f.Id is int fid)
@@ -786,15 +874,46 @@ public partial class PropertyEditorDialog : Window
             return;
         }
 
-        // Для типа «Дата» применяем переключатель «Отображать в календаре».
+        // Для типа «Дата» применяем переключатель «Отображать в календаре»: включённая дата
+        // тянет за собой роль «Описание» (окно события правит и его), поэтому сначала
+        // спрашиваем про одноимённые столбцы коллекции.
         if (_selectedType == "date")
-            _repository.SetDateFieldVisible(savedFieldId, CalDateToggle.IsChecked == true);
+        {
+            var inCalendar = CalDateToggle.IsChecked == true;
+            var adopt      = !inCalendar || await ConfirmRoleAdoption(ConstructorRepository.CalendarRoles,
+                                                                      savedFieldId, "календарь");
+            try
+            {
+                _repository.SetDateFieldVisible(savedFieldId, inCalendar, adopt);
+                // Тумблер мог быть включён и раньше — тогда SetDateFieldVisible уходит в ранний
+                // возврат, а проверить столбцы всё равно нужно (пользователь мог переименовать
+                // поля и хочет переключить роль на другое).
+                if (inCalendar)
+                    _repository.EnsureRoles(_collectionId, ConstructorRepository.CalendarRoles,
+                                            adopt, savedFieldId);
+            }
+            catch (InvalidOperationException ex)
+            {
+                ShowError(ex.Message);
+                return;
+            }
+        }
 
-        // Для типа «Пользователь» — «Добавить в раздел задач» (может авто-создать
-        // «Назначил»/«Статус»; нет права на создание полей — покажем причину баннером).
+        // Для типа «Пользователь» — «Добавить в раздел задач»: коллекция доводится до полного
+        // набора ролей («Назначил», «Статус», «Дата», «Описание»). Нет права на создание полей —
+        // покажем причину баннером.
         if (_selectedType == "user")
         {
-            try { _repository.SetUserFieldTaskExec(savedFieldId, TaskToggle.IsChecked == true); }
+            var inTasks = TaskToggle.IsChecked == true;
+            var adopt   = !inTasks || await ConfirmRoleAdoption(ConstructorRepository.TaskRoles,
+                                                                savedFieldId, "раздел «Задачи»");
+            try
+            {
+                _repository.SetUserFieldTaskExec(savedFieldId, inTasks, adopt);
+                if (inTasks)
+                    _repository.EnsureRoles(_collectionId, ConstructorRepository.TaskRoles,
+                                            adopt, savedFieldId);
+            }
             catch (InvalidOperationException ex)
             {
                 ShowError(ex.Message);

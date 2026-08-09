@@ -9,10 +9,10 @@ namespace SmartBase.Core.Models;
 /// (только верхний уровень, регистр учитывается). Найденный путь материализуется в
 /// db_field_values (чтобы работали фильтр/сортировка), сам столбец становится read-only.
 ///
-/// Источник — строковый ключ колонки (как в сортировке/фильтре/экспорте): системные
-/// «Название»/«Описание» (<see cref="TitleSource"/>/<see cref="DescSource"/>, значения в
-/// db_records) либо числовой Id текст-поля (значения в db_field_values). Так на источник можно
-/// брать и системные колонки, которые в db_field_values не хранятся.
+/// Источник — строковый ключ колонки (как в сортировке/фильтре/экспорте): системное
+/// «Название» (<see cref="TitleSource"/>, значение в db_records.Title) либо числовой Id
+/// текст-поля (значения в db_field_values). «Описание» — обычное текст-поле, поэтому берётся
+/// вторым путём, по своему Id.
 ///
 /// Хранится в ConfigJson поля: <c>{ "auto": { "source": "…", "folder": "…", "format": "pdf" } }</c>.
 /// null (правила нет) — поле работает как обычный ручной «файл».
@@ -21,14 +21,10 @@ public sealed record FileAutoRule(string SourceKey, string Folder, string Format
 {
     /// <summary>Ключ системной колонки «Название» (значение — db_records.Title).</summary>
     public const string TitleSource = "__title__";
-    /// <summary>Ключ системной колонки «Описание» (значение — db_records.Description).</summary>
-    public const string DescSource = "__desc__";
 
     /// <summary>Источник — системная колонка «Название».</summary>
     public bool SourceIsTitle => SourceKey == TitleSource;
-    /// <summary>Источник — системная колонка «Описание».</summary>
-    public bool SourceIsDesc => SourceKey == DescSource;
-    /// <summary>Числовой Id текст-поля-источника; 0 — источник системный (Название/Описание).</summary>
+    /// <summary>Числовой Id текст-поля-источника; 0 — источник системный («Название»).</summary>
     public int SourceFieldId => int.TryParse(SourceKey, out var id) ? id : 0;
 
     /// <summary>Разобрать правило из ConfigJson поля. null — правила нет / конфиг нечитаем /
@@ -55,6 +51,10 @@ public sealed record FileAutoRule(string SourceKey, string Folder, string Format
             var format = a.TryGetProperty("format", out var t) && t.ValueKind == JsonValueKind.String ? t.GetString() ?? "" : "";
 
             source = source.Trim();
+            // Нераспознанный ключ (например, «__desc__» из баз, где описание было системной
+            // колонкой) — правило неполно: подставлять вместо него «Название» нельзя, это молча
+            // переписало бы значения чужим столбцом.
+            if (source != TitleSource && !(int.TryParse(source, out var srcId) && srcId > 0)) return null;
             folder = folder.Trim();
             format = NormalizeFormat(format);
             if (source.Length == 0 || folder.Length == 0 || format.Length == 0) return null;

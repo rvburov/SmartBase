@@ -55,6 +55,10 @@ public class DbFieldEntity
     public bool   IsTaskExec     { get; set; } = false; // user-поле — источник задач (исполнитель)
     public bool   IsTaskAssigner { get; set; } = false; // поле «Назначил»
     public bool   IsTaskStatus   { get; set; } = false; // поле «Статус»
+    // Роль «Описание»: обычное поле (удаляется, переименовывается, меняет тип), но панель
+    // записи рисует его нижним markdown-блоком, а календарь/задачи пишут в него описание.
+    // Заводится только календарным и задачным путём — см. EnsureDescriptionField.
+    public bool   IsDescription  { get; set; } = false;
 
     [ForeignKey(nameof(CollectionId))]
     public DbCollectionEntity              Collection  { get; set; } = null!;
@@ -78,8 +82,9 @@ public class DbRecordEntity
     public string? EndDt        { get; set; }
     public bool    AllDay       { get; set; } = false;
 
+    // «Название» — единственный системный атрибут записи. «Описание» больше не колонка:
+    // это обычное поле коллекции с ролью IsDescription, значения — в db_field_values.
     [Required] public string  Title       { get; set; } = "";
-    public string? Description { get; set; }
 
     [ForeignKey(nameof(CollectionId))]
     public DbCollectionEntity              Collection  { get; set; } = null!;

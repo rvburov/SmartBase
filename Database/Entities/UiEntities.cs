@@ -50,7 +50,7 @@ public class UiCollectionSettingEntity
 }
 
 // Метаданные колонки таблицы — порядок, видимость/уровень, подпись — одной строкой на
-// (CollectionId, Key). Key = TableRowVm.TitleKey ("__title__") / DescKey ("__desc__") либо
+// (CollectionId, Key). Key = TableRowVm.TitleKey ("__title__") либо
 // строковый id поля. Каждый аспект nullable: null = дефолт (порядок по Position полей,
 // видима/уровень 1, имя по умолчанию). Строки только для изменённых колонок; строка живёт,
 // пока задан хоть один аспект (см. ConstructorRepository.RemoveColumnMetaIfEmpty).
@@ -62,7 +62,7 @@ public class ColumnMetaEntity
     public int?    Position     { get; set; }   // порядок колонки; null = дефолтный
     public bool?   Visible      { get; set; }   // false = скрыта; null = аспект «Отображение» не задан
     public int?    Level        { get; set; }   // пресет-уровень; задаётся вместе с Visible
-    public string? DisplayName  { get; set; }   // подпись системных колонок (__title__/__desc__)
+    public string? DisplayName  { get; set; }   // подпись системной колонки (__title__)
 }
 
 // Отображение записей (окно «Отображение записей») — аналог аспекта Visible/Level в

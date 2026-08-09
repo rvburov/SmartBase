@@ -327,6 +327,9 @@ public partial class MainWindow : Window
         // новое поле создаётся, колонка появляется в таблице, а FieldsChanged ниже
         // перестраивает список свойств панели (новое поле сразу видно и там, и там).
         RecordPanel.AddPropertyRequested      += (_, _)          => ConstructorModule.CreatePropertyFromPanel();
+        // «Добавить описание» из крошки нижнего блока — тем же путём: поле с ролью «Описание»
+        // заводит контроллер, FieldsChanged ниже перестраивает панель и открывает блок на нём.
+        RecordPanel.AddDescriptionRequested   += (_, _)          => ConstructorModule.CreateDescriptionFieldFromPanel();
         // Обратная синхронизация: правка ячейки в таблице → обновить открытую панель записи,
         // если это та же запись (значения свойств, имя и описание перечитываются из БД).
         ConstructorModule.RecordValueEdited   += (_, rid) =>

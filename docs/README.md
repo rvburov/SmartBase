@@ -29,7 +29,8 @@ EF Core/SQLite). Документация разделена на два раз�
   [url](developer/architecture/data-types/url.md) ·
   [file](developer/architecture/data-types/file.md) ·
   [user](developer/architecture/data-types/user.md) ·
-  [computed](developer/architecture/data-types/computed.md).
+  [computed](developer/architecture/data-types/computed.md) ·
+  [роль «Описание»](developer/architecture/data-types/description.md).
 - **База данных** ([database/](developer/architecture/database/)):
   [schema](developer/architecture/database/schema.md) (справочник всех таблиц/колонок) ·
   [storage-and-migrations](developer/architecture/database/storage-and-migrations.md) (два файла, миграции, пути, WAL) ·

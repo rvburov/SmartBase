@@ -61,7 +61,7 @@ public partial class TasksControllerView : UserControl
         NavbarControl.SearchChanged += (_, q) => { _searchQuery = q; ApplyToList(); };
 
         TaskList.TaskActivated     += (_, t)   => _ = OpenEditDialog(t);
-        TaskList.QuickAddRequested += (_, req) => QuickAdd(req);
+        TaskList.QuickAddRequested += (_, req) => _ = QuickAdd(req);
 
         RefreshCurrent();
     }
@@ -208,12 +208,17 @@ public partial class TasksControllerView : UserControl
         return (_dbs.Count > 0 ? _dbs[0].DbId : 0, null);
     }
 
-    private void QuickAdd(QuickAddRequest req)
+    private async Task QuickAdd(QuickAddRequest req)
     {
         if (_dbs.Count == 0 || string.IsNullOrWhiteSpace(req.Title)) return;
 
         var (dbId, colId) = ResolveQuickAddTarget();
         if (RepoFor(dbId) is not { } repo) return;
+
+        // Задача доводит коллекцию до полного набора столбцов («Исполнитель», «Назначил»,
+        // «Статус», «Дата», «Описание»), а цель здесь выбирается автоматически — тем более
+        // нельзя менять чужую коллекцию молча. Ничего не изменится — окна не будет.
+        if (VisualRoot is Window owner && !await SectionSetupConfirm.ForTasks(owner, repo, colId)) return;
 
         try
         {
@@ -256,6 +261,21 @@ public partial class TasksControllerView : UserControl
                 : new ConfirmDialog("Перенос пересоздаёт задачу: связи из других записей на неё "
                                   + "оборвутся (станут «связи нет»). Перенести?", "Перенести");
             if (await warn.ShowDialog<bool>(win) != true) return;
+        }
+
+        // Правка тоже готовит коллекцию: перенос — целевую целиком, а правка на месте вернёт
+        // удалённые роли. Без этого введённые «Назначил»/«Статус» молча пропадали: писать их
+        // некуда, и UpdateTaskRecord просто отбрасывал значения. Отказ = правка не сохраняется.
+        if (!res.Deleted && res.Task is { } target)
+        {
+            var cid = target.CollectionId ?? t.CollectionId;
+            if (!await SectionSetupConfirm.ForTasks(win, repo, cid,
+                    moving: cid != t.CollectionId, adoptExec: false)) return;
+            if (cid is int prepared)
+            {
+                try { repo.EnsureTaskCollection(prepared, adoptExisting: false); }
+                catch (InvalidOperationException ex) { TaskList.ShowError(ex.Message); return; }
+            }
         }
 
         try

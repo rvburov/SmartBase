@@ -628,6 +628,7 @@ public partial class CalendarControllerView : UserControl
         var result = await dlg.ShowDialog<RecordDialogResult?>(win);
         if (result?.Record is not null)
         {
+            if (!await ConfirmCalendarSetup(win, result.Record)) return;
             if (!TryWrite(RepoOf(result.Record), () => RepoOf(result.Record).AddCalendarRecord(result.Record))) return;
             _journalAnchor = result.Record;   // Журнал: к созданной записи
             _journalDelta  = [(result.Record, +1)];
@@ -643,6 +644,7 @@ public partial class CalendarControllerView : UserControl
         var result = await dlg.ShowDialog<RecordDialogResult?>(win);
         if (result?.Record is not null)
         {
+            if (!await ConfirmCalendarSetup(win, result.Record)) return;
             if (!TryWrite(RepoOf(result.Record), () => RepoOf(result.Record).AddCalendarRecord(result.Record))) return;
             _journalAnchor = result.Record;   // Журнал: к созданной записи
             _journalDelta  = [(result.Record, +1)];
@@ -676,6 +678,13 @@ public partial class CalendarControllerView : UserControl
         return await new ConfirmDialog(message, confirmText).ShowDialog<bool>(win) == true;
     }
 
+    // Событие доводит коллекцию до нужных столбцов («Дата», «Описание») — прежде это
+    // происходило молча, и чужая таблица обрастала колонками без ведома хозяина. Спрашиваем
+    // ДО записи и ТОЛЬКО если коллекция реально изменится; отказ = запись не создаётся.
+    // moving — правка со сменой коллекции или базы (готовится цель переноса).
+    private Task<bool> ConfirmCalendarSetup(Avalonia.Controls.Window win, CalendarRecord r, bool moving = false) =>
+        SectionSetupConfirm.ForCalendar(win, RepoOf(r), r.CollectionId, r.FieldId, moving);
+
     private async Task OpenEditDialog(CalendarRecord r)
     {
         if (VisualRoot is not Avalonia.Controls.Window win || _dbs.Count == 0) return;
@@ -706,10 +715,14 @@ public partial class CalendarControllerView : UserControl
             // Смена коллекции или базы = перенос: запись ПЕРЕСОЗДАЁТСЯ с новым Id, поэтому входящие
             // связи на неё оборвутся (исходящие переносятся, см. CopyRelationLinksByName). Правка без
             // смены места (дата, название, поле-дата) Id не меняет — там предупреждать не о чем.
-            if ((rec.DbId != r.DbId || rec.CollectionId != r.CollectionId)
-                && !await ConfirmIncomingLinkBreak(win, r,
+            var moving = rec.DbId != r.DbId || rec.CollectionId != r.CollectionId;
+            if (moving && !await ConfirmIncomingLinkBreak(win, r,
                         "Перенос пересоздаёт запись: связи из других записей на неё оборвутся "
                       + "(станут «связи нет»). Перенести?", "Перенести")) return;
+
+            // Правка тоже готовит коллекцию: перенос — целевую целиком, а правка на месте
+            // вернёт удалённое «Описание». Спрашиваем и здесь — молча столбцы не появляются.
+            if (!await ConfirmCalendarSetup(win, rec, moving)) return;
 
             if (rec.DbId == r.DbId)
             {

@@ -203,7 +203,7 @@ internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollecti
             var rec    = records[i];
             var id     = rec.Id!.Value;
             var values = valMap.TryGetValue(id, out var v) ? v : [];
-            rows[i]    = Track(new TableRowVm(_repo, id, skip + i + 1, values, rec.Title ?? "", rec.Description,
+            rows[i]    = Track(new TableRowVm(_repo, id, skip + i + 1, values, rec.Title ?? "",
                                               rec.CreatedAt ?? "", rec.UpdatedAt ?? "", rec.CreatedBy ?? "", rec.UpdatedBy ?? ""));
         }
         RememberCursor(skip / PageSize, records);
@@ -226,7 +226,7 @@ internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollecti
             var rec    = records[i];
             var id     = rec.Id!.Value;
             var values = valMap.TryGetValue(id, out var v) ? v : [];
-            rows[i].Fill(_repo, id, values, rec.Title ?? "", rec.Description,
+            rows[i].Fill(_repo, id, values, rec.Title ?? "",
                          rec.CreatedAt ?? "", rec.UpdatedAt ?? "", rec.CreatedBy ?? "", rec.UpdatedBy ?? "");
         }
 
@@ -275,7 +275,7 @@ internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollecti
 
         var values = _repo.GetFieldValues(recordId);
         PrimeRelationLinks([recordId]);   // связи записи могли измениться (правка в панели записи)
-        row.Fill(_repo, recordId, values, rec.Title ?? "", rec.Description,
+        row.Fill(_repo, recordId, values, rec.Title ?? "",
                  rec.CreatedAt ?? "", rec.UpdatedAt ?? "", rec.CreatedBy ?? "", rec.UpdatedBy ?? "");
     }
 
@@ -325,7 +325,7 @@ internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollecti
                 var rec    = records[i];
                 var id     = rec.Id!.Value;
                 var values = valMap.TryGetValue(id, out var v) ? v : [];
-                rows[i].Fill(_repo, id, values, rec.Title ?? "", rec.Description,
+                rows[i].Fill(_repo, id, values, rec.Title ?? "",
                          rec.CreatedAt ?? "", rec.UpdatedAt ?? "", rec.CreatedBy ?? "", rec.UpdatedBy ?? "");
             }
             RememberCursor(page, records);

@@ -229,7 +229,7 @@ public partial class TableView : UserControl
         if (_selectedColumnKeys.Count > 0)
         {
             // Удаляемые = только пользовательские поля (ключ = id поля). Системные
-            // (__title__/__desc__) и №/+ не парсятся в int → отсекаются.
+            // («__title__») и №/+ не парсятся в int → отсекаются.
             var fieldIds = _selectedColumnKeys
                 .Where(k => int.TryParse(k, out _))
                 .Select(int.Parse)
@@ -713,17 +713,14 @@ public partial class TableView : UserControl
 
     private List<TableColumnDef> BuildColDefs()
     {
-        // Движимые колонки: Title, Desc и пользовательские поля. Порядок — по
-        // эффективной позиции (из column_order, иначе дефолт). № и «+» закреплены.
+        // Движимые колонки: системное «Название» и пользовательские поля (в т.ч. «Описание» —
+        // оно обычное поле). Порядок — по эффективной позиции (из column_order, иначе дефолт).
+        // № и «+» закреплены.
         var movable = new List<TableColumnDef>
         {
             new() { Key = TableRowVm.TitleKey, Header = SystemHeader(TableRowVm.TitleKey),
                     FieldType = "text",  IsStarWidth = true, MinWidth = MinColWidth,
                     BuildHeaderMenu = _ => BuildSystemHeaderContextMenu(TableRowVm.TitleKey) },
-
-            new() { Key = TableRowVm.DescKey,  Header = SystemHeader(TableRowVm.DescKey),
-                    FieldType = "text",  IsStarWidth = true, MinWidth = MinColWidth,
-                    BuildHeaderMenu = _ => BuildSystemHeaderContextMenu(TableRowVm.DescKey) },
         };
 
         foreach (var f in _fields)
@@ -805,7 +802,6 @@ public partial class TableView : UserControl
     {
         if (_columnOrder.TryGetValue(def.Key, out var pos)) return pos;
         if (def.Key == TableRowVm.TitleKey) return 1000;
-        if (def.Key == TableRowVm.DescKey)  return 2000;
         if (int.TryParse(def.Key, out var fid))
         {
             var f = _fields.FirstOrDefault(x => x.Id == fid);
@@ -1114,10 +1110,11 @@ public partial class TableView : UserControl
         // Слева — иконка типа свойства (если тип известен). Сетка: [иконка][текст][шеврон].
         var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto") };
 
-        // «Название»/«Описание» — базовые свойства целостности: их нельзя удалить и сменить тип.
-        // Их иконку типа красим красным, чтобы визуально выделять среди обычных свойств
-        // (полезно, когда колонок много и легко перепутать).
-        var isSystemColumn = def.Key == TableRowVm.TitleKey || def.Key == TableRowVm.DescKey;
+        // «Название» — единственное базовое свойство целостности: его нельзя удалить и сменить
+        // тип. Его иконку типа красим красным, чтобы визуально выделять среди обычных свойств
+        // (полезно, когда колонок много и легко перепутать). «Описание» — обычное поле и
+        // рисуется как все остальные.
+        var isSystemColumn = def.Key == TableRowVm.TitleKey;
         var iconStroke     = isSystemColumn ? (IBrush)this.FindResource("BrushRed")! : null;
         var typeIcon = BuildTypeIcon(def.FieldType, iconStroke);
         if (typeIcon is not null)
@@ -1958,28 +1955,27 @@ public partial class TableView : UserControl
         Focusable        = false,
     };
 
-    // ── Системные колонки «Название»/«Описание» ───────────────────────────────
+    // ── Системная колонка «Название» ──────────────────────────────────────────
 
     // Публично для контроллера: текущая подпись и имя по умолчанию по ключу колонки.
     public string GetSystemHeader(string key)        => SystemHeader(key);
     public string GetSystemDefaultName(string key)   => SystemDefaultName(key);
 
-    // Имя по умолчанию для системной колонки.
-    private static string SystemDefaultName(string key) =>
-        key == TableRowVm.DescKey ? "Описание" : "Название";
+    // Имя по умолчанию для системной колонки (она одна — «Название»).
+    private static string SystemDefaultName(string key) => "Название";
 
     // Текущая подпись: пользовательская из метаданных, иначе имя по умолчанию.
     private string SystemHeader(string key) =>
         _systemNames.TryGetValue(key, out var name) ? name : SystemDefaultName(key);
 
-    // Меню заголовка системной колонки «Название»/«Описание»:
+    // Меню заголовка системной колонки «Название»:
     //   Изменить · Создать новое свойство · — · Сдвинуть вправо · Сдвинуть влево
-    // Удаление/смена типа/дублирование для системных колонок недоступны.
+    // Удаление/смена типа/дублирование для неё недоступны.
     private ContextMenu BuildSystemHeaderContextMenu(string key)
     {
         var menu = new ContextMenu();
 
-        // Шапка: иконка типа + подпись колонки + тип «Текст» (Title/Desc — текстовые).
+        // Шапка: иконка типа + подпись колонки + тип «Текст» (Title — текстовый).
         menu.Items.Add(MakeMenuHeaderItem(
             Controls.Components.MenuIcons.PropertyMenuHeader(SystemHeader(key), "text")));
         menu.Items.Add(new Separator());

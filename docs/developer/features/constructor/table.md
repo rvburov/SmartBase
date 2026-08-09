@@ -16,14 +16,15 @@
 
 ### Колонки
 
-Колонки строятся из полей коллекции (`GetFields`) плюс системные «Название»
-(`__title__`) и «Описание» (`__desc__`). Порядок, ширины, видимость и уровни
-колонок берутся из UI-настроек коллекции:
+Колонки строятся из полей коллекции (`GetFields`) плюс системная «Название»
+(`__title__`) — единственная, что не является полем. «Описание» — обычное поле
+(роль `IsDescription`), в новой коллекции его нет: см. [[../../architecture/data-types/description]].
+Порядок, ширины, видимость и уровни колонок берутся из UI-настроек коллекции:
 
 - порядок — `GetColumnOrder` / `MoveColumn` / `MoveColumnAfter` / `SaveColumnOrder`;
 - ширины — `GetColWidths` / `SaveColWidths`;
 - видимость/уровни — `SaveColumnDisplay`;
-- подписи системных колонок — `GetSystemFieldNames` / `SetSystemFieldName`.
+- подпись системной колонки — `GetSystemFieldNames` / `SetSystemFieldName`.
 
 Готовый список колонок отдаётся наверх через событие `ColumnsBuilt`
 (`TableColumnDef`), а `MovableKeysInOrder()` / `MovableColumnsInOrder()` дают
@@ -143,11 +144,15 @@
 | `RecordRelocateRequested` | «Расположение»: перенести записи в другую коллекцию/БД (СПИСОК id — мультивыделение строк); контроллер открывает [RecordLocationDialog](../../../../Controls/Dialogs/RecordLocationDialog.axaml.cs) |
 | `PropertyCreateRequested` / `PropertyCreateAfterRequested` | новое свойство (в конец / после колонки) |
 | `PropertyEditRequested` / `PropertyDuplicateRequested` / `PropertiesDeleteRequested` | правка / копия / удаление свойств; дубль и удаление несут СПИСОК id (всё мультивыделение колонок) |
-| `SystemFieldRenameRequested` | переименовать «Название»/«Описание» |
+| `SystemFieldRenameRequested` | переименовать «Название» |
 | `ColumnDisplayRequested` / `RecordDisplayRequested` | окна «Отображение» колонок / записей |
 
 Мультивыделение строк + клавиша Delete → `RecordsDeleteRequested`; то же для
 свойств → `PropertiesDeleteRequested` (обязательные поля защищены).
+
+Столбец с ролью раздела удаляется как обычный, но окно подтверждения называет потерю
+(«Исполнитель» — записи коллекции перестанут отображаться в задачах) — см.
+[[../tasks]] → «Удаление ролевого столбца».
 
 ## Перенос записи («Расположение»)
 

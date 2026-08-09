@@ -95,6 +95,7 @@
 | `IsTaskExec` | INTEGER 0/1 | user-поле — источник раздела «Задачи» (исполнитель) |
 | `IsTaskAssigner` | INTEGER 0/1 | авто-поле «Назначил» |
 | `IsTaskStatus` | INTEGER 0/1 | авто-поле «Статус» |
+| `IsDescription` | INTEGER 0/1 | поле «Описание»: панель записи рисует его нижним markdown-блоком, календарь/задачи пишут в него описание. Заводится ТОЛЬКО этими двумя путями (`EnsureDescriptionField`), в остальном — обычное поле |
 
 #### `db_records` — записи
 
@@ -102,8 +103,7 @@
 |---|---|---|
 | `Id` | INTEGER, PK | |
 | `CollectionId` | INTEGER, FK→`db_collections.Id`, CASCADE | |
-| `Title` | TEXT | системная колонка «Название» |
-| `Description` | TEXT, NULL | системная колонка «Описание» |
+| `Title` | TEXT | системная колонка «Название» — единственный системный атрибут записи (описание переехало в обычное поле с ролью `IsDescription`, миграция `DescriptionAsField`) |
 | `CreatedAt` | TEXT | ISO-дата создания (источник типа `created_at`) |
 | `UpdatedAt` | TEXT | ISO-дата последней правки данных записи (источник типа `updated_at`); при создании = `CreatedAt`, у старых записей бэкфилл = `CreatedAt` |
 | `CreatedBy` | TEXT | снимок имени автора создания (`CurrentUser.DisplayName`; источник `created_by`); пусто у записей, созданных до фичи |
@@ -172,7 +172,7 @@ FK-каскадов у этих таблиц нет — при удалении 
 | Колонка | Тип | Описание |
 |---|---|---|
 | `CollectionId` | INTEGER, PK (составной) | |
-| `Key` | TEXT, PK (составной) | `__title__` / `__desc__` или строковый id поля |
+| `Key` | TEXT, PK (составной) | `__title__` или строковый id поля |
 | `Position` | INTEGER, NULL | аспект «порядок» (окно «Отображение», перетаскивание); NULL = дефолтный порядок |
 | `Visible` | INTEGER 0/1, NULL | аспект «видимость»; NULL = видима |
 | `Level` | INTEGER, NULL | пресет-уровень; задаётся вместе с `Visible` |

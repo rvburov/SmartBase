@@ -4,6 +4,7 @@ using SmartBase.Controls.Dialogs;
 using SmartBase.Core.Models;
 using SmartBase.Database;
 using SmartBase.Database.Repositories;
+using SmartBase.Utils;
 
 namespace SmartBase.Views.ConstructorDb;
 
@@ -534,6 +535,32 @@ public partial class ConstructorControllerView : UserControl
     /// </summary>
     public void CreatePropertyFromPanel() => _ = OpenPropertyDialog(null);
 
+    /// <summary>
+    /// «Добавить описание» из панели записи: заводит коллекции поле с ролью «Описание» (тип
+    /// «Текст») без диалога — имя и тип у него предопределены, настраивать нечего. Дальше — тот
+    /// же путь, что у обычного создания свойства: одна новая колонка в таблице и FieldsChanged,
+    /// по которому панель перечитывается и открывает нижний блок уже на описании.
+    /// </summary>
+    public void CreateDescriptionFieldFromPanel()
+    {
+        if (_currentCollectionId is null || _repository is null) return;
+
+        var colId  = _currentCollectionId.Value;
+        var before = _repository.GetFields(colId).Select(f => f.Id).ToHashSet();
+
+        int fieldId;
+        try { fieldId = _repository.EnsureDescriptionField(colId); }
+        catch (Exception ex) when (DbErrors.Handle(ex, _repository.DbPath)) { return; }
+
+        // Поле могло не создаться, а лишь получить роль (одноимённое уже было) — колонку в
+        // таблице добавляем только для действительно нового.
+        if (!before.Contains(fieldId)) TableViewCtrl.AddColumnForField(fieldId);
+        else                           TableViewCtrl.RebuildColumn(fieldId.ToString());
+
+        NotifyFieldsChanged();
+        CollectionsChanged?.Invoke(this, EventArgs.Empty);
+    }
+
     private async Task OpenPropertyDialog(int? fieldId)
     {
         if (_currentCollectionId is null || _repository is null) return;
@@ -628,7 +655,7 @@ public partial class ConstructorControllerView : UserControl
 
     // Создать новое свойство и поставить его сразу справа от колонки afterKey
     // (колонка, на заголовке которой вызвали меню). afterKey — ключ колонки:
-    // id поля как строка либо системный «__title__»/«__desc__».
+    // id поля как строка либо системный «__title__».
     private async Task CreatePropertyAfter(string afterKey)
     {
         if (_currentCollectionId is null || _repository is null) return;
@@ -659,8 +686,8 @@ public partial class ConstructorControllerView : UserControl
         CollectionsChanged?.Invoke(this, EventArgs.Empty);
     }
 
-    // Переименование системной колонки «Название»/«Описание»: меняем только подпись
-    // (DisplayName в метаданных). Физические колонки Title/Description не трогаем.
+    // Переименование системной колонки «Название»: меняем только подпись (DisplayName
+    // в метаданных). Физическую колонку Title не трогаем.
     private async Task RenameSystemField(string key)
     {
         if (_currentCollectionId is null || _repository is null) return;
@@ -758,6 +785,22 @@ public partial class ConstructorControllerView : UserControl
         // CollectionsChanged не нужен: копии не источники календаря, список коллекций не меняется.
     }
 
+    // Столбцы с ролью удаляются как обычные — но молча уносят с собой раздел: без исполнителя
+    // коллекция целиком выпадает из задач, без «Описания» пропадают все тексты. Называем
+    // потерю в том же окне подтверждения (пустая строка — ролей среди удаляемых нет).
+    private static string RoleLossWarning(IReadOnlyList<DbField> fields, IReadOnlyList<int> deletable)
+    {
+        var lines = deletable
+            .Select(id => fields.FirstOrDefault(f => f.Id == id))
+            .OfType<DbField>()
+            .Select(f => (Field: f, Impact: FieldRoleText.DeletionImpact(f)))
+            .Where(x => x.Impact is not null)
+            .Select(x => $"«{x.Field.Name}» — {x.Impact}")
+            .ToList();
+
+        return lines.Count == 0 ? "" : "\n\n" + string.Join("\n", lines) + ".";
+    }
+
     // Пакетное удаление выделенных свойств (клавиша Delete) с подтверждением —
     // аналог DeleteRecordsWithConfirm в календаре. Обязательные поля отфильтровываются.
     private async Task DeletePropertiesWithConfirm(IReadOnlyList<int> fieldIds)
@@ -772,8 +815,9 @@ public partial class ConstructorControllerView : UserControl
             .ToList();
         if (deletable.Count == 0) return;
 
-        var dlg = new ConfirmDialog($"Вы удаляете {deletable.Count} {PropertiesPlural(deletable.Count)}. Подтвердить?");
-        if (await dlg.ShowDialog<bool>(win) != true) return;
+        var message = $"Вы удаляете {deletable.Count} {PropertiesPlural(deletable.Count)}. Подтвердить?"
+                    + RoleLossWarning(fields, deletable);
+        if (await new ConfirmDialog(message).ShowDialog<bool>(win) != true) return;
 
         // Надёжно (без осиротевших данных) и без фриза UI: подсчёт значений и удаление идут
         // в фоне на изолированных подключениях, на главном потоке ничего не считаем. Окно

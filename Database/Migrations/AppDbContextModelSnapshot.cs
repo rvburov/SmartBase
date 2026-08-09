@@ -196,6 +196,9 @@ namespace SmartBase.Database.Migrations
                     b.Property<bool>("IsCalStart")
                         .HasColumnType("INTEGER");
 
+                    b.Property<bool>("IsDescription")
+                        .HasColumnType("INTEGER");
+
                     b.Property<bool>("IsRequired")
                         .HasColumnType("INTEGER");
 
@@ -325,9 +328,6 @@ namespace SmartBase.Database.Migrations
 
                     b.Property<string>("CreatedBy")
                         .IsRequired()
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("Description")
                         .HasColumnType("TEXT");
 
                     b.Property<string>("EndDt")

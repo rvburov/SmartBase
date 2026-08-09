@@ -52,7 +52,9 @@ public sealed class ExportMatrixTests
         var goods = BuildGoods(db, dir);
 
         var cols = db.Constructor.GetExportColumnsIsolated(goods, includeHidden: true);
-        Assert.Equal(["Название", "Цена", "Дата", "Готово", "Комментарий", "Описание"],
+        // «Описание» в списке нет: импорт его не заводит — поле появляется только у записей,
+        // созданных через календарь или задачу.
+        Assert.Equal(["Название", "Цена", "Дата", "Готово", "Комментарий"],
                      cols.Select(c => c.Header).ToArray());
         Assert.Equal("number", cols[1].FieldType);
         Assert.Equal("date", cols[2].FieldType);
@@ -69,10 +71,10 @@ public sealed class ExportMatrixTests
         var keys = db.Constructor.GetExportColumnsIsolated(goods, true).Select(c => c.Key).ToList();
 
         // Комментарий (индекс 4) сразу после Названия.
-        var reordered = new List<string> { keys[0], keys[4], keys[1], keys[2], keys[3], keys[5] };
+        var reordered = new List<string> { keys[0], keys[4], keys[1], keys[2], keys[3] };
         db.Constructor.SaveColumnOrder(goods, reordered);
 
-        Assert.Equal(["Название", "Комментарий", "Цена", "Дата", "Готово", "Описание"],
+        Assert.Equal(["Название", "Комментарий", "Цена", "Дата", "Готово"],
                      db.Constructor.GetExportColumnsIsolated(goods, true).Select(c => c.Header).ToArray());
     }
 
@@ -111,16 +113,16 @@ public sealed class ExportMatrixTests
         var bytes = File.ReadAllBytes(f);
         Assert.True(bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF); // UTF-8 BOM
         var lines = File.ReadAllLines(f, Encoding.UTF8);
-        Assert.Equal("Название;Цена;Дата;Готово;Комментарий;Описание", lines[0]);
-        Assert.Equal("Товар 1;10.5;06.07.2026;1;обычный текст;", lines[1]);
-        Assert.Equal("Товар 2;1,25;06.07.2026 15:30;;\"текст с ; и \"\"кавычками\"\"\";", lines[2]);
-        Assert.Equal("Товар 3;abc;01.01.2026 - 03.01.2026;;Ёжик и ёлка;", lines[3]);
+        Assert.Equal("Название;Цена;Дата;Готово;Комментарий", lines[0]);
+        Assert.Equal("Товар 1;10.5;06.07.2026;1;обычный текст", lines[1]);
+        Assert.Equal("Товар 2;1,25;06.07.2026 15:30;;\"текст с ; и \"\"кавычками\"\"\"", lines[2]);
+        Assert.Equal("Товар 3;abc;01.01.2026 - 03.01.2026;;Ёжик и ёлка", lines[3]);
 
         var back = IE.Import(db.Constructor, f, "Круг CSV");
         var (fields, count, titles) = IE.Snapshot(db.Path, back);
         Assert.Equal(3, count);
         Assert.Equal(["Товар 1", "Товар 2", "Товар 3"], titles);
-        Assert.Equal(["Цена", "Дата", "Готово", "Комментарий", "Описание"], fields);
+        Assert.Equal(["Цена", "Дата", "Готово", "Комментарий"], fields);
         Assert.Equal("текст с ; и \"кавычками\"", IE.Values(db.Path, back, 1)["Комментарий"]);
         Assert.Equal("abc", IE.Values(db.Path, back, 2)["Цена"]);
     }
@@ -182,7 +184,7 @@ public sealed class ExportMatrixTests
         var back = IE.Import(db.Constructor, f, "Круг XLSX");
         var (fields, count, titles) = IE.Snapshot(db.Path, back);
         Assert.Equal(3, count);
-        Assert.Equal(["Цена", "Дата", "Готово", "Комментарий", "Описание"], fields);
+        Assert.Equal(["Цена", "Дата", "Готово", "Комментарий"], fields);
         Assert.Equal(["Товар 1", "Товар 2", "Товар 3"], titles);
         Assert.Equal("06.07.2026 15:30", IE.Values(db.Path, back, 1)["Дата"]);
         Assert.Equal("1.25", IE.Values(db.Path, back, 1)["Цена"]);
@@ -210,7 +212,7 @@ public sealed class ExportMatrixTests
 
         var spec = IE.ExportSpecFor(db.Path, [goods], "Ручной", ExportFormat.Xlsx, dir.Path,
             manual: true, sheetName: "Мой лист", noHeader: true,
-            excludeColumns: "Комментарий, НетТакого, Описание");
+            excludeColumns: "Комментарий, НетТакого");
         var f = IE.Export(db.Constructor, spec)[0];
 
         using var wb = new XLWorkbook(f);
@@ -229,7 +231,7 @@ public sealed class ExportMatrixTests
         var goods = BuildGoods(db, dir);
 
         var spec = IE.ExportSpecFor(db.Path, [goods], "Пусто", ExportFormat.Csv, dir.Path,
-            manual: true, excludeColumns: "Название, Цена, Дата, Готово, Комментарий, Описание");
+            manual: true, excludeColumns: "Название, Цена, Дата, Готово, Комментарий");
         var err = IE.ExportFails(() => IE.Export(db.Constructor, spec));
         Assert.Contains("исключены", err);
         Assert.Contains("Товары", err);
@@ -252,7 +254,7 @@ public sealed class ExportMatrixTests
         Assert.Equal(2, multi.Count);
         Assert.Equal("Товары.csv", Path.GetFileName(multi[0]));
         Assert.Equal("Звери.csv", Path.GetFileName(multi[1]));
-        Assert.Equal("Барсик;кот;", File.ReadAllLines(multi[1], Encoding.UTF8)[1]);
+        Assert.Equal("Барсик;кот", File.ReadAllLines(multi[1], Encoding.UTF8)[1]);
 
         // Одна книга, лист на коллекцию.
         var one = IE.Export(db.Constructor,

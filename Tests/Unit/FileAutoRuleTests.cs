@@ -4,9 +4,10 @@ namespace SmartBase.Tests.Unit;
 
 /// <summary>
 /// Правило авто-привязки файлов: разбор/сериализация ConfigJson и построение искомого имени
-/// «значение.формат». Источник — строковый ключ колонки (число = текст-поле; «__title__»/
-/// «__desc__» = системные «Название»/«Описание»). Неполное правило (без папки/формата/источника)
-/// не применяется (null). Читается и старый формат «sourceFieldId» (совместимость).
+/// «значение.формат». Источник — строковый ключ колонки (число = текст-поле, в том числе
+/// «Описание»; «__title__» = системное «Название»). Неполное правило (без папки/формата/
+/// источника) и нераспознанный ключ (легаси «__desc__») не применяются (null). Читается
+/// и старый формат «sourceFieldId» (совместимость).
 /// </summary>
 public sealed class FileAutoRuleTests
 {
@@ -19,17 +20,27 @@ public sealed class FileAutoRuleTests
         Assert.Equal(42, back!.SourceFieldId);
     }
 
-    [Theory]
-    [InlineData("__title__")]
-    [InlineData("__desc__")]
-    public void Roundtrips_system_column_source(string key)
+    [Fact]
+    public void Roundtrips_system_column_source()
     {
+        var key  = FileAutoRule.TitleSource;
         var back = FileAutoRule.FromConfig(new FileAutoRule(key, "/d", "pdf").ToConfigJson());
         Assert.NotNull(back);
         Assert.Equal(key, back!.SourceKey);
         Assert.Equal(0, back.SourceFieldId);   // системная колонка — не числовое поле
-        Assert.Equal(key == FileAutoRule.TitleSource, back.SourceIsTitle);
-        Assert.Equal(key == FileAutoRule.DescSource,  back.SourceIsDesc);
+        Assert.True(back.SourceIsTitle);
+    }
+
+    /// <summary>
+    /// Легаси-ключ «__desc__» (описание было системной колонкой) больше не источник: правило
+    /// отбрасывается целиком. Подставлять вместо него «Название» нельзя — авто-привязка молча
+    /// переписала бы файл-столбец значениями чужой колонки.
+    /// </summary>
+    [Fact]
+    public void Legacy_description_source_is_rejected()
+    {
+        Assert.Null(FileAutoRule.FromConfig(
+            "{\"auto\":{\"source\":\"__desc__\",\"folder\":\"/d\",\"format\":\"pdf\"}}"));
     }
 
     [Fact]

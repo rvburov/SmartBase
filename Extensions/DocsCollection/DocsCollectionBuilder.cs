@@ -17,7 +17,8 @@ public sealed record DocEntry(string Name, string FolderName, string Format, str
 public sealed record DocsProgress(int Current, int Total, string File);
 
 /// <summary>Каркас созданной коллекции: её id и id двух пользовательских полей.</summary>
-public sealed record DocsShell(int CollectionId, string CollectionName, int FormatFieldId, int FileFieldId);
+public sealed record DocsShell(int CollectionId, string CollectionName,
+                              int FolderFieldId, int FormatFieldId, int FileFieldId);
 
 /// <summary>Понятная пользователю ошибка расширения (показывается в статусе окна).</summary>
 public sealed class DocsCollectionException(string message) : Exception(message);
@@ -32,18 +33,17 @@ public sealed class DocsCollectionException(string message) : Exception(message)
 /// массовые операции репозитория, см. <c>AddRecordIsolated</c>/<c>DeleteCollectionIsolated</c>):
 /// общий контекст EF принадлежит UI-потоку и делить его с фоном нельзя.</item>
 /// </list>
-/// Схема коллекции: «Наименование» и «Название папки» — переименованные СИСТЕМНЫЕ колонки записи
-/// (Title/Description), «Формат файла» — текст, «Файл» — тип «файл» с абсолютным путём.
+/// Схема коллекции: «Наименование» — переименованная СИСТЕМНАЯ колонка записи (Title),
+/// «Название папки» и «Формат файла» — текст, «Файл» — тип «файл» с абсолютным путём.
 /// </summary>
 public static class DocsCollectionBuilder
 {
-    // Ключи системных колонок записи (те же строки, что в ConstructorRepository/TableRowVm).
+    // Ключ системной колонки записи (та же строка, что в ConstructorRepository/TableRowVm).
     private const string TitleKey = "__title__";
-    private const string DescKey  = "__desc__";
 
     /// <summary>Подписи колонок создаваемой коллекции.</summary>
     public const string TitleColumnName  = "Наименование";
-    public const string DescColumnName   = "Название папки";
+    public const string FolderFieldName  = "Название папки";
     public const string FormatFieldName  = "Формат файла";
     public const string FileFieldName    = "Файл";
 
@@ -140,29 +140,36 @@ public static class DocsCollectionBuilder
 
         try
         {
-            // Системные колонки записи переименовываем — физически это Title/Description.
+            // Системную колонку записи переименовываем — физически это Title.
             repo.SetSystemFieldName(colId, TitleKey, TitleColumnName, "Название");
-            repo.SetSystemFieldName(colId, DescKey,  DescColumnName,  "Описание");
 
+            // Название папки — обычное текстовое поле: описание записи (роль IsDescription)
+            // заводят только календарь и задачи, расширение к ним отношения не имеет.
+            var folder = repo.AddField(new DbField
+            {
+                CollectionId = colId, Name = FolderFieldName, FieldType = "text", Position = 1000,
+            });
             var format = repo.AddField(new DbField
             {
-                CollectionId = colId, Name = FormatFieldName, FieldType = "text", Position = 1000,
+                CollectionId = colId, Name = FormatFieldName, FieldType = "text", Position = 2000,
             });
             // Поле «файл» без правила авто-привязки (ConfigJson пуст): пути проставляем сами —
             // правило умеет лишь одну папку без подпапок и один формат, чего не хватает при
             // рекурсивном обходе и смешанных расширениях.
             var file = repo.AddField(new DbField
             {
-                CollectionId = colId, Name = FileFieldName, FieldType = "file", Position = 2000,
+                CollectionId = colId, Name = FileFieldName, FieldType = "file", Position = 3000,
             });
 
+            var folderId = folder.Id!.Value;
             var formatId = format.Id!.Value;
             var fileId   = file.Id!.Value;
 
             // Порядок колонок: Наименование | Название папки | Формат файла | Файл.
-            repo.SaveColumnOrder(colId, [TitleKey, DescKey, formatId.ToString(), fileId.ToString()]);
+            repo.SaveColumnOrder(colId,
+                [TitleKey, folderId.ToString(), formatId.ToString(), fileId.ToString()]);
 
-            return new DocsShell(colId, name, formatId, fileId);
+            return new DocsShell(colId, name, folderId, formatId, fileId);
         }
         catch
         {
@@ -193,7 +200,7 @@ public static class DocsCollectionBuilder
 
     /// <summary>
     /// Наполнить коллекцию записями на СВОЁМ подключении к <paramref name="dbPath"/>: наименование
-    /// → Title, название папки → Description, формат и путь к файлу → значения полей каркаса.
+    /// → Title, название папки, формат и путь к файлу → значения полей каркаса.
     /// Возвращает число созданных записей; отмена бросает <see cref="OperationCanceledException"/>
     /// (вызывающий удаляет коллекцию через <see cref="TryDelete"/>).
     /// </summary>
@@ -218,12 +225,12 @@ public static class DocsCollectionBuilder
             {
                 CollectionId = shell.CollectionId,
                 Title        = doc.Name,
-                Description  = doc.FolderName,
                 Position     = (i + 1) * step,
             });
             var recordId = record.Id!.Value;
 
-            if (doc.Format.Length > 0) repo.SetFieldValue(recordId, shell.FormatFieldId, doc.Format);
+            if (doc.FolderName.Length > 0) repo.SetFieldValue(recordId, shell.FolderFieldId, doc.FolderName);
+            if (doc.Format.Length > 0)     repo.SetFieldValue(recordId, shell.FormatFieldId, doc.Format);
             repo.SetFieldValue(recordId, shell.FileFieldId, doc.FullPath);
             created++;
 

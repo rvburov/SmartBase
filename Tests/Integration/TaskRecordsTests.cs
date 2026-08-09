@@ -41,10 +41,13 @@ public sealed class TaskRecordsTests
         repo.SetUserFieldTaskExec(exec.Id!.Value, true);
 
         var roles = repo.TaskRoleFields(collectionId);
-        // Включение задач обязано дать коллекции роли «Назначил» и «Статус» —
-        // без них карточку задачи нечем заполнять.
+        // Включение задач обязано дать коллекции полный набор ролей: без «Назначил» и
+        // «Статуса» карточку нечем заполнять, без «Даты» у задачи не будет срока, без
+        // «Описания» — текста.
         Assert.True(roles.AssignerId is not null, "включение задач не создало поле «Назначил»");
         Assert.True(roles.StatusId is not null, "включение задач не создало поле «Статус»");
+        Assert.NotNull(repo.DescriptionFieldId(collectionId));
+        Assert.Contains(repo.GetFields(collectionId), f => f.FieldType == "date" && f.IsCalStart);
         return (exec.Id!.Value, roles.AssignerId!.Value, roles.StatusId!.Value);
     }
 
@@ -86,7 +89,10 @@ public sealed class TaskRecordsTests
         // Коллекция «Заявки»: исполнитель + авто-роли + собственный срок.
         var zayavki = SampleData.AddCollection(repo, "Заявки").Id!.Value;
         var (execZ, assignerZ, statusZ) = EnableTasks(repo, zayavki);
+        // Включение задач уже завело поле-дату («Дата»), поэтому своё «Срок» в календарь
+        // нужно включить явно — автофлаг достаётся лишь ПЕРВОМУ полю-дате коллекции.
         var dueZ = SampleData.AddField(repo, zayavki, "Срок", "date", position: 4000).Id!.Value;
+        repo.SetDateFieldVisible(dueZ, true);
 
         var pumpId = SampleData.AddRecord(repo, zayavki, "Заменить насос").Id!.Value;
         repo.SetRecordDescription(pumpId, "в подвале");
@@ -101,6 +107,7 @@ public sealed class TaskRecordsTests
         var remonty = SampleData.AddCollection(repo, "Ремонты").Id!.Value;
         var (execR, assignerR, statusR) = EnableTasks(repo, remonty);
         var dueR = SampleData.AddField(repo, remonty, "Срок", "date", position: 4000).Id!.Value;
+        repo.SetDateFieldVisible(dueR, true);
 
         var roofId = SampleData.AddRecord(repo, remonty, "Починить крышу").Id!.Value;
         repo.SetFieldValue(roofId, execR, "Сидоров Семён");
@@ -148,12 +155,14 @@ public sealed class TaskRecordsTests
         var col = SampleData.AddCollection(repo, "Заявки").Id!.Value;
         EnableTasks(repo, col);
 
-        // Первое поле-дата коллекции видно в календаре по умолчанию, второе — нет.
+        // Поле-дата у коллекции уже есть (его завело включение задач), поэтому автофлаг
+        // «первому полю-дате» больше не срабатывает — обе свои даты включаем явно.
         var startId = SampleData.AddField(repo, col, "Начало", "date", position: 4000).Id!.Value;
         var deadlineId = SampleData.AddField(repo, col, "Дедлайн", "date", position: 5000).Id!.Value;
         var fields = FieldsById(repo, col);
-        Assert.True(fields[startId].IsCalStart);
+        Assert.False(fields[startId].IsCalStart);
         Assert.False(fields[deadlineId].IsCalStart);
+        repo.SetDateFieldVisible(startId, true);
         repo.SetDateFieldVisible(deadlineId, true);
 
         // Исполнителя не задаём: новая запись сама получает текущего пользователя во все

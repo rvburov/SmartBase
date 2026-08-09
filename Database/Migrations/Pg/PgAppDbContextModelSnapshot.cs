@@ -246,6 +246,10 @@ namespace SmartBase.Database.Migrations.Pg
                         .HasColumnType("integer")
                         .HasColumnName("iscalstart");
 
+                    b.Property<int>("IsDescription")
+                        .HasColumnType("integer")
+                        .HasColumnName("isdescription");
+
                     b.Property<int>("IsRequired")
                         .HasColumnType("integer")
                         .HasColumnName("isrequired");
@@ -407,10 +411,6 @@ namespace SmartBase.Database.Migrations.Pg
                         .IsRequired()
                         .HasColumnType("text")
                         .HasColumnName("createdby");
-
-                    b.Property<string>("Description")
-                        .HasColumnType("text")
-                        .HasColumnName("description");
 
                     b.Property<string>("EndDt")
                         .HasColumnType("text")

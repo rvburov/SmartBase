@@ -16,8 +16,10 @@ namespace SmartBase.Database.Repositories;
 public partial class ConstructorRepository(AppDbContext db)
 {
     // Системное поле «Дата» — единственное, что осталось schema-driven.
-    // Название и Описание подняты до колонок Title/Description в db_records.
+    // «Название» — колонка Title в db_records; «Описание» — ОБЫЧНОЕ поле коллекции с ролью
+    // IsDescription (заводится только календарём и задачами, см. EnsureDescriptionField).
     private const string FieldDate = "Дата";
+    private const string FieldDescription = "Описание";
 
     /// <summary>Путь к файлу БД этого репозитория — для переноса коллекции в другую БД
     /// (ATTACH источника на подключении целевой БД, см. MoveCollectionIsolated).</summary>
@@ -121,6 +123,9 @@ public partial class ConstructorRepository(AppDbContext db)
         Log(action, targetType, targetName, collectionName, count);
         db.SaveChanges();
     }
+
+    /// <summary>Имя коллекции по id («» — коллекции уже нет). Для текстов окон подтверждения.</summary>
+    public string CollectionName(int collectionId) => CollectionNameOf(collectionId) ?? "";
 
     private string? CollectionNameOf(int? collectionId) =>
         collectionId is int cid
@@ -634,15 +639,14 @@ public partial class ConstructorRepository(AppDbContext db)
         db.SaveChanges();
         col.Id = entity.Id;
 
-        // Title и Description теперь являются колонками таблицы db_records.
-        // В схеме DbFields их больше не создаём.
+        // «Название» — колонка Title в db_records, полем оно не заводится. «Описание» —
+        // обычное поле, но его создают только календарь и задачи (EnsureDescriptionField).
         return col;
     }
 
-    // Ключи системных колонок (см. TableRowVm.TitleKey/DescKey). Дублируем строками,
+    // Ключ системной колонки «Название» (см. TableRowVm.TitleKey). Дублируем строкой,
     // чтобы слой БД не зависел от ViewModels.
     private const string TitleKey = "__title__";
-    private const string DescKey  = "__desc__";
 
     /// <summary>
     /// Создать коллекцию и залить записи ПОТОКОМ: маленькая shell-транзакция (коллекция + текстовые
@@ -692,10 +696,10 @@ public partial class ConstructorRepository(AppDbContext db)
             // Подпись колонки «Название» из заголовка (пусто/дефолт → имя по умолчанию).
             SetSystemFieldName(col.Id, TitleKey, schema.TitleHeader, "Название");
 
-            // Порядок колонок: «Название», затем свойства, «Описание» — в конце.
+            // Порядок колонок: «Название», затем свойства. Поля «Описание» у импорта нет —
+            // оно заводится только календарным/задачным путём (EnsureDescriptionField).
             var order = new List<string> { TitleKey };
             order.AddRange(fieldIds.Select(id => id.ToString()));
-            order.Add(DescKey);
             SaveColumnOrder(col.Id, order);
 
             tx.Commit();
@@ -758,8 +762,8 @@ public partial class ConstructorRepository(AppDbContext db)
         // RETURNING Id (SQLite ≥3.35 и PG): id каждой записи получаем из самой вставки — без
         // допущения «новые id непрерывны» (на PG identity-последовательность делят все клиенты).
         insRec.CommandText =
-            "INSERT INTO db_records (CollectionId, CreatedAt, UpdatedAt, CreatedBy, UpdatedBy, Position, AllDay, Title, Description) " +
-            "VALUES (@cid, @created, @created, @author, @author, @pos, 0, @title, NULL) RETURNING Id";
+            "INSERT INTO db_records (CollectionId, CreatedAt, UpdatedAt, CreatedBy, UpdatedBy, Position, AllDay, Title) " +
+            "VALUES (@cid, @created, @created, @author, @author, @pos, 0, @title) RETURNING Id";
         var rCid     = AddParam(insRec, "@cid",     System.Data.DbType.Int32);
         var rCreated = AddParam(insRec, "@created", System.Data.DbType.String);
         var rAuthor  = AddParam(insRec, "@author",  System.Data.DbType.String);
@@ -1006,6 +1010,7 @@ public partial class ConstructorRepository(AppDbContext db)
                 IsCalStart = f.IsCalStart, IsCalEnd = f.IsCalEnd,
                 IsSystem = f.IsSystem, IsRequired = f.IsRequired,
                 IsTaskExec = f.IsTaskExec, IsTaskAssigner = f.IsTaskAssigner, IsTaskStatus = f.IsTaskStatus,
+                IsDescription = f.IsDescription,
             });
         }
         db.SaveChanges();
@@ -1069,8 +1074,8 @@ public partial class ConstructorRepository(AppDbContext db)
             // 1) Все записи одним INSERT … SELECT в порядке (Position, Id). Новые id — непрерывный блок
             //    в этом порядке (SQLite присваивает rowid по порядку SELECT, мы единственный писатель).
             db.Database.ExecuteSqlInterpolated($@"
-                INSERT INTO db_records (CollectionId, CreatedAt, UpdatedAt, CreatedBy, UpdatedBy, Position, StartDt, EndDt, AllDay, Title, Description)
-                SELECT {newCollectionId}, {createdAt}, {createdAt}, {createdBy}, {createdBy}, Position, StartDt, EndDt, AllDay, Title, Description
+                INSERT INTO db_records (CollectionId, CreatedAt, UpdatedAt, CreatedBy, UpdatedBy, Position, StartDt, EndDt, AllDay, Title)
+                SELECT {newCollectionId}, {createdAt}, {createdAt}, {createdBy}, {createdBy}, Position, StartDt, EndDt, AllDay, Title
                 FROM db_records WHERE CollectionId = {srcCollectionId} ORDER BY Position, Id");
             firstNew = LastInsertRowid() - recCount + 1;
 
@@ -1141,8 +1146,8 @@ public partial class ConstructorRepository(AppDbContext db)
 
     // UI-настройки коллекции при дубле В ТОЙ ЖЕ БД: ключи-id полей перемэппливаются через временную
     // карту _dup_fmap (та же, что для значений), записи — по рангу (Position, Id) → firstNew + ранг − 1
-    // (новые id непрерывны). Ключи column_meta: числовой id поля → новый, системные
-    // (__title__/__desc__) — как есть. Поле-/коллекция-level копируем всегда; строки (row_heights,
+    // (новые id непрерывны). Ключи column_meta: числовой id поля → новый, системный
+    // «__title__» — как есть. Поле-/коллекция-level копируем всегда; строки (row_heights,
     // record_display) — только при наличии записей. Зеркало CopyMovedUi для одной БД (без ATTACH).
     private void CopyDuplicatedUi(int srcCol, int newCol, long firstNew, long recCount)
     {
@@ -1223,8 +1228,8 @@ public partial class ConstructorRepository(AppDbContext db)
             var createdAt = DateTime.Now.ToString("o");
             var createdBy = CurrentUser.DisplayName;   // дубль коллекции = новые записи (свой автор/время)
             db.Database.ExecuteSqlInterpolated($@"
-                INSERT INTO db_records (Id, CollectionId, CreatedAt, UpdatedAt, CreatedBy, UpdatedBy, Position, StartDt, EndDt, AllDay, Title, Description)
-                SELECT m.new_id, {newCollectionId}, {createdAt}, {createdAt}, {createdBy}, {createdBy}, r.Position, r.StartDt, r.EndDt, r.AllDay, r.Title, r.Description
+                INSERT INTO db_records (Id, CollectionId, CreatedAt, UpdatedAt, CreatedBy, UpdatedBy, Position, StartDt, EndDt, AllDay, Title)
+                SELECT m.new_id, {newCollectionId}, {createdAt}, {createdAt}, {createdBy}, {createdBy}, r.Position, r.StartDt, r.EndDt, r.AllDay, r.Title
                 FROM db_records r JOIN _dup_rmap m ON m.old_id = r.Id");
 
             var processed = 0;
@@ -1402,10 +1407,10 @@ public partial class ConstructorRepository(AppDbContext db)
 
     /// <summary>
     /// Колонки экспорта в порядке таблицы: сохранённый column_order, иначе дефолт как у
-    /// TableView.EffectiveColumnPosition (Название=1000, Описание=2000, поле=3000+Position).
+    /// TableView.EffectiveColumnPosition (Название=1000, поле=3000+Position).
     /// markdown-поля исключаются (они не колонки таблицы). includeHidden=false — только
-    /// видимые колонки (column_display; отсутствие ключа = видима). Подписи системных
-    /// колонок — из system_field_meta (дефолты «Название»/«Описание»).
+    /// видимые колонки (column_display; отсутствие ключа = видима). Подпись «Названия» —
+    /// из column_meta (дефолт «Название»); «Описание» — обычное поле и идёт наравне с ними.
     /// </summary>
     public List<ExportColumn> GetExportColumns(int collectionId, bool includeHidden)
     {
@@ -1419,13 +1424,11 @@ public partial class ConstructorRepository(AppDbContext db)
         int Pos(string key, int fieldPos) =>
             order.TryGetValue(key, out var p) ? p
             : key == TitleKey ? 1000
-            : key == DescKey  ? 2000
             : 3000 + fieldPos;
 
         var cols = new List<(ExportColumn Col, int Pos)>
         {
             (new ExportColumn(TitleKey, names.GetValueOrDefault(TitleKey, "Название"), null, "text"), Pos(TitleKey, 0)),
-            (new ExportColumn(DescKey,  names.GetValueOrDefault(DescKey,  "Описание"), null, "text"), Pos(DescKey, 0)),
         };
         foreach (var f in fields)
         {
@@ -1464,8 +1467,8 @@ public partial class ConstructorRepository(AppDbContext db)
     /// значения пакетом <see cref="GetFieldValuesBatch"/> (EF9 транслирует Contains в
     /// json_each — один параметр, лимита 999 нет). Память O(страницы). Bulk-прагмы:
     /// чтение db_field_values на десятках ГБ в стандартные 64 МБ кеша не влезает.
-    /// Значения — string[] в порядке columns: Название → Title, Описание → Description,
-    /// поле → значение (отсутствующее → ""). rowsRead — нарастающий итог раз в страницу.
+    /// Значения — string[] в порядке columns: Название → Title, поле → значение
+    /// (отсутствующее → ""). rowsRead — нарастающий итог раз в страницу.
     /// </summary>
     public IEnumerable<string[]> ReadExportRowsIsolated(int collectionId,
         IReadOnlyList<ExportColumn> columns, bool excludeHidden, CancellationToken ct,
@@ -1494,7 +1497,6 @@ public partial class ConstructorRepository(AppDbContext db)
                 {
                     var c = columns[i];
                     row[i] = c.Key == TitleKey ? r.Title
-                           : c.Key == DescKey  ? r.Description ?? ""
                            : c.FieldId is int fid && vals is not null ? vals.GetValueOrDefault(fid, "") : "";
                 }
                 yield return row;
@@ -1607,6 +1609,7 @@ public partial class ConstructorRepository(AppDbContext db)
                 IsCalStart = f.IsCalStart, IsCalEnd = f.IsCalEnd,
                 IsSystem = f.IsSystem, IsRequired = f.IsRequired,
                 IsTaskExec = f.IsTaskExec, IsTaskAssigner = f.IsTaskAssigner, IsTaskStatus = f.IsTaskStatus,
+                IsDescription = f.IsDescription,
             };
             db.DbFields.Add(nf);
             db.SaveChanges();
@@ -1621,7 +1624,7 @@ public partial class ConstructorRepository(AppDbContext db)
             {
                 CollectionId = copy.Id, CreatedAt = r.CreatedAt ?? DateTime.Now.ToString("o"),
                 Position = r.Position, StartDt = r.StartDt, EndDt = r.EndDt,
-                AllDay = r.AllDay, Title = r.Title, Description = r.Description,
+                AllDay = r.AllDay, Title = r.Title,
             };
             db.DbRecords.Add(nr);
             db.SaveChanges();
@@ -1643,7 +1646,7 @@ public partial class ConstructorRepository(AppDbContext db)
     }
 
     // Восстановить UI-настройки в новой коллекции: id полей/записей — через карты,
-    // системные ключи (__title__/__desc__) и настройки коллекции — как есть.
+    // системный ключ «__title__» и настройки коллекции — как есть.
     private void ImportUi(UiSnapshot ui, int newCollectionId,
                           Dictionary<int, int> fieldMap, Dictionary<int, int> recordMap)
     {
@@ -1678,7 +1681,7 @@ public partial class ConstructorRepository(AppDbContext db)
         db.SaveChanges();
     }
 
-    // Ключ колонки: системные (__title__/__desc__) оставляем как есть; числовой id поля — на новый.
+    // Ключ колонки: системный «__title__» оставляем как есть; числовой id поля — на новый.
     private static string RemapColKey(string key, Dictionary<int, int> fieldMap) =>
         int.TryParse(key, out var oldFid) && fieldMap.TryGetValue(oldFid, out var nfid) ? nfid.ToString() : key;
 
@@ -2019,8 +2022,8 @@ public partial class ConstructorRepository(AppDbContext db)
 
         // 2) Поля (Position копируем дословно — по нему строим карту old→new).
         Exec(conn, tx, $@"
-            INSERT INTO main.db_fields (CollectionId, Name, FieldType, ConfigJson, Position, IsCalStart, IsCalEnd, IsSystem, IsRequired, IsTaskExec, IsTaskAssigner, IsTaskStatus)
-            SELECT {newColId}, Name, FieldType, ConfigJson, Position, IsCalStart, IsCalEnd, IsSystem, IsRequired, IsTaskExec, IsTaskAssigner, IsTaskStatus
+            INSERT INTO main.db_fields (CollectionId, Name, FieldType, ConfigJson, Position, IsCalStart, IsCalEnd, IsSystem, IsRequired, IsTaskExec, IsTaskAssigner, IsTaskStatus, IsDescription)
+            SELECT {newColId}, Name, FieldType, ConfigJson, Position, IsCalStart, IsCalEnd, IsSystem, IsRequired, IsTaskExec, IsTaskAssigner, IsTaskStatus, IsDescription
             FROM src.db_fields WHERE CollectionId = {srcCollectionId} ORDER BY Id");
 
         Exec(conn, tx, "DROP TABLE IF EXISTS temp._move_fmap");
@@ -2035,8 +2038,8 @@ public partial class ConstructorRepository(AppDbContext db)
         {
             // 3) Записи одним INSERT … SELECT в порядке (Position, Id) — новые id непрерывным блоком.
             Exec(conn, tx, $@"
-                INSERT INTO main.db_records (CollectionId, CreatedAt, UpdatedAt, CreatedBy, UpdatedBy, Position, StartDt, EndDt, AllDay, Title, Description)
-                SELECT {newColId}, CreatedAt, UpdatedAt, CreatedBy, UpdatedBy, Position, StartDt, EndDt, AllDay, Title, Description
+                INSERT INTO main.db_records (CollectionId, CreatedAt, UpdatedAt, CreatedBy, UpdatedBy, Position, StartDt, EndDt, AllDay, Title)
+                SELECT {newColId}, CreatedAt, UpdatedAt, CreatedBy, UpdatedBy, Position, StartDt, EndDt, AllDay, Title
                 FROM src.db_records WHERE CollectionId = {srcCollectionId} ORDER BY Position, Id");
             var firstNew = ScalarLong(conn, tx, "SELECT last_insert_rowid()") - recCount + 1;
 
@@ -2218,6 +2221,7 @@ public partial class ConstructorRepository(AppDbContext db)
               IsCalStart = f.IsCalStart, IsCalEnd = f.IsCalEnd,
               IsSystem = f.IsSystem, IsRequired = f.IsRequired,
               IsTaskExec = f.IsTaskExec, IsTaskAssigner = f.IsTaskAssigner, IsTaskStatus = f.IsTaskStatus,
+              IsDescription = f.IsDescription,
           })
           .ToList();
 
@@ -2241,7 +2245,7 @@ public partial class ConstructorRepository(AppDbContext db)
             IsCalEnd     = field.IsCalEnd,     IsSystem = field.IsSystem,
             IsRequired   = field.IsRequired,
             IsTaskExec   = field.IsTaskExec,   IsTaskAssigner = field.IsTaskAssigner,
-            IsTaskStatus = field.IsTaskStatus,
+            IsTaskStatus = field.IsTaskStatus, IsDescription  = field.IsDescription,
         };
         db.DbFields.Add(entity);
         Log("create", "field", field.Name, CollectionNameOf(field.CollectionId));
@@ -2289,6 +2293,7 @@ public partial class ConstructorRepository(AppDbContext db)
         entity.IsTaskExec     = field.IsTaskExec;
         entity.IsTaskAssigner = field.IsTaskAssigner;
         entity.IsTaskStatus   = field.IsTaskStatus;
+        entity.IsDescription  = field.IsDescription;
         db.SaveChanges();
 
         // Тип пересёк границу «дата» → приводим уже сохранённые значения к новому виду
@@ -2401,9 +2406,9 @@ public partial class ConstructorRepository(AppDbContext db)
 
         if (!TryScanFolder(rule.Folder, out var files)) return FileAutoResolveResult.FolderInaccessible;
 
-        // Источник значений: числовое текст-поле → db_field_values по (FieldId, Value); системная
-        // колонка «Название»/«Описание» → db_records по (Id, Title/Description) этой коллекции
-        // (в db_field_values их нет). SQL — некавыченный PascalCase: PG складывает в нижний регистр
+        // Источник значений: числовое текст-поле (в т.ч. «Описание») → db_field_values по
+        // (FieldId, Value); системная колонка «Название» → db_records по (Id, Title) этой коллекции
+        // (в db_field_values её нет). SQL — некавыченный PascalCase: PG складывает в нижний регистр
         // своих колонок, SQLite регистронезависим.
         var (countSql, selectSql) = SourceStreamSql(rule, field.CollectionId);
 
@@ -2448,21 +2453,20 @@ public partial class ConstructorRepository(AppDbContext db)
     }
 
     // SQL потоковой выборки значений источника (COUNT + SELECT (RecordId, Value)). Текст-поле —
-    // из db_field_values по FieldId; системные «Название»/«Описание» — из db_records этой коллекции
-    // (Title/Description). Некавыченные PascalCase-идентификаторы работают в SQLite и PG (см. выше).
+    // из db_field_values по FieldId; системное «Название» — из db_records этой коллекции (Title).
+    // Некавыченные PascalCase-идентификаторы работают в SQLite и PG (см. выше).
     private static (string Count, string Select) SourceStreamSql(FileAutoRule rule, int collectionId)
     {
         if (rule.SourceFieldId is var fid && fid > 0)
             return ($"SELECT COUNT(*) FROM db_field_values WHERE FieldId = {fid} AND Value <> ''",
                     $"SELECT RecordId, Value FROM db_field_values WHERE FieldId = {fid} AND Value <> ''");
 
-        var col = rule.SourceIsDesc ? "Description" : "Title";   // NULL <> '' → строка отсеивается
-        return ($"SELECT COUNT(*) FROM db_records WHERE CollectionId = {collectionId} AND {col} <> ''",
-                $"SELECT Id, {col} FROM db_records WHERE CollectionId = {collectionId} AND {col} <> ''");
+        return ($"SELECT COUNT(*) FROM db_records WHERE CollectionId = {collectionId} AND Title <> ''",
+                $"SELECT Id, Title FROM db_records WHERE CollectionId = {collectionId} AND Title <> ''");
     }
 
     // Значение столбца-источника для ОДНОЙ записи (точечный пересчёт). Текст-поле — из
-    // db_field_values; системные «Название»/«Описание» — из самой записи.
+    // db_field_values; системное «Название» — из самой записи.
     private string ReadSourceValue(FileAutoRule rule, int recordId)
     {
         if (rule.SourceFieldId is var fid && fid > 0)
@@ -2471,8 +2475,7 @@ public partial class ConstructorRepository(AppDbContext db)
                 .Select(v => v.Value).FirstOrDefault() ?? "";
 
         var rec = db.DbRecords.AsNoTracking().FirstOrDefault(r => r.Id == recordId);
-        if (rec is null) return "";
-        return (rule.SourceIsDesc ? rec.Description : rec.Title) ?? "";
+        return rec?.Title ?? "";
     }
 
     // Скан папки в словарь имя→путь (только верхний уровень, регистр учитывается — Ordinal).
@@ -2691,6 +2694,7 @@ public partial class ConstructorRepository(AppDbContext db)
             IsCalEnd     = false,                IsSystem = false,
             IsRequired   = false,
             IsTaskExec   = false, IsTaskAssigner = false, IsTaskStatus = false,
+            IsDescription = false,
         };
         db.DbFields.Add(copy);
         db.SaveChanges();
@@ -2942,7 +2946,7 @@ public partial class ConstructorRepository(AppDbContext db)
               Id = r.Id, CollectionId = r.CollectionId, CreatedAt = r.CreatedAt,
               UpdatedAt = r.UpdatedAt, CreatedBy = r.CreatedBy, UpdatedBy = r.UpdatedBy,
               Position = r.Position, StartDt = r.StartDt, EndDt = r.EndDt, AllDay = r.AllDay,
-              Title = r.Title, Description = r.Description,
+              Title = r.Title,
           })
           .ToList();
 
@@ -2995,8 +2999,16 @@ public partial class ConstructorRepository(AppDbContext db)
     // скролла, т.е. «keyset» был O(глубины)). Хвост Id в ключе сика бесплатен: Id = rowid,
     // он неявно завершает каждую запись индекса.
     private const string RecordCols =
-        "r.Id, r.CollectionId, r.CreatedAt, r.Position, r.StartDt, r.EndDt, r.AllDay, r.Title, r.Description, " +
+        "r.Id, r.CollectionId, r.CreatedAt, r.Position, r.StartDt, r.EndDt, r.AllDay, r.Title, " +
         "r.UpdatedAt, r.CreatedBy, r.UpdatedBy";
+
+    // Описание записи для календарных карточек: значение поля с ролью «Описание»
+    // (IsDescription). Скалярный подзапрос, а не JOIN: не размножает строки, если ролью
+    // помечено два поля (копии коллекций), и идёт сиком по PK (RecordId, FieldId)
+    // db_field_values. Флаги в PG хранятся integer 0/1 — сравнение общее для обоих провайдеров.
+    private const string DescExpr =
+        "(SELECT fv.Value FROM db_field_values fv JOIN db_fields fd ON fd.Id = fv.FieldId" +
+        " WHERE fv.RecordId = r.Id AND fd.IsDescription = 1 LIMIT 1)";
 
     // Фильтр скрытых записей (окно «Отображение записей») для raw SQL страниц таблицы.
     private static string HiddenFilter(bool excludeHidden, string alias = "r") => excludeHidden
@@ -3083,10 +3095,9 @@ public partial class ConstructorRepository(AppDbContext db)
                     EndDt        = rdr.IsDBNull(5) ? null : rdr.GetString(5),
                     AllDay       = rdr.GetInt32(6) != 0,
                     Title        = rdr.IsDBNull(7) ? "" : rdr.GetString(7),
-                    Description  = rdr.IsDBNull(8) ? null : rdr.GetString(8),
-                    UpdatedAt    = rdr.IsDBNull(9)  ? null : rdr.GetString(9),
-                    CreatedBy    = rdr.IsDBNull(10) ? null : rdr.GetString(10),
-                    UpdatedBy    = rdr.IsDBNull(11) ? null : rdr.GetString(11),
+                    UpdatedAt    = rdr.IsDBNull(8)  ? null : rdr.GetString(8),
+                    CreatedBy    = rdr.IsDBNull(9)  ? null : rdr.GetString(9),
+                    UpdatedBy    = rdr.IsDBNull(10) ? null : rdr.GetString(10),
                 });
         }
         finally { if (opened) conn.Close(); }
@@ -3139,7 +3150,7 @@ public partial class ConstructorRepository(AppDbContext db)
             Id = r.Id, CollectionId = r.CollectionId, CreatedAt = r.CreatedAt,
             UpdatedAt = r.UpdatedAt, CreatedBy = r.CreatedBy, UpdatedBy = r.UpdatedBy,
             Position = r.Position, StartDt = r.StartDt, EndDt = r.EndDt, AllDay = r.AllDay,
-            Title = r.Title, Description = r.Description,
+            Title = r.Title,
         };
     }
 
@@ -3167,30 +3178,28 @@ public partial class ConstructorRepository(AppDbContext db)
         return changed ? ReactToSourceEdit(recordId, r => r.SourceIsTitle) : [];
     }
 
-    /// <summary>Записать описание. Возвращает побочные изменения авто-привязки файлов (если
-    /// «Описание» — источник авто-file поля) — для мгновенного показа.</summary>
+    /// <summary>
+    /// Записать описание записи. Описание — обычное поле коллекции с ролью «Описание»
+    /// (<see cref="DbFieldEntity.IsDescription"/>), значение живёт в db_field_values, поэтому
+    /// вся работа (журнал, аудит, авто-привязка файлов) идёт общим путём SetFieldValue.
+    /// Поля нет (коллекция никогда не создавалась календарём/задачей, либо его удалили) —
+    /// писать некуда, правка молча игнорируется. Возвращает побочные изменения авто-привязки.
+    /// </summary>
     public IReadOnlyList<(int FieldId, string Value)> SetRecordDescription(int recordId, string? description)
     {
-        Demand(PermAction.EditRecord, CollectionOfRecord(recordId));
-        var rec = db.DbRecords.Find(recordId);
-        if (rec is null) return [];
-        var normalized = string.IsNullOrEmpty(description) ? null : description;
-        var changed = rec.Description != normalized;
-        if (changed)
-        {
-            // Побуквенное сохранение панели записи — сливаем в одну строку журнала.
-            var key = (Kind: "desc", RecordId: recordId, SubId: 0);
-            var old = BeginEditMerge(key, rec.Description ?? "");
-            if (old != (normalized ?? ""))
-                EndEditMerge(key, Log("update", "record", rec.Title, CollectionNameOf(rec.CollectionId),
-                                      detail: ChangeDetail.Value(rec.Title, "Описание", old, normalized ?? "")),
-                             old);
-        }
-        rec.Description = normalized;
-        TouchUpdated(rec);
-        SaveIgnoringRemoteDelete(rec);
-        // «Описание» как источник авто-привязки — пересчитать файл-поля этой записи.
-        return changed ? ReactToSourceEdit(recordId, r => r.SourceIsDesc) : [];
+        if (CollectionOfRecord(recordId) is not int collectionId) return [];
+        if (DescriptionFieldId(collectionId) is not int fieldId) return [];
+        return SetFieldValue(recordId, fieldId, description ?? "");
+    }
+
+    /// <summary>Значение поля-описания записи ("" — поля нет либо оно пустое).</summary>
+    public string GetRecordDescription(int recordId)
+    {
+        if (CollectionOfRecord(recordId) is not int collectionId) return "";
+        if (DescriptionFieldId(collectionId) is not int fieldId) return "";
+        return db.DbFieldValues.AsNoTracking()
+                 .Where(v => v.RecordId == recordId && v.FieldId == fieldId)
+                 .Select(v => v.Value).FirstOrDefault() ?? "";
     }
 
     // Проставляет аудит «последней правки» записи (для типов свойств «Дата/Изменение …»):
@@ -3233,7 +3242,6 @@ public partial class ConstructorRepository(AppDbContext db)
             EndDt        = record.EndDt,
             AllDay       = record.AllDay,
             Title        = record.Title,
-            Description  = record.Description,
         };
         db.DbRecords.Add(entity);
         Log("create", "record", record.Title, CollectionNameOf(record.CollectionId));
@@ -3324,19 +3332,17 @@ public partial class ConstructorRepository(AppDbContext db)
         if (entity is null) return;
 
         // Перестановки (Position) журнал не засоряют — только смысловые изменения.
-        // «до → после» — для переименования и правки описания (даты видны в самой записи).
+        // «до → после» — для переименования (даты видны в самой записи, описание ведёт
+        // журнал своим путём как обычное поле — см. SetFieldValue).
         var meaningfulChange =
-            entity.Title != record.Title || entity.Description != record.Description ||
+            entity.Title != record.Title ||
             entity.StartDt != record.StartDt || entity.EndDt != record.EndDt ||
             entity.AllDay != record.AllDay || entity.CollectionId != record.CollectionId;
         if (meaningfulChange)
             Log("update", "record", record.Title, CollectionNameOf(record.CollectionId),
                 detail: entity.Title != record.Title
                     ? ChangeDetail.Rename(entity.Title, record.Title)
-                    : entity.Description != record.Description
-                        ? ChangeDetail.Value(record.Title, "Описание",
-                                             entity.Description ?? "", record.Description ?? "")
-                        : null);
+                    : null);
 
         entity.CollectionId = record.CollectionId;
         entity.Position     = record.Position;
@@ -3344,7 +3350,6 @@ public partial class ConstructorRepository(AppDbContext db)
         entity.EndDt        = record.EndDt;
         entity.AllDay       = record.AllDay;
         entity.Title        = record.Title;
-        entity.Description  = record.Description;
         if (meaningfulChange) TouchUpdated(entity);   // аудит «последней правки» (не для чистых перестановок)
         db.SaveChanges();
     }
@@ -3421,7 +3426,6 @@ public partial class ConstructorRepository(AppDbContext db)
             EndDt        = src.EndDt,
             AllDay       = src.AllDay,
             Title        = src.Title,
-            Description  = src.Description,
         };
         db.DbRecords.Add(copy);
         Log("duplicate", "record", src.Title, CollectionNameOf(src.CollectionId));
@@ -3455,7 +3459,6 @@ public partial class ConstructorRepository(AppDbContext db)
             CollectionId = copy.CollectionId,
             Position     = copy.Position,
             Title        = copy.Title,
-            Description  = copy.Description,
         };
     }
 
@@ -3653,10 +3656,10 @@ public partial class ConstructorRepository(AppDbContext db)
         //    (ранг по Position, Id исходников). Новые rowid — непрерывный блок в этом порядке (мы
         //    единственный писатель в транзакции).
         db.Database.ExecuteSqlInterpolated($@"
-            INSERT INTO db_records (CollectionId, CreatedAt, UpdatedAt, CreatedBy, UpdatedBy, Position, StartDt, EndDt, AllDay, Title, Description)
+            INSERT INTO db_records (CollectionId, CreatedAt, UpdatedAt, CreatedBy, UpdatedBy, Position, StartDt, EndDt, AllDay, Title)
             SELECT {collectionId}, {createdAt}, {createdAt}, {createdBy}, {createdBy},
                    {anchorPos} + ROW_NUMBER() OVER (ORDER BY r.Position, r.Id) * 1000,
-                   r.StartDt, r.EndDt, r.AllDay, r.Title, r.Description
+                   r.StartDt, r.EndDt, r.AllDay, r.Title
             FROM db_records r JOIN _dup_recsel s ON s.src_id = r.Id
             WHERE r.CollectionId = {collectionId}
             ORDER BY r.Position, r.Id");
@@ -3763,9 +3766,9 @@ public partial class ConstructorRepository(AppDbContext db)
             var createdAt = DateTime.Now.ToString("o");
             var createdBy = CurrentUser.DisplayName;   // дубль = новая запись (свой автор/время)
             db.Database.ExecuteSqlInterpolated($@"
-                INSERT INTO db_records (Id, CollectionId, CreatedAt, UpdatedAt, CreatedBy, UpdatedBy, Position, StartDt, EndDt, AllDay, Title, Description)
+                INSERT INTO db_records (Id, CollectionId, CreatedAt, UpdatedAt, CreatedBy, UpdatedBy, Position, StartDt, EndDt, AllDay, Title)
                 SELECT m.new_id, {collectionId}, {createdAt}, {createdAt}, {createdBy}, {createdBy}, {anchorPos} + m.rn * 1000,
-                       r.StartDt, r.EndDt, r.AllDay, r.Title, r.Description
+                       r.StartDt, r.EndDt, r.AllDay, r.Title
                 FROM db_records r JOIN _dup_rmap m ON m.old_id = r.Id");
 
             var processed = 0;
@@ -4079,7 +4082,7 @@ public partial class ConstructorRepository(AppDbContext db)
                     UpdatedBy    = header.UpdatedBy ?? "",
                     Position     = posBase,            StartDt   = header.StartDt,
                     EndDt        = header.EndDt,       AllDay    = header.AllDay,
-                    Title        = header.Title,       Description = header.Description,
+                    Title        = header.Title,
                 };
                 db.DbRecords.Add(rec);
                 db.SaveChanges();   // нужен Id записи для значений (в рамках транзакции, без коммита)
@@ -4188,8 +4191,6 @@ public partial class ConstructorRepository(AppDbContext db)
             var allow = allowed.ToList();   // EF переведёт Contains → SQL IN (...)
             if (key == TitleKey)
                 q = q.Where(r => allow.Contains(r.Title));
-            else if (key == DescKey)
-                q = q.Where(r => allow.Contains(r.Description ?? ""));
             else if (int.TryParse(key, out var fid))
             {
                 var hasEmpty = allowed.Contains("");
@@ -4246,10 +4247,6 @@ public partial class ConstructorRepository(AppDbContext db)
             return db.DbRecords.AsNoTracking().Where(r => r.CollectionId == collectionId)
                      .Select(r => new { r.Id, r.Title }).ToList()
                      .ToDictionary(x => x.Id, x => x.Title ?? "");
-        if (key == DescKey)
-            return db.DbRecords.AsNoTracking().Where(r => r.CollectionId == collectionId)
-                     .Select(r => new { r.Id, r.Description }).ToList()
-                     .ToDictionary(x => x.Id, x => x.Description ?? "");
         if (int.TryParse(key, out var fid))
         {
             var field = db.DbFields.AsNoTracking().FirstOrDefault(f => f.Id == fid);
@@ -4280,7 +4277,7 @@ public partial class ConstructorRepository(AppDbContext db)
             {
                 Id = r.Id, CollectionId = r.CollectionId, CreatedAt = r.CreatedAt,
                 Position = r.Position, StartDt = r.StartDt, EndDt = r.EndDt, AllDay = r.AllDay,
-                Title = r.Title, Description = r.Description,
+                Title = r.Title,
             })
             .ToList()
             .ToDictionary(r => r.Id!.Value);
@@ -4335,16 +4332,6 @@ public partial class ConstructorRepository(AppDbContext db)
             .Select(g => new { Value = g.Key, Cnt = g.Count(), FirstPos = g.Min(r => r.Position) })
             .ToList();
         return OrderValueGroups(groups.Select(g => (g.Value ?? "", g.Cnt, g.FirstPos)));
-    }
-
-    public List<(string Value, int Count)> GetDescriptionCounts(int collectionId)
-    {
-        var groups = db.DbRecords
-            .Where(r => r.CollectionId == collectionId)
-            .GroupBy(r => r.Description ?? "")
-            .Select(g => new { Value = g.Key, Cnt = g.Count(), FirstPos = g.Min(r => r.Position) })
-            .ToList();
-        return OrderValueGroups(groups.Select(g => (g.Value, g.Cnt, g.FirstPos)));
     }
 
     /// <summary>
@@ -4490,11 +4477,10 @@ public partial class ConstructorRepository(AppDbContext db)
     private bool IsRelationField(int fieldId) =>
         db.DbFields.AsNoTracking().Any(f => f.Id == fieldId && f.FieldType == "relation");
 
-    // Счётчики значений колонки (Title/Desc/поле/связь) по ключу — диспетчер для фона.
+    // Счётчики значений колонки (Title/поле/связь) по ключу — диспетчер для фона.
     private List<(string Value, int Count)> ColumnCounts(int collectionId, string key,
         Func<int, IReadOnlyList<int>, Dictionary<int, string>?>? resolveForeign = null) =>
         key == TitleKey ? GetTitleCounts(collectionId)
-        : key == DescKey ? GetDescriptionCounts(collectionId)
         : int.TryParse(key, out var fid)
             ? (IsRelationField(fid) ? GetRelationValueCounts(collectionId, fid, resolveForeign) : GetFieldValueCounts(collectionId, fid))
             : [];
@@ -4711,7 +4697,7 @@ public partial class ConstructorRepository(AppDbContext db)
     /// наследие старого поведения (строки удалила прошлая версия): вызывающий должен один раз
     /// залить её фоном (<see cref="FillCalendarIndexForFieldAsync"/> с окном прогресса).
     /// </summary>
-    public bool SetDateFieldVisible(int fieldId, bool visible)
+    public bool SetDateFieldVisible(int fieldId, bool visible, bool adoptByName = true)
     {
         Demand(PermAction.EditField, CollectionOfField(fieldId));
         var field = db.DbFields.Find(fieldId);
@@ -4720,6 +4706,11 @@ public partial class ConstructorRepository(AppDbContext db)
         db.SaveChanges();
 
         if (!visible) return false;
+
+        // Включённая дата = запись показывается в календаре, а окно события правит ещё и
+        // описание — значит роль «Описание» коллекции нужна так же, как поле-дата. Одноимённый
+        // столбец подтягивается или обходится стороной по ответу пользователя (см. PlanRoles).
+        EnsureRoles(field.CollectionId, CalendarRoles, adoptByName, excludeFieldId: fieldId);
         if (db.CalendarIndex.Any(x => x.FieldId == fieldId)) return false;   // проекция уже есть
         return db.DbFieldValues.Any(v => v.FieldId == fieldId && v.Value != "");
     }
@@ -4785,7 +4776,7 @@ public partial class ConstructorRepository(AppDbContext db)
     }
 
     // Подписи системных колонок «Название»/«Описание» (только заданные пользователем).
-    // Ключ — TableRowVm.TitleKey / DescKey; значение — отображаемое имя.
+    // Ключ — TableRowVm.TitleKey; значение — отображаемое имя.
     public Dictionary<string, string> GetSystemFieldNames(int collectionId) =>
         db.ColumnMeta
           .Where(m => m.CollectionId == collectionId && m.DisplayName != null)
@@ -5057,6 +5048,7 @@ public partial class ConstructorRepository(AppDbContext db)
         Demand(PermAction.CreateRecord, r.CollectionId);
         var colId = r.CollectionId ?? GetOrCreateDefaultCollection();
         var dateFieldId = ResolveCalendarDateField(colId, r.FieldId);
+        var descFieldId = EnsureDescriptionField(colId);
 
         var maxPos = db.DbRecords
             .Where(rec => rec.CollectionId == colId)
@@ -5072,13 +5064,15 @@ public partial class ConstructorRepository(AppDbContext db)
             CreatedAt    = DateTime.Now.ToString("o"),
             Position     = maxPos + 1000,
             Title        = r.Title,
-            Description  = string.IsNullOrEmpty(r.Description) ? null : r.Description,
         };
         db.DbRecords.Add(rec);
         Log("create", "record", r.Title, CollectionNameOf(colId));
         db.SaveChanges();
 
         SetCalendarDateValue(rec.Id, dateFieldId, r);
+        // Календарь — один из двух путей, которые заводят поле «Описание» (второй — задачи):
+        // поле появляется у коллекции при КАЖДОМ создании записи отсюда, даже если текст пуст.
+        SetFieldValue(rec.Id, descFieldId, r.Description ?? "");
 
         r.Id           = rec.Id;
         r.CollectionId = colId;
@@ -5131,13 +5125,14 @@ public partial class ConstructorRepository(AppDbContext db)
         rec.EndDt       = DateTime.SpecifyKind(r.EndDt,   DateTimeKind.Unspecified).ToString("o");
         rec.AllDay      = r.AllDay;
         rec.Title       = r.Title;
-        rec.Description = string.IsNullOrEmpty(r.Description) ? null : r.Description;
         Log("update", "record", r.Title, CollectionNameOf(newColId));
         db.SaveChanges();
 
         var dateFieldId = ResolveCalendarDateField(newColId, r.FieldId);
         SetCalendarDateValue(rec.Id, dateFieldId, r);
         r.FieldId = dateFieldId;
+        // Описание — обычное поле: правка события пишет его туда же, куда и создание.
+        SetFieldValue(rec.Id, EnsureDescriptionField(newColId), r.Description ?? "");
     }
 
     /// <summary>
@@ -5402,7 +5397,7 @@ public partial class ConstructorRepository(AppDbContext db)
             conn.Open();
             using var cmd = conn.CreateCommand();
             cmd.CommandText = $@"SELECT ci.RecordId, ci.FieldId, ci.CollectionId, ci.StartIso, ci.EndIso, ci.AllDay,
-                                        r.Title, r.Description, c.Name, c.Color
+                                        r.Title, {DescExpr}, c.Name, c.Color
                                  FROM calendar_index ci
                                  JOIN db_records r ON r.Id = ci.RecordId
                                  JOIN db_collections c ON c.Id = r.CollectionId
@@ -5455,7 +5450,7 @@ public partial class ConstructorRepository(AppDbContext db)
                 OR (ci.StartIso = @cs AND ci.RecordId > @cr)
                 OR (ci.StartIso = @cs AND ci.RecordId = @cr AND ci.FieldId > @cf))";
         var sql = $@"SELECT ci.RecordId, ci.FieldId, ci.CollectionId, ci.StartIso, ci.EndIso, ci.AllDay,
-                            r.Title, r.Description, c.Name, c.Color
+                            r.Title, {DescExpr}, c.Name, c.Color
                      FROM calendar_index ci
                      JOIN db_records r ON r.Id = ci.RecordId
                      JOIN db_collections c ON c.Id = r.CollectionId
@@ -5567,7 +5562,7 @@ public partial class ConstructorRepository(AppDbContext db)
         // (без дублей/пропусков на границах страниц с равным StartIso). Быстрый пропуск идёт по
         // индексу (CollectionId, AllDay, StartIso, RecordId, FieldId) без временной сортировки.
         var sql = $@"SELECT ci.RecordId, ci.FieldId, ci.CollectionId, ci.StartIso, ci.EndIso, ci.AllDay,
-                            r.Title, r.Description, c.Name, c.Color
+                            r.Title, {DescExpr}, c.Name, c.Color
                      FROM (
                          SELECT RecordId, FieldId, CollectionId, StartIso, EndIso, AllDay
                          FROM calendar_index
@@ -6041,7 +6036,7 @@ public partial class ConstructorRepository(AppDbContext db)
     {
         using var cmd = conn.CreateCommand();
         cmd.CommandText = $@"SELECT ci.RecordId, ci.FieldId, ci.CollectionId, ci.StartIso, ci.EndIso, ci.AllDay,
-                                    r.Title, r.Description, c.Name, c.Color
+                                    r.Title, {DescExpr}, c.Name, c.Color
                              FROM calendar_index ci
                              JOIN db_records r ON r.Id = ci.RecordId
                              JOIN db_collections c ON c.Id = r.CollectionId
@@ -6178,6 +6173,36 @@ public partial class ConstructorRepository(AppDbContext db)
         }
     }
 
+    // ── Поле «Описание» ───────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Id поля с ролью «Описание» этой коллекции (null — поля нет). Роль ищется ПО ФЛАГУ,
+    /// а не по имени: поле переименовывается как любое другое. Двух ролей быть не должно,
+    /// но при копировании коллекций берём первое по (Position, Id) — как остальные роли.
+    /// </summary>
+    public int? DescriptionFieldId(int collectionId) =>
+        db.DbFields.AsNoTracking()
+          .Where(f => f.CollectionId == collectionId && f.IsDescription)
+          .OrderBy(f => f.Position).ThenBy(f => f.Id)
+          .Select(f => (int?)f.Id)
+          .FirstOrDefault();
+
+    /// <summary>
+    /// Гарантирует поле «Описание» (тип «Текст») в коллекции и возвращает его Id. Заводят его
+    /// только два пути — создание записи через календарь и через задачу; в остальных местах
+    /// коллекция живёт без описания, пока пользователь не добавит поле сам. Поле обычное
+    /// (IsSystem = false): его можно переименовать, сменить тип и удалить.
+    /// <paramref name="adoptByName"/> = true — одноимённый столбец получает роль (данные из
+    /// него поедут в панель записи), false — он остаётся нетронутым, а поле заводится своё
+    /// с суффиксом « 2» (ответ пользователя в окне подтверждения).
+    /// </summary>
+    public int EnsureDescriptionField(int collectionId, bool adoptByName = true)
+    {
+        EnsureRoles(collectionId, [FieldRole.Description], adoptByName);
+        return DescriptionFieldId(collectionId)
+               ?? throw new InvalidOperationException("Не удалось создать поле «Описание»");
+    }
+
     // ── Вспомогательные методы для CalendarRecord ─────────────────────────────
 
     private int GetOrCreateDefaultCollection()
@@ -6196,43 +6221,8 @@ public partial class ConstructorRepository(AppDbContext db)
         db.DbCollections.Add(col);
         db.SaveChanges();
 
-        EnsureSystemFields(col.Id);
+        EnsureRoles(col.Id, [FieldRole.CalendarDate], adoptByName: true);
         return col.Id;
-    }
-
-    private Dictionary<string, int> EnsureSystemFields(int collectionId)
-    {
-        var existing = db.DbFields
-            .Where(f => f.CollectionId == collectionId)
-            .GroupBy(f => f.Name)
-            .ToDictionary(g => g.Key, g => g.Min(f => f.Id));
-
-        if (existing.ContainsKey(FieldDate)) return existing;
-
-        var maxPos = db.DbFields
-            .Where(f => f.CollectionId == collectionId)
-            .Select(f => (int?)f.Position)
-            .Max() ?? 0;
-
-        // Системное поле «Дата» — источник календаря (если другой ещё не назначен).
-        var hasCalField = db.DbFields.Any(f =>
-            f.CollectionId == collectionId && f.FieldType == "date" && f.IsCalStart);
-
-        var field = new DbFieldEntity
-        {
-            CollectionId = collectionId,
-            Name         = FieldDate,
-            FieldType    = "date",
-            Position     = maxPos + 1000,
-            IsSystem     = true,
-            IsCalStart   = !hasCalField,
-            IsRequired   = false,
-        };
-        db.DbFields.Add(field);
-        db.SaveChanges();
-        existing[FieldDate] = field.Id;
-
-        return existing;
     }
 
     // Поле-дата, в которое класть дату события. Если в окне явно выбрано поле
@@ -6249,28 +6239,26 @@ public partial class ConstructorRepository(AppDbContext db)
         return EnsureCalendarDateField(collectionId);
     }
 
-    // id поля-источника календаря коллекции: существующее поле-дата с IsCalStart, иначе
-    // системное «Дата» (создаётся при необходимости и помечается видимым). Фолбэк, когда
-    // явное поле не выбрано.
-    private int EnsureCalendarDateField(int collectionId)
+    // id поля-источника календаря коллекции: существующее поле-дата с IsCalStart, иначе роль
+    // «Дата» (одноимённый столбец получает флаг либо заводится системное «Дата»). Фолбэк,
+    // когда явное поле не выбрано.
+    private int EnsureCalendarDateField(int collectionId, bool adoptByName = true)
     {
-        var source = db.DbFields.FirstOrDefault(f =>
-            f.CollectionId == collectionId && f.FieldType == "date" && f.IsCalStart);
-        if (source is not null) return source.Id;
+        if (CalendarDateFieldId(collectionId) is int source) return source;
 
-        // Источника нет (коллекция без даты или помечена «Не отображать») — гарантируем
-        // системное «Дата» и делаем его источником: добавление события через календарь
-        // должно показать запись в календаре.
-        var fieldIds  = EnsureSystemFields(collectionId);
-        var dateId    = fieldIds[FieldDate];
-        var dateField = db.DbFields.Find(dateId);
-        if (dateField is not null && !dateField.IsCalStart)
-        {
-            dateField.IsCalStart = true;
-            db.SaveChanges();
-        }
-        return dateId;
+        // Источника нет (коллекция без даты или помечена «Не отображать») — доводим роль:
+        // добавление события через календарь должно показать запись в календаре.
+        EnsureRoles(collectionId, [FieldRole.CalendarDate], adoptByName);
+        return CalendarDateFieldId(collectionId)
+               ?? throw new InvalidOperationException("Не удалось создать поле «Дата»");
     }
+
+    // Первое (по Position, Id — общее правило ролей) поле-дата коллекции, видимое в календаре.
+    private int? CalendarDateFieldId(int collectionId) =>
+        db.DbFields.Where(f => f.CollectionId == collectionId && f.FieldType == "date" && f.IsCalStart)
+          .OrderBy(f => f.Position).ThenBy(f => f.Id)
+          .Select(f => (int?)f.Id)
+          .FirstOrDefault();
 
     // Пишет дату записи в поле-источник календаря (db_field_values). Колонки StartDt/EndDt
     // уже проставлены напрямую в Add/UpdateCalendarRecord — здесь синхронизируем значение

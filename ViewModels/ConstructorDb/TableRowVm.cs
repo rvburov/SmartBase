@@ -13,15 +13,13 @@ namespace SmartBase.ViewModels.ConstructorDb;
 /// </summary>
 public class TableRowVm : INotifyPropertyChanged
 {
-    // Виртуальные ключи для колонок, которые хранятся не в db_field_values,
-    // а прямо в DbRecordEntity.Title / DbRecordEntity.Description.
+    // Виртуальный ключ колонки «Название»: она хранится не в db_field_values, а прямо
+    // в DbRecordEntity.Title. «Описание» — обычное поле, у него числовой ключ, как у всех.
     public const string TitleKey = "__title__";
-    public const string DescKey  = "__desc__";
 
     private ConstructorRepository? _repository;
     private Dictionary<int, string> _values;
     private string _title;
-    private string _description;
     // Аудит-метаданные записи — источник для «вычисляемых» типов свойств
     // (created_at/updated_at/created_by/updated_by). Ячейки этих типов биндятся
     // к одноимённым свойствам ниже, а не к индексатору значений полей.
@@ -53,7 +51,7 @@ public class TableRowVm : INotifyPropertyChanged
 
     /// <summary>Обычная строка с данными.</summary>
     public TableRowVm(ConstructorRepository repository, int recordId, int rowNumber,
-                     Dictionary<int, string> values, string title, string? description,
+                     Dictionary<int, string> values, string title,
                      string createdAt = "", string updatedAt = "",
                      string createdBy = "", string updatedBy = "")
     {
@@ -62,7 +60,6 @@ public class TableRowVm : INotifyPropertyChanged
         RowNumber    = rowNumber;
         _values      = values;
         _title       = title       ?? "";
-        _description = description ?? "";
         _createdAt   = createdAt   ?? "";
         _updatedAt   = updatedAt   ?? "";
         _createdBy   = createdBy   ?? "";
@@ -75,7 +72,6 @@ public class TableRowVm : INotifyPropertyChanged
         IsAddRow     = true;
         _values      = [];
         _title       = "";
-        _description = "";
         _createdAt   = "";
         _updatedAt   = "";
         _createdBy   = "";
@@ -93,7 +89,6 @@ public class TableRowVm : INotifyPropertyChanged
         RowNumber    = rowNumber;
         _values      = [];
         _title       = "";
-        _description = "";
         _createdAt   = "";
         _updatedAt   = "";
         _createdBy   = "";
@@ -104,7 +99,7 @@ public class TableRowVm : INotifyPropertyChanged
     /// Заполнить строку-заглушку реальными данными и обновить ячейки.
     /// </summary>
     public void Fill(ConstructorRepository repository, int recordId,
-                     Dictionary<int, string> values, string title, string? description,
+                     Dictionary<int, string> values, string title,
                      string createdAt = "", string updatedAt = "",
                      string createdBy = "", string updatedBy = "")
     {
@@ -112,7 +107,6 @@ public class TableRowVm : INotifyPropertyChanged
         RecordId     = recordId;
         _values      = values;
         _title       = title       ?? "";
-        _description = description ?? "";
         _createdAt   = createdAt   ?? "";
         _updatedAt   = updatedAt   ?? "";
         _createdBy   = createdBy   ?? "";
@@ -170,7 +164,6 @@ public class TableRowVm : INotifyPropertyChanged
         {
             if (IsLoading) return key == TitleKey ? "Загрузка…" : "";
             if (key == TitleKey) return _title;
-            if (key == DescKey)  return _description;
             return int.TryParse(key, out var id) && _values.TryGetValue(id, out var v) ? v : "";
         }
         set
@@ -189,19 +182,6 @@ public class TableRowVm : INotifyPropertyChanged
                 catch (Exception ex) when (DbErrors.Handle(ex, _repository?.DbPath)) { NotifyAllCells(); return; }
                 _title = newVal;
                 ApplyAutoFileChanges(autoTitle);   // «Название» — источник авто-file: файл-ячейка обновится
-                BumpUpdatedLocal();
-                NotifyAllCells();
-                Edited?.Invoke(this, RecordId);
-                return;
-            }
-            if (key == DescKey)
-            {
-                if (_description == newVal) return;
-                IReadOnlyList<(int FieldId, string Value)> autoDesc;
-                try { autoDesc = _repository?.SetRecordDescription(RecordId, newVal) ?? []; }
-                catch (Exception ex) when (DbErrors.Handle(ex, _repository?.DbPath)) { NotifyAllCells(); return; }
-                _description = newVal;
-                ApplyAutoFileChanges(autoDesc);   // «Описание» — источник авто-file: файл-ячейка обновится
                 BumpUpdatedLocal();
                 NotifyAllCells();
                 Edited?.Invoke(this, RecordId);
@@ -226,7 +206,7 @@ public class TableRowVm : INotifyPropertyChanged
 
     // Отразить побочные изменения авто-привязки файлов в кеше строки (пустой путь → удаляем).
     // skipFieldId — редактируемое поле (не трогаем, чтобы не сбить каретку ввода); для правки
-    // «Названия»/«Описания» пропуск не нужен (файл-поле не совпадает с системной колонкой).
+    // «Названия» пропуск не нужен (файл-поле не совпадает с системной колонкой).
     private void ApplyAutoFileChanges(IReadOnlyList<(int FieldId, string Value)> changes, int skipFieldId = 0)
     {
         foreach (var (fid, val) in changes)

@@ -35,6 +35,12 @@ public partial class RecordPageView : UserControl
     /// чтобы новое поле сразу появилось и в таблице, и в панели.</summary>
     public event EventHandler? AddPropertyRequested;
 
+    /// <summary>Клик по «Добавить описание» в крошке нижнего блока: завести полю коллекции
+    /// роль «Описание». Тот же путь наверх, что и у «Добавить свойство» — контроллер создаёт
+    /// поле, добавляет колонку в таблицу и шлёт FieldsChanged, по которому панель перечитывается
+    /// и открывает нижний блок уже на описании.</summary>
+    public event EventHandler? AddDescriptionRequested;
+
     private RecordPageViewModel? _vm;
     private ConstructorRepository? _repo;   // для перечитывания записи из БД (ReloadFromDb)
 
@@ -49,27 +55,28 @@ public partial class RecordPageView : UserControl
     private bool _suppressAutoSave;
 
     // ── Нижний блок = редактор активного ТЕКСТОВОГО свойства ───────────────────
-    // Снизу всегда виден один редактор (Markdown/обычный текст). Что он редактирует —
-    // системное «Описание» или текстовое свойство — задаёт _bottomTarget. Выбор текстовой
-    // карточки переключает цель; не-текстовые карточки нижний блок не трогают.
+    // Снизу виден один редактор (Markdown/обычный текст). Что он редактирует, задаёт
+    // _bottomTarget: по умолчанию — поле с ролью «Описание», дальше выбор текстовой карточки
+    // переключает цель. Нет ни одного текстового свойства (в т.ч. описания) — снизу пусто.
+    // Не-текстовые карточки нижний блок не трогают.
     private sealed class BottomTextTarget
     {
-        public int?            FieldId;          // null = системное «Описание»
+        public int?            FieldId;          // id текстового поля-цели
         public string          Name = "";
         public string          IconKey = "IconFieldText";   // иконка типа (для заголовка-крошки)
         public Func<string>    Read  = () => "";
         public Action<string>  Write = _ => { }; // сохранить значение (+ уведомить таблицу)
         public TextBox?        Inline;           // инлайн-поле в карточке (текстовые свойства) — для синхронизации
-        public TextBlock?      Preview;          // превью-подпись в карточке «Описание»
         public Border?         Card;             // карточка цели — для подсветки
     }
 
     private BottomTextTarget? _bottomTarget;
-    private int?              _bottomFieldId;    // null = «Описание» (что открыто снизу — для восстановления)
+    private int?              _bottomFieldId;    // id поля, открытого снизу — для восстановления
     private readonly Dictionary<int, BottomTextTarget> _fieldTargets = new();
     // Файл-редакторы по FieldId — чтобы обновить показ авто-file поля сразу при правке столбца-источника.
     private readonly Dictionary<int, Controls.Widgets.FileEditor> _fileEditors = new();
-    private BottomTextTarget? _descTarget;
+    private BottomTextTarget? _descTarget;      // цель по умолчанию — поле с ролью «Описание»
+    private bool _focusBottomAfterReload;       // описание только что создано — поставить каретку в редактор
     private bool _suppressBottomSync;            // гасит обратную синхронизацию инлайн↔нижний при программной установке
 
     public RecordPageView()
@@ -90,9 +97,9 @@ public partial class RecordPageView : UserControl
             RecordChanged?.Invoke(this, _vm.RecordId);
         };
 
-        // Живая запись активного текстового свойства по символу. Цель (Описание/текстовое поле)
-        // задаёт _bottomTarget. Guard _suppressAutoSave — для служебной установки текста.
-        // Параллельно синхронизируем инлайн-поле/превью карточки той же цели.
+        // Живая запись активного текстового свойства по символу. Цель (поле «Описание» либо
+        // другое текстовое поле) задаёт _bottomTarget. Guard _suppressAutoSave — для служебной
+        // установки текста. Параллельно синхронизируем инлайн-поле карточки той же цели.
         MarkdownEditor.TextChanged += (_, _) =>
         {
             if (_vm is null || _suppressAutoSave || _bottomTarget is null) return;
@@ -105,8 +112,6 @@ public partial class RecordPageView : UserControl
                 inline.Text = text;
                 _suppressBottomSync = false;
             }
-            if (_bottomTarget.Preview is { } prev)
-                prev.Text = PreviewText(text);
         };
 
         HeaderBar.CollectionPanelToggled += (_, open) => CollectionPanelToggled?.Invoke(this, open);
@@ -130,7 +135,9 @@ public partial class RecordPageView : UserControl
         BuildProperties();
         ApplyPropsHeight();
 
-        // Новая запись — нижний блок по умолчанию на «Описании».
+        // Новая запись — нижний блок по умолчанию на «Описании»; описания у коллекции нет —
+        // снизу пусто, а в крошке снова видна ссылка + «Добавить описание» (выбор другого
+        // текстового свойства её прячет, но живёт он только до следующего открытия записи).
         _bottomFieldId = null;
         RestoreBottom();
     }
@@ -271,16 +278,20 @@ public partial class RecordPageView : UserControl
         _selectedCard = null;
         if (_vm is null) return;
 
-        // Порядок строго как в таблице (включая «Описание»): VM уже отсортировала элементы по
-        // эффективной позиции колонки. Карточку строим по типу элемента.
+        // Порядок строго как в таблице: VM уже отсортировала элементы по эффективной позиции
+        // колонки. «Описание» — обычное поле и идёт в этом же списке, отдельной карточки у него нет.
         foreach (var item in _vm.OrderedItems)
         {
             switch (item)
             {
-                case FieldItem fi:      PropertiesHost.Children.Add(BuildPropertyCard(fi.Row)); break;
-                case DescriptionItem:   PropertiesHost.Children.Add(BuildDescriptionCard());    break;
+                case FieldItem fi: PropertiesHost.Children.Add(BuildPropertyCard(fi.Row)); break;
             }
         }
+
+        // Цель нижнего блока по умолчанию — поле с ролью «Описание» (если оно есть и текстовое:
+        // после смены типа цели у него нет, и блок остаётся пустым, пока не выберут другое свойство).
+        _descTarget = _vm.DescriptionFieldId is int did && _fieldTargets.TryGetValue(did, out var dt)
+            ? dt : null;
 
         // «Добавить свойство» — единственная карточка с фиксированным местом (всегда внизу).
         // Тоже входит в общий ресайз колонки названий (ручка ⋮).
@@ -377,41 +388,6 @@ public partial class RecordPageView : UserControl
         return card;
     }
 
-    // Карточка «Описание»: markdown-описание записи. Значение — превью в одну строку
-    // (правка — в нижнем блоке при выборе карточки).
-    private Border BuildDescriptionCard()
-    {
-        var preview = new TextBlock
-        {
-            Text              = PreviewText(_vm?.MarkdownText ?? ""),
-            Foreground        = (IBrush)this.FindResource("BrushPrimaryText")!,
-            VerticalAlignment = VerticalAlignment.Center,
-            TextTrimming      = TextTrimming.CharacterEllipsis,
-        };
-        var card = BuildCardShell("proprow", BuildStrokeIcon("IconFieldText", selectable: true),
-                                  "Описание", selectableName: true, preview);
-
-        _descTarget = new BottomTextTarget
-        {
-            FieldId = null,
-            Name    = "Описание",
-            Read    = () => _vm?.MarkdownText ?? "",
-            Write   = t =>
-            {
-                if (_vm is null) return;
-                _vm.MarkdownText = t;
-                ApplyFileSideEffects(_vm.SaveMarkdown());   // «Описание» — источник авто-file: обновить файл-ячейки
-                RecordChanged?.Invoke(this, _vm.RecordId);
-            },
-            Preview = preview,
-            Card    = card,
-        };
-        var target = _descTarget;
-        card.AddHandler(InputElement.PointerPressedEvent, (_, _) => SelectCard(card, target),
-                        RoutingStrategies.Tunnel);
-        return card;
-    }
-
     // Выделяем карточку всегда; нижний блок переключаем только на ТЕКСТОВУЮ цель —
     // не-текстовые свойства его не трогают (остаётся как было).
     private void SelectCard(Border card, BottomTextTarget? target)
@@ -442,25 +418,73 @@ public partial class RecordPageView : UserControl
     }
 
     // Заголовок-крошка нижнего блока: «Свойство» › Имя. Статичную часть («Свойство» +
-    // стрелка) рисует XAML; здесь — имя активного свойства, серым.
-    private void UpdateBottomHeader(BottomTextTarget target)
+    // стрелка) рисует XAML; здесь — имя активного свойства, серым. Цели нет (коллекция без
+    // описания, запись только что открыта) — вместо имени зовущая ссылка + «Добавить описание».
+    private void UpdateBottomHeader(BottomTextTarget? target)
     {
         BottomTitleHost.Children.Clear();
-        BottomTitleHost.Children.Add(new TextBlock
+        if (target is not null)
         {
-            Text              = target.Name,
-            Foreground        = (IBrush)this.FindResource("BrushSecondaryText")!,
+            BottomTitleHost.Children.Add(new TextBlock
+            {
+                Text              = target.Name,
+                Foreground        = (IBrush)this.FindResource("BrushSecondaryText")!,
+                VerticalAlignment = VerticalAlignment.Center,
+            });
+            return;
+        }
+
+        if (AddDescriptionLink() is { } link) BottomTitleHost.Children.Add(link);
+    }
+
+    // Ссылка «+ «Добавить описание»» — только пока поля с ролью «Описание» у коллекции нет и есть
+    // право создавать свойства. Показывается вместо имени свойства, то есть лишь когда снизу
+    // пусто: стоит выбрать текстовую карточку — крошка занята её именем, и ссылка уходит до
+    // следующего открытия записи. Клик уходит наверх (AddDescriptionRequested): поле заводит
+    // контроллер, чтобы колонка появилась и в таблице.
+    private Control? AddDescriptionLink()
+    {
+        if (_vm is null || _vm.DescriptionFieldId is not null) return null;
+        if (_repo?.Permissions is { } perms && !perms.Can(PermAction.CreateField, _vm.CollectionId)) return null;
+
+        // Плюс — часть самой подписи, а не иконка: один TextBlock, поэтому символ идёт
+        // ровно в размер текста крошки и не требует отдельной подгонки.
+        var link = new TextBlock
+        {
+            Text              = "+ «Добавить описание»",
+            Foreground        = (IBrush)this.FindResource("BrushAccent")!,
             VerticalAlignment = VerticalAlignment.Center,
-        });
+            Cursor            = new Cursor(StandardCursorType.Hand),
+            Background        = Brushes.Transparent,   // иначе клик мимо букв не ловится
+        };
+        link.PointerPressed += (_, e) =>
+        {
+            e.Handled = true;
+            _focusBottomAfterReload = true;   // после пересборки каретка встанет в редактор
+            AddDescriptionRequested?.Invoke(this, EventArgs.Empty);
+        };
+        return link;
     }
 
     // Вернуть нижний блок на ранее открытую цель (по id) после перестроения списка; если её
-    // больше нет — на «Описание». Текст не перечитываем, пока пользователь печатает в редакторе.
+    // больше нет — на поле «Описание». Текст не перечитываем, пока пользователь печатает в редакторе.
     private void RestoreBottom()
     {
         var target = _bottomFieldId is int id && _fieldTargets.TryGetValue(id, out var t)
             ? t : _descTarget;
-        if (target is null) return;
+        if (target is null)
+        {
+            // Ни описания, ни другого текстового свойства — снизу пусто (редактор чистим, чтобы
+            // не показывать текст прошлой записи), в крошке остаётся «Добавить описание».
+            _bottomTarget  = null;
+            _bottomFieldId = null;
+            UpdateBottomHeader(null);
+            _suppressAutoSave = true;
+            MarkdownEditor.Text = "";
+            _suppressAutoSave = false;
+            UpdatePreviewVisibility();
+            return;
+        }
 
         _bottomTarget  = target;
         _bottomFieldId = target.FieldId;
@@ -475,6 +499,14 @@ public partial class RecordPageView : UserControl
         UpdatePreviewVisibility();
 
         if (target.Card is { } card) HighlightCard(card);
+
+        // Описание только что создали ссылкой в крошке — сразу отдаём каретку редактору,
+        // чтобы можно было писать, не кликая по блоку.
+        if (_focusBottomAfterReload)
+        {
+            _focusBottomAfterReload = false;
+            if (!FooterBar.IsPreview) MarkdownEditor.Focus();
+        }
     }
 
     // Правка в инлайн-поле карточки → обновить большой редактор, если это поле открыто снизу.
@@ -487,9 +519,6 @@ public partial class RecordPageView : UserControl
         _suppressAutoSave = false;
         UpdatePreviewVisibility();
     }
-
-    // Одна строка для превью значения в карточке (переводы строк → пробелы; обрезку — TextBlock).
-    private static string PreviewText(string text) => text.ReplaceLineEndings(" ").Trim();
 
     // Ключ иконки типа свойства в реестре Icons.axaml.
     private static string IconKeyFor(DbField f) => f.FieldType switch
