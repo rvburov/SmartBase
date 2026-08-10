@@ -173,4 +173,77 @@ public sealed class InstallServiceTests
             : Path.Combine(Path.GetTempPath(), "Документы", "SmartBase");
         Assert.Equal(expected, InstallService.EnsureDedicatedDir(docs));
     }
+
+    // ── Установщик рядом с приложением при обновлении ──────────────────────────
+    // Обновление «по воздуху» до 1.0.5 меняло только сам бинарь, и SmartBase-Setup рядом
+    // оставался от прежней сборки — со старой иконкой и старой версией. Теперь обновляется
+    // и он, но строго на месте: обновление не должно класть 157 МБ туда, где установщика
+    // отродясь не было (портативная копия, установка до 1.0.5).
+
+    [Fact]
+    public void Update_refreshes_the_setup_binary_lying_beside_the_app()
+    {
+        // На macOS единица — .app-бандл (каталог), сценарий копирования дерева отдельный.
+        if (InstallService.IsMac) return;
+
+        var dir = NewTempDir();
+        var src = Path.Combine(NewTempDir(), "SmartBase.update");
+        try
+        {
+            var setup = InstallService.SetupInstalledPath(dir);
+            File.WriteAllText(setup, "прежняя сборка");
+            File.WriteAllText(src,   "новая сборка");
+
+            InstallService.RefreshSetupBesideApp(dir, src);
+
+            Assert.Equal("новая сборка", File.ReadAllText(setup));
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+            Directory.Delete(Path.GetDirectoryName(src)!, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Update_does_not_create_a_setup_binary_where_there_was_none()
+    {
+        var dir = NewTempDir();
+        var src = Path.Combine(NewTempDir(), "SmartBase.update");
+        try
+        {
+            File.WriteAllText(src, "новая сборка");
+            var setup = InstallService.SetupInstalledPath(dir);
+
+            InstallService.RefreshSetupBesideApp(dir, src);
+
+            Assert.False(File.Exists(setup),      "портативной копии установщик не полагается");
+            Assert.False(Directory.Exists(setup), "и бандла установщика тоже");
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+            Directory.Delete(Path.GetDirectoryName(src)!, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Update_started_from_the_setup_binary_itself_leaves_it_intact()
+    {
+        // Установщик рядом с приложением — это тот же файл, которым может идти обновление.
+        // Копирование файла самого в себя обнулило бы его.
+        if (InstallService.IsMac) return;
+
+        var dir = NewTempDir();
+        try
+        {
+            var setup = InstallService.SetupInstalledPath(dir);
+            File.WriteAllText(setup, "я и есть источник");
+
+            InstallService.RefreshSetupBesideApp(dir, setup);
+
+            Assert.Equal("я и есть источник", File.ReadAllText(setup));
+        }
+        finally { Directory.Delete(dir, recursive: true); }
+    }
 }

@@ -458,6 +458,9 @@ public static partial class InstallService
             $"$s.TargetPath = {PsQuote(targetExe)}; " +
             (arguments.Length > 0 ? $"$s.Arguments = {PsQuote(arguments)}; " : "") +
             $"$s.WorkingDirectory = {PsQuote(workDir)}; " +
+            // Значок указываем явно, а не оставляем «бери у цели»: так оболочка знает, откуда
+            // его перечитывать, когда .exe заменят обновлением (см. InstallService.ShellIcons).
+            $"$s.IconLocation = {PsQuote($"{targetExe},0")}; " +
             "$s.Save()";
         RunHidden("powershell", $"-NoProfile -NonInteractive -Command \"{script}\"", wait: true);
     }
@@ -579,7 +582,12 @@ public static partial class InstallService
     private const string UninstallKey =
         @"HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\" + AppSettings.AppName;
 
-    private static void RegisterUninstall(string installDir)
+    /// <param name="onlyIfRegistered">
+    /// Обновлять запись, но не создавать её. Нужно при обновлении: версию в списке приложений
+    /// освежить надо, а вот заводить запись там, где её не было, нельзя — это либо установка
+    /// до 1.0.5, либо портативная копия, которой в «Приложениях» не место.
+    /// </param>
+    private static void RegisterUninstall(string installDir, bool onlyIfRegistered = false)
     {
         if (!OperatingSystem.IsWindows()) return;   // Linux — .desktop в меню, macOS — lsregister
 
@@ -591,6 +599,7 @@ public static partial class InstallService
         var sb = new StringBuilder();
         sb.AppendLine("$ErrorActionPreference='SilentlyContinue'");
         sb.AppendLine($"$k={Q(UninstallKey)}");
+        if (onlyIfRegistered) sb.AppendLine("if (-not (Test-Path $k)) { exit }");
         sb.AppendLine("New-Item -Path $k -Force | Out-Null");
         void Set(string name, string value, string type) =>
             sb.AppendLine($"New-ItemProperty -Path $k -Name {name} -Value {value} -PropertyType {type} -Force | Out-Null");
@@ -701,7 +710,12 @@ public static partial class InstallService
         RunHidden("cmd.exe", $"/c \"{bat}\"", wait: false);
     }
 
-    private static void RunHidden(string file, string args, bool wait)
+    /// <param name="timeoutMs">
+    /// Ограничение ожидания при <paramref name="wait"/>. 0 — ждать сколько потребуется.
+    /// Нужно там, где зависшая утилита не должна тормозить шаг целиком (обход ярлыков после
+    /// обновления: чтение цели ярлыка на недоступную сетевую папку упирается в таймаут SMB).
+    /// </param>
+    private static void RunHidden(string file, string args, bool wait, int timeoutMs = 0)
     {
         try
         {
@@ -716,7 +730,11 @@ public static partial class InstallService
                 // наследует её как текущий каталог и блокирует удаление.
                 WorkingDirectory = Path.GetTempPath(),
             });
-            if (wait) p?.WaitForExit();
+            if (wait)
+            {
+                if (timeoutMs > 0) p?.WaitForExit(timeoutMs);
+                else               p?.WaitForExit();
+            }
         }
         catch { /* среда без нужной утилиты — пропускаем */ }
     }
