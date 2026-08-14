@@ -40,12 +40,11 @@ public partial class App : Application
             // Настройки приложения хранятся в app.db.
             AppSettings.AttachStore(registry);
 
-            // Запись автозапуска от версий до 1.0.5 несла --background (тихий старт со скрытым
-            // окном). Переписываем её без аргументов — здесь, а не в Program: настройки читаются
-            // только после AttachStore. Срабатывает ровно один раз, при первом входе в систему
-            // со старой записью, дальше флага в команде уже нет.
-            if (Program.LegacyBackgroundArg && AppSettings.LoadAutostartEnabled())
-                Autostart.Set(true);
+            // Автозапуск: сверяем запись в системе с настройкой — вернуть пропавшую (переустановка,
+            // чистилка автозагрузки), переписать устаревшую (сменилась папка установки; у версий до
+            // 1.0.5 в команде оставался --background), снять лишнюю. Именно здесь, а не в Program:
+            // настройка читается только после AttachStore.
+            Autostart.Sync(AppSettings.LoadAutostartEnabled());
 
             // Профиль пользователя (ФИО для модуля «Профиль») — тоже в app.db.
             CurrentUser.AttachStore(registry);

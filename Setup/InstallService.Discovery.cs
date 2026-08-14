@@ -108,6 +108,19 @@ public static partial class InstallService
         return found;
     }
 
+    /// <summary>
+    /// Запущены ли мы из установленной копии. Только по <c>installs.json</c> — читается мгновенно
+    /// и годится для старта (полный <see cref="FindInstallations"/> дёргает PowerShell и стоит секунды).
+    /// <c>null</c> — сказать нечем: список пуст (установка до 1.0.5, стёртая папка данных),
+    /// вызывающий решает сам.
+    /// </summary>
+    public static bool? IsRunningInstalledCopy()
+    {
+        var paths = ReadRegisteredPaths();
+        if (paths.Count == 0) return null;
+        return Normalize(CurrentDir) is { } cur && paths.Contains(cur, StringComparer.OrdinalIgnoreCase);
+    }
+
     /// <summary>Версия установленной копии: macOS — из Info.plist, иначе — из ресурса версии бинаря.</summary>
     public static string? InstalledVersion(string installDir)
     {

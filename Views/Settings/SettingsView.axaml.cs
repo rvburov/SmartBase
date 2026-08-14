@@ -61,8 +61,12 @@ public partial class SettingsView : UserControl
 
         // ── Общее ────────────────────────────────────────────────────────────
         NotificationsToggle.IsChecked = AppSettings.LoadNotificationsEnabled();
-        AutostartToggle.IsChecked     = AppSettings.LoadAutostartEnabled();
         AutostartToggle.IsEnabled     = Autostart.IsSupported;   // в dev-режиме (без бандла/exe) недоступно
+        // Состояние берём у САМОЙ системы, а не из app.db: запись могли снести мимо приложения,
+        // и тумблер показывал бы автозапуск, которого нет. Вне установки читать нечего — там
+        // остаётся сохранённая настройка (тумблер всё равно неактивен).
+        AutostartToggle.IsChecked     = Autostart.IsSupported ? Autostart.IsEnabled()
+                                                             : AppSettings.LoadAutostartEnabled();
         BackgroundToggle.IsChecked    = AppSettings.LoadBackgroundEnabled();
         _generalLoaded = true;
 
@@ -150,14 +154,35 @@ public partial class SettingsView : UserControl
         NotificationsEnabledChanged?.Invoke(this, on);
     }
 
-    // Автозапуск: сохраняем + пишем/удаляем запись в ОС. Запись не зависит от фонового режима —
-    // при входе в систему окно открывается в любом случае (см. Utils/Autostart).
+    // Автозапуск: сначала запись в ОС, и только если она легла — сохраняем настройку. Запись не
+    // зависит от фонового режима: при входе в систему окно открывается в любом случае (Utils/Autostart).
+    //
+    // Раньше сбой записи проглатывался молча: настройка сохранялась, тумблер оставался включённым,
+    // а автозапуска не было — и понять это снаружи было нечем. Теперь отказ (нет прав, политика
+    // домена, откат антивирусом) виден: тумблер возвращается в фактическое состояние + окно с причиной.
     private void OnAutostartToggled(object? sender, RoutedEventArgs e)
     {
         if (!_generalLoaded) return;
         var on = AutostartToggle.IsChecked == true;
+
+        if (!Autostart.Set(on))
+        {
+            var actual = Autostart.IsEnabled();
+            _generalLoaded = false;              // возврат тумблера не должен снова звать обработчик
+            AutostartToggle.IsChecked = actual;
+            _generalLoaded = true;
+            AppSettings.SaveAutostartEnabled(actual);
+            if (VisualRoot is Window win)
+                _ = ConfirmDialog.Info(
+                    on ? "Не удалось включить автозапуск: система отклонила запись. Такое бывает из-за политик " +
+                         "организации или защитных программ — проверьте автозагрузку в параметрах системы."
+                       : "Не удалось выключить автозапуск: система отклонила изменение записи. " +
+                         "Убрать её можно в параметрах системы, раздел «Автозагрузка».")
+                    .ShowDialog(win);
+            return;
+        }
+
         AppSettings.SaveAutostartEnabled(on);
-        Autostart.Set(on);
     }
 
     // Фоновый режим: сохраняем + сообщаем MainWindow (значок в трее). Автозапуск не трогаем —
