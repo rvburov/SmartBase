@@ -34,6 +34,11 @@ public sealed class FilterValueMetrics : INotifyPropertyChanged
     // строка, которая шире своего MinWidth, снова растянула бы панель под себя.
     private const double Slack = 4;
 
+    /// <summary>Просвет между числом и текстом, который оно закрывает. Такой же, как
+    /// справа от числа (его даёт правый отступ списка), — расстояние с обеих сторон
+    /// одинаковое и не зависит от количества цифр.</summary>
+    public const double Gap = 8;
+
     private double _textMinWidth;
     private double _countMinWidth;
     private double _pin;
@@ -41,7 +46,9 @@ public sealed class FilterValueMetrics : INotifyPropertyChanged
     /// <summary>Ширина самого широкого значения — MinWidth текста строки.</summary>
     public double TextMinWidth { get => _textMinWidth; private set => Set(ref _textMinWidth, value); }
 
-    /// <summary>Ширина самого широкого счётчика — MinWidth его колонки (счётчики в столбик).</summary>
+    /// <summary>Ширина МЕСТА под счётчик: самое длинное число плюс <see cref="Gap"/>.
+    /// Место одинаковое во всех строках (иначе ширина строки, а с ней и экстент, зависела
+    /// бы от количества цифр), а сама непрозрачная плашка обхватывает своё число.</summary>
     public double CountMinWidth { get => _countMinWidth; private set => Set(ref _countMinWidth, value); }
 
     /// <summary>Сдвиг счётчика, удерживающий его у правого края видимой области.</summary>
@@ -54,7 +61,7 @@ public sealed class FilterValueMetrics : INotifyPropertyChanged
                         double fontSize, FontFamily? family = null)
     {
         TextMinWidth  = Widest(displays, fontSize, family);
-        CountMinWidth = Widest(counts,   fontSize, family);
+        CountMinWidth = Widest(counts,   fontSize, family) + Gap;
     }
 
     /// <summary>Следить за прокруткой списка, чтобы держать счётчик на месте.</summary>

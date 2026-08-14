@@ -822,33 +822,34 @@ public partial class ProfileView
             };
             cb.Bind(ToggleButton.IsCheckedProperty, new Binding(nameof(HistoryFilterValueVm.Checked)) { Mode = BindingMode.TwoWay });
 
-            var cnt = new TextBlock
-            {
-                Foreground        = secondary,
-                VerticalAlignment = VerticalAlignment.Center,
-                TextAlignment     = TextAlignment.Right,
-            };
+            var cnt = new TextBlock { Foreground = secondary, VerticalAlignment = VerticalAlignment.Center };
             cnt.Bind(TextBlock.TextProperty, new Binding(nameof(HistoryFilterValueVm.CountText)));
-            // Счётчики стоят столбиком: ширина колонки — по самому длинному числу.
-            cnt.Bind(Layoutable.MinWidthProperty,
-                     new Binding(nameof(FilterValueMetrics.CountMinWidth)) { Source = metrics });
 
             // Счётчик ЗАКРЕПЛЁН у правого края видимой области: сдвиг компенсирует
             // горизонтальную прокрутку, фон непрозрачный — длинный текст уезжает под него.
+            // Плашка обхватывает САМО число (Gap слева), поэтому просвет до закрываемого
+            // текста одинаковый в любой строке — не зависит от количества цифр.
             var pin = new TranslateTransform();
             pin.Bind(TranslateTransform.XProperty,
                      new Binding(nameof(FilterValueMetrics.Pin)) { Source = metrics });
             var cntHost = new Border
             {
-                Background      = Brushes.White,
-                Padding         = new Thickness(8, 0, 0, 0),
-                Child           = cnt,
-                RenderTransform = pin,
+                Background          = Brushes.White,
+                Padding             = new Thickness(FilterValueMetrics.Gap, 0, 0, 0),
+                HorizontalAlignment = HorizontalAlignment.Right,
+                Child               = cnt,
+                RenderTransform     = pin,
             };
+
+            // Прозрачное МЕСТО под счётчик — одинаковой ширины во всех строках, чтобы от
+            // количества цифр не зависела ширина строки, а с ней и экстент прокрутки.
+            var cntSlot = new Border { Child = cntHost };
+            cntSlot.Bind(Layoutable.MinWidthProperty,
+                         new Binding(nameof(FilterValueMetrics.CountMinWidth)) { Source = metrics });
 
             var row = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto") };
             Grid.SetColumn(cb, 0);      row.Children.Add(cb);
-            Grid.SetColumn(cntHost, 1); row.Children.Add(cntHost);
+            Grid.SetColumn(cntSlot, 1); row.Children.Add(cntSlot);
             return row;
         });
 
