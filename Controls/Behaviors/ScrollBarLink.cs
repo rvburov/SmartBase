@@ -48,40 +48,84 @@ public static class ScrollBarLink
     }
 
     /// <summary>
-    /// Готовая связка «закреплённая шапка + список» с полосой на всю высоту — для попапов,
-    /// собираемых в C# (фильтр колонки таблицы, истории профиля, журнала логов). Полоса
-    /// списка выносится из его шаблона в отдельную колонку и встаёт на уровень шапки, как
-    /// вертикальная полоса таблицы стоит на уровне шапки колонок.
-    /// ВНИМАНИЕ: у <paramref name="header"/> и <paramref name="list"/> выставляется правый
-    /// Margin — воздух между текстом и полосой (в таблице его даёт отступ ячейки).
+    /// Готовая связка «закреплённая шапка + список» с обеими полосами по краям — для попапов,
+    /// собираемых в C# (фильтр колонки таблицы, истории профиля, журнала логов). Полосы
+    /// списка выносятся из его шаблона в отдельные колонку и строку сетки: вертикальная
+    /// встаёт на уровень шапки, горизонтальная даёт прочитать длинные значения целиком
+    /// (без неё они обрезались многоточием). Раскладка повторяет таблицу конструктора,
+    /// включая квадрат на пересечении полос.
+    ///
+    /// ВНИМАНИЕ: у карточки-контейнера <c>Padding</c> должен быть НУЛЕВОЙ — иначе полосы
+    /// отойдут от её краёв. Весь воздух задаёт <paramref name="padding"/>: он вешается
+    /// Margin'ом на шапку и список, то есть на содержимое ВНУТРИ полос.
     /// </summary>
-    public static Control HeaderedList(Control header, ListBox list, double gap = 4, double air = 8)
+    public static Control HeaderedList(Control header, ListBox list, double gap = 4, Thickness? padding = null)
     {
+        // Прокрутка у списка работает, своих полос он не рисует — их роль играют вынесенные.
+        // Горизонтальная включена намеренно: длинные значения перестают обрезаться
+        // многоточием, их можно домотать полосой снизу.
         ScrollViewer.SetVerticalScrollBarVisibility(list, ScrollBarVisibility.Hidden);
-        header.Margin = new Thickness(0, 0, air, 0);
-        list.Margin   = new Thickness(0, 0, air, 0);
+        ScrollViewer.SetHorizontalScrollBarVisibility(list, ScrollBarVisibility.Hidden);
 
-        var bar = new ScrollBar { Orientation = Orientation.Vertical, IsVisible = false };
-        // Полоса ссылается на ScrollViewer ВНУТРИ шаблона списка — он появляется только
-        // после применения шаблона.
-        list.TemplateApplied += (_, e) =>
+        return Build(header, list, padding, gap, (vbar, hbar) =>
+            // Полосы ссылаются на ScrollViewer ВНУТРИ шаблона списка — он появляется
+            // только после применения шаблона.
+            list.TemplateApplied += (_, e) =>
+            {
+                if (e.NameScope.Find<ScrollViewer>("PART_ScrollViewer") is not { } sv) return;
+                SetSource(vbar, sv);
+                SetSource(hbar, sv);
+            });
+    }
+
+    /// <summary>
+    /// То же для случая, когда прокручиваемая область — обычный <see cref="ScrollViewer"/>
+    /// (пикер коллекций, попапы свойств сайдбара): полоса берётся у него напрямую.
+    /// Горизонтальную прокрутку метод НЕ включает — остаётся та, что задал вызывающий.
+    /// </summary>
+    public static Control HeaderedList(Control header, ScrollViewer scroll, double gap = 4, Thickness? padding = null)
+    {
+        scroll.VerticalScrollBarVisibility = ScrollBarVisibility.Hidden;
+
+        return Build(header, scroll, padding, gap, (vbar, hbar) =>
         {
-            if (e.NameScope.Find<ScrollViewer>("PART_ScrollViewer") is { } sv) SetSource(bar, sv);
-        };
+            SetSource(vbar, scroll);
+            SetSource(hbar, scroll);
+        });
+    }
+
+    private static Control Build(Control header, Control body, Thickness? padding, double gap,
+                                 Action<ScrollBar, ScrollBar> link)
+    {
+        var pad = padding ?? new Thickness(8, 6);
+        header.Margin = new Thickness(pad.Left, pad.Top, pad.Right, 0);
+        body.Margin   = new Thickness(pad.Left, 0, pad.Right, pad.Bottom);
+
+        var vbar = new ScrollBar { Orientation = Orientation.Vertical,   IsVisible = false };
+        var hbar = new ScrollBar { Orientation = Orientation.Horizontal, IsVisible = false };
+        link(vbar, hbar);
+
+        // Квадрат на пересечении полос — иначе там белое пятно (в таблице то же делает
+        // PART_BottomRightCorner). Схлопывается сам вместе со скрытой полосой.
+        var corner = new Border();
+        corner.Bind(Border.BackgroundProperty, corner.GetResourceObservable("BrushScrollbarTrack"));
 
         var grid = new Grid
         {
             ColumnDefinitions = new ColumnDefinitions("*,Auto"),
             // Инвариантный формат обязателен: в ru-культуре дробное число ушло бы с
             // запятой и строка определений разъехалась бы на лишние строки.
-            RowDefinitions    = new RowDefinitions(FormattableString.Invariant($"Auto,{gap},*")),
+            RowDefinitions    = new RowDefinitions(FormattableString.Invariant($"Auto,{gap},*,Auto")),
         };
-        Grid.SetRow(list, 2);
-        Grid.SetColumn(bar, 1);
-        Grid.SetRowSpan(bar, 3);
+        Grid.SetRow(body, 2);
+        Grid.SetColumn(vbar, 1); Grid.SetRowSpan(vbar, 3);
+        Grid.SetRow(hbar, 3);
+        Grid.SetRow(corner, 3); Grid.SetColumn(corner, 1);
         grid.Children.Add(header);
-        grid.Children.Add(list);
-        grid.Children.Add(bar);
+        grid.Children.Add(body);
+        grid.Children.Add(vbar);
+        grid.Children.Add(hbar);
+        grid.Children.Add(corner);
         return grid;
     }
 

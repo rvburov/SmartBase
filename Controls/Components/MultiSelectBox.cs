@@ -142,7 +142,9 @@ public sealed class MultiSelectBox : Panel
         {
             Background      = Brushes.Transparent,
             BorderThickness = new Thickness(0),
-            Padding         = new Thickness(0),
+            // Воздух вокруг строк — здесь, а не у карточки: Padding списка это Margin
+            // презентера ВНУТРИ области прокрутки, поэтому полоса остаётся у края карточки.
+            Padding         = new Thickness(8, 6),
             ItemsSource     = _shown,
             ItemTemplate    = BuildItemTemplate(fontBase),
         };
@@ -189,9 +191,10 @@ public sealed class MultiSelectBox : Panel
             BorderBrush     = Brush("BrushSeparator", Colors.LightGray),
             BorderThickness = new Thickness(1),
             CornerRadius    = Radius("RadiusBase", 6),
-            // Справа 0: полоса прокрутки списка прилегает к рамке карточки без белого зазора.
+            // Padding НУЛЕВОЙ: полоса прокрутки прилегает ко всем краям карточки без белого
+            // зазора, воздух вокруг строк задан Padding'ом самого списка.
             // ClipToBounds — квадратные углы полосы срезаются скруглением карточки.
-            Padding         = new Thickness(8, 6, 0, 6),
+            Padding         = new Thickness(0),
             ClipToBounds    = true,
             Height          = 232,
             Child           = valuesList,

@@ -16,6 +16,7 @@ using Serilog;
 using SmartBase.Database;
 using SmartBase.Database.Repositories;
 using SmartBase.Utils;
+using SmartBase.Controls.Behaviors;
 
 namespace SmartBase.Controls.Components;
 
@@ -1042,15 +1043,14 @@ public partial class SidebarTree : UserControl
             Background       = Brushes.White,
             BorderBrush     = (IBrush)this.FindResource("BrushSeparator")!,
             CornerRadius    = radius,
-            // Справа 0: полоса прокрутки списка прилегает к рамке карточки без белого зазора.
+            // Padding НУЛЕВОЙ: полоса прокрутки прилегает ко всем краям карточки без белого
+            // зазора, воздух вокруг содержимого задаёт HeaderedList.
             // ClipToBounds — квадратные углы полосы срезаются скруглением карточки.
-            Padding         = new Thickness(8, 6, 0, 6),
+            Padding         = new Thickness(0),
             ClipToBounds    = true,
-            Child = new StackPanel
-            {
-                Spacing = 4,
-                Children = { selectAll, new ScrollViewer { MaxHeight = 240, Content = list } },
-            },
+            // «Выделить всё» — закреплённая шапка; полоса стоит на её уровне.
+            Child = ScrollBarLink.HeaderedList(
+                selectAll, new ScrollViewer { MaxHeight = 240, Content = list }),
         };
         // Карточка живёт в попапе сабменю — попап наследует зум (InheritsTransform
         // ставит стиль MenuItem в Controls.axaml), токен обычный.
@@ -1185,15 +1185,14 @@ public partial class SidebarTree : UserControl
             Background       = Brushes.White,
             BorderBrush     = (IBrush)this.FindResource("BrushSeparator")!,
             CornerRadius    = radius,
-            // Справа 0: полоса прокрутки списка прилегает к рамке карточки без белого зазора.
+            // Padding НУЛЕВОЙ: полоса прокрутки прилегает ко всем краям карточки без белого
+            // зазора, воздух вокруг содержимого задаёт HeaderedList.
             // ClipToBounds — квадратные углы полосы срезаются скруглением карточки.
-            Padding         = new Thickness(8, 6, 0, 6),
+            Padding         = new Thickness(0),
             ClipToBounds    = true,
-            Child = new StackPanel
-            {
-                Spacing = 4,
-                Children = { selectAll, new ScrollViewer { MaxHeight = 240, Content = list } },
-            },
+            // «Выделить всё» — закреплённая шапка; полоса стоит на её уровне.
+            Child = ScrollBarLink.HeaderedList(
+                selectAll, new ScrollViewer { MaxHeight = 240, Content = list }),
         };
         listBox.Bind(Border.BorderThicknessProperty, listBox.GetResourceObservable("BorderLine"));
         panel.Children.Add(listBox);

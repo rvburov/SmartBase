@@ -513,7 +513,8 @@ public partial class ProfileView
 
         var valuesList = new ListBox
         {
-            Height          = 200,
+            // Высоты нет: список занимает остаток строки карточки фиксированной высоты и
+            // сам ужимается, когда снизу появляется горизонтальная полоса.
             Background      = Brushes.Transparent,
             BorderThickness = new Thickness(0),
             Padding         = new Thickness(0),
@@ -559,9 +560,10 @@ public partial class ProfileView
             Background   = Brushes.White,
             BorderBrush  = (IBrush)this.FindResource("BrushSeparator")!,
             CornerRadius = radius,
-            // Справа 0: полоса прокрутки списка прилегает к рамке карточки без белого зазора.
-            // ClipToBounds — квадратные углы полосы срезаются скруглением карточки.
-            Padding      = new Thickness(8, 6, 0, 6),
+            // Padding НУЛЕВОЙ: полосы прокрутки списка прилегают ко всем краям карточки без
+            // белого зазора, а воздух вокруг содержимого задаёт ScrollBarLink.HeaderedList.
+            // ClipToBounds — квадратные углы полос срезаются скруглением карточки.
+            Padding      = new Thickness(0),
             ClipToBounds = true,
             Height       = 232,
             Child        = loadingText,

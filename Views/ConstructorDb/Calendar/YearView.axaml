@@ -29,7 +29,7 @@
                     BorderThickness="{DynamicResource BorderLine}"
                     CornerRadius="{StaticResource RadiusMedium}"
                     BoxShadow="0 4 16 0 #1A000000"
-                    Padding="12,12,0,12"
+                    Padding="12,12,0,0"
                     MinWidth="200" MaxWidth="280">
                 <StackPanel Spacing="8">
                     <TextBlock x:Name="DayPopupTitle"
@@ -41,8 +41,11 @@
                              Watermark="Поиск"
                              MinHeight="28" Padding="8,4"
                              Margin="0,0,12,0" />
+                    <!-- Нижний Padding у рамки снят, чтобы полоса прокрутки доходила до её
+                         нижнего края; воздух под списком вернулся его же Margin'ом (полосу
+                         он не двигает — она вне прокручиваемой области). -->
                     <ScrollViewer MaxHeight="220">
-                        <StackPanel x:Name="DayPopupList" Spacing="6" Margin="0,0,12,0" />
+                        <StackPanel x:Name="DayPopupList" Spacing="6" Margin="0,0,12,12" />
                     </ScrollViewer>
                 </StackPanel>
             </Border>

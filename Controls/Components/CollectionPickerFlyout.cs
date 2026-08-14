@@ -89,18 +89,18 @@ public sealed class CollectionPickerFlyout
             Content = list,
         };
 
-        var valuesBox = new StackPanel { Spacing = 4 };
-        valuesBox.Children.Add(selectAll);
-        valuesBox.Children.Add(scroll);
+        // «Выделить всё» — закреплённая шапка; полоса прокрутки стоит на её уровне.
+        var valuesBox = ScrollBarLink.HeaderedList(selectAll, scroll);
 
         var valuesHost = new Border
         {
             Background   = Brushes.White,
             BorderBrush  = separator,
             CornerRadius = radius,
-            // Справа 0: полоса прокрутки списка прилегает к рамке карточки без белого зазора.
+            // Padding НУЛЕВОЙ: полоса прокрутки прилегает ко всем краям карточки без белого
+            // зазора, воздух вокруг содержимого задаёт HeaderedList.
             // ClipToBounds — квадратные углы полосы срезаются скруглением карточки.
-            Padding      = new Avalonia.Thickness(8, 6, 0, 6),
+            Padding      = new Avalonia.Thickness(0),
             ClipToBounds = true,
             Child        = valuesBox,
         };
