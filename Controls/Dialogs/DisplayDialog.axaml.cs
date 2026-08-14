@@ -113,10 +113,16 @@ public partial class DisplayDialog : Window
                 Width = _numWidth, Foreground = secondary, FontSize = fontBase,
                 HorizontalAlignment = HorizontalAlignment.Center,
                 VerticalAlignment   = VerticalAlignment.Center,
+                // Номер прижат ВЛЕВО (по решению: правое выравнивание уводило короткие
+                // номера от левого края). Колонка одной ширины на все строки — под самый
+                // длинный номер, поэтому у коротких до чекбокса остаётся запас колонки;
+                // гарантированный минимум зазора даёт левый Margin чекбокса.
             };
             num.Bind(TextBlock.TextProperty, new Binding(nameof(RowVm.NumberText)));
 
-            var cb = new CheckBox { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(2, 0, 6, 0) };
+            // Слева 8 — просвет между номером и чекбоксом. Номер прижат вправо, поэтому
+            // весь зазор задаётся здесь и одинаков в любой строке.
+            var cb = new CheckBox { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8, 0, 6, 0) };
             cb.Bind(ToggleButton.IsCheckedProperty, new Binding(nameof(RowVm.Visible)) { Mode = BindingMode.TwoWay });
 
             var lvlText = new TextBlock
