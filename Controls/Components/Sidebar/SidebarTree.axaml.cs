@@ -240,6 +240,57 @@ public partial class SidebarTree : UserControl
         // Первая строка стоит на месте шапки колонок таблицы (высота 36), остальные — на месте
         // строк данных (37). См. SidebarRow.RowHeight.
         if (_rows.Count > 0) _rows[0].IsFirstRow = true;
+        MeasureRowWidth();
+    }
+
+    // Мерить каждую строку нельзя — узлов бывают тысячи. Сначала отбираем кандидатов дёшево
+    // (отступ + число символов), потом честно меряем только их: шрифт пропорциональный, и
+    // самое длинное имя не обязательно самое широкое.
+    private const int    WidthCandidates = 16;
+    private const double WidthSlack      = 4;    // промах даже на пиксель вернул бы дрожание экстента
+
+    /// <summary>
+    /// Общая ширина строк — по самой широкой из них. Ставится КАЖДОЙ строке, поэтому экстент
+    /// горизонтальной прокрутки не зависит от того, какие строки сейчас реализованы
+    /// (виртуализация), и полоса внизу не дёргается при вертикальной прокрутке.
+    /// </summary>
+    private void MeasureRowWidth()
+    {
+        if (_rows.Count == 0) return;
+
+        var fontSize  = Metric("FontSizeBase",   14);
+        var smallSize = Metric("FontSizeSmall",  12);
+        var iconSize  = Metric("IconSizeMedium", 20);
+        var family    = this.TryFindResource("FontFamilyBase", out var f) ? f as FontFamily : null;
+
+        // Всё, что стоит СЛЕВА от текста, по шаблону строки: Padding строки (10), отступ
+        // вложенности, слоты стрелки и чекбокса, иконка с её отступом (2) и поля текста (6 и 8).
+        double Lead(SidebarRow r) =>
+            10 + r.IndentMargin.Left + r.ChevronSlot + r.CheckboxSlot + 2 + iconSize + 6 + 8;
+
+        var max = 0.0;
+        foreach (var r in _rows
+                     .OrderByDescending(r => Lead(r) + Math.Max(r.Name.Length, r.Status?.Length ?? 0))
+                     .Take(WidthCandidates))
+        {
+            max = Math.Max(max, Lead(r) + Probe(r.Name, fontSize, family));
+            // У заглушек очереди под именем есть статусная строка мелким шрифтом — она бывает длиннее.
+            if (r.HasStatus) max = Math.Max(max, Lead(r) + Probe(r.Status!, smallSize, family));
+        }
+
+        var width = Math.Ceiling(max) + WidthSlack;
+        foreach (var r in _rows) r.MinRowWidth = width;
+    }
+
+    private double Metric(string key, double fallback) =>
+        this.TryFindResource(key, out var v) && v is double d ? d : fallback;
+
+    private static double Probe(string text, double fontSize, FontFamily? family)
+    {
+        var probe = new TextBlock { Text = text, FontSize = fontSize };
+        if (family is not null) probe.FontFamily = family;
+        probe.Measure(Size.Infinity);
+        return probe.DesiredSize.Width;
     }
 
     private void Flatten(IEnumerable<SidebarNode> nodes, int depth)
@@ -2256,6 +2307,13 @@ public partial class SidebarRow : ObservableObject
     [ObservableProperty] private bool _hovered;
     [ObservableProperty] private bool _checked;
     [ObservableProperty] private bool _selected;
+
+    // Ширина, ОДИНАКОВАЯ у всех строк списка (её считает SidebarTree.MeasureRowWidth).
+    // Нужна из-за виртуализации: экстент горизонтальной прокрутки панель считает по
+    // РЕАЛИЗОВАННЫМ строкам, и без общей ширины полоса дёргалась бы при вертикальной
+    // прокрутке — как было в списке значений фильтра (см. FilterValueMetrics).
+    // Заодно подсветка строки идёт во всю ширину содержимого, а не до края видимой части.
+    [ObservableProperty] private double _minRowWidth;
 
     // Статусная строка заглушки очереди («в очереди…» / «Обновление · 45% · ≈ 2 мин»):
     // обновляется живьём (раз в полсекунды при миграции) без перестройки дерева.

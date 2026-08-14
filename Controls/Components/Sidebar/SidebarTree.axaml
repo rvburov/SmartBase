@@ -98,8 +98,14 @@
             </StackPanel>
         </Border>
 
-        <!-- Плоский список с виртуализацией -->
+        <!-- Плоский список с виртуализацией.
+             Горизонтальная прокрутка: длинные имена (вложенные группы и коллекции с
+             отступом) перестают упираться в правый край — их можно домотать полосой снизу.
+             Ширина строки при этом ПОСТОЯННАЯ (SidebarRow.MinRowWidth, считает
+             MeasureRowWidth), иначе экстент считался бы по видимым строкам и полоса
+             прыгала бы при вертикальной прокрутке. -->
         <ScrollViewer VerticalScrollBarVisibility="Auto"
+                      HorizontalScrollBarVisibility="Auto"
                       Background="Transparent"
                       ContextRequested="OnEmptyContextRequested">
             <!-- UseLayoutRounding отключается при зуме≠1 (тот же токен, что у DataGrid): иначе
@@ -131,6 +137,7 @@
                                 Padding="10,0,0,0"
                                 Height="{Binding RowContentHeight}"
                                 MinHeight="{StaticResource RowHeightStandard}"
+                                MinWidth="{Binding MinRowWidth}"
                                 Tapped="OnRowTapped"
                                 PointerEntered="OnRowEnter"
                                 PointerExited="OnRowExit"
