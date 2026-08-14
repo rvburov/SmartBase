@@ -1041,10 +1041,13 @@
         <Setter Property="Margin"          Value="0,1,0,0" />
     </Style>
 
+    <!-- Padding списка = воздух сверху/снизу вместо Padding попапа: ListBox отдаёт его
+         в Margin презентера ВНУТРИ своего ScrollViewer, поэтому пункты отступают от края,
+         а полоса прокрутки остаётся прижатой к рамке (см. TimeField.axaml). -->
     <Style Selector="ListBox.timeList">
         <Setter Property="Background"      Value="Transparent" />
         <Setter Property="BorderThickness" Value="0" />
-        <Setter Property="Padding"         Value="0" />
+        <Setter Property="Padding"         Value="0,2" />
     </Style>
 
     <!-- Элементы списка времени -->

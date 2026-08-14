@@ -21,7 +21,13 @@
                    PlacementTarget="{Binding #Box}"
                    Placement="BottomEdgeAlignedLeft"
                    IsLightDismissEnabled="True">
-                <Border Classes="timePopup" MinWidth="{Binding #Box.Bounds.Width}">
+                <!-- Padding НУЛЕВОЙ (перебивает «0,2» стиля timePopup): полоса прокрутки
+                     идёт вплотную к верхнему и нижнему краю попапа, без белых зазоров.
+                     Воздух над первым и под последним пунктом даёт Padding самого списка —
+                     он внутри ScrollViewer и полосу не двигает. ClipToBounds — квадратные
+                     концы полосы срезаются скруглением рамки. -->
+                <Border Classes="timePopup" MinWidth="{Binding #Box.Bounds.Width}"
+                        Padding="0" ClipToBounds="True">
                     <ScrollViewer MaxHeight="240">
                         <ListBox x:Name="List" Classes="timeList" />
                     </ScrollViewer>
