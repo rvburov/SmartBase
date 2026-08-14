@@ -17,9 +17,12 @@ internal sealed class Program
     // флагом. App покажет разовое уведомление, что версия осталась прежней.
     internal static bool UpdateFailed { get; private set; }
 
-    // Тихий старт из автозапуска (--background): App создаёт окно скрытым — работают только
-    // служба уведомлений и значок в трее (см. настройку «Фоновый режим»).
-    internal static bool LaunchBackground { get; private set; }
+    // Хвост версий до 1.0.5: автозапуск с включённым фоновым режимом писал в команду
+    // --background, и приложение стартовало со скрытым окном — человек видел, что при входе
+    // в систему «ничего не открылось». Теперь автозапуск всегда открывает окно, а флаг
+    // игнорируется: он лишь означает, что запись автозапуска осталась от старой версии и её
+    // надо переписать (App.OnFrameworkInitializationCompleted, уже с подключёнными настройками).
+    internal static bool LegacyBackgroundArg { get; private set; }
 
     // Единственный экземпляр на локальную папку данных: фоновый режим не должен поднять второй
     // процесс (двойные уведомления). В режимах установщика/удаления не используется.
@@ -67,9 +70,11 @@ internal sealed class Program
         {
             AppSettings.EnsureCreated();
 
+            // Запись автозапуска старой версии (см. свойство): флаг только запоминаем.
+            LegacyBackgroundArg = Array.Exists(args, a => a == "--background");
+
             // Один экземпляр на папку данных: второй запуск просит работающий показать окно и
             // выходит (иначе фоновый режим поднял бы второй процесс — двойные уведомления).
-            LaunchBackground = Array.Exists(args, a => a == Autostart.BackgroundArg);
             Instance = SingleInstance.TryAcquire(AppSettings.AppDataDir);
             if (Instance is null)
             {

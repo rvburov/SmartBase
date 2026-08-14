@@ -20,37 +20,36 @@ public sealed class AutostartTests
 
     // ── Построение записи (чистое) ─────────────────────────────────────────────
 
+    // Запись автозапуска не несёт аргументов: при входе в систему окно открывается всегда,
+    // независимо от фонового режима. Раньше сюда дописывался --background, и приложение
+    // стартовало скрытым — со стороны это выглядело как «автозапуск не сработал».
+
     [Fact]
-    public void Windows_command_quotes_exe_and_adds_background_flag()
+    public void Windows_command_is_quoted_exe_without_arguments()
     {
         Assert.Equal("\"C:\\App\\SmartBase.exe\"",
-            Autostart.BuildWindowsCommand("C:\\App\\SmartBase.exe", background: false));
-
-        var bg = Autostart.BuildWindowsCommand("C:\\App\\SmartBase.exe", background: true);
-        Assert.Contains(Autostart.BackgroundArg, bg);
+            Autostart.BuildWindowsCommand("C:\\App\\SmartBase.exe"));
+        Assert.DoesNotContain("--background", Autostart.BuildWindowsCommand("C:\\App\\SmartBase.exe"));
     }
 
     [Fact]
-    public void Mac_plist_has_runatload_program_and_optional_background()
+    public void Mac_plist_has_runatload_and_program_without_arguments()
     {
-        var plist = Autostart.BuildMacPlist("/Apps/SmartBase.app/Contents/MacOS/SmartBase", background: true);
+        var plist = Autostart.BuildMacPlist("/Apps/SmartBase.app/Contents/MacOS/SmartBase");
         Assert.Contains("<key>RunAtLoad</key>", plist);
         Assert.Contains("com.romanburov.smartbase", plist);
         Assert.Contains("/Apps/SmartBase.app/Contents/MacOS/SmartBase", plist);
-        Assert.Contains(Autostart.BackgroundArg, plist);
-
-        var noBg = Autostart.BuildMacPlist("/Apps/SmartBase.app/Contents/MacOS/SmartBase", background: false);
-        Assert.DoesNotContain(Autostart.BackgroundArg, noBg);
+        Assert.DoesNotContain("--background", plist);
     }
 
     [Fact]
     public void Linux_desktop_entry_is_autostart_enabled_with_exec()
     {
-        var d = Autostart.BuildLinuxDesktop("/opt/smartbase/SmartBase", background: true);
+        var d = Autostart.BuildLinuxDesktop("/opt/smartbase/SmartBase");
         Assert.Contains("[Desktop Entry]", d);
         Assert.Contains("X-GNOME-Autostart-enabled=true", d);
         Assert.Contains("/opt/smartbase/SmartBase", d);
-        Assert.Contains(Autostart.BackgroundArg, d);
+        Assert.DoesNotContain("--background", d);
     }
 
     // ── Поведение окна в фоне (чистое) ─────────────────────────────────────────

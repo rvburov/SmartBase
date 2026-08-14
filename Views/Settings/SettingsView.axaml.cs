@@ -150,24 +150,24 @@ public partial class SettingsView : UserControl
         NotificationsEnabledChanged?.Invoke(this, on);
     }
 
-    // Автозапуск: сохраняем + пишем/удаляем запись в ОС (с учётом фонового режима для --background).
+    // Автозапуск: сохраняем + пишем/удаляем запись в ОС. Запись не зависит от фонового режима —
+    // при входе в систему окно открывается в любом случае (см. Utils/Autostart).
     private void OnAutostartToggled(object? sender, RoutedEventArgs e)
     {
         if (!_generalLoaded) return;
         var on = AutostartToggle.IsChecked == true;
         AppSettings.SaveAutostartEnabled(on);
-        Autostart.Set(on, AppSettings.LoadBackgroundEnabled());
+        Autostart.Set(on);
     }
 
-    // Фоновый режим: сохраняем + сообщаем MainWindow (значок в трее). Если автозапуск включён —
-    // обновляем его команду, т.к. --background зависит от этого тумблера.
+    // Фоновый режим: сохраняем + сообщаем MainWindow (значок в трее). Автозапуск не трогаем —
+    // тумблеры независимы: фон отвечает только за «крестик» окна и значок.
     private void OnBackgroundToggled(object? sender, RoutedEventArgs e)
     {
         if (!_generalLoaded) return;
         var on = BackgroundToggle.IsChecked == true;
         AppSettings.SaveBackgroundEnabled(on);
         BackgroundEnabledChanged?.Invoke(this, on);
-        if (AppSettings.LoadAutostartEnabled()) Autostart.Set(true, on);
     }
 
     // ── О программе ──────────────────────────────────────────────────────────
@@ -230,7 +230,7 @@ public partial class SettingsView : UserControl
     // модалка «Обновить/Отмена» и штатный поток загрузки/самозамены, что и по кнопке.
     //
     // Метод НИКОГДА не бросает: его зовут из обработчика Opened (async void), и любое
-    // исключение оттуда прилетает пользователю крэш-окном вместо тихого старта — так
+    // исключение оттуда прилетает пользователю крэш-окном вместо обычного запуска — так
     // «Cannot show window with non-visible owner» и вылезал при автозапуске в фоне.
     public async Task CheckForUpdatesOnStartupAsync()
     {

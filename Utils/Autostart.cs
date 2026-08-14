@@ -5,11 +5,14 @@ namespace SmartBase.Utils;
 
 /// <summary>
 /// Автозапуск приложения при входе в систему. Пер-ОС запись, ссылающаяся на текущий
-/// установленный бинарь/бандл; при включённом фоновом режиме добавляет <c>--background</c>
-/// (тихий старт, см. Program/App):
+/// установленный бинарь/бандл:
 ///   • Windows — ключ реестра HKCU\…\Run\SmartBase;
 ///   • macOS   — LaunchAgent ~/Library/LaunchAgents/com.romanburov.smartbase.plist;
 ///   • Linux   — ~/.config/autostart/smartbase.desktop.
+///
+/// Запись НЕ несёт аргументов: автозапуск всегда открывает окно — что с фоновым режимом,
+/// что без него. Фоновый режим отвечает только за «крестик» окна (скрыть вместо выхода)
+/// и значок в трее, но не за то, как приложение стартует при входе в систему.
 ///
 /// Построение записи (путь + содержимое) отделено от записи на диск — чистые методы
 /// <c>Build*</c> покрываются юнит-тестом. Вне установленного приложения (dev <c>dotnet run</c>,
@@ -17,7 +20,6 @@ namespace SmartBase.Utils;
 /// </summary>
 public static class Autostart
 {
-    public const string BackgroundArg = "--background";
     internal const string BundleId      = "com.romanburov.smartbase";
     private const string WindowsRunKey  = @"Software\Microsoft\Windows\CurrentVersion\Run";
     private const string WindowsValue   = AppSettings.AppName;   // "SmartBase"
@@ -50,15 +52,14 @@ public static class Autostart
         return false;
     }
 
-    /// <summary>Включить/выключить автозапуск. <paramref name="background"/> — стартовать в фоне
-    /// (добавляет <see cref="BackgroundArg"/> в команду). Вне установки — no-op.</summary>
-    public static void Set(bool enabled, bool background)
+    /// <summary>Включить/выключить автозапуск. Вне установки — no-op.</summary>
+    public static void Set(bool enabled)
     {
         var target = LaunchTarget();
         if (target is null) return;
         try
         {
-            if (enabled) Write(target, background);
+            if (enabled) Write(target);
             else         Remove();
         }
         catch { /* сбой записи автозапуска не критичен для работы приложения */ }
@@ -66,19 +67,19 @@ public static class Autostart
 
     // ── Запись/удаление ────────────────────────────────────────────────────────
 
-    private static void Write(string target, bool background)
+    private static void Write(string target)
     {
         if (OperatingSystem.IsWindows())
-            WindowsWrite(BuildWindowsCommand(target, background));
+            WindowsWrite(BuildWindowsCommand(target));
         else if (OperatingSystem.IsMacOS())
         {
             Directory.CreateDirectory(Path.GetDirectoryName(MacPlistPath)!);
-            File.WriteAllText(MacPlistPath, BuildMacPlist(target, background));
+            File.WriteAllText(MacPlistPath, BuildMacPlist(target));
         }
         else if (OperatingSystem.IsLinux())
         {
             Directory.CreateDirectory(Path.GetDirectoryName(LinuxDesktopPath)!);
-            File.WriteAllText(LinuxDesktopPath, BuildLinuxDesktop(target, background));
+            File.WriteAllText(LinuxDesktopPath, BuildLinuxDesktop(target));
         }
     }
 
@@ -102,36 +103,28 @@ public static class Autostart
 
     // ── Чистое построение содержимого (тестируется) ─────────────────────────────
 
-    /// <summary>Значение реестра HKCU\…\Run: команда запуска exe (+ --background).</summary>
-    public static string BuildWindowsCommand(string exe, bool background) =>
-        background ? $"\"{exe}\" {BackgroundArg}" : $"\"{exe}\"";
+    /// <summary>Значение реестра HKCU\…\Run: команда запуска exe (без аргументов).</summary>
+    public static string BuildWindowsCommand(string exe) => $"\"{exe}\"";
 
-    /// <summary>LaunchAgent-plist для macOS: RunAtLoad + ProgramArguments (бинарь [+--background]).</summary>
-    public static string BuildMacPlist(string innerBinary, bool background)
-    {
-        var args = background
-            ? $"    <string>{innerBinary}</string>\n    <string>{BackgroundArg}</string>"
-            : $"    <string>{innerBinary}</string>";
-        return "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" +
-               "<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n" +
-               "<plist version=\"1.0\">\n<dict>\n" +
-               $"  <key>Label</key>\n  <string>{BundleId}</string>\n" +
-               "  <key>ProgramArguments</key>\n  <array>\n" + args + "\n  </array>\n" +
-               "  <key>RunAtLoad</key>\n  <true/>\n" +
-               "</dict>\n</plist>\n";
-    }
+    /// <summary>LaunchAgent-plist для macOS: RunAtLoad + ProgramArguments (только бинарь).</summary>
+    public static string BuildMacPlist(string innerBinary) =>
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" +
+        "<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n" +
+        "<plist version=\"1.0\">\n<dict>\n" +
+        $"  <key>Label</key>\n  <string>{BundleId}</string>\n" +
+        "  <key>ProgramArguments</key>\n  <array>\n" +
+        $"    <string>{innerBinary}</string>\n  </array>\n" +
+        "  <key>RunAtLoad</key>\n  <true/>\n" +
+        "</dict>\n</plist>\n";
 
-    /// <summary>autostart .desktop для Linux: Exec = бинарь (+--background), автозапуск включён.</summary>
-    public static string BuildLinuxDesktop(string exec, bool background)
-    {
-        var cmd = background ? $"\"{exec}\" {BackgroundArg}" : $"\"{exec}\"";
-        return "[Desktop Entry]\n" +
-               "Type=Application\n" +
-               $"Name={AppSettings.DisplayName}\n" +
-               $"Exec={cmd}\n" +
-               "Terminal=false\n" +
-               "X-GNOME-Autostart-enabled=true\n";
-    }
+    /// <summary>autostart .desktop для Linux: Exec = бинарь, автозапуск включён.</summary>
+    public static string BuildLinuxDesktop(string exec) =>
+        "[Desktop Entry]\n" +
+        "Type=Application\n" +
+        $"Name={AppSettings.DisplayName}\n" +
+        $"Exec=\"{exec}\"\n" +
+        "Terminal=false\n" +
+        "X-GNOME-Autostart-enabled=true\n";
 
     // ── Пути ────────────────────────────────────────────────────────────────────
 
