@@ -67,6 +67,7 @@ public partial class SettingsView : UserControl
         // остаётся сохранённая настройка (тумблер всё равно неактивен).
         AutostartToggle.IsChecked     = Autostart.IsSupported ? Autostart.IsEnabled()
                                                              : AppSettings.LoadAutostartEnabled();
+        RefreshAutostartHint();
         BackgroundToggle.IsChecked    = AppSettings.LoadBackgroundEnabled();
         _generalLoaded = true;
 
@@ -183,6 +184,22 @@ public partial class SettingsView : UserControl
         }
 
         AppSettings.SaveAutostartEnabled(on);
+        RefreshAutostartHint();
+    }
+
+    // Запись автозагрузки может быть отключена средствами системы (Диспетчер задач Windows).
+    // Тогда тумблер честно показывает «включено» — запись на месте, — но при входе в систему
+    // программа не стартует. Проверяем и после переключения: снятие и повторное включение
+    // записи отметку Диспетчера не сбрасывает.
+    private void RefreshAutostartHint()
+    {
+        var disabled = Autostart.DisabledInSystemUi();
+        AutostartHint.IsVisible = disabled;
+        if (!disabled) return;
+        AutostartHint.Text = "Запись автозапуска отключена в системе: Диспетчер задач → «Автозагрузка». " +
+                             "Пока она там выключена, программа при входе в систему не запустится.";
+        if (this.TryFindResource("BrushRed", out var res) && res is Avalonia.Media.IBrush brush)
+            AutostartHint.Foreground = brush;
     }
 
     // Фоновый режим: сохраняем + сообщаем MainWindow (значок в трее). Автозапуск не трогаем —

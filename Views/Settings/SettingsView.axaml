@@ -243,6 +243,9 @@
                                 <TextBlock Classes="title" Text="Автозапуск при входе в систему" />
                                 <TextBlock Classes="desc"
                                            Text="Запускать программу автоматически при входе в систему, чтобы напоминания приходили без ручного запуска. Доступно в установленном приложении." />
+                                <!-- Видна, только когда запись автозагрузки отключена средствами
+                                     системы (Диспетчер задач): тумблер включён, а старта нет. -->
+                                <TextBlock x:Name="AutostartHint" Classes="desc" IsVisible="False" />
                             </StackPanel>
                             <ToggleSwitch Grid.Column="1" x:Name="AutostartToggle"
                                           OnContent="" OffContent=""

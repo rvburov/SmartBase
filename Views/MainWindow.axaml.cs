@@ -431,14 +431,22 @@ public partial class MainWindow : Window
         {
             // Фоновый режим: нажатие на «крестик» окна не завершает приложение, а СКРЫВАЕТ его
             // (служба уведомлений и трей продолжают работать). Явный выход (трей «Выход», ⌘Q/OS
-            // shutdown) идёт с другим CloseReason и проходит дальше.
+            // shutdown) идёт с другим CloseReason и проходит дальше. Без созданного значка окно
+            // не прячем — возвращать его будет нечем (см. BackgroundBehavior).
             if (e.CloseReason == WindowCloseReason.WindowClosing
-                && BackgroundBehavior.ShouldHideOnClose(_backgroundEnabled, _explicitQuit))
+                && BackgroundBehavior.ShouldHideOnClose(_backgroundEnabled, _explicitQuit, _tray is not null))
             {
                 e.Cancel = true;
                 Hide();
                 return;
             }
+
+            // Предупреждение про идущую перекладку базы — только когда окно закрывает ЧЕЛОВЕК.
+            // На выходе по обновлению апдейтер уже запущен и отсчитывает 20 секунд до замены:
+            // модалка, которую некому подтвердить, срывала бы обновление. Выключение компьютера
+            // ждать ответа тем более не станет, а сама перекладка возобновляемая — при следующем
+            // запуске продолжится с того же места.
+            if (e.CloseReason != WindowCloseReason.WindowClosing) return;
 
             if (_closeConfirmed) return;
             var busy = _mountQueue.Pending().FirstOrDefault(p => p.State == MountQueue.ItemState.Mounting);
@@ -748,6 +756,14 @@ public partial class MainWindow : Window
     {
         _backgroundEnabled = on;
         if (_tray is not null) _tray.IsVisible = on;
+        // Значок создать не удалось: прятать окно мы не станем (возвращать нечем), и человек
+        // должен знать, что тумблер в его системе ничего не даст, — иначе он рассчитывает на
+        // напоминания при закрытом окне, а их не будет.
+        else if (on)
+            _ = ConfirmDialog.Info(
+                "Значок в системной области недоступен в этой системе, поэтому фоновый режим не заработает: " +
+                "при закрытии окна программа завершится как обычно, и напоминания приходить не будут.")
+                .ShowDialog(this);
         if (!on && !IsVisible) ShowFromTray();
     }
 

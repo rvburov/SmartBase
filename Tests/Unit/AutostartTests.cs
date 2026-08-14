@@ -138,11 +138,25 @@ public sealed class AutostartTests
     // ── Поведение окна в фоне (чистое) ─────────────────────────────────────────
 
     [Theory]
-    [InlineData(true,  false, true)]   // фон вкл, не явный выход → скрыть
-    [InlineData(true,  true,  false)]  // фон вкл, явный выход     → не скрывать (закрыть)
-    [InlineData(false, false, false)]  // фон выкл                 → не скрывать
-    public void ShouldHideOnClose(bool background, bool explicitQuit, bool expected) =>
-        Assert.Equal(expected, BackgroundBehavior.ShouldHideOnClose(background, explicitQuit));
+    [InlineData(true,  false, true,  true)]   // фон вкл, не явный выход, значок есть → скрыть
+    [InlineData(true,  true,  true,  false)]  // фон вкл, явный выход                 → закрыть
+    [InlineData(false, false, true,  false)]  // фон выкл                             → закрыть
+    [InlineData(true,  false, false, false)]  // значка нет — прятать некуда          → закрыть
+    public void ShouldHideOnClose(bool background, bool explicitQuit, bool canReturn, bool expected) =>
+        Assert.Equal(expected, BackgroundBehavior.ShouldHideOnClose(background, explicitQuit, canReturn));
+
+    // ── Отметка «выключено» из Диспетчера задач (чистое) ───────────────────────
+
+    [Theory]
+    [InlineData(null,  false)]   // значения нет — запись не отключали
+    [InlineData(new byte[0],     false)]
+    [InlineData(new byte[] { 0x02, 0, 0, 0 }, false)]   // включена
+    [InlineData(new byte[] { 0x06, 0, 0, 0 }, false)]   // включена (другой вариант)
+    [InlineData(new byte[] { 0x03, 0, 0, 0 }, true)]    // выключена пользователем
+    [InlineData(new byte[] { 0x07, 0, 0, 0 }, true)]
+    [InlineData(new byte[] { 0x01, 0, 0, 0 }, true)]    // встречается на живых машинах
+    public void StartupApproved_flag_is_read_by_low_bit(byte[]? data, bool expected) =>
+        Assert.Equal(expected, Autostart.IsDisabledFlag(data));
 
     // ── Дельты настроек ────────────────────────────────────────────────────────
 

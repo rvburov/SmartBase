@@ -30,6 +30,9 @@ public static class Autostart
     internal const string BundleId      = "com.romanburov.smartbase";
     private const string WindowsRunKey  = @"Software\Microsoft\Windows\CurrentVersion\Run";
     private const string WindowsValue   = AppSettings.AppName;   // "SmartBase"
+    // Сюда Диспетчер задач кладёт свой «выключено» для записей автозагрузки — см. DisabledInSystemUi.
+    private const string WindowsApprovedKey =
+        @"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run";
 
     /// <summary>Что сделать с записью ОС, чтобы она отвечала настройке (см. <see cref="DecideSync"/>).</summary>
     public enum SyncAction { None, Write, Remove }
@@ -67,6 +70,29 @@ public static class Autostart
 
     /// <summary>Стоит ли запись автозапуска в системе прямо сейчас (не то, что записано в настройках).</summary>
     public static bool IsEnabled() => Record() is not null;
+
+    /// <summary>
+    /// Windows: запись автозапуска на месте, но пользователь выключил её в Диспетчере задач
+    /// (вкладка «Автозагрузка»). Тогда программа при входе в систему не стартует, а по реестру
+    /// этого не видно — отсюда «включено, но не работает». Только показываем: отменять решение
+    /// человека приложение не должно. На других ОС и при любой неясности — false.
+    /// </summary>
+    public static bool DisabledInSystemUi()
+    {
+        try
+        {
+            if (OperatingSystem.IsWindows()) return IsDisabledFlag(WindowsApprovedFlag());
+        }
+        catch { /* нет ключа/прав — считаем, что не отключено */ }
+        return false;
+    }
+
+    /// <summary>
+    /// Разбор флага из <c>StartupApproved\Run</c>: 12 байт, значимый — первый. Чётный (0x02, 0x06)
+    /// — запись включена, нечётный (0x03, 0x07, встречается и 0x01) — выключена пользователем.
+    /// Данных нет или они короче — не выдумываем, считаем включённой.
+    /// </summary>
+    public static bool IsDisabledFlag(byte[]? data) => data is { Length: > 0 } && (data[0] & 1) == 1;
 
     /// <summary>Содержимое записи автозапуска глазами ОС: значение реестра / plist / .desktop.
     /// null — записи нет либо её не прочитать (нет прав).</summary>
@@ -311,6 +337,13 @@ public static class Autostart
     {
         using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(WindowsRunKey);
         return key?.GetValue(WindowsValue) as string;
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static byte[]? WindowsApprovedFlag()
+    {
+        using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(WindowsApprovedKey);
+        return key?.GetValue(WindowsValue) as byte[];
     }
 
     [SupportedOSPlatform("windows")]
