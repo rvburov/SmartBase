@@ -10,9 +10,10 @@
     <Grid>
         <Grid>
 
-            <!-- Основной контент: 72px метка слева + зона колонок справа. Скроллбар сетки
-                 времени рисуется поверх контента (overlay) и место не отъедает, поэтому
-                 здесь резерв не нужен — зона колонок занимает всю ширину, как у сетки. -->
+            <!-- Основной контент: 72px метка слева + зона колонок справа. Полосы прокрутки
+                 (и своя, и сетки времени) стоят ОТДЕЛЬНОЙ колонкой в родительском виде,
+                 за границами этого контрола, поэтому резерв здесь не нужен — зона колонок
+                 занимает всю ширину, как у сетки времени, и колонки дней совпадают. -->
             <Grid ColumnDefinitions="72,*">
 
                 <!-- Метка "весь день" слева (правая линия — отдельный separator,
@@ -34,10 +35,14 @@
                 <Grid Grid.Column="1">
                     <UniformGrid x:Name="DividersPanel"
                                  IsHitTestVisible="False" />
+                    <!-- Своей полосы нет (Hidden): её роль играет ScrollBar в колонке полос
+                         родительского вида — он привязан сюда через ScrollBarLink.Source
+                         (свойство Scroller). Так плашки не сужаются, когда прокручивать
+                         есть что, и остаются вровень с колонками сетки времени. -->
                     <ScrollViewer x:Name="EventsScroll"
                                   Background="Transparent"
                                   HorizontalScrollBarVisibility="Disabled"
-                                  VerticalScrollBarVisibility="Auto">
+                                  VerticalScrollBarVisibility="Hidden">
                         <Grid x:Name="EventsPanel"
                               VerticalAlignment="Top"
                               Margin="0,2,0,0" />

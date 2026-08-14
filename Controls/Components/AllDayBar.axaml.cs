@@ -56,6 +56,14 @@ public partial class AllDayBar : UserControl
     public Action?    DeleteAllSelected     { get; set; }
     public Action?    DuplicateAllSelected  { get; set; }
 
+    /// <summary>
+    /// Прокручиваемая область плашек — для ВНЕШНЕЙ полосы прокрутки: она живёт в колонке
+    /// полос родительского вида (Day/Week) и привязывается сюда через
+    /// <c>ScrollBarLink.Source</c>. Публичное свойство, а не поле <c>EventsScroll</c>:
+    /// сгенерированные по x:Name поля внутренние, привязка их не видит.
+    /// </summary>
+    public ScrollViewer Scroller => EventsScroll;
+
     private const double MinH          = 40;
     private const double MaxH          = 300;
     private const double RowH          = 26.0; // block height (24) + bottom margin (2)

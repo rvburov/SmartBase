@@ -11,7 +11,8 @@
         <local:HourLineBorderConverter x:Key="HourBorderConv" />
     </UserControl.Resources>
 
-    <!-- Колонка 1 — полоса прокрутки на всю высоту, вместе с шапкой дней и AllDayBar. -->
+    <!-- Колонка 1 — полосы прокрутки: у блока «весь день» и у сетки времени она СВОЯ,
+         каждая напротив своего блока (прокручиваются они независимо). -->
     <Grid RowDefinitions="Auto,Auto,*" ColumnDefinitions="*,Auto">
 
         <!-- Заголовки дней недели — 72px пустой отступ + 7 равных колонок.
@@ -29,8 +30,8 @@
         <comp:AllDayBar Grid.Row="1" x:Name="AllDayBarCtrl" />
 
         <!-- Прокручиваемая сетка событий. Своей полосы нет (Hidden) — её роль играет
-             ScrollBar ниже, стоящий и на строках шапки, чтобы полоса начиналась сверху,
-             как в таблице. -->
+             ScrollBar ниже, напротив сетки: полоса начинается у верхнего края своего
+             блока, ниже блока «весь день» с его собственной полосой. -->
         <ScrollViewer Grid.Row="2" x:Name="TimeScroll"
                       VerticalScrollBarVisibility="Hidden">
             <Grid ColumnDefinitions="72,*">
@@ -120,8 +121,21 @@
             </Grid>
         </ScrollViewer>
 
-        <!-- Полоса прокрутки сетки событий — на всю высоту, включая шапку дней. -->
-        <ScrollBar Grid.Column="1" Grid.Row="0" Grid.RowSpan="3"
+        <!-- Дорожка во всю высоту колонки: полоса, которой нечего прокручивать, прячется
+             (ScrollBarLink), и без этой подложки на её месте была бы белая прореха.
+             Объявлена ДО полос — они рисуются поверх. -->
+        <Border Grid.Column="1" Grid.Row="0" Grid.RowSpan="3"
+                Background="{StaticResource BrushScrollbarTrack}" />
+
+        <!-- Полоса блока «весь день» — напротив него, вместе с шапкой дней: шапка стоит
+             над этим блоком вплотную, и по стандарту полоса начинается у верхнего края
+             блока (заодно короткому бару хватает места на стрелки и ползунок). -->
+        <ScrollBar Grid.Column="1" Grid.Row="0" Grid.RowSpan="2"
+                   Orientation="Vertical"
+                   b:ScrollBarLink.Source="{Binding #AllDayBarCtrl.Scroller}" />
+
+        <!-- Полоса сетки событий — напротив сетки. -->
+        <ScrollBar Grid.Column="1" Grid.Row="2"
                    Orientation="Vertical"
                    b:ScrollBarLink.Source="{Binding #TimeScroll}" />
 
