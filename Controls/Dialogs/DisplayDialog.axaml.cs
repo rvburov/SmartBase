@@ -37,10 +37,6 @@ public partial class DisplayDialog : Window
     private int _activeLevel = 1;
     private bool _orderChanged;
 
-    // Ширина колонки «№» — единая для всех строк (вычисляется под самый длинный номер),
-    // чтобы крупные номера не обрезались, а чекбокс справа оставался ровным по горизонтали.
-    private double _numWidth = 22;
-
     // Ширина названия — единая для всех строк, по самому длинному. Без неё экстент
     // горизонтальной прокрутки виртуализирующая панель считала бы по видимым строкам, и
     // полоса снизу дёргалась бы при вертикальной прокрутке (см. FilterValueMetrics).
@@ -63,7 +59,6 @@ public partial class DisplayDialog : Window
         }
         _maxLevel    = Math.Max(1, _all.Select(r => r.Level).DefaultIfEmpty(1).Max());
         _activeLevel = 0;
-        _numWidth    = NumberColumnWidth();
 
         ListHost.ItemTemplate = BuildRowTemplate();
         ListHost.ItemsSource   = _shown;
@@ -88,18 +83,6 @@ public partial class DisplayDialog : Window
         Close(true);
     }
 
-    // Единая ширина колонки «№»: дефолтные 22px для коротких номеров, шире — под самый
-    // длинный номер (= числу строк), измеренный реальным шрифтом строки.
-    private double NumberColumnWidth()
-    {
-        var text     = Math.Max(1, _all.Count).ToString(CultureInfo.InvariantCulture);
-        var fontBase = (double)this.FindResource("FontSizeBase")!;
-        var measured = new FormattedText(text, CultureInfo.InvariantCulture,
-                                         FlowDirection.LeftToRight,
-                                         new Typeface(this.FontFamily), fontBase, null).Width;
-        return Math.Max(22, Math.Ceiling(measured) + 8);
-    }
-
     // ── Шаблон строки ──────────────────────────────────────────────────────────
     private IDataTemplate BuildRowTemplate()
     {
@@ -108,15 +91,14 @@ public partial class DisplayDialog : Window
 
         return new FuncDataTemplate<RowVm>((_, _) =>
         {
+            // Ширины у номера НЕТ: колонка «№» подстраивается под своё число, поэтому зазор
+            // до чекбокса отсчитывается от каждого числа и одинаков в любой строке. Общая
+            // ширина колонки (под самый длинный номер) давала бы «1» огромный отступ, а
+            // «546346» — никакого. Плата: чекбокс и всё правее сдвигаются по строкам.
             var num = new TextBlock
             {
-                Width = _numWidth, Foreground = secondary, FontSize = fontBase,
-                HorizontalAlignment = HorizontalAlignment.Center,
-                VerticalAlignment   = VerticalAlignment.Center,
-                // Номер прижат ВЛЕВО (по решению: правое выравнивание уводило короткие
-                // номера от левого края). Колонка одной ширины на все строки — под самый
-                // длинный номер, поэтому у коротких до чекбокса остаётся запас колонки;
-                // гарантированный минимум зазора даёт левый Margin чекбокса.
+                Foreground = secondary, FontSize = fontBase,
+                VerticalAlignment = VerticalAlignment.Center,
             };
             num.Bind(TextBlock.TextProperty, new Binding(nameof(RowVm.NumberText)));
 
