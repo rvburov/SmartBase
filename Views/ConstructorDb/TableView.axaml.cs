@@ -22,6 +22,7 @@ using SmartBase.Database.Repositories;
 using SmartBase.ViewModels.ConstructorDb;
 using SmartBase.Utils;
 using SmartBase.Controls.Behaviors;
+using SmartBase.Controls.Components;
 
 namespace SmartBase.Views.ConstructorDb;
 
@@ -2383,6 +2384,9 @@ public partial class TableView : UserControl
         var secondary = (IBrush)this.FindResource("BrushSecondaryText")!;
         var fontBase  = (double)this.FindResource("FontSizeBase")!;
         var radius    = (CornerRadius)this.FindResource("RadiusBase")!;
+        var family    = this.TryFindResource("FontFamilyBase", out var f) ? f as FontFamily : null;
+        // Ширины строк и закреплённый справа счётчик — см. FilterValueMetrics.
+        var metrics   = new FilterValueMetrics();
 
         // Курсор-стрелка по умолчанию для всей панели (наследуется вниз): на пустых
         // местах и подложке — стрелка. Интерактивные элементы (кнопки сортировки,
@@ -2489,7 +2493,7 @@ public partial class TableView : UserControl
             BorderThickness  = new Thickness(0),
             Padding          = new Thickness(0),
             ItemsSource      = shown,
-            ItemTemplate     = BuildFilterValueTemplate(fontBase, secondary),
+            ItemTemplate     = BuildFilterValueTemplate(fontBase, secondary, metrics),
         };
         valuesList.Styles.Add(new Style(x => x.OfType<ListBoxItem>())
         {
@@ -2518,7 +2522,10 @@ public partial class TableView : UserControl
 
         // «Выделить всё» — закреплённая шапка списка; полоса прокрутки стоит на её уровне
         // (отдельной колонкой), как вертикальная полоса таблицы стоит на уровне шапки колонок.
-        var valuesBox = ScrollBarLink.HeaderedList(selectAll, valuesList);
+        // gap=2: вместе с верхним отступом первой строки (Padding 0,2) даёт под шапкой
+        // ровно такой же просвет, как между значениями.
+        var valuesBox = ScrollBarLink.HeaderedList(selectAll, valuesList, gap: 2,
+                                                   scroller: metrics.Track);
 
         // До прихода данных — «Загрузка…»; по готовности заменяется на список значений.
         var loadingText = new TextBlock
@@ -2559,6 +2566,10 @@ public partial class TableView : UserControl
         {
             shown.Clear();
             shown.AddRange(Matched().Select(c => Vm(c.Raw, c.Count)));
+            // Ширина строки фиксируется по текущему набору — иначе экстент горизонтальной
+            // прокрутки считался бы только по видимым строкам и полоса прыгала бы.
+            metrics.Measure(shown.Select(v => v.Display), shown.Select(v => v.CountText),
+                            fontBase, family);
         }
         rebuildListRef = RebuildList;
 
@@ -2770,11 +2781,16 @@ public partial class TableView : UserControl
 
     // Шаблон строки списка значений фильтра (чекбокс + количество) — для виртуализированного
     // ListBox: привязки следуют за DataContext при переиспользовании контейнеров.
-    private static IDataTemplate BuildFilterValueTemplate(double fontBase, IBrush secondary) =>
+    private static IDataTemplate BuildFilterValueTemplate(double fontBase, IBrush secondary,
+                                                          FilterValueMetrics metrics) =>
         new FuncDataTemplate<FilterValueVm>((_, _) =>
         {
             var name = new TextBlock { TextTrimming = TextTrimming.CharacterEllipsis, VerticalAlignment = VerticalAlignment.Center };
             name.Bind(TextBlock.TextProperty, new Binding(nameof(FilterValueVm.Display)));
+            // Ширина ВСЕХ строк одинаковая (по самому широкому значению) — иначе экстент
+            // горизонтальной прокрутки считался бы по видимым строкам и полоса дёргалась.
+            name.Bind(Layoutable.MinWidthProperty,
+                      new Binding(nameof(FilterValueMetrics.TextMinWidth)) { Source = metrics });
 
             var cb = new CheckBox
             {
@@ -2789,20 +2805,31 @@ public partial class TableView : UserControl
 
             var cnt = new TextBlock
             {
-                Foreground          = secondary,
-                VerticalAlignment   = VerticalAlignment.Center,
-                HorizontalAlignment = HorizontalAlignment.Right,
-                // Отступ СЛЕВА — воздух между названием значения и счётчиком. Раньше он
-                // стоял справа: полоса прокрутки лежала поверх списка и закрывала счётчик.
-                // Теперь полоса — отдельная колонка (ScrollBarLink.HeaderedList), справа
-                // отступ даёт она сама.
-                Margin              = new Thickness(8, 0, 0, 0),
+                Foreground        = secondary,
+                VerticalAlignment = VerticalAlignment.Center,
+                TextAlignment     = TextAlignment.Right,
             };
             cnt.Bind(TextBlock.TextProperty, new Binding(nameof(FilterValueVm.CountText)));
+            // Счётчики стоят столбиком: ширина колонки — по самому длинному числу.
+            cnt.Bind(Layoutable.MinWidthProperty,
+                     new Binding(nameof(FilterValueMetrics.CountMinWidth)) { Source = metrics });
+
+            // Счётчик ЗАКРЕПЛЁН у правого края видимой области: сдвиг компенсирует
+            // горизонтальную прокрутку, фон непрозрачный — длинный текст уезжает под него.
+            var pin = new TranslateTransform();
+            pin.Bind(TranslateTransform.XProperty,
+                     new Binding(nameof(FilterValueMetrics.Pin)) { Source = metrics });
+            var cntHost = new Border
+            {
+                Background      = Brushes.White,
+                Padding         = new Thickness(8, 0, 0, 0),
+                Child           = cnt,
+                RenderTransform = pin,
+            };
 
             var row = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto") };
-            Grid.SetColumn(cb, 0);  row.Children.Add(cb);
-            Grid.SetColumn(cnt, 1); row.Children.Add(cnt);
+            Grid.SetColumn(cb, 0);      row.Children.Add(cb);
+            Grid.SetColumn(cntHost, 1); row.Children.Add(cntHost);
             return row;
         });
 

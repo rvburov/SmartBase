@@ -59,7 +59,10 @@ public static class ScrollBarLink
     /// отойдут от её краёв. Весь воздух задаёт <paramref name="padding"/>: он вешается
     /// Margin'ом на шапку и список, то есть на содержимое ВНУТРИ полос.
     /// </summary>
-    public static Control HeaderedList(Control header, ListBox list, double gap = 4, Thickness? padding = null)
+    /// <param name="scroller">Вызывается, когда у списка появится его внутренний
+    /// <see cref="ScrollViewer"/> — например, чтобы следить за прокруткой.</param>
+    public static Control HeaderedList(Control header, ListBox list, double gap = 4,
+                                       Thickness? padding = null, Action<ScrollViewer>? scroller = null)
     {
         // Прокрутка у списка работает, своих полос он не рисует — их роль играют вынесенные.
         // Горизонтальная включена намеренно: длинные значения перестают обрезаться
@@ -75,6 +78,7 @@ public static class ScrollBarLink
                 if (e.NameScope.Find<ScrollViewer>("PART_ScrollViewer") is not { } sv) return;
                 SetSource(vbar, sv);
                 SetSource(hbar, sv);
+                scroller?.Invoke(sv);
             });
     }
 
