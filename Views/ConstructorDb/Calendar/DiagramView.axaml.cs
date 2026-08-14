@@ -126,6 +126,10 @@ public partial class DiagramView : UserControl
     // Свёрнутость групп переживает Refresh (пересборку), но не перезапуск приложения.
     private readonly Dictionary<(int DbId, int ColId), bool> _collapsed = new();
 
+    // Текущая ширина холста таймлайна — то, что реально осталось справа от левой панели
+    // ПОСЛЕ полосы прокрутки. Обновляется из SizeChanged холста (см. конструктор).
+    private double _timelineW;
+
     // Геометрия последней сборки — для линии «сейчас» и пересчёта drag.
     private double _lastTimelineW;
     private double _lastBgH;
@@ -222,7 +226,19 @@ public partial class DiagramView : UserControl
         ScalePlusBtn.Click  += (_, _) => StepScale(+1);
         UpdateScaleButtons();
 
-        SizeChanged += (_, _) => BuildAll();
+        // Пересборка — по ширине САМОГО холста таймлайна, а не окна: полоса прокрутки
+        // стоит отдельной колонкой и то появляется, то исчезает (ScrollBarLink прячет её,
+        // когда прокручивать нечего), поэтому доступная ширина меняется и без изменения
+        // размера окна. На высоту не реагируем: её задаёт число строк, и каждая пересборка
+        // вызывала бы следующую.
+        // Ширину запоминаем из аргументов события: Bounds холста в момент SizeChanged ещё
+        // старый (в DayView/WeekView по той же причине берут args.NewSize.Width).
+        TimelinePane.SizeChanged += (_, e) =>
+        {
+            if (Math.Abs(e.NewSize.Width - _timelineW) < 0.1) return;
+            _timelineW = e.NewSize.Width;
+            BuildAll();
+        };
 
         _timeLineTimer = new DispatcherTimer { Interval = TimeSpan.FromMinutes(1) };
         _timeLineTimer.Tick += (_, _) => UpdateTodayLine();
@@ -423,7 +439,11 @@ public partial class DiagramView : UserControl
 
         EmptyHint.IsVisible = _groups.Count == 0;
 
-        var timelineW = Bounds.Width - LeftW;
+        // Ширина — у холста таймлайна, а не «ширина окна − LeftW»: справа отдельной
+        // колонкой стоит полоса прокрутки, и вычитание только левой панели рисовало
+        // последний день ПОД полосой (шкала обрывалась на полуцифре). Как в таблице
+        // конструктора: ячейки заканчиваются там, где начинается полоса.
+        var timelineW = _timelineW;
         if (timelineW <= 0 || _rangeDays <= 0) return;
         var dayW = timelineW / _rangeDays;
         _lastTimelineW = timelineW;
