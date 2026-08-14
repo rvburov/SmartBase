@@ -7,9 +7,10 @@ using Avalonia.Media;
 namespace SmartBase.Controls.Components;
 
 /// <summary>
-/// Геометрия строк списка значений «экселевского» фильтра (колонка таблицы, история
-/// профиля, журнал логов). Решает две задачи, которые сами собой не решаются из-за
-/// виртуализации списка.
+/// Геометрия строк виртуализированного списка с горизонтальной прокруткой: список значений
+/// «экселевского» фильтра (колонка таблицы, история профиля, журнал логов), а также окна
+/// «Отображение записей» и «Отображение свойств». Решает две задачи, которые сами собой не
+/// решаются из-за виртуализации (вторая нужна только там, где справа от текста что-то есть).
 ///
 /// 1. ПОСТОЯННАЯ ШИРИНА СТРОКИ. Экстент горизонтальной прокрутки виртуализирующая панель
 ///    считает по РЕАЛИЗОВАННЫМ строкам. Прокрутил вниз к коротким значениям — экстент
@@ -60,9 +61,15 @@ public sealed class FilterValueMetrics : INotifyPropertyChanged
     public void Measure(IEnumerable<string> displays, IEnumerable<string> counts,
                         double fontSize, FontFamily? family = null)
     {
-        TextMinWidth  = Widest(displays, fontSize, family);
-        CountMinWidth = Widest(counts,   fontSize, family) + Gap;
+        Measure(displays, fontSize, family);
+        CountMinWidth = Widest(counts, fontSize, family) + Gap;
     }
+
+    /// <summary>Только ширина текста — для списков без счётчика (окна «Отображение
+    /// записей» и «Отображение свойств»: там название последнее в строке и закреплять
+    /// справа нечего, нужна лишь постоянная ширина строки).</summary>
+    public void Measure(IEnumerable<string> displays, double fontSize, FontFamily? family = null) =>
+        TextMinWidth = Widest(displays, fontSize, family);
 
     /// <summary>Следить за прокруткой списка, чтобы держать счётчик на месте.</summary>
     public void Track(ScrollViewer scroll)

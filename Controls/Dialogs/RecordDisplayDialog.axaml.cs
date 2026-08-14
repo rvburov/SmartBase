@@ -9,6 +9,7 @@ using Avalonia.Data;
 using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Media;
+using SmartBase.Controls.Components;
 using SmartBase.Database.Repositories;
 
 namespace SmartBase.Controls.Dialogs;
@@ -47,6 +48,11 @@ public partial class RecordDisplayDialog : Window
     // Порядок строк меняли (кнопки вверх/вниз) — только тогда переписываем позиции в БД.
     private bool _orderChanged;
 
+    // Ширина названия — единая для всех строк, по самому длинному. Без неё экстент
+    // горизонтальной прокрутки виртуализирующая панель считала бы по видимым строкам, и
+    // полоса снизу дёргалась бы при вертикальной прокрутке (см. FilterValueMetrics).
+    private readonly FilterValueMetrics _metrics = new();
+
     public RecordDisplayDialog(ConstructorRepository repository, int collectionId,
                                IReadOnlyList<(int RecordId, string Title)> records)
     {
@@ -69,6 +75,7 @@ public partial class RecordDisplayDialog : Window
         ListHost.ItemTemplate = BuildRowTemplate();
         ListHost.ItemsSource   = _shown;
         _shown.AddRange(_all);
+        MeasureRows();
 
         ListHost.SelectionChanged += (_, _) => RenderMoveButtons();
         SearchBox.TextChanged += (_, _) => ApplySearch();
@@ -141,6 +148,10 @@ public partial class RecordDisplayDialog : Window
 
             var label = new TextBlock { VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis };
             label.Bind(TextBlock.TextProperty, new Binding(nameof(RowVm.Title)));
+            // Ширина ВСЕХ строк одинаковая — иначе экстент горизонтальной прокрутки
+            // считался бы по видимым строкам и полоса дёргалась.
+            label.Bind(Layoutable.MinWidthProperty,
+                       new Binding(nameof(FilterValueMetrics.TextMinWidth)) { Source = _metrics });
 
             var row = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,Auto,Auto,*") };
             Grid.SetColumn(num, 0);   row.Children.Add(num);
@@ -160,8 +171,15 @@ public partial class RecordDisplayDialog : Window
         _shown.AddRange(q.Length == 0
             ? _all
             : _all.Where(r => r.Title.Contains(q, StringComparison.OrdinalIgnoreCase)));
+        MeasureRows();
         RenderMoveButtons();
     }
+
+    // Ширина названия — по самому длинному в ТЕКУЩЕМ наборе (после поиска он другой).
+    private void MeasureRows() =>
+        _metrics.Measure(_shown.Select(r => r.Title),
+                         (double)this.FindResource("FontSizeBase")!,
+                         this.TryFindResource("FontFamilyBase", out var f) ? f as FontFamily : null);
 
     private bool IsSearching => !string.IsNullOrEmpty(SearchBox.Text?.Trim());
 

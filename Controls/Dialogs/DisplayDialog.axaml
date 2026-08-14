@@ -41,11 +41,15 @@
                     Padding="0">
                 <!-- Виртуализирующий список: рендерятся только видимые строки (для коллекций
                      с большим числом свойств окно открывается мгновенно). -->
+                <!-- Горизонтальная прокрутка: длинные названия не обрезаются многоточием,
+                     их можно домотать полосой снизу. Ширина строки при этом постоянная
+                     (MinWidth названия из FilterValueMetrics) — иначе экстент считался бы
+                     по видимым строкам и полоса прыгала бы при вертикальной прокрутке. -->
                 <ListBox x:Name="ListHost"
                          Background="Transparent"
                          BorderThickness="0"
                          Padding="0"
-                         ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                         ScrollViewer.HorizontalScrollBarVisibility="Auto">
                     <ListBox.Styles>
                         <Style Selector="ListBox#ListHost ListBoxItem">
                             <Setter Property="Padding"   Value="0" />
