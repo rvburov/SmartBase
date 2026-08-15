@@ -64,7 +64,9 @@ public partial class SidebarTree : UserControl
 
     // Активны все коллекции, кроме явно отключённых пользователем.
     // Ключ — (DbId, CollectionId): id коллекций не уникальны между БД.
+    // Набор переживает перезапуск: снятые галочки лежат в app.db (см. RestoreChecks).
     private readonly HashSet<(int Db, int Id)> _uncheckedIds = [];
+    private bool _checksRestored;
     // Свёрнутые корни-БД (по DbId) — чтобы состояние раскрытия переживало Refresh.
     private readonly HashSet<int> _collapsedDbRoots = [];
 
@@ -124,6 +126,7 @@ public partial class SidebarTree : UserControl
         _showRoots = false;
         _mode = mode;
         ToggleAllBtn.IsVisible = ChecksMode;
+        RestoreChecks();
         Refresh();
     }
 
@@ -141,6 +144,7 @@ public partial class SidebarTree : UserControl
         _showRoots = true;
         _mode = mode;
         ToggleAllBtn.IsVisible = ChecksMode;
+        RestoreChecks();
         Refresh();
     }
 
@@ -527,7 +531,47 @@ public partial class SidebarTree : UserControl
 
         RebuildRows();
         UpdateToggleAllIcon();
+        PersistChecks();
         ActiveIdsChanged?.Invoke(this, GetActiveIds());
+    }
+
+    // ── Галочки между запусками (app.db) ─────────────────────────────────────
+    //
+    // У календаря и задач наборы РАЗНЫЕ: в задачах человек держит отмеченными одни
+    // коллекции, в календаре — другие, и общий набор превратил бы каждое переключение
+    // раздела в переделку галочек.
+    private string ChecksScope => _mode == SidebarMode.Tasks ? "tasks" : "calendar";
+
+    /// <summary>
+    /// Поднять снятые галочки из настроек. Один раз за жизнь панели: сайдбар
+    /// переинициализируется на каждое монтирование базы, и повторное чтение затирало бы
+    /// то, что человек нащёлкал в этой сессии.
+    /// </summary>
+    private void RestoreChecks()
+    {
+        if (!ChecksMode || _checksRestored) return;
+        _checksRestored = true;
+        foreach (var key in AppSettings.LoadHiddenCollections(ChecksScope)) _uncheckedIds.Add(key);
+    }
+
+    private void PersistChecks()
+    {
+        if (!ChecksMode) return;
+
+        // Ключи удалённых коллекций иначе копились бы всё время жизни установки. Чистим
+        // только по базам, которые сейчас смонтированы и читаемы: у запертой (нет допуска)
+        // список коллекций пуст, и её галочки стёрлись бы за компанию. Ключи баз, которых
+        // сейчас нет вовсе (отключена, недоступна), не трогаем — база вернётся с ними.
+        var readable = _dbs.Where(d => !d.Locked).ToList();
+        var known    = readable.Select(d => d.DbId).ToHashSet();
+        var alive    = readable
+            .SelectMany(db => db.Repo.GetAllCollections()
+                                     .Where(c => c.Id.HasValue)
+                                     .Select(c => (Db: db.DbId, Id: c.Id!.Value)))
+            .ToHashSet();
+        _uncheckedIds.RemoveWhere(k => known.Contains(k.Db) && !alive.Contains(k));
+
+        AppSettings.SaveHiddenCollections(ChecksScope, _uncheckedIds);
     }
 
     // Ключи (DbId, CollectionId) всех коллекций всех смонтированных БД.
@@ -553,6 +597,7 @@ public partial class SidebarTree : UserControl
 
         RebuildRows();
         UpdateToggleAllIcon();
+        PersistChecks();
         ActiveIdsChanged?.Invoke(this, GetActiveIds());
     }
 

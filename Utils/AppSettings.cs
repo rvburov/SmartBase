@@ -317,7 +317,53 @@ public static class AppSettings
         else                              _store?.Set(KeyIntroSeedDone, done.ToString());
     }
 
+    // ── Галочки коллекций в боковой панели (календарь и задачи) ───────────────
+    //
+    // Хранятся СНЯТЫЕ галочки, а не отмеченные: по умолчанию видно всё, поэтому пустая
+    // настройка = стандарт, а новая коллекция появляется отмеченной сама собой (её ключа
+    // в списке снятых нет). Обратное хранение («какие отмечены») требовало бы дописывать
+    // каждую созданную коллекцию, и любая пропущенная запись прятала бы её от человека.
+    //
+    // Пара — (DbId реестра, id коллекции внутри БД): id коллекций между базами пересекаются.
+    // Формат строки — «db:col;db:col».
+
+    /// <param name="scope">Раздел: <c>calendar</c> или <c>tasks</c> — наборы у них свои.</param>
+    public static HashSet<(int DbId, int CollectionId)> LoadHiddenCollections(string scope)
+    {
+        var result = new HashSet<(int DbId, int CollectionId)>();
+        var packed = _store?.Get(KeyHiddenCollections(scope));
+        if (string.IsNullOrEmpty(packed)) return result;
+
+        // Мусор молча пропускаем: настройка правится только этим кодом, но испорченный
+        // app.db не должен ронять старт — хуже всего будет лишняя отмеченная коллекция.
+        foreach (var pair in packed.Split(';', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var parts = pair.Split(':');
+            if (parts.Length == 2 &&
+                int.TryParse(parts[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out var db) &&
+                int.TryParse(parts[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out var col))
+                result.Add((db, col));
+        }
+        return result;
+    }
+
+    public static void SaveHiddenCollections(string scope,
+                                             IReadOnlyCollection<(int DbId, int CollectionId)> hidden)
+    {
+        var key = KeyHiddenCollections(scope);
+        // Ничего не снято — это и есть стандарт: ключ удаляем, как остальные настройки.
+        if (hidden.Count == 0) { _store?.Remove(key); return; }
+
+        // Порядок фиксированный: множество неупорядочено, и без сортировки один и тот же
+        // набор писался бы в базу каждый раз новой строкой.
+        _store?.Set(key, string.Join(';', hidden
+            .OrderBy(h => h.DbId).ThenBy(h => h.CollectionId)
+            .Select(h => $"{h.DbId}:{h.CollectionId}")));
+    }
+
     // ── Ключи настроек ─────────────────────────────────────────────────────────
+
+    private static string KeyHiddenCollections(string scope) => $"hiddenCollections.{scope}";
 
     private const string KeyScale            = "scale";
     private const string KeyRecordPanelOpen  = "recordPanelOpen";
