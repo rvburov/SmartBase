@@ -6,7 +6,7 @@
 
 ## Где в коде
 
-- Ресурсы и стили: [Assets/Styles/](../../../Assets/Styles/) — `Colors.axaml`, `Typography.axaml`, `Controls.axaml`
+- Ресурсы и стили: [Assets/Styles/](../../../Assets/Styles/) — `Colors.axaml`, `Typography.axaml`, `Controls.axaml`, `ComboBoxTheme.axaml`
 - Подключение: [App.axaml](../../../App.axaml)
 - Масштабирование интерфейса: [Utils/Scaling.cs](../../../Utils/Scaling.cs)
 
@@ -14,7 +14,8 @@
 
 В [App.axaml](../../../App.axaml):
 
-- `Application.Resources` подключает `Colors.axaml` (`ResourceInclude`).
+- `Application.Resources` подключает `Colors.axaml`, `Icons.axaml`, `ZoomPopupThemes.axaml` и
+  `ComboBoxTheme.axaml` (`ResourceInclude`) — последние два содержат локальные копии тем Fluent.
 - `Application.Styles` подключает базовую тему `FluentTheme`, стили `DataGrid`,
   затем `Typography.axaml`, `Controls.axaml` и стиль виджета `AppCheckBox`.
 - Там же — глобальный стиль `Window` с иконкой приложения (см. [../features/icons.md](../features/icons.md)).
@@ -430,6 +431,30 @@ Fluent: иначе между двумя полосами белое пятно.
 (включая контент попапов), использует ОБЫЧНЫЕ токены (`BorderLine`,
 `SeparatorThickness`); `BorderLinePopup`/`SeparatorThicknessPopup` остаются только для
 хрома вне трансформа (плашки FlyoutPresenter: filterFlyout, toast).
+
+## Выпадающие списки (стандарт)
+
+Нативный `ComboBox` идёт на копии темы Fluent 11.2.3
+([Assets/Styles/ComboBoxTheme.axaml](../../../Assets/Styles/ComboBoxTheme.axaml), паспорт в
+файле, подключена `ResourceInclude` в App.axaml). Три отличия от оригинала — то, что снаружи
+шаблона задать нельзя:
+
+| Что | Оригинал Fluent | У нас |
+|---|---|---|
+| Пустой список | попап-полоска в несколько пикселей | надпись **«Список пуст»** (не пункт — выбрать нельзя) |
+| Ширина попапа | `MinWidth` = ширине поля, сверху не ограничена → длинное название растягивает выпадашку | `MaxWidth` = ширине поля, длинный пункт обрезается многоточием |
+| Высота попапа | `MaxDropDownHeight` 504 (≈14 пунктов) | 280 (≈8 пунктов), дальше скролл |
+
+Собственные выпадающие списки (чеклист «Мультисписка» и «Связи», панели фильтра колонки
+таблицы, логов и истории) — карточки фиксированной высоты 232 (≈7 строк) с прокруткой; пустое
+состояние им даёт [EmptyListHint](../../../Controls/Components/EmptyListHint.cs): «Список
+пуст», а при непустом поиске — «Ничего не найдено». Новый список без пустого состояния не
+заводим: голая белая карточка читается как поломка.
+
+Направление раскрытия: `ComboBox` открывается вниз и сам переворачивается вверх, если снизу
+не помещается. Свои попапы привязываются к якорю явно — `BottomEdgeAlignedRight` (фильтры,
+«Связь», выбор коллекций) или `BottomEdgeAlignedLeft` (дата, время, «Мультисписок»); выбор
+стороны — по тому, у какого края поля стоит кнопка-якорь.
 
 ## Связанные документы
 

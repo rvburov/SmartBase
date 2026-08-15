@@ -2562,7 +2562,10 @@ public partial class TableView : UserControl
                 else checkedSet.UnionWith(domain);
 
                 ReloadCounts();
-                valuesHost.Child = valuesBox;   // «Загрузка…» → список значений
+                // «Загрузка…» → список значений; пустой список показывает надпись
+                // «Список пуст» / «Ничего не найдено» вместо голой белой карточки.
+                valuesHost.Child = Controls.Components.EmptyListHint.Wrap(
+                    valuesList, search, secondary, fontBase, content: valuesBox);
                 RebuildList();
                 SyncSelectAll();
                 loaded = true;

@@ -197,7 +197,9 @@ public sealed class MultiSelectBox : Panel
             Padding         = new Thickness(0),
             ClipToBounds    = true,
             Height          = 232,
-            Child           = valuesList,
+            // Пустой список — надпись «Список пуст» / «Ничего не найдено» вместо голой карточки.
+            Child           = EmptyListHint.Wrap(valuesList, _search,
+                                                 Brush("BrushSecondaryText", Colors.Gray), fontBase),
         };
 
         var content = new StackPanel { Spacing = 2, MinWidth = 240 };

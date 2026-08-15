@@ -11,6 +11,9 @@
                 <!-- Копии тем ContextMenu/ToolTip с зум-обёрткой (см. паспорт файла):
                      попапы меню и тултипов иначе не масштабируются зумом приложения. -->
                 <ResourceInclude Source="avares://SmartBase/Assets/Styles/ZoomPopupThemes.axaml" />
+                <!-- Копия темы ComboBox (см. паспорт файла): заглушка «Список пуст»,
+                     выпадашка не шире поля, высота ≈8 пунктов вместо 504px. -->
+                <ResourceInclude Source="avares://SmartBase/Assets/Styles/ComboBoxTheme.axaml" />
             </ResourceDictionary.MergedDictionaries>
 
         </ResourceDictionary>

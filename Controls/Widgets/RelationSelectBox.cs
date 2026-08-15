@@ -330,7 +330,9 @@ public sealed class RelationSelectBox : Panel
             Padding         = new Thickness(0),
             ClipToBounds    = true,
             Height          = 232,
-            Child           = valuesList,
+            // Пустой список — надпись «Список пуст» / «Ничего не найдено» вместо голой карточки.
+            Child           = Controls.Components.EmptyListHint.Wrap(
+                                  valuesList, _search, Brush("BrushSecondaryText", Colors.Gray), fontBase),
         };
 
         // Подсказка «показаны первые N — уточните в поиске» (видна, когда кандидатов больше капа).
