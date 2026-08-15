@@ -16,6 +16,8 @@ using SmartBase.Database.Repositories;
 using SmartBase.Utils;
 using SmartBase.Controls.Behaviors;
 using SmartBase.Controls.Components;
+using SmartBase.Controls.Dialogs;
+using SmartBase.Core.Models;
 using ChangeLogRow = SmartBase.Database.Repositories.ConstructorRepository.ChangeLogRow;
 using Path = Avalonia.Controls.Shapes.Path;
 
@@ -32,16 +34,18 @@ public partial class ProfileView
 {
     private const int HistoryPageSize = 200;
 
-    // Колонки журнала: ключ (как в ChangeLogQuery) и заголовок. Ширина у всех
-    // одинаковая — звёздная, окно делится поровну.
-    private static readonly (string Key, string Header)[] HistoryColumns =
+    // Колонки журнала: ключ (как в ChangeLogQuery), заголовок и иконка типа. Ширина
+    // у всех одинаковая — звёздная, окно делится поровну. Иконка — та же, что у поля
+    // в панели деталей: колонка и карточка одного поля обязаны читаться как одно целое
+    // (в «Диагностике» ровно так же — LogsDetailFields).
+    private static readonly (string Key, string Header, string IconKey)[] HistoryColumns =
     [
-        ("user",       "Пользователь"),
-        ("action",     "Действие"),
-        ("type",       "Тип"),
-        ("object",     "Объект"),
-        ("collection", "Коллекция"),
-        ("date",       "Дата и время"),
+        ("user",       "Пользователь", "IconUser"),
+        ("action",     "Действие",     "IconPencil"),
+        ("type",       "Тип",          "IconBlocks"),
+        ("object",     "Объект",       "IconFieldText"),
+        ("collection", "Коллекция",    "IconCollection"),
+        ("date",       "Дата и время", "IconClock"),
     ];
 
     private List<DatabaseManager> _historyDbs = [];
@@ -81,6 +85,7 @@ public partial class ProfileView
             BuildHistoryColumns();
             HistoryGrid.ItemsSource = _historyRows;
         }
+        HookHistoryDetail();
         OnHistoryDbChanged();
     }
 
@@ -103,6 +108,8 @@ public partial class ProfileView
     // Перечитать строки с текущими фильтрами/сортировкой (скролл возвращается к началу).
     private void ReloadHistoryRows()
     {
+        // Выбранная строка после смены базы/фильтра могла исчезнуть — закрываем детали.
+        CloseHistoryDetail();
         _historyGen++;
         _historyRows.Clear();
         _historyEnd = _historyDb is null;
@@ -173,6 +180,42 @@ public partial class ProfileView
         _            => "",
     };
 
+    // ── Выгрузка в CSV ────────────────────────────────────────────────────────
+    //
+    // Кнопка в навбаре раздела. Выгружается ровно то, что показано: та же база, те же
+    // фильтры и сортировка; строки читаются keyset-страницами уже в фоне
+    // (ReadChangeLogCsvRowsIsolated) — журнал на миллионы строк не поднимается в память.
+
+    private async Task ExportHistoryToCsv()
+    {
+        if (TopLevel.GetTopLevel(this) is not Window owner) return;
+        if (_historyDb is null)
+        {
+            await ConfirmDialog.Info("Сначала выберите базу данных в списке справа.").ShowDialog(owner);
+            return;
+        }
+
+        var repo  = _historyDb.Constructor;
+        var query = new ConstructorRepository.ChangeLogQuery
+        {
+            Filters = _historyFilters.ToDictionary(
+                kv => kv.Key, kv => (IReadOnlyCollection<string>)kv.Value),
+            SortColumn = _historySortKey,
+            SortAsc    = _historySortAsc,
+        };
+        var total = await repo.CountChangeLogAsync(query);
+        var dbName = string.IsNullOrWhiteSpace(_historyDb.Name) ? "База данных" : _historyDb.Name;
+
+        await CsvExportRunner.Run(owner, new CsvExportRunner.Job(
+            Title:           "Выгрузка журнала",
+            What:            $"История изменений базы «{dbName}»",
+            TotalRows:       total,
+            Filtered:        _historyFilters.Count > 0,
+            DefaultFileName: CsvExportRunner.FileName($"История изменений — {dbName}", DateTime.Now),
+            Headers:         ConstructorRepository.ChangeLogCsvHeaders,
+            Rows:            ct => repo.ReadChangeLogCsvRowsIsolated(query, ct)));
+    }
+
     // ── Колонки и шапка ───────────────────────────────────────────────────────
 
     private void BuildHistoryColumns()
@@ -182,7 +225,7 @@ public partial class ProfileView
         {
             HistoryGrid.Columns.Add(new DataGridTemplateColumn
             {
-                Header       = BuildHistoryHeader(def.Key, def.Header),
+                Header       = BuildHistoryHeader(def.Key, def.Header, def.IconKey),
                 Width        = new DataGridLength(1, DataGridLengthUnitType.Star),
                 MinWidth     = 110,
                 CellTemplate = BuildHistoryCellTemplate(def.Key),
@@ -190,9 +233,9 @@ public partial class ProfileView
         }
     }
 
-    // Шапка колонки: [название][шеврон фильтра] + правая линия — как MakeTextHeader
-    // в TableView (без иконки типа свойства).
-    private Control BuildHistoryHeader(string key, string header)
+    // Шапка колонки: [иконка типа][название][шеврон фильтра] + правая линия — как
+    // MakeTextHeader в TableView и шапка «Диагностики».
+    private Control BuildHistoryHeader(string key, string header, string iconKey)
     {
         var text = new TextBlock
         {
@@ -203,12 +246,19 @@ public partial class ProfileView
             Foreground        = (IBrush)this.FindResource("BrushSecondaryText")!,
         };
 
-        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto") };
-        Grid.SetColumn(text, 0);
+        // Сетка [иконка типа][текст][шеврон] — 1-в-1 как шапка таблицы конструктора
+        // (TableView.MakeTextHeader): иконка IconSizeSmall с отступом 6px справа.
+        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto") };
+
+        var icon = BuildHistoryHeaderIcon(iconKey);
+        Grid.SetColumn(icon, 0);
+        grid.Children.Add(icon);
+
+        Grid.SetColumn(text, 1);
         grid.Children.Add(text);
 
         var chevron = BuildHistoryChevron(key);
-        Grid.SetColumn(chevron, 1);
+        Grid.SetColumn(chevron, 2);
         grid.Children.Add(chevron);
 
         var border = new Border
@@ -246,6 +296,32 @@ public partial class ProfileView
 
         return host;
     }
+
+    // Иконка типа в шапке колонки — как в таблице конструктора (TableView.BuildTypeIcon):
+    // Viewbox IconSizeSmall, отступ 6px справа, обводка BrushSecondaryText / IconStrokeSmall.
+    private Control BuildHistoryHeaderIcon(string iconKey) => new Viewbox
+    {
+        Width             = HistoryIconSize("IconSizeSmall"),
+        Height            = HistoryIconSize("IconSizeSmall"),
+        VerticalAlignment = VerticalAlignment.Center,
+        Margin            = new Thickness(0, 0, 6, 0),
+        Child = new Canvas
+        {
+            Width  = 24,
+            Height = 24,
+            Children =
+            {
+                new Path
+                {
+                    Data            = HistoryIcon(iconKey),
+                    Stroke          = (IBrush)this.FindResource("BrushSecondaryText")!,
+                    StrokeThickness = HistoryIconSize("IconStrokeSmall"),
+                    StrokeLineCap   = PenLineCap.Round,
+                    StrokeJoin      = PenLineJoin.Round,
+                },
+            },
+        },
+    };
 
     // Стрелка в шапке колонки — открывает окно фильтра/сортировки (как в TableView:
     // спокойное состояние — серый шеврон, активный фильтр/сортировка — синяя воронка).
@@ -334,67 +410,23 @@ public partial class ProfileView
         _            => "",
     };
 
-    private static string HistoryActionLabel(string action) => action switch
-    {
-        "create"       => "Создание",
-        "update"       => "Изменение",
-        "delete"       => "Удаление",
-        "duplicate"    => "Дублирование",
-        "import"       => "Импорт",
-        "export"       => "Экспорт",
-        "move"         => "Перенос",
-        "user.join"    => "Присоединение",
-        "user.approve" => "Допуск",
-        "user.revoke"  => "Отзыв допуска",
-        "user.rights"  => "Изменение прав",
-        "user.role"    => "Смена роли",
-        "user.remove"  => "Удаление пользователя",
-        "user.unlock"  => "Доступ по паролю",
-        "user.rename"  => "Смена имени",
-        _              => action,
-    };
+    // Подписи и текст объекта — из общего ChangeLogLabels (Core): тот же текст
+    // в таблице и в выгрузке CSV.
+    private static string HistoryActionLabel(string action) => ChangeLogLabels.ActionLabel(action);
 
-    private static string HistoryTypeLabel(string targetType) => targetType switch
-    {
-        "collection" => "Коллекция",
-        "group"      => "Группа",
-        "field"      => "Свойство",
-        "record"     => "Запись",
-        "records"    => "Записи",
-        "user"       => "Пользователь",
-        _            => targetType,
-    };
+    private static string HistoryTypeLabel(string targetType) => ChangeLogLabels.TypeLabel(targetType);
 
     // Объект строки: правки с «до → после» показывают готовый Detail («„А" → „Б"»,
     // «Договор 12 (Телефон: «123» → «456»)»); иначе имя цели; пакетные операции —
     // «10 000 записей», дубль/удаление коллекции с записями — «Имя (N записей)».
-    private static string HistoryObjectText(ChangeLogRow row)
-    {
-        if (!string.IsNullOrEmpty(row.Detail)) return row.Detail;
-        if (row.TargetType == "records") return RecordsCount(row.Count ?? 0);
-        if (row.TargetName.Length == 0)  return "—";
-        return row.TargetType is "collection" or "group" && row.Count is > 0
-            ? $"{row.TargetName} ({RecordsCount(row.Count.Value)})"
-            : row.TargetName;
-    }
+    private static string HistoryObjectText(ChangeLogRow row) =>
+        ChangeLogLabels.ObjectText(row.TargetType, row.TargetName, row.Count, row.Detail);
 
     // Русское склонение: 1 запись, 2 записи, 10 000 записей.
-    private static string RecordsCount(long n)
-    {
-        var word = (n % 100 is >= 11 and <= 14) ? "записей" : (n % 10) switch
-        {
-            1           => "запись",
-            2 or 3 or 4 => "записи",
-            _           => "записей",
-        };
-        return $"{n:N0} {word}";
-    }
+
 
     // ISO UTC → локальное «дд.MM.гггг HH:mm».
-    private static string FormatHistoryTs(string iso) =>
-        DateTime.TryParse(iso, null, System.Globalization.DateTimeStyles.RoundtripKind, out var dt)
-            ? dt.ToLocalTime().ToString("dd.MM.yyyy HH:mm")
-            : iso;
+    private static string FormatHistoryTs(string iso) => ChangeLogLabels.FormatTs(iso);
 
     // Значение в окне фильтра: сырое → отображаемое (те же подписи, что в ячейках).
     private static string HistoryDisplayValue(string key, string raw)

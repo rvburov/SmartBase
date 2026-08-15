@@ -6,7 +6,7 @@
 
     <!-- Заголовок слева, действия раздела справа — как в остальных навбарах
          (NavbarSettings: «Добавить базу данных» тем же стилем). -->
-    <Grid ColumnDefinitions="*,Auto" Margin="16,0">
+    <Grid ColumnDefinitions="*,Auto,Auto" Margin="16,0">
 
         <TextBlock Grid.Column="0" x:Name="TitleText"
                    Text="Общие данные"
@@ -22,6 +22,27 @@
                   IsVisible="False"
                   Width="240" Height="{StaticResource ControlHeightStandard}"
                   VerticalAlignment="Center" />
+
+        <!-- Выгрузка журнала в CSV — крайняя кнопка навбара, тем же видом, что
+             «Импорт/Экспорт» в сайдбаре конструктора (navbtn 30×30, lucide download). -->
+        <Button Grid.Column="2" x:Name="ExportHistoryBtn"
+                Classes="navbtn" Width="30" Height="30"
+                IsVisible="False"
+                VerticalAlignment="Center"
+                Margin="8,0,0,0"
+                CornerRadius="{StaticResource RadiusMedium}"
+                ToolTip.Tip="Выгрузить в CSV"
+                Click="OnExportHistoryClick">
+            <Viewbox Width="{StaticResource IconSizeMedium}"
+                     Height="{StaticResource IconSizeMedium}">
+                <Canvas Width="24" Height="24">
+                    <Path Data="{StaticResource IconDownload}"
+                          Stroke="{Binding $parent[Button].Foreground}"
+                          StrokeThickness="{StaticResource IconStrokeMedium}"
+                          StrokeLineCap="Round" StrokeJoin="Round" />
+                </Canvas>
+            </Viewbox>
+        </Button>
 
     </Grid>
 

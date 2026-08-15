@@ -196,42 +196,137 @@ public partial class ConstructorRepository(AppDbContext db)
         {
             using var ctx = new AppDbContext(path);
             ctx.ApplyPerformancePragmas();
-            IQueryable<ChangeLogEntity> q = ctx.ChangeLog.AsNoTracking();
-
-            foreach (var (column, values) in query.Filters)
-            {
-                var set = values as HashSet<string> ?? [.. values];
-                q = column switch
-                {
-                    "user"       => q.Where(e => set.Contains(e.UserName)),
-                    "action"     => q.Where(e => set.Contains(e.Action)),
-                    "type"       => q.Where(e => set.Contains(e.TargetType)),
-                    "object"     => q.Where(e => set.Contains(e.TargetName)),
-                    "collection" => q.Where(e => set.Contains(e.CollectionName ?? "")),
-                    "date"       => q.Where(e => set.Contains(e.Ts.Substring(0, 10))),
-                    _            => q,
-                };
-            }
-
-            if (query.SortColumn is null or "date")
-            {
-                // Хронология = порядок Id; «Сначала старые» — Id ASC, иначе новые сверху.
-                var asc = query.SortColumn == "date" && query.SortAsc;
-                if (query.AfterId is long a) q = asc ? q.Where(e => e.Id > a) : q.Where(e => e.Id < a);
-                q = asc ? q.OrderBy(e => e.Id) : q.OrderByDescending(e => e.Id);
-            }
-            else
-            {
-                q = SortChangeLog(q, query.SortColumn, query.SortAsc, query.AfterValue, query.AfterId);
-            }
-
-            return q.Take(take)
-                    .Select(e => new ChangeLogRow(e.Id, e.Ts, e.UserName, e.Action,
-                                                  e.TargetType, e.TargetName, e.CollectionName,
-                                                  e.Count, e.Detail))
-                    .ToList();
+            return ChangeLogPage(ctx, query, take);
         });
     }
+
+    // Одна страница журнала на ГОТОВОМ контексте: фильтры + сортировка + keyset-срез.
+    // Общая для таблицы истории и для выгрузки в CSV — иначе выгрузка отдавала бы
+    // не то, что показано на экране (или теряла строки на границе страниц).
+    private static List<ChangeLogRow> ChangeLogPage(AppDbContext ctx, ChangeLogQuery query, int take)
+    {
+        IQueryable<ChangeLogEntity> q = ctx.ChangeLog.AsNoTracking();
+        q = FilterChangeLog(q, query.Filters);
+
+        if (query.SortColumn is null or "date")
+        {
+            // Хронология = порядок Id; «Сначала старые» — Id ASC, иначе новые сверху.
+            var asc = query.SortColumn == "date" && query.SortAsc;
+            if (query.AfterId is long a) q = asc ? q.Where(e => e.Id > a) : q.Where(e => e.Id < a);
+            q = asc ? q.OrderBy(e => e.Id) : q.OrderByDescending(e => e.Id);
+        }
+        else
+        {
+            q = SortChangeLog(q, query.SortColumn, query.SortAsc, query.AfterValue, query.AfterId);
+        }
+
+        return q.Take(take)
+                .Select(e => new ChangeLogRow(e.Id, e.Ts, e.UserName, e.Action,
+                                              e.TargetType, e.TargetName, e.CollectionName,
+                                              e.Count, e.Detail))
+                .ToList();
+    }
+
+    private static IQueryable<ChangeLogEntity> FilterChangeLog(IQueryable<ChangeLogEntity> q,
+        IReadOnlyDictionary<string, IReadOnlyCollection<string>> filters)
+    {
+        foreach (var (column, values) in filters)
+        {
+            var set = values as HashSet<string> ?? [.. values];
+            q = column switch
+            {
+                "user"       => q.Where(e => set.Contains(e.UserName)),
+                "action"     => q.Where(e => set.Contains(e.Action)),
+                "type"       => q.Where(e => set.Contains(e.TargetType)),
+                "object"     => q.Where(e => set.Contains(e.TargetName)),
+                "collection" => q.Where(e => set.Contains(e.CollectionName ?? "")),
+                "date"       => q.Where(e => set.Contains(e.Ts.Substring(0, 10))),
+                _            => q,
+            };
+        }
+        return q;
+    }
+
+    /// <summary>Заголовки CSV-выгрузки журнала — в порядке колонок таблицы истории.</summary>
+    public static readonly string[] ChangeLogCsvHeaders =
+        ["Пользователь", "Действие", "Тип", "Объект", "Коллекция", "Дата и время"];
+
+    /// <summary>
+    /// Сколько строк журнала отдаст выгрузка с этими фильтрами — число для окна
+    /// подтверждения и знаменатель прогресса. Считается в SQL, отдельное подключение.
+    /// </summary>
+    public Task<long> CountChangeLogAsync(ChangeLogQuery query)
+    {
+        var path = db.DbPath;
+        return Task.Run(() =>
+        {
+            using var ctx = new AppDbContext(path);
+            ctx.ApplyPerformancePragmas();
+            return FilterChangeLog(ctx.ChangeLog.AsNoTracking(), query.Filters).LongCount();
+        });
+    }
+
+    /// <summary>
+    /// Ленивый поток строк журнала для выгрузки в CSV: значения уже человеческие
+    /// («Изменение», «Запись», «до → после», локальное время), порядок и фильтры —
+    /// как в таблице истории.
+    ///
+    /// Одно СВОЁ подключение на всю выгрузку, keyset-страницы по <paramref name="pageSize"/>,
+    /// AsNoTracking: в памяти живёт одна страница, поэтому миллионы строк выгружаются
+    /// без роста памяти. Метод-итератор (yield) — вызывать из фонового потока.
+    /// </summary>
+    public IEnumerable<string[]> ReadChangeLogCsvRowsIsolated(ChangeLogQuery query,
+        CancellationToken ct = default, int pageSize = 5000)
+    {
+        using var ctx = new AppDbContext(db.DbPath);
+        // Обычные прагмы, не bulk: чтение строго последовательное, страницы мелкие —
+        // мегабайтные mmap/кеш дали бы тот же темп, но раздули бы рабочий набор
+        // (на замере 10 млн строк — 2,2 ГБ против ~300 МБ).
+        ctx.ApplyPerformancePragmas();
+
+        var cursor = query;
+        while (true)
+        {
+            ct.ThrowIfCancellationRequested();
+            var page = ChangeLogPage(ctx, cursor, pageSize);
+            if (page.Count == 0) yield break;
+
+            foreach (var row in page)
+            {
+                ct.ThrowIfCancellationRequested();
+                yield return
+                [
+                    row.UserName,
+                    ChangeLogLabels.ActionLabel(row.Action),
+                    ChangeLogLabels.TypeLabel(row.TargetType),
+                    ChangeLogLabels.ObjectText(row.TargetType, row.TargetName, row.Count, row.Detail),
+                    row.CollectionName ?? "",
+                    ChangeLogLabels.FormatTs(row.Ts, withSeconds: true),
+                ];
+            }
+
+            if (page.Count < pageSize) yield break;
+
+            var last = page[^1];
+            cursor = cursor with
+            {
+                AfterId    = last.Id,
+                AfterValue = ChangeLogRawValue(cursor.SortColumn, last),
+            };
+        }
+    }
+
+    /// <summary>Сырое значение сорт-колонки последней строки — вторая половина курсора.</summary>
+    private static string? ChangeLogRawValue(string? sortColumn, ChangeLogRow row) => sortColumn switch
+    {
+        null or "date" => null,   // порядок по Id — значение не нужно
+        "user"         => row.UserName,
+        "action"       => row.Action,
+        "type"         => row.TargetType,
+        "object"       => row.TargetName,
+        "collection"   => row.CollectionName ?? "",
+        _              => null,
+    };
 
     // Сортировка журнала по строковой колонке + keyset-срез после курсора. Селектор
     // колонки один, предикат среза собирается Expression-ами из него же — сравнение

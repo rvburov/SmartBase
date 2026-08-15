@@ -1,15 +1,19 @@
 using Avalonia.Controls;
+using Avalonia.Interactivity;
 
 namespace SmartBase.Controls.Components;
 
 /// <summary>Навбар раздела «Профиль»: заголовок выбранного раздела слева; в «Истории
-/// изменений» справа — выбор базы журнала (наполняет ProfileView). Высота/отступы — как
-/// у остальных навбаров (56 / 16).</summary>
+/// изменений» справа — выбор базы журнала (наполняет ProfileView) и кнопка выгрузки
+/// журнала в CSV. Высота/отступы — как у остальных навбаров (56 / 16).</summary>
 public partial class NavbarProfile : UserControl
 {
     /// <summary>Пользователь выбрал другую базу журнала (программное наполнение
     /// списка через <see cref="SetHistoryDbs"/> событие не поднимает).</summary>
     public event EventHandler? HistoryDbChanged;
+
+    /// <summary>Нажата кнопка выгрузки журнала в CSV.</summary>
+    public event EventHandler? ExportHistoryRequested;
 
     private bool _syncingHistoryDbs;
 
@@ -27,8 +31,19 @@ public partial class NavbarProfile : UserControl
     /// <summary>Заголовок раздела профиля.</summary>
     public string Title { set => TitleText.Text = value; }
 
-    /// <summary>Показать/скрыть выбор базы (виден только в «Истории изменений»).</summary>
-    public bool ShowHistoryActions { set => HistoryDbCombo.IsVisible = value; }
+    /// <summary>Показать/скрыть действия журнала — выбор базы и выгрузку в CSV
+    /// (видны только в «Истории изменений»).</summary>
+    public bool ShowHistoryActions
+    {
+        set
+        {
+            HistoryDbCombo.IsVisible   = value;
+            ExportHistoryBtn.IsVisible = value;
+        }
+    }
+
+    private void OnExportHistoryClick(object? sender, RoutedEventArgs e) =>
+        ExportHistoryRequested?.Invoke(this, EventArgs.Empty);
 
     /// <summary>Наполнить список баз журнала и выставить выбор без события
     /// <see cref="HistoryDbChanged"/>.</summary>

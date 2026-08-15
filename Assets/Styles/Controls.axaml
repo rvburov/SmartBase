@@ -234,6 +234,51 @@
         <Setter Property="Background" Value="{StaticResource BrushHover}" />
     </Style>
 
+    <!-- ── Карточки полей в панели «Детали» ────────────────────────────────────
+         Строка выбранной записи раскрывается панелью справа: карточка на поле,
+         клик по карточке открывает полный текст снизу. Оформление — карточки
+         свойств «Страницы записи» (Border.proprow в RecordPageView): hover — серая
+         подложка, выбор — голубой фон с синей рамкой, подпись и иконка синеют.
+         Стиль общий: панель деталей есть и в «Настройки → Диагностика», и в
+         «Профиль → История изменений» — карточки обязаны выглядеть одинаково. -->
+    <Style Selector="Border.detailRow">
+        <Setter Property="Background"      Value="Transparent" />
+        <Setter Property="BorderBrush"     Value="{StaticResource BrushSeparator}" />
+        <Setter Property="BorderThickness" Value="{DynamicResource BorderLine}" />
+        <Setter Property="CornerRadius"    Value="{StaticResource RadiusMedium}" />
+        <Setter Property="Padding"         Value="10,3" />
+        <Setter Property="MinHeight"       Value="40" />
+        <Setter Property="Cursor"          Value="Hand" />
+    </Style>
+    <Style Selector="Border.detailRow:pointerover">
+        <Setter Property="Background" Value="{StaticResource BrushSecondaryBg}" />
+    </Style>
+    <Style Selector="Border.detailRow.selected, Border.detailRow.selected:pointerover">
+        <Setter Property="Background"  Value="{StaticResource BrushAccentLight}" />
+        <Setter Property="BorderBrush" Value="{StaticResource BrushAccent}" />
+    </Style>
+    <Style Selector="Border.detailRow TextBlock.detailName">
+        <Setter Property="Foreground" Value="{StaticResource BrushSecondaryText}" />
+    </Style>
+    <Style Selector="Border.detailRow Path.detailIcon">
+        <Setter Property="Stroke" Value="{StaticResource BrushSecondaryText}" />
+    </Style>
+    <Style Selector="Border.detailRow.selected TextBlock.detailName">
+        <Setter Property="Foreground" Value="{StaticResource BrushAccent}" />
+    </Style>
+    <Style Selector="Border.detailRow.selected Path.detailIcon">
+        <Setter Property="Stroke" Value="{StaticResource BrushAccent}" />
+    </Style>
+
+    <!-- Ручка-разделитель (три вертикальные точки ⋮) между названием и значением
+         карточки — тянем влево/вправо, меняем общую ширину колонки названий. -->
+    <Style Selector="Border.detailGrip">
+        <Setter Property="Background"        Value="Transparent" />
+        <Setter Property="Width"             Value="18" />
+        <Setter Property="VerticalAlignment" Value="Stretch" />
+        <Setter Property="Cursor"            Value="SizeWestEast" />
+    </Style>
+
     <!-- Активный модуль в ActivityBar -->
     <Style Selector="ToggleButton.icon.module:checked /template/ ContentPresenter">
         <Setter Property="Background" Value="Transparent" />

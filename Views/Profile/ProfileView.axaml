@@ -101,7 +101,12 @@
 
     </UserControl.Styles>
 
-    <DockPanel>
+    <!-- В разделе «История изменений» строка раскрывается панелью «Детали» во всю высоту
+         справа (Column 2) — как в «Настройки → Диагностика»: её навбар встаёт вровень
+         с навбаром профиля. Прочие разделы занимают всю ширину (Column 0). -->
+    <Grid ColumnDefinitions="*,Auto,Auto">
+
+    <DockPanel Grid.Column="0">
 
         <!-- Шапка раздела (вынесена в компонент-навбар). Список пользователей открывается
              ВМЕСТО панели администратора и приносит свою шапку — тогда навбар скрывается,
@@ -532,5 +537,150 @@
         </Grid>
 
     </DockPanel>
+
+    <!-- Вертикальный разделитель между разделом и деталями (во всю высоту). -->
+    <Border Grid.Column="1" x:Name="HistoryDetailDivider"
+            Classes="separator v" IsVisible="False" />
+
+    <!-- ── Детали строки журнала (во всю высоту) ───────────────────────────
+         Зеркало панели «Детали» из «Диагностики» (SettingsView): навбар вровень
+         с навбаром профиля, карточки полей сверху, полный текст снизу — как
+         «Страница записи». Нижнюю границу навбара рисует общая линия окна на y=56
+         (MainWindow), своей линии под шапкой нет (иначе удвоение). Ширина —
+         в code-behind (_historyDetailWidth), меняется ручкой ниже. -->
+    <Border Grid.Column="2" x:Name="HistoryDetailPanel"
+            IsVisible="False"
+            Background="{StaticResource BrushBg}">
+        <Grid x:Name="HistoryDetailGrid" RowDefinitions="Auto,*,Auto,*">
+
+            <!-- Шапка-навбар панели: заголовок слева + крестик справа. -->
+            <Grid Grid.Row="0" ColumnDefinitions="*,Auto"
+                  Height="56" Margin="16,0">
+                <TextBlock Grid.Column="0" Text="Детали"
+                           VerticalAlignment="Center"
+                           FontSize="{DynamicResource FontSizeLarge}"
+                           FontWeight="{StaticResource FontWeightBold}"
+                           TextTrimming="CharacterEllipsis"
+                           Margin="0,0,12,0" />
+                <Button Grid.Column="1" x:Name="HistoryDetailCloseBtn"
+                        Classes="navbtn" Width="30" Height="30"
+                        VerticalAlignment="Center"
+                        CornerRadius="{StaticResource RadiusMedium}"
+                        ToolTip.Tip="Закрыть">
+                    <Viewbox Width="{StaticResource IconSizeMedium}"
+                             Height="{StaticResource IconSizeMedium}">
+                        <Canvas Width="24" Height="24">
+                            <Path Data="{StaticResource IconClose}"
+                                  Stroke="{Binding $parent[Button].Foreground}"
+                                  StrokeThickness="{StaticResource IconStrokeMedium}"
+                                  StrokeLineCap="Round" StrokeJoin="Round" />
+                        </Canvas>
+                    </Viewbox>
+                </Button>
+            </Grid>
+
+            <!-- Карточки полей строятся в code-behind (BuildHistoryDetailCards). -->
+            <ScrollViewer Grid.Row="1"
+                          VerticalScrollBarVisibility="Auto"
+                          HorizontalScrollBarVisibility="Disabled">
+                <StackPanel x:Name="HistoryDetailCardsHost"
+                            Margin="16,16,16,16" Spacing="6" />
+            </ScrollViewer>
+
+            <!-- Линия-разделитель между карточками и текстом (в своей строке). -->
+            <Border Grid.Row="2" Classes="separator h"
+                    VerticalAlignment="Center" />
+
+            <!-- Ручка-пилюля: плавает поверх линии, тянет высоту блока карточек. -->
+            <Border Grid.Row="1"
+                    x:Name="HistoryPropsResizeGrip"
+                    Width="34" Height="11"
+                    Margin="0,0,0,-5"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Bottom"
+                    CornerRadius="4"
+                    Background="{StaticResource BrushBg}"
+                    BorderBrush="{StaticResource BrushSeparator}"
+                    BorderThickness="{DynamicResource BorderLine}"
+                    Cursor="SizeNorthSouth">
+                <StackPanel Orientation="Horizontal" Spacing="3"
+                            HorizontalAlignment="Center"
+                            VerticalAlignment="Center">
+                    <Ellipse Width="2.5" Height="2.5" Fill="{StaticResource BrushSecondaryText}" />
+                    <Ellipse Width="2.5" Height="2.5" Fill="{StaticResource BrushSecondaryText}" />
+                    <Ellipse Width="2.5" Height="2.5" Fill="{StaticResource BrushSecondaryText}" />
+                </StackPanel>
+            </Border>
+
+            <!-- Полный текст выбранного поля: крошка «Поле › Имя» + копирование
+                 и безбордерный переносящий редактор (только чтение). -->
+            <Grid Grid.Row="3" RowDefinitions="Auto,*"
+                  Margin="16,16,16,16">
+                <Grid Grid.Row="0" ColumnDefinitions="*,Auto"
+                      Margin="0,0,0,16">
+                    <StackPanel Grid.Column="0" Orientation="Horizontal"
+                                Spacing="6" VerticalAlignment="Center">
+                        <TextBlock Text="Поле"
+                                   Foreground="{StaticResource BrushSecondaryText}"
+                                   VerticalAlignment="Center" />
+                        <Viewbox Width="14" Height="14" VerticalAlignment="Center">
+                            <Canvas Width="24" Height="24">
+                                <Path Data="{StaticResource IconChevronRight}"
+                                      Stroke="{StaticResource BrushSecondaryText}"
+                                      StrokeThickness="1.6"
+                                      StrokeLineCap="Round" StrokeJoin="Round" />
+                            </Canvas>
+                        </Viewbox>
+                        <TextBlock x:Name="HistoryDetailFieldName"
+                                   Foreground="{StaticResource BrushSecondaryText}"
+                                   VerticalAlignment="Center" />
+                    </StackPanel>
+                    <Button Grid.Column="1" x:Name="HistoryDetailCopyBtn"
+                            Classes="icon" Width="28" Height="28"
+                            ToolTip.Tip="Скопировать">
+                        <Viewbox Width="{StaticResource IconSizeSmall}"
+                                 Height="{StaticResource IconSizeSmall}">
+                            <Canvas Width="24" Height="24">
+                                <Path Data="{StaticResource IconCopy}"
+                                      Stroke="{StaticResource BrushSecondaryText}"
+                                      StrokeThickness="{StaticResource IconStrokeSmall}"
+                                      StrokeLineCap="Round" StrokeJoin="Round" />
+                            </Canvas>
+                        </Viewbox>
+                    </Button>
+                </Grid>
+
+                <TextBox Grid.Row="1" x:Name="HistoryDetailFullText"
+                         Classes="notesEditor"
+                         IsReadOnly="True"
+                         AcceptsReturn="True"
+                         TextWrapping="Wrap" />
+            </Grid>
+        </Grid>
+    </Border>
+
+    <!-- Ручка перетягивания ширины панели «Детали» — вертикальная пилюля у её левого
+         края, плавает поверх разделителя (Margin -5). Видна вместе с панелью. -->
+    <Border Grid.Column="2" x:Name="HistoryDetailResizeGrip"
+            Width="11" Height="34"
+            HorizontalAlignment="Left"
+            VerticalAlignment="Center"
+            Margin="-5,0,0,0"
+            CornerRadius="4"
+            Background="{StaticResource BrushBg}"
+            BorderBrush="{StaticResource BrushSeparator}"
+            BorderThickness="{DynamicResource BorderLine}"
+            Cursor="SizeWestEast"
+            IsVisible="False">
+        <StackPanel Orientation="Vertical" Spacing="3"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Center">
+            <Ellipse Width="2.5" Height="2.5" Fill="{StaticResource BrushSecondaryText}" />
+            <Ellipse Width="2.5" Height="2.5" Fill="{StaticResource BrushSecondaryText}" />
+            <Ellipse Width="2.5" Height="2.5" Fill="{StaticResource BrushSecondaryText}" />
+        </StackPanel>
+    </Border>
+
+    </Grid>
 
 </UserControl>

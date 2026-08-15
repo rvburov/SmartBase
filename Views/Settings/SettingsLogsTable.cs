@@ -15,6 +15,7 @@ using SmartBase.Logging;
 using SmartBase.Utils;
 using SmartBase.Controls.Behaviors;
 using SmartBase.Controls.Components;
+using SmartBase.Controls.Dialogs;
 using LogRow = SmartBase.Logging.LogReader.LogRow;
 using Path = Avalonia.Controls.Shapes.Path;
 
@@ -176,6 +177,35 @@ public partial class SettingsView
         "date"      => row.Timestamp.Length >= 10 ? row.Timestamp[..10] : row.Timestamp,
         _           => "",
     };
+
+    // ── Выгрузка в CSV ────────────────────────────────────────────────────────
+    //
+    // Кнопка в навбаре раздела. Выгружается ровно то, что показано: те же фильтры
+    // и та же сортировка; строки читаются keyset-страницами уже в фоне (ReadCsvRows),
+    // поэтому объём лога ограничивает только диск.
+
+    private async Task ExportLogsToCsv()
+    {
+        if (TopLevel.GetTopLevel(this) is not Window owner) return;
+
+        var query = new LogReader.LogQuery
+        {
+            Filters = _logsFilters.ToDictionary(
+                kv => kv.Key, kv => (IReadOnlyCollection<string>)kv.Value),
+            SortColumn = _logsSortKey,
+            SortAsc    = _logsSortAsc,
+        };
+        var total = await _logReader.CountAsync(query);
+
+        await CsvExportRunner.Run(owner, new CsvExportRunner.Job(
+            Title:           "Выгрузка диагностики",
+            What:            "Диагностика",
+            TotalRows:       total,
+            Filtered:        _logsFilters.Count > 0,
+            DefaultFileName: CsvExportRunner.FileName("Диагностика", DateTime.Now),
+            Headers:         LogReader.CsvHeaders,
+            Rows:            ct => _logReader.ReadCsvRows(query, ct)));
+    }
 
     // ── Колонки и шапка ───────────────────────────────────────────────────────
 
@@ -373,16 +403,8 @@ public partial class SettingsView
         _           => "",
     };
 
-    private static string LogsLevelLabel(string level) => level switch
-    {
-        "Verbose"     => "Подробно",
-        "Debug"       => "Отладка",
-        "Information" => "Информация",
-        "Warning"     => "Предупреждение",
-        "Error"       => "Ошибка",
-        "Fatal"       => "Критическая",
-        _             => level,
-    };
+    // Подписи — из общего LogLabels: тот же текст в таблице и в выгрузке CSV.
+    private static string LogsLevelLabel(string level) => LogLabels.LevelLabel(level);
 
     // Краткое представление исключения в ячейке: первая непустая строка (тип + текст).
     private static string LogsExceptionSummary(string? exception)
@@ -397,12 +419,7 @@ public partial class SettingsView
     }
 
     // UTC-текст Serilog → локальное «дд.MM.гггг ЧЧ:мм:сс».
-    private static string FormatLogsTs(string ts) =>
-        DateTime.TryParse(ts, System.Globalization.CultureInfo.InvariantCulture,
-                          System.Globalization.DateTimeStyles.AssumeUniversal |
-                          System.Globalization.DateTimeStyles.AdjustToUniversal, out var dt)
-            ? dt.ToLocalTime().ToString("dd.MM.yyyy HH:mm:ss")
-            : ts;
+    private static string FormatLogsTs(string ts) => LogLabels.FormatTs(ts);
 
     // Значение в окне фильтра: сырое → отображаемое (те же подписи, что в ячейках).
     private static string LogsDisplayValue(string key, string raw)
@@ -1005,7 +1022,7 @@ public partial class SettingsView
             Margin            = new Thickness(8, 0, 4, 0),
             FontSize          = (double)this.FindResource("FontSizeBase")!,
         };
-        nameLabel.Classes.Add("logname");
+        nameLabel.Classes.Add("detailName");
 
         var nameRow = new Grid
         {
@@ -1045,7 +1062,7 @@ public partial class SettingsView
         Grid.SetColumn(grip,    1); grid.Children.Add(grip);
         Grid.SetColumn(preview, 2); grid.Children.Add(preview);
 
-        var card = new Border { Classes = { "logrow" }, Child = grid };
+        var card = new Border { Classes = { "detailRow" }, Child = grid };
         // Клик по карточке выделяет её. Нажатие на ручку ⋮ обработчик грипа помечает
         // Handled (пузырьком, раньше карточки) — поэтому drag ручки карточку не выделяет.
         card.PointerPressed += (_, _) => OpenLogsDetailField(key, row);
@@ -1086,7 +1103,7 @@ public partial class SettingsView
                 Fill   = (IBrush)this.FindResource("BrushSecondaryText")!,
             });
 
-        var grip = new Border { Classes = { "loggrip" }, Child = dots };
+        var grip = new Border { Classes = { "detailGrip" }, Child = dots };
         grip.PointerPressed  += OnLogsColGripPressed;
         grip.PointerMoved    += OnLogsColGripMoved;
         grip.PointerReleased += OnLogsColGripReleased;
@@ -1136,7 +1153,7 @@ public partial class SettingsView
         _           => "",
     };
 
-    // Обводочная иконка 16×16 из реестра Icons.axaml с классом logicon (синеет в выбранной карточке).
+    // Обводочная иконка 16×16 из реестра Icons.axaml с классом detailIcon (синеет в выбранной карточке).
     private Control MakeLogsCardIcon(string key)
     {
         var path = new Path
@@ -1146,7 +1163,7 @@ public partial class SettingsView
             StrokeLineCap   = PenLineCap.Round,
             StrokeJoin      = PenLineJoin.Round,
         };
-        path.Classes.Add("logicon");
+        path.Classes.Add("detailIcon");
 
         return new Viewbox
         {

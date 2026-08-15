@@ -6,7 +6,7 @@
 
     <!-- Заголовок слева, действия раздела справа — как в остальных навбарах
          (NavbarConstructor: переключатель вида справа тем же стилем). -->
-    <Grid ColumnDefinitions="*,Auto" Margin="16,0">
+    <Grid ColumnDefinitions="*,Auto,Auto" Margin="16,0">
 
         <TextBlock Grid.Column="0" x:Name="TitleText"
                    Text="Оформление"
@@ -29,6 +29,28 @@
             <ComboBoxItem Content="Подключить базу данных SQLite" />
             <ComboBoxItem Content="Подключить сервер PostgreSQL" />
         </ComboBox>
+
+        <!-- Выгрузка журнала диагностики в CSV — только в разделе «Диагностика».
+             Вид кнопки — как «Импорт/Экспорт» в сайдбаре конструктора (navbtn 30×30,
+             lucide download). -->
+        <Button Grid.Column="2" x:Name="ExportLogsBtn"
+                Classes="navbtn" Width="30" Height="30"
+                IsVisible="False"
+                VerticalAlignment="Center"
+                Margin="8,0,0,0"
+                CornerRadius="{StaticResource RadiusMedium}"
+                ToolTip.Tip="Выгрузить в CSV"
+                Click="OnExportLogsClick">
+            <Viewbox Width="{StaticResource IconSizeMedium}"
+                     Height="{StaticResource IconSizeMedium}">
+                <Canvas Width="24" Height="24">
+                    <Path Data="{StaticResource IconDownload}"
+                          Stroke="{Binding $parent[Button].Foreground}"
+                          StrokeThickness="{StaticResource IconStrokeMedium}"
+                          StrokeLineCap="Round" StrokeJoin="Round" />
+                </Canvas>
+            </Viewbox>
+        </Button>
 
     </Grid>
 

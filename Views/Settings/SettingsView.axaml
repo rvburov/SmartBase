@@ -151,48 +151,8 @@
             </Setter>
         </Style>
 
-        <!-- ── Диагностика: карточки полей в панели деталей ──────────────────
-             1-в-1 карточки свойств «Страницы записи» (Border.proprow в RecordPageView):
-             hover — серая подложка; выбор (клик) — голубой фон + синяя рамка, иконка
-             типа и подпись синеют; ручка ⋮ между названием и значением тянет общую
-             ширину колонки названий. -->
-        <Style Selector="Border.logrow">
-            <Setter Property="Background"      Value="Transparent" />
-            <Setter Property="BorderBrush"     Value="{StaticResource BrushSeparator}" />
-            <Setter Property="BorderThickness" Value="{DynamicResource BorderLine}" />
-            <Setter Property="CornerRadius"    Value="{StaticResource RadiusMedium}" />
-            <Setter Property="Padding"         Value="10,3" />
-            <Setter Property="MinHeight"       Value="40" />
-            <Setter Property="Cursor"          Value="Hand" />
-        </Style>
-        <Style Selector="Border.logrow:pointerover">
-            <Setter Property="Background" Value="{StaticResource BrushSecondaryBg}" />
-        </Style>
-        <Style Selector="Border.logrow.selected, Border.logrow.selected:pointerover">
-            <Setter Property="Background"  Value="{StaticResource BrushAccentLight}" />
-            <Setter Property="BorderBrush" Value="{StaticResource BrushAccent}" />
-        </Style>
-        <Style Selector="Border.logrow TextBlock.logname">
-            <Setter Property="Foreground" Value="{StaticResource BrushSecondaryText}" />
-        </Style>
-        <Style Selector="Border.logrow Path.logicon">
-            <Setter Property="Stroke" Value="{StaticResource BrushSecondaryText}" />
-        </Style>
-        <Style Selector="Border.logrow.selected TextBlock.logname">
-            <Setter Property="Foreground" Value="{StaticResource BrushAccent}" />
-        </Style>
-        <Style Selector="Border.logrow.selected Path.logicon">
-            <Setter Property="Stroke" Value="{StaticResource BrushAccent}" />
-        </Style>
-
-        <!-- Ручка-разделитель (три вертикальные точки ⋮) между названием и значением
-             карточки — тянем влево/вправо, меняем общую ширину колонки названий. -->
-        <Style Selector="Border.loggrip">
-            <Setter Property="Background"        Value="Transparent" />
-            <Setter Property="Width"             Value="18" />
-            <Setter Property="VerticalAlignment" Value="Stretch" />
-            <Setter Property="Cursor"            Value="SizeWestEast" />
-        </Style>
+        <!-- Карточки полей панели деталей — общий стиль Border.detailRow
+             (Assets/Styles/Controls.axaml): тот же вид в «Истории изменений». -->
     </UserControl.Styles>
 
     <!-- В разделе «Диагностика» деталь строки открывается отдельной панелью во всю

@@ -70,7 +70,8 @@ public partial class ProfileView : UserControl
         };
 
         // Выбор базы журнала живёт в навбаре (правый край «Истории изменений»).
-        HeaderBar.HistoryDbChanged += (_, _) => OnHistoryDbChanged();
+        HeaderBar.HistoryDbChanged      += (_, _) => OnHistoryDbChanged();
+        HeaderBar.ExportHistoryRequested += (_, _) => _ = ExportHistoryToCsv();
     }
 
     /// <summary>Рабочее пространство для панелей администратора и истории.</summary>
@@ -90,6 +91,9 @@ public partial class ProfileView : UserControl
         // в сайдбаре (в том числе повторный выбор «Панели администратора») возвращает
         // обычный вид с навбаром.
         CloseUsersPanel();
+        // Детали строки журнала живут в отдельной колонке окна и разделом не скрываются —
+        // закрываем их вместе с уходом из «Истории изменений».
+        CloseHistoryDetail();
         HeaderBar.Title = (ProfileRegistry.FindByKey(key) ?? ProfileRegistry.All[0]).Label;
         // Действия истории (выбор базы, очистка журнала) — только для истории.
         HeaderBar.ShowHistoryActions = key == "history";

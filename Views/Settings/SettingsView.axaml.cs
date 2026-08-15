@@ -101,6 +101,7 @@ public partial class SettingsView : UserControl
         HeaderBar.CreateSqliteRequested    += (_, _) => OnCreateDatabaseClick(this, new RoutedEventArgs());
         HeaderBar.ConnectSqliteRequested   += (_, _) => OnConnectDatabaseClick(this, new RoutedEventArgs());
         HeaderBar.ConnectPostgresRequested += (_, _) => OnConnectPostgresClick(this, new RoutedEventArgs());
+        HeaderBar.ExportLogsRequested      += (_, _) => _ = ExportLogsToCsv();
     }
 
     // ── Стартовый раздел ─────────────────────────────────────────────────────
@@ -771,6 +772,7 @@ public partial class SettingsView : UserControl
         HeaderBar.Title = (SettingsRegistry.FindByKey(key) ?? SettingsRegistry.All[0]).Label;
         // Кнопка «Добавить базу данных» в навбаре осмысленна только в разделе БД.
         HeaderBar.ShowDatabaseActions = key == "database";
+        HeaderBar.ShowLogsActions     = key == "logs";
 
         if (key == "logs") RebuildLogsPanel();
     }

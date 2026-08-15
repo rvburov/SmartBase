@@ -11,6 +11,7 @@ dotnet run -c Release --project Tests/Benchmarks -- sidebar [--db PATH] [--targe
 dotnet run -c Release --project Tests/Benchmarks -- import  [--rows N] [--dir PATH]
 dotnet run -c Release --project Tests/Benchmarks -- export  [--rows N] [--dir PATH]
 dotnet run -c Release --project Tests/Benchmarks -- pgload  [клиентов] [секунд] [--db ИМЯ]
+dotnet run -c Release --project Tests/Benchmarks -- csvlog  [--rows N] [--dir PATH]
 ```
 
 | Команда | Что мерит | Требования |
@@ -19,6 +20,22 @@ dotnet run -c Release --project Tests/Benchmarks -- pgload  [клиентов] [
 | **import** | импорт большого CSV (Analyze + чтение/запись, строк/с) | — |
 | **export** | экспорт коллекции во все форматы (CSV/JSON/XLSX/XLSM) | — |
 | **pgload** | нагрузка PostgreSQL: N клиентов со своими подключениями, сверка целостности | стенд `sb-pg` (порт 5455) — см. [../guides/postgresql-setup.md](../guides/postgresql-setup.md) |
+| **csvlog** | выгрузка в CSV журнала изменений и диагностики (строк/с, размер файла, живая куча) | — (сеет свои temp-базы) |
 
 Функциональная корректность импорта/экспорта/PG проверяется автотестами (см.
 [automated-tests.md](automated-tests.md)); здесь только скорость.
+
+## Ориентиры
+
+Снято на MacBook (Apple Silicon, SSD), Release, `--rows 10000000`:
+
+| Замер | Время | Темп | Файл | Живая куча после |
+|---|---|---|---|---|
+| `csvlog` — журнал изменений | 24 с | ~420 тыс. строк/с | 1,2 ГБ | 8 МБ |
+| `csvlog` — диагностика (logs.db) | 16 с | ~615 тыс. строк/с | 1,3 ГБ | 7 МБ |
+
+Куча после выгрузки — главный показатель: она обязана оставаться единицами мегабайт.
+Рост означал бы, что поток строк где-то материализуется целиком (тогда 10 млн строк
+положат приложение по памяти). Счёт строк для окна подтверждения — 0,5–1 с на 10 млн.
+Выгрузка журнала намеренно идёт на обычных прагмах, а не bulk: темп тот же, а рабочий
+набор втрое меньше (687 МБ против 2,2 ГБ).

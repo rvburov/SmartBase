@@ -8,6 +8,7 @@ if (args.Length == 0)
     Console.WriteLine("  import  [--rows N] [--dir PATH]                — замер импорта CSV");
     Console.WriteLine("  export  [--rows N] [--dir PATH]                — замер экспорта во все форматы");
     Console.WriteLine("  pgload  [клиентов] [секунд] [--db ИМЯ]         — нагрузка PostgreSQL (стенд sb-pg)");
+    Console.WriteLine("  csvlog  [--rows N] [--dir PATH]                — выгрузка журнала и диагностики в CSV");
     return 1;
 }
 
@@ -18,11 +19,12 @@ return args[0] switch
     "import"  => ImportBench.Run(rest),
     "export"  => ExportBench.Run(rest),
     "pgload"  => PgLoadBench.Run(rest),
+    "csvlog"  => LogExportBench.Run(rest),
     _         => Unknown(args[0]),
 };
 
 static int Unknown(string cmd)
 {
-    Console.WriteLine($"Неизвестная команда: {cmd}. Доступно: sidebar | import | export | pgload.");
+    Console.WriteLine($"Неизвестная команда: {cmd}. Доступно: sidebar | import | export | pgload | csvlog.");
     return 1;
 }

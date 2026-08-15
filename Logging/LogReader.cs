@@ -95,6 +95,83 @@ public sealed class LogReader
         });
     }
 
+    /// <summary>Заголовки CSV-выгрузки — в порядке колонок таблицы «Диагностика».</summary>
+    public static readonly string[] CsvHeaders = ["Время", "Уровень", "Сообщение", "Ошибка"];
+
+    /// <summary>
+    /// Сколько строк отдаст выгрузка с этими фильтрами — число для окна подтверждения
+    /// и знаменатель прогресса. Считается в SQL (COUNT(*) с теми же WHERE), сортировка
+    /// и курсор роли не играют.
+    /// </summary>
+    public Task<long> CountAsync(LogQuery query)
+    {
+        var path = _path;
+        return Task.Run(() =>
+        {
+            if (!File.Exists(path)) return 0L;
+
+            using var conn = OpenRead(path);
+            using var cmd  = conn.CreateCommand();
+            var where = new List<string>();
+            AppendFilters(cmd, query.Filters, where);
+            cmd.CommandText = "SELECT COUNT(*) FROM logs" +
+                              (where.Count > 0 ? " WHERE " + string.Join(" AND ", where) : "");
+            return Convert.ToInt64(cmd.ExecuteScalar());
+        });
+    }
+
+    /// <summary>
+    /// Ленивый поток строк лога для выгрузки в CSV: значения уже человеческие (уровень
+    /// по-русски, время локальное), порядок и фильтры — как в таблице.
+    ///
+    /// Читается keyset-страницами по <paramref name="pageSize"/> на СВОЁМ подключении:
+    /// в памяти живёт одна страница, поэтому размер файла лога ограничивает только диск.
+    /// Метод-итератор (yield) — вызывать из фонового потока.
+    /// </summary>
+    public IEnumerable<string[]> ReadCsvRows(LogQuery query, CancellationToken ct = default,
+                                             int pageSize = 5000)
+    {
+        var cursor = query;
+        while (true)
+        {
+            ct.ThrowIfCancellationRequested();
+            // GetPageAsync уже умеет фильтры + keyset; ждём синхронно — мы и так в фоне.
+            var page = GetPageAsync(cursor, pageSize).GetAwaiter().GetResult();
+            if (page.Count == 0) yield break;
+
+            foreach (var row in page)
+            {
+                ct.ThrowIfCancellationRequested();
+                yield return
+                [
+                    LogLabels.FormatTs(row.Timestamp),
+                    LogLabels.LevelLabel(row.Level),
+                    row.Message,
+                    row.Exception ?? "",
+                ];
+            }
+
+            if (page.Count < pageSize) yield break;
+
+            var last = page[^1];
+            cursor = cursor with
+            {
+                AfterId    = last.Id,
+                AfterValue = RawValue(cursor.SortColumn, last),
+            };
+        }
+    }
+
+    /// <summary>Сырое значение сорт-колонки последней строки — вторая половина курсора.</summary>
+    private static string? RawValue(string? sortColumn, LogRow row) => sortColumn switch
+    {
+        null or "date" => null,   // порядок по id — значение не нужно
+        "level"        => row.Level,
+        "message"      => row.Message,
+        "exception"    => row.Exception ?? "",
+        _              => null,
+    };
+
     /// <summary>
     /// Значения колонки с количеством — для окна фильтра таблицы логов (SQL-агрегат на
     /// фоне). Аналог <c>GetChangeLogCountsAsync</c>. date группируется по дню.

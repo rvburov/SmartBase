@@ -1,4 +1,5 @@
 using Avalonia.Controls;
+using Avalonia.Interactivity;
 using Avalonia.Threading;
 
 namespace SmartBase.Controls.Components;
@@ -14,6 +15,9 @@ public partial class NavbarSettings : UserControl
     public event EventHandler? CreateSqliteRequested;
     public event EventHandler? ConnectSqliteRequested;
     public event EventHandler? ConnectPostgresRequested;
+
+    /// <summary>Нажата кнопка выгрузки диагностики в CSV.</summary>
+    public event EventHandler? ExportLogsRequested;
 
     public NavbarSettings()
     {
@@ -43,4 +47,10 @@ public partial class NavbarSettings : UserControl
 
     /// <summary>Показать/скрыть «Добавить базу данных» (видна только в разделе БД).</summary>
     public bool ShowDatabaseActions { set => AddDatabaseCombo.IsVisible = value; }
+
+    /// <summary>Показать/скрыть выгрузку в CSV (видна только в «Диагностике»).</summary>
+    public bool ShowLogsActions { set => ExportLogsBtn.IsVisible = value; }
+
+    private void OnExportLogsClick(object? sender, RoutedEventArgs e) =>
+        ExportLogsRequested?.Invoke(this, EventArgs.Empty);
 }
