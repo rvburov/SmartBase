@@ -429,7 +429,13 @@
         <Setter Property="BorderBrush"     Value="{StaticResource BrushSeparator}" />
         <Setter Property="BorderThickness" Value="{DynamicResource BorderLine}" />
         <Setter Property="CornerRadius"    Value="{StaticResource RadiusMedium}" />
-        <Setter Property="Padding"         Value="0,2" />
+        <!-- Padding НУЛЕВОЙ (стандарт «полоса прилегает к краю», theming.md): вертикальный
+             давал зазоры сверху и снизу полосы, а её прямые углы вылезали за скругление
+             плашки. Воздух вокруг пунктов переехал внутрь области прокрутки — Margin
+             презентера в копии темы (ComboBoxTheme.axaml). ClipToBounds — срезает углы
+             полосы скруглением плашки, как в карточках списков. -->
+        <Setter Property="Padding"         Value="0" />
+        <Setter Property="ClipToBounds"    Value="True" />
         <!-- Зазор между полем и выпадашкой — как у списка времени (timePopup). -->
         <Setter Property="Margin"          Value="0,1,0,0" />
     </Style>
@@ -529,6 +535,47 @@
         <Setter Property="FontWeight"        Value="{StaticResource FontWeightBold}" />
         <Setter Property="Foreground"        Value="{StaticResource BrushSecondaryText}" />
         <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+
+    <!-- ===== Многострочное поле с прокруткой (описание записи/задачи, журнал) ===== -->
+    <!-- Полоса прокрутки — во ВСЮ высоту поля: Padding в шаблоне Fluent это Margin
+         контейнера PART_InnerDockPanel, который держит и ScrollViewer, поэтому вертикальной
+         составляющей у него нет вовсе (была 6 сверху и снизу — ровно на столько полоса и не
+         доходила до краёв), правой тоже: полоса прилегает к рамке, а рамка рисуется ПОВЕРХ
+         неё (см. ниже) — линия и скругления накрывают полосу, она читается как часть блока.
+         Воздух над первой и под последней строкой даёт Margin содержимого ВНУТРИ
+         ScrollViewer — оно прокручивается вместе с текстом: при прокрутке строки уходят
+         под самый край поля, а отступ виден только в крайних положениях. -->
+    <Style Selector="TextBox.multiline">
+        <Setter Property="Padding" Value="10,0,0,0" />
+        <!-- Многострочному прокрутка нужна (базовый стиль TextBox её отключает). -->
+        <Setter Property="ScrollViewer.VerticalScrollBarVisibility" Value="Auto" />
+        <Setter Property="VerticalContentAlignment" Value="Top" />
+    </Style>
+    <!-- РАМКА ПОВЕРХ СОДЕРЖИМОГО. В шаблоне Fluent рамка (PART_BorderElement) лежит ПОД
+         контентом, поэтому полоса прокрутки, прижатая к краю, закрывала линию, а её прямые
+         углы вылезали за скругление. Поднимаем рамку наверх (ZIndex) — линия и скругления
+         рисуются ПО полосе, она выглядит частью блока; клики сквозь неё проходят
+         (IsHitTestVisible=False), а фон переезжает на внутреннюю обёртку содержимого —
+         иначе рамка, оказавшись сверху, закрасила бы своим фоном весь текст. -->
+    <Style Selector="TextBox.multiline /template/ Border#PART_BorderElement">
+        <Setter Property="Background"       Value="Transparent" />
+        <Setter Property="ZIndex"           Value="1" />
+        <Setter Property="IsHitTestVisible" Value="False" />
+    </Style>
+    <!-- Внутренняя обёртка содержимого (единственный Border шаблона, кроме рамки; сдвинута
+         на её толщину): несёт фон поля и срезает углы полосы по скруглению — ClipToBounds
+         режет прямоугольником, поэтому клип скруглённый (RoundedClip). -->
+    <Style Selector="TextBox.multiline /template/ Border:not(#PART_BorderElement)">
+        <Setter Property="Background"           Value="{Binding $parent[TextBox].Background}" />
+        <Setter Property="CornerRadius"         Value="{StaticResource RadiusMedium}" />
+        <Setter Property="b:RoundedClip.Radius" Value="{StaticResource RadiusMedium}" />
+    </Style>
+    <Style Selector="TextBox.multiline /template/ TextPresenter#PART_TextPresenter">
+        <Setter Property="Margin" Value="0,6" />
+    </Style>
+    <Style Selector="TextBox.multiline /template/ TextBlock#PART_Watermark">
+        <Setter Property="Margin" Value="0,6" />
     </Style>
 
     <!-- Безбордерный редактор (письмо как в заметках): убираем рамку во всех состояниях,

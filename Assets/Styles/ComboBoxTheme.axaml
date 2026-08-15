@@ -1,6 +1,7 @@
 <ResourceDictionary xmlns="https://github.com/avaloniaui"
                     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-                    xmlns:u="clr-namespace:SmartBase.Utils">
+                    xmlns:u="clr-namespace:SmartBase.Utils"
+                    xmlns:b="clr-namespace:SmartBase.Controls.Behaviors">
 
     <!-- ═══ ПАСПОРТ ФАЙЛА ══════════════════════════════════════════════════════
          Локальная копия темы ComboBox из Avalonia.Themes.Fluent, тег 11.2.3
@@ -121,13 +122,20 @@
                                     HorizontalAlignment="Stretch"
                                     CornerRadius="{DynamicResource OverlayCornerRadius}">
                                 <!-- Отличие 1: заглушка пустого списка ПОВЕРХ презентера
-                                     (не пункт — выбрать нельзя, клик просто закрывает попап). -->
-                                <Panel>
+                                     (не пункт — выбрать нельзя, клик просто закрывает попап).
+                                     RoundedClip — прямые углы полосы прокрутки срезаются
+                                     скруглением плашки: ClipToBounds у Border режет только
+                                     ПРЯМОУГОЛЬНИКОМ, поэтому в углах полоса вылезала на
+                                     рамку. Радиус на пиксель меньше плашки (её рамка). -->
+                                <Panel b:RoundedClip.Radius="{DynamicResource RadiusBase}">
                                     <ScrollViewer HorizontalScrollBarVisibility="{TemplateBinding ScrollViewer.HorizontalScrollBarVisibility}"
                                                   VerticalScrollBarVisibility="{TemplateBinding ScrollViewer.VerticalScrollBarVisibility}"
                                                   IsDeferredScrollingEnabled="{TemplateBinding (ScrollViewer.IsDeferredScrollingEnabled)}">
+                                        <!-- Воздух вокруг пунктов — здесь, ВНУТРИ области
+                                             прокрутки (у плашки Padding нулевой, иначе
+                                             полоса отходит от её краёв, см. Controls.axaml). -->
                                         <ItemsPresenter Name="PART_ItemsPresenter"
-                                                        Margin="{DynamicResource ComboBoxDropdownContentMargin}"
+                                                        Margin="0,2"
                                                         ItemsPanel="{TemplateBinding ItemsPanel}" />
                                     </ScrollViewer>
                                     <TextBlock x:Name="EmptyPlaceholder"

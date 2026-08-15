@@ -121,18 +121,16 @@
                            Margin="0,0,0,6"
                            FontWeight="{StaticResource FontWeightBold}"
                            Foreground="{StaticResource BrushSecondaryText}" />
-                <!-- Правый Padding — 0 (базовый стиль TextBox даёт 10,6): в шаблоне поля
-                     Padding охватывает и ScrollViewer, поэтому иначе полоса прокрутки
-                     висела бы в 10px от рамки. -->
+                <!-- Класс multiline (Controls.axaml): полоса прокрутки во всю высоту поля,
+                     воздух текста — внутри области прокрутки. -->
                 <TextBox x:Name="DescBox"
+                         Classes="multiline"
                          Watermark="Добавить описание в Markdown (необязательно)"
                          Height="100"
                          Margin="0,0,0,4"
-                         Padding="10,6,0,6"
                          AcceptsReturn="True"
                          AcceptsTab="True"
                          TextWrapping="Wrap"
-                         ScrollViewer.VerticalScrollBarVisibility="Auto"
                          CornerRadius="{StaticResource RadiusMedium}" />
             </StackPanel>
 

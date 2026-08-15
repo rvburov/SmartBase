@@ -63,18 +63,15 @@
                    FontWeight="{StaticResource FontWeightBold}"
  />
 
-        <!-- Журнал (заполняет остаток). Правый Padding — 0 (базовый стиль TextBox даёт 10,6):
-             в шаблоне поля Padding охватывает и ScrollViewer, иначе полоса прокрутки висела
-             бы в 10px от рамки. -->
+        <!-- Журнал (заполняет остаток). Класс multiline (Controls.axaml): полоса прокрутки
+             во всю высоту поля, воздух текста — внутри области прокрутки. -->
         <TextBox x:Name="LogBox"
+                 Classes="multiline"
                  IsReadOnly="True"
                  AcceptsReturn="True"
                  TextWrapping="Wrap"
-                 Padding="10,6,0,6"
                  FontFamily="{StaticResource FontFamilyBase}"
-                 FontSize="{DynamicResource FontSizeSmall}"
-                 VerticalContentAlignment="Top"
-                 ScrollViewer.VerticalScrollBarVisibility="Auto" />
+                 FontSize="{DynamicResource FontSizeSmall}" />
 
     </DockPanel>
 
