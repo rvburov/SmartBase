@@ -522,15 +522,15 @@ public partial class RecordDialog : Window
     private void ShowError(string message)
     {
         var pos = Position;
-        ErrorBanner.Show(message);
+        NoticeBanner.Show(message);
         KeepWindowPosition(pos);
     }
 
     private void HideError()
     {
-        if (!ErrorBanner.IsVisible) return;
+        if (!NoticeBanner.IsVisible) return;
         var pos = Position;
-        ErrorBanner.Hide();
+        NoticeBanner.Hide();
         KeepWindowPosition(pos);
     }
 }

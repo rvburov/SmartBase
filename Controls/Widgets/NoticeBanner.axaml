@@ -1,13 +1,19 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             x:Class="SmartBase.Controls.Widgets.ErrorBanner"
+             x:Class="SmartBase.Controls.Widgets.NoticeBanner"
              IsVisible="False">
 
-    <Border Background="#1AFF3B30"
+    <!-- ЕДИНЫЙ вид уведомления на всё приложение: иконка-восклицание + красная рамка +
+         светло-красная подложка + красный текст. Любая новая «красная плашка» (ошибка
+         валидации, пояснение в диалоге, тост) делается ЭТИМ виджетом, а не своей вёрсткой.
+         Цвета — только из палитры (Colors.axaml), размер текста — из Typography.axaml. -->
+    <Border Background="{StaticResource BrushRedLight}"
             BorderBrush="{StaticResource BrushRed}"
             BorderThickness="{DynamicResource BorderLine}"
             CornerRadius="{StaticResource RadiusBase}"
             Padding="10,7">
+        <!-- Иконка — своя колонка слева, по центру ВСЕЙ плашки (не по первой строке):
+             текст многострочный, и иконка стоит напротив его середины. -->
         <Grid ColumnDefinitions="Auto,8,*">
             <Viewbox Grid.Column="0" Width="{StaticResource IconSizeSmall}" Height="{StaticResource IconSizeSmall}"
                      VerticalAlignment="Center">

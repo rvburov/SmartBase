@@ -132,17 +132,9 @@
 
         <!-- Привязка к разделу: столбец несёт роль («Исполнитель», «Назначил», «Статус»,
              «Дата», «Описание») — данные из него подтягиваются в календарь или задачи.
-             Текст собирается по флагам поля в code-behind; роли нет — блока нет. -->
-        <Border x:Name="RoleNote" IsVisible="False"
-                Background="{StaticResource BrushRedLight}"
-                CornerRadius="{StaticResource RadiusMedium}"
-                Padding="12,10"
-                Margin="0,0,0,12">
-            <TextBlock x:Name="RoleNoteText"
-                       TextWrapping="Wrap"
-                       LineHeight="18"
-                       Foreground="{StaticResource BrushRed}" />
-        </Border>
+             Текст собирается по флагам поля в code-behind; роли нет — блока нет.
+             Общий баннер (иконка + красная рамка), как у ошибок и пояснения SystemNote. -->
+        <w:NoticeBanner x:Name="RoleNote" Margin="0,0,0,12" />
 
         <!-- Отображать в календаре: виден только для типа «Дата». Если включено — значения
              этого поля показываются в календаре как события. Несколько полей-дат коллекции
@@ -494,20 +486,12 @@
 
         <!-- Пояснение для системных колонок «Название»/«Описание»: скрыто по умолчанию,
              показывается только в системном режиме (см. code-behind). Объясняет, почему
-             тип заблокирован и свойство нельзя удалить. -->
-        <Border x:Name="SystemNote" IsVisible="False"
-                Background="{StaticResource BrushRedLight}"
-                CornerRadius="{StaticResource RadiusMedium}"
-                Padding="12,10"
-                Margin="0,0,0,12">
-            <TextBlock TextWrapping="Wrap"
-                       LineHeight="18"
-                       Foreground="{StaticResource BrushRed}"
-                       Text="Это базовое свойство записи — на нём держится целостность коллекции. Его нельзя удалить, а тип изменить: доступно только переименование." />
-        </Border>
+             тип заблокирован и свойство нельзя удалить. Тот же баннер, что у ошибок
+             валидации: иконка + красная рамка, текст обычного размера. -->
+        <w:NoticeBanner x:Name="SystemNote" Margin="0,0,0,12" />
 
         <!-- Уведомление об ошибке валидации -->
-        <w:ErrorBanner x:Name="ErrorBanner" Margin="0,0,0,12" />
+        <w:NoticeBanner x:Name="NoticeBanner" Margin="0,0,0,12" />
 
         <!-- Кнопки -->
         <Grid ColumnDefinitions="*,Auto,8,Auto" Margin="0,4,0,0">

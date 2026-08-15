@@ -43,7 +43,7 @@
                    IsLightDismissEnabled="False">
                 <Border Background="{StaticResource BrushBg}"
                         CornerRadius="{StaticResource RadiusBase}">
-                    <w:ErrorBanner x:Name="ErrorBanner" MinWidth="220" />
+                    <w:NoticeBanner x:Name="NoticeBanner" MinWidth="220" />
                 </Border>
             </Popup>
         </Grid>

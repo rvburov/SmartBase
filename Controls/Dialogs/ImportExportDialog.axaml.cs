@@ -145,7 +145,7 @@ public partial class ImportExportDialog : Window
         ExportFolderBox.TextChanged += (_, _) => HideError();
         ExportNameBox.TextChanged   += (_, _) => HideError();
 
-        if (!string.IsNullOrEmpty(error)) ErrorBanner.Show(error);
+        if (!string.IsNullOrEmpty(error)) NoticeBanner.Show(error);
     }
 
     private int IndexOfDb(int dbId)
@@ -177,7 +177,7 @@ public partial class ImportExportDialog : Window
         ImportFields.IsVisible = !export;
         ExportFields.IsVisible = export;
         ConfirmBtn.Content     = export ? "Экспортировать" : "Импортировать";
-        if (ErrorBanner.IsVisible) ErrorBanner.Hide();
+        if (NoticeBanner.IsVisible) NoticeBanner.Hide();
         UpdateTypeVisibility(keepPosition: false);
         if (keepPosition) KeepWindowPosition(pos);
     }
@@ -478,15 +478,15 @@ public partial class ImportExportDialog : Window
     private void ShowError(string message)
     {
         var pos = Position;
-        ErrorBanner.Show(message);
+        NoticeBanner.Show(message);
         KeepWindowPosition(pos);
     }
 
     private void HideError()
     {
-        if (!ErrorBanner.IsVisible) return;
+        if (!NoticeBanner.IsVisible) return;
         var pos = Position;
-        ErrorBanner.Hide();
+        NoticeBanner.Hide();
         KeepWindowPosition(pos);
     }
 

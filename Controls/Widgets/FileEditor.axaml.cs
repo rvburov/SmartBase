@@ -17,7 +17,7 @@ namespace SmartBase.Controls.Widgets;
 /// «имя — файл не найден», если пути нет, и серое «Выбрать файл…» для пустого значения.
 /// Правка — по аналогии с датой: ручной ввод пути в поле + правая иконка-скрепка,
 /// открывающая системный выбор файла. Неверный путь при ручном вводе — красный текст и
-/// плашка-уведомление (<see cref="ErrorBanner"/>). Хранит/отдаёт путь через <see cref="Storage"/>.
+/// плашка-уведомление (<see cref="NoticeBanner"/>). Хранит/отдаёт путь через <see cref="Storage"/>.
 /// </summary>
 public partial class FileEditor : UserControl
 {
@@ -318,8 +318,8 @@ public partial class FileEditor : UserControl
     // произвольное значение от прежнего типа → как есть).
     private static string SafeFileName(string path) => Core.Models.FileValue.DisplayName(path);
 
-    private void ShowError(string message) { ErrorBanner.Show(message); ErrPop.IsOpen = true; }
-    private void HideError()               { ErrorBanner.Hide();        ErrPop.IsOpen = false; }
+    private void ShowError(string message) { NoticeBanner.Show(message); ErrPop.IsOpen = true; }
+    private void HideError()               { NoticeBanner.Hide();        ErrPop.IsOpen = false; }
 
     // Приложение потеряло фокус — прячем плашку (top-level popup), чтобы не висела поверх
     // других программ; текст ошибки в баннере сохраняем и вернём на Activated.

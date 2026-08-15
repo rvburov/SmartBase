@@ -72,7 +72,7 @@ public partial class DateEditor : UserControl
         DoneBtn.Click += (_, _) =>
         {
             RecomputeFromUi();
-            if (!ErrorBanner.IsVisible) Pop.IsOpen = false;
+            if (!NoticeBanner.IsVisible) Pop.IsOpen = false;
         };
 
         Input.KeyDown   += (_, e) => { if (e.Key == Key.Enter) CommitManual(); };
@@ -225,9 +225,9 @@ public partial class DateEditor : UserControl
         if (changed) Changed?.Invoke(this, EventArgs.Empty);
     }
 
-    private void ShowError(string message) => ErrorBanner.Show(message);
+    private void ShowError(string message) => NoticeBanner.Show(message);
 
-    private void HideError() => ErrorBanner.Hide();
+    private void HideError() => NoticeBanner.Hide();
 
     // Разложить значение по элементам выпадашки (без поднятия Changed).
     private void PushToUi(DateValue? v)

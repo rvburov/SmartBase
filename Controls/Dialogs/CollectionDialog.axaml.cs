@@ -90,15 +90,15 @@ public partial class CollectionDialog : Window
     private void ShowError(string message)
     {
         var pos = Position;            // баннер увеличит высоту — держим позицию
-        ErrorBanner.Show(message);
+        NoticeBanner.Show(message);
         KeepWindowPosition(pos);
     }
 
     private void HideError()
     {
-        if (!ErrorBanner.IsVisible) return;
+        if (!NoticeBanner.IsVisible) return;
         var pos = Position;
-        ErrorBanner.Hide();
+        NoticeBanner.Hide();
         KeepWindowPosition(pos);
     }
 

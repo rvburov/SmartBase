@@ -58,8 +58,8 @@ public partial class TaskListView : UserControl
         QuickExecutor.SelectedIndex = idx >= 0 ? idx : 0;
     }
 
-    public void ShowError(string message) => ErrorBanner.Show(message);
-    public void HideError()               { if (ErrorBanner.IsVisible) ErrorBanner.Hide(); }
+    public void ShowError(string message) => NoticeBanner.Show(message);
+    public void HideError()               { if (NoticeBanner.IsVisible) NoticeBanner.Hide(); }
 
     // ── Быстрое добавление ───────────────────────────────────────────────────
 

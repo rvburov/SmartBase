@@ -16,13 +16,13 @@ namespace SmartBase.Controls.Widgets;
 public static class Toast
 {
     /// <summary>Всплывашка-ошибка у <paramref name="anchor"/> — тем же баннером
-    /// <see cref="ErrorBanner"/>, что и в диалогах «Создать»/«Изменить» (единый стиль).</summary>
+    /// <see cref="NoticeBanner"/>, что и в диалогах «Создать»/«Изменить» (единый стиль).</summary>
     public static void Error(Control anchor, string message,
                              PlacementMode placement = PlacementMode.BottomEdgeAlignedLeft,
                              double seconds = 3.5)
     {
         if (anchor is null || string.IsNullOrEmpty(message)) return;
-        var banner = new ErrorBanner();
+        var banner = new NoticeBanner();
         banner.Show(message);
         Show(anchor, banner, placement, seconds);
     }

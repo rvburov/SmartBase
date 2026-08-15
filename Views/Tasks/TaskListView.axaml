@@ -13,7 +13,7 @@
     <Grid RowDefinitions="8,Auto,Auto,*" ColumnDefinitions="*,Auto" Margin="16,0,0,0">
 
         <!-- Ошибка (нет прав и т.п.) — тот же баннер, что в диалогах -->
-        <w:ErrorBanner Grid.Row="1" x:Name="ErrorBanner" Margin="0,0,16,8" />
+        <w:NoticeBanner Grid.Row="1" x:Name="NoticeBanner" Margin="0,0,16,8" />
 
         <!-- Строка быстрого добавления: название + Enter, срок, исполнитель, «Добавить» -->
         <Border Grid.Row="2"

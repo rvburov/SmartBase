@@ -53,7 +53,7 @@
                                   />
 
                         <!-- Уведомление об ошибке валидации (как в RecordDialog) -->
-                        <w:ErrorBanner x:Name="ErrorBanner" Margin="0,2,0,2" />
+                        <w:NoticeBanner x:Name="NoticeBanner" Margin="0,2,0,2" />
 
                         <Grid ColumnDefinitions="Auto,*,Auto">
                             <Button Grid.Column="0" x:Name="ClearBtn" Classes="dialog"

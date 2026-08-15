@@ -228,7 +228,7 @@ public partial class PropertyEditorDialog : Window
     {
         if (_systemMode || _editField is null || _repository is null)
         {
-            RoleNote.IsVisible = false;
+            RoleNote.Hide();
             return;
         }
 
@@ -247,12 +247,11 @@ public partial class PropertyEditorDialog : Window
         // Поле-дата коллекции с задачами — ещё и срок задачи, поэтому разделов у неё два.
         var binding = FieldRoleText.Binding(effective, _repository.HasTaskExecField(_collectionId));
 
-        RoleNote.IsVisible = binding is not null;
-        if (binding is null) return;
+        if (binding is null) { RoleNote.Hide(); return; }
 
-        RoleNoteText.Text =
+        RoleNote.Show(
             $"Это свойство привязано {binding}. Раздел берёт данные отсюда: " +
-            "если удалить свойство или снять привязку, они перестанут в нём отображаться.";
+            "если удалить свойство или снять привязку, они перестанут в нём отображаться.");
     }
 
     // ── Роли раздела: подтягивание одноимённых столбцов ─────────────────────────
@@ -741,7 +740,8 @@ public partial class PropertyEditorDialog : Window
 
         // Пояснение: «Название»/«Описание» — базовые свойства целостности, их нельзя
         // удалить и сменить тип. Показываем только в этом (системном) режиме.
-        SystemNote.IsVisible = true;
+        SystemNote.Show("Это базовое свойство записи — на нём держится целостность коллекции. "
+                      + "Его нельзя удалить, а тип изменить: доступно только переименование.");
 
         NameBox.Text = currentName;
 
@@ -756,15 +756,15 @@ public partial class PropertyEditorDialog : Window
     private void ShowError(string message)
     {
         var pos = Position;            // баннер увеличит высоту — держим позицию
-        ErrorBanner.Show(message);
+        NoticeBanner.Show(message);
         KeepWindowPosition(pos);
     }
 
     private void HideError()
     {
-        if (!ErrorBanner.IsVisible) return;
+        if (!NoticeBanner.IsVisible) return;
         var pos = Position;
-        ErrorBanner.Hide();
+        NoticeBanner.Hide();
         KeepWindowPosition(pos);
     }
 

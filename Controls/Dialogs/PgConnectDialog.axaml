@@ -87,7 +87,7 @@
                  CornerRadius="{StaticResource RadiusMedium}" />
 
         <!-- Ошибка подключения/валидации -->
-        <w:ErrorBanner x:Name="ErrorBanner" Margin="0,0,0,12" />
+        <w:NoticeBanner x:Name="NoticeBanner" Margin="0,0,0,12" />
 
         <!-- Проверка соединения: «Проверяю…» серым, успех — зелёным -->
         <TextBlock x:Name="StatusText"

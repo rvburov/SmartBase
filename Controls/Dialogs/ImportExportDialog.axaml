@@ -406,7 +406,7 @@
 
         <!-- Уведомление об ошибке и кнопки — под полосой -->
         <StackPanel Grid.Row="2" Margin="20,12,20,16" Spacing="0">
-            <w:ErrorBanner x:Name="ErrorBanner" Margin="0,0,0,12" />
+            <w:NoticeBanner x:Name="NoticeBanner" Margin="0,0,0,12" />
             <Grid ColumnDefinitions="*,Auto,8,Auto">
                 <Button Grid.Column="1" x:Name="CancelBtn" Classes="dialog"
                         Content="Отмена" />
