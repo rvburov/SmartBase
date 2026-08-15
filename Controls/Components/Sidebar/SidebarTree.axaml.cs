@@ -30,9 +30,6 @@ public partial class SidebarTree : UserControl
 
     // Конструктор: выбор несёт (DbId, CollectionId) — при мульти-маунте id не уникален между БД.
     public event EventHandler<EntityRef>? CollectionSelected;
-    // Задачи: клик по коллекции открывает её (список сужается до неё), повторный клик или
-    // пропажа коллекции — null (агрегат по отмеченным чекбоксами).
-    public event EventHandler<EntityRef?>? CollectionOpened;
     public event EventHandler<int>?       CollectionDeleted;
     public event EventHandler?            RequestRefresh;
     // Клик по запертой базе (без допуска) — MainWindow предлагает ввести пароль.
@@ -174,19 +171,14 @@ public partial class SidebarTree : UserControl
         RestoreExpanded(_roots, expandedIds);
 
         // Мультивыделение не переживает перестройку дерева; восстанавливаем только
-        // подсветку открытой коллекции по (DbId, Id) (в режимах конструктора и задач).
+        // подсветку открытой коллекции по (DbId, Id) (режим конструктора — в календаре и
+        // задачах открытой коллекции нет, там всё решают галочки).
         _selectedNodes.Clear();
-        if (_mode is SidebarMode.Constructor or SidebarMode.Tasks && _open is { } open)
+        if (_mode is SidebarMode.Constructor && _open is { } open)
         {
             var node = FindNode(_roots, "collection", open.DbId, open.Id);
             if (node is not null) { _selectedNodes.Add(node); ExpandAncestors(_roots, node); }
-            else
-            {
-                _open = null;
-                // Открытая в задачах коллекция пропала (удалена/БД размонтирована) —
-                // модуль задач должен вернуться к агрегатному списку.
-                if (_mode == SidebarMode.Tasks) CollectionOpened?.Invoke(this, null);
-            }
+            else _open = null;
         }
 
         RebuildRows();
@@ -629,33 +621,13 @@ public partial class SidebarTree : UserControl
             return;
         }
 
-        if (_mode == SidebarMode.Calendar)
+        // Календарь и задачи — списки-агрегаты по ОТМЕЧЕННЫМ коллекциям: клик по строке
+        // переключает её галочку. Раньше задачи вместо этого «открывали» коллекцию —
+        // список сужался до одной, и галочки остальных ни на что не влияли.
+        if (_mode is SidebarMode.Calendar or SidebarMode.Tasks)
         {
             _selectedNodes.Clear();
             ToggleCollection(node);   // RebuildRows внутри
-        }
-        else if (_mode == SidebarMode.Tasks)
-        {
-            // Клик по коллекции — открыть её (список задач сужается до неё, быстрые
-            // задачи создаются в ней); повторный клик по открытой — назад к агрегату.
-            _selectedNodes.Clear();
-            if (node.Id.HasValue)
-            {
-                if (_open is { } cur && cur.DbId == node.DbId && cur.Id == node.Id.Value)
-                {
-                    _open = null;
-                    RebuildRows();
-                    CollectionOpened?.Invoke(this, null);
-                }
-                else
-                {
-                    _open = new EntityRef(node.DbId, node.Id.Value);
-                    _selectedNodes.Add(node);
-                    RebuildRows();
-                    CollectionOpened?.Invoke(this, _open);
-                }
-            }
-            else RebuildRows();
         }
         else
         {
@@ -676,7 +648,7 @@ public partial class SidebarTree : UserControl
     private void ResetSelectionToOpen()
     {
         _selectedNodes.Clear();
-        if (_mode is SidebarMode.Constructor or SidebarMode.Tasks && _open is { } open)
+        if (_mode is SidebarMode.Constructor && _open is { } open)
         {
             var node = FindNode(_roots, "collection", open.DbId, open.Id);
             if (node is not null) _selectedNodes.Add(node);

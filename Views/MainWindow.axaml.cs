@@ -267,15 +267,15 @@ public partial class MainWindow : Window
             CalendarModule.SetActiveIds(CalendarSidebar.GetActiveIds());
         };
 
-        // Сайдбар задач: чекбоксы фильтруют агрегат, клик по коллекции открывает/закрывает её,
-        // тумблеры user-полей и смена цвета приходят событием CalendarsChanged.
+        // Сайдбар задач: галочки решают, какие коллекции показывать (клик по строке —
+        // та же галочка, как в календаре); тумблеры user-полей и смена цвета приходят
+        // событием CalendarsChanged.
         TasksSidebar.ActiveIdsChanged += (_, ids) => TasksModule.SetActiveIds(ids);
         TasksSidebar.CalendarsChanged += (_, _) =>
         {
             TasksModule.SetActiveIds(TasksSidebar.GetActiveIds());
             ConstructorSidebar.Refresh();
         };
-        TasksSidebar.CollectionOpened += (_, sel) => TasksModule.SetOpenCollection(sel);
         // CRUD коллекций из сайдбара задач → обновить календарь и конструктор.
         TasksSidebar.RequestRefresh += (_, _) =>
         {

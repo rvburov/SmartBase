@@ -19,11 +19,24 @@ public partial class TaskListView : UserControl
     public event EventHandler<TaskRecord>?      TaskActivated;
     public event EventHandler<QuickAddRequest>? QuickAddRequested;
 
+    // Показанные группы и свёрнутые коллекции (ключ (DbId, ColId) — как в сайдбаре).
+    // Свёрнутость живёт в самом списке: это состояние показа, база о нём ничего не знает.
+    private IReadOnlyList<TaskGroup> _groups = [];
+    private readonly HashSet<(int DbId, int ColId)> _collapsed = [];
+    private string _emptyHint = "Нет задач";
+
     public TaskListView()
     {
         InitializeComponent();
 
-        CardsHost.ItemTemplate = new FuncDataTemplate<TaskCardVm>((vm, _) => BuildCard(vm), supportsRecycling: false);
+        // Список смешанный: заголовок коллекции + её карточки, поэтому шаблон один на оба
+        // типа строки (виртуализация строит контейнеры по общему ItemTemplate).
+        CardsHost.ItemTemplate = new FuncDataTemplate<object>((item, _) => item switch
+        {
+            TaskGroupHeaderVm header => BuildGroupHeader(header),
+            TaskCardVm card          => BuildCard(card),
+            _                        => new Control(),
+        }, supportsRecycling: false);
 
         // Срок по умолчанию — вечер текущего дня; сама дата пуста («без даты»).
         QuickTimeField.Time = new TimeSpan(18, 0, 0);
@@ -39,11 +52,48 @@ public partial class TaskListView : UserControl
 
     // ── Публичный API (для контроллера) ──────────────────────────────────────
 
-    public void SetTasks(IReadOnlyList<TaskRecord> tasks)
+    /// <summary>
+    /// Показать задачи, разложенные по коллекциям: над каждой пачкой — строка с названием
+    /// коллекции и числом задач. Порядок групп задаёт контроллер (как в сайдбаре).
+    /// <paramref name="emptyHint"/> — что написать, когда показывать нечего.
+    /// </summary>
+    public void SetGroups(IReadOnlyList<TaskGroup> groups, string emptyHint = "Нет задач")
     {
-        var now = DateTime.Now;
-        CardsHost.ItemsSource = tasks.Select(t => new TaskCardVm(t, now)).ToList();
-        EmptyLabel.IsVisible  = tasks.Count == 0;
+        _groups    = groups;
+        _emptyHint = emptyHint;
+
+        // Свёрнутость помним по (DbId, ColId), а не по индексу: список перезагружается на
+        // каждый символ поиска и после любой правки — группы не должны раскрываться сами.
+        // Ключи исчезнувших коллекций чистим, иначе набор растёт всё время работы.
+        var alive = groups.Select(g => (g.DbId, g.ColId)).ToHashSet();
+        _collapsed.RemoveWhere(k => !alive.Contains(k));
+
+        RebuildItems();
+    }
+
+    private void RebuildItems()
+    {
+        var now   = DateTime.Now;
+        var items = new List<object>();
+        foreach (var g in _groups)
+        {
+            var collapsed = _collapsed.Contains((g.DbId, g.ColId));
+            items.Add(new TaskGroupHeaderVm(g, collapsed, first: items.Count == 0));
+            if (collapsed) continue;
+            foreach (var t in g.Tasks) items.Add(new TaskCardVm(t, now));
+        }
+
+        CardsHost.ItemsSource = items;
+        EmptyLabel.Text       = _emptyHint;
+        // Свёрнутая группа — не пустой список: подсказку показываем, только когда групп нет.
+        EmptyLabel.IsVisible  = _groups.Count == 0;
+    }
+
+    private void ToggleGroup(TaskGroup group)
+    {
+        var key = (group.DbId, group.ColId);
+        if (!_collapsed.Remove(key)) _collapsed.Add(key);
+        RebuildItems();
     }
 
     // Опции исполнителя строки быстрого добавления (пользователи целевой БД).
@@ -81,6 +131,88 @@ public partial class TaskListView : UserControl
         var executor = QuickExecutor.SelectedItem as string ?? CurrentUser.DisplayName;
         QuickAddRequested?.Invoke(this, new QuickAddRequest(title, due, executor));
         QuickTitle.Text = "";
+    }
+
+    // ── Заголовок группы (коллекция) ─────────────────────────────────────────
+
+    private Control BuildGroupHeader(TaskGroupHeaderVm vm)
+    {
+        var secondary = (IBrush)this.FindResource("BrushSecondaryText")!;
+        var large     = (double)this.FindResource("FontSizeLarge")!;
+
+        var row = new StackPanel
+        {
+            Orientation       = Orientation.Horizontal,
+            Spacing           = 8,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+
+        // Стрелка — та же, что у групп и баз в сайдбаре (Viewbox 24×24 + Path обводкой):
+        // раскрытая коллекция смотрит вниз, свёрнутая — вправо.
+        row.Children.Add(Chevron(vm.IsCollapsed ? "IconChevronRight" : "IconChevronDown", secondary));
+
+        row.Children.Add(new TextBlock
+        {
+            Text              = vm.Title,
+            FontSize          = large,
+            FontWeight        = (FontWeight)this.FindResource("FontWeightBold")!,
+            TextTrimming      = TextTrimming.CharacterEllipsis,
+            VerticalAlignment = VerticalAlignment.Center,
+        });
+
+        // База показывается, только когда их несколько (иначе шум): «· Основная».
+        if (vm.Subtitle.Length > 0)
+            row.Children.Add(new TextBlock
+            {
+                Text = $"· {vm.Subtitle}", Foreground = secondary,
+                VerticalAlignment = VerticalAlignment.Center,
+            });
+
+        row.Children.Add(new TextBlock
+        {
+            Text = vm.CountText, Foreground = secondary,
+            VerticalAlignment = VerticalAlignment.Center,
+        });
+
+        // Кликом сворачивается вся строка, а не одна стрелка, — как строка группы в сайдбаре.
+        // Первая группа стоит вплотную к строке быстрого добавления, следующие отбиваются
+        // воздухом сверху: видно, где кончаются задачи предыдущей коллекции.
+        var header = new Border
+        {
+            Background = Brushes.Transparent,
+            Padding    = new Thickness(0, 2),
+            Margin     = new Thickness(0, vm.IsFirst ? 0 : 12, 0, 8),
+            Cursor     = new Cursor(StandardCursorType.Hand),
+            Child      = row,
+        };
+        header.Tapped += (_, e) => { e.Handled = true; ToggleGroup(vm.Group); };
+        return header;
+    }
+
+    // Стрелка сайдбара: геометрия из общего реестра иконок, обводка вторичным цветом.
+    private static Control Chevron(string iconKey, IBrush stroke)
+    {
+        var app       = Application.Current!;
+        var geometry  = app.TryFindResource(iconKey, out var res) ? res as Geometry : null;
+        var size      = app.TryFindResource("IconSizeSmall",   out var s) && s is double d  ? d  : 16;
+        var thickness = app.TryFindResource("IconStrokeSmall", out var t) && t is double th ? th : 1.2;
+
+        var canvas = new Canvas { Width = 24, Height = 24 };
+        canvas.Children.Add(new Avalonia.Controls.Shapes.Path
+        {
+            Data            = geometry,
+            Stroke          = stroke,
+            StrokeThickness = thickness,
+            StrokeLineCap   = PenLineCap.Round,
+            StrokeJoin      = PenLineJoin.Round,
+        });
+
+        return new Viewbox
+        {
+            Width = size, Height = size,
+            VerticalAlignment = VerticalAlignment.Center,
+            Child = canvas,
+        };
     }
 
     // ── Карточка задачи ──────────────────────────────────────────────────────
@@ -188,6 +320,38 @@ public partial class TaskListView : UserControl
         Padding      = new Thickness(10, 3),
         Child        = new TextBlock { Text = text, Foreground = fg, FontWeight = FontWeight.SemiBold },
     };
+}
+
+/// <summary>Группа списка: коллекция и её задачи (порядок задаёт контроллер).</summary>
+/// <param name="DbId">База коллекции — вместе с <paramref name="ColId"/> ключ свёрнутости
+/// (id коллекций не уникальны между БД).</param>
+/// <param name="Title">Название коллекции (одной строкой).</param>
+/// <param name="Subtitle">Имя базы — только при нескольких смонтированных БД, иначе "".</param>
+public sealed record TaskGroup(int DbId, int ColId, string Title, string Subtitle,
+                               IReadOnlyList<TaskRecord> Tasks);
+
+// ── Модель строки-заголовка группы ───────────────────────────────────────────
+public sealed class TaskGroupHeaderVm(TaskGroup group, bool collapsed, bool first)
+{
+    public TaskGroup Group       => group;
+    public string    Title       => group.Title;
+    public string    Subtitle    => group.Subtitle;
+    public bool      IsCollapsed => collapsed;
+    public bool      IsFirst     => first;
+
+    /// <summary>«1 задача» / «2 задачи» / «5 задач» — с учётом 11–14.</summary>
+    public string CountText
+    {
+        get
+        {
+            var count  = group.Tasks.Count;
+            var mod100 = count % 100;
+            var mod10  = count % 10;
+            var word = mod100 is >= 11 and <= 14 ? "задач"
+                     : mod10 switch { 1 => "задача", >= 2 and <= 4 => "задачи", _ => "задач" };
+            return $"{count} {word}";
+        }
+    }
 }
 
 // ── Модель карточки: тексты и кисти чипов считаются один раз при загрузке ────

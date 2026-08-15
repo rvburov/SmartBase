@@ -9,8 +9,13 @@ using SmartBase.Utils;
 namespace SmartBase.Views.Tasks;
 
 // Оркестратор раздела «Задачи» (упрощённый CalendarControllerView): агрегат задач по
-// отмеченным коллекциям всех допущенных БД либо одна открытая коллекция; поиск и
-// сортировка — в памяти по загруженному (v1 читает не более TaskLimit на БД).
+// ОТМЕЧЕННЫМ коллекциям всех допущенных БД, сгруппированный по коллекциям (заголовок
+// коллекции + её задачи); поиск и сортировка — в памяти по загруженному (v1 читает не
+// более TaskLimit на БД).
+//
+// «Открытой коллекции» здесь нет: клик по строке сайдбара — та же галочка, что и в
+// календаре. Раньше клик сужал список до одной коллекции, и галочки остальных ни на что
+// не влияли — увидеть задачи двух коллекций разом было нельзя.
 public partial class TasksControllerView : UserControl
 {
     // Создание задачи могло создать коллекцию/авто-поля — сайдбары и таблицы обновляются снаружи.
@@ -20,9 +25,11 @@ public partial class TasksControllerView : UserControl
 
     private readonly List<(int DbId, string Name, ConstructorRepository Repo)> _dbs = [];
     private Dictionary<int, HashSet<int>>? _activeByDb;
-    private EntityRef? _openCollection;
     private string _searchQuery = "";
     private List<TaskRecord> _loaded = [];
+    // Порядок коллекций (как в сайдбаре) для групп списка: (DbId, ColId) → место. Снимается
+    // при загрузке — ApplyToList зовётся и на каждый символ поиска.
+    private Dictionary<(int DbId, int ColId), int> _collectionOrder = [];
     private long _gen;   // поколение загрузки: устаревшие результаты не применяются
 
     private ConstructorRepository? RepoFor(int dbId)
@@ -72,15 +79,7 @@ public partial class TasksControllerView : UserControl
         RefreshCurrent();
     }
 
-    public void SetOpenCollection(EntityRef? open)
-    {
-        _openCollection = open;
-        RefreshCurrent();
-    }
-
     // Обновить набор смонтированных БД (live add/remove) без переподписки обработчиков.
-    // Открытую коллекцию не сбрасываем: если она пропала вместе с БД, сайдбар сам
-    // пришлёт CollectionOpened(null) при своём Refresh.
     public void SetDatabases(IReadOnlyList<DatabaseManager> databases)
     {
         SetDatabaseList(databases);
@@ -124,17 +123,6 @@ public partial class TasksControllerView : UserControl
     private async Task<List<TaskRecord>> LoadAllAsync()
     {
         var result = new List<TaskRecord>();
-        if (_openCollection is { } oc)
-        {
-            if (RepoFor(oc.DbId) is { } repo)
-            {
-                var part = await repo.LoadTasksAsync(new HashSet<int> { oc.Id }, TaskLimit);
-                foreach (var t in part) t.DbId = oc.DbId;
-                result.AddRange(part);
-            }
-            return result;
-        }
-
         foreach (var (dbId, _, repo) in _dbs.ToList())
         {
             ISet<int>? active = _activeByDb is not null && _activeByDb.TryGetValue(dbId, out var s) ? s : null;
@@ -145,23 +133,27 @@ public partial class TasksControllerView : UserControl
         return result;
     }
 
-    // Заголовок навбара и опции исполнителя быстрого добавления — по целевой коллекции/БД.
+    // Заголовок навбара, порядок коллекций для групп и опции исполнителя быстрого добавления.
     private void UpdateChrome()
     {
-        string title = "Задачи";
-        if (_openCollection is { } oc && RepoFor(oc.DbId) is { } repo)
-        {
-            var col = repo.GetAllCollections().FirstOrDefault(c => c.Id == oc.Id);
-            if (col is not null) title = col.Name;
-        }
-        NavbarControl.SetTitle(title);
+        NavbarControl.SetTitle("Задачи");
 
-        var (dbId, _) = ResolveQuickAddTarget();
-        var options = RepoFor(dbId)?.GetUserOptions() ?? [];
+        // Коллекции — тем же порядком, что в сайдбаре (GetAllCollections отдаёт их по
+        // Position), чтобы группы списка шли как строки дерева.
+        var order = new Dictionary<(int DbId, int ColId), int>();
+        foreach (var (dbId, _, repo) in _dbs)
+            foreach (var c in repo.GetAllCollections())
+                if (c.Id is int cid)
+                    order[(dbId, cid)] = order.Count;
+        _collectionOrder = order;
+
+        var (targetDbId, _) = ResolveQuickAddTarget();
+        var options = RepoFor(targetDbId)?.GetUserOptions() ?? [];
         TaskList.SetUserOptions(options, CurrentUser.DisplayName);
     }
 
-    // Поиск и сортировка — в памяти: срок ↑, «без даты» в конец, тай-брейк (DbId, Id).
+    // Поиск и сортировка — в памяти. Задачи разложены по коллекциям (порядок групп — как в
+    // сайдбаре), внутри группы: срок ↑, «без даты» в конец, тай-брейк по Id.
     private void ApplyToList()
     {
         IEnumerable<TaskRecord> items = _loaded;
@@ -171,33 +163,33 @@ public partial class TasksControllerView : UserControl
             items = items.Where(t => t.Title.Contains(q, StringComparison.CurrentCultureIgnoreCase));
         }
 
-        var list = items.ToList();
-        list.Sort((a, b) =>
-        {
-            var an = a.DueStart is null;
-            var bn = b.DueStart is null;
-            if (an != bn) return an ? 1 : -1;
-            if (!an)
-            {
-                var byDue = a.DueStart!.Value.CompareTo(b.DueStart!.Value);
-                if (byDue != 0) return byDue;
-            }
-            var byDb = a.DbId.CompareTo(b.DbId);
-            if (byDb != 0) return byDb;
-            return (a.Id ?? 0).CompareTo(b.Id ?? 0);
-        });
+        // Базу в подзаголовке показываем, только когда их несколько (иначе шум).
+        var groups = TaskGrouping.Build(items, _collectionOrder, _dbs.Count > 1 ? NameOfDb : null);
 
-        TaskList.SetTasks(list);
+        // Пусто по разным причинам — подсказка разная: снятые галочки исправляются в сайдбаре.
+        TaskList.SetGroups(groups, NoTasksHint());
+    }
+
+    private string NameOfDb(int dbId)
+    {
+        foreach (var d in _dbs) if (d.DbId == dbId) return d.Name;
+        return "";
+    }
+
+    private string NoTasksHint()
+    {
+        if (!string.IsNullOrWhiteSpace(_searchQuery)) return "Ничего не найдено";
+        var noneChecked = _activeByDb is not null && _activeByDb.Count > 0 &&
+                          _activeByDb.Values.All(ids => ids.Count == 0);
+        return noneChecked ? "Отметьте коллекции в боковой панели" : "Нет задач";
     }
 
     // ── CRUD ─────────────────────────────────────────────────────────────────
 
-    // Цель быстрого добавления: открытая коллекция, иначе первая отмеченная чекбоксом,
-    // иначе (коллекций нет вовсе) — null в БД по умолчанию (репозиторий создаст «Без названия»).
+    // Цель быстрого добавления: первая отмеченная чекбоксом коллекция, иначе (коллекций нет
+    // вовсе) — null в БД по умолчанию (репозиторий создаст «Без названия»).
     private (int DbId, int? ColId) ResolveQuickAddTarget()
     {
-        if (_openCollection is { } oc) return (oc.DbId, oc.Id);
-
         foreach (var (dbId, _, repo) in _dbs)
         {
             HashSet<int>? active = _activeByDb is not null && _activeByDb.TryGetValue(dbId, out var s) ? s : null;
