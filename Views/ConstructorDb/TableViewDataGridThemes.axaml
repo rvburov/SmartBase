@@ -42,9 +42,10 @@
           DataGridScrollBarsSeparatorBackground — квадрат на пересечении полос был
           белым пятном между ними.
 
-     Имена частей шаблонов сохранены — код DataGrid (EnsureGridLine и др.), стили
-     /template/ в TableView.axaml и подсветка колонок RefreshColumnHighlights работают
-     без изменений, X-координаты линий не сдвигаются. -->
+     Имена частей шаблонов сохранены — код DataGrid (EnsureGridLine и др.) и стили
+     /template/ в TableView.axaml работают без изменений, X-координаты линий не
+     сдвигаются. Заливку выделенной колонки code-behind ставит фоном ContentPresenter'а
+     ячейки (звёздная колонка сетки шаблона) — линии сетки она не трогает. -->
 <ResourceDictionary xmlns="https://github.com/avaloniaui"
                     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
 

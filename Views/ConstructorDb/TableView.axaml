@@ -98,17 +98,17 @@
         </Style>
     </UserControl.Styles>
 
-    <!-- DataGrid + накладная рамка выделенной колонки (позиционируется в коде). -->
     <!-- ВНИМАНИЕ по линиям сетки. Линии рисует НАТИВНАЯ сетка DataGrid
          (GridLinesVisibility="All"): цвет — BrushSeparator, толщина — динамический токен
          SeparatorThickness через локальные копии тем (TableViewDataGridThemes.axaml),
          те же, что у линий всего приложения (Border.separator, Controls.axaml).
-         НЕ переводить на линии-Border в ячейках без проверки на Windows: слой подсветки
-         выделенных колонок (RefreshColumnHighlights в code-behind) позиционирует рамки по
-         X-координатам линий сетки — смена механизма сдвинет линии на ~1px и сломает
-         выравнивание. Вертикальные линии ЗАГОЛОВКОВ — Rectangle в тех же слотах Grid
+         НЕ переводить на линии-Border в ячейках без проверки на Windows.
+         Вертикальные линии ЗАГОЛОВКОВ — Rectangle в тех же слотах Grid
          "*,Auto", что и в ячейках (MakeCenteredHeader/MakeTextHeader) — округляются
-         одинаково с линиями строк и совпадают с ними по X при любом зуме/DPI. -->
+         одинаково с линиями строк и совпадают с ними по X при любом зуме/DPI.
+         Выделение колонки — голубая ЗАЛИВКА ячеек значений (как у выделенной записи):
+         фон ContentPresenter'а ячейки, звёздная колонка её сетки, поэтому линии не
+         перекрываются. Шапка не красится (см. ColumnSelectionBrush в code-behind). -->
     <Panel>
         <DataGrid x:Name="RecordsGrid"
                   AutoGenerateColumns="False"
@@ -129,15 +129,9 @@
                   VerticalScrollBarVisibility="Auto"
                   />
 
-        <!-- Слой голубых рамок выделенных колонок (по одной на колонку). Рамки
-             добавляются в коде (RefreshColumnHighlights). IsHitTestVisible=False —
-             клики проходят сквозь слой в таблицу. -->
-        <Canvas x:Name="ColumnHighlightLayer"
-                IsHitTestVisible="False" />
-
         <!-- Слой прозрачных полосок-«грипперов» у нижней границы строк для ручного
-             изменения высоты. В отличие от слоя рамок — кликабельный (ловит drag).
-             Полоски строятся в коде (RefreshRowResizeHandles) только в ручном режиме. -->
+             изменения высоты — кликабельный (ловит drag). Полоски строятся в коде
+             (RefreshRowResizeHandles) только в ручном режиме. -->
         <Canvas x:Name="RowResizeLayer"
                 IsHitTestVisible="True" />
     </Panel>

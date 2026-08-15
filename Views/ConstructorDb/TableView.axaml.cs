@@ -83,7 +83,6 @@ public partial class TableView : UserControl
     private bool _manualColResize;
     private bool _manualRowResize;
     private bool _snapPending;
-    private bool _highlightPending;   // отложенная перестройка рамок выделения
     private List<DbField>        _fields  = [];
     private List<TableColumnDef> _colDefs = [];
     private VirtualRowList?      _virtualRows;
@@ -112,8 +111,8 @@ public partial class TableView : UserControl
     // Скрытые записи (окно «Отображение записей»): id есть в множестве ⇒ строка скрыта.
     // Применяется на уровне SQL (excludeHidden в запросах страницы/фильтра), виртуализация цела.
     private HashSet<int> _hiddenRecords = [];
-    // Выделенные по клику в заголовок колонки (голубые рамки). Пусто — нет выделения.
-    // Обычный клик — одна колонка; Shift+клик — точечный toggle колонки.
+    // Выделенные по клику в заголовок колонки (голубая заливка ячеек — как у выделенной
+    // записи). Пусто — нет выделения. Обычный клик — одна колонка; Shift+клик — toggle.
     private readonly List<string> _selectedColumnKeys = [];
 
     // ── Фильтр/сортировка колонок (Excel-стиль) ───────────────────────────────
@@ -1060,6 +1059,7 @@ public partial class TableView : UserControl
             HorizontalAlignment = HorizontalAlignment.Stretch,
             VerticalAlignment   = VerticalAlignment.Stretch,
         };
+
         Grid.SetColumn(content, 0);
         host.Children.Add(content);
 
@@ -1242,7 +1242,20 @@ public partial class TableView : UserControl
 
     // ── Шаблоны ячеек ─────────────────────────────────────────────────────────
 
-    private IDataTemplate BuildCellTemplate(TableColumnDef def) =>
+    // Шаблон ячейки = содержимое (inner) + заливка выделения колонки: кисть колонки
+    // вешается на ContentPresenter ячейки при подключении к дереву (AttachColumnFill).
+    private IDataTemplate BuildCellTemplate(TableColumnDef def)
+    {
+        var inner = BuildCellContentTemplate(def);
+        return new FuncDataTemplate<TableRowVm>((row, _) =>
+        {
+            var content = inner.Build(row);
+            AttachColumnFill(content, def.Key);
+            return content;
+        });
+    }
+
+    private IDataTemplate BuildCellContentTemplate(TableColumnDef def) =>
         new FuncDataTemplate<TableRowVm>((row, _) =>
         {
             // Серые заливки «№»/«+» — без сглаживания (Aliased): на дробных позициях
@@ -1605,12 +1618,12 @@ public partial class TableView : UserControl
         else                   sel.Add(row);
     }
 
-    // ── Выделение колонок голубой рамкой (одиночное и Shift-диапазон) ──────────
+    // ── Выделение колонок голубой заливкой (одиночное и Shift-диапазон) ────────
 
     private void SelectColumn(string key, bool shift)
     {
         // Служебные колонки № и + не выделяем. «Название»/«Описание» выделять можно
-        // (синяя рамка появляется), но при удалении они отфильтровываются.
+        // (заливка появляется), но при удалении они отфильтровываются.
         if (key == TableColumnDef.NumKey || key == TableColumnDef.AddPropKey) return;
 
         if (shift)
@@ -1626,169 +1639,59 @@ public partial class TableView : UserControl
             _selectedColumnKeys.Add(key);
         }
 
-        // Порядок выделения держим по порядку колонок — для аккуратной отрисовки рамок.
+        // Порядок выделения держим по порядку колонок — как в списке ключей на удаление.
         _selectedColumnKeys.Sort((a, b) =>
             _colDefs.FindIndex(d => d.Key == a).CompareTo(_colDefs.FindIndex(d => d.Key == b)));
 
-        RefreshColumnHighlights();
+        ApplyColumnSelection();
     }
 
     private void ClearColumnSelection()
     {
         if (_selectedColumnKeys.Count == 0) return;
         _selectedColumnKeys.Clear();
-        _lastHighlights.Clear();
-        ColumnHighlightLayer.Children.Clear();
+        ApplyColumnSelection();
     }
 
-    // Откладывает перестройку рамок на следующий тик диспетчера — безопасно вызывать
-    // из LayoutUpdated (синхронная модификация Canvas там даёт «Infinite layout loop»).
-    private void ScheduleHighlightRefresh()
+    // Заливка выделенной колонки — ОДНА кисть на колонку (ключ → кисть): её держат ячейки
+    // ЗНАЧЕНИЙ (фон ContentPresenter, см. AttachColumnFill). Шапка не красится — заголовок
+    // остаётся прежним, выделение видно только по ячейкам свойства.
+    // Выделение/снятие — смена Color у самой кисти, поэтому виртуализация не мешает: новая
+    // ячейка получает ту же кисть и сразу верный цвет, а перекраска не требует обхода
+    // дерева и не зависит от скролла (прежний слой рамок пересчитывался в LayoutUpdated).
+    private readonly Dictionary<string, SolidColorBrush> _colSelBrushes = [];
+
+    private SolidColorBrush ColumnSelectionBrush(string key)
     {
-        if (_highlightPending) return;
-        _highlightPending = true;
-        Dispatcher.UIThread.Post(() =>
-        {
-            _highlightPending = false;
-            RefreshColumnHighlights();
-        }, DispatcherPriority.Background);
+        if (!_colSelBrushes.TryGetValue(key, out var brush))
+            _colSelBrushes[key] = brush = new SolidColorBrush(Colors.Transparent);
+        return brush;
     }
 
-    // Перерисовывает рамки поверх всех выделенных колонок: по одной на колонку.
-    // X/ширина — от заголовка; высота — до низа области строк (RowsPresenter), чтобы
-    // нижняя линия не уходила под горизонтальный скроллбар. Вызывается при выделении,
-    // скролле и изменении размеров.
-    // Геометрия последней отрисовки рамок — чтобы не трогать дерево, если ничего не
-    // изменилось (иначе перестройка в LayoutUpdated самоподдерживается циклом).
-    private readonly List<(double X, double W, double H)> _lastHighlights = [];
-
-    private void RefreshColumnHighlights()
+    // Красит кисти колонок под текущее выделение: цвет — тот же BrushAccentLight, что у
+    // выделенной записи (DataGridRow:selected, TableView.axaml).
+    private void ApplyColumnSelection()
     {
-        var panel = ColumnHighlightLayer;
-
-        // Считаем целевую геометрию рамок, НЕ трогая дерево.
-        var target = new List<(double X, double W, double H)>();
-
-        if (_selectedColumnKeys.Count > 0)
-        {
-            var rowsPresenter = RecordsGrid.GetVisualDescendants()
-                .FirstOrDefault(v => v.GetType().Name == "DataGridRowsPresenter") as Visual;
-
-            double h;
-            if (rowsPresenter is not null)
-            {
-                var bottomLeft = rowsPresenter.TranslatePoint(new Point(0, rowsPresenter.Bounds.Height), panel);
-                h = bottomLeft?.Y ?? RecordsGrid.Bounds.Height;
-            }
-            else
-            {
-                h = RecordsGrid.Bounds.Height;
-            }
-            h = Math.Min(h, panel.Bounds.Height - 2);
-
-            foreach (var key in _selectedColumnKeys)
-            {
-                var colIdx = _colDefs.FindIndex(d => d.Key == key);
-                if (colIdx < 0 || colIdx >= RecordsGrid.Columns.Count) continue;
-
-                var hdr = FindHeaderForColumn(colIdx);
-                if (hdr is null) continue;
-
-                var topLeft = hdr.TranslatePoint(new Point(0, 0), panel);
-                if (topLeft is null) continue;
-
-                var x = topLeft.Value.X;
-                var w = hdr.Bounds.Width;
-
-                // Колонка вне видимой области (за горизонтальным скроллом) — пропускаем.
-                if (x + w <= 0 || x >= panel.Bounds.Width) continue;
-
-                target.Add((x, w, h));
-            }
-        }
-
-        // Соседние выделенные колонки сливаем в одну рамку: иначе на их общей
-        // границе ложатся две линии по 2px и выглядят толстой полосой. Внутри
-        // объединённой рамки границу колонок рисует обычная серая линия сетки.
-        target.Sort((a, b) => a.X.CompareTo(b.X));
-        var merged = new List<(double X, double W, double H)>();
-        foreach (var r in target)
-        {
-            if (merged.Count > 0)
-            {
-                var last = merged[^1];
-                if (r.X <= last.X + last.W + 1)   // смежные/перекрывающиеся колонки
-                {
-                    merged[^1] = (last.X, Math.Max(last.X + last.W, r.X + r.W) - last.X, Math.Max(last.H, r.H));
-                    continue;
-                }
-            }
-            merged.Add(r);
-        }
-
-        // Ничего не изменилось — дерево не трогаем (разрывает layout-цикл).
-        if (HighlightsEqual(merged, _lastHighlights)) return;
-
-        _lastHighlights.Clear();
-        _lastHighlights.AddRange(merged);
-
-        panel.Children.Clear();
-        if (merged.Count == 0) return;
-
-        var accent = (IBrush)this.FindResource("BrushAccent")!;
-        // Акцентная рамка вдвое толще стандартной линии — стабилизирована тем же
-        // токеном (2 DIP визуально при любом зуме/DPI).
-        var accentThickness = 2 * LineMetrics.ThicknessFor(this);
-        foreach (var (x, w, h) in merged)
-        {
-            var border = new Border
-            {
-                Width            = w,
-                Height           = h,
-                BorderBrush      = accent,
-                BorderThickness  = new Thickness(accentThickness),
-                CornerRadius     = new CornerRadius(2),
-                IsHitTestVisible = false,
-            };
-            Canvas.SetLeft(border, x);
-            Canvas.SetTop(border, 0);
-            panel.Children.Add(border);
-        }
+        var on = (this.FindResource("BrushAccentLight") as ISolidColorBrush)?.Color ?? Colors.Transparent;
+        foreach (var (key, brush) in _colSelBrushes)
+            brush.Color = _selectedColumnKeys.Contains(key) ? on : Colors.Transparent;
     }
 
-    private static bool HighlightsEqual(
-        List<(double X, double W, double H)> a, List<(double X, double W, double H)> b)
+    // Вешает заливку выделения на ячейку: фон ставится ContentPresenter'у шаблона
+    // DataGridCell — это звёздная колонка сетки ячейки, поэтому заливка доходит ровно до
+    // вертикальной линии сетки и не перекрывает ни её, ни линию соседа слева. Контейнеры
+    // переиспользуются между строками, но не между колонками — кисть на ячейке всегда «своя».
+    private void AttachColumnFill(Control? content, string key)
     {
-        if (a.Count != b.Count) return false;
-        for (var i = 0; i < a.Count; i++)
+        if (content is null) return;
+        if (key == TableColumnDef.NumKey || key == TableColumnDef.AddPropKey) return;
+
+        var brush = ColumnSelectionBrush(key);
+        content.AttachedToVisualTree += (_, _) =>
         {
-            if (Math.Abs(a[i].X - b[i].X) > 0.5 ||
-                Math.Abs(a[i].W - b[i].W) > 0.5 ||
-                Math.Abs(a[i].H - b[i].H) > 0.5) return false;
-        }
-        return true;
-    }
-
-    // Заголовок колонки по индексу в _colDefs. Заголовки в визуальном дереве идут в
-    // порядке колонок и позиционированы по X — сортируем по фактической X-координате.
-    // Скрытые колонки (IsVisible=false) заголовков не имеют, поэтому индекс _colDefs
-    // не совпадает со списком видимых заголовков — переводим в «видимый ранг».
-    private DataGridColumnHeader? FindHeaderForColumn(int colIdx)
-    {
-        if (colIdx < 0 || colIdx >= RecordsGrid.Columns.Count) return null;
-        if (!RecordsGrid.Columns[colIdx].IsVisible) return null;
-
-        var visibleRank = 0;
-        for (var i = 0; i < colIdx; i++)
-            if (RecordsGrid.Columns[i].IsVisible) visibleRank++;
-
-        var headers = RecordsGrid.GetVisualDescendants()
-            .OfType<DataGridColumnHeader>()
-            .Where(h => h.Bounds.Width > 0)
-            .OrderBy(h => h.TranslatePoint(new Point(0, 0), RecordsGrid)?.X ?? double.MaxValue)
-            .ToList();
-
-        return visibleRank < headers.Count ? headers[visibleRank] : null;
+            if (content.FindAncestorOfType<Avalonia.Controls.Presenters.ContentPresenter>() is { } cp)
+                cp.Background = brush;
+        };
     }
 
     private ContextMenu BuildGridContextMenu()
@@ -2187,12 +2090,12 @@ public partial class TableView : UserControl
     }
 
     // Убирает из выделения системные колонки («Название»/«Описание») — они не
-    // удаляются, поэтому при запросе удаления их обводка гаснет, а рамки на
-    // удаляемых полях остаются видимыми, пока открыт диалог подтверждения.
+    // удаляются, поэтому при запросе удаления их заливка гаснет, а на удаляемых
+    // полях остаётся видимой, пока открыт диалог подтверждения.
     private void KeepSelectionOnDeletableOnly()
     {
         var removed = _selectedColumnKeys.RemoveAll(k => !int.TryParse(k, out _));
-        if (removed > 0) RefreshColumnHighlights();
+        if (removed > 0) ApplyColumnSelection();
     }
 
     private void OnLoadingRow(object? sender, DataGridRowEventArgs e)
@@ -2868,14 +2771,21 @@ public partial class TableView : UserControl
     private static string DisplayValue(string raw, string fieldType, string separator = ", ", NumberFormat? numberFormat = null)
     {
         // Связь: значение фильтра = название связанной записи (Title); пусто → «(нет связей)».
-        if (fieldType == "relation") return raw == "" ? "(нет связей)" : raw;
+        if (fieldType == "relation") return raw == "" ? "(нет связей)" : OneLine(raw);
         if (raw == "") return "(Пусто)";
         if (fieldType == "checkbox") return IsTruthy(raw) ? "✓" : "—";
-        if (fieldType == "multiselect") return MultiSelectValue.Display(raw, separator);
+        if (fieldType == "multiselect") return OneLine(MultiSelectValue.Display(raw, separator));
         if (fieldType == "number") return NumberFormatValue.Format(raw, numberFormat ?? NumberFormat.Default);
         if (fieldType == "file") return FileValue.DisplayName(raw);   // имя файла, а не абсолютный путь
-        return raw;
+        return OneLine(raw);
     }
+
+    // Значение в списке фильтра — всегда ОДНА строка: многострочный текст ячейки иначе
+    // растягивает строку списка по высоте (и ширину меряет по самой длинной из своих
+    // строк). Схлопываем переводы строк в пробел — как Detail в истории (ChangeDetail).
+    // Фильтруется всё равно исходное значение (FilterValueVm.Raw), меняется только показ.
+    private static string OneLine(string s) =>
+        s.Contains('\n') || s.Contains('\r') ? s.ReplaceLineEndings(" ").Trim() : s;
 
     /// <summary>
     /// Применяет активные фильтры/сортировку. Без них таблица работает на полном
@@ -2979,13 +2889,11 @@ public partial class TableView : UserControl
 
     private void OnGridLayoutUpdated(object? s, EventArgs e)
     {
-        // Рамки выделенных колонок следуют за скроллом/ресайзом. Перестройку откладываем
-        // через Dispatcher: менять дерево Canvas прямо в LayoutUpdated нельзя — это
-        // инвалидирует раскладку и вызывает «Infinite layout loop».
-        if (_selectedColumnKeys.Count > 0)
-            ScheduleHighlightRefresh();
+        // Заливка выделенных колонок за скроллом не следит: цвет живёт в кисти колонки,
+        // которую держат сами ячейки (см. ColumnSelectionBrush) — пересчёт по
+        // LayoutUpdated ей не нужен.
 
-        // Полоски ресайза строк следуют за скроллом/ресайзом (как и рамки колонок).
+        // Полоски ресайза строк следуют за скроллом/ресайзом.
         if (_manualRowResize && !_isResizingRow)
             ScheduleRowHandlesRefresh();
 
