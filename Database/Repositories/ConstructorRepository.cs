@@ -271,9 +271,16 @@ public partial class ConstructorRepository(AppDbContext db)
     /// («Изменение», «Запись», «до → после», локальное время), порядок и фильтры —
     /// как в таблице истории.
     ///
-    /// Одно СВОЁ подключение на всю выгрузку, keyset-страницы по <paramref name="pageSize"/>,
-    /// AsNoTracking: в памяти живёт одна страница, поэтому миллионы строк выгружаются
-    /// без роста памяти. Метод-итератор (yield) — вызывать из фонового потока.
+    /// Одно СВОЁ подключение на всю выгрузку, AsNoTracking: в памяти живёт одна страница
+    /// (или одна строка ридера), поэтому миллионы строк выгружаются без роста памяти.
+    /// Метод-итератор (yield) — вызывать из фонового потока.
+    ///
+    /// Два режима чтения. Хронология (без сортировки и «Дата и время») — keyset-страницы
+    /// по <paramref name="pageSize"/>: срез идёт по первичному ключу, каждая страница
+    /// стоит один поиск по индексу. Сортировка по строковой колонке — ОДИН запрос
+    /// с ORDER BY и потоковое чтение: у change_log вторичных индексов нет, поэтому
+    /// keyset-страницами база сортировала бы всю таблицу заново на КАЖДУЮ страницу
+    /// (замер: 300 тыс. строк — 14,7 с против 1,6 с, дальше квадратично).
     /// </summary>
     public IEnumerable<string[]> ReadChangeLogCsvRowsIsolated(ChangeLogQuery query,
         CancellationToken ct = default, int pageSize = 5000)
@@ -283,6 +290,44 @@ public partial class ConstructorRepository(AppDbContext db)
         // мегабайтные mmap/кеш дали бы тот же темп, но раздули бы рабочий набор
         // (на замере 10 млн строк — 2,2 ГБ против ~300 МБ).
         ctx.ApplyPerformancePragmas();
+
+        foreach (var row in ChangeLogCsvSource(ctx, query, ct, pageSize))
+        {
+            ct.ThrowIfCancellationRequested();
+            yield return
+            [
+                row.UserName,
+                ChangeLogLabels.ActionLabel(row.Action),
+                ChangeLogLabels.TypeLabel(row.TargetType),
+                ChangeLogLabels.ObjectText(row.TargetType, row.TargetName, row.Count, row.Detail),
+                row.CollectionName ?? "",
+                ChangeLogLabels.FormatTs(row.Ts, withSeconds: true),
+            ];
+        }
+    }
+
+    private static IEnumerable<ChangeLogRow> ChangeLogCsvSource(AppDbContext ctx,
+        ChangeLogQuery query, CancellationToken ct, int pageSize)
+    {
+        if (query.SortColumn is not (null or "date"))
+        {
+            // Сортировка по колонке: один ORDER BY на всю выгрузку, строки тянутся
+            // ридером по мере записи в файл (без ToList — материализации нет).
+            // Временный файл сортировки пусть живёт на диске: temp_store=MEMORY из
+            // общих прагм на миллионах строк съел бы сотни мегабайт.
+            ctx.Database.ExecuteSqlRaw("PRAGMA temp_store=FILE;");
+            var filtered = FilterChangeLog(ctx.ChangeLog.AsNoTracking(), query.Filters);
+            var sorted   = SortChangeLog(filtered, query.SortColumn!, query.SortAsc,
+                                         afterValue: null, afterId: null);
+            foreach (var row in sorted.Select(e => new ChangeLogRow(e.Id, e.Ts, e.UserName, e.Action,
+                                                                    e.TargetType, e.TargetName, e.CollectionName,
+                                                                    e.Count, e.Detail)))
+            {
+                ct.ThrowIfCancellationRequested();
+                yield return row;
+            }
+            yield break;
+        }
 
         var cursor = query;
         while (true)
@@ -294,39 +339,14 @@ public partial class ConstructorRepository(AppDbContext db)
             foreach (var row in page)
             {
                 ct.ThrowIfCancellationRequested();
-                yield return
-                [
-                    row.UserName,
-                    ChangeLogLabels.ActionLabel(row.Action),
-                    ChangeLogLabels.TypeLabel(row.TargetType),
-                    ChangeLogLabels.ObjectText(row.TargetType, row.TargetName, row.Count, row.Detail),
-                    row.CollectionName ?? "",
-                    ChangeLogLabels.FormatTs(row.Ts, withSeconds: true),
-                ];
+                yield return row;
             }
 
             if (page.Count < pageSize) yield break;
-
-            var last = page[^1];
-            cursor = cursor with
-            {
-                AfterId    = last.Id,
-                AfterValue = ChangeLogRawValue(cursor.SortColumn, last),
-            };
+            cursor = cursor with { AfterId = page[^1].Id, AfterValue = null };
         }
     }
 
-    /// <summary>Сырое значение сорт-колонки последней строки — вторая половина курсора.</summary>
-    private static string? ChangeLogRawValue(string? sortColumn, ChangeLogRow row) => sortColumn switch
-    {
-        null or "date" => null,   // порядок по Id — значение не нужно
-        "user"         => row.UserName,
-        "action"       => row.Action,
-        "type"         => row.TargetType,
-        "object"       => row.TargetName,
-        "collection"   => row.CollectionName ?? "",
-        _              => null,
-    };
 
     // Сортировка журнала по строковой колонке + keyset-срез после курсора. Селектор
     // колонки один, предикат среза собирается Expression-ами из него же — сравнение

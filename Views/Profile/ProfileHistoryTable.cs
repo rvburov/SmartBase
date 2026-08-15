@@ -183,37 +183,71 @@ public partial class ProfileView
     // ── Выгрузка в CSV ────────────────────────────────────────────────────────
     //
     // Кнопка в навбаре раздела. Выгружается ровно то, что показано: та же база, те же
-    // фильтры и сортировка; строки читаются keyset-страницами уже в фоне
-    // (ReadChangeLogCsvRowsIsolated) — журнал на миллионы строк не поднимается в память.
+    // фильтры и сортировка; строки читаются в фоне (ReadChangeLogCsvRowsIsolated) —
+    // журнал на миллионы строк не поднимается в память.
+
+    private bool _historyExporting;
 
     private async Task ExportHistoryToCsv()
     {
         if (TopLevel.GetTopLevel(this) is not Window owner) return;
+        // Подсчёт строк на большом журнале занимает секунды, и всё это время окон ещё нет —
+        // второй клик по кнопке запустил бы вторую выгрузку и второе окно подтверждения.
+        if (_historyExporting) return;
         if (_historyDb is null)
         {
             await ConfirmDialog.Info("Сначала выберите базу данных в списке справа.").ShowDialog(owner);
             return;
         }
 
-        var repo  = _historyDb.Constructor;
-        var query = new ConstructorRepository.ChangeLogQuery
+        // Снимок состояния экрана ДО ожидания: пока считаются строки, пользователь может
+        // сменить базу или фильтр — тогда окно подтверждения назвало бы одну базу,
+        // а выгрузились бы данные другой.
+        var db     = _historyDb;
+        var gen    = _historyGen;
+        var repo   = db.Constructor;
+        var dbName = string.IsNullOrWhiteSpace(db.Name) ? "База данных" : db.Name;
+        var query  = new ConstructorRepository.ChangeLogQuery
         {
             Filters = _historyFilters.ToDictionary(
                 kv => kv.Key, kv => (IReadOnlyCollection<string>)kv.Value),
             SortColumn = _historySortKey,
             SortAsc    = _historySortAsc,
         };
-        var total = await repo.CountChangeLogAsync(query);
-        var dbName = string.IsNullOrWhiteSpace(_historyDb.Name) ? "База данных" : _historyDb.Name;
+        var filtered = query.Filters.Count > 0;
 
-        await CsvExportRunner.Run(owner, new CsvExportRunner.Job(
-            Title:           "Выгрузка журнала",
-            What:            $"История изменений базы «{dbName}»",
-            TotalRows:       total,
-            Filtered:        _historyFilters.Count > 0,
-            DefaultFileName: CsvExportRunner.FileName($"История изменений — {dbName}", DateTime.Now),
-            Headers:         ConstructorRepository.ChangeLogCsvHeaders,
-            Rows:            ct => repo.ReadChangeLogCsvRowsIsolated(query, ct)));
+        _historyExporting = true;
+        try
+        {
+            long total;
+            try
+            {
+                total = await repo.CountChangeLogAsync(query);
+            }
+            catch (Exception ex) when (DbErrors.Handle(ex, db.Path))
+            {
+                return;   // тост «база недоступна» уже показан
+            }
+
+            // Пока считали, могли переключить базу/фильтр — выгружать снимок молча нельзя.
+            if (gen != _historyGen)
+            {
+                await ConfirmDialog.Info(
+                        "Список изменился, пока считались строки. Откройте выгрузку заново.")
+                    .ShowDialog(owner);
+                return;
+            }
+
+            await CsvExportRunner.Run(owner, new CsvExportRunner.Job(
+                Title:           "Выгрузка журнала",
+                What:            $"История изменений базы «{dbName}»",
+                TotalRows:       total,
+                Filtered:        filtered,
+                DefaultFileName: CsvExportRunner.FileName($"История изменений — {dbName}", DateTime.Now),
+                Headers:         ConstructorRepository.ChangeLogCsvHeaders,
+                Rows:            ct => repo.ReadChangeLogCsvRowsIsolated(query, ct)));
+        }
+        finally { _historyExporting = false; }
     }
 
     // ── Колонки и шапка ───────────────────────────────────────────────────────

@@ -181,13 +181,19 @@ public partial class SettingsView
     // ── Выгрузка в CSV ────────────────────────────────────────────────────────
     //
     // Кнопка в навбаре раздела. Выгружается ровно то, что показано: те же фильтры
-    // и та же сортировка; строки читаются keyset-страницами уже в фоне (ReadCsvRows),
-    // поэтому объём лога ограничивает только диск.
+    // и та же сортировка; строки читаются в фоне (ReadCsvRows), поэтому объём лога
+    // ограничивает только диск.
+
+    private bool _logsExporting;
 
     private async Task ExportLogsToCsv()
     {
         if (TopLevel.GetTopLevel(this) is not Window owner) return;
+        // Подсчёт строк на большом логе занимает секунды, и окон в это время ещё нет —
+        // второй клик по кнопке дал бы вторую выгрузку и второе окно подтверждения.
+        if (_logsExporting) return;
 
+        // Снимок состояния экрана ДО ожидания: фильтр могли поменять, пока считались строки.
         var query = new LogReader.LogQuery
         {
             Filters = _logsFilters.ToDictionary(
@@ -195,16 +201,37 @@ public partial class SettingsView
             SortColumn = _logsSortKey,
             SortAsc    = _logsSortAsc,
         };
-        var total = await _logReader.CountAsync(query);
+        var filtered = query.Filters.Count > 0;
 
-        await CsvExportRunner.Run(owner, new CsvExportRunner.Job(
-            Title:           "Выгрузка диагностики",
-            What:            "Диагностика",
-            TotalRows:       total,
-            Filtered:        _logsFilters.Count > 0,
-            DefaultFileName: CsvExportRunner.FileName("Диагностика", DateTime.Now),
-            Headers:         LogReader.CsvHeaders,
-            Rows:            ct => _logReader.ReadCsvRows(query, ct)));
+        _logsExporting = true;
+        try
+        {
+            long total;
+            try
+            {
+                total = await _logReader.CountAsync(query);
+            }
+            catch (Exception ex)
+            {
+                // logs.db читается мимо EF (raw SQL): повреждённый или занятый файл
+                // не должен молча гасить кнопку.
+                Serilog.Log.Warning(ex, "Не удалось посчитать строки диагностики для выгрузки");
+                await ConfirmDialog.Info(
+                        "Не удалось прочитать журнал диагностики. Попробуйте ещё раз позже.")
+                    .ShowDialog(owner);
+                return;
+            }
+
+            await CsvExportRunner.Run(owner, new CsvExportRunner.Job(
+                Title:           "Выгрузка диагностики",
+                What:            "Диагностика",
+                TotalRows:       total,
+                Filtered:        filtered,
+                DefaultFileName: CsvExportRunner.FileName("Диагностика", DateTime.Now),
+                Headers:         LogReader.CsvHeaders,
+                Rows:            ct => _logReader.ReadCsvRows(query, ct)));
+        }
+        finally { _logsExporting = false; }
     }
 
     // ── Колонки и шапка ───────────────────────────────────────────────────────

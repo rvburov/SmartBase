@@ -156,6 +156,10 @@ public sealed class CsvExportTests
         };
 
         var expected = await db.Constructor.CountChangeLogAsync(query);
+        // Якорь: без него все проверки ниже выродились бы на пустом результате
+        // (0 == 0, файл из одной шапки, Assert.All по пустому списку).
+        Assert.Equal(3, expected);   // коллекция + две записи
+
         var path = dir.File("создания.csv");
         var written = CsvDump.Write(path, ConstructorRepository.ChangeLogCsvHeaders,
                                     db.Constructor.ReadChangeLogCsvRowsIsolated(query));
@@ -233,6 +237,70 @@ public sealed class CsvExportTests
         var inFile = File.ReadAllLines(path, Encoding.UTF8).Skip(1)
                          .Select(l => l.Split(';')[2]).ToList();
         Assert.Equal(onScreen, inFile);
+    }
+
+    /// <summary>
+    /// «Сначала старые» — единственная ветка, где курсор идёт вперёд (Id &gt; курсора)
+    /// и порядок возрастающий. Без теста перепутанное направление среза читало бы
+    /// одну и ту же страницу вечно или обрывало выгрузку после первой.
+    /// </summary>
+    [Fact]
+    public async Task Change_log_export_supports_oldest_first()
+    {
+        using var db  = new TempDatabase();
+        using var dir = new TempDir();
+
+        var col = SampleData.AddCollection(db.Constructor, "Хронология");
+        SampleData.AddRecords(db.Constructor, col.Id!.Value, 120);
+
+        var query = new ConstructorRepository.ChangeLogQuery { SortColumn = "date", SortAsc = true };
+        var total = await db.Constructor.CountChangeLogAsync(query);
+        Assert.True(total > 100, "нужен объём больше страницы");
+
+        var path = dir.File("хронология.csv");
+        var written = CsvDump.Write(path, ConstructorRepository.ChangeLogCsvHeaders,
+                                    db.Constructor.ReadChangeLogCsvRowsIsolated(query, pageSize: 20));
+
+        Assert.Equal(total, written);
+        var lines = File.ReadAllLines(path, Encoding.UTF8).Skip(1).ToList();
+        Assert.Equal(total, lines.Count);
+        Assert.Equal(lines.Count, lines.Distinct().Count());
+
+        // Первой строкой — самое старое событие (создание коллекции), а не свежее.
+        Assert.Contains("Создание;Коллекция;Хронология", lines[0]);
+
+        // Время не убывает — порядок действительно «сначала старые».
+        var times = lines.Select(l => DateTime.ParseExact(l.Split(';')[^1], "dd.MM.yyyy HH:mm:ss", null)).ToList();
+        Assert.Equal(times.OrderBy(t => t), times);
+    }
+
+    /// <summary>
+    /// Сортировка по строковой колонке идёт одним запросом, а не keyset-страницами:
+    /// у change_log нет вторичных индексов, и постраничный курсор пересортировывал бы
+    /// всю таблицу на каждую страницу (замер: 300 тыс. строк — 14,7 с против 1,6 с).
+    /// Тест держит результат такой смены механики: строки не теряются и не дублируются,
+    /// а pageSize на сортированный путь не влияет.
+    /// </summary>
+    [Fact]
+    public async Task Sorted_export_ignores_page_size_and_stays_complete()
+    {
+        using var db  = new TempDatabase();
+        using var dir = new TempDir();
+
+        var col = SampleData.AddCollection(db.Constructor, "Потоком");
+        SampleData.AddRecords(db.Constructor, col.Id!.Value, 150);
+
+        var query = new ConstructorRepository.ChangeLogQuery { SortColumn = "user", SortAsc = false };
+        var total = await db.Constructor.CountChangeLogAsync(query);
+
+        var small = dir.File("страница-5.csv");
+        var big   = dir.File("страница-1000.csv");
+        Assert.Equal(total, CsvDump.Write(small, ConstructorRepository.ChangeLogCsvHeaders,
+                                          db.Constructor.ReadChangeLogCsvRowsIsolated(query, pageSize: 5)));
+        Assert.Equal(total, CsvDump.Write(big, ConstructorRepository.ChangeLogCsvHeaders,
+                                          db.Constructor.ReadChangeLogCsvRowsIsolated(query, pageSize: 1000)));
+
+        Assert.Equal(File.ReadAllLines(small, Encoding.UTF8), File.ReadAllLines(big, Encoding.UTF8));
     }
 
     // ── Диагностика (logs.db) ─────────────────────────────────────────────────
@@ -348,6 +416,31 @@ public sealed class CsvExportTests
         Assert.Equal(500, written);
         var lines = File.ReadAllLines(path, Encoding.UTF8).Skip(1).ToList();
         Assert.Equal(500, lines.Distinct().Count());
+    }
+
+    /// <summary>Сортировка логов по строковой колонке тоже идёт одним запросом —
+    /// проверяем полноту и сам порядок.</summary>
+    [Fact]
+    public void Logs_export_sorted_by_message_is_complete()
+    {
+        using var dir = new TempDir();
+        var dbPath = dir.File("logs.db");
+        var seed = Enumerable.Range(0, 200)
+            .Select(i => ($"2026-08-15 10:{i / 60 % 60:00}:{i % 60:00}", "Information",
+                          $"Сообщение {i:000}", (string?)null))
+            .ToArray();
+        SeedLogs(dbPath, seed);
+
+        var reader = new LogReader(dbPath);
+        var query  = new LogReader.LogQuery { SortColumn = "message", SortAsc = true };
+        var path   = dir.File("по-сообщению.csv");
+
+        Assert.Equal(200, CsvDump.Write(path, LogReader.CsvHeaders, reader.ReadCsvRows(query, pageSize: 7)));
+
+        var messages = File.ReadAllLines(path, Encoding.UTF8).Skip(1)
+                           .Select(l => l.Split(';')[2]).ToList();
+        Assert.Equal(200, messages.Distinct().Count());
+        Assert.Equal(messages.OrderBy(m => m, StringComparer.OrdinalIgnoreCase), messages);
     }
 
     [Fact]

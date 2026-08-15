@@ -1,3 +1,4 @@
+using SmartBase;
 using SmartBase.Utils;
 
 namespace SmartBase.Tests.Unit;
@@ -54,6 +55,28 @@ public sealed class EtaEstimatorTests
 
         // Дальше оценка продолжает сходиться к быстрой: 0.7*660 + 0.3*100 = 492 с.
         Assert.Equal("осталось ≈ 9 мин", eta.Update(0.5, TimeSpan.FromSeconds(100)));
+    }
+
+    /// <summary>
+    /// Имя базы данных — свободный текст пользователя и попадает в имя файла выгрузки.
+    /// «Отдел/Продажи» без чистки увёл бы диалог сохранения в другую папку (а на Windows
+    /// дал бы недопустимое имя), поэтому префикс проходит общий санитайзер экспорта.
+    /// </summary>
+    [Fact]
+    public void Export_file_name_is_safe_for_the_file_system()
+    {
+        var now  = new DateTime(2026, 8, 15, 20, 45, 0);
+        var name = Controls.Dialogs.CsvExportRunner.FileName("История изменений — Отдел/Продажи", now);
+
+        Assert.Equal("История изменений — Отдел_Продажи 2026-08-15 20-45.csv", name);
+        Assert.DoesNotContain(System.IO.Path.GetInvalidFileNameChars(), name.Contains);
+    }
+
+    [Fact]
+    public void Export_file_name_keeps_the_stamp_format()
+    {
+        Assert.Equal("Диагностика 2026-08-15 20-45.csv",
+            Controls.Dialogs.CsvExportRunner.FileName("Диагностика", new DateTime(2026, 8, 15, 20, 45, 0)));
     }
 
     [Theory]

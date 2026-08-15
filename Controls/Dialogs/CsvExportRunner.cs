@@ -31,59 +31,67 @@ public static class CsvExportRunner
 
     public static async Task Run(Window owner, Job job)
     {
-        if (job.TotalRows == 0)
-        {
-            await ConfirmDialog.Info($"{job.What}: выгружать нечего — строк нет.").ShowDialog(owner);
-            return;
-        }
-
-        var scope = job.Filtered
-            ? "Выгружаются строки с учётом активных фильтров таблицы."
-            : "Выгружаются все строки таблицы.";
-        var confirmed = await new ConfirmDialog(
-                $"{job.What} будет выгружена в файл CSV (UTF-8, разделитель «;») — " +
-                $"его открывает Excel и любая таблица.\n\n" +
-                $"Строк: {job.TotalRows:N0}. {scope}\n\n" +
-                "После подтверждения нужно выбрать, куда сохранить файл.",
-                confirmText: "Подтвердить")
-            .ShowDialog<bool>(owner);
-        if (!confirmed) return;
-
-        var file = await owner.StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
-        {
-            Title                  = "Куда сохранить выгрузку",
-            SuggestedFileName      = job.DefaultFileName,
-            DefaultExtension       = "csv",
-            ShowOverwritePrompt    = true,
-            FileTypeChoices        = [new FilePickerFileType("CSV") { Patterns = ["*.csv"] }],
-        });
-        var path = file?.TryGetLocalPath();
-        if (string.IsNullOrEmpty(path)) return;
-
-        var progress = new ProgressDialog { Title = job.Title };
-        using var cts = new CancellationTokenSource();
-        progress.EnableCancel(() => cts.Cancel());
-
-        IProgress<(double Fraction, string Info)> ui =
-            new Progress<(double Fraction, string Info)>(t =>
-            {
-                progress.SetProgress(t.Fraction, "Выгрузка строк…");
-                progress.SetInfo(t.Info);
-            });
-
-        progress.SetProgress(0, "Подготовка…");   // фаза до показа — окно не меняет высоту
-        progress.SetInfo($"Строк: {job.TotalRows:N0}");
-        var progressClosed = progress.ShowDialog(owner);
+        // Окно прогресса появляется не сразу (сначала подтверждение и выбор файла),
+        // поэтому переменные объявлены снаружи try: в catch окно закрывается, только
+        // если оно вообще успело открыться.
+        ProgressDialog? progress = null;
+        Task? progressClosed = null;
+        string? path = null;
 
         try
         {
+            if (job.TotalRows == 0)
+            {
+                await ConfirmDialog.Info($"{job.What}: выгружать нечего — строк нет.").ShowDialog(owner);
+                return;
+            }
+
+            var scope = job.Filtered
+                ? "Выгружаются строки с учётом активных фильтров таблицы."
+                : "Выгружаются все строки таблицы.";
+            var confirmed = await new ConfirmDialog(
+                    $"{job.What} будет выгружена в файл CSV (UTF-8, разделитель «;») — " +
+                    $"его открывает Excel и любая таблица.\n\n" +
+                    $"Строк: {job.TotalRows:N0}. {scope}\n\n" +
+                    "После подтверждения нужно выбрать, куда сохранить файл.",
+                    confirmText: "Подтвердить")
+                .ShowDialog<bool>(owner);
+            if (!confirmed) return;
+
+            var file = await owner.StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
+            {
+                Title               = "Куда сохранить выгрузку",
+                SuggestedFileName   = job.DefaultFileName,
+                DefaultExtension    = "csv",
+                ShowOverwritePrompt = true,
+                FileTypeChoices     = [new FilePickerFileType("CSV") { Patterns = ["*.csv"] }],
+            });
+            path = file?.TryGetLocalPath();
+            if (string.IsNullOrEmpty(path)) return;
+
+            progress = new ProgressDialog { Title = job.Title };
+            using var cts = new CancellationTokenSource();
+            progress.EnableCancel(() => cts.Cancel());
+
+            IProgress<(double Fraction, string Info)> ui =
+                new Progress<(double Fraction, string Info)>(t =>
+                {
+                    progress.SetProgress(t.Fraction, "Выгрузка строк…");
+                    progress.SetInfo(t.Info);
+                });
+
+            progress.SetProgress(0, "Подготовка…");   // фаза до показа — окно не меняет высоту
+            progress.SetInfo($"Строк: {job.TotalRows:N0}");
+            progressClosed = progress.ShowDialog(owner);
+
+            var target  = path;
             var written = await Task.Run(() =>
             {
-                var watch  = Stopwatch.StartNew();
-                var eta    = new EtaEstimator();
+                var watch   = Stopwatch.StartNew();
+                var eta     = new EtaEstimator();
                 var lastPct = -1;
 
-                return CsvDump.Write(path, job.Headers, job.Rows(cts.Token), cts.Token, done =>
+                return CsvDump.Write(target, job.Headers, job.Rows(cts.Token), cts.Token, done =>
                 {
                     var fraction = Math.Min(1.0, done / (double)job.TotalRows);
                     var pct      = (int)(fraction * 100);
@@ -96,27 +104,36 @@ public static class CsvExportRunner
                 });
             });
 
-            progress.Done();
-            await progressClosed;
-            await ConfirmDialog.Info(
-                    $"Выгружено строк: {written:N0}.\nФайл: {path}")
-                .ShowDialog(owner);
+            await CloseProgress(progress, progressClosed);
+            progress = null;
+            await ConfirmDialog.Info($"Выгружено строк: {written:N0}.\nФайл: {path}").ShowDialog(owner);
         }
         catch (OperationCanceledException)
         {
             // Недописанный файл удалён в CsvDump — половина журнала выглядела бы как целый.
-            progress.Done();
-            await progressClosed;
+            await CloseProgress(progress, progressClosed);
         }
         catch (Exception ex)
         {
-            progress.Done();
-            await progressClosed;
-            await ConfirmDialog.Info(ExportErrors.Map(ex, path).Message).ShowDialog(owner);
+            // Сюда попадают и ошибки записи, и сбои диалога сохранения: кнопка не должна
+            // молча «не работать» — пользователь всегда получает причину.
+            await CloseProgress(progress, progressClosed);
+            await ConfirmDialog.Info(ExportErrors.Map(ex, path ?? "").Message).ShowDialog(owner);
         }
     }
 
-    /// <summary>Имя файла по умолчанию: «Диагностика 2026-08-15 20-45.csv».</summary>
+    private static async Task CloseProgress(ProgressDialog? progress, Task? closed)
+    {
+        if (progress is null) return;
+        progress.Done();
+        if (closed is not null) await closed;
+    }
+
+    /// <summary>
+    /// Имя файла по умолчанию: «Диагностика 2026-08-15 20-45.csv». Имя базы данных —
+    /// свободный текст пользователя, поэтому чистится тем же санитайзером, что и остальной
+    /// экспорт: «Отдел/Продажи» иначе увёл бы диалог сохранения в чужую папку.
+    /// </summary>
     public static string FileName(string prefix, DateTime now) =>
-        $"{prefix} {now:yyyy-MM-dd HH-mm}.csv";
+        $"{ExportPlanner.SanitizeFileName(prefix)} {now:yyyy-MM-dd HH-mm}.csv";
 }

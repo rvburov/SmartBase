@@ -55,6 +55,13 @@ internal static class LogExportBench
         Measure("  выгрузка", Path.Combine(dir, "журнал.csv"), total,
                 path => CsvDump.Write(path, ConstructorRepository.ChangeLogCsvHeaders,
                                       repo.ReadChangeLogCsvRowsIsolated(query)));
+
+        // Худший случай: пользователь отсортировал таблицу по строковой колонке — курсор
+        // идёт не по PK, а по «значение + Id» поверх неиндексированной колонки.
+        var sorted = new ConstructorRepository.ChangeLogQuery { SortColumn = "user", SortAsc = true };
+        Measure("  выгрузка (сортировка по колонке)", Path.Combine(dir, "журнал-сорт.csv"), total,
+                path => CsvDump.Write(path, ConstructorRepository.ChangeLogCsvHeaders,
+                                      repo.ReadChangeLogCsvRowsIsolated(sorted)));
     }
 
     private static void Diagnostics(string dir, int rows)
