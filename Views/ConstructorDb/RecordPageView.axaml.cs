@@ -106,12 +106,7 @@ public partial class RecordPageView : UserControl
             var text = MarkdownEditor.Text ?? "";
             _bottomTarget.Write(text);   // сохраняет значение и уведомляет таблицу
 
-            if (_bottomTarget.Inline is { } inline && inline.Text != text)
-            {
-                _suppressBottomSync = true;
-                inline.Text = text;
-                _suppressBottomSync = false;
-            }
+            if (_bottomTarget.Inline is { } inline) ApplyInlineText(inline, text);
         };
 
         HeaderBar.CollectionPanelToggled += (_, open) => CollectionPanelToggled?.Invoke(this, open);
@@ -665,13 +660,35 @@ public partial class RecordPageView : UserControl
     // во ВСЕХ состояниях (в т.ч. при фокусе) — иначе Fluent рисует синюю рамку «бокс в боксе».
     // MaxLines=1 держит инлайн-поле в одну строку: многострочное значение (markdown-абзацы
     // текстового свойства) не растягивает карточку — полностью правится в нижнем блоке.
-    private static TextBox FlatValueBox(string? text, string? watermark = null) => new()
+    private static TextBox FlatValueBox(string? text = null, string? watermark = null) => new()
     {
         Text      = text,
         Watermark = watermark,
         Classes   = { "propValue" },
         MaxLines   = 1,
     };
+
+    // Показ значения текстового свойства в карточке — ТОЛЬКО ПЕРВАЯ строка: остальные
+    // не показываем вовсе. MaxLines=1 сам по себе не помогает — он ограничивает перенос
+    // по ширине, а явные переводы строк всё равно рисуются, и текст вылезает за карточку
+    // фиксированной высоты (виден кусками, по-разному после каждой синхронизации).
+    // Усечённый показ править нельзя: правка записала бы первую строку поверх всего
+    // значения и стёрла остальные — поле становится read-only (обратную запись гасит и
+    // проверка IsReadOnly в его TextChanged), полный текст правится в нижнем блоке, он и
+    // так открывается по клику на карточку. Однострочное значение правится инлайн, как раньше.
+    private void ApplyInlineText(TextBox tb, string value)
+    {
+        var brk     = value.IndexOfAny(['\r', '\n']);
+        var display = brk < 0 ? value : value[..brk];
+
+        tb.IsReadOnly = brk >= 0;
+        if ((tb.Text ?? "") == display) return;
+
+        // Установка служебная — TextChanged поля не должен записать показ обратно в значение.
+        _suppressBottomSync = true;
+        tb.Text = display;
+        _suppressBottomSync = false;
+    }
 
     private Control MakeInputForField(PropertyRowVm row)
     {
@@ -836,10 +853,15 @@ public partial class RecordPageView : UserControl
             }
             default:  // text
             {
-                var tb = FlatValueBox(row.Value);
+                var tb = FlatValueBox();
+                ApplyInlineText(tb, row.Value ?? "");
                 tb.TextChanged += (_, _) =>
                 {
                     if (_suppressBottomSync) return;   // программная установка из нижнего блока
+                    // Значение многострочное — в поле лежит только первая строка (read-only):
+                    // писать её обратно нельзя, иначе остальные строки пропали бы. Проверка
+                    // дублирует guard выше: TextChanged приходит и после его снятия.
+                    if (tb.IsReadOnly) return;
                     row.Value = tb.Text ?? "";
                     PersistProperty(row);
                     SyncBottomFromInline(tb);          // если поле открыто снизу — обновить большой редактор
