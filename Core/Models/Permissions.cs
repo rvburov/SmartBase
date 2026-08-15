@@ -23,33 +23,85 @@ public enum PermAction
     CreateField         = 1 << 9,
     EditField           = 1 << 10,
     DeleteField         = 1 << 11,
+    DuplicateField      = 1 << 12,
 
     /// <summary>Полная маска — права допущенного пользователя по умолчанию
     /// (администратор снимает лишнее в панели).</summary>
     All = ViewCollection | EditCollection | DeleteCollection | DuplicateCollection |
           CreateCollection | CreateRecord | EditRecord | DeleteRecord | DuplicateRecord |
-          CreateField | EditField | DeleteField,
+          CreateField | EditField | DeleteField | DuplicateField,
 }
 
 /// <summary>Русские подписи действий для панели администратора и сообщений об отказе.</summary>
 public static class PermActionLabels
 {
-    /// <summary>Подпись действия для чекбокса панели администратора.</summary>
-    public static string Label(PermAction a) => a switch
+    /// <summary>
+    /// Заголовок колонки в таблице пользователей: что именно делает галка — «Удаление
+    /// записи», а не «Удаление». Название полное и по одному шаблону «действие + объект»,
+    /// чтобы колонку можно было прочитать, не разглядывая иконку группы.
+    /// </summary>
+    public static string Title(PermAction a) => a switch
     {
-        PermAction.ViewCollection      => "Просматривать коллекцию",
-        PermAction.EditCollection      => "Изменять коллекцию",
-        PermAction.DeleteCollection    => "Удалять коллекцию",
-        PermAction.DuplicateCollection => "Дублировать коллекцию",
-        PermAction.CreateCollection    => "Создавать коллекции",
-        PermAction.CreateRecord        => "Создавать записи",
-        PermAction.EditRecord          => "Изменять записи",
-        PermAction.DeleteRecord        => "Удалять записи",
-        PermAction.DuplicateRecord     => "Дублировать записи",
-        PermAction.CreateField         => "Создавать свойства",
-        PermAction.EditField           => "Изменять свойства",
-        PermAction.DeleteField         => "Удалять свойства",
+        PermAction.ViewCollection      => "Просмотр коллекции",
+        PermAction.EditCollection      => "Изменение коллекции",
+        PermAction.DeleteCollection    => "Удаление коллекции",
+        PermAction.DuplicateCollection => "Дублирование коллекции",
+        PermAction.CreateCollection    => "Создание коллекции",
+        PermAction.CreateRecord        => "Создание записи",
+        PermAction.EditRecord          => "Изменение записи",
+        PermAction.DeleteRecord        => "Удаление записи",
+        PermAction.DuplicateRecord     => "Дублирование записи",
+        PermAction.CreateField         => "Создание свойства",
+        PermAction.EditField           => "Изменение свойства",
+        PermAction.DeleteField         => "Удаление свойства",
+        PermAction.DuplicateField      => "Дублирование свойства",
         _                              => a.ToString(),
+    };
+
+    /// <summary>
+    /// Что право разрешает — текст подсказки над заголовком колонки. Перечисляет все
+    /// операции, которые открывает галка, включая неочевидные (перенос спрашивает право
+    /// удаления у источника и создания у цели), чтобы администратор не выяснял охват
+    /// опытным путём. Тот же охват описан в
+    /// docs/developer/architecture/users-permissions.md — при правке менять обе стороны.
+    /// </summary>
+    public static string Description(PermAction a) => a switch
+    {
+        PermAction.ViewCollection =>
+            "Открывать коллекцию и видеть её содержимое. Без права коллекция показана " +
+            "в сайдбаре замком и не попадает в экспорт.",
+        PermAction.EditCollection =>
+            "Переименовывать коллекции и группы, менять иконку, цвет и настройки коллекции.",
+        PermAction.DeleteCollection =>
+            "Удалять коллекции и группы со всем содержимым; отдавать коллекцию " +
+            "при переносе в другое место или базу данных.",
+        PermAction.DuplicateCollection =>
+            "Создавать копию коллекции или группы вместе со свойствами и записями.",
+        PermAction.CreateCollection =>
+            "Создавать коллекции и группы, импортировать файл как коллекцию, принимать " +
+            "перенос из другой базы данных. Право уровня базы: для отдельной коллекции " +
+            "не выдаётся.",
+        PermAction.CreateRecord =>
+            "Добавлять записи в таблице, календаре и задачах; принимать записи " +
+            "при переносе из другой коллекции.",
+        PermAction.EditRecord =>
+            "Править значения ячеек, заголовок и описание записи, связи между записями, " +
+            "менять порядок строк.",
+        PermAction.DeleteRecord =>
+            "Удалять записи по одной и пакетно; отдавать записи при переносе в другую " +
+            "коллекцию.",
+        PermAction.DuplicateRecord =>
+            "Создавать копии записей, в том числе пакетно.",
+        PermAction.CreateField =>
+            "Добавлять в коллекцию новые свойства — вручную и при импорте файла.",
+        PermAction.EditField =>
+            "Переименовывать свойство, менять его тип и настройки, видимость дат " +
+            "и роли исполнителя в задачах.",
+        PermAction.DeleteField =>
+            "Удалять свойства вместе со значениями во всех записях коллекции.",
+        PermAction.DuplicateField =>
+            "Создавать копию свойства вместе с его значениями во всех записях коллекции.",
+        _ => "Действие в базе данных.",
     };
 
     /// <summary>Текст отказа для тоста/диалога: «Недостаточно прав: …».</summary>
@@ -67,6 +119,7 @@ public static class PermActionLabels
         PermAction.CreateField         => "создание свойств запрещено администратором базы данных",
         PermAction.EditField           => "изменение свойств запрещено администратором базы данных",
         PermAction.DeleteField         => "удаление свойств запрещено администратором базы данных",
+        PermAction.DuplicateField      => "дублирование свойств запрещено администратором базы данных",
         _                              => "действие запрещено администратором базы данных",
     };
 }

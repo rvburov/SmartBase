@@ -49,7 +49,33 @@ public sealed class PermissionsTests
         {
             if (a is PermAction.None or PermAction.All) continue;
             // Fallback-ветка возвращает a.ToString(); подпись должна быть человеческой, не именем enum.
-            Assert.NotEqual(a.ToString(), PermActionLabels.Label(a));
+            Assert.NotEqual(a.ToString(), PermActionLabels.Title(a));
+        }
+    }
+
+    /// <summary>
+    /// Заголовок колонки называет и действие, и объект («Удаление записи»), а подсказка
+    /// разворачивает охват права. Новое действие без своей ветки провалилось бы
+    /// в fallback и молча показало бы в панели общую заглушку.
+    /// </summary>
+    [Fact]
+    public void Titles_and_descriptions_are_specific_for_all_actions()
+    {
+        var fallback = PermActionLabels.Description(PermAction.None);
+        var titles   = new HashSet<string>();
+
+        foreach (PermAction a in Enum.GetValues<PermAction>())
+        {
+            if (a is PermAction.None or PermAction.All) continue;
+
+            var title = PermActionLabels.Title(a);
+            Assert.True(titles.Add(title), $"подпись «{title}» повторяется у {a}");
+            Assert.Contains(' ', title);   // «Удаление записи», а не «Удаление»
+
+            var description = PermActionLabels.Description(a);
+            Assert.NotEqual(fallback, description);
+            Assert.True(description.Length > title.Length,
+                        $"описание {a} не объясняет право: «{description}»");
         }
     }
 

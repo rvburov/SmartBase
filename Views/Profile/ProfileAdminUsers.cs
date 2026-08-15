@@ -27,7 +27,7 @@ namespace SmartBase.Views.Profile;
 /// <summary>
 /// Панель «Пользователи» панели администратора: таблица «пользователь × действия» во всю
 /// высоту справа (тот же приём, что панель «Детали» в «Настройки → Диагностика»).
-/// Строка — пользователь базы, колонки — роль, допуск, 12 действий <see cref="PermAction"/>
+/// Строка — пользователь базы, колонки — роль, доступ к базе, действия <see cref="PermAction"/>
 /// с чекбоксами, даты и удаление из базы. Область действия прав (вся база или коллекция)
 /// выбирается в шапке панели.
 ///
@@ -51,21 +51,23 @@ public partial class ProfileView
     private const string UsersKeyCreated  = "created";
     private const string UsersKeySeen     = "seen";
 
-    // Действия в порядке колонок: группа (для иконки и тултипа) + короткая подпись.
-    private static readonly (PermAction Action, string Group, string Short, string IconKey)[] UsersActionColumns =
+    // Действия в порядке колонок: группа (иконка + первая строка подсказки). Подпись
+    // и описание берутся из PermActionLabels — единый источник для панели и документации.
+    private static readonly (PermAction Action, string Group, string IconKey)[] UsersActionColumns =
     [
-        (PermAction.ViewCollection,      "Коллекции", "Просмотр",  "IconCollection"),
-        (PermAction.EditCollection,      "Коллекции", "Изменение", "IconCollection"),
-        (PermAction.DeleteCollection,    "Коллекции", "Удаление",  "IconCollection"),
-        (PermAction.DuplicateCollection, "Коллекции", "Дубль",     "IconCollection"),
-        (PermAction.CreateCollection,    "Коллекции", "Создание",  "IconCollection"),
-        (PermAction.CreateRecord,        "Записи",    "Создание",  "IconBlocks"),
-        (PermAction.EditRecord,          "Записи",    "Изменение", "IconBlocks"),
-        (PermAction.DeleteRecord,        "Записи",    "Удаление",  "IconBlocks"),
-        (PermAction.DuplicateRecord,     "Записи",    "Дубль",     "IconBlocks"),
-        (PermAction.CreateField,         "Свойства",  "Создание",  "IconSliders"),
-        (PermAction.EditField,           "Свойства",  "Изменение", "IconSliders"),
-        (PermAction.DeleteField,         "Свойства",  "Удаление",  "IconSliders"),
+        (PermAction.ViewCollection,      "Коллекции", "IconCollection"),
+        (PermAction.EditCollection,      "Коллекции", "IconCollection"),
+        (PermAction.DeleteCollection,    "Коллекции", "IconCollection"),
+        (PermAction.DuplicateCollection, "Коллекции", "IconCollection"),
+        (PermAction.CreateCollection,    "Коллекции", "IconCollection"),
+        (PermAction.CreateRecord,        "Записи",    "IconBlocks"),
+        (PermAction.EditRecord,          "Записи",    "IconBlocks"),
+        (PermAction.DeleteRecord,        "Записи",    "IconBlocks"),
+        (PermAction.DuplicateRecord,     "Записи",    "IconBlocks"),
+        (PermAction.CreateField,         "Свойства",  "IconSliders"),
+        (PermAction.EditField,           "Свойства",  "IconSliders"),
+        (PermAction.DeleteField,         "Свойства",  "IconSliders"),
+        (PermAction.DuplicateField,      "Свойства",  "IconSliders"),
     ];
 
     // Все прочитанные строки и то, что показано после фильтра и сортировки.
@@ -191,7 +193,7 @@ public partial class ProfileView
     }
 
     // Фильтр и сортировка считаются здесь же: пользователей десятки, ходить в БД незачем.
-    // Порядок по умолчанию — по имени (стабильный): иначе галка «Допуск» переставляла бы
+    // Порядок по умолчанию — по имени (стабильный): иначе галка доступа переставляла бы
     // строку прямо под курсором.
     private void ApplyUserFilters()
     {
@@ -306,39 +308,62 @@ public partial class ProfileView
     {
         _userChevrons.Clear();
 
-        AddUsersColumn(UsersKeyName, "Пользователь", "IconUser", 220, BuildUserNameCell());
+        AddUsersColumn(UsersKeyName, "Пользователь", "IconUser", 220, BuildUserNameCell(),
+                       tip: BuildUsersTip("Пользователь",
+                                          "Имя из профиля человека, открывавшего эту базу данных. " +
+                                          "Пометка «(вы)» — ваша строка: свои роль, допуск и права " +
+                                          "не меняет никто, кроме другого администратора."));
         AddUsersColumn(UsersKeyId, "Идентификатор", "IconFieldText", 200,
-                       BuildUsersTextCell(nameof(AdminUserRow.UserKey), secondary: true));
-        AddUsersColumn(UsersKeyRole, "Роль", "IconShieldUser", 170, BuildUserRoleCell());
-        AddUsersColumn(UsersKeyApproved, "Допуск", "IconLock", 110,
+                       BuildUsersTextCell(nameof(AdminUserRow.UserKey), secondary: true),
+                       tip: BuildUsersTip("Идентификатор",
+                                          "Ключ «учётная запись@компьютер» — по нему база узнаёт человека " +
+                                          "при следующем открытии, даже если он сменит имя в профиле."));
+        AddUsersColumn(UsersKeyRole, "Роль", "IconShieldUser", 170, BuildUserRoleCell(),
+                       tip: BuildUsersTip("Роль",
+                                          "Администратор управляет доступом и не подчиняется галкам — " +
+                                          "ему разрешено всё. Чтобы ограничить его, сначала переведите " +
+                                          "в «Пользователя». Свою роль изменить нельзя."));
+        AddUsersColumn(UsersKeyApproved, "Доступ к базе данных", "IconLock", 210,
                        BuildUsersCheckCell(nameof(AdminUserRow.IsApproved),
-                                           nameof(AdminUserRow.ApprovalEnabled)));
+                                           nameof(AdminUserRow.ApprovalEnabled)),
+                       tip: BuildUsersTip("Доступ к базе данных",
+                                          "Разрешение работать с базой данных. Без допуска она показана " +
+                                          "замком: содержимое скрыто, права не действуют. " +
+                                          "У администратора допуск снять нельзя."));
 
-        foreach (var (action, group, shortName, iconKey) in UsersActionColumns)
+        foreach (var (action, group, iconKey) in UsersActionColumns)
         {
             // «Создавать коллекции» имеет смысл только на уровне базы: у несозданной
             // коллекции переопределений нет.
             var enabledPath = action == PermAction.CreateCollection
                 ? nameof(AdminUserRow.CreateCollectionEnabled)
                 : nameof(AdminUserRow.RightsEnabled);
-            AddUsersColumn($"act{(int)action}", shortName, iconKey, 130,
+            // Ширина под самую длинную подпись («Дублирование коллекции») — колонки действий
+            // одинаковые, иначе шапка выглядит рваной; лишнее уходит в прокрутку.
+            AddUsersColumn($"act{(int)action}", PermActionLabels.Title(action), iconKey, 210,
                            BuildUsersCheckCell($"[{(int)action}]", enabledPath),
-                           tip: $"{group} · {PermActionLabels.Label(action)}");
+                           tip: BuildUsersActionTip(group, action));
         }
 
         AddUsersColumn(UsersKeyCreated, "Подключён", "IconClock", 150,
-                       BuildUsersTextCell(nameof(AdminUserRow.CreatedAtText), secondary: true));
+                       BuildUsersTextCell(nameof(AdminUserRow.CreatedAtText), secondary: true),
+                       tip: BuildUsersTip("Подключён",
+                                          "Когда пользователь впервые открыл эту базу данных."));
         AddUsersColumn(UsersKeySeen, "Последняя активность", "IconHistory", 190,
-                       BuildUsersTextCell(nameof(AdminUserRow.LastSeenText), secondary: true));
+                       BuildUsersTextCell(nameof(AdminUserRow.LastSeenText), secondary: true),
+                       tip: BuildUsersTip("Последняя активность",
+                                          "Когда пользователь в последний раз открывал эту базу данных."));
         // Колонка действия: фильтровать нечего — шеврона нет. Последняя колонка правой линии
         // заголовка не рисует: её край и так очерчен краем таблицы (как в диагностике).
-        AddUsersColumn("", "Удаление", "IconTrash", 110, BuildUserRemoveCell(),
-                       tip: "Убрать пользователя из базы данных",
+        AddUsersColumn("", "Удаление пользователя", "IconTrash", 210, BuildUserRemoveCell(),
+                       tip: BuildUsersTip("Удаление пользователя",
+                                          "Убрать пользователя из базы данных вместе с выданными правами. " +
+                                          "При следующем открытии базы он вернётся в список как ожидающий допуска."),
                        filterable: false, addRightLine: false);
     }
 
     private void AddUsersColumn(string key, string header, string iconKey, double width,
-                                IDataTemplate cell, string? tip = null,
+                                IDataTemplate cell, object? tip = null,
                                 bool filterable = true, bool addRightLine = true) =>
         UsersGrid.Columns.Add(new DataGridTemplateColumn
         {
@@ -347,9 +372,35 @@ public partial class ProfileView
             CellTemplate = cell,
         });
 
+    // Подсказка колонки: жирный заголовок + описание с переносом строк. Простая строка
+    // здесь не годится — описания в два-три предложения вытянулись бы в одну линию
+    // шире экрана.
+    private Control BuildUsersTip(string title, string body)
+    {
+        var head = new TextBlock
+        {
+            Text         = title,
+            FontWeight   = WeightToken("FontWeightBold", FontWeight.SemiBold),
+            TextWrapping = TextWrapping.Wrap,
+        };
+        var text = new TextBlock
+        {
+            Text         = body,
+            TextWrapping = TextWrapping.Wrap,
+            Margin       = new Thickness(0, 4, 0, 0),
+        };
+        return new StackPanel { MaxWidth = 320, Children = { head, text } };
+    }
+
+    // Для колонки действия заголовок подсказки несёт ещё и группу: «Записи · Удаление
+    // записи» — видно, к чему право применяется, когда иконка группы уже прокручена.
+    private Control BuildUsersActionTip(string group, PermAction action) =>
+        BuildUsersTip($"{group} · {PermActionLabels.Title(action)}",
+                      PermActionLabels.Description(action));
+
     // Шапка колонки 1-в-1 как в таблице конструктора и журналов: [иконка типа][подпись]
     // [шеврон фильтра] + правая линия-разделитель.
-    private Control BuildUsersHeader(string key, string header, string iconKey, string? tip,
+    private Control BuildUsersHeader(string key, string header, string iconKey, object? tip,
                                      bool filterable, bool addRightLine)
     {
         var text = new TextBlock

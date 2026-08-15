@@ -25,6 +25,7 @@ public sealed class PermissionMatrixTests
         PermAction.CreateRecord, PermAction.EditRecord, PermAction.DeleteRecord,
         PermAction.DuplicateRecord,
         PermAction.CreateField, PermAction.EditField, PermAction.DeleteField,
+        PermAction.DuplicateField,
     ];
 
     public static TheoryData<PermAction> AllActions()
@@ -72,7 +73,8 @@ public sealed class PermissionMatrixTests
                 field.Name = "Поле " + Guid.NewGuid().ToString("N")[..6];
                 repo.UpdateField(field);
             },
-            PermAction.DeleteField => () => repo.DeleteField(f.FieldId),
+            PermAction.DeleteField    => () => repo.DeleteField(f.FieldId),
+            PermAction.DuplicateField => () => repo.DuplicateField(f.FieldId),
             _ => throw new ArgumentOutOfRangeException(nameof(action), action, "нет операции для права"),
         };
     }
@@ -207,6 +209,25 @@ public sealed class PermissionMatrixTests
             Assert.True(db.Permissions.Can(action, fixture.CollectionId));
 
         db.Constructor.SetFieldValue(fixture.RecordId, fixture.FieldId, "можно");
+    }
+
+    /// <summary>
+    /// Дублирование свойства раньше спрашивало право создания — теперь у него свой бит.
+    /// Тест держит разделение: снятое «Создание свойства» не должно запирать дубль,
+    /// иначе новая колонка панели ничего не решала бы.
+    /// </summary>
+    [Fact]
+    public void Duplicating_a_field_does_not_need_the_create_right()
+    {
+        using var db = new TempDatabase();
+        var fixture  = Arrange(db);
+
+        SetRights(db, PermAction.All & ~PermAction.CreateField);
+
+        db.Constructor.DuplicateField(fixture.FieldId);   // своё право на месте — проходит
+        var denied = Assert.Throws<PermissionDeniedException>(
+            () => SampleData.AddField(db.Constructor, fixture.CollectionId, "Новое"));
+        Assert.Equal(PermAction.CreateField, denied.Action);
     }
 
     /// <summary>

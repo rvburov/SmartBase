@@ -2654,7 +2654,7 @@ public partial class ConstructorRepository(AppDbContext db)
 
     public DbField DuplicateField(int fieldId)
     {
-        Demand(PermAction.CreateField, CollectionOfField(fieldId));
+        Demand(PermAction.DuplicateField, CollectionOfField(fieldId));
         var copy = CreateFieldCopyEntity(fieldId);
 
         // Копируем значения ячеек исходного свойства во всех записях ОДНИМ bulk-SQL —
@@ -2743,7 +2743,7 @@ public partial class ConstructorRepository(AppDbContext db)
         var repo = new ConstructorRepository(ctx);
         // Владельца-коллекцию ищем через СВЕЖИЙ контекст: обёртку зовут из фонового
         // потока, а общий контекст — только для UI-потока (сама Demand читает кеш).
-        Demand(PermAction.CreateField, repo.CollectionOfField(fieldId));
+        Demand(PermAction.DuplicateField, repo.CollectionOfField(fieldId));
         return repo.DuplicateFieldData(fieldId, progress);
     }
 

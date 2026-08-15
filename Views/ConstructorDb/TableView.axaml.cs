@@ -1996,7 +1996,7 @@ public partial class TableView : UserControl
         menu.Items.Add(miEdit);
 
         var miDuplicate = new MenuItem { Header = Controls.Components.MenuIcons.DuplicateHeader() };
-        Guarded(miDuplicate, PermAction.CreateField, () => RequestDuplicateFromMenu(fieldId));
+        Guarded(miDuplicate, PermAction.DuplicateField, () => RequestDuplicateFromMenu(fieldId));
         menu.Items.Add(miDuplicate);
 
         var miCreate = new MenuItem { Header = Controls.Components.MenuIcons.CreatePropertyHeader() };

@@ -299,4 +299,7 @@ public partial class ProfileView : UserControl
     // TemplatedControl.FontSize (CS0108).
     private static double FontSizeToken(string key, double fallback) =>
         Application.Current!.TryFindResource(key, out var res) && res is double d ? d : fallback;
+
+    private static FontWeight WeightToken(string key, FontWeight fallback) =>
+        Application.Current!.TryFindResource(key, out var res) && res is FontWeight w ? w : fallback;
 }
