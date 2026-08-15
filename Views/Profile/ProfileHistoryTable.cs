@@ -347,6 +347,8 @@ public partial class ProfileView
         "user.approve" => "Допуск",
         "user.revoke"  => "Отзыв допуска",
         "user.rights"  => "Изменение прав",
+        "user.role"    => "Смена роли",
+        "user.remove"  => "Удаление пользователя",
         "user.unlock"  => "Доступ по паролю",
         "user.rename"  => "Смена имени",
         _              => action,

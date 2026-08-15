@@ -516,6 +516,11 @@ namespace SmartBase.Database.Migrations.Pg
                         .HasColumnType("integer")
                         .HasColumnName("isapproved");
 
+                    b.Property<string>("LastSeenAt")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("lastseenat");
+
                     b.Property<string>("UserKey")
                         .IsRequired()
                         .HasColumnType("text")

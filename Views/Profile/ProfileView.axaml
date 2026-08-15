@@ -89,11 +89,23 @@
             </Setter>
         </Style>
 
+        <!-- Горизонтальная полоса таблицы пользователей — во всю ширину. У таблицы
+             закреплена первая колонка, а DataGrid под закреплёнными ставит распорку
+             (PART_FrozenColumnScrollBarSpacer) и полоса начинается только после них.
+             Распорку прячем: её колонка Auto схлопывается в ноль, полоса идёт от края
+             до края, как в остальных таблицах приложения. Ширину распорки DataGrid
+             задаёт из кода, поэтому гасим именно видимость, а не Width. -->
+        <Style Selector="DataGrid#UsersGrid /template/ Rectangle#PART_FrozenColumnScrollBarSpacer">
+            <Setter Property="IsVisible" Value="False" />
+        </Style>
+
     </UserControl.Styles>
 
     <DockPanel>
 
-        <!-- Шапка раздела (вынесена в компонент-навбар). -->
+        <!-- Шапка раздела (вынесена в компонент-навбар). Список пользователей открывается
+             ВМЕСТО панели администратора и приносит свою шапку — тогда навбар скрывается,
+             чтобы заголовков не было два. -->
         <comp:NavbarProfile DockPanel.Dock="Top" x:Name="HeaderBar" />
 
         <!-- Содержимое выбранного раздела -->
@@ -384,41 +396,25 @@
                     </Border>
                     <Border Classes="separator h" />
 
-                    <!-- Пользователи базы -->
+                    <!-- Пользователи базы: сами пользователи, их роли и права живут в правой
+                         панели во всю высоту (UsersPanel ниже) — таблица «пользователь ×
+                         действия» на странице не помещается. -->
                     <Border Classes="settingRow">
-                        <StackPanel Spacing="4">
-                            <TextBlock Classes="title" Text="Пользователи" />
-                            <TextBlock Classes="desc"
-                                       Text="Все, кто открывал эту базу данных. Новые пользователи ждут допуска. Выберите пользователя, чтобы настроить его права." />
-                        </StackPanel>
+                        <Grid ColumnDefinitions="*,Auto">
+                            <StackPanel Grid.Column="0" Spacing="4"
+                                        VerticalAlignment="Center" Margin="0,0,32,0">
+                                <TextBlock Classes="title" Text="Пользователи" />
+                                <TextBlock Classes="desc"
+                                           Text="Все, кто открывал эту базу данных. Новые пользователи ждут допуска. В таблице — роли, допуск и права каждого пользователя." />
+                            </StackPanel>
+                            <Button Grid.Column="1" x:Name="UsersOpenBtn" Classes="dialog"
+                                    Width="NaN" MinWidth="110" Padding="14,0"
+                                    VerticalAlignment="Center"
+                                    Content="Открыть"
+                                    Click="OnOpenUsersPanel" />
+                        </Grid>
                     </Border>
-                    <StackPanel x:Name="UsersHost" Margin="0,0,0,8" />
                     <Border Classes="separator h" />
-
-                    <!-- Права выбранного пользователя -->
-                    <StackPanel x:Name="RightsBlock" IsVisible="False">
-                        <Border Classes="settingRow">
-                            <Grid ColumnDefinitions="*,Auto">
-                                <StackPanel Grid.Column="0" Spacing="4"
-                                            VerticalAlignment="Center" Margin="0,0,32,0">
-                                    <TextBlock Classes="title" x:Name="RightsTitle"
-                                               Text="Права пользователя" />
-                                    <TextBlock Classes="desc"
-                                               Text="Область действия: вся база данных или отдельная коллекция. Настройки коллекции имеют приоритет над настройками базы." />
-                                </StackPanel>
-                                <ComboBox Grid.Column="1" x:Name="ScopeCombo"
-                                          Width="240" Height="{StaticResource ControlHeightStandard}"
-                                          VerticalAlignment="Center"
-                                          Background="{StaticResource BrushSecondaryBg}"
-                                          CornerRadius="{StaticResource RadiusBase}"
-                                          SelectionChanged="OnScopeChanged" />
-                            </Grid>
-                        </Border>
-
-                        <!-- Сетка чекбоксов: три группы действий (строится в коде) -->
-                        <Grid x:Name="ChecksGrid" ColumnDefinitions="*,*,*" Margin="0,4,0,16" />
-                        <Border Classes="separator h" />
-                    </StackPanel>
 
                     </StackPanel>
 
@@ -458,6 +454,80 @@
                            HorizontalAlignment="Center"
                            Margin="0,48,0,0" />
             </Panel>
+
+            <!-- ── Пользователи выбранной базы ──────────────────────────────
+                 Открывается кнопкой «Открыть» ВМЕСТО панели администратора и занимает
+                 её место целиком; крестик возвращает панель администратора (клик по
+                 разделу в сайдбаре — тоже). Своя шапка высотой 56 встаёт на место
+                 навбара модуля (тот скрывается): заголовок слева, область действия прав
+                 и крестик справа. Нижнюю границу шапки рисует общая линия окна на y=56
+                 (MainWindow) — своей линии нет, иначе удвоение. -->
+            <Grid x:Name="UsersPanel" IsVisible="False"
+                  RowDefinitions="Auto,*"
+                  Background="{StaticResource BrushBg}">
+
+                <Grid Grid.Row="0" ColumnDefinitions="*,Auto,Auto"
+                      Height="56" Margin="16,0">
+                    <TextBlock Grid.Column="0" Text="Пользователи"
+                               VerticalAlignment="Center"
+                               FontSize="{DynamicResource FontSizeLarge}"
+                               FontWeight="{StaticResource FontWeightBold}"
+                               TextTrimming="CharacterEllipsis"
+                               Margin="0,0,12,0" />
+                    <!-- Область действия прав: «Вся база данных» + коллекции. Настройки
+                         коллекции приоритетнее настроек базы (PermissionService.GetMask). -->
+                    <ComboBox Grid.Column="1" x:Name="ScopeCombo"
+                              Width="240" Height="{StaticResource ControlHeightStandard}"
+                              VerticalAlignment="Center"
+                              Margin="0,0,8,0"
+                              Background="{StaticResource BrushSecondaryBg}"
+                              CornerRadius="{StaticResource RadiusBase}"
+                              SelectionChanged="OnScopeChanged" />
+                    <Button Grid.Column="2" x:Name="UsersPanelCloseBtn"
+                            Classes="navbtn" Width="30" Height="30"
+                            VerticalAlignment="Center"
+                            CornerRadius="{StaticResource RadiusMedium}"
+                            ToolTip.Tip="Закрыть"
+                            Click="OnCloseUsersPanel">
+                        <Viewbox Width="{StaticResource IconSizeMedium}"
+                                 Height="{StaticResource IconSizeMedium}">
+                            <Canvas Width="24" Height="24">
+                                <Path Data="{StaticResource IconClose}"
+                                      Stroke="{Binding $parent[Button].Foreground}"
+                                      StrokeThickness="{StaticResource IconStrokeMedium}"
+                                      StrokeLineCap="Round" StrokeJoin="Round" />
+                            </Canvas>
+                        </Viewbox>
+                    </Button>
+                </Grid>
+
+                <!-- Матрица «пользователь × действия»: колонки строятся в коде
+                     (ProfileAdminUsers.cs) — вид таблицы конструктора: иконка типа
+                     в шапке, шеврон фильтра/сортировки, те же линии и высота строки.
+                     Первая колонка закреплена — имя видно при горизонтальной прокрутке
+                     (полосу под ней освобождает стиль на PART_FrozenColumnScrollBarSpacer
+                     выше). -->
+                <Panel Grid.Row="1">
+                    <DataGrid x:Name="UsersGrid"
+                              AutoGenerateColumns="False"
+                              RowHeight="{StaticResource RowHeightStandard}"
+                              FrozenColumnCount="1"
+                              CanUserResizeColumns="False"
+                              CanUserReorderColumns="False"
+                              CanUserSortColumns="False"
+                              GridLinesVisibility="All"
+                              HorizontalGridLinesBrush="{StaticResource BrushSeparator}"
+                              VerticalGridLinesBrush="{StaticResource BrushSeparator}"
+                              HeadersVisibility="Column"
+                              SelectionMode="Single"
+                              IsReadOnly="True"
+                              Background="Transparent"
+                              UseLayoutRounding="{DynamicResource LineUseLayoutRounding}"
+                              RowBackground="{StaticResource BrushBg}"
+                              HorizontalScrollBarVisibility="Auto"
+                              VerticalScrollBarVisibility="Auto" />
+                </Panel>
+            </Grid>
 
         </Grid>
 

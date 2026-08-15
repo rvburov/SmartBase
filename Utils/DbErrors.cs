@@ -22,6 +22,11 @@ public static class DbErrors
     /// <summary>Показ уведомления (MainWindow.Notify). Вызывается уже на UI-потоке.</summary>
     public static Action<string>? Notify;
 
+    /// <summary>Показ окна «действие запрещено правами» (MainWindow → PermissionNotice).
+    /// Отдельно от тоста: отказ по правам — ответ на осознанное действие человека,
+    /// его нужно прочитать, а не заметить краем глаза.</summary>
+    public static Action<string>? NotifyDenied;
+
     /// <summary>Сигнал монитору доступности (DbHealthMonitor.ReportFailureByPath).</summary>
     public static Action<string, Exception>? ReportFailure;
 
@@ -29,6 +34,15 @@ public static class DbErrors
     /// монитор оповещён), пробрасывать не нужно. false — чужое исключение.</summary>
     public static bool Handle(Exception ex, string? dbPath)
     {
+        if (ex is Core.Models.PermissionDeniedException)
+        {
+            // Действие запрещено правами: интерфейс обычно объясняет это ещё до вызова
+            // (PermissionNotice в меню), сюда доходят обходные пути и гонки — право
+            // отозвали, пока меню/окно были открыты. Не ошибка приложения → Warning.
+            Log.Warning(ex, "Действие запрещено правами: {Path:l}", dbPath);
+            Dispatcher.UIThread.Post(() => (NotifyDenied ?? Notify)?.Invoke(ex.Message));
+            return true;
+        }
         if (DbHealthMonitor.IsBusyError(ex))
         {
             // Штатная конкуренция — не ошибка приложения, поэтому Warning, не Error.

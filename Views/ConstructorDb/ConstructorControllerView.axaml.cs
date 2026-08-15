@@ -325,7 +325,9 @@ public partial class ConstructorControllerView : UserControl
         // тысячах записей таблицу не откидывало в начало (снимаем offset ДО пересборки).
         var keepVertical = TableViewCtrl.IsVisible ? TableViewCtrl.CurrentVerticalOffset() : (double?)null;
 
-        _repository.DeleteRecord(recordId);
+        // Право могли отозвать, пока меню было открыто: DbErrors покажет причину окном.
+        try { _repository.DeleteRecord(recordId); }
+        catch (Exception ex) when (DbErrors.Handle(ex, _repository.DbPath)) { return; }
         RefreshRows(structural: true);
         TableViewCtrl.ClearRecordSelection();   // удалённая строка не должна оставаться «подсвеченной»
         CollectionsChanged?.Invoke(this, EventArgs.Empty);
@@ -518,7 +520,8 @@ public partial class ConstructorControllerView : UserControl
         // вертикальную позицию, чтобы таблицу не откидывало.
         var keepVertical = TableViewCtrl.IsVisible ? TableViewCtrl.CurrentVerticalOffset() : (double?)null;
 
-        _repository.DuplicateRecord(recordId);
+        try { _repository.DuplicateRecord(recordId); }
+        catch (Exception ex) when (DbErrors.Handle(ex, _repository.DbPath)) { return; }
         RefreshRows(structural: true);
         CollectionsChanged?.Invoke(this, EventArgs.Empty);
 
@@ -699,7 +702,8 @@ public partial class ConstructorControllerView : UserControl
         if (ok != true || dlg.ResultName is null) return;   // отмена
 
         var defaultName = TableViewCtrl.GetSystemDefaultName(key);
-        _repository.SetSystemFieldName(_currentCollectionId.Value, key, dlg.ResultName, defaultName);
+        try { _repository.SetSystemFieldName(_currentCollectionId.Value, key, dlg.ResultName, defaultName); }
+        catch (Exception ex) when (DbErrors.Handle(ex, _repository.DbPath)) { return; }
         TableViewCtrl.RebuildColumn(key);   // перестроить только этот заголовок, не всю таблицу
         CollectionsChanged?.Invoke(this, EventArgs.Empty);
     }
@@ -723,7 +727,12 @@ public partial class ConstructorControllerView : UserControl
         }
 
         col.Name = newName;
-        _repository.UpdateCollection(col);
+        try { _repository.UpdateCollection(col); }
+        catch (Exception ex) when (DbErrors.Handle(ex, _repository.DbPath))
+        {
+            NavbarConstructor.SetTitle(col.Name);   // заголовок вернём к сохранённому имени
+            return;
+        }
         CollectionsChanged?.Invoke(this, EventArgs.Empty);
     }
 

@@ -1,12 +1,9 @@
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Interactivity;
-using Avalonia.Layout;
 using Avalonia.Media;
 using SmartBase.Controls.Dialogs;
-using SmartBase.Core.Models;
 using SmartBase.Database;
-using SmartBase.Database.Entities;
 using SmartBase.Database.Repositories;
 using SmartBase.Settings;
 using SmartBase.Utils;
@@ -24,16 +21,15 @@ public partial class ProfileView : UserControl
 {
     private Workspace? _workspace;
 
+    // Открытый раздел (ключ ProfileRegistry) — панель пользователей по нему понимает,
+    // куда возвращаться при закрытии.
+    private string _categoryKey = "general";
+
     // ── Состояние панели администратора ──────────────────────────────────────
+    // Пользователи, роли и права выбранной базы живут в отдельной панели, которая
+    // открывается на месте этой, — ProfileAdminUsers.cs (тот же partial-класс).
     private List<DatabaseManager> _adminDbs = [];
     private DatabaseManager? _adminDb;
-    private List<DbUserEntity> _users = [];
-    private DbUserEntity? _selectedUser;
-    // Области прав в порядке ScopeCombo: null = вся база, иначе id коллекции.
-    private List<int?> _scopes = [];
-    // Программное выставление чекбоксов не должно писать маски в БД.
-    private bool _suppressChecks;
-    private readonly List<(CheckBox Box, PermAction Action)> _checkBoxes = [];
 
     public ProfileView()
     {
@@ -86,9 +82,14 @@ public partial class ProfileView : UserControl
         // Уход из «Общих данных» с полем в фокусе — тоже точка фиксации ФИО.
         if (GeneralPanel.IsVisible && key != "general") CommitProfile();
 
+        _categoryKey = key;
         GeneralPanel.IsVisible = key == "general";
         AdminPanel.IsVisible   = key == "admin";
         HistoryPanel.IsVisible = key == "history";
+        // Список пользователей открыт «поверх» раздела и сам не спрячется: выбор раздела
+        // в сайдбаре (в том числе повторный выбор «Панели администратора») возвращает
+        // обычный вид с навбаром.
+        CloseUsersPanel();
         HeaderBar.Title = (ProfileRegistry.FindByKey(key) ?? ProfileRegistry.All[0]).Label;
         // Действия истории (выбор базы, очистка журнала) — только для истории.
         HeaderBar.ShowHistoryActions = key == "history";
@@ -145,7 +146,9 @@ public partial class ProfileView : UserControl
         var hasAny = _adminDbs.Count > 0;
         AdminNoAccessRow.IsVisible = !hasAny;
         AdminContent.IsVisible     = hasAny;
-        if (!hasAny) return;
+        // Администрировать больше нечего (последнюю базу размонтировали или админство
+        // отозвали) — открытая панель пользователей не должна остаться висеть.
+        if (!hasAny) { CloseUsersPanel(); return; }
 
         // Сохранить выбранную базу, если она ещё в списке.
         var keepDbId = _adminDb?.DbId;
@@ -158,34 +161,26 @@ public partial class ProfileView : UserControl
 
     private void OnAdminDbChanged(object? sender, SelectionChangedEventArgs e) => LoadAdminDb();
 
-    /// <summary>Чужие события пользователей этой базы (присоединение, допуск, права —
-    /// принёс поллер через MainWindow): перечитать список открытой панели администратора,
-    /// сохранив выбор. Панель закрыта или база другая — не трогаем (откроется свежей).</summary>
+    /// <summary>Чужие события пользователей этой базы (присоединение, допуск, права, роль —
+    /// принёс поллер через MainWindow): перечитать открытую панель пользователей, сохранив
+    /// выбранную область. Панель закрыта или база другая — не трогаем (откроется свежей).</summary>
     public void OnRemoteUserChanges(int dbId)
     {
         if (!AdminPanel.IsVisible || _adminDb is null || _adminDb.DbId != dbId) return;
-
-        RebuildUsers();
-        // Выбранная строка могла исчезнуть/смениться — пересинхронизировать блок прав.
-        _selectedUser = _selectedUser is null
-            ? null
-            : _users.FirstOrDefault(u => u.Id == _selectedUser.Id && !u.IsAdmin);
-        if (_selectedUser is null) RightsBlock.IsVisible = false;
-        else if (RightsBlock.IsVisible) LoadChecks();
+        RefreshUsersPanel();
     }
 
-    // Загрузить выбранную базу: пароль, автоочистка, пользователи; блок прав сворачивается.
+    // Загрузить выбранную базу: пароль, автоочистка. Панель пользователей относится
+    // к конкретной базе — при смене базы закрывается (открывается заново кнопкой).
     private void LoadAdminDb()
     {
         var i = AdminDbCombo.SelectedIndex;
         _adminDb = i >= 0 && i < _adminDbs.Count ? _adminDbs[i] : null;
-        _selectedUser = null;
-        RightsBlock.IsVisible = false;
+        CloseUsersPanel();
         if (_adminDb is null) return;
 
         RefreshPasswordRow();
         RefreshRetentionRow();
-        RebuildUsers();
     }
 
     private void RefreshPasswordRow()
@@ -292,222 +287,8 @@ public partial class ProfileView : UserControl
         RefreshPasswordRow();
     }
 
-    // ── Список пользователей ──────────────────────────────────────────────────
-
-    private void RebuildUsers()
-    {
-        UsersHost.Children.Clear();
-        if (_adminDb is null) return;
-
-        _users = _adminDb.Permissions.GetUsers();
-        foreach (var user in _users)
-            UsersHost.Children.Add(BuildUserRow(user));
-    }
-
-    // Строка пользователя: имя + ключ + статус слева, действия справа. Клик по строке
-    // выбирает пользователя для настройки прав (не-администраторов).
-    private Control BuildUserRow(DbUserEntity user)
-    {
-        var isSelf = user.UserKey == CurrentUser.Key;
-
-        var info = new StackPanel { Spacing = 3, VerticalAlignment = VerticalAlignment.Center };
-        info.Children.Add(new TextBlock { Text = user.DisplayName + (isSelf ? " (вы)" : "") });
-        info.Children.Add(new TextBlock
-        {
-            Text = user.UserKey,
-            FontSize = FontSizeToken("FontSizeSmall", 11),
-            Foreground = Brush("BrushSecondaryText", "#8E8E93"),
-        });
-
-        var actions = new StackPanel
-        {
-            Orientation = Orientation.Horizontal,
-            Spacing = 8,
-            VerticalAlignment = VerticalAlignment.Center,
-        };
-        if (user.IsAdmin)
-        {
-            actions.Children.Add(new TextBlock
-            {
-                Text = "Администратор",
-                VerticalAlignment = VerticalAlignment.Center,
-                FontSize = FontSizeToken("FontSizeSmall", 11),
-                Foreground = Brush("BrushSecondaryText", "#8E8E93"),
-            });
-        }
-        else if (!user.IsApproved)
-        {
-            actions.Children.Add(new TextBlock
-            {
-                Text = "Ожидает допуска",
-                VerticalAlignment = VerticalAlignment.Center,
-                FontSize = FontSizeToken("FontSizeSmall", 11),
-                Foreground = Brush("BrushRed", "#FF3B30"),
-            });
-            var approve = MakeRowButton("Допустить");
-            approve.Click += (_, _) => { _adminDb?.Permissions.SetApproved(user.Id, true); RebuildUsers(); };
-            actions.Children.Add(approve);
-        }
-        else
-        {
-            var revoke = MakeRowButton("Отозвать допуск");
-            revoke.Click += (_, _) =>
-            {
-                _adminDb?.Permissions.SetApproved(user.Id, false);
-                if (_selectedUser?.Id == user.Id) { _selectedUser = null; RightsBlock.IsVisible = false; }
-                RebuildUsers();
-            };
-            actions.Children.Add(revoke);
-        }
-
-        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto") };
-        Grid.SetColumn(info, 0);
-        Grid.SetColumn(actions, 1);
-        grid.Children.Add(info);
-        grid.Children.Add(actions);
-
-        var row = new Border
-        {
-            Padding = new Thickness(10, 8),
-            CornerRadius = Radius("RadiusBase", 6),
-            Background = _selectedUser?.Id == user.Id
-                ? Brush("BrushAccentLight", "#E5F0FF")
-                : Brushes.Transparent,
-            Child = grid,
-        };
-
-        // Права настраиваются у не-администраторов; клик по строке выбирает пользователя.
-        if (!user.IsAdmin)
-        {
-            row.Cursor = new Avalonia.Input.Cursor(Avalonia.Input.StandardCursorType.Hand);
-            row.PointerPressed += (_, _) => SelectUser(user);
-        }
-        return row;
-    }
-
-    // Кнопка строки пользователя: вид dialog, но ширина по тексту (стиль фиксирует
-    // Width=110, а «Отозвать допуск» шире — Width=NaN возвращает авторазмер).
-    private static Button MakeRowButton(string content)
-    {
-        var btn = new Button
-        {
-            Content  = content,
-            Width    = double.NaN,
-            MinWidth = 110,
-            Padding  = new Thickness(14, 0),
-        };
-        btn.Classes.Add("dialog");
-        return btn;
-    }
-
-    private void SelectUser(DbUserEntity user)
-    {
-        _selectedUser = user;
-        RebuildUsers();   // подсветка выбранной строки
-
-        RightsTitle.Text = $"Права пользователя: {user.DisplayName}";
-        RightsBlock.IsVisible = true;
-        RebuildScopes();
-    }
-
-    // Область прав: «Вся база данных» + коллекции выбранной базы.
-    private void RebuildScopes()
-    {
-        if (_adminDb is null) return;
-        var collections = _adminDb.Constructor.GetAllCollections();
-
-        _scopes = [null];
-        var labels = new List<string> { "Вся база данных" };
-        foreach (var c in collections.Where(c => c.Id.HasValue))
-        {
-            _scopes.Add(c.Id);
-            labels.Add(c.Name);
-        }
-        ScopeCombo.ItemsSource   = labels;
-        ScopeCombo.SelectedIndex = 0;   // SelectionChanged → LoadChecks
-        LoadChecks();
-    }
-
-    private void OnScopeChanged(object? sender, SelectionChangedEventArgs e) => LoadChecks();
-
-    private int? CurrentScope =>
-        ScopeCombo.SelectedIndex >= 0 && ScopeCombo.SelectedIndex < _scopes.Count
-            ? _scopes[ScopeCombo.SelectedIndex]
-            : null;
-
-    // Сетка чекбоксов: три группы действий. Строится один раз, дальше только значения.
-    private void EnsureChecksGrid()
-    {
-        if (ChecksGrid.Children.Count > 0) return;
-
-        AddCheckGroup(0, "Коллекции",
-        [
-            PermAction.ViewCollection, PermAction.EditCollection,
-            PermAction.DeleteCollection, PermAction.DuplicateCollection,
-            PermAction.CreateCollection,
-        ]);
-        AddCheckGroup(1, "Записи",
-        [
-            PermAction.CreateRecord, PermAction.EditRecord,
-            PermAction.DeleteRecord, PermAction.DuplicateRecord,
-        ]);
-        AddCheckGroup(2, "Свойства",
-        [
-            PermAction.CreateField, PermAction.EditField, PermAction.DeleteField,
-        ]);
-    }
-
-    private void AddCheckGroup(int column, string title, PermAction[] actions)
-    {
-        var panel = new StackPanel { Spacing = 8, Margin = new Thickness(0, 0, 24, 0) };
-        panel.Children.Add(new TextBlock
-        {
-            Text = title,
-            FontWeight = Avalonia.Media.FontWeight.SemiBold,
-            Margin = new Thickness(0, 0, 0, 2),
-        });
-        foreach (var action in actions)
-        {
-            var box = new CheckBox { Content = PermActionLabels.Label(action) };
-            box.IsCheckedChanged += (_, _) => OnCheckChanged();
-            _checkBoxes.Add((box, action));
-            panel.Children.Add(box);
-        }
-        Grid.SetColumn(panel, column);
-        ChecksGrid.Children.Add(panel);
-    }
-
-    // Показать действующую маску выбранного пользователя в выбранной области.
-    private void LoadChecks()
-    {
-        if (_adminDb is null || _selectedUser is null) return;
-        EnsureChecksGrid();
-
-        var mask = _adminDb.Permissions.GetMask(_selectedUser.Id, CurrentScope);
-        _suppressChecks = true;
-        foreach (var (box, action) in _checkBoxes)
-        {
-            box.IsChecked = (mask & (int)action) == (int)action;
-            // «Создавать коллекции» имеет смысл только на уровне базы.
-            box.IsEnabled = action != PermAction.CreateCollection || CurrentScope is null;
-        }
-        _suppressChecks = false;
-    }
-
-    // Любой чекбокс: собрать маску и записать для выбранной области.
-    private void OnCheckChanged()
-    {
-        if (_suppressChecks || _adminDb is null || _selectedUser is null) return;
-
-        var mask = 0;
-        foreach (var (box, action) in _checkBoxes)
-            if (box.IsChecked == true)
-                mask |= (int)action;
-
-        _adminDb.Permissions.SetMask(_selectedUser.Id, CurrentScope, mask);
-    }
-
     // ── Хелперы ресурсов (fallback — как в SidebarRow) ────────────────────────
+    // Используются и панелью пользователей (ProfileAdminUsers.cs — тот же класс).
 
     private static IBrush Brush(string key, string fallbackHex) =>
         Application.Current!.TryFindResource(key, out var res) && res is IBrush b
@@ -518,9 +299,4 @@ public partial class ProfileView : UserControl
     // TemplatedControl.FontSize (CS0108).
     private static double FontSizeToken(string key, double fallback) =>
         Application.Current!.TryFindResource(key, out var res) && res is double d ? d : fallback;
-
-    // Скругление из токена Radius* (fallback — как в Brush/FontSize).
-    private static CornerRadius Radius(string key, double fallback) =>
-        Application.Current!.TryFindResource(key, out var res) && res is CornerRadius r
-            ? r : new CornerRadius(fallback);
 }

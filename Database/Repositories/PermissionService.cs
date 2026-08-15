@@ -97,6 +97,7 @@ public sealed class PermissionService(AppDbContext db)
         var key      = CurrentUser.Key;
         var me       = _db.DbUsers.FirstOrDefault(u => u.UserKey == key);
         var hasAdmin = _db.DbUsers.Any(u => u.IsAdmin);
+        var now      = DateTime.UtcNow.ToString("o");
 
         if (me is null)
         {
@@ -106,7 +107,8 @@ public sealed class PermissionService(AppDbContext db)
                 DisplayName = CurrentUser.DisplayName,
                 IsAdmin     = !hasAdmin,
                 IsApproved  = !hasAdmin,
-                CreatedAt   = DateTime.UtcNow.ToString("o"),
+                CreatedAt   = now,
+                LastSeenAt  = now,
             };
             _db.DbUsers.Add(me);
             // Присоединение к чужой базе (админ уже есть) — событие в журнал: у админа
@@ -130,7 +132,6 @@ public sealed class PermissionService(AppDbContext db)
         }
         else
         {
-            var dirty = false;
             if (me.DisplayName != CurrentUser.DisplayName)
             {
                 // Имя сменилось между сессиями — сигналим соседям (открытые панели
@@ -138,16 +139,19 @@ public sealed class PermissionService(AppDbContext db)
                 LogUser("user.rename", CurrentUser.DisplayName,
                         Utils.ChangeDetail.Rename(me.DisplayName, CurrentUser.DisplayName));
                 me.DisplayName = CurrentUser.DisplayName;
-                dirty = true;
             }
             if (!hasAdmin && !me.IsAdmin)
             {
                 // База осталась без админа (например, строку удалили вручную) — клеймим.
                 me.IsAdmin    = true;
                 me.IsApproved = true;
-                dirty = true;
             }
-            if (dirty) _db.SaveChanges();
+            // Отметка активности: администратор видит в панели, кто и когда открывал базу
+            // последний раз. Пишется КАЖДОЕ монтирование (поэтому SaveChanges безусловный),
+            // но НЕ идёт в журнал — иначе каждое открытие базы будило бы поллеры соседей
+            // строкой без содержания.
+            me.LastSeenAt = now;
+            _db.SaveChanges();
         }
 
         Reload(notify: false);
@@ -234,6 +238,63 @@ public sealed class PermissionService(AppDbContext db)
         // Событие в журнал: у затронутого пользователя замок снимется/появится сам,
         // без перезапуска (его поллер увидит строку и перечитает права).
         LogUser(approved ? "user.approve" : "user.revoke", user.DisplayName);
+        _db.SaveChanges();
+        Reload();
+    }
+
+    /// <summary>
+    /// Назначить/снять роль администратора. Только администратор и только ДРУГОМУ
+    /// пользователю: свою роль не меняет никто (иначе последний админ мог бы запереть
+    /// базу от самого себя, а «понижение себя» ничем не отличалось бы от потери доступа).
+    /// Повышение заодно даёт допуск — иначе новый администратор не попал бы в опции полей
+    /// «Пользователь» (GetUserOptions отбирает по IsApproved). Понижение допуск не трогает
+    /// и строк прав не создаёт: «нет строк — разрешено всё», лишнее админ снимает галками.
+    /// </summary>
+    public void SetAdmin(int userId, bool isAdmin)
+    {
+        DemandAdmin();
+        var user = Tracked(_db.DbUsers.Find(userId));
+        if (user is null || user.UserKey == CurrentUser.Key) return;   // свою роль не трогаем
+        // Строку снёс сосед, пока панель была открыта, — Reload отцепил её от контекста.
+        if (_db.Entry(user).State == Microsoft.EntityFrameworkCore.EntityState.Detached) return;
+        if (user.IsAdmin == isAdmin) return;
+        // Страховка на гонку: пока панель была открыта, соседи могли снять админство
+        // с остальных. Базу без единого администратора не оставляем — настроить доступ
+        // тогда не смог бы никто.
+        if (!isAdmin && !FreshUsers.Any(u => u.IsAdmin && u.Id != userId)) return;
+
+        user.IsAdmin = isAdmin;
+        if (isAdmin) user.IsApproved = true;
+        // Событие в журнал: у затронутого пользователя панель администратора появится
+        // (или исчезнет) сама, без перезапуска — его поллер увидит строку.
+        LogUser("user.role", user.DisplayName,
+                Utils.ChangeDetail.Rename(isAdmin ? RoleUser : RoleAdmin,
+                                          isAdmin ? RoleAdmin : RoleUser));
+        _db.SaveChanges();
+        Reload();
+    }
+
+    /// <summary>Подписи ролей — общие для панели администратора и «до → после» в журнале.</summary>
+    public const string RoleUser  = "Пользователь";
+    public const string RoleAdmin = "Администратор";
+
+    /// <summary>
+    /// Убрать пользователя из базы: строка db_users и его права (каскад db_permissions)
+    /// исчезают. Только администратор и только ДРУГОГО: себя из базы не удаляют.
+    /// Человек не заблокирован навсегда — при следующем открытии базы он зарегистрируется
+    /// заново и снова будет ждать допуска. Записи, где его имя стоит в поле «Пользователь»,
+    /// и строки журнала не трогаются: там снапшоты имени, а не ссылки.
+    /// </summary>
+    public void RemoveUser(int userId)
+    {
+        DemandAdmin();
+        var user = Tracked(_db.DbUsers.Find(userId));
+        if (user is null || user.UserKey == CurrentUser.Key) return;   // себя не удаляем
+        if (_db.Entry(user).State == Microsoft.EntityFrameworkCore.EntityState.Detached) return;
+
+        // Имя снимаем ДО удаления: после SaveChanges читать сущность уже нельзя.
+        LogUser("user.remove", user.DisplayName);
+        _db.DbUsers.Remove(user);
         _db.SaveChanges();
         Reload();
     }

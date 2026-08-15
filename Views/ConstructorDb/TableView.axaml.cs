@@ -16,6 +16,7 @@ using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
+using SmartBase.Controls.Dialogs;
 using SmartBase.Controls.Widgets;
 using SmartBase.Core.Models;
 using SmartBase.Database.Repositories;
@@ -155,7 +156,18 @@ public partial class TableView : UserControl
         RecordsGrid.LayoutUpdated      += OnGridLayoutUpdated;
         // Открыт ли редактор ячейки — фоновая синхронизация чужих правок (ChangePoller)
         // не обновляет строки, пока пользователь печатает, чтобы не затирать ввод.
-        RecordsGrid.BeginningEdit      += (_, _) => IsCellEditing = true;
+        // Заодно точка отказа: без права изменения записей правку отменяем и объясняем
+        // причину (сетка не read-only, иначе двойной клик молчал бы).
+        RecordsGrid.BeginningEdit += (_, e) =>
+        {
+            if (!Can(PermAction.EditRecord))
+            {
+                e.Cancel = true;
+                PermissionNotice.Show(this, PermAction.EditRecord);
+                return;
+            }
+            IsCellEditing = true;
+        };
         RecordsGrid.CellEditEnded      += (_, _) => IsCellEditing = false;
         // Delete по выделенным колонкам. Tunnel — чтобы перехватить раньше, чем
         // DataGrid обработает клавишу для редактирования/навигации.
@@ -277,6 +289,13 @@ public partial class TableView : UserControl
     // Меню читают его при открытии, поэтому смена прав видна со следующего клика.
     private bool Can(PermAction a) => _repository?.Permissions?.Can(a, _collectionId) ?? true;
 
+    // Запрещённое действие НЕ гасим, а объясняем: пункт остаётся кликабельным и по клику
+    // показывает причину («Недостаточно прав: удаление записей запрещено администратором
+    // базы данных») — как замок у коллекции без права просмотра. Молчаливо серый пункт
+    // выглядел как поломка: непонятно, кто и что запретил.
+    private void Guarded(MenuItem item, PermAction action, Action run) =>
+        item.Click += (_, _) => PermissionNotice.Run(this, Can(action), action, run);
+
     public void Load(ConstructorRepository repository, int collectionId)
     {
         var sameCollection = _lastLoadedCollectionId == collectionId;
@@ -284,10 +303,10 @@ public partial class TableView : UserControl
         _repository   = repository;
         _collectionId = collectionId;
 
-        // Без права изменения записей таблица только читается: инлайн-редактор ячеек
-        // не открывается (SetFieldValue в репозитории всё равно бы отказал — но без
-        // сетки в режиме правки пользователь не теряет ввод на страховке).
-        RecordsGrid.IsReadOnly = !Can(PermAction.EditRecord);
+        // Правку без права изменения записей отменяет BeginningEdit (там же — окно
+        // с причиной): read-only сетка молча игнорировала бы двойной клик, и человек
+        // не понимал бы, почему ячейка не открывается.
+        RecordsGrid.IsReadOnly = false;
 
         // Фильтры/сортировка не переносятся между коллекциями.
         _filters.Clear();
@@ -1011,11 +1030,9 @@ public partial class TableView : UserControl
             // Размер «+» — как у «+» создания записи (add-row), т.е. стандартный FontSizeBase.
             var plus = MakeCenteredHeader("+", addRightBorder: false);
             plus.Cursor = new Cursor(StandardCursorType.Hand);
-            plus.PointerPressed += (_, _) =>
-            {
-                if (Can(PermAction.CreateField))
-                    PropertyCreateRequested?.Invoke(this, EventArgs.Empty);
-            };
+            plus.PointerPressed += (_, _) => PermissionNotice.Run(
+                this, Can(PermAction.CreateField), PermAction.CreateField,
+                () => PropertyCreateRequested?.Invoke(this, EventArgs.Empty));
             return plus;
         }
 
@@ -1573,8 +1590,9 @@ public partial class TableView : UserControl
 
         if (row.IsAddRow)
         {
-            if (Can(PermAction.CreateRecord))
-                RecordCreateRequested?.Invoke(this, (false, null)); // создать в конце, без открытия
+            // Создать в конце, без открытия; без права — окно с причиной.
+            PermissionNotice.Run(this, Can(PermAction.CreateRecord), PermAction.CreateRecord,
+                                 () => RecordCreateRequested?.Invoke(this, (false, null)));
             return;
         }
 
@@ -1596,8 +1614,8 @@ public partial class TableView : UserControl
 
         if (e.Column.Tag as string == TableColumnDef.AddPropKey)
         {
-            if (Can(PermAction.CreateField))
-                PropertyCreateRequested?.Invoke(this, EventArgs.Empty);
+            PermissionNotice.Run(this, Can(PermAction.CreateField), PermAction.CreateField,
+                                 () => PropertyCreateRequested?.Invoke(this, EventArgs.Empty));
             return;
         }
 
@@ -1698,8 +1716,8 @@ public partial class TableView : UserControl
     {
         var menu = new ContextMenu();
         var mi = new MenuItem { Header = Controls.Components.MenuIcons.CreateRecordHeader() };
-        mi.Click += (_, _) => RecordCreateRequested?.Invoke(this, (false, null)); // в конце, без открытия
-        mi.IsEnabled = Can(PermAction.CreateRecord);
+        // В конце, без открытия.
+        Guarded(mi, PermAction.CreateRecord, () => RecordCreateRequested?.Invoke(this, (false, null)));
         menu.Items.Add(mi);
 
         // «Отображение» доступно и отсюда — на случай, если все колонки скрыты и до
@@ -1723,12 +1741,11 @@ public partial class TableView : UserControl
 
         var miCreate = new MenuItem { Header = Controls.Components.MenuIcons.CreateRecordHeader() };
         // После этой строки, без открытия. Если строка ещё не заполнена (id=0) — создаём в конце.
-        miCreate.Click += (_, _) =>
+        Guarded(miCreate, PermAction.CreateRecord, () =>
         {
             var rid = RowRecordId(row);
             RecordCreateRequested?.Invoke(this, (false, rid > 0 ? rid : (int?)null));
-        };
-        miCreate.IsEnabled = Can(PermAction.CreateRecord);
+        });
         menu.Items.Add(miCreate);
 
         menu.Items.Add(new Separator());
@@ -1738,14 +1755,12 @@ public partial class TableView : UserControl
         menu.Items.Add(miEdit);
 
         var miDuplicate = new MenuItem { Header = Controls.Components.MenuIcons.DuplicateHeader() };
-        miDuplicate.Click += (_, _) => RequestRecordDuplicateFromMenu(row);
-        miDuplicate.IsEnabled = Can(PermAction.DuplicateRecord);
+        Guarded(miDuplicate, PermAction.DuplicateRecord, () => RequestRecordDuplicateFromMenu(row));
         menu.Items.Add(miDuplicate);
 
         // Перенос = изъятие записи из коллекции: право как у удаления.
         var miRelocate = new MenuItem { Header = Controls.Components.MenuIcons.LocationHeader() };
-        miRelocate.Click += (_, _) => RequestRecordRelocateFromMenu(row);
-        miRelocate.IsEnabled = Can(PermAction.DeleteRecord);
+        Guarded(miRelocate, PermAction.DeleteRecord, () => RequestRecordRelocateFromMenu(row));
         menu.Items.Add(miRelocate);
 
         // «Отображение» (записей) — глобальное окно видимости/уровней строк (список всех
@@ -1759,8 +1774,8 @@ public partial class TableView : UserControl
 
         menu.Items.Add(new Separator());
 
-        var miDelete = MakeDeleteMenuItem(enabled: Can(PermAction.DeleteRecord));
-        miDelete.Click += (_, _) => RequestRecordDeleteFromMenu(row);
+        var miDelete = MakeDeleteMenuItem();
+        Guarded(miDelete, PermAction.DeleteRecord, () => RequestRecordDeleteFromMenu(row));
         menu.Items.Add(miDelete);
 
         return menu;
@@ -1885,13 +1900,11 @@ public partial class TableView : UserControl
         menu.Items.Add(new Separator());
 
         var miEdit = new MenuItem { Header = Controls.Components.MenuIcons.EditHeader() };
-        miEdit.Click += (_, _) => SystemFieldRenameRequested?.Invoke(this, key);
-        miEdit.IsEnabled = Can(PermAction.EditField);
+        Guarded(miEdit, PermAction.EditField, () => SystemFieldRenameRequested?.Invoke(this, key));
         menu.Items.Add(miEdit);
 
         var miCreate = new MenuItem { Header = Controls.Components.MenuIcons.CreatePropertyHeader() };
-        miCreate.Click += (_, _) => PropertyCreateAfterRequested?.Invoke(this, key);
-        miCreate.IsEnabled = Can(PermAction.CreateField);
+        Guarded(miCreate, PermAction.CreateField, () => PropertyCreateAfterRequested?.Invoke(this, key));
         menu.Items.Add(miCreate);
 
         var miDisplay = new MenuItem { Header = Controls.Components.MenuIcons.DisplayHeader() };
@@ -1979,18 +1992,15 @@ public partial class TableView : UserControl
         menu.Items.Add(new Separator());
 
         var miEdit = new MenuItem { Header = Controls.Components.MenuIcons.EditHeader() };
-        miEdit.Click += (_, _) => PropertyEditRequested?.Invoke(this, fieldId);
-        miEdit.IsEnabled = Can(PermAction.EditField);
+        Guarded(miEdit, PermAction.EditField, () => PropertyEditRequested?.Invoke(this, fieldId));
         menu.Items.Add(miEdit);
 
         var miDuplicate = new MenuItem { Header = Controls.Components.MenuIcons.DuplicateHeader() };
-        miDuplicate.Click += (_, _) => RequestDuplicateFromMenu(fieldId);
-        miDuplicate.IsEnabled = Can(PermAction.CreateField);
+        Guarded(miDuplicate, PermAction.CreateField, () => RequestDuplicateFromMenu(fieldId));
         menu.Items.Add(miDuplicate);
 
         var miCreate = new MenuItem { Header = Controls.Components.MenuIcons.CreatePropertyHeader() };
-        miCreate.Click += (_, _) => PropertyCreateAfterRequested?.Invoke(this, fieldId.ToString());
-        miCreate.IsEnabled = Can(PermAction.CreateField);
+        Guarded(miCreate, PermAction.CreateField, () => PropertyCreateAfterRequested?.Invoke(this, fieldId.ToString()));
         menu.Items.Add(miCreate);
 
         var miDisplay = new MenuItem { Header = Controls.Components.MenuIcons.DisplayHeader() };
@@ -2002,8 +2012,7 @@ public partial class TableView : UserControl
         if (fileAuto)
         {
             var miRefresh = new MenuItem { Header = "Обновить привязку" };
-            miRefresh.Click += (_, _) => RefreshAutoFileFromMenu(fieldId);
-            miRefresh.IsEnabled = Can(PermAction.EditRecord);
+            Guarded(miRefresh, PermAction.EditRecord, () => RefreshAutoFileFromMenu(fieldId));
             menu.Items.Add(miRefresh);
         }
 
@@ -2012,8 +2021,8 @@ public partial class TableView : UserControl
 
         menu.Items.Add(new Separator());
 
-        var miDelete = MakeDeleteMenuItem(enabled: !isRequired && Can(PermAction.DeleteField));
-        miDelete.Click += (_, _) => RequestDeleteFromMenu(fieldId);
+        var miDelete = MakeDeleteMenuItem(enabled: !isRequired);
+        Guarded(miDelete, PermAction.DeleteField, () => RequestDeleteFromMenu(fieldId));
         menu.Items.Add(miDelete);
 
         return menu;

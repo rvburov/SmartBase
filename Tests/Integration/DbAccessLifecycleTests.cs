@@ -133,6 +133,50 @@ public sealed class DbAccessLifecycleTests
         finally { TempDatabase.Cleanup(path); }
     }
 
+    /// <summary>
+    /// Администратор убрал человека из базы (панель администратора → корзина в строке):
+    /// это не пожизненный бан, а сброс — при следующем открытии базы он регистрируется
+    /// заново и снова ждёт допуска. Иначе «удалить и допустить заново» было бы невозможно
+    /// без ручной правки файла.
+    /// </summary>
+    [Fact]
+    public void Removed_user_rejoins_as_pending_on_next_mount()
+    {
+        var path = TempDatabase.NewTempPath();
+        try
+        {
+            // Базу создал сосед — админ он, я прихожу вторым и получаю допуск.
+            using (var owner = DatabaseManager.Open(1, "общая", path))
+            {
+                var me = owner.Context.DbUsers.Single(u => u.UserKey == CurrentUser.Key);
+                me.UserKey     = "boss@other-pc";
+                me.DisplayName = "Чужой Админ";
+                owner.Context.SaveChanges();
+            }
+
+            int myId;
+            using (var mine = DatabaseManager.Open(1, "общая", path))
+                myId = mine.Permissions.CurrentUserId;
+
+            // Админ удаляет мою строку со своей машины.
+            using (var owner = new AppDbContext(path))
+            {
+                owner.DbUsers.Remove(owner.DbUsers.Single(u => u.Id == myId));
+                owner.SaveChanges();
+            }
+
+            // Открываю базу заново: строка появилась снова и ждёт допуска.
+            using (DatabaseManager.Open(1, "общая", path)) { }
+
+            using var check = new AppDbContext(path);
+            var again = check.DbUsers.Single(u => u.UserKey == CurrentUser.Key);
+            Assert.NotEqual(myId, again.Id);
+            Assert.False(again.IsApproved);
+            Assert.False(again.IsAdmin);
+        }
+        finally { TempDatabase.Cleanup(path); }
+    }
+
     // ── 2. Вход паролем базы ──────────────────────────────────────────────────
 
     /// <summary>

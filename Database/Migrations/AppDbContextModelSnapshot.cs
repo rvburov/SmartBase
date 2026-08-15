@@ -413,6 +413,10 @@ namespace SmartBase.Database.Migrations
                     b.Property<bool>("IsApproved")
                         .HasColumnType("INTEGER");
 
+                    b.Property<string>("LastSeenAt")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("UserKey")
                         .IsRequired()
                         .HasColumnType("TEXT");

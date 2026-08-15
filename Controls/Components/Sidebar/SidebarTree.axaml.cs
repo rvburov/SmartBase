@@ -40,6 +40,9 @@ public partial class SidebarTree : UserControl
     // Клик по ещё не смонтированной базе (в очереди/обновляется/недоступна) —
     // MainWindow показывает подсказку с текущим статусом.
     public event EventHandler<int>?       PendingDatabaseTapped;
+    // Клик по коллекции, просмотр которой запрещён правами (замок) — MainWindow
+    // поясняет, что доступ закрыт администратором. Аргумент — имя коллекции.
+    public event EventHandler<string>?    CollectionAccessDenied;
 
     // Смонтированные БД сайдбара. В режиме календаря — одна (дефолт). В конструкторе —
     // все из рабочего пространства, и каждая показывается корневым узлом (_showRoots).
@@ -365,22 +368,22 @@ public partial class SidebarTree : UserControl
         var root        = new List<SidebarNode>();
 
         foreach (var g in groups.Where(g => g.ParentId is null).OrderBy(g => g.Position))
-            root.Add(BuildGroupNode(db.DbId, g, groups, collections));
+            root.Add(BuildGroupNode(db, g, groups, collections));
         foreach (var c in collections.Where(c => c.GroupId is null).OrderBy(c => c.Position))
-            root.Add(MakeCollectionNode(db.DbId, c));
+            root.Add(MakeCollectionNode(db, c));
 
         return SortNodes(root);
     }
 
-    private SidebarNode BuildGroupNode(int dbId, DbGroup group, List<DbGroup> allGroups, List<DbCollection> allCollections)
+    private SidebarNode BuildGroupNode(MountedDb db, DbGroup group, List<DbGroup> allGroups, List<DbCollection> allCollections)
     {
-        var node = new SidebarNode { NodeType = "group", DbId = dbId, Id = group.Id, Name = group.Name };
+        var node = new SidebarNode { NodeType = "group", DbId = db.DbId, Id = group.Id, Name = group.Name };
 
         var children = new List<SidebarNode>();
         foreach (var child in allGroups.Where(g => g.ParentId == group.Id).OrderBy(g => g.Position))
-            children.Add(BuildGroupNode(dbId, child, allGroups, allCollections));
+            children.Add(BuildGroupNode(db, child, allGroups, allCollections));
         foreach (var col in allCollections.Where(c => c.GroupId == group.Id).OrderBy(c => c.Position))
-            children.Add(MakeCollectionNode(dbId, col));
+            children.Add(MakeCollectionNode(db, col));
 
         foreach (var c in SortNodes(children))
             node.Children.Add(c);
@@ -388,8 +391,21 @@ public partial class SidebarTree : UserControl
         return node;
     }
 
-    private static SidebarNode MakeCollectionNode(int dbId, DbCollection c) =>
-        new() { NodeType = "collection", DbId = dbId, Id = c.Id, Name = c.Name, Color = c.Color };
+    // Коллекция без права просмотра выглядит как база без допуска: замок вместо иконки,
+    // содержимое не открывается, контекстного меню нет (Locked гасит его на общих
+    // основаниях). Замок ставим только в конструкторе: там клик по строке ОТКРЫВАЕТ
+    // коллекцию, а в календаре и задачах строка — это переключатель набора.
+    private SidebarNode MakeCollectionNode(MountedDb db, DbCollection c) =>
+        new()
+        {
+            NodeType = "collection",
+            DbId     = db.DbId,
+            Id       = c.Id,
+            Name     = c.Name,
+            Color    = c.Color,
+            IsLocked = _mode == SidebarMode.Constructor && c.Id is int cid &&
+                       !(db.Repo.Permissions?.Can(PermAction.ViewCollection, cid) ?? true),
+        };
 
     private List<SidebarNode> SortNodes(List<SidebarNode> nodes)
     {
@@ -591,6 +607,14 @@ public partial class SidebarTree : UserControl
             return;
         }
 
+        // Коллекция без права просмотра: не открываем — поясняем, что доступ закрыт
+        // администратором (иначе замок молчит и выглядит поломкой).
+        if (node.IsLocked && !node.IsDatabase)
+        {
+            CollectionAccessDenied?.Invoke(this, node.Name);
+            return;
+        }
+
         // Обычный клик по раскрываемому узлу (группа или корень-БД) — раскрыть/свернуть.
         if (node.IsGroup || node.IsDatabase)
         {
@@ -751,7 +775,8 @@ public partial class SidebarTree : UserControl
     {
         if (sender is not Control { DataContext: SidebarRow row } anchor) return;
         if (!row.Node.Id.HasValue) return;
-        // У запертой базы меню нет — содержимое недоступно до допуска.
+        // У запертой базы меню нет — содержимое недоступно до допуска. У коллекции без
+        // права просмотра (тоже замок) — тем более: она закрыта целиком.
         // У немонтированной (очередь/обновление/недоступна) — тоже: база ещё не готова.
         if (row.Node.IsLocked || row.Node.IsPending) { e.Handled = true; return; }
 
@@ -769,39 +794,60 @@ public partial class SidebarTree : UserControl
         // (пользователь понимает, что действие существует, но закрыто администратором).
         var perms = RepoOf(node)?.Permissions;
         bool Can(PermAction a, int? cid = null) => perms?.Can(a, cid) ?? true;
-        static MenuItem Gate(MenuItem m, bool allowed) { m.IsEnabled = allowed; return m; }
+        // Запрещённый пункт остаётся кликабельным и объясняет причину окном — как замок
+        // у коллекции без права просмотра. Серый пункт молчал: непонятно, кто запретил.
+        Action Guard(PermAction a, int? cid, Action run) =>
+            () => PermissionNotice.Run(this, Can(a, cid), a, run);
 
         if (node.IsDatabase)
         {
             // Корень-БД: создание группы/коллекции в этой БД. Сама БД управляется в настройках.
-            menu.Items.Add(Gate(MenuItemCreateGroup(()      => _ = CreateItem("group", db, parentId: null)), Can(PermAction.CreateCollection)));
-            menu.Items.Add(Gate(MenuItemCreateCollection(() => _ = CreateItem("collection", db, parentId: null)), Can(PermAction.CreateCollection)));
+            menu.Items.Add(MenuItemCreateGroup(Guard(PermAction.CreateCollection, null,
+                () => _ = CreateItem("group", db, parentId: null))));
+            menu.Items.Add(MenuItemCreateCollection(Guard(PermAction.CreateCollection, null,
+                () => _ = CreateItem("collection", db, parentId: null))));
         }
         else if (node.IsGroup)
         {
-            menu.Items.Add(Gate(MenuItemCreateGroup(()      => _ = CreateItem("group", db, parentId: id)), Can(PermAction.CreateCollection)));
-            menu.Items.Add(Gate(MenuItemCreateCollection(() => _ = CreateItem("collection", db, parentId: id)), Can(PermAction.CreateCollection)));
+            menu.Items.Add(MenuItemCreateGroup(Guard(PermAction.CreateCollection, null,
+                () => _ = CreateItem("group", db, parentId: id))));
+            menu.Items.Add(MenuItemCreateCollection(Guard(PermAction.CreateCollection, null,
+                () => _ = CreateItem("collection", db, parentId: id))));
             menu.Items.Add(new Separator());
-            if (!multi) menu.Items.Add(Gate(MenuItemEdit(() => _ = EditGroup(db, id)), Can(PermAction.EditCollection)));
+            if (!multi) menu.Items.Add(MenuItemEdit(Guard(PermAction.EditCollection, null,
+                () => _ = EditGroup(db, id))));
             // Перенос = изъятие из текущего места: право как у удаления.
-            menu.Items.Add(Gate(MenuItemLocation(() => RelocateSelectionOrNode(node)), Can(PermAction.DeleteCollection)));
-            menu.Items.Add(Gate(MenuItemDuplicate(() => DuplicateSelectionOrNode(node)), Can(PermAction.DuplicateCollection)));
-            menu.Items.Add(Gate(MenuItemDelete(() => _ = DeleteSelectionOrNode(node)), Can(PermAction.DeleteCollection)));
+            menu.Items.Add(MenuItemLocation(Guard(PermAction.DeleteCollection, null,
+                () => RelocateSelectionOrNode(node))));
+            menu.Items.Add(MenuItemDuplicate(Guard(PermAction.DuplicateCollection, null,
+                () => DuplicateSelectionOrNode(node))));
+            menu.Items.Add(MenuItemDelete(Guard(PermAction.DeleteCollection, null,
+                () => _ = DeleteSelectionOrNode(node))));
         }
         else
         {
             if (ChecksMode)
             {
-                menu.Items.Add(Gate(BuildColorMenu(db, id), Can(PermAction.EditCollection, id)));
-                menu.Items.Add(_mode == SidebarMode.Calendar
-                    ? Gate(BuildDateFieldsMenu(db, id), Can(PermAction.EditField, id))
-                    : Gate(BuildUserFieldsMenu(db, id), Can(PermAction.EditField, id)));
+                // Подменю (цвет, поля) — по клику по пункту меню не запускается действие,
+                // поэтому запрет здесь честнее показать недоступностью самого подменю.
+                var color = BuildColorMenu(db, id);
+                color.IsEnabled = Can(PermAction.EditCollection, id);
+                menu.Items.Add(color);
+                var fields = _mode == SidebarMode.Calendar
+                    ? BuildDateFieldsMenu(db, id)
+                    : BuildUserFieldsMenu(db, id);
+                fields.IsEnabled = Can(PermAction.EditField, id);
+                menu.Items.Add(fields);
                 menu.Items.Add(new Separator());
             }
-            if (!multi) menu.Items.Add(Gate(MenuItemEdit(() => _ = EditCollection(db, id)), Can(PermAction.EditCollection, id)));
-            menu.Items.Add(Gate(MenuItemLocation(() => RelocateSelectionOrNode(node)), Can(PermAction.DeleteCollection, id)));
-            menu.Items.Add(Gate(MenuItemDuplicate(() => DuplicateSelectionOrNode(node)), Can(PermAction.DuplicateCollection, id)));
-            menu.Items.Add(Gate(MenuItemDelete(() => _ = DeleteSelectionOrNode(node)), Can(PermAction.DeleteCollection, id)));
+            if (!multi) menu.Items.Add(MenuItemEdit(Guard(PermAction.EditCollection, id,
+                () => _ = EditCollection(db, id))));
+            menu.Items.Add(MenuItemLocation(Guard(PermAction.DeleteCollection, id,
+                () => RelocateSelectionOrNode(node))));
+            menu.Items.Add(MenuItemDuplicate(Guard(PermAction.DuplicateCollection, id,
+                () => DuplicateSelectionOrNode(node))));
+            menu.Items.Add(MenuItemDelete(Guard(PermAction.DeleteCollection, id,
+                () => _ = DeleteSelectionOrNode(node))));
         }
 
         menu.Open(anchor);
@@ -815,12 +861,12 @@ public partial class SidebarTree : UserControl
         // Создание из пустой области идёт в БД по умолчанию.
         var canCreate = RepoFor(DefaultDbId)?.Permissions?.Can(PermAction.CreateCollection) ?? true;
         var menu = new ContextMenu();
-        var g = MenuItemCreateGroup(()      => _ = CreateItem("group", DefaultDbId, parentId: null));
-        var c = MenuItemCreateCollection(() => _ = CreateItem("collection", DefaultDbId, parentId: null));
-        g.IsEnabled = canCreate;
-        c.IsEnabled = canCreate;
-        menu.Items.Add(g);
-        menu.Items.Add(c);
+        menu.Items.Add(MenuItemCreateGroup(() => PermissionNotice.Run(
+            this, canCreate, PermAction.CreateCollection,
+            () => _ = CreateItem("group", DefaultDbId, parentId: null))));
+        menu.Items.Add(MenuItemCreateCollection(() => PermissionNotice.Run(
+            this, canCreate, PermAction.CreateCollection,
+            () => _ = CreateItem("collection", DefaultDbId, parentId: null))));
         menu.Open(anchor);
         e.Handled = true;
     }

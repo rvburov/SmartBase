@@ -81,6 +81,9 @@ public partial class MainWindow : Window
         // тост, «недоступна» — тост + сигнал монитору. См. Utils/DbErrors.
         DbErrors.Notify        = Notify;
         DbErrors.ReportFailure = _health.ReportFailureByPath;
+        // Отказ по правам — окном с причиной (тост тут легко пропустить): так ведут себя
+        // и запрещённые пункты меню, и замок у коллекции без права просмотра.
+        DbErrors.NotifyDenied  = message => Controls.Dialogs.PermissionNotice.Show(this, message);
         // Календарь и панель записи пока работают с дефолтной БД (мульти-БД календаря — Этап 3.3).
         _categories  = workspace.Default.Categories;
         _constructor = workspace.Default.Constructor;
@@ -203,6 +206,13 @@ public partial class MainWindow : Window
         TasksSidebar.InitializeWorkspace(GrantedDbs(), Controls.Components.SidebarMode.Tasks);
         ConstructorSidebar.InitializeWorkspace(workspace.Mounted, Controls.Components.SidebarMode.Constructor);
         ConstructorSidebar.DatabaseUnlockRequested += async (_, dbId) => await RequestDatabaseUnlock(dbId);
+        // Клик по коллекции с замком (просмотр запрещён правами) — пояснение вместо
+        // молчаливого «ничего не происходит».
+        ConstructorSidebar.CollectionAccessDenied += async (_, name) =>
+            await ConfirmDialog.Info(
+                    $"Нет доступа к коллекции «{name}». Просмотр запрещён администратором " +
+                    "базы данных — обратитесь к нему, чтобы получить право.")
+                .ShowDialog(this);
 
         // Клик по заглушке немонтированной базы — подсказка с текущим статусом.
         ConstructorSidebar.PendingDatabaseTapped += async (_, dbId) => await ShowPendingDatabaseInfo(dbId);
@@ -818,6 +828,10 @@ public partial class MainWindow : Window
     private void OnDbUsersChanged(int dbId)
     {
         if (_workspace.Get(dbId) is null) return;
+
+        // Право просмотра коллекции рисуется замком в сайдбаре конструктора: выдали или
+        // отобрали — дерево должно перестроиться без перезапуска.
+        ConstructorSidebar.Refresh();
 
         if (_activeModule == "tasks") TasksModule.Refresh();
         if (_recordPanelLogicalOpen && _currentConstructorDbId == dbId) RecordPanel.ReloadFromDb();

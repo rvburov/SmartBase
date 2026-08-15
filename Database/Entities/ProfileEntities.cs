@@ -21,6 +21,10 @@ public class DbUserEntity
     public bool   IsAdmin     { get; set; } = false;
     public bool   IsApproved  { get; set; } = false;
     public string CreatedAt   { get; set; } = "";           // ISO "o", когда впервые открыл базу
+    // ISO "o", последнее монтирование базы этим пользователем (панель администратора
+    // показывает колонкой «Последняя активность»). Отмечается при монтировании и НЕ пишется
+    // в журнал: иначе каждое открытие базы будило бы поллеры соседей строкой-пустышкой.
+    public string LastSeenAt  { get; set; } = "";
 
     public ICollection<DbPermissionEntity> Permissions { get; set; } = [];
 }
