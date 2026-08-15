@@ -5308,8 +5308,6 @@ public partial class ConstructorRepository(AppDbContext db)
         return new ConstructorRepository(ctx).GetCalendarRecordsByRange(start, end, activeIds);
     }
 
-    public int CountCalendarRecords() => db.CalendarIndex.Count();
-
     // ── Пагинация «Расписания» (ленивая подгрузка списка одного дня) ─────────────
     // «Расписание» показывает события, НАЧИНАющиеся в этом дне (StartDt.Date == день),
     // в порядке: all-day первыми, затем по времени начала. Курсор keyset — по этому же

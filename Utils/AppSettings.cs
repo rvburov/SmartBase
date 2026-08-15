@@ -300,6 +300,23 @@ public static class AppSettings
         else                                _store?.Set(KeyBackgroundEnabled, on.ToString());
     }
 
+    // ── Вводный чек-лист первого запуска ──────────────────────────────────────────
+    //
+    // Не настройка, а отметка «вводные задачи уже заводились» (см. Database/IntroSeed.cs).
+    // Ставится ОДИН раз — на чистой установке, до наполнения базы: даже прерванный на
+    // середине сидинг не должен повториться. Пользователь, удаливший вводные задачи или
+    // всю коллекцию, сделал это осознанно — возвращать их следующим запуском нельзя.
+    public const bool IntroSeedDoneDefault = false;
+
+    public static bool LoadIntroSeedDone() =>
+        bool.TryParse(_store?.Get(KeyIntroSeedDone), out var done) ? done : IntroSeedDoneDefault;
+
+    public static void SaveIntroSeedDone(bool done)
+    {
+        if (done == IntroSeedDoneDefault) _store?.Remove(KeyIntroSeedDone);
+        else                              _store?.Set(KeyIntroSeedDone, done.ToString());
+    }
+
     // ── Ключи настроек ─────────────────────────────────────────────────────────
 
     private const string KeyScale            = "scale";
@@ -316,6 +333,7 @@ public static class AppSettings
     private const string KeyNotifyWatermark      = "notifyWatermark";
     private const string KeyAutostartEnabled     = "autostartEnabled";
     private const string KeyBackgroundEnabled    = "backgroundEnabled";
+    private const string KeyIntroSeedDone        = "introSeedDone";
 
     // ── Приватное ─────────────────────────────────────────────────────────────
 

@@ -82,6 +82,13 @@ public partial class App : Application
                 try
                 {
                     var workspace = Workspace.Open(registry, progress);
+
+                    // Первый запуск на чистой машине (ни одной базы данных не было) —
+                    // вводный чек-лист по разделам программы. Здесь, а не в модуле
+                    // календаря: решает состояние установки, а не содержимое базы, и
+                    // данные готовы до построения окна. Ошибку глотает сам IntroSeed.
+                    IntroSeed.RunOnFreshInstall(registry, workspace.Default);
+
                     Dispatcher.UIThread.Post(() =>
                     {
                         void Build()

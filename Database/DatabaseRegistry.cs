@@ -14,12 +14,27 @@ public sealed class DatabaseRegistry : IDisposable, ISettingsDatabase
 {
     private readonly SystemDbContext _db;
 
-    private DatabaseRegistry(SystemDbContext db) => _db = db;
-
-    /// <summary>Открыть реестр и гарантировать дефолтную запись на путь данных по умолчанию.</summary>
-    public static DatabaseRegistry Open(string defaultDataPath)
+    private DatabaseRegistry(SystemDbContext db, bool freshInstall)
     {
-        var db = new SystemDbContext(AppSettings.SystemDbPath);
+        _db = db;
+        IsFreshInstall = freshInstall;
+    }
+
+    /// <summary>
+    /// Чистая установка: до этого запуска у приложения не было НИ ОДНОЙ базы данных —
+    /// реестр пуст (ни дефолтной записи, ни подключённых баз) и файла основной БД на диске
+    /// тоже нет. Единственное основание завести вводный чек-лист (см. <see cref="IntroSeed"/>):
+    /// там, где базы уже жили, их содержимое — данные пользователя, и дополнять их нечем.
+    /// </summary>
+    public bool IsFreshInstall { get; }
+
+    /// <summary>Открыть реестр и гарантировать дефолтную запись на путь данных по умолчанию.
+    /// <paramref name="systemDbPath"/> — путь app.db; null = штатный
+    /// <see cref="AppSettings.SystemDbPath"/> (иное задают только тесты: признак чистой
+    /// установки читается именно из app.db, и проверять его на живом реестре нельзя).</summary>
+    public static DatabaseRegistry Open(string defaultDataPath, string? systemDbPath = null)
+    {
+        var db = new SystemDbContext(systemDbPath ?? AppSettings.SystemDbPath);
         db.Database.EnsureCreated();   // создаёт app.db и таблицы, если их нет; существующие данные не трогает
         EnsureSettingsTable(db);       // app_settings могло не быть в старых app.db (EnsureCreated её не достроит)
         EnsurePgColumns(db);           // Pg*-колонки реестра появились позже — достраиваем аддитивно
@@ -28,7 +43,15 @@ public sealed class DatabaseRegistry : IDisposable, ISettingsDatabase
         // но для полноты — если файл вдруг раздулся свободными страницами, разово ужимаем.
         // Порог ниже, чем у данных-БД (см. SqliteMaintenance): app.db всегда должен быть мал.
         SqliteMaintenance.CompactIfBloated(db, 1L * 1024 * 1024);
-        var registry = new DatabaseRegistry(db);
+
+        // Признак чистой установки снимаем ДО EnsureDefault: дальше в реестре уже будет
+        // дефолтная запись, и «никогда не запускались» станет неотличимо от «всё удалили».
+        // Пустого реестра мало: app.db мог быть удалён (или не пережить перенос) при живом
+        // database.db — база с данными пользователя, а не чистый старт.
+        var freshInstall = !db.Databases.Any() &&
+                           !System.IO.File.Exists(System.IO.Path.GetFullPath(defaultDataPath));
+
+        var registry = new DatabaseRegistry(db, freshInstall);
         registry.EnsureDefault(defaultDataPath);
         registry.ProtectLegacyPasswords();
         return registry;

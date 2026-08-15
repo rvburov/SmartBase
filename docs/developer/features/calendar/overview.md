@@ -112,4 +112,5 @@ MVVM-слой (`CalendarControllerViewModel` и `*ViewModel`) с такой же
 
 ## Связанные документы
 
-[[month]], [[interactions]], [[categories]], [[../../architecture/database/multi-database]]
+[[month]], [[interactions]], [[categories]], [[../intro-seed]],
+[[../../architecture/database/multi-database]]

@@ -239,5 +239,5 @@
 
 ## Связанные документы
 
-[[calendar/overview]], [[constructor/overview]],
+[[calendar/overview]], [[constructor/overview]], [[intro-seed]],
 [[../architecture/users-permissions]], [[../architecture/data-model]]
