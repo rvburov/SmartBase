@@ -41,8 +41,9 @@ PostgreSQL, ошибка расширения) нигде не фиксиров�
 
 | ОС / режим | Путь |
 |---|---|
-| Windows (у пользователя) | `%AppData%\Roaming\SmartBase\logs.db` |
-| macOS / Linux | `~/.config/SmartBase/logs.db` |
+| Windows (у пользователя) | `%AppData%\SmartBase\logs.db` (`%AppData%` — это уже `…\AppData\Roaming`) |
+| macOS | `~/Library/Application Support/SmartBase/logs.db` |
+| Linux | `~/.config/SmartBase/logs.db` |
 | Debug (у разработчика) | `<корень проекта>/.localdata/logs.db` |
 
 Это **единый файл на приложение** — не привязан к пользовательским базам данных

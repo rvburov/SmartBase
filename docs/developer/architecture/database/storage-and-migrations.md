@@ -56,8 +56,10 @@ WAL, вручную их удалять не нужно.
 
 ## Пути ([AppSettings](../../../../Utils/AppSettings.cs))
 
-- **Release:** `%AppData%\Roaming\SmartBase\` (Windows); на Linux/macOS .NET
-  `ApplicationData` указывает на `~/.config/SmartBase/`.
+- **Release:** `%AppData%\SmartBase\` (Windows; `%AppData%` — это уже
+  `C:\Users\<Имя>\AppData\Roaming`); `~/.config/SmartBase/` (Linux —
+  .NET `ApplicationData` = XDG_CONFIG_HOME); `~/Library/Application Support/SmartBase/`
+  (macOS — там `ApplicationData` указывает на нативную папку Apple, а не на `~/.config`).
 - **Debug:** папка `.localdata/` в корне проекта (находится по маркеру
   `SmartBase.csproj`) — изолированно «как venv», переживает `dotnet clean` и снос
   `artifacts/`.

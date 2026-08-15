@@ -31,7 +31,7 @@
 | Регистрация               | `HKCU\…\Uninstall\SmartBase` («Приложения»)       | `.desktop` в `~/.local/share/applications`             | `lsregister` (Launchpad/Finder)                     |
 | Установщик рядом с приложением | `SmartBase-Setup.exe` в папке установки      | `SmartBase-Setup` в папке установки                    | `SmartBase-Setup.app` рядом с бандлом                 |
 | Ярлык удаления            | «Uninstall SmartBase» (Пуск + папка, `.lnk`)      | `…-uninstall.desktop` + `uninstall.sh` в папке         | нет — двойной клик по `SmartBase-Setup.app`           |
-| Данные пользователя       | `%APPDATA%\SmartBase\` (`database.db`, `app.db`)  | `~/.config/SmartBase/`                                  | `~/.config/SmartBase/` — **отдельно**, не трогаются   |
+| Данные пользователя       | `%APPDATA%\SmartBase\` (`database.db`, `app.db`)  | `~/.config/SmartBase/`                                  | `~/Library/Application Support/SmartBase/` — **отдельно**, не трогаются |
 | Путь обновления           | ключ `UpdatePath` в `app.db` (см. [AppSettings](../../../Utils/AppSettings.cs)) | то же                       | то же                                               |
 | Папка обновлений (сеть)   | `…\SmartBase-Setup.exe`                           | `…/SmartBase-Setup`                                     | `…/SmartBase-Setup.app` (бандл)                       |
 
@@ -253,7 +253,7 @@ self-contained установщик ~120 МБ) отклонена из-за уд
      кладёт рядом второй бандл `SmartBase-Setup.app` (см. ниже). Обновление/самозамена работают **с бандлом целиком**
      (publish не single-file): загрузка дерева в `/tmp/SmartBase.update.app`, замена установленного
      бандла, перезапуск через `open`. Сравнение версий — по дате внутреннего бинаря.
-     Данные — `~/.config/SmartBase`. Каверзы: Gatekeeper/quarantine при ручном скачивании из браузера
+     Данные — `~/Library/Application Support/SmartBase`. Каверзы: Gatekeeper/quarantine при ручном скачивании из браузера
      (копии по SMB/File API без quarantine — ок); ad-hoc подпись `dotnet publish` при подмене сохраняется;
      нотаризация/полноценная подпись — на будущее.
 

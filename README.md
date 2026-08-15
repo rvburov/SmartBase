@@ -435,6 +435,59 @@ SmartBase/
 
 ---
 
+## Куда что устанавливается
+
+Права администратора не нужны ни на одной ОС — всё кладётся в пользовательские папки
+(на Windows это заодно снимает запрос UAC). Пути задаются в
+[Setup/InstallService.cs](Setup/InstallService.cs).
+
+### Приложение и установщик
+
+|                                    | Windows                     | Linux                       | macOS                   |
+| ---------------------------------- | --------------------------- | --------------------------- | ----------------------- |
+| Папка установки по умолчанию       | `%LOCALAPPDATA%\SmartBase\` | `~/.local/share/SmartBase/` | `~/Applications/`       |
+| Приложение                         | `SmartBase.exe`             | `SmartBase`                 | `SmartBase.app` (бандл) |
+| Установщик — рядом, в той же папке | `SmartBase-Setup.exe`       | `SmartBase-Setup`           | `SmartBase-Setup.app`   |
+
+Полные пути по умолчанию:
+
+- **Windows** — `C:\Users\<Имя>\AppData\Local\SmartBase\SmartBase.exe`
+- **Linux** — `/home/<имя>/.local/share/SmartBase/SmartBase`
+  (папка — `$XDG_DATA_HOME`, по умолчанию `~/.local/share`)
+- **macOS** — `/Users/<имя>/Applications/SmartBase.app`
+
+**Отдельного деинсталлятора нет:** установщик копируется в папку установки и служит
+единственной точкой входа для обновления и удаления.
+
+**Своя папка.** Путь установки можно задать вручную. На Windows и Linux к нему
+автоматически дописывается подпапка `SmartBase`, если её там ещё нет: удаление чистит
+папку установки целиком, и без этого оно снесло бы чужое содержимое общей папки. На macOS
+подпапка не нужна — единица установки сама по себе изолирована, это бандл `.app`
+(`EnsureDedicatedDir` в [InstallService.cs](Setup/InstallService.cs)).
+
+### Ярлыки и регистрация в системе
+
+|                            | Windows                                                                                                                              | Linux                                                                  | macOS                                 |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------- | ------------------------------------- |
+| Меню приложений            | `%APPDATA%\Microsoft\Windows\Start Menu\Programs\SmartBase\SmartBase.lnk`                                                             | `~/.local/share/applications/SmartBase.desktop`                         | Launchpad/Finder (через `lsregister`) |
+| Рабочий стол (по галочке)  | `SmartBase.lnk`                                                                                                                      | `SmartBase.desktop` (с битом `+x` — этого требует GNOME)                | —                                     |
+| Удаление                   | `Uninstall SmartBase.lnk` в меню и в папке установки; запись `HKCU\…\CurrentVersion\Uninstall\SmartBase` для «Приложения и возможности» | `SmartBase-uninstall.desktop` в меню + `uninstall.sh` в папке установки | двойной клик по `SmartBase-Setup.app` |
+| Автозапуск (по настройке)  | `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, значение `SmartBase`                                                            | `~/.config/autostart/smartbase.desktop`                                 | `~/Library/LaunchAgents/com.romanburov.smartbase.plist` |
+
+На Linux иконка распаковывается в папку установки (`icon.png`) — на неё ссылаются оба
+`.desktop`-ярлыка.
+
+### Временные файлы обновления
+
+Новая версия скачивается во временную папку ОС (`%TEMP%`, на Unix — `$TMPDIR`) под именем
+`SmartBase.update.exe` или `SmartBase.update.app`. После перезапуска апдейтер её не убирает —
+хвост подчищается при следующем старте приложения (`CleanStaleUpdateArtifacts`).
+
+Механика установки, обновления и удаления целиком —
+[auto-update.md](docs/developer/guides/auto-update.md).
+
+---
+
 ## База данных
 
 Приложение держит три SQLite-файла (пути задаются в [Utils/AppSettings.cs](Utils/AppSettings.cs)):
@@ -450,20 +503,21 @@ SmartBase/
   - `C:\Users\<Имя>\AppData\Roaming\SmartBase\database.db`
   - `C:\Users\<Имя>\AppData\Roaming\SmartBase\app.db`
   - `C:\Users\<Имя>\AppData\Roaming\SmartBase\logs.db`
-- **Linux** (`~/.config`):
+- **Linux** (`$XDG_CONFIG_HOME`, по умолчанию `~/.config`):
   - `/home/<имя>/.config/SmartBase/database.db`
   - `/home/<имя>/.config/SmartBase/app.db`
   - `/home/<имя>/.config/SmartBase/logs.db`
-- **macOS** (`~/.config` — в .NET `ApplicationData` указывает на `~/.config`, а не на `~/Library/Application Support`):
-  - `/Users/<имя>/.config/SmartBase/database.db`
-  - `/Users/<имя>/.config/SmartBase/app.db`
-  - `/Users/<имя>/.config/SmartBase/logs.db`
+- **macOS** (`~/Library/Application Support` — в отличие от Linux, .NET отдаёт под
+  `ApplicationData` нативную папку Apple, а не `~/.config`):
+  - `/Users/<имя>/Library/Application Support/SmartBase/database.db`
+  - `/Users/<имя>/Library/Application Support/SmartBase/app.db`
+  - `/Users/<имя>/Library/Application Support/SmartBase/logs.db`
 
 Во время работы рядом появляются временные файлы SQLite: `*.db-wal`, `*.db-shm`.
 
 ### Служебные файлы в папке данных
 
-Кроме трёх баз там же лежат три служебных файла. Они **остаются на диске после выхода
+Кроме трёх баз там же лежат служебные файлы. Они **остаются на диске после выхода
 из приложения** — это норма, а не мусор:
 
 | Файл          | Кто создаёт                             | Когда появляется                                                                                                                                                                                                                        |
@@ -471,6 +525,7 @@ SmartBase/
 | `instance.lock` | [Utils/SingleInstance.cs](Utils/SingleInstance.cs) | при каждом запуске; пустой (0 байт) — защита от второго экземпляра держится на эксклюзивном дескрипторе`FileShare.None`, а не на наличии файла |
 | `show.signal`   | [Utils/SingleInstance.cs](Utils/SingleInstance.cs) | только при запуске второй копии поверх работающей: второй процесс пишет метку времени и выходит, работающий показывает окно                   |
 | `crash.log`     | [Program.cs](Program.cs)                           | только при необработанном исключении; синхронный резерв к`logs.db`, время в нём локальное (в `logs.db` — UTC)                                                                |
+| `installs.json` | [Setup/InstallService.Discovery.cs](Setup/InstallService.Discovery.cs) | после установки/обновления; список папок, куда поставлено приложение — по нему установщик находит уже установленные копии, где бы они ни лежали. Пишется в системную папку данных даже при Debug-сборке: у установщика свой `DataDir`, без `.localdata` |
 
 Подробнее — [storage-and-migrations.md](docs/developer/architecture/database/storage-and-migrations.md).
 
