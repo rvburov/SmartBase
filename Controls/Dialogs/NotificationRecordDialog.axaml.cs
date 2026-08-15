@@ -23,7 +23,7 @@ public partial class NotificationRecordDialog : Window
 
         if (!string.IsNullOrWhiteSpace(record.CollectionName))
         {
-            CollectionLabel.Text      = record.CollectionName;
+            CollectionLabel.Text      = TitleText.FirstLine(record.CollectionName);
             CollectionLabel.IsVisible = true;
         }
         if (!string.IsNullOrWhiteSpace(record.Description))

@@ -1,4 +1,5 @@
 using Avalonia.Controls;
+using SmartBase.Core.Models;
 using SmartBase.Database.Repositories;
 
 namespace SmartBase.Controls.Dialogs;
@@ -51,7 +52,8 @@ public partial class RecordLocationDialog : Window
     private void RebuildCollections(int? selectCollectionId)
     {
         _collections = CurrentRepo.GetAllCollections().Select(c => (c.Name, c.Id!.Value)).ToList();
-        CollectionCombo.ItemsSource = _collections.Select(c => c.Name).ToList();
+        // Пункт списка — одна строка (TitleText), выбор идёт по индексу.
+        CollectionCombo.ItemsSource = _collections.Select(c => TitleText.FirstLine(c.Name)).ToList();
         var idx = selectCollectionId.HasValue ? _collections.FindIndex(c => c.Id == selectCollectionId) : -1;
         CollectionCombo.SelectedIndex = idx >= 0 ? idx : (_collections.Count > 0 ? 0 : -1);
     }

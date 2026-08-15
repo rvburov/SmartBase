@@ -52,5 +52,8 @@ public class DbRecord
     public bool     AllDay       { get; set; } = false;
     public string   Title        { get; set; } = "";
 
-    public string   DisplayTitle => string.IsNullOrWhiteSpace(Title) ? "Без названия" : Title;
+    // Для показа — первая непустая строка названия (см. TitleText); вид «Список» рисует
+    // название одной строкой карточки. Таблица берёт Title напрямую — у неё свои правила.
+    public string   DisplayTitle => TitleText.FirstLine(Title) is { Length: > 0 } line
+                                        ? line : "Без названия";
 }

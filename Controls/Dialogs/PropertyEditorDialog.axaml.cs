@@ -459,7 +459,9 @@ public partial class PropertyEditorDialog : Window
         var items = new List<TargetCollectionItem>();
         if (repo is not null)
             foreach (var c in repo.GetAllCollections())
-                if (c.Id.HasValue) items.Add(new TargetCollectionItem { Id = c.Id.Value, Name = c.Name });
+                // Пункт списка — одна строка (TitleText); выбор идёт по Id.
+                if (c.Id.HasValue)
+                    items.Add(new TargetCollectionItem { Id = c.Id.Value, Name = TitleText.FirstLine(c.Name) });
         RelationTargetCombo.ItemsSource   = items;
         RelationTargetCombo.SelectedIndex = -1;      // цель нужно выбрать явно (список сменился)
     }

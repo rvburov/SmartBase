@@ -10,6 +10,7 @@ using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Media;
 using SmartBase.Controls.Components;
+using SmartBase.Core.Models;
 using SmartBase.Database.Repositories;
 
 namespace SmartBase.Controls.Dialogs;
@@ -135,7 +136,7 @@ public partial class RecordDisplayDialog : Window
             badge.Margin = new Thickness(0, 0, 8, 0);
 
             var label = new TextBlock { VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis };
-            label.Bind(TextBlock.TextProperty, new Binding(nameof(RowVm.Title)));
+            label.Bind(TextBlock.TextProperty, new Binding(nameof(RowVm.DisplayTitle)));
             // Ширина ВСЕХ строк одинаковая — иначе экстент горизонтальной прокрутки
             // считался бы по видимым строкам и полоса дёргалась.
             label.Bind(Layoutable.MinWidthProperty,
@@ -165,7 +166,7 @@ public partial class RecordDisplayDialog : Window
 
     // Ширина названия — по самому длинному в ТЕКУЩЕМ наборе (после поиска он другой).
     private void MeasureRows() =>
-        _metrics.Measure(_shown.Select(r => r.Title),
+        _metrics.Measure(_shown.Select(r => r.DisplayTitle),
                          (double)this.FindResource("FontSizeBase")!,
                          this.TryFindResource("FontFamilyBase", out var f) ? f as FontFamily : null);
 
@@ -343,12 +344,16 @@ public partial class RecordDisplayDialog : Window
     private sealed class RowVm : INotifyPropertyChanged
     {
         public int    RecordId { get; }
+        /// <summary>Полное название — по нему идёт поиск.</summary>
         public string Title    { get; }
+        /// <summary>Первая строка названия — строка списка одна, показываем её (см. TitleText).</summary>
+        public string DisplayTitle { get; }
 
         public RowVm(int recordId, string title)
         {
-            RecordId = recordId;
-            Title    = string.IsNullOrWhiteSpace(title) ? "Без названия" : title;
+            RecordId     = recordId;
+            Title        = string.IsNullOrWhiteSpace(title) ? "Без названия" : title;
+            DisplayTitle = TitleText.FirstLine(Title);
         }
 
         private int _number;

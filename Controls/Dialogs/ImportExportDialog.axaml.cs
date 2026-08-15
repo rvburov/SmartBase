@@ -79,7 +79,9 @@ public partial class ImportExportDialog : Window
         _pickerItems = _dbs
             .SelectMany(d => d.Repo.GetAllCollections()
                 .Where(c => c.Id is int cid && (d.Repo.Permissions?.Can(PermAction.ViewCollection, cid) ?? true))
-                .Select(c => new CollectionPickerFlyout.Item(d.Id, c.Id!.Value, c.Name, d.Name)))
+                // Пункт списка — одна строка (TitleText); выбор идёт по паре (DbId, Id).
+                .Select(c => new CollectionPickerFlyout.Item(
+                    d.Id, c.Id!.Value, TitleText.FirstLine(c.Name), TitleText.FirstLine(d.Name))))
             .ToList();
 
         // «В одну» и «в разные» коллекции взаимоисключающие: отметка одного снимает другой.

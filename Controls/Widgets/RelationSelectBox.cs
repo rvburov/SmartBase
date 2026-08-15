@@ -244,7 +244,10 @@ public sealed class RelationSelectBox : Panel
     // Показ закрытого вида — названия через разделитель поля (как read-ячейка мультисписка).
     private void RefreshDisplay()
     {
-        _valueText.Text        = string.Join(_separator, _selected.Select(id => _titles.GetValueOrDefault(id, "")));
+        // Название цели показываем первой строкой (TitleText): закрытый вид — одна строка,
+        // многострочное название разорвало бы её на несколько.
+        _valueText.Text        = string.Join(_separator,
+            _selected.Select(id => TitleText.FirstLine(_titles.GetValueOrDefault(id, ""))));
         _valueText.IsVisible   = _selected.Count > 0;
         _placeholder.IsVisible = _selected.Count == 0;
     }
@@ -492,7 +495,8 @@ public sealed class RelationSelectBox : Panel
     {
         public int    Id    => id;
         public int    DbId  => dbId;   // база цели этого пункта (0 — та же БД, >0 — межбазовая)
-        public string Title => title;
+        // Строка списка — одна строка: показываем первую (поиск выше идёт по полному названию).
+        public string Title => TitleText.FirstLine(title);
 
         public bool Checked
         {

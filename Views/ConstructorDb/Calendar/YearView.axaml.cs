@@ -188,8 +188,12 @@ public partial class YearView : UserControl
             found = found.OrderBy(x => x.AllDay ? TimeSpan.Zero : x.StartDt.TimeOfDay).ToList();
         }
         else
+            // Ищем по ПОЛНОМУ названию (в показе от него остаётся первая строка, см.
+            // TitleText) плюс по DisplayTitle — иначе безымянные события перестали бы
+            // находиться по «Без названия».
             found = DayEventsFromSnapshot(_popupDay)
-                .Where(e => e.DisplayTitle.Contains(q, StringComparison.OrdinalIgnoreCase))
+                .Where(e => e.Title.Contains(q, StringComparison.OrdinalIgnoreCase) ||
+                            e.DisplayTitle.Contains(q, StringComparison.OrdinalIgnoreCase))
                 .ToList();
 
         FillPopupList(found, searchMode: true);

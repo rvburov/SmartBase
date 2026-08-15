@@ -2348,7 +2348,9 @@ public partial class SidebarRow : ObservableObject
     public SidebarNode Node { get; }
     public int         Depth { get; }
     public SidebarMode Mode { get; }
-    public string      Name => Node.Name;
+    // Строка дерева — одна строка: показываем первую строку имени (TitleText). Полное имя
+    // живёт в Node.Name — по нему идут поиск, сортировка и переименование.
+    public string      Name => TitleText.FirstLine(Node.Name);
 
     [ObservableProperty] private bool _hovered;
     [ObservableProperty] private bool _checked;

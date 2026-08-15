@@ -354,7 +354,12 @@ public partial class DiagramView : UserControl
         if (_collections is not null)
             foreach (var (dbId, col) in _collections)
             {
-                var g = new GroupRow { DbId = dbId, ColId = col.Id ?? 0, Name = col.Name, Color = col.Color };
+                var g = new GroupRow
+                {
+                    DbId = dbId, ColId = col.Id ?? 0,
+                    Name = TitleText.FirstLine(col.Name),   // подпись строки — одна строка
+                    Color = col.Color,
+                };
                 if (byKey.TryAdd((g.DbId, g.ColId), g)) groups.Add(g);
             }
 
@@ -367,7 +372,9 @@ public partial class DiagramView : UserControl
                 {
                     DbId  = key.DbId,
                     ColId = key.ColId,
-                    Name  = string.IsNullOrWhiteSpace(e.CollectionName) ? "Без коллекции" : e.CollectionName,
+                    // Подпись строки Диаграммы — одна строка (TitleText).
+                    Name  = string.IsNullOrWhiteSpace(e.CollectionName)
+                                ? "Без коллекции" : TitleText.FirstLine(e.CollectionName),
                     Color = e.Color,
                 };
                 byKey[key] = g;

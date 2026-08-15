@@ -3,6 +3,7 @@ using Avalonia.Input;
 using Avalonia.Media;
 using Avalonia.Threading;
 using SmartBase.Controls.Widgets;
+using SmartBase.Core.Models;
 
 namespace SmartBase.Controls.Components;
 
@@ -103,7 +104,9 @@ public partial class NavbarConstructor : UserControl
         }
         else
         {
-            TitleDisplay.Text       = _committedTitle;
+            // Шапка — одна строка: показываем первую строку имени коллекции (TitleText).
+            // Полное имя остаётся в TitleBox — переименование идёт по нему.
+            TitleDisplay.Text       = TitleText.FirstLine(_committedTitle);
             TitleDisplay.Foreground = (IBrush)this.FindResource("BrushPrimaryText")!;
         }
     }

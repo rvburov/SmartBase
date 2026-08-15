@@ -8,7 +8,10 @@ public class TaskRecord
     // задач (по включённому полю-исполнителю), поэтому задача опознаётся парой (Id, ExecFieldId).
     public int       ExecFieldId    { get; set; }
     public string    Title          { get; set; } = "";
-    public string    DisplayTitle   => string.IsNullOrWhiteSpace(Title) ? CalendarRecord.UntitledPlaceholder : Title;
+    // Для показа — первая непустая строка названия (см. TitleText): карточка задачи
+    // рисует название одним блоком.
+    public string    DisplayTitle   => TitleText.FirstLine(Title) is { Length: > 0 } line
+                                           ? line : CalendarRecord.UntitledPlaceholder;
     public string    Description    { get; set; } = "";
     public string    Executor       { get; set; } = "";
     public string    Assigner       { get; set; } = "";

@@ -2,6 +2,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Media;
+using SmartBase.Core.Models;
 
 namespace SmartBase.Controls.Components;
 
@@ -75,7 +76,10 @@ public partial class NavbarPage : UserControl
     {
         TitleBox.IsVisible     = false;
         TitleDisplay.IsVisible = true;
-        var title = TitleBox.Text ?? "";
+        // Шапка — одна строка: показываем первую (TitleText), как и все остальные блоки с
+        // названием записи. Режется только ПОКАЗ — в TitleBox остаётся полный текст, и
+        // правка с сохранением идут по нему, ничего не теряя.
+        var title = TitleText.FirstLine(TitleBox.Text);
         // Кисти берём из ресурсов приложения (а не this.FindResource) — ExitTitleEdit зовётся
         // в т.ч. из конструктора, когда контрол ещё не в дереве и this.FindResource даёт UnsetValue.
         if (string.IsNullOrEmpty(title))

@@ -130,7 +130,8 @@ public partial class TaskDialog : Window
         foreach (var c in cols)
             _collections.Add((c.Name, c.Id, c.Color ?? "#8E8E93"));
 
-        CollectionCombo.ItemsSource   = _collections.Select(c => c.Name).ToList();
+        // Пункт списка — одна строка (TitleText), выбор идёт по индексу.
+        CollectionCombo.ItemsSource   = _collections.Select(c => TitleText.FirstLine(c.Name)).ToList();
         CollectionCombo.SelectedIndex = 0;
     }
 

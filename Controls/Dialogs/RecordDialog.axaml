@@ -1,6 +1,7 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:w="clr-namespace:SmartBase.Controls.Widgets"
+        xmlns:b="clr-namespace:SmartBase.Controls.Behaviors"
         x:Class="SmartBase.Controls.Dialogs.RecordDialog"
         Title="Новая запись"
         Width="520"
@@ -39,10 +40,19 @@
                            Margin="0,0,0,6"
                            FontWeight="{StaticResource FontWeightBold}"
                            Foreground="{StaticResource BrushSecondaryText}" />
+                <!-- Название хранится как есть, вместе с переводами строк (их даёт вставка
+                     текста и импорт), а показывают его везде первой строкой (TitleText).
+                     Здесь текст ещё и СОХРАНЯЕТСЯ обратно, поэтому режем не текст, а высоту:
+                     поле растёт по содержимому до трёх строк, дальше прокрутка. Однострочное
+                     поле рисовало все строки внутри своих 34 пикселей — они наезжали. -->
                 <TextBox x:Name="TitleBox"
+                         Classes="multiline"
+                         b:GrowingFieldAlign.CenterWhenSingleLine="True"
                          Watermark="Добавить название"
-                         Height="34"
-                         VerticalContentAlignment="Center"
+                         MinHeight="34"
+                         MaxHeight="72"
+                         AcceptsReturn="True"
+                         TextWrapping="Wrap"
                          Margin="0,0,0,12"
                          CornerRadius="{StaticResource RadiusMedium}" />
 
