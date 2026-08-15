@@ -15,7 +15,9 @@
         <!-- Ошибка (нет прав и т.п.) — тот же баннер, что в диалогах -->
         <w:NoticeBanner Grid.Row="1" x:Name="NoticeBanner" Margin="0,0,16,8" />
 
-        <!-- Строка быстрого добавления: название + Enter, срок, исполнитель, «Добавить» -->
+        <!-- Строка быстрого добавления: название + Enter, срок, исполнитель, коллекция,
+             «Добавить». Коллекция выбирается явно: раньше задача молча уезжала в первую
+             отмеченную, и попасть в нужную можно было только через окно задачи. -->
         <Border Grid.Row="2"
                 Background="{StaticResource BrushBg}"
                 BorderBrush="{StaticResource BrushSeparator}"
@@ -23,7 +25,7 @@
                 CornerRadius="{StaticResource RadiusMedium}"
                 Padding="12,8"
                 Margin="0,0,16,12">
-            <Grid ColumnDefinitions="*,12,Auto,6,Auto,6,Auto,12,Auto,6,Auto,12,Auto"
+            <Grid ColumnDefinitions="*,12,Auto,6,Auto,6,Auto,12,Auto,6,Auto,12,Auto,6,Auto,12,Auto"
                   VerticalAlignment="Center">
 
                 <TextBox Grid.Column="0" x:Name="QuickTitle"
@@ -51,7 +53,16 @@
                           Background="{StaticResource BrushSecondaryBg}"
                           CornerRadius="{StaticResource RadiusBase}" />
 
-                <Button Grid.Column="12" x:Name="QuickAddBtn" Classes="accent"
+                <TextBlock Grid.Column="12" Text="Коллекция"
+                           VerticalAlignment="Center"
+                           Foreground="{StaticResource BrushSecondaryText}" />
+
+                <ComboBox Grid.Column="14" x:Name="QuickCollection"
+                          Width="150" Height="34"
+                          Background="{StaticResource BrushSecondaryBg}"
+                          CornerRadius="{StaticResource RadiusBase}" />
+
+                <Button Grid.Column="16" x:Name="QuickAddBtn" Classes="accent"
                         Content="Добавить" Height="34"
                         Padding="14,0"
                         VerticalContentAlignment="Center"

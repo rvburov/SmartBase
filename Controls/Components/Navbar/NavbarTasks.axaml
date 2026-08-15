@@ -4,7 +4,7 @@
              Height="56"
              Background="{StaticResource BrushBg}">
 
-    <Grid ColumnDefinitions="Auto,*,Auto,Auto"
+    <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto"
           Margin="16,0"
           VerticalAlignment="Center">
 
@@ -26,8 +26,74 @@
                  Background="{StaticResource BrushSecondaryBg}"
                  ScrollViewer.VerticalScrollBarVisibility="Disabled" />
 
+        <!-- Быстрый фильтр: пункт + сколько задач ему отвечает («Просрочено 2»).
+             Счётчики считает контроллер по текущему набору (отмеченные коллекции + поиск),
+             поэтому цифра всегда равна тому, что покажет выбор пункта.
+
+             Padding: правый отступ ОТРИЦАТЕЛЬНЫЙ — пилюля счётчика подвинута вплотную к
+             стрелке. Стрелка в шаблоне (Assets/Styles/ComboBoxTheme.axaml) стоит в своей
+             колонке шириной 32 и прижата к правому краю с отступом 10, то есть между ней и
+             краем содержимого остаётся 10 + правый Padding. Со стандартными 8 это 18px
+             пустоты после числа — здесь она лишняя, потому что пилюля и есть правый край
+             строки. −4 оставляет 6px: рядом со стрелкой, но не слипается. -->
+        <ComboBox Grid.Column="3" x:Name="FilterSelector"
+                  VerticalAlignment="Center"
+                  Width="210" Height="30" Margin="0,0,8,0"
+                  Padding="10,0,-4,0"
+                  VerticalContentAlignment="Center"
+                  Background="{StaticResource BrushSecondaryBg}"
+                  CornerRadius="{StaticResource RadiusBase}">
+            <ComboBox.ItemTemplate>
+                <DataTemplate>
+                    <!-- Своей минимальной ширины у строки нет: она тянется по доступной,
+                         иначе в СВЁРНУТОМ боксе (там место урезано стрелкой) счётчик
+                         вылезал за край и обрезался. -->
+                    <Grid ColumnDefinitions="Auto,*,Auto">
+                        <Viewbox Grid.Column="0"
+                                 Width="{StaticResource IconSizeMedium}" Height="{StaticResource IconSizeMedium}"
+                                 VerticalAlignment="Center" Margin="0,0,10,0">
+                            <Canvas Width="24" Height="24">
+                                <Path Data="{Binding Icon}"
+                                      Stroke="{Binding IconBrush}"
+                                      StrokeThickness="{StaticResource IconStrokeMedium}"
+                                      StrokeLineCap="Round" StrokeJoin="Round" />
+                            </Canvas>
+                        </Viewbox>
+                        <!-- Подпись ужимается первой: при увеличенном размере шрифта
+                             («Оформление → Размер шрифта») длинное «Мне назначено»
+                             схлопнется многоточием, а иконка и пилюля останутся целы. -->
+                        <TextBlock Grid.Column="1" Text="{Binding Label}"
+                                   VerticalAlignment="Center"
+                                   Foreground="{Binding LabelBrush}"
+                                   TextTrimming="CharacterEllipsis" />
+                        <!-- Пилюля счётчика. MinWidth равна собственной высоте: одна цифра
+                             даёт КВАДРАТ, двузначное и трёхзначное число раздвигают блок
+                             вширь. Через привязку, а не константой, потому что высота растёт
+                             вместе с размером шрифта («Оформление → Размер шрифта») — жёсткое
+                             число сделало бы квадрат прямоугольником на любом другом размере.
+                             Пустой пункт пилюли не получает вовсе (IsVisible) — ноль в рамке
+                             читался бы как значение, на которое стоит нажать. -->
+                        <Border Grid.Column="2" x:Name="CountPill"
+                                IsVisible="{Binding HasCount}"
+                                MinWidth="{Binding $self.Bounds.Height}"
+                                Margin="10,0,0,0" Padding="6,2"
+                                CornerRadius="{StaticResource RadiusBase}"
+                                Background="{Binding CountBg}"
+                                VerticalAlignment="Center">
+                            <TextBlock Text="{Binding CountText}"
+                                       HorizontalAlignment="Center"
+                                       VerticalAlignment="Center"
+                                       TextAlignment="Center"
+                                       FontWeight="{StaticResource FontWeightBold}"
+                                       Foreground="{Binding CountFg}" />
+                        </Border>
+                    </Grid>
+                </DataTemplate>
+            </ComboBox.ItemTemplate>
+        </ComboBox>
+
         <!-- Вид (пока единственный «Список») -->
-        <ComboBox Grid.Column="3" x:Name="ViewSelector"
+        <ComboBox Grid.Column="4" x:Name="ViewSelector"
                   VerticalAlignment="Center"
                   Width="140" Height="30"
                   Background="{StaticResource BrushSecondaryBg}"

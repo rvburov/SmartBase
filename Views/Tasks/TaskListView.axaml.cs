@@ -3,27 +3,56 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
 using Avalonia.Controls.Templates;
+using Avalonia.Data;
 using Avalonia.Input;
+using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Media;
+using CommunityToolkit.Mvvm.ComponentModel;
 using SmartBase.Core.Models;
 using SmartBase.Database.Repositories;
 using SmartBase.Utils;
 
 namespace SmartBase.Views.Tasks;
 
-public record QuickAddRequest(string Title, DateValue? Due, string Executor);
+/// <summary>Коллекция-цель в строке быстрого добавления. <c>ColId</c> = null — коллекций
+/// нет вовсе, репозиторий заведёт «Без названия» (прежнее поведение).</summary>
+public sealed record QuickCollectionOption(int DbId, int? ColId, string Label)
+{
+    // ComboBox без ItemTemplate печатает ToString() — отдаём готовую подпись.
+    public override string ToString() => Label;
+}
+
+/// <param name="Target">Выбранная коллекция; null — цель определяет контроллер сам.</param>
+public record QuickAddRequest(string Title, DateValue? Due, string Executor, QuickCollectionOption? Target);
 
 public partial class TaskListView : UserControl
 {
     public event EventHandler<TaskRecord>?      TaskActivated;
     public event EventHandler<QuickAddRequest>? QuickAddRequested;
+    /// <summary>Сменилась коллекция-цель быстрого добавления: у неё может быть своя база,
+    /// а значит и свой список пользователей для «Исполнителя».</summary>
+    public event EventHandler<QuickCollectionOption>? QuickTargetChanged;
+    /// <summary>Удалить выделенные задачи (меню или Delete) — подтверждение спрашивает контроллер.</summary>
+    public event EventHandler<IReadOnlyList<TaskRecord>>? TasksDeleteRequested;
+    /// <summary>Дублировать выделенные задачи (меню).</summary>
+    public event EventHandler<IReadOnlyList<TaskRecord>>? TasksDuplicateRequested;
+
+    // Гасит QuickTargetChanged, пока список коллекций пересобирается (смена ItemsSource
+    // сбрасывает выбор — это не выбор пользователя).
+    private bool _suppressTargetChange;
 
     // Показанные группы и свёрнутые коллекции (ключ (DbId, ColId) — как в сайдбаре).
     // Свёрнутость живёт в самом списке: это состояние показа, база о нём ничего не знает.
     private IReadOnlyList<TaskGroup> _groups = [];
     private readonly HashSet<(int DbId, int ColId)> _collapsed = [];
     private string _emptyHint = "Нет задач";
+
+    // Строки списка (заголовки групп + карточки) и отдельно — только показанные задачи
+    // в порядке показа: по нему считается диапазон Ctrl+Shift и состав выделения.
+    private List<object>     _items   = [];
+    private List<TaskRecord> _visible = [];
+    private readonly TaskSelection _selection = new();
 
     public TaskListView()
     {
@@ -48,6 +77,12 @@ public partial class TaskListView : UserControl
             FireQuickAdd();
         };
         QuickAddBtn.Click += (_, _) => FireQuickAdd();
+
+        QuickCollection.SelectionChanged += (_, _) =>
+        {
+            if (_suppressTargetChange) return;
+            if (QuickCollection.SelectedItem is QuickCollectionOption o) QuickTargetChanged?.Invoke(this, o);
+        };
     }
 
     // ── Публичный API (для контроллера) ──────────────────────────────────────
@@ -68,25 +103,150 @@ public partial class TaskListView : UserControl
         var alive = groups.Select(g => (g.DbId, g.ColId)).ToHashSet();
         _collapsed.RemoveWhere(k => !alive.Contains(k));
 
+        // Выделение переживает перезагрузку (правка задачи, поиск), но задачи, ушедшие из
+        // набора, из него выпадают: «Удалить» должно действовать на видимое.
+        _selection.Retain(groups.SelectMany(g => g.Tasks));
+
         RebuildItems();
     }
 
     private void RebuildItems()
     {
-        var now   = DateTime.Now;
-        var items = new List<object>();
+        var now     = DateTime.Now;
+        var items   = new List<object>();
+        var visible = new List<TaskRecord>();
         foreach (var g in _groups)
         {
             var collapsed = _collapsed.Contains((g.DbId, g.ColId));
             items.Add(new TaskGroupHeaderVm(g, collapsed, first: items.Count == 0));
             if (collapsed) continue;
-            foreach (var t in g.Tasks) items.Add(new TaskCardVm(t, now));
+            foreach (var t in g.Tasks)
+            {
+                items.Add(new TaskCardVm(t, now) { IsSelected = _selection.Contains(t) });
+                visible.Add(t);
+            }
         }
+
+        _items   = items;
+        _visible = visible;
 
         CardsHost.ItemsSource = items;
         EmptyLabel.Text       = _emptyHint;
         // Свёрнутая группа — не пустой список: подсказку показываем, только когда групп нет.
         EmptyLabel.IsVisible  = _groups.Count == 0;
+    }
+
+    // ── Выделение карточек ───────────────────────────────────────────────────
+
+    // Перекрасить карточки под текущее выделение. Идём по моделям строк, а не по контролам:
+    // список виртуализирован, и карточки за краем экрана контролов сейчас не имеют — новые
+    // построятся уже с нужным IsSelected.
+    private void SyncSelection()
+    {
+        foreach (var item in _items)
+            if (item is TaskCardVm card) card.IsSelected = _selection.Contains(card.Task);
+    }
+
+    private void OnCardTapped(TaskCardVm vm, TappedEventArgs e)
+    {
+        e.Handled = true;
+
+        // Ctrl+Shift+клик — диапазон от якоря; якоря нет (первый клик после загрузки) —
+        // ведём себя как обычный клик.
+        if (e.KeyModifiers.HasFlag(KeyModifiers.Shift) && e.KeyModifiers.HasFlag(KeyModifiers.Control)
+            && _selection.SelectRange(_visible, vm.Task))
+        {
+            SyncSelection();
+            return;
+        }
+
+        if (e.KeyModifiers.HasFlag(KeyModifiers.Shift)) _selection.Toggle(vm.Task);
+        else                                            _selection.SelectOnly(vm.Task);
+        SyncSelection();
+    }
+
+    // Правый клик по НЕвыделенной карточке выделяет её одну: меню всегда действует на то,
+    // что видно выделенным (как в календаре).
+    private void OnCardPointerPressed(TaskCardVm vm, PointerPressedEventArgs e)
+    {
+        if (!e.GetCurrentPoint(this).Properties.IsRightButtonPressed) return;
+        if (_selection.Contains(vm.Task)) return;
+        _selection.SelectOnly(vm.Task);
+        SyncSelection();
+    }
+
+    private void OnCardContextRequested(Control card, TaskCardVm vm, ContextRequestedEventArgs e)
+    {
+        var selected = _selection.In(_visible);
+
+        // Выделение НЕ снимаем: пока открыт диалог подтверждения, видно, ЧТО удаляется или
+        // дублируется (после «Отмена» карточки остаются подсвеченными).
+        var menu = selected.Count > 1 && _selection.Contains(vm.Task)
+            ? Controls.Components.EventContextMenu.Multi(
+                () => TasksDeleteRequested?.Invoke(this, selected),
+                onDuplicateAll: () => TasksDuplicateRequested?.Invoke(this, selected))
+            : Controls.Components.EventContextMenu.Single(
+                onEdit:      () => TaskActivated?.Invoke(this, vm.Task),
+                onDelete:    () => TasksDeleteRequested?.Invoke(this, [vm.Task]),
+                onDuplicate: () => TasksDuplicateRequested?.Invoke(this, [vm.Task]));
+
+        menu.Open(card);
+        e.Handled = true;
+    }
+
+    // ── Сброс выделения и Delete ─────────────────────────────────────────────
+
+    private EventHandler<KeyEventArgs>? _windowKeyHandler;
+
+    protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
+    {
+        base.OnAttachedToVisualTree(e);
+        // Обработчики вешаем на КОРЕНЬ из события, а не на GetTopLevel(this): при отсоединении
+        // контрол уже вне дерева и снять их с найденного «на лету» окна не вышло бы.
+        if (e.Root is TopLevel top)
+            top.AddHandler(PointerPressedEvent, OnGlobalPointerPressed, RoutingStrategies.Tunnel);
+
+        if (e.Root is Window win)
+        {
+            _windowKeyHandler = (_, ke) =>
+            {
+                if (ke.Key is not (Key.Delete or Key.Back)) return;
+                // Раздел скрыт (открыт календарь/конструктор) — клавиша не наша.
+                if (!IsEffectivelyVisible) return;
+                // Ввод: название новой задачи, поиск в навбаре, поля срока — там Delete стирает текст.
+                // ComboBox тоже пропускаем: клавиша в списке коллекций/исполнителя не про задачи.
+                if (ke.Source is TextBox or AutoCompleteBox or ComboBox) return;
+
+                var selected = _selection.In(_visible);
+                if (selected.Count == 0) return;
+                TasksDeleteRequested?.Invoke(this, selected);
+                ke.Handled = true;
+            };
+            win.AddHandler(KeyDownEvent, _windowKeyHandler, handledEventsToo: true);
+        }
+    }
+
+    protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
+    {
+        base.OnDetachedFromVisualTree(e);
+        if (e.Root is TopLevel top)
+            top.RemoveHandler(PointerPressedEvent, OnGlobalPointerPressed);
+        if (e.Root is Window win && _windowKeyHandler is not null)
+        {
+            win.RemoveHandler(KeyDownEvent, _windowKeyHandler);
+            _windowKeyHandler = null;
+        }
+    }
+
+    // Клик мимо карточек (в т.ч. по заголовку группы и вне списка) снимает выделение.
+    private void OnGlobalPointerPressed(object? sender, PointerPressedEventArgs e)
+    {
+        // Правый клик не сбрасывает: иначе меню открылось бы над снятым выделением.
+        if (e.GetCurrentPoint(this).Properties.IsRightButtonPressed) return;
+        // Shift+клик — аддитивное выделение, его собирает сама карточка.
+        if (e.KeyModifiers.HasFlag(KeyModifiers.Shift)) return;
+
+        if (_selection.Clear()) SyncSelection();
     }
 
     private void ToggleGroup(TaskGroup group)
@@ -95,6 +255,32 @@ public partial class TaskListView : UserControl
         if (!_collapsed.Remove(key)) _collapsed.Add(key);
         RebuildItems();
     }
+
+    /// <summary>
+    /// Коллекции строки быстрого добавления. Выбор пользователя сохраняется между
+    /// обновлениями (список пересобирается на каждую загрузку), пока выбранная коллекция
+    /// жива; исчезла — возвращаемся к <paramref name="fallback"/>, цели по умолчанию.
+    /// </summary>
+    public void SetCollectionOptions(IReadOnlyList<QuickCollectionOption> options,
+                                     QuickCollectionOption? fallback)
+    {
+        var keep = QuickCollection.SelectedItem as QuickCollectionOption;
+
+        _suppressTargetChange = true;
+        QuickCollection.ItemsSource = options;
+
+        var idx = keep is not null
+            ? options.ToList().FindIndex(o => o.DbId == keep.DbId && o.ColId == keep.ColId)
+            : -1;
+        if (idx < 0 && fallback is not null)
+            idx = options.ToList().FindIndex(o => o.DbId == fallback.DbId && o.ColId == fallback.ColId);
+
+        QuickCollection.SelectedIndex = idx >= 0 ? idx : (options.Count > 0 ? 0 : -1);
+        _suppressTargetChange = false;
+    }
+
+    /// <summary>Коллекция, выбранная в строке быстрого добавления (null — список пуст).</summary>
+    public QuickCollectionOption? SelectedCollection => QuickCollection.SelectedItem as QuickCollectionOption;
 
     // Опции исполнителя строки быстрого добавления (пользователи целевой БД).
     public void SetUserOptions(IReadOnlyList<string> options, string selected)
@@ -129,7 +315,7 @@ public partial class TaskListView : UserControl
         }
 
         var executor = QuickExecutor.SelectedItem as string ?? CurrentUser.DisplayName;
-        QuickAddRequested?.Invoke(this, new QuickAddRequest(title, due, executor));
+        QuickAddRequested?.Invoke(this, new QuickAddRequest(title, due, executor, SelectedCollection));
         QuickTitle.Text = "";
     }
 
@@ -168,9 +354,12 @@ public partial class TaskListView : UserControl
                 VerticalAlignment = VerticalAlignment.Center,
             });
 
+        // Индикатор выполненного: полоска цветом коллекции + «2 из 7». Голое число задач
+        // не отвечало на главный вопрос к списку дел — сколько из них уже закрыто.
+        row.Children.Add(ProgressBar(vm.DoneFraction, vm.Color));
         row.Children.Add(new TextBlock
         {
-            Text = vm.CountText, Foreground = secondary,
+            Text = vm.ProgressText, Foreground = secondary,
             VerticalAlignment = VerticalAlignment.Center,
         });
 
@@ -187,6 +376,34 @@ public partial class TaskListView : UserControl
         };
         header.Tapped += (_, e) => { e.Handled = true; ToggleGroup(vm.Group); };
         return header;
+    }
+
+    // Полоска выполненного: серый трек фиксированной ширины и заливка цветом коллекции.
+    // Ширина в DIP — общий зум приложения масштабирует её вместе с остальным.
+    private Control ProgressBar(double fraction, string color)
+    {
+        const double width = 96, height = 8;
+
+        var fill = new Border
+        {
+            // Ненулевой прогресс всегда виден: доля в пару процентов иначе схлопывалась
+            // бы в невидимую полоску и читалась как «ничего не сделано».
+            Width               = fraction <= 0 ? 0 : Math.Max(height, Math.Round(width * fraction)),
+            Height              = height,
+            CornerRadius        = new CornerRadius(99),
+            Background          = new SolidColorBrush(Color.Parse(color)),
+            HorizontalAlignment = HorizontalAlignment.Left,
+        };
+
+        return new Border
+        {
+            Width             = width,
+            Height            = height,
+            CornerRadius      = new CornerRadius(99),
+            Background        = (IBrush)this.FindResource("BrushSecondaryBg")!,
+            VerticalAlignment = VerticalAlignment.Center,
+            Child             = fill,
+        };
     }
 
     // Стрелка сайдбара: геометрия из общего реестра иконок, обводка вторичным цветом.
@@ -293,8 +510,6 @@ public partial class TaskListView : UserControl
 
         var card = new Border
         {
-            Background   = (IBrush)this.FindResource("BrushBg")!,
-            BorderBrush  = (IBrush)this.FindResource("BrushSeparator")!,
             CornerRadius = radius,
             Padding      = new Thickness(14, 10),
             Margin       = new Thickness(0, 0, 0, 8),
@@ -302,12 +517,24 @@ public partial class TaskListView : UserControl
         };
         card.Bind(Border.BorderThicknessProperty, card.GetResourceObservable("BorderLine"));
 
-        var hover = (IBrush)this.FindResource("BrushInactiveBg")!;
-        card.PointerEntered += (_, _) => card.Background = hover;
-        card.PointerExited  += (_, _) => card.Background = (IBrush)this.FindResource("BrushBg")!;
+        // Фон и рамка — от модели строки: наведение и выделение меняются без пересборки
+        // списка, а вернувшаяся из-за края экрана карточка сразу рисуется выделенной.
+        card.Bind(Border.BackgroundProperty,
+                  new Binding(nameof(TaskCardVm.BackgroundBrush)) { Source = vm });
+        card.Bind(Border.BorderBrushProperty,
+                  new Binding(nameof(TaskCardVm.BorderBrushValue)) { Source = vm });
+
+        card.PointerEntered += (_, _) => vm.IsHovered = true;
+        card.PointerExited  += (_, _) => vm.IsHovered = false;
+        card.PointerPressed += (_, e) => OnCardPointerPressed(vm, e);
+        card.Tapped         += (_, e) => OnCardTapped(vm, e);
+        card.ContextRequested += (_, e) => OnCardContextRequested(card, vm, e);
         card.DoubleTapped   += (_, e) =>
         {
             e.Handled = true;
+            // Двойной клик тоже оставляет задачу выделенной: после «Сохранить»/«Отмена»
+            // видно, какую карточку правили (одиночный клик уже выделил её — здесь ничего
+            // не сбрасываем).
             TaskActivated?.Invoke(this, vm.Task);
         };
         return card;
@@ -327,7 +554,9 @@ public partial class TaskListView : UserControl
 /// (id коллекций не уникальны между БД).</param>
 /// <param name="Title">Название коллекции (одной строкой).</param>
 /// <param name="Subtitle">Имя базы — только при нескольких смонтированных БД, иначе "".</param>
-public sealed record TaskGroup(int DbId, int ColId, string Title, string Subtitle,
+/// <param name="Color">Цвет коллекции (правило «дефолтный синий → серый» уже применено) —
+/// им заливается индикатор выполненных задач в заголовке.</param>
+public sealed record TaskGroup(int DbId, int ColId, string Title, string Subtitle, string Color,
                                IReadOnlyList<TaskRecord> Tasks);
 
 // ── Модель строки-заголовка группы ───────────────────────────────────────────
@@ -336,27 +565,48 @@ public sealed class TaskGroupHeaderVm(TaskGroup group, bool collapsed, bool firs
     public TaskGroup Group       => group;
     public string    Title       => group.Title;
     public string    Subtitle    => group.Subtitle;
+    public string    Color       => group.Color;
     public bool      IsCollapsed => collapsed;
     public bool      IsFirst     => first;
 
-    /// <summary>«1 задача» / «2 задачи» / «5 задач» — с учётом 11–14.</summary>
-    public string CountText
-    {
-        get
-        {
-            var count  = group.Tasks.Count;
-            var mod100 = count % 100;
-            var mod10  = count % 10;
-            var word = mod100 is >= 11 and <= 14 ? "задач"
-                     : mod10 switch { 1 => "задача", >= 2 and <= 4 => "задачи", _ => "задач" };
-            return $"{count} {word}";
-        }
-    }
+    /// <summary>Сколько задач коллекции в статусе «Выполнено».</summary>
+    public int DoneCount { get; } =
+        group.Tasks.Count(t => t.Status == ConstructorRepository.TaskStatusDone);
+
+    public int TotalCount => group.Tasks.Count;
+
+    /// <summary>«2 из 7» — выполнено из всего (с разделителем разрядов, как счётчики фильтра).</summary>
+    public string ProgressText => $"{DoneCount:N0} из {TotalCount:N0}";
+
+    /// <summary>Доля выполненных 0..1 — длина заливки индикатора.</summary>
+    public double DoneFraction => TotalCount > 0 ? (double)DoneCount / TotalCount : 0;
 }
 
 // ── Модель карточки: тексты и кисти чипов считаются один раз при загрузке ────
-public class TaskCardVm
+// Наведение и выделение — наблюдаемые: карточка привязывает к ним фон и рамку.
+public partial class TaskCardVm : ObservableObject
 {
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(BackgroundBrush))]
+    [NotifyPropertyChangedFor(nameof(BorderBrushValue))]
+    private bool _isSelected;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(BackgroundBrush))]
+    private bool _isHovered;
+
+    /// <summary>Фон карточки: выделение заметнее наведения (та же серая полупрозрачная
+    /// заливка, что у выделенных строк календаря).</summary>
+    public IBrush BackgroundBrush => IsSelected
+        ? new SolidColorBrush(Color.FromArgb(50, 128, 128, 128))
+        : IsHovered ? Brush("BrushInactiveBg", "#FAFAFA") : Brush("BrushBg", "#FFFFFF");
+
+    /// <summary>Рамка: у выделенной карточки — акцентная (одной заливки мало, карточки и так
+    /// стоят на светлом фоне).</summary>
+    public IBrush BorderBrushValue => IsSelected
+        ? Brush("BrushAccent", "#007AFF")
+        : Brush("BrushSeparator", "#E5E5EA");
+
     private static IBrush Brush(string key, string fallback) =>
         Application.Current!.TryFindResource(key, out var res) && res is IBrush b
             ? b : new SolidColorBrush(Color.Parse(fallback));

@@ -13,16 +13,17 @@ namespace SmartBase.Views.Tasks;
 /// </summary>
 public static class TaskGrouping
 {
-    /// <param name="order">
-    /// Место коллекции в сайдбаре: (DbId, CollectionId) → порядковый номер. Коллекции,
-    /// которой в словаре нет (удалена между загрузкой и показом), достаётся конец списка.
+    /// <param name="collections">
+    /// Коллекции сайдбара: (DbId, CollectionId) → место в списке и цвет (цветом заливается
+    /// индикатор выполненного). Коллекции, которой в словаре нет (удалена между загрузкой и
+    /// показом), достаётся конец списка и цвет из самой задачи.
     /// </param>
     /// <param name="dbName">
     /// Имя базы для подзаголовка группы; null — базу не показываем (она одна, это был бы шум).
     /// </param>
     public static List<TaskGroup> Build(
         IEnumerable<TaskRecord> tasks,
-        IReadOnlyDictionary<(int DbId, int ColId), int> order,
+        IReadOnlyDictionary<(int DbId, int ColId), (int Order, string Color)> collections,
         Func<int, string>? dbName = null)
     {
         return tasks
@@ -32,15 +33,17 @@ public static class TaskGrouping
                 var items = g.ToList();
                 items.Sort(ByDueThenId);
 
+                var known = collections.TryGetValue(g.Key, out var col);
                 var title = TitleText.FirstLine(items[0].CollectionName);
 
                 return (
-                    Order: order.TryGetValue(g.Key, out var place) ? place : int.MaxValue,
+                    Order: known ? col.Order : int.MaxValue,
                     Group: new TaskGroup(
                         DbId:     g.Key.DbId,
                         ColId:    g.Key.ColId,
                         Title:    title.Length > 0 ? title : "Без коллекции",
                         Subtitle: dbName?.Invoke(g.Key.DbId) ?? "",
+                        Color:    EventColors.Display(known ? col.Color : items[0].Color),
                         Tasks:    items));
             })
             .OrderBy(x => x.Order)
