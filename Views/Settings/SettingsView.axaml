@@ -174,7 +174,11 @@
                           VerticalScrollBarVisibility="Auto">
                 <Grid>
                     <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*" MaxWidth="1400" />
+                        <!-- Во всю ширину окна: содержимое раздела заканчивается там же,
+                             где заголовок и линия под ним. Прежний потолок в 1400 оставлял
+                             на широком экране пустую полосу справа, и строки настроек
+                             обрывались, не доходя до края. -->
+                        <ColumnDefinition Width="*" />
                     </Grid.ColumnDefinitions>
                     <StackPanel Margin="16,0,16,32">
 
@@ -241,7 +245,11 @@
                           VerticalScrollBarVisibility="Auto">
                 <Grid>
                     <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*" MaxWidth="1400" />
+                        <!-- Во всю ширину окна: содержимое раздела заканчивается там же,
+                             где заголовок и линия под ним. Прежний потолок в 1400 оставлял
+                             на широком экране пустую полосу справа, и строки настроек
+                             обрывались, не доходя до края. -->
+                        <ColumnDefinition Width="*" />
                     </Grid.ColumnDefinitions>
                     <StackPanel Margin="16,0,16,32">
 
@@ -446,7 +454,11 @@
                           VerticalScrollBarVisibility="Auto">
                 <Grid>
                     <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*" MaxWidth="1400" />
+                        <!-- Во всю ширину окна: содержимое раздела заканчивается там же,
+                             где заголовок и линия под ним. Прежний потолок в 1400 оставлял
+                             на широком экране пустую полосу справа, и строки настроек
+                             обрывались, не доходя до края. -->
+                        <ColumnDefinition Width="*" />
                     </Grid.ColumnDefinitions>
                     <!-- Отступ сверху — как в «Оформлении»: его даёт Padding самих
                          settingRow-строк, у StackPanel верхнего отступа нет. -->
@@ -538,7 +550,11 @@
                           VerticalScrollBarVisibility="Auto">
                 <Grid>
                     <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*" MaxWidth="1400" />
+                        <!-- Во всю ширину окна: содержимое раздела заканчивается там же,
+                             где заголовок и линия под ним. Прежний потолок в 1400 оставлял
+                             на широком экране пустую полосу справа, и строки настроек
+                             обрывались, не доходя до края. -->
+                        <ColumnDefinition Width="*" />
                     </Grid.ColumnDefinitions>
                     <StackPanel Margin="16,16,16,32" Spacing="0">
 

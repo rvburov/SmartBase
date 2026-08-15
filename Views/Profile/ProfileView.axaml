@@ -121,7 +121,11 @@
                           VerticalScrollBarVisibility="Auto">
                 <Grid>
                     <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*" MaxWidth="1400" />
+                        <!-- Во всю ширину окна: содержимое раздела заканчивается там же,
+                             где заголовок и линия под ним. Прежний потолок в 1400 оставлял
+                             на широком экране пустую полосу справа, и строки обрывались,
+                             не доходя до края. -->
+                        <ColumnDefinition Width="*" />
                     </Grid.ColumnDefinitions>
                     <StackPanel Margin="16,0,16,32">
 
@@ -270,7 +274,11 @@
                           VerticalScrollBarVisibility="Auto">
                 <Grid>
                     <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*" MaxWidth="1400" />
+                        <!-- Во всю ширину окна: содержимое раздела заканчивается там же,
+                             где заголовок и линия под ним. Прежний потолок в 1400 оставлял
+                             на широком экране пустую полосу справа, и строки обрывались,
+                             не доходя до края. -->
+                        <ColumnDefinition Width="*" />
                     </Grid.ColumnDefinitions>
                     <StackPanel Margin="16,0,16,32">
 
@@ -431,8 +439,8 @@
                  Таблица журнала как в конструкторе: колонки с фильтром/сортировкой
                  в шапке (строятся в коде — ProfileHistoryTable.cs), страницы
                  подгружаются при прокрутке. Выбор базы — в навбаре (NavbarProfile).
-                 Без боковых полей и MaxWidth остальных панелей — таблица от края
-                 до края, как TableView в конструкторе. -->
+                 Без боковых полей остальных панелей — таблица вплотную к краю,
+                 как TableView в конструкторе. -->
             <Panel x:Name="HistoryPanel" IsVisible="False">
                 <DataGrid x:Name="HistoryGrid"
                           AutoGenerateColumns="False"
