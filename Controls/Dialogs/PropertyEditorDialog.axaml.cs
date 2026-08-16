@@ -325,11 +325,14 @@ public partial class PropertyEditorDialog : Window
         FileSourceCombo.SelectedIndex = 0;
     }
 
-    // Разобрать сохранённое правило и выставить контролы (столбец/папку/формат).
+    // Разобрать сохранённое правило и выставить контролы (столбец/папку/формат/вложенность).
     private void RestoreFileAutoRule(string? configJson)
     {
         var rule = FileAutoRule.FromConfig(configJson);
+        // Правила нет — это новое поле или ручной режим: галочка остаётся в состоянии
+        // по умолчанию (включена), как задано в разметке.
         if (rule is null) { FileSourceCombo.SelectedIndex = 0; return; }
+        FileRecursiveCheck.IsChecked = rule.Recursive;
 
         if (FileSourceCombo.ItemsSource is IEnumerable<SourceFieldItem> items)
         {
@@ -404,7 +407,7 @@ public partial class PropertyEditorDialog : Window
         if (folder.Length == 0) { ShowError("Выберите папку с файлами"); return null; }
         if (!Directory.Exists(folder)) { ShowError("Папка недоступна"); return null; }
         if (format.Length == 0) { ShowError("Выберите формат файла"); return null; }
-        return new FileAutoRule(src.Key, folder, format).ToConfigJson();
+        return new FileAutoRule(src.Key, folder, format, FileRecursiveCheck.IsChecked == true).ToConfigJson();
     }
 
     // ── Связь (relation) ─────────────────────────────────────────────────────────

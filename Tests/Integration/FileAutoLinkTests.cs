@@ -6,8 +6,8 @@ namespace SmartBase.Tests.Integration;
 
 /// <summary>
 /// Авто-привязка файлов типа «файл»: сканирование папки и материализация путей по совпадению
-/// «значение_текст-столбца.формат» (регистр учитывается, точное имя), реакция на правку
-/// столбца-источника, статус недоступной папки.
+/// «значение_текст-столбца.формат» (регистр учитывается, точное имя), поиск во вложенных
+/// папках, реакция на правку столбца-источника, статус недоступной папки.
 /// </summary>
 public sealed class FileAutoLinkTests : IDisposable
 {
@@ -21,6 +21,9 @@ public sealed class FileAutoLinkTests : IDisposable
         File.WriteAllText(Path.Combine(_folder, "Отчёт.pdf"),  "x");
         File.WriteAllText(Path.Combine(_folder, "Отчёт.xlsx"), "x");   // тот же base, другой формат
         File.WriteAllText(Path.Combine(_folder, "Смета.pdf"),  "x");
+        // Файл во вложенной папке — для проверки рекурсивного режима.
+        Directory.CreateDirectory(Path.Combine(_folder, "Архив", "2026"));
+        File.WriteAllText(Path.Combine(_folder, "Архив", "2026", "Акт.pdf"), "x");
     }
 
     public void Dispose()
@@ -80,6 +83,40 @@ public sealed class FileAutoLinkTests : IDisposable
         repo.UpdateField(file);
         Assert.Equal(ConstructorRepository.FileAutoResolveResult.FolderInaccessible,
                      repo.ResolveAutoFileField(file.Id!.Value));
+    }
+
+    /// <summary>
+    /// Вложенные папки: без флага виден только верхний уровень, с флагом — всё дерево.
+    /// Проверяются оба пути подстановки: bulk-резолв и реактивная правка источника.
+    /// </summary>
+    [Fact]
+    public void Recursive_rule_finds_files_in_subfolders()
+    {
+        using var db = new TempDatabase();
+        var repo = db.Constructor;
+        var col  = SampleData.AddCollection(repo);
+        var src  = SampleData.AddField(repo, col.Id!.Value, "Имя", "text");
+        var file = SampleData.AddField(repo, col.Id!.Value, "Файл", "file");
+        var r    = SampleData.AddRecord(repo, col.Id!.Value, "R");
+        repo.SetFieldValue(r.Id!.Value, src.Id!.Value, "Акт");   // лежит в Архив/2026
+
+        // Только верхний уровень — вложенный файл не виден.
+        file.ConfigJson = new FileAutoRule(src.Id!.Value.ToString(), _folder, "pdf").ToConfigJson();
+        repo.UpdateField(file);
+        Assert.Equal(ConstructorRepository.FileAutoResolveResult.Ok, repo.ResolveAutoFileField(file.Id!.Value));
+        Assert.Equal("", FileVal(repo, r.Id!.Value, file.Id!.Value));
+
+        // С поиском по вложенным папкам — найден.
+        file.ConfigJson = new FileAutoRule(src.Id!.Value.ToString(), _folder, "pdf", Recursive: true).ToConfigJson();
+        repo.UpdateField(file);
+        Assert.Equal(ConstructorRepository.FileAutoResolveResult.Ok, repo.ResolveAutoFileField(file.Id!.Value));
+        Assert.EndsWith(Path.Combine("Архив", "2026", "Акт.pdf"), FileVal(repo, r.Id!.Value, file.Id!.Value));
+
+        // Точечный пересчёт по правке источника тоже ходит вглубь.
+        repo.SetFieldValue(r.Id!.Value, src.Id!.Value, "Смета");     // верхний уровень
+        Assert.EndsWith("Смета.pdf", FileVal(repo, r.Id!.Value, file.Id!.Value));
+        repo.SetFieldValue(r.Id!.Value, src.Id!.Value, "Акт");       // снова вложенный
+        Assert.EndsWith(Path.Combine("Архив", "2026", "Акт.pdf"), FileVal(repo, r.Id!.Value, file.Id!.Value));
     }
 
     [Fact]

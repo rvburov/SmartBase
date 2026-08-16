@@ -378,6 +378,9 @@
                         <Button Grid.Column="2" x:Name="FileFolderBtn" Classes="dialog"
                                 Content="Выбрать…" />
                     </Grid>
+                    <CheckBox x:Name="FileRecursiveCheck"
+                              Content="Искать во вложенных папках"
+                              IsChecked="True" />
                 </StackPanel>
 
                 <StackPanel Spacing="6">
@@ -394,6 +397,7 @@
                         <ComboBoxItem Content="docx" />
                         <ComboBoxItem Content="xls" />
                         <ComboBoxItem Content="xlsx" />
+                        <ComboBoxItem Content="xlsm" />
                         <ComboBoxItem Content="csv" />
                         <ComboBoxItem Content="txt" />
                         <ComboBoxItem Content="rtf" />

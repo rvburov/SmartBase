@@ -43,6 +43,27 @@ public sealed class FileAutoRuleTests
             "{\"auto\":{\"source\":\"__desc__\",\"folder\":\"/d\",\"format\":\"pdf\"}}"));
     }
 
+    /// <summary>
+    /// Вложенные папки: флаг переживает сериализацию, а правило БЕЗ ключа «recursive»
+    /// (создано до появления настройки) остаётся поиском по верхнему уровню — иначе у
+    /// существующих полей молча поменялись бы значения.
+    /// </summary>
+    [Fact]
+    public void Roundtrips_recursive_flag()
+    {
+        var back = FileAutoRule.FromConfig(new FileAutoRule("1", "/d", "pdf", Recursive: true).ToConfigJson());
+        Assert.NotNull(back);
+        Assert.True(back!.Recursive);
+    }
+
+    [Fact]
+    public void Rule_without_recursive_key_is_top_level_only()
+    {
+        var rule = FileAutoRule.FromConfig("{\"auto\":{\"source\":\"1\",\"folder\":\"/d\",\"format\":\"pdf\"}}");
+        Assert.NotNull(rule);
+        Assert.False(rule!.Recursive);
+    }
+
     [Fact]
     public void Reads_legacy_source_field_id_format()
     {

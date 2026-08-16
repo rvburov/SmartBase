@@ -2519,7 +2519,7 @@ public partial class ConstructorRepository(AppDbContext db)
         var rule = FileAutoRule.FromConfig(field.ConfigJson);
         if (rule is null) return FileAutoResolveResult.NoRule;
 
-        if (!TryScanFolder(rule.Folder, out var files)) return FileAutoResolveResult.FolderInaccessible;
+        if (!TryScanFolder(rule.Folder, rule.Recursive, out var files)) return FileAutoResolveResult.FolderInaccessible;
 
         // Источник значений: числовое текст-поле (в т.ч. «Описание») → db_field_values по
         // (FieldId, Value); системная колонка «Название» → db_records по (Id, Title) этой коллекции
@@ -2593,16 +2593,21 @@ public partial class ConstructorRepository(AppDbContext db)
         return rec?.Title ?? "";
     }
 
-    // Скан папки в словарь имя→путь (только верхний уровень, регистр учитывается — Ordinal).
-    // false — папки нет или нет доступа.
-    private static bool TryScanFolder(string folder, out Dictionary<string, string> files)
+    // Скан папки в словарь имя→путь (регистр учитывается — Ordinal). recursive — вместе
+    // с вложенными папками. false — папки нет или нет доступа.
+    //
+    // При рекурсии одно имя может встретиться в разных подпапках — берём ПЕРВОЕ найденное
+    // (TryAdd, обход сверху вниз): выбирать «правильный» дубль не по чему, а перезапись
+    // последним делала бы результат зависимым от порядка обхода файловой системы.
+    private static bool TryScanFolder(string folder, bool recursive, out Dictionary<string, string> files)
     {
         files = new Dictionary<string, string>(StringComparer.Ordinal);
         try
         {
             if (!System.IO.Directory.Exists(folder)) return false;
-            foreach (var path in System.IO.Directory.EnumerateFiles(folder))
-                files[System.IO.Path.GetFileName(path)] = path;   // имена в папке уникальны
+            var depth = recursive ? System.IO.SearchOption.AllDirectories : System.IO.SearchOption.TopDirectoryOnly;
+            foreach (var path in System.IO.Directory.EnumerateFiles(folder, "*", depth))
+                files.TryAdd(System.IO.Path.GetFileName(path), path);
             return true;
         }
         catch (Exception ex) when (ex is System.IO.IOException or UnauthorizedAccessException)
@@ -2671,13 +2676,16 @@ public partial class ConstructorRepository(AppDbContext db)
     }
 
     // Точечное совпадение файла для записи (регистр учитывается). "" — не найден/пусто.
+    // Ищем маской по имени, при recursive — вместе с вложенными папками; берём первое
+    // совпадение, как и bulk-скан (TryScanFolder).
     private static string MatchSingle(FileAutoRule rule, string sourceValue)
     {
         var target = rule.TargetFileName(sourceValue);
         if (target.Length == 0) return "";
         try
         {
-            foreach (var path in System.IO.Directory.EnumerateFiles(rule.Folder, target))
+            var depth = rule.Recursive ? System.IO.SearchOption.AllDirectories : System.IO.SearchOption.TopDirectoryOnly;
+            foreach (var path in System.IO.Directory.EnumerateFiles(rule.Folder, target, depth))
                 if (string.Equals(System.IO.Path.GetFileName(path), target, StringComparison.Ordinal))
                     return path;
         }

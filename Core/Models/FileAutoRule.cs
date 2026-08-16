@@ -6,19 +6,30 @@ namespace SmartBase.Core.Models;
 /// Правило авто-привязки файлов для поля типа «файл»: файл берётся не выбором пользователя, а
 /// сопоставлением по имени. Для каждой записи имя = значение столбца-источника
 /// (<see cref="SourceKey"/>) + «.» + <see cref="Format"/>; ищется в <see cref="Folder"/>
-/// (только верхний уровень, регистр учитывается). Найденный путь материализуется в
-/// db_field_values (чтобы работали фильтр/сортировка), сам столбец становится read-only.
+/// (регистр учитывается). <see cref="Recursive"/> = искать и во вложенных папках.
+/// Найденный путь материализуется в db_field_values (чтобы работали фильтр/сортировка),
+/// сам столбец становится read-only.
 ///
 /// Источник — строковый ключ колонки (как в сортировке/фильтре/экспорте): системное
 /// «Название» (<see cref="TitleSource"/>, значение в db_records.Title) либо числовой Id
 /// текст-поля (значения в db_field_values). «Описание» — обычное текст-поле, поэтому берётся
 /// вторым путём, по своему Id.
 ///
-/// Хранится в ConfigJson поля: <c>{ "auto": { "source": "…", "folder": "…", "format": "pdf" } }</c>.
+/// Хранится в ConfigJson поля:
+/// <c>{ "auto": { "source": "…", "folder": "…", "format": "pdf", "recursive": true } }</c>.
 /// null (правила нет) — поле работает как обычный ручной «файл».
 /// </summary>
-public sealed record FileAutoRule(string SourceKey, string Folder, string Format)
+/// <param name="Recursive">
+/// Искать во вложенных папках. Ключа нет в конфиге — <c>false</c>: правила, созданные до
+/// появления настройки, работали по верхнему уровню, и молча расширять их охват нельзя —
+/// у поля разом поменялись бы значения. Новые правила диалог создаёт с включённой галочкой
+/// (<see cref="DefaultRecursive"/>).
+/// </param>
+public sealed record FileAutoRule(string SourceKey, string Folder, string Format, bool Recursive = false)
 {
+    /// <summary>Состояние галочки «Искать во вложенных папках» у нового свойства.</summary>
+    public const bool DefaultRecursive = true;
+
     /// <summary>Ключ системной колонки «Название» (значение — db_records.Title).</summary>
     public const string TitleSource = "__title__";
 
@@ -49,6 +60,9 @@ public sealed record FileAutoRule(string SourceKey, string Folder, string Format
 
             var folder = a.TryGetProperty("folder", out var f) && f.ValueKind == JsonValueKind.String ? f.GetString() ?? "" : "";
             var format = a.TryGetProperty("format", out var t) && t.ValueKind == JsonValueKind.String ? t.GetString() ?? "" : "";
+            // Ключа нет — правило из баз, где настройки ещё не было: там искали только по
+            // верхнему уровню, таким и оставляем (см. комментарий к Recursive).
+            var recursive = a.TryGetProperty("recursive", out var r) && r.ValueKind == JsonValueKind.True;
 
             source = source.Trim();
             // Нераспознанный ключ (например, «__desc__» из баз, где описание было системной
@@ -58,7 +72,7 @@ public sealed record FileAutoRule(string SourceKey, string Folder, string Format
             folder = folder.Trim();
             format = NormalizeFormat(format);
             if (source.Length == 0 || folder.Length == 0 || format.Length == 0) return null;
-            return new FileAutoRule(source, folder, format);
+            return new FileAutoRule(source, folder, format, recursive);
         }
         catch (JsonException) { return null; }
     }
@@ -66,7 +80,7 @@ public sealed record FileAutoRule(string SourceKey, string Folder, string Format
     /// <summary>Объект для сериализации в ConfigJson (под ключом «auto»).</summary>
     public static object ToConfigObject(FileAutoRule rule) => new
     {
-        auto = new { source = rule.SourceKey, folder = rule.Folder, format = rule.Format },
+        auto = new { source = rule.SourceKey, folder = rule.Folder, format = rule.Format, recursive = rule.Recursive },
     };
 
     /// <summary>ConfigJson-строка целиком (у поля «файл» иных настроек нет).</summary>
