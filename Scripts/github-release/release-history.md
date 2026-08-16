@@ -19,7 +19,7 @@
 
 ## [Не выпущено]
 
-## [1.1.0]
+## [1.1.0] — 2026-08-16
 
 ### Добавлено
 - Раздел «Задачи» показывает задачи всех коллекций, отмеченных галочками в боковой панели,
@@ -133,6 +133,7 @@
 - Работа с несколькими базами одновременно, SQLite и PostgreSQL, пользователи и права.
 - Импорт и экспорт, автообновление из сетевой папки, нативные уведомления, автозапуск.
 
-[Не выпущено]: https://github.com/rvburov/SmartBase/compare/v1.0.4...HEAD
+[Не выпущено]: https://github.com/rvburov/SmartBase/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/rvburov/SmartBase/compare/v1.0.4...v1.1.0
 [1.0.4]: https://github.com/rvburov/SmartBase/compare/v1.0.3...v1.0.4
 [1.0.3]: https://github.com/rvburov/SmartBase/releases/tag/v1.0.3
