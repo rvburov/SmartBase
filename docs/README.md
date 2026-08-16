@@ -5,7 +5,8 @@ EF Core/SQLite). Документация разделена на два раз�
 
 - **[developer/](developer/)** — как устроено и работает приложение (для разработчиков) —
   основной раздел.
-- **[user/](user/)** — инструкция для пользователя (заглушка, в разработке).
+- **[user/](user/)** — инструкция для пользователя. Эти же файлы показывает сама
+  программа: «Настройки → Инструкция пользователя».
 
 Планы развития — [ROADMAP.md](ROADMAP.md).
 
@@ -48,7 +49,7 @@ EF Core/SQLite). Документация разделена на два раз�
 - **Конструктор** ([constructor/](developer/features/constructor/)): [overview](developer/features/constructor/overview.md) · [table](developer/features/constructor/table.md) · [record-page](developer/features/constructor/record-page.md).
 - **Импорт/экспорт** ([import-export/](developer/features/import-export/)): [overview](developer/features/import-export/overview.md) · [import](developer/features/import-export/import.md) · [export](developer/features/import-export/export.md) · [cross-database-move](developer/features/import-export/cross-database-move.md).
 - [tasks.md](developer/features/tasks.md) — раздел «Задачи».
-- [categories.md](developer/features/categories.md) · [settings.md](developer/features/settings.md) · [notifications.md](developer/features/notifications.md) · [autostart-background.md](developer/features/autostart-background.md) · [profile.md](developer/features/profile.md) · [extensions.md](developer/features/extensions.md) · [logging.md](developer/features/logging.md) · [icons.md](developer/features/icons.md).
+- [categories.md](developer/features/categories.md) · [settings.md](developer/features/settings.md) · [user-guide-section.md](developer/features/user-guide-section.md) · [notifications.md](developer/features/notifications.md) · [autostart-background.md](developer/features/autostart-background.md) · [profile.md](developer/features/profile.md) · [extensions.md](developer/features/extensions.md) · [logging.md](developer/features/logging.md) · [icons.md](developer/features/icons.md).
 
 ### UI ([developer/ui/](developer/ui/))
 
@@ -73,7 +74,20 @@ EF Core/SQLite). Документация разделена на два раз�
 
 ## Для пользователей ([user/](user/))
 
-Инструкция для конечного пользователя. Пока заглушка — см. [user/README.md](user/README.md) и черновик [user-guide.md](user/user-guide.md).
+Инструкция для конечного пользователя; точка входа — [user/README.md](user/README.md).
+Порядок документов в программе задаёт [GuideRegistry](../Settings/GuideRegistry.cs),
+устройство раздела — [features/user-guide-section.md](developer/features/user-guide-section.md).
+
+- Начало: [overview](user/overview.md) · [data-structure](user/data-structure.md)
+- Работа с данными: [table](user/table.md) · [record-page](user/record-page.md) · [properties](user/properties.md) · [filters-sorting](user/filters-sorting.md)
+- Планирование: [calendar](user/calendar.md) · [tasks](user/tasks.md)
+- Обмен и инструменты: [import-export](user/import-export.md) · [extensions](user/extensions.md)
+- Настройка: [settings](user/settings.md) · [profile-access](user/profile-access.md) · [postgresql](user/postgresql.md) · [install-update](user/install-update.md)
+- Справочное: [shortcuts](user/shortcuts.md)
+
+> **Файлы попадают в сборку.** `docs/user/**/*.md` объявлены `AvaloniaResource`
+> в [SmartBase.csproj](../SmartBase.csproj) — правка markdown меняет и то, что видит
+> пользователь в программе. Новый документ = файл здесь + строка в `GuideRegistry`.
 
 ---
 

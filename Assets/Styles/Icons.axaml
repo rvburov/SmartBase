@@ -111,6 +111,8 @@
     <StreamGeometry x:Key="IconSliders">M10 8 H14 M12 21 V12 M12 8 V3 M17 16 H21 M19 12 V3 M19 21 V16 M3 14 H7 M5 10 V3 M5 21 V14</StreamGeometry>
     <!-- Уведомления (bell) -->
     <StreamGeometry x:Key="IconBell">M18 8 A6 6 0 0 0 6 8 C6 15 3 17 3 17 H21 S18 15 18 8 Z M13.73 21 A2 2 0 0 1 10.27 21</StreamGeometry>
+    <!-- Инструкция пользователя (book-open) -->
+    <StreamGeometry x:Key="IconBook">M12 7 V21 M3 18 A1 1 0 0 1 2 17 V4 A1 1 0 0 1 3 3 H8 A4 4 0 0 1 12 7 A4 4 0 0 1 16 3 H21 A1 1 0 0 1 22 4 V17 A1 1 0 0 1 21 18 H15 A3 3 0 0 0 12 21 A3 3 0 0 0 9 18 Z</StreamGeometry>
 
     <!-- ─── Сайдбар: разделы профиля (общие данные = IconUser) ─── -->
 

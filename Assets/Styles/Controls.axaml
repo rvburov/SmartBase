@@ -35,6 +35,11 @@
         <Thickness x:Key="BorderLineBottom">0,0,0,1</Thickness>
         <Thickness x:Key="BorderLineLeft">1,0,0,0</Thickness>
         <Thickness x:Key="BorderLineRight">0,0,1,0</Thickness>
+        <!-- Для сеток из ячеек-Border: ячейка рисует правую и нижнюю, контейнер —
+             верхнюю и левую. Так на стыке соседних ячеек линию рисует ровно ОДИН
+             элемент (иначе две линии складываются в двойную толщину). -->
+        <Thickness x:Key="BorderLineBottomRight">0,0,1,1</Thickness>
+        <Thickness x:Key="BorderLineTopLeft">1,1,0,0</Thickness>
         <Thickness x:Key="BorderLinePopup">1</Thickness>
         <!-- При зуме ≠ 1 layout rounding пере-округлил бы компенсированную толщину
              (округление идёт в пре-трансформ координатах) — линии-потребители
@@ -500,7 +505,7 @@
              её обратно в 0, там высоту задаёт строка карточки. -->
         <Setter Property="MinHeight"       Value="{StaticResource ControlHeightStandard}" />
         <!-- Выделение текста серым вместо системного синего -->
-        <Setter Property="SelectionBrush"           Value="#C7C7CC" />
+        <Setter Property="SelectionBrush"           Value="{StaticResource BrushTextSelection}" />
         <Setter Property="SelectionForegroundBrush" Value="{StaticResource BrushPrimaryText}" />
         <!-- По умолчанию однострочный: без вертикальной прокрутки — иначе при крупном шрифте
              текст переполняет поле фикс. высоты и вылезает кнопка-стрелка скроллбара.

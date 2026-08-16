@@ -762,11 +762,14 @@ public partial class SettingsView : UserControl
         GeneralPanel.IsVisible    = key == "general";
         AppearancePanel.IsVisible = key == "appearance";
         DatabasePanel.IsVisible   = key == "database";
+        GuidePanel.IsVisible      = key == "guide";
         LogsPanel.IsVisible       = key == "logs";
         AboutPanel.IsVisible      = key == "about";
         // Панель деталей журнала живёт в корне (во всю высоту) — при уходе из «Диагностики»
         // её нужно закрыть явно (она не вложена в LogsPanel).
         if (key != "logs") CloseLogsDetail();
+        // То же и у «Содержания» инструкции: панель, разделитель и ручка лежат в корне.
+        ShowGuideToc(key == "guide");
 
         // Заголовок берём из реестра по ключу — единственный источник подписей разделов.
         HeaderBar.Title = (SettingsRegistry.FindByKey(key) ?? SettingsRegistry.All[0]).Label;
@@ -774,7 +777,8 @@ public partial class SettingsView : UserControl
         HeaderBar.ShowDatabaseActions = key == "database";
         HeaderBar.ShowLogsActions     = key == "logs";
 
-        if (key == "logs") RebuildLogsPanel();
+        if (key == "logs")  RebuildLogsPanel();
+        if (key == "guide") BuildGuide();
     }
 
     // ── Управление базой данных ──────────────────────────────────────────────

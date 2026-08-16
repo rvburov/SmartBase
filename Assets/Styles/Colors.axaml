@@ -35,6 +35,9 @@
     <Color x:Key="ColorHover">#E5E5EA</Color>
     <Color x:Key="ColorDragHandle">#AEAEB2</Color>
     <Color x:Key="ColorScrollbar">#C7C7CC</Color>
+    <!-- Подсветка выделенного мышью текста: серая вместо системной синей. Одна на всё
+         приложение — поля ввода (TextBox) и markdown-текст инструкции. -->
+    <Color x:Key="ColorTextSelection">#C7C7CC</Color>
 
     <!-- SolidColorBrush для привязок -->
     <SolidColorBrush x:Key="BrushBg"           Color="{StaticResource ColorBg}" />
@@ -51,6 +54,7 @@
     <SolidColorBrush x:Key="BrushGreen"        Color="{StaticResource ColorGreen}" />
     <SolidColorBrush x:Key="BrushGreenLight"   Color="{StaticResource ColorGreenLight}" />
     <SolidColorBrush x:Key="BrushHover"        Color="{StaticResource ColorHover}" />
+    <SolidColorBrush x:Key="BrushTextSelection" Color="{StaticResource ColorTextSelection}" />
 
     <!-- Фон вложенного меню (Popup у MenuItem с сабпунктами): Fluent по умолчанию
          использует белый из FlyoutBackground/MenuFlyoutPresenterBackground.

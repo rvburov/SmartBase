@@ -95,6 +95,29 @@
             <Setter Property="TextWrapping" Value="Wrap" />
         </Style>
 
+        <!-- Пункт панели «Содержание» (раздел «Инструкция пользователя»). Подсветка во всю
+             ширину без скруглений, как строка сайдбара (SidebarList.axaml): панель — та же
+             навигация, только внутри раздела. Строки строятся в code-behind (SettingsGuide). -->
+        <Style Selector="Border.tocrow">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="Cursor"     Value="Hand" />
+        </Style>
+        <Style Selector="Border.tocrow:pointerover">
+            <Setter Property="Background" Value="{StaticResource BrushSecondaryBg}" />
+        </Style>
+        <Style Selector="Border.tocrow.selected, Border.tocrow.selected:pointerover">
+            <Setter Property="Background" Value="{StaticResource BrushAccentLight}" />
+        </Style>
+        <Style Selector="Border.tocrow TextBlock">
+            <Setter Property="Foreground" Value="{StaticResource BrushPrimaryText}" />
+        </Style>
+        <Style Selector="Border.tocrow.sub TextBlock">
+            <Setter Property="Foreground" Value="{StaticResource BrushSecondaryText}" />
+        </Style>
+        <Style Selector="Border.tocrow.selected TextBlock">
+            <Setter Property="Foreground" Value="{StaticResource BrushAccent}" />
+        </Style>
+
         <!-- Стили DataGrid таблицы «Диагностики» — копии стилей TableView.axaml (там же
              объяснено, почему линии/шапка устроены именно так). -->
         <Style Selector="DataGridCell">
@@ -650,6 +673,18 @@
                 </Grid>
             </ScrollViewer>
 
+            <!-- ── Инструкция пользователя ───────────────────────
+                 Документы docs/user/*.md, вшитые в сборку (AvaloniaResource). Текст
+                 собирается в code-behind (SettingsGuide) секциями в GuideHost: свой
+                 ScrollViewer вместо MarkdownScrollViewer — так известна Y-координата
+                 каждого заголовка, и оглавление умеет к нему прокручивать. Оглавление —
+                 отдельной панелью справа (Column 2 корневой сетки), как «Детали» журнала. -->
+            <ScrollViewer x:Name="GuidePanel" IsVisible="False"
+                          VerticalScrollBarVisibility="Auto"
+                          HorizontalScrollBarVisibility="Disabled">
+                <StackPanel x:Name="GuideHost" Margin="16,16,16,32" />
+            </ScrollViewer>
+
             <!-- ── Диагностика ───────────────────────────────────
                  Журнал logs.db (Serilog): единый файл на приложение, без выбора базы.
                  Деталь строки — отдельной панелью справа (Column 2 корневой сетки). -->
@@ -684,9 +719,62 @@
 
     </DockPanel>
 
-    <!-- Вертикальный разделитель между разделом и деталями (во всю высоту). -->
+    <!-- Вертикальный разделитель между разделом и деталями (во всю высоту). Разделителя
+         два — по одному на панель Column 2 («Детали» журнала и «Содержание» инструкции):
+         разделы не показываются одновременно, поэтому видна всегда ровно одна пара. -->
     <Border Grid.Column="1" x:Name="LogsDetailDivider"
             Classes="separator v" IsVisible="False" />
+    <Border Grid.Column="1" x:Name="GuideTocDivider"
+            Classes="separator v" IsVisible="False" />
+
+    <!-- ── Содержание инструкции (во всю высоту) ────────────────────────────
+         Устроено как панель «Детали» журнала: навбар высотой 56 встаёт вровень с навбаром
+         настроек, своей линии под ним нет (её рисует общая линия окна на y=56 в MainWindow —
+         вторая при зуме дала бы двойную). Пункты строятся в code-behind по заголовкам
+         документов; ширина меняется ручкой GuideTocResizeGrip ниже. -->
+    <Border Grid.Column="2" x:Name="GuideTocPanel"
+            IsVisible="False"
+            Background="{StaticResource BrushBg}">
+        <Grid RowDefinitions="Auto,*">
+
+            <Grid Grid.Row="0" Height="56" Margin="16,0">
+                <TextBlock Text="Содержание"
+                           VerticalAlignment="Center"
+                           FontSize="{DynamicResource FontSizeLarge}"
+                           FontWeight="{StaticResource FontWeightBold}"
+                           TextTrimming="CharacterEllipsis" />
+            </Grid>
+
+            <!-- Боковых отступов у хоста нет: подсветка пункта идёт во всю ширину панели,
+                 воздух даёт Padding самой строки (как в сайдбаре). -->
+            <ScrollViewer Grid.Row="1"
+                          VerticalScrollBarVisibility="Auto"
+                          HorizontalScrollBarVisibility="Disabled">
+                <StackPanel x:Name="GuideTocHost" Margin="0,0,0,16" />
+            </ScrollViewer>
+        </Grid>
+    </Border>
+
+    <!-- Ручка перетягивания ширины панели «Содержание» — копия ручки «Деталей» ниже. -->
+    <Border Grid.Column="2" x:Name="GuideTocResizeGrip"
+            Width="11" Height="34"
+            HorizontalAlignment="Left"
+            VerticalAlignment="Center"
+            Margin="-5,0,0,0"
+            CornerRadius="4"
+            Background="{StaticResource BrushBg}"
+            BorderBrush="{StaticResource BrushSeparator}"
+            BorderThickness="{DynamicResource BorderLine}"
+            Cursor="SizeWestEast"
+            IsVisible="False">
+        <StackPanel Orientation="Vertical" Spacing="3"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Center">
+            <Ellipse Width="2.5" Height="2.5" Fill="{StaticResource BrushSecondaryText}" />
+            <Ellipse Width="2.5" Height="2.5" Fill="{StaticResource BrushSecondaryText}" />
+            <Ellipse Width="2.5" Height="2.5" Fill="{StaticResource BrushSecondaryText}" />
+        </StackPanel>
+    </Border>
 
     <!-- ── Детали строки журнала (во всю высоту) ───────────────────────────
          Навбар «Детали» встаёт вровень с навбаром настроек. Карточки полей сверху,

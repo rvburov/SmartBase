@@ -562,4 +562,5 @@ SmartBase/
 | [guides/build-and-run.md](docs/developer/guides/build-and-run.md)                     | сборка и запуск во всех режимах                                                                           |
 | [guides/developer-guide.md](docs/developer/guides/developer-guide.md)                 | миграции EF, соглашения, раскладка вывода                                                          |
 | [testing/overview.md](docs/developer/testing/overview.md)                             | автотесты, бенчмарки, стенды                                                                                |
+| [user/](docs/user/)                                                                   | инструкция пользователя — её же показывает раздел настроек                             |
 | [ROADMAP.md](docs/ROADMAP.md)                                                         | планы развития                                                                                                         |

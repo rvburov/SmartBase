@@ -112,6 +112,30 @@ public static class AppSettings
         else                                  _store?.Set(KeyRecordPanelWidth, width.ToString(CultureInfo.InvariantCulture));
     }
 
+    // ── Панель «Содержание» инструкции пользователя ───────────────────────────
+    //
+    // Панель открыта всё время, пока выбран раздел (у «Деталей» журнала ширина живёт
+    // только в пределах сессии — там панель появляется по клику), поэтому ширина
+    // сохраняется: подобранное один раз не приходится подбирать заново.
+
+    public const int GuideTocWidthMin     = 200;
+    public const int GuideTocWidthMax     = 600;
+    public const int GuideTocWidthDefault = 280;
+
+    public static int LoadGuideTocWidth()
+    {
+        if (int.TryParse(_store?.Get(KeyGuideTocWidth), NumberStyles.Integer, CultureInfo.InvariantCulture, out var w)
+            && w >= GuideTocWidthMin && w <= GuideTocWidthMax)
+            return w;
+        return GuideTocWidthDefault;
+    }
+
+    public static void SaveGuideTocWidth(int width)
+    {
+        if (width == GuideTocWidthDefault) _store?.Remove(KeyGuideTocWidth);
+        else                               _store?.Set(KeyGuideTocWidth, width.ToString(CultureInfo.InvariantCulture));
+    }
+
     // Виртуализация таблицы (постраничная подгрузка через VirtualCollectionView) и фоновая
     // подгрузка строк с заглушкой «Загрузка…» — всегда включены, это часть программы,
     // переключателей нет (без них большие коллекции зависают). Бывший ключ asyncRowLoad
@@ -368,6 +392,7 @@ public static class AppSettings
     private const string KeyScale            = "scale";
     private const string KeyRecordPanelOpen  = "recordPanelOpen";
     private const string KeyRecordPanelWidth = "recordPanelWidth";
+    private const string KeyGuideTocWidth    = "guideTocWidth";
     private const string KeyFontDelta        = "fontDelta";
     private const string KeyStartupModule    = "startupModule";
     private const string KeyCalendarView     = "calendarView";

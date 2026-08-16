@@ -12,7 +12,7 @@ namespace SmartBase.Utils;
 /// </summary>
 public static class FontScale
 {
-    private static double _baseSmall = 11, _baseBase = 12, _baseLarge = 20;
+    private static double _baseSmall = 11, _baseBase = 12, _baseMedium = 16, _baseLarge = 20;
     private static bool _ready;
 
     /// <summary>Текущая дельта в пикселях к стандарту (0 = стандарт).</summary>
@@ -31,9 +31,10 @@ public static class FontScale
     public static void Init()
     {
         // Стандарт читаем ДО первой записи в Application.Resources (иначе прочитаем уже override).
-        _baseSmall = Read("FontSizeSmall", 11);
-        _baseBase  = Read("FontSizeBase",  12);
-        _baseLarge = Read("FontSizeLarge", 20);
+        _baseSmall  = Read("FontSizeSmall",  11);
+        _baseBase   = Read("FontSizeBase",   12);
+        _baseMedium = Read("FontSizeMedium", 16);
+        _baseLarge  = Read("FontSizeLarge",  20);
         _ready = true;
 
         Delta = AppSettings.LoadFontDelta();
@@ -55,9 +56,10 @@ public static class FontScale
     {
         if (!_ready) return;
         var r = Application.Current!.Resources;
-        r["FontSizeSmall"] = _baseSmall + Delta;
-        r["FontSizeBase"]  = _baseBase  + Delta;
-        r["FontSizeLarge"] = _baseLarge + Delta;
+        r["FontSizeSmall"]  = _baseSmall  + Delta;
+        r["FontSizeBase"]   = _baseBase   + Delta;
+        r["FontSizeMedium"] = _baseMedium + Delta;
+        r["FontSizeLarge"]  = _baseLarge  + Delta;
     }
 
     private static double Read(string key, double fallback) =>

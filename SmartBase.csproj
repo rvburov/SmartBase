@@ -122,6 +122,10 @@
     <AvaloniaResource Remove="Assets\Branding\icon.icns" />
     <AvaloniaResource Remove="Assets\Branding\Info.plist" />
     <AvaloniaResource Remove="Assets\Branding\SmartBase.desktop" />
+    <!-- Инструкция пользователя показывается прямо в настройках (раздел «Инструкция
+         пользователя»), а редактируется как обычные markdown-файлы в docs/user — они же
+         читаются на GitHub. Копии в Assets нет намеренно: две копии разъехались бы. -->
+    <AvaloniaResource Include="docs\user\**\*.md" />
   </ItemGroup>
 
   <!-- Tests/ — отдельный проект-генератор стенда (Tests/DbGenerator), в приложение не входит -->

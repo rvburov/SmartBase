@@ -140,6 +140,8 @@ public static class LineMetrics
         r["BorderLineBottom"]        = new Thickness(0, 0, 0, t);
         r["BorderLineLeft"]          = new Thickness(t, 0, 0, 0);
         r["BorderLineRight"]         = new Thickness(0, 0, t, 0);
+        r["BorderLineBottomRight"]   = new Thickness(0, 0, t, t);
+        r["BorderLineTopLeft"]       = new Thickness(t, t, 0, 0);
         r["BorderLinePopup"]         = new Thickness(tPop);
         r["LineUseLayoutRounding"]   = Math.Abs(zoom - 1.0) < 0.001;
 
