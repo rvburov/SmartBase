@@ -50,11 +50,11 @@ public partial class ConstructorRepository
 
     /// <summary>
     /// Включает/выключает участие user-поля в разделе задач (флаг <c>IsTaskExec</c>).
-    /// Несколько user-полей коллекции могут быть включены одновременно — каждое даёт
-    /// свои задачи. Включение — read-time фильтр (никаких проекций), плюс коллекция
-    /// доводится до полного набора ролей задачи: «Назначил», «Статус», «Дата» (срок),
-    /// «Описание». <paramref name="adoptByName"/> = false — одноимённые столбцы не трогаем
-    /// и заводим для ролей отдельные поля (ответ пользователя в окне подтверждения; план
+    /// Исполнитель у коллекции ОДИН: пока тумблер стоит на одном user-поле, включить второе
+    /// нельзя (см. <see cref="TaskExecFieldId"/>). Включение — read-time фильтр (никаких
+    /// проекций), плюс коллекция доводится до полного набора ролей задачи: «Назначил», «Статус»,
+    /// «Дата» (срок), «Описание». <paramref name="adoptByName"/> = false — одноимённые столбцы не
+    /// трогаем и заводим для ролей отдельные поля (ответ пользователя в окне подтверждения; план
     /// для него считает <see cref="PlanRoles"/>). Возвращает true, если состав или разметка
     /// полей коллекции изменились.
     /// </summary>
@@ -63,6 +63,16 @@ public partial class ConstructorRepository
         Demand(PermAction.EditField, CollectionOfField(fieldId));
         var field = db.DbFields.Find(fieldId);
         if (field is null || field.FieldType != "user" || field.IsTaskExec == enabled) return false;
+
+        // Второй исполнитель коллекции запрещён. Раньше их могло быть сколько угодно, и каждая
+        // запись давала карточку на КАЖДОЕ включённое поле: один и тот же пункт списка дублировался
+        // столько раз, сколько в коллекции user-полей, а «своей» карточки у записи не было.
+        // Одно поле — один список дел; чтобы сменить носителя, тумблер сначала снимают со старого.
+        if (enabled && TaskExecFieldId(field.CollectionId) is int busy && busy != fieldId)
+            throw new InvalidOperationException(
+                $"В коллекции уже есть свойство-исполнитель — «{FieldName(busy)}». " +
+                "Исполнитель может быть только один: снимите переключатель с него, " +
+                "чтобы назначить исполнителем это свойство.");
 
         // Чужая роль задач исполнителем быть не может: два значения писались бы в один
         // FieldId и затирали друг друга. «Назначил» отсекаем и по флагу, и по имени —
@@ -91,9 +101,22 @@ public partial class ConstructorRepository
         return enabled && EnsureTaskRoles(field.CollectionId, fieldId, adoptByName);
     }
 
+    /// <summary>
+    /// Поле-исполнитель коллекции (null — задачи для неё не включены). Исполнитель один на
+    /// коллекцию; порядок <see cref="RoleOrder"/> нужен старым базам, где их успело накопиться
+    /// несколько, — до того, как их починит <see cref="RepairTaskFieldRoles"/>.
+    /// </summary>
+    public int? TaskExecFieldId(int collectionId) =>
+        RoleOrder(db.DbFields.Where(f => f.CollectionId == collectionId &&
+                                         f.FieldType == "user" && f.IsTaskExec))
+        .Select(f => (int?)f.Id).FirstOrDefault();
+
     /// <summary>Есть ли у коллекции включённое поле-исполнитель (участвует в задачах).</summary>
-    public bool HasTaskExecField(int collectionId) =>
-        db.DbFields.Any(f => f.CollectionId == collectionId && f.FieldType == "user" && f.IsTaskExec);
+    public bool HasTaskExecField(int collectionId) => TaskExecFieldId(collectionId) is not null;
+
+    /// <summary>Имя свойства по id ("" — свойства нет) — для окон, называющих носителя роли.</summary>
+    public string FieldName(int fieldId) =>
+        db.DbFields.Where(f => f.Id == fieldId).Select(f => f.Name).FirstOrDefault() ?? "";
 
     /// <summary>
     /// Гарантирует коллекции полный набор полей задач: включённое user-поле «исполнитель»
@@ -171,46 +194,95 @@ public partial class ConstructorRepository
         EnsureRoles(collectionId, TaskRoles, adoptByName, execFieldId);
 
     /// <summary>
-    /// Разовая починка при монтировании: поле, несущее СРАЗУ две роли задач. Такие поля
-    /// остались в базах, открытых до запрета (роль «Назначил» усыновлялась исполнителем):
-    /// оба значения писались в один <c>FieldId</c> и затирали друг друга. Сам запрет их не
-    /// лечит — <see cref="EnsureTaskCollection"/> находит exec по флагу и уходит в ранний
-    /// возврат, а разметка ролей видит роль уже помеченной, поэтому
-    /// заметивший дефект пользователь так и остался бы с ним.
+    /// Разовая починка разметки ролей при монтировании — три дефекта, которые запреты нового кода
+    /// сами по себе не лечат (база уже в таком состоянии, а пути включения уходят в ранний возврат):
     ///
-    /// Чиним по правилу «исполнитель остаётся, чужая роль снимается»: раздел задач построен
-    /// вокруг exec-поля, и его значения пользователь видит именно как исполнителя. Затёртых
-    /// исполнителей не вернуть — их перезаписали значения второй роли; «Назначил»/«Статус»
-    /// заводятся отдельными пустыми полями.
+    /// 1. <b>Две роли на одном поле.</b> Наследие баз, открытых до запрета: роль «Назначил»
+    ///    усыновлялась исполнителем, оба значения писались в один <c>FieldId</c> и затирали друг
+    ///    друга. Правило починки — «исполнитель остаётся, чужая роль снимается»: раздел построен
+    ///    вокруг exec-поля, и его значения пользователь видит именно как исполнителя. Затёртых
+    ///    исполнителей не вернуть — их перезаписали значения второй роли.
+    /// 2. <b>Несколько исполнителей в коллекции.</b> Раньше это было штатно (каждое поле давало
+    ///    свои карточки), теперь исполнитель один: оставляем первого по <see cref="RoleOrder"/>,
+    ///    с остальных снимаем флаг. Значения в столбцах не трогаем — это обычные user-поля.
+    /// 3. <b>Роль на несовместимом типе.</b> Текстовый «Статус», чекбокс-«Описание»: раздел такие
+    ///    данные не читает (<see cref="RoleAllowsType"/>), но флаг продолжал висеть и показывать
+    ///    плашку «привязано к разделу» над неработающей привязкой.
+    ///
+    /// Освободившиеся роли заводятся заново обычным путём (<see cref="EnsureTaskRoles"/>) — только
+    /// в коллекциях, где остался исполнитель: без него раздел всё равно молчит, и плодить там
+    /// «Статус 2» не за чем.
     ///
     /// Возвращает число вылеченных коллекций. Монтирование не срывает: у пользователя без
     /// прав на схему починка просто не происходит (её сделает следующий, у кого права есть).
     /// </summary>
-    public int RepairDoubleRoleTaskFields()
+    public int RepairTaskFieldRoles()
     {
-        // Быстрый путь обычной базы — один запрос, ни одной записи.
-        var broken = db.DbFields
-                       .Where(f => f.IsTaskExec && (f.IsTaskAssigner || f.IsTaskStatus))
-                       .ToList();
-        if (broken.Count == 0) return 0;
+        // Быстрый путь обычной базы — один запрос, ни одной записи. Роль на несовместимом типе
+        // ловится сравнением с допустимыми типами прямо в SQL (список короткий и статичный).
+        var suspects = db.DbFields
+            .Where(f => (f.IsTaskExec && (f.IsTaskAssigner || f.IsTaskStatus)) ||
+                        (f.IsTaskExec     && f.FieldType != "user") ||
+                        (f.IsTaskAssigner && f.FieldType != "user") ||
+                        (f.IsTaskStatus   && f.FieldType != "status" && f.FieldType != "select") ||
+                        (f.IsCalStart     && f.FieldType != "date") ||
+                        (f.IsDescription  && f.FieldType != "text"))
+            .Select(f => f.CollectionId)
+            .Distinct()
+            .ToList();
+
+        // Коллекции с двумя и более исполнителями — отдельным запросом: по одному полю дефект
+        // не виден, он в их количестве.
+        var multiExec = db.DbFields
+            .Where(f => f.IsTaskExec && f.FieldType == "user")
+            .GroupBy(f => f.CollectionId)
+            .Where(g => g.Count() > 1)
+            .Select(g => g.Key)
+            .ToList();
+
+        var collections = suspects.Concat(multiExec).Distinct().ToList();
+        if (collections.Count == 0) return 0;
 
         var healed = 0;
-        foreach (var group in broken.GroupBy(f => f.CollectionId))
+        foreach (var collectionId in collections)
         {
             try
             {
-                foreach (var f in group)
+                var fields = CollectionFields(collectionId);
+
+                // (2) Исполнитель — первый по RoleOrder; CollectionFields уже отсортирован.
+                var keepExec = fields.FirstOrDefault(f => f.IsTaskExec && f.FieldType == "user");
+                foreach (var f in fields)
                 {
-                    f.IsTaskAssigner = false;
-                    f.IsTaskStatus   = false;
-                    Log("update", "field", f.Name, CollectionNameOf(group.Key));
+                    var changed = false;
+
+                    if (f.IsTaskExec && !ReferenceEquals(f, keepExec)) { f.IsTaskExec = false; changed = true; }
+
+                    // (1) Чужие роли задач на исполнителе.
+                    if (ReferenceEquals(f, keepExec) && (f.IsTaskAssigner || f.IsTaskStatus))
+                    {
+                        f.IsTaskAssigner = false;
+                        f.IsTaskStatus   = false;
+                        changed = true;
+                    }
+
+                    // (3) Роли, которым не подходит тип поля.
+                    foreach (var role in AllRoles)
+                        if (RoleFlag(f, role) && !RoleAllowsType(role, f.FieldType))
+                        {
+                            SetRole(f, role, false);
+                            changed = true;
+                        }
+
+                    if (changed) Log("update", "field", f.Name, CollectionNameOf(collectionId));
                 }
                 db.SaveChanges();
 
                 // Освободившиеся роли заводятся заново — обычным путём, со своими правами
                 // и транзакцией. Упадёт по правам — коллекция остаётся без роли, но уже
-                // БЕЗ двойной: следующее действие с задачами доведёт набор до полного.
-                EnsureTaskRoles(group.Key, execFieldId: 0, adoptByName: true);
+                // БЕЗ поломанной: следующее действие с задачами доведёт набор до полного.
+                if (keepExec is not null)
+                    EnsureTaskRoles(collectionId, keepExec.Id, adoptByName: true);
                 healed++;
             }
             catch (Exception ex) when (ex is PermissionDeniedException or DbUpdateException)
@@ -260,10 +332,18 @@ public partial class ConstructorRepository
 
     /// <summary>
     /// Задачи по активным коллекциям (null — все коллекции базы, ПУСТОЙ набор — ни одной,
-    /// как у календаря). Прямой запрос по db_field_values (индекс FieldId,Value) без
-    /// денормализованной проекции: exec-полей мало, «Назначил»/«Статус»/срок добираются
-    /// коррелированными подзапросами по PK-префиксам. Сортировку и поиск делает контроллер
-    /// (агрегат нескольких БД сортируется после слияния). limit — грубая крышка v1.
+    /// как у календаря). Задачей считается КАЖДАЯ запись коллекции, у которой есть поле-исполнитель,
+    /// — заполнено оно или нет. Раньше условие было `v.Value <> ''`, и запись без исполнителя в
+    /// раздел не попадала: список молчал о делах, которые никому не розданы, — а именно их и нужно
+    /// раздать. Пустые исполнитель и «Назначил» показываются прочерком (карточка), пустой срок —
+    /// «без даты», как и прежде.
+    ///
+    /// Цена решения: раздел показывает ВСЕ записи коллекции с включёнными задачами, поэтому крышка
+    /// <c>limit</c> (1000 на базу) теперь упирается в размер коллекции, а не в число розданных дел.
+    /// Чтение идёт от db_records по покрывающему индексу (CollectionId, Position); значение
+    /// исполнителя добирается LEFT JOIN'ом сиком по PK (RecordId, FieldId), «Назначил»/«Статус»/срок —
+    /// коррелированными подзапросами, как и раньше. Сортировку и поиск делает контроллер
+    /// (агрегат нескольких БД сортируется после слияния).
     /// </summary>
     public List<TaskRecord> GetTaskRecords(ISet<int>? activeIds = null, int limit = 1000)
     {
@@ -286,30 +366,32 @@ public partial class ConstructorRepository
             // ORDER BY у ролей повторяет RoleOrder: при двух полях с одним флагом читаем
             // ровно то поле, в которое пишет TaskRoleFields (без порядка SQLite отдавал
             // произвольное — раздел показывал то одно значение, то другое).
+            // Ведущая таблица — db_records (все записи коллекции), значение исполнителя
+            // приезжает LEFT JOIN'ом: NULL/'' = задача без исполнителя, карточка ставит прочерк.
             cmd.CommandText = $@"
-                SELECT v.RecordId, f.Id, f.CollectionId, c.Name, c.Color,
+                SELECT r.Id, f.Id, f.CollectionId, c.Name, c.Color,
                        r.Title, {DescExpr}, v.Value,
                        (SELECT va.Value FROM db_field_values va
                           JOIN db_fields fa ON fa.Id = va.FieldId
-                         WHERE va.RecordId = v.RecordId AND fa.CollectionId = f.CollectionId
+                         WHERE va.RecordId = r.Id AND fa.CollectionId = f.CollectionId
                            AND fa.IsTaskAssigner = 1
                          ORDER BY fa.Position, fa.Id LIMIT 1),
                        (SELECT vs.Value FROM db_field_values vs
                           JOIN db_fields fs ON fs.Id = vs.FieldId
-                         WHERE vs.RecordId = v.RecordId AND fs.CollectionId = f.CollectionId
+                         WHERE vs.RecordId = r.Id AND fs.CollectionId = f.CollectionId
                            AND fs.IsTaskStatus = 1
                          ORDER BY fs.Position, fs.Id LIMIT 1),
                        (SELECT ci.FieldId || '|' || ci.StartIso || '|' || ci.EndIso || '|' || ci.AllDay
                           FROM calendar_index ci
                           JOIN db_fields fd ON fd.Id = ci.FieldId
-                         WHERE ci.RecordId = v.RecordId AND fd.IsCalStart = 1 AND fd.FieldType = 'date'
+                         WHERE ci.RecordId = r.Id AND fd.IsCalStart = 1 AND fd.FieldType = 'date'
                          ORDER BY ci.StartIso LIMIT 1)
-                FROM db_field_values v
-                JOIN db_fields f      ON f.Id = v.FieldId AND f.FieldType = 'user' AND f.IsTaskExec = 1
-                JOIN db_records r     ON r.Id = v.RecordId
+                FROM db_fields f
                 JOIN db_collections c ON c.Id = f.CollectionId
-                WHERE v.Value <> ''{colFilter}
-                ORDER BY v.RecordId, f.Id
+                JOIN db_records r     ON r.CollectionId = f.CollectionId
+                LEFT JOIN db_field_values v ON v.RecordId = r.Id AND v.FieldId = f.Id
+                WHERE f.FieldType = 'user' AND f.IsTaskExec = 1{colFilter}
+                ORDER BY f.CollectionId, r.Position, r.Id
                 LIMIT {Math.Max(1, limit)}";
 
             using var rdr = cmd.ExecuteReader();

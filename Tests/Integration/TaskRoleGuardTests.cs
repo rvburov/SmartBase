@@ -240,7 +240,63 @@ public sealed class TaskRoleGuardTests
                 Assert.Equal("user", assigner.FieldType);
 
                 // Повторное монтирование уже ничего не чинит.
-                Assert.Equal(0, healed.Constructor.RepairDoubleRoleTaskFields());
+                Assert.Equal(0, healed.Constructor.RepairTaskFieldRoles());
+            }
+        }
+        finally { TempDatabase.Cleanup(path); }
+    }
+
+    /// <summary>
+    /// База, где исполнителей несколько (раньше это было штатно) и где роль осталась на поле
+    /// несовместимого типа (столбец «Статус» переключили на «Текст» до появления запрета).
+    /// Монтирование приводит разметку к нынешним правилам: исполнитель один, роли — только на
+    /// своих типах, недостающие роли заводятся заново.
+    /// </summary>
+    [Fact]
+    public void Mounting_heals_extra_executors_and_roles_left_on_wrong_types()
+    {
+        var path = TempDatabase.NewTempPath();
+        try
+        {
+            int col, first, second, status;
+            using (var old = DatabaseManager.Open(1, "старая", path))
+            {
+                var repo = old.Constructor;
+                col    = SampleData.AddCollection(repo, "Поручения").Id!.Value;
+                first  = SampleData.AddField(repo, col, "Исполнитель", "user", position: 1000).Id!.Value;
+                repo.SetUserFieldTaskExec(first, true);
+
+                second = SampleData.AddField(repo, col, "Проверяющий", "user", position: 5000).Id!.Value;
+                status = old.Context.DbFields.Single(f => f.CollectionId == col && f.IsTaskStatus).Id;
+
+                // Состояние базы, открытой ДО нынешних правил: второй исполнитель и «Статус»,
+                // переключённый на текст (флаг роли при этом остался висеть).
+                old.Context.DbFields.Single(f => f.Id == second).IsTaskExec = true;
+                old.Context.DbFields.Single(f => f.Id == status).FieldType  = "text";
+                old.Context.SaveChanges();
+            }
+
+            using (var healed = DatabaseManager.Open(1, "старая", path))
+            {
+                var fields = healed.Constructor.GetFields(col);
+
+                // Исполнитель — первый по позиции; со второго флаг снят, само поле цело.
+                Assert.Equal(first, healed.Constructor.TaskExecFieldId(col));
+                Assert.False(fields.First(f => f.Id == second).IsTaskExec);
+                Assert.Equal("user", fields.First(f => f.Id == second).FieldType);
+
+                // Текстовый «Статус» роль потерял и остался обычным столбцом…
+                var textStatus = fields.First(f => f.Id == status);
+                Assert.False(textStatus.IsTaskStatus);
+                Assert.Equal("text", textStatus.FieldType);
+
+                // …а роль ушла новому полю своего типа.
+                var role = Assert.Single(fields, f => f.IsTaskStatus);
+                Assert.Equal("status", role.FieldType);
+                Assert.NotEqual(status, role.Id);
+
+                // Повторное монтирование уже ничего не чинит.
+                Assert.Equal(0, healed.Constructor.RepairTaskFieldRoles());
             }
         }
         finally { TempDatabase.Cleanup(path); }
@@ -272,12 +328,18 @@ public sealed class TaskRoleGuardTests
         task.CollectionId = clients;
         repo.UpdateTaskRecord(task);
 
-        // «Менеджер» остался обычным свойством: записи клиентов не превратились в задачи.
+        // «Менеджер» остался обычным свойством: раздел не забрал его значения себе — «Сидоров
+        // Семён» нигде не показан исполнителем.
         Assert.False(repo.GetFields(clients).Single(f => f.Id == manager).IsTaskExec);
         Assert.DoesNotContain(repo.GetTaskRecords(), t => t.Executor == "Сидоров Семён");
 
+        // Зато сама коллекция теперь в разделе (у неё появилось поле-исполнитель), поэтому её
+        // запись видна как нераспределённая задача — с пустым исполнителем, а не с «Менеджером».
+        var clientCard = repo.GetTaskRecords().Single(t => t.Title == "ООО «Ромашка»");
+        Assert.Equal("", clientCard.Executor);
+
         // Задача переехала целиком и лежит в собственном поле цели.
-        var moved = Assert.Single(repo.GetTaskRecords());
+        var moved = repo.GetTaskRecords().Single(t => t.Title == "Течь в подвале");
         Assert.Equal(clients, moved.CollectionId);
         Assert.Equal("Иванов Иван", moved.Executor);
         Assert.Equal("Петров Пётр", moved.Assigner);

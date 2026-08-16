@@ -211,9 +211,38 @@ public partial class PropertyEditorDialog : Window
         if (_selectedType == "status" && _optionBoxes.Count == 0)
             foreach (var o in ConstructorRepository.TaskStatusOptions) AddOptionRow(o);
 
+        UpdateTaskToggleAvailability();
         // Смена типа рвёт привязку даты (календарь строится только по полям типа «Дата») —
         // плашка обязана это отразить сразу.
         UpdateRoleNote();
+    }
+
+    /// <summary>
+    /// Исполнитель у коллекции ОДИН, поэтому тумблер «Добавить в раздел задач» доступен только
+    /// свободному свойству либо тому, что уже несёт роль. Занята роль другим столбцом — тумблер
+    /// гаснет, а подпись называет носителя: молча выключенный переключатель читался бы как
+    /// поломка, и человек искал бы причину в правах или типе поля.
+    /// </summary>
+    private void UpdateTaskToggleAvailability()
+    {
+        if (_selectedType != "user" || _systemMode)
+        {
+            TaskToggleHint.IsVisible = false;
+            TaskToggle.IsEnabled     = true;
+            return;
+        }
+
+        var busy = _repository.TaskExecFieldId(_collectionId);
+        var free = busy is null || busy == _editFieldId;
+
+        TaskToggle.IsEnabled = free;
+        if (!free) TaskToggle.IsChecked = false;
+
+        TaskToggleHint.IsVisible = !free;
+        TaskToggleHint.Text = free
+            ? ""
+            : $"Исполнитель уже назначен — свойство «{_repository.FieldName(busy!.Value)}». " +
+              "Исполнитель может быть только один: снимите переключатель с него, чтобы назначить это свойство.";
     }
 
     // ── Привязка к разделу ──────────────────────────────────────────────────────
@@ -232,26 +261,68 @@ public partial class PropertyEditorDialog : Window
             return;
         }
 
-        // Дата и исполнитель управляются тумблерами ЭТОГО окна, поэтому смотрим не на
-        // сохранённый флаг, а на положение тумблера и выбранный тип. Остальные роли отсюда не
-        // снимаются и от типа не зависят: раздел читает значение по флагу, каким бы ни был тип.
+        // Дата и исполнитель управляются тумблерами ЭТОГО окна, поэтому смотрим не на сохранённый
+        // флаг, а на положение тумблера. Тип берём выбранный, а не сохранённый: роль на
+        // несовместимом типе не работает, и плашка гаснет ещё до «Сохранить» — то же самое, что
+        // потом сделает с флагом сама запись (ClearRolesIncompatibleWithType).
         var effective = new DbField
         {
-            IsCalStart     = _editField.IsCalStart && _selectedType == "date" && CalDateToggle.IsChecked == true,
-            IsTaskExec     = _editField.IsTaskExec && _selectedType == "user" && TaskToggle.IsChecked == true,
+            FieldType      = _selectedType,
+            IsCalStart     = _editField.IsCalStart && CalDateToggle.IsChecked == true,
+            IsTaskExec     = _editField.IsTaskExec && TaskToggle.IsChecked == true,
             IsTaskAssigner = _editField.IsTaskAssigner,
             IsTaskStatus   = _editField.IsTaskStatus,
             IsDescription  = _editField.IsDescription,
         };
 
-        // Поле-дата коллекции с задачами — ещё и срок задачи, поэтому разделов у неё два.
-        var binding = FieldRoleText.Binding(effective, _repository.HasTaskExecField(_collectionId));
+        // Роли задач читает только коллекция с исполнителем, «Описание» в календаре — только
+        // коллекция с видимой датой: без них плашка молчит, как молчит и сам раздел.
+        var binding = FieldRoleText.Binding(effective,
+                                            _repository.HasTaskExecField(_collectionId),
+                                            _repository.HasCalendarDateField(_collectionId));
 
         if (binding is null) { RoleNote.Hide(); return; }
 
         RoleNote.Show(
             $"Это свойство привязано {binding}. Раздел берёт данные отсюда: " +
             "если удалить свойство или снять привязку, они перестанут в нём отображаться.");
+    }
+
+    /// <summary>
+    /// Спрашивает перед сменой типа, которая снимет привязку к разделу. Роль работает только на
+    /// своём типе (список статусов нужен «Статусу», дата — сроку), поэтому смена типа для раздела
+    /// равна удалению столбца — и предупреждение здесь теми же словами, что в окне удаления
+    /// (<c>FieldRoleText</c>). true — терять нечего либо пользователь согласился.
+    /// </summary>
+    private async Task<bool> ConfirmRoleLossOnTypeChange()
+    {
+        if (_editFieldId is not int fieldId || _editField is null) return true;
+        if (_editField.FieldType == _selectedType) return true;
+
+        // Роли, которые раздел уже не читает (нет исполнителя / нет видимой даты), терять нечего —
+        // о них молчит и плашка, так что окно про них спрашивать не должно.
+        var hasTasks    = _repository.HasTaskExecField(_collectionId);
+        var hasCalendar = _repository.HasCalendarDateField(_collectionId);
+        var lost = _repository.RolesLostByTypeChange(fieldId, _selectedType)
+                              .Where(r => r switch
+                              {
+                                  FieldRole.TaskAssigner or FieldRole.TaskStatus or FieldRole.TaskExec => hasTasks,
+                                  _ => hasCalendar || hasTasks,
+                              })
+                              .ToList();
+        if (lost.Count == 0) return true;
+
+        var typeLabel = FieldTypes.FirstOrDefault(t => t.Type == _selectedType)?.Label ?? _selectedType;
+        var roles     = FieldRoleText.JoinRu(lost.Select(FieldRoleText.Title));
+        var needs     = FieldRoleText.JoinRu(
+            lost.Select(ConstructorRepository.RoleTypeNames).Distinct());
+
+        var text = $"Свойство «{_editField.Name}» привязано к разделу — {roles}. " +
+                   $"Роль работает только на типе {needs}, поэтому смена типа на «{typeLabel}» " +
+                   $"снимет привязку: {FieldRoleText.TypeChangeImpact(lost)}.\n\n" +
+                   "Значения столбца останутся на месте. Продолжить?";
+
+        return await new ConfirmDialog(text, "Продолжить").ShowDialog<bool>(this);
     }
 
     // ── Роли раздела: подтягивание одноимённых столбцов ─────────────────────────
@@ -822,6 +893,11 @@ public partial class PropertyEditorDialog : Window
             if (cfg is null) return;
             relationConfig = cfg;
         }
+
+        // Смена типа уносит привязку к разделу — предупреждаем ровно так же, как при удалении
+        // столбца: для раздела это одно и то же (данные ему станут недоступны), а раньше тип
+        // менялся молча и плашка оставалась висеть над уже неработающей ролью.
+        if (!await ConfirmRoleLossOnTypeChange()) return;
 
         // Включение авто-привязки на поле с уже сохранёнными значениями — подтверждаем затирание.
         if (fileAuto && _editFieldId is int existId && _repository.FieldHasValues(existId))

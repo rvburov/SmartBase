@@ -154,14 +154,22 @@
              записи с непустым значением этого поля показываются в разделе задач (значение =
              исполнитель). При первом включении в коллекции авто-создаются недостающие поля
              «Назначил» и «Статус». -->
-        <StackPanel x:Name="TaskSection" IsVisible="False"
-                    Orientation="Horizontal" Spacing="10" Margin="0,0,0,12">
-            <ToggleSwitch x:Name="TaskToggle"
-                          OnContent="" OffContent=""
-                          VerticalAlignment="Center" />
-            <TextBlock Text="Добавить в раздел задач"
-                       VerticalAlignment="Center"
-                       FontWeight="{StaticResource FontWeightBold}"
+        <StackPanel x:Name="TaskSection" IsVisible="False" Spacing="6" Margin="0,0,0,12">
+            <StackPanel Orientation="Horizontal" Spacing="10">
+                <ToggleSwitch x:Name="TaskToggle"
+                              OnContent="" OffContent=""
+                              VerticalAlignment="Center" />
+                <TextBlock Text="Добавить в раздел задач"
+                           VerticalAlignment="Center"
+                           FontWeight="{StaticResource FontWeightBold}"
+                           Foreground="{StaticResource BrushSecondaryText}" />
+            </StackPanel>
+            <!-- Исполнитель у коллекции один: когда роль занята другим свойством, тумблер гаснет
+                 и подпись объясняет, каким именно (иначе выключенный переключатель выглядит
+                 поломкой). Текст ставит code-behind — UpdateTaskToggleAvailability. -->
+            <TextBlock x:Name="TaskToggleHint" IsVisible="False"
+                       TextWrapping="Wrap"
+                       FontSize="{DynamicResource FontSizeSmall}"
                        Foreground="{StaticResource BrushSecondaryText}" />
         </StackPanel>
 

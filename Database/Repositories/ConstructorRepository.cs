@@ -2409,6 +2409,12 @@ public partial class ConstructorRepository(AppDbContext db)
         entity.IsTaskAssigner = field.IsTaskAssigner;
         entity.IsTaskStatus   = field.IsTaskStatus;
         entity.IsDescription  = field.IsDescription;
+        // Смена типа рвёт привязку к разделу так же, как удаление столбца: раздел физически не
+        // сможет читать данные (статус без списка статусов, срок без даты). Флаг, оставшийся на
+        // несовместимом типе, — роль-призрак: данные в раздел не идут, а плашка «привязано к
+        // разделу» продолжает висеть. Снимаем здесь, чтобы состояние базы совпадало с тем, что
+        // видит пользователь; окно свойства предупреждает об этом ДО сохранения.
+        ClearRolesIncompatibleWithType(entity, field.FieldType);
         db.SaveChanges();
 
         // Тип пересёк границу «дата» → приводим уже сохранённые значения к новому виду
@@ -6373,6 +6379,11 @@ public partial class ConstructorRepository(AppDbContext db)
         return CalendarDateFieldId(collectionId)
                ?? throw new InvalidOperationException("Не удалось создать поле «Дата»");
     }
+
+    /// <summary>Есть ли у коллекции видимое поле-дата (участвует ли она в календаре) — для плашки
+    /// «привязано к разделу»: без источника дат календарь коллекцию не показывает, и заявлять
+    /// привязку к нему не о чем.</summary>
+    public bool HasCalendarDateField(int collectionId) => CalendarDateFieldId(collectionId) is not null;
 
     // Первое (по Position, Id — общее правило ролей) поле-дата коллекции, видимое в календаре.
     private int? CalendarDateFieldId(int collectionId) =>

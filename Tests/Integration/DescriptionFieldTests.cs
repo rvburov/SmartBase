@@ -152,7 +152,11 @@ public sealed class DescriptionFieldTests
         var updated = repo.GetFields(col).First(f => f.Id == fid);
         Assert.Equal("Комментарий", updated.Name);
         Assert.Equal("number", updated.FieldType);   // тип сменился — системное поле так не умеет
-        Assert.True(updated.IsDescription);          // роль (и привязка нижнего блока) сохраняется
+        // Переименование роль НЕ трогает (роль живёт флагом, а не именем), а смена типа —
+        // снимает: описание читается только с текстового поля, и оставленный флаг был бы
+        // ролью-призраком (раздел молчит, а плашка «привязано к разделу» висит).
+        Assert.False(updated.IsDescription);
+        Assert.Null(repo.DescriptionFieldId(col));
 
         repo.DeleteField(fid);
         Assert.Null(repo.DescriptionFieldId(col));

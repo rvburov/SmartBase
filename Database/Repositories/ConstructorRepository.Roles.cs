@@ -63,6 +63,11 @@ public partial class ConstructorRepository
     public static readonly FieldRole[] TaskRoles =
         [FieldRole.TaskAssigner, FieldRole.TaskStatus, FieldRole.CalendarDate, FieldRole.Description];
 
+    /// <summary>Все роли — для обходов «что несёт это поле» (плашка, смена типа, починка).</summary>
+    public static readonly FieldRole[] AllRoles =
+        [FieldRole.CalendarDate, FieldRole.TaskExec, FieldRole.TaskAssigner,
+         FieldRole.TaskStatus, FieldRole.Description];
+
     /// <summary>Роли, которые обеспечивает поле-дата, включённое в календарь (дата — само поле).</summary>
     public static readonly FieldRole[] CalendarRoles = [FieldRole.Description];
 
@@ -76,18 +81,48 @@ public partial class ConstructorRepository
         _                      => FieldDescription,
     };
 
-    // Носитель роли. У «Даты» флаг проверяется ВМЕСТЕ с типом: календарная проекция строится
-    // только по полям типа «Дата», поэтому текстовое поле с оставшимся от прежнего типа
-    // IsCalStart источником не считается (иначе роль выглядела бы занятой, а срок и события
-    // не появлялись бы вовсе).
-    private static bool HasRole(DbFieldEntity f, FieldRole role) => role switch
+    /// <summary>
+    /// Тип свойства, без которого роль работать не может. Раньше тип проверялся только у «Даты»
+    /// и «Исполнителя» (их читают физически типизированные пути — <c>calendar_index</c> и
+    /// «запись × user-поле»), а «Статус»/«Назначил»/«Описание» роль несли при любом типе. На
+    /// практике это давало молчаливо сломанную привязку: столбец «Статус» типа «Текст» показывал
+    /// плашку раздела, но списка статусов в нём не было и выбрать «Выполнено» было негде.
+    /// Теперь правило одно на все роли: <b>тип = роль</b>. Оно же ограничивает подтягивание по
+    /// имени (<see cref="RoleCandidateField"/>) — иначе окно снова предложило бы текстовый
+    /// «Статус», и пользователь получил бы ровно то состояние, которое чинит смена типа.
+    /// </summary>
+    public static bool RoleAllowsType(FieldRole role, string fieldType) => role switch
+    {
+        FieldRole.CalendarDate => fieldType == "date",
+        FieldRole.TaskExec     => fieldType == "user",
+        FieldRole.TaskAssigner => fieldType == "user",
+        FieldRole.TaskStatus   => fieldType is "status" or "select",
+        _                      => fieldType == "text",
+    };
+
+    /// <summary>Человеческое перечисление типов, при которых роль работает — для окон и ошибок.</summary>
+    public static string RoleTypeNames(FieldRole role) => role switch
+    {
+        FieldRole.CalendarDate => "«Дата»",
+        FieldRole.TaskExec     => "«Пользователь»",
+        FieldRole.TaskAssigner => "«Пользователь»",
+        FieldRole.TaskStatus   => "«Список» или «Статус»",
+        _                      => "«Текст»",
+    };
+
+    private static bool RoleFlag(DbFieldEntity f, FieldRole role) => role switch
     {
         FieldRole.TaskAssigner => f.IsTaskAssigner,
         FieldRole.TaskStatus   => f.IsTaskStatus,
-        FieldRole.CalendarDate => f.IsCalStart && f.FieldType == "date",
-        FieldRole.TaskExec     => f.IsTaskExec && f.FieldType == "user",
+        FieldRole.CalendarDate => f.IsCalStart,
+        FieldRole.TaskExec     => f.IsTaskExec,
         _                      => f.IsDescription,
     };
+
+    // Носитель роли — флаг ВМЕСТЕ с типом: роль на неподходящем типе не работает, поэтому и
+    // носителем считаться не должна (иначе роль выглядела бы занятой, а данные в раздел не шли).
+    private static bool HasRole(DbFieldEntity f, FieldRole role) =>
+        RoleFlag(f, role) && RoleAllowsType(role, f.FieldType);
 
     private static void SetRole(DbFieldEntity f, FieldRole role, bool on)
     {
@@ -108,7 +143,7 @@ public partial class ConstructorRepository
         role is not (FieldRole.CalendarDate or FieldRole.TaskExec);
 
     // Поле уже занято ДРУГОЙ ролью — вторую не вешаем: оба значения писались бы в один
-    // FieldId и затирали друг друга (тот же запрет, что чинит FixDualRoleFields).
+    // FieldId и затирали друг друга (тот же дефект, что чинит RepairTaskFieldRoles).
     private static bool CarriesOtherRole(DbFieldEntity f, FieldRole role) =>
         (role != FieldRole.TaskAssigner && f.IsTaskAssigner) ||
         (role != FieldRole.TaskStatus   && f.IsTaskStatus)   ||
@@ -122,17 +157,17 @@ public partial class ConstructorRepository
     private static DbFieldEntity? RoleHolder(List<DbFieldEntity> fields, FieldRole role) =>
         fields.FirstOrDefault(f => HasRole(f, role));
 
-    // Столбец, который называется как роль и может её принять. Тип не важен — кроме «Даты» и
-    // «Исполнителя»: calendar_index строится только по полям типа «Дата» (флаг на тексте дал бы
-    // пустой срок), а задача = запись × user-поле (на тексте её просто не видно).
+    // Столбец, который называется как роль и может её принять: имя (регистр не важен) ПЛЮС
+    // подходящий тип (RoleAllowsType). Тип обязателен для всех ролей — подтянутый столбец
+    // неподходящего типа дал бы неработающую привязку: «Статус» без списка статусов, «Дата»
+    // без срока.
     private static DbFieldEntity? RoleCandidateField(List<DbFieldEntity> fields, FieldRole role, int excludeFieldId) =>
         fields.FirstOrDefault(f =>
             f.Id != excludeFieldId &&
             IsRoleName(f.Name, RoleName(role)) &&
+            RoleAllowsType(role, f.FieldType) &&
             !HasRole(f, role) &&
-            !CarriesOtherRole(f, role) &&
-            (role != FieldRole.CalendarDate || f.FieldType == "date") &&
-            (role != FieldRole.TaskExec     || f.FieldType == "user"));
+            !CarriesOtherRole(f, role));
 
     /// <summary>
     /// Что даст разметка ролей: какие существующие столбцы можно подтянуть по имени и какие
@@ -311,6 +346,29 @@ public partial class ConstructorRepository
             throw;
         }
         return true;
+    }
+
+    /// <summary>
+    /// Роли, которые поле ПОТЕРЯЕТ при смене типа на <paramref name="newType"/>. Смена типа —
+    /// то же самое для раздела, что удаление столбца: читать данные ему станет неоткуда,
+    /// поэтому UI обязан предупредить теми же словами, что и удаление, а не менять тип молча
+    /// (окно свойства → <c>ConfirmRoleLossOnTypeChange</c>). Пустой список — терять нечего.
+    /// </summary>
+    public IReadOnlyList<FieldRole> RolesLostByTypeChange(int fieldId, string newType)
+    {
+        var f = db.DbFields.AsNoTracking().FirstOrDefault(x => x.Id == fieldId);
+        if (f is null || f.FieldType == newType) return [];
+        return AllRoles.Where(r => HasRole(f, r) && !RoleAllowsType(r, newType)).ToList();
+    }
+
+    // Снимает флаги ролей, которые новый тип поля не поддерживает. Зовётся из UpdateField ПЕРЕД
+    // записью: без этого флаг оставался жить на несовместимом типе — раздел данные не брал, а
+    // окно свойства продолжало показывать плашку «привязано к разделу» (роль-призрак).
+    private static void ClearRolesIncompatibleWithType(DbFieldEntity entity, string newType)
+    {
+        foreach (var role in AllRoles)
+            if (RoleFlag(entity, role) && !RoleAllowsType(role, newType))
+                SetRole(entity, role, false);
     }
 
     // Новое поле под роль: тип и настройки предопределены самой ролью.

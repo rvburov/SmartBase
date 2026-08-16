@@ -455,15 +455,16 @@ public partial class TaskListView : UserControl
         };
         if (vm.IsDone) title.TextDecorations = TextDecorations.Strikethrough;
 
+        // Обе строки показываются ВСЕГДА, пустое значение — прочерком: в разделе теперь живут и
+        // нераспределённые записи (запись есть, исполнитель не проставлен), и именно их надо
+        // раздать. Пропуск «Назначил» при пустом значении сдвигал бы строку и делал незаполненное
+        // невидимым — а «—» прямо говорит, чего не хватает.
         var people = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
         people.Children.Add(new TextBlock { Text = "Исполнитель", Foreground = secondary });
-        people.Children.Add(new TextBlock { Text = vm.Executor, Foreground = secondary, FontWeight = bold });
-        if (vm.Task.Assigner.Length > 0)
-        {
-            people.Children.Add(new TextBlock { Text = "·", Foreground = secondary, Margin = new Thickness(4, 0) });
-            people.Children.Add(new TextBlock { Text = "Назначил", Foreground = secondary });
-            people.Children.Add(new TextBlock { Text = vm.Task.Assigner, Foreground = secondary, FontWeight = bold });
-        }
+        people.Children.Add(new TextBlock { Text = vm.ExecutorText, Foreground = secondary, FontWeight = bold });
+        people.Children.Add(new TextBlock { Text = "·", Foreground = secondary, Margin = new Thickness(4, 0) });
+        people.Children.Add(new TextBlock { Text = "Назначил", Foreground = secondary });
+        people.Children.Add(new TextBlock { Text = vm.AssignerText, Foreground = secondary, FontWeight = bold });
 
         var left = new StackPanel { Spacing = 4, VerticalAlignment = VerticalAlignment.Center };
         left.Children.Add(title);
@@ -614,9 +615,14 @@ public partial class TaskCardVm : ObservableObject
     private static readonly string[] Months =
         ["янв", "фев", "мар", "апр", "мая", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"];
 
+    /// <summary>Прочерк вместо пустого значения — раздел показывает и нераспределённые записи.</summary>
+    public const string Dash = "—";
+
     public TaskRecord Task { get; }
     public bool   IsDone      { get; }
     public string Executor    => Task.Executor;
+    public string ExecutorText => Task.Executor.Length > 0 ? Task.Executor : Dash;
+    public string AssignerText => Task.Assigner.Length > 0 ? Task.Assigner : Dash;
     public string StatusText  { get; }
     public IBrush StatusBg    { get; }
     public IBrush StatusFg    { get; }

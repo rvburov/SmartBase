@@ -263,4 +263,40 @@ public sealed class PgProviderTests
         Assert.Contains(fields, f => f.Id == copy.Id);
         Assert.False(repo.GetFieldValuesBatch([rec.Id!.Value])[rec.Id!.Value].ContainsKey(field.Id!.Value));
     }
+
+    /// <summary>
+    /// Раздел задач на PG: чтение идёт общим raw SQL (LEFT JOIN значения исполнителя + три
+    /// коррелированных подзапроса, флаги сравниваются с 1 — в PG они integer, см.
+    /// <c>ApplyLowercaseNames</c>). Проверяем обе половины нового правила: запись с исполнителем
+    /// и запись без него — в разделе должны быть обе.
+    /// </summary>
+    [SkippableFact]
+    public void Task_records_include_unassigned_rows_pg()
+    {
+        Skip.IfNot(PgTestServer.IsAvailable, "Стенд PostgreSQL sb-pg (порт 5455) не поднят");
+        var cs = PgTestServer.ConnectionString(PgTestServer.Database1);
+        ResetSchema(cs);
+
+        using var m = DatabaseManager.Open(101, "pg-test", cs, provider: "postgres");
+        var repo = m.Constructor;
+        var col  = SampleData.AddCollection(repo, "Поручения").Id!.Value;
+        var exec = SampleData.AddField(repo, col, "Исполнитель", "user", position: 1000).Id!.Value;
+        repo.SetUserFieldTaskExec(exec, true);
+
+        var roles = repo.TaskRoleFields(col);
+        var assigned = SampleData.AddRecord(repo, col, "Заменить насос").Id!.Value;
+        repo.SetFieldValue(assigned, exec, "Иванов Иван");
+        if (roles.StatusId is int sid) repo.SetFieldValue(assigned, sid, ConstructorRepository.TaskStatusActive);
+
+        var free = SampleData.AddRecord(repo, col, "Разобрать архив").Id!.Value;
+        repo.SetFieldValue(free, exec, "");
+        if (roles.AssignerId is int aid) repo.SetFieldValue(free, aid, "");
+
+        var tasks = repo.GetTaskRecords();
+        Assert.Equal(2, tasks.Count);
+        Assert.Equal("Иванов Иван", tasks.Single(t => t.Id == assigned).Executor);
+        Assert.Equal(ConstructorRepository.TaskStatusActive, tasks.Single(t => t.Id == assigned).Status);
+        Assert.Equal("", tasks.Single(t => t.Id == free).Executor);
+        Assert.Equal(exec, tasks.Single(t => t.Id == free).ExecFieldId);
+    }
 }

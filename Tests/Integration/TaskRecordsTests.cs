@@ -203,8 +203,12 @@ public sealed class TaskRecordsTests
         Assert.Equal(2, check.CalendarIndex.AsNoTracking().Count(x => x.RecordId == recId));
     }
 
+    /// <summary>
+    /// Исполнитель — один на коллекцию: второй тумблер отвергается, роль переходит только через
+    /// снятие с прежнего носителя. Запись даёт ровно одну карточку.
+    /// </summary>
     [Fact]
-    public void Record_yields_one_task_per_enabled_executor_field()
+    public void Collection_keeps_a_single_executor_field()
     {
         using var db = new TempDatabase();
         var repo = db.Constructor;
@@ -212,8 +216,13 @@ public sealed class TaskRecordsTests
 
         var (execId, assignerId, statusId) = EnableTasks(repo, col);
         var reviewerId = SampleData.AddField(repo, col, "Проверяющий", "user", position: 5000).Id!.Value;
-        // Второе включение ролей не плодит: «Назначил»/«Статус» принадлежат коллекции.
-        Assert.False(repo.SetUserFieldTaskExec(reviewerId, true));
+
+        // Исполнитель у коллекции ОДИН: второй тумблер не включается. Раньше включались все, и
+        // одна запись давала карточку на каждое user-поле — список дублировал сам себя.
+        var ex = Assert.Throws<InvalidOperationException>(() => repo.SetUserFieldTaskExec(reviewerId, true));
+        Assert.Contains("Исполнитель", ex.Message);
+        Assert.False(repo.GetFields(col).First(f => f.Id == reviewerId).IsTaskExec);
+        Assert.Equal(execId, repo.TaskExecFieldId(col));
 
         var recId = SampleData.AddRecord(repo, col, "Заменить насос").Id!.Value;
         repo.SetFieldValue(recId, execId, "Иванов Иван");
@@ -221,25 +230,20 @@ public sealed class TaskRecordsTests
         repo.SetFieldValue(recId, assignerId, "Кузнецов Кузьма");
         repo.SetFieldValue(recId, statusId, ConstructorRepository.TaskStatusPlanned);
 
-        var tasks = repo.GetTaskRecords();
+        // Одна запись — одна карточка, от поля-исполнителя; «Проверяющий» остаётся обычным
+        // свойством записи и раздел не удваивает.
+        var task = Assert.Single(repo.GetTaskRecords());
+        Assert.Equal(recId, task.Id);
+        Assert.Equal(execId, task.ExecFieldId);
+        Assert.Equal("Иванов Иван", task.Executor);
+        Assert.Equal("Кузнецов Кузьма", task.Assigner);
+        Assert.Equal(ConstructorRepository.TaskStatusPlanned, task.Status);
 
-        // Одна запись — две карточки: «сделать» и «проверить» это разная работа разных людей.
-        Assert.Equal(2, tasks.Count);
-        Assert.All(tasks, t => Assert.Equal(recId, t.Id));
-
-        var byExec = tasks.Single(t => t.ExecFieldId == execId);
-        var byReviewer = tasks.Single(t => t.ExecFieldId == reviewerId);
-
-        // Каждая карточка показывает исполнителя СВОЕГО поля — иначе правка одной карточки
-        // писала бы в чужое поле и стирала второго исполнителя.
-        Assert.Equal("Иванов Иван", byExec.Executor);
-        Assert.Equal("Петров Пётр", byReviewer.Executor);
-
-        // «Назначил» и «Статус» — свойства записи, а не поля-исполнителя: у обеих одинаковы.
-        Assert.Equal("Кузнецов Кузьма", byExec.Assigner);
-        Assert.Equal("Кузнецов Кузьма", byReviewer.Assigner);
-        Assert.Equal(ConstructorRepository.TaskStatusPlanned, byExec.Status);
-        Assert.Equal(ConstructorRepository.TaskStatusPlanned, byReviewer.Status);
+        // Роль освобождается снятием тумблера — тогда её можно отдать другому свойству.
+        repo.SetUserFieldTaskExec(execId, false);
+        repo.SetUserFieldTaskExec(reviewerId, true);
+        Assert.Equal(reviewerId, repo.TaskExecFieldId(col));
+        Assert.Equal("Петров Пётр", Assert.Single(repo.GetTaskRecords()).Executor);
     }
 
     [Fact]
@@ -268,18 +272,50 @@ public sealed class TaskRecordsTests
         var onlyA = Assert.Single(repo.GetTaskRecords(new HashSet<int> { a }));
         Assert.Equal(a, onlyA.CollectionId);
 
-        // Пустой исполнитель = задачи нет. Это единственный способ убрать запись из раздела,
-        // не трогая схему: сама запись остаётся в коллекции.
+        // Пустой исполнитель задачу НЕ убирает: раздел показывает все записи коллекции с
+        // включённым полем-исполнителем — нераспределённое дело и есть то, что надо раздать.
+        // (Раньше условие было `Value <> ''`, и такие записи молча выпадали из списка.)
         repo.SetFieldValue(recA, execA, "");
-        var left = Assert.Single(repo.GetTaskRecords(null));
-        Assert.Equal(b, left.CollectionId);
-        Assert.Equal(1, repo.CountRecords(a));
+        var all = repo.GetTaskRecords(null);
+        Assert.Equal(2, all.Count);
+        var unassigned = all.Single(t => t.CollectionId == a);
+        Assert.Equal("", unassigned.Executor);       // карточка ставит здесь прочерк
+        Assert.Equal(execA, unassigned.ExecFieldId); // поле-источник известно — есть куда писать
 
-        // Исполнителя вернули — карточка на месте, с тем же полем-источником.
+        // Исполнителя вернули — та же карточка, с тем же полем-источником.
         repo.SetFieldValue(recA, execA, "Иванов Иван");
         var restored = repo.GetTaskRecords(null);
         Assert.Equal(2, restored.Count);
-        Assert.Equal(execA, restored.Single(t => t.CollectionId == a).ExecFieldId);
+        Assert.Equal("Иванов Иван", restored.Single(t => t.CollectionId == a).Executor);
+    }
+
+    /// <summary>
+    /// Запись, созданную мимо раздела (в таблице конструктора), список показывает сразу — с
+    /// прочерками вместо исполнителя и назначившего. Проверяем именно «сырую» запись без единого
+    /// заполненного поля задачи: раньше в раздел попадали только записи с непустым исполнителем.
+    /// </summary>
+    [Fact]
+    public void Records_without_any_task_values_are_still_tasks()
+    {
+        using var db = new TempDatabase();
+        var repo = db.Constructor;
+        var col  = SampleData.AddCollection(repo, "Заявки").Id!.Value;
+        var (execId, _, _) = EnableTasks(repo, col);
+
+        // Чистая запись: AddRecord автозаполняет ВСЕ user-поля текущим пользователем (и
+        // исполнителя, и «Назначил»), поэтому гасим их явно — нужен случай «в разделе есть,
+        // но никому не роздано».
+        var recId = SampleData.AddRecord(repo, col, "Заменить насос").Id!.Value;
+        repo.SetFieldValue(recId, execId, "");
+        if (repo.TaskRoleFields(col).AssignerId is int assignerId)
+            repo.SetFieldValue(recId, assignerId, "");
+
+        var task = Assert.Single(repo.GetTaskRecords());
+        Assert.Equal(recId, task.Id);
+        Assert.Equal("Заменить насос", task.Title);
+        Assert.Equal("", task.Executor);
+        Assert.Equal("", task.Assigner);
+        Assert.Null(task.DueStart);   // срока нет — «без даты», в конце списка
     }
 
     // ── CRUD задач ────────────────────────────────────────────────────────────

@@ -797,12 +797,13 @@ public partial class ConstructorControllerView : UserControl
     // Столбцы с ролью удаляются как обычные — но молча уносят с собой раздел: без исполнителя
     // коллекция целиком выпадает из задач, без «Описания» пропадают все тексты. Называем
     // потерю в том же окне подтверждения (пустая строка — ролей среди удаляемых нет).
-    private static string RoleLossWarning(IReadOnlyList<DbField> fields, IReadOnlyList<int> deletable)
+    private static string RoleLossWarning(IReadOnlyList<DbField> fields, IReadOnlyList<int> deletable,
+                                          bool hasTasks, bool hasCalendar)
     {
         var lines = deletable
             .Select(id => fields.FirstOrDefault(f => f.Id == id))
             .OfType<DbField>()
-            .Select(f => (Field: f, Impact: FieldRoleText.DeletionImpact(f)))
+            .Select(f => (Field: f, Impact: FieldRoleText.DeletionImpact(f, hasTasks, hasCalendar)))
             .Where(x => x.Impact is not null)
             .Select(x => $"«{x.Field.Name}» — {x.Impact}")
             .ToList();
@@ -825,7 +826,9 @@ public partial class ConstructorControllerView : UserControl
         if (deletable.Count == 0) return;
 
         var message = $"Вы удаляете {deletable.Count} {PropertiesPlural(deletable.Count)}. Подтвердить?"
-                    + RoleLossWarning(fields, deletable);
+                    + RoleLossWarning(fields, deletable,
+                                      _repository.HasTaskExecField(_currentCollectionId.Value),
+                                      _repository.HasCalendarDateField(_currentCollectionId.Value));
         if (await new ConfirmDialog(message).ShowDialog<bool>(win) != true) return;
 
         // Надёжно (без осиротевших данных) и без фриза UI: подсчёт значений и удаление идут

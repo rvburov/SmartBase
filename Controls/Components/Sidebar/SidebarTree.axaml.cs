@@ -1226,26 +1226,28 @@ public partial class SidebarTree : UserControl
             return panel;
         }
 
-        var syncing   = false;
-        var selectAll = new CheckBox
-        {
-            Content = "(Выделить всё)", FontSize = fontBase,
-            Cursor = new Cursor(StandardCursorType.Hand),
-        };
-
-        var list = new StackPanel { Spacing = 4 };
-        var rows = new List<(DbField Field, CheckBox Box)>();
+        var syncing = false;
+        var list    = new StackPanel { Spacing = 4 };
+        var rows    = new List<(DbField Field, CheckBox Box)>();
 
         bool Matches(DbField f) =>
             string.IsNullOrWhiteSpace(search.Text) ||
             f.Name.Contains(search.Text!.Trim(), StringComparison.OrdinalIgnoreCase);
 
-        void SyncSelectAll()
+        // Исполнитель у коллекции ОДИН, поэтому «(Выделить всё)» здесь нет, а остальные пункты
+        // гаснут, пока занят один: список читается как выбор одного носителя, а не как набор
+        // фильтров (в отличие от полей-дат календаря, которых может быть сколько угодно).
+        void SyncEnabled()
         {
-            syncing = true;
-            var vis = rows.Where(r => Matches(r.Field)).ToList();
-            selectAll.IsChecked = vis.Count > 0 && vis.All(r => r.Box.IsChecked == true);
-            syncing = false;
+            var taken = rows.Any(r => r.Box.IsChecked == true);
+            foreach (var (_, box) in rows)
+            {
+                var self = box.IsChecked == true;
+                box.IsEnabled = self || !taken;
+                ToolTip.SetTip(box, taken && !self
+                    ? "Исполнитель может быть только один — снимите переключатель с текущего свойства"
+                    : null);
+            }
         }
 
         foreach (var f in userFields)
@@ -1263,36 +1265,28 @@ public partial class SidebarTree : UserControl
                 try { fieldsCreated = repo.SetUserFieldTaskExec(fid, cb.IsChecked == true); }
                 catch (InvalidOperationException)
                 {
-                    // Нет права создать авто-поля («Назначил»/«Статус») — откатываем галку.
+                    // Нет права создать авто-поля («Назначил»/«Статус») либо исполнитель уже
+                    // занят другим свойством — откатываем галку.
                     syncing = true;
                     cb.IsChecked = !cb.IsChecked;
                     syncing = false;
+                    SyncEnabled();
                     return;
                 }
                 CalendarsChanged?.Invoke(this, EventArgs.Empty);
                 if (fieldsCreated) RequestRefresh?.Invoke(this, EventArgs.Empty);
-                SyncSelectAll();
+                SyncEnabled();
             };
             rows.Add((f, cb));
             list.Children.Add(cb);
         }
 
-        // «Выделить всё» действует на видимое (после поиска) подмножество.
-        selectAll.IsCheckedChanged += (_, _) =>
-        {
-            if (syncing) return;
-            var on = selectAll.IsChecked == true;
-            foreach (var (f, box) in rows.Where(r => Matches(r.Field)))
-                if ((box.IsChecked == true) != on) box.IsChecked = on;   // дёргает обработчик чекбокса
-        };
-
         search.TextChanged += (_, _) =>
         {
             foreach (var (f, box) in rows) box.IsVisible = Matches(f);
-            SyncSelectAll();
         };
 
-        SyncSelectAll();
+        SyncEnabled();
 
         var listBox = new Border
         {
@@ -1304,9 +1298,7 @@ public partial class SidebarTree : UserControl
             // ClipToBounds — квадратные углы полосы срезаются скруглением карточки.
             Padding         = new Thickness(0),
             ClipToBounds    = true,
-            // «Выделить всё» — закреплённая шапка; полоса стоит на её уровне.
-            Child = ScrollBarLink.HeaderedList(
-                selectAll, new ScrollViewer { MaxHeight = 240, Content = list }),
+            Child           = new ScrollViewer { MaxHeight = 240, Content = list },
         };
         listBox.Bind(Border.BorderThicknessProperty, listBox.GetResourceObservable("BorderLine"));
         panel.Children.Add(listBox);
