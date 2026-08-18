@@ -19,4 +19,7 @@ public sealed class FakeSettingsDatabase : ISettingsDatabase
     public string? Get(string key) => _store.TryGetValue(key, out var v) ? v : null;
     public void Set(string key, string value) => _store[key] = value;
     public void Remove(string key) => _store.Remove(key);
+
+    public IReadOnlyList<string> KeysWithPrefix(string prefix) =>
+        _store.Keys.Where(k => k.StartsWith(prefix, StringComparison.Ordinal)).ToList();
 }

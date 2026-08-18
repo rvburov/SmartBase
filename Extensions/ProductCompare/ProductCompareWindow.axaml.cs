@@ -8,6 +8,7 @@ using Avalonia.Media;
 using Avalonia.Platform.Storage;
 using Serilog;
 using SmartBase.Controls.Dialogs;
+using SmartBase.Utils;
 
 namespace SmartBase.Extensions.ProductCompare;
 
@@ -19,10 +20,6 @@ namespace SmartBase.Extensions.ProductCompare;
 /// </summary>
 public partial class ProductCompareWindow : Window
 {
-    // Путь к шаблону по умолчанию (сетевой). Подставляется, только если файл доступен.
-    private const string DefaultTemplate =
-        @"P:\20016000 Технологический отдел\_Макросы\Программы Python\Формирование файла «Сравнение составов изделия»\Шаблон сравнения файлов изделий.xlsm";
-
     private static readonly FilePickerFileType ExcelType =
         new("Excel (*.xlsx, *.xlsm, *.xls)") { Patterns = ["*.xlsx", "*.xlsm", "*.xls"] };
 
@@ -34,12 +31,19 @@ public partial class ProductCompareWindow : Window
     {
         InitializeComponent();
 
-        // Путь к шаблону по умолчанию показываем всегда (он фиксирован для рабочих машин,
-        // где смонтирован диск P:). Доступность файла проверяется при запуске сравнения —
-        // если недоступен, движок вернёт «Файл-шаблон не найден».
-        _template = DefaultTemplate;
-        TemplateBox.Text = DefaultTemplate;
-        ToolTip.SetTip(TemplateBox, DefaultTemplate);
+        // Путь к шаблону — из настроек расширения (объявлены в ProductCompareExtension,
+        // экран — «Настройки → Расширения»): у каждой машины свой смонтированный диск,
+        // поэтому в коде пути нет. Не задан — поле пустое, шаблон выбирают «Обзором».
+        // Доступность файла проверяется при запуске сравнения: недоступен — движок
+        // вернёт «Файл-шаблон не найден».
+        var template = AppSettings.LoadExtensionSetting(
+            ProductCompareExtension.ExtensionId, ProductCompareExtension.TemplateKey);
+        if (template.Length > 0)
+        {
+            _template = template;
+            TemplateBox.Text = template;
+            ToolTip.SetTip(TemplateBox, template);
+        }
 
         UpdateState();
     }
@@ -51,6 +55,9 @@ public partial class ProductCompareWindow : Window
         var path = await PickFile("Выберите файл-шаблон");
         if (path is null) return;
         _template = path; TemplateBox.Text = path; ToolTip.SetTip(TemplateBox, path);
+        // Запоминаем выбор: следующий запуск подставит шаблон сам.
+        AppSettings.SaveExtensionSetting(
+            ProductCompareExtension.ExtensionId, ProductCompareExtension.TemplateKey, path);
         UpdateState();
     }
 

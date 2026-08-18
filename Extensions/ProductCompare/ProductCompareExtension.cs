@@ -10,8 +10,22 @@ namespace SmartBase.Extensions.ProductCompare;
 /// </summary>
 public sealed class ProductCompareExtension : IExtension
 {
-    public string Id   => "product-compare";
+    /// <summary>Идентификатор строкой-константой — на него ссылается окно, когда читает
+    /// свои настройки у оболочки.</summary>
+    public const string ExtensionId = "product-compare";
+
+    /// <summary>Имя настройки «файл-шаблон» (полный ключ хранения собирает оболочка).</summary>
+    public const string TemplateKey = "template";
+
+    public string Id   => ExtensionId;
     public string Name => "Сравнение составов изделий";
+
+    /// <summary>Путь к шаблону в коде не зашит: файл лежит на файловом сервере, буква
+    /// смонтированного диска у каждой машины своя.</summary>
+    public IReadOnlyList<ExtensionSetting> Settings =>
+    [
+        new(TemplateKey, "Файл-шаблон", @"\\server\share\Шаблон сравнения файлов изделий.xlsm"),
+    ];
 
     public string MarkdownDescription =>
         """

@@ -16,6 +16,8 @@ public sealed class AutostartTests
         public string? Get(string key) => _d.TryGetValue(key, out var v) ? v : null;
         public void Set(string key, string value) => _d[key] = value;
         public void Remove(string key) => _d.Remove(key);
+        public IReadOnlyList<string> KeysWithPrefix(string prefix) =>
+            _d.Keys.Where(k => k.StartsWith(prefix, StringComparison.Ordinal)).ToList();
     }
 
     // ── Построение записи (чистое) ─────────────────────────────────────────────

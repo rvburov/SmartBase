@@ -10,8 +10,22 @@ namespace SmartBase.Extensions.AssemblyCalc;
 /// </summary>
 public sealed class AssemblyCalcExtension : IExtension
 {
-    public string Id   => "assembly-calc";
+    /// <summary>Идентификатор строкой-константой — на него ссылается окно, когда читает
+    /// свои настройки у оболочки.</summary>
+    public const string ExtensionId = "assembly-calc";
+
+    /// <summary>Имя настройки «файл-шаблон» (полный ключ хранения собирает оболочка).</summary>
+    public const string TemplateKey = "template";
+
+    public string Id   => ExtensionId;
     public string Name => "Расчёт сборочных единиц";
+
+    /// <summary>Путь к шаблону в коде не зашит: файл лежит на файловом сервере, буква
+    /// смонтированного диска у каждой машины своя.</summary>
+    public IReadOnlyList<ExtensionSetting> Settings =>
+    [
+        new(TemplateKey, "Файл-шаблон", @"\\server\share\Шаблон расчета сборочных единиц в изделии.xlsm"),
+    ];
 
     public string MarkdownDescription =>
         """

@@ -94,6 +94,15 @@
             <Setter Property="Foreground"   Value="{StaticResource BrushSecondaryText}" />
             <Setter Property="TextWrapping" Value="Wrap" />
         </Style>
+        <!-- Поле настройки расширения. Строки раздела «Расширения» собираются в code-behind
+             по IExtension.Settings, поэтому вид задаём стилем, а не атрибутами разметки —
+             как у поля пути обновления в «О программе». -->
+        <Style Selector="Border.settingRow TextBox.extSetting">
+            <Setter Property="Height"                   Value="{StaticResource ControlHeightStandard}" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+            <Setter Property="Background"               Value="{StaticResource BrushSecondaryBg}" />
+            <Setter Property="CornerRadius"             Value="{StaticResource RadiusBase}" />
+        </Style>
 
         <!-- Пункт панели «Содержание» (раздел «Инструкция пользователя»). Подсветка во всю
              ширину без скруглений, как строка сайдбара (SidebarList.axaml): панель — та же
@@ -565,6 +574,21 @@
                     </ItemsControl>
 
                     </StackPanel>
+                </Grid>
+            </ScrollViewer>
+
+            <!-- ── Расширения ────────────────────────────────────── -->
+            <!-- Содержимое собирается в code-behind (BuildExtensionsPanel) по
+                 ExtensionRegistry.All и объявленным настройкам IExtension.Settings: здесь
+                 только пустой контейнер. Разметка не знает ни одного расширения по имени —
+                 иначе удаление расширения требовало бы правки этого файла. -->
+            <ScrollViewer x:Name="ExtensionsPanel" IsVisible="False"
+                          VerticalScrollBarVisibility="Auto">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel x:Name="ExtensionsSettingsList" Margin="16,0,16,32" />
                 </Grid>
             </ScrollViewer>
 

@@ -17,4 +17,12 @@ public interface ISettingsDatabase
     /// Нет ключа — no-op. БД хранит только отличия от стандарта, поэтому AppSettings
     /// удаляет ключ, когда значение равно дефолту.</summary>
     void Remove(string key);
+
+    /// <summary>
+    /// Все ключи, начинающиеся с приставки. Нужен там, где набор ключей заранее неизвестен
+    /// и группу приходится обходить целиком: настройки расширений лежат под <c>ext.</c>, и
+    /// при старте среди них ищутся осиротевшие — от расширений, которых в сборке больше нет
+    /// (см. <see cref="AppSettings.RemoveOrphanExtensionSettings"/>).
+    /// </summary>
+    IReadOnlyList<string> KeysWithPrefix(string prefix);
 }

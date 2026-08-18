@@ -341,6 +341,59 @@ public static class AppSettings
         else                              _store?.Set(KeyIntroSeedDone, done.ToString());
     }
 
+    // ── Настройки расширений ──────────────────────────────────────────────────
+    //
+    // Значения полей, которые расширение объявило в IExtension.Settings (например, путь к
+    // файлу-шаблону). Ключ строки — «ext.<id расширения>.<имя настройки>».
+    //
+    // Ядро хранит здесь ПРОСТО СТРОКУ и не знает ни названий расширений, ни смысла их
+    // настроек: иначе удаление расширения требовало бы правок в этом файле и на экране
+    // настроек, а по контракту (см. Extensions/IExtension.cs) достаточно убрать папку и
+    // строку из ExtensionRegistry. Настройка удалённого расширения остаётся в app.db
+    // осиротевшей строкой — её больше никто не читает, вреда нет, а при возврате
+    // расширения прежнее значение подхватится само.
+    //
+    // Пусто = «не задано»: пустое значение стирает ключ, как у пути обновления.
+    public static string LoadExtensionSetting(string extensionId, string key) =>
+        _store?.Get(ExtensionKey(extensionId, key)) ?? "";
+
+    public static void SaveExtensionSetting(string extensionId, string key, string value)
+    {
+        var storeKey = ExtensionKey(extensionId, key);
+        var trimmed  = (value ?? "").Trim();
+        if (trimmed.Length == 0) _store?.Remove(storeKey);
+        else                     _store?.Set(storeKey, trimmed);
+    }
+
+    private static string ExtensionKey(string extensionId, string key) =>
+        $"{ExtensionKeyPrefix}{extensionId}.{key}";
+
+    /// <summary>
+    /// Убрать настройки расширений, которых в сборке больше нет: удалено расширение —
+    /// удалены и его строки, лишнего в app.db не остаётся. Вызывается на старте после
+    /// AttachStore; возвращает число убранных ключей (для записи в журнал).
+    ///
+    /// Живым считается расширение, чей Id пришёл в <paramref name="liveExtensionIds"/> —
+    /// список даёт реестр расширений. Сверяем по полной приставке «ext.&lt;id&gt;.», а не
+    /// разбором ключа: id с точкой внутри не сломает уборку и не заденет соседа с похожим
+    /// началом имени (pdf-rename и pdf-rename-v2 — разные расширения).
+    ///
+    /// Обратная сторона: расширение, временно убранное из реестра, теряет свои настройки
+    /// при первом же запуске — вернув его, значения придётся ввести заново.
+    /// </summary>
+    public static int RemoveOrphanExtensionSettings(IEnumerable<string> liveExtensionIds)
+    {
+        if (_store is null) return 0;
+
+        var live = liveExtensionIds.Select(id => $"{ExtensionKeyPrefix}{id}.").ToList();
+        var orphans = _store.KeysWithPrefix(ExtensionKeyPrefix)
+                            .Where(key => !live.Any(p => key.StartsWith(p, StringComparison.Ordinal)))
+                            .ToList();
+
+        foreach (var key in orphans) _store.Remove(key);
+        return orphans.Count;
+    }
+
     // ── Галочки коллекций в боковой панели (календарь и задачи) ───────────────
     //
     // Хранятся СНЯТЫЕ галочки, а не отмеченные: по умолчанию видно всё, поэтому пустая
@@ -405,6 +458,9 @@ public static class AppSettings
     private const string KeyAutostartEnabled     = "autostartEnabled";
     private const string KeyBackgroundEnabled    = "backgroundEnabled";
     private const string KeyIntroSeedDone        = "introSeedDone";
+    // Не ключ, а приставка: полный ключ собирает ExtensionKey из id расширения и имени
+    // настройки — фиксированного списка тут быть не может, расширения приходят и уходят.
+    private const string ExtensionKeyPrefix      = "ext.";
 
     // ── Приватное ─────────────────────────────────────────────────────────────
 

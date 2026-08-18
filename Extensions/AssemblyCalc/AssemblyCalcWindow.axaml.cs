@@ -8,6 +8,7 @@ using Avalonia.Media;
 using Avalonia.Platform.Storage;
 using Serilog;
 using SmartBase.Controls.Dialogs;
+using SmartBase.Utils;
 
 namespace SmartBase.Extensions.AssemblyCalc;
 
@@ -19,10 +20,6 @@ namespace SmartBase.Extensions.AssemblyCalc;
 /// </summary>
 public partial class AssemblyCalcWindow : Window
 {
-    // Путь к шаблону по умолчанию (сетевой). Показываем всегда; доступность — при запуске.
-    private const string DefaultTemplate =
-        @"P:\20016000 Технологический отдел\_Макросы\Программы Python\Формирование файла «Расчет сборочных единиц в изделии»\Шаблон расчета сборочных единиц в изделии.xlsm";
-
     private static readonly FilePickerFileType ExcelType =
         new("Excel (*.xlsx, *.xlsm, *.xls)") { Patterns = ["*.xlsx", "*.xlsm", "*.xls"] };
 
@@ -34,9 +31,18 @@ public partial class AssemblyCalcWindow : Window
     {
         InitializeComponent();
 
-        _template = DefaultTemplate;
-        TemplateBox.Text = DefaultTemplate;
-        ToolTip.SetTip(TemplateBox, DefaultTemplate);
+        // Путь к шаблону — из настроек расширения (объявлены в AssemblyCalcExtension, экран —
+        // «Настройки → Расширения»): у каждой машины свой смонтированный диск, в коде пути
+        // нет. Не задан — поле пустое, шаблон выбирают «Обзором»; доступность проверяет
+        // движок при запуске.
+        var template = AppSettings.LoadExtensionSetting(
+            AssemblyCalcExtension.ExtensionId, AssemblyCalcExtension.TemplateKey);
+        if (template.Length > 0)
+        {
+            _template = template;
+            TemplateBox.Text = template;
+            ToolTip.SetTip(TemplateBox, template);
+        }
 
         UpdateState();
     }
@@ -56,6 +62,9 @@ public partial class AssemblyCalcWindow : Window
         var path = await PickFile("Выберите файл-шаблон");
         if (path is null) return;
         _template = path; TemplateBox.Text = path; ToolTip.SetTip(TemplateBox, path);
+        // Запоминаем выбор: следующий запуск подставит шаблон сам.
+        AppSettings.SaveExtensionSetting(
+            AssemblyCalcExtension.ExtensionId, AssemblyCalcExtension.TemplateKey, path);
         UpdateState();
     }
 

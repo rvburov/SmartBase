@@ -137,6 +137,14 @@ public sealed class DatabaseRegistry : IDisposable, ISettingsDatabase
         _db.SaveChanges();
     }
 
+    /// <summary>Ключи настроек, начинающиеся с приставки (группа с заранее неизвестным
+    /// составом — например, настройки расширений под <c>ext.</c>).</summary>
+    public IReadOnlyList<string> KeysWithPrefix(string prefix) =>
+        _db.Settings.AsNoTracking()
+                    .Where(s => s.Key.StartsWith(prefix))
+                    .Select(s => s.Key)
+                    .ToList();
+
     // Если дефолтной БД ещё нет — регистрируем текущий database.db как основную.
     private void EnsureDefault(string defaultDataPath)
     {

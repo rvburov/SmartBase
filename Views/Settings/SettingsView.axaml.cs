@@ -9,6 +9,7 @@ using Avalonia.Platform.Storage;
 using SmartBase.Controls.Dialogs;
 using SmartBase.Database;
 using SmartBase.Database.Entities;
+using SmartBase.Extensions;
 using SmartBase.Settings;
 using SmartBase.Utils;
 
@@ -211,6 +212,66 @@ public partial class SettingsView : UserControl
         var on = BackgroundToggle.IsChecked == true;
         AppSettings.SaveBackgroundEnabled(on);
         BackgroundEnabledChanged?.Invoke(this, on);
+    }
+
+    // ── Расширения ───────────────────────────────────────────────────────────
+    //
+    // Раздел собирается ЦЕЛИКОМ из реестра: по одной строке на расширение, объявившее
+    // настройки в IExtension.Settings. Ни одного расширения по имени здесь нет — убрали
+    // расширение из ExtensionRegistry, и его блок исчез сам, без правок этого экрана.
+    //
+    // Перестраиваем при каждом показе: значение могло смениться мимо настроек — «Обзор»
+    // в окне расширения пишет в те же ключи.
+    private void BuildExtensionsPanel()
+    {
+        ExtensionsSettingsList.Children.Clear();
+
+        var withSettings = ExtensionRegistry.All.Where(e => e.Settings.Count > 0).ToList();
+        if (withSettings.Count == 0)
+        {
+            ExtensionsSettingsList.Children.Add(new Border
+            {
+                Classes = { "settingRow" },
+                Child = new TextBlock
+                {
+                    Classes = { "desc" },
+                    Text = "Ни одно расширение не требует настройки.",
+                },
+            });
+            return;
+        }
+
+        foreach (var extension in withSettings)
+        {
+            var rows = new StackPanel { Spacing = 10 };
+            rows.Children.Add(new TextBlock { Classes = { "title" }, Text = extension.Name });
+
+            foreach (var setting in extension.Settings)
+                rows.Children.Add(BuildSettingField(extension, setting));
+
+            ExtensionsSettingsList.Children.Add(new Border { Classes = { "settingRow" }, Child = rows });
+            ExtensionsSettingsList.Children.Add(new Border { Classes = { "separator", "h" } });
+        }
+    }
+
+    // Поле одной настройки: подпись, под ней строка ввода. Значение сохраняется при потере
+    // фокуса — тот же приём, что у пути обновления.
+    private static StackPanel BuildSettingField(IExtension extension, ExtensionSetting setting)
+    {
+        var block = new StackPanel { Spacing = 6 };
+        block.Children.Add(new TextBlock { Classes = { "desc" }, Text = setting.Label });
+
+        var box = new TextBox
+        {
+            Classes   = { "extSetting" },
+            Watermark = setting.Watermark,
+            Text      = AppSettings.LoadExtensionSetting(extension.Id, setting.Key),
+        };
+        box.LostFocus += (_, _) =>
+            AppSettings.SaveExtensionSetting(extension.Id, setting.Key, box.Text ?? "");
+
+        block.Children.Add(box);
+        return block;
     }
 
     // ── О программе ──────────────────────────────────────────────────────────
@@ -762,6 +823,7 @@ public partial class SettingsView : UserControl
         GeneralPanel.IsVisible    = key == "general";
         AppearancePanel.IsVisible = key == "appearance";
         DatabasePanel.IsVisible   = key == "database";
+        ExtensionsPanel.IsVisible = key == "extensions";
         GuidePanel.IsVisible      = key == "guide";
         LogsPanel.IsVisible       = key == "logs";
         AboutPanel.IsVisible      = key == "about";
@@ -777,8 +839,9 @@ public partial class SettingsView : UserControl
         HeaderBar.ShowDatabaseActions = key == "database";
         HeaderBar.ShowLogsActions     = key == "logs";
 
-        if (key == "logs")  RebuildLogsPanel();
-        if (key == "guide") BuildGuide();
+        if (key == "logs")       RebuildLogsPanel();
+        if (key == "guide")      BuildGuide();
+        if (key == "extensions") BuildExtensionsPanel();
     }
 
     // ── Управление базой данных ──────────────────────────────────────────────

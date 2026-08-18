@@ -40,6 +40,18 @@ public partial class App : Application
             // Настройки приложения хранятся в app.db.
             AppSettings.AttachStore(registry);
 
+            // Расширения: Id — ключ и строки сайдбара, и группы настроек «ext.<Id>.…»,
+            // поэтому тёзки недопустимы (проверка падает с явным сообщением).
+            Extensions.ExtensionRegistry.EnsureUniqueIds();
+
+            // Убрать настройки расширений, которых в сборке больше нет: удалили папку
+            // расширения и строку реестра — при первом же запуске уходят и его строки из
+            // app.db, лишнего не остаётся. См. docs/features/extensions.md.
+            var orphans = AppSettings.RemoveOrphanExtensionSettings(
+                Extensions.ExtensionRegistry.All.Select(e => e.Id));
+            if (orphans > 0)
+                Log.Information("Настройки удалённых расширений убраны из app.db: {Count}", orphans);
+
             // Автозапуск: сверяем запись в системе с настройкой — вернуть пропавшую (переустановка,
             // чистилка автозагрузки), переписать устаревшую (сменилась папка установки; у версий до
             // 1.0.5 в команде оставался --background), снять лишнюю. Именно здесь, а не в Program:
