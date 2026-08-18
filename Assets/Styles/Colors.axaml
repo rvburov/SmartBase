@@ -1,7 +1,7 @@
 <ResourceDictionary xmlns="https://github.com/avaloniaui"
                     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
 
-    <!-- Аналог Colors в styles.py -->
+    <!-- Палитра приложения -->
 
     <!-- Фоны -->
     <Color x:Key="ColorBg">#FFFFFF</Color>

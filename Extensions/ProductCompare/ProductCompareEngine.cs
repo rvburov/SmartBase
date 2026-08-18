@@ -135,7 +135,7 @@ public static class ProductCompareEngine
             ct.ThrowIfCancellationRequested();
 
             var hierarchyCell = ws.Cell(row, ColHierarchy);
-            // Как в Python (hierarchy_to_tuple + `if hierarchy`): ключ строится ТОЛЬКО из
+            // Как в исходной утилите: ключ строится ТОЛЬКО из
             // строкового значения иерархии. Число/пусто/иной тип → пустой ключ.
             var key = hierarchyCell.Value.IsText
                 ? Hierarchy.Parse(hierarchyCell.GetString())
@@ -252,7 +252,7 @@ public static class ProductCompareEngine
             return h.ToHashCode();
         }
 
-        // Лексикографически, как сортировка кортежей в Python (короткий префикс — раньше).
+        // Лексикографически по уровням: короткий префикс — раньше.
         public int CompareTo(Hierarchy? other)
         {
             if (other is null) return 1;
