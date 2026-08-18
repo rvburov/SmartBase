@@ -166,19 +166,42 @@ public static class AppSettings
     // ── Стартовый раздел ───────────────────────────────────────────────────────
     //
     // Раздел навигации (ActivityBar), открываемый при запуске. Значения совпадают с
-    // ключами модулей: "calendar", "constructor", "extensions". Стандарт — конструктор.
+    // ключами модулей: "calendar", "tasks", "constructor", "extensions". Стандарт —
+    // конструктор. Список закрытый: незнакомое значение (правка app.db руками, откат на
+    // версию без этого модуля) молча заменяется стандартом, а не роняет старт. Добавили
+    // модуль в ActivityBar — дописать его и сюда, иначе выбор в настройках не сохранится.
     public const string StartupModuleDefault = "constructor";
 
     public static string LoadStartupModule()
     {
         var v = _store?.Get(KeyStartupModule);
-        return v is "calendar" or "constructor" or "extensions" ? v : StartupModuleDefault;
+        return v is "calendar" or "tasks" or "constructor" or "extensions" ? v : StartupModuleDefault;
     }
 
     public static void SaveStartupModule(string module)
     {
         if (module == StartupModuleDefault) _store?.Remove(KeyStartupModule);
         else                                _store?.Set(KeyStartupModule, module);
+    }
+
+    // ── Стартовый вид задач ──────────────────────────────────────────────────────
+    //
+    // Какой вид открывается в разделе «Задачи». Пока вид один — "list" (Список), поэтому
+    // список значений закрытый ровно на нём; дальше сюда добавятся остальные, как это
+    // сделано у календаря и конструктора. Незнакомое значение (правка app.db руками, откат
+    // на версию с другим набором видов) молча заменяется стандартом.
+    public const string TasksViewDefault = "list";
+
+    public static string LoadTasksView()
+    {
+        var v = _store?.Get(KeyTasksView);
+        return v is "list" ? v : TasksViewDefault;
+    }
+
+    public static void SaveTasksView(string mode)
+    {
+        if (mode == TasksViewDefault) _store?.Remove(KeyTasksView);
+        else                          _store?.Set(KeyTasksView, mode);
     }
 
     // ── Стартовый вид календаря ──────────────────────────────────────────────────
@@ -438,9 +461,38 @@ public static class AppSettings
             .Select(h => $"{h.DbId}:{h.CollectionId}")));
     }
 
+    // ── Скрытые виды разделов и модули панели навигации ───────────────────────
+    //
+    // Что НЕ показывать: пункты переключателя вида в навбаре («Оформление → Отображение
+    // раздела …») и кнопки модулей панели навигации. Как и у галочек коллекций, хранятся
+    // СКРЫТЫЕ, а не показываемые: пустая настройка = стандарт «видно всё», и новый вид
+    // появляется у всех сам собой, без дописывания в каждую установку.
+    //
+    // Ключи пунктов даёт ViewCatalog, формат строки — «key;key». Правило «хотя бы один
+    // пункт остаётся» держит экран настроек: сюда набор приходит уже проверенным, а
+    // навбар на всякий случай не даёт списку опустеть (см. ViewCatalog.Visible).
+    public static HashSet<string> LoadHiddenViews(string scope)
+    {
+        var packed = _store?.Get(KeyHiddenViews(scope));
+        if (string.IsNullOrEmpty(packed)) return [];
+
+        return [.. packed.Split(';', StringSplitOptions.RemoveEmptyEntries)];
+    }
+
+    public static void SaveHiddenViews(string scope, IReadOnlyCollection<string> hidden)
+    {
+        var key = KeyHiddenViews(scope);
+        if (hidden.Count == 0) { _store?.Remove(key); return; }
+
+        // Порядок фиксированный: множество неупорядочено, и без сортировки один и тот же
+        // набор писался бы в базу каждый раз новой строкой.
+        _store?.Set(key, string.Join(';', hidden.OrderBy(h => h, StringComparer.Ordinal)));
+    }
+
     // ── Ключи настроек ─────────────────────────────────────────────────────────
 
     private static string KeyHiddenCollections(string scope) => $"hiddenCollections.{scope}";
+    private static string KeyHiddenViews(string scope)       => $"hiddenViews.{scope}";
 
     private const string KeyScale            = "scale";
     private const string KeyRecordPanelOpen  = "recordPanelOpen";
@@ -448,6 +500,7 @@ public static class AppSettings
     private const string KeyGuideTocWidth    = "guideTocWidth";
     private const string KeyFontDelta        = "fontDelta";
     private const string KeyStartupModule    = "startupModule";
+    private const string KeyTasksView        = "tasksView";
     private const string KeyCalendarView     = "calendarView";
     private const string KeyDiagramScale     = "diagramScale";
     private const string KeyConstructorView  = "constructorView";

@@ -18,6 +18,7 @@
 | [DateEditor](../../../Controls/Widgets/DateEditor.axaml) | ввод даты; событие `Changed` |
 | [TimeField](../../../Controls/Widgets/TimeField.axaml) | ввод времени; событие `TimeChanged` |
 | [NoticeBanner](../../../Controls/Widgets/NoticeBanner.axaml) | ШАБЛОН красного уведомления (ошибка, пояснение, тост); методы `Show(msg)` / `Hide()` |
+| [CheckListDropdown](../../../Controls/Widgets/CheckListDropdown.axaml) | выпадающий список с галочками (что показывать, а что скрыть); событие `HiddenChanged` |
 
 `DateEditor` и `TimeField` используются в диалоге события ([RecordDialog](dialogs.md))
 для выбора начала/конца.

@@ -1,0 +1,50 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:w="using:SmartBase.Controls.Widgets"
+             x:Class="SmartBase.Controls.Widgets.CheckListDropdown">
+
+    <!-- Список с галочками на ШТАТНОМ ComboBox: попап, скругления, наведение, обрезка
+         длинного пункта и «Список пуст» достаются от общей темы
+         (Assets/Styles/ComboBoxTheme.axaml) — своего попапа тут нет намеренно, иначе
+         строка выбивалась бы из ряда соседних настроек. Отличий от обычного списка два:
+         пункт — CheckBox, и выбранного значения у списка нет, в свёрнутом боксе стоит
+         сводка «Показаны все» / «Показано N из M».
+
+         Сводка подставляется ДВАЖДЫ, и это не дублирование:
+           • PlaceholderText — обычное состояние, когда выбранного пункта нет;
+           • SelectionBoxItemTemplate — на случай, когда ComboBox всё же пометил пункт
+             выбранным (клик мимо галочки). Без него бокс рисует шаблон ПУНКТА, то есть
+             чекбокс поверх текста: сброса SelectedItem в code-behind не хватает, кадр
+             успевает отрисоваться раньше. -->
+    <ComboBox x:Name="Selector"
+              HorizontalAlignment="Stretch"
+              Height="{StaticResource ControlHeightStandard}"
+              VerticalContentAlignment="Center"
+              Background="{StaticResource BrushSecondaryBg}"
+              CornerRadius="{StaticResource RadiusBase}"
+              PlaceholderForeground="{StaticResource BrushPrimaryText}"
+              PlaceholderText="{Binding Summary, RelativeSource={RelativeSource AncestorType=w:CheckListDropdown}}">
+
+        <ComboBox.SelectionBoxItemTemplate>
+            <DataTemplate>
+                <TextBlock VerticalAlignment="Center"
+                           TextTrimming="CharacterEllipsis"
+                           Foreground="{StaticResource BrushPrimaryText}"
+                           Text="{Binding Summary, RelativeSource={RelativeSource AncestorType=w:CheckListDropdown}}" />
+            </DataTemplate>
+        </ComboBox.SelectionBoxItemTemplate>
+
+        <ComboBox.ItemTemplate>
+            <DataTemplate>
+                <!-- Растянут на всю строку: попадание по строке = попадание по чекбоксу,
+                     и список не закрывается на каждой галочке. -->
+                <CheckBox IsChecked="{Binding IsChecked, Mode=TwoWay}"
+                          IsEnabled="{Binding CanToggle}"
+                          Content="{Binding Label}"
+                          HorizontalAlignment="Stretch"
+                          HorizontalContentAlignment="Left" />
+            </DataTemplate>
+        </ComboBox.ItemTemplate>
+    </ComboBox>
+
+</UserControl>

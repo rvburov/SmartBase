@@ -2,6 +2,7 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="using:SmartBase.Views.Settings"
              xmlns:comp="using:SmartBase.Controls.Components"
+             xmlns:w="using:SmartBase.Controls.Widgets"
              x:Class="SmartBase.Views.Settings.SettingsView"
              Background="{StaticResource BrushBg}">
 
@@ -285,74 +286,136 @@
                     </Grid.ColumnDefinitions>
                     <StackPanel Margin="16,0,16,32">
 
-                    <!-- Отображение раздела навигации -->
+                    <!-- ── Что открывается по умолчанию ────────────────────────
+                         Пункты этих списков в разметке НЕ перечислены: их наполняет
+                         code-behind из ViewCatalog, причём только видимыми — вид, скрытый
+                         соседней настройкой, не должен предлагаться как стартовый. -->
+
+                    <Border Classes="settingRow">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <StackPanel Grid.Column="0" Spacing="4"
+                                        VerticalAlignment="Center" Margin="0,0,32,0">
+                                <TextBlock Classes="title" Text="Отображение по умолчанию раздела навигации" />
+                                <TextBlock Classes="desc"
+                                           Text="Какой раздел панели навигации (слева) открывается при запуске программы." />
+                            </StackPanel>
+                            <ComboBox Grid.Column="1" x:Name="StartupModuleCombo"
+                                      Width="240" Height="{StaticResource ControlHeightStandard}"
+                                      VerticalAlignment="Center"
+                                      Background="{StaticResource BrushSecondaryBg}"
+                                      CornerRadius="{StaticResource RadiusBase}" />
+                        </Grid>
+                    </Border>
+                    <Border Classes="separator h" />
+
+                    <Border Classes="settingRow">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <StackPanel Grid.Column="0" Spacing="4"
+                                        VerticalAlignment="Center" Margin="0,0,32,0">
+                                <TextBlock Classes="title" Text="Отображение по умолчанию раздела календаря" />
+                                <TextBlock Classes="desc"
+                                           Text="Какой вид календаря открывается при переходе в раздел." />
+                            </StackPanel>
+                            <ComboBox Grid.Column="1" x:Name="CalendarViewCombo"
+                                      Width="240" Height="{StaticResource ControlHeightStandard}"
+                                      VerticalAlignment="Center"
+                                      Background="{StaticResource BrushSecondaryBg}"
+                                      CornerRadius="{StaticResource RadiusBase}" />
+                        </Grid>
+                    </Border>
+                    <Border Classes="separator h" />
+
+                    <Border Classes="settingRow">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <StackPanel Grid.Column="0" Spacing="4"
+                                        VerticalAlignment="Center" Margin="0,0,32,0">
+                                <TextBlock Classes="title" Text="Отображение по умолчанию раздела задач" />
+                                <TextBlock Classes="desc"
+                                           Text="Какой вид открывается при переходе в раздел «Задачи»." />
+                            </StackPanel>
+                            <ComboBox Grid.Column="1" x:Name="TasksViewCombo"
+                                      Width="240" Height="{StaticResource ControlHeightStandard}"
+                                      VerticalAlignment="Center"
+                                      Background="{StaticResource BrushSecondaryBg}"
+                                      CornerRadius="{StaticResource RadiusBase}" />
+                        </Grid>
+                    </Border>
+                    <Border Classes="separator h" />
+
+                    <Border Classes="settingRow">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <StackPanel Grid.Column="0" Spacing="4"
+                                        VerticalAlignment="Center" Margin="0,0,32,0">
+                                <TextBlock Classes="title" Text="Отображение по умолчанию раздела конструктора" />
+                                <TextBlock Classes="desc"
+                                           Text="Какой вид коллекции открывается в конструкторе базы данных. Если у коллекции выбран свой вид, он сохраняется за ней." />
+                            </StackPanel>
+                            <ComboBox Grid.Column="1" x:Name="ConstructorViewCombo"
+                                      Width="240" Height="{StaticResource ControlHeightStandard}"
+                                      VerticalAlignment="Center"
+                                      Background="{StaticResource BrushSecondaryBg}"
+                                      CornerRadius="{StaticResource RadiusBase}" />
+                        </Grid>
+                    </Border>
+                    <Border Classes="separator h" />
+
+                    <!-- ── Что вообще показывать ───────────────────────────────
+                         Галочки убирают лишние виды и разделы с глаз. Последнюю снять
+                         нельзя — раздел без единого вида неработоспособен; правило держит
+                         сам виджет (см. CheckListDropdown). -->
+
                     <Border Classes="settingRow">
                         <Grid ColumnDefinitions="*,Auto">
                             <StackPanel Grid.Column="0" Spacing="4"
                                         VerticalAlignment="Center" Margin="0,0,32,0">
                                 <TextBlock Classes="title" Text="Отображение раздела навигации" />
                                 <TextBlock Classes="desc"
-                                           Text="Какой раздел панели навигации (слева) открывается при запуске программы: Календарь, Конструктор базы данных или Расширения." />
+                                           Text="Какие разделы показывать в панели навигации слева. «Настройки» и «Профиль» скрыть нельзя." />
                             </StackPanel>
-                            <ComboBox Grid.Column="1" x:Name="StartupModuleCombo"
-                                      Width="240" Height="{StaticResource ControlHeightStandard}"
-                                      VerticalAlignment="Center"
-                                      Background="{StaticResource BrushSecondaryBg}"
-                                      CornerRadius="{StaticResource RadiusBase}"
-                                      SelectionChanged="OnStartupModuleChanged">
-                                <ComboBoxItem Tag="calendar"    Content="Календарь" />
-                                <ComboBoxItem Tag="constructor" Content="Конструктор базы данных" />
-                                <ComboBoxItem Tag="extensions"  Content="Расширения" />
-                            </ComboBox>
+                            <w:CheckListDropdown Grid.Column="1" x:Name="NavigationVisibility"
+                                                 Width="240" VerticalAlignment="Center" />
                         </Grid>
                     </Border>
                     <Border Classes="separator h" />
 
-                    <!-- Отображение раздела календаря -->
                     <Border Classes="settingRow">
                         <Grid ColumnDefinitions="*,Auto">
                             <StackPanel Grid.Column="0" Spacing="4"
                                         VerticalAlignment="Center" Margin="0,0,32,0">
                                 <TextBlock Classes="title" Text="Отображение раздела календаря" />
                                 <TextBlock Classes="desc"
-                                           Text="Какой вид календаря открывается при переходе в раздел: Расписание, Журнал, День, Неделя, Месяц, Год или Диаграмма." />
+                                           Text="Какие виды календаря показывать в переключателе навбара." />
                             </StackPanel>
-                            <ComboBox Grid.Column="1" x:Name="CalendarViewCombo"
-                                      Width="240" Height="{StaticResource ControlHeightStandard}"
-                                      VerticalAlignment="Center"
-                                      Background="{StaticResource BrushSecondaryBg}"
-                                      CornerRadius="{StaticResource RadiusBase}"
-                                      SelectionChanged="OnCalendarViewChanged">
-                                <ComboBoxItem Tag="0" Content="Расписание" />
-                                <ComboBoxItem Tag="1" Content="Журнал" />
-                                <ComboBoxItem Tag="2" Content="День" />
-                                <ComboBoxItem Tag="3" Content="Неделя" />
-                                <ComboBoxItem Tag="4" Content="Месяц" />
-                                <ComboBoxItem Tag="5" Content="Год" />
-                                <ComboBoxItem Tag="6" Content="Диаграмма" />
-                            </ComboBox>
+                            <w:CheckListDropdown Grid.Column="1" x:Name="CalendarVisibility"
+                                                 Width="240" VerticalAlignment="Center" />
                         </Grid>
                     </Border>
                     <Border Classes="separator h" />
 
-                    <!-- Отображение раздела конструктора -->
+                    <Border Classes="settingRow">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <StackPanel Grid.Column="0" Spacing="4"
+                                        VerticalAlignment="Center" Margin="0,0,32,0">
+                                <TextBlock Classes="title" Text="Отображение раздела задач" />
+                                <TextBlock Classes="desc"
+                                           Text="Какие виды задач показывать в переключателе навбара. Пока вид один — Список." />
+                            </StackPanel>
+                            <w:CheckListDropdown Grid.Column="1" x:Name="TasksVisibility"
+                                                 Width="240" VerticalAlignment="Center" />
+                        </Grid>
+                    </Border>
+                    <Border Classes="separator h" />
+
                     <Border Classes="settingRow">
                         <Grid ColumnDefinitions="*,Auto">
                             <StackPanel Grid.Column="0" Spacing="4"
                                         VerticalAlignment="Center" Margin="0,0,32,0">
                                 <TextBlock Classes="title" Text="Отображение раздела конструктора" />
                                 <TextBlock Classes="desc"
-                                           Text="Какой вид коллекции открывается в конструкторе базы данных: Таблица или Список. Если у коллекции выбран свой вид, он сохраняется за ней." />
+                                           Text="Какие виды коллекции показывать в конструкторе базы данных." />
                             </StackPanel>
-                            <ComboBox Grid.Column="1" x:Name="ConstructorViewCombo"
-                                      Width="240" Height="{StaticResource ControlHeightStandard}"
-                                      VerticalAlignment="Center"
-                                      Background="{StaticResource BrushSecondaryBg}"
-                                      CornerRadius="{StaticResource RadiusBase}"
-                                      SelectionChanged="OnConstructorViewChanged">
-                                <ComboBoxItem Tag="table" Content="Таблица" />
-                                <ComboBoxItem Tag="list"  Content="Список" />
-                            </ComboBox>
+                            <w:CheckListDropdown Grid.Column="1" x:Name="ConstructorVisibility"
+                                                 Width="240" VerticalAlignment="Center" />
                         </Grid>
                     </Border>
                     <Border Classes="separator h" />

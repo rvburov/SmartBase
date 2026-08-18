@@ -4,13 +4,14 @@ using Avalonia.Media;
 using Avalonia.Threading;
 using SmartBase.Controls.Widgets;
 using SmartBase.Core.Models;
+using SmartBase.Settings;
 
 namespace SmartBase.Controls.Components;
 
 public partial class NavbarConstructor : UserControl
 {
-    private static readonly string[] ViewNames = ["Таблица", "Список"];
-    private static readonly string[] ViewModes = ["table", "list"];
+    // Только виды, не скрытые в «Оформлении» (ключи и подписи — в ViewCatalog).
+    private readonly string[] ViewModes;
 
     public event EventHandler<string>? ViewChanged;
     /// <summary>Новое имя коллекции (после blur/Enter). Пусто/whitespace — игнорируется родителем.</summary>
@@ -24,7 +25,10 @@ public partial class NavbarConstructor : UserControl
     {
         InitializeComponent();
 
-        ViewSelector.ItemsSource   = ViewNames;
+        var visible = ViewCatalog.Visible(ViewCatalog.ScopeConstructor);
+        ViewModes   = [.. visible.Select(v => v.Key)];
+
+        ViewSelector.ItemsSource   = visible.Select(v => v.Label).ToList();
         ViewSelector.SelectedIndex = 0;
 
         ViewSelector.SelectionChanged += (_, _) =>

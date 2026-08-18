@@ -1,4 +1,5 @@
 using Avalonia.Controls;
+using SmartBase.Settings;
 
 namespace SmartBase.Controls.Components;
 
@@ -23,6 +24,23 @@ public partial class ActivityBar : UserControl
         ExtensionsBtn.Click += (_, _) => SwitchModule("extensions");
         ProfileBtn.Click += (_, _) => SwitchModule("profile");
         SettingsBtn.Click += (_, _) => SwitchModule("settings");
+
+        ApplyModuleVisibility();
+    }
+
+    // Разделы, скрытые в «Оформление → Отображение раздела навигации», убираем из панели.
+    // «Настройки» и «Профиль» здесь не участвуют: их нет в ViewCatalog.Navigation, скрыть
+    // настройки значило бы отрезать путь обратно.
+    private void ApplyModuleVisibility()
+    {
+        var visible = ViewCatalog.Visible(ViewCatalog.ScopeNavigation)
+                                 .Select(v => v.Key)
+                                 .ToHashSet(StringComparer.Ordinal);
+
+        CalendarBtn.IsVisible    = visible.Contains("calendar");
+        TasksBtn.IsVisible       = visible.Contains("tasks");
+        ConstructorBtn.IsVisible = visible.Contains("constructor");
+        ExtensionsBtn.IsVisible  = visible.Contains("extensions");
     }
 
     public void SetSidebarOpen(bool isOpen)

@@ -3,10 +3,12 @@ using System.Reflection;
 using System.Runtime.InteropServices;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
+using Avalonia.Data;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Platform.Storage;
 using SmartBase.Controls.Dialogs;
+using SmartBase.Controls.Widgets;
 using SmartBase.Database;
 using SmartBase.Database.Entities;
 using SmartBase.Extensions;
@@ -88,14 +90,8 @@ public partial class SettingsView : UserControl
         FontSizeSlider.AddHandler(PointerReleasedEvent, (_, _) => EndFontDrag(),        RoutingStrategies.Tunnel);
         FontSizeSlider.AddHandler(Thumb.DragCompletedEvent, (_, _) => EndFontDrag());
 
-        // Стартовый раздел: выделить сохранённый пункт (по Tag).
-        SelectStartupModule(AppSettings.LoadStartupModule());
-
-        // Стартовый вид календаря: выделить по индексу (Tag = "0".."5").
-        CalendarViewCombo.SelectedIndex = AppSettings.LoadCalendarView();
-
-        // Стартовый вид конструктора: Таблица (0) или Список (1).
-        ConstructorViewCombo.SelectedIndex = AppSettings.LoadConstructorView() == "list" ? 1 : 0;
+        // «Оформление»: обе группы строк (что открывается по умолчанию и что показывать).
+        InitAppearance();
 
         // Меню «Добавить базу данных» живёт в навбаре (видно только в разделе БД,
         // см. ShowCategory) — пункты ведут на те же обработчики, что прежние кнопки.
@@ -105,45 +101,98 @@ public partial class SettingsView : UserControl
         HeaderBar.ExportLogsRequested      += (_, _) => _ = ExportLogsToCsv();
     }
 
-    // ── Стартовый раздел ─────────────────────────────────────────────────────
+    // ── Оформление: что открывается по умолчанию и что вообще показывать ─────
     //
-    // Какой раздел навигации (ActivityBar) открывается при запуске. Применяется при
-    // следующем запуске — MainWindow читает AppSettings.LoadStartupModule() на старте.
-    private void SelectStartupModule(string module)
+    // Обе группы строк ведёт один код по ViewCatalog: слева выпадающий список ТОЛЬКО из
+    // видимых пунктов, справа галочки видимости. Ни разметка, ни этот файл не знают ни
+    // одного вида по имени — появился вид в каталоге, и обе строки подхватят его сами.
+    //
+    // Связь между строками: сняли галочку с пункта, который стоял «по умолчанию», —
+    // умолчание переезжает на первый видимый и сразу сохраняется. Иначе настройка
+    // указывала бы на вид, которого человек больше не видит.
+    //
+    // Читает и пишет каждый раздел своей парой из AppSettings: ключи у них исторически
+    // разные (у календаря — номер вида, у остальных — строка), поэтому перевод «ключ
+    // каталога ↔ хранимое значение» задаётся здесь и больше нигде не повторяется.
+    private sealed record AppearanceScope(
+        string            Scope,
+        ComboBox          DefaultCombo,
+        CheckListDropdown Visibility,
+        Func<string>      LoadKey,
+        Action<string>    SaveKey);
+
+    private List<AppearanceScope> _appearance = [];
+
+    // Гасит обработчики, пока список наполняется кодом: смена ItemsSource дёргает
+    // SelectionChanged, и без флага перестройка перезаписывала бы настройку.
+    private bool _appearanceBuilding;
+
+    private void InitAppearance()
     {
-        foreach (var obj in StartupModuleCombo.Items)
-            if (obj is ComboBoxItem { Tag: string tag } item && tag == module)
-            {
-                StartupModuleCombo.SelectedItem = item;
-                return;
-            }
+        _appearance =
+        [
+            new(ViewCatalog.ScopeNavigation, StartupModuleCombo, NavigationVisibility,
+                AppSettings.LoadStartupModule,
+                AppSettings.SaveStartupModule),
+
+            new(ViewCatalog.ScopeCalendar, CalendarViewCombo, CalendarVisibility,
+                () => ViewCatalog.KeyAt(ViewCatalog.ScopeCalendar, AppSettings.LoadCalendarView()),
+                key => AppSettings.SaveCalendarView(
+                           Math.Max(0, ViewCatalog.IndexOf(ViewCatalog.ScopeCalendar, key)))),
+
+            new(ViewCatalog.ScopeTasks, TasksViewCombo, TasksVisibility,
+                AppSettings.LoadTasksView,
+                AppSettings.SaveTasksView),
+
+            new(ViewCatalog.ScopeConstructor, ConstructorViewCombo, ConstructorVisibility,
+                AppSettings.LoadConstructorView,
+                AppSettings.SaveConstructorView),
+        ];
+
+        foreach (var scope in _appearance)
+        {
+            var captured = scope;
+            captured.DefaultCombo.SelectionChanged += (_, _) => OnAppearanceDefaultChanged(captured);
+            captured.Visibility.HiddenChanged      += (_, hidden) => OnAppearanceVisibilityChanged(captured, hidden);
+            RebuildAppearanceScope(captured);
+        }
     }
 
-    private void OnStartupModuleChanged(object? sender, SelectionChangedEventArgs e)
+    private void RebuildAppearanceScope(AppearanceScope scope)
     {
-        if (StartupModuleCombo.SelectedItem is ComboBoxItem { Tag: string module })
-            AppSettings.SaveStartupModule(module);
+        _appearanceBuilding = true;
+
+        scope.Visibility.SetItems(ViewCatalog.All(scope.Scope),
+                                  AppSettings.LoadHiddenViews(scope.Scope));
+
+        var visible = ViewCatalog.Visible(scope.Scope);
+        scope.DefaultCombo.ItemsSource           = visible;
+        scope.DefaultCombo.DisplayMemberBinding  = new Binding(nameof(ViewItem.Label));
+
+        // Сохранённого пункта может не быть среди видимых только в переходный момент
+        // (настройку правили руками) — тогда показываем первый видимый.
+        var current = scope.LoadKey();
+        var index   = visible.ToList().FindIndex(v => v.Key == current);
+        scope.DefaultCombo.SelectedIndex = index >= 0 ? index : 0;
+
+        _appearanceBuilding = false;
     }
 
-    // ── Стартовый вид календаря ──────────────────────────────────────────────
-    //
-    // Какой вид (Расписание/Журнал/День/Неделя/Месяц/Год) открывается при переходе в
-    // Календарь. Индекс совпадает с порядком пунктов и ViewSelector навбара (0..5).
-    // Применяется при следующем запуске — календарь читает AppSettings.LoadCalendarView().
-    private void OnCalendarViewChanged(object? sender, SelectionChangedEventArgs e)
+    private void OnAppearanceDefaultChanged(AppearanceScope scope)
     {
-        if (CalendarViewCombo.SelectedIndex >= 0)
-            AppSettings.SaveCalendarView(CalendarViewCombo.SelectedIndex);
+        if (_appearanceBuilding) return;
+        if (scope.DefaultCombo.SelectedItem is ViewItem item) scope.SaveKey(item.Key);
     }
 
-    // ── Стартовый вид конструктора ───────────────────────────────────────────
-    //
-    // Вид коллекции (Таблица/Список) для коллекций без своего сохранённого режима.
-    // Применяется при следующем открытии коллекции (репозиторий читает его как дефолт).
-    private void OnConstructorViewChanged(object? sender, SelectionChangedEventArgs e)
+    private void OnAppearanceVisibilityChanged(AppearanceScope scope, IReadOnlyList<string> hidden)
     {
-        if (ConstructorViewCombo.SelectedItem is ComboBoxItem { Tag: string mode })
-            AppSettings.SaveConstructorView(mode);
+        AppSettings.SaveHiddenViews(scope.Scope, hidden);
+
+        if (!ViewCatalog.IsVisible(scope.Scope, scope.LoadKey()) &&
+            ViewCatalog.FirstVisible(scope.Scope) is { } first)
+            scope.SaveKey(first.Key);
+
+        RebuildAppearanceScope(scope);
     }
 
     // ── Общее ────────────────────────────────────────────────────────────────

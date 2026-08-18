@@ -223,7 +223,11 @@ public partial class MainWindow : Window
         HookPermissionEvents();
 
         // Начальное состояние: раздел при запуске берём из настроек (стандарт — конструктор).
+        // Его могли скрыть в «Оформлении» уже после выбора — тогда открываем первый видимый,
+        // иначе программа стартовала бы на разделе, кнопки которого в панели нет.
         var startupModule = AppSettings.LoadStartupModule();
+        if (!ViewCatalog.IsVisible(ViewCatalog.ScopeNavigation, startupModule))
+            startupModule = ViewCatalog.FirstVisible(ViewCatalog.ScopeNavigation)?.Key ?? startupModule;
         ActivityBarControl.SetModuleActive(startupModule);
         ActivityBarControl.SetSidebarOpen(true);
         ShowModule(startupModule);

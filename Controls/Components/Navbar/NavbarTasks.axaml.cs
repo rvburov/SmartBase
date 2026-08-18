@@ -3,13 +3,16 @@ using Avalonia.Controls;
 using Avalonia.Media;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
+using SmartBase.Settings;
+using SmartBase.Utils;
 using SmartBase.Views.Tasks;
 
 namespace SmartBase.Controls.Components;
 
 public partial class NavbarTasks : UserControl
 {
-    private static readonly string[] ViewNames = ["Список"];
+    // Только виды, не скрытые в «Оформлении»; ключи и подписи — в ViewCatalog.
+    private readonly string[] _viewKeys;
 
     public event EventHandler<int>? ViewChanged;
     public event EventHandler<string>? SearchChanged;
@@ -32,8 +35,13 @@ public partial class NavbarTasks : UserControl
     {
         InitializeComponent();
 
-        ViewSelector.ItemsSource   = ViewNames;
-        ViewSelector.SelectedIndex = 0;
+        var visible = ViewCatalog.Visible(ViewCatalog.ScopeTasks);
+        _viewKeys   = [.. visible.Select(v => v.Key)];
+
+        ViewSelector.ItemsSource = visible.Select(v => v.Label).ToList();
+        // Стартовый вид из настроек; если он скрыт — показываем первый видимый.
+        var saved = Array.IndexOf(_viewKeys, AppSettings.LoadTasksView());
+        ViewSelector.SelectedIndex = saved >= 0 ? saved : 0;
 
         ViewSelector.SelectionChanged += (_, _) =>
             ViewChanged?.Invoke(this, ViewSelector.SelectedIndex);
