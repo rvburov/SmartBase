@@ -575,4 +575,86 @@ public sealed class TaskRecordsTests
         // И в истории изменений — ни одной новой строки: запрещённого действия не было.
         Assert.Equal(logRowsBefore, db.Context.ChangeLog.Count());
     }
+
+    // ── Точный размер раздела (CountTasksByCollection) ────────────────────────
+    //
+    // Заголовок группы обязан называть НАСТОЯЩЕЕ число дел коллекции, а не пересчитывать
+    // то, что и так на экране: крышка чтения пускает в раздел не всё, и без отдельного
+    // счёта последняя карточка выглядела бы концом коллекции. Значит, счёт обязан совпадать
+    // с чтением по правилам (что считается задачей, какое поле — статус) и расходиться с ним
+    // ровно на недочитанный хвост.
+
+    [Fact]
+    public void Task_counts_match_the_list_and_split_out_the_done_ones()
+    {
+        using var db = new TempDatabase();
+        var repo = db.Constructor;
+
+        var zayavki = SampleData.AddCollection(repo, "Заявки").Id!.Value;
+        var (execZ, _, statusZ) = EnableTasks(repo, zayavki);
+
+        // Три записи: выполненная, в работе и вовсе НЕРОЗДАННАЯ (исполнитель пуст).
+        // Последняя — тот самый случай, ради которого раздел читает все записи коллекции:
+        // счёт обязан видеть её так же, как список.
+        var a = SampleData.AddRecord(repo, zayavki, "Заменить насос").Id!.Value;
+        repo.SetFieldValue(a, execZ, "Иванов Иван");
+        repo.SetFieldValue(a, statusZ, ConstructorRepository.TaskStatusDone);
+
+        var b = SampleData.AddRecord(repo, zayavki, "Покрасить стену").Id!.Value;
+        repo.SetFieldValue(b, execZ, "Петров Пётр");
+        repo.SetFieldValue(b, statusZ, ConstructorRepository.TaskStatusActive);
+
+        SampleData.AddRecord(repo, zayavki, "Разобрать архив");
+
+        // Соседняя коллекция БЕЗ задач — в счёт не попадает вовсе.
+        var spravochnik = SampleData.AddCollection(repo, "Справочник").Id!.Value;
+        SampleData.AddRecord(repo, spravochnik, "Строка");
+
+        var counts = repo.CountTasksByCollection();
+
+        Assert.Equal((3, 1), counts[zayavki]);
+        Assert.DoesNotContain(spravochnik, counts.Keys);
+        // Главное: счёт и список говорят об одном и том же наборе.
+        Assert.Equal(repo.GetTaskRecords().Count(t => t.CollectionId == zayavki), counts[zayavki].Total);
+    }
+
+    [Fact]
+    public void Task_counts_honour_the_active_collections_the_same_way_the_list_does()
+    {
+        using var db = new TempDatabase();
+        var repo = db.Constructor;
+
+        var zayavki = SampleData.AddCollection(repo, "Заявки").Id!.Value;
+        EnableTasks(repo, zayavki);
+        SampleData.AddRecord(repo, zayavki, "Заменить насос");
+
+        var remonty = SampleData.AddCollection(repo, "Ремонты").Id!.Value;
+        EnableTasks(repo, remonty);
+        SampleData.AddRecord(repo, remonty, "Починить крышу");
+
+        // null — все коллекции базы, как у календаря.
+        Assert.Equal([zayavki, remonty], repo.CountTasksByCollection().Keys.Order());
+        // Явный набор — только он.
+        Assert.Equal([remonty], repo.CountTasksByCollection(new HashSet<int> { remonty }).Keys);
+        // ПУСТОЙ набор — ни одной (галочки сняты), а не «все».
+        Assert.Empty(repo.CountTasksByCollection(new HashSet<int>()));
+    }
+
+    /// <summary>
+    /// Ради чего всё и затевалось: крышка чтения обрезает список, а счёт — нет. Разница между
+    /// ними и есть «+N ещё» в конце группы.
+    /// </summary>
+    [Fact]
+    public void The_read_cap_shortens_the_list_but_never_the_count()
+    {
+        using var db = new TempDatabase();
+        var repo = db.Constructor;
+
+        var col = SampleData.AddCollection(repo, "Заявки").Id!.Value;
+        EnableTasks(repo, col);
+        for (var i = 0; i < 7; i++) SampleData.AddRecord(repo, col, $"Задача {i}");
+
+        Assert.Equal(3, repo.GetTaskRecords(limit: 3).Count);
+        Assert.Equal(7, repo.CountTasksByCollection()[col].Total);
+    }
 }

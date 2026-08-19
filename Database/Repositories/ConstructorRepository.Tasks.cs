@@ -395,28 +395,32 @@ public partial class ConstructorRepository
                 LIMIT {Math.Max(1, limit)}";
 
             using var rdr = cmd.ExecuteReader();
-            while (rdr.Read())
-            {
-                var t = new TaskRecord
-                {
-                    Id             = rdr.GetInt32(0),
-                    ExecFieldId    = rdr.GetInt32(1),
-                    CollectionId   = rdr.GetInt32(2),
-                    CollectionName = rdr.IsDBNull(3) ? "" : rdr.GetString(3),
-                    Color          = rdr.IsDBNull(4) ? "#007AFF" : rdr.GetString(4),
-                    Title          = rdr.IsDBNull(5) ? "" : rdr.GetString(5),
-                    Description    = rdr.IsDBNull(6) ? "" : rdr.GetString(6),
-                    Executor       = rdr.IsDBNull(7) ? "" : rdr.GetString(7),
-                    Assigner       = rdr.IsDBNull(8) ? "" : rdr.GetString(8),
-                    Status         = rdr.IsDBNull(9) ? "" : rdr.GetString(9),
-                };
-                if (!rdr.IsDBNull(10))
-                    ApplyDuePacked(t, rdr.GetString(10));
-                result.Add(t);
-            }
+            while (rdr.Read()) result.Add(ReadTaskRow(rdr));
         }
         finally { if (opened) conn.Close(); }
         return result;
+    }
+
+    /// <summary>Строка карточки из читателя общей проекции задач. Вынесено, потому что ту же
+    /// проекцию читает постраничный путь (<see cref="GetTaskRecordsByIds"/>): разъехавшись,
+    /// два режима раздела показывали бы разное.</summary>
+    private static TaskRecord ReadTaskRow(System.Data.Common.DbDataReader rdr)
+    {
+        var t = new TaskRecord
+        {
+            Id             = rdr.GetInt32(0),
+            ExecFieldId    = rdr.GetInt32(1),
+            CollectionId   = rdr.GetInt32(2),
+            CollectionName = rdr.IsDBNull(3) ? "" : rdr.GetString(3),
+            Color          = rdr.IsDBNull(4) ? "#007AFF" : rdr.GetString(4),
+            Title          = rdr.IsDBNull(5) ? "" : rdr.GetString(5),
+            Description    = rdr.IsDBNull(6) ? "" : rdr.GetString(6),
+            Executor       = rdr.IsDBNull(7) ? "" : rdr.GetString(7),
+            Assigner       = rdr.IsDBNull(8) ? "" : rdr.GetString(8),
+            Status         = rdr.IsDBNull(9) ? "" : rdr.GetString(9),
+        };
+        if (!rdr.IsDBNull(10)) ApplyDuePacked(t, rdr.GetString(10));
+        return t;
     }
 
     private static void ApplyDuePacked(TaskRecord t, string packed)
@@ -438,6 +442,86 @@ public partial class ConstructorRepository
             using var ctx = new AppDbContext(db.DbPath);
             ctx.ApplyPerformancePragmas();
             return new ConstructorRepository(ctx).GetTaskRecords(activeIds, limit);
+        });
+
+    /// <summary>
+    /// Точный размер раздела по коллекциям: id коллекции → (всего задач, из них выполненных).
+    /// Считается ПО БАЗЕ, а не по загруженному, поэтому не зависит от крышки чтения: заголовок
+    /// группы обязан называть настоящее число дел коллекции, иначе он повторял бы то, что и так
+    /// видно на экране, и молчал бы о недочитанном хвосте.
+    ///
+    /// Задача = запись коллекции с включённым полем-исполнителем (исполнитель один, см.
+    /// <see cref="TaskExecFieldId"/>), поэтому «всего» — это обычный COUNT по индексу
+    /// db_records(CollectionId, Position). Выполненные добираются JOIN'ом по PK
+    /// (RecordId, FieldId) к ОДНОМУ полю-статусу коллекции — тому же, что читает
+    /// <see cref="GetTaskRecords"/>: подзапрос повторяет <see cref="RoleOrder"/>, иначе на старой
+    /// базе с двумя статусами счётчик спорил бы с чипами карточек. Коррелирован он только по
+    /// коллекции (не по записи), поэтому это одна дешёвая выборка на группу, а не на строку.
+    /// </summary>
+    public Dictionary<int, (int Total, int Done)> CountTasksByCollection(ISet<int>? activeIds = null)
+    {
+        var result = new Dictionary<int, (int Total, int Done)>();
+        if (activeIds is { Count: 0 }) return result;
+
+        // Задачные коллекции и их поля-статусы — через EF: db_fields мала, а знать это заранее
+        // важно. Раньше поле-статус искал коррелированный подзапрос ВНУТРИ счёта, и SQLite
+        // выполнял его на КАЖДУЮ запись — на базе в полмиллиона это полмиллиона лишних выборок
+        // по db_fields, то есть секунды на ровном месте при каждом открытии раздела и каждой
+        // правке задачи. Теперь связь «коллекция → её статус» приезжает готовой картой.
+        var statusByCollection = RoleOrder(db.DbFields.Where(f => f.IsTaskStatus))
+            .Select(f => new { f.CollectionId, f.Id })
+            .ToList()
+            .GroupBy(x => x.CollectionId)
+            .ToDictionary(g => g.Key, g => g.First().Id);
+
+        var taskCollections = db.DbFields
+            .Where(f => f.FieldType == "user" && f.IsTaskExec)
+            .Select(f => f.CollectionId)
+            .Distinct()
+            .ToList();
+        if (activeIds is not null) taskCollections.RemoveAll(c => !activeIds.Contains(c));
+        if (taskCollections.Count == 0) return result;
+
+        // Поле-статус подставляется прямо в условие соединения: CASE по коллекции строки. Это
+        // сик по PK (RecordId, FieldId), а не поиск поля. Коллекции без статуса достаётся −1 —
+        // совпадений нет, выполненных ноль.
+        var statusCase = string.Join(" ", taskCollections
+            .Where(statusByCollection.ContainsKey)
+            .Select(c => $"WHEN {c} THEN {statusByCollection[c]}"));
+        var statusExpr = statusCase.Length > 0 ? $"CASE r.CollectionId {statusCase} ELSE -1 END" : "-1";
+
+        var conn = db.Database.GetDbConnection();
+        var opened = conn.State != System.Data.ConnectionState.Open;
+        if (opened) conn.Open();
+        try
+        {
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = $@"
+                SELECT r.CollectionId, COUNT(*),
+                       SUM(CASE WHEN vs.Value = @done THEN 1 ELSE 0 END)
+                FROM db_records r
+                LEFT JOIN db_field_values vs
+                       ON vs.RecordId = r.Id AND vs.FieldId = {statusExpr}
+                WHERE r.CollectionId IN ({string.Join(",", taskCollections)})
+                GROUP BY r.CollectionId";
+            AddParam(cmd, "@done").Value = TaskStatusDone;
+
+            using var rdr = cmd.ExecuteReader();
+            while (rdr.Read())
+                result[rdr.GetInt32(0)] = (rdr.GetInt32(1), rdr.IsDBNull(2) ? 0 : rdr.GetInt32(2));
+        }
+        finally { if (opened) conn.Close(); }
+        return result;
+    }
+
+    /// <summary>Фоновый <see cref="CountTasksByCollection"/> на ОТДЕЛЬНОМ подключении: идёт рядом
+    /// с чтением задач, а общий контекст однопоточный.</summary>
+    public Task<Dictionary<int, (int Total, int Done)>> CountTasksByCollectionAsync(ISet<int>? activeIds = null) =>
+        Task.Run(() =>
+        {
+            using var ctx = new AppDbContext(db.DbPath);
+            ctx.ApplyPerformancePragmas();
+            return new ConstructorRepository(ctx).CountTasksByCollection(activeIds);
         });
 
     // ── CRUD задач ───────────────────────────────────────────────────────────

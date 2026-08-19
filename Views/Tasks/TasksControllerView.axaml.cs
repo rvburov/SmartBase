@@ -10,8 +10,8 @@ namespace SmartBase.Views.Tasks;
 
 // Оркестратор раздела «Задачи» (упрощённый CalendarControllerView): агрегат задач по
 // ОТМЕЧЕННЫМ коллекциям всех допущенных БД, сгруппированный по коллекциям (заголовок
-// коллекции + её задачи); поиск и сортировка — в памяти по загруженному (v1 читает не
-// более TaskLimit на БД).
+// коллекции + её задачи); поиск и сортировка — в памяти по загруженному (читается не
+// более TaskLoadCap на БД).
 //
 // «Открытой коллекции» здесь нет: клик по строке сайдбара — та же галочка, что и в
 // календаре. Раньше клик сужал список до одной коллекции, и галочки остальных ни на что
@@ -21,16 +21,34 @@ public partial class TasksControllerView : UserControl
     // Создание задачи могло создать коллекцию/авто-поля — сайдбары и таблицы обновляются снаружи.
     public event EventHandler? CollectionsMayHaveChanged;
 
-    private const int TaskLimit = 1000;
+    /// <summary>
+    /// Сколько задач раздел читает с одной БД. Тот же порог, что у «Расписания» и «Журнала»
+    /// календаря (<c>MemCap</c>): до него набор держится в памяти целиком — а значит порядок по
+    /// сроку, поиск и все шесть счётчиков фильтра остаются точными и считаются одним проходом.
+    ///
+    /// Прежняя тысяча была здесь не порогом памяти, а произволом: задачей стала КАЖДАЯ запись
+    /// коллекции с полем-исполнителем, и крышка уперлась в размер коллекции, а не в число дел.
+    /// Раздел молча показывал первую тысячу по позиции, а счётчик в навбаре повторял ту же
+    /// тысячу и выглядел полным ответом. Теперь недочитанный хвост виден: сколько задач в
+    /// коллекции на самом деле, спрашивается отдельным COUNT'ом
+    /// (<see cref="ConstructorRepository.CountTasksByCollection"/>), и разница показывается
+    /// строкой «+N ещё» в конце группы — как календарь говорит о недоставленных событиях дня.
+    /// </summary>
+    private const int TaskLoadCap = 10_000;
 
     private readonly List<(int DbId, string Name, ConstructorRepository Repo)> _dbs = [];
     private Dictionary<int, HashSet<int>>? _activeByDb;
     private string _searchQuery = "";
     private TaskFilterKind _filter = TaskFilterKind.All;
     private List<TaskRecord> _loaded = [];
-    // Коллекции для заголовков групп: (DbId, ColId) → место в сайдбаре и цвет. Снимается
-    // при загрузке — ApplyToList зовётся и на каждый символ поиска.
-    private Dictionary<(int DbId, int ColId), (int Order, string Color)> _collections = [];
+    // Коллекции для заголовков групп: (DbId, ColId) → место в сайдбаре, цвет и название.
+    // Снимается при загрузке — ApplyToList зовётся и на каждый символ поиска.
+    private Dictionary<(int DbId, int ColId), (int Order, string Color, string Name)> _collections = [];
+    // Размеры и форма коллекций ПО БАЗЕ: сколько задач, сколько выполнено, сколько со сроком и
+    // можно ли читать коллекцию страницами. Снимается тем же заходом, что и сам список.
+    // Заголовок группы называет эти числа, а не пересчитывает показанное (но только при пустом
+    // поиске и фильтре «Все задачи»), и по ним же собирается виртуальный список.
+    private Dictionary<(int DbId, int ColId), ConstructorRepository.TaskCollectionStats> _stats = [];
     private long _gen;   // поколение загрузки: устаревшие результаты не применяются
 
     private ConstructorRepository? RepoFor(int dbId)
@@ -81,6 +99,11 @@ public partial class TasksControllerView : UserControl
 
     public void SetActiveIds(Dictionary<int, HashSet<int>> activeByDb)
     {
+        // Тот же набор галочек — перечитывать нечего. Сайдбар присылает его и когда ничего не
+        // менял (возврат в раздел, перемонтирование базы), а на большой базе каждый лишний
+        // заход — это лишний счёт по всем коллекциям и волна «Загрузка…» на ровном месте.
+        if (TaskLoadPlan.SameActiveIds(_activeByDb, activeByDb)) return;
+
         _activeByDb = activeByDb;
         RefreshCurrent();
     }
@@ -102,42 +125,81 @@ public partial class TasksControllerView : UserControl
 
     // ── Загрузка ─────────────────────────────────────────────────────────────
 
-    private void RefreshCurrent() => _ = LoadAsync();
+    /// <param name="quiet">
+    /// Тихое обновление: список остаётся на экране и возвращается на прежнее место, оверлей
+    /// «Загрузка…» не показывается. Так перечитываются данные ПОСЛЕ действия над задачей —
+    /// человек только что нажал «Сохранить» и смотрит на карточку, а не начинает всё заново;
+    /// волна «Загрузка…» на её месте выглядит так, будто раздел открылся заново. То же правило
+    /// в «Расписании» календаря: оно зовёт это «пересборкой без свежести».
+    /// </param>
+    private void RefreshCurrent(bool quiet = false) => _ = LoadAsync(quiet);
 
-    private async Task LoadAsync()
+    private async Task LoadAsync(bool quiet = false)
     {
         if (_dbs.Count == 0) { _loaded = []; ApplyToList(); return; }
 
-        var gen  = ++_gen;
-        var work = LoadAllAsync();
+        var gen       = ++_gen;
+        var oldOffset = TaskList.ScrollOffset;
+        var work      = LoadAllAsync();
 
-        // Оверлей — только если загрузка дольше 400 мс (как сетка календаря).
-        if (await Task.WhenAny(work, Task.Delay(400)) != work && gen == _gen)
+        // Оверлей — только если загрузка дольше 400 мс (как сетка календаря) И показывать
+        // нечего: при правке задачи на экране уже есть верный список.
+        if (!quiet && await Task.WhenAny(work, Task.Delay(400)) != work && gen == _gen)
             LoadingOverlay.IsVisible = true;
 
         List<TaskRecord> list;
-        try { list = await work; }
-        catch { list = []; }   // фон: недоступная БД не валит UI
+        Dictionary<(int DbId, int ColId), ConstructorRepository.TaskCollectionStats> stats;
+        bool tasksRead;
+        try { (list, stats, tasksRead) = await work; }
+        catch { (list, stats, tasksRead) = ([], [], true); }   // фон: недоступная БД не валит UI
 
         if (gen != _gen) return;
         LoadingOverlay.IsVisible = false;
-        _loaded = list;
+        _loaded      = list;
+        _stats       = stats;
+        _loadedStale = !tasksRead;
         UpdateChrome();
         ApplyToList();
+
+        // Список подменён целиком, а значит прокрутка уехала в начало. При тихом обновлении
+        // возвращаем её: правка задачи в середине длинного списка не должна выбрасывать наверх.
+        if (quiet) TaskList.RestoreScroll(oldOffset);
     }
 
-    private async Task<List<TaskRecord>> LoadAllAsync()
+    // Размеры коллекций читаются ВСЕГДА (счёт по индексам — дёшево), а сплошной прочит карточек
+    // делается, только пока раздел помещается в память. Дальше он не нужен вовсе: страницами
+    // читается ЛЮБОЙ вид — и поиск, и каждый из пяти фильтров, — а прочитанные «на всякий
+    // случай» десять тысяч строк с коррелированными подзапросами были самым дорогим, что
+    // раздел делал при открытии И при каждой правке задачи.
+    private async Task<(List<TaskRecord> Tasks,
+                        Dictionary<(int DbId, int ColId), ConstructorRepository.TaskCollectionStats> Stats,
+                        bool TasksRead)>
+        LoadAllAsync()
     {
+        var stats = new Dictionary<(int DbId, int ColId), ConstructorRepository.TaskCollectionStats>();
+        foreach (var (dbId, _, repo) in _dbs.ToList())
+        {
+            ISet<int>? active = _activeByDb is not null && _activeByDb.TryGetValue(dbId, out var s) ? s : null;
+            foreach (var (colId, one) in await repo.GetTaskCollectionStatsAsync(active))
+                stats[(dbId, colId)] = one;
+        }
+
+        var needTasks = TaskLoadPlan.NeedsTaskRead(stats.Values.Sum(s => s.Total), TaskLoadCap);
+        if (!needTasks) return ([], stats, false);
+
         var result = new List<TaskRecord>();
         foreach (var (dbId, _, repo) in _dbs.ToList())
         {
             ISet<int>? active = _activeByDb is not null && _activeByDb.TryGetValue(dbId, out var s) ? s : null;
-            var part = await repo.LoadTasksAsync(active, TaskLimit);
+            var part = await repo.LoadTasksAsync(active, TaskLoadCap);
             foreach (var t in part) t.DbId = dbId;
             result.AddRange(part);
         }
-        return result;
+        return (result, stats, true);
     }
+
+    // Карточки не читались: виду они были не нужны. Понадобятся — перезагрузимся (см. ApplyToList).
+    private bool _loadedStale;
 
     // Заголовок навбара, коллекции (группы списка + строка быстрого добавления) и опции
     // исполнителя.
@@ -147,13 +209,13 @@ public partial class TasksControllerView : UserControl
 
         // Коллекции — тем же порядком, что в сайдбаре (GetAllCollections отдаёт их по
         // Position), чтобы группы списка шли как строки дерева; цвет идёт на индикатор.
-        var collections = new Dictionary<(int DbId, int ColId), (int Order, string Color)>();
+        var collections = new Dictionary<(int DbId, int ColId), (int Order, string Color, string Name)>();
         var options     = new List<QuickCollectionOption>();
         foreach (var (dbId, dbName, repo) in _dbs)
             foreach (var c in repo.GetAllCollections())
                 if (c.Id is int cid)
                 {
-                    collections[(dbId, cid)] = (collections.Count, c.Color ?? EventColors.Default);
+                    collections[(dbId, cid)] = (collections.Count, c.Color ?? EventColors.Default, c.Name);
                     // В выборе цели — ВСЕ коллекции допущенных баз, а не только отмеченные:
                     // галочки решают, что показано в списке, а создавать можно и в скрытой.
                     // Имя базы в подписи — только при нескольких (иначе шум), как в группах.
@@ -191,15 +253,159 @@ public partial class TasksControllerView : UserControl
         var found = items.ToList();
         var now   = DateTime.Now;
         var me    = CurrentUser.DisplayName;
-        NavbarControl.SetFilterCounts(TaskFilters.Counts(found, now, me), _filter);
+        RefreshFilterCounts(found, now, me);
 
         var shown = found.Where(t => TaskFilters.Matches(t, _filter, now, me));
+
+        // Раздел не помещается в память — показываем его страницами. Это касается ЛЮБОГО вида:
+        // и поиск, и каждый из пяти фильтров уходят в SQL тем же условием, каким описаны в
+        // TaskFilters, поэтому недостижимых задач в разделе не остаётся.
+        if (SectionTotal() > TaskLoadCap) { ShowVirtual(now); return; }
 
         // Базу в подзаголовке показываем, только когда их несколько (иначе шум).
         var groups = TaskGrouping.Build(shown, _collections, _dbs.Count > 1 ? NameOfDb : null);
 
         // Пусто по разным причинам — подсказка разная: снятые галочки исправляются в сайдбаре.
         TaskList.SetGroups(groups, NoTasksHint());
+    }
+
+    // Поколение счёта: устаревший фоновый результат не должен лечь поверх свежего.
+    private long _countGen;
+
+    // Счётчики пунктов фильтра. Пока раздел помещается в память — считаются проходом по ней:
+    // точно и мгновенно. Дальше карточек в памяти нет вовсе, и счёт уходит в БД — по одному
+    // запросу на правило, каждый ПОД КРЫШКОЙ ПОКАЗА: больше 999 пилюле не нужно, она печатает
+    // «999+», зато цена такого счёта не зависит от размера базы. Крышка живёт только здесь:
+    // размеры групп, по которым строится полоса прокрутки, считаются точно.
+    private void RefreshFilterCounts(List<TaskRecord> found, DateTime now, string me)
+    {
+        if (SectionTotal() <= TaskLoadCap)
+        {
+            NavbarControl.SetFilterCounts(TaskFilters.Counts(found, now, me), _filter);
+            return;
+        }
+        _ = RefreshFilterCountsFromDbAsync(++_countGen, now, me);
+    }
+
+    private async Task RefreshFilterCountsFromDbAsync(long gen, DateTime now, string me)
+    {
+        var kinds  = TaskFilters.All.Select(k => k.ToString()).ToList();
+        var totals = TaskFilters.All.ToDictionary(k => k, _ => 0);
+        // Считать точнее потолка пилюли незачем: на единицу больше — уже «999+».
+        var cap    = Controls.Components.TaskFilterItem.CountCap + 1;
+        var search = (_searchQuery ?? "").Trim();
+
+        foreach (var (dbId, _, repo) in _dbs.ToList())
+        {
+            var byCol = StatsOfDb(dbId);
+            if (byCol.Count == 0) continue;
+
+            Dictionary<string, int> part;
+            try { part = await repo.CountTaskViewsAsync(byCol, kinds, search, MeVariants(repo, me), now, cap); }
+            catch { continue; }   // фон: недоступная БД не валит счётчики остальных
+
+            if (gen != _countGen) return;
+            foreach (var k in TaskFilters.All)
+                totals[k] += part.GetValueOrDefault(k.ToString());
+        }
+
+        if (gen != _countGen) return;
+        NavbarControl.SetFilterCounts(totals, _filter);
+    }
+
+    // Размеры коллекций одной базы — репозиторий знает только свои id.
+    private Dictionary<int, ConstructorRepository.TaskCollectionStats> StatsOfDb(int dbId)
+    {
+        var result = new Dictionary<int, ConstructorRepository.TaskCollectionStats>();
+        foreach (var (key, s) in _stats)
+            if (key.DbId == dbId && s.Total > 0) result[key.ColId] = s;
+        return result;
+    }
+
+    // Чем текущий пользователь может быть записан в поле-исполнителе. В памяти сравнение идёт
+    // без учёта регистра, а SQLite так кириллицу не сравнивает — поэтому берём имена
+    // пользователей базы, совпавшие с текущим без учёта регистра, и сверяемся с ними точно.
+    private static List<string> MeVariants(ConstructorRepository repo, string me)
+    {
+        var set = new HashSet<string>(StringComparer.Ordinal) { me };
+        try
+        {
+            foreach (var name in repo.GetUserOptions())
+                if (name.Equals(me, StringComparison.CurrentCultureIgnoreCase)) set.Add(name);
+        }
+        catch { /* нет прав на список пользователей — сверяемся с одним точным именем */ }
+        return [.. set];
+    }
+
+    /// <summary>Сколько задач в разделе на самом деле — сумма по отмеченным коллекциям всех БД.</summary>
+    private int SectionTotal()
+    {
+        var sum = 0;
+        foreach (var s in _stats.Values) sum += s.Total;
+        return sum;
+    }
+
+    // ── Виртуальный показ (раздел не помещается в память) ────────────────────
+
+    // Поколение показа: устаревшая сборка не должна лечь поверх свежей (человек успел
+    // переключить фильтр, пока считались размеры групп).
+    private long _viewGen;
+
+    private void ShowVirtual(DateTime now) => _ = ShowVirtualAsync(++_viewGen, now);
+
+    // Группы собираются не из задач, а из РАЗМЕРОВ групп в текущем виде: карточки виртуальный
+    // список дочитает сам. Для вида «Все задачи» размеры уже известны из общего счёта коллекций,
+    // и запросов не будет вовсе; поиск и фильтры требуют по запросу на коллекцию — они идут
+    // фоном, а прежний список всё это время остаётся на экране.
+    private async Task ShowVirtualAsync(long gen, DateTime now)
+    {
+        var search  = (_searchQuery ?? "").Trim();
+        var me      = CurrentUser.DisplayName;
+        var entries = new List<(int Order, TaskVirtualList.Entry Entry)>();
+
+        foreach (var (dbId, _, repo) in _dbs.ToList())
+        {
+            var byCol = StatsOfDb(dbId);
+            if (byCol.Count == 0) continue;
+
+            // Вид у каждой базы свой: варианты написания текущего пользователя берутся из её
+            // списка пользователей.
+            var view = new ConstructorRepository.TaskView(
+                _filter.ToString(), search, MeVariants(repo, me), now);
+
+            Dictionary<int, ConstructorRepository.TaskViewSize> sizes;
+            try { sizes = await repo.CountTaskViewAsync(byCol, view); }
+            catch { continue; }   // фон: недоступная БД не валит остальные
+
+            if (gen != _viewGen) return;
+
+            foreach (var (colId, size) in sizes)
+            {
+                if (size.Total == 0) continue;
+                if (!_collections.TryGetValue((dbId, colId), out var col)) continue;
+
+                var title = TitleText.FirstLine(col.Name);
+                entries.Add((col.Order, new TaskVirtualList.Entry
+                {
+                    Group = new TaskGroup(
+                        DbId:     dbId,
+                        ColId:    colId,
+                        Title:    title.Length > 0 ? title : "Без коллекции",
+                        Subtitle: _dbs.Count > 1 ? NameOfDb(dbId) : "",
+                        Color:    EventColors.Display(col.Color),
+                        Tasks:    [],
+                        Exact:    (size.Total, size.Done)),
+                    Repo   = repo,
+                    Stats  = byCol[colId],
+                    View   = view,
+                    Dated  = size.Dated,
+                    Tasks  = size.Total,
+                }));
+            }
+        }
+
+        if (gen != _viewGen) return;
+        TaskList.SetVirtual([.. entries.OrderBy(x => x.Order).Select(x => x.Entry)], NoTasksHint());
     }
 
     private string NameOfDb(int dbId)
@@ -262,7 +468,8 @@ public partial class TasksControllerView : UserControl
         }
 
         CollectionsMayHaveChanged?.Invoke(this, EventArgs.Empty);
-        RefreshCurrent();
+        // Тихо: список остаётся на экране и на прежнем месте (см. RefreshCurrent).
+        RefreshCurrent(quiet: true);
     }
 
     // ── Массовые операции (контекстное меню карточек и Delete) ───────────────
@@ -290,7 +497,7 @@ public partial class TasksControllerView : UserControl
     }
 
     // Bulk-путь: работа идёт на изолированных подключениях в фоне, поверх списка — тот же
-    // оверлей, что при долгой загрузке (процентов нет: объём здесь ограничен TaskLimit).
+    // оверлей, что при долгой загрузке (процентов нет: объём здесь ограничен TaskLoadCap).
     private async Task RunBulkAsync(string dbPath, Action work)
     {
         LoadingOverlay.IsVisible = true;
@@ -351,7 +558,8 @@ public partial class TasksControllerView : UserControl
             });
 
         CollectionsMayHaveChanged?.Invoke(this, EventArgs.Empty);
-        RefreshCurrent();
+        // Тихо: список остаётся на экране и на прежнем месте (см. RefreshCurrent).
+        RefreshCurrent(quiet: true);
     }
 
     private async Task DuplicateTasksWithConfirm(IReadOnlyList<TaskRecord> tasks)
@@ -395,7 +603,8 @@ public partial class TasksControllerView : UserControl
         }
 
         CollectionsMayHaveChanged?.Invoke(this, EventArgs.Empty);
-        RefreshCurrent();
+        // Тихо: список остаётся на экране и на прежнем месте (см. RefreshCurrent).
+        RefreshCurrent(quiet: true);
     }
 
     // Русское склонение: 1 задачу, 2–4 задачи, 5+ задач (с учётом 11–14).
@@ -472,6 +681,7 @@ public partial class TasksControllerView : UserControl
         }
 
         CollectionsMayHaveChanged?.Invoke(this, EventArgs.Empty);
-        RefreshCurrent();
+        // Тихо: список остаётся на экране и на прежнем месте (см. RefreshCurrent).
+        RefreshCurrent(quiet: true);
     }
 }

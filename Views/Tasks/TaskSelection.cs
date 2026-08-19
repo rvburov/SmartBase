@@ -24,6 +24,11 @@ public sealed class TaskSelection
 
     public int Count => _keys.Count;
 
+    /// <summary>Ключи выделенных задач. Нужны виртуальному списку: карточка, уехавшая за край
+    /// кеша страниц, обязана вернуться подсвеченной, а самой задачи он в этот момент не знает —
+    /// только ключ.</summary>
+    public IReadOnlyCollection<TaskKey> Keys => _keys;
+
     /// <summary>Ключ задачи; null — задача ещё не сохранена (нет Id).</summary>
     public static TaskKey? KeyOf(TaskRecord t) =>
         t.Id is int id ? new TaskKey(t.DbId, id, t.ExecFieldId) : null;

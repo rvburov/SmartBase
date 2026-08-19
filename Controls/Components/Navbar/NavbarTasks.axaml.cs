@@ -137,9 +137,19 @@ public sealed partial class TaskFilterItem : ObservableObject
     /// как «нечего смотреть», а «0» в рамке выглядел бы значением, на которое стоит нажать.</summary>
     public bool HasCount => Count > 0;
 
-    /// <summary>Счётчик с разделителем разрядов («1 000»), как остальные количества в
-    /// приложении: четырёхзначное число сплошняком читается заметно хуже.</summary>
-    public string CountText => Count.ToString("N0");
+    /// <summary>Потолок показа: больше него счётчик печатается как «999+».</summary>
+    public const int CountCap = 999;
+
+    /// <summary>
+    /// Счётчик пункта. Свыше <see cref="CountCap"/> — «999+»: пилюля стоит в свёрнутом боксе
+    /// навбара рядом с поиском, и точное четырёх-пятизначное число там только распирает строку,
+    /// ничего не сообщая — по нему всё равно не считают, по нему решают, стоит ли заходить.
+    /// Разделитель разрядов после этого не нужен: до потолка число всегда трёхзначное.
+    ///
+    /// Точное количество не пропадает: заголовок коллекции в списке называет его полностью
+    /// (<c>TaskGroupHeaderVm.ProgressText</c>) — там для этого есть место.
+    /// </summary>
+    public string CountText => Count > CountCap ? $"{CountCap}+" : Count.ToString();
 
     public Geometry? Icon =>
         Application.Current!.TryFindResource(TaskFilters.IconKey(_kind), out var res) ? res as Geometry : null;

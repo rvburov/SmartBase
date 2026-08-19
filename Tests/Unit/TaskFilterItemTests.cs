@@ -63,13 +63,34 @@ public sealed class TaskFilterItemTests
         Assert.Equal("0", item.CountText);   // текст есть, но пилюля скрыта по HasCount
     }
 
+    // Пилюля живёт в свёрнутом боксе навбара: точное четырёхзначное число там только распирает
+    // строку. Ровно на потолке счётчик ещё точный — «+» появляется только когда есть что скрывать.
     [Fact]
-    public void Large_counts_get_a_thousands_separator()
+    public void Counts_up_to_the_cap_stay_exact()
     {
-        var item = new TaskFilterItem(TaskFilterKind.Done, 1234);
+        Assert.Equal("998", new TaskFilterItem(TaskFilterKind.Done, TaskFilterItem.CountCap - 1).CountText);
+        Assert.Equal("999", new TaskFilterItem(TaskFilterKind.Done, TaskFilterItem.CountCap).CountText);
+    }
 
-        Assert.Contains("1", item.CountText);
-        Assert.NotEqual("1234", item.CountText);
+    [Fact]
+    public void Counts_above_the_cap_collapse_to_999_plus()
+    {
+        Assert.Equal("999+", new TaskFilterItem(TaskFilterKind.Done, TaskFilterItem.CountCap + 1).CountText);
+        Assert.Equal("999+", new TaskFilterItem(TaskFilterKind.All, 1_234_567).CountText);
+    }
+
+    // Потолок обязан доезжать до привязки: пункты живут всё время работы панели, и переход
+    // через границу меняет только текст — уведомление о нём то же, что у обычной смены числа.
+    [Fact]
+    public void Crossing_the_cap_notifies_the_binding()
+    {
+        var item = new TaskFilterItem(TaskFilterKind.All, TaskFilterItem.CountCap);
+        var seen = Track(item);
+
+        item.Count = TaskFilterItem.CountCap + 1;
+
+        Assert.Contains(nameof(TaskFilterItem.CountText), seen);
+        Assert.Equal("999+", item.CountText);
     }
 
     [Fact]

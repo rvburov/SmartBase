@@ -14,16 +14,17 @@ namespace SmartBase.Views.Tasks;
 public static class TaskGrouping
 {
     /// <param name="collections">
-    /// Коллекции сайдбара: (DbId, CollectionId) → место в списке и цвет (цветом заливается
-    /// индикатор выполненного). Коллекции, которой в словаре нет (удалена между загрузкой и
-    /// показом), достаётся конец списка и цвет из самой задачи.
+    /// Коллекции сайдбара: (DbId, CollectionId) → место в списке, цвет (им заливается индикатор
+    /// выполненного) и название. Коллекции, которой в словаре нет (удалена между загрузкой и
+    /// показом), достаётся конец списка, а цвет и название — из самой задачи. Название нужно
+    /// отдельно от задач: у группы, ни одна карточка которой не прочиталась, брать его неоткуда.
     /// </param>
     /// <param name="dbName">
     /// Имя базы для подзаголовка группы; null — базу не показываем (она одна, это был бы шум).
     /// </param>
     public static List<TaskGroup> Build(
         IEnumerable<TaskRecord> tasks,
-        IReadOnlyDictionary<(int DbId, int ColId), (int Order, string Color)> collections,
+        IReadOnlyDictionary<(int DbId, int ColId), (int Order, string Color, string Name)> collections,
         Func<int, string>? dbName = null)
     {
         return tasks

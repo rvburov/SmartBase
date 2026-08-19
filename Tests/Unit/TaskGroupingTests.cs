@@ -22,10 +22,11 @@ public sealed class TaskGroupingTests
             Title = $"T{id}", DueStart = due, DueEnd = due, Status = status,
         };
 
-    // Коллекции «как в сайдбаре»: (DbId, ColId) → место в списке и цвет.
-    private static Dictionary<(int DbId, int ColId), (int Order, string Color)> Cols(
+    // Коллекции «как в сайдбаре»: (DbId, ColId) → место в списке, цвет и название. Название
+    // берёт виртуальный список: там карточек в памяти нет и спросить имя не у кого.
+    private static Dictionary<(int DbId, int ColId), (int Order, string Color, string Name)> Cols(
         params (int DbId, int ColId, int Place)[] rows) =>
-        rows.ToDictionary(r => (r.DbId, r.ColId), r => (r.Place, ""));
+        rows.ToDictionary(r => (r.DbId, r.ColId), r => (r.Place, "", ""));
 
     // ── Порядок групп ─────────────────────────────────────────────────────────
 
@@ -144,9 +145,9 @@ public sealed class TaskGroupingTests
     [InlineData("", EventColors.Grey)]
     public void Group_color_follows_the_default_color_rule(string collectionColor, string expected)
     {
-        var cols = new Dictionary<(int DbId, int ColId), (int Order, string Color)>
+        var cols = new Dictionary<(int DbId, int ColId), (int Order, string Color, string Name)>
         {
-            [(1, 10)] = (0, collectionColor),
+            [(1, 10)] = (0, collectionColor, "К"),
         };
 
         var group = Assert.Single(TaskGrouping.Build([Task(1, 1, 10, "К")], cols));
@@ -192,5 +193,20 @@ public sealed class TaskGroupingTests
 
         Assert.Equal("2 из 2", vm.ProgressText);
         Assert.Equal(1, vm.DoneFraction);
+    }
+
+    /// <summary>
+    /// В виртуальном режиме карточек в памяти нет вовсе: группа приходит с ПУСТЫМ набором задач
+    /// и готовыми числами из базы. Заголовок обязан называть их, а не пересчитывать пустоту.
+    /// </summary>
+    [Fact]
+    public void Header_takes_the_numbers_from_the_database_when_it_has_no_tasks()
+    {
+        var group = new TaskGroup(1, 10, "К", "", "#FF9500", [], Exact: (4218, 900));
+        var vm    = new TaskGroupHeaderVm(group, collapsed: false, first: true);
+
+        Assert.Equal(4218, vm.TotalCount);
+        Assert.Equal(900, vm.DoneCount);
+        Assert.Equal($"{900:N0} из {4218:N0}", vm.ProgressText);
     }
 }

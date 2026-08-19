@@ -70,28 +70,33 @@
             </Grid>
         </Border>
 
-        <!-- Список карточек задач (виртуализация — как список сайдбара).
-             Своей полосы нет (Hidden) — её роль играет ScrollBar ниже, стоящий на всю
-             высоту панели, чтобы полоса начиналась сверху, как в таблице. -->
+        <!-- Список карточек задач. Своей полосы нет (Hidden) — её роль играет ScrollBar ниже,
+             стоящий на всю высоту панели, чтобы полоса начиналась сверху, как в таблице.
+
+             ItemsControl — ПРЯМОЙ ребёнок ScrollViewer'а, без промежуточной панели. Иначе
+             VirtualizingStackPanel получает неограниченную высоту и материализует ВСЕ строки:
+             виртуализация есть на бумаге и отсутствует на деле. Раньше здесь стоял StackPanel
+             ради подписи «Нет задач» — теперь она лежит поверх списка отдельной строкой сетки
+             (показывать её всё равно не с чем: пустой список пуст). -->
         <ScrollViewer Grid.Row="3" x:Name="CardsScroll"
                       HorizontalScrollBarVisibility="Disabled"
                       VerticalScrollBarVisibility="Hidden">
-            <StackPanel Margin="0,0,16,0">
-                <ItemsControl x:Name="CardsHost">
-                    <ItemsControl.ItemsPanel>
-                        <ItemsPanelTemplate>
-                            <VirtualizingStackPanel />
-                        </ItemsPanelTemplate>
-                    </ItemsControl.ItemsPanel>
-                </ItemsControl>
-                <TextBlock x:Name="EmptyLabel"
-                           Text="Нет задач"
-                           IsVisible="False"
-                           Foreground="{StaticResource BrushSecondaryText}"
-                           HorizontalAlignment="Center"
-                           Margin="0,32,0,16" />
-            </StackPanel>
+            <ItemsControl x:Name="CardsHost" Margin="0,0,16,0">
+                <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate>
+                        <VirtualizingStackPanel />
+                    </ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+            </ItemsControl>
         </ScrollViewer>
+
+        <TextBlock Grid.Row="3" x:Name="EmptyLabel"
+                   Text="Нет задач"
+                   IsVisible="False"
+                   Foreground="{StaticResource BrushSecondaryText}"
+                   HorizontalAlignment="Center"
+                   VerticalAlignment="Top"
+                   Margin="0,32,16,16" />
 
         <!-- Полоса прокрутки списка — отдельной колонкой на всю высоту панели (строка
              быстрого добавления + список), как вертикальная полоса таблицы стоит на
