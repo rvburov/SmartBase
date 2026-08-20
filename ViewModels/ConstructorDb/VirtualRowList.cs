@@ -175,7 +175,7 @@ internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollecti
             if (!_pending.Contains(page) || !_pages.ContainsKey(page)) return;
             var data = await _repo.LoadPageAsync(_collectionId, _excludeHidden, idSlice, skip, take,
                                                  afterPos, afterId, beforePos, beforeId);
-            Dispatcher.UIThread.Post(() => FillFromData(gen, page, data.Records, data.Values));
+            Dispatcher.UIThread.Post(() => FillFromData(gen, page, data.Records, data.Values, data.CellStyles));
         }
         catch (Exception ex)
         {
@@ -193,8 +193,9 @@ internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollecti
     // Строит реальные строки из записей + их значений (тёплая пересборка страниц, RebuildPageSync).
     private TableRowVm[] BuildRows(int skip, List<DbRecord> records)
     {
-        var ids    = records.Select(r => r.Id!.Value).ToList();
-        var valMap = _repo.GetFieldValuesBatch(ids);
+        var ids     = records.Select(r => r.Id!.Value).ToList();
+        var valMap  = _repo.GetFieldValuesBatch(ids);
+        var cellMap = _repo.GetCellStylesBatch(_collectionId, ids);
         PrimeRelationLinks(ids);
 
         var rows = new TableRowVm[records.Count];
@@ -205,6 +206,7 @@ internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollecti
             var values = valMap.TryGetValue(id, out var v) ? v : [];
             rows[i]    = Track(new TableRowVm(_repo, id, skip + i + 1, values, rec.Title ?? "",
                                               rec.CreatedAt ?? "", rec.UpdatedAt ?? "", rec.CreatedBy ?? "", rec.UpdatedBy ?? ""));
+            rows[i].SetStyle(rec.Color, cellMap.GetValueOrDefault(id), notify: false);
         }
         RememberCursor(skip / PageSize, records);
         return rows;
@@ -212,7 +214,8 @@ internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollecti
 
     /// <summary>Заполняет ранее созданные строки-заглушки данными, пришедшими из фона (UI-поток).</summary>
     private void FillFromData(int gen, int page, List<DbRecord> records,
-                             Dictionary<int, Dictionary<int, string>> valMap)
+                             Dictionary<int, Dictionary<int, string>> valMap,
+                             Dictionary<int, Dictionary<string, RowStyle>> cellMap)
     {
         if (gen != _generation) return;                         // данные устарели (был Reset)
         if (!_pending.Remove(page)) return;                     // уже заполнена/сброшена
@@ -226,6 +229,7 @@ internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollecti
             var rec    = records[i];
             var id     = rec.Id!.Value;
             var values = valMap.TryGetValue(id, out var v) ? v : [];
+            rows[i].SetStyle(rec.Color, cellMap.GetValueOrDefault(id), notify: false);
             rows[i].Fill(_repo, id, values, rec.Title ?? "",
                          rec.CreatedAt ?? "", rec.UpdatedAt ?? "", rec.CreatedBy ?? "", rec.UpdatedBy ?? "");
         }
@@ -253,6 +257,15 @@ internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollecti
         _pending.Remove(oldest);   // вытесненную страницу её фоновая загрузка пропустит (см. выше)
     }
 
+    /// <summary>Уведомить ВСЕ загруженные строки, что их ячейки надо перечитать — для правок,
+    /// касающихся всей таблицы сразу (цвет колонки). Данных не трогает, загрузку не инициирует.</summary>
+    public void NotifyAllCachedRows()
+    {
+        foreach (var rows in _pages.Values)
+            foreach (var row in rows)
+                row.NotifyCellsChanged();
+    }
+
     /// <summary>Ищет строку по RecordId в уже загруженных страницах (не инициирует загрузку).</summary>
     public TableRowVm? FindCachedByRecordId(int recordId)
     {
@@ -274,7 +287,9 @@ internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollecti
         if (rec is null) return;                       // запись удалена — оставляем как есть до Reset
 
         var values = _repo.GetFieldValues(recordId);
+        var cells  = _repo.GetCellStylesBatch(_collectionId, [recordId]);
         PrimeRelationLinks([recordId]);   // связи записи могли измениться (правка в панели записи)
+        row.SetStyle(rec.Color, cells.GetValueOrDefault(recordId), notify: false);
         row.Fill(_repo, recordId, values, rec.Title ?? "",
                  rec.CreatedAt ?? "", rec.UpdatedAt ?? "", rec.CreatedBy ?? "", rec.UpdatedBy ?? "");
     }
@@ -318,6 +333,7 @@ internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollecti
             var records = LoadRecordsByOffset(skip, rows.Length);
             var pageIds = records.Select(r => r.Id!.Value).ToList();
             var valMap  = _repo.GetFieldValuesBatch(pageIds);
+            var cellMap = _repo.GetCellStylesBatch(_collectionId, pageIds);
             PrimeRelationLinks(pageIds);
 
             for (var i = 0; i < records.Count && i < rows.Length; i++)
@@ -325,6 +341,7 @@ internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollecti
                 var rec    = records[i];
                 var id     = rec.Id!.Value;
                 var values = valMap.TryGetValue(id, out var v) ? v : [];
+                rows[i].SetStyle(rec.Color, cellMap.GetValueOrDefault(id), notify: false);
                 rows[i].Fill(_repo, id, values, rec.Title ?? "",
                          rec.CreatedAt ?? "", rec.UpdatedAt ?? "", rec.CreatedBy ?? "", rec.UpdatedBy ?? "");
             }

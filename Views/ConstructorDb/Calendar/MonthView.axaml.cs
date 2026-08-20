@@ -557,7 +557,7 @@ public partial class MonthView : UserControl
         var normalBg   = new SolidColorBrush(Color.FromArgb(50, color.R, color.G, color.B));
         var hoverBg    = new SolidColorBrush(Color.FromArgb(90, color.R, color.G, color.B));
         var selectedBg = new SolidColorBrush(color);
-        var darkBrush  = new SolidColorBrush(_Darken(color));
+        var darkBrush  = new SolidColorBrush(ColorTools.Darken(color));
 
         // Полоска утоплена внутрь плашки (как в Неделе): прижатая к краю она
         // выступала «усиками» за скруглённый силуэт — её радиус меньше радиуса плашки.
@@ -718,7 +718,7 @@ public partial class MonthView : UserControl
         var normalBg   = new SolidColorBrush(Color.FromArgb(50, color.R, color.G, color.B));
         var hoverBg    = new SolidColorBrush(Color.FromArgb(90, color.R, color.G, color.B));
         var selectedBg = new SolidColorBrush(color);
-        var darkBrush  = new SolidColorBrush(_Darken(color));
+        var darkBrush  = new SolidColorBrush(ColorTools.Darken(color));
 
         var bar = new Grid { Width = bw, Height = BarH, Cursor = new Cursor(StandardCursorType.Hand) };
 
@@ -1181,9 +1181,6 @@ public partial class MonthView : UserControl
         var row = Math.Max(0, Math.Min(5, (int)(pos.Y / ch)));
         return _gridStart.AddDays(row * 7 + col);
     }
-
-    private static Color _Darken(Color c, double f = 0.6)
-        => Color.FromArgb(c.A, (byte)(c.R * f), (byte)(c.G * f), (byte)(c.B * f));
 
     // Меню назначаются свойством ContextMenu контрола — фреймворк сам открывает
     // их по правому клику и закрывает (в т.ч. предыдущее), поэтому ручной Open()

@@ -249,10 +249,10 @@ public partial class WeekView : UserControl
                     var evH        = Math.Max(22, effectiveEndMin - startMin);
                     var evHVisible = evH - 2;
                     var color      = Color.Parse(EventColors.Display(ev.Color));
-                    var normalBg   = new SolidColorBrush(BlendWithWhite(color, 40));
-                    var hoverBg    = new SolidColorBrush(BlendWithWhite(color, 90));
+                    var normalBg   = new SolidColorBrush(ColorTools.BlendWithWhite(color, 40));
+                    var hoverBg    = new SolidColorBrush(ColorTools.BlendWithWhite(color, 90));
                     var colorBrush = new SolidColorBrush(color);
-                    var darkBrush  = new SolidColorBrush(Darken(color));
+                    var darkBrush  = new SolidColorBrush(ColorTools.Darken(color));
 
                     const double lineH   = 16.0;
                     const double margins = 4.0;
@@ -355,7 +355,7 @@ public partial class WeekView : UserControl
                     canvas.Children.Add(bottomHandle);
 
                     var solidBrush = new SolidColorBrush(color);
-                    var dimBg      = new SolidColorBrush(BlendWithWhite(color, 18));
+                    var dimBg      = new SolidColorBrush(ColorTools.BlendWithWhite(color, 18));
                     var entry = new EventEntry(ev, col, startMin, startMin + evH, btn)
                     {
                         SubCol     = colIdx,
@@ -1484,19 +1484,7 @@ public partial class WeekView : UserControl
         _todayTimeOverlay.Children.Add(line);
     }
 
-    private static Color Darken(Color c, double f = 0.6)
-        => Color.FromArgb(c.A, (byte)(c.R * f), (byte)(c.G * f), (byte)(c.B * f));
-
     // смешивает цвет с белым фоном чтобы убрать прозрачность (alpha blending)
-    private static Color BlendWithWhite(Color c, byte alpha)
-    {
-        var a = alpha / 255.0;
-        return Color.FromRgb(
-            (byte)(c.R * a + 255 * (1 - a)),
-            (byte)(c.G * a + 255 * (1 - a)),
-            (byte)(c.B * a + 255 * (1 - a)));
-    }
-
     // Лимит ПАРАЛЛЕЛЬНЫХ под-колонок пересекающихся событий (см. DayView.MaxEventColumns —
     // здесь жёстче: колонка дня в 7 раз уже). День-гигант давал 2000 под-колонок = тысячи
     // субпиксельных контролов и подвисание UI на каждую перерисовку.

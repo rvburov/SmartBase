@@ -1,3 +1,5 @@
+using Avalonia.Media;
+using SmartBase.Utils;
 using Avalonia.Controls;
 using CommunityToolkit.Mvvm.Input;
 using SmartBase.Database.Repositories;
@@ -55,6 +57,7 @@ public partial class ConstructorListView : UserControl
                 name:     record.DisplayTitle,
                 status:   statusField is not null && values.TryGetValue(statusField.Id ?? 0, out var s) ? s : "",
                 date:     dateField   is not null && values.TryGetValue(dateField.Id   ?? 0, out var d) ? d : "",
+                color:    record.Color,
                 onClick:  id => RecordClicked?.Invoke(this, id),
                 onDelete: id => RecordDeleteRequested?.Invoke(this, id),
                 onCreate: () => RecordCreateRequested?.Invoke(this, EventArgs.Empty)
@@ -78,7 +81,13 @@ public class ListRecordItem
     public ICommand CreateCommand { get; }
     public ICommand DeleteCommand { get; }
 
-    public ListRecordItem(int? recordId, string name, string status, string date,
+    /// <summary>Сквозной цвет записи (db_records.Color) полоской слева; без цвета полоски нет
+    /// — в отличие от календаря, где «без цвета» рисуется серым: в списке серая полоска у
+    /// каждой строки была бы шумом.</summary>
+    public bool    HasColor   { get; }
+    public IBrush? ColorBrush { get; }
+
+    public ListRecordItem(int? recordId, string name, string status, string date, string? color,
                           Action<int> onClick, Action<int> onDelete, Action onCreate)
     {
         RecordId     = recordId;
@@ -87,6 +96,8 @@ public class ListRecordItem
         Date         = date;
         HasStatus    = !string.IsNullOrEmpty(status);
         HasDate      = !string.IsNullOrEmpty(date);
+        ColorBrush   = ColorTools.Solid(color);
+        HasColor     = ColorBrush is not null;
 
         ClickCommand  = new RelayCommand(() => { if (recordId.HasValue) onClick(recordId.Value); });
         OpenCommand   = new RelayCommand(() => { if (recordId.HasValue) onClick(recordId.Value); });

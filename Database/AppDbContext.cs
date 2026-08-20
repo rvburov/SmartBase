@@ -18,6 +18,7 @@ public class AppDbContext : DbContext
     public DbSet<UiCollectionSettingEntity> UiCollectionSettings { get; set; } = null!;
     public DbSet<ColumnMetaEntity>         ColumnMeta           { get; set; } = null!;
     public DbSet<RecordDisplayEntity>      RecordDisplay        { get; set; } = null!;
+    public DbSet<CellStyleEntity>          CellStyles           { get; set; } = null!;
     public DbSet<DbUserEntity>             DbUsers              { get; set; } = null!;
     public DbSet<DbPermissionEntity>       DbPermissions        { get; set; } = null!;
     public DbSet<DbMetaEntity>             DbMeta               { get; set; } = null!;
@@ -353,6 +354,18 @@ public class AppDbContext : DbContext
         {
             e.ToTable("record_display");
             e.HasKey(x => new { x.CollectionId, x.RecordId });
+        });
+
+        model.Entity<CellStyleEntity>(e =>
+        {
+            e.ToTable("cell_style");
+            e.HasKey(x => new { x.CollectionId, x.RecordId, x.Key });
+            // Страница таблицы спрашивает цвета сразу за 200 записей одной коллекции —
+            // префикс PK (CollectionId, RecordId) закрывает этот запрос сиком.
+            e.HasOne(x => x.Record)
+             .WithMany()
+             .HasForeignKey(x => x.RecordId)
+             .OnDelete(DeleteBehavior.Cascade);
         });
 
         model.Entity<DbUserEntity>(e =>

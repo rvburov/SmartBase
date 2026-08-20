@@ -65,6 +65,15 @@ public partial class NavbarPage : UserControl
         _suppressTitleChange = false;
     }
 
+    /// <summary>Полоска сквозного цвета записи слева от имени; null — «без цвета», полоска
+    /// скрыта и места не занимает (в отличие от календаря, где «без цвета» рисуется серым).</summary>
+    public void SetRecordColor(string? hex)
+    {
+        var brush = Utils.ColorTools.Solid(hex);
+        ColorStripe.Background = brush;
+        ColorStripe.IsVisible  = brush is not null;
+    }
+
     /// <summary>Синхронизирует визуальное состояние кнопки с фактической видимостью блока коллекции.</summary>
     public void SetCollectionPanelOpen(bool isOpen)
     {

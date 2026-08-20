@@ -91,7 +91,21 @@ public static class MenuIcons
     public static Control CreateCollectionHeader() => Header(CollectionPlus, "Создать коллекцию");
 
     // Заголовок пункта «Изменить цвет»: иконка палитры + стандартный текст.
-    public static Control ColorHeader() => Header(Palette, "Изменить цвет");
+    public static Control ColorHeader() => PaletteHeader("Изменить цвет");
+
+    // Тот же заголовок с произвольным текстом: пунктов выбора цвета в таблице несколько
+    // («Цвет записи», «Цвет текста строки», «Фон ячейки», «Фон колонки»).
+    public static Control PaletteHeader(string text) => Header(Palette, text);
+
+    // Сабменю по умолчанию (тема Fluent) ставит HorizontalOffset попапа ≈ -1 (локальное
+    // значение шаблона, стилем не перебить) → блок наезжает на меню. После применения
+    // шаблона находим Popup сабменю и сдвигаем вправо, чтобы он стоял отдельно (как в VSCode).
+    public static void FixSubmenuGap(MenuItem item) =>
+        item.TemplateApplied += (_, e) =>
+        {
+            if (e.NameScope.Find<Avalonia.Controls.Primitives.Popup>("PART_Popup") is { } popup)
+                popup.HorizontalOffset = 6;
+        };
 
     // Заголовки пунктов перемещения колонки.
     public static Control MoveLeftHeader()  => Header(ArrowLeft,  "Сдвинуть влево");

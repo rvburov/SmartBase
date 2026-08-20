@@ -6,6 +6,7 @@ using Avalonia.Layout;
 using Avalonia.Media;
 using SmartBase.Core.Models;
 using SmartBase.Controls.Behaviors;
+using SmartBase.Utils;
 
 namespace SmartBase.Controls.Components;
 
@@ -453,7 +454,7 @@ public partial class AllDayBar : UserControl
             var color      = Color.Parse(EventColors.Display(ev.Color));
             var normalBg   = new SolidColorBrush(Color.FromArgb(40, color.R, color.G, color.B));
             var solidBrush = new SolidColorBrush(color);
-            var darkBrush  = new SolidColorBrush(Darken(color));
+            var darkBrush  = new SolidColorBrush(ColorTools.Darken(color));
 
             var isSelected = false;
 
@@ -513,7 +514,7 @@ public partial class AllDayBar : UserControl
     {
         var color      = Color.Parse(EventColors.Display(ev.Color));
         var normalBg   = new SolidColorBrush(Color.FromArgb(40, color.R, color.G, color.B));
-        var darkBrush  = new SolidColorBrush(Darken(color));
+        var darkBrush  = new SolidColorBrush(ColorTools.Darken(color));
         var colorBrush = new SolidColorBrush(color);
 
         var strip = new Border
@@ -728,9 +729,6 @@ public partial class AllDayBar : UserControl
             if (!occupied) return row;
         }
     }
-
-    private static Color Darken(Color c, double f = 0.6)
-        => Color.FromArgb(c.A, (byte)(c.R * f), (byte)(c.G * f), (byte)(c.B * f));
 
     // ── context menu ──────────────────────────────────────────────────────────
 

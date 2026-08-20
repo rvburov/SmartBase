@@ -86,6 +86,14 @@ public class DbRecordEntity
     // это обычное поле коллекции с ролью IsDescription, значения — в db_field_values.
     [Required] public string  Title       { get; set; } = "";
 
+    // Цвет записи, hex «#RRGGBB» (как у коллекции и категории). NULL = «без цвета»:
+    // запись наследует цвет своей коллекции. СКВОЗНОЙ атрибут — его показывают таблица
+    // (заливка строки), календарь, задачи, вид «Список» и панель записи, поэтому он живёт
+    // здесь, а не в UI-настройках коллекции: так цвет переезжает вместе с записью при
+    // дубле и переносе в другую коллекцию/БД. Локальное оформление таблицы (фон строки,
+    // ячейки, колонки) — отдельно, см. RecordDisplayEntity/CellStyleEntity.
+    public string? Color       { get; set; }
+
     [ForeignKey(nameof(CollectionId))]
     public DbCollectionEntity              Collection  { get; set; } = null!;
     public ICollection<DbFieldValueEntity> FieldValues { get; set; } = [];

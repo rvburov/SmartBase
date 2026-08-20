@@ -7,6 +7,7 @@ using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Threading;
 using SmartBase.Core.Models;
+using SmartBase.Utils;
 
 namespace SmartBase.Views.ConstructorDb.Calendar;
 
@@ -216,10 +217,10 @@ public partial class DayView : UserControl
                 var evH        = Math.Max(22, effectiveEndMin - startMin);
                 var evHVisible = evH - 2;
                 var color      = Color.Parse(EventColors.Display(ev.Color));
-                var normalBg   = new SolidColorBrush(BlendWithWhite(color, 40));
-                var hoverBg    = new SolidColorBrush(BlendWithWhite(color, 90));
+                var normalBg   = new SolidColorBrush(ColorTools.BlendWithWhite(color, 40));
+                var hoverBg    = new SolidColorBrush(ColorTools.BlendWithWhite(color, 90));
                 var colorBrush = new SolidColorBrush(color);
-                var darkBrush  = new SolidColorBrush(Darken(color));
+                var darkBrush  = new SolidColorBrush(ColorTools.Darken(color));
 
                 const double lineH   = 16.0;
                 const double margins = 4.0;
@@ -1123,17 +1124,7 @@ public partial class DayView : UserControl
         _todayTimeOverlay.Children.Add(line);
     }
 
-    private static Color Darken(Color c, double f = 0.6)
-        => Color.FromArgb(c.A, (byte)(c.R * f), (byte)(c.G * f), (byte)(c.B * f));
 
-    private static Color BlendWithWhite(Color c, byte alpha)
-    {
-        var a = alpha / 255.0;
-        return Color.FromRgb(
-            (byte)(c.R * a + 255 * (1 - a)),
-            (byte)(c.G * a + 255 * (1 - a)),
-            (byte)(c.B * a + 255 * (1 - a)));
-    }
 
     // Лимит ПАРАЛЛЕЛЬНЫХ под-колонок пересекающихся событий: сверх лимита событие не рисуется —
     // полоски уже нечитаемо узкие, а день-гигант (сетке приходят первые 2000 записей, и все

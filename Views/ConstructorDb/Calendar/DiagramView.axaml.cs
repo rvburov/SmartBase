@@ -625,7 +625,7 @@ public partial class DiagramView : UserControl
         for (var i = 0; i < rows.Count; i++)
         {
             if (rows[i].Ev is not null || rows[i].Note is not null) continue;
-            var tint = new SolidColorBrush(BlendWithWhite(DisplayColor(rows[i].Group.Color), 14));
+            var tint = new SolidColorBrush(ColorTools.BlendWithWhite(DisplayColor(rows[i].Group.Color), 14));
             var band = new Border { Width = timelineW, Height = RowH, Background = tint };
             Canvas.SetTop(band, i * RowH);
             BgCanvas.Children.Add(band);
@@ -908,7 +908,7 @@ public partial class DiagramView : UserControl
         var x1     = i1 * dayW + (clipL ? 0 : insetL);
         var x2     = (i2 + 1) * dayW - (clipR ? 0 : insetR);
 
-        var dark  = new SolidColorBrush(Darken(color));
+        var dark  = new SolidColorBrush(ColorTools.Darken(color));
         var label = new TextBlock
         {
             Text       = RuDuration(start, end, allDay),
@@ -1226,7 +1226,7 @@ public partial class DiagramView : UserControl
         if (_selection.Contains(e) || e.Vis is null) return;
         var color = DisplayColor(e.Ev.Color);
         if (e.Vis.Dot is not null)
-            e.Vis.Dot.Fill = new SolidColorBrush(on ? Darken(color, 0.85) : color);
+            e.Vis.Dot.Fill = new SolidColorBrush(on ? ColorTools.Darken(color, 0.85) : color);
         else if (e.Vis.BlockBg is not null)
             e.Vis.BlockBg.Background =
                 new SolidColorBrush(Color.FromArgb(on ? (byte)90 : (byte)50, color.R, color.G, color.B));
@@ -1240,7 +1240,7 @@ public partial class DiagramView : UserControl
         var color = DisplayColor(e.Ev.Color);
         if (e.Vis.Dot is not null)
         {
-            e.Vis.Dot.Fill = new SolidColorBrush(on ? Darken(color) : color);
+            e.Vis.Dot.Fill = new SolidColorBrush(on ? ColorTools.Darken(color) : color);
         }
         else if (e.Vis.BlockBg is not null)
         {
@@ -1248,7 +1248,7 @@ public partial class DiagramView : UserControl
                 ? new SolidColorBrush(color)
                 : new SolidColorBrush(Color.FromArgb(50, color.R, color.G, color.B));
             // Белый текст — только внутри залитого блока, подпись снаружи остаётся тёмной.
-            if (e.Vis.LabelInside) e.Vis.Label.Foreground = on ? Brushes.White : new SolidColorBrush(Darken(color));
+            if (e.Vis.LabelInside) e.Vis.Label.Foreground = on ? Brushes.White : new SolidColorBrush(ColorTools.Darken(color));
         }
     }
 
@@ -1371,17 +1371,4 @@ public partial class DiagramView : UserControl
     // ── цвета ───────────────────────────────────────────────────────────────────
 
     private static Color DisplayColor(string? hex) => Color.Parse(EventColors.Display(hex));
-
-    private static Color Darken(Color c, double f = 0.6)
-        => Color.FromArgb(c.A, (byte)(c.R * f), (byte)(c.G * f), (byte)(c.B * f));
-
-    // смешивает цвет с белым фоном чтобы убрать прозрачность (alpha blending)
-    private static Color BlendWithWhite(Color c, byte alpha)
-    {
-        var a = alpha / 255.0;
-        return Color.FromRgb(
-            (byte)(c.R * a + 255 * (1 - a)),
-            (byte)(c.G * a + 255 * (1 - a)),
-            (byte)(c.B * a + 255 * (1 - a)));
-    }
 }

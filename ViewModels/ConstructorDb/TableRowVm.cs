@@ -32,6 +32,33 @@ public class TableRowVm : INotifyPropertyChanged
     public int  RowNumber   { get; private set; }
     public bool IsAddRow    { get; }
 
+    /// <summary>Сквозной цвет записи (db_records.Color); null — наследует цвет коллекции.
+    /// Таблица показывает его заливкой ячеек строки и полоской в колонке «№».</summary>
+    public string? RecordColor { get; private set; }
+
+    /// <summary>Оформление отдельных ячеек строки: ключ колонки → стиль. У подавляющего
+    /// большинства строк null — цветные ячейки редки, словарь заводим только когда они есть.</summary>
+    public IReadOnlyDictionary<string, RowStyle>? CellStyles { get; private set; }
+
+    /// <summary>Стиль конкретной ячейки, без каскада (каскад собирает таблица — только у неё
+    /// есть оформление строки и колонки, см. RowStyle.Resolve).</summary>
+    public RowStyle CellStyle(string key) =>
+        CellStyles is not null && CellStyles.TryGetValue(key, out var c) ? c : RowStyle.None;
+
+    /// <summary>Цвет записи и оформление её ячеек. Уведомление идёт тем же «Item», что и у
+    /// значений — привязки ячеек перечитывают и цвет.</summary>
+    /// <param name="notify">false — когда сразу следом идёт <see cref="Fill"/>: он уведомит
+    /// сам, а на странице в 200 строк лишний проход по всем ячейкам не бесплатен.</param>
+    public void SetStyle(string? recordColor, IReadOnlyDictionary<string, RowStyle>? cellStyles,
+                         bool notify = true)
+    {
+        RecordColor = recordColor;
+        CellStyles  = cellStyles is { Count: > 0 } ? cellStyles : null;
+        if (!notify) return;
+        OnPropertyChanged(nameof(RecordColor));
+        NotifyAllCells();
+    }
+
     /// <summary>Аудит-метаданные записи для «вычисляемых» типов свойств (read-only).</summary>
     public string CreatedAt => _createdAt;
     public string UpdatedAt => _updatedAt;

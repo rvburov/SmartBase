@@ -96,15 +96,6 @@ public partial class SidebarTree : UserControl
     // клавиша не должна трогать выделение (в т.ч. пассивно подсвеченную коллекцию).
     private bool _lastPressInSidebar;
 
-    // Синий #007AFF трактуется как «без цвета» (серый) → отдельный пункт меню.
-    private static readonly (string Hex, string Name)[] PredefinedColors =
-    [
-        ("#34C759", "Зеленый"),    ("#FF3B30", "Красный"),
-        ("#FF9500", "Оранжевый"), ("#FF2D55", "Розовый"), ("#AF52DE", "Фиолетовый"),
-        ("#FFCC00", "Желтый"),    ("#5E5CE6", "Индиго"),  ("#64D2FF", "Голубой"),
-        ("#FF6B6B", "Коралловый"),
-    ];
-
     public SidebarTree()
     {
         InitializeComponent();
@@ -847,7 +838,7 @@ public partial class SidebarTree : UserControl
             {
                 // Подменю (цвет, поля) — по клику по пункту меню не запускается действие,
                 // поэтому запрет здесь честнее показать недоступностью самого подменю.
-                var color = BuildColorMenu(db, id);
+                var color = BuildColorMenu(db, id, node.Color);
                 color.IsEnabled = Can(PermAction.EditCollection, id);
                 menu.Items.Add(color);
                 var fields = _mode == SidebarMode.Calendar
@@ -888,52 +879,16 @@ public partial class SidebarTree : UserControl
         e.Handled = true;
     }
 
-    // Сабменю по умолчанию (тема Fluent) ставит HorizontalOffset попапа ≈ -1 (локальное
-    // значение шаблона, стилем не перебить) → блок наезжает на меню. После применения
-    // шаблона находим Popup сабменю и сдвигаем вправо, чтобы он стоял отдельно (как в VSCode).
-    private static void FixSubmenuGap(MenuItem item) =>
-        item.TemplateApplied += (_, e) =>
-        {
-            if (e.NameScope.Find<Avalonia.Controls.Primitives.Popup>("PART_Popup") is { } popup)
-                popup.HorizontalOffset = 6;
-        };
+    // Сдвиг попапа сабменю — общий для всех подменю сайдбара (цвет, поля-даты, исполнители).
+    private static void FixSubmenuGap(MenuItem item) => MenuIcons.FixSubmenuGap(item);
 
-    private MenuItem BuildColorMenu(int dbId, int collectionId)
-    {
-        var colorItem = new MenuItem { Header = MenuIcons.ColorHeader() };
-        FixSubmenuGap(colorItem);
-
-        var noColor = new MenuItem
-        {
-            Header = "Без цвета",
-            Icon   = new Border
-            {
-                Width = 14, Height = 14, CornerRadius = new CornerRadius(3),
-                Background  = Brushes.Transparent,
-                BorderBrush = new SolidColorBrush(Color.Parse("#8E8E93")),
-                BorderThickness = new Thickness(1.5),
-            },
-        };
-        noColor.Click += (_, _) => ChangeColor(dbId, collectionId, "#007AFF");
-        colorItem.Items.Add(noColor);
-        colorItem.Items.Add(new Separator());
-
-        foreach (var (hex, name) in PredefinedColors)
-        {
-            var sub = new MenuItem
-            {
-                Header = name,
-                Icon   = new Border
-                {
-                    Width = 14, Height = 14, CornerRadius = new CornerRadius(3),
-                    Background = new SolidColorBrush(Color.Parse(hex)),
-                },
-            };
-                sub.Click += (_, _) => ChangeColor(dbId, collectionId, hex);
-            colorItem.Items.Add(sub);
-        }
-        return colorItem;
-    }
+    // Палитра и разметка пунктов — общие (ColorMenu). У коллекции «без цвета» хранится
+    // не как NULL, а дефолтным синим (EventColors.Default) — это её исторический контракт.
+    private MenuItem BuildColorMenu(int dbId, int collectionId, string? current) =>
+        ColorMenu.Build(
+            MenuIcons.ColorHeader(),
+            current == EventColors.Default ? null : current,
+            hex => ChangeColor(dbId, collectionId, hex ?? EventColors.Default));
 
     // Пункт «Создать группу» с иконкой папки с плюсом.
     private static MenuItem MenuItemCreateGroup(Action onClick)
@@ -2350,10 +2305,6 @@ public partial class SidebarRow : ObservableObject
             ? b
             : new SolidColorBrush(Color.Parse(fallbackHex));
 
-    // «Без цвета»: дефолтный синий → серый чекбокс.
-    private const string DefaultColor = "#007AFF";
-    private const string GreyColor    = "#8E8E93";
-
     public SidebarNode Node { get; }
     public int         Depth { get; }
     public SidebarMode Mode { get; }
@@ -2439,16 +2390,9 @@ public partial class SidebarRow : ObservableObject
     public Geometry? ChevronGeometry => Node.IsExpanded ? Icon("IconChevronDown") : Icon("IconChevronRight");
     public Geometry? IconGeometry    => Node.IsLocked ? Icon("IconLock") : Node.IsDatabase ? Icon("IconDatabase") : Node.IsGroup ? Icon("IconFolder") : Icon("IconCollection");
 
-    private SolidColorBrush ColorBrush
-    {
-        get
-        {
-            var c = string.IsNullOrWhiteSpace(Node.Color) || Node.Color == DefaultColor
-                ? GreyColor
-                : Node.Color;
-            return new SolidColorBrush(Color.Parse(c));
-        }
-    }
+    // «Без цвета» → серый: единое правило EventColors, кисти кешируются в ColorTools
+    // (свойство читается на каждой перерисовке строки дерева).
+    private IBrush ColorBrush => ColorTools.Solid(EventColors.Display(Node.Color)) ?? Brushes.Transparent;
 
     public IBrush CheckFill   => Checked ? ColorBrush : Brushes.Transparent;
     public IBrush CheckBorder => ColorBrush;

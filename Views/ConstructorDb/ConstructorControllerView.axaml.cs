@@ -39,6 +39,10 @@ public partial class ConstructorControllerView : UserControl
     /// открытая панель «Страница записи» должна перестроить список свойств.</summary>
     public event EventHandler? FieldsChanged;
 
+    /// <summary>Сменился сквозной цвет записи — его показывают и другие разделы (календарь,
+    /// задачи), поэтому MainWindow перечитывает видимый агрегатный модуль.</summary>
+    public event EventHandler? RecordColorChanged;
+
     private void NotifyFieldsChanged() => FieldsChanged?.Invoke(this, EventArgs.Empty);
 
     /// <summary>Текущая открытая коллекция (для MainWindow при открытии PageView).</summary>
@@ -75,6 +79,7 @@ public partial class ConstructorControllerView : UserControl
         TableViewCtrl.RecordClicked             += (_, rid)  => OpenPage(rid);
         TableViewCtrl.CrossDbRecordRequested    += (_, t)    => CrossDbRecordPageRequested?.Invoke(this, t);
         TableViewCtrl.RecordValueEdited         += (_, rid)  => RecordValueEdited?.Invoke(this, rid);
+        TableViewCtrl.RecordColorChanged        += (_, _)    => RecordColorChanged?.Invoke(this, EventArgs.Empty);
         TableViewCtrl.RecordCreateRequested     += (_, e)    => _ = CreateAndOpen(e.Open, e.AfterId);
         TableViewCtrl.RecordsDeleteRequested    += (_, ids)  => _ = DeleteRecordsWithConfirm(ids);
         TableViewCtrl.RecordDuplicateRequested  += (_, ids)  => _ = DuplicateRecords(ids);

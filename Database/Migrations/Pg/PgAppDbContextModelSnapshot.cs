@@ -89,6 +89,35 @@ namespace SmartBase.Database.Migrations.Pg
                     b.ToTable("categories", (string)null);
                 });
 
+            modelBuilder.Entity("SmartBase.Database.Entities.CellStyleEntity", b =>
+                {
+                    b.Property<int>("CollectionId")
+                        .HasColumnType("integer")
+                        .HasColumnName("collectionid");
+
+                    b.Property<int>("RecordId")
+                        .HasColumnType("integer")
+                        .HasColumnName("recordid");
+
+                    b.Property<string>("Key")
+                        .HasColumnType("text")
+                        .HasColumnName("key");
+
+                    b.Property<string>("Bg")
+                        .HasColumnType("text")
+                        .HasColumnName("bg");
+
+                    b.Property<string>("Fg")
+                        .HasColumnType("text")
+                        .HasColumnName("fg");
+
+                    b.HasKey("CollectionId", "RecordId", "Key");
+
+                    b.HasIndex("RecordId");
+
+                    b.ToTable("cell_style", (string)null);
+                });
+
             modelBuilder.Entity("SmartBase.Database.Entities.ChangeLogEntity", b =>
                 {
                     b.Property<long>("Id")
@@ -155,9 +184,17 @@ namespace SmartBase.Database.Migrations.Pg
                         .HasColumnType("text")
                         .HasColumnName("key");
 
+                    b.Property<string>("Bg")
+                        .HasColumnType("text")
+                        .HasColumnName("bg");
+
                     b.Property<string>("DisplayName")
                         .HasColumnType("text")
                         .HasColumnName("displayname");
+
+                    b.Property<string>("Fg")
+                        .HasColumnType("text")
+                        .HasColumnName("fg");
 
                     b.Property<int?>("Level")
                         .HasColumnType("integer")
@@ -402,6 +439,10 @@ namespace SmartBase.Database.Migrations.Pg
                         .HasColumnType("integer")
                         .HasColumnName("collectionid");
 
+                    b.Property<string>("Color")
+                        .HasColumnType("text")
+                        .HasColumnName("color");
+
                     b.Property<string>("CreatedAt")
                         .IsRequired()
                         .HasColumnType("text")
@@ -544,6 +585,10 @@ namespace SmartBase.Database.Migrations.Pg
                         .HasColumnType("integer")
                         .HasColumnName("recordid");
 
+                    b.Property<string>("Fg")
+                        .HasColumnType("text")
+                        .HasColumnName("fg");
+
                     b.Property<int>("Level")
                         .HasColumnType("integer")
                         .HasColumnName("level");
@@ -637,6 +682,17 @@ namespace SmartBase.Database.Migrations.Pg
                         .IsRequired();
 
                     b.Navigation("Field");
+
+                    b.Navigation("Record");
+                });
+
+            modelBuilder.Entity("SmartBase.Database.Entities.CellStyleEntity", b =>
+                {
+                    b.HasOne("SmartBase.Database.Entities.DbRecordEntity", "Record")
+                        .WithMany()
+                        .HasForeignKey("RecordId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
 
                     b.Navigation("Record");
                 });

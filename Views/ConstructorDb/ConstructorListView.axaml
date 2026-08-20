@@ -38,12 +38,20 @@
                                 </MenuItem>
                             </ContextMenu>
                         </Button.ContextMenu>
-                        <Grid ColumnDefinitions="*,Auto,Auto">
-                            <TextBlock Grid.Column="0"
+                        <Grid ColumnDefinitions="Auto,*,Auto,Auto">
+                            <!-- Полоска сквозного цвета записи — как у события календаря
+                                 и карточки задачи; без цвета место не занимает. -->
+                            <Border Grid.Column="0"
+                                    Width="3"
+                                    CornerRadius="{StaticResource RadiusXS}"
+                                    Margin="0,4,8,4"
+                                    IsVisible="{Binding HasColor}"
+                                    Background="{Binding ColorBrush}" />
+                            <TextBlock Grid.Column="1"
                                        Text="{Binding Name}"
                                        VerticalAlignment="Center"
                                        TextTrimming="CharacterEllipsis" />
-                            <Border Grid.Column="1"
+                            <Border Grid.Column="2"
                                     IsVisible="{Binding HasStatus}"
                                     Background="{StaticResource BrushAccentLight}"
                                     CornerRadius="{StaticResource RadiusXS}"
@@ -53,7 +61,7 @@
                                            FontSize="{DynamicResource FontSizeSmall}"
                                            Foreground="{StaticResource BrushAccent}" />
                             </Border>
-                            <TextBlock Grid.Column="2"
+                            <TextBlock Grid.Column="3"
                                        IsVisible="{Binding HasDate}"
                                        Text="{Binding Date}"
                                        FontSize="{DynamicResource FontSizeSmall}"

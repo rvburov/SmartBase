@@ -369,7 +369,7 @@ public partial class ConstructorRepository
             // Ведущая таблица — db_records (все записи коллекции), значение исполнителя
             // приезжает LEFT JOIN'ом: NULL/'' = задача без исполнителя, карточка ставит прочерк.
             cmd.CommandText = $@"
-                SELECT r.Id, f.Id, f.CollectionId, c.Name, c.Color,
+                SELECT r.Id, f.Id, f.CollectionId, c.Name, COALESCE(r.Color, c.Color),
                        r.Title, {DescExpr}, v.Value,
                        (SELECT va.Value FROM db_field_values va
                           JOIN db_fields fa ON fa.Id = va.FieldId

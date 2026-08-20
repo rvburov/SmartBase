@@ -617,8 +617,10 @@ public partial class ConstructorRepository(AppDbContext db)
         // уходят параметрами. Сырой SQL намеренно: пакетные DELETE и INSERT…SELECT на тысячах
         // строк параметрами не выражаются.
         #pragma warning disable EF1002
+        // cell_style обычно уносит FK-каскад вместе с записями, но чистим и здесь: если записи
+        // ушли другим путём, строки осиротели бы, а id коллекций SQLite переиспользует.
         foreach (var t in new[] { "ui_row_heights", "record_display", "ui_col_widths",
-                                  "ui_collection_settings", "column_meta" })
+                                  "ui_collection_settings", "column_meta", "cell_style" })
             db.Database.ExecuteSqlRaw($"DELETE FROM {t} WHERE CollectionId = {collectionId}");
         #pragma warning restore EF1002
     }
@@ -1189,8 +1191,8 @@ public partial class ConstructorRepository(AppDbContext db)
             // 1) Все записи одним INSERT … SELECT в порядке (Position, Id). Новые id — непрерывный блок
             //    в этом порядке (SQLite присваивает rowid по порядку SELECT, мы единственный писатель).
             db.Database.ExecuteSqlInterpolated($@"
-                INSERT INTO db_records (CollectionId, CreatedAt, UpdatedAt, CreatedBy, UpdatedBy, Position, StartDt, EndDt, AllDay, Title)
-                SELECT {newCollectionId}, {createdAt}, {createdAt}, {createdBy}, {createdBy}, Position, StartDt, EndDt, AllDay, Title
+                INSERT INTO db_records (CollectionId, CreatedAt, UpdatedAt, CreatedBy, UpdatedBy, Position, StartDt, EndDt, AllDay, Title, Color)
+                SELECT {newCollectionId}, {createdAt}, {createdAt}, {createdBy}, {createdBy}, Position, StartDt, EndDt, AllDay, Title, Color
                 FROM db_records WHERE CollectionId = {srcCollectionId} ORDER BY Position, Id");
             firstNew = LastInsertRowid() - recCount + 1;
 
@@ -1276,10 +1278,10 @@ public partial class ConstructorRepository(AppDbContext db)
             SELECT {newCol}, ColResize, RowResize, ViewMode FROM ui_collection_settings WHERE CollectionId = {srcCol}");
 
         db.Database.ExecuteSqlInterpolated($@"
-            INSERT INTO column_meta (CollectionId, Key, Position, Visible, Level, DisplayName)
+            INSERT INTO column_meta (CollectionId, Key, Position, Visible, Level, DisplayName, Bg, Fg)
             SELECT {newCol},
                    CASE WHEN fm.new_fid IS NOT NULL THEN CAST(fm.new_fid AS TEXT) ELSE cm.Key END,
-                   cm.Position, cm.Visible, cm.Level, cm.DisplayName
+                   cm.Position, cm.Visible, cm.Level, cm.DisplayName, cm.Bg, cm.Fg
             FROM column_meta cm
             LEFT JOIN _dup_fmap fm ON cm.Key GLOB '[0-9]*' AND CAST(cm.Key AS INTEGER) = fm.old_fid
             WHERE cm.CollectionId = {srcCol}");
@@ -1294,11 +1296,24 @@ public partial class ConstructorRepository(AppDbContext db)
                 WHERE h.CollectionId = {srcCol}");
 
             db.Database.ExecuteSqlInterpolated($@"
-                INSERT INTO record_display (CollectionId, RecordId, Visible, Level)
-                SELECT {newCol}, {firstNew} + r.rn - 1, d.Visible, d.Level FROM record_display d
+                INSERT INTO record_display (CollectionId, RecordId, Visible, Level, Fg)
+                SELECT {newCol}, {firstNew} + r.rn - 1, d.Visible, d.Level, d.Fg FROM record_display d
                 JOIN (SELECT Id AS old_id, ROW_NUMBER() OVER (ORDER BY Position, Id) AS rn
                       FROM db_records WHERE CollectionId = {srcCol}) r ON r.old_id = d.RecordId
                 WHERE d.CollectionId = {srcCol}");
+
+            // Оформление ячеек: запись — по рангу (как выше), колонка — по карте полей
+            // (числовой Key = id поля, «__title__» остаётся как есть — как у column_meta).
+            db.Database.ExecuteSqlInterpolated($@"
+                INSERT INTO cell_style (CollectionId, RecordId, Key, Bg, Fg)
+                SELECT {newCol}, {firstNew} + r.rn - 1,
+                       CASE WHEN fm.new_fid IS NOT NULL THEN CAST(fm.new_fid AS TEXT) ELSE cs.Key END,
+                       cs.Bg, cs.Fg
+                FROM cell_style cs
+                JOIN (SELECT Id AS old_id, ROW_NUMBER() OVER (ORDER BY Position, Id) AS rn
+                      FROM db_records WHERE CollectionId = {srcCol}) r ON r.old_id = cs.RecordId
+                LEFT JOIN _dup_fmap fm ON cs.Key GLOB '[0-9]*' AND CAST(cs.Key AS INTEGER) = fm.old_fid
+                WHERE cs.CollectionId = {srcCol}");
         }
     }
 
@@ -1343,8 +1358,8 @@ public partial class ConstructorRepository(AppDbContext db)
             var createdAt = DateTime.Now.ToString("o");
             var createdBy = CurrentUser.DisplayName;   // дубль коллекции = новые записи (свой автор/время)
             db.Database.ExecuteSqlInterpolated($@"
-                INSERT INTO db_records (Id, CollectionId, CreatedAt, UpdatedAt, CreatedBy, UpdatedBy, Position, StartDt, EndDt, AllDay, Title)
-                SELECT m.new_id, {newCollectionId}, {createdAt}, {createdAt}, {createdBy}, {createdBy}, r.Position, r.StartDt, r.EndDt, r.AllDay, r.Title
+                INSERT INTO db_records (Id, CollectionId, CreatedAt, UpdatedAt, CreatedBy, UpdatedBy, Position, StartDt, EndDt, AllDay, Title, Color)
+                SELECT m.new_id, {newCollectionId}, {createdAt}, {createdAt}, {createdBy}, {createdBy}, r.Position, r.StartDt, r.EndDt, r.AllDay, r.Title, r.Color
                 FROM db_records r JOIN _dup_rmap m ON m.old_id = r.Id");
 
             var processed = 0;
@@ -1389,10 +1404,10 @@ public partial class ConstructorRepository(AppDbContext db)
         // Числовой ключ column_meta сопоставляется текстом (Key = CAST(old_fid AS TEXT)) —
         // без GLOB (его в PG нет) и без CAST(Key AS INTEGER), падающего на '__title__'.
         db.Database.ExecuteSqlInterpolated($@"
-            INSERT INTO column_meta (CollectionId, Key, Position, Visible, Level, DisplayName)
+            INSERT INTO column_meta (CollectionId, Key, Position, Visible, Level, DisplayName, Bg, Fg)
             SELECT {newCollectionId},
                    CASE WHEN fm.new_fid IS NOT NULL THEN CAST(fm.new_fid AS TEXT) ELSE cm.Key END,
-                   cm.Position, cm.Visible, cm.Level, cm.DisplayName
+                   cm.Position, cm.Visible, cm.Level, cm.DisplayName, cm.Bg, cm.Fg
             FROM column_meta cm
             LEFT JOIN _dup_fmap fm ON cm.Key = CAST(fm.old_fid AS TEXT)
             WHERE cm.CollectionId = {srcCollectionId}");
@@ -1405,9 +1420,19 @@ public partial class ConstructorRepository(AppDbContext db)
                 JOIN _dup_rmap m ON m.old_id = h.RecordId WHERE h.CollectionId = {srcCollectionId}");
 
             db.Database.ExecuteSqlInterpolated($@"
-                INSERT INTO record_display (CollectionId, RecordId, Visible, Level)
-                SELECT {newCollectionId}, m.new_id, d.Visible, d.Level FROM record_display d
+                INSERT INTO record_display (CollectionId, RecordId, Visible, Level, Fg)
+                SELECT {newCollectionId}, m.new_id, d.Visible, d.Level, d.Fg FROM record_display d
                 JOIN _dup_rmap m ON m.old_id = d.RecordId WHERE d.CollectionId = {srcCollectionId}");
+
+            db.Database.ExecuteSqlInterpolated($@"
+                INSERT INTO cell_style (CollectionId, RecordId, Key, Bg, Fg)
+                SELECT {newCollectionId}, m.new_id,
+                       CASE WHEN fm.new_fid IS NOT NULL THEN CAST(fm.new_fid AS TEXT) ELSE cs.Key END,
+                       cs.Bg, cs.Fg
+                FROM cell_style cs
+                JOIN _dup_rmap m ON m.old_id = cs.RecordId
+                LEFT JOIN _dup_fmap fm ON cs.Key = CAST(fm.old_fid AS TEXT)
+                WHERE cs.CollectionId = {srcCollectionId}");
         }
 
         db.Database.ExecuteSqlRaw("DROP TABLE IF EXISTS _dup_rmap");
@@ -1653,8 +1678,9 @@ public partial class ConstructorRepository(AppDbContext db)
         List<(int FieldId, int Width)>                        ColWidths,
         List<(int RecordId, int Height)>                      RowHeights,
         (bool ColResize, bool RowResize, string ViewMode)?    Settings,
-        List<(string Key, int? Position, bool? Visible, int? Level, string? DisplayName)> ColumnMeta,
-        List<(int RecordId, bool Visible, int Level)>         RecordDisplay);
+        List<(string Key, int? Position, bool? Visible, int? Level, string? DisplayName, string? Bg, string? Fg)> ColumnMeta,
+        List<(int RecordId, bool Visible, int Level, string? Fg)> RecordDisplay,
+        List<(int RecordId, string Key, string? Bg, string? Fg)> CellStyles);
 
     // Снимок группы со всей вложенной веткой (подгруппы + коллекции).
     public sealed record GroupSnapshot(DbGroup Group, List<GroupSnapshot> Subgroups, List<CollectionSnapshot> Collections);
@@ -1689,9 +1715,11 @@ public partial class ConstructorRepository(AppDbContext db)
                              .Select(h => (h.RecordId, h.Height)).ToList(),
             Settings:      settings is null ? null : (settings.ColResize, settings.RowResize, settings.ViewMode),
             ColumnMeta:    db.ColumnMeta.AsNoTracking().Where(m => m.CollectionId == collectionId).ToList()
-                             .Select(m => (m.Key, m.Position, m.Visible, m.Level, m.DisplayName)).ToList(),
+                             .Select(m => (m.Key, m.Position, m.Visible, m.Level, m.DisplayName, m.Bg, m.Fg)).ToList(),
             RecordDisplay: db.RecordDisplay.AsNoTracking().Where(d => d.CollectionId == collectionId).ToList()
-                             .Select(d => (d.RecordId, d.Visible, d.Level)).ToList());
+                             .Select(d => (d.RecordId, d.Visible, d.Level, d.Fg)).ToList(),
+            CellStyles:    db.CellStyles.AsNoTracking().Where(c => c.CollectionId == collectionId).ToList()
+                             .Select(c => (c.RecordId, c.Key, c.Bg, c.Fg)).ToList());
     }
 
     /// <summary>Импортировать снимок коллекции под группу targetGroupId — атомарно (одна транзакция). Возвращает новую коллекцию.</summary>
@@ -1740,6 +1768,7 @@ public partial class ConstructorRepository(AppDbContext db)
                 CollectionId = copy.Id, CreatedAt = r.CreatedAt ?? DateTime.Now.ToString("o"),
                 Position = r.Position, StartDt = r.StartDt, EndDt = r.EndDt,
                 AllDay = r.AllDay, Title = r.Title,
+                Color = r.Color,
             };
             db.DbRecords.Add(nr);
             db.SaveChanges();
@@ -1779,18 +1808,27 @@ public partial class ConstructorRepository(AppDbContext db)
                 CollectionId = newCollectionId, ColResize = st.ColResize, RowResize = st.RowResize, ViewMode = st.ViewMode,
             });
 
-        foreach (var (key, pos, vis, lvl, name) in ui.ColumnMeta)
+        foreach (var (key, pos, vis, lvl, name, bg, fg) in ui.ColumnMeta)
             db.ColumnMeta.Add(new ColumnMetaEntity
             {
                 CollectionId = newCollectionId, Key = RemapColKey(key, fieldMap),
-                Position = pos, Visible = vis, Level = lvl, DisplayName = name,
+                Position = pos, Visible = vis, Level = lvl, DisplayName = name, Bg = bg, Fg = fg,
             });
 
-        foreach (var (oldRid, vis, lvl) in ui.RecordDisplay)
+        foreach (var (oldRid, vis, lvl, fg) in ui.RecordDisplay)
             if (recordMap.TryGetValue(oldRid, out var nrid))
                 db.RecordDisplay.Add(new RecordDisplayEntity
                 {
                     CollectionId = newCollectionId, RecordId = nrid, Visible = vis, Level = lvl,
+                    Fg = fg,
+                });
+
+        foreach (var (oldRid, key, bg, fg) in ui.CellStyles)
+            if (recordMap.TryGetValue(oldRid, out var nrid))
+                db.CellStyles.Add(new CellStyleEntity
+                {
+                    CollectionId = newCollectionId, RecordId = nrid, Key = RemapColKey(key, fieldMap),
+                    Bg = bg, Fg = fg,
                 });
 
         db.SaveChanges();
@@ -2153,8 +2191,8 @@ public partial class ConstructorRepository(AppDbContext db)
         {
             // 3) Записи одним INSERT … SELECT в порядке (Position, Id) — новые id непрерывным блоком.
             Exec(conn, tx, $@"
-                INSERT INTO main.db_records (CollectionId, CreatedAt, UpdatedAt, CreatedBy, UpdatedBy, Position, StartDt, EndDt, AllDay, Title)
-                SELECT {newColId}, CreatedAt, UpdatedAt, CreatedBy, UpdatedBy, Position, StartDt, EndDt, AllDay, Title
+                INSERT INTO main.db_records (CollectionId, CreatedAt, UpdatedAt, CreatedBy, UpdatedBy, Position, StartDt, EndDt, AllDay, Title, Color)
+                SELECT {newColId}, CreatedAt, UpdatedAt, CreatedBy, UpdatedBy, Position, StartDt, EndDt, AllDay, Title, Color
                 FROM src.db_records WHERE CollectionId = {srcCollectionId} ORDER BY Position, Id");
             var firstNew = ScalarLong(conn, tx, "SELECT last_insert_rowid()") - recCount + 1;
 
@@ -2249,10 +2287,10 @@ public partial class ConstructorRepository(AppDbContext db)
             SELECT {newCol}, ColResize, RowResize, ViewMode FROM src.ui_collection_settings WHERE CollectionId = {srcCol}");
 
         Exec(conn, tx, $@"
-            INSERT INTO main.column_meta (CollectionId, Key, Position, Visible, Level, DisplayName)
+            INSERT INTO main.column_meta (CollectionId, Key, Position, Visible, Level, DisplayName, Bg, Fg)
             SELECT {newCol},
                    CASE WHEN fm.new_fid IS NOT NULL THEN CAST(fm.new_fid AS TEXT) ELSE cm.Key END,
-                   cm.Position, cm.Visible, cm.Level, cm.DisplayName
+                   cm.Position, cm.Visible, cm.Level, cm.DisplayName, cm.Bg, cm.Fg
             FROM src.column_meta cm
             LEFT JOIN _move_fmap fm ON cm.Key GLOB '[0-9]*' AND CAST(cm.Key AS INTEGER) = fm.old_fid
             WHERE cm.CollectionId = {srcCol}");
@@ -2266,9 +2304,18 @@ public partial class ConstructorRepository(AppDbContext db)
                 SELECT {newCol}, {firstNew} + r.rn - 1, h.Height FROM src.ui_row_heights h
                 JOIN {rank} r ON r.old_id = h.RecordId WHERE h.CollectionId = {srcCol}");
             Exec(conn, tx, $@"
-                INSERT INTO main.record_display (CollectionId, RecordId, Visible, Level)
-                SELECT {newCol}, {firstNew} + r.rn - 1, d.Visible, d.Level FROM src.record_display d
+                INSERT INTO main.record_display (CollectionId, RecordId, Visible, Level, Fg)
+                SELECT {newCol}, {firstNew} + r.rn - 1, d.Visible, d.Level, d.Fg FROM src.record_display d
                 JOIN {rank} r ON r.old_id = d.RecordId WHERE d.CollectionId = {srcCol}");
+            Exec(conn, tx, $@"
+                INSERT INTO main.cell_style (CollectionId, RecordId, Key, Bg, Fg)
+                SELECT {newCol}, {firstNew} + r.rn - 1,
+                       CASE WHEN fm.new_fid IS NOT NULL THEN CAST(fm.new_fid AS TEXT) ELSE cs.Key END,
+                       cs.Bg, cs.Fg
+                FROM src.cell_style cs
+                JOIN {rank} r ON r.old_id = cs.RecordId
+                LEFT JOIN _move_fmap fm ON cs.Key GLOB '[0-9]*' AND CAST(cs.Key AS INTEGER) = fm.old_fid
+                WHERE cs.CollectionId = {srcCol}");
         }
     }
 
@@ -2937,12 +2984,14 @@ public partial class ConstructorRepository(AppDbContext db)
             progress?.Report(Math.Min(ids.Count, i + batchSize));
         }
 
-        // Строка поля (FK ON DELETE CASCADE уберёт calendar_index) + чистка column_meta
-        // (FK нет — ключ строковый), как в синхронном DeleteField.
+        // Строка поля (FK ON DELETE CASCADE уберёт calendar_index) + чистка column_meta и
+        // оформления её ячеек (FK нет — ключ строковый), как в синхронном DeleteField.
         var key = fieldId.ToString();
         db.Database.ExecuteSqlInterpolated($"DELETE FROM db_fields WHERE Id = {fieldId}");
         db.Database.ExecuteSqlInterpolated(
             $"DELETE FROM column_meta WHERE CollectionId = {colId} AND Key = {key}");
+        db.Database.ExecuteSqlInterpolated(
+            $"DELETE FROM cell_style WHERE CollectionId = {colId} AND Key = {key}");
         tx.Commit();
         LogNow("delete", "field", field.Name, CollectionNameOf(colId));
     }
@@ -3051,6 +3100,9 @@ public partial class ConstructorRepository(AppDbContext db)
         var metaRow = db.ColumnMeta.FirstOrDefault(m => m.CollectionId == colId && m.Key == key);
         if (metaRow is not null) db.ColumnMeta.Remove(metaRow);
 
+        // Оформление ячеек этой колонки — по той же причине: Key строковый, FK на поле нет.
+        db.CellStyles.RemoveRange(db.CellStyles.Where(c => c.CollectionId == colId && c.Key == key));
+
         db.SaveChanges();
     }
 
@@ -3076,6 +3128,7 @@ public partial class ConstructorRepository(AppDbContext db)
               UpdatedAt = r.UpdatedAt, CreatedBy = r.CreatedBy, UpdatedBy = r.UpdatedBy,
               Position = r.Position, StartDt = r.StartDt, EndDt = r.EndDt, AllDay = r.AllDay,
               Title = r.Title,
+              Color = r.Color,
           })
           .ToList();
 
@@ -3129,7 +3182,7 @@ public partial class ConstructorRepository(AppDbContext db)
     // он неявно завершает каждую запись индекса.
     private const string RecordCols =
         "r.Id, r.CollectionId, r.CreatedAt, r.Position, r.StartDt, r.EndDt, r.AllDay, r.Title, " +
-        "r.UpdatedAt, r.CreatedBy, r.UpdatedBy";
+        "r.UpdatedAt, r.CreatedBy, r.UpdatedBy, r.Color";
 
     // Описание записи для календарных карточек: значение поля с ролью «Описание»
     // (IsDescription). Скалярный подзапрос, а не JOIN: не размножает строки, если ролью
@@ -3227,6 +3280,7 @@ public partial class ConstructorRepository(AppDbContext db)
                     UpdatedAt    = rdr.IsDBNull(8)  ? null : rdr.GetString(8),
                     CreatedBy    = rdr.IsDBNull(9)  ? null : rdr.GetString(9),
                     UpdatedBy    = rdr.IsDBNull(10) ? null : rdr.GetString(10),
+                    Color        = rdr.IsDBNull(11) ? null : rdr.GetString(11),
                 });
         }
         finally { if (opened) conn.Close(); }
@@ -3280,6 +3334,7 @@ public partial class ConstructorRepository(AppDbContext db)
             UpdatedAt = r.UpdatedAt, CreatedBy = r.CreatedBy, UpdatedBy = r.UpdatedBy,
             Position = r.Position, StartDt = r.StartDt, EndDt = r.EndDt, AllDay = r.AllDay,
             Title = r.Title,
+            Color = r.Color,
         };
     }
 
@@ -3371,6 +3426,7 @@ public partial class ConstructorRepository(AppDbContext db)
             EndDt        = record.EndDt,
             AllDay       = record.AllDay,
             Title        = record.Title,
+            Color        = record.Color,
         };
         db.DbRecords.Add(entity);
         Log("create", "record", record.Title, CollectionNameOf(record.CollectionId));
@@ -3555,6 +3611,7 @@ public partial class ConstructorRepository(AppDbContext db)
             EndDt        = src.EndDt,
             AllDay       = src.AllDay,
             Title        = src.Title,
+            Color        = src.Color,
         };
         db.DbRecords.Add(copy);
         Log("duplicate", "record", src.Title, CollectionNameOf(src.CollectionId));
@@ -3588,6 +3645,7 @@ public partial class ConstructorRepository(AppDbContext db)
             CollectionId = copy.CollectionId,
             Position     = copy.Position,
             Title        = copy.Title,
+            Color        = copy.Color,
         };
     }
 
@@ -3785,10 +3843,10 @@ public partial class ConstructorRepository(AppDbContext db)
         //    (ранг по Position, Id исходников). Новые rowid — непрерывный блок в этом порядке (мы
         //    единственный писатель в транзакции).
         db.Database.ExecuteSqlInterpolated($@"
-            INSERT INTO db_records (CollectionId, CreatedAt, UpdatedAt, CreatedBy, UpdatedBy, Position, StartDt, EndDt, AllDay, Title)
+            INSERT INTO db_records (CollectionId, CreatedAt, UpdatedAt, CreatedBy, UpdatedBy, Position, StartDt, EndDt, AllDay, Title, Color)
             SELECT {collectionId}, {createdAt}, {createdAt}, {createdBy}, {createdBy},
                    {anchorPos} + ROW_NUMBER() OVER (ORDER BY r.Position, r.Id) * 1000,
-                   r.StartDt, r.EndDt, r.AllDay, r.Title
+                   r.StartDt, r.EndDt, r.AllDay, r.Title, r.Color
             FROM db_records r JOIN _dup_recsel s ON s.src_id = r.Id
             WHERE r.CollectionId = {collectionId}
             ORDER BY r.Position, r.Id");
@@ -3895,9 +3953,9 @@ public partial class ConstructorRepository(AppDbContext db)
             var createdAt = DateTime.Now.ToString("o");
             var createdBy = CurrentUser.DisplayName;   // дубль = новая запись (свой автор/время)
             db.Database.ExecuteSqlInterpolated($@"
-                INSERT INTO db_records (Id, CollectionId, CreatedAt, UpdatedAt, CreatedBy, UpdatedBy, Position, StartDt, EndDt, AllDay, Title)
+                INSERT INTO db_records (Id, CollectionId, CreatedAt, UpdatedAt, CreatedBy, UpdatedBy, Position, StartDt, EndDt, AllDay, Title, Color)
                 SELECT m.new_id, {collectionId}, {createdAt}, {createdAt}, {createdBy}, {createdBy}, {anchorPos} + m.rn * 1000,
-                       r.StartDt, r.EndDt, r.AllDay, r.Title
+                       r.StartDt, r.EndDt, r.AllDay, r.Title, r.Color
                 FROM db_records r JOIN _dup_rmap m ON m.old_id = r.Id");
 
             var processed = 0;
@@ -4407,6 +4465,7 @@ public partial class ConstructorRepository(AppDbContext db)
                 Id = r.Id, CollectionId = r.CollectionId, CreatedAt = r.CreatedAt,
                 Position = r.Position, StartDt = r.StartDt, EndDt = r.EndDt, AllDay = r.AllDay,
                 Title = r.Title,
+                Color = r.Color,
             })
             .ToList()
             .ToDictionary(r => r.Id!.Value);
@@ -4425,7 +4484,11 @@ public partial class ConstructorRepository(AppDbContext db)
     /// иначе keyset вперёд по (afterPos, afterId), иначе keyset назад по (beforePos, beforeId) —
     /// скролл вверх, иначе offset по skip (прыжок скроллбаром).
     /// </summary>
-    public Task<(List<DbRecord> Records, Dictionary<int, Dictionary<int, string>> Values)> LoadPageAsync(
+    /// <summary>Страница таблицы одним фоновым чтением: записи (со своим цветом в DbRecord.Color),
+    /// значения ячеек и оформление ячеек этой страницы. Цвета ячеек берутся тем же батчем, что и
+    /// значения — на пустой cell_style это один индексный промах, а не запрос на строку.</summary>
+    public Task<(List<DbRecord> Records, Dictionary<int, Dictionary<int, string>> Values,
+                 Dictionary<int, Dictionary<string, RowStyle>> CellStyles)> LoadPageAsync(
         int collectionId, bool excludeHidden, IReadOnlyList<int>? idSlice,
         int skip, int take, int? afterPos, int? afterId, int? beforePos = null, int? beforeId = null) =>
         Task.Run(() =>
@@ -4444,7 +4507,8 @@ public partial class ConstructorRepository(AppDbContext db)
 
             var ids    = records.Select(r => r.Id!.Value).ToList();
             var values = repo.GetFieldValuesBatch(ids);
-            return (records, values);
+            var cells  = repo.GetCellStylesBatch(collectionId, ids);
+            return (records, values, cells);
         });
 
     // ── Фильтр колонок (Excel-стиль): уникальные значения с количеством ───────
@@ -4900,7 +4964,8 @@ public partial class ConstructorRepository(AppDbContext db)
     // и таблица не копила пустых строк.
     private void RemoveColumnMetaIfEmpty(ColumnMetaEntity m)
     {
-        if (m.Position is null && m.Visible is null && m.Level is null && m.DisplayName is null)
+        if (m.Position is null && m.Visible is null && m.Level is null && m.DisplayName is null
+            && m.Bg is null && m.Fg is null)
             db.ColumnMeta.Remove(m);
     }
 
@@ -5083,20 +5148,208 @@ public partial class ConstructorRepository(AppDbContext db)
           .Where(d => d.CollectionId == collectionId)
           .ToDictionary(d => d.RecordId, d => (d.Visible, d.Level));
 
-    // Перезаписываем отображение записей целиком. Дефолт (видима, уровень 1) не храним —
-    // так таблица не разрастается, а новые записи по умолчанию видимы.
+    // Переписываем АСПЕКТ «видимость/уровень» у всех записей коллекции. Дефолт (видима,
+    // уровень 1) не храним — так таблица не разрастается, а новые записи по умолчанию видимы.
+    //
+    // Раньше метод сносил все строки коллекции и писал заново. С появлением аспектов Bg/Fg
+    // так нельзя: окно «Отображение записей» ничего не знает о цвете и стёрло бы его. Поэтому
+    // строки обновляются на месте, а удаляются только те, у которых после сброса не осталось
+    // ни одного заданного аспекта (тот же контракт, что RemoveColumnMetaIfEmpty у колонок).
     public void SaveRecordDisplay(int collectionId, IEnumerable<(int RecordId, bool Visible, int Level)> entries)
     {
-        db.RecordDisplay.RemoveRange(db.RecordDisplay.Where(d => d.CollectionId == collectionId));
+        var byRecord = db.RecordDisplay.Where(d => d.CollectionId == collectionId)
+                                       .ToDictionary(d => d.RecordId);
+        var touched  = new HashSet<int>();
+
         foreach (var (recordId, visible, level) in entries)
         {
-            if (visible && level <= 1) continue;   // дефолт — не храним
-            db.RecordDisplay.Add(new RecordDisplayEntity
+            touched.Add(recordId);
+            var lvl = Math.Max(1, level);
+            if (byRecord.TryGetValue(recordId, out var row))
             {
-                CollectionId = collectionId, RecordId = recordId, Visible = visible, Level = Math.Max(1, level),
-            });
+                row.Visible = visible;
+                row.Level   = lvl;
+            }
+            else if (!visible || lvl > 1)   // дефолт для новой строки не храним
+            {
+                db.RecordDisplay.Add(new RecordDisplayEntity
+                {
+                    CollectionId = collectionId, RecordId = recordId, Visible = visible, Level = lvl,
+                });
+            }
+        }
+
+        // Записи, которых нет в списке, возвращаются к дефолту видимости — но их цвет остаётся.
+        foreach (var (recordId, row) in byRecord)
+        {
+            if (!touched.Contains(recordId)) { row.Visible = true; row.Level = 1; }
+            RemoveRecordDisplayIfEmpty(row);
+        }
+
+        db.SaveChanges();
+    }
+
+    // Строка record_display живёт, пока задан хоть один аспект: скрытость, уровень > 1 или
+    // свой цвет текста. Иначе «отсутствие строки = дефолт» перестало бы быть верным.
+    private void RemoveRecordDisplayIfEmpty(RecordDisplayEntity d)
+    {
+        if (d.Visible && d.Level <= 1 && d.Fg is null)
+            db.RecordDisplay.Remove(d);
+    }
+
+    // ── Цвет: сквозной цвет записи + оформление таблицы ─────────────────────────
+    //
+    // Два уровня, см. RowStyle.Resolve:
+    //   • db_records.Color — цвет самой записи. Это И ЕСТЬ заливка строки в таблице; он же
+    //     виден в календаре, задачах, «Списке» и панели записи, едет с записью при
+    //     дубле/переносе и пишется в журнал. Отдельной «локальной» заливки строки нет —
+    //     она выглядела ровно так же, а разницу «видит ли календарь» глазами не отличить;
+    //   • cell_style, column_meta.Bg/Fg и record_display.Fg — локальное оформление
+    //     конкретной таблицы: в журнал не пишется, как ширины колонок и высоты строк.
+    // «Без цвета» везде = null: строка-дельта удаляется, если аспектов не осталось.
+
+    /// <summary>Сквозной цвет записей (hex «#RRGGBB» либо null — «без цвета»).</summary>
+    public void SetRecordColor(IReadOnlyList<int> recordIds, string? hex)
+    {
+        if (recordIds.Count == 0) return;
+        var value = AppPalette.IsHex(hex) ? hex : null;
+        var rows  = db.DbRecords.Where(r => recordIds.Contains(r.Id)).ToList();
+        if (rows.Count == 0) return;
+
+        Demand(PermAction.EditRecord, rows[0].CollectionId);
+        var changed = rows.Where(r => r.Color != value).ToList();
+        if (changed.Count == 0) return;
+
+        // Соседи по общей базе подхватывают цвет через ChangePoller — а он смотрит журнал,
+        // поэтому правка обязана оставить в нём след (в отличие от чисто UI-настроек).
+        var colName = CollectionNameOf(rows[0].CollectionId);
+        if (changed.Count == 1)
+            Log("update", "record", changed[0].Title, colName,
+                detail: ChangeDetail.Value(changed[0].Title, "цвет",
+                                           AppPalette.NameOf(changed[0].Color), AppPalette.NameOf(value)));
+        else
+            Log("update", "records", "", colName, changed.Count);
+
+        foreach (var r in changed) r.Color = value;
+        db.SaveChanges();
+    }
+
+    /// <summary>Фон или цвет текста строк в этой коллекции; null — сбросить аспект.</summary>
+    public void SetRowTextColor(int collectionId, IReadOnlyList<int> recordIds, string? hex)
+    {
+        if (recordIds.Count == 0) return;
+        Demand(PermAction.EditRecord, collectionId);
+        var value = AppPalette.IsHex(hex) ? hex : null;
+
+        var existing = db.RecordDisplay
+            .Where(d => d.CollectionId == collectionId && recordIds.Contains(d.RecordId))
+            .ToDictionary(d => d.RecordId);
+
+        foreach (var recordId in recordIds)
+        {
+            if (existing.TryGetValue(recordId, out var row))
+            {
+                row.Fg = value;
+                RemoveRecordDisplayIfEmpty(row);
+            }
+            else if (value is not null)
+            {
+                db.RecordDisplay.Add(new RecordDisplayEntity
+                {
+                    CollectionId = collectionId, RecordId = recordId, Fg = value,
+                });
+            }
         }
         db.SaveChanges();
+    }
+
+    /// <summary>Фон или цвет текста ячеек; key — «__title__» либо строковый id поля.</summary>
+    public void SetCellStyle(int collectionId, IReadOnlyList<(int RecordId, string Key)> cells,
+                             StyleAspect aspect, string? hex)
+    {
+        if (cells.Count == 0) return;
+        Demand(PermAction.EditRecord, collectionId);
+        var value     = AppPalette.IsHex(hex) ? hex : null;
+        var recordIds = cells.Select(c => c.RecordId).Distinct().ToList();
+
+        var existing = db.CellStyles
+            .Where(c => c.CollectionId == collectionId && recordIds.Contains(c.RecordId))
+            .ToList()
+            .ToDictionary(c => (c.RecordId, c.Key));
+
+        foreach (var (recordId, key) in cells)
+        {
+            if (existing.TryGetValue((recordId, key), out var row))
+            {
+                Apply(aspect, value, v => row.Bg = v, v => row.Fg = v);
+                if (row.Bg is null && row.Fg is null) db.CellStyles.Remove(row);
+            }
+            else if (value is not null)
+            {
+                var added = new CellStyleEntity { CollectionId = collectionId, RecordId = recordId, Key = key };
+                Apply(aspect, value, v => added.Bg = v, v => added.Fg = v);
+                db.CellStyles.Add(added);
+            }
+        }
+        db.SaveChanges();
+    }
+
+    /// <summary>Фон или цвет текста всей колонки; аспект column_meta, как видимость и подпись.</summary>
+    public void SetColumnStyle(int collectionId, string key, StyleAspect aspect, string? hex)
+    {
+        Demand(PermAction.EditField, collectionId);
+        var value = AppPalette.IsHex(hex) ? hex : null;
+        var row   = db.ColumnMeta.FirstOrDefault(m => m.CollectionId == collectionId && m.Key == key);
+
+        if (row is not null)
+        {
+            Apply(aspect, value, v => row.Bg = v, v => row.Fg = v);
+            RemoveColumnMetaIfEmpty(row);
+        }
+        else if (value is not null)
+        {
+            var added = new ColumnMetaEntity { CollectionId = collectionId, Key = key };
+            Apply(aspect, value, v => added.Bg = v, v => added.Fg = v);
+            db.ColumnMeta.Add(added);
+        }
+        db.SaveChanges();
+    }
+
+    private static void Apply(StyleAspect aspect, string? value, Action<string?> bg, Action<string?> fg)
+    {
+        if (aspect == StyleAspect.Background) bg(value); else fg(value);
+    }
+
+    /// <summary>Цвет текста строк коллекции: recordId → стиль (заполнен только Fg — заливка
+    /// строки живёт в цвете записи). Только заданные строки: таблица разрежена, отсутствие
+    /// ключа = стандартный цвет текста.</summary>
+    public Dictionary<int, RowStyle> GetRowStyles(int collectionId) =>
+        db.RecordDisplay.AsNoTracking()
+          .Where(d => d.CollectionId == collectionId && d.Fg != null)
+          .Select(d => new { d.RecordId, d.Fg })
+          .ToList()
+          .ToDictionary(d => d.RecordId, d => RowStyle.Clean(null, d.Fg));
+
+    /// <summary>Оформление колонок: key → стиль (аспекты Bg/Fg из column_meta).</summary>
+    public Dictionary<string, RowStyle> GetColumnStyles(int collectionId) =>
+        db.ColumnMeta.AsNoTracking()
+          .Where(m => m.CollectionId == collectionId && (m.Bg != null || m.Fg != null))
+          .Select(m => new { m.Key, m.Bg, m.Fg })
+          .ToList()
+          .ToDictionary(m => m.Key, m => RowStyle.Clean(m.Bg, m.Fg));
+
+    /// <summary>Оформление ячеек ОДНОЙ СТРАНИЦЫ записей: recordId → (key → стиль).
+    /// Зовётся постранично рядом с GetFieldValuesBatch; AsNoTracking по той же причине.</summary>
+    public Dictionary<int, Dictionary<string, RowStyle>> GetCellStylesBatch(
+        int collectionId, IReadOnlyList<int> recordIds)
+    {
+        if (recordIds.Count == 0) return [];
+        return db.CellStyles.AsNoTracking()
+            .Where(c => c.CollectionId == collectionId && recordIds.Contains(c.RecordId))
+            .Select(c => new { c.RecordId, c.Key, c.Bg, c.Fg })
+            .ToList()
+            .GroupBy(c => c.RecordId)
+            .ToDictionary(g => g.Key, g => g.ToDictionary(c => c.Key, c => RowStyle.Clean(c.Bg, c.Fg)));
     }
 
     // Пакетная перестановка порядка записей (окно «Отображение записей»). Переписывает
@@ -5524,7 +5777,7 @@ public partial class ConstructorRepository(AppDbContext db)
             conn.Open();
             using var cmd = conn.CreateCommand();
             cmd.CommandText = $@"SELECT ci.RecordId, ci.FieldId, ci.CollectionId, ci.StartIso, ci.EndIso, ci.AllDay,
-                                        r.Title, {DescExpr}, c.Name, c.Color
+                                        r.Title, {DescExpr}, c.Name, COALESCE(r.Color, c.Color)
                                  FROM calendar_index ci
                                  JOIN db_records r ON r.Id = ci.RecordId
                                  JOIN db_collections c ON c.Id = r.CollectionId
@@ -5577,7 +5830,7 @@ public partial class ConstructorRepository(AppDbContext db)
                 OR (ci.StartIso = @cs AND ci.RecordId > @cr)
                 OR (ci.StartIso = @cs AND ci.RecordId = @cr AND ci.FieldId > @cf))";
         var sql = $@"SELECT ci.RecordId, ci.FieldId, ci.CollectionId, ci.StartIso, ci.EndIso, ci.AllDay,
-                            r.Title, {DescExpr}, c.Name, c.Color
+                            r.Title, {DescExpr}, c.Name, COALESCE(r.Color, c.Color)
                      FROM calendar_index ci
                      JOIN db_records r ON r.Id = ci.RecordId
                      JOIN db_collections c ON c.Id = r.CollectionId
@@ -5689,7 +5942,7 @@ public partial class ConstructorRepository(AppDbContext db)
         // (без дублей/пропусков на границах страниц с равным StartIso). Быстрый пропуск идёт по
         // индексу (CollectionId, AllDay, StartIso, RecordId, FieldId) без временной сортировки.
         var sql = $@"SELECT ci.RecordId, ci.FieldId, ci.CollectionId, ci.StartIso, ci.EndIso, ci.AllDay,
-                            r.Title, {DescExpr}, c.Name, c.Color
+                            r.Title, {DescExpr}, c.Name, COALESCE(r.Color, c.Color)
                      FROM (
                          SELECT RecordId, FieldId, CollectionId, StartIso, EndIso, AllDay
                          FROM calendar_index
@@ -6163,7 +6416,7 @@ public partial class ConstructorRepository(AppDbContext db)
     {
         using var cmd = conn.CreateCommand();
         cmd.CommandText = $@"SELECT ci.RecordId, ci.FieldId, ci.CollectionId, ci.StartIso, ci.EndIso, ci.AllDay,
-                                    r.Title, {DescExpr}, c.Name, c.Color
+                                    r.Title, {DescExpr}, c.Name, COALESCE(r.Color, c.Color)
                              FROM calendar_index ci
                              JOIN db_records r ON r.Id = ci.RecordId
                              JOIN db_collections c ON c.Id = r.CollectionId

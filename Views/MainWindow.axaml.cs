@@ -319,6 +319,16 @@ public partial class MainWindow : Window
         };
         ConstructorSidebar.CollectionDeleted += (_, _) => ConstructorModule.Refresh();
 
+        // Сквозной цвет записи виден и в календаре, и в задачах — видимый агрегатный модуль
+        // перечитывает свои проекции (сам цвет приезжает из COALESCE(r.Color, c.Color)).
+        ConstructorModule.RecordColorChanged += (_, _) =>
+        {
+            if (_activeModule == "calendar")   CalendarModule.SetActiveIds(CalendarSidebar.GetActiveIds());
+            else if (_activeModule == "tasks") TasksModule.SetActiveIds(TasksSidebar.GetActiveIds());
+            // Открытая панель записи показывает цвет полоской в шапке — перечитываем.
+            if (_recordPanelLogicalOpen) RecordPanel.ReloadFromDb();
+        };
+
         // При изменении коллекций из конструктора — обновить sidebar
         ConstructorModule.CollectionsChanged += (_, _) =>
         {

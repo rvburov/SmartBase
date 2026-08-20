@@ -847,10 +847,9 @@ public partial class TaskCardVm : ObservableObject
         DueChipBg   = chip is { Overdue: true } ? Brush("BrushRedLight", "#FFE9E7") : Brush("BrushSecondaryBg", "#F2F2F7");
         DueChipFg   = chip is { Overdue: true } ? Brush("BrushRed", "#FF3B30")      : Brush("BrushSecondaryText", "#8E8E93");
 
-        // Цветовая полоска коллекции — как в списке календаря; дефолтный синий читается как
-        // «без цвета» и гасится в серый.
-        StripeBrush = new SolidColorBrush(Color.Parse(
-            string.IsNullOrWhiteSpace(task.Color) || task.Color == "#007AFF" ? "#8E8E93" : task.Color));
+        // Цветовая полоска коллекции — как в списке календаря; правило «дефолтный синий =
+        // без цвета → серый» живёт в EventColors, кисти кешируются (карточек на экране много).
+        StripeBrush = ColorTools.Solid(EventColors.Display(task.Color)) ?? Brushes.Transparent;
     }
 
     private static string FormatDay(DateTime d) => $"{d.Day} {Months[d.Month - 1]}";

@@ -8,10 +8,17 @@
          окна на y=56 (MainWindow), иначе линии удваивались бы в 2px. -->
     <DockPanel>
 
-        <!-- Редактируемое имя записи слева + toggle блока коллекции справа -->
-        <Grid ColumnDefinitions="*,Auto" Margin="16,0">
+        <!-- Полоска цвета записи + редактируемое имя слева, toggle блока коллекции справа.
+             Без цвета полоска скрыта и места не занимает (колонка Auto). -->
+        <Grid ColumnDefinitions="Auto,*,Auto" Margin="16,0">
 
-            <TextBlock Grid.Column="0" x:Name="TitleDisplay"
+            <Border Grid.Column="0" x:Name="ColorStripe"
+                    Width="3"
+                    Margin="0,16,10,16"
+                    CornerRadius="{StaticResource RadiusXS}"
+                    IsVisible="False" />
+
+            <TextBlock Grid.Column="1" x:Name="TitleDisplay"
                        HorizontalAlignment="Stretch"
                        VerticalAlignment="Center"
                        FontSize="{DynamicResource FontSizeLarge}"
@@ -20,7 +27,7 @@
                        Cursor="IBeam"
                        Margin="0,0,12,0" />
 
-            <TextBox Grid.Column="0" x:Name="TitleBox"
+            <TextBox Grid.Column="1" x:Name="TitleBox"
                      Classes="titleEditor"
                      IsVisible="False"
                      Watermark="Без названия"
@@ -29,7 +36,7 @@
                      FontWeight="{StaticResource FontWeightBold}"
                      Margin="0,0,12,0" />
 
-            <ToggleButton Grid.Column="1" x:Name="CollectionPanelBtn" Classes="navbtn"
+            <ToggleButton Grid.Column="2" x:Name="CollectionPanelBtn" Classes="navbtn"
                           Width="30" Height="30"
                           VerticalAlignment="Center"
                           CornerRadius="{StaticResource RadiusMedium}"

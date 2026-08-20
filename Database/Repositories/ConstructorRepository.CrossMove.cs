@@ -218,6 +218,7 @@ public partial class ConstructorRepository
                 var calRows  = ReadCalendarFor(srcConn, srcDbTx, oldIds);
                 var heights  = ReadRowHeightsFor(srcConn, srcDbTx, srcCollectionId, oldIds);
                 var displays = ReadRecordDisplayFor(srcConn, srcDbTx, srcCollectionId, oldIds);
+                var cells    = ReadCellStylesFor(srcConn, srcDbTx, srcCollectionId, oldIds);
 
                 using (var tx = tgtCtx.Database.BeginTransaction())
                 {
@@ -234,8 +235,14 @@ public partial class ConstructorRepository
                     InsertRows(tgtCtx, "ui_row_heights", "CollectionId, RecordId, Height",
                         heights.Select(h => new object[] { newColId, recMap[h.RecordId], h.Height }));
 
-                    InsertRows(tgtCtx, "record_display", "CollectionId, RecordId, Visible, Level",
-                        displays.Select(d => new object[] { newColId, recMap[d.RecordId], d.Visible, d.Level }));
+                    InsertRows(tgtCtx, "record_display", "CollectionId, RecordId, Visible, Level, Fg",
+                        displays.Select(d => new object?[]
+                            { newColId, recMap[d.RecordId], d.Visible, d.Level, d.Fg }));
+
+                    // Key ремапится на новый id поля — как у column_meta ниже; «__title__» едет как есть.
+                    InsertRows(tgtCtx, "cell_style", "CollectionId, RecordId, Key, Bg, Fg",
+                        cells.Select(c => new object?[]
+                            { newColId, recMap[c.RecordId], RemapColumnKey(c.Key, fieldMap), c.Bg, c.Fg }));
 
                     tx.Commit();
                 }
@@ -261,16 +268,12 @@ public partial class ConstructorRepository
                         { CollectionId = newColId, ColResize = s.ColResize, RowResize = s.RowResize, ViewMode = s.ViewMode });
 
                 foreach (var cm in srcCtx.ColumnMeta.AsNoTracking().Where(m => m.CollectionId == srcCollectionId).ToList())
-                {
-                    var key = int.TryParse(cm.Key, out var oldFid) && fieldMap.TryGetValue(oldFid, out var nfid)
-                        ? nfid.ToString()
-                        : cm.Key;
                     tgtCtx.ColumnMeta.Add(new ColumnMetaEntity
                     {
-                        CollectionId = newColId, Key = key, Position = cm.Position,
+                        CollectionId = newColId, Key = RemapColumnKey(cm.Key, fieldMap), Position = cm.Position,
                         Visible = cm.Visible, Level = cm.Level, DisplayName = cm.DisplayName,
+                        Bg = cm.Bg, Fg = cm.Fg,
                     });
-                }
                 tgtCtx.SaveChanges();
                 tx.Commit();
             }
@@ -349,7 +352,8 @@ public partial class ConstructorRepository
     private sealed record RecPage(long OldId, string CreatedAt, int Position,
                                   string? StartDt, string? EndDt, int AllDay,
                                   string Title,
-                                  string UpdatedAt, string CreatedBy, string UpdatedBy);
+                                  string UpdatedAt, string CreatedBy, string UpdatedBy,
+                                  string? Color);
 
     private static List<RecPage> ReadRecordsPage(System.Data.Common.DbConnection conn,
         System.Data.Common.DbTransaction tx, int collectionId, int afterPos, int afterId, int take)
@@ -359,7 +363,7 @@ public partial class ConstructorRepository
         // Числа в SQL — int, которые мы формируем сами, поэтому интерполяция безопасна.
         cmd.CommandText = $@"
             SELECT Id, CreatedAt, Position, StartDt, EndDt, AllDay, Title,
-                   UpdatedAt, CreatedBy, UpdatedBy
+                   UpdatedAt, CreatedBy, UpdatedBy, Color
             FROM db_records
             WHERE CollectionId = {collectionId} AND (Position, Id) > ({afterPos}, {afterId})
             ORDER BY Position, Id LIMIT {take}";
@@ -374,14 +378,23 @@ public partial class ConstructorRepository
                 r.GetInt32(5), r.GetString(6),
                 r.IsDBNull(7) ? "" : r.GetString(7),
                 r.IsDBNull(8) ? "" : r.GetString(8),
-                r.IsDBNull(9) ? "" : r.GetString(9)));
+                r.IsDBNull(9) ? "" : r.GetString(9),
+                r.IsDBNull(10) ? null : r.GetString(10)));
         return list;
     }
 
     private sealed record ValueRow(long RecordId, int FieldId, string Value);
     private sealed record CalRow(long RecordId, int FieldId, string StartIso, string EndIso, int AllDay);
     private sealed record HeightRow(long RecordId, int Height);
-    private sealed record DisplayRow(long RecordId, int Visible, int Level);
+    private sealed record DisplayRow(long RecordId, int Visible, int Level, string? Fg);
+    private sealed record CellStyleRow(long RecordId, string Key, string? Bg, string? Fg);
+
+    // Ключ колонки (column_meta / cell_style) в терминах приёмника: числовой ключ — это id
+    // поля, его переводим по карте; «__title__» и незнакомые ключи едут как есть.
+    private static string RemapColumnKey(string key, Dictionary<int, int> fieldMap) =>
+        int.TryParse(key, out var oldFid) && fieldMap.TryGetValue(oldFid, out var nfid)
+            ? nfid.ToString()
+            : key;
 
     private static List<ValueRow> ReadValuesFor(System.Data.Common.DbConnection conn,
         System.Data.Common.DbTransaction tx, List<long> recordIds)
@@ -428,11 +441,31 @@ public partial class ConstructorRepository
     {
         using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
-        cmd.CommandText = "SELECT RecordId, Visible, Level FROM record_display " +
+        cmd.CommandText = "SELECT RecordId, Visible, Level, Fg FROM record_display " +
                           $"WHERE CollectionId = {collectionId} AND RecordId IN ({string.Join(",", recordIds)})";
         using var r = cmd.ExecuteReader();
         var list = new List<DisplayRow>();
-        while (r.Read()) list.Add(new DisplayRow(Convert.ToInt64(r.GetValue(0)), r.GetInt32(1), r.GetInt32(2)));
+        while (r.Read())
+            list.Add(new DisplayRow(Convert.ToInt64(r.GetValue(0)), r.GetInt32(1), r.GetInt32(2),
+                                    r.IsDBNull(3) ? null : r.GetString(3)));
+        return list;
+    }
+
+    // Оформление ячеек страницы записей. Key — строковый («__title__» либо id поля),
+    // поэтому ремап на новые id полей делает вызывающий (как у column_meta).
+    private static List<CellStyleRow> ReadCellStylesFor(System.Data.Common.DbConnection conn,
+        System.Data.Common.DbTransaction tx, int collectionId, List<long> recordIds)
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = "SELECT RecordId, Key, Bg, Fg FROM cell_style " +
+                          $"WHERE CollectionId = {collectionId} AND RecordId IN ({string.Join(",", recordIds)})";
+        using var r = cmd.ExecuteReader();
+        var list = new List<CellStyleRow>();
+        while (r.Read())
+            list.Add(new CellStyleRow(Convert.ToInt64(r.GetValue(0)), r.GetString(1),
+                                      r.IsDBNull(2) ? null : r.GetString(2),
+                                      r.IsDBNull(3) ? null : r.GetString(3)));
         return list;
     }
 
@@ -446,8 +479,8 @@ public partial class ConstructorRepository
         using var ins = conn.CreateCommand();
         ins.Transaction = tgt.Database.CurrentTransaction!.GetDbTransaction();
         ins.CommandText =
-            "INSERT INTO db_records (CollectionId, CreatedAt, Position, StartDt, EndDt, AllDay, Title, UpdatedAt, CreatedBy, UpdatedBy) " +
-            "VALUES (@cid, @created, @pos, @s, @e, @a, @t, @ua, @cb, @ub) RETURNING Id";
+            "INSERT INTO db_records (CollectionId, CreatedAt, Position, StartDt, EndDt, AllDay, Title, UpdatedAt, CreatedBy, UpdatedBy, Color) " +
+            "VALUES (@cid, @created, @pos, @s, @e, @a, @t, @ua, @cb, @ub, @clr) RETURNING Id";
         var pCid     = AddParam(ins, "@cid",     DbType.Int32);
         var pCreated = AddParam(ins, "@created", DbType.String);
         var pPos     = AddParam(ins, "@pos",     DbType.Int32);
@@ -458,6 +491,7 @@ public partial class ConstructorRepository
         var pUa      = AddParam(ins, "@ua",      DbType.String);   // перенос сохраняет аудит-метаданные
         var pCb      = AddParam(ins, "@cb",      DbType.String);
         var pUb      = AddParam(ins, "@ub",      DbType.String);
+        var pClr     = AddParam(ins, "@clr",     DbType.String);   // сквозной цвет записи едет с ней
         ins.Prepare();
 
         var map = new Dictionary<long, long>(page.Count);
@@ -473,6 +507,7 @@ public partial class ConstructorRepository
             pUa.Value      = rec.UpdatedAt;
             pCb.Value      = rec.CreatedBy;
             pUb.Value      = rec.UpdatedBy;
+            pClr.Value     = (object?)rec.Color ?? DBNull.Value;
             map[rec.OldId] = Convert.ToInt64(ins.ExecuteScalar()!);
         }
         return map;
@@ -487,12 +522,12 @@ public partial class ConstructorRepository
                                       IEnumerable<(long A, object B, object C)> rows)
         => InsertRows(tgt, table, columns, rows.Select(r => new object[] { r.A, r.B, r.C }));
 
-    private static void InsertRows(AppDbContext tgt, string table, string columns, IEnumerable<object[]> rows)
+    private static void InsertRows(AppDbContext tgt, string table, string columns, IEnumerable<object?[]> rows)
     {
         var conn = tgt.Database.GetDbConnection();
         var tx   = tgt.Database.CurrentTransaction!.GetDbTransaction();
 
-        var chunk = new List<object[]>(InsertChunkRows);
+        var chunk = new List<object?[]>(InsertChunkRows);
         foreach (var row in rows)
         {
             chunk.Add(row);

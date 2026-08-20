@@ -51,6 +51,8 @@ public class DbRecord
     public string?  EndDt        { get; set; }
     public bool     AllDay       { get; set; } = false;
     public string   Title        { get; set; } = "";
+    // Сквозной цвет записи, hex «#RRGGBB»; null = наследовать цвет коллекции.
+    public string?  Color        { get; set; }
 
     // Для показа — первая непустая строка названия (см. TitleText); вид «Список» рисует
     // название одной строкой карточки. Таблица берёт Title напрямую — у неё свои правила.
