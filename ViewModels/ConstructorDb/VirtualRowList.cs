@@ -1,4 +1,4 @@
-using System.Collections;
+﻿using System.Collections;
 using System.Collections.Specialized;
 using Avalonia.Threading;
 using SmartBase.Core.Models;
@@ -206,7 +206,7 @@ internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollecti
             var values = valMap.TryGetValue(id, out var v) ? v : [];
             rows[i]    = Track(new TableRowVm(_repo, id, skip + i + 1, values, rec.Title ?? "",
                                               rec.CreatedAt ?? "", rec.UpdatedAt ?? "", rec.CreatedBy ?? "", rec.UpdatedBy ?? ""));
-            rows[i].SetStyle(rec.Color, cellMap.GetValueOrDefault(id), notify: false);
+            rows[i].SetStyle(cellMap.GetValueOrDefault(id), notify: false);
         }
         RememberCursor(skip / PageSize, records);
         return rows;
@@ -229,7 +229,7 @@ internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollecti
             var rec    = records[i];
             var id     = rec.Id!.Value;
             var values = valMap.TryGetValue(id, out var v) ? v : [];
-            rows[i].SetStyle(rec.Color, cellMap.GetValueOrDefault(id), notify: false);
+            rows[i].SetStyle(cellMap.GetValueOrDefault(id), notify: false);
             rows[i].Fill(_repo, id, values, rec.Title ?? "",
                          rec.CreatedAt ?? "", rec.UpdatedAt ?? "", rec.CreatedBy ?? "", rec.UpdatedBy ?? "");
         }
@@ -289,7 +289,7 @@ internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollecti
         var values = _repo.GetFieldValues(recordId);
         var cells  = _repo.GetCellStylesBatch(_collectionId, [recordId]);
         PrimeRelationLinks([recordId]);   // связи записи могли измениться (правка в панели записи)
-        row.SetStyle(rec.Color, cells.GetValueOrDefault(recordId), notify: false);
+        row.SetStyle(cells.GetValueOrDefault(recordId), notify: false);
         row.Fill(_repo, recordId, values, rec.Title ?? "",
                  rec.CreatedAt ?? "", rec.UpdatedAt ?? "", rec.CreatedBy ?? "", rec.UpdatedBy ?? "");
     }
@@ -341,7 +341,7 @@ internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollecti
                 var rec    = records[i];
                 var id     = rec.Id!.Value;
                 var values = valMap.TryGetValue(id, out var v) ? v : [];
-                rows[i].SetStyle(rec.Color, cellMap.GetValueOrDefault(id), notify: false);
+                rows[i].SetStyle(cellMap.GetValueOrDefault(id), notify: false);
                 rows[i].Fill(_repo, id, values, rec.Title ?? "",
                          rec.CreatedAt ?? "", rec.UpdatedAt ?? "", rec.CreatedBy ?? "", rec.UpdatedBy ?? "");
             }

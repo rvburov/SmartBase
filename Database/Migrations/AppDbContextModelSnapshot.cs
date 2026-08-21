@@ -470,6 +470,9 @@ namespace SmartBase.Database.Migrations
                     b.Property<int>("RecordId")
                         .HasColumnType("INTEGER");
 
+                    b.Property<string>("Bg")
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("Fg")
                         .HasColumnType("TEXT");
 

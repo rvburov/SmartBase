@@ -66,6 +66,13 @@
             <Setter Property="Fill"    Value="{StaticResource BrushAccentLight}" />
             <Setter Property="Opacity" Value="1" />
         </Style>
+        <!-- ВНИМАНИЕ: этот сеттер до текста НЕ доходит и цвет выделенной строки не меняет.
+             Foreground ячейки тема отдаёт ContentPresenter'у, а дальше значение только
+             НАСЛЕДУЕТСЯ — и проигрывает глобальному стилю «Style Selector="TextBlock"»
+             (Typography.axaml), который задаёт цвет всем надписям приложения. Оставлен как
+             есть: заработает сам, если тот глобальный сеттер когда-нибудь уберут. Цвет
+             текста ячейки, выбранный пользователем, ставится по-другому — локальным
+             значением самим надписям, см. CellStyleHost в code-behind. -->
         <Style Selector="DataGridRow:selected DataGridCell">
             <Setter Property="Foreground" Value="{StaticResource BrushAccent}" />
         </Style>

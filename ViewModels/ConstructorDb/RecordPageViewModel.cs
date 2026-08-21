@@ -37,10 +37,6 @@ public partial class RecordPageViewModel : ObservableObject
     [ObservableProperty] private string _title = "";
     [ObservableProperty] private string _collectionName = "";
 
-    /// <summary>Сквозной цвет записи (db_records.Color); null — «без цвета». Шапка панели
-    /// показывает его полоской, как таблица в колонке «№» и календарь у события.</summary>
-    public string? RecordColor { get; }
-
     public RecordPageViewModel(ConstructorRepository repository, int recordId, int collectionId)
     {
         _repository   = repository;
@@ -52,7 +48,6 @@ public partial class RecordPageViewModel : ObservableObject
         var values = repository.GetFieldValues(recordId);
 
         _title        = record?.Title ?? "";
-        RecordColor   = record?.Color;
 
         var col = repository.GetAllCollections().FirstOrDefault(c => c.Id == collectionId);
         _collectionName = col?.Name ?? "";

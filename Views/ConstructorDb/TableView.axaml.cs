@@ -1,5 +1,4 @@
-using System.Runtime.CompilerServices;
-using System.ComponentModel;
+﻿using System.ComponentModel;
 using Avalonia.Controls.Documents;
 using System.Globalization;
 using System.Reflection;
@@ -11,6 +10,7 @@ using Avalonia.Controls.Primitives;
 using Avalonia.Controls.Shapes;
 using Avalonia.Controls.Templates;
 using Avalonia.Data;
+using Avalonia.Diagnostics;
 using Avalonia.Styling;
 using Avalonia.Data.Converters;
 using Avalonia.Input;
@@ -39,10 +39,6 @@ public partial class TableView : UserControl
     // Значение записи изменено прямо в таблице (правка ячейки: имя/описание/поле). Аргумент —
     // RecordId. MainWindow обновляет открытую панель «Страница записи», если это та же запись.
     public event EventHandler<int>? RecordValueEdited;
-    // Сменился СКВОЗНОЙ цвет записи (db_records.Color) — его показывают и другие разделы
-    // (календарь, задачи, «Список»), поэтому контроллер обновляет их. Локальное оформление
-    // таблицы (фон строки/ячейки/колонки) наружу не сигналит: оно видно только здесь.
-    public event EventHandler? RecordColorChanged;
     // Удаление записей из таблицы (одной или мультивыделения: Shift/Ctrl-клик → меню
     // «Удалить» или клавиша Delete) — всегда пакетно, с подтверждением; для одной записи
     // список из одного id (как удаление свойств).
@@ -141,9 +137,6 @@ public partial class TableView : UserControl
     // Ключ колонки последнего правого клика по ячейке: своего меню у ячейки нет (его открывает
     // строка), поэтому пункты «Фон ячейки»/«Цвет текста ячейки» узнают адресата отсюда.
     private string? _menuCellKey;
-    // Слой цвета → его DataGridCell. Цвет текста ставится ячейке, а не слою (см. ApplyCellStyle);
-    // ссылки слабые — контейнеры создаёт и выбрасывает виртуализация, держать их нельзя.
-    private readonly ConditionalWeakTable<Border, DataGridCell?> _cellOwners = [];
 
     // ── Ручная высота строк ───────────────────────────────────────────────────
     // recordId → высота строки (px). Применяется в OnLoadingRow при ручном режиме;
@@ -152,7 +145,6 @@ public partial class TableView : UserControl
 
     private static readonly Cursor RowResizeCursor = new(StandardCursorType.SizeNorthSouth);
     private const double RowGripThickness = 8;     // высота прозрачной полоски-захвата
-    private const double RecordColorStripeWidth = 3; // полоска цвета записи в колонке «№»
     private const double RowHeightMax     = 600;
     private bool   _rowHandlesPending;             // отложенная перестройка полосок
     // Состояние перетаскивания нижней границы строки (одно за раз).
@@ -1307,12 +1299,21 @@ public partial class TableView : UserControl
 
     // ── Слой пользовательского цвета ячейки ───────────────────────────────────
     //
-    // Заливка и цвет текста ложатся на СВОЙ Border ВНУТРИ ContentPresenter'а, а не на его
-    // фон: там уже живёт заливка выделения колонки. Заливка ПОЛУПРОЗРАЧНА (ColorTools.Fill),
-    // поэтому выделение колонки, выделение строки и наведение просвечивают сквозь цвет и
-    // смешиваются с ним — вместо «цвет закрыл подсветку». Цвет текста ставится
-    // наследуемым TextElement.Foreground: он ближе к тексту, чем стиль DataGridCell, и
-    // перебивает в том числе синий текст выделенной строки.
+    // Заливка ложится на СВОЙ Border ВНУТРИ ContentPresenter'а, а не на его фон: там уже
+    // живёт заливка выделения колонки. Заливка ПОЛУПРОЗРАЧНА (ColorTools.Fill), поэтому
+    // выделение колонки, выделение строки и наведение просвечивают сквозь цвет и
+    // смешиваются с ним — вместо «цвет закрыл подсветку».
+    //
+    // Цвет ТЕКСТА ставится ЛОКАЛЬНЫМ значением самим надписям ячейки. Наследуемый
+    // Foreground — со слоя, с DataGridCell, откуда угодно — до текста не доходит В ПРИНЦИПЕ:
+    // цвет всех надписей приложения задан стилем «Style Selector="TextBlock"»
+    // (Assets/Styles/Typography.axaml), а стиль в Avalonia приоритетнее унаследованного
+    // значения. По той же причине не работает и штатный стиль «DataGridRow:selected
+    // DataGridCell» — синим текст выделенной строки не становится. Локальное значение
+    // приоритетнее стиля, поэтому цвет виден и на выделенной строке.
+    //
+    // Исходную кисть надписи запоминаем: у части ячеек цвет свой («вычисляемые» значения
+    // приглушены), и сброс обязан вернуть именно её, а не обнулить.
     //
     // Контейнеры ячеек переиспользуются виртуализацией, поэтому цвет пересчитывается на
     // КАЖДУЮ смену DataContext (пришла другая строка) и на «Item» строки (страница-заглушка
@@ -1326,15 +1327,42 @@ public partial class TableView : UserControl
             VerticalAlignment   = VerticalAlignment.Stretch,
         };
 
-        // Ячейка-владелец: цвет текста ставим ЕЙ (см. ApplyCellStyle). Находится только после
-        // подключения к дереву, поэтому пересчитываем и здесь — до этого её ещё нет.
-        host.AttachedToVisualTree += (_, _) =>
+        // Надписи, которым поставили цвет → их СВОЯ кисть (null — своей не было, цвет пришёл
+        // от глобального стиля, и сброс = ClearValue). «Своя» — это ровно LocalValue: IsSet
+        // здесь не годится, он True и для стилевого значения, и сброс запирал бы стилевую
+        // кисть локально. Словарь заводится только у покрашенной ячейки — у подавляющего
+        // большинства так и остаётся null, лишней работы на строку нет.
+        Dictionary<TextBlock, IBrush?>? painted = null;
+
+        void PaintText(IBrush? fg)
         {
-            _cellOwners.Remove(host);
-            _cellOwners.Add(host, host.FindAncestorOfType<DataGridCell>());
-            ApplyCellStyle(host, key);
-        };
-        host.DetachedFromVisualTree += (_, _) => _cellOwners.Remove(host);
+            if (fg is null)
+            {
+                if (painted is null) return;             // не красили — и снимать нечего
+                foreach (var (text, original) in painted)
+                {
+                    if (original is null) text.ClearValue(TextBlock.ForegroundProperty);
+                    else                  text.Foreground = original;
+                }
+                painted = null;
+                return;
+            }
+
+            painted ??= [];
+            foreach (var text in host.GetVisualDescendants().OfType<TextBlock>())
+            {
+                if (!painted.ContainsKey(text))
+                    painted[text] = text.GetDiagnostic(TextBlock.ForegroundProperty).Priority
+                                    == BindingPriority.LocalValue ? text.Foreground : null;
+                text.Foreground = fg;
+            }
+        }
+
+        void Apply() => ApplyCellStyle(host, key, PaintText);
+
+        // Loaded, а не AttachedToVisualTree: у составных ячеек (связь, файл) на момент
+        // подключения шаблон ещё не применён — надписей в дереве нет и красить нечего.
+        host.Loaded += (_, _) => Apply();
 
         // Правый клик по ячейке запоминает её колонку: меню открывает СТРОКА, и без этого
         // пункты «Фон ячейки»/«Цвет текста ячейки» не знали бы, какую ячейку красить.
@@ -1344,7 +1372,7 @@ public partial class TableView : UserControl
             if (e.GetCurrentPoint(host).Properties.IsRightButtonPressed) _menuCellKey = key;
         }, RoutingStrategies.Tunnel);
 
-        TrackRowStyle(host, () => ApplyCellStyle(host, key));
+        TrackRowStyle(host, Apply);
         return host;
     }
 
@@ -1357,7 +1385,7 @@ public partial class TableView : UserControl
         TableRowVm? bound = null;
         void OnRowChanged(object? _, PropertyChangedEventArgs e)
         {
-            if (e.PropertyName is "Item" or nameof(TableRowVm.RecordColor)) apply();
+            if (e.PropertyName is "Item") apply();
         }
         void Rebind()
         {
@@ -1377,25 +1405,16 @@ public partial class TableView : UserControl
     }
 
     // Итоговый цвет ячейки: ячейка → строка → цвет записи → колонка (RowStyle.Resolve —
-    // единственное место, где описан приоритет).
-    //
-    // Заливка — на СВОЙ Border (см. CellStyleHost), а цвет текста — на саму DataGridCell:
-    // её Foreground тема прокидывает в ContentPresenter явным TemplateBinding, и весь текст
-    // ячейки берёт цвет оттуда (этим же механизмом красит текст выделенной строки стиль
-    // «DataGridRow:selected DataGridCell»). Локальное значение перебивает оба стиля, поэтому
-    // выбранный пользователем цвет виден и на выделенной строке; сброс возвращает стилевой.
-    private void ApplyCellStyle(Border host, string key)
+    // единственное место, где описан приоритет). Заливка — слою, цвет текста — в paintText:
+    // надписи ячейки и их исходные кисти знает он (см. CellStyleHost).
+    private void ApplyCellStyle(Border host, string key, Action<IBrush?> paintText)
     {
         var style = host.DataContext is TableRowVm vm && !vm.IsAddRow
-            ? RowStyle.Resolve(vm.CellStyle(key), RowStyleOf(vm.RecordId), vm.RecordColor, ColumnStyleOf(key))
+            ? RowStyle.Resolve(vm.CellStyle(key), RowStyleOf(vm.RecordId), ColumnStyleOf(key))
             : RowStyle.None;
 
         host.Background = ColorTools.Fill(style.Bg);
-
-        if (!_cellOwners.TryGetValue(host, out var cell) || cell is null) return;
-        var fg = ColorTools.Text(style.Fg);
-        if (fg is null) cell.ClearValue(TemplatedControl.ForegroundProperty);
-        else            cell.Foreground = fg;
+        paintText(ColorTools.Text(style.Fg));
     }
 
     private RowStyle RowStyleOf(int recordId) =>
@@ -1428,21 +1447,6 @@ public partial class TableView : UserControl
                     Foreground          = (IBrush)this.FindResource("BrushSecondaryText")!,
                 });
 
-                // Полоска сквозного цвета записи — насыщенная и НЕ прозрачная. Заливка ячеек
-                // приглушена и под выделением строки читается плохо; полоска же видна всегда
-                // и совпадает по смыслу с полоской события в календаре и карточки задачи.
-                if (!row.IsAddRow)
-                {
-                    var stripe = new Border
-                    {
-                        Width               = RecordColorStripeWidth,
-                        HorizontalAlignment = HorizontalAlignment.Left,
-                        VerticalAlignment   = VerticalAlignment.Stretch,
-                    };
-                    TrackRowStyle(stripe, () => stripe.Background =
-                        stripe.DataContext is TableRowVm vm ? ColorTools.Solid(vm.RecordColor) : null);
-                    num.Children.Add(stripe);
-                }
                 return num;
             }
 
@@ -1917,7 +1921,7 @@ public partial class TableView : UserControl
         miDisplay.Click += (_, _) => RecordDisplayRequested?.Invoke(this, EventArgs.Empty);
         menu.Items.Add(miDisplay);
 
-        AddRecordColorItems(menu, row);
+        AddColorItems(menu, row);
         AddRecordMoveItems(menu, row);
         AddHeightModeItems(menu);
 
@@ -1937,14 +1941,13 @@ public partial class TableView : UserControl
 
     // ── Пункты цвета в меню строки ────────────────────────────────────────────
     //
-    // Подменю с общей палитрой (ColorMenu):
-    //   • «Цвет записи» — он же заливка строки; сквозной, виден в календаре, задачах,
-    //     «Списке» и панели записи. Отдельного «фона строки» нет: он выглядел так же;
-    //   • «Цвет текста строки», «Фон ячейки», «Цвет текста ячейки» — ТОЛЬКО эта таблица.
-    // Все применяются ко ВСЕМУ мультивыделению строк — как удаление и дубль.
+    // Подменю с общей палитрой (ColorMenu): «Фон строки», «Цвет текста строки», а под
+    // чертой — «Фон ячейки» и «Цвет текста ячейки». Всё это оформление ЭТОЙ таблицы: за её
+    // пределами цвет не виден (сквозной цвет записи был и убран — см. RowStyle.Resolve).
+    // Все пункты применяются ко ВСЕМУ мультивыделению строк — как удаление и дубль.
     // Состав пунктов пересчитывается в menu.Opening: цвета строки к моменту клика могли
     // измениться, а «текущий» цвет в палитре должен быть отмечен верно.
-    private void AddRecordColorItems(ContextMenu menu, DataGridRow row)
+    private void AddColorItems(ContextMenu menu, DataGridRow row)
     {
         var host = new MenuItem { Header = Controls.Components.MenuIcons.ColorHeader() };
         Controls.Components.MenuIcons.FixSubmenuGap(host);
@@ -1958,10 +1961,13 @@ public partial class TableView : UserControl
             if (ids.Count == 0) { host.IsEnabled = false; return; }
             host.IsEnabled = Can(PermAction.EditRecord);
 
-            host.Items.Add(ColorMenu.Build("Цвет записи", vm?.RecordColor,
-                hex => ApplyRecordColor(ids, hex)));
-            host.Items.Add(ColorMenu.Build("Цвет текста строки", RowStyleOf(ids[0]).Fg,
-                hex => ApplyRowTextColor(ids, hex)));
+            // Отмечаем цвет ТОЙ строки, по которой кликнули (в выделении она не обязательно
+            // первая), а применяем ко всему набору — как у колонок.
+            var rowStyle = RowStyleOf(RowRecordId(row));
+            host.Items.Add(ColorMenu.Build("Фон строки", rowStyle.Bg,
+                hex => ApplyRowStyle(ids, StyleAspect.Background, hex)));
+            host.Items.Add(ColorMenu.Build("Цвет текста строки", rowStyle.Fg,
+                hex => ApplyRowStyle(ids, StyleAspect.Text, hex)));
 
             // Ячейка — та, по которой был правый клик (запомнена в CellStyleHost). Своего
             // контекстного меню у ячейки нет: меню открывает строка, поэтому пункты ячейки
@@ -1991,41 +1997,28 @@ public partial class TableView : UserControl
         return selected.Contains(recordId) && selected.Count > 1 ? selected : [recordId];
     }
 
-    private void ApplyRecordColor(List<int> recordIds, string? hex)
+    private void ApplyRowStyle(List<int> recordIds, StyleAspect aspect, string? hex)
     {
         if (_repository is null) return;
-        try { _repository.SetRecordColor(recordIds, hex); }
-        catch (Exception ex) when (DbErrors.Handle(ex, _repository.DbPath)) { return; }
-
-        // Строки в кеше правим на месте — без Reset и мелькания «Загрузка…».
-        // Оформление ячеек при этом сохраняем: меняется только цвет самой записи.
-        foreach (var id in recordIds)
-        {
-            var row = _virtualRows?.FindCachedByRecordId(id);
-            row?.SetStyle(hex, row.CellStyles);
-        }
-        RecordColorChanged?.Invoke(this, EventArgs.Empty);
-    }
-
-    private void ApplyRowTextColor(List<int> recordIds, string? hex)
-    {
-        if (_repository is null) return;
-        try { _repository.SetRowTextColor(_collectionId, recordIds, hex); }
+        try { _repository.SetRowStyle(_collectionId, recordIds, aspect, hex); }
         catch (Exception ex) when (DbErrors.Handle(ex, _repository.DbPath)) { return; }
 
         foreach (var id in recordIds)
         {
-            if (hex is null) _rowStyles.Remove(id);
-            else             _rowStyles[id] = new RowStyle(null, hex);
+            var cur  = RowStyleOf(id);
+            var next = aspect == StyleAspect.Background ? cur with { Bg = hex } : cur with { Fg = hex };
+            if (next.IsEmpty) _rowStyles.Remove(id); else _rowStyles[id] = next;
         }
         RefreshRowStyleVisuals(recordIds);
     }
 
     // Перерисовать цвет уже загруженных строк: ячейки слушают «Item» строки (см. TrackRowStyle).
+    // Строки берём из ВИДИМОГО списка (_activeRows): при фильтре/сортировке на экране живут
+    // строки отфильтрованного списка, а не _virtualRows — как и в точечных рефрешах правки.
     private void RefreshRowStyleVisuals(IEnumerable<int> recordIds)
     {
         foreach (var id in recordIds)
-            _virtualRows?.FindCachedByRecordId(id)?.NotifyCellsChanged();
+            _activeRows?.FindCachedByRecordId(id)?.NotifyCellsChanged();
     }
 
     private void ApplyCellStyleChange(List<(int RecordId, string Key)> cells, StyleAspect aspect, string? hex)
@@ -2036,7 +2029,7 @@ public partial class TableView : UserControl
 
         foreach (var (recordId, key) in cells)
         {
-            var row = _virtualRows?.FindCachedByRecordId(recordId);
+            var row = _activeRows?.FindCachedByRecordId(recordId);
             if (row is null) continue;
             var next = new Dictionary<string, RowStyle>();
             if (row.CellStyles is { } existing)
@@ -2046,22 +2039,31 @@ public partial class TableView : UserControl
             var updated = aspect == StyleAspect.Background ? cur with { Bg = hex } : cur with { Fg = hex };
             if (updated.IsEmpty) next.Remove(key); else next[key] = updated;
 
-            row.SetStyle(row.RecordColor, next);
+            row.SetStyle(next);
         }
     }
 
-    private void ApplyColumnStyle(string key, StyleAspect aspect, string? hex)
+    private void ApplyColumnStyle(List<string> keys, StyleAspect aspect, string? hex)
     {
-        if (_repository is null) return;
-        try { _repository.SetColumnStyle(_collectionId, key, aspect, hex); }
+        if (_repository is null || keys.Count == 0) return;
+        try { _repository.SetColumnStyle(_collectionId, keys, aspect, hex); }
         catch (Exception ex) when (DbErrors.Handle(ex, _repository.DbPath)) { return; }
 
-        var cur  = ColumnStyleOf(key);
-        var next = aspect == StyleAspect.Background ? cur with { Bg = hex } : cur with { Fg = hex };
-        if (next.IsEmpty) _columnStyles.Remove(key); else _columnStyles[key] = next;
+        foreach (var key in keys)
+        {
+            var cur  = ColumnStyleOf(key);
+            var next = aspect == StyleAspect.Background ? cur with { Bg = hex } : cur with { Fg = hex };
+            if (next.IsEmpty) _columnStyles.Remove(key); else _columnStyles[key] = next;
+        }
 
         // Цвет колонки касается всех загруженных строк — уведомляем их разом.
-        _virtualRows?.NotifyAllCachedRows();
+        _activeRows?.NotifyAllCachedRows();
+
+        // Снимаем выделение колонок: его голубая заливка лежит ПОД полупрозрачным цветом,
+        // и на выделенной колонке разницу «покрасил / снял цвет» почти не видно. Выделение
+        // здесь — жест «эти колонки», он своё отработал (так же гаснет после дубля и
+        // удаления свойств). Выделение СТРОК не трогаем: это основное состояние таблицы.
+        ClearColumnSelection();
     }
 
     // Удаление из меню записи. Если запись входит в текущее мультивыделение (правый
@@ -2310,7 +2312,8 @@ public partial class TableView : UserControl
     }
 
     // Цвет колонки — тот же аспект column_meta, что видимость и подпись, поэтому право
-    // как у правки свойства. Состав пересчитывается в Opening: отметка текущего цвета.
+    // как у правки свойства. Состав пересчитывается в Opening: и отметка текущего цвета,
+    // и НАБОР колонок — выделение к моменту клика могло смениться.
     private void AddColumnColorItems(ContextMenu menu, string key)
     {
         var host = new MenuItem { Header = Controls.Components.MenuIcons.ColorHeader() };
@@ -2320,15 +2323,24 @@ public partial class TableView : UserControl
         menu.Opening += (_, _) =>
         {
             host.Items.Clear();
-            var cur = ColumnStyleOf(key);
+            var keys = TargetColumnKeys(key);
+            var cur  = ColumnStyleOf(key);   // отмечаем цвет колонки, по которой кликнули
             host.Items.Add(ColorMenu.Build("Фон колонки", cur.Bg,
-                hex => ApplyColumnStyle(key, StyleAspect.Background, hex)));
+                hex => ApplyColumnStyle(keys, StyleAspect.Background, hex)));
             host.Items.Add(ColorMenu.Build("Цвет текста колонки", cur.Fg,
-                hex => ApplyColumnStyle(key, StyleAspect.Text, hex)));
+                hex => ApplyColumnStyle(keys, StyleAspect.Text, hex)));
         };
 
         menu.Items.Add(host);
     }
+
+    // Колонки, к которым применяется цвет: всё выделение, если колонка в него входит
+    // (как дубль и удаление свойств), иначе только она. В отличие от них системные
+    // колонки НЕ отбрасываются: «Название» красится наравне с остальными.
+    private List<string> TargetColumnKeys(string key) =>
+        _selectedColumnKeys.Contains(key) && _selectedColumnKeys.Count > 1
+            ? [.. _selectedColumnKeys]
+            : [key];
 
     // «Обновить привязку» файла: пересканировать папку, пересобрать значения и перечитать строки.
     // Окно прогресса — только если долго (маленькая коллекция обновляется без мелькания).

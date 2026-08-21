@@ -124,7 +124,6 @@ public partial class RecordPageView : UserControl
         DataContext = _vm;
 
         HeaderBar.SetTitle(_vm.Title == "Без названия" ? "" : _vm.Title);
-        HeaderBar.SetRecordColor(_vm.RecordColor);
 
         FooterBar.IsPreview = false;
 
@@ -159,7 +158,6 @@ public partial class RecordPageView : UserControl
         // Заголовок — только если он не в режиме редактирования (SetTitle сам не дёргает сохранение).
         if (!HeaderBar.IsTitleEditing)
             HeaderBar.SetTitle(_vm.Title == "Без названия" ? "" : _vm.Title);
-        HeaderBar.SetRecordColor(_vm.RecordColor);
 
         BuildProperties();
         ApplyPropsHeight();
@@ -177,7 +175,6 @@ public partial class RecordPageView : UserControl
         _repo = null;
         DataContext = null;
         HeaderBar.SetTitle("");
-        HeaderBar.SetRecordColor(null);
         MarkdownEditor.Text  = "";
         MarkdownPreview.Markdown = "";
         BottomTitleHost.Children.Clear();

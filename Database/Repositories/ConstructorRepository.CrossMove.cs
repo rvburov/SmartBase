@@ -1,4 +1,4 @@
-using System.Data;
+﻿using System.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using SmartBase.Database.Entities;
@@ -235,9 +235,9 @@ public partial class ConstructorRepository
                     InsertRows(tgtCtx, "ui_row_heights", "CollectionId, RecordId, Height",
                         heights.Select(h => new object[] { newColId, recMap[h.RecordId], h.Height }));
 
-                    InsertRows(tgtCtx, "record_display", "CollectionId, RecordId, Visible, Level, Fg",
+                    InsertRows(tgtCtx, "record_display", "CollectionId, RecordId, Visible, Level, Bg, Fg",
                         displays.Select(d => new object?[]
-                            { newColId, recMap[d.RecordId], d.Visible, d.Level, d.Fg }));
+                            { newColId, recMap[d.RecordId], d.Visible, d.Level, d.Bg, d.Fg }));
 
                     // Key ремапится на новый id поля — как у column_meta ниже; «__title__» едет как есть.
                     InsertRows(tgtCtx, "cell_style", "CollectionId, RecordId, Key, Bg, Fg",
@@ -386,7 +386,7 @@ public partial class ConstructorRepository
     private sealed record ValueRow(long RecordId, int FieldId, string Value);
     private sealed record CalRow(long RecordId, int FieldId, string StartIso, string EndIso, int AllDay);
     private sealed record HeightRow(long RecordId, int Height);
-    private sealed record DisplayRow(long RecordId, int Visible, int Level, string? Fg);
+    private sealed record DisplayRow(long RecordId, int Visible, int Level, string? Bg, string? Fg);
     private sealed record CellStyleRow(long RecordId, string Key, string? Bg, string? Fg);
 
     // Ключ колонки (column_meta / cell_style) в терминах приёмника: числовой ключ — это id
@@ -441,13 +441,14 @@ public partial class ConstructorRepository
     {
         using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
-        cmd.CommandText = "SELECT RecordId, Visible, Level, Fg FROM record_display " +
+        cmd.CommandText = "SELECT RecordId, Visible, Level, Bg, Fg FROM record_display " +
                           $"WHERE CollectionId = {collectionId} AND RecordId IN ({string.Join(",", recordIds)})";
         using var r = cmd.ExecuteReader();
         var list = new List<DisplayRow>();
         while (r.Read())
             list.Add(new DisplayRow(Convert.ToInt64(r.GetValue(0)), r.GetInt32(1), r.GetInt32(2),
-                                    r.IsDBNull(3) ? null : r.GetString(3)));
+                                    r.IsDBNull(3) ? null : r.GetString(3),
+                                    r.IsDBNull(4) ? null : r.GetString(4)));
         return list;
     }
 

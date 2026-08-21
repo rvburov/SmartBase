@@ -585,6 +585,10 @@ namespace SmartBase.Database.Migrations.Pg
                         .HasColumnType("integer")
                         .HasColumnName("recordid");
 
+                    b.Property<string>("Bg")
+                        .HasColumnType("text")
+                        .HasColumnName("bg");
+
                     b.Property<string>("Fg")
                         .HasColumnType("text")
                         .HasColumnName("fg");
