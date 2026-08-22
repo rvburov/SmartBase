@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Контракт реестра расширений (Extensions/ExtensionRegistry.cs) — инварианты, которые нельзя
+    проверить изнутри одного расширения: уникальность Id и имён, форма Id, раскладка настроек.
+
+    ЕДИНСТВЕННАЯ папка в Tests/Extensions/, которая не является расширением. Ни один тест здесь
+    не называет конкретное расширение и не проверяет минимальный размер реестра — только обход
+    ExtensionRegistry.All. Реестр опустел → тесты вырождаются в пустые проходы и остаются
+    зелёными: приложение с нулём расширений работоспособно.
+
+    Запуск: dotnet test Tests/Extensions/Registry
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+    <RootNamespace>SmartBase.Tests.Extensions.Registry</RootNamespace>
+    <AssemblyName>SmartBase.Tests.Extensions.Registry</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="coverlet.collector" Version="6.0.4" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\SmartBase.csproj" />
+  </ItemGroup>
+
+</Project>

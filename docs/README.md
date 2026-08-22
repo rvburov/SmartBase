@@ -65,6 +65,7 @@ EF Core/SQLite). Документация разделена на два раз�
 ### Тестирование ([developer/testing/](developer/testing/))
 
 - [overview.md](developer/testing/overview.md) — точка входа: автотесты (Unit/Integration), бенчмарки, многопроцессные проверки, генератор стенда. Команды запуска — также в корневом [README.md](../README.md#тесты).
+- [extension-tests.md](developer/testing/extension-tests.md) — тесты расширений: отдельное дерево `Tests/Extensions/*`, по проекту на расширение, изолированы от тестов ядра.
 
 ### QA-чеклисты ([developer/qa-checklists/](developer/qa-checklists/))
 

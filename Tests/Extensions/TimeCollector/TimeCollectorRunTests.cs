@@ -1,7 +1,7 @@
 using ClosedXML.Excel;
 using SmartBase.Extensions.TimeCollector;
 
-namespace SmartBase.Tests.Integration;
+namespace SmartBase.Tests.Extensions.TimeCollector;
 
 /// <summary>
 /// Сквозной прогон расширения «Сводная трудоёмкость»: на диске создаются настоящие .xlsm —

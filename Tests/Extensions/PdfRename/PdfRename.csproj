@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Тесты расширения «Переименование PDF» (Extensions/PdfRename/).
+
+    Отдельная сборка на расширение: удаление расширения = удаление этой папки, больше ничего
+    править не нужно — ни SmartBase.sln (проектов тестов расширений в нём нет), ни скрипт
+    прогона (он берёт проекты глобом), ни CI.
+
+    Запуск: dotnet test Tests/Extensions/PdfRename
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+    <RootNamespace>SmartBase.Tests.Extensions.PdfRename</RootNamespace>
+    <AssemblyName>SmartBase.Tests.Extensions.PdfRename</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="coverlet.collector" Version="6.0.4" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\SmartBase.csproj" />
+  </ItemGroup>
+
+</Project>

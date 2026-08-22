@@ -1,6 +1,6 @@
 using SmartBase.Extensions.TimeCollector;
 
-namespace SmartBase.Tests.Unit;
+namespace SmartBase.Tests.Extensions.TimeCollector;
 
 /// <summary>
 /// Чистая логика расширения «Сводная трудоёмкость»: разбор имени файла расчёта, отбор файлов
@@ -8,7 +8,7 @@ namespace SmartBase.Tests.Unit;
 /// макроса <c>TimeCollector</c>, поэтому тесты заодно фиксируют, где поведение намеренно
 /// отличается от исходника (см. docs/developer/features/extensions.md).
 /// </summary>
-public sealed class TimeCollectorTests
+public sealed class TimeCollectorEngineTests
 {
     // Колонки свода: 1 — служебный номер строки источника, дальше как в шапке листа «Таблица».
     private const int ColRNum = 1, ColName = 2, ColDeno = 3, ColNorm = 4, ColEfio = 6, ColProj = 7;

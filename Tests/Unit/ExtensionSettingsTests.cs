@@ -1,13 +1,17 @@
-using SmartBase.Extensions;
 using SmartBase.Utils;
 
 namespace SmartBase.Tests.Unit;
 
 /// <summary>
-/// Настройки расширений: раскладка ключей «ext.&lt;Id&gt;.&lt;имя&gt;», уборка строк от
-/// расширений, которых в сборке больше нет, и уникальность Id в реестре. Всё это держит
-/// отделимость расширения: удаление сводится к папке и строке реестра, лишнего не остаётся
-/// ни в коде, ни в app.db (см. docs/features/extensions.md).
+/// Механизм хранения настроек расширений: раскладка ключей «ext.&lt;Id&gt;.&lt;имя&gt;» и уборка
+/// строк от расширений, которых в сборке больше нет. Это часть ОБОЛОЧКИ (AppSettings): она
+/// работает при нуле расширений и обязана работать после удаления любого из них, поэтому
+/// тесты живут в ядре и намеренно НЕ называют ни одного настоящего расширения — иначе
+/// удалённое расширение осталось бы упомянутым здесь.
+///
+/// Инварианты, которые зависят от состава реестра (уникальность Id, объявленные настройки),
+/// проверяются отдельно — Tests/Extensions/Registry/, см. docs/developer/testing/extension-tests.md.
+/// Общая картина механизма — docs/developer/features/extensions.md.
 /// </summary>
 public sealed class ExtensionSettingsTests
 {
@@ -31,10 +35,10 @@ public sealed class ExtensionSettingsTests
         var store = new FakeStore();
         AppSettings.AttachStore(store);
 
-        AppSettings.SaveExtensionSetting("product-compare", "template", @"C:\шаблон.xlsm");
+        AppSettings.SaveExtensionSetting("расш-1", "template", @"C:\шаблон.xlsm");
 
-        Assert.True(store.Has("ext.product-compare.template"));
-        Assert.Equal(@"C:\шаблон.xlsm", AppSettings.LoadExtensionSetting("product-compare", "template"));
+        Assert.True(store.Has("ext.расш-1.template"));
+        Assert.Equal(@"C:\шаблон.xlsm", AppSettings.LoadExtensionSetting("расш-1", "template"));
     }
 
     [Fact]
@@ -50,11 +54,11 @@ public sealed class ExtensionSettingsTests
     {
         var store = new FakeStore();
         AppSettings.AttachStore(store);
-        AppSettings.SaveExtensionSetting("product-compare", "template", @"C:\шаблон.xlsm");
+        AppSettings.SaveExtensionSetting("расш-1", "template", @"C:\шаблон.xlsm");
 
-        AppSettings.SaveExtensionSetting("product-compare", "template", "   ");
+        AppSettings.SaveExtensionSetting("расш-1", "template", "   ");
 
-        Assert.False(store.Has("ext.product-compare.template"));
+        Assert.False(store.Has("ext.расш-1.template"));
         Assert.Equal(0, store.Count);
     }
 
@@ -64,11 +68,11 @@ public sealed class ExtensionSettingsTests
         var store = new FakeStore();
         AppSettings.AttachStore(store);
 
-        AppSettings.SaveExtensionSetting("product-compare", "template", "первый");
-        AppSettings.SaveExtensionSetting("assembly-calc",   "template", "второй");
+        AppSettings.SaveExtensionSetting("расш-1", "template", "первый");
+        AppSettings.SaveExtensionSetting("расш-2", "template", "второй");
 
-        Assert.Equal("первый", AppSettings.LoadExtensionSetting("product-compare", "template"));
-        Assert.Equal("второй", AppSettings.LoadExtensionSetting("assembly-calc",   "template"));
+        Assert.Equal("первый", AppSettings.LoadExtensionSetting("расш-1", "template"));
+        Assert.Equal("второй", AppSettings.LoadExtensionSetting("расш-2", "template"));
     }
 
     // ── Уборка после удаления расширения ──────────────────────────────────────
@@ -113,60 +117,13 @@ public sealed class ExtensionSettingsTests
     {
         var store = new FakeStore();
         AppSettings.AttachStore(store);
-        AppSettings.SaveExtensionSetting("pdf-rename",    "mode", "остаётся");
-        AppSettings.SaveExtensionSetting("pdf-rename-v2", "mode", "уходит");
+        AppSettings.SaveExtensionSetting("живое",    "mode", "остаётся");
+        AppSettings.SaveExtensionSetting("живое-v2", "mode", "уходит");
 
-        var removed = AppSettings.RemoveOrphanExtensionSettings(["pdf-rename"]);
+        var removed = AppSettings.RemoveOrphanExtensionSettings(["живое"]);
 
         Assert.Equal(1, removed);
-        Assert.True(store.Has("ext.pdf-rename.mode"));
-        Assert.False(store.Has("ext.pdf-rename-v2.mode"));
-    }
-
-    // ── Реестр ────────────────────────────────────────────────────────────────
-
-    [Fact]
-    public void Registry_Ids_Are_Unique()
-    {
-        ExtensionRegistry.EnsureUniqueIds();   // не бросает — Id в реестре не повторяются
-
-        var ids = ExtensionRegistry.All.Select(e => e.Id).ToList();
-        Assert.Equal(ids.Count, ids.Distinct(StringComparer.Ordinal).Count());
-    }
-
-    // Настройки живых расширений уборка не трогает: их Id приходят из того же реестра.
-    [Fact]
-    public void Cleanup_Keeps_Settings_Of_Registered_Extensions()
-    {
-        var store = new FakeStore();
-        AppSettings.AttachStore(store);
-        foreach (var extension in ExtensionRegistry.All)
-            foreach (var setting in extension.Settings)
-                AppSettings.SaveExtensionSetting(extension.Id, setting.Key, "значение");
-
-        var before  = store.Count;
-        var removed = AppSettings.RemoveOrphanExtensionSettings(
-            ExtensionRegistry.All.Select(e => e.Id));
-
-        Assert.Equal(0, removed);
-        Assert.Equal(before, store.Count);
-    }
-
-    // Настройка объявлена — значит у неё есть непустые Key и Label: по ним строится поле
-    // в разделе «Расширения», без них строка окажется безымянной.
-    [Fact]
-    public void Declared_Settings_Have_Key_And_Label()
-    {
-        foreach (var extension in ExtensionRegistry.All)
-        {
-            var keys = extension.Settings.Select(s => s.Key).ToList();
-            Assert.Equal(keys.Count, keys.Distinct(StringComparer.Ordinal).Count());
-
-            foreach (var setting in extension.Settings)
-            {
-                Assert.False(string.IsNullOrWhiteSpace(setting.Key));
-                Assert.False(string.IsNullOrWhiteSpace(setting.Label));
-            }
-        }
+        Assert.True(store.Has("ext.живое.mode"));
+        Assert.False(store.Has("ext.живое-v2.mode"));
     }
 }

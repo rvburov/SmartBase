@@ -98,6 +98,12 @@ jobs:
       - name: Интеграционные тесты
         run: dotnet test Tests/Integration --configuration Release --logger 'console;verbosity=minimal'
 
+      # Расширения входят в поставку — выпускать релиз без их проверки нельзя. Список наборов
+      # скрипт берёт глобом (Tests/Extensions/*), правки этого файла при добавлении и удалении
+      # расширения не нужны.
+      - name: Тесты расширений
+        run: bash Tests/run-extensions.sh --configuration Release --logger 'console;verbosity=minimal'
+
   # ── Сборка: четыре платформы параллельно ────────────────────────────────────
   build:
     name: Сборка ${{ matrix.rid }}

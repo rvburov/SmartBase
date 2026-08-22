@@ -12,6 +12,11 @@
 
 UI/ViewModels в охват сознательно не входят — тестируется логика, стоящая за интерфейсом.
 
+**Тесты расширений живут не здесь.** У них своё дерево `Tests/Extensions/<Имя>/` — по проекту на
+расширение, без единой связи с наборами ядра (в `Tests/Unit` и `Tests/Integration` не должно быть
+ни одного `using SmartBase.Extensions.*`, это проверяется шагом CI). Зачем так и как устроено —
+[extension-tests.md](extension-tests.md).
+
 ## Как запускать
 
 Из корня репозитория:
@@ -19,8 +24,9 @@ UI/ViewModels в охват сознательно не входят — тес�
 ```bash
 dotnet test Tests/Unit                 # быстрый гейт: чистая логика, мс
 dotnet test Tests/Integration          # SQLite + PostgreSQL (медленнее)
-dotnet test SmartBase.sln              # оба набора
-./Tests/run-all.sh                     # оба набора (+ --with-bench для бенчмарков)
+dotnet test SmartBase.sln              # оба набора ядра
+./Tests/run-all.sh                     # оба набора ядра (+ --with-bench для бенчмарков)
+./Tests/run-all.sh --with-extensions   # плюс тесты расширений
 dotnet test Tests/Integration --collect:"XPlat Code Coverage"   # покрытие (coverlet)
 ```
 
@@ -45,9 +51,12 @@ SQLite + PG), `CsvExportTests` (выгрузка журнала и диагно�
 - **Только файловые БД.** `TempDatabase` поднимает SQLite на временном файле — `:memory:`
   не годится (WAL и ATTACH требуют файла на диске). При `Dispose` файл и спутники
   `-wal/-shm` удаляются (пул соединений сбрасывается `SqliteConnection.ClearAllPools`).
-- **Integration гоняется последовательно** (`[assembly: CollectionBehavior(DisableTestParallelization = true)]`):
-  `ClearAllPools` — процесс-глобальная операция, при параллельных тестах задевала бы чужие
-  подключения. Unit-тесты остаются параллельными (без общего состояния).
+- **Оба набора гоняются последовательно** (`[assembly: CollectionBehavior(DisableTestParallelization = true)]`
+  в `AssemblyInfo.cs` каждого проекта). Integration — потому что `ClearAllPools` процесс-глобальна
+  и при параллельных тестах задевала бы чужие подключения. Unit — потому что
+  `AppSettings.AttachStore` кладёт хранилище настроек в статическое поле, одно на процесс:
+  параллельные классы подменяли его друг другу между Attach и проверкой. Полный прогон Unit —
+  порядка сотни миллисекунд, так что последовательность ничего не стоит.
 - **Настоящий путь инициализации.** База поднимается через `DatabaseManager.Open` — те же
   миграции, прагмы, сиды и регистрация текущего пользователя администратором, что и в
   приложении. Поэтому тесты идут ровно тем же кодом, а не его тестовым дублёром.
