@@ -958,8 +958,12 @@
             </Grid>
 
             <!-- Карточки полей строятся в code-behind (BuildLogsDetailCards).
-                 Строка карточек ресайзится ручкой-пилюлей ниже. -->
+                 Строка карточек ресайзится ручкой-пилюлей ниже.
+                 Фон блока серый — как у блока свойств «Страницы записи»: белые карточки
+                 читаются на нем как отдельные плашки. Серым залита вся строка (она
+                 звездная), поэтому блок отбит от белой шапки сверху и текста снизу. -->
             <ScrollViewer Grid.Row="1"
+                          Background="{StaticResource BrushSecondaryBg}"
                           VerticalScrollBarVisibility="Auto"
                           HorizontalScrollBarVisibility="Disabled">
                 <StackPanel x:Name="LogsDetailCardsHost"

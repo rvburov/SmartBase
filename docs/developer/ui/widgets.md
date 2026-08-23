@@ -89,6 +89,7 @@ Note.Hide();                       // прячет
 | [ConstructorNavbar](../../../Controls/Components/Navbar/NavbarConstructor.axaml) | навбар конструктора: заголовок-коллекция (редактируемый), переключатель вида, toggle панели записи |
 | [ConstructorFooter](../../../Controls/Components/Footer/FooterConstructor.axaml) | нижняя панель: навигация по строкам таблицы («‹‹ ‹ 10 – 50 из 125 437 › ››», см. [../features/constructor/table.md](../features/constructor/table.md#навигация-нижней-панели)). Больше в панели ничего нет: кнопки «Фильтр»/«Сортировка» удалены (их события никто не слушал, живые вызовы — из меню заголовка колонки), счетчик «Всего: N» — как дубль числа после «из» |
 | [AllDayBar](../../../Controls/Components/AllDayBar.axaml) | полоса событий «весь день» в режимах «День»/«Неделя» |
+| [DateFilterTreeBox](../../../Controls/Components/DateFilterTreeBox.cs) | чеклист дат в окне фильтра колонки: дерево «год → месяц → день» с каскадом галочек; общий для таблицы конструктора, «Диагностики» и «Истории изменений» (логика — [DateFilterTree](../../../Core/Models/DateFilterTree.cs)) |
 | [EventContextMenu](../../../Controls/Components/EventContextMenu.cs) | фабрика контекстных меню событий: `Single` / `Multi` / `Background` |
 
 `Navbar` шлет наверх `TodayClicked/PrevClicked/NextClicked/AddClicked/ViewChanged/

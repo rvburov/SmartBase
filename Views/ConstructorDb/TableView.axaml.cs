@@ -3127,6 +3127,32 @@ public partial class TableView : UserControl
         valuesHost.Bind(Border.BorderThicknessProperty, valuesHost.GetResourceObservable("BorderLine"));
         panel.Children.Add(valuesHost);
 
+        // Колонка-дата показывает не плоский список значений, а дерево «Год → Месяц → День»
+        // (DateFilterTreeBox): сырое значение даты нечитаемо, а по плоскому списку нельзя
+        // выбрать «весь август». Отмечается день, фильтр по-прежнему работает сырыми
+        // значениями. Дерево появляется вместе с данными (см. фоновую загрузку ниже).
+        var isDate = def.FieldType == "date";
+        DateFilterTreeBox? tree = null;
+        var treeNewestFirst = false;   // порядок, которым построено текущее дерево
+
+        // Пересобирает дерево под выбранную сортировку колонки и вешает его в карточку.
+        void MountTree(bool newestFirst)
+        {
+            treeNewestFirst = newestFirst;
+            tree = DateFilterTreeBox.ForStorageDates(counts, checkedSet, fontBase, secondary, newestFirst);
+            tree.SelectionChanged += (_, _) => SyncSelectAll();
+            // «(Выделить все)» — общий чекбокс обоих режимов, а шапку HeaderedList он
+            // получает во владение. Снимаем его с прежнего родителя: он уже стоит в шапке
+            // плоского списка (та строится до загрузки данных), а при смене сортировки —
+            // в шапке предыдущего дерева. Иначе Avalonia бросает «already has a visual parent».
+            (selectAll.Parent as Panel)?.Children.Remove(selectAll);
+            // Пустой результат поиска показывает «Ничего не найдено» — как у плоского списка.
+            valuesHost.Child = Controls.Components.EmptyListHint.Wrap(
+                tree.List, search, secondary, fontBase,
+                content: ScrollBarLink.HeaderedList(selectAll, tree.List, gap: 2));
+            tree.Search(search.Text);
+        }
+
         List<(string Raw, int Count)> Matched()
         {
             var q = search.Text?.Trim() ?? "";
@@ -3136,8 +3162,23 @@ public partial class TableView : UserControl
                     .Contains(q, StringComparison.OrdinalIgnoreCase)).ToList();
         }
 
+        // Показанные сейчас сырые значения — общий язык обоих режимов списка: по ним
+        // считается «(Выделить все)» и Excel-режим «Заменить» в кнопке «Готово».
+        IEnumerable<string> MatchedRaws() =>
+            tree is not null ? tree.VisibleRaws : Matched().Select(c => c.Raw);
+
         void RebuildList()
         {
+            if (isDate)
+            {
+                if (tree is null) return;   // значения еще грузятся — дерева нет
+                // Сменили сортировку колонки — дерево пересобираем в новом порядке,
+                // иначе годы и дни остались бы в прежнем.
+                if (treeNewestFirst != (pendingSort == false)) MountTree(pendingSort == false);
+                else tree.Search(search.Text);
+                return;
+            }
+
             shown.Clear();
             shown.AddRange(Matched().Select(c => Vm(c.Raw, c.Count)));
             // Ширина строки фиксируется по текущему набору — иначе экстент горизонтальной
@@ -3153,7 +3194,9 @@ public partial class TableView : UserControl
         void SyncSelectAll()
         {
             syncingSelectAll    = true;
-            selectAll.IsChecked = Matched().All(c => checkedSet.Contains(c.Raw));
+            selectAll.IsChecked = tree is not null
+                ? tree.AllVisibleChecked
+                : Matched().All(c => checkedSet.Contains(c.Raw));
             syncingSelectAll    = false;
         }
 
@@ -3163,6 +3206,8 @@ public partial class TableView : UserControl
             if (syncingSelectAll) return;
             // «Выделить все» действует на видимое (после поиска) подмножество.
             var on = selectAll.IsChecked == true;
+            if (tree is not null) { tree.SetAllVisible(on); return; }
+
             foreach (var (raw, _) in Matched())
             {
                 if (on) checkedSet.Add(raw);
@@ -3202,7 +3247,7 @@ public partial class TableView : UserControl
             // Поиск пуст — фильтр = все отмеченные галки по всему домену.
             var hasSearch = !string.IsNullOrWhiteSpace(search.Text);
             var effective = hasSearch
-                ? Matched().Select(c => c.Raw).Where(checkedSet.Contains).ToHashSet()
+                ? MatchedRaws().Where(checkedSet.Contains).ToHashSet()
                 : new HashSet<string>(checkedSet);
 
             // Отмечены все значения колонки (а не только видимые) — фильтр не нужен.
@@ -3233,10 +3278,21 @@ public partial class TableView : UserControl
                 else checkedSet.UnionWith(domain);
 
                 ReloadCounts();
-                // «Загрузка…» → список значений; пустой список показывает надпись
-                // «Список пуст» / «Ничего не найдено» вместо голой белой карточки.
-                valuesHost.Child = Controls.Components.EmptyListHint.Wrap(
-                    valuesList, search, secondary, fontBase, content: valuesBox);
+
+                if (isDate)
+                {
+                    // Дерево строится по ТЕКУЩЕЙ сортировке колонки: «Сначала новые» —
+                    // годы, месяцы и дни идут сверху вниз от новых к старым.
+                    MountTree(newestFirst: pendingSort == false);
+                }
+                else
+                {
+                    // «Загрузка…» → список значений; пустой список показывает надпись
+                    // «Список пуст» / «Ничего не найдено» вместо голой белой карточки.
+                    valuesHost.Child = Controls.Components.EmptyListHint.Wrap(
+                        valuesList, search, secondary, fontBase, content: valuesBox);
+                }
+
                 RebuildList();
                 SyncSelectAll();
                 loaded = true;

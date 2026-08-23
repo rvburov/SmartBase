@@ -260,12 +260,14 @@
     <!-- ── Карточки полей в панели «Детали» ────────────────────────────────────
          Строка выбранной записи раскрывается панелью справа: карточка на поле,
          клик по карточке открывает полный текст снизу. Оформление — карточки
-         свойств «Страницы записи» (Border.proprow в RecordPageView): hover — серая
-         подложка, выбор — голубой фон с синей рамкой, подпись и иконка синеют.
+         свойств «Страницы записи» (Border.proprow в RecordPageView): БЕЛАЯ карточка
+         на серой подложке блока, hover — чуть притемненный белый, выбор — голубой фон
+         с синей рамкой, подпись и иконка синеют. Фон нужен явный: прозрачный дал бы
+         серый с подложки, а серый hover совпал бы с ней (карточка «пропадала» бы).
          Стиль общий: панель деталей есть и в «Настройки → Диагностика», и в
          «Профиль → История изменений» — карточки обязаны выглядеть одинаково. -->
     <Style Selector="Border.detailRow">
-        <Setter Property="Background"      Value="Transparent" />
+        <Setter Property="Background"      Value="{StaticResource BrushBg}" />
         <Setter Property="BorderBrush"     Value="{StaticResource BrushSeparator}" />
         <Setter Property="BorderThickness" Value="{DynamicResource BorderLine}" />
         <Setter Property="CornerRadius"    Value="{StaticResource RadiusMedium}" />
@@ -274,7 +276,7 @@
         <Setter Property="Cursor"          Value="Hand" />
     </Style>
     <Style Selector="Border.detailRow:pointerover">
-        <Setter Property="Background" Value="{StaticResource BrushSecondaryBg}" />
+        <Setter Property="Background" Value="{StaticResource BrushInactiveBg}" />
     </Style>
     <Style Selector="Border.detailRow.selected, Border.detailRow.selected:pointerover">
         <Setter Property="Background"  Value="{StaticResource BrushAccentLight}" />

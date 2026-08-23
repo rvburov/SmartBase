@@ -587,8 +587,12 @@
                 </Button>
             </Grid>
 
-            <!-- Карточки полей строятся в code-behind (BuildHistoryDetailCards). -->
+            <!-- Карточки полей строятся в code-behind (BuildHistoryDetailCards).
+                 Фон блока серый — как у блока свойств «Страницы записи» и панели деталей
+                 диагностики: белые карточки читаются на нем как отдельные плашки. Серым
+                 залита вся строка (она звездная) — блок отбит от шапки и текста снизу. -->
             <ScrollViewer Grid.Row="1"
+                          Background="{StaticResource BrushSecondaryBg}"
                           VerticalScrollBarVisibility="Auto"
                           HorizontalScrollBarVisibility="Disabled">
                 <StackPanel x:Name="HistoryDetailCardsHost"

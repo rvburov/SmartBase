@@ -95,7 +95,9 @@
                 <Setter Property="IsVisible" Value="True" />
             </Style>
 
-            <!-- Промежуточное состояние — тоже акцент -->
+            <!-- Промежуточное состояние — тоже акцент. В приложении оно не используется:
+                 галочки везде двухпозиционные (в дереве дат фильтра галочка ветки стоит,
+                 только когда отмечено все внутри, — как «(Выделить все)»). -->
             <Style Selector="^:indeterminate /template/ Border#NormalRectangle">
                 <Setter Property="Background"  Value="{StaticResource BrushAccent}" />
                 <Setter Property="BorderBrush" Value="{StaticResource BrushAccent}" />
