@@ -2868,7 +2868,9 @@ public partial class TableView : UserControl
         // чекбоксы значений, «Готово») задают курсор-руку явно и перебивают наследование.
         var panel = new StackPanel
         {
-            Width  = 240,
+            // Ширина и высота карточки списка — общий стандарт всплывающих списков
+            // (PopupContentWidth/PopupListHeight в Controls.axaml).
+            Width  = (double)this.FindResource("PopupContentWidth")!,
             Margin = new Thickness(12),
             Spacing = 2,
             Cursor  = new Cursor(StandardCursorType.Arrow),
@@ -3021,7 +3023,8 @@ public partial class TableView : UserControl
             // ClipToBounds — квадратные углы полос срезаются скруглением карточки.
             Padding         = new Thickness(0),
             ClipToBounds    = true,
-            Height          = 232,   // фикс высота — список не «прыгает» при замене «Загрузка…»
+            // Фикс высота (стандарт) — список не «прыгает» при замене «Загрузка…».
+            Height          = (double)this.FindResource("PopupListHeight")!,
             Child           = loadingText,
         };
         // Карточка живет в контенте флайаута, обернутом в зум-трансформ — токен обычный.

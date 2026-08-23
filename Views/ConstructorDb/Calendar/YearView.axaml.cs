@@ -237,13 +237,16 @@ public partial class YearView : UserControl
                 Spacing  = 1,
                 Children =
                 {
+                    // Без переноса: ширина попапа фиксированная, длинное название
+                    // дочитывается горизонтальной полосой карточки (как значения в
+                    // фильтре колонки), а не растит строку на пол-попапа.
                     new TextBlock
                     {
                         Text       = e.DisplayTitle,
                         FontSize   = FontSizeBase,
                         FontWeight = WeightBold,
                         Foreground = Primary,
-                        TextWrapping = TextWrapping.Wrap,
+                        TextWrapping = TextWrapping.NoWrap,
                     },
                     new TextBlock
                     {

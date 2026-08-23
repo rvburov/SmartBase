@@ -16,37 +16,53 @@
                          VerticalAlignment="Center" />
         </Viewbox>
 
-        <!-- Попап со списком событий дня, привязывается к ячейке числа -->
-        <!-- Правый Padding рамки — 0: полоса прокрутки списка прилегает к ней без зазора.
-             Заголовку, поиску и содержимому списка правый отступ возвращен их собственным
-             Margin (ClipToBounds тут нельзя — срежет BoxShadow). -->
+        <!-- Попап со списком событий дня, привязывается к ячейке числа.
+             Оформление — стандартный дропдаун приложения (FlyoutPresenter.filterFlyout,
+             фильтр колонки таблицы): серая подложка, на ней заголовок с датой, белая
+             карточка поиска и белая карточка списка. -->
         <Popup x:Name="DayPopup" InheritsTransform="True"
                Placement="Bottom"
                IsLightDismissEnabled="True"
                HorizontalOffset="0" VerticalOffset="4">
-            <Border Background="{StaticResource BrushBg}"
+            <Border Background="{StaticResource BrushSecondaryBg}"
                     BorderBrush="{StaticResource BrushSeparator}"
                     BorderThickness="{DynamicResource BorderLine}"
                     CornerRadius="{StaticResource RadiusMedium}"
                     BoxShadow="0 4 16 0 #1A000000"
-                    Padding="12,12,0,0"
-                    MinWidth="200" MaxWidth="280">
-                <StackPanel Spacing="8">
+                    Padding="12">
+                <!-- Ширина фиксированная (общий стандарт всплывающих списков): блок не
+                     скачет от длины названий, длинные читаются горизонтальной полосой. -->
+                <StackPanel Spacing="8" Width="{StaticResource PopupContentWidth}">
                     <TextBlock x:Name="DayPopupTitle"
-                               FontWeight="{StaticResource FontWeightBold}"
-                               Margin="0,0,12,0" />
+                               FontWeight="{StaticResource FontWeightBold}" />
                     <!-- Поиск по ВСЕМУ дню (фоновый SQL LIKE, как в «Расписании») — попап
-                         показывает лишь первые PopupMaxEvents доставленных записей. -->
+                         показывает лишь первые PopupMaxEvents доставленных записей.
+                         Класс onCard — белое поле во всех состояниях: стандартный серый
+                         слился бы с подложкой попапа. -->
                     <TextBox x:Name="DayPopupSearch"
-                             Watermark="Поиск"
-                             MinHeight="28" Padding="8,4"
-                             Margin="0,0,12,0" />
-                    <!-- Нижний Padding у рамки снят, чтобы полоса прокрутки доходила до ее
-                         нижнего края; воздух под списком вернулся его же Margin'ом (полосу
-                         он не двигает — она вне прокручиваемой области). -->
-                    <ScrollViewer MaxHeight="220">
-                        <StackPanel x:Name="DayPopupList" Spacing="6" Margin="0,0,12,12" />
-                    </ScrollViewer>
+                             Classes="onCard"
+                             Watermark="Поиск" />
+                    <!-- Белая карточка списка. Padding НУЛЕВОЙ + ClipToBounds: полосы
+                         прокрутки прилегают к краям карточки без белого зазора, а их
+                         прямые углы срезаются скруглением. Воздух вокруг строк — Margin
+                         содержимого ВНУТРИ области прокрутки (полосы он не двигает).
+                         Высота — по числу записей, но в границах общего стандарта: пустой
+                         день не схлопывает карточку в полоску, полный — не растит попап
+                         на весь экран (дальше вертикальная полоса). Обе полосы Auto:
+                         горизонтальная дает дочитать длинное название целиком. -->
+                    <Border Background="{StaticResource BrushBg}"
+                            BorderBrush="{StaticResource BrushSeparator}"
+                            BorderThickness="{DynamicResource BorderLine}"
+                            CornerRadius="{StaticResource RadiusBase}"
+                            Padding="0"
+                            ClipToBounds="True"
+                            MinHeight="{StaticResource PopupListMinHeight}"
+                            MaxHeight="{StaticResource PopupListHeight}">
+                        <ScrollViewer HorizontalScrollBarVisibility="Auto"
+                                      VerticalScrollBarVisibility="Auto">
+                            <StackPanel x:Name="DayPopupList" Spacing="6" Margin="10,8" />
+                        </ScrollViewer>
+                    </Border>
                 </StackPanel>
             </Border>
         </Popup>

@@ -505,7 +505,8 @@ public partial class ProfileView
 
         var panel = new StackPanel
         {
-            Width   = 240,
+            // Общий стандарт всплывающих списков (Controls.axaml).
+            Width   = (double)this.FindResource("PopupContentWidth")!,
             Margin  = new Thickness(12),
             Spacing = 2,
             Cursor  = new Cursor(StandardCursorType.Arrow),
@@ -640,7 +641,8 @@ public partial class ProfileView
             // ClipToBounds — квадратные углы полос срезаются скруглением карточки.
             Padding      = new Thickness(0),
             ClipToBounds = true,
-            Height       = 232,
+            // Фикс высота (стандарт) — список не «прыгает» при замене «Загрузка…».
+            Height       = (double)this.FindResource("PopupListHeight")!,
             Child        = loadingText,
         };
         valuesHost.Bind(Border.BorderThicknessProperty, valuesHost.GetResourceObservable("BorderLine"));

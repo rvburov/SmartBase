@@ -134,7 +134,7 @@ public sealed class MultiSelectBox : Panel
     // при пустом поиске). Ничего больше (сортировка/«Готово» не нужны — light dismiss).
     private Control BuildChecklist()
     {
-        var fontBase = Font("FontSizeBase", 12);
+        var fontBase = Res("FontSizeBase", 12);
 
         // Виртуализирующий ListBox (панель по умолчанию — VirtualizingStackPanel): реализуются
         // только видимые строки, поэтому тысячи опций открываются мгновенно.
@@ -183,8 +183,9 @@ public sealed class MultiSelectBox : Panel
         };
         _search.TextChanged += (_, _) => Filter(_search.Text);
 
-        // Белая карточка списка — фиксированной высоты (как valuesHost фильтра, Height=232):
-        // при пустом поиске окно не сужается до тонкой полоски. ListBox сам скроллит контент.
+        // Белая карточка списка — фиксированной высоты (общий стандарт PopupListHeight,
+        // как у фильтра колонки): при пустом поиске окно не сужается до тонкой полоски.
+        // ListBox сам скроллит контент.
         var valuesCard = new Border
         {
             Background      = Brush("BrushBg", Colors.White),
@@ -196,13 +197,14 @@ public sealed class MultiSelectBox : Panel
             // ClipToBounds — квадратные углы полосы срезаются скруглением карточки.
             Padding         = new Thickness(0),
             ClipToBounds    = true,
-            Height          = 232,
+            Height          = Res("PopupListHeight", 232),
             // Пустой список — надпись «Список пуст» / «Ничего не найдено» вместо голой карточки.
             Child           = EmptyListHint.Wrap(valuesList, _search,
                                                  Brush("BrushSecondaryText", Colors.Gray), fontBase),
         };
 
-        var content = new StackPanel { Spacing = 2, MinWidth = 240 };
+        // Ширина фиксированная (общий стандарт): блок одинаков независимо от длины опций.
+        var content = new StackPanel { Spacing = 2, Width = Res("PopupContentWidth", 240) };
         content.Children.Add(_search);
         content.Children.Add(valuesCard);
 
@@ -276,7 +278,8 @@ public sealed class MultiSelectBox : Panel
     private static CornerRadius Radius(string key, double fallback) =>
         Application.Current!.TryFindResource(key, out var r) && r is CornerRadius c ? c : new CornerRadius(fallback);
 
-    private static double Font(string key, double fallback) =>
+    // Числовой токен из ресурсов (размер шрифта, ширина/высота блока-списка).
+    private static double Res(string key, double fallback) =>
         Application.Current!.TryFindResource(key, out var r) && r is double d ? d : fallback;
 
     // Строка чеклиста: Checked читает/пишет общий _selected; при изменении из UI дергает onChanged

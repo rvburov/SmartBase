@@ -56,7 +56,8 @@ public sealed class CollectionPickerFlyout
 
         var panel = new StackPanel
         {
-            Width   = 280,
+            // Общий стандарт всплывающих списков (Controls.axaml).
+            Width   = (double)host.FindResource("PopupContentWidth")!,
             Margin  = new Avalonia.Thickness(12),
             Spacing = 2,
             Cursor  = new Cursor(StandardCursorType.Arrow),
@@ -83,11 +84,9 @@ public sealed class CollectionPickerFlyout
         };
 
         var list = new StackPanel { Spacing = 4 };
-        var scroll = new ScrollViewer
-        {
-            Height  = 220,
-            Content = list,
-        };
+        // Своей высоты у области прокрутки нет — ее задает карточка ниже (общий стандарт
+        // PopupListHeight); иначе карточка выходила выше стандарта на шапку и отступы.
+        var scroll = new ScrollViewer { Content = list };
 
         // «Выделить все» — закрепленная шапка; полоса прокрутки стоит на ее уровне.
         var valuesBox = ScrollBarLink.HeaderedList(selectAll, scroll);
@@ -102,6 +101,7 @@ public sealed class CollectionPickerFlyout
             // ClipToBounds — квадратные углы полосы срезаются скруглением карточки.
             Padding      = new Avalonia.Thickness(0),
             ClipToBounds = true,
+            Height       = (double)host.FindResource("PopupListHeight")!,
             Child        = valuesBox,
         };
         valuesHost.Bind(Border.BorderThicknessProperty, valuesHost.GetResourceObservable("BorderLine"));

@@ -1022,7 +1022,9 @@ public partial class SidebarTree : UserControl
 
         var panel = new StackPanel
         {
-            Width = 240, Margin = new Thickness(10, 8), Spacing = 6,
+            // Общий стандарт всплывающих списков (Controls.axaml).
+            Width = (double)this.FindResource("PopupContentWidth")!,
+            Margin = new Thickness(10, 8), Spacing = 6,
             Cursor = new Cursor(StandardCursorType.Arrow),
         };
 
@@ -1117,9 +1119,10 @@ public partial class SidebarTree : UserControl
             // ClipToBounds — квадратные углы полосы срезаются скруглением карточки.
             Padding         = new Thickness(0),
             ClipToBounds    = true,
+            // Высота — по числу пунктов, но не выше общего стандарта (дальше прокрутка).
+            MaxHeight = (double)this.FindResource("PopupListHeight")!,
             // «Выделить все» — закрепленная шапка; полоса стоит на ее уровне.
-            Child = ScrollBarLink.HeaderedList(
-                selectAll, new ScrollViewer { MaxHeight = 240, Content = list }),
+            Child = ScrollBarLink.HeaderedList(selectAll, new ScrollViewer { Content = list }),
         };
         // Карточка живет в попапе сабменю — попап наследует зум (InheritsTransform
         // ставит стиль MenuItem в Controls.axaml), токен обычный.
@@ -1158,7 +1161,9 @@ public partial class SidebarTree : UserControl
 
         var panel = new StackPanel
         {
-            Width = 240, Margin = new Thickness(10, 8), Spacing = 6,
+            // Общий стандарт всплывающих списков (Controls.axaml).
+            Width = (double)this.FindResource("PopupContentWidth")!,
+            Margin = new Thickness(10, 8), Spacing = 6,
             Cursor = new Cursor(StandardCursorType.Arrow),
         };
 
@@ -1253,7 +1258,9 @@ public partial class SidebarTree : UserControl
             // ClipToBounds — квадратные углы полосы срезаются скруглением карточки.
             Padding         = new Thickness(0),
             ClipToBounds    = true,
-            Child           = new ScrollViewer { MaxHeight = 240, Content = list },
+            // Высота — по числу пунктов, но не выше общего стандарта (дальше прокрутка).
+            MaxHeight       = (double)this.FindResource("PopupListHeight")!,
+            Child           = new ScrollViewer { Content = list },
         };
         listBox.Bind(Border.BorderThicknessProperty, listBox.GetResourceObservable("BorderLine"));
         panel.Children.Add(listBox);

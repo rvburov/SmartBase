@@ -332,7 +332,7 @@ public sealed class RelationSelectBox : Panel
             // ClipToBounds — квадратные углы полосы срезаются скруглением карточки.
             Padding         = new Thickness(0),
             ClipToBounds    = true,
-            Height          = 232,
+            Height          = Res("PopupListHeight", 232),
             // Пустой список — надпись «Список пуст» / «Ничего не найдено» вместо голой карточки.
             Child           = Controls.Components.EmptyListHint.Wrap(
                                   valuesList, _search, Brush("BrushSecondaryText", Colors.Gray), fontBase),
@@ -347,7 +347,9 @@ public sealed class RelationSelectBox : Panel
             IsVisible  = false,
         };
 
-        var stack = new StackPanel { Spacing = 2, MinWidth = 260 };
+        // Ширина фиксированная (общий стандарт всплывающих списков): длинные названия
+        // записей дочитываются горизонтальной полосой карточки, а не растягивают попап.
+        var stack = new StackPanel { Spacing = 2, Width = Res("PopupContentWidth", 240) };
         stack.Children.Add(_search);
         stack.Children.Add(valuesCard);
         stack.Children.Add(_moreHint);
