@@ -8,6 +8,7 @@ using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Media;
+using Avalonia.Media.TextFormatting;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using SmartBase.Core.Models;
@@ -406,11 +407,13 @@ public partial class TaskListView : UserControl
     {
         var secondary = (IBrush)this.FindResource("BrushSecondaryText")!;
         var large     = (double)this.FindResource("FontSizeLarge")!;
+        var bold      = (FontWeight)this.FindResource("FontWeightBold")!;
 
-        var row = new StackPanel
+        // Название держится левого края, мелкий блок уходит к правому. Между ними тянущаяся
+        // колонка: длинное название обрезается многоточием, а блок не съезжает влево.
+        var row = new Grid
         {
-            Orientation       = Orientation.Horizontal,
-            Spacing           = 8,
+            ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto"),
             VerticalAlignment = VerticalAlignment.Center,
         };
 
@@ -418,31 +421,49 @@ public partial class TaskListView : UserControl
         // раскрытая коллекция смотрит вниз, свернутая — вправо.
         row.Children.Add(Chevron(vm.IsCollapsed ? "IconChevronRight" : "IconChevronDown", secondary));
 
-        row.Children.Add(new TextBlock
+        var title = new TextBlock
         {
             Text              = vm.Title,
             FontSize          = large,
-            FontWeight        = (FontWeight)this.FindResource("FontWeightBold")!,
+            FontWeight        = bold,
             TextTrimming      = TextTrimming.CharacterEllipsis,
-            VerticalAlignment = VerticalAlignment.Center,
-        });
+            VerticalAlignment = VerticalAlignment.Bottom,
+            Margin            = new Thickness(8, 0, 0, 0),
+        };
+        Grid.SetColumn(title, 1);
+        row.Children.Add(title);
 
-        // База показывается, только когда их несколько (иначе шум): «· Основная».
+        // Мелкое (база, полоска, счетчик) стоит на ОДНОЙ базовой линии с названием коллекции,
+        // а не по середине его высоты. Выравнивание по низу само по себе базовую линию не дает —
+        // у крупного текста выносной элемент («р», «у») длиннее, поэтому блок опускается на
+        // разницу выносных.
+        var meta = new StackPanel
+        {
+            Orientation         = Orientation.Horizontal,
+            Spacing             = 8,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            VerticalAlignment   = VerticalAlignment.Bottom,
+            Margin              = new Thickness(16, 0, 0, DescenderGap(large, bold)),
+        };
+
+        // База показывается, только когда их несколько (иначе шум): «база данных «Основная»».
         if (vm.Subtitle.Length > 0)
-            row.Children.Add(new TextBlock
+            meta.Children.Add(new TextBlock
             {
-                Text = $"· {vm.Subtitle}", Foreground = secondary,
+                Text = $"база данных «{vm.Subtitle}»", Foreground = secondary,
                 VerticalAlignment = VerticalAlignment.Center,
             });
 
         // Индикатор выполненного: полоска цветом коллекции + «2 из 7». Голое число задач
         // не отвечало на главный вопрос к списку дел — сколько из них уже закрыто.
-        row.Children.Add(ProgressBar(vm.DoneFraction, vm.Color));
-        row.Children.Add(new TextBlock
+        meta.Children.Add(ProgressBar(vm.DoneFraction, vm.Color));
+        meta.Children.Add(new TextBlock
         {
             Text = vm.ProgressText, Foreground = secondary,
             VerticalAlignment = VerticalAlignment.Center,
         });
+        Grid.SetColumn(meta, 2);
+        row.Children.Add(meta);
 
         // Кликом сворачивается вся строка, а не одна стрелка, — как строка группы в сайдбаре.
         // Первая группа стоит вплотную к строке быстрого добавления, следующие отбиваются
@@ -457,6 +478,25 @@ public partial class TaskListView : UserControl
         };
         header.Tapped += (_, e) => { e.Handled = true; ToggleGroup(vm.Group); };
         return header;
+    }
+
+    // На сколько опустить мелкий блок, чтобы он сел на базовую линию названия коллекции.
+    // Считается по метрикам шрифта, а не константой: размеры берутся из ресурсов и меняются
+    // живьем (настройка размера текста), а зум масштабирует результат вместе со строкой.
+    private double DescenderGap(double titleSize, FontWeight titleWeight)
+    {
+        var family = this.FindResource("FontFamilyBase") as FontFamily ?? FontFamily.Default;
+        var body   = (double)this.FindResource("FontSizeBase")!;
+
+        // Height − Baseline = «низ строки минус базовая линия», то есть выносной вниз.
+        double Descender(double size, FontWeight weight)
+        {
+            var layout = new TextLayout("Ар", new Typeface(family, FontStyle.Normal, weight),
+                                        size, Brushes.Black);
+            return layout.Height - layout.Baseline;
+        }
+
+        return Math.Max(0, Descender(titleSize, titleWeight) - Descender(body, FontWeight.Normal));
     }
 
     // Полоска выполненного: серый трек фиксированной ширины и заливка цветом коллекции.
