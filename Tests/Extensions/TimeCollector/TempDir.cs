@@ -18,3 +18,11 @@ internal sealed class TempDir : IDisposable
         catch { /* best-effort */ }
     }
 }
+
+/// <summary>Прогресс, срабатывающий СИНХРОННО в потоке вызова: штатный
+/// <see cref="Progress{T}"/> постит в контекст синхронизации, и в тесте отчеты приходили бы
+/// после проверок (тот же прием, что в остальных наборах расширений).</summary>
+internal sealed class SyncProgress<T>(Action<T> onReport) : IProgress<T>
+{
+    public void Report(T value) => onReport(value);
+}

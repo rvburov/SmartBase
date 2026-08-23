@@ -32,7 +32,9 @@
   </ItemGroup>
 
   <!-- Ссылка на приложение — единственная зависимость. ClosedXML и ExcelDataReader приходят
-       транзитивно (так же ими пользовался этот же тест, пока лежал в Tests/Integration). -->
+       транзитивно (так же ими пользовался этот же тест, пока лежал в Tests/Integration);
+       оттуда же Microsoft.Data.Sqlite для стенда выгрузки свода в коллекцию (TempDatabase.cs —
+       локальная копия обвязки, как у DocsCollection). -->
   <ItemGroup>
     <ProjectReference Include="..\..\..\SmartBase.csproj" />
   </ItemGroup>

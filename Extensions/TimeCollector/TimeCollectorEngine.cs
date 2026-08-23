@@ -58,8 +58,20 @@ public sealed record CollectResult(
     string OutputPath, int TotalFiles, int ProcessedFiles, int RowCount, IReadOnlyList<FileIssue> Issues);
 
 /// <summary>
+/// Прочитанный свод — общая часть обоих способов выгрузки (файл Excel и коллекция программы):
+/// строки в конечном порядке, план их раскраски и счетчики с замечаниями. Все, что зависит от
+/// приемника (шаблон, скрытые колонки, поля коллекции), считается уже после.
+/// </summary>
+public sealed record CollectedTable(
+    List<TimeRow> Rows, TimeCollectorEngine.RowPaint[] Paints,
+    int TotalFiles, int ProcessedFiles, IReadOnlyList<FileIssue> Issues);
+
+/// <summary>
 /// Сборка сводной таблицы трудоемкости — логика без UI (порт <c>TimeCollector.main</c>).
-/// Окно вызывает <see cref="Run"/>, репортя прогресс и отменяясь по токену.
+/// Чтение папки и сборку строк дает <see cref="Collect"/>; дальше свод либо пишется в
+/// .xlsm-шаблон (<see cref="Run"/> — порт макроса целиком), либо становится коллекцией
+/// программы (<see cref="TimeCollectionWriter"/>). Окно зовет нужную ветку, репортя прогресс
+/// и отменяясь по токену.
 ///
 /// Отличия от исходного макроса — намеренные, перечислены в
 /// <c>docs/developer/features/extensions.md</c>: сортируются ВСЕ строки (в макросе из-за
@@ -75,27 +87,32 @@ public static class TimeCollectorEngine
     /// дольше разбора, поэтому четыре читателя дают кратный выигрыш, не выедая память.</summary>
     private const int MaxReaders = 4;
 
-    // Границы фаз на шкале прогресса: чтение файлов — самая долгая часть на сетевой папке,
-    // запись через ClosedXML — на больших сводах.
+    // Границы фаз на шкале прогресса ВЫГРУЗКИ В EXCEL: чтение файлов — самая долгая часть на
+    // сетевой папке, запись через ClosedXML — на больших сводах. У выгрузки в коллекцию свои
+    // границы (см. TimeCollectionWriter): фаз там другое число и стоят они иначе.
     private const double ReadTo   = 0.60;
     private const double ClearTo  = 0.65;
     private const double WriteTo  = 0.90;
     private const double FormatTo = 0.97;
 
-    public static CollectResult Run(
-        string folder, bool recursive, string templatePath, string outputDir,
-        IProgress<CollectProgress>? progress, CancellationToken ct)
+    /// <summary>
+    /// Прочитать папку с расчетами и собрать свод — общая часть обеих выгрузок. Дальше строки
+    /// либо пишутся в .xlsm-шаблон (<see cref="Run"/>), либо становятся записями коллекции
+    /// (<see cref="TimeCollectionWriter"/>). <paramref name="readTo"/> — доля шкалы прогресса,
+    /// которую занимает чтение: остаток шкалы делит между своими фазами уже приемник.
+    /// </summary>
+    public static CollectedTable Collect(
+        string folder, bool recursive, IProgress<CollectProgress>? progress, CancellationToken ct,
+        double readTo = ReadTo)
     {
-        if (!Directory.Exists(folder))    throw new TimeCollectException("Папка с расчетами не найдена.");
-        if (!File.Exists(templatePath))   throw new TimeCollectException("Файл-шаблон не найден.");
-        if (!Directory.Exists(outputDir)) throw new TimeCollectException("Папка для сохранения не найдена.");
+        if (!Directory.Exists(folder)) throw new TimeCollectException("Папка с расчетами не найдена.");
 
         progress?.Report(new CollectProgress(null, "Поиск файлов…", folder));
         var files = FindCalcFiles(folder, recursive);
         if (files.Count == 0)
             throw new TimeCollectException("В папке не найдено файлов расчетов (*.xlsm).");
 
-        var results = ReadAll(files, progress, ct);
+        var results = ReadAll(files, progress, ct, readTo);
 
         var rows      = new List<TimeRow>();
         var issues    = new List<FileIssue>();
@@ -121,7 +138,22 @@ public static class TimeCollectorEngine
         }
 
         var ordered = Sort(rows);
-        var paints  = PlanColors(ordered);
+        return new CollectedTable(ordered, PlanColors(ordered), files.Count, processed, issues);
+    }
+
+    /// <summary>Собрать свод и записать его в .xlsm-шаблон — выгрузка в файл Excel.</summary>
+    public static CollectResult Run(
+        string folder, bool recursive, string templatePath, string outputDir,
+        IProgress<CollectProgress>? progress, CancellationToken ct)
+    {
+        // Приемник проверяем до долгого чтения папки: узнать про недоступный шаблон через
+        // десять минут обхода сетевой шары — худшее из возможного.
+        if (!File.Exists(templatePath))   throw new TimeCollectException("Файл-шаблон не найден.");
+        if (!Directory.Exists(outputDir)) throw new TimeCollectException("Папка для сохранения не найдена.");
+
+        var table   = Collect(folder, recursive, progress, ct);
+        var ordered = table.Rows;
+        var paints  = table.Paints;
         var hidden  = HiddenColumns(ordered);
 
         ct.ThrowIfCancellationRequested();
@@ -143,7 +175,8 @@ public static class TimeCollectorEngine
         }
 
         progress?.Report(new CollectProgress(1, "Готово", ""));
-        return new CollectResult(outputPath, files.Count, processed, ordered.Count, issues);
+        return new CollectResult(outputPath, table.TotalFiles, table.ProcessedFiles,
+                                 ordered.Count, table.Issues);
     }
 
     // ── Обход папки ───────────────────────────────────────────────────────────
@@ -178,7 +211,7 @@ public static class TimeCollectorEngine
     // Результат по каждому файлу кладется в массив ПО ИНДЕКСУ файла: порядок сборки свода
     // и журнала не зависит от того, какой поток закончил раньше.
     private static CalcFileReader.FileReadResult?[] ReadAll(
-        List<string> files, IProgress<CollectProgress>? progress, CancellationToken ct)
+        List<string> files, IProgress<CollectProgress>? progress, CancellationToken ct, double readTo)
     {
         var results = new CalcFileReader.FileReadResult?[files.Count];
         var eta     = new EtaEstimator();
@@ -196,7 +229,7 @@ public static class TimeCollectorEngine
 
                 var count  = Interlocked.Increment(ref done);
                 var issues = result.Issue is null ? Volatile.Read(ref bad) : Interlocked.Increment(ref bad);
-                ReportRead(progress, eta, clock, count, files.Count, result.FileName, issues);
+                ReportRead(progress, eta, clock, count, files.Count, result.FileName, issues, readTo);
             });
         }
         catch (AggregateException ex) when (ex.InnerExceptions.Any(e => e is OperationCanceledException))
@@ -208,7 +241,7 @@ public static class TimeCollectorEngine
     }
 
     private static void ReportRead(IProgress<CollectProgress>? progress, EtaEstimator eta, Stopwatch clock,
-                                   int done, int total, string file, int issues)
+                                   int done, int total, string file, int issues, double readTo)
     {
         if (progress is null) return;
 
@@ -221,7 +254,7 @@ public static class TimeCollectorEngine
         lock (eta) left = eta.Update(fraction, clock.Elapsed);
         if (left is not null) info += $" · {left}";
 
-        progress.Report(new CollectProgress(ReadTo * fraction, "Чтение расчетов", info));
+        progress.Report(new CollectProgress(readTo * fraction, "Чтение расчетов", info));
     }
 
     // ── Разбор имени файла ────────────────────────────────────────────────────
