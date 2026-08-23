@@ -7,10 +7,12 @@
 
     <UserControl.Styles>
         <!-- Карточка свойства: иконка типа + название · ручка-разделитель · значение.
-             Hover — легкая серая подложка; выделение (клик) — голубой фон + синяя рамка,
-             как выбранная строка сайдбара (BrushAccentLight / BrushAccent). -->
+             Карточка белая на серой подложке блока свойств (PropertiesScroll) — фон нужен
+             явный, прозрачный дал бы серый. Hover — чуть притемненный белый (на сером фоне
+             серая подложка hover'а слила бы карточку с подложкой блока); выделение (клик) —
+             голубой фон + синяя рамка, как выбранная строка сайдбара. -->
         <Style Selector="Border.proprow">
-            <Setter Property="Background"      Value="Transparent" />
+            <Setter Property="Background"      Value="{StaticResource BrushBg}" />
             <Setter Property="BorderBrush"     Value="{StaticResource BrushSeparator}" />
             <Setter Property="BorderThickness" Value="{DynamicResource BorderLine}" />
             <Setter Property="CornerRadius"    Value="{StaticResource RadiusMedium}" />
@@ -19,7 +21,7 @@
             <Setter Property="Cursor"          Value="Hand" />
         </Style>
         <Style Selector="Border.proprow:pointerover">
-            <Setter Property="Background" Value="{StaticResource BrushSecondaryBg}" />
+            <Setter Property="Background" Value="{StaticResource BrushInactiveBg}" />
         </Style>
         <Style Selector="Border.proprow.selected, Border.proprow.selected:pointerover">
             <Setter Property="Background"  Value="{StaticResource BrushAccentLight}" />
@@ -49,10 +51,10 @@
             <Setter Property="Cursor"              Value="SizeWestEast" />
         </Style>
 
-        <!-- Строка «Добавить свойство» — такая же карточка, как у свойств (рамка, скругление,
-             высота, отступы), только с иконкой «+» и подписью; подложка по наведению. -->
+        <!-- Строка «Добавить свойство» — такая же карточка, как у свойств (белая на серой
+             подложке, рамка, скругление, высота, отступы), только с иконкой «+» и подписью. -->
         <Style Selector="Border.addprop">
-            <Setter Property="Background"      Value="Transparent" />
+            <Setter Property="Background"      Value="{StaticResource BrushBg}" />
             <Setter Property="BorderBrush"     Value="{StaticResource BrushSeparator}" />
             <Setter Property="BorderThickness" Value="{DynamicResource BorderLine}" />
             <Setter Property="CornerRadius"    Value="{StaticResource RadiusMedium}" />
@@ -61,7 +63,7 @@
             <Setter Property="Cursor"          Value="Hand" />
         </Style>
         <Style Selector="Border.addprop:pointerover">
-            <Setter Property="Background" Value="{StaticResource BrushSecondaryBg}" />
+            <Setter Property="Background" Value="{StaticResource BrushInactiveBg}" />
         </Style>
     </UserControl.Styles>
 
@@ -72,8 +74,12 @@
 
         <!-- Свойства (все кроме системного «Название» и markdown).
              В ScrollViewer: когда ручкой ниже задана пиксельная высота строки и
-             свойств больше, чем влезает, — список прокручивается. -->
+             свойств больше, чем влезает, — список прокручивается.
+             Фон блока серый: белые карточки свойств читаются на нем как отдельные
+             плашки. Серым залита вся строка (по умолчанию 1*, а не высота контента) —
+             блок свойств отбит от белой шапки сверху и белого описания снизу. -->
         <ScrollViewer Grid.Row="1" x:Name="PropertiesScroll"
+                      Background="{StaticResource BrushSecondaryBg}"
                       VerticalScrollBarVisibility="Auto"
                       HorizontalScrollBarVisibility="Disabled">
             <!-- Карточки свойств и строка «Добавить свойство» строятся в code-behind
