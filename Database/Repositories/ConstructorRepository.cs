@@ -4036,6 +4036,11 @@ public partial class ConstructorRepository(AppDbContext db)
         var srcValues = source.GetFieldValues(sourceRecordId);
         if (srcValues.Count == 0) return;
 
+        // Перенос — не назначение: значения переезжают в ДРУГУЮ запись, исполнитель и стадия
+        // у задачи не менялись. Без этого каждый перенос записи слал бы исполнителю ложное
+        // «вам назначена задача».
+        using var quiet = SuppressTaskEvents();
+
         var targetByName = new Dictionary<string, DbField>(StringComparer.OrdinalIgnoreCase);
         foreach (var tf in GetFields(targetCollectionId))
             targetByName.TryAdd(tf.Name, tf);
@@ -4765,14 +4770,19 @@ public partial class ConstructorRepository(AppDbContext db)
                 .FirstOrDefault();
             if (rec is not null)
             {
+                // Метаданные поля нужны и журналу (имя, тип), и событиям задач (роли) —
+                // читаем ОДНИМ запросом, тем же, что был здесь и раньше.
+                var f = db.DbFields.AsNoTracking()
+                    .Where(x => x.Id == fieldId)
+                    .Select(x => new EditedFieldMeta(x.Name, x.FieldType, x.IsTaskExec, x.IsTaskStatus))
+                    .FirstOrDefault();
+
                 // «до → после»: имя свойства + компактный дифф значения (старое уже в fv).
                 // Побуквенное сохранение панели записи — сливаем в одну строку журнала.
                 var key = (Kind: "field", RecordId: recordId, SubId: fieldId);
                 var old = BeginEditMerge(key, fv?.Value ?? "");
                 if (old != value)
                 {
-                    var f = db.DbFields.AsNoTracking()
-                        .Where(x => x.Id == fieldId).Select(x => new { x.Name, x.FieldType }).FirstOrDefault();
                     var fieldName = f?.Name ?? "";
                     // «Файл»: в журнале показываем имя файла, а не абсолютный путь (как в ячейке
                     // и фильтре). Слияние правок идет по сырым old/value — свертка только для показа.
@@ -4783,6 +4793,10 @@ public partial class ConstructorRepository(AppDbContext db)
                                           detail: ChangeDetail.Value(rec.Title, fieldName, detailOld, detailNew)),
                                  old);
                 }
+
+                // Правили исполнителя или стадию — кладем в очередь уведомление получателю.
+                // Старым значением идет ФАКТИЧЕСКОЕ значение ячейки, а не слитое «до» журнала.
+                TryWriteTaskEvent(recordId, rec.Title, rec.CollectionId, fieldId, f, fv?.Value ?? "", value);
             }
         }
 

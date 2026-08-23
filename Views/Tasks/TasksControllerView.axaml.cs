@@ -117,6 +117,34 @@ public partial class TasksControllerView : UserControl
 
     public void Refresh() => RefreshCurrent();
 
+    /// <summary>
+    /// Открыть карточку задачи по клику на уведомлении. Задачу перечитываем из базы, а не
+    /// берем из показанного списка: раздел мог быть еще не загружен, задача — не попасть в
+    /// текущий фильтр или крышку чтения, а название и стадия за время показа баннера уже
+    /// поменяться. Дальше — обычный путь правки (OpenEditDialog), со всеми подтверждениями.
+    /// </summary>
+    public async Task OpenTaskAsync(int dbId, int recordId, int collectionId, int execFieldId)
+    {
+        if (RepoFor(dbId) is not { } repo) return;
+
+        TaskRecord? task = null;
+        try
+        {
+            task = repo.GetTaskRecordsByIds(collectionId, [recordId])
+                       .FirstOrDefault(t => execFieldId == 0 || t.ExecFieldId == execFieldId);
+        }
+        catch { /* база могла отвалиться — ниже покажем то же сообщение, что и об удалении */ }
+
+        if (task is null)
+        {
+            TaskList.ShowError("Задача не найдена: возможно, ее удалили или перенесли.");
+            return;
+        }
+
+        task.DbId = dbId;
+        await OpenEditDialog(task);
+    }
+
     private void SetDatabaseList(IReadOnlyList<DatabaseManager> databases)
     {
         _dbs.Clear();

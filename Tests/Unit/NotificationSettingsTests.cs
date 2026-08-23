@@ -81,4 +81,72 @@ public sealed class NotificationSettingsTests
         // Формат "o" — стабилен независимо от локали машины.
         Assert.Equal(instant.ToString("o", CultureInfo.InvariantCulture), store.Get("notifyWatermark"));
     }
+
+    // ── Уведомления по задачам ────────────────────────────────────────────────
+
+    [Fact]
+    public void Task_notifications_enabled_by_default()
+    {
+        AppSettings.AttachStore(new FakeStore());
+        Assert.True(AppSettings.LoadNotifyTaskAssigned());
+        Assert.True(AppSettings.LoadNotifyTaskStatus());
+    }
+
+    [Fact]
+    public void Task_toggles_are_stored_as_deltas_and_are_independent()
+    {
+        var store = new FakeStore();
+        AppSettings.AttachStore(store);
+
+        AppSettings.SaveNotifyTaskAssigned(false);
+        Assert.True(store.Has("notifyTaskAssigned"));
+        Assert.False(AppSettings.LoadNotifyTaskAssigned());
+        Assert.True(AppSettings.LoadNotifyTaskStatus());    // сосед не задет
+        Assert.False(store.Has("notifyTaskStatus"));
+
+        AppSettings.SaveNotifyTaskAssigned(true);           // назад к дефолту
+        Assert.False(store.Has("notifyTaskAssigned"));
+    }
+
+    [Fact]
+    public void Task_event_cursors_round_trip_per_database()
+    {
+        var store = new FakeStore();
+        AppSettings.AttachStore(store);
+
+        AppSettings.SaveTaskEventCursors(new Dictionary<int, long> { [2] = 17, [5] = 4 });
+        var back = AppSettings.LoadTaskEventCursors();
+
+        Assert.Equal(17, back[2]);
+        Assert.Equal(4, back[5]);
+        // Порядок фиксированный: иначе один и тот же набор писался бы каждый раз новой строкой.
+        Assert.Equal("2:17;5:4", store.Get("notifyTaskCursors"));
+    }
+
+    [Fact]
+    public void Task_event_cursors_survive_a_broken_value()
+    {
+        var store = new FakeStore();
+        AppSettings.AttachStore(store);
+        store.Set("notifyTaskCursors", "3:9;мусор;;7:x;4:12");
+
+        var back = AppSettings.LoadTaskEventCursors();
+
+        Assert.Equal(9, back[3]);
+        Assert.Equal(12, back[4]);
+        Assert.Equal(2, back.Count);
+    }
+
+    [Fact]
+    public void Empty_cursor_set_removes_the_key()
+    {
+        var store = new FakeStore();
+        AppSettings.AttachStore(store);
+
+        AppSettings.SaveTaskEventCursors(new Dictionary<int, long> { [1] = 5 });
+        AppSettings.SaveTaskEventCursors(new Dictionary<int, long>());
+
+        Assert.False(store.Has("notifyTaskCursors"));
+        Assert.Empty(AppSettings.LoadTaskEventCursors());
+    }
 }

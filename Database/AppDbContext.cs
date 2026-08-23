@@ -23,6 +23,7 @@ public class AppDbContext : DbContext
     public DbSet<DbPermissionEntity>       DbPermissions        { get; set; } = null!;
     public DbSet<DbMetaEntity>             DbMeta               { get; set; } = null!;
     public DbSet<ChangeLogEntity>          ChangeLog            { get; set; } = null!;
+    public DbSet<TaskEventEntity>          TaskEvents           { get; set; } = null!;
 
     private readonly string _dbPath;
 
@@ -403,6 +404,21 @@ public class AppDbContext : DbContext
             e.HasKey(x => x.Id);
             // Без FK: журнал переживает удаление коллекций/записей/пользователей.
             // Чтение идет keyset-пагинацией по Id (rowid) DESC — индексы не нужны.
+        });
+
+        model.Entity<TaskEventEntity>(e =>
+        {
+            e.ToTable("task_events");
+            e.HasKey(x => x.Id);
+            // Без FK по тем же причинам, что у журнала: уведомление «вам назначена задача»
+            // должно доехать, даже если запись успели удалить, а каскад по db_records
+            // молча уносил бы очередь.
+            //
+            // Горячий путь опроса — диапазон по PK (Id > курсор), обычно пустой. Индекс по
+            // получателю нужен второму сценарию: человек не заходил неделю, в очереди
+            // накопились чужие события, и «мои после курсора» надо взять индексом, а не
+            // фильтром поверх всего хвоста.
+            e.HasIndex(x => new { x.RecipientKey, x.Id });
         });
 
         if (IsPostgres) ApplyLowercaseNames(model);

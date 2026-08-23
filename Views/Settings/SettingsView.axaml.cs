@@ -38,6 +38,9 @@ public partial class SettingsView : UserControl
     public event EventHandler<int>?               DatabaseReconnectRequested;
     // Тумблер «Общее → Уведомления» переключен — MainWindow сообщает службе уведомлений.
     public event EventHandler<bool>?              NotificationsEnabledChanged;
+    // Тумблеры уведомлений по задачам — туда же, каждый сам по себе.
+    public event EventHandler<bool>?              TaskAssignedNotificationsChanged;
+    public event EventHandler<bool>?              TaskStatusNotificationsChanged;
     // Тумблер «Общее → Фоновый режим» переключен — MainWindow показывает/прячет значок в трее.
     public event EventHandler<bool>?              BackgroundEnabledChanged;
 
@@ -64,6 +67,8 @@ public partial class SettingsView : UserControl
 
         // ── Общее ────────────────────────────────────────────────────────────
         NotificationsToggle.IsChecked = AppSettings.LoadNotificationsEnabled();
+        TaskAssignedToggle.IsChecked  = AppSettings.LoadNotifyTaskAssigned();
+        TaskStatusToggle.IsChecked    = AppSettings.LoadNotifyTaskStatus();
         AutostartToggle.IsEnabled     = Autostart.IsSupported;   // в dev-режиме (без бандла/exe) недоступно
         // Состояние берем у САМОЙ системы, а не из app.db: запись могли снести мимо приложения,
         // и тумблер показывал бы автозапуск, которого нет. Вне установки читать нечего — там
@@ -204,6 +209,22 @@ public partial class SettingsView : UserControl
         var on = NotificationsToggle.IsChecked == true;
         AppSettings.SaveNotificationsEnabled(on);
         NotificationsEnabledChanged?.Invoke(this, on);
+    }
+
+    // Уведомления по задачам — тем же путем: сохранить и сообщить службе. Включение показывает
+    // только то, что случится дальше: накопленное за время «выключено» служба не вываливает.
+    private void OnTaskAssignedToggled(object? sender, RoutedEventArgs e)
+    {
+        var on = TaskAssignedToggle.IsChecked == true;
+        AppSettings.SaveNotifyTaskAssigned(on);
+        TaskAssignedNotificationsChanged?.Invoke(this, on);
+    }
+
+    private void OnTaskStatusToggled(object? sender, RoutedEventArgs e)
+    {
+        var on = TaskStatusToggle.IsChecked == true;
+        AppSettings.SaveNotifyTaskStatus(on);
+        TaskStatusNotificationsChanged?.Invoke(this, on);
     }
 
     // Автозапуск: сначала запись в ОС, и только если она легла — сохраняем настройку. Запись не

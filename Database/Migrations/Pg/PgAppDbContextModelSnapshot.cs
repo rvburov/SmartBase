@@ -606,6 +606,88 @@ namespace SmartBase.Database.Migrations.Pg
                     b.ToTable("record_display", (string)null);
                 });
 
+            modelBuilder.Entity("SmartBase.Database.Entities.TaskEventEntity", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint")
+                        .HasColumnName("id");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<string>("ActorKey")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("actorkey");
+
+                    b.Property<string>("ActorName")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("actorname");
+
+                    b.Property<int>("CollectionId")
+                        .HasColumnType("integer")
+                        .HasColumnName("collectionid");
+
+                    b.Property<string>("CollectionName")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("collectionname");
+
+                    b.Property<int>("ExecFieldId")
+                        .HasColumnType("integer")
+                        .HasColumnName("execfieldid");
+
+                    b.Property<int>("FieldId")
+                        .HasColumnType("integer")
+                        .HasColumnName("fieldid");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("kind");
+
+                    b.Property<string>("NewValue")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("newvalue");
+
+                    b.Property<string>("OldValue")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("oldvalue");
+
+                    b.Property<string>("RecipientKey")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("recipientkey");
+
+                    b.Property<string>("RecipientName")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("recipientname");
+
+                    b.Property<int>("RecordId")
+                        .HasColumnType("integer")
+                        .HasColumnName("recordid");
+
+                    b.Property<string>("TaskTitle")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("tasktitle");
+
+                    b.Property<string>("Ts")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("ts");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("RecipientKey", "Id");
+
+                    b.ToTable("task_events", (string)null);
+                });
+
             modelBuilder.Entity("SmartBase.Database.Entities.UiColWidthEntity", b =>
                 {
                     b.Property<int>("CollectionId")

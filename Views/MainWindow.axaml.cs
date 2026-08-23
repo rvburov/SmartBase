@@ -95,10 +95,13 @@ public partial class MainWindow : Window
             PlatformNotifications.CreateNotifier(Program.NotificationManager),
             PlatformNotifications.CreateBadge(() => TryGetPlatformHandle()?.Handle ?? nint.Zero),
             CollectDueEvents,
-            AppSettings.SaveNotifyWatermark);
+            AppSettings.SaveNotifyWatermark,
+            taskSource: new TaskEventReader(GrantedDbs));
         // Клик по баннеру (может прийти из фонового потока библиотеки/делегата) → активировать
         // окно и показать запись с кнопкой «Принято». Маршалим в UI-поток.
         _notifications.RecordActivated += r => Dispatcher.UIThread.Post(() => OnNotificationClicked(r));
+        // Клик по баннеру задачи → раздел «Задачи» и карточка этой задачи.
+        _notifications.TaskActivated   += e => Dispatcher.UIThread.Post(() => OnTaskNotificationClicked(e));
 
         // Фоновый режим и значок в трее/меню-баре (по настройке «Фоновый режим»).
         InitBackgroundMode();
@@ -189,6 +192,9 @@ public partial class MainWindow : Window
 
         // Тумблер «Общее → Уведомления»: включаем/выключаем службу на лету.
         SettingsModule.NotificationsEnabledChanged += (_, on) => _notifications.SetEnabled(on);
+        // Тумблеры уведомлений по задачам — тем же путем, каждый сам по себе.
+        SettingsModule.TaskAssignedNotificationsChanged += (_, on) => _notifications.SetTaskAssignedEnabled(on);
+        SettingsModule.TaskStatusNotificationsChanged   += (_, on) => _notifications.SetTaskStatusEnabled(on);
         // Тумблер «Общее → Фоновый режим»: показать/скрыть значок в трее (и вернуть окно при выкл).
         SettingsModule.BackgroundEnabledChanged += (_, on) => OnBackgroundChanged(on);
 
@@ -684,6 +690,22 @@ public partial class MainWindow : Window
         // Значок гаснет: активация окна = «увидел» (Activated может не прийти при программном Activate).
         _notifications.NotifyWindowActivated();
         _ = new NotificationRecordDialog(record).ShowDialog(this);
+    }
+
+    // Клик по уведомлению задачи: окно на передний план, раздел «Задачи» и карточка этой
+    // задачи — тот же диалог, что по двойному клику в списке (правка, перенос, удаление).
+    private void OnTaskNotificationClicked(Core.Models.TaskEvent e)
+    {
+        Show();
+        if (WindowState == WindowState.Minimized) WindowState = WindowState.Normal;
+        Activate();
+        _notifications.NotifyWindowActivated();
+
+        // Переключаем раздел ТЕМ ЖЕ путем, что и кнопка панели активности, иначе подсветка
+        // кнопки разъедется с показанным разделом.
+        ActivityBarControl.SetModuleActive("tasks");
+        ShowModule("tasks");
+        _ = TasksModule.OpenTaskAsync(e.DbId, e.RecordId, e.CollectionId, e.ExecFieldId);
     }
 
     // ── Фоновый режим и значок в трее/меню-баре ──────────────────────────────────

@@ -7,20 +7,25 @@ namespace SmartBase.Notifications;
 
 /// <summary>
 /// Оркестратор уведомлений: пока приложение открыто, раз в <see cref="TickSeconds"/> секунд
-/// (и один раз на старте — догон пропущенного) собирает наступившие события календаря,
-/// показывает нативные баннеры (<see cref="INativeNotifier"/>) и ведет значок-счетчик на
-/// иконке (<see cref="IAppBadge"/>). Служба живет весь сеанс вместе с процессом — в фоновом
-/// режиме и при скрытом окне тоже.
+/// (и один раз на старте — догон пропущенного) собирает наступившие события календаря и новые
+/// события задач, показывает нативные баннеры (<see cref="INativeNotifier"/>) и ведет
+/// значок-счетчик на иконке (<see cref="IAppBadge"/>). Служба живет весь сеанс вместе с
+/// процессом — в фоновом режиме и при скрытом окне тоже.
 ///
-/// Логику отбора держит чистый <see cref="NotificationScheduler"/>, поэтому сам сервис
-/// покрывается интеграционным тестом через прямой вызов <see cref="Tick"/> (без таймера/UI):
-/// зависимости — источник событий, часы и запись метки — внедряются.
+/// Источников два, оркестратор один: значок и счетчик непросмотренного — общий ресурс, и
+/// разводить их по двум службам значило бы делить одно состояние на двоих. Каждый источник
+/// гейтится своим тумблером «Настройки → Общее»: календарь, назначение задачи, смена стадии.
+///
+/// Логику отбора держат чистые <see cref="NotificationScheduler"/> (календарь) и
+/// <see cref="TaskEventScheduler"/> (задачи), поэтому сам сервис покрывается интеграционным
+/// тестом через прямой вызов <see cref="Tick"/> (без таймера/UI): зависимости — источники,
+/// часы и запись метки — внедряются.
 ///
 /// Поток БД: продакшн-тик (<see cref="TickBackground"/> из таймера/старта) уводит тяжелое
-/// чтение источника на пул потоков, а показ плашек, значок и метку возвращает в UI-поток —
-/// чтобы тик не «морозил» интерфейс на больших БД. Источник при этом читает СВЕЖЕЕ подключение
-/// (new AppDbContext), а не общий контекст (он однопоточный). Синхронный <see cref="Tick"/>
-/// остается для интеграционных тестов (прямой вызов без таймера/UI).
+/// чтение источников на пул потоков, а показ плашек, значок, метку и курсоры возвращает в
+/// UI-поток — чтобы тик не «морозил» интерфейс на больших БД. Источники при этом читают
+/// СВЕЖИЕ подключения (new AppDbContext), а не общий контекст (он однопоточный). Синхронный
+/// <see cref="Tick"/> остается для интеграционных тестов (прямой вызов без таймера/UI).
 /// </summary>
 public sealed class NotificationService : IDisposable
 {
@@ -33,21 +38,33 @@ public sealed class NotificationService : IDisposable
     private readonly Action<DateTime> _persistWatermark;
     private readonly Func<DateTime>   _clock;
     private readonly int _maxBanners;
+    // Источник событий задач (курсоры прочитанного держит он сам); null — задачная ветка
+    // выключена целиком (тесты календаря, старые вызовы конструктора).
+    private readonly ITaskEventSource? _taskSource;
 
     private DispatcherTimer? _timer;
-    private bool     _enabled  = true;
+    private bool     _calendarOn     = true;
+    private bool     _taskAssignedOn = true;
+    private bool     _taskStatusOn   = true;
     private DateTime _watermark;
+    // Тумблер задачных видов включили — на ближайшем тике не читаем накопленное, а сдвигаем
+    // курсоры на хвост: включение не должно вываливать историю (симметрия с водяной меткой).
+    private bool _reseedTasks;
     // Идет фоновое чтение тика — второй поверх не запускаем (чтение обычно десятки мс, но на
     // холодном кеше может затянуться дольше интервала таймера). Читается/пишется на UI-потоке.
     private bool _ticking;
     // Показано, но еще «не увидено» (окно не активировали) — это и есть число на значке.
     private int _unseen;
 
-    // Недавно показанные записи по метке (tag) — чтобы по клику отдать полную запись в окно
-    // без повторного запроса в БД. Ограничено, чтобы не расти в долгих сессиях.
+    // Хоть один источник включен: тик целиком гейтится этим.
+    private bool AnyOn => _calendarOn || _taskAssignedOn || _taskStatusOn;
+    private bool TasksOn => _taskSource is not null && (_taskAssignedOn || _taskStatusOn);
+
+    // Недавно показанные цели по метке (tag) — чтобы по клику отдать полные данные без
+    // повторного запроса в БД. Ограничено, чтобы не расти в долгих сессиях.
     // Пишется с UI-потока (Remember), читается из потока нотифайера (клик по баннеру) —
     // поэтому под локом: одновременный доступ к Dictionary портит его внутреннее состояние.
-    private readonly Dictionary<string, CalendarRecord> _recent = new();
+    private readonly Dictionary<string, object> _recent = new();
     private readonly Lock _recentLock = new();
     private const int RecentLimit = 200;
 
@@ -56,13 +73,18 @@ public sealed class NotificationService : IDisposable
     /// подписчик обязан маршалить в UI-поток.</summary>
     public event Action<CalendarRecord>? RecordActivated;
 
+    /// <summary>Пользователь кликнул по баннеру задачи — MainWindow открывает карточку задачи.
+    /// Поднимается из потока нотифайера: подписчик обязан маршалить в UI-поток.</summary>
+    public event Action<TaskEvent>? TaskActivated;
+
     public NotificationService(
         INativeNotifier notifier,
         IAppBadge badge,
         Func<DateTime, DateTime, IReadOnlyList<CalendarRecord>> eventSource,
         Action<DateTime> persistWatermark,
         Func<DateTime>? clock = null,
-        int maxBanners = 5)
+        int maxBanners = 5,
+        ITaskEventSource? taskSource = null)
     {
         _notifier         = notifier;
         _badge            = badge;
@@ -70,18 +92,24 @@ public sealed class NotificationService : IDisposable
         _persistWatermark = persistWatermark;
         _clock            = clock ?? (() => DateTime.Now);
         _maxBanners       = maxBanners;
+        _taskSource       = taskSource;
         _watermark        = _clock();
         _notifier.Activated += OnNotifierActivated;
     }
 
-    // Клик по баннеру: находим запись по метке и просим MainWindow открыть окно записи.
-    // Сводка (пустая метка / запись не в кэше) — только активирует приложение, окна нет.
+    // Клик по баннеру: находим цель по метке и просим MainWindow ее открыть — окно записи для
+    // события календаря, карточку задачи для события задачи (метки различаются приставкой).
+    // Сводка (пустая метка / цели нет в кэше) — только активирует приложение.
     private void OnNotifierActivated(string tag)
     {
         if (string.IsNullOrEmpty(tag)) return;
-        CalendarRecord? rec;
-        lock (_recentLock) rec = _recent.TryGetValue(tag, out var r) ? r : null;
-        if (rec is not null) RecordActivated?.Invoke(rec);
+        object? target;
+        lock (_recentLock) target = _recent.TryGetValue(tag, out var t) ? t : null;
+        switch (target)
+        {
+            case CalendarRecord rec: RecordActivated?.Invoke(rec); break;
+            case TaskEvent e:        TaskActivated?.Invoke(e);     break;
+        }
     }
 
     /// <summary>Запуск из UI-потока (MainWindow.Opened): читает тумблер и метку из app.db,
@@ -97,7 +125,9 @@ public sealed class NotificationService : IDisposable
     {
         if (_timer is not null) return;   // уже запущены — повторный Opened ничего не меняет
 
-        _enabled = AppSettings.LoadNotificationsEnabled();
+        _calendarOn     = AppSettings.LoadNotificationsEnabled();
+        _taskAssignedOn = AppSettings.LoadNotifyTaskAssigned();
+        _taskStatusOn   = AppSettings.LoadNotifyTaskStatus();
 
         var saved = AppSettings.LoadNotifyWatermark();
         _watermark = saved ?? _clock();
@@ -117,7 +147,10 @@ public sealed class NotificationService : IDisposable
     public NotificationScheduler.Decision Tick()
     {
         var now = _clock();
-        if (!_enabled)
+
+        if (TasksOn) TickTasksSync();
+
+        if (!_calendarOn)
             return new NotificationScheduler.Decision([], 0, _watermark);
 
         // Источник намеренно отдает лишнее (буфер многодневных) — точную отсечку по StartDt
@@ -127,25 +160,71 @@ public sealed class NotificationService : IDisposable
         return Apply(candidates, _watermark, now);
     }
 
+    // Задачная ветка синхронного тика (тесты): читает и сразу применяет на этом же потоке.
+    private void TickTasksSync()
+    {
+        if (_reseedTasks)
+        {
+            _taskSource!.Reseed();
+            _reseedTasks = false;
+            _taskSource.Commit();
+            return;
+        }
+
+        ApplyTasks(_taskSource!.Read());
+    }
+
     /// <summary>Продакшн-тик: тяжелое чтение источника (скан calendar_index) уводим с UI-потока
     /// на пул, а показ плашек, значок и запись метки возвращаем в UI-поток — так интерфейс не
     /// «морозит» даже на больших БД. Пересекающиеся запуски отсекаем (<see cref="_ticking"/>):
     /// чтение обычно десятки мс, но на холодном кеше может затянуться дольше интервала таймера.</summary>
     private void TickBackground()
     {
-        if (!_enabled || _ticking) return;
+        if (!AnyOn || _ticking) return;
         _ticking = true;
         var now       = _clock();
         var watermark = _watermark;   // снимок на UI-потоке; окно чтения — (watermark, now+1мин]
+        var calendarOn = _calendarOn;
+        var tasksOn    = TasksOn;
+        var reseed     = _reseedTasks;
         Task.Run(() =>
         {
             IReadOnlyList<CalendarRecord>? candidates = null;
-            try { candidates = _eventSource(watermark, now.AddMinutes(1)); }
-            catch { /* БД могла отвалиться — пропускаем тик, метку не двигаем */ }
+            if (calendarOn)
+            {
+                try { candidates = _eventSource(watermark, now.AddMinutes(1)); }
+                catch { /* БД могла отвалиться — пропускаем тик, метку не двигаем */ }
+            }
+
+            // Задачная ветка читается своими подключениями и своим try/catch: упавшая база
+            // одного источника не должна гасить второй.
+            IReadOnlyList<TaskEvent>? events = null;
+            if (tasksOn)
+            {
+                try
+                {
+                    if (reseed) _taskSource!.Reseed();
+                    else        events = _taskSource!.Read();
+                }
+                catch { /* очередь недоступна — попробуем следующим тиком */ }
+            }
+
             Dispatcher.UIThread.Post(() =>
             {
-                // За время чтения тумблер мог выключиться — уважаем актуальное состояние.
-                try { if (candidates is not null && _enabled) Apply(candidates, watermark, now); }
+                // За время чтения тумблеры могли выключиться — уважаем актуальное состояние.
+                try
+                {
+                    if (candidates is not null && _calendarOn) Apply(candidates, watermark, now);
+                    if (tasksOn && reseed)
+                    {
+                        _reseedTasks = false;
+                        _taskSource!.Commit();
+                    }
+                    else if (events is not null && TasksOn)
+                    {
+                        ApplyTasks(events);
+                    }
+                }
                 finally { _ticking = false; }
             });
         });
@@ -179,23 +258,68 @@ public sealed class NotificationService : IDisposable
         return decision;
     }
 
-    /// <summary>Живое переключение тумблера «Общее → Уведомления». Включение стартует «с
-    /// чистого листа» (метка = сейчас), чтобы не показать разом все, что прошло, пока было
-    /// выключено; выключение гасит значок.</summary>
+    // Задачная половина прохода: показать плашки, накопить значок и зафиксировать курсоры.
+    // Курсоры фиксируем ВСЕГДА, а не только после показа: за прочитанным диапазоном стоят и
+    // чужие события, которые иначе перечитывались бы каждым тиком по кругу.
+    // Меняет состояние службы — обязан идти на UI-потоке.
+    private TaskEventScheduler.Decision ApplyTasks(IReadOnlyList<TaskEvent> events)
+    {
+        var decision = TaskEventScheduler.Decide(events, _taskAssignedOn, _taskStatusOn, _maxBanners);
+
+        foreach (var b in decision.Banners)
+        {
+            if (b.Event is { } e) Remember(b.Tag, e);
+            SafeShow(b.Title, b.Body, b.Tag);
+        }
+
+        if (decision.FiredCount > 0)
+        {
+            _unseen += decision.FiredCount;
+            SafeBadge(_unseen);
+        }
+
+        try { _taskSource?.Commit(); } catch { /* курсор не записался — увидим событие дважды */ }
+        return decision;
+    }
+
+    /// <summary>Живое переключение тумблера «Общее → Уведомления календаря». Включение стартует
+    /// «с чистого листа» (метка = сейчас), чтобы не показать разом все, что прошло, пока было
+    /// выключено; выключение гасит значок, если это был последний включенный источник.</summary>
     public void SetEnabled(bool on)
     {
-        if (on == _enabled) return;
-        _enabled = on;
+        if (on == _calendarOn) return;
+        _calendarOn = on;
         if (on)
         {
             _watermark = _clock();
             Persist(_watermark);
         }
-        else
-        {
-            _unseen = 0;
-            SafeBadge(0);
-        }
+        else ClearBadgeIfAllOff();
+    }
+
+    /// <summary>Живое переключение тумблера «Уведомления о назначении задачи».</summary>
+    public void SetTaskAssignedEnabled(bool on) => SetTaskFlag(ref _taskAssignedOn, on);
+
+    /// <summary>Живое переключение тумблера «Уведомления о смене стадии задачи».</summary>
+    public void SetTaskStatusEnabled(bool on) => SetTaskFlag(ref _taskStatusOn, on);
+
+    // Включение задачного вида — не показывать накопленное: на ближайшем тике курсоры уедут
+    // на хвост очередей (аналог «метка = сейчас» у календаря).
+    private void SetTaskFlag(ref bool flag, bool on)
+    {
+        if (on == flag) return;
+        flag = on;
+        if (on) _reseedTasks = true;
+        else    ClearBadgeIfAllOff();
+    }
+
+    // Значок общий на оба источника: гасим его, только когда молчат все. Иначе выключение
+    // календаря стирало бы счет, накопленный задачами.
+    private void ClearBadgeIfAllOff()
+    {
+        if (AnyOn) return;
+        _unseen = 0;
+        SafeBadge(0);
     }
 
     /// <summary>Окно активировали — пользователь «увидел» уведомления: гасим значок.</summary>
@@ -206,11 +330,21 @@ public sealed class NotificationService : IDisposable
         SafeBadge(0);
     }
 
-    /// <summary>Тестовый/стартовый посев состояния без таймера и app.db.</summary>
+    /// <summary>Тестовый/стартовый посев состояния без таймера и app.db.
+    /// <paramref name="enabled"/> — календарный источник; задачные виды посеваются
+    /// <see cref="ConfigureTasks"/> (по умолчанию включены оба).</summary>
     public void Configure(bool enabled, DateTime watermark)
     {
-        _enabled   = enabled;
-        _watermark = watermark;
+        _calendarOn = enabled;
+        _watermark  = watermark;
+    }
+
+    /// <summary>Тестовый посев задачных тумблеров (без app.db и живого переключения).</summary>
+    public void ConfigureTasks(bool assignedOn, bool statusOn)
+    {
+        _taskAssignedOn = assignedOn;
+        _taskStatusOn   = statusOn;
+        _reseedTasks    = false;
     }
 
     public void Dispose()
@@ -220,15 +354,15 @@ public sealed class NotificationService : IDisposable
         _notifier.Activated -= OnNotifierActivated;
     }
 
-    // Запомнить запись под меткой для маршрутизации клика; при переполнении чистим кэш
+    // Запомнить цель под меткой для маршрутизации клика; при переполнении чистим кэш
     // (старые баннеры пользователь уже вряд ли откроет).
-    private void Remember(string tag, CalendarRecord rec)
+    private void Remember(string tag, object target)
     {
         if (string.IsNullOrEmpty(tag)) return;
         lock (_recentLock)
         {
             if (_recent.Count >= RecentLimit) _recent.Clear();
-            _recent[tag] = rec;
+            _recent[tag] = target;
         }
     }
 

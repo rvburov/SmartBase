@@ -111,6 +111,10 @@ public sealed partial class DatabaseManager : IDisposable
         // в фоне на свежем подключении — старт не блокируется.
         Constructor.ApplyChangeLogRetention(Permissions.RetentionEnabled, Permissions.RetentionMonths);
 
+        // Очередь уведомлений по задачам: события старше квартала доставлять уже некому и
+        // незачем. Тоже в фоне и тоже best-effort.
+        Constructor.ApplyTaskEventsRetention();
+
         Categories.SeedDefaults();
     }
 

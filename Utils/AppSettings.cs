@@ -321,6 +321,67 @@ public static class AppSettings
     public static void SaveNotifyWatermark(DateTime instant) =>
         _store?.Set(KeyNotifyWatermark, instant.ToString("o", CultureInfo.InvariantCulture));
 
+    // ── Уведомления по задачам ────────────────────────────────────────────────────
+    //
+    // Два независимых тумблера «Общее», оба независимы и от календарного:
+    //   • назначение — баннер новому исполнителю, когда его поставил КТО-ТО ДРУГОЙ;
+    //   • смена стадии — баннер тому, кто указан в свойстве «Назначил».
+    // Стандарт — включено: ради них раздел задач и становится живым.
+    public const bool NotifyTaskAssignedDefault = true;
+    public const bool NotifyTaskStatusDefault   = true;
+
+    public static bool LoadNotifyTaskAssigned() =>
+        bool.TryParse(_store?.Get(KeyNotifyTaskAssigned), out var on) ? on : NotifyTaskAssignedDefault;
+
+    public static void SaveNotifyTaskAssigned(bool on)
+    {
+        if (on == NotifyTaskAssignedDefault) _store?.Remove(KeyNotifyTaskAssigned);
+        else                                 _store?.Set(KeyNotifyTaskAssigned, on.ToString());
+    }
+
+    public static bool LoadNotifyTaskStatus() =>
+        bool.TryParse(_store?.Get(KeyNotifyTaskStatus), out var on) ? on : NotifyTaskStatusDefault;
+
+    public static void SaveNotifyTaskStatus(bool on)
+    {
+        if (on == NotifyTaskStatusDefault) _store?.Remove(KeyNotifyTaskStatus);
+        else                               _store?.Set(KeyNotifyTaskStatus, on.ToString());
+    }
+
+    // Курсоры прочитанной очереди событий по базам — СОСТОЯНИЕ, а не настройка (как водяная
+    // метка): пишутся всегда, дефолта у них нет. Формат «db:id;db:id» — как у галочек
+    // коллекций: один ключ вместо ключа на базу, а курсоры размонтированных баз отпадают
+    // сами при следующей записи.
+    public static Dictionary<int, long> LoadTaskEventCursors()
+    {
+        var result = new Dictionary<int, long>();
+        var packed = _store?.Get(KeyTaskEventCursors);
+        if (string.IsNullOrEmpty(packed)) return result;
+
+        // Мусор молча пропускаем: испорченный app.db не должен ронять старт — худшее
+        // последствие тут «курсор посеется заново».
+        foreach (var pair in packed.Split(';', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var parts = pair.Split(':');
+            if (parts.Length == 2 &&
+                int.TryParse(parts[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out var db) &&
+                long.TryParse(parts[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out var id))
+                result[db] = id;
+        }
+        return result;
+    }
+
+    public static void SaveTaskEventCursors(IReadOnlyDictionary<int, long> cursors)
+    {
+        if (cursors.Count == 0) { _store?.Remove(KeyTaskEventCursors); return; }
+
+        // Порядок фиксированный: без сортировки один и тот же набор писался бы в базу
+        // каждый раз новой строкой.
+        _store?.Set(KeyTaskEventCursors, string.Join(';', cursors
+            .OrderBy(c => c.Key)
+            .Select(c => $"{c.Key}:{c.Value.ToString(CultureInfo.InvariantCulture)}")));
+    }
+
     // ── Автозапуск и фоновый режим ────────────────────────────────────────────────
     //
     // Оба служат уведомлениям, но независимы от тумблера «Уведомления». Стандарт — выключено
@@ -508,6 +569,9 @@ public static class AppSettings
     private const string KeyAutoUpdate       = "autoUpdate";
     private const string KeyNotificationsEnabled = "notificationsEnabled";
     private const string KeyNotifyWatermark      = "notifyWatermark";
+    private const string KeyNotifyTaskAssigned   = "notifyTaskAssigned";
+    private const string KeyNotifyTaskStatus     = "notifyTaskStatus";
+    private const string KeyTaskEventCursors     = "notifyTaskCursors";
     private const string KeyAutostartEnabled     = "autostartEnabled";
     private const string KeyBackgroundEnabled    = "backgroundEnabled";
     private const string KeyIntroSeedDone        = "introSeedDone";

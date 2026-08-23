@@ -232,6 +232,40 @@
                     </Border>
                     <Border Classes="separator h" />
 
+                    <!-- Уведомления по задачам: назначение исполнителя -->
+                    <Border Classes="settingRow">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <StackPanel Grid.Column="0" Spacing="4"
+                                        VerticalAlignment="Center" Margin="0,0,32,0">
+                                <TextBlock Classes="title" Text="Уведомления о назначении задачи" />
+                                <TextBlock Classes="desc"
+                                           Text="Всплывающее уведомление приходит, когда вас назначают исполнителем задачи: в разделе «Задачи», в таблице конструктора, на странице записи и в календаре. Задача, назначенная себе, уведомление не присылает." />
+                            </StackPanel>
+                            <ToggleSwitch Grid.Column="1" x:Name="TaskAssignedToggle"
+                                          OnContent="" OffContent=""
+                                          VerticalAlignment="Center"
+                                          IsCheckedChanged="OnTaskAssignedToggled" />
+                        </Grid>
+                    </Border>
+                    <Border Classes="separator h" />
+
+                    <!-- Уведомления по задачам: смена стадии -->
+                    <Border Classes="settingRow">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <StackPanel Grid.Column="0" Spacing="4"
+                                        VerticalAlignment="Center" Margin="0,0,32,0">
+                                <TextBlock Classes="title" Text="Уведомления о смене стадии задачи" />
+                                <TextBlock Classes="desc"
+                                           Text="Всплывающее уведомление о переходе задачи между стадиями («Запланировано», «В работе», «Выполнено» и обратно). Приходит тому, кто указан в свойстве «Назначил»." />
+                            </StackPanel>
+                            <ToggleSwitch Grid.Column="1" x:Name="TaskStatusToggle"
+                                          OnContent="" OffContent=""
+                                          VerticalAlignment="Center"
+                                          IsCheckedChanged="OnTaskStatusToggled" />
+                        </Grid>
+                    </Border>
+                    <Border Classes="separator h" />
+
                     <!-- Автозапуск при входе в систему -->
                     <Border Classes="settingRow">
                         <Grid ColumnDefinitions="*,Auto">
