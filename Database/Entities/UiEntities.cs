@@ -27,6 +27,10 @@ public class CalendarIndexEntity
     public DbFieldEntity  Field  { get; set; } = null!;
 }
 
+// ЛЕГАСИ: ширины колонок таблицы переехали в column_meta (аспект Width). Ключ здесь —
+// числовой FieldId, поэтому системную колонку «Название» ("__title__") он покрыть не может,
+// а без нее ручной ресайз неполон. Таблица оставлена, чтобы не ломать старые базы; таблица
+// конструктора ее больше не читает и не пишет.
 public class UiColWidthEntity
 {
     public int CollectionId { get; set; }
@@ -49,12 +53,14 @@ public class UiCollectionSettingEntity
     public string ViewMode     { get; set; } = "table";
 }
 
-// Метаданные колонки таблицы — порядок, видимость/уровень, подпись — одной строкой на
-// (CollectionId, Key). Key = TableRowVm.TitleKey ("__title__") либо
+// Метаданные колонки таблицы — порядок, видимость/уровень, подпись, цвет, ручная ширина —
+// одной строкой на (CollectionId, Key). Key = TableRowVm.TitleKey ("__title__") либо
 // строковый id поля. Каждый аспект nullable: null = дефолт (порядок по Position полей,
-// видима/уровень 1, имя по умолчанию). Строки только для измененных колонок; строка живет,
-// пока задан хоть один аспект (см. ConstructorRepository.RemoveColumnMetaIfEmpty).
-// Объединяет прежние таблицы column_order + column_display + system_field_meta.
+// видима/уровень 1, имя по умолчанию, ширина не задана). Строки только для измененных
+// колонок; строка живет, пока задан хоть один аспект (см.
+// ConstructorRepository.RemoveColumnMetaIfEmpty).
+// Объединяет прежние таблицы column_order + column_display + system_field_meta, а с
+// аспектом Width — и ui_col_widths (там ключ числовой и «__title__» не помещается).
 public class ColumnMetaEntity
 {
     public int     CollectionId { get; set; }
@@ -65,6 +71,7 @@ public class ColumnMetaEntity
     public string? DisplayName  { get; set; }   // подпись системной колонки (__title__)
     public string? Bg           { get; set; }   // фон всех ячеек колонки, hex; null = без фона
     public string? Fg           { get; set; }   // цвет текста колонки, hex; null = стандартный
+    public int?    Width        { get; set; }   // ручная ширина колонки в DIP; null = не задана
 }
 
 // Метаданные записи в таблице — аналог column_meta, но для строк. Visible=false — запись

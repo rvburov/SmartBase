@@ -77,9 +77,13 @@ public partial class TableView : UserControl
     public event EventHandler<IReadOnlyList<TableColumnDef>>? ColumnsBuilt;
 
     // ── Константы геометрии ───────────────────────────────────────────────────
-    private const int MinColWidth  = 160;
-    private const int NumColWidth  = 36;
-    private const int PlusColWidth = 36;
+    // MinColWidth — СТАНДАРТНАЯ ширина движимой колонки: минимум авто-режима и ширина
+    // колонки, для которой ручная ширина еще не задана. Ручное перетаскивание опускается
+    // ниже — до MinManualColWidth (иначе «уменьшить столбец» было бы невыполнимо).
+    private const int MinColWidth       = 160;
+    private const int MinManualColWidth = 48;
+    private const int NumColWidth       = 36;
+    private const int PlusColWidth      = 36;
 
     // ── Состояние ─────────────────────────────────────────────────────────────
     private ConstructorRepository? _repository;
@@ -154,6 +158,32 @@ public partial class TableView : UserControl
     private double _resizeStartPointerY;           // в координатах RowResizeLayer
     private double _resizeStartBottomY;            // нижняя граница строки на старте
     private double _resizeStartHeight;
+
+    // ── Ручная ширина колонок ─────────────────────────────────────────────────
+    // ключ колонки → ширина (DIP). МОДЕЛЬ, а не снимок раскладки: меняется только жестом
+    // пользователя, ресайз окна ее не трогает — поэтому «развернул окно и свернул обратно»
+    // возвращает ту же картинку. Пусто = ручных ширин нет (колонки делят ширину поровну).
+    private Dictionary<string, double> _colWidths = [];
+    // Построенные ячейки шапки (ключ → контрол): от них поднимаемся к DataGridColumnHeader,
+    // чтобы узнать положение правой границы колонки. OwningColumn у заголовка internal.
+    private readonly Dictionary<string, Control> _headerHosts = [];
+
+    private static readonly Cursor ColResizeCursor = new(StandardCursorType.SizeWestEast);
+    private const double ColGripThickness = 8;     // ширина прозрачной полоски-захвата
+    private bool _colHandlesPending;               // отложенная перестройка полосок
+    // Состояние перетаскивания правой границы колонки (одно за раз).
+    private bool    _isResizingCol;
+    private string? _resizeColKey;
+    private double  _resizeStartX;                 // в координатах ColResizeLayer
+    private double  _resizeStartWidth;
+    private double  _resizeStartHOffset;           // гориз. прокрутка на старте жеста
+    private double  _resizeStartGripLeft;          // позиция полоски на старте жеста
+    private double  _resizeFill;                   // ширина, при которой таблица ровно заполнена
+    private Dictionary<string, double> _resizeBase = [];   // снимок модели на старте жеста
+    private List<(string Key, double X, double Top, double H)> _lastColGrips = [];
+    // Презентер шапки: по нему меряем доступную под колонки ширину (у него нет полосы
+    // вертикальной прокрутки, в отличие от самого грида).
+    private DataGridColumnHeadersPresenter? _headersPresenter;
 
     public TableView()
     {
@@ -230,9 +260,13 @@ public partial class TableView : UserControl
         base.OnDetachedFromVisualTree(e);
     }
 
+    // Сменился зум или DPI: квант физического пиксела стал другим — переквантовать базу
+    // ручных ширин под новую сетку (ApplyColumnWidths) и пересадить границы на нее (снап).
     private void OnLineMetricsChanged()
     {
-        if (_repository is not null && !_manualColResize) SnapStarColumnWidths();
+        if (_repository is null) return;
+        ApplyColumnWidths();
+        SnapColumnWidths();
     }
 
     // Дельта последнего рендера — чтобы перерисовать таблицу при возврате, если размер
@@ -498,6 +532,13 @@ public partial class TableView : UserControl
         _resizeRow = null;
         _lastRowGrips.Clear();
         RowResizeLayer.Children.Clear();
+        _colWidths = [];
+        _headerHosts.Clear();
+        _isResizingCol = false;
+        _resizeColKey  = null;
+        _lastColGrips.Clear();
+        ColResizeLayer.Children.Clear();
+        _headersPresenter = null;
         RecordsGrid.ItemsSource = null;
         RecordsGrid.Columns.Clear();
     }
@@ -505,9 +546,14 @@ public partial class TableView : UserControl
     public void SetColResizeMode(bool manual)
     {
         _manualColResize = manual;
-        RecordsGrid.CanUserResizeColumns = manual;
+
+        // Выключение ручного режима сбрасывает все сохраненные ширины на стандарт
+        // (как сброс высот при переходе на стандартную высоту строк).
         if (!manual)
-            _repository?.SaveColWidths(_collectionId, []);
+        {
+            _colWidths.Clear();
+            _repository?.ClearColumnWidths(_collectionId);
+        }
 
         // Запоминаем режим, чтобы он сохранялся между сессиями (раньше управлялся
         // из футера без персиста; теперь — из меню заголовка).
@@ -517,8 +563,14 @@ public partial class TableView : UserControl
             _repository.SaveUiSettings(_collectionId, manual, rowResize, viewMode);
         }
 
-        // Пересобирать колонки нельзя — DataGrid теряет ресайз-грипперы. Вместо
-        // этого переключаем IsVisible у filler-колонки и пересчитываем ширины.
+        // Колонки не пересобираем: полоски-захваты у границ наши (ColResizeLayer), их
+        // достаточно перестроить. Включение режима вид таблицы НЕ меняет — ширины
+        // появятся в модели только с первым перетаскиванием.
+        if (!manual)
+        {
+            _lastColGrips.Clear();
+            ColResizeLayer.Children.Clear();
+        }
         ApplyColumnWidths();
     }
 
@@ -695,6 +747,9 @@ public partial class TableView : UserControl
             .Select(kv => kv.Key)
             .ToHashSet();
         _columnStyles = _repository.GetColumnStyles(_collectionId);
+        // Ручные ширины (аспект column_meta.Width). Читаются здесь, потому что LoadColumnState
+        // вызывается из всех путей пересборки колонок — отдельной точки чтения не нужно.
+        _colWidths = _repository.GetColumnWidths(_collectionId);
     }
 
     // ── Точечные изменения набора колонок (без полной пересборки) ──────────────
@@ -1005,8 +1060,8 @@ public partial class TableView : UserControl
     private void BuildColumns()
     {
         _chevronPaths.Clear();
+        _headerHosts.Clear();
         RecordsGrid.Columns.Clear();
-        RecordsGrid.CanUserResizeColumns = _manualColResize;
 
         foreach (var def in _colDefs)
             RecordsGrid.Columns.Add(CreateDataGridColumn(def));
@@ -1018,9 +1073,14 @@ public partial class TableView : UserControl
             ? new DataGridLength(1, DataGridLengthUnitType.Star)
             : new DataGridLength(def.FixedWidth);
 
+        // Ячейку шапки запоминаем: от нее поднимаемся к DataGridColumnHeader, когда нужно
+        // положение правой границы колонки для полоски-захвата.
+        var header = BuildHeaderCell(def);
+        if (def.IsStarWidth) _headerHosts[def.Key] = header;
+
         var col = new DataGridTemplateColumn
         {
-            Header         = BuildHeaderCell(def),
+            Header         = header,
             Tag            = def.Tag ?? def.Key,
             Width          = width,
             MinWidth       = def.IsStarWidth ? def.MinWidth : def.FixedWidth,
@@ -2583,6 +2643,195 @@ public partial class TableView : UserControl
         ScheduleRowHandlesRefresh();   // пересобрать полоски под новые позиции строк
     }
 
+    // ── Ручная ширина колонок: полоски-«грипперы» у правой границы ─────────────
+    //
+    // Встроенный ресайз DataGrid не используется (CanUserResizeColumns остается False):
+    //   • у него нет события «перетаскивание закончено» — ширину негде сохранить;
+    //   • он запрещает тянуть последнюю видимую колонку и вообще любой ресайз, когда
+    //     колонки не помещаются в окно, — а это ровно наш рабочий режим;
+    //   • он перекладывает дельту на соседей справа, сжимая их, вместо того чтобы
+    //     увеличивать общую ширину таблицы.
+    // Поэтому полоски-захваты свои — точная калька слоя высоты строк выше.
+
+    private void ScheduleColHandlesRefresh()
+    {
+        if (_colHandlesPending || _isResizingCol) return;
+        _colHandlesPending = true;
+        Dispatcher.UIThread.Post(() =>
+        {
+            _colHandlesPending = false;
+            RefreshColResizeHandles();
+        }, DispatcherPriority.Background);
+    }
+
+    // Размещает по прозрачной полоске на правой границе каждой видимой движимой колонки.
+    // Полоска кликабельна и несет курсор «↔»; перетаскивание меняет ширину колонки.
+    private void RefreshColResizeHandles()
+    {
+        if (_isResizingCol) return;   // во время перетаскивания полоски не пересобираем
+
+        var layer = ColResizeLayer;
+
+        // Считаем целевую раскладку полосок, НЕ трогая дерево.
+        var target = new List<(string Key, double X, double Top, double H)>();
+        if (_manualColResize)
+        {
+            foreach (var (def, _) in MovableColumns())
+            {
+                if (!_headerHosts.TryGetValue(def.Key, out var host)) continue;
+                var hdr = host.GetVisualAncestors().OfType<DataGridColumnHeader>().FirstOrDefault();
+                if (hdr is null || hdr.Bounds.Width <= 0 || hdr.Bounds.Height <= 0) continue;
+
+                var topRight = hdr.TranslatePoint(new Point(hdr.Bounds.Width, 0), layer);
+                if (topRight is null) continue;
+
+                // Заголовки виртуализованы: за краем видимой зоны полоски не нужны.
+                if (topRight.Value.X < 0 || topRight.Value.X > layer.Bounds.Width) continue;
+
+                target.Add((def.Key, topRight.Value.X - ColGripThickness / 2,
+                            topRight.Value.Y, hdr.Bounds.Height));
+            }
+        }
+
+        // Ничего не изменилось — дерево не трогаем (разрывает layout-цикл).
+        if (ColGripsEqual(target, _lastColGrips)) return;
+
+        _lastColGrips.Clear();
+        _lastColGrips.AddRange(target);
+
+        layer.Children.Clear();
+        foreach (var (key, x, top, h) in target)
+        {
+            var grip = new Border
+            {
+                Width      = ColGripThickness,
+                Height     = h,
+                Background = Brushes.Transparent,
+                Cursor     = ColResizeCursor,
+            };
+            grip.PointerPressed     += (_, e) => BeginColResize(key, e);
+            grip.PointerMoved       += (_, e) => DragColResize(e);
+            grip.PointerReleased    += (_, e) => EndColResize(e);
+            grip.PointerCaptureLost += (_, _) => CancelColResize();
+
+            Canvas.SetLeft(grip, x);
+            Canvas.SetTop(grip, top);
+            layer.Children.Add(grip);
+        }
+    }
+
+    private static bool ColGripsEqual(
+        List<(string Key, double X, double Top, double H)> a,
+        List<(string Key, double X, double Top, double H)> b)
+    {
+        if (a.Count != b.Count) return false;
+        for (var i = 0; i < a.Count; i++)
+        {
+            if (a[i].Key != b[i].Key) return false;
+            if (Math.Abs(a[i].X   - b[i].X)   > 0.5) return false;
+            if (Math.Abs(a[i].Top - b[i].Top) > 0.5) return false;
+            if (Math.Abs(a[i].H   - b[i].H)   > 0.5) return false;
+        }
+        return true;
+    }
+
+    private void BeginColResize(string key, PointerPressedEventArgs e)
+    {
+        if (!e.GetCurrentPoint(ColResizeLayer).Properties.IsLeftButtonPressed) return;
+
+        // Фиксируем в модели текущую раскладку: до первого перетаскивания модель пуста,
+        // и жест должен отталкиваться от того, что человек видит.
+        if (!MaterializeColumnWidths()) return;
+        if (!_colWidths.TryGetValue(key, out var startWidth)) return;
+
+        _isResizingCol       = true;
+        _resizeColKey        = key;
+        _resizeStartWidth    = startWidth;
+        _resizeStartX        = e.GetPosition(ColResizeLayer).X;
+        _resizeStartHOffset  = CurrentScrollOffset();
+        _resizeStartGripLeft = e.Source is Control grip ? Canvas.GetLeft(grip) : 0;
+        _resizeFill          = MovableFillWidth();
+        _resizeBase          = MovableColumns().ToDictionary(c => c.Def.Key, c => ModelWidth(c.Def.Key));
+
+        e.Pointer.Capture(e.Source as IInputElement);
+        e.Handled = true;
+    }
+
+    private void DragColResize(PointerEventArgs e)
+    {
+        if (!_isResizingCol || _resizeColKey is null) return;
+
+        var keys = MovableColumns().Select(c => c.Def.Key).ToList();
+        var idx  = keys.IndexOf(_resizeColKey);
+        if (idx < 0) return;
+
+        double Base(string k) => _resizeBase.TryGetValue(k, out var w) ? w : ModelWidth(k);
+
+        // Слагаемое с прокруткой компенсирует ее клампинг: когда таблица шире окна и
+        // прокрутка сама доезжает до края, без поправки граница отлипает от курсора.
+        var scrolled = CurrentScrollOffset() - _resizeStartHOffset;
+        var raw = _resizeStartWidth + (e.GetPosition(ColResizeLayer).X - _resizeStartX) + scrolled;
+
+        var right  = keys.Skip(idx + 1).ToList();
+        var others = keys.Where(k => k != _resizeColKey).Sum(Base);
+
+        // У последней движимой колонки правую границу нельзя утащить левее точки «таблица
+        // ровно заполнена»: справа некому принять освободившееся место, и появилась бы пустота.
+        var floor = right.Count > 0
+            ? MinManualColWidth
+            : Math.Max(MinManualColWidth, _resizeFill - others);
+
+        var target  = Math.Max(floor, raw);
+        var surplus = _resizeFill - (others + target);
+
+        _colWidths[_resizeColKey] = target;
+
+        // Колонки СЛЕВА не трогаем никогда — иначе перетаскиваемая граница уехала бы
+        // из-под курсора. Освободившееся место (surplus > 0) раздаем колонкам справа
+        // пропорционально их ширине; при росте колонки (surplus < 0) соседи сохраняют
+        // ширину и просто уезжают вправо — таблица становится шире окна.
+        var rightSum = right.Sum(Base);
+        foreach (var k in right)
+            _colWidths[k] = surplus > 0 && rightSum > 0
+                ? Base(k) + surplus * Base(k) / rightSum
+                : Base(k);
+
+        ApplyColumnWidths();
+
+        // Полоска следует за новой границей (Bounds на этом проходе еще не пересчитаны).
+        // Ширина выросла на (target - старт) — на столько же правее уехала граница; прокрутка
+        // сдвигает содержимое влево, поэтому вычитается.
+        if (e.Source is Control grip)
+            Canvas.SetLeft(grip, _resizeStartGripLeft + (target - _resizeStartWidth) - scrolled);
+
+        e.Handled = true;
+    }
+
+    private void EndColResize(PointerReleasedEventArgs e)
+    {
+        if (!_isResizingCol) return;
+
+        _isResizingCol = false;
+        _resizeColKey  = null;
+        e.Pointer.Capture(null);
+        e.Handled = true;
+
+        // Сохраняем один раз на отпускание мыши — точечным upsert'ом, а не на каждый кадр.
+        _repository?.SaveColumnWidths(_collectionId, _colWidths);
+
+        ScheduleColHandlesRefresh();   // пересобрать полоски под новые границы
+    }
+
+    // Захват потерян (Alt+Tab, модальное окно поверх): жест закрываем без записи в БД,
+    // иначе зависший флаг заблокировал бы перестройку полосок.
+    private void CancelColResize()
+    {
+        if (!_isResizingCol) return;
+        _isResizingCol = false;
+        _resizeColKey  = null;
+        ScheduleColHandlesRefresh();
+    }
+
     // ── Фильтр и сортировка колонок (Excel-стиль) ──────────────────────────────
 
     // Текущий открытый flyout фильтра/сортировки — чтобы закрыть его при потере фокуса.
@@ -3187,30 +3436,125 @@ public partial class TableView : UserControl
         DateValue.TryParse(s, out var dv) ? dv.Start : DateTime.MaxValue;
 
     // ── Ширины колонок ─────────────────────────────────────────────────────────
+    //
+    // ГЛАВНОЕ ПРАВИЛО: движимые колонки ВСЕГДА остаются звездными (Star), в обоих режимах.
+    // Именно наличие хотя бы одной видимой Star-колонки заставляет Avalonia каждым
+    // проходом разметки доводить сумму ширин до ширины вьюпорта, а внутренняя filler-колонка
+    // получает нулевую ширину — только поэтому служебная «+» прижата к правому краю.
+    // Перевод колонок в пиксельную ширину это ломает: справа от «+» появляется полоса
+    // filler'а с лишней вертикальной линией. Пришпилено к Avalonia 11.2.3.
+    //
+    // Ручная ширина выражается так: звездный ВЕС колонки == ее ширине в пикселях, и та же
+    // величина ставится в MinWidth. Дальше все делает сам движок:
+    //   сумма > вьюпорта — колонки упираются в MinWidth, не сжимаются, появляется
+    //                      горизонтальная прокрутка (растянутый столбец «уводит» соседей вправо);
+    //   сумма < вьюпорта — остаток раздается пропорционально весам, пустоты справа нет.
+    // Наш код задает базу, движок — гарантированно попадает в ширину вьюпорта.
+
+    // Модель ручных ширин применима: включен ручной режим и хоть у одной видимой движимой
+    // колонки ширина задана. Пока модель пуста, ручной режим выглядит как стандартный —
+    // включение режима больше не схлопывает все колонки до минимума.
+    private bool HasManualWidths =>
+        _manualColResize && _colWidths.Count > 0 &&
+        MovableColumns().Any(c => _colWidths.ContainsKey(c.Def.Key));
+
+    // Квант раскладки — один ФИЗИЧЕСКИЙ пиксель в DIP (учитывает DPI монитора и зум).
+    private double Quant() => 1.0 / LineMetrics.EffectiveScale(this);
+
+    private double Quantize(double w)
+    {
+        var q = Quant();
+        return Math.Round(w / q) * q;
+    }
+
+    // Ширина колонки по модели; не задана — стандартная.
+    private double ModelWidth(string key) =>
+        _colWidths.TryGetValue(key, out var w) && w > 0 ? w : MinColWidth;
+
+    // Видимые движимые колонки (без служебных «№» и «+») в порядке слева направо.
+    // Связка _colDefs[i] ↔ Columns[i] держится на индексе, поэтому сверяем Tag: если
+    // наборы разошлись, лучше отдать пусто, чем править чужие колонки.
+    private IEnumerable<(TableColumnDef Def, DataGridColumn Col)> MovableColumns()
+    {
+        if (_colDefs.Count != RecordsGrid.Columns.Count) yield break;
+
+        for (var i = 0; i < _colDefs.Count; i++)
+        {
+            var def = _colDefs[i];
+            var col = RecordsGrid.Columns[i];
+            if (!def.IsStarWidth || !col.IsVisible) continue;
+            if (!Equals(col.Tag, def.Tag ?? def.Key)) yield break;
+            yield return (def, col);
+        }
+    }
+
+    // Запись ТОЧНОГО звездного веса (вес == ширине в пикселях). Присваивание Width с ТЕМ ЖЕ
+    // типом длины Avalonia трактует как ресайз и перекладывает дельту на соседей справа;
+    // присваивание со СМЕНОЙ типа — просто запись. Поэтому сначала переключаем тип, потом
+    // ставим целевое значение. Явные desired/display убирают NaN-коэрцию.
+    // Пришпилено к Avalonia 11.2.3 (DataGridColumn.Width → Resize).
+    private static void SetColWidth(DataGridColumn col, double px)
+    {
+        var target = new DataGridLength(px, DataGridLengthUnitType.Star, px, px);
+        if (col.Width.IsStar)
+            col.Width = new DataGridLength(Math.Max(1, col.ActualWidth));
+        col.Width = target;
+    }
 
     private void ApplyColumnWidths()
     {
         if (_repository is null) return;
-        var saved = _repository.GetColWidths(_collectionId);
 
-        for (var i = 0; i < _colDefs.Count && i < RecordsGrid.Columns.Count; i++)
+        var manual = HasManualWidths;
+        var cols   = MovableColumns().ToList();
+
+        // Два прохода обязательны: сеттер MinWidth изнутри дергает пересчет ширин соседей
+        // справа и портит уже выставленные веса. Второй проход переписывает их из модели.
+        foreach (var (def, col) in cols)
+            col.MinWidth = manual ? Quantize(ModelWidth(def.Key)) : def.MinWidth;
+
+        foreach (var (def, col) in cols)
         {
-            var def = _colDefs[i];
-            if (!def.IsStarWidth) continue;
-
-            var col = RecordsGrid.Columns[i];
-
-            if (_manualColResize && int.TryParse(def.Key, out var fieldId))
-            {
-                col.Width = saved.TryGetValue(fieldId, out var w) && w > 0
-                    ? new DataGridLength(w)
-                    : new DataGridLength(def.MinWidth);
-            }
-            else
-            {
-                col.Width = new DataGridLength(1, DataGridLengthUnitType.Star);
-            }
+            if (manual) SetColWidth(col, Quantize(ModelWidth(def.Key)));
+            // Стандартный режим — равные веса, ширину считает движок (как было всегда).
+            else col.Width = new DataGridLength(1, DataGridLengthUnitType.Star);
         }
+
+        ScheduleColHandlesRefresh();
+    }
+
+    // Ширина, доступная под движимые колонки: столько, чтобы таблица ровно заполнила окно.
+    // Занижаем на один физический пиксель — остаток дораздаст звездный движок, а фантомная
+    // горизонтальная полоса прокрутки от промаха в доли пиксела не появится.
+    private double MovableFillWidth()
+    {
+        _headersPresenter ??= RecordsGrid.GetVisualDescendants()
+                                         .OfType<DataGridColumnHeadersPresenter>()
+                                         .FirstOrDefault();
+
+        var total = _headersPresenter?.Bounds.Width ?? RecordsGrid.Bounds.Width;
+        if (total <= 0) return 0;
+
+        var service = 0.0;
+        for (var i = 0; i < _colDefs.Count && i < RecordsGrid.Columns.Count; i++)
+            if (!_colDefs[i].IsStarWidth && RecordsGrid.Columns[i].IsVisible)
+                service += RecordsGrid.Columns[i].ActualWidth;
+
+        return Math.Max(0, total - service - Quant());
+    }
+
+    // Зафиксировать в модели то, что человек сейчас видит на экране. Вызывается в начале
+    // жеста: до первого перетаскивания модель пуста (колонки поровну), и жест должен
+    // отталкиваться именно от текущей раскладки, а не от стандартных ширин.
+    private bool MaterializeColumnWidths()
+    {
+        var cols = MovableColumns().ToList();
+        if (cols.Count == 0 || cols.Any(c => c.Col.ActualWidth <= 0)) return false;
+
+        foreach (var (def, col) in cols)
+            _colWidths[def.Key] = Quantize(col.ActualWidth);
+
+        return true;
     }
 
     private void OnGridLayoutUpdated(object? s, EventArgs e)
@@ -3223,20 +3567,22 @@ public partial class TableView : UserControl
         if (_manualRowResize && !_isResizingRow)
             ScheduleRowHandlesRefresh();
 
-        if (_snapPending || _manualColResize) return;
+        // То же для полосок ресайза колонок.
+        if (_manualColResize && !_isResizingCol)
+            ScheduleColHandlesRefresh();
 
-        // В авто-режиме снапим Star-колонки к ФИЗИЧЕСКОЙ пиксельной сетке (квант =
-        // 1 физ. пиксель в DIP с учетом DPI и зума; при зуме 1 и DPI 1x — целые DIP,
-        // как раньше) — иначе DataGrid рисует вертикальные грид-линии в сабпиксельных
-        // позициях и они округляются по-разному с линиями заголовков. В ручном режиме
-        // снап не нужен: активный снап во время drag делает перетаскивание «дерганым».
-        var q = 1.0 / LineMetrics.EffectiveScale(this);
+        // Во время самого перетаскивания снап выключен — иначе жест становится дерганым.
+        if (_snapPending || _isResizingCol) return;
+
+        // Снапим Star-колонки к ФИЗИЧЕСКОЙ пиксельной сетке (квант = 1 физ. пиксель в DIP
+        // с учетом DPI и зума; при зуме 1 и DPI 1x — целые DIP) — иначе DataGrid рисует
+        // вертикальные грид-линии в сабпиксельных позициях и они округляются по-разному
+        // с линиями заголовков. Нужен в ОБОИХ режимах: ручные ширины тоже дают дробные
+        // доли при раздаче остатка.
+        var q = Quant();
         var hasFractional = false;
-        for (var i = 0; i < RecordsGrid.Columns.Count && i < _colDefs.Count; i++)
+        foreach (var (_, col) in MovableColumns())
         {
-            var def = _colDefs[i];
-            if (!def.IsStarWidth) continue;
-            var col = RecordsGrid.Columns[i];
             if (col.ActualWidth <= 0 || !col.Width.IsStar) continue;
             var units = col.ActualWidth / q;
             if (Math.Abs(units - Math.Round(units)) > 0.001) { hasFractional = true; break; }
@@ -3247,34 +3593,68 @@ public partial class TableView : UserControl
         Dispatcher.UIThread.Post(() =>
         {
             _snapPending = false;
-            SnapStarColumnWidths();
+            SnapColumnWidths();
         }, DispatcherPriority.Background);
     }
 
-    private void SnapStarColumnWidths()
+    // Посадить границы колонок на физическую пиксельную сетку, сохранив пропорции.
+    // totalUnits берем из ФАКТИЧЕСКОЙ раскладки (сумма ActualWidth), а не из своей оценки
+    // ширины вьюпорта: только так сумма весов гарантированно равна доступной ширине и
+    // следующий проход разметки уже не видит дробного — снап сходится за один шаг.
+    private void SnapColumnWidths()
     {
-        var starCols = new List<DataGridColumn>();
-        for (var i = 0; i < RecordsGrid.Columns.Count && i < _colDefs.Count; i++)
+        var cols = MovableColumns()
+            .Where(c => c.Col.Width.IsStar && c.Col.ActualWidth > 0)
+            .ToList();
+        if (cols.Count == 0) return;
+
+        var q          = Quant();
+        var totalUnits = (int)Math.Round(cols.Sum(c => c.Col.ActualWidth) / q);
+        var units      = new int[cols.Count];
+
+        if (HasManualWidths)
         {
-            var def = _colDefs[i];
-            if (def.IsStarWidth && RecordsGrid.Columns[i].Width.IsStar && RecordsGrid.Columns[i].ActualWidth > 0)
-                starCols.Add(RecordsGrid.Columns[i]);
+            // Ручные ширины: доли считаем ОТ МОДЕЛИ, а не от текущей раскладки — иначе
+            // многократные ресайзы окна накапливали бы дрейф. Ниже своей ширины колонка
+            // не опускается (это и дает горизонтальную прокрутку при переполнении).
+            var minUnits = cols.Select(c => Math.Max(1, (int)Math.Round(ModelWidth(c.Def.Key) / q))).ToArray();
+            var minSum   = minUnits.Sum();
+
+            if (totalUnits <= minSum)
+            {
+                Array.Copy(minUnits, units, units.Length);
+            }
+            else
+            {
+                // Остаток — методом наибольших остатков пропорционально ширинам колонок:
+                // сумма долей точно равна остатку, без потерянных и лишних пикселей.
+                var extra = totalUnits - minSum;
+                var share = new double[cols.Count];
+                for (var i = 0; i < cols.Count; i++)
+                {
+                    share[i] = extra * (double)minUnits[i] / minSum;
+                    units[i] = minUnits[i] + (int)Math.Floor(share[i]);
+                }
+                var left = extra - (units.Sum() - minSum);
+                foreach (var i in Enumerable.Range(0, cols.Count)
+                             .OrderByDescending(i => share[i] - Math.Floor(share[i]))
+                             .Take(Math.Max(0, left)))
+                    units[i]++;
+            }
         }
-        if (starCols.Count == 0) return;
+        else
+        {
+            // Стандартный режим: колонки делят ширину поровну.
+            var baseU = totalUnits / cols.Count;
+            var rem   = totalUnits % cols.Count;
+            for (var i = 0; i < cols.Count; i++) units[i] = baseU + (i < rem ? 1 : 0);
+        }
 
-        // Квант — 1 физический пиксель в DIP (учитывает DPI монитора и зум приложения).
-        var q = 1.0 / LineMetrics.EffectiveScale(this);
-        var totalUnits = (int)Math.Round(starCols.Sum(c => c.ActualWidth) / q);
-        var baseU = totalUnits / starCols.Count;
-        var extra = totalUnits % starCols.Count;
-
-        // Star-вес == целому числу ФИЗИЧЕСКИХ пикселей: сумма весов равна доступной
-        // ширине, каждая колонка получает ровно weight DIP, границы колонок ложатся на
-        // физическую сетку, следующий проход LayoutUpdated уже не видит дробного —
-        // снап сходится.
-        for (var i = 0; i < starCols.Count; i++)
-            starCols[i].Width = new DataGridLength((baseU + (i < extra ? 1 : 0)) * q,
-                                                   DataGridLengthUnitType.Star);
+        // Star-вес == целому числу ФИЗИЧЕСКИХ пикселей: сумма весов равна доступной ширине,
+        // каждая колонка получает ровно weight DIP, границы ложатся на физическую сетку.
+        // MinWidth и саму модель снап НЕ трогает — он выравнивает только показ.
+        for (var i = 0; i < cols.Count; i++)
+            SetColWidth(cols[i].Col, units[i] * q);
     }
 
     // ── Утилиты ────────────────────────────────────────────────────────────────

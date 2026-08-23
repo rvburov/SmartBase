@@ -208,6 +208,10 @@ namespace SmartBase.Database.Migrations.Pg
                         .HasColumnType("integer")
                         .HasColumnName("visible");
 
+                    b.Property<int?>("Width")
+                        .HasColumnType("integer")
+                        .HasColumnName("width");
+
                     b.HasKey("CollectionId", "Key");
 
                     b.ToTable("column_meta", (string)null);

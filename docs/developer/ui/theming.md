@@ -398,6 +398,17 @@ Fluent: иначе между двумя полосами белое пятно.
 **При апгрейде Avalonia проверить, что локальные Width/Height и span'ы не вернулись из
 нового оригинала.**
 
+**Прижатие «+» к правому краю держится звездной раскладкой, а не разметкой.** Служебная
+колонка «+» стоит вплотную к правому краю не потому, что так сверстано, а потому, что
+`DataGridColumnHeadersPresenter.MeasureOverride` каждым проходом доводит сумму ширин
+`Star`-колонок до ширины вьюпорта, и внутренняя filler-колонка получает нулевую ширину.
+Именно поэтому колонки таблицы остаются `Star` в ОБОИХ режимах ширины, а ручная ширина
+выражается как «звездный вес == ширина в пикселях» (см.
+[../features/constructor/table.md](../features/constructor/table.md)). Перевод колонок в
+пиксельную ширину дает полосу filler'а справа от «+» с лишней вертикальной линией.
+При апгрейде Avalonia это проверять первым: `DataGridColumnHeadersPresenter.MeasureOverride`,
+`DataGrid.OnFillerColumnWidthNeeded`, `DataGridColumn.Resize`.
+
 Сама прокрутка DataGrid идет мимо `ScrollViewer` (внутренний offset + виртуализация),
 поэтому позиция снимается и восстанавливается рефлексией — см.
 [../features/constructor/table.md](../features/constructor/table.md) и

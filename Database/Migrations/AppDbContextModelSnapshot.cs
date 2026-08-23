@@ -167,6 +167,9 @@ namespace SmartBase.Database.Migrations
                     b.Property<bool?>("Visible")
                         .HasColumnType("INTEGER");
 
+                    b.Property<int?>("Width")
+                        .HasColumnType("INTEGER");
+
                     b.HasKey("CollectionId", "Key");
 
                     b.ToTable("column_meta", (string)null);

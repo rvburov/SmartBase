@@ -254,8 +254,10 @@ public partial class ConstructorRepository
             }
             if (recCount == 0) progress?.Report((int)progressBase);
 
-            // 3) UI-настройки уровня коллекции (строк мало — EF): ширины колонок, режим
-            //    просмотра, порядок/видимость/подписи колонок (числовые ключи — новый id поля).
+            // 3) UI-настройки уровня коллекции (строк мало — EF): режим просмотра,
+            //    порядок/видимость/подписи/цвет/ширина колонок (числовые ключи — новый id
+            //    поля). Ширины едут аспектом column_meta.Width; копирование легаси-таблицы
+            //    ui_col_widths оставлено ради старых баз.
             using (var tx = tgtCtx.Database.BeginTransaction())
             {
                 foreach (var w in srcCtx.UiColWidths.AsNoTracking().Where(w => w.CollectionId == srcCollectionId).ToList())
@@ -272,7 +274,7 @@ public partial class ConstructorRepository
                     {
                         CollectionId = newColId, Key = RemapColumnKey(cm.Key, fieldMap), Position = cm.Position,
                         Visible = cm.Visible, Level = cm.Level, DisplayName = cm.DisplayName,
-                        Bg = cm.Bg, Fg = cm.Fg,
+                        Bg = cm.Bg, Fg = cm.Fg, Width = cm.Width,
                     });
                 tgtCtx.SaveChanges();
                 tx.Commit();

@@ -69,7 +69,7 @@ EF Core/SQLite). Документация разделена на два раз�
 
 ### QA-чеклисты ([developer/qa-checklists/](developer/qa-checklists/))
 
-Ручные прогоны фич (что нажать → что должно получиться): [overview.md](developer/qa-checklists/overview.md) · [calendar-diagram](developer/qa-checklists/calendar-diagram.md) · [import](developer/qa-checklists/import.md) · [export](developer/qa-checklists/export.md) · [profile](developer/qa-checklists/profile.md).
+Ручные прогоны фич (что нажать → что должно получиться): [overview.md](developer/qa-checklists/overview.md) · [calendar-diagram](developer/qa-checklists/calendar-diagram.md) · [import](developer/qa-checklists/import.md) · [export](developer/qa-checklists/export.md) · [profile](developer/qa-checklists/profile.md) · [tasks](developer/qa-checklists/tasks.md) · [relation](developer/qa-checklists/relation.md) · [table-columns](developer/qa-checklists/table-columns.md) · [diagnostics](developer/qa-checklists/diagnostics.md).
 
 ---
 

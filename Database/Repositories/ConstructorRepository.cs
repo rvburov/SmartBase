@@ -1278,10 +1278,10 @@ public partial class ConstructorRepository(AppDbContext db)
             SELECT {newCol}, ColResize, RowResize, ViewMode FROM ui_collection_settings WHERE CollectionId = {srcCol}");
 
         db.Database.ExecuteSqlInterpolated($@"
-            INSERT INTO column_meta (CollectionId, Key, Position, Visible, Level, DisplayName, Bg, Fg)
+            INSERT INTO column_meta (CollectionId, Key, Position, Visible, Level, DisplayName, Bg, Fg, Width)
             SELECT {newCol},
                    CASE WHEN fm.new_fid IS NOT NULL THEN CAST(fm.new_fid AS TEXT) ELSE cm.Key END,
-                   cm.Position, cm.Visible, cm.Level, cm.DisplayName, cm.Bg, cm.Fg
+                   cm.Position, cm.Visible, cm.Level, cm.DisplayName, cm.Bg, cm.Fg, cm.Width
             FROM column_meta cm
             LEFT JOIN _dup_fmap fm ON cm.Key GLOB '[0-9]*' AND CAST(cm.Key AS INTEGER) = fm.old_fid
             WHERE cm.CollectionId = {srcCol}");
@@ -1404,10 +1404,10 @@ public partial class ConstructorRepository(AppDbContext db)
         // Числовой ключ column_meta сопоставляется текстом (Key = CAST(old_fid AS TEXT)) —
         // без GLOB (его в PG нет) и без CAST(Key AS INTEGER), падающего на '__title__'.
         db.Database.ExecuteSqlInterpolated($@"
-            INSERT INTO column_meta (CollectionId, Key, Position, Visible, Level, DisplayName, Bg, Fg)
+            INSERT INTO column_meta (CollectionId, Key, Position, Visible, Level, DisplayName, Bg, Fg, Width)
             SELECT {newCollectionId},
                    CASE WHEN fm.new_fid IS NOT NULL THEN CAST(fm.new_fid AS TEXT) ELSE cm.Key END,
-                   cm.Position, cm.Visible, cm.Level, cm.DisplayName, cm.Bg, cm.Fg
+                   cm.Position, cm.Visible, cm.Level, cm.DisplayName, cm.Bg, cm.Fg, cm.Width
             FROM column_meta cm
             LEFT JOIN _dup_fmap fm ON cm.Key = CAST(fm.old_fid AS TEXT)
             WHERE cm.CollectionId = {srcCollectionId}");
@@ -1678,7 +1678,7 @@ public partial class ConstructorRepository(AppDbContext db)
         List<(int FieldId, int Width)>                        ColWidths,
         List<(int RecordId, int Height)>                      RowHeights,
         (bool ColResize, bool RowResize, string ViewMode)?    Settings,
-        List<(string Key, int? Position, bool? Visible, int? Level, string? DisplayName, string? Bg, string? Fg)> ColumnMeta,
+        List<(string Key, int? Position, bool? Visible, int? Level, string? DisplayName, string? Bg, string? Fg, int? Width)> ColumnMeta,
         List<(int RecordId, bool Visible, int Level, string? Bg, string? Fg)> RecordDisplay,
         List<(int RecordId, string Key, string? Bg, string? Fg)> CellStyles);
 
@@ -1715,7 +1715,7 @@ public partial class ConstructorRepository(AppDbContext db)
                              .Select(h => (h.RecordId, h.Height)).ToList(),
             Settings:      settings is null ? null : (settings.ColResize, settings.RowResize, settings.ViewMode),
             ColumnMeta:    db.ColumnMeta.AsNoTracking().Where(m => m.CollectionId == collectionId).ToList()
-                             .Select(m => (m.Key, m.Position, m.Visible, m.Level, m.DisplayName, m.Bg, m.Fg)).ToList(),
+                             .Select(m => (m.Key, m.Position, m.Visible, m.Level, m.DisplayName, m.Bg, m.Fg, m.Width)).ToList(),
             RecordDisplay: db.RecordDisplay.AsNoTracking().Where(d => d.CollectionId == collectionId).ToList()
                              .Select(d => (d.RecordId, d.Visible, d.Level, d.Bg, d.Fg)).ToList(),
             CellStyles:    db.CellStyles.AsNoTracking().Where(c => c.CollectionId == collectionId).ToList()
@@ -1808,11 +1808,12 @@ public partial class ConstructorRepository(AppDbContext db)
                 CollectionId = newCollectionId, ColResize = st.ColResize, RowResize = st.RowResize, ViewMode = st.ViewMode,
             });
 
-        foreach (var (key, pos, vis, lvl, name, bg, fg) in ui.ColumnMeta)
+        foreach (var (key, pos, vis, lvl, name, bg, fg, width) in ui.ColumnMeta)
             db.ColumnMeta.Add(new ColumnMetaEntity
             {
                 CollectionId = newCollectionId, Key = RemapColKey(key, fieldMap),
                 Position = pos, Visible = vis, Level = lvl, DisplayName = name, Bg = bg, Fg = fg,
+                Width = width,
             });
 
         foreach (var (oldRid, vis, lvl, bg, fg) in ui.RecordDisplay)
@@ -2287,10 +2288,10 @@ public partial class ConstructorRepository(AppDbContext db)
             SELECT {newCol}, ColResize, RowResize, ViewMode FROM src.ui_collection_settings WHERE CollectionId = {srcCol}");
 
         Exec(conn, tx, $@"
-            INSERT INTO main.column_meta (CollectionId, Key, Position, Visible, Level, DisplayName, Bg, Fg)
+            INSERT INTO main.column_meta (CollectionId, Key, Position, Visible, Level, DisplayName, Bg, Fg, Width)
             SELECT {newCol},
                    CASE WHEN fm.new_fid IS NOT NULL THEN CAST(fm.new_fid AS TEXT) ELSE cm.Key END,
-                   cm.Position, cm.Visible, cm.Level, cm.DisplayName, cm.Bg, cm.Fg
+                   cm.Position, cm.Visible, cm.Level, cm.DisplayName, cm.Bg, cm.Fg, cm.Width
             FROM src.column_meta cm
             LEFT JOIN _move_fmap fm ON cm.Key GLOB '[0-9]*' AND CAST(cm.Key AS INTEGER) = fm.old_fid
             WHERE cm.CollectionId = {srcCol}");
@@ -4973,13 +4974,16 @@ public partial class ConstructorRepository(AppDbContext db)
         db.SaveChanges();
     }
 
-    // Строка column_meta живет, пока задан хоть один аспект (порядок/видимость/подпись);
-    // сброс последнего удаляет ее, чтобы «отсутствие строки = дефолт» оставалось верным
-    // и таблица не копила пустых строк.
+    // Строка column_meta живет, пока задан хоть один аспект (порядок/видимость/подпись/
+    // цвет/ширина); сброс последнего удаляет ее, чтобы «отсутствие строки = дефолт»
+    // оставалось верным и таблица не копила пустых строк.
+    // ВАЖНО: Width обязан быть в этом списке — иначе SaveColumnDisplay и WriteColumnOrder,
+    // обнуляющие свои аспекты у всех строк коллекции, снесли бы строку с одной лишь
+    // сохраненной шириной, и ручные ширины молча терялись бы после окна «Отображение».
     private void RemoveColumnMetaIfEmpty(ColumnMetaEntity m)
     {
         if (m.Position is null && m.Visible is null && m.Level is null && m.DisplayName is null
-            && m.Bg is null && m.Fg is null)
+            && m.Bg is null && m.Fg is null && m.Width is null)
             db.ColumnMeta.Remove(m);
     }
 
@@ -5106,6 +5110,73 @@ public partial class ConstructorRepository(AppDbContext db)
     public void SaveColumnOrder(int collectionId, IReadOnlyList<string> orderedKeys) =>
         WriteColumnOrder(collectionId, orderedKeys);
 
+    // ── Ручные ширины колонок (аспект Width в column_meta) ─────────────────────
+    // Ключ строковый — тот же, что у порядка/видимости/подписи/цвета: id поля строкой либо
+    // TableRowVm.TitleKey для системной колонки «Название». Числовой ключ прежней таблицы
+    // ui_col_widths системную колонку покрыть не мог, из-за чего она оставалась «резиновой»
+    // и ломала ручной ресайз (см. GetColWidths ниже — легаси).
+
+    /// <summary>Ключ колонки → ручная ширина в DIP. Только заданные колонки: отсутствие
+    /// ключа = ширина не задана (колонка получает стандартную).</summary>
+    public Dictionary<string, double> GetColumnWidths(int collectionId) =>
+        db.ColumnMeta
+          .Where(m => m.CollectionId == collectionId && m.Width != null)
+          .ToDictionary(m => m.Key, m => (double)m.Width!.Value);
+
+    /// <summary>Точечный upsert ширин (как SetColumnStyle): строки column_meta не сносим —
+    /// в них живут порядок, видимость, подпись и цвет. Ключей нет в словаре → Width = null.
+    /// Пишем только реально изменившиеся значения: вызывается на каждое отпускание мыши.</summary>
+    public void SaveColumnWidths(int collectionId, IReadOnlyDictionary<string, double> widths)
+    {
+        var rows = db.ColumnMeta.Where(m => m.CollectionId == collectionId).ToList();
+        var seen = new HashSet<string>();
+        var dirty = false;
+
+        foreach (var row in rows)
+        {
+            seen.Add(row.Key);
+            var want = widths.TryGetValue(row.Key, out var w) && w > 0
+                ? (int?)Math.Round(w)
+                : null;
+            if (row.Width == want) continue;
+
+            row.Width = want;
+            dirty = true;
+            RemoveColumnMetaIfEmpty(row);
+        }
+
+        foreach (var (key, w) in widths)
+        {
+            if (w <= 0 || seen.Contains(key)) continue;
+            db.ColumnMeta.Add(new ColumnMetaEntity
+            {
+                CollectionId = collectionId, Key = key, Width = (int)Math.Round(w),
+            });
+            dirty = true;
+        }
+
+        if (dirty) db.SaveChanges();
+    }
+
+    /// <summary>Сбросить все ручные ширины коллекции («Стандартная ширина столбцов»).
+    /// Прочие аспекты строк column_meta сохраняются.</summary>
+    public void ClearColumnWidths(int collectionId)
+    {
+        var rows = db.ColumnMeta
+            .Where(m => m.CollectionId == collectionId && m.Width != null)
+            .ToList();
+        if (rows.Count == 0) return;
+
+        foreach (var row in rows)
+        {
+            row.Width = null;
+            RemoveColumnMetaIfEmpty(row);
+        }
+        db.SaveChanges();
+    }
+
+    // ЛЕГАСИ (таблица ui_col_widths): из UI не вызывается — ширины ведет column_meta.Width.
+    // Оставлено, чтобы старые базы читались без ошибок.
     public Dictionary<int, int> GetColWidths(int collectionId) =>
         db.UiColWidths
           .Where(w => w.CollectionId == collectionId)
