@@ -43,9 +43,10 @@ public sealed class NotificationService : IDisposable
     private readonly ITaskEventSource? _taskSource;
 
     private DispatcherTimer? _timer;
+    // Стандарты те же, что в AppSettings: календарь включен, задачи — по желанию.
     private bool     _calendarOn     = true;
-    private bool     _taskAssignedOn = true;
-    private bool     _taskStatusOn   = true;
+    private bool     _taskAssignedOn = false;
+    private bool     _taskStatusOn   = false;
     private DateTime _watermark;
     // Тумблер задачных видов включили — на ближайшем тике не читаем накопленное, а сдвигаем
     // курсоры на хвост: включение не должно вываливать историю (симметрия с водяной меткой).

@@ -237,7 +237,7 @@
                         <Grid ColumnDefinitions="*,Auto">
                             <StackPanel Grid.Column="0" Spacing="4"
                                         VerticalAlignment="Center" Margin="0,0,32,0">
-                                <TextBlock Classes="title" Text="Уведомления о назначении задачи" />
+                                <TextBlock Classes="title" Text="Уведомления задачи «Исполнитель»" />
                                 <TextBlock Classes="desc"
                                            Text="Всплывающее уведомление приходит, когда вас назначают исполнителем задачи: в разделе «Задачи», в таблице конструктора, на странице записи и в календаре. Задача, назначенная себе, уведомление не присылает." />
                             </StackPanel>
@@ -254,7 +254,7 @@
                         <Grid ColumnDefinitions="*,Auto">
                             <StackPanel Grid.Column="0" Spacing="4"
                                         VerticalAlignment="Center" Margin="0,0,32,0">
-                                <TextBlock Classes="title" Text="Уведомления о смене стадии задачи" />
+                                <TextBlock Classes="title" Text="Уведомления задачи «Смена стадии»" />
                                 <TextBlock Classes="desc"
                                            Text="Всплывающее уведомление о переходе задачи между стадиями («Запланировано», «В работе», «Выполнено» и обратно). Приходит тому, кто указан в свойстве «Назначил»." />
                             </StackPanel>

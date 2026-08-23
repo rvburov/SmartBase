@@ -326,9 +326,11 @@ public static class AppSettings
     // Два независимых тумблера «Общее», оба независимы и от календарного:
     //   • назначение — баннер новому исполнителю, когда его поставил КТО-ТО ДРУГОЙ;
     //   • смена стадии — баннер тому, кто указан в свойстве «Назначил».
-    // Стандарт — включено: ради них раздел задач и становится живым.
-    public const bool NotifyTaskAssignedDefault = true;
-    public const bool NotifyTaskStatusDefault   = true;
+    // Стандарт — ВЫКЛЮЧЕНО: уведомления по задачам осмысленны только в общей базе с
+    // несколькими людьми, поэтому включает их тот, кому они нужны, а не обновление
+    // приложения. Календарный тумблер по той же логике включен: он полезен и одному.
+    public const bool NotifyTaskAssignedDefault = false;
+    public const bool NotifyTaskStatusDefault   = false;
 
     public static bool LoadNotifyTaskAssigned() =>
         bool.TryParse(_store?.Get(KeyNotifyTaskAssigned), out var on) ? on : NotifyTaskAssignedDefault;

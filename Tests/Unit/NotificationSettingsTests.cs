@@ -85,11 +85,14 @@ public sealed class NotificationSettingsTests
     // ── Уведомления по задачам ────────────────────────────────────────────────
 
     [Fact]
-    public void Task_notifications_enabled_by_default()
+    public void Task_notifications_are_off_by_default()
     {
+        // Уведомления по задачам осмысленны в общей базе с несколькими людьми — включает их
+        // тот, кому они нужны. Календарные по той же логике включены (полезны и одному).
         AppSettings.AttachStore(new FakeStore());
-        Assert.True(AppSettings.LoadNotifyTaskAssigned());
-        Assert.True(AppSettings.LoadNotifyTaskStatus());
+        Assert.False(AppSettings.LoadNotifyTaskAssigned());
+        Assert.False(AppSettings.LoadNotifyTaskStatus());
+        Assert.True(AppSettings.LoadNotificationsEnabled());
     }
 
     [Fact]
@@ -98,13 +101,13 @@ public sealed class NotificationSettingsTests
         var store = new FakeStore();
         AppSettings.AttachStore(store);
 
-        AppSettings.SaveNotifyTaskAssigned(false);
-        Assert.True(store.Has("notifyTaskAssigned"));
-        Assert.False(AppSettings.LoadNotifyTaskAssigned());
-        Assert.True(AppSettings.LoadNotifyTaskStatus());    // сосед не задет
+        AppSettings.SaveNotifyTaskAssigned(true);
+        Assert.True(store.Has("notifyTaskAssigned"));       // отличие от дефолта — хранится
+        Assert.True(AppSettings.LoadNotifyTaskAssigned());
+        Assert.False(AppSettings.LoadNotifyTaskStatus());   // сосед не задет
         Assert.False(store.Has("notifyTaskStatus"));
 
-        AppSettings.SaveNotifyTaskAssigned(true);           // назад к дефолту
+        AppSettings.SaveNotifyTaskAssigned(false);          // назад к дефолту
         Assert.False(store.Has("notifyTaskAssigned"));
     }
 
