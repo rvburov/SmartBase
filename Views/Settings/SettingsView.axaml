@@ -677,15 +677,36 @@
             <!-- ── Расширения ────────────────────────────────────── -->
             <!-- Содержимое собирается в code-behind (BuildExtensionsPanel) по
                  ExtensionRegistry.All и объявленным настройкам IExtension.Settings: здесь
-                 только пустой контейнер. Разметка не знает ни одного расширения по имени —
-                 иначе удаление расширения требовало бы правки этого файла. -->
+                 только контейнеры. Разметка не знает ни одного расширения по имени — иначе
+                 удаление расширения требовало бы правки этого файла. Строка видимости —
+                 такая же, как «Отображение раздела …» в «Оформлении», но живет здесь:
+                 она про состав раздела расширений, а не про виды. -->
             <ScrollViewer x:Name="ExtensionsPanel" IsVisible="False"
                           VerticalScrollBarVisibility="Auto">
                 <Grid>
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*" />
                     </Grid.ColumnDefinitions>
-                    <StackPanel x:Name="ExtensionsSettingsList" Margin="16,0,16,32" />
+                    <StackPanel Margin="16,0,16,32">
+
+                        <StackPanel x:Name="ExtensionsVisibilityBlock">
+                            <Border Classes="settingRow">
+                                <Grid ColumnDefinitions="*,Auto">
+                                    <StackPanel Grid.Column="0" Spacing="4"
+                                                VerticalAlignment="Center" Margin="0,0,32,0">
+                                        <TextBlock Classes="title" Text="Отображение раздела расширений" />
+                                        <TextBlock Classes="desc"
+                                                   Text="Какие расширения показывать. Снятые исчезают из списка раздела «Расширения» и из настроек ниже." />
+                                    </StackPanel>
+                                    <w:CheckListDropdown Grid.Column="1" x:Name="ExtensionsVisibility"
+                                                         Width="240" VerticalAlignment="Center" />
+                                </Grid>
+                            </Border>
+                            <Border Classes="separator h" />
+                        </StackPanel>
+
+                        <StackPanel x:Name="ExtensionsSettingsList" />
+                    </StackPanel>
                 </Grid>
             </ScrollViewer>
 

@@ -98,6 +98,10 @@ public partial class SettingsView : UserControl
         // «Оформление»: обе группы строк (что открывается по умолчанию и что показывать).
         InitAppearance();
 
+        // «Расширения»: галочки видимости. Подписка один раз здесь, наполнение — при каждом
+        // показе раздела (BuildExtensionsPanel), иначе обработчик копился бы на каждый заход.
+        ExtensionsVisibility.HiddenChanged += OnExtensionsVisibilityChanged;
+
         // Меню «Добавить базу данных» живет в навбаре (видно только в разделе БД,
         // см. ShowCategory) — пункты ведут на те же обработчики, что прежние кнопки.
         HeaderBar.CreateSqliteRequested    += (_, _) => OnCreateDatabaseClick(this, new RoutedEventArgs());
@@ -290,13 +294,26 @@ public partial class SettingsView : UserControl
     // настройки в IExtension.Settings. Ни одного расширения по имени здесь нет — убрали
     // расширение из ExtensionRegistry, и его блок исчез сам, без правок этого экрана.
     //
+    // Скрытые расширения в список настроек не попадают: скрыли — убрали с глаз целиком,
+    // и в разделе, и здесь. Единственное место, где скрытое остается видимым, — строка
+    // галочек выше: иначе вернуть его было бы нечем.
+    //
     // Перестраиваем при каждом показе: значение могло смениться мимо настроек — «Обзор»
     // в окне расширения пишет в те же ключи.
     private void BuildExtensionsPanel()
     {
+        BuildExtensionsVisibility();
+        BuildExtensionsSettingsList();
+    }
+
+    private void BuildExtensionsSettingsList()
+    {
         ExtensionsSettingsList.Children.Clear();
 
-        var withSettings = ExtensionRegistry.All.Where(e => e.Settings.Count > 0).ToList();
+        var withSettings = ExtensionRegistry.All
+            .Where(e => e.Settings.Count > 0)
+            .Where(e => ViewCatalog.IsVisible(ViewCatalog.ScopeExtensions, e.Id))
+            .ToList();
         if (withSettings.Count == 0)
         {
             ExtensionsSettingsList.Children.Add(new Border
@@ -305,7 +322,7 @@ public partial class SettingsView : UserControl
                 Child = new TextBlock
                 {
                     Classes = { "desc" },
-                    Text = "Ни одно расширение не требует настройки.",
+                    Text = "Ни одно показанное расширение не требует настройки.",
                 },
             });
             return;
@@ -322,6 +339,35 @@ public partial class SettingsView : UserControl
             ExtensionsSettingsList.Children.Add(new Border { Classes = { "settingRow" }, Child = rows });
             ExtensionsSettingsList.Children.Add(new Border { Classes = { "separator", "h" } });
         }
+    }
+
+    // Галочки «какие расширения показывать». Пункты — не список в разметке, а сам реестр
+    // (ViewCatalog.ScopeExtensions): удалили расширение — пункт исчез, а его Id уберется из
+    // «скрытых» при следующем запуске (AppSettings.PruneHiddenViews в App.axaml.cs).
+    //
+    // Строка живет здесь, а не в «Оформлении» рядом с прочими «Отображение раздела …»:
+    // там перечислены ВИДЫ разделов, а тут — состав самого раздела расширений. Реестр пуст —
+    // прятать нечего, и блок скрывается целиком.
+    private void BuildExtensionsVisibility()
+    {
+        var items = ViewCatalog.All(ViewCatalog.ScopeExtensions);
+        ExtensionsVisibilityBlock.IsVisible = items.Count > 0;
+        if (items.Count == 0) return;
+
+        ExtensionsVisibility.SetItems(items, AppSettings.LoadHiddenViews(ViewCatalog.ScopeExtensions));
+    }
+
+    // Набор скрытых поменяли: сохраняем и тут же убираем (или возвращаем) блоки настроек
+    // ниже — они на этом же экране, и ждать перезахода незачем. Сам список галочек НЕ
+    // перестраиваем: попап в этот момент открыт под курсором, а SetItems пересоздал бы его
+    // строки прямо под нажатием.
+    //
+    // Сайдбар раздела расширений пересобирается при заходе в него (MainWindow.ShowModule):
+    // пока человек в настройках, тот список скрыт, и события наружу не нужно.
+    private void OnExtensionsVisibilityChanged(object? sender, IReadOnlyList<string> hidden)
+    {
+        AppSettings.SaveHiddenViews(ViewCatalog.ScopeExtensions, hidden);
+        BuildExtensionsSettingsList();
     }
 
     // Поле одной настройки: подпись, под ней строка ввода. Значение сохраняется при потере

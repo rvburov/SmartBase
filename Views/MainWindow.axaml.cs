@@ -10,7 +10,6 @@ using SmartBase.Controls.Dialogs;
 using SmartBase.Database;
 using SmartBase.Database.Entities;
 using SmartBase.Database.Repositories;
-using SmartBase.Extensions;
 using SmartBase.Notifications;
 using SmartBase.Settings;
 using SmartBase.Utils;
@@ -64,6 +63,10 @@ public partial class MainWindow : Window
     // Иконка пунктов сайдбара расширений (lucide blocks, ключ из Icons.axaml) — одна
     // на все расширения, т.к. в ExtensionRegistry своей иконки у расширений нет.
     private const string ExtensionsIcon = "IconBlocks";
+
+    // Состав сайдбара расширений на текущий момент — чтобы не перерисовывать список,
+    // когда галочки видимости не трогали (см. SyncExtensionsSidebar).
+    private IReadOnlyList<string> _extensionKeys = [];
     // _recordPanelLogicalOpen — правая панель записи (col 5), объявлено ниже.
 
     public MainWindow(Workspace workspace)
@@ -247,9 +250,11 @@ public partial class MainWindow : Window
         SettingsSidebar.SetItems(SettingsRegistry.All.Select(c => new SidebarListItem(c.Key, c.Label, c.Icon)));
         SettingsSidebar.CategorySelected += (_, key) => SettingsModule.ShowCategory(key);
 
-        // Сайдбар расширений: пункты из ExtensionRegistry (одна иконка на все); выбор открывает блок.
+        // Сайдбар расширений: пункты из каталога — то есть из реестра расширений, но уже без
+        // скрытых («Настройки → Расширения → Отображение раздела расширений»). Одна иконка на
+        // все, выбор открывает блок; список пересобирается при заходе (SyncExtensionsSidebar).
         ExtensionsSidebar.Title = "Расширения";
-        ExtensionsSidebar.SetItems(ExtensionRegistry.All.Select(e => new SidebarListItem(e.Id, e.Name, ExtensionsIcon)));
+        SyncExtensionsSidebar();
         ExtensionsSidebar.CategorySelected += (_, key) => ExtensionsModule.ShowExtension(key);
 
         // Сайдбар профиля: пункты из ProfileRegistry; выбор раздела открывает его в основной области.
@@ -944,6 +949,7 @@ public partial class MainWindow : Window
             CalendarSidebar.IsVisible    = false;
             ConstructorSidebar.IsVisible = false;
             ExtensionsSidebar.IsVisible  = _sidebarOpen;
+            SyncExtensionsSidebar();
             ExtensionsModule.ShowExtension(ExtensionsSidebar.SelectedKey);
         }
 
@@ -954,6 +960,25 @@ public partial class MainWindow : Window
         if (module != "profile")    ProfileSidebar.IsVisible    = false;
 
         ApplyColumns();
+    }
+
+    // Список расширений в сайдбаре = видимые пункты каталога. Зовется при старте и при каждом
+    // заходе в раздел: галочки правятся в другом разделе («Настройки → Расширения»), а сайдбар
+    // расширений в это время скрыт — значит перестроить его достаточно к моменту показа.
+    //
+    // Пересобираем ТОЛЬКО при смене состава: SetItems перерисовывает строки и сбрасывает выбор
+    // на первый пункт, а заход в раздел — частое действие. Выбранное расширение переживает
+    // перестройку, если осталось видимым.
+    private void SyncExtensionsSidebar()
+    {
+        var visible = ViewCatalog.Visible(ViewCatalog.ScopeExtensions);
+        var keys    = visible.Select(v => v.Key).ToList();
+        if (keys.SequenceEqual(_extensionKeys, StringComparer.Ordinal)) return;
+
+        var previous = ExtensionsSidebar.SelectedKey;
+        _extensionKeys = keys;
+        ExtensionsSidebar.SetItems(visible.Select(v => new SidebarListItem(v.Key, v.Label, ExtensionsIcon)));
+        if (keys.Contains(previous, StringComparer.Ordinal)) ExtensionsSidebar.Select(previous);
     }
 
     private void OnSidebarToggled(bool isOpen)

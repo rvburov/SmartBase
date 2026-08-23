@@ -1,5 +1,6 @@
 using Avalonia.Controls;
 using SmartBase.Extensions;
+using SmartBase.Settings;
 
 namespace SmartBase.Views.Extensions;
 
@@ -7,6 +8,9 @@ namespace SmartBase.Views.Extensions;
 /// Блок раздела «Расширения» (по стилю блока настроек): навбар с именем расширения и
 /// кнопкой запуска + Markdown-описание. Оболочка знает о расширении только через
 /// <see cref="IExtension"/> — само расширение лежит самостоятельно под Extensions/.
+///
+/// Скрытые расширения («Настройки → Расширения → Отображение раздела расширений») сюда не
+/// попадают: и запасной выбор, и проверка показываемого идут через видимые пункты каталога.
 /// </summary>
 public partial class ExtensionsView : UserControl
 {
@@ -16,13 +20,17 @@ public partial class ExtensionsView : UserControl
     {
         InitializeComponent();
         HeaderBar.RunClicked += OnRunClick;
-        ShowExtension(ExtensionRegistry.All.FirstOrDefault()?.Id ?? "");
+        ShowExtension("");   // пустой Id → первое видимое расширение
     }
 
-    /// <summary>Показать расширение по Id (из выбора в сайдбаре). Пустой/неизвестный → первое.</summary>
+    /// <summary>Показать расширение по Id (из выбора в сайдбаре). Пустой, неизвестный или
+    /// скрытый → первое видимое.</summary>
     public void ShowExtension(string id)
     {
-        _current = ExtensionRegistry.FindById(id) ?? ExtensionRegistry.All.FirstOrDefault();
+        _current = ViewCatalog.IsVisible(ViewCatalog.ScopeExtensions, id)
+            ? ExtensionRegistry.FindById(id)
+            : null;
+        _current ??= FirstVisible();
 
         if (_current is null)
         {
@@ -36,6 +44,13 @@ public partial class ExtensionsView : UserControl
         DescriptionMd.Markdown = _current.MarkdownDescription;
         HeaderBar.SetRunState(_current.CanRun, _current.CanRun ? "Запустить расширение" : "Запуск пока недоступен");
     }
+
+    // Первое расширение, которое разрешено показывать. null — расширений нет вовсе
+    // (реестр пуст) либо ни одно не нашлось по Id из каталога.
+    private static IExtension? FirstVisible() =>
+        ViewCatalog.FirstVisible(ViewCatalog.ScopeExtensions) is { } item
+            ? ExtensionRegistry.FindById(item.Key)
+            : null;
 
     // Запуск: расширение отдает свое окно (в стиле приложения), оболочка показывает его
     // поверх главного окна. null — расширение окно не открывает (заглушка/надстройка).

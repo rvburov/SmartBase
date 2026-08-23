@@ -52,6 +52,16 @@ public partial class App : Application
             if (orphans > 0)
                 Log.Information("Настройки удаленных расширений убраны из app.db: {Count}", orphans);
 
+            // Там же — галочки «Расширения → Отображение раздела расширений»: список пунктов
+            // динамический (Id реестра), поэтому Id удаленного расширения не должен остаться
+            // в «скрытых». Иначе вернувшееся расширение молча оказалось бы скрытым.
+            var hiddenOrphans = AppSettings.PruneHiddenViews(
+                Settings.ViewCatalog.ScopeExtensions,
+                Extensions.ExtensionRegistry.All.Select(e => e.Id));
+            if (hiddenOrphans > 0)
+                Log.Information("Скрытые расширения, которых больше нет, убраны из app.db: {Count}",
+                                hiddenOrphans);
+
             // Автозапуск: сверяем запись в системе с настройкой — вернуть пропавшую (переустановка,
             // чистилка автозагрузки), переписать устаревшую (сменилась папка установки; у версий до
             // 1.0.5 в команде оставался --background), снять лишнюю. Именно здесь, а не в Program:

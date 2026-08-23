@@ -1,3 +1,4 @@
+using SmartBase.Extensions;
 using SmartBase.Utils;
 
 namespace SmartBase.Settings;
@@ -16,6 +17,7 @@ public sealed record ViewItem(string Key, string Label);
 /// <c>calendarView</c>). Скрытие пунктов номера НЕ сдвигает: навбар показывает только
 /// видимые, но наружу отдает по-прежнему глобальный номер. Поэтому новые виды дописываются
 /// в КОНЕЦ списка, иначе сохраненные у людей значения станут значить другое.
+/// Исключение — <see cref="ScopeExtensions"/>: там пункты не нумеруются вовсе (см. ниже).
 /// </summary>
 public static class ViewCatalog
 {
@@ -23,6 +25,7 @@ public static class ViewCatalog
     public const string ScopeCalendar    = "calendar";
     public const string ScopeTasks       = "tasks";
     public const string ScopeConstructor = "constructor";
+    public const string ScopeExtensions  = "extensions";
 
     /// <summary>
     /// Модули панели навигации, которые разрешено скрывать. «Настройки» и «Профиль» сюда
@@ -61,6 +64,23 @@ public static class ViewCatalog
         new("list",  "Список"),
     ];
 
+    /// <summary>
+    /// Расширения раздела «Расширения» — единственный ДИНАМИЧЕСКИЙ список каталога: пункты
+    /// не перечислены здесь, а берутся из <see cref="ExtensionRegistry"/> (ключ — <c>Id</c>
+    /// расширения, подпись — его <c>Name</c>). Так удаление расширения убирает его сразу
+    /// отовсюду — из сайдбара, из настроек видимости и из списка галочек, — не требуя правок
+    /// ни здесь, ни на экране настроек (контракт см. в <c>Extensions/IExtension.cs</c>).
+    ///
+    /// Правило «позиция = глобальный номер вида» к этому разделу НЕ относится: номеров у
+    /// расширений нет, ключ — Id, а «вида по умолчанию» у раздела не бывает. Поэтому порядок
+    /// здесь — просто порядок показа, тот же, что в реестре.
+    ///
+    /// Свойство пересобирается на каждое обращение (реестр статический, список короткий):
+    /// кешировать нечего, а лишний снимок жил бы дольше самого реестра.
+    /// </summary>
+    public static IReadOnlyList<ViewItem> Extensions =>
+        [.. ExtensionRegistry.All.Select(e => new ViewItem(e.Id, e.Name))];
+
     /// <summary>Все пункты раздела; неизвестный scope — пустой список.</summary>
     public static IReadOnlyList<ViewItem> All(string scope) => scope switch
     {
@@ -68,6 +88,7 @@ public static class ViewCatalog
         ScopeCalendar    => Calendar,
         ScopeTasks       => Tasks,
         ScopeConstructor => Constructor,
+        ScopeExtensions  => Extensions,
         _                => [],
     };
 

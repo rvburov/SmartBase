@@ -552,6 +552,30 @@ public static class AppSettings
         _store?.Set(key, string.Join(';', hidden.OrderBy(h => h, StringComparer.Ordinal)));
     }
 
+    /// <summary>
+    /// Выбросить из «скрытых» ключи, которых больше нет среди пунктов раздела. Нужно разделам
+    /// с ДИНАМИЧЕСКИМ составом — сейчас это расширения (<c>ViewCatalog.ScopeExtensions</c>):
+    /// удалили расширение, и его Id уходит из настройки при первом же запуске, как и группа
+    /// «ext.&lt;Id&gt;.…» (см. <see cref="RemoveOrphanExtensionSettings"/>). Иначе строка жила бы
+    /// в app.db вечно, а вернувшееся расширение оказалось бы скрытым без видимой причины.
+    ///
+    /// Возвращает число убранных ключей (для записи в журнал). Разделы со статическим списком
+    /// звать не нужно: их пункты не исчезают между запусками.
+    /// </summary>
+    public static int PruneHiddenViews(string scope, IEnumerable<string> liveKeys)
+    {
+        var hidden = LoadHiddenViews(scope);
+        if (hidden.Count == 0) return 0;
+
+        var live    = liveKeys.ToHashSet(StringComparer.Ordinal);
+        var orphans = hidden.Where(k => !live.Contains(k)).ToList();
+        if (orphans.Count == 0) return 0;
+
+        hidden.ExceptWith(orphans);
+        SaveHiddenViews(scope, hidden);
+        return orphans.Count;
+    }
+
     // ── Ключи настроек ─────────────────────────────────────────────────────────
 
     private static string KeyHiddenCollections(string scope) => $"hiddenCollections.{scope}";

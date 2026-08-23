@@ -1,3 +1,4 @@
+using SmartBase.Extensions;
 using SmartBase.Settings;
 using SmartBase.Utils;
 
@@ -22,6 +23,9 @@ public sealed class ViewCatalogTests
             _d.Keys.Where(k => k.StartsWith(prefix, StringComparison.Ordinal)).ToList();
     }
 
+    // Только разделы со СТАТИЧЕСКИМ списком: у расширений он динамический (реестр), и в
+    // сборке без расширений пуст — общие проверки «пунктов не бывает ноль» к нему неприменимы.
+    // Его правила проверяются отдельно, ниже, и переживают любой состав реестра.
     private static readonly string[] Scopes =
         [ViewCatalog.ScopeNavigation, ViewCatalog.ScopeCalendar,
          ViewCatalog.ScopeTasks, ViewCatalog.ScopeConstructor];
@@ -165,5 +169,87 @@ public sealed class ViewCatalogTests
 
         Assert.Empty(AppSettings.LoadHiddenViews(ViewCatalog.ScopeConstructor));
         Assert.Equal(ViewCatalog.Constructor.Count, ViewCatalog.Visible(ViewCatalog.ScopeConstructor).Count);
+    }
+
+    // ── Расширения: динамический раздел ───────────────────────────────────────
+    //
+    // Пункты берутся из реестра, а не перечислены в каталоге. Поэтому проверки здесь НЕ
+    // называют ни одного расширения и не рассчитывают на их число: удалили расширение (или
+    // все сразу) — тесты обязаны остаться зелеными, иначе обещание «убрал папку, и больше
+    // ничего править не нужно» не выполняется.
+
+    [Fact]
+    public void Extensions_scope_mirrors_the_registry()
+    {
+        var items = ViewCatalog.All(ViewCatalog.ScopeExtensions);
+
+        Assert.Equal(ExtensionRegistry.All.Select(e => e.Id),   items.Select(v => v.Key));
+        Assert.Equal(ExtensionRegistry.All.Select(e => e.Name), items.Select(v => v.Label));
+    }
+
+    // Скрываем все, кроме первого: работает и на пустом реестре (скрывать нечего, видимых нет),
+    // и на одном расширении, и на шести.
+    [Fact]
+    public void Hidden_extensions_disappear_from_the_visible_list()
+    {
+        AppSettings.AttachStore(new FakeStore());
+        var all = ViewCatalog.All(ViewCatalog.ScopeExtensions);
+
+        AppSettings.SaveHiddenViews(ViewCatalog.ScopeExtensions, all.Skip(1).Select(v => v.Key).ToList());
+
+        Assert.Equal(all.Take(1).Select(v => v.Key),
+                     ViewCatalog.Visible(ViewCatalog.ScopeExtensions).Select(v => v.Key));
+    }
+
+    // ── Уборка «скрытых» у динамического раздела ──────────────────────────────
+
+    /// <summary>Id удаленного расширения не должен пережить его самого: иначе строка живет в
+    /// app.db вечно, а вернувшееся расширение молча оказывается скрытым.</summary>
+    [Fact]
+    public void Prune_drops_keys_that_are_no_longer_offered()
+    {
+        AppSettings.AttachStore(new FakeStore());
+        AppSettings.SaveHiddenViews(ViewCatalog.ScopeExtensions, ["живое", "удаленное"]);
+
+        var removed = AppSettings.PruneHiddenViews(ViewCatalog.ScopeExtensions, ["живое", "другое"]);
+
+        Assert.Equal(1, removed);
+        Assert.Equal(["живое"], AppSettings.LoadHiddenViews(ViewCatalog.ScopeExtensions));
+    }
+
+    [Fact]
+    public void Prune_removes_the_key_when_nothing_is_left()
+    {
+        var store = new FakeStore();
+        AppSettings.AttachStore(store);
+        AppSettings.SaveHiddenViews(ViewCatalog.ScopeExtensions, ["удаленное"]);
+
+        var removed = AppSettings.PruneHiddenViews(ViewCatalog.ScopeExtensions, ["живое"]);
+
+        Assert.Equal(1, removed);
+        Assert.False(store.Has("hiddenViews.extensions"));
+    }
+
+    // Уборка зовется на КАЖДОМ запуске — когда убирать нечего, она не должна трогать базу.
+    [Fact]
+    public void Prune_keeps_live_keys_untouched()
+    {
+        var store = new FakeStore();
+        AppSettings.AttachStore(store);
+        AppSettings.SaveHiddenViews(ViewCatalog.ScopeExtensions, ["живое"]);
+        var before = store.Get("hiddenViews.extensions");
+
+        var removed = AppSettings.PruneHiddenViews(ViewCatalog.ScopeExtensions, ["живое", "другое"]);
+
+        Assert.Equal(0, removed);
+        Assert.Equal(before, store.Get("hiddenViews.extensions"));
+    }
+
+    [Fact]
+    public void Prune_of_an_empty_setting_does_nothing()
+    {
+        AppSettings.AttachStore(new FakeStore());
+
+        Assert.Equal(0, AppSettings.PruneHiddenViews(ViewCatalog.ScopeExtensions, ["живое"]));
     }
 }
