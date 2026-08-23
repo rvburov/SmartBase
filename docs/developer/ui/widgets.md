@@ -87,7 +87,7 @@ Note.Hide();                       // прячет
 | [SettingsSidebar](../../../Controls/Components/Sidebar/SidebarList.axaml) | боковая навигация в настройках |
 | [Navbar](../../../Controls/Components/Navbar/NavbarCalendar.axaml) | верхний навбар календаря: ← Сегодня →, переключатель режимов, поиск, «+» |
 | [ConstructorNavbar](../../../Controls/Components/Navbar/NavbarConstructor.axaml) | навбар конструктора: заголовок-коллекция (редактируемый), переключатель вида, toggle панели записи |
-| [ConstructorFooter](../../../Controls/Components/Footer/FooterConstructor.axaml) | нижняя панель: счетчик записей, страницы |
+| [ConstructorFooter](../../../Controls/Components/Footer/FooterConstructor.axaml) | нижняя панель: навигация по строкам таблицы («‹‹ ‹ 10 – 50 из 125 437 › ››», см. [../features/constructor/table.md](../features/constructor/table.md#навигация-нижней-панели)). Больше в панели ничего нет: кнопки «Фильтр»/«Сортировка» удалены (их события никто не слушал, живые вызовы — из меню заголовка колонки), счетчик «Всего: N» — как дубль числа после «из» |
 | [AllDayBar](../../../Controls/Components/AllDayBar.axaml) | полоса событий «весь день» в режимах «День»/«Неделя» |
 | [EventContextMenu](../../../Controls/Components/EventContextMenu.cs) | фабрика контекстных меню событий: `Single` / `Multi` / `Background` |
 

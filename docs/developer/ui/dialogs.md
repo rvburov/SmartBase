@@ -48,6 +48,26 @@ if (await dlg.ShowDialog<bool>(ownerWindow) == true) { /* ... */ }
 [ConstructorControllerView](../../../Views/ConstructorDb/ConstructorControllerView.axaml.cs))
 открывают диалоги и применяют результат к репозиторию.
 
+## Группы типов в списке свойства
+
+Выпадашка «Тип» в [PropertyEditorDialog](../../../Controls/Dialogs/PropertyEditorDialog.axaml.cs)
+разбита на четыре группы, разделенные **только чертой** — без подписей-заголовков (список
+короткий, а заголовок в `ComboBox` пришлось бы делать невыбираемым пунктом):
+
+| Группа | Типы | По какому признаку |
+|---|---|---|
+| Простые значения | `text`, `number`, `date`, `checkbox` | вводятся руками, настраивать нечего |
+| Выбор из набора | `select`, `status`, `multiselect` | в диалоге появляется блок «Пункты списка» — ровно то, что возвращает `FieldTypeInfo.HasOptions` |
+| Ссылки наружу | `url`, `file`, `relation`, `user` | значение указывает на объект за пределами ячейки: веб-адрес, файл на диске, другую запись, человека в базе |
+| Вычисляемые | `created_at`, `updated_at`, `created_by`, `updated_by` | значение авто из метаданных записи, ячейка read-only (`FieldTypeInfo.IsComputed`) |
+
+Черту рисует `StartsGroup` у первого элемента группы: в `ItemContainerTheme` она вынесена
+НАД подсвечиваемым `ContentPresenter`, поэтому не попадает под hover/выбор, а сама тема
+применяется только к пунктам выпадашки — в свернутом боксе выбора разделителей не бывает.
+
+Порядок пунктов менять безопасно: индексы нигде не зашиты, тип резолвится
+`Array.FindIndex(FieldTypes, t => t.Type == …)`.
+
 ## Подготовка коллекции к разделу
 
 [SectionSetupConfirm](../../../Controls/Dialogs/SectionSetupConfirm.cs) — окно перед созданием

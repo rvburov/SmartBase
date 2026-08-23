@@ -444,6 +444,102 @@ public partial class TableView : UserControl
         RecordsGrid.LayoutUpdated += Handler;
     }
 
+    // ── Навигация по строкам из нижней панели («‹‹ ‹ 10 – 50 из 125 437 › ››») ──────
+    //
+    // Кнопки двигают ту же вертикальную полосу, что и колесо мыши: у DataGrid она
+    // пиксельная (Value/Maximum/ViewportSize в пикселях), поэтому «экран» = ViewportSize,
+    // «в конец» = Maximum. Арифметика — в TableViewportScroll (покрыта тестами), здесь
+    // только доступ к полосе и применение результата.
+
+    /// <summary>Видимый кусок таблицы изменился (прокрутка, ресайз, перезагрузка строк).</summary>
+    public event EventHandler<TableViewportRange>? VisibleRangeChanged;
+
+    // Последний отданный наверх диапазон — событие поднимаем только на изменение
+    // (пересчет идет из LayoutUpdated, который дергается на каждый проход разметки).
+    private TableViewportRange _lastVisibleRange = TableViewportRange.Empty;
+
+    private ScrollBar? VerticalScrollBar => VScrollBarProp?.GetValue(RecordsGrid) as ScrollBar;
+
+    /// <summary>Экран назад (кнопка «‹»).</summary>
+    public void ScrollRowsPageBack() =>
+        ApplyVerticalScroll(sb => TableViewportScroll.PageBack(sb.Value, sb.ViewportSize, sb.Maximum));
+
+    /// <summary>Экран вперед (кнопка «›»).</summary>
+    public void ScrollRowsPageForward() =>
+        ApplyVerticalScroll(sb => TableViewportScroll.PageForward(sb.Value, sb.ViewportSize, sb.Maximum));
+
+    /// <summary>В начало таблицы (кнопка «‹‹»).</summary>
+    public void ScrollRowsToStart() =>
+        ApplyVerticalScroll(_ => TableViewportScroll.ToStart());
+
+    /// <summary>В конец таблицы (кнопка «››»).</summary>
+    public void ScrollRowsToEnd() =>
+        ApplyVerticalScroll(sb => TableViewportScroll.ToEnd(sb.Maximum));
+
+    // Ставит полосу в посчитанную позицию и применяет ее к строкам. ThumbTrack —
+    // та же ветка, что и у перетаскивания ползунка: инвалидирует measure, поэтому
+    // виртуализация подтягивает страницы новой позиции (см. RestoreVerticalOffset).
+    private void ApplyVerticalScroll(Func<ScrollBar, double> position)
+    {
+        if (VerticalScrollBar is not { } sb || ProcessVScrollMethod is null) return;
+
+        var target = position(sb);
+        if (Math.Abs(target - sb.Value) < 0.5) return;
+
+        sb.Value = target;
+        ProcessVScrollMethod.Invoke(RecordsGrid, [ScrollEventType.ThumbTrack]);
+        RefreshVisibleRange();
+    }
+
+    /// <summary>
+    /// Номера строк, которые сейчас в окне, и общее число строк среза.
+    ///
+    /// Считаем по РЕАЛИЗОВАННЫМ строкам DataGrid, а не делением offset на высоту строки:
+    /// высота строк бывает ручной (разная у каждой), и деление врало бы. Строка попадает
+    /// в диапазон, если хоть частью пересекает область строк (RowResizeLayer лежит ровно
+    /// над ней). Строка «+» (add-row) — не запись, ее пропускаем.
+    /// </summary>
+    public TableViewportRange VisibleRowRange()
+    {
+        // Count у списка = записи + строка «+».
+        var total = Math.Max(0, (_activeRows?.Count ?? 0) - 1);
+        if (total == 0) return TableViewportRange.Empty;
+
+        var layer  = RowResizeLayer;
+        var height = layer.Bounds.Height;
+        if (height <= 0) return TableViewportRange.Of(0, 0, total);
+
+        var first = 0;
+        var last  = 0;
+        foreach (var rowCtrl in RecordsGrid.GetVisualDescendants().OfType<DataGridRow>())
+        {
+            if (rowCtrl.DataContext is not TableRowVm vm || vm.IsAddRow) continue;
+            if (vm.RowNumber <= 0 || rowCtrl.Bounds.Height <= 0) continue;
+
+            var topLeft = rowCtrl.TranslatePoint(new Point(0, 0), layer);
+            if (topLeft is null) continue;
+
+            var top    = topLeft.Value.Y;
+            var bottom = top + rowCtrl.Bounds.Height;
+            if (bottom <= 0 || top >= height) continue;   // целиком выше или ниже окна
+
+            if (first == 0 || vm.RowNumber < first) first = vm.RowNumber;
+            if (vm.RowNumber > last) last = vm.RowNumber;
+        }
+
+        return TableViewportRange.Of(first, last, total);
+    }
+
+    // Пересчитывает диапазон и поднимает событие, только если он изменился.
+    private void RefreshVisibleRange()
+    {
+        var range = VisibleRowRange();
+        if (range == _lastVisibleRange) return;
+
+        _lastVisibleRange = range;
+        VisibleRangeChanged?.Invoke(this, range);
+    }
+
     // Текущий горизонтальный offset DataGrid (0, если API недоступен).
     private double CurrentScrollOffset() =>
         HOffsetProp?.GetValue(RecordsGrid) is double x ? x : 0;
@@ -3565,6 +3661,10 @@ public partial class TableView : UserControl
         // Заливка выделенных колонок за скроллом не следит: цвет живет в кисти колонки,
         // которую держат сами ячейки (см. ColumnSelectionBrush) — пересчет по
         // LayoutUpdated ей не нужен.
+
+        // Индикатор нижней панели следит за прокруткой и ресайзом: пересчет дешевый
+        // (обход реализованных строк), наверх уходит только изменение диапазона.
+        RefreshVisibleRange();
 
         // Полоски ресайза строк следуют за скроллом/ресайзом.
         if (_manualRowResize && !_isResizingRow)

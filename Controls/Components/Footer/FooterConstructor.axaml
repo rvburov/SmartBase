@@ -10,56 +10,39 @@
         <Border DockPanel.Dock="Top"
                 Classes="separator h" />
 
-        <Grid ColumnDefinitions="Auto,Auto,Auto,*,Auto"
+        <!-- Единственное содержимое панели — навигация по строкам, прижатая вправо.
+             Кнопок «Фильтр» и «Сортировка» здесь больше нет: они ничего не делали
+             (события никто не слушал), а живые фильтр и сортировка вызываются из меню
+             заголовка колонки. Счетчик «Всего: N» убран как дубль — то же число стоит
+             в индикаторе после «из», и лишний CountRecords на UI-потоке при каждом
+             открытии коллекции и структурном обновлении больше не нужен. -->
+        <Grid ColumnDefinitions="*,Auto"
               Margin="16,0">
 
-            <!-- Фильтр -->
-            <Button Grid.Column="0" x:Name="FilterBtn" Classes="navbtn"
-                    Width="30" Height="30" Margin="0,0,4,0"
-                    VerticalAlignment="Center"
-                    CornerRadius="{StaticResource RadiusMedium}"
-                    ToolTip.Tip="Фильтр">
-                <Viewbox Width="{StaticResource IconSizeMedium}" Height="{StaticResource IconSizeMedium}">
-                    <Canvas Width="24" Height="24">
-                        <Path Data="{StaticResource IconFilter}"
-                              Stroke="{Binding $parent[Button].Foreground}"
-                              StrokeThickness="{StaticResource IconStrokeMedium}"
-                              StrokeLineCap="Round" StrokeJoin="Round" />
-                    </Canvas>
-                </Viewbox>
-            </Button>
-
-            <!-- Сортировка. Высота строк теперь переключается из контекстного меню записи. -->
-            <Button Grid.Column="1" x:Name="SortBtn" Classes="navbtn"
-                    Width="30" Height="30" Margin="0,0,4,0"
-                    VerticalAlignment="Center"
-                    CornerRadius="{StaticResource RadiusMedium}"
-                    ToolTip.Tip="Сортировка">
-                <Viewbox Width="{StaticResource IconSizeMedium}" Height="{StaticResource IconSizeMedium}">
-                    <Canvas Width="24" Height="24">
-                        <Path Data="{StaticResource IconSortDesc}"
-                              Stroke="{Binding $parent[Button].Foreground}"
-                              StrokeThickness="{StaticResource IconStrokeMedium}"
-                              StrokeLineCap="Round" StrokeJoin="Round" />
-                    </Canvas>
-                </Viewbox>
-            </Button>
-
-            <!-- Счетчик записей -->
-            <TextBlock Grid.Column="2" x:Name="CountLabel"
-                       Text="Всего: 0"
-                       VerticalAlignment="Center"
-                       Margin="8,0,0,0"
-                       FontSize="{DynamicResource FontSizeSmall}"
-                       Foreground="{StaticResource BrushSecondaryText}" />
-
-            <!-- Навигация по страницам -->
-            <StackPanel Grid.Column="4" Orientation="Horizontal"
+            <!-- Навигация по строкам: «в начало · экран назад · 10 – 50 из 125 437 ·
+                 экран вперед · в конец». Страниц фиксированного размера у таблицы нет
+                 (она виртуализирована и прокручивается непрерывно), поэтому индикатор
+                 показывает НОМЕРА видимых строк — см. TableViewportRange. -->
+            <StackPanel Grid.Column="1" Orientation="Horizontal"
                         VerticalAlignment="Center" Spacing="2" Margin="0,0,8,0">
+                <Button x:Name="FirstRowBtn" Classes="navbtn"
+                        Width="30" Height="30"
+                        CornerRadius="{StaticResource RadiusMedium}"
+                        ToolTip.Tip="В начало таблицы">
+                    <Viewbox Width="{StaticResource IconSizeMedium}" Height="{StaticResource IconSizeMedium}">
+                        <Canvas Width="24" Height="24">
+                            <Path Data="{StaticResource IconChevronsLeft}"
+                                  Stroke="{Binding $parent[Button].Foreground}"
+                                  StrokeThickness="{StaticResource IconStrokeMediumBold}"
+                                  StrokeLineCap="Round" StrokeJoin="Round" />
+                        </Canvas>
+                    </Viewbox>
+                </Button>
+
                 <Button x:Name="PrevPageBtn" Classes="navbtn"
                         Width="30" Height="30"
                         CornerRadius="{StaticResource RadiusMedium}"
-                        ToolTip.Tip="Предыдущая страница">
+                        ToolTip.Tip="Экран назад">
                     <Viewbox Width="{StaticResource IconSizeMedium}" Height="{StaticResource IconSizeMedium}">
                         <Canvas Width="24" Height="24">
                             <Path Data="{StaticResource IconChevronLeft}"
@@ -71,7 +54,7 @@
                 </Button>
 
                 <TextBlock x:Name="PageLabel"
-                           Text="1 / 1"
+                           Text="Нет записей"
                            VerticalAlignment="Center"
                            Margin="4,0"
                            FontSize="{DynamicResource FontSizeSmall}"
@@ -80,10 +63,24 @@
                 <Button x:Name="NextPageBtn" Classes="navbtn"
                         Width="30" Height="30"
                         CornerRadius="{StaticResource RadiusMedium}"
-                        ToolTip.Tip="Следующая страница">
+                        ToolTip.Tip="Экран вперед">
                     <Viewbox Width="{StaticResource IconSizeMedium}" Height="{StaticResource IconSizeMedium}">
                         <Canvas Width="24" Height="24">
                             <Path Data="{StaticResource IconChevronRight}"
+                                  Stroke="{Binding $parent[Button].Foreground}"
+                                  StrokeThickness="{StaticResource IconStrokeMediumBold}"
+                                  StrokeLineCap="Round" StrokeJoin="Round" />
+                        </Canvas>
+                    </Viewbox>
+                </Button>
+
+                <Button x:Name="LastRowBtn" Classes="navbtn"
+                        Width="30" Height="30"
+                        CornerRadius="{StaticResource RadiusMedium}"
+                        ToolTip.Tip="В конец таблицы">
+                    <Viewbox Width="{StaticResource IconSizeMedium}" Height="{StaticResource IconSizeMedium}">
+                        <Canvas Width="24" Height="24">
+                            <Path Data="{StaticResource IconChevronsRight}"
                                   Stroke="{Binding $parent[Button].Foreground}"
                                   StrokeThickness="{StaticResource IconStrokeMediumBold}"
                                   StrokeLineCap="Round" StrokeJoin="Round" />

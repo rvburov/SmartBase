@@ -144,10 +144,14 @@
     <StreamGeometry x:Key="IconArrowUp">M5 12l7-7 7 7 M12 19V5</StreamGeometry>
     <!-- ↓ arrow-down (сдвинуть строку вниз) -->
     <StreamGeometry x:Key="IconArrowDown">M12 5v14 M19 12l-7 7-7-7</StreamGeometry>
-    <!-- ‹ chevron-left (предыдущая страница) -->
+    <!-- ‹ chevron-left (экран назад) -->
     <StreamGeometry x:Key="IconChevronLeft">M15 18 L9 12 L15 6</StreamGeometry>
-    <!-- › chevron-right (следующая страница) -->
+    <!-- › chevron-right (экран вперед) -->
     <StreamGeometry x:Key="IconChevronRight">M9 18 L15 12 L9 6</StreamGeometry>
+    <!-- ‹‹ chevrons-left (в самое начало таблицы) -->
+    <StreamGeometry x:Key="IconChevronsLeft">M17 18 L11 12 L17 6 M11 18 L5 12 L11 6</StreamGeometry>
+    <!-- ›› chevrons-right (в самый конец таблицы) -->
+    <StreamGeometry x:Key="IconChevronsRight">M7 18 L13 12 L7 6 M13 18 L19 12 L13 6</StreamGeometry>
     <!-- ⌄ chevron-down (выпадающие списки, аккордеоны) -->
     <StreamGeometry x:Key="IconChevronDown">M6 9 L12 15 L18 9</StreamGeometry>
     <!-- ⌄ chevron-down ЗАЛИВКОЙ для ComboBox (PathIcon, своя сетка ~12×8) -->

@@ -94,13 +94,23 @@ public partial class ConstructorControllerView : UserControl
         TableViewCtrl.ColumnDisplayRequested     += (_, _)   => _ = OpenDisplayDialog();
         TableViewCtrl.RecordDisplayRequested     += (_, _)   => _ = OpenRecordDisplayDialog();
 
+        // Навигация по строкам из нижней панели. Таблица виртуализирована и прокручивается
+        // непрерывно, поэтому «‹›» двигают окно ровно на экран, а «‹‹››» ставят его к краю;
+        // индикатор («10 – 50 из 125 437») таблица отдает сама, когда окно съехало.
+        FooterConstructor.FirstRowClicked += (_, _) => TableViewCtrl.ScrollRowsToStart();
+        FooterConstructor.PrevPageClicked += (_, _) => TableViewCtrl.ScrollRowsPageBack();
+        FooterConstructor.NextPageClicked += (_, _) => TableViewCtrl.ScrollRowsPageForward();
+        FooterConstructor.LastRowClicked  += (_, _) => TableViewCtrl.ScrollRowsToEnd();
+        TableViewCtrl.VisibleRangeChanged += (_, range) => FooterConstructor.SetRange(range);
+
         // Стартовое состояние: коллекция не выбрана — заголовок-плейсхолдер и подсказка.
         NavbarConstructor.SetTitle("");
         SetEmptyState(true);
     }
 
     // Пустое состояние (коллекция не выбрана): подсказка по центру, скрыты контролы
-    // навбара (вид/запись) и нижняя панель — чтобы не показывать «Всего: 0» и пр.
+    // навбара (вид/запись) и нижняя панель — показывать навигацию по несуществующей
+    // таблице не над чем.
     private void SetEmptyState(bool empty)
     {
         EmptyStateHint.IsVisible    = empty;
@@ -167,10 +177,11 @@ public partial class ConstructorControllerView : UserControl
         NavbarConstructor.SetViewMode(viewMode);
         SwitchView(viewMode);
 
-        // Нижняя панель: счетчик записей и страницы (пока 1 страница).
-        var count = _repository.CountRecords(collectionId);
-        FooterConstructor.SetCount(count);
-        FooterConstructor.SetPage(1, 1);
+        // Нижняя панель: диапазон видимых строк приедет от таблицы, когда она разложится
+        // (VisibleRangeChanged) — до тех пор кнопки погашены. Своего счетчика записей у
+        // панели нет, поэтому и CountRecords при открытии коллекции больше не считаем:
+        // на большой коллекции это был заметный запрос на UI-потоке.
+        FooterConstructor.SetRange(TableViewportRange.Empty);
     }
 
     public void Refresh()
@@ -199,11 +210,12 @@ public partial class ConstructorControllerView : UserControl
     {
         if (_currentCollectionId is null || _repository is null) return;
 
+        // Число записей нижней панели больше не нужно (счетчика нет) — его пересчет
+        // отсюда убран; индикатор диапазона таблица обновит сама, когда разложит строки.
         if (TableViewCtrl.IsVisible)
         {
             if (structural) TableViewCtrl.ReloadRowsStructural();
             else            TableViewCtrl.ReloadRows();
-            FooterConstructor.SetCount(_repository.CountRecords(_currentCollectionId.Value));
         }
         else
         {
@@ -228,8 +240,7 @@ public partial class ConstructorControllerView : UserControl
         NavbarConstructor.SetTitle("");
         TableViewCtrl.Clear();
         ListViewCtrl.Clear();
-        FooterConstructor.SetCount(0);
-        FooterConstructor.SetPage(1, 1);
+        FooterConstructor.SetRange(TableViewportRange.Empty);
         SetEmptyState(true);
         RecordPageClosed?.Invoke(this, EventArgs.Empty);
     }
@@ -238,6 +249,11 @@ public partial class ConstructorControllerView : UserControl
     {
         TableViewCtrl.IsVisible = mode != "list";
         ListViewCtrl.IsVisible  = mode == "list";
+
+        // Навигация нижней панели двигает таблицу — в «Списке» ее гасим (индикатор от
+        // прошлой таблицы врал бы про видимые строки). В таблицу диапазон вернется
+        // первым же проходом разметки.
+        if (mode == "list") FooterConstructor.SetRange(TableViewportRange.Empty);
 
         if (_currentCollectionId.HasValue && _repository is not null)
         {

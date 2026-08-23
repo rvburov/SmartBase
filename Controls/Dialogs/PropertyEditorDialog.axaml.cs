@@ -23,8 +23,8 @@ public sealed class FieldTypeItem
     public required string   Type  { get; init; }
     public required string   Label { get; init; }
     public required Geometry Icon  { get; init; }
-    /// <summary>Первый элемент «системной» группы (вычисляемые типы) — над ним рисуется
-    /// разделительная черта в выпадающем списке.</summary>
+    /// <summary>Первый элемент группы — над ним рисуется разделительная черта в выпадающем
+    /// списке (группы идут без подписей, только чертой; состав — см. FieldTypes).</summary>
     public bool StartsGroup { get; init; }
 }
 
@@ -37,21 +37,31 @@ public sealed class FieldTypeItem
 public partial class PropertyEditorDialog : Window
 {
     // Иконки берем из общего источника FieldTypeIcons (lucide, 24×24).
+    //
+    // Список разбит на четыре группы, разделенные ТОЛЬКО чертой (StartsGroup у первого
+    // элемента группы) — без подписей-заголовков: список короткий, а подписи в ComboBox
+    // пришлось бы делать непопадаемыми пунктами. Порядок внутри группы — от частого к
+    // редкому. Индексы нигде не зашиты (тип ищется через Array.FindIndex по Type),
+    // поэтому порядок можно менять свободно.
     private static readonly FieldTypeItem[] FieldTypes =
     [
+        // 1. Простые значения: вводятся руками, настраивать нечего.
         new() { Type = "text",     Label = "Текст",   Icon = Components.FieldTypeIcons.ForType("text")!     },
         new() { Type = "number",   Label = "Число",   Icon = Components.FieldTypeIcons.ForType("number")!   },
         new() { Type = "date",     Label = "Дата",    Icon = Components.FieldTypeIcons.ForType("date")!     },
-        new() { Type = "select",   Label = "Список",  Icon = Components.FieldTypeIcons.ForType("select")!   },
+        new() { Type = "checkbox", Label = "Чекбокс", Icon = Components.FieldTypeIcons.ForType("checkbox")! },
+        // 2. Выбор из набора: у этих трех в диалоге появляется блок «Пункты списка»
+        //    (признак формализован — FieldTypeInfo.HasOptions возвращает ровно их).
+        new() { Type = "select",   Label = "Список",  Icon = Components.FieldTypeIcons.ForType("select")!, StartsGroup = true },
         new() { Type = "status",   Label = "Статус",  Icon = Components.FieldTypeIcons.ForType("status")!   },
         new() { Type = "multiselect", Label = "Мультисписок", Icon = Components.FieldTypeIcons.ForType("multiselect")! },
-        new() { Type = "checkbox", Label = "Чекбокс", Icon = Components.FieldTypeIcons.ForType("checkbox")! },
-        new() { Type = "url",      Label = "Ссылка",  Icon = Components.FieldTypeIcons.ForType("url")!      },
+        // 3. Ссылки наружу: значение указывает на объект за пределами ячейки — веб-адрес,
+        //    файл на диске, другую запись, человека в базе.
+        new() { Type = "url",      Label = "Ссылка",  Icon = Components.FieldTypeIcons.ForType("url")!, StartsGroup = true },
         new() { Type = "file",     Label = "Файл",    Icon = Components.FieldTypeIcons.ForType("file")!     },
         new() { Type = "relation", Label = "Связь",   Icon = Components.FieldTypeIcons.ForType("relation")! },
         new() { Type = "user",     Label = "Пользователь", Icon = Components.FieldTypeIcons.ForType("user")! },
-        // Вычисляемые типы (значение авто из метаданных записи, ячейка read-only). Идут внизу
-        // отдельной группой — StartsGroup у первого рисует разделительную черту над ней.
+        // 4. Вычисляемые типы (значение авто из метаданных записи, ячейка read-only).
         new() { Type = "created_at", Label = "Дата создания",          Icon = Components.FieldTypeIcons.ForType("created_at")!, StartsGroup = true },
         new() { Type = "updated_at", Label = "Дата изменения",         Icon = Components.FieldTypeIcons.ForType("updated_at")! },
         new() { Type = "created_by", Label = "Создание пользователем",  Icon = Components.FieldTypeIcons.ForType("created_by")! },
