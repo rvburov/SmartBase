@@ -4,7 +4,7 @@ using Avalonia.Threading;
 namespace SmartBase.Controls.Components;
 
 // Единая точка сборки контекстных меню календаря (Month/Week/Day/AllDay/List/Journal).
-// Стиль (FontSize, фон, отступы) задаётся глобально в Assets/Styles/Controls.axaml
+// Стиль (FontSize, фон, отступы) задается глобально в Assets/Styles/Controls.axaml
 // через селекторы ContextMenu / MenuItem — здесь только состав пунктов.
 //
 // Каждый пункт оборачивается в Dispatcher.UIThread.Post, потому что нажатие

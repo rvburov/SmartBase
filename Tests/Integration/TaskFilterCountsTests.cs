@@ -5,12 +5,12 @@ using SmartBase.Views.Tasks;
 namespace SmartBase.Tests.Integration;
 
 /// <summary>
-/// Счётчики быстрого фильтра, посчитанные В БАЗЕ
+/// Счетчики быстрого фильтра, посчитанные В БАЗЕ
 /// (<c>ConstructorRepository.CountTasksMatching</c>).
 ///
 /// На маленьком разделе их считает проход по памяти (<c>TaskFilters.Counts</c>), на большом —
-/// SQL: прочитанной части там мало, и счёт по ней занижал бы цифру в пилюле. Значит, два
-/// счётчика обязаны давать ОДНО И ТО ЖЕ на одних и тех же данных — иначе у человека, чья база
+/// SQL: прочитанной части там мало, и счет по ней занижал бы цифру в пилюле. Значит, два
+/// счетчика обязаны давать ОДНО И ТО ЖЕ на одних и тех же данных — иначе у человека, чья база
 /// подросла, цифры поедут сами собой.
 ///
 /// Каждый тест ниже строит набор задач и сверяет ВСЕ шесть правил разом: правила определены
@@ -32,7 +32,7 @@ public sealed class TaskFilterCountsTests
         repo.GetFields(collectionId).First(f => f.FieldType == "date" && f.IsCalStart).Id!.Value;
 
     /// <summary>
-    /// Сверяет все шесть правил: точный счёт в SQL против прохода по памяти. Поиск участвует
+    /// Сверяет все шесть правил: точный счет в SQL против прохода по памяти. Поиск участвует
     /// на равных — в SQL он уходит тем же условием, что и фильтр.
     /// </summary>
     private static void AssertCountsAgree(ConstructorRepository repo, DateTime now, string search = "")
@@ -75,12 +75,12 @@ public sealed class TaskFilterCountsTests
         Task("Сегодня, мне",        Me,           now,                 now.AddHours(2),  planned);
         Task("Через сегодня",       "Петров",     now.AddDays(-2),     now.AddDays(2),   planned);
 
-        // Просрочка: незакрытая с истёкшим сроком — и такая же, но выполненная (у неё
-        // просрочки нет, сколько бы срок ни истёк).
+        // Просрочка: незакрытая с истекшим сроком — и такая же, но выполненная (у нее
+        // просрочки нет, сколько бы срок ни истек).
         Task("Просрочена",          Me,           now.AddDays(-5),     now.AddDays(-4),  planned);
         Task("Просрочена, но сдана", Me,          now.AddDays(-5),     now.AddDays(-4),  done);
 
-        // Будущее, без срока, чужая, нераспределённая, без статуса вовсе.
+        // Будущее, без срока, чужая, нераспределенная, без статуса вовсе.
         Task("Впереди",             "Петров",     now.AddDays(10),     now.AddDays(11),  planned);
         Task("Без срока, мне",      Me,           null,                null,             planned);
         Task("Без срока, ничья",    "",           null,                null,             "");
@@ -114,7 +114,7 @@ public sealed class TaskFilterCountsTests
         AssertCountsAgree(repo, new DateTime(2026, 8, 19, 14, 0, 0));
     }
 
-    /// <summary>Две коллекции: правила не путают их между собой (статус берётся из своей).</summary>
+    /// <summary>Две коллекции: правила не путают их между собой (статус берется из своей).</summary>
     [Fact]
     public void Sql_counts_match_across_two_collections()
     {
@@ -150,7 +150,7 @@ public sealed class TaskFilterCountsTests
         AssertCountsAgree(repo, now, search: "нет такой задачи");
     }
 
-    /// <summary>Крышка счёта пилюли: сверх неё точное число не считается — пилюле оно и не
+    /// <summary>Крышка счета пилюли: сверх нее точное число не считается — пилюле оно и не
     /// нужно, она печатает «999+». Цена запроса от размера базы после этого не зависит.</summary>
     [Fact]
     public void The_pill_count_stops_at_the_cap()

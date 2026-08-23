@@ -35,7 +35,7 @@ public sealed class TableColumnDef
     public NumberFormat NumberFormat { get; init; } = NumberFormat.Default;
 
     // Папка авто-привязки поля «Файл» (из ConfigJson: {"auto":{folder}}); пусто — ручной режим.
-    // Непусто → ячейка файла read-only (правило ведёт значения), нужна для статуса «папка недоступна».
+    // Непусто → ячейка файла read-only (правило ведет значения), нужна для статуса «папка недоступна».
     public string FileAutoFolder { get; init; } = "";
 
     // Настройка поля-связи «relation» (целевая коллекция + one/many) из ConfigJson; null — не связь

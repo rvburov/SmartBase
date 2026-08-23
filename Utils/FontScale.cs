@@ -25,7 +25,7 @@ public static class FontScale
     public static event Action? Changed;
 
     /// <summary>
-    /// Старт: считать стандартные размеры из Typography и применить сохранённую дельту.
+    /// Старт: считать стандартные размеры из Typography и применить сохраненную дельту.
     /// Вызывать после AppSettings.AttachStore и до создания MainWindow.
     /// </summary>
     public static void Init()

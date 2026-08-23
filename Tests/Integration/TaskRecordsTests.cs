@@ -11,8 +11,8 @@ namespace SmartBase.Tests.Integration;
 ///
 /// Задача — это НЕ отдельная сущность: это обычная запись коллекции, увиденная через
 /// user-поле с флагом IsTaskExec («исполнитель»). Идентичность карточки — пара
-/// (RecordId, ExecFieldId): одна запись даёт столько задач, сколько у коллекции
-/// включённых полей-исполнителей с непустым значением. Роли «Назначил» (user) и
+/// (RecordId, ExecFieldId): одна запись дает столько задач, сколько у коллекции
+/// включенных полей-исполнителей с непустым значением. Роли «Назначил» (user) и
 /// «Статус» (status) — обычные поля коллекции, помеченные флагами и авто-созданные при
 /// первом включении задач. Срок отдельно не хранится — это первая по началу ВИДИМАЯ
 /// календарная дата записи (calendar_index + IsCalStart).
@@ -22,7 +22,7 @@ namespace SmartBase.Tests.Integration;
 /// записи и ИМЕННО той коллекции: ошибка в подзапросе не падает, она молча показывает
 /// пользователю чужого назначившего, чужой статус или чужой срок.
 ///
-/// Часть тестов ниже помечена «КРАСНЫЙ»: они воспроизводят подтверждённые дефекты и
+/// Часть тестов ниже помечена «КРАСНЫЙ»: они воспроизводят подтвержденные дефекты и
 /// сегодня падают — это их работа, они фиксируют ожидаемое пользователем поведение.
 /// </summary>
 public sealed class TaskRecordsTests
@@ -31,7 +31,7 @@ public sealed class TaskRecordsTests
 
     /// <summary>
     /// Включает коллекцию в задачи так, как это делает пользователь галочкой в сайдбаре:
-    /// создаёт user-поле-исполнитель и помечает его IsTaskExec — роли «Назначил»/«Статус»
+    /// создает user-поле-исполнитель и помечает его IsTaskExec — роли «Назначил»/«Статус»
     /// коллекция получает сама. Возвращает id исполнителя и id обеих ролей.
     /// </summary>
     private static (int ExecId, int AssignerId, int StatusId) EnableTasks(
@@ -68,7 +68,7 @@ public sealed class TaskRecordsTests
             .ToList();
 
     // Понижает текущего пользователя до допущенного НЕ-администратора: с этого момента
-    // действуют маски прав (администратору разрешено всё и проверки не срабатывают).
+    // действуют маски прав (администратору разрешено все и проверки не срабатывают).
     private static void DemoteToApprovedUser(TempDatabase db)
     {
         var me = db.Context.DbUsers.First(u => u.UserKey == CurrentUser.Key);
@@ -89,20 +89,20 @@ public sealed class TaskRecordsTests
         // Коллекция «Заявки»: исполнитель + авто-роли + собственный срок.
         var zayavki = SampleData.AddCollection(repo, "Заявки").Id!.Value;
         var (execZ, assignerZ, statusZ) = EnableTasks(repo, zayavki);
-        // Включение задач уже завело поле-дату («Дата»), поэтому своё «Срок» в календарь
-        // нужно включить явно — автофлаг достаётся лишь ПЕРВОМУ полю-дате коллекции.
+        // Включение задач уже завело поле-дату («Дата»), поэтому свое «Срок» в календарь
+        // нужно включить явно — автофлаг достается лишь ПЕРВОМУ полю-дате коллекции.
         var dueZ = SampleData.AddField(repo, zayavki, "Срок", "date", position: 4000).Id!.Value;
         repo.SetDateFieldVisible(dueZ, true);
 
         var pumpId = SampleData.AddRecord(repo, zayavki, "Заменить насос").Id!.Value;
         repo.SetRecordDescription(pumpId, "в подвале");
         repo.SetFieldValue(pumpId, execZ, "Иванов Иван");
-        repo.SetFieldValue(pumpId, assignerZ, "Петров Пётр");
+        repo.SetFieldValue(pumpId, assignerZ, "Петров Петр");
         repo.SetFieldValue(pumpId, statusZ, ConstructorRepository.TaskStatusActive);
         repo.SetFieldValue(pumpId, dueZ,
             new DateValue(new DateTime(2026, 4, 1, 10, 0, 0), new DateTime(2026, 4, 1, 11, 0, 0), false).ToStorage());
 
-        // Соседняя коллекция с тем же набором полей и своей задачей — её данные не должны
+        // Соседняя коллекция с тем же набором полей и своей задачей — ее данные не должны
         // подмешиваться в чужую карточку.
         var remonty = SampleData.AddCollection(repo, "Ремонты").Id!.Value;
         var (execR, assignerR, statusR) = EnableTasks(repo, remonty);
@@ -110,7 +110,7 @@ public sealed class TaskRecordsTests
         repo.SetDateFieldVisible(dueR, true);
 
         var roofId = SampleData.AddRecord(repo, remonty, "Починить крышу").Id!.Value;
-        repo.SetFieldValue(roofId, execR, "Сидоров Семён");
+        repo.SetFieldValue(roofId, execR, "Сидоров Семен");
         repo.SetFieldValue(roofId, assignerR, "Кузнецов Кузьма");
         repo.SetFieldValue(roofId, statusR, ConstructorRepository.TaskStatusDone);
         repo.SetFieldValue(roofId, dueR,
@@ -125,7 +125,7 @@ public sealed class TaskRecordsTests
         Assert.Equal("Заменить насос", pump.Title);
         Assert.Equal("в подвале", pump.Description);
         Assert.Equal("Иванов Иван", pump.Executor);
-        Assert.Equal("Петров Пётр", pump.Assigner);
+        Assert.Equal("Петров Петр", pump.Assigner);
         Assert.Equal(ConstructorRepository.TaskStatusActive, pump.Status);
         Assert.Equal(zayavki, pump.CollectionId);
         Assert.Equal("Заявки", pump.CollectionName);
@@ -165,7 +165,7 @@ public sealed class TaskRecordsTests
         repo.SetDateFieldVisible(startId, true);
         repo.SetDateFieldVisible(deadlineId, true);
 
-        // Исполнителя не задаём: новая запись сама получает текущего пользователя во все
+        // Исполнителя не задаем: новая запись сама получает текущего пользователя во все
         // user-поля, значит карточка в разделе появится (это и есть поведение продукта).
         var recId = SampleData.AddRecord(repo, col, "Заявка").Id!.Value;
         var startValue = new DateValue(new DateTime(2026, 4, 1), new DateTime(2026, 4, 1), true).ToStorage();
@@ -185,7 +185,7 @@ public sealed class TaskRecordsTests
         Assert.Equal(new DateTime(2026, 5, 1), task.DueStart!.Value.Date);
         Assert.Equal(deadlineId, task.DueFieldId);
 
-        // Видимых дат не осталось: задача ОСТАЁТСЯ в разделе, но «без даты» (уходит в конец
+        // Видимых дат не осталось: задача ОСТАЕТСЯ в разделе, но «без даты» (уходит в конец
         // списка) — прятать даты не значит прятать работу.
         repo.SetDateFieldVisible(deadlineId, false);
         task = Assert.Single(repo.GetTaskRecords());
@@ -205,7 +205,7 @@ public sealed class TaskRecordsTests
 
     /// <summary>
     /// Исполнитель — один на коллекцию: второй тумблер отвергается, роль переходит только через
-    /// снятие с прежнего носителя. Запись даёт ровно одну карточку.
+    /// снятие с прежнего носителя. Запись дает ровно одну карточку.
     /// </summary>
     [Fact]
     public void Collection_keeps_a_single_executor_field()
@@ -226,11 +226,11 @@ public sealed class TaskRecordsTests
 
         var recId = SampleData.AddRecord(repo, col, "Заменить насос").Id!.Value;
         repo.SetFieldValue(recId, execId, "Иванов Иван");
-        repo.SetFieldValue(recId, reviewerId, "Петров Пётр");
+        repo.SetFieldValue(recId, reviewerId, "Петров Петр");
         repo.SetFieldValue(recId, assignerId, "Кузнецов Кузьма");
         repo.SetFieldValue(recId, statusId, ConstructorRepository.TaskStatusPlanned);
 
-        // Одна запись — одна карточка, от поля-исполнителя; «Проверяющий» остаётся обычным
+        // Одна запись — одна карточка, от поля-исполнителя; «Проверяющий» остается обычным
         // свойством записи и раздел не удваивает.
         var task = Assert.Single(repo.GetTaskRecords());
         Assert.Equal(recId, task.Id);
@@ -239,11 +239,11 @@ public sealed class TaskRecordsTests
         Assert.Equal("Кузнецов Кузьма", task.Assigner);
         Assert.Equal(ConstructorRepository.TaskStatusPlanned, task.Status);
 
-        // Роль освобождается снятием тумблера — тогда её можно отдать другому свойству.
+        // Роль освобождается снятием тумблера — тогда ее можно отдать другому свойству.
         repo.SetUserFieldTaskExec(execId, false);
         repo.SetUserFieldTaskExec(reviewerId, true);
         Assert.Equal(reviewerId, repo.TaskExecFieldId(col));
-        Assert.Equal("Петров Пётр", Assert.Single(repo.GetTaskRecords()).Executor);
+        Assert.Equal("Петров Петр", Assert.Single(repo.GetTaskRecords()).Executor);
     }
 
     [Fact]
@@ -260,20 +260,20 @@ public sealed class TaskRecordsTests
         var b = SampleData.AddCollection(repo, "Ремонты").Id!.Value;
         var (execB, _, _) = EnableTasks(repo, b);
         var recB = SampleData.AddRecord(repo, b, "Починить крышу").Id!.Value;
-        repo.SetFieldValue(recB, execB, "Петров Пётр");
+        repo.SetFieldValue(recB, execB, "Петров Петр");
 
         // null — «все коллекции базы» (первое открытие раздела).
         Assert.Equal(2, repo.GetTaskRecords(null).Count);
 
         // Пустой набор — сняты ВСЕ галки: пусто, как в календаре. «Ничего не выбрано» не
-        // должно означать «показать всё» — иначе галки в сайдбаре бессмысленны.
+        // должно означать «показать все» — иначе галки в сайдбаре бессмысленны.
         Assert.Empty(repo.GetTaskRecords(new HashSet<int>()));
 
         var onlyA = Assert.Single(repo.GetTaskRecords(new HashSet<int> { a }));
         Assert.Equal(a, onlyA.CollectionId);
 
         // Пустой исполнитель задачу НЕ убирает: раздел показывает все записи коллекции с
-        // включённым полем-исполнителем — нераспределённое дело и есть то, что надо раздать.
+        // включенным полем-исполнителем — нераспределенное дело и есть то, что надо раздать.
         // (Раньше условие было `Value <> ''`, и такие записи молча выпадали из списка.)
         repo.SetFieldValue(recA, execA, "");
         var all = repo.GetTaskRecords(null);
@@ -324,21 +324,21 @@ public sealed class TaskRecordsTests
     public void Field_named_assigner_never_becomes_the_executor_field()
     {
         // КРАСНЫЙ ТЕСТ. Дефект: ConstructorRepository.Tasks.cs:78-79 — кандидата в исполнители
-        // ищут по флагу (!IsTaskAssigner), а у вручную созданного поля «Назначил» флага ещё
+        // ищут по флагу (!IsTaskAssigner), а у вручную созданного поля «Назначил» флага еще
         // нет: одно и то же поле получает ОБА флага, и AddTaskRecord затирает выбранного
         // исполнителя назначившим. Для пользователя это потеря данных без сообщения.
         using var db = new TempDatabase();
         var repo = db.Constructor;
         var col = SampleData.AddCollection(repo, "Заявки").Id!.Value;
 
-        // Пользователь сам завёл поле «Назначил» и ни разу не включал задачи.
+        // Пользователь сам завел поле «Назначил» и ни разу не включал задачи.
         repo.AddField(new DbField
         {
             CollectionId = col, Name = "Назначил", FieldType = "user", Position = 1000,
         });
 
         // Быстрое добавление задачи из раздела: коллекция включается в задачи на лету.
-        repo.AddTaskRecord(col, "Проверить насос", "Иванов Иван", "Петров Пётр",
+        repo.AddTaskRecord(col, "Проверить насос", "Иванов Иван", "Петров Петр",
                            ConstructorRepository.TaskStatusPlanned, due: null);
 
         var fields = repo.GetFields(col);
@@ -352,26 +352,26 @@ public sealed class TaskRecordsTests
 
         var task = Assert.Single(repo.GetTaskRecords());
         Assert.Equal("Иванов Иван", task.Executor);
-        Assert.Equal("Петров Пётр", task.Assigner);
+        Assert.Equal("Петров Петр", task.Assigner);
 
         // И в самой базе: выбранный исполнитель не перезаписан назначившим.
         Assert.Equal("Иванов Иван", ValueOf(repo, task.Id!.Value, execField.Id!.Value));
-        Assert.Equal("Петров Пётр", ValueOf(repo, task.Id!.Value, assignerField.Id!.Value));
+        Assert.Equal("Петров Петр", ValueOf(repo, task.Id!.Value, assignerField.Id!.Value));
     }
 
     [Fact]
     public void Moving_task_to_another_collection_carries_executor_assigner_and_status()
     {
-        // КРАСНЫЙ ТЕСТ. Дефект: Tasks.cs:363-397 — смена коллекции ПЕРЕСОЗДАЁТ запись, но
+        // КРАСНЫЙ ТЕСТ. Дефект: Tasks.cs:363-397 — смена коллекции ПЕРЕСОЗДАЕТ запись, но
         // исполнитель после этого пишется по устаревшему t.ExecFieldId (поле ЧУЖОЙ коллекции),
-        // а EnsureTaskCollection для цели не зовётся. Итог у пользователя: перенёс задачу —
+        // а EnsureTaskCollection для цели не зовется. Итог у пользователя: перенес задачу —
         // и она пропала из раздела/показывает старую коллекцию, а назначивший и статус исчезли.
         using var db = new TempDatabase();
         var repo = db.Constructor;
 
         var a = SampleData.AddCollection(repo, "Заявки").Id!.Value;
         EnableTasks(repo, a);
-        repo.AddTaskRecord(a, "Течь в подвале", "Иванов Иван", "Петров Пётр",
+        repo.AddTaskRecord(a, "Течь в подвале", "Иванов Иван", "Петров Петр",
                            ConstructorRepository.TaskStatusActive,
                            due: new DateValue(new DateTime(2026, 4, 1, 9, 0, 0),
                                               new DateTime(2026, 4, 1, 10, 0, 0), false));
@@ -397,7 +397,7 @@ public sealed class TaskRecordsTests
                              .Select(v => v.FieldId).ToList()
                              .Where(fieldsOfA.Contains).ToList();
             Assert.True(stray.Count == 0,
-                        $"значения перенесённой записи остались на полях исходной коллекции: {stray.Count}");
+                        $"значения перенесенной записи остались на полях исходной коллекции: {stray.Count}");
         }
 
         Assert.Equal(0, repo.CountRecords(a));
@@ -407,7 +407,7 @@ public sealed class TaskRecordsTests
         var roles = repo.TaskRoleFields(b);
         Assert.True(roles.AssignerId is not null, "коллекция-цель не получила роль «Назначил»");
         Assert.True(roles.StatusId is not null, "коллекция-цель не получила роль «Статус»");
-        Assert.Equal("Петров Пётр", ValueOf(repo, movedId, roles.AssignerId!.Value));
+        Assert.Equal("Петров Петр", ValueOf(repo, movedId, roles.AssignerId!.Value));
         Assert.Equal(ConstructorRepository.TaskStatusActive, ValueOf(repo, movedId, roles.StatusId!.Value));
 
         // И в разделе — ровно одна карточка (без призрачного дубля от старого поля).
@@ -415,7 +415,7 @@ public sealed class TaskRecordsTests
         Assert.Equal(b, after.CollectionId);
         Assert.Equal("Ремонты", after.CollectionName);
         Assert.Equal("Иванов Иван", after.Executor);
-        Assert.Equal("Петров Пётр", after.Assigner);
+        Assert.Equal("Петров Петр", after.Assigner);
         Assert.Equal(ConstructorRepository.TaskStatusActive, after.Status);
         Assert.Equal(new DateTime(2026, 4, 1, 9, 0, 0), after.DueStart);
     }
@@ -430,9 +430,9 @@ public sealed class TaskRecordsTests
         var (execId, assignerId, statusId) = EnableTasks(repo, col);
         var approverId = SampleData.AddField(repo, col, "Согласующий", "user", position: 5000).Id!.Value;
 
-        var t1 = repo.AddTaskRecord(col, "без срока", "Иванов Иван", "Петров Пётр",
+        var t1 = repo.AddTaskRecord(col, "без срока", "Иванов Иван", "Петров Петр",
                                     ConstructorRepository.TaskStatusPlanned, due: null);
-        var t2 = repo.AddTaskRecord(col, "со сроком", "Иванов Иван", "Петров Пётр",
+        var t2 = repo.AddTaskRecord(col, "со сроком", "Иванов Иван", "Петров Петр",
                                     ConstructorRepository.TaskStatusPlanned,
                                     due: new DateValue(new DateTime(2026, 4, 1), new DateTime(2026, 4, 1), true));
 
@@ -452,13 +452,13 @@ public sealed class TaskRecordsTests
 
         var (t1, t2, execId, assignerId, statusId, _, Value) = TwoTasksWithAndWithoutDue(repo, col);
 
-        // Задача без срока идёт через AddRecord, со сроком — через AddCalendarRecord. Три роли
+        // Задача без срока идет через AddRecord, со сроком — через AddCalendarRecord. Три роли
         // задачи обязаны заполняться одинаково обоими путями: иначе «добавил задачу с датой» и
         // «добавил задачу без даты» давали бы карточки разного качества.
         Assert.Equal("Иванов Иван", Value(t1, execId));
         Assert.Equal("Иванов Иван", Value(t2, execId));
-        Assert.Equal("Петров Пётр", Value(t1, assignerId));
-        Assert.Equal("Петров Пётр", Value(t2, assignerId));
+        Assert.Equal("Петров Петр", Value(t1, assignerId));
+        Assert.Equal("Петров Петр", Value(t2, assignerId));
         Assert.Equal(ConstructorRepository.TaskStatusPlanned, Value(t1, statusId));
         Assert.Equal(ConstructorRepository.TaskStatusPlanned, Value(t2, statusId));
 
@@ -470,9 +470,9 @@ public sealed class TaskRecordsTests
                  "текущего пользователя в user-поля новой записи, а AddRecord — проставляет")]
     public void Task_creation_fills_other_user_fields_the_same_with_and_without_due()
     {
-        // КРАСНЫЙ ТЕСТ. Дефект: Tasks.cs:311-355 — задача БЕЗ срока создаётся через AddRecord
+        // КРАСНЫЙ ТЕСТ. Дефект: Tasks.cs:311-355 — задача БЕЗ срока создается через AddRecord
         // (заполняет ВСЕ user-поля текущим пользователем), СО сроком — через AddCalendarRecord
-        // (не заполняет ничего). Одинаковое действие пользователя даёт разные записи: у одной
+        // (не заполняет ничего). Одинаковое действие пользователя дает разные записи: у одной
         // «Согласующий» заполнен, у другой пуст. Тест фиксирует симметрию путей, не выбирая,
         // какой из них правильный.
         using var db = new TempDatabase();
@@ -488,7 +488,7 @@ public sealed class TaskRecordsTests
     // ── Права на правку схемы задач ───────────────────────────────────────────
 
     // Коллекция «с другой машины/со старой версии»: exec-поле уже помечено флагом, ролей нет,
-    // но поля с их именами есть, причём «Статус» — обычный список пользователя СО СВОИМИ
+    // но поля с их именами есть, причем «Статус» — обычный список пользователя СО СВОИМИ
     // опциями. Возвращает id «Статуса» и id постороннего user-поля «Проверяющий».
     private static (int StatusId, int ReviewerId) SeedCollectionWithRoleLikeFields(
         ConstructorRepository repo, int col)
@@ -536,7 +536,7 @@ public sealed class TaskRecordsTests
         // Включение задач у поля = правка схемы коллекции: без права на свойства — отказ.
         Assert.Throws<PermissionDeniedException>(() => repo.SetUserFieldTaskExec(reviewerId, true));
         Assert.False(FieldsById(repo, col)[reviewerId].IsTaskExec);
-        // Отказ не оставляет коллекцию наполовину включённой: проверка идёт ДО записи флага.
+        // Отказ не оставляет коллекцию наполовину включенной: проверка идет ДО записи флага.
         Assert.Equal(fieldsBefore, FieldSnapshot(repo, col));
     }
 
@@ -548,7 +548,7 @@ public sealed class TaskRecordsTests
         // пометка СУЩЕСТВУЮЩИХ полей ролями задач и правка их ConfigJson — это изменение
         // СХЕМЫ коллекции. Значит, требует права EditField (создание недостающих ролей —
         // CreateField) и обязано попадать в журнал строкой Action=="update"/TargetType=="field".
-        // Сейчас ветка EnsureTaskCollection «exec-поле уже есть» (Tasks.cs:112-169) зовёт
+        // Сейчас ветка EnsureTaskCollection «exec-поле уже есть» (Tasks.cs:112-169) зовет
         // EnsureTaskSupportFields без Demand и без Log: чужое поле «Статус» получает флаг роли,
         // а его опции переписываются стандартными — молча, без прав и без следа в истории.
         using var db = new TempDatabase();
@@ -563,7 +563,7 @@ public sealed class TaskRecordsTests
 
         // То же изменение схемы, но «между делом» — при добавлении задачи.
         Assert.Throws<PermissionDeniedException>(() =>
-            repo.AddTaskRecord(col, "Задача", "Иванов Иван", "Петров Пётр", "Согласовано", due: null));
+            repo.AddTaskRecord(col, "Задача", "Иванов Иван", "Петров Петр", "Согласовано", due: null));
 
         var fieldsAfter = FieldsById(repo, col);
         // Опции пользовательского списка не переписаны стандартными статусами.
@@ -572,15 +572,15 @@ public sealed class TaskRecordsTests
         Assert.DoesNotContain(fieldsAfter.Values, f => f.IsTaskAssigner || f.IsTaskStatus);
         Assert.Equal(fieldsBefore, FieldSnapshot(repo, col));
         Assert.Equal(0, repo.CountRecords(col));
-        // И в истории изменений — ни одной новой строки: запрещённого действия не было.
+        // И в истории изменений — ни одной новой строки: запрещенного действия не было.
         Assert.Equal(logRowsBefore, db.Context.ChangeLog.Count());
     }
 
     // ── Точный размер раздела (CountTasksByCollection) ────────────────────────
     //
     // Заголовок группы обязан называть НАСТОЯЩЕЕ число дел коллекции, а не пересчитывать
-    // то, что и так на экране: крышка чтения пускает в раздел не всё, и без отдельного
-    // счёта последняя карточка выглядела бы концом коллекции. Значит, счёт обязан совпадать
+    // то, что и так на экране: крышка чтения пускает в раздел не все, и без отдельного
+    // счета последняя карточка выглядела бы концом коллекции. Значит, счет обязан совпадать
     // с чтением по правилам (что считается задачей, какое поле — статус) и расходиться с ним
     // ровно на недочитанный хвост.
 
@@ -595,18 +595,18 @@ public sealed class TaskRecordsTests
 
         // Три записи: выполненная, в работе и вовсе НЕРОЗДАННАЯ (исполнитель пуст).
         // Последняя — тот самый случай, ради которого раздел читает все записи коллекции:
-        // счёт обязан видеть её так же, как список.
+        // счет обязан видеть ее так же, как список.
         var a = SampleData.AddRecord(repo, zayavki, "Заменить насос").Id!.Value;
         repo.SetFieldValue(a, execZ, "Иванов Иван");
         repo.SetFieldValue(a, statusZ, ConstructorRepository.TaskStatusDone);
 
         var b = SampleData.AddRecord(repo, zayavki, "Покрасить стену").Id!.Value;
-        repo.SetFieldValue(b, execZ, "Петров Пётр");
+        repo.SetFieldValue(b, execZ, "Петров Петр");
         repo.SetFieldValue(b, statusZ, ConstructorRepository.TaskStatusActive);
 
         SampleData.AddRecord(repo, zayavki, "Разобрать архив");
 
-        // Соседняя коллекция БЕЗ задач — в счёт не попадает вовсе.
+        // Соседняя коллекция БЕЗ задач — в счет не попадает вовсе.
         var spravochnik = SampleData.AddCollection(repo, "Справочник").Id!.Value;
         SampleData.AddRecord(repo, spravochnik, "Строка");
 
@@ -614,7 +614,7 @@ public sealed class TaskRecordsTests
 
         Assert.Equal((3, 1), counts[zayavki]);
         Assert.DoesNotContain(spravochnik, counts.Keys);
-        // Главное: счёт и список говорят об одном и том же наборе.
+        // Главное: счет и список говорят об одном и том же наборе.
         Assert.Equal(repo.GetTaskRecords().Count(t => t.CollectionId == zayavki), counts[zayavki].Total);
     }
 
@@ -641,8 +641,8 @@ public sealed class TaskRecordsTests
     }
 
     /// <summary>
-    /// Ради чего всё и затевалось: крышка чтения обрезает список, а счёт — нет. Разница между
-    /// ними и есть «+N ещё» в конце группы.
+    /// Ради чего все и затевалось: крышка чтения обрезает список, а счет — нет. Разница между
+    /// ними и есть «+N еще» в конце группы.
     /// </summary>
     [Fact]
     public void The_read_cap_shortens_the_list_but_never_the_count()

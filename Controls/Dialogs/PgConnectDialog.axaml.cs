@@ -15,8 +15,8 @@ public sealed record PgConnectResult(string Name, PgConnectionInfo Info);
 /// Окно «Подключение к PostgreSQL»: сервер/порт/база/пользователь/пароль/SSL, проверка
 /// соединения (короткая проба с таймаутом 5 с, см. PgConnectionInfo) и русские тексты
 /// типовых ошибок сервера. Кнопка «Подключить» прогоняет ту же пробу — в реестр не
-/// попадают заведомо нерабочие параметры. Базу на сервере приложение НЕ создаёт
-/// (создаёт администратор командой CREATE DATABASE); схему внутри пустой базы
+/// попадают заведомо нерабочие параметры. Базу на сервере приложение НЕ создает
+/// (создает администратор командой CREATE DATABASE); схему внутри пустой базы
 /// приложение построит само при монтировании. Возвращает <see cref="PgConnectResult"/>
 /// или null при отмене.
 /// </summary>
@@ -124,12 +124,12 @@ public partial class PgConnectDialog : Window
             {
                 "28P01" => "Неверный пароль или пользователь.",
                 "28000" => "Сервер отклонил подключение — проверьте настройки доступа (pg_hba.conf).",
-                "3D000" => "База данных не найдена на сервере. Создайте её (CREATE DATABASE) и повторите.",
+                "3D000" => "База данных не найдена на сервере. Создайте ее (CREATE DATABASE) и повторите.",
                 _       => $"Ошибка сервера: {pe.MessageText}",
             };
         if (ex is System.Security.Authentication.AuthenticationException
             || ex.InnerException is System.Security.Authentication.AuthenticationException)
-            return "Не удалось установить защищённое соединение — попробуйте другой режим SSL.";
+            return "Не удалось установить защищенное соединение — попробуйте другой режим SSL.";
         if (ex is TimeoutException or System.Net.Sockets.SocketException
             || ex.InnerException is TimeoutException or System.Net.Sockets.SocketException)
             return "Сервер недоступен — проверьте адрес, порт и сеть.";
@@ -180,7 +180,7 @@ public partial class PgConnectDialog : Window
             ? b
             : new SolidColorBrush(Color.Parse(fallbackHex));
 
-    // Держим позицию окна при пересчёте высоты (SizeToContent), чтобы оно не «прыгало».
+    // Держим позицию окна при пересчете высоты (SizeToContent), чтобы оно не «прыгало».
     private void KeepWindowPosition(PixelPoint pos)
     {
         void Restore(object? _, EventArgs __)

@@ -22,7 +22,7 @@ public sealed class AutostartTests
 
     // ── Построение записи (чистое) ─────────────────────────────────────────────
 
-    // Запись автозапуска не несёт аргументов: при входе в систему окно открывается всегда,
+    // Запись автозапуска не несет аргументов: при входе в систему окно открывается всегда,
     // независимо от фонового режима. Раньше сюда дописывался --background, и приложение
     // стартовало скрытым — со стороны это выглядело как «автозапуск не сработал».
 
@@ -76,7 +76,7 @@ public sealed class AutostartTests
 
         const string exec = "/opt/smartbase/SmartBase";
         Assert.Equal(exec, Autostart.ParseLinuxDesktopTarget(Autostart.BuildLinuxDesktop(exec)));
-        // Запись до 1.0.5 несла аргумент — путь всё равно должен вычитываться.
+        // Запись до 1.0.5 несла аргумент — путь все равно должен вычитываться.
         Assert.Equal(exec, Autostart.ParseLinuxDesktopTarget($"[Desktop Entry]\nExec=\"{exec}\" --background\n"));
         Assert.Null(Autostart.ParseLinuxDesktopTarget("[Desktop Entry]\nName=SmartBase\n"));
     }

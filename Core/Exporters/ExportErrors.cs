@@ -5,7 +5,7 @@ namespace SmartBase.Core.Exporters;
 /// <summary>
 /// Создание файлов экспорта и перевод системных исключений записи в дружелюбные
 /// <see cref="ExportException"/> (показываются в баннере диалога). Здесь — только файловые
-/// ошибки; ошибок БД у экспорта нет (чтение идёт через репозиторий, WAL допускает
+/// ошибки; ошибок БД у экспорта нет (чтение идет через репозиторий, WAL допускает
 /// параллельное чтение). Зеркало <see cref="Importers.ImportErrors"/>.
 /// </summary>
 public static class ExportErrors
@@ -48,7 +48,7 @@ public static class ExportErrors
             UnauthorizedAccessException =>
                 new ExportException("Нет прав на запись в папку. Выберите другую папку и повторите."),
             IOException io when (io.HResult & 0xFFFF) is 0x27 or 0x70 =>   // handle/disk full
-                new ExportException("Недостаточно места на диске — экспорт отменён."),
+                new ExportException("Недостаточно места на диске — экспорт отменен."),
             IOException io when (io.HResult & 0xFFFF) is 0x20 or 0x21 or 0x50 =>   // sharing/lock/exists
                 new ExportException($"Файл{name} занят другой программой или уже существует. Закройте его и повторите."),
             IOException io =>

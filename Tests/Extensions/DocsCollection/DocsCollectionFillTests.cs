@@ -3,7 +3,7 @@ using SmartBase.Extensions.DocsCollection;
 namespace SmartBase.Tests.Extensions.DocsCollection;
 
 /// <summary>
-/// Наполнение коллекции записями — третий шаг расширения. Он идёт в фоне на СВОЁМ подключении
+/// Наполнение коллекции записями — третий шаг расширения. Он идет в фоне на СВОЕМ подключении
 /// к тому же файлу базы, а не на общем контексте приложения (общий AppDbContext однопоточный).
 /// Отсюда и главная проверка файла: записи, сделанные вторым подключением, обязаны быть видны
 /// через основной контекст — ровно поэтому стенду нужна файловая БД, а не in-memory.
@@ -104,7 +104,7 @@ public sealed class DocsCollectionFillTests
         Assert.Equal("2последний", last.File);
     }
 
-    /// <summary>Прогресс постится в UI-поток, поэтому шлётся не на каждую запись: на тысячах
+    /// <summary>Прогресс постится в UI-поток, поэтому шлется не на каждую запись: на тысячах
     /// документов поток сообщений тормозит диспетчер сильнее самой вставки.</summary>
     [Fact]
     public void Progress_is_not_reported_for_every_record()
@@ -118,13 +118,13 @@ public sealed class DocsCollectionFillTests
         DocsCollectionBuilder.FillRecords(db.Path, shell, Scan(dir),
                                           new SyncProgress<DocsProgress>(reported.Add), None);
 
-        Assert.True(reported.Count < 20, $"отчётов {reported.Count} на 100 документов — шаг прогресса потерян");
+        Assert.True(reported.Count < 20, $"отчетов {reported.Count} на 100 документов — шаг прогресса потерян");
         Assert.NotEmpty(reported);
     }
 
     /// <summary>Отмена бросает и ОСТАВЛЯЕТ каркас: убрать недособранную коллекцию — забота
-    /// вызывающего (окно зовёт TryDelete). Проверяем именно этот контракт, а не «за собой
-    /// убрано»: иначе окно удаляло бы уже удалённое.</summary>
+    /// вызывающего (окно зовет TryDelete). Проверяем именно этот контракт, а не «за собой
+    /// убрано»: иначе окно удаляло бы уже удаленное.</summary>
     [Fact]
     public void Cancellation_throws_and_leaves_the_shell_behind()
     {

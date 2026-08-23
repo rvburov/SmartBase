@@ -12,7 +12,7 @@ public sealed record SidebarListItem(string Id, string Label, string Icon);
 
 /// <summary>
 /// Универсальный сайдбар-список (настройки, расширения и т.п.): заголовок сверху + строки.
-/// Пункты задаёт родитель через <see cref="SetItems"/> (их источник — SettingsRegistry/
+/// Пункты задает родитель через <see cref="SetItems"/> (их источник — SettingsRegistry/
 /// ExtensionRegistry — знает он). Выбор подсвечивается классом <c>selected</c> и поднимается
 /// событием <see cref="CategorySelected"/> (Id пункта).
 /// </summary>
@@ -26,7 +26,7 @@ public partial class SidebarList : UserControl
 
     public SidebarList() => InitializeComponent();
 
-    // Размер шрифта меняется живьём: строки строятся в C# с размером из ресурса, поэтому
+    // Размер шрифта меняется живьем: строки строятся в C# с размером из ресурса, поэтому
     // перерисовываем список (с сохранением выбранного пункта). Дельта последнего рендера —
     // чтобы перерисовать при возврате, если размер меняли в другом разделе.
     private int _renderedFontDelta = FontScale.Delta;
@@ -73,8 +73,8 @@ public partial class SidebarList : UserControl
 
         foreach (var item in _items)
         {
-            // Background/Cursor/цвета НЕ задаём в коде — иначе локальное значение перебьёт
-            // стили hover/selected; их отдаём стилям navrow.
+            // Background/Cursor/цвета НЕ задаем в коде — иначе локальное значение перебьет
+            // стили hover/selected; их отдаем стилям navrow.
             var row = new Border
             {
                 Tag     = item.Id,

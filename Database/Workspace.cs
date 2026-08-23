@@ -13,7 +13,7 @@ namespace SmartBase.Database;
 public sealed class Workspace : IDisposable
 {
     // Монтирует фоновый поток очереди, читает UI-поток — все обращения под замком,
-    // Mounted отдаёт снимок.
+    // Mounted отдает снимок.
     private readonly object _gate = new();
     private readonly List<DatabaseManager> _mounted = [];
 
@@ -40,8 +40,8 @@ public sealed class Workspace : IDisposable
     {
         var defEntry = registry.GetAll().First(d => d.IsDefault);
 
-        // Дефолт всегда открываем по актуальному пути приложения (а не по сохранённому
-        // в реестре — на случай переноса), но идентичность (DbId, Name) берём из реестра.
+        // Дефолт всегда открываем по актуальному пути приложения (а не по сохраненному
+        // в реестре — на случай переноса), но идентичность (DbId, Name) берем из реестра.
         // Долгие этапы репортят текст и живую долю — иначе на больших БД сплэш выглядит
         // зависшим (замерший процент неотличим от зависания).
         progress?.Report((0, $"Открываю базу «{defEntry.Name}»…"));
@@ -69,7 +69,7 @@ public sealed class Workspace : IDisposable
                 var info = entry.ToPgInfo();
                 if (info is not null) mountPath = info.ToConnectionString();
                 else if (PgConnectionInfo.IsPostgresConnectionString(entry.Path)) mountPath = entry.Path;
-                else return null;   // повреждённая запись реестра
+                else return null;   // поврежденная запись реестра
             }
             else mountPath = entry.Path;
 
@@ -87,7 +87,7 @@ public sealed class Workspace : IDisposable
         }
         catch (Exception ex)
         {
-            // Недоступная/повреждённая БД — статус покажут сайдбар и список БД в настройках.
+            // Недоступная/поврежденная БД — статус покажут сайдбар и список БД в настройках.
             // Единая точка сбоя открытия БД — здесь же диагностический лог (имя + путь без пароля).
             Log.Warning(ex, "Не удалось смонтировать БД «{Name:l}» ({Path:l})", entry.Name, entry.Path);
             return null;
@@ -108,7 +108,7 @@ public sealed class Workspace : IDisposable
         manager.Dispose();
     }
 
-    /// <summary>Найти смонтированную БД по её DbId.</summary>
+    /// <summary>Найти смонтированную БД по ее DbId.</summary>
     public DatabaseManager? Get(int dbId)
     {
         lock (_gate) return _mounted.FirstOrDefault(m => m.DbId == dbId);

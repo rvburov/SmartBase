@@ -15,7 +15,7 @@ namespace SmartBase.Tests.Extensions.DocsCollection;
 /// (критерий — docs/developer/testing/extension-tests.md).
 ///
 /// Файл на диске, а не <c>:memory:</c>, — принципиально: <c>DocsCollectionBuilder.FillRecords</c>
-/// открывает СВОЁ второе подключение к тому же пути, а у in-memory базы второго подключения
+/// открывает СВОЕ второе подключение к тому же пути, а у in-memory базы второго подключения
 /// к тем же данным не бывает.
 /// </summary>
 internal sealed class TempDatabase : IDisposable
@@ -35,7 +35,7 @@ internal sealed class TempDatabase : IDisposable
 
     public void Dispose()
     {
-        try { Manager.Dispose(); } catch { /* при падении теста файл всё равно чистим */ }
+        try { Manager.Dispose(); } catch { /* при падении теста файл все равно чистим */ }
 
         // Пул Microsoft.Data.Sqlite держит файловый дескриптор — без сброса файл «занят».
         try { SqliteConnection.ClearAllPools(); } catch { /* best-effort */ }

@@ -2,7 +2,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:components="using:SmartBase.Controls.Components"
         x:Class="SmartBase.Extensions.TimeCollector.TimeCollectorWindow"
-        Title="Сводная трудоёмкость"
+        Title="Сводная трудоемкость"
         Width="720" Height="760"
         MinWidth="560" MinHeight="560"
         WindowStartupLocation="CenterOwner"
@@ -12,14 +12,14 @@
 
         <StackPanel DockPanel.Dock="Top" Spacing="14" Margin="0,0,0,14">
 
-            <!-- 1. Папка с расчётами -->
+            <!-- 1. Папка с расчетами -->
             <StackPanel Spacing="6">
-                <TextBlock Text="1. Папка с расчётами (файлы «Проект_ГГГГ.ММ.ДД_ФИО.xlsm»)"
+                <TextBlock Text="1. Папка с расчетами (файлы «Проект_ГГГГ.ММ.ДД_ФИО.xlsm»)"
                            FontWeight="{StaticResource FontWeightBold}" />
                 <Grid ColumnDefinitions="*,10,Auto">
                     <TextBox Grid.Column="0" x:Name="FolderBox"
                              VerticalContentAlignment="Center"
-                             Watermark="Выберите папку с расчётами…"
+                             Watermark="Выберите папку с расчетами…"
                              TextChanged="OnPathChanged" />
                     <Button Grid.Column="2" x:Name="FolderBtn"
                             Classes="dialog" Content="Обзор…" Click="OnBrowseFolder" />

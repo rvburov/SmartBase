@@ -5,11 +5,11 @@ namespace SmartBase.Tests.Unit;
 /// <summary>
 /// Установка в НЕСТАНДАРТНУЮ папку: удаление обязано уносить только свои файлы и не трогать
 /// чужие. Это главный риск сценария «поставил в Документы» — папка общая, и рекурсивный снос
-/// каталога стёр бы там всё.
+/// каталога стер бы там все.
 ///
 /// Тестируется <see cref="InstallService.RemoveOwnedFilesAndPrune"/>, а не Uninstall целиком:
 /// Uninstall дополнительно снимает автозапуск и удаляет ярлыки меню «Пуск» — вызов из теста
-/// испортил бы машину, на которой он идёт.
+/// испортил бы машину, на которой он идет.
 /// </summary>
 public sealed class InstallServiceTests
 {
@@ -20,7 +20,7 @@ public sealed class InstallServiceTests
         return dir;
     }
 
-    // Кладёт в папку файлы приложения — те самые, что создаёт установка на этой ОС.
+    // Кладет в папку файлы приложения — те самые, что создает установка на этой ОС.
     private static void CreateOwnedFiles(string dir)
     {
         foreach (var f in InstallService.OwnedInstallFiles(dir))
@@ -40,7 +40,7 @@ public sealed class InstallServiceTests
         {
             CreateOwnedFiles(dir);
 
-            // Чужое добро, оказавшееся в той же папке: файлы, вложенная папка, файл внутри неё.
+            // Чужое добро, оказавшееся в той же папке: файлы, вложенная папка, файл внутри нее.
             var doc       = Path.Combine(dir, "договор.docx");
             var sub       = Path.Combine(dir, "Фотографии");
             var subFile   = Path.Combine(sub, "отпуск.jpg");
@@ -59,7 +59,7 @@ public sealed class InstallServiceTests
             Assert.True(File.Exists(lookalike), "файл с похожим именем не наш — трогать нельзя");
 
             foreach (var f in InstallService.OwnedInstallFiles(dir))
-                Assert.False(File.Exists(f), $"свой файл должен быть удалён: {f}");
+                Assert.False(File.Exists(f), $"свой файл должен быть удален: {f}");
         }
         finally { Directory.Delete(dir, recursive: true); }
     }
@@ -111,7 +111,7 @@ public sealed class InstallServiceTests
         {
             var full = Path.GetFullPath(f);
             Assert.StartsWith(Path.GetFullPath(dir) + Path.DirectorySeparatorChar, full, StringComparison.Ordinal);
-            // Ровно один уровень: вложенных путей установщик в папке установки не создаёт.
+            // Ровно один уровень: вложенных путей установщик в папке установки не создает.
             Assert.Equal(Path.GetFullPath(dir), Path.GetDirectoryName(full));
         }
     }
@@ -129,14 +129,14 @@ public sealed class InstallServiceTests
     // ── Приведение пути к «выделенной» папке ───────────────────────────────────
 
     // Пропусков здесь нет намеренно: Tests/Unit — обязательный быстрый гейт без SkippableFact.
-    // Вместо пропуска проверяется ожидаемое поведение той ОС, на которой идёт прогон.
+    // Вместо пропуска проверяется ожидаемое поведение той ОС, на которой идет прогон.
     [Fact]
     public void Chosen_folder_gets_a_dedicated_subfolder_outside_mac()
     {
         var docs     = Path.Combine(Path.GetTempPath(), "Документы");
         var expected = InstallService.IsMac
             ? docs                                     // единица установки — .app-бандл, подпапка не нужна
-            : Path.Combine(docs, "SmartBase");         // иначе бинарь лёг бы прямо в «Документы»
+            : Path.Combine(docs, "SmartBase");         // иначе бинарь лег бы прямо в «Документы»
         Assert.Equal(expected, InstallService.EnsureDedicatedDir(docs));
     }
 

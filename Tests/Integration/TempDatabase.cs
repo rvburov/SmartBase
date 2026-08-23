@@ -37,7 +37,7 @@ public sealed class TempDatabase : IDisposable
 
     public void Dispose()
     {
-        try { Manager.Dispose(); } catch { /* при падении теста файл всё равно чистим */ }
+        try { Manager.Dispose(); } catch { /* при падении теста файл все равно чистим */ }
         Cleanup(Path);
     }
 

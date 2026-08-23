@@ -66,7 +66,7 @@ public sealed class CrossMoveTests
         using var src = new TempDatabase(dbId: 1, name: "src");
         using var tgt = new TempDatabase(dbId: 2, name: "tgt");
         var srcColId = SeedSource(src, "Данные");
-        SampleData.AddCollection(tgt.Constructor, "Данные"); // одноимённая уже в цели
+        SampleData.AddCollection(tgt.Constructor, "Данные"); // одноименная уже в цели
 
         var newColId = tgt.Constructor.MoveCollectionIsolated(src.Path, srcColId, targetGroupId: null);
 

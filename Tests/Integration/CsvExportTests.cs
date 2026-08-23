@@ -15,7 +15,7 @@ namespace SmartBase.Tests.Integration;
 ///
 /// Главные инварианты: в файле лежит ровно то, что показано на экране (человеческие
 /// подписи, тот же порядок, те же фильтры), страницы keyset не теряют и не дублируют
-/// строки на объёме больше страницы, а недописанный файл после отмены не остаётся.
+/// строки на объеме больше страницы, а недописанный файл после отмены не остается.
 /// </summary>
 public sealed class CsvExportTests
 {
@@ -133,7 +133,7 @@ public sealed class CsvExportTests
 
     /// <summary>
     /// Фильтр таблицы уезжает в выгрузку: пользователь отобрал «Создание» — в файле
-    /// должны быть только созданные объекты, а счётчик окна подтверждения обязан
+    /// должны быть только созданные объекты, а счетчик окна подтверждения обязан
     /// показывать то же число строк.
     /// </summary>
     [Fact]
@@ -186,10 +186,10 @@ public sealed class CsvExportTests
 
         var query = new ConstructorRepository.ChangeLogQuery();
         var total = await db.Constructor.CountChangeLogAsync(query);
-        Assert.True(total > 200, "нужен объём больше страницы");
+        Assert.True(total > 200, "нужен объем больше страницы");
 
         var path = dir.File("страницы.csv");
-        // Страница нарочно мелкая — чтобы курсор прошёл много кругов на скромных данных.
+        // Страница нарочно мелкая — чтобы курсор прошел много кругов на скромных данных.
         var written = CsvDump.Write(path, ConstructorRepository.ChangeLogCsvHeaders,
                                     db.Constructor.ReadChangeLogCsvRowsIsolated(query, pageSize: 25));
 
@@ -202,7 +202,7 @@ public sealed class CsvExportTests
     /// <summary>
     /// Сортировка по колонке (не по дате) листается курсором «значение + Id».
     /// Главный инвариант выгрузки: в файле — ровно та же последовательность строк,
-    /// что показала бы таблица с этими настройками (сортировка идёт по СЫРЫМ значениям,
+    /// что показала бы таблица с этими настройками (сортировка идет по СЫРЫМ значениям,
     /// поэтому сверяемся с таблицей, а не с алфавитом русских подписей).
     /// </summary>
     [Fact]
@@ -240,7 +240,7 @@ public sealed class CsvExportTests
     }
 
     /// <summary>
-    /// «Сначала старые» — единственная ветка, где курсор идёт вперёд (Id &gt; курсора)
+    /// «Сначала старые» — единственная ветка, где курсор идет вперед (Id &gt; курсора)
     /// и порядок возрастающий. Без теста перепутанное направление среза читало бы
     /// одну и ту же страницу вечно или обрывало выгрузку после первой.
     /// </summary>
@@ -255,7 +255,7 @@ public sealed class CsvExportTests
 
         var query = new ConstructorRepository.ChangeLogQuery { SortColumn = "date", SortAsc = true };
         var total = await db.Constructor.CountChangeLogAsync(query);
-        Assert.True(total > 100, "нужен объём больше страницы");
+        Assert.True(total > 100, "нужен объем больше страницы");
 
         var path = dir.File("хронология.csv");
         var written = CsvDump.Write(path, ConstructorRepository.ChangeLogCsvHeaders,
@@ -275,7 +275,7 @@ public sealed class CsvExportTests
     }
 
     /// <summary>
-    /// Сортировка по строковой колонке идёт одним запросом, а не keyset-страницами:
+    /// Сортировка по строковой колонке идет одним запросом, а не keyset-страницами:
     /// у change_log нет вторичных индексов, и постраничный курсор пересортировывал бы
     /// всю таблицу на каждую страницу (замер: 300 тыс. строк — 14,7 с против 1,6 с).
     /// Тест держит результат такой смены механики: строки не теряются и не дублируются,
@@ -305,7 +305,7 @@ public sealed class CsvExportTests
 
     // ── Диагностика (logs.db) ─────────────────────────────────────────────────
 
-    // Схема таблицы logs приёмника Serilog + засев строк (как в LogReaderTests).
+    // Схема таблицы logs приемника Serilog + засев строк (как в LogReaderTests).
     private static void SeedLogs(string path,
         params (string Timestamp, string Level, string Message, string? Exception)[] rows)
     {
@@ -418,7 +418,7 @@ public sealed class CsvExportTests
         Assert.Equal(500, lines.Distinct().Count());
     }
 
-    /// <summary>Сортировка логов по строковой колонке тоже идёт одним запросом —
+    /// <summary>Сортировка логов по строковой колонке тоже идет одним запросом —
     /// проверяем полноту и сам порядок.</summary>
     [Fact]
     public void Logs_export_sorted_by_message_is_complete()

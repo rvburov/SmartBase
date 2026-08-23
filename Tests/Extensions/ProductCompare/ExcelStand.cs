@@ -2,7 +2,7 @@ using ClosedXML.Excel;
 
 namespace SmartBase.Tests.Extensions.ProductCompare;
 
-/// <summary>Одна строка состава изделия, как её видит расширение: позиция, иерархический
+/// <summary>Одна строка состава изделия, как ее видит расширение: позиция, иерархический
 /// номер, наименование, обозначение (ключ уникальности) и количество.</summary>
 internal sealed record CompareRow(string Pos, string Hierarchy, string Name, string Designation, string Qty);
 
@@ -10,13 +10,13 @@ internal sealed record CompareRow(string Pos, string Hierarchy, string Name, str
 /// Стенд «Сравнения составов»: источники и шаблон собираются ClosedXML прямо в тесте —
 /// бинарных фикстур в репозитории нет. Раскладка колонок повторяет исходную утилиту
 /// (1 — позиция, 2 — иерархия, 5 — наименование, 11 — обозначение, 12 — количество),
-/// данные начинаются с 6-й строки: строки 1–5 — шапка, её расширение читать не должно.
+/// данные начинаются с 6-й строки: строки 1–5 — шапка, ее расширение читать не должно.
 /// </summary>
 internal static class ExcelStand
 {
     public const int FirstDataRow = 6;
 
-    /// <summary>Файл состава изделия. В шапку кладётся мусор — он не должен попасть в результат.</summary>
+    /// <summary>Файл состава изделия. В шапку кладется мусор — он не должен попасть в результат.</summary>
     public static void WriteSource(string path, params CompareRow[] rows)
     {
         using var wb = new XLWorkbook();
@@ -38,7 +38,7 @@ internal static class ExcelStand
         wb.SaveAs(path);
     }
 
-    /// <summary>Файл-шаблон: первый лист принимает результат, второй несёт «обвязку» шаблона —
+    /// <summary>Файл-шаблон: первый лист принимает результат, второй несет «обвязку» шаблона —
     /// она обязана пережить прогон (в бою там лежат макросы и настройки).</summary>
     public static void WriteTemplate(string path)
     {

@@ -39,7 +39,7 @@
             </StackPanel>
         </Grid>
 
-        <!-- Нижняя панель (statusbar): добавление, счётчик, навигация -->
+        <!-- Нижняя панель (statusbar): добавление, счетчик, навигация -->
         <comp:FooterConstructor Grid.Row="2" x:Name="FooterConstructor" Margin="0,-1,0,0" />
 
     </Grid>

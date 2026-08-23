@@ -6,7 +6,7 @@ namespace SmartBase.Tests.Integration;
 /// Поля профиля «Общих данных» (ФИО, подразделение, должность): все заполняются ПО ЖЕЛАНИЮ
 /// и живут в app.db дельтами — пустое значение не хранится, а удаляет ключ (тот же инвариант,
 /// что у настроек). Подразделение и должность — справочные: они не меняют отображаемое имя
-/// и не участвуют в идентичности пользователя (ключ «учётка@компьютер»), поэтому их правка
+/// и не участвуют в идентичности пользователя (ключ «учетка@компьютер»), поэтому их правка
 /// не может внезапно превратить человека в «другого» участника базы.
 /// </summary>
 public sealed class ProfileFieldsTests
@@ -62,7 +62,7 @@ public sealed class ProfileFieldsTests
             CurrentUser.Position   = "Инспектор";
             Assert.Equal(2, store.Count);
 
-            // Стёрли обратно (в том числе одними пробелами) — ключи ушли, значение «не задано».
+            // Стерли обратно (в том числе одними пробелами) — ключи ушли, значение «не задано».
             CurrentUser.Department = "";
             CurrentUser.Position   = "   ";
             Assert.False(store.Has("profile.department"));
@@ -83,7 +83,7 @@ public sealed class ProfileFieldsTests
             CurrentUser.Department = "Отдел эксплуатации";
             CurrentUser.Position   = "Главный инженер";
 
-            // ФИО не заполнено — подписью остаётся идентификатор, а не должность.
+            // ФИО не заполнено — подписью остается идентификатор, а не должность.
             Assert.Equal(CurrentUser.Key, CurrentUser.DisplayName);
 
             CurrentUser.LastName  = "Иванов";

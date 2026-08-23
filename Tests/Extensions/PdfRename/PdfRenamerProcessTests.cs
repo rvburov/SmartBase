@@ -7,7 +7,7 @@ namespace SmartBase.Tests.Extensions.PdfRename;
 /// считаются итоги и что происходит при отмене и при сорвавшейся файловой операции.
 ///
 /// Разделение «план отдельно, применение отдельно» — не случайность расширения, а его контракт:
-/// план строится один раз вне UI-потока, а <see cref="PdfRenamer.Process"/> идёт по уже
+/// план строится один раз вне UI-потока, а <see cref="PdfRenamer.Process"/> идет по уже
 /// принятым решениям. Поэтому здесь всегда сперва BuildPlan, потом Process.
 /// </summary>
 public sealed class PdfRenamerProcessTests
@@ -79,7 +79,7 @@ public sealed class PdfRenamerProcessTests
         Assert.False(summary.Cancelled);
     }
 
-    // Прогресс несёт ИТОГОВЫЙ исход шага, а не плановый: в окне пользователь должен видеть
+    // Прогресс несет ИТОГОВЫЙ исход шага, а не плановый: в окне пользователь должен видеть
     // «переименован», а не «будет переименован».
     [Fact]
     public void Progress_reports_every_item_in_order()
@@ -137,7 +137,7 @@ public sealed class PdfRenamerProcessTests
                                          new SyncProgress<RenameProgress>(reported.Add), None);
 
         Assert.Equal(1, summary.Errors);
-        Assert.Equal(1, summary.Renamed);   // второй файл всё равно обработан
+        Assert.Equal(1, summary.Renamed);   // второй файл все равно обработан
         Assert.Equal(RenameOutcome.Error, reported[0].Item.Outcome);
         Assert.False(string.IsNullOrWhiteSpace(reported[0].Item.Note));
         Assert.Contains("2ДЕЖ.002.pdf", dir.Names());

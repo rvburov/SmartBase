@@ -48,7 +48,7 @@ step() { echo "→ $1"; }
 
 # ── 1. Формат версии ──────────────────────────────────────────────────────────
 # Только X.Y.Z. Суффиксы вида 1.0.4-rc.1 запрещены: у shields.io дефис — разделитель полей
-# label-message-color, и бейдж «version-1.0.4-rc.1-blue» распадётся на message=1.0.4 и
+# label-message-color, и бейдж «version-1.0.4-rc.1-blue» распадется на message=1.0.4 и
 # color=rc.1. Бейдж сломается, а check-version.sh прочитает «1.0.4» и пропустит расхождение.
 [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
   || die "версия «${VERSION}» не в формате X.Y.Z (предвыпускные суффиксы не поддерживаются)"
@@ -83,7 +83,7 @@ if [ $NET_OK -eq 1 ]; then
       || die "локальная main разошлась с origin/main — сначала git pull"
   fi
 elif [ $DRY_RUN -eq 1 ]; then
-  echo "⚠ origin недоступен: проверки против удалённого репозитория пропущены (--dry-run)"
+  echo "⚠ origin недоступен: проверки против удаленного репозитория пропущены (--dry-run)"
 else
   die "не удалось связаться с origin — проверьте сеть и доступ к $REPO_URL"
 fi
@@ -125,7 +125,7 @@ ver_gt "$VERSION" "$CURRENT" || die "версия $VERSION не больше т�
 if [ $SKIP_TESTS -eq 0 ]; then
   step "dotnet test Tests/Unit"
   dotnet test Tests/Unit --nologo --verbosity quiet \
-    || die "модульные тесты не прошли — релиз отменён"
+    || die "модульные тесты не прошли — релиз отменен"
 else
   echo "⚠ модульные тесты пропущены (--skip-tests)"
 fi
@@ -140,11 +140,11 @@ info "release-history.md ## [$VERSION] → ## [$VERSION] — $TODAY"
 info "коммит             release: $TAG"
 info "тег                $TAG (аннотированный)"
 info "push               origin main, затем origin $TAG"
-info "далее              GitHub соберёт win-x64, linux-x64, osx-arm64, osx-x64 и опубликует релиз"
+info "далее              GitHub соберет win-x64, linux-x64, osx-arm64, osx-x64 и опубликует релиз"
 echo
 
 if [ $DRY_RUN -eq 1 ]; then
-  echo "✓ проверки пройдены. Это --dry-run: ни один файл не изменён."
+  echo "✓ проверки пройдены. Это --dry-run: ни один файл не изменен."
   exit 0
 fi
 
@@ -171,7 +171,7 @@ tmp="$(mktemp)"
 sed -E "s@^## \[${VERSION_RE}\].*\$@## [${VERSION}] — ${TODAY}@" "$HISTORY" > "$tmp" && mv "$tmp" "$HISTORY"
 
 # Ссылки-сноски внизу истории: сдвинуть «Не выпущено» на новую версию и добавить строку
-# сравнения для неё. Если сносок нет — молча пропускаем, файл остаётся валидным.
+# сравнения для нее. Если сносок нет — молча пропускаем, файл остается валидным.
 if grep -q '^\[Не выпущено\]:' "$HISTORY"; then
   tmp="$(mktemp)"
   awk -v new="$VERSION" -v old="$CURRENT" -v url="$REPO_URL" '
@@ -192,16 +192,16 @@ git add "$CSPROJ" "$README" "$HISTORY"
 git commit -q -m "release: $TAG"
 git tag -a "$TAG" -m "SmartBase $VERSION"
 
-# Порядок важен: если push ветки отклонён (кто-то опередил), тег в удалёнку не уедет,
+# Порядок важен: если push ветки отклонен (кто-то опередил), тег в удаленку не уедет,
 # и версию можно перевыпустить, ничего не разбирая на сервере.
 step "push origin main"
-git push --quiet origin main || die "push ветки отклонён. Тег $TAG создан локально; после
+git push --quiet origin main || die "push ветки отклонен. Тег $TAG создан локально; после
     git pull --rebase повторите: git push origin main && git push origin $TAG"
 
 step "push origin $TAG"
-git push --quiet origin "$TAG" || die "push тега отклонён — отправьте вручную: git push origin $TAG"
+git push --quiet origin "$TAG" || die "push тега отклонен — отправьте вручную: git push origin $TAG"
 
 echo
-echo "✓ $TAG отправлен. Сборка идёт на GitHub:"
+echo "✓ $TAG отправлен. Сборка идет на GitHub:"
 echo "  $REPO_URL/actions"
 echo "  $REPO_URL/releases/tag/$TAG   (появится через ~12 минут)"

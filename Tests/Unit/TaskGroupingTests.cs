@@ -23,7 +23,7 @@ public sealed class TaskGroupingTests
         };
 
     // Коллекции «как в сайдбаре»: (DbId, ColId) → место в списке, цвет и название. Название
-    // берёт виртуальный список: там карточек в памяти нет и спросить имя не у кого.
+    // берет виртуальный список: там карточек в памяти нет и спросить имя не у кого.
     private static Dictionary<(int DbId, int ColId), (int Order, string Color, string Name)> Cols(
         params (int DbId, int ColId, int Place)[] rows) =>
         rows.ToDictionary(r => (r.DbId, r.ColId), r => (r.Place, "", ""));
@@ -50,10 +50,10 @@ public sealed class TaskGroupingTests
     [Fact]
     public void Unknown_collection_goes_last_and_keeps_its_tasks()
     {
-        var tasks = new[] { Task(1, 1, 99, "Удалённая"), Task(2, 1, 10, "Живая") };
+        var tasks = new[] { Task(1, 1, 99, "Удаленная"), Task(2, 1, 10, "Живая") };
         var groups = TaskGrouping.Build(tasks, Cols((1, 10, 0)));
 
-        Assert.Equal(["Живая", "Удалённая"], groups.Select(g => g.Title));
+        Assert.Equal(["Живая", "Удаленная"], groups.Select(g => g.Title));
         Assert.Single(groups[^1].Tasks);
     }
 
@@ -96,7 +96,7 @@ public sealed class TaskGroupingTests
     // ── Ключ группы и подзаголовок ────────────────────────────────────────────
 
     /// <summary>
-    /// Ключ группы — пара (DbId, ColId): по нему список помнит, какие коллекции свёрнуты,
+    /// Ключ группы — пара (DbId, ColId): по нему список помнит, какие коллекции свернуты,
     /// и переживает перезагрузку (поиск, правка задачи). Индекс для этого не годится —
     /// он съезжает, стоит группе появиться или исчезнуть.
     /// </summary>

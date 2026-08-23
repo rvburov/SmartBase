@@ -26,7 +26,7 @@ namespace SmartBase.Views.Profile;
 
 /// <summary>
 /// Панель «Пользователи» панели администратора: таблица «пользователь × действия» во всю
-/// высоту справа (тот же приём, что панель «Детали» в «Настройки → Диагностика»).
+/// высоту справа (тот же прием, что панель «Детали» в «Настройки → Диагностика»).
 /// Строка — пользователь базы, колонки — роль, доступ к базе, действия <see cref="PermAction"/>
 /// с чекбоксами, даты и удаление из базы. Область действия прав (вся база или коллекция)
 /// выбирается в шапке панели.
@@ -93,8 +93,8 @@ public partial class ProfileView
 
     // ── Открытие и закрытие ───────────────────────────────────────────────────
 
-    // Список пользователей открывается ВМЕСТО панели администратора и занимает её место
-    // целиком: своя шапка (56) встаёт на место навбара модуля, тот скрывается — иначе
+    // Список пользователей открывается ВМЕСТО панели администратора и занимает ее место
+    // целиком: своя шапка (56) встает на место навбара модуля, тот скрывается — иначе
     // заголовка было бы два. Крестик (и повторный выбор раздела в сайдбаре) возвращает
     // панель администратора.
     private void OnOpenUsersPanel(object? sender, RoutedEventArgs e)
@@ -122,7 +122,7 @@ public partial class ProfileView
 
         UsersPanel.IsVisible = false;
         HeaderBar.IsVisible  = true;
-        // Возвращаемся в панель администратора, только если раздел ещё открыт: при уходе
+        // Возвращаемся в панель администратора, только если раздел еще открыт: при уходе
         // в «Общие данные» или «Историю» видимость панелей уже расставил ShowCategory.
         AdminPanel.IsVisible = _categoryKey == "admin";
 
@@ -130,13 +130,13 @@ public partial class ProfileView
         _allUserRows.Clear();
 
         // Панель открывается свежей: фильтры и сортировка не переезжают на другую базу
-        // (так же ведёт себя «История изменений» при смене базы).
+        // (так же ведет себя «История изменений» при смене базы).
         _userFilters.Clear();
         _userSortKey = null;
         UpdateUsersChevrons();
     }
 
-    /// <summary>Панель открыта (её данные нужно перечитывать после правок).</summary>
+    /// <summary>Панель открыта (ее данные нужно перечитывать после правок).</summary>
     private bool UsersPanelOpen => UsersPanel.IsVisible;
 
     // ── Область действия прав ─────────────────────────────────────────────────
@@ -147,7 +147,7 @@ public partial class ProfileView
     {
         if (_adminDb is null) return;
 
-        // Сохранить выбранную область, если она ещё существует (перечитывание после
+        // Сохранить выбранную область, если она еще существует (перечитывание после
         // чужих правок не должно сбрасывать администратора на «всю базу»).
         var keep = CurrentScope;
 
@@ -228,7 +228,7 @@ public partial class ProfileView
     };
 
     // Правки пишутся сразу; после них строки перечитываются — роль и допуск меняют
-    // доступность соседних ячеек, а сосед мог тем временем поправить своё.
+    // доступность соседних ячеек, а сосед мог тем временем поправить свое.
     private void OnUserRightChanged(AdminUserRow row, PermAction action, bool allowed)
     {
         if (_adminDb is null) return;
@@ -316,12 +316,12 @@ public partial class ProfileView
         AddUsersColumn(UsersKeyId, "Идентификатор", "IconFieldText", 200,
                        BuildUsersTextCell(nameof(AdminUserRow.UserKey), secondary: true),
                        tip: BuildUsersTip("Идентификатор",
-                                          "Ключ «учётная запись@компьютер» — по нему база узнаёт человека " +
+                                          "Ключ «учетная запись@компьютер» — по нему база узнает человека " +
                                           "при следующем открытии, даже если он сменит имя в профиле."));
         AddUsersColumn(UsersKeyRole, "Роль", "IconShieldUser", 170, BuildUserRoleCell(),
                        tip: BuildUsersTip("Роль",
                                           "Администратор управляет доступом и не подчиняется галкам — " +
-                                          "ему разрешено всё. Чтобы ограничить его, сначала переведите " +
+                                          "ему разрешено все. Чтобы ограничить его, сначала переведите " +
                                           "в «Пользователя». Свою роль изменить нельзя."));
         AddUsersColumn(UsersKeyApproved, "Доступ к базе данных", "IconLock", 210,
                        BuildUsersCheckCell(nameof(AdminUserRow.IsApproved),
@@ -345,20 +345,20 @@ public partial class ProfileView
                            tip: BuildUsersActionTip(group, action));
         }
 
-        AddUsersColumn(UsersKeyCreated, "Подключён", "IconClock", 150,
+        AddUsersColumn(UsersKeyCreated, "Подключен", "IconClock", 150,
                        BuildUsersTextCell(nameof(AdminUserRow.CreatedAtText), secondary: true),
-                       tip: BuildUsersTip("Подключён",
+                       tip: BuildUsersTip("Подключен",
                                           "Когда пользователь впервые открыл эту базу данных."));
         AddUsersColumn(UsersKeySeen, "Последняя активность", "IconHistory", 190,
                        BuildUsersTextCell(nameof(AdminUserRow.LastSeenText), secondary: true),
                        tip: BuildUsersTip("Последняя активность",
                                           "Когда пользователь в последний раз открывал эту базу данных."));
         // Колонка действия: фильтровать нечего — шеврона нет. Последняя колонка правой линии
-        // заголовка не рисует: её край и так очерчен краем таблицы (как в диагностике).
+        // заголовка не рисует: ее край и так очерчен краем таблицы (как в диагностике).
         AddUsersColumn("", "Удаление пользователя", "IconTrash", 210, BuildUserRemoveCell(),
                        tip: BuildUsersTip("Удаление пользователя",
                                           "Убрать пользователя из базы данных вместе с выданными правами. " +
-                                          "При следующем открытии базы он вернётся в список как ожидающий допуска."),
+                                          "При следующем открытии базы он вернется в список как ожидающий допуска."),
                        filterable: false, addRightLine: false);
     }
 
@@ -392,7 +392,7 @@ public partial class ProfileView
         return new StackPanel { MaxWidth = 320, Children = { head, text } };
     }
 
-    // Для колонки действия заголовок подсказки несёт ещё и группу: «Записи · Удаление
+    // Для колонки действия заголовок подсказки несет еще и группу: «Записи · Удаление
     // записи» — видно, к чему право применяется, когда иконка группы уже прокручена.
     private Control BuildUsersActionTip(string group, PermAction action) =>
         BuildUsersTip($"{group} · {PermActionLabels.Title(action)}",
@@ -573,8 +573,8 @@ public partial class ProfileView
             Cursor  = new Cursor(StandardCursorType.Arrow),
         };
 
-        // Значения колонки со счётчиками — по всем строкам базы (фильтры других колонок
-        // список значений не режут: так же ведёт себя фильтр в диагностике).
+        // Значения колонки со счетчиками — по всем строкам базы (фильтры других колонок
+        // список значений не режут: так же ведет себя фильтр в диагностике).
         var counts = _allUserRows
             .GroupBy(row => UsersCellValue(key, row))
             .Select(g => (Value: g.Key, Count: g.Count()))
@@ -628,7 +628,7 @@ public partial class ProfileView
 
         var selectAll = new CheckBox
         {
-            Content   = "(Выделить всё)",
+            Content   = "(Выделить все)",
             FontSize  = fontBase,
             IsChecked = !_userFilters.ContainsKey(key),
             Cursor    = new Cursor(StandardCursorType.Hand),
@@ -930,7 +930,7 @@ public partial class ProfileView
             return text;
         });
 
-    // Имя пользователя + пометка «ждёт допуска» (у допущенных и админов её нет).
+    // Имя пользователя + пометка «ждет допуска» (у допущенных и админов ее нет).
     private IDataTemplate BuildUserNameCell() =>
         new FuncDataTemplate<AdminUserRow>((_, _) =>
         {
@@ -943,7 +943,7 @@ public partial class ProfileView
 
             var pending = new TextBlock
             {
-                Text              = "ждёт допуска",
+                Text              = "ждет допуска",
                 VerticalAlignment = VerticalAlignment.Center,
                 FontSize          = FontSizeToken("FontSizeSmall", 11),
                 Foreground        = Brush("BrushRed", "#FF3B30"),
@@ -1031,7 +1031,7 @@ public partial class ProfileView
             button.Classes.Add("icon");
             ToolTip.SetTip(button, "Убрать пользователя из базы данных");
             button.Bind(InputElement.IsEnabledProperty, new Binding(nameof(AdminUserRow.RemoveEnabled)));
-            // DataContext ячейки — строка таблицы; берём его в момент клика, а не из
+            // DataContext ячейки — строка таблицы; берем его в момент клика, а не из
             // замыкания шаблона: контейнер ячейки переиспользуется при прокрутке.
             button.Click += (s, _) =>
             {
@@ -1040,7 +1040,7 @@ public partial class ProfileView
             return button;
         });
 
-    /// <summary>Строка окна фильтра: значение колонки, счётчик и галка (зеркало
+    /// <summary>Строка окна фильтра: значение колонки, счетчик и галка (зеркало
     /// LogsFilterValueVm «Диагностики» — окно фильтра во всех таблицах одинаковое).</summary>
     private sealed class UsersFilterValueVm : INotifyPropertyChanged
     {
@@ -1082,9 +1082,9 @@ public partial class ProfileView
 /// в выбранной области. Правки уходят в базу через колбэки панели (RightChanged/ApprovalChanged/
 /// RoleChanged) прямо из сеттеров — как строка таблицы конструктора (TableRowVm).
 ///
-/// Правила доступности (панель их только отображает, сервис проверяет ещё раз):
+/// Правила доступности (панель их только отображает, сервис проверяет еще раз):
 /// свою строку не правит никто; у администратора все действия разрешены и заблокированы
-/// (роль даёт полный доступ — чтобы ограничить, другой администратор сначала меняет роль);
+/// (роль дает полный доступ — чтобы ограничить, другой администратор сначала меняет роль);
 /// у ожидающего допуска чекбоксы действий выключены, пока допуск не выдан.
 /// </summary>
 public sealed class AdminUserRow : INotifyPropertyChanged
@@ -1115,14 +1115,14 @@ public sealed class AdminUserRow : INotifyPropertyChanged
     public string CreatedAtText { get; }
     public string LastSeenText  { get; }
 
-    /// <summary>Колбэки панели: пишут правку в базу (сервис проверяет права ещё раз).</summary>
+    /// <summary>Колбэки панели: пишут правку в базу (сервис проверяет права еще раз).</summary>
     public Action<AdminUserRow, PermAction, bool>? RightChanged    { get; init; }
     public Action<AdminUserRow, bool>?             ApprovalChanged { get; init; }
     public Action<AdminUserRow, bool>?             RoleChanged     { get; init; }
 
     public string Title => IsSelf ? $"{DisplayName} (вы)" : DisplayName;
 
-    /// <summary>Ждёт допуска (у администратора допуск есть всегда).</summary>
+    /// <summary>Ждет допуска (у администратора допуск есть всегда).</summary>
     public bool IsPending => !_isAdmin && !_isApproved;
 
     /// <summary>Действующая маска прав в выбранной области.</summary>
@@ -1139,7 +1139,7 @@ public sealed class AdminUserRow : INotifyPropertyChanged
     }
 
     /// <summary>Галка действия. Ключ — бит <see cref="PermAction"/> (путь биндинга «[64]»).
-    /// У администратора разрешено всё — галки стоят и не редактируются.</summary>
+    /// У администратора разрешено все — галки стоят и не редактируются.</summary>
     public bool this[int bit]
     {
         get => _isAdmin || (_mask & bit) == bit;
@@ -1180,7 +1180,7 @@ public sealed class AdminUserRow : INotifyPropertyChanged
     /// <summary>Допуск администратора не снимается (у него доступ по роли).</summary>
     public bool ApprovalEnabled => !IsSelf && !_isAdmin;
 
-    /// <summary>Действия: администратору можно всё (галки заблокированы), ожидающему
+    /// <summary>Действия: администратору можно все (галки заблокированы), ожидающему
     /// допуска настраивать нечего, пока допуск не выдан.</summary>
     public bool RightsEnabled => !IsSelf && !_isAdmin && _isApproved;
 

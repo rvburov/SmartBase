@@ -11,7 +11,7 @@ namespace SmartBase.Controls.Widgets;
 /// Редактор свойства типа «дата». Ручной ввод (с подсказкой) + выпадашка с
 /// раздельными «Начало»/«Конец» (дата + время) и переключателем «Весь день» —
 /// так явно задаются все формы: день, диапазон дней, дата+время, диапазон с временем.
-/// Хранит/отдаёт значение в каноне <see cref="DateValue"/> через <see cref="Storage"/>.
+/// Хранит/отдает значение в каноне <see cref="DateValue"/> через <see cref="Storage"/>.
 /// </summary>
 public partial class DateEditor : UserControl
 {
@@ -65,8 +65,8 @@ public partial class DateEditor : UserControl
             SetValue(null, raise: true);
             Pop.IsOpen = false;
         };
-        // «Готово» применяет текущее состояние выпадашки (на случай, если изменение ещё не
-        // зафиксировалось через RecomputeFromUi — например, фокус не ушёл из поля), затем закрывает.
+        // «Готово» применяет текущее состояние выпадашки (на случай, если изменение еще не
+        // зафиксировалось через RecomputeFromUi — например, фокус не ушел из поля), затем закрывает.
         // RecomputeFromUi идемпотентна (Changed поднимается только при реальной смене значения).
         // Как в диалоге события: при ошибке валидации не закрываем (баннер виден).
         DoneBtn.Click += (_, _) =>
@@ -129,8 +129,8 @@ public partial class DateEditor : UserControl
         if (!Pop.IsOpen) return;
         if (AnyChildPopupOpen) return;
         // Клик внутри любого попапа (сама выпадашка + вложенные календарь/список времени)
-        // не должен её закрывать. Вложенные попапы — overlay в главном окне и в визуальном
-        // дереве отделены от this, поэтому узнаём их по предку PopupRoot/OverlayPopupHost.
+        // не должен ее закрывать. Вложенные попапы — overlay в главном окне и в визуальном
+        // дереве отделены от this, поэтому узнаем их по предку PopupRoot/OverlayPopupHost.
         if (e.Source is Visual v &&
             v.GetSelfAndVisualAncestors().Any(a => a.GetType().Name is "PopupRoot" or "OverlayPopupHost"))
             return;

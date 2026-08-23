@@ -4,8 +4,8 @@ using System.Runtime.Versioning;
 namespace SmartBase.Notifications.Platforms;
 
 /// <summary>
-/// macOS: значок-счётчик на иконке в Dock через <c>NSApp.dockTile.badgeLabel</c>.
-/// Cocoa-класса в .NET нет, поэтому дёргаем Objective-C runtime напрямую (libobjc):
+/// macOS: значок-счетчик на иконке в Dock через <c>NSApp.dockTile.badgeLabel</c>.
+/// Cocoa-класса в .NET нет, поэтому дергаем Objective-C runtime напрямую (libobjc):
 /// <c>[[NSApplication sharedApplication] dockTile] setBadgeLabel: "N"]</c>; пустая метка
 /// (nil) убирает значок. Вызывается из UI-потока (главный поток AppKit).
 /// </summary>

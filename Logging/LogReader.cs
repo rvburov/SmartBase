@@ -4,7 +4,7 @@ namespace SmartBase.Logging;
 
 /// <summary>
 /// Чтение диагностического лога <c>logs.db</c> для таблицы «Профиль → Логи»
-/// (ProfileLogsTable). Схему таблицы <c>logs</c> задаёт приёмник Serilog.Sinks.SQLite:
+/// (ProfileLogsTable). Схему таблицы <c>logs</c> задает приемник Serilog.Sinks.SQLite:
 /// столбцы <c>id</c> (INTEGER PRIMARY KEY AUTOINCREMENT), <c>Timestamp</c> (TEXT, UTC),
 /// <c>Level</c>, <c>Exception</c>, <c>RenderedMessage</c>, <c>Properties</c>. Пишет туда
 /// только Serilog — здесь мы лишь читаем (raw SQL, БЕЗ EF: у logs.db нет модели EF).
@@ -41,7 +41,7 @@ public sealed class LogReader
 
     public LogReader(string path) => _path = path;
 
-    /// <summary>Файл лога ещё не создан (Serilog пишет его при первой записи).</summary>
+    /// <summary>Файл лога еще не создан (Serilog пишет его при первой записи).</summary>
     public bool Exists => File.Exists(_path);
 
     // SQL-выражение колонки по ключу — для WHERE-фильтров, keyset и агрегатов фильтра.
@@ -127,7 +127,7 @@ public sealed class LogReader
     ///
     /// Два режима, как у выгрузки журнала изменений. Хронология (без сортировки и «Время») —
     /// keyset-страницы по <paramref name="pageSize"/>: срез по <c>id</c>, короткие
-    /// транзакции, приёмник Serilog продолжает писать лог во время выгрузки. Сортировка
+    /// транзакции, приемник Serilog продолжает писать лог во время выгрузки. Сортировка
     /// по строковой колонке — ОДИН запрос с ORDER BY и потоковое чтение: индексов на
     /// Level/RenderedMessage нет, и страницами база пересортировывала бы всю таблицу
     /// на каждую страницу.
@@ -181,7 +181,7 @@ public sealed class LogReader
         while (true)
         {
             ct.ThrowIfCancellationRequested();
-            // GetPageAsync уже умеет фильтры + keyset; ждём синхронно — мы и так в фоне.
+            // GetPageAsync уже умеет фильтры + keyset; ждем синхронно — мы и так в фоне.
             var page = GetPageAsync(cursor, pageSize).GetAwaiter().GetResult();
             if (page.Count == 0) yield break;
 
@@ -231,7 +231,7 @@ public sealed class LogReader
             Cache      = SqliteCacheMode.Shared,
         }.ToString());
         conn.Open();
-        // Параллельная запись приёмника не должна ронять чтение с SQLITE_BUSY.
+        // Параллельная запись приемника не должна ронять чтение с SQLITE_BUSY.
         using var pragma = conn.CreateCommand();
         pragma.CommandText = "PRAGMA busy_timeout=3000;";
         pragma.ExecuteNonQuery();

@@ -11,7 +11,7 @@ public sealed class FileValueTests
 {
     [Theory]
     [InlineData("/Users/roman/Документы/Договор.pdf", "Договор.pdf")]
-    [InlineData(@"C:\Users\roman\Отчёт.xlsx",         "Отчёт.xlsx")]
+    [InlineData(@"C:\Users\roman\Отчет.xlsx",         "Отчет.xlsx")]
     [InlineData("Проценты_по_месяцам-2.xlsx",         "Проценты_по_месяцам-2.xlsx")]
     public void DisplayName_returns_basename_for_paths(string raw, string expected) =>
         Assert.Equal(expected, FileValue.DisplayName(raw));

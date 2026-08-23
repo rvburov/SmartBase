@@ -17,12 +17,12 @@ namespace SmartBase.Controls.Widgets;
 /// «имя — файл не найден», если пути нет, и серое «Выбрать файл…» для пустого значения.
 /// Правка — по аналогии с датой: ручной ввод пути в поле + правая иконка-скрепка,
 /// открывающая системный выбор файла. Неверный путь при ручном вводе — красный текст и
-/// плашка-уведомление (<see cref="NoticeBanner"/>). Хранит/отдаёт путь через <see cref="Storage"/>.
+/// плашка-уведомление (<see cref="NoticeBanner"/>). Хранит/отдает путь через <see cref="Storage"/>.
 /// </summary>
 public partial class FileEditor : UserControl
 {
     private string _path = "";        // хранимое значение: полный путь или ""
-    private string _autoFolder = "";  // непусто → авто-режим (read-only, значения ведёт правило)
+    private string _autoFolder = "";  // непусто → авто-режим (read-only, значения ведет правило)
     private bool   _editing;
     private bool   _suppress;
     private Window? _window;
@@ -61,8 +61,8 @@ public partial class FileEditor : UserControl
         Input.LostFocus   += (_, _) => CommitManual();
         Input.TextChanged += (_, _) => { if (!_suppress) LiveValidate(); };
 
-        // Пересчёт показа после подключения к дереву: в конструкторе/инициализаторе (когда
-        // задаётся Storage) ресурсы темы ещё не резолвятся (this.TryFindResource → fallback),
+        // Пересчет показа после подключения к дереву: в конструкторе/инициализаторе (когда
+        // задается Storage) ресурсы темы еще не резолвятся (this.TryFindResource → fallback),
         // из-за чего ссылка красилась не акцентом (#007AFF), а запасным цветом. На attach
         // BrushAccent/BrushSecondaryText уже доступны — перекрашиваем корректно.
         // Плюс подписываемся на окно: плашку-ошибку (top-level popup) надо прятать, когда
@@ -95,7 +95,7 @@ public partial class FileEditor : UserControl
         set { _path = value?.Trim() ?? ""; EndEdit(); UpdateVisual(); }
     }
 
-    /// <summary>Папка авто-привязки. Непусто → ячейка read-only (правило ведёт значения): скрепки
+    /// <summary>Папка авто-привязки. Непусто → ячейка read-only (правило ведет значения): скрепки
     /// и ручного ввода нет, недоступная папка показывается как «папка недоступна». Пусто — обычный
     /// ручной режим.</summary>
     public string AutoFolder
@@ -139,7 +139,7 @@ public partial class FileEditor : UserControl
     }
 
     /// <summary>Левый отступ значения (показ и ввод). В ячейке таблицы = 6px, чтобы текст
-    /// выравнивался с остальными колонками; на карточке записи — 0 (задаёт карточка).</summary>
+    /// выравнивался с остальными колонками; на карточке записи — 0 (задает карточка).</summary>
     public double ContentLeftPadding
     {
         set
@@ -162,7 +162,7 @@ public partial class FileEditor : UserControl
         }
         if (_path.Length == 0) return;              // «Выбрать файл…» — не кликабельно
         if (File.Exists(_path)) OpenFile();
-        else BeginEdit();                           // файла нет — даём поправить путь руками
+        else BeginEdit();                           // файла нет — даем поправить путь руками
     }
 
     // Открыть файл штатным приложением ОС. UseShellExecute=true делегирует системе:
@@ -290,7 +290,7 @@ public partial class FileEditor : UserControl
         var name = SafeFileName(_path);
         if (File.Exists(_path))
         {
-            Link.Text            = name;                 // синяя подчёркнутая ссылка
+            Link.Text            = name;                 // синяя подчеркнутая ссылка
             Link.Foreground      = Accent();
             Link.TextDecorations = TextDecorations.Underline;
             LinkHost.Cursor      = new Cursor(StandardCursorType.Hand);
@@ -322,10 +322,10 @@ public partial class FileEditor : UserControl
     private void HideError()               { NoticeBanner.Hide();        ErrPop.IsOpen = false; }
 
     // Приложение потеряло фокус — прячем плашку (top-level popup), чтобы не висела поверх
-    // других программ; текст ошибки в баннере сохраняем и вернём на Activated.
+    // других программ; текст ошибки в баннере сохраняем и вернем на Activated.
     private void OnWindowDeactivated(object? sender, EventArgs e) => ErrPop.IsOpen = false;
 
-    // Вернулись в приложение — если ещё правим и путь неверный, показываем плашку снова.
+    // Вернулись в приложение — если еще правим и путь неверный, показываем плашку снова.
     private void OnWindowActivated(object? sender, EventArgs e) { if (_editing) LiveValidate(); }
 
     // Fallback-цвета — на случай вызова до attach; после подключения перекрашиваем из темы.

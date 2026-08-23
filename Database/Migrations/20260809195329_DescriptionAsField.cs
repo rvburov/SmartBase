@@ -5,12 +5,12 @@ using Microsoft.EntityFrameworkCore.Migrations;
 namespace SmartBase.Database.Migrations
 {
     /// <summary>
-    /// «Описание» перестаёт быть системной колонкой записи и становится ОБЫЧНЫМ полем коллекции
+    /// «Описание» перестает быть системной колонкой записи и становится ОБЫЧНЫМ полем коллекции
     /// с ролью <c>IsDescription</c>: его можно переименовать, сменить тип и удалить, а заводят его
     /// только календарь и задачи. Миграция переносит уже накопленные описания в db_field_values,
     /// после чего колонка db_records.Description удаляется.
     ///
-    /// Порядок шагов обязателен: роль → перенос данных → удаление колонки. Перенос идёт только
+    /// Порядок шагов обязателен: роль → перенос данных → удаление колонки. Перенос идет только
     /// для коллекций, где есть хотя бы одно НЕПУСТОЕ описание — пустые колонки в чужих коллекциях
     /// не плодим.
     /// </summary>
@@ -27,7 +27,7 @@ namespace SmartBase.Database.Migrations
                 defaultValue: false);
 
             // 1) Поле «Описание» в каждой коллекции с непустыми описаниями. Имя — подпись
-            //    системной колонки, если пользователь её переименовал, иначе «Описание»;
+            //    системной колонки, если пользователь ее переименовал, иначе «Описание»;
             //    занятое имя разводим суффиксом (индекс (CollectionId, Name) уникален).
             migrationBuilder.Sql(@"
                 INSERT INTO db_fields (CollectionId, Name, FieldType, ConfigJson, Position,
@@ -69,7 +69,7 @@ namespace SmartBase.Database.Migrations
                                    WHERE v.RecordId = r.Id AND v.FieldId = f.Id)");
 
             // 3) Метаданные колонки (порядок, видимость, уровень) переезжают с ключа '__desc__'
-            //    на числовой ключ нового поля. Подпись больше не нужна — имя живёт в db_fields.
+            //    на числовой ключ нового поля. Подпись больше не нужна — имя живет в db_fields.
             migrationBuilder.Sql(@"
                 INSERT INTO column_meta (CollectionId, Key, Position, Visible, Level, DisplayName)
                 SELECT m.CollectionId, CAST(f.Id AS TEXT), m.Position, m.Visible, m.Level, NULL
@@ -99,7 +99,7 @@ namespace SmartBase.Database.Migrations
 
             // Колонку сносим НАТИВНЫМ ALTER TABLE … DROP COLUMN (SQLite ≥ 3.35, в поставке
             // Microsoft.Data.Sqlite он свежее), а не migrationBuilder.DropColumn: тот на SQLite
-            // пересоздаёт db_records через ef_temp — на базах в миллионы записей это копирование
+            // пересоздает db_records через ef_temp — на базах в миллионы записей это копирование
             // всей таблицы и пересборка индексов на ровном месте. Условия нативного дропа
             // выполнены: Description не входит ни в PK, ни в единственный индекс
             // (CollectionId, Position), ни в FK/CHECK.

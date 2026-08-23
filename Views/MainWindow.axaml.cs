@@ -26,7 +26,7 @@ public partial class MainWindow : Window
     private readonly MountQueue _mountQueue;
     // Монитор доступности: общая база в сетевой папке может пропасть на ходу (сервер
     // выключили, файл удалили) — база размонтируется со статусом «недоступна» и
-    // уведомлением, монитор сам ретраит и возвращает её, когда файл снова доступен.
+    // уведомлением, монитор сам ретраит и возвращает ее, когда файл снова доступен.
     private readonly DbHealthMonitor _health;
     // Фоновая проверка чужих правок (~3 с): другие пользователи общей базы (сетевая папка)
     // или другая копия приложения меняют данные — сайдбары/таблица/календарь обновляются сами.
@@ -34,11 +34,11 @@ public partial class MainWindow : Window
     // БД, потерянные на ходу — чтобы при возврате показать «снова доступна».
     private readonly HashSet<int> _lostDbIds = [];
     // Служба уведомлений: пока окно открыто, показывает нативные баннеры о наступивших
-    // событиях календаря и ведёт значок-счётчик на иконке приложения.
+    // событиях календаря и ведет значок-счетчик на иконке приложения.
     private readonly NotificationService _notifications;
 
     // Фоновый режим: значок в трее/меню-баре + скрытие окна вместо выхода. Значок виден, когда
-    // фон включён; _explicitQuit — явный выход (трей «Выход» / ⌘Q), чтобы не скрывать окно.
+    // фон включен; _explicitQuit — явный выход (трей «Выход» / ⌘Q), чтобы не скрывать окно.
     private TrayIcon? _tray;
     private bool _backgroundEnabled;
     private bool _explicitQuit;
@@ -82,7 +82,7 @@ public partial class MainWindow : Window
         DbErrors.Notify        = Notify;
         DbErrors.ReportFailure = _health.ReportFailureByPath;
         // Отказ по правам — окном с причиной (тост тут легко пропустить): так ведут себя
-        // и запрещённые пункты меню, и замок у коллекции без права просмотра.
+        // и запрещенные пункты меню, и замок у коллекции без права просмотра.
         DbErrors.NotifyDenied  = message => Controls.Dialogs.PermissionNotice.Show(this, message);
         // Календарь и панель записи пока работают с дефолтной БД (мульти-БД календаря — Этап 3.3).
         _categories  = workspace.Default.Categories;
@@ -104,7 +104,7 @@ public partial class MainWindow : Window
         InitBackgroundMode();
 
         // Живой статус очереди: процент/оценка времени — только текст заглушки в сайдбарах
-        // (без перестройки дерева), смена состояния — ещё и список БД в настройках.
+        // (без перестройки дерева), смена состояния — еще и список БД в настройках.
         // События очереди приходят из фонового потока — маршалим в UI.
         _mountQueue.Changed += (dbId, stateChanged) => Dispatcher.UIThread.Post(() =>
         {
@@ -114,7 +114,7 @@ public partial class MainWindow : Window
                 ConstructorSidebar.UpdatePendingStatus(dbId, st.Text, failed);
                 CalendarSidebar.UpdatePendingStatus(dbId, st.Text, failed);
                 TasksSidebar.UpdatePendingStatus(dbId, st.Text, failed);
-                // Список БД в настройках живёт теми же процентами/временем, что и сайдбар.
+                // Список БД в настройках живет теми же процентами/временем, что и сайдбар.
                 SettingsModule.UpdateQueueStatus(dbId, st.Text, failed);
             }
             if (stateChanged) SettingsModule.RefreshDatabases();
@@ -130,7 +130,7 @@ public partial class MainWindow : Window
             }
             if (manager is null)
             {
-                // Не смонтировалась (нет сети/файла) — отдаём монитору под фоновые ретраи:
+                // Не смонтировалась (нет сети/файла) — отдаем монитору под фоновые ретраи:
                 // сервер включится — база подключится сама, без действий пользователя.
                 var entry = _workspace.Registry.GetAll().FirstOrDefault(d => d.Id == dbId);
                 if (entry is not null) _health.TrackFailed(entry);
@@ -157,7 +157,7 @@ public partial class MainWindow : Window
                 : null);
 
         // Live mount/unmount: добавление/удаление БД в настройках сразу отражается в
-        // сайдбаре конструктора без перезапуска. Новая база встаёт в хвост очереди —
+        // сайдбаре конструктора без перезапуска. Новая база встает в хвост очереди —
         // даже если сейчас мигрирует другая, ничего не блокируется.
         SettingsModule.DatabaseAdded += (_, entry) =>
         {
@@ -206,11 +206,11 @@ public partial class MainWindow : Window
         TasksSidebar.InitializeWorkspace(GrantedDbs(), Controls.Components.SidebarMode.Tasks);
         ConstructorSidebar.InitializeWorkspace(workspace.Mounted, Controls.Components.SidebarMode.Constructor);
         ConstructorSidebar.DatabaseUnlockRequested += async (_, dbId) => await RequestDatabaseUnlock(dbId);
-        // Клик по коллекции с замком (просмотр запрещён правами) — пояснение вместо
+        // Клик по коллекции с замком (просмотр запрещен правами) — пояснение вместо
         // молчаливого «ничего не происходит».
         ConstructorSidebar.CollectionAccessDenied += async (_, name) =>
             await ConfirmDialog.Info(
-                    $"Нет доступа к коллекции «{name}». Просмотр запрещён администратором " +
+                    $"Нет доступа к коллекции «{name}». Просмотр запрещен администратором " +
                     "базы данных — обратитесь к нему, чтобы получить право.")
                 .ShowDialog(this);
 
@@ -222,7 +222,7 @@ public partial class MainWindow : Window
         // Живой состав пользователей уже смонтированных баз (дальше — из SyncMountedToUi).
         HookPermissionEvents();
 
-        // Начальное состояние: раздел при запуске берём из настроек (стандарт — конструктор).
+        // Начальное состояние: раздел при запуске берем из настроек (стандарт — конструктор).
         // Его могли скрыть в «Оформлении» уже после выбора — тогда открываем первый видимый,
         // иначе программа стартовала бы на разделе, кнопки которого в панели нет.
         var startupModule = AppSettings.LoadStartupModule();
@@ -253,7 +253,7 @@ public partial class MainWindow : Window
         // Панели администратора и истории работают со смонтированными БД рабочего пространства.
         ProfileModule.Initialize(workspace);
 
-        // Sidebar коллекций передаёт активные id в CalendarModule
+        // Sidebar коллекций передает активные id в CalendarModule
         CalendarSidebar.ActiveIdsChanged += (_, ids) =>
             CalendarModule.SetActiveIds(ids);
 
@@ -298,8 +298,8 @@ public partial class MainWindow : Window
             ConstructorModule.Refresh();
         };
 
-        // Дерево конструктора: выбор коллекции открывает её в ConstructorModule из её БД.
-        // Если центральный блок был скрыт (свёрнут из записи) — снова показываем его.
+        // Дерево конструктора: выбор коллекции открывает ее в ConstructorModule из ее БД.
+        // Если центральный блок был скрыт (свернут из записи) — снова показываем его.
         ConstructorSidebar.CollectionSelected += (_, sel) =>
         {
             var db = _workspace.Get(sel.DbId) ?? _workspace.Default;
@@ -331,18 +331,18 @@ public partial class MainWindow : Window
         ConstructorModule.RecordPageRequested += (_, rid)        => OpenRecordPanel(rid);
         ConstructorModule.RecordPageClosed    += (_, _)          => CloseRecordPanel();
         RecordPanel.RecordChanged             += (_, rid)        => ConstructorModule.RefreshRecordRow(rid);
-        // Клик по чипу связи в панели записи → открыть связанную запись (её коллекция резолвится
+        // Клик по чипу связи в панели записи → открыть связанную запись (ее коллекция резолвится
         // в OpenRecordPanel по самой записи, поэтому переход между коллекциями работает).
         RecordPanel.RelatedRecordRequested    += (_, rid)        => OpenRecordPanel(rid);
-        // Переход по чипу МЕЖБАЗОВОЙ связи (из таблицы и из панели записи): открыть запись из её БД.
+        // Переход по чипу МЕЖБАЗОВОЙ связи (из таблицы и из панели записи): открыть запись из ее БД.
         ConstructorModule.CrossDbRecordPageRequested += (_, t)   => OpenRecordPanel(t.DbId, t.RecordId);
         RecordPanel.CrossDbRelatedRecordRequested    += (_, t)   => OpenRecordPanel(t.DbId, t.RecordId);
-        // «Добавить свойство» из панели записи — тем же путём, что и «+» в таблице:
-        // новое поле создаётся, колонка появляется в таблице, а FieldsChanged ниже
+        // «Добавить свойство» из панели записи — тем же путем, что и «+» в таблице:
+        // новое поле создается, колонка появляется в таблице, а FieldsChanged ниже
         // перестраивает список свойств панели (новое поле сразу видно и там, и там).
         RecordPanel.AddPropertyRequested      += (_, _)          => ConstructorModule.CreatePropertyFromPanel();
-        // «Добавить описание» из крошки нижнего блока — тем же путём: поле с ролью «Описание»
-        // заводит контроллер, FieldsChanged ниже перестраивает панель и открывает блок на нём.
+        // «Добавить описание» из крошки нижнего блока — тем же путем: поле с ролью «Описание»
+        // заводит контроллер, FieldsChanged ниже перестраивает панель и открывает блок на нем.
         RecordPanel.AddDescriptionRequested   += (_, _)          => ConstructorModule.CreateDescriptionFieldFromPanel();
         // Обратная синхронизация: правка ячейки в таблице → обновить открытую панель записи,
         // если это та же запись (значения свойств, имя и описание перечитываются из БД).
@@ -361,14 +361,14 @@ public partial class MainWindow : Window
         };
 
         // Toggle правой панели записи из навбара коллекции.
-        // Если запись ранее была открыта (_lastOpened есть) — переоткрываем её;
-        // иначе берём первую запись текущей коллекции (на первом запуске
-        // _lastOpened ещё null, но коллекция уже выбрана).
+        // Если запись ранее была открыта (_lastOpened есть) — переоткрываем ее;
+        // иначе берем первую запись текущей коллекции (на первом запуске
+        // _lastOpened еще null, но коллекция уже выбрана).
         ConstructorModule.RecordPanelToggled += (_, isOpen) =>
         {
             if (isOpen)
             {
-                // Переоткрываем ИМЕННО ту запись и в ТОЙ базе, что была открыта (межбазовую — в её
+                // Переоткрываем ИМЕННО ту запись и в ТОЙ базе, что была открыта (межбазовую — в ее
                 // БД); если открывать нечего — первая запись текущей коллекции (DbId=0).
                 var last = _lastOpened
                            ?? (FirstRecordIdOfCurrentCollection() is int f
@@ -399,15 +399,15 @@ public partial class MainWindow : Window
             _changes.SetForeground(false);
         };
 
-        // Уровень масштабирования: применяем сохранённый и реагируем на изменения из настроек.
+        // Уровень масштабирования: применяем сохраненный и реагируем на изменения из настроек.
         ApplyScale(Scaling.Current);
         Scaling.ScaleChanged += ApplyScale;
         Closed += (_, _) => Scaling.ScaleChanged -= ApplyScale;
 
         // Автообновление: тихая проверка после открытия окна (уже показанное окно —
-        // владелец модалки «Обновить/Отмена»). Проверка папки идёт в фоне, UI не блокирует.
+        // владелец модалки «Обновить/Отмена»). Проверка папки идет в фоне, UI не блокирует.
         // В фоне (окно неактивно) частота проверки чужих правок снижается.
-        // Активация окна = пользователь «увидел» уведомления → гасим значок-счётчик.
+        // Активация окна = пользователь «увидел» уведомления → гасим значок-счетчик.
         Activated += (_, _) =>
         {
             _changes.SetForeground(true);
@@ -416,7 +416,7 @@ public partial class MainWindow : Window
 
         // ВНИМАНИЕ: Opened приходит не только на старте. В фоновом режиме «крестик» скрывает
         // окно (Hide), а возврат из трея — это снова Window.Show(), который заново поднимает
-        // Opened. Поэтому всё здесь обязано быть идемпотентным: очередь монтирования сама
+        // Opened. Поэтому все здесь обязано быть идемпотентным: очередь монтирования сама
         // отсеивает уже смонтированные/ждущие БД (MountQueue.Enqueue), мониторы просто
         // переставляют период таймера, служба уведомлений выходит на повторном Start, а
         // автопроверка обновления держит флаг _updateChecked.
@@ -433,7 +433,7 @@ public partial class MainWindow : Window
 
             // Автообновление: проверяем сразу — окно показано (в том числе при старте из
             // автозапуска) и может быть владельцем модалки «Обновить/Отмена». Со скрытым
-            // окном ShowDialog упал бы, поэтому StartUpdateAsync перед модалкой всё равно
+            // окном ShowDialog упал бы, поэтому StartUpdateAsync перед модалкой все равно
             // поднимает окно: его могли убрать в трей, пока шла проверка сетевой папки.
             if (AppSettings.LoadAutoUpdate() && !_updateChecked)
                 await CheckUpdatesOnceAsync();
@@ -445,7 +445,7 @@ public partial class MainWindow : Window
         {
             // Фоновый режим: нажатие на «крестик» окна не завершает приложение, а СКРЫВАЕТ его
             // (служба уведомлений и трей продолжают работать). Явный выход (трей «Выход», ⌘Q/OS
-            // shutdown) идёт с другим CloseReason и проходит дальше. Без созданного значка окно
+            // shutdown) идет с другим CloseReason и проходит дальше. Без созданного значка окно
             // не прячем — возвращать его будет нечем (см. BackgroundBehavior).
             if (e.CloseReason == WindowCloseReason.WindowClosing
                 && BackgroundBehavior.ShouldHideOnClose(_backgroundEnabled, _explicitQuit, _tray is not null))
@@ -469,7 +469,7 @@ public partial class MainWindow : Window
             e.Cancel = true;
             var ok = await new ConfirmDialog(
                 $"База данных «{busy.Name}» сейчас обновляется ({busy.Text}). " +
-                "Можно выйти: прогресс сохранён, обновление продолжится с этого места " +
+                "Можно выйти: прогресс сохранен, обновление продолжится с этого места " +
                 "при следующем запуске.", "Выйти")
                 .ShowDialog<bool>(this);
             if (ok)
@@ -487,7 +487,7 @@ public partial class MainWindow : Window
         };
     }
 
-    // Выход уже подтверждён диалогом «база обновляется» — повторно не спрашиваем.
+    // Выход уже подтвержден диалогом «база обновляется» — повторно не спрашиваем.
     private bool _closeConfirmed;
 
     // Масштаб всего интерфейса: LayoutTransform на корне — содержимое перекомпоновывается в
@@ -509,7 +509,7 @@ public partial class MainWindow : Window
             if (ctrl.ContextMenu is { IsOpen: true } cm)
                 cm.Close();
 
-        // Flyout фильтра/сортировки в таблице — он живёт отдельным popup.
+        // Flyout фильтра/сортировки в таблице — он живет отдельным popup.
         foreach (var table in controls.OfType<ConstructorDb.TableView>())
             table.CloseTransientPopups();
     }
@@ -549,14 +549,14 @@ public partial class MainWindow : Window
             _ =>
                 $"База данных «{st.Name}» {st.Text}. Приложение периодически пытается " +
                 "переподключиться — как только файл снова станет доступен, база откроется сама. " +
-                "Можно также подключить её заново вручную в настройках («Управление базой данных»).",
+                "Можно также подключить ее заново вручную в настройках («Управление базой данных»).",
         };
         await ConfirmDialog.Info(text).ShowDialog(this);
     }
 
     // Потеря смонтированной БД на ходу (сервер выключился, файл удалили): зеркало
-    // отключения из настроек, но запись реестра остаётся — монитор будет ретраить,
-    // при возврате файла база оживёт сама (очередь → Completed → SyncMountedToUi).
+    // отключения из настроек, но запись реестра остается — монитор будет ретраить,
+    // при возврате файла база оживет сама (очередь → Completed → SyncMountedToUi).
     private void OnDatabaseLost(int dbId, string reason)
     {
         var db = _workspace.Get(dbId);
@@ -633,7 +633,7 @@ public partial class MainWindow : Window
         else if (_activeModule == "tasks")
             TasksModule.SetActiveIds(TasksSidebar.GetActiveIds());
 
-        // Открытая панель записи могла показывать изменённую запись — перечитать значения.
+        // Открытая панель записи могла показывать измененную запись — перечитать значения.
         if (_recordPanelLogicalOpen && _currentConstructorDbId == dbId)
             RecordPanel.ReloadFromDb();
     }
@@ -660,10 +660,10 @@ public partial class MainWindow : Window
 
     // Источник событий для службы уведомлений: события со стартом в окне [from, to) по всем
     // допущенным БД (то же, что показывает календарь: activeIds=null → все видимые поля-даты,
-    // без учёта временных галок сайдбара). Зовётся из ФОНОВОГО потока (NotificationService.
+    // без учета временных галок сайдбара). Зовется из ФОНОВОГО потока (NotificationService.
     // TickBackground), поэтому читает КАЖДУЮ БД на свежем подключении
     // (GetCalendarRecordsByRangeIsolated), а не общий однопоточный контекст. GrantedDbs()
-    // безопасен вне UI-потока: Workspace.Mounted отдаёт снимок под локом.
+    // безопасен вне UI-потока: Workspace.Mounted отдает снимок под локом.
     private IReadOnlyList<Core.Models.CalendarRecord> CollectDueEvents(DateTime from, DateTime to)
     {
         var list = new List<Core.Models.CalendarRecord>();
@@ -783,7 +783,7 @@ public partial class MainWindow : Window
 
     // Пересобрать боковые панели и обновить набор БД календаря после монтирования/
     // размонтирования/получения допуска. Немонтированные БД очереди показываются
-    // заглушками со статусом во всех трёх сайдбарах.
+    // заглушками со статусом во всех трех сайдбарах.
     private void SyncMountedToUi()
     {
         HookPermissionEvents();
@@ -841,7 +841,7 @@ public partial class MainWindow : Window
         if (_recordPanelLogicalOpen && _currentConstructorDbId == dbId) RecordPanel.ReloadFromDb();
     }
 
-    // Клик по запертой базе в сайдбаре: с паролем — диалог ввода (верный пароль даёт
+    // Клик по запертой базе в сайдбаре: с паролем — диалог ввода (верный пароль дает
     // допуск сразу), без пароля — пояснение про подтверждение администратором (запрос
     // на доступ уже создан при монтировании).
     private async Task RequestDatabaseUnlock(int dbId)
@@ -876,7 +876,7 @@ public partial class MainWindow : Window
         SettingsModule.IsVisible   = module == "settings";
         ExtensionsModule.IsVisible = module == "extensions";
         ProfileModule.IsVisible    = module == "profile";
-        // Видимость ConstructorModule зависит ещё и от _collectionOpen — её ставит ApplyColumns.
+        // Видимость ConstructorModule зависит еще и от _collectionOpen — ее ставит ApplyColumns.
 
         if (module == "calendar")
         {
@@ -925,7 +925,7 @@ public partial class MainWindow : Window
             ExtensionsModule.ShowExtension(ExtensionsSidebar.SelectedKey);
         }
 
-        // Сайдбары мета-разделов и задач видны только в своём режиме.
+        // Сайдбары мета-разделов и задач видны только в своем режиме.
         if (module != "tasks")      TasksSidebar.IsVisible      = false;
         if (module != "settings")   SettingsSidebar.IsVisible   = false;
         if (module != "extensions") ExtensionsSidebar.IsVisible = false;
@@ -954,13 +954,13 @@ public partial class MainWindow : Window
         ApplyColumns();
     }
 
-    // Запоминаем последнюю ширину сайдбара, чтобы вернуть её при повторном открытии
+    // Запоминаем последнюю ширину сайдбара, чтобы вернуть ее при повторном открытии
     private double _lastSidebarWidth = 220;
 
     private const double SidebarMin = 180;
     private const double SidebarMax = 500;
 
-    // Единая точка раскладки трёх колонок (сайдбар | контент | запись) и обеих ручек
+    // Единая точка раскладки трех колонок (сайдбар | контент | запись) и обеих ручек
     // ресайза. Вызывается при любом изменении состояния панелей. Колонки Grid сами
     // учитывают ширину открытого сайдбара: контент/запись растягиваются на остаток.
     //
@@ -1073,8 +1073,8 @@ public partial class MainWindow : Window
     private bool _recordPanelLogicalOpen;
     // Последняя открытая запись — нужна toggle-кнопке в навбаре коллекции,
     // чтобы повторно открыть ту же запись после закрытия панели.
-    // Последняя открытая в панели запись — ВМЕСТЕ с её базой (DbId=0 — текущая). База обязательна:
-    // переоткрытие по toggle навбара иначе теряло бы её и искало межбазовую запись в текущей БД.
+    // Последняя открытая в панели запись — ВМЕСТЕ с ее базой (DbId=0 — текущая). База обязательна:
+    // переоткрытие по toggle навбара иначе теряло бы ее и искало межбазовую запись в текущей БД.
     private (int DbId, int RecordId)? _lastOpened;
 
     private int? FirstRecordIdOfCurrentCollection()
@@ -1088,7 +1088,7 @@ public partial class MainWindow : Window
     private void OpenRecordPanel(int recordId) => OpenRecordPanel(0, recordId);
 
     // dbId>0 — межбазовый переход (по чипу связи на запись в ДРУГОЙ .db): панель открывается из
-    // репозитория ЦЕЛЕВОЙ БД (её схема/правки), активную коллекцию НЕ переключаем — панель
+    // репозитория ЦЕЛЕВОЙ БД (ее схема/правки), активную коллекцию НЕ переключаем — панель
     // самодостаточна. dbId=0 — обычный переход в текущей БД.
     private void OpenRecordPanel(int dbId, int recordId)
     {
@@ -1096,12 +1096,12 @@ public partial class MainWindow : Window
         if (repo is null)
         {
             // Раньше — молчаливый return: клик по «→» выглядел как «кнопка не работает».
-            Notify("База связанной записи недоступна — открыть её нельзя.");
+            Notify("База связанной записи недоступна — открыть ее нельзя.");
             return;
         }
 
-        // Коллекцию берём У САМОЙ ЗАПИСИ (переход по чипу связи открывает запись ДРУГОЙ
-        // коллекции — панель должна показать её собственную схему полей).
+        // Коллекцию берем У САМОЙ ЗАПИСИ (переход по чипу связи открывает запись ДРУГОЙ
+        // коллекции — панель должна показать ее собственную схему полей).
         var ownCollectionId = repo.GetRecord(recordId)?.CollectionId;
 
         // МЕЖБАЗОВЫЙ переход к несуществующей записи фолбэка иметь НЕ МОЖЕТ: id активной коллекции
@@ -1116,7 +1116,7 @@ public partial class MainWindow : Window
         var collectionId = ownCollectionId ?? ConstructorModule.CurrentCollectionId;
         if (collectionId is null) return;
 
-        // dbId прокидываем в панель: её внутрибазовые связи должны резолвиться в базе ПОКАЗЫВАЕМОЙ
+        // dbId прокидываем в панель: ее внутрибазовые связи должны резолвиться в базе ПОКАЗЫВАЕМОЙ
         // записи, а не в активной (панель могла быть открыта межбазовым переходом).
         RecordPanel.Show(repo, recordId, collectionId.Value, dbId);
         _recordPanelLogicalOpen = true;
@@ -1144,7 +1144,7 @@ public partial class MainWindow : Window
     }
 
     // Скрытие/показ центрального блока коллекции — кнопка в навбаре записи.
-    // Панель записи при этом остаётся открытой (кнопка живёт внутри неё).
+    // Панель записи при этом остается открытой (кнопка живет внутри нее).
     private void ApplyConstructorContentVisibility(bool isOpen)
     {
         _collectionOpen = isOpen;

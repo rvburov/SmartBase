@@ -19,7 +19,7 @@ public partial class FooterConstructor : UserControl
         NextPageBtn.Click    += (_, _) => NextPageClicked?.Invoke(this, EventArgs.Empty);
     }
 
-    /// <summary>Обновить счётчик записей.</summary>
+    /// <summary>Обновить счетчик записей.</summary>
     public void SetCount(int count) => CountLabel.Text = $"Всего: {count}";
 
     /// <summary>Обновить индикатор страниц и активность кнопок навигации.</summary>

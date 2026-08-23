@@ -37,7 +37,7 @@ public static class Toast
 
         var flyout = new Flyout
         {
-            // Всплывашка рендерится вне зума приложения — контент в зум-обёртке.
+            // Всплывашка рендерится вне зума приложения — контент в зум-обертке.
             Content = WindowZoom.WrapPopupContent(content),
             Placement = placement,
             ShowMode = FlyoutShowMode.Transient,   // не забирает фокус

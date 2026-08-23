@@ -8,7 +8,7 @@ namespace SmartBase.Tests.Extensions.PdfAnalyzer;
 ///
 /// Тест стоит первым намеренно. Сквозные тесты движка целиком опираются на этот генератор, и
 /// если писатель однажды перестанет отдавать читаемый документ (обновление пакета, смена API),
-/// упадёт один понятный тест здесь, а не два десятка непонятных в PdfAnalyzerRunTests.
+/// упадет один понятный тест здесь, а не два десятка непонятных в PdfAnalyzerRunTests.
 /// </summary>
 public sealed class PdfStandSmokeTests : IDisposable
 {
@@ -36,7 +36,7 @@ public sealed class PdfStandSmokeTests : IDisposable
     [Fact]
     public void Page_count_matches_the_stand()
     {
-        var path = Path.Combine(_root, "трёхстраничный.pdf");
+        var path = Path.Combine(_root, "трехстраничный.pdf");
         PdfStand.Write(path, PdfStand.A4, PdfStand.A3, PdfStand.A0);
 
         using var doc = PdfDocument.Open(path);
@@ -45,7 +45,7 @@ public sealed class PdfStandSmokeTests : IDisposable
     }
 
     /// <summary>Размеры доезжают до документа с точностью, которой хватает распознаванию
-    /// форматов (допуск движка — 30 мм, здесь проверяем куда жёстче).</summary>
+    /// форматов (допуск движка — 30 мм, здесь проверяем куда жестче).</summary>
     [Fact]
     public void Page_size_survives_the_round_trip()
     {

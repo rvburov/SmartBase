@@ -58,7 +58,7 @@ public sealed record NumberFormat(
 /// <summary>Разбор/применение формата числа (<see cref="NumberFormat"/>).</summary>
 public static class NumberFormatValue
 {
-    // Неразрывный пробел для группировки разрядов — не переносится и не «съедается» вёрсткой.
+    // Неразрывный пробел для группировки разрядов — не переносится и не «съедается» версткой.
     private const string GroupSep = " ";
 
     /// <summary>Ключ формата (<see cref="NumberFormat.Kind"/>) → строка ConfigJson и обратно.</summary>
@@ -133,7 +133,7 @@ public static class NumberFormatValue
     };
 
     /// <summary>Показ значения по формату. Пусто → пусто; нечисловое (после смены типа) → как есть;
-    /// «Обычное число» → сырой ввод с приведённым десятичным разделителем (цифры сохраняются).</summary>
+    /// «Обычное число» → сырой ввод с приведенным десятичным разделителем (цифры сохраняются).</summary>
     public static string Format(string? raw, NumberFormat fmt)
     {
         var s = raw ?? "";

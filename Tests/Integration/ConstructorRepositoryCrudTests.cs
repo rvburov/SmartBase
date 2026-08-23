@@ -5,7 +5,7 @@ namespace SmartBase.Tests.Integration;
 
 /// <summary>
 /// Базовый CRUD конструктора БД на временной SQLite: группы, коллекции, поля, записи,
-/// значения. Проверяет присвоение Id, проверки уникальности имён и каскадное удаление.
+/// значения. Проверяет присвоение Id, проверки уникальности имен и каскадное удаление.
 /// </summary>
 public sealed class ConstructorRepositoryCrudTests
 {
@@ -167,14 +167,14 @@ public sealed class ConstructorRepositoryCrudTests
 
         repo.DeleteCollection(col.Id!.Value);
 
-        // FK ON DELETE CASCADE: ни записей, ни значений, ни полей не остаётся.
+        // FK ON DELETE CASCADE: ни записей, ни значений, ни полей не остается.
         Assert.DoesNotContain(db.Context.DbRecords, r => r.CollectionId == col.Id!.Value);
         Assert.DoesNotContain(db.Context.DbFieldValues, v => v.RecordId == rec.Id!.Value);
         Assert.DoesNotContain(db.Context.DbFields, f => f.CollectionId == col.Id!.Value);
     }
 
-    // Регресс: после каскадного удаления общий контекст мог держать «фантомную» строку (её уже нет
-    // в БД). Повторное её удаление даёт «ожидалась 1 строка, затронуто 0» → DbUpdateConcurrencyException,
+    // Регресс: после каскадного удаления общий контекст мог держать «фантомную» строку (ее уже нет
+    // в БД). Повторное ее удаление дает «ожидалась 1 строка, затронуто 0» → DbUpdateConcurrencyException,
     // и раньше строка ЗАВИСАЛА в трекере, роняя КАЖДЫЙ следующий SaveChanges (в т.ч. несвязанное
     // создание группы) — отсюда всплеск ошибок в диагностике. Теперь SaveChanges сам примиряет фантом.
     [Fact]
@@ -191,7 +191,7 @@ public sealed class ConstructorRepositoryCrudTests
 
         repo.DeleteCollection(col);               // каскад сносит запись в БД; трекер о ней не знает
 
-        // Явно удаляем уже снесённую строку → фантомное Deleted. Примирение внутри SaveChanges: без throw.
+        // Явно удаляем уже снесенную строку → фантомное Deleted. Примирение внутри SaveChanges: без throw.
         ctx.DbRecords.Remove(tracked!);
         Assert.Null(Record.Exception(() => ctx.SaveChanges()));
 

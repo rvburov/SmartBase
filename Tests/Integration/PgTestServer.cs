@@ -19,7 +19,7 @@ public static class PgTestServer
     public const string Database2 = "smartbase2";
 
     /// <summary>Строка подключения Npgsql к указанной базе стенда (начинается с «Host=»,
-    /// что и распознаёт <c>AppDbContext.IsPostgres</c>).</summary>
+    /// что и распознает <c>AppDbContext.IsPostgres</c>).</summary>
     public static string ConnectionString(string database) =>
         $"Host={Host};Port={Port};Username={User};Password={Password};Database={database}";
 

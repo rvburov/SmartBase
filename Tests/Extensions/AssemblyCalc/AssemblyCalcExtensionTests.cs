@@ -9,9 +9,9 @@ namespace SmartBase.Tests.Extensions.AssemblyCalc;
 /// с расширением при удалении.
 ///
 /// Ключ настройки прибит потому, что он часть ХРАНИЛИЩА («ext.assembly-calc.template»
-/// в app.db): переименование молча теряет сохранённый пользователем путь к шаблону.
+/// в app.db): переименование молча теряет сохраненный пользователем путь к шаблону.
 ///
-/// CreateWindow() здесь не зовётся и звать нельзя: Avalonia в тест-хосте не поднята.
+/// CreateWindow() здесь не зовется и звать нельзя: Avalonia в тест-хосте не поднята.
 /// </summary>
 public sealed class AssemblyCalcExtensionTests
 {

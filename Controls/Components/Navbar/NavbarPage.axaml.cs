@@ -17,7 +17,7 @@ public partial class NavbarPage : UserControl
     /// <summary>Нажата кнопка блока коллекции (true — открыть, false — закрыть).</summary>
     public event EventHandler<bool>? CollectionPanelToggled;
 
-    // Гасит TitleChanged на время служебной установки имени (SetTitle), чтобы её не приняли за правку.
+    // Гасит TitleChanged на время служебной установки имени (SetTitle), чтобы ее не приняли за правку.
     private bool _suppressTitleChange;
 
     public NavbarPage()
@@ -77,11 +77,11 @@ public partial class NavbarPage : UserControl
         TitleBox.IsVisible     = false;
         TitleDisplay.IsVisible = true;
         // Шапка — одна строка: показываем первую (TitleText), как и все остальные блоки с
-        // названием записи. Режется только ПОКАЗ — в TitleBox остаётся полный текст, и
+        // названием записи. Режется только ПОКАЗ — в TitleBox остается полный текст, и
         // правка с сохранением идут по нему, ничего не теряя.
         var title = TitleText.FirstLine(TitleBox.Text);
-        // Кисти берём из ресурсов приложения (а не this.FindResource) — ExitTitleEdit зовётся
-        // в т.ч. из конструктора, когда контрол ещё не в дереве и this.FindResource даёт UnsetValue.
+        // Кисти берем из ресурсов приложения (а не this.FindResource) — ExitTitleEdit зовется
+        // в т.ч. из конструктора, когда контрол еще не в дереве и this.FindResource дает UnsetValue.
         if (string.IsNullOrEmpty(title))
         {
             TitleDisplay.Text       = "Без названия";

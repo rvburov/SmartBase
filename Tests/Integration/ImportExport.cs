@@ -63,7 +63,7 @@ public static class ImportExport
             manual || sheetName is not null, sheetName, excludeColumns, noHeader, includeHidden, singleFile);
     }
 
-    /// <summary>Экспорт по заявке (как цикл SidebarTree.RunExport): по юниту создаётся файл,
+    /// <summary>Экспорт по заявке (как цикл SidebarTree.RunExport): по юниту создается файл,
     /// столбцы/строки читаются isolated-методами; ошибка юнита удаляет недописанный файл.</summary>
     public static List<string> Export(ConstructorRepository repo, ExportSpec spec,
         CancellationToken ct = default, Action<long>? onRow = null, List<string>? completed = null)

@@ -5,7 +5,7 @@ namespace SmartBase.Database;
 /// <summary>
 /// Параметры подключения к серверу PostgreSQL (вторая ветка провайдера рядом с файловым SQLite).
 /// Единственное место, где собираются строки подключения Npgsql: благодаря этому
-/// <see cref="IsPostgresConnectionString"/> — надёжный признак «строка подключения, а не путь к файлу»
+/// <see cref="IsPostgresConnectionString"/> — надежный признак «строка подключения, а не путь к файлу»
 /// (пути к файлам БД не содержат «Host=»), и все таймауты/пул задаются в одной точке.
 /// </summary>
 public sealed record PgConnectionInfo(
@@ -43,7 +43,7 @@ public sealed record PgConnectionInfo(
         return b.ConnectionString;
     }
 
-    /// <summary>Отображаемый идентификатор без пароля — идёт в Path записи реестра
+    /// <summary>Отображаемый идентификатор без пароля — идет в Path записи реестра
     /// (дедупликация) и во вторую строку карточки БД в настройках.</summary>
     public string ToDisplayString() => $"postgres://{Host}:{Port}/{Database}";
 

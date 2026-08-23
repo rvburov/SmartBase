@@ -7,7 +7,7 @@ namespace SmartBase.Tests.Integration;
 /// <summary>
 /// Многопользовательская запись в один SQLite-файл (перенос сценария Tests/MultiUserHarness
 /// --contend): два независимых подключения наперегонки пишут одну ячейку. Ожидание —
-/// «последний побеждает», без падений (busy_timeout ждёт чужого писателя, PK-конфликт
+/// «последний побеждает», без падений (busy_timeout ждет чужого писателя, PK-конфликт
 /// превращается в UPDATE), целостность файла сохранена.
 /// </summary>
 public sealed class ContentionTests
@@ -22,7 +22,7 @@ public sealed class ContentionTests
         int recId = rec.Id!.Value, fieldId = field.Id!.Value;
         var path  = db.Path;
 
-        // Каждый писатель — своё подключение (общий контекст однопоточный, поэтому не
+        // Каждый писатель — свое подключение (общий контекст однопоточный, поэтому не
         // используем его из потоков; это и есть модель «двух пользователей»).
         void Writer(string tag)
         {
@@ -44,7 +44,7 @@ public sealed class ContentionTests
         Assert.Single(values);
         Assert.True(values[0].Value.StartsWith('A') || values[0].Value.StartsWith('B'));
 
-        // Файл БД не повреждён.
+        // Файл БД не поврежден.
         var conn = check.Database.GetDbConnection();
         conn.Open();
         using var cmd = conn.CreateCommand();

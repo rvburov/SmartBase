@@ -29,8 +29,8 @@ public static class ColorTools
     private static readonly ConcurrentDictionary<string, IBrush> SolidCache  = new();
 
     /// <summary>
-    /// Приглушённая заливка под текст. ПОЛУПРОЗРАЧНАЯ намеренно: в таблице она ложится
-    /// поверх подсветки наведения и выделения строки/колонки, и прозрачность даёт
+    /// Приглушенная заливка под текст. ПОЛУПРОЗРАЧНАЯ намеренно: в таблице она ложится
+    /// поверх подсветки наведения и выделения строки/колонки, и прозрачность дает
     /// естественное смешение вместо «цвет закрыл выделение». На белом фоне выглядит так же,
     /// как смешивание с белым (BlendWithWhite с тем же alpha).
     /// </summary>
@@ -41,7 +41,7 @@ public static class ColorTools
     public static IBrush? FillStrong(string? hex) =>
         Cached(StrongCache, hex, c => new SolidColorBrush(Color.FromArgb(FillAlphaStrong, c.R, c.G, c.B)));
 
-    /// Цвет текста: затемнённый исходный — на светлой заливке читается, в отличие от самого цвета.
+    /// Цвет текста: затемненный исходный — на светлой заливке читается, в отличие от самого цвета.
     public static IBrush? Text(string? hex) =>
         Cached(TextCache, hex, c => new SolidColorBrush(Darken(c)));
 
@@ -54,7 +54,7 @@ public static class ColorTools
         => Color.FromArgb(c.A, (byte)(c.R * f), (byte)(c.G * f), (byte)(c.B * f));
 
     /// Смешивание с белым фоном: прозрачность «запекается» в цвет, поэтому слои под
-    /// плашкой (линии сетки, чередование) сквозь неё не просвечивают.
+    /// плашкой (линии сетки, чередование) сквозь нее не просвечивают.
     public static Color BlendWithWhite(Color c, byte alpha)
     {
         var a = alpha / 255.0;

@@ -279,7 +279,7 @@ public sealed class XlsxTableWriter : ITableWriter
 
     /// <summary>Минимальный Stylesheet: только два датных формата. Индексы ячейковых стилей:
     /// 0 — дефолт, 1 — дд.мм.гггг (numFmt 164), 2 — дд.мм.гггг чч:мм (numFmt 165).
-    /// Fills обязаны содержать None и Gray125 — Excel иначе считает файл повреждённым.</summary>
+    /// Fills обязаны содержать None и Gray125 — Excel иначе считает файл поврежденным.</summary>
     private static void AddStyles(WorkbookPart wb)
     {
         var styles = wb.AddNewPart<WorkbookStylesPart>();

@@ -5,12 +5,12 @@
     <!--
       Два таргета. Базовый net10.0 — macOS, Linux, тесты и утилиты (Tests/* ссылаются на
       проект и собираются под него). Windows-таргет net10.0-windows10.0.17763 нужен ровно
-      ради нативных тостов: только под ним NuGet отдаёт WinRT-ассеты DesktopNotifications.
+      ради нативных тостов: только под ним NuGet отдает WinRT-ассеты DesktopNotifications.
       Windows (lib/net6.0-windows10.0.17763) и Microsoft.Toolkit.Uwp.Notifications
       (lib/net5.0-windows10.0.17763). Под голым net10.0 подтягивались сборки БЕЗ WinRT, и
       менеджер уведомлений падал с TypeLoadException (ToastNotificationManagerCompat не
       найден) — баннеры на Windows молча не показывались. Windows собирать только вторым
-      таргетом: Scripts/windows-build.sh передаёт -f.
+      таргетом: Scripts/windows-build.sh передает -f.
     -->
     <TargetFrameworks>net10.0;net10.0-windows10.0.17763</TargetFrameworks>
     <!-- Разрешает собирать Windows-таргет на macOS/Linux (ref-паки тянутся с nuget). -->
@@ -42,7 +42,7 @@
       месте. Публичный конструктор без аргументов пришлось бы заводить ровно ради того, чтобы
       его никто не вызывал.
 
-      Рантайм-загрузчиком проект не пользуется: App.Initialize зовёт перегрузку
+      Рантайм-загрузчиком проект не пользуется: App.Initialize зовет перегрузку
       AvaloniaXamlLoader.Load(this) (скомпилированный XAML), а единственный avares://-адрес
       в коде указывает на иконку, а не на разметку. Предупреждение неприменимо целиком.
     -->
@@ -72,15 +72,15 @@
     <PackageReference Include="DocumentFormat.OpenXml"           Version="3.1.1" />
     <PackageReference Include="ExcelDataReader"                  Version="3.7.0" />
     <PackageReference Include="PdfPig"                          Version="0.1.15" />
-    <!-- Диагностическое логирование в отдельную базу logs.db (Serilog + SQLite-приёмник).
+    <!-- Диагностическое логирование в отдельную базу logs.db (Serilog + SQLite-приемник).
          Sinks.SQLite тянет Microsoft.Data.Sqlite, но версия унифицируется вверх до 9.0.1
-         (уже в проекте через EF Core) — нативный SQLite один на всё приложение. -->
+         (уже в проекте через EF Core) — нативный SQLite один на все приложение. -->
     <PackageReference Include="Serilog"                          Version="4.4.0" />
     <PackageReference Include="Serilog.Sinks.SQLite"             Version="7.0.0" />
     <!-- Нативные уведомления с колбэком клика и иконкой приложения для Windows и Linux
          (бэкенды netstandard2.0). macOS реализован своим кодом — Apple-бэкенд библиотеки
          нефункционален (заглушка). Пакет .Avalonia НЕ подключаем: он завязан на Avalonia
-         0.10, у нас 11.2.3 — менеджеры создаём вручную (Program.BuildAvaloniaApp). -->
+         0.10, у нас 11.2.3 — менеджеры создаем вручную (Program.BuildAvaloniaApp). -->
     <PackageReference Include="DesktopNotifications"             Version="1.3.1" />
     <PackageReference Include="DesktopNotifications.Windows"     Version="1.3.1" />
     <PackageReference Include="DesktopNotifications.FreeDesktop" Version="1.3.1" />
@@ -89,7 +89,7 @@
   <!--
     Пины транзитивных зависимостей с известными уязвимостями. Сами по себе в коде не
     используются — прямая ссылка нужна ровно затем, чтобы поднять версию, которую тянет
-    кто-то другой: NuGet берёт наибольшую из затребованных.
+    кто-то другой: NuGet берет наибольшую из затребованных.
 
     Проверять актуальность: «dotnet list package» с ключами vulnerable и include-transitive
     (два дефиса подряд в XML-комментарий вписать нельзя). Когда зависимость обновится сама —
@@ -100,7 +100,7 @@
     <!-- CVE-2025-6965, SQLite до 3.50.2: повреждение памяти. Тянут EF Core Sqlite и
          Serilog.Sinks.SQLite. Уязвимы версии по 2.1.11 включительно. -->
     <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="2.1.12" />
-    <!-- CVE-2021-24112, удалённое выполнение кода при разборе графики. Тянет
+    <!-- CVE-2021-24112, удаленное выполнение кода при разборе графики. Тянет
          Microsoft.Toolkit.Uwp.Notifications (только Windows-таргет). Уязвимы 4.0.0–4.7.1. -->
     <PackageReference Include="System.Drawing.Common" Version="4.7.2" />
     <!-- GHSA-xrw6-gwf8-vvr9: подмена сигналов D-Bus и исчерпание дескрипторов.

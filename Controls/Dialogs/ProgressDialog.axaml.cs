@@ -29,7 +29,7 @@ public partial class ProgressDialog : Window
     }
 
     /// <summary>
-    /// Включить отмену (opt-in; по умолчанию окна прогресса без неё — существующие операции не
+    /// Включить отмену (opt-in; по умолчанию окна прогресса без нее — существующие операции не
     /// меняются). По клику кнопка гаснет, полоса переходит в «Отмена…», колбэк вызывается один
     /// раз (обычно CancellationTokenSource.Cancel). Окно, как и прежде, закрывает только Done() —
     /// вызывающий делает это после отката/очистки.
@@ -41,7 +41,7 @@ public partial class ProgressDialog : Window
     }
 
     /// <summary>Обновить прогресс. fraction — 0..1. Вызывается на UI-потоке (через Progress&lt;T&gt;).
-    /// После нажатия «Отмена» игнорируется (полоса остаётся в «Отмена…»).</summary>
+    /// После нажатия «Отмена» игнорируется (полоса остается в «Отмена…»).</summary>
     public void SetProgress(double fraction, string phase)
     {
         if (_cancelling) return;
@@ -70,7 +70,7 @@ public partial class ProgressDialog : Window
         Close();
     }
 
-    // Пока идёт работа, окно нельзя закрыть вручную (крестиком/Alt+F4).
+    // Пока идет работа, окно нельзя закрыть вручную (крестиком/Alt+F4).
     protected override void OnClosing(WindowClosingEventArgs e)
     {
         if (!_allowClose) e.Cancel = true;

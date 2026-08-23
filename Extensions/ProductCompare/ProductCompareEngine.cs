@@ -7,7 +7,7 @@ namespace SmartBase.Extensions.ProductCompare;
 /// <summary>Ошибка сравнения с дружелюбным текстом — показывается пользователю в статусе окна.</summary>
 public sealed class ProductCompareException(string message) : Exception(message);
 
-/// <summary>Итог сравнения: путь к созданному файлу и счётчики строк.</summary>
+/// <summary>Итог сравнения: путь к созданному файлу и счетчики строк.</summary>
 public sealed record CompareResult(string OutputPath, int OldRows, int NewRows, int TotalRows);
 
 /// <summary>
@@ -17,7 +17,7 @@ public sealed record CompareResult(string OutputPath, int OldRows, int NewRows, 
 /// Алгоритм: строки сопоставляются по <b>иерархическому номеру</b> (столбец 2), уникальность
 /// определяется по <b>обозначению</b> (столбец 11). В шаблон с 6-й строки пишутся старые данные
 /// слева (столбцы 1–5) и новые справа (столбцы 7–11); уникальные в старом — красным, уникальные
-/// в новом — зелёным; стиль ГОСТ (шрифт, границы, выравнивание), макросы шаблона сохраняются.
+/// в новом — зеленым; стиль ГОСТ (шрифт, границы, выравнивание), макросы шаблона сохраняются.
 ///
 /// Логика без UI: окно вызывает <see cref="Run"/>, репортя прогресс и отменяясь по токену.
 /// </summary>
@@ -196,7 +196,7 @@ public static class ProductCompareEngine
     }
 
     // Стиль ГОСТ: шрифт «GOST type A» 12, выравнивание по центру с переносом, тонкие границы,
-    // опциональная заливка (красная/зелёная для уникальных).
+    // опциональная заливка (красная/зеленая для уникальных).
     private static void ApplyGost(IXLCell cell, XLColor? fill)
     {
         var s = cell.Style;

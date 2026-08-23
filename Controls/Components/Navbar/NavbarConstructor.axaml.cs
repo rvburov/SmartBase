@@ -109,7 +109,7 @@ public partial class NavbarConstructor : UserControl
         else
         {
             // Шапка — одна строка: показываем первую строку имени коллекции (TitleText).
-            // Полное имя остаётся в TitleBox — переименование идёт по нему.
+            // Полное имя остается в TitleBox — переименование идет по нему.
             TitleDisplay.Text       = TitleText.FirstLine(_committedTitle);
             TitleDisplay.Foreground = (IBrush)this.FindResource("BrushPrimaryText")!;
         }

@@ -2,7 +2,7 @@
 namespace SmartBase.Tests.Integration;
 
 /// <summary>
-/// Репозиторий категорий: идемпотентные сиды, CRUD, запрет дублей имён, поиск по имени.
+/// Репозиторий категорий: идемпотентные сиды, CRUD, запрет дублей имен, поиск по имени.
 /// </summary>
 public sealed class CategoryRepositoryTests
 {
@@ -28,7 +28,7 @@ public sealed class CategoryRepositoryTests
         var id = added!.Id!.Value;
         Assert.Equal("Тест", repo.GetByName("Тест")!.Name);
 
-        Assert.Null(repo.Add("Тест", "#000000")); // дубль имени не создаётся
+        Assert.Null(repo.Add("Тест", "#000000")); // дубль имени не создается
 
         Assert.True(repo.Update(id, "Тест2", "#654321"));
         Assert.Null(repo.GetByName("Тест"));

@@ -112,7 +112,7 @@
 
     </StackPanel>
 
-    <!-- Модуль: Настройки — закреплён внизу панели -->
+    <!-- Модуль: Настройки — закреплен внизу панели -->
     <ToggleButton x:Name="SettingsBtn" Classes="icon module"
                   DockPanel.Dock="Bottom"
                   Width="32" Height="32"

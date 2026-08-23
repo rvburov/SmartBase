@@ -13,7 +13,7 @@ namespace SmartBase.Tests.Extensions.Registry;
 /// </summary>
 public sealed class ExtensionSettingsContractTests
 {
-    // Настройка объявлена — значит у неё есть непустые Key и Label: по ним строится поле,
+    // Настройка объявлена — значит у нее есть непустые Key и Label: по ним строится поле,
     // без них строка окажется безымянной.
     [Fact]
     public void Declared_settings_have_key_and_label()

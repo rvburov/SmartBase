@@ -8,7 +8,7 @@ namespace SmartBase.Tests.Unit;
 /// Виртуальный список отвечает на вопрос «что стоит в строке N», не материализуя соседей, —
 /// вся его правильность держится на этой арифметике. Ошибка здесь не падает: она молча
 /// показывает заголовок вместо карточки или теряет последнюю задачу коллекции. Поэтому границы
-/// групп и свёрнутость проверяются поимённо.
+/// групп и свернутость проверяются поименно.
 /// </summary>
 public sealed class TaskRowMapTests
 {
@@ -26,14 +26,14 @@ public sealed class TaskRowMapTests
         Assert.Equal(-1, map.GroupOf(0));
     }
 
-    /// <summary>Заголовок считается строкой: группа из трёх задач занимает четыре.</summary>
+    /// <summary>Заголовок считается строкой: группа из трех задач занимает четыре.</summary>
     [Fact]
     public void A_group_costs_a_header_plus_its_tasks()
     {
         Assert.Equal(4, Map((3, false)).Count);
     }
 
-    /// <summary>Свёрнутая группа — это ровно заголовок: её карточек не видно.</summary>
+    /// <summary>Свернутая группа — это ровно заголовок: ее карточек не видно.</summary>
     [Fact]
     public void A_collapsed_group_shrinks_to_its_header()
     {
@@ -58,7 +58,7 @@ public sealed class TaskRowMapTests
 
         Assert.Equal(new TaskRowSpan(0, 3), map[0]);   // заголовок + 2
         Assert.Equal(new TaskRowSpan(3, 2), map[1]);   // заголовок + 1
-        Assert.Equal(new TaskRowSpan(5, 1), map[2]);   // свёрнута
+        Assert.Equal(new TaskRowSpan(5, 1), map[2]);   // свернута
         Assert.Equal(6, map.Count);
     }
 
@@ -74,7 +74,7 @@ public sealed class TaskRowMapTests
         Assert.Equal((0, TaskRowKind.Task,    1), map.Resolve(2));
     }
 
-    /// <summary>Последняя строка группы — задача, а не что-то ещё. На этой границе и живёт
+    /// <summary>Последняя строка группы — задача, а не что-то еще. На этой границе и живет
     /// классическая ошибка на единицу.</summary>
     [Fact]
     public void The_last_row_of_a_group_is_a_task()

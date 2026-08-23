@@ -9,7 +9,7 @@ using SmartBase.Database.Repositories;
 
 namespace SmartBase.Controls.Dialogs;
 
-// Record.FieldId — выбранное поле-дата (куда кладётся дата события). Контроллер при
+// Record.FieldId — выбранное поле-дата (куда кладется дата события). Контроллер при
 // изменении сравнивает его с прежним полем и при смене переносит дату (очищает старое).
 public record RecordDialogResult(CalendarRecord? Record, bool Deleted = false);
 
@@ -26,7 +26,7 @@ public partial class RecordDialog : Window
     // ── Календарь-режим ───────────────────────────────────────────────────────
     private readonly CalendarRecord? _editRecord;
     private readonly List<(string Name, int? Id, string Color)> _collections = [];
-    // Смонтированные БД и выбранная цель (выбор перенесён сюда из отдельного окна).
+    // Смонтированные БД и выбранная цель (выбор перенесен сюда из отдельного окна).
     private readonly List<(int DbId, string Name, ConstructorRepository Repo)> _databases = [];
     private int _selectedDbId;
     // Поля-даты выбранной коллекции (для списка «Дата события» при 2+ датах).
@@ -63,7 +63,7 @@ public partial class RecordDialog : Window
             // при наличии). Межбазовые входящие из других баз здесь не проверяем (окну не передан DbId).
             if (_repository.HasIncomingLinks([rid], 0))
             {
-                var warn = new ConfirmDialog("Удалить запись? На неё ссылаются связи — они будут удалены.");
+                var warn = new ConfirmDialog("Удалить запись? На нее ссылаются связи — они будут удалены.");
                 if (await warn.ShowDialog<bool>(this) != true) return;
             }
             _repository.DeleteRecord(rid);
@@ -153,7 +153,7 @@ public partial class RecordDialog : Window
         Deactivated += (_, _) => ClosePopups();
         Closing     += (_, _) => ClosePopups();
 
-        // Список «Дата события» зависит от выбранной коллекции — обновляем при её смене
+        // Список «Дата события» зависит от выбранной коллекции — обновляем при ее смене
         // (смена БД тоже сюда приводит: LoadCollections сбрасывает выбор коллекции).
         CollectionCombo.SelectionChanged += (_, _) => UpdateEventDateField();
         UpdateEventDateField();
@@ -164,7 +164,7 @@ public partial class RecordDialog : Window
     // Список «Дата записи»: показываем всегда. Перечисляет видимые в календаре поля-даты
     // коллекции (IsCalStart) — куда положить дату этого события. По умолчанию: при изменении —
     // поле самого события, при создании — первое доступное. Если видимых полей-дат нет —
-    // список пуст, и при сохранении дата ляжет в системное «Дата» (создаётся автоматически).
+    // список пуст, и при сохранении дата ляжет в системное «Дата» (создается автоматически).
     private void UpdateEventDateField()
     {
         var idx   = CollectionCombo.SelectedIndex;
@@ -206,7 +206,7 @@ public partial class RecordDialog : Window
             _collections.Add((c.Name, c.Id, c.Color ?? "#8E8E93"));
 
         // Пункт списка — одна строка (TitleText): многострочное имя коллекции растянуло бы
-        // строку выпадающего списка. Выбор идёт по индексу, поэтому показ можно резать.
+        // строку выпадающего списка. Выбор идет по индексу, поэтому показ можно резать.
         CollectionCombo.ItemsSource   = _collections.Select(c => TitleText.FirstLine(c.Name)).ToList();
         CollectionCombo.SelectedIndex = 0;
     }
@@ -324,7 +324,7 @@ public partial class RecordDialog : Window
                     ((Components.MultiSelectBox)input).SetStorage(val);
                     break;
                 case "user":
-                    // Существующая запись показывает СВОЁ значение (в т.ч. пустое или имя
+                    // Существующая запись показывает СВОЕ значение (в т.ч. пустое или имя
                     // пользователя, которого уже нет в базе, — добавляем его в опции сырым).
                     var ucb  = (ComboBox)input;
                     var opts = ucb.ItemsSource as List<string> ?? [];
@@ -394,7 +394,7 @@ public partial class RecordDialog : Window
         EndTimeField.ClosePopup();
     }
 
-    // Восстанавливает позицию окна после пересчёта высоты (SizeToContent),
+    // Восстанавливает позицию окна после пересчета высоты (SizeToContent),
     // чтобы левый-верхний угол не сдвигался при переключении «Весь день».
     private void KeepWindowPosition(PixelPoint pos)
     {
@@ -483,7 +483,7 @@ public partial class RecordDialog : Window
         var colIdx = CollectionCombo.SelectedIndex;
         var colId  = colIdx >= 0 ? _collections[colIdx].Id : null;
 
-        // Поле-дата, куда положить дату события. Если есть видимые поля-даты — берём выбранное;
+        // Поле-дата, куда положить дату события. Если есть видимые поля-даты — берем выбранное;
         // если их нет — 0 (репозиторий положит дату в системное «Дата», создав его).
         var chosenFieldId = 0;
         if (_eventDateFields.Count > 0)

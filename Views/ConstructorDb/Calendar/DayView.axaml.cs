@@ -14,7 +14,7 @@ namespace SmartBase.Views.ConstructorDb.Calendar;
 public partial class DayView : UserControl
 {
     // Размеры/веса шрифта — из токенов Typography.axaml (резолв ресурса в рантайме).
-    // Свежий размер из Application.Resources — меняется живьём при изменении FontScale.
+    // Свежий размер из Application.Resources — меняется живьем при изменении FontScale.
     private static double FontSizeBase =>
         (double)Application.Current!.FindResource("FontSizeBase")!;
 
@@ -349,7 +349,7 @@ public partial class DayView : UserControl
                 dayEntryLayouts.Add((entry, topHandle, bottomHandle));
 
                 // Контекстное меню по правому клику. Перед открытием выделяем
-                // событие (если оно ещё не в наборе) — как в режимах «Месяц»/«Неделя».
+                // событие (если оно еще не в наборе) — как в режимах «Месяц»/«Неделя».
                 btn.ContextMenu = _BuildEventContextMenu(entry);
                 btn.AddHandler(PointerPressedEvent, (_, pe) =>
                 {
@@ -531,7 +531,7 @@ public partial class DayView : UserControl
             : pos.Y - (entry.StartMin + 2);
 
         // Визуальный отклик на press — только для обычного клика по невыделенному
-        // (для плавного drag). С Shift всё выделение/toggle делается на release,
+        // (для плавного drag). С Shift все выделение/toggle делается на release,
         // иначе press+release дважды переключают набор и он «мигает».
         var additive = e.KeyModifiers.HasFlag(KeyModifiers.Shift);
         if (!additive && !_selections.ContainsKey(entry.Ev))
@@ -1130,7 +1130,7 @@ public partial class DayView : UserControl
     // полоски уже нечитаемо узкие, а день-гигант (сетке приходят первые 2000 записей, и все
     // пересекаются) давал 2000 под-колонок = тысячи субпиксельных контролов и подвисание UI на
     // КАЖДУЮ перерисовку (открытие дня, создание/удаление/перенос/растяжение). Колонки заполняются
-    // по времени равномерно — видна выборка событий по всему дню; смотреть всё — в «Расписании».
+    // по времени равномерно — видна выборка событий по всему дню; смотреть все — в «Расписании».
     private const int MaxEventColumns = 12;
 
     private static List<List<CalendarRecord>> GroupOverlapping(List<CalendarRecord> events)

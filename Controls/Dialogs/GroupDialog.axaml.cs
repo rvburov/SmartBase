@@ -13,7 +13,7 @@ public partial class GroupDialog : Window
     private readonly IReadOnlyList<DbOption> _dbs;
     private List<(string Label, int? Id)> _groups = [];
 
-    // Исходная БД группы и её id — чтобы в пределах своей БД исключать собственную ветку
+    // Исходная БД группы и ее id — чтобы в пределах своей БД исключать собственную ветку
     // из «Расположения» (нельзя вложить группу в себя/потомка). При переносе в другую БД
     // такого ограничения нет.
     private readonly int  _originalDbId;
@@ -57,7 +57,7 @@ public partial class GroupDialog : Window
 
     private void RebuildLocation(int? selectParentId)
     {
-        // Ветку группы исключаем только в её собственной БД; при переносе — все группы доступны.
+        // Ветку группы исключаем только в ее собственной БД; при переносе — все группы доступны.
         var exclude = CurrentDbId == _originalDbId && _excludeSubtreeRootId is int ex
             ? new HashSet<int> { ex } : null;
         _groups = GroupLocationOptions.Build(CurrentRepo.GetAllGroups(), excludeSubtreeRoots: exclude);
@@ -105,7 +105,7 @@ public partial class GroupDialog : Window
         KeepWindowPosition(pos);
     }
 
-    // Держим позицию окна при пересчёте высоты (SizeToContent), чтобы оно не «прыгало».
+    // Держим позицию окна при пересчете высоты (SizeToContent), чтобы оно не «прыгало».
     private void KeepWindowPosition(PixelPoint pos)
     {
         void Restore(object? _, EventArgs __)

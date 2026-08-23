@@ -6,7 +6,7 @@ namespace SmartBase.Controls.Components;
 
 // Иконки типов свойств (lucide, сетка 24×24) — единый источник для диалога
 // создания/изменения свойства и заголовков колонок таблицы.
-// Геометрия берётся из общего словаря Assets/Styles/Icons.axaml.
+// Геометрия берется из общего словаря Assets/Styles/Icons.axaml.
 public static class FieldTypeIcons
 {
     private static Geometry? Icon(string key) =>

@@ -9,7 +9,7 @@ namespace SmartBase.Notifications;
 ///
 /// Правило отбора: событие «наступило», если его <see cref="CalendarRecord.StartDt"/>
 /// попадает в окно <c>(watermark, now]</c>. Источник событий (GetCalendarRecordsByRange)
-/// сознательно ОТДАЁТ ЛИШНЕЕ (буфер многодневных ±62 дня), поэтому окончательную точную
+/// сознательно ОТДАЕТ ЛИШНЕЕ (буфер многодневных ±62 дня), поэтому окончательную точную
 /// отсечку по StartDt делаем здесь. Метка всегда двигается в <paramref name="now"/> —
 /// даже если ничего не наступило, — чтобы одно и то же событие не показать дважды.
 /// </summary>
@@ -27,13 +27,13 @@ public static class NotificationScheduler
     public sealed record Decision(IReadOnlyList<Banner> Banners, int FiredCount, DateTime NewWatermark);
 
     /// <param name="candidates">Кандидаты из источника (могут выходить за окно — отфильтруем).</param>
-    /// <param name="watermark">Нижняя (исключающая) граница окна: до неё уже показано.</param>
+    /// <param name="watermark">Нижняя (исключающая) граница окна: до нее уже показано.</param>
     /// <param name="now">Верхняя (включающая) граница окна — «сейчас».</param>
     /// <param name="maxBanners">Порог: больше — вместо N плашек одна сводка «Пропущено…».</param>
     public static Decision Decide(IReadOnlyList<CalendarRecord> candidates,
                                   DateTime watermark, DateTime now, int maxBanners)
     {
-        // Метка не идёт назад (защита от рассинхронизации часов), но окно не пустеет,
+        // Метка не идет назад (защита от рассинхронизации часов), но окно не пустеет,
         // если now == watermark: тогда наступивших нет и показывать нечего.
         var newWatermark = now > watermark ? now : watermark;
 

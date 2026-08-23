@@ -5,13 +5,13 @@ using SmartBase.Core.Models;
 namespace SmartBase.Core.Exporters.TableWriters;
 
 /// <summary>
-/// JSON: массив объектов, UTF-8 без отступов (на 10 млн строк отступы — +30–50 % объёма).
+/// JSON: массив объектов, UTF-8 без отступов (на 10 млн строк отступы — +30–50 % объема).
 /// Ключи — заголовки колонок (пустые → «Колонка N», дубликаты → «Имя (2)»); колонка
-/// названия уходит своим именем (дефолт «Название») — импорт находит её первой, круг
+/// названия уходит своим именем (дефолт «Название») — импорт находит ее первой, круг
 /// сходится. Значения типизированы: number → число, checkbox → true/false, date —
 /// ISO-канон хранения (лосслесс круг через DateValue.TryParseStorage), остальное — строки.
 /// Encoder — UnsafeRelaxedJsonEscaping, иначе кириллица превращается в \uXXXX.
-/// Flush раз в 500 строк обязателен: Utf8JsonWriter копит ВСЁ записанное до Flush
+/// Flush раз в 500 строк обязателен: Utf8JsonWriter копит ВСЕ записанное до Flush
 /// (без него память O(n)).
 /// </summary>
 public sealed class JsonTableWriter : ITableWriter

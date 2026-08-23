@@ -10,8 +10,8 @@ namespace SmartBase.Core.Importers.TableSources;
 /// листа может включать пустые отформатированные хвосты (заливка/рамки на весь столбец), и без
 /// обрезки импорт раздувается лишними столбцами и строками. Исключения ручного режима
 /// (листы/строки/столбцы) не участвуют ни в данных, ни в границах; заголовки читаются даже из
-/// исключённой строки (исключения действуют на данные). Проход 2 переоткрывает файл — надёжнее,
-/// чем Reset() (особенно на .xlsb), и стоит дёшево.
+/// исключенной строки (исключения действуют на данные). Проход 2 переоткрывает файл — надежнее,
+/// чем Reset() (особенно на .xlsb), и стоит дешево.
 /// </summary>
 public sealed class ExcelTableSource(string path, string? sheetName, int headerRow, int dataRow, int titleCol,
     RangeSet excludeRows, RangeSet excludeCols, HashSet<string> excludeSheets) : ITableSource
@@ -20,7 +20,7 @@ public sealed class ExcelTableSource(string path, string? sheetName, int headerR
     private List<int> _fieldCols = [];
 
     /// <summary>Статистика одного прохода по листу (общая для одиночного и merge-источников).
-    /// DataRows — число неисключённых строк в диапазоне данных (для процентов записи).</summary>
+    /// DataRows — число неисключенных строк в диапазоне данных (для процентов записи).</summary>
     internal sealed record SheetStat(long LastRow, int FirstCol, int LastCol, string[]? Headers,
                                      long DataRows, long EmptyTitles);
 
@@ -90,7 +90,7 @@ public sealed class ExcelTableSource(string path, string? sheetName, int headerR
             Log.Warning(ex, "Не удалось открыть файл Excel для импорта");
             throw new ImportException(
                 "Не удалось открыть файл. Проверьте, что это корректный файл Excel " +
-                "(.xlsx, .xlsm, .xlsb, .xls) и он не повреждён.");
+                "(.xlsx, .xlsm, .xlsb, .xls) и он не поврежден.");
         }
     }
 
@@ -98,7 +98,7 @@ public sealed class ExcelTableSource(string path, string? sheetName, int headerR
     {
         if (string.IsNullOrWhiteSpace(sheetName))
         {
-            // Первый НЕисключённый лист (даже скрытый).
+            // Первый НЕисключенный лист (даже скрытый).
             while (excludeSheets.Contains(reader.Name?.Trim() ?? ""))
                 if (!reader.NextResult())
                     throw new ImportException("Все листы исключены — нет данных для импорта.");
@@ -113,10 +113,10 @@ public sealed class ExcelTableSource(string path, string? sheetName, int headerR
                 throw new ImportException($"Лист «{target}» не найден.");
     }
 
-    // Полный проход по текущему листу: границы по непустым НЕисключённым ячейкам, заголовки
-    // (даже из исключённой строки — исключения действуют на данные), счётчики строк данных и
+    // Полный проход по текущему листу: границы по непустым НЕисключенным ячейкам, заголовки
+    // (даже из исключенной строки — исключения действуют на данные), счетчики строк данных и
     // пустых названий в границах непустого хвоста (строки после последней непустой не считаются).
-    // Прогресс — по позиции файла (приблизительно, только вперёд).
+    // Прогресс — по позиции файла (приблизительно, только вперед).
     internal static SheetStat ScanSheet(IExcelDataReader reader, int headerRow, int dataRow, int titleCol,
         RangeSet excludeRows, RangeSet excludeCols, FileStream fs, IProgress<double>? progress, CancellationToken ct)
     {

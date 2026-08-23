@@ -31,18 +31,18 @@ namespace SmartBase.Views.Settings;
 /// </summary>
 public partial class SettingsView
 {
-    // Пункт оглавления: строка панели «Содержание» + секция текста, к которой она ведёт.
+    // Пункт оглавления: строка панели «Содержание» + секция текста, к которой она ведет.
     private sealed record GuideAnchor(Border Row, Control Section);
 
     private readonly List<GuideAnchor> _guideAnchors = [];
     private bool _guideBuilt;
 
-    // Кеш Y-координат секций внутри GuideHost — чтобы не мерить всё дерево на каждый
+    // Кеш Y-координат секций внутри GuideHost — чтобы не мерить все дерево на каждый
     // тик прокрутки. Сбрасывается, когда меняется раскладка (зум, размер шрифта, ширина).
     private double[]? _guideOffsets;
     private GuideAnchor? _guideActive;
 
-    // Ширина панели «Содержание». В отличие от «Деталей» журнала панель открыта всё время,
+    // Ширина панели «Содержание». В отличие от «Деталей» журнала панель открыта все время,
     // пока выбран раздел, поэтому ширина помнится между запусками (AppSettings).
     private double _guideTocWidth = AppSettings.GuideTocWidthDefault;
 
@@ -57,7 +57,7 @@ public partial class SettingsView
         ApplyMarkdownStyles();
 
         // Проход 1: читаем документы. Заголовки нужны заранее — их подставляют вместо
-        // wiki-ссылок [[имя]], а ссылка может смотреть на документ, который идёт ниже.
+        // wiki-ссылок [[имя]], а ссылка может смотреть на документ, который идет ниже.
         var pages = new List<(GuidePage Page, string Text, string Title)>();
         foreach (var page in GuideRegistry.All)
         {
@@ -69,7 +69,7 @@ public partial class SettingsView
         // Проход 2: режем на секции и рендерим. Заголовки нумеруются сквозь весь текст
         // («2. Базы, группы…», «2.3. Боковая панель») — по справочнику проще ориентироваться
         // и ссылаться на место. Номера считаются из порядка реестра, а не пишутся руками
-        // в markdown: иначе перестановка документа заставляла бы перенумеровывать всё.
+        // в markdown: иначе перестановка документа заставляла бы перенумеровывать все.
         var docNo = 0;
         foreach (var (page, text, title) in pages)
         {
@@ -113,7 +113,7 @@ public partial class SettingsView
         };
 
         // Пока раскладки нет, координаты секций не измерить — подсвечиваем первый пункт,
-        // он и так соответствует началу текста; дальше подсветку ведёт прокрутка.
+        // он и так соответствует началу текста; дальше подсветку ведет прокрутка.
         if (_guideAnchors.Count > 0) SelectGuideRow(_guideAnchors[0]);
         Dispatcher.UIThread.Post(UpdateGuideActive, DispatcherPriority.Loaded);
     }
@@ -136,7 +136,7 @@ public partial class SettingsView
 
     /// <summary>
     /// Наш вид markdown (Assets/Styles/Markdown.axaml) вешается ОДИН раз на общий хост
-    /// секций: стили родителя действуют на всё поддерево, а один экземпляр
+    /// секций: стили родителя действуют на все поддерево, а один экземпляр
     /// <see cref="Styles"/> может принадлежать только одному владельцу — раздать его
     /// сотне контролов нельзя («The Styles already has a owner»).
     /// </summary>
@@ -155,14 +155,14 @@ public partial class SettingsView
     private Control RenderMarkdown(string markdown) =>
         // Своя прокрутка контролу не нужна и не мешает: внутри вертикального StackPanel
         // высота не ограничена, поэтому он разворачивается на весь текст, а прокруткой
-        // заведует общий ScrollViewer раздела. Отключить её свойством нельзя — у типа
+        // заведует общий ScrollViewer раздела. Отключить ее свойством нельзя — у типа
         // таких свойств нет (это не ScrollViewer, вопреки имени).
         new MarkdownScrollViewer
         {
             // Пустой набор ВМЕСТО встроенной темы пакета (MarkdownStyleGithubLike и
-            // прочие): она живёт в самом контроле и потому сильнее наших стилей —
-            // заголовки шли её размером, таблицы рисовались чёрными рамками с «зеброй».
-            // Убрали её — и вид задают стили хоста (см. ApplyMarkdownStyles).
+            // прочие): она живет в самом контроле и потому сильнее наших стилей —
+            // заголовки шли ее размером, таблицы рисовались черными рамками с «зеброй».
+            // Убрали ее — и вид задают стили хоста (см. ApplyMarkdownStyles).
             MarkdownStyle    = new Styles(),
             Markdown         = markdown,
             SelectionEnabled = true,   // текст инструкции можно выделить и скопировать
@@ -187,15 +187,15 @@ public partial class SettingsView
 
     /// <summary>
     /// Заменяет вики-ссылки <c>[[имя]]</c> (соглашение документации, см. docs/README.md)
-    /// названием документа в кавычках-ёлочках: «см. „Календарь“». На GitHub такая ссылка
+    /// названием документа в кавычках-елочках: «см. „Календарь“». На GitHub такая ссылка
     /// кликается, а в программе читалась бы мусором — двойные скобки с латинским именем
-    /// файла. Ёлочки, а не жирный: так во всей инструкции оформлены названия разделов
+    /// файла. Елочки, а не жирный: так во всей инструкции оформлены названия разделов
     /// и кнопок, ссылка на документ ничем не выделяется из этого ряда.
     ///
     /// Настоящей ссылкой не делаем: подставить свою команду перехода в Markdown.Avalonia
     /// 11.0.3 нечем (у контрола нет доступного <c>HyperlinkCommand</c>), а ссылка, которая
-    /// никуда не ведёт, хуже простого текста. Переход по документам даёт панель «Содержание».
-    /// Неизвестное имя остаётся текстом как есть.
+    /// никуда не ведет, хуже простого текста. Переход по документам дает панель «Содержание».
+    /// Неизвестное имя остается текстом как есть.
     /// </summary>
     private static string ResolveWikiLinks(string md, IReadOnlyDictionary<string, string> titles) =>
         WikiLinkPattern().Replace(md, m =>
@@ -288,7 +288,7 @@ public partial class SettingsView
             Text         = text,
             TextWrapping = TextWrapping.Wrap,
         };
-        // Заголовок документа — жирный, как строка-раздел; размер не задаём: глобальный
+        // Заголовок документа — жирный, как строка-раздел; размер не задаем: глобальный
         // стиль TextBlock уже сидит на динамическом FontSizeBase (живой «Размер шрифта»).
         if (!sub && this.TryFindResource("FontWeightBold", out var weight) && weight is FontWeight fw)
             label.FontWeight = fw;
@@ -331,7 +331,7 @@ public partial class SettingsView
         EnsureGuideOffsets();
         if (_guideOffsets is not { Length: > 0 } offsets) return;
 
-        // Секция считается текущей, пока её начало не ушло ниже верхней кромки с запасом:
+        // Секция считается текущей, пока ее начало не ушло ниже верхней кромки с запасом:
         // так подсветка переключается ровно тогда, когда заголовок доезжает до верха.
         var y     = GuidePanel.Offset.Y + 24;
         var index = 0;
@@ -348,19 +348,19 @@ public partial class SettingsView
         var offsets = new double[_guideAnchors.Count];
         for (var i = 0; i < _guideAnchors.Count; i++)
         {
-            if (OffsetOf(_guideAnchors[i].Section) is not double y) return;   // раскладки ещё нет
+            if (OffsetOf(_guideAnchors[i].Section) is not double y) return;   // раскладки еще нет
             offsets[i] = y;
         }
         _guideOffsets = offsets;
     }
 
-    /// <summary>Положение секции в координатах прокрутки раздела (null — раскладки ещё нет).</summary>
+    /// <summary>Положение секции в координатах прокрутки раздела (null — раскладки еще нет).</summary>
     private double? OffsetOf(Control section) =>
         section.TranslatePoint(new Point(0, 0), GuidePanel) is { } p
             ? GuidePanel.Offset.Y + p.Y
             : null;
 
-    // Плавная прокрутка — тот же приём, что в календаре (ListView.AnimateScroll):
+    // Плавная прокрутка — тот же прием, что в календаре (ListView.AnimateScroll):
     // easeOutCubic за 300 мс, шаг таймера 16 мс.
     private void AnimateGuideScroll(double targetY)
     {
@@ -422,7 +422,7 @@ public partial class SettingsView
     {
         if (!_guideGripDragging) return;
 
-        // Панель справа: движение вправо её сужает.
+        // Панель справа: движение вправо ее сужает.
         var dx = e.GetPosition(this).X - _guideGripStartX;
         _guideTocWidth = Math.Clamp(_guideGripStartWidth - dx,
                                     AppSettings.GuideTocWidthMin, AppSettings.GuideTocWidthMax);

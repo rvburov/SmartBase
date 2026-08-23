@@ -14,18 +14,18 @@ public sealed class TimeCollectException(string message) : Exception(message);
 /// <summary>
 /// Строка свода. <paramref name="RNum"/> — номер строки исходного листа «Расшифровка» МИНУС
 /// единица: ровно это число читает макрос шаблона (<c>row_num = Cells(row, COL_RNUM) + 1</c>),
-/// когда открывает расчёт по ссылке «&gt;&gt;&gt;».
+/// когда открывает расчет по ссылке «&gt;&gt;&gt;».
 /// </summary>
-/// <param name="Norm">Трудоёмкость числом; <c>null</c> — в ячейке был нечисловой текст
-/// (он сохранён в <paramref name="NormText"/> и пишется в свод как есть).</param>
+/// <param name="Norm">Трудоемкость числом; <c>null</c> — в ячейке был нечисловой текст
+/// (он сохранен в <paramref name="NormText"/> и пишется в свод как есть).</param>
 public sealed record TimeRow(
     int RNum, string Name, string Deno, double? Norm, string NormText,
     DateTime Date, string Efio, string Proj, string SourcePath);
 
-/// <summary>Разобранное имя файла расчёта «Проект_ГГГГ.ММ.ДД_ФИО.xlsm».</summary>
+/// <summary>Разобранное имя файла расчета «Проект_ГГГГ.ММ.ДД_ФИО.xlsm».</summary>
 public sealed record CalcFileName(string Proj, DateTime Date, string Efio);
 
-/// <summary>Что случилось с файлом расчёта. <see cref="Ok"/> в журнал не попадает.</summary>
+/// <summary>Что случилось с файлом расчета. <see cref="Ok"/> в журнал не попадает.</summary>
 public enum FileStatus
 {
     /// <summary>Прочитан без замечаний.</summary>
@@ -36,13 +36,13 @@ public enum FileStatus
     Locked,
     /// <summary>Нет прав доступа.</summary>
     NoAccess,
-    /// <summary>Повреждён или не является файлом Excel.</summary>
+    /// <summary>Поврежден или не является файлом Excel.</summary>
     Corrupted,
     /// <summary>Нет листа «Расшифровка».</summary>
     NoSheet,
     /// <summary>Имя не по образцу «Проект_ГГГГ.ММ.ДД_ФИО.xlsm».</summary>
     BadName,
-    /// <summary>Лист есть, но подходящих строк в нём нет.</summary>
+    /// <summary>Лист есть, но подходящих строк в нем нет.</summary>
     NoRows,
 }
 
@@ -50,15 +50,15 @@ public enum FileStatus
 public sealed record FileIssue(string FileName, FileStatus Status, string Message);
 
 /// <summary>Прогресс прогона. <paramref name="Fraction"/> <c>null</c> — фаза без известного
-/// объёма работы (полоса переводится в бегущий режим, чтобы не выглядеть застывшей).</summary>
+/// объема работы (полоса переводится в бегущий режим, чтобы не выглядеть застывшей).</summary>
 public sealed record CollectProgress(double? Fraction, string Phase, string Info);
 
-/// <summary>Итог: путь к созданному файлу, счётчики и список замечаний для журнала.</summary>
+/// <summary>Итог: путь к созданному файлу, счетчики и список замечаний для журнала.</summary>
 public sealed record CollectResult(
     string OutputPath, int TotalFiles, int ProcessedFiles, int RowCount, IReadOnlyList<FileIssue> Issues);
 
 /// <summary>
-/// Сборка сводной таблицы трудоёмкости — логика без UI (порт <c>TimeCollector.main</c>).
+/// Сборка сводной таблицы трудоемкости — логика без UI (порт <c>TimeCollector.main</c>).
 /// Окно вызывает <see cref="Run"/>, репортя прогресс и отменяясь по токену.
 ///
 /// Отличия от исходного макроса — намеренные, перечислены в
@@ -86,14 +86,14 @@ public static class TimeCollectorEngine
         string folder, bool recursive, string templatePath, string outputDir,
         IProgress<CollectProgress>? progress, CancellationToken ct)
     {
-        if (!Directory.Exists(folder))    throw new TimeCollectException("Папка с расчётами не найдена.");
+        if (!Directory.Exists(folder))    throw new TimeCollectException("Папка с расчетами не найдена.");
         if (!File.Exists(templatePath))   throw new TimeCollectException("Файл-шаблон не найден.");
         if (!Directory.Exists(outputDir)) throw new TimeCollectException("Папка для сохранения не найдена.");
 
         progress?.Report(new CollectProgress(null, "Поиск файлов…", folder));
         var files = FindCalcFiles(folder, recursive);
         if (files.Count == 0)
-            throw new TimeCollectException("В папке не найдено файлов расчётов (*.xlsm).");
+            throw new TimeCollectException("В папке не найдено файлов расчетов (*.xlsm).");
 
         var results = ReadAll(files, progress, ct);
 
@@ -109,7 +109,7 @@ public static class TimeCollectorEngine
             processed++;
         }
 
-        // Собирать нечего — в текст ошибки идут первые причины: без них остаётся гадать,
+        // Собирать нечего — в текст ошибки идут первые причины: без них остается гадать,
         // папка не та или файлы не читаются (полный разбор — в журнале окна).
         if (rows.Count == 0)
         {
@@ -133,7 +133,7 @@ public static class TimeCollectorEngine
         TimeTableWriter.Fill(wb, ws, ordered, paints, hidden, progress, ct, ClearTo, WriteTo, FormatTo);
 
         progress?.Report(new CollectProgress(null, "Сохранение…", ""));
-        var outputPath = FreePath(outputDir, $"Трудоёмкость ({DateTime.Now:yyyy-MM-dd_HH-mm})", ".xlsm");
+        var outputPath = FreePath(outputDir, $"Трудоемкость ({DateTime.Now:yyyy-MM-dd_HH-mm})", ".xlsm");
         try { wb.SaveAs(outputPath); }
         catch (Exception ex)
         {
@@ -148,7 +148,7 @@ public static class TimeCollectorEngine
 
     // ── Обход папки ───────────────────────────────────────────────────────────
 
-    /// <summary>Файлы расчётов в папке: только <c>*.xlsm</c> и только имена БЕЗ «$» — то же
+    /// <summary>Файлы расчетов в папке: только <c>*.xlsm</c> и только имена БЕЗ «$» — то же
     /// условие, что в макросе (оно же отсекает служебные «~$»-файлы Excel). Скрытые и системные
     /// файлы пропускаются, недоступные подпапки обход не роняют.</summary>
     public static List<string> FindCalcFiles(string root, bool recursive)
@@ -175,7 +175,7 @@ public static class TimeCollectorEngine
 
     // ── Параллельное чтение ───────────────────────────────────────────────────
 
-    // Результат по каждому файлу кладётся в массив ПО ИНДЕКСУ файла: порядок сборки свода
+    // Результат по каждому файлу кладется в массив ПО ИНДЕКСУ файла: порядок сборки свода
     // и журнала не зависит от того, какой поток закончил раньше.
     private static CalcFileReader.FileReadResult?[] ReadAll(
         List<string> files, IProgress<CollectProgress>? progress, CancellationToken ct)
@@ -216,20 +216,20 @@ public static class TimeCollectorEngine
         var info     = $"{done} из {total} · {file}";
         if (issues > 0) info += $" · с замечаниями: {issues}";
 
-        // EtaEstimator хранит сглаженное среднее и зовётся из четырёх потоков — под замком.
+        // EtaEstimator хранит сглаженное среднее и зовется из четырех потоков — под замком.
         string? left;
         lock (eta) left = eta.Update(fraction, clock.Elapsed);
         if (left is not null) info += $" · {left}";
 
-        progress.Report(new CollectProgress(ReadTo * fraction, "Чтение расчётов", info));
+        progress.Report(new CollectProgress(ReadTo * fraction, "Чтение расчетов", info));
     }
 
     // ── Разбор имени файла ────────────────────────────────────────────────────
 
     /// <summary>
     /// «Проект_ГГГГ.ММ.ДД_ФИО.xlsm» → проект, дата, ФИО. Разбор ровно как в макросе
-    /// (<c>TimeCollector.GetData</c>): проект — до ПЕРВОГО подчёркивания, дата — между первым и
-    /// вторым, ФИО — после ПОСЛЕДНЕГО подчёркивания до последней точки. Не разобралось —
+    /// (<c>TimeCollector.GetData</c>): проект — до ПЕРВОГО подчеркивания, дата — между первым и
+    /// вторым, ФИО — после ПОСЛЕДНЕГО подчеркивания до последней точки. Не разобралось —
     /// <c>null</c>: макрос в этом месте падал на преобразовании даты и ронял весь прогон.
     /// </summary>
     public static CalcFileName? ParseFileName(string fileName)
@@ -264,7 +264,7 @@ public static class TimeCollectorEngine
 
     /// <summary>
     /// Порядок свода: обозначение ↑, дата ↓, наименование ↑ — те же три ключа, что у
-    /// <c>ApplyFastFormatting</c>. Текст сравнивается как в Excel (регистронезависимо, с учётом
+    /// <c>ApplyFastFormatting</c>. Текст сравнивается как в Excel (регистронезависимо, с учетом
     /// языка), в отличие от группировки при раскраске: там равенство побайтовое, как у
     /// оператора «=» в VBA.
     /// </summary>
@@ -279,23 +279,23 @@ public static class TimeCollectorEngine
     /// <summary>Заливка строки свода.</summary>
     public enum RowFill
     {
-        /// <summary>Светло-жёлтый — «чётная» группа обозначения (ColorIndex 19 в макросе).</summary>
+        /// <summary>Светло-желтый — «четная» группа обозначения (ColorIndex 19 в макросе).</summary>
         Yellow,
-        /// <summary>Белый — «нечётная» группа и строки без обозначения (ColorIndex 2).</summary>
+        /// <summary>Белый — «нечетная» группа и строки без обозначения (ColorIndex 2).</summary>
         White,
-        /// <summary>Красный — расхождение трудоёмкости при совпавших проекте и дате (ColorIndex 3).</summary>
+        /// <summary>Красный — расхождение трудоемкости при совпавших проекте и дате (ColorIndex 3).</summary>
         Red,
     }
 
     /// <summary>План раскраски одной строки: заливка строки целиком и отдельная пометка ячейки
-    /// «Тр-ть» (расхождение при РАЗНЫХ проекте или дате красит только её).</summary>
+    /// «Тр-ть» (расхождение при РАЗНЫХ проекте или дате красит только ее).</summary>
     public sealed record RowPaint(RowFill Fill, bool NormRed);
 
     /// <summary>
     /// План раскраски свода — порт <c>SameProductsSameColor</c> + <c>SameNormColor</c>:
     /// <list type="bullet">
     /// <item>цвет чередуется на каждой смене обозначения; строка без обозначения — белая;</item>
-    /// <item>у соседей с ОДИНАКОВЫМ обозначением и РАЗНОЙ трудоёмкостью: совпали проект и дата —
+    /// <item>у соседей с ОДИНАКОВЫМ обозначением и РАЗНОЙ трудоемкостью: совпали проект и дата —
     /// обе строки красные, иначе красными становятся только их ячейки «Тр-ть».</item>
     /// </list>
     /// Красный только добавляется и никогда не снимается, поэтому итог считается за один проход.
@@ -340,7 +340,7 @@ public static class TimeCollectorEngine
         return plan;
     }
 
-    // Нечисловая трудоёмкость в макросе не переживала CDbl и шла в сравнение нулём.
+    // Нечисловая трудоемкость в макросе не переживала CDbl и шла в сравнение нулем.
     private static double Norm(TimeRow row) => row.Norm ?? 0;
 
     private static void MarkNormDiff(IReadOnlyList<TimeRow> rows, int i, RowFill[] fills, bool[] normRed)
@@ -385,8 +385,8 @@ public static class TimeCollectorEngine
 
     /// <summary>
     /// Свободное имя в папке результата: занято — добавляется « (2)», « (3)»… Имя содержит
-    /// время с точностью до минуты, а прогон на сетевой папке идёт минутами: второй запуск
-    /// в ту же минуту не должен молча затереть первый свод (тот же приём, что у имени
+    /// время с точностью до минуты, а прогон на сетевой папке идет минутами: второй запуск
+    /// в ту же минуту не должен молча затереть первый свод (тот же прием, что у имени
     /// коллекции в «Документах в коллекцию»).
     /// </summary>
     private static string FreePath(string dir, string baseName, string extension)

@@ -13,7 +13,7 @@
 
         <!-- Фиксированная шапка: заголовок панели + шкала (дни месяца или месяцы года).
              Нижняя линия — отдельный separator (не бордер контейнера с текстом):
-             чёткая при любом зуме. -->
+             четкая при любом зуме. -->
         <Grid Grid.Row="0">
             <Grid ColumnDefinitions="230,*" Background="{StaticResource BrushSecondaryBg}">
                 <Grid Grid.Column="0" ColumnDefinitions="*,Auto,Auto">
@@ -24,7 +24,7 @@
                                Margin="12,0,4,0" />
                     <!-- Масштаб таймлайна — лесенка месяц → год → 5 лет → 10 лет:
                          «−» мельче, «+» крупнее (кнопки в стиле «+» навбара); крайняя
-                         кнопка гаснет, тултип называет масштаб, куда ведёт нажатие. -->
+                         кнопка гаснет, тултип называет масштаб, куда ведет нажатие. -->
                     <Button Grid.Column="1" x:Name="ScaleMinusBtn" Classes="navbtn"
                             Width="28" Height="28" Margin="0,0,4,0"
                             VerticalAlignment="Center"
@@ -68,13 +68,13 @@
              шапка шкалы и заголовок панели стоят. Горизонтального скролла нет: период
              всегда растянут на всю ширину (dayW = ширина / дней периода). -->
         <Grid Grid.Row="1">
-            <!-- Своей полосы нет (Hidden): её роль играет ScrollBar в колонке 1, стоящий
+            <!-- Своей полосы нет (Hidden): ее роль играет ScrollBar в колонке 1, стоящий
                  и на строке шапки, — полоса начинается сверху, как в таблице. -->
             <ScrollViewer x:Name="RowsScroll" HorizontalScrollBarVisibility="Disabled"
                           VerticalScrollBarVisibility="Hidden">
                 <Grid ColumnDefinitions="230,*" VerticalAlignment="Top">
                     <Canvas Grid.Column="0" x:Name="LeftRowsCanvas" ClipToBounds="True" />
-                    <!-- Приёмник указателя таймлайна: слои под ним не хит-тестятся,
+                    <!-- Приемник указателя таймлайна: слои под ним не хит-тестятся,
                          попадание в бары ищется вручную по хит-листу (как в Неделе). -->
                     <Grid Grid.Column="1" x:Name="TimelinePane"
                           Background="Transparent" ClipToBounds="True">

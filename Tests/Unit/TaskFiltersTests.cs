@@ -6,10 +6,10 @@ namespace SmartBase.Tests.Unit;
 
 /// <summary>
 /// Быстрые фильтры раздела «Задачи» (Views/Tasks/TaskFilters.cs) — выпадающий список в
-/// навбаре со счётчиками («Просрочено 1»).
+/// навбаре со счетчиками («Просрочено 1»).
 ///
 /// Определения обязаны совпадать с тем, что показывает сама карточка: у выполненной задачи
-/// чипа просрочки нет, значит и в «Просрочено» она попадать не должна — иначе счётчик
+/// чипа просрочки нет, значит и в «Просрочено» она попадать не должна — иначе счетчик
 /// спорит со списком, который сам же и открывает.
 /// </summary>
 public sealed class TaskFiltersTests
@@ -36,7 +36,7 @@ public sealed class TaskFiltersTests
     {
         Assert.True(Matches(Task(Now.Date.AddHours(9)), TaskFilterKind.Today));   // утро сегодня
         Assert.True(Matches(Task(Now.Date.AddHours(20)), TaskFilterKind.Today));  // вечер сегодня
-        // Многодневная задача идёт через сегодня — она тоже «на сегодня».
+        // Многодневная задача идет через сегодня — она тоже «на сегодня».
         Assert.True(Matches(Task(Now.Date.AddDays(-2), Now.Date.AddDays(2)), TaskFilterKind.Today));
 
         Assert.False(Matches(Task(Now.Date.AddDays(1)), TaskFilterKind.Today));
@@ -56,7 +56,7 @@ public sealed class TaskFiltersTests
         Assert.False(Matches(Task(), TaskFilterKind.Overdue));                    // без срока
     }
 
-    /// <summary>Выполненная задача не просрочена, сколько бы срок ни истёк — как и в карточке.</summary>
+    /// <summary>Выполненная задача не просрочена, сколько бы срок ни истек — как и в карточке.</summary>
     [Fact]
     public void Finished_task_is_never_overdue()
     {
@@ -98,11 +98,11 @@ public sealed class TaskFiltersTests
         Assert.True(Matches(Task(Now.AddDays(-9), status: ConstructorRepository.TaskStatusDone), TaskFilterKind.All));
     }
 
-    // ── Счётчики ──────────────────────────────────────────────────────────────
+    // ── Счетчики ──────────────────────────────────────────────────────────────
 
     /// <summary>
     /// Одна задача попадает сразу в несколько пунктов (например, моя просроченная — это и
-    /// «Мне назначено», и «Просрочено»): счётчики независимы, а не разбивают набор на части.
+    /// «Мне назначено», и «Просрочено»): счетчики независимы, а не разбивают набор на части.
     /// </summary>
     [Fact]
     public void Counts_cover_every_kind_independently()
@@ -126,8 +126,8 @@ public sealed class TaskFiltersTests
     }
 
     /// <summary>
-    /// Сегодняшняя задача, чьё время уже прошло, считается и «Сегодня», и «Просрочено» —
-    /// ровно как её собственный чип в карточке («Просрочено» появляется по истечении срока,
+    /// Сегодняшняя задача, чье время уже прошло, считается и «Сегодня», и «Просрочено» —
+    /// ровно как ее собственный чип в карточке («Просрочено» появляется по истечении срока,
     /// а не с началом следующего дня).
     /// </summary>
     [Fact]
@@ -139,7 +139,7 @@ public sealed class TaskFiltersTests
         Assert.True(Matches(task, TaskFilterKind.Overdue));
     }
 
-    /// <summary>Пустой набор даёт нули по всем пунктам, а не отсутствующие ключи.</summary>
+    /// <summary>Пустой набор дает нули по всем пунктам, а не отсутствующие ключи.</summary>
     [Fact]
     public void Counts_of_an_empty_set_are_zeroes()
     {

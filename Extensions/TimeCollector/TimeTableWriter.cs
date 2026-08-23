@@ -9,7 +9,7 @@ namespace SmartBase.Extensions.TimeCollector;
 /// Реализация на ClosedXML, как у остальных расширений, работающих с Excel; макросы шаблона
 /// переживают <c>SaveAs</c>.
 ///
-/// ClosedXML держит книгу в памяти целиком, поэтому оформление кладётся диапазонами, а не
+/// ClosedXML держит книгу в памяти целиком, поэтому оформление кладется диапазонами, а не
 /// по ячейкам: на десятках тысяч строк это разница в разы. Прогресс репортится по фазам,
 /// отмена проверяется между ними.
 /// </summary>
@@ -36,11 +36,11 @@ internal static class TimeTableWriter
     // Прогресс постится не на каждую строку: поток сообщений в UI тормозит сильнее записи.
     private const int ProgressEvery = 500;
 
-    // Цвета макроса в RGB: ColorIndex 19 (светло-жёлтый) и ColorIndex 3 (красный).
+    // Цвета макроса в RGB: ColorIndex 19 (светло-желтый) и ColorIndex 3 (красный).
     private static readonly XLColor Yellow = XLColor.FromArgb(255, 255, 204);
     private static readonly XLColor Red    = XLColor.FromArgb(255, 0, 0);
 
-    // Символы, при которых формулу HYPERLINK не собрать: кавычка рвёт строку, скобки — адрес.
+    // Символы, при которых формулу HYPERLINK не собрать: кавычка рвет строку, скобки — адрес.
     private static readonly char[] BadLinkChars = ['"', '[', ']'];
 
     internal static void Fill(
@@ -92,7 +92,7 @@ internal static class TimeTableWriter
         ws.Cell(1, ColLink).Value = "Ссылка";
 
         // Каждая подпись объединена с ячейкой под ней — как в макросе. Колонка A подписи не
-        // получает: она служебная и всё равно скрывается.
+        // получает: она служебная и все равно скрывается.
         for (var col = ColName; col <= ColLink; col++) ws.Range(1, col, 2, col).Merge();
 
         ws.Row(1).Height = 30;
@@ -100,7 +100,7 @@ internal static class TimeTableWriter
         ws.Row(3).Height = 13;
 
         // Границы — как в макросе; выравнивание с переносом добавлено взамен форматирования,
-        // которое снимает ClearSheet (макрос чистил только содержимое шапки, не её вид).
+        // которое снимает ClearSheet (макрос чистил только содержимое шапки, не ее вид).
         var head = ws.Range(1, ColRNum, TopIndent, LastCol);
         head.Style.Border.OutsideBorder = XLBorderStyleValues.Thin;
         head.Style.Border.InsideBorder  = XLBorderStyleValues.Thin;
@@ -145,7 +145,7 @@ internal static class TimeTableWriter
     /// <summary>
     /// Колонка «Ссылка» — оба способа перехода сразу. Текст «&gt;&gt;&gt;» и номер строки в
     /// скрытой колонке A нужны макросу шаблона (<c>WsSelectionChanged</c> → <c>CalculationLink</c>),
-    /// формула <c>HYPERLINK</c> открывает тот же расчёт на той же строке и без макросов.
+    /// формула <c>HYPERLINK</c> открывает тот же расчет на той же строке и без макросов.
     /// </summary>
     private static void WriteLink(IXLCell cell, TimeRow row)
     {
@@ -195,7 +195,7 @@ internal static class TimeTableWriter
         progress?.Report(new CollectProgress(to, "Оформление…", ""));
     }
 
-    // Заливка кладётся непрерывными кусками одного цвета: вызов на каждую строку в ClosedXML
+    // Заливка кладется непрерывными кусками одного цвета: вызов на каждую строку в ClosedXML
     // на десятках тысяч строк стоит заметно дороже одного вызова на всю группу обозначения.
     // Белые куски пропускаем — лист очищен, и «нет заливки» выглядит ровно так же.
     private static void PaintRows(IXLWorksheet ws, TimeCollectorEngine.RowPaint[] paints, int firstRow)

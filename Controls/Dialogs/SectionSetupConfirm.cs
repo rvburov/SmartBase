@@ -14,8 +14,8 @@ namespace SmartBase.Controls.Dialogs;
 /// <see cref="ConstructorRepository.PlanTaskSetup"/>) и показывает, что именно изменится.
 ///
 /// Спрашиваем ТОЛЬКО когда коллекция реально изменится: набор уже размечен — окна нет, запись
-/// создаётся как прежде (иначе окно всплывало бы на каждое событие). «Отмена» = запись не
-/// создаётся и не переносится, коллекция остаётся нетронутой.
+/// создается как прежде (иначе окно всплывало бы на каждое событие). «Отмена» = запись не
+/// создается и не переносится, коллекция остается нетронутой.
 /// </summary>
 public static class SectionSetupConfirm
 {
@@ -25,7 +25,7 @@ public static class SectionSetupConfirm
         collectionId is int cid
             ? Ask(owner, repo, cid, repo.PlanCalendarSetup(cid, preferredDateFieldId),
                   FieldRoleText.SectionCalendar, moving)
-            // Коллекции ещё нет (запись без цели — репозиторий заведёт её сам): спрашивать
+            // Коллекции еще нет (запись без цели — репозиторий заведет ее сам): спрашивать
             // про столбцы новой пустой коллекции не о чем.
             : Task.FromResult(true);
 
@@ -47,14 +47,14 @@ public static class SectionSetupConfirm
 
         var verb = moving ? "перенесена" : "создана";
         var text = new StringBuilder()
-            .Append($"Коллекция «{repo.CollectionName(collectionId)}» ещё не подготовлена ")
+            .Append($"Коллекция «{repo.CollectionName(collectionId)}» еще не подготовлена ")
             .Append($"к разделу «{section}».");
 
         if (plan.FieldsToCreateIfAdopted.Count > 0)
             text.Append("\n\nБудут созданы столбцы:\n")
                 .AppendJoin("\n", plan.FieldsToCreateIfAdopted.Select(n => $"    • «{n}»"));
 
-        // Одноимённые столбцы не дублируем, а подтягиваем: данные из них поедут в раздел —
+        // Одноименные столбцы не дублируем, а подтягиваем: данные из них поедут в раздел —
         // ровно та развилка, которую окно тумблера предлагает при включении раздела.
         if (plan.Candidates.Count > 0)
             text.Append("\n\nСуществующие столбцы станут полями раздела, и данные из них будут подтягиваться туда:\n")

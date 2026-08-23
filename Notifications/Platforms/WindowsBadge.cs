@@ -4,10 +4,10 @@ using System.Runtime.Versioning;
 namespace SmartBase.Notifications.Platforms;
 
 /// <summary>
-/// Windows: значок-счётчик как overlay-иконка на кнопке приложения в панели задач через
+/// Windows: значок-счетчик как overlay-иконка на кнопке приложения в панели задач через
 /// <c>ITaskbarList3.SetOverlayIcon</c> (штатный механизм для неупакованных Win32-приложений).
 /// Саму иконку (красный кружок с числом) рисуем средствами GDI — без сторонних библиотек и
-/// System.Drawing. Хэндл главного окна берётся через переданный провайдер. Всё под
+/// System.Drawing. Хэндл главного окна берется через переданный провайдер. Все под
 /// <c>try/catch</c>: сбой интеропа не должен ломать приложение. Проверять на реальной Windows.
 /// </summary>
 [SupportedOSPlatform("windows")]
@@ -57,12 +57,12 @@ internal sealed class WindowsBadge : IAppBadge
     //
     // Три вещи, без которых кружок выглядит кривым:
     //
-    // 1. РАЗМЕР. Панель задач ждёт overlay-иконку размером с «маленький значок» системы
+    // 1. РАЗМЕР. Панель задач ждет overlay-иконку размером с «маленький значок» системы
     //    (SM_CXSMICON — 16 px при 100 %, больше при масштабировании экрана). Иконку другого
     //    размера шелл ужимает своим быстрым фильтром, и ровный круг превращается в огрызок.
     // 2. СГЛАЖИВАНИЕ. GDI не умеет сглаживать ни Ellipse, ни текст без ClearType. На 16 px
     //    ступеньки видно сразу. Поэтому рисуем в 4 раза крупнее и уменьшаем усреднением —
-    //    доля закрашенных подпикселей и даёт альфу края (у ClearType вместо этого цветная
+    //    доля закрашенных подпикселей и дает альфу края (у ClearType вместо этого цветная
     //    бахрома по краям букв, на прозрачном фоне она выглядит грязно, поэтому он выключен).
     // 3. ЦЕНТР ЧИСЛА. DrawText(DT_VCENTER) центрирует СТРОКУ, у которой снизу запас под
     //    выносные элементы (у «р», «у»), а у цифр их нет — число уезжало вверх. Центрируем
@@ -101,8 +101,8 @@ internal sealed class WindowsBadge : IAppBadge
             SetTextColor(hdc, Rgb(255, 255, 255));
 
             // Круг узкий по краям, поэтому надпись вписываем в горизонтальную хорду: меряем
-            // её и при нужде пересоздаём шрифт мельче. Без этого «9+» вылезает за кружок,
-            // а привязка к длине строки («две цифры — шрифт X») врёт на других шрифтах и DPI.
+            // ее и при нужде пересоздаем шрифт мельче. Без этого «9+» вылезает за кружок,
+            // а привязка к длине строки («две цифры — шрифт X») врет на других шрифтах и DPI.
             var maxWidth = (int)(hi * 0.62);
             if (GetTextExtentPoint32(hdc, txt, txt.Length, out var ext) && ext.cx > maxWidth)
             {
@@ -126,7 +126,7 @@ internal sealed class WindowsBadge : IAppBadge
             Downsample(bigBits, hi, smallBits, sz);
 
             // Маска обязана быть НУЛЕВОЙ: CreateBitmap с null оставляет содержимое
-            // неопределённым, и мусор в ней выгрызает из значка случайные пиксели.
+            // неопределенным, и мусор в ней выгрызает из значка случайные пиксели.
             mask = CreateBitmap(sz, sz, 1, 1, new byte[(sz + 15) / 16 * 2 * sz]);
             var ii = new ICONINFO { fIcon = true, hbmMask = mask, hbmColor = small };
             return CreateIconIndirect(ref ii);
@@ -148,7 +148,7 @@ internal sealed class WindowsBadge : IAppBadge
         CreateFont(height, 0, 0, 0, FwBold, 0, 0, 0, DefaultCharset,
                    0, 0, NonAntialiasedQuality, 0, "Segoe UI");
 
-    // Квадратная 32-битная top-down DIB-секция: рисуем в неё и читаем пиксели напрямую.
+    // Квадратная 32-битная top-down DIB-секция: рисуем в нее и читаем пиксели напрямую.
     private static nint CreateDib(nint hdc, int side, out nint bits)
     {
         var header = new BITMAPINFOHEADER
@@ -162,7 +162,7 @@ internal sealed class WindowsBadge : IAppBadge
     }
 
     // Уменьшение усреднением: доля закрашенных подпикселей становится альфой, их средний
-    // цвет — цветом. Фон (чёрный, GDI оставляет его нетронутым) считается пустым, поэтому
+    // цвет — цветом. Фон (черный, GDI оставляет его нетронутым) считается пустым, поэтому
     // край круга и буквы получают плавную полупрозрачную кромку вместо ступенек.
     private static void Downsample(nint src, int hi, nint dst, int sz)
     {
@@ -221,7 +221,7 @@ internal sealed class WindowsBadge : IAppBadge
     // а ClearType дал бы цветную бахрому по краям цифр на прозрачном фоне.
     private const uint NonAntialiasedQuality = 3;
     private const uint TaCenter = 6, TaBaseline = 24;
-    private const int  SmCxSmIcon = 49;   // ширина «маленького значка» системы (с учётом масштаба)
+    private const int  SmCxSmIcon = 49;   // ширина «маленького значка» системы (с учетом масштаба)
 
     [StructLayout(LayoutKind.Sequential)]
     private struct BITMAPINFOHEADER

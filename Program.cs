@@ -17,7 +17,7 @@ internal sealed class Program
     // флагом. App покажет разовое уведомление, что версия осталась прежней.
     internal static bool UpdateFailed { get; private set; }
 
-    // Хвост версий до 1.0.5: автозапуск с включённым фоновым режимом писал в команду
+    // Хвост версий до 1.0.5: автозапуск с включенным фоновым режимом писал в команду
     // --background, и приложение стартовало со скрытым окном — человек видел, что при входе
     // в систему «ничего не открылось». Теперь автозапуск всегда открывает окно: флаг просто
     // игнорируется, а устаревшую запись переписывает Autostart.Sync (см. App).
@@ -41,7 +41,7 @@ internal sealed class Program
             AppLog.Shutdown();
         };
         // Упавшие fire-and-forget задачи (паттерн `_ = Task.Run(...)`): фиксируем в лог и
-        // помечаем наблюдёнными — иначе финализатор может завершить процесс.
+        // помечаем наблюденными — иначе финализатор может завершить процесс.
         TaskScheduler.UnobservedTaskException += (_, e) =>
         {
             LogCrash("unobserved-task", e.Exception);
@@ -79,7 +79,7 @@ internal sealed class Program
 
             // Диагностический лог в logs.db. Только App-режим: установщику/удалению он не нужен.
             AppLog.Init();
-            // Точка отсчёта сессии: в logs.db всегда есть версия и старт, даже без ошибок.
+            // Точка отсчета сессии: в logs.db всегда есть версия и старт, даже без ошибок.
             // :l — литеральный вывод строк без кавычек (иначе Serilog пишет v"1.0.3").
             Log.Information("Запуск SmartBase v{Version:l} ({OS:l})",
                 AppSettings.AppVersion, System.Runtime.InteropServices.RuntimeInformation.OSDescription);
@@ -98,15 +98,15 @@ internal sealed class Program
         }
         finally
         {
-            // Дописать буфер приёмника при любом выходе (штатном или по исключению).
+            // Дописать буфер приемника при любом выходе (штатном или по исключению).
             // Если Init не вызывали (установщик) — no-op на «тихом» логгере по умолчанию.
             AppLog.Shutdown();
         }
     }
 
     // Дозапись в crash.log (best-effort: сбой логирования не должен маскировать исходную ошибку).
-    // Дублируем в Serilog (logs.db) — но crash.log остаётся независимым резервом: он работает,
-    // даже если Serilog ещё не инициализирован (сбой на старте) или его приёмник недоступен.
+    // Дублируем в Serilog (logs.db) — но crash.log остается независимым резервом: он работает,
+    // даже если Serilog еще не инициализирован (сбой на старте) или его приемник недоступен.
     private static void LogCrash(string source, Exception? ex)
     {
         // На «тихом» логгере по умолчанию (до AppLog.Init) — безопасный no-op.
@@ -126,7 +126,7 @@ internal sealed class Program
 
     // Режим установщика включается аргументом (--install/--uninstall) или именем раздачи
     // «…-Setup»: на Windows/Linux — имя файла бинаря, на macOS — имя `.app`-бандла
-    // (SmartBase-Setup.app, внутренний бинарь остаётся SmartBase). Иначе → приложение.
+    // (SmartBase-Setup.app, внутренний бинарь остается SmartBase). Иначе → приложение.
     private static SetupMode ResolveMode(string[] args)
     {
         if (Array.Exists(args, a => a == "--uninstall")) return SetupMode.Uninstall;
@@ -142,8 +142,8 @@ internal sealed class Program
     }
 
     // Менеджер библиотеки DesktopNotifications для Windows/Linux (баннеры с иконкой приложения
-    // и колбэком клика). macOS его не использует — там свой бэкенд (MacNotifier). Создаётся один
-    // раз на процесс; MainWindow берёт его через фабрику PlatformNotifications.CreateNotifier.
+    // и колбэком клика). macOS его не использует — там свой бэкенд (MacNotifier). Создается один
+    // раз на процесс; MainWindow берет его через фабрику PlatformNotifications.CreateNotifier.
     internal static DesktopNotifications.INotificationManager? NotificationManager { get; private set; }
 
     public static AppBuilder BuildAvaloniaApp()
@@ -155,11 +155,11 @@ internal sealed class Program
                          .LogToTrace();
     }
 
-    // Платформенный менеджер: Windows — WinRT-тосты (нужен ярлык/AUMID, создаётся контекстом),
+    // Платформенный менеджер: Windows — WinRT-тосты (нужен ярлык/AUMID, создается контекстом),
     // Linux — freedesktop D-Bus. macOS/прочее — null (используется MacNotifier / no-op).
     //
-    // Сбой здесь стоит дорого: приложение стартует как ни в чём не бывало, значок-счётчик
-    // растёт, а баннеров нет — и понять это снаружи нечем. Поэтому и удача, и провал попадают
+    // Сбой здесь стоит дорого: приложение стартует как ни в чем не бывало, значок-счетчик
+    // растет, а баннеров нет — и понять это снаружи нечем. Поэтому и удача, и провал попадают
     // в logs.db (AppLog.Init уже отработал выше, в App-режиме). Ровно так пряталась поломка
     // Windows-тостов: под таргетом без WinRT менеджер падал с TypeLoadException, а catch молчал.
     private static DesktopNotifications.INotificationManager? CreateNotificationManager()
@@ -181,14 +181,14 @@ internal sealed class Program
         catch (Exception ex)
         {
             // Нет D-Bus / WinRT / ярлыка — уведомления Windows/Linux показываться не будут
-            // (фабрика вернёт no-op). Приложение стартует как обычно, но след остаётся.
+            // (фабрика вернет no-op). Приложение стартует как обычно, но след остается.
             Log.Warning(ex, "Не удалось создать менеджер нативных уведомлений — баннеры ОС показываться не будут");
             return null;
         }
     }
 
-    // Ждёт выхода старого процесса (--pid), копирует себя поверх --target и запускает
-    // обновлённое приложение заново. Запущенный .exe нельзя перезаписать собой, поэтому
+    // Ждет выхода старого процесса (--pid), копирует себя поверх --target и запускает
+    // обновленное приложение заново. Запущенный .exe нельзя перезаписать собой, поэтому
     // замену делает новый файл, пока старый закрыт.
     private static void ApplyUpdate(string[] args)
     {
@@ -221,14 +221,14 @@ internal sealed class Program
         var replaced = InstallService.ReplaceArtifact(src, target);
         var flag     = replaced ? "" : "--update-failed";
 
-        // Заменён только бинарь, а всё, что установщик создал вокруг него, осталось от прежней
+        // Заменен только бинарь, а все, что установщик создал вокруг него, осталось от прежней
         // сборки: ярлыки, установщик рядом, запись в списке приложений. Из-за этого оболочка
         // продолжала показывать старую иконку — ярлык не менялся, и перечитывать значок ей было
         // незачем. Приводим окружение в соответствие ДО запуска: если запустить сначала, человек
         // увидит новую программу под старой иконкой хотя бы мгновение.
         if (replaced) InstallService.RefreshAfterUpdate(target, src);
 
-        // Запустить обновлённое приложение.
+        // Запустить обновленное приложение.
         try
         {
             if (OperatingSystem.IsMacOS())
@@ -240,7 +240,7 @@ internal sealed class Program
                     UseShellExecute = false,
                 });
             else
-                // На Linux запускаем бинарь напрямую (UseShellExecute=true ушёл бы в xdg-open).
+                // На Linux запускаем бинарь напрямую (UseShellExecute=true ушел бы в xdg-open).
                 Process.Start(new ProcessStartInfo { FileName = target, Arguments = flag, UseShellExecute = OperatingSystem.IsWindows() });
         }
         catch { /* не удалось перезапустить — пользователь откроет вручную */ }

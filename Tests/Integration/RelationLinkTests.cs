@@ -6,9 +6,9 @@ using SmartBase.Database.Repositories;
 namespace SmartBase.Tests.Integration;
 
 /// <summary>
-/// Связи между записями (тип поля «relation»): рёбра в db_record_links, показ чипами (Id+Title),
+/// Связи между записями (тип поля «relation»): ребра в db_record_links, показ чипами (Id+Title),
 /// кардинальность one/many, батч по видимым строкам и FK-каскады (удаление записи-конца/поля
-/// чистит связи). Также — что таблица db_record_links создаётся миграцией (TempDatabase проходит
+/// чистит связи). Также — что таблица db_record_links создается миграцией (TempDatabase проходит
 /// полный путь инициализации приложения).
 /// </summary>
 public sealed class RelationLinkTests
@@ -37,7 +37,7 @@ public sealed class RelationLinkTests
         repo.SetLinks(rel, t, [p2, p1]);   // порядок выбора p2, p1
 
         var links = repo.GetLinks(rel, t);
-        Assert.Equal([(p2, "Инфра"), (p1, "Сайт 2026")], links);   // порядок сохранён, Title резолвится
+        Assert.Equal([(p2, "Инфра"), (p1, "Сайт 2026")], links);   // порядок сохранен, Title резолвится
 
         // Переименование цели сразу отражается (Title не дублируется в связи).
         repo.SetRecordTitle(p1, "Сайт 2027");
@@ -116,7 +116,7 @@ public sealed class RelationLinkTests
         var t  = SampleData.AddRecord(repo, taskCol, "T").Id!.Value;
         repo.SetLinks(rel, t, [p1]);
 
-        repo.DeleteField(rel);   // FK ON DELETE CASCADE (FieldId) чистит все рёбра поля
+        repo.DeleteField(rel);   // FK ON DELETE CASCADE (FieldId) чистит все ребра поля
         Assert.Empty(repo.GetLinkTargetIds(rel, t));
     }
 
@@ -267,7 +267,7 @@ public sealed class RelationLinkTests
 
         repoA.SetLinks(rel.Id!.Value, t, [b2, b1]);   // цели — Id из БД-B
 
-        // Рёбра лежат в БД-A с порядком; TargetDbId=2. Само-ссылку НЕ отсеиваем (b1 может совпасть с t
+        // Ребра лежат в БД-A с порядком; TargetDbId=2. Само-ссылку НЕ отсеиваем (b1 может совпасть с t
         // по Id, но это разные записи в разных БД).
         Assert.Equal([b2, b1], repoA.GetLinkTargetIds(rel.Id!.Value, t));
         Assert.Equal([2], dbA.Context.DbRecordLinks.AsNoTracking().Select(l => l.TargetDbId).Distinct().ToList());
@@ -277,7 +277,7 @@ public sealed class RelationLinkTests
         Assert.Equal("Инфра B", titles[b1]);
         Assert.Equal("Сайт B",  titles[b2]);
 
-        // Удаление записи-источника в БД-A уносит её межбазовые рёбра (FK FromRecordId цел).
+        // Удаление записи-источника в БД-A уносит ее межбазовые ребра (FK FromRecordId цел).
         repoA.DeleteRecord(t);
         Assert.Empty(repoA.GetLinkTargetIds(rel.Id!.Value, t));
     }
@@ -314,9 +314,9 @@ public sealed class RelationLinkTests
         // Сортировка: значение = названия целей из БД-B через разделитель поля.
         var vals = repoA.GetColumnValues(taskA, relId.ToString(), Resolve);
         Assert.Equal("Инфра B",          vals[t1]);
-        Assert.Equal("Инфра B, Сайт B",  vals[t2]);   // порядок рёбер сохранён
+        Assert.Equal("Инфра B, Сайт B",  vals[t2]);   // порядок ребер сохранен
 
-        // Счётчики фильтра: межбазовые названия видны, t3 → «(нет связей)» последним.
+        // Счетчики фильтра: межбазовые названия видны, t3 → «(нет связей)» последним.
         var counts = repoA.GetRelationValueCounts(taskA, relId, Resolve);
         Assert.Equal(("Инфра B", 2), counts.Single(c => c.Value == "Инфра B"));   // t1, t2
         Assert.Equal(("Сайт B",  1), counts.Single(c => c.Value == "Сайт B"));    // t2
@@ -349,7 +349,7 @@ public sealed class RelationLinkTests
         var t1 = SampleData.AddRecord(repoA, taskA, "T1").Id!.Value;
         repoA.SetLinks(rel.Id!.Value, t1, [b1]);
 
-        // Счётчики считаются в фоне на изолированном подключении; Workspace не поднят → путей к БД-B нет.
+        // Счетчики считаются в фоне на изолированном подключении; Workspace не поднят → путей к БД-B нет.
         // Цель обязана деградировать в «(база недоступна)» БЕЗ падения и БЕЗ ухода в RelationDbResolver.RepoFor
         // (общий контекст чужой базы) из фонового потока — иначе нарушилось бы правило «общий контекст — только UI».
         var counts = await repoA.GetColumnCountsAsync(taskA, rel.Id!.Value.ToString());
@@ -398,7 +398,7 @@ public sealed class RelationLinkTests
         var t = SampleData.AddRecord(repoA, taskA, "Задача").Id!.Value;
         repoA.SetLinks(relA.Id!.Value, t, [p1]);
 
-        // Переносим запись t из dbA в новую «Задачи» dbB (создаём недостающие поля).
+        // Переносим запись t из dbA в новую «Задачи» dbB (создаем недостающие поля).
         var taskB = SampleData.AddCollection(repoB, "Задачи").Id!.Value;
         var newIds = repoB.MoveRecordsToCollectionIsolated(dbA.Path, taskA, [t], taskB,
             createMissingFields: true, sourceDbId: 1, targetDbId: 2);
@@ -460,7 +460,7 @@ public sealed class RelationLinkTests
         Assert.Equal([(newT2, 0)], verify.GetLinkEdges(fSelf.Id!.Value, newT1));
     }
 
-    // Переносы, которые рёбра не копируют ВООБЩЕ (PG-путь и ветка группы даже на SQLite), обязаны
+    // Переносы, которые ребра не копируют ВООБЩЕ (PG-путь и ветка группы даже на SQLite), обязаны
     // предупреждать при ЛЮБЫХ связях. Обычная проверка смотрит только ВНЕШНИЕ ВХОДЯЩИЕ и молчит в двух
     // случаях, где связи реально теряются: одни само-связи и ссылки только НАРУЖУ.
     [Fact]
@@ -480,10 +480,10 @@ public sealed class RelationLinkTests
         // ATTACH-путь одиночной коллекции: внешних входящих нет → окна нет, и это ВЕРНО
         // (само-связи переписываются на копию и переезжают).
         Assert.False(RelationDeleteImpact.ForCollectionExternalCrossMove(repo, 1, colC));
-        // Путь без копирования рёбер: предупреждать обязаны.
+        // Путь без копирования ребер: предупреждать обязаны.
         Assert.True(RelationDeleteImpact.ForCrossMoveDroppingAllLinks(repo, 1, [colC]));
 
-        // Вторая дыра: связи только НАРУЖУ. Входящих в D нет вообще, но её рёбра тоже пропадут.
+        // Вторая дыра: связи только НАРУЖУ. Входящих в D нет вообще, но ее ребра тоже пропадут.
         var colD = SampleData.AddCollection(repo, "D").Id!.Value;
         var d1   = SampleData.AddRecord(repo, colD, "d1").Id!.Value;
         var relOut = SampleData.AddField(repo, colD, "Ссылка наружу", "relation", position: 1000);
@@ -501,7 +501,7 @@ public sealed class RelationLinkTests
     }
 
     // Окно «что потеряется» перед переносом записи. Правила ОБЯЗАНЫ совпадать с планом MoveRecordsCore:
-    // свойство без одноимённого поля в цели теряет значения, несовместимая одноимённая связь — рёбра.
+    // свойство без одноименного поля в цели теряет значения, несовместимая одноименная связь — ребра.
     [Fact]
     public void FieldsLostOnMove_reports_missing_fields_and_incompatible_relations()
     {
@@ -523,7 +523,7 @@ public sealed class RelationLinkTests
         tgtRel.ConfigJson = new RelationConfig(projCol, false).ToConfigJson();
         repo.UpdateField(tgtRel);
 
-        // Без создания недостающих: пропадёт «Заметка», связи целы.
+        // Без создания недостающих: пропадет «Заметка», связи целы.
         var (dropped, links) = repo.FieldsLostOnMove(repo, taskCol, archCol, createMissingFields: false, 1, 1);
         Assert.Equal(["Заметка"], dropped);
         Assert.Empty(links);
@@ -533,13 +533,13 @@ public sealed class RelationLinkTests
         Assert.Empty(withCreate.Dropped);
         Assert.Empty(withCreate.LinksDropped);
 
-        // Одноимённая связь смотрит на ДРУГУЮ коллекцию → поле переедет, рёбра нет.
+        // Одноименная связь смотрит на ДРУГУЮ коллекцию → поле переедет, ребра нет.
         tgtRel.ConfigJson = new RelationConfig(otherCol, false).ToConfigJson();
         repo.UpdateField(tgtRel);
         Assert.Equal(["Проект"],
             repo.FieldsLostOnMove(repo, taskCol, archCol, createMissingFields: true, 1, 1).LinksDropped);
 
-        // Одноимённое поле НЕ «Связь» (текст) — тот же исход: рёбра не переносятся.
+        // Одноименное поле НЕ «Связь» (текст) — тот же исход: ребра не переносятся.
         var textCol = SampleData.AddCollection(repo, "Текстовый архив").Id!.Value;
         SampleData.AddField(repo, textCol, "Проект", "text", position: 1000);
         SampleData.AddField(repo, textCol, "Заметка", "text", position: 2000);
@@ -547,7 +547,7 @@ public sealed class RelationLinkTests
             repo.FieldsLostOnMove(repo, taskCol, textCol, createMissingFields: false, 1, 1).LinksDropped);
     }
 
-    // Регресс: МЕЖБАЗОВЫЙ перенос ГРУППЫ. Сами рёбра ветки не копируются (v1), но конфиги полей-связей
+    // Регресс: МЕЖБАЗОВЫЙ перенос ГРУППЫ. Сами ребра ветки не копируются (v1), но конфиги полей-связей
     // раньше уезжали ДОСЛОВНО: TargetDbId=0 + TargetCollectionId из dbA читались в dbB как ссылка на
     // ЛОКАЛЬНУЮ коллекцию с этим id — поле молча показывало ЧУЖИЕ записи. Цель ВНУТРИ ветки должна
     // перемэпиться на новую коллекцию, цель СНАРУЖИ — стать межбазовой на источник.
@@ -598,7 +598,7 @@ public sealed class RelationLinkTests
         Assert.Equal(projA, cProj.TargetCollectionId);
     }
 
-    // Регресс: пере-настройка цели поля оставляет «осиротевшие» рёбра с ЧУЖИМ TargetDbId, чей
+    // Регресс: пере-настройка цели поля оставляет «осиротевшие» ребра с ЧУЖИМ TargetDbId, чей
     // ToRecordId может СЛУЧАЙНО совпасть с локальной записью. GetLinks/GetLinksBatch (внутрибазовый
     // резолв JOIN'ом к своим db_records) НЕ должны их подхватывать — иначе показ покажет чужую запись
     // («Событие 5»/«Проверка»). Каждое ребро резолвит ячейка по СВОЕМУ TargetDbId (GetLinkEdges).
@@ -623,7 +623,7 @@ public sealed class RelationLinkTests
         Assert.Equal([(p1, "Локальная цель")], repo.GetLinks(rel, t));
         Assert.Equal([p1], repo.GetLinksBatch(rel, [t])[t].Select(x => x.Id));
 
-        // Полный набор рёбер — со своими TargetDbId (ячейка резолвит каждое в своей БД).
+        // Полный набор ребер — со своими TargetDbId (ячейка резолвит каждое в своей БД).
         Assert.Equal([(p1, 0), (p1, 2)], repo.GetLinkEdges(rel, t));
     }
 
@@ -676,7 +676,7 @@ public sealed class RelationLinkTests
         Assert.Empty(repoA.RecordIdsInCollections(map.Keys.ToList(), [otherA]));           // но не в «Прочее»
     }
 
-    // CollectionIdsInGroup — вся ветка группы (сама + вложенные), для подсчёта/удаления группы.
+    // CollectionIdsInGroup — вся ветка группы (сама + вложенные), для подсчета/удаления группы.
     [Fact]
     public void CollectionIdsInGroup_returns_whole_branch()
     {
@@ -721,8 +721,8 @@ public sealed class RelationLinkTests
         Assert.True(repo.HasExternalIncomingLinksToCollection(colC));
     }
 
-    // Смена коллекции в окне записи КАЛЕНДАРЯ и ЗАДАЧ идёт через UpdateCalendarRecord, а он
-    // пересоздаёт запись. Раньше переносились только db_field_values — рёбра (db_record_links)
+    // Смена коллекции в окне записи КАЛЕНДАРЯ и ЗАДАЧ идет через UpdateCalendarRecord, а он
+    // пересоздает запись. Раньше переносились только db_field_values — ребра (db_record_links)
     // терялись молча, хотя тот же перенос из таблицы (MoveRecordsCore) их сохраняет.
     [Fact]
     public void Calendar_collection_change_carries_outgoing_links()
@@ -732,7 +732,7 @@ public sealed class RelationLinkTests
         var p1 = SampleData.AddRecord(repo, projCol, "Сайт").Id!.Value;
         var p2 = SampleData.AddRecord(repo, projCol, "Инфра").Id!.Value;
 
-        // Цель переноса — «Архив» с ОДНОИМЁННЫМ полем-связью на те же «Проекты» (условие переезда рёбер).
+        // Цель переноса — «Архив» с ОДНОИМЕННЫМ полем-связью на те же «Проекты» (условие переезда ребер).
         var archCol = SampleData.AddCollection(repo, "Архив").Id!.Value;
         var relArch = SampleData.AddField(repo, archCol, "Проект", "relation", position: 1000);
         relArch.ConfigJson = new RelationConfig(projCol, false).ToConfigJson();
@@ -749,12 +749,12 @@ public sealed class RelationLinkTests
         repo.UpdateCalendarRecord(moved);
 
         Assert.NotEqual(t, moved.Id);                    // запись пересоздана — Id новый
-        Assert.Null(repo.GetRecord(t));                  // оригинал удалён
-        // Порядок рёбер сохранён вместе с целями.
+        Assert.Null(repo.GetRecord(t));                  // оригинал удален
+        // Порядок ребер сохранен вместе с целями.
         Assert.Equal([(p2, "Инфра"), (p1, "Сайт")], repo.GetLinks(relArch.Id!.Value, moved.Id!.Value));
     }
 
-    // Удаление из календаря/задач (DeleteCalendarRecord) обязано чистить ВХОДЯЩИЕ рёбра так же, как
+    // Удаление из календаря/задач (DeleteCalendarRecord) обязано чистить ВХОДЯЩИЕ ребра так же, как
     // табличные DeleteRecord/DeleteRecordsData: FK на ToRecordId снят (цель может быть межбазовой),
     // без явной чистки в db_record_links оставался висяк — в ячейке невидимый, но живой.
     [Fact]
@@ -773,7 +773,7 @@ public sealed class RelationLinkTests
         Assert.Empty(ctx.DbRecordLinks.AsNoTracking().Where(l => l.ToRecordId == p).ToList());
     }
 
-    // Смена БАЗЫ в окне записи календаря: рёбра переезжают с пересчётом TargetDbId под целевую базу
+    // Смена БАЗЫ в окне записи календаря: ребра переезжают с пересчетом TargetDbId под целевую базу
     // (внутрибазовая связь на источник становится межбазовой) — как у MoveRecordsCore. Ребро переезжает
     // только при совпадении пересчитанной цели, иначе указывало бы в чужую коллекцию.
     [Fact]
@@ -793,7 +793,7 @@ public sealed class RelationLinkTests
         var t = SampleData.AddRecord(repoA, taskA, "Задача").Id!.Value;
         repoA.SetLinks(relA.Id!.Value, t, [p]);
 
-        // В B — одноимённые коллекция и поле, цель уже МЕЖБАЗОВАЯ на «Проекты» из A: ровно так конфиг
+        // В B — одноименные коллекция и поле, цель уже МЕЖБАЗОВАЯ на «Проекты» из A: ровно так конфиг
         // выглядит после переноса поля, и ровно при таком совпадении ребро имеет право переехать.
         var taskB = SampleData.AddCollection(repoB, "Задачи").Id!.Value;
         var relB  = SampleData.AddField(repoB, taskB, "Проект", "relation", position: 1000);

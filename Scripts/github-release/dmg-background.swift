@@ -1,10 +1,10 @@
 // Фон окна установочного образа .dmg — та самая инструкция, которую человек читает
-// РАНЬШЕ, чем увидит предупреждение Gatekeeper. Приложение само её показать не может:
+// РАНЬШЕ, чем увидит предупреждение Gatekeeper. Приложение само ее показать не может:
 // Gatekeeper блокирует запуск до первой строчки нашего кода.
 //
 //   swift Scripts/github-release/dmg-background.swift <папка-вывода>
 //
-// Пишет background.png (640×470) и background@2x.png (1280×940); в образ кладётся
+// Пишет background.png (640×470) и background@2x.png (1280×940); в образ кладется
 // склеенный из них TIFF, иначе на retina текст выходит мылом.
 //
 // Рисуется кодом, а не лежит картинкой в репозитории: текст инструкции правится как
@@ -35,7 +35,7 @@ let ink      = NSColor(calibratedRed: 0.11, green: 0.12, blue: 0.14, alpha: 1)
 let hairline = NSColor(calibratedRed: 0.85, green: 0.86, blue: 0.88, alpha: 1)
 let backdrop = NSColor(calibratedRed: 0.98, green: 0.98, blue: 0.99, alpha: 1)
 
-// Координаты задаются от ВЕРХА окна — так же, как их задаёт Finder значку.
+// Координаты задаются от ВЕРХА окна — так же, как их задает Finder значку.
 // NSGraphicsContext считает от низа, поэтому каждая переворачивается.
 func fromTop(_ y: CGFloat) -> CGFloat { H - y }
 

@@ -3,16 +3,16 @@ using DesktopNotifications;
 namespace SmartBase.Notifications.Platforms;
 
 /// <summary>
-/// Windows/Linux: баннер через библиотеку DesktopNotifications (её <c>INotificationManager</c>
-/// создаётся в Program.BuildAvaloniaApp). Она посылает уведомление от имени приложения (иконка
-/// из ярлыка/AUMID на Windows, из .desktop на Linux) и отдаёт колбэк клика. Метку записи
-/// связываем с объектом <see cref="Notification"/> и достаём в событии активации.
+/// Windows/Linux: баннер через библиотеку DesktopNotifications (ее <c>INotificationManager</c>
+/// создается в Program.BuildAvaloniaApp). Она посылает уведомление от имени приложения (иконка
+/// из ярлыка/AUMID на Windows, из .desktop на Linux) и отдает колбэк клика. Метку записи
+/// связываем с объектом <see cref="Notification"/> и достаем в событии активации.
 /// </summary>
 internal sealed class LibraryNotifier : INativeNotifier
 {
     private readonly INotificationManager _manager;
     // Метка (tag) по показанному уведомлению; ограничено, чтобы не расти в долгих сессиях.
-    // Show идёт с UI-потока, событие активации библиотека поднимает со своего — под локом.
+    // Show идет с UI-потока, событие активации библиотека поднимает со своего — под локом.
     private readonly Dictionary<Notification, string> _tags = new();
     private readonly Lock _lock = new();
     private const int Limit = 200;

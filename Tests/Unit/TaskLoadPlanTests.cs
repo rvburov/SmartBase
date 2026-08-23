@@ -9,7 +9,7 @@ namespace SmartBase.Tests.Unit;
 /// Прочитать лишнее значит вернуть прежнюю медлительность: десять тысяч строк с
 /// коррелированными подзапросами при каждом открытии и каждой правке задачи. НЕ прочитать
 /// нужное значит показать пустой список — а это уже не медленно, а сломано. Поэтому граница
-/// проверяется поимённо, с обеих сторон.
+/// проверяется поименно, с обеих сторон.
 /// </summary>
 public sealed class TaskLoadPlanTests
 {
@@ -17,7 +17,7 @@ public sealed class TaskLoadPlanTests
 
     // ── Когда карточки нужны ─────────────────────────────────────────────────
 
-    /// <summary>Раздел помещается в память — читаем всё, поведение маленьких баз прежнее.</summary>
+    /// <summary>Раздел помещается в память — читаем все, поведение маленьких баз прежнее.</summary>
     [Theory]
     [InlineData(0)]
     [InlineData(1)]
@@ -32,7 +32,7 @@ public sealed class TaskLoadPlanTests
 
     /// <summary>
     /// Раздел не помещается в память — не читаем ВООБЩЕ, каким бы ни был вид: страницами
-    /// читается и «Все задачи», и поиск, и каждый из пяти фильтров. Ради этого всё и затевалось.
+    /// читается и «Все задачи», и поиск, и каждый из пяти фильтров. Ради этого все и затевалось.
     /// </summary>
     [Fact]
     public void A_section_that_does_not_fit_is_never_read_in_bulk()
@@ -41,7 +41,7 @@ public sealed class TaskLoadPlanTests
         Assert.False(TaskLoadPlan.NeedsTaskRead(520_000, Cap));
     }
 
-    /// <summary>Граница ровно на крышке: до неё включительно читаем, за ней — нет.</summary>
+    /// <summary>Граница ровно на крышке: до нее включительно читаем, за ней — нет.</summary>
     [Fact]
     public void The_cap_itself_still_counts_as_fitting()
     {
@@ -54,7 +54,7 @@ public sealed class TaskLoadPlanTests
     private static Dictionary<int, HashSet<int>> Active(params (int DbId, int[] Ids)[] rows) =>
         rows.ToDictionary(r => r.DbId, r => new HashSet<int>(r.Ids));
 
-    /// <summary>Раздел ещё ничего не показывал — читать надо в любом случае.</summary>
+    /// <summary>Раздел еще ничего не показывал — читать надо в любом случае.</summary>
     [Fact]
     public void A_missing_current_set_never_counts_as_the_same()
     {

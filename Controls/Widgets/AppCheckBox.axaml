@@ -12,12 +12,12 @@
          Размер в дефолтном Fluent-шаблоне зашит локальными значениями
          (20×20) прямо в шаблоне, а локальное значение приоритетнее
          сеттера стиля — поэтому переопределить его стилем нельзя и мы
-         задаём собственный ControlTheme.
+         задаем собственный ControlTheme.
 
          Отличие только в цвете:
-           • обычный CheckBox — чёрная рамка (BrushPrimaryText),
+           • обычный CheckBox — черная рамка (BrushPrimaryText),
                                 заливка акцентом в отмеченном состоянии;
-           • Sidebar          — цветной (цвет коллекции, задаётся в шаблоне).
+           • Sidebar          — цветной (цвет коллекции, задается в шаблоне).
          ════════════════════════════════════════════════════════════════ -->
     <Styles.Resources>
         <!-- Геометрия чекбокса (единая везде; используется и в Sidebar) -->
@@ -26,7 +26,7 @@
         <CornerRadius x:Key="CheckBoxRadius">2</CornerRadius>
 
         <!-- Форма галочки (CheckBoxGlyphGeometry) — в Assets/Styles/Icons.axaml;
-             здесь только её толщина (общая, чтобы Sidebar рисовал так же). -->
+             здесь только ее толщина (общая, чтобы Sidebar рисовал так же). -->
         <x:Double x:Key="CheckBoxGlyphThickness">2.5</x:Double>
 
         <ControlTheme x:Key="{x:Type CheckBox}" TargetType="CheckBox">
@@ -81,7 +81,7 @@
             </Setter>
 
             <!-- На серой карточке (BrushCardBg): незакрашенный квадрат — белый, чтобы не
-                 сливался с фоном (стоит ДО :checked — отмеченный остаётся акцентным). -->
+                 сливался с фоном (стоит ДО :checked — отмеченный остается акцентным). -->
             <Style Selector="^.onCard /template/ Border#NormalRectangle">
                 <Setter Property="Background" Value="{StaticResource BrushBg}" />
             </Style>

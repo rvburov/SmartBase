@@ -7,7 +7,7 @@ namespace SmartBase.Database;
 /// <summary>
 /// Монитор доступности смонтированных БД. Общая база в сетевой папке может пропасть на
 /// ходу (сервер выключили, файл удалили/переместили) — приложение не должно ни падать,
-/// ни молча работать с «мёртвым» файлом. Монитор периодически пробует каждую
+/// ни молча работать с «мертвым» файлом. Монитор периодически пробует каждую
 /// недефолтную БД; при потере поднимает <see cref="DatabaseLost"/> (MainWindow
 /// размонтирует, покажет заглушку «недоступна» и уведомление), затем сам ретраит путь
 /// с бэкофом и, когда файл вернулся, ставит базу в очередь монтирования — она оживает
@@ -25,10 +25,10 @@ public sealed class DbHealthMonitor : IDisposable
     private readonly Timer      _timer;
     private readonly object     _gate = new();
 
-    // Счётчик подряд неудачных проб по dbId (потеря объявляется после 2 подряд —
+    // Счетчик подряд неудачных проб по dbId (потеря объявляется после 2 подряд —
     // одиночный таймаут сети не должен ронять базу).
     private readonly Dictionary<int, int> _failStreak = [];
-    // Пробы «в полёте»: на зависшей SMB проба может висеть в неотменяемом IO — не плодим
+    // Пробы «в полете»: на зависшей SMB проба может висеть в неотменяемом IO — не плодим
     // новые потоки поверх, следующая попытка только после завершения текущей.
     private readonly HashSet<int> _probing = [];
     // Потерянные БД, которые монитор ретраит сам: dbId → (запись реестра, номер попытки,
@@ -53,13 +53,13 @@ public sealed class DbHealthMonitor : IDisposable
     public void Dispose() => _timer.Dispose();
 
     /// <summary>Ошибка БД из рабочего кода (правка ячейки, подгрузка страницы и т.п.):
-    /// коды «файл пропал/повреждён» → немедленная внеплановая проверка этой БД.
+    /// коды «файл пропал/поврежден» → немедленная внеплановая проверка этой БД.
     /// BUSY/LOCKED потерей НЕ считаются — это штатная конкуренция писателей.</summary>
     public void ReportFailure(int dbId, Exception ex)
     {
         if (!IsUnavailableError(ex)) return;
         lock (_gate) _urgent.Add(dbId);
-        // Не ждём штатного тика — проверяем сразу (сам тик разберётся с флагами).
+        // Не ждем штатного тика — проверяем сразу (сам тик разберется с флагами).
         Task.Run(Tick);
     }
 
@@ -73,7 +73,7 @@ public sealed class DbHealthMonitor : IDisposable
 
     /// <summary>Взять под ретраи БД, которую не удалось смонтировать (стартовая очередь или
     /// повторная попытка после потери): монитор периодически пробует путь и, когда файл
-    /// вернётся, снова ставит базу в очередь. Вызывается из MainWindow (UI-поток — там
+    /// вернется, снова ставит базу в очередь. Вызывается из MainWindow (UI-поток — там
     /// безопасен доступ к реестру за записью).</summary>
     public void TrackFailed(DatabaseRefEntity entry)
     {
@@ -81,12 +81,12 @@ public sealed class DbHealthMonitor : IDisposable
         {
             if (_lost.ContainsKey(entry.Id)) return;
             // Стартуем сразу с потолка бэкофа: монтирование только что честно упало,
-            // частить по мёртвому пути смысла нет.
+            // частить по мертвому пути смысла нет.
             _lost[entry.Id] = (entry, 2, DateTime.UtcNow.AddSeconds(BackoffSeconds(2)));
         }
     }
 
-    /// <summary>БД отключили в настройках — забыть её (ретраи и счётчики).</summary>
+    /// <summary>БД отключили в настройках — забыть ее (ретраи и счетчики).</summary>
     public void Forget(int dbId)
     {
         lock (_gate)
@@ -127,14 +127,14 @@ public sealed class DbHealthMonitor : IDisposable
     private void Tick()
     {
         // 1. Пробы смонтированных недефолтных БД (дефолтная — локальная база программы,
-        //    её отказ — фатальный сценарий сплэша, не наш).
+        //    ее отказ — фатальный сценарий сплэша, не наш).
         foreach (var db in _ws.Mounted.Where(m => m.DbId != _ws.Default.DbId))
         {
             bool urgent;
             lock (_gate)
             {
                 if (_lost.ContainsKey(db.DbId)) continue;       // уже потеряна — ретраит блок 2
-                if (!_probing.Add(db.DbId)) continue;           // проба ещё в полёте
+                if (!_probing.Add(db.DbId)) continue;           // проба еще в полете
                 urgent = _urgent.Remove(db.DbId);
             }
             var dbId = db.DbId;
@@ -157,7 +157,7 @@ public sealed class DbHealthMonitor : IDisposable
             {
                 lock (_gate) _lost.Remove(dbId);
                 // Дальше — существующий конвейер: монтирование, Completed → SyncMountedToUi,
-                // узел в сайдбаре оживает. Если монтирование всё же упадёт, MainWindow вернёт
+                // узел в сайдбаре оживает. Если монтирование все же упадет, MainWindow вернет
                 // базу под ретраи через TrackFailed (обработчик Completed).
                 _queue.Enqueue(entry);
             }
@@ -187,7 +187,7 @@ public sealed class DbHealthMonitor : IDisposable
                 if (ok) { _failStreak.Remove(dbId); return; }
                 var streak = _failStreak.GetValueOrDefault(dbId) + 1;
                 _failStreak[dbId] = streak;
-                // Файл исчез — теряем сразу; иначе (таймаут/ошибка чтения) ждём подтверждения,
+                // Файл исчез — теряем сразу; иначе (таймаут/ошибка чтения) ждем подтверждения,
                 // кроме случая urgent: рабочий код уже словил CANTOPEN/IOERR — не тянем.
                 if (!gone && !urgent && streak < FailsToDeclare) return;
             }
@@ -205,7 +205,7 @@ public sealed class DbHealthMonitor : IDisposable
     private void DeclareLost(int dbId, string name, string path, string reason)
     {
         // Идентичность для ретраев собираем из уже известного (реестр из фонового потока
-        // не трогаем — его контекст живёт на UI-потоке); Enqueue нужны только Id/Name/Path.
+        // не трогаем — его контекст живет на UI-потоке); Enqueue нужны только Id/Name/Path.
         // Для PG path — строка подключения (Workspace.Mount монтирует по ней напрямую,
         // когда Pg*-полей у синтетической записи нет).
         var entry = new DatabaseRefEntity
@@ -243,7 +243,7 @@ public sealed class DbHealthMonitor : IDisposable
         return probe.Wait(ProbeWaitMs) && probe.Result.Ok;
     }
 
-    // Проба: File.Exists ОБЯЗАТЕЛЕН отдельно от открытия — на POSIX удалённый файл
+    // Проба: File.Exists ОБЯЗАТЕЛЕН отдельно от открытия — на POSIX удаленный файл
     // продолжает «работать» через уже открытый хендл долгоживущего контекста, записи
     // молча уходят в отвязанный inode. Затем одноразовое read-only подключение + SELECT 1.
     // Для PostgreSQL (path — строка подключения) проба сервера: короткое подключение

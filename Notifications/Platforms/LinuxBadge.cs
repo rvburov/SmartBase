@@ -5,8 +5,8 @@ using System.Runtime.Versioning;
 namespace SmartBase.Notifications.Platforms;
 
 /// <summary>
-/// Linux: значок-счётчик через протокол Unity LauncherEntry — сигнал D-Bus
-/// <c>com.canonical.Unity.LauncherEntry.Update</c> со счётчиком. Его слушают док-панели
+/// Linux: значок-счетчик через протокол Unity LauncherEntry — сигнал D-Bus
+/// <c>com.canonical.Unity.LauncherEntry.Update</c> со счетчиком. Его слушают док-панели
 /// GNOME (Dash-to-Dock), KDE Plasma, Unity и др. Эмитим через <c>gdbus emit</c> (без
 /// сторонних библиотек). Best-effort: где окружение не поддерживает LauncherEntry —
 /// сигнал просто игнорируется. Привязка к <c>.desktop</c> приложения — <see cref="AppUri"/>.

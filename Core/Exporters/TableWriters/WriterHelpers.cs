@@ -26,7 +26,7 @@ public static class WriterHelpers
         DateValue.TryParse(raw, out var dv) ? dv.ToDisplay() : raw;
 
     /// <summary>Управляющие символы &lt;0x20 (кроме \t \n \r) в XML запрещены — OpenXml
-    /// молча создаёт битый файл. Вырезаем; чистые строки возвращаются без копии.</summary>
+    /// молча создает битый файл. Вырезаем; чистые строки возвращаются без копии.</summary>
     public static string SanitizeXml(string s)
     {
         var dirty = false;

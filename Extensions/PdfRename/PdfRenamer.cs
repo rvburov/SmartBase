@@ -3,7 +3,7 @@ using System.Threading;
 
 namespace SmartBase.Extensions.PdfRename;
 
-/// <summary>Что произойдёт (или произошло) с конкретным файлом.</summary>
+/// <summary>Что произойдет (или произошло) с конкретным файлом.</summary>
 public enum RenameOutcome
 {
     /// <summary>Будет переименован (режим проверки).</summary>
@@ -29,7 +29,7 @@ public sealed record RenameSummary(
     int Total, int Renamed, int Planned, int Unchanged, int Conflicts, int Errors, bool Cancelled);
 
 /// <summary>
-/// Пакетное переименование PDF-файлов: имя обрезается по первому пробелу (берётся всё
+/// Пакетное переименование PDF-файлов: имя обрезается по первому пробелу (берется все
 /// до него), расширение <c>.pdf</c> сохраняется. Чистая логика без UI — окно лишь
 /// вызывает <see cref="Run"/>, репортя прогресс и отменяясь по токену. Поддерживаются
 /// отмена через <see cref="CancellationToken"/>, обнаружение
@@ -41,11 +41,11 @@ public static class PdfRenamer
 
     private static readonly StringComparer NameCmp = StringComparer.OrdinalIgnoreCase;
 
-    /// <summary>Целевое имя по правилу «всё до первого пробела + .pdf».</summary>
+    /// <summary>Целевое имя по правилу «все до первого пробела + .pdf».</summary>
     public static string Transform(string fileName)
     {
         var stem = Path.GetFileNameWithoutExtension(fileName);
-        var head = stem.Split(' ', 2)[0];      // часть до первого пробела (или всё имя)
+        var head = stem.Split(' ', 2)[0];      // часть до первого пробела (или все имя)
         return head + Extension;
     }
 

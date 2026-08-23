@@ -7,7 +7,7 @@ namespace SmartBase.Tests.Integration;
 /// Служба уведомлений поверх настоящей БД: источник событий — календарная проекция
 /// (<c>GetCalendarRecordsByRange</c>), а показ/значок/метка проверяются через фейковые
 /// <see cref="INativeNotifier"/>/<see cref="IAppBadge"/> и управляемые часы — без таймера и
-/// платформы. Проверяем: наступившее показывается, будущее ждёт, значок копится и гаснет при
+/// платформы. Проверяем: наступившее показывается, будущее ждет, значок копится и гаснет при
 /// активации, метка сохраняется, выключенная служба молчит.
 /// </summary>
 public sealed class NotificationServiceTests
@@ -124,7 +124,7 @@ public sealed class NotificationServiceTests
         svc.Tick();
         Assert.Single(notifier.Shown);
 
-        // Клик по баннеру с его меткой → служба отдаёт полную запись подписчику.
+        // Клик по баннеру с его меткой → служба отдает полную запись подписчику.
         notifier.RaiseActivated(notifier.Shown[0].Tag);
 
         Assert.NotNull(activated);
@@ -134,7 +134,7 @@ public sealed class NotificationServiceTests
     // Фоновый тик (TickBackground) читает наступившие события НЕ на UI-потоке, через свежее
     // подключение (GetCalendarRecordsByRangeIsolated) — иначе скан calendar_index «морозит»
     // интерфейс на больших БД. Здесь фиксируем контракт этого чтения: с фонового потока оно
-    // отдаёт ровно тот же результат, что и обычное чтение с общего контекста.
+    // отдает ровно тот же результат, что и обычное чтение с общего контекста.
     [Fact]
     public async Task Isolated_read_matches_shared_and_runs_off_thread()
     {

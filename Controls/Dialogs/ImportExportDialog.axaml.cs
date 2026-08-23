@@ -10,7 +10,7 @@ using SmartBase.Database.Repositories;
 
 namespace SmartBase.Controls.Dialogs;
 
-/// <summary>Введённые значения формы — чтобы переоткрыть окно с теми же данными после ошибки.</summary>
+/// <summary>Введенные значения формы — чтобы переоткрыть окно с теми же данными после ошибки.</summary>
 public record ImportDraft(string Path, string Name, int DbId, int? ParentId,
                           bool Manual, string Sheet, string HeaderRow, string DataRow, string TitleCol,
                           bool MergeSheets, bool SplitSheets, bool FolderMode,
@@ -19,7 +19,7 @@ public record ImportDraft(string Path, string Name, int DbId, int? ParentId,
 /// <summary>Готовая заявка на импорт: спецификация чтения + куда создавать коллекцию + черновик формы.</summary>
 public record ImportRequest(ImportSpec Spec, int DbId, int? ParentId, string Name, ImportDraft Draft);
 
-/// <summary>Введённые значения формы экспорта — для переоткрытия окна после ошибки.</summary>
+/// <summary>Введенные значения формы экспорта — для переоткрытия окна после ошибки.</summary>
 public record ExportDraft(string Folder, string FileName, int FormatIndex,
                           IReadOnlyList<(int DbId, int ColId)> Selected,
                           bool Manual, string SheetName, string ExcludeColumns,
@@ -75,11 +75,11 @@ public partial class ImportExportDialog : Window
         DbCombo.SelectionChanged += (_, _) => RebuildLocation();
 
         // Коллекции для экспорта: все допущенные базы (запертые отфильтрованы вызывающим),
-        // из каждой — коллекции, разрешённые к просмотру (право ViewCollection).
+        // из каждой — коллекции, разрешенные к просмотру (право ViewCollection).
         _pickerItems = _dbs
             .SelectMany(d => d.Repo.GetAllCollections()
                 .Where(c => c.Id is int cid && (d.Repo.Permissions?.Can(PermAction.ViewCollection, cid) ?? true))
-                // Пункт списка — одна строка (TitleText); выбор идёт по паре (DbId, Id).
+                // Пункт списка — одна строка (TitleText); выбор идет по паре (DbId, Id).
                 .Select(c => new CollectionPickerFlyout.Item(
                     d.Id, c.Id!.Value, TitleText.FirstLine(c.Name), TitleText.FirstLine(d.Name))))
             .ToList();
@@ -91,7 +91,7 @@ public partial class ImportExportDialog : Window
         { if (SplitSheetsCheck.IsChecked == true) MergeSheetsCheck.IsChecked = false; };
         FolderCheck.IsCheckedChanged += (_, _) => UpdateFolderMode();
 
-        // Восстанавливаем введённые значения ДО подписки на TextChanged (чтобы не сбросить ошибку).
+        // Восстанавливаем введенные значения ДО подписки на TextChanged (чтобы не сбросить ошибку).
         if (prefill is not null)
         {
             PathBox.Text           = prefill.Path;
@@ -119,7 +119,7 @@ public partial class ImportExportDialog : Window
             IncludeHiddenCheck.IsChecked = exportPrefill.IncludeHidden;
             SingleFileCheck.IsChecked    = exportPrefill.SingleFile;
 
-            // Восстанавливаем только ещё существующие коллекции (могли удалить).
+            // Восстанавливаем только еще существующие коллекции (могли удалить).
             foreach (var key in exportPrefill.Selected)
                 if (_pickerItems.Any(i => (i.DbId, i.CollectionId) == key))
                     _selectedCols.Add(key);
@@ -202,13 +202,13 @@ public partial class ImportExportDialog : Window
         if (keepPosition) KeepWindowPosition(pos);
     }
 
-    // Режим папки: путь — к папке, названия коллекций берутся из имён файлов.
+    // Режим папки: путь — к папке, названия коллекций берутся из имен файлов.
     private void UpdateFolderMode()
     {
         var folder = FolderCheck.IsChecked == true;
         PathBox.Watermark = folder ? "Путь к папке с файлами" : "Путь к файлу (Excel, CSV, JSON)";
         NameBox.IsEnabled = !folder;
-        NameBox.Watermark = folder ? "Названия — из имён файлов" : "Введите название";
+        NameBox.Watermark = folder ? "Названия — из имен файлов" : "Введите название";
     }
 
     // Пояснение стандартного типа — под формат выбранного файла.
@@ -219,10 +219,10 @@ public partial class ImportExportDialog : Window
         StandardHelp.Text = ext switch
         {
             ".xlsx" or ".xlsm" or ".xlsb" or ".xls" =>
-                "Excel: берётся первый лист. Первая строка — заголовки (имена свойств). " +
+                "Excel: берется первый лист. Первая строка — заголовки (имена свойств). " +
                 "Столбец 1 → название записи, остальные столбцы → текстовые свойства. Данные — " +
                 "со второй строки. Скрытые строки, столбцы и листы тоже импортируются. " +
-                "Колонка «Описание» создаётся пустой в конце.",
+                "Колонка «Описание» создается пустой в конце.",
             ".csv" =>
                 "CSV: разделитель (запятая, точка с запятой, табуляция) и кодировка " +
                 "(UTF-8 / Windows-1251) определяются автоматически. Первая строка — заголовки, " +
@@ -291,7 +291,7 @@ public partial class ImportExportDialog : Window
         ExportNameBox.IsEnabled = single || singleFile;
         ExportNameBox.Watermark = single || singleFile
             ? (singleFile && !single ? "Введите название (пусто — «Экспорт»)" : "Введите название (пусто — имя коллекции)")
-            : "Названия — из имён коллекций";
+            : "Названия — из имен коллекций";
 
         ExportSheetBox.IsEnabled = single;
         ExportSheetBox.Watermark = single ? "Название листа (пусто — имя коллекции)" : "Доступно при одной коллекции";
@@ -341,13 +341,13 @@ public partial class ImportExportDialog : Window
 
     // ── Подтверждение ─────────────────────────────────────────────────────────
 
-    // Валидируем ввод и возвращаем заявку. Ошибки ввода показываем в баннере (окно остаётся).
+    // Валидируем ввод и возвращаем заявку. Ошибки ввода показываем в баннере (окно остается).
     private void TryConfirm()
     {
         if (ModeCombo.SelectedIndex == 1) { TryConfirmExport(); return; }
 
         var manual = TypeCombo.SelectedIndex == 1;
-        // Режим папки — общий (живёт при поле «Файл»); листовые чекбоксы — часть ручного
+        // Режим папки — общий (живет при поле «Файл»); листовые чекбоксы — часть ручного
         // типа, в стандартном их состояние игнорируется.
         var folder = FolderCheck.IsChecked == true;
         var merge  = manual && MergeSheetsCheck.IsChecked == true;
@@ -492,7 +492,7 @@ public partial class ImportExportDialog : Window
         KeepWindowPosition(pos);
     }
 
-    // Держим позицию окна при пересчёте высоты (SizeToContent), чтобы оно не «прыгало».
+    // Держим позицию окна при пересчете высоты (SizeToContent), чтобы оно не «прыгало».
     private void KeepWindowPosition(PixelPoint pos)
     {
         void Restore(object? _, EventArgs __)

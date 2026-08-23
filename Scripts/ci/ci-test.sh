@@ -8,7 +8,7 @@
 # Главный инвариант тот же, что у workflow: прогон НИЧЕГО не меняет.
 #
 # Проверки 3 и 4 — машинная запись требования «не пересекаться с выпуском релиза». Словами оно
-# живёт в комментариях, а здесь перестаёт зависеть от того, прочитал их кто-то или нет:
+# живет в комментариях, а здесь перестает зависеть от того, прочитал их кто-то или нет:
 # workflow не может запуститься ни на main, ни на теге и не вызывает никаких скриптов.
 set -uo pipefail
 
@@ -48,10 +48,10 @@ WF_CODE="$(sed 's/#.*$//' "$WF")"
 
 # ── 1. Workflow разбирается как YAML ──────────────────────────────────────────
 # Не формальность: значение `if`, ключ с двоеточием внутри строки, многострочный `options` —
-# всё это ломается молча. GitHub при неразбираемом файле просто не запускает workflow.
+# все это ломается молча. GitHub при неразбираемом файле просто не запускает workflow.
 if command -v actionlint > /dev/null 2>&1; then
   out="$(actionlint "$WF" 2>&1)" \
-    && ok "1. actionlint не нашёл замечаний" \
+    && ok "1. actionlint не нашел замечаний" \
     || bad "1. actionlint" "$out"
 elif python3 -c 'import yaml' > /dev/null 2>&1; then
   out="$(python3 -c 'import sys, yaml; yaml.safe_load(open(sys.argv[1], encoding="utf-8"))' "$WF" 2>&1)" \
@@ -77,7 +77,7 @@ done
 # Блок `on:` целиком — от строки «on:» до следующего ключа нулевого отступа.
 on_block="$(awk '/^on:/ { f = 1 } f && /^[a-zA-Z]/ && !/^on:/ { exit } f' "$WF")"
 # Here-string, а не «printf | grep -q»: grep закрывает канал на первом совпадении, источник
-# получает SIGPIPE, и pipefail отдаёт ненулевой код ПРИ найденном совпадении — проверка начинает
+# получает SIGPIPE, и pipefail отдает ненулевой код ПРИ найденном совпадении — проверка начинает
 # врать наоборот. Ровно на этом однажды падал шаг workflow.
 triggers="$(awk '/^  [a-z_]+:/ { gsub(/[ :]/, ""); print }' <<< "$on_block" | sort | tr '\n' ' ')"
 
@@ -85,9 +85,9 @@ prob=()
 [ "$triggers" = "push workflow_dispatch " ] \
   || prob+=("триггеры: «${triggers}», ожидалось «push workflow_dispatch »")
 grep -q 'branches: \[ci\]' <<< "$on_block" \
-  || prob+=("нет фильтра «branches: [ci]» — прогон пошёл бы не по команде")
+  || prob+=("нет фильтра «branches: [ci]» — прогон пошел бы не по команде")
 grep -q 'main' <<< "$on_block" \
-  && prob+=("в блоке on: упомянут main — обычный push начнёт запускать прогон")
+  && prob+=("в блоке on: упомянут main — обычный push начнет запускать прогон")
 grep -q 'tags' <<< "$on_block" \
   && prob+=("в блоке on: упомянуты теги — это территория выпуска релиза")
 
@@ -109,7 +109,7 @@ else
 fi
 
 # ── 5. То, что workflow собирает и гоняет, существует ─────────────────────────
-# Ловит переименование проекта или папки: без этой проверки расхождение всплывёт только красным
+# Ловит переименование проекта или папки: без этой проверки расхождение всплывет только красным
 # прогоном, то есть через десять минут после пуша.
 prob=()
 for t in "SmartBase.csproj" "Tests/Unit" "Tests/Integration" \
@@ -119,9 +119,9 @@ for t in "SmartBase.csproj" "Tests/Unit" "Tests/Integration" \
 done
 # Фильтры тестов заданы строками с именами классов — их легко осиротить переименованием.
 [ -f "Tests/Integration/PgProviderTests.cs" ] \
-  || prob+=("нет Tests/Integration/PgProviderTests.cs — фильтр в job postgres ничего не найдёт")
+  || prob+=("нет Tests/Integration/PgProviderTests.cs — фильтр в job postgres ничего не найдет")
 [ -f "Tests/Integration/LinuxNotificationsTests.cs" ] \
-  || prob+=("нет Tests/Integration/LinuxNotificationsTests.cs — шаг про D-Bus ничего не найдёт")
+  || prob+=("нет Tests/Integration/LinuxNotificationsTests.cs — шаг про D-Bus ничего не найдет")
 
 if [ ${#prob[@]} -eq 0 ]; then
   ok "5. Все проекты и наборы тестов из workflow на месте"
@@ -143,11 +143,11 @@ done
 # Без always() мусор копился бы ровно после неудачных прогонов, то есть чаще всего.
 prob=()
 grep -q '^  cleanup:'            <<< "$WF_CODE" || prob+=("нет job cleanup — ветка ci останется на сервере")
-grep -qF 'always()'              <<< "$WF_CODE" || prob+=("уборка не помечена always() — после красного или отменённого прогона ветка останется")
+grep -qF 'always()'              <<< "$WF_CODE" || prob+=("уборка не помечена always() — после красного или отмененного прогона ветка останется")
 grep -qF 'git/refs/heads/ci'     <<< "$WF_CODE" || prob+=("уборка не удаляет refs/heads/ci")
-grep -qF 'contents: write'       <<< "$WF_CODE" || prob+=("у уборки нет права на запись — удаление не пройдёт")
+grep -qF 'contents: write'       <<< "$WF_CODE" || prob+=("у уборки нет права на запись — удаление не пройдет")
 grep -qF 'contents: read'        <<< "$WF_CODE" || prob+=("права по умолчанию не сужены до чтения")
-grep -qF 'ref: ${{ github.sha }}' <<< "$WF_CODE" || prob+=("checkout не пришпилен к коммиту — сломается об удалённую ветку")
+grep -qF 'ref: ${{ github.sha }}' <<< "$WF_CODE" || prob+=("checkout не пришпилен к коммиту — сломается об удаленную ветку")
 
 [ ${#prob[@]} -eq 0 ] \
   && ok "7. Ветка ci удаляется после прогона, права на запись только у уборки" \
@@ -161,14 +161,14 @@ for p in "${MODULE_PATHS[@]}"; do
   [ -f "$p" ] || prob+=("нет файла $p")
   # В .gitignore есть стандартное для .NET правило «[Rr]elease/» — папка с похожим именем молча
   # выпала бы из git целиком. Проверяем явно, чтобы это не всплыло при переименовании.
-  git check-ignore -q "$p" 2>/dev/null && prob+=("$p игнорируется git — файл не попадёт в репозиторий")
+  git check-ignore -q "$p" 2>/dev/null && prob+=("$p игнорируется git — файл не попадет в репозиторий")
 done
 
 # Ищем упоминания модуля в файлах ВНЕ модуля. Внутри модуля ссылки свободны.
 #
-# --others --exclude-standard добавляет к отслеживаемым ещё и новые файлы, которые git пока
+# --others --exclude-standard добавляет к отслеживаемым еще и новые файлы, которые git пока
 # не видел, но и не игнорирует. Без них проверка слепа ровно в тот момент, когда нужна: файл
-# только что создан, ссылка на модуль в нём уже есть, а замечено это будет лишь после коммита.
+# только что создан, ссылка на модуль в нем уже есть, а замечено это будет лишь после коммита.
 # Игнорируемое (artifacts/, packages/) не попадает — иначе обход занял бы минуты.
 refs="$(git ls-files -z --cached --others --exclude-standard -- . ':(exclude).github/workflows/build.yml' ':(exclude)Scripts/ci' \
         ':(exclude)docs/developer/guides/ci.md' \

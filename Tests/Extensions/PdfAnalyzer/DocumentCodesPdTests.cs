@@ -4,14 +4,14 @@ namespace SmartBase.Tests.Extensions.PdfAnalyzer;
 
 /// <summary>
 /// Разбор программных обозначений (ЕСПД, ГОСТ 19.101/19.103): КОДО.РРРРР-ИИ [ВВ ДД][-Ч][-ЛУ|-УЛ],
-/// где ВВ — код ВИДА документа. Тип программного документа берётся только отсюда, и ошибка здесь
+/// где ВВ — код ВИДА документа. Тип программного документа берется только отсюда, и ошибка здесь
 /// уводит документ в чужую ведомость: ПД и КД разведены по разным выгрузкам целиком.
 /// </summary>
 public sealed class DocumentCodesPdTests
 {
     // ── Тип по коду вида ──────────────────────────────────────────────────────
 
-    // Номер без кода вида — это сама программа, её строка в ведомости называется «Спецификация».
+    // Номер без кода вида — это сама программа, ее строка в ведомости называется «Спецификация».
     [Fact]
     public void Number_without_a_kind_code_is_a_specification() =>
         Assert.Equal("Спецификация", DocumentCodes.ResolvePdType("АБВГ.12345-01"));
@@ -33,7 +33,7 @@ public sealed class DocumentCodesPdTests
     public void Known_kind_code_gives_its_name(string vid, string expected) =>
         Assert.Equal(expected, DocumentCodes.ResolvePdType($"АБВГ.12345-01 {vid} 01"));
 
-    // Диапазон 90–99 по ГОСТ 19.101 — «прочие документы», перечислять их поимённо не нужно.
+    // Диапазон 90–99 по ГОСТ 19.101 — «прочие документы», перечислять их поименно не нужно.
     [Theory]
     [InlineData("90")]
     [InlineData("95")]
@@ -60,7 +60,7 @@ public sealed class DocumentCodesPdTests
     // ── База программы (изделие) ──────────────────────────────────────────────
 
     /// <summary>Редакция «-ИИ» — часть изделия, а не документа: программы разных редакций
-    /// называются по-разному, и имя изделия обязано подтягиваться с учётом редакции.</summary>
+    /// называются по-разному, и имя изделия обязано подтягиваться с учетом редакции.</summary>
     [Fact]
     public void Program_base_keeps_the_edition()
     {
@@ -79,7 +79,7 @@ public sealed class DocumentCodesPdTests
     public void Media_carriers_share_the_program_base(string designation) =>
         Assert.Equal("АБВГ.12345-01", DocumentCodes.GetPdProgramBase(designation));
 
-    /// <summary>При этом по ВИДУ носители не разрешаются: их тип задаёт код НД/НДЗ из таблицы
+    /// <summary>При этом по ВИДУ носители не разрешаются: их тип задает код НД/НДЗ из таблицы
     /// КД, а не код вида ЕСПД. Две разные ветки разбора не должны спорить.</summary>
     [Theory]
     [InlineData("АБВГ.12345-01НД")]

@@ -8,7 +8,7 @@ namespace SmartBase.Tests.Integration;
 /// Постраничное чтение раздела «Задачи»
 /// (Database/Repositories/ConstructorRepository.TasksPaging.cs).
 ///
-/// Раздел живёт в двух режимах: маленькая база читается целиком и сортируется в памяти,
+/// Раздел живет в двух режимах: маленькая база читается целиком и сортируется в памяти,
 /// большая — страницами из БД. Главное требование к паре — НЕРАЗЛИЧИМОСТЬ: страницы обязаны
 /// выдавать ровно ту же последовательность, что сплошной прочит с
 /// <c>TaskGrouping.ByDueThenId</c>. Разойдись они — и человек, у которого база подросла,
@@ -39,7 +39,7 @@ public sealed class TaskPagingTests
     private static ConstructorRepository.TaskView AllView =>
         new("All", "", [], new DateTime(2026, 8, 19, 12, 0, 0));
 
-    /// <summary>Эталон: всё прочитанное разом и отсортированное правилом раздела.</summary>
+    /// <summary>Эталон: все прочитанное разом и отсортированное правилом раздела.</summary>
     private static List<int> ExpectedOrder(ConstructorRepository repo, int collectionId)
     {
         var all = repo.GetTaskRecords(limit: 1_000_000).Where(t => t.CollectionId == collectionId).ToList();
@@ -49,7 +49,7 @@ public sealed class TaskPagingTests
 
     /// <summary>
     /// Тот же список, но собранный страницами по <paramref name="pageSize"/>. Разбиение
-    /// страницы на потоки берётся из БОЕВОГО <see cref="TaskStreams.Split"/>, а не повторяется
+    /// страницы на потоки берется из БОЕВОГО <see cref="TaskStreams.Split"/>, а не повторяется
     /// здесь: иначе тест проверял бы только SQL и молчал бы о том, что виртуальный список режет
     /// страницу иначе.
     /// </summary>
@@ -83,7 +83,7 @@ public sealed class TaskPagingTests
     [InlineData(3)]
     [InlineData(4)]    // ровно граница между потоками
     [InlineData(7)]
-    [InlineData(100)]  // одна страница на всё
+    [InlineData(100)]  // одна страница на все
     public void Pages_reproduce_the_in_memory_order_exactly(int pageSize)
     {
         using var db = new TempDatabase();
@@ -109,7 +109,7 @@ public sealed class TaskPagingTests
         var e = SampleData.AddRecord(repo, col, "Вторая по сроку").Id!.Value;
         SetDue(repo, e, due, march.AddDays(5));
 
-        var f = SampleData.AddRecord(repo, col, "Четвёртая по сроку").Id!.Value;
+        var f = SampleData.AddRecord(repo, col, "Четвертая по сроку").Id!.Value;
         SetDue(repo, f, due, march.AddDays(40));
 
         var expected = ExpectedOrder(repo, col);
@@ -193,9 +193,9 @@ public sealed class TaskPagingTests
     }
 
     /// <summary>
-    /// Два календарных поля-даты: сроком служит наименьшая из них, одна запись даёт несколько
+    /// Два календарных поля-даты: сроком служит наименьшая из них, одна запись дает несколько
     /// строк проекции — двумя индексными потоками такой порядок не выражается. Коллекция
-    /// обязана сама об этом сказать, чтобы её читали общим путём (медленнее, зато полностью).
+    /// обязана сама об этом сказать, чтобы ее читали общим путем (медленнее, зато полностью).
     /// </summary>
     [Fact]
     public void A_collection_with_two_calendar_dates_says_so()
@@ -209,7 +209,7 @@ public sealed class TaskPagingTests
         var second = SampleData.AddField(repo, col, "Срок", "date", position: 4000).Id!.Value;
         repo.SetDateFieldVisible(second, true);
 
-        // Счётчики строятся от записей: у коллекции без единой записи размеров нет вовсе.
+        // Счетчики строятся от записей: у коллекции без единой записи размеров нет вовсе.
         SampleData.AddRecord(repo, col, "Задача");
 
         var stats = repo.GetTaskCollectionStats()[col];
@@ -239,7 +239,7 @@ public sealed class TaskPagingTests
         var a = SampleData.AddRecord(repo, col, "Поздняя").Id!.Value;
         SetDue(repo, a, first, march.AddDays(30));
 
-        // Срок этой записи задан ВТОРЫМ полем-датой — и он раньше, значит она идёт первой.
+        // Срок этой записи задан ВТОРЫМ полем-датой — и он раньше, значит она идет первой.
         var b = SampleData.AddRecord(repo, col, "Ранняя по второму полю").Id!.Value;
         SetDue(repo, b, second, march);
 
@@ -249,7 +249,7 @@ public sealed class TaskPagingTests
         Assert.Equal(ExpectedOrder(repo, col), PagedOrder(repo, col, pageSize: 2));
     }
 
-    /// <summary>Коллекция без записей в размерах не появляется: группы у неё всё равно не будет.</summary>
+    /// <summary>Коллекция без записей в размерах не появляется: группы у нее все равно не будет.</summary>
     [Fact]
     public void An_empty_collection_has_no_stats_row()
     {

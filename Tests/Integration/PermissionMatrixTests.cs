@@ -6,12 +6,12 @@ namespace SmartBase.Tests.Integration;
 
 /// <summary>
 /// Матрица «право → операция»: каждая галка панели администратора обязана блокировать
-/// ИМЕННО своё действие и не задевать соседние. Точечные тесты на отдельные права были
+/// ИМЕННО свое действие и не задевать соседние. Точечные тесты на отдельные права были
 /// и раньше (DbAccessLifecycleTests, PermissionServiceTests), но они не ловят главный
 /// класс ошибок — перепутанный бит в новом мутаторе: «Удалять записи» отбивает
 /// дублирование, «Изменять свойства» — создание и т.п.
 ///
-/// Метод один: снимаем ровно один бит из полной маски, зовём операцию этого права
+/// Метод один: снимаем ровно один бит из полной маски, зовем операцию этого права
 /// и проверяем, что она отбита с правильным <see cref="PermAction"/>; затем возвращаем
 /// маску и убеждаемся, что та же операция проходит.
 /// </summary>
@@ -47,7 +47,7 @@ public sealed class PermissionMatrixTests
     }
 
     // Операция, которую разрешает ровно это право. Каждая — публичная точка входа
-    // репозитория, то есть тот же путь, которым идёт интерфейс.
+    // репозитория, то есть тот же путь, которым идет интерфейс.
     private static Action Operation(TempDatabase db, PermAction action, Fixture f)
     {
         var repo = db.Constructor;
@@ -62,7 +62,7 @@ public sealed class PermissionMatrixTests
             PermAction.DeleteCollection    => () => repo.DeleteCollection(f.CollectionId),
             PermAction.DuplicateCollection => () => repo.DuplicateCollection(f.CollectionId),
             PermAction.CreateCollection    => () => SampleData.AddCollection(repo, $"Новая{Guid.NewGuid():N}"),
-            PermAction.CreateRecord        => () => SampleData.AddRecord(repo, f.CollectionId, "Ещё запись"),
+            PermAction.CreateRecord        => () => SampleData.AddRecord(repo, f.CollectionId, "Еще запись"),
             PermAction.EditRecord          => () => repo.SetFieldValue(f.RecordId, f.FieldId, "значение"),
             PermAction.DeleteRecord        => () => repo.DeleteRecord(f.RecordId),
             PermAction.DuplicateRecord     => () => repo.DuplicateRecord(f.RecordId),
@@ -88,7 +88,7 @@ public sealed class PermissionMatrixTests
         db.Permissions.Reload(notify: false);
         db.Permissions.SetMask(db.Permissions.CurrentUserId, null, (int)mask);
 
-        me.IsAdmin    = false;   // теперь маска действует: администратору можно всё
+        me.IsAdmin    = false;   // теперь маска действует: администратору можно все
         me.IsApproved = true;
         db.Context.SaveChanges();
         db.Permissions.Reload(notify: false);
@@ -101,7 +101,7 @@ public sealed class PermissionMatrixTests
         using var db = new TempDatabase();
         var fixture  = Arrange(db);
 
-        // Всё, кроме проверяемого права: если операция всё же пройдёт — значит мутатор
+        // Все, кроме проверяемого права: если операция все же пройдет — значит мутатор
         // спрашивает не тот бит (или не спрашивает вовсе).
         SetRights(db, PermAction.All & ~action);
 
@@ -189,8 +189,8 @@ public sealed class PermissionMatrixTests
     }
 
     /// <summary>
-    /// Нет строк в db_permissions — допущенному разрешено всё: администратор снимает
-    /// лишнее, а не раздаёт по одному (в базе хранятся только отличия).
+    /// Нет строк в db_permissions — допущенному разрешено все: администратор снимает
+    /// лишнее, а не раздает по одному (в базе хранятся только отличия).
     /// </summary>
     [Fact]
     public void Approved_user_without_rows_can_everything()
@@ -224,7 +224,7 @@ public sealed class PermissionMatrixTests
 
         SetRights(db, PermAction.All & ~PermAction.CreateField);
 
-        db.Constructor.DuplicateField(fixture.FieldId);   // своё право на месте — проходит
+        db.Constructor.DuplicateField(fixture.FieldId);   // свое право на месте — проходит
         var denied = Assert.Throws<PermissionDeniedException>(
             () => SampleData.AddField(db.Constructor, fixture.CollectionId, "Новое"));
         Assert.Equal(PermAction.CreateField, denied.Action);
@@ -232,7 +232,7 @@ public sealed class PermissionMatrixTests
 
     /// <summary>
     /// Пакетные пути (массовое удаление и дублирование записей) идут мимо одиночных
-    /// мутаторов — у них своя проверка, и её тоже нужно держать: именно ими удаляют
+    /// мутаторов — у них своя проверка, и ее тоже нужно держать: именно ими удаляют
     /// сотни строк одним движением.
     /// </summary>
     [Fact]

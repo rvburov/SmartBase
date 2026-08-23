@@ -22,7 +22,7 @@
 | **Unit** | xUnit (быстрый гейт) | Чистая логика ядра без БД/IO: даты, валидаторы, планировщики, права | `dotnet test Tests/Unit` |
 | **Integration** | xUnit (медленнее) | Репозитории на temp SQLite + PostgreSQL: CRUD, keyset, календарь, cross-move, импорт/экспорт, гонки | `dotnet test Tests/Integration` |
 | **Extensions/&lt;Имя&gt;** | xUnit (по проекту на расширение) | Логика и сквозные прогоны расширений; отдельные сборки, от тестов ядра не зависят | `./Tests/run-extensions.sh` |
-| **Benchmarks** | консоль (замеры) | Производительность: сайдбар, импорт/экспорт больших объёмов, нагрузка PG | `dotnet run -c Release --project Tests/Benchmarks -- <команда>` |
+| **Benchmarks** | консоль (замеры) | Производительность: сайдбар, импорт/экспорт больших объемов, нагрузка PG | `dotnet run -c Release --project Tests/Benchmarks -- <команда>` |
 | **DbGenerator** | консоль (инструмент) | Генерация большого стенда (по умолчанию 20 млн записей) | `dotnet run -c Release --project Tests/DbGenerator` |
 | **MultiProcess** | консоль (многопроцесс) | Ручные многопроцессные сценарии (два процесса, сетевые прагмы, живая синхронизация) | `dotnet run -c Release --project Tests/MultiProcess -- <режим>` |
 
@@ -57,6 +57,6 @@ Integration — из-за процесс-глобального `SqliteConnectio
 проектов ядра ломали это свойство — `using SmartBase.Extensions.<Имя>` в `Tests/Unit` означал, что
 удаление расширения роняет сборку тестов программы.
 
-Поэтому у расширений своё дерево `Tests/Extensions/<Имя>/` с проектом на расширение: свой процесс
+Поэтому у расширений свое дерево `Tests/Extensions/<Имя>/` с проектом на расширение: свой процесс
 тест-хоста, свой прогон, ноль связей с наборами ядра (сторожится шагом CI). Подробности —
 [extension-tests.md](extension-tests.md).

@@ -12,12 +12,12 @@ namespace SmartBase.Controls.Widgets;
 ///
 /// Внутри — штатный <see cref="ComboBox"/> на общей теме приложения, отличается только
 /// шаблон пункта (чекбокс вместо текста). Выбранного значения у списка нет: выбор гасится,
-/// а в свёрнутом боксе стоит сводка «Показаны все» / «Показано N из M».
+/// а в свернутом боксе стоит сводка «Показаны все» / «Показано N из M».
 ///
-/// Главное правило — ХОТЯ БЫ ОДИН ПУНКТ ОСТАЁТСЯ отмеченным: раздел без единого вида (и
+/// Главное правило — ХОТЯ БЫ ОДИН ПУНКТ ОСТАЕТСЯ отмеченным: раздел без единого вида (и
 /// панель навигации без единого раздела) неработоспособны. У последней галочки чекбокс
 /// выключается, а не возвращается «прыжком» после клика — так видно, что пункт снять
-/// нельзя, ещё до нажатия.
+/// нельзя, еще до нажатия.
 /// </summary>
 public partial class CheckListDropdown : UserControl
 {
@@ -26,7 +26,7 @@ public partial class CheckListDropdown : UserControl
     // Гасит события, пока список наполняется кодом.
     private bool _building;
 
-    /// <summary>Текст в свёрнутом боксе: «Показаны все» / «Показано N из M». Свойство, а не
+    /// <summary>Текст в свернутом боксе: «Показаны все» / «Показано N из M». Свойство, а не
     /// прямая запись в ComboBox, потому что берут его два места сразу — подсказка и шаблон
     /// выбранного значения (см. разметку).</summary>
     public static readonly StyledProperty<string> SummaryProperty =
@@ -46,7 +46,7 @@ public partial class CheckListDropdown : UserControl
         InitializeComponent();
 
         // Пункт можно только отметить, но не «выбрать»: снимаем выбор сразу. Иначе строка
-        // залипала бы подсветкой выбранного, а её текст уезжал бы в свёрнутый бокс вместо
+        // залипала бы подсветкой выбранного, а ее текст уезжал бы в свернутый бокс вместо
         // сводки.
         Selector.SelectionChanged += (_, _) =>
         {
@@ -88,7 +88,7 @@ public partial class CheckListDropdown : UserControl
         var total = _items.Count;
         var shown = _items.Count(i => i.IsChecked);
 
-        // Замок на последней галочке; как только отмечен ещё один пункт — снимается со всех.
+        // Замок на последней галочке; как только отмечен еще один пункт — снимается со всех.
         foreach (var row in _items) row.CanToggle = !(shown == 1 && row.IsChecked);
 
         Summary = total == 0     ? "Список пуст"
@@ -99,7 +99,7 @@ public partial class CheckListDropdown : UserControl
 
 /// <summary>Строка списка: ключ пункта, подпись и состояние галочки. Наблюдаемая — галочку
 /// ставит привязка шаблона, а <see cref="CanToggle"/> меняет сам контрол, когда отмеченным
-/// остаётся один пункт.</summary>
+/// остается один пункт.</summary>
 public sealed partial class CheckListItem : ObservableObject
 {
     public CheckListItem(string key, string label, bool isChecked)

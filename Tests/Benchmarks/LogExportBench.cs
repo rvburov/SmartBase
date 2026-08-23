@@ -50,14 +50,14 @@ internal static class LogExportBench
         var count = Stopwatch.StartNew();
         var total = repo.CountChangeLogAsync(query).GetAwaiter().GetResult();
         count.Stop();
-        Console.WriteLine($"  счёт строк (окно подтверждения): {count.Elapsed.TotalMilliseconds:N0} мс → {total:N0}");
+        Console.WriteLine($"  счет строк (окно подтверждения): {count.Elapsed.TotalMilliseconds:N0} мс → {total:N0}");
 
         Measure("  выгрузка", Path.Combine(dir, "журнал.csv"), total,
                 path => CsvDump.Write(path, ConstructorRepository.ChangeLogCsvHeaders,
                                       repo.ReadChangeLogCsvRowsIsolated(query)));
 
         // Худший случай: пользователь отсортировал таблицу по строковой колонке — курсор
-        // идёт не по PK, а по «значение + Id» поверх неиндексированной колонки.
+        // идет не по PK, а по «значение + Id» поверх неиндексированной колонки.
         var sorted = new ConstructorRepository.ChangeLogQuery { SortColumn = "user", SortAsc = true };
         Measure("  выгрузка (сортировка по колонке)", Path.Combine(dir, "журнал-сорт.csv"), total,
                 path => CsvDump.Write(path, ConstructorRepository.ChangeLogCsvHeaders,
@@ -79,15 +79,15 @@ internal static class LogExportBench
         var count = Stopwatch.StartNew();
         var total = reader.CountAsync(query).GetAwaiter().GetResult();
         count.Stop();
-        Console.WriteLine($"  счёт строк (окно подтверждения): {count.Elapsed.TotalMilliseconds:N0} мс → {total:N0}");
+        Console.WriteLine($"  счет строк (окно подтверждения): {count.Elapsed.TotalMilliseconds:N0} мс → {total:N0}");
 
         Measure("  выгрузка", Path.Combine(dir, "диагностика.csv"), total,
                 path => CsvDump.Write(path, LogReader.CsvHeaders, reader.ReadCsvRows(query)));
     }
 
     // Замер с памятью: живой размер кучи важнее секунд — именно он вырастет,
-    // если выгрузка начнёт материализовать строки вместо потока. Общий объём
-    // выделений (мусор страниц) при этом растёт всегда — он ни о чём не говорит.
+    // если выгрузка начнет материализовать строки вместо потока. Общий объем
+    // выделений (мусор страниц) при этом растет всегда — он ни о чем не говорит.
     private static void Measure(string label, string path, long total, Func<string, long> write)
     {
         var before = GC.GetTotalAllocatedBytes();

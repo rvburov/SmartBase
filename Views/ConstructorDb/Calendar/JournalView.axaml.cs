@@ -114,7 +114,7 @@ public partial class JournalView : UserControl
         if (ev is { Id: int id }) _rangeAnchor = (ev.DbId, id, ev.FieldId);
     }
 
-    // Ctrl+Shift+клик: выделить диапазон от якоря до кликнутой строки. true — диапазон применён.
+    // Ctrl+Shift+клик: выделить диапазон от якоря до кликнутой строки. true — диапазон применен.
     private bool TrySelectRange(KeyModifiers modifiers, CalendarRecord? clicked)
     {
         if (!modifiers.HasFlag(KeyModifiers.Shift) || !modifiers.HasFlag(KeyModifiers.Control))
@@ -130,18 +130,18 @@ public partial class JournalView : UserControl
 
     /// <summary>
     /// Открывает «Журнал» (ВСЯ история данных, без ограничений по датам) через полную
-    /// виртуализацию: карта ленты строится из счётчиков по дням (В ФОНЕ на изолированных
+    /// виртуализацию: карта ленты строится из счетчиков по дням (В ФОНЕ на изолированных
     /// подключениях — на больших БД GROUP BY занимает секунды), полоса прокрутки соответствует
     /// всем строкам ленты, события подгружаются страницами по требованию с «Загрузка…»
     /// (см. <see cref="JournalVirtualList"/>).
     ///
     /// Первый показ / смена поиска — «свежая» загрузка: видна «Загрузка…», после построения —
     /// прокрутка к сегодня. Иначе — ТИХОЕ обновление (создание/правка/удаление события,
-    /// переключение коллекций): старая лента остаётся на экране, пока строится новая, позиция
-    /// прокрутки сохраняется; к дате созданной/изменённой записи (<paramref name="anchorDate"/>)
+    /// переключение коллекций): старая лента остается на экране, пока строится новая, позиция
+    /// прокрутки сохраняется; к дате созданной/измененной записи (<paramref name="anchorDate"/>)
     /// лента едет, только если этот день сейчас НЕ виден.
     /// </summary>
-    // Кеш счётчиков дней последней полной загрузки (по источникам, в порядке dbs) — позволяет
+    // Кеш счетчиков дней последней полной загрузки (по источникам, в порядке dbs) — позволяет
     // применять точечные правки МГНОВЕННО (дельтой), без полного GROUP BY по всем БД.
     private List<Dictionary<string, int>>? _countsCache;
     private string _countsKey = "";
@@ -154,7 +154,7 @@ public partial class JournalView : UserControl
         var gen = ++_loadGeneration;
         search ??= "";
         var sorted = dbs.OrderBy(d => d.dbId).ToList();
-        // Сигнатура кеша счётчиков: набор БД И их активных коллекций — смена любого делает
+        // Сигнатура кеша счетчиков: набор БД И их активных коллекций — смена любого делает
         // кеш чужим (ключ только по DbId позволял правке сразу после переключения коллекции
         // в сайдбаре применить кеш, посчитанный для другого набора).
         var key = string.Join("|", sorted.Select(d =>
@@ -171,8 +171,8 @@ public partial class JournalView : UserControl
             .Select(i => (i.OriginalEvent!.DbId, i.OriginalEvent!.Id!.Value, i.OriginalEvent!.FieldId))
             .ToHashSet();
 
-        // Созданная/изменённая запись тоже выделяется — визуально видно её в списке
-        // (при создании она ещё не была выделена, добавляем её ключ явно).
+        // Созданная/измененная запись тоже выделяется — визуально видно ее в списке
+        // (при создании она еще не была выделена, добавляем ее ключ явно).
         if (!fresh && anchorRecord is { Id: int anchorId })
             (preserveSelection ??= new HashSet<(int, int, int)>())
                 .Add((anchorRecord.DbId, anchorId, anchorRecord.FieldId));
@@ -184,23 +184,23 @@ public partial class JournalView : UserControl
                 .Select(t => (t.Rec.DbId, t.Rec.Id!.Value, t.Rec.FieldId))
                 .ToHashSet();
 
-        // Дельта правит кеш счётчиков ТОЧЕЧНО (−1 старый день, +1 новый) и ДО выбора пути
-        // загрузки: правка при активном поиске тоже меняет счётчики — кеш остаётся источником
-        // правды (БД уже изменена) и годится при выходе из поиска. Незнакомая БД — пересчёт.
+        // Дельта правит кеш счетчиков ТОЧЕЧНО (−1 старый день, +1 новый) и ДО выбора пути
+        // загрузки: правка при активном поиске тоже меняет счетчики — кеш остается источником
+        // правды (БД уже изменена) и годится при выходе из поиска. Незнакомая БД — пересчет.
         if (delta is not null && _countsCache is not null && _countsKey == key)
             foreach (var (rec, d) in delta)
             {
                 var idx = sorted.FindIndex(x => x.dbId == rec.DbId);
-                if (idx < 0) { _countsCache = null; break; }   // незнакомая БД — полный пересчёт
+                if (idx < 0) { _countsCache = null; break; }   // незнакомая БД — полный пересчет
                 var dict = _countsCache[idx];
                 var k = rec.StartDt.Date.ToString("yyyy-MM-dd");
                 var v = dict.GetValueOrDefault(k) + d;
                 if (v > 0) dict[k] = v; else dict.Remove(k);
             }
 
-        // МГНОВЕННЫЙ путь: правка/создание/удаление записи. Полный пересчёт (GROUP BY по всем БД)
+        // МГНОВЕННЫЙ путь: правка/создание/удаление записи. Полный пересчет (GROUP BY по всем БД)
         // на больших базах занимает секунды, в течение которых лента показывала бы УСТАРЕВШУЮ
-        // запись (её можно было снова открыть и править). Кеш уже поправлен дельтой выше —
+        // запись (ее можно было снова открыть и править). Кеш уже поправлен дельтой выше —
         // правим ленту в этом же кадре.
         if (!fresh && search.Length == 0 && delta is not null &&
             _countsCache is not null && _countsKey == key)
@@ -212,7 +212,7 @@ public partial class JournalView : UserControl
 
         // Пересборка БЕЗ дельты того же поиска (смена коллекций, возврат в вид, внешняя правка):
         // что изменилось — неизвестно, кеш недействителен целиком (иначе правка, пришедшая во
-        // время пересчёта, применила бы устаревшие счётчики).
+        // время пересчета, применила бы устаревшие счетчики).
         if (!fresh && delta is null) _countsCache = null;
 
         if (fresh)
@@ -228,8 +228,8 @@ public partial class JournalView : UserControl
     // Точечная правка: сперва пробуем мутировать ТЕКУЩИЙ список НА МЕСТЕ (страницы и кеши
     // дней переживают правку — она видна в том же кадре, без волны «Загрузка…»: пересоздание
     // списка на разреженной истории перечитывало десятки видимых дней по одному — секунды после
-    // каждого удаления). Если мутация невозможна (InMemory, день пересёк порог слияния и т.п.) —
-    // мгновенная пересборка по кешу счётчиков, как раньше.
+    // каждого удаления). Если мутация невозможна (InMemory, день пересек порог слияния и т.п.) —
+    // мгновенная пересборка по кешу счетчиков, как раньше.
     private async Task ApplyDeltaOrRebuildAsync(
         int gen, List<(int dbId, ConstructorRepository repo, ISet<int>? active)> dbs,
         IReadOnlyList<(CalendarRecord Rec, int Delta)> delta,
@@ -274,7 +274,7 @@ public partial class JournalView : UserControl
             if (search.Length > 0)
             {
                 // Поиск — фоновым SQL по ВСЕЙ истории (LIKE на изолированных подключениях):
-                // счётчики дней не нужны, находит в любом году.
+                // счетчики дней не нужны, находит в любом году.
                 var found = new List<CalendarRecord>();
                 foreach (var (dbId, repo, active) in dbs)
                 {
@@ -287,7 +287,7 @@ public partial class JournalView : UserControl
             }
             else if (_countsCache is not null && _countsKey == key)
             {
-                // Кеш счётчиков валиден (дельты держали его актуальным): пересборка без
+                // Кеш счетчиков валиден (дельты держали его актуальным): пересборка без
                 // GROUP BY по всей истории — например, мгновенный выход из поиска.
                 var shaped = _countsCache.Select(m => m.Select(kv => (kv.Key, kv.Value)).ToList()).ToList();
                 list = new JournalVirtualList(dbs, shaped, preserveSelection);
@@ -307,7 +307,7 @@ public partial class JournalView : UserControl
         }
         catch
         {
-            // БД недоступна/повреждена — журнал показываем пустым (как ведёт себя Workspace.Mount).
+            // БД недоступна/повреждена — журнал показываем пустым (как ведет себя Workspace.Mount).
             if (gen == _loadGeneration) LoadingHint.IsVisible = false;
             return;
         }
@@ -319,9 +319,9 @@ public partial class JournalView : UserControl
     }
 
     // Позиция после подмены списка (после отрисовки — нужен Extent): свежая загрузка — к сегодня;
-    // тихое обновление — остаёмся на месте, а если создали/изменили запись — прокрутка к САМОЙ
+    // тихое обновление — остаемся на месте, а если создали/изменили запись — прокрутка к САМОЙ
     // записи (не к заголовку дня: в большом дне она может быть далеко ниже) с центрированием,
-    // и только когда её строка сейчас не видна.
+    // и только когда ее строка сейчас не видна.
     private void ApplyPosition(int gen, JournalVirtualList list, bool fresh,
                                CalendarRecord? anchorRecord, double oldOffset)
     {
@@ -335,12 +335,12 @@ public partial class JournalView : UserControl
                 return;
             }
 
-            _scroll.Offset = new Vector(0, oldOffset);   // по умолчанию остаёмся на месте
+            _scroll.Offset = new Vector(0, oldOffset);   // по умолчанию остаемся на месте
             if (anchorRecord is null) return;
 
             try
             {
-                // Строка самой записи; если найти не удалось — заголовок её дня.
+                // Строка самой записи; если найти не удалось — заголовок ее дня.
                 int? row = anchorRecord.Id is int rid
                     ? await list.RowOfEventAsync(anchorRecord.DbId, rid, anchorRecord.FieldId,
                                                  anchorRecord.StartDt)
@@ -348,7 +348,7 @@ public partial class JournalView : UserControl
                 row ??= list.DayRowsOf(anchorRecord.StartDt.Date)?.FirstRow;
                 if (gen != _loadGeneration || row is not int r) return;
 
-                // Хоть ЧАСТИЧНО видна — ленту не дёргаем (правка видимой записи не должна
+                // Хоть ЧАСТИЧНО видна — ленту не дергаем (правка видимой записи не должна
                 // двигать экран, даже если строка наполовину срезана краем окна).
                 var y  = OffsetOfRow(r);
                 var vh = _scroll.Viewport.Height;
@@ -359,7 +359,7 @@ public partial class JournalView : UserControl
             }
             catch
             {
-                // Поиск строки не удался (БД недоступна) — остаёмся на месте.
+                // Поиск строки не удался (БД недоступна) — остаемся на месте.
             }
         }, DispatcherPriority.Background);
     }
@@ -411,7 +411,7 @@ public partial class JournalView : UserControl
         }
     }
 
-    // Правый клик по событию: если ещё не выделено — выделяем его одно.
+    // Правый клик по событию: если еще не выделено — выделяем его одно.
     private void OnEventPointerPressed(object? sender, PointerPressedEventArgs e)
     {
         if (sender is Border { Tag: JournalRow { IsEvent: true } item }
@@ -444,7 +444,7 @@ public partial class JournalView : UserControl
         else
         {
             // «Редактировать»/«Дублировать»/«Удалить» выделение НЕ снимают: после сохранения/
-            // отмены запись остаётся подсвеченной — видно, какую строку меняли/удаляли
+            // отмены запись остается подсвеченной — видно, какую строку меняли/удаляли
             // (выделение переживает и пересборку — см. preserveSelection в LoadFrom).
             menu = SmartBase.Controls.Components.EventContextMenu.Single(
                 onEdit:      () => RecordClicked?.Invoke(this, item.OriginalEvent!),

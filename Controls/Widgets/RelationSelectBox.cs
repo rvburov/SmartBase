@@ -45,8 +45,8 @@ public sealed class RelationSelectBox : Panel
     private readonly RelationLinksCache? _cache;
 
     private readonly List<int>                     _selected = [];
-    // id выбранной цели → TargetDbId ЕГО ребра: переход по «карандашу» идёт в СВОЮ базу ребра, а не в
-    // цель текущего конфига поля (иначе после пере-настройки/смешанных рёбер открылась бы пустая/чужая
+    // id выбранной цели → TargetDbId ЕГО ребра: переход по «карандашу» идет в СВОЮ базу ребра, а не в
+    // цель текущего конфига поля (иначе после пере-настройки/смешанных ребер открылась бы пустая/чужая
     // запись). Для кандидатов из пикера используется _cfg.TargetDbId (они из текущей целевой базы).
     private readonly Dictionary<int, int>          _selectedDb = new();
     private readonly Dictionary<int, string>       _titles   = new();
@@ -61,7 +61,7 @@ public sealed class RelationSelectBox : Panel
     /// <summary>Поднимается после изменения набора связей.</summary>
     public event EventHandler? Changed;
     /// <summary>Переход к связанной записи — (DbId цели, Id записи). DbId=0 — та же БД, &gt;0 —
-    /// межбазовая цель (открыть из её БД). Пункт «карандаш» у строки списка.</summary>
+    /// межбазовая цель (открыть из ее БД). Пункт «карандаш» у строки списка.</summary>
     public event EventHandler<(int DbId, int RecordId)>? Navigate;
 
     // Репозиторий целевой БД: та же (внутрибазовая связь) или чужая (межбазовая — через резолвер
@@ -160,8 +160,8 @@ public sealed class RelationSelectBox : Panel
     public void Reload() => ReloadSelected(preferCache: false);
 
     /// <summary>Строка таблицы наполнилась данными (уведомление "Item"). Смена записи → перечитать.
-    /// Тот же RecordId, но МЕЖБАЗОВАЯ связь → тоже перечитать СВЕЖИМ: её нет в батч-кеше, поэтому
-    /// правка/фон иначе не видны (внутрибазовую держит свежей батч-кеш, лишний раз не дёргаем).</summary>
+    /// Тот же RecordId, но МЕЖБАЗОВАЯ связь → тоже перечитать СВЕЖИМ: ее нет в батч-кеше, поэтому
+    /// правка/фон иначе не видны (внутрибазовую держит свежей батч-кеш, лишний раз не дергаем).</summary>
     public void OnRowFilled(int recordId)
     {
         if (recordId != _recordId) { RecordId = recordId; return; }
@@ -169,7 +169,7 @@ public sealed class RelationSelectBox : Panel
         // Тот же RecordId, но строку пере-Fill'или. Read-ячейка (editing:false) перечитывает показ,
         // чтобы ВНЕШНЕЕ изменение отразилось сразу — в т.ч. переименование ЦЕЛИ: VirtualRowList
         // пере-праймил батч-кеш свежими названиями (RefreshRelationTargets), и здесь мы их подхватываем.
-        // Межбазовую читаем свежей (её нет в кеше), внутрибазовую — из обновлённого кеша (дёшево).
+        // Межбазовую читаем свежей (ее нет в кеше), внутрибазовую — из обновленного кеша (дешево).
         // Edit-ячейку (editing:true) не трогаем на тот же RecordId — там может идти правка выбора;
         // ей достаточно прежнего поведения (межбазовую освежить, внутрибазовую держит кеш/правка).
         if (_editing)
@@ -185,9 +185,9 @@ public sealed class RelationSelectBox : Panel
         _selectedDb.Clear();
         if (_recordId > 0)
         {
-            // Быстрый путь таблицы: батч-кеш держит ТОЛЬКО внутрибазовые рёбра (TargetDbId=0) с уже
+            // Быстрый путь таблицы: батч-кеш держит ТОЛЬКО внутрибазовые ребра (TargetDbId=0) с уже
             // резолвнутыми названиями. Годится лишь для внутрибазового поля при прогретом кеше; иначе
-            // (и всегда для межбазового поля) — резолвим по рёбрам, КАЖДОЕ по своему TargetDbId.
+            // (и всегда для межбазового поля) — резолвим по ребрам, КАЖДОЕ по своему TargetDbId.
             if (!_cfg.IsCrossDb && preferCache && _cache is not null
                 && _cache.TryGet(_fieldId, _recordId, out var cached))
             {
@@ -201,13 +201,13 @@ public sealed class RelationSelectBox : Panel
 
     // Резолв КАЖДОГО ребра по ЕГО СОБСТВЕННОМУ TargetDbId (а не по цели текущего конфига поля): ребро,
     // созданное на другую БД, всегда резолвится ИЗ ТОЙ БД — даже если позже цель поля пере-настроили.
-    // Так показ остаётся честным: нет ложных совпадений Id с чужой локальной записью.
+    // Так показ остается честным: нет ложных совпадений Id с чужой локальной записью.
     //
     // Единая логика обрыва (как внутри базы, так и межбазы):
     //  • БД цели ДОСТУПНА, но записи в ней нет (удалена/перенесена) → чип пропадает (не в _selected):
     //    пусто → «связи нет». На правке ячейки такое ребро вычищается само (SetLinks по _selected).
-    //  • БД цели НЕДОСТУПНА (сервер лёг / путь-файл пропал / грузится / отключена) → показываем
-    //    «(база недоступна)» и ДЕРЖИМ ребро (база вернётся — связь восстановится).
+    //  • БД цели НЕДОСТУПНА (сервер лег / путь-файл пропал / грузится / отключена) → показываем
+    //    «(база недоступна)» и ДЕРЖИМ ребро (база вернется — связь восстановится).
     private void LoadSelected()
     {
         var edges = _repo.GetLinkEdges(_fieldId, _recordId);   // (ToRecordId, TargetDbId) в порядке Position
@@ -215,7 +215,7 @@ public sealed class RelationSelectBox : Panel
 
         // Обрыв решаем по ПАРЕ (ToRecordId, TargetDbId), а не по голому id: осиротевшее межбазовое
         // ребро (TargetDbId>0), чей id СЛУЧАЙНО совпал с живой внутрибазовой записью, не должно
-        // прятать валидную внутрибазовую связь (и убивать её на следующей правке через SetLinks).
+        // прятать валидную внутрибазовую связь (и убивать ее на следующей правке через SetLinks).
         var gone = new HashSet<(int To, int Db)>();   // база доступна, но цели нет → обрыв → «связи нет»
         foreach (var grp in edges.GroupBy(e => e.TargetDbId))
         {
@@ -245,7 +245,7 @@ public sealed class RelationSelectBox : Panel
     private void RefreshDisplay()
     {
         // Название цели показываем первой строкой (TitleText): закрытый вид — одна строка,
-        // многострочное название разорвало бы её на несколько.
+        // многострочное название разорвало бы ее на несколько.
         _valueText.Text        = string.Join(_separator,
             _selected.Select(id => TitleText.FirstLine(_titles.GetValueOrDefault(id, ""))));
         _valueText.IsVisible   = _selected.Count > 0;
@@ -284,7 +284,7 @@ public sealed class RelationSelectBox : Panel
             Background      = Brushes.Transparent,
             BorderThickness = new Thickness(0),
             // Воздух вокруг строк — здесь, а не у карточки: Padding списка это Margin
-            // презентера ВНУТРИ области прокрутки, поэтому полоса остаётся у края карточки.
+            // презентера ВНУТРИ области прокрутки, поэтому полоса остается у края карточки.
             Padding         = new Thickness(8, 6),
             ItemsSource     = _shown,
             ItemTemplate    = BuildItemTemplate(fontBase),
@@ -409,7 +409,7 @@ public sealed class RelationSelectBox : Panel
         });
 
     // Показываем не более Cap кандидатов (на огромных коллекциях полный список невозможен — память/
-    // зависание UI). Тянем Cap+1: если пришло больше — есть ещё, показываем подсказку «уточните в поиске»
+    // зависание UI). Тянем Cap+1: если пришло больше — есть еще, показываем подсказку «уточните в поиске»
     // (точный остаток не считаем — COUNT по 10 млн на каждый ввод недопустим).
     private const int PickerCap = 200;
 
@@ -430,10 +430,10 @@ public sealed class RelationSelectBox : Panel
                 _titles[id] = title;
 
         var list = new List<RelationOptionVm>();
-        // Уже выбранные — ВСЕГДА с базой СВОЕГО ребра (переход туда, откуда связь реально идёт), и в
+        // Уже выбранные — ВСЕГДА с базой СВОЕГО ребра (переход туда, откуда связь реально идет), и в
         // пустом списке, И В ПОИСКЕ: иначе при коллизии id «→» уводил бы в базу текущего конфига поля
         // (исходный симптом C4). Кандидаты приходят только из целевой базы поля, поэтому выбранная
-        // цель в ЧУЖОЙ базе в results не попадает — отбираем её по уже известному названию, чтобы при
+        // цель в ЧУЖОЙ базе в results не попадает — отбираем ее по уже известному названию, чтобы при
         // поиске она не исчезала из списка.
         foreach (var id in _selected)
         {
@@ -474,9 +474,9 @@ public sealed class RelationSelectBox : Panel
         if (_recordId > 0)
         {
             // Оборванные ссылки (цель удалена при живой базе) в _selected не попадают (LoadSelected),
-            // поэтому SetLinks по _selected сам вычищает их рёбра — «чистка при правке».
+            // поэтому SetLinks по _selected сам вычищает их ребра — «чистка при правке».
             _repo.SetLinks(_fieldId, _recordId, _selected);
-            _cache?.Invalidate(_fieldId, _recordId);   // кеш устарел — следующее чтение возьмёт свежее
+            _cache?.Invalidate(_fieldId, _recordId);   // кеш устарел — следующее чтение возьмет свежее
         }
         RefreshDisplay();
         Changed?.Invoke(this, EventArgs.Empty);
@@ -495,7 +495,7 @@ public sealed class RelationSelectBox : Panel
     {
         public int    Id    => id;
         public int    DbId  => dbId;   // база цели этого пункта (0 — та же БД, >0 — межбазовая)
-        // Строка списка — одна строка: показываем первую (поиск выше идёт по полному названию).
+        // Строка списка — одна строка: показываем первую (поиск выше идет по полному названию).
         public string Title => TitleText.FirstLine(title);
 
         public bool Checked

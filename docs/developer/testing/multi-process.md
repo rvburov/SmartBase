@@ -23,7 +23,7 @@ dotnet run -c Release --project Tests/MultiProcess -- --hold-write-lock <db> [с
 
 Что можно было автоматизировать — перенесено в автотесты (см. [automated-tests.md](automated-tests.md)):
 локальный профиль прагм из `--check-pragmas` → `PragmaTests`, гонка ячейки из `--contend`
-(в упрощённом in-process виде) → `ContentionTests`. Здесь остаются межпроцессные и ручные
+(в упрощенном in-process виде) → `ContentionTests`. Здесь остаются межпроцессные и ручные
 сценарии, которые в `dotnet test` не выразить.
 
 Подробнее про многопользовательскую работу — [../architecture/multi-database.md](../architecture/database/multi-database.md).

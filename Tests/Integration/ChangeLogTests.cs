@@ -4,12 +4,12 @@ namespace SmartBase.Tests.Integration;
 
 /// <summary>
 /// Журнал изменений (change_log): мутации автоматически логируются, страница читается
-/// keyset-обходом с фильтрами/сортировкой, счётчики группируют значения колонки,
+/// keyset-обходом с фильтрами/сортировкой, счетчики группируют значения колонки,
 /// очистка удаляет строки.
 /// </summary>
 public sealed class ChangeLogTests
 {
-    // Создаёт коллекцию + поле + запись → несколько строк журнала «create».
+    // Создает коллекцию + поле + запись → несколько строк журнала «create».
     private static void SeedActivity(ConstructorRepository repo)
     {
         var col = SampleData.AddCollection(repo, "Журналируемая");

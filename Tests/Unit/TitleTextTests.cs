@@ -8,7 +8,7 @@ namespace SmartBase.Tests.Unit;
 /// В базе <c>Title</c> лежит как есть: вставка текста в ячейку «Название» и импорт приносят
 /// переводы строк. Все блоки, где название рисуется одним куском — карточка задачи, строка
 /// «Расписания», лента «Журнала», плашка события, попап года, — показывают первую непустую
-/// строку. Полное значение остаётся в самом <c>Title</c>: по нему идут поиск, сортировка,
+/// строку. Полное значение остается в самом <c>Title</c>: по нему идут поиск, сортировка,
 /// экспорт и правка в окнах записи и задачи.
 /// </summary>
 public sealed class TitleTextTests
@@ -58,10 +58,10 @@ public sealed class TitleTextTests
     [Fact]
     public void Task_record_shows_the_first_line_only()
     {
-        var task = new TaskRecord { Title = "Сдать отчёт\nдо пятницы" };
+        var task = new TaskRecord { Title = "Сдать отчет\nдо пятницы" };
 
-        Assert.Equal("Сдать отчёт", task.DisplayTitle);
-        Assert.Equal("Сдать отчёт\nдо пятницы", task.Title);
+        Assert.Equal("Сдать отчет", task.DisplayTitle);
+        Assert.Equal("Сдать отчет\nдо пятницы", task.Title);
     }
 
     [Fact]

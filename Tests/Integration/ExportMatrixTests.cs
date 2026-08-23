@@ -246,7 +246,7 @@ public sealed class ExportMatrixTests
         var goods = BuildGoods(db, dir);
 
         var petsCsv = dir.File("pets.csv");
-        File.WriteAllText(petsCsv, "Название;Вид\nБарсик;кот\nШарик;пёс\n", new UTF8Encoding(false));
+        File.WriteAllText(petsCsv, "Название;Вид\nБарсик;кот\nШарик;пес\n", new UTF8Encoding(false));
         var pets = IE.Import(db.Constructor, petsCsv, "Звери");
 
         // Файл на коллекцию.
@@ -258,9 +258,9 @@ public sealed class ExportMatrixTests
 
         // Одна книга, лист на коллекцию.
         var one = IE.Export(db.Constructor,
-            IE.ExportSpecFor(db.Path, [goods, pets], "Всё разом", ExportFormat.Xlsx, dir.Path, singleFile: true));
+            IE.ExportSpecFor(db.Path, [goods, pets], "Все разом", ExportFormat.Xlsx, dir.Path, singleFile: true));
         Assert.Single(one);
-        Assert.Equal("Всё разом.xlsx", Path.GetFileName(one[0]));
+        Assert.Equal("Все разом.xlsx", Path.GetFileName(one[0]));
         using var wb = new XLWorkbook(one[0]);
         Assert.Equal(2, wb.Worksheets.Count);
         Assert.Equal("Товары", wb.Worksheets.First().Name);
@@ -317,7 +317,7 @@ public sealed class ExportMatrixTests
         Assert.True(cancelled);
         Assert.Single(done);                                   // «Мелкая» дописана
         Assert.True(File.Exists(done[0]));
-        Assert.False(File.Exists(Path.Combine(dir.Path, "Большая.csv")));  // недописанный удалён
+        Assert.False(File.Exists(Path.Combine(dir.Path, "Большая.csv")));  // недописанный удален
     }
 
     [Fact]

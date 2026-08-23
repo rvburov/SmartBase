@@ -7,8 +7,8 @@ namespace SmartBase.Tests.Integration;
 
 /// <summary>
 /// Права и допуск (docs/architecture/users-permissions.md): первый пользователь —
-/// администратор; неодобренному всё запрещено; маска коллекции переопределяет базовую;
-/// пароль базы (PBKDF2) выдаёт допуск.
+/// администратор; неодобренному все запрещено; маска коллекции переопределяет базовую;
+/// пароль базы (PBKDF2) выдает допуск.
 /// </summary>
 public sealed class PermissionServiceTests
 {
@@ -51,7 +51,7 @@ public sealed class PermissionServiceTests
         var col = SampleData.AddCollection(repo);
         var userId = db.Permissions.CurrentUserId;
 
-        // Пока администратор: пишем маски. База — только просмотр; коллекция — всё.
+        // Пока администратор: пишем маски. База — только просмотр; коллекция — все.
         db.Permissions.SetMask(userId, null, (int)PermAction.ViewCollection);
         db.Permissions.SetMask(userId, col.Id!.Value, (int)PermAction.All);
 
@@ -136,7 +136,7 @@ public sealed class PermissionServiceTests
         db.Permissions.SetMask(id, null, (int)PermAction.ViewCollection);
 
         // Повышение и возврат в «Пользователя» не должны стирать настроенные права:
-        // пока человек админ, Can() и так разрешает всё.
+        // пока человек админ, Can() и так разрешает все.
         db.Permissions.SetAdmin(id, true);
         db.Permissions.SetAdmin(id, false);
 
@@ -161,7 +161,7 @@ public sealed class PermissionServiceTests
     public void Database_never_loses_its_last_admin()
     {
         using var db = new TempDatabase();
-        // Второй админ есть, но он же и единственный после того, как мою строку снёс сосед.
+        // Второй админ есть, но он же и единственный после того, как мою строку снес сосед.
         var id = JoinUser(db.Path, "ivanov@pc2", "Иванов Иван");
         db.Permissions.SetAdmin(id, true);
 

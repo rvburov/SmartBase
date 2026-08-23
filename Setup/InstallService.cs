@@ -48,7 +48,7 @@ public static partial class InstallService
         Path.Combine(installDir, IsMac ? AppBundleName : AppExeName);
 
     /// <summary>
-    /// Установщик рядом с приложением, в той же папке. Кладётся при установке и служит
+    /// Установщик рядом с приложением, в той же папке. Кладется при установке и служит
     /// единственной точкой входа для обновления и удаления: отдельного деинсталлятора нет.
     /// </summary>
     public static string SetupInstalledPath(string installDir) =>
@@ -72,7 +72,7 @@ public static partial class InstallService
 
     /// <summary>
     /// Приводит выбранную пользователем папку к «выделенной»: дописывает подпапку с именем
-    /// приложения, если её там ещё нет. Нужно, чтобы удаление не задело чужое содержимое общей
+    /// приложения, если ее там еще нет. Нужно, чтобы удаление не задело чужое содержимое общей
     /// папки — удаление чистит папку установки. На macOS не применяется: единица установки —
     /// `.app`-бандл внутри `~/Applications`, отдельная подпапка не нужна.
     /// </summary>
@@ -89,8 +89,8 @@ public static partial class InstallService
 
     /// <summary>
     /// Есть ли права на запись в папку (можно ли установить/обновить туда приложение). Саму
-    /// папку НЕ создаёт — пробует записать временный файл в ближайший существующий каталог-предок
-    /// (проверка вызывается на каждый ввод пути). Ловит защищённые пути без прав: Program Files,
+    /// папку НЕ создает — пробует записать временный файл в ближайший существующий каталог-предок
+    /// (проверка вызывается на каждый ввод пути). Ловит защищенные пути без прав: Program Files,
     /// корень диска, чужие каталоги.
     /// </summary>
     public static bool CanCreateOrWrite(string dir)
@@ -167,7 +167,7 @@ public static partial class InstallService
         progress.Report((1.0, "Готово"));
     }
 
-    // Установщик кладётся рядом с приложением: одна программа на установку, обновление и
+    // Установщик кладется рядом с приложением: одна программа на установку, обновление и
     // удаление, отдельного деинсталлятора нет. Пропускаем, если запущены уже оттуда —
     // копировать файл сам в себя нельзя.
     private static void CopySetupBesideApp(string installDir, string self)
@@ -179,7 +179,7 @@ public static partial class InstallService
             File.Copy(self, target, overwrite: true);
             MakeExecutable(target);
         }
-        catch { /* не легло — приложение всё равно установлено, удаление доступно из ярлыка */ }
+        catch { /* не легло — приложение все равно установлено, удаление доступно из ярлыка */ }
     }
 
     private static bool PathsEqual(string a, string b)
@@ -213,7 +213,7 @@ public static partial class InstallService
         progress.Report((1.0, "Готово"));
     }
 
-    // macOS: рядом с SmartBase.app кладём SmartBase-Setup.app — ту же программу под именем
+    // macOS: рядом с SmartBase.app кладем SmartBase-Setup.app — ту же программу под именем
     // установщика (режим выбирается по имени бандла, см. Program.ResolveMode). Двойной клик
     // по нему открывает окно обновления и удаления. Пропускаем, если установщик уже запущен
     // из этой самой папки: копировать каталог сам в себя нельзя.
@@ -228,7 +228,7 @@ public static partial class InstallService
             MakeExecutable(MacInnerBinary(target));
             ClearQuarantine(target);
         }
-        catch { /* не легло — приложение всё равно установлено */ }
+        catch { /* не легло — приложение все равно установлено */ }
     }
 
     // ── Удаление ────────────────────────────────────────────────────────────
@@ -236,7 +236,7 @@ public static partial class InstallService
     {
         if (IsMac) { UninstallMac(installDir, removeData); return; }
 
-        Autostart.Disable();     // иначе система будет пытаться стартовать снесённый бинарь
+        Autostart.Disable();     // иначе система будет пытаться стартовать снесенный бинарь
         UnregisterUninstall();   // убрать из «Параметры → Приложения» (Windows)
         RemoveShortcuts();
         UnregisterInstallPath(installDir);
@@ -259,7 +259,7 @@ public static partial class InstallService
     private static void UninstallMac(string installDir, bool removeData)
     {
         var bundle = InstalledPath(installDir);   // <dir>/SmartBase.app
-        Autostart.Disable();                      // LaunchAgent указывал бы на снесённый бинарь
+        Autostart.Disable();                      // LaunchAgent указывал бы на снесенный бинарь
         UnregisterLaunchServices(bundle);
         UnregisterInstallPath(installDir);
         // Хвост версий до 1.0.4: тогда рядом клался .command-удалятор, теперь его роль
@@ -268,15 +268,15 @@ public static partial class InstallService
         if (removeData) TryDeleteDir(DataDir);
         TryDeleteDir(bundle);
         // Установщик сносим последним и только если удаляем не из него самого: каталог
-        // запущенного бандла на macOS отвязывается на ходу, но окно ещё живёт до Close().
+        // запущенного бандла на macOS отвязывается на ходу, но окно еще живет до Close().
         var setup = SetupInstalledPath(installDir);
         if (!PathsEqual(setup, BundleRoot(Environment.ProcessPath) ?? "")) TryDeleteDir(setup);
         else ScheduleSelfBundleDelete(setup);
     }
 
     // macOS: снести собственный бандл после выхода процесса. Каталог запущенного приложения
-    // отвязывается на лету, но пока окно не закрыто, внутри него ещё читаются ресурсы —
-    // поэтому ждём завершения процесса отдельной командой и только потом удаляем.
+    // отвязывается на лету, но пока окно не закрыто, внутри него еще читаются ресурсы —
+    // поэтому ждем завершения процесса отдельной командой и только потом удаляем.
     private static void ScheduleSelfBundleDelete(string bundle)
     {
         try
@@ -354,7 +354,7 @@ public static partial class InstallService
     }
 
     /// <summary>Синхронная замена артефакта (для самозамены без UI): файл или каталог-бандл.
-    /// Возвращает true, если замена удалась в пределах попыток; false — если файл всё время
+    /// Возвращает true, если замена удалась в пределах попыток; false — если файл все время
     /// занят (антивирус/старый процесс не отпустил): вызывающий покажет это пользователю.</summary>
     public static bool ReplaceArtifact(string src, string target)
     {
@@ -401,8 +401,8 @@ public static partial class InstallService
 
     /// <summary>Убрать залежавшийся temp-артефакт обновления (best-effort, при старте приложения).
     /// Апдейтер копирует новую версию в <c>%TEMP%\SmartBase.update.exe</c> (или <c>.update.app</c>) и
-    /// после перезапуска его не удаляет. Если апдейтер ещё выполняется — файл занят, молча
-    /// пропустим, уберётся при следующем старте.</summary>
+    /// после перезапуска его не удаляет. Если апдейтер еще выполняется — файл занят, молча
+    /// пропустим, уберется при следующем старте.</summary>
     public static void CleanStaleUpdateArtifacts()
     {
         var temp = Path.GetTempPath();
@@ -448,7 +448,7 @@ public static partial class InstallService
             CreateShortcutWindows(Path.Combine(DesktopDir, $"{AppSettings.AppName}.lnk"), exe);
     }
 
-    // Ярлык .lnk создаём через WScript.Shell из PowerShell (без COM-interop в проекте).
+    // Ярлык .lnk создаем через WScript.Shell из PowerShell (без COM-interop в проекте).
     private static void CreateShortcutWindows(string lnkPath, string targetExe, string arguments = "")
     {
         var workDir = Path.GetDirectoryName(targetExe) ?? "";
@@ -466,8 +466,8 @@ public static partial class InstallService
     }
 
     // ── Linux: ярлыки .desktop по XDG ──────────────────────────────────────────
-    // Меню приложений = регистрация (аналог реестра на Windows). Иконку достаём из вшитого
-    // ресурса в папку установки и ссылаемся на неё абсолютным путём.
+    // Меню приложений = регистрация (аналог реестра на Windows). Иконку достаем из вшитого
+    // ресурса в папку установки и ссылаемся на нее абсолютным путем.
     private static void CreateShortcutsLinux(string installDir, bool desktop)
     {
         var exe  = Path.Combine(installDir, AppExeName);
@@ -510,9 +510,9 @@ public static partial class InstallService
         File.WriteAllText(path, content);
     }
 
-    // Иконку приложения достаём из вшитого Avalonia-ресурса (avares://) в файл .png.
-    // Мастеров три, по одному на систему (см. Scripts/generate-icons.sh) — сюда идёт тот,
-    // что нарисован под рабочие столы Linux. Имя файла на диске остаётся icon.png:
+    // Иконку приложения достаем из вшитого Avalonia-ресурса (avares://) в файл .png.
+    // Мастеров три, по одному на систему (см. Scripts/generate-icons.sh) — сюда идет тот,
+    // что нарисован под рабочие столы Linux. Имя файла на диске остается icon.png:
     // на него ссылаются уже созданные ярлыки .desktop.
     private static void ExtractIcon(string destPng)
     {
@@ -532,12 +532,12 @@ public static partial class InstallService
     private static string Quote(string s) => "\"" + s + "\"";
 
     // Экранирование пути под конкретную «границу», куда он подставляется КАК ТЕКСТ скрипта.
-    // (Для аргументов процесса — RunHidden/lsregister/update-desktop-database — остаётся Quote:
+    // (Для аргументов процесса — RunHidden/lsregister/update-desktop-database — остается Quote:
     //  там нет интерпретатора, экранировать $/` было бы ошибкой.)
     //   • PsQuote          — строковый литерал PowerShell в одинарных кавычках (' → ''); ярлыки .lnk,
     //                        запись в реестр. Внутри '…' спецсимвол только сам '; " в путях Windows невозможен.
     //   • BatEscape        — путь в .bat: % → %% (иначе cmd примет %…% за переменную); кавычки ставит вызывающий.
-    //   • ShQuote          — аргумент bash в одинарных кавычках (' → '\''); экранирует всё: $, `, ", \, пробел.
+    //   • ShQuote          — аргумент bash в одинарных кавычках (' → '\''); экранирует все: $, `, ", \, пробел.
     //   • DesktopExecQuote — поле Exec в .desktop (freedesktop): двойные кавычки, внутри \ ` $ " с обратным слэшем.
     private static string PsQuote(string s) => "'" + s.Replace("'", "''") + "'";
     private static string BatEscape(string s) => s.Replace("%", "%%");
@@ -549,14 +549,14 @@ public static partial class InstallService
     private const string Lsregister =
         "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister";
 
-    // Скачанный из интернета установщик несёт метку карантина, и macOS переносит её на всё,
+    // Скачанный из интернета установщик несет метку карантина, и macOS переносит ее на все,
     // что он записывает, — установленное приложение тоже оказывается заблокированным. Без
     // этого человек проходит «Настройки → Конфиденциальность и безопасность → Все равно
     // открыть» дважды: сначала для установщика, потом для самой программы.
     //
-    // Ждём завершения: снять метку надо до того, как бандл увидит LaunchServices, иначе
+    // Ждем завершения: снять метку надо до того, как бандл увидит LaunchServices, иначе
     // блокировка успевает закешироваться. Ошибку глотаем — установку она не отменяет,
-    // в худшем случае вернётся лишнее предупреждение (при установке из сетевой папки
+    // в худшем случае вернется лишнее предупреждение (при установке из сетевой папки
     // метки нет вовсе и снимать нечего).
     private static void ClearQuarantine(string bundle)
     {
@@ -583,8 +583,8 @@ public static partial class InstallService
         @"HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\" + AppSettings.AppName;
 
     /// <param name="onlyIfRegistered">
-    /// Обновлять запись, но не создавать её. Нужно при обновлении: версию в списке приложений
-    /// освежить надо, а вот заводить запись там, где её не было, нельзя — это либо установка
+    /// Обновлять запись, но не создавать ее. Нужно при обновлении: версию в списке приложений
+    /// освежить надо, а вот заводить запись там, где ее не было, нельзя — это либо установка
     /// до 1.0.5, либо портативная копия, которой в «Приложениях» не место.
     /// </param>
     private static void RegisterUninstall(string installDir, bool onlyIfRegistered = false)
@@ -627,8 +627,8 @@ public static partial class InstallService
     }
 
     /// <summary>
-    /// Файлы, которые установщик создаёт В САМОЙ папке установки (Win/Linux). Нужны для точечного
-    /// удаления: сносим только своё, а папку — лишь если она осталась пустой. Ярлыки Пуск/рабочего
+    /// Файлы, которые установщик создает В САМОЙ папке установки (Win/Linux). Нужны для точечного
+    /// удаления: сносим только свое, а папку — лишь если она осталась пустой. Ярлыки Пуск/рабочего
     /// стола и .desktop лежат вне папки установки — их убирает RemoveShortcuts.
     /// Публичный, чтобы тест мог убедиться: список не выходит за пределы папки установки.
     /// </summary>
@@ -665,7 +665,7 @@ public static partial class InstallService
         catch { /* не пусто (чужие файлы) или занято — папку оставляем */ }
     }
 
-    // Отложенное удаление (только Windows): запущенный .exe нельзя снести самому себе → bat ждёт
+    // Отложенное удаление (только Windows): запущенный .exe нельзя снести самому себе → bat ждет
     // его освобождения (до 30 попыток, ~30 с). Удаляем ТОЛЬКО свои файлы, затем rmdir БЕЗ /S —
     // папка исчезнет, лишь если пуста; при установке в общую папку чужие файлы уцелеют. Затем
     // bat самоудаляется. Последний rmdir с парой повторов — гасит гонку с асинхронным удалением.
@@ -684,14 +684,14 @@ public static partial class InstallService
         sb.Append("set n=0\r\n");
         sb.Append(":loop\r\n");
         sb.Append("ping -n 2 127.0.0.1 >nul\r\n");
-        sb.Append($"del /F /Q \"{exeB}\" 2>nul\r\n");     // ждём освобождения запущенного .exe
+        sb.Append($"del /F /Q \"{exeB}\" 2>nul\r\n");     // ждем освобождения запущенного .exe
         sb.Append($"if not exist \"{exeB}\" goto cleanup\r\n");
         sb.Append("set /a n+=1\r\n");
         sb.Append("if %n% lss 30 goto loop\r\n");
         sb.Append(":cleanup\r\n");
         foreach (var f in OwnedInstallFiles(dir))
         {
-            if (string.Equals(f, exe, StringComparison.OrdinalIgnoreCase)) continue;   // .exe уже удалён в цикле
+            if (string.Equals(f, exe, StringComparison.OrdinalIgnoreCase)) continue;   // .exe уже удален в цикле
             sb.Append($"del /F /Q \"{BatEscape(f)}\" 2>nul\r\n");
         }
         sb.Append("set m=0\r\n");
@@ -727,7 +727,7 @@ public static partial class InstallService
                 CreateNoWindow   = true,
                 WindowStyle      = ProcessWindowStyle.Hidden,
                 // Рабочая папка — %TEMP%, а не папка установки: иначе дочерний процесс
-                // наследует её как текущий каталог и блокирует удаление.
+                // наследует ее как текущий каталог и блокирует удаление.
                 WorkingDirectory = Path.GetTempPath(),
             });
             if (wait)

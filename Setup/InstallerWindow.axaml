@@ -11,7 +11,7 @@
 
     <Window.Styles>
         <!-- Главная кнопка («Установить»/«Обновить»): размер как у dialog-кнопок приложения,
-             синий фон (accent), тёмно-синий #0062CC при наведении. -->
+             синий фон (accent), темно-синий #0062CC при наведении. -->
         <Style Selector="Button.accent">
             <Setter Property="Width"                      Value="110" />
             <Setter Property="Height"                     Value="30" />

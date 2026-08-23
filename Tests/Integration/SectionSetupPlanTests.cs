@@ -5,7 +5,7 @@ namespace SmartBase.Tests.Integration;
 
 /// <summary>
 /// План подготовки коллекции к разделу: что UI покажет пользователю ДО того, как создание
-/// события или задачи заведёт коллекции столбцы. Главный инвариант — план совпадает с тем, что
+/// события или задачи заведет коллекции столбцы. Главный инвариант — план совпадает с тем, что
 /// реально сделают <c>AddCalendarRecord</c>/<c>AddTaskRecord</c>, и пустеет, как только
 /// коллекция готова (тогда окно подтверждения не показывается вовсе).
 /// Инварианты из docs/features/tasks.md и docs/ui/dialogs.md.
@@ -30,7 +30,7 @@ public sealed class SectionSetupPlanTests
         Assert.Empty(plan.Candidates);
     }
 
-    /// <summary>Коллекция готова — спрашивать не о чем, следующее событие создаётся молча.</summary>
+    /// <summary>Коллекция готова — спрашивать не о чем, следующее событие создается молча.</summary>
     [Fact]
     public void Calendar_plan_is_empty_after_first_event()
     {
@@ -40,7 +40,7 @@ public sealed class SectionSetupPlanTests
 
         repo.AddCalendarRecord(new CalendarRecord
         {
-            CollectionId = col, Title = "Планёрка",
+            CollectionId = col, Title = "Планерка",
             StartDt = new DateTime(2026, 4, 1, 10, 0, 0), EndDt = new DateTime(2026, 4, 1, 11, 0, 0),
         });
 
@@ -58,7 +58,7 @@ public sealed class SectionSetupPlanTests
         var plan = repo.PlanCalendarSetup(col);
 
         Assert.Contains(plan.Candidates, c => c.FieldId == mine && c.Role == FieldRole.Description);
-        // Подтянутому столбцу близнеца не заводим — создаётся только то, чего нет.
+        // Подтянутому столбцу близнеца не заводим — создается только то, чего нет.
         Assert.Equal(["Дата"], Created(plan));
     }
 
@@ -77,9 +77,9 @@ public sealed class SectionSetupPlanTests
     }
 
     /// <summary>
-    /// Поле-дату перевели в «Текст», флаг `IsCalStart` на нём остался. Источником календаря оно
+    /// Поле-дату перевели в «Текст», флаг `IsCalStart` на нем остался. Источником календаря оно
     /// быть не может (проекция строится по типу «Дата»), поэтому роль считается свободной и
-    /// событие заведёт настоящее поле-дату — вместо падения «Не удалось создать поле «Дата»».
+    /// событие заведет настоящее поле-дату — вместо падения «Не удалось создать поле «Дата»».
     /// </summary>
     [Fact]
     public void Calendar_plan_ignores_stale_flag_on_text_field()
@@ -98,7 +98,7 @@ public sealed class SectionSetupPlanTests
 
         var ev = repo.AddCalendarRecord(new CalendarRecord
         {
-            CollectionId = col, Title = "Планёрка",
+            CollectionId = col, Title = "Планерка",
             StartDt = new DateTime(2026, 4, 1, 10, 0, 0), EndDt = new DateTime(2026, 4, 1, 11, 0, 0),
         });
         Assert.Contains(repo.GetFields(col), f => f.Name == "Дата" && f.FieldType == "date" && f.IsCalStart);
@@ -138,7 +138,7 @@ public sealed class SectionSetupPlanTests
         Assert.DoesNotContain("Исполнитель", Created(plan));
 
         // И это действительно происходит — план не расходится с записью.
-        repo.AddTaskRecord(col, "Позвонить", "Иванов Иван", "Петров Пётр",
+        repo.AddTaskRecord(col, "Позвонить", "Иванов Иван", "Петров Петр",
                            ConstructorRepository.TaskStatusPlanned, due: null);
         Assert.True(repo.GetFields(col).First(f => f.Id == mgr).IsTaskExec);
     }
@@ -165,7 +165,7 @@ public sealed class SectionSetupPlanTests
         var repo = db.Constructor;
         var col  = SampleData.AddCollection(repo, "Заявки").Id!.Value;
 
-        repo.AddTaskRecord(col, "Позвонить", "Иванов Иван", "Петров Пётр",
+        repo.AddTaskRecord(col, "Позвонить", "Иванов Иван", "Петров Петр",
                            ConstructorRepository.TaskStatusPlanned, due: null);
 
         Assert.False(repo.PlanTaskSetup(col).ChangesCollection);
@@ -173,8 +173,8 @@ public sealed class SectionSetupPlanTests
     }
 
     /// <summary>
-    /// Удалённую роль правка задачи возвращает: раньше введённый статус было некуда писать и он
-    /// молча пропадал. План видит пропажу (UI спросит), а доводка набора её чинит.
+    /// Удаленную роль правка задачи возвращает: раньше введенный статус было некуда писать и он
+    /// молча пропадал. План видит пропажу (UI спросит), а доводка набора ее чинит.
     /// </summary>
     [Fact]
     public void Deleted_status_role_reappears_in_the_plan_and_is_restored()
@@ -182,7 +182,7 @@ public sealed class SectionSetupPlanTests
         using var db = new TempDatabase();
         var repo = db.Constructor;
         var col  = SampleData.AddCollection(repo, "Заявки").Id!.Value;
-        repo.AddTaskRecord(col, "Позвонить", "Иванов Иван", "Петров Пётр",
+        repo.AddTaskRecord(col, "Позвонить", "Иванов Иван", "Петров Петр",
                            ConstructorRepository.TaskStatusPlanned, due: null);
 
         repo.DeleteField(repo.GetFields(col).First(f => f.IsTaskStatus).Id!.Value);

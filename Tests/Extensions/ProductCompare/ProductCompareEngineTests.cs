@@ -77,7 +77,7 @@ public sealed class ProductCompareEngineTests : IDisposable
         Assert.Equal("Папка для сохранения не найдена.", ex.Message);
     }
 
-    // Повреждённая или чужая книга не должна выпадать наружу исключением ClosedXML.
+    // Поврежденная или чужая книга не должна выпадать наружу исключением ClosedXML.
     [Fact]
     public void Unreadable_workbook_is_a_friendly_error()
     {

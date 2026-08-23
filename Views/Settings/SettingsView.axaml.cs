@@ -23,7 +23,7 @@ public partial class SettingsView : UserControl
     // Статус БД в фоновой очереди монтирования (текст + признак ошибки) или null,
     // если базы в очереди нет; поставляет MainWindow из MountQueue.
     private Func<int, (string Text, bool Failed)?>? _queueStatus;
-    // Признак «БД сейчас смонтирована» (даёт MainWindow по рабочему пространству).
+    // Признак «БД сейчас смонтирована» (дает MainWindow по рабочему пространству).
     private Func<int, bool>?  _isMounted;
 
     // Ползунок удерживается мышью: применение масштаба/шрифта отложено до отпускания
@@ -31,14 +31,14 @@ public partial class SettingsView : UserControl
     private bool _scaleDragging;
     private bool _fontDragging;
 
-    // Реестр изменён — MainWindow монтирует/размонтирует БД и обновляет сайдбар.
+    // Реестр изменен — MainWindow монтирует/размонтирует БД и обновляет сайдбар.
     public event EventHandler<DatabaseRefEntity>? DatabaseAdded;
     public event EventHandler<int>?               DatabaseRemoved;
     // Попытка переподключить недоступную БД (по DbId).
     public event EventHandler<int>?               DatabaseReconnectRequested;
-    // Тумблер «Общее → Уведомления» переключён — MainWindow сообщает службе уведомлений.
+    // Тумблер «Общее → Уведомления» переключен — MainWindow сообщает службе уведомлений.
     public event EventHandler<bool>?              NotificationsEnabledChanged;
-    // Тумблер «Общее → Фоновый режим» переключён — MainWindow показывает/прячет значок в трее.
+    // Тумблер «Общее → Фоновый режим» переключен — MainWindow показывает/прячет значок в трее.
     public event EventHandler<bool>?              BackgroundEnabledChanged;
 
     // Тумблеры раздела «Общее» инициализированы — до этого IsCheckedChanged не обрабатываем
@@ -65,9 +65,9 @@ public partial class SettingsView : UserControl
         // ── Общее ────────────────────────────────────────────────────────────
         NotificationsToggle.IsChecked = AppSettings.LoadNotificationsEnabled();
         AutostartToggle.IsEnabled     = Autostart.IsSupported;   // в dev-режиме (без бандла/exe) недоступно
-        // Состояние берём у САМОЙ системы, а не из app.db: запись могли снести мимо приложения,
+        // Состояние берем у САМОЙ системы, а не из app.db: запись могли снести мимо приложения,
         // и тумблер показывал бы автозапуск, которого нет. Вне установки читать нечего — там
-        // остаётся сохранённая настройка (тумблер всё равно неактивен).
+        // остается сохраненная настройка (тумблер все равно неактивен).
         AutostartToggle.IsChecked     = Autostart.IsSupported ? Autostart.IsEnabled()
                                                              : AppSettings.LoadAutostartEnabled();
         RefreshAutostartHint();
@@ -93,7 +93,7 @@ public partial class SettingsView : UserControl
         // «Оформление»: обе группы строк (что открывается по умолчанию и что показывать).
         InitAppearance();
 
-        // Меню «Добавить базу данных» живёт в навбаре (видно только в разделе БД,
+        // Меню «Добавить базу данных» живет в навбаре (видно только в разделе БД,
         // см. ShowCategory) — пункты ведут на те же обработчики, что прежние кнопки.
         HeaderBar.CreateSqliteRequested    += (_, _) => OnCreateDatabaseClick(this, new RoutedEventArgs());
         HeaderBar.ConnectSqliteRequested   += (_, _) => OnConnectDatabaseClick(this, new RoutedEventArgs());
@@ -103,7 +103,7 @@ public partial class SettingsView : UserControl
 
     // ── Оформление: что открывается по умолчанию и что вообще показывать ─────
     //
-    // Обе группы строк ведёт один код по ViewCatalog: слева выпадающий список ТОЛЬКО из
+    // Обе группы строк ведет один код по ViewCatalog: слева выпадающий список ТОЛЬКО из
     // видимых пунктов, справа галочки видимости. Ни разметка, ни этот файл не знают ни
     // одного вида по имени — появился вид в каталоге, и обе строки подхватят его сами.
     //
@@ -113,7 +113,7 @@ public partial class SettingsView : UserControl
     //
     // Читает и пишет каждый раздел своей парой из AppSettings: ключи у них исторически
     // разные (у календаря — номер вида, у остальных — строка), поэтому перевод «ключ
-    // каталога ↔ хранимое значение» задаётся здесь и больше нигде не повторяется.
+    // каталога ↔ хранимое значение» задается здесь и больше нигде не повторяется.
     private sealed record AppearanceScope(
         string            Scope,
         ComboBox          DefaultCombo,
@@ -123,7 +123,7 @@ public partial class SettingsView : UserControl
 
     private List<AppearanceScope> _appearance = [];
 
-    // Гасит обработчики, пока список наполняется кодом: смена ItemsSource дёргает
+    // Гасит обработчики, пока список наполняется кодом: смена ItemsSource дергает
     // SelectionChanged, и без флага перестройка перезаписывала бы настройку.
     private bool _appearanceBuilding;
 
@@ -169,7 +169,7 @@ public partial class SettingsView : UserControl
         scope.DefaultCombo.ItemsSource           = visible;
         scope.DefaultCombo.DisplayMemberBinding  = new Binding(nameof(ViewItem.Label));
 
-        // Сохранённого пункта может не быть среди видимых только в переходный момент
+        // Сохраненного пункта может не быть среди видимых только в переходный момент
         // (настройку правили руками) — тогда показываем первый видимый.
         var current = scope.LoadKey();
         var index   = visible.ToList().FindIndex(v => v.Key == current);
@@ -209,7 +209,7 @@ public partial class SettingsView : UserControl
     // Автозапуск: сначала запись в ОС, и только если она легла — сохраняем настройку. Запись не
     // зависит от фонового режима: при входе в систему окно открывается в любом случае (Utils/Autostart).
     //
-    // Раньше сбой записи проглатывался молча: настройка сохранялась, тумблер оставался включённым,
+    // Раньше сбой записи проглатывался молча: настройка сохранялась, тумблер оставался включенным,
     // а автозапуска не было — и понять это снаружи было нечем. Теперь отказ (нет прав, политика
     // домена, откат антивирусом) виден: тумблер возвращается в фактическое состояние + окно с причиной.
     private void OnAutostartToggled(object? sender, RoutedEventArgs e)
@@ -229,7 +229,7 @@ public partial class SettingsView : UserControl
                     on ? "Не удалось включить автозапуск: система отклонила запись. Такое бывает из-за политик " +
                          "организации или защитных программ — проверьте автозагрузку в параметрах системы."
                        : "Не удалось выключить автозапуск: система отклонила изменение записи. " +
-                         "Убрать её можно в параметрах системы, раздел «Автозагрузка».")
+                         "Убрать ее можно в параметрах системы, раздел «Автозагрузка».")
                     .ShowDialog(win);
             return;
         }
@@ -304,7 +304,7 @@ public partial class SettingsView : UserControl
     }
 
     // Поле одной настройки: подпись, под ней строка ввода. Значение сохраняется при потере
-    // фокуса — тот же приём, что у пути обновления.
+    // фокуса — тот же прием, что у пути обновления.
     private static StackPanel BuildSettingField(IExtension extension, ExtensionSetting setting)
     {
         var block = new StackPanel { Spacing = 6 };
@@ -326,9 +326,9 @@ public partial class SettingsView : UserControl
     // ── О программе ──────────────────────────────────────────────────────────
     //
     // Дата сборки = время последней записи бинаря на диск (детерминированные сборки
-    // обнуляют PE-таймстамп, поэтому берём mtime файла). Environment.ProcessPath —
+    // обнуляют PE-таймстамп, поэтому берем mtime файла). Environment.ProcessPath —
     // путь к запущенному .exe; работает одинаково в обычной и single-file-сборке
-    // (в отличие от Assembly.Location, который в single-file пуст и даёт warning IL3000).
+    // (в отличие от Assembly.Location, который в single-file пуст и дает warning IL3000).
     // Так дата всегда отражает текущий бинарь и видна в раздаваемой версии — без ручного указания.
     private static DateTime? BuildDate()
     {
@@ -341,7 +341,7 @@ public partial class SettingsView : UserControl
     }
 
     // Открыть папку с данными в системном файловом менеджере. UseShellExecute=true
-    // делегирует системе: open (macOS), explorer (Windows), xdg-open (Linux) — надёжно
+    // делегирует системе: open (macOS), explorer (Windows), xdg-open (Linux) — надежно
     // работает с путями с пробелами/спецсимволами (Avalonia.Launcher на таких молчал).
     private void OnOpenDataFolder(object? sender, RoutedEventArgs e)
     {
@@ -359,7 +359,7 @@ public partial class SettingsView : UserControl
     // ── Обновления ───────────────────────────────────────────────────────────
     //
     // Этап 1–2 автообновления: путь к папке с новой версией хранится в app.db, кнопка
-    // «Проверить» читает версию удалённого SmartBase.exe (FileVersionInfo, без скачивания)
+    // «Проверить» читает версию удаленного SmartBase.exe (FileVersionInfo, без скачивания)
     // и сравнивает с текущей. Скачивание и замену .exe выполнит отдельный SmartBase-Setup.exe
     // (следующие этапы — см. docs/guides/auto-update.md).
 
@@ -379,7 +379,7 @@ public partial class SettingsView : UserControl
 
     // Тихая проверка при запуске (тумблер «Автообновление», вызывает MainWindow.Opened):
     // путь пуст/папка недоступна/версия актуальна — никаких окон, приложение стартует как
-    // обычно (статус всё же пишем — виден, если открыть настройки); есть обновление — та же
+    // обычно (статус все же пишем — виден, если открыть настройки); есть обновление — та же
     // модалка «Обновить/Отмена» и штатный поток загрузки/самозамены, что и по кнопке.
     //
     // Метод НИКОГДА не бросает: его зовут из обработчика Opened (async void), и любое
@@ -420,7 +420,7 @@ public partial class SettingsView : UserControl
         try
         {
             // Фоном, чтобы UI не подвисал на сетевом пути. Если путь недоступен —
-            // вернётся ошибка с красным уведомлением (как «файл недоступен» в «Управлении БД»).
+            // вернется ошибка с красным уведомлением (как «файл недоступен» в «Управлении БД»).
             var info = await Task.Run(() => CheckRemoteVersion(folder));
             SetUpdateStatus(info.Message, isError: info.Result == UpdateCheck.Error);
             if (info.Result == UpdateCheck.Available && info.RemoteExe is not null && info.Remote is not null)
@@ -441,7 +441,7 @@ public partial class SettingsView : UserControl
                 return new(UpdateCheck.Error, "Папка обновления недоступна — проверьте путь и подключение к сети.");
 
             // Источник обновления — SmartBase-Setup (один артефакт на сервере работает и как
-            // установщик, и как обновление); если его нет — берём обычный SmartBase. На macOS
+            // установщик, и как обновление); если его нет — берем обычный SmartBase. На macOS
             // артефакт — это .app-бандл (папка), а сравниваемый по дате файл — внутренний бинарь.
             if (!ResolveRemote(folder, out var remoteArtifact, out var remoteTimeFile, out var missing))
                 return new(UpdateCheck.Error, missing);
@@ -449,7 +449,7 @@ public partial class SettingsView : UserControl
             var current = Assembly.GetExecutingAssembly().GetName().Version ?? new Version(0, 0, 0);
             var cur     = Normalize(current);   // Major.Minor.Build — как версия в «О программе»
 
-            // Версию читаем из удалённого файла (на Windows — из PE-ресурса .exe). Если версия
+            // Версию читаем из удаленного файла (на Windows — из PE-ресурса .exe). Если версия
             // прочиталась и отличается — решаем по ней. На Linux/macOS у нативного бинаря
             // версия из файла недоступна → ниже падаем на сравнение по дате изменения.
             if (Version.TryParse(FileVersionInfo.GetVersionInfo(remoteTimeFile).FileVersion, out var remoteFull))
@@ -462,9 +462,9 @@ public partial class SettingsView : UserControl
                 // равны → сравниваем дату изменения файла ниже
             }
 
-            // Версия недоступна или равна → ловим изменённый файл по СОДЕРЖИМОМУ, чтобы можно
+            // Версия недоступна или равна → ловим измененный файл по СОДЕРЖИМОМУ, чтобы можно
             // было раздавать сборки без смены версии:
-            //   • другой размер = точно другая сборка (дёшево, только метаданные, надёжнее даты —
+            //   • другой размер = точно другая сборка (дешево, только метаданные, надежнее даты —
             //     не зависит от часов машин и от копирования с сохранением атрибутов);
             //   • иначе — дата изменения новее на сервере (допуск 2 с против округления меток).
             // После штатного обновления размер установленного == серверному, а дата установленного
@@ -475,7 +475,7 @@ public partial class SettingsView : UserControl
                 var local  = new System.IO.FileInfo(localExe);
                 var remote = new System.IO.FileInfo(remoteTimeFile);
                 if (remote.Length != local.Length)
-                    return new(UpdateCheck.Available, $"Доступна новая сборка (файл изменён, {cur}).", remoteArtifact, cur);
+                    return new(UpdateCheck.Available, $"Доступна новая сборка (файл изменен, {cur}).", remoteArtifact, cur);
                 if (remote.LastWriteTimeUtc > local.LastWriteTimeUtc.AddSeconds(2))
                     return new(UpdateCheck.Available, $"Доступна новая сборка (файл новее, {cur}).", remoteArtifact, cur);
             }
@@ -531,7 +531,7 @@ public partial class SettingsView : UserControl
 
         // Модалке нужен ВИДИМЫЙ владелец, иначе Avalonia бросает «Cannot show window with
         // non-visible owner». Окно могло уехать в трей (фоновый режим), пока шла проверка
-        // сетевой папки, — возвращаем его: пользователю всё равно подтверждать обновление,
+        // сетевой папки, — возвращаем его: пользователю все равно подтверждать обновление,
         // после которого приложение закроется и откроется заново.
         if (!win.IsVisible)
         {
@@ -579,7 +579,7 @@ public partial class SettingsView : UserControl
 
         UpdateCheckBtn.IsEnabled = false;
 
-        // Загрузка идёт в отдельном ОКНЕ с процентами (единый ProgressDialog, как импорт),
+        // Загрузка идет в отдельном ОКНЕ с процентами (единый ProgressDialog, как импорт),
         // а не инлайн-полосой в настройках. Окно нельзя закрыть, пока копирование не кончится.
         var progressDlg = new ProgressDialog { Title = "Обновление" };
         progressDlg.SetProgress(0, "Загрузка обновления…");
@@ -589,7 +589,7 @@ public partial class SettingsView : UserControl
             var progress = new Progress<double>(p => progressDlg.SetProgress(p, "Загрузка обновления…"));
             if (!await DownloadAsync(remoteExe, tempExe, progress))
             {
-                SetUpdateStatus("Загрузка прервалась — артефакт скопирован не полностью. Попробуйте ещё раз.", isError: true);
+                SetUpdateStatus("Загрузка прервалась — артефакт скопирован не полностью. Попробуйте еще раз.", isError: true);
                 return;
             }
             // На Unix temp-копию нужно сделать запускаемой (на macOS — внутренний бинарь бандла).
@@ -609,7 +609,7 @@ public partial class SettingsView : UserControl
         }
 
         // Сверяем скачанный артефакт перед заменой (размер уже проверен в DownloadAsync). На
-        // Windows — версия из PE: не даём «обновиться» на файл СТАРЕЕ текущего (файл в папке мог
+        // Windows — версия из PE: не даем «обновиться» на файл СТАРЕЕ текущего (файл в папке мог
         // смениться между проверкой и загрузкой). У нативных бинарей Linux/macOS версия из файла
         // недоступна — там полагаемся на размер/дату, как в CheckRemoteVersion.
         if (OperatingSystem.IsWindows()
@@ -637,7 +637,7 @@ public partial class SettingsView : UserControl
             return;
         }
 
-        // Закрываем приложение: апдейтер дождётся выхода, заменит артефакт и перезапустит.
+        // Закрываем приложение: апдейтер дождется выхода, заменит артефакт и перезапустит.
         (Avalonia.Application.Current?.ApplicationLifetime
             as Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime)?.Shutdown();
     }
@@ -687,7 +687,7 @@ public partial class SettingsView : UserControl
     // Масштаб применяется ко всему окну: MainWindow слушает Scaling.ScaleChanged
     // и ставит LayoutTransform на корень. Слайдер — в процентах, Scaling хранит множитель.
     // Во время перетаскивания НЕ применяем (окно перекладывается и ползунок «уезжает»
-    // из-под курсора) — только двигаем пузырёк; применение — в EndScaleDrag.
+    // из-под курсора) — только двигаем пузырек; применение — в EndScaleDrag.
     private void OnScaleChanged(object? sender, RangeBaseValueChangedEventArgs e)
     {
         if (_scaleDragging)
@@ -716,7 +716,7 @@ public partial class SettingsView : UserControl
 
     private void OnScaleSliderExited(object? sender, PointerEventArgs e) => ScaleValuePopup.IsOpen = false;
 
-    // Движение по слайдеру: при перетаскивании пузырёк следует за ползунком, при
+    // Движение по слайдеру: при перетаскивании пузырек следует за ползунком, при
     // простом наведении — показывает масштаб, который БЫЛ БЫ в точке под курсором.
     private void OnScaleSliderMoved(object? sender, PointerEventArgs e)
     {
@@ -737,13 +737,13 @@ public partial class SettingsView : UserControl
 
         var frac = (value - ScaleSlider.Minimum) / range;
         const double thumbW = 26;
-        // Ползунок масштабируется LayoutTransform'ом окна, а попап живёт в немасштабированном
+        // Ползунок масштабируется LayoutTransform'ом окна, а попап живет в немасштабированном
         // оверлее → смещение домножаем на текущий масштаб, иначе плашка «уезжает» от ползунка.
         ScaleValuePopup.HorizontalOffset = (frac * (w - thumbW) + thumbW / 2 - w / 2) * Scaling.Current;
     }
 
     // Значение слайдера в точке под курсором: обратная формула к смещению пузырька
-    // (трек = ширина минус ползунок), с защёлкиванием на шаг слайдера.
+    // (трек = ширина минус ползунок), с защелкиванием на шаг слайдера.
     private static double ValueAtPointer(Slider s, PointerEventArgs e, double step)
     {
         var w = s.Bounds.Width;
@@ -768,7 +768,7 @@ public partial class SettingsView : UserControl
 
     // Размер шрифта: дельта пишется в Application.Resources (DynamicResource),
     // C#-виды пересобираются по событию FontScale.Changed. Во время перетаскивания
-    // НЕ применяем (перекладка интерфейса дёргает ползунок) — только пузырёк;
+    // НЕ применяем (перекладка интерфейса дергает ползунок) — только пузырек;
     // применение — в EndFontDrag.
     private void OnFontSizeChanged(object? sender, RangeBaseValueChangedEventArgs e)
     {
@@ -790,7 +790,7 @@ public partial class SettingsView : UserControl
         UpdateFontBadge();
     }
 
-    // Пузырёк со значением показываем при наведении/перетаскивании ползунка.
+    // Пузырек со значением показываем при наведении/перетаскивании ползунка.
     private void OnFontSliderEntered(object? sender, PointerEventArgs e)
     {
         UpdateFontBadge();
@@ -799,7 +799,7 @@ public partial class SettingsView : UserControl
 
     private void OnFontSliderExited(object? sender, PointerEventArgs e) => FontValuePopup.IsOpen = false;
 
-    // Движение по слайдеру: при перетаскивании пузырёк следует за ползунком, при
+    // Движение по слайдеру: при перетаскивании пузырек следует за ползунком, при
     // наведении — показывает размер, который БЫЛ БЫ в точке под курсором.
     private void OnFontSliderMoved(object? sender, PointerEventArgs e)
     {
@@ -824,7 +824,7 @@ public partial class SettingsView : UserControl
 
         var frac = (deltaValue - FontSizeSlider.Minimum) / range;
         const double thumbW = 26;
-        // Тот же учёт масштаба окна, что и у плашки масштабирования (попап — в оверлее).
+        // Тот же учет масштаба окна, что и у плашки масштабирования (попап — в оверлее).
         FontValuePopup.HorizontalOffset = (frac * (w - thumbW) + thumbW / 2 - w / 2) * Scaling.Current;
     }
 
@@ -839,7 +839,7 @@ public partial class SettingsView : UserControl
     }
 
     // Вызывается из MainWindow: реестр + способ узнать, смонтирована ли БД сейчас,
-    // + статус фоновой очереди монтирования для ещё не подключённых.
+    // + статус фоновой очереди монтирования для еще не подключенных.
     public void Initialize(DatabaseRegistry registry, Func<int, bool> isMounted,
                            Func<int, (string Text, bool Failed)?>? queueStatus = null)
     {
@@ -876,13 +876,13 @@ public partial class SettingsView : UserControl
         GuidePanel.IsVisible      = key == "guide";
         LogsPanel.IsVisible       = key == "logs";
         AboutPanel.IsVisible      = key == "about";
-        // Панель деталей журнала живёт в корне (во всю высоту) — при уходе из «Диагностики»
-        // её нужно закрыть явно (она не вложена в LogsPanel).
+        // Панель деталей журнала живет в корне (во всю высоту) — при уходе из «Диагностики»
+        // ее нужно закрыть явно (она не вложена в LogsPanel).
         if (key != "logs") CloseLogsDetail();
         // То же и у «Содержания» инструкции: панель, разделитель и ручка лежат в корне.
         ShowGuideToc(key == "guide");
 
-        // Заголовок берём из реестра по ключу — единственный источник подписей разделов.
+        // Заголовок берем из реестра по ключу — единственный источник подписей разделов.
         HeaderBar.Title = (SettingsRegistry.FindByKey(key) ?? SettingsRegistry.All[0]).Label;
         // Кнопка «Добавить базу данных» в навбаре осмысленна только в разделе БД.
         HeaderBar.ShowDatabaseActions = key == "database";
@@ -902,7 +902,7 @@ public partial class SettingsView : UserControl
         DatabaseList.ItemsSource = _registry.GetAll().Select(d =>
         {
             var mounted = _isMounted?.Invoke(d.Id) ?? true;
-            // Не смонтирована: либо ждёт/монтируется в фоновой очереди (живой статус),
+            // Не смонтирована: либо ждет/монтируется в фоновой очереди (живой статус),
             // либо недоступна (нет в очереди или очередь пометила ошибкой).
             var queue = mounted ? null : _queueStatus?.Invoke(d.Id);
             return new DatabaseRow
@@ -923,8 +923,8 @@ public partial class SettingsView : UserControl
 
     // Создать новую БД: собственное русское окно (имя + папка) вместо системного
     // save-диалога — тот говорит на языке ОС и предлагает ПЕРЕЗАПИСАТЬ существующий
-    // файл; здесь занятое имя даёт ошибку «уже существует», перезаписи нет в принципе.
-    // Схема создаётся при монтировании.
+    // файл; здесь занятое имя дает ошибку «уже существует», перезаписи нет в принципе.
+    // Схема создается при монтировании.
     private async void OnCreateDatabaseClick(object? sender, RoutedEventArgs e)
     {
         if (_registry is null || VisualRoot is not Window win) return;
@@ -955,7 +955,7 @@ public partial class SettingsView : UserControl
         var file = files.FirstOrDefault();
         if (file is null) return;
 
-        // Уже в реестре — не создаём дубль и честно говорим об этом (раньше клик
+        // Уже в реестре — не создаем дубль и честно говорим об этом (раньше клик
         // просто «ничего не делал»).
         var full = System.IO.Path.GetFullPath(file.Path.LocalPath);
         if (_registry.GetAll().Any(d => string.Equals(d.Path, full, StringComparison.OrdinalIgnoreCase)))
@@ -1017,8 +1017,8 @@ public partial class SettingsView : UserControl
 
         if (VisualRoot is not Window win) return;
         var dlg = new ConfirmDialog(entry.IsPostgres
-            ? $"Отключить базу данных «{entry.Name}»? Данные на сервере не удаляются — её можно подключить снова."
-            : $"Отключить базу данных «{entry.Name}»? Файл на диске не удаляется — её можно подключить снова.");
+            ? $"Отключить базу данных «{entry.Name}»? Данные на сервере не удаляются — ее можно подключить снова."
+            : $"Отключить базу данных «{entry.Name}»? Файл на диске не удаляется — ее можно подключить снова.");
         if (await dlg.ShowDialog<bool>(win) != true) return;
 
         _registry.Remove(id);

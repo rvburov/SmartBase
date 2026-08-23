@@ -32,7 +32,7 @@ public partial class SettingsView
 {
     private const int LogsPageSize = 200;
 
-    // Колонки лога: ключ (как в LogQuery) и заголовок. Ширина звёздная — окно делится поровну.
+    // Колонки лога: ключ (как в LogQuery) и заголовок. Ширина звездная — окно делится поровну.
     private static readonly (string Key, string Header)[] LogsColumns =
     [
         ("date",      "Время"),
@@ -181,7 +181,7 @@ public partial class SettingsView
     // ── Выгрузка в CSV ────────────────────────────────────────────────────────
     //
     // Кнопка в навбаре раздела. Выгружается ровно то, что показано: те же фильтры
-    // и та же сортировка; строки читаются в фоне (ReadCsvRows), поэтому объём лога
+    // и та же сортировка; строки читаются в фоне (ReadCsvRows), поэтому объем лога
     // ограничивает только диск.
 
     private bool _logsExporting;
@@ -189,7 +189,7 @@ public partial class SettingsView
     private async Task ExportLogsToCsv()
     {
         if (TopLevel.GetTopLevel(this) is not Window owner) return;
-        // Подсчёт строк на большом логе занимает секунды, и окон в это время ещё нет —
+        // Подсчет строк на большом логе занимает секунды, и окон в это время еще нет —
         // второй клик по кнопке дал бы вторую выгрузку и второе окно подтверждения.
         if (_logsExporting) return;
 
@@ -213,11 +213,11 @@ public partial class SettingsView
             }
             catch (Exception ex)
             {
-                // logs.db читается мимо EF (raw SQL): повреждённый или занятый файл
+                // logs.db читается мимо EF (raw SQL): поврежденный или занятый файл
                 // не должен молча гасить кнопку.
                 Serilog.Log.Warning(ex, "Не удалось посчитать строки диагностики для выгрузки");
                 await ConfirmDialog.Info(
-                        "Не удалось прочитать журнал диагностики. Попробуйте ещё раз позже.")
+                        "Не удалось прочитать журнал диагностики. Попробуйте еще раз позже.")
                     .ShowDialog(owner);
                 return;
             }
@@ -242,7 +242,7 @@ public partial class SettingsView
         for (var i = 0; i < LogsColumns.Length; i++)
         {
             var def = LogsColumns[i];
-            // Последняя колонка («Ошибка») не рисует правую линию заголовка: её правый край
+            // Последняя колонка («Ошибка») не рисует правую линию заголовка: ее правый край
             // и так очерчен краем таблицы/скроллом, а вторая линия давала «двойную/толстую».
             // Так же поступает таблица конструктора (WrapHeaderContent addRightLine=false
             // для последней колонки «+»).
@@ -482,7 +482,7 @@ public partial class SettingsView
         var fontBase  = (double)this.FindResource("FontSizeBase")!;
         var radius    = (CornerRadius)this.FindResource("RadiusBase")!;
         var family    = this.TryFindResource("FontFamilyBase", out var f) ? f as FontFamily : null;
-        // Ширины строк и закреплённый справа счётчик — см. FilterValueMetrics.
+        // Ширины строк и закрепленный справа счетчик — см. FilterValueMetrics.
         var metrics   = new FilterValueMetrics();
 
         var panel = new StackPanel
@@ -548,7 +548,7 @@ public partial class SettingsView
 
         var selectAll = new CheckBox
         {
-            Content   = "(Выделить всё)",
+            Content   = "(Выделить все)",
             FontSize  = fontBase,
             IsChecked = !_logsFilters.ContainsKey(key),
             Cursor    = new Cursor(StandardCursorType.Hand),
@@ -592,9 +592,9 @@ public partial class SettingsView
         FlatRow(":selected");
         FlatRow(":selected", ":pointerover");
 
-        // «Выделить всё» — закреплённая шапка списка; полоса прокрутки стоит на её уровне
+        // «Выделить все» — закрепленная шапка списка; полоса прокрутки стоит на ее уровне
         // (отдельной колонкой), как вертикальная полоса таблицы стоит на уровне шапки колонок.
-        // gap=2: вместе с верхним отступом первой строки (Padding 0,2) даёт под шапкой
+        // gap=2: вместе с верхним отступом первой строки (Padding 0,2) дает под шапкой
         // ровно такой же просвет, как между значениями.
         var valuesBox = ScrollBarLink.HeaderedList(selectAll, valuesList, gap: 2,
                                                    scroller: metrics.Track);
@@ -613,7 +613,7 @@ public partial class SettingsView
             BorderBrush  = (IBrush)this.FindResource("BrushSeparator")!,
             CornerRadius = radius,
             // Padding НУЛЕВОЙ: полосы прокрутки списка прилегают ко всем краям карточки без
-            // белого зазора, а воздух вокруг содержимого задаёт ScrollBarLink.HeaderedList.
+            // белого зазора, а воздух вокруг содержимого задает ScrollBarLink.HeaderedList.
             // ClipToBounds — квадратные углы полос срезаются скруглением карточки.
             Padding      = new Thickness(0),
             ClipToBounds = true,
@@ -724,7 +724,7 @@ public partial class SettingsView
         return panel;
     }
 
-    // Порядок значений в окне фильтра: выбранная сортировка; без неё — дата новыми
+    // Порядок значений в окне фильтра: выбранная сортировка; без нее — дата новыми
     // сверху, остальные по подписи, «(Пусто)» в конце.
     private static List<(string Raw, int Count)> SortLogsValueCounts(
         List<(string Value, int Count)> src, string key, bool? asc)
@@ -847,7 +847,7 @@ public partial class SettingsView
             var name = new TextBlock { TextTrimming = TextTrimming.CharacterEllipsis, VerticalAlignment = VerticalAlignment.Center };
             name.Bind(TextBlock.TextProperty, new Binding(nameof(LogsFilterValueVm.Display)));
             // Ширина ВСЕХ строк одинаковая (по самому широкому значению) — иначе экстент
-            // горизонтальной прокрутки считался бы по видимым строкам и полоса дёргалась.
+            // горизонтальной прокрутки считался бы по видимым строкам и полоса дергалась.
             name.Bind(Layoutable.MinWidthProperty,
                       new Binding(nameof(FilterValueMetrics.TextMinWidth)) { Source = metrics });
 
@@ -865,7 +865,7 @@ public partial class SettingsView
             var cnt = new TextBlock { Foreground = secondary, VerticalAlignment = VerticalAlignment.Center };
             cnt.Bind(TextBlock.TextProperty, new Binding(nameof(LogsFilterValueVm.CountText)));
 
-            // Счётчик ЗАКРЕПЛЁН у правого края видимой области: сдвиг компенсирует
+            // Счетчик ЗАКРЕПЛЕН у правого края видимой области: сдвиг компенсирует
             // горизонтальную прокрутку, фон непрозрачный — длинный текст уезжает под него.
             // Плашка обхватывает САМО число (Gap слева), поэтому просвет до закрываемого
             // текста одинаковый в любой строке — не зависит от количества цифр.
@@ -881,7 +881,7 @@ public partial class SettingsView
                 RenderTransform     = pin,
             };
 
-            // Прозрачное МЕСТО под счётчик — одинаковой ширины во всех строках, чтобы от
+            // Прозрачное МЕСТО под счетчик — одинаковой ширины во всех строках, чтобы от
             // количества цифр не зависела ширина строки, а с ней и экстент прокрутки.
             var cntSlot = new Border { Child = cntHost };
             cntSlot.Bind(Layoutable.MinWidthProperty,
@@ -936,7 +936,7 @@ public partial class SettingsView
     }
 
     // ── Ручка-разделитель: делит карточки (сверху) и полный текст (снизу) ────────
-    // По умолчанию строки делят место поровну (обе 1*). Перетаскивание задаёт строке
+    // По умолчанию строки делят место поровну (обе 1*). Перетаскивание задает строке
     // карточек пиксельную высоту; выбранная высота помнится в пределах сессии и
     // переносится между строками — как PropsResizeGrip «Страницы записи».
     private bool    _logsGripDragging;
@@ -968,7 +968,7 @@ public partial class SettingsView
         if (!_logsGripDragging) return;
 
         var dy  = e.GetPosition(LogsDetailPanel).Y - _logsGripStartY;
-        // Не даём карточкам съесть весь текст: оставляем нижнему блоку запас (шапка+крошка+минимум).
+        // Не даем карточкам съесть весь текст: оставляем нижнему блоку запас (шапка+крошка+минимум).
         var max = Math.Max(LogsCardsHeightMin, LogsDetailPanel.Bounds.Height - 180);
         var newHeight = Math.Clamp(_logsGripStartHeight + dy, LogsCardsHeightMin, max);
 
@@ -1090,7 +1090,7 @@ public partial class SettingsView
         Grid.SetColumn(preview, 2); grid.Children.Add(preview);
 
         var card = new Border { Classes = { "detailRow" }, Child = grid };
-        // Клик по карточке выделяет её. Нажатие на ручку ⋮ обработчик грипа помечает
+        // Клик по карточке выделяет ее. Нажатие на ручку ⋮ обработчик грипа помечает
         // Handled (пузырьком, раньше карточки) — поэтому drag ручки карточку не выделяет.
         card.PointerPressed += (_, _) => OpenLogsDetailField(key, row);
         return card;
@@ -1156,7 +1156,7 @@ public partial class SettingsView
         if (!_logsColGripDragging) return;
 
         var dx  = e.GetPosition(this).X - _logsColGripStartX;
-        // Названиям не даём съесть всё значение: значению оставляем минимум места.
+        // Названиям не даем съесть все значение: значению оставляем минимум места.
         var max = Math.Max(LogsNameColMin, LogsDetailCardsHost.Bounds.Width - 160);
         _logsNameColWidth = Math.Clamp(_logsColGripStartWidth + dx, LogsNameColMin, max);
         foreach (var col in _logsNameCols)

@@ -18,21 +18,21 @@ public enum FieldRole
     /// <summary>
     /// «Исполнитель» — user-поле, на котором держится задача (<c>IsTaskExec</c>). В
     /// <see cref="ConstructorRepository.TaskRoles"/> не входит: это само поле с тумблером.
-    /// Появляется в планах подготовки коллекции (<c>PlanTaskSetup</c>), где исполнителя ещё нет.
+    /// Появляется в планах подготовки коллекции (<c>PlanTaskSetup</c>), где исполнителя еще нет.
     /// </summary>
     TaskExec,
 }
 
-/// <summary>Существующий столбец, который подойдёт под роль, потому что так и называется.</summary>
+/// <summary>Существующий столбец, который подойдет под роль, потому что так и называется.</summary>
 public sealed record RoleCandidate(FieldRole Role, string RoleName, int FieldId, string FieldName);
 
 /// <summary>
-/// Что произойдёт при разметке ролей коллекции: <see cref="Candidates"/> — столбцы, чьи имена
+/// Что произойдет при разметке ролей коллекции: <see cref="Candidates"/> — столбцы, чьи имена
 /// совпали с ролями (их предлагается подтянуть, чтобы данные поехали в раздел),
 /// <see cref="FieldsToCreateIfDeclined"/> — имена полей, которые заведутся при отказе от
 /// подтягивания, <see cref="FieldsToCreateIfAdopted"/> — при согласии (роли, которым не нашлось
-/// ни носителя, ни одноимённого столбца). Пустой список кандидатов = спрашивать про
-/// подтягивание не о чем, разметка идёт молча.
+/// ни носителя, ни одноименного столбца). Пустой список кандидатов = спрашивать про
+/// подтягивание не о чем, разметка идет молча.
 /// </summary>
 public sealed record RoleAdoptionPlan(IReadOnlyList<RoleCandidate> Candidates,
                                       IReadOnlyList<string> FieldsToCreateIfDeclined,
@@ -42,7 +42,7 @@ public sealed record RoleAdoptionPlan(IReadOnlyList<RoleCandidate> Candidates,
 
     /// <summary>
     /// Изменит ли согласие состав или разметку коллекции. Для создания записи из раздела это
-    /// и есть повод спросить: ничего не меняется — окно не нужно, запись создаётся молча.
+    /// и есть повод спросить: ничего не меняется — окно не нужно, запись создается молча.
     /// </summary>
     public bool ChangesCollection => Candidates.Count > 0 || FieldsToCreateIfAdopted.Count > 0;
 
@@ -59,16 +59,16 @@ public sealed record RoleAdoptionPlan(IReadOnlyList<RoleCandidate> Candidates,
 // одно — «Дата», где календарная проекция физически строится по полям типа «Дата».
 public partial class ConstructorRepository
 {
-    /// <summary>Роли, которые обеспечивает включённый раздел задач (исполнитель — само поле).</summary>
+    /// <summary>Роли, которые обеспечивает включенный раздел задач (исполнитель — само поле).</summary>
     public static readonly FieldRole[] TaskRoles =
         [FieldRole.TaskAssigner, FieldRole.TaskStatus, FieldRole.CalendarDate, FieldRole.Description];
 
-    /// <summary>Все роли — для обходов «что несёт это поле» (плашка, смена типа, починка).</summary>
+    /// <summary>Все роли — для обходов «что несет это поле» (плашка, смена типа, починка).</summary>
     public static readonly FieldRole[] AllRoles =
         [FieldRole.CalendarDate, FieldRole.TaskExec, FieldRole.TaskAssigner,
          FieldRole.TaskStatus, FieldRole.Description];
 
-    /// <summary>Роли, которые обеспечивает поле-дата, включённое в календарь (дата — само поле).</summary>
+    /// <summary>Роли, которые обеспечивает поле-дата, включенное в календарь (дата — само поле).</summary>
     public static readonly FieldRole[] CalendarRoles = [FieldRole.Description];
 
     /// <summary>Имя роли — оно же имя по умолчанию для авто-созданного поля.</summary>
@@ -86,7 +86,7 @@ public partial class ConstructorRepository
     /// и «Исполнителя» (их читают физически типизированные пути — <c>calendar_index</c> и
     /// «запись × user-поле»), а «Статус»/«Назначил»/«Описание» роль несли при любом типе. На
     /// практике это давало молчаливо сломанную привязку: столбец «Статус» типа «Текст» показывал
-    /// плашку раздела, но списка статусов в нём не было и выбрать «Выполнено» было негде.
+    /// плашку раздела, но списка статусов в нем не было и выбрать «Выполнено» было негде.
     /// Теперь правило одно на все роли: <b>тип = роль</b>. Оно же ограничивает подтягивание по
     /// имени (<see cref="RoleCandidateField"/>) — иначе окно снова предложило бы текстовый
     /// «Статус», и пользователь получил бы ровно то состояние, которое чинит смена типа.
@@ -157,7 +157,7 @@ public partial class ConstructorRepository
     private static DbFieldEntity? RoleHolder(List<DbFieldEntity> fields, FieldRole role) =>
         fields.FirstOrDefault(f => HasRole(f, role));
 
-    // Столбец, который называется как роль и может её принять: имя (регистр не важен) ПЛЮС
+    // Столбец, который называется как роль и может ее принять: имя (регистр не важен) ПЛЮС
     // подходящий тип (RoleAllowsType). Тип обязателен для всех ролей — подтянутый столбец
     // неподходящего типа дал бы неработающую привязку: «Статус» без списка статусов, «Дата»
     // без срока.
@@ -173,7 +173,7 @@ public partial class ConstructorRepository
     /// Что даст разметка ролей: какие существующие столбцы можно подтянуть по имени и какие
     /// поля появятся, если от подтягивания отказаться. Ничего не меняет — только считает.
     /// <paramref name="excludeFieldId"/> — поле, на котором сейчас включают тумблер (оно уже
-    /// несёт свою роль: исполнитель у задач, дата у календаря).
+    /// несет свою роль: исполнитель у задач, дата у календаря).
     /// </summary>
     public RoleAdoptionPlan PlanRoles(int collectionId, IReadOnlyList<FieldRole> roles, int excludeFieldId = 0)
     {
@@ -225,7 +225,7 @@ public partial class ConstructorRepository
     /// <param name="adoptExec">
     /// Можно ли отдать роль исполнителя существующему user-полю. Повторяет параметр
     /// <c>adoptExisting</c> у <see cref="EnsureTaskCollection"/>: создание задачи в открытой
-    /// коллекции — да, ПЕРЕНОС задачи в постороннюю — нет (там заводится своё «Исполнитель»,
+    /// коллекции — да, ПЕРЕНОС задачи в постороннюю — нет (там заводится свое «Исполнитель»,
     /// иначе чужое user-поле залило бы раздел своими значениями).
     /// </param>
     public RoleAdoptionPlan PlanTaskSetup(int collectionId, bool adoptExec = true)
@@ -283,15 +283,15 @@ public partial class ConstructorRepository
 
     /// <summary>
     /// Доводит набор ролей коллекции до полного. <paramref name="adoptByName"/> = true —
-    /// одноимённые столбцы получают роль (данные из них поедут в раздел), false — они
+    /// одноименные столбцы получают роль (данные из них поедут в раздел), false — они
     /// остаются нетронутыми, а для ролей заводятся отдельные поля. Роль без носителя
-    /// создаётся в любом случае: раздел без «Статуса» или без срока работать не должен.
+    /// создается в любом случае: раздел без «Статуса» или без срока работать не должен.
     /// Возвращает true, если состав или разметка полей изменились.
     ///
     /// Права спрашиваем ЗДЕСЬ, до первой записи: пометка чужого поля ролью и правка его
     /// опций — изменение схемы коллекции, а приходят сюда двумя путями (тумблер в диалоге
     /// свойства и «между делом» из AddTaskRecord, где проверен только CreateRecord). Отказ
-    /// не должен оставить коллекцию наполовину размеченной, поэтому всё — одной транзакцией.
+    /// не должен оставить коллекцию наполовину размеченной, поэтому все — одной транзакцией.
     /// </summary>
     public bool EnsureRoles(int collectionId, IReadOnlyList<FieldRole> roles,
                             bool adoptByName, int excludeFieldId = 0)
@@ -324,8 +324,8 @@ public partial class ConstructorRepository
                         SetRole(other, role, false);
 
                 SetRole(field, role, true);
-                // Одноимённый список-«Статус» дополняем тремя статусами; поле другого типа
-                // (имя решает, тип нет) остаётся со своим конфигом.
+                // Одноименный список-«Статус» дополняем тремя статусами; поле другого типа
+                // (имя решает, тип нет) остается со своим конфигом.
                 if (role == FieldRole.TaskStatus && field.FieldType is "select" or "status")
                     field.ConfigJson = MergeSelectOptions(field.ConfigJson, TaskStatusOptions);
 
@@ -361,7 +361,7 @@ public partial class ConstructorRepository
         return AllRoles.Where(r => HasRole(f, r) && !RoleAllowsType(r, newType)).ToList();
     }
 
-    // Снимает флаги ролей, которые новый тип поля не поддерживает. Зовётся из UpdateField ПЕРЕД
+    // Снимает флаги ролей, которые новый тип поля не поддерживает. Зовется из UpdateField ПЕРЕД
     // записью: без этого флаг оставался жить на несовместимом типе — раздел данные не брал, а
     // окно свойства продолжало показывать плашку «привязано к разделу» (роль-призрак).
     private static void ClearRolesIncompatibleWithType(DbFieldEntity entity, string newType)
@@ -391,7 +391,7 @@ public partial class ConstructorRepository
         IsTaskExec     = role == FieldRole.TaskExec,
         IsCalStart     = role == FieldRole.CalendarDate,
         IsDescription  = role == FieldRole.Description,
-        // Поле-дата раздела остаётся системным (как было у авто-«Даты»), остальные роли —
+        // Поле-дата раздела остается системным (как было у авто-«Даты»), остальные роли —
         // обычные поля: их можно переименовать, сменить тип и удалить.
         IsSystem       = role == FieldRole.CalendarDate,
     };

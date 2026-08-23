@@ -35,7 +35,7 @@ public partial class ProfileView
     private const int HistoryPageSize = 200;
 
     // Колонки журнала: ключ (как в ChangeLogQuery), заголовок и иконка типа. Ширина
-    // у всех одинаковая — звёздная, окно делится поровну. Иконка — та же, что у поля
+    // у всех одинаковая — звездная, окно делится поровну. Иконка — та же, что у поля
     // в панели деталей: колонка и карточка одного поля обязаны читаться как одно целое
     // (в «Диагностике» ровно так же — LogsDetailFields).
     private static readonly (string Key, string Header, string IconKey)[] HistoryColumns =
@@ -56,7 +56,7 @@ public partial class ProfileView
     private int _historyGen;
     private readonly AvaloniaList<ChangeLogRow> _historyRows = [];
 
-    // key колонки → набор разрешённых СЫРЫХ значений; нет ключа = фильтра нет (как в TableView).
+    // key колонки → набор разрешенных СЫРЫХ значений; нет ключа = фильтра нет (как в TableView).
     private readonly Dictionary<string, HashSet<string>> _historyFilters = [];
     private string? _historySortKey;
     private bool _historySortAsc;
@@ -72,7 +72,7 @@ public partial class ProfileView
     {
         _historyDbs = _workspace?.Mounted.Where(m => m.Permissions.AccessGranted).ToList() ?? [];
 
-        // Список баз — в навбаре; выбор сохраняется, если база ещё смонтирована.
+        // Список баз — в навбаре; выбор сохраняется, если база еще смонтирована.
         var keepDbId = _historyDb?.DbId;
         var names = _historyDbs
             .Select(d => string.IsNullOrWhiteSpace(d.Name) ? "База данных" : d.Name)
@@ -191,7 +191,7 @@ public partial class ProfileView
     private async Task ExportHistoryToCsv()
     {
         if (TopLevel.GetTopLevel(this) is not Window owner) return;
-        // Подсчёт строк на большом журнале занимает секунды, и всё это время окон ещё нет —
+        // Подсчет строк на большом журнале занимает секунды, и все это время окон еще нет —
         // второй клик по кнопке запустил бы вторую выгрузку и второе окно подтверждения.
         if (_historyExporting) return;
         if (_historyDb is null)
@@ -487,7 +487,7 @@ public partial class ProfileView
         var flyout = new Flyout { Placement = PlacementMode.BottomEdgeAlignedRight };
         flyout.FlyoutPresenterClasses.Add("filterFlyout");
         // Флайаут рендерится в отдельном попап-окне вне зума приложения — контент
-        // оборачивается в зум-трансформ (плашка-презентер остаётся вне зума).
+        // оборачивается в зум-трансформ (плашка-презентер остается вне зума).
         flyout.Content = WindowZoom.WrapPopupContent(BuildHistoryFilterPanel(key, () => flyout.Hide()));
         flyout.Closed += (_, _) => { if (ReferenceEquals(_historyFlyout, flyout)) _historyFlyout = null; };
         _historyFlyout = flyout;
@@ -500,7 +500,7 @@ public partial class ProfileView
         var fontBase  = (double)this.FindResource("FontSizeBase")!;
         var radius    = (CornerRadius)this.FindResource("RadiusBase")!;
         var family    = this.TryFindResource("FontFamilyBase", out var f) ? f as FontFamily : null;
-        // Ширины строк и закреплённый справа счётчик — см. FilterValueMetrics.
+        // Ширины строк и закрепленный справа счетчик — см. FilterValueMetrics.
         var metrics   = new FilterValueMetrics();
 
         var panel = new StackPanel
@@ -569,7 +569,7 @@ public partial class ProfileView
 
         var selectAll = new CheckBox
         {
-            Content   = "(Выделить всё)",
+            Content   = "(Выделить все)",
             FontSize  = fontBase,
             IsChecked = !_historyFilters.ContainsKey(key),
             Cursor    = new Cursor(StandardCursorType.Hand),
@@ -615,9 +615,9 @@ public partial class ProfileView
         FlatRow(":selected");
         FlatRow(":selected", ":pointerover");
 
-        // «Выделить всё» — закреплённая шапка списка; полоса прокрутки стоит на её уровне
+        // «Выделить все» — закрепленная шапка списка; полоса прокрутки стоит на ее уровне
         // (отдельной колонкой), как вертикальная полоса таблицы стоит на уровне шапки колонок.
-        // gap=2: вместе с верхним отступом первой строки (Padding 0,2) даёт под шапкой
+        // gap=2: вместе с верхним отступом первой строки (Padding 0,2) дает под шапкой
         // ровно такой же просвет, как между значениями.
         var valuesBox = ScrollBarLink.HeaderedList(selectAll, valuesList, gap: 2,
                                                    scroller: metrics.Track);
@@ -636,7 +636,7 @@ public partial class ProfileView
             BorderBrush  = (IBrush)this.FindResource("BrushSeparator")!,
             CornerRadius = radius,
             // Padding НУЛЕВОЙ: полосы прокрутки списка прилегают ко всем краям карточки без
-            // белого зазора, а воздух вокруг содержимого задаёт ScrollBarLink.HeaderedList.
+            // белого зазора, а воздух вокруг содержимого задает ScrollBarLink.HeaderedList.
             // ClipToBounds — квадратные углы полос срезаются скруглением карточки.
             Padding      = new Thickness(0),
             ClipToBounds = true,
@@ -750,7 +750,7 @@ public partial class ProfileView
         return panel;
     }
 
-    // Порядок значений в окне фильтра: выбранная сортировка колонки; без неё — дата
+    // Порядок значений в окне фильтра: выбранная сортировка колонки; без нее — дата
     // новыми сверху (сырое ISO сортируется хронологически), остальные по подписи,
     // «(Пусто)» в конце.
     private static List<(string Raw, int Count)> SortHistoryValueCounts(
@@ -855,7 +855,7 @@ public partial class ProfileView
         return btn;
     }
 
-    // Разделитель в попапе фильтра (контент обёрнут в зум-трансформ — токен обычный).
+    // Разделитель в попапе фильтра (контент обернут в зум-трансформ — токен обычный).
     private Border MakeHistorySeparator()
     {
         var sep = new Border
@@ -878,7 +878,7 @@ public partial class ProfileView
             var name = new TextBlock { TextTrimming = TextTrimming.CharacterEllipsis, VerticalAlignment = VerticalAlignment.Center };
             name.Bind(TextBlock.TextProperty, new Binding(nameof(HistoryFilterValueVm.Display)));
             // Ширина ВСЕХ строк одинаковая (по самому широкому значению) — иначе экстент
-            // горизонтальной прокрутки считался бы по видимым строкам и полоса дёргалась.
+            // горизонтальной прокрутки считался бы по видимым строкам и полоса дергалась.
             name.Bind(Layoutable.MinWidthProperty,
                       new Binding(nameof(FilterValueMetrics.TextMinWidth)) { Source = metrics });
 
@@ -896,7 +896,7 @@ public partial class ProfileView
             var cnt = new TextBlock { Foreground = secondary, VerticalAlignment = VerticalAlignment.Center };
             cnt.Bind(TextBlock.TextProperty, new Binding(nameof(HistoryFilterValueVm.CountText)));
 
-            // Счётчик ЗАКРЕПЛЁН у правого края видимой области: сдвиг компенсирует
+            // Счетчик ЗАКРЕПЛЕН у правого края видимой области: сдвиг компенсирует
             // горизонтальную прокрутку, фон непрозрачный — длинный текст уезжает под него.
             // Плашка обхватывает САМО число (Gap слева), поэтому просвет до закрываемого
             // текста одинаковый в любой строке — не зависит от количества цифр.
@@ -912,7 +912,7 @@ public partial class ProfileView
                 RenderTransform     = pin,
             };
 
-            // Прозрачное МЕСТО под счётчик — одинаковой ширины во всех строках, чтобы от
+            // Прозрачное МЕСТО под счетчик — одинаковой ширины во всех строках, чтобы от
             // количества цифр не зависела ширина строки, а с ней и экстент прокрутки.
             var cntSlot = new Border { Child = cntHost };
             cntSlot.Bind(Layoutable.MinWidthProperty,
@@ -925,7 +925,7 @@ public partial class ProfileView
         });
 
     // Строка списка значений фильтра. Checked читает/пишет общий checkedSet; onChanged
-    // обновляет состояние «(Выделить всё)».
+    // обновляет состояние «(Выделить все)».
     private sealed class HistoryFilterValueVm : System.ComponentModel.INotifyPropertyChanged
     {
         public string Raw       { get; }

@@ -48,7 +48,7 @@ public class AppDbContext : DbContext
     // дубль, релокация, календарные копии, восстановление снапшота) — вызывающему коду не
     // нужно заполнять поля вручную. Явно заданные значения (см. ConstructorRepository.AddRecord)
     // не перетираем. Сырые INSERT мимо EF (импорт/пакетный дубль/перенос) стампят метаданные в
-    // своём SQL. «Изменение» стампится точечно в методах правки (TouchUpdated/SetFieldValue).
+    // своем SQL. «Изменение» стампится точечно в методах правки (TouchUpdated/SetFieldValue).
     public override int SaveChanges() => SaveChanges(acceptAllChangesOnSuccess: true);
 
     public override int SaveChanges(bool acceptAllChangesOnSuccess)
@@ -57,10 +57,10 @@ public class AppDbContext : DbContext
         return SaveReconcilingPhantomDeletes(() => base.SaveChanges(acceptAllChangesOnSuccess));
     }
 
-    // Общий контекст живёт всё время работы с БД. Если SaveChanges падает concurrency-исключением
-    // «ожидалась 1 строка, затронуто 0» на УДАЛЯЕМОЙ строке — этой строки уже нет: её снёс каскад в
+    // Общий контекст живет все время работы с БД. Если SaveChanges падает concurrency-исключением
+    // «ожидалась 1 строка, затронуто 0» на УДАЛЯЕМОЙ строке — этой строки уже нет: ее снес каскад в
     // ЭТОМ же контексте (удалили группу/коллекцию → дочерние коллекции/записи/значения ушли по FK, а
-    // EF всё ещё держал их в трекере как отслеживаемые) или другой писатель. Для удаления это УСПЕХ.
+    // EF все еще держал их в трекере как отслеживаемые) или другой писатель. Для удаления это УСПЕХ.
     // Критично не оставить «фантом» в трекере: иначе он повисает Deleted и роняет КАЖДЫЙ следующий
     // (даже несвязанный) SaveChanges — отсюда каскад ошибок в диагностике на создание/удаление групп.
     // Отцепляем конфликтные строки и до-сохраняем остальное; на чужую правку изменяемой строки (не
@@ -128,7 +128,7 @@ public class AppDbContext : DbContext
         // FK enforcement и MVCC включены всегда. Один guard нейтрализует все вызовы из репозиториев.
         if (IsPostgres) return;
 
-        // Сетевой путь (SMB/NFS, см. NetworkPath): другой профиль надёжности — БД общая,
+        // Сетевой путь (SMB/NFS, см. NetworkPath): другой профиль надежности — БД общая,
         // с ней могут работать несколько пользователей с разных машин:
         //  • busy_timeout 15 с — чужие писатели по сети держат замок дольше;
         //  • synchronous=FULL — журнал DELETE (не WAL, см. DatabaseManager.ApplyJournalMode),
@@ -138,7 +138,7 @@ public class AppDbContext : DbContext
         var shared = NetworkPath.IsNetwork(_dbPath);
 
         // Каскадное удаление (записи→значения, коллекция→поля/настройки) держится на FK ON DELETE
-        // CASCADE — а оно работает только при включённом enforcement. Включаем явно на КАЖДОМ
+        // CASCADE — а оно работает только при включенном enforcement. Включаем явно на КАЖДОМ
         // подключении (и фоновом), чтобы batched-удаление и удаление группы/коллекции не оставляли
         // «осиротевшие» значения/поля. PRAGMA вне транзакции (вызываем сразу после создания контекста).
         Database.ExecuteSqlRaw("PRAGMA foreign_keys=ON;");
@@ -161,7 +161,7 @@ public class AppDbContext : DbContext
     /// кеш до ~512 МБ и mmap до 2 ГБ. Глобальные индексы (db_field_values, calendar_index) на
     /// больших БД (десятки ГБ) не влезают в стандартные 64 МБ — каждая вставка/удаление строки
     /// деградирует в случайный дисковый ввод-вывод (замер на стенде 10 млн записей: дубль коллекции
-    /// шёл ~35 мин). Только для короткоживущих фоновых подключений — основному контексту держать
+    /// шел ~35 мин). Только для короткоживущих фоновых подключений — основному контексту держать
     /// сотни МБ кеша весь сеанс ни к чему (те же значения использует генератор стенда).
     /// </summary>
     public void ApplyBulkPerformancePragmas()
@@ -169,7 +169,7 @@ public class AppDbContext : DbContext
         if (IsPostgres) return;   // см. ApplyPerformancePragmas
 
         ApplyPerformancePragmas();
-        // На сетевом пути mmap остаётся выключенным (см. ApplyPerformancePragmas) —
+        // На сетевом пути mmap остается выключенным (см. ApplyPerformancePragmas) —
         // поднимаем только страничный кеш.
         if (!NetworkPath.IsNetwork(_dbPath))
             Database.ExecuteSqlRaw("PRAGMA mmap_size=2147483648;");
@@ -181,7 +181,7 @@ public class AppDbContext : DbContext
     /// ожидающие миграции. Table-rebuild миграции (пример: SchemaCompact) перекладывают миллионы
     /// строк, а с дефолтным кешем SQLite ~2 МБ и без mmap это часы вместо минут. Отличия от
     /// <see cref="ApplyBulkPerformancePragmas"/>: <c>foreign_keys</c> НЕ включаем (дефолтный OFF —
-    /// перекладка идёт без FK-проверки на каждую строку, сами объявления FK копируются в DDL);
+    /// перекладка идет без FK-проверки на каждую строку, сами объявления FK копируются в DDL);
     /// <c>temp_store</c> оставляем дисковым (внешняя сортировка ORDER BY на гигабайтах не должна
     /// раздувать память). После Migrate() основной контекст возвращается к обычному профилю —
     /// TunePerformancePragmas перезаписывает кеш/mmap штатными значениями.
@@ -262,7 +262,7 @@ public class AppDbContext : DbContext
             // SchemaCompact) — кластеризована по PK, значения одной записи лежат рядом, и отдельный
             // уникальный индекс пары не нужен (минус целое B-дерево на самой большой таблице).
             e.HasKey(x => new { x.RecordId, x.FieldId });
-            // Фильтр по значению поля (Value IN ...) и подсчёт уникальных значений (GROUP BY Value)
+            // Фильтр по значению поля (Value IN ...) и подсчет уникальных значений (GROUP BY Value)
             // идут по этому индексу — иначе скан всех значений поля. См. GetFilteredRecordIds.
             e.HasIndex(x => new { x.FieldId, x.Value });
             e.HasOne(x => x.Record)
@@ -283,7 +283,7 @@ public class AppDbContext : DbContext
             e.HasIndex(x => new { x.FieldId, x.FromRecordId, x.Position });
             // Очистка при удалении цели В ЭТОЙ ЖЕ БД (TargetDbId=0): кто ссылается на запись.
             e.HasIndex(x => x.ToRecordId);
-            // Не даём задвоить связь; TargetDbId в ключе различает одинаковые id в разных целевых БД.
+            // Не даем задвоить связь; TargetDbId в ключе различает одинаковые id в разных целевых БД.
             e.HasIndex(x => new { x.FieldId, x.FromRecordId, x.TargetDbId, x.ToRecordId }).IsUnique();
             // Каскады на поле-связь и запись-источник (всегда в этой же БД). FK на ToRecordId НЕТ:
             // цель может быть в другом файле (межбазовая связь), а FK между файлами невозможен —
@@ -301,12 +301,12 @@ public class AppDbContext : DbContext
             // Горячий путь календаря: WHERE CollectionId IN(...) AND StartIso < end AND EndIso >= start.
             e.HasIndex(x => new { x.CollectionId, x.StartIso });
             // Сплит окна на два под-запроса по AllDay: короткие timed — с нижней границей StartIso,
-            // многодневные/all-day — без неё (их мало). Индекс изолирует каждый класс, чтобы
-            // под-запрос не сканировал всё от начала. См. ConstructorRepository.ReadCalendarEvents.
-            // Хвост (RecordId, FieldId) даёт полный порядок (StartIso, RecordId, FieldId) — на нём
+            // многодневные/all-day — без нее (их мало). Индекс изолирует каждый класс, чтобы
+            // под-запрос не сканировал все от начала. См. ConstructorRepository.ReadCalendarEvents.
+            // Хвост (RecordId, FieldId) дает полный порядок (StartIso, RecordId, FieldId) — на нем
             // «Расписание» согласует offset-прыжки и keyset-скролл (одинаковый порядок → без дублей/
-            // пропусков на границах страниц с равным StartIso), а глубокий offset идёт по индексу без
-            // временной сортировки. Прежний префикс (CollectionId, AllDay, StartIso) остаётся рабочим
+            // пропусков на границах страниц с равным StartIso), а глубокий offset идет по индексу без
+            // временной сортировки. Прежний префикс (CollectionId, AllDay, StartIso) остается рабочим
             // для сплит-окон. См. CalendarDayVirtualList / GetCalendarDayEventsByOffset.
             e.HasIndex(x => new { x.CollectionId, x.AllDay, x.StartIso, x.RecordId, x.FieldId });
             // Спилловеры окна сетки: timed-события, начавшиеся ДО окна и пересекающие его, ищутся
@@ -402,7 +402,7 @@ public class AppDbContext : DbContext
             e.ToTable("change_log");
             e.HasKey(x => x.Id);
             // Без FK: журнал переживает удаление коллекций/записей/пользователей.
-            // Чтение идёт keyset-пагинацией по Id (rowid) DESC — индексы не нужны.
+            // Чтение идет keyset-пагинацией по Id (rowid) DESC — индексы не нужны.
         });
 
         if (IsPostgres) ApplyLowercaseNames(model);
@@ -412,7 +412,7 @@ public class AppDbContext : DbContext
     /// PG-модель: все имена колонок в lowercase (таблицы уже lowercase). PostgreSQL сворачивает
     /// неэкранированные идентификаторы к нижнему регистру — благодаря этому весь общий raw SQL
     /// репозиториев (<c>WHERE CollectionId = @c</c> и т.п.) работает на обоих провайдерах без
-    /// правок: SQLite матчит имена без учёта регистра, PG находит колонку <c>collectionid</c>.
+    /// правок: SQLite матчит имена без учета регистра, PG находит колонку <c>collectionid</c>.
     /// Флаги (bool) маппятся в integer 0/1, как SQLite хранит их физически: иначе boolean-колонки
     /// PG сломали бы общий raw SQL (`IsCalStart = 1`, `AllDay = 0`, конкатенации, int-биндинги).
     /// SQLite-модель не трогаем — имена колонок там исторически PascalCase.

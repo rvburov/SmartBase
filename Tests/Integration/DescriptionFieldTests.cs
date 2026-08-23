@@ -6,8 +6,8 @@ namespace SmartBase.Tests.Integration;
 
 /// <summary>
 /// «Описание» — ОБЫЧНОЕ поле коллекции с ролью <c>IsDescription</c>, а не системная колонка
-/// записи: коллекция живёт без него, заводят его только два пути (создание записи через
-/// календарь и через задачу), и оно ведёт себя как любое свойство — переименование, смена
+/// записи: коллекция живет без него, заводят его только два пути (создание записи через
+/// календарь и через задачу), и оно ведет себя как любое свойство — переименование, смена
 /// типа, удаление. Инварианты из docs/architecture/data-types/description.md.
 /// </summary>
 public sealed class DescriptionFieldTests
@@ -59,7 +59,7 @@ public sealed class DescriptionFieldTests
 
         var ev = repo.AddCalendarRecord(new CalendarRecord
         {
-            CollectionId = col, Title = "Планёрка", Description = "в переговорной",
+            CollectionId = col, Title = "Планерка", Description = "в переговорной",
             StartDt = new DateTime(2026, 4, 1, 10, 0, 0), EndDt = new DateTime(2026, 4, 1, 11, 0, 0),
         });
 
@@ -95,12 +95,12 @@ public sealed class DescriptionFieldTests
         var repo = db.Constructor;
 
         var noDue = SampleData.AddCollection(repo, "Задачи без срока").Id!.Value;
-        repo.AddTaskRecord(noDue, "Позвонить", "Иванов Иван", "Петров Пётр",
+        repo.AddTaskRecord(noDue, "Позвонить", "Иванов Иван", "Петров Петр",
                            ConstructorRepository.TaskStatusPlanned, due: null);
         Assert.NotNull(DescField(db, noDue));
 
         var withDue = SampleData.AddCollection(repo, "Задачи со сроком").Id!.Value;
-        repo.AddTaskRecord(withDue, "Отчёт", "Иванов Иван", "Петров Пётр",
+        repo.AddTaskRecord(withDue, "Отчет", "Иванов Иван", "Петров Петр",
                            ConstructorRepository.TaskStatusPlanned,
                            new DateValue(new DateTime(2026, 5, 1), new DateTime(2026, 5, 1), true));
         Assert.NotNull(DescField(db, withDue));
@@ -121,7 +121,7 @@ public sealed class DescriptionFieldTests
         Assert.Single(repo.GetFields(col), f => f.IsDescription);
     }
 
-    /// <summary>Одноимённое текстовое поле, заведённое руками, получает роль, а не второго близнеца.</summary>
+    /// <summary>Одноименное текстовое поле, заведенное руками, получает роль, а не второго близнеца.</summary>
     [Fact]
     public void Existing_text_field_named_description_is_adopted()
     {
@@ -134,7 +134,7 @@ public sealed class DescriptionFieldTests
         Assert.Single(repo.GetFields(col), f => f.Name == "Описание");
     }
 
-    // ── Ведёт себя как обычное свойство ───────────────────────────────────────
+    // ── Ведет себя как обычное свойство ───────────────────────────────────────
 
     [Fact]
     public void Description_field_can_be_renamed_retyped_and_deleted()
@@ -152,7 +152,7 @@ public sealed class DescriptionFieldTests
         var updated = repo.GetFields(col).First(f => f.Id == fid);
         Assert.Equal("Комментарий", updated.Name);
         Assert.Equal("number", updated.FieldType);   // тип сменился — системное поле так не умеет
-        // Переименование роль НЕ трогает (роль живёт флагом, а не именем), а смена типа —
+        // Переименование роль НЕ трогает (роль живет флагом, а не именем), а смена типа —
         // снимает: описание читается только с текстового поля, и оставленный флаг был бы
         // ролью-призраком (раздел молчит, а плашка «привязано к разделу» висит).
         Assert.False(updated.IsDescription);
@@ -177,9 +177,9 @@ public sealed class DescriptionFieldTests
         Assert.Single(repo.GetFields(col), f => f.IsDescription);
     }
 
-    // ── Чтение календарём ─────────────────────────────────────────────────────
+    // ── Чтение календарем ─────────────────────────────────────────────────────
 
-    /// <summary>Карточка календаря берёт описание из поля (значение в db_field_values).</summary>
+    /// <summary>Карточка календаря берет описание из поля (значение в db_field_values).</summary>
     [Fact]
     public void Calendar_reader_returns_description_from_field()
     {
@@ -189,7 +189,7 @@ public sealed class DescriptionFieldTests
 
         var ev = repo.AddCalendarRecord(new CalendarRecord
         {
-            CollectionId = col, Title = "Планёрка", Description = "в переговорной",
+            CollectionId = col, Title = "Планерка", Description = "в переговорной",
             StartDt = new DateTime(2026, 4, 1, 10, 0, 0), EndDt = new DateTime(2026, 4, 1, 11, 0, 0),
         });
 
@@ -210,7 +210,7 @@ public sealed class DescriptionFieldTests
 
         var ev = repo.AddCalendarRecord(new CalendarRecord
         {
-            CollectionId = col, Title = "Планёрка", Description = "старое",
+            CollectionId = col, Title = "Планерка", Description = "старое",
             StartDt = new DateTime(2026, 4, 1, 10, 0, 0), EndDt = new DateTime(2026, 4, 1, 11, 0, 0),
         });
 

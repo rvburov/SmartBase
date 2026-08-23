@@ -8,11 +8,11 @@ namespace SmartBase.Extensions.AssemblyCalc;
 /// <summary>Ошибка формирования с дружелюбным текстом — показывается в статусе окна.</summary>
 public sealed class AssemblyCalcException(string message) : Exception(message);
 
-/// <summary>Итог: путь к созданному файлу и число перенесённых строк.</summary>
+/// <summary>Итог: путь к созданному файлу и число перенесенных строк.</summary>
 public sealed record AssemblyCalcResult(string OutputPath, int RowCount);
 
 /// <summary>
-/// Формирование файла «Расчёт сборочных единиц в изделии»: перенос выбранных столбцов из
+/// Формирование файла «Расчет сборочных единиц в изделии»: перенос выбранных столбцов из
 /// исходного «Список КД и ТД» (лист «Исходные данные») в .xlsm-шаблон (тот же лист) с
 /// раскраской строк по уровню и стилем ГОСТ. Реализация на ClosedXML.
 ///

@@ -5,10 +5,10 @@ using SmartBase.Utils;
 
 namespace SmartBase.Setup;
 
-/// <summary>Найденная на компьютере копия: папка установки и её версия (null — прочитать не удалось).</summary>
+/// <summary>Найденная на компьютере копия: папка установки и ее версия (null — прочитать не удалось).</summary>
 public sealed record Installation(string Dir, string? Version)
 {
-    /// <summary>Подпись версии для окна: на Linux у бинаря нет ресурса версии, и её не прочитать.</summary>
+    /// <summary>Подпись версии для окна: на Linux у бинаря нет ресурса версии, и ее не прочитать.</summary>
     public string VersionText => Version is null ? "версия неизвестна" : $"версия {Version}";
 }
 
@@ -17,7 +17,7 @@ public sealed record Installation(string Dir, string? Version)
 /// иначе человек вспоминает путь руками, а забыв его, ставит вторую копию рядом с первой.
 ///
 /// Главный источник — <c>installs.json</c> в папке данных: он один на машину, не зависит от
-/// места установки и читается мгновенно. Остальные источники запасные, на случай стёртых
+/// места установки и читается мгновенно. Остальные источники запасные, на случай стертых
 /// данных. Полного обхода диска нет намеренно: на большом томе это минуты, и окно выглядит
 /// зависшим.
 /// </summary>
@@ -65,7 +65,7 @@ public static partial class InstallService
                 JsonSerializer.Serialize(paths.Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
                                          new JsonSerializerOptions { WriteIndented = true }));
         }
-        catch { /* не смогли запомнить — поиск обойдётся запасными источниками */ }
+        catch { /* не смогли запомнить — поиск обойдется запасными источниками */ }
     }
 
     // ── Поиск ────────────────────────────────────────────────────────────────
@@ -110,8 +110,8 @@ public static partial class InstallService
 
     /// <summary>
     /// Запущены ли мы из установленной копии. Только по <c>installs.json</c> — читается мгновенно
-    /// и годится для старта (полный <see cref="FindInstallations"/> дёргает PowerShell и стоит секунды).
-    /// <c>null</c> — сказать нечем: список пуст (установка до 1.0.5, стёртая папка данных),
+    /// и годится для старта (полный <see cref="FindInstallations"/> дергает PowerShell и стоит секунды).
+    /// <c>null</c> — сказать нечем: список пуст (установка до 1.0.5, стертая папка данных),
     /// вызывающий решает сам.
     /// </summary>
     public static bool? IsRunningInstalledCopy()
@@ -137,8 +137,8 @@ public static partial class InstallService
 
             var exe = InstalledPath(installDir);
             if (!File.Exists(exe)) return null;
-            // ProductVersion у сборок .NET несёт суффикс «+хеш-коммита» — он тут лишний.
-            // На Linux ресурса версии нет вовсе, вернётся null: окно скажет «версия неизвестна».
+            // ProductVersion у сборок .NET несет суффикс «+хеш-коммита» — он тут лишний.
+            // На Linux ресурса версии нет вовсе, вернется null: окно скажет «версия неизвестна».
             var v = FileVersionInfo.GetVersionInfo(exe).ProductVersion;
             if (string.IsNullOrWhiteSpace(v)) return null;
             var plus = v.IndexOf('+');
@@ -150,7 +150,7 @@ public static partial class InstallService
     // ── Запасные источники по ОС ─────────────────────────────────────────────
 
     // macOS: Spotlight знает все бандлы по идентификатору. Оба наших бандла (приложение и
-    // установщик) несут один CFBundleIdentifier, поэтому берём только SmartBase.app.
+    // установщик) несут один CFBundleIdentifier, поэтому берем только SmartBase.app.
     private static IEnumerable<string> SpotlightDirs()
     {
         var outp = RunCapture("/usr/bin/mdfind",
@@ -168,7 +168,7 @@ public static partial class InstallService
     // «удалить» результат сборки. Смонтированный образ и Корзина — из той же серии.
     private static bool LooksLikeNotInstalled(string dir)
     {
-        if (dir.StartsWith("/Volumes/", StringComparison.OrdinalIgnoreCase)) return true;   // подключённый .dmg
+        if (dir.StartsWith("/Volumes/", StringComparison.OrdinalIgnoreCase)) return true;   // подключенный .dmg
         foreach (var part in dir.Split(Path.DirectorySeparatorChar))
             if (part.Equals("dist", StringComparison.OrdinalIgnoreCase)          // вывод сборки проекта
                 || part.Equals(".Trash", StringComparison.OrdinalIgnoreCase))    // Корзина

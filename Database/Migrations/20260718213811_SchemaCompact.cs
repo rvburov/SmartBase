@@ -14,14 +14,14 @@ namespace SmartBase.Database.Migrations
     ///    поаспектно. Неиспользуемая колонка system_field_meta.Position не переносится.
     ///
     /// 2) db_field_values и calendar_index пересозданы WITHOUT ROWID с естественным PK
-    ///    (RecordId, FieldId); суррогатный Id у db_field_values удалён. Таблица кластеризована
+    ///    (RecordId, FieldId); суррогатный Id у db_field_values удален. Таблица кластеризована
     ///    по PK: значения одной записи лежат физически рядом (чтение строки таблицы —
     ///    последовательное), а отдельное B-дерево уникального индекса пары больше не нужно —
-    ///    минус треть объёма и работы на вставке/удалении у самой большой таблицы базы.
+    ///    минус треть объема и работы на вставке/удалении у самой большой таблицы базы.
     ///
     /// Пересоздание — руками через CREATE…WITHOUT ROWID + INSERT…SELECT (EF не умеет
     /// WITHOUT ROWID). Копирование в порядке PK — последовательная запись B-дерева; источник
-    /// читается с NOT INDEXED: без подсказки планировщик шёл бы по индексу пары и на каждую
+    /// читается с NOT INDEXED: без подсказки планировщик шел бы по индексу пары и на каждую
     /// строку прыгал в таблицу-источник случайным чтением по всему файлу — на миллионах строк
     /// это на порядки медленнее полного скана с внешней сортировкой (оба прохода
     /// последовательные; сортировка спиллится во временные файлы, не в RAM).
@@ -31,7 +31,7 @@ namespace SmartBase.Database.Migrations
     /// AppDbContext.ApplyMigrationPragmas (вызывается перед Migrate()).
     ///
     /// ВНИМАНИЕ: на больших базах (миллионы значений) миграция разово переписывает
-    /// db_field_values и calendar_index целиком — первое открытие займёт время,
+    /// db_field_values и calendar_index целиком — первое открытие займет время,
     /// на диске нужен запас ~размера этих таблиц (WAL на время транзакции + temp-файлы
     /// сортировки); после миграций DatabaseManager дополнительно ужимает файл (VACUUM).
     /// </summary>
@@ -40,7 +40,7 @@ namespace SmartBase.Database.Migrations
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
-            // ── 1) column_meta: создать, слить данные трёх таблиц, старые удалить ──
+            // ── 1) column_meta: создать, слить данные трех таблиц, старые удалить ──
             migrationBuilder.CreateTable(
                 name: "column_meta",
                 columns: table => new
@@ -57,8 +57,8 @@ namespace SmartBase.Database.Migrations
                     table.PrimaryKey("PK_column_meta", x => new { x.CollectionId, x.Key });
                 });
 
-            // Полный набор ключей — объединение трёх таблиц; аспекты подтягиваются LEFT JOIN'ами
-            // (отсутствующий аспект остаётся NULL = дефолт). Строки system_field_meta без подписи
+            // Полный набор ключей — объединение трех таблиц; аспекты подтягиваются LEFT JOIN'ами
+            // (отсутствующий аспект остается NULL = дефолт). Строки system_field_meta без подписи
             // (DisplayName IS NULL) — мусор от старых сохранений, в объединение не входят.
             migrationBuilder.Sql(@"
                 INSERT INTO column_meta (CollectionId, Key, Position, Visible, Level, DisplayName)

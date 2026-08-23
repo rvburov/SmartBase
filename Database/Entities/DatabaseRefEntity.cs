@@ -8,7 +8,7 @@ namespace SmartBase.Database.Entities;
 /// параметры в Pg*-колонках, а Path хранит отображаемую строку «postgres://host:port/db»
 /// (дедупликация и вторая строка карточки в настройках, без пароля).
 /// Pg*-колонки добавлены аддитивно (см. DatabaseRegistry.EnsurePgColumns) — app.db
-/// никогда не пересоздаётся. PgPassword хранится в защищённом виде через
+/// никогда не пересоздается. PgPassword хранится в защищенном виде через
 /// <see cref="SmartBase.Utils.SecretProtector"/> (macOS — Связка ключей, Windows — DPAPI;
 /// Linux/сбой хранилища — открытый текст); в PgConnectionInfo пароль расшифровывает
 /// <see cref="ToPgInfo"/> — единственная точка чтения.

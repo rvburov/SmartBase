@@ -8,8 +8,8 @@ namespace SmartBase.Tests.Integration;
 /// Живой состав пользователей базы (docs/architecture/users-permissions.md): опции типа
 /// свойства «пользователь» — ДОПУЩЕННЫЕ пользователи db_users, и они меняются, пока
 /// приложение открыто (сосед присоединился, администратор допустил/отозвал, сменилось ФИО).
-/// Отдельное подключение здесь играет роль второй машины общей базы: её правки обязаны
-/// доезжать без перезапуска — общий контекст живёт весь сеанс, и любой кеш EF на этих
+/// Отдельное подключение здесь играет роль второй машины общей базы: ее правки обязаны
+/// доезжать без перезапуска — общий контекст живет весь сеанс, и любой кеш EF на этих
 /// строках означал бы «пользователь есть в базе, но его нет в выпадающем списке».
 /// </summary>
 public sealed class UserOptionsTests
@@ -38,13 +38,13 @@ public sealed class UserOptionsTests
 
         var id = JoinUser(db.Path, "ivanov@pc2", "Иванов Иван");
 
-        // Ждёт допуска — в списке исполнителей его быть не должно.
+        // Ждет допуска — в списке исполнителей его быть не должно.
         Assert.DoesNotContain("Иванов Иван", db.Constructor.GetUserOptions());
 
         db.Permissions.SetApproved(id, true);
         Assert.Contains("Иванов Иван", db.Constructor.GetUserOptions());
 
-        // Ушёл из базы (допуск отозван): выбрать нельзя, но старые значения — снапшот строкой.
+        // Ушел из базы (допуск отозван): выбрать нельзя, но старые значения — снапшот строкой.
         db.Permissions.SetApproved(id, false);
         Assert.DoesNotContain("Иванов Иван", db.Constructor.GetUserOptions());
         Assert.Contains("Иванов Иван", db.Constructor.GetUserOptions("Иванов Иван"));
@@ -54,7 +54,7 @@ public sealed class UserOptionsTests
     public void Options_follow_neighbour_approval_without_restart()
     {
         using var db = new TempDatabase();
-        var id = JoinUser(db.Path, "petrov@pc3", "Петров Пётр");
+        var id = JoinUser(db.Path, "petrov@pc3", "Петров Петр");
 
         // Панель администратора уже посмотрела на пользователей — строки в контексте.
         Assert.Contains(db.Permissions.GetUsers(), u => u.UserKey == "petrov@pc3" && !u.IsApproved);
@@ -66,7 +66,7 @@ public sealed class UserOptionsTests
             neighbour.SaveChanges();
         }
 
-        Assert.Contains("Петров Пётр", db.Constructor.GetUserOptions());
+        Assert.Contains("Петров Петр", db.Constructor.GetUserOptions());
         Assert.True(db.Permissions.GetUsers().First(u => u.UserKey == "petrov@pc3").IsApproved,
                     "панель администратора обязана показывать актуальный допуск");
         Assert.Equal((int)SmartBase.Core.Models.PermAction.All, db.Permissions.GetMask(id, null));
@@ -82,12 +82,12 @@ public sealed class UserOptionsTests
         // Сосед заполнил ФИО в профиле — снапшот имени в db_users обновился с его стороны.
         using (var neighbour = new AppDbContext(db.Path))
         {
-            neighbour.DbUsers.First(u => u.UserKey == "sidorov@pc4").DisplayName = "Сидоров Семён Семёнович";
+            neighbour.DbUsers.First(u => u.UserKey == "sidorov@pc4").DisplayName = "Сидоров Семен Семенович";
             neighbour.SaveChanges();
         }
 
         var options = db.Constructor.GetUserOptions();
-        Assert.Contains("Сидоров Семён Семёнович", options);
+        Assert.Contains("Сидоров Семен Семенович", options);
         Assert.DoesNotContain("Сидоров С.", options);
     }
 

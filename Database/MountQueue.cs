@@ -7,7 +7,7 @@ namespace SmartBase.Database;
 /// Очередь фонового монтирования БД. Старт открывает только дефолтную базу, остальные
 /// встают сюда и монтируются СТРОГО ПО ОДНОЙ в фоновом потоке: параллельное монтирование
 /// умножило бы память (кеш миграции) и заставило бы сортировки драться за диск, а работать
-/// пользователь всё равно может только в уже открытых базах. Стартовая партия сортируется
+/// пользователь все равно может только в уже открытых базах. Стартовая партия сортируется
 /// по размеру файла — мелкие базы оживают почти сразу, гиганты мигрируют последними.
 /// Добавленные позже (подключение из настроек) встают в хвост.
 ///
@@ -18,7 +18,7 @@ public sealed class MountQueue
     public enum ItemState { Queued, Mounting, Failed }
 
     /// <summary>Статус немонтированной БД для сайдбара/настроек: короткий текст обновляется
-    /// живьём из тех же stage-колбэков, что сплэш и окно подключения.</summary>
+    /// живьем из тех же stage-колбэков, что сплэш и окно подключения.</summary>
     public sealed record ItemStatus(int DbId, string Name, ItemState State, string Text);
 
     /// <summary>Изменился статус БД (dbId, сменилось ли состояние — не только процент).</summary>
@@ -51,13 +51,13 @@ public sealed class MountQueue
     }
 
     /// <summary>Поставить БД в хвост очереди. Повторная постановка «упавшей» базы
-    /// («Подключить заново») сбрасывает её статус на «в очереди…».</summary>
+    /// («Подключить заново») сбрасывает ее статус на «в очереди…».</summary>
     public void Enqueue(DatabaseRefEntity entry)
     {
         lock (_gate)
         {
             if (_ws.Get(entry.Id) is not null) return;                 // уже смонтирована
-            if (_queue.Any(e => e.Id == entry.Id)) return;             // уже ждёт
+            if (_queue.Any(e => e.Id == entry.Id)) return;             // уже ждет
             if (_status.TryGetValue(entry.Id, out var s) && s.State == ItemState.Mounting) return;
             _queue.Add(entry);
             _status[entry.Id] = new ItemStatus(entry.Id, entry.Name, ItemState.Queued, "в очереди…");
@@ -74,7 +74,7 @@ public sealed class MountQueue
     {
         lock (_gate)
         {
-            // База в этот момент не должна числиться ждущей (её только что размонтировали).
+            // База в этот момент не должна числиться ждущей (ее только что размонтировали).
             _queue.RemoveAll(e => e.Id == dbId);
             _status[dbId] = new ItemStatus(dbId, name, ItemState.Failed, text);
         }
@@ -100,7 +100,7 @@ public sealed class MountQueue
         lock (_gate) return _status.Values.ToList();
     }
 
-    /// <summary>Короткий статус конкретной БД или null, если её нет в очереди.</summary>
+    /// <summary>Короткий статус конкретной БД или null, если ее нет в очереди.</summary>
     public ItemStatus? StatusOf(int dbId)
     {
         lock (_gate) return _status.GetValueOrDefault(dbId);
@@ -130,7 +130,7 @@ public sealed class MountQueue
             }
             Changed?.Invoke(entry.Id, true);
 
-            // Mount() гасит ошибки сам (вернёт null); страхуемся на случай неожиданных.
+            // Mount() гасит ошибки сам (вернет null); страхуемся на случай неожиданных.
             DatabaseManager? m = null;
             try { m = _ws.Mount(entry, (msg, frac) => OnStage(entry, msg, frac)); }
             catch (Exception ex) { Log.Error(ex, "Неожиданный сбой монтирования БД «{Name:l}»", entry.Name); }
@@ -165,7 +165,7 @@ public sealed class MountQueue
 
     // Компактная строка для сайдбара: «Обновление · 45% · ≈ 2 мин». Полные фразы стадий
     // (см. DatabaseManager) в узкой колонке не помещаются, поэтому фаза укорачивается,
-    // а из инфо-строки берётся только оценка времени (слово «осталось» опускаем — рядом
+    // а из инфо-строки берется только оценка времени (слово «осталось» опускаем — рядом
     // с процентами «≈ 2 мин» читается однозначно).
     private static string ShortText(string phase, string info, double? frac)
     {

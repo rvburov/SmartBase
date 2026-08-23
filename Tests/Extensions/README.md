@@ -17,7 +17,7 @@ dotnet test Tests/Extensions/PdfRename     # одно расширение
 ./Tests/run-all.sh --with-extensions       # ядро + расширения
 ```
 
-Список наборов нигде не перечислен — скрипт берёт проекты глобом `Tests/Extensions/*/*.csproj`.
+Список наборов нигде не перечислен — скрипт берет проекты глобом `Tests/Extensions/*/*.csproj`.
 
 ## Добавить расширение
 

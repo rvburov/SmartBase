@@ -5,13 +5,13 @@ namespace SmartBase.Tests.Integration;
 
 /// <summary>
 /// Чтение диагностического лога <c>logs.db</c> (<see cref="LogReader"/>): keyset-пагинация
-/// (порядок id и строковая сортировка), фильтры по колонкам и счётчики значений. В бою схему
-/// таблицы <c>logs</c> задаёт приёмник Serilog.Sinks.SQLite — здесь воспроизводим её и сеем
+/// (порядок id и строковая сортировка), фильтры по колонкам и счетчики значений. В бою схему
+/// таблицы <c>logs</c> задает приемник Serilog.Sinks.SQLite — здесь воспроизводим ее и сеем
 /// строки напрямую (LogReader только читает, raw SQL, без EF).
 /// </summary>
 public sealed class LogReaderTests
 {
-    // Схема таблицы logs приёмника + засев строк (в порядке аргументов = по возрастанию id
+    // Схема таблицы logs приемника + засев строк (в порядке аргументов = по возрастанию id
     // = хронология). Pooling=false — не держим файл в пуле, read-only reader откроет чисто.
     private static void Seed(string path,
         params (string Timestamp, string Level, string Message, string? Exception)[] rows)
@@ -48,7 +48,7 @@ public sealed class LogReaderTests
     }
 
     // Пролистать журнал постранично до конца (как LoadMoreLogsAsync в UI): курсор —
-    // (AfterValue, AfterId) последней строки; rawOf даёт сырое значение колонки сортировки.
+    // (AfterValue, AfterId) последней строки; rawOf дает сырое значение колонки сортировки.
     private static async Task<List<LogReader.LogRow>> ReadAll(
         LogReader reader, LogReader.LogQuery baseQuery, int take,
         Func<LogReader.LogRow, string?> rawOf)

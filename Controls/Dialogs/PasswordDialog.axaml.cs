@@ -6,7 +6,7 @@ namespace SmartBase.Controls.Dialogs;
 
 /// <summary>
 /// Пароль базы данных, два режима.
-/// «Установить/сменить» (<see cref="ForSet"/>): два поля, возвращает введённый пароль
+/// «Установить/сменить» (<see cref="ForSet"/>): два поля, возвращает введенный пароль
 /// (ShowDialog&lt;string?&gt;) — хеширует и сохраняет вызывающий (PermissionService.SetPassword).
 /// «Разблокировать» (<see cref="ForUnlock"/>): одно поле, проверка через переданный
 /// колбэк (PermissionService.TryUnlock) — неверный пароль показывает баннер, окно не
@@ -51,7 +51,7 @@ public partial class PasswordDialog : Window
         dlg.Title = "База данных защищена";
         dlg.InfoText.Text =
             $"База данных «{dbName}» доступна после подтверждения администратором или " +
-            "по паролю. Введите пароль, чтобы открыть её сейчас.";
+            "по паролю. Введите пароль, чтобы открыть ее сейчас.";
         dlg.RepeatBlock.IsVisible = false;
         dlg.ConfirmBtn.Content = "Открыть";
         return dlg;
@@ -67,7 +67,7 @@ public partial class PasswordDialog : Window
             return;
         }
 
-        // Режим разблокировки: проверяем пароль на месте, окно живёт до успеха/отмены.
+        // Режим разблокировки: проверяем пароль на месте, окно живет до успеха/отмены.
         if (_tryUnlock is not null)
         {
             if (_tryUnlock(password)) Close(true);

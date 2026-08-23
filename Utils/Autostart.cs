@@ -11,14 +11,14 @@ namespace SmartBase.Utils;
 ///   • macOS   — LaunchAgent ~/Library/LaunchAgents/com.romanburov.smartbase.plist;
 ///   • Linux   — ~/.config/autostart/smartbase.desktop.
 ///
-/// Запись НЕ несёт аргументов: автозапуск всегда открывает окно — что с фоновым режимом,
+/// Запись НЕ несет аргументов: автозапуск всегда открывает окно — что с фоновым режимом,
 /// что без него. Фоновый режим отвечает только за «крестик» окна (скрыть вместо выхода)
 /// и значок в трее, но не за то, как приложение стартует при входе в систему.
 ///
 /// Построение и разбор записи отделены от работы с диском — чистые <c>Build*</c>,
 /// <c>Parse*</c> и <see cref="DecideSync"/> покрываются юнит-тестом. Вне установленного
 /// приложения (dev <c>dotnet run</c>, на macOS — нет .app-бандла) <see cref="IsSupported"/>
-/// = false и всё — no-op.
+/// = false и все — no-op.
 ///
 /// Источник правды о состоянии — САМА ОС, а не настройка в app.db: запись могут снести
 /// мимо приложения (переустановка, чистилка автозагрузки, правка вручную), и тогда тумблер
@@ -30,7 +30,7 @@ public static class Autostart
     internal const string BundleId      = "com.romanburov.smartbase";
     private const string WindowsRunKey  = @"Software\Microsoft\Windows\CurrentVersion\Run";
     private const string WindowsValue   = AppSettings.AppName;   // "SmartBase"
-    // Сюда Диспетчер задач кладёт свой «выключено» для записей автозагрузки — см. DisabledInSystemUi.
+    // Сюда Диспетчер задач кладет свой «выключено» для записей автозагрузки — см. DisabledInSystemUi.
     private const string WindowsApprovedKey =
         @"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run";
 
@@ -52,7 +52,7 @@ public static class Autostart
         return null;   // dev-сборка (dotnet run) — не установленное приложение
 #else
         // Портативная/скопированная куда-то копия: installs.json знает настоящие папки установки.
-        // Список пуст (установка до 1.0.5, стёртые данные) — не запрещаем, работаем как раньше.
+        // Список пуст (установка до 1.0.5, стертые данные) — не запрещаем, работаем как раньше.
         if (InstallService.IsRunningInstalledCopy() == false) return null;
 
         if (InstallService.IsMac)
@@ -72,7 +72,7 @@ public static class Autostart
     public static bool IsEnabled() => Record() is not null;
 
     /// <summary>
-    /// Windows: запись автозапуска на месте, но пользователь выключил её в Диспетчере задач
+    /// Windows: запись автозапуска на месте, но пользователь выключил ее в Диспетчере задач
     /// (вкладка «Автозагрузка»). Тогда программа при входе в систему не стартует, а по реестру
     /// этого не видно — отсюда «включено, но не работает». Только показываем: отменять решение
     /// человека приложение не должно. На других ОС и при любой неясности — false.
@@ -88,14 +88,14 @@ public static class Autostart
     }
 
     /// <summary>
-    /// Разбор флага из <c>StartupApproved\Run</c>: 12 байт, значимый — первый. Чётный (0x02, 0x06)
-    /// — запись включена, нечётный (0x03, 0x07, встречается и 0x01) — выключена пользователем.
-    /// Данных нет или они короче — не выдумываем, считаем включённой.
+    /// Разбор флага из <c>StartupApproved\Run</c>: 12 байт, значимый — первый. Четный (0x02, 0x06)
+    /// — запись включена, нечетный (0x03, 0x07, встречается и 0x01) — выключена пользователем.
+    /// Данных нет или они короче — не выдумываем, считаем включенной.
     /// </summary>
     public static bool IsDisabledFlag(byte[]? data) => data is { Length: > 0 } && (data[0] & 1) == 1;
 
     /// <summary>Содержимое записи автозапуска глазами ОС: значение реестра / plist / .desktop.
-    /// null — записи нет либо её не прочитать (нет прав).</summary>
+    /// null — записи нет либо ее не прочитать (нет прав).</summary>
     public static string? Record()
     {
         try
@@ -111,7 +111,7 @@ public static class Autostart
     /// <summary>
     /// Включить/выключить автозапуск. Возвращает <c>false</c>, если ОС запись не приняла:
     /// нет прав, политика домена, откат антивирусом, приложение не установлено. Раньше сбой
-    /// проглатывался молча — тумблер оставался включённым, а автозапуска не было и следов в
+    /// проглатывался молча — тумблер оставался включенным, а автозапуска не было и следов в
     /// логе тоже. Поэтому: пишем, СВЕРЯЕМ факт и докладываем вызывающему.
     /// </summary>
     public static bool Set(bool enabled)
@@ -135,7 +135,7 @@ public static class Autostart
 
         // Исключения мало: запись могла не появиться и без ошибки (политика, откат антивирусом).
         if (IsEnabled() == enabled) return true;
-        Log.Warning("Автозапуск: система не приняла запись (просили {Enabled}, в системе её {State:l})",
+        Log.Warning("Автозапуск: система не приняла запись (просили {Enabled}, в системе ее {State:l})",
                     enabled, enabled ? "нет" : "по-прежнему есть");
         return false;
     }
@@ -144,7 +144,7 @@ public static class Autostart
     /// Самолечение при старте: привести запись ОС в соответствие с настройкой — вернуть
     /// пропавшую (переустановка, чистилка автозагрузки), переписать устаревшую (сменилась
     /// папка установки, остались аргументы прежних версий), убрать лишнюю. Чужую копию
-    /// не трогаем: у неё своя запись, и перехватывать автозапуск на себя приложение не должно.
+    /// не трогаем: у нее своя запись, и перехватывать автозапуск на себя приложение не должно.
     /// </summary>
     public static void Sync(bool enabled)
     {
@@ -175,7 +175,7 @@ public static class Autostart
     /// <param name="enabled">настройка «Автозапуск» из app.db</param>
     /// <param name="record">содержимое записи ОС (null — записи нет)</param>
     /// <param name="recordedTarget">путь к бинарю, вынутый из записи</param>
-    /// <param name="recordedTargetExists">этот бинарь ещё на месте</param>
+    /// <param name="recordedTargetExists">этот бинарь еще на месте</param>
     /// <param name="currentTarget">бинарь, из которого мы сейчас запущены</param>
     /// <param name="expected">каким содержимое записи должно быть для <paramref name="currentTarget"/></param>
     public static SyncAction DecideSync(bool enabled, string? record, string? recordedTarget,
@@ -184,11 +184,11 @@ public static class Autostart
         var ours = SamePath(recordedTarget, currentTarget);
 
         // Выключен: снимаем только СВОЮ запись. Чужая (другая установка, портативная копия)
-        // живёт по своим настройкам — не нам её трогать.
+        // живет по своим настройкам — не нам ее трогать.
         if (!enabled) return record is not null && ours ? SyncAction.Remove : SyncAction.None;
 
         if (record is null)            return SyncAction.Write;   // запись пропала — вернуть
-        if (!recordedTargetExists)     return SyncAction.Write;   // указывает на снесённый бинарь
+        if (!recordedTargetExists)     return SyncAction.Write;   // указывает на снесенный бинарь
         if (!ours)                     return SyncAction.None;    // работает чужая копия — пусть
         return record == expected ? SyncAction.None : SyncAction.Write;   // наш путь, но команда устарела
     }
@@ -233,8 +233,8 @@ public static class Autostart
     /// <summary>
     /// Снять автозапуск безусловно — для удаления программы. В отличие от <see cref="Set"/>
     /// не смотрит на <see cref="LaunchTarget"/>: при удалении бинарь может быть уже недоступен,
-    /// а запись автозапуска убрать всё равно надо, иначе система будет пытаться стартовать
-    /// снесённое приложение.
+    /// а запись автозапуска убрать все равно надо, иначе система будет пытаться стартовать
+    /// снесенное приложение.
     /// </summary>
     public static void Disable()
     {
@@ -266,9 +266,9 @@ public static class Autostart
 
     // ── Чистый разбор записи (тестируется) ─────────────────────────────────────
     //
-    // Обратная сторона Build*: достаём путь к бинарю из того, что реально лежит в системе.
+    // Обратная сторона Build*: достаем путь к бинарю из того, что реально лежит в системе.
     // Нужно, чтобы отличить свою запись от чужой и заметить устаревшую (старый путь или
-    // аргументы прежних версий). Записи старше 1.0.5 несли ещё и --background, поэтому
+    // аргументы прежних версий). Записи старше 1.0.5 несли еще и --background, поэтому
     // разбор обязан переживать любые аргументы после пути.
 
     /// <summary>Путь из значения реестра: <c>"C:\App\SmartBase.exe" [аргументы]</c>.</summary>
@@ -311,7 +311,7 @@ public static class Autostart
         return space < 0 ? s : space > 0 ? s[..space] : null;
     }
 
-    /// <summary>autostart .desktop для Linux: Exec = бинарь, автозапуск включён.</summary>
+    /// <summary>autostart .desktop для Linux: Exec = бинарь, автозапуск включен.</summary>
     public static string BuildLinuxDesktop(string exec) =>
         "[Desktop Entry]\n" +
         "Type=Application\n" +

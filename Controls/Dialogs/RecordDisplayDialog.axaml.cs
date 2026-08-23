@@ -45,9 +45,9 @@ public partial class RecordDisplayDialog : Window
     // Порядок строк меняли (кнопки вверх/вниз) — только тогда переписываем позиции в БД.
     private bool _orderChanged;
 
-    // Ширина названия — единая для всех строк, по самому длинному. Без неё экстент
+    // Ширина названия — единая для всех строк, по самому длинному. Без нее экстент
     // горизонтальной прокрутки виртуализирующая панель считала бы по видимым строкам, и
-    // полоса снизу дёргалась бы при вертикальной прокрутке (см. FilterValueMetrics).
+    // полоса снизу дергалась бы при вертикальной прокрутке (см. FilterValueMetrics).
     private readonly FilterValueMetrics _metrics = new();
 
     public RecordDisplayDialog(ConstructorRepository repository, int collectionId,
@@ -66,7 +66,7 @@ public partial class RecordDisplayDialog : Window
             _all.Add(new RowVm(id, title) { Number = i + 1, Visible = vis, Level = Math.Max(1, lvl) });
         }
         _maxLevel    = Math.Max(1, _all.Select(r => r.Level).DefaultIfEmpty(1).Max());
-        _activeLevel = 0;   // ни один уровень не выбран (видимость — из сохранённого состояния)
+        _activeLevel = 0;   // ни один уровень не выбран (видимость — из сохраненного состояния)
 
         ListHost.ItemTemplate = BuildRowTemplate();
         ListHost.ItemsSource   = _shown;
@@ -101,10 +101,10 @@ public partial class RecordDisplayDialog : Window
 
         return new FuncDataTemplate<RowVm>((_, _) =>
         {
-            // Ширины у номера НЕТ: колонка «№» подстраивается под своё число, поэтому зазор
+            // Ширины у номера НЕТ: колонка «№» подстраивается под свое число, поэтому зазор
             // до чекбокса отсчитывается от каждого числа и одинаков в любой строке. Общая
             // ширина колонки (под самый длинный номер) давала бы «1» огромный отступ, а
-            // «546346» — никакого. Плата: чекбокс и всё правее сдвигаются по строкам.
+            // «546346» — никакого. Плата: чекбокс и все правее сдвигаются по строкам.
             var num = new TextBlock
             {
                 Foreground = secondary, FontSize = fontBase,
@@ -113,7 +113,7 @@ public partial class RecordDisplayDialog : Window
             num.Bind(TextBlock.TextProperty, new Binding(nameof(RowVm.NumberText)));
 
             // Слева 8 — просвет между номером и чекбоксом. Номер прижат вправо, поэтому
-            // весь зазор задаётся здесь и одинаков в любой строке.
+            // весь зазор задается здесь и одинаков в любой строке.
             var cb = new CheckBox { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8, 0, 6, 0) };
             cb.Bind(ToggleButton.IsCheckedProperty, new Binding(nameof(RowVm.Visible)) { Mode = BindingMode.TwoWay });
 
@@ -138,7 +138,7 @@ public partial class RecordDisplayDialog : Window
             var label = new TextBlock { VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis };
             label.Bind(TextBlock.TextProperty, new Binding(nameof(RowVm.DisplayTitle)));
             // Ширина ВСЕХ строк одинаковая — иначе экстент горизонтальной прокрутки
-            // считался бы по видимым строкам и полоса дёргалась.
+            // считался бы по видимым строкам и полоса дергалась.
             label.Bind(Layoutable.MinWidthProperty,
                        new Binding(nameof(FilterValueMetrics.TextMinWidth)) { Source = _metrics });
 
@@ -344,9 +344,9 @@ public partial class RecordDisplayDialog : Window
     private sealed class RowVm : INotifyPropertyChanged
     {
         public int    RecordId { get; }
-        /// <summary>Полное название — по нему идёт поиск.</summary>
+        /// <summary>Полное название — по нему идет поиск.</summary>
         public string Title    { get; }
-        /// <summary>Первая строка названия — строка списка одна, показываем её (см. TitleText).</summary>
+        /// <summary>Первая строка названия — строка списка одна, показываем ее (см. TitleText).</summary>
         public string DisplayTitle { get; }
 
         public RowVm(int recordId, string title)

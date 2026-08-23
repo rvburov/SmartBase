@@ -28,16 +28,16 @@ public partial class SidebarTree : UserControl
     public event EventHandler<Dictionary<int, HashSet<int>>>? ActiveIdsChanged;
     public event EventHandler?                                CalendarsChanged;
 
-    // Конструктор: выбор несёт (DbId, CollectionId) — при мульти-маунте id не уникален между БД.
+    // Конструктор: выбор несет (DbId, CollectionId) — при мульти-маунте id не уникален между БД.
     public event EventHandler<EntityRef>? CollectionSelected;
     public event EventHandler<int>?       CollectionDeleted;
     public event EventHandler?            RequestRefresh;
     // Клик по запертой базе (без допуска) — MainWindow предлагает ввести пароль.
     public event EventHandler<int>?       DatabaseUnlockRequested;
-    // Клик по ещё не смонтированной базе (в очереди/обновляется/недоступна) —
+    // Клик по еще не смонтированной базе (в очереди/обновляется/недоступна) —
     // MainWindow показывает подсказку с текущим статусом.
     public event EventHandler<int>?       PendingDatabaseTapped;
-    // Клик по коллекции, просмотр которой запрещён правами (замок) — MainWindow
+    // Клик по коллекции, просмотр которой запрещен правами (замок) — MainWindow
     // поясняет, что доступ закрыт администратором. Аргумент — имя коллекции.
     public event EventHandler<string>?    CollectionAccessDenied;
 
@@ -49,10 +49,10 @@ public partial class SidebarTree : UserControl
     private readonly List<MountedDb> _dbs = [];
     private bool _showRoots;
 
-    // Ещё не смонтированные БД (фоновая очередь): узел-заглушка с именем и статусной
+    // Еще не смонтированные БД (фоновая очередь): узел-заглушка с именем и статусной
     // строкой («в очереди…» / «Обновление · 45% · ≈ 2 мин» / «недоступна…»). Содержимое
     // не строится — до готовности ни один модуль в базу не лезет. Статус обновляется
-    // живьём через UpdatePendingStatus без перестройки дерева.
+    // живьем через UpdatePendingStatus без перестройки дерева.
     private readonly List<PendingDb> _pending = [];
 
     private SidebarMode _mode = SidebarMode.Calendar;
@@ -62,12 +62,12 @@ public partial class SidebarTree : UserControl
     // Режимы с чекбоксами видимости коллекций (календарь и задачи ведут себя одинаково).
     private bool ChecksMode => _mode is SidebarMode.Calendar or SidebarMode.Tasks;
 
-    // Активны все коллекции, кроме явно отключённых пользователем.
+    // Активны все коллекции, кроме явно отключенных пользователем.
     // Ключ — (DbId, CollectionId): id коллекций не уникальны между БД.
     // Набор переживает перезапуск: снятые галочки лежат в app.db (см. RestoreChecks).
     private readonly HashSet<(int Db, int Id)> _uncheckedIds = [];
     private bool _checksRestored;
-    // Свёрнутые корни-БД (по DbId) — чтобы состояние раскрытия переживало Refresh.
+    // Свернутые корни-БД (по DbId) — чтобы состояние раскрытия переживало Refresh.
     private readonly HashSet<int> _collapsedDbRoots = [];
 
     private List<SidebarNode> _roots = [];
@@ -123,7 +123,7 @@ public partial class SidebarTree : UserControl
 
     // Конструктор: несколько БД из рабочего пространства, каждая — корневой узел.
     // База без допуска (Permissions.AccessGranted=false) отображается замком без содержимого.
-    // pending — ещё не смонтированные БД фоновой очереди: узлы-заглушки со статусом.
+    // pending — еще не смонтированные БД фоновой очереди: узлы-заглушки со статусом.
     public void InitializeWorkspace(IReadOnlyList<DatabaseManager> databases, SidebarMode mode,
                                     IReadOnlyList<PendingDb>? pending = null)
     {
@@ -167,7 +167,7 @@ public partial class SidebarTree : UserControl
 
         // Мультивыделение не переживает перестройку дерева; восстанавливаем только
         // подсветку открытой коллекции по (DbId, Id) (режим конструктора — в календаре и
-        // задачах открытой коллекции нет, там всё решают галочки).
+        // задачах открытой коллекции нет, там все решают галочки).
         _selectedNodes.Clear();
         if (_mode is SidebarMode.Constructor && _open is { } open)
         {
@@ -180,8 +180,8 @@ public partial class SidebarTree : UserControl
         UpdateToggleAllIcon();
     }
 
-    // Запоминаем, какие корни-БД свёрнуты, чтобы состояние пережило перестройку дерева.
-    // Заглушки очереди не считаются: они всегда «свёрнуты», но после монтирования база
+    // Запоминаем, какие корни-БД свернуты, чтобы состояние пережило перестройку дерева.
+    // Заглушки очереди не считаются: они всегда «свернуты», но после монтирования база
     // должна открыться раскрытой.
     private void CaptureDbRootStates()
     {
@@ -198,7 +198,7 @@ public partial class SidebarTree : UserControl
         var result = new Dictionary<int, HashSet<int>>();
         foreach (var db in _dbs)
         {
-            // Запертая база событий не даёт (календарь получает только допущенные, но страхуемся).
+            // Запертая база событий не дает (календарь получает только допущенные, но страхуемся).
             if (db.Locked) { result[db.DbId] = []; continue; }
             var ids = db.Repo.GetAllCollections()
                 .Where(c => c.Id.HasValue).Select(c => c.Id!.Value)
@@ -233,7 +233,7 @@ public partial class SidebarTree : UserControl
         MeasureRowWidth();
     }
 
-    // Мерить каждую строку нельзя — узлов бывают тысячи. Сначала отбираем кандидатов дёшево
+    // Мерить каждую строку нельзя — узлов бывают тысячи. Сначала отбираем кандидатов дешево
     // (отступ + число символов), потом честно меряем только их: шрифт пропорциональный, и
     // самое длинное имя не обязательно самое широкое.
     private const int    WidthCandidates = 16;
@@ -242,7 +242,7 @@ public partial class SidebarTree : UserControl
     /// <summary>
     /// Общая ширина строк — по самой широкой из них. Ставится КАЖДОЙ строке, поэтому экстент
     /// горизонтальной прокрутки не зависит от того, какие строки сейчас реализованы
-    /// (виртуализация), и полоса внизу не дёргается при вертикальной прокрутке.
+    /// (виртуализация), и полоса внизу не дергается при вертикальной прокрутке.
     /// </summary>
     private void MeasureRowWidth()
     {
@@ -253,8 +253,8 @@ public partial class SidebarTree : UserControl
         var iconSize  = Metric("IconSizeMedium", 20);
         var family    = this.TryFindResource("FontFamilyBase", out var f) ? f as FontFamily : null;
 
-        // Всё, что стоит СЛЕВА от текста, по шаблону строки: Padding строки (10), отступ
-        // вложенности, слоты стрелки и чекбокса, иконка с её отступом (2) и поля текста (6 и 8).
+        // Все, что стоит СЛЕВА от текста, по шаблону строки: Padding строки (10), отступ
+        // вложенности, слоты стрелки и чекбокса, иконка с ее отступом (2) и поля текста (6 и 8).
         double Lead(SidebarRow r) =>
             10 + r.IndentMargin.Left + r.ChevronSlot + r.CheckboxSlot + 2 + iconSize + 6 + 8;
 
@@ -302,7 +302,7 @@ public partial class SidebarTree : UserControl
     {
         if (_dbs.Count == 0 && _pending.Count == 0) return [];
 
-        // Конструктор: каждая БД — корневой узел, под ним её дерево.
+        // Конструктор: каждая БД — корневой узел, под ним ее дерево.
         if (_showRoots)
         {
             var roots = new List<SidebarNode>();
@@ -536,7 +536,7 @@ public partial class SidebarTree : UserControl
     /// <summary>
     /// Поднять снятые галочки из настроек. Один раз за жизнь панели: сайдбар
     /// переинициализируется на каждое монтирование базы, и повторное чтение затирало бы
-    /// то, что человек нащёлкал в этой сессии.
+    /// то, что человек нащелкал в этой сессии.
     /// </summary>
     private void RestoreChecks()
     {
@@ -549,10 +549,10 @@ public partial class SidebarTree : UserControl
     {
         if (!ChecksMode) return;
 
-        // Ключи удалённых коллекций иначе копились бы всё время жизни установки. Чистим
+        // Ключи удаленных коллекций иначе копились бы все время жизни установки. Чистим
         // только по базам, которые сейчас смонтированы и читаемы: у запертой (нет допуска)
-        // список коллекций пуст, и её галочки стёрлись бы за компанию. Ключи баз, которых
-        // сейчас нет вовсе (отключена, недоступна), не трогаем — база вернётся с ними.
+        // список коллекций пуст, и ее галочки стерлись бы за компанию. Ключи баз, которых
+        // сейчас нет вовсе (отключена, недоступна), не трогаем — база вернется с ними.
         var readable = _dbs.Where(d => !d.Locked).ToList();
         var known    = readable.Select(d => d.DbId).ToHashSet();
         var alive    = readable
@@ -621,7 +621,7 @@ public partial class SidebarTree : UserControl
         }
 
         // Немонтированная база (очередь/обновление/недоступна): вместо раскрытия —
-        // подсказка с текущим статусом (раскрывать нечего, содержимое ещё не готово).
+        // подсказка с текущим статусом (раскрывать нечего, содержимое еще не готово).
         if (node.IsPending)
         {
             PendingDatabaseTapped?.Invoke(this, node.DbId);
@@ -652,13 +652,13 @@ public partial class SidebarTree : UserControl
                 if (node.IsExpanded) _collapsedDbRoots.Remove(node.DbId);
                 else                 _collapsedDbRoots.Add(node.DbId);
             }
-            ResetSelectionToOpen();   // открытая коллекция остаётся подсвеченной
+            ResetSelectionToOpen();   // открытая коллекция остается подсвеченной
             RebuildRows();
             return;
         }
 
         // Календарь и задачи — списки-агрегаты по ОТМЕЧЕННЫМ коллекциям: клик по строке
-        // переключает её галочку. Раньше задачи вместо этого «открывали» коллекцию —
+        // переключает ее галочку. Раньше задачи вместо этого «открывали» коллекцию —
         // список сужался до одной, и галочки остальных ни на что не влияли.
         if (_mode is SidebarMode.Calendar or SidebarMode.Tasks)
         {
@@ -679,7 +679,7 @@ public partial class SidebarTree : UserControl
         }
     }
 
-    // Сброс выделения к одной открытой коллекции (она остаётся подсвеченной при
+    // Сброс выделения к одной открытой коллекции (она остается подсвеченной при
     // обычном клике по группе), как было до мультивыделения.
     private void ResetSelectionToOpen()
     {
@@ -692,7 +692,7 @@ public partial class SidebarTree : UserControl
     }
 
     // Окно, на котором висит обработчик Delete (см. OnTopLevelKeyDown). Как в таблице:
-    // ловим клавишу на уровне окна — фокус UserControl ненадёжен, и собственный OnKeyDown
+    // ловим клавишу на уровне окна — фокус UserControl ненадежен, и собственный OnKeyDown
     // часто не получает клавишу.
     private TopLevel? _keyHookTopLevel;
 
@@ -705,7 +705,7 @@ public partial class SidebarTree : UserControl
     {
         base.OnAttachedToVisualTree(e);
         _keyHookTopLevel = TopLevel.GetTopLevel(this);
-        // Клавиши и клики ловим на уровне окна (туннель): фокус UserControl ненадёжен.
+        // Клавиши и клики ловим на уровне окна (туннель): фокус UserControl ненадежен.
         _keyHookTopLevel?.AddHandler(KeyDownEvent,        OnTopLevelKeyDown,        RoutingStrategies.Tunnel);
         _keyHookTopLevel?.AddHandler(PointerPressedEvent, OnTopLevelPointerPressed, RoutingStrategies.Tunnel);
 
@@ -727,7 +727,7 @@ public partial class SidebarTree : UserControl
         _lastPressInSidebar = e.Source is Visual v && (ReferenceEquals(v, this) || this.IsVisualAncestorOf(v));
 
     // Delete — удалить выделенные узлы (как пункт «Удалить» в меню), с тем же диалогом и
-    // подсчётом. Срабатывает, только если последний клик был в сайдбаре (иначе клавиша
+    // подсчетом. Срабатывает, только если последний клик был в сайдбаре (иначе клавиша
     // принадлежит таблице/полю справа).
     private void OnTopLevelKeyDown(object? sender, KeyEventArgs e)
     {
@@ -785,7 +785,7 @@ public partial class SidebarTree : UserControl
         if (!row.Node.Id.HasValue) return;
         // У запертой базы меню нет — содержимое недоступно до допуска. У коллекции без
         // права просмотра (тоже замок) — тем более: она закрыта целиком.
-        // У немонтированной (очередь/обновление/недоступна) — тоже: база ещё не готова.
+        // У немонтированной (очередь/обновление/недоступна) — тоже: база еще не готова.
         if (row.Node.IsLocked || row.Node.IsPending) { e.Handled = true; return; }
 
         var menu = new ContextMenu();
@@ -798,11 +798,11 @@ public partial class SidebarTree : UserControl
         // множественном выборе его скрываем (иначе пункт некорректен — правил бы только этот узел).
         var multi = _selectedNodes.Contains(node) && _selectedNodes.Count > 1;
 
-        // Права текущего пользователя в БД узла: запрещённые пункты видны, но недоступны
+        // Права текущего пользователя в БД узла: запрещенные пункты видны, но недоступны
         // (пользователь понимает, что действие существует, но закрыто администратором).
         var perms = RepoOf(node)?.Permissions;
         bool Can(PermAction a, int? cid = null) => perms?.Can(a, cid) ?? true;
-        // Запрещённый пункт остаётся кликабельным и объясняет причину окном — как замок
+        // Запрещенный пункт остается кликабельным и объясняет причину окном — как замок
         // у коллекции без права просмотра. Серый пункт молчал: непонятно, кто запретил.
         Action Guard(PermAction a, int? cid, Action run) =>
             () => PermissionNotice.Run(this, Can(a, cid), a, run);
@@ -866,7 +866,7 @@ public partial class SidebarTree : UserControl
     {
         if (sender is not Control anchor) return;
 
-        // Создание из пустой области идёт в БД по умолчанию.
+        // Создание из пустой области идет в БД по умолчанию.
         var canCreate = RepoFor(DefaultDbId)?.Permissions?.Can(PermAction.CreateCollection) ?? true;
         var menu = new ContextMenu();
         menu.Items.Add(MenuItemCreateGroup(() => PermissionNotice.Run(
@@ -883,7 +883,7 @@ public partial class SidebarTree : UserControl
     private static void FixSubmenuGap(MenuItem item) => MenuIcons.FixSubmenuGap(item);
 
     // Палитра и разметка пунктов — общие (ColorMenu). У коллекции «без цвета» хранится
-    // не как NULL, а дефолтным синим (EventColors.Default) — это её исторический контракт.
+    // не как NULL, а дефолтным синим (EventColors.Default) — это ее исторический контракт.
     private MenuItem BuildColorMenu(int dbId, int collectionId, string? current) =>
         ColorMenu.Build(
             MenuIcons.ColorHeader(),
@@ -958,9 +958,9 @@ public partial class SidebarTree : UserControl
     // ── «Отображение свойств даты» ────────────────────────────────────────────────
 
     // Подменю (как «Изменить цвет»): открывается справа от контекстного меню, со стрелкой
-    // и тем же стилем, контекстное меню остаётся открытым. Внутри — панель выбора, какие
+    // и тем же стилем, контекстное меню остается открытым. Внутри — панель выбора, какие
     // поля-даты коллекции показывать в календаре (вкл/выкл IsCalStart): поиск + чеклист
-    // с «Выделить всё», как у фильтра колонок таблицы. Применяется сразу по клику чекбокса.
+    // с «Выделить все», как у фильтра колонок таблицы. Применяется сразу по клику чекбокса.
     private MenuItem BuildDateFieldsMenu(int dbId, int collectionId)
     {
         var dateItem = new MenuItem { Header = MenuIcons.DateFieldsHeader() };
@@ -980,7 +980,7 @@ public partial class SidebarTree : UserControl
         return dateItem;
     }
 
-    // Разовая фоновая заливка проекции включённого поля-даты (наследие старого поведения,
+    // Разовая фоновая заливка проекции включенного поля-даты (наследие старого поведения,
     // когда выключение удаляло строки calendar_index): изолированное подключение, окно
     // прогресса при >400 мс — как массовые операции; по завершении календарь обновляется.
     private async Task FillDateFieldProjectionAsync(ConstructorRepository repo, int fieldId)
@@ -1048,7 +1048,7 @@ public partial class SidebarTree : UserControl
         var syncing   = false;
         var selectAll = new CheckBox
         {
-            Content = "(Выделить всё)", FontSize = fontBase,
+            Content = "(Выделить все)", FontSize = fontBase,
             Cursor = new Cursor(StandardCursorType.Hand),
         };
 
@@ -1090,13 +1090,13 @@ public partial class SidebarTree : UserControl
             list.Children.Add(cb);
         }
 
-        // «Выделить всё» действует на видимое (после поиска) подмножество.
+        // «Выделить все» действует на видимое (после поиска) подмножество.
         selectAll.IsCheckedChanged += (_, _) =>
         {
             if (syncing) return;
             var on = selectAll.IsChecked == true;
             foreach (var (f, box) in rows.Where(r => Matches(r.Field)))
-                if ((box.IsChecked == true) != on) box.IsChecked = on;   // дёргает обработчик чекбокса
+                if ((box.IsChecked == true) != on) box.IsChecked = on;   // дергает обработчик чекбокса
         };
 
         search.TextChanged += (_, _) =>
@@ -1113,15 +1113,15 @@ public partial class SidebarTree : UserControl
             BorderBrush     = (IBrush)this.FindResource("BrushSeparator")!,
             CornerRadius    = radius,
             // Padding НУЛЕВОЙ: полоса прокрутки прилегает ко всем краям карточки без белого
-            // зазора, воздух вокруг содержимого задаёт HeaderedList.
+            // зазора, воздух вокруг содержимого задает HeaderedList.
             // ClipToBounds — квадратные углы полосы срезаются скруглением карточки.
             Padding         = new Thickness(0),
             ClipToBounds    = true,
-            // «Выделить всё» — закреплённая шапка; полоса стоит на её уровне.
+            // «Выделить все» — закрепленная шапка; полоса стоит на ее уровне.
             Child = ScrollBarLink.HeaderedList(
                 selectAll, new ScrollViewer { MaxHeight = 240, Content = list }),
         };
-        // Карточка живёт в попапе сабменю — попап наследует зум (InheritsTransform
+        // Карточка живет в попапе сабменю — попап наследует зум (InheritsTransform
         // ставит стиль MenuItem в Controls.axaml), токен обычный.
         listBox.Bind(Border.BorderThicknessProperty, listBox.GetResourceObservable("BorderLine"));
         panel.Children.Add(listBox);
@@ -1132,7 +1132,7 @@ public partial class SidebarTree : UserControl
     // ── «Отображение свойств исполнителя» (режим задач) ──────────────────────────
 
     // Зеркало BuildDateFieldsMenu для раздела задач: какие user-поля коллекции дают
-    // задачи (вкл/выкл IsTaskExec). Первое включение авто-создаёт «Назначил»/«Статус» —
+    // задачи (вкл/выкл IsTaskExec). Первое включение авто-создает «Назначил»/«Статус» —
     // тогда обновляем и другие сайдбары/таблицу (RequestRefresh).
     private MenuItem BuildUserFieldsMenu(int dbId, int collectionId)
     {
@@ -1189,7 +1189,7 @@ public partial class SidebarTree : UserControl
             string.IsNullOrWhiteSpace(search.Text) ||
             f.Name.Contains(search.Text!.Trim(), StringComparison.OrdinalIgnoreCase);
 
-        // Исполнитель у коллекции ОДИН, поэтому «(Выделить всё)» здесь нет, а остальные пункты
+        // Исполнитель у коллекции ОДИН, поэтому «(Выделить все)» здесь нет, а остальные пункты
         // гаснут, пока занят один: список читается как выбор одного носителя, а не как набор
         // фильтров (в отличие от полей-дат календаря, которых может быть сколько угодно).
         void SyncEnabled()
@@ -1249,7 +1249,7 @@ public partial class SidebarTree : UserControl
             BorderBrush     = (IBrush)this.FindResource("BrushSeparator")!,
             CornerRadius    = radius,
             // Padding НУЛЕВОЙ: полоса прокрутки прилегает ко всем краям карточки без белого
-            // зазора, воздух вокруг содержимого задаёт HeaderedList.
+            // зазора, воздух вокруг содержимого задает HeaderedList.
             // ClipToBounds — квадратные углы полосы срезаются скруглением карточки.
             Padding         = new Thickness(0),
             ClipToBounds    = true,
@@ -1306,7 +1306,7 @@ public partial class SidebarTree : UserControl
                 var pos = repo.GetAllCollections().Select(c => c.Position).DefaultIfEmpty(0).Max() + 1000;
                 var col = repo.AddCollection(new DbCollection { Name = res.Name, GroupId = res.ParentId, Position = pos });
                 if (col.Id.HasValue)
-                    // Title задаём реальным текстом «Без названия» (как кнопка «+»),
+                    // Title задаем реальным текстом «Без названия» (как кнопка «+»),
                     // а не оставляем пустым с одним плейсхолдером в ячейке.
                     repo.AddRecord(new DbRecord { CollectionId = col.Id.Value, Title = "Без названия" });
                 ReloadAndNotify();
@@ -1372,14 +1372,14 @@ public partial class SidebarTree : UserControl
         if (repo is null) return (null, null);
 
         // OwnerWindow — вычисляемое свойство (VisualRoot as Window), каждое обращение читает
-        // визуальное дерево заново. Берём значение один раз: и владелец гарантированно тот же,
+        // визуальное дерево заново. Берем значение один раз: и владелец гарантированно тот же,
         // и ShowDialog ниже не получит null, если панель успели отцепить от окна.
         var owner = OwnerWindow;
         if (owner is null) return (null, null);
 
         // Окно загрузки: показываем модально. Задачу ShowDialog запоминаем и дожидаемся
-        // её завершения после закрытия — иначе повторный показ окна импорта (при ошибке)
-        // стартует поверх ещё не закрытого модального окна и падает.
+        // ее завершения после закрытия — иначе повторный показ окна импорта (при ошибке)
+        // стартует поверх еще не закрытого модального окна и падает.
         var progress = new ProgressDialog();
         using var cts = new CancellationTokenSource();
         progress.EnableCancel(() => cts.Cancel());
@@ -1450,7 +1450,7 @@ public partial class SidebarTree : UserControl
         }
         catch (OperationCanceledException)
         {
-            // Отмена пользователем: сбойный юнит уже удалён репозиторием, готовые остаются.
+            // Отмена пользователем: сбойный юнит уже удален репозиторием, готовые остаются.
             progress.Done();
             await progressClosed;
             if (created.Count > 0) ReloadAndNotify();
@@ -1475,7 +1475,7 @@ public partial class SidebarTree : UserControl
     // Экспорт коллекций в файлы. Планировщик разворачивает заявку в юниты «один файл»
     // (обычно коллекция на файл; «в один файл» — книга с листом на коллекцию). Чтение —
     // keyset-страницами на отдельных подключениях, запись — потоковыми писателями
-    // (Core/Exporters); подсчёт записей — первые 5 % слайса таблицы, строки — остальные 95 %.
+    // (Core/Exporters); подсчет записей — первые 5 % слайса таблицы, строки — остальные 95 %.
     // Ошибка/отмена: недописанный файл удаляется, готовые остаются. Успех — открываем папку
     // выгрузки в проводнике; БД не менялась, сайдбар не перечитываем.
     private async Task<(ExportDraft? Prefill, string? Error)> RunExport(ExportRequest req)
@@ -1533,7 +1533,7 @@ public partial class SidebarTree : UserControl
                                 if (!(repo.Permissions?.Can(PermAction.ViewCollection, tbl.Collection.CollectionId) ?? true))
                                     throw new ExportException(
                                         $"Недостаточно прав: просмотр коллекции «{tbl.Collection.CollectionName}» " +
-                                        "запрещён администратором базы данных.");
+                                        "запрещен администратором базы данных.");
 
                                 ui.Report((tBase, "Подготовка…", info));
                                 var cols = repo.GetExportColumnsIsolated(
@@ -1590,7 +1590,7 @@ public partial class SidebarTree : UserControl
         }
         catch (OperationCanceledException)
         {
-            // Отмена пользователем: недописанный файл удалён в фоне, готовые остаются.
+            // Отмена пользователем: недописанный файл удален в фоне, готовые остаются.
             progress.Done();
             await progressClosed;
             return (null, null);
@@ -1651,8 +1651,8 @@ public partial class SidebarTree : UserControl
         var res = await dlg.ShowDialog<GroupDialogResult?>(OwnerWindow);
         if (res is null) return;
 
-        // Смена БД → перенос группы со всей веткой в целевую БД быстрым путём (ATTACH + bulk, окно
-        // прогресса для больших), как пункт «Расположение». Имя задаётся отдельно (быстрый путь
+        // Смена БД → перенос группы со всей веткой в целевую БД быстрым путем (ATTACH + bulk, окно
+        // прогресса для больших), как пункт «Расположение». Имя задается отдельно (быстрый путь
         // копирует его как есть) — применяем выбранное после переноса.
         if (res.DbId != dbId && RepoFor(res.DbId) is { } target)
         {
@@ -1700,8 +1700,8 @@ public partial class SidebarTree : UserControl
         var res = await dlg.ShowDialog<CollectionDialogResult?>(OwnerWindow);
         if (res is null) return;
 
-        // Смена БД → перенос коллекции в целевую БД быстрым путём (ATTACH + bulk, окно прогресса для
-        // больших), как пункт «Расположение». Имя задаётся отдельно (быстрый путь копирует его как
+        // Смена БД → перенос коллекции в целевую БД быстрым путем (ATTACH + bulk, окно прогресса для
+        // больших), как пункт «Расположение». Имя задается отдельно (быстрый путь копирует его как
         // есть) — применяем выбранное после переноса.
         if (res.DbId != dbId && RepoFor(res.DbId) is { } target)
         {
@@ -1722,7 +1722,7 @@ public partial class SidebarTree : UserControl
             }
             else
             {
-                ReloadAndNotify();   // вернёт исходное состояние в дерево
+                ReloadAndNotify();   // вернет исходное состояние в дерево
                 if (OwnerWindow is not null)
                     await new ConfirmDialog("Не удалось перенести коллекцию в другую базу. Данные остались в исходной базе.")
                         .ShowDialog<bool>(OwnerWindow);
@@ -1737,10 +1737,10 @@ public partial class SidebarTree : UserControl
     }
 
     // Порог записей (суммарно по выделению) для дублирования/удаления/переноса: меньше — операция
-    // идёт мгновенно синхронно без окна; больше — окно прогресса с % (как импорт) и работа в фоне.
+    // идет мгновенно синхронно без окна; больше — окно прогресса с % (как импорт) и работа в фоне.
     private const int BulkProgressThreshold = 20000;
 
-    // Записей в узле и сколько коллекций он несёт: коллекция — её записи и 1; группа — сумма по всей
+    // Записей в узле и сколько коллекций он несет: коллекция — ее записи и 1; группа — сумма по всей
     // ветке (подгруппы + коллекции) и число коллекций в ветке. Для порога, % и текста индикатора.
     // Асинхронно на ОТДЕЛЬНОМ подключении: COUNT по коллекции в 10 млн — сотни мс, на UI-потоке это
     // был фриз между кликом по меню и окном прогресса (умножался при мультивыборе).
@@ -1762,7 +1762,7 @@ public partial class SidebarTree : UserControl
     private async void DuplicateSelectionOrNode(SidebarNode node)
     {
         // Репозитории резолвим здесь, на UI-потоке (общий список _dbs не трогаем из Task.Run);
-        // счётчики — в фоне на отдельных подключениях (CountNodeAsync), UI не фризится.
+        // счетчики — в фоне на отдельных подключениях (CountNodeAsync), UI не фризится.
         var sel     = _selectedNodes.Contains(node) ? _selectedNodes.ToList() : [node];
         var targets = new List<(int DbId, ConstructorRepository Repo, bool IsGroup, int Id, long Records)>();
         long total = 0; int totalCollections = 0; bool anyGroup = false;
@@ -1777,7 +1777,7 @@ public partial class SidebarTree : UserControl
         if (targets.Count == 0) return;
         var single = targets.Count == 1;
 
-        // Малый объём — мгновенно, синхронно (без окна): bulk-копия быстрая.
+        // Малый объем — мгновенно, синхронно (без окна): bulk-копия быстрая.
         if (total <= BulkProgressThreshold)
         {
             (int DbId, int Id, bool IsGroup)? made = null;
@@ -1791,7 +1791,7 @@ public partial class SidebarTree : UserControl
             return;
         }
 
-        // Большой объём — окно прогресса. Копии идут ПО ОЧЕРЕДИ в фоне на отдельных подключениях
+        // Большой объем — окно прогресса. Копии идут ПО ОЧЕРЕДИ в фоне на отдельных подключениях
         // (DuplicateCollectionIsolated/DuplicateGroupIsolated) — не трогаем общий Context с фона.
         if (OwnerWindow is null) return;
         var dlg = new ProgressDialog { Title = "Дублирование" };
@@ -1852,7 +1852,7 @@ public partial class SidebarTree : UserControl
     }
 
     // Адаптер IProgress<int> для сырого прогресса копии (вызывается с фонового потока, сам
-    // маршалит на UI через Dispatcher) — Progress<T> здесь не годится (создаётся в Task.Run,
+    // маршалит на UI через Dispatcher) — Progress<T> здесь не годится (создается в Task.Run,
     // захватил бы фоновый контекст синхронизации).
     private sealed class IntProgress(Action<int> report) : IProgress<int>
     {
@@ -1860,13 +1860,13 @@ public partial class SidebarTree : UserControl
     }
 
     // Одна цель кросс-БД переноса: репозиторий-ИСТОЧНИК, что переносим (группа/коллекция), его id,
-    // и счётчики (записей в ветке/коллекции и число коллекций — для порога, % и текста индикатора).
+    // и счетчики (записей в ветке/коллекции и число коллекций — для порога, % и текста индикатора).
     private sealed record CrossMove(int SrcDbId, ConstructorRepository SrcRepo, bool IsGroup, int Id, long Records, int Collections);
 
     // Межбазовый перенос = новые id у записей → ВХОДЯЩИЕ связи на переносимое обрываются (за объектом
     // не следуют). Для КОЛЛЕКЦИИ теряются лишь ВНЕШНИЕ входящие (само-связи внутри переписываются);
     // для ГРУППЫ (v1) отбрасываются ВСЕ связи ветки. Внутрибазовый перенос id не меняет — потерь нет,
-    // туда не зовём. Возвращает false, если пользователь отказался (переносить нельзя).
+    // туда не зовем. Возвращает false, если пользователь отказался (переносить нельзя).
     //
     // ВАЖНО: звать перед КАЖДЫМ вызовом MoveNodesCrossDb и ДО любых изменений. Точек входа в
     // межбазовый перенос три — «Расположение» (RelocateSelectionOrNode), «Изменение» коллекции
@@ -1876,13 +1876,13 @@ public partial class SidebarTree : UserControl
     {
         if (crossDb.Count == 0 || OwnerWindow is null) return true;
 
-        // Два пути НЕ копируют рёбра вовсе: любой перенос с участием PostgreSQL (generic вместо ATTACH)
+        // Два пути НЕ копируют ребра вовсе: любой перенос с участием PostgreSQL (generic вместо ATTACH)
         // и перенос ВЕТКИ ГРУППЫ даже на SQLite (v1). Там теряются и связи ВНУТРИ переносимого, и
         // исходящие наружу — обычная проверка смотрит только внешние ВХОДЯЩИЕ и их не видит.
         var pg = targetRepo.IsPostgres || crossDb.Any(t => t.SrcRepo.IsPostgres);
 
         var hasLinks   = false;
-        string? severe = null;   // непустое → рёбра не переедут вовсе (текст строже)
+        string? severe = null;   // непустое → ребра не переедут вовсе (текст строже)
         foreach (var t in crossDb)
         {
             var dropsAll = pg || t.IsGroup;
@@ -1898,24 +1898,24 @@ public partial class SidebarTree : UserControl
             hasLinks = true;
             if (!dropsAll) continue;
             severe = pg ? "Перенос с участием PostgreSQL" : "Перенос ветки группы между базами";
-            break;   // строгий текст уже определён, остальные узлы не важны
+            break;   // строгий текст уже определен, остальные узлы не важны
         }
         if (!hasLinks) return true;
 
         var warn = new ConfirmDialog(
             severe is not null
                 ? $"{severe} связи НЕ переносит: будут потеряны и связи ВНУТРИ переносимого, и ссылки на него. Продолжить?"
-                : "Межбазовый перенос оборвёт связи, ссылающиеся на переносимое (станут «связи нет»). Продолжить?",
+                : "Межбазовый перенос оборвет связи, ссылающиеся на переносимое (станут «связи нет»). Продолжить?",
             confirmText: "Перенести");
         return await warn.ShowDialog<bool>(OwnerWindow) == true;
     }
 
-    // Перенести набор узлов в ДРУГУЮ БД быстрым путём (Move*Isolated: ATTACH + bulk INSERT…SELECT на
+    // Перенести набор узлов в ДРУГУЮ БД быстрым путем (Move*Isolated: ATTACH + bulk INSERT…SELECT на
     // отдельных подключениях, не трогая общий Context). targetLocation — расположение в целевой БД:
-    // для коллекции это её группа, для группы — родитель. Малый суммарный объём (≤ порога) — синхронно
+    // для коллекции это ее группа, для группы — родитель. Малый суммарный объем (≤ порога) — синхронно
     // мгновенно без окна; больше — окно прогресса (title) + перенос по очереди в фоне с общим %. Ошибки
     // переноса не валят UI (как дубль/удаление). Возвращает (целевая БД, новый id, IsGroup) последнего
-    // успешно перенесённого узла (для reveal) либо null, если ничего не перенеслось/была ошибка.
+    // успешно перенесенного узла (для reveal) либо null, если ничего не перенеслось/была ошибка.
     private async Task<(int DbId, int Id, bool IsGroup)?> MoveNodesCrossDb(
         ConstructorRepository targetRepo, int targetDbId, int? targetLocation,
         IReadOnlyList<CrossMove> crossDb, string title)
@@ -1932,7 +1932,7 @@ public partial class SidebarTree : UserControl
 
         (int DbId, int Id, bool IsGroup)? reveal = null;
 
-        // Малый объём — перенос синхронно, мгновенно (bulk-копия быстрая).
+        // Малый объем — перенос синхронно, мгновенно (bulk-копия быстрая).
         if (total <= BulkProgressThreshold)
         {
             try
@@ -1943,11 +1943,11 @@ public partial class SidebarTree : UserControl
                     if (nid != 0) reveal = (targetDbId, nid, t.IsGroup);
                 }
             }
-            catch { /* узел либо перенесён, либо нет — UI не валим */ }
+            catch { /* узел либо перенесен, либо нет — UI не валим */ }
             return reveal;
         }
 
-        // Большой объём — окно прогресса. Перенос ПО ОЧЕРЕДИ в фоне на отдельных подключениях;
+        // Большой объем — окно прогресса. Перенос ПО ОЧЕРЕДИ в фоне на отдельных подключениях;
         // проценты — общий прогресс по всем целям.
         var dlg = new ProgressDialog { Title = title };
         dlg.SetInfo(BulkInfo(collections, total, anyGroup));
@@ -1959,7 +1959,7 @@ public partial class SidebarTree : UserControl
 
         // Прогресс покрывает И копию, И удаление исходника: на каждую цель 2× записей (копия — первая
         // половина 0..Records, удаление исходной БД — вторая Records..2·Records). Иначе бар замирал на
-        // 100% на всё время удаления (каскад записей/значений — минуты на больших коллекциях/ветках).
+        // 100% на все время удаления (каскад записей/значений — минуты на больших коллекциях/ветках).
         long workTotal = 2 * total;
         var lastPct = -1;
         var lastText = "";
@@ -1996,7 +1996,7 @@ public partial class SidebarTree : UserControl
         }
         catch (Exception ex)
         {
-            // Ошибку фона проглатываем: узел либо перенесён, либо нет — UI не валим.
+            // Ошибку фона проглатываем: узел либо перенесен, либо нет — UI не валим.
             Log.Warning(ex, "Сбой фонового переноса узла");
         }
 
@@ -2007,9 +2007,9 @@ public partial class SidebarTree : UserControl
 
     // «Расположение» через контекстное меню: если клик по узлу из мультивыделения — перемещаем ВЕСЬ
     // набор (коллекции И группы со всей веткой); иначе только этот узел. Окно (как «Изменение», но без
-    // названия) выбирает целевую БД и расположение (для коллекции — её группа, для группы — родитель).
+    // названия) выбирает целевую БД и расположение (для коллекции — ее группа, для группы — родитель).
     // В той же БД — мгновенно (смена GroupId/ParentId, данные на месте); в другую БД — bulk-перенос
-    // (как дубль): малый объём синхронно, большой — окно прогресса и фон (Move*Isolated).
+    // (как дубль): малый объем синхронно, большой — окно прогресса и фон (Move*Isolated).
     private async void RelocateSelectionOrNode(SidebarNode node)
     {
         if (OwnerWindow is null) return;
@@ -2018,7 +2018,7 @@ public partial class SidebarTree : UserControl
         var picked = sel.Where(n => n.Id.HasValue && !n.IsDatabase).ToList();
         if (picked.Count == 0) return;
 
-        // Префилл: для группы — её родитель, для коллекции — её группа (узел, по которому кликнули).
+        // Префилл: для группы — ее родитель, для коллекции — ее группа (узел, по которому кликнули).
         int? prefill = node.IsGroup
             ? RepoFor(node.DbId)?.GetAllGroups().FirstOrDefault(g => g.Id == node.Id)?.ParentId
             : RepoFor(node.DbId)?.GetAllCollections().FirstOrDefault(c => c.Id == node.Id)?.GroupId;
@@ -2048,11 +2048,11 @@ public partial class SidebarTree : UserControl
             }
         }
 
-        // Спрашиваем ДО переносов внутри той же БД ниже: отказ должен оставить всё как было.
+        // Спрашиваем ДО переносов внутри той же БД ниже: отказ должен оставить все как было.
         if (!await ConfirmCrossDbLinkBreak(targetRepo, crossDb)) return;
 
         // Та же БД — только метаданные: группа меняет ParentId, коллекция — GroupId (ветка/записи на
-        // месте). Если в целевой группе/уровне уже есть одноимённый узел — даём «(копия)» (как дубль).
+        // месте). Если в целевой группе/уровне уже есть одноименный узел — даем «(копия)» (как дубль).
         foreach (var (r, isGroup, id) in sameDb)
         {
             if (isGroup)
@@ -2074,7 +2074,7 @@ public partial class SidebarTree : UserControl
         }
 
         var single = picked.Count == 1;
-        // Что показать после: единственный перемещённый узел (коллекцию открыть, группу раскрыть).
+        // Что показать после: единственный перемещенный узел (коллекцию открыть, группу раскрыть).
         (int DbId, int Id, bool IsGroup)? reveal =
             single && sameDb.Count == 1 ? (res.DbId, sameDb[0].Id, sameDb[0].IsGroup) : null;
 
@@ -2109,7 +2109,7 @@ public partial class SidebarTree : UserControl
         var colls  = nodes.Where(n => !n.IsGroup && !n.IsDatabase && n.Id.HasValue).ToList();
         if (groups.Count == 0 && colls.Count == 0) return;
 
-        // Есть ли входящие связи, которые оборвёт удаление (best-effort: внутрибазовые + межбазовые из
+        // Есть ли входящие связи, которые оборвет удаление (best-effort: внутрибазовые + межбазовые из
         // ОТКРЫТЫХ баз; из закрытых — не проверяем, вычистятся лениво). Разворачиваем группы в их ветки
         // и объединяем с одиночными коллекциями по базе (одну коллекцию не проверяем дважды), обрываемся
         // на первой найденной связи.
@@ -2129,7 +2129,7 @@ public partial class SidebarTree : UserControl
         if (await confirm.ShowDialog<bool>(OwnerWindow) != true) return;
 
         // Цели: группа (удаляем ВСЮ ветку) или коллекция. Репозитории резолвим здесь, на UI-потоке
-        // (общий список не трогаем из Task.Run); счётчики (для группы — число коллекций и записей по
+        // (общий список не трогаем из Task.Run); счетчики (для группы — число коллекций и записей по
         // всей ветке) — в фоне на отдельных подключениях (CountNodeAsync). Порог и % — по суммарному
         // числу записей; в индикаторе при группах показываем и число коллекций.
         var targets = new List<(ConstructorRepository Repo, bool IsGroup, int Id, long Records)>();
@@ -2145,7 +2145,7 @@ public partial class SidebarTree : UserControl
 
         if (total <= BulkProgressThreshold)
         {
-            // Малый объём — мгновенно, синхронно (без окна): каскадный DELETE быстрый.
+            // Малый объем — мгновенно, синхронно (без окна): каскадный DELETE быстрый.
             // Файл занят чужим писателем/пропал — тост (DbErrors), UI не валим.
             try
             {
@@ -2156,7 +2156,7 @@ public partial class SidebarTree : UserControl
         }
         else
         {
-            // Большой объём — окно прогресса (как дубль/импорт). Удаление ПО ОЧЕРЕДИ в фоне на
+            // Большой объем — окно прогресса (как дубль/импорт). Удаление ПО ОЧЕРЕДИ в фоне на
             // отдельных подключениях (Delete*Isolated), проценты — общий прогресс по всем целям.
             var dlg = new ProgressDialog { Title = "Удаление" };
             dlg.SetInfo(BulkInfo(totalCollections, total, groups.Count > 0));
@@ -2194,9 +2194,9 @@ public partial class SidebarTree : UserControl
             }
             catch (Exception ex)
             {
-                // Ошибку фона проглатываем: узел либо удалён, либо нет — UI не валим.
+                // Ошибку фона проглатываем: узел либо удален, либо нет — UI не валим.
                 // Известные ошибки БД (занята/пропала) дают тост, сигнал монитору и лог внутри
-                // Handle; непредвиденное (Handle вернёт false) логируем здесь, иначе — тишина.
+                // Handle; непредвиденное (Handle вернет false) логируем здесь, иначе — тишина.
                 if (!DbErrors.Handle(ex, targets.FirstOrDefault().Repo?.DbPath))
                     Log.Warning(ex, "Сбой фонового удаления узла");
             }
@@ -2211,7 +2211,7 @@ public partial class SidebarTree : UserControl
         if (firstColl is not null) CollectionDeleted?.Invoke(this, firstColl.Id!.Value);
     }
 
-    // Текст подтверждения с подсчётом: только группы / только коллекции / и то и другое.
+    // Текст подтверждения с подсчетом: только группы / только коллекции / и то и другое.
     private static string BuildDeleteMessage(int groups, int colls, bool hasLinks)
     {
         var parts = new List<string>();
@@ -2272,7 +2272,7 @@ public class SidebarNode
     public string  Name     { get; init; } = "";
     public string  Color    { get; init; } = "#007AFF";
     public bool    IsLocked { get; init; }        // база без допуска: замок, без содержимого
-    public bool    IsPending { get; init; }       // база ещё не смонтирована (очередь/ошибка)
+    public bool    IsPending { get; init; }       // база еще не смонтирована (очередь/ошибка)
     public string? Status    { get; init; }       // статусная строка заглушки
     public bool    Failed    { get; init; }       // статус — ошибка (красный)
     public bool    IsExpanded { get; set; }
@@ -2309,22 +2309,22 @@ public partial class SidebarRow : ObservableObject
     public int         Depth { get; }
     public SidebarMode Mode { get; }
     // Строка дерева — одна строка: показываем первую строку имени (TitleText). Полное имя
-    // живёт в Node.Name — по нему идут поиск, сортировка и переименование.
+    // живет в Node.Name — по нему идут поиск, сортировка и переименование.
     public string      Name => TitleText.FirstLine(Node.Name);
 
     [ObservableProperty] private bool _hovered;
     [ObservableProperty] private bool _checked;
     [ObservableProperty] private bool _selected;
 
-    // Ширина, ОДИНАКОВАЯ у всех строк списка (её считает SidebarTree.MeasureRowWidth).
+    // Ширина, ОДИНАКОВАЯ у всех строк списка (ее считает SidebarTree.MeasureRowWidth).
     // Нужна из-за виртуализации: экстент горизонтальной прокрутки панель считает по
-    // РЕАЛИЗОВАННЫМ строкам, и без общей ширины полоса дёргалась бы при вертикальной
+    // РЕАЛИЗОВАННЫМ строкам, и без общей ширины полоса дергалась бы при вертикальной
     // прокрутке — как было в списке значений фильтра (см. FilterValueMetrics).
-    // Заодно подсветка строки идёт во всю ширину содержимого, а не до края видимой части.
+    // Заодно подсветка строки идет во всю ширину содержимого, а не до края видимой части.
     [ObservableProperty] private double _minRowWidth;
 
     // Статусная строка заглушки очереди («в очереди…» / «Обновление · 45% · ≈ 2 мин»):
-    // обновляется живьём (раз в полсекунды при миграции) без перестройки дерева.
+    // обновляется живьем (раз в полсекунды при миграции) без перестройки дерева.
     [ObservableProperty] private string? _status;
     [ObservableProperty] private bool    _statusFailed;
 
@@ -2353,7 +2353,7 @@ public partial class SidebarRow : ObservableObject
     // Строка повторяет СТРУКТУРУ строки таблицы: контент = высота ячейки (RowHeightStandard = 36),
     // а линия-разделитель ДОБАВЛЯЕТСЯ снизу отдельным элементом толщиной SeparatorThickness (тот же
     // зум-компенсированный токен, что у линий сетки таблицы = ровно 1 физ. пиксель). Итог: шаг строки
-    // данных = 36 + линия, ровно как у DataGrid (RowHeight задаёт только ячейки, линия сетки — отдельная
+    // данных = 36 + линия, ровно как у DataGrid (RowHeight задает только ячейки, линия сетки — отдельная
     // Auto-строка сверх них), поэтому белые линии сайдбара садятся на линии сетки при ЛЮБОМ зуме.
     // ПЕРВАЯ строка сайдбара стоит на месте ШАПКИ колонок (высота ровно 36, линия НЕ добавляется).
     private bool _isFirstRow;
@@ -2398,7 +2398,7 @@ public partial class SidebarRow : ObservableObject
     public IBrush CheckBorder => ColorBrush;
 
     public IBrush IconBrush => Selected ? Accent : Secondary;
-    // Имя немонтированной базы приглушено — узел «неживой», пока очередь её не догрузит.
+    // Имя немонтированной базы приглушено — узел «неживой», пока очередь ее не догрузит.
     public IBrush NameBrush => Node.IsPending ? Secondary : Selected ? Accent : Primary;
 
     public IBrush RowBackground =>
@@ -2409,7 +2409,7 @@ public partial class SidebarRow : ObservableObject
     partial void OnStatusChanged(string? value)
     {
         OnPropertyChanged(nameof(HasStatus));
-        OnPropertyChanged(nameof(RowContentHeight));   // появился/исчез статус → контент растёт/зажимается
+        OnPropertyChanged(nameof(RowContentHeight));   // появился/исчез статус → контент растет/зажимается
     }
     partial void OnStatusFailedChanged(bool value)  => OnPropertyChanged(nameof(StatusBrush));
     partial void OnCheckedChanged(bool value)

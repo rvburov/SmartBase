@@ -4,11 +4,11 @@ using SmartBase.Extensions.TimeCollector;
 namespace SmartBase.Tests.Extensions.TimeCollector;
 
 /// <summary>
-/// Сквозной прогон расширения «Сводная трудоёмкость»: на диске создаются настоящие .xlsm —
-/// шаблон с листом «Таблица» и несколько расчётов с листом «Расшифровка», — после чего
+/// Сквозной прогон расширения «Сводная трудоемкость»: на диске создаются настоящие .xlsm —
+/// шаблон с листом «Таблица» и несколько расчетов с листом «Расшифровка», — после чего
 /// <see cref="TimeCollectorEngine.Run"/> собирает свод и результат читается обратно.
 ///
-/// Тест держит вместе всё, чего не видно на чистой логике: чтение через ExcelDataReader,
+/// Тест держит вместе все, чего не видно на чистой логике: чтение через ExcelDataReader,
 /// запись через ClosedXML (очистка листа, объединения шапки, заливка диапазонами, скрытые
 /// колонки, автофильтр, имя ALL_DATA, формулы HYPERLINK) и разбор проблемных файлов —
 /// битого и с отсутствующим листом.
@@ -22,7 +22,7 @@ public sealed class TimeCollectorRunTests : IDisposable
 
     public TimeCollectorRunTests()
     {
-        _calc     = Path.Combine(_root, "Расчёты");
+        _calc     = Path.Combine(_root, "Расчеты");
         _out      = Path.Combine(_root, "Свод");
         _template = Path.Combine(_root, "шаблон.xlsm");
 
@@ -49,13 +49,13 @@ public sealed class TimeCollectorRunTests : IDisposable
         ws.Range(1, 2, 2, 2).Merge();
         ws.Cell(4, 2).Value = "строка прошлого прогона";
         ws.Cell(4, 2).Style.Fill.BackgroundColor = XLColor.FromArgb(0, 128, 0);
-        ws.Cell(99, 2).Value = "далёкий хвост";
+        ws.Cell(99, 2).Value = "далекий хвост";
         wb.AddWorksheet("Настройки").Cell(1, 2).Value = @"\\старый\путь";
         wb.SaveAs(path);
     }
 
-    // Расчёт: лист «Расшифровка», где колонки листа A…K = F1…F11 запроса макроса.
-    // В свод попадают только строки с заполненными иерархией (B) и трудоёмкостью (G).
+    // Расчет: лист «Расшифровка», где колонки листа A…K = F1…F11 запроса макроса.
+    // В свод попадают только строки с заполненными иерархией (B) и трудоемкостью (G).
     private void CreateCalc(string fileName, params (string Hierarchy, string Name, string Deno, object? Norm)[] rows)
     {
         using var wb = new XLWorkbook();
@@ -108,7 +108,7 @@ public sealed class TimeCollectorRunTests : IDisposable
         Assert.True(ws.Cell(1, 2).IsMerged());
 
         // Пробелы в обозначении убраны, поэтому оба «Блока питания» — одна группа, и свежая
-        // дата идёт первой: обозначение ↑, дата ↓, наименование ↑.
+        // дата идет первой: обозначение ↑, дата ↓, наименование ↑.
         Assert.Equal("АБВГ.111111.001", ws.Cell(4, 3).GetString());
         Assert.Equal(12.5,              ws.Cell(4, 4).GetDouble());
         Assert.Equal(new DateTime(2025, 3, 14), ws.Cell(4, 5).GetDateTime());
@@ -121,7 +121,7 @@ public sealed class TimeCollectorRunTests : IDisposable
         Assert.True(ws.Cell(99, 2).IsEmpty());
 
         // Служебная колонка скрыта, но номер строки источника в ней есть: по нему макрос
-        // шаблона открывает расчёт (строка 1 листа «Расшифровка» → RNUM 0).
+        // шаблона открывает расчет (строка 1 листа «Расшифровка» → RNUM 0).
         Assert.True(ws.Column(1).IsHidden);
         Assert.Equal(0, ws.Cell(4, 1).GetDouble());
         Assert.Equal(2, ws.Cell(6, 1).GetDouble());
@@ -136,15 +136,15 @@ public sealed class TimeCollectorRunTests : IDisposable
         Assert.True(wb.DefinedNames.TryGetValue("ALL_DATA", out var named));
         Assert.Contains("$A$3", named.RefersTo);
 
-        // Лист «Настройки» — не дело расширения: путь к папке живёт в настройках приложения,
-        // а содержимое шаблона остаётся нетронутым.
+        // Лист «Настройки» — не дело расширения: путь к папке живет в настройках приложения,
+        // а содержимое шаблона остается нетронутым.
         Assert.Equal(@"\\старый\путь", wb.Worksheet("Настройки").Cell(1, 2).GetString());
     }
 
     [Fact]
     public void Designation_Groups_Alternate_And_Diverging_Norms_Turn_Red()
     {
-        // Один проект, одна дата, одно обозначение, разная трудоёмкость → обе строки красные.
+        // Один проект, одна дата, одно обозначение, разная трудоемкость → обе строки красные.
         CreateCalc("П_2025.03.14_Иванов.xlsm",
             ("Изделие", "А", "АА", 10.0),
             ("1.",      "Б", "АА", 20.0),
@@ -164,9 +164,9 @@ public sealed class TimeCollectorRunTests : IDisposable
         Assert.NotEqual(red, ws.Cell(6, 2).Style.Fill.BackgroundColor);
     }
 
-    // Готовый свод — сам законный шаблон для следующего прогона: в нём уже есть автофильтр,
-    // имя ALL_DATA, скрытая колонка, объединённая шапка и заливка. Очистка обязана снять всё
-    // это, иначе второй прогон упадёт на повторном ALL_DATA или оставит чужие строки.
+    // Готовый свод — сам законный шаблон для следующего прогона: в нем уже есть автофильтр,
+    // имя ALL_DATA, скрытая колонка, объединенная шапка и заливка. Очистка обязана снять все
+    // это, иначе второй прогон упадет на повторном ALL_DATA или оставит чужие строки.
     [Fact]
     public void Previous_Result_Can_Serve_As_The_Template_For_The_Next_Run()
     {
@@ -198,8 +198,8 @@ public sealed class TimeCollectorRunTests : IDisposable
         Assert.Single(wb.DefinedNames, n => n.Name == "ALL_DATA");
     }
 
-    // Имя результата содержит время с точностью до минуты, а прогон идёт минутами: второй
-    // запуск в ту же минуту обязан получить своё имя, а не затереть первый свод.
+    // Имя результата содержит время с точностью до минуты, а прогон идет минутами: второй
+    // запуск в ту же минуту обязан получить свое имя, а не затереть первый свод.
     [Fact]
     public void Second_Run_In_The_Same_Minute_Does_Not_Overwrite_The_First()
     {
@@ -232,7 +232,7 @@ public sealed class TimeCollectorRunTests : IDisposable
         }
 
         // Имя не по образцу — разобрать проект, дату и ФИО неоткуда.
-        CreateCalc("отчёт.xlsm", ("Изделие", "А", "АА", 1.0));
+        CreateCalc("отчет.xlsm", ("Изделие", "А", "АА", 1.0));
 
         var result = Run();
 
@@ -245,10 +245,10 @@ public sealed class TimeCollectorRunTests : IDisposable
         Assert.Equal(FileStatus.NoSheet,
                      result.Issues.Single(i => i.FileName.StartsWith("Безлиста")).Status);
         Assert.Equal(FileStatus.BadName,
-                     result.Issues.Single(i => i.FileName.StartsWith("отчёт")).Status);
+                     result.Issues.Single(i => i.FileName.StartsWith("отчет")).Status);
     }
 
-    // Книга, открытая другим пользователем, читается с диска: терять её строки хуже, чем
+    // Книга, открытая другим пользователем, читается с диска: терять ее строки хуже, чем
     // показать данные на момент последнего сохранения. В журнал она попадает пометкой.
     [Fact]
     public void File_Opened_By_Someone_Else_Is_Read_And_Flagged()

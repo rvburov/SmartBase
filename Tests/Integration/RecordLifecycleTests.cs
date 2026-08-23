@@ -36,7 +36,7 @@ public sealed class RecordLifecycleTests
         var copy = repo.DuplicateRecord(srcId);
 
         Assert.Equal(3, repo.CountRecords(colId));
-        // Копия встаёт сразу после исходной: R1, копия, R2.
+        // Копия встает сразу после исходной: R1, копия, R2.
         var order = OrderIds(repo, colId);
         Assert.Equal(copy.Id!.Value, order[order.IndexOf(srcId) + 1]);
         // Значение исходной записи скопировано.
@@ -82,7 +82,7 @@ public sealed class RecordLifecycleTests
         foreach (var (srcId, newId) in map)
         {
             var expected = "v" + (page.IndexOf(srcId) + 1);
-            Assert.Equal(expected, vals[newId][fieldId]);   // копия несёт значение СВОЕГО источника
+            Assert.Equal(expected, vals[newId][fieldId]);   // копия несет значение СВОЕГО источника
         }
     }
 

@@ -32,7 +32,7 @@ public partial class ConstructorControllerView : UserControl
     public event EventHandler<bool>? RecordPanelToggled;
 
     /// <summary>Значение записи отредактировано прямо в таблице — для живой синхронизации открытой
-    /// панели «Страница записи» (MainWindow обновит её, если это та же запись).</summary>
+    /// панели «Страница записи» (MainWindow обновит ее, если это та же запись).</summary>
     public event EventHandler<int>? RecordValueEdited;
 
     /// <summary>Состав/имена полей коллекции изменились (добавление/правка/дубль/удаление свойства) —
@@ -59,7 +59,7 @@ public partial class ConstructorControllerView : UserControl
     {
         _repository = repository;
 
-        // Переключатель вида остаётся в верхнем навбаре.
+        // Переключатель вида остается в верхнем навбаре.
         NavbarConstructor.ViewChanged += (_, mode) => SwitchView(mode);
 
         // Переименование коллекции прямо из заголовка навбара.
@@ -108,7 +108,7 @@ public partial class ConstructorControllerView : UserControl
         NavbarConstructor.ShowCollectionControls(!empty);
 
         // Скрываем таблицу/список, чтобы пустая шапка DataGrid не висела серой полосой
-        // под навбаром. При выборе коллекции SwitchView вернёт нужную видимость.
+        // под навбаром. При выборе коллекции SwitchView вернет нужную видимость.
         if (empty)
         {
             TableViewCtrl.IsVisible = false;
@@ -131,9 +131,9 @@ public partial class ConstructorControllerView : UserControl
     private int CurrentDbId =>
         _dbs.FirstOrDefault(d => ReferenceEquals(d.Repo, _repository))?.Id ?? (_dbs.Count > 0 ? _dbs[0].Id : 0);
 
-    // Открыть коллекцию из конкретной БД: перенацеливаем модуль на её репозиторий.
+    // Открыть коллекцию из конкретной БД: перенацеливаем модуль на ее репозиторий.
     // В основной области одновременно открыта одна коллекция, поэтому достаточно
-    // держать активным один репозиторий (мульти-маунт живёт в сайдбаре).
+    // держать активным один репозиторий (мульти-маунт живет в сайдбаре).
     public void OpenFrom(ConstructorRepository repository, int collectionId)
     {
         _repository = repository;
@@ -167,7 +167,7 @@ public partial class ConstructorControllerView : UserControl
         NavbarConstructor.SetViewMode(viewMode);
         SwitchView(viewMode);
 
-        // Нижняя панель: счётчик записей и страницы (пока 1 страница).
+        // Нижняя панель: счетчик записей и страницы (пока 1 страница).
         var count = _repository.CountRecords(collectionId);
         FooterConstructor.SetCount(count);
         FooterConstructor.SetPage(1, 1);
@@ -188,9 +188,9 @@ public partial class ConstructorControllerView : UserControl
     /// колонок и мелькания (число записей могло измениться → структурный путь).</summary>
     public void RefreshRowsRemote() => RefreshRows(structural: true);
 
-    // Лёгкое обновление при изменении ТОЛЬКО строк (создание/удаление/дубль/сдвиг записей,
+    // Легкое обновление при изменении ТОЛЬКО строк (создание/удаление/дубль/сдвиг записей,
     // видимость записей): в таблице пересобираем только строки (ReloadRows) — набор колонок
-    // не трогаем, поэтому при 1000 свойств нет «моргания» и тяжёлой пересборки. Для режима
+    // не трогаем, поэтому при 1000 свойств нет «моргания» и тяжелой пересборки. Для режима
     // «Список» (без множества колонок) — пока полный путь Refresh.
     // structural=true — изменилось ЧИСЛО записей (создание/удаление/дубль): строки обновляем на месте
     // без пересоздания списка и мелькания «Загрузка…» (ReloadRowsStructural). false — изменилась
@@ -212,9 +212,9 @@ public partial class ConstructorControllerView : UserControl
     }
 
     // Точечное обновление ОДНОЙ строки после правки записи в правой панели (имя/описание/значения):
-    // перечитываем только её данные и заполняем строку на месте. Прежде правка дёргала полный
+    // перечитываем только ее данные и заполняем строку на месте. Прежде правка дергала полный
     // Refresh (пересборка всей таблицы) — на больших коллекциях с множеством колонок это «вешало» UI.
-    // Число записей не меняется → счётчик и набор колонок не трогаем. В «Списке» — полный путь.
+    // Число записей не меняется → счетчик и набор колонок не трогаем. В «Списке» — полный путь.
     public void RefreshRecordRow(int recordId)
     {
         if (_currentCollectionId is null || _repository is null) return;
@@ -274,19 +274,19 @@ public partial class ConstructorControllerView : UserControl
 
         // Вставку делаем в ФОНЕ (изолированное подключение) — синхронная вставка-плюс-RefreshStructural
         // в одном кадре UI заставляла грид моргать при добавлении одной строки. Фоновый путь + await
-        // (как у удаления/дубля нескольких) даёт гриду чистый кадр → без мерцания.
+        // (как у удаления/дубля нескольких) дает гриду чистый кадр → без мерцания.
         var rec = await Task.Run(() => _repository.AddRecordIsolated(newRecord, afterRecordId));
 
         RefreshRows(structural: true);
-        // CollectionsChanged НЕ зовём: новая пустая запись не меняет ни список коллекций/групп в
-        // сайдбарах, ни события календаря (даты ещё нет). Прежний кросс-БД рефреш на каждое создание
-        // давал заметную задержку (~1 с) на мультибазе. Появится дата — её правка обновит календарь сама.
+        // CollectionsChanged НЕ зовем: новая пустая запись не меняет ни список коллекций/групп в
+        // сайдбарах, ни события календаря (даты еще нет). Прежний кросс-БД рефреш на каждое создание
+        // давал заметную задержку (~1 с) на мультибазе. Появится дата — ее правка обновит календарь сама.
 
         if (rec.Id.HasValue)
         {
             if (keepVertical is { } off)
             {
-                // Создание в середине — остаёмся на месте (новая запись появляется
+                // Создание в середине — остаемся на месте (новая запись появляется
                 // прямо под строкой-инициатором, в зоне видимости).
                 if (TableViewCtrl.IsVisible)
                     TableViewCtrl.RestoreVerticalOffset(off);
@@ -312,12 +312,12 @@ public partial class ConstructorControllerView : UserControl
     {
         if (_repository is null) return;
 
-        // Предупреждаем ТОЛЬКО если удаление оборвёт входящие связи (иначе — мгновенно, как раньше):
+        // Предупреждаем ТОЛЬКО если удаление оборвет входящие связи (иначе — мгновенно, как раньше):
         // на эту запись ссылались другие → у них станет «связи нет».
         if (RelationDeleteImpact.ForRecords(_repository, CurrentDbId, [recordId])
             && VisualRoot is Avalonia.Controls.Window confirmWin)
         {
-            var warnDlg = new ConfirmDialog("Удалить запись? На неё ссылаются связи — они будут удалены.");
+            var warnDlg = new ConfirmDialog("Удалить запись? На нее ссылаются связи — они будут удалены.");
             if (await warnDlg.ShowDialog<bool>(confirmWin) != true) return;
         }
 
@@ -329,7 +329,7 @@ public partial class ConstructorControllerView : UserControl
         try { _repository.DeleteRecord(recordId); }
         catch (Exception ex) when (DbErrors.Handle(ex, _repository.DbPath)) { return; }
         RefreshRows(structural: true);
-        TableViewCtrl.ClearRecordSelection();   // удалённая строка не должна оставаться «подсвеченной»
+        TableViewCtrl.ClearRecordSelection();   // удаленная строка не должна оставаться «подсвеченной»
         CollectionsChanged?.Invoke(this, EventArgs.Empty);
         RecordPageClosed?.Invoke(this, EventArgs.Empty);
 
@@ -348,7 +348,7 @@ public partial class ConstructorControllerView : UserControl
         var ids = recordIds.Distinct().ToList();
         if (ids.Count == 0) return;
 
-        // Предупреждаем, что удаление оборвёт ВХОДЯЩИЕ связи на эти записи (внутрибазовые + межбазовые
+        // Предупреждаем, что удаление оборвет ВХОДЯЩИЕ связи на эти записи (внутрибазовые + межбазовые
         // из открытых баз). Best-effort: связи из закрытых баз чистятся лениво. Показываем лишь ФАКТ.
         var linkWarn = RelationDeleteImpact.ForRecords(_repository, CurrentDbId, ids)
             ? " На них ссылаются связи из других записей — они будут удалены." : "";
@@ -370,7 +370,7 @@ public partial class ConstructorControllerView : UserControl
             });
 
         RefreshRows(structural: true);
-        TableViewCtrl.ClearRecordSelection();   // удалённые строки не должны оставаться «подсвеченными»
+        TableViewCtrl.ClearRecordSelection();   // удаленные строки не должны оставаться «подсвеченными»
         CollectionsChanged?.Invoke(this, EventArgs.Empty);
         RecordPageClosed?.Invoke(this, EventArgs.Empty);
 
@@ -394,7 +394,7 @@ public partial class ConstructorControllerView : UserControl
         {
             // Копия сразу после исходной (по середине, без сдвига хвоста) — но в ФОНЕ (изолированно)
             // + await: синхронная вставка одной строки с немедленным refresh моргала; фоновый путь
-            // (как у дубля нескольких) даёт гриду чистый кадр.
+            // (как у дубля нескольких) дает гриду чистый кадр.
             var copy = await Task.Run(() => _repository.DuplicateRecordIsolated(ids[0]));
             if (copy.Id is { } cid) newIds.Add(cid);
         }
@@ -424,7 +424,7 @@ public partial class ConstructorControllerView : UserControl
     // «Расположение»: перенос выбранных записей в другую коллекцию/БД. Окно (как у коллекций в
     // сайдбаре) выбирает целевую БД и коллекцию + «Перенести все свойства». Значения переносятся
     // грамотно (по имени поля, с приведением типов; см. ConstructorRepository.MoveRecordsToCollectionIsolated).
-    // Перенос идёт на изолированных подключениях в фоне (мелкий объём — без окна прогресса), как
+    // Перенос идет на изолированных подключениях в фоне (мелкий объем — без окна прогресса), как
     // дубль/удаление. Запись исчезает из исходной коллекции (move = copy + delete).
     private async Task RelocateRecords(IReadOnlyList<int> recordIds)
     {
@@ -444,9 +444,9 @@ public partial class ConstructorControllerView : UserControl
         // Все потери — в ОДНО окно: два-три подтверждения подряд просто «прокликивают».
         var warnings = new List<string>();
 
-        // Свойства без пары в целевой коллекции значения не переносят, а несовместимое одноимённое
+        // Свойства без пары в целевой коллекции значения не переносят, а несовместимое одноименное
         // поле-связь теряет связи — раньше и то и другое происходило МОЛЧА. Считается по схеме
-        // (два списка полей), поэтому дёшево независимо от числа переносимых записей.
+        // (два списка полей), поэтому дешево независимо от числа переносимых записей.
         var (dropped, linksDropped) = targetRepo.FieldsLostOnMove(
             _repository, _currentCollectionId.Value, res.CollectionId,
             res.CreateMissingFields, CurrentDbId, res.DbId);
@@ -455,7 +455,7 @@ public partial class ConstructorControllerView : UserControl
         if (linksDropped.Count > 0)
             warnings.Add($"• потеряются связи в полях: {NameList(linksDropped)}");
 
-        // Перенос = копия + удаление (у записи новый id), поэтому ВХОДЯЩИЕ связи на неё обрываются
+        // Перенос = копия + удаление (у записи новый id), поэтому ВХОДЯЩИЕ связи на нее обрываются
         // (за записью не следуют).
         if (RelationDeleteImpact.ForRecords(_repository, CurrentDbId, ids))
             warnings.Add("• оборвутся связи, ссылающиеся на переносимые записи (станут «связи нет»)");
@@ -483,7 +483,7 @@ public partial class ConstructorControllerView : UserControl
             });
 
         RefreshRows(structural: true);
-        TableViewCtrl.ClearRecordSelection();   // перенесённые строки исчезли — снимаем подсветку
+        TableViewCtrl.ClearRecordSelection();   // перенесенные строки исчезли — снимаем подсветку
         CollectionsChanged?.Invoke(this, EventArgs.Empty);
         RecordPageClosed?.Invoke(this, EventArgs.Empty);
 
@@ -491,14 +491,14 @@ public partial class ConstructorControllerView : UserControl
             TableViewCtrl.RestoreVerticalOffset(off);
     }
 
-    // Имена свойств для окна: первые 8 + «и ещё N». Ограничение чисто визуальное (при коллекции на
+    // Имена свойств для окна: первые 8 + «и еще N». Ограничение чисто визуальное (при коллекции на
     // сотню полей окно растянулось бы на экран) — на стоимость проверки не влияет.
     private static string NameList(IReadOnlyList<string> names) =>
         names.Count <= 8
             ? string.Join(", ", names)
-            : string.Join(", ", names.Take(8)) + $" и ещё {names.Count - 8}";
+            : string.Join(", ", names.Take(8)) + $" и еще {names.Count - 8}";
 
-    // Русское склонение: 1 запись, 2–4 записи, 5+ записей (с учётом 11–14).
+    // Русское склонение: 1 запись, 2–4 записи, 5+ записей (с учетом 11–14).
     private static string RecordsPlural(int n)
     {
         var mod100 = n % 100;
@@ -516,7 +516,7 @@ public partial class ConstructorControllerView : UserControl
     {
         if (_repository is null) return;
 
-        // Копия встаёт сразу после исходной (как создание после строки) — сохраняем
+        // Копия встает сразу после исходной (как создание после строки) — сохраняем
         // вертикальную позицию, чтобы таблицу не откидывало.
         var keepVertical = TableViewCtrl.IsVisible ? TableViewCtrl.CurrentVerticalOffset() : (double?)null;
 
@@ -532,7 +532,7 @@ public partial class ConstructorControllerView : UserControl
     // ── Свойства (поля) ───────────────────────────────────────────────────────
 
     /// <summary>
-    /// Создать новое свойство из панели записи («Добавить свойство»). Идёт тем же путём,
+    /// Создать новое свойство из панели записи («Добавить свойство»). Идет тем же путем,
     /// что и «+» в таблице: открывает редактор свойства, добавляет колонку в таблицу и
     /// поднимает FieldsChanged — открытая панель записи перечитывает поля и сразу показывает новое.
     /// </summary>
@@ -555,7 +555,7 @@ public partial class ConstructorControllerView : UserControl
         try { fieldId = _repository.EnsureDescriptionField(colId); }
         catch (Exception ex) when (DbErrors.Handle(ex, _repository.DbPath)) { return; }
 
-        // Поле могло не создаться, а лишь получить роль (одноимённое уже было) — колонку в
+        // Поле могло не создаться, а лишь получить роль (одноименное уже было) — колонку в
         // таблице добавляем только для действительно нового.
         if (!before.Contains(fieldId)) TableViewCtrl.AddColumnForField(fieldId);
         else                           TableViewCtrl.RebuildColumn(fieldId.ToString());
@@ -608,7 +608,7 @@ public partial class ConstructorControllerView : UserControl
         CollectionsChanged?.Invoke(this, EventArgs.Empty);
     }
 
-    // Окно «Отображение» — менеджер видимости/уровней колонок. Список свойств берём
+    // Окно «Отображение» — менеджер видимости/уровней колонок. Список свойств берем
     // из таблицы (полный, включая скрытые). По «Сохранить» — обновляем таблицу.
     private async Task OpenDisplayDialog()
     {
@@ -623,7 +623,7 @@ public partial class ConstructorControllerView : UserControl
     }
 
     // Окно «Отображение записей» — менеджер видимости/уровней/порядка строк. Список
-    // записей берём из БД (полный, включая скрытые — их там можно вернуть), в порядке
+    // записей берем из БД (полный, включая скрытые — их там можно вернуть), в порядке
     // позиций. По «Сохранить» — обновляем таблицу.
     private async Task OpenRecordDisplayDialog()
     {
@@ -679,7 +679,7 @@ public partial class ConstructorControllerView : UserControl
         if (newField?.Id is { } newId)
         {
             // movableKeys для MoveColumnAfter = прежний порядок + новый ключ в конце
-            // (как его кладёт AddField). Затем метод переставит его за afterKey.
+            // (как его кладет AddField). Затем метод переставит его за afterKey.
             var movable = new List<string>(orderBefore) { newId.ToString() };
             _repository.MoveColumnAfter(_currentCollectionId.Value, newId.ToString(), afterKey, movable);
         }
@@ -730,7 +730,7 @@ public partial class ConstructorControllerView : UserControl
         try { _repository.UpdateCollection(col); }
         catch (Exception ex) when (DbErrors.Handle(ex, _repository.DbPath))
         {
-            NavbarConstructor.SetTitle(col.Name);   // заголовок вернём к сохранённому имени
+            NavbarConstructor.SetTitle(col.Name);   // заголовок вернем к сохраненному имени
             return;
         }
         CollectionsChanged?.Invoke(this, EventArgs.Empty);
@@ -742,14 +742,14 @@ public partial class ConstructorControllerView : UserControl
         var ids = fieldIds.Distinct().ToList();
         if (ids.Count == 0) return;
 
-        // Порядок колонок ДО дублирования — чтобы каждую копию поставить сразу справа от её
+        // Порядок колонок ДО дублирования — чтобы каждую копию поставить сразу справа от ее
         // исходника (как одиночный дубль), даже если задан column_order.
         var orderBefore = TableViewCtrl.MovableKeysInOrder();
 
         var copies = new List<(int Src, int Copy)>();   // исходник → созданная копия
         var many   = ids.Count > 1;
 
-        // Всю тяжёлую работу (подсчёт значений + копирование) делаем в фоне на изолированных
+        // Всю тяжелую работу (подсчет значений + копирование) делаем в фоне на изолированных
         // подключениях — на главном потоке ничего не считаем, поэтому UI не «висит» до окна.
         // Окно прогресса покажется само, если работа не уложится в короткий момент (RunFieldOp).
         await RunBulkOp(many ? "Дублирование столбцов" : "Дублирование столбца",
@@ -770,7 +770,7 @@ public partial class ConstructorControllerView : UserControl
                 p.Report((total, total));   // финал → «Сохранение…»
             });
 
-        // Каждую копию — сразу за её исходником, одним пересохранением порядка колонок.
+        // Каждую копию — сразу за ее исходником, одним пересохранением порядка колонок.
         if (copies.Count > 0)
         {
             var copyBySrc  = copies.ToDictionary(c => c.Src.ToString(), c => c.Copy.ToString());
@@ -831,7 +831,7 @@ public partial class ConstructorControllerView : UserControl
                                       _repository.HasCalendarDateField(_currentCollectionId.Value));
         if (await new ConfirmDialog(message).ShowDialog<bool>(win) != true) return;
 
-        // Надёжно (без осиротевших данных) и без фриза UI: подсчёт значений и удаление идут
+        // Надежно (без осиротевших данных) и без фриза UI: подсчет значений и удаление идут
         // в фоне на изолированных подключениях, на главном потоке ничего не считаем. Окно
         // прогресса покажется само, если работа не уложится в короткий момент (RunFieldOp).
         var manyCols = deletable.Count > 1;
@@ -840,7 +840,7 @@ public partial class ConstructorControllerView : UserControl
             {
                 var counts = _repository.CountFieldValuesIsolated(deletable);
                 var total  = counts.Sum(c => (long)c);
-                // Поля удаляем по очереди (каждое — на своём подключении), показывая «N/M».
+                // Поля удаляем по очереди (каждое — на своем подключении), показывая «N/M».
                 long basis = 0;
                 for (var i = 0; i < deletable.Count; i++)
                 {
@@ -867,24 +867,24 @@ public partial class ConstructorControllerView : UserControl
     private const int SavingPhase = -2;
 
     // Через сколько мс работы показывать окно прогресса. Мелкие операции (пара значений/записей)
-    // укладываются раньше — для них окно не появляется вовсе. На больших объёмах окно всплывает
+    // укладываются раньше — для них окно не появляется вовсе. На больших объемах окно всплывает
     // почти сразу, но UI при этом НЕ висит: вся работа уже в фоне.
     private const int FieldOpDialogDelayMs = 200;
 
-    // Выполняет тяжёлую bulk-операцию (удаление/дубль свойств ИЛИ записей) ПОЛНОСТЬЮ в фоне (подсчёт +
+    // Выполняет тяжелую bulk-операцию (удаление/дубль свойств ИЛИ записей) ПОЛНОСТЬЮ в фоне (подсчет +
     // сама работа — на изолированных подключениях; главный контекст из фонового потока не трогаем).
-    // Окно прогресса показываем, только если работа не уложилась в FieldOpDialogDelayMs: раньше счёт/
+    // Окно прогресса показываем, только если работа не уложилась в FieldOpDialogDelayMs: раньше счет/
     // удаление шли СИНХРОННО на UI-потоке (на сотнях тысяч строк — фриз на несколько секунд, и лишь
     // потом индикатор). work репортит (готово, всего); пока всего неизвестно/0 — индикатор крутится
-    // «Подсчёт значений…». Окно МОДАЛЬНОЕ — вторую операцию нельзя начать, пока текущая не закрылась.
+    // «Подсчет значений…». Окно МОДАЛЬНОЕ — вторую операцию нельзя начать, пока текущая не закрылась.
     private async Task RunBulkOp(string windowTitle,
                                  Action<IProgress<(long Done, long Total)>, Action<string>> work)
     {
         ProgressDialog? dlg = null;
-        var lastShown = -1;          // -1 ещё не показывали %, -2 «Сохранение…», 0..100 — проценты
+        var lastShown = -1;          // -1 еще не показывали %, -2 «Сохранение…», 0..100 — проценты
         var phase     = windowTitle;
 
-        // Обновление окна (на UI-потоке). dlg может быть ещё/уже null — тогда отчёт игнорируем.
+        // Обновление окна (на UI-потоке). dlg может быть еще/уже null — тогда отчет игнорируем.
         void Update(long done, long total)
         {
             if (dlg is null || total <= 0) return;
@@ -914,7 +914,7 @@ public partial class ConstructorControllerView : UserControl
         if (VisualRoot is Avalonia.Controls.Window win)
         {
             dlg = new ProgressDialog { Title = windowTitle };
-            dlg.SetSaving("Подсчёт значений…");   // пока total неизвестен — бегущая полоса
+            dlg.SetSaving("Подсчет значений…");   // пока total неизвестен — бегущая полоса
             var dlgClosed = dlg.ShowDialog(win);
             await bg;
             dlg.Done();
@@ -926,7 +926,7 @@ public partial class ConstructorControllerView : UserControl
         }
     }
 
-    // Адаптер IProgress<int> для прогресса с фонового потока (передаётся в *Isolated-методы).
+    // Адаптер IProgress<int> для прогресса с фонового потока (передается в *Isolated-методы).
     private sealed class IntProgress(Action<int> report) : IProgress<int>
     {
         public void Report(int value) => report(value);
@@ -938,7 +938,7 @@ public partial class ConstructorControllerView : UserControl
         public void Report((long Done, long Total) v) => report(v.Done, v.Total);
     }
 
-    // Русское склонение: 1 свойство, 2–4 свойства, 5+ свойств (с учётом 11–14).
+    // Русское склонение: 1 свойство, 2–4 свойства, 5+ свойств (с учетом 11–14).
     private static string PropertiesPlural(int n)
     {
         var mod100 = n % 100;

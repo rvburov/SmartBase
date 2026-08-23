@@ -7,8 +7,8 @@ namespace SmartBase.Tests.Integration;
 
 /// <summary>
 /// Цвет строк, ячеек, колонок и текста — оформление ТАБЛИЦЫ (docs/architecture/data-model.md):
-/// record_display.Bg/Fg на строку, cell_style на ячейку, column_meta.Bg/Fg на колонку. Всё
-/// живёт дельтами рядом с ui_*, едет с коллекцией при дубле и переносе и чистится вместе с
+/// record_display.Bg/Fg на строку, cell_style на ячейку, column_meta.Bg/Fg на колонку. Все
+/// живет дельтами рядом с ui_*, едет с коллекцией при дубле и переносе и чистится вместе с
 /// записями и свойствами. Сквозного цвета записи (db_records.Color) больше нет — заливка
 /// строки не «протекает» в календарь и задачи, см. RowStyle.Resolve.
 /// </summary>
@@ -39,7 +39,7 @@ public sealed class TableColorTests
         repo.SetRowStyle(colId, [recId], StyleAspect.Text, Red);
         Assert.Equal(new RowStyle(Green, Red), repo.GetRowStyles(colId)[recId]);
 
-        // Аспекты независимы: сброс одного не трогает другой, строка живёт ради оставшегося.
+        // Аспекты независимы: сброс одного не трогает другой, строка живет ради оставшегося.
         repo.SetRowStyle(colId, [recId], StyleAspect.Background, null);
         Assert.Equal(new RowStyle(null, Red), repo.GetRowStyles(colId)[recId]);
 
@@ -56,7 +56,7 @@ public sealed class TableColorTests
         using var db = new TempDatabase();
         var (repo, colId, _, recId) = Seed(db);
 
-        repo.SetRowStyle(colId, [recId], StyleAspect.Background, "зелёный");
+        repo.SetRowStyle(colId, [recId], StyleAspect.Background, "зеленый");
         Assert.Empty(repo.GetRowStyles(colId));
     }
 
@@ -98,12 +98,12 @@ public sealed class TableColorTests
         Assert.Equal(3, styles.Count);
         Assert.All(all, id => Assert.Equal(new RowStyle(Green, Red), styles[id]));
 
-        // Сброс фона у всей пачки: цвет текста остаётся, строки живы.
+        // Сброс фона у всей пачки: цвет текста остается, строки живы.
         repo.SetRowStyle(colId, all, StyleAspect.Background, null);
         styles = repo.GetRowStyles(colId);
         Assert.All(all, id => Assert.Equal(new RowStyle(null, Red), styles[id]));
 
-        // Сброс второго аспекта — строк не остаётся вовсе.
+        // Сброс второго аспекта — строк не остается вовсе.
         repo.SetRowStyle(colId, all, StyleAspect.Text, null);
         Assert.Empty(repo.GetRowStyles(colId));
     }
@@ -167,7 +167,7 @@ public sealed class TableColorTests
         var resolved = RowStyle.Resolve(cell, row, column);
 
         Assert.Equal(Green, resolved.Bg);   // фон ячейки сильнее строки и колонки
-        Assert.Equal(Red,   resolved.Fg);   // текста у ячейки нет — берём у строки
+        Assert.Equal(Red,   resolved.Fg);   // текста у ячейки нет — берем у строки
 
         // Пустые уровни пропускаются насквозь до колонки.
         var fromColumn = RowStyle.Resolve(RowStyle.None, RowStyle.None, column);
@@ -215,7 +215,7 @@ public sealed class TableColorTests
     }
 
     /// <summary>Колонки выделяются пачкой (Shift+клик по заголовкам) — цвет обязан лечь на
-    /// всё выделение и сняться со всего, включая системную «Название». Раньше красилась
+    /// все выделение и сняться со всего, включая системную «Название». Раньше красилась
     /// только та колонка, по которой был правый клик.</summary>
     [Fact]
     public void Column_style_applies_to_every_selected_column()

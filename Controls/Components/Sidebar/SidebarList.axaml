@@ -16,7 +16,7 @@
             <Setter Property="Background" Value="{StaticResource BrushAccentLight}" />
         </Style>
 
-        <!-- Невыбранная: тёмный текст + серая иконка. Выбранная: синий текст и иконка. -->
+        <!-- Невыбранная: темный текст + серая иконка. Выбранная: синий текст и иконка. -->
         <Style Selector="Border.navrow TextBlock">
             <Setter Property="Foreground" Value="{StaticResource BrushPrimaryText}" />
         </Style>

@@ -23,7 +23,7 @@ public static class EncodingSetup
 /// <summary>
 /// Общие правила источников импорта: уникальные имена свойств, нумерация «Без названия»,
 /// разбор номера/буквы столбца, форматирование значений Excel, определение кодировки и
-/// разделителя CSV, форвард-обёртка прогресса.
+/// разделителя CSV, форвард-обертка прогресса.
 /// </summary>
 public static class SourceHelpers
 {
@@ -61,7 +61,7 @@ public static class SourceHelpers
 
     /// <summary>
     /// Пустые названия записей → «Без названия» (одна такая запись) или «Без названия N»
-    /// (несколько; счётчик — из прохода 1). Строки не пропускаются, порядок сохраняется.
+    /// (несколько; счетчик — из прохода 1). Строки не пропускаются, порядок сохраняется.
     /// </summary>
     public static IEnumerable<ImportRow> WithTitles(IEnumerable<ImportRow> rows, long emptyTitleCount)
     {
@@ -103,7 +103,7 @@ public static class SourceHelpers
 
     // ── Исключения листов/строк/столбцов (ручной режим Excel) ────────────────
 
-    /// <summary>Названия исключаемых листов: через запятую/точку с запятой, без учёта регистра.</summary>
+    /// <summary>Названия исключаемых листов: через запятую/точку с запятой, без учета регистра.</summary>
     public static HashSet<string> ParseSheetExclusions(string? raw)
     {
         var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -248,7 +248,7 @@ public static class SourceHelpers
 
     // ── Прогресс ──────────────────────────────────────────────────────────────
 
-    /// <summary>Прогресс «только вперёд»: позиция ZIP-потока Excel между листами может прыгать
+    /// <summary>Прогресс «только вперед»: позиция ZIP-потока Excel между листами может прыгать
     /// назад — наружу уходят только возрастающие значения.</summary>
     public static IProgress<double>? ForwardOnly(IProgress<double>? inner) =>
         inner is null ? null : new ForwardProgress(inner);
@@ -269,7 +269,7 @@ public static class SourceHelpers
 /// <summary>
 /// Набор диапазонов номеров (исключаемые строки/столбцы): «4-9, 11, 14-28». Хранится списком
 /// диапазонов, а не HashSet — диапазон вроде «1-1000000» не должен материализовывать миллион
-/// чисел; Contains — линейный проход по немногим диапазонам (проверка на каждую строку дешёвая).
+/// чисел; Contains — линейный проход по немногим диапазонам (проверка на каждую строку дешевая).
 /// </summary>
 public sealed class RangeSet
 {

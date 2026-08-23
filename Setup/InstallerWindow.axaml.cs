@@ -11,7 +11,7 @@ namespace SmartBase.Setup;
 
 /// <summary>
 /// Единственное окно установщика: установка, обновление и удаление в одном месте.
-/// Отдельного деинсталлятора нет — эта же программа кладётся рядом с приложением как
+/// Отдельного деинсталлятора нет — эта же программа кладется рядом с приложением как
 /// `SmartBase-Setup`, и двойной клик по ней открывает это окно.
 ///
 /// При открытии окно само ищет установленные копии на машине (см. FindInstallations),
@@ -22,7 +22,7 @@ public partial class InstallerWindow : Window
 {
     private readonly bool _preselectCurrent;   // запуск из ярлыка «Удалить»: показать свою копию
     private List<Installation> _found = [];
-    private bool _manualPath;                  // пользователь ушёл в «другую папку»
+    private bool _manualPath;                  // пользователь ушел в «другую папку»
     private bool _busy;
     private readonly string _myVersion;
 
@@ -72,14 +72,14 @@ public partial class InstallerWindow : Window
         : _found.Count == 1 ? _found[0]
         : InstallsList.SelectedItem as Installation;
 
-    /// <summary>Папка, с которой работают кнопки, как её задал человек.</summary>
+    /// <summary>Папка, с которой работают кнопки, как ее задал человек.</summary>
     private string TargetDir =>
         Selected?.Dir ?? (PathBox.Text ?? "").Trim();
 
     /// <summary>
     /// Папка, куда установка ляжет на самом деле. Путь, вписанный руками, приводится к
     /// «выделенному» так же, как выбранный кнопкой «Обзор»: на Windows/Linux дописывается
-    /// подпапка SmartBase. Иначе бинарь лёг бы прямо в «Документы», а удаление потом искало
+    /// подпапка SmartBase. Иначе бинарь лег бы прямо в «Документы», а удаление потом искало
     /// бы свои файлы посреди чужих. Для уже установленной копии и на macOS — без изменений.
     /// </summary>
     private string EffectiveDir => InstallService.EnsureDedicatedDir(TargetDir);
@@ -115,7 +115,7 @@ public partial class InstallerWindow : Window
         var dir      = EffectiveDir;
         var isUpdate = InstallService.IsAppPresent(dir);
 
-        // Подсказка появляется, только когда путь вписали руками и он будет изменён.
+        // Подсказка появляется, только когда путь вписали руками и он будет изменен.
         var typed = TargetDir;
         EffectivePathText.IsVisible = !showFound && typed.Length > 0
                                       && !string.Equals(dir, typed, StringComparison.Ordinal);
@@ -138,7 +138,7 @@ public partial class InstallerWindow : Window
 
         PrimaryBtn.Content = "Установить";
 
-        // Нет прав на запись (напр. Program Files без администратора) → предупреждаем и не даём ставить.
+        // Нет прав на запись (напр. Program Files без администратора) → предупреждаем и не даем ставить.
         if (dir.Length > 0 && !InstallService.CanCreateOrWrite(dir))
         {
             WarnText.Text        = "В эту папку нет прав на запись. Выберите другую (например, предложенную "
@@ -166,7 +166,7 @@ public partial class InstallerWindow : Window
             new FolderPickerOpenOptions { Title = "Папка установки", AllowMultiple = false });
         if (folders.Count > 0 && folders[0].TryGetLocalPath() is { } p)
             // Дописываем выделенную подпапку (…\SmartBase), чтобы удаление не задело чужие файлы
-            // общей папки — удаление чистит папку установки. На macOS путь остаётся как есть.
+            // общей папки — удаление чистит папку установки. На macOS путь остается как есть.
             PathBox.Text = InstallService.EnsureDedicatedDir(p);
     }
 
@@ -178,7 +178,7 @@ public partial class InstallerWindow : Window
         if (dir.Length == 0) return;
 
         SetBusy(true);
-        SubtitleText.Text = "Идёт установка, пожалуйста подождите…";
+        SubtitleText.Text = "Идет установка, пожалуйста подождите…";
         try
         {
             // Проценты рисует сам индикатор — в тексте фазы их не дублируем.
@@ -212,7 +212,7 @@ public partial class InstallerWindow : Window
         var message  = $"Удалить {AppSettings.DisplayName} из:\n{dir}"
                      + (withData
                         ? "\n\nВместе с данными пользователя: коллекции, записи, настройки и журнал "
-                          + "будут стёрты безвозвратно. Базы, подключённые из других папок и с сервера "
+                          + "будут стерты безвозвратно. Базы, подключенные из других папок и с сервера "
                           + "PostgreSQL, не затрагиваются."
                         : "\n\nДанные пользователя сохранятся.");
         if (await new ConfirmDialog(message, "Удалить").ShowDialog<bool>(this) != true) return;
@@ -229,7 +229,7 @@ public partial class InstallerWindow : Window
         }
 
         // Снесли копию, из которой сами и запущены → закрываемся: остальное доделает
-        // отложенное удаление. Чужую копию удалили — остаёмся и обновляем список.
+        // отложенное удаление. Чужую копию удалили — остаемся и обновляем список.
         if (string.Equals(Path.GetFullPath(dir), Path.GetFullPath(InstallService.CurrentDir),
                           StringComparison.OrdinalIgnoreCase))
         {

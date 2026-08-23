@@ -12,7 +12,7 @@
          1) ПУСТОЙ СПИСОК. Выпадашка без пунктов открывалась тонкой полоской в
             несколько пикселей (пустой ItemsPresenter) — непонятно, сломалось что-то
             или вариантов правда нет. Теперь в попапе лежит надпись «Список пуст»,
-            видимая при ItemCount = 0. Это НЕ пункт списка: выбрать её нельзя.
+            видимая при ItemCount = 0. Это НЕ пункт списка: выбрать ее нельзя.
          2) ШИРИНА. У оригинала попап только шире поля не бывает (MinWidth), а сверху
             не ограничен: длинное название коллекции/базы растягивало выпадашку далеко
             за поле. MaxWidth = ширине поля, длинный пункт обрезается многоточием
@@ -126,14 +126,14 @@
                                      RoundedClip — прямые углы полосы прокрутки срезаются
                                      скруглением плашки: ClipToBounds у Border режет только
                                      ПРЯМОУГОЛЬНИКОМ, поэтому в углах полоса вылезала на
-                                     рамку. Радиус на пиксель меньше плашки (её рамка). -->
+                                     рамку. Радиус на пиксель меньше плашки (ее рамка). -->
                                 <Panel b:RoundedClip.Radius="{DynamicResource RadiusBase}">
                                     <ScrollViewer HorizontalScrollBarVisibility="{TemplateBinding ScrollViewer.HorizontalScrollBarVisibility}"
                                                   VerticalScrollBarVisibility="{TemplateBinding ScrollViewer.VerticalScrollBarVisibility}"
                                                   IsDeferredScrollingEnabled="{TemplateBinding (ScrollViewer.IsDeferredScrollingEnabled)}">
                                         <!-- Воздух вокруг пунктов — здесь, ВНУТРИ области
                                              прокрутки (у плашки Padding нулевой, иначе
-                                             полоса отходит от её краёв, см. Controls.axaml). -->
+                                             полоса отходит от ее краев, см. Controls.axaml). -->
                                         <ItemsPresenter Name="PART_ItemsPresenter"
                                                         Margin="0,2"
                                                         ItemsPanel="{TemplateBinding ItemsPanel}" />

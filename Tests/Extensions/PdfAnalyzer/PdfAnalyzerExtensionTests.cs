@@ -7,7 +7,7 @@ namespace SmartBase.Tests.Extensions.PdfAnalyzer;
 /// Контракт ИМЕННО этого расширения: прибитый Id и факт регистрации. Общие правила живут в
 /// Tests/Extensions/Registry — здесь только то, что уходит вместе с расширением при удалении.
 ///
-/// CreateWindow() здесь не зовётся и звать нельзя: Avalonia в тест-хосте не поднята.
+/// CreateWindow() здесь не зовется и звать нельзя: Avalonia в тест-хосте не поднята.
 /// </summary>
 public sealed class PdfAnalyzerExtensionTests
 {
@@ -15,7 +15,7 @@ public sealed class PdfAnalyzerExtensionTests
     public void Extension_id_is_frozen() =>
         Assert.Equal("pdf-analyzer", new PdfAnalyzerExtension().Id);
 
-    // Настроек расширение не объявляет: папку и файл отчёта выбирают в самом окне.
+    // Настроек расширение не объявляет: папку и файл отчета выбирают в самом окне.
     [Fact]
     public void Extension_declares_no_settings() =>
         Assert.Empty(((IExtension)new PdfAnalyzerExtension()).Settings);

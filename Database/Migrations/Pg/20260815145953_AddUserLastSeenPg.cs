@@ -18,7 +18,7 @@ namespace SmartBase.Database.Migrations.Pg
                 defaultValue: "");
 
             // Бэкфилл: про старые строки известно только первое открытие базы — с него и
-            // начинаем отсчёт активности (см. парную SQLite-миграцию AddUserLastSeen).
+            // начинаем отсчет активности (см. парную SQLite-миграцию AddUserLastSeen).
             migrationBuilder.Sql("UPDATE db_users SET lastseenat = createdat");
         }
 

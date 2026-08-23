@@ -16,7 +16,7 @@ namespace SmartBase.Views.ConstructorDb.Calendar;
 public partial class WeekView : UserControl
 {
     // Размеры/веса шрифта — из токенов Typography.axaml (резолв ресурса в рантайме).
-    // Свежий размер из Application.Resources — меняется живьём при изменении FontScale.
+    // Свежий размер из Application.Resources — меняется живьем при изменении FontScale.
     private static double FontSizeBase =>
         (double)Application.Current!.FindResource("FontSizeBase")!;
 
@@ -198,7 +198,7 @@ public partial class WeekView : UserControl
         var gridLineBrush = new SolidColorBrush(Color.Parse("#E8E8E8"));
 
         // Слой вертикальных линий колонок (ColumnLines): пустые Border без контента,
-        // поэтому Aliased безопасен — линия защёлкивается в целый пиксель при любом
+        // поэтому Aliased безопасен — линия защелкивается в целый пиксель при любом
         // зуме/DPI, а не размазывается сглаживанием. Первая колонка без линии.
         ColumnLines.Children.Clear();
         for (var i = 0; i < allDays.Count; i++)
@@ -233,7 +233,7 @@ public partial class WeekView : UserControl
                 .ThenBy(e => e.Title)
                 .ToList();
 
-            // список пар (entry, topHandle, bottomHandle) для пересчёта при resize
+            // список пар (entry, topHandle, bottomHandle) для пересчета при resize
             var dayEntryLayouts = new List<(EventEntry Entry, Border TopHandle, Border BottomHandle)>();
 
             foreach (var group in GroupOverlapping(sortedDayEvents))
@@ -382,7 +382,7 @@ public partial class WeekView : UserControl
                     dayEntryLayouts.Add((entry, topHandle, bottomHandle));
 
                     // Контекстное меню по правому клику. Перед открытием выделяем
-                    // событие (если оно ещё не в наборе), чтобы пункт действовал
+                    // событие (если оно еще не в наборе), чтобы пункт действовал
                     // на видимо выделенное — как в режиме «Месяц».
                     btn.ContextMenu = _BuildEventContextMenu(entry);
                     btn.AddHandler(PointerPressedEvent, (_, pe) =>
@@ -464,7 +464,7 @@ public partial class WeekView : UserControl
         _selections.Clear();
     }
 
-    // Снять выделение в баре «весь день» — зовём при выделении в часовой сетке,
+    // Снять выделение в баре «весь день» — зовем при выделении в часовой сетке,
     // чтобы на экране было ровно одно выделенное событие.
     private void _ClearAllDaySelection() => AllDayBarCtrl.ClearSelection();
 
@@ -588,9 +588,9 @@ public partial class WeekView : UserControl
             _dragOffsetY = pos.Y - (entry.StartMin + 2);
         }
 
-        // Визуальный отклик на press даём только для обычного клика по
+        // Визуальный отклик на press даем только для обычного клика по
         // невыделенному событию (чтобы при последующем drag цвет уже сменился).
-        // С Shift ничего не трогаем здесь — всё выделение/toggle делается на
+        // С Shift ничего не трогаем здесь — все выделение/toggle делается на
         // release, иначе press+release дважды переключают набор и он «мигает».
         var additive = e.KeyModifiers.HasFlag(KeyModifiers.Shift);
         if (!additive && !_selections.ContainsKey(entry.Ev))
@@ -1376,7 +1376,7 @@ public partial class WeekView : UserControl
         {
             if (_resizeGhostTimeBlock is null && _resizeGhostContentStack is not null)
             {
-                // ghost стал достаточно большим — создаём TextBlock времени динамически
+                // ghost стал достаточно большим — создаем TextBlock времени динамически
                 _resizeGhostTimeBlock = new TextBlock
                 {
                     Text       = timeText,
@@ -1486,7 +1486,7 @@ public partial class WeekView : UserControl
 
     // смешивает цвет с белым фоном чтобы убрать прозрачность (alpha blending)
     // Лимит ПАРАЛЛЕЛЬНЫХ под-колонок пересекающихся событий (см. DayView.MaxEventColumns —
-    // здесь жёстче: колонка дня в 7 раз уже). День-гигант давал 2000 под-колонок = тысячи
+    // здесь жестче: колонка дня в 7 раз уже). День-гигант давал 2000 под-колонок = тысячи
     // субпиксельных контролов и подвисание UI на каждую перерисовку.
     private const int MaxEventColumns = 6;
 
@@ -1594,7 +1594,7 @@ public partial class WeekView : UserControl
         {
             menu.Items.Clear();
 
-            // Множественное выделение (это событие в общем наборе обеих зон и в нём 2+):
+            // Множественное выделение (это событие в общем наборе обеих зон и в нем 2+):
             // массовые «Дублировать»/«Удалить» всех выделенных разом — как по Delete.
             var all = _SelectedAll();
             if (all.Count > 1 && all.Any(r => r.Id == ev.Id))

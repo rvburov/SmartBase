@@ -13,7 +13,7 @@ namespace SmartBase.Controls.Components;
 public partial class AllDayBar : UserControl
 {
     // Размеры/веса шрифта — из токенов Typography.axaml (резолв ресурса в рантайме).
-    // Свежий размер из Application.Resources — меняется живьём при изменении FontScale.
+    // Свежий размер из Application.Resources — меняется живьем при изменении FontScale.
     private static double FontSizeBase =>
         (double)Application.Current!.FindResource("FontSizeBase")!;
 
@@ -30,7 +30,7 @@ public partial class AllDayBar : UserControl
 
     // Лимит отрисовки: панель строит контрол на КАЖДОЕ событие (плюс поиск свободной строки —
     // квадратичный), тысячи all-day в окне повесили бы UI. Скрытое сверх лимита — строкой
-    // «+N ещё» внизу; больше и не проскроллить осмысленно. Сами данные окна уже ограничены
+    // «+N еще» внизу; больше и не проскроллить осмысленно. Сами данные окна уже ограничены
     // чтением (GetCalendarRecordsByRangeCapped), лимит здесь — вторая линия обороны.
     private const int MaxRenderedEvents = 300;
 
@@ -48,7 +48,7 @@ public partial class AllDayBar : UserControl
     // набор через обе зоны.
     public event EventHandler<bool>? SelectionRequested;
 
-    // Хуки для общих (кросс-зонных) массовых операций. Родитель задаёт:
+    // Хуки для общих (кросс-зонных) массовых операций. Родитель задает:
     //  • ExternalSelectedCount — сколько выделено ВНЕ бара (в часовой сетке);
     //  • DeleteAllSelected     — удалить общий набор обеих зон разом;
     //  • DuplicateAllSelected  — дублировать общий набор обеих зон разом.
@@ -58,7 +58,7 @@ public partial class AllDayBar : UserControl
     public Action?    DuplicateAllSelected  { get; set; }
 
     /// <summary>
-    /// Прокручиваемая область плашек — для ВНЕШНЕЙ полосы прокрутки: она живёт в колонке
+    /// Прокручиваемая область плашек — для ВНЕШНЕЙ полосы прокрутки: она живет в колонке
     /// полос родительского вида (Day/Week) и привязывается сюда через
     /// <c>ScrollBarLink.Source</c>. Публичное свойство, а не поле <c>EventsScroll</c>:
     /// сгенерированные по x:Name поля внутренние, привязка их не видит.
@@ -141,7 +141,7 @@ public partial class AllDayBar : UserControl
     // набор выделенных из обеих зон и удаляет разом — см. SelectedRecords/ClearSelection.
 
     // ── resize ────────────────────────────────────────────────────────────────
-    // Вызывается из родительского вида (ручка-«пилюля» живёт там, чтобы не
+    // Вызывается из родительского вида (ручка-«пилюля» живет там, чтобы не
     // обрезалась границами этого контрола). pointerY — координата Y указателя
     // в системе координат вида, единая между Begin/Update.
 
@@ -247,7 +247,7 @@ public partial class AllDayBar : UserControl
         _selections.Clear();
     }
 
-    // Внешний сброс выделения (родитель зовёт при выделении в часовой сетке).
+    // Внешний сброс выделения (родитель зовет при выделении в часовой сетке).
     public void ClearSelection() => _DeselectAll();
 
     // Текущий набор выделенных в баре — родитель объединяет его с выделением
@@ -294,7 +294,7 @@ public partial class AllDayBar : UserControl
             var maxCol = Math.Max(0, _currentDays.Count - _dragSourceSpan);
             var col    = Math.Clamp((int)(pos.X / colW), 0, maxCol);
 
-            // В исходной колонке событие остаётся на своей строке (это «то же
+            // В исходной колонке событие остается на своей строке (это «то же
             // событие на месте» — без перестановки вниз). В другой колонке ищем
             // первую свободную строку для целевых дней — так же, как при первичной
             // раскладке: ghost занимает дыру выше, а не всегда падает в самый низ.
@@ -385,7 +385,7 @@ public partial class AllDayBar : UserControl
             // Толщина левой границы — живой токен LineMetrics (ColumnLines недели привязан
             // так же — линии остаются пиксель-в-пиксель при любом зуме/DPI). Первая колонка
             // без линии. Border пустой (без контента) → Aliased безопасен: линия
-            // защёлкивается в целый пиксель, а не размазывается сглаживанием.
+            // защелкивается в целый пиксель, а не размазывается сглаживанием.
             if (i > 0)
             {
                 divider.Bind(Border.BorderThicknessProperty, divider.GetResourceObservable("BorderLineLeft"));
@@ -407,7 +407,7 @@ public partial class AllDayBar : UserControl
             .ThenBy(e => e.Title)
             .ToList();
 
-        // Сверх лимита не рисуем — только строка «+N ещё» внизу (см. MaxRenderedEvents).
+        // Сверх лимита не рисуем — только строка «+N еще» внизу (см. MaxRenderedEvents).
         var hiddenCount = Math.Max(0, allDayEvents.Count - MaxRenderedEvents);
         if (hiddenCount > 0)
             allDayEvents = allDayEvents.Take(MaxRenderedEvents).ToList();
@@ -484,7 +484,7 @@ public partial class AllDayBar : UserControl
             block.PointerExited  += (_, _) => { if (!isSelected) block.Background = normalBg; };
         }
 
-        // «+N ещё» — не отрисованные сверх лимита, строкой на всю ширину внизу
+        // «+N еще» — не отрисованные сверх лимита, строкой на всю ширину внизу
         // (как подпись в ячейке «Месяца»).
         if (hiddenCount > 0)
         {
@@ -492,7 +492,7 @@ public partial class AllDayBar : UserControl
             EventsPanel.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
             var more = new TextBlock
             {
-                Text       = $"+{hiddenCount} ещё",
+                Text       = $"+{hiddenCount} еще",
                 FontSize   = FontSizeBase,
                 Foreground = Brush("BrushSecondaryText", "#8E8E93"),
                 Margin     = new Thickness(6, 2, 0, 2),

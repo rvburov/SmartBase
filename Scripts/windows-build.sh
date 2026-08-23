@@ -10,7 +10,7 @@
 #
 # Особенности Windows-сборки:
 #   • self-contained     — .NET у пользователя не нужен;
-#   • PublishSingleFile  — всё в одном .exe (нативные .dll вшиваются и
+#   • PublishSingleFile  — все в одном .exe (нативные .dll вшиваются и
 #                          распаковываются при запуске, см.
 #                          IncludeNativeLibrariesForSelfExtract в SmartBase.csproj);
 #   • иконка вшита в .exe — через ApplicationIcon в SmartBase.csproj, отдельных
@@ -19,7 +19,7 @@
 # dotnet publish одинаково работает в любом шелле (Git Bash / PowerShell / CMD),
 # поэтому Windows-сборка — обычный bash-скрипт, как linux/macos.
 #
-# Результат: dist/<RID>/SmartBase.exe — раздаётся как есть.
+# Результат: dist/<RID>/SmartBase.exe — раздается как есть.
 # ── Будущие особенности Windows-сборки добавляйте в массив flags ниже. ──
 set -euo pipefail
 
@@ -29,9 +29,9 @@ CONFIG="${2:-Release}"
 VERSION="${3:-}"
 
 # Целевая платформа сборки. Проект многотаргетный (см. TargetFrameworks в SmartBase.csproj),
-# и Windows собирается ТОЛЬКО этим таргетом: лишь под ним NuGet отдаёт WinRT-версии
+# и Windows собирается ТОЛЬКО этим таргетом: лишь под ним NuGet отдает WinRT-версии
 # DesktopNotifications.Windows и Microsoft.Toolkit.Uwp.Notifications. Собранный под голым
-# net10.0 дистрибутив выглядит рабочим, но нативных уведомлений в нём нет.
+# net10.0 дистрибутив выглядит рабочим, но нативных уведомлений в нем нет.
 TFM="net10.0-windows10.0.17763"
 
 # Общие флаги publish — единая точка правки на будущее.
@@ -53,7 +53,7 @@ if [ -n "$VERSION" ]; then
   echo "==> Версия обновлена на $VERSION (SmartBase.csproj + бейдж README.md)"
 fi
 
-# Эффективная версия сборки = аргумент или текущая из csproj. Задаёт папку вывода
+# Эффективная версия сборки = аргумент или текущая из csproj. Задает папку вывода
 # dist/Version <X.Y.Z>/<rid>: та же версия перезаписывается, новая — отдельная папка.
 EFFVER="${VERSION:-$(sed -nE 's#.*<Version>([^<]*)</Version>.*#\1#p' "$csproj" | head -n1)}"
 OUT="$ROOT/dist/Version $EFFVER/$RID"
@@ -62,7 +62,7 @@ echo "==> dotnet publish ($RID, $CONFIG, v$EFFVER)"
 dotnet publish "$csproj" -c "$CONFIG" -r "$RID" "${flags[@]}" -o "$OUT"
 
 # Установщик (вариант A): тот же бинарь под именем SmartBase-Setup.exe — по имени «-Setup»
-# он запускается в режиме установки. Раздаётся одним файлом. См. docs/guides/auto-update.md.
+# он запускается в режиме установки. Раздается одним файлом. См. docs/guides/auto-update.md.
 # Копию иногда на миг блокирует антивирус (свежий .exe) — повтор с паузой.
 for _ in 1 2 3 4 5; do
   cp "$OUT/SmartBase.exe" "$OUT/SmartBase-Setup.exe" 2>/dev/null && break

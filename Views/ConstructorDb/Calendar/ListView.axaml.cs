@@ -24,7 +24,7 @@ public partial class ListView : UserControl
     private const double RowHeight = 38.0;
     private const double PadTop    = 4.0;
 
-    // Полная виртуализация: список знает ПОЛНОЕ число событий дня (полоса прокрутки на весь объём,
+    // Полная виртуализация: список знает ПОЛНОЕ число событий дня (полоса прокрутки на весь объем,
     // можно перетащить в самый низ), а страницы грузятся по требованию (см. CalendarDayVirtualList).
     private CalendarDayVirtualList? _list;
     private DateTime _currentDate = DateTime.Today;
@@ -108,7 +108,7 @@ public partial class ListView : UserControl
         if (ev is { Id: int id }) _rangeAnchor = (ev.DbId, id, ev.FieldId);
     }
 
-    // Ctrl+Shift+клик: выделить диапазон от якоря до кликнутой строки. true — диапазон применён.
+    // Ctrl+Shift+клик: выделить диапазон от якоря до кликнутой строки. true — диапазон применен.
     private bool TrySelectRange(KeyModifiers modifiers, CalendarRecord? clicked)
     {
         if (!modifiers.HasFlag(KeyModifiers.Shift) || !modifiers.HasFlag(KeyModifiers.Control))
@@ -125,11 +125,11 @@ public partial class ListView : UserControl
     private DateTime? _lastDay;
     private string    _lastSearch = "";
 
-    // Кеш счётчиков дня (день → счётчики по источникам, позиционно к отсортированным dbs):
+    // Кеш счетчиков дня (день → счетчики по источникам, позиционно к отсортированным dbs):
     // COUNT дня-гиганта — секунды холодным, и без кеша платится при КАЖДОМ визите дня
     // (навигация Prev/Next/Сегодня, возврат из поиска). Дельта правит кеш точечно по дню
     // НАЧАЛА записи (та же семантика, что у CountCalendarDayEvents и InDay в ApplyDeltaAsync) —
-    // БД уже изменена, поэтому правленый кеш остаётся источником правды. Сбрасывается целиком
+    // БД уже изменена, поэтому правленый кеш остается источником правды. Сбрасывается целиком
     // при смене набора источников/активных коллекций (сигнатура) и при пересборке БЕЗ дельты
     // (внешнее изменение — что поменялось, неизвестно).
     private readonly Dictionary<DateTime, int[]> _dayCountsCache = [];
@@ -138,17 +138,17 @@ public partial class ListView : UserControl
     /// <summary>
     /// Открывает день в «Расписании» через полную виртуализацию: события дня из
     /// <paramref name="dbs"/> (несколько БД) в окне [<paramref name="dayStart"/>,
-    /// <paramref name="dayEnd"/>). Полоса прокрутки — на всё число событий, страницы грузятся по
+    /// <paramref name="dayEnd"/>). Полоса прокрутки — на все число событий, страницы грузятся по
     /// требованию (в т.ч. прыжок в самый низ). <paramref name="search"/> фильтрует по заголовку.
-    /// Подсчёт числа событий (размер полосы) идёт В ФОНЕ на изолированных подключениях: холодный
+    /// Подсчет числа событий (размер полосы) идет В ФОНЕ на изолированных подключениях: холодный
     /// COUNT по дню с миллионами событий занимает секунды и не должен блокировать UI-поток
     /// (иначе старт приложения выглядел зависшим на «Запуске интерфейса…»).
     ///
     /// Первый показ / другой день / смена поиска — «свежая» загрузка с прокруткой наверх. Иначе —
     /// ТИХОЕ обновление (правка/дублирование/смена коллекций), как в «Журнале»: старый список
-    /// остаётся на экране, пока строится новый, позиция сохраняется, выделение переживает
-    /// перезагрузку; к <paramref name="anchorRecord"/> (созданная/изменённая запись или последняя
-    /// копия) лента едет по центру, только если её строка сейчас не видна;
+    /// остается на экране, пока строится новый, позиция сохраняется, выделение переживает
+    /// перезагрузку; к <paramref name="anchorRecord"/> (созданная/измененная запись или последняя
+    /// копия) лента едет по центру, только если ее строка сейчас не видна;
     /// <paramref name="selectRecords"/> (копии после дублирования) ЗАМЕНЯЮТ старое выделение.
     /// </summary>
     public void LoadFrom(IReadOnlyList<(int dbId, ConstructorRepository repo, ISet<int>? active)> dbs,
@@ -186,14 +186,14 @@ public partial class ListView : UserControl
         // Порядок источников фиксируем по DbId — он же порядок конкатенации в виртуальном списке.
         var sorted = dbs.OrderBy(d => d.dbId).ToList();
 
-        // Кеш счётчиков дня: другой набор источников/активных коллекций — все записи кеша не о том.
+        // Кеш счетчиков дня: другой набор источников/активных коллекций — все записи кеша не о том.
         var sig = string.Join("|", sorted.Select(d =>
             $"{d.dbId}:{(d.active is null ? "*" : string.Join(",", d.active.OrderBy(x => x)))}"));
         if (sig != _dayCountsSig) { _dayCountsCache.Clear(); _dayCountsSig = sig; }
 
         // Дельта правит кеш точечно — по дню НАЧАЛА записи (в т.ч. чужих дней: перенос даты
         // правит и старый, и новый день). Делается ДО выбора пути загрузки: правка при активном
-        // поиске тоже меняет счётчики, хотя сама идёт пересборкой поиска.
+        // поиске тоже меняет счетчики, хотя сама идет пересборкой поиска.
         if (delta is { Count: > 0 })
             foreach (var (rec, d) in delta)
                 if (_dayCountsCache.TryGetValue(rec.StartDt.Date, out var c))
@@ -213,7 +213,7 @@ public partial class ListView : UserControl
         }
 
         // Пересборка БЕЗ дельты того же дня (смена коллекций, возврат в вид, внешняя правка):
-        // что изменилось — неизвестно, кеш счётчиков недействителен целиком.
+        // что изменилось — неизвестно, кеш счетчиков недействителен целиком.
         if (!fresh && delta is null) _dayCountsCache.Clear();
 
         if (fresh)
@@ -268,7 +268,7 @@ public partial class ListView : UserControl
             if (search.Length > 0)
             {
                 // Поиск — фоновым SQL по всему дню (LIKE на изолированных подключениях):
-                // счётчики не нужны, потолок «от начала» отсутствует — находит в любом месте дня.
+                // счетчики не нужны, потолок «от начала» отсутствует — находит в любом месте дня.
                 var found = new List<CalendarRecord>();
                 foreach (var (dbId, repo, active) in dbs)
                 {
@@ -281,7 +281,7 @@ public partial class ListView : UserControl
             }
             else
             {
-                // Счётчики дня — из кеша (визит дня уже был, дельты держали его актуальным);
+                // Счетчики дня — из кеша (визит дня уже был, дельты держали его актуальным);
                 // промах — фоновый COUNT по источникам с сохранением в кеш.
                 if (!_dayCountsCache.TryGetValue(dayStart, out var counts))
                 {
@@ -297,7 +297,7 @@ public partial class ListView : UserControl
         }
         catch
         {
-            // БД недоступна/повреждена — день показываем пустым (как ведёт себя Workspace.Mount).
+            // БД недоступна/повреждена — день показываем пустым (как ведет себя Workspace.Mount).
             if (gen == _loadGeneration) EmptyHint.Text = "Нет записей";
             return;
         }
@@ -310,9 +310,9 @@ public partial class ListView : UserControl
     }
 
     // Позиция после подмены списка (после отрисовки — нужен Extent): свежая загрузка — наверх;
-    // тихое обновление — остаёмся на месте, а к созданной/изменённой записи или последней копии
-    // едем (плавно, по центру окна), только если её строка сейчас не видна. В Offset-режиме
-    // гигантского дня позиция нереализованной строки без запроса неизвестна — остаёмся на месте.
+    // тихое обновление — остаемся на месте, а к созданной/измененной записи или последней копии
+    // едем (плавно, по центру окна), только если ее строка сейчас не видна. В Offset-режиме
+    // гигантского дня позиция нереализованной строки без запроса неизвестна — остаемся на месте.
     private void ApplyPosition(int gen, CalendarDayVirtualList list, bool fresh,
                                CalendarRecord? anchorRecord, double oldOffset)
     {
@@ -321,12 +321,12 @@ public partial class ListView : UserControl
             if (gen != _loadGeneration) return;
             if (fresh) { ListScroll.Offset = new Vector(0, 0); return; }
 
-            ListScroll.Offset = new Vector(0, oldOffset);   // по умолчанию остаёмся на месте
+            ListScroll.Offset = new Vector(0, oldOffset);   // по умолчанию остаемся на месте
             if (anchorRecord is not { Id: int rid }) return;
             if (list.RowOfEvent(anchorRecord.DbId, rid, anchorRecord.FieldId) is not int r) return;
 
-            // Хоть ЧАСТИЧНО видна — список не дёргаем (правка видимой записи не должна двигать
-            // экран, даже если её строка наполовину срезана краем); полностью вне — центрируем.
+            // Хоть ЧАСТИЧНО видна — список не дергаем (правка видимой записи не должна двигать
+            // экран, даже если ее строка наполовину срезана краем); полностью вне — центрируем.
             var y  = PadTop + r * RowHeight;
             var vh = ListScroll.Viewport.Height;
             if (y + RowHeight > ListScroll.Offset.Y && y < ListScroll.Offset.Y + vh) return;
@@ -391,7 +391,7 @@ public partial class ListView : UserControl
         }
     }
 
-    // Правый клик по событию: если оно ещё не выделено — выделяем его одно
+    // Правый клик по событию: если оно еще не выделено — выделяем его одно
     // (как в других режимах), чтобы меню действовало на видимо выделенное.
     private void OnEventPointerPressed(object? sender, PointerPressedEventArgs e)
     {
@@ -423,7 +423,7 @@ public partial class ListView : UserControl
         else
         {
             // «Редактировать»/«Дублировать»/«Удалить» выделение НЕ снимают: после сохранения/
-            // отмены запись остаётся подсвеченной — видно, какую строку меняли/удаляли
+            // отмены запись остается подсвеченной — видно, какую строку меняли/удаляли
             // (выделение переживает и перезагрузку — см. preserveSelection в LoadFrom).
             menu = SmartBase.Controls.Components.EventContextMenu.Single(
                 onEdit:      () => RecordClicked?.Invoke(this, item.OriginalEvent!),

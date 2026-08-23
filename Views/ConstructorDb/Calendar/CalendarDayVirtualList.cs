@@ -53,8 +53,8 @@ internal sealed class CalendarDayVirtualList : IList<EventListItem>, IList, INot
     private int _total;
     private readonly Dictionary<int, EventListItem[]> _pages = new();
     private readonly LinkedList<int> _lru = new();
-    private readonly HashSet<int> _needLoad = new();   // запрошены, но фон ещё не стартовал (ждут дебаунса)
-    private readonly HashSet<int> _pending  = new();   // фон в полёте (ждут заполнения)
+    private readonly HashSet<int> _needLoad = new();   // запрошены, но фон еще не стартовал (ждут дебаунса)
+    private readonly HashSet<int> _pending  = new();   // фон в полете (ждут заполнения)
     private readonly HashSet<int> _settled  = new();   // загрузка завершена — заглушки не перечитываем по кругу
     private readonly System.Threading.SemaphoreSlim _loadGate = new(4);
     private DispatcherTimer? _loadTimer;               // дебаунс: грузим после паузы скролла
@@ -125,8 +125,8 @@ internal sealed class CalendarDayVirtualList : IList<EventListItem>, IList, INot
         _total = _all.Count;
     }
 
-    // Грузит весь день сразу через пейджер (слияние по времени между БД); зовётся только
-    // при total ≤ MemCap, поэтому объём ограничен.
+    // Грузит весь день сразу через пейджер (слияние по времени между БД); зовется только
+    // при total ≤ MemCap, поэтому объем ограничен.
     private List<EventListItem> LoadAllInMemory(
         IReadOnlyList<(int dbId, ConstructorRepository repo, ISet<int>? active)> dbs,
         DateTime dayStart, DateTime dayEnd)
@@ -147,10 +147,10 @@ internal sealed class CalendarDayVirtualList : IList<EventListItem>, IList, INot
         return items;
     }
 
-    /// <summary>Индекс строки записи — для прокрутки к созданной/изменённой записи или последней
+    /// <summary>Индекс строки записи — для прокрутки к созданной/измененной записи или последней
     /// копии после дублирования. InMemory/Search — точный; Offset-режим гигантского дня — только
     /// если строка уже реализована (позиция глубокого события без запроса неизвестна — тогда
-    /// null, лента остаётся на месте).</summary>
+    /// null, лента остается на месте).</summary>
     public int? RowOfEvent(int dbId, int recId, int fieldId)
     {
         if (_all is not null)
@@ -249,8 +249,8 @@ internal sealed class CalendarDayVirtualList : IList<EventListItem>, IList, INot
         }
         removedIdx.Sort();
 
-        // Посекундная карта мультибазного дня строится ПРЯМО СЕЙЧАС — её состояние (до/после
-        // правки в БД) неизвестно, надёжнее пересборка.
+        // Посекундная карта мультибазного дня строится ПРЯМО СЕЙЧАС — ее состояние (до/после
+        // правки в БД) неизвестно, надежнее пересборка.
         if (_buckets is null && _bucketsTask is not null) return false;
 
         ++_generation;   // заливки страниц по СТАРЫМ позициям дальше не нужны
@@ -258,7 +258,7 @@ internal sealed class CalendarDayVirtualList : IList<EventListItem>, IList, INot
         // Карта секунд правится точечно (полная пересборка — секунды сканирования).
         if (_buckets is not null) AdjustBuckets(_buckets, removedIn, addedIn);
 
-        // Снимок заполненных строк → новые позиции: сдвиг на число удалённых ДО строки.
+        // Снимок заполненных строк → новые позиции: сдвиг на число удаленных ДО строки.
         var mapping = new SortedDictionary<int, EventListItem>();
         var removedKeys = removedIn.Select(Key).ToHashSet();
         foreach (var (page, rows) in _pages)
@@ -279,7 +279,7 @@ internal sealed class CalendarDayVirtualList : IList<EventListItem>, IList, INot
         //  2) дубль — СРАЗУ ПОСЛЕ последней строки с теми же временем и названием (копия
         //     видимой записи появляется прямо под ней, а не в конце группы одинаковых секунд;
         //     истинный порядок БД восстановится при следующем открытии дня);
-        //  3) иначе — позиция из БД (ранг в дне / в бакете её секунды — COUNT по индексу);
+        //  3) иначе — позиция из БД (ранг в дне / в бакете ее секунды — COUNT по индексу);
         //     таких вставок за раз не больше 8 — массовые быстрее пересборкой.
         var rankBudget = 8;
         foreach (var rec in addedIn.OrderBy(r => r.StartDt).ThenBy(r => r.Id ?? 0))
@@ -312,7 +312,7 @@ internal sealed class CalendarDayVirtualList : IList<EventListItem>, IList, INot
             total += 1;
         }
 
-        // Счётчики источников (нужны offset-срезам одиночного источника) и общий объём.
+        // Счетчики источников (нужны offset-срезам одиночного источника) и общий объем.
         foreach (var r in removedIn) _srcs![_srcIndexByDbId[r.DbId]].Count -= 1;
         foreach (var r in addedIn)   _srcs![_srcIndexByDbId[r.DbId]].Count += 1;
         var cum = 0;
@@ -322,7 +322,7 @@ internal sealed class CalendarDayVirtualList : IList<EventListItem>, IList, INot
         // Страницы заново из пересаженных строк: полные остаются как были; дыры (сдвиги на
         // границах кешированных диапазонов) дочитываются ПО ТРЕБОВАНИЮ — когда заглушка
         // реально показана (см. индексатор). Жадная перечитка всех дырявых страниц занимала
-        // фоновую очередь вне экрана, и страница у якоря ждала её секунды.
+        // фоновую очередь вне экрана, и страница у якоря ждала ее секунды.
         _pages.Clear(); _lru.Clear(); _needLoad.Clear(); _pending.Clear(); _settled.Clear();
         foreach (var group in mapping.GroupBy(kv => kv.Key / PageSize))
         {
@@ -435,7 +435,7 @@ internal sealed class CalendarDayVirtualList : IList<EventListItem>, IList, INot
     public IEnumerable<EventListItem> RealizedItems =>
         _all ?? _pages.Values.SelectMany(p => p);
 
-    // Создаёт страницу-заглушку «Загрузка…»; фактическую offset-загрузку откладываем дебаунсом.
+    // Создает страницу-заглушку «Загрузка…»; фактическую offset-загрузку откладываем дебаунсом.
     private EventListItem[] LoadPage(int page)
     {
         EvictOldestIfFull();
@@ -452,7 +452,7 @@ internal sealed class CalendarDayVirtualList : IList<EventListItem>, IList, INot
 
     // Дебаунс: грузим не сразу, а через паузу после последнего запроса страницы. При быстром
     // скролле промежуточные страницы успевают вытесниться из кеша и запрос не тратят — грузятся
-    // только «осевшие» видимые. Так видимая страница не ждёт за очередью «мусорных» загрузок.
+    // только «осевшие» видимые. Так видимая страница не ждет за очередью «мусорных» загрузок.
     private void ScheduleLoad()
     {
         if (_loadTimer is null)
@@ -484,7 +484,7 @@ internal sealed class CalendarDayVirtualList : IList<EventListItem>, IList, INot
     }
 
     // Курсор для keyset-продолжения: позиция ПОСЛЕ последней строки предыдущей (уже загруженной)
-    // страницы. null — предыдущей нет/ещё грузится (тогда страница берётся offset'ом).
+    // страницы. null — предыдущей нет/еще грузится (тогда страница берется offset'ом).
     private FwdCursor? SequentialCursor(int page)
     {
         if (page == 0) return null;
@@ -526,7 +526,7 @@ internal sealed class CalendarDayVirtualList : IList<EventListItem>, IList, INot
         }
     }
 
-    // Последовательное чтение вперёд от курсора в общем (конкатенация источников) порядке через
+    // Последовательное чтение вперед от курсора в общем (конкатенация источников) порядке через
     // keyset (O(страницы), не зависит от глубины). Порядок ИДЕНТИЧЕН offset-выборке (тот же ключ
     // (StartIso, RecordId, FieldId), те же фазы all-day→timed и порядок источников), поэтому
     // страницы keyset и offset стыкуются без дублей/пропусков.
@@ -579,7 +579,7 @@ internal sealed class CalendarDayVirtualList : IList<EventListItem>, IList, INot
         {
             if (remaining <= 0) break;
             var srcEnd = s.Cumulative + s.Count;
-            if (pos >= srcEnd) continue;            // окно ещё не дошло до источника
+            if (pos >= srcEnd) continue;            // окно еще не дошло до источника
             var localSkip = pos - s.Cumulative;
             if (localSkip < 0) break;               // разрыв (не должно быть при корректных суммах)
             var localTake = Math.Min(remaining, s.Count - localSkip);
@@ -595,8 +595,8 @@ internal sealed class CalendarDayVirtualList : IList<EventListItem>, IList, INot
     }
 
     // ── Мультибазный гигантский день: ПОСЕКУНДНАЯ карта (как «Журнал») ────────────
-    // Конкатенация источников ломала порядок времени между БД. Бакет = секунда: счётчики по
-    // источникам + префикс-суммы; события идут строго по секундам, конкатенация остаётся
+    // Конкатенация источников ломала порядок времени между БД. Бакет = секунда: счетчики по
+    // источникам + префикс-суммы; события идут строго по секундам, конкатенация остается
     // только внутри одной и той же секунды — визуально неотличимо от полного порядка.
 
     private sealed class SecondBucket
@@ -716,7 +716,7 @@ internal sealed class CalendarDayVirtualList : IList<EventListItem>, IList, INot
         return outp;
     }
 
-    // Точечная правка карты: счётчик секунды записи ± по её источнику, затем пересчёт
+    // Точечная правка карты: счетчик секунды записи ± по ее источнику, затем пересчет
     // префикс-сумм (полная пересборка карты стоила бы секунды сканирования).
     private void AdjustBuckets(List<SecondBucket> buckets,
                                List<CalendarRecord> removed, List<CalendarRecord> added)
@@ -752,8 +752,8 @@ internal sealed class CalendarDayVirtualList : IList<EventListItem>, IList, INot
         }
     }
 
-    // Глобальная позиция записи из БД: одна БД — ранг в дне; несколько — начало бакета её
-    // секунды + смещение источника внутри бакета + ранг в секундном окне (COUNT дёшев —
+    // Глобальная позиция записи из БД: одна БД — ранг в дне; несколько — начало бакета ее
+    // секунды + смещение источника внутри бакета + ранг в секундном окне (COUNT дешев —
     // окно в одну секунду).
     private async Task<int> RankOfAsync(CalendarRecord rec)
     {

@@ -24,15 +24,15 @@ internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollecti
     private readonly Dictionary<int, TableRowVm[]> _pages = [];
     private readonly LinkedList<int> _lru = new();
     // page → (Position, Id) последней/первой строки страницы: курсоры keyset-загрузки соседних
-    // страниц при последовательном скролле (конец предыдущей → вперёд; начало следующей → назад,
+    // страниц при последовательном скролле (конец предыдущей → вперед; начало следующей → назад,
     // скролл ВВЕРХ, в т.ч. после прыжка вглубь — иначе каждая страница вверх шла бы offset'ом
     // O(глубины)). Храним даже для вытесненных из _pages страниц (это всего пара int) —
-    // курсоры дёшевы и ускоряют скролл по глубине.
+    // курсоры дешевы и ускоряют скролл по глубине.
     private readonly Dictionary<int, (int Pos, int Id)> _pageEnd   = [];
     private readonly Dictionary<int, (int Pos, int Id)> _pageStart = [];
     // Страницы, ожидающие отложенного заполнения (показывают «Загрузка…»).
     private readonly HashSet<int> _pending = [];
-    // Поколение кеша: растёт при Reset; фоновые загрузки со старым поколением отбрасываются.
+    // Поколение кеша: растет при Reset; фоновые загрузки со старым поколением отбрасываются.
     private int _generation;
     // Ограничитель параллельных фоновых чтений (защита от всплеска при быстром драге скролла).
     private readonly System.Threading.SemaphoreSlim _loadGate = new(4);
@@ -57,7 +57,7 @@ internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollecti
     /// открытой панели «Страница записи».</summary>
     public event EventHandler<int>? RecordEdited;
 
-    // Подписать строку: её правки (из сеттера ячейки) ретранслируем наружу как RecordEdited.
+    // Подписать строку: ее правки (из сеттера ячейки) ретранслируем наружу как RecordEdited.
     // Заглушки «Загрузка…» тоже подписываем — после Fill это тот же экземпляр, подписка сохраняется.
     private TableRowVm Track(TableRowVm row)
     {
@@ -82,7 +82,7 @@ internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollecti
     }
 
     // Батч-префетч связей видимой страницы: по одному GetLinksBatch на каждое поле-связь вместо N
-    // точечных GetLinks (по строке). Только UI-поток (общий _repo) — зовём из путей наполнения строк.
+    // точечных GetLinks (по строке). Только UI-поток (общий _repo) — зовем из путей наполнения строк.
     private void PrimeRelationLinks(IReadOnlyList<int> recordIds)
     {
         if (_relLinks is null || _relationFieldIds.Length == 0 || recordIds.Count == 0) return;
@@ -105,7 +105,7 @@ internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollecti
     }
 
     /// <summary>
-    /// Загружает страницу: создаёт строки-заглушки «Загрузка…» и грузит данные в ФОНОВОМ потоке
+    /// Загружает страницу: создает строки-заглушки «Загрузка…» и грузит данные в ФОНОВОМ потоке
     /// (отдельное read-only подключение, WAL), затем на UI-потоке заполняет строки. UI-поток
     /// не трогает БД при скролле → ноль микроподвисаний даже при экстремально быстром скролле.
     /// </summary>
@@ -121,7 +121,7 @@ internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollecti
         return placeholders;
     }
 
-    // Создаёт страницу-заглушку «Загрузка…», кладёт в кеш и помечает ожидающей заполнения.
+    // Создает страницу-заглушку «Загрузка…», кладет в кеш и помечает ожидающей заполнения.
     private TableRowVm[] MakePlaceholders(int page, int skip, int take)
     {
         var ph = new TableRowVm[take];
@@ -166,12 +166,12 @@ internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollecti
         await _loadGate.WaitAsync();
         try
         {
-            if (gen != _generation) return;   // устарело ещё до старта (был Reset)
+            if (gen != _generation) return;   // устарело еще до старта (был Reset)
             // Пока задача ждала слот, пользователь мог проскроллить дальше и страницу вытеснили
             // из кеша (EvictOldestIfFull). Тогда не тратим слот/запрос — освобождаем гейт сразу,
             // чтобы быстрее дошла очередь до СТРАНИЦЫ, на которой пользователь остановился.
             // (Возврат на эту страницу запросит загрузку заново.) Чтение полей — на UI-потоке
-            // (продолжение после await идёт в захваченном контексте), гонки нет.
+            // (продолжение после await идет в захваченном контексте), гонки нет.
             if (!_pending.Contains(page) || !_pages.ContainsKey(page)) return;
             var data = await _repo.LoadPageAsync(_collectionId, _excludeHidden, idSlice, skip, take,
                                                  afterPos, afterId, beforePos, beforeId);
@@ -190,7 +190,7 @@ internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollecti
         }
     }
 
-    // Строит реальные строки из записей + их значений (тёплая пересборка страниц, RebuildPageSync).
+    // Строит реальные строки из записей + их значений (теплая пересборка страниц, RebuildPageSync).
     private TableRowVm[] BuildRows(int skip, List<DbRecord> records)
     {
         var ids     = records.Select(r => r.Id!.Value).ToList();
@@ -222,7 +222,7 @@ internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollecti
         if (!_pages.TryGetValue(page, out var rows)) return;    // вытеснена из кеша
 
         // Строки-заглушки заполняем реальными данными; на будущее (редактирование ячеек)
-        // отдаём ОСНОВНОЙ репозиторий — фоновый контекст использовался только для чтения.
+        // отдаем ОСНОВНОЙ репозиторий — фоновый контекст использовался только для чтения.
         PrimeRelationLinks(records.Select(r => r.Id!.Value).ToList());
         for (var i = 0; i < records.Count && i < rows.Length; i++)
         {
@@ -238,7 +238,7 @@ internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollecti
     }
 
     // Сохраняет (Position, Id) крайних строк страницы — курсоры keyset соседних страниц
-    // (конец → следующая вперёд, начало → предыдущая назад при скролле вверх).
+    // (конец → следующая вперед, начало → предыдущая назад при скролле вверх).
     private void RememberCursor(int page, List<DbRecord> records)
     {
         if (records.Count == 0) return;
@@ -254,7 +254,7 @@ internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollecti
         var oldest = _lru.First!.Value;
         _lru.RemoveFirst();
         _pages.Remove(oldest);
-        _pending.Remove(oldest);   // вытесненную страницу её фоновая загрузка пропустит (см. выше)
+        _pending.Remove(oldest);   // вытесненную страницу ее фоновая загрузка пропустит (см. выше)
     }
 
     /// <summary>Уведомить ВСЕ загруженные строки, что их ячейки надо перечитать — для правок,
@@ -275,7 +275,7 @@ internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollecti
         return null;
     }
 
-    /// <summary>Перечитывает данные ОДНОЙ записи и обновляет её строку НА МЕСТЕ (если она сейчас в
+    /// <summary>Перечитывает данные ОДНОЙ записи и обновляет ее строку НА МЕСТЕ (если она сейчас в
     /// кеше) — для точечного обновления после правки записи в правой панели, без пересоздания списка
     /// и мелькания «Загрузка…». Строки нет в кеше (прокручена) → ничего не делаем (загрузится свежей).</summary>
     public void RefreshRecord(int recordId)
@@ -295,14 +295,14 @@ internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollecti
     }
 
     /// <summary>Запись <paramref name="targetId"/> изменилась (напр., переименована в панели): строки,
-    /// чьи связи ССЫЛАЮТСЯ на неё, показывают устаревшее название из батч-кеша. Пере-праймим связи этих
+    /// чьи связи ССЫЛАЮТСЯ на нее, показывают устаревшее название из батч-кеша. Пере-праймим связи этих
     /// строк свежими названиями и уведомляем — их read-ячейки-связи перечитают показ. Точечно, без Reset
     /// и без мелькания «Загрузка…»; если на targetId никто из загруженных строк не ссылается — ничего.</summary>
     public void RefreshRelationTargets(int targetId)
     {
         if (_relLinks is null || _relationFieldIds.Length == 0) return;
 
-        // Ссылающиеся строки ищем по ТЕКУЩЕМУ кешу: id целей в нём верны, устарел лишь Title.
+        // Ссылающиеся строки ищем по ТЕКУЩЕМУ кешу: id целей в нем верны, устарел лишь Title.
         var referencing = new List<TableRowVm>();
         foreach (var rows in _pages.Values)
             foreach (var row in rows)
@@ -326,7 +326,7 @@ internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollecti
     {
         foreach (var page in _pages.Keys.ToList())
         {
-            if (_pending.Contains(page)) continue;                 // ещё грузится — придёт свежей
+            if (_pending.Contains(page)) continue;                 // еще грузится — придет свежей
             if (!_pages.TryGetValue(page, out var rows)) continue;
 
             var skip    = page * PageSize;
@@ -363,7 +363,7 @@ internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollecti
 
     /// <summary>Структурное обновление (создание/удаление/дубль записей): пересчитывает число строк и
     /// СИНХРОННО перестраивает уже загруженные страницы реальными данными (+ страницу 0 — после Reset
-    /// грид может прокрутиться в начало), затем шлёт Reset. Кеш остаётся ТЁПЛЫМ, поэтому грид
+    /// грид может прокрутиться в начало), затем шлет Reset. Кеш остается ТЕПЛЫМ, поэтому грид
     /// перерисовывается сразу из него, без заглушек «Загрузка…» — это и убирает мелькание. Применяется
     /// только в обычном режиме (без фильтра/сортировки — там список id пересобирает полный ReloadRows).</summary>
     public void RefreshStructural()
@@ -388,7 +388,7 @@ internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollecti
             new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Reset));
     }
 
-    // Перестраивает страницу реальными строками синхронно (offset по индексу) — для тёплого кеша.
+    // Перестраивает страницу реальными строками синхронно (offset по индексу) — для теплого кеша.
     private void RebuildPageSync(int page)
     {
         var skip = page * PageSize;

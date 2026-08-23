@@ -16,14 +16,14 @@ namespace SmartBase.Views.ConstructorDb;
 
 /// <summary>
 /// Правая панель «Страница записи» (Obsidian-стиль): свойства сверху + markdown снизу.
-/// Сохранение значений идёт сразу в БД при изменении (как в TableView).
+/// Сохранение значений идет сразу в БД при изменении (как в TableView).
 /// </summary>
 public partial class RecordPageView : UserControl
 {
     public event EventHandler<int>? RecordChanged;
     public event EventHandler<bool>? CollectionPanelToggled;
 
-    /// <summary>Клик по чипу поля-связи: открыть связанную запись (её Id; коллекция может быть
+    /// <summary>Клик по чипу поля-связи: открыть связанную запись (ее Id; коллекция может быть
     /// другой). Обрабатывает MainWindow → OpenRecordPanel (коллекция резолвится у самой записи).</summary>
     public event EventHandler<int>? RelatedRecordRequested;
 
@@ -36,8 +36,8 @@ public partial class RecordPageView : UserControl
     public event EventHandler? AddPropertyRequested;
 
     /// <summary>Клик по «Добавить описание» в крошке нижнего блока: завести полю коллекции
-    /// роль «Описание». Тот же путь наверх, что и у «Добавить свойство» — контроллер создаёт
-    /// поле, добавляет колонку в таблицу и шлёт FieldsChanged, по которому панель перечитывается
+    /// роль «Описание». Тот же путь наверх, что и у «Добавить свойство» — контроллер создает
+    /// поле, добавляет колонку в таблицу и шлет FieldsChanged, по которому панель перечитывается
     /// и открывает нижний блок уже на описании.</summary>
     public event EventHandler? AddDescriptionRequested;
 
@@ -45,17 +45,17 @@ public partial class RecordPageView : UserControl
     private ConstructorRepository? _repo;   // для перечитывания записи из БД (ReloadFromDb)
 
     // База ПОКАЗЫВАЕМОЙ записи (0 — активная). Панель может быть открыта межбазовым переходом, и тогда
-    // «текущая база» для неё и для приложения — РАЗНЫЕ. Без этого внутрибазовая связь чужой записи
+    // «текущая база» для нее и для приложения — РАЗНЫЕ. Без этого внутрибазовая связь чужой записи
     // уводила бы в активную базу (см. Navigate ниже).
     private int _dbId;
 
     // Гасит авто-сейв описания на время служебной установки текста (Show/ReloadFromDb), чтобы
     // программное MarkdownEditor.Text не приняли за правку пользователя (иначе перечитанное из БД
-    // значение тут же писалось бы обратно и дёргало таблицу). Имя гасит сам NavbarPage (SetTitle).
+    // значение тут же писалось бы обратно и дергало таблицу). Имя гасит сам NavbarPage (SetTitle).
     private bool _suppressAutoSave;
 
     // ── Нижний блок = редактор активного ТЕКСТОВОГО свойства ───────────────────
-    // Снизу виден один редактор (Markdown/обычный текст). Что он редактирует, задаёт
+    // Снизу виден один редактор (Markdown/обычный текст). Что он редактирует, задает
     // _bottomTarget: по умолчанию — поле с ролью «Описание», дальше выбор текстовой карточки
     // переключает цель. Нет ни одного текстового свойства (в т.ч. описания) — снизу пусто.
     // Не-текстовые карточки нижний блок не трогают.
@@ -98,7 +98,7 @@ public partial class RecordPageView : UserControl
         };
 
         // Живая запись активного текстового свойства по символу. Цель (поле «Описание» либо
-        // другое текстовое поле) задаёт _bottomTarget. Guard _suppressAutoSave — для служебной
+        // другое текстовое поле) задает _bottomTarget. Guard _suppressAutoSave — для служебной
         // установки текста. Параллельно синхронизируем инлайн-поле карточки той же цели.
         MarkdownEditor.TextChanged += (_, _) =>
         {
@@ -132,7 +132,7 @@ public partial class RecordPageView : UserControl
 
         // Новая запись — нижний блок по умолчанию на «Описании»; описания у коллекции нет —
         // снизу пусто, а в крошке снова видна ссылка + «Добавить описание» (выбор другого
-        // текстового свойства её прячет, но живёт он только до следующего открытия записи).
+        // текстового свойства ее прячет, но живет он только до следующего открытия записи).
         _bottomFieldId = null;
         RestoreBottom();
     }
@@ -155,7 +155,7 @@ public partial class RecordPageView : UserControl
         _vm = new RecordPageViewModel(_repo, recordId, collectionId);
         DataContext = _vm;
 
-        // Заголовок — только если он не в режиме редактирования (SetTitle сам не дёргает сохранение).
+        // Заголовок — только если он не в режиме редактирования (SetTitle сам не дергает сохранение).
         if (!HeaderBar.IsTitleEditing)
             HeaderBar.SetTitle(_vm.Title == "Без названия" ? "" : _vm.Title);
 
@@ -164,7 +164,7 @@ public partial class RecordPageView : UserControl
 
         FooterBar.IsPreview = preview;
 
-        // Возвращаем нижний блок на ту же цель (по id), если она ещё есть; иначе — «Описание».
+        // Возвращаем нижний блок на ту же цель (по id), если она еще есть; иначе — «Описание».
         // Текст не перечитываем, пока редактор в фокусе (не затереть набираемое).
         RestoreBottom();
     }
@@ -201,10 +201,10 @@ public partial class RecordPageView : UserControl
     // ── Перетаскивание ручки между свойствами и описанием ──────────────────────
     //
     // По умолчанию свойства и описание делят высоту поровну (обе строки 1*, 50/50);
-    // ручка-пилюля сидит на границе. Перетаскивание задаёт строке свойств пиксельную
+    // ручка-пилюля сидит на границе. Перетаскивание задает строке свойств пиксельную
     // высоту: тянем вниз — свойства растут (описание сжимается, оно в Star-строке),
     // тянем вверх — свойства сжимаются, и если их больше, чем влезает, ScrollViewer
-    // даёт прокрутку. Выбранная высота помнится в пределах сессии и переносится
+    // дает прокрутку. Выбранная высота помнится в пределах сессии и переносится
     // между записями (на диск не пишем — у разных записей разное число свойств).
 
     private bool    _propsGripDragging;
@@ -239,7 +239,7 @@ public partial class RecordPageView : UserControl
         if (!_propsGripDragging) return;
 
         var dy = e.GetPosition(this).Y - _propsGripStartY;
-        // Не даём свойствам съесть всё описание: оставляем ему запас (шапка+футер+минимум описания).
+        // Не даем свойствам съесть все описание: оставляем ему запас (шапка+футер+минимум описания).
         var max = Math.Max(PropsHeightMin, PageGrid.Bounds.Height - 260);
         var newHeight = Math.Clamp(_propsGripStartHeight + dy, PropsHeightMin, max);
 
@@ -255,7 +255,7 @@ public partial class RecordPageView : UserControl
     }
 
     // Общая ширина колонки названий (px) — делится всеми карточками; меняется
-    // перетаскиванием ручки-разделителя ⋮. Живёт в пределах сессии (переносится между записями).
+    // перетаскиванием ручки-разделителя ⋮. Живет в пределах сессии (переносится между записями).
     private readonly List<ColumnDefinition> _nameCols = new();
     private double _nameColWidth = 150;
     private const double NameColMin = 70;
@@ -274,7 +274,7 @@ public partial class RecordPageView : UserControl
         if (_vm is null) return;
 
         // Порядок строго как в таблице: VM уже отсортировала элементы по эффективной позиции
-        // колонки. «Описание» — обычное поле и идёт в этом же списке, отдельной карточки у него нет.
+        // колонки. «Описание» — обычное поле и идет в этом же списке, отдельной карточки у него нет.
         foreach (var item in _vm.OrderedItems)
         {
             switch (item)
@@ -284,7 +284,7 @@ public partial class RecordPageView : UserControl
         }
 
         // Цель нижнего блока по умолчанию — поле с ролью «Описание» (если оно есть и текстовое:
-        // после смены типа цели у него нет, и блок остаётся пустым, пока не выберут другое свойство).
+        // после смены типа цели у него нет, и блок остается пустым, пока не выберут другое свойство).
         _descTarget = _vm.DescriptionFieldId is int did && _fieldTargets.TryGetValue(did, out var dt)
             ? dt : null;
 
@@ -309,7 +309,7 @@ public partial class RecordPageView : UserControl
         };
         _nameCols.Add(grid.ColumnDefinitions[0]);
 
-        // Название: иконка (Auto) + подпись (*). Подпись в звёздной колонке ограничена шириной
+        // Название: иконка (Auto) + подпись (*). Подпись в звездной колонке ограничена шириной
         // колонки названий — при сужении ручкой ⋮ обрезается многоточием, не наезжая на значение.
         var nameRow = new Grid
         {
@@ -353,7 +353,7 @@ public partial class RecordPageView : UserControl
     }
 
     // Карточка свойства: иконка типа + название · ручка ⋮ · значение. Клик выделяет карточку
-    // (стиль выбранной строки сайдбара). Для типа «текст» — ещё и цель нижнего блока.
+    // (стиль выбранной строки сайдбара). Для типа «текст» — еще и цель нижнего блока.
     private Border BuildPropertyCard(PropertyRowVm row)
     {
         var input = MakeInputForField(row);
@@ -377,14 +377,14 @@ public partial class RecordPageView : UserControl
         }
 
         // Туннелем (до детей) — выделяем карточку и (для текстовых) открываем нижний блок;
-        // поле ввода при этом всё равно получает клик и фокус (событие не помечаем обработанным).
+        // поле ввода при этом все равно получает клик и фокус (событие не помечаем обработанным).
         card.AddHandler(InputElement.PointerPressedEvent, (_, _) => SelectCard(card, target),
                         RoutingStrategies.Tunnel);
         return card;
     }
 
     // Выделяем карточку всегда; нижний блок переключаем только на ТЕКСТОВУЮ цель —
-    // не-текстовые свойства его не трогают (остаётся как было).
+    // не-текстовые свойства его не трогают (остается как было).
     private void SelectCard(Border card, BottomTextTarget? target)
     {
         HighlightCard(card);
@@ -434,7 +434,7 @@ public partial class RecordPageView : UserControl
 
     // Ссылка «+ «Добавить описание»» — только пока поля с ролью «Описание» у коллекции нет и есть
     // право создавать свойства. Показывается вместо имени свойства, то есть лишь когда снизу
-    // пусто: стоит выбрать текстовую карточку — крошка занята её именем, и ссылка уходит до
+    // пусто: стоит выбрать текстовую карточку — крошка занята ее именем, и ссылка уходит до
     // следующего открытия записи. Клик уходит наверх (AddDescriptionRequested): поле заводит
     // контроллер, чтобы колонка появилась и в таблице.
     private Control? AddDescriptionLink()
@@ -442,7 +442,7 @@ public partial class RecordPageView : UserControl
         if (_vm is null || _vm.DescriptionFieldId is not null) return null;
         if (_repo?.Permissions is { } perms && !perms.Can(PermAction.CreateField, _vm.CollectionId)) return null;
 
-        // Плюс — часть самой подписи, а не иконка: один TextBlock, поэтому символ идёт
+        // Плюс — часть самой подписи, а не иконка: один TextBlock, поэтому символ идет
         // ровно в размер текста крошки и не требует отдельной подгонки.
         var link = new TextBlock
         {
@@ -461,7 +461,7 @@ public partial class RecordPageView : UserControl
         return link;
     }
 
-    // Вернуть нижний блок на ранее открытую цель (по id) после перестроения списка; если её
+    // Вернуть нижний блок на ранее открытую цель (по id) после перестроения списка; если ее
     // больше нет — на поле «Описание». Текст не перечитываем, пока пользователь печатает в редакторе.
     private void RestoreBottom()
     {
@@ -470,7 +470,7 @@ public partial class RecordPageView : UserControl
         if (target is null)
         {
             // Ни описания, ни другого текстового свойства — снизу пусто (редактор чистим, чтобы
-            // не показывать текст прошлой записи), в крошке остаётся «Добавить описание».
+            // не показывать текст прошлой записи), в крошке остается «Добавить описание».
             _bottomTarget  = null;
             _bottomFieldId = null;
             UpdateBottomHeader(null);
@@ -495,7 +495,7 @@ public partial class RecordPageView : UserControl
 
         if (target.Card is { } card) HighlightCard(card);
 
-        // Описание только что создали ссылкой в крошке — сразу отдаём каретку редактору,
+        // Описание только что создали ссылкой в крошке — сразу отдаем каретку редактору,
         // чтобы можно было писать, не кликая по блоку.
         if (_focusBottomAfterReload)
         {
@@ -538,7 +538,7 @@ public partial class RecordPageView : UserControl
     private Control BuildTypeIcon(DbField f) => BuildStrokeIcon(IconKeyFor(f), selectable: true);
 
     // Обводочная иконка 16×16 из реестра Icons.axaml. selectable=true → класс propicon,
-    // чтобы стиль выделенной карточки перекрашивал её в синий; иначе фиксированный серый.
+    // чтобы стиль выделенной карточки перекрашивал ее в синий; иначе фиксированный серый.
     private Control BuildStrokeIcon(string key, bool selectable)
     {
         var path = new Path
@@ -561,7 +561,7 @@ public partial class RecordPageView : UserControl
     }
 
     // Карточка «Добавить свойство»: [иконка «+» + подпись] · [ручка ⋮]. Та же 3-колоночная
-    // сетка, что и у свойств, поэтому её колонка названия входит в общий ресайз и сужается
+    // сетка, что и у свойств, поэтому ее колонка названия входит в общий ресайз и сужается
     // вместе со всеми. Клик (не по ручке) открывает редактор свойства; нажатие на ручку ⋮
     // OnColGripPressed помечает обработанным — до пузырькового OnAddPropertyClick, поэтому
     // перетаскивание ручки не открывает диалог, а меняет ширину.
@@ -570,7 +570,7 @@ public partial class RecordPageView : UserControl
         var card = BuildCardShell("addprop", BuildStrokeIcon("IconPlus", selectable: false),
                                   "Добавить свойство", selectableName: false, valueContent: null);
         // Пузырьком: нажатие на ручку ⋮ OnColGripPressed помечает обработанным раньше, поэтому
-        // перетаскивание ручки не открывает диалог, а меняет ширину; клик мимо ручки — создаёт поле.
+        // перетаскивание ручки не открывает диалог, а меняет ширину; клик мимо ручки — создает поле.
         card.PointerPressed += OnAddPropertyClick;
         return card;
     }
@@ -620,7 +620,7 @@ public partial class RecordPageView : UserControl
         if (!_colGripDragging) return;
 
         var dx  = e.GetPosition(this).X - _colGripStartX;
-        // Названиям не даём съесть всё значение: оставляем значению минимум места.
+        // Названиям не даем съесть все значение: оставляем значению минимум места.
         var max = Math.Max(NameColMin, PropertiesHost.Bounds.Width - 160);
         _nameColWidth = Math.Clamp(_colGripStartWidth + dx, NameColMin, max);
         foreach (var col in _nameCols)
@@ -641,7 +641,7 @@ public partial class RecordPageView : UserControl
     }
 
     // Сохранить значение свойства И сообщить наверх (RecordChanged) — чтобы таблица обновила ЭТУ
-    // строку точечно (RefreshRecordRow), а не перезагружалась целиком. Дёшево: одна строка на месте.
+    // строку точечно (RefreshRecordRow), а не перезагружалась целиком. Дешево: одна строка на месте.
     private void PersistProperty(PropertyRowVm row)
     {
         ApplyFileSideEffects(row.Persist());
@@ -670,10 +670,10 @@ public partial class RecordPageView : UserControl
 
     // Показ значения текстового свойства в карточке — ТОЛЬКО ПЕРВАЯ строка: остальные
     // не показываем вовсе. MaxLines=1 сам по себе не помогает — он ограничивает перенос
-    // по ширине, а явные переводы строк всё равно рисуются, и текст вылезает за карточку
+    // по ширине, а явные переводы строк все равно рисуются, и текст вылезает за карточку
     // фиксированной высоты (виден кусками, по-разному после каждой синхронизации).
-    // Усечённый показ править нельзя: правка записала бы первую строку поверх всего
-    // значения и стёрла остальные — поле становится read-only (обратную запись гасит и
+    // Усеченный показ править нельзя: правка записала бы первую строку поверх всего
+    // значения и стерла остальные — поле становится read-only (обратную запись гасит и
     // проверка IsReadOnly в его TextChanged), полный текст правится в нижнем блоке, он и
     // так открывается по клику на карточку. Однострочное значение правится инлайн, как раньше.
     private void ApplyInlineText(TextBox tb, string value)
@@ -702,7 +702,7 @@ public partial class RecordPageView : UserControl
         {
             var box = FlatValueBox(FieldTypeInfo.FormatComputedDisplay(row.Value, f.FieldType));
             box.IsReadOnly  = true;
-            box.Foreground  = (IBrush)this.FindResource("BrushSecondaryText")!;   // авто-значение — приглушённо
+            box.Foreground  = (IBrush)this.FindResource("BrushSecondaryText")!;   // авто-значение — приглушенно
             return box;
         }
 
@@ -734,8 +734,8 @@ public partial class RecordPageView : UserControl
             }
             case "date":
             {
-                // Тот же редактор, что и в таблице: хранит/отдаёт канон DateValue (диапазоны,
-                // дата+время, «весь день»). Flat — без собственной рамки (рамку даёт карточка).
+                // Тот же редактор, что и в таблице: хранит/отдает канон DateValue (диапазоны,
+                // дата+время, «весь день»). Flat — без собственной рамки (рамку дает карточка).
                 var editor = new DateEditor
                 {
                     HorizontalAlignment = HorizontalAlignment.Stretch,
@@ -752,7 +752,7 @@ public partial class RecordPageView : UserControl
             {
                 // Опции пользователей читаются при каждом построении поля: состав меняют
                 // соседи. Текущее значение добавляется к ним, даже если такого пользователя
-                // в базе уже нет, — историческое имя остаётся видимым и не затирается.
+                // в базе уже нет, — историческое имя остается видимым и не затирается.
                 var combo = new ComboBox
                 {
                     HorizontalAlignment = HorizontalAlignment.Stretch,
@@ -806,7 +806,7 @@ public partial class RecordPageView : UserControl
             case "file":
             {
                 // Тот же редактор, что и в таблице: путь к файлу, ссылка-открытие, ручной ввод +
-                // иконка-скрепка (системный выбор). Flat — без собственной рамки (её даёт карточка).
+                // иконка-скрепка (системный выбор). Flat — без собственной рамки (ее дает карточка).
                 var editor = new FileEditor
                 {
                     HorizontalAlignment = HorizontalAlignment.Stretch,
@@ -814,7 +814,7 @@ public partial class RecordPageView : UserControl
                     AutoFolder          = FileAutoRule.FromConfig(f.ConfigJson)?.Folder ?? "",   // read-only, если авто
                     Storage             = row.Value,
                 };
-                // Ручную правку сохраняем только в ручном режиме (в авто значения ведёт правило).
+                // Ручную правку сохраняем только в ручном режиме (в авто значения ведет правило).
                 editor.Changed += (_, _) => { row.Value = editor.Storage ?? ""; PersistProperty(row); };
                 if (f.Id is int ffid) _fileEditors[ffid] = editor;   // для мгновенного обновления при правке источника
                 input = editor;
@@ -823,7 +823,7 @@ public partial class RecordPageView : UserControl
             case "relation":
             {
                 // Названия связанных записей текстом + иконка-стрелка справа (чеклист выбора) — тот
-                // же контрол, что и в таблице, без рамки (её даёт карточка). «→» у пункта → переход.
+                // же контрол, что и в таблице, без рамки (ее дает карточка). «→» у пункта → переход.
                 var cfg = RelationConfig.FromConfig(f.ConfigJson);
                 if (cfg is null || _repo is null || f.Id is not int relFid)
                 {
@@ -859,7 +859,7 @@ public partial class RecordPageView : UserControl
                 {
                     if (_suppressBottomSync) return;   // программная установка из нижнего блока
                     // Значение многострочное — в поле лежит только первая строка (read-only):
-                    // писать её обратно нельзя, иначе остальные строки пропали бы. Проверка
+                    // писать ее обратно нельзя, иначе остальные строки пропали бы. Проверка
                     // дублирует guard выше: TextChanged приходит и после его снятия.
                     if (tb.IsReadOnly) return;
                     row.Value = tb.Text ?? "";
@@ -875,7 +875,7 @@ public partial class RecordPageView : UserControl
     }
 
     // Фильтр ввода числового поля (как в TableView): символ принимается только если итоговый
-    // текст остаётся допустимым (частичным) числом — цифры, один разделитель, ведущий минус.
+    // текст остается допустимым (частичным) числом — цифры, один разделитель, ведущий минус.
     private static void OnNumberTextInput(object? sender, TextInputEventArgs e)
     {
         if (sender is not TextBox tb || string.IsNullOrEmpty(e.Text)) return;
@@ -888,7 +888,7 @@ public partial class RecordPageView : UserControl
         if (!IsPartialNumber(prospective)) e.Handled = true;
     }
 
-    // Допускает незавершённый ввод: "", "-", "12", "12,", "-3.5".
+    // Допускает незавершенный ввод: "", "-", "12", "12,", "-3.5".
     private static bool IsPartialNumber(string s)
     {
         if (s.Length == 0) return true;

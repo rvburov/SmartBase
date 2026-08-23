@@ -4,7 +4,7 @@ using SmartBase.Core.Models;
 namespace SmartBase.Core.Exporters;
 
 /// <summary>
-/// Выгрузка ГОТОВЫХ строк в один CSV-файл: журнал изменений, диагностика — всё, что
+/// Выгрузка ГОТОВЫХ строк в один CSV-файл: журнал изменений, диагностика — все, что
 /// уже посчитано источником и не нуждается в планировщике коллекций (<see cref="ExportPlanner"/>).
 ///
 /// Пишет тем же <see cref="CsvTableWriter"/>, что экспорт коллекций: UTF-8 с BOM,
@@ -19,7 +19,7 @@ public static class CsvDump
 {
     /// <summary>
     /// Пишет файл и возвращает число записанных строк (без шапки).
-    /// <paramref name="onRow"/> зовётся после каждой строки — для прогресса; троттлинг
+    /// <paramref name="onRow"/> зовется после каждой строки — для прогресса; троттлинг
     /// на стороне UI. Отмена проверяется на каждой строке: страница читается за
     /// миллисекунды, реакция мгновенная.
     /// </summary>
@@ -31,7 +31,7 @@ public static class CsvDump
         // строго CreateNew (в экспорте коллекций имя уникализирует планировщик).
         if (File.Exists(path)) File.Delete(path);
 
-        // Все значения источник отдаёт уже отформатированными — тип «text» велит
+        // Все значения источник отдает уже отформатированными — тип «text» велит
         // писателю отдать их как есть, без дат/чекбоксов/мультиселектов.
         var columns = headers.Select(h => new ExportColumn(h, h, null, "text")).ToList();
 
@@ -45,8 +45,8 @@ public static class CsvDump
                 {
                     ct.ThrowIfCancellationRequested();
                     writer.WriteRow(row);
-                    // Счётчик — отдельной строкой: в «onRow?.Invoke(++written)» аргумент
-                    // не вычисляется, когда onRow == null (без прогресса счёт стоял бы на нуле).
+                    // Счетчик — отдельной строкой: в «onRow?.Invoke(++written)» аргумент
+                    // не вычисляется, когда onRow == null (без прогресса счет стоял бы на нуле).
                     written++;
                     onRow?.Invoke(written);
                 }

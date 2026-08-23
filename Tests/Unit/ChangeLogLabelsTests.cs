@@ -117,7 +117,7 @@ public sealed class ChangeLogLabelsTests
     }
 
     /// <summary>
-    /// Serilog пишет время без суффикса Z — оно всё равно UTC. Без AssumeUniversal
+    /// Serilog пишет время без суффикса Z — оно все равно UTC. Без AssumeUniversal
     /// строка разобралась бы как местная и в выгрузке поехала бы на часовой пояс.
     /// </summary>
     [Fact]

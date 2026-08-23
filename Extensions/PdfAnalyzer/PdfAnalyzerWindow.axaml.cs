@@ -12,9 +12,9 @@ using SmartBase.Controls.Dialogs;
 namespace SmartBase.Extensions.PdfAnalyzer;
 
 /// <summary>
-/// Окно расширения «Анализ PDF файлов» (в основном стиле приложения): папка с PDF, путь отчёта,
+/// Окно расширения «Анализ PDF файлов» (в основном стиле приложения): папка с PDF, путь отчета,
 /// тип выгрузки, опции поиска и «Запустить анализ». Логика — в <see cref="PdfAnalyzerEngine"/>;
-/// анализ идёт в фоне (<see cref="Task.Run"/>) с прогрессом по файлам и отменой при закрытии окна.
+/// анализ идет в фоне (<see cref="Task.Run"/>) с прогрессом по файлам и отменой при закрытии окна.
 /// </summary>
 public partial class PdfAnalyzerWindow : Window
 {
@@ -25,7 +25,7 @@ public partial class PdfAnalyzerWindow : Window
     public PdfAnalyzerWindow()
     {
         InitializeComponent();
-        PreserveCheck.IsEnabled = false;   // при включённом «рекурсивном» (по умолчанию) — недоступно
+        PreserveCheck.IsEnabled = false;   // при включенном «рекурсивном» (по умолчанию) — недоступно
         UpdateState();
     }
 

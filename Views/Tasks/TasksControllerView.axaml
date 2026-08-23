@@ -7,7 +7,7 @@
     <Grid RowDefinitions="Auto,*">
 
         <!-- Навбар: заголовок («Задачи» / открытая коллекция), поиск, вид. Линию под
-             навбаром не рисуем — её рисует MainWindow (как в календаре). -->
+             навбаром не рисуем — ее рисует MainWindow (как в календаре). -->
         <comp:NavbarTasks Grid.Row="0" x:Name="NavbarControl" />
 
         <Grid Grid.Row="1">

@@ -7,13 +7,13 @@ namespace SmartBase.Core.Exporters;
 public sealed record ExportTable(ExportCollectionRef Collection, string TableName);
 
 /// <summary>Единица экспорта: один файл. Обычно таблица одна; в режиме «все коллекции в один
-/// файл» (Excel) — лист на коллекцию. OpenWriter создаёт файл — вызывается лениво,
+/// файл» (Excel) — лист на коллекцию. OpenWriter создает файл — вызывается лениво,
 /// в начале обработки юнита (fail-fast прав/диска до чтения данных).</summary>
 public sealed record ExportUnit(string FilePath, IReadOnlyList<ExportTable> Tables, Func<ITableWriter> OpenWriter);
 
 /// <summary>
 /// Разворачивает заявку диалога в список юнитов «один файл — одна коллекция» (или один файл
-/// с листами при SingleFile). Здесь же — санитайз имён (в названиях коллекций допустимы
+/// с листами при SingleFile). Здесь же — санитайз имен (в названиях коллекций допустимы
 /// \/:*?"&lt;&gt;|) и уникализация путей «Имя (2).xlsx» против диска И между юнитами
 /// (коллекции разных БД могут совпадать по имени). Вызывать в фоне: трогает диск.
 /// Зеркало <see cref="Importers.ImportPlanner"/>.
@@ -79,7 +79,7 @@ public static class ExportPlanner
 
     // ── Имена ────────────────────────────────────────────────────────────────
 
-    /// <summary>Имена устройств Windows: файл «CON.csv» не создаётся/ведёт себя странно.</summary>
+    /// <summary>Имена устройств Windows: файл «CON.csv» не создается/ведет себя странно.</summary>
     private static readonly HashSet<string> ReservedNames = new(StringComparer.OrdinalIgnoreCase)
     {
         "CON", "PRN", "AUX", "NUL",
@@ -102,8 +102,8 @@ public static class ExportPlanner
         return ReservedNames.Contains(s) ? "_" + s : s;
     }
 
-    /// <summary>Символы, запрещённые в именах листов Excel ([]:*?/\), → «_»; апострофы по краям
-    /// срезаются (Excel не даёт), длина ≤31, пусто → «Лист1».</summary>
+    /// <summary>Символы, запрещенные в именах листов Excel ([]:*?/\), → «_»; апострофы по краям
+    /// срезаются (Excel не дает), длина ≤31, пусто → «Лист1».</summary>
     public static string SanitizeSheetName(string name)
     {
         var sb = new StringBuilder(name.Length);
@@ -129,7 +129,7 @@ public static class ExportPlanner
         }
     }
 
-    /// <summary>«Имя (2)», «Имя (3)»… — уникализация имён ЛИСТОВ между коллекциями одного
+    /// <summary>«Имя (2)», «Имя (3)»… — уникализация имен ЛИСТОВ между коллекциями одного
     /// файла (продолжения «Имя 2» при переполнении делает сам писатель).</summary>
     private static string UniqueSheetName(string baseName, HashSet<string> used)
     {

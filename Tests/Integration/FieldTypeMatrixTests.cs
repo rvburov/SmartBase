@@ -15,7 +15,7 @@ namespace SmartBase.Tests.Integration;
 public sealed class FieldTypeMatrixTests
 {
     // Пример значения каждого типа в том виде, как оно ложится в db_field_values
-    // (всё — строки: числа сырым вводом, даты — ISO-канон, checkbox — «1»/«0»).
+    // (все — строки: числа сырым вводом, даты — ISO-канон, checkbox — «1»/«0»).
     public static IEnumerable<object[]> TypeValues() =>
     [
         ["text",     "произвольный текст"],
@@ -122,7 +122,7 @@ public sealed class FieldTypeMatrixTests
         var col = SampleData.AddCollection(repo);
         var exec = SampleData.AddField(repo, col.Id!.Value, "Исполнитель", "user");
 
-        // Включение задач авто-создаёт «Назначил» (user) и «Статус» (новый тип status).
+        // Включение задач авто-создает «Назначил» (user) и «Статус» (новый тип status).
         repo.SetUserFieldTaskExec(exec.Id!.Value, true);
 
         var status = repo.GetFields(col.Id!.Value).Single(f => f.IsTaskStatus);
@@ -161,7 +161,7 @@ public sealed class FieldTypeMatrixTests
     }
 
     // Смена типа ЛЮБОГО поля на «файл» сохраняет значение (не очищает) — тогда ячейка показывает
-    // «имя — файл не найден» (значение не является существующим путём). Дата при этом приводится к
+    // «имя — файл не найден» (значение не является существующим путем). Дата при этом приводится к
     // человекочитаемому виду (как текст), остальные типы — как есть.
     [Theory]
     [InlineData("text",     "какой-то текст",             "какой-то текст")]
@@ -219,7 +219,7 @@ public sealed class FieldTypeMatrixTests
     [Theory]
     [InlineData("42,5", true)]    // запятая → точка (как ParseNum таблицы)
     [InlineData("42.5", true)]
-    [InlineData("abc",  false)]   // неразобранное — остаётся строкой
+    [InlineData("abc",  false)]   // неразобранное — остается строкой
     public void Number_parses_raw_input(string raw, bool ok) =>
         Assert.Equal(ok, WriterHelpers.TryNumber(raw, out _));
 }

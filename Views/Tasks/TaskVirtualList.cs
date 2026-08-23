@@ -8,7 +8,7 @@ namespace SmartBase.Views.Tasks;
 
 /// <summary>
 /// Виртуальный список раздела «Задачи»: строка = заголовок коллекции, карточка задачи или
-/// строка «+N ещё». Реализует <see cref="IList"/>, поэтому полоса прокрутки соответствует
+/// строка «+N еще». Реализует <see cref="IList"/>, поэтому полоса прокрутки соответствует
 /// ПОЛНОМУ числу задач всех отмеченных коллекций — прыгнуть можно в любое место, — а сами
 /// карточки не материализуются: список знает лишь РАЗМЕРЫ групп
 /// (<see cref="ConstructorRepository.GetTaskCollectionStats"/>, считаются в фоне до его
@@ -29,7 +29,7 @@ internal sealed class TaskVirtualList : IList<object>, IList, INotifyCollectionC
     private const int PageSize = 200;
     private const int MaxPages = 40;    // 40 × 200 = 8000 строк в кеше
 
-    /// <summary>Группа списка: коллекция, её размеры и место в плоской нумерации строк.</summary>
+    /// <summary>Группа списка: коллекция, ее размеры и место в плоской нумерации строк.</summary>
     internal sealed class Entry
     {
         public required TaskGroup Group;
@@ -60,14 +60,14 @@ internal sealed class TaskVirtualList : IList<object>, IList, INotifyCollectionC
     private int _generation;
 
     /// <summary>Выделение, пережившее перезагрузку: ключи задач, которые надо снова подсветить —
-    /// в том числе в карточках, которые ещё не приехали.</summary>
+    /// в том числе в карточках, которые еще не приехали.</summary>
     private readonly HashSet<TaskKey> _preselect;
 
     // Список НИКОГДА не меняет форму на месте: любая правка данных, сворачивание группы, поиск
     // или смена фильтра пересобирают его целиком и заново отдают в ItemsSource. Поэтому
     // INotifyCollectionChanged реализован пустышкой — интерфейс нужен только затем, чтобы
     // VirtualizingStackPanel вообще согласилась работать с источником как с виртуальным.
-    // Оживление заглушки идёт не через него, а привязками карточки (TaskCardVm.Fill).
+    // Оживление заглушки идет не через него, а привязками карточки (TaskCardVm.Fill).
     event NotifyCollectionChangedEventHandler? INotifyCollectionChanged.CollectionChanged
     {
         add { } remove { }
@@ -118,7 +118,7 @@ internal sealed class TaskVirtualList : IList<object>, IList, INotifyCollectionC
         set => throw new NotSupportedException();
     }
 
-    // Строки, которые СЕЙЧАС лежат в кеше страниц. Всё, что список может отдать выделению:
+    // Строки, которые СЕЙЧАС лежат в кеше страниц. Все, что список может отдать выделению:
     // задач за пределами кеша он не знает.
     private IEnumerable<object> RealizedItems => _pages.Values.SelectMany(p => p);
 
@@ -147,8 +147,8 @@ internal sealed class TaskVirtualList : IList<object>, IList, INotifyCollectionC
 
     // ── Страницы с фоновой загрузкой ─────────────────────────────────────────
 
-    // Заголовки и «+N ещё» строятся сразу (данных не нужно), карточки — заглушками до фоновой
-    // загрузки. Страница создаётся мгновенно и без единого запроса: прокрутка не ждёт БД.
+    // Заголовки и «+N еще» строятся сразу (данных не нужно), карточки — заглушками до фоновой
+    // загрузки. Страница создается мгновенно и без единого запроса: прокрутка не ждет БД.
     private object[] LoadPage(int page)
     {
         EvictOldestIfFull();
@@ -241,7 +241,7 @@ internal sealed class TaskVirtualList : IList<object>, IList, INotifyCollectionC
     }
 
     // Разбор страницы на куски по группам: (группа, номер первой карточки в ней, сколько, слот).
-    // Заголовки и «+N ещё» пропускаются — их страница уже содержит.
+    // Заголовки и «+N еще» пропускаются — их страница уже содержит.
     private List<(Entry Entry, int Local, int Take, int Slot)> Segments(int page)
     {
         var segs  = new List<(Entry, int, int, int)>();
@@ -254,7 +254,7 @@ internal sealed class TaskVirtualList : IList<object>, IList, INotifyCollectionC
             var (gi, kind, local) = _map.Resolve(start + k);
             if (gi < 0) break;
 
-            // Заголовок данных не ждёт — он готов сразу.
+            // Заголовок данных не ждет — он готов сразу.
             if (kind != TaskRowKind.Task) { k++; continue; }
 
             var e = _entries[gi];
@@ -279,7 +279,7 @@ internal sealed class TaskVirtualList : IList<object>, IList, INotifyCollectionC
             foreach (var t in part) t.DbId = e.Group.DbId;
             result.AddRange(part);
 
-            // Прочиталось меньше, чем просили: база изменилась между счётом и чтением.
+            // Прочиталось меньше, чем просили: база изменилась между счетом и чтением.
             // Дальше по этому куску идти незачем — оставшиеся слоты честнее оставить заглушками,
             // чем заполнить сдвинутыми строками.
             if (part.Count < n) break;
@@ -299,7 +299,7 @@ internal sealed class TaskVirtualList : IList<object>, IList, INotifyCollectionC
 
     // ── IList<T> / IList (нужны ItemsControl и VirtualizingStackPanel) ────────
     //
-    // IndexOf/Contains намеренно отвечают «нет»: панель зовёт их при пересборке, а честный
+    // IndexOf/Contains намеренно отвечают «нет»: панель зовет их при пересборке, а честный
     // ответ означал бы материализацию всего списка — ровно того, чего виртуализация и избегает.
 
     public IEnumerator<object> GetEnumerator() =>

@@ -138,7 +138,7 @@ public sealed class PgProviderTests
 
         Assert.NotEqual(0, movedId);
         Assert.Equal(15, m2.Constructor.CountRecords(movedId));
-        Assert.Equal(0, PgScalar(cs1, $"SELECT COUNT(*) FROM db_records WHERE collectionid = {srcColId}")); // источник удалён
+        Assert.Equal(0, PgScalar(cs1, $"SELECT COUNT(*) FROM db_records WHERE collectionid = {srcColId}")); // источник удален
     }
 
     [SkippableFact]
@@ -265,7 +265,7 @@ public sealed class PgProviderTests
     }
 
     /// <summary>
-    /// Раздел задач на PG: чтение идёт общим raw SQL (LEFT JOIN значения исполнителя + три
+    /// Раздел задач на PG: чтение идет общим raw SQL (LEFT JOIN значения исполнителя + три
     /// коррелированных подзапроса, флаги сравниваются с 1 — в PG они integer, см.
     /// <c>ApplyLowercaseNames</c>). Проверяем обе половины нового правила: запись с исполнителем
     /// и запись без него — в разделе должны быть обе.

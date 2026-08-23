@@ -24,7 +24,7 @@ namespace SmartBase.Views.ConstructorDb.Calendar;
 public partial class DiagramView : UserControl
 {
     // Размеры/веса шрифта — из токенов Typography.axaml (резолв ресурса в рантайме).
-    // Свежий размер из Application.Resources — меняется живьём при изменении FontScale.
+    // Свежий размер из Application.Resources — меняется живьем при изменении FontScale.
     private static double FontSizeBase =>
         (double)Application.Current!.FindResource("FontSizeBase")!;
     private static double FontSizeSmall =>
@@ -57,9 +57,9 @@ public partial class DiagramView : UserControl
     private const double EdgeHit    = 6;    // зона захвата ресайза по краям бара
     private const double LeftIndent = 24;   // отступ строк записей в левой панели
 
-    // Кэпы строк: сверх кэпа — серые строки «+N ещё»; смотреть всё — Расписание/Журнал
-    // (у них виртуализация). MaxRecordsPerCollection публичен: контроллер передаёт его
-    // загрузчику окна как cap чтения (репозиторий отдаёт не больше, чем вид нарисует).
+    // Кэпы строк: сверх кэпа — серые строки «+N еще»; смотреть все — Расписание/Журнал
+    // (у них виртуализация). MaxRecordsPerCollection публичен: контроллер передает его
+    // загрузчику окна как cap чтения (репозиторий отдает не больше, чем вид нарисует).
     public  const int MaxRecordsPerCollection = 200;
     private const int MaxTotalRows            = 1000;
 
@@ -118,19 +118,19 @@ public partial class DiagramView : UserControl
     private bool _hideEmptyGroups;   // при активном поиске пустые группы — шум
 
     // Точные агрегаты окна по коллекциям (фаза 2 контроллера): чтение окна обрезано
-    // cap'ом на коллекцию, поэтому счётчик, «+N ещё» и охват суммарного бара берутся
+    // cap'ом на коллекцию, поэтому счетчик, «+N еще» и охват суммарного бара берутся
     // отсюда; до прихода агрегатов (и при поиске) — от фактически доставленного.
     private IReadOnlyDictionary<(int DbId, int ColId), DiagramGroupStat>? _stats;
 
     private List<GroupRow> _groups = [];
-    // Свёрнутость групп переживает Refresh (пересборку), но не перезапуск приложения.
+    // Свернутость групп переживает Refresh (пересборку), но не перезапуск приложения.
     private readonly Dictionary<(int DbId, int ColId), bool> _collapsed = new();
 
     // Текущая ширина холста таймлайна — то, что реально осталось справа от левой панели
     // ПОСЛЕ полосы прокрутки. Обновляется из SizeChanged холста (см. конструктор).
     private double _timelineW;
 
-    // Геометрия последней сборки — для линии «сейчас» и пересчёта drag.
+    // Геометрия последней сборки — для линии «сейчас» и пересчета drag.
     private double _lastTimelineW;
     private double _lastBgH;
 
@@ -151,7 +151,7 @@ public partial class DiagramView : UserControl
     }
 
     // Плоский план строк: Ev == null && Note == null — строка группы;
-    // Ev != null — строка записи; Note != null — серая инфо-строка («+N ещё»).
+    // Ev != null — строка записи; Note != null — серая инфо-строка («+N еще»).
     private sealed class RowItem
     {
         public GroupRow        Group = null!;
@@ -180,7 +180,7 @@ public partial class DiagramView : UserControl
         public double Y;          // верх строки
         public double X1, X2;     // клампленная геометрия бара/круга
         public bool   IsDot;
-        public bool   ClipL, ClipR;   // край обрезан границей периода — ресайз с него запрещён
+        public bool   ClipL, ClipR;   // край обрезан границей периода — ресайз с него запрещен
         public EventVisual? Vis;
         public List<Control> Visuals = [];   // прячутся на время drag (виден только ghost)
     }
@@ -227,11 +227,11 @@ public partial class DiagramView : UserControl
         UpdateScaleButtons();
 
         // Пересборка — по ширине САМОГО холста таймлайна, а не окна: полоса прокрутки
-        // стоит отдельной колонкой и то появляется, то исчезает (ScrollBarLink прячет её,
+        // стоит отдельной колонкой и то появляется, то исчезает (ScrollBarLink прячет ее,
         // когда прокручивать нечего), поэтому доступная ширина меняется и без изменения
-        // размера окна. На высоту не реагируем: её задаёт число строк, и каждая пересборка
+        // размера окна. На высоту не реагируем: ее задает число строк, и каждая пересборка
         // вызывала бы следующую.
-        // Ширину запоминаем из аргументов события: Bounds холста в момент SizeChanged ещё
+        // Ширину запоминаем из аргументов события: Bounds холста в момент SizeChanged еще
         // старый (в DayView/WeekView по той же причине берут args.NewSize.Width).
         TimelinePane.SizeChanged += (_, e) =>
         {
@@ -270,7 +270,7 @@ public partial class DiagramView : UserControl
     {
         ScaleMinusBtn.IsEnabled = _scaleIdx > 0;
         ScalePlusBtn.IsEnabled  = _scaleIdx < Scales.Length - 1;
-        // Тултип называет масштаб, КУДА ведёт нажатие («Масштаб: 10 лет»).
+        // Тултип называет масштаб, КУДА ведет нажатие («Масштаб: 10 лет»).
         ToolTip.SetTip(ScaleMinusBtn, _scaleIdx > 0
             ? $"Масштаб: {Scales[_scaleIdx - 1].Label}" : null);
         ToolTip.SetTip(ScalePlusBtn, _scaleIdx < Scales.Length - 1
@@ -413,7 +413,7 @@ public partial class DiagramView : UserControl
             if (groupsShown > 0 && rows.Count + need > MaxTotalRows)
             {
                 var left = _groups.Count - groupsShown;
-                rows.Add(new RowItem { Group = g, Note = $"+{left} {Plural(left, "коллекция", "коллекции", "коллекций")} ещё" });
+                rows.Add(new RowItem { Group = g, Note = $"+{left} {Plural(left, "коллекция", "коллекции", "коллекций")} еще" });
                 break;
             }
 
@@ -424,7 +424,7 @@ public partial class DiagramView : UserControl
             for (var i = 0; i < shown; i++)
                 rows.Add(new RowItem { Group = g, Ev = g.Records[i] });
             if (g.Total > shown)
-                rows.Add(new RowItem { Group = g, Note = $"+{g.Total - shown} ещё" });
+                rows.Add(new RowItem { Group = g, Note = $"+{g.Total - shown} еще" });
         }
         return rows;
     }
@@ -463,7 +463,7 @@ public partial class DiagramView : UserControl
         var contentH = rows.Count * RowH;
         _lastBgH     = contentH;
 
-        // Явные высоты слоёв задают extent прокрутки; фон, линии дней и линия
+        // Явные высоты слоев задают extent прокрутки; фон, линии дней и линия
         // «сейчас» заканчиваются на последней строке, а не тянутся до низа окна.
         LeftRowsCanvas.Height = contentH;
         BgCanvas.Height       = contentH;
@@ -530,7 +530,7 @@ public partial class DiagramView : UserControl
     }
 
     // Шапка масштаба «год»: ячейки месяцев (границы — по реальному числу дней).
-    // Полное имя месяца, не влезло в ячейку — трёхбуквенное («Янв»). Текущий
+    // Полное имя месяца, не влезло в ячейку — трехбуквенное («Янв»). Текущий
     // месяц — синим и жирным, как «сегодня» в шапке Недели.
     private void BuildMonthHeader(double dayW)
     {
@@ -602,8 +602,8 @@ public partial class DiagramView : UserControl
         => s.Length == 0 ? s : char.ToUpper(s[0]) + s[1..];
 
     // Фон таймлайна: заливка выходных → тинты строк групп → линии дней → линии строк.
-    // Всё обрывается на последней строке (contentH), ниже — чистый фон.
-    // Линии — пустые Border с Aliased + LayoutRounding (защёлкиваются в целый пиксель,
+    // Все обрывается на последней строке (contentH), ниже — чистый фон.
+    // Линии — пустые Border с Aliased + LayoutRounding (защелкиваются в целый пиксель,
     // текста в поддереве нет — сглаживанию текста не мешают), см. docs/ui/theming.md.
     private void BuildBackground(List<RowItem> rows, double dayW, double timelineW, double contentH)
     {
@@ -689,7 +689,7 @@ public partial class DiagramView : UserControl
     {
         var color = DisplayColor(g.Color);
 
-        // Левая панель: шеврон + цветная точка + имя + счётчик. Клик — свернуть/развернуть.
+        // Левая панель: шеврон + цветная точка + имя + счетчик. Клик — свернуть/развернуть.
         var row = new Grid
         {
             Width      = LeftW,
@@ -780,7 +780,7 @@ public partial class DiagramView : UserControl
         // блок по ячейкам дней, однодневный охват — круг по центру ячейки; подпись —
         // суммарный охват дней И времени («30 минут», «1 день 3 часа 30 минут»).
         // Полностью all-day группа считается как all-day («N дней»/«24 часа»);
-        // в смешанной all-day-конец берётся концом суток, чтобы длительность не
+        // в смешанной all-day-конец берется концом суток, чтобы длительность не
         // засорялась хвостом «23 часа 59 минут».
         bool allDayGroup;
         DateTime spanStart, spanEnd;
@@ -801,7 +801,7 @@ public partial class DiagramView : UserControl
                 ? g.Records.Max(e => e.EndDt)
                 : g.Records.Max(e => e.AllDay ? e.EndDt.Date.AddDays(1) : e.EndDt);
         }
-        else return;   // счётчик есть, а строк и агрегатов нет — бар нарисует фаза 2
+        else return;   // счетчик есть, а строк и агрегатов нет — бар нарисует фаза 2
 
         RenderEventVisual(BarsCanvas, [], y, spanStart, spanEnd, allDayGroup,
                           color, dayW, timelineW);
@@ -920,7 +920,7 @@ public partial class DiagramView : UserControl
         var tw = label.DesiredSize.Width;
 
         // Подпись ВНЕ блока — в хосте высотой в строку: вертикальный центр считает
-        // layout по реальным метрикам шрифта (ручной расчёт от предварительного
+        // layout по реальным метрикам шрифта (ручной расчет от предварительного
         // Measure давал сдвиг — до подключения к дереву метрики немного другие).
         void AddOutside(double lx)
         {
@@ -1042,7 +1042,7 @@ public partial class DiagramView : UserControl
         var p     = e.GetPosition(TimelinePane);
         var props = e.GetCurrentPoint(TimelinePane).Properties;
 
-        // Правый клик: по невыделенной записи — выделить её одну (как в Месяце),
+        // Правый клик: по невыделенной записи — выделить ее одну (как в Месяце),
         // меню собирается по актуальному выделению и откроется на отпускании.
         if (props.IsRightButtonPressed)
         {
@@ -1067,7 +1067,7 @@ public partial class DiagramView : UserControl
         _pressClickCount = e.ClickCount;
         _pressModifiers  = e.KeyModifiers;
         _isDragging      = false;
-        // Узкий бар (короткое событие на годовом масштабе) не ресайзится: зоны краёв
+        // Узкий бар (короткое событие на годовом масштабе) не ресайзится: зоны краев
         // накрыли бы его целиком, не оставив места для переноса.
         var canResize = !hit.IsDot && hit.X2 - hit.X1 >= EdgeHit * 3;
         _resizeLeft  = canResize && !hit.ClipL && Math.Abs(p.X - hit.X1) <= EdgeHit;
@@ -1164,7 +1164,7 @@ public partial class DiagramView : UserControl
 
     private void CancelDrag()
     {
-        // Пересборка на живом drag: визуалы всё равно пересоздаются — только сбросить состояние.
+        // Пересборка на живом drag: визуалы все равно пересоздаются — только сбросить состояние.
         _pressEntry = null;
         _isDragging = false;
     }
@@ -1247,7 +1247,7 @@ public partial class DiagramView : UserControl
             e.Vis.BlockBg.Background = on
                 ? new SolidColorBrush(color)
                 : new SolidColorBrush(Color.FromArgb(50, color.R, color.G, color.B));
-            // Белый текст — только внутри залитого блока, подпись снаружи остаётся тёмной.
+            // Белый текст — только внутри залитого блока, подпись снаружи остается темной.
             if (e.Vis.LabelInside) e.Vis.Label.Foreground = on ? Brushes.White : new SolidColorBrush(ColorTools.Darken(color));
         }
     }
@@ -1274,7 +1274,7 @@ public partial class DiagramView : UserControl
     }
 
     // Ctrl+Shift+клик: выделить все записи между якорем и кликнутой включительно
-    // (строки групп и «+N ещё» пропускаются — их записей нет в хит-листе).
+    // (строки групп и «+N еще» пропускаются — их записей нет в хит-листе).
     private void SelectRange(BarEntry e)
     {
         if (_rangeAnchor is null || !_barEntries.Contains(_rangeAnchor)) { SelectOnly(e); return; }

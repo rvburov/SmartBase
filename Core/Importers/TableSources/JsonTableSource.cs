@@ -7,7 +7,7 @@ namespace SmartBase.Core.Importers.TableSources;
 /// раскладка определяется по первому значимому токену. Читается потоково (Utf8JsonReader поверх
 /// FileStream, буфер дозаполняется и дорастает по мере необходимости; одно значение больше 64 МБ —
 /// дружелюбная ошибка). Ключи объектов → свойства: объединение по всем записям в порядке первого
-/// появления. Название записи — ключ «Название», name или title (без учёта регистра), иначе первый
+/// появления. Название записи — ключ «Название», name или title (без учета регистра), иначе первый
 /// ключ первого объекта. Скаляры сохраняются текстом как в файле (числа/булевы — сырой токен),
 /// null → пусто, вложенные объекты/массивы → сырой JSON-текст.
 /// </summary>
@@ -81,7 +81,7 @@ public sealed class JsonTableSource(string path) : ITableSource
                                 rowCount - stats[titleKey].NonEmpty);
     }
 
-    // Приоритет ключа названия: «Название» → name → title (без учёта регистра, первый по порядку
+    // Приоритет ключа названия: «Название» → name → title (без учета регистра, первый по порядку
     // появления), иначе первый ключ первого объекта.
     private static string? PickTitleKey(List<string> keys, string? firstKey)
     {
@@ -128,8 +128,8 @@ public sealed class JsonTableSource(string path) : ITableSource
 
     // ── Потоковое чтение значений ─────────────────────────────────────────────
 
-    // Utf8JsonReader — ref struct и не переживает yield, поэтому на каждый шаг он пересоздаётся
-    // из сохранённого JsonReaderState + буфера. JsonDocument.TryParseValue при нехватке данных
+    // Utf8JsonReader — ref struct и не переживает yield, поэтому на каждый шаг он пересоздается
+    // из сохраненного JsonReaderState + буфера. JsonDocument.TryParseValue при нехватке данных
     // возвращает false и откатывает ридер — буфер дозаполняется (и дорастает под большое значение).
     private IEnumerable<JsonDocument> ReadValues(IProgress<double>? progress, CancellationToken ct)
     {
@@ -164,7 +164,7 @@ public sealed class JsonTableSource(string path) : ITableSource
         }
 
         static ImportException Broken() =>
-            new("Файл повреждён или имеет некорректную структуру JSON.");
+            new("Файл поврежден или имеет некорректную структуру JSON.");
 
         static bool WhitespaceOnly(byte[] buf, int start, int len)
         {
@@ -219,7 +219,7 @@ public sealed class JsonTableSource(string path) : ITableSource
                 try
                 {
                     // Сначала встать НА первый токен значения тем же ридером: TryParseValue по
-                    // возобновлённому состоянию принял бы «текущим» уже съеденный чужой токен
+                    // возобновленному состоянию принял бы «текущим» уже съеденный чужой токен
                     // (StartArray внешнего массива) и распарсил бы не тот диапазон.
                     if (r.Read() && JsonDocument.TryParseValue(ref r, out var doc))
                     {

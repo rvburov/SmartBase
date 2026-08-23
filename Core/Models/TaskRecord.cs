@@ -5,7 +5,7 @@ public class TaskRecord
     public int       DbId           { get; set; }   // владелец-БД (мульти-маунт); 0 = по умолчанию
     public int?      Id             { get; set; }
     // User-поле (IsTaskExec), из которого получена задача. Одна запись может давать несколько
-    // задач (по включённому полю-исполнителю), поэтому задача опознаётся парой (Id, ExecFieldId).
+    // задач (по включенному полю-исполнителю), поэтому задача опознается парой (Id, ExecFieldId).
     public int       ExecFieldId    { get; set; }
     public string    Title          { get; set; } = "";
     // Для показа — первая непустая строка названия (см. TitleText): карточка задачи

@@ -4,22 +4,22 @@ using Microsoft.EntityFrameworkCore;
 namespace SmartBase.Database;
 
 /// <summary>
-/// Возобновляемое выполнение тяжёлой миграции SchemaCompact (см.
-/// Migrations/20260718213811_SchemaCompact.cs — конечное состояние схемы задаёт ОНА,
+/// Возобновляемое выполнение тяжелой миграции SchemaCompact (см.
+/// Migrations/20260718213811_SchemaCompact.cs — конечное состояние схемы задает ОНА,
 /// здесь то же самое достигается порциями). Зачем: EF выполняет миграцию одной
 /// транзакцией — на больших базах (16 ГБ — десятки минут) выключение программы
-/// откатывало всё, и обновление каждый раз начиналось с нуля. Здесь каждая порция
+/// откатывало все, и обновление каждый раз начиналось с нуля. Здесь каждая порция
 /// (~200 тыс. строк, секунды) коммитится отдельно: выключение в любой момент теряет
 /// максимум последнюю порцию, при следующем запуске перекладка продолжается с места
 /// остановки (точка возобновления — хвост новой таблицы, читается мгновенно по PK).
 ///
 /// Конвейер — последовательность идемпотентных шагов, состояние определяется по самой
 /// схеме (какие таблицы существуют и в каком формате), отдельного файла состояния нет:
-///   1. слияние трёх таблиц колонок в column_meta (мелкий шаг, одна транзакция);
+///   1. слияние трех таблиц колонок в column_meta (мелкий шаг, одна транзакция);
 ///   2. db_field_values → WITHOUT ROWID: порционная перекладка + короткая атомарная
 ///      подмена (DROP + RENAME) + индекс;
 ///   3. calendar_index → WITHOUT ROWID: так же;
-///   4. отметка миграции применённой в __EFMigrationsHistory (паттерн моста
+///   4. отметка миграции примененной в __EFMigrationsHistory (паттерн моста
 ///      InitialCreate) + флаг отложенного сжатия.
 /// Прогресс честный: доля = переложено/всего, «осталось ≈ N мин» по скорости текущего
 /// сеанса; после перезапуска процент СРАЗУ показывает достигнутое место.
@@ -41,8 +41,8 @@ public sealed partial class DatabaseManager
             db.ApplyMigrationPragmas();
             var conn = db.Database.GetDbConnection();
 
-            // Одна монотонная шкала на всё обновление: под-этапам отведены сегменты общего
-            // прогресса (доли — по типичному соотношению объёмов работ), иначе процент
+            // Одна монотонная шкала на все обновление: под-этапам отведены сегменты общего
+            // прогресса (доли — по типичному соотношению объемов работ), иначе процент
             // «прыгал назад» на границах (копия 99% → индексы 6%) и выглядел сломанным.
             Action<string, double?> Seg(double from, double to) => (msg, frac) =>
                 stage?.Invoke(msg, frac is null ? null : from + Math.Clamp(frac.Value, 0, 1) * (to - from));
@@ -52,7 +52,7 @@ public sealed partial class DatabaseManager
             var segCalendarIndex = Seg(0.89, 0.99);
 
             // ── 1) column_meta: слить три таблицы колонок (строк немного — одна транзакция).
-            //     Наличие старых таблиц и есть признак «шаг ещё не сделан».
+            //     Наличие старых таблиц и есть признак «шаг еще не сделан».
             if (TableExists(conn, "column_order"))
                 Exec(conn, @"
                     BEGIN IMMEDIATE;
@@ -132,7 +132,7 @@ public sealed partial class DatabaseManager
                  "CREATE INDEX \"IX_calendar_index_CollectionId_AllDay_EndIso_StartIso_RecordId_FieldId\" ON \"calendar_index\" (\"CollectionId\", \"AllDay\", \"EndIso\", \"StartIso\", \"RecordId\", \"FieldId\");"));
 
             // ── 4) Готово: миграция достигнута порциями — фиксируем в истории EF (паттерн
-            //     моста InitialCreate), чистим счётчики, поднимаем флаг отложенного сжатия.
+            //     моста InitialCreate), чистим счетчики, поднимаем флаг отложенного сжатия.
             Exec(conn, $@"
                 BEGIN IMMEDIATE;
                 CREATE TABLE IF NOT EXISTS ""__EFMigrationsHistory"" (
@@ -165,23 +165,23 @@ public sealed partial class DatabaseManager
         var newTable = source + "_new";
         Exec(conn, createNewSql);
 
-        // Общий объём: считается один раз (скан индекса пары) и хранится в db_meta —
-        // после перезапуска процент восстанавливается без повторного пересчёта.
+        // Общий объем: считается один раз (скан индекса пары) и хранится в db_meta —
+        // после перезапуска процент восстанавливается без повторного пересчета.
         var total = ReadMetaLong(conn, totalKey);
         if (total is null)
         {
-            stage?.Invoke($"Обновление «{name}»\nмиграция данных · подсчёт объёма…", null);
+            stage?.Invoke($"Обновление «{name}»\nмиграция данных · подсчет объема…", null);
             total = Scalar(conn, $"SELECT COUNT(*) FROM \"{source}\";");
             Exec(conn, $"INSERT INTO db_meta (\"Key\", \"Value\") VALUES ('{totalKey}', '{total}') " +
                        $"ON CONFLICT(\"Key\") DO UPDATE SET \"Value\" = '{total}';");
         }
 
-        // Сколько уже переложено — хвост новой таблицы говорит и точку, и (через счётчик
-        // порций) объём; счётчик держим в памяти, а на старте сеанса берём COUNT новой
+        // Сколько уже переложено — хвост новой таблицы говорит и точку, и (через счетчик
+        // порций) объем; счетчик держим в памяти, а на старте сеанса берем COUNT новой
         // таблицы ТОЛЬКО если она непуста и мала… COUNT по WITHOUT ROWID — полный скан,
-        // на гигабайтах дорого, поэтому прогресс сеанса восстанавливаем дёшево: доля
+        // на гигабайтах дорого, поэтому прогресс сеанса восстанавливаем дешево: доля
         // = позиция ключа возобновления в старой таблице непредсказуема, но монотонна —
-        // используем счётчик done из db_meta, обновляемый в ОДНОЙ транзакции с порцией.
+        // используем счетчик done из db_meta, обновляемый в ОДНОЙ транзакции с порцией.
         var doneKey = totalKey.Replace(".total", ".done");
         var done    = ReadMetaLong(conn, doneKey) ?? 0;
 
@@ -251,9 +251,9 @@ public sealed partial class DatabaseManager
         }
     }
 
-    // Индексы новой таблицы. CREATE INDEX неделим (при выключении начнётся заново), но
+    // Индексы новой таблицы. CREATE INDEX неделим (при выключении начнется заново), но
     // это короткая часть работы; готовые индексы пропускаются — шаг идемпотентен.
-    // Прогресс — тем же гибридным счётчиком, что у EF-миграций (VM-шаги + рост журнала).
+    // Прогресс — тем же гибридным счетчиком, что у EF-миграций (VM-шаги + рост журнала).
     private static void CreateMissingIndexes(AppDbContext db, string path, string name,
         Action<string, double?>? stage, params (string IndexName, string Sql)[] indexes)
     {
@@ -324,7 +324,7 @@ public sealed partial class DatabaseManager
     private static bool TableExists(DbConnection conn, string table) =>
         Scalar(conn, $"SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='{table}';") > 0;
 
-    // Таблица ещё в старом (rowid) формате? Новый формат содержит WITHOUT ROWID в DDL.
+    // Таблица еще в старом (rowid) формате? Новый формат содержит WITHOUT ROWID в DDL.
     private static bool IsRowidTable(DbConnection conn, string table)
     {
         using var cmd = conn.CreateCommand();

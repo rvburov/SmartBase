@@ -45,7 +45,7 @@
                 </Viewbox>
             </Button>
 
-            <!-- Счётчик записей -->
+            <!-- Счетчик записей -->
             <TextBlock Grid.Column="2" x:Name="CountLabel"
                        Text="Всего: 0"
                        VerticalAlignment="Center"

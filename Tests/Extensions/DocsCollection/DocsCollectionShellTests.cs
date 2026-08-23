@@ -8,10 +8,10 @@ namespace SmartBase.Tests.Extensions.DocsCollection;
 /// <summary>
 /// Каркас коллекции — второй шаг расширения: коллекция, подпись системной колонки и три
 /// пользовательских поля. Делается на ОБЩЕМ репозитории в UI-потоке, поэтому здесь же
-/// проверяется точка отказа по правам: расширение не заводит своего права и живёт под
+/// проверяется точка отказа по правам: расширение не заводит своего права и живет под
 /// <see cref="PermAction.CreateCollection"/>.
 ///
-/// Состав и порядок колонок — часть договорённости с пользователем: он увидит именно такую
+/// Состав и порядок колонок — часть договоренности с пользователем: он увидит именно такую
 /// таблицу, и молчаливая смена набора полей ломает уже созданные коллекции.
 /// </summary>
 public sealed class DocsCollectionShellTests
@@ -56,7 +56,7 @@ public sealed class DocsCollectionShellTests
         var shell = DocsCollectionBuilder.CreateShell(db.Constructor, "Документы");
         var file  = db.Constructor.GetFields(shell.CollectionId).Single(f => f.Id == shell.FileFieldId);
 
-        // Конфиг остаётся дефолтным «{}» — правило из него не разбирается, значит поле
+        // Конфиг остается дефолтным «{}» — правило из него не разбирается, значит поле
         // в ручном режиме и путь пишет расширение.
         Assert.Null(FileAutoRule.FromConfig(file.ConfigJson));
     }
@@ -113,7 +113,7 @@ public sealed class DocsCollectionShellTests
     // ── Права ─────────────────────────────────────────────────────────────────
 
     /// <summary>Своего права расширение не заводит — создание каркаса упирается в общее
-    /// «Создавать коллекции». Проверка идёт настоящим путём: репозиторий сам зовёт Demand,
+    /// «Создавать коллекции». Проверка идет настоящим путем: репозиторий сам зовет Demand,
     /// расширение только ловит исключение и показывает причину в статусе окна.</summary>
     [Fact]
     public void Shell_creation_needs_the_create_collection_right()
@@ -151,7 +151,7 @@ public sealed class DocsCollectionShellTests
         Assert.DoesNotContain(db.Constructor.GetAllCollections(), c => c.Id == shell.CollectionId);
     }
 
-    // Уборка вызывается в catch — её собственная ошибка не должна перебивать исходную причину.
+    // Уборка вызывается в catch — ее собственная ошибка не должна перебивать исходную причину.
     [Fact]
     public void Try_delete_of_a_missing_collection_is_silent()
     {
@@ -161,7 +161,7 @@ public sealed class DocsCollectionShellTests
     }
 
     // Понижает текущего пользователя до допущенного не-админа с заданной маской на всю базу
-    // (тот же приём, что в матрице прав ядра: маски пишет только администратор).
+    // (тот же прием, что в матрице прав ядра: маски пишет только администратор).
     private static void SetRights(TempDatabase db, PermAction mask)
     {
         var me = db.Context.DbUsers.First(u => u.UserKey == CurrentUser.Key);
@@ -170,7 +170,7 @@ public sealed class DocsCollectionShellTests
         db.Permissions.Reload(notify: false);
         db.Permissions.SetMask(db.Permissions.CurrentUserId, null, (int)mask);
 
-        me.IsAdmin    = false;   // теперь маска действует: администратору можно всё
+        me.IsAdmin    = false;   // теперь маска действует: администратору можно все
         me.IsApproved = true;
         db.Context.SaveChanges();
         db.Permissions.Reload(notify: false);

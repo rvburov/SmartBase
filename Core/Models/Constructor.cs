@@ -55,7 +55,7 @@ public class DbRecord
     public string?  Color        { get; set; }
 
     // Для показа — первая непустая строка названия (см. TitleText); вид «Список» рисует
-    // название одной строкой карточки. Таблица берёт Title напрямую — у неё свои правила.
+    // название одной строкой карточки. Таблица берет Title напрямую — у нее свои правила.
     public string   DisplayTitle => TitleText.FirstLine(Title) is { Length: > 0 } line
                                         ? line : "Без названия";
 }

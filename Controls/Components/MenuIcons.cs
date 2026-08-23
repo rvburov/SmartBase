@@ -6,12 +6,12 @@ using Path = Avalonia.Controls.Shapes.Path;
 
 namespace SmartBase.Controls.Components;
 
-// Общие иконки и заголовки для контекстных меню (единый стиль во всём приложении).
+// Общие иконки и заголовки для контекстных меню (единый стиль во всем приложении).
 // Иконка — обводочная, в стандарте сайдбара: Viewbox 18×18 поверх сетки 24×24.
 public static class MenuIcons
 {
     // Геометрии иконок — из общего словаря Assets/Styles/Icons.axaml (единый
-    // источник на всё приложение). Ключ — x:Key соответствующей <StreamGeometry>.
+    // источник на все приложение). Ключ — x:Key соответствующей <StreamGeometry>.
     private static Geometry Icon(string key) =>
         Application.Current!.TryFindResource(key, out var res) && res is Geometry g
             ? g
@@ -39,7 +39,7 @@ public static class MenuIcons
 
     private static SolidColorBrush Red => new(Color.Parse("#FF3B30"));
 
-    // Стандартный цвет текста/иконки меню (BrushPrimaryText, fallback — чёрный).
+    // Стандартный цвет текста/иконки меню (BrushPrimaryText, fallback — черный).
     private static IBrush PrimaryText =>
         Application.Current!.TryFindResource("BrushPrimaryText", out var res) && res is IBrush b ? b : Brushes.Black;
 
@@ -131,11 +131,11 @@ public static class MenuIcons
     public static Control CreateRecordHeader() => Header(Plus, "Создать запись");
 
     // Заголовок пункта-переключателя режима ширины столбцов: иконка move-horizontal
-    // + текст. Текст задаёт вызывающий (показывает режим, в который переключит клик).
+    // + текст. Текст задает вызывающий (показывает режим, в который переключит клик).
     public static Control WidthModeHeader(string text) => Header(MoveHorizontal, text);
 
     // Заголовок пункта-переключателя режима высоты строк: иконка move-vertical + текст.
-    // Текст задаёт вызывающий (показывает режим, в который переключит клик).
+    // Текст задает вызывающий (показывает режим, в который переключит клик).
     public static Control HeightModeHeader(string text) => Header(MoveVertical, text);
 
     // Русская подпись типа поля — для шапки контекстного меню свойства (единый источник в Core).

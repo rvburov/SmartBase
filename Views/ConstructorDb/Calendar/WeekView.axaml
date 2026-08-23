@@ -17,7 +17,7 @@
 
         <!-- Заголовки дней недели — 72px пустой отступ + 7 равных колонок.
              Нижняя линия — отдельный separator (не бордер контейнера с текстом):
-             чёткая при любом зуме. -->
+             четкая при любом зуме. -->
         <Grid Grid.Row="0">
             <Grid ColumnDefinitions="72,*"
                   Background="{StaticResource BrushSecondaryBg}">
@@ -29,7 +29,7 @@
         <!-- AllDayBar -->
         <comp:AllDayBar Grid.Row="1" x:Name="AllDayBarCtrl" />
 
-        <!-- Прокручиваемая сетка событий. Своей полосы нет (Hidden) — её роль играет
+        <!-- Прокручиваемая сетка событий. Своей полосы нет (Hidden) — ее роль играет
              ScrollBar ниже, напротив сетки: полоса начинается у верхнего края своего
              блока, ниже блока «весь день» с его собственной полосой. -->
         <ScrollViewer Grid.Row="2" x:Name="TimeScroll"
@@ -76,7 +76,7 @@
                             <DataTemplate>
                                 <Grid Height="60" ClipToBounds="True">
                                     <!-- сплошная линия часа (скрыта для 00:00). EdgeMode=Aliased:
-                                         на дробных позициях (зум ≠ 1) линия защёлкивается в целый
+                                         на дробных позициях (зум ≠ 1) линия защелкивается в целый
                                          пиксель, а не размазывается. -->
                                     <Border BorderBrush="{StaticResource BrushSeparator}"
                                             BorderThickness="{Binding Converter={StaticResource HourBorderConv}}"
@@ -122,7 +122,7 @@
         </ScrollViewer>
 
         <!-- Дорожка во всю высоту колонки: полоса, которой нечего прокручивать, прячется
-             (ScrollBarLink), и без этой подложки на её месте была бы белая прореха.
+             (ScrollBarLink), и без этой подложки на ее месте была бы белая прореха.
              Объявлена ДО полос — они рисуются поверх. -->
         <Border Grid.Column="1" Grid.Row="0" Grid.RowSpan="3"
                 Background="{StaticResource BrushScrollbarTrack}" />

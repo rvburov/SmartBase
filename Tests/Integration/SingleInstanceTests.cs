@@ -4,7 +4,7 @@ namespace SmartBase.Tests.Integration;
 
 /// <summary>
 /// Единственный экземпляр на папку данных (нужен фоновому режиму): второй захват лока не
-/// удаётся, пока жив первый; освобождение лока даёт захватить снова; второй экземпляр умеет
+/// удается, пока жив первый; освобождение лока дает захватить снова; второй экземпляр умеет
 /// оставить сигнал «показать окно». На temp-папке — реальный лок-файл (FileShare.None).
 /// </summary>
 public sealed class SingleInstanceTests
@@ -30,7 +30,7 @@ public sealed class SingleInstanceTests
 
             first!.Dispose();
 
-            // Лок освобождён — снова можно стать единственным.
+            // Лок освобожден — снова можно стать единственным.
             var again = SingleInstance.TryAcquire(dir);
             Assert.NotNull(again);
             again!.Dispose();

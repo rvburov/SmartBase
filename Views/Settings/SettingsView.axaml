@@ -83,7 +83,7 @@
 
         <!-- Строка одной настройки. Линия под строкой — отдельный separator h ПОСЛЕ
              каждой строки (не бордер контейнера с текстом: отдельную линию можно
-             алиасить, она чёткая при любом зуме). -->
+             алиасить, она четкая при любом зуме). -->
         <Style Selector="Border.settingRow">
             <Setter Property="Padding" Value="0,16" />
         </Style>
@@ -96,7 +96,7 @@
             <Setter Property="TextWrapping" Value="Wrap" />
         </Style>
         <!-- Поле настройки расширения. Строки раздела «Расширения» собираются в code-behind
-             по IExtension.Settings, поэтому вид задаём стилем, а не атрибутами разметки —
+             по IExtension.Settings, поэтому вид задаем стилем, а не атрибутами разметки —
              как у поля пути обновления в «О программе». -->
         <Style Selector="Border.settingRow TextBox.extSetting">
             <Setter Property="Height"                   Value="{StaticResource ControlHeightStandard}" />
@@ -189,7 +189,7 @@
     </UserControl.Styles>
 
     <!-- В разделе «Диагностика» деталь строки открывается отдельной панелью во всю
-         высоту справа (Column 2) — её навбар «Детали» встаёт вровень с навбаром настроек
+         высоту справа (Column 2) — ее навбар «Детали» встает вровень с навбаром настроек
          (как навбар записи рядом с навбаром таблицы в конструкторе). Прочие разделы
          занимают всю ширину (Column 0). -->
     <Grid ColumnDefinitions="*,Auto,Auto">
@@ -241,7 +241,7 @@
                                 <TextBlock Classes="desc"
                                            Text="Запускать программу автоматически при входе в систему, чтобы напоминания приходили без ручного запуска. Доступно в установленном приложении." />
                                 <!-- Видна, только когда запись автозагрузки отключена средствами
-                                     системы (Диспетчер задач): тумблер включён, а старта нет. -->
+                                     системы (Диспетчер задач): тумблер включен, а старта нет. -->
                                 <TextBlock x:Name="AutostartHint" Classes="desc" IsVisible="False" />
                             </StackPanel>
                             <ToggleSwitch Grid.Column="1" x:Name="AutostartToggle"
@@ -288,7 +288,7 @@
 
                     <!-- ── Что открывается по умолчанию ────────────────────────
                          Пункты этих списков в разметке НЕ перечислены: их наполняет
-                         code-behind из ViewCatalog, причём только видимыми — вид, скрытый
+                         code-behind из ViewCatalog, причем только видимыми — вид, скрытый
                          соседней настройкой, не должен предлагаться как стартовый. -->
 
                     <Border Classes="settingRow">
@@ -454,7 +454,7 @@
                                         PointerMoved="OnScaleSliderMoved"
                                         PointerExited="OnScaleSliderExited" />
 
-                                <!-- Пузырёк со значением над ползунком: текущий масштаб в процентах. -->
+                                <!-- Пузырек со значением над ползунком: текущий масштаб в процентах. -->
                                 <Popup x:Name="ScaleValuePopup" InheritsTransform="True"
                                        PlacementTarget="{Binding #ScaleSlider}"
                                        Placement="Top" VerticalOffset="-6"
@@ -511,15 +511,15 @@
                                         PointerMoved="OnFontSliderMoved"
                                         PointerExited="OnFontSliderExited" />
 
-                                <!-- Пузырёк со значением над ползунком: показывает итоговый
+                                <!-- Пузырек со значением над ползунком: показывает итоговый
                                      базовый размер текста (стандарт ± дельта). -->
                                 <Popup x:Name="FontValuePopup" InheritsTransform="True"
                                        PlacementTarget="{Binding #FontSizeSlider}"
                                        Placement="Top" VerticalOffset="-6"
                                        IsLightDismissEnabled="False">
-                                    <!-- Плашка-индикатор постоянного размера (как пузырёк масштаба):
+                                    <!-- Плашка-индикатор постоянного размера (как пузырек масштаба):
                                          меняется только число. Размер текста пришпилен StaticResource —
-                                         иначе плашка росла бы вместе с применённым размером шрифта. -->
+                                         иначе плашка росла бы вместе с примененным размером шрифта. -->
                                     <Border x:Name="FontBadgeBorder"
                                             Background="{DynamicResource ToolTipBackground}"
                                             BorderBrush="{StaticResource BrushSeparator}"
@@ -555,7 +555,7 @@
                              обрывались, не доходя до края. -->
                         <ColumnDefinition Width="*" />
                     </Grid.ColumnDefinitions>
-                    <!-- Отступ сверху — как в «Оформлении»: его даёт Padding самих
+                    <!-- Отступ сверху — как в «Оформлении»: его дает Padding самих
                          settingRow-строк, у StackPanel верхнего отступа нет. -->
                     <StackPanel Margin="16,0,16,32">
 
@@ -676,7 +676,7 @@
                         <TextBlock x:Name="VersionText"
                                    Text="Версия 1.0.0"
                                    Foreground="{StaticResource BrushSecondaryText}" />
-                        <TextBlock Text="Локальная база данных с календарём и конструктором коллекций. Все данные хранятся на вашем устройстве — в локальных файлах базы данных."
+                        <TextBlock Text="Локальная база данных с календарем и конструктором коллекций. Все данные хранятся на вашем устройстве — в локальных файлах базы данных."
                                    Foreground="{StaticResource BrushSecondaryText}"
                                    TextWrapping="Wrap" MaxWidth="640"
                                    HorizontalAlignment="Left" />
@@ -708,7 +708,7 @@
                             </Grid>
                             <!-- Автообновление: тихая проверка папки при запуске приложения;
                                  при наличии новой версии — та же модалка «Обновить/Отмена».
-                                 Проверка идёт сразу: окно показано при любом старте, в том
+                                 Проверка идет сразу: окно показано при любом старте, в том
                                  числе из автозапуска — см. MainWindow. -->
                             <StackPanel Orientation="Horizontal" Spacing="10" Margin="0,2,0,0">
                                 <ToggleSwitch x:Name="AutoUpdateToggle"
@@ -724,7 +724,7 @@
                                 </StackPanel>
                             </StackPanel>
                             <!-- Результат проверки («доступна версия…»/«актуальная»/ошибка).
-                                 Сама загрузка идёт в отдельном ОКНЕ (ProgressDialog), не инлайн. -->
+                                 Сама загрузка идет в отдельном ОКНЕ (ProgressDialog), не инлайн. -->
                             <TextBlock x:Name="UpdateStatusText" Classes="desc"
                                        Text="" IsVisible="False" />
                         </StackPanel>
@@ -815,8 +815,8 @@
             Classes="separator v" IsVisible="False" />
 
     <!-- ── Содержание инструкции (во всю высоту) ────────────────────────────
-         Устроено как панель «Детали» журнала: навбар высотой 56 встаёт вровень с навбаром
-         настроек, своей линии под ним нет (её рисует общая линия окна на y=56 в MainWindow —
+         Устроено как панель «Детали» журнала: навбар высотой 56 встает вровень с навбаром
+         настроек, своей линии под ним нет (ее рисует общая линия окна на y=56 в MainWindow —
          вторая при зуме дала бы двойную). Пункты строятся в code-behind по заголовкам
          документов; ширина меняется ручкой GuideTocResizeGrip ниже. -->
     <Border Grid.Column="2" x:Name="GuideTocPanel"
@@ -832,8 +832,8 @@
                            TextTrimming="CharacterEllipsis" />
             </Grid>
 
-            <!-- Боковых отступов у хоста нет: подсветка пункта идёт во всю ширину панели,
-                 воздух даёт Padding самой строки (как в сайдбаре). -->
+            <!-- Боковых отступов у хоста нет: подсветка пункта идет во всю ширину панели,
+                 воздух дает Padding самой строки (как в сайдбаре). -->
             <ScrollViewer Grid.Row="1"
                           VerticalScrollBarVisibility="Auto"
                           HorizontalScrollBarVisibility="Disabled">
@@ -864,7 +864,7 @@
     </Border>
 
     <!-- ── Детали строки журнала (во всю высоту) ───────────────────────────
-         Навбар «Детали» встаёт вровень с навбаром настроек. Карточки полей сверху,
+         Навбар «Детали» встает вровень с навбаром настроек. Карточки полей сверху,
          полный текст снизу — как «Страница записи» (RecordPageView). Нижнюю границу
          навбара рисует общая линия окна на y=56 (MainWindow), своей линии под шапкой
          нет (иначе удвоение). Ширина — в code-behind (_logsDetailWidth), меняется
@@ -992,7 +992,7 @@
         </Grid>
     </Border>
 
-    <!-- Ручка перетягивания ширины панели «Детали» — вертикальная пилюля у её левого
+    <!-- Ручка перетягивания ширины панели «Детали» — вертикальная пилюля у ее левого
          края, плавает поверх разделителя (Margin -5), курсор ↔. Как ручка панели записи
          (RecordResizeGrip в MainWindow). Видна вместе с панелью; drag меняет ширину. -->
     <Border Grid.Column="2" x:Name="LogsDetailResizeGrip"

@@ -38,7 +38,7 @@
                        FontWeight="{StaticResource FontWeightBold}"
                        Foreground="{StaticResource BrushSecondaryText}" />
             <!-- Как в окне записи: показ везде — первая строка (TitleText), а здесь текст
-                 сохраняется обратно, поэтому поле растёт до трёх строк с прокруткой. -->
+                 сохраняется обратно, поэтому поле растет до трех строк с прокруткой. -->
             <TextBox x:Name="TitleBox"
                      Classes="multiline"
                      b:GrowingFieldAlign.CenterWhenSingleLine="True"

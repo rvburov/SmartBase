@@ -8,7 +8,7 @@ namespace SmartBase.Utils;
 /// Применяется как LayoutTransform: к корню MainWindow (окно слушает
 /// <see cref="ScaleChanged"/>), к остальным окнам (диалоги, расширения) — через
 /// <see cref="Controls.Behaviors.WindowZoom"/>, к попапам (меню, тултипы, выпадашки) — через ресурс
-/// приложения "AppZoomTransform" (DynamicResource у LayoutTransformControl-обёрток
+/// приложения "AppZoomTransform" (DynamicResource у LayoutTransformControl-оберток
 /// контента попапов). Диапазон/шаг/дефолт — в <see cref="AppSettings"/>
 /// (70…130 %, шаг 10 %, стандарт 100 %).
 /// </summary>
@@ -20,7 +20,7 @@ public static class Scaling
     /// <summary>Масштаб изменился — корню окна пора применить трансформацию.</summary>
     public static event Action<double>? ScaleChanged;
 
-    /// <summary>Старт: загрузить сохранённый масштаб. Вызывать до создания MainWindow.</summary>
+    /// <summary>Старт: загрузить сохраненный масштаб. Вызывать до создания MainWindow.</summary>
     public static void Load()
     {
         Current = AppSettings.LoadScale();
@@ -43,7 +43,7 @@ public static class Scaling
         return true;
     }
 
-    // Кладёт трансформ текущего зума в ресурсы приложения: все попап-обёртки
+    // Кладет трансформ текущего зума в ресурсы приложения: все попап-обертки
     // (LayoutTransformControl с DynamicResource "AppZoomTransform") обновляются разом.
     private static void PublishTransform()
     {

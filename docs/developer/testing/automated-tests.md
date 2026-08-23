@@ -12,7 +12,7 @@
 
 UI/ViewModels в охват сознательно не входят — тестируется логика, стоящая за интерфейсом.
 
-**Тесты расширений живут не здесь.** У них своё дерево `Tests/Extensions/<Имя>/` — по проекту на
+**Тесты расширений живут не здесь.** У них свое дерево `Tests/Extensions/<Имя>/` — по проекту на
 расширение, без единой связи с наборами ядра (в `Tests/Unit` и `Tests/Integration` не должно быть
 ни одного `using SmartBase.Extensions.*`, это проверяется шагом CI). Зачем так и как устроено —
 [extension-tests.md](extension-tests.md).
@@ -35,16 +35,16 @@ dotnet test Tests/Integration --collect:"XPlat Code Coverage"   # покрыти
 
 ## Структура
 
-Два тест-проекта, разделённых по характеру (скорость/зависимости):
+Два тест-проекта, разделенных по характеру (скорость/зависимости):
 
 | Проект | Что внутри |
 |--------|-----------|
-| **Tests/Unit** | Чистые юнит-тесты без БД и IO: `DateValueTests`, `CalendarRecordValidatorTests`, `PermissionsTests`, `PlannerTests`, `NotificationSchedulerTests` (ядро уведомлений), `NotificationSettingsTests` (дельты тумблера/метки), `AutostartTests` (построение записи автозапуска, «скрывать при закрытии?», дельты автозапуска/фона), `IconRegistryTests` (ключи иконок из C# существуют в `Assets/Styles/Icons.axaml` — опечатка в ключе иначе падает только при открытии экрана), `EtaEstimatorTests` (оценка оставшегося времени долгих операций), `ChangeLogLabelsTests` (подписи журнала и диагностики — общий источник для таблиц и выгрузки CSV), `TitleTextTests` (название для показа — одна строка, полное значение не тронуто), `TaskGroupingTests` (раскладка раздела задач по коллекциям: порядок групп «как в сайдбаре», ключ группы, индикатор выполненного) `TaskFiltersTests` (быстрые фильтры задач и их счётчики), `TaskFilterItemTests` (пункт фильтра: счётчик наблюдаемый — иначе свёрнутый бокс отстаёт от списка), `TaskSelectionTests` (выделение карточек задач: диапазон от якоря, ключ (база, запись, поле-исполнитель), переживание перезагрузки списка) и `SidebarChecksSettingsTests` (галочки коллекций в app.db: хранятся снятые, наборы календаря и задач раздельны, испорченное значение не роняет старт). Ноль внешних зависимостей, параллельные, миллисекунды. |
+| **Tests/Unit** | Чистые юнит-тесты без БД и IO: `DateValueTests`, `CalendarRecordValidatorTests`, `PermissionsTests`, `PlannerTests`, `NotificationSchedulerTests` (ядро уведомлений), `NotificationSettingsTests` (дельты тумблера/метки), `AutostartTests` (построение записи автозапуска, «скрывать при закрытии?», дельты автозапуска/фона), `IconRegistryTests` (ключи иконок из C# существуют в `Assets/Styles/Icons.axaml` — опечатка в ключе иначе падает только при открытии экрана), `EtaEstimatorTests` (оценка оставшегося времени долгих операций), `ChangeLogLabelsTests` (подписи журнала и диагностики — общий источник для таблиц и выгрузки CSV), `TitleTextTests` (название для показа — одна строка, полное значение не тронуто), `TaskGroupingTests` (раскладка раздела задач по коллекциям: порядок групп «как в сайдбаре», ключ группы, индикатор выполненного) `TaskFiltersTests` (быстрые фильтры задач и их счетчики), `TaskFilterItemTests` (пункт фильтра: счетчик наблюдаемый — иначе свернутый бокс отстает от списка), `TaskSelectionTests` (выделение карточек задач: диапазон от якоря, ключ (база, запись, поле-исполнитель), переживание перезагрузки списка) и `SidebarChecksSettingsTests` (галочки коллекций в app.db: хранятся снятые, наборы календаря и задач раздельны, испорченное значение не роняет старт). Ноль внешних зависимостей, параллельные, миллисекунды. |
 | **Tests/Integration** | На temp SQLite + PostgreSQL: CRUD (в т.ч. аудит-метаданные записи), `FieldTypeMatrixTests` (матрица типов свойств: round-trip / подпись / смена типа / user-дефолт), `KeysetPaginationTests`, `CalendarProjectionTests`, `ChangeLogTests`, `PermissionServiceTests` (допуск, роли, удаление пользователя,
 отметка активности), `PermissionMatrixTests` (матрица «право → операция»: каждый бит
-`PermAction` снимается по одному и обязан отбить именно своё действие),
-`PermissionMaskMigrationTests` (бэкфилл сохранённых масок при появлении нового бита,
-SQLite + PG), `CsvExportTests` (выгрузка журнала и диагностики в CSV: экранирование и BOM, фильтры, keyset без пропусков, отмена не оставляет обрезанный файл), `CrossMoveTests`, `ImportMatrixTests`/`ExportMatrixTests` (round-trip), `DescriptionFieldTests` (описание как обычное поле с ролью) и `DescriptionMigrationTests` (переезд описаний из колонки в поле, SQLite + PG), `RoleAdoptionTests` (подтягивание ролей по имени столбца) и `SectionSetupPlanTests` (план подготовки коллекции к разделу — что покажет окно перед созданием записи), `ContentionTests`, `PragmaTests`, `PgProviderTests`, `NotificationServiceTests` (служба уведомлений на календарной проекции), `SingleInstanceTests` (лок единственного экземпляра на temp-папке), `IntroSeedTests` (вводный чек-лист первого запуска: полнота задач, признак чистой установки, «завёлся один раз и после удаления не вернулся»). Здесь же обвязка: `TempDatabase` (SQLite через настоящий `DatabaseManager.Open`), `SampleData`, `ImportExport`, `FakeSettingsDatabase`, `PgTestServer`. Прогон **последовательный** (см. ниже). |
+`PermAction` снимается по одному и обязан отбить именно свое действие),
+`PermissionMaskMigrationTests` (бэкфилл сохраненных масок при появлении нового бита,
+SQLite + PG), `CsvExportTests` (выгрузка журнала и диагностики в CSV: экранирование и BOM, фильтры, keyset без пропусков, отмена не оставляет обрезанный файл), `CrossMoveTests`, `ImportMatrixTests`/`ExportMatrixTests` (round-trip), `DescriptionFieldTests` (описание как обычное поле с ролью) и `DescriptionMigrationTests` (переезд описаний из колонки в поле, SQLite + PG), `RoleAdoptionTests` (подтягивание ролей по имени столбца) и `SectionSetupPlanTests` (план подготовки коллекции к разделу — что покажет окно перед созданием записи), `ContentionTests`, `PragmaTests`, `PgProviderTests`, `NotificationServiceTests` (служба уведомлений на календарной проекции), `SingleInstanceTests` (лок единственного экземпляра на temp-папке), `IntroSeedTests` (вводный чек-лист первого запуска: полнота задач, признак чистой установки, «завелся один раз и после удаления не вернулся»). Здесь же обвязка: `TempDatabase` (SQLite через настоящий `DatabaseManager.Open`), `SampleData`, `ImportExport`, `FakeSettingsDatabase`, `PgTestServer`. Прогон **последовательный** (см. ниже). |
 
 Ключевые принципы обвязки:
 
@@ -54,12 +54,12 @@ SQLite + PG), `CsvExportTests` (выгрузка журнала и диагно�
 - **Оба набора гоняются последовательно** (`[assembly: CollectionBehavior(DisableTestParallelization = true)]`
   в `AssemblyInfo.cs` каждого проекта). Integration — потому что `ClearAllPools` процесс-глобальна
   и при параллельных тестах задевала бы чужие подключения. Unit — потому что
-  `AppSettings.AttachStore` кладёт хранилище настроек в статическое поле, одно на процесс:
+  `AppSettings.AttachStore` кладет хранилище настроек в статическое поле, одно на процесс:
   параллельные классы подменяли его друг другу между Attach и проверкой. Полный прогон Unit —
   порядка сотни миллисекунд, так что последовательность ничего не стоит.
 - **Настоящий путь инициализации.** База поднимается через `DatabaseManager.Open` — те же
   миграции, прагмы, сиды и регистрация текущего пользователя администратором, что и в
-  приложении. Поэтому тесты идут ровно тем же кодом, а не его тестовым дублёром.
+  приложении. Поэтому тесты идут ровно тем же кодом, а не его тестовым дублером.
 - **Импорт/экспорт** вызывают ровно те методы, что и UI:
   `ImportPlanner.Plan → ITableSource.Analyze → ReadRows → ImportStreamedCollectionIsolated`
   и `ExportPlanner.Plan → GetExportColumnsIsolated → ReadExportRowsIsolated → ITableWriter`.
@@ -69,7 +69,7 @@ SQLite + PG), `CsvExportTests` (выгрузка журнала и диагно�
 ## PostgreSQL
 
 Тесты `PgProviderTests` — `[SkippableFact]`: без поднятого стенда они помечаются **Skipped**,
-а не падают, поэтому локально и в CI без Docker набор остаётся зелёным. Стенд —
+а не падают, поэтому локально и в CI без Docker набор остается зеленым. Стенд —
 docker-контейнер `sb-pg` (порт **5455**), как в
 [../guides/postgresql-setup.md](../guides/postgresql-setup.md); нужны базы `smartbase` и `smartbase2`:
 

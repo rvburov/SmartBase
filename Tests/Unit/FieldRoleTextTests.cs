@@ -24,7 +24,7 @@ public sealed class FieldRoleTextTests
             IsTaskStatus = status, IsDescription = description,
         };
 
-    // ── Роль работает только на своём типе ────────────────────────────────────
+    // ── Роль работает только на своем типе ────────────────────────────────────
 
     [Fact]
     public void Role_on_a_wrong_type_is_not_announced()
@@ -50,7 +50,7 @@ public sealed class FieldRoleTextTests
         var status = Field("status", status: true);
 
         // Исполнителя в коллекции нет — раздел не покажет ни одной записи, и «Статус» читать
-        // некому. Флаг при этом остаётся: вернули исполнителя — привязка ожила сама.
+        // некому. Флаг при этом остается: вернули исполнителя — привязка ожила сама.
         Assert.Null(FieldRoleText.Binding(status, hasTasks: false));
         Assert.NotNull(FieldRoleText.Binding(status, hasTasks: true));
 
@@ -99,7 +99,7 @@ public sealed class FieldRoleTextTests
     public void Type_change_impact_reads_like_deletion_except_for_description()
     {
         // Столбец удалили — тексты уходят вместе с ним; тип сменили — тексты на месте,
-        // просто раздел перестаёт их читать. Формулировки обязаны различаться.
+        // просто раздел перестает их читать. Формулировки обязаны различаться.
         Assert.Equal("тексты описаний удалятся вместе со столбцом",
                      FieldRoleText.DeletionImpact(Field("text", description: true)));
         Assert.Equal("описания перестанут показываться в календаре и задачах",

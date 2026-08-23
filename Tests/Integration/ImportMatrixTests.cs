@@ -9,7 +9,7 @@ namespace SmartBase.Tests.Integration;
 /// <summary>
 /// Функциональная матрица импорта (перенос Tests/ImportPerf): CSV в разных кодировках,
 /// JSON/NDJSON, XLSX (скрытые строки/столбцы/листы, ручной режим, исключения), режим папки,
-/// отмена, уникализация имени и дружелюбные ошибки. Идёт тем же конвейером, что и приложение.
+/// отмена, уникализация имени и дружелюбные ошибки. Идет тем же конвейером, что и приложение.
 /// </summary>
 public sealed class ImportMatrixTests
 {
@@ -324,7 +324,7 @@ public sealed class ImportMatrixTests
         Assert.DoesNotContain("X", IE.AllCollectionNames(db.Path));
     }
 
-    // Дёргает Cancel после n-й строки источника — детерминированная отмена посреди импорта.
+    // Дергает Cancel после n-й строки источника — детерминированная отмена посреди импорта.
     private static IEnumerable<ImportRow> CancelAfter(IEnumerable<ImportRow> rows, int n, CancellationTokenSource cts)
     {
         var i = 0;

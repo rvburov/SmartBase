@@ -8,7 +8,7 @@ namespace SmartBase.Tests.Unit;
 /// контекстное меню и Delete.
 ///
 /// Правила те же, что в календаре: обычный клик выделяет одну, Shift+клик добавляет/снимает,
-/// Ctrl+Shift+клик берёт диапазон от последней выделенной. Список перечитывается на каждый
+/// Ctrl+Shift+клик берет диапазон от последней выделенной. Список перечитывается на каждый
 /// символ поиска и после любой правки, поэтому выделение хранится ключами задач, а не
 /// индексами строк, и чистится от того, чего в наборе больше нет.
 /// </summary>
@@ -107,7 +107,7 @@ public sealed class TaskSelectionTests
         Assert.Equal(0, sel.Count);
     }
 
-    // Якорь ушёл из набора (сузили поиск) — диапазон не от чего считать.
+    // Якорь ушел из набора (сузили поиск) — диапазон не от чего считать.
     [Fact]
     public void Range_is_refused_when_the_anchor_left_the_list()
     {
@@ -170,7 +170,7 @@ public sealed class TaskSelectionTests
         Assert.False(sel.Contains(second));
     }
 
-    // Запись с двумя полями-исполнителями даёт две карточки — выделяются они порознь.
+    // Запись с двумя полями-исполнителями дает две карточки — выделяются они порознь.
     [Fact]
     public void Two_executor_fields_of_one_record_select_separately()
     {
@@ -183,7 +183,7 @@ public sealed class TaskSelectionTests
         Assert.False(sel.Contains(bySecond));
     }
 
-    // Несохранённая задача (без Id) ключа не имеет — выделять нечего.
+    // Несохраненная задача (без Id) ключа не имеет — выделять нечего.
     [Fact]
     public void Task_without_id_is_never_selected()
     {

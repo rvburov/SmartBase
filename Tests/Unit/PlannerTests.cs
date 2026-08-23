@@ -5,7 +5,7 @@ namespace SmartBase.Tests.Unit;
 
 /// <summary>
 /// Чистая логика планировщиков импорта/экспорта: распознавание форматов по расширению,
-/// санитайз имён файлов/листов и уникализация путей.
+/// санитайз имен файлов/листов и уникализация путей.
 /// </summary>
 public sealed class PlannerTests
 {
@@ -61,7 +61,7 @@ public sealed class PlannerTests
         Assert.Equal(expected, ExportPlanner.IsExcel(format));
     }
 
-    // ── ExportPlanner: санитайз имён ────────────────────────────────────────────
+    // ── ExportPlanner: санитайз имен ────────────────────────────────────────────
 
     [Fact]
     public void SanitizeFileName_replaces_invalid_and_trims()
@@ -108,11 +108,11 @@ public sealed class PlannerTests
         using var dir = new TempDir();
         var taken = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        var first  = ExportPlanner.UniquePath(dir.Path, "Отчёт", ".csv", taken);
-        var second = ExportPlanner.UniquePath(dir.Path, "Отчёт", ".csv", taken);
+        var first  = ExportPlanner.UniquePath(dir.Path, "Отчет", ".csv", taken);
+        var second = ExportPlanner.UniquePath(dir.Path, "Отчет", ".csv", taken);
 
-        Assert.Equal(Path.Combine(dir.Path, "Отчёт.csv"), first);
-        Assert.Equal(Path.Combine(dir.Path, "Отчёт (2).csv"), second);
+        Assert.Equal(Path.Combine(dir.Path, "Отчет.csv"), first);
+        Assert.Equal(Path.Combine(dir.Path, "Отчет (2).csv"), second);
     }
 
     [Fact]

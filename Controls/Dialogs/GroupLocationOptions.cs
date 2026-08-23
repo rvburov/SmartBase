@@ -2,8 +2,8 @@ using SmartBase.Core.Models;
 
 namespace SmartBase.Controls.Dialogs;
 
-// Построение вариантов выпадающего списка «Расположение» с полным путём вложенности
-// групп — «1», «1 / 1», «1 (копия) / 2» … — чтобы одноимённые группы на разных
+// Построение вариантов выпадающего списка «Расположение» с полным путем вложенности
+// групп — «1», «1 / 1», «1 (копия) / 2» … — чтобы одноименные группы на разных
 // уровнях были различимы.
 internal static class GroupLocationOptions
 {
@@ -26,7 +26,7 @@ internal static class GroupLocationOptions
             foreach (var g in byParent[parentId])
             {
                 if (g.Id is int gid && excludeSubtreeRoots is not null && excludeSubtreeRoots.Contains(gid))
-                    continue; // группа и всё под ней (рекурсия в неё не заходит)
+                    continue; // группа и все под ней (рекурсия в нее не заходит)
                 var label = prefix.Length == 0 ? g.Name : $"{prefix} / {g.Name}";
                 result.Add((label, g.Id));
                 AddChildren(g.Id, label);

@@ -13,7 +13,7 @@ public partial class CollectionDialog : Window
     private readonly IReadOnlyList<DbOption> _dbs;
     private List<(string Label, int? Id)> _groups = [];
 
-    // Исходная БД коллекции и её id — чтобы при проверке уникальности имени исключать саму себя
+    // Исходная БД коллекции и ее id — чтобы при проверке уникальности имени исключать саму себя
     // (в пределах своей БД). При переносе в другую БД исключения нет.
     private readonly int  _originalDbId;
     private readonly int? _editCollectionId;
@@ -102,7 +102,7 @@ public partial class CollectionDialog : Window
         KeepWindowPosition(pos);
     }
 
-    // Держим позицию окна при пересчёте высоты (SizeToContent), чтобы оно не «прыгало».
+    // Держим позицию окна при пересчете высоты (SizeToContent), чтобы оно не «прыгало».
     private void KeepWindowPosition(PixelPoint pos)
     {
         void Restore(object? _, EventArgs __)

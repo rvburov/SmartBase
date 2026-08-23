@@ -10,7 +10,7 @@ namespace SmartBase.Controls.Behaviors;
 /// (<see cref="Scaling"/>, LayoutTransform 0.7–1.3) и любом DPI монитора (FullHD 1x /
 /// 2K 1.25–1.5x / Retina 2x). Проблема: layout rounding в Avalonia работает в
 /// ПРЕ-трансформ координатах и знает только RenderScaling окна — 1 DIP × zoom × DPI
-/// даёт дробные физические пиксели, и линии рендерятся то в 1px, то в 2px, то размыто.
+/// дает дробные физические пиксели, и линии рендерятся то в 1px, то в 2px, то размыто.
 ///
 /// Решение: в Resources каждого окна пишутся динамические токены толщины,
 /// скомпенсированные так, чтобы после зума линия занимала целое число физических
@@ -19,7 +19,7 @@ namespace SmartBase.Controls.Behaviors;
 ///   t    = physTarget / RenderScaling / zoom    — для контента под зумом;
 ///   tPop = physTarget / RenderScaling           — для контента ВНЕ зума (legacy).
 /// Зум применяется КО ВСЕМ окнам (MainWindow — ScaleHost, остальные — WindowZoom) и ко
-/// всем попапам (LayoutTransformControl-обёртки с ресурсом "AppZoomTransform"), поэтому
+/// всем попапам (LayoutTransformControl-обертки с ресурсом "AppZoomTransform"), поэтому
 /// токен t действует везде; tPop оставлен на случай контента вне трансформа.
 /// Токены (DynamicResource): SeparatorThickness, SeparatorThicknessPopup (double);
 /// BorderLine, BorderLineFocus (=2×), BorderLineTop/Bottom/Left/Right, BorderLinePopup
@@ -27,7 +27,7 @@ namespace SmartBase.Controls.Behaviors;
 /// бы компенсированную толщину, поэтому линии-потребители отключают его динамически.
 /// Дефолты токенов (1/2/True) объявлены в Assets/Styles/Controls.axaml.
 ///
-/// Подключение: глобальный стиль Window ставит IsManaged=True (пересчёт на Opened,
+/// Подключение: глобальный стиль Window ставит IsManaged=True (пересчет на Opened,
 /// ScalingChanged — переезд между мониторами, Scaling.ScaleChanged); MainWindow
 /// дополнительно помечен FollowsAppZoom=True — только его контент масштабируется зумом.
 /// </summary>
@@ -44,7 +44,7 @@ public static class LineMetrics
     /// <summary>Мост к RenderOptions.EdgeMode=Aliased для СТИЛЕЙ: у RenderOptions нет
     /// публичных полей AttachedProperty, и сеттер стиля не может адресовать EdgeMode
     /// напрямую (в атрибутах элементов — можно). Ставить только на чисто-линейные
-    /// элементы: на скруглённых рамках выключенное сглаживание даёт зазубрины.</summary>
+    /// элементы: на скругленных рамках выключенное сглаживание дает зазубрины.</summary>
     public static readonly AttachedProperty<bool> AliasedProperty =
         AvaloniaProperty.RegisterAttached<Visual, bool>("Aliased", typeof(LineMetrics));
 
@@ -71,7 +71,7 @@ public static class LineMetrics
             if (e.NewValue is true) Attach(w);
         });
         // FollowsAppZoom может примениться ПОЗЖЕ IsManaged (локальное свойство в XAML
-        // против сеттера стиля) — пересчитать с учётом зума.
+        // против сеттера стиля) — пересчитать с учетом зума.
         FollowsAppZoomProperty.Changed.AddClassHandler<Window>((w, _) => Apply(w));
 
         AliasedProperty.Changed.AddClassHandler<Visual>((v, e) =>
@@ -80,7 +80,7 @@ public static class LineMetrics
         });
     }
 
-    // ── Расчёт (общий для ресурсов и C#-кода) ─────────────────────────────────
+    // ── Расчет (общий для ресурсов и C#-кода) ─────────────────────────────────
 
     /// <summary>Целевая толщина линии в физических пикселях для данного DPI (≈1 DIP).</summary>
     public static double PhysTarget(double renderScaling) =>
@@ -107,7 +107,7 @@ public static class LineMetrics
         var tl = TopLevel.GetTopLevel(v);
         var rs = tl?.RenderScaling ?? 1.0;
         // Зум приложения действует везде: главное окно (ScaleHost), отдельные окна
-        // (WindowZoom) и попапы (обёртки AppZoomTransform).
+        // (WindowZoom) и попапы (обертки AppZoomTransform).
         return (rs, Scaling.Current);
     }
 
@@ -116,7 +116,7 @@ public static class LineMetrics
     private static void Attach(Window w)
     {
         Action<double> onZoom = _ => Apply(w);
-        Scaling.ScaleChanged += onZoom;                    // окна без зума пересчитают то же — дёшево
+        Scaling.ScaleChanged += onZoom;                    // окна без зума пересчитают то же — дешево
         w.Opened         += (_, _) => Apply(w);
         w.ScalingChanged += (_, _) => Apply(w);            // переезд между мониторами с разным DPI
         w.Closed         += (_, _) => Scaling.ScaleChanged -= onZoom;

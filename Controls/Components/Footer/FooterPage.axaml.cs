@@ -7,7 +7,7 @@ namespace SmartBase.Controls.Components;
 /// через событие <see cref="PreviewToggled"/>.</summary>
 public partial class FooterPage : UserControl
 {
-    /// <summary>Режим переключён: true — динамический просмотр, false — редактор исходника.</summary>
+    /// <summary>Режим переключен: true — динамический просмотр, false — редактор исходника.</summary>
     public event EventHandler<bool>? PreviewToggled;
 
     public FooterPage()

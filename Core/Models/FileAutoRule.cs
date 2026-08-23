@@ -3,7 +3,7 @@ using System.Text.Json;
 namespace SmartBase.Core.Models;
 
 /// <summary>
-/// Правило авто-привязки файлов для поля типа «файл»: файл берётся не выбором пользователя, а
+/// Правило авто-привязки файлов для поля типа «файл»: файл берется не выбором пользователя, а
 /// сопоставлением по имени. Для каждой записи имя = значение столбца-источника
 /// (<see cref="SourceKey"/>) + «.» + <see cref="Format"/>; ищется в <see cref="Folder"/>
 /// (регистр учитывается). <see cref="Recursive"/> = искать и во вложенных папках.
@@ -12,8 +12,8 @@ namespace SmartBase.Core.Models;
 ///
 /// Источник — строковый ключ колонки (как в сортировке/фильтре/экспорте): системное
 /// «Название» (<see cref="TitleSource"/>, значение в db_records.Title) либо числовой Id
-/// текст-поля (значения в db_field_values). «Описание» — обычное текст-поле, поэтому берётся
-/// вторым путём, по своему Id.
+/// текст-поля (значения в db_field_values). «Описание» — обычное текст-поле, поэтому берется
+/// вторым путем, по своему Id.
 ///
 /// Хранится в ConfigJson поля:
 /// <c>{ "auto": { "source": "…", "folder": "…", "format": "pdf", "recursive": true } }</c>.
@@ -22,7 +22,7 @@ namespace SmartBase.Core.Models;
 /// <param name="Recursive">
 /// Искать во вложенных папках. Ключа нет в конфиге — <c>false</c>: правила, созданные до
 /// появления настройки, работали по верхнему уровню, и молча расширять их охват нельзя —
-/// у поля разом поменялись бы значения. Новые правила диалог создаёт с включённой галочкой
+/// у поля разом поменялись бы значения. Новые правила диалог создает с включенной галочкой
 /// (<see cref="DefaultRecursive"/>).
 /// </param>
 public sealed record FileAutoRule(string SourceKey, string Folder, string Format, bool Recursive = false)
@@ -60,7 +60,7 @@ public sealed record FileAutoRule(string SourceKey, string Folder, string Format
 
             var folder = a.TryGetProperty("folder", out var f) && f.ValueKind == JsonValueKind.String ? f.GetString() ?? "" : "";
             var format = a.TryGetProperty("format", out var t) && t.ValueKind == JsonValueKind.String ? t.GetString() ?? "" : "";
-            // Ключа нет — правило из баз, где настройки ещё не было: там искали только по
+            // Ключа нет — правило из баз, где настройки еще не было: там искали только по
             // верхнему уровню, таким и оставляем (см. комментарий к Recursive).
             var recursive = a.TryGetProperty("recursive", out var r) && r.ValueKind == JsonValueKind.True;
 
@@ -95,6 +95,6 @@ public sealed record FileAutoRule(string SourceKey, string Folder, string Format
     }
 
     // Нормализуем формат: без ведущей точки и пробелов, нижний регистр расширения не форсируем —
-    // сравнение имён идёт как есть (регистр учитывается пользователем при вводе значения).
+    // сравнение имен идет как есть (регистр учитывается пользователем при вводе значения).
     private static string NormalizeFormat(string format) => format.Trim().TrimStart('.');
 }

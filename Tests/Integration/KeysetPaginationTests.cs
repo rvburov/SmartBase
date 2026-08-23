@@ -10,7 +10,7 @@ namespace SmartBase.Tests.Integration;
 /// </summary>
 public sealed class KeysetPaginationTests
 {
-    // Прогоняет keyset вперёд страницами по pageSize и собирает Id в порядке обхода.
+    // Прогоняет keyset вперед страницами по pageSize и собирает Id в порядке обхода.
     private static List<int> WalkKeyset(SmartBase.Database.Repositories.ConstructorRepository repo,
                                         int collectionId, int pageSize)
     {

@@ -14,12 +14,12 @@ using SmartBase.Utils;
 namespace SmartBase.Extensions.TimeCollector;
 
 /// <summary>
-/// Окно расширения «Сводная трудоёмкость» (в основном стиле приложения): папка с расчётами и
+/// Окно расширения «Сводная трудоемкость» (в основном стиле приложения): папка с расчетами и
 /// рекурсия, файл-шаблон, папка результата, индикатор по фазам и журнал во всю оставшуюся
-/// высоту. Логика — в <see cref="TimeCollectorEngine"/>; прогон идёт в фоне
+/// высоту. Логика — в <see cref="TimeCollectorEngine"/>; прогон идет в фоне
 /// (<see cref="Task.Run"/>) и отменяется кнопкой «Остановить» либо закрытием окна.
 ///
-/// Во время прогона журнал молчит: счётчики, текущий файл и оценка времени идут в индикатор,
+/// Во время прогона журнал молчит: счетчики, текущий файл и оценка времени идут в индикатор,
 /// а замечания по файлам выводятся в конце — отсортированными по имени (файлы читаются
 /// четырьмя потоками, и порядок их обнаружения ничего не значит).
 /// </summary>
@@ -28,7 +28,7 @@ public partial class TimeCollectorWindow : Window
     private static readonly FilePickerFileType TemplateType =
         new("Excel с макросами (*.xlsm)") { Patterns = ["*.xlsm"] };
 
-    /// <summary>Сколько имён показывать в одной секции журнала (счётчик в заголовке — полный).</summary>
+    /// <summary>Сколько имен показывать в одной секции журнала (счетчик в заголовке — полный).</summary>
     private const int MaxIssueLines = 200;
 
     /// <summary>Как часто обновлять индикатор во время прогона (~20 раз/сек).</summary>
@@ -46,7 +46,7 @@ public partial class TimeCollectorWindow : Window
         InitializeComponent();
 
         // Пути — из настроек расширения (объявлены в TimeCollectorExtension, экран —
-        // «Настройки → Расширения»): и расчёты, и шаблон лежат на файловом сервере, у каждой
+        // «Настройки → Расширения»): и расчеты, и шаблон лежат на файловом сервере, у каждой
         // машины своя буква диска. Существование проверяет движок при запуске.
         Restore(FolderBox,   TimeCollectorExtension.FolderKey);
         Restore(TemplateBox, TimeCollectorExtension.TemplateKey);
@@ -70,7 +70,7 @@ public partial class TimeCollectorWindow : Window
 
     private async void OnBrowseFolder(object? sender, RoutedEventArgs e)
     {
-        var path = await PickFolder("Выберите папку с расчётами", FolderBox.Text);
+        var path = await PickFolder("Выберите папку с расчетами", FolderBox.Text);
         if (path is null) return;
         Assign(FolderBox, path, TimeCollectorExtension.FolderKey);
     }
@@ -134,7 +134,7 @@ public partial class TimeCollectorWindow : Window
         var output    = OutputBox.Text!.Trim();
         var recursive = RecursiveCheck.IsChecked == true;
 
-        if (!Directory.Exists(folder))  { SetStatus("Папка с расчётами не существует", "BrushRed"); return; }
+        if (!Directory.Exists(folder))  { SetStatus("Папка с расчетами не существует", "BrushRed"); return; }
         if (!File.Exists(template))     { SetStatus("Файл-шаблон не найден", "BrushRed"); return; }
         if (!Directory.Exists(output))  { SetStatus("Папка для сохранения не существует", "BrushRed"); return; }
 
@@ -175,12 +175,12 @@ public partial class TimeCollectorWindow : Window
         }
         catch (TimeCollectException ex)
         {
-            Log.Warning(ex, "Сводная трудоёмкость: не выполнено");
+            Log.Warning(ex, "Сводная трудоемкость: не выполнено");
             Fail(ex.Message);
         }
         catch (Exception ex)
         {
-            Log.Error(ex, "Сводная трудоёмкость: непредвиденная ошибка");
+            Log.Error(ex, "Сводная трудоемкость: непредвиденная ошибка");
             Fail($"Ошибка: {ex.Message}");
         }
         finally
@@ -277,7 +277,7 @@ public partial class TimeCollectorWindow : Window
         LogLine("");
         LogLine($"{title} ({listed.Count}):");
         foreach (var issue in listed.Take(MaxIssueLines)) LogLine($"  • {issue.FileName} — {issue.Message}");
-        if (listed.Count > MaxIssueLines) LogLine($"  … и ещё {listed.Count - MaxIssueLines}");
+        if (listed.Count > MaxIssueLines) LogLine($"  … и еще {listed.Count - MaxIssueLines}");
     }
 
     private static string SummaryLine(CollectResult result)
@@ -289,13 +289,13 @@ public partial class TimeCollectorWindow : Window
             : text;
     }
 
-    private void LogLine(string text)          // только в модель (дёшево)
+    private void LogLine(string text)          // только в модель (дешево)
     {
         if (_log.Length > 0) _log.Append('\n');
         _log.Append(text);
     }
 
-    private void RenderLog()                   // модель → TextBox (дорого; зовём пачкой)
+    private void RenderLog()                   // модель → TextBox (дорого; зовем пачкой)
     {
         LogBox.Text       = _log.ToString();
         LogBox.CaretIndex = LogBox.Text.Length;   // прокрутка к последней строке
@@ -319,10 +319,10 @@ public partial class TimeCollectorWindow : Window
         ExecuteBtn.IsEnabled = Ready() && !_running;
         if (_running) return;
 
-        if (Ready()) { SetStatus("Всё готово к сборке свода", "BrushAccent"); return; }
+        if (Ready()) { SetStatus("Все готово к сборке свода", "BrushAccent"); return; }
 
         var missing = new List<string>();
-        if (string.IsNullOrWhiteSpace(FolderBox.Text))   missing.Add("папка с расчётами");
+        if (string.IsNullOrWhiteSpace(FolderBox.Text))   missing.Add("папка с расчетами");
         if (string.IsNullOrWhiteSpace(TemplateBox.Text)) missing.Add("файл-шаблон");
         if (string.IsNullOrWhiteSpace(OutputBox.Text))   missing.Add("папка для сохранения");
         SetStatus($"Ожидание: {string.Join(", ", missing)}", "BrushSecondaryText");

@@ -22,7 +22,7 @@ public class TableRowVm : INotifyPropertyChanged
     private string _title;
     // Аудит-метаданные записи — источник для «вычисляемых» типов свойств
     // (created_at/updated_at/created_by/updated_by). Ячейки этих типов биндятся
-    // к одноимённым свойствам ниже, а не к индексатору значений полей.
+    // к одноименным свойствам ниже, а не к индексатору значений полей.
     private string _createdAt;
     private string _updatedAt;
     private string _createdBy;
@@ -36,14 +36,14 @@ public class TableRowVm : INotifyPropertyChanged
     /// большинства строк null — цветные ячейки редки, словарь заводим только когда они есть.</summary>
     public IReadOnlyDictionary<string, RowStyle>? CellStyles { get; private set; }
 
-    /// <summary>Стиль конкретной ячейки, без каскада (каскад собирает таблица — только у неё
+    /// <summary>Стиль конкретной ячейки, без каскада (каскад собирает таблица — только у нее
     /// есть оформление строки и колонки, см. RowStyle.Resolve).</summary>
     public RowStyle CellStyle(string key) =>
         CellStyles is not null && CellStyles.TryGetValue(key, out var c) ? c : RowStyle.None;
 
-    /// <summary>Оформление ячеек строки. Уведомление идёт тем же «Item», что и у значений —
+    /// <summary>Оформление ячеек строки. Уведомление идет тем же «Item», что и у значений —
     /// привязки ячеек перечитывают и цвет.</summary>
-    /// <param name="notify">false — когда сразу следом идёт <see cref="Fill"/>: он уведомит
+    /// <param name="notify">false — когда сразу следом идет <see cref="Fill"/>: он уведомит
     /// сам, а на странице в 200 строк лишний проход по всем ячейкам не бесплатен.</param>
     public void SetStyle(IReadOnlyDictionary<string, RowStyle>? cellStyles, bool notify = true)
     {
@@ -56,7 +56,7 @@ public class TableRowVm : INotifyPropertyChanged
     public string UpdatedAt => _updatedAt;
     public string CreatedBy => _createdBy;
     public string UpdatedBy => _updatedBy;
-    // Строка-заглушка: данные страницы ещё не пришли (async-подгрузка), ячейки показывают
+    // Строка-заглушка: данные страницы еще не пришли (async-подгрузка), ячейки показывают
     // «Загрузка…». Заполняется методом Fill, который обновляет ячейки.
     public bool IsLoading   { get; private set; }
 
@@ -143,7 +143,7 @@ public class TableRowVm : INotifyPropertyChanged
     private void NotifyAllCells() => OnPropertyChanged("Item");
 
     /// <summary>Поднять "Item" извне — перечитать привязки ячеек строки без смены данных (напр., у
-    /// строки-источника изменилось название ЦЕЛИ её связи: read-ячейка-связь перечитает показ из кеша).</summary>
+    /// строки-источника изменилось название ЦЕЛИ ее связи: read-ячейка-связь перечитает показ из кеша).</summary>
     public void NotifyCellsChanged() => NotifyAllCells();
 
     // Обновить привязки «вычисляемых» ячеек (created_at/updated_at/created_by/updated_by),
@@ -156,7 +156,7 @@ public class TableRowVm : INotifyPropertyChanged
         OnPropertyChanged(nameof(UpdatedBy));
     }
 
-    // Локально отражаем «последнюю правку» записи (БД её проставила в SetFieldValue/TouchUpdated),
+    // Локально отражаем «последнюю правку» записи (БД ее проставила в SetFieldValue/TouchUpdated),
     // чтобы «вычисляемые» ячейки «Дата/Изменение пользователем» обновились сразу, без перечитывания
     // строки из БД. Значения совпадают с записанными в БД с точностью до момента правки.
     private void BumpUpdatedLocal()

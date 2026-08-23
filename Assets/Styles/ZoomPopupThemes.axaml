@@ -14,7 +14,7 @@
          публикует Utils/Scaling). Попап-хост сам подстраивается под итоговый размер.
 
          Отличия от оригинала:
-         1) корень шаблона обёрнут в LayoutTransformControl (зум);
+         1) корень шаблона обернут в LayoutTransformControl (зум);
          2) ScrollViewer без Theme="FluentMenuScrollViewer" (приватный StaticResource
             Fluent недоступен из копии; меню приложения короткие);
          3) у ContextMenu убран Design.PreviewWith; у MenuItem копий нет — сабменю

@@ -27,7 +27,7 @@ public sealed class TaskStreamsTests
         Assert.Equal([new TaskStreams.Slice(true, 3, 4)], Split(dated: 10, from: 3, take: 4));
     }
 
-    /// <summary>Кусок ровно до границы — всё ещё один запрос: следующая строка уже чужая.</summary>
+    /// <summary>Кусок ровно до границы — все еще один запрос: следующая строка уже чужая.</summary>
     [Fact]
     public void A_slice_ending_exactly_at_the_boundary_stays_one_query()
     {
@@ -68,7 +68,7 @@ public sealed class TaskStreamsTests
 
     // ── Вырожденные потоки ───────────────────────────────────────────────────
 
-    /// <summary>Ни одной задачи со сроком — всё берётся из второго потока без смещения.</summary>
+    /// <summary>Ни одной задачи со сроком — все берется из второго потока без смещения.</summary>
     [Fact]
     public void With_no_dated_tasks_everything_comes_from_the_undated_stream()
     {
@@ -91,7 +91,7 @@ public sealed class TaskStreamsTests
         Assert.Empty(Split(dated: 10, from: 0, take: take));
     }
 
-    // ── Свойство, ради которого всё и написано ───────────────────────────────
+    // ── Свойство, ради которого все и написано ───────────────────────────────
 
     /// <summary>
     /// Как ни режь группу на куски, потоки в сумме дают каждую строку РОВНО ОДИН раз и в том же

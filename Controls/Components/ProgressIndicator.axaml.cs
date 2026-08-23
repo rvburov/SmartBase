@@ -8,8 +8,8 @@ namespace SmartBase.Controls.Components;
 /// Единый индикатор загрузки приложения: строка фазы + доп. строка + полоса с процентами.
 /// Один контрол на все места с прогрессом (окно импорта, сплэш старта, установщик, окно
 /// обновления, окна расширений) — вид и поведение меняются в одном месте. Режимы:
-///  • <see cref="SetProgress"/> — определённый прогресс (доля 0..1 → полоса + N%);
-///  • <see cref="SetIndeterminate"/> — бегущая полоса без процентов (фаза без известного объёма,
+///  • <see cref="SetProgress"/> — определенный прогресс (доля 0..1 → полоса + N%);
+///  • <see cref="SetIndeterminate"/> — бегущая полоса без процентов (фаза без известного объема,
 ///    например коммит большой транзакции), чтобы 100% не выглядели «зависшими»;
 ///  • <see cref="StartSmooth"/>/<see cref="FinishSmooth"/> — плавная самодвижущаяся полоса
 ///    (замедляющееся приближение к 97% по таймеру, затем быстрый добег до 100% и колбэк) —
@@ -18,7 +18,7 @@ namespace SmartBase.Controls.Components;
 /// </summary>
 public partial class ProgressIndicator : UserControl
 {
-    private DispatcherTimer? _ticker;   // создаётся только для smooth-режима
+    private DispatcherTimer? _ticker;   // создается только для smooth-режима
     private double  _value;             // показанное значение 0..1 (smooth)
     private double  _cap = 0.97;        // асимптота текущей ступени «докручивания»
     private bool    _finishing;         // режим быстрого добега до 100%
@@ -26,7 +26,7 @@ public partial class ProgressIndicator : UserControl
 
     public ProgressIndicator() => InitializeComponent();
 
-    /// <summary>Определённый прогресс: доля 0..1 + необязательный текст фазы.</summary>
+    /// <summary>Определенный прогресс: доля 0..1 + необязательный текст фазы.</summary>
     public void SetProgress(double fraction, string? phase = null)
     {
         StopSmooth();
@@ -38,7 +38,7 @@ public partial class ProgressIndicator : UserControl
         if (phase is not null) SetPhase(phase);
     }
 
-    /// <summary>Бегущая полоса без процентов — для фаз с неизвестным объёмом работы.</summary>
+    /// <summary>Бегущая полоса без процентов — для фаз с неизвестным объемом работы.</summary>
     public void SetIndeterminate(string? phase = null)
     {
         StopSmooth();
@@ -62,7 +62,7 @@ public partial class ProgressIndicator : UserControl
     public void SetStage(double cap, string phase)
     {
         SetPhase(phase);
-        _cap = Math.Clamp(cap, _cap, 0.99);   // ступени только вперёд
+        _cap = Math.Clamp(cap, _cap, 0.99);   // ступени только вперед
         if (!_finishing) Ticker().Start();
     }
 
@@ -114,9 +114,9 @@ public partial class ProgressIndicator : UserControl
             PercentText.Text = "100%";
             _ticker!.Stop();
             var done = _onFinished; _onFinished = null;
-            // Колбэк — отложенно (после отрисовки кадра): тяжёлое продолжение (например,
+            // Колбэк — отложенно (после отрисовки кадра): тяжелое продолжение (например,
             // построение главного окна) блокирует UI-поток, и без отложки «100%» не успевал
-            // отрисоваться — полоса визуально застревала на 99% на всё время построения.
+            // отрисоваться — полоса визуально застревала на 99% на все время построения.
             if (done is not null)
                 Dispatcher.UIThread.Post(done, DispatcherPriority.Background);
             return;
@@ -125,7 +125,7 @@ public partial class ProgressIndicator : UserControl
         PercentText.Text = $"{(int)Math.Round(_value * 100)}%";
     }
 
-    // Таймер smooth-режима: создаётся лениво, подписка на Tick — ровно одна.
+    // Таймер smooth-режима: создается лениво, подписка на Tick — ровно одна.
     private DispatcherTimer Ticker()
     {
         if (_ticker is null)

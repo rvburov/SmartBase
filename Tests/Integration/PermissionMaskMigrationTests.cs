@@ -9,7 +9,7 @@ namespace SmartBase.Tests.Integration;
 /// <summary>
 /// Миграция <c>AddDuplicateFieldRight</c>: у дублирования свойства появился свой бит
 /// (<c>PermAction.DuplicateField</c> = 4096), раньше операция шла под правом создания
-/// (<c>CreateField</c> = 512). Схема не меняется — меняются УЖЕ СОХРАНЁННЫЕ маски:
+/// (<c>CreateField</c> = 512). Схема не меняется — меняются УЖЕ СОХРАНЕННЫЕ маски:
 /// без бэкфилла каждый, кому администратор что-то урезал, внезапно потерял бы дубль
 /// свойства (в старых масках нового бита нет физически).
 ///
@@ -35,9 +35,9 @@ public sealed class PermissionMaskMigrationTests
         " VALUES (1, 'полный@пк', 'Полный', 0, 1, '2026-01-01', '2026-01-01')",
         "INSERT INTO db_users (Id, UserKey, DisplayName, IsAdmin, IsApproved, CreatedAt, LastSeenAt)" +
         " VALUES (2, 'урезанный@пк', 'Урезанный', 0, 1, '2026-01-01', '2026-01-01')",
-        // Полная старая маска — человек мог всё, включая дубль свойства.
+        // Полная старая маска — человек мог все, включая дубль свойства.
         "INSERT INTO db_permissions (Id, UserId, CollectionId, ActionsMask) VALUES (10, 1, NULL, 4095)",
-        // Создание свойств снято — дубль был запрещён и должен остаться запрещённым.
+        // Создание свойств снято — дубль был запрещен и должен остаться запрещенным.
         "INSERT INTO db_permissions (Id, UserId, CollectionId, ActionsMask) VALUES (11, 2, NULL, 3583)",
         // Переопределение на коллекцию — обрабатывается наравне с масками базы.
         "INSERT INTO db_permissions (Id, UserId, CollectionId, ActionsMask) VALUES (12, 2, 1, 4095)",
@@ -63,7 +63,7 @@ public sealed class PermissionMaskMigrationTests
         Assert.Equal(OldAll | DuplicateField, Mask(conn, column, 10));
         Assert.Equal(OldAll | DuplicateField, Mask(conn, column, 12));
 
-        // Не мог создавать → дубль по-прежнему закрыт, лишних прав миграция не раздаёт.
+        // Не мог создавать → дубль по-прежнему закрыт, лишних прав миграция не раздает.
         var trimmed = Mask(conn, column, 11);
         Assert.Equal(0, trimmed & DuplicateField);
         Assert.Equal(0, trimmed & CreateField);

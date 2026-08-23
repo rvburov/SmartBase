@@ -8,7 +8,7 @@
             <ResourceDictionary.MergedDictionaries>
                 <ResourceInclude Source="avares://SmartBase/Assets/Styles/Colors.axaml" />
                 <ResourceInclude Source="avares://SmartBase/Assets/Styles/Icons.axaml" />
-                <!-- Копии тем ContextMenu/ToolTip с зум-обёрткой (см. паспорт файла):
+                <!-- Копии тем ContextMenu/ToolTip с зум-оберткой (см. паспорт файла):
                      попапы меню и тултипов иначе не масштабируются зумом приложения. -->
                 <ResourceInclude Source="avares://SmartBase/Assets/Styles/ZoomPopupThemes.axaml" />
                 <!-- Копия темы ComboBox (см. паспорт файла): заглушка «Список пуст»,
@@ -25,10 +25,10 @@
 
         <!-- Иконка приложения для ВСЕХ окон (главное + все диалоги, в т.ч. будущие).
              На Windows/Linux это иконка в заголовке окна, таскбаре и Alt-Tab.
-             На macOS иконка окна не отображается — там она берётся из .app-бандла.
+             На macOS иконка окна не отображается — там она берется из .app-бандла.
 
              Указываем .ico, а не .png: backend Win32 разбирает ICONDIR и через
-             CreateIconFromResourceEx отдаёт Windows ГОТОВЫЙ слой нужного размера
+             CreateIconFromResourceEx отдает Windows ГОТОВЫЙ слой нужного размера
              (16/24/32/48), а не масштабирует на лету одиночный 512px PNG. Без этого
              иконка в заголовке и таскбаре выглядит мыльной. -->
         <Style Selector="Window">

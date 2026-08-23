@@ -4,7 +4,7 @@ using SmartBase.Core.Models;
 namespace SmartBase.Database.Repositories;
 
 /// <summary>
-/// Постраничное чтение раздела «Задачи» — то, чем живёт виртуальный список
+/// Постраничное чтение раздела «Задачи» — то, чем живет виртуальный список
 /// (<c>Views/Tasks/TaskVirtualList.cs</c>) на базах, которые целиком в память не берут.
 ///
 /// Страницами читается ЛЮБОЙ вид раздела, а не только «Все задачи»: поиск и каждый из пяти
@@ -24,30 +24,30 @@ namespace SmartBase.Database.Repositories;
 /// <list type="bullet">
 /// <item>«со сроком» — <c>calendar_index</c> по полю-дате коллекции, <c>ORDER BY StartIso, RecordId</c>.
 /// Это в точности порядок индекса <c>(CollectionId, StartIso)</c>: у таблицы WITHOUT ROWID хвостом
-/// каждой записи индекса идёт PK <c>(RecordId, FieldId)</c>, поэтому сортировать нечего;</item>
+/// каждой записи индекса идет PK <c>(RecordId, FieldId)</c>, поэтому сортировать нечего;</item>
 /// <item>«без срока» — записи коллекции, у которых строки в проекции нет, <c>ORDER BY Id</c>.</item>
 /// </list>
-/// Границу задаёт <see cref="TaskViewSize.Dated"/>: строки [0, Dated) берутся из первого потока.
+/// Границу задает <see cref="TaskViewSize.Dated"/>: строки [0, Dated) берутся из первого потока.
 ///
-/// Коллекция с НЕСКОЛЬКИМИ календарными полями-датами читается общим путём (см.
+/// Коллекция с НЕСКОЛЬКИМИ календарными полями-датами читается общим путем (см.
 /// <see cref="TaskCollectionStats.MultiDate"/>): там срок — наименьшая из дат записи, двумя
 /// индексными потоками это не выражается. Такая коллекция сортируется запросом и на больших
-/// объёмах листается медленнее, зато ни одна её задача не становится недостижимой.
+/// объемах листается медленнее, зато ни одна ее задача не становится недостижимой.
 /// </summary>
 public partial class ConstructorRepository
 {
     /// <summary>
-    /// Что разделу нужно знать о коллекции, не читая её задач.
+    /// Что разделу нужно знать о коллекции, не читая ее задач.
     /// </summary>
     /// <param name="Total">Всего задач (= записей коллекции с полем-исполнителем).</param>
     /// <param name="Done">Из них в статусе «Выполнено».</param>
     /// <param name="DueFieldId">
-    /// Единственное календарное поле-дата коллекции — им задаётся срок. null — либо полей-дат
+    /// Единственное календарное поле-дата коллекции — им задается срок. null — либо полей-дат
     /// нет вовсе (все задачи «без срока»), либо их несколько (см. <paramref name="MultiDate"/>).
     /// </param>
     /// <param name="MultiDate">
     /// У коллекции НЕСКОЛЬКО календарных полей-дат: сроком служит наименьшая, и порядок
-    /// перестаёт быть порядком индекса. Читается общим путём — медленнее, но полностью.
+    /// перестает быть порядком индекса. Читается общим путем — медленнее, но полностью.
     /// </param>
     public sealed record TaskCollectionStats(int Total, int Done, int? DueFieldId, bool MultiDate);
 
@@ -59,14 +59,14 @@ public partial class ConstructorRepository
     public readonly record struct TaskViewSize(int Total, int Dated, int Done);
 
     /// <summary>
-    /// Вид раздела: правило быстрого фильтра плюс поиск. Одна структура на счёт и на страницы —
-    /// иначе счётчик и список считали бы по разным правилам.
+    /// Вид раздела: правило быстрого фильтра плюс поиск. Одна структура на счет и на страницы —
+    /// иначе счетчик и список считали бы по разным правилам.
     /// </summary>
     /// <param name="Kind">Значение <c>TaskFilterKind</c> строкой: репозиторий не знает о слое показа.</param>
     /// <param name="Search">Подстрока названия; пусто — поиск выключен.</param>
     /// <param name="MeVariants">
-    /// Чем может быть записан текущий пользователь в поле-исполнителе. В памяти сравнение идёт
-    /// без учёта регистра, а SQLite так кириллицу не сравнивает — варианты считает вызывающий.
+    /// Чем может быть записан текущий пользователь в поле-исполнителе. В памяти сравнение идет
+    /// без учета регистра, а SQLite так кириллицу не сравнивает — варианты считает вызывающий.
     /// </param>
     /// <param name="Now">«Сейчас» — от него считаются «Сегодня» и просрочка.</param>
     public sealed record TaskView(string Kind, string Search,
@@ -127,8 +127,8 @@ public partial class ConstructorRepository
          RoleOrder(db.DbFields.Where(f => f.CollectionId == collectionId && f.IsTaskStatus))
              .Select(f => (int?)f.Id).FirstOrDefault());
 
-    // Регистровые варианты подстроки поиска: SQLite сравнивает без учёта регистра только
-    // латиницу, поэтому кириллицу перебираем вариантами — тот же приём, что в поиске календаря.
+    // Регистровые варианты подстроки поиска: SQLite сравнивает без учета регистра только
+    // латиницу, поэтому кириллицу перебираем вариантами — тот же прием, что в поиске календаря.
     private static List<string> SearchVariants(string query)
     {
         var lower = query.ToLowerInvariant();
@@ -210,7 +210,7 @@ public partial class ConstructorRepository
         foreach (var v in SearchVariants(view.Search)) AddParam(cmd, $"@q{k++}").Value = $"%{EscapeLike(v)}%";
     }
 
-    // ── Счёт и страницы ──────────────────────────────────────────────────────
+    // ── Счет и страницы ──────────────────────────────────────────────────────
 
     /// <summary>
     /// Сколько задач коллекции подходит виду и сколько из них со сроком. Считается ПО БАЗЕ:
@@ -218,7 +218,7 @@ public partial class ConstructorRepository
     /// </summary>
     public TaskViewSize CountTaskView(int collectionId, TaskCollectionStats stats, TaskView view)
     {
-        // Вид без сужения: числа уже посчитаны общим счётом коллекций, спрашивать нечего.
+        // Вид без сужения: числа уже посчитаны общим счетом коллекций, спрашивать нечего.
         if (view.IsAll && !stats.MultiDate)
             return new TaskViewSize(stats.Total, CountDated(collectionId, stats), stats.Done);
 
@@ -232,7 +232,7 @@ public partial class ConstructorRepository
     /// ПОД КРЫШКОЙ <paramref name="cap"/>: пилюля печатает «999+», точное число ей не нужно, а
     /// шесть полных проходов по коллекции-полумиллионнику стоили бы секунд. Размеры групп, по
     /// которым строится полоса прокрутки, считаются отдельно и ТОЧНО
-    /// (<see cref="CountTaskView"/>) — крышка живёт только в пилюле.
+    /// (<see cref="CountTaskView"/>) — крышка живет только в пилюле.
     /// </summary>
     public Dictionary<string, int> CountTaskViews(Dictionary<int, TaskCollectionStats> stats,
                                                   IReadOnlyList<string> kinds, string search,
@@ -257,7 +257,7 @@ public partial class ConstructorRepository
         return result;
     }
 
-    /// <summary>Фоновые счётчики пилюль на ОТДЕЛЬНОМ подключении.</summary>
+    /// <summary>Фоновые счетчики пилюль на ОТДЕЛЬНОМ подключении.</summary>
     public Task<Dictionary<string, int>> CountTaskViewsAsync(
         Dictionary<int, TaskCollectionStats> stats, IReadOnlyList<string> kinds, string search,
         IReadOnlyCollection<string> meVariants, DateTime now, int cap) =>
@@ -277,8 +277,8 @@ public partial class ConstructorRepository
                            ("@c", collectionId), ("@due", due));
     }
 
-    // cap > 0 — считаем не дальше него: `COUNT(*) FROM (… LIMIT cap)`. Цена такого счёта не
-    // зависит от размера коллекции, а «выполнено» под крышкой не нужно (это счёт для пилюли).
+    // cap > 0 — считаем не дальше него: `COUNT(*) FROM (… LIMIT cap)`. Цена такого счета не
+    // зависит от размера коллекции, а «выполнено» под крышкой не нужно (это счет для пилюли).
     private (int Total, int Done) CountStream(int collectionId, TaskCollectionStats stats,
                                               TaskView view, bool dated, int cap)
     {
@@ -312,10 +312,10 @@ public partial class ConstructorRepository
     /// <summary>
     /// Id записей одной страницы группы, в порядке показа. <paramref name="skip"/> отсчитывается
     /// от начала ПОТОКА, а не группы: вызывающий сам решает по <see cref="TaskViewSize.Dated"/>,
-    /// из какого потока берёт строки.
+    /// из какого потока берет строки.
     ///
     /// Смещение — обычный OFFSET по индексу. Пропускаемые строки не читаются из таблицы, но по
-    /// дереву SQLite всё равно шагает, поэтому прыжок ползунком в конец коллекции-миллионника
+    /// дереву SQLite все равно шагает, поэтому прыжок ползунком в конец коллекции-миллионника
     /// стоит линейно от глубины — как и у «Расписания». Ради этого страницы и грузятся в фоне
     /// с дебаунсом.
     /// </summary>
@@ -350,7 +350,7 @@ public partial class ConstructorRepository
         return result;
     }
 
-    /// <summary>Части запроса потока — из них собираются и счёт, и страница, поэтому считают
+    /// <summary>Части запроса потока — из них собираются и счет, и страница, поэтому считают
     /// и показывают они заведомо одно и то же. <c>Ok = false</c> — поток виду не подходит вовсе
     /// («Сегодня» без срока, «Без срока» со сроком): его не читают и не считают.</summary>
     private readonly record struct ViewSql(string IdExpr, string Body, string Order, string DoneExpr, bool Ok);
@@ -367,12 +367,12 @@ public partial class ConstructorRepository
     {
         var (_, statusId) = TaskRoleIds(collectionId);
 
-        // Коллекция с несколькими полями-датами: индексных потоков нет, читаем общим путём —
-        // срок берётся подзапросом (наименьшая из дат записи), а порядок строит сама СУБД.
+        // Коллекция с несколькими полями-датами: индексных потоков нет, читаем общим путем —
+        // срок берется подзапросом (наименьшая из дат записи), а порядок строит сама СУБД.
         // Медленнее, зато ни одна задача не становится недостижимой.
         if (stats.MultiDate)
         {
-            if (!dated) return NoStream;   // весь набор отдаёт первый «поток»
+            if (!dated) return NoStream;   // весь набор отдает первый «поток»
             var where = ViewCondition(view, dated: true, (DueStartExpr, DueEndExpr), statusId)
                         ?? ViewCondition(view, dated: false, null, statusId);
             if (where is null) return NoStream;
@@ -504,7 +504,7 @@ public partial class ConstructorRepository
         }
         finally { if (opened) conn.Close(); }
 
-        // Порядок задаёт страница, а не SQL: `IN (…)` его не гарантирует, а строки уже разложены
+        // Порядок задает страница, а не SQL: `IN (…)` его не гарантирует, а строки уже разложены
         // по местам в виртуальном списке.
         var result = new List<TaskRecord>(recordIds.Count);
         foreach (var id in recordIds)

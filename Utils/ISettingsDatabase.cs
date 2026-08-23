@@ -3,7 +3,7 @@ namespace SmartBase.Utils;
 /// <summary>
 /// Хранилище настроек приложения (ключ-значение). Реализуется поверх системной app.db
 /// (см. <c>DatabaseRegistry</c>); <see cref="AppSettings"/> обращается к нему за
-/// настройками. Интерфейс живёт в Utils, чтобы не тянуть слой БД в AppSettings.
+/// настройками. Интерфейс живет в Utils, чтобы не тянуть слой БД в AppSettings.
 /// </summary>
 public interface ISettingsDatabase
 {

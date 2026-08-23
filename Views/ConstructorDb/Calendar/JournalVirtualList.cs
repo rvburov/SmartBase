@@ -11,7 +11,7 @@ namespace SmartBase.Views.ConstructorDb.Calendar;
 /// строка = заголовок дня / событие / подсказка «Нет записей на сегодня» / заглушка «Загрузка…».
 /// Реализует <see cref="IList"/> —
 /// полоса прокрутки соответствует ПОЛНОМУ числу строк ленты (можно прыгнуть в любой день),
-/// при этом события не материализуются: карта окна строится из СЧЁТЧИКОВ по дням
+/// при этом события не материализуются: карта окна строится из СЧЕТЧИКОВ по дням
 /// (<c>GetCalendarDayCountsByRange</c>, считаются асинхронно до создания списка), а строки
 /// событий подгружаются страницами в фоне по требованию — как в «Расписании»
 /// (<see cref="CalendarDayVirtualList"/>), тем же порядком внутри дня (all-day первыми, затем
@@ -34,7 +34,7 @@ internal sealed class JournalVirtualList : IList<JournalRow>, IList, INotifyColl
         public ISet<int>? Active;
     }
 
-    // День окна: счётчики по источникам + позиция первой строки (заголовка) в плоском списке.
+    // День окна: счетчики по источникам + позиция первой строки (заголовка) в плоском списке.
     private sealed class DayEntry
     {
         public DateTime Date;
@@ -66,8 +66,8 @@ internal sealed class JournalVirtualList : IList<JournalRow>, IList, INotifyColl
     public event NotifyCollectionChangedEventHandler? CollectionChanged;
 
     /// <summary>Границы «без ограничений»: лента покрывает ВСЮ историю данных. Карта строится из
-    /// счётчиков по дням, поэтому фактические границы — первый/последний день с событиями;
-    /// сентинелы нужны только запросам (счётчики/диапазон/поиск).</summary>
+    /// счетчиков по дням, поэтому фактические границы — первый/последний день с событиями;
+    /// сентинелы нужны только запросам (счетчики/диапазон/поиск).</summary>
     internal static readonly DateTime RangeStart = new(1, 1, 1);
     internal static readonly DateTime RangeEnd   = new(9999, 1, 1);
 
@@ -84,7 +84,7 @@ internal sealed class JournalVirtualList : IList<JournalRow>, IList, INotifyColl
         _preselect = preserveSelection is { Count: > 0 } ? preserveSelection : null;
         _srcs = dbs.Select(d => new Src { DbId = d.dbId, Repo = d.repo, Active = d.active }).ToList();
 
-        // Карта окна: день → счётчики по источникам (dayCounts[i] позиционно к dbs[i]).
+        // Карта окна: день → счетчики по источникам (dayCounts[i] позиционно к dbs[i]).
         var byDay = new SortedDictionary<string, int[]>(StringComparer.Ordinal);
         for (var i = 0; i < dayCounts.Count; i++)
             foreach (var (day, cnt) in dayCounts[i])
@@ -255,7 +255,7 @@ internal sealed class JournalVirtualList : IList<JournalRow>, IList, INotifyColl
     public int? TodayHeaderRow => _todayHeaderRow;
 
     /// <summary>Диапазон строк дня (заголовок + события), если день есть в ленте — для
-    /// проверки видимости и прокрутки к дате созданной/изменённой записи.</summary>
+    /// проверки видимости и прокрутки к дате созданной/измененной записи.</summary>
     public (int FirstRow, int RowCount)? DayRowsOf(DateTime date) =>
         FindDay(date) is { } d ? (d.FirstRow, d.RowCount) : null;
 
@@ -274,8 +274,8 @@ internal sealed class JournalVirtualList : IList<JournalRow>, IList, INotifyColl
     }
 
     /// <summary>Индекс СТРОКИ конкретного события (<paramref name="start"/> — его точное время
-    /// начала) — для центрирования ленты на созданной/изменённой записи (заголовок дня может
-    /// быть далеко от неё в большом дне). Обычный день — по слитому дню (кеш); InMemory/Search —
+    /// начала) — для центрирования ленты на созданной/измененной записи (заголовок дня может
+    /// быть далеко от нее в большом дне). Обычный день — по слитому дню (кеш); InMemory/Search —
     /// по готовым строкам; гигантский день — через бакет секунды записи.</summary>
     public async Task<int?> RowOfEventAsync(int dbId, int recId, int fieldId, DateTime start)
     {
@@ -507,13 +507,13 @@ internal sealed class JournalVirtualList : IList<JournalRow>, IList, INotifyColl
     }
 
     // Дни ≤ этого сливаются ПО ВРЕМЕНИ между БД целиком (слитый день кешируется). Гигантские
-    // дни (миллионы) в память не грузятся — для них порядок по времени даёт ПОСЕКУНДНАЯ карта
+    // дни (миллионы) в память не грузятся — для них порядок по времени дает ПОСЕКУНДНАЯ карта
     // (см. HugeDayMapAsync): блоки по базам остаются только внутри одной и той же секунды.
     private const int MergeDayCap = 10000;
     private readonly Dictionary<DateTime, List<CalendarRecord>> _mergedDays = new();
     private readonly LinkedList<DateTime> _mergedLru = new();
 
-    // Посекундная карта гигантского дня: бакет = секунда, счётчики по источникам + префикс-суммы.
+    // Посекундная карта гигантского дня: бакет = секунда, счетчики по источникам + префикс-суммы.
     private sealed class HugeBucket
     {
         public TimeSpan Time;
@@ -535,7 +535,7 @@ internal sealed class JournalVirtualList : IList<JournalRow>, IList, INotifyColl
             return n <= 0 ? new List<CalendarRecord>() : all.GetRange(evOffset, n);
         }
 
-        // Гигантский день: идём по посекундным бакетам от evOffset.
+        // Гигантский день: идем по посекундным бакетам от evOffset.
         var buckets = await HugeDayMapAsync(d);
         var outp = new List<CalendarRecord>(take);
         var bi = FindBucket(buckets, evOffset);
@@ -706,17 +706,17 @@ internal sealed class JournalVirtualList : IList<JournalRow>, IList, INotifyColl
     /// реализованные страницы, слитые дни и посекундные карты переживают правку — лента
     /// обновляется в том же кадре, без волны «Загрузка…» и без перечитывания видимых дней
     /// по одному (на разреженной истории пересоздание списка стоило секунды после каждого
-    /// удаления). false — мутация невозможна (InMemory/поиск, день пересёк порог слияния,
-    /// удаляемая строка не реализована) — вызывающий пересоберёт список по кешу счётчиков.
+    /// удаления). false — мутация невозможна (InMemory/поиск, день пересек порог слияния,
+    /// удаляемая строка не реализована) — вызывающий пересоберет список по кешу счетчиков.
     /// </summary>
     public async Task<bool> ApplyDeltaAsync(IReadOnlyList<CalendarRecord> removed,
                                             IReadOnlyList<CalendarRecord> added,
                                             bool selectAddedOnly = false)
     {
-        if (_all is not null) return false;   // InMemory/Search: пересборка и так дешёвая
+        if (_all is not null) return false;   // InMemory/Search: пересборка и так дешевая
         if (removed.Count == 0 && added.Count == 0) return false;
         // Массовые ВСТАВКИ (дублирование сотен строк): каждый затронутый день вне кеша слитых
-        // перечитывался бы отдельным запросом — быстрее мгновенная пересборка по счётчикам.
+        // перечитывался бы отдельным запросом — быстрее мгновенная пересборка по счетчикам.
         // Удаления не ограничиваем: они обходятся без БД (индекс реализованных строк).
         if (added.Count > 100) return false;
         foreach (var r in removed.Concat(added))
@@ -749,10 +749,10 @@ internal sealed class JournalVirtualList : IList<JournalRow>, IList, INotifyColl
         }
 
         // 1. План по каждому затронутому дню (структуры пока не трогаем — при любом отказе
-        //    список остаётся целым, вызывающий уходит на пересборку).
+        //    список остается целым, вызывающий уходит на пересборку).
         var removedKeys = removed.Select(Key).ToHashSet();
         var mergedPlan  = new Dictionary<DateTime, List<CalendarRecord>>(); // итоговый слитый день
-        var offsetsPlan = new Dictionary<DateTime, List<int>>();            // удалённые evOffset
+        var offsetsPlan = new Dictionary<DateTime, List<int>>();            // удаленные evOffset
         var dropDays    = new HashSet<DateTime>();                          // строки дня не переносим
 
         foreach (var (day, deltas) in byDay)
@@ -762,7 +762,7 @@ internal sealed class JournalVirtualList : IList<JournalRow>, IList, INotifyColl
             var after  = before + deltas.Sum(x => x.Delta);
             if (after < 0) return false;                        // рассинхрон с картой дней
             if (after == 0) { dropDays.Add(day); continue; }
-            // Порог слияния пересечён — порядок ВСЕГО дня меняется (слитый ↔ посекундный).
+            // Порог слияния пересечен — порядок ВСЕГО дня меняется (слитый ↔ посекундный).
             if (d is not null && before > MergeDayCap != after > MergeDayCap) return false;
 
             if (after > MergeDayCap)
@@ -816,7 +816,7 @@ internal sealed class JournalVirtualList : IList<JournalRow>, IList, INotifyColl
                 oldRows.Add((d.Date, idx - d.FirstRow - 1, rows[s]));
             }
 
-        // 3. Мутация карты дней: счётчики/строки затронутых дней, затем префиксы FirstRow.
+        // 3. Мутация карты дней: счетчики/строки затронутых дней, затем префиксы FirstRow.
         var today = DateTime.Today;
         foreach (var (day, deltas) in byDay)
         {
@@ -877,13 +877,13 @@ internal sealed class JournalVirtualList : IList<JournalRow>, IList, INotifyColl
             }
             else if (offsetsPlan.TryGetValue(day, out var offs))
             {
-                if (offs.BinarySearch(evOffset) >= 0) continue;    // сама удалённая строка
+                if (offs.BinarySearch(evOffset) >= 0) continue;    // сама удаленная строка
                 k = evOffset - offs.Count(o => o < evOffset);
             }
             else k = evOffset;
             if (k >= 0 && k < nd.Events) moved[nd.FirstRow + 1 + k] = row;
         }
-        // Созданная/изменённая запись — готовой строкой, сразу выделенной (видно, ЧТО меняли).
+        // Созданная/измененная запись — готовой строкой, сразу выделенной (видно, ЧТО меняли).
         foreach (var rec in added)
         {
             var day = rec.StartDt.Date;
@@ -952,7 +952,7 @@ internal sealed class JournalVirtualList : IList<JournalRow>, IList, INotifyColl
         return true;
     }
 
-    // Кладёт/обновляет слитый день в LRU-кеше.
+    // Кладет/обновляет слитый день в LRU-кеше.
     private void StoreMergedDay(DateTime day, List<CalendarRecord> all)
     {
         if (!_mergedDays.ContainsKey(day))
@@ -968,8 +968,8 @@ internal sealed class JournalVirtualList : IList<JournalRow>, IList, INotifyColl
         _mergedDays[day] = all;
     }
 
-    // Свежий слитый день из БД (правка там уже применена): объём чтения — текущие счётчики
-    // источников ПЛЮС дельты, потому что карта дней в этот момент ещё старая.
+    // Свежий слитый день из БД (правка там уже применена): объем чтения — текущие счетчики
+    // источников ПЛЮС дельты, потому что карта дней в этот момент еще старая.
     private async Task<List<CalendarRecord>> LoadMergedDayFreshAsync(
         DateTime day, List<(CalendarRecord Rec, int Delta)> deltas)
     {
@@ -989,8 +989,8 @@ internal sealed class JournalVirtualList : IList<JournalRow>, IList, INotifyColl
         return all;
     }
 
-    // Точечная правка посекундной карты гигантского дня: счётчик секунды записи ± по её
-    // источнику, затем пересчёт префикс-сумм (≤ 86 400 бакетов — мгновенно). Полная пересборка
+    // Точечная правка посекундной карты гигантского дня: счетчик секунды записи ± по ее
+    // источнику, затем пересчет префикс-сумм (≤ 86 400 бакетов — мгновенно). Полная пересборка
     // карты потребовала бы повторного сканирования дня в БД (секунды на миллионах).
     private void AdjustHugeBuckets(List<HugeBucket> buckets,
                                    List<(CalendarRecord Rec, int Delta)> deltas)

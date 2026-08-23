@@ -8,14 +8,14 @@ namespace SmartBase.Database.Repositories;
 // ── Связи между записями (тип поля «relation») ──────────────────────────────────
 // Ребро «из записи в запись по полю-связи» хранится в db_record_links (DbRecordLinkEntity),
 // НЕ в db_field_values — так работают каскады (FK ON DELETE CASCADE: удаление поля/записи-конца
-// чистит рёбра) и обратные ссылки (backlink = запрос по ToRecordId). Показ ячейки — «чипы» с
+// чистит ребра) и обратные ссылки (backlink = запрос по ToRecordId). Показ ячейки — «чипы» с
 // названием (Title) связанной записи, резолвятся на лету (в базе дублируется только Id).
 // Настройка поля (целевая коллекция, one/many) — RelationConfig в ConfigJson.
 public partial class ConstructorRepository
 {
     /// <summary>Связанные записи (Id + Title) для ячейки поля-связи одной записи, в порядке
-    /// Position. Только ВНУТРИБАЗОВЫЕ рёбра (<c>TargetDbId=0</c>) — Title резолвится JOIN'ом к
-    /// локальным db_records; межбазовые рёбра резолвятся отдельно по своим БД (см.
+    /// Position. Только ВНУТРИБАЗОВЫЕ ребра (<c>TargetDbId=0</c>) — Title резолвится JOIN'ом к
+    /// локальным db_records; межбазовые ребра резолвятся отдельно по своим БД (см.
     /// <c>RelationSelectBox.LoadSelected</c>), иначе их Id совпал бы с чужой локальной записью.</summary>
     public List<(int Id, string Title)> GetLinks(int fieldId, int fromRecordId) =>
         (from l in db.DbRecordLinks.AsNoTracking()
@@ -29,7 +29,7 @@ public partial class ConstructorRepository
 
     /// <summary>Связи для НАБОРА записей-источников (горячий путь виртуализированной таблицы:
     /// тянем чипы только видимых строк): fromRecordId → список (Id, Title) в порядке Position.
-    /// Только ВНУТРИБАЗОВЫЕ рёбра (<c>TargetDbId=0</c>) — как <see cref="GetLinks"/>; межбазовые в
+    /// Только ВНУТРИБАЗОВЫЕ ребра (<c>TargetDbId=0</c>) — как <see cref="GetLinks"/>; межбазовые в
     /// табличный батч-кеш не попадают (резолвятся ячейкой отдельно по своим БД).</summary>
     public Dictionary<int, List<(int Id, string Title)>> GetLinksBatch(int fieldId, IReadOnlyList<int> fromRecordIds)
     {
@@ -52,8 +52,8 @@ public partial class ConstructorRepository
     }
 
     /// <summary>Названия записей по их Id (Id → Title). Для резолва названий целей МЕЖБАЗОВОЙ связи:
-    /// вызывается на репозитории ЦЕЛЕВОЙ базы (UI берёт его через Workspace/реестр по TargetDbId).
-    /// Отсутствующие Id (удалённые цели) в словарь не попадают — при ДОСТУПНОЙ базе вызывающий трактует
+    /// вызывается на репозитории ЦЕЛЕВОЙ базы (UI берет его через Workspace/реестр по TargetDbId).
+    /// Отсутствующие Id (удаленные цели) в словарь не попадают — при ДОСТУПНОЙ базе вызывающий трактует
     /// это как обрыв (чип пропадает → «связи нет»); недоступная база (repo=null) → «(база недоступна)».</summary>
     public Dictionary<int, string> GetRecordTitles(IReadOnlyList<int> ids)
     {
@@ -71,7 +71,7 @@ public partial class ConstructorRepository
           .Select(l => l.ToRecordId)
           .ToList();
 
-    /// <summary>Рёбра ячейки в порядке Position: (ToRecordId, TargetDbId). Нужны переносу записей —
+    /// <summary>Ребра ячейки в порядке Position: (ToRecordId, TargetDbId). Нужны переносу записей —
     /// чтобы переписать TargetDbId под целевую базу (см. MoveRecordsCore).</summary>
     public List<(int ToRecordId, int TargetDbId)> GetLinkEdges(int fieldId, int fromRecordId) =>
         db.DbRecordLinks.AsNoTracking()
@@ -83,20 +83,20 @@ public partial class ConstructorRepository
           .ToList();
 
     /// <summary>
-    /// Перенести исходящие рёбра ОДНОЙ записи на её новую копию в другой коллекции — то же, что
+    /// Перенести исходящие ребра ОДНОЙ записи на ее новую копию в другой коллекции — то же, что
     /// <c>MoveRecordsCore</c> делает при переносе записей из таблицы, но для «пересоздающих» путей
-    /// календаря и задач (<see cref="UpdateCalendarRecord"/>, смена БД в окне записи). Зовётся сразу
-    /// после <see cref="CopyFieldValuesByName"/>: тот копирует только db_field_values, а рёбра живут
+    /// календаря и задач (<see cref="UpdateCalendarRecord"/>, смена БД в окне записи). Зовется сразу
+    /// после <see cref="CopyFieldValuesByName"/>: тот копирует только db_field_values, а ребра живут
     /// в db_record_links и без этого вызова терялись молча. <c>this</c> — репозиторий ЦЕЛИ.
     ///
     /// ВАЖНО: правила обязаны совпадать с <c>MoveRecordsCore</c> — ребро переезжает, только если
-    /// исходное и целевое поля одноимённые, оба «Связь», и конфиг цели смотрит на ту же коллекцию и ту
+    /// исходное и целевое поля одноименные, оба «Связь», и конфиг цели смотрит на ту же коллекцию и ту
     /// же (пересчитанную под целевую базу) целевую БД. Иначе ребро указывало бы в чужую коллекцию.
     /// Недостающие в цели поля здесь не создаются (как и у зовущих: createMissingFields=false).
     ///
     /// <paramref name="sourceDbId"/>/<paramref name="targetDbId"/> — реестровые DbId баз. Равны
-    /// (в т.ч. 0,0 — перенос внутри одной базы) → TargetDbId рёбер не трогаем. Разные и оба валидные →
-    /// пересчитываем по формуле MoveRecordsCore. Разные, но хотя бы один неизвестен (≤0) — рёбра НЕ
+    /// (в т.ч. 0,0 — перенос внутри одной базы) → TargetDbId ребер не трогаем. Разные и оба валидные →
+    /// пересчитываем по формуле MoveRecordsCore. Разные, но хотя бы один неизвестен (≤0) — ребра НЕ
     /// переносим: без DbId внутрибазовое ребро нельзя честно превратить в межбазовое.
     ///
     /// Входящие связи на исходную запись не сохраняются (у копии новый Id) — за это отвечает окно
@@ -152,7 +152,7 @@ public partial class ConstructorRepository
     /// <summary>
     /// Заменить ВЕСЬ набор связей ячейки на <paramref name="toRecordIds"/> (основной путь записи из
     /// пикера). Порядок сохраняется (Position), дубли/само-ссылки/чужие коллекции отсеиваются, для
-    /// single берётся максимум одна связь. Разница применяется точечно (лишние — удалить, новые —
+    /// single берется максимум одна связь. Разница применяется точечно (лишние — удалить, новые —
     /// добавить, оставшиеся — переставить), чтобы не задваивать unique-индекс и не плодить Id.
     /// Пишет строку журнала «до → после» именами записей. Ничего не изменилось → выходим молча.
     /// </summary>
@@ -232,8 +232,8 @@ public partial class ConstructorRepository
     /// <summary>Добавить одну связь (для single — заменяет прежнюю). Идемпотентно.</summary>
     public void AddLink(int fieldId, int fromRecordId, int toRecordId)
     {
-        // single: новый выбор замещает прежний (SetLinks сам возьмёт первую, но нам нужна именно
-        // новая связь — значит передаём ровно её).
+        // single: новый выбор замещает прежний (SetLinks сам возьмет первую, но нам нужна именно
+        // новая связь — значит передаем ровно ее).
         var cfg = RelationConfig.FromConfig(
             db.DbFields.AsNoTracking().Where(f => f.Id == fieldId).Select(f => f.ConfigJson).FirstOrDefault());
         if (cfg is { Single: true }) { SetLinks(fieldId, fromRecordId, [toRecordId]); return; }
@@ -253,12 +253,12 @@ public partial class ConstructorRepository
     }
 
     /// <summary>
-    /// Переписать конфиги полей-связей ПЕРЕНЕСЁННОЙ (ATTACH) коллекции под целевую базу: копия полей
-    /// идёт дословным INSERT…SELECT, поэтому TargetDbId/TargetCollectionId остаются от источника —
+    /// Переписать конфиги полей-связей ПЕРЕНЕСЕННОЙ (ATTACH) коллекции под целевую базу: копия полей
+    /// идет дословным INSERT…SELECT, поэтому TargetDbId/TargetCollectionId остаются от источника —
     /// правим после. TargetDbId по формуле (абсолютная БД цели = TargetDbId==0?sourceDbId; в целевой
-    /// базе → 0 если == targetDbId, иначе межбазовая). Для САМО-связи (цель = сама перенесённая
+    /// базе → 0 если == targetDbId, иначе межбазовая). Для САМО-связи (цель = сама перенесенная
     /// коллекция) — TargetDbId=0 и TargetCollectionId=новый id (цель уехала вместе с полем). Должно
-    /// быть согласовано с переписыванием рёбер в CopyOneCollectionFromAttached.
+    /// быть согласовано с переписыванием ребер в CopyOneCollectionFromAttached.
     /// </summary>
     private void RewriteMovedRelationConfigs(int newColId, int srcCollectionId, int sourceDbId, int targetDbId)
     {
@@ -287,11 +287,11 @@ public partial class ConstructorRepository
     }
 
     /// <summary>
-    /// То же для МЕЖБАЗОВОГО переноса ГРУППЫ (ветки целиком). Рёбра ветки не копируются (v1), но
+    /// То же для МЕЖБАЗОВОГО переноса ГРУППЫ (ветки целиком). Ребра ветки не копируются (v1), но
     /// конфиги полей-связей приезжают ДОСЛОВНО, и без правки TargetCollectionId источника читался бы
     /// как id ЛОКАЛЬНОЙ коллекции целевой базы — поле молча показывало бы ЧУЖИЕ записи. Разбор целей:
     /// <list type="bullet">
-    /// <item>цель — коллекция ТОЙ ЖЕ перенесённой ветки (есть в <paramref name="colMap"/>): уехала
+    /// <item>цель — коллекция ТОЙ ЖЕ перенесенной ветки (есть в <paramref name="colMap"/>): уехала
     /// вместе с полем → внутрибазовая на новый id;</item>
     /// <item>внешняя цель: по формуле MoveCollectionIsolated (абсолютная БД цели = TargetDbId==0 ?
     /// sourceDbId; в целевой базе → 0 если == targetDbId, иначе межбазовая);</item>
@@ -299,7 +299,7 @@ public partial class ConstructorRepository
     /// ≤ 0 — цель не восстановить): сбрасываем в «не настроено» (TargetCollectionId=0). Лучше пустое
     /// поле, чем ссылка на чужие записи.</item>
     /// </list>
-    /// Сами связи ветки при этом всё равно пусты — поле лишь показывает верную цель для нового выбора.
+    /// Сами связи ветки при этом все равно пусты — поле лишь показывает верную цель для нового выбора.
     /// </summary>
     private void RewriteMovedGroupRelationConfigs(IReadOnlyDictionary<int, int> colMap, int sourceDbId, int targetDbId)
     {
@@ -325,7 +325,7 @@ public partial class ConstructorRepository
             else
             {
                 newDb  = 0;
-                newCol = 0;   // «не настроено» — FromConfig вернёт null, поле ничего не связывает
+                newCol = 0;   // «не настроено» — FromConfig вернет null, поле ничего не связывает
             }
             var updated = new RelationConfig(newCol, c.Single, c.Separator, newDb).ToConfigJson();
             if (updated != f.ConfigJson) { f.ConfigJson = updated; changed = true; }
@@ -385,9 +385,9 @@ public partial class ConstructorRepository
             && db.DbRecords.Any(r => r.Id == l.ToRecordId   && r.CollectionId == collectionId)
             && !db.DbRecords.Any(r => r.Id == l.FromRecordId && r.CollectionId == collectionId));
 
-    /// <summary>Есть ли у записей коллекций <paramref name="collectionIds"/> ЛЮБЫЕ рёбра — ИСХОДЯЩИЕ
+    /// <summary>Есть ли у записей коллекций <paramref name="collectionIds"/> ЛЮБЫЕ ребра — ИСХОДЯЩИЕ
     /// (FromRecordId в них) или ВХОДЯЩИЕ внутрибазовые (ToRecordId в них). Для PG-пути переноса,
-    /// который рёбра не копирует ВООБЩЕ: проверка «только внешние входящие» пропустила бы коллекцию
+    /// который ребра не копирует ВООБЩЕ: проверка «только внешние входящие» пропустила бы коллекцию
     /// с одними само-связями, и они исчезли бы молча. EXISTS обрывается на первом ребре.</summary>
     public bool HasAnyLinksInCollections(IReadOnlyCollection<int> collectionIds) =>
         collectionIds.Count > 0
@@ -396,8 +396,8 @@ public partial class ConstructorRepository
             || HasIncomingLinksToCollections(collectionIds));
 
     /// <summary>Межбазовые цели ЭТОЙ базы в базу <paramref name="targetDbId"/>: recordId (в той базе) →
-    /// число рёбер. Множество целей межбазовых связей мало (их не заводят миллионами) — вернуть карту
-    /// безопасно; вызывающий пересечёт ключи с удаляемыми записями/коллекциями.</summary>
+    /// число ребер. Множество целей межбазовых связей мало (их не заводят миллионами) — вернуть карту
+    /// безопасно; вызывающий пересечет ключи с удаляемыми записями/коллекциями.</summary>
     public Dictionary<int, int> IncomingLinkCountsByTarget(int targetDbId) =>
         db.DbRecordLinks.Where(l => l.TargetDbId == targetDbId)
           .GroupBy(l => l.ToRecordId)

@@ -6,7 +6,7 @@ namespace SmartBase.Tests.Unit;
 /// <summary>
 /// Ядро службы уведомлений (<see cref="NotificationScheduler"/>) — чистая логика отбора:
 /// окно <c>(watermark, now]</c>, дедуп по (БД, запись, поле), сводка при переполнении и
-/// сдвиг метки. Стоит за нативными баннерами и значком-счётчиком, но не зависит от ОС/БД.
+/// сдвиг метки. Стоит за нативными баннерами и значком-счетчиком, но не зависит от ОС/БД.
 /// </summary>
 public sealed class NotificationSchedulerTests
 {
@@ -31,7 +31,7 @@ public sealed class NotificationSchedulerTests
         Assert.Equal(1, d.FiredCount);
         Assert.Single(d.Banners);
         Assert.Equal("Встреча", d.Banners[0].Title);
-        // Плашка несёт метку «db:id:field» и саму запись — для маршрутизации клика в окно.
+        // Плашка несет метку «db:id:field» и саму запись — для маршрутизации клика в окно.
         Assert.Equal("2:5:3", d.Banners[0].Tag);
         Assert.Equal(due, d.Banners[0].Record);
     }
@@ -118,7 +118,7 @@ public sealed class NotificationSchedulerTests
     public void Body_says_all_day_for_all_day_event()
     {
         var e = Ev(new DateTime(2026, 7, 1, 0, 0, 0), "Отпуск", allDay: true);
-        // all-day начинается в 00:00 — попадёт в окно, если оно включает начало дня.
+        // all-day начинается в 00:00 — попадет в окно, если оно включает начало дня.
         var d = NotificationScheduler.Decide([e], new DateTime(2026, 6, 30, 23, 0, 0), Now, 5);
 
         Assert.StartsWith("Весь день", d.Banners[0].Body);

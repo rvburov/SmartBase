@@ -16,7 +16,7 @@
              (ComboBox) и кнопок-действий (Button.dialog): в строках настроек/диалогов
              они стоят рядом и обязаны совпадать. Меняется в ОДНОМ месте.
              Тема Fluent навязывает TextBox/ComboBox свою min-высоту (~32px) — стили
-             ниже перебивают её этим значением, поэтому Height у контролов honored. -->
+             ниже перебивают ее этим значением, поэтому Height у контролов honored. -->
         <x:Double x:Key="ControlHeightStandard">30</x:Double>
 
         <!-- ── Толщина линий ────────────────────────────────────────────────
@@ -26,7 +26,7 @@
              обязаны ссылаться через DynamicResource. Цвет линий — BrushSeparator. -->
         <x:Double x:Key="SeparatorThickness">1</x:Double>
         <!-- Legacy: толщина без компенсации зума — для контента ВНЕ зум-трансформа.
-             Сейчас зумируется всё (окна — WindowZoom, попапы — обёртки AppZoomTransform),
+             Сейчас зумируется все (окна — WindowZoom, попапы — обертки AppZoomTransform),
              поэтому потребители в попапах тоже используют SeparatorThickness/BorderLine. -->
         <x:Double x:Key="SeparatorThicknessPopup">1</x:Double>
         <Thickness x:Key="BorderLine">1</Thickness>
@@ -42,18 +42,18 @@
         <Thickness x:Key="BorderLineTopLeft">1,1,0,0</Thickness>
         <Thickness x:Key="BorderLinePopup">1</Thickness>
         <!-- При зуме ≠ 1 layout rounding пере-округлил бы компенсированную толщину
-             (округление идёт в пре-трансформ координатах) — линии-потребители
+             (округление идет в пре-трансформ координатах) — линии-потребители
              отключают его динамически этим флагом. -->
         <x:Boolean x:Key="LineUseLayoutRounding">True</x:Boolean>
 
-        <!-- Дефолт трансформа зума приложения для обёрток попапов (живое значение
+        <!-- Дефолт трансформа зума приложения для оберток попапов (живое значение
              публикует Scaling в Application.Resources при загрузке и смене зума). -->
         <ScaleTransform x:Key="AppZoomTransform" ScaleX="1" ScaleY="1" />
 
         <!-- Базовая высота строки: DataGrid.RowHeight (ячейки), высота шапки колонок
              (DataGridColumnHeader.Height) и блоки событий. ВНИМАНИЕ: у строки ДАННЫХ таблицы
-             DataGrid ПРИБАВЛЯЕТ 1px линию сетки к RowHeight → её реальный шаг = 36 + 1 = 37, а у
-             шапки колонок разделитель сидит внутри → её высота = 36. Поэтому сайдбар выравнивается
+             DataGrid ПРИБАВЛЯЕТ 1px линию сетки к RowHeight → ее реальный шаг = 36 + 1 = 37, а у
+             шапки колонок разделитель сидит внутри → ее высота = 36. Поэтому сайдбар выравнивается
              так: первая строка (на месте шапки) = 36, остальные (на месте строк данных) = 37 —
              см. SidebarRow.RowHeight. Белые линии сайдбара тогда садятся на линии сетки таблицы. -->
         <x:Double x:Key="RowHeightStandard">36</x:Double>
@@ -88,7 +88,7 @@
                 <ControlTemplate>
                     <!-- Фон совпадает с дорожкой, скругления нет — кнопка неотличима от полосы
                          и стыкуется с ней без шва. Реакции на наведение и нажатие у кнопки
-                         нет намеренно: видимым остаётся только шеврон. -->
+                         нет намеренно: видимым остается только шеврон. -->
                     <Border Background="{TemplateBinding Background}">
                         <ContentPresenter HorizontalAlignment="Center"
                                           VerticalAlignment="Center"
@@ -119,11 +119,11 @@
              1px-линии остаются ровно 1px и не «толстеют» на дробном масштабе ОС. -->
         <Setter Property="UseLayoutRounding" Value="True" />
         <!-- Каждое окно (включая диалоги) получает динамические токены толщины линий
-             от LineMetrics: пересчёт при смене зума и переезде между мониторами. -->
+             от LineMetrics: пересчет при смене зума и переезде между мониторами. -->
         <Setter Property="(b:LineMetrics.IsManaged)" Value="True" />
         <!-- Каждое отдельное окно (диалоги, расширения, сплэш) масштабируется под общий
              зум приложения: контент — LayoutTransform, габариты — ×зум. MainWindow
-             исключён внутри WindowZoom (у него собственный ScaleHost). -->
+             исключен внутри WindowZoom (у него собственный ScaleHost). -->
         <Setter Property="(b:WindowZoom.Enabled)" Value="True" />
     </Style>
     <!-- Минимальный размер только у главного окна, не у диалогов -->
@@ -137,15 +137,15 @@
          Использование:
            <Border Classes="separator h" />   горизонтальная (тянется по ширине)
            <Border Classes="separator v" />   вертикальная   (тянется по высоте)
-         Позиционирование (VerticalAlignment/Margin/ColumnSpan) задаётся по месту. -->
+         Позиционирование (VerticalAlignment/Margin/ColumnSpan) задается по месту. -->
     <Style Selector="Border.separator">
         <Setter Property="Background" Value="{StaticResource BrushSeparator}" />
         <!-- Компенсированная толщина при зуме ≠ 1 дробная — штатное округление
-             уничтожило бы её, поэтому флаг выключает его динамически (LineMetrics). -->
+             уничтожило бы ее, поэтому флаг выключает его динамически (LineMetrics). -->
         <Setter Property="UseLayoutRounding" Value="{DynamicResource LineUseLayoutRounding}" />
         <!-- Без сглаживания: при зуме ≠ 1 линия попадает на дробные физические пиксели
-             и антиалиасинг размазал бы края — Aliased защёлкивает её в целый пиксель.
-             Только для линий: на скруглённых рамках дал бы зазубрины. Через мост
+             и антиалиасинг размазал бы края — Aliased защелкивает ее в целый пиксель.
+             Только для линий: на скругленных рамках дал бы зазубрины. Через мост
              LineMetrics.Aliased: у RenderOptions нет полей для сеттера стиля. -->
         <Setter Property="(b:LineMetrics.Aliased)" Value="True" />
     </Style>
@@ -321,7 +321,7 @@
                      ToggleButton.navbtn:pointerover">
         <Setter Property="Foreground" Value="{StaticResource BrushAccent}" />
     </Style>
-    <!-- В нажатом/checked состоянии остаёмся серыми (перебиваем синий Fluent).
+    <!-- В нажатом/checked состоянии остаемся серыми (перебиваем синий Fluent).
          Синий — только при наведении. -->
     <Style Selector="ToggleButton.navbtn:checked /template/ ContentPresenter">
         <Setter Property="Background"  Value="{StaticResource BrushSecondaryBg}" />
@@ -362,10 +362,10 @@
         <Setter Property="CornerRadius"    Value="{StaticResource RadiusMedium}" />
     </Style>
 
-    <!-- Всплывашка-уведомление (Toast): сама плашка БЕЗ своего оформления — внутри живёт обычный
+    <!-- Всплывашка-уведомление (Toast): сама плашка БЕЗ своего оформления — внутри живет обычный
          баннер (NoticeBanner) ровно как в диалогах, поэтому фон под ним = BrushBg (как фон окна
          диалога), скругление = радиус баннера, без рамки/паддинга. Так всплывашка 1-в-1 совпадает
-         с баннером в окнах «Создать»/«Изменить». Живёт здесь, т.к. FlyoutPresenter рендерится в popup-руте. -->
+         с баннером в окнах «Создать»/«Изменить». Живет здесь, т.к. FlyoutPresenter рендерится в popup-руте. -->
     <Style Selector="FlyoutPresenter.toast">
         <Setter Property="Padding"                    Value="0" />
         <Setter Property="Background"                 Value="{StaticResource BrushBg}" />
@@ -480,7 +480,7 @@
         <Setter Property="BorderThickness" Value="{DynamicResource BorderLine}" />
         <Setter Property="CornerRadius"    Value="{StaticResource RadiusMedium}" />
         <!-- Padding НУЛЕВОЙ (стандарт «полоса прилегает к краю», theming.md): вертикальный
-             давал зазоры сверху и снизу полосы, а её прямые углы вылезали за скругление
+             давал зазоры сверху и снизу полосы, а ее прямые углы вылезали за скругление
              плашки. Воздух вокруг пунктов переехал внутрь области прокрутки — Margin
              презентера в копии темы (ComboBoxTheme.axaml). ClipToBounds — срезает углы
              полосы скруглением плашки, как в карточках списков. -->
@@ -502,7 +502,7 @@
              (~32px), чтобы однострочные поля с Height=ControlHeightStandard были 30px
              вровень с кнопками и списками. Многострочные (notesEditor/DescBox) растут
              выше — это только нижняя граница; поле-значение карточки (propValue) сбрасывает
-             её обратно в 0, там высоту задаёт строка карточки. -->
+             ее обратно в 0, там высоту задает строка карточки. -->
         <Setter Property="MinHeight"       Value="{StaticResource ControlHeightStandard}" />
         <!-- Выделение текста серым вместо системного синего -->
         <Setter Property="SelectionBrush"           Value="{StaticResource BrushTextSelection}" />
@@ -591,31 +591,31 @@
     <!-- Полоса прокрутки — во ВСЮ высоту поля: Padding в шаблоне Fluent это Margin
          контейнера PART_InnerDockPanel, который держит и ScrollViewer, поэтому вертикальной
          составляющей у него нет вовсе (была 6 сверху и снизу — ровно на столько полоса и не
-         доходила до краёв), правой тоже: полоса прилегает к рамке, а рамка рисуется ПОВЕРХ
-         неё (см. ниже) — линия и скругления накрывают полосу, она читается как часть блока.
-         Воздух над первой и под последней строкой даёт Margin содержимого ВНУТРИ
+         доходила до краев), правой тоже: полоса прилегает к рамке, а рамка рисуется ПОВЕРХ
+         нее (см. ниже) — линия и скругления накрывают полосу, она читается как часть блока.
+         Воздух над первой и под последней строкой дает Margin содержимого ВНУТРИ
          ScrollViewer — оно прокручивается вместе с текстом: при прокрутке строки уходят
          под самый край поля, а отступ виден только в крайних положениях. -->
     <Style Selector="TextBox.multiline">
         <Setter Property="Padding" Value="10,0,0,0" />
-        <!-- Многострочному прокрутка нужна (базовый стиль TextBox её отключает). -->
+        <!-- Многострочному прокрутка нужна (базовый стиль TextBox ее отключает). -->
         <Setter Property="ScrollViewer.VerticalScrollBarVisibility" Value="Auto" />
         <Setter Property="VerticalContentAlignment" Value="Top" />
     </Style>
     <!-- РАМКА ПОВЕРХ СОДЕРЖИМОГО. В шаблоне Fluent рамка (PART_BorderElement) лежит ПОД
-         контентом, поэтому полоса прокрутки, прижатая к краю, закрывала линию, а её прямые
+         контентом, поэтому полоса прокрутки, прижатая к краю, закрывала линию, а ее прямые
          углы вылезали за скругление. Поднимаем рамку наверх (ZIndex) — линия и скругления
-         рисуются ПО полосе, она выглядит частью блока; клики сквозь неё проходят
-         (IsHitTestVisible=False), а фон переезжает на внутреннюю обёртку содержимого —
+         рисуются ПО полосе, она выглядит частью блока; клики сквозь нее проходят
+         (IsHitTestVisible=False), а фон переезжает на внутреннюю обертку содержимого —
          иначе рамка, оказавшись сверху, закрасила бы своим фоном весь текст. -->
     <Style Selector="TextBox.multiline /template/ Border#PART_BorderElement">
         <Setter Property="Background"       Value="Transparent" />
         <Setter Property="ZIndex"           Value="1" />
         <Setter Property="IsHitTestVisible" Value="False" />
     </Style>
-    <!-- Внутренняя обёртка содержимого (единственный Border шаблона, кроме рамки; сдвинута
-         на её толщину): несёт фон поля и срезает углы полосы по скруглению — ClipToBounds
-         режет прямоугольником, поэтому клип скруглённый (RoundedClip). -->
+    <!-- Внутренняя обертка содержимого (единственный Border шаблона, кроме рамки; сдвинута
+         на ее толщину): несет фон поля и срезает углы полосы по скруглению — ClipToBounds
+         режет прямоугольником, поэтому клип скругленный (RoundedClip). -->
     <Style Selector="TextBox.multiline /template/ Border:not(#PART_BorderElement)">
         <Setter Property="Background"           Value="{Binding $parent[TextBox].Background}" />
         <Setter Property="CornerRadius"         Value="{StaticResource RadiusMedium}" />
@@ -652,7 +652,7 @@
     </Style>
 
     <!-- ===== Значение свойства в карточке RecordPageView ===== -->
-    <!-- Безбордерное во ВСЕХ состояниях (включая фокус/наведение): рамку и подсветку даёт
+    <!-- Безбордерное во ВСЕХ состояниях (включая фокус/наведение): рамку и подсветку дает
          сама карточка, как у поля даты (timeInput). Без этого тема Fluent в фокусе рисует
          собственную синюю рамку ВНУТРИ карточки — «бокс в боксе», что и просили убрать. -->
     <Style Selector="TextBox.propValue">
@@ -662,7 +662,7 @@
         <Setter Property="Padding"                  Value="0" />
         <Setter Property="VerticalContentAlignment" Value="Center" />
         <Setter Property="ScrollViewer.VerticalScrollBarVisibility" Value="Disabled" />
-        <!-- Высоту в карточке задаёт строка (RowHeightStandard/ручная), а не стандарт
+        <!-- Высоту в карточке задает строка (RowHeightStandard/ручная), а не стандарт
              формы: сбрасываем нижнюю границу базового TextBox обратно в 0. -->
         <Setter Property="MinHeight"                Value="0" />
     </Style>
@@ -680,7 +680,7 @@
     </Style>
 
     <!-- ComboBox-значение свойства (тип «список»): так же без собственной рамки/фона во
-         всех состояниях — рамку даёт карточка. -->
+         всех состояниях — рамку дает карточка. -->
     <Style Selector="ComboBox.propValue">
         <Setter Property="Background"      Value="Transparent" />
         <Setter Property="BorderThickness" Value="0" />
@@ -700,12 +700,12 @@
         <Setter Property="BorderThickness" Value="0" />
     </Style>
 
-    <!-- ПОЛОСА — ОТДЕЛЬНЫЙ БЛОК, А НЕ НАКЛАДКА. Шаблон ScrollViewer темы Fluent кладёт
+    <!-- ПОЛОСА — ОТДЕЛЬНЫЙ БЛОК, А НЕ НАКЛАДКА. Шаблон ScrollViewer темы Fluent кладет
          содержимое в ячейку 0,0 сетки "*,Auto"/"*,Auto" (полосы — в колонку 1 и строку 1),
          но при AllowAutoHide=True добавляет стилем Grid.ColumnSpan=2 и Grid.RowSpan=2:
          содержимое растягивается ПОД обе полосы, и правые 14px данных не видно.
          AllowAutoHide=False у САМОГО ScrollViewer этот стиль отключает — содержимое
-         сужается на толщину полосы везде разом. Одноимённый сеттер ниже (у ScrollBar)
+         сужается на толщину полосы везде разом. Одноименный сеттер ниже (у ScrollBar)
          этого не делает: селектор темы читает свойство ScrollViewer, не полосы. -->
     <!-- :is() обязателен — селектор по имени типа в Avalonia ловит ТОЛЬКО точный тип,
          а прокрутку наследуют и производные (виджеты сторонних пакетов). -->
@@ -722,13 +722,13 @@
         <Setter Property="Background"     Value="Transparent" />
     </Style>
 
-    <!-- Стрелка: Path ВСЕГДА кладётся в Canvas фиксированного размера, а Canvas — в Viewbox.
+    <!-- Стрелка: Path ВСЕГДА кладется в Canvas фиксированного размера, а Canvas — в Viewbox.
          Без Canvas Path меряется по габаритам геометрии (у IconScrollUp это 12×5), а обводка
          толщиной 2 с круглыми торцами выходит за них на 1 единицу с каждой стороны — Viewbox
          масштабирует только измеренный прямоугольник и срезает торцы. Canvas 14×7 (для
          горизонтальных стрелок 7×14) = габариты геометрии + припуск на обводку, поэтому
          шеврон виден целиком. Размер Canvas от толщины полосы НЕ зависит — итоговый
-         масштаб стрелки задаёт Viewbox. Тот же приём, что у иконок в RecordPageView. -->
+         масштаб стрелки задает Viewbox. Тот же прием, что у иконок в RecordPageView. -->
     <Style Selector="ScrollBar Path.arrow">
         <Setter Property="Stroke"          Value="{StaticResource BrushScrollbarArrow}" />
         <Setter Property="StrokeThickness" Value="2" />
@@ -747,7 +747,7 @@
             </ControlTemplate>
         </Setter>
     </Style>
-    <!-- Поля пилюли внутри дорожки — по 2px с боков (поперёк прокрутки). Вдоль прокрутки
+    <!-- Поля пилюли внутри дорожки — по 2px с боков (поперек прокрутки). Вдоль прокрутки
          полей нет: длина ползунка и стыки кнопок с дорожкой остаются как были. -->
     <Style Selector="ScrollBar:vertical Thumb">
         <Setter Property="Margin" Value="2,0" />
@@ -755,8 +755,8 @@
     <Style Selector="ScrollBar:horizontal Thumb">
         <Setter Property="Margin" Value="0,2" />
     </Style>
-    <!-- Покой задаётся отдельным правилом с псевдоклассами, а не только базовым сеттером
-         выше: базовый проигрывает правилу темы Fluent и ползунок в покое рисовался её
+    <!-- Покой задается отдельным правилом с псевдоклассами, а не только базовым сеттером
+         выше: базовый проигрывает правилу темы Fluent и ползунок в покое рисовался ее
          светло-серым (#BEBEC0) вместо нашего #A0A0A6. Правила с псевдоклассом (как
          :pointerover ниже) тему перебивают — отсюда такая форма селектора. -->
     <Style Selector="ScrollBar Thumb:not(:pointerover):not(:pressed)">
@@ -871,8 +871,8 @@
         </Setter>
     </Style>
 
-    <!-- Календарь-выпадашка поля даты (DateField создаёт Calendar сам; попап и рамку
-         даёт Border.timePopup, поэтому стилей CalendarDatePicker здесь больше нет). -->
+    <!-- Календарь-выпадашка поля даты (DateField создает Calendar сам; попап и рамку
+         дает Border.timePopup, поэтому стилей CalendarDatePicker здесь больше нет). -->
 
     <!-- Фон всего календаря -->
     <Style Selector="Calendar">
@@ -962,7 +962,7 @@
         <Setter Property="BorderThickness" Value="0" />
     </Style>
 
-    <!-- Сегодня. Календарь живёт в попапе поля даты (DateField) — попап наследует зум,
+    <!-- Сегодня. Календарь живет в попапе поля даты (DateField) — попап наследует зум,
          токен обычный (рамка была 1.5 — приведена к стандартной 1, как все линии). -->
     <Style Selector="CalendarDayButton:today /template/ Border#Background">
         <Setter Property="Background"      Value="Transparent" />
@@ -1138,9 +1138,9 @@
         <Setter Property="Margin"          Value="0,1,0,0" />
     </Style>
 
-    <!-- Padding списка = воздух сверху/снизу вместо Padding попапа: ListBox отдаёт его
+    <!-- Padding списка = воздух сверху/снизу вместо Padding попапа: ListBox отдает его
          в Margin презентера ВНУТРИ своего ScrollViewer, поэтому пункты отступают от края,
-         а полоса прокрутки остаётся прижатой к рамке (см. TimeField.axaml). -->
+         а полоса прокрутки остается прижатой к рамке (см. TimeField.axaml). -->
     <Style Selector="ListBox.timeList">
         <Setter Property="Background"      Value="Transparent" />
         <Setter Property="BorderThickness" Value="0" />
@@ -1181,7 +1181,7 @@
     <!-- ContextMenu / MenuItem: визуально как ComboBox-выпадашка.
          Фон/рамка/скругление контейнера повторяют ComboBox Popup, элементы — ComboBoxItem
          (наведение/выделение тем же ресурсом MenuFlyoutItemBackgroundPointerOver). -->
-    <!-- Меню отмасштабировано зум-обёрткой в своей теме (ZoomPopupThemes) —
+    <!-- Меню отмасштабировано зум-оберткой в своей теме (ZoomPopupThemes) —
          рамка ВНУТРИ трансформа, токен обычный. -->
     <Style Selector="ContextMenu">
         <Setter Property="FontSize"        Value="{DynamicResource FontSizeBase}" />
@@ -1193,8 +1193,8 @@
         <Setter Property="MinWidth"        Value="180" />
     </Style>
 
-    <!-- Сабменю наследует зум приложения: контекстное меню отмасштабировано обёрткой
-         в своей теме (ZoomPopupThemes), а попап сабменю берёт накопленный трансформ
+    <!-- Сабменю наследует зум приложения: контекстное меню отмасштабировано оберткой
+         в своей теме (ZoomPopupThemes), а попап сабменю берет накопленный трансформ
          плейсмент-таргета (пункта меню) — как выпадашка ComboBox в Fluent. -->
     <Style Selector="MenuItem /template/ Popup#PART_Popup">
         <Setter Property="InheritsTransform" Value="True" />
@@ -1241,10 +1241,10 @@
 
     <!-- Подменю у вложенного MenuItem (Popup со списком цветов): фон/рамка/радиус
          как у основного контекстного меню. В шаблоне Fluent сабменю лежит в
-         БЕЗЫМЯННОМ Border — прямом ребёнке Popup#PART_Popup (селектор Border#PART_Popup
+         БЕЗЫМЯННОМ Border — прямом ребенке Popup#PART_Popup (селектор Border#PART_Popup
          не матчился бы: PART_Popup — имя самого Popup). Попап наследует зум
          (InheritsTransform выше) → рамка внутри трансформа, токен обычный.
-         Зазор от меню (чтобы не наезжало) задаётся в коде: HorizontalOffset попапа правится
+         Зазор от меню (чтобы не наезжало) задается в коде: HorizontalOffset попапа правится
          на инстансе (Sidebar.FixSubmenuGap), т.к. шаблон темы ставит его локальным значением,
          которое стиль перебить не может. -->
     <Style Selector="MenuItem /template/ Popup#PART_Popup > Border">

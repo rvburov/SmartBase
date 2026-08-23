@@ -15,7 +15,7 @@ namespace SmartBase.Extensions.ProductCompare;
 /// <summary>
 /// Окно расширения «Сравнение составов изделий» (в основном стиле приложения): выбор
 /// шаблона, старого и нового файлов и папки результата, затем «Сравнить файлы».
-/// Логика — в <see cref="ProductCompareEngine"/>; сам прогон идёт в фоне (<see cref="Task.Run"/>)
+/// Логика — в <see cref="ProductCompareEngine"/>; сам прогон идет в фоне (<see cref="Task.Run"/>)
 /// с прогрессом и отменой при закрытии окна.
 /// </summary>
 public partial class ProductCompareWindow : Window
@@ -35,7 +35,7 @@ public partial class ProductCompareWindow : Window
         // экран — «Настройки → Расширения»): у каждой машины свой смонтированный диск,
         // поэтому в коде пути нет. Не задан — поле пустое, шаблон выбирают «Обзором».
         // Доступность файла проверяется при запуске сравнения: недоступен — движок
-        // вернёт «Файл-шаблон не найден».
+        // вернет «Файл-шаблон не найден».
         var template = AppSettings.LoadExtensionSetting(
             ProductCompareExtension.ExtensionId, ProductCompareExtension.TemplateKey);
         if (template.Length > 0)
@@ -180,7 +180,7 @@ public partial class ProductCompareWindow : Window
 
         if (AllReady())
         {
-            SetStatus("Всё готово к сравнению", "BrushAccent");
+            SetStatus("Все готово к сравнению", "BrushAccent");
             return;
         }
 

@@ -120,7 +120,7 @@ switch (args.FirstOrDefault())
 
     case "--contend-child":
     {
-        // Дочерний писатель: жёсткий цикл правок одной ячейки. Печатает число операций.
+        // Дочерний писатель: жесткий цикл правок одной ячейки. Печатает число операций.
         var (db, recId, fieldId, seconds, tag) =
             (args[1], int.Parse(args[2]), int.Parse(args[3]), int.Parse(args[4]), args[5]);
         NetworkPath.ForceNetwork(db);
@@ -151,7 +151,7 @@ switch (args.FirstOrDefault())
         if (recId.Length == 0) { Console.WriteLine("нет записей — создайте коллекцию с записью"); return 1; }
         Console.WriteLine($"пишу в коллекцию «{colName}», запись {recId}, поле {fieldId}; Ctrl+C — стоп");
 
-        // Пишем как «удалённый пользователь»: значение + строка журнала с чужим UserKey —
+        // Пишем как «удаленный пользователь»: значение + строка журнала с чужим UserKey —
         // ровно то, что увидит поллер другой копии приложения.
         var n = 0;
         while (true)

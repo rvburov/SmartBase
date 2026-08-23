@@ -5,8 +5,8 @@ namespace SmartBase.Core.Models;
 /// min(начало)…max(конец) по ВСЕМ строкам окна, а не только по доставленным
 /// (чтение окна Диаграммы обрезано перебором на коллекцию — см.
 /// ConstructorRepository.GetDiagramRecordsCapped). Считаются фоновой фазой 2
-/// (GetDiagramStats) индексными сканами и тихо уточняют счётчики групп,
-/// «+N ещё» и суммарные бары.
+/// (GetDiagramStats) индексными сканами и тихо уточняют счетчики групп,
+/// «+N еще» и суммарные бары.
 /// </summary>
 public sealed class DiagramGroupStat
 {

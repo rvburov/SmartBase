@@ -101,7 +101,7 @@ public partial class DocsCollectionWindow : Window
         _cts = new CancellationTokenSource();
         var ct = _cts.Token;
 
-        // Каркас создаётся ниже — до этого момента откатывать нечего.
+        // Каркас создается ниже — до этого момента откатывать нечего.
         DocsShell? shell = null;
 
         try

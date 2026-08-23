@@ -2,7 +2,7 @@
 # Прогон автотестов SmartBase.
 #   ./Tests/run-all.sh                   — Unit (быстрый гейт) + Integration (SQLite + PG, если поднят sb-pg)
 #   ./Tests/run-all.sh --with-extensions — плюс тесты расширений (Tests/Extensions/*)
-#   ./Tests/run-all.sh --with-bench      — плюс быстрый прогон бенчмарков (маленькие объёмы, смоук)
+#   ./Tests/run-all.sh --with-bench      — плюс быстрый прогон бенчмарков (маленькие объемы, смоук)
 #
 # По умолчанию здесь только ЯДРО: тесты расширений — отдельные сборки и отдельный прогон
 # (./Tests/run-extensions.sh), см. docs/developer/testing/extension-tests.md.

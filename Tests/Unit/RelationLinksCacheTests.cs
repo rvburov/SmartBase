@@ -3,7 +3,7 @@ using SmartBase.ViewModels.ConstructorDb;
 namespace SmartBase.Tests.Unit;
 
 /// <summary>
-/// Контракт табличного кеша связей (батч видимой страницы вместо N точечных GetLinks): Prime кладёт
+/// Контракт табличного кеша связей (батч видимой страницы вместо N точечных GetLinks): Prime кладет
 /// и пустые наборы, TryGet различает «нет ребра» и «не прогрето», Invalidate/Clear сбрасывают.
 /// </summary>
 public sealed class RelationLinksCacheTests
@@ -19,7 +19,7 @@ public sealed class RelationLinksCacheTests
     public void Prime_stores_links_and_empties_for_records_without_edges()
     {
         var cache = new RelationLinksCache();
-        var batch = Batch((10, [(1, "A"), (2, "B")]));   // у записи 11 рёбер нет
+        var batch = Batch((10, [(1, "A"), (2, "B")]));   // у записи 11 ребер нет
 
         cache.Prime(fieldId: 5, recordIds: [10, 11], batch);
 
@@ -50,6 +50,6 @@ public sealed class RelationLinksCacheTests
         Assert.True(cache.TryGet(5, 11, out _));    // соседняя запись цела
 
         cache.Clear();
-        Assert.False(cache.TryGet(5, 11, out _));   // всё сброшено
+        Assert.False(cache.TryGet(5, 11, out _));   // все сброшено
     }
 }

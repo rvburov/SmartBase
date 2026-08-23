@@ -45,7 +45,7 @@ public sealed class FileAutoRuleTests
 
     /// <summary>
     /// Вложенные папки: флаг переживает сериализацию, а правило БЕЗ ключа «recursive»
-    /// (создано до появления настройки) остаётся поиском по верхнему уровню — иначе у
+    /// (создано до появления настройки) остается поиском по верхнему уровню — иначе у
     /// существующих полей молча поменялись бы значения.
     /// </summary>
     [Fact]
@@ -94,7 +94,7 @@ public sealed class FileAutoRuleTests
         Assert.Null(FileAutoRule.FromConfig(config));
 
     [Theory]
-    [InlineData("Отчёт", "Отчёт.pdf")]
+    [InlineData("Отчет", "Отчет.pdf")]
     [InlineData("Проценты_по_месяцам-2", "Проценты_по_месяцам-2.pdf")]
     [InlineData("", "")]     // пустое значение источника → нет искомого имени → «файл не найден»
     public void Target_file_name_is_value_dot_format(string sourceValue, string expected) =>

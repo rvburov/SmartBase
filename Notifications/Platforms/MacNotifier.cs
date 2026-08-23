@@ -4,11 +4,11 @@ using System.Runtime.Versioning;
 namespace SmartBase.Notifications.Platforms;
 
 /// <summary>
-/// macOS: баннер шлёт САМ процесс приложения через <c>NSUserNotificationCenter</c> — тогда
+/// macOS: баннер шлет САМ процесс приложения через <c>NSUserNotificationCenter</c> — тогда
 /// система рисует иконку приложения (из .app-бандла) и по клику активирует именно наше окно.
 /// Библиотечный Apple-бэкенд DesktopNotifications нефункционален (заглушка), поэтому Cocoa
-/// дёргаем напрямую через Objective-C runtime (libobjc). Для клика создаём на лету класс-делегат
-/// и ставим его в <c>center.delegate</c>; метку записи кладём в <c>userInfo</c> и достаём при клике.
+/// дергаем напрямую через Objective-C runtime (libobjc). Для клика создаем на лету класс-делегат
+/// и ставим его в <c>center.delegate</c>; метку записи кладем в <c>userInfo</c> и достаем при клике.
 ///
 /// <c>NSUserNotification</c> помечен deprecated (с macOS 11), но продолжает работать из
 /// подписанного .app; современная замена — UNUserNotificationCenter (задача на потом).
@@ -77,7 +77,7 @@ internal sealed class MacNotifier : INativeNotifier
             var center = Send(GetClass("NSUserNotificationCenter"), Sel("defaultUserNotificationCenter"));
             SendPtr(center, Sel("setDelegate:"), _delegate);
         }
-        catch { /* не удалось поставить делегат — уведомления всё равно покажутся, но без клика */ }
+        catch { /* не удалось поставить делегат — уведомления все равно покажутся, но без клика */ }
     }
 
     [UnmanagedCallersOnly]

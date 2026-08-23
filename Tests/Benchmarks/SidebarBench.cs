@@ -8,7 +8,7 @@ namespace SmartBase.Tests.Benchmarks;
 /// <summary>
 /// Замер операций сайдбара (SidebarTree) на большом стенде — перенос Tests/SidebarPerf.
 /// Вызывает ровно те методы ConstructorRepository и в той же последовательности, что и UI.
-/// Стенд создаёт Tests/DbGenerator (см. docs/testing/test-database.md):
+/// Стенд создает Tests/DbGenerator (см. docs/testing/test-database.md):
 ///   dotnet run -c Release --project Tests/DbGenerator -- --count 10000000 --out ~/TestData/perf_main.db
 /// </summary>
 internal static class SidebarBench
@@ -36,7 +36,7 @@ internal static class SidebarBench
             if (File.Exists(targetPath + suffix)) File.Delete(targetPath + suffix);
 
         Console.WriteLine($"Стенд:   {mainPath} ({BenchUtil.SizeGb(mainPath):0.00} ГБ)");
-        Console.WriteLine($"Целевая: {targetPath} (пересоздаётся)");
+        Console.WriteLine($"Целевая: {targetPath} (пересоздается)");
         Console.WriteLine($"Режим:   {(light ? "light (без дубля/переноса группы)" : "полный")}");
         Console.WriteLine();
 
@@ -53,7 +53,7 @@ internal static class SidebarBench
         List<DbCollection> cols   = [];
         Time("Refresh: GetAllGroups (холодное)",      () => groups = repo.GetAllGroups());
         Time("Refresh: GetAllCollections (холодное)", () => cols   = repo.GetAllCollections());
-        Time("Refresh: GetAllGroups+GetAllCollections (тёплое)",
+        Time("Refresh: GetAllGroups+GetAllCollections (теплое)",
             () => { groups = repo.GetAllGroups(); cols = repo.GetAllCollections(); });
 
         var taskCol = cols.FirstOrDefault(c => c.Name == "Задачи")
@@ -76,7 +76,7 @@ internal static class SidebarBench
         Time("Календарь: окно Месяца с днями-гигантами (42 дня, cap 2000/день)",
             () => repo.GetCalendarRecordsByRangeCapped(giantStart, giantStart.AddDays(42), null, 2000));
         var dayCount = 0;
-        Time("Календарь: COUNT событий дня-гиганта (для «+N ещё»)",
+        Time("Календарь: COUNT событий дня-гиганта (для «+N еще»)",
             () => dayCount = repo.CountCalendarDayEvents(new DateTime(2026, 7, 1), new DateTime(2026, 7, 2), null),
             () => $"{dayCount:N0} событий");
 

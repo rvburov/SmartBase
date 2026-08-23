@@ -9,7 +9,7 @@ using SmartBase.Core.Importers.TableSources;
 namespace SmartBase.Extensions.TimeCollector;
 
 /// <summary>
-/// Чтение одного файла расчёта — потоково, через ExcelDataReader (книга в память не поднимается,
+/// Чтение одного файла расчета — потоково, через ExcelDataReader (книга в память не поднимается,
 /// тот же стек, что у импорта). Заменяет связку ADO/ACE OLEDB из макроса: колонки <c>F1…F11</c>
 /// запроса «SELECT … FROM [Расшифровка$]» — это колонки листа A…K, то есть индексы 0…10 ридера.
 ///
@@ -18,14 +18,14 @@ namespace SmartBase.Extensions.TimeCollector;
 /// </summary>
 internal static class CalcFileReader
 {
-    /// <summary>Лист, из которого макрос берёт данные.</summary>
+    /// <summary>Лист, из которого макрос берет данные.</summary>
     private const string SourceSheet = "Расшифровка";
 
     // Индексы колонок листа (0-based) = F(n+1) в SQL-запросе макроса.
     private const int SrcHierarchy = 1;   // F2  — иерархический номер, только условие отбора
     private const int SrcName      = 2;   // F3  — наименование
     private const int SrcDeno      = 3;   // F4  — обозначение КД
-    private const int SrcNorm      = 6;   // F7  — трудоёмкость
+    private const int SrcNorm      = 6;   // F7  — трудоемкость
 
     /// <summary>Итог по файлу: собранные строки и, если есть, замечание для журнала.
     /// Замечание может стоять и у прочитанного файла — так помечается книга, открытая
@@ -40,19 +40,19 @@ internal static class CalcFileReader
         if (parsed is null)
             return Problem(fileName, FileStatus.BadName, "имя не по образцу «Проект_ГГГГ.ММ.ДД_ФИО.xlsm»");
 
-        // Проверяем ДО открытия: если книга занята намертво, замечание попадёт и в текст ошибки.
+        // Проверяем ДО открытия: если книга занята намертво, замечание попадет и в текст ошибки.
         var owner = OwnerNote(path);
 
         try
         {
             // ExcelDataReader лезет за кодировкой 1252 даже в OpenXml, а в .NET legacy-кодировок
-            // из коробки нет: без регистрации провайдера каждый файл падал бы как «повреждён».
-            // Program.Main зовёт то же самое, но расширение не вправе на это рассчитывать —
+            // из коробки нет: без регистрации провайдера каждый файл падал бы как «поврежден».
+            // Program.Main зовет то же самое, но расширение не вправе на это рассчитывать —
             // движок работает и из тестового хоста.
             EncodingSetup.Ensure();
 
-            // FileShare.ReadWrite — книгу, открытую в Excel, читаем без конфликта (тот же приём,
-            // что в ImportErrors.OpenRead). Отказ приходит только при жёсткой блокировке.
+            // FileShare.ReadWrite — книгу, открытую в Excel, читаем без конфликта (тот же прием,
+            // что в ImportErrors.OpenRead). Отказ приходит только при жесткой блокировке.
             using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
             using var reader = ExcelReaderFactory.CreateOpenXmlReader(fs);
 
@@ -62,7 +62,7 @@ internal static class CalcFileReader
             var rows = ReadRows(reader, path, parsed, ct);
             if (rows.Count == 0)
                 return Problem(fileName, FileStatus.NoRows,
-                               "нет строк с заполненными иерархическим номером и трудоёмкостью");
+                               "нет строк с заполненными иерархическим номером и трудоемкостью");
 
             return new FileReadResult(fileName, rows,
                 owner is null ? null : new FileIssue(fileName, FileStatus.OpenedByOther, owner));
@@ -84,9 +84,9 @@ internal static class CalcFileReader
         catch (Exception ex)
         {
             // Причина (битый zip, чужой формат, обрезанный файл) иначе нигде бы не осталась.
-            Log.Warning(ex, "Сводная трудоёмкость: не удалось прочитать {File:l}", path);
+            Log.Warning(ex, "Сводная трудоемкость: не удалось прочитать {File:l}", path);
             return Problem(fileName, FileStatus.Corrupted,
-                           $"повреждён или не является файлом Excel: {ex.Message}");
+                           $"поврежден или не является файлом Excel: {ex.Message}");
         }
     }
 
@@ -102,8 +102,8 @@ internal static class CalcFileReader
         return false;
     }
 
-    // Условие отбора 1-в-1 из TimeCollector.GetData: строка идёт в свод, только если заполнены
-    // И трудоёмкость, И иерархический номер (последний в свод не переносится — он лишь признак
+    // Условие отбора 1-в-1 из TimeCollector.GetData: строка идет в свод, только если заполнены
+    // И трудоемкость, И иерархический номер (последний в свод не переносится — он лишь признак
     // того, что строка описывает изделие, а не операцию).
     private static List<TimeRow> ReadRows(IExcelDataReader reader, string path, CalcFileName name,
                                           CancellationToken ct)
@@ -149,7 +149,7 @@ internal static class CalcFileReader
         _           => Convert.ToString(value, CultureInfo.CurrentCulture) ?? "",
     };
 
-    /// <summary>Трудоёмкость: число — числом, нечисловой текст — как есть (в макросе такое
+    /// <summary>Трудоемкость: число — числом, нечисловой текст — как есть (в макросе такое
     /// значение не переживало <c>CDec</c> и попадало в свод строкой).</summary>
     private static (double? Norm, string Text) ReadNorm(object? value)
     {
@@ -175,7 +175,7 @@ internal static class CalcFileReader
 
     /// <summary>
     /// Пока книга открыта в Excel, рядом с ней лежит служебный файл «~$имя.xlsm» с именем
-    /// владельца. Сам расчёт при этом читается — поэтому файл не пропускается, а помечается
+    /// владельца. Сам расчет при этом читается — поэтому файл не пропускается, а помечается
     /// в журнале: терять его строки хуже, чем показать данные на момент последнего сохранения.
     /// </summary>
     private static string? OwnerNote(string path)
@@ -193,7 +193,7 @@ internal static class CalcFileReader
     }
 
     // Формат «~$»-файла недокументирован: первый байт — длина имени, дальше само имя.
-    // Разбор best-effort: не получилось — вернём пустую строку и напишем в журнал без имени.
+    // Разбор best-effort: не получилось — вернем пустую строку и напишем в журнал без имени.
     private static string OwnerName(string ownerPath)
     {
         try

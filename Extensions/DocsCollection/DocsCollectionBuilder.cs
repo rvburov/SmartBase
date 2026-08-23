@@ -16,7 +16,7 @@ public sealed record DocEntry(string Name, string FolderName, string Format, str
 /// <summary>Прогресс наполнения: сколько записей создано из скольких + имя текущего документа.</summary>
 public sealed record DocsProgress(int Current, int Total, string File);
 
-/// <summary>Каркас созданной коллекции: её id и id двух пользовательских полей.</summary>
+/// <summary>Каркас созданной коллекции: ее id и id двух пользовательских полей.</summary>
 public sealed record DocsShell(int CollectionId, string CollectionName,
                               int FolderFieldId, int FormatFieldId, int FileFieldId);
 
@@ -24,7 +24,7 @@ public sealed record DocsShell(int CollectionId, string CollectionName,
 public sealed class DocsCollectionException(string message) : Exception(message);
 
 /// <summary>
-/// Логика расширения «Документы в коллекцию» — без UI. Три шага, разнесённые намеренно:
+/// Логика расширения «Документы в коллекцию» — без UI. Три шага, разнесенные намеренно:
 /// <list type="number">
 /// <item><see cref="Scan"/> — обход папки (только диск, безопасно в фоне);</item>
 /// <item><see cref="CreateShell"/> — коллекция + колонки на ОБЩЕМ репозитории (UI-поток: там же
@@ -34,7 +34,7 @@ public sealed class DocsCollectionException(string message) : Exception(message)
 /// общий контекст EF принадлежит UI-потоку и делить его с фоном нельзя.</item>
 /// </list>
 /// Схема коллекции: «Наименование» — переименованная СИСТЕМНАЯ колонка записи (Title),
-/// «Название папки» и «Формат файла» — текст, «Файл» — тип «файл» с абсолютным путём.
+/// «Название папки» и «Формат файла» — текст, «Файл» — тип «файл» с абсолютным путем.
 /// </summary>
 public static class DocsCollectionBuilder
 {
@@ -89,7 +89,7 @@ public static class DocsCollectionBuilder
             var format = Path.GetExtension(path).TrimStart('.').ToLowerInvariant();
             if (extensions.Count > 0 && !extensions.Contains(format)) continue;
 
-            // «.gitignore» и подобные: имени без расширения нет — берём имя файла целиком.
+            // «.gitignore» и подобные: имени без расширения нет — берем имя файла целиком.
             var name = Path.GetFileNameWithoutExtension(path);
             if (name.Length == 0) name = Path.GetFileName(path);
 
@@ -125,8 +125,8 @@ public static class DocsCollectionBuilder
     // ── 2. Каркас коллекции (общий репозиторий, UI-поток) ─────────────────────
 
     /// <summary>
-    /// Создать коллекцию и её колонки. Имя занято — добавляется « (2)», « (3)»… Любая ошибка
-    /// после создания коллекции удаляет её, чтобы не осталось полупустого каркаса.
+    /// Создать коллекцию и ее колонки. Имя занято — добавляется « (2)», « (3)»… Любая ошибка
+    /// после создания коллекции удаляет ее, чтобы не осталось полупустого каркаса.
     /// </summary>
     public static DocsShell CreateShell(ConstructorRepository repo, string collectionName)
     {
@@ -199,7 +199,7 @@ public static class DocsCollectionBuilder
     // ── 3. Записи (отдельное подключение, фон) ────────────────────────────────
 
     /// <summary>
-    /// Наполнить коллекцию записями на СВОЁМ подключении к <paramref name="dbPath"/>: наименование
+    /// Наполнить коллекцию записями на СВОЕМ подключении к <paramref name="dbPath"/>: наименование
     /// → Title, название папки, формат и путь к файлу → значения полей каркаса.
     /// Возвращает число созданных записей; отмена бросает <see cref="OperationCanceledException"/>
     /// (вызывающий удаляет коллекцию через <see cref="TryDelete"/>).
@@ -212,7 +212,7 @@ public static class DocsCollectionBuilder
         var repo = new ConstructorRepository(ctx);
 
         // Шаг позиции 1000 оставляет место для вставки строк между документами; на неправдоподобно
-        // больших объёмах падаем до 1, чтобы (i+1)*step не переполнил int (как в импорте).
+        // больших объемах падаем до 1, чтобы (i+1)*step не переполнил int (как в импорте).
         var step = docs.Count > 2_000_000 ? 1 : 1000;
 
         var created = 0;

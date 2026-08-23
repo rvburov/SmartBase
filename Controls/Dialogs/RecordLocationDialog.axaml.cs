@@ -52,7 +52,7 @@ public partial class RecordLocationDialog : Window
     private void RebuildCollections(int? selectCollectionId)
     {
         _collections = CurrentRepo.GetAllCollections().Select(c => (c.Name, c.Id!.Value)).ToList();
-        // Пункт списка — одна строка (TitleText), выбор идёт по индексу.
+        // Пункт списка — одна строка (TitleText), выбор идет по индексу.
         CollectionCombo.ItemsSource = _collections.Select(c => TitleText.FirstLine(c.Name)).ToList();
         var idx = selectCollectionId.HasValue ? _collections.FindIndex(c => c.Id == selectCollectionId) : -1;
         CollectionCombo.SelectedIndex = idx >= 0 ? idx : (_collections.Count > 0 ? 0 : -1);

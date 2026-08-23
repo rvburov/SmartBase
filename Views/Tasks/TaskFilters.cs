@@ -15,12 +15,12 @@ public enum TaskFilterKind
 }
 
 /// <summary>
-/// Правила быстрых фильтров и их счётчики. Отдельно от навбара и контроллера: это чистая
-/// логика «какая задача куда попадает», её и проверяют тесты (<c>TaskFiltersTests</c>).
+/// Правила быстрых фильтров и их счетчики. Отдельно от навбара и контроллера: это чистая
+/// логика «какая задача куда попадает», ее и проверяют тесты (<c>TaskFiltersTests</c>).
 ///
 /// Определения совпадают с тем, что показывает сама карточка задачи (см. <c>TaskCardVm</c>),
-/// иначе счётчик и список спорили бы с чипами: просроченной считается незакрытая задача,
-/// чей срок уже истёк, — у выполненной чипа просрочки тоже нет.
+/// иначе счетчик и список спорили бы с чипами: просроченной считается незакрытая задача,
+/// чей срок уже истек, — у выполненной чипа просрочки тоже нет.
 /// </summary>
 public static class TaskFilters
 {
@@ -55,8 +55,8 @@ public static class TaskFilters
     /// <param name="me">Отображаемое имя текущего пользователя (значение поля-исполнителя).</param>
     public static bool Matches(TaskRecord t, TaskFilterKind kind, DateTime now, string me) => kind switch
     {
-        // Задача «на сегодня», если сегодняшний день попадает в её период: однодневная
-        // с сегодняшним сроком и многодневная, которая идёт через сегодня, — обе на виду.
+        // Задача «на сегодня», если сегодняшний день попадает в ее период: однодневная
+        // с сегодняшним сроком и многодневная, которая идет через сегодня, — обе на виду.
         TaskFilterKind.Today => t.DueStart is DateTime s &&
                                 s.Date <= now.Date && (t.DueEnd ?? s).Date >= now.Date,
 
@@ -64,7 +64,7 @@ public static class TaskFilters
 
         TaskFilterKind.NoDue => t.DueStart is null,
 
-        // Как чип карточки: у выполненной просрочки нет, сколько бы срок ни истёк.
+        // Как чип карточки: у выполненной просрочки нет, сколько бы срок ни истек.
         TaskFilterKind.Overdue => t.Status != ConstructorRepository.TaskStatusDone &&
                                   t.DueStart is DateTime start && (t.DueEnd ?? start) <= now,
 
@@ -73,7 +73,7 @@ public static class TaskFilters
         _ => true,
     };
 
-    /// <summary>Счётчики всех пунктов одним проходом набора.</summary>
+    /// <summary>Счетчики всех пунктов одним проходом набора.</summary>
     public static Dictionary<TaskFilterKind, int> Counts(
         IReadOnlyCollection<TaskRecord> tasks, DateTime now, string me)
     {

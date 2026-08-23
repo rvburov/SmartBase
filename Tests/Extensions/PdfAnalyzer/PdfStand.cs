@@ -20,7 +20,7 @@ internal static class PdfStand
     public static readonly (double W, double H) A1   = (594, 841);
     public static readonly (double W, double H) A0   = (841, 1189);
     public static readonly (double W, double H) A4x3 = (297, 630);   // производный формат
-    public static readonly (double W, double H) A5   = (148, 210);   // не базовый — уйдёт в «Доп. форматы»
+    public static readonly (double W, double H) A5   = (148, 210);   // не базовый — уйдет в «Доп. форматы»
     public static readonly (double W, double H) Odd  = (500, 700);   // нестандартный
 
     private const double MmToPt = 72.0 / 25.4;

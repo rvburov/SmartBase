@@ -17,7 +17,7 @@ public partial class ConstructorRepository(AppDbContext db)
 {
     // Системное поле «Дата» — единственное, что осталось schema-driven.
     // «Название» — колонка Title в db_records; «Описание» — ОБЫЧНОЕ поле коллекции с ролью
-    // IsDescription (заводится только календарём и задачами, см. EnsureDescriptionField).
+    // IsDescription (заводится только календарем и задачами, см. EnsureDescriptionField).
     private const string FieldDate = "Дата";
     private const string FieldDescription = "Описание";
 
@@ -25,13 +25,13 @@ public partial class ConstructorRepository(AppDbContext db)
     /// (ATTACH источника на подключении целевой БД, см. MoveCollectionIsolated).</summary>
     public string DbPath => db.DbPath;
 
-    /// <summary>Провайдер этой БД — PostgreSQL. Нужен UI: перенос с участием PG идёт generic-путём
+    /// <summary>Провайдер этой БД — PostgreSQL. Нужен UI: перенос с участием PG идет generic-путем
     /// (ATTACH есть только у SQLite) и связи НЕ переносит — предупреждение там строже.</summary>
     public bool IsPostgres => db.IsPostgres;
 
     /// <summary>
     /// Права текущего пользователя в этой базе (ставит DatabaseManager). Публичные мутаторы
-    /// первой строкой зовут <see cref="Demand"/> — страховку к скрытым кнопкам UI: запрещённое
+    /// первой строкой зовут <see cref="Demand"/> — страховку к скрытым кнопкам UI: запрещенное
     /// действие кидает PermissionDeniedException. Внутренние изолированные клоны репозитория
     /// (фоновые подключения массовых операций) прав не несут — их работа уже разрешена
     /// проверкой публичной точки входа. UI читает это же свойство для видимости кнопок
@@ -51,7 +51,7 @@ public partial class ConstructorRepository(AppDbContext db)
     // ── Журнал изменений (change_log) ─────────────────────────────────────────
     //
     // Факты: кто (снапшот CurrentUser), когда, что сделал; у правок — компактное
-    // «до → после» (Detail, Utils/ChangeDetail), длинные тексты свёрнуты ещё при
+    // «до → после» (Detail, Utils/ChangeDetail), длинные тексты свернуты еще при
     // записи. Пишется через ТОТ ЖЕ контекст, что и операция — в т.ч. изолированный
     // фоновый (строка журнала не конкурирует с общим контекстом и коммитится вместе
     // с операцией, если вызвана до SaveChanges). Пакетные пути пишут ОДНУ строку
@@ -84,8 +84,8 @@ public partial class ConstructorRepository(AppDbContext db)
     // Заголовок/описание/поля в панели записи сохраняются на каждую букву (защита от
     // потери ввода) — без слияния журнал фиксировал бы промежуточные состояния
     // («Проверка» → «3Проверка», «3Проверка» → «35Проверка», …). Недавняя строка журнала
-    // той же цели помнится в памяти: следующая правка УДАЛЯЕТ её и пишет новую от
-    // ИСХОДНОГО «до» к последнему «после» — в журнале остаётся конечный результат.
+    // той же цели помнится в памяти: следующая правка УДАЛЯЕТ ее и пишет новую от
+    // ИСХОДНОГО «до» к последнему «после» — в журнале остается конечный результат.
     // Именно удаление+вставка, не UPDATE строки: новый Id будит поллер соседей на каждое
     // изменение (UPDATE старой строки они бы не увидели). Правка вернула исходное
     // значение — строка убирается совсем (события нет).
@@ -93,7 +93,7 @@ public partial class ConstructorRepository(AppDbContext db)
     private readonly Dictionary<(string Kind, int RecordId, int SubId), EditMerge> _editMerges = [];
     private static readonly TimeSpan EditMergeWindow = TimeSpan.FromSeconds(30);
 
-    // Исходное «до» для цели: недавняя строка той же цели снимается (её заменит новая);
+    // Исходное «до» для цели: недавняя строка той же цели снимается (ее заменит новая);
     // правка после паузы (окно истекло) — обычная новая строка с oldValue как есть.
     private string BeginEditMerge((string Kind, int RecordId, int SubId) key, string oldValue)
     {
@@ -138,14 +138,14 @@ public partial class ConstructorRepository(AppDbContext db)
     /// Значение хранится строкой-именем (как select): фильтр/сортировка/экспорт работают
     /// без доработок, а старые значения остаются историческим снапшотом.
     ///
-    /// Читается КАЖДЫЙ раз при построении редактора (запрос дешёвый — десятки строк):
+    /// Читается КАЖДЫЙ раз при построении редактора (запрос дешевый — десятки строк):
     /// состав пользователей меняют соседи, и выпадающий список обязан быть живым —
     /// допущенный появляется, потерявший допуск исчезает без перезапуска.
     ///
     /// <paramref name="includeValue"/> — текущее значение ячейки: оно попадает в опции,
-    /// даже если такого пользователя среди допущенных уже нет (ушёл из базы, переименовался).
+    /// даже если такого пользователя среди допущенных уже нет (ушел из базы, переименовался).
     /// Иначе редактор показал бы пустоту вместо исторического снапшота, а первый же клик
-    /// затёр бы значение. Историческое значение идёт последним — «живые» опции сверху.
+    /// затер бы значение. Историческое значение идет последним — «живые» опции сверху.
     /// </summary>
     public List<string> GetUserOptions(string? includeValue = null)
     {
@@ -271,12 +271,12 @@ public partial class ConstructorRepository(AppDbContext db)
     /// («Изменение», «Запись», «до → после», локальное время), порядок и фильтры —
     /// как в таблице истории.
     ///
-    /// Одно СВОЁ подключение на всю выгрузку, AsNoTracking: в памяти живёт одна страница
+    /// Одно СВОЕ подключение на всю выгрузку, AsNoTracking: в памяти живет одна страница
     /// (или одна строка ридера), поэтому миллионы строк выгружаются без роста памяти.
     /// Метод-итератор (yield) — вызывать из фонового потока.
     ///
     /// Два режима чтения. Хронология (без сортировки и «Дата и время») — keyset-страницы
-    /// по <paramref name="pageSize"/>: срез идёт по первичному ключу, каждая страница
+    /// по <paramref name="pageSize"/>: срез идет по первичному ключу, каждая страница
     /// стоит один поиск по индексу. Сортировка по строковой колонке — ОДИН запрос
     /// с ORDER BY и потоковое чтение: у change_log вторичных индексов нет, поэтому
     /// keyset-страницами база сортировала бы всю таблицу заново на КАЖДУЮ страницу
@@ -313,7 +313,7 @@ public partial class ConstructorRepository(AppDbContext db)
         {
             // Сортировка по колонке: один ORDER BY на всю выгрузку, строки тянутся
             // ридером по мере записи в файл (без ToList — материализации нет).
-            // Временный файл сортировки пусть живёт на диске: temp_store=MEMORY из
+            // Временный файл сортировки пусть живет на диске: temp_store=MEMORY из
             // общих прагм на миллионах строк съел бы сотни мегабайт.
             ctx.Database.ExecuteSqlRaw("PRAGMA temp_store=FILE;");
             var filtered = FilterChangeLog(ctx.ChangeLog.AsNoTracking(), query.Filters);
@@ -427,7 +427,7 @@ public partial class ConstructorRepository(AppDbContext db)
 
     /// <summary>
     /// Удаляет строки журнала старше <paramref name="olderThanUtc"/> (UTC); null —
-    /// весь журнал. Только администратор. Возвращает число удалённых строк.
+    /// весь журнал. Только администратор. Возвращает число удаленных строк.
     /// </summary>
     public int PurgeChangeLog(DateTime? olderThanUtc)
     {
@@ -436,7 +436,7 @@ public partial class ConstructorRepository(AppDbContext db)
                 "Очистить журнал может только администратор базы данных.");
 
         // Кеш слияния побуквенных правок мог держать ссылки на удаляемые строки —
-        // сбрасываем, иначе следующая правка попыталась бы удалить уже удалённую строку.
+        // сбрасываем, иначе следующая правка попыталась бы удалить уже удаленную строку.
         _editMerges.Clear();
 
         return olderThanUtc is DateTime cut
@@ -512,7 +512,7 @@ public partial class ConstructorRepository(AppDbContext db)
 
     /// <summary>
     /// Полный дубль группы СО ВСЕМ содержимым (подгруппы + коллекции + записи + значения + UI) в той же
-    /// БД. Структуру (группы + шеллы коллекций) создаём через EF, данные коллекций — bulk-SQL
+    /// БД. Структуру (группы + шеллы коллекций) создаем через EF, данные коллекций — bulk-SQL
     /// (<see cref="CopyCollectionData"/>), как дубль коллекции. Верхняя группа получает имя «X (копия)»,
     /// вложенные элементы — свои имена. <paramref name="progress"/> — нарастающее число скопированных
     /// записей по всем коллекциям ветки (для %). Возвращает id новой верхней группы.
@@ -560,7 +560,7 @@ public partial class ConstructorRepository(AppDbContext db)
     }
 
     // Рекурсивно копирует только СТРУКТУРУ групп (без коллекций): новая группа под targetParentId,
-    // затем её подгруппы. Заполняет map (старый id → новый). Верхняя получает «(копия)», вложенные — имена как есть.
+    // затем ее подгруппы. Заполняет map (старый id → новый). Верхняя получает «(копия)», вложенные — имена как есть.
     private int CloneGroupTree(int srcGroupId, int? targetParentId, bool isRoot, Dictionary<int, int> map)
     {
         var src    = db.DbGroups.Find(srcGroupId)!;
@@ -618,7 +618,7 @@ public partial class ConstructorRepository(AppDbContext db)
         // строк параметрами не выражаются.
         #pragma warning disable EF1002
         // cell_style обычно уносит FK-каскад вместе с записями, но чистим и здесь: если записи
-        // ушли другим путём, строки осиротели бы, а id коллекций SQLite переиспользует.
+        // ушли другим путем, строки осиротели бы, а id коллекций SQLite переиспользует.
         foreach (var t in new[] { "ui_row_heights", "record_display", "ui_col_widths",
                                   "ui_collection_settings", "column_meta", "cell_style" })
             db.Database.ExecuteSqlRaw($"DELETE FROM {t} WHERE CollectionId = {collectionId}");
@@ -643,7 +643,7 @@ public partial class ConstructorRepository(AppDbContext db)
     }
 
     /// <summary>Асинхронная версия <see cref="CountGroupSubtree"/> на ОТДЕЛЬНОМ подключении — для
-    /// подсчёта перед массовыми операциями сайдбара: COUNT по ветке с миллионами записей — сотни мс,
+    /// подсчета перед массовыми операциями сайдбара: COUNT по ветке с миллионами записей — сотни мс,
     /// на UI-потоке это фриз перед окном прогресса (множится при мультивыборе).</summary>
     public Task<(int Collections, long Records)> CountGroupSubtreeAsync(int groupId) =>
         Task.Run(() =>
@@ -675,10 +675,10 @@ public partial class ConstructorRepository(AppDbContext db)
     }
 
     /// <summary>
-    /// Удалить группу со всей веткой ПАКЕТАМИ: коллекции ветки по очереди тем же путём, что
+    /// Удалить группу со всей веткой ПАКЕТАМИ: коллекции ветки по очереди тем же путем, что
     /// <see cref="DeleteCollectionData"/> (транзакция на пакет, явные bulk-DELETE значений/проекции,
     /// чистка UI-строк без FK), затем строки групп ветки. <paramref name="progress"/> — нарастающее
-    /// число удалённых записей по всей ветке (для %).
+    /// число удаленных записей по всей ветке (для %).
     /// </summary>
     public void DeleteGroupData(int groupId, IProgress<int>? progress = null, int batchSize = 10000,
                                 bool log = true)
@@ -769,7 +769,7 @@ public partial class ConstructorRepository(AppDbContext db)
     /// Создать коллекцию и залить записи ПОТОКОМ: маленькая shell-транзакция (коллекция + текстовые
     /// поля + подпись «Название» + порядок колонок, «Описание» пустое в конце), затем строки
     /// пакетами по <paramref name="batchSize"/> — каждый пакет в СВОЕЙ транзакции (WAL не
-    /// разрастается на весь объём, отмена срабатывает между пакетами). Записи и значения пишутся
+    /// разрастается на весь объем, отмена срабатывает между пакетами). Записи и значения пишутся
     /// сырым ADO.NET (prepared INSERT), а НЕ через EF: EF на каждую из миллионов сущностей тратит
     /// построение графа и чтение сгенерированного Id — ≈60× медленнее сырого пути. Внутри своей
     /// транзакции мы единственный писатель → id пакета непрерывны: RecordId = firstNew + индекс.
@@ -814,7 +814,7 @@ public partial class ConstructorRepository(AppDbContext db)
             SetSystemFieldName(col.Id, TitleKey, schema.TitleHeader, "Название");
 
             // Порядок колонок: «Название», затем свойства. Поля «Описание» у импорта нет —
-            // оно заводится только календарным/задачным путём (EnsureDescriptionField).
+            // оно заводится только календарным/задачным путем (EnsureDescriptionField).
             var order = new List<string> { TitleKey };
             order.AddRange(fieldIds.Select(id => id.ToString()));
             SaveColumnOrder(col.Id, order);
@@ -833,16 +833,16 @@ public partial class ConstructorRepository(AppDbContext db)
             Serilog.Log.Error(ex, "Ошибка записи в БД при импорте коллекции «{Name:l}»", collectionName);
             TryDeleteImported(colId);
             throw ex.SqliteErrorCode == 13   // SQLITE_FULL
-                ? new ImportException("Недостаточно места на диске — импорт отменён, частичные данные удалены.")
-                : new ImportException("Ошибка записи в базу данных. Импорт отменён.");
+                ? new ImportException("Недостаточно места на диске — импорт отменен, частичные данные удалены.")
+                : new ImportException("Ошибка записи в базу данных. Импорт отменен.");
         }
         catch (Npgsql.PostgresException ex)
         {
             Serilog.Log.Error(ex, "Ошибка записи в PostgreSQL при импорте коллекции «{Name:l}»", collectionName);
             TryDeleteImported(colId);
             throw ex.SqlState == "53100"   // disk_full
-                ? new ImportException("Недостаточно места на диске — импорт отменён, частичные данные удалены.")
-                : new ImportException("Ошибка записи в базу данных. Импорт отменён.");
+                ? new ImportException("Недостаточно места на диске — импорт отменен, частичные данные удалены.")
+                : new ImportException("Ошибка записи в базу данных. Импорт отменен.");
         }
         catch
         {
@@ -870,7 +870,7 @@ public partial class ConstructorRepository(AppDbContext db)
         IEnumerable<ImportRow> rows, CancellationToken ct, IProgress<long>? rowsWritten, int batchSize)
     {
         // Шаг Position: 1000 (есть куда вставлять строки между импортированными), но на
-        // многомиллионных объёмах — 1: (idx+1)*1000 в int переполняется после ~2,1 млн строк.
+        // многомиллионных объемах — 1: (idx+1)*1000 в int переполняется после ~2,1 млн строк.
         var posStep = schema.RowCount > 2_000_000 ? 1L : 1000L;
         var now     = DateTime.Now.ToString("o");
         var conn    = db.Database.GetDbConnection();
@@ -992,12 +992,12 @@ public partial class ConstructorRepository(AppDbContext db)
     /// <summary>
     /// Удалить записи коллекции ПАКЕТАМИ, затем строку коллекции и UI-настройки. Каждый пакет —
     /// СВОЯ транзакция: прежде вся операция шла одной гигантской транзакцией, и WAL разрастался на
-    /// весь объём изменений (десятки ГБ на многомиллионных коллекциях); частичное удаление при сбое
+    /// весь объем изменений (десятки ГБ на многомиллионных коллекциях); частичное удаление при сбое
     /// не страшно — повтор операции доудаляет остаток. Значения и проекция календаря удаляются
-    /// ЯВНЫМ bulk-DELETE до записей (каскаду по FK остаётся проверить пустоту), UI-строки без FK
+    /// ЯВНЫМ bulk-DELETE до записей (каскаду по FK остается проверить пустоту), UI-строки без FK
     /// (ui_row_heights, record_display и коллекция-level) чистятся явно — иначе они сиротели, а id
     /// коллекций SQLite переиспользует (фантомные настройки у будущей коллекции с тем же id).
-    /// <paramref name="progress"/> — нарастающее число удалённых записей.
+    /// <paramref name="progress"/> — нарастающее число удаленных записей.
     /// </summary>
     public void DeleteCollectionData(int collectionId, IProgress<int>? progress = null, int batchSize = 10000,
                                      bool log = true)
@@ -1010,7 +1010,7 @@ public partial class ConstructorRepository(AppDbContext db)
     }
 
     // Удаление одной коллекции пакетами (транзакция на пакет, см. DeleteCollectionData): значения и
-    // проекция — bulk-DELETE по срезу записей, затем записи; в конце строка коллекции (каскад уберёт
+    // проекция — bulk-DELETE по срезу записей, затем записи; в конце строка коллекции (каскад уберет
     // поля) и UI-строки без FK. progressBase — сдвиг прогресса при удалении ветки группы. Числа в
     // SQL — int/long, которые мы формируем сами, поэтому интерполяция в Raw безопасна.
     private void DeleteCollectionRows(int collectionId, long progressBase, IProgress<int>? progress, int batchSize)
@@ -1037,7 +1037,7 @@ public partial class ConstructorRepository(AppDbContext db)
             #pragma warning restore EF1002
             tx.Commit();
 
-            if (end is not int e) break;   // последний (неполный) пакет удалён
+            if (end is not int e) break;   // последний (неполный) пакет удален
             deleted += batchSize; prevId = e;
             progress?.Report((int)(progressBase + deleted));
         }
@@ -1045,7 +1045,7 @@ public partial class ConstructorRepository(AppDbContext db)
         using var tail = db.Database.BeginTransaction();
         // UI-настройки коллекции: FK-каскада у этих таблиц нет — только явная чистка.
         DeleteCollectionUiRows(collectionId);
-        // Строка коллекции: каскад уберёт поля (их строки calendar_index уже удалены выше).
+        // Строка коллекции: каскад уберет поля (их строки calendar_index уже удалены выше).
         db.Database.ExecuteSqlInterpolated($"DELETE FROM db_collections WHERE Id = {collectionId}");
         tail.Commit();
     }
@@ -1083,7 +1083,7 @@ public partial class ConstructorRepository(AppDbContext db)
     /// <see cref="DuplicateCollectionIsolated"/> (фон + прогресс). Возвращает новую коллекцию
     /// и число записей источника.
     /// </summary>
-    /// <param name="overrideGroupId">Если задан — коллекция-копия кладётся в ЭТУ группу (для дубля
+    /// <param name="overrideGroupId">Если задан — коллекция-копия кладется в ЭТУ группу (для дубля
     /// группы: копии коллекций идут в новые подгруппы), иначе в группу источника.</param>
     /// <param name="addCopySuffix">true — имя «X (копия)» (дубль одной коллекции); false — имя как у
     /// источника (дубль группы: суффикс «(копия)» получает только верхняя группа, вложенное — нет).</param>
@@ -1144,7 +1144,7 @@ public partial class ConstructorRepository(AppDbContext db)
     /// <summary>
     /// Скопировать записи и значения из исходной коллекции в уже созданный «скелет» (newCollectionId).
     /// Только bulk-SQL без материализации в EF. Карта полей old→new — по Position (скелет копирует
-    /// Position дословно). Всё в ОДНОЙ транзакции (атомарно, без частичной копии при ошибке):
+    /// Position дословно). Все в ОДНОЙ транзакции (атомарно, без частичной копии при ошибке):
     ///  1) ВСЕ записи одним `INSERT … SELECT … ORDER BY Position, Id` (id новых записей — непрерывный
     ///     блок в этом порядке: firstNew = last_insert_rowid − recCount + 1);
     ///  2) значения — КРУПНЫМИ пакетами (по batchSize записей), но ВСЕ поля за один `INSERT` через
@@ -1175,8 +1175,8 @@ public partial class ConstructorRepository(AppDbContext db)
 
         // Временная карта полей (old_fid → new_fid) — чтобы копировать значения ВСЕХ полей за один
         // INSERT (JOIN _dup_fmap), а не по одному полю; та же карта перемэппливает ключи UI-колонок.
-        // Создаём заранее (нужна и при пустой коллекции — UI колонок копируем без записей). Живёт на
-        // этом подключении; пересоздаём.
+        // Создаем заранее (нужна и при пустой коллекции — UI колонок копируем без записей). Живет на
+        // этом подключении; пересоздаем.
         db.Database.ExecuteSqlRaw("DROP TABLE IF EXISTS temp._dup_fmap");
         db.Database.ExecuteSqlRaw("CREATE TEMP TABLE _dup_fmap(old_fid INTEGER PRIMARY KEY, new_fid INTEGER)");
         foreach (var (oldFid, newFid) in fieldMap)
@@ -1199,7 +1199,7 @@ public partial class ConstructorRepository(AppDbContext db)
             // 2) Значения и проекция календаря крупными пакетами по (Position, Id): на пакет — один
             //    INSERT значений по всем полям и один INSERT строк calendar_index. Проекция источника
             //    всегда полная (видимость поля — фильтр чтения, см. SetDateFieldVisible), поэтому дубль
-            //    копирует её 1:1 с перемэппингом id — прежняя пересборка (RebuildCalendarIndexForCollection:
+            //    копирует ее 1:1 с перемэппингом id — прежняя пересборка (RebuildCalendarIndexForCollection:
             //    чтение значений EF-страницами + парсинг дат + по-строчный INSERT) на больших коллекциях
             //    добавляла минуты «висящего» на 100% прогресса ПОСЛЕ копии данных. Числа в SQL — int/long,
             //    которые мы формируем сами, поэтому интерполяция в Raw безопасна (как в attached-переносе).
@@ -1303,7 +1303,7 @@ public partial class ConstructorRepository(AppDbContext db)
                 WHERE d.CollectionId = {srcCol}");
 
             // Оформление ячеек: запись — по рангу (как выше), колонка — по карте полей
-            // (числовой Key = id поля, «__title__» остаётся как есть — как у column_meta).
+            // (числовой Key = id поля, «__title__» остается как есть — как у column_meta).
             db.Database.ExecuteSqlInterpolated($@"
                 INSERT INTO cell_style (CollectionId, RecordId, Key, Bg, Fg)
                 SELECT {newCol}, {firstNew} + r.rn - 1,
@@ -1542,15 +1542,15 @@ public partial class ConstructorRepository(AppDbContext db)
     // Экспорт — чистое чтение: все методы работают на ОТДЕЛЬНЫХ подключениях (вызовы
     // идут с фонового потока оркестрации, общий Context трогать нельзя — правило
     // однопоточности), WAL допускает такое чтение рядом с любыми операциями. Demand не
-    // зовётся: изолированные клоны прав не несут (см. Permissions), проверку
+    // зовется: изолированные клоны прав не несут (см. Permissions), проверку
     // ViewCollection делает оркестрация по кешу прав до начала чтения.
 
     /// <summary>
-    /// Колонки экспорта в порядке таблицы: сохранённый column_order, иначе дефолт как у
+    /// Колонки экспорта в порядке таблицы: сохраненный column_order, иначе дефолт как у
     /// TableView.EffectiveColumnPosition (Название=1000, поле=3000+Position).
     /// markdown-поля исключаются (они не колонки таблицы). includeHidden=false — только
     /// видимые колонки (column_display; отсутствие ключа = видима). Подпись «Названия» —
-    /// из column_meta (дефолт «Название»); «Описание» — обычное поле и идёт наравне с ними.
+    /// из column_meta (дефолт «Название»); «Описание» — обычное поле и идет наравне с ними.
     /// </summary>
     public List<ExportColumn> GetExportColumns(int collectionId, bool includeHidden)
     {
@@ -1661,9 +1661,9 @@ public partial class ConstructorRepository(AppDbContext db)
 
     // ── Перенос между БД (мульти-маунт) ───────────────────────────────────────
     //
-    // Из-за изоляции id (DbId, Id) коллекция/группа физически живут в своём .db-файле,
+    // Из-за изоляции id (DbId, Id) коллекция/группа физически живут в своем .db-файле,
     // поэтому «перенос в другую БД» = глубокая копия снимка в целевой репозиторий (с
-    // перенумерацией id) + удаление из исходного. Переносится всё: поля, записи, значения
+    // перенумерацией id) + удаление из исходного. Переносится все: поля, записи, значения
     // и UI-настройки коллекции (ширины/порядок/видимость колонок, высоты строк, отображение
     // записей, подписи системных колонок) — ключи-id (поле/запись) перемэппливаются на новые.
 
@@ -1866,7 +1866,7 @@ public partial class ConstructorRepository(AppDbContext db)
         db.DbGroups.Add(copy);
         db.SaveChanges();
 
-        // Внутри уже открытой транзакции — зовём *Core (без вложенной транзакции).
+        // Внутри уже открытой транзакции — зовем *Core (без вложенной транзакции).
         foreach (var sub in snap.Subgroups)   ImportGroupCore(sub, copy.Id);
         foreach (var col in snap.Collections) ImportCollectionCore(col, copy.Id);
 
@@ -1876,7 +1876,7 @@ public partial class ConstructorRepository(AppDbContext db)
     // ── Перенос целиком: export → import (в транзакции) → delete; откат копии при сбое ──
     //
     // import уже атомарен (транзакция целевой БД) — частичной копии не бывает. Если удаление
-    // из исходной упадёт после копии, удаляем копию из целевой (компенсация) и возвращаемся к
+    // из исходной упадет после копии, удаляем копию из целевой (компенсация) и возвращаемся к
     // исходному состоянию. Дубль возможен лишь при двойном сбое (исчезающе редко) — данные целы.
 
     /// <summary>Перенести коллекцию из source в target (с именем newName). Бросает при сбое — после отката копии.</summary>
@@ -1927,9 +1927,9 @@ public partial class ConstructorRepository(AppDbContext db)
 
     // ── Быстрый перенос коллекции в другую БД (bulk-SQL через ATTACH) ──────────
     //
-    // Старый MoveCollection материализует ВСЮ коллекцию в память (ExportCollection) и пишет её в
+    // Старый MoveCollection материализует ВСЮ коллекцию в память (ExportCollection) и пишет ее в
     // целевую БД через EF по одной записи (ImportCollection) — на больших коллекциях это минуты
-    // (как был импорт до перевода на bulk). Здесь то же, что дубль, только источник — присоединённый
+    // (как был импорт до перевода на bulk). Здесь то же, что дубль, только источник — присоединенный
     // файл: на подключении ЦЕЛЕВОЙ БД делаем `ATTACH src`, копируем шелл/записи/значения/UI bulk-ом
     // (id полей и записей перемэппливаются), затем удаляем коллекцию из источника на ОТДЕЛЬНОМ
     // подключении. Копия и удаление раздельны (в WAL межбазовая транзакция не атомарна), с той же
@@ -1938,8 +1938,8 @@ public partial class ConstructorRepository(AppDbContext db)
     /// <summary>
     /// Перенести коллекцию в ДРУГУЮ БД быстро (bulk-SQL через ATTACH) на ОТДЕЛЬНЫХ подключениях —
     /// не трогает общий Context (см. правило об общем AppDbContext), поэтому безопасно из Task.Run.
-    /// <c>this</c> — репозиторий ЦЕЛЕВОЙ БД (куда переносим); источник задаётся путём к его .db-файлу.
-    /// <paramref name="progress"/> — нарастающее число перенесённых записей (для % в окне). Возвращает
+    /// <c>this</c> — репозиторий ЦЕЛЕВОЙ БД (куда переносим); источник задается путем к его .db-файлу.
+    /// <paramref name="progress"/> — нарастающее число перенесенных записей (для % в окне). Возвращает
     /// id новой коллекции в целевой БД (0 — если копировать нечего). Бросает при сбое (после отката копии).
     /// </summary>
     public int MoveCollectionIsolated(string sourceDbPath, int srcCollectionId, int? targetGroupId,
@@ -1951,7 +1951,7 @@ public partial class ConstructorRepository(AppDbContext db)
         Demand(PermAction.CreateCollection);
 
         // Пара с PostgreSQL (или PG→PG): ATTACH существует только у SQLite — переносим
-        // generic-путём на двух независимых подключениях (см. ConstructorRepository.CrossMove).
+        // generic-путем на двух независимых подключениях (см. ConstructorRepository.CrossMove).
         // Связи через generic-путь пока НЕ переносятся (bulk по двум подключениям — отдельным заходом).
         if (db.IsPostgres || PgConnectionInfo.IsPostgresConnectionString(sourceDbPath))
             return MoveCollectionGeneric(sourceDbPath, srcCollectionId, targetGroupId, progress, batchSize);
@@ -1961,19 +1961,19 @@ public partial class ConstructorRepository(AppDbContext db)
         var target = new ConstructorRepository(targetCtx);
 
         // Прогресс покрывает ОБЕ фазы: копию (0..recCount) и удаление исходника (recCount..2·recCount).
-        // Иначе бар замирал на 100% на всё время удаления (каскад записей/значений — минуты на больших).
+        // Иначе бар замирал на 100% на все время удаления (каскад записей/значений — минуты на больших).
         var (newColId, recCount) = target.CopyCollectionFromAttached(sourceDbPath, srcCollectionId, targetGroupId, progress, batchSize, sourceDbId, targetDbId);
         if (newColId == 0) return 0;
 
         // Конфиги полей-связей перенесены дословно — переписываем под целевую базу (согласованно с
-        // переписыванием рёбер в копии): внешняя цель → межбазовая на источник, само-связь → на новую коллекцию.
+        // переписыванием ребер в копии): внешняя цель → межбазовая на источник, само-связь → на новую коллекцию.
         target.RewriteMovedRelationConfigs(newColId, srcCollectionId, sourceDbId, targetDbId);
 
-        // Имя копируется как есть → если в целевой группе уже есть одноимённая коллекция, даём «(копия)».
+        // Имя копируется как есть → если в целевой группе уже есть одноименная коллекция, даем «(копия)».
         target.UniquifyCollectionName(newColId, targetGroupId);
 
         // Источник чистим на отдельном подключении (каскад: записи→значения, коллекция→поля).
-        // Журнал: в источнике «удалил» пишет DeleteCollectionData, в целевой — «перенёс» ниже.
+        // Журнал: в источнике «удалил» пишет DeleteCollectionData, в целевой — «перенес» ниже.
         try
         {
             using var srcCtx = new AppDbContext(sourceDbPath);
@@ -1991,10 +1991,10 @@ public partial class ConstructorRepository(AppDbContext db)
 
     /// <summary>
     /// Перенести группу СО ВСЕЙ веткой в ДРУГУЮ БД быстро (bulk-SQL через ATTACH). <c>this</c> —
-    /// репозиторий ЦЕЛЕВОЙ БД; источник задаётся путём к его .db-файлу. Структуру групп и все коллекции
+    /// репозиторий ЦЕЛЕВОЙ БД; источник задается путем к его .db-файлу. Структуру групп и все коллекции
     /// ветки копируем в ОДНОЙ транзакции целевой БД, затем удаляем ветку из источника на ОТДЕЛЬНОМ
     /// подключении (с компенсацией как в MoveCollectionIsolated). <paramref name="progress"/> —
-    /// нарастающее число перенесённых записей. Возвращает id новой верхней группы (0 — нечего копировать).
+    /// нарастающее число перенесенных записей. Возвращает id новой верхней группы (0 — нечего копировать).
     /// </summary>
     public int MoveGroupIsolated(string sourceDbPath, int srcGroupId, int? targetParentId,
                                  IProgress<int>? progress = null, int batchSize = 10000,
@@ -2015,13 +2015,13 @@ public partial class ConstructorRepository(AppDbContext db)
         var (newRootId, total, colMap) = target.CopyGroupFromAttached(sourceDbPath, srcGroupId, targetParentId, progress, batchSize, sourceDbId, targetDbId);
         if (newRootId == 0) return 0;
 
-        // Конфиги полей-связей ветки перенесены дословно — правим под целевую базу. Рёбра ветки не
+        // Конфиги полей-связей ветки перенесены дословно — правим под целевую базу. Ребра ветки не
         // копируются (v1), но без этой правки TargetCollectionId источника читался бы как ЛОКАЛЬНАЯ
         // коллекция целевой базы, и поле показывало бы ЧУЖИЕ записи вместо пустой связи.
         target.RewriteMovedGroupRelationConfigs(colMap, sourceDbId, targetDbId);
 
-        // Имя корня ветки копируется как есть → если на целевом уровне уже есть одноимённая группа,
-        // даём «(копия)». Вложенные группы/коллекции легли в новую (пустую) ветку — там конфликтов нет.
+        // Имя корня ветки копируется как есть → если на целевом уровне уже есть одноименная группа,
+        // даем «(копия)». Вложенные группы/коллекции легли в новую (пустую) ветку — там конфликтов нет.
         target.UniquifyGroupName(newRootId, targetParentId);
 
         try
@@ -2041,9 +2041,9 @@ public partial class ConstructorRepository(AppDbContext db)
         return newRootId;
     }
 
-    // Перенос группы из присоединённой БД: одна транзакция целевой БД — сначала структура групп
+    // Перенос группы из присоединенной БД: одна транзакция целевой БД — сначала структура групп
     // (CloneGroupTreeAttached, имена через INSERT…SELECT, без материализации в C#), затем все коллекции
-    // ветки по очереди с общим % (progressBase накапливает перенесённые записи).
+    // ветки по очереди с общим % (progressBase накапливает перенесенные записи).
     private (int NewRootId, long TotalRecords, Dictionary<int, int> ColMap) CopyGroupFromAttached(string sourceDbPath, int srcGroupId,
                                       int? targetParentId, IProgress<int>? progress, int batchSize,
                                       int sourceDbId = 0, int targetDbId = 0)
@@ -2060,7 +2060,7 @@ public partial class ConstructorRepository(AppDbContext db)
             var cols = ReadIntPairs(conn, tx,
                 $"SELECT Id, GroupId FROM src.db_collections WHERE GroupId IN ({oldGroupIds}) ORDER BY GroupId, Position");
 
-            // Перенос группы: сами РЁБРА пока НЕ копируем (0,0) — межколлекционный ремап ToRecordId в
+            // Перенос группы: сами РЕБРА пока НЕ копируем (0,0) — межколлекционный ремап ToRecordId в
             // пределах ветки отдельным заходом. Но карту коллекций собираем: по ней вызывающий чинит
             // КОНФИГИ полей-связей (RewriteMovedGroupRelationConfigs), иначе они уехали бы дословно и
             // TargetCollectionId источника читался бы как ЛОКАЛЬНАЯ коллекция целевой базы (чужие записи).
@@ -2074,11 +2074,11 @@ public partial class ConstructorRepository(AppDbContext db)
             }
 
             tx.Commit();
-            return (root, basis, colMap);   // basis = суммарно перенесённых записей ветки (для прогресса удаления)
+            return (root, basis, colMap);   // basis = суммарно перенесенных записей ветки (для прогресса удаления)
         });
     }
 
-    // Рекурсивно копирует структуру групп из src в main (INSERT…SELECT — имя остаётся в SQL, без
+    // Рекурсивно копирует структуру групп из src в main (INSERT…SELECT — имя остается в SQL, без
     // инъекции). Заполняет map (старый id → новый). Возвращает id новой верхней группы.
     private int CloneGroupTreeAttached(DbConnection conn, DbTransaction tx, int srcGroupId,
                                        int? targetParentId, Dictionary<int, int> map)
@@ -2106,7 +2106,7 @@ public partial class ConstructorRepository(AppDbContext db)
     }
 
     // ATTACH источника (src) на подключение целевой БД, выполнить body, DETACH. Подключение держим
-    // открытым на всё время: ATTACH живёт на подключении. Путь источника — через параметр (в пути
+    // открытым на все время: ATTACH живет на подключении. Путь источника — через параметр (в пути
     // пользователя пробелы и спецсимволы). Используется и переносом коллекции, и переносом группы.
     private T WithAttachedSource<T>(string sourceDbPath, Func<DbConnection, T> body)
     {
@@ -2134,7 +2134,7 @@ public partial class ConstructorRepository(AppDbContext db)
         }
     }
 
-    // Перенос одной коллекции из присоединённой БД: одна транзакция целевой БД.
+    // Перенос одной коллекции из присоединенной БД: одна транзакция целевой БД.
     private (int NewColId, long RecCount) CopyCollectionFromAttached(string sourceDbPath, int srcCollectionId,
                                            int? targetGroupId, IProgress<int>? progress, int batchSize,
                                            int sourceDbId = 0, int targetDbId = 0)
@@ -2153,7 +2153,7 @@ public partial class ConstructorRepository(AppDbContext db)
     // Position (temp _move_fmap), записи одним INSERT…SELECT (новые id — непрерывный блок в порядке
     // Position,Id), значения крупными пакетами (один INSERT по всем полям через _move_fmap; пакеты —
     // ради гранулярности %), затем UI-настройки. progressBase — сколько записей уже перенесено ранее
-    // (для общего % по группе). Возвращает (id новой коллекции, число её записей). Числа в SQL — int/
+    // (для общего % по группе). Возвращает (id новой коллекции, число ее записей). Числа в SQL — int/
     // long, которые мы формируем сами (не пользовательский ввод), поэтому интерполяция безопасна.
     private (int NewColId, long RecCount) CopyOneCollectionFromAttached(DbConnection conn, DbTransaction tx,
         int srcCollectionId, int? targetGroupId, IProgress<int>? progress, long progressBase, int batchSize,
@@ -2238,7 +2238,7 @@ public partial class ConstructorRepository(AppDbContext db)
             //    иначе абсолютная БД = (TargetDbId=0?sourceDbId:TargetDbId), в целевой базе → 0 если совпала
             //    с назначением, иначе межбазовая (ToRecordId без изменений — цель осталась в исходной/третьей БД).
             //    Оговорка: связь на ДРУГУЮ коллекцию той же переносимой ГРУППЫ станет межбазовой на источник
-            //    (её цель тоже уедет — станет висячей). Групповой ремап целей — отдельным заходом.
+            //    (ее цель тоже уедет — станет висячей). Групповой ремап целей — отдельным заходом.
             if (canMoveLinks)
             {
                 Exec(conn, tx, "DROP TABLE IF EXISTS temp._move_rmap");
@@ -2320,7 +2320,7 @@ public partial class ConstructorRepository(AppDbContext db)
     }
 
     // (Position, Id) записи источника на позиции offset−1 после курсора — граница пакета значений.
-    // null — записей меньше (последний неполный пакет). Источник — присоединённая схема src.
+    // null — записей меньше (последний неполный пакет). Источник — присоединенная схема src.
     private static (long Pos, long Id)? AttachedBatchEnd(DbConnection conn, DbTransaction tx,
         int srcCollectionId, long prevPos, long prevId, int offset)
     {
@@ -2427,13 +2427,13 @@ public partial class ConstructorRepository(AppDbContext db)
 
         // Пересборка проекции нужна только при смене ТИПА (содержимое проекции реально меняется:
         // текст→дата заливает строки, дата→текст очищает). Видимость (IsCalStart) — чистый
-        // фильтр чтения, пересборки не требует (см. SetDateFieldVisible) — раньше её смена
+        // фильтр чтения, пересборки не требует (см. SetDateFieldVisible) — раньше ее смена
         // здесь тоже пересобирала проекцию (минуты фриза на больших коллекциях).
         var oldType            = entity.FieldType;
         var calRelevantChanged = entity.FieldType != field.FieldType;
 
         // Число с выбранным десятичным разделителем: если поле стало числом или сменился разделитель —
-        // приведём уже сохранённые значения к нему (канон хранения). Считаем ДО перезаписи ConfigJson.
+        // приведем уже сохраненные значения к нему (канон хранения). Считаем ДО перезаписи ConfigJson.
         var newMark      = NumberFormatValue.FromConfig(field.ConfigJson).DecimalSeparator;
         var oldMark      = NumberFormatValue.FromConfig(entity.ConfigJson).DecimalSeparator;
         var sepMigration = field.FieldType == "number" && (oldType != "number" || oldMark != newMark);
@@ -2456,7 +2456,7 @@ public partial class ConstructorRepository(AppDbContext db)
         entity.IsTaskAssigner = field.IsTaskAssigner;
         entity.IsTaskStatus   = field.IsTaskStatus;
         entity.IsDescription  = field.IsDescription;
-        // Смена типа рвёт привязку к разделу так же, как удаление столбца: раздел физически не
+        // Смена типа рвет привязку к разделу так же, как удаление столбца: раздел физически не
         // сможет читать данные (статус без списка статусов, срок без даты). Флаг, оставшийся на
         // несовместимом типе, — роль-призрак: данные в раздел не идут, а плашка «привязано к
         // разделу» продолжает висеть. Снимаем здесь, чтобы состояние базы совпадало с тем, что
@@ -2464,13 +2464,13 @@ public partial class ConstructorRepository(AppDbContext db)
         ClearRolesIncompatibleWithType(entity, field.FieldType);
         db.SaveChanges();
 
-        // Тип пересёк границу «дата» → приводим уже сохранённые значения к новому виду
+        // Тип пересек границу «дата» → приводим уже сохраненные значения к новому виду
         // (текст↔дата без потери данных). Делаем ДО пересборки calendar_index, чтобы
         // индекс строился уже по каноническим значениям.
         if (oldType != field.FieldType && field.Id is int convFid)
             ConvertFieldValuesForTypeChange(convFid, oldType, field.FieldType);
 
-        // Число: привести десятичный разделитель уже сохранённых значений к выбранному
+        // Число: привести десятичный разделитель уже сохраненных значений к выбранному
         // (после конверсии типа — чтобы нормализовать итоговые числовые строки).
         if (sepMigration && field.Id is int sepFid)
             NormalizeNumberSeparatorValues(sepFid, newMark);
@@ -2532,7 +2532,7 @@ public partial class ConstructorRepository(AppDbContext db)
     /// <summary>
     /// Материализует авто-привязку файлов поля «файл»: сканирует папку (верхний уровень, регистр
     /// учитывается), сопоставляет по «значение_текст-столбца.формат», и ПЕРЕЗАПИСЫВАЕТ значения поля
-    /// найденными путями (существующие значения очищаются — теперь столбец ведёт правило). Значения
+    /// найденными путями (существующие значения очищаются — теперь столбец ведет правило). Значения
     /// материализуются в db_field_values, поэтому фильтр/сортировка работают штатно.
     /// Папка недоступна → значения не трогаем, возвращаем статус (UI покажет плашку).
     /// </summary>
@@ -2555,7 +2555,7 @@ public partial class ConstructorRepository(AppDbContext db)
         if (field is null || field.FieldType != "file") return Task.FromResult(FileAutoResolveResult.NoRule);
         Demand(PermAction.EditRecord, field.CollectionId);
         var path = db.DbPath;
-        // ct в Task.Run НЕ передаём: задача всегда стартует и обрабатывает отмену кооперативно
+        // ct в Task.Run НЕ передаем: задача всегда стартует и обрабатывает отмену кооперативно
         // (возвращает Cancelled), чтобы await у вызывающего не бросал TaskCanceledException.
         return Task.Run(() =>
         {
@@ -2576,7 +2576,7 @@ public partial class ConstructorRepository(AppDbContext db)
 
         // Источник значений: числовое текст-поле (в т.ч. «Описание») → db_field_values по
         // (FieldId, Value); системная колонка «Название» → db_records по (Id, Title) этой коллекции
-        // (в db_field_values её нет). SQL — некавыченный PascalCase: PG складывает в нижний регистр
+        // (в db_field_values ее нет). SQL — некавыченный PascalCase: PG складывает в нижний регистр
         // своих колонок, SQLite регистронезависим.
         var (countSql, selectSql) = SourceStreamSql(rule, field.CollectionId);
 
@@ -2633,7 +2633,7 @@ public partial class ConstructorRepository(AppDbContext db)
                 $"SELECT Id, Title FROM db_records WHERE CollectionId = {collectionId} AND Title <> ''");
     }
 
-    // Значение столбца-источника для ОДНОЙ записи (точечный пересчёт). Текст-поле — из
+    // Значение столбца-источника для ОДНОЙ записи (точечный пересчет). Текст-поле — из
     // db_field_values; системное «Название» — из самой записи.
     private string ReadSourceValue(FileAutoRule rule, int recordId)
     {
@@ -2649,7 +2649,7 @@ public partial class ConstructorRepository(AppDbContext db)
     // Скан папки в словарь имя→путь (регистр учитывается — Ordinal). recursive — вместе
     // с вложенными папками. false — папки нет или нет доступа.
     //
-    // При рекурсии одно имя может встретиться в разных подпапках — берём ПЕРВОЕ найденное
+    // При рекурсии одно имя может встретиться в разных подпапках — берем ПЕРВОЕ найденное
     // (TryAdd, обход сверху вниз): выбирать «правильный» дубль не по чему, а перезапись
     // последним делала бы результат зависимым от порядка обхода файловой системы.
     private static bool TryScanFolder(string folder, bool recursive, out Dictionary<string, string> files)
@@ -2712,7 +2712,7 @@ public partial class ConstructorRepository(AppDbContext db)
     }
 
     // Пересчитать авто-file поля коллекции для ОДНОЙ записи (добавление записи / правка
-    // столбца-источника). Дёшево: точечная проверка файла на диске, без bulk-скана.
+    // столбца-источника). Дешево: точечная проверка файла на диске, без bulk-скана.
     private void ResolveAutoFileForRecord(int collectionId, int recordId)
     {
         var autoFields = db.DbFields.AsNoTracking()
@@ -2729,7 +2729,7 @@ public partial class ConstructorRepository(AppDbContext db)
     }
 
     // Точечное совпадение файла для записи (регистр учитывается). "" — не найден/пусто.
-    // Ищем маской по имени, при recursive — вместе с вложенными папками; берём первое
+    // Ищем маской по имени, при recursive — вместе с вложенными папками; берем первое
     // совпадение, как и bulk-скан (TryScanFolder).
     private static string MatchSingle(FileAutoRule rule, string sourceValue)
     {
@@ -2777,10 +2777,10 @@ public partial class ConstructorRepository(AppDbContext db)
         return toDate ? dv.ToStorage() : dv.ToDisplay();
     }
 
-    // При смене типа поля на «дата»/с «даты» приводим уже сохранённые значения к нужному
-    // виду — чтобы перевод текст↔дата шёл без потери данных:
+    // При смене типа поля на «дата»/с «даты» приводим уже сохраненные значения к нужному
+    // виду — чтобы перевод текст↔дата шел без потери данных:
     //   • текст → дата: разбираем значение и пишем ISO-канон (как пишет редактор даты),
-    //     чтобы дата сразу читалась таблицей, календарём и редактором;
+    //     чтобы дата сразу читалась таблицей, календарем и редактором;
     //   • дата → текст: разбираем ISO-канон и пишем человекочитаемое дд.MM.гггг,
     //     чтобы текст сохранил дату в привычном виде, а не как 2026-02-01.
     // Неразбираемое значение оставляем как есть — это не потеря: произвольный текст просто
@@ -2883,7 +2883,7 @@ public partial class ConstructorRepository(AppDbContext db)
         FieldType = e.FieldType, ConfigJson = e.ConfigJson, Position = e.Position,
     };
 
-    // ── Тяжёлые операции со свойствами: счётчик + пакетные версии с прогрессом ──
+    // ── Тяжелые операции со свойствами: счетчик + пакетные версии с прогрессом ──
     // Удаление и дубль поля затрагивают его значения по ВСЕМ записям коллекции (на больших
     // коллекциях — сотни тысяч строк). Маленькие поля контроллер делает синхронно мгновенно;
     // большие — через *Isolated на отдельном подключении в фоне, с окном прогресса (как дубль/
@@ -2895,7 +2895,7 @@ public partial class ConstructorRepository(AppDbContext db)
         db.DbFieldValues.Count(v => v.FieldId == fieldId);
 
     /// <summary>Число значений по каждому из полей (для прогресса bulk-операций со свойствами) на
-    /// ОТДЕЛЬНОМ подключении — чтобы счёт по сотням тысяч строк шёл в фоне, не подвешивая UI до
+    /// ОТДЕЛЬНОМ подключении — чтобы счет по сотням тысяч строк шел в фоне, не подвешивая UI до
     /// появления индикатора. Одним GROUP BY-запросом (индекс (FieldId,Value)). Порядок результата
     /// совпадает с fieldIds; для полей без значений — 0.</summary>
     public List<int> CountFieldValuesIsolated(IReadOnlyList<int> fieldIds)
@@ -2917,7 +2917,7 @@ public partial class ConstructorRepository(AppDbContext db)
         using var ctx = new AppDbContext(db.DbPath);
         ctx.ApplyPerformancePragmas();
         var repo = new ConstructorRepository(ctx);
-        // Владельца-коллекцию ищем через СВЕЖИЙ контекст: обёртку зовут из фонового
+        // Владельца-коллекцию ищем через СВЕЖИЙ контекст: обертку зовут из фонового
         // потока, а общий контекст — только для UI-потока (сама Demand читает кеш).
         Demand(PermAction.DuplicateField, repo.CollectionOfField(fieldId));
         return repo.DuplicateFieldData(fieldId, progress);
@@ -2930,7 +2930,7 @@ public partial class ConstructorRepository(AppDbContext db)
         using var ctx = new AppDbContext(db.DbPath);
         ctx.ApplyPerformancePragmas();
         var repo = new ConstructorRepository(ctx);
-        // Лукап через свежий контекст — обёртка работает в фоне (см. DuplicateFieldIsolated).
+        // Лукап через свежий контекст — обертка работает в фоне (см. DuplicateFieldIsolated).
         Demand(PermAction.DeleteField, repo.CollectionOfField(fieldId));
         repo.DeleteFieldData(fieldId, progress);
     }
@@ -2984,8 +2984,8 @@ public partial class ConstructorRepository(AppDbContext db)
             progress?.Report(Math.Min(ids.Count, i + batchSize));
         }
 
-        // Строка поля (FK ON DELETE CASCADE уберёт calendar_index) + чистка column_meta и
-        // оформления её ячеек (FK нет — ключ строковый), как в синхронном DeleteField.
+        // Строка поля (FK ON DELETE CASCADE уберет calendar_index) + чистка column_meta и
+        // оформления ее ячеек (FK нет — ключ строковый), как в синхронном DeleteField.
         var key = fieldId.ToString();
         db.Database.ExecuteSqlInterpolated($"DELETE FROM db_fields WHERE Id = {fieldId}");
         db.Database.ExecuteSqlInterpolated(
@@ -3049,7 +3049,7 @@ public partial class ConstructorRepository(AppDbContext db)
 
     /// <summary>Имя коллекции, свободное в целевой группе: если <paramref name="desired"/> занято —
     /// «(копия)»-вариант (как дубль), иначе <paramref name="desired"/> без изменений.
-    /// <paramref name="excludeId"/> — id самой коллекции (не считать её саму конфликтом).</summary>
+    /// <paramref name="excludeId"/> — id самой коллекции (не считать ее саму конфликтом).</summary>
     public string UniqueCollectionName(string desired, int? groupId, int? excludeId = null) =>
         CollectionNameExists(desired, groupId, excludeId)
             ? NextCopyName(desired, c => CollectionNameExists(c, groupId, excludeId))
@@ -3061,7 +3061,7 @@ public partial class ConstructorRepository(AppDbContext db)
             ? NextCopyName(desired, c => GroupNameExists(c, parentId, excludeId))
             : desired;
 
-    /// <summary>Если имя коллекции совпало с другой в её группе — переименовать в «(копия)»-вариант
+    /// <summary>Если имя коллекции совпало с другой в ее группе — переименовать в «(копия)»-вариант
     /// (для bulk-переноса в другую БД, где имя копируется как есть). No-op, если конфликта нет.</summary>
     public void UniquifyCollectionName(int collectionId, int? groupId)
     {
@@ -3073,7 +3073,7 @@ public partial class ConstructorRepository(AppDbContext db)
         db.SaveChanges();
     }
 
-    /// <summary>Если имя группы совпало с другой на её уровне — переименовать в «(копия)»-вариант.</summary>
+    /// <summary>Если имя группы совпало с другой на ее уровне — переименовать в «(копия)»-вариант.</summary>
     public void UniquifyGroupName(int groupId, int? parentId)
     {
         var g = db.DbGroups.Find(groupId);
@@ -3095,7 +3095,7 @@ public partial class ConstructorRepository(AppDbContext db)
         db.DbFields.Remove(entity);
 
         // Чистим метаданные колонки этого поля (порядок/видимость), чтобы в column_meta не
-        // копились мёртвые ключи (иначе перемещение колонок начинает «не работать»).
+        // копились мертвые ключи (иначе перемещение колонок начинает «не работать»).
         var key     = fieldId.ToString();
         var metaRow = db.ColumnMeta.FirstOrDefault(m => m.CollectionId == colId && m.Key == key);
         if (metaRow is not null) db.ColumnMeta.Remove(metaRow);
@@ -3133,7 +3133,7 @@ public partial class ConstructorRepository(AppDbContext db)
           .ToList();
 
     /// <summary>
-    /// Лёгкая выборка (Id, Title) всех записей коллекции в порядке (Position, Id) — для окна
+    /// Легкая выборка (Id, Title) всех записей коллекции в порядке (Position, Id) — для окна
     /// «Отображение записей». Только две колонки через проекцию + AsNoTracking: не материализует
     /// полные сущности и не засоряет трекер (на коллекциях в сотни тысяч строк это заметно).
     /// </summary>
@@ -3156,7 +3156,7 @@ public partial class ConstructorRepository(AppDbContext db)
     }
 
     /// <summary>Асинхронная версия <see cref="CountRecords"/> на ОТДЕЛЬНОМ подключении — для
-    /// подсчёта перед массовыми операциями сайдбара без фриза UI (COUNT на 10 млн — сотни мс).</summary>
+    /// подсчета перед массовыми операциями сайдбара без фриза UI (COUNT на 10 млн — сотни мс).</summary>
     public Task<int> CountRecordsAsync(int collectionId) =>
         Task.Run(() =>
         {
@@ -3175,7 +3175,7 @@ public partial class ConstructorRepository(AppDbContext db)
 
     // Страницы таблицы — raw SQL: EF-формы не масштабируются на миллионы строк. Смещение и
     // keyset обязаны идти ПО ИНДЕКСУ (CollectionId, Position): row-value сравнение
-    // (Position, Id) > (@p, @id) даёт индексный сик (0 мс на любой глубине), а OR-форма
+    // (Position, Id) > (@p, @id) дает индексный сик (0 мс на любой глубине), а OR-форма
     // (Position > @p OR (Position = @p AND Id > @id)), в которую транслируется LINQ, НЕ ложится
     // на индекс — SQLite сканирует коллекцию с НАЧАЛА (на 10 млн — сотни мс на КАЖДУЮ страницу
     // скролла, т.е. «keyset» был O(глубины)). Хвост Id в ключе сика бесплатен: Id = rowid,
@@ -3186,7 +3186,7 @@ public partial class ConstructorRepository(AppDbContext db)
 
     // Описание записи для календарных карточек: значение поля с ролью «Описание»
     // (IsDescription). Скалярный подзапрос, а не JOIN: не размножает строки, если ролью
-    // помечено два поля (копии коллекций), и идёт сиком по PK (RecordId, FieldId)
+    // помечено два поля (копии коллекций), и идет сиком по PK (RecordId, FieldId)
     // db_field_values. Флаги в PG хранятся integer 0/1 — сравнение общее для обоих провайдеров.
     private const string DescExpr =
         "(SELECT fv.Value FROM db_field_values fv JOIN db_fields fd ON fd.Id = fv.FieldId" +
@@ -3198,9 +3198,9 @@ public partial class ConstructorRepository(AppDbContext db)
           $" WHERE d.CollectionId = {alias}.CollectionId AND d.RecordId = {alias}.Id AND d.Visible = 0)"
         : "";
 
-    /// <summary>Страница по offset (прыжок скроллбаром). Смещение идёт по ПОКРЫВАЮЩЕМУ индексу
+    /// <summary>Страница по offset (прыжок скроллбаром). Смещение идет по ПОКРЫВАЮЩЕМУ индексу
     /// (CollectionId, Position): подзапрос отбирает только Id — пропускаемые записи не читаются
-    /// из таблицы, join достаёт колонки лишь для строк страницы (~9 млн глубины: 190 мс вместо
+    /// из таблицы, join достает колонки лишь для строк страницы (~9 млн глубины: 190 мс вместо
     /// сотен и секунды холодным).</summary>
     public List<DbRecord> GetRecordsPage(int collectionId, int skip, int take, bool excludeHidden = false)
     {
@@ -3301,7 +3301,7 @@ public partial class ConstructorRepository(AppDbContext db)
 
     /// <summary>Есть ли у записи сосед выше/ниже в порядке коллекции (Position, Id) — для пунктов
     /// «Сдвинуть вверх/вниз». Row-value сик по индексу (CollectionId, Position): O(1) на любой
-    /// глубине. Прежний путь считал РАНГ записи (COUNT до её глубины) + полный COUNT коллекции —
+    /// глубине. Прежний путь считал РАНГ записи (COUNT до ее глубины) + полный COUNT коллекции —
     /// сотни мс на миллионах строк, и вызывался при КАЖДОЙ реализации строки (построение
     /// контекстного меню в OnLoadingRow) — это подвешивало прокрутку колесом.</summary>
     public bool HasNeighborRecord(int collectionId, int recordId, bool up)
@@ -3364,9 +3364,9 @@ public partial class ConstructorRepository(AppDbContext db)
 
     /// <summary>
     /// Записать описание записи. Описание — обычное поле коллекции с ролью «Описание»
-    /// (<see cref="DbFieldEntity.IsDescription"/>), значение живёт в db_field_values, поэтому
-    /// вся работа (журнал, аудит, авто-привязка файлов) идёт общим путём SetFieldValue.
-    /// Поля нет (коллекция никогда не создавалась календарём/задачей, либо его удалили) —
+    /// (<see cref="DbFieldEntity.IsDescription"/>), значение живет в db_field_values, поэтому
+    /// вся работа (журнал, аудит, авто-привязка файлов) идет общим путем SetFieldValue.
+    /// Поля нет (коллекция никогда не создавалась календарем/задачей, либо его удалили) —
     /// писать некуда, правка молча игнорируется. Возвращает побочные изменения авто-привязки.
     /// </summary>
     public IReadOnlyList<(int FieldId, string Value)> SetRecordDescription(int recordId, string? description)
@@ -3396,7 +3396,7 @@ public partial class ConstructorRepository(AppDbContext db)
     }
 
     // Многопользовательский режим: сущность мог удалить другой пользователь между нашим
-    // чтением и записью — UPDATE попадает в 0 строк (DbUpdateConcurrencyException). Удалённое
+    // чтением и записью — UPDATE попадает в 0 строк (DbUpdateConcurrencyException). Удаленное
     // не воскрешаем: отцепляем от трекера и дожимаем остальное (строку журнала).
     private void SaveIgnoringRemoteDelete(object entity)
     {
@@ -3451,7 +3451,7 @@ public partial class ConstructorRepository(AppDbContext db)
         return record;
     }
 
-    // Создаёт запись сразу после afterRecordId (по позиции).
+    // Создает запись сразу после afterRecordId (по позиции).
     public DbRecord AddRecordAfter(DbRecord record, int afterRecordId)
     {
         record.Position = PositionAfterRecord(record.CollectionId, afterRecordId);
@@ -3517,8 +3517,8 @@ public partial class ConstructorRepository(AppDbContext db)
         if (entity is null) return;
 
         // Перестановки (Position) журнал не засоряют — только смысловые изменения.
-        // «до → после» — для переименования (даты видны в самой записи, описание ведёт
-        // журнал своим путём как обычное поле — см. SetFieldValue).
+        // «до → после» — для переименования (даты видны в самой записи, описание ведет
+        // журнал своим путем как обычное поле — см. SetFieldValue).
         var meaningfulChange =
             entity.Title != record.Title ||
             entity.StartDt != record.StartDt || entity.EndDt != record.EndDt ||
@@ -3651,13 +3651,13 @@ public partial class ConstructorRepository(AppDbContext db)
 
     /// <summary>Дубль ОДНОЙ записи (копия сразу после исходной, по середине — без сдвига хвоста) на
     /// ОТДЕЛЬНОМ подключении: чтобы контроллер выполнял вставку в фоне (Task.Run) и обновлял таблицу
-    /// уже после — без «моргания», которое даёт синхронная вставка-плюс-refresh в одном кадре UI.</summary>
+    /// уже после — без «моргания», которое дает синхронная вставка-плюс-refresh в одном кадре UI.</summary>
     public DbRecord DuplicateRecordIsolated(int recordId)
     {
         using var ctx = new AppDbContext(db.DbPath);
         ctx.ApplyPerformancePragmas();
         var repo = new ConstructorRepository(ctx);
-        // Лукап через свежий контекст: обёртку зовут из фонового потока, общий контекст —
+        // Лукап через свежий контекст: обертку зовут из фонового потока, общий контекст —
         // только для UI-потока (Demand читает кеш, потокобезопасна).
         Demand(PermAction.DuplicateRecord, repo.CollectionOfRecord(recordId));
         return repo.DuplicateRecord(recordId);
@@ -3689,7 +3689,7 @@ public partial class ConstructorRepository(AppDbContext db)
         ctx.ApplyPerformancePragmas();
         var repo = new ConstructorRepository(ctx);
         // Право проверяем по коллекции ПЕРВОЙ записи (мультивыделение таблицы всегда
-        // в одной коллекции); лукап — через свежий контекст (обёртка работает в фоне).
+        // в одной коллекции); лукап — через свежий контекст (обертка работает в фоне).
         if (recordIds.Count > 0)
             Demand(PermAction.DeleteRecord, repo.CollectionOfRecord(recordIds[0]));
         repo.DeleteRecordsData(recordIds, progress);
@@ -3744,7 +3744,7 @@ public partial class ConstructorRepository(AppDbContext db)
     }
 
     /// <summary>То же, что <see cref="DuplicateRecordsIsolated"/>, но возвращает СООТВЕТСТВИЕ
-    /// «исходная запись → её копия». Нужно календарю: он строит из копий события (дельта Журнала,
+    /// «исходная запись → ее копия». Нужно календарю: он строит из копий события (дельта Журнала,
     /// якорь прокрутки, перенос выделения) и обязан знать, какому источнику какая копия досталась;
     /// таблице хватает голого списка id для выделения.
     ///
@@ -3779,7 +3779,7 @@ public partial class ConstructorRepository(AppDbContext db)
 
     /// <summary>Дубль выбранных записей коллекции bulk-SQL: копии встают СРАЗУ ПОСЛЕ последней (самой
     /// нижней по порядку Position, Id) выбранной записи — как дубль одной записи ставит копию следом за
-    /// исходной, а не в конец таблицы. Поля те же (одна коллекция) → FieldId не перемэппливаем. Всё в одной
+    /// исходной, а не в конец таблицы. Поля те же (одна коллекция) → FieldId не перемэппливаем. Все в одной
     /// транзакции: освобождаем count слотов сразу после якоря сдвигом ТОЛЬКО хвоста (без перенумерации всей
     /// коллекции); 1) записи одним INSERT…SELECT в эти слоты (новые id — непрерывный блок в порядке вставки:
     /// firstNew = last_insert_rowid − count + 1); 2) значения пакетами по рангу (новый RecordId = firstNew +
@@ -3798,7 +3798,7 @@ public partial class ConstructorRepository(AppDbContext db)
         using var tx = db.Database.BeginTransaction();
 
         // Временный набор выбранных Id — чтобы ранг (ROW_NUMBER по Position,Id) и JOIN значений шли
-        // по одному подмножеству. Живёт на этом подключении; пересоздаём.
+        // по одному подмножеству. Живет на этом подключении; пересоздаем.
         db.Database.ExecuteSqlRaw("DROP TABLE IF EXISTS temp._dup_recsel");
         db.Database.ExecuteSqlRaw("CREATE TEMP TABLE _dup_recsel(src_id INTEGER PRIMARY KEY)");
         foreach (var id in ids)
@@ -3816,8 +3816,8 @@ public partial class ConstructorRepository(AppDbContext db)
             return [];
         }
 
-        // Якорь — ПОСЛЕДНЯЯ (самая нижняя) выбранная запись в порядке (Position, Id): её Position, и среди
-        // делящих эту Position — максимальный Id. Копии встанут сразу после неё.
+        // Якорь — ПОСЛЕДНЯЯ (самая нижняя) выбранная запись в порядке (Position, Id): ее Position, и среди
+        // делящих эту Position — максимальный Id. Копии встанут сразу после нее.
         var anchorPos = ScalarInt($@"
             SELECT MAX(r.Position) FROM db_records r JOIN _dup_recsel s ON s.src_id = r.Id
             WHERE r.CollectionId = {collectionId}");
@@ -3825,11 +3825,11 @@ public partial class ConstructorRepository(AppDbContext db)
             SELECT MAX(r.Id) FROM db_records r JOIN _dup_recsel s ON s.src_id = r.Id
             WHERE r.CollectionId = {collectionId} AND r.Position = {anchorPos}");
 
-        // Освобождаем count слотов сразу после якоря: всё, что идёт после него в порядке (Position, Id),
+        // Освобождаем count слотов сразу после якоря: все, что идет после него в порядке (Position, Id),
         // сдвигаем на (count+1)*1000 — с запасом, чтобы копии (anchorPos + ранг*1000, ранг 1..count) не
         // столкнулись даже с записями, делящими Position якоря (Id > anchorId). Перенумерация всей коллекции
         // не нужна — трогаем только хвост. Сами выбранные (Position ≤ anchorPos, при равенстве Id ≤ anchorId)
-        // НЕ сдвигаются, поэтому их ранг для значений совпадёт с рангом при вставке копий.
+        // НЕ сдвигаются, поэтому их ранг для значений совпадет с рангом при вставке копий.
         var shift = (count + 1) * 1000;
         db.Database.ExecuteSqlInterpolated($@"
             UPDATE db_records SET Position = Position + {shift}
@@ -3839,7 +3839,7 @@ public partial class ConstructorRepository(AppDbContext db)
         var createdAt = DateTime.Now.ToString("o");
         var createdBy = CurrentUser.DisplayName;   // дубль = новая запись (свой автор/время)
 
-        // 1) Копии записей в освобождённый диапазон сразу после якоря: Position = anchorPos + ранг*1000
+        // 1) Копии записей в освобожденный диапазон сразу после якоря: Position = anchorPos + ранг*1000
         //    (ранг по Position, Id исходников). Новые rowid — непрерывный блок в этом порядке (мы
         //    единственный писатель в транзакции).
         db.Database.ExecuteSqlInterpolated($@"
@@ -4015,7 +4015,7 @@ public partial class ConstructorRepository(AppDbContext db)
     }
 
     // ── Перенос записи в другую коллекцию / БД ──────────────────────────────────
-    // Грамотный перенос: значения сопоставляются с полями целевой коллекции ПО ИМЕНИ (без учёта
+    // Грамотный перенос: значения сопоставляются с полями целевой коллекции ПО ИМЕНИ (без учета
     // регистра) с приведением типов (ConvertValueForType — текст↔дата и т.д.). Совпадающие по
     // имени поля переносятся; для остальных — createMissingFields решает: создать недостающее
     // свойство в цели (полное сохранение) или отбросить значение. Общая логика для таблицы
@@ -4052,7 +4052,7 @@ public partial class ConstructorRepository(AppDbContext db)
             {
                 if (!createMissingFields) continue;
                 // Флаги ролей задач не копируем — см. MoveRecordsCore: перенос записи не должен
-                // молча включать коллекцию-приёмник в раздел «Задачи».
+                // молча включать коллекцию-приемник в раздел «Задачи».
                 target = AddField(new DbField
                 {
                     CollectionId = targetCollectionId, Name = meta.Name,
@@ -4100,17 +4100,17 @@ public partial class ConstructorRepository(AppDbContext db)
 
     /// <summary>
     /// Что ПОТЕРЯЕТСЯ при переносе записей в другую коллекцию — для окна подтверждения ДО старта.
-    /// <c>this</c> — ЦЕЛЕВОЙ репозиторий (как у <see cref="MoveRecordsCore"/>), источник передаётся.
+    /// <c>this</c> — ЦЕЛЕВОЙ репозиторий (как у <see cref="MoveRecordsCore"/>), источник передается.
     ///
     /// Считается по СХЕМЕ — два списка полей (<c>db_fields</c>, десятки строк), а не по данным:
-    /// стоимость не зависит от числа переносимых записей, скана значений и рёбер нет. Поэтому здесь,
-    /// в отличие от проверки входящих связей (<see cref="RelationDeleteImpact"/>, миллионы рёбер →
-    /// только ФАКТ через EXISTS), можно позволить себе полный список ИМЁН: решение «отменять ли
+    /// стоимость не зависит от числа переносимых записей, скана значений и ребер нет. Поэтому здесь,
+    /// в отличие от проверки входящих связей (<see cref="RelationDeleteImpact"/>, миллионы ребер →
+    /// только ФАКТ через EXISTS), можно позволить себе полный список ИМЕН: решение «отменять ли
     /// перенос» зависит именно от того, какие свойства пропадут.
     ///
     /// ВАЖНО: правила обязаны совпадать с планом в <see cref="MoveRecordsCore"/> (сопоставление по
     /// имени + для связей совместимость целевой коллекции и ПЕРЕПИСАННОЙ целевой БД) — иначе окно
-    /// соврёт. Меняешь план — меняй и здесь.
+    /// соврет. Меняешь план — меняй и здесь.
     /// </summary>
     /// <returns>
     /// Dropped — свойств нет в целевой коллекции и создавать их не просили (значения не переедут);
@@ -4137,10 +4137,10 @@ public partial class ConstructorRepository(AppDbContext db)
         {
             if (!targetByName.TryGetValue(sf.Name, out var tf))
             {
-                // Поля в цели нет: либо создадим (переедет всё), либо свойство молча пропадёт.
+                // Поля в цели нет: либо создадим (переедет все), либо свойство молча пропадет.
                 if (!createMissingFields) dropped.Add(sf.Name);
-                // Созданное поле-связь получает переписанный конфиг — но без известных DbId рёбра
-                // всё равно не копируются.
+                // Созданное поле-связь получает переписанный конфиг — но без известных DbId ребра
+                // все равно не копируются.
                 else if (sf.FieldType == "relation" && !canMoveLinks) linksDropped.Add(sf.Name);
                 continue;
             }
@@ -4165,7 +4165,7 @@ public partial class ConstructorRepository(AppDbContext db)
     //   • проекция календаря наполняется ОДИН раз по диапазону новых id (новые id непрерывны —
     //     мы единственный писатель);
     //   • исходные записи удаляются bulk-ом (DeleteRecordsData, каскад чистит значения и индекс);
-    //   • копирование идёт в одной транзакции (один коммит), трекер EF чистим после каждой записи —
+    //   • копирование идет в одной транзакции (один коммит), трекер EF чистим после каждой записи —
     //     память ограничена независимо от размера пакета.
     private List<int> MoveRecordsCore(ConstructorRepository source, int sourceCollectionId,
         IReadOnlyList<int> recordIds, int targetCollectionId, bool createMissingFields,
@@ -4187,7 +4187,7 @@ public partial class ConstructorRepository(AppDbContext db)
             return new RelationConfig(sc.TargetCollectionId, sc.Single, sc.Separator, RelTargetDb(sc.TargetDbId)).ToConfigJson();
         }
 
-        // 1) План: srcFieldId → (целевое поле, типы). Недостающие свойства создаём ОДИН раз (при флаге),
+        // 1) План: srcFieldId → (целевое поле, типы). Недостающие свойства создаем ОДИН раз (при флаге),
         //    до транзакции копирования (AddField коммитит сам).
         var srcFields    = source.GetFields(sourceCollectionId);
         var targetByName = new Dictionary<string, DbField>(StringComparer.OrdinalIgnoreCase);
@@ -4206,10 +4206,10 @@ public partial class ConstructorRepository(AppDbContext db)
                 // (иначе TargetDbId «поедет»: внутрибазовая связь на источник станет ссылкой в никуда).
                 var cfgJson = canMoveLinks && sf.FieldType == "relation" ? RewriteRelConfig(sf) : sf.ConfigJson;
                 // Флаги ролей задач (IsTaskExec/IsTaskAssigner/IsTaskStatus) НЕ копируем:
-                // они включают в раздел «Задачи» всю коллекцию-приёмник, а пользователь просил
+                // они включают в раздел «Задачи» всю коллекцию-приемник, а пользователь просил
                 // перенести записи, а не превращать «Клиентов» в задачи. Роль — свойство
                 // коллекции, а не переносимых значений; перенос ЦЕЛОЙ коллекции (DuplicateCollection,
-                // CrossMove) её сохраняет — там коллекция и остаётся собой. Календарные IsCalStart/
+                // CrossMove) ее сохраняет — там коллекция и остается собой. Календарные IsCalStart/
                 // IsCalEnd копируются намеренно: они делают видимой дату САМОЙ записи, а не
                 // подписывают цель на чужой раздел.
                 tf = AddField(new DbField
@@ -4256,7 +4256,7 @@ public partial class ConstructorRepository(AppDbContext db)
 
                 posBase += 1000;
                 // Аудит переносим ЦЕЛИКОМ (четыре поля): «Расположение» перекладывает запись,
-                // а не создаёт новую. Иначе StampNewRecordAudit (пустые CreatedBy/UpdatedBy) и
+                // а не создает новую. Иначе StampNewRecordAudit (пустые CreatedBy/UpdatedBy) и
                 // CreatedAt = «сейчас» показывали бы запись коллеги созданной вами сегодня —
                 // при том что перенос КОЛЛЕКЦИИ аудит сохраняет (INSERT … SELECT CreatedAt,
                 // UpdatedAt, CreatedBy, UpdatedBy), и продукт противоречил сам себе.
@@ -4315,14 +4315,14 @@ public partial class ConstructorRepository(AppDbContext db)
             tx.Commit();
         }
 
-        // 3) Проекция календаря — один раз по СПИСКУ новых id (EF переведёт Contains в IN):
+        // 3) Проекция календаря — один раз по СПИСКУ новых id (EF переведет Contains в IN):
         // диапазон firstNew..lastNew полагался на непрерывность новых id — на PG соседние id
         // могли достаться другим клиентам (общая identity-последовательность).
         if (newIds.Count > 0)
             FillCalendarIndex(q => q.Where(v => newIds.Contains(v.RecordId)));
 
         // 4) Исходные записи — bulk-удалением (каскад уносит их значения и calendar_index).
-        // Без строки «удалил» в журнале — это перенос, одна строка «перенёс» ниже.
+        // Без строки «удалил» в журнале — это перенос, одна строка «перенес» ниже.
         if (copiedSources.Count > 0) source.DeleteRecordsData(copiedSources, log: false);
 
         if (newIds.Count > 0)
@@ -4375,7 +4375,7 @@ public partial class ConstructorRepository(AppDbContext db)
 
         foreach (var (key, allowed) in filters)
         {
-            var allow = allowed.ToList();   // EF переведёт Contains → SQL IN (...)
+            var allow = allowed.ToList();   // EF переведет Contains → SQL IN (...)
             if (key == TitleKey)
                 q = q.Where(r => allow.Contains(r.Title));
             else if (int.TryParse(key, out var fid))
@@ -4389,7 +4389,7 @@ public partial class ConstructorRepository(AppDbContext db)
                     if (!hasCrossDb)
                     {
                         // Чисто внутрибазовое поле — серверный EXISTS (индекс-дружественный, без
-                        // материализации рёбер). TargetDbId==0 обязателен: иначе осиротевшее межбазовое
+                        // материализации ребер). TargetDbId==0 обязателен: иначе осиротевшее межбазовое
                         // ребро с коллизией id могло бы совпасть с чужим локальным Title.
                         q = q.Where(r =>
                             db.DbRecordLinks.Any(l => l.FieldId == fid && l.FromRecordId == r.Id && l.TargetDbId == 0
@@ -4399,8 +4399,8 @@ public partial class ConstructorRepository(AppDbContext db)
                     }
                     else
                     {
-                        // Есть межбазовые рёбра — цели (в т.ч. из ДРУГОЙ базы) резолвим тем же путём, что
-                        // ячейка/счётчики (иначе межбазовые ссылки не фильтровались бы). Множества ограничены
+                        // Есть межбазовые ребра — цели (в т.ч. из ДРУГОЙ базы) резолвим тем же путем, что
+                        // ячейка/счетчики (иначе межбазовые ссылки не фильтровались бы). Множества ограничены
                         // связанными записями.
                         var bySource     = RelationTitlesBySource(collectionId, fid, resolveForeign);
                         var matchIds     = bySource.Where(kv => kv.Value.Any(t => t.Length > 0 && allowed.Contains(t)))
@@ -4481,7 +4481,7 @@ public partial class ConstructorRepository(AppDbContext db)
     /// и их значения. Нужно виртуализации таблицы, чтобы подгрузка строк при скролле НЕ блокировала
     /// UI-поток (ноль микроподвисаний даже при экстремально быстром скролле). WAL → фоновое чтение
     /// не конфликтует с основным контекстом. Режим выбирается параметрами: idSlice (фильтр/сортировка),
-    /// иначе keyset вперёд по (afterPos, afterId), иначе keyset назад по (beforePos, beforeId) —
+    /// иначе keyset вперед по (afterPos, afterId), иначе keyset назад по (beforePos, beforeId) —
     /// скролл вверх, иначе offset по skip (прыжок скроллбаром).
     /// </summary>
     /// <summary>Страница таблицы одним фоновым чтением: записи (со своим цветом в DbRecord.Color),
@@ -4529,7 +4529,7 @@ public partial class ConstructorRepository(AppDbContext db)
 
     /// <summary>
     /// Значения поля с количеством в порядке таблицы (по первой позиции). Записи без строки
-    /// значения учитываются в пустом значении "" — в UI оно показывается как «(Пусто)» и идёт в конец.
+    /// значения учитываются в пустом значении "" — в UI оно показывается как «(Пусто)» и идет в конец.
     /// </summary>
     public List<(string Value, int Count)> GetFieldValueCounts(int collectionId, int fieldId)
     {
@@ -4552,20 +4552,20 @@ public partial class ConstructorRepository(AppDbContext db)
         return result;
     }
 
-    // Названия связанных записей по каждому источнику коллекции, В ПОРЯДКЕ рёбер (Position, Id), с
+    // Названия связанных записей по каждому источнику коллекции, В ПОРЯДКЕ ребер (Position, Id), с
     // резолвом МЕЖБАЗОВЫХ целей из их баз — как в ячейке (RelationSelectBox). Единая основа для
-    // сортировки/фильтра/счётчиков столбца-связи: раньше все три джойнили db_record_links с ЛОКАЛЬНОЙ
+    // сортировки/фильтра/счетчиков столбца-связи: раньше все три джойнили db_record_links с ЛОКАЛЬНОЙ
     // db_records по ToRecordId → межбазовые цели не находились (падали в «(нет связей)») или при
     // коллизии id клеили чужой заголовок. resolveForeign: (dbId, ids) → Id→Title целевой базы (null —
-    // база недоступна); по умолчанию из реестра (RelationDbResolver, только UI-поток). Фон (счётчики)
-    // передаёт свой резолвер поверх свежих изолированных подключений (пути сняты заранее на UI).
+    // база недоступна); по умолчанию из реестра (RelationDbResolver, только UI-поток). Фон (счетчики)
+    // передает свой резолвер поверх свежих изолированных подключений (пути сняты заранее на UI).
     private Dictionary<int, List<string>> RelationTitlesBySource(
         int collectionId, int fieldId,
         Func<int, IReadOnlyList<int>, Dictionary<int, string>?>? resolveForeign = null)
     {
         resolveForeign ??= (dbId, ids) => RelationDbResolver.RepoFor(dbId)?.GetRecordTitles(ids);
 
-        // Все рёбра поля от записей этой коллекции, в порядке ребра; TargetDbId различает базу-цель.
+        // Все ребра поля от записей этой коллекции, в порядке ребра; TargetDbId различает базу-цель.
         var edges = (from l in db.DbRecordLinks.AsNoTracking()
                      where l.FieldId == fieldId
                      join src in db.DbRecords.AsNoTracking() on l.FromRecordId equals src.Id
@@ -4598,7 +4598,7 @@ public partial class ConstructorRepository(AppDbContext db)
         }
 
         var bySource = new Dictionary<int, List<string>>();
-        foreach (var e in edges)   // рёбра уже в порядке (Position, Id)
+        foreach (var e in edges)   // ребра уже в порядке (Position, Id)
         {
             var title = e.TargetDbId == 0
                 ? (sameDb.TryGetValue(e.ToRecordId, out var t) ? t : null)     // нет строки → цель удалена
@@ -4629,9 +4629,9 @@ public partial class ConstructorRepository(AppDbContext db)
 
     /// <summary>
     /// Значения столбца-связи с количеством для панели фильтра (Excel-стиль): каждый пункт —
-    /// НАЗВАНИЕ связанной записи (Title цели, в т.ч. из ДРУГОЙ базы), счётчик — сколько записей-
+    /// НАЗВАНИЕ связанной записи (Title цели, в т.ч. из ДРУГОЙ базы), счетчик — сколько записей-
     /// источников коллекции ссылаются хотя бы на одну запись с этим названием. «(нет связей)» = "" —
-    /// источники без связей (либо связанные только с безымянными/удалёнными целями), последним. Порядок
+    /// источники без связей (либо связанные только с безымянными/удаленными целями), последним. Порядок
     /// непустых — по первой позиции источника (порядок таблицы). resolveForeign — см. RelationTitlesBySource.
     /// </summary>
     public List<(string Value, int Count)> GetRelationValueCounts(
@@ -4643,7 +4643,7 @@ public partial class ConstructorRepository(AppDbContext db)
                     .Select(r => new { r.Id, r.Position }).ToList()
                     .ToDictionary(x => x.Id, x => x.Position);
 
-        // value → (уникальные источники, минимальная позиция); мульти-связь на одно имя не дублирует счётчик.
+        // value → (уникальные источники, минимальная позиция); мульти-связь на одно имя не дублирует счетчик.
         var byValue = new Dictionary<string, (HashSet<int> Sources, int MinPos)>();
         foreach (var (src, titles) in bySource)
             foreach (var title in titles.Where(t => t.Length > 0).Distinct())
@@ -4670,7 +4670,7 @@ public partial class ConstructorRepository(AppDbContext db)
     private bool IsRelationField(int fieldId) =>
         db.DbFields.AsNoTracking().Any(f => f.Id == fieldId && f.FieldType == "relation");
 
-    // Счётчики значений колонки (Title/поле/связь) по ключу — диспетчер для фона.
+    // Счетчики значений колонки (Title/поле/связь) по ключу — диспетчер для фона.
     private List<(string Value, int Count)> ColumnCounts(int collectionId, string key,
         Func<int, IReadOnlyList<int>, Dictionary<int, string>?>? resolveForeign = null) =>
         key == TitleKey ? GetTitleCounts(collectionId)
@@ -4680,7 +4680,7 @@ public partial class ConstructorRepository(AppDbContext db)
 
     /// <summary>
     /// Асинхронно (на фоновом потоке, отдельное read-only подключение) считает значения колонки
-    /// с количеством — чтобы окно фильтра открывалось мгновенно, а UI не подвисал на подсчёте.
+    /// с количеством — чтобы окно фильтра открывалось мгновенно, а UI не подвисал на подсчете.
     /// WAL допускает одновременное чтение, поэтому фоновое подключение не конфликтует с основным.
     /// </summary>
     public Task<List<(string Value, int Count)>> GetColumnCountsAsync(int collectionId, string key)
@@ -4697,7 +4697,7 @@ public partial class ConstructorRepository(AppDbContext db)
             using var ctx = new AppDbContext(db.DbPath);
             ctx.ApplyPerformancePragmas();
             var repo = new ConstructorRepository(ctx);
-            // Для поля-связи crossPaths НЕ null (даже пустой): всегда отдаём этот резолвер, чтобы
+            // Для поля-связи crossPaths НЕ null (даже пустой): всегда отдаем этот резолвер, чтобы
             // дефолт RelationTitlesBySource (RelationDbResolver.RepoFor → общий контекст чужой базы)
             // НИКОГДА не выполнялся из фона. Путь не снят на UI → dbId нет в карте → null →
             // «(база недоступна)», как в ячейке при недоступной базе (реестр из фона не трогаем).
@@ -4775,7 +4775,7 @@ public partial class ConstructorRepository(AppDbContext db)
                         .Where(x => x.Id == fieldId).Select(x => new { x.Name, x.FieldType }).FirstOrDefault();
                     var fieldName = f?.Name ?? "";
                     // «Файл»: в журнале показываем имя файла, а не абсолютный путь (как в ячейке
-                    // и фильтре). Слияние правок идёт по сырым old/value — свёртка только для показа.
+                    // и фильтре). Слияние правок идет по сырым old/value — свертка только для показа.
                     var (detailOld, detailNew) = f?.FieldType == "file"
                         ? (FileValue.DisplayName(old), FileValue.DisplayName(value))
                         : (old, value);
@@ -4793,7 +4793,7 @@ public partial class ConstructorRepository(AppDbContext db)
         //    и превращает вставку в UPDATE;
         //  • строку/запись успели удалить — UPDATE попадает в 0 строк
         //    (DbUpdateConcurrencyException): значение не воскрешаем, синхронизация вскоре
-        //    уберёт запись и из нашего UI.
+        //    уберет запись и из нашего UI.
         // Оба случая воспроизведены стендом Tests/MultiUserHarness (--contend).
         if (fv is null)
         {
@@ -4805,12 +4805,12 @@ public partial class ConstructorRepository(AppDbContext db)
                 or Npgsql.PostgresException { SqlState: "23505" })
             {
                 db.Entry(added).State = EntityState.Detached;
-                // Идентификаторы в кавычках нижним регистром: SQLite матчит их без учёта
+                // Идентификаторы в кавычках нижним регистром: SQLite матчит их без учета
                 // регистра, PG-модель и так lowercase — одна строка на оба провайдера.
                 db.Database.ExecuteSqlRaw(
                     "UPDATE \"db_field_values\" SET \"value\" = {0} WHERE \"recordid\" = {1} AND \"fieldid\" = {2}",
                     value, recordId, fieldId);
-                db.SaveChanges();   // дожать строку журнала, не сохранённую упавшим SaveChanges
+                db.SaveChanges();   // дожать строку журнала, не сохраненную упавшим SaveChanges
             }
         }
         else
@@ -4834,8 +4834,8 @@ public partial class ConstructorRepository(AppDbContext db)
             db.Database.ExecuteSqlRaw(
                 "UPDATE \"db_records\" SET \"updatedat\" = {0}, \"updatedby\" = {1} WHERE \"id\" = {2}",
                 now, author, recordId);
-            // Если запись уже в трекере (её грузили через GetRecord/Find) — синхронизируем, иначе
-            // сырой UPDATE прошёл бы мимо кеша и GetRecord вернул бы старое «изменено».
+            // Если запись уже в трекере (ее грузили через GetRecord/Find) — синхронизируем, иначе
+            // сырой UPDATE прошел бы мимо кеша и GetRecord вернул бы старое «изменено».
             if (db.DbRecords.Local.FirstOrDefault(x => x.Id == recordId) is { } trackedRec)
             {
                 trackedRec.UpdatedAt = now;
@@ -4857,7 +4857,7 @@ public partial class ConstructorRepository(AppDbContext db)
         ReactToSourceEdit(recordId, rule => rule.SourceFieldId == editedFieldId);
 
     // Пересчитать авто-file поля записи, чей источник подходит под <paramref name="isSource"/>
-    // (правка текст-столбца-источника, «Названия» или «Описания»). Возвращает список изменённых
+    // (правка текст-столбца-источника, «Названия» или «Описания»). Возвращает список измененных
     // (FieldId файл-поля, новое значение — путь или "" при отсутствии совпадения) — для мгновенного
     // обновления файл-ячеек в UI без перезагрузки.
     private List<(int FieldId, string Value)> ReactToSourceEdit(int recordId, Func<FileAutoRule, bool> isSource)
@@ -4881,14 +4881,14 @@ public partial class ConstructorRepository(AppDbContext db)
 
     /// <summary>
     /// Включает/выключает показ поля-даты в календаре (флаг <c>IsCalStart</c>). Несколько
-    /// полей-дат коллекции могут быть включены одновременно — каждое даёт свои события.
+    /// полей-дат коллекции могут быть включены одновременно — каждое дает свои события.
     /// Видимость — ЧИСТЫЙ ФИЛЬТР ЧТЕНИЯ (HiddenFieldsClause во всех читателях calendar_index),
     /// БЕЗ пересборки проекции: прежний RebuildCalendarIndexForField удалял/заливал строки поля
     /// синхронно на UI-потоке — на 10 млн записей клик чекбокса вешал приложение на минуты.
     /// Проекция всегда полная (SyncCalendarIndexValue/FillCalendarIndex пишут ВСЕ date-поля).
     /// Возвращает true, если при ВКЛЮЧЕНИИ проекция поля пуста при непустых значениях —
     /// наследие старого поведения (строки удалила прошлая версия): вызывающий должен один раз
-    /// залить её фоном (<see cref="FillCalendarIndexForFieldAsync"/> с окном прогресса).
+    /// залить ее фоном (<see cref="FillCalendarIndexForFieldAsync"/> с окном прогресса).
     /// </summary>
     public bool SetDateFieldVisible(int fieldId, bool visible, bool adoptByName = true)
     {
@@ -4900,8 +4900,8 @@ public partial class ConstructorRepository(AppDbContext db)
 
         if (!visible) return false;
 
-        // Включённая дата = запись показывается в календаре, а окно события правит ещё и
-        // описание — значит роль «Описание» коллекции нужна так же, как поле-дата. Одноимённый
+        // Включенная дата = запись показывается в календаре, а окно события правит еще и
+        // описание — значит роль «Описание» коллекции нужна так же, как поле-дата. Одноименный
         // столбец подтягивается или обходится стороной по ответу пользователя (см. PlanRoles).
         EnsureRoles(field.CollectionId, CalendarRoles, adoptByName, excludeFieldId: fieldId);
         if (db.CalendarIndex.Any(x => x.FieldId == fieldId)) return false;   // проекция уже есть
@@ -4932,8 +4932,8 @@ public partial class ConstructorRepository(AppDbContext db)
     public (bool ColResize, bool RowResize, string ViewMode) GetUiSettings(int collectionId)
     {
         var s = db.UiCollectionSettings.Find(collectionId);
-        // Нет своей записи у коллекции → вид по умолчанию берём из настроек (Оформление).
-        // Свой сохранённый вид коллекции (переключали вручную) имеет приоритет.
+        // Нет своей записи у коллекции → вид по умолчанию берем из настроек (Оформление).
+        // Свой сохраненный вид коллекции (переключали вручную) имеет приоритет.
         return s is null
             ? (false, false, Utils.AppSettings.LoadConstructorView())
             : (s.ColResize, s.RowResize, s.ViewMode);
@@ -4959,8 +4959,8 @@ public partial class ConstructorRepository(AppDbContext db)
         db.SaveChanges();
     }
 
-    // Строка column_meta живёт, пока задан хоть один аспект (порядок/видимость/подпись);
-    // сброс последнего удаляет её, чтобы «отсутствие строки = дефолт» оставалось верным
+    // Строка column_meta живет, пока задан хоть один аспект (порядок/видимость/подпись);
+    // сброс последнего удаляет ее, чтобы «отсутствие строки = дефолт» оставалось верным
     // и таблица не копила пустых строк.
     private void RemoveColumnMetaIfEmpty(ColumnMetaEntity m)
     {
@@ -5016,7 +5016,7 @@ public partial class ConstructorRepository(AppDbContext db)
 
     // ── Порядок колонок (единый для Title/Desc и пользовательских) ─────────────
 
-    // Сохранённый порядок (key -> position); пусто, если в коллекции ещё не двигали.
+    // Сохраненный порядок (key -> position); пусто, если в коллекции еще не двигали.
     public Dictionary<string, int> GetColumnOrder(int collectionId) =>
         db.ColumnMeta
           .Where(m => m.CollectionId == collectionId && m.Position != null)
@@ -5074,7 +5074,7 @@ public partial class ConstructorRepository(AppDbContext db)
     }
 
     // Поставить колонку newKey сразу после afterKey в общем порядке. movableKeys —
-    // актуальный порядок колонок ДО вставки (newKey там в конце, как создаёт AddField).
+    // актуальный порядок колонок ДО вставки (newKey там в конце, как создает AddField).
     // Перезаписываем порядок из movableKeys, затем перемещаем newKey за afterKey.
     public void MoveColumnAfter(int collectionId, string newKey, string afterKey, IReadOnlyList<string> movableKeys)
     {
@@ -5109,7 +5109,7 @@ public partial class ConstructorRepository(AppDbContext db)
 
     // ── Отображение колонок (видимость + уровень; окно «Отображение») ──────────
 
-    // key → (Visible, Level). Только сохранённые строки; отсутствие ключа = (видима, 1).
+    // key → (Visible, Level). Только сохраненные строки; отсутствие ключа = (видима, 1).
     public Dictionary<string, (bool Visible, int Level)> GetColumnDisplay(int collectionId) =>
         db.ColumnMeta
           .Where(m => m.CollectionId == collectionId && m.Visible != null)
@@ -5142,7 +5142,7 @@ public partial class ConstructorRepository(AppDbContext db)
 
     // ── Отображение записей (видимость + уровень; окно «Отображение записей») ────
 
-    // recordId → (Visible, Level). Только сохранённые строки; отсутствие ключа = (видима, 1).
+    // recordId → (Visible, Level). Только сохраненные строки; отсутствие ключа = (видима, 1).
     public Dictionary<int, (bool Visible, int Level)> GetRecordDisplay(int collectionId) =>
         db.RecordDisplay
           .Where(d => d.CollectionId == collectionId)
@@ -5152,7 +5152,7 @@ public partial class ConstructorRepository(AppDbContext db)
     // уровень 1) не храним — так таблица не разрастается, а новые записи по умолчанию видимы.
     //
     // Раньше метод сносил все строки коллекции и писал заново. С появлением аспектов Bg/Fg
-    // так нельзя: окно «Отображение записей» ничего не знает о цвете и стёрло бы его. Поэтому
+    // так нельзя: окно «Отображение записей» ничего не знает о цвете и стерло бы его. Поэтому
     // строки обновляются на месте, а удаляются только те, у которых после сброса не осталось
     // ни одного заданного аспекта (тот же контракт, что RemoveColumnMetaIfEmpty у колонок).
     public void SaveRecordDisplay(int collectionId, IEnumerable<(int RecordId, bool Visible, int Level)> entries)
@@ -5179,7 +5179,7 @@ public partial class ConstructorRepository(AppDbContext db)
             }
         }
 
-        // Записи, которых нет в списке, возвращаются к дефолту видимости — но их цвет остаётся.
+        // Записи, которых нет в списке, возвращаются к дефолту видимости — но их цвет остается.
         foreach (var (recordId, row) in byRecord)
         {
             if (!touched.Contains(recordId)) { row.Visible = true; row.Level = 1; }
@@ -5189,7 +5189,7 @@ public partial class ConstructorRepository(AppDbContext db)
         db.SaveChanges();
     }
 
-    // Строка record_display живёт, пока задан хоть один аспект: скрытость, уровень > 1,
+    // Строка record_display живет, пока задан хоть один аспект: скрытость, уровень > 1,
     // свой фон или цвет текста. Иначе «отсутствие строки = дефолт» перестало бы быть верным.
     private void RemoveRecordDisplayIfEmpty(RecordDisplayEntity d)
     {
@@ -5321,7 +5321,7 @@ public partial class ConstructorRepository(AppDbContext db)
           .ToDictionary(m => m.Key, m => RowStyle.Clean(m.Bg, m.Fg));
 
     /// <summary>Оформление ячеек ОДНОЙ СТРАНИЦЫ записей: recordId → (key → стиль).
-    /// Зовётся постранично рядом с GetFieldValuesBatch; AsNoTracking по той же причине.</summary>
+    /// Зовется постранично рядом с GetFieldValuesBatch; AsNoTracking по той же причине.</summary>
     public Dictionary<int, Dictionary<string, RowStyle>> GetCellStylesBatch(
         int collectionId, IReadOnlyList<int> recordIds)
     {
@@ -5461,17 +5461,17 @@ public partial class ConstructorRepository(AppDbContext db)
 
         if (oldColId != newColId)
         {
-            // Смена коллекции = перенос: создаём новую запись в целевой коллекции (правленый
+            // Смена коллекции = перенос: создаем новую запись в целевой коллекции (правленый
             // header + выбранное поле-дата + индекс), затем грамотно переносим остальные значения
             // свойств (по имени, с приведением типов) — иначе они терялись. Недостающие в цели
-            // свойства НЕ создаём (окно календаря визуально не меняем). Поле-дату исключаем, чтобы
+            // свойства НЕ создаем (окно календаря визуально не меняем). Поле-дату исключаем, чтобы
             // не затереть отредактированную дату.
             //
             // Связи лежат не в db_field_values, а в db_record_links — CopyFieldValuesByName их не
             // видит, и без CopyRelationLinksByName исходящие связи записи пропадали молча (тогда как
             // тот же перенос из таблицы, через MoveRecordsCore, их сохраняет). Перенос здесь всегда
-            // ВНУТРИ одной базы, поэтому DbId не передаём: TargetDbId рёбер не пересчитывается.
-            // Входящие связи всё равно оборвутся (у копии новый Id) — предупреждает UI.
+            // ВНУТРИ одной базы, поэтому DbId не передаем: TargetDbId ребер не пересчитывается.
+            // Входящие связи все равно оборвутся (у копии новый Id) — предупреждает UI.
             var oldId = rec.Id;
             var audit = (rec.CreatedAt, rec.UpdatedAt, rec.CreatedBy, rec.UpdatedBy);
             r.CollectionId = newColId;
@@ -5500,11 +5500,11 @@ public partial class ConstructorRepository(AppDbContext db)
     }
 
     /// <summary>
-    /// Возвращает перенесённой записи аудит источника (четыре поля). Смена коллекции у события
-    /// ПЕРЕСОЗДАЁТ строку <c>db_records</c>, и запись обрастает чужим аудитом трижды:
+    /// Возвращает перенесенной записи аудит источника (четыре поля). Смена коллекции у события
+    /// ПЕРЕСОЗДАЕТ строку <c>db_records</c>, и запись обрастает чужим аудитом трижды:
     /// <see cref="AddCalendarRecord"/> ставит <c>CreatedAt</c> = «сейчас», <c>StampNewRecordAudit</c>
     /// (AppDbContext) — текущего пользователя автором, а копирование значений и связей
-    /// (<c>SetFieldValue</c>/<c>TouchUpdated</c>) добивает «изменено». Для ПЕРЕНОСА всё это ложь:
+    /// (<c>SetFieldValue</c>/<c>TouchUpdated</c>) добивает «изменено». Для ПЕРЕНОСА все это ложь:
     /// событие коллеги выглядело бы созданным вами сегодня — ровно тот дефект, что закрыт в
     /// <see cref="MoveRecordsCore"/> для переноса из таблицы; правка события БЕЗ смены коллекции
     /// аудит тоже не трогает. Поэтому вызывать нужно ПОСЛЕ копирования значений и связей —
@@ -5532,7 +5532,7 @@ public partial class ConstructorRepository(AppDbContext db)
             Log("delete", "record", rec.Title, CollectionNameOf(rec.CollectionId));
             // Входящие связи в этой же БД: FK на ToRecordId снят (цель может быть межбазовой) —
             // чистим прикладно, как DeleteRecord/DeleteRecordsData. Без этого удаление из календаря
-            // и задач оставляло висячие рёбра (невидимые в ячейке, но живущие в db_record_links).
+            // и задач оставляло висячие ребра (невидимые в ячейке, но живущие в db_record_links).
             // Исходящие уходят каскадом FromRecordId вместе с записью.
             var incoming = db.DbRecordLinks.Where(l => l.TargetDbId == 0 && l.ToRecordId == id).ToList();
             db.DbRecordLinks.RemoveRange(incoming);
@@ -5568,7 +5568,7 @@ public partial class ConstructorRepository(AppDbContext db)
     //    все события вместо ни одного — галка и события «работали не сообща»;
     //  • скрытые поля-даты (IsCalStart=0): видимость поля — теперь ЧИСТЫЙ ФИЛЬТР ЧТЕНИЯ,
     //    проекция не пересобирается (см. SetDateFieldVisible). Обычно скрытых нет — фильтр
-    //    не добавляется вовсе; db_fields крошечная, её запрос копеечный.
+    //    не добавляется вовсе; db_fields крошечная, ее запрос копеечный.
     private string VisibilityFilter(ISet<int>? activeIds, string prefix = "")
     {
         // Коллекции, у которых ВСЕ поля-даты скрыты, отсекаются целиком на уровне CollectionId:
@@ -5594,7 +5594,7 @@ public partial class ConstructorRepository(AppDbContext db)
         else
             cols = activeIds.Where(id => !fullyHidden.Contains(id)).ToList();
 
-        // Пустой набор (все галки сняты / всё скрыто) — НИ ОДНОЙ, а не «без фильтра».
+        // Пустой набор (все галки сняты / все скрыто) — НИ ОДНОЙ, а не «без фильтра».
         if (cols.Count == 0) return " AND 1=0";
 
         var f = $" AND {prefix}CollectionId IN ({string.Join(",", cols)})";
@@ -5647,8 +5647,8 @@ public partial class ConstructorRepository(AppDbContext db)
 
     /// <summary>
     /// Число событий ПО ДНЯМ в окне [start, end): "yyyy-MM-dd" → count, только дни с событиями,
-    /// по возрастанию. Для «Журнала»: полоса прокрутки на весь объём окна без материализации
-    /// событий (день с миллионами строк даёт одну строку счётчика). Скан по покрывающему индексу.
+    /// по возрастанию. Для «Журнала»: полоса прокрутки на весь объем окна без материализации
+    /// событий (день с миллионами строк дает одну строку счетчика). Скан по покрывающему индексу.
     /// </summary>
     public List<(string Day, int Count)> GetCalendarDayCountsByRange(
         DateTime start, DateTime end, ISet<int>? activeIds)
@@ -5690,7 +5690,7 @@ public partial class ConstructorRepository(AppDbContext db)
 
     /// <summary>
     /// ПОСЕКУНДНАЯ гистограмма событий дня: "HH:MM:SS" → count, по возрастанию времени. Для
-    /// «Журнала» на гигантских днях (миллионы событий): даёт порядок по времени БЕЗ материализации
+    /// «Журнала» на гигантских днях (миллионы событий): дает порядок по времени БЕЗ материализации
     /// дня — карта секунд вместо самих событий. Скан индекса дня — фоново (изолированное подключение).
     /// </summary>
     public Task<List<(string Time, int Count)>> LoadCalendarDayTimeHistogramAsync(
@@ -5793,7 +5793,7 @@ public partial class ConstructorRepository(AppDbContext db)
     /// <summary>
     /// Страница событий дня ОДНОЙ фазы <paramref name="allDay"/> (1 — «весь день»/многодневные,
     /// 0 — по времени), упорядоченная по StartIso ASC. Такой порядок совпадает с индексом
-    /// (CollectionId, AllDay, StartIso), поэтому выборка идёт seek'ом без сортировки всего дня
+    /// (CollectionId, AllDay, StartIso), поэтому выборка идет seek'ом без сортировки всего дня
     /// (иначе на дне с миллионами событий SQLite строит TEMP B-TREE и подвешивает UI на секунды).
     /// Keyset после (<paramref name="afterStartIso"/>, <paramref name="afterRecordId"/>,
     /// <paramref name="afterFieldId"/>); afterStartIso=null — с начала фазы. До <paramref name="limit"/>
@@ -5863,7 +5863,7 @@ public partial class ConstructorRepository(AppDbContext db)
     }
 
     // Число событий дня одной фазы allDay (быстро по индексу (CollectionId, AllDay, StartIso)) —
-    // для стыковки offset all-day→timed и подсчёта.
+    // для стыковки offset all-day→timed и подсчета.
     private int CountCalendarDayPhase(DateTime dayStart, DateTime dayEnd, ISet<int>? activeIds, int allDay)
     {
         var s = DateTime.SpecifyKind(dayStart, DateTimeKind.Unspecified).ToString("o");
@@ -5887,7 +5887,7 @@ public partial class ConstructorRepository(AppDbContext db)
 
     /// <summary>
     /// Страница событий дня по ГЛОБАЛЬНОМУ смещению <paramref name="skip"/> в порядке «Расписания»
-    /// (all-day первыми, затем timed; внутри — по StartIso). Пропуск идёт по покрывающему индексу
+    /// (all-day первыми, затем timed; внутри — по StartIso). Пропуск идет по покрывающему индексу
     /// (подзапрос LIMIT/OFFSET на calendar_index), а join к db_records/db_collections — только для
     /// строк страницы, поэтому даже прыжок в конец дня с миллионами событий — доли секунды. Нужно
     /// для произвольного доступа полосой прокрутки (перетаскивание, в т.ч. в самый низ).
@@ -5921,7 +5921,7 @@ public partial class ConstructorRepository(AppDbContext db)
         var col = VisibilityFilter(activeIds);
         // ORDER BY (StartIso, RecordId, FieldId) — тот же полный ключ, что и в keyset-выборке
         // (GetCalendarDayEventsPage), чтобы offset-прыжки и keyset-скролл давали ОДИН порядок
-        // (без дублей/пропусков на границах страниц с равным StartIso). Быстрый пропуск идёт по
+        // (без дублей/пропусков на границах страниц с равным StartIso). Быстрый пропуск идет по
         // индексу (CollectionId, AllDay, StartIso, RecordId, FieldId) без временной сортировки.
         var sql = $@"SELECT ci.RecordId, ci.FieldId, ci.CollectionId, ci.StartIso, ci.EndIso, ci.AllDay,
                             r.Title, {DescExpr}, c.Name, c.Color
@@ -5991,7 +5991,7 @@ public partial class ConstructorRepository(AppDbContext db)
                 dayStart, dayEnd, activeIds, allDay, afterStartIso, afterRecordId, afterFieldId, limit);
         });
 
-    /// <summary>Фоновый подсчёт числа событий дня (для размера полосы прокрутки) — изолированное подключение.</summary>
+    /// <summary>Фоновый подсчет числа событий дня (для размера полосы прокрутки) — изолированное подключение.</summary>
     public Task<int> CountCalendarDayEventsAsync(DateTime dayStart, DateTime dayEnd, ISet<int>? activeIds) =>
         Task.Run(() =>
         {
@@ -6002,7 +6002,7 @@ public partial class ConstructorRepository(AppDbContext db)
 
     /// <summary>Ранг события внутри дня — число событий строго ДО него в порядке «Расписания»
     /// (all-day первыми, затем (StartIso, RecordId, FieldId)); изолированное подключение.
-    /// Нужен точечной правке offset-режима: вставить строку созданной/изменённой записи в кеш
+    /// Нужен точечной правке offset-режима: вставить строку созданной/измененной записи в кеш
     /// гигантского дня на точное место без перечитывания дня (COUNT по покрывающему индексу).</summary>
     public Task<int> CountCalendarDayEventsBeforeAsync(DateTime dayStart, DateTime dayEnd,
         ISet<int>? activeIds, bool allDay, DateTime start, int recordId, int fieldId) =>
@@ -6046,20 +6046,20 @@ public partial class ConstructorRepository(AppDbContext db)
         finally { if (opened) conn.Close(); }
     }
 
-    // Верхняя граница длительности «короткого/timed» события — задаёт, насколько далеко
+    // Верхняя граница длительности «короткого/timed» события — задает, насколько далеко
     // назад от начала окна сканируется timed-под-запрос (нижняя граница StartIso). Событие
-    // длиннее считается «многодневным» и берётся отдельным all-day-под-запросом без нижней
+    // длиннее считается «многодневным» и берется отдельным all-day-под-запросом без нижней
     // границы, поэтому НЕ теряется. 62 дня — с большим запасом: не-all-day событий такой
     // длины в календаре не бывает (длинное — это all-day/«проект»). Влияет только на скорость
     // timed-под-запроса, не на корректность.
     private const int CalendarTimedBufferDays = 62;
 
     // Строит события окна календаря из проекции calendar_index. Чтобы индекс не сканировал
-    // всё «от начала времён» (StartIso имеет верхнюю границу окна, но не нижнюю), окно
-    // берётся ДВУМЯ под-запросами по индексу (CollectionId, AllDay, StartIso):
+    // все «от начала времен» (StartIso имеет верхнюю границу окна, но не нижнюю), окно
+    // берется ДВУМЯ под-запросами по индексу (CollectionId, AllDay, StartIso):
     //   • timed (AllDay=0): с нижней границей StartIso = начало окна − буфер → быстрый
     //     двусторонний seek (основная масса событий);
-    //   • all-day (AllDay=1): без нижней границы (их мало → дёшево) — чтобы многодневные
+    //   • all-day (AllDay=1): без нижней границы (их мало → дешево) — чтобы многодневные
     //     события, начавшиеся ДО окна (панель AllDayBar), не потерялись.
     // Пересечение окна: StartIso < конец И EndIso >= начало (ISO-строки сравниваются
     // лексикографически — формат фиксирован). Результат объединяется и сортируется по началу
@@ -6088,7 +6088,7 @@ public partial class ConstructorRepository(AppDbContext db)
         if (opened) conn.Open();
         try
         {
-            // Короткие/timed — с нижней границей; многодневные/all-day — без неё (их мало).
+            // Короткие/timed — с нижней границей; многодневные/all-day — без нее (их мало).
             ReadCalendarRows(conn, result,
                 $"ci.AllDay = 0{colFilter} AND ci.StartIso >= @lo AND ci.StartIso < @end AND ci.EndIso >= @start",
                 [("@lo", lowerIso), ("@end", endIso), ("@start", startIso)]);
@@ -6104,9 +6104,9 @@ public partial class ConstructorRepository(AppDbContext db)
 
     /// <summary>
     /// Окно календаря для видов-сеток (День/Неделя/Месяц/Год) с ОГРАНИЧЕНИЕМ числа timed-событий
-    /// на день: гигантский день (миллионы записей) отдаёт сетке первые <paramref name="perDayCap"/>
-    /// строк вместо всех — больше ячейке всё равно не отрисовать, остальное показывает «+N ещё»
-    /// по карте счётчиков (<see cref="GetCalendarDayCountsByRange"/>). Чтение — per-day ×
+    /// на день: гигантский день (миллионы записей) отдает сетке первые <paramref name="perDayCap"/>
+    /// строк вместо всех — больше ячейке все равно не отрисовать, остальное показывает «+N еще»
+    /// по карте счетчиков (<see cref="GetCalendarDayCountsByRange"/>). Чтение — per-day ×
     /// per-collection: каждый запрос фиксирует (CollectionId, AllDay) одним значением, ложится
     /// сиком на индекс (CollectionId, AllDay, StartIso) и обрывается LIMIT'ом, НЕ сканируя день
     /// целиком (общий ORDER BY с IN по коллекциям заставил бы SQLite сортировать все миллионы
@@ -6158,7 +6158,7 @@ public partial class ConstructorRepository(AppDbContext db)
             // длительность ≤ буфера ⇒ EndIso < win+буфер). Прежний проход сканировал весь
             // StartIso-буфер с проверкой EndIso чтением строк — день-гигант в буфере стоил секунд
             // при каждом открытии «Дня»/«Недели» следующие 62 дня (замер на 10 млн: 3.15 с → 7 мс).
-            // Порядок LIMIT'а — по EndIso: его отдаёт сам индекс, скан обрывается на cap.
+            // Порядок LIMIT'а — по EndIso: его отдает сам индекс, скан обрывается на cap.
             var upperIso = Iso(SafeAddDays(rangeStart, CalendarTimedBufferDays));
             foreach (var colId in colIds)
                 ReadCalendarRows(conn, result,
@@ -6168,12 +6168,12 @@ public partial class ConstructorRepository(AppDbContext db)
                     [("@win", startIso), ("@hi", upperIso), ("@lo", lowerIso)], perDayCap, "ci.EndIso");
 
             // All-day/многодневные — сик по EndIso-индексу: у StartIso нет нижней границы
-            // (многодневное могло начаться сколь угодно давно), и прежний StartIso-скан шёл от
+            // (многодневное могло начаться сколь угодно давно), и прежний StartIso-скан шел от
             // НАЧАЛА таймлайна с проверкой EndIso чтением строк — миллионы прошлых all-day
             // (импорт дат «без времени») стоили секунды на каждое окно после них (замер:
             // 2.2 с → 0 мс). EndIso >= start отсекает прошлое сиком; верхней границы нет —
             // all-day, в отличие от timed, не ограничен буфером по длительности. Cap тем же
-            // LIMIT: сетке и панели «весь день» больше всё равно не отрисовать.
+            // LIMIT: сетке и панели «весь день» больше все равно не отрисовать.
             foreach (var colId in colIds)
                 ReadCalendarRows(conn, result,
                     $"ci.CollectionId = {colId} AND ci.AllDay = 1{hidden}" +
@@ -6187,9 +6187,9 @@ public partial class ConstructorRepository(AppDbContext db)
     }
 
     /// <summary>Фоновая (изолированное подключение) загрузка окна сетки: только capped-события,
-    /// индексными сиками — миллисекунды на любом окне. Карта счётчиков дней («+N ещё»
-    /// Месяца/Года) сюда сознательно НЕ входит: её GROUP BY по окну с днём-гигантом — секунды,
-    /// поэтому контроллер грузит её ВТОРОЙ фазой (<see cref="LoadCalendarDayCountsAsync"/>)
+    /// индексными сиками — миллисекунды на любом окне. Карта счетчиков дней («+N еще»
+    /// Месяца/Года) сюда сознательно НЕ входит: ее GROUP BY по окну с днем-гигантом — секунды,
+    /// поэтому контроллер грузит ее ВТОРОЙ фазой (<see cref="LoadCalendarDayCountsAsync"/>)
     /// и тихо уточняет уже показанную сетку.</summary>
     public Task<List<CalendarRecord>> LoadCalendarGridRangeAsync(
         DateTime rangeStart, DateTime rangeEnd, ISet<int>? activeIds, int perDayCap) =>
@@ -6227,14 +6227,14 @@ public partial class ConstructorRepository(AppDbContext db)
 
     /// <summary>
     /// Окно Диаграммы: не более <paramref name="perCollectionCap"/> событий каждого класса
-    /// (timed в окне / timed-спилловеры / all-day) НА КОЛЛЕКЦИЮ — Диаграмма всё равно рисует
-    /// максимум ~200 строк на группу, а её окно может быть годом или десятилетием.
+    /// (timed в окне / timed-спилловеры / all-day) НА КОЛЛЕКЦИЮ — Диаграмма все равно рисует
+    /// максимум ~200 строк на группу, а ее окно может быть годом или десятилетием.
     /// Per-day чтение сеток (<see cref="GetCalendarRecordsByRangeCapped"/>) здесь не годится:
     /// на 10-летнем окне это 3653 дня × коллекции запросов и до perDayCap строк с КАЖДОГО
     /// дня — десятки секунд и миллионы строк в памяти при том, что показана будет тысяча.
     /// Здесь — 3 индексных сика с LIMIT на коллекцию: память и время не зависят от длины окна
-    /// и объёма БД. Какие именно события попали под cap — «первые» в порядке своего индекса
-    /// (по StartIso / EndIso); точные счётчики и охват групп считает <see cref="GetDiagramStats"/>.
+    /// и объема БД. Какие именно события попали под cap — «первые» в порядке своего индекса
+    /// (по StartIso / EndIso); точные счетчики и охват групп считает <see cref="GetDiagramStats"/>.
     /// </summary>
     public List<CalendarRecord> GetDiagramRecordsCapped(
         DateTime rangeStart, DateTime rangeEnd, ISet<int>? activeIds, int perCollectionCap)
@@ -6260,7 +6260,7 @@ public partial class ConstructorRepository(AppDbContext db)
         {
             foreach (var colId in colIds)
             {
-                // Timed, начавшиеся в окне: порядок отдаёт индекс (CollectionId, AllDay,
+                // Timed, начавшиеся в окне: порядок отдает индекс (CollectionId, AllDay,
                 // StartIso), residual-фильтра нет (EndIso ≥ StartIso ≥ start автоматически).
                 ReadCalendarRows(conn, result,
                     $"ci.CollectionId = {colId} AND ci.AllDay = 0{hidden}" +
@@ -6289,11 +6289,11 @@ public partial class ConstructorRepository(AppDbContext db)
 
     /// <summary>
     /// Точные агрегаты окна Диаграммы по коллекциям: число событий, min(начало), max(конец)
-    /// по классам timed/all-day — для счётчиков групп, «+N ещё» и суммарных баров, которые
+    /// по классам timed/all-day — для счетчиков групп, «+N еще» и суммарных баров, которые
     /// должны считаться по ВСЕМ событиям окна, а не по обрезанным cap'ом. Все запросы —
     /// покрывающие индексные сканы (в таблицу не ходят): COUNT пропорционален строкам окна
-    /// (индексный, ~миллионы/с), MIN/MAX — сик до первой подходящей строки. Контроллер зовёт
-    /// это ФОНОВОЙ фазой 2 (как карту счётчиков Месяца/Года) и тихо уточняет уже показанное.
+    /// (индексный, ~миллионы/с), MIN/MAX — сик до первой подходящей строки. Контроллер зовет
+    /// это ФОНОВОЙ фазой 2 (как карту счетчиков Месяца/Года) и тихо уточняет уже показанное.
     /// </summary>
     public Dictionary<int, DiagramGroupStat> GetDiagramStats(
         DateTime rangeStart, DateTime rangeEnd, ISet<int>? activeIds)
@@ -6501,7 +6501,7 @@ public partial class ConstructorRepository(AppDbContext db)
             {
                 ins.Transaction = tx;
                 // ON CONFLICT DO UPDATE вместо INSERT OR REPLACE: работает на обоих провайдерах
-                // (SQLite ≥3.24 и PG) и не пересоздаёт строку (REPLACE = DELETE+INSERT с каскадами).
+                // (SQLite ≥3.24 и PG) и не пересоздает строку (REPLACE = DELETE+INSERT с каскадами).
                 ins.CommandText = @"INSERT INTO calendar_index
                     (RecordId, FieldId, CollectionId, StartIso, EndIso, AllDay)
                     VALUES (@rid, @fid, @cid, @s, @e, @a)
@@ -6540,7 +6540,7 @@ public partial class ConstructorRepository(AppDbContext db)
     /// <summary>
     /// Id поля с ролью «Описание» этой коллекции (null — поля нет). Роль ищется ПО ФЛАГУ,
     /// а не по имени: поле переименовывается как любое другое. Двух ролей быть не должно,
-    /// но при копировании коллекций берём первое по (Position, Id) — как остальные роли.
+    /// но при копировании коллекций берем первое по (Position, Id) — как остальные роли.
     /// </summary>
     public int? DescriptionFieldId(int collectionId) =>
         db.DbFields.AsNoTracking()
@@ -6552,10 +6552,10 @@ public partial class ConstructorRepository(AppDbContext db)
     /// <summary>
     /// Гарантирует поле «Описание» (тип «Текст») в коллекции и возвращает его Id. Заводят его
     /// только два пути — создание записи через календарь и через задачу; в остальных местах
-    /// коллекция живёт без описания, пока пользователь не добавит поле сам. Поле обычное
+    /// коллекция живет без описания, пока пользователь не добавит поле сам. Поле обычное
     /// (IsSystem = false): его можно переименовать, сменить тип и удалить.
-    /// <paramref name="adoptByName"/> = true — одноимённый столбец получает роль (данные из
-    /// него поедут в панель записи), false — он остаётся нетронутым, а поле заводится своё
+    /// <paramref name="adoptByName"/> = true — одноименный столбец получает роль (данные из
+    /// него поедут в панель записи), false — он остается нетронутым, а поле заводится свое
     /// с суффиксом « 2» (ответ пользователя в окне подтверждения).
     /// </summary>
     public int EnsureDescriptionField(int collectionId, bool adoptByName = true)
@@ -6575,7 +6575,7 @@ public partial class ConstructorRepository(AppDbContext db)
         // Создание — только с правом на коллекции. Спрашиваем именно здесь и только в ветке
         // создания: вызывающие (AddTaskRecord/AddCalendarRecord с collection = null) проверили
         // лишь CreateRecord, и без этой строки «Без названия» заводилась в обход прав. Когда
-        // коллекция уже есть, права на неё не нужны — там достаточно CreateRecord.
+        // коллекция уже есть, права на нее не нужны — там достаточно CreateRecord.
         Demand(PermAction.CreateCollection);
 
         var maxPos = db.DbCollections.Select(c => (int?)c.Position).Max() ?? 0;
@@ -6602,7 +6602,7 @@ public partial class ConstructorRepository(AppDbContext db)
     }
 
     // id поля-источника календаря коллекции: существующее поле-дата с IsCalStart, иначе роль
-    // «Дата» (одноимённый столбец получает флаг либо заводится системное «Дата»). Фолбэк,
+    // «Дата» (одноименный столбец получает флаг либо заводится системное «Дата»). Фолбэк,
     // когда явное поле не выбрано.
     private int EnsureCalendarDateField(int collectionId, bool adoptByName = true)
     {
@@ -6651,11 +6651,11 @@ public partial class ConstructorRepository(AppDbContext db)
     /// 1) Системные поля «Дата» из эпохи, когда они были типа text, переводит в date
     ///    и помечает источником календаря. 2) Бэкафилл: для записей с заполненным
     ///    календарным полем-датой, но пустыми StartDt — проецирует значение на колонки,
-    ///    чтобы такие записи появились в календаре. Идемпотентно и дёшево.
+    ///    чтобы такие записи появились в календаре. Идемпотентно и дешево.
     /// </summary>
-    /// <param name="progress">Прогресс тяжёлой фазы (первое открытие старой базы): (обработано,
-    /// всего) строк-значений дат; (0, 0) — фаза началась, объём ещё не посчитан. Быстрый путь
-    /// (индекс уже построен) колбэк не дёргает — на обычных запусках этап не мелькает.</param>
+    /// <param name="progress">Прогресс тяжелой фазы (первое открытие старой базы): (обработано,
+    /// всего) строк-значений дат; (0, 0) — фаза началась, объем еще не посчитан. Быстрый путь
+    /// (индекс уже построен) колбэк не дергает — на обычных запусках этап не мелькает.</param>
     public void MigrateAndBackfillCalendarDates(Action<long, long>? progress = null)
     {
         var legacy = db.DbFields.Where(f => f.Name == FieldDate && f.FieldType == "text").ToList();
@@ -6695,12 +6695,12 @@ public partial class ConstructorRepository(AppDbContext db)
 
         // Индекс календаря уже построен → БД мигрирована, а новые данные (создание/импорт/
         // правка) поддерживают StartDt и индекс инкрементально. Значит недобэкафилленных
-        // записей нет — пропускаем тяжёлый скан db_field_values на каждом монтировании
+        // записей нет — пропускаем тяжелый скан db_field_values на каждом монтировании
         // (он нужен ровно один раз, при первом открытии старой БД). Ускоряет подключение
         // больших БД.
         if (db.CalendarIndex.Any()) return;
 
-        progress?.Invoke(0, 0);   // тяжёлая фаза началась (скан значений; объём ещё не посчитан)
+        progress?.Invoke(0, 0);   // тяжелая фаза началась (скан значений; объем еще не посчитан)
 
         var pending = db.DbFieldValues
             .Where(v => calFieldIds.Contains(v.FieldId) && v.Value != "" && v.Record.StartDt == null)
@@ -6734,7 +6734,7 @@ public partial class ConstructorRepository(AppDbContext db)
     }
 
     // IProgress без маршалинга в SynchronizationContext (стандартный Progress<T> постит
-    // асинхронно): бэкафилл идёт в фоне старта, колбэк должен дёргаться синхронно и по порядку.
+    // асинхронно): бэкафилл идет в фоне старта, колбэк должен дергаться синхронно и по порядку.
     private sealed class SyncProgress<T>(Action<T> handler) : IProgress<T>
     {
         public void Report(T value) => handler(value);

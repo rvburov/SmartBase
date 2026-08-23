@@ -32,7 +32,7 @@
 
 ### CRUD
 
-`Add(name, color)` (имя уникально — дубликат вернёт `null`), `Update(id, name, color)`
+`Add(name, color)` (имя уникально — дубликат вернет `null`), `Update(id, name, color)`
 (тоже проверяет уникальность), `Delete(id)`, `GetAll()` (сортировка по имени),
 `GetById`, `GetByName`.
 

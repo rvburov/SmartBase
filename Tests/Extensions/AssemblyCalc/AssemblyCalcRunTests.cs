@@ -4,7 +4,7 @@ using SmartBase.Extensions.AssemblyCalc;
 namespace SmartBase.Tests.Extensions.AssemblyCalc;
 
 /// <summary>
-/// Сквозной прогон «Расчёта сборочных единиц»: исходный файл и шаблон собираются на диске,
+/// Сквозной прогон «Расчета сборочных единиц»: исходный файл и шаблон собираются на диске,
 /// расширение переносит данные, и результат читается обратно.
 ///
 /// Главное, ради чего этот файл существует, — КАРТА СТОЛБЦОВ. Она разрежена (248, 283, 287,
@@ -40,7 +40,7 @@ public sealed class AssemblyCalcRunTests : IDisposable
     private AssemblyCalcResult Run(IProgress<int>? progress = null, CancellationToken ct = default) =>
         AssemblyCalcEngine.Run(_source, _template, _out, progress, ct);
 
-    /// <summary>Прогнать расчёт и проверить лист результата (книга закрывается сама).</summary>
+    /// <summary>Прогнать расчет и проверить лист результата (книга закрывается сама).</summary>
     private AssemblyCalcResult RunAndCheck(Action<IXLWorksheet> check)
     {
         var result = Run();
@@ -52,7 +52,7 @@ public sealed class AssemblyCalcRunTests : IDisposable
     // ── Карта столбцов ────────────────────────────────────────────────────────
 
     /// <summary>Все пары «столбец источника → столбец шаблона» разом, включая экзотическую
-    /// 248 → 13 («ВЭ»): её потеря видна только на боевом файле.</summary>
+    /// 248 → 13 («ВЭ»): ее потеря видна только на боевом файле.</summary>
     [Fact]
     public void Mapped_columns_land_in_their_target_places()
     {
@@ -99,7 +99,7 @@ public sealed class AssemblyCalcRunTests : IDisposable
     }
 
     /// <summary>Пустая ячейка «Уровень» обрывает перенос: ниже в выгрузке идут итоги и мусор,
-    /// которым в расчёте не место.</summary>
+    /// которым в расчете не место.</summary>
     [Fact]
     public void Transfer_stops_at_the_first_row_without_a_level()
     {
@@ -179,7 +179,7 @@ public sealed class AssemblyCalcRunTests : IDisposable
         RunAndCheck(ws =>
         {
             Assert.Null(ws.Fill(First, 1));
-            Assert.Equal(XLBorderStyleValues.Thin, ws.Cell(First, 1).Style.Border.TopBorder);   // стиль всё равно есть
+            Assert.Equal(XLBorderStyleValues.Thin, ws.Cell(First, 1).Style.Border.TopBorder);   // стиль все равно есть
         });
     }
 
@@ -198,7 +198,7 @@ public sealed class AssemblyCalcRunTests : IDisposable
         });
     }
 
-    /// <summary>Чистится ровно до последнего столбца КАРТЫ (13). Столбец 14 шаблона остаётся —
+    /// <summary>Чистится ровно до последнего столбца КАРТЫ (13). Столбец 14 шаблона остается —
     /// фиксируем как есть: расширение считает, что дальше идут поля пользователя, и правка карты
     /// молча изменила бы это поведение.</summary>
     [Fact]
@@ -280,8 +280,8 @@ public sealed class AssemblyCalcRunTests : IDisposable
     }
 
     /// <summary>Имя результата НЕ уникализируется — оно с точностью до минуты, и повторный
-    /// прогон в ту же минуту затирает прошлый файл. Отличие от «Сводной трудоёмкости», где имя
-    /// получает номер. Фиксируем как есть: поведение расширения не меняем, но и молчать о нём
+    /// прогон в ту же минуту затирает прошлый файл. Отличие от «Сводной трудоемкости», где имя
+    /// получает номер. Фиксируем как есть: поведение расширения не меняем, но и молчать о нем
     /// нельзя (см. docs/developer/testing/extension-tests.md).</summary>
     [Fact]
     public void Second_run_in_the_same_minute_overwrites_the_first()
@@ -312,8 +312,8 @@ public sealed class AssemblyCalcRunTests : IDisposable
     }
 }
 
-/// <summary>Синхронный приёмник прогресса: штатный <see cref="Progress{T}"/> публикует колбэк
-/// в пул потоков, и к возврату из метода часть отчётов может быть ещё не доставлена.</summary>
+/// <summary>Синхронный приемник прогресса: штатный <see cref="Progress{T}"/> публикует колбэк
+/// в пул потоков, и к возврату из метода часть отчетов может быть еще не доставлена.</summary>
 internal sealed class SyncProgress<T>(Action<T> onReport) : IProgress<T>
 {
     public void Report(T value) => onReport(value);

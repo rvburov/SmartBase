@@ -76,7 +76,7 @@ EF Core/SQLite). Документация разделена на два раз�
 ## Для пользователей ([user/](user/))
 
 Инструкция для конечного пользователя; точка входа — [user/README.md](user/README.md).
-Порядок документов в программе задаёт [GuideRegistry](../Settings/GuideRegistry.cs),
+Порядок документов в программе задает [GuideRegistry](../Settings/GuideRegistry.cs),
 устройство раздела — [features/user-guide-section.md](developer/features/user-guide-section.md).
 
 - Начало: [overview](user/overview.md) · [data-structure](user/data-structure.md)
@@ -104,5 +104,5 @@ EF Core/SQLite). Документация разделена на два раз�
 - **Производительность** — общая картина в
   [performance/overview.md](developer/architecture/performance/overview.md); в фич-документ добавляйте
   подраздел `### Производительность` только при наличии конкретики, со ссылкой на центральный документ.
-- Крупные документы дробим по подтемам в одноимённую папку (как `performance/`, `import-export/`),
+- Крупные документы дробим по подтемам в одноименную папку (как `performance/`, `import-export/`),
   оставляя `overview.md` точкой входа.

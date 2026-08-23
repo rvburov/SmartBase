@@ -50,7 +50,7 @@ public sealed class FieldLifecycleTests
         var fields = repo.GetFields(col.Id!.Value);
         Assert.DoesNotContain(fields, f => f.Id == f1.Id);
         Assert.Contains(fields, f => f.Id == f2.Id);
-        // Значение удалённого поля ушло каскадом; поле f2 — на месте.
+        // Значение удаленного поля ушло каскадом; поле f2 — на месте.
         var vals = repo.GetFieldValuesBatch([rec.Id!.Value])[rec.Id!.Value];
         Assert.False(vals.ContainsKey(f1.Id!.Value));
         Assert.Equal("y", vals[f2.Id!.Value]);

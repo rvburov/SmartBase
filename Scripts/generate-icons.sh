@@ -9,7 +9,7 @@
 #                      генерировать из него нечего.
 #
 # Скрипт проверяет мастера перед сборкой: 1024×1024, RGBA, без непрозрачной кромки по краю
-# холста. Кромка — та самая «белая рамка», из-за которой иконка в Finder выглядела обведённой.
+# холста. Кромка — та самая «белая рамка», из-за которой иконка в Finder выглядела обведенной.
 #
 # Нужны только штатные macOS-утилиты: sips, iconutil, python3.
 set -euo pipefail
@@ -94,7 +94,7 @@ def check(path, inset):
             if (x < inset or y < inset or x >= w-inset or y >= h-inset) and px[(y*w+x)*4+3] > 8]
     if inset and edge:
         sys.exit(f"  {path}: поле {inset}px вокруг плашки должно быть прозрачным, "
-                 f"а закрашенных точек в нём {len(edge)}")
+                 f"а закрашенных точек в нем {len(edge)}")
 
     # Белая кромка: сплошная светлая полоса вдоль края плашки. Ищем по середине каждой стороны.
     def light(x, y):
@@ -125,7 +125,7 @@ for s in 16 32 48 64 128 256; do
   ico+=("$TMP/$s.png")
 done
 # Сборка .ico из PNG-кадров без сторонних зависимостей (формат поддерживают
-# Windows Vista+ и Avalonia). Каждый кадр кладётся в .ico как есть.
+# Windows Vista+ и Avalonia). Каждый кадр кладется в .ico как есть.
 python3 - "$DIR/icon.ico" "${ico[@]}" <<'PY'
 import struct, sys
 out, paths = sys.argv[1], sys.argv[2:]
@@ -166,5 +166,5 @@ g 1024 icon_512x512@2x.png   # retina-слот Dock: настоящий 1024, м
 iconutil -c icns "$SET" -o "$DIR/icon.icns"
 echo "  $DIR/icon.icns"
 
-echo "==> Linux icon-linux.png — берётся как есть (см. Scripts/linux-install.sh)"
+echo "==> Linux icon-linux.png — берется как есть (см. Scripts/linux-install.sh)"
 echo "Готово."

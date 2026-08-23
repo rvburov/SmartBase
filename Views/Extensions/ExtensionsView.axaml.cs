@@ -37,7 +37,7 @@ public partial class ExtensionsView : UserControl
         HeaderBar.SetRunState(_current.CanRun, _current.CanRun ? "Запустить расширение" : "Запуск пока недоступен");
     }
 
-    // Запуск: расширение отдаёт своё окно (в стиле приложения), оболочка показывает его
+    // Запуск: расширение отдает свое окно (в стиле приложения), оболочка показывает его
     // поверх главного окна. null — расширение окно не открывает (заглушка/надстройка).
     private void OnRunClick(object? sender, EventArgs e)
     {

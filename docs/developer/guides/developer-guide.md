@@ -79,9 +79,9 @@ dotnet ef migrations add ИмяМиграцииPg --context PgAppDbContext --fra
 Необработанные исключения пишутся в `crash.log` рядом с данными приложения
 (`AppSettings.AppDataDir`): глобальные предохранители в [Program.cs](../../../Program.cs)
 ловят `AppDomain.UnhandledException`, упавшие fire-and-forget задачи
-(`TaskScheduler.UnobservedTaskException` — паттерн `_ = Task.Run(...)` перестаёт
+(`TaskScheduler.UnobservedTaskException` — паттерн `_ = Task.Run(...)` перестает
 убивать процесс) и исключения, выбившие UI-цикл Avalonia (у 11.2.3 нет публичного
-dispatcher-хука, поэтому это последний рубеж — основная защита остаётся за точечными
+dispatcher-хука, поэтому это последний рубеж — основная защита остается за точечными
 catch в UI, см. [Utils/DbErrors](../../../Utils/DbErrors.cs)). У пользователя вылет
 больше не бесследный: просите файл `crash.log` из папки данных.
 

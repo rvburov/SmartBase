@@ -69,7 +69,7 @@ public partial class ProfileView : UserControl
             TopLevel.GetTopLevel(this)?.FocusManager?.ClearFocus();
         };
 
-        // Выбор базы журнала живёт в навбаре (правый край «Истории изменений»).
+        // Выбор базы журнала живет в навбаре (правый край «Истории изменений»).
         HeaderBar.HistoryDbChanged      += (_, _) => OnHistoryDbChanged();
         HeaderBar.ExportHistoryRequested += (_, _) => _ = ExportHistoryToCsv();
     }
@@ -154,7 +154,7 @@ public partial class ProfileView : UserControl
         // отозвали) — открытая панель пользователей не должна остаться висеть.
         if (!hasAny) { CloseUsersPanel(); return; }
 
-        // Сохранить выбранную базу, если она ещё в списке.
+        // Сохранить выбранную базу, если она еще в списке.
         var keepDbId = _adminDb?.DbId;
         AdminDbCombo.ItemsSource = _adminDbs
             .Select(d => string.IsNullOrWhiteSpace(d.Name) ? "База данных" : d.Name)
@@ -166,7 +166,7 @@ public partial class ProfileView : UserControl
     private void OnAdminDbChanged(object? sender, SelectionChangedEventArgs e) => LoadAdminDb();
 
     /// <summary>Чужие события пользователей этой базы (присоединение, допуск, права, роль —
-    /// принёс поллер через MainWindow): перечитать открытую панель пользователей, сохранив
+    /// принес поллер через MainWindow): перечитать открытую панель пользователей, сохранив
     /// выбранную область. Панель закрыта или база другая — не трогаем (откроется свежей).</summary>
     public void OnRemoteUserChanges(int dbId)
     {
@@ -201,7 +201,7 @@ public partial class ProfileView : UserControl
     // Программное выставление тумблера/периода не должно писать конфиг в БД.
     private bool _suppressRetention;
 
-    // Отразить сохранённую в базе политику автоочистки (RetentionEnabled/Months).
+    // Отразить сохраненную в базе политику автоочистки (RetentionEnabled/Months).
     private void RefreshRetentionRow()
     {
         if (_adminDb is null) return;
@@ -260,7 +260,7 @@ public partial class ProfileView : UserControl
 
         await ConfirmDialog.Info($"Удалено записей журнала: {deleted:N0}.").ShowDialog(owner);
 
-        // Открыта история этой базы — перечитать, чтобы удалённое исчезло из таблицы.
+        // Открыта история этой базы — перечитать, чтобы удаленное исчезло из таблицы.
         if (HistoryPanel.IsVisible && ReferenceEquals(_historyDb, _adminDb))
             ReloadHistoryRows();
     }

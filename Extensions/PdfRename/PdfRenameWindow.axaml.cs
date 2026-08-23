@@ -17,11 +17,11 @@ namespace SmartBase.Extensions.PdfRename;
 /// «Проверить» (предпросмотр без изменений), «Запустить» (с подтверждением) и
 /// «Остановить». Логика — в <see cref="PdfRenamer"/>.
 ///
-/// Масштаб (тысячи файлов): план строится один раз и в фоне; сам прогон идёт в
+/// Масштаб (тысячи файлов): план строится один раз и в фоне; сам прогон идет в
 /// <see cref="Task.Run"/>, а UI обновляется не на каждый файл, а с троттлингом
 /// (~20 раз/сек) — журнал копится в <see cref="StringBuilder"/> и рендерится пачкой,
-/// логируются только проблемные файлы (успехи отражает счётчик/полоса), число строк
-/// журнала ограничено. Так окно остаётся отзывчивым на десятках тысяч файлов.
+/// логируются только проблемные файлы (успехи отражает счетчик/полоса), число строк
+/// журнала ограничено. Так окно остается отзывчивым на десятках тысяч файлов.
 /// </summary>
 public partial class PdfRenameWindow : Window
 {
@@ -84,7 +84,7 @@ public partial class PdfRenameWindow : Window
 
         LogLineNow($"📄 Найдено PDF-файлов: {pdfs.Count}");
         foreach (var name in pdfs.Take(5)) LogLineNow($"  • {name}");
-        if (pdfs.Count > 5) LogLineNow($"  … и ещё {pdfs.Count - 5}");
+        if (pdfs.Count > 5) LogLineNow($"  … и еще {pdfs.Count - 5}");
         LogLineNow("💡 Нажмите «Проверить» для предпросмотра изменений");
     }
 
@@ -164,7 +164,7 @@ public partial class PdfRenameWindow : Window
             return;
         }
 
-        // Финальный сброс журнала и сводка (continuation идёт после всех колбэков прогресса).
+        // Финальный сброс журнала и сводка (continuation идет после всех колбэков прогресса).
         UpdateBar();
         RenderLog();
         LogLineNow("");
@@ -201,7 +201,7 @@ public partial class PdfRenameWindow : Window
     // ── Журнал и прогресс ─────────────────────────────────────────────────────
 
     // На реальном прогоне успехи (Renamed) и пропуски (Unchanged) в журнал не пишем —
-    // их отражают счётчик/полоса и итоговая сводка. Логируем только то, что требует внимания.
+    // их отражают счетчик/полоса и итоговая сводка. Логируем только то, что требует внимания.
     private static bool ShouldLog(RenameOutcome o) =>
         o is RenameOutcome.WillRename or RenameOutcome.Conflict or RenameOutcome.Error;
 
@@ -229,13 +229,13 @@ public partial class PdfRenameWindow : Window
     private void UpdateBar() =>
         Progress.SetProgress(_total > 0 ? (double)_curr / _total : 0);
 
-    private void LogLine(string s)            // только в модель (дёшево)
+    private void LogLine(string s)            // только в модель (дешево)
     {
         if (_log.Length > 0) _log.Append('\n');
         _log.Append(s);
     }
 
-    private void RenderLog()                  // модель → TextBox (дорого; зовём с троттлингом)
+    private void RenderLog()                  // модель → TextBox (дорого; зовем с троттлингом)
     {
         LogBox.Text       = _log.ToString();
         LogBox.CaretIndex = LogBox.Text.Length;   // прокрутка к последней строке
@@ -279,7 +279,7 @@ public partial class PdfRenameWindow : Window
         UpdateActionState();
     }
 
-    // Кнопки действий доступны, когда указана папка и прогон не идёт; «Обзор» — когда не идёт.
+    // Кнопки действий доступны, когда указана папка и прогон не идет; «Обзор» — когда не идет.
     private void UpdateActionState()
     {
         var hasFolder = !string.IsNullOrWhiteSpace(FolderBox.Text);

@@ -14,7 +14,7 @@ public partial class YearView : UserControl
     public event EventHandler<DateTime>? MonthSelected;
 
     // Размеры/веса шрифта — из токенов Typography.axaml (резолв ресурса в рантайме).
-    // Свежий размер из Application.Resources — меняется живьём при изменении FontScale.
+    // Свежий размер из Application.Resources — меняется живьем при изменении FontScale.
     private static double FontSizeBase =>
         (double)Application.Current!.FindResource("FontSizeBase")!;
 
@@ -49,7 +49,7 @@ public partial class YearView : UserControl
     public Func<DateTime, string, Task<List<CalendarRecord>>>? DaySearchProvider { get; set; }
 
     // Список дня для попапа — ПО ТРЕБОВАНИЮ из БД (инъекция контроллера): Год события окна
-    // не читает вовсе (числам достаточно карты счётчиков, а чтение всех событий года —
+    // не читает вовсе (числам достаточно карты счетчиков, а чтение всех событий года —
     // сотни тысяч строк — показывало оверлей «Загрузка…» при листании лет). Per-day
     // capped-чтение сиками — миллисекунды даже на дне-гиганте. null — снимок года.
     public Func<DateTime, Task<List<CalendarRecord>>>? DayEventsProvider { get; set; }
@@ -59,9 +59,9 @@ public partial class YearView : UserControl
     private bool     _popupResetting;    // сброс текста при открытии не запускает поиск
 
     // Доставленные события года (ограничены чтением окна — GridDayCap на день) и карта
-    // счётчиков дней (доезжает второй фазой; null — ещё едет/поиск). Раскладку по дням НЕ
+    // счетчиков дней (доезжает второй фазой; null — еще едет/поиск). Раскладку по дням НЕ
     // храним: на сотнях тысяч событий словарь списков перестраивался при КАЖДОЙ перерисовке
-    // (правки сетки перерисовывают Год на месте) — счётчики считаются одним проходом,
+    // (правки сетки перерисовывают Год на месте) — счетчики считаются одним проходом,
     // а список дня для попапа фильтруется по клику (см. ShowDayEvents).
     private List<CalendarRecord> _events = [];
     private IReadOnlyDictionary<DateOnly, int>? _dayTotals;
@@ -72,8 +72,8 @@ public partial class YearView : UserControl
         _events    = events as List<CalendarRecord> ?? events.ToList();
         _dayTotals = dayTotals;
 
-        // Счётчики на числа: событие учитывается в каждом дне своего диапазона; карта
-        // счётчиков (по дню НАЧАЛА) дополняет недоставленное сверх капа чтения — день-гигант
+        // Счетчики на числа: событие учитывается в каждом дне своего диапазона; карта
+        // счетчиков (по дню НАЧАЛА) дополняет недоставленное сверх капа чтения — день-гигант
         // получает честное число, хотя событий пришло только GridDayCap.
         var eventCounts = new Dictionary<DateTime, int>();
         var received    = new Dictionary<DateTime, int>();   // доставлено по дню СТАРТА
@@ -100,9 +100,9 @@ public partial class YearView : UserControl
         }
     }
 
-    // Лимит попапа дня: контрол на каждое событие — день-гигант отдаёт сетке до GridDayCap
+    // Лимит попапа дня: контрол на каждое событие — день-гигант отдает сетке до GridDayCap
     // (2000) записей, столько строк попапу ни к чему (и это секунды построения). Скрытое
-    // сверх лимита — честный «+N ещё» по карте счётчиков; смотреть весь день — «Расписание».
+    // сверх лимита — честный «+N еще» по карте счетчиков; смотреть весь день — «Расписание».
     private const int PopupMaxEvents = 100;
 
     // Открывает попап со списком событий дня, привязанный к ячейке числа.
@@ -115,7 +115,7 @@ public partial class YearView : UserControl
         if (DayPopup.IsOpen) DayPopup.IsOpen = false;
 
         _popupDay = day;
-        var gen = ++_popupSearchGen;        // отменяет незавершённый поиск/загрузку прошлого дня
+        var gen = ++_popupSearchGen;        // отменяет незавершенный поиск/загрузку прошлого дня
         _popupResetting = true;
         DayPopupSearch.Text = "";
         _popupResetting = false;
@@ -133,7 +133,7 @@ public partial class YearView : UserControl
         await FillPopupFromProviderAsync(gen, day);
     }
 
-    // Список дня из провайдера (по требованию); применяется, только если попап всё ещё
+    // Список дня из провайдера (по требованию); применяется, только если попап все еще
     // показывает этот день (не переключились/не начали искать).
     private async Task FillPopupFromProviderAsync(int gen, DateTime day)
     {
@@ -163,7 +163,7 @@ public partial class YearView : UserControl
         .ToList();
 
     // Дебаунс поиска в попапе: пустой запрос — снимок дня; иначе — фоновый SQL LIKE по
-    // ВСЕМУ дню через DaySearchProvider (найдёт и то, что не доставлено капом чтения).
+    // ВСЕМУ дню через DaySearchProvider (найдет и то, что не доставлено капом чтения).
     private async Task OnPopupSearchChanged()
     {
         var gen = ++_popupSearchGen;
@@ -188,7 +188,7 @@ public partial class YearView : UserControl
             found = found.OrderBy(x => x.AllDay ? TimeSpan.Zero : x.StartDt.TimeOfDay).ToList();
         }
         else
-            // Ищем по ПОЛНОМУ названию (в показе от него остаётся первая строка, см.
+            // Ищем по ПОЛНОМУ названию (в показе от него остается первая строка, см.
             // TitleText) плюс по DisplayTitle — иначе безымянные события перестали бы
             // находиться по «Без названия».
             found = DayEventsFromSnapshot(_popupDay)
@@ -199,8 +199,8 @@ public partial class YearView : UserControl
         FillPopupList(found, searchMode: true);
     }
 
-    // Наполняет список попапа (не больше PopupMaxEvents строк + «+N ещё»).
-    // searchMode: результат поиска — «+N ещё» только от фактически найденного
+    // Наполняет список попапа (не больше PopupMaxEvents строк + «+N еще»).
+    // searchMode: результат поиска — «+N еще» только от фактически найденного
     // (итог по всему дню неизвестен, провайдер лимитирован).
     private void FillPopupList(List<CalendarRecord> events, bool searchMode)
     {
@@ -256,17 +256,17 @@ public partial class YearView : UserControl
             DayPopupList.Children.Add(row);
         }
 
-        // «+N ещё»: не показанные сверх лимита попапа + (вне поиска) недоставленные капом
-        // чтения — день-гигант: показаны первые 100, всего — из карты счётчиков.
+        // «+N еще»: не показанные сверх лимита попапа + (вне поиска) недоставленные капом
+        // чтения — день-гигант: показаны первые 100, всего — из карты счетчиков.
         var total = !searchMode && _dayTotals is not null &&
                     _dayTotals.TryGetValue(DateOnly.FromDateTime(_popupDay), out var t)
-            ? Math.Max(t, events.Count)   // карта — по дню начала; перетёкшие мультидни добавляем
+            ? Math.Max(t, events.Count)   // карта — по дню начала; перетекшие мультидни добавляем
             : events.Count;
         var hidden = total - Math.Min(events.Count, PopupMaxEvents);
         if (hidden > 0)
             DayPopupList.Children.Add(new TextBlock
             {
-                Text       = $"+{hidden} ещё",
+                Text       = $"+{hidden} еще",
                 FontSize   = FontSizeBase,
                 Foreground = Secondary,
             });

@@ -13,9 +13,9 @@ using SmartBase.Utils;
 namespace SmartBase.Extensions.AssemblyCalc;
 
 /// <summary>
-/// Окно расширения «Расчёт сборочных единиц в изделии» (в основном стиле приложения): выбор
+/// Окно расширения «Расчет сборочных единиц в изделии» (в основном стиле приложения): выбор
 /// исходного файла, шаблона и папки результата, затем «Запустить». Логика — в
-/// <see cref="AssemblyCalcEngine"/>; прогон идёт в фоне (<see cref="Task.Run"/>) с прогрессом
+/// <see cref="AssemblyCalcEngine"/>; прогон идет в фоне (<see cref="Task.Run"/>) с прогрессом
 /// и отменой при закрытии окна.
 /// </summary>
 public partial class AssemblyCalcWindow : Window
@@ -122,12 +122,12 @@ public partial class AssemblyCalcWindow : Window
         }
         catch (AssemblyCalcException ex)
         {
-            Log.Warning(ex, "Расчёт сборочных единиц не выполнен");
+            Log.Warning(ex, "Расчет сборочных единиц не выполнен");
             SetStatus(ex.Message, "BrushRed");
         }
         catch (Exception ex)
         {
-            Log.Error(ex, "Расчёт сборочных единиц: непредвиденная ошибка");
+            Log.Error(ex, "Расчет сборочных единиц: непредвиденная ошибка");
             SetStatus($"Ошибка: {ex.Message}", "BrushRed");
         }
         finally
@@ -168,7 +168,7 @@ public partial class AssemblyCalcWindow : Window
 
         if (AllReady())
         {
-            SetStatus("Всё готово к формированию", "BrushAccent");
+            SetStatus("Все готово к формированию", "BrushAccent");
             return;
         }
 

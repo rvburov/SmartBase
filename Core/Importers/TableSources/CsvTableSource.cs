@@ -8,7 +8,7 @@ namespace SmartBase.Core.Importers.TableSources;
 /// автоматически (<see cref="SourceHelpers.SniffCsv"/>). Проход 1 считает записи и реальную
 /// ширину: последний столбец — самый правый непустой хоть в одной строке (Excel при экспорте
 /// набивает хвост пустых полей — без обрезки это тысячи лишних «Без названия»-столбцов), хвостовые
-/// полностью пустые строки отбрасываются. Проход 2 переоткрывает файл и отдаёт записи потоком.
+/// полностью пустые строки отбрасываются. Проход 2 переоткрывает файл и отдает записи потоком.
 /// </summary>
 public sealed class CsvTableSource(string path, int headerRow, int dataRow, int titleCol) : ITableSource
 {
@@ -40,7 +40,7 @@ public sealed class CsvTableSource(string path, int headerRow, int dataRow, int 
             {
                 lastRow = row;
                 if (rightmost > lastCol) lastCol = rightmost;
-                emptySnapshot = emptyTitles;   // счётчик пустых названий в границах непустого хвоста
+                emptySnapshot = emptyTitles;   // счетчик пустых названий в границах непустого хвоста
             }
         }
 
@@ -95,7 +95,7 @@ public sealed class CsvTableSource(string path, int headerRow, int dataRow, int 
         var field     = new StringBuilder();
         var row       = new List<string>();
         var inQuotes  = false;
-        var quoteSeen = false;   // внутри кавычек встретили " — ждём следующий символ ("" → ")
+        var quoteSeen = false;   // внутри кавычек встретили " — ждем следующий символ ("" → ")
         var skipLf    = false;   // после \r следующий \n — часть того же перевода строки
         var lastPct   = -1;
 

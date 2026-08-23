@@ -6,7 +6,7 @@ namespace SmartBase.Tests.Integration;
 /// In-memory реализация <see cref="ISettingsDatabase"/> для тестов дельт настроек:
 /// хранит только явно записанные ключи, поэтому позволяет проверить инвариант
 /// «в БД лежат лишь отличия от дефолта» (см. <c>AppSettings</c>). <see cref="Count"/> и
-/// <see cref="Has"/> дают заглянуть в фактически сохранённые ключи.
+/// <see cref="Has"/> дают заглянуть в фактически сохраненные ключи.
 /// </summary>
 public sealed class FakeSettingsDatabase : ISettingsDatabase
 {

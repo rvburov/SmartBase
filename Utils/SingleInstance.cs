@@ -20,7 +20,7 @@ public sealed class SingleInstance : IDisposable
     private readonly string _dir;
     private FileSystemWatcher? _watcher;
 
-    /// <summary>Работающий экземпляр попросили показать окно (пришёл второй запуск).</summary>
+    /// <summary>Работающий экземпляр попросили показать окно (пришел второй запуск).</summary>
     public event Action? ShowRequested;
 
     private SingleInstance(FileStream lockStream, string dir)

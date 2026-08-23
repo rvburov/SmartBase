@@ -36,7 +36,7 @@ public sealed class FieldTypeItem
 /// </summary>
 public partial class PropertyEditorDialog : Window
 {
-    // Иконки берём из общего источника FieldTypeIcons (lucide, 24×24).
+    // Иконки берем из общего источника FieldTypeIcons (lucide, 24×24).
     private static readonly FieldTypeItem[] FieldTypes =
     [
         new() { Type = "text",     Label = "Текст",   Icon = Components.FieldTypeIcons.ForType("text")!     },
@@ -65,11 +65,11 @@ public partial class PropertyEditorDialog : Window
     private readonly int  _currentDbId;
 
     // Режим системной колонки («Название»/«Описание»): тип зафиксирован «Текст»,
-    // запись идёт не в DbFields, а через результат диалога (см. ResultName).
+    // запись идет не в DbFields, а через результат диалога (см. ResultName).
     private readonly bool _systemMode;
 
     // Редактируемое поле целиком — из его флагов собирается плашка «привязано к разделу»
-    // (см. UpdateRoleNote). Для нового свойства null: ролей у него ещё нет.
+    // (см. UpdateRoleNote). Для нового свойства null: ролей у него еще нет.
     private readonly DbField? _editField;
 
     private string _selectedType = "text";
@@ -80,7 +80,7 @@ public partial class PropertyEditorDialog : Window
 
     // Формат склейки значений «Мультисписка»/«Связи» — порядок совпадает с пунктами
     // SeparatorCombo и RelationSeparatorCombo в XAML (общий список; ключ хранится в ConfigJson,
-    // не индекс, поэтому порядок можно менять без миграции сохранённых полей).
+    // не индекс, поэтому порядок можно менять без миграции сохраненных полей).
     private static readonly string[] SeparatorKeys =
         ["comma", "dot", "space", "semicolon", "newline", "comma_tight", "dot_tight"];
 
@@ -88,11 +88,11 @@ public partial class PropertyEditorDialog : Window
     private static readonly NumberFormatKind[] NumberFormatKinds =
         [NumberFormatKind.Plain, NumberFormatKind.Grouped, NumberFormatKind.Currency, NumberFormatKind.Percent];
 
-    // Строка пунктов, которая сейчас в режиме ввода (поле + действие фиксации). Клик мимо неё
+    // Строка пунктов, которая сейчас в режиме ввода (поле + действие фиксации). Клик мимо нее
     // (в т.ч. по неинтерактивному фону) фиксирует ввод — см. DismissOptionEditor.
     private (TextBox Box, Action Commit)? _editingOption;
 
-    /// <summary>В системном режиме — введённая подпись (после Сохранить); иначе null.</summary>
+    /// <summary>В системном режиме — введенная подпись (после Сохранить); иначе null.</summary>
     public string? ResultName { get; private set; }
 
     public PropertyEditorDialog(ConstructorRepository repository, int collectionId, int? editFieldId = null,
@@ -159,8 +159,8 @@ public partial class PropertyEditorDialog : Window
             }
         }
 
-        // Добавление пункта: сбрасываем поиск (иначе новая пустая строка не пройдёт фильтр),
-        // добавляем строку и ставим в неё фокус.
+        // Добавление пункта: сбрасываем поиск (иначе новая пустая строка не пройдет фильтр),
+        // добавляем строку и ставим в нее фокус.
         AddOptionBtn.Click   += (_, _) => { OptionsSearch.Text = ""; AddOptionRow("").Focus(); };
         OptionsSearch.TextChanged += (_, _) => FilterOptionRows();
 
@@ -212,14 +212,14 @@ public partial class PropertyEditorDialog : Window
             foreach (var o in ConstructorRepository.TaskStatusOptions) AddOptionRow(o);
 
         UpdateTaskToggleAvailability();
-        // Смена типа рвёт привязку даты (календарь строится только по полям типа «Дата») —
+        // Смена типа рвет привязку даты (календарь строится только по полям типа «Дата») —
         // плашка обязана это отразить сразу.
         UpdateRoleNote();
     }
 
     /// <summary>
     /// Исполнитель у коллекции ОДИН, поэтому тумблер «Добавить в раздел задач» доступен только
-    /// свободному свойству либо тому, что уже несёт роль. Занята роль другим столбцом — тумблер
+    /// свободному свойству либо тому, что уже несет роль. Занята роль другим столбцом — тумблер
     /// гаснет, а подпись называет носителя: молча выключенный переключатель читался бы как
     /// поломка, и человек искал бы причину в правах или типе поля.
     /// </summary>
@@ -248,9 +248,9 @@ public partial class PropertyEditorDialog : Window
     // ── Привязка к разделу ──────────────────────────────────────────────────────
 
     /// <summary>
-    /// Красная плашка «привязано к разделу»: столбец несёт роль, и данные из него подтягиваются
+    /// Красная плашка «привязано к разделу»: столбец несет роль, и данные из него подтягиваются
     /// в календарь или задачи. Ни в таблице, ни в панели записи этого не видно — значения просто
-    /// «сами» оказываются в разделе, поэтому называем привязку там же, где её теряют (смена типа,
+    /// «сами» оказываются в разделе, поэтому называем привязку там же, где ее теряют (смена типа,
     /// снятый тумблер, удаление свойства). Собирается по флагам поля: роли нет — блока нет.
     /// </summary>
     private void UpdateRoleNote()
@@ -261,9 +261,9 @@ public partial class PropertyEditorDialog : Window
             return;
         }
 
-        // Дата и исполнитель управляются тумблерами ЭТОГО окна, поэтому смотрим не на сохранённый
-        // флаг, а на положение тумблера. Тип берём выбранный, а не сохранённый: роль на
-        // несовместимом типе не работает, и плашка гаснет ещё до «Сохранить» — то же самое, что
+        // Дата и исполнитель управляются тумблерами ЭТОГО окна, поэтому смотрим не на сохраненный
+        // флаг, а на положение тумблера. Тип берем выбранный, а не сохраненный: роль на
+        // несовместимом типе не работает, и плашка гаснет еще до «Сохранить» — то же самое, что
         // потом сделает с флагом сама запись (ClearRolesIncompatibleWithType).
         var effective = new DbField
         {
@@ -284,13 +284,13 @@ public partial class PropertyEditorDialog : Window
         if (binding is null) { RoleNote.Hide(); return; }
 
         RoleNote.Show(
-            $"Это свойство привязано {binding}. Раздел берёт данные отсюда: " +
-            "если удалить свойство или снять привязку, они перестанут в нём отображаться.");
+            $"Это свойство привязано {binding}. Раздел берет данные отсюда: " +
+            "если удалить свойство или снять привязку, они перестанут в нем отображаться.");
     }
 
     /// <summary>
     /// Спрашивает перед сменой типа, которая снимет привязку к разделу. Роль работает только на
-    /// своём типе (список статусов нужен «Статусу», дата — сроку), поэтому смена типа для раздела
+    /// своем типе (список статусов нужен «Статусу», дата — сроку), поэтому смена типа для раздела
     /// равна удалению столбца — и предупреждение здесь теми же словами, что в окне удаления
     /// (<c>FieldRoleText</c>). true — терять нечего либо пользователь согласился.
     /// </summary>
@@ -325,13 +325,13 @@ public partial class PropertyEditorDialog : Window
         return await new ConfirmDialog(text, "Продолжить").ShowDialog<bool>(this);
     }
 
-    // ── Роли раздела: подтягивание одноимённых столбцов ─────────────────────────
+    // ── Роли раздела: подтягивание одноименных столбцов ─────────────────────────
 
     /// <summary>
     /// Спрашивает, использовать ли существующие столбцы коллекции для ролей раздела. Совпадение
     /// ищется ТОЛЬКО по имени («Назначил», «Статус», «Дата», «Описание»), поэтому решение за
     /// пользователем: подтянуть их (данные поедут в раздел) или оставить нетронутыми и завести
-    /// отдельные поля. Совпадений нет — спрашивать не о чем, разметка идёт молча (true).
+    /// отдельные поля. Совпадений нет — спрашивать не о чем, разметка идет молча (true).
     /// </summary>
     private async Task<bool> ConfirmRoleAdoption(IReadOnlyList<FieldRole> roles, int excludeFieldId,
                                                  string sectionName)
@@ -364,7 +364,7 @@ public partial class PropertyEditorDialog : Window
 
     /// <summary>Пункт выпадашки столбца-источника. Key — строковый ключ колонки (пустой —
     /// ручной выбор/без авто; «__title__» — системная колонка; число — Id текст-поля).
-    /// Foreground: приглушённый для пункта-заглушки «Выбрать…».</summary>
+    /// Foreground: приглушенный для пункта-заглушки «Выбрать…».</summary>
     public sealed class SourceFieldItem
     {
         public string  Key        { get; init; } = "";
@@ -396,11 +396,11 @@ public partial class PropertyEditorDialog : Window
         FileSourceCombo.SelectedIndex = 0;
     }
 
-    // Разобрать сохранённое правило и выставить контролы (столбец/папку/формат/вложенность).
+    // Разобрать сохраненное правило и выставить контролы (столбец/папку/формат/вложенность).
     private void RestoreFileAutoRule(string? configJson)
     {
         var rule = FileAutoRule.FromConfig(configJson);
-        // Правила нет — это новое поле или ручной режим: галочка остаётся в состоянии
+        // Правила нет — это новое поле или ручной режим: галочка остается в состоянии
         // по умолчанию (включена), как задано в разметке.
         if (rule is null) { FileSourceCombo.SelectedIndex = 0; return; }
         FileRecursiveCheck.IsChecked = rule.Recursive;
@@ -533,14 +533,14 @@ public partial class PropertyEditorDialog : Window
         var items = new List<TargetCollectionItem>();
         if (repo is not null)
             foreach (var c in repo.GetAllCollections())
-                // Пункт списка — одна строка (TitleText); выбор идёт по Id.
+                // Пункт списка — одна строка (TitleText); выбор идет по Id.
                 if (c.Id.HasValue)
                     items.Add(new TargetCollectionItem { Id = c.Id.Value, Name = TitleText.FirstLine(c.Name) });
         RelationTargetCombo.ItemsSource   = items;
         RelationTargetCombo.SelectedIndex = -1;      // цель нужно выбрать явно (список сменился)
     }
 
-    // Восстановить сохранённое правило связи (целевая БД + коллекция + one/many + разделитель).
+    // Восстановить сохраненное правило связи (целевая БД + коллекция + one/many + разделитель).
     private void RestoreRelationConfig(string? configJson)
     {
         var cfg = RelationConfig.FromConfig(configJson);
@@ -642,7 +642,7 @@ public partial class PropertyEditorDialog : Window
         display.Bind(TextBlock.FontSizeProperty,   box.GetObservable(TextBox.FontSizeProperty));
         display.Bind(TextBlock.FontFamilyProperty, box.GetObservable(TextBox.FontFamilyProperty));
 
-        // Показ: пустое значение — приглушённый плейсхолдер (как watermark поля).
+        // Показ: пустое значение — приглушенный плейсхолдер (как watermark поля).
         void ShowDisplay()
         {
             var v = box.Text ?? "";
@@ -665,7 +665,7 @@ public partial class PropertyEditorDialog : Window
         box.LostFocus          += (_, _) => ShowDisplay();
         box.KeyDown            += (_, e) => { if (e.Key is Key.Enter or Key.Escape) ShowDisplay(); };
 
-        // Панель фиксированной высоты строки (30) — чтобы список не «дёргался» при переключении
+        // Панель фиксированной высоты строки (30) — чтобы список не «дергался» при переключении
         // показ/ввод (скрытое поле в измерение не входит).
         var editArea = new Panel { Height = 30 };
         editArea.Children.Add(display);
@@ -696,7 +696,7 @@ public partial class PropertyEditorDialog : Window
 
         box.Tag = grid;   // строка-контейнер для фильтра (box лежит внутри editArea, не прямо в grid)
 
-        // Заполненная строка стартует в показе, новая (пустая) — сразу в вводе (её фокусирует вызвавший).
+        // Заполненная строка стартует в показе, новая (пустая) — сразу в вводе (ее фокусирует вызвавший).
         if (value.Length > 0) ShowDisplay();
         else ShowEditor();
 
@@ -705,7 +705,7 @@ public partial class PropertyEditorDialog : Window
         return box;
     }
 
-    // Фильтр строк-пунктов по полю поиска: строка видна, если её текст содержит запрос
+    // Фильтр строк-пунктов по полю поиска: строка видна, если ее текст содержит запрос
     // (пустой запрос — видны все). Совпадение по текущему тексту строки.
     private void FilterOptionRows()
     {
@@ -816,7 +816,7 @@ public partial class PropertyEditorDialog : Window
 
         // Пояснение: «Название»/«Описание» — базовые свойства целостности, их нельзя
         // удалить и сменить тип. Показываем только в этом (системном) режиме.
-        SystemNote.Show("Это базовое свойство записи — на нём держится целостность коллекции. "
+        SystemNote.Show("Это базовое свойство записи — на нем держится целостность коллекции. "
                       + "Его нельзя удалить, а тип изменить: доступно только переименование.");
 
         NameBox.Text = currentName;
@@ -844,7 +844,7 @@ public partial class PropertyEditorDialog : Window
         KeepWindowPosition(pos);
     }
 
-    // Держим позицию окна при пересчёте высоты (SizeToContent), чтобы оно не «прыгало».
+    // Держим позицию окна при пересчете высоты (SizeToContent), чтобы оно не «прыгало».
     private void KeepWindowPosition(PixelPoint pos)
     {
         void Restore(object? _, EventArgs __)
@@ -899,7 +899,7 @@ public partial class PropertyEditorDialog : Window
         // менялся молча и плашка оставалась висеть над уже неработающей ролью.
         if (!await ConfirmRoleLossOnTypeChange()) return;
 
-        // Включение авто-привязки на поле с уже сохранёнными значениями — подтверждаем затирание.
+        // Включение авто-привязки на поле с уже сохраненными значениями — подтверждаем затирание.
         if (fileAuto && _editFieldId is int existId && _repository.FieldHasValues(existId))
         {
             var ok = await new ConfirmDialog(
@@ -955,9 +955,9 @@ public partial class PropertyEditorDialog : Window
             return;
         }
 
-        // Для типа «Дата» применяем переключатель «Отображать в календаре»: включённая дата
+        // Для типа «Дата» применяем переключатель «Отображать в календаре»: включенная дата
         // тянет за собой роль «Описание» (окно события правит и его), поэтому сначала
-        // спрашиваем про одноимённые столбцы коллекции.
+        // спрашиваем про одноименные столбцы коллекции.
         if (_selectedType == "date")
         {
             var inCalendar = CalDateToggle.IsChecked == true;
@@ -966,8 +966,8 @@ public partial class PropertyEditorDialog : Window
             try
             {
                 _repository.SetDateFieldVisible(savedFieldId, inCalendar, adopt);
-                // Тумблер мог быть включён и раньше — тогда SetDateFieldVisible уходит в ранний
-                // возврат, а проверить столбцы всё равно нужно (пользователь мог переименовать
+                // Тумблер мог быть включен и раньше — тогда SetDateFieldVisible уходит в ранний
+                // возврат, а проверить столбцы все равно нужно (пользователь мог переименовать
                 // поля и хочет переключить роль на другое).
                 if (inCalendar)
                     _repository.EnsureRoles(_collectionId, ConstructorRepository.CalendarRoles,

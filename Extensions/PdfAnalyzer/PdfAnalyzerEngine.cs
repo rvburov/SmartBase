@@ -8,7 +8,7 @@ using UglyToad.PdfPig;
 
 namespace SmartBase.Extensions.PdfAnalyzer;
 
-/// <summary>Тип выгрузки. Порядок пунктов комбобокса задаётся в окне (сопоставление в OnExecuteClick).</summary>
+/// <summary>Тип выгрузки. Порядок пунктов комбобокса задается в окне (сопоставление в OnExecuteClick).</summary>
 public enum ExportType
 {
     Td,           // Ведомость технологической документации
@@ -25,13 +25,13 @@ public sealed class PdfAnalyzeException(string message) : Exception(message);
 /// <summary>Прогресс: обработано из всего + текущий файл.</summary>
 public sealed record AnalyzeProgress(int Current, int Total, string File);
 
-/// <summary>Итог анализа: путь к отчёту + сводка для показа.</summary>
+/// <summary>Итог анализа: путь к отчету + сводка для показа.</summary>
 public sealed record AnalyzeResult(string SavePath, int TotalFiles, int Processed, int Errors, string StatsText);
 
 /// <summary>
 /// Анализ PDF файлов: рекурсивный/локальный обход папки, разбор имени (КД/ПД/ТД через
 /// <see cref="DocumentCodes"/>), MD5, число страниц и форматы листов (PdfPig), сортировка
-/// (3 режима), 4 типа выгрузки и запись отчёта в Excel (ClosedXML).
+/// (3 режима), 4 типа выгрузки и запись отчета в Excel (ClosedXML).
 /// Логика без UI: окно вызывает <see cref="Run"/>, репортя прогресс и отменяясь по токену.
 /// </summary>
 public static class PdfAnalyzerEngine
@@ -190,8 +190,8 @@ public static class PdfAnalyzerEngine
 
     // ── Форматы листов ────────────────────────────────────────────────────────
 
-    // A5 намеренно НЕ в списке: страница A5 (148×210) не совпадёт ни с базовым, ни с производным
-    // форматом и попадёт в «Доп. форматы» как «148×210» (в оригинале A5 распознавался, но столбца
+    // A5 намеренно НЕ в списке: страница A5 (148×210) не совпадет ни с базовым, ни с производным
+    // форматом и попадет в «Доп. форматы» как «148×210» (в оригинале A5 распознавался, но столбца
     // под него не было — и страница «терялась» в разбивке).
     private static readonly (string Fmt, double W, double H)[] BaseFormats =
     [
@@ -231,7 +231,7 @@ public static class PdfAnalyzerEngine
 
         foreach (var page in doc.GetPages())
         {
-            // PdfPig отдаёт размеры в пунктах (1/72"). Переводим в мм и округляем.
+            // PdfPig отдает размеры в пунктах (1/72"). Переводим в мм и округляем.
             var wMm = (int)Math.Round(page.Width * 25.4 / 72.0);
             var hMm = (int)Math.Round(page.Height * 25.4 / 72.0);
 
@@ -244,7 +244,7 @@ public static class PdfAnalyzerEngine
         return (counts, string.Join(", ", parts));
     }
 
-    // Значение столбца «Доп. форматы»: строка нестандартных размеров, либо счётчик, либо пусто.
+    // Значение столбца «Доп. форматы»: строка нестандартных размеров, либо счетчик, либо пусто.
     private static object? AdditionalValue(Dictionary<string, int> fmt, string nonStandard)
     {
         if (nonStandard.Length > 0)
@@ -303,7 +303,7 @@ public static class PdfAnalyzerEngine
                 cleanName = Regex.Replace(t, @"[()\[\]_\-]+$", "").Trim();
             }
             if (cleanName.Length == 0) continue;
-            // Имя изделия не может быть названием вида документа (иначе тип «протёк» бы в изделие).
+            // Имя изделия не может быть названием вида документа (иначе тип «протек» бы в изделие).
             if (DocumentCodes.IsDocTypeName(cleanName)) continue;
 
             // ПД: спецификация (номер без кода вида, КОДО.РРРРР-ИИ) — авторитетное имя изделия
@@ -335,7 +335,7 @@ public static class PdfAnalyzerEngine
 
     private static List<Row> ScopeRows(List<Row> rows, ExportType exportType) => exportType switch
     {
-        // Ведомость/Опись КД — всё, КРОМЕ чисто программной документации.
+        // Ведомость/Опись КД — все, КРОМЕ чисто программной документации.
         ExportType.Kd or ExportType.Inventory     => rows.Where(r => !IsPd(r)).ToList(),
         // Ведомость/Опись ПД — только программная документация.
         ExportType.PdRegister or ExportType.PdInventory => rows.Where(IsPd).ToList(),
@@ -469,7 +469,7 @@ public static class PdfAnalyzerEngine
             return new PdSortKeyData(row.Folder, baseNum, ed, 1, vid * 1000 + num * 10 + part, suffix, d);
         }
 
-        // Голая спецификация (rest == "") и всё прочее — группа 0 (начало).
+        // Голая спецификация (rest == "") и все прочее — группа 0 (начало).
         return new PdSortKeyData(row.Folder, baseNum, ed, 0, 0, suffix, d);
     }
 
@@ -478,8 +478,8 @@ public static class PdfAnalyzerEngine
     private static List<(string Header, Func<Row, object?> Value)> BuildColumns(
         List<Row> rows, ExportType exportType, Dictionary<string, string> cache, bool splitName)
     {
-        // Пересчёт «Наименование документа» из спецификаций — для всех выгрузок с наименованием
-        // (КД/Опись КД/ПД/Опись ПД/Все). КД берёт обозначение из DesignationKd, ПД — из DesignationPd.
+        // Пересчет «Наименование документа» из спецификаций — для всех выгрузок с наименованием
+        // (КД/Опись КД/ПД/Опись ПД/Все). КД берет обозначение из DesignationKd, ПД — из DesignationPd.
         if (exportType is ExportType.Kd or ExportType.Inventory or ExportType.All
                        or ExportType.PdRegister or ExportType.PdInventory)
         {
@@ -543,7 +543,7 @@ public static class PdfAnalyzerEngine
                 ("Доп. форматы", r => r.Additional), ("Листов формата А4", r => Count(r.A4Sheets)),
                 ("Объем, МБ", r => r.SizeMb), ("Гриф секретности", r => r.Secrecy), ("Примечание", r => r.Note),
             ],
-            ExportType.PdInventory =>   // Опись программной документации (сокращённый формат)
+            ExportType.PdInventory =>   // Опись программной документации (сокращенный формат)
             [
                 ("№ п/п", r => r.NumPp), ("Обозначение", r => r.DesignationPd), ("Наименование", r => r.Name),
                 ("Количество листов в документе", r => r.PageCount), ("Примечание", r => r.Note),
@@ -600,7 +600,7 @@ public static class PdfAnalyzerEngine
         catch (IOException)
         {
             throw new PdfAnalyzeException(
-                $"Не удалось сохранить отчёт. Возможно, файл «{Path.GetFileName(savePath)}» открыт в Excel. Закройте его и повторите.");
+                $"Не удалось сохранить отчет. Возможно, файл «{Path.GetFileName(savePath)}» открыт в Excel. Закройте его и повторите.");
         }
     }
 
@@ -678,8 +678,8 @@ public static class PdfAnalyzerEngine
         string savePath, int total, int processed, List<string> errors, ExportType exportType, List<Row> rows)
     {
         var sb = new StringBuilder();
-        sb.AppendLine("Отчёт успешно создан!").AppendLine();
-        sb.AppendLine($"Сохранён в: {savePath}").AppendLine();
+        sb.AppendLine("Отчет успешно создан!").AppendLine();
+        sb.AppendLine($"Сохранен в: {savePath}").AppendLine();
         sb.AppendLine("Статистика:");
         sb.AppendLine($"- Всего найдено файлов: {total}");
         sb.AppendLine($"- Успешно обработано: {processed}");
@@ -688,29 +688,29 @@ public static class PdfAnalyzerEngine
         {
             case ExportType.Td:
                 sb.AppendLine($"- Файлов с обозначением ТД: {rows.Count(r => r.DesignationTd.Length > 0)}");
-                sb.AppendLine("Выгружен отчёт по технологической документации (ТД).");
+                sb.AppendLine("Выгружен отчет по технологической документации (ТД).");
                 break;
             case ExportType.Kd:
                 sb.AppendLine($"- Файлов с обозначением КД: {rows.Count(r => r.DesignationKd.Length > 0)}");
-                sb.AppendLine("Выгружен отчёт по конструкторской документации (КД).");
+                sb.AppendLine("Выгружен отчет по конструкторской документации (КД).");
                 break;
             case ExportType.Inventory:
                 sb.AppendLine($"- Файлов в описи КД: {rows.Count}");
-                sb.AppendLine("Выгружена опись конструкторской документации (КД) — сокращённый формат.");
+                sb.AppendLine("Выгружена опись конструкторской документации (КД) — сокращенный формат.");
                 break;
             case ExportType.PdRegister:
                 sb.AppendLine($"- Файлов с обозначением ПД: {rows.Count(r => r.DesignationPd.Length > 0)}");
-                sb.AppendLine("Выгружен отчёт по программной документации (ПД).");
+                sb.AppendLine("Выгружен отчет по программной документации (ПД).");
                 break;
             case ExportType.PdInventory:
                 sb.AppendLine($"- Файлов в описи ПД: {rows.Count}");
-                sb.AppendLine("Выгружена опись программной документации (ПД) — сокращённый формат.");
+                sb.AppendLine("Выгружена опись программной документации (ПД) — сокращенный формат.");
                 break;
             default:
                 sb.AppendLine($"- Файлов с обозначением КД: {rows.Count(r => r.DesignationKd.Length > 0)}");
                 sb.AppendLine($"- Файлов с обозначением ПД: {rows.Count(r => r.DesignationPd.Length > 0)}");
                 sb.AppendLine($"- Файлов с обозначением ТД: {rows.Count(r => r.DesignationTd.Length > 0)}");
-                sb.AppendLine("Выгружен полный отчёт со всеми данными.");
+                sb.AppendLine("Выгружен полный отчет со всеми данными.");
                 break;
         }
 
@@ -718,7 +718,7 @@ public static class PdfAnalyzerEngine
         {
             sb.AppendLine().AppendLine($"Файлы с ошибками ({errors.Count}):");
             foreach (var e in errors.Take(5)) sb.AppendLine($"- {e}");
-            if (errors.Count > 5) sb.AppendLine($"… и ещё {errors.Count - 5} файлов с ошибками");
+            if (errors.Count > 5) sb.AppendLine($"… и еще {errors.Count - 5} файлов с ошибками");
         }
 
         return sb.ToString().TrimEnd();

@@ -30,7 +30,7 @@ public partial class RecordPageViewModel : ObservableObject
 
     /// <summary>
     /// Id поля с ролью «Описание» (null — коллекция без описания). Нижний блок панели по
-    /// умолчанию открыт именно на нём; поля нет — снизу пусто.
+    /// умолчанию открыт именно на нем; поля нет — снизу пусто.
     /// </summary>
     public int? DescriptionFieldId { get; }
 
@@ -54,7 +54,7 @@ public partial class RecordPageViewModel : ObservableObject
 
         foreach (var f in fields)
         {
-            // «Вычисляемые» типы значения в db_field_values не имеют — берём из аудит-метаданных записи.
+            // «Вычисляемые» типы значения в db_field_values не имеют — берем из аудит-метаданных записи.
             var initial = FieldTypeInfo.IsComputed(f.FieldType)
                 ? FieldTypeInfo.ComputedValue(record, f.FieldType)
                 : values.GetValueOrDefault(f.Id!.Value, "");

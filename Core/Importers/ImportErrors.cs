@@ -35,7 +35,7 @@ public static class ImportErrors
         return ex switch
         {
             FileNotFoundException or DirectoryNotFoundException =>
-                new ImportException($"Файл{name} не найден или был удалён во время импорта."),
+                new ImportException($"Файл{name} не найден или был удален во время импорта."),
             PathTooLongException =>
                 new ImportException("Слишком длинный путь к файлу."),
             UnauthorizedAccessException =>

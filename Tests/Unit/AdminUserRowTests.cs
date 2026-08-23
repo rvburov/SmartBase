@@ -8,8 +8,8 @@ namespace SmartBase.Tests.Unit;
 /// <summary>
 /// Строка таблицы пользователей панели администратора: правила доступности ячеек и
 /// маршрутизация правок в колбэки панели. Это единственный слой панели, который можно
-/// проверить без живого окна, — а именно в нём живут договорённости «свою строку не
-/// правит никто», «администратору разрешено всё» и «ожидающему допуска настраивать нечего».
+/// проверить без живого окна, — а именно в нем живут договоренности «свою строку не
+/// правит никто», «администратору разрешено все» и «ожидающему допуска настраивать нечего».
 /// </summary>
 public sealed class AdminUserRowTests
 {
@@ -52,7 +52,7 @@ public sealed class AdminUserRowTests
         foreach (PermAction a in Enum.GetValues<PermAction>())
         {
             if (a == PermAction.None || a == PermAction.All) continue;
-            Assert.True(row[(int)a]);           // роль даёт полный доступ
+            Assert.True(row[(int)a]);           // роль дает полный доступ
         }
         Assert.False(row.RightsEnabled);        // ограничить можно, только сменив роль
         Assert.True(row.IsApproved);            // допуск у администратора есть всегда
@@ -94,7 +94,7 @@ public sealed class AdminUserRowTests
         Assert.True(row[(int)PermAction.ViewCollection]);
         Assert.False(row[(int)PermAction.DeleteRecord]);
 
-        // Правка не пишется в саму строку: панель отправляет её в базу и обновляет маску,
+        // Правка не пишется в саму строку: панель отправляет ее в базу и обновляет маску,
         // только если сервис принял изменение.
         row[(int)PermAction.DeleteRecord] = true;
         Assert.Equal((PermAction.DeleteRecord, true), change);

@@ -24,7 +24,7 @@ public partial class SplashWindow : Window
         Indicator.StartSmooth("Подготовка…", cap: 0.05);
     }
 
-    /// <summary>Этап запуска со своим сегментом шкалы: полоса плавно идёт к <paramref name="cap"/>.
+    /// <summary>Этап запуска со своим сегментом шкалы: полоса плавно идет к <paramref name="cap"/>.
     /// Перевод строки в сообщении делит его на фазу (жирная строка) и доп. строку под ней —
     /// туда долгие этапы кладут живую оценку времени («осталось ≈ 2 мин»).</summary>
     public void SetStage(double cap, string message)

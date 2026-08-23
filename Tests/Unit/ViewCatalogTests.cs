@@ -6,8 +6,8 @@ namespace SmartBase.Tests.Unit;
 /// <summary>
 /// Каталог видов и настройка их видимости («Оформление → Отображение раздела …»).
 /// Проверяется главное: скрытие пунктов не сдвигает глобальные номера видов (на них
-/// завязаны сохранённый <c>calendarView</c> и <c>SwitchView</c>), пустым список видимых
-/// не бывает, а хранятся именно СКРЫТЫЕ пункты — пустая настройка означает «видно всё».
+/// завязаны сохраненный <c>calendarView</c> и <c>SwitchView</c>), пустым список видимых
+/// не бывает, а хранятся именно СКРЫТЫЕ пункты — пустая настройка означает «видно все».
 /// </summary>
 public sealed class ViewCatalogTests
 {
@@ -48,7 +48,7 @@ public sealed class ViewCatalogTests
         Assert.Empty(ViewCatalog.All("такого-раздела-нет"));
     }
 
-    // Порядок видов календаря — это и есть сохранённые номера (calendarView), менять его
+    // Порядок видов календаря — это и есть сохраненные номера (calendarView), менять его
     // нельзя: 4 обязан оставаться «Месяцем».
     [Fact]
     public void Calendar_view_order_matches_stored_indexes()
@@ -124,7 +124,7 @@ public sealed class ViewCatalogTests
                      AppSettings.LoadHiddenViews(ViewCatalog.ScopeNavigation).OrderBy(k => k, StringComparer.Ordinal));
     }
 
-    // Скрыть ВСЁ нельзя: раздел без единого вида неработоспособен, поэтому даже испорченная
+    // Скрыть ВСЕ нельзя: раздел без единого вида неработоспособен, поэтому даже испорченная
     // настройка оставляет первый пункт.
     [Fact]
     public void Hiding_everything_still_leaves_one_view()

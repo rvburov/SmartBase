@@ -3,7 +3,7 @@
              x:Class="SmartBase.Controls.Widgets.DateField">
 
     <!-- Поле даты по образцу TimeField: свой Popup, внутрь которого Calendar
-         создаётся ЗАНОВО при каждом открытии (иначе он сохраняет «зажатое»
+         создается ЗАНОВО при каждом открытии (иначе он сохраняет «зажатое»
          состояние указателя между открытиями и выбирает дату по наведению). -->
     <Border x:Name="Box" Classes="timeField" Height="34">
         <Grid ColumnDefinitions="*,Auto">

@@ -7,25 +7,25 @@ namespace SmartBase.Database.Repositories;
 
 // ── Generic-перенос коллекции/группы между БД РАЗНЫХ провайдеров (SQLite ↔ PG, PG ↔ PG) ──
 //
-// ATTACH существует только у SQLite, поэтому для пар с PostgreSQL перенос идёт на ДВУХ
+// ATTACH существует только у SQLite, поэтому для пар с PostgreSQL перенос идет на ДВУХ
 // независимых подключениях: источник читается keyset-страницами в консистентном снимке
-// (одна read-транзакция на всё чтение), приёмник пишется пакетами — записи prepared-вставкой
+// (одна read-транзакция на все чтение), приемник пишется пакетами — записи prepared-вставкой
 // с RETURNING Id (точная карта id без допущения непрерывности), значения/проекция/строчные
 // UI-таблицы — multi-row INSERT'ами по карте. Контракт тот же, что у ATTACH-переноса
-// (см. MoveCollectionIsolated): копируется всё, включая UI-настройки; копия и удаление
+// (см. MoveCollectionIsolated): копируется все, включая UI-настройки; копия и удаление
 // источника раздельны, с компенсацией при сбое удаления.
 //
 // Отличие от ATTACH-пути: копия коммитится ПО ПАКЕТАМ (а не одной транзакцией), поэтому
-// kill посреди копии оставил бы частичную копию в приёмнике. Против этого — маркер
-// crossmove.pending.* в db_meta приёмника: ставится до заливки, снимается по завершении;
-// свип при монтировании (SweepUnfinishedCrossMove) доудаляет незавершённую копию.
+// kill посреди копии оставил бы частичную копию в приемнике. Против этого — маркер
+// crossmove.pending.* в db_meta приемника: ставится до заливки, снимается по завершении;
+// свип при монтировании (SweepUnfinishedCrossMove) доудаляет незавершенную копию.
 // Источник не трогается до полного завершения копии — после сбоя он всегда цел.
 public partial class ConstructorRepository
 {
     private const string PendingCollectionKey = "crossmove.pending.collection";
     private const string PendingGroupKey      = "crossmove.pending.group";
 
-    // Перенос коллекции между провайдерами: копия в приёмник (this) → уникализация имени →
+    // Перенос коллекции между провайдерами: копия в приемник (this) → уникализация имени →
     // удаление из источника на отдельном подключении (компенсация при сбое — как у ATTACH).
     private int MoveCollectionGeneric(string sourceDbPath, int srcCollectionId, int? targetGroupId,
                                       IProgress<int>? progress, int batchSize)
@@ -62,7 +62,7 @@ public partial class ConstructorRepository
 
     // Перенос группы со всей веткой между провайдерами: структура групп клонируется через EF
     // (строк мало), коллекции — поколлекционно generic-копией с накоплением прогресса. Один
-    // маркер на корневую группу покрывает всю ветку (свип удалит её целиком).
+    // маркер на корневую группу покрывает всю ветку (свип удалит ее целиком).
     private int MoveGroupGeneric(string sourceDbPath, int srcGroupId, int? targetParentId,
                                  IProgress<int>? progress, int batchSize)
     {
@@ -79,7 +79,7 @@ public partial class ConstructorRepository
 
         try
         {
-            // Корень + маркер — одной транзакцией приёмника: сбой между ними невозможен.
+            // Корень + маркер — одной транзакцией приемника: сбой между ними невозможен.
             using (var tx = targetCtx.Database.BeginTransaction())
             {
                 newRootId = CloneOneGroup(srcCtx, targetCtx, srcGroupId, targetParentId, map);
@@ -108,7 +108,7 @@ public partial class ConstructorRepository
         }
         catch
         {
-            // Сбой на фазе копии: убираем частичную ветку из приёмника (или это сделает свип).
+            // Сбой на фазе копии: убираем частичную ветку из приемника (или это сделает свип).
             try
             {
                 if (map.TryGetValue(srcGroupId, out var rootId))
@@ -149,8 +149,8 @@ public partial class ConstructorRepository
         ConstructorRepository target, int srcCollectionId, int? targetGroupId,
         IProgress<int>? progress, long progressBase, int batchSize, bool markPending = true)
     {
-        // Один консистентный снимок источника на всё чтение: конкурентные правки других
-        // пользователей PG не дадут «рваную» копию (SQLite-читателю то же даёт его
+        // Один консистентный снимок источника на все чтение: конкурентные правки других
+        // пользователей PG не дадут «рваную» копию (SQLite-читателю то же дает его
         // транзакция чтения). Держится до конца копии.
         using var srcTx = srcCtx.Database.BeginTransaction(
             srcCtx.IsPostgres ? IsolationLevel.RepeatableRead : IsolationLevel.Serializable);
@@ -164,7 +164,7 @@ public partial class ConstructorRepository
             .Where(f => f.CollectionId == srcCollectionId).OrderBy(f => f.Id).ToList();
         var recCount = srcCtx.DbRecords.LongCount(r => r.CollectionId == srcCollectionId);
 
-        // 1) Шелл в приёмнике: коллекция + поля + маркер — одной транзакцией (маркер
+        // 1) Шелл в приемнике: коллекция + поля + маркер — одной транзакцией (маркер
         //    гарантированно переживает любой сбой заливки).
         int newColId;
         var fieldMap = new Dictionary<int, int>(srcFields.Count);
@@ -204,7 +204,7 @@ public partial class ConstructorRepository
         {
             // 2) Пакетный цикл: keyset-страница записей из источника (row-value сик по индексу
             //    (CollectionId, Position) — портативен и на SQLite ≥3.15, и на PG), на пакет —
-            //    одна транзакция приёмника: записи prepared-вставкой с RETURNING Id, затем
+            //    одна транзакция приемника: записи prepared-вставкой с RETURNING Id, затем
             //    значения/проекция/строчные UI-таблицы multi-row INSERT'ами через карту id.
             long processed = 0;
             int prevPos = int.MinValue, prevId = 0;
@@ -282,7 +282,7 @@ public partial class ConstructorRepository
         }
         catch
         {
-            // Сбой заливки: убираем частичную копию сразу (иначе её доудалит свип по маркеру).
+            // Сбой заливки: убираем частичную копию сразу (иначе ее доудалит свип по маркеру).
             try
             {
                 target.DeleteCollectionData(newColId, log: false);
@@ -296,10 +296,10 @@ public partial class ConstructorRepository
     }
 
     /// <summary>
-    /// Свип незавершённого generic-переноса при монтировании: kill посреди пакетной заливки
-    /// оставляет в приёмнике частичную копию под маркером crossmove.pending.* — доудаляем её
+    /// Свип незавершенного generic-переноса при монтировании: kill посреди пакетной заливки
+    /// оставляет в приемнике частичную копию под маркером crossmove.pending.* — доудаляем ее
     /// (источник переносом не тронут, его данные целы). Сбой свипа не валит монтирование:
-    /// маркер остаётся, доудалим в следующий раз.
+    /// маркер остается, доудалим в следующий раз.
     /// </summary>
     public void SweepUnfinishedCrossMove()
     {
@@ -316,7 +316,7 @@ public partial class ConstructorRepository
                 RemoveMeta(db, PendingGroupKey);
             }
         }
-        catch { /* маркер остаётся — доудалим при следующем монтировании */ }
+        catch { /* маркер остается — доудалим при следующем монтировании */ }
     }
 
     // ── Клонирование структуры групп (EF, строк мало) ───────────────────────────
@@ -389,7 +389,7 @@ public partial class ConstructorRepository
     private sealed record DisplayRow(long RecordId, int Visible, int Level, string? Bg, string? Fg);
     private sealed record CellStyleRow(long RecordId, string Key, string? Bg, string? Fg);
 
-    // Ключ колонки (column_meta / cell_style) в терминах приёмника: числовой ключ — это id
+    // Ключ колонки (column_meta / cell_style) в терминах приемника: числовой ключ — это id
     // поля, его переводим по карте; «__title__» и незнакомые ключи едут как есть.
     private static string RemapColumnKey(string key, Dictionary<int, int> fieldMap) =>
         int.TryParse(key, out var oldFid) && fieldMap.TryGetValue(oldFid, out var nfid)
@@ -470,7 +470,7 @@ public partial class ConstructorRepository
         return list;
     }
 
-    // ── Запись в приёмник ───────────────────────────────────────────────────────
+    // ── Запись в приемник ───────────────────────────────────────────────────────
 
     // Записи пакета prepared-вставкой с RETURNING Id: точная карта старый id → новый,
     // без допущения непрерывности (на PG identity-последовательность делят все клиенты).
@@ -561,7 +561,7 @@ public partial class ConstructorRepository
         }
     }
 
-    // ── db_meta: маркер незавершённого переноса ─────────────────────────────────
+    // ── db_meta: маркер незавершенного переноса ─────────────────────────────────
 
     private static string? GetMeta(AppDbContext ctx, string key) =>
         ctx.DbMeta.AsNoTracking().FirstOrDefault(m => m.Key == key)?.Value;

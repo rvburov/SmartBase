@@ -7,7 +7,7 @@ namespace SmartBase.Tests.Extensions.DocsCollection;
 /// Контракт ИМЕННО этого расширения: прибитый Id и факт регистрации. Общие правила живут в
 /// Tests/Extensions/Registry — здесь только то, что уходит вместе с расширением при удалении.
 ///
-/// CreateWindow() здесь не зовётся и звать нельзя: Avalonia в тест-хосте не поднята.
+/// CreateWindow() здесь не зовется и звать нельзя: Avalonia в тест-хосте не поднята.
 /// </summary>
 public sealed class DocsCollectionExtensionTests
 {

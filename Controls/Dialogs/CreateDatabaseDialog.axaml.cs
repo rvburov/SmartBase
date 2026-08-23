@@ -8,10 +8,10 @@ namespace SmartBase.Controls.Dialogs;
 /// <summary>
 /// Собственное окно «Создать базу данных» вместо системного save-диалога. Причины:
 ///  • системный диалог предлагает ПЕРЕЗАПИСАТЬ существующий файл («already exists —
-///    Replace?») — для базы данных это опасно и запрещено: здесь занятое имя даёт
+///    Replace?») — для базы данных это опасно и запрещено: здесь занятое имя дает
 ///    ошибку «уже существует», перезаписи нет в принципе;
-///  • системные диалоги говорят на языке ОС — у нас всё окно по-русски на любой ОС
-///    (нативным остаётся только выбор папки по «Обзор…»: файловый браузер — часть ОС).
+///  • системные диалоги говорят на языке ОС — у нас все окно по-русски на любой ОС
+///    (нативным остается только выбор папки по «Обзор…»: файловый браузер — часть ОС).
 /// Возвращает полный путь нового файла (…/имя.db) или null при отмене.
 /// </summary>
 public partial class CreateDatabaseDialog : Window
@@ -31,7 +31,7 @@ public partial class CreateDatabaseDialog : Window
         NameBox.KeyDown     += (_, e) => { if (e.Key == Key.Enter) TryConfirm(); };
         NameBox.TextChanged += (_, _) => HideError();
 
-        // Имя предвыделено — ввод сразу заменяет «database» на своё.
+        // Имя предвыделено — ввод сразу заменяет «database» на свое.
         Opened += (_, _) => { NameBox.Focus(); NameBox.SelectAll(); };
     }
 
@@ -55,7 +55,7 @@ public partial class CreateDatabaseDialog : Window
     {
         var name = NameBox.Text?.Trim() ?? "";
         if (name.EndsWith(".db", StringComparison.OrdinalIgnoreCase))
-            name = name[..^3].TrimEnd();   // расширение добавляем сами — введённое не дублируем
+            name = name[..^3].TrimEnd();   // расширение добавляем сами — введенное не дублируем
 
         if (name.Length == 0)
         {
@@ -104,7 +104,7 @@ public partial class CreateDatabaseDialog : Window
         KeepWindowPosition(pos);
     }
 
-    // Держим позицию окна при пересчёте высоты (SizeToContent), чтобы оно не «прыгало».
+    // Держим позицию окна при пересчете высоты (SizeToContent), чтобы оно не «прыгало».
     private void KeepWindowPosition(PixelPoint pos)
     {
         void Restore(object? _, EventArgs __)

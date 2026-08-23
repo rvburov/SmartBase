@@ -5,9 +5,9 @@ namespace SmartBase.Tests.Integration;
 
 /// <summary>
 /// Подтягивание ролей по имени столбца: включение раздела (задачи/календарь) доводит коллекцию
-/// до полного набора ролей, а одноимённые столбцы либо получают роль (данные едут в раздел),
+/// до полного набора ролей, а одноименные столбцы либо получают роль (данные едут в раздел),
 /// либо остаются нетронутыми, и роли достаются новым полям. Совпадение — по имени И типу:
-/// роль работает только на своём типе (ConstructorRepository.RoleAllowsType), поэтому столбец
+/// роль работает только на своем типе (ConstructorRepository.RoleAllowsType), поэтому столбец
 /// подходящего имени, но чужого типа кандидатом не становится и роль при смене типа теряет.
 /// Инварианты из docs/features/tasks.md и docs/architecture/data-types/description.md.
 /// </summary>
@@ -41,7 +41,7 @@ public sealed class RoleAdoptionTests
         Assert.Contains(fields, f => f.IsDescription);
     }
 
-    /// <summary>Задача без срока всё равно оставляет коллекции поле-дату — срок можно вписать потом.</summary>
+    /// <summary>Задача без срока все равно оставляет коллекции поле-дату — срок можно вписать потом.</summary>
     [Fact]
     public void Task_without_due_still_creates_date_field()
     {
@@ -49,7 +49,7 @@ public sealed class RoleAdoptionTests
         var repo = db.Constructor;
         var col  = SampleData.AddCollection(repo, "Задачи").Id!.Value;
 
-        repo.AddTaskRecord(col, "Позвонить", "Иванов Иван", "Петров Пётр",
+        repo.AddTaskRecord(col, "Позвонить", "Иванов Иван", "Петров Петр",
                            ConstructorRepository.TaskStatusPlanned, due: null);
 
         Assert.Contains(repo.GetFields(col), f => f.IsCalStart && f.FieldType == "date");
@@ -64,8 +64,8 @@ public sealed class RoleAdoptionTests
         var repo = db.Constructor;
         var col  = SampleData.AddCollection(repo).Id!.Value;
         var exec = SampleData.AddField(repo, col, "Исполнитель", "user", position: 1000).Id!.Value;
-        // Имени мало — нужен и подходящий тип: «Статус» на тексте списка статусов не даёт,
-        // поэтому кандидатом не станет и роль уйдёт новому полю.
+        // Имени мало — нужен и подходящий тип: «Статус» на тексте списка статусов не дает,
+        // поэтому кандидатом не станет и роль уйдет новому полю.
         SampleData.AddField(repo, col, "Статус", "text", position: 2000);
         SampleData.AddField(repo, col, "Описание", "text", position: 3000);
 
@@ -73,7 +73,7 @@ public sealed class RoleAdoptionTests
 
         Assert.True(plan.NeedsConfirmation);
         Assert.Equal(["Описание"], plan.Candidates.Select(c => c.FieldName).ToArray());
-        // Отказ заведёт поля под ВСЕ роли без носителя — и те, что нашлись по имени тоже
+        // Отказ заведет поля под ВСЕ роли без носителя — и те, что нашлись по имени тоже
         // (тогда с суффиксом, потому что имя занято).
         Assert.Equal(["Назначил", "Статус 2", "Дата", "Описание 2"],
                      plan.FieldsToCreateIfDeclined.ToArray());
@@ -101,7 +101,7 @@ public sealed class RoleAdoptionTests
         Assert.False(fields.First(f => f.Id == text).IsTaskStatus);
         Assert.False(fields.First(f => f.Id == date).IsDescription);
 
-        // Роли всё равно обеспечены — новыми полями своего типа.
+        // Роли все равно обеспечены — новыми полями своего типа.
         var status = Assert.Single(fields, f => f.IsTaskStatus);
         Assert.Equal("status", status.FieldType);
         var desc = Assert.Single(fields, f => f.IsDescription);
@@ -139,7 +139,7 @@ public sealed class RoleAdoptionTests
 
         // Что потеряем — известно до правки.
         Assert.Equal([FieldRole.TaskStatus], repo.RolesLostByTypeChange(status.Id!.Value, "checkbox"));
-        // Родственный тип роль сохраняет: список статусов остаётся списком.
+        // Родственный тип роль сохраняет: список статусов остается списком.
         Assert.Empty(repo.RolesLostByTypeChange(status.Id!.Value, "select"));
 
         status.FieldType = "checkbox";
@@ -151,7 +151,7 @@ public sealed class RoleAdoptionTests
     }
 
     /// <summary>
-    /// Поле-дата, переключённое на текст, перестаёт быть источником календаря и сроком задачи:
+    /// Поле-дата, переключенное на текст, перестает быть источником календаря и сроком задачи:
     /// иначе роль выглядела бы занятой, а событий и срока не было бы вовсе.
     /// </summary>
     [Fact]
@@ -194,11 +194,11 @@ public sealed class RoleAdoptionTests
         // Данные подтянулись: значения этих столбцов читает раздел задач.
         var rec = SampleData.AddRecord(repo, col, "Заявка").Id!.Value;
         repo.SetFieldValue(rec, exec, "Иванов Иван");
-        repo.SetFieldValue(rec, assigner, "Петров Пётр");
+        repo.SetFieldValue(rec, assigner, "Петров Петр");
         repo.SetFieldValue(rec, status, ConstructorRepository.TaskStatusActive);
 
         var task = Assert.Single(repo.GetTaskRecords());
-        Assert.Equal("Петров Пётр", task.Assigner);
+        Assert.Equal("Петров Петр", task.Assigner);
         Assert.Equal(ConstructorRepository.TaskStatusActive, task.Status);
     }
 
@@ -262,7 +262,7 @@ public sealed class RoleAdoptionTests
 
     /// <summary>
     /// Имя решает — кроме «Даты»: календарная проекция строится только по полям типа «Дата»,
-    /// поэтому текстовый столбец с таким именем сроком стать не может и заводится своё поле.
+    /// поэтому текстовый столбец с таким именем сроком стать не может и заводится свое поле.
     /// </summary>
     [Fact]
     public void Date_role_skips_column_of_wrong_type()

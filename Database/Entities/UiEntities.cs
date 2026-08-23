@@ -52,7 +52,7 @@ public class UiCollectionSettingEntity
 // Метаданные колонки таблицы — порядок, видимость/уровень, подпись — одной строкой на
 // (CollectionId, Key). Key = TableRowVm.TitleKey ("__title__") либо
 // строковый id поля. Каждый аспект nullable: null = дефолт (порядок по Position полей,
-// видима/уровень 1, имя по умолчанию). Строки только для изменённых колонок; строка живёт,
+// видима/уровень 1, имя по умолчанию). Строки только для измененных колонок; строка живет,
 // пока задан хоть один аспект (см. ConstructorRepository.RemoveColumnMetaIfEmpty).
 // Объединяет прежние таблицы column_order + column_display + system_field_meta.
 public class ColumnMetaEntity
@@ -61,7 +61,7 @@ public class ColumnMetaEntity
     public string  Key          { get; set; } = "";
     public int?    Position     { get; set; }   // порядок колонки; null = дефолтный
     public bool?   Visible      { get; set; }   // false = скрыта; null = аспект «Отображение» не задан
-    public int?    Level        { get; set; }   // пресет-уровень; задаётся вместе с Visible
+    public int?    Level        { get; set; }   // пресет-уровень; задается вместе с Visible
     public string? DisplayName  { get; set; }   // подпись системной колонки (__title__)
     public string? Bg           { get; set; }   // фон всех ячеек колонки, hex; null = без фона
     public string? Fg           { get; set; }   // цвет текста колонки, hex; null = стандартный
@@ -77,9 +77,9 @@ public class ColumnMetaEntity
 // и в журнал не пишется, как ширины колонок и высоты строк. Сквозной цвет записи
 // (DbRecordEntity.Color) был отдельным уровнем и убран — см. комментарий там.
 //
-// Аспекты независимы, как в column_meta: строка живёт, пока задан хоть один, отсутствие
+// Аспекты независимы, как в column_meta: строка живет, пока задан хоть один, отсутствие
 // строки = видима, уровень 1, без своего цвета. Поэтому запись аспектов — точечный
-// upsert (SetRowStyle / SaveRecordDisplay), а не «удалить всё и переписать»: иначе
+// upsert (SetRowStyle / SaveRecordDisplay), а не «удалить все и переписать»: иначе
 // сохранение видимости стирало бы цвет.
 public class RecordDisplayEntity
 {
@@ -94,9 +94,9 @@ public class RecordDisplayEntity
 // Оформление ОДНОЙ ячейки таблицы: (коллекция, запись, колонка) → фон и цвет текста.
 // Key — как в column_meta: "__title__" либо строковый id поля (числовым FieldId нельзя —
 // системную колонку «Название» тогда не покрасить). Таблица разрежена: строка появляется
-// только у покрашенной ячейки, поэтому у большинства страниц выборка вернёт пусто.
+// только у покрашенной ячейки, поэтому у большинства страниц выборка вернет пусто.
 //
-// FK на запись с каскадом (как у calendar_index) — удаление записи чистит её ячейки само.
+// FK на запись с каскадом (как у calendar_index) — удаление записи чистит ее ячейки само.
 // Каскада по полю нет: Key строковый, поэтому чистку при удалении свойства делает
 // прикладной код там же, где чистится column_meta.
 public class CellStyleEntity

@@ -8,12 +8,12 @@ namespace SmartBase.Database;
 /// <summary>
 /// Фоновая проверка чужих изменений в смонтированных БД (~каждые 3 с): несколько
 /// пользователей могут работать с одним файлом (сетевая папка) или несколько копий
-/// приложения — с одним локальным файлом. Дешёвый детектор — <c>PRAGMA data_version</c>:
+/// приложения — с одним локальным файлом. Дешевый детектор — <c>PRAGMA data_version</c>:
 /// меняется, когда БД изменил ДРУГОЙ коннект (в т.ч. другой процесс), но только
 /// относительно СВОЕГО соединения — поэтому на каждую БД держится одно постоянное
 /// read-only подключение (свежее подключение на каждый тик ничего не увидит). Версия
 /// не изменилась — тик стоит микросекунды. Изменилась — читаем хвост change_log после
-/// последнего виденного Id, отбрасываем свои правки (UserKey) и отдаём остальным
+/// последнего виденного Id, отбрасываем свои правки (UserKey) и отдаем остальным
 /// подписчику: MainWindow обновляет сайдбары/таблицу/календарь.
 ///
 /// События поднимаются ИЗ ФОНОВОГО ПОТОКА — подписчик маршалит в UI сам.
@@ -35,7 +35,7 @@ public sealed class ChangePoller : IDisposable
     private const int BackgroundMs = 15_000;  // окно в фоне — экономный режим
 
     // Наблюдение за одной БД: постоянное соединение + последняя версия + курсор журнала.
-    // Для PostgreSQL (Path — строка подключения) data_version не существует; дешёвый
+    // Для PostgreSQL (Path — строка подключения) data_version не существует; дешевый
     // детектор — MAX(id) журнала обратным сканом PK (микросекунды на тик).
     private sealed class Watch
     {
@@ -122,7 +122,7 @@ public sealed class ChangePoller : IDisposable
 
         if (w.IsPostgres)
         {
-            // PG: дешёвый детектор — вырос ли журнал (обратный скан PK). Правки без записи
+            // PG: дешевый детектор — вырос ли журнал (обратный скан PK). Правки без записи
             // в change_log (только UI-таблицы) сосед и не должен подхватывать.
             if (ReadLong(w.Conn!, MaxLogIdSql(true)) <= w.LastLogId) return;
         }
@@ -139,7 +139,7 @@ public sealed class ChangePoller : IDisposable
         var changes = new List<RemoteChange>();
         using (var cmd = w.Conn!.CreateCommand())
         {
-            // Идентификаторы без кавычек: SQLite матчит PascalCase-колонки без учёта регистра,
+            // Идентификаторы без кавычек: SQLite матчит PascalCase-колонки без учета регистра,
             // PG сворачивает в lowercase — совпадает с PG-моделью (см. ApplyLowercaseNames).
             cmd.CommandText = "SELECT Id, UserKey, Action, TargetType, CollectionName " +
                               "FROM change_log WHERE Id > @last ORDER BY Id LIMIT 500;";
@@ -153,7 +153,7 @@ public sealed class ChangePoller : IDisposable
                 w.LastLogId = r.GetInt64(0);
                 var userKey = r.GetString(1);
                 if (string.Equals(userKey, CurrentUser.Key, StringComparison.OrdinalIgnoreCase))
-                    continue;   // своя правка — UI уже обновлён по месту действия
+                    continue;   // своя правка — UI уже обновлен по месту действия
                 changes.Add(new RemoteChange(r.GetString(2), r.GetString(3),
                                              r.IsDBNull(4) ? null : r.GetString(4)));
             }

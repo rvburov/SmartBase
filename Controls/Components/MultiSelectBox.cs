@@ -21,12 +21,12 @@ namespace SmartBase.Controls.Components;
 /// текстом через запятую (как в ячейке таблицы), клик открывает выпадающий чеклист
 /// (CheckBox на каждую опцию — можно отметить несколько). Значение — JSON-массив
 /// (<see cref="MultiSelectValue"/>). Один и тот же контрол используется в ячейке таблицы
-/// (edit) и в панели записи; <paramref name="flat"/> убирает собственную рамку (её даёт
+/// (edit) и в панели записи; <paramref name="flat"/> убирает собственную рамку (ее дает
 /// карточка панели записи).
 ///
 /// Чеклист — виртуализирующий ListBox (один-в-один с дропдауном фильтра таблицы): рисуются
 /// только видимые строки, поэтому список держит хоть тысячи опций без задержки открытия и
-/// поиска. Состояние «отмечено» живёт в модели (<see cref="OptionVm.Checked"/> → общий
+/// поиска. Состояние «отмечено» живет в модели (<see cref="OptionVm.Checked"/> → общий
 /// <c>_selected</c>), а не на самом чекбоксе — при виртуализации контейнеры строк
 /// переиспользуются, и state на контроле бы терялся.
 /// </summary>
@@ -143,7 +143,7 @@ public sealed class MultiSelectBox : Panel
             Background      = Brushes.Transparent,
             BorderThickness = new Thickness(0),
             // Воздух вокруг строк — здесь, а не у карточки: Padding списка это Margin
-            // презентера ВНУТРИ области прокрутки, поэтому полоса остаётся у края карточки.
+            // презентера ВНУТРИ области прокрутки, поэтому полоса остается у края карточки.
             Padding         = new Thickness(8, 6),
             ItemsSource     = _shown,
             ItemTemplate    = BuildItemTemplate(fontBase),
@@ -255,7 +255,7 @@ public sealed class MultiSelectBox : Panel
         _shown.AddRange(_items);
     }
 
-    // Вызывается моделью строки при клике по чекбоксу (_selected уже обновлён в сеттере Checked).
+    // Вызывается моделью строки при клике по чекбоксу (_selected уже обновлен в сеттере Checked).
     private void OnItemToggled()
     {
         RefreshDisplay();
@@ -279,7 +279,7 @@ public sealed class MultiSelectBox : Panel
     private static double Font(string key, double fallback) =>
         Application.Current!.TryFindResource(key, out var r) && r is double d ? d : fallback;
 
-    // Строка чеклиста: Checked читает/пишет общий _selected; при изменении из UI дёргает onChanged
+    // Строка чеклиста: Checked читает/пишет общий _selected; при изменении из UI дергает onChanged
     // (обновление показа + событие Changed). Refresh() лишь уведомляет привязку перечитать getter
     // при внешней смене выбора (SetStorage) — _selected и onChanged не трогает.
     private sealed class OptionVm(string name, HashSet<string> selected, Action onChanged) : INotifyPropertyChanged

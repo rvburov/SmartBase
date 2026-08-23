@@ -16,7 +16,7 @@ namespace SmartBase.Views.Profile;
 ///
 /// Зачем: в таблице длинные значения обрезаются «…» — «Объект» с «до → после» почти
 /// всегда шире колонки. Тултип годится посмотреть, но не выделить и не скопировать;
-/// панель даёт полный текст с кнопкой копирования.
+/// панель дает полный текст с кнопкой копирования.
 ///
 /// Поля карточек совпадают с колонками таблицы (те же подписи и иконки) — строка
 /// раскрывается «как есть», без изобретения новых названий.
@@ -167,7 +167,7 @@ public partial class ProfileView
         Grid.SetColumn(preview, 2); grid.Children.Add(preview);
 
         var card = new Border { Classes = { "detailRow" }, Child = grid };
-        // Нажатие на ручку ⋮ её обработчик помечает Handled (пузырьком, раньше карточки) —
+        // Нажатие на ручку ⋮ ее обработчик помечает Handled (пузырьком, раньше карточки) —
         // поэтому drag ручки карточку не выделяет.
         card.PointerPressed += (_, _) => OpenHistoryDetailField(key, row);
         return card;
@@ -237,7 +237,7 @@ public partial class ProfileView
     }
 
     // ── Ручка-разделитель: делит карточки (сверху) и полный текст (снизу) ────────
-    // По умолчанию строки делят место поровну (обе 1*). Перетаскивание задаёт строке
+    // По умолчанию строки делят место поровну (обе 1*). Перетаскивание задает строке
     // карточек пиксельную высоту; выбранная высота помнится в пределах сессии.
     private bool    _historyGripDragging;
     private double  _historyGripStartY;
@@ -265,7 +265,7 @@ public partial class ProfileView
         if (!_historyGripDragging) return;
 
         var dy  = e.GetPosition(HistoryDetailPanel).Y - _historyGripStartY;
-        // Не даём карточкам съесть весь текст: оставляем нижнему блоку запас.
+        // Не даем карточкам съесть весь текст: оставляем нижнему блоку запас.
         var max = Math.Max(HistoryCardsHeightMin, HistoryDetailPanel.Bounds.Height - 180);
         var newHeight = Math.Clamp(_historyGripStartHeight + dy, HistoryCardsHeightMin, max);
 
@@ -331,7 +331,7 @@ public partial class ProfileView
         if (!_historyColGripDragging) return;
 
         var dx  = e.GetPosition(this).X - _historyColGripStartX;
-        // Названиям не даём съесть всё значение: значению оставляем минимум места.
+        // Названиям не даем съесть все значение: значению оставляем минимум места.
         var max = Math.Max(HistoryNameColMin, HistoryDetailCardsHost.Bounds.Width - 160);
         _historyNameColWidth = Math.Clamp(_historyColGripStartWidth + dx, HistoryNameColMin, max);
         foreach (var col in _historyNameCols)

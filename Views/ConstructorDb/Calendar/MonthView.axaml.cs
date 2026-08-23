@@ -12,7 +12,7 @@ namespace SmartBase.Views.ConstructorDb.Calendar;
 public partial class MonthView : UserControl
 {
     // Размеры/веса шрифта — из токенов Typography.axaml (резолв ресурса в рантайме).
-    // Свежий размер из Application.Resources — меняется живьём при изменении FontScale.
+    // Свежий размер из Application.Resources — меняется живьем при изменении FontScale.
     private static double FontSizeBase =>
         (double)Application.Current!.FindResource("FontSizeBase")!;
 
@@ -23,7 +23,7 @@ public partial class MonthView : UserControl
     public event EventHandler<DateTime>? DayAddClicked;
     public event EventHandler<CalendarRecord>? RecordClicked;
     // Перенос между днями: запись уже с НОВЫМИ датами + исходные даты — для точечной
-    // дельты в контроллере (−1 старому дню, +1 новому, включая карту счётчиков «+N ещё»).
+    // дельты в контроллере (−1 старому дню, +1 новому, включая карту счетчиков «+N еще»).
     public event EventHandler<(CalendarRecord Rec, DateTime OldStart, DateTime OldEnd)>? RecordMoved;
     public event EventHandler<CalendarRecord>? RecordDeleteRequested;
     public event EventHandler<IReadOnlyList<CalendarRecord>>? RecordsDeleteRequested;
@@ -53,7 +53,7 @@ public partial class MonthView : UserControl
     private Control?  _dragSrcControl;
     private Grid?     _dragGhost;
     private DateTime? _shiftedDay;
-    private bool      _srcCounterShifted; // в исходном дне «+N ещё» временно уменьшен на утащенное
+    private bool      _srcCounterShifted; // в исходном дне «+N еще» временно уменьшен на утащенное
     private int       _pressClickCount;
     private bool      _skipNextDeselect;
 
@@ -145,9 +145,9 @@ public partial class MonthView : UserControl
         }
     }
 
-    // Карта счётчиков дней (день → сколько событий СТАРТУЕТ в нём): при ограниченном чтении
-    // окна день-гигант отдаёт сетке только первые GridDayCap строк — недоставленные события
-    // не попадают в _events вовсе, и честный «+N ещё» получается только из карты. null —
+    // Карта счетчиков дней (день → сколько событий СТАРТУЕТ в нем): при ограниченном чтении
+    // окна день-гигант отдает сетке только первые GridDayCap строк — недоставленные события
+    // не попадают в _events вовсе, и честный «+N еще» получается только из карты. null —
     // чтение без ограничения (или поиск), скрытые считаются от фактически полученного.
     private IReadOnlyDictionary<DateOnly, int>? _dayTotals;
 
@@ -161,7 +161,7 @@ public partial class MonthView : UserControl
     }
 
     // ── алгоритм раскладки многодневных событий по строкам ────────────────────
-    // Жадный алгоритм: для каждого события берём первую строку, где ec < sc.
+    // Жадный алгоритм: для каждого события берем первую строку, где ec < sc.
 
     private readonly record struct LayoutEntry(int RowIdx, int Sc, int Ec);
 
@@ -198,7 +198,7 @@ public partial class MonthView : UserControl
     }
 
     // Строки, занятые spanning-барами именно в день d (множество с возможными
-    // дырами — бар в строке 1 может покрывать день, а строка 0 в нём свободна).
+    // дырами — бар в строке 1 может покрывать день, а строка 0 в нем свободна).
     private HashSet<int> _SpanRowsForDay(DateTime d, Dictionary<int, LayoutEntry> layout)
     {
         var rows = new HashSet<int>();
@@ -222,7 +222,7 @@ public partial class MonthView : UserControl
 
     // Слой линий сетки месяца (GridLines): пустые Border поверх заливок ячеек.
     // В самих ячейках текст — их алиасить нельзя (EdgeMode наследуется и переключает
-    // сглаживание текста), а пустой слой Aliased защёлкивает линии в целый пиксель
+    // сглаживание текста), а пустой слой Aliased защелкивает линии в целый пиксель
     // при любом зуме/DPI. Каждая «ячейка» слоя рисует левую (кроме первой колонки —
     // она граничит с разделителем сайдбара) и верхнюю линии; низ/право не рисуются —
     // линию в одном месте рисует ровно один элемент, без визуального удвоения.
@@ -269,7 +269,7 @@ public partial class MonthView : UserControl
         var H = GridContainer.Bounds.Height;
 
         // Сколько событий на каждый день ДОСТАВЛЕНО (по дню старта): разница с картой
-        // счётчиков — события, обрезанные ограниченным чтением, идут в «+N ещё».
+        // счетчиков — события, обрезанные ограниченным чтением, идут в «+N еще».
         Dictionary<DateTime, int>? received = null;
         if (_dayTotals is not null)
         {
@@ -308,7 +308,7 @@ public partial class MonthView : UserControl
                 var rightCap = ev.EndDt.Date   <= weekEnd;
                 var barY     = wrow * ch + DateH + rowIdx * BarStep;
 
-                // Не влезает — учитываем в счётчике скрытых
+                // Не влезает — учитываем в счетчике скрытых
                 if (ch > 0 && barY + BarH > wrow * ch + ch - BPad - MoreH)
                 {
                     for (var c2 = sc; c2 <= ec; c2++) hiddenSpans[c2]++;
@@ -345,7 +345,7 @@ public partial class MonthView : UserControl
                     .ToList();
 
                 // Последняя строка, помещающаяся по высоте: row*BarStep от DateH,
-                // снизу резерв под «+N ещё» (MoreH) и нижний отступ (BPad).
+                // снизу резерв под «+N еще» (MoreH) и нижний отступ (BPad).
                 var maxVisRow = ch > 0
                     ? (int)((ch - BPad - MoreH - DateH) / BarStep) - 1
                     : 4;
@@ -487,10 +487,10 @@ public partial class MonthView : UserControl
             eventsPanel.Children.Add(chip);
         }
 
-        // «+N ещё» — прижата к нижнему краю ячейки
+        // «+N еще» — прижата к нижнему краю ячейки
         var moreLabel = new TextBlock
         {
-            Text                = $"+{hidden} ещё",
+            Text                = $"+{hidden} еще",
             IsVisible           = hidden > 0,
             FontSize            = FontSizeBase,
             Foreground          = new SolidColorBrush(Color.Parse("#8E8E93")),
@@ -560,7 +560,7 @@ public partial class MonthView : UserControl
         var darkBrush  = new SolidColorBrush(ColorTools.Darken(color));
 
         // Полоска утоплена внутрь плашки (как в Неделе): прижатая к краю она
-        // выступала «усиками» за скруглённый силуэт — её радиус меньше радиуса плашки.
+        // выступала «усиками» за скругленный силуэт — ее радиус меньше радиуса плашки.
         var leftStripe = new Border
         {
             Width               = 3,
@@ -652,7 +652,7 @@ public partial class MonthView : UserControl
         }
 
         // additive (Shift+клик): добавляет/убирает событие из набора, не трогая
-        // остальные. Иначе — одиночное выделение (сначала снимаем всё).
+        // остальные. Иначе — одиночное выделение (сначала снимаем все).
         void SelectThis(bool additive)
         {
             if (additive)
@@ -741,7 +741,7 @@ public partial class MonthView : UserControl
         if (leftCap)
         {
             // Утоплена внутрь бара (как в Неделе) — прижатая к краю выступала
-            // «усиками» за скруглённый силуэт.
+            // «усиками» за скругленный силуэт.
             leftStripeBar = new Border
             {
                 Width               = 3,
@@ -848,7 +848,7 @@ public partial class MonthView : UserControl
         }
 
         // additive (Shift+клик): добавляет/убирает событие из набора, не трогая
-        // остальные. Иначе — одиночное выделение (сначала снимаем всё).
+        // остальные. Иначе — одиночное выделение (сначала снимаем все).
         void SelectThis(bool additive)
         {
             if (additive)
@@ -928,7 +928,7 @@ public partial class MonthView : UserControl
             if (Math.Abs(pos.X - _dragPress.X) + Math.Abs(pos.Y - _dragPress.Y) < 6) return;
             _dragActive = true;
             _Deselect();
-            // Оригинал остаётся прозрачным (Opacity 0.45) на исходном месте.
+            // Оригинал остается прозрачным (Opacity 0.45) на исходном месте.
             if (_dragSrcControl is not null) _dragSrcControl.Opacity = 0.45;
         }
         var target = _DayAtPos(pos);
@@ -936,8 +936,8 @@ public partial class MonthView : UserControl
         var changed = target.Value.Date != _dragTargetDay;
         if (changed) _dragTargetDay = target.Value.Date;
 
-        // Счётчик исходного дня: пока событие уведено в другой день — там одним
-        // меньше; вернулось на место — счётчик восстанавливаем.
+        // Счетчик исходного дня: пока событие уведено в другой день — там одним
+        // меньше; вернулось на место — счетчик восстанавливаем.
         if (_dragTargetDay != _dragSourceDay) _ShiftSourceCounter();
         else                                  _RestoreSourceCounter();
 
@@ -958,7 +958,7 @@ public partial class MonthView : UserControl
             ev.EndDt   = _dragOrigEnd   + delta;
             _CancelDrag();
             // Исходные даты — контроллеру: перенос между днями правится дельтой на месте
-            // (−1 старому дню, +1 новому — в т.ч. карта счётчиков «+N ещё»), без перезагрузки.
+            // (−1 старому дню, +1 новому — в т.ч. карта счетчиков «+N еще»), без перезагрузки.
             RecordMoved?.Invoke(this, (ev, origS, origE));
         }
         else
@@ -1032,19 +1032,19 @@ public partial class MonthView : UserControl
         }
     }
 
-    // Чипы при drag больше не двигаются — восстановить нужно только «+N ещё».
+    // Чипы при drag больше не двигаются — восстановить нужно только «+N еще».
     private void _RestoreShift(DateTime day)
     {
         if (_dayUiMap.TryGetValue(day, out var ui))
         {
             ui.More.IsVisible = ui.OrigHidden > 0;
-            ui.More.Text      = $"+{ui.OrigHidden} ещё";
+            ui.More.Text      = $"+{ui.OrigHidden} еще";
         }
         _shiftedDay = null;
     }
 
     // Пока событие утащено из исходного дня в другой — там одним событием меньше:
-    // освободившееся место займёт скрытое, поэтому «+N ещё» уменьшаем на 1.
+    // освободившееся место займет скрытое, поэтому «+N еще» уменьшаем на 1.
     private void _ShiftSourceCounter()
     {
         if (_srcCounterShifted) return;
@@ -1052,24 +1052,24 @@ public partial class MonthView : UserControl
         {
             var n = ui.OrigHidden - 1;
             ui.More.IsVisible = n > 0;
-            ui.More.Text      = $"+{n} ещё";
+            ui.More.Text      = $"+{n} еще";
         }
         _srcCounterShifted = true;
     }
 
-    // Вернуть исходному дню его настоящий «+N ещё» (возврат курсора / отпускание).
+    // Вернуть исходному дню его настоящий «+N еще» (возврат курсора / отпускание).
     private void _RestoreSourceCounter()
     {
         if (!_srcCounterShifted) return;
         if (_dayUiMap.TryGetValue(_dragSourceDay, out var ui))
         {
             ui.More.IsVisible = ui.OrigHidden > 0;
-            ui.More.Text      = $"+{ui.OrigHidden} ещё";
+            ui.More.Text      = $"+{ui.OrigHidden} еще";
         }
         _srcCounterShifted = false;
     }
 
-    // Создаёт ghost-плашку (яркая красная, белый текст) при первом обращении.
+    // Создает ghost-плашку (яркая красная, белый текст) при первом обращении.
     private void _EnsureDragGhost(Color color)
     {
         if (_dragGhost is not null || _dragEv is null) return;
@@ -1143,7 +1143,7 @@ public partial class MonthView : UserControl
         var by = row * ch + 1 + DateH + freeRow * BarStep;
 
         // Свободной строки в пределах ячейки нет — событие не влезает: прячем ghost
-        // и показываем «+N ещё», увеличив счётчик на это перетаскиваемое событие
+        // и показываем «+N еще», увеличив счетчик на это перетаскиваемое событие
         // (исходные скрытые + 1).
         if (ch > 0 && by + BarH > row * ch + ch - BPad)
         {
@@ -1154,13 +1154,13 @@ public partial class MonthView : UserControl
             {
                 var n = uiHidden.OrigHidden + 1;
                 uiHidden.More.IsVisible = true;
-                uiHidden.More.Text      = $"+{n} ещё";
+                uiHidden.More.Text      = $"+{n} еще";
             }
             _shiftedDay = _dragTargetDay;
             return;
         }
 
-        // Если ghost заняло бы строку «+N ещё» — прячем подпись на время drag.
+        // Если ghost заняло бы строку «+N еще» — прячем подпись на время drag.
         if (_dayUiMap.TryGetValue(_dragTargetDay, out var ui2))
             ui2.More.IsVisible = false;
         _shiftedDay = _dragTargetDay;

@@ -105,7 +105,7 @@ public readonly record struct DateValue(DateTime Start, DateTime End, bool AllDa
         return DateTime.TryParseExact(p, fmt, CultureInfo.InvariantCulture, DateTimeStyles.None, out dt);
     }
 
-    /// <summary>Разбор ручного ввода: до двух дат (дд.MM.гггг) и до двух времён (чч:мм) в любом порядке.</summary>
+    /// <summary>Разбор ручного ввода: до двух дат (дд.MM.гггг) и до двух времен (чч:мм) в любом порядке.</summary>
     public static bool TryParseDisplay(string? text, out DateValue value)
     {
         value = default;

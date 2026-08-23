@@ -7,7 +7,7 @@ namespace SmartBase.Tests.Unit;
 /// строк от расширений, которых в сборке больше нет. Это часть ОБОЛОЧКИ (AppSettings): она
 /// работает при нуле расширений и обязана работать после удаления любого из них, поэтому
 /// тесты живут в ядре и намеренно НЕ называют ни одного настоящего расширения — иначе
-/// удалённое расширение осталось бы упомянутым здесь.
+/// удаленное расширение осталось бы упомянутым здесь.
 ///
 /// Инварианты, которые зависят от состава реестра (уникальность Id, объявленные настройки),
 /// проверяются отдельно — Tests/Extensions/Registry/, см. docs/developer/testing/extension-tests.md.
@@ -82,16 +82,16 @@ public sealed class ExtensionSettingsTests
     {
         var store = new FakeStore();
         AppSettings.AttachStore(store);
-        AppSettings.SaveExtensionSetting("живое",  "template", "остаётся");
-        AppSettings.SaveExtensionSetting("удалённое", "template", "уходит");
-        AppSettings.SaveExtensionSetting("удалённое", "иное",     "тоже уходит");
+        AppSettings.SaveExtensionSetting("живое",  "template", "остается");
+        AppSettings.SaveExtensionSetting("удаленное", "template", "уходит");
+        AppSettings.SaveExtensionSetting("удаленное", "иное",     "тоже уходит");
 
         var removed = AppSettings.RemoveOrphanExtensionSettings(["живое"]);
 
         Assert.Equal(2, removed);
         Assert.True(store.Has("ext.живое.template"));
-        Assert.False(store.Has("ext.удалённое.template"));
-        Assert.False(store.Has("ext.удалённое.иное"));
+        Assert.False(store.Has("ext.удаленное.template"));
+        Assert.False(store.Has("ext.удаленное.иное"));
     }
 
     [Fact]
@@ -101,13 +101,13 @@ public sealed class ExtensionSettingsTests
         AppSettings.AttachStore(store);
         store.Set("scale", "1.2");
         store.Set("startupModule", "calendar");
-        AppSettings.SaveExtensionSetting("удалённое", "template", "уходит");
+        AppSettings.SaveExtensionSetting("удаленное", "template", "уходит");
 
         AppSettings.RemoveOrphanExtensionSettings([]);
 
         Assert.True(store.Has("scale"));
         Assert.True(store.Has("startupModule"));
-        Assert.False(store.Has("ext.удалённое.template"));
+        Assert.False(store.Has("ext.удаленное.template"));
     }
 
     // Id сверяется по полной приставке «ext.<id>.», поэтому расширение с похожим началом
@@ -117,7 +117,7 @@ public sealed class ExtensionSettingsTests
     {
         var store = new FakeStore();
         AppSettings.AttachStore(store);
-        AppSettings.SaveExtensionSetting("живое",    "mode", "остаётся");
+        AppSettings.SaveExtensionSetting("живое",    "mode", "остается");
         AppSettings.SaveExtensionSetting("живое-v2", "mode", "уходит");
 
         var removed = AppSettings.RemoveOrphanExtensionSettings(["живое"]);

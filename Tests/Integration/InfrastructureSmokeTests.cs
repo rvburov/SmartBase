@@ -23,6 +23,6 @@ public sealed class InfrastructureSmokeTests
             Assert.True(db.Permissions.AccessGranted);
         }
 
-        Assert.False(File.Exists(path), "файл БД должен быть удалён при Dispose");
+        Assert.False(File.Exists(path), "файл БД должен быть удален при Dispose");
     }
 }

@@ -16,15 +16,15 @@ namespace SmartBase.Controls.Behaviors;
 ///
 /// Подключение — глобальным стилем Window в Controls.axaml (Enabled=True), как у
 /// LineMetrics.IsManaged. Немодальные окна (расширения) живут при смене зума —
-/// пересчёт по Scaling.ScaleChanged, отписка на Closed.
+/// пересчет по Scaling.ScaleChanged, отписка на Closed.
 /// </summary>
 public static class WindowZoom
 {
     public static readonly AttachedProperty<bool> EnabledProperty =
         AvaloniaProperty.RegisterAttached<Window, bool>("Enabled", typeof(WindowZoom));
 
-    // Зум, уже применённый к габаритам окна (0 = ещё не применялся): при пересчёте
-    // размеры умножаются на отношение нового зума к применённому.
+    // Зум, уже примененный к габаритам окна (0 = еще не применялся): при пересчете
+    // размеры умножаются на отношение нового зума к примененному.
     private static readonly AttachedProperty<double> AppliedProperty =
         AvaloniaProperty.RegisterAttached<Window, double>("Applied", typeof(WindowZoom));
 
@@ -43,7 +43,7 @@ public static class WindowZoom
     {
         // MainWindow (FollowsAppZoom) проверяется в Apply: сеттер стиля может сработать
         // РАНЬШЕ локального атрибута FollowsAppZoom из XAML — на момент Attach флаг
-        // ещё не выставлен, а на момент Initialized/Opened — уже да.
+        // еще не выставлен, а на момент Initialized/Opened — уже да.
         if (LineMetrics.GetFollowsAppZoom(w)) return;
 
         Action<double> onZoom = _ => Apply(w);
@@ -61,7 +61,7 @@ public static class WindowZoom
         if (LineMetrics.GetFollowsAppZoom(w)) return;   // MainWindow — свой ScaleHost
         if (w.Content is not Control content) return;
 
-        // Обёртка контента — один раз; дальше меняется только трансформ.
+        // Обертка контента — один раз; дальше меняется только трансформ.
         if (content is not LayoutTransformControl { Tag: nameof(WindowZoom) } host)
         {
             w.Content = null;   // отцепить от окна ДО пере-parent'а (иначе «already has a parent»)

@@ -63,7 +63,7 @@ public sealed class CalendarProjectionTests
         var visible = repo.GetCalendarRecordsByRangeCapped(start, end, null, perDayCap: 1000);
         Assert.Contains(visible, r => r.Id == rec.Id);
 
-        // Скрываем поле-дату: событие пропадает из чтения, НО строка проекции остаётся
+        // Скрываем поле-дату: событие пропадает из чтения, НО строка проекции остается
         // (видимость — фильтр чтения, а не удаление проекции).
         repo.SetDateFieldVisible(date.Id!.Value, visible: false);
 

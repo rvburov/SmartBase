@@ -14,7 +14,7 @@
         Background="{StaticResource BrushBg}">
 
     <!-- Вся начинка — единый индикатор загрузки приложения; кнопка отмены появляется
-         только у операций, которые её включили (EnableCancel). -->
+         только у операций, которые ее включили (EnableCancel). -->
     <StackPanel Margin="22,20" Spacing="14">
         <components:ProgressIndicator x:Name="Indicator" />
         <Button x:Name="CancelBtn" Classes="dialog"

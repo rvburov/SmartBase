@@ -10,19 +10,19 @@ namespace SmartBase.Database.Repositories;
 /// <summary>
 /// Права и допуск пользователей одной базы конструктора (экземпляр — на DatabaseManager).
 ///
-/// Модель: администратор — создатель базы (первый открывший, когда админов ещё нет),
+/// Модель: администратор — создатель базы (первый открывший, когда админов еще нет),
 /// у него всегда все права. Остальные пользователи регистрируются при монтировании
-/// (<see cref="EnsureCurrentUserRegistered"/>) и ждут допуска: его даёт администратор
+/// (<see cref="EnsureCurrentUserRegistered"/>) и ждут допуска: его дает администратор
 /// в панели (SetApproved) или верный пароль базы (<see cref="TryUnlock"/>). Права —
 /// битовые маски <see cref="PermAction"/> в db_permissions: строка с CollectionId=null
-/// действует на всю базу, строка с коллекцией переопределяет её; нет строк — у
-/// допущенного всё разрешено (администратор снимает лишнее).
+/// действует на всю базу, строка с коллекцией переопределяет ее; нет строк — у
+/// допущенного все разрешено (администратор снимает лишнее).
 ///
 /// Проверки (<see cref="Can"/>/<see cref="Demand"/>) идут по кеш-снапшоту прав ТЕКУЩЕГО
 /// пользователя — ноль запросов к БД на горячих путях (правка ячеек, пакетные операции).
 /// После правок в панели администратора вызывается <see cref="Reload"/>; UI подписывается
 /// на <see cref="Changed"/> и перечитывает доступность кнопок. Методы, трогающие БД,
-/// вызываются с UI-потока (или при монтировании, пока контекст не разделён) — как и все
+/// вызываются с UI-потока (или при монтировании, пока контекст не разделен) — как и все
 /// операции общего контекста; Can/Demand можно звать из фоновых потоков (только кеш).
 /// </summary>
 public sealed class PermissionService(AppDbContext db)
@@ -53,7 +53,7 @@ public sealed class PermissionService(AppDbContext db)
     public bool HasPassword   { get; private set; }
     /// <summary>Автоочистка журнала включена (политика в db_meta, применяется при монтировании).</summary>
     public bool RetentionEnabled { get; private set; }
-    /// <summary>Сколько месяцев журнала хранить при включённой автоочистке.</summary>
+    /// <summary>Сколько месяцев журнала хранить при включенной автоочистке.</summary>
     public int  RetentionMonths  { get; private set; } = DefaultRetentionMonths;
     private int _dbMask = (int)PermAction.All;
     private Dictionary<int, int> _collectionMasks = [];
@@ -69,7 +69,7 @@ public sealed class PermissionService(AppDbContext db)
     //
     // Строки db_users/db_permissions/db_meta меняют СОСЕДИ (другая машина общей базы,
     // вторая копия приложения): выдали допуск, сменили ФИО, поправили права. Общий
-    // контекст живёт весь сеанс, и обычный трекинг-запрос вернул бы уже загруженный
+    // контекст живет весь сеанс, и обычный трекинг-запрос вернул бы уже загруженный
     // экземпляр со СТАРЫМИ значениями (EF не перетирает загруженное данными из БД) —
     // допуск «не доезжал» бы до перезапуска, а панель администратора показывала бы
     // устаревший статус. Поэтому все чтения этой службы — AsNoTracking (свежий снимок),
@@ -89,7 +89,7 @@ public sealed class PermissionService(AppDbContext db)
     /// <summary>
     /// Зарегистрировать/синхронизировать текущего пользователя в db_users. Нет ни одного
     /// администратора (новая база, старая база после обновления, личная database.db) —
-    /// текущий пользователь становится админом. Иначе новая строка ждёт допуска
+    /// текущий пользователь становится админом. Иначе новая строка ждет допуска
     /// (IsApproved=false), у существующей обновляется снапшот ФИО.
     /// </summary>
     public void EnsureCurrentUserRegistered()
@@ -122,7 +122,7 @@ public sealed class PermissionService(AppDbContext db)
             {
                 // Гонка регистрации одного пользователя из двух процессов (уникальный индекс
                 // UserKey): сосед успел первым — строку не дублируем, работаем с его версией.
-                // Отцепляем ВСЁ несохранённое, включая строку журнала user.join, — иначе она
+                // Отцепляем ВСЕ несохраненное, включая строку журнала user.join, — иначе она
                 // уехала бы в БД с чужим ближайшим SaveChanges.
                 foreach (var entry in _db.ChangeTracker.Entries()
                              .Where(en => en.State == Microsoft.EntityFrameworkCore.EntityState.Added)
@@ -148,7 +148,7 @@ public sealed class PermissionService(AppDbContext db)
             }
             // Отметка активности: администратор видит в панели, кто и когда открывал базу
             // последний раз. Пишется КАЖДОЕ монтирование (поэтому SaveChanges безусловный),
-            // но НЕ идёт в журнал — иначе каждое открытие базы будило бы поллеры соседей
+            // но НЕ идет в журнал — иначе каждое открытие базы будило бы поллеры соседей
             // строкой без содержания.
             me.LastSeenAt = now;
             _db.SaveChanges();
@@ -165,7 +165,7 @@ public sealed class PermissionService(AppDbContext db)
     /// </summary>
     public void SyncDisplayName()
     {
-        // Перед правкой перечитываем строку: соседский допуск/права, изменённые за сеанс,
+        // Перед правкой перечитываем строку: соседский допуск/права, измененные за сеанс,
         // иначе уехали бы обратно вместе с UPDATE по устаревшему снапшоту.
         var me = Tracked(_db.DbUsers.FirstOrDefault(u => u.UserKey == CurrentUser.Key));
         if (me is null || me.DisplayName == CurrentUser.DisplayName ||
@@ -232,7 +232,7 @@ public sealed class PermissionService(AppDbContext db)
         DemandAdmin();
         var user = Tracked(_db.DbUsers.Find(userId));
         if (user is null || user.IsAdmin) return;   // допуск админа не трогаем
-        // Строку снёс сосед, пока панель была открыта, — Reload отцепил её от контекста.
+        // Строку снес сосед, пока панель была открыта, — Reload отцепил ее от контекста.
         if (_db.Entry(user).State == Microsoft.EntityFrameworkCore.EntityState.Detached) return;
         user.IsApproved = approved;
         // Событие в журнал: у затронутого пользователя замок снимется/появится сам,
@@ -246,16 +246,16 @@ public sealed class PermissionService(AppDbContext db)
     /// Назначить/снять роль администратора. Только администратор и только ДРУГОМУ
     /// пользователю: свою роль не меняет никто (иначе последний админ мог бы запереть
     /// базу от самого себя, а «понижение себя» ничем не отличалось бы от потери доступа).
-    /// Повышение заодно даёт допуск — иначе новый администратор не попал бы в опции полей
+    /// Повышение заодно дает допуск — иначе новый администратор не попал бы в опции полей
     /// «Пользователь» (GetUserOptions отбирает по IsApproved). Понижение допуск не трогает
-    /// и строк прав не создаёт: «нет строк — разрешено всё», лишнее админ снимает галками.
+    /// и строк прав не создает: «нет строк — разрешено все», лишнее админ снимает галками.
     /// </summary>
     public void SetAdmin(int userId, bool isAdmin)
     {
         DemandAdmin();
         var user = Tracked(_db.DbUsers.Find(userId));
         if (user is null || user.UserKey == CurrentUser.Key) return;   // свою роль не трогаем
-        // Строку снёс сосед, пока панель была открыта, — Reload отцепил её от контекста.
+        // Строку снес сосед, пока панель была открыта, — Reload отцепил ее от контекста.
         if (_db.Entry(user).State == Microsoft.EntityFrameworkCore.EntityState.Detached) return;
         if (user.IsAdmin == isAdmin) return;
         // Страховка на гонку: пока панель была открыта, соседи могли снять админство
@@ -301,7 +301,7 @@ public sealed class PermissionService(AppDbContext db)
 
     /// <summary>
     /// Действующая маска пользователя для панели (чекбоксы): маска коллекции ??
-    /// маска базы ?? всё разрешено.
+    /// маска базы ?? все разрешено.
     /// </summary>
     public int GetMask(int userId, int? collectionId)
     {
@@ -344,7 +344,7 @@ public sealed class PermissionService(AppDbContext db)
     // ── Пароль базы ───────────────────────────────────────────────────────────
     //
     // Программный замок на уровне приложения (файл не шифруется): PBKDF2-хеш в db_meta
-    // самой базы — его видят все машины, открывающие файл. Верный пароль даёт допуск
+    // самой базы — его видят все машины, открывающие файл. Верный пароль дает допуск
     // без ожидания администратора.
 
     private const string MetaPasswordHash       = "password.hash";
@@ -352,9 +352,9 @@ public sealed class PermissionService(AppDbContext db)
     private const string MetaPasswordIterations = "password.iterations";
     private const int    PasswordIterations     = 100_000;
 
-    // Политика автоочистки журнала — в db_meta самой базы (как пароль): её видят все
+    // Политика автоочистки журнала — в db_meta самой базы (как пароль): ее видят все
     // машины, открывающие файл, и чистят одинаково. Применяет ConstructorRepository
-    // при монтировании (DatabaseManager). Задаёт только администратор.
+    // при монтировании (DatabaseManager). Задает только администратор.
     private const string MetaRetentionEnabled   = "changelog.retention.enabled";
     private const string MetaRetentionMonths    = "changelog.retention.months";
     public  const int    DefaultRetentionMonths = 12;
@@ -394,7 +394,7 @@ public sealed class PermissionService(AppDbContext db)
     }
 
     /// <summary>
-    /// Попытка открыть базу паролем: верный пароль выдаёт текущему пользователю допуск
+    /// Попытка открыть базу паролем: верный пароль выдает текущему пользователю допуск
     /// (IsApproved) — повторно пароль не спрашивается.
     /// </summary>
     public bool TryUnlock(string password)

@@ -19,7 +19,7 @@ public sealed class DescriptionMigrationTests
     private const string PreviousMigrationPg = "20260725130305_AddCrossDbLinksPg";
 
     // Старая база: две коллекции — у одной описания есть (переносим), у другой пусто (поля быть
-    // не должно). Плюс переименованная системная колонка, её метаданные и правило авто-файла.
+    // не должно). Плюс переименованная системная колонка, ее метаданные и правило авто-файла.
     private static readonly string[] SeedSql =
     [
         "INSERT INTO db_collections (Id, Name, Position, Icon, Color) VALUES (1, 'События', 1000, '', '#007AFF')",
@@ -27,12 +27,12 @@ public sealed class DescriptionMigrationTests
         "INSERT INTO db_fields (Id, CollectionId, Name, FieldType, ConfigJson, Position, IsCalStart, IsCalEnd, IsSystem, IsRequired, IsTaskExec, IsTaskAssigner, IsTaskStatus)" +
         " VALUES (10, 1, 'Файл', 'file', '{\"auto\":{\"source\":\"__desc__\",\"folder\":\"/d\",\"format\":\"pdf\"}}', 1000, 0, 0, 0, 0, 0, 0, 0)",
         "INSERT INTO db_records (Id, CollectionId, CreatedAt, UpdatedAt, CreatedBy, UpdatedBy, Position, AllDay, Title, Description)" +
-        " VALUES (100, 1, '2026-01-01', '2026-01-01', 'я', 'я', 1000, 0, 'Планёрка', 'в переговорной')",
+        " VALUES (100, 1, '2026-01-01', '2026-01-01', 'я', 'я', 1000, 0, 'Планерка', 'в переговорной')",
         "INSERT INTO db_records (Id, CollectionId, CreatedAt, UpdatedAt, CreatedBy, UpdatedBy, Position, AllDay, Title, Description)" +
         " VALUES (101, 1, '2026-01-01', '2026-01-01', 'я', 'я', 2000, 0, 'Без описания', NULL)",
         "INSERT INTO db_records (Id, CollectionId, CreatedAt, UpdatedAt, CreatedBy, UpdatedBy, Position, AllDay, Title, Description)" +
         " VALUES (200, 2, '2026-01-01', '2026-01-01', 'я', 'я', 1000, 0, 'Чужая', NULL)",
-        // Пользователь переименовал системную колонку и подвинул её — имя и позиция переезжают.
+        // Пользователь переименовал системную колонку и подвинул ее — имя и позиция переезжают.
         "INSERT INTO column_meta (CollectionId, Key, Position, Visible, Level, DisplayName)" +
         " VALUES (1, '__desc__', 1500, NULL, NULL, 'Комментарий')",
     ];

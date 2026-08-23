@@ -13,7 +13,7 @@ namespace SmartBase.Database.Migrations
             // Метаданные системных колонок «Название»/«Описание»: подпись (DisplayName)
             // и резерв под порядок (Position). Сами колонки Title/Description в
             // db_records не трогаем — это только наложение поверх них. Миграция
-            // лишь создаёт новую пустую таблицу, существующих данных не касается.
+            // лишь создает новую пустую таблицу, существующих данных не касается.
             migrationBuilder.CreateTable(
                 name: "system_field_meta",
                 columns: table => new

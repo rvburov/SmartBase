@@ -20,7 +20,7 @@ public sealed class PdfAnalyzerEngineTests : IDisposable
 
     private PdfAnalyzeException RunExpectingFailure(string folder) =>
         Assert.Throws<PdfAnalyzeException>(() => PdfAnalyzerEngine.Run(
-            folder, savePath: Path.Combine(_root, "отчёт.xlsx"), ExportType.All,
+            folder, savePath: Path.Combine(_root, "отчет.xlsx"), ExportType.All,
             recursive: false, preserveOrder: false, splitName: false, progress: null,
             ct: CancellationToken.None));
 

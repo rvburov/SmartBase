@@ -35,7 +35,7 @@ public static class NetworkPath
         {
             if (OperatingSystem.IsWindows())
             {
-                // UNC-путь или подключённый сетевой диск.
+                // UNC-путь или подключенный сетевой диск.
                 if (full.StartsWith(@"\\") || full.StartsWith("//")) return true;
                 var root = System.IO.Path.GetPathRoot(full);
                 if (string.IsNullOrEmpty(root)) return true;
@@ -43,9 +43,9 @@ public static class NetworkPath
             }
 
             if (OperatingSystem.IsMacOS())
-                // Всё под /Volumes/ — сетевые шары И внешние диски: у обоих одна модель
+                // Все под /Volumes/ — сетевые шары И внешние диски: у обоих одна модель
                 // отказа («том пропал на ходу»), обоим положен DELETE-журнал. Проще и
-                // надёжнее, чем P/Invoke statfs с разбором типа ФС.
+                // надежнее, чем P/Invoke statfs с разбором типа ФС.
                 return full.StartsWith("/Volumes/", StringComparison.OrdinalIgnoreCase);
 
             if (OperatingSystem.IsLinux())
@@ -60,7 +60,7 @@ public static class NetworkPath
     }
 
     // /proc/mounts: «device mountpoint fstype opts …». Ищем точку монтирования с самым
-    // длинным префиксом пути и смотрим тип её ФС.
+    // длинным префиксом пути и смотрим тип ее ФС.
     private static bool IsLinuxNetworkMount(string full)
     {
         var netFs = new HashSet<string>(StringComparer.OrdinalIgnoreCase)

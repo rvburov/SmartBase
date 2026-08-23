@@ -35,7 +35,7 @@
     <Color x:Key="ColorHover">#E5E5EA</Color>
     <Color x:Key="ColorDragHandle">#AEAEB2</Color>
     <Color x:Key="ColorScrollbar">#C7C7CC</Color>
-    <!-- Подсветка выделенного мышью текста: серая вместо системной синей. Одна на всё
+    <!-- Подсветка выделенного мышью текста: серая вместо системной синей. Одна на все
          приложение — поля ввода (TextBox) и markdown-текст инструкции. -->
     <Color x:Key="ColorTextSelection">#C7C7CC</Color>
 

@@ -11,7 +11,7 @@ namespace SmartBase.Controls.Components;
 /// как меню действий: выбор пункта поднимает событие и тут же сбрасывается.</summary>
 public partial class NavbarSettings : UserControl
 {
-    /// <summary>Пункты меню «Добавить базу данных» (обработку ведёт SettingsView).</summary>
+    /// <summary>Пункты меню «Добавить базу данных» (обработку ведет SettingsView).</summary>
     public event EventHandler? CreateSqliteRequested;
     public event EventHandler? ConnectSqliteRequested;
     public event EventHandler? ConnectPostgresRequested;

@@ -19,7 +19,7 @@ namespace SmartBase.Controls.Dialogs;
 /// </summary>
 public static class CsvExportRunner
 {
-    /// <summary>Что выгружаем. Rows зовётся в фоне: внутри — свои подключения к БД.</summary>
+    /// <summary>Что выгружаем. Rows зовется в фоне: внутри — свои подключения к БД.</summary>
     public sealed record Job(
         string Title,                  // заголовок окна прогресса, напр. «Выгрузка диагностики»
         string What,                   // что именно выгружается, для окна подтверждения
@@ -47,7 +47,7 @@ public static class CsvExportRunner
             }
 
             var scope = job.Filtered
-                ? "Выгружаются строки с учётом активных фильтров таблицы."
+                ? "Выгружаются строки с учетом активных фильтров таблицы."
                 : "Выгружаются все строки таблицы.";
             var confirmed = await new ConfirmDialog(
                     $"{job.What} будет выгружена в файл CSV (UTF-8, разделитель «;») — " +
@@ -110,7 +110,7 @@ public static class CsvExportRunner
         }
         catch (OperationCanceledException)
         {
-            // Недописанный файл удалён в CsvDump — половина журнала выглядела бы как целый.
+            // Недописанный файл удален в CsvDump — половина журнала выглядела бы как целый.
             await CloseProgress(progress, progressClosed);
         }
         catch (Exception ex)
@@ -132,7 +132,7 @@ public static class CsvExportRunner
     /// <summary>
     /// Имя файла по умолчанию: «Диагностика 2026-08-15 20-45.csv». Имя базы данных —
     /// свободный текст пользователя, поэтому чистится тем же санитайзером, что и остальной
-    /// экспорт: «Отдел/Продажи» иначе увёл бы диалог сохранения в чужую папку.
+    /// экспорт: «Отдел/Продажи» иначе увел бы диалог сохранения в чужую папку.
     /// </summary>
     public static string FileName(string prefix, DateTime now) =>
         $"{ExportPlanner.SanitizeFileName(prefix)} {now:yyyy-MM-dd HH-mm}.csv";

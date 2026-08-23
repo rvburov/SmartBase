@@ -28,7 +28,7 @@
 - Писатели форматов: [Core/Exporters/TableWriters/](../../../../Core/Exporters/TableWriters/) —
   `XlsxTableWriter` (OpenXmlWriter, SAX), `CsvTableWriter`, `JsonTableWriter`,
   общие правила типизации в `WriterHelpers`, контракт `ITableWriter`
-- Планировщик юнитов, санитайз и уникализация имён:
+- Планировщик юнитов, санитайз и уникализация имен:
   [ExportPlanner.cs](../../../../Core/Exporters/ExportPlanner.cs)
 - Файловые ошибки записи: [ExportErrors.cs](../../../../Core/Exporters/ExportErrors.cs)
 - Чтение из БД: `ConstructorRepository.GetExportColumnsIsolated` /

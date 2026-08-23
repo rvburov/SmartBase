@@ -5,10 +5,10 @@ namespace SmartBase.Tests.Extensions.PdfAnalyzer;
 
 /// <summary>
 /// Сквозной прогон «Анализа PDF»: в папке собираются настоящие PDF (генератор — писатель самого
-/// PdfPig, см. PdfStand), расширение считает форматы и пишет отчёт, отчёт читается обратно.
+/// PdfPig, см. PdfStand), расширение считает форматы и пишет отчет, отчет читается обратно.
 ///
-/// Здесь проверяется всё, чего не видно на чистой логике DocumentCodes: распознавание форматов
-/// с допуском, подсчёт листов А4, состав колонок по типу выгрузки, отбор КД/ПД, обход папок и
+/// Здесь проверяется все, чего не видно на чистой логике DocumentCodes: распознавание форматов
+/// с допуском, подсчет листов А4, состав колонок по типу выгрузки, отбор КД/ПД, обход папок и
 /// обработка битых файлов.
 /// </summary>
 public sealed class PdfAnalyzerRunTests : IDisposable
@@ -20,7 +20,7 @@ public sealed class PdfAnalyzerRunTests : IDisposable
     public PdfAnalyzerRunTests()
     {
         _pdfs   = Path.Combine(_root, "Документы");
-        _report = Path.Combine(_root, "отчёт.xlsx");
+        _report = Path.Combine(_root, "отчет.xlsx");
         Directory.CreateDirectory(_pdfs);
     }
 
@@ -47,7 +47,7 @@ public sealed class PdfAnalyzerRunTests : IDisposable
         PdfAnalyzerEngine.Run(_pdfs, savePath ?? _report, exportType, recursive, preserveOrder,
                               splitName, progress, ct);
 
-    /// <summary>Прогнать анализ и проверить лист отчёта (книга закрывается сама).</summary>
+    /// <summary>Прогнать анализ и проверить лист отчета (книга закрывается сама).</summary>
     private AnalyzeResult RunAndCheck(Action<IXLWorksheet> check, ExportType exportType = ExportType.All,
                                       bool recursive = false, bool preserveOrder = false, bool splitName = false)
     {
@@ -57,7 +57,7 @@ public sealed class PdfAnalyzerRunTests : IDisposable
         return result;
     }
 
-    // Значение колонки с заданной подписью в строке отчёта (строка 1 — шапка, данные с 2-й).
+    // Значение колонки с заданной подписью в строке отчета (строка 1 — шапка, данные с 2-й).
     private static string Cell(IXLWorksheet ws, int dataRow, string header)
     {
         var col = ws.Row(1).CellsUsed().First(c => c.GetString() == header).Address.ColumnNumber;
@@ -82,7 +82,7 @@ public sealed class PdfAnalyzerRunTests : IDisposable
         Assert.True(File.Exists(result.SavePath));
     }
 
-    // ── Путь отчёта ───────────────────────────────────────────────────────────
+    // ── Путь отчета ───────────────────────────────────────────────────────────
 
     [Fact]
     public void Report_lands_next_to_the_folder_when_no_path_is_given()
@@ -98,7 +98,7 @@ public sealed class PdfAnalyzerRunTests : IDisposable
     public void Existing_folder_as_save_path_gets_the_default_name()
     {
         Pdf("документ.pdf");
-        var folder = Path.Combine(_root, "Отчёты");
+        var folder = Path.Combine(_root, "Отчеты");
         Directory.CreateDirectory(folder);
 
         var result = Run(savePath: folder);
@@ -158,7 +158,7 @@ public sealed class PdfAnalyzerRunTests : IDisposable
         }, ExportType.Td);
     }
 
-    // Описи — сокращённый формат: пять колонок вместо восемнадцати.
+    // Описи — сокращенный формат: пять колонок вместо восемнадцати.
     [Theory]
     [InlineData(ExportType.Inventory,   "АБВГ.301234.001СБ Блок питания.pdf")]
     [InlineData(ExportType.PdInventory, "АБВГ.12345-01 34 01 Руководство оператора.pdf")]
@@ -200,7 +200,7 @@ public sealed class PdfAnalyzerRunTests : IDisposable
         {
             Assert.Equal("1", Cell(ws, 1, "А4"));
             Assert.Equal("1", Cell(ws, 1, "А3"));
-            Assert.Equal("",  Cell(ws, 1, "А2"));   // нулевые счётчики остаются пустыми
+            Assert.Equal("",  Cell(ws, 1, "А2"));   // нулевые счетчики остаются пустыми
             Assert.Equal("1", Cell(ws, 1, "А1"));
             Assert.Equal("1", Cell(ws, 1, "А0"));
             Assert.Equal("4", Cell(ws, 1, "Физических листов"));
@@ -224,8 +224,8 @@ public sealed class PdfAnalyzerRunTests : IDisposable
     }
 
     /// <summary>Производный формат (A4×3 и подобные) в колонке «Доп. форматы» показывается
-    /// СЧЁТЧИКОМ, а не названием — названием выводятся только нестандартные размеры вида
-    /// «500×700» (см. AdditionalValue: имя, начинающееся с «A», в ячейку не идёт). Само название
+    /// СЧЕТЧИКОМ, а не названием — названием выводятся только нестандартные размеры вида
+    /// «500×700» (см. AdditionalValue: имя, начинающееся с «A», в ячейку не идет). Само название
     /// при этом не теряется: по нему считается множитель листов А4
     /// (см. A4_sheet_count_adds_derived_formats). Фиксируем как есть.</summary>
     [Fact]
@@ -311,7 +311,7 @@ public sealed class PdfAnalyzerRunTests : IDisposable
         });
 
         Assert.Equal(1, result.Errors);
-        Assert.Equal(2, result.Processed);   // хороший файл всё равно обработан
+        Assert.Equal(2, result.Processed);   // хороший файл все равно обработан
     }
 
     // ── Отбор КД и ПД ─────────────────────────────────────────────────────────
@@ -425,7 +425,7 @@ public sealed class PdfAnalyzerRunTests : IDisposable
 
     // ── Наименование ──────────────────────────────────────────────────────────
 
-    /// <summary>Имя изделия подтягивается из соседней спецификации: файл без кода документа даёт
+    /// <summary>Имя изделия подтягивается из соседней спецификации: файл без кода документа дает
     /// название всем документам того же изделия. Ради этого и строится кэш обозначений.</summary>
     [Fact]
     public void Product_names_are_taken_from_the_neighbouring_specification()
@@ -495,8 +495,8 @@ public sealed class PdfAnalyzerRunTests : IDisposable
     }
 }
 
-/// <summary>Синхронный приёмник прогресса: штатный <see cref="Progress{T}"/> публикует колбэк
-/// в пул потоков, и к возврату из метода часть отчётов может быть ещё не доставлена.</summary>
+/// <summary>Синхронный приемник прогресса: штатный <see cref="Progress{T}"/> публикует колбэк
+/// в пул потоков, и к возврату из метода часть отчетов может быть еще не доставлена.</summary>
 internal sealed class SyncProgress<T>(Action<T> onReport) : IProgress<T>
 {
     public void Report(T value) => onReport(value);

@@ -8,9 +8,9 @@ namespace SmartBase.Controls.Components;
 
 public partial class NavbarCalendar : UserControl
 {
-    // Показываем только виды, не скрытые в «Оформлении». НАРУЖУ при этом отдаём и
+    // Показываем только виды, не скрытые в «Оформлении». НАРУЖУ при этом отдаем и
     // принимаем ГЛОБАЛЬНЫЙ номер вида (позиция в ViewCatalog): на него завязаны
-    // CalendarControllerView.SwitchView и сохранённый calendarView, и скрытие пунктов не
+    // CalendarControllerView.SwitchView и сохраненный calendarView, и скрытие пунктов не
     // должно менять смысл этих чисел. Перевод «позиция в списке ↔ глобальный номер»
     // держится здесь, в _viewIndexes.
     private int[] _viewIndexes = [];

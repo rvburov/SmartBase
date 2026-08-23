@@ -17,10 +17,10 @@ using SmartBase.Utils;
 namespace SmartBase.Views.Tasks;
 
 /// <summary>Коллекция-цель в строке быстрого добавления. <c>ColId</c> = null — коллекций
-/// нет вовсе, репозиторий заведёт «Без названия» (прежнее поведение).</summary>
+/// нет вовсе, репозиторий заведет «Без названия» (прежнее поведение).</summary>
 public sealed record QuickCollectionOption(int DbId, int? ColId, string Label)
 {
-    // ComboBox без ItemTemplate печатает ToString() — отдаём готовую подпись.
+    // ComboBox без ItemTemplate печатает ToString() — отдаем готовую подпись.
     public override string ToString() => Label;
 }
 
@@ -31,7 +31,7 @@ public partial class TaskListView : UserControl
 {
     public event EventHandler<TaskRecord>?      TaskActivated;
     public event EventHandler<QuickAddRequest>? QuickAddRequested;
-    /// <summary>Сменилась коллекция-цель быстрого добавления: у неё может быть своя база,
+    /// <summary>Сменилась коллекция-цель быстрого добавления: у нее может быть своя база,
     /// а значит и свой список пользователей для «Исполнителя».</summary>
     public event EventHandler<QuickCollectionOption>? QuickTargetChanged;
     /// <summary>Удалить выделенные задачи (меню или Delete) — подтверждение спрашивает контроллер.</summary>
@@ -43,8 +43,8 @@ public partial class TaskListView : UserControl
     // сбрасывает выбор — это не выбор пользователя).
     private bool _suppressTargetChange;
 
-    // Показанные группы и свёрнутые коллекции (ключ (DbId, ColId) — как в сайдбаре).
-    // Свёрнутость живёт в самом списке: это состояние показа, база о нём ничего не знает.
+    // Показанные группы и свернутые коллекции (ключ (DbId, ColId) — как в сайдбаре).
+    // Свернутость живет в самом списке: это состояние показа, база о нем ничего не знает.
     private IReadOnlyList<TaskGroup> _groups = [];
     private readonly HashSet<(int DbId, int ColId)> _collapsed = [];
     private string _emptyHint = "Нет задач";
@@ -69,7 +69,7 @@ public partial class TaskListView : UserControl
     {
         InitializeComponent();
 
-        // Список смешанный: заголовок коллекции + её карточки, поэтому шаблон один на оба
+        // Список смешанный: заголовок коллекции + ее карточки, поэтому шаблон один на оба
         // типа строки (виртуализация строит контейнеры по общему ItemTemplate).
         CardsHost.ItemTemplate = new FuncDataTemplate<object>((item, _) => item switch
         {
@@ -100,7 +100,7 @@ public partial class TaskListView : UserControl
 
     /// <summary>
     /// Показать задачи, разложенные по коллекциям: над каждой пачкой — строка с названием
-    /// коллекции и числом задач. Порядок групп задаёт контроллер (как в сайдбаре).
+    /// коллекции и числом задач. Порядок групп задает контроллер (как в сайдбаре).
     /// <paramref name="emptyHint"/> — что написать, когда показывать нечего.
     /// </summary>
     public void SetGroups(IReadOnlyList<TaskGroup> groups, string emptyHint = "Нет задач")
@@ -111,9 +111,9 @@ public partial class TaskListView : UserControl
         _groups    = groups;
         _emptyHint = emptyHint;
 
-        // Свёрнутость помним по (DbId, ColId), а не по индексу: список перезагружается на
+        // Свернутость помним по (DbId, ColId), а не по индексу: список перезагружается на
         // каждый символ поиска и после любой правки — группы не должны раскрываться сами.
-        // Ключи исчезнувших коллекций чистим, иначе набор растёт всё время работы.
+        // Ключи исчезнувших коллекций чистим, иначе набор растет все время работы.
         var alive = groups.Select(g => (g.DbId, g.ColId)).ToHashSet();
         _collapsed.RemoveWhere(k => !alive.Contains(k));
 
@@ -131,7 +131,7 @@ public partial class TaskListView : UserControl
     ///
     /// Выделение здесь НЕ прореживается по живым задачам (<c>Retain</c>): полного набора у нас
     /// нет, а вычистить ключи по одному кешу страниц значило бы терять выделение просто оттого,
-    /// что человек отлистал далеко. Ключи остаются, а действуют меню и «Удалить» всё равно
+    /// что человек отлистал далеко. Ключи остаются, а действуют меню и «Удалить» все равно
     /// только на реализованные строки (<see cref="VisibleTasks"/>).
     /// </summary>
     internal void SetVirtual(IReadOnlyList<TaskVirtualList.Entry> entries, string emptyHint = "Нет задач")
@@ -149,7 +149,7 @@ public partial class TaskListView : UserControl
     private IReadOnlyList<TaskVirtualList.Entry> _entries = [];
 
     // Пересобрать виртуальный список. Форму он на месте не меняет (свернули группу — сместились
-    // ВСЕ последующие строки), поэтому проще и честнее собрать заново: карточки при этом всё
+    // ВСЕ последующие строки), поэтому проще и честнее собрать заново: карточки при этом все
     // равно не материализуются, а страницы перечитаются по мере показа.
     private void RebuildVirtual()
     {
@@ -188,20 +188,20 @@ public partial class TaskListView : UserControl
 
         CardsHost.ItemsSource = items;
         EmptyLabel.Text       = _emptyHint;
-        // Свёрнутая группа — не пустой список: подсказку показываем, только когда групп нет.
+        // Свернутая группа — не пустой список: подсказку показываем, только когда групп нет.
         EmptyLabel.IsVisible  = _groups.Count == 0;
     }
 
     // ── Выделение карточек ───────────────────────────────────────────────────
 
-    // Перекрасить карточки под текущее выделение. Идём по моделям строк, а не по контролам:
+    // Перекрасить карточки под текущее выделение. Идем по моделям строк, а не по контролам:
     // список виртуализирован, и карточки за краем экрана контролов сейчас не имеют — новые
     // построятся уже с нужным IsSelected.
     private void SyncSelection()
     {
         if (_virtual is { } v)
         {
-            // Виртуальному списку выделение отдаётся ключами: карточки, которые приедут позже,
+            // Виртуальному списку выделение отдается ключами: карточки, которые приедут позже,
             // должны прийти уже подсвеченными, а самих задач он в этот момент не знает.
             v.SyncSelection(_selection, _selection.Keys);
             return;
@@ -214,11 +214,11 @@ public partial class TaskListView : UserControl
     private void OnCardTapped(TaskCardVm vm, TappedEventArgs e)
     {
         e.Handled = true;
-        // Заглушка ещё не задача: выделять и открывать нечего.
+        // Заглушка еще не задача: выделять и открывать нечего.
         if (vm.IsPlaceholder) return;
 
         // Ctrl+Shift+клик — диапазон от якоря; якоря нет (первый клик после загрузки) —
-        // ведём себя как обычный клик.
+        // ведем себя как обычный клик.
         if (e.KeyModifiers.HasFlag(KeyModifiers.Shift) && e.KeyModifiers.HasFlag(KeyModifiers.Control)
             && _selection.SelectRange(VisibleTasks, vm.Task))
         {
@@ -231,7 +231,7 @@ public partial class TaskListView : UserControl
         SyncSelection();
     }
 
-    // Правый клик по НЕвыделенной карточке выделяет её одну: меню всегда действует на то,
+    // Правый клик по НЕвыделенной карточке выделяет ее одну: меню всегда действует на то,
     // что видно выделенным (как в календаре).
     private void OnCardPointerPressed(TaskCardVm vm, PointerPressedEventArgs e)
     {
@@ -368,8 +368,8 @@ public partial class TaskListView : UserControl
 
     /// <summary>
     /// Вернуть список туда, где он стоял. Отложенно: контейнеры строятся уже после подмены
-    /// источника, и до отрисовки у ScrollViewer ещё нет высоты содержимого — присвоенное
-    /// сейчас смещение он просто обрежет нулём. Тот же приём, что у «Расписания»
+    /// источника, и до отрисовки у ScrollViewer еще нет высоты содержимого — присвоенное
+    /// сейчас смещение он просто обрежет нулем. Тот же прием, что у «Расписания»
     /// (<c>ApplyPosition</c>).
     /// </summary>
     public void RestoreScroll(double y) => Dispatcher.UIThread.Post(
@@ -415,7 +415,7 @@ public partial class TaskListView : UserControl
         };
 
         // Стрелка — та же, что у групп и баз в сайдбаре (Viewbox 24×24 + Path обводкой):
-        // раскрытая коллекция смотрит вниз, свёрнутая — вправо.
+        // раскрытая коллекция смотрит вниз, свернутая — вправо.
         row.Children.Add(Chevron(vm.IsCollapsed ? "IconChevronRight" : "IconChevronDown", secondary));
 
         row.Children.Add(new TextBlock
@@ -460,7 +460,7 @@ public partial class TaskListView : UserControl
     }
 
     // Полоска выполненного: серый трек фиксированной ширины и заливка цветом коллекции.
-    // Ширина в DIP — общий зум приложения масштабирует её вместе с остальным.
+    // Ширина в DIP — общий зум приложения масштабирует ее вместе с остальным.
     private Control ProgressBar(double fraction, string color)
     {
         const double width = 96, height = 8;
@@ -518,14 +518,14 @@ public partial class TaskListView : UserControl
     private Control BuildCard(TaskCardVm vm)
     {
         // При переиспользовании контейнера виртуализацией контент временно = null
-        // (ContentPresenter строит по явному ItemTemplate без проверки типа) — отдаём пустую карточку.
+        // (ContentPresenter строит по явному ItemTemplate без проверки типа) — отдаем пустую карточку.
         if (vm is null) return new Control();
 
         var bold      = (FontWeight)this.FindResource("FontWeightBold")!;
         var secondary = (IBrush)this.FindResource("BrushSecondaryText")!;
         var radius    = (CornerRadius)this.FindResource("RadiusMedium")!;
 
-        // Всё, что зависит от задачи, идёт ПРИВЯЗКОЙ к модели строки, а не читается здесь:
+        // Все, что зависит от задачи, идет ПРИВЯЗКОЙ к модели строки, а не читается здесь:
         // в виртуальном режиме карточка строится заглушкой и оживает на месте, когда приедет
         // фоновая страница (TaskCardVm.Fill). Прочитанное при постройке так и осталось бы
         // «Загрузка…».
@@ -546,7 +546,7 @@ public partial class TaskListView : UserControl
         (TextBlock.TextDecorationsProperty,  nameof(TaskCardVm.TitleDecorations)));
 
         // Обе строки показываются ВСЕГДА, пустое значение — прочерком: в разделе теперь живут и
-        // нераспределённые записи (запись есть, исполнитель не проставлен), и именно их надо
+        // нераспределенные записи (запись есть, исполнитель не проставлен), и именно их надо
         // раздать. Пропуск «Назначил» при пустом значении сдвигал бы строку и делал незаполненное
         // невидимым — а «—» прямо говорит, чего не хватает.
         var people = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
@@ -628,14 +628,14 @@ public partial class TaskListView : UserControl
             e.Handled = true;
             if (vm.IsPlaceholder) return;
             // Двойной клик тоже оставляет задачу выделенной: после «Сохранить»/«Отмена»
-            // видно, какую карточку правили (одиночный клик уже выделил её — здесь ничего
+            // видно, какую карточку правили (одиночный клик уже выделил ее — здесь ничего
             // не сбрасываем).
             TaskActivated?.Invoke(this, vm.Task);
         };
         return card;
     }
 
-    // Чип карточки: пилюля с текстом. Всё привязано к модели строки — и текст, и обе кисти, и
+    // Чип карточки: пилюля с текстом. Все привязано к модели строки — и текст, и обе кисти, и
     // видимость (у задачи без срока чипа остатка нет). Строится один раз на всю жизнь контейнера.
     private static Border BoundChip(TaskCardVm vm, string textProp, string bgProp, string fgProp,
                                     string? visibleProp = null)
@@ -657,8 +657,8 @@ public partial class TaskListView : UserControl
     }
 }
 
-/// <summary>Группа списка: коллекция и её задачи (порядок задаёт контроллер).</summary>
-/// <param name="DbId">База коллекции — вместе с <paramref name="ColId"/> ключ свёрнутости
+/// <summary>Группа списка: коллекция и ее задачи (порядок задает контроллер).</summary>
+/// <param name="DbId">База коллекции — вместе с <paramref name="ColId"/> ключ свернутости
 /// (id коллекций не уникальны между БД).</param>
 /// <param name="Title">Название коллекции (одной строкой).</param>
 /// <param name="Subtitle">Имя базы — только при нескольких смонтированных БД, иначе "".</param>
@@ -696,7 +696,7 @@ public sealed class TaskGroupHeaderVm(TaskGroup group, bool collapsed, bool firs
 
     /// <summary>«2 из 7» — выполнено из всего, с разделителем разрядов. Здесь, в отличие от
     /// пилюли навбара, число печатается целиком: в строке заголовка для него есть место, и
-    /// именно тут человек узнаёт настоящий размер коллекции.</summary>
+    /// именно тут человек узнает настоящий размер коллекции.</summary>
     public string ProgressText => $"{DoneCount:N0} из {TotalCount:N0}";
 
     /// <summary>Доля выполненных 0..1 — длина заливки индикатора.</summary>
@@ -705,11 +705,11 @@ public sealed class TaskGroupHeaderVm(TaskGroup group, bool collapsed, bool firs
 
 // ── Модель карточки ─────────────────────────────────────────────────────────
 //
-// ВСЕ видимые значения карточка берёт привязками к этой модели, а не читает при постройке.
+// ВСЕ видимые значения карточка берет привязками к этой модели, а не читает при постройке.
 // Так строка виртуального списка рождается ЗАГЛУШКОЙ и превращается в задачу НА МЕСТЕ
-// (<see cref="TaskCardVm.Fill"/>), когда придёт фоновая страница, — тем же приёмом, каким
+// (<see cref="TaskCardVm.Fill"/>), когда придет фоновая страница, — тем же приемом, каким
 // оживает строка «Журнала» календаря. Пересобирать список для этого не нужно, а высота
-// заглушки совпадает с высотой задачи (разметка одна и та же), поэтому прокрутка не дёргается.
+// заглушки совпадает с высотой задачи (разметка одна и та же), поэтому прокрутка не дергается.
 public partial class TaskCardVm : ObservableObject
 {
     [ObservableProperty]
@@ -740,14 +740,14 @@ public partial class TaskCardVm : ObservableObject
     private static readonly string[] Months =
         ["янв", "фев", "мар", "апр", "мая", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"];
 
-    /// <summary>Прочерк вместо пустого значения — раздел показывает и нераспределённые записи.</summary>
+    /// <summary>Прочерк вместо пустого значения — раздел показывает и нераспределенные записи.</summary>
     public const string Dash = "—";
 
-    /// <summary>Задача строки. У заглушки — пустая заготовка: настоящей ещё нет.</summary>
+    /// <summary>Задача строки. У заглушки — пустая заготовка: настоящей еще нет.</summary>
     public TaskRecord Task { get; private set; } = new();
 
     /// <summary>
-    /// Строка ещё не заполнена — место под задачу, которую тянет фоновая страница. Такая
+    /// Строка еще не заполнена — место под задачу, которую тянет фоновая страница. Такая
     /// карточка не выделяется, не открывается двойным кликом и в меню не участвует: под ней
     /// пока нет записи, и любое действие было бы действием над пустотой.
     /// </summary>
@@ -777,7 +777,7 @@ public partial class TaskCardVm : ObservableObject
 
     /// <summary>
     /// Пустое место под задачу: разметка та же, поэтому строка занимает столько же высоты,
-    /// сколько займёт настоящая карточка, и прокрутка не прыгает, когда страница приедет.
+    /// сколько займет настоящая карточка, и прокрутка не прыгает, когда страница приедет.
     /// </summary>
     public static TaskCardVm Loading() => new()
     {
@@ -802,7 +802,7 @@ public partial class TaskCardVm : ObservableObject
     }
 
     // Что обязано доехать до привязок при оживлении заглушки. Список явный, а не пустое имя
-    // «обновилось всё»: так видно, что именно показывает карточка, и новое поле не потеряется.
+    // «обновилось все»: так видно, что именно показывает карточка, и новое поле не потеряется.
     private static readonly string[] Notified =
     [
         nameof(IsPlaceholder), nameof(IsDone), nameof(TitleValue), nameof(TitleColor),
@@ -824,7 +824,7 @@ public partial class TaskCardVm : ObservableObject
         TitleDecorations = IsDone ? TextDecorations.Strikethrough : null;
 
         // Обе строки показываются ВСЕГДА, пустое значение — прочерком: в разделе живут и
-        // нераспределённые записи, и именно их надо раздать.
+        // нераспределенные записи, и именно их надо раздать.
         ExecutorText = task.Executor.Length > 0 ? task.Executor : Dash;
         AssignerText = task.Assigner.Length > 0 ? task.Assigner : Dash;
 
@@ -848,7 +848,7 @@ public partial class TaskCardVm : ObservableObject
         DueChipFg   = chip is { Overdue: true } ? Brush("BrushRed", "#FF3B30")      : Brush("BrushSecondaryText", "#8E8E93");
 
         // Цветовая полоска коллекции — как в списке календаря; правило «дефолтный синий =
-        // без цвета → серый» живёт в EventColors, кисти кешируются (карточек на экране много).
+        // без цвета → серый» живет в EventColors, кисти кешируются (карточек на экране много).
         StripeBrush = ColorTools.Solid(EventColors.Display(task.Color)) ?? Brushes.Transparent;
     }
 
@@ -864,7 +864,7 @@ public partial class TaskCardVm : ObservableObject
     }
 
     // Чип остатка: просрочка (красный) / «Сегодня» / «Осталось N ч|дн.». У выполненных —
-    // только нейтральное «Сегодня», без просрочки и обратного отсчёта.
+    // только нейтральное «Сегодня», без просрочки и обратного отсчета.
     private static (string Text, bool Overdue)? DueChip(TaskRecord t, DateTime now)
     {
         if (t.DueStart is not DateTime s) return null;

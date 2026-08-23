@@ -8,7 +8,7 @@ using SmartBase.Controls.Behaviors;
 namespace SmartBase.Controls.Components;
 
 /// <summary>
-/// Выпадающий выбор коллекций для экспорта: поиск + чекбоксы + «(Выделить всё)» —
+/// Выпадающий выбор коллекций для экспорта: поиск + чекбоксы + «(Выделить все)» —
 /// по образцу панели фильтра таблицы (TableView.BuildFilterPanel: плашка filterFlyout,
 /// зум через WindowZoom.WrapPopupContent, белые карточки на серой подложке). Коллекции
 /// группируются заголовками БД (заголовки видны только при нескольких базах). Семантика
@@ -38,7 +38,7 @@ public sealed class CollectionPickerFlyout
         var flyout = new Flyout { Placement = PlacementMode.BottomEdgeAlignedRight };
         flyout.FlyoutPresenterClasses.Add("filterFlyout");
         // Флайаут рендерится в попап-окне вне зума приложения — контент оборачивается
-        // в зум-трансформ (плашка-презентер остаётся вне зума), как у фильтра таблицы.
+        // в зум-трансформ (плашка-презентер остается вне зума), как у фильтра таблицы.
         flyout.Content = WindowZoom.WrapPopupContent(BuildPanel(anchor, () => flyout.Hide()));
         flyout.ShowAt(anchor);
     }
@@ -77,7 +77,7 @@ public sealed class CollectionPickerFlyout
         var syncingSelectAll = false;
         var selectAll = new CheckBox
         {
-            Content  = "(Выделить всё)",
+            Content  = "(Выделить все)",
             FontSize = fontBase,
             Cursor   = new Cursor(StandardCursorType.Hand),
         };
@@ -89,7 +89,7 @@ public sealed class CollectionPickerFlyout
             Content = list,
         };
 
-        // «Выделить всё» — закреплённая шапка; полоса прокрутки стоит на её уровне.
+        // «Выделить все» — закрепленная шапка; полоса прокрутки стоит на ее уровне.
         var valuesBox = ScrollBarLink.HeaderedList(selectAll, scroll);
 
         var valuesHost = new Border
@@ -98,7 +98,7 @@ public sealed class CollectionPickerFlyout
             BorderBrush  = separator,
             CornerRadius = radius,
             // Padding НУЛЕВОЙ: полоса прокрутки прилегает ко всем краям карточки без белого
-            // зазора, воздух вокруг содержимого задаёт HeaderedList.
+            // зазора, воздух вокруг содержимого задает HeaderedList.
             // ClipToBounds — квадратные углы полосы срезаются скруглением карточки.
             Padding      = new Avalonia.Thickness(0),
             ClipToBounds = true,
@@ -184,7 +184,7 @@ public sealed class CollectionPickerFlyout
         selectAll.IsCheckedChanged += (_, _) =>
         {
             if (syncingSelectAll) return;
-            // «Выделить всё» действует на видимое (после поиска) подмножество.
+            // «Выделить все» действует на видимое (после поиска) подмножество.
             var on = selectAll.IsChecked == true;
             foreach (var i in Matched())
             {
@@ -218,8 +218,8 @@ public sealed class CollectionPickerFlyout
         return panel;
     }
 
-    // Разделитель в попапе: контент обёрнут в зум-трансформ → обычные токены линий;
-    // Border пустой → Aliased защёлкивает линию в целый пиксель (стандарт theming.md).
+    // Разделитель в попапе: контент обернут в зум-трансформ → обычные токены линий;
+    // Border пустой → Aliased защелкивает линию в целый пиксель (стандарт theming.md).
     private static Border MakeSeparator(IBrush brush)
     {
         var sep = new Border

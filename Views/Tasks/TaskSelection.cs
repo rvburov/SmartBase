@@ -4,13 +4,13 @@ namespace SmartBase.Views.Tasks;
 
 /// <summary>
 /// Ключ задачи в списке. В ключ входит поле-исполнитель: одна запись с двумя такими полями
-/// даёт две задачи (см. <see cref="TaskRecord.ExecFieldId"/>), и различать их надо так же,
+/// дает две задачи (см. <see cref="TaskRecord.ExecFieldId"/>), и различать их надо так же,
 /// как календарь различает события одной записи парой (запись, поле-дата).
 /// </summary>
 public readonly record struct TaskKey(int DbId, int RecId, int ExecFieldId);
 
 /// <summary>
-/// Выделение карточек списка задач: что выбрано и от чего считается диапазон. Живёт в самом
+/// Выделение карточек списка задач: что выбрано и от чего считается диапазон. Живет в самом
 /// списке (база о выделении ничего не знает) и переживает перезагрузку — список перечитывается
 /// на каждый символ поиска и после любой правки, а выделение при этом теряться не должно.
 /// </summary>
@@ -18,7 +18,7 @@ public sealed class TaskSelection
 {
     private readonly HashSet<TaskKey> _keys = [];
 
-    // Якорь диапазона — последняя выделенная кликом задача: Ctrl+Shift+клик выделяет всё
+    // Якорь диапазона — последняя выделенная кликом задача: Ctrl+Shift+клик выделяет все
     // между ней и кликнутой (как в «Расписании» и «Журнале» календаря).
     private TaskKey? _anchor;
 
@@ -29,7 +29,7 @@ public sealed class TaskSelection
     /// только ключ.</summary>
     public IReadOnlyCollection<TaskKey> Keys => _keys;
 
-    /// <summary>Ключ задачи; null — задача ещё не сохранена (нет Id).</summary>
+    /// <summary>Ключ задачи; null — задача еще не сохранена (нет Id).</summary>
     public static TaskKey? KeyOf(TaskRecord t) =>
         t.Id is int id ? new TaskKey(t.DbId, id, t.ExecFieldId) : null;
 
@@ -62,9 +62,9 @@ public sealed class TaskSelection
     }
 
     /// <summary>
-    /// Ctrl+Shift+клик: выделить всё от якоря до <paramref name="clicked"/> по порядку показа
+    /// Ctrl+Shift+клик: выделить все от якоря до <paramref name="clicked"/> по порядку показа
     /// <paramref name="order"/> (плоский список карточек — заголовки групп в него не входят,
-    /// поэтому диапазон свободно пересекает границы коллекций). false — якоря нет или он ушёл
+    /// поэтому диапазон свободно пересекает границы коллекций). false — якоря нет или он ушел
     /// из списка: вызывающий делает обычное выделение.
     /// </summary>
     public bool SelectRange(IReadOnlyList<TaskRecord> order, TaskRecord clicked)
@@ -82,7 +82,7 @@ public sealed class TaskSelection
 
     /// <summary>
     /// Оставить только задачи, которые есть в новом наборе. Без этого выделение копило бы ключи
-    /// удалённых и отфильтрованных задач всё время работы, а «Удалить» действовало бы на то,
+    /// удаленных и отфильтрованных задач все время работы, а «Удалить» действовало бы на то,
     /// чего на экране нет.
     /// </summary>
     public void Retain(IEnumerable<TaskRecord> alive)
@@ -95,7 +95,7 @@ public sealed class TaskSelection
         if (_anchor is { } a && !live.Contains(a)) _anchor = null;
     }
 
-    /// <summary>Выделенные задачи в порядке показа (порядок важен: он же порядок в меню и в счёте).</summary>
+    /// <summary>Выделенные задачи в порядке показа (порядок важен: он же порядок в меню и в счете).</summary>
     public List<TaskRecord> In(IReadOnlyList<TaskRecord> order) => order.Where(Contains).ToList();
 
     private static int IndexOf(IReadOnlyList<TaskRecord> order, TaskKey key)

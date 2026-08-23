@@ -10,12 +10,12 @@
 #
 # Особенности Linux-сборки:
 #   • self-contained      — .NET у пользователя не нужен;
-#   • PublishSingleFile   — всё в одном файле (нативные .so вшиваются);
+#   • PublishSingleFile   — все в одном файле (нативные .so вшиваются);
 #   • chmod +x            — бинарю выставляется бит запуска;
 #   • иконка/ярлык в меню — отдельным шагом на целевой машине через
 #                           Scripts/linux-install.sh (использует icon-linux.png из Assets/Branding).
 #
-# Результат: dist/<RID>/SmartBase — раздаётся как есть.
+# Результат: dist/<RID>/SmartBase — раздается как есть.
 # ── Будущие особенности Linux-сборки добавляйте в массив flags ниже. ──
 set -euo pipefail
 
@@ -25,7 +25,7 @@ CONFIG="${2:-Release}"
 VERSION="${3:-}"
 
 # Целевая платформа: проект многотаргетный (см. TargetFrameworks в SmartBase.csproj), и
-# publish требует явно выбрать один таргет. Всё, кроме Windows, собирается базовым net10.0 —
+# publish требует явно выбрать один таргет. Все, кроме Windows, собирается базовым net10.0 —
 # Windows-таргет существует только ради WinRT-ассетов нативных тостов.
 TFM="net10.0"
 
@@ -48,7 +48,7 @@ if [ -n "$VERSION" ]; then
   echo "==> Версия обновлена на $VERSION (SmartBase.csproj + бейдж README.md)"
 fi
 
-# Эффективная версия сборки = аргумент или текущая из csproj. Задаёт папку вывода
+# Эффективная версия сборки = аргумент или текущая из csproj. Задает папку вывода
 # dist/Version <X.Y.Z>/<rid>: та же версия перезаписывается, новая — отдельная папка.
 EFFVER="${VERSION:-$(sed -nE 's#.*<Version>([^<]*)</Version>.*#\1#p' "$csproj" | head -n1)}"
 OUT="$ROOT/dist/Version $EFFVER/$RID"
@@ -60,7 +60,7 @@ chmod +x "$OUT/SmartBase"
 
 # Установщик (вариант A): тот же бинарь под именем SmartBase-Setup — по имени «-Setup»
 # он запускается в режиме установки (ставит в ~/.local/share/SmartBase, .desktop-ярлыки,
-# умеет --uninstall). Раздаётся одним файлом. См. docs/guides/auto-update.md.
+# умеет --uninstall). Раздается одним файлом. См. docs/guides/auto-update.md.
 cp "$OUT/SmartBase" "$OUT/SmartBase-Setup"
 chmod +x "$OUT/SmartBase-Setup"
 
