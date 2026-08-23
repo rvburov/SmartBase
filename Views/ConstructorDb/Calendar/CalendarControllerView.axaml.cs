@@ -413,29 +413,33 @@ public partial class CalendarControllerView : UserControl
     {
         var records   = new List<CalendarRecord>();
         var hasSearch = !string.IsNullOrEmpty(query);
-        // Год без поиска события окна НЕ читает вовсе: числам достаточно карты счетчиков
+        // Год без поиска ВСЕ события окна не читает: числам достаточно карты счетчиков
         // (фаза 2), а список дня попап грузит ПО ТРЕБОВАНИЮ (DayEventsProvider). Чтение всех
         // событий года (сотни тысяч строк, ~0.7–1.5 с) было последним местом сетки, где
-        // оверлей «Загрузка…» еще успевал появиться при листании.
-        var skipEvents = viewIdx == 5 && !hasSearch;
+        // оверлей «Загрузка…» еще успевал появиться при листании. Исключение — МНОГОДНЕВНЫЕ
+        // события: карта считает событие по дню НАЧАЛА, поэтому запись на три года
+        // подсвечивала одно число вместо всего диапазона. Их читаем отдельно (их мало),
+        // вид разложит по дням сам — остальное по-прежнему приходит картой.
+        var spanningOnly = viewIdx == 5 && !hasSearch;
         string? loadingPath = null;   // путь читаемой БД — для сигнала монитору при сбое
         try
         {
-            if (!skipEvents)
-                foreach (var (dbId, _, repo) in _dbs.ToList())
-                {
-                    loadingPath = repo.DbPath;
-                    ISet<int>? active = _activeByDb is not null && _activeByDb.TryGetValue(dbId, out var s) ? s : null;
-                    // Диаграмма — свой загрузчик «по коллекциям» (cap на коллекцию, а не на
-                    // день): ее окно бывает десятилетием, и per-day чтение сеток стоило бы
-                    // тысяч запросов и миллионов строк при потолке отрисовки ~200 на группу.
-                    var part = viewIdx == 6
+            foreach (var (dbId, _, repo) in _dbs.ToList())
+            {
+                loadingPath = repo.DbPath;
+                ISet<int>? active = _activeByDb is not null && _activeByDb.TryGetValue(dbId, out var s) ? s : null;
+                // Диаграмма — свой загрузчик «по коллекциям» (cap на коллекцию, а не на
+                // день): ее окно бывает десятилетием, и per-day чтение сеток стоило бы
+                // тысяч запросов и миллионов строк при потолке отрисовки ~200 на группу.
+                var part = spanningOnly
+                    ? await repo.LoadCalendarSpanningAsync(startDt, endDt, active, GridDayCap)
+                    : viewIdx == 6
                         ? await repo.LoadDiagramWindowAsync(startDt, endDt, active, DiagramView.MaxRecordsPerCollection)
                         : await repo.LoadCalendarGridRangeAsync(startDt, endDt, active, GridDayCap);
-                    if (gen != _gridGen) return;           // вид/дата уже другие — не применяем
-                    foreach (var r in part) r.DbId = dbId;
-                    records.AddRange(part);
-                }
+                if (gen != _gridGen) return;           // вид/дата уже другие — не применяем
+                foreach (var r in part) r.DbId = dbId;
+                records.AddRange(part);
+            }
         }
         catch (Exception ex)
         {

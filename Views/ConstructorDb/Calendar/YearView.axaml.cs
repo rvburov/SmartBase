@@ -74,13 +74,20 @@ public partial class YearView : UserControl
 
         // Счетчики на числа: событие учитывается в каждом дне своего диапазона; карта
         // счетчиков (по дню НАЧАЛА) дополняет недоставленное сверх капа чтения — день-гигант
-        // получает честное число, хотя событий пришло только GridDayCap.
+        // получает честное число, хотя событий пришло только GridDayCap. Контроллер доставляет
+        // сюда МНОГОДНЕВНЫЕ события года (их мало) — как раз потому, что карта знает только
+        // день начала; однодневные приходят ею. Диапазон обрезается показанным годом:
+        // событие на три года иначе крутило бы тысячу дней, из которых нужны 365.
+        var yearStart   = new DateTime(year, 1, 1);
+        var yearEnd     = new DateTime(year, 12, 31);
         var eventCounts = new Dictionary<DateTime, int>();
         var received    = new Dictionary<DateTime, int>();   // доставлено по дню СТАРТА
         foreach (var e in _events)
         {
             received[e.StartDt.Date] = received.GetValueOrDefault(e.StartDt.Date) + 1;
-            foreach (var d in EachDay(e.StartDt.Date, e.EndDt.Date))
+            var from = e.StartDt.Date < yearStart ? yearStart : e.StartDt.Date;
+            var to   = e.EndDt.Date   > yearEnd   ? yearEnd   : e.EndDt.Date;
+            foreach (var d in EachDay(from, to))
                 eventCounts[d] = eventCounts.GetValueOrDefault(d) + 1;
         }
         if (dayTotals is not null)

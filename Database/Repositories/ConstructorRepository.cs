@@ -6286,6 +6286,62 @@ public partial class ConstructorRepository(AppDbContext db)
                 .GetCalendarRecordsByRangeCapped(rangeStart, rangeEnd, activeIds, perDayCap);
         });
 
+    /// <summary>
+    /// МНОГОДНЕВНЫЕ события окна (день конца ≠ дню начала), пересекающие его. Для вида «Год»,
+    /// который сами события окна не читает (сотни тысяч строк на год): числам достаточно карты
+    /// счетчиков, но карта считает событие по дню НАЧАЛА — многодневное иначе подсвечивало бы
+    /// один день из своего диапазона вместо всех. Таких событий мало (это «проекты», а не
+    /// рядовые встречи), поэтому их можно прочитать целиком и разложить по дням в виде.
+    /// Форма — как у all-day-прохода сетки: сик по EndIso-индексу (у StartIso нижней границы
+    /// нет — многодневное могло начаться сколь угодно давно), многодневность — residual по
+    /// дате из того же индекса. Cap на коллекцию: подсветка чисел от лишних не изменится.
+    /// </summary>
+    public List<CalendarRecord> GetCalendarSpanningRecords(
+        DateTime rangeStart, DateTime rangeEnd, ISet<int>? activeIds, int perCollectionCap)
+    {
+        var fullyHidden = FullyHiddenDateCollections();
+        var colIds = (activeIds is null
+            ? db.DbCollections.Select(c => c.Id).AsEnumerable()
+            : activeIds)
+            .Where(id => !fullyHidden.Contains(id)).ToList();
+        var hidden = HiddenFieldsClause("ci.");
+
+        string Iso(DateTime dt) => DateTime.SpecifyKind(dt, DateTimeKind.Unspecified).ToString("o");
+        var startIso = Iso(rangeStart);
+        var endIso   = Iso(rangeEnd);
+        const string spans = " AND substr(ci.EndIso, 1, 10) <> substr(ci.StartIso, 1, 10)";
+
+        var result = new List<CalendarRecord>();
+        var conn = db.Database.GetDbConnection();
+        var opened = conn.State != System.Data.ConnectionState.Open;
+        if (opened) conn.Open();
+        try
+        {
+            foreach (var colId in colIds)
+                foreach (var allDay in new[] { 0, 1 })
+                    ReadCalendarRows(conn, result,
+                        $"ci.CollectionId = {colId} AND ci.AllDay = {allDay}{hidden}" +
+                        " AND ci.EndIso >= @start AND ci.StartIso < @end" + spans,
+                        [("@start", startIso), ("@end", endIso)], perCollectionCap, "ci.EndIso");
+        }
+        finally { if (opened) conn.Close(); }
+
+        result.Sort((a, b) => a.StartDt.CompareTo(b.StartDt));
+        return result;
+    }
+
+    /// <summary>Фоновая (изолированное подключение) версия
+    /// <see cref="GetCalendarSpanningRecords"/> — как и карта счетчиков, не на UI-потоке.</summary>
+    public Task<List<CalendarRecord>> LoadCalendarSpanningAsync(
+        DateTime rangeStart, DateTime rangeEnd, ISet<int>? activeIds, int perCollectionCap) =>
+        Task.Run(() =>
+        {
+            using var ctx = new AppDbContext(db.DbPath);
+            ctx.ApplyPerformancePragmas();
+            return new ConstructorRepository(ctx)
+                .GetCalendarSpanningRecords(rangeStart, rangeEnd, activeIds, perCollectionCap);
+        });
+
     /// <summary>Фоновая загрузка окна Диаграммы (изолированное подключение) —
     /// см. <see cref="GetDiagramRecordsCapped"/>.</summary>
     public Task<List<CalendarRecord>> LoadDiagramWindowAsync(
@@ -6334,8 +6390,6 @@ public partial class ConstructorRepository(AppDbContext db)
         string Iso(DateTime dt) => DateTime.SpecifyKind(dt, DateTimeKind.Unspecified).ToString("o");
         var startIso = Iso(rangeStart);
         var endIso   = Iso(rangeEnd);
-        var lowerIso = Iso(SafeAddDays(rangeStart, -CalendarTimedBufferDays));
-        var upperIso = Iso(SafeAddDays(rangeStart, CalendarTimedBufferDays));
 
         var result = new List<CalendarRecord>();
         var conn = db.Database.GetDbConnection();
@@ -6352,12 +6406,17 @@ public partial class ConstructorRepository(AppDbContext db)
                     " AND ci.StartIso >= @start AND ci.StartIso < @end",
                     [("@start", startIso), ("@end", endIso)], perCollectionCap);
 
-                // Timed-спилловеры — сик по EndIso-индексу, как в окне сеток.
+                // Timed-спилловеры (начались ДО окна и пересекают его) — БЕЗ буфера
+                // длительности, форма запроса как у all-day: сик по EndIso-индексу,
+                // residual StartIso лежит в том же индексе. Буфер сеток
+                // (CalendarTimedBufferDays) здесь не годится: он держится на допущении
+                // «timed длиннее двух месяцев не бывает», а в Диаграмме окно — до 10 лет,
+                // и растянутое мышью timed-событие на полгода терялось в КАЖДОМ окне,
+                // которое оно лишь пересекает (см. DiagramWindowTests).
                 ReadCalendarRows(conn, result,
                     $"ci.CollectionId = {colId} AND ci.AllDay = 0{hidden}" +
-                    " AND ci.EndIso >= @win AND ci.EndIso < @hi" +
-                    " AND ci.StartIso >= @lo AND ci.StartIso < @win",
-                    [("@win", startIso), ("@hi", upperIso), ("@lo", lowerIso)], perCollectionCap, "ci.EndIso");
+                    " AND ci.EndIso >= @start AND ci.StartIso < @start",
+                    [("@start", startIso)], perCollectionCap, "ci.EndIso");
 
                 // All-day/многодневные — сик по EndIso-индексу (у StartIso нет нижней границы).
                 ReadCalendarRows(conn, result,
@@ -6393,10 +6452,6 @@ public partial class ConstructorRepository(AppDbContext db)
         string Iso(DateTime dt) => DateTime.SpecifyKind(dt, DateTimeKind.Unspecified).ToString("o");
         var startIso = Iso(rangeStart);
         var endIso   = Iso(rangeEnd);
-        var lowerIso = Iso(SafeAddDays(rangeStart, -CalendarTimedBufferDays));
-        var upperIso = Iso(SafeAddDays(rangeStart, CalendarTimedBufferDays));
-        // Timed длиннее буфера не бывает ⇒ их EndIso < конец окна + буфер.
-        var endHiIso = Iso(SafeAddDays(rangeEnd, CalendarTimedBufferDays));
 
         var result = new Dictionary<int, DiagramGroupStat>();
         var conn = db.Database.GetDbConnection();
@@ -6440,16 +6495,15 @@ public partial class ConstructorRepository(AppDbContext db)
                     return v is string s && DateTime.TryParse(s, out var d) ? d : null;
                 }
 
-                // Timed-спилловеры — тот же EndIso-сик, что у чтения строк.
+                // Timed-спилловеры — тот же EndIso-сик без буфера, что и у чтения строк:
+                // счетчик группы обязан считать те же события, что показаны строками.
                 var tSpill = Agg("COUNT(*), MIN(StartIso)",
-                    " AND AllDay = 0 AND EndIso >= @win AND EndIso < @hi" +
-                    " AND StartIso >= @lo AND StartIso < @win",
-                    ("@win", startIso), ("@hi", upperIso), ("@lo", lowerIso));
-                // Max(конец) timed.
+                    " AND AllDay = 0 AND EndIso >= @start AND StartIso < @start",
+                    ("@start", startIso));
+                // Max(конец) timed — по всем timed окна (начавшимся в нем и до него).
                 var tMaxEnd = AggMaxEnd(
-                    " AND AllDay = 0 AND EndIso >= @win AND EndIso < @endHi" +
-                    " AND StartIso >= @lo AND StartIso < @end",
-                    ("@win", startIso), ("@endHi", endHiIso), ("@lo", lowerIso), ("@end", endIso));
+                    " AND AllDay = 0 AND EndIso >= @start AND StartIso < @end",
+                    ("@start", startIso), ("@end", endIso));
                 // All-day: count/min/max одним сканом EndIso-диапазона (residual StartIso — в индексе).
                 var aday = Agg("COUNT(*), MIN(StartIso), MAX(EndIso)",
                     " AND AllDay = 1 AND EndIso >= @start AND StartIso < @end",

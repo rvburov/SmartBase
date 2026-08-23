@@ -34,6 +34,10 @@ public partial class DiagramView : UserControl
 
     private static IBrush BrushOf(string key) => (IBrush)Application.Current!.FindResource(key)!;
 
+    // Размерный токен (иконки, толщина обводки) — резолв в рантайме, как у шрифтов.
+    private static double Res(string key, double fallback) =>
+        Application.Current!.TryFindResource(key, out var v) && v is double d ? d : fallback;
+
     public event EventHandler<CalendarRecord>? RecordClicked;
     public event EventHandler<CalendarRecord>? RecordMoved;
     public event EventHandler<CalendarRecord>? RecordDeleteRequested;
@@ -124,6 +128,8 @@ public partial class DiagramView : UserControl
 
     private List<GroupRow> _groups = [];
     // Свернутость групп переживает Refresh (пересборку), но не перезапуск приложения.
+    // По умолчанию коллекция свернута, поэтому в словаре лежит ЯВНО выбранное
+    // пользователем состояние: нет ключа — свернута.
     private readonly Dictionary<(int DbId, int ColId), bool> _collapsed = new();
 
     // Текущая ширина холста таймлайна — то, что реально осталось справа от левой панели
@@ -396,7 +402,11 @@ public partial class DiagramView : UserControl
             // и при поиске — от доставленного. Агрегаты не могут знать меньше доставленного.
             g.Stat  = _stats?.GetValueOrDefault((g.DbId, g.ColId));
             g.Total = Math.Max(g.Stat?.Count ?? 0, g.Records.Count);
-            g.Collapsed = _collapsed.TryGetValue((g.DbId, g.ColId), out var c) && c;
+            // Свернуто по умолчанию: диаграмма открывается списком коллекций с суммарными
+            // барами, записи разворачивает сам пользователь (в словаре — только то, что он
+            // менял руками). При активном поиске группы раскрыты: иначе найденного не видно.
+            g.Collapsed = !_hideEmptyGroups
+                          && (!_collapsed.TryGetValue((g.DbId, g.ColId), out var c) || c);
         }
 
         _groups = groups;
@@ -689,20 +699,23 @@ public partial class DiagramView : UserControl
     {
         var color = DisplayColor(g.Color);
 
-        // Левая панель: шеврон + цветная точка + имя + счетчик. Клик — свернуть/развернуть.
+        // Левая панель: шеврон + имя + счетчик. Клик — свернуть/развернуть.
+        // Цвет коллекции показывает сам бар справа, цветной точки в строке нет.
         var row = new Grid
         {
             Width      = LeftW,
             Height     = RowH,
             Background = Brushes.Transparent,
             Cursor     = CursorHand,
-            ColumnDefinitions = new ColumnDefinitions("24,14,*,Auto"),
+            ColumnDefinitions = new ColumnDefinitions($"{LeftIndent},*,Auto"),
         };
         Canvas.SetTop(row, y);
 
+        // Стрелка — как в дереве сайдбара: IconSizeSmall в слоте, обводка IconStrokeSmall.
+        var arrow = Res("IconSizeSmall", 16);
         var chevron = new Viewbox
         {
-            Width  = 12, Height = 12,
+            Width  = arrow, Height = arrow,
             HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Center,
             VerticalAlignment   = Avalonia.Layout.VerticalAlignment.Center,
             IsHitTestVisible    = false,
@@ -715,7 +728,7 @@ public partial class DiagramView : UserControl
                     {
                         Data            = (Geometry)Application.Current!.FindResource(g.Collapsed ? "IconChevronRight" : "IconChevronDown")!,
                         Stroke          = BrushOf("BrushSecondaryText"),
-                        StrokeThickness = 2,
+                        StrokeThickness = Res("IconStrokeSmall", 1.8),
                         StrokeLineCap   = PenLineCap.Round,
                         StrokeJoin      = PenLineJoin.Round,
                     },
@@ -723,16 +736,6 @@ public partial class DiagramView : UserControl
             },
         };
         row.Children.Add(chevron);
-
-        var dot = new Avalonia.Controls.Shapes.Ellipse
-        {
-            Width = 8, Height = 8,
-            Fill  = new SolidColorBrush(color),
-            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
-            IsHitTestVisible  = false,
-        };
-        Grid.SetColumn(dot, 1);
-        row.Children.Add(dot);
 
         var name = new TextBlock
         {
@@ -745,7 +748,7 @@ public partial class DiagramView : UserControl
             VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
             IsHitTestVisible  = false,
         };
-        Grid.SetColumn(name, 2);
+        Grid.SetColumn(name, 1);
         row.Children.Add(name);
 
         var count = new TextBlock
@@ -757,7 +760,7 @@ public partial class DiagramView : UserControl
             VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
             IsHitTestVisible  = false,
         };
-        Grid.SetColumn(count, 3);
+        Grid.SetColumn(count, 2);
         row.Children.Add(count);
 
         row.PointerPressed += (_, e) =>
@@ -890,8 +893,8 @@ public partial class DiagramView : UserControl
     {
         // Геометрия — ПО ЯЧЕЙКАМ ДНЕЙ, как бары Месяца: блок занимает колонки от
         // первого до последнего дня события целиком, время суток на позицию не
-        // влияет. Однодневное событие (timed или all-day) — сплошной круг по центру
-        // ячейки, диаметром в высоту блока.
+        // влияет. Все, что уже круга (однодневное событие и любой короткий диапазон
+        // на крупном масштабе), — сплошной круг диаметром в высоту блока.
         var startIdx = (int)(start.Date - _rangeStart).TotalDays;
         var endIdx   = (int)(LastIncludedDay(start, end, allDay) - _rangeStart).TotalDays;
         if (endIdx < startIdx) endIdx = startIdx;
@@ -932,9 +935,15 @@ public partial class DiagramView : UserControl
             visuals.Add(host);
         }
 
-        if (startIdx == endIdx)
+        // Круг — вид события, которое не растянуто: однодневное (на любом масштабе, даже
+        // когда ячейка дня шире круга) ИЛИ такое, чей блок не шире круга. Второе — про
+        // крупные масштабы: на годе, 5 и 10 годах ячейка дня — единицы пикселей, и «4 дня»
+        // превратились бы в невидимую полоску. Круг стоит по центру закрытых событием
+        // ячеек: на пороге (блок ровно в круг) это та же точка, где у блока стоит круг
+        // начала, — перехода не видно.
+        if (startIdx == endIdx || x2 - x1 < BarH)
         {
-            var cx  = (i1 + 0.5) * dayW;   // центр ячейки дня — по ширине и высоте строки
+            var cx  = (i1 + i2 + 1) / 2.0 * dayW;
             var dot = new Avalonia.Controls.Shapes.Ellipse
             {
                 Width = BarH, Height = BarH,
@@ -951,6 +960,7 @@ public partial class DiagramView : UserControl
             return new EventVisual
             {
                 X1 = cx - BarH / 2, X2 = cx + BarH / 2, IsDot = true,
+                ClipL = clipL, ClipR = clipR,
                 Dot = dot, Label = label,
             };
         }
@@ -990,8 +1000,8 @@ public partial class DiagramView : UserControl
     // Блок-«пилюля»: белая подложка глушит линии сетки и заливку выходных под
     // баром, поверх — полупрозрачный цвет; скругление в половину высоты — силуэт
     // совпадает с кругом у начала. Скругление и круг — только на реальных краях
-    // события; в блок уже круга (короткое событие на крупном масштабе) круг
-    // не рисуется.
+    // события. Вызывается лишь для блока ШИРЕ круга (что уже — рисуется кругом),
+    // поэтому круг не помещается только у обрезанного левым краем периода события.
     private static Grid MakeBlock(double w, Color color, bool clipL, bool clipR,
                                   out Border bg, out Border? circle)
     {
@@ -1006,7 +1016,7 @@ public partial class DiagramView : UserControl
         };
         bar.Children.Add(bg);
         circle = null;
-        if (!clipL && w >= BarH)
+        if (!clipL)
         {
             circle = new Border
             {
