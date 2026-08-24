@@ -1,6 +1,9 @@
+using System.IO.Compression;
 using System.Text;
 using System.Text.Json;
 using ClosedXML.Excel;
+using DocumentFormat.OpenXml.Packaging;
+using DocumentFormat.OpenXml.Validation;
 using Microsoft.EntityFrameworkCore;
 using SmartBase.Core.Exporters;
 using SmartBase.Core.Exporters.TableWriters;
@@ -202,6 +205,69 @@ public sealed class ExportMatrixTests
         using var wb = new XLWorkbook(f);
         Assert.Equal("Товар 1", wb.Worksheets.First().Cell(2, 1).GetString());
     }
+
+    /// <summary>Пакет писатель собирает сам, без OpenXml SDK, поэтому за схему и за опись
+    /// частей отвечает он же: ClosedXML прощает многое (в разработке так и было — файл читался,
+    /// а элементы шли не в том порядке), строгий валидатор — нет.</summary>
+    [Theory]
+    [InlineData(ExportFormat.Xlsx, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml")]
+    [InlineData(ExportFormat.Xlsm, "application/vnd.ms-excel.sheet.macroEnabled.main+xml")]
+    public void Excel_package_is_schema_valid_and_fully_described(ExportFormat fmt, string bookType)
+    {
+        using var db = new TempDatabase();
+        using var dir = new TempDir();
+        var goods = BuildGoods(db, dir);
+
+        var spec = IE.ExportSpecFor(db.Path, [goods], $"Схема {fmt}", fmt, dir.Path);
+        var f = IE.Export(db.Constructor, spec)[0];
+
+        using (var doc = SpreadsheetDocument.Open(f, false))
+            Assert.Equal([], new OpenXmlValidator().Validate(doc)
+                                                   .Select(e => $"{e.Part?.Uri}{e.Path?.XPath}: {e.Description}")
+                                                   .ToArray());
+
+        using var zip = ZipFile.OpenRead(f);
+        var types = ReadEntry(zip, "[Content_Types].xml");
+        Assert.Contains($"PartName=\"/xl/workbook.xml\" ContentType=\"{bookType}\"", types);
+        Assert.Contains("PartName=\"/xl/worksheets/sheet1.xml\"", types);
+
+        // Связи книги должны указывать на реально существующие части архива.
+        var names = zip.Entries.Select(e => e.FullName).ToHashSet();
+        foreach (var target in Targets(ReadEntry(zip, "xl/_rels/workbook.xml.rels")))
+            Assert.Contains("xl/" + target, names);
+        foreach (var target in Targets(ReadEntry(zip, "_rels/.rels")))
+            Assert.Contains(target, names);
+    }
+
+    /// <summary>Главное свойство писателя: строки уходят в файл по мере записи. Если пакет
+    /// снова начнет собираться в памяти (ZipArchiveMode.Update, как делает OpenXml SDK), файл
+    /// до закрытия останется пустым — а память вырастет с объемом выгрузки.</summary>
+    [Fact]
+    public void Xlsx_rows_reach_the_file_before_the_book_is_finished()
+    {
+        using var dir = new TempDir();
+        var f = dir.File("stream.xlsx");
+        var cols = new List<ExportColumn> { new("__title__", "Название", null, "text") };
+
+        using var w = new XlsxTableWriter(f, macroEnabled: false);
+        w.BeginTable("Данные", cols, writeHeader: true);
+        for (var i = 0; i < 50_000; i++) w.WriteRow([$"Строка номер {i} с текстом подлиннее"]);
+
+        using (var probe = File.Open(f, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+            Assert.True(probe.Length > 64 * 1024, $"до Finish на диске всего {probe.Length} байт — лист копится в памяти");
+
+        w.EndTable();
+        w.Finish();
+    }
+
+    private static string ReadEntry(ZipArchive zip, string name)
+    {
+        using var s = zip.GetEntry(name)!.Open();
+        return new StreamReader(s).ReadToEnd();
+    }
+
+    private static IEnumerable<string> Targets(string relsXml) =>
+        System.Text.RegularExpressions.Regex.Matches(relsXml, "Target=\"([^\"]+)\"").Select(m => m.Groups[1].Value);
 
     [Fact]
     public void Manual_sheet_name_no_header_and_exclusions()

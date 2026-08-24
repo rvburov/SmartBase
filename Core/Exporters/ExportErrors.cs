@@ -14,15 +14,12 @@ public static class ExportErrors
     /// FileStream для записи. FileMode.CreateNew: имя уже уникализировано планировщиком,
     /// существующий файл — гонка с внешним процессом, честно падаем «занят/существует».
     /// FileShare.Read — недописанный файл можно открыть просмотром, но не заблокировать запись.
-    /// readWrite=true — для OpenXml-пакета (.xlsx/.xlsm): ZIP-архив перечитывает свой каталог,
-    /// на write-only потоке падает «The stream was not opened for reading».
     /// </summary>
-    public static FileStream CreateFile(string path, bool readWrite = false)
+    public static FileStream CreateFile(string path)
     {
         try
         {
-            return new FileStream(path, FileMode.CreateNew,
-                readWrite ? FileAccess.ReadWrite : FileAccess.Write, FileShare.Read);
+            return new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.Read);
         }
         catch (Exception ex) when (ex is not ExportException) { throw Map(ex, path); }
     }

@@ -26,7 +26,7 @@
 - Типы и контракты: [Exporter.cs](../../../../Core/Exporters/Exporter.cs) (`ExportSpec`,
   `ExportColumn`, `ExportFormat`, `ExportException`)
 - Писатели форматов: [Core/Exporters/TableWriters/](../../../../Core/Exporters/TableWriters/) —
-  `XlsxTableWriter` (OpenXmlWriter, SAX), `CsvTableWriter`, `JsonTableWriter`,
+  `XlsxTableWriter` (свой ZIP-пакет + `XmlWriter`), `CsvTableWriter`, `JsonTableWriter`,
   общие правила типизации в `WriterHelpers`, контракт `ITableWriter`
 - Планировщик юнитов, санитайз и уникализация имен:
   [ExportPlanner.cs](../../../../Core/Exporters/ExportPlanner.cs)
