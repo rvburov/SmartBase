@@ -37,6 +37,21 @@ public readonly record struct TableViewportRange(int First, int Last, int Total)
         return new TableViewportRange(f, l, total);
     }
 
+    /// <summary>
+    /// Диапазон из СЛОТОВ, которые показывает DataGrid (<c>DisplayData.FirstScrollingSlot</c>
+    /// и <c>LastScrollingSlot</c>) — так его и считает <c>TableView.VisibleRowRange</c>.
+    /// Группировки у таблицы нет, поэтому слот = индекс строки, а ее номер = индекс + 1.
+    ///
+    /// Отрицательный первый слот — «ничего не разложено» (первый проход, пересборка строк):
+    /// число записей уже известно, показываем «0 из N». Последним слотом бывает строка «+»
+    /// (ее индекс = число записей) — <see cref="Of"/> срежет ее номер по общему числу, и у
+    /// самого низа таблицы индикатор честно показывает последнюю ЗАПИСЬ.
+    /// </summary>
+    public static TableViewportRange FromSlots(int firstSlot, int lastSlot, int total) =>
+        total <= 0                              ? Empty
+      : firstSlot < 0 || lastSlot < firstSlot   ? Of(0, 0, total)
+      :                                           Of(firstSlot + 1, lastSlot + 1, total);
+
     /// <summary>Есть ли что показывать в индикаторе (и куда листать).</summary>
     public bool HasRows => Total > 0 && First >= 1 && Last >= First;
 

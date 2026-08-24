@@ -308,7 +308,7 @@
 
 | Слой | Ответственность |
 |---|---|
-| [TableViewportRange](../../../../Core/Models/TableViewportRange.cs) | чистая логика: текст индикатора, `AtStart`/`AtEnd` для гашения кнопок, нормализация «мусорного» диапазона; `TableViewportScroll` — куда встает полоса. Покрыто `TableViewportRangeTests` |
+| [TableViewportRange](../../../../Core/Models/TableViewportRange.cs) | чистая логика: текст индикатора, `AtStart`/`AtEnd` для гашения кнопок, нормализация «мусорного» диапазона, `FromSlots` — перевод слотов DataGrid в номера строк; `TableViewportScroll` — куда встает полоса. Покрыто `TableViewportRangeTests` |
 | `TableView` | `VisibleRowRange()` + `VisibleRangeChanged`, методы `ScrollRowsPageBack/PageForward/ToStart/ToEnd` |
 | `FooterConstructor` | кнопки (`FirstRowClicked`/`PrevPageClicked`/`NextPageClicked`/`LastRowClicked`) и `SetRange` |
 | `ConstructorControllerView` | связывает одно с другим; в виде «Список» ставит `TableViewportRange.Empty` (кнопки гаснут — двигать нечего) |
@@ -317,11 +317,20 @@
 
 Номера видимых строк спрашиваются **у самого DataGrid**: `DisplayData.FirstScrollingSlot`
 и `DisplayData.LastScrollingSlot` — те самые слоты, по которым контрол раскладывает строки
-и сам отвечает на `SlotIsDisplayed`. Группировки у таблицы нет
-(`VirtualCollectionView.Groups = null`), поэтому слот = индекс строки, а ее номер =
-индекс + 1; последним слотом бывает строка «+» — `TableViewportRange.Of` срежет ее по
-общему числу. Доступ рефлексией (`DisplayData` internal), версия Avalonia зафиксирована
-11.2.x — имена и типы стережет `DataGridInternalsTests`.
+и сам отвечает на `SlotIsDisplayed`. Доступ рефлексией (`DisplayData` internal), версия
+Avalonia зафиксирована 11.2.x — имена и типы стережет `DataGridInternalsTests`.
+
+Перевод слотов в номера строк — `TableViewportRange.FromSlots`, чистый и покрытый
+`TableViewportRangeTests`; у `TableView` остается только доступ к гриду. Группировки у
+таблицы нет (`VirtualCollectionView.Groups = null`), поэтому слот = индекс строки, а ее
+номер = индекс + 1. Отдельно оговорены два края:
+
+- **строка «+»** стоит последним слотом (ее индекс = число записей) — ее номер срезается по
+  общему числу, поэтому у самого низа индикатор показывает последнюю ЗАПИСЬ. Если в окне
+  осталась одна «+», диапазон все равно `N – N`, а не «0 из N»: иначе погасли бы все четыре
+  кнопки и вернуться наверх было бы нечем;
+- **`FirstScrollingSlot = -1`** — ничего не разложено (первый проход, пересборка строк):
+  «0 из N», число записей к этому моменту уже известно.
 
 Деление `offset / RowHeight` не годится: высота строк бывает **ручной** (своя у каждой), и
 счет врал бы. Номера — порядковые в текущем срезе: `VirtualRowList` проставляет

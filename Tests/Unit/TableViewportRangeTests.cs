@@ -146,6 +146,102 @@ public sealed class TableViewportRangeTests
         Assert.Equal(TableViewportRange.Empty, TableViewportRange.Of(1, 10, -3));
     }
 
+    // ── Слоты DataGrid → номера строк ─────────────────────────────────────────
+    //
+    // Живой источник диапазона — DisplayData.FirstScrollingSlot/LastScrollingSlot
+    // (TableView.VisibleRowRange). Слот = индекс строки, номер = индекс + 1; последним
+    // слотом бывает строка «+». Считать по визуальному дереву нельзя: DataGrid бросает
+    // в нем строки прошлого экрана, и индикатор показывал смесь двух позиций
+    // («71 – 456 002 из 456 002» после прыжка в конец) — см.
+    // docs/developer/features/constructor/table.md.
+
+    [Fact]
+    public void From_slots_numbers_rows_from_one()
+    {
+        // Первый экран: слоты 0..24 — это строки 1..25.
+        var range = TableViewportRange.FromSlots(0, 24, 500);
+
+        Assert.Equal(1,  range.First);
+        Assert.Equal(25, range.Last);
+        Assert.True(range.AtStart);
+        Assert.False(range.AtEnd);
+    }
+
+    [Fact]
+    public void From_slots_in_the_middle_enables_both_directions()
+    {
+        var range = TableViewportRange.FromSlots(100, 140, 500);
+
+        Assert.Equal(101, range.First);
+        Assert.Equal(141, range.Last);
+        Assert.False(range.AtStart);
+        Assert.False(range.AtEnd);
+    }
+
+    [Fact]
+    public void From_slots_at_the_end_shows_last_record_not_the_add_row()
+    {
+        // Прыжок «в конец» на 456 002 записях: в окне последние 25 строк и строка «+»
+        // (ее слот = число записей). Номер строки «+» срезается по общему числу.
+        var range = TableViewportRange.FromSlots(455977, 456002, 456002);
+
+        Assert.Equal(455978, range.First);
+        Assert.Equal(456002, range.Last);
+        Assert.True(range.AtEnd);
+        Assert.False(range.AtStart);
+        Assert.Equal($"455{Nbsp}978 – 456{Nbsp}002 из 456{Nbsp}002", range.Label);
+    }
+
+    [Fact]
+    public void From_slots_of_add_row_alone_keeps_navigation_alive()
+    {
+        // У самого низа в окне может остаться одна строка «+»: показываем последнюю
+        // запись, а не «0 из N» — иначе погасли бы все кнопки и вернуться было бы нечем.
+        var range = TableViewportRange.FromSlots(500, 500, 500);
+
+        Assert.Equal(500, range.First);
+        Assert.Equal(500, range.Last);
+        Assert.True(range.AtEnd);
+        Assert.False(range.AtStart);
+    }
+
+    [Fact]
+    public void From_slots_before_layout_shows_zero_of_total()
+    {
+        // Ничего не разложено: FirstScrollingSlot = -1, но число записей уже известно.
+        var range = TableViewportRange.FromSlots(-1, -1, 456002);
+
+        Assert.False(range.HasRows);
+        Assert.Equal($"0 из 456{Nbsp}002", range.Label);
+    }
+
+    [Fact]
+    public void From_slots_ignores_last_below_first()
+    {
+        // Промежуточное состояние пересборки строк — не диапазон.
+        var range = TableViewportRange.FromSlots(30, 10, 100);
+
+        Assert.False(range.HasRows);
+        Assert.Equal(100, range.Total);
+    }
+
+    [Fact]
+    public void From_slots_of_empty_collection_is_empty()
+    {
+        Assert.Equal(TableViewportRange.Empty, TableViewportRange.FromSlots(0, 10, 0));
+        Assert.Equal(TableViewportRange.Empty, TableViewportRange.FromSlots(-1, -1, 0));
+    }
+
+    [Fact]
+    public void From_slots_clamps_rows_beyond_total()
+    {
+        // Строки удалили, а раскладка еще старая.
+        var range = TableViewportRange.FromSlots(47, 89, 50);
+
+        Assert.Equal(48, range.First);
+        Assert.Equal(50, range.Last);
+    }
+
     // ── Позиция вертикальной полосы ───────────────────────────────────────────
 
     [Fact]

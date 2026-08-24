@@ -499,9 +499,8 @@ public partial class TableView : UserControl
     /// с экрана (разбор — у <see cref="VisibleRowRangeByTree"/>). Деление
     /// <c>offset / RowHeight</c> не годится в любом случае: высота строк бывает ручной.
     ///
-    /// Группировки у таблицы нет (<c>VirtualCollectionView.Groups = null</c>), поэтому
-    /// слот = индекс строки, а ее номер = индекс + 1. Последним слотом бывает строка «+» —
-    /// <c>Of()</c> срежет ее по общему числу записей.
+    /// Перевод слотов в номера строк — <see cref="TableViewportRange.FromSlots"/> (чистый,
+    /// покрыт <c>TableViewportRangeTests</c>); здесь только доступ к гриду.
     /// </summary>
     public TableViewportRange VisibleRowRange()
     {
@@ -511,10 +510,7 @@ public partial class TableView : UserControl
 
         if (DisplayedSlots() is not { } slots) return VisibleRowRangeByTree(total);
 
-        // Ничего не разложено (первый проход, пересборка строк) — число записей уже знаем.
-        if (slots.First < 0 || slots.Last < slots.First) return TableViewportRange.Of(0, 0, total);
-
-        return TableViewportRange.Of(slots.First + 1, slots.Last + 1, total);
+        return TableViewportRange.FromSlots(slots.First, slots.Last, total);
     }
 
     // Диапазон слотов, показанных гридом сейчас: DisplayData.FirstScrollingSlot и
