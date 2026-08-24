@@ -58,7 +58,7 @@ public static class ProductCompareEngine
         var outputPath = Path.Combine(outputDir, $"Результат сравнения {timestamp}.xlsm");
 
         using var twb = Open(templatePath);
-        var tws = twb.Worksheets.FirstOrDefault()
+        var tws = twb.Workbook.Worksheets.FirstOrDefault()
                   ?? throw new ProductCompareException("В файле-шаблоне нет ни одного листа.");
 
         var allKeys = oldData.ByKey.Keys.Union(newData.ByKey.Keys).ToList();
@@ -92,7 +92,7 @@ public static class ProductCompareEngine
         }
 
         // 4) Сохраняем.
-        try { twb.SaveAs(outputPath); }
+        try { twb.Workbook.SaveAs(outputPath); }
         catch (Exception ex)
         {
             throw new ProductCompareException(
@@ -121,8 +121,8 @@ public static class ProductCompareEngine
     private static FileData ReadRows(
         string path, CancellationToken ct, IProgress<int>? progress, int fromPct, int toPct)
     {
-        using var wb = Open(path);
-        var ws = wb.Worksheets.FirstOrDefault()
+        using var book = Open(path);
+        var ws = book.Workbook.Worksheets.FirstOrDefault()
                  ?? throw new ProductCompareException($"В файле «{Path.GetFileName(path)}» нет ни одного листа.");
 
         int last  = ws.LastRowUsed()?.RowNumber() ?? 0;
@@ -212,14 +212,13 @@ public static class ProductCompareEngine
         if (fill is not null) s.Fill.BackgroundColor = fill;
     }
 
-    private static XLWorkbook Open(string path)
+    private static ExcelBook Open(string path)
     {
-        try { return new XLWorkbook(path); }
-        catch
+        try { return ExcelBook.Open(path); }
+        catch (ExcelOpenException ex)
         {
             throw new ProductCompareException(
-                $"Не удалось открыть файл:\n{Path.GetFileName(path)}\n" +
-                "Проверьте, что это корректный Excel (.xlsx/.xlsm) и он не открыт в другой программе.");
+                $"Не удалось открыть файл:\n{Path.GetFileName(path)}\n{ex.Message}");
         }
     }
 

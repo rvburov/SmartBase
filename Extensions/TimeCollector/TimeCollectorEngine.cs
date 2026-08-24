@@ -158,7 +158,8 @@ public static class TimeCollectorEngine
 
         ct.ThrowIfCancellationRequested();
         progress?.Report(new CollectProgress(null, "Открываю шаблон…", Path.GetFileName(templatePath)));
-        using var wb = OpenTemplate(templatePath);
+        using var book = OpenTemplate(templatePath);
+        var wb = book.Workbook;
         if (!wb.Worksheets.TryGetWorksheet(TargetSheet, out var ws))
             throw new TimeCollectException($"Лист «{TargetSheet}» не найден в файле-шаблоне.");
 
@@ -432,14 +433,13 @@ public static class TimeCollectorEngine
 
     // ── Шаблон ────────────────────────────────────────────────────────────────
 
-    private static XLWorkbook OpenTemplate(string path)
+    private static ExcelBook OpenTemplate(string path)
     {
-        try { return new XLWorkbook(path); }
-        catch (Exception ex)
+        try { return ExcelBook.Open(path); }
+        catch (ExcelOpenException ex)
         {
             throw new TimeCollectException(
-                $"Не удалось открыть файл-шаблон:\n{Path.GetFileName(path)}\n{ex.Message}\n" +
-                "Проверьте, что это корректный Excel (.xlsm) и он не открыт в другой программе.");
+                $"Не удалось открыть файл-шаблон:\n{Path.GetFileName(path)}\n{ex.Message}");
         }
     }
 }

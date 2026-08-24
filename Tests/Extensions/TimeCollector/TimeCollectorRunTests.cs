@@ -1,3 +1,4 @@
+using System.IO.Compression;
 using ClosedXML.Excel;
 using SmartBase.Extensions.TimeCollector;
 
@@ -297,5 +298,91 @@ public sealed class TimeCollectorRunTests : IDisposable
 
         Assert.Equal(1, Run().RowCount);
         Assert.Equal(2, Run(recursive: true).RowCount);
+    }
+
+    // ── Проблемный шаблон ─────────────────────────────────────────────────────
+
+    // В шаблоне остается мусорное определенное имя со ссылкой на другую книгу (префикс «[2]»
+    // плюс имя листа с пробелами без апострофов). Excel такую книгу открывает, ClosedXML —
+    // нет, и раньше на этом падал весь прогон. Заводятся такие имена сами, от копирования
+    // листа между книгами, а чинить их некому: часть скрыта и не видна в Диспетчере имен.
+    [Fact]
+    public void Template_With_An_Unparsable_Defined_Name_Is_Repaired_And_The_Run_Succeeds()
+    {
+        const string junk = "Порядок видов [2]работ!$A$1:$A$11";
+
+        // Второе имя — с пустой ссылкой: оно ломается иначе, чем первое (не разбором, а
+        // отказом принять пустую строку), и раньше срывало бы ремонт всей книги.
+        AddDefinedNames(_template, ("МУСОР", junk), ("ПУСТОЕ", ""));
+
+        // Страховка стенда: без ремонта здесь падает само открытие книги.
+        Assert.ThrowsAny<Exception>(() => new XLWorkbook(_template));
+
+        CreateCalc("П_2025.03.14_Иванов.xlsm", ("Изделие", "А", "АА", 1.0));
+
+        var result = Run();
+
+        Assert.Equal(1, result.RowCount);
+        Assert.True(File.Exists(result.OutputPath));
+
+        // Оригинал шаблона не тронут — ремонт шел на временной копии.
+        Assert.Contains(junk, WorkbookXml(_template));
+
+        // В своде мусорного имени нет, а рабочее имя диапазона на месте.
+        using var wb = new XLWorkbook(result.OutputPath);
+        Assert.DoesNotContain(wb.DefinedNames, n => n.Name == "МУСОР");
+        Assert.DoesNotContain(wb.DefinedNames, n => n.Name == "ПУСТОЕ");
+        Assert.Single(wb.DefinedNames, n => n.Name == "ALL_DATA");
+    }
+
+    // Ремонтом лечится только непарсящееся имя. Все остальное обязано дойти до пользователя
+    // понятным текстом с именем файла, а не превратиться в загадочный сбой.
+    [Fact]
+    public void Broken_Template_Is_A_Friendly_Error()
+    {
+        File.WriteAllText(_template, "не excel");
+        CreateCalc("П_2025.03.14_Иванов.xlsm", ("Изделие", "А", "АА", 1.0));
+
+        var ex = Assert.Throws<TimeCollectException>(() => Run());
+
+        Assert.Contains("Не удалось открыть файл-шаблон", ex.Message);
+        Assert.Contains(Path.GetFileName(_template), ex.Message);
+        Assert.Empty(Directory.GetFiles(_out));
+    }
+
+    // Дописать в книгу определенные имена мимо ClosedXML: .xlsm — это zip, имена лежат в
+    // xl/workbook.xml. Через API такие имена не завести — ClosedXML их же и не разбирает.
+    private static void AddDefinedNames(string path, params (string Name, string RefersTo)[] names)
+    {
+        using var zip = ZipFile.Open(path, ZipArchiveMode.Update);
+        var entry = zip.GetEntry("xl/workbook.xml")
+                    ?? throw new InvalidOperationException("в книге нет xl/workbook.xml");
+
+        string xml;
+        using (var reader = new StreamReader(entry.Open())) xml = reader.ReadToEnd();
+
+        // ClosedXML пишет части с префиксом «x:», Excel — без него; стенд не должен зависеть
+        // от того, кто именно собрал книгу.
+        var (open, close) = xml.Contains("<x:sheets>") ? ("<x:", "</x:") : ("<", "</");
+        var block = $"{open}definedNames>" +
+                    string.Concat(names.Select(n =>
+                        $"{open}definedName name=\"{n.Name}\">{n.RefersTo}{close}definedName>")) +
+                    $"{close}definedNames>";
+
+        xml = xml.Contains($"{open}definedNames />")
+            ? xml.Replace($"{open}definedNames />", block)
+            : xml.Replace($"{close}sheets>", $"{close}sheets>{block}");
+
+        entry.Delete();
+        using var writer = new StreamWriter(zip.CreateEntry("xl/workbook.xml").Open());
+        writer.Write(xml);
+    }
+
+    private static string WorkbookXml(string path)
+    {
+        using var zip = ZipFile.OpenRead(path);
+        using var reader = new StreamReader(
+            zip.GetEntry("xl/workbook.xml")!.Open());
+        return reader.ReadToEnd();
     }
 }

@@ -62,11 +62,11 @@ public static class AssemblyCalcEngine
         progress?.Report(5);
 
         using var swb = Open(sourcePath, "исходный файл");
-        var sws = Sheet(swb, "исходном файле");
+        var sws = Sheet(swb.Workbook, "исходном файле");
         progress?.Report(15);
 
         using var twb = Open(templatePath, "файл-шаблон");
-        var tws = Sheet(twb, "шаблоне");
+        var tws = Sheet(twb.Workbook, "шаблоне");
         progress?.Report(30);
 
         // Очистка прежних данных шаблона (с 6-й строки, столбцы 1–LastCol) — только содержимое.
@@ -131,7 +131,7 @@ public static class AssemblyCalcEngine
 
         var timestamp  = DateTime.Now.ToString("yyyy-MM-dd_HH-mm");
         var outputPath = Path.Combine(outputDir, $"Расчет сборочных единиц ({timestamp}).xlsm");
-        try { twb.SaveAs(outputPath); }
+        try { twb.Workbook.SaveAs(outputPath); }
         catch (Exception ex)
         {
             throw new AssemblyCalcException(
@@ -157,14 +157,13 @@ public static class AssemblyCalcEngine
         s.NumberFormat.Format   = "@";
     }
 
-    private static XLWorkbook Open(string path, string what)
+    private static ExcelBook Open(string path, string what)
     {
-        try { return new XLWorkbook(path); }
-        catch
+        try { return ExcelBook.Open(path); }
+        catch (ExcelOpenException ex)
         {
             throw new AssemblyCalcException(
-                $"Не удалось открыть {what}:\n{Path.GetFileName(path)}\n" +
-                "Проверьте, что это корректный Excel (.xlsx/.xlsm) и он не открыт в другой программе.");
+                $"Не удалось открыть {what}:\n{Path.GetFileName(path)}\n{ex.Message}");
         }
     }
 
