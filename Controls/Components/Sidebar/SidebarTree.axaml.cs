@@ -350,9 +350,28 @@ public partial class SidebarTree : UserControl
 
     private List<SidebarNode> BuildDbChildren(MountedDb db)
     {
-        var groups      = db.Repo.GetAllGroups();
-        var collections = db.Repo.GetAllCollections();
-        var root        = new List<SidebarNode>();
+        // Содержимое ОДНОЙ базы не должно ронять все дерево. Чтение идет на общем контексте
+        // и может упереться в чужого писателя (SQLITE_BUSY) или в пропавшую сетевую папку.
+        // Раньше исключение отсюда летело через Refresh() и MainWindow.ShowModule() прямо в
+        // цикл UI — приложение падало на простом переключении раздела, унося и остальные
+        // смонтированные базы. Теперь такая база показывается пустой (следующее обновление
+        // от поллера ее восстановит), а «база пропала» уходит монитору доступности.
+        // Тоста нет намеренно: это ошибка ЧТЕНИЯ, политика — см. DbErrors.HandleRead.
+        List<DbGroup>      groups;
+        List<DbCollection> collections;
+        try
+        {
+            groups      = db.Repo.GetAllGroups();
+            collections = db.Repo.GetAllCollections();
+        }
+        catch (Exception ex) when (DbHealthMonitor.IsBusyError(ex) || DbHealthMonitor.IsUnavailableError(ex))
+        {
+            DbErrors.HandleRead(ex, db.Repo.DbPath);
+            Log.Warning(ex, "Сайдбар: содержимое базы «{Name:l}» не прочитано", db.Name);
+            return [];
+        }
+
+        var root = new List<SidebarNode>();
 
         foreach (var g in groups.Where(g => g.ParentId is null).OrderBy(g => g.Position))
             root.Add(BuildGroupNode(db, g, groups, collections));

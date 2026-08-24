@@ -1,5 +1,6 @@
 using Avalonia;
 using Avalonia.Controls;
+using Serilog;
 using SmartBase.Controls.Dialogs;
 using SmartBase.Core.Models;
 using SmartBase.Database;
@@ -87,10 +88,13 @@ public partial class TasksControllerView : UserControl
         NavbarControl.SearchChanged += (_, q) => { _searchQuery = q; ApplyToList(); };
         NavbarControl.FilterChanged += (_, kind) => { _filter = kind; ApplyToList(); };
 
-        TaskList.TaskActivated     += (_, t)   => _ = OpenEditDialog(t);
-        TaskList.QuickAddRequested += (_, req) => _ = QuickAdd(req);
-        TaskList.TasksDeleteRequested    += (_, ts) => _ = DeleteTasksWithConfirm(ts);
-        TaskList.TasksDuplicateRequested += (_, ts) => _ = DuplicateTasksWithConfirm(ts);
+        // Обработчики событий синхронные, поэтому Task не ждем — но и не теряем (см. Fire):
+        // раньше `_ = QuickAdd(req)` превращал любую не пойманную внутри ошибку в unobserved
+        // task exception, который финализатор добивал уже без всякого контекста.
+        TaskList.TaskActivated     += (_, t)   => Fire(OpenEditDialog(t));
+        TaskList.QuickAddRequested += (_, req) => Fire(QuickAdd(req));
+        TaskList.TasksDeleteRequested    += (_, ts) => Fire(DeleteTasksWithConfirm(ts));
+        TaskList.TasksDuplicateRequested += (_, ts) => Fire(DuplicateTasksWithConfirm(ts));
         // Коллекция может жить в другой базе — «Исполнитель» показывает ее пользователей.
         TaskList.QuickTargetChanged += (_, target) => UpdateQuickUserOptions(target.DbId);
 
@@ -480,20 +484,27 @@ public partial class TasksControllerView : UserControl
         // Задача доводит коллекцию до полного набора столбцов («Исполнитель», «Назначил»,
         // «Статус», «Дата», «Описание») — менять чужую коллекцию молча нельзя.
         // Ничего не изменится — окна не будет.
-        if (VisualRoot is Window owner && !await SectionSetupConfirm.ForTasks(owner, repo, colId)) return;
+        //
+        // Окно СЧИТАЕТ план по базе (PlanTaskSetup → CollectionFields), то есть читает ее —
+        // и это чтение может упереться в чужого писателя. Раньше вызов стоял вне всякого
+        // try, а сам QuickAdd запущен как fire-and-forget: SQLITE_BUSY отсюда становился
+        // «unobserved task exception», который добивал финализатор — без тоста и без шанса
+        // повторить. Ошибки БД теперь идут тем же путем, что и у остальных операций раздела.
+        if (VisualRoot is Window owner)
+        {
+            bool prepared;
+            try { prepared = await SectionSetupConfirm.ForTasks(owner, repo, colId); }
+            catch (Exception ex) when (DbErrors.Handle(ex, repo.DbPath)) { return; }
+            catch (InvalidOperationException ex) { TaskList.ShowError(ex.Message); return; }
+            if (!prepared) return;
+        }
 
-        try
-        {
-            var executor = req.Executor.Length > 0 ? req.Executor : CurrentUser.DisplayName;
-            // Назначил — сам пользователь: он ставит задачу (по умолчанию — себе же).
-            repo.AddTaskRecord(colId, req.Title.Trim(), executor,
-                               CurrentUser.DisplayName, ConstructorRepository.TaskStatusPlanned, req.Due);
-        }
-        catch (InvalidOperationException ex)
-        {
-            TaskList.ShowError(ex.Message);
+        var executor = req.Executor.Length > 0 ? req.Executor : CurrentUser.DisplayName;
+        // Назначил — сам пользователь: он ставит задачу (по умолчанию — себе же).
+        if (!TryWrite(repo, () => repo.AddTaskRecord(colId, req.Title.Trim(), executor,
+                                                     CurrentUser.DisplayName,
+                                                     ConstructorRepository.TaskStatusPlanned, req.Due)))
             return;
-        }
 
         CollectionsMayHaveChanged?.Invoke(this, EventArgs.Empty);
         // Тихо: список остается на экране и на прежнем месте (см. RefreshCurrent).
@@ -514,6 +525,13 @@ public partial class TasksControllerView : UserControl
              .GroupBy(t => (t.DbId, Id: t.Id!.Value))
              .Select(g => (g.Key.DbId, g.Key.Id, g.First().CollectionId))
              .ToList();
+
+    // Запустить операцию раздела «в фоне» и НЕ потерять ее ошибку. Ожидаемые отказы (нет
+    // прав, база занята) гасятся внутри самих операций через DbErrors; сюда доходит только
+    // то, что мы не предусмотрели — и это должно попасть в лог, а не в финализатор.
+    private static void Fire(Task work) => work.ContinueWith(
+        t => Log.Error(t.Exception!, "Раздел «Задачи»: необработанная ошибка операции"),
+        CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted, TaskScheduler.Default);
 
     // Запись в БД с обработкой ошибок: нет прав / база занята чужим писателем → тост
     // (Utils/DbErrors), прочие отказы репозитория → баннер списка. false — дальше не идем.

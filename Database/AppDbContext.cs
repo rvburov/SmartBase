@@ -1,3 +1,4 @@
+using System.Data.Common;
 using Microsoft.EntityFrameworkCore;
 using SmartBase.Database.Entities;
 
@@ -27,6 +28,11 @@ public class AppDbContext : DbContext
 
     private readonly string _dbPath;
 
+    // Профиль объема этого контекста: обычный (~64 МБ кеша) или массовый (~512 МБ, mmap 2 ГБ).
+    // Хранится на контексте, а не ставится разово: соединение закрывается и открывается заново
+    // между операциями, и объемные прагмы обязаны восстановиться вместе с ним.
+    private bool _bulkProfile;
+
     /// <summary>Путь к файлу БД — нужен, чтобы открыть параллельное read-only подключение
     /// (фоновые запросы, WAL допускает одновременное чтение) без общего контекста.
     /// Для PostgreSQL здесь строка подключения Npgsql — фоновые места
@@ -41,6 +47,21 @@ public class AppDbContext : DbContext
     {
         _dbPath    = dbPath;
         IsPostgres = PgConnectionInfo.IsPostgresConnectionString(dbPath);
+
+        // Прагмы надежности — на КАЖДОЕ открытие соединения (см. ApplyConnectionPragmas).
+        // Подписка именно на StateChange самого соединения, а не на интерцептор EF: около
+        // тридцати мест (пагинация, календарь, массовые операции) открывают соединение
+        // контекста НАПРЯМУЮ — `conn.Open()` мимо Database.OpenConnection(), и интерцептор
+        // EF там просто не сработал бы. У контекста ровно одно соединение на весь его срок
+        // жизни, поэтому одной подписки достаточно.
+        if (!IsPostgres)
+            Database.GetDbConnection().StateChange += OnConnectionStateChange;
+    }
+
+    private void OnConnectionStateChange(object? sender, System.Data.StateChangeEventArgs e)
+    {
+        if (e.CurrentState == System.Data.ConnectionState.Open && sender is DbConnection conn)
+            ApplyConnectionPragmas(conn);
     }
 
     // ── Аудит-метаданные записей (для типов свойств «Дата/Создание/Изменение …») ──
@@ -105,8 +126,15 @@ public class AppDbContext : DbContext
 
     protected override void OnConfiguring(DbContextOptionsBuilder options)
     {
-        if (IsPostgres) options.UseNpgsql(_dbPath);
-        else            options.UseSqlite($"Data Source={_dbPath}");
+        if (IsPostgres)
+        {
+            options.UseNpgsql(_dbPath);
+        }
+        else
+        {
+            options.UseSqlite(SqliteConnectionString(_dbPath),
+                              o => o.CommandTimeout(WaitSeconds(_dbPath)));
+        }
         // Один тип контекста обслуживает два провайдера: без своего ключа кеша EF отдал бы
         // модель первого открытого провайдера второму (у PG имена колонок lowercase — см.
         // ApplyLowercaseNames), что молча ломало бы SQL. Ключ учитывает IsPostgres.
@@ -115,66 +143,116 @@ public class AppDbContext : DbContext
     }
 
     /// <summary>
-    /// Прагмы скорости на ПОДКЛЮЧЕНИЕ (не на файл). Применять и к основному контексту, и к КАЖДОМУ
-    /// свежему фоновому (импорт/копия дубля/подгрузка строк и значений) — иначе фоновые операции
-    /// деградируют: без <c>mmap_size</c> чтения страниц индексов идут pread-syscall'ами (импорт
-    /// 425k в БД с уже большими коллекциями — минуты вместо секунд, т.к. индексы db_field_values
-    /// глобальные); без <c>busy_timeout</c> параллельные писатели падают с SQLITE_BUSY. journal_mode=WAL
-    /// здесь НЕ ставим — он персистится в заголовке файла (см. DatabaseManager.EnableWal).
-    /// Централизовано, чтобы наборы прагм основного и фоновых подключений не расходились.
+    /// Предел ожидания занятой базы, секунды. Один и тот же для трех независимых механизмов,
+    /// иначе они дают неожиданную сумму:
+    ///  • <c>CommandTimeout</c> EF — сколько Microsoft.Data.Sqlite РЕТРАИТ команду на SQLITE_BUSY;
+    ///  • <c>Default Timeout</c> строки подключения — то же для <c>BeginTransaction</c>,
+    ///    который CommandTimeout НЕ смотрит (замер: BEGIN IMMEDIATE ждал 33 с при
+    ///    CommandTimeout=2 — держал дефолтные 30 с соединения);
+    ///  • <c>PRAGMA busy_timeout</c> — ожидание внутри самого SQLite (см. ConnectionPragmas).
+    /// Дефолт Microsoft.Data.Sqlite — 30 с, и это ощущалось как полное зависание окна: поток
+    /// UI замирал на полминуты и только потом показывал «database is locked». Берем чуть
+    /// больше busy_timeout — один полный цикл ожидания и честный отказ вместо долгих ретраев.
     /// </summary>
-    public void ApplyPerformancePragmas()
+    private static int WaitSeconds(string path) => NetworkPath.IsNetwork(path) ? 18 : 12;
+
+    private static string SqliteConnectionString(string path) =>
+        new Microsoft.Data.Sqlite.SqliteConnectionStringBuilder
+        {
+            DataSource     = path,
+            DefaultTimeout = WaitSeconds(path),
+        }.ToString();
+
+    /// <summary>
+    /// Прагмы подключения — применяются при КАЖДОМ его открытии (подписка на StateChange,
+    /// см. конструктор).
+    ///
+    /// Почему не разово на контекст, как было раньше. EF не держит соединение открытым: сразу
+    /// после <c>ExecuteSqlRaw("PRAGMA …")</c> оно закрывается и уходит в пул Microsoft.Data.Sqlite
+    /// (замер: <c>GetDbConnection().State == Closed</c>). Пока с файлом работает один контекст,
+    /// пул отдает то же физическое соединение и прагмы «как бы» держатся. Но стоит рядом ожить
+    /// второму контексту (фоновых у нас десятки — Task.Run в репозитории, автоочистки, поллеры),
+    /// как первый получает из пула ДРУГОЕ соединение — с дефолтами SQLite. Замер на этой сборке:
+    ///
+    ///   ГЛАВНЫЙ до появления фонового:  busy_timeout=15000, cache_size=-65536
+    ///   ГЛАВНЫЙ при живом фоновом:      busy_timeout=0,     cache_size=-2000
+    ///
+    /// busy_timeout=0 означает, что при чужом писателе запрос падает SQLITE_BUSY немедленно,
+    /// не выждав ни секунды из заявленных 10–15. Именно так UI-поток ловил «database is locked»
+    /// на обычном чтении (SidebarTree → GetAllGroups).
+    ///
+    /// journal_mode здесь НЕ ставим — он персистится в заголовке файла
+    /// (см. DatabaseManager.ApplyJournalMode).
+    ///
+    /// Сетевой путь (SMB/NFS, см. NetworkPath) — другой профиль надежности: БД общая,
+    /// с ней работают несколько пользователей с разных машин.
+    ///  • busy_timeout 15 с — чужие писатели по сети держат замок дольше;
+    ///  • synchronous=FULL — там журнал DELETE (не WAL), а NORMAL в rollback-режиме
+    ///    допускает порчу при сбое питания сервера;
+    ///  • mmap_size=0 — mmap поверх сетевой ФС прямо не рекомендован SQLite
+    ///    (когерентность кеша страниц между машинами не гарантируется).
+    /// foreign_keys включаем явно: каскадное удаление (записи→значения, коллекция→поля/настройки)
+    /// держится на FK ON DELETE CASCADE, а оно работает только при включенном enforcement.
+    /// </summary>
+    private void ApplyConnectionPragmas(DbConnection conn)
+    {
+        var shared = NetworkPath.IsNetwork(_dbPath);
+        try
+        {
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText =
+                  "PRAGMA foreign_keys=ON;"
+                + (shared ? "PRAGMA busy_timeout=15000;" : "PRAGMA busy_timeout=10000;")
+                + (shared ? "PRAGMA synchronous=FULL;"   : "PRAGMA synchronous=NORMAL;")
+                + "PRAGMA temp_store=MEMORY;"
+                // Объем — по профилю ЭТОГО контекста. Без mmap чтения страниц индексов идут
+                // pread-syscall'ами (импорт 425k в БД с большими коллекциями — минуты вместо
+                // секунд: индексы db_field_values глобальные).
+                + (shared            ? "PRAGMA mmap_size=0;"
+                   : _bulkProfile    ? "PRAGMA mmap_size=2147483648;"
+                                     : "PRAGMA mmap_size=268435456;")
+                + (_bulkProfile ? "PRAGMA cache_size=-524288;"    // ~512 МБ
+                                : "PRAGMA cache_size=-65536;");   // ~64 МБ
+            cmd.ExecuteNonQuery();
+        }
+        catch (Microsoft.Data.Sqlite.SqliteException)
+        {
+            // Прагмы — не повод не дать открыть соединение: без них работа просто менее
+            // терпима к конкуренции. Реальная ошибка все равно вылезет на первом запросе.
+        }
+    }
+
+    /// <summary>
+    /// Обычный профиль объема для этого контекста (~64 МБ кеша). Вызов остается точкой, где
+    /// код заявляет «работаю с этой базой всерьез»; сами прагмы теперь ставятся на каждом
+    /// открытии соединения, поэтому переоткрытие мимо пула их больше не теряет.
+    /// </summary>
+    public void ApplyPerformancePragmas() => SetVolumeProfile(bulk: false);
+
+    /// <summary>
+    /// Профиль прагм для МАССОВЫХ операций (дубль/перенос/удаление/импорт миллионов строк) на
+    /// изолированном фоновом подключении: кеш до ~512 МБ и mmap до 2 ГБ. Глобальные индексы
+    /// (db_field_values, calendar_index) на больших БД (десятки ГБ) не влезают в стандартные
+    /// 64 МБ — каждая вставка/удаление строки деградирует в случайный дисковый ввод-вывод
+    /// (замер на стенде 10 млн записей: дубль коллекции шел ~35 мин). Только для
+    /// короткоживущих фоновых подключений — основному контексту держать сотни МБ кеша весь
+    /// сеанс ни к чему (те же значения использует генератор стенда).
+    /// На сетевом пути mmap остается выключенным — поднимается только страничный кеш.
+    /// </summary>
+    public void ApplyBulkPerformancePragmas() => SetVolumeProfile(bulk: true);
+
+    // Профиль запоминается на контексте: соединение может закрываться и открываться заново
+    // между операциями, и объемные прагмы обязаны восстановиться вместе с ним. Если соединение
+    // уже открыто — применяем немедленно, иначе профиль подхватит ближайшее открытие.
+    private void SetVolumeProfile(bool bulk)
     {
         // PostgreSQL: PRAGMA не существует, тюнинг (shared_buffers, work_mem) — забота сервера;
         // FK enforcement и MVCC включены всегда. Один guard нейтрализует все вызовы из репозиториев.
         if (IsPostgres) return;
 
-        // Сетевой путь (SMB/NFS, см. NetworkPath): другой профиль надежности — БД общая,
-        // с ней могут работать несколько пользователей с разных машин:
-        //  • busy_timeout 15 с — чужие писатели по сети держат замок дольше;
-        //  • synchronous=FULL — журнал DELETE (не WAL, см. DatabaseManager.ApplyJournalMode),
-        //    NORMAL в rollback-режиме допускает порчу при сбое питания сервера;
-        //  • mmap_size=0 — mmap поверх сетевой ФС прямо не рекомендован SQLite
-        //    (когерентность кеша страниц между машинами не гарантируется).
-        var shared = NetworkPath.IsNetwork(_dbPath);
-
-        // Каскадное удаление (записи→значения, коллекция→поля/настройки) держится на FK ON DELETE
-        // CASCADE — а оно работает только при включенном enforcement. Включаем явно на КАЖДОМ
-        // подключении (и фоновом), чтобы batched-удаление и удаление группы/коллекции не оставляли
-        // «осиротевшие» значения/поля. PRAGMA вне транзакции (вызываем сразу после создания контекста).
-        Database.ExecuteSqlRaw("PRAGMA foreign_keys=ON;");
-        Database.ExecuteSqlRaw(shared
-            ? "PRAGMA busy_timeout=15000;"
-            : "PRAGMA busy_timeout=10000;");   // ждать чужого писателя, не падать SQLITE_BUSY
-        Database.ExecuteSqlRaw(shared
-            ? "PRAGMA synchronous=FULL;"
-            : "PRAGMA synchronous=NORMAL;");   // с WAL локально безопасно и быстрее коммитов
-        Database.ExecuteSqlRaw("PRAGMA temp_store=MEMORY;");
-        Database.ExecuteSqlRaw(shared
-            ? "PRAGMA mmap_size=0;"
-            : "PRAGMA mmap_size=268435456;");  // локально: чтение индексов через mmap, а не syscalls
-        Database.ExecuteSqlRaw("PRAGMA cache_size=-65536;");    // ~64 МБ страничного кеша
-    }
-
-    /// <summary>
-    /// Профиль прагм для МАССОВЫХ операций (дубль/перенос/удаление/импорт миллионов строк) на
-    /// изолированном фоновом подключении: поверх <see cref="ApplyPerformancePragmas"/> поднимает
-    /// кеш до ~512 МБ и mmap до 2 ГБ. Глобальные индексы (db_field_values, calendar_index) на
-    /// больших БД (десятки ГБ) не влезают в стандартные 64 МБ — каждая вставка/удаление строки
-    /// деградирует в случайный дисковый ввод-вывод (замер на стенде 10 млн записей: дубль коллекции
-    /// шел ~35 мин). Только для короткоживущих фоновых подключений — основному контексту держать
-    /// сотни МБ кеша весь сеанс ни к чему (те же значения использует генератор стенда).
-    /// </summary>
-    public void ApplyBulkPerformancePragmas()
-    {
-        if (IsPostgres) return;   // см. ApplyPerformancePragmas
-
-        ApplyPerformancePragmas();
-        // На сетевом пути mmap остается выключенным (см. ApplyPerformancePragmas) —
-        // поднимаем только страничный кеш.
-        if (!NetworkPath.IsNetwork(_dbPath))
-            Database.ExecuteSqlRaw("PRAGMA mmap_size=2147483648;");
-        Database.ExecuteSqlRaw("PRAGMA cache_size=-524288;");
+        _bulkProfile = bulk;
+        var conn = Database.GetDbConnection();
+        if (conn.State == System.Data.ConnectionState.Open) ApplyConnectionPragmas(conn);
     }
 
     /// <summary>

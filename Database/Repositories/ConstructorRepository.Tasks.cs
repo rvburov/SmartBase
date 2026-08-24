@@ -536,6 +536,13 @@ public partial class ConstructorRepository
                                     string assigner, string status, DateValue? due)
     {
         Demand(PermAction.CreateRecord, collection);
+
+        // Вся задача — ОДНОЙ транзакцией (см. BeginWrite). Раньше это были 9–11 независимых
+        // коммитов (на первой задаче в коллекции — до 15–20), и каждый на сетевой папке
+        // отдельно запирал файл: чужое чтение в любом из промежутков ловило SQLITE_BUSY.
+        // Заодно задача перестала быть «наполовину созданной» при обрыве.
+        using var scope = BeginWrite();
+
         var collectionId = collection ?? GetOrCreateDefaultCollection();
         var execFieldId  = EnsureTaskCollection(collectionId);
 
@@ -567,6 +574,8 @@ public partial class ConstructorRepository
         var roles = TaskRoleFields(collectionId);
         if (roles.AssignerId is int aid) SetFieldValue(recordId, aid, assigner);
         if (roles.StatusId   is int sid) SetFieldValue(recordId, sid, status);
+
+        scope.Commit();
 
         return new TaskRecord
         {

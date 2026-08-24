@@ -312,39 +312,32 @@ public partial class ConstructorRepository
         if (adopt.Count   > 0) Demand(PermAction.EditField,   collectionId);
         if (create.Count  > 0) Demand(PermAction.CreateField, collectionId);
 
-        using var tx = db.Database.BeginTransaction();
-        try
+        // Своя транзакция, если разметку зовут напрямую (тумблер роли в диалоге свойства);
+        // при вызове «между делом» из AddTaskRecord — присоединяемся к его транзакции,
+        // чтобы создание задачи было ОДНИМ коммитом, а не полутора десятком (см. BeginWrite).
+        using var scope = BeginWrite();
+
+        foreach (var (field, role) in adopt)
         {
-            foreach (var (field, role) in adopt)
-            {
-                // Эксклюзивную роль снимаем с прежнего носителя: пользователь именно
-                // переключает раздел на другой столбец (мог переименовать поля местами).
-                if (IsExclusiveRole(role))
-                    foreach (var other in fields.Where(f => f.Id != field.Id && HasRole(f, role)))
-                        SetRole(other, role, false);
+            // Эксклюзивную роль снимаем с прежнего носителя: пользователь именно
+            // переключает раздел на другой столбец (мог переименовать поля местами).
+            if (IsExclusiveRole(role))
+                foreach (var other in fields.Where(f => f.Id != field.Id && HasRole(f, role)))
+                    SetRole(other, role, false);
 
-                SetRole(field, role, true);
-                // Одноименный список-«Статус» дополняем тремя статусами; поле другого типа
-                // (имя решает, тип нет) остается со своим конфигом.
-                if (role == FieldRole.TaskStatus && field.FieldType is "select" or "status")
-                    field.ConfigJson = MergeSelectOptions(field.ConfigJson, TaskStatusOptions);
+            SetRole(field, role, true);
+            // Одноименный список-«Статус» дополняем тремя статусами; поле другого типа
+            // (имя решает, тип нет) остается со своим конфигом.
+            if (role == FieldRole.TaskStatus && field.FieldType is "select" or "status")
+                field.ConfigJson = MergeSelectOptions(field.ConfigJson, TaskStatusOptions);
 
-                Log("update", "field", field.Name, CollectionNameOf(collectionId));
-            }
-            if (adopt.Count > 0) db.SaveChanges();
-
-            foreach (var role in create) AddField(NewRoleField(collectionId, role));
-
-            tx.Commit();
+            Log("update", "field", field.Name, CollectionNameOf(collectionId));
         }
-        catch
-        {
-            // Откат вернул флаги в БД, но трекер держит их выставленными: следующее чтение
-            // отдало бы «размеченную» роль, которой в базе нет. Сбрасываем — перечитается.
-            tx.Rollback();
-            db.ChangeTracker.Clear();
-            throw;
-        }
+        if (adopt.Count > 0) db.SaveChanges();
+
+        foreach (var role in create) AddField(NewRoleField(collectionId, role));
+
+        scope.Commit();
         return true;
     }
 
