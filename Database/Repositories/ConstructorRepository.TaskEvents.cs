@@ -208,12 +208,17 @@ public partial class ConstructorRepository
     /// Автоочистка очереди при монтировании: события старше <see cref="TaskEventsRetentionDays"/>
     /// суток уже не доставить осмысленно. Свежее подключение в фоне, best-effort — как у
     /// автоочистки журнала.
+    ///
+    /// Возвращает запущенную задачу: ее ДОЛЖЕН дождаться DatabaseManager.Dispose — иначе
+    /// чистка переживает закрытие базы и продолжает держать файл (см. подробности
+    /// в <see cref="ApplyChangeLogRetention"/>). В отличие от журнальной, эта запускается
+    /// всегда, поэтому именно она и держала файл в большинстве случаев.
     /// </summary>
-    public void ApplyTaskEventsRetention()
+    public Task ApplyTaskEventsRetention()
     {
         var cutoff = DateTime.UtcNow.AddDays(-TaskEventsRetentionDays).ToString("o");
         var path   = db.DbPath;
-        _ = Task.Run(() =>
+        return Task.Run(() =>
         {
             try
             {

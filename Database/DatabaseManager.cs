@@ -31,6 +31,10 @@ public sealed partial class DatabaseManager : IDisposable
     public ConstructorRepository Constructor { get; }
     public PermissionService     Permissions { get; }
 
+    // Фоновые чистки, запущенные при монтировании (автоочистка журнала и очереди задач).
+    // Их обязан дождаться Dispose — см. WaitMaintenance.
+    private readonly List<Task> _maintenance = [];
+
     private DatabaseManager(int dbId, string name, string path, string provider, Action<string, double?>? stage)
     {
         DbId     = dbId;
@@ -112,11 +116,12 @@ public sealed partial class DatabaseManager : IDisposable
 
         // Автоочистка журнала по возрасту (политика в db_meta, задается администратором):
         // в фоне на свежем подключении — старт не блокируется.
-        Constructor.ApplyChangeLogRetention(Permissions.RetentionEnabled, Permissions.RetentionMonths);
+        _maintenance.Add(
+            Constructor.ApplyChangeLogRetention(Permissions.RetentionEnabled, Permissions.RetentionMonths));
 
         // Очередь уведомлений по задачам: события старше квартала доставлять уже некому и
         // незачем. Тоже в фоне и тоже best-effort.
-        Constructor.ApplyTaskEventsRetention();
+        _maintenance.Add(Constructor.ApplyTaskEventsRetention());
 
         Categories.SeedDefaults();
     }
@@ -131,7 +136,36 @@ public sealed partial class DatabaseManager : IDisposable
         string provider = "sqlite", Action<string, double?>? stage = null)
         => new(dbId, name, path, provider, stage);
 
-    public void Dispose() => Context.Dispose();
+    public void Dispose()
+    {
+        WaitMaintenance();
+        Context.Dispose();
+    }
+
+    /// <summary>
+    /// Дождаться фоновых чисток, запущенных при монтировании, прежде чем закрывать базу.
+    ///
+    /// Без этого Dispose врал: он возвращал управление, пока чистки еще держали файл своими
+    /// подключениями. Замер до правки — из 12 открытий-закрытий файл оставался занят сразу
+    /// после Dispose семь раз (освобождался в пределах ~700 мс). Настоящая цена не в уборке
+    /// временных файлов, а в перемонтировании сразу после размонтирования — штатном сценарии
+    /// DbHealthMonitor после «связь потеряна»: оно первым делом выполняет PRAGMA journal_mode,
+    /// а она падает SQLITE_BUSY, пока файл держит другое соединение, и монтирование уходит
+    /// на новый круг ретраев.
+    ///
+    /// Ожидание ограничено: чистки — best-effort (свой catch внутри), и застрявшая на
+    /// недоступной сетевой шаре не должна вешать закрытие приложения. Вышли за предел —
+    /// закрываемся как раньше: хуже, чем было, не станет.
+    /// </summary>
+    private void WaitMaintenance()
+    {
+        if (_maintenance.Count == 0) return;
+        try { Task.WaitAll([.. _maintenance], MaintenanceWaitMs); }
+        catch { /* сами задачи best-effort: их отказ уже проглочен внутри */ }
+        _maintenance.Clear();
+    }
+
+    private const int MaintenanceWaitMs = 5_000;
 
     // Режим журнала (персистится в заголовке файла, идемпотентно):
     //  • локально — WAL: параллельные чтения во время записи + быстрые коммиты;

@@ -449,13 +449,21 @@ public partial class ConstructorRepository(AppDbContext db)
     /// месяцев на СВЕЖЕМ подключении в фоне (не блокирует старт, не трогает общий контекст).
     /// Это настроенная администратором политика самой базы (db_meta) — прав не требует.
     /// Best-effort: файл занят/недоступен — очистка повторится при следующем монтировании.
+    ///
+    /// Возвращает запущенную задачу: ее ДОЛЖЕН дождаться DatabaseManager.Dispose, иначе
+    /// чистка переживает закрытие базы и продолжает держать файл. Замер до правки: из 12
+    /// открытий-закрытий файл оставался занят сразу после Dispose семь раз (освобождался
+    /// в пределах ~700 мс). Это ломало не только уборку в тестах: перемонтирование сразу
+    /// после размонтирования (штатный сценарий DbHealthMonitor после «связь потеряна»)
+    /// первым делом выполняет PRAGMA journal_mode, а она падает SQLITE_BUSY, пока файл
+    /// держит другое соединение.
     /// </summary>
-    public void ApplyChangeLogRetention(bool enabled, int months)
+    public Task ApplyChangeLogRetention(bool enabled, int months)
     {
-        if (!enabled || months <= 0) return;
+        if (!enabled || months <= 0) return Task.CompletedTask;
         var cutoff = DateTime.UtcNow.AddMonths(-months).ToString("o");
         var path   = db.DbPath;
-        _ = Task.Run(() =>
+        return Task.Run(() =>
         {
             try
             {
