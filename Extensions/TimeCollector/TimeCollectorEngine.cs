@@ -96,12 +96,12 @@ public static class TimeCollectorEngine
     private static readonly int MaxReaders = Math.Clamp(Environment.ProcessorCount * 2, 4, 16);
 
     // Границы фаз на шкале прогресса ВЫГРУЗКИ В EXCEL: чтение файлов — самая долгая часть на
-    // сетевой папке, запись через ClosedXML — на больших сводах. У выгрузки в коллекцию свои
-    // границы (см. TimeCollectionWriter): фаз там другое число и стоят они иначе.
-    private const double ReadTo   = 0.60;
-    private const double ClearTo  = 0.65;
-    private const double WriteTo  = 0.90;
-    private const double FormatTo = 0.97;
+    // сетевой папке, запись свода — на больших сводах. Отдельной фазы сохранения нет: писатель
+    // потоковый и пишет сразу в результат. У выгрузки в коллекцию свои границы
+    // (см. TimeCollectionWriter): фаз там другое число и стоят они иначе.
+    private const double ReadTo  = 0.60;
+    private const double ClearTo = 0.65;
+    private const double WriteTo = 0.99;
 
     /// <summary>
     /// Прочитать папку с расчетами и собрать свод — общая часть обеих выгрузок. Дальше строки
@@ -165,19 +165,20 @@ public static class TimeCollectorEngine
         var hidden  = HiddenColumns(ordered);
 
         ct.ThrowIfCancellationRequested();
-        progress?.Report(new CollectProgress(null, "Открываю шаблон…", Path.GetFileName(templatePath)));
-        using var book = OpenTemplate(templatePath);
-        var wb = book.Workbook;
-        if (!wb.Worksheets.TryGetWorksheet(TargetSheet, out var ws))
-            throw new TimeCollectException($"Лист «{TargetSheet}» не найден в файле-шаблоне.");
 
-        TimeTableWriter.Fill(wb, ws, ordered, paints, hidden, progress, ct, ClearTo, WriteTo, FormatTo);
-
-        progress?.Report(new CollectProgress(null, "Сохранение…", ""));
+        // Результат пишется СРАЗУ в свой файл, а не собирается в памяти и сохраняется в конце:
+        // писатель потоковый (см. TimeSheetWriter), и отдельной фазы «Сохранение…» у него нет.
         var outputPath = FreePath(outputDir, $"Трудоемкость ({DateTime.Now:yyyy-MM-dd_HH-mm})", ".xlsm");
-        try { wb.SaveAs(outputPath); }
+        try
+        {
+            TimeSheetWriter.Write(templatePath, outputPath, ordered, paints, hidden,
+                                  progress, ct, ClearTo, WriteTo);
+        }
+        catch (TimeCollectException)                { Discard(outputPath); throw; }
+        catch (OperationCanceledException)          { Discard(outputPath); throw; }
         catch (Exception ex)
         {
+            Discard(outputPath);
             throw new TimeCollectException(
                 $"Не удалось сохранить результат:\n{ex.Message}\n" +
                 "Проверьте права на папку и что файл не открыт в Excel.");
@@ -414,14 +415,14 @@ public static class TimeCollectorEngine
     /// </summary>
     public static IReadOnlySet<int> HiddenColumns(IReadOnlyList<TimeRow> rows)
     {
-        var hidden = new HashSet<int> { TimeTableWriter.ColRNum };
+        var hidden = new HashSet<int> { TimeSheetWriter.ColRNum };
         if (rows.Count == 0) return hidden;
 
-        if (rows.All(r => r.Name.Length == 0)) hidden.Add(TimeTableWriter.ColName);
-        if (rows.All(r => r.Deno.Length == 0)) hidden.Add(TimeTableWriter.ColDeno);
-        if (rows.All(r => r.Norm is null && r.NormText.Length == 0)) hidden.Add(TimeTableWriter.ColNorm);
-        if (rows.All(r => r.Efio.Length == 0)) hidden.Add(TimeTableWriter.ColEfio);
-        if (rows.All(r => r.Proj.Length == 0)) hidden.Add(TimeTableWriter.ColProj);
+        if (rows.All(r => r.Name.Length == 0)) hidden.Add(TimeSheetWriter.ColName);
+        if (rows.All(r => r.Deno.Length == 0)) hidden.Add(TimeSheetWriter.ColDeno);
+        if (rows.All(r => r.Norm is null && r.NormText.Length == 0)) hidden.Add(TimeSheetWriter.ColNorm);
+        if (rows.All(r => r.Efio.Length == 0)) hidden.Add(TimeSheetWriter.ColEfio);
+        if (rows.All(r => r.Proj.Length == 0)) hidden.Add(TimeSheetWriter.ColProj);
         return hidden;
     }
 
@@ -441,13 +442,11 @@ public static class TimeCollectorEngine
 
     // ── Шаблон ────────────────────────────────────────────────────────────────
 
-    private static ExcelBook OpenTemplate(string path)
+    /// <summary>Убрать недописанный результат: писатель пишет прямо в файл, поэтому после
+    /// отмены или ошибки на диске остался бы обрезанный .xlsm, который выглядит как готовый
+    /// свод. Ошибку удаления глотаем — важнее показать исходную причину.</summary>
+    private static void Discard(string path)
     {
-        try { return ExcelBook.Open(path); }
-        catch (ExcelOpenException ex)
-        {
-            throw new TimeCollectException(
-                $"Не удалось открыть файл-шаблон:\n{Path.GetFileName(path)}\n{ex.Message}");
-        }
+        try { if (File.Exists(path)) File.Delete(path); } catch { /* best-effort */ }
     }
 }

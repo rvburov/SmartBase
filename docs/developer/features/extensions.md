@@ -33,9 +33,10 @@
   `MarkdownDescription`, `CanRun`, `CreateWindow()`.
 - Реестр: [ExtensionRegistry.cs](../../../Extensions/ExtensionRegistry.cs) — список всех
   расширений (`All`) + поиск `FindById`. Пока регистрируются вручную.
-- Открытие книг Excel: [ExcelBook.cs](../../../Extensions/ExcelBook.cs) — общий для трех
-  расширений, работающих с Excel; чинит книги, которые ClosedXML не открывает из-за битого
-  определенного имени, и объясняет отказ понятным текстом (см. «Открытие книг Excel» ниже).
+- Открытие книг Excel: [ExcelBook.cs](../../../Extensions/ExcelBook.cs) — общий для тех
+  расширений, что читают книги через ClosedXML; чинит книги, которые тот не открывает из-за
+  битого определенного имени, и объясняет отказ понятным текстом (см. «Открытие книг Excel»
+  ниже).
 - **Переименование PDF** ([Extensions/PdfRename/](../../../Extensions/PdfRename/)) — рабочее
   расширение с окном (и образец структуры): [PdfRenameExtension.cs](../../../Extensions/PdfRename/PdfRenameExtension.cs)
   (контракт), [PdfRenamer.cs](../../../Extensions/PdfRename/PdfRenamer.cs) (логика без UI),
@@ -63,7 +64,7 @@
   обход папки, параллельное чтение, порядок и план раскраски),
   [CalcFileReader.cs](../../../Extensions/TimeCollector/CalcFileReader.cs) (чтение одного расчета +
   разбор причин, по которым файл не прочитался),
-  [TimeTableWriter.cs](../../../Extensions/TimeCollector/TimeTableWriter.cs) (запись в шаблон, ClosedXML),
+  [TimeSheetWriter.cs](../../../Extensions/TimeCollector/TimeSheetWriter.cs) (потоковая запись в шаблон),
   [TimeCollectionWriter.cs](../../../Extensions/TimeCollector/TimeCollectionWriter.cs) (запись свода
   коллекцией программы), [TimeCollectorWindow.axaml](../../../Extensions/TimeCollector/TimeCollectorWindow.axaml)
   (окно с журналом).
@@ -156,9 +157,13 @@ public IReadOnlyList<ExtensionSetting> Settings =>
 ### Открытие книг Excel
 
 Книги открывает не каждое расширение само, а общий
-[ExcelBook.cs](../../../Extensions/ExcelBook.cs) — им пользуются все три расширения, работающие с
-Excel (`ProductCompare`, `AssemblyCalc`, `TimeCollector`). Обычный путь — `new XLWorkbook(path)`
-один в один, без копий и накладных расходов.
+[ExcelBook.cs](../../../Extensions/ExcelBook.cs) — им пользуются `ProductCompare` и
+`AssemblyCalc`. Обычный путь — `new XLWorkbook(path)` один в один, без копий и накладных
+расходов.
+
+`TimeCollector` сюда больше не ходит: свод пишется потоково, шаблон читается как zip
+(`TimeSheetWriter`), и битое определенное имя загрузку не роняет в принципе — из результата оно
+просто выбрасывается той же проверкой. ClosedXML это расширение не использует вовсе.
 
 Отдельно разбирается одна поломка, из-за которой ClosedXML не открывает книгу **целиком**:
 непарсящееся определенное имя (`definedNames` в `xl/workbook.xml`). Такие имена заводятся сами —
@@ -423,12 +428,16 @@ Excel (`ProductCompare`, `AssemblyCalc`, `TimeCollector`). Обычный пут
 - [TimeCollectorEngine.cs](../../../Extensions/TimeCollector/TimeCollectorEngine.cs) — обход
   папки (рекурсивно/локально, `EnumerationOptions` со `IgnoreInaccessible`; берутся `*.xlsm`
   с именем **без «$»** — то же условие макроса, оно же отсекает служебные `~$`-файлы),
-  **параллельное чтение в 4 потока** (`Parallel.For`; результат каждого файла кладется в массив
+  **параллельное чтение** в `2 × ядра` потоков, потолок 16 (`Parallel.For`; результат каждого файла кладется в массив
   по его индексу, поэтому порядок сборки не зависит от потоков), разбор имени
   `Проект_ГГГГ.ММ.ДД_ФИО.xlsm`, сортировка и план раскраски. `IProgress`/`CancellationToken`.
-- [TimeTableWriter.cs](../../../Extensions/TimeCollector/TimeTableWriter.cs) — запись в копию
-  шаблона на **ClosedXML**: очистка листа, шапка с объединениями (`SetHeaderData`), данные с
-  4-й строки, границы, высоты, раскраска, скрытие пустых колонок, автофильтр и имя `ALL_DATA`.
+- [TimeSheetWriter.cs](../../../Extensions/TimeCollector/TimeSheetWriter.cs) +
+  [TimeSheetStyles.cs](../../../Extensions/TimeCollector/TimeSheetStyles.cs) — **потоковая**
+  запись свода в копию шаблона: шапка с объединениями (`SetHeaderData`), данные с 4-й строки,
+  границы, раскраска, скрытие пустых колонок, автофильтр и имя `ALL_DATA`. Результат
+  собирается новым zip-архивом, куда части шаблона копируются побайтно, а лист свода пишется
+  на лету — отсюда и скорость, и целость макросов (подробности и замеры —
+  [[../architecture/performance/hot-paths]]).
 - [TimeCollectionWriter.cs](../../../Extensions/TimeCollector/TimeCollectionWriter.cs) — запись
   свода коллекцией программы (см. ниже).
 - Окно [TimeCollectorWindow](../../../Extensions/TimeCollector/TimeCollectorWindow.axaml.cs):

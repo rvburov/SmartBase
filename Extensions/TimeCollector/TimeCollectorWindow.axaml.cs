@@ -27,7 +27,7 @@ namespace SmartBase.Extensions.TimeCollector;
 /// порт макроса) и <b>коллекция программы</b> (база из реестра + название коллекции). Блоки 2 и 3
 /// принадлежат выбранному приемнику и переключаются вместе с ним; общая часть — чтение расчетов.
 /// Логика — в <see cref="TimeCollectorEngine"/> (чтение и сборка свода),
-/// <see cref="TimeTableWriter"/> (Excel) и <see cref="TimeCollectionWriter"/> (коллекция);
+/// <see cref="TimeSheetWriter"/> (Excel) и <see cref="TimeCollectionWriter"/> (коллекция);
 /// прогон идет в фоне (<see cref="Task.Run"/>) и отменяется кнопкой «Остановить» либо
 /// закрытием окна.
 ///

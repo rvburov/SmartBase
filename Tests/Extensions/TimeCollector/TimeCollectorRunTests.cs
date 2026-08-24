@@ -51,6 +51,7 @@ public sealed class TimeCollectorRunTests : IDisposable
         ws.Cell(4, 2).Value = "строка прошлого прогона";
         ws.Cell(4, 2).Style.Fill.BackgroundColor = XLColor.FromArgb(0, 128, 0);
         ws.Cell(99, 2).Value = "далекий хвост";
+        ws.Column(2).Width = 40;                                   // ширина шаблона обязана уцелеть
         wb.AddWorksheet("Настройки").Cell(1, 2).Value = @"\\старый\путь";
         wb.SaveAs(path);
     }
@@ -348,6 +349,109 @@ public sealed class TimeCollectorRunTests : IDisposable
         Assert.Contains("Не удалось открыть файл-шаблон", ex.Message);
         Assert.Contains(Path.GetFileName(_template), ex.Message);
         Assert.Empty(Directory.GetFiles(_out));
+    }
+
+    // ── Целость шаблона ───────────────────────────────────────────────────────
+
+    // Свод пишется потоково: результат собирается НОВЫМ zip-архивом, куда части шаблона
+    // копируются побайтно (см. TimeSheetWriter). Проверяем ровно то, что при этом могло бы
+    // потеряться и чего не видно по значениям ячеек: макросы, привязка кода к листу, чужие
+    // листы и настройки колонок.
+    [Fact]
+    public void Template_Parts_Survive_The_Streaming_Write()
+    {
+        // vbaProject.bin своими байтами: настоящий макрос собрать нечем, а нам важно, что
+        // часть переезжает в результат НЕ ТРОНУТОЙ — по ней Excel и находит код книги.
+        var macro = new byte[] { 0xD0, 0xCF, 0x11, 0xE0, 1, 2, 3, 4, 5 };
+        AddPart(_template, "xl/vbaProject.bin", macro);
+        SetSheetCodeName(_template, "ЛистСвода");
+        Assert.Contains("ЛистСвода", SheetXml(_template));         // страховка самого стенда
+
+        CreateCalc("П_2025.03.14_Иванов.xlsm", ("Изделие", "А", "АА", 1.0));
+        var result = Run();
+
+        Assert.Equal(macro, ReadPart(result.OutputPath, "xl/vbaProject.bin"));
+        Assert.Contains("ЛистСвода", SheetXml(result.OutputPath));
+
+        using var wb = new XLWorkbook(result.OutputPath);
+
+        // Чужой лист шаблона и его содержимое на месте.
+        Assert.Equal(@"\\старый\путь", wb.Worksheet("Настройки").Cell(1, 2).GetString());
+
+        // Ширины колонок — из шаблона: их настраивал тот, кто шаблон делал.
+        var ws = wb.Worksheet(TimeCollectorEngine.TargetSheet);
+        Assert.Equal(40, ws.Column(2).Width, precision: 0);
+    }
+
+    // Лист свода не обязан быть в книге первым: писатель ищет его часть через связи книги
+    // (имя листа → r:id → цель в workbook.xml.rels), а не по имени файла части.
+    [Fact]
+    public void Target_Sheet_Is_Found_Even_When_It_Is_Not_First_In_The_Workbook()
+    {
+        using (var wb = new XLWorkbook())
+        {
+            wb.AddWorksheet("Настройки").Cell(1, 1).Value = "первый лист — чужой";
+            wb.AddWorksheet("Ещё один").Cell(1, 1).Value = "и второй тоже";
+            wb.AddWorksheet(TimeCollectorEngine.TargetSheet).Cell(1, 2).Value = "старая шапка";
+            wb.SaveAs(_template);
+        }
+
+        CreateCalc("П_2025.03.14_Иванов.xlsm", ("Изделие", "А", "АА", 5.0));
+        var result = Run();
+
+        Assert.Equal(1, result.RowCount);
+        using var book = new XLWorkbook(result.OutputPath);
+        Assert.Equal("АА", book.Worksheet(TimeCollectorEngine.TargetSheet).Cell(4, 3).GetString());
+        Assert.Equal("первый лист — чужой", book.Worksheet("Настройки").Cell(1, 1).GetString());
+    }
+
+    // Лист «Таблица» добавляется в стенд первым, поэтому ClosedXML кладет его в sheet1.xml.
+    // Берем часть ПО ИМЕНИ, а не первую подходящую: после пересоздания часть уезжает в конец
+    // архива, и «первая по порядку» оказывается уже другим листом.
+    private const string SheetPart = "xl/worksheets/sheet1.xml";
+
+    private static void AddPart(string path, string entryName, byte[] content)
+    {
+        using var zip = ZipFile.Open(path, ZipArchiveMode.Update);
+        zip.GetEntry(entryName)?.Delete();
+        using var s = zip.CreateEntry(entryName).Open();
+        s.Write(content);
+    }
+
+    private static byte[] ReadPart(string path, string entryName)
+    {
+        using var zip = ZipFile.OpenRead(path);
+        var entry = zip.GetEntry(entryName) ?? throw new InvalidOperationException($"нет части {entryName}");
+        using var s  = entry.Open();
+        using var ms = new MemoryStream();
+        s.CopyTo(ms);
+        return ms.ToArray();
+    }
+
+    // codeName связывает лист с его кодом в макросах: потеряется — отвалятся обработчики
+    // событий листа, а именно ими шаблон открывает расчет по «>>>».
+    private static void SetSheetCodeName(string path, string codeName)
+    {
+        using var zip = ZipFile.Open(path, ZipArchiveMode.Update);
+        var entry = zip.GetEntry(SheetPart) ?? throw new InvalidOperationException("нет " + SheetPart);
+
+        string xml;
+        using (var r = new StreamReader(entry.Open())) xml = r.ReadToEnd();
+        var open = xml.IndexOf("<x:worksheet", StringComparison.Ordinal) >= 0 ? "x:" : "";
+        xml = xml.Replace($"<{open}sheetData",
+                          $"<{open}sheetPr codeName=\"{codeName}\" /><{open}sheetData");
+
+        entry.Delete();
+        using var w = new StreamWriter(zip.CreateEntry(entry.FullName).Open());
+        w.Write(xml);
+    }
+
+    private static string SheetXml(string path)
+    {
+        using var zip = ZipFile.OpenRead(path);
+        var entry = zip.GetEntry(SheetPart) ?? throw new InvalidOperationException("нет " + SheetPart);
+        using var r = new StreamReader(entry.Open());
+        return r.ReadToEnd();
     }
 
     // Дописать в книгу определенные имена мимо ClosedXML: .xlsm — это zip, имена лежат в
