@@ -496,8 +496,10 @@ public partial class TableView : UserControl
     ///
     /// Считаем по РЕАЛИЗОВАННЫМ строкам DataGrid, а не делением offset на высоту строки:
     /// высота строк бывает ручной (разная у каждой), и деление врало бы. Строка попадает
-    /// в диапазон, если хоть частью пересекает область строк (RowResizeLayer лежит ровно
-    /// над ней). Строка «+» (add-row) — не запись, ее пропускаем.
+    /// в диапазон, если хоть частью пересекает область строк (DataGridRowsPresenter —
+    /// ровно она, без шапки колонок и горизонтальной полосы). Строка «+» (add-row) — не
+    /// запись, ее пропускаем; уехавшие с экрана, но оставшиеся в дереве строки отсеивает
+    /// <see cref="IsParkedRow"/>.
     /// </summary>
     public TableViewportRange VisibleRowRange()
     {
@@ -505,18 +507,22 @@ public partial class TableView : UserControl
         var total = Math.Max(0, (_activeRows?.Count ?? 0) - 1);
         if (total == 0) return TableViewportRange.Empty;
 
-        var layer  = RowResizeLayer;
-        var height = layer.Bounds.Height;
-        if (height <= 0) return TableViewportRange.Of(0, 0, total);
+        // Мерим по ОБЛАСТИ СТРОК, а не по всему гриду: RowResizeLayer лежит поверх всего
+        // DataGrid, и по его высоте нижняя граница окна уходила ниже настоящей на шапку
+        // колонок и горизонтальную полосу — примерно на строку.
+        if (RowsPresenter is not { } area || area.Bounds.Height <= 0)
+            return TableViewportRange.Of(0, 0, total);
 
-        var first = 0;
-        var last  = 0;
+        var height = area.Bounds.Height;
+        var first  = 0;
+        var last   = 0;
         foreach (var rowCtrl in RecordsGrid.GetVisualDescendants().OfType<DataGridRow>())
         {
+            if (IsParkedRow(rowCtrl)) continue;
             if (rowCtrl.DataContext is not TableRowVm vm || vm.IsAddRow) continue;
             if (vm.RowNumber <= 0 || rowCtrl.Bounds.Height <= 0) continue;
 
-            var topLeft = rowCtrl.TranslatePoint(new Point(0, 0), layer);
+            var topLeft = rowCtrl.TranslatePoint(new Point(0, 0), area);
             if (topLeft is null) continue;
 
             var top    = topLeft.Value.Y;
@@ -529,6 +535,35 @@ public partial class TableView : UserControl
 
         return TableViewportRange.Of(first, last, total);
     }
+
+    // Область строк грида (без шапки колонок и полос прокрутки) — по ней меряется видимое
+    // окно. Ищем, пока не найдется: до первой раскладки презентера в дереве еще нет.
+    private DataGridRowsPresenter? _rowsPresenter;
+    private DataGridRowsPresenter? RowsPresenter =>
+        _rowsPresenter ??= RecordsGrid.GetVisualDescendants()
+                                      .OfType<DataGridRowsPresenter>()
+                                      .FirstOrDefault();
+
+    /// <summary>
+    /// Строка ушла с экрана, но осталась в визуальном дереве — ее номер и раскладка устарели.
+    ///
+    /// Уехавшую строку DataGrid обычно забирает в переработку и удаляет из дерева
+    /// (<c>UnloadRow</c> → <c>_rowsPresenter.Children.Remove</c>). ДВЕ строки он не
+    /// перерабатывает — с фокусом и в режиме правки (<c>IsRowRecyclable</c> = строка не
+    /// <c>EditingRow</c> и не <c>_focusedRow</c>): такую он просто закрывает пустым
+    /// <c>Clip</c> и оставляет в дереве — с <c>Bounds</c> и <c>DataContext</c> от того
+    /// момента, когда она была видна. Обход дерева ее находит, и без этой проверки она
+    /// приносила в индикатор СТАРЫЙ номер: кликнуть по строке 529 и прыгнуть в конец
+    /// давало «529 – 647 584 из 647 584» вместо номеров последнего экрана. Фокус при этом
+    /// остается в гриде — кнопки нижней панели его не забирают (Avalonia Button по клику
+    /// не фокусируется), поэтому сам DataGrid строку не распаркует.
+    ///
+    /// Признак — непустой <c>Clip</c>: вернувшейся в окно строке
+    /// (<c>InsertDisplayedElement</c>) DataGrid ставит его обратно в null, а сами мы строкам
+    /// <c>Clip</c> нигде не задаем (<c>RoundedClip</c> живет на полях ввода и списках).
+    /// Пришпилено к Avalonia 11.2.x — см. qa-checklists/table-navigation.md.
+    /// </summary>
+    private static bool IsParkedRow(DataGridRow row) => row.Clip is not null;
 
     // Пересчитывает диапазон и поднимает событие, только если он изменился.
     private void RefreshVisibleRange()
@@ -2633,6 +2668,9 @@ public partial class TableView : UserControl
         {
             foreach (var rowCtrl in RecordsGrid.GetVisualDescendants().OfType<DataGridRow>())
             {
+                // Строка с фокусом/в правке, уехавшая за экран, остается в дереве со
+                // старой раскладкой — полоска встала бы у чужой границы (см. IsParkedRow).
+                if (IsParkedRow(rowCtrl)) continue;
                 if (rowCtrl.DataContext is not TableRowVm vm || vm.IsAddRow) continue;
                 if (rowCtrl.Bounds.Height <= 0) continue;
 
