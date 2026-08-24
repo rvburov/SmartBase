@@ -13,6 +13,17 @@ using SmartBase.Utils;
 
 namespace SmartBase.Database.Repositories;
 
+/// <summary>
+/// Одна строка массовой заливки в готовую коллекцию (<see cref="ConstructorRepository.BulkAddRecords"/>):
+/// название записи и значения свойств В ПОРЯДКЕ переданного списка полей. Пустое значение
+/// (или <c>null</c>) ячейку не создает.
+///
+/// Отличие от <see cref="SmartBase.Core.Importers.ImportRow"/>: тот описывает строку ИСТОЧНИКА
+/// импорта, где все свойства текстовые и создаются на лету; здесь схема уже есть, поля могут
+/// быть любых типов, а значения приходят в каноне хранения этих типов.
+/// </summary>
+public sealed record BulkRecordRow(string Title, IReadOnlyList<string?> Values);
+
 public partial class ConstructorRepository(AppDbContext db)
 {
     // Системное поле «Дата» — единственное, что осталось schema-driven.
@@ -952,6 +963,117 @@ public partial class ConstructorRepository(AppDbContext db)
         }
 
         rowsWritten?.Report(written);
+    }
+
+    /// <summary>
+    /// Массовая заливка записей в УЖЕ СОЗДАННУЮ коллекцию — тот же сырой путь, что у импорта
+    /// (<see cref="WriteRowsBatched"/>), но поверх готовой схемы: поля создал вызывающий, и
+    /// типы у них могут быть любые (число, дата, файл), а не только текст.
+    ///
+    /// Зачем не через <c>AddRecord</c> + <c>SetFieldValue</c>: тот путь рассчитан на правку
+    /// ОДНОЙ ячейки руками и на каждое значение делает проверку права, чтение типа поля, поиск
+    /// прежнего значения, строку журнала, проверку событий задач и свой <c>SaveChanges</c> —
+    /// то есть свою транзакцию. На своде трудоемкости в 600 тыс. строк это ~4,2 млн коммитов и
+    /// столько же строк журнала: замер дал 18 строк/с против 13 300 строк/с здесь.
+    ///
+    /// Журнал получает ОДНУ строку с числом записей — как и все пакетные пути.
+    /// Значения по умолчанию для полей типа «пользователь» здесь НЕ проставляются (это делает
+    /// <see cref="AddRecord"/>): у массовой заливки все значения приходят от вызывающего.
+    /// </summary>
+    /// <param name="fieldIds">Свойства коллекции в том порядке, в каком идут значения строки.</param>
+    /// <param name="rows">Строки потоком — в памяти живет только текущий пакет.</param>
+    /// <param name="rowCount">Ожидаемое число строк: шаг <c>Position</c> и размер списка id.</param>
+    /// <returns>Id созданных записей в порядке строк — вызывающему они нужны, чтобы разложить
+    /// оформление (заливку строк и ячеек) пакетами.</returns>
+    public List<int> BulkAddRecords(int collectionId, IReadOnlyList<int> fieldIds,
+        IEnumerable<BulkRecordRow> rows, long rowCount, CancellationToken ct,
+        IProgress<long>? rowsWritten = null, int batchSize = 10_000)
+    {
+        Demand(PermAction.CreateRecord, collectionId);
+
+        // Шаг Position — как у импорта: 1000 оставляет место для вставки строк между
+        // залитыми, но на многомиллионных объемах (idx+1)*1000 переполняет int.
+        var posStep = rowCount > 2_000_000 ? 1L : 1000L;
+        var now     = DateTime.Now.ToString("o");
+        var conn    = db.Database.GetDbConnection();
+
+        using var insRec = conn.CreateCommand();
+        insRec.CommandText =
+            "INSERT INTO db_records (CollectionId, CreatedAt, UpdatedAt, CreatedBy, UpdatedBy, Position, AllDay, Title) " +
+            "VALUES (@cid, @created, @created, @author, @author, @pos, 0, @title) RETURNING Id";
+        var rCid     = AddParam(insRec, "@cid",     System.Data.DbType.Int32);
+        var rCreated = AddParam(insRec, "@created", System.Data.DbType.String);
+        var rAuthor  = AddParam(insRec, "@author",  System.Data.DbType.String);
+        var rPos     = AddParam(insRec, "@pos",     System.Data.DbType.Int64);
+        var rTitle   = AddParam(insRec, "@title",   System.Data.DbType.String);
+        rCid.Value     = collectionId;
+        rCreated.Value = now;
+        rAuthor.Value  = CurrentUser.DisplayName;
+
+        using var insVal = conn.CreateCommand();
+        insVal.CommandText = "INSERT INTO db_field_values (RecordId, FieldId, Value) VALUES (@rid, @fid, @val)";
+        var vRid = AddParam(insVal, "@rid", System.Data.DbType.Int32);
+        var vFid = AddParam(insVal, "@fid", System.Data.DbType.Int32);
+        var vVal = AddParam(insVal, "@val", System.Data.DbType.String);
+
+        // Id записи в модели — int (DbRecordEntity.Id), поэтому сужение из ExecuteScalar
+        // безопасно; long тут только потому, что SQLite отдает INTEGER как Int64.
+        var ids   = new List<int>(rowCount is > 0 and < int.MaxValue ? (int)rowCount : 0);
+        var batch = new List<BulkRecordRow>(Math.Min(batchSize, 4096));
+
+        long written  = 0;
+        var  prepared = false;
+        using var e   = rows.GetEnumerator();
+        var  more     = true;
+
+        while (more)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            batch.Clear();
+            while (batch.Count < batchSize && (more = e.MoveNext()))
+                batch.Add(e.Current);
+            if (batch.Count == 0) break;
+
+            using var tx = db.Database.BeginTransaction();
+            var dbTx = tx.GetDbTransaction();
+            insRec.Transaction = dbTx;
+            insVal.Transaction = dbTx;
+            if (!prepared) { insRec.Prepare(); insVal.Prepare(); prepared = true; }
+
+            var first = ids.Count;
+            for (var i = 0; i < batch.Count; i++)
+            {
+                rPos.Value   = (written + i + 1) * posStep;
+                rTitle.Value = batch[i].Title ?? "";
+                ids.Add(Convert.ToInt32(insRec.ExecuteScalar()!));
+            }
+
+            for (var i = 0; i < batch.Count; i++)
+            {
+                var values = batch[i].Values;
+                vRid.Value = ids[first + i];
+                for (var f = 0; f < fieldIds.Count && f < values.Count; f++)
+                {
+                    // Пустая ячейка строки в db_field_values не заводится: на своде это
+                    // десятки процентов строк таблицы значений, а читается пустое и так пустым.
+                    var value = values[f];
+                    if (string.IsNullOrEmpty(value)) continue;
+                    vFid.Value = fieldIds[f];
+                    vVal.Value = value;
+                    insVal.ExecuteNonQuery();
+                }
+            }
+
+            tx.Commit();
+            written += batch.Count;
+            rowsWritten?.Report(written);
+        }
+
+        var name = CollectionNameOf(collectionId) ?? "";
+        LogNow("create", "record", name, name, count: written);
+        rowsWritten?.Report(written);
+        return ids;
     }
 
     public void UpdateCollection(DbCollection col)
@@ -5330,6 +5452,101 @@ public partial class ConstructorRepository(AppDbContext db)
     }
 
     /// <summary>Фон или цвет текста ячеек; key — «__title__» либо строковый id поля.</summary>
+    /// <summary>
+    /// Массовая раскраска строк — сырой upsert пакетами вместо EF, пара к
+    /// <see cref="BulkAddRecords"/>. <see cref="SetRowStyle"/> на каждый вызов читает
+    /// существующие строки оформления и копит сущности в трекере: на своде трудоемкости
+    /// раскраска 100 тыс. строк занимала 46 из 54 секунд заливки, ровно по этой причине.
+    /// Здесь трекер не участвует, а каждый пакет идет своей транзакцией.
+    ///
+    /// Снимать цвет этим путем нельзя (пустая строка оформления не удаляется) — для точечных
+    /// правок и сброса остается <see cref="SetRowStyle"/>.
+    /// </summary>
+    public void BulkSetRowStyle(int collectionId, IReadOnlyList<int> recordIds, StyleAspect aspect,
+                                string hex, CancellationToken ct, int batchSize = 20_000)
+    {
+        if (recordIds.Count == 0 || !AppPalette.IsHex(hex)) return;
+        Demand(PermAction.EditRecord, collectionId);
+
+        var column = aspect == StyleAspect.Background ? "Bg" : "Fg";
+        var conn   = db.Database.GetDbConnection();
+
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText =
+            $"INSERT INTO record_display (CollectionId, RecordId, Visible, Level, {column}) " +
+            "VALUES (@cid, @rid, @visible, @level, @val) " +
+            $"ON CONFLICT (CollectionId, RecordId) DO UPDATE SET {column} = excluded.{column}";
+        var pCid = AddParam(cmd, "@cid", System.Data.DbType.Int32);
+        var pRid = AddParam(cmd, "@rid", System.Data.DbType.Int32);
+        // Visible/Level — дефолты сущности. Через параметры, а не литералами: bool на SQLite
+        // это 0/1, а на PostgreSQL — boolean, и «1» там бы не прошло.
+        var pVis = AddParam(cmd, "@visible", System.Data.DbType.Boolean);
+        var pLvl = AddParam(cmd, "@level",   System.Data.DbType.Int32);
+        var pVal = AddParam(cmd, "@val",     System.Data.DbType.String);
+        pCid.Value = collectionId;
+        pVis.Value = true;
+        pLvl.Value = 1;
+        pVal.Value = hex;
+
+        RunBatched(cmd, recordIds.Count, batchSize, ct, i => pRid.Value = recordIds[i]);
+    }
+
+    /// <summary>Массовая раскраска ячеек — то же, что <see cref="BulkSetRowStyle"/>, но по
+    /// (запись, колонка): ключ колонки — как в column_meta («__title__» либо id поля строкой).</summary>
+    public void BulkSetCellStyle(int collectionId, IReadOnlyList<(int RecordId, string Key)> cells,
+                                 StyleAspect aspect, string hex, CancellationToken ct,
+                                 int batchSize = 20_000)
+    {
+        if (cells.Count == 0 || !AppPalette.IsHex(hex)) return;
+        Demand(PermAction.EditRecord, collectionId);
+
+        var column = aspect == StyleAspect.Background ? "Bg" : "Fg";
+        var conn   = db.Database.GetDbConnection();
+
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText =
+            $"INSERT INTO cell_style (CollectionId, RecordId, Key, {column}) " +
+            "VALUES (@cid, @rid, @key, @val) " +
+            $"ON CONFLICT (CollectionId, RecordId, Key) DO UPDATE SET {column} = excluded.{column}";
+        var pCid = AddParam(cmd, "@cid", System.Data.DbType.Int32);
+        var pRid = AddParam(cmd, "@rid", System.Data.DbType.Int32);
+        var pKey = AddParam(cmd, "@key", System.Data.DbType.String);
+        var pVal = AddParam(cmd, "@val", System.Data.DbType.String);
+        pCid.Value = collectionId;
+        pVal.Value = hex;
+
+        RunBatched(cmd, cells.Count, batchSize, ct, i =>
+        {
+            pRid.Value = cells[i].RecordId;
+            pKey.Value = cells[i].Key;
+        });
+    }
+
+    // Пакетный прогон подготовленной команды: пакет = транзакция (WAL не разрастается на весь
+    // объем, отмена срабатывает между пакетами), Prepare один раз на все пакеты.
+    private void RunBatched(DbCommand cmd, int count, int batchSize, CancellationToken ct,
+                            Action<int> bind)
+    {
+        var prepared = false;
+        for (var start = 0; start < count; start += batchSize)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            using var tx = db.Database.BeginTransaction();
+            cmd.Transaction = tx.GetDbTransaction();
+            if (!prepared) { cmd.Prepare(); prepared = true; }
+
+            var end = Math.Min(start + batchSize, count);
+            for (var i = start; i < end; i++)
+            {
+                bind(i);
+                cmd.ExecuteNonQuery();
+            }
+
+            tx.Commit();
+        }
+    }
+
     public void SetCellStyle(int collectionId, IReadOnlyList<(int RecordId, string Key)> cells,
                              StyleAspect aspect, string? hex)
     {

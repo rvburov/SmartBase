@@ -169,7 +169,10 @@ internal static class TimeTableWriter
     {
         progress?.Report(new CollectProgress(from, "Оформление…", "высота строк и границы"));
 
-        ws.Rows(first, last).Height = 15;
+        // Высота — ДЕФОЛТОМ листа, а не проходом по строкам: у макроса свод занимал тысячи
+        // строк, а тут сотни тысяч, и Rows(first, last).Height материализует каждую. Шапке
+        // это не мешает — ее строкам высота проставлена явно (WriteHeader) и дефолт перебивает.
+        ws.RowHeight = 15;
 
         var data = ws.Range(first, ColRNum, last, LastCol);
         data.Style.Border.OutsideBorder = XLBorderStyleValues.Thin;

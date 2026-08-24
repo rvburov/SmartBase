@@ -118,9 +118,15 @@ internal static class CalcFileReader
 
             if (reader.FieldCount <= SrcNorm) continue;
 
+            // Иерархический номер проверяем ПЕРВЫМ, хотя условие то же самое (нужны оба
+            // значения). Разница в цене отсева: пустой номер виден по самой ячейке, а разбор
+            // трудоемкости собирает строку и пытается ее разобрать числом. Строк-операций
+            // (у них номера нет) в расчетах подавляющее большинство — в свод из десяти тысяч
+            // строк файла проходит порядка двух сотен.
+            if (IsBlank(reader.GetValue(SrcHierarchy))) continue;
+
             var (norm, normText) = ReadNorm(reader.GetValue(SrcNorm));
             if (norm is null && normText.Length == 0) continue;
-            if (Text(reader.GetValue(SrcHierarchy)).Length == 0) continue;
 
             rows.Add(new TimeRow(
                 RNum:       rowNo - 1,                                   // см. TimeRow.RNum
@@ -138,6 +144,16 @@ internal static class CalcFileReader
     }
 
     // ── Значения ячеек ────────────────────────────────────────────────────────
+
+    /// <summary>Пуста ли ячейка. Отдельно от <see cref="Text"/>: тому ради одной проверки
+    /// пришлось бы собрать строку — на десятках миллионов отсеиваемых строк это заметно.
+    /// Ответы совпадают с <c>Text(value).Length == 0</c> для всех типов значений ридера.</summary>
+    private static bool IsBlank(object? value) => value switch
+    {
+        null     => true,
+        string s => s.Length == 0,
+        _        => false,
+    };
 
     private static string Text(object? value) => value switch
     {

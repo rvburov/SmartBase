@@ -57,18 +57,10 @@ public static class TimeCollectionWriter
     private const string YellowHex = "#FFCC00";
     private const string RedHex    = "#FF3B30";
 
-    // Прогресс постится в UI-поток, поэтому не на каждую запись: на десятках тысяч строк
-    // поток сообщений тормозит диспетчер сильнее самой вставки.
-    private const int ProgressEvery = 25;
-
-    // Как часто чистить трекер изменений EF. Запись идет публичным API (AddRecord +
-    // SetFieldValue), и контекст копит ВСЕ созданные сущности: без сброса DetectChanges на
-    // каждом сохранении обходит растущий граф, и время заливки растет квадратично.
-    private const int ClearTrackerEvery = 200;
-
-    // Стили ставятся пачками: список id уходит в SQL параметрами (IN), и одним вызовом на
-    // десятки тысяч записей запрос упирается в лимит переменных SQLite.
-    private const int StyleBatch = 500;
+    // Размер пакета заливки: пакет = одна транзакция, прогресс постится раз в пакет.
+    // 10 000 — компромисс: реже транзакции, но на своде в 600 тыс. строк это 60 отчетов
+    // о прогрессе, а не 30, и полоса не выглядит застывшей.
+    private const int RecordBatch = 10_000;
 
     // ── 1. Каркас коллекции (общий репозиторий, UI-поток) ─────────────────────
 
@@ -158,52 +150,64 @@ public static class TimeCollectionWriter
         ctx.ApplyBulkPerformancePragmas();
         var repo = new ConstructorRepository(ctx);
 
-        // Шаг позиции 1000 оставляет место для вставки строк; на неправдоподобно больших сводах
-        // падаем до 1, чтобы (i+1)*step не переполнил int (как в импорте).
-        var step = rows.Count > 2_000_000 ? 1 : 1000;
-        var ids  = new int[rows.Count];
+        // Поля — в том порядке, в каком Values отдает Stream: он и есть контракт с BulkAddRecords.
+        int[] fieldIds =
+        [
+            shell.DenoFieldId, shell.NormFieldId, shell.DateFieldId,
+            shell.EfioFieldId, shell.ProjFieldId, shell.FileFieldId,
+        ];
 
-        for (var i = 0; i < rows.Count; i++)
-        {
-            ct.ThrowIfCancellationRequested();
-            var row = rows[i];
-
-            var record = repo.AddRecord(new DbRecord
-            {
-                CollectionId = shell.CollectionId,
-                Title        = row.Name,
-                Position     = (i + 1) * step,
-            });
-            var recordId = record.Id!.Value;
-            ids[i] = recordId;
-
-            if (row.Deno.Length > 0) repo.SetFieldValue(recordId, shell.DenoFieldId, row.Deno);
-
-            var norm = NormValue(row);
-            if (norm.Length > 0) repo.SetFieldValue(recordId, shell.NormFieldId, norm);
-
-            repo.SetFieldValue(recordId, shell.DateFieldId, DateStorage(row.Date));
-
-            if (row.Efio.Length > 0)       repo.SetFieldValue(recordId, shell.EfioFieldId, row.Efio);
-            if (row.Proj.Length > 0)       repo.SetFieldValue(recordId, shell.ProjFieldId, row.Proj);
-            if (row.SourcePath.Length > 0) repo.SetFieldValue(recordId, shell.FileFieldId, row.SourcePath);
-
-            if ((i + 1) % ClearTrackerEvery == 0) ctx.ChangeTracker.Clear();
-
-            if (i % ProgressEvery == 0 || i == rows.Count - 1)
-                progress?.Report(new CollectProgress(
-                    from + (to - from) * (i + 1) / rows.Count, "Запись строк",
-                    $"{i + 1} из {rows.Count}"));
-        }
+        var total = rows.Count;
+        var ids = repo.BulkAddRecords(
+            shell.CollectionId, fieldIds, Stream(rows), total, ct,
+            new SyncProgress<long>(written => progress?.Report(new CollectProgress(
+                from + (to - from) * written / Math.Max(1, total), "Запись строк",
+                $"{written} из {total}"))),
+            RecordBatch);
 
         Paint(repo, shell, ids, paints, progress, ct, to);
         return rows.Count;
     }
 
-    /// <summary>Трудоемкость для ячейки: число — инвариантной строкой (десятичный разделитель
-    /// поля приведет <c>SetFieldValue</c>), нечисловой текст — как есть, как и в Excel-своде.</summary>
+    /// <summary>
+    /// Строки свода → строки массовой заливки, ЛЕНИВО: в памяти живет только текущий пакет,
+    /// а не вторая копия свода на 600 тыс. строк. Порядок значений — тот же, что у списка полей
+    /// в <see cref="FillRecords"/>. Пустые значения BulkAddRecords пропускает сам, поэтому
+    /// условия «писать, только если не пусто» здесь не нужны — кроме даты, которая непуста
+    /// всегда и потому есть у каждой записи (как и раньше).
+    /// </summary>
+    private static IEnumerable<BulkRecordRow> Stream(IReadOnlyList<TimeRow> rows)
+    {
+        foreach (var row in rows)
+            yield return new BulkRecordRow(row.Name,
+            [
+                row.Deno,
+                NormValue(row),
+                DateStorage(row.Date),
+                row.Efio,
+                row.Proj,
+                row.SourcePath,
+            ]);
+    }
+
+    /// <summary>Прогресс, срабатывающий СИНХРОННО в потоке вызова. Штатный
+    /// <see cref="Progress{T}"/> постит в контекст синхронизации, и отчеты о заливке приходили бы
+    /// в UI пачкой после ее конца — полоса стояла бы всю запись.</summary>
+    private sealed class SyncProgress<T>(Action<T> onReport) : IProgress<T>
+    {
+        public void Report(T value) => onReport(value);
+    }
+
+    /// <summary>Трудоемкость для ячейки в каноне хранения поля «Число», нечисловой текст — как
+    /// есть, как и в Excel-своде. Разделитель приводим здесь сами: массовая заливка не читает
+    /// настройки поля (в отличие от <c>SetFieldValue</c>, который делал это запросом на КАЖДОЕ
+    /// значение), а формат поля известен — <see cref="CreateShell"/> заводит его без ConfigJson,
+    /// то есть с форматом по умолчанию.</summary>
     private static string NormValue(TimeRow row) =>
-        row.Norm is { } value ? value.ToString(CultureInfo.InvariantCulture) : row.NormText;
+        row.Norm is { } value
+            ? NumberFormatValue.NormalizeStorage(value.ToString(CultureInfo.InvariantCulture),
+                                                 NumberFormat.Default.DecimalSeparator)
+            : row.NormText;
 
     /// <summary>Дата расчета в каноне хранения поля «дата» (<see cref="DateValue"/>): день
     /// целиком, как его показывает и правит ячейка таблицы.</summary>
@@ -217,7 +221,7 @@ public static class TimeCollectionWriter
     /// таблицы: заливка строки — на строку записи, пометка расхождения — на ячейку «Тр-ть».
     /// Белые строки не трогаем: «без заливки» и есть дефолт таблицы.
     /// </summary>
-    private static void Paint(ConstructorRepository repo, TimeShell shell, int[] ids,
+    private static void Paint(ConstructorRepository repo, TimeShell shell, IReadOnlyList<int> ids,
                               TimeCollectorEngine.RowPaint[] paints,
                               IProgress<CollectProgress>? progress, CancellationToken ct, double from)
     {
@@ -226,7 +230,7 @@ public static class TimeCollectionWriter
         var normRed = new List<(int RecordId, string Key)>();
         var normKey = shell.NormFieldId.ToString();
 
-        var count = Math.Min(ids.Length, paints.Length);
+        var count = Math.Min(ids.Count, paints.Length);
         for (var i = 0; i < count; i++)
         {
             switch (paints[i].Fill)
@@ -239,31 +243,12 @@ public static class TimeCollectionWriter
 
         if (yellow.Count == 0 && red.Count == 0 && normRed.Count == 0) return;
 
+        // Массовые методы, а не поштучные SetRowStyle/SetCellStyle: те на каждый вызов читают
+        // прежнее оформление и копят сущности в трекере EF — на 100 тыс. строк раскраска
+        // занимала 46 из 54 секунд заливки. Коллекция только что создана, снимать нечего.
         progress?.Report(new CollectProgress(from, "Раскраска…", ""));
-        PaintRows(repo, shell.CollectionId, yellow, YellowHex, ct);
-        PaintRows(repo, shell.CollectionId, red, RedHex, ct);
-        PaintCells(repo, shell.CollectionId, normRed, RedHex, ct);
-    }
-
-    private static void PaintRows(ConstructorRepository repo, int collectionId,
-                                  List<int> recordIds, string hex, CancellationToken ct)
-    {
-        for (var i = 0; i < recordIds.Count; i += StyleBatch)
-        {
-            ct.ThrowIfCancellationRequested();
-            repo.SetRowStyle(collectionId, recordIds.GetRange(i, Math.Min(StyleBatch, recordIds.Count - i)),
-                             StyleAspect.Background, hex);
-        }
-    }
-
-    private static void PaintCells(ConstructorRepository repo, int collectionId,
-                                   List<(int RecordId, string Key)> cells, string hex, CancellationToken ct)
-    {
-        for (var i = 0; i < cells.Count; i += StyleBatch)
-        {
-            ct.ThrowIfCancellationRequested();
-            repo.SetCellStyle(collectionId, cells.GetRange(i, Math.Min(StyleBatch, cells.Count - i)),
-                              StyleAspect.Background, hex);
-        }
+        repo.BulkSetRowStyle(shell.CollectionId, yellow, StyleAspect.Background, YellowHex, ct);
+        repo.BulkSetRowStyle(shell.CollectionId, red, StyleAspect.Background, RedHex, ct);
+        repo.BulkSetCellStyle(shell.CollectionId, normRed, StyleAspect.Background, RedHex, ct);
     }
 }
