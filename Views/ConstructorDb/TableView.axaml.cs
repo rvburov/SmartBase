@@ -494,12 +494,14 @@ public partial class TableView : UserControl
     /// <summary>
     /// Номера строк, которые сейчас в окне, и общее число строк среза.
     ///
-    /// Считаем по РЕАЛИЗОВАННЫМ строкам DataGrid, а не делением offset на высоту строки:
-    /// высота строк бывает ручной (разная у каждой), и деление врало бы. Строка попадает
-    /// в диапазон, если хоть частью пересекает область строк (DataGridRowsPresenter —
-    /// ровно она, без шапки колонок и горизонтальной полосы). Строка «+» (add-row) — не
-    /// запись, ее пропускаем; уехавшие с экрана, но оставшиеся в дереве строки отсеивает
-    /// <see cref="IsParkedRow"/>.
+    /// Спрашиваем САМ DataGrid, какие слоты он показывает (<c>DisplayData</c>), а не
+    /// считаем по визуальному дереву: в дереве остаются строки, которые контрол уже снял
+    /// с экрана (разбор — у <see cref="VisibleRowRangeByTree"/>). Деление
+    /// <c>offset / RowHeight</c> не годится в любом случае: высота строк бывает ручной.
+    ///
+    /// Группировки у таблицы нет (<c>VirtualCollectionView.Groups = null</c>), поэтому
+    /// слот = индекс строки, а ее номер = индекс + 1. Последним слотом бывает строка «+» —
+    /// <c>Of()</c> срежет ее по общему числу записей.
     /// </summary>
     public TableViewportRange VisibleRowRange()
     {
@@ -507,8 +509,62 @@ public partial class TableView : UserControl
         var total = Math.Max(0, (_activeRows?.Count ?? 0) - 1);
         if (total == 0) return TableViewportRange.Empty;
 
+        if (DisplayedSlots() is not { } slots) return VisibleRowRangeByTree(total);
+
+        // Ничего не разложено (первый проход, пересборка строк) — число записей уже знаем.
+        if (slots.First < 0 || slots.Last < slots.First) return TableViewportRange.Of(0, 0, total);
+
+        return TableViewportRange.Of(slots.First + 1, slots.Last + 1, total);
+    }
+
+    // Диапазон слотов, показанных гридом сейчас: DisplayData.FirstScrollingSlot и
+    // LastScrollingSlot — то, по чему DataGrid и раскладывает строки (по ним же он сам
+    // отвечает на SlotIsDisplayed). Доступ рефлексией: DisplayData internal, версия Avalonia
+    // зафиксирована 11.2.x (как VerticalScrollBar/ProcessVerticalScroll выше).
+    private static readonly PropertyInfo? DisplayDataProp =
+        typeof(DataGrid).GetProperty("DisplayData",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+    private static PropertyInfo? _firstSlotProp;
+    private static PropertyInfo? _lastSlotProp;
+
+    private (int First, int Last)? DisplayedSlots()
+    {
+        // Public тоже нужен: класс DataGridDisplayData internal, а свойства в нем public —
+        // по одному NonPublic рефлексия их не находит (см. DataGridInternalsTests).
+        const BindingFlags SlotFlags =
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+
+        if (DisplayDataProp?.GetValue(RecordsGrid) is not { } data) return null;
+
+        _firstSlotProp ??= data.GetType().GetProperty("FirstScrollingSlot", SlotFlags);
+        _lastSlotProp  ??= data.GetType().GetProperty("LastScrollingSlot",  SlotFlags);
+
+        if (_firstSlotProp?.GetValue(data) is not int first) return null;
+        if (_lastSlotProp ?.GetValue(data) is not int last)  return null;
+        return (first, last);
+    }
+
+    /// <summary>
+    /// Запасной счет диапазона — по реализованным строкам из визуального дерева. Работает,
+    /// только пока рефлексия к <c>DisplayData</c> жива; после апгрейда Avalonia проверять
+    /// оба пути (qa-checklists/table-navigation.md).
+    ///
+    /// ПОЧЕМУ ЭТО ЛИШЬ ЗАПАСНОЙ ПУТЬ. Обход дерева находит и строки, которых на экране уже
+    /// нет. Прыжок «в начало/в конец» идет через <c>ResetDisplayedRows</c> →
+    /// <c>DisplayData.ClearElements</c>, а тот только помечает старые строки
+    /// переработанными и ЧИСТИТ стек переработки — из <c>_rowsPresenter.Children</c> он их
+    /// не убирает. Переиспользовать их уже некому (новые строки создаются с нуля), заново
+    /// раскладывать тоже: <c>DataGridRowsPresenter.ArrangeOverride</c> ходит только по
+    /// <c>DisplayData.GetScrollingElements()</c>. Строки-сироты так и висят в дереве со
+    /// старыми <c>Bounds</c> и старым <c>DataContext</c>; на экране их не видно только
+    /// потому, что новые строки добавлены в <c>Children</c> позже и рисуются поверх.
+    /// Отсюда и брались «71 – 456 002» после прыжка в конец и «1 – 455 774» после прыжка
+    /// в начало: <c>last</c> от настоящих строк, <c>first</c> от сироты (и наоборот).
+    /// </summary>
+    private TableViewportRange VisibleRowRangeByTree(int total)
+    {
         // Мерим по ОБЛАСТИ СТРОК, а не по всему гриду: RowResizeLayer лежит поверх всего
-        // DataGrid, и по его высоте нижняя граница окна уходила ниже настоящей на шапку
+        // DataGrid, и по его высоте нижняя граница окна уходила бы ниже настоящей на шапку
         // колонок и горизонтальную полосу — примерно на строку.
         if (RowsPresenter is not { } area || area.Bounds.Height <= 0)
             return TableViewportRange.Of(0, 0, total);
@@ -518,7 +574,7 @@ public partial class TableView : UserControl
         var last   = 0;
         foreach (var rowCtrl in RecordsGrid.GetVisualDescendants().OfType<DataGridRow>())
         {
-            if (IsParkedRow(rowCtrl)) continue;
+            if (IsStaleRow(rowCtrl)) continue;
             if (rowCtrl.DataContext is not TableRowVm vm || vm.IsAddRow) continue;
             if (vm.RowNumber <= 0 || rowCtrl.Bounds.Height <= 0) continue;
 
@@ -536,34 +592,37 @@ public partial class TableView : UserControl
         return TableViewportRange.Of(first, last, total);
     }
 
-    // Область строк грида (без шапки колонок и полос прокрутки) — по ней меряется видимое
-    // окно. Ищем, пока не найдется: до первой раскладки презентера в дереве еще нет.
+    // Область строк грида (без шапки колонок и полос прокрутки). Ищем, пока не найдется:
+    // до первой раскладки презентера в дереве еще нет.
     private DataGridRowsPresenter? _rowsPresenter;
     private DataGridRowsPresenter? RowsPresenter =>
         _rowsPresenter ??= RecordsGrid.GetVisualDescendants()
                                       .OfType<DataGridRowsPresenter>()
                                       .FirstOrDefault();
 
+    private static readonly PropertyInfo? RowIsRecycledProp =
+        typeof(DataGridRow).GetProperty("IsRecycled",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+
     /// <summary>
-    /// Строка ушла с экрана, но осталась в визуальном дереве — ее номер и раскладка устарели.
+    /// Строка ушла с экрана, но осталась в визуальном дереве — ее номер и раскладка от
+    /// прошлой позиции. Таких две породы, и обе надо пропускать при обходе дерева:
     ///
-    /// Уехавшую строку DataGrid обычно забирает в переработку и удаляет из дерева
-    /// (<c>UnloadRow</c> → <c>_rowsPresenter.Children.Remove</c>). ДВЕ строки он не
-    /// перерабатывает — с фокусом и в режиме правки (<c>IsRowRecyclable</c> = строка не
-    /// <c>EditingRow</c> и не <c>_focusedRow</c>): такую он просто закрывает пустым
-    /// <c>Clip</c> и оставляет в дереве — с <c>Bounds</c> и <c>DataContext</c> от того
-    /// момента, когда она была видна. Обход дерева ее находит, и без этой проверки она
-    /// приносила в индикатор СТАРЫЙ номер: кликнуть по строке 529 и прыгнуть в конец
-    /// давало «529 – 647 584 из 647 584» вместо номеров последнего экрана. Фокус при этом
-    /// остается в гриде — кнопки нижней панели его не забирают (Avalonia Button по клику
-    /// не фокусируется), поэтому сам DataGrid строку не распаркует.
+    /// • <b>сирота</b> после прыжка к краю — помечена <c>IsRecycled</c> и брошена в
+    ///   <c>Children</c> (см. <see cref="VisibleRowRangeByTree"/>);
+    /// • <b>паркованная</b> строка с фокусом или в режиме правки — их DataGrid не
+    ///   перерабатывает (<c>IsRowRecyclable</c> = строка не <c>EditingRow</c> и не
+    ///   <c>_focusedRow</c>), а закрывает пустым <c>Clip</c> и оставляет в дереве. Сам он
+    ///   ее не распаркует: фокус остается в гриде — кнопки нижней панели его не забирают
+    ///   (Avalonia Button по клику не фокусируется), поэтому <c>DataGrid_LostFocus</c> →
+    ///   <c>ResetFocusedRow</c> не срабатывает.
     ///
-    /// Признак — непустой <c>Clip</c>: вернувшейся в окно строке
-    /// (<c>InsertDisplayedElement</c>) DataGrid ставит его обратно в null, а сами мы строкам
-    /// <c>Clip</c> нигде не задаем (<c>RoundedClip</c> живет на полях ввода и списках).
-    /// Пришпилено к Avalonia 11.2.x — см. qa-checklists/table-navigation.md.
+    /// Живой строке <c>Clip</c> снимают при возвращении в окно
+    /// (<c>InsertDisplayedElement</c>), а сами мы строкам <c>Clip</c> нигде не задаем
+    /// (<c>RoundedClip</c> живет на полях ввода и списках).
     /// </summary>
-    private static bool IsParkedRow(DataGridRow row) => row.Clip is not null;
+    private static bool IsStaleRow(DataGridRow row) =>
+        row.Clip is not null || RowIsRecycledProp?.GetValue(row) is true;
 
     // Пересчитывает диапазон и поднимает событие, только если он изменился.
     private void RefreshVisibleRange()
@@ -2669,8 +2728,8 @@ public partial class TableView : UserControl
             foreach (var rowCtrl in RecordsGrid.GetVisualDescendants().OfType<DataGridRow>())
             {
                 // Строка с фокусом/в правке, уехавшая за экран, остается в дереве со
-                // старой раскладкой — полоска встала бы у чужой границы (см. IsParkedRow).
-                if (IsParkedRow(rowCtrl)) continue;
+                // старой раскладкой — полоска встала бы у чужой границы (см. IsStaleRow).
+                if (IsStaleRow(rowCtrl)) continue;
                 if (rowCtrl.DataContext is not TableRowVm vm || vm.IsAddRow) continue;
                 if (rowCtrl.Bounds.Height <= 0) continue;
 
