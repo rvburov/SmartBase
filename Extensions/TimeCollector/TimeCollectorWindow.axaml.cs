@@ -390,7 +390,10 @@ public partial class TimeCollectorWindow : Window
         LogLine("");
         LogLine($"❌ {message}");
         RenderLog();
-        SetStatus(message, "BrushRed");
+
+        // В статус — только первая строка: подробности (пути, что проверить) уже целиком
+        // в журнале, а узкая полоска статуса на многострочном тексте расползается.
+        SetStatus(message.Split('\n')[0], "BrushRed");
     }
 
     private async Task OfferOpenFolder(string path)

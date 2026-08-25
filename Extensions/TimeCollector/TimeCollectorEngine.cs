@@ -4,12 +4,16 @@ using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using ClosedXML.Excel;
+using Serilog;
 using SmartBase.Utils;
 
 namespace SmartBase.Extensions.TimeCollector;
 
-/// <summary>Ошибка сборки свода с дружелюбным текстом — показывается в статусе окна.</summary>
-public sealed class TimeCollectException(string message) : Exception(message);
+/// <summary>Ошибка сборки свода с дружелюбным текстом — показывается в статусе окна.
+/// <paramref name="inner"/> — исходный сбой: текст пользователю дружелюбный, но в logs.db
+/// должна попасть настоящая причина со стеком, иначе разбирать нечего.</summary>
+public sealed class TimeCollectException(string message, Exception? inner = null)
+    : Exception(message, inner);
 
 /// <summary>
 /// Строка свода. <paramref name="RNum"/> — номер строки исходного листа «Расшифровка» МИНУС
@@ -195,9 +199,9 @@ public static class TimeCollectorEngine
         catch (Exception ex)
         {
             Discard(outputPath);
-            throw new TimeCollectException(
-                $"Не удалось сохранить результат:\n{ex.Message}\n" +
-                "Проверьте права на папку и что файл не открыт в Excel.");
+            Log.Error(ex, "Сводная трудоемкость: свод не записан. Результат {Output:l}, шаблон {Template:l}",
+                      outputPath, templatePath);
+            throw new TimeCollectException(SaveFailure(ex, templatePath, outputPath), ex);
         }
 
         progress?.Report(new CollectProgress(1, "Готово", ""));
@@ -460,6 +464,30 @@ public static class TimeCollectorEngine
     }
 
     // ── Шаблон ────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Почему не записался свод. Общий текст «проверьте права и что файл не открыт» верен не
+    /// всегда: писатель ВСЕ ВРЕМЯ ЗАПИСИ читает шаблон (части книги копируются из него на лету),
+    /// и обрыв связи с папкой шаблона выглядит как сбой сохранения. Поэтому после сбоя смотрим,
+    /// что из двух путей пропало, — вопрос «куда смотреть» решается прямо в сообщении.
+    /// </summary>
+    private static string SaveFailure(Exception ex, string templatePath, string outputPath)
+    {
+        var head = $"Не удалось сохранить результат:\n{outputPath}\n{ex.Message}";
+
+        if (!File.Exists(templatePath))
+            return $"{head}\n\nФайл-шаблон стал недоступен уже во время записи:\n{templatePath}\n" +
+                   "Проверьте связь с папкой, где он лежит (сетевой диск отваливается на долгих " +
+                   "прогонах), и что его не пересохранили в Excel. Копия шаблона на локальном " +
+                   "диске такой обрыв исключает.";
+
+        var dir = Path.GetDirectoryName(outputPath);
+        if (dir is not null && !Directory.Exists(dir))
+            return $"{head}\n\nПапка для результата исчезла во время записи:\n{dir}";
+
+        return $"{head}\n\nПроверьте права на папку, свободное место и что файл не открыт в Excel. " +
+               "Свод содержит макросы шаблона — его мог забрать антивирус.";
+    }
 
     /// <summary>Убрать недописанный результат: писатель пишет прямо в файл, поэтому после
     /// отмены или ошибки на диске остался бы обрезанный .xlsm, который выглядит как готовый
