@@ -36,6 +36,14 @@ internal static class TimeSheetWriter
     private const string NsRel = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
     private const string NsPkg = "http://schemas.openxmlformats.org/package/2006/relationships";
 
+    /// <summary>
+    /// Неймспейс «совместимости разметки». Через него Excel помечает свои поздние добавки:
+    /// корень листа объявляет <c>mc:Ignorable="x14ac xr xr2"</c>, и только поэтому атрибуты
+    /// вроде <c>xr:uid</c> на гиперссылках и фильтрах не считаются ошибкой. Список обязан
+    /// переехать в результат вместе с элементами, которые им пользуются, — см. <see cref="SheetShell"/>.
+    /// </summary>
+    private const string NsMc = "http://schemas.openxmlformats.org/markup-compatibility/2006";
+
     // Колонки свода (1-based) — те же константы, что COL_* в модуле TimeCollector.
     internal const int ColRNum = 1;   // номер строки листа «Расшифровка» − 1, колонка скрытая
     internal const int ColName = 2;
@@ -129,8 +137,9 @@ internal static class TimeSheetWriter
 
         // Что именно перенесено из шаблона — в лог: если Excel забракует результат, по этой
         // строке видно, на что смотреть, и не приходится гадать по составу чужой книги.
-        Log.Information("Сводная трудоемкость: обвязка листа шаблона — {Parts:l}",
-                        shell.Others.Count == 0 ? "пусто" : string.Join(", ", shell.Others.Select(o => o.Name)));
+        Log.Information("Сводная трудоемкость: обвязка листа шаблона — {Parts:l}; не перенесено — {Dropped:l}",
+                        shell.Others.Count  == 0 ? "пусто" : string.Join(" ", shell.Others.Select(o => o.Name)),
+                        shell.Dropped.Count == 0 ? "ничего" : string.Join(" ", shell.Dropped));
 
         using var outFile = new FileStream(outputPath, FileMode.Create, FileAccess.Write, FileShare.None);
         using var target  = new ZipArchive(outFile, ZipArchiveMode.Create);
@@ -186,16 +195,23 @@ internal static class TimeSheetWriter
         var entry = zip.GetEntry(sheetPath)
             ?? throw new TimeCollectException($"В записанном своде нет части {sheetPath}.");
 
-        using var s = entry.Open();
-        using var r = XmlReader.Create(s, new XmlReaderSettings { IgnoreWhitespace = true });
+        using var s      = entry.Open();
+        using var counted = new LineCounted(s);
+        using var r      = XmlReader.Create(counted, new XmlReaderSettings { IgnoreWhitespace = true });
 
         var sheetRow = 0;
         var seen     = 0;
+        var parts    = new List<string>();
         try
         {
             while (r.Read())
             {
-                if (r.NodeType != XmlNodeType.Element || r.LocalName != "row") continue;
+                if (r.NodeType != XmlNodeType.Element) continue;
+
+                // Верхний уровень листа — это и есть его состав в том порядке, в каком его
+                // видит Excel: как раз по нему он и судит, читаемый лист или нет.
+                if (r.Depth == 1) parts.Add(r.LocalName);
+                if (r.LocalName != "row") continue;
 
                 // Номер строки листа — чтобы назвать не только позицию в XML (она ни о чем
                 // не говорит), но и расчет, чья строка оказалась последней прочитанной.
@@ -210,10 +226,48 @@ internal static class TimeSheetWriter
                 $"{NL}{ex.Message}{NL}{RowHint(rows, sheetRow)}", ex);
         }
 
+        // Строки XML считаются потому, что об отказе Excel сообщает НОМЕРОМ СТРОКИ в части
+        // листа. Сам лист пишется в одну строку, а переводы строк в нем — из текста ячеек
+        // (наименования из CAD часто многострочные), и без этого числа номер из сообщения
+        // Excel не с чем сопоставить: хвост листа или середина свода.
+        Log.Information("Сводная трудоемкость: лист результата — {Parts:l}; строк XML: {Lines}",
+                        string.Join(" ", parts), counted.Lines);
+
         var expected = rows.Count + TopIndent;
         if (seen != expected)
             throw new TimeCollectException(
                 $"В записанном своде {seen} строк вместо {expected} — лист неполон.");
+    }
+
+    /// <summary>Поток, считающий переводы строк по дороге: отдельный проход по листу
+    /// в сотни мегабайт стоил бы дороже всей проверки.</summary>
+    private sealed class LineCounted(Stream inner) : Stream
+    {
+        internal long Lines { get; private set; } = 1;
+
+        public override int Read(byte[] buffer, int offset, int count)
+        {
+            var read = inner.Read(buffer, offset, count);
+            for (var i = offset; i < offset + read; i++)
+                if (buffer[i] == (byte)'\n') Lines++;
+            return read;
+        }
+
+        public override bool CanRead  => true;
+        public override bool CanSeek  => false;
+        public override bool CanWrite => false;
+        public override long Length   => throw new NotSupportedException();
+
+        public override long Position
+        {
+            get => throw new NotSupportedException();
+            set => throw new NotSupportedException();
+        }
+
+        public override void Flush() { }
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
     }
 
     // Какая строка свода и какой расчет стоят за строкой листа: XML-позиция сама по себе
@@ -338,9 +392,21 @@ internal static class TimeSheetWriter
 
     // ── Обвязка листа ─────────────────────────────────────────────────────────
 
-    /// <summary>Все, что на листе НЕ строки: элементы шаблона как есть (в порядке появления)
-    /// плюс отдельно ширины колонок — их мы не выбрасываем, а лишь помечаем скрытые.</summary>
-    private sealed record SheetShell(List<(string Name, XElement Xml)> Others, XElement? Cols);
+    /// <summary>
+    /// Все, что на листе НЕ строки: элементы шаблона как есть (в порядке появления) плюс
+    /// отдельно ширины колонок — их мы не выбрасываем, а лишь помечаем скрытые.
+    ///
+    /// <paramref name="Namespaces"/> и <paramref name="Ignorable"/> — объявления с КОРНЯ листа
+    /// шаблона. Без них элемент, принесенный из шаблона, приезжает со своим
+    /// <c>xmlns:xr="…"</c>, но без разрешения его игнорировать — и Excel считает лист
+    /// поврежденным, хотя XML безупречен. <paramref name="Dropped"/> — что не поехало вовсе.
+    /// </summary>
+    private sealed record SheetShell(
+        List<(string Name, XElement Xml)> Others,
+        XElement? Cols,
+        List<(string Prefix, string Uri)> Namespaces,
+        string? Ignorable,
+        List<string> Dropped);
 
     /// <summary>
     /// Порядок элементов листа, заданный схемой (CT_Worksheet). Excel читает лист ПО СХЕМЕ:
@@ -358,17 +424,16 @@ internal static class TimeSheetWriter
         "conditionalFormatting", "dataValidations", "hyperlinks", "printOptions",
         "pageMargins", "pageSetup", "headerFooter", "rowBreaks", "colBreaks",
         "customProperties", "cellWatches", "ignoredErrors", "smartTags", "drawing",
-        "drawingHF", "picture", "oleObjects", "controls", "webPublishItems", "tableParts",
-        "extLst",
+        "legacyDrawing", "legacyDrawingHF", "drawingHF", "picture", "oleObjects", "controls",
+        "webPublishItems", "tableParts", "extLst",
     ];
 
-    /// <summary>Место элемента в схемном порядке. Незнакомое имя ставим предпоследним —
-    /// перед <c>extLst</c>, который обязан замыкать лист.</summary>
-    private static int Rank(string name)
-    {
-        var i = Array.IndexOf(SheetOrder, name);
-        return i >= 0 ? i : SheetOrder.Length - 1;
-    }
+    /// <summary>Место элемента в схемном порядке; −1 — такого элемента у листа не бывает.
+    /// Раньше незнакомое имя писалось в конец листа, и это было ровно то, чего схема не
+    /// прощает: <c>legacyDrawing</c> (им держатся примечания и кнопки на листе) в списке
+    /// не значился и уезжал за <c>tableParts</c> — лист становился нечитаемым. Теперь
+    /// список полон, а то, что в него все же не попало, лучше не переносить вовсе.</summary>
+    private static int Rank(string name) => Array.IndexOf(SheetOrder, name);
 
     // Элементы, которые формируются заново: из шаблона их брать не нужно.
     private static readonly HashSet<string> Rebuilt =
@@ -376,16 +441,23 @@ internal static class TimeSheetWriter
 
     private static SheetShell ReadSheetShell(ZipArchive zip, string sheetPath)
     {
-        var others = new List<(string Name, XElement Xml)>();
-        XElement? cols = null;
+        var others  = new List<(string Name, XElement Xml)>();
+        var spaces  = new List<(string Prefix, string Uri)>();
+        var dropped = new List<string>();
+        XElement? cols      = null;
+        string?   ignorable = null;
+
+        SheetShell Done() => new(others, cols, spaces, ignorable, dropped);
 
         var entry = zip.GetEntry(sheetPath);
-        if (entry is null) return new SheetShell(others, cols);
+        if (entry is null) return Done();
 
         using var s = entry.Open();
         using var r = XmlReader.Create(s, new XmlReaderSettings { IgnoreWhitespace = true });
-        if (!r.ReadToDescendant("worksheet", Ns)) return new SheetShell(others, cols);
-        if (r.IsEmptyElement) return new SheetShell(others, cols);
+        if (!r.ReadToDescendant("worksheet", Ns)) return Done();
+
+        ReadRoot(r, spaces, out ignorable);
+        if (r.IsEmptyElement) return Done();
         r.ReadStartElement();
 
         // Читатель двигают САМИ операции: и Skip, и ReadOuterXml оставляют его на следующем
@@ -409,17 +481,49 @@ internal static class TimeSheetWriter
                 default:
                     if (Rebuilt.Contains(r.LocalName)) { r.Skip(); break; }
                     var name = r.LocalName;
-                    var xml  = r.ReadOuterXml();
+
+                    // Элемента нет в схеме листа — переносить его некуда: где ни поставь,
+                    // получится лист, который Excel забракует целиком (см. Rank).
+                    if (Rank(name) < 0) { dropped.Add(name); r.Skip(); break; }
+
+                    var xml = r.ReadOuterXml();
                     // Разбираем сразу: записанный через WriteTo элемент берет объявления
                     // неймспейсов из КОНТЕКСТА писателя, а сырая строка тащит за собой
                     // «x:»-префиксы и собственные xmlns на каждом узле. Формально это тот же
                     // неймспейс, но Excel к такому листу придирчив.
                     if (TryParse(xml, out var parsed)) others.Add((name, parsed));
+                    else                               dropped.Add(name);
                     break;
             }
         }
 
-        return new SheetShell(others, cols);
+        return Done();
+    }
+
+    /// <summary>
+    /// Объявления с корня <c>&lt;worksheet&gt;</c> шаблона. Свои два (лист и связи) пропускаем —
+    /// их пишем сами; все прочее переносим как есть вместе с <c>mc:Ignorable</c>, иначе
+    /// принесенный из шаблона элемент окажется с атрибутом в неизвестном Excel неймспейсе
+    /// и без разрешения его не заметить.
+    /// </summary>
+    private static void ReadRoot(XmlReader r, List<(string Prefix, string Uri)> spaces, out string? ignorable)
+    {
+        ignorable = null;
+        if (!r.HasAttributes) return;
+
+        for (var more = r.MoveToFirstAttribute(); more; more = r.MoveToNextAttribute())
+        {
+            if (r.Prefix == "xmlns")
+            {
+                if (r.Value == Ns) continue;                              // лист — наш default
+                if (r.LocalName == "r" && r.Value == NsRel) continue;     // связи — пишем сами
+                spaces.Add((r.LocalName, r.Value));
+            }
+            else if (r.NamespaceURI == NsMc && r.LocalName == "Ignorable")
+                ignorable = r.Value;
+        }
+
+        r.MoveToElement();
     }
 
     // ── Лист ──────────────────────────────────────────────────────────────────
@@ -443,6 +547,13 @@ internal static class TimeSheetWriter
         w.WriteStartDocument(standalone: true);
         w.WriteStartElement("worksheet", Ns);
         w.WriteAttributeString("xmlns", "r", null, NsRel);
+
+        // Объявления шаблона идут ПЕРЕД mc:Ignorable: список ссылается на префиксы, и без
+        // объявленного «mc» его самого не записать.
+        foreach (var (prefix, uri) in shell.Namespaces)
+            w.WriteAttributeString("xmlns", prefix, null, uri);
+        if (!string.IsNullOrEmpty(shell.Ignorable))
+            w.WriteAttributeString("Ignorable", NsMc, shell.Ignorable);
 
         // Куски листа — и шаблонные, и наши — складываются в один список и пишутся строго
         // по схемному порядку (см. SheetOrder). Порядок между равными сохраняется по seq:

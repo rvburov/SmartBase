@@ -510,6 +510,70 @@ public sealed class TimeCollectorRunTests : IDisposable
         Assert.Equal(40, ws.Column(2).Width, precision: 0);
     }
 
+    // Обвязка листа переезжает из шаблона в результат, и переезжать она обязана ЦЕЛИКОМ:
+    // вместе с объявлениями неймспейсов с корня листа и списком mc:Ignorable. Excel помечает
+    // чужими неймспейсами свои поздние добавки (xr:uid на гиперссылках, фильтрах, примечаниях)
+    // и разрешает их не замечать ровно этим списком — элемент, принесенный без него, делает
+    // лист нечитаемым, хотя XML безупречен. Заодно проверяется схемный порядок: legacyDrawing
+    // (им держатся примечания и кнопки на листе) обязан идти РАНЬШЕ tableParts, а элементу,
+    // которого у листа не бывает, в результате не место вовсе.
+    [Fact]
+    public void Sheet_Namespaces_And_Late_Elements_Survive_In_Schema_Order()
+    {
+        DecorateSheet(_template);
+
+        CreateCalc("П_2025.03.14_Иванов.xlsm", ("Изделие", "А", "АА", 1.0));
+        var xml = SheetXml(Run().OutputPath);
+
+        Assert.Contains("mc:Ignorable=\"xr\"", xml);
+        Assert.Contains("xr:uid", xml);
+
+        var legacy = xml.IndexOf("legacyDrawing", StringComparison.Ordinal);
+        var tables = xml.IndexOf("tableParts", StringComparison.Ordinal);
+        Assert.True(legacy > 0 && tables > 0, "обвязка шаблона до результата не доехала");
+        Assert.True(legacy < tables, "legacyDrawing уехал за tableParts — Excel забракует лист");
+
+        Assert.DoesNotContain("mysteryPart", xml);
+    }
+
+    // Дописать в лист шаблона то, чего ClosedXML не пишет: объявления с корня, гиперссылку
+    // с «поздним» атрибутом и хвостовые элементы. r:id у legacyDrawing нет намеренно —
+    // стенд смотрит только на МЕСТО элемента, а связь пришлось бы заводить настоящую.
+    private static void DecorateSheet(string path)
+    {
+        const string mc = "http://schemas.openxmlformats.org/markup-compatibility/2006";
+        const string xr = "http://schemas.microsoft.com/office/spreadsheetml/2014/revision";
+
+        using var zip = ZipFile.Open(path, ZipArchiveMode.Update);
+        var entry = zip.GetEntry(SheetPart) ?? throw new InvalidOperationException("нет " + SheetPart);
+
+        string xml;
+        using (var r = new StreamReader(entry.Open())) xml = r.ReadToEnd();
+
+        var p = xml.Contains("<x:worksheet", StringComparison.Ordinal) ? "x:" : "";
+
+        // ClosedXML часть объявлений пишет сам — дописываем только недостающие, иначе
+        // получится дубликат атрибута и стенд развалится раньше проверки.
+        var add = "";
+        if (!xml.Contains("xmlns:mc=", StringComparison.Ordinal)) add += $" xmlns:mc=\"{mc}\"";
+        if (!xml.Contains("xmlns:xr=", StringComparison.Ordinal)) add += $" xmlns:xr=\"{xr}\"";
+        xml = xml.Replace($"<{p}worksheet", $"<{p}worksheet{add}");
+
+        xml = xml.Contains("mc:Ignorable=", StringComparison.Ordinal)
+            ? System.Text.RegularExpressions.Regex.Replace(xml, "mc:Ignorable=\"[^\"]*\"", "mc:Ignorable=\"xr\"")
+            : xml.Replace($"<{p}worksheet", $"<{p}worksheet mc:Ignorable=\"xr\"");
+
+        var anchor = $"</{p}sheetData>";
+        xml = xml.Replace(anchor, anchor +
+            $"<{p}hyperlinks><{p}hyperlink ref=\"H4\" location=\"Таблица!A1\" " +
+            $"xr:uid=\"{{00000000-0001-0000-0000-000000000000}}\" /></{p}hyperlinks>" +
+            $"<{p}legacyDrawing /><{p}tableParts count=\"0\" /><{p}mysteryPart />");
+
+        entry.Delete();
+        using var w = new StreamWriter(zip.CreateEntry(SheetPart).Open());
+        w.Write(xml);
+    }
+
     // Лист свода не обязан быть в книге первым: писатель ищет его часть через связи книги
     // (имя листа → r:id → цель в workbook.xml.rels), а не по имени файла части.
     [Fact]
