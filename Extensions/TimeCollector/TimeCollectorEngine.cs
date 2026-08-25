@@ -193,6 +193,11 @@ public static class TimeCollectorEngine
         {
             TimeSheetWriter.Write(templatePath, outputPath, ordered, paints, hidden,
                                   progress, ct, ClearTo, WriteTo);
+
+            // Читаем свой же результат парсером, как это делает Excel при открытии: беда,
+            // найденная сейчас, называет строку и расчет, а найденная Excel через полчаса —
+            // только «нечитаемое содержимое».
+            TimeSheetWriter.Verify(outputPath, ordered, progress, ct);
         }
         catch (TimeCollectException)                { Discard(outputPath); throw; }
         catch (OperationCanceledException)          { Discard(outputPath); throw; }

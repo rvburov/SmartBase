@@ -53,6 +53,14 @@ internal static class TimeSheetWriter
     /// с лишними строками записался бы молча, а Excel открыть его уже не смог.</summary>
     internal const int ExcelMaxRows = 1_048_576;
 
+    /// <summary>Символов в ячейке Excel. Столько же не дает ввести и сам Excel, поэтому из
+    /// расчета такой текст прийти не может — это страховка на случай другого источника: более
+    /// длинный текст лист принимает, но книгу Excel объявляет нечитаемой.</summary>
+    internal const int ExcelMaxCellText = 32_767;
+
+    // Перенос строки в тексте ошибок — как во всех сообщениях расширения.
+    private const string NL = "\n";
+
     internal const string NamedRange  = "ALL_DATA";
     private  const string SourceSheet = "Расшифровка";
     private  const string LinkMark    = ">>>";
@@ -132,6 +140,64 @@ internal static class TimeSheetWriter
         throw new TimeCollectException(
             $"В своде {rowCount:N0} строк, а лист Excel вмещает {room:N0}.\n" +
             "Сузьте папку с расчетами или выгрузите свод в коллекцию программы — у нее предела нет.");
+    }
+
+    /// <summary>
+    /// Прочитать записанный свод так же, как его читает Excel: лист прогоняется XML-парсером
+    /// целиком. Нужно потому, что «нечитаемое содержимое» Excel объявляет уже ПОСЛЕ прогона —
+    /// пользователь узнает о беде через полчаса и без единой подсказки, где она. Здесь та же
+    /// проверка стоит секунды и называет и место в XML, и строку свода, и файл расчета.
+    /// </summary>
+    internal static void Verify(string outputPath, IReadOnlyList<TimeRow> rows,
+                                IProgress<CollectProgress>? progress, CancellationToken ct)
+    {
+        progress?.Report(new CollectProgress(null, "Проверка результата…", Path.GetFileName(outputPath)));
+
+        using var zip = ZipFile.OpenRead(outputPath);
+        var sheetPath = FindSheetPath(zip, TimeCollectorEngine.TargetSheet)
+            ?? throw new TimeCollectException("В записанном своде не нашелся лист «Таблица».");
+        var entry = zip.GetEntry(sheetPath)
+            ?? throw new TimeCollectException($"В записанном своде нет части {sheetPath}.");
+
+        using var s = entry.Open();
+        using var r = XmlReader.Create(s, new XmlReaderSettings { IgnoreWhitespace = true });
+
+        var sheetRow = 0;
+        var seen     = 0;
+        try
+        {
+            while (r.Read())
+            {
+                if (r.NodeType != XmlNodeType.Element || r.LocalName != "row") continue;
+
+                // Номер строки листа — чтобы назвать не только позицию в XML (она ни о чем
+                // не говорит), но и расчет, чья строка оказалась последней прочитанной.
+                if (int.TryParse(r.GetAttribute("r"), out var n)) sheetRow = n;
+                if ((++seen & 1023) == 0) ct.ThrowIfCancellationRequested();
+            }
+        }
+        catch (XmlException ex)
+        {
+            throw new TimeCollectException(
+                "Записанный свод получился нечитаемым — Excel открыл бы его с потерей листа." +
+                $"{NL}{ex.Message}{NL}{RowHint(rows, sheetRow)}", ex);
+        }
+
+        var expected = rows.Count + TopIndent;
+        if (seen != expected)
+            throw new TimeCollectException(
+                $"В записанном своде {seen} строк вместо {expected} — лист неполон.");
+    }
+
+    // Какая строка свода и какой расчет стоят за строкой листа: XML-позиция сама по себе
+    // не подсказывает ничего, а имя файла ведет прямо к данным-виновнику.
+    private static string RowHint(IReadOnlyList<TimeRow> rows, int sheetRow)
+    {
+        var i = sheetRow - TopIndent - 1;
+        if (i < 0 || i >= rows.Count) return "Сбой в шапке листа или до первой строки свода.";
+
+        return $"Последняя целая строка свода — {i + 1} из {rows.Count} " +
+               $"(расчет: {Path.GetFileName(rows[i].SourcePath)}). Виновата, скорее всего, следующая.";
     }
 
     private static ZipArchive OpenTemplate(string path)
@@ -528,6 +594,8 @@ internal static class TimeSheetWriter
     /// </summary>
     private static string XmlSafe(string text)
     {
+        if (text.Length > ExcelMaxCellText) text = Clip(text);
+
         var bad = FirstBad(text);
         if (bad < 0) return text;
 
@@ -539,6 +607,15 @@ internal static class TimeSheetWriter
             buf.Append(Allowed(c) ? c : ' ');
         }
         return buf.ToString();
+    }
+
+    /// <summary>Обрезать текст до предела ячейки, не разрубив суррогатную пару пополам:
+    /// половина пары — недопустимый XML, и лечили бы одно, ломая другое.</summary>
+    private static string Clip(string text)
+    {
+        var len = ExcelMaxCellText;
+        if (char.IsHighSurrogate(text[len - 1])) len--;
+        return text[..len];
     }
 
     private static int FirstBad(string text)
