@@ -343,6 +343,57 @@ public sealed class TimeCollectorRunTests : IDisposable
         Assert.Equal("#ЧИСЛО!", ws.Cell(7, 4).GetString());
     }
 
+    // Цепочка вычислений перечисляет ячейки с формулами поименно, а свод меняет их набор
+    // целиком. Оставленная от шаблона, она не совпадает с листом — и Excel объявляет книгу
+    // нечитаемой. В результат она не попадает вместе со своими объявлениями: часть, заявленная
+    // в [Content_Types].xml и rels, но отсутствующая, ломает книгу ничуть не меньше.
+    [Fact]
+    public void Calc_Chain_Of_The_Template_Does_Not_Reach_The_Result()
+    {
+        AddCalcChain(_template);
+        CreateCalc("Изделие_2025.03.14_Иванов.xlsm", ("Изделие", "Блок", "АБВГ.777777.007", 1.0));
+
+        var result = Run();
+
+        using var zip = ZipFile.OpenRead(result.OutputPath);
+        Assert.DoesNotContain(zip.Entries, e => e.FullName == "xl/calcChain.xml");
+        Assert.DoesNotContain("calcChain", ReadEntry(zip, "[Content_Types].xml"));
+        Assert.DoesNotContain("calcChain", ReadEntry(zip, "xl/_rels/workbook.xml.rels"));
+    }
+
+    // Дописать в готовый .xlsm цепочку вычислений и оба объявления о ней — так выглядит
+    // книга, которую сохранил Excel.
+    private static void AddCalcChain(string path)
+    {
+        using var zip = ZipFile.Open(path, ZipArchiveMode.Update);
+
+        using (var w = new StreamWriter(zip.CreateEntry("xl/calcChain.xml").Open()))
+            w.Write("""<?xml version="1.0" encoding="UTF-8" standalone="yes"?><calcChain xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><c r="H4" i="1"/></calcChain>""");
+
+        Patch(zip, "[Content_Types].xml", "</Types>",
+              """<Override PartName="/xl/calcChain.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.calcChain+xml"/></Types>""");
+        Patch(zip, "xl/_rels/workbook.xml.rels", "</Relationships>",
+              """<Relationship Id="rId777" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/calcChain" Target="calcChain.xml"/></Relationships>""");
+    }
+
+    private static void Patch(ZipArchive zip, string part, string anchor, string replacement)
+    {
+        var entry = zip.GetEntry(part)!;
+        string xml;
+        using (var r = new StreamReader(entry.Open())) xml = r.ReadToEnd();
+
+        using var s = entry.Open();
+        s.SetLength(0);
+        using var w = new StreamWriter(s);
+        w.Write(xml.Replace(anchor, replacement));
+    }
+
+    private static string ReadEntry(ZipArchive zip, string part)
+    {
+        using var r = new StreamReader(zip.GetEntry(part)!.Open());
+        return r.ReadToEnd();
+    }
+
     [Fact]
     public void Nothing_To_Collect_Is_A_Friendly_Error()
     {

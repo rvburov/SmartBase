@@ -65,6 +65,20 @@ internal static class TimeSheetWriter
     private  const string SourceSheet = "Расшифровка";
     private  const string LinkMark    = ">>>";
 
+    /// <summary>
+    /// Цепочка вычислений книги. В результат НЕ копируется: она перечисляет ячейки с формулами
+    /// поименно, а свод меняет их набор целиком (у нас формула HYPERLINK в каждой строке
+    /// колонки «Ссылка», в шаблоне ее не было вовсе). Цепочка, не совпавшая с листом, — самая
+    /// частая причина «нечитаемого содержимого» у книг, собранных программой: Excel сверяет ее
+    /// при открытии. Без части он строит цепочку заново при первом пересчете, поэтому вместе
+    /// с ней убираются запись в [Content_Types].xml и связь в rels книги — иначе Excel искал бы
+    /// объявленную, но отсутствующую часть.
+    /// </summary>
+    private const string CalcChainPath = "xl/calcChain.xml";
+
+    private const string ContentTypesPath = "[Content_Types].xml";
+    private const string BookRelsPath     = "xl/_rels/workbook.xml.rels";
+
     // Буквы колонок: их ровно восемь, считать в цикле незачем.
     private static readonly string[] Letters = ["A", "B", "C", "D", "E", "F", "G", "H"];
 
@@ -126,6 +140,12 @@ internal static class TimeSheetWriter
                 CopyText(target, entry.FullName, styles.Xml);
             else if (entry.FullName == "xl/workbook.xml")
                 CopyText(target, entry.FullName, RewriteWorkbook(entry, rows.Count));
+            else if (entry.FullName == CalcChainPath)
+                continue;                                   // см. CalcChainPath
+            else if (entry.FullName == ContentTypesPath)
+                CopyText(target, entry.FullName, WithoutCalcChain(entry, "Override", "PartName"));
+            else if (entry.FullName == BookRelsPath)
+                CopyText(target, entry.FullName, WithoutCalcChain(entry, "Relationship", "Target"));
             else
                 CopyRaw(target, entry);
         }
@@ -220,6 +240,24 @@ internal static class TimeSheetWriter
         using var from = entry.Open();
         using var to   = copy.Open();
         from.CopyTo(to);
+    }
+
+    /// <summary>XML части без элементов, ссылающихся на calcChain: имя части в
+    /// <c>[Content_Types].xml</c> и цель связи в rels книги пишутся по-разному, поэтому имя
+    /// элемента и атрибут передаются снаружи.</summary>
+    private static string WithoutCalcChain(ZipArchiveEntry entry, string element, string attribute)
+    {
+        XDocument doc;
+        using (var s = entry.Open()) doc = XDocument.Load(s);
+
+        doc.Descendants()
+           .Where(e => e.Name.LocalName == element &&
+                       ((string?)e.Attribute(attribute))?.EndsWith("calcChain.xml",
+                            StringComparison.OrdinalIgnoreCase) == true)
+           .ToList()
+           .ForEach(e => e.Remove());
+
+        return Serialize(doc);
     }
 
     private static void CopyText(ZipArchive target, string path, string xml)
@@ -749,7 +787,16 @@ internal static class TimeSheetWriter
         foreach (var name in names.Elements(XName.Get("definedName", Ns)).ToList())
         {
             var key = (string?)name.Attribute("name");
-            if (string.Equals(key, NamedRange, StringComparison.OrdinalIgnoreCase) || !Parses(name.Value))
+
+            // «_xlnm._FilterDatabase» — служебное имя автофильтра. В шаблоне оно указывает на
+            // диапазон ПРОШЛОГО свода, а лист теперь другой длины: несовпадение имени и фильтра
+            // Excel считает поводом объявить книгу нечитаемой. Свой автофильтр мы ставим сами,
+            // и имя к нему Excel заведет заново — старое просто убираем.
+            var filter = key is not null &&
+                         key.EndsWith("_FilterDatabase", StringComparison.OrdinalIgnoreCase) &&
+                         name.Value.Contains(TimeCollectorEngine.TargetSheet, StringComparison.OrdinalIgnoreCase);
+
+            if (filter || string.Equals(key, NamedRange, StringComparison.OrdinalIgnoreCase) || !Parses(name.Value))
                 name.Remove();
         }
 
