@@ -104,6 +104,25 @@ public sealed class TimeCollectionWriterTests
         Assert.Null(FileAutoRule.FromConfig(file.ConfigJson));
     }
 
+    /// <summary>Колонка «Тр-ть» приходит уже отформатированной: два знака после запятой и
+    /// десятичная запятая. Без настройки поле показывало бы трудоемкость ровно как в расчете
+    /// («12», «12,5», «12,456»), и формат пришлось бы выставлять руками после КАЖДОГО прогона.
+    /// Разряды при этом не разделяются.</summary>
+    [Fact]
+    public void Norm_field_comes_preformatted_with_two_decimals()
+    {
+        using var db = new TempDatabase();
+
+        var shell = TimeCollectionWriter.CreateShell(db.Constructor, "Трудоемкость");
+        var norm  = db.Constructor.GetFields(shell.CollectionId).Single(f => f.Id == shell.NormFieldId);
+
+        var fmt = NumberFormatValue.FromConfig(norm.ConfigJson);
+        Assert.Equal(NumberFormatKind.Grouped, fmt.Kind);
+        Assert.Equal(2, fmt.Decimals);
+        Assert.False(fmt.Thousands);
+        Assert.Equal(DecimalMark.Comma, fmt.DecimalSeparator);
+    }
+
     // ── Имя коллекции ─────────────────────────────────────────────────────────
 
     [Fact]

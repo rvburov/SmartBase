@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text.Json;
 using System.Threading;
 using SmartBase.Core.Models;
 using SmartBase.Database;
@@ -57,6 +58,18 @@ public static class TimeCollectionWriter
     private const string YellowHex = "#FFCC00";
     private const string RedHex    = "#FF3B30";
 
+    /// <summary>
+    /// Формат колонки «Тр-ть»: «Число с разрядами», два знака после запятой, десятичная запятая,
+    /// разряды НЕ разделяются. Без него поле показывало бы трудоемкость ровно так, как она
+    /// пришла из расчета («12», «12,5», «12,456»), и столбец свода выглядел бы рваным —
+    /// а выставлять формат руками после каждого прогона незачем. Символ валюты и его сторона
+    /// на этот вид формата не влияют, но в настройке хранятся всегда — берем значения
+    /// по умолчанию, как их кладет окно свойства колонки.
+    /// </summary>
+    private static readonly NumberFormat NormFormat = new(
+        NumberFormatKind.Grouped, Decimals: 2, Thousands: false,
+        CurrencySymbol: "₽", SymbolSuffix: true, DecimalSeparator: DecimalMark.Comma);
+
     // Размер пакета заливки: пакет = одна транзакция, прогресс постится раз в пакет.
     // 10 000 — компромисс: реже транзакции, но на своде в 600 тыс. строк это 60 отчетов
     // о прогрессе, а не 30, и полоса не выглядит застывшей.
@@ -84,7 +97,8 @@ public static class TimeCollectionWriter
             repo.SetSystemFieldName(colId, TitleKey, TitleColumnName, "Название");
 
             var deno = Field(repo, colId, DenoFieldName, "text",   1000);
-            var norm = Field(repo, colId, NormFieldName, "number", 2000);
+            var norm = Field(repo, colId, NormFieldName, "number", 2000,
+                             JsonSerializer.Serialize(NumberFormatValue.ToConfigObject(NormFormat)));
             var date = Field(repo, colId, DateFieldName, "date",   3000);
             var efio = Field(repo, colId, EfioFieldName, "text",   4000);
             var proj = Field(repo, colId, ProjFieldName, "text",   5000);
@@ -106,10 +120,12 @@ public static class TimeCollectionWriter
         }
     }
 
-    private static int Field(ConstructorRepository repo, int colId, string name, string type, int position) =>
+    private static int Field(ConstructorRepository repo, int colId, string name, string type, int position,
+                             string? configJson = null) =>
         repo.AddField(new DbField
         {
             CollectionId = colId, Name = name, FieldType = type, Position = position,
+            ConfigJson = configJson ?? "{}",
         }).Id!.Value;
 
     private static string UniqueName(string baseName, HashSet<string> taken)
@@ -201,12 +217,12 @@ public static class TimeCollectionWriter
     /// <summary>Трудоемкость для ячейки в каноне хранения поля «Число», нечисловой текст — как
     /// есть, как и в Excel-своде. Разделитель приводим здесь сами: массовая заливка не читает
     /// настройки поля (в отличие от <c>SetFieldValue</c>, который делал это запросом на КАЖДОЕ
-    /// значение), а формат поля известен — <see cref="CreateShell"/> заводит его без ConfigJson,
-    /// то есть с форматом по умолчанию.</summary>
+    /// значение), а формат поля известен — его задает <see cref="NormFormat"/>, и разделитель
+    /// в нем десятичная запятая.</summary>
     private static string NormValue(TimeRow row) =>
         row.Norm is { } value
             ? NumberFormatValue.NormalizeStorage(value.ToString(CultureInfo.InvariantCulture),
-                                                 NumberFormat.Default.DecimalSeparator)
+                                                 NormFormat.DecimalSeparator)
             : row.NormText;
 
     /// <summary>Дата расчета в каноне хранения поля «дата» (<see cref="DateValue"/>): день
