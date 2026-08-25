@@ -49,6 +49,10 @@ internal static class TimeSheetWriter
     /// <summary>Шапка занимает строки 1–3, данные начинаются с 4-й (TOP_INDENT макроса).</summary>
     internal const int TopIndent = 3;
 
+    /// <summary>Строк на листе Excel. Свод должен влезть вместе с тремя строками шапки: файл
+    /// с лишними строками записался бы молча, а Excel открыть его уже не смог.</summary>
+    internal const int ExcelMaxRows = 1_048_576;
+
     internal const string NamedRange  = "ALL_DATA";
     private  const string SourceSheet = "Расшифровка";
     private  const string LinkMark    = ">>>";
@@ -86,6 +90,8 @@ internal static class TimeSheetWriter
         IProgress<CollectProgress>? progress, CancellationToken ct,
         double from, double to)
     {
+        EnsureFits(rows.Count);
+
         progress?.Report(new CollectProgress(from, "Открываю шаблон…", Path.GetFileName(templatePath)));
 
         using var source = OpenTemplate(templatePath);
@@ -114,6 +120,18 @@ internal static class TimeSheetWriter
             else
                 CopyRaw(target, entry);
         }
+    }
+
+    /// <summary>Влезает ли свод на лист. Проверяем ДО записи: узнать про предел из отказа
+    /// Excel открыть готовый файл — худший способ.</summary>
+    internal static void EnsureFits(int rowCount)
+    {
+        var room = ExcelMaxRows - TopIndent;
+        if (rowCount <= room) return;
+
+        throw new TimeCollectException(
+            $"В своде {rowCount:N0} строк, а лист Excel вмещает {room:N0}.\n" +
+            "Сузьте папку с расчетами или выгрузите свод в коллекцию программы — у нее предела нет.");
     }
 
     private static ZipArchive OpenTemplate(string path)
@@ -403,43 +421,59 @@ internal static class TimeSheetWriter
         IProgress<CollectProgress>? progress, CancellationToken ct, double from, double to)
     {
         var plain = new TimeCollectorEngine.RowPaint(TimeCollectorEngine.RowFill.White, false);
+        var i     = 0;
 
-        for (var i = 0; i < rows.Count; i++)
+        try
         {
-            // Отмена проверяется не на каждой строке: сам по себе токен дешев, но на 600 тыс.
-            // строк лишние проверки заметны, а реакция раз в тысячу строк мгновенна и так.
-            if ((i & 1023) == 0) ct.ThrowIfCancellationRequested();
+            for (; i < rows.Count; i++)
+            {
+                // Отмена проверяется не на каждой строке: сам по себе токен дешев, но на
+                // 600 тыс. строк лишние проверки заметны, а реакция раз в тысячу строк
+                // мгновенна и так.
+                if ((i & 1023) == 0) ct.ThrowIfCancellationRequested();
 
-            var source = rows[i];
-            var row    = TopIndent + 1 + i;
-            var paint  = i < paints.Length ? paints[i] : plain;
+                WriteRow(w, styles, rows[i], i < paints.Length ? paints[i] : plain, TopIndent + 1 + i);
 
-            var body = styles.Body(paint.Fill);
-            var date = styles.Date(paint.Fill);
-            var norm = paint.NormRed ? styles.Body(TimeCollectorEngine.RowFill.Red) : body;
-
-            w.WriteStartElement("row", Ns);
-            w.WriteAttributeString("r", row.ToString(CultureInfo.InvariantCulture));
-
-            WriteNumber(w, ColRNum, row, source.RNum, body);
-            WriteInlineString(w, ColName, row, source.Name, body);
-            WriteInlineString(w, ColDeno, row, source.Deno, body);
-
-            if (source.Norm is { } value) WriteNumber(w, ColNorm, row, value, norm);
-            else                          WriteInlineString(w, ColNorm, row, source.NormText, norm);
-
-            // Дата в Excel — число с датным форматом; серийный номер дает ToOADate.
-            WriteNumber(w, ColDate, row, source.Date.ToOADate(), date);
-            WriteInlineString(w, ColEfio, row, source.Efio, body);
-            WriteInlineString(w, ColProj, row, source.Proj, body);
-            WriteLink(w, row, source, body);
-
-            w.WriteEndElement();
-
-            if (i % ProgressEvery == 0 || i == rows.Count - 1)
-                progress?.Report(new CollectProgress(
-                    from + (to - from) * (i + 1) / rows.Count, "Запись строк", $"{i + 1} из {rows.Count}"));
+                if (i % ProgressEvery == 0 || i == rows.Count - 1)
+                    progress?.Report(new CollectProgress(
+                        from + (to - from) * (i + 1) / rows.Count, "Запись строк", $"{i + 1} из {rows.Count}"));
+            }
         }
+        catch (Exception ex) when (ex is not OperationCanceledException and not TimeCollectException)
+        {
+            // Свод склеен из тысяч расчетов, и сбой на записи почти всегда про данные одной
+            // ячейки. Без имени файла и номера строки искать виновника в такой куче нечем.
+            var file = i < rows.Count ? Path.GetFileName(rows[i].SourcePath) : "";
+            throw new TimeCollectException(
+                $"Сбой при записи строки {i + 1} из {rows.Count}" +
+                (file.Length > 0 ? $" (расчет: {file})" : "") + $":\n{ex.Message}", ex);
+        }
+    }
+
+    private static void WriteRow(XmlWriter w, TimeSheetStyles styles, TimeRow source,
+                                 TimeCollectorEngine.RowPaint paint, int row)
+    {
+        var body = styles.Body(paint.Fill);
+        var date = styles.Date(paint.Fill);
+        var norm = paint.NormRed ? styles.Body(TimeCollectorEngine.RowFill.Red) : body;
+
+        w.WriteStartElement("row", Ns);
+        w.WriteAttributeString("r", row.ToString(CultureInfo.InvariantCulture));
+
+        WriteNumber(w, ColRNum, row, source.RNum, body);
+        WriteInlineString(w, ColName, row, source.Name, body);
+        WriteInlineString(w, ColDeno, row, source.Deno, body);
+
+        if (source.Norm is { } value) WriteNumber(w, ColNorm, row, value, norm);
+        else                          WriteInlineString(w, ColNorm, row, source.NormText, norm);
+
+        // Дата в Excel — число с датным форматом; серийный номер дает ToOADate.
+        WriteNumber(w, ColDate, row, source.Date.ToOADate(), date);
+        WriteInlineString(w, ColEfio, row, source.Efio, body);
+        WriteInlineString(w, ColProj, row, source.Proj, body);
+        WriteLink(w, row, source, body);
+
+        w.WriteEndElement();
     }
 
     /// <summary>
@@ -455,7 +489,7 @@ internal static class TimeSheetWriter
             return;
         }
 
-        var target = $"[{source.SourcePath}]{SourceSheet}!A{source.RNum + 1}";
+        var target = XmlSafe($"[{source.SourcePath}]{SourceSheet}!A{source.RNum + 1}");
 
         w.WriteStartElement("c", Ns);
         w.WriteAttributeString("r", Ref(ColLink, row));
@@ -476,10 +510,56 @@ internal static class TimeSheetWriter
         // держать в памяти словарь на весь свод — ровно то, от чего мы здесь уходим.
         w.WriteAttributeString("t", "inlineStr");
         w.WriteStartElement("is", Ns);
-        w.WriteElementString("t", Ns, text);
+        w.WriteElementString("t", Ns, XmlSafe(text));
         w.WriteEndElement();
         w.WriteEndElement();
     }
+
+    /// <summary>
+    /// Текст, пригодный для XML. В XML 1.0 нет управляющих символов (кроме табуляции и
+    /// переводов строки), одиночных суррогатов и FFFE/FFFF, а в расчетах они попадаются:
+    /// выгрузки CAD оставляют в наименованиях остатки форматирования, и такой знак не виден
+    /// ни в ячейке Excel, ни в глаза. <see cref="XmlWriter"/> на нем бросает
+    /// <see cref="ArgumentException"/> — и весь прогон падал уже на записи, потеряв все
+    /// прочитанное. Меняем на пробел: свод важнее одного невидимого знака.
+    ///
+    /// Быстрый путь без единой аллокации: обычная строка проходит <see cref="FirstBad"/>
+    /// и возвращается собой — на 600 тыс. строк это важнее краткости.
+    /// </summary>
+    private static string XmlSafe(string text)
+    {
+        var bad = FirstBad(text);
+        if (bad < 0) return text;
+
+        var buf = new StringBuilder(text.Length).Append(text, 0, bad);
+        for (var i = bad; i < text.Length; i++)
+        {
+            var c = text[i];
+            if (IsPair(text, i)) { buf.Append(c).Append(text[i + 1]); i++; continue; }
+            buf.Append(Allowed(c) ? c : ' ');
+        }
+        return buf.ToString();
+    }
+
+    private static int FirstBad(string text)
+    {
+        for (var i = 0; i < text.Length; i++)
+        {
+            if (IsPair(text, i)) { i++; continue; }
+            if (!Allowed(text[i])) return i;
+        }
+        return -1;
+    }
+
+    // Пара суррогатов — один символ вне BMP (эмодзи, редкие иероглифы): она допустима,
+    // а вот половина пары сама по себе — нет.
+    private static bool IsPair(string text, int i) =>
+        char.IsHighSurrogate(text[i]) && i + 1 < text.Length && char.IsLowSurrogate(text[i + 1]);
+
+    private static bool Allowed(char c) =>
+        c >= 0x20
+            ? !char.IsSurrogate(c) && c is not ('\uFFFE' or '\uFFFF')
+            : c is '\t' or '\n' or '\r';
 
     private static void WriteNumber(XmlWriter w, int col, int row, double value, int style)
     {

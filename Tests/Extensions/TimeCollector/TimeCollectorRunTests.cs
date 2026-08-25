@@ -291,6 +291,24 @@ public sealed class TimeCollectorRunTests : IDisposable
         Assert.False(issue.IsProblem());
     }
 
+    // Управляющий символ в ячейке расчета (остатки форматирования из выгрузок CAD) — не повод
+    // потерять прогон: XmlWriter на таком знаке бросает ArgumentException, и свод не писался
+    // вовсе — за минуты до конца, потеряв все прочитанное. Знак меняется на пробел, остальное
+    // доезжает до листа как есть.
+    [Fact]
+    public void Control_Character_In_A_Cell_Does_Not_Break_The_Run()
+    {
+        CreateCalc("Грязный_2025.03.14_Иванов.xlsm",
+                   ("Изделие", "Корпус" + (char)0x01 + "01", "АБВГ.333333.003", 3.0));
+
+        var result = Run();
+
+        Assert.Equal(1, result.RowCount);
+        using var wb = new XLWorkbook(result.OutputPath);
+        var ws = wb.Worksheet(TimeCollectorEngine.TargetSheet);
+        Assert.Equal("Корпус 01", ws.Cell(4, 2).GetString());          // первая строка свода, «Наименование»
+    }
+
     [Fact]
     public void Nothing_To_Collect_Is_A_Friendly_Error()
     {
