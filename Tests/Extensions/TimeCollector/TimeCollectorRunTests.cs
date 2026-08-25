@@ -252,19 +252,43 @@ public sealed class TimeCollectorRunTests : IDisposable
 
     // Книга, открытая другим пользователем, читается с диска: терять ее строки хуже, чем
     // показать данные на момент последнего сохранения. В журнал она попадает пометкой.
+    // «Открыта» — это подтвержденный факт: рядом лежит «~$»-файл И книгу кто-то держит
+    // (здесь — открытый поток теста, как это делает Excel).
     [Fact]
     public void File_Opened_By_Someone_Else_Is_Read_And_Flagged()
     {
+        var path = Path.Combine(_calc, "Занятый_2025.03.14_Иванов.xlsm");
         CreateCalc("Занятый_2025.03.14_Иванов.xlsm", ("Изделие", "А", "АА", 7.0));
         File.WriteAllBytes(Path.Combine(_calc, "~$Занятый_2025.03.14_Иванов.xlsm"),
                            [7, .. "SIDOROV"u8]);
 
+        using var held = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
         var result = Run();
 
         Assert.Equal(1, result.RowCount);
         var issue = Assert.Single(result.Issues);
         Assert.Equal(FileStatus.OpenedByOther, issue.Status);
         Assert.Contains("SIDOROV", issue.Message);
+        Assert.True(issue.IsProblem());
+    }
+
+    // Тот же «~$»-файл, но книгу никто не держит: маркер остался от аварийно закрытого Excel
+    // или приехал вместе с копией папки. Замечанием это не считается — данные полны и свежи,
+    // в журнале такие файлы идут отдельной строкой со счетчиком.
+    [Fact]
+    public void Stale_Owner_Marker_Is_Noted_But_Not_Counted_As_A_Problem()
+    {
+        CreateCalc("Свободный_2025.03.14_Иванов.xlsm", ("Изделие", "А", "АА", 7.0));
+        File.WriteAllBytes(Path.Combine(_calc, "~$Свободный_2025.03.14_Иванов.xlsm"),
+                           [7, .. "SIDOROV"u8]);
+
+        var result = Run();
+
+        Assert.Equal(1, result.RowCount);
+        var issue = Assert.Single(result.Issues);
+        Assert.Equal(FileStatus.StaleLock, issue.Status);
+        Assert.Contains("SIDOROV", issue.Message);
+        Assert.False(issue.IsProblem());
     }
 
     [Fact]

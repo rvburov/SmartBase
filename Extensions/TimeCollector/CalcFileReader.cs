@@ -29,7 +29,7 @@ internal static class CalcFileReader
 
     /// <summary>Итог по файлу: собранные строки и, если есть, замечание для журнала.
     /// Замечание может стоять и у прочитанного файла — так помечается книга, открытая
-    /// другим пользователем.</summary>
+    /// другим пользователем, и осиротевший рядом с ней «~$»-файл.</summary>
     internal sealed record FileReadResult(string FileName, IReadOnlyList<TimeRow> Rows, FileIssue? Issue);
 
     internal static FileReadResult Read(string path, CancellationToken ct)
@@ -65,7 +65,7 @@ internal static class CalcFileReader
                                "нет строк с заполненными иерархическим номером и трудоемкостью");
 
             return new FileReadResult(fileName, rows,
-                owner is null ? null : new FileIssue(fileName, FileStatus.OpenedByOther, owner));
+                owner is null ? null : new FileIssue(fileName, owner.Status, owner.Message));
         }
         catch (OperationCanceledException) { throw; }
         catch (FileNotFoundException)
@@ -78,7 +78,7 @@ internal static class CalcFileReader
         }
         catch (IOException ex) when ((ex.HResult & 0xFFFF) is 0x20 or 0x21)   // sharing/lock violation
         {
-            var note = owner is null ? "" : $" ({owner})";
+            var note = owner is null ? "" : $" ({owner.Message})";
             return Problem(fileName, FileStatus.Locked, $"заблокирован другим процессом{note}");
         }
         catch (Exception ex)
@@ -189,12 +189,25 @@ internal static class CalcFileReader
 
     // ── Кто держит книгу открытой ─────────────────────────────────────────────
 
+    /// <summary>Что показала проверка «~$»-файла: занята книга сейчас или маркер осиротел.</summary>
+    private sealed record OwnerCheck(FileStatus Status, string Message);
+
     /// <summary>
     /// Пока книга открыта в Excel, рядом с ней лежит служебный файл «~$имя.xlsm» с именем
     /// владельца. Сам расчет при этом читается — поэтому файл не пропускается, а помечается
     /// в журнале: терять его строки хуже, чем показать данные на момент последнего сохранения.
+    ///
+    /// Но одного маркера мало: он остается лежать после аварийного закрытия Excel и приезжает
+    /// вместе с копией папки (файл скрытый, копируется молча). Такой «~$» ни о чем не говорит,
+    /// а замечание по нему пугает — на скопированной папке их набирались десятки. Поэтому
+    /// найденный маркер ПОДТВЕРЖДАЕТСЯ пробой: <see cref="IsBusy"/> пытается открыть книгу
+    /// монопольно. Не вышло — книга правда занята; вышло — маркер осиротел
+    /// (<see cref="FileStatus.StaleLock"/>, в журнале одна строка со счетчиком).
+    ///
+    /// Проба идет ТОЛЬКО при найденном маркере: на 3 тыс. файлов их единицы, и лишнего
+    /// открытия на каждый расчет не случается.
     /// </summary>
-    private static string? OwnerNote(string path)
+    private static OwnerCheck? OwnerNote(string path)
     {
         var dir = Path.GetDirectoryName(path);
         if (string.IsNullOrEmpty(dir)) return null;
@@ -203,9 +216,42 @@ internal static class CalcFileReader
         if (!File.Exists(ownerPath)) return null;
 
         var user = OwnerName(ownerPath);
-        return user.Length > 0
+        var who  = user.Length > 0 ? $" ({user})" : "";
+
+        if (!IsBusy(path))
+            return new OwnerCheck(FileStatus.StaleLock,
+                $"книга не открыта, рядом остался служебный файл «~$» от прошлого сеанса{who}");
+
+        return new OwnerCheck(FileStatus.OpenedByOther, user.Length > 0
             ? $"открыт пользователем {user} — данные прочитаны с диска"
-            : "открыт другим пользователем — данные прочитаны с диска";
+            : "открыт другим пользователем — данные прочитаны с диска");
+    }
+
+    /// <summary>
+    /// Держит ли книгу кто-то прямо сейчас. Проверяется попыткой открыть ее МОНОПОЛЬНО
+    /// (<c>FileShare.None</c>): открытый в Excel файл дает на этом «нарушение совместного
+    /// доступа» (0x20/0x21), свободный открывается. Захват длится доли миллисекунды и сразу
+    /// отпускается — читаем мы потом как раньше, с <c>FileShare.ReadWrite</c>.
+    ///
+    /// Любая другая ошибка (нет прав, файл исчез) — это НЕ ответ на вопрос «занят ли»:
+    /// считаем книгу занятой, то есть остаемся при прежнем, осторожном поведении. Настоящую
+    /// причину все равно назовет основное чтение следом.
+    /// </summary>
+    private static bool IsBusy(string path)
+    {
+        try
+        {
+            using var probe = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.None);
+            return false;
+        }
+        catch (IOException ex) when ((ex.HResult & 0xFFFF) is 0x20 or 0x21)
+        {
+            return true;
+        }
+        catch
+        {
+            return true;
+        }
     }
 
     // Формат «~$»-файла недокументирован: первый байт — длина имени, дальше само имя.

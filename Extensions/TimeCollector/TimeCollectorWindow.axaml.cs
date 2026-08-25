@@ -438,16 +438,33 @@ public partial class TimeCollectorWindow : Window
         LogLine($"📊 Готово. Обработано файлов: {processed} из {total}, собрано строк: {rowCount}");
 
         Section("⚠️ Открыты другим пользователем", issues, FileStatus.OpenedByOther);
+        StaleNote(issues);
         Section("❌ Не открылись", issues,
                 FileStatus.Locked, FileStatus.NoAccess, FileStatus.Corrupted);
         Section("⏭️ Пропущены", issues,
                 FileStatus.NoSheet, FileStatus.BadName, FileStatus.NoRows);
 
-        if (issues.Count == 0)
+        if (!issues.Any(i => i.IsProblem()))
         {
             LogLine("");
             LogLine("✅ Все файлы прочитаны без замечаний.");
         }
+    }
+
+    /// <summary>
+    /// Осиротевшие «~$» — одной строкой со счетчиком, без перечисления имен. Данные таких
+    /// файлов полны и свежи (книга не открыта, см. <c>CalcFileReader</c>), а список из полусотни
+    /// имен только прятал бы настоящие замечания — ради этого их и вынесли из общей секции.
+    /// </summary>
+    private void StaleNote(IReadOnlyList<FileIssue> issues)
+    {
+        var count = issues.Count(i => i.Status == FileStatus.StaleLock);
+        if (count == 0) return;
+
+        LogLine("");
+        LogLine($"ℹ️ Остались служебные файлы «~$» от прошлых сеансов: {count}. " +
+                "На данные не влияют: книги не открыты, строки собраны полностью. " +
+                "Файлы скрытые, их можно удалить.");
     }
 
     private void Section(string title, IReadOnlyList<FileIssue> issues, params FileStatus[] statuses)
@@ -468,9 +485,8 @@ public partial class TimeCollectorWindow : Window
     {
         var text = $"Готово: {Path.GetFileName(result.OutputPath)} — строк {result.RowCount}, " +
                    $"файлов {result.ProcessedFiles} из {result.TotalFiles}";
-        return result.Issues.Count > 0
-            ? $"{text}, с замечаниями {result.Issues.Count} (см. журнал)"
-            : text;
+        var problems = result.Issues.Count(i => i.IsProblem());
+        return problems > 0 ? $"{text}, с замечаниями {problems} (см. журнал)" : text;
     }
 
     private void LogLine(string text)          // только в модель (дешево)

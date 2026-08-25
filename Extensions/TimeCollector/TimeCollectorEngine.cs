@@ -30,8 +30,15 @@ public enum FileStatus
 {
     /// <summary>Прочитан без замечаний.</summary>
     Ok,
-    /// <summary>Открыт другим пользователем (рядом служебный «~$»-файл) — прочитан с диска.</summary>
+    /// <summary>Открыт другим пользователем прямо сейчас — прочитан с диска, то есть без его
+    /// несохраненных правок. Рядом лежит служебный «~$»-файл, и книга ДЕЙСТВИТЕЛЬНО занята
+    /// (проверено попыткой открыть ее монопольно).</summary>
     OpenedByOther,
+    /// <summary>Рядом лежит служебный «~$»-файл, но книга свободна: маркер остался от прошлого
+    /// сеанса (Excel уронили) или приехал вместе с копией папки. На данные не влияет —
+    /// замечанием не считается (см. <see cref="FileIssueRank.IsProblem"/>), в журнал идет одной
+    /// строкой со счетчиком.</summary>
+    StaleLock,
     /// <summary>Заблокирован другим процессом — прочитать не удалось.</summary>
     Locked,
     /// <summary>Нет прав доступа.</summary>
@@ -48,6 +55,14 @@ public enum FileStatus
 
 /// <summary>Замечание по одному файлу — строка журнала.</summary>
 public sealed record FileIssue(string FileName, FileStatus Status, string Message);
+
+/// <summary>Замечание ли это на самом деле. Осиротевший «~$» (<see cref="FileStatus.StaleLock"/>)
+/// — нет: строки такого файла в своде полны и свежи, и в счетчиках прогона он не участвует,
+/// иначе полсотни таких «замечаний» прятали бы настоящие.</summary>
+public static class FileIssueRank
+{
+    public static bool IsProblem(this FileIssue issue) => issue.Status != FileStatus.StaleLock;
+}
 
 /// <summary>Прогресс прогона. <paramref name="Fraction"/> <c>null</c> — фаза без известного
 /// объема работы (полоса переводится в бегущий режим, чтобы не выглядеть застывшей).</summary>
@@ -138,10 +153,11 @@ public static class TimeCollectorEngine
         // папка не та или файлы не читаются (полный разбор — в журнале окна).
         if (rows.Count == 0)
         {
-            var reasons = string.Join("\n", issues.Take(3).Select(i => $"• {i.FileName} — {i.Message}"));
+            var problems = issues.Where(i => i.IsProblem()).ToList();
+            var reasons  = string.Join("\n", problems.Take(3).Select(i => $"• {i.FileName} — {i.Message}"));
             throw new TimeCollectException(
                 $"Ни в одном файле не нашлось подходящих строк.\n" +
-                $"Просмотрено файлов: {files.Count}, с замечаниями: {issues.Count}." +
+                $"Просмотрено файлов: {files.Count}, с замечаниями: {problems.Count}." +
                 (reasons.Length > 0 ? $"\n{reasons}" : ""));
         }
 
@@ -238,7 +254,10 @@ public static class TimeCollectorEngine
                 results[i] = result;
 
                 var count  = Interlocked.Increment(ref done);
-                var issues = result.Issue is null ? Volatile.Read(ref bad) : Interlocked.Increment(ref bad);
+                // Осиротевший «~$» в счетчик замечаний не идет: файл прочитан целиком и свежим.
+                var issues = result.Issue?.IsProblem() == true
+                    ? Interlocked.Increment(ref bad)
+                    : Volatile.Read(ref bad);
                 ReportRead(progress, eta, clock, count, files.Count, result.FileName, issues, readTo);
             });
         }
