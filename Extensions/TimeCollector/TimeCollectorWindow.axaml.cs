@@ -275,9 +275,10 @@ public partial class TimeCollectorWindow : Window
         var progress = new Progress<CollectProgress>(OnProgress);
         var template = TemplateBox.Text!.Trim();
         var output   = OutputBox.Text!.Trim();
+        var links    = LinkFormulaCheck.IsChecked == true;
 
         var result = await Task.Run(
-            () => TimeCollectorEngine.Run(folder, recursive, template, output, progress, ct), ct);
+            () => TimeCollectorEngine.Run(folder, recursive, template, output, progress, ct, links), ct);
 
         Progress.SetProgress(1, "Готово");
         Progress.SetInfo("");

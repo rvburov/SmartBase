@@ -172,7 +172,7 @@ public static class TimeCollectorEngine
     /// <summary>Собрать свод и записать его в .xlsm-шаблон — выгрузка в файл Excel.</summary>
     public static CollectResult Run(
         string folder, bool recursive, string templatePath, string outputDir,
-        IProgress<CollectProgress>? progress, CancellationToken ct)
+        IProgress<CollectProgress>? progress, CancellationToken ct, bool linkFormulas = true)
     {
         // Приемник проверяем до долгого чтения папки: узнать про недоступный шаблон через
         // десять минут обхода сетевой шары — худшее из возможного.
@@ -192,7 +192,7 @@ public static class TimeCollectorEngine
         try
         {
             TimeSheetWriter.Write(templatePath, outputPath, ordered, paints, hidden,
-                                  progress, ct, ClearTo, WriteTo);
+                                  progress, ct, ClearTo, WriteTo, linkFormulas);
 
             // Читаем свой же результат парсером, как это делает Excel при открытии: беда,
             // найденная сейчас, называет строку и расчет, а найденная Excel через полчаса —

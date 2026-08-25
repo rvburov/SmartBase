@@ -96,7 +96,7 @@ internal static class TimeSheetWriter
         string templatePath, string outputPath,
         IReadOnlyList<TimeRow> rows, TimeCollectorEngine.RowPaint[] paints, IReadOnlySet<int> hidden,
         IProgress<CollectProgress>? progress, CancellationToken ct,
-        double from, double to)
+        double from, double to, bool linkFormulas = true)
     {
         EnsureFits(rows.Count);
 
@@ -120,7 +120,8 @@ internal static class TimeSheetWriter
             ct.ThrowIfCancellationRequested();
 
             if (entry.FullName == sheetPath)
-                WriteSheet(target, entry.FullName, shell, styles, rows, paints, hidden, progress, ct, from, to);
+                WriteSheet(target, entry.FullName, shell, styles, rows, paints, hidden,
+                           progress, ct, from, to, linkFormulas);
             else if (entry.FullName == TimeSheetStyles.PartPath)
                 CopyText(target, entry.FullName, styles.Xml);
             else if (entry.FullName == "xl/workbook.xml")
@@ -267,19 +268,36 @@ internal static class TimeSheetWriter
 
     // ── Обвязка листа ─────────────────────────────────────────────────────────
 
-    /// <summary>Все, что на листе НЕ строки: элементы до <c>sheetData</c> и после него, плюс
-    /// отдельно ширины колонок — их мы не выбрасываем, а лишь помечаем скрытые.</summary>
-    private sealed record SheetShell(List<(string Name, string Xml)> Head, XElement? Cols, List<string> Tail);
+    /// <summary>Все, что на листе НЕ строки: элементы шаблона как есть (в порядке появления)
+    /// плюс отдельно ширины колонок — их мы не выбрасываем, а лишь помечаем скрытые.</summary>
+    private sealed record SheetShell(List<(string Name, string Xml)> Others, XElement? Cols);
 
-    /// <summary>Порядок элементов листа ДО строк — задан схемой, и Excel считает книгу битой,
-    /// если его нарушить. Из этого списка мы формируем заново все, кроме первых двух: их берем
-    /// из шаблона и должны вернуть на свои места между нашими.</summary>
-    private static readonly string[] HeadOrder = ["sheetPr", "dimension", "sheetViews", "sheetFormatPr", "cols"];
+    /// <summary>
+    /// Порядок элементов листа, заданный схемой (CT_Worksheet). Excel читает лист ПО СХЕМЕ:
+    /// элемент не на своем месте — и книга объявляется нечитаемой, а лист выбрасывается
+    /// целиком, хотя XML при этом синтаксически безупречен. Раньше элементы шаблона писались
+    /// в их исходном порядке ПОСЛЕ наших autoFilter и mergeCells — и любой шаблонный элемент,
+    /// которому по схеме положено идти раньше (sheetProtection, sortState, customSheetViews),
+    /// ломал лист. Теперь и наши, и шаблонные раскладываются по одному этому списку.
+    /// </summary>
+    private static readonly string[] SheetOrder =
+    [
+        "sheetPr", "dimension", "sheetViews", "sheetFormatPr", "cols", "sheetData",
+        "sheetCalcPr", "sheetProtection", "protectedRanges", "scenarios", "autoFilter",
+        "sortState", "dataConsolidate", "customSheetViews", "mergeCells", "phoneticPr",
+        "conditionalFormatting", "dataValidations", "hyperlinks", "printOptions",
+        "pageMargins", "pageSetup", "headerFooter", "rowBreaks", "colBreaks",
+        "customProperties", "cellWatches", "ignoredErrors", "smartTags", "drawing",
+        "drawingHF", "picture", "oleObjects", "controls", "webPublishItems", "tableParts",
+        "extLst",
+    ];
 
-    private static int HeadRank(string name)
+    /// <summary>Место элемента в схемном порядке. Незнакомое имя ставим предпоследним —
+    /// перед <c>extLst</c>, который обязан замыкать лист.</summary>
+    private static int Rank(string name)
     {
-        var i = Array.IndexOf(HeadOrder, name);
-        return i < 0 ? HeadOrder.Length : i;   // незнакомое — в конец, ближе к sheetData
+        var i = Array.IndexOf(SheetOrder, name);
+        return i >= 0 ? i : SheetOrder.Length - 1;
     }
 
     // Элементы, которые формируются заново: из шаблона их брать не нужно.
@@ -288,23 +306,21 @@ internal static class TimeSheetWriter
 
     private static SheetShell ReadSheetShell(ZipArchive zip, string sheetPath)
     {
-        var head = new List<(string Name, string Xml)>();
-        var tail = new List<string>();
+        var others = new List<(string Name, string Xml)>();
         XElement? cols = null;
 
         var entry = zip.GetEntry(sheetPath);
-        if (entry is null) return new SheetShell(head, cols, tail);
+        if (entry is null) return new SheetShell(others, cols);
 
         using var s = entry.Open();
         using var r = XmlReader.Create(s, new XmlReaderSettings { IgnoreWhitespace = true });
-        if (!r.ReadToDescendant("worksheet", Ns)) return new SheetShell(head, cols, tail);
-        if (r.IsEmptyElement) return new SheetShell(head, cols, tail);
+        if (!r.ReadToDescendant("worksheet", Ns)) return new SheetShell(others, cols);
+        if (r.IsEmptyElement) return new SheetShell(others, cols);
         r.ReadStartElement();
 
         // Читатель двигают САМИ операции: и Skip, и ReadOuterXml оставляют его на следующем
         // узле. Поэтому в цикле нет «лишнего» Read — с ним терялся бы каждый второй элемент
         // (наступали на это: printOptions уезжал в начало листа, и Excel считал файл битым).
-        var seenData = false;
         while (!r.EOF && r.NodeType != XmlNodeType.EndElement)
         {
             if (r.NodeType != XmlNodeType.Element) { r.Read(); continue; }
@@ -313,7 +329,6 @@ internal static class TimeSheetWriter
             {
                 case "sheetData":
                     // Строки прошлого свода не читаем вовсе — их может быть сотни тысяч.
-                    seenData = true;
                     r.Skip();
                     break;
 
@@ -324,14 +339,12 @@ internal static class TimeSheetWriter
                 default:
                     if (Rebuilt.Contains(r.LocalName)) { r.Skip(); break; }
                     var name = r.LocalName;
-                    var xml  = r.ReadOuterXml();
-                    if (seenData) tail.Add(xml);
-                    else          head.Add((name, xml));
+                    others.Add((name, r.ReadOuterXml()));
                     break;
             }
         }
 
-        return new SheetShell(head, cols, tail);
+        return new SheetShell(others, cols);
     }
 
     // ── Лист ──────────────────────────────────────────────────────────────────
@@ -339,7 +352,8 @@ internal static class TimeSheetWriter
     private static void WriteSheet(
         ZipArchive target, string path, SheetShell shell, TimeSheetStyles styles,
         IReadOnlyList<TimeRow> rows, TimeCollectorEngine.RowPaint[] paints, IReadOnlySet<int> hidden,
-        IProgress<CollectProgress>? progress, CancellationToken ct, double from, double to)
+        IProgress<CollectProgress>? progress, CancellationToken ct, double from, double to,
+        bool linkFormulas)
     {
         var entry = target.CreateEntry(path, CompressionLevel.Optimal);
         using var s = entry.Open();
@@ -355,39 +369,52 @@ internal static class TimeSheetWriter
         w.WriteStartElement("worksheet", Ns);
         w.WriteAttributeString("xmlns", "r", null, NsRel);
 
-        // Элементы шаблона расставляются вокруг наших по схемному порядку: то, что идет до
-        // dimension (это sheetPr с codeName), — раньше него, остальное (настройки вида) — после.
-        var dimension = HeadRank("dimension");
-        foreach (var (name, xml) in shell.Head) if (HeadRank(name) < dimension) w.WriteRaw(xml);
+        // Куски листа — и шаблонные, и наши — складываются в один список и пишутся строго
+        // по схемному порядку (см. SheetOrder). Порядок между равными сохраняется по seq:
+        // шаблонные идут первыми, как лежали в книге.
+        var parts = new List<(int Rank, int Seq, Action Write)>();
+        var seq   = 0;
 
-        w.WriteStartElement("dimension", Ns);
-        w.WriteAttributeString("ref", $"A1:{Letters[^1]}{last}");
-        w.WriteEndElement();
+        void Add(string name, Action write) => parts.Add((Rank(name), seq++, write));
 
-        foreach (var (name, xml) in shell.Head) if (HeadRank(name) >= dimension) w.WriteRaw(xml);
+        foreach (var (name, xml) in shell.Others) Add(name, () => w.WriteRaw(xml));
+
+        Add("dimension", () =>
+        {
+            w.WriteStartElement("dimension", Ns);
+            w.WriteAttributeString("ref", $"A1:{Letters[^1]}{last}");
+            w.WriteEndElement();
+        });
 
         // Высота строк — ДЕФОЛТОМ листа: проход по сотням тысяч строк ради одинаковой высоты
         // не нужен, а шапке высота проставлена явно и дефолт перебивает.
-        w.WriteStartElement("sheetFormatPr", Ns);
-        w.WriteAttributeString("defaultRowHeight", "15");
-        w.WriteEndElement();
+        Add("sheetFormatPr", () =>
+        {
+            w.WriteStartElement("sheetFormatPr", Ns);
+            w.WriteAttributeString("defaultRowHeight", "15");
+            w.WriteEndElement();
+        });
 
-        WriteCols(w, shell.Cols, hidden);
+        Add("cols", () => WriteCols(w, shell.Cols, hidden));
 
-        w.WriteStartElement("sheetData", Ns);
-        WriteHeaderRows(w, styles);
-        WriteDataRows(w, styles, rows, paints, progress, ct, from, to);
-        w.WriteEndElement();
+        Add("sheetData", () =>
+        {
+            w.WriteStartElement("sheetData", Ns);
+            WriteHeaderRows(w, styles);
+            WriteDataRows(w, styles, rows, paints, progress, ct, from, to, linkFormulas);
+            w.WriteEndElement();
+        });
 
-        // Порядок после sheetData задан схемой: autoFilter раньше mergeCells, и оба раньше
-        // хвоста шаблона (поля печати, колонтитулы, рисунки).
-        w.WriteStartElement("autoFilter", Ns);
-        w.WriteAttributeString("ref", $"A{TopIndent}:{Letters[^1]}{last}");
-        w.WriteEndElement();
+        Add("autoFilter", () =>
+        {
+            w.WriteStartElement("autoFilter", Ns);
+            w.WriteAttributeString("ref", $"A{TopIndent}:{Letters[^1]}{last}");
+            w.WriteEndElement();
+        });
 
-        WriteMerges(w);
+        Add("mergeCells", () => WriteMerges(w));
 
-        foreach (var xml in shell.Tail) w.WriteRaw(xml);
+        foreach (var part in parts.OrderBy(p => p.Rank).ThenBy(p => p.Seq)) part.Write();
 
         w.WriteEndElement();
         w.WriteEndDocument();
@@ -484,7 +511,8 @@ internal static class TimeSheetWriter
     private static void WriteDataRows(
         XmlWriter w, TimeSheetStyles styles,
         IReadOnlyList<TimeRow> rows, TimeCollectorEngine.RowPaint[] paints,
-        IProgress<CollectProgress>? progress, CancellationToken ct, double from, double to)
+        IProgress<CollectProgress>? progress, CancellationToken ct, double from, double to,
+        bool linkFormulas)
     {
         var plain = new TimeCollectorEngine.RowPaint(TimeCollectorEngine.RowFill.White, false);
         var i     = 0;
@@ -498,7 +526,8 @@ internal static class TimeSheetWriter
                 // мгновенна и так.
                 if ((i & 1023) == 0) ct.ThrowIfCancellationRequested();
 
-                WriteRow(w, styles, rows[i], i < paints.Length ? paints[i] : plain, TopIndent + 1 + i);
+                WriteRow(w, styles, rows[i], i < paints.Length ? paints[i] : plain,
+                         TopIndent + 1 + i, linkFormulas);
 
                 if (i % ProgressEvery == 0 || i == rows.Count - 1)
                     progress?.Report(new CollectProgress(
@@ -517,7 +546,7 @@ internal static class TimeSheetWriter
     }
 
     private static void WriteRow(XmlWriter w, TimeSheetStyles styles, TimeRow source,
-                                 TimeCollectorEngine.RowPaint paint, int row)
+                                 TimeCollectorEngine.RowPaint paint, int row, bool linkFormulas)
     {
         var body = styles.Body(paint.Fill);
         var date = styles.Date(paint.Fill);
@@ -537,7 +566,7 @@ internal static class TimeSheetWriter
         WriteNumber(w, ColDate, row, source.Date.ToOADate(), date);
         WriteInlineString(w, ColEfio, row, source.Efio, body);
         WriteInlineString(w, ColProj, row, source.Proj, body);
-        WriteLink(w, row, source, body);
+        WriteLink(w, row, source, body, linkFormulas);
 
         w.WriteEndElement();
     }
@@ -546,22 +575,34 @@ internal static class TimeSheetWriter
     /// Колонка «Ссылка» — оба способа перехода сразу. Текст «&gt;&gt;&gt;» и номер строки в
     /// скрытой колонке A нужны макросу шаблона (<c>WsSelectionChanged</c> → <c>CalculationLink</c>),
     /// формула <c>HYPERLINK</c> открывает тот же расчет на той же строке и без макросов.
+    ///
+    /// Адрес берется В АПОСТРОФАХ: без них ссылка верна только для путей без пробелов и
+    /// спецсимволов, а расчеты лежат в папках вида «Расшифровка 2025» и зовутся «!!!БРАТЬ
+    /// ОСТОРОЖНО…_2025.11.06_Иванов.xlsm». Апостроф внутри пути удваивается — иначе он
+    /// закрыл бы адрес раньше времени.
     /// </summary>
-    private static void WriteLink(XmlWriter w, int row, TimeRow source, int style)
+    private static void WriteLink(XmlWriter w, int row, TimeRow source, int style, bool linkFormulas)
     {
-        if (source.SourcePath.Length == 0 || source.SourcePath.IndexOfAny(BadLinkChars) >= 0)
+        // Без формулы колонка выглядит ровно как у макроса: текст «>>>» плюс номер строки
+        // в скрытой колонке A, и переход делает макрос шаблона.
+        if (!linkFormulas || source.SourcePath.Length == 0 ||
+            source.SourcePath.IndexOfAny(BadLinkChars) >= 0)
         {
             WriteInlineString(w, ColLink, row, LinkMark, style);
             return;
         }
 
-        var target = XmlSafe($"[{source.SourcePath}]{SourceSheet}!A{source.RNum + 1}");
+        var path   = source.SourcePath.Replace("'", "''");
+        var target = XmlSafe($"'[{path}]{SourceSheet}'!A{source.RNum + 1}");
 
         w.WriteStartElement("c", Ns);
         w.WriteAttributeString("r", Ref(ColLink, row));
         w.WriteAttributeString("s", style.ToString(CultureInfo.InvariantCulture));
         w.WriteAttributeString("t", "str");
         w.WriteElementString("f", Ns, $"HYPERLINK(\"{target}\",\"{LinkMark}\")");
+        // Кэш результата формулы. Формально он необязателен — Excel пересчитал бы сам, — но
+        // ячейка объявлена строковой (t="str"), и лист без кэша он читает как неполный.
+        w.WriteElementString("v", Ns, LinkMark);
         w.WriteEndElement();
     }
 

@@ -129,10 +129,12 @@ public sealed class TimeCollectorRunTests : IDisposable
         Assert.Equal(0, ws.Cell(4, 1).GetDouble());
         Assert.Equal(2, ws.Cell(6, 1).GetDouble());
 
-        // Ссылка: и метка для макроса, и формула перехода без макросов.
+        // Ссылка: и метка для макроса, и формула перехода без макросов. Адрес в апострофах —
+        // без них ссылка ломается на путях с пробелами, а расчеты лежат именно в таких папках.
         Assert.Contains("HYPERLINK", ws.Cell(4, 8).FormulaA1);
-        Assert.Contains("Расшифровка!A1", ws.Cell(4, 8).FormulaA1);
+        Assert.Contains("Расшифровка'!A1", ws.Cell(4, 8).FormulaA1);
         Assert.Contains(">>>", ws.Cell(4, 8).FormulaA1);
+        Assert.Equal(">>>", ws.Cell(4, 8).CachedValue.ToString());
 
         // Автофильтр и именованный диапазон — на строке-шапке фильтра и всех данных.
         Assert.True(ws.AutoFilter.IsEnabled);
