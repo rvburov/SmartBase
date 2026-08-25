@@ -510,6 +510,35 @@ public sealed class TimeCollectorRunTests : IDisposable
         Assert.Equal(40, ws.Column(2).Width, precision: 0);
     }
 
+    // Адрес ссылки — это полный путь к расчету, а строковая константа формулы у Excel куда
+    // короче ячейки (см. ExcelMaxFormulaText). Формулу с константой длиннее Excel при открытии
+    // книги выбрасывает («Удаленные записи: Формула»), поэтому такая строка получает простой
+    // текст «>>>» — ровно то, что писал макрос, и переход по ней он же и делает.
+    [Fact]
+    public void Too_Long_Path_Gets_The_Plain_Mark_Instead_Of_A_Formula()
+    {
+        // Путь подгоняется под предел, но остается в MAX_PATH: длиннее файл просто не создать.
+        var filler = 245 - _calc.Length - 1 - "_2025.03.14_Иванов.xlsm".Length;
+        Assert.True(filler > 0, "временная папка стенда слишком длинная для этой проверки");
+
+        CreateCalc(new string('П', filler) + "_2025.03.14_Иванов.xlsm",
+                   ("Изделие", "Длинный", "ДД", 1.0));
+        CreateCalc("К_2025.03.14_Петров.xlsm", ("Изделие", "Короткий", "КК", 2.0));
+
+        var result = Run();
+
+        // Строк две, а формула ровно одна — у той, чей путь влез.
+        Assert.Equal(1, SheetXml(result.OutputPath).Split("HYPERLINK").Length - 1);
+
+        using var wb = new XLWorkbook(result.OutputPath);
+        var ws = wb.Worksheet(TimeCollectorEngine.TargetSheet);
+
+        var byName = Enumerable.Range(4, 2).ToDictionary(r => ws.Cell(r, 2).GetString(), r => r);
+        Assert.False(ws.Cell(byName["Длинный"], 8).HasFormula);
+        Assert.Equal(">>>", ws.Cell(byName["Длинный"], 8).GetString());
+        Assert.True(ws.Cell(byName["Короткий"], 8).HasFormula);
+    }
+
     // Обвязка листа переезжает из шаблона в результат, и переезжать она обязана ЦЕЛИКОМ:
     // вместе с объявлениями неймспейсов с корня листа и списком mc:Ignorable. Excel помечает
     // чужими неймспейсами свои поздние добавки (xr:uid на гиперссылках, фильтрах, примечаниях)

@@ -67,6 +67,16 @@ internal static class TimeSheetWriter
     /// длинный текст лист принимает, но книгу Excel объявляет нечитаемой.</summary>
     internal const int ExcelMaxCellText = 32_767;
 
+    /// <summary>
+    /// Символов в СТРОКОВОЙ КОНСТАНТЕ формулы. Предел куда жестче ячейки, и упереться в него
+    /// легко: адрес ссылки — это полный путь к расчету, а MAX_PATH у Windows 260. Формулу
+    /// с константой длиннее Excel не принимает и при открытии книги выбрасывает («Удаленные
+    /// записи: Формула из части /xl/worksheets/sheetN.xml»), причем молча — какая именно
+    /// ячейка виновата, он не говорит. Такие строки получают простой текст «&gt;&gt;&gt;»,
+    /// как их писал макрос: переход по ним все равно делает макрос шаблона.
+    /// </summary>
+    internal const int ExcelMaxFormulaText = 255;
+
     // Перенос строки в тексте ошибок — как во всех сообщениях расширения.
     private const string NL = "\n";
 
@@ -654,28 +664,33 @@ internal static class TimeSheetWriter
         }
     }
 
+    /// <summary>
+    /// Шапка: строка 1 — подписи, 2-я объединена с ней (подпись занимает две строки),
+    /// 3-я — строка автофильтра. Высоты те же, что ставил макрос.
+    ///
+    /// Ячейки пишутся во ВСЕХ трех строках и во всех восьми колонках, даже когда они пусты:
+    /// рамка у Excel принадлежит ячейке, а не диапазону, и у объединенной пары B1:B2 нижний
+    /// край рисует именно B2. Раньше строки 2 и 3 писались вовсе без ячеек — шапка выходила
+    /// с оборванными рамками, хотя макрос обводил весь диапазон A1:H3.
+    /// </summary>
     private static void WriteHeaderRows(XmlWriter w, TimeSheetStyles styles)
     {
-        // Строка 1 — подписи; 2-я объединена с ней (подпись занимает две строки), 3-я — строка
-        // автофильтра. Высоты те же, что ставил макрос.
-        w.WriteStartElement("row", Ns);
-        w.WriteAttributeString("r", "1");
-        w.WriteAttributeString("ht", "30");
-        w.WriteAttributeString("customHeight", "1");
-        for (var col = ColName; col <= ColLink; col++)
-            WriteInlineString(w, col, 1, Header(col), styles.Head);
-        w.WriteEndElement();
-
-        WriteEmptyRow(w, 2, "100");
-        WriteEmptyRow(w, 3, "13");
+        WriteHeaderRow(w, 1, "30",  styles, captions: true);
+        WriteHeaderRow(w, 2, "100", styles, captions: false);
+        WriteHeaderRow(w, 3, "13",  styles, captions: false);
     }
 
-    private static void WriteEmptyRow(XmlWriter w, int row, string height)
+    private static void WriteHeaderRow(XmlWriter w, int row, string height,
+                                       TimeSheetStyles styles, bool captions)
     {
         w.WriteStartElement("row", Ns);
         w.WriteAttributeString("r", row.ToString(CultureInfo.InvariantCulture));
         w.WriteAttributeString("ht", height);
         w.WriteAttributeString("customHeight", "1");
+
+        for (var col = ColRNum; col <= ColLink; col++)
+            WriteInlineString(w, col, row, captions ? Header(col) : "", styles.Head);
+
         w.WriteEndElement();
     }
 
@@ -685,8 +700,9 @@ internal static class TimeSheetWriter
         IProgress<CollectProgress>? progress, CancellationToken ct, double from, double to,
         bool linkFormulas)
     {
-        var plain = new TimeCollectorEngine.RowPaint(TimeCollectorEngine.RowFill.White, false);
-        var i     = 0;
+        var plain    = new TimeCollectorEngine.RowPaint(TimeCollectorEngine.RowFill.White, false);
+        var tooLong  = 0;
+        var i        = 0;
 
         try
         {
@@ -697,13 +713,18 @@ internal static class TimeSheetWriter
                 // мгновенна и так.
                 if ((i & 1023) == 0) ct.ThrowIfCancellationRequested();
 
-                WriteRow(w, styles, rows[i], i < paints.Length ? paints[i] : plain,
-                         TopIndent + 1 + i, linkFormulas);
+                if (WriteRow(w, styles, rows[i], i < paints.Length ? paints[i] : plain,
+                             TopIndent + 1 + i, linkFormulas)) tooLong++;
 
                 if (i % ProgressEvery == 0 || i == rows.Count - 1)
                     progress?.Report(new CollectProgress(
                         from + (to - from) * (i + 1) / rows.Count, "Запись строк", $"{i + 1} из {rows.Count}"));
             }
+
+            if (tooLong > 0)
+                Log.Warning("Сводная трудоемкость: у {Count} строк путь длиннее {Limit} знаков — " +
+                            "«{Mark:l}» записан текстом, переход по ним делает макрос шаблона",
+                            tooLong, ExcelMaxFormulaText, LinkMark);
         }
         catch (Exception ex) when (ex is not OperationCanceledException and not TimeCollectException)
         {
@@ -716,7 +737,7 @@ internal static class TimeSheetWriter
         }
     }
 
-    private static void WriteRow(XmlWriter w, TimeSheetStyles styles, TimeRow source,
+    private static bool WriteRow(XmlWriter w, TimeSheetStyles styles, TimeRow source,
                                  TimeCollectorEngine.RowPaint paint, int row, bool linkFormulas)
     {
         var body = styles.Body(paint.Fill);
@@ -737,9 +758,10 @@ internal static class TimeSheetWriter
         WriteNumber(w, ColDate, row, source.Date.ToOADate(), date);
         WriteInlineString(w, ColEfio, row, source.Efio, body);
         WriteInlineString(w, ColProj, row, source.Proj, body);
-        WriteLink(w, row, source, body, linkFormulas);
+        var plain = WriteLink(w, row, source, body, linkFormulas);
 
         w.WriteEndElement();
+        return plain;
     }
 
     /// <summary>
@@ -752,7 +774,7 @@ internal static class TimeSheetWriter
     /// ОСТОРОЖНО…_2025.11.06_Иванов.xlsm». Апостроф внутри пути удваивается — иначе он
     /// закрыл бы адрес раньше времени.
     /// </summary>
-    private static void WriteLink(XmlWriter w, int row, TimeRow source, int style, bool linkFormulas)
+    private static bool WriteLink(XmlWriter w, int row, TimeRow source, int style, bool linkFormulas)
     {
         // Без формулы колонка выглядит ровно как у макроса: текст «>>>» плюс номер строки
         // в скрытой колонке A, и переход делает макрос шаблона.
@@ -760,11 +782,20 @@ internal static class TimeSheetWriter
             source.SourcePath.IndexOfAny(BadLinkChars) >= 0)
         {
             WriteInlineString(w, ColLink, row, LinkMark, style);
-            return;
+            return false;
         }
 
         var path   = source.SourcePath.Replace("'", "''");
         var target = XmlSafe($"'[{path}]{SourceSheet}'!A{source.RNum + 1}");
+
+        // Слишком длинный адрес формулой не записать (см. ExcelMaxFormulaText) — такая строка
+        // получает текст макроса. Молчать тут нельзя: колонка выглядит так же, а работает
+        // иначе, поэтому число таких строк уходит в лог.
+        if (target.Length > ExcelMaxFormulaText)
+        {
+            WriteInlineString(w, ColLink, row, LinkMark, style);
+            return true;
+        }
 
         w.WriteStartElement("c", Ns);
         w.WriteAttributeString("r", Ref(ColLink, row));
@@ -775,6 +806,7 @@ internal static class TimeSheetWriter
         // ячейка объявлена строковой (t="str"), и лист без кэша он читает как неполный.
         w.WriteElementString("v", Ns, LinkMark);
         w.WriteEndElement();
+        return false;
     }
 
     private static void WriteInlineString(XmlWriter w, int col, int row, string text, int style)
