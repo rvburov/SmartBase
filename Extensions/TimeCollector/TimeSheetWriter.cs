@@ -145,11 +145,11 @@ internal static class TimeSheetWriter
         var shell  = ReadSheetShell(source, sheetPath);
         var styles = TimeSheetStyles.Prepare(source);
 
-        // Что именно перенесено из шаблона — в лог: если Excel забракует результат, по этой
-        // строке видно, на что смотреть, и не приходится гадать по составу чужой книги.
-        Log.Information("Сводная трудоемкость: обвязка листа шаблона — {Parts:l}; не перенесено — {Dropped:l}",
-                        shell.Others.Count  == 0 ? "пусто" : string.Join(" ", shell.Others.Select(o => o.Name)),
-                        shell.Dropped.Count == 0 ? "ничего" : string.Join(" ", shell.Dropped));
+        // Потерю части обвязки замечать нужно: элемент, которого нет в схеме листа, мы
+        // не переносим (см. Rank), и лист от этого может выглядеть иначе, чем шаблон.
+        if (shell.Dropped.Count > 0)
+            Log.Information("Сводная трудоемкость: из листа шаблона не перенесено — {Dropped:l}",
+                            string.Join(" ", shell.Dropped));
 
         using var outFile = new FileStream(outputPath, FileMode.Create, FileAccess.Write, FileShare.None);
         using var target  = new ZipArchive(outFile, ZipArchiveMode.Create);
@@ -205,23 +205,16 @@ internal static class TimeSheetWriter
         var entry = zip.GetEntry(sheetPath)
             ?? throw new TimeCollectException($"В записанном своде нет части {sheetPath}.");
 
-        using var s      = entry.Open();
-        using var counted = new LineCounted(s);
-        using var r      = XmlReader.Create(counted, new XmlReaderSettings { IgnoreWhitespace = true });
+        using var s = entry.Open();
+        using var r = XmlReader.Create(s, new XmlReaderSettings { IgnoreWhitespace = true });
 
         var sheetRow = 0;
         var seen     = 0;
-        var parts    = new List<string>();
         try
         {
             while (r.Read())
             {
-                if (r.NodeType != XmlNodeType.Element) continue;
-
-                // Верхний уровень листа — это и есть его состав в том порядке, в каком его
-                // видит Excel: как раз по нему он и судит, читаемый лист или нет.
-                if (r.Depth == 1) parts.Add(r.LocalName);
-                if (r.LocalName != "row") continue;
+                if (r.NodeType != XmlNodeType.Element || r.LocalName != "row") continue;
 
                 // Номер строки листа — чтобы назвать не только позицию в XML (она ни о чем
                 // не говорит), но и расчет, чья строка оказалась последней прочитанной.
@@ -236,48 +229,10 @@ internal static class TimeSheetWriter
                 $"{NL}{ex.Message}{NL}{RowHint(rows, sheetRow)}", ex);
         }
 
-        // Строки XML считаются потому, что об отказе Excel сообщает НОМЕРОМ СТРОКИ в части
-        // листа. Сам лист пишется в одну строку, а переводы строк в нем — из текста ячеек
-        // (наименования из CAD часто многострочные), и без этого числа номер из сообщения
-        // Excel не с чем сопоставить: хвост листа или середина свода.
-        Log.Information("Сводная трудоемкость: лист результата — {Parts:l}; строк XML: {Lines}",
-                        string.Join(" ", parts), counted.Lines);
-
         var expected = rows.Count + TopIndent;
         if (seen != expected)
             throw new TimeCollectException(
                 $"В записанном своде {seen} строк вместо {expected} — лист неполон.");
-    }
-
-    /// <summary>Поток, считающий переводы строк по дороге: отдельный проход по листу
-    /// в сотни мегабайт стоил бы дороже всей проверки.</summary>
-    private sealed class LineCounted(Stream inner) : Stream
-    {
-        internal long Lines { get; private set; } = 1;
-
-        public override int Read(byte[] buffer, int offset, int count)
-        {
-            var read = inner.Read(buffer, offset, count);
-            for (var i = offset; i < offset + read; i++)
-                if (buffer[i] == (byte)'\n') Lines++;
-            return read;
-        }
-
-        public override bool CanRead  => true;
-        public override bool CanSeek  => false;
-        public override bool CanWrite => false;
-        public override long Length   => throw new NotSupportedException();
-
-        public override long Position
-        {
-            get => throw new NotSupportedException();
-            set => throw new NotSupportedException();
-        }
-
-        public override void Flush() { }
-        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
-        public override void SetLength(long value) => throw new NotSupportedException();
-        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
     }
 
     // Какая строка свода и какой расчет стоят за строкой листа: XML-позиция сама по себе

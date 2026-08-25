@@ -146,6 +146,24 @@ public sealed class TimeCollectorRunTests : IDisposable
         Assert.Equal(@"\\старый\путь", wb.Worksheet("Настройки").Cell(1, 2).GetString());
     }
 
+    // Рамка у Excel принадлежит ЯЧЕЙКЕ, а не диапазону: у объединенной пары B1:B2 нижний край
+    // рисует именно B2. Строки 2 и 3 писались вовсе без ячеек — шапка выходила с оборванными
+    // рамками, хотя макрос обводил весь A1:H3.
+    [Fact]
+    public void Header_Is_Bordered_In_All_Three_Rows()
+    {
+        CreateCalc("П_2025.03.14_Иванов.xlsm", ("Изделие", "А", "АА", 1.0));
+
+        using var wb = new XLWorkbook(Run().OutputPath);
+        var ws = wb.Worksheet(TimeCollectorEngine.TargetSheet);
+
+        // Шапка занимает строки 1-3, свод начинается с 4-й.
+        for (var row = 1; row <= 3; row++)
+            for (var col = 1; col <= 8; col++)
+                Assert.NotEqual(XLBorderStyleValues.None,
+                                ws.Cell(row, col).Style.Border.BottomBorder);
+    }
+
     [Fact]
     public void Designation_Groups_Alternate_And_Diverging_Norms_Turn_Red()
     {
