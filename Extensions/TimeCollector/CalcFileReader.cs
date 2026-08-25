@@ -21,6 +21,10 @@ internal static class CalcFileReader
     /// <summary>Лист, из которого макрос берет данные.</summary>
     private const string SourceSheet = "Расшифровка";
 
+    /// <summary>Пометка вместо трудоемкости, которую нельзя записать числом (переполнение,
+    /// ошибка формулы). Обозначение то же, что показывает сам Excel.</summary>
+    private const string BadNumber = "#ЧИСЛО!";
+
     // Индексы колонок листа (0-based) = F(n+1) в SQL-запросе макроса.
     private const int SrcHierarchy = 1;   // F2  — иерархический номер, только условие отбора
     private const int SrcName      = 2;   // F3  — наименование
@@ -166,13 +170,19 @@ internal static class CalcFileReader
     };
 
     /// <summary>Трудоемкость: число — числом, нечисловой текст — как есть (в макросе такое
-    /// значение не переживало <c>CDec</c> и попадало в свод строкой).</summary>
+    /// значение не переживало <c>CDec</c> и попадало в свод строкой).
+    ///
+    /// Бесконечность и NaN числом НЕ считаются, хотя формально это <c>double</c>: такие
+    /// значения приходят из ячеек с переполнением и ошибками формул, а в лист Excel они
+    /// попадали как <c>&lt;v&gt;Infinity&lt;/v&gt;</c> — синтаксически XML цел, но Excel такую
+    /// книгу объявляет нечитаемой и «восстанавливает», выбрасывая лист целиком. Ставим вместо
+    /// значения пометку: строка свода уцелеет, а ошибку будет видно.</summary>
     private static (double? Norm, string Text) ReadNorm(object? value)
     {
         switch (value)
         {
             case null:      return (null, "");
-            case double d:  return (d, "");
+            case double d:  return double.IsFinite(d) ? (d, "") : (null, BadNumber);
             case int n:     return (n, "");
             case decimal m: return ((double)m, "");
         }
@@ -182,7 +192,7 @@ internal static class CalcFileReader
 
         if (double.TryParse(text, NumberStyles.Any, CultureInfo.CurrentCulture, out var parsed) ||
             double.TryParse(text.Replace(',', '.'), NumberStyles.Any, CultureInfo.InvariantCulture, out parsed))
-            return (parsed, "");
+            return double.IsFinite(parsed) ? (parsed, "") : (null, BadNumber);
 
         return (null, text);
     }

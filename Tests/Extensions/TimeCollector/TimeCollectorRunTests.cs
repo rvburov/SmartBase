@@ -1,4 +1,5 @@
 using System.IO.Compression;
+using System.Xml;
 using ClosedXML.Excel;
 using SmartBase.Extensions.TimeCollector;
 
@@ -307,6 +308,37 @@ public sealed class TimeCollectorRunTests : IDisposable
         using var wb = new XLWorkbook(result.OutputPath);
         var ws = wb.Worksheet(TimeCollectorEngine.TargetSheet);
         Assert.Equal("Корпус 01", ws.Cell(4, 2).GetString());          // первая строка свода, «Наименование»
+    }
+
+    // Данные расчетов бывают «злыми»: переносы строк и спецсимволы XML в наименовании, эмодзи
+    // (пара суррогатов), переполнение в трудоемкости. Проверяем не глазами, а как это делает
+    // Excel: лист обязан читаться XML-парсером, а книга — открываться целиком. Переполнение
+    // особенно коварно: «Infinity» в <v> оставляет XML синтаксически целым, и Excel молча
+    // объявляет книгу нечитаемой, выбрасывая лист при «восстановлении».
+    [Fact]
+    public void Nasty_Cell_Values_Keep_The_Workbook_Readable()
+    {
+        CreateCalc("Злой_2025.03.14_Иванов.xlsm",
+            ("Изделие", "Корпус\nвторая строка", "АБВГ.111111.001", 1.0),
+            ("Изделие", "A & B < C > D \" \' ]]>", "АБВГ.222222.002", 2.0),
+            ("Изделие", "Корпус \U0001F600 узел", "АБВГ.333333.003", 3.0),
+            ("Изделие", "Переполнение",            "АБВГ.444444.004", "1e400"));
+
+        var result = Run();
+        Assert.Equal(4, result.RowCount);
+
+        using (var zip = ZipFile.OpenRead(result.OutputPath))
+        {
+            var sheet = zip.Entries.First(e => e.FullName.StartsWith("xl/worksheets/sheet"));
+            using var reader = XmlReader.Create(sheet.Open());
+            while (reader.Read()) { }                       // битый лист бросит XmlException
+        }
+
+        using var wb = new XLWorkbook(result.OutputPath);   // а нечитаемую книгу не откроет ClosedXML
+        var ws = wb.Worksheet(TimeCollectorEngine.TargetSheet);
+
+        // Порядок свода — по обозначению, значит переполнение легло последней строкой.
+        Assert.Equal("#ЧИСЛО!", ws.Cell(7, 4).GetString());
     }
 
     [Fact]

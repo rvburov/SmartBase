@@ -563,6 +563,12 @@ internal static class TimeSheetWriter
 
     private static void WriteNumber(XmlWriter w, int col, int row, double value, int style)
     {
+        // Бесконечность и NaN числом не записать: «Infinity» в <v> оставляет XML синтаксически
+        // целым, но Excel объявляет книгу нечитаемой и выбрасывает лист при «восстановлении».
+        // Отсеивает такие значения уже читатель (CalcFileReader.ReadNorm) — здесь страховка
+        // на случай другого источника: пустая ячейка со стилем безопаснее битого листа.
+        if (!double.IsFinite(value)) { WriteBlank(w, col, row, style); return; }
+
         w.WriteStartElement("c", Ns);
         w.WriteAttributeString("r", Ref(col, row));
         w.WriteAttributeString("s", style.ToString(CultureInfo.InvariantCulture));
