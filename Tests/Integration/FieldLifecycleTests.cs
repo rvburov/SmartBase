@@ -1,3 +1,5 @@
+using SmartBase.Core.Models;
+
 namespace SmartBase.Tests.Integration;
 
 /// <summary>
@@ -95,6 +97,32 @@ public sealed class FieldLifecycleTests
         // Сброс на дефолт (значение == defaultName) снимает переопределение.
         repo.SetSystemFieldName(col.Id!.Value, TitleKey, "Название", defaultName: "Название");
         Assert.DoesNotContain(TitleKey, repo.GetSystemFieldNames(col.Id!.Value).Keys);
+    }
+
+    /// <summary>Первое поле-дата коллекции показывается в календаре само — так ждет тот, кто
+    /// заводит поле руками. Сборщику коллекции из готовых данных это не нужно, и он гасит флаг
+    /// через <c>autoCalendar: false</c> (см. TimeCollectionWriter): дата там — обычная колонка.</summary>
+    [Fact]
+    public void AddField_shows_first_date_in_calendar_unless_the_caller_opts_out()
+    {
+        using var db = new TempDatabase();
+        var repo = db.Constructor;
+        var col  = SampleData.AddCollection(repo);
+
+        var auto = repo.AddField(new DbField
+        {
+            CollectionId = col.Id!.Value, Name = "Дата", FieldType = "date", Position = 1000,
+        });
+        Assert.True(auto.IsCalStart);
+
+        var other = SampleData.AddCollection(repo, "Свод");
+        var quiet = repo.AddField(new DbField
+        {
+            CollectionId = other.Id!.Value, Name = "Дата", FieldType = "date", Position = 1000,
+        }, autoCalendar: false);
+
+        Assert.False(quiet.IsCalStart);
+        Assert.False(repo.GetFields(other.Id!.Value).Single(f => f.Id == quiet.Id).IsCalStart);
     }
 
     private static string[] AddThreeFieldKeys(SmartBase.Database.Repositories.ConstructorRepository repo, int colId)

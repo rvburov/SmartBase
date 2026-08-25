@@ -123,6 +123,21 @@ public sealed class TimeCollectionWriterTests
         Assert.Equal(DecimalMark.Comma, fmt.DecimalSeparator);
     }
 
+    /// <summary>Дата свода — колонка таблицы, а не событие: тумблер «Отображать в календаре»
+    /// у поля выключен. Репозиторий включает его первому полю-дате коллекции сам, поэтому
+    /// каркас заводит дату с <c>autoCalendar: false</c> — иначе календарь заполнился бы
+    /// датами расчетов.</summary>
+    [Fact]
+    public void Date_field_stays_out_of_the_calendar()
+    {
+        using var db = new TempDatabase();
+
+        var shell = TimeCollectionWriter.CreateShell(db.Constructor, "Трудоемкость");
+        var date  = db.Constructor.GetFields(shell.CollectionId).Single(f => f.Id == shell.DateFieldId);
+
+        Assert.False(date.IsCalStart);
+    }
+
     // ── Имя коллекции ─────────────────────────────────────────────────────────
 
     [Fact]

@@ -2518,7 +2518,11 @@ public partial class ConstructorRepository(AppDbContext db)
           })
           .ToList();
 
-    public DbField AddField(DbField field)
+    /// <param name="autoCalendar">true (по умолчанию) — первое поле-дата коллекции включается
+    /// в календаре само: так ждет тот, кто заводит поле руками. false — флаг остается таким,
+    /// каким его передали: коллекцию собирает код из готовых данных, и дата в ней может быть
+    /// обычной колонкой, а не событием (см. <c>TimeCollectionWriter</c>).</param>
+    public DbField AddField(DbField field, bool autoCalendar = true)
     {
         Demand(PermAction.CreateField, field.CollectionId);
         if (db.DbFields.Any(f => f.CollectionId == field.CollectionId && f.Name == field.Name))
@@ -2526,7 +2530,7 @@ public partial class ConstructorRepository(AppDbContext db)
 
         // Первое поле-дата в коллекции по умолчанию видно в календаре (IsCalStart); его
         // значения попадают в индексную проекцию calendar_index (см. SyncCalendarIndexValue).
-        if (field.FieldType == "date" &&
+        if (autoCalendar && field.FieldType == "date" &&
             !db.DbFields.Any(f => f.CollectionId == field.CollectionId && f.FieldType == "date" && f.IsCalStart))
             field.IsCalStart = true;
 
