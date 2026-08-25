@@ -5,6 +5,7 @@ using System.Text;
 using System.Threading;
 using System.Xml;
 using System.Xml.Linq;
+using Serilog;
 using ClosedXML.Parser;
 
 namespace SmartBase.Extensions.TimeCollector;
@@ -125,6 +126,11 @@ internal static class TimeSheetWriter
         // не читая: шаблоном вполне может оказаться прошлый результат на те же сотни тысяч строк.
         var shell  = ReadSheetShell(source, sheetPath);
         var styles = TimeSheetStyles.Prepare(source);
+
+        // Что именно перенесено из шаблона — в лог: если Excel забракует результат, по этой
+        // строке видно, на что смотреть, и не приходится гадать по составу чужой книги.
+        Log.Information("Сводная трудоемкость: обвязка листа шаблона — {Parts:l}",
+                        shell.Others.Count == 0 ? "пусто" : string.Join(", ", shell.Others.Select(o => o.Name)));
 
         using var outFile = new FileStream(outputPath, FileMode.Create, FileAccess.Write, FileShare.None);
         using var target  = new ZipArchive(outFile, ZipArchiveMode.Create);
@@ -295,6 +301,32 @@ internal static class TimeSheetWriter
         return target.StartsWith("xl/", StringComparison.OrdinalIgnoreCase) ? target : "xl/" + target;
     }
 
+    /// <summary>Разобрать кусок листа. Не разобрался — молча пропускаем: лист без чужой
+    /// настройки вида откроется, а с обрывком XML — нет.</summary>
+    private static bool TryParse(string xml, out XElement element)
+    {
+        try
+        {
+            element = XElement.Parse(xml);
+
+            // Объявления неймспейса листа снимаем: имя элемента его уже несет, а префикс
+            // в результат тащить незачем — ClosedXML пишет «x:», Excel не пишет ничего,
+            // и лист с чужими префиксами Excel читает неохотно.
+            foreach (var node in element.DescendantsAndSelf())
+                node.Attributes()
+                    .Where(a => a.IsNamespaceDeclaration && a.Value == Ns)
+                    .ToList()
+                    .ForEach(a => a.Remove());
+
+            return true;
+        }
+        catch (XmlException)
+        {
+            element = null!;
+            return false;
+        }
+    }
+
     private static XDocument? ReadXml(ZipArchive zip, string path)
     {
         var entry = zip.GetEntry(path);
@@ -308,7 +340,7 @@ internal static class TimeSheetWriter
 
     /// <summary>Все, что на листе НЕ строки: элементы шаблона как есть (в порядке появления)
     /// плюс отдельно ширины колонок — их мы не выбрасываем, а лишь помечаем скрытые.</summary>
-    private sealed record SheetShell(List<(string Name, string Xml)> Others, XElement? Cols);
+    private sealed record SheetShell(List<(string Name, XElement Xml)> Others, XElement? Cols);
 
     /// <summary>
     /// Порядок элементов листа, заданный схемой (CT_Worksheet). Excel читает лист ПО СХЕМЕ:
@@ -344,7 +376,7 @@ internal static class TimeSheetWriter
 
     private static SheetShell ReadSheetShell(ZipArchive zip, string sheetPath)
     {
-        var others = new List<(string Name, string Xml)>();
+        var others = new List<(string Name, XElement Xml)>();
         XElement? cols = null;
 
         var entry = zip.GetEntry(sheetPath);
@@ -377,7 +409,12 @@ internal static class TimeSheetWriter
                 default:
                     if (Rebuilt.Contains(r.LocalName)) { r.Skip(); break; }
                     var name = r.LocalName;
-                    others.Add((name, r.ReadOuterXml()));
+                    var xml  = r.ReadOuterXml();
+                    // Разбираем сразу: записанный через WriteTo элемент берет объявления
+                    // неймспейсов из КОНТЕКСТА писателя, а сырая строка тащит за собой
+                    // «x:»-префиксы и собственные xmlns на каждом узле. Формально это тот же
+                    // неймспейс, но Excel к такому листу придирчив.
+                    if (TryParse(xml, out var parsed)) others.Add((name, parsed));
                     break;
             }
         }
@@ -415,7 +452,7 @@ internal static class TimeSheetWriter
 
         void Add(string name, Action write) => parts.Add((Rank(name), seq++, write));
 
-        foreach (var (name, xml) in shell.Others) Add(name, () => w.WriteRaw(xml));
+        foreach (var (name, xml) in shell.Others) Add(name, () => xml.WriteTo(w));
 
         Add("dimension", () =>
         {
@@ -463,55 +500,40 @@ internal static class TimeSheetWriter
     /// расставляем скрытие: колонка A служебная (номер строки источника нужен макросу) и
     /// скрыта всегда, остальные прячутся, если во всем своде пусты, а прежнее скрытие с них
     /// снимается — иначе колонка, пустовавшая в прошлый раз, осталась бы невидимой.
+    ///
+    /// Пишем РОВНО восемь элементов — по одному на колонку свода. Диапазоны шаблона при этом
+    /// не переносятся: они накрывают лист целиком (у Excel это обычно <c>min="1" max="16384"</c>)
+    /// и запросто перекрывают друг друга, а раньше каждый разрезался на отдельные колонки.
+    /// На листе в 158 колонок это давало и тысячи лишних элементов, и ДУБЛИКАТЫ диапазонов —
+    /// лист с такими <c>col</c> Excel объявляет поврежденным. Справа от свода колонки пусты,
+    /// и дефолтная ширина им не мешает.
     /// </summary>
     private static void WriteCols(XmlWriter w, XElement? template, IReadOnlySet<int> hidden)
     {
-        var kept = new List<XElement>();
-        var seen = new HashSet<int>();
-
+        // Атрибуты колонки из шаблона: последний накрывший диапазон выигрывает — так же,
+        // как их применяет сам Excel.
+        var source = new XElement?[LastCol + 1];
         foreach (var col in template?.Elements(XName.Get("col", Ns)) ?? [])
         {
             var min = (int?)col.Attribute("min") ?? 0;
             var max = (int?)col.Attribute("max") ?? min;
             if (min <= 0) continue;
 
-            // Диапазон шаблона может накрывать сразу несколько наших колонок — режем его на
-            // отдельные, чтобы скрыть ровно нужные и не тронуть соседей.
-            if (min <= LastCol && max >= 1)
-            {
-                for (var c = min; c <= max; c++)
-                {
-                    var one = new XElement(col);
-                    one.SetAttributeValue("min", c);
-                    one.SetAttributeValue("max", c);
-                    if (c <= LastCol)
-                    {
-                        seen.Add(c);
-                        SetHidden(one, c == ColRNum || hidden.Contains(c));
-                    }
-                    kept.Add(one);
-                }
-            }
-            else
-            {
-                kept.Add(new XElement(col));
-            }
+            for (var c = Math.Max(min, 1); c <= Math.Min(max, LastCol); c++) source[c] = col;
         }
-
-        // Колонки, которых в шаблоне не было: ширина остается дефолтной, важен только флаг.
-        for (var c = 1; c <= LastCol; c++)
-        {
-            if (seen.Contains(c)) continue;
-            var one = new XElement(XName.Get("col", Ns),
-                new XAttribute("min", c), new XAttribute("max", c));
-            SetHidden(one, c == ColRNum || hidden.Contains(c));
-            kept.Add(one);
-        }
-
-        if (kept.Count == 0) return;
 
         w.WriteStartElement("cols", Ns);
-        foreach (var col in kept.OrderBy(e => (int?)e.Attribute("min") ?? 0)) w.WriteRaw(col.ToString());
+        for (var c = 1; c <= LastCol; c++)
+        {
+            var one = source[c] is { } from
+                ? new XElement(from)
+                : new XElement(XName.Get("col", Ns));
+
+            one.SetAttributeValue("min", c);
+            one.SetAttributeValue("max", c);
+            SetHidden(one, c == ColRNum || hidden.Contains(c));
+            one.WriteTo(w);
+        }
         w.WriteEndElement();
 
         static void SetHidden(XElement col, bool hide)
