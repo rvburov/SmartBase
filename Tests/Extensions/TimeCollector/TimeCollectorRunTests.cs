@@ -548,6 +548,9 @@ public sealed class TimeCollectorRunTests : IDisposable
         // Строк две, а формула ровно одна — у той, чей путь влез.
         Assert.Equal(1, SheetXml(result.OutputPath).Split("HYPERLINK").Length - 1);
 
+        // И об этом сказано в журнале: ячейка выглядит так же, а работает иначе.
+        Assert.Equal(1, result.Sheet.PlainLinks);
+
         using var wb = new XLWorkbook(result.OutputPath);
         var ws = wb.Worksheet(TimeCollectorEngine.TargetSheet);
 
@@ -584,7 +587,8 @@ public sealed class TimeCollectorRunTests : IDisposable
         DecorateSheet(_template);
 
         CreateCalc("П_2025.03.14_Иванов.xlsm", ("Изделие", "А", "АА", 1.0));
-        var xml = SheetXml(Run().OutputPath);
+        var result = Run();
+        var xml    = SheetXml(result.OutputPath);
 
         Assert.Contains("mc:Ignorable=\"xr\"", xml);
         Assert.Contains("xr:uid", xml);
@@ -594,7 +598,9 @@ public sealed class TimeCollectorRunTests : IDisposable
         Assert.True(legacy > 0 && tables > 0, "обвязка шаблона до результата не доехала");
         Assert.True(legacy < tables, "legacyDrawing уехал за tableParts — Excel забракует лист");
 
+        // Выброшенное не должно пропадать втихую — журнал называет его поименно.
         Assert.DoesNotContain("mysteryPart", xml);
+        Assert.Contains("mysteryPart", result.Sheet.Dropped);
     }
 
     // Дописать в лист шаблона то, чего ClosedXML не пишет: объявления с корня, гиперссылку

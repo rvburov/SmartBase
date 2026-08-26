@@ -5,7 +5,6 @@ using System.Text;
 using System.Threading;
 using System.Xml;
 using System.Xml.Linq;
-using Serilog;
 using ClosedXML.Parser;
 
 namespace SmartBase.Extensions.TimeCollector;
@@ -124,8 +123,9 @@ internal static class TimeSheetWriter
     /// Собрать результат: копия <paramref name="templatePath"/>, в которой лист
     /// <see cref="TimeCollectorEngine.TargetSheet"/> заменен сводом. Оригинал не трогается.
     /// </summary>
+    /// <returns>Чем результат разошелся с задуманным — для журнала расширения.</returns>
     /// <exception cref="TimeCollectException">Шаблон не читается или в нем нет нужного листа.</exception>
-    internal static void Write(
+    internal static SheetNotes Write(
         string templatePath, string outputPath,
         IReadOnlyList<TimeRow> rows, TimeCollectorEngine.RowPaint[] paints, IReadOnlySet<int> hidden,
         IProgress<CollectProgress>? progress, CancellationToken ct,
@@ -145,22 +145,17 @@ internal static class TimeSheetWriter
         var shell  = ReadSheetShell(source, sheetPath);
         var styles = TimeSheetStyles.Prepare(source);
 
-        // Потерю части обвязки замечать нужно: элемент, которого нет в схеме листа, мы
-        // не переносим (см. Rank), и лист от этого может выглядеть иначе, чем шаблон.
-        if (shell.Dropped.Count > 0)
-            Log.Information("Сводная трудоемкость: из листа шаблона не перенесено — {Dropped:l}",
-                            string.Join(" ", shell.Dropped));
-
         using var outFile = new FileStream(outputPath, FileMode.Create, FileAccess.Write, FileShare.None);
         using var target  = new ZipArchive(outFile, ZipArchiveMode.Create);
 
+        var plainLinks = 0;
         foreach (var entry in source.Entries)
         {
             ct.ThrowIfCancellationRequested();
 
             if (entry.FullName == sheetPath)
-                WriteSheet(target, entry.FullName, shell, styles, rows, paints, hidden,
-                           progress, ct, from, to);
+                plainLinks = WriteSheet(target, entry.FullName, shell, styles, rows, paints, hidden,
+                                        progress, ct, from, to);
             else if (entry.FullName == TimeSheetStyles.PartPath)
                 CopyText(target, entry.FullName, styles.Xml);
             else if (entry.FullName == "xl/workbook.xml")
@@ -174,6 +169,8 @@ internal static class TimeSheetWriter
             else
                 CopyRaw(target, entry);
         }
+
+        return new SheetNotes(shell.Dropped, plainLinks);
     }
 
     /// <summary>Влезает ли свод на лист. Проверяем ДО записи: узнать про предел из отказа
@@ -493,7 +490,8 @@ internal static class TimeSheetWriter
 
     // ── Лист ──────────────────────────────────────────────────────────────────
 
-    private static void WriteSheet(
+    /// <returns>Сколько строк остались со ссылкой-текстом вместо формулы.</returns>
+    private static int WriteSheet(
         ZipArchive target, string path, SheetShell shell, TimeSheetStyles styles,
         IReadOnlyList<TimeRow> rows, TimeCollectorEngine.RowPaint[] paints, IReadOnlySet<int> hidden,
         IProgress<CollectProgress>? progress, CancellationToken ct, double from, double to)
@@ -547,11 +545,15 @@ internal static class TimeSheetWriter
 
         Add("cols", () => WriteCols(w, shell.Cols, hidden));
 
+        // Строки пишет отложенное действие ниже (см. parts), но выполняется оно ДО выхода
+        // из метода — счетчику отсюда деваться некуда.
+        var plainLinks = 0;
+
         Add("sheetData", () =>
         {
             w.WriteStartElement("sheetData", Ns);
             WriteHeaderRows(w, styles);
-            WriteDataRows(w, styles, rows, paints, progress, ct, from, to);
+            plainLinks = WriteDataRows(w, styles, rows, paints, progress, ct, from, to);
             w.WriteEndElement();
         });
 
@@ -568,6 +570,7 @@ internal static class TimeSheetWriter
 
         w.WriteEndElement();
         w.WriteEndDocument();
+        return plainLinks;
     }
 
     /// <summary>
@@ -648,7 +651,9 @@ internal static class TimeSheetWriter
         w.WriteEndElement();
     }
 
-    private static void WriteDataRows(
+    /// <returns>Сколько строк остались со ссылкой-текстом: адрес не влез в формулу
+    /// (см. <see cref="LinkTarget"/>), и переход по ним делает только макрос шаблона.</returns>
+    private static int WriteDataRows(
         XmlWriter w, TimeSheetStyles styles,
         IReadOnlyList<TimeRow> rows, TimeCollectorEngine.RowPaint[] paints,
         IProgress<CollectProgress>? progress, CancellationToken ct, double from, double to)
@@ -673,13 +678,6 @@ internal static class TimeSheetWriter
                     progress?.Report(new CollectProgress(
                         from + (to - from) * (i + 1) / rows.Count, "Запись строк", $"{i + 1} из {rows.Count}"));
             }
-
-            // Молчать про такие строки нельзя: колонка выглядит так же, а работает иначе.
-            if (marked > 0)
-                Log.Warning("Сводная трудоемкость: у {Count} строк путь формулой не записать " +
-                            "(длиннее {Limit} знаков или со скобками в имени) — «{Mark:l}» записан " +
-                            "текстом, переход по ним делает макрос шаблона",
-                            marked, ExcelMaxFormulaText, LinkMark);
         }
         catch (Exception ex) when (ex is not OperationCanceledException and not TimeCollectException)
         {
@@ -690,6 +688,8 @@ internal static class TimeSheetWriter
                 $"Сбой при записи строки {i + 1} из {rows.Count}" +
                 (file.Length > 0 ? $" (расчет: {file})" : "") + $":\n{ex.Message}", ex);
         }
+
+        return marked;
     }
 
     private static bool WriteRow(XmlWriter w, TimeSheetStyles styles, TimeRow source,

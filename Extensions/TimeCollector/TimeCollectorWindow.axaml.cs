@@ -9,7 +9,6 @@ using Avalonia.Interactivity;
 using Avalonia.Media;
 using Avalonia.Platform.Storage;
 using Avalonia.VisualTree;
-using Serilog;
 using SmartBase.Controls.Components;
 using SmartBase.Controls.Dialogs;
 using SmartBase.Core.Models;
@@ -253,14 +252,12 @@ public partial class TimeCollectorWindow : Window
         catch (TimeCollectException ex)
         {
             Rollback();
-            Log.Warning(ex, "Сводная трудоемкость: не выполнено");
-            Fail(ex.Message);
+            Fail(ex.Message, ex.InnerException);
         }
         catch (Exception ex)
         {
             Rollback();
-            Log.Error(ex, "Сводная трудоемкость: непредвиденная ошибка");
-            Fail($"Ошибка: {ex.Message}");
+            Fail($"Ошибка: {ex.Message}", ex);
         }
         finally
         {
@@ -283,6 +280,7 @@ public partial class TimeCollectorWindow : Window
         Progress.SetInfo("");
 
         AppendIssues(result.ProcessedFiles, result.TotalFiles, result.RowCount, result.Issues);
+        AppendSheetNotes(result.Sheet);
         LogLine("");
         LogLine($"💾 Результат: {result.OutputPath}");
         RenderLog();
@@ -369,7 +367,9 @@ public partial class TimeCollectorWindow : Window
 
     // Список коллекций в сайдбаре строится главным окном; события «коллекции изменились»
     // расширению недоступны, поэтому просто просим перестроиться все деревья окна-владельца.
-    // Не нашли — не беда: коллекция появится при следующем обновлении списка.
+    // Не нашли — не беда: коллекция появится при следующем обновлении списка. По той же
+    // причине сбой здесь глотается молча: коллекция уже создана, и говорить пользователю
+    // про чужое дерево значило бы пугать его тем, что само пройдет.
     private void RefreshSidebars()
     {
         try
@@ -378,21 +378,35 @@ public partial class TimeCollectorWindow : Window
             foreach (var tree in owner.GetVisualDescendants().OfType<SidebarTree>())
                 tree.Refresh();
         }
-        catch (Exception ex)
+        catch
         {
-            Log.Warning(ex, "Сводная трудоемкость: не удалось обновить сайдбар");
+            // см. выше
         }
     }
 
-    private void Fail(string message)
+    /// <summary>
+    /// Отказ: целиком — в журнал, первой строкой — в статус (узкая полоска статуса
+    /// на многострочном тексте расползается, а подробности уже в журнале).
+    ///
+    /// <paramref name="technical"/> — исходный сбой со стеком. Раньше он уходил в общий
+    /// диагностический лог приложения; место ему здесь: расширение самодостаточно, разбирать
+    /// его отказ проще там же, где его увидели, и «Настройки → Диагностика» не засоряется
+    /// записями расширения, которое из программы может быть просто удалено.
+    /// </summary>
+    private void Fail(string message, Exception? technical = null)
     {
         Progress.SetInfo("");
         LogLine("");
         LogLine($"❌ {message}");
-        RenderLog();
 
-        // В статус — только первая строка: подробности (пути, что проверить) уже целиком
-        // в журнале, а узкая полоска статуса на многострочном тексте расползается.
+        if (technical is not null)
+        {
+            LogLine("");
+            LogLine("Подробности сбоя (для разработчика):");
+            LogLine(technical.ToString());
+        }
+
+        RenderLog();
         SetStatus(message.Split('\n')[0], "BrushRed");
     }
 
@@ -451,6 +465,30 @@ public partial class TimeCollectorWindow : Window
         {
             LogLine("");
             LogLine("✅ Все файлы прочитаны без замечаний.");
+        }
+    }
+
+    /// <summary>
+    /// Чем готовый лист разошелся с задуманным. Обе заметки — про то, что меняет результат
+    /// МОЛЧА: лист выглядит как надо, а ведет себя иначе, и заметить это можно только здесь.
+    /// В обычном прогоне обеих нет, и журнал они не засоряют.
+    /// </summary>
+    private void AppendSheetNotes(SheetNotes notes)
+    {
+        if (notes.PlainLinks > 0)
+        {
+            LogLine("");
+            LogLine($"ℹ️ Ссылка осталась текстом у строк: {notes.PlainLinks}. Путь к расчету длиннее " +
+                    "255 знаков или со скобками в имени — такой адрес Excel в формулу не берет. " +
+                    "«>>>» на месте, переход по нему делает макрос шаблона.");
+        }
+
+        if (notes.Dropped.Count > 0)
+        {
+            LogLine("");
+            LogLine($"ℹ️ Из листа шаблона не перенесено: {string.Join(", ", notes.Dropped)}. " +
+                    "Таких элементов нет в схеме листа Excel — с ними книгу пришлось бы " +
+                    "восстанавливать при открытии.");
         }
     }
 

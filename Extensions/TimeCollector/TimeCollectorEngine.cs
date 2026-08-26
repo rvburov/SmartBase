@@ -4,14 +4,13 @@ using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using ClosedXML.Excel;
-using Serilog;
 using SmartBase.Utils;
 
 namespace SmartBase.Extensions.TimeCollector;
 
 /// <summary>Ошибка сборки свода с дружелюбным текстом — показывается в статусе окна.
-/// <paramref name="inner"/> — исходный сбой: текст пользователю дружелюбный, но в logs.db
-/// должна попасть настоящая причина со стеком, иначе разбирать нечего.</summary>
+/// <paramref name="inner"/> — исходный сбой: текст пользователю дружелюбный, но настоящую
+/// причину со стеком окно дописывает в свой журнал, иначе разбирать нечего.</summary>
 public sealed class TimeCollectException(string message, Exception? inner = null)
     : Exception(message, inner);
 
@@ -72,9 +71,20 @@ public static class FileIssueRank
 /// объема работы (полоса переводится в бегущий режим, чтобы не выглядеть застывшей).</summary>
 public sealed record CollectProgress(double? Fraction, string Phase, string Info);
 
-/// <summary>Итог: путь к созданному файлу, счетчики и список замечаний для журнала.</summary>
+/// <summary>
+/// Что писатель сделал с листом не так, как просили, — для журнала расширения.
+/// <paramref name="Dropped"/> — элементы обвязки шаблона, которых нет в схеме листа и которые
+/// поэтому не перенесены; <paramref name="PlainLinks"/> — строки, где «Ссылка» осталась текстом,
+/// потому что адрес не влез в формулу. Обе вещи меняют результат МОЛЧА: лист выглядит как надо,
+/// а ведет себя иначе — сказать о них некому, кроме журнала.
+/// </summary>
+public sealed record SheetNotes(IReadOnlyList<string> Dropped, int PlainLinks);
+
+/// <summary>Итог: путь к созданному файлу, счетчики, список замечаний и заметки по листу —
+/// все для журнала расширения.</summary>
 public sealed record CollectResult(
-    string OutputPath, int TotalFiles, int ProcessedFiles, int RowCount, IReadOnlyList<FileIssue> Issues);
+    string OutputPath, int TotalFiles, int ProcessedFiles, int RowCount,
+    IReadOnlyList<FileIssue> Issues, SheetNotes Sheet);
 
 /// <summary>
 /// Прочитанный свод — общая часть обоих способов выгрузки (файл Excel и коллекция программы):
@@ -189,10 +199,11 @@ public static class TimeCollectorEngine
         // Результат пишется СРАЗУ в свой файл, а не собирается в памяти и сохраняется в конце:
         // писатель потоковый (см. TimeSheetWriter), и отдельной фазы «Сохранение…» у него нет.
         var outputPath = FreePath(outputDir, $"Трудоемкость ({DateTime.Now:yyyy-MM-dd_HH-mm})", ".xlsm");
+        SheetNotes notes;
         try
         {
-            TimeSheetWriter.Write(templatePath, outputPath, ordered, paints, hidden,
-                                  progress, ct, ClearTo, WriteTo);
+            notes = TimeSheetWriter.Write(templatePath, outputPath, ordered, paints, hidden,
+                                          progress, ct, ClearTo, WriteTo);
 
             // Читаем свой же результат парсером, как это делает Excel при открытии: беда,
             // найденная сейчас, называет строку и расчет, а найденная Excel через полчаса —
@@ -203,15 +214,15 @@ public static class TimeCollectorEngine
         catch (OperationCanceledException)          { Discard(outputPath); throw; }
         catch (Exception ex)
         {
+            // Настоящая причина со стеком уезжает вложенным исключением: окно допишет ее
+            // в свой журнал, и разбирать отказ можно там же, где его увидели.
             Discard(outputPath);
-            Log.Error(ex, "Сводная трудоемкость: свод не записан. Результат {Output:l}, шаблон {Template:l}",
-                      outputPath, templatePath);
             throw new TimeCollectException(SaveFailure(ex, templatePath, outputPath), ex);
         }
 
         progress?.Report(new CollectProgress(1, "Готово", ""));
         return new CollectResult(outputPath, table.TotalFiles, table.ProcessedFiles,
-                                 ordered.Count, table.Issues);
+                                 ordered.Count, table.Issues, notes);
     }
 
     // ── Обход папки ───────────────────────────────────────────────────────────

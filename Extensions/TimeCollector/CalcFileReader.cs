@@ -3,7 +3,6 @@ using System.IO;
 using System.Text;
 using System.Threading;
 using ExcelDataReader;
-using Serilog;
 using SmartBase.Core.Importers.TableSources;
 
 namespace SmartBase.Extensions.TimeCollector;
@@ -87,8 +86,8 @@ internal static class CalcFileReader
         }
         catch (Exception ex)
         {
-            // Причина (битый zip, чужой формат, обрезанный файл) иначе нигде бы не осталась.
-            Log.Warning(ex, "Сводная трудоемкость: не удалось прочитать {File:l}", path);
+            // Причина (битый zip, чужой формат, обрезанный файл) едет в журнал расширения
+            // вместе с именем файла — больше ее взять неоткуда.
             return Problem(fileName, FileStatus.Corrupted,
                            $"поврежден или не является файлом Excel: {ex.Message}");
         }
