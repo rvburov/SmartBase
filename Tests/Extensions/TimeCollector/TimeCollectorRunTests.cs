@@ -147,6 +147,56 @@ public sealed class TimeCollectorRunTests : IDisposable
         Assert.Equal(@"\\старый\путь", wb.Worksheet("Настройки").Cell(1, 2).GetString());
     }
 
+    // ── Точность трудоемкости ─────────────────────────────────────────────────
+
+    // Трудоемкость в расчете обычно посчитана формулой, и ее кэш оседает в файле с двоичной
+    // погрешностью: 6,1000000000000005 вместо 6,1 — ДРУГОЕ число, у него другие биты. Excel
+    // эту разницу прячет всегда (15 значащих цифр — его предел), а .NET показывает все 17,
+    // и ломалось это в трех местах: показ в коллекции, значение в листе Excel и — главное —
+    // сравнение для красной подсветки, которое считается один раз для обоих приемников.
+    [Fact]
+    public void Binary_Noise_Of_Excel_Formulas_Does_Not_Reach_The_Table()
+    {
+        const string file = "П_2025.03.14_Иванов.xlsm";
+        CreateCalc(file,
+            ("Изделие", "Стенка в сборе", "АБВГ.100200.300", 6.15),
+            ("1.",      "Стенка в сборе", "АБВГ.100200.300", 6.1));
+        PlantBinaryNoise(file, was: "6.15", becomes: "6.1000000000000005");
+
+        // Страховка стенда: погрешность обязана доехать до файла, иначе тест ничего не проверяет.
+        Assert.Contains("6.1000000000000005", SheetXml(Path.Combine(_calc, file)));
+
+        var table = TimeCollectorEngine.Collect(
+            _calc, recursive: false, progress: null, CancellationToken.None);
+
+        Assert.All(table.Rows, row => Assert.Equal(6.1, row.Norm));
+
+        // Одинаковые значения больше не расходятся — красить нечего.
+        Assert.All(table.Paints, paint => Assert.False(paint.NormRed));
+        Assert.DoesNotContain(table.Paints, paint => paint.Fill == TimeCollectorEngine.RowFill.Red);
+    }
+
+    // Положить погрешность в расчет через ClosedXML нельзя: на записи он округляет число так же,
+    // как Excel (15 значащих цифр), и 6,1000000000000005 превращается в 6,1. Поэтому значение
+    // подменяется прямо в XML готового файла — ровно так оно и выглядит в настоящем расчете,
+    // где ячейку считала формула и Excel закэшировал результат.
+    private void PlantBinaryNoise(string fileName, string was, string becomes)
+    {
+        var path = Path.Combine(_calc, fileName);
+        using var zip = ZipFile.Open(path, ZipArchiveMode.Update);
+        var entry = zip.GetEntry(SheetPart) ?? throw new InvalidOperationException("нет " + SheetPart);
+
+        string xml;
+        using (var r = new StreamReader(entry.Open())) xml = r.ReadToEnd();
+
+        var planted = xml.Replace($">{was}<", $">{becomes}<");
+        Assert.NotEqual(xml, planted);                     // стенд обязан сработать
+
+        entry.Delete();
+        using var w = new StreamWriter(zip.CreateEntry(SheetPart).Open());
+        w.Write(planted);
+    }
+
     // ── Один алфавит ──────────────────────────────────────────────────────────
 
     // Расчеты набивают в двух раскладках вперемешку, и в русском слове оказывается латинская

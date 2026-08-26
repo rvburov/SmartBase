@@ -175,15 +175,17 @@ internal static class CalcFileReader
     /// значения приходят из ячеек с переполнением и ошибками формул, а в лист Excel они
     /// попадали как <c>&lt;v&gt;Infinity&lt;/v&gt;</c> — синтаксически XML цел, но Excel такую
     /// книгу объявляет нечитаемой и «восстанавливает», выбрасывая лист целиком. Ставим вместо
-    /// значения пометку: строка свода уцелеет, а ошибку будет видно.</summary>
+    /// значения пометку: строка свода уцелеет, а ошибку будет видно.
+    ///
+    /// Число приходит с точностью Excel — см. <see cref="ExcelPrecise"/>.</summary>
     private static (double? Norm, string Text) ReadNorm(object? value)
     {
         switch (value)
         {
             case null:      return (null, "");
-            case double d:  return double.IsFinite(d) ? (d, "") : (null, BadNumber);
+            case double d:  return double.IsFinite(d) ? (ExcelPrecise(d), "") : (null, BadNumber);
             case int n:     return (n, "");
-            case decimal m: return ((double)m, "");
+            case decimal m: return (ExcelPrecise((double)m), "");
         }
 
         var text = Text(value).Trim();
@@ -191,9 +193,43 @@ internal static class CalcFileReader
 
         if (double.TryParse(text, NumberStyles.Any, CultureInfo.CurrentCulture, out var parsed) ||
             double.TryParse(text.Replace(',', '.'), NumberStyles.Any, CultureInfo.InvariantCulture, out parsed))
-            return double.IsFinite(parsed) ? (parsed, "") : (null, BadNumber);
+            return double.IsFinite(parsed) ? (ExcelPrecise(parsed), "") : (null, BadNumber);
 
         return (null, text);
+    }
+
+    /// <summary>Значащих цифр у числа в Excel. Больше он не показывает и не считает — это его
+    /// собственный предел точности, а не настройка колонки.</summary>
+    private const int ExcelDigits = 15;
+
+    /// <summary>
+    /// Число с точностью Excel — ровно столько значащих цифр, сколько показывает он сам.
+    ///
+    /// Трудоемкость в расчете обычно посчитана формулой, и ее кэш оседает в файле с двоичной
+    /// погрешностью: вместо «6,1» там лежит 6,1000000000000005 — ДРУГОЕ число, у него другие
+    /// биты. Excel эту разницу прячет всегда (на 15 значащих цифрах она исчезает), а .NET —
+    /// нет: <c>ToString</c> у <c>double</c> дает кратчайшую запись, по которой число
+    /// восстанавливается точно, а для этого нужны все 17 цифр.
+    ///
+    /// Без округления это било в трех местах сразу. В коллекции «6,1» показывалось как
+    /// «6,1000000000000001» (формат «Обычное число» отдает значение как есть). В лист Excel
+    /// уезжала та же длинная запись — там ее прятал формат колонки. И, главное, ломалось
+    /// СРАВНЕНИЕ: <c>PlanColors</c> сверяет трудоемкости точно, и строки с одинаковым на вид
+    /// значением объявлялись расходящимися и красились красным — в обоих приемниках, потому
+    /// что раскраска считается один раз до записи.
+    ///
+    /// Настоящих данных округление не теряет: все, что дальше 15-й значащей цифры, — шум
+    /// двоичного представления, Excel его и сам не покажет.
+    /// </summary>
+    private static double ExcelPrecise(double value)
+    {
+        var rounded = double.Parse(value.ToString("G" + ExcelDigits, CultureInfo.InvariantCulture),
+                                   NumberStyles.Float, CultureInfo.InvariantCulture);
+
+        // У чисел под самым пределом double округление вверх дает бесконечность. Для
+        // трудоемкости это фантастика, но превратить число в «нечитаемый лист» страховка
+        // дешевле, чем потом искать причину.
+        return double.IsFinite(rounded) ? rounded : value;
     }
 
     // ── Кто держит книгу открытой ─────────────────────────────────────────────
