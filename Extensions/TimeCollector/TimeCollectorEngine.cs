@@ -72,6 +72,20 @@ public static class FileIssueRank
 public sealed record CollectProgress(double? Fraction, string Phase, string Info);
 
 /// <summary>
+/// Итог приведения текста к одному алфавиту (см. <see cref="Homoglyphs"/>) — для журнала.
+/// </summary>
+/// <param name="Values">Сколько значений исправлено (значение — это одно поле одной строки).</param>
+/// <param name="Mixed">Сколько слов оставлено как есть: решить, какого они алфавита, нельзя.</param>
+/// <param name="Designations">Замены в «Обозначении КД», по одной на каждую пару «было → стало».
+/// Обозначения перечисляются ПОИМЕННО, а не счетчиком: их немного, они ключ сортировки
+/// и раскраски, и цена неверной догадки в них выше, чем в наименовании.</param>
+public sealed record TextFixes(int Values, int Mixed, IReadOnlyList<string> Designations)
+{
+    /// <summary>Галочка снята — текст не трогали.</summary>
+    public static readonly TextFixes None = new(0, 0, []);
+}
+
+/// <summary>
 /// Что писатель сделал с листом не так, как просили, — для журнала расширения.
 /// <paramref name="Dropped"/> — элементы обвязки шаблона, которых нет в схеме листа и которые
 /// поэтому не перенесены; <paramref name="PlainLinks"/> — строки, где «Ссылка» осталась текстом,
@@ -84,7 +98,7 @@ public sealed record SheetNotes(IReadOnlyList<string> Dropped, int PlainLinks);
 /// все для журнала расширения.</summary>
 public sealed record CollectResult(
     string OutputPath, int TotalFiles, int ProcessedFiles, int RowCount,
-    IReadOnlyList<FileIssue> Issues, SheetNotes Sheet);
+    IReadOnlyList<FileIssue> Issues, SheetNotes Sheet, TextFixes Text);
 
 /// <summary>
 /// Прочитанный свод — общая часть обоих способов выгрузки (файл Excel и коллекция программы):
@@ -93,7 +107,7 @@ public sealed record CollectResult(
 /// </summary>
 public sealed record CollectedTable(
     List<TimeRow> Rows, TimeCollectorEngine.RowPaint[] Paints,
-    int TotalFiles, int ProcessedFiles, IReadOnlyList<FileIssue> Issues);
+    int TotalFiles, int ProcessedFiles, IReadOnlyList<FileIssue> Issues, TextFixes Text);
 
 /// <summary>
 /// Сборка сводной таблицы трудоемкости — логика без UI (порт <c>TimeCollector.main</c>).
@@ -138,9 +152,12 @@ public static class TimeCollectorEngine
     /// (<see cref="TimeCollectionWriter"/>). <paramref name="readTo"/> — доля шкалы прогресса,
     /// которую занимает чтение: остаток шкалы делит между своими фазами уже приемник.
     /// </summary>
+    /// <param name="fixText">Привести текст к одному алфавиту (см. <see cref="Homoglyphs"/>).
+    /// Галочка в окне; настройка настоящая, а не страховка от чужой ошибки: она МЕНЯЕТ данные,
+    /// и кому-то свод нужен ровно таким, как в расчетах.</param>
     public static CollectedTable Collect(
         string folder, bool recursive, IProgress<CollectProgress>? progress, CancellationToken ct,
-        double readTo = ReadTo)
+        double readTo = ReadTo, bool fixText = true)
     {
         if (!Directory.Exists(folder)) throw new TimeCollectException("Папка с расчетами не найдена.");
 
@@ -175,21 +192,71 @@ public static class TimeCollectorEngine
                 (reasons.Length > 0 ? $"\n{reasons}" : ""));
         }
 
+        // Текст правится ДО сортировки и раскраски: «Обозначение КД» — их ключ, и обозначение,
+        // набитое в двух раскладках, иначе разъедется по своду двумя группами.
+        var fixes = fixText ? FixText(rows, progress, ct) : TextFixes.None;
+
         var ordered = Sort(rows);
-        return new CollectedTable(ordered, PlanColors(ordered), files.Count, processed, issues);
+        return new CollectedTable(ordered, PlanColors(ordered), files.Count, processed, issues, fixes);
+    }
+
+    /// <summary>
+    /// Привести текст всех строк к одному алфавиту (см. <see cref="Homoglyphs"/>). Чистятся ВСЕ
+    /// текстовые поля: «Наименование» и «Обозначение КД» приходят из ячеек расчета, «ФИО»
+    /// и «Проект» — из имени файла, и раскладка сбивается везде одинаково.
+    /// </summary>
+    private static TextFixes FixText(
+        List<TimeRow> rows, IProgress<CollectProgress>? progress, CancellationToken ct)
+    {
+        progress?.Report(new CollectProgress(null, "Приведение текста к одному алфавиту…", ""));
+
+        // Замены в обозначениях перечисляются поименно, поэтому одинаковые схлопываются:
+        // на сотнях строк одного обозначения строка в журнале нужна одна.
+        var designations = new List<string>();
+        var seen         = new HashSet<string>(StringComparer.Ordinal);
+        var values       = 0;
+        var mixed        = 0;
+
+        for (var i = 0; i < rows.Count; i++)
+        {
+            if ((i & 1023) == 0) ct.ThrowIfCancellationRequested();
+
+            var row  = rows[i];
+            var name = Homoglyphs.Normalize(row.Name);
+            var deno = Homoglyphs.Normalize(row.Deno);
+            var efio = Homoglyphs.Normalize(row.Efio);
+            var proj = Homoglyphs.Normalize(row.Proj);
+
+            mixed  += name.Mixed + deno.Mixed + efio.Mixed + proj.Mixed;
+            values += (name.Changed ? 1 : 0) + (deno.Changed ? 1 : 0) +
+                      (efio.Changed ? 1 : 0) + (proj.Changed ? 1 : 0);
+
+            if (deno.Changed && seen.Add(row.Deno))
+                designations.Add($"{row.Deno} → {deno.Text}");
+
+            if (!(name.Changed || deno.Changed || efio.Changed || proj.Changed)) continue;
+
+            rows[i] = row with
+            {
+                Name = name.Text, Deno = deno.Text, Efio = efio.Text, Proj = proj.Text,
+            };
+        }
+
+        return new TextFixes(values, mixed, designations);
     }
 
     /// <summary>Собрать свод и записать его в .xlsm-шаблон — выгрузка в файл Excel.</summary>
+    /// <param name="fixText">См. <see cref="Collect"/>.</param>
     public static CollectResult Run(
         string folder, bool recursive, string templatePath, string outputDir,
-        IProgress<CollectProgress>? progress, CancellationToken ct)
+        IProgress<CollectProgress>? progress, CancellationToken ct, bool fixText = true)
     {
         // Приемник проверяем до долгого чтения папки: узнать про недоступный шаблон через
         // десять минут обхода сетевой шары — худшее из возможного.
         if (!File.Exists(templatePath))   throw new TimeCollectException("Файл-шаблон не найден.");
         if (!Directory.Exists(outputDir)) throw new TimeCollectException("Папка для сохранения не найдена.");
 
-        var table   = Collect(folder, recursive, progress, ct);
+        var table   = Collect(folder, recursive, progress, ct, ReadTo, fixText);
         var ordered = table.Rows;
         var paints  = table.Paints;
         var hidden  = HiddenColumns(ordered);
@@ -222,7 +289,7 @@ public static class TimeCollectorEngine
 
         progress?.Report(new CollectProgress(1, "Готово", ""));
         return new CollectResult(outputPath, table.TotalFiles, table.ProcessedFiles,
-                                 ordered.Count, table.Issues, notes);
+                                 ordered.Count, table.Issues, notes, table.Text);
     }
 
     // ── Обход папки ───────────────────────────────────────────────────────────

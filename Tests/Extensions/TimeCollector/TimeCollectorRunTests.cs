@@ -80,8 +80,9 @@ public sealed class TimeCollectorRunTests : IDisposable
         wb.SaveAs(Path.Combine(_calc, fileName));
     }
 
-    private CollectResult Run(bool recursive = false) =>
-        TimeCollectorEngine.Run(_calc, recursive, _template, _out, progress: null, CancellationToken.None);
+    private CollectResult Run(bool recursive = false, bool fixText = true) =>
+        TimeCollectorEngine.Run(_calc, recursive, _template, _out,
+                                progress: null, CancellationToken.None, fixText);
 
     // ── Сквозной прогон ───────────────────────────────────────────────────────
 
@@ -144,6 +145,111 @@ public sealed class TimeCollectorRunTests : IDisposable
         // Лист «Настройки» — не дело расширения: путь к папке живет в настройках приложения,
         // а содержимое шаблона остается нетронутым.
         Assert.Equal(@"\\старый\путь", wb.Worksheet("Настройки").Cell(1, 2).GetString());
+    }
+
+    // ── Один алфавит ──────────────────────────────────────────────────────────
+
+    // Расчеты набивают в двух раскладках вперемешку, и в русском слове оказывается латинская
+    // буква-двойник. На глаз не видно, но для программы строки разные. Разбор идет ПО СЛОВУ,
+    // и здесь собраны все ветки этого решения разом.
+    [Fact]
+    public void Mixed_Layout_Words_Are_Brought_To_One_Alphabet()
+    {
+        CreateCalc("П_2025.03.14_Иванов.xlsm",
+            // Русское слово с латинской «c»: «п» двойника не имеет и решает за все слово.
+            ("Изделие", "Корпуc",  "К1", 1.0),
+            // Английское слово с кириллической «о»: «R», «t» решают в обратную сторону.
+            ("1.",      "Rоtor",   "К2", 2.0),
+            // Однозначные буквы ОБОИХ алфавитов («Г» и «d») — не трогаем.
+            ("2.",      "ГОСТd",   "К3", 3.0),
+            // Слово целиком из двойников: три кириллических против одной латинской «P».
+            ("3.",      "СТОP",    "К4", 4.0),
+            // Тоже целиком из двойников, но поровну — решать нечем.
+            ("4.",      "ОP",      "К5", 5.0));
+
+        var result = Run();
+        using var wb = new XLWorkbook(result.OutputPath);
+        var ws = wb.Worksheet(TimeCollectorEngine.TargetSheet);
+
+        var byDeno = Enumerable.Range(4, 5).ToDictionary(r => ws.Cell(r, 3).GetString(), r => r);
+        string Name(string deno) => ws.Cell(byDeno[deno], 2).GetString();
+
+        Assert.Equal("Корпус", Name("К1"));                 // c → с
+        Assert.Equal("Rotor",  Name("К2"));                 // о → o
+        Assert.Equal("ГОСТd",  Name("К3"));                 // не тронуто
+        Assert.Equal("СТОР",   Name("К4"));                 // P → Р по большинству
+        Assert.Equal("ОP",     Name("К5"));                 // поровну — не тронуто
+
+        Assert.Equal(3, result.Text.Values);                // исправлено три значения
+        Assert.Equal(2, result.Text.Mixed);                 // два слова оставлены как есть
+    }
+
+    // Ради этого все и делается: обозначение — ключ сортировки и раскраски, и сравнивается оно
+    // побайтно (StringComparison.Ordinal в PlanColors). Одна буква из чужой раскладки разносила
+    // одно и то же обозначение по двум группам с разной заливкой.
+    [Fact]
+    public void One_Designation_Typed_Two_Ways_Becomes_One_Group()
+    {
+        // Второе обозначение отличается ровно одной буквой: латинская «A» вместо кириллической.
+        CreateCalc("П_2025.03.14_Иванов.xlsm", ("Изделие", "Первая",  "АБВГ.100200.300", 7.0));
+        CreateCalc("П_2025.03.15_Иванов.xlsm", ("Изделие", "Вторая",  "AБВГ.100200.300", 7.0));
+
+        var fixedRun = Run();
+        using (var wb = new XLWorkbook(fixedRun.OutputPath))
+        {
+            var ws = wb.Worksheet(TimeCollectorEngine.TargetSheet);
+            Assert.Equal(ws.Cell(4, 3).GetString(), ws.Cell(5, 3).GetString());
+            Assert.Equal(ws.Cell(4, 2).Style.Fill.BackgroundColor,
+                         ws.Cell(5, 2).Style.Fill.BackgroundColor);
+
+            // Цифры не тронуты: «0»/«О» — тоже двойники, но подмена уничтожила бы номер.
+            Assert.EndsWith(".100200.300", ws.Cell(4, 3).GetString());
+        }
+
+        // Замена в обозначении названа поименно — ее должно быть видно в журнале.
+        Assert.Single(fixedRun.Text.Designations);
+        Assert.Contains("АБВГ.100200.300", fixedRun.Text.Designations[0]);
+
+        // Со снятой галочкой — две разные строки и, значит, две группы.
+        var asIs = Run(fixText: false);
+        using (var wb = new XLWorkbook(asIs.OutputPath))
+        {
+            var ws = wb.Worksheet(TimeCollectorEngine.TargetSheet);
+            Assert.NotEqual(ws.Cell(4, 3).GetString(), ws.Cell(5, 3).GetString());
+            Assert.NotEqual(ws.Cell(4, 2).Style.Fill.BackgroundColor,
+                            ws.Cell(5, 2).Style.Fill.BackgroundColor);
+        }
+        Assert.Equal(0, asIs.Text.Values);
+        Assert.Empty(asIs.Text.Designations);
+    }
+
+    // Выгрузка в коллекцию идет через тот же Collect, что и выгрузка в Excel: правка текста
+    // общая для обоих приемников и по умолчанию включена.
+    [Fact]
+    public void Collect_Cleans_Text_By_Default_For_Both_Destinations()
+    {
+        CreateCalc("П_2025.03.14_Иванов.xlsm", ("Изделие", "Корпуc", "К1", 1.0));
+
+        var table = TimeCollectorEngine.Collect(
+            _calc, recursive: false, progress: null, CancellationToken.None);
+
+        Assert.Equal("Корпус", table.Rows[0].Name);
+        Assert.Equal(1, table.Text.Values);
+    }
+
+    // Чистятся ВСЕ текстовые поля, а «ФИО» и «Проект» приходят не из ячеек, а из имени файла —
+    // раскладка сбивается и там.
+    [Fact]
+    public void Project_And_Author_From_The_File_Name_Are_Cleaned_Too()
+    {
+        // «Cтанок» с латинской «C» и «Ивaнов» с латинской «a».
+        CreateCalc("Cтанок_2025.03.14_Ивaнов.xlsm", ("Изделие", "Деталь", "К1", 1.0));
+
+        using var wb = new XLWorkbook(Run().OutputPath);
+        var ws = wb.Worksheet(TimeCollectorEngine.TargetSheet);
+
+        Assert.Equal("Иванов", ws.Cell(4, 6).GetString());
+        Assert.Equal("Станок", ws.Cell(4, 7).GetString());
     }
 
     // Рамка у Excel принадлежит ЯЧЕЙКЕ, а не диапазону: у объединенной пары B1:B2 нижний край

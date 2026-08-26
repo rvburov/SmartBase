@@ -193,6 +193,7 @@ public partial class TimeCollectorWindow : Window
 
         var folder    = FolderBox.Text!.Trim();
         var recursive = RecursiveCheck.IsChecked == true;
+        var fixText   = FixTextCheck.IsChecked == true;
         if (!Directory.Exists(folder)) { SetStatus("Папка с расчетами не существует", "BrushRed"); return; }
 
         _repo  = null;
@@ -232,8 +233,8 @@ public partial class TimeCollectorWindow : Window
 
         try
         {
-            if (ToCollection) await RunToCollection(folder, recursive);
-            else              await RunToExcel(folder, recursive);
+            if (ToCollection) await RunToCollection(folder, recursive, fixText);
+            else              await RunToExcel(folder, recursive, fixText);
         }
         catch (OperationCanceledException)
         {
@@ -266,7 +267,7 @@ public partial class TimeCollectorWindow : Window
     }
 
     /// <summary>Сборка свода и запись в .xlsm-шаблон — порт макроса целиком.</summary>
-    private async Task RunToExcel(string folder, bool recursive)
+    private async Task RunToExcel(string folder, bool recursive, bool fixText)
     {
         var ct       = _cts!.Token;
         var progress = new Progress<CollectProgress>(OnProgress);
@@ -274,11 +275,12 @@ public partial class TimeCollectorWindow : Window
         var output   = OutputBox.Text!.Trim();
 
         var result = await Task.Run(
-            () => TimeCollectorEngine.Run(folder, recursive, template, output, progress, ct), ct);
+            () => TimeCollectorEngine.Run(folder, recursive, template, output, progress, ct, fixText), ct);
 
         Progress.SetProgress(1, "Готово");
         Progress.SetInfo("");
 
+        AppendTextFixes(result.Text);
         AppendIssues(result.ProcessedFiles, result.TotalFiles, result.RowCount, result.Issues);
         AppendSheetNotes(result.Sheet);
         LogLine("");
@@ -294,14 +296,14 @@ public partial class TimeCollectorWindow : Window
     /// «Документах в коллекцию»: диск — в фоне, каркас коллекции — на общем репозитории
     /// (UI-поток, там же проверка прав), записи и раскраска — на отдельном подключении в фоне.
     /// </summary>
-    private async Task RunToCollection(string folder, bool recursive)
+    private async Task RunToCollection(string folder, bool recursive, bool fixText)
     {
         var ct       = _cts!.Token;
         var progress = new Progress<CollectProgress>(OnProgress);
         var repo     = _repo!;
 
         var table = await Task.Run(
-            () => TimeCollectorEngine.Collect(folder, recursive, progress, ct, CollectionReadTo), ct);
+            () => TimeCollectorEngine.Collect(folder, recursive, progress, ct, CollectionReadTo, fixText), ct);
 
         ct.ThrowIfCancellationRequested();
         SetStatus($"Создаю коллекцию ({table.Rows.Count} строк)…", "BrushAccent");
@@ -326,6 +328,7 @@ public partial class TimeCollectorWindow : Window
         Progress.SetInfo("");
         RefreshSidebars();
 
+        AppendTextFixes(table.Text);
         AppendIssues(table.ProcessedFiles, table.TotalFiles, rows.Count, table.Issues);
         LogLine("");
         LogLine($"🗂️ Коллекция «{shell.CollectionName}» — записей: {created}");
@@ -469,6 +472,31 @@ public partial class TimeCollectorWindow : Window
     }
 
     /// <summary>
+    /// Что дало приведение текста к одному алфавиту. Наименований правится много, и они идут
+    /// счетчиком, а замены в «Обозначении КД» — СПИСКОМ: их немного, они ключ сортировки
+    /// и раскраски, и цена неверной догадки в них выше. Список нужен, чтобы правку можно было
+    /// проверить глазами: не понравилась — прогон повторяется со снятой галочкой, а прежний
+    /// свод при этом цел (результат всегда пишется в новый файл).
+    /// </summary>
+    private void AppendTextFixes(TextFixes fixes)
+    {
+        if (fixes.Values == 0 && fixes.Mixed == 0) return;
+
+        LogLine("");
+        LogLine($"🔤 Приведено к одному алфавиту: значений {fixes.Values}" +
+                (fixes.Mixed > 0
+                    ? $"; слов оставлено как есть (решить нельзя): {fixes.Mixed}"
+                    : ""));
+
+        if (fixes.Designations.Count == 0) return;
+
+        LogLine($"   Обозначения КД ({fixes.Designations.Count}):");
+        foreach (var change in fixes.Designations.Take(MaxIssueLines)) LogLine($"     • {change}");
+        if (fixes.Designations.Count > MaxIssueLines)
+            LogLine($"     … и еще {fixes.Designations.Count - MaxIssueLines}");
+    }
+
+    /// <summary>
     /// Чем готовый лист разошелся с задуманным. Обе заметки — про то, что меняет результат
     /// МОЛЧА: лист выглядит как надо, а ведет себя иначе, и заметить это можно только здесь.
     /// В обычном прогоне обеих нет, и журнал они не засоряют.
@@ -595,6 +623,7 @@ public partial class TimeCollectorWindow : Window
         DbCombo.IsEnabled        = !running && _databases.Count > 1;
         NameBox.IsEnabled        = !running;
         RecursiveCheck.IsEnabled = !running;
+        FixTextCheck.IsEnabled   = !running;
         StopBtn.IsEnabled        = running;
         ExecuteBtn.IsEnabled     = !running && Ready();
     }
