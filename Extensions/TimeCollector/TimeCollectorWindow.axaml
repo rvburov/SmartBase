@@ -50,8 +50,6 @@
                     <Button Grid.Column="2" x:Name="TemplateBtn"
                             Classes="dialog" Content="Обзор…" Click="OnBrowseTemplate" />
                 </Grid>
-                <CheckBox x:Name="LinkFormulaCheck" IsChecked="True"
-                          Content="Колонка «Ссылка» — формулой (снимите, чтобы переход делал макрос шаблона)" />
             </StackPanel>
 
             <!-- 3. Папка для сохранения (выгрузка в Excel) -->

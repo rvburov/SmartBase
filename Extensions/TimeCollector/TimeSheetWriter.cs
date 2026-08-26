@@ -129,7 +129,7 @@ internal static class TimeSheetWriter
         string templatePath, string outputPath,
         IReadOnlyList<TimeRow> rows, TimeCollectorEngine.RowPaint[] paints, IReadOnlySet<int> hidden,
         IProgress<CollectProgress>? progress, CancellationToken ct,
-        double from, double to, bool linkFormulas = true)
+        double from, double to)
     {
         EnsureFits(rows.Count);
 
@@ -160,7 +160,7 @@ internal static class TimeSheetWriter
 
             if (entry.FullName == sheetPath)
                 WriteSheet(target, entry.FullName, shell, styles, rows, paints, hidden,
-                           progress, ct, from, to, linkFormulas);
+                           progress, ct, from, to);
             else if (entry.FullName == TimeSheetStyles.PartPath)
                 CopyText(target, entry.FullName, styles.Xml);
             else if (entry.FullName == "xl/workbook.xml")
@@ -496,8 +496,7 @@ internal static class TimeSheetWriter
     private static void WriteSheet(
         ZipArchive target, string path, SheetShell shell, TimeSheetStyles styles,
         IReadOnlyList<TimeRow> rows, TimeCollectorEngine.RowPaint[] paints, IReadOnlySet<int> hidden,
-        IProgress<CollectProgress>? progress, CancellationToken ct, double from, double to,
-        bool linkFormulas)
+        IProgress<CollectProgress>? progress, CancellationToken ct, double from, double to)
     {
         var entry = target.CreateEntry(path, CompressionLevel.Optimal);
         using var s = entry.Open();
@@ -552,7 +551,7 @@ internal static class TimeSheetWriter
         {
             w.WriteStartElement("sheetData", Ns);
             WriteHeaderRows(w, styles);
-            WriteDataRows(w, styles, rows, paints, progress, ct, from, to, linkFormulas);
+            WriteDataRows(w, styles, rows, paints, progress, ct, from, to);
             w.WriteEndElement();
         });
 
@@ -652,12 +651,11 @@ internal static class TimeSheetWriter
     private static void WriteDataRows(
         XmlWriter w, TimeSheetStyles styles,
         IReadOnlyList<TimeRow> rows, TimeCollectorEngine.RowPaint[] paints,
-        IProgress<CollectProgress>? progress, CancellationToken ct, double from, double to,
-        bool linkFormulas)
+        IProgress<CollectProgress>? progress, CancellationToken ct, double from, double to)
     {
-        var plain    = new TimeCollectorEngine.RowPaint(TimeCollectorEngine.RowFill.White, false);
-        var tooLong  = 0;
-        var i        = 0;
+        var plain  = new TimeCollectorEngine.RowPaint(TimeCollectorEngine.RowFill.White, false);
+        var marked = 0;
+        var i      = 0;
 
         try
         {
@@ -669,17 +667,19 @@ internal static class TimeSheetWriter
                 if ((i & 1023) == 0) ct.ThrowIfCancellationRequested();
 
                 if (WriteRow(w, styles, rows[i], i < paints.Length ? paints[i] : plain,
-                             TopIndent + 1 + i, linkFormulas)) tooLong++;
+                             TopIndent + 1 + i)) marked++;
 
                 if (i % ProgressEvery == 0 || i == rows.Count - 1)
                     progress?.Report(new CollectProgress(
                         from + (to - from) * (i + 1) / rows.Count, "Запись строк", $"{i + 1} из {rows.Count}"));
             }
 
-            if (tooLong > 0)
-                Log.Warning("Сводная трудоемкость: у {Count} строк путь длиннее {Limit} знаков — " +
-                            "«{Mark:l}» записан текстом, переход по ним делает макрос шаблона",
-                            tooLong, ExcelMaxFormulaText, LinkMark);
+            // Молчать про такие строки нельзя: колонка выглядит так же, а работает иначе.
+            if (marked > 0)
+                Log.Warning("Сводная трудоемкость: у {Count} строк путь формулой не записать " +
+                            "(длиннее {Limit} знаков или со скобками в имени) — «{Mark:l}» записан " +
+                            "текстом, переход по ним делает макрос шаблона",
+                            marked, ExcelMaxFormulaText, LinkMark);
         }
         catch (Exception ex) when (ex is not OperationCanceledException and not TimeCollectException)
         {
@@ -693,7 +693,7 @@ internal static class TimeSheetWriter
     }
 
     private static bool WriteRow(XmlWriter w, TimeSheetStyles styles, TimeRow source,
-                                 TimeCollectorEngine.RowPaint paint, int row, bool linkFormulas)
+                                 TimeCollectorEngine.RowPaint paint, int row)
     {
         var body = styles.Body(paint.Fill);
         var date = styles.Date(paint.Fill);
@@ -713,7 +713,7 @@ internal static class TimeSheetWriter
         WriteNumber(w, ColDate, row, source.Date.ToOADate(), date);
         WriteInlineString(w, ColEfio, row, source.Efio, body);
         WriteInlineString(w, ColProj, row, source.Proj, body);
-        var plain = WriteLink(w, row, source, body, linkFormulas);
+        var plain = WriteLink(w, row, source, body);
 
         w.WriteEndElement();
         return plain;
@@ -724,32 +724,17 @@ internal static class TimeSheetWriter
     /// скрытой колонке A нужны макросу шаблона (<c>WsSelectionChanged</c> → <c>CalculationLink</c>),
     /// формула <c>HYPERLINK</c> открывает тот же расчет на той же строке и без макросов.
     ///
-    /// Адрес берется В АПОСТРОФАХ: без них ссылка верна только для путей без пробелов и
-    /// спецсимволов, а расчеты лежат в папках вида «Расшифровка 2025» и зовутся «!!!БРАТЬ
-    /// ОСТОРОЖНО…_2025.11.06_Иванов.xlsm». Апостроф внутри пути удваивается — иначе он
-    /// закрыл бы адрес раньше времени.
+    /// Возвращает <c>true</c>, если путь есть, но формулой его не записать: ячейка выглядит
+    /// так же, а переход по ней делает только макрос — и это стоит посчитать (см. вызов).
     /// </summary>
-    private static bool WriteLink(XmlWriter w, int row, TimeRow source, int style, bool linkFormulas)
+    private static bool WriteLink(XmlWriter w, int row, TimeRow source, int style)
     {
-        // Без формулы колонка выглядит ровно как у макроса: текст «>>>» плюс номер строки
-        // в скрытой колонке A, и переход делает макрос шаблона.
-        if (!linkFormulas || source.SourcePath.Length == 0 ||
-            source.SourcePath.IndexOfAny(BadLinkChars) >= 0)
+        if (LinkTarget(source) is not { } target)
         {
+            // Колонка выглядит ровно как у макроса: текст «>>>» плюс номер строки в скрытой
+            // колонке A — переход по ней макрос и сделает.
             WriteInlineString(w, ColLink, row, LinkMark, style);
-            return false;
-        }
-
-        var path   = source.SourcePath.Replace("'", "''");
-        var target = XmlSafe($"'[{path}]{SourceSheet}'!A{source.RNum + 1}");
-
-        // Слишком длинный адрес формулой не записать (см. ExcelMaxFormulaText) — такая строка
-        // получает текст макроса. Молчать тут нельзя: колонка выглядит так же, а работает
-        // иначе, поэтому число таких строк уходит в лог.
-        if (target.Length > ExcelMaxFormulaText)
-        {
-            WriteInlineString(w, ColLink, row, LinkMark, style);
-            return true;
+            return source.SourcePath.Length > 0;
         }
 
         w.WriteStartElement("c", Ns);
@@ -762,6 +747,26 @@ internal static class TimeSheetWriter
         w.WriteElementString("v", Ns, LinkMark);
         w.WriteEndElement();
         return false;
+    }
+
+    /// <summary>
+    /// Адрес расчета для формулы; <c>null</c> — формулой его не записать.
+    ///
+    /// Адрес берется В АПОСТРОФАХ: без них ссылка верна только для путей без пробелов и
+    /// спецсимволов, а расчеты лежат в папках вида «Расшифровка 2025» и зовутся «!!!БРАТЬ
+    /// ОСТОРОЖНО…_2025.11.06_Иванов.xlsm». Апостроф внутри пути удваивается — иначе он
+    /// закрыл бы адрес раньше времени.
+    /// </summary>
+    private static string? LinkTarget(TimeRow source)
+    {
+        // Кавычка рвет строку формулы, скобки — адрес книги внутри нее.
+        if (source.SourcePath.Length == 0 ||
+            source.SourcePath.IndexOfAny(BadLinkChars) >= 0) return null;
+
+        var path   = source.SourcePath.Replace("'", "''");
+        var target = XmlSafe($"'[{path}]{SourceSheet}'!A{source.RNum + 1}");
+
+        return target.Length > ExcelMaxFormulaText ? null : target;
     }
 
     private static void WriteInlineString(XmlWriter w, int col, int row, string text, int style)

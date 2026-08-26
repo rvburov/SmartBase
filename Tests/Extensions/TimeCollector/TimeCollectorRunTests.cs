@@ -557,6 +557,20 @@ public sealed class TimeCollectorRunTests : IDisposable
         Assert.True(ws.Cell(byName["Короткий"], 8).HasFormula);
     }
 
+    // Скобки в имени файла рвут адрес книги внутри формулы («[путь]Лист»), и такая строка
+    // получает текст макроса — формула с испорченным адресом хуже, чем ее отсутствие.
+    [Fact]
+    public void Brackets_In_The_File_Name_Get_The_Plain_Mark_Too()
+    {
+        CreateCalc("П[1]_2025.03.14_Иванов.xlsm", ("Изделие", "А", "АА", 1.0));
+
+        using var wb = new XLWorkbook(Run().OutputPath);
+        var ws = wb.Worksheet(TimeCollectorEngine.TargetSheet);
+
+        Assert.False(ws.Cell(4, 8).HasFormula);
+        Assert.Equal(">>>", ws.Cell(4, 8).GetString());
+    }
+
     // Обвязка листа переезжает из шаблона в результат, и переезжать она обязана ЦЕЛИКОМ:
     // вместе с объявлениями неймспейсов с корня листа и списком mc:Ignorable. Excel помечает
     // чужими неймспейсами свои поздние добавки (xr:uid на гиперссылках, фильтрах, примечаниях)
