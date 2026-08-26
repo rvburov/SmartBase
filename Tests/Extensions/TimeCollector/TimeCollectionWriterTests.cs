@@ -104,12 +104,13 @@ public sealed class TimeCollectionWriterTests
         Assert.Null(FileAutoRule.FromConfig(file.ConfigJson));
     }
 
-    /// <summary>Колонка «Тр-ть» приходит уже отформатированной: два знака после запятой и
-    /// десятичная запятая. Без настройки поле показывало бы трудоемкость ровно как в расчете
-    /// («12», «12,5», «12,456»), и формат пришлось бы выставлять руками после КАЖДОГО прогона.
-    /// Разряды при этом не разделяются.</summary>
+    /// <summary>Колонка «Тр-ть» приходит уже настроенной, иначе формат пришлось бы выставлять
+    /// руками после КАЖДОГО прогона. Знаков после запятой — «Авто» (-1): трудоемкость приходит
+    /// из расчетов с разной точностью, и фиксированная точность врала бы в обе стороны —
+    /// дописывала бы «12» до «12,00» и резала бы «12,456». Разряды не разделяются, десятичный
+    /// разделитель — запятая.</summary>
     [Fact]
-    public void Norm_field_comes_preformatted_with_two_decimals()
+    public void Norm_field_comes_preformatted_with_automatic_decimals()
     {
         using var db = new TempDatabase();
 
@@ -118,9 +119,13 @@ public sealed class TimeCollectionWriterTests
 
         var fmt = NumberFormatValue.FromConfig(norm.ConfigJson);
         Assert.Equal(NumberFormatKind.Grouped, fmt.Kind);
-        Assert.Equal(2, fmt.Decimals);
+        Assert.Equal(-1, fmt.Decimals);
         Assert.False(fmt.Thousands);
         Assert.Equal(DecimalMark.Comma, fmt.DecimalSeparator);
+
+        // «Авто» — это «сколько есть», а не «ноль»: показ не дописывает нулей и не режет знаки.
+        Assert.Equal("12",     NumberFormatValue.Format("12",     fmt));
+        Assert.Equal("12,456", NumberFormatValue.Format("12,456", fmt));
     }
 
     /// <summary>Дата свода — колонка таблицы, а не событие: тумблер «Отображать в календаре»
