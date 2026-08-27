@@ -26,18 +26,37 @@ public sealed class DocRegistryExtensionTests
     }
 
     /// <summary>
-    /// Настроек ровно две, и обе — то, что расширению негде взять самому: коды организации
-    /// (у каждого предприятия свои) и ФИО регистратора (у машины одно и меняется редко).
-    /// Выбранная коллекция настройкой НЕ объявлена намеренно — ее выбирает само окно.
+    /// Четыре настройки, и порядок значим — так они и лягут полями на экране: сперва то, что
+    /// вводят руками (коды организации, ФИО), затем то, что ведет само окно (база, коллекция).
     /// </summary>
     [Fact]
-    public void Settings_are_organisation_codes_and_fio()
+    public void Settings_are_codes_fio_and_the_target()
     {
         var keys = ((IExtension)new DocRegistryExtension()).Settings.Select(s => s.Key).ToList();
 
-        Assert.Equal([DocRegistryExtension.OrgCodesKey, DocRegistryExtension.FioKey], keys);
-        Assert.DoesNotContain(DocRegistryExtension.LastCollectionKey, keys);
+        Assert.Equal([
+            DocRegistryExtension.OrgCodesKey,
+            DocRegistryExtension.FioKey,
+            DocRegistryExtension.DatabaseKey,
+            DocRegistryExtension.CollectionKey,
+        ], keys);
     }
+
+    /// <summary>Ключи уходят в app.db приставкой «ext.doc-registry.&lt;Key&gt;» и должны быть
+    /// разными: тезки читали бы чужое значение.</summary>
+    [Fact]
+    public void Setting_keys_are_unique()
+    {
+        var keys = ((IExtension)new DocRegistryExtension()).Settings.Select(s => s.Key).ToList();
+
+        Assert.Equal(keys.Count, keys.Distinct(StringComparer.Ordinal).Count());
+    }
+
+    /// <summary>У каждой настройки есть подпись — иначе поле на экране осталось бы безымянным.</summary>
+    [Fact]
+    public void Setting_labels_are_not_empty() =>
+        Assert.All(((IExtension)new DocRegistryExtension()).Settings,
+                   s => Assert.False(string.IsNullOrWhiteSpace(s.Label)));
 
     // ── Разбор строки кодов организации ───────────────────────────────────────
 

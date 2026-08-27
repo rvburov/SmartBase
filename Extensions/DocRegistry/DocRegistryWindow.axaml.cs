@@ -80,7 +80,7 @@ public partial class DocRegistryWindow : Window
                                                        DocRegistryExtension.FioKey);
 
         // Выбор базы тянет за собой список коллекций и проверку структуры.
-        if (_databases.Count > 0) DbCombo.SelectedIndex = 0;
+        RestoreDatabase();
 
         UpdateState();
     }
@@ -119,15 +119,35 @@ public partial class DocRegistryWindow : Window
         if (CollectionCombo.SelectedIndex < 0) RefreshShape();
     }
 
-    // Коллекция журнала у человека одна и та же изо дня в день — возвращаем прошлую по имени.
-    // Не нашлась (переименовали, другая база) — не выбираем НИЧЕГО: наугад выбранная первая
-    // коллекция тут же отвечала бы «Вы выбрали неправильную коллекцию» на пустом месте.
+    // База журнала у человека одна и та же изо дня в день — возвращаем прошлую по ИМЕНИ.
+    // Не по DbId: он живет в реестре и после переустановки или перемонтирования баз может
+    // значить другое, а имя человек и видит в списке. Не нашлась — первая, как и раньше:
+    // без базы окно бесполезно, а с одной базой этот путь вообще единственный.
+    private void RestoreDatabase()
+    {
+        if (_databases.Count == 0) return;
+
+        var last = AppSettings.LoadExtensionSetting(DocRegistryExtension.ExtensionId,
+                                                    DocRegistryExtension.DatabaseKey);
+
+        var at = -1;
+        if (last.Length > 0)
+            for (var i = 0; i < _databases.Count && at < 0; i++)
+                if (string.Equals(_databases[i].Name, last, StringComparison.CurrentCultureIgnoreCase))
+                    at = i;
+
+        DbCombo.SelectedIndex = at >= 0 ? at : 0;
+    }
+
+    // Коллекция журнала — так же по имени. Не нашлась (переименовали, другая база) — не выбираем
+    // НИЧЕГО: наугад выбранная первая коллекция тут же отвечала бы «Вы выбрали неправильную
+    // коллекцию» на пустом месте.
     private void RestoreLastCollection()
     {
         if (_collections.Count == 0) { CollectionCombo.SelectedIndex = -1; return; }
 
         var last = AppSettings.LoadExtensionSetting(DocRegistryExtension.ExtensionId,
-                                                    DocRegistryExtension.LastCollectionKey);
+                                                    DocRegistryExtension.CollectionKey);
 
         CollectionCombo.SelectedIndex = last.Length == 0
             ? -1
@@ -158,9 +178,7 @@ public partial class DocRegistryWindow : Window
                 {
                     _shape        = shape;
                     _designations = [.. DocRegistrar.Designations(_repo, shape)];
-                    AppSettings.SaveExtensionSetting(DocRegistryExtension.ExtensionId,
-                                                     DocRegistryExtension.LastCollectionKey,
-                                                     collection.Name);
+                    RememberTarget(collection.Name);
                 }
                 else
                 {
@@ -175,6 +193,24 @@ public partial class DocRegistryWindow : Window
         }
 
         UpdateState();
+    }
+
+    /// <summary>
+    /// Запомнить приемник — базу и коллекцию — в настройках расширения. Записывается ТОЛЬКО
+    /// когда структура коллекции сошлась: незачем возвращать в следующий раз выбор, на котором
+    /// работать все равно нельзя.
+    /// </summary>
+    private void RememberTarget(string collectionName)
+    {
+        var index = DbCombo.SelectedIndex;
+        if (index >= 0 && index < _databases.Count)
+            AppSettings.SaveExtensionSetting(DocRegistryExtension.ExtensionId,
+                                             DocRegistryExtension.DatabaseKey,
+                                             _databases[index].Name);
+
+        AppSettings.SaveExtensionSetting(DocRegistryExtension.ExtensionId,
+                                         DocRegistryExtension.CollectionKey,
+                                         collectionName);
     }
 
     // ── Подбор кода ЕСКД ──────────────────────────────────────────────────────
