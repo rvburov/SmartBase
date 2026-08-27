@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Общая обвязка тестов расширений: временная база, временная папка и синхронный прогресс.
+    Тестов здесь НЕТ — это библиотека, которую подключают наборы из Tests/Extensions/*.
+
+    Почему папка лежит РЯДОМ с Tests/Extensions, а не внутри: скрипт прогона
+    (Tests/run-extensions.sh) собирает наборы глобом «Tests/Extensions/*/*.csproj» и написан с
+    обещанием «править не нужно никогда». Проект внутри попал бы в этот глоб, и прогон стал бы
+    запускать библиотеку без тестов. Снаружи он в глоб не попадает — скрипт остается нетронутым.
+
+    Правила жизни этого проекта — в README.md рядом.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+    <RootNamespace>SmartBase.Tests.Extensions.Shared</RootNamespace>
+    <AssemblyName>SmartBase.Tests.Extensions.Shared</AssemblyName>
+  </PropertyGroup>
+
+  <!-- Ссылка на приложение — единственная зависимость: TempDatabase поднимает базу настоящим
+       DatabaseManager.Open, оттуда же транзитивно приходит Microsoft.Data.Sqlite.
+       xunit НЕ подключаем намеренно: обвязка ничего не утверждает, а проверки — дело наборов. -->
+  <ItemGroup>
+    <ProjectReference Include="..\..\SmartBase.csproj" />
+  </ItemGroup>
+
+</Project>

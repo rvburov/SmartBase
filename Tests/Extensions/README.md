@@ -8,6 +8,10 @@
 расширения. Ни один тест там не называет конкретное расширение, поэтому удаление любого из них
 набор не ломает.
 
+Общая обвязка (временная база, временная папка, синхронный прогресс) лежит НЕ здесь, а рядом —
+[`Tests/ExtensionsShared/`](../ExtensionsShared/). Снаружи, чтобы не попасть в глоб прогона:
+это библиотека без тестов, и запускать ее незачем.
+
 ## Запуск
 
 ```bash
@@ -30,15 +34,25 @@ dotnet test Tests/Extensions/PdfRename     # одно расширение
 ```bash
 rm -rf Extensions/<Имя> Tests/Extensions/<Имя>
 # убрать 1 using и 1 строку из Extensions/ExtensionRegistry.cs
+
+# если это был последний набор, пользовавшийся общей обвязкой, —
+# ее тоже можно удалить (пустой вывод = потребителей не осталось):
+grep -rl ExtensionsShared Tests/Extensions
 ```
 
-## Почему у пяти проектов нет `AssemblyInfo.cs`
+## Почему `AssemblyInfo.cs` есть не у всех
 
-`DisableTestParallelization` стоит только там, где есть причина: в `DocsCollection`
-(`SqliteConnection.ClearAllPools()` — процесс-глобальная) и в `Registry`
-(`AppSettings.AttachStore` — статическое поле). Остальные наборы чистые либо работают в своих
-временных папках, и параллельность им на пользу — у `PdfAnalyzer` больше сотни вычислительных
-тестов. Отсутствие файла здесь — решение, а не забывчивость.
+`DisableTestParallelization` стоит только там, где есть причина, — и причина всегда одна:
+процесс-глобальное состояние.
+
+| Набор | Что глобально |
+|---|---|
+| `DocsCollection`, `TimeCollector`, `DocRegistry` | `SqliteConnection.ClearAllPools()` при уборке файловой БД + регистрация текущего пользователя через статику `CurrentUser` |
+| `Registry` | `AppSettings.AttachStore` — статическое поле |
+
+Остальные наборы чистые либо работают в своих временных папках, и параллельность им на пользу —
+у `PdfAnalyzer` больше сотни вычислительных тестов. Отсутствие файла там — решение, а не
+забывчивость.
 
 Подробности, стенды и список сознательно не покрытого —
 [docs/developer/testing/extension-tests.md](../../docs/developer/testing/extension-tests.md).

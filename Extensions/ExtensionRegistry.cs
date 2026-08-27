@@ -1,4 +1,5 @@
 using SmartBase.Extensions.AssemblyCalc;
+using SmartBase.Extensions.DocRegistry;
 using SmartBase.Extensions.DocsCollection;
 using SmartBase.Extensions.PdfAnalyzer;
 using SmartBase.Extensions.PdfRename;
@@ -23,6 +24,7 @@ public static class ExtensionRegistry
         new PdfAnalyzerExtension(),
         new DocsCollectionExtension(),
         new TimeCollectorExtension(),
+        new DocRegistryExtension(),
     ];
 
     /// <summary>Найти расширение по <see cref="IExtension.Id"/> (null, если нет).</summary>

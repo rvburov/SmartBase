@@ -1,0 +1,193 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:registry="using:SmartBase.Extensions.DocRegistry"
+        x:Class="SmartBase.Extensions.DocRegistry.DocRegistryWindow"
+        Title="Регистрация КД"
+        Width="720" Height="740"
+        MinWidth="620" MinHeight="560"
+        WindowStartupLocation="CenterOwner"
+        Background="{StaticResource BrushBg}">
+
+    <DockPanel Margin="24">
+
+        <!-- Верх: кто регистрирует и по какому коду -->
+        <StackPanel DockPanel.Dock="Top" Spacing="14" Margin="0,0,0,10">
+
+            <Grid ColumnDefinitions="*,14,240">
+                <StackPanel Grid.Column="0" Spacing="6">
+                    <TextBlock Text="Фамилия, имя, отчество"
+                               FontWeight="{StaticResource FontWeightBold}" />
+                    <TextBox x:Name="FioBox"
+                             VerticalContentAlignment="Center"
+                             Watermark="Иванов Иван Иванович"
+                             TextChanged="OnFormChanged" />
+                </StackPanel>
+                <StackPanel Grid.Column="2" Spacing="6">
+                    <TextBlock Text="Код организации"
+                               FontWeight="{StaticResource FontWeightBold}" />
+                    <ComboBox x:Name="OrgCombo" Height="30" HorizontalAlignment="Stretch"
+                              SelectionChanged="OnTargetChanged" />
+                </StackPanel>
+            </Grid>
+
+            <StackPanel Spacing="6">
+                <TextBlock Text="Код ЕСКД"
+                           FontWeight="{StaticResource FontWeightBold}" />
+                <TextBox x:Name="EskdBox"
+                         VerticalContentAlignment="Center"
+                         Watermark="Фильтр по списку: цифры кода или слово из наименования — ↑ ↓ выбрать, Enter зафиксировать"
+                         TextChanged="OnEskdTextChanged"
+                         KeyDown="OnEskdKeyDown" />
+            </StackPanel>
+
+        </StackPanel>
+
+        <!-- Низ: что получится и куда пишем -->
+        <StackPanel DockPanel.Dock="Bottom" Spacing="14" Margin="0,10,0,0">
+
+            <TextBlock x:Name="SuggestHint" Text=""
+                       FontSize="{DynamicResource FontSizeSmall}"
+                       TextTrimming="CharacterEllipsis"
+                       Foreground="{StaticResource BrushSecondaryText}" />
+
+            <StackPanel Spacing="6">
+                <TextBlock Text="Наименование ЕСКД"
+                           FontWeight="{StaticResource FontWeightBold}" />
+                <TextBox x:Name="NameBox"
+                         VerticalContentAlignment="Center"
+                         Watermark="Подставится по выбранному коду — можно поправить"
+                         TextChanged="OnFormChanged" />
+            </StackPanel>
+
+            <Grid ColumnDefinitions="*,14,*">
+                <StackPanel Grid.Column="0" Spacing="6">
+                    <TextBlock Text="База данных"
+                               FontWeight="{StaticResource FontWeightBold}" />
+                    <ComboBox x:Name="DbCombo" Height="30" HorizontalAlignment="Stretch"
+                              SelectionChanged="OnDbChanged" />
+                </StackPanel>
+                <StackPanel Grid.Column="2" Spacing="6">
+                    <TextBlock Text="Коллекция"
+                               FontWeight="{StaticResource FontWeightBold}" />
+                    <ComboBox x:Name="CollectionCombo" Height="30" HorizontalAlignment="Stretch"
+                              SelectionChanged="OnCollectionChanged" />
+                </StackPanel>
+            </Grid>
+
+            <Grid ColumnDefinitions="*,14,*" RowDefinitions="Auto,10,Auto">
+                <StackPanel Grid.Row="0" Grid.Column="0" Spacing="6">
+                    <TextBlock Text="Тема" Foreground="{StaticResource BrushSecondaryText}" />
+                    <TextBox x:Name="TopicBox" VerticalContentAlignment="Center"
+                             Watermark="Необязательно" />
+                </StackPanel>
+                <StackPanel Grid.Row="0" Grid.Column="2" Spacing="6">
+                    <TextBlock Text="Отметка учёта" Foreground="{StaticResource BrushSecondaryText}" />
+                    <TextBox x:Name="AccountingBox" VerticalContentAlignment="Center"
+                             Watermark="Необязательно" />
+                </StackPanel>
+                <StackPanel Grid.Row="2" Grid.Column="0" Spacing="6">
+                    <TextBlock Text="Примечания (первичное применение)"
+                               Foreground="{StaticResource BrushSecondaryText}"
+                               TextTrimming="CharacterEllipsis" />
+                    <TextBox x:Name="FirstUseBox" VerticalContentAlignment="Center"
+                             Watermark="Необязательно" />
+                </StackPanel>
+                <StackPanel Grid.Row="2" Grid.Column="2" Spacing="6">
+                    <TextBlock Text="Примечание (краткая характеристика)"
+                               Foreground="{StaticResource BrushSecondaryText}"
+                               TextTrimming="CharacterEllipsis" />
+                    <TextBox x:Name="SummaryBox" VerticalContentAlignment="Center"
+                             Watermark="Необязательно" />
+                </StackPanel>
+            </Grid>
+
+            <Border Background="{StaticResource BrushSecondaryBg}"
+                    BorderBrush="{StaticResource BrushSeparator}"
+                    BorderThickness="{DynamicResource BorderLine}"
+                    CornerRadius="{StaticResource RadiusMedium}"
+                    Padding="12,10">
+                <TextBlock x:Name="StatusText"
+                           Text="Готов к работе"
+                           TextWrapping="Wrap"
+                           HorizontalAlignment="Center"
+                           FontWeight="{StaticResource FontWeightBold}"
+                           Foreground="{StaticResource BrushSecondaryText}" />
+            </Border>
+
+            <Grid ColumnDefinitions="*,10,*">
+                <Button Grid.Column="0" x:Name="RegisterBtn"
+                        Classes="dialog"
+                        Width="NaN" Height="36"
+                        HorizontalAlignment="Stretch"
+                        IsEnabled="False"
+                        Content="Зарегистрировать"
+                        Click="OnRegisterClick" />
+                <Button Grid.Column="2" x:Name="CloseBtn"
+                        Classes="dialog"
+                        Width="NaN" Height="36"
+                        HorizontalAlignment="Stretch"
+                        Content="Закрыть"
+                        Click="OnCloseClick" />
+            </Grid>
+
+        </StackPanel>
+
+        <!-- Середина: классификатор занимает всю оставшуюся высоту. Показан ЦЕЛИКОМ с самого
+             начала — ввод в поле кода его фильтрует, а не наполняет.
+
+             Рамка и список собраны один в один как в окне «Отображение записей»
+             (Controls/Dialogs/RecordDisplayDialog.axaml): Padding=0 и ClipToBounds у рамки,
+             нулевые отступы у строк — выделение идет во всю ширину до линии рамки и обрезается
+             по ее скруглению, а полоса прокрутки встает вплотную к рамке, а не висит в отступе. -->
+        <Border BorderBrush="{StaticResource BrushSeparator}"
+                BorderThickness="{DynamicResource BorderLine}"
+                CornerRadius="{StaticResource RadiusBase}"
+                ClipToBounds="True"
+                MinHeight="120"
+                Padding="0">
+            <Panel>
+                <TextBlock x:Name="SuggestEmpty"
+                           Text="Справочник ЕСКД загружается…"
+                           HorizontalAlignment="Center" VerticalAlignment="Center"
+                           TextWrapping="Wrap" TextAlignment="Center"
+                           Foreground="{StaticResource BrushSecondaryText}" />
+                <!-- Виртуализирующий список: рендерятся только видимые строки, поэтому все
+                     66 тысяч кодов открываются мгновенно. -->
+                <ListBox x:Name="SuggestList"
+                         Background="Transparent"
+                         BorderThickness="0"
+                         Padding="0"
+                         IsVisible="False"
+                         Tapped="OnSuggestTapped">
+                    <ListBox.Styles>
+                        <Style Selector="ListBox#SuggestList ListBoxItem">
+                            <Setter Property="Padding"   Value="0" />
+                            <Setter Property="MinHeight" Value="0" />
+                        </Style>
+                        <Style Selector="ListBox#SuggestList ListBoxItem:pointerover /template/ ContentPresenter">
+                            <Setter Property="Background" Value="{StaticResource BrushSecondaryBg}" />
+                        </Style>
+                        <Style Selector="ListBox#SuggestList ListBoxItem:selected /template/ ContentPresenter">
+                            <Setter Property="Background" Value="{StaticResource BrushAccentLight}" />
+                        </Style>
+                    </ListBox.Styles>
+                    <ListBox.ItemTemplate>
+                        <DataTemplate x:DataType="registry:EskdEntry">
+                            <!-- Отступы строки задает содержимое, а не ListBoxItem: тогда
+                                 подсветка занимает всю ширину, а текст все равно не липнет
+                                 к краю (тот же прием, что в «Отображении записей»). -->
+                            <Grid ColumnDefinitions="86,*" Margin="10,7">
+                                <TextBlock Grid.Column="0" Text="{Binding Code}"
+                                           FontWeight="{StaticResource FontWeightBold}" />
+                                <TextBlock Grid.Column="1" Text="{Binding Name}"
+                                           TextTrimming="CharacterEllipsis" />
+                            </Grid>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+            </Panel>
+        </Border>
+
+    </DockPanel>
+
+</Window>

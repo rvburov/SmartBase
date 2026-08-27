@@ -29,14 +29,16 @@
 
   <ItemGroup>
     <Using Include="Xunit" />
+    <Using Include="SmartBase.Tests.Extensions.Shared" />
   </ItemGroup>
 
-  <!-- Ссылка на приложение — единственная зависимость. ClosedXML и ExcelDataReader приходят
-       транзитивно (так же ими пользовался этот же тест, пока лежал в Tests/Integration);
-       оттуда же Microsoft.Data.Sqlite для стенда выгрузки свода в коллекцию (TempDatabase.cs —
-       локальная копия обвязки, как у DocsCollection). -->
+  <!-- Приложение (ClosedXML и ExcelDataReader приходят транзитивно — так же ими пользовался
+       этот же тест, пока лежал в Tests/Integration) и общая обвязка тестов расширений
+       (TempDatabase, TempDir, SyncProgress). Excel-стенд остается здесь: он знает про формат
+       расчетов этого расширения. -->
   <ItemGroup>
     <ProjectReference Include="..\..\..\SmartBase.csproj" />
+    <ProjectReference Include="..\..\ExtensionsShared\ExtensionsShared.csproj" />
   </ItemGroup>
 
 </Project>

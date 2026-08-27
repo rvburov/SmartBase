@@ -31,10 +31,12 @@
 
   <ItemGroup>
     <Using Include="Xunit" />
+    <Using Include="SmartBase.Tests.Extensions.Shared" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\..\..\SmartBase.csproj" />
+    <ProjectReference Include="..\..\ExtensionsShared\ExtensionsShared.csproj" />
   </ItemGroup>
 
 </Project>

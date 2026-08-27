@@ -320,10 +320,3 @@ public sealed class ProductCompareRunTests : IDisposable
         Assert.Empty(Directory.EnumerateFiles(_out));
     }
 }
-
-/// <summary>Синхронный приемник прогресса: штатный <see cref="Progress{T}"/> публикует колбэк
-/// в пул потоков, и к возврату из метода часть отчетов может быть еще не доставлена.</summary>
-internal sealed class SyncProgress<T>(Action<T> onReport) : IProgress<T>
-{
-    public void Report(T value) => onReport(value);
-}
