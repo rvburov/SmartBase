@@ -35,7 +35,7 @@
                            FontWeight="{StaticResource FontWeightBold}" />
                 <TextBox x:Name="EskdBox"
                          VerticalContentAlignment="Center"
-                         Watermark="Фильтр по списку: цифры кода или слово из наименования — ↑ ↓ выбрать, Enter зафиксировать"
+                         Watermark="Цифры кода ведут вглубь по дереву, слово ищет по наименованию — ↑ ↓ выбрать, Enter раскрыть"
                          TextChanged="OnEskdTextChanged"
                          KeyDown="OnEskdKeyDown" />
             </StackPanel>
@@ -132,8 +132,8 @@
 
         </StackPanel>
 
-        <!-- Середина: классификатор занимает всю оставшуюся высоту. Показан ЦЕЛИКОМ с самого
-             начала — ввод в поле кода его фильтрует, а не наполняет.
+        <!-- Середина: классификатор занимает всю оставшуюся высоту. Открыт на классах, дальше
+             вглубь — щелчком по строке или вводом цифр кода.
 
              Рамка и список собраны один в один как в окне «Отображение записей»
              (Controls/Dialogs/RecordDisplayDialog.axaml): Padding=0 и ClipToBounds у рамки,
@@ -151,8 +151,8 @@
                            HorizontalAlignment="Center" VerticalAlignment="Center"
                            TextWrapping="Wrap" TextAlignment="Center"
                            Foreground="{StaticResource BrushSecondaryText}" />
-                <!-- Виртуализирующий список: рендерятся только видимые строки, поэтому все
-                     66 тысяч кодов открываются мгновенно. -->
+                <!-- Виртуализирующий список: рендерятся только видимые строки. В дереве их и так
+                     немного, но поиск по слову выдает плоский перечень на тысячи строк. -->
                 <ListBox x:Name="SuggestList"
                          Background="Transparent"
                          BorderThickness="0"
@@ -177,9 +177,17 @@
                                  подсветка занимает всю ширину, а текст все равно не липнет
                                  к краю (тот же прием, что в «Отображении записей»). -->
                             <Grid ColumnDefinitions="86,*" Margin="10,7">
-                                <TextBlock Grid.Column="0" Text="{Binding Code}"
-                                           FontWeight="{StaticResource FontWeightBold}" />
-                                <TextBlock Grid.Column="1" Text="{Binding Name}"
+                                <!-- Код и точки до шести знаков: точками показан уровень, как в
+                                     исходной таблице классификатора. Есть точки — строка
+                                     раскрывается; нет точек (шесть цифр) — строку можно
+                                     зафиксировать. Отдельный значок для этого не нужен. -->
+                                <StackPanel Grid.Column="0" Orientation="Horizontal">
+                                    <TextBlock Text="{Binding Code}"
+                                               FontWeight="{StaticResource FontWeightBold}" />
+                                    <TextBlock Text="{Binding Dots}" Margin="4,0,0,0"
+                                               Foreground="{StaticResource BrushSecondaryText}" />
+                                </StackPanel>
+                                <TextBlock Grid.Column="1" Text="{Binding Title}"
                                            TextTrimming="CharacterEllipsis" />
                             </Grid>
                         </DataTemplate>

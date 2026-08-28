@@ -53,8 +53,8 @@ public partial class DocRegistryWindow : Window
     {
         InitializeComponent();
 
-        // Справочник распаковывается в фоне, и как только готов — показывается ЦЕЛИКОМ: список
-        // открыт до всякого ввода, ввод его фильтрует. До готовности в рамке стоит подпись из
+        // Справочник распаковывается в фоне, и как только готов — открывается на классах: дальше
+        // вглубь ведут щелчок по строке и ввод цифр кода. До готовности в рамке стоит подпись из
         // разметки («Справочник ЕСКД загружается…»).
         _ = ShowCatalogWhenReady();
 
@@ -216,9 +216,9 @@ public partial class DocRegistryWindow : Window
     // ── Подбор кода ЕСКД ──────────────────────────────────────────────────────
 
     /// <summary>
-    /// Дождаться распаковки справочника и показать его целиком. Пока идет распаковка, в рамке
-    /// стоит подпись из разметки — окном можно пользоваться (поля заполняются), список
-    /// появляется, как только готов.
+    /// Дождаться распаковки справочника и показать классы. Пока идет распаковка, в рамке стоит
+    /// подпись из разметки — окном можно пользоваться (поля заполняются), список появляется,
+    /// как только готов.
     /// </summary>
     private async Task ShowCatalogWhenReady()
     {
@@ -229,14 +229,19 @@ public partial class DocRegistryWindow : Window
         catch (Exception ex)
         {
             Log.Error(ex, "Регистрация КД: справочник ЕСКД не загрузился");
-            ShowSuggestions(new EskdSearch([], 0));
+            ShowSuggestions(Nothing);
             SuggestEmpty.Text = "Справочник ЕСКД недоступен — код можно ввести цифрами вручную";
+            SuggestHint.Text  = "";   // причина уже названа в рамке, «ничего не нашлось» тут ни при чем
             return;
         }
 
         // Пока распаковывалось, человек мог начать набирать — показываем то, что набрано.
         await RunSearch();
     }
+
+    // Пустой список: справочник не поднялся. Вид «поиск по наименованию» тут ни при чем —
+    // просто в нем нет ни узла, ни детей, о которых можно было бы что-то сказать в подсказке.
+    private static EskdView Nothing => new([], EskdViewKind.Names, null, 0, 0, Exact: false);
 
     private void OnEskdTextChanged(object? sender, TextChangedEventArgs e)
     {
@@ -247,32 +252,35 @@ public partial class DocRegistryWindow : Window
     }
 
     /// <summary>
-    /// Отфильтровать справочник по тому, что стоит в поле кода. Пустое поле — весь справочник.
-    /// Ответ устаревшего запроса (человек набрал дальше) отбрасывается по номеру.
+    /// Перестроить список по тому, что стоит в поле кода: цифры ведут по дереву, слово — поиск
+    /// по наименованию, пусто — классы. Ответ устаревшего запроса (человек набрал дальше)
+    /// отбрасывается по номеру.
     /// </summary>
     private async Task RunSearch()
     {
         var query = (EskdBox.Text ?? "").Trim();
         var token = ++_searchToken;
 
-        EskdSearch found;
+        EskdView view;
         try
         {
-            // В фоне: обход 66 тыс. наименований хоть и быстр, но ввод от него подрагивал бы.
-            // Первый вызов вдобавок может застать распаковку справочника.
-            found = await Task.Run(() => EskdCatalog.Search(query));
+            // В фоне: ветка дерева считается мгновенно, а вот поиск по слову обходит 78 тыс.
+            // наименований, и ввод от этого подрагивал бы. Первый вызов вдобавок может застать
+            // распаковку справочника.
+            view = await Task.Run(() => EskdCatalog.View(query));
         }
         catch (Exception ex)
         {
             Log.Error(ex, "Регистрация КД: подбор по справочнику ЕСКД не выполнен");
             if (token != _searchToken) return;
-            ShowSuggestions(new EskdSearch([], 0));
+            ShowSuggestions(Nothing);
             SuggestEmpty.Text = "Справочник ЕСКД недоступен — код можно ввести цифрами вручную";
+            SuggestHint.Text  = "";   // причина уже названа в рамке, «ничего не нашлось» тут ни при чем
             return;
         }
 
         if (token != _searchToken) return;   // человек набрал дальше — ответ устарел
-        ShowSuggestions(found);
+        ShowSuggestions(view);
     }
 
     private void OnEskdKeyDown(object? sender, KeyEventArgs e)
@@ -282,14 +290,14 @@ public partial class DocRegistryWindow : Window
             case Key.Down:   MoveSuggestion(+1); e.Handled = true; break;
             case Key.Up:     MoveSuggestion(-1); e.Handled = true; break;
 
-            // Enter фиксирует выбранную строку — так это описано в поле ввода.
+            // Enter делает с выбранной строкой ровно то же, что и щелчок по ней.
             case Key.Enter when SuggestList.SelectedItem is EskdEntry entry:
-                Accept(entry);
+                Choose(entry);
                 e.Handled = true;
                 break;
 
-            // Escape снимает ФИЛЬТР, а не прячет список: справочник открыт всегда, и вернуть
-            // его целиком — это очистить поле кода.
+            // Escape не прячет список, а возвращает его к классам: справочник открыт всегда,
+            // и подняться в самый верх — это очистить поле кода.
             case Key.Escape when (EskdBox.Text ?? "").Length > 0:
                 EskdBox.Text = "";
                 e.Handled = true;
@@ -309,7 +317,30 @@ public partial class DocRegistryWindow : Window
 
     private void OnSuggestTapped(object? sender, TappedEventArgs e)
     {
-        if (SuggestList.SelectedItem is EskdEntry entry) Accept(entry);
+        if (SuggestList.SelectedItem is EskdEntry entry) Choose(entry);
+    }
+
+    /// <summary>
+    /// Что делает щелчок (и Enter) по строке. Шестизначная — конец ветки: фиксируется в поля кода
+    /// и наименования. Любая другая раскрывается на уровень вниз. Строки цепочки предков
+    /// раскрываются так же — ими и поднимаются обратно наверх.
+    /// </summary>
+    private void Choose(EskdEntry entry)
+    {
+        if (entry.IsLeaf) Accept(entry);
+        else              Descend(entry);
+    }
+
+    // Раскрыть узел: его код уходит в поле ввода, и список сам перестраивается на его ветку —
+    // отдельного состояния «что раскрыто» окно не держит, все дерево задается одним кодом.
+    private void Descend(EskdEntry node)
+    {
+        EskdBox.Text       = node.Code;
+        EskdBox.CaretIndex = node.Code.Length;
+
+        // Ходить по дереву удобнее с клавиатуры: после щелчка фокус возвращается в поле кода,
+        // и следующий уровень берется стрелками с Enter, не отрывая рук.
+        EskdBox.Focus();
     }
 
     // Зафиксировать выбранную строку: код идет в поле кода, наименование — в поле наименования
@@ -325,10 +356,10 @@ public partial class DocRegistryWindow : Window
 
         NameBox.Text = entry.Name;
 
-        // Список НЕ сбрасываем и фильтр по нему НЕ перезапускаем (см. _suppressSearch выше):
-        // выбранная строка остается на виду и выделенной — видно, что именно зафиксировано, —
-        // а соседние коды можно тут же пролистать и передумать. Перезапусти мы фильтр, список
-        // схлопнулся бы до одной строки.
+        // Список НЕ перестраиваем (см. _suppressSearch выше): выбранная строка остается на виду
+        // и выделенной — видно, что именно зафиксировано, — а соседние коды можно тут же
+        // пролистать и передумать. Это важно после поиска по слову: перестрой мы список,
+        // плоская выдача схлопнулась бы в ветку, и остальные находки пропали бы.
         SuggestList.SelectedItem = entry;
         if (SuggestList.SelectedIndex >= 0) SuggestList.ScrollIntoView(SuggestList.SelectedIndex);
 
@@ -338,19 +369,57 @@ public partial class DocRegistryWindow : Window
         UpdateState();
     }
 
-    private void ShowSuggestions(EskdSearch found)
+    private void ShowSuggestions(EskdView view)
     {
-        SuggestList.ItemsSource   = found.Shown;
-        SuggestList.SelectedIndex = found.Shown.Count > 0 ? 0 : -1;
-        SuggestList.IsVisible     = found.Shown.Count > 0;
-        if (found.Shown.Count > 0) SuggestList.ScrollIntoView(0);   // новый отбор — с начала
+        var rows = view.Rows;
 
-        SuggestEmpty.IsVisible = found.Shown.Count == 0;
-        SuggestEmpty.Text      = "Ничего не нашлось — проверьте код или попробуйте другое слово";
+        SuggestList.ItemsSource = rows;
+        SuggestList.IsVisible   = rows.Count > 0;
 
-        SuggestHint.Text = (EskdBox.Text ?? "").Trim().Length == 0
-            ? $"Весь классификатор ЕСКД: {found.Total} кодов — начните вводить, чтобы отфильтровать"
-            : $"Найдено {found.Total}";
+        // Выделяем не первую строку, а ПЕРВОГО РЕБЕНКА: в дереве наверху стоит цепочка предков,
+        // и выделение на ней означало бы, что Enter поднимает обратно, а не ведет вглубь. Так
+        // по дереву можно идти вниз одним Enter. Детей нет (дошли до шестизначной) — выделяем
+        // последнюю строку, то есть сам код.
+        SuggestList.SelectedIndex = rows.Count == 0
+            ? -1
+            : view.Kind == EskdViewKind.Tree ? rows.Count - Math.Max(view.ChildCount, 1) : 0;
+
+        // Прокрутка всегда к началу: цепочка предков должна быть видна целиком — по ней человек
+        // и понимает, где находится.
+        if (rows.Count > 0) SuggestList.ScrollIntoView(0);
+
+        SuggestEmpty.IsVisible = rows.Count == 0;
+        SuggestEmpty.Text      = "Ничего не нашлось — попробуйте другое слово или введите код цифрами";
+
+        SuggestHint.Text = HintFor(view);
+    }
+
+    /// <summary>Подпись под списком: где мы в дереве или сколько нашлось по слову.</summary>
+    private string HintFor(EskdView view)
+    {
+        if (view.Kind == EskdViewKind.Names)
+            return view.Total == 0
+                ? "Ничего не нашлось"
+                : $"Найдено: {view.Total} — щелчок по строке с точками откроет ее ветку";
+
+        var typed  = (EskdBox.Text ?? "").Trim();
+        var levels = EskdCatalog.LevelName(EskdCatalog.RootLength);
+
+        // Числа ставим ПОСЛЕ существительного («классов: 43»): иначе пришлось бы склонять его
+        // под каждое число, а подпись должна читаться при любом.
+        if (view.Node is not { } node)
+            return typed.Length == 0
+                ? $"Классификатор ЕСКД, {levels}: {view.Rows.Count} — щелкните строку, чтобы раскрыть"
+                : view.Rows.Count < EskdCatalog.Roots.Count
+                    ? $"Классификатор ЕСКД, {levels} на «{typed}»: {view.Rows.Count}"
+                    : $"Кода {typed} в справочнике нет — открыты все {levels}";
+
+        if (!view.Exact)
+            return $"Кода {typed} в справочнике нет — открыта ближайшая ветка {node.Code}";
+
+        return view.ChildCount == 0
+            ? $"{node.Code} {node.Title} — дальше не раскрывается, код полный"
+            : $"{node.Code} {node.Title} — {EskdCatalog.LevelName(node.Code.Length + 1)}: {view.ChildCount}";
     }
 
     // ── Регистрация ───────────────────────────────────────────────────────────
@@ -431,8 +500,8 @@ public partial class DocRegistryWindow : Window
         FirstUseBox.Text   = "";
         SummaryBox.Text    = "";
 
-        // Фильтр снят — возвращаем весь справочник под следующий документ. Своим номером
-        // запрос отменяет все, что было запущено до него.
+        // Поле кода опустело — справочник возвращается к классам под следующий документ. Своим
+        // номером запрос отменяет все, что было запущено до него.
         _ = RunSearch();
     }
 
