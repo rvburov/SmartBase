@@ -142,18 +142,32 @@ public sealed class RegistrySchemaTests
 
     // ── Мягкость сравнения имен ───────────────────────────────────────────────
 
-    /// <summary>«Отметка учета» и «Отметка учёта» — одно и то же: «ё» набирают не все, и ронять
-    /// из-за нее целую коллекцию было бы придиркой.</summary>
+    /// <summary>
+    /// Эталон написан одним написанием буквы «е». Но в уже заведенных журналах столбец учета
+    /// может быть назван вторым — такая коллекция обязана подходить, иначе людям пришлось бы
+    /// переименовывать столбец из-за одной буквы.
+    ///
+    /// Проверка идет ИМЕННО в эту сторону (второе написание в коллекции, эталон без него).
+    /// Обратная сторона теперь невозможна, и тест, написанный так, ничего бы не проверял.
+    /// </summary>
     [Fact]
-    public void Yo_in_a_column_name_is_forgiven()
+    public void Second_spelling_in_a_column_name_is_forgiven()
     {
         using var db = new TempDatabase();
 
-        string[] withoutYo = [.. Reference.Select(n => n.Replace('ё', 'е'))];
-        var id = JournalStand.Create(db.Constructor, "Без ё", withoutYo);
+        string[] renamed = [.. Reference.Select(n => n.Replace("учета", "учёта"))];
+        Assert.NotEqual(Reference, renamed);   // стенд и правда отличается от эталона
 
-        Assert.True(RegistrySchema.Check(db.Constructor, id, "Без ё").Ok);
+        var id = JournalStand.Create(db.Constructor, "Второе написание", renamed);
+
+        Assert.True(RegistrySchema.Check(db.Constructor, id, "Второе написание").Ok);
     }
+
+    /// <summary>В эталонных именах столбцов второго написания буквы «е» быть не должно.</summary>
+    [Fact]
+    public void Reference_column_names_use_one_spelling() =>
+        Assert.All(RegistrySchema.Columns,
+                   name => Assert.DoesNotContain('ё', name.ToLowerInvariant()));
 
     [Fact]
     public void Case_and_spaces_in_a_column_name_are_forgiven()

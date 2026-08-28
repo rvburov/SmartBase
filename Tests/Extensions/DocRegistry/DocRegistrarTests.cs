@@ -34,7 +34,7 @@ public sealed class DocRegistrarTests
         Assert.Equal("Иванов Иван Иванович", values[shape.FioFieldId]);      // 3. ФИО
         Assert.True(values.ContainsKey(shape.DateFieldId));                  // 4. Дата регистрации
         Assert.Equal("Тема",            values[shape.TopicFieldId]);         // 5. Тема
-        Assert.Equal("Учтено",          values[shape.AccountingFieldId]);    // 6. Отметка учёта
+        Assert.Equal("Учтено",          values[shape.AccountingFieldId]);    // 6. Отметка учета
         Assert.Equal("Изделие 1",       values[shape.FirstUseFieldId]);      // 7. Первичное применение
         Assert.Equal("Кратко",          values[shape.SummaryFieldId]);       // 8. Краткая характеристика
     }

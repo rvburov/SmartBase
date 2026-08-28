@@ -81,7 +81,7 @@
                              Watermark="Необязательно" />
                 </StackPanel>
                 <StackPanel Grid.Row="0" Grid.Column="2" Spacing="6">
-                    <TextBlock Text="Отметка учёта" Foreground="{StaticResource BrushSecondaryText}" />
+                    <TextBlock Text="Отметка учета" Foreground="{StaticResource BrushSecondaryText}" />
                     <TextBox x:Name="AccountingBox" VerticalContentAlignment="Center"
                              Watermark="Необязательно" />
                 </StackPanel>

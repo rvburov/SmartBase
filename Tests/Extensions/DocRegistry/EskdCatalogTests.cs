@@ -107,25 +107,31 @@ public sealed class EskdCatalogTests
 
     // ── Подбор по наименованию ────────────────────────────────────────────────
 
-    /// <summary>В самом справочнике одно и то же слово написано и «Трёхступенчатые», и
-    /// «Трехступенчатые» — поэтому найденное сверяем со свернутым наименованием, а не с
-    /// буквальным написанием запроса.</summary>
     [Fact]
     public void Word_picks_codes_by_name()
     {
-        var found = EskdCatalog.Search("трёхступенчатые");
+        var found = EskdCatalog.Search("трехступенчатые");
 
         Assert.True(found.Total > 0);
-        Assert.All(found.Shown, e => Assert.Contains("рехступенчатые",
-                                                     e.Name.ToLowerInvariant().Replace('ё', 'е'),
+        Assert.All(found.Shown, e => Assert.Contains("рехступенчатые", e.Name.ToLowerInvariant(),
                                                      StringComparison.Ordinal));
     }
 
-    /// <summary>«ё» с клавиатуры набирают редко — поиск по «е» должен находить то же самое.</summary>
+    /// <summary>
+    /// Данные справочника готовятся в одном написании буквы «е», а человек может набрать второе —
+    /// свертка приводит запрос к тому же виду, и находится то же самое. Без нее такой запрос не
+    /// нашел бы ничего.
+    /// </summary>
     [Fact]
-    public void Yo_and_ye_find_the_same_rows() =>
-        Assert.Equal(EskdCatalog.Search("трёхступенчатые").Total,
-                     EskdCatalog.Search("трехступенчатые").Total);
+    public void Both_spellings_find_the_same_rows() =>
+        Assert.Equal(EskdCatalog.Search("трехступенчатые").Total,
+                     EskdCatalog.Search("трёхступенчатые").Total);
+
+    /// <summary>В данных справочника второго написания буквы «е» нет — файл готовится без него.</summary>
+    [Fact]
+    public void Catalog_names_use_one_spelling() =>
+        Assert.All(EskdCatalog.All,
+                   e => Assert.DoesNotContain('ё', e.Name.ToLowerInvariant()));
 
     [Fact]
     public void Name_search_ignores_case() =>

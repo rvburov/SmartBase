@@ -31,8 +31,8 @@ public sealed record SchemaCheck(RegistryShape? Shape, string? Problem)
 /// заранее дешевле, чем разбирать потом записи, разложенные не по тем столбцам.
 ///
 /// Первый столбец — СИСТЕМНАЯ колонка записи (Title), переименованная в «Наименование»;
-/// остальные семь — обычные поля коллекции. Сравнение имен прощает регистр, крайние пробелы
-/// и разницу «е/ё» («Отметка учета» и «Отметка учёта» — одно и то же), но не прощает порядок:
+/// остальные семь — обычные поля коллекции. Сравнение имен прощает регистр, крайние пробелы и
+/// разнобой в написании буквы «е» (см. <see cref="SameName"/>), но не прощает порядок:
 /// перепутанные местами столбцы означают, что значения лягут не туда.
 /// </summary>
 public static class RegistrySchema
@@ -45,7 +45,7 @@ public static class RegistrySchema
     public const string FioColumn         = "Фамилия, имя, отчество";
     public const string DateColumn        = "Дата регистрации";
     public const string TopicColumn       = "Тема";
-    public const string AccountingColumn  = "Отметка учёта";
+    public const string AccountingColumn  = "Отметка учета";
     public const string FirstUseColumn    = "Примечания (первичное применение)";
     public const string SummaryColumn     = "Примечание (краткая характеристика)";
 
@@ -141,10 +141,15 @@ public static class RegistrySchema
         return columns.OrderBy(c => c.Position).Select(c => c.Column).ToList();
     }
 
-    /// <summary>Имена столбцов равны с точностью до регистра, крайних пробелов и «е/ё».</summary>
+    /// <summary>Имена столбцов равны с точностью до регистра, крайних пробелов и написания
+    /// буквы «е».</summary>
     public static bool SameName(string? actual, string? expected) =>
         Fold(actual) == Fold(expected);
 
+    // Сворачивание перед сравнением. Второе написание буквы «е» здесь не текст, а СИМВОЛ:
+    // эталон написан одним написанием, а в чужом журнале столбец может быть заведен другим,
+    // и такая коллекция обязана подходить без переименования столбца. Уберешь эту строку —
+    // перестанет.
     private static string Fold(string? name) =>
         (name ?? "").Trim().ToLowerInvariant().Replace('ё', 'е');
 }
