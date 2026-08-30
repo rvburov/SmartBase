@@ -1109,6 +1109,29 @@ public partial class TableView : UserControl
             .Select(d => (d.Key, d.Header))
             .ToList();
 
+    // ── Операции над свойствами для панели записи ──────────────────────────────
+    //
+    // Панель записи показывает те же свойства карточками и дает над ними то же контекстное
+    // меню, что заголовок колонки. Порядок, цвет и видимость колонок живут ЗДЕСЬ (column_meta
+    // + кеши + точечная перестройка грида), поэтому панель не делает их сама, а просит через
+    // контроллер — иначе состояние таблицы и БД разъедутся. См. docs/developer/features/constructor/record-page.md.
+
+    /// <summary>Порядок свойства: «вверх» в панели = «влево» в таблице (список тот же).</summary>
+    public void MoveProperty(int fieldId, bool up) => MoveColumn(fieldId.ToString(), left: up);
+
+    /// <summary>Есть ли куда двигать — пункт меню в панели неприменимого направления не показывает.</summary>
+    public bool CanMoveProperty(int fieldId, bool up) => CanMoveColumn(fieldId.ToString(), left: up);
+
+    /// <summary>Текущий цвет свойства — панели он нужен, чтобы отметить его в меню «Изменить цвет».</summary>
+    public RowStyle PropertyStyle(int fieldId) => ColumnStyleOf(fieldId.ToString());
+
+    /// <summary>Применить цвет к свойствам (тот же путь, что из меню заголовка колонки).</summary>
+    public void ApplyPropertyStyle(IReadOnlyList<int> fieldIds, StyleAspect aspect, string? hex) =>
+        ApplyColumnStyle([.. fieldIds.Select(id => id.ToString())], aspect, hex);
+
+    /// <summary>«Обновить привязку» файла из панели — пересканировать папку и перечитать строки.</summary>
+    public void RefreshAutoFileProperty(int fieldId) => RefreshAutoFileFromMenu(fieldId);
+
     // Перемещение колонки влево/вправо: пишем порядок в БД и двигаем ТОЛЬКО одну колонку
     // на месте (RemoveAt+Insert), не сбрасывая весь набор. Полная пересборка (BuildColumns →
     // Columns.Clear) на коллекции со множеством колонок и сотнями тысяч строк рушит все

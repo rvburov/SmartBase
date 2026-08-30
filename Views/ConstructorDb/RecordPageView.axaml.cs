@@ -6,6 +6,7 @@ using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Media;
+using Avalonia.VisualTree;
 using SmartBase.Controls.Behaviors;
 using SmartBase.Controls.Widgets;
 using SmartBase.Core.Models;
@@ -35,6 +36,43 @@ public partial class RecordPageView : UserControl
     /// Обрабатывает MainWindow → контроллер (тот же путь, что и «+» в таблице),
     /// чтобы новое поле сразу появилось и в таблице, и в панели.</summary>
     public event EventHandler? AddPropertyRequested;
+
+    // ── Операции над свойствами (контекстное меню карточки, как у заголовка колонки) ──
+    //
+    // Панель их не выполняет сама: порядок, цвет и видимость колонок живут в таблице
+    // (column_meta + кеши + точечная перестройка грида), а диалоги и пакетные операции —
+    // в контроллере. Панель поднимает те же события, что таблица, и MainWindow ведет их в
+    // те же обработчики — иначе поведение двух мест разъедется.
+
+    /// <summary>«Изменить» — открыть диалог свойства.</summary>
+    public event EventHandler<int>? PropertyEditRequested;
+
+    /// <summary>«Дублировать» — набор выделенных свойств либо одно, по которому кликнули.</summary>
+    public event EventHandler<IReadOnlyList<int>>? PropertyDuplicateRequested;
+
+    /// <summary>«Удалить» и клавиши Delete/Backspace — тот же пакетный путь с подтверждением.</summary>
+    public event EventHandler<IReadOnlyList<int>>? PropertiesDeleteRequested;
+
+    /// <summary>«Создать новое свойство» — новое поле встает ПОСЛЕ этого (ключ = id поля).</summary>
+    public event EventHandler<string>? PropertyCreateAfterRequested;
+
+    /// <summary>«Отображение» — окно видимости и порядка колонок.</summary>
+    public event EventHandler? PropertyDisplayRequested;
+
+    /// <summary>«Сдвинуть вверх/вниз» — тот же порядок, что у колонок таблицы (вверх = влево).</summary>
+    public event EventHandler<(int FieldId, bool Up)>? PropertyMoveRequested;
+
+    /// <summary>«Изменить цвет» — цвет свойства (он же цвет колонки в таблице).</summary>
+    public event EventHandler<(IReadOnlyList<int> FieldIds, StyleAspect Aspect, string? Hex)>? PropertyColorRequested;
+
+    /// <summary>«Обновить привязку» — только у «Файла» с авто-правилом: пересканировать папку.</summary>
+    public event EventHandler<int>? PropertyAutoFileRefreshRequested;
+
+    /// <summary>Текущий цвет свойства — чтобы отметить его в меню. Источник — таблица.</summary>
+    public Func<int, RowStyle>? PropertyStyleProvider { get; set; }
+
+    /// <summary>Есть ли куда двигать свойство: у крайнего пункт меню не показываем.</summary>
+    public Func<int, bool, bool>? CanMovePropertyProvider { get; set; }
 
     /// <summary>Клик по «Добавить описание» в крошке нижнего блока: завести полю коллекции
     /// роль «Описание». Тот же путь наверх, что и у «Добавить свойство» — контроллер создает
@@ -96,6 +134,10 @@ public partial class RecordPageView : UserControl
             _editorScroll = e.NameScope.Find<ScrollViewer>("PART_ScrollViewer");
             UpdateBottomScrollBar();
         };
+
+        // Delete/Backspace по выделенным свойствам — как по выделенным колонкам в таблице.
+        // Туннелем: иначе клавишу раньше разберут поля ввода внутри карточек.
+        AddHandler(KeyDownEvent, OnPanelKeyDown, RoutingStrategies.Tunnel);
 
         // Живая запись имени по символу — как ячейка таблицы: правка имени в навбаре панели
         // сразу видна в строке таблицы (RecordChanged → RefreshRecordRow). NavbarPage сам гасит
@@ -309,12 +351,20 @@ public partial class RecordPageView : UserControl
 
     private Border? _selectedCard;
 
+    // Выделенные свойства — набор, как выделение колонок в таблице: над ним работают
+    // «Дублировать», «Изменить цвет», «Удалить» и клавиши Delete/Backspace. Карточки
+    // держим по id поля, чтобы перекрашивать выделение, не обходя дерево.
+    private readonly List<int> _selectedFieldIds = [];
+    private readonly Dictionary<int, Border> _cardsByField = [];
+
     private void BuildProperties()
     {
         PropertiesHost.Children.Clear();
         _nameCols.Clear();
         _fieldTargets.Clear();
         _fileEditors.Clear();
+        _cardsByField.Clear();
+        _selectedFieldIds.Clear();
         _descTarget   = null;
         _bottomTarget = null;
         _selectedCard = null;
@@ -343,7 +393,11 @@ public partial class RecordPageView : UserControl
     // Каркас карточки: [иконка + название] · [ручка ⋮] · [контент-значение]. Колонка названия
     // регистрируется в общем ресайзе. selectableName=true → подпись с классом propname (синеет
     // в выделенной карточке); cssClass — proprow/addprop.
-    private Border BuildCardShell(string cssClass, Control icon, string name, bool selectableName, Control? valueContent)
+    //
+    // gripArea отдается наружу: ручка ширины — единственная зона карточки, которая на клик
+    // не отвечает ни выделением, ни правкой (она тянет ширину колонки названий).
+    private Border BuildCardShell(string cssClass, Control icon, string name, bool selectableName,
+                                  Control? valueContent, out Control gripArea)
     {
         var grid = new Grid
         {
@@ -379,8 +433,8 @@ public partial class RecordPageView : UserControl
         nameRow.Children.Add(icon);
         nameRow.Children.Add(nameLabel);
         Grid.SetColumn(nameRow, 0);
-
         var grip = BuildColumnGrip();
+        gripArea = grip;
         Grid.SetColumn(grip, 1);
 
         grid.Children.Add(nameRow);
@@ -404,7 +458,8 @@ public partial class RecordPageView : UserControl
     private Border BuildPropertyCard(PropertyRowVm row)
     {
         var input = MakeInputForField(row);
-        var card  = BuildCardShell("proprow", BuildTypeIcon(row.Field), row.Field.Name, selectableName: true, input);
+        var card  = BuildCardShell("proprow", BuildTypeIcon(row.Field), row.Field.Name, selectableName: true,
+                                   input, out var gripArea);
 
         // Текстовое свойство → цель нижнего блока: инлайн-поле и большой редактор синхронны.
         BottomTextTarget? target = null;
@@ -425,9 +480,234 @@ public partial class RecordPageView : UserControl
 
         // Туннелем (до детей) — выделяем карточку и (для текстовых) открываем нижний блок;
         // поле ввода при этом все равно получает клик и фокус (событие не помечаем обработанным).
-        card.AddHandler(InputElement.PointerPressedEvent, (_, _) => SelectCard(card, target),
-                        RoutingStrategies.Tunnel);
+        //
+        // Зоны карточки: ЗНАЧЕНИЕ справа — правка (и открытие текстового свойства снизу), она
+        // же сбрасывает набор до одного, как клик по ячейке снимает выделение колонок; РУЧКА ⋮
+        // не отвечает вовсе (она тянет ширину); ВСЕ ОСТАЛЬНОЕ — название, иконка типа и пустое
+        // место карточки — жест ВЫДЕЛЕНИЯ, с Shift он набирает несколько свойств.
+        //
+        // Именно «все остальное», а не «попал в подпись»: подпись занимает лишь часть колонки
+        // названий, и клик правее текста приходил в саму карточку — набор сбрасывался, хотя
+        // человек целился в то же свойство. Так выделение не зависит от длины названия.
+        card.AddHandler(InputElement.PointerPressedEvent, (_, e) =>
+        {
+            // Правый клик выделение НЕ трогает: он открывает меню, а меню работает по набору
+            // — иначе правый клик по одному из выделенных свойств сбрасывал бы набор ровно
+            // перед тем, как применить к нему операцию (в таблице то же самое).
+            if (!e.GetCurrentPoint(card).Properties.IsLeftButtonPressed) return;
+            if (IsInside(e.Source, gripArea)) return;
+
+            if (input is not null && IsInside(e.Source, input))
+                SelectCard(card, target);
+            else if (row.Field.Id is int fid)
+                SelectProperty(fid, e.KeyModifiers.HasFlag(KeyModifiers.Shift));
+        }, RoutingStrategies.Tunnel);
+
+        if (row.Field.Id is int id)
+        {
+            _cardsByField[id] = card;
+            card.ContextMenu  = BuildPropertyMenu(row);
+        }
         return card;
+    }
+
+    /// <summary>Клик пришелся в этот элемент или внутрь него.</summary>
+    private static bool IsInside(object? source, Control area) =>
+        source is Visual v && (ReferenceEquals(v, area) || area.IsVisualAncestorOf(v));
+
+    // ── Выделение свойств (одиночное и набор по Shift) ──────────────────────────
+    //
+    // Один в один с выделением колонок таблицы: обычный клик — только это свойство,
+    // Shift+клик — добавить или убрать одно, не трогая остальные. Порядок держим по порядку
+    // свойств в панели — он же порядок колонок, и в этом порядке уходит список на удаление.
+
+    private void SelectProperty(int fieldId, bool shift)
+    {
+        if (shift)
+        {
+            if (!_selectedFieldIds.Remove(fieldId)) _selectedFieldIds.Add(fieldId);
+        }
+        else
+        {
+            _selectedFieldIds.Clear();
+            _selectedFieldIds.Add(fieldId);
+        }
+
+        // Фокус уводим из поля значения на саму карточку: иначе Delete по выделенным
+        // свойствам не сработает — обработчик клавиши намеренно молчит, пока курсор в тексте
+        // (там Delete правит буквы). Так же ведет себя таблица: клик по заголовку колонки
+        // выводит фокус из ячейки.
+        if (_cardsByField.TryGetValue(fieldId, out var focusCard))
+        {
+            focusCard.Focusable = true;
+            focusCard.Focus();
+        }
+
+        if (_vm is not null)
+        {
+            var order = _vm.OrderedItems.OfType<FieldItem>().Select(i => i.Row.Field.Id).ToList();
+            _selectedFieldIds.Sort((a, b) => order.IndexOf(a).CompareTo(order.IndexOf(b)));
+        }
+
+        ApplyPropertySelection();
+    }
+
+    private void ClearPropertySelection()
+    {
+        if (_selectedFieldIds.Count == 0) return;
+        _selectedFieldIds.Clear();
+        ApplyPropertySelection();
+    }
+
+    // Вид выделенной карточки — тот же класс «selected», что у карточки-цели нижнего блока:
+    // состояние одно («это свойство сейчас в работе»), два разных подсвета на одной карточке
+    // читались бы как поломка.
+    private void ApplyPropertySelection()
+    {
+        _selectedCard = null;
+        foreach (var (id, card) in _cardsByField)
+            card.Classes.Set("selected", _selectedFieldIds.Contains(id));
+    }
+
+    /// <summary>Свойства, к которым применяется операция меню: весь набор, если поле в него
+    /// входит, иначе только оно (как дубль, цвет и удаление колонок в таблице).</summary>
+    private List<int> TargetFieldIds(int fieldId) =>
+        _selectedFieldIds.Contains(fieldId) && _selectedFieldIds.Count > 1
+            ? [.. _selectedFieldIds]
+            : [fieldId];
+
+    // Клавиша удаления работает по ВЫДЕЛЕННЫМ свойствам и только когда курсор не в тексте:
+    // иначе Delete в поле значения или в редакторе описания сносил бы свойства вместо букв.
+    // Путь тот же, что у меню «Удалить», — пакетный, с подтверждением у контроллера.
+    private void OnPanelKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Delete && e.Key != Key.Back) return;
+        if (_selectedFieldIds.Count == 0) return;
+        if (e.Source is TextBox || (e.Source is Visual v && v.FindAncestorOfType<TextBox>() is not null)) return;
+
+        PropertiesDeleteRequested?.Invoke(this, [.. _selectedFieldIds]);
+        e.Handled = true;
+    }
+
+    // ── Контекстное меню свойства ───────────────────────────────────────────────
+    //
+    // Состав и порядок — как у заголовка колонки в таблице (BuildHeaderContextMenu), с двумя
+    // отличиями по существу: свойства в панели идут сверху вниз, поэтому сдвиг называется
+    // «вверх/вниз», а пункта «Ручная ширина столбцов» нет вовсе — столбцов в панели нет.
+    // Пункты собираются из общих MenuIcons/ColorMenu, поэтому вид у двух меню один.
+
+    private bool Can(PermAction action) =>
+        _repo?.Permissions?.Can(action, _vm?.CollectionId ?? 0) ?? true;
+
+    // Запрещенное действие не гасим, а объясняем по клику — как в таблице.
+    private void Guarded(MenuItem item, PermAction action, Action run) =>
+        item.Click += (_, _) => Controls.Dialogs.PermissionNotice.Run(this, Can(action), action, run);
+
+    private ContextMenu BuildPropertyMenu(PropertyRowVm row)
+    {
+        var fieldId = row.Field.Id!.Value;
+        var menu    = new ContextMenu();
+
+        menu.Items.Add(new MenuItem
+        {
+            Header    = Controls.Components.MenuIcons.PropertyMenuHeader(row.Field.Name, row.Field.FieldType),
+            IsEnabled = false,
+            Focusable = false,
+        });
+        menu.Items.Add(new Separator());
+
+        var miEdit = new MenuItem { Header = Controls.Components.MenuIcons.EditHeader() };
+        Guarded(miEdit, PermAction.EditField, () => PropertyEditRequested?.Invoke(this, fieldId));
+        menu.Items.Add(miEdit);
+
+        var miDuplicate = new MenuItem { Header = Controls.Components.MenuIcons.DuplicateHeader() };
+        Guarded(miDuplicate, PermAction.DuplicateField,
+                () => PropertyDuplicateRequested?.Invoke(this, TargetFieldIds(fieldId)));
+        menu.Items.Add(miDuplicate);
+
+        var miCreate = new MenuItem { Header = Controls.Components.MenuIcons.CreatePropertyHeader() };
+        Guarded(miCreate, PermAction.CreateField,
+                () => PropertyCreateAfterRequested?.Invoke(this, fieldId.ToString()));
+        menu.Items.Add(miCreate);
+
+        var miDisplay = new MenuItem { Header = Controls.Components.MenuIcons.DisplayHeader() };
+        miDisplay.Click += (_, _) => PropertyDisplayRequested?.Invoke(this, EventArgs.Empty);
+        menu.Items.Add(miDisplay);
+
+        AddColorItems(menu, fieldId);
+
+        // «Файл» с авто-привязкой: пересканировать папку и пересобрать значения — файлы на
+        // диске могли поменяться. Пункт есть только у таких полей, как и в таблице.
+        if (FileAutoRule.FromConfig(row.Field.ConfigJson) is not null)
+        {
+            var miRefresh = new MenuItem { Header = "Обновить привязку" };
+            Guarded(miRefresh, PermAction.EditRecord,
+                    () => PropertyAutoFileRefreshRequested?.Invoke(this, fieldId));
+            menu.Items.Add(miRefresh);
+        }
+
+        AddMoveItems(menu, fieldId);
+
+        menu.Items.Add(new Separator());
+
+        var miDelete = new MenuItem
+        {
+            Header    = Controls.Components.MenuIcons.DeleteHeader(),
+            IsEnabled = !row.Field.IsRequired,
+        };
+        Guarded(miDelete, PermAction.DeleteField,
+                () => PropertiesDeleteRequested?.Invoke(this, TargetFieldIds(fieldId)));
+        menu.Items.Add(miDelete);
+
+        return menu;
+    }
+
+    // Цвет свойства — тот же аспект column_meta, что видимость и подпись, поэтому право как
+    // у правки свойства. Состав пересчитывается в Opening: и отметка текущего цвета, и НАБОР
+    // свойств — выделение к моменту клика могло смениться.
+    private void AddColorItems(ContextMenu menu, int fieldId)
+    {
+        var host = new MenuItem { Header = Controls.Components.MenuIcons.ColorHeader() };
+        Controls.Components.MenuIcons.FixSubmenuGap(host);
+        host.IsEnabled = Can(PermAction.EditField);
+
+        menu.Opening += (_, _) =>
+        {
+            host.Items.Clear();
+            var ids = TargetFieldIds(fieldId);
+            var cur = PropertyStyleProvider?.Invoke(fieldId) ?? RowStyle.None;
+            host.Items.Add(Controls.Components.ColorMenu.Build("Фон колонки", cur.Bg,
+                hex => PropertyColorRequested?.Invoke(this, (ids, StyleAspect.Background, hex))));
+            host.Items.Add(Controls.Components.ColorMenu.Build("Цвет текста колонки", cur.Fg,
+                hex => PropertyColorRequested?.Invoke(this, (ids, StyleAspect.Text, hex))));
+        };
+
+        menu.Items.Add(host);
+    }
+
+    // «Сдвинуть вверх/вниз» с разделителем перед ними; неприменимое направление (крайнее
+    // свойство) скрываем. Порядок свойств в панели = порядок колонок, поэтому сдвиг виден и
+    // в таблице. Доступность пересчитываем в Opening: порядок мог смениться.
+    private void AddMoveItems(ContextMenu menu, int fieldId)
+    {
+        var separator = new Separator();
+        var miUp   = new MenuItem { Header = Controls.Components.MenuIcons.MoveUpHeader() };
+        var miDown = new MenuItem { Header = Controls.Components.MenuIcons.MoveDownHeader() };
+        miUp.Click   += (_, _) => PropertyMoveRequested?.Invoke(this, (fieldId, true));
+        miDown.Click += (_, _) => PropertyMoveRequested?.Invoke(this, (fieldId, false));
+
+        menu.Opening += (_, _) =>
+        {
+            var up   = CanMovePropertyProvider?.Invoke(fieldId, true)  ?? false;
+            var down = CanMovePropertyProvider?.Invoke(fieldId, false) ?? false;
+            separator.IsVisible = up || down;
+            miUp.IsVisible      = up;
+            miDown.IsVisible    = down;
+        };
+
+        menu.Items.Add(separator);
+        menu.Items.Add(miUp);
+        menu.Items.Add(miDown);
     }
 
     // Выделяем карточку всегда; нижний блок переключаем только на ТЕКСТОВУЮ цель —
@@ -438,9 +718,20 @@ public partial class RecordPageView : UserControl
         if (target is not null) OpenBottom(target);
     }
 
+    // Подсветить карточку как единственную выделенную. Для карточки свойства это тот же
+    // набор выделения, что у меню и клавиш, — просто из одного элемента: иначе после клика
+    // по значению «Удалить» из меню унесло бы прежний набор, а подсвечено было бы другое.
     private void HighlightCard(Border card)
     {
+        foreach (var (id, c) in _cardsByField)
+            if (ReferenceEquals(c, card))
+            {
+                SelectProperty(id, shift: false);
+                return;
+            }
+
         if (ReferenceEquals(_selectedCard, card)) return;
+        ClearPropertySelection();
         _selectedCard?.Classes.Remove("selected");
         card.Classes.Add("selected");
         _selectedCard = card;
@@ -615,7 +906,7 @@ public partial class RecordPageView : UserControl
     private Border BuildAddPropertyCard()
     {
         var card = BuildCardShell("addprop", BuildStrokeIcon("IconPlus", selectable: false),
-                                  "Добавить свойство", selectableName: false, valueContent: null);
+                                  "Добавить свойство", selectableName: false, valueContent: null, out _);
         // Пузырьком: нажатие на ручку ⋮ OnColGripPressed помечает обработанным раньше, поэтому
         // перетаскивание ручки не открывает диалог, а меняет ширину; клик мимо ручки — создает поле.
         card.PointerPressed += OnAddPropertyClick;

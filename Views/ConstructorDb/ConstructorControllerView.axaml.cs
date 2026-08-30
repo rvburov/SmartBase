@@ -555,6 +555,40 @@ public partial class ConstructorControllerView : UserControl
     public void CreatePropertyFromPanel() => _ = OpenPropertyDialog(null);
 
     /// <summary>
+    /// Подключить панель записи к операциям над свойствами: контекстное меню ее карточек и
+    /// клавиша удаления ведут ровно туда же, куда меню заголовка колонки, — в эти же
+    /// обработчики. Иначе два места, где живут свойства, разошлись бы поведением.
+    ///
+    /// Порядок и цвет свойств выполняет ТАБЛИЦА (там column_meta, кеши стилей и точечная
+    /// перестройка грида), поэтому панель их не делает сама, а просит через контроллер.
+    /// Панель живет в MainWindow — отсюда явное подключение, а не подписка в разметке.
+    /// </summary>
+    public void AttachRecordPanel(RecordPageView panel)
+    {
+        panel.PropertyEditRequested        += (_, fid)  => _ = OpenPropertyDialog(fid);
+        panel.PropertyDuplicateRequested   += (_, fids) => _ = DuplicateProperties(fids);
+        panel.PropertiesDeleteRequested    += (_, fids) => _ = DeletePropertiesWithConfirm(fids);
+        panel.PropertyCreateAfterRequested += (_, key)  => _ = CreatePropertyAfter(key);
+        panel.PropertyDisplayRequested     += (_, _)    => _ = OpenDisplayDialog();
+
+        panel.PropertyMoveRequested += (_, m) =>
+        {
+            TableViewCtrl.MoveProperty(m.FieldId, m.Up);
+            NotifyFieldsChanged();   // панель перечитает свойства в новом порядке
+        };
+        panel.PropertyColorRequested += (_, c) =>
+            TableViewCtrl.ApplyPropertyStyle(c.FieldIds, c.Aspect, c.Hex);
+        panel.PropertyAutoFileRefreshRequested += (_, fid) =>
+        {
+            TableViewCtrl.RefreshAutoFileProperty(fid);
+            NotifyFieldsChanged();   // панель перечитает значения, пересобранные по папке
+        };
+
+        panel.PropertyStyleProvider   = fid       => TableViewCtrl.PropertyStyle(fid);
+        panel.CanMovePropertyProvider = (fid, up) => TableViewCtrl.CanMoveProperty(fid, up);
+    }
+
+    /// <summary>
     /// «Добавить описание» из панели записи: заводит коллекции поле с ролью «Описание» (тип
     /// «Текст») без диалога — имя и тип у него предопределены, настраивать нечего. Дальше — тот
     /// же путь, что у обычного создания свойства: одна новая колонка в таблице и FieldsChanged,
