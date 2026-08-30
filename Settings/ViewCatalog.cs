@@ -37,6 +37,7 @@ public static class ViewCatalog
         new("tasks",       "Задачи"),
         new("constructor", "Конструктор базы данных"),
         new("extensions",  "Расширения"),
+        new("notes",       "Заметки"),
     ];
 
     /// <summary>Виды календаря. Порядок — номера видов навбара (0 Расписание … 6 Диаграмма).</summary>

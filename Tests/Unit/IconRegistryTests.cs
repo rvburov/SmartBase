@@ -14,7 +14,10 @@ namespace SmartBase.Tests.Unit;
 public sealed class IconRegistryTests
 {
     // Папки, где код обращается к реестру по ключу-строке.
-    private static readonly string[] CodeDirs = ["Views", "Controls", "Utils", "Core", "Database"];
+    // Settings/ здесь ради реестров разделов (SettingsRegistry, ProfileRegistry): они задают
+    // иконку строкой, а SidebarList при отсутствии ключа молча рисует пустоту — опечатку не
+    // видно ничем, кроме глаза.
+    private static readonly string[] CodeDirs = ["Views", "Controls", "Utils", "Core", "Database", "Settings"];
 
     private static string RepoRoot()
     {

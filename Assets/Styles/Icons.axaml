@@ -70,6 +70,8 @@
     <StreamGeometry x:Key="IconDatabaseCheck">M4 6c0 1.657 3.582 3 8 3s8 -1.343 8 -3s-3.582 -3 -8 -3s-8 1.343 -8 3 M4 6v6c0 1.657 3.582 3 8 3c1.075 0 2.1 -.08 3.037 -.224 M20 6v8 M4 12v6c0 1.657 3.582 3 8 3c.166 0 .331 -.002 .495 -.006 M15 19l2 2l4 -4</StreamGeometry>
     <!-- Модуль «Расширения» (lucide blocks) -->
     <StreamGeometry x:Key="IconBlocks">M10 22V7a1 1 0 0 0-1-1H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-5a1 1 0 0 0-1-1H2 M15 2 H21 A1 1 0 0 1 22 3 V9 A1 1 0 0 1 21 10 H15 A1 1 0 0 1 14 9 V3 A1 1 0 0 1 15 2 Z</StreamGeometry>
+    <!-- Модуль «Заметки» и раздел настроек «Заметки» (lucide notebook-pen) -->
+    <StreamGeometry x:Key="IconNotebook">M13.4 2 H6 A2 2 0 0 0 4 4 V20 A2 2 0 0 0 6 22 H18 A2 2 0 0 0 20 20 V12.6 M2 6 H4 M2 10 H4 M2 14 H4 M2 18 H4 M21.378 5.626 A1 1 0 1 0 18.374 2.622 L13.364 7.634 A2 2 0 0 0 12.858 8.488 L12.021 11.358 A0.5 0.5 0 0 0 12.641 11.978 L15.511 11.141 A2 2 0 0 0 16.365 10.635 Z</StreamGeometry>
     <!-- Модуль «Настройки» (lucide settings) -->
     <StreamGeometry x:Key="IconSettings">M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1 -2.33 4.033 2.34 2.34 0 0 0 -3.319 1.915 2.34 2.34 0 0 1 -4.659 0 2.34 2.34 0 0 0 -3.32 -1.915 2.34 2.34 0 0 1 -2.33 -4.033 2.34 2.34 0 0 0 0 -3.831 A2.34 2.34 0 0 1 6.35 6.051 a2.34 2.34 0 0 0 3.319 -1.915 Z M15 12 A3 3 0 0 1 9 12 A3 3 0 0 1 15 12 Z</StreamGeometry>
     <!-- Модуль «Профиль» и разделы профиля / тип поля «пользователь» (lucide circle-user-round) -->
@@ -100,6 +102,10 @@
     <StreamGeometry x:Key="IconCollection">M12 3 V20 A1 1 0 0 1 11 21 H5 A2 2 0 0 1 3 19 V5 A2 2 0 0 1 5 3 H19 A2 2 0 0 1 21 5 V11 A1 1 0 0 1 20 12 H3 M16 19 L18 21 L22 17</StreamGeometry>
     <!-- База данных (lucide database) -->
     <StreamGeometry x:Key="IconDatabase">M3 5 A9 3 0 1 0 21 5 A9 3 0 1 0 3 5 Z M3 5 V19 A9 3 0 0 0 21 19 V5 M3 12 A9 3 0 0 0 21 12</StreamGeometry>
+    <!-- Заметка .md в дереве заметок (lucide file-text) -->
+    <StreamGeometry x:Key="IconFileText">M15 2 H6 A2 2 0 0 0 4 4 V20 A2 2 0 0 0 6 22 H18 A2 2 0 0 0 20 20 V7 Z M14 2 V6 A2 2 0 0 0 16 8 H20 M10 9 H8 M16 13 H8 M16 17 H8</StreamGeometry>
+    <!-- Любой другой файл в дереве заметок: виден, но не открывается (lucide file) -->
+    <StreamGeometry x:Key="IconFile">M15 2 H6 A2 2 0 0 0 4 4 V20 A2 2 0 0 0 6 22 H18 A2 2 0 0 0 20 20 V7 Z M14 2 V6 A2 2 0 0 0 16 8 H20</StreamGeometry>
 
     <!-- ─── Сайдбар: разделы настроек (расширения = IconBlocks, БД = IconDatabase) ─── -->
 
@@ -165,6 +171,10 @@
     <StreamGeometry x:Key="IconPencil">M13 21 H21 M15 5 L19 9 M21.174 6.812 A1 1 0 0 0 17.188 2.825 L3.842 16.174 A2 2 0 0 0 3.342 17.004 L2.021 21.356 A0.5 0.5 0 0 0 2.644 21.978 L6.997 20.658 A2 2 0 0 0 7.827 20.161 Z</StreamGeometry>
     <!-- Исходник / разметка (lucide code) -->
     <StreamGeometry x:Key="IconCode">M18 16 L22 12 L18 8 M6 8 L2 12 L6 16 M14.5 4 L9.5 20</StreamGeometry>
+    <!-- Разделенный вид заметки: слева исходник, справа просмотр (lucide columns-2) -->
+    <StreamGeometry x:Key="IconColumns2">M5 3 H19 A2 2 0 0 1 21 5 V19 A2 2 0 0 1 19 21 H5 A2 2 0 0 1 3 19 V5 A2 2 0 0 1 5 3 Z M12 3 V21</StreamGeometry>
+    <!-- Просмотр заметки целиком (lucide eye) -->
+    <StreamGeometry x:Key="IconEye">M2.062 12.348 A1 1 0 0 1 2.062 11.652 A10.75 10.75 0 0 1 21.938 11.652 A1 1 0 0 1 21.938 12.348 A10.75 10.75 0 0 1 2.062 12.348 Z M15 12 A3 3 0 0 1 9 12 A3 3 0 0 1 15 12 Z</StreamGeometry>
     <!-- Сброс к умолчанию (rotate-ccw) -->
     <StreamGeometry x:Key="IconRotateCcw">M3 12 a9 9 0 1 0 9 -9 a9.75 9.75 0 0 0 -6.74 2.74 L3 8 M3 3 V8 H8</StreamGeometry>
     <!-- Удалить (trash) -->
@@ -202,6 +212,8 @@
     <StreamGeometry x:Key="IconCheckCheck">M18 6 7 17l-5-5 M22 10l-7.5 7.5L13 16</StreamGeometry>
     <!-- Создать группу (folder-plus) -->
     <StreamGeometry x:Key="IconFolderPlus">M12 10v6 M9 13h6 M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z</StreamGeometry>
+    <!-- Создать заметку (file-plus) -->
+    <StreamGeometry x:Key="IconFilePlus">M15 2 H6 A2 2 0 0 0 4 4 V20 A2 2 0 0 0 6 22 H18 A2 2 0 0 0 20 20 V7 Z M14 2 V6 A2 2 0 0 0 16 8 H20 M9 15 H15 M12 18 V12</StreamGeometry>
     <!-- Создать коллекцию (grid-2x2-plus) -->
     <StreamGeometry x:Key="IconCollectionPlus">M12 3v17a1 1 0 0 1-1 1H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v6a1 1 0 0 1-1 1H3 M16 19h6 M19 22v-6</StreamGeometry>
     <!-- Изменить цвет (palette): контур + 4 точки-кружка (r≈0.5, обводкой выглядят заполненными) -->

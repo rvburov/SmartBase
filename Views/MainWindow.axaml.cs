@@ -231,6 +231,18 @@ public partial class MainWindow : Window
         // Живой состав пользователей уже смонтированных баз (дальше — из SyncMountedToUi).
         HookPermissionEvents();
 
+        // ── Заметки ──────────────────────────────────────────────────────────────
+        //
+        // Раздел самостоятельный: базы данных он не касается вовсе, из общего — только путь к
+        // папке-хранилищу в app.db. Пока папка не выбрана, дерево пустое, а раздел показывает
+        // подсказку с кнопкой в нужный раздел настроек.
+        //
+        // Хранилище раздается ДО первого ShowModule: иначе при запуске сразу в «Заметках» раздел
+        // открылся бы с пустым деревом и без прошлой заметки.
+        var notesVault = AppSettings.LoadNotesVault();
+        NotesSidebar.SetVault(notesVault);
+        NotesModule.SetVault(notesVault);
+
         // Начальное состояние: раздел при запуске берем из настроек (стандарт — конструктор).
         // Его могли скрыть в «Оформлении» уже после выбора — тогда открываем первый видимый,
         // иначе программа стартовала бы на разделе, кнопки которого в панели нет.
@@ -263,6 +275,38 @@ public partial class MainWindow : Window
         ProfileSidebar.CategorySelected += (_, key) => ProfileModule.ShowCategory(key);
         // Панели администратора и истории работают со смонтированными БД рабочего пространства.
         ProfileModule.Initialize(workspace);
+
+        NotesSidebar.NoteSelected        += (_, rel)  => NotesModule.OpenNote(rel);
+        NotesSidebar.UnsupportedSelected += (_, name) => NotesModule.ShowUnsupported(name);
+        NotesSidebar.NoteMoved           += (_, m)    => NotesModule.NotePathChanged(m.OldPath, m.NewPath);
+        NotesSidebar.NoteRemoved         += (_, rel)  => NotesModule.NoteRemoved(rel);
+        NotesSidebar.VaultChanged        += (_, _)    => NotesModule.Refresh();
+
+        // Переименование из шапки раздела — та же операция, что и из дерева: файл трогает
+        // только сайдбар, а раздел узнает о новом пути событием NoteMoved.
+        NotesModule.NoteRenamed += (_, r) =>
+        {
+            // Имя не подошло (занято, запрещенные символы, отказ ФС) — заголовок откатывается
+            // и объясняет причину прямо у себя, а не всплывашкой над деревом.
+            if (NotesSidebar.RenameFromHeader(r.RelativePath, r.NewName) is { } error)
+                NotesModule.RejectRename(error);
+        };
+
+        // Кнопка «Открыть настройки» из пустого состояния. Переключаем ровно тем же путем, что и
+        // панель активности, иначе подсветка кнопки разъедется с показанным разделом.
+        NotesModule.OpenSettingsRequested += (_, _) =>
+        {
+            ActivityBarControl.SetModuleActive("settings");
+            ShowModule("settings");
+            SettingsSidebar.Select("notes");
+        };
+
+        // Папку хранилища сменили в настройках — раздать новый путь дереву и разделу.
+        SettingsModule.NotesVaultChanged += (_, path) =>
+        {
+            NotesSidebar.SetVault(path);
+            NotesModule.SetVault(path);
+        };
 
         // Sidebar коллекций передает активные id в CalendarModule
         CalendarSidebar.ActiveIdsChanged += (_, ids) =>
@@ -411,6 +455,10 @@ public partial class MainWindow : Window
         {
             CloseOpenPopups();
             _changes.SetForeground(false);
+            // Ушли в другую программу — дописать черновик заметки: пользователь мог уйти
+            // править тот же файл снаружи. Вызов синхронный и без диалогов (на macOS
+            // Deactivated приходит и при открытии собственной модалки).
+            NotesModule.FlushPendingSave();
         };
 
         // Уровень масштабирования: применяем сохраненный и реагируем на изменения из настроек.
@@ -457,6 +505,10 @@ public partial class MainWindow : Window
         // предупреждаем, что обновление продолжится при следующем запуске.
         Closing += async (_, e) =>
         {
+            // Первым делом — черновик заметки на диск: дальше окно может уйти в фоновый режим
+            // или закрыться совсем, и несохраненный текст пропал бы.
+            NotesModule.FlushPendingSave();
+
             // Фоновый режим: нажатие на «крестик» окна не завершает приложение, а СКРЫВАЕТ его
             // (служба уведомлений и трей продолжают работать). Явный выход (трей «Выход», ⌘Q/OS
             // shutdown) идет с другим CloseReason и проходит дальше. Без созданного значка окно
@@ -899,6 +951,10 @@ public partial class MainWindow : Window
 
     private void ShowModule(string module)
     {
+        // Уходим из заметок — дописать несохраненный текст: автосохранение работает с паузой,
+        // и последние набранные символы иначе остались бы только в редакторе.
+        if (_activeModule == "notes" && module != "notes") NotesModule.FlushPendingSave();
+
         _activeModule = module;
 
         CalendarModule.IsVisible   = module == "calendar";
@@ -906,6 +962,7 @@ public partial class MainWindow : Window
         SettingsModule.IsVisible   = module == "settings";
         ExtensionsModule.IsVisible = module == "extensions";
         ProfileModule.IsVisible    = module == "profile";
+        NotesModule.IsVisible      = module == "notes";
         // Видимость ConstructorModule зависит еще и от _collectionOpen — ее ставит ApplyColumns.
 
         if (module == "calendar")
@@ -947,6 +1004,17 @@ public partial class MainWindow : Window
             ProfileSidebar.IsVisible     = _sidebarOpen;
             ProfileModule.ShowCategory(ProfileSidebar.SelectedKey);
         }
+        else if (module == "notes") // собственный сайдбар-дерево файлов, без панели записи
+        {
+            CalendarSidebar.IsVisible    = false;
+            ConstructorSidebar.IsVisible = false;
+            NotesSidebar.IsVisible       = _sidebarOpen;
+            // Хранилище живет на диске и меняется мимо программы — перечитываем при каждом заходе
+            // (тот же прием, что у остальных сайдбаров; следить за папкой watcher'ом не беремся).
+            NotesSidebar.Refresh();
+            RestoreLastNoteOnce();
+            NotesModule.Refresh();
+        }
         else // extensions — собственный сайдбар со списком расширений, без панели записи
         {
             CalendarSidebar.IsVisible    = false;
@@ -961,6 +1029,7 @@ public partial class MainWindow : Window
         if (module != "settings")   SettingsSidebar.IsVisible   = false;
         if (module != "extensions") ExtensionsSidebar.IsVisible = false;
         if (module != "profile")    ProfileSidebar.IsVisible    = false;
+        if (module != "notes")      NotesSidebar.IsVisible      = false;
 
         ApplyColumns();
     }
@@ -984,6 +1053,25 @@ public partial class MainWindow : Window
         if (keys.Contains(previous, StringComparer.Ordinal)) ExtensionsSidebar.Select(previous);
     }
 
+    // Заметка, открытая в прошлый раз, восстанавливается ОДИН раз за запуск — при первом заходе
+    // в раздел, а не при каждом. Иначе возврат в «Заметки» после закрытия файла снова открывал бы
+    // его, и закрыть заметку было бы нельзя.
+    private bool _lastNoteRestored;
+
+    private void RestoreLastNoteOnce()
+    {
+        if (_lastNoteRestored) return;
+        _lastNoteRestored = true;
+
+        var last = AppSettings.LoadNotesLastFile();
+        if (last.Length == 0) return;
+        // Файл могли удалить или переименовать между запусками — тогда просто открываем раздел пустым.
+        if (!File.Exists(NotesSidebar.FullPathOf(last))) return;
+
+        NotesSidebar.Reveal(last);
+        NotesModule.OpenNote(last);
+    }
+
     private void OnSidebarToggled(bool isOpen)
     {
         _sidebarOpen = isOpen;
@@ -998,6 +1086,8 @@ public partial class MainWindow : Window
             SettingsSidebar.IsVisible = isOpen;
         else if (_activeModule == "profile")
             ProfileSidebar.IsVisible = isOpen;
+        else if (_activeModule == "notes")
+            NotesSidebar.IsVisible = isOpen;
         else // extensions
             ExtensionsSidebar.IsVisible = isOpen;
 

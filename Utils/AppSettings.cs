@@ -166,7 +166,7 @@ public static class AppSettings
     // ── Стартовый раздел ───────────────────────────────────────────────────────
     //
     // Раздел навигации (ActivityBar), открываемый при запуске. Значения совпадают с
-    // ключами модулей: "calendar", "tasks", "constructor", "extensions". Стандарт —
+    // ключами модулей: "calendar", "tasks", "constructor", "extensions", "notes". Стандарт —
     // конструктор. Список закрытый: незнакомое значение (правка app.db руками, откат на
     // версию без этого модуля) молча заменяется стандартом, а не роняет старт. Добавили
     // модуль в ActivityBar — дописать его и сюда, иначе выбор в настройках не сохранится.
@@ -175,7 +175,8 @@ public static class AppSettings
     public static string LoadStartupModule()
     {
         var v = _store?.Get(KeyStartupModule);
-        return v is "calendar" or "tasks" or "constructor" or "extensions" ? v : StartupModuleDefault;
+        return v is "calendar" or "tasks" or "constructor" or "extensions" or "notes"
+            ? v : StartupModuleDefault;
     }
 
     public static void SaveStartupModule(string module)
@@ -276,6 +277,73 @@ public static class AppSettings
         var trimmed = (path ?? "").Trim();
         if (trimmed.Length == 0) _store?.Remove(KeyUpdatePath);
         else                     _store?.Set(KeyUpdatePath, trimmed);
+    }
+
+    // ── Заметки ──────────────────────────────────────────────────────────────────
+    //
+    // Папка-хранилище раздела «Заметки»: читается рекурсивно и показывается деревом. Пусто по
+    // умолчанию — до выбора папки раздел показывает подсказку и в диск не лезет вовсе.
+    // Остальные ключи раздела осмысленны только при заданном хранилище.
+    public const string NotesVaultDefault = "";
+
+    public static string LoadNotesVault() => _store?.Get(KeyNotesVault) ?? NotesVaultDefault;
+
+    public static void SaveNotesVault(string path)
+    {
+        var trimmed = (path ?? "").Trim();
+        // Смена хранилища обесценивает «последнюю открытую заметку»: путь относительный, в
+        // новой папке он указал бы на другой файл или в пустоту.
+        if (trimmed != LoadNotesVault()) _store?.Remove(KeyNotesLastFile);
+
+        if (trimmed.Length == 0) _store?.Remove(KeyNotesVault);
+        else                     _store?.Set(KeyNotesVault, trimmed);
+    }
+
+    // Последняя открытая заметка — путь ОТНОСИТЕЛЬНО хранилища, разделитель '/'. Абсолютный
+    // сломался бы при переносе хранилища на другой диск или другую машину.
+    public const string NotesLastFileDefault = "";
+
+    public static string LoadNotesLastFile() => _store?.Get(KeyNotesLastFile) ?? NotesLastFileDefault;
+
+    public static void SaveNotesLastFile(string relativePath)
+    {
+        var trimmed = (relativePath ?? "").Trim();
+        if (trimmed.Length == 0) _store?.Remove(KeyNotesLastFile);
+        else                     _store?.Set(KeyNotesLastFile, trimmed);
+    }
+
+    // Режим тела раздела: "source" — исходный текст, "split" — слева правка, справа живой
+    // просмотр, "preview" — только просмотр. Стандарт — разделенный: ближе всего к тому, как
+    // markdown показывают редакторы заметок.
+    public const string NotesViewModeDefault = "split";
+
+    public static string LoadNotesViewMode()
+    {
+        var v = _store?.Get(KeyNotesViewMode);
+        return v is "source" or "split" or "preview" ? v : NotesViewModeDefault;
+    }
+
+    public static void SaveNotesViewMode(string mode)
+    {
+        if (mode == NotesViewModeDefault) _store?.Remove(KeyNotesViewMode);
+        else                              _store?.Set(KeyNotesViewMode, mode);
+    }
+
+    // Порядок дерева заметок. У файлов нет собственной позиции (как Position у коллекций), а
+    // порядок файловой системы произволен, — поэтому положений два, а не три, как в
+    // конструкторе: "asc" (А → Я, стандарт) и "desc".
+    public const string NotesSortDefault = "asc";
+
+    public static string LoadNotesSort()
+    {
+        var v = _store?.Get(KeyNotesSort);
+        return v is "asc" or "desc" ? v : NotesSortDefault;
+    }
+
+    public static void SaveNotesSort(string sort)
+    {
+        if (sort == NotesSortDefault) _store?.Remove(KeyNotesSort);
+        else                          _store?.Set(KeyNotesSort, sort);
     }
 
     // ── Автообновление ───────────────────────────────────────────────────────────
@@ -592,6 +660,10 @@ public static class AppSettings
     private const string KeyDiagramScale     = "diagramScale";
     private const string KeyConstructorView  = "constructorView";
     private const string KeyUpdatePath       = "updatePath";
+    private const string KeyNotesVault       = "notesVault";
+    private const string KeyNotesLastFile    = "notesLastFile";
+    private const string KeyNotesViewMode    = "notesViewMode";
+    private const string KeyNotesSort        = "notesSort";
     private const string KeyAutoUpdate       = "autoUpdate";
     private const string KeyNotificationsEnabled = "notificationsEnabled";
     private const string KeyNotifyWatermark      = "notifyWatermark";

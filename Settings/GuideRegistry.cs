@@ -30,6 +30,7 @@ public static class GuideRegistry
         new("filters",        "filters-sorting.md"),
         new("calendar",       "calendar.md"),
         new("tasks",          "tasks.md"),
+        new("notes",          "notes.md"),
         new("import-export",  "import-export.md"),
         new("extensions",     "extensions.md"),
         new("settings",       "settings.md"),

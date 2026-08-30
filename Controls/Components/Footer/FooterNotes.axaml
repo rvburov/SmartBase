@@ -1,0 +1,57 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="SmartBase.Controls.Components.FooterNotes"
+             Height="56"
+             Background="{StaticResource BrushBg}">
+
+    <DockPanel>
+        <!-- Линия-разделитель сверху -->
+        <Border DockPanel.Dock="Top" Classes="separator h" />
+
+        <Grid Margin="16,0">
+            <!-- Одна кнопка-цикл: исходник → разделенный → просмотр. Как переключатель режима в
+                 футере панели записи, только состояний три. Иконка показывает режим, В КОТОРЫЙ
+                 переведет клик, — тот же принцип, что там. -->
+            <Button x:Name="ModeBtn" Classes="navbtn"
+                    Width="30" Height="30"
+                    HorizontalAlignment="Left"
+                    VerticalAlignment="Center"
+                    CornerRadius="{StaticResource RadiusMedium}"
+                    ToolTip.Tip="Разделенный вид">
+                <Viewbox Width="{StaticResource IconSizeMedium}" Height="{StaticResource IconSizeMedium}">
+                    <Canvas Width="24" Height="24">
+                        <!-- code-xml: перейти к исходному тексту (виден в режиме просмотра) -->
+                        <Path x:Name="IconToSource"
+                              IsVisible="False"
+                              Data="{StaticResource IconCode}"
+                              Stroke="{Binding $parent[Button].Foreground}"
+                              StrokeThickness="{StaticResource IconStrokeMedium}"
+                              StrokeLineCap="Round" StrokeJoin="Round" />
+                        <!-- columns-2: перейти к разделенному виду (виден в режиме исходника) -->
+                        <Path x:Name="IconToSplit"
+                              Data="{StaticResource IconColumns2}"
+                              Stroke="{Binding $parent[Button].Foreground}"
+                              StrokeThickness="{StaticResource IconStrokeMedium}"
+                              StrokeLineCap="Round" StrokeJoin="Round" />
+                        <!-- eye: перейти к просмотру (виден в разделенном режиме) -->
+                        <Path x:Name="IconToPreview"
+                              IsVisible="False"
+                              Data="{StaticResource IconEye}"
+                              Stroke="{Binding $parent[Button].Foreground}"
+                              StrokeThickness="{StaticResource IconStrokeMedium}"
+                              StrokeLineCap="Round" StrokeJoin="Round" />
+                    </Canvas>
+                </Viewbox>
+            </Button>
+
+            <!-- Текущий режим словом: у трех состояний иконка одна, и без подписи человеку
+                 пришлось бы гадать, где он сейчас. -->
+            <TextBlock x:Name="ModeLabel"
+                       Margin="46,0,0,0"
+                       HorizontalAlignment="Left"
+                       VerticalAlignment="Center"
+                       Foreground="{StaticResource BrushSecondaryText}" />
+        </Grid>
+    </DockPanel>
+
+</UserControl>

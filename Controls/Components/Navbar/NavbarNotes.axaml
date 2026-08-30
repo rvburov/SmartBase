@@ -1,0 +1,36 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="SmartBase.Controls.Components.NavbarNotes"
+             Height="56"
+             Background="{StaticResource BrushBg}">
+
+    <!-- Своей линии-разделителя нет: нижнюю границу титульной зоны рисует общая линия
+         окна на y=56 (MainWindow), иначе линии удваивались бы в 2px. -->
+    <DockPanel>
+
+        <!-- Имя заметки; правится по клику, как название коллекции в конструкторе. -->
+        <Grid ColumnDefinitions="*" Margin="16,0">
+
+            <TextBlock Grid.Column="0" x:Name="TitleDisplay"
+                       HorizontalAlignment="Stretch"
+                       VerticalAlignment="Center"
+                       FontSize="{DynamicResource FontSizeLarge}"
+                       FontWeight="{StaticResource FontWeightBold}"
+                       TextTrimming="CharacterEllipsis"
+                       Cursor="IBeam"
+                       Margin="0,0,12,0" />
+
+            <TextBox Grid.Column="0" x:Name="TitleBox"
+                     Classes="titleEditor"
+                     IsVisible="False"
+                     Watermark="Выберите заметку"
+                     VerticalAlignment="Center"
+                     FontSize="{DynamicResource FontSizeLarge}"
+                     FontWeight="{StaticResource FontWeightBold}"
+                     Margin="0,0,12,0" />
+
+        </Grid>
+
+    </DockPanel>
+
+</UserControl>

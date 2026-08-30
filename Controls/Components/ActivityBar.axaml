@@ -110,6 +110,26 @@
             </Viewbox>
         </ToggleButton>
 
+        <!-- Модуль: Заметки. Дописан последним — ни одна прежняя кнопка не сдвинулась,
+             и порядок панели совпал с ViewCatalog.Navigation, где новые пункты можно
+             добавлять только в конец. -->
+        <ToggleButton x:Name="NotesBtn" Classes="icon module"
+                      Width="32" Height="32"
+                      HorizontalAlignment="Center"
+                      CornerRadius="{StaticResource RadiusMedium}"
+                      ToolTip.Tip="Заметки">
+            <Viewbox Width="{StaticResource IconSizeXLarge}" Height="{StaticResource IconSizeXLarge}">
+                <Canvas Width="24" Height="24">
+                    <!-- lucide notebook-pen -->
+                    <Path Data="{StaticResource IconNotebook}"
+                          Stroke="{Binding $parent[ToggleButton].Foreground}"
+                          StrokeThickness="{StaticResource IconStrokeXLargeBold}"
+                          StrokeLineCap="Round"
+                          StrokeJoin="Round" />
+                </Canvas>
+            </Viewbox>
+        </ToggleButton>
+
     </StackPanel>
 
     <!-- Модуль: Настройки — закреплен внизу панели -->

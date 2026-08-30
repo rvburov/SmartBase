@@ -43,6 +43,8 @@ public partial class SettingsView : UserControl
     public event EventHandler<bool>?              TaskStatusNotificationsChanged;
     // Тумблер «Общее → Фоновый режим» переключен — MainWindow показывает/прячет значок в трее.
     public event EventHandler<bool>?              BackgroundEnabledChanged;
+    // Выбрана (или очищена) папка хранилища заметок — MainWindow передает путь дереву и разделу.
+    public event EventHandler<string>?            NotesVaultChanged;
 
     // Тумблеры раздела «Общее» инициализированы — до этого IsCheckedChanged не обрабатываем
     // (иначе присвоение IsChecked на старте записало бы автозапуск в ОС на каждом запуске).
@@ -64,6 +66,10 @@ public partial class SettingsView : UserControl
         SystemInfoText.Text = $"{RuntimeInformation.OSDescription.Trim()} · {RuntimeInformation.FrameworkDescription}";
         UpdatePathBox.Text  = AppSettings.LoadUpdatePath();
         AutoUpdateToggle.IsChecked = AppSettings.LoadAutoUpdate();
+
+        // ── Заметки ──────────────────────────────────────────────────────────
+        NotesVaultBox.Text = AppSettings.LoadNotesVault();
+        RefreshNotesVaultStatus();
 
         // ── Общее ────────────────────────────────────────────────────────────
         NotificationsToggle.IsChecked = AppSettings.LoadNotificationsEnabled();
@@ -443,6 +449,68 @@ public partial class SettingsView : UserControl
     // Тумблер «Автообновление»: сохраняем сразу при переключении.
     private void OnAutoUpdateToggled(object? sender, RoutedEventArgs e) =>
         AppSettings.SaveAutoUpdate(AutoUpdateToggle.IsChecked == true);
+
+    // ── Заметки ──────────────────────────────────────────────────────────────
+
+    // Автосохранение пути при потере фокуса полем — как у «Пути обновления».
+    private void OnNotesVaultChanged(object? sender, RoutedEventArgs e) =>
+        ApplyNotesVault(NotesVaultBox.Text ?? "");
+
+    private async void OnNotesVaultBrowse(object? sender, RoutedEventArgs e)
+    {
+        if (TopLevel.GetTopLevel(this) is not { } top) return;
+
+        // Открываем пикер там, где стоит текущее хранилище: менять папку чаще всего нужно
+        // по соседству с прежней.
+        IStorageFolder? start = null;
+        var current = (NotesVaultBox.Text ?? "").Trim();
+        if (current.Length > 0 && Directory.Exists(current))
+            start = await top.StorageProvider.TryGetFolderFromPathAsync(current);
+
+        var folders = await top.StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
+        {
+            Title                  = "Папка хранилища заметок",
+            AllowMultiple          = false,
+            SuggestedStartLocation = start,
+        });
+
+        var folder = folders.FirstOrDefault();
+        if (folder is null) return;
+
+        NotesVaultBox.Text = folder.Path.LocalPath;
+        ApplyNotesVault(NotesVaultBox.Text);
+    }
+
+    private void OnNotesVaultClear(object? sender, RoutedEventArgs e)
+    {
+        NotesVaultBox.Text = "";
+        ApplyNotesVault("");
+    }
+
+    private void ApplyNotesVault(string path)
+    {
+        var trimmed = (path ?? "").Trim();
+        AppSettings.SaveNotesVault(trimmed);
+        RefreshNotesVaultStatus();
+        NotesVaultChanged?.Invoke(this, trimmed);
+    }
+
+    // Папка задана, но ее нет — сказать об этом здесь, а не оставлять человека гадать
+    // над пустым деревом в самом разделе.
+    private void RefreshNotesVaultStatus()
+    {
+        var path = AppSettings.LoadNotesVault();
+        if (path.Length == 0)
+        {
+            NotesVaultStatus.IsVisible = false;
+            return;
+        }
+
+        NotesVaultStatus.Text = Directory.Exists(path)
+            ? "Папка найдена — раздел «Заметки» показывает ее содержимое."
+            : "Папка не найдена. Проверьте путь или выберите другую.";
+        NotesVaultStatus.IsVisible = true;
+    }
 
     // Тихая проверка при запуске (тумблер «Автообновление», вызывает MainWindow.Opened):
     // путь пуст/папка недоступна/версия актуальна — никаких окон, приложение стартует как
@@ -941,6 +1009,7 @@ public partial class SettingsView : UserControl
         DatabasePanel.IsVisible   = key == "database";
         ExtensionsPanel.IsVisible = key == "extensions";
         GuidePanel.IsVisible      = key == "guide";
+        NotesPanel.IsVisible      = key == "notes";
         LogsPanel.IsVisible       = key == "logs";
         AboutPanel.IsVisible      = key == "about";
         // Панель деталей журнала живет в корне (во всю высоту) — при уходе из «Диагностики»

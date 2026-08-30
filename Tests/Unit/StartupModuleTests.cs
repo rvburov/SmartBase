@@ -23,7 +23,7 @@ public sealed class StartupModuleTests
 
     // Модули панели навигации, которые можно открыть при запуске. «settings» и «profile»
     // сюда не входят: это служебные разделы, стартовым ни один из них не выбирается.
-    public static TheoryData<string> NavigationModules => ["calendar", "tasks", "constructor", "extensions"];
+    public static TheoryData<string> NavigationModules => ["calendar", "tasks", "constructor", "extensions", "notes"];
 
     [Theory]
     [MemberData(nameof(NavigationModules))]

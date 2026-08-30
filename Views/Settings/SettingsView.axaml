@@ -710,6 +710,74 @@
                 </Grid>
             </ScrollViewer>
 
+            <!-- ── Заметки ───────────────────────────────────────── -->
+            <ScrollViewer x:Name="NotesPanel" IsVisible="False"
+                          VerticalScrollBarVisibility="Auto">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Margin="16,16,16,32" Spacing="0">
+
+                        <!-- Папка-хранилище: до ее выбора раздел «Заметки» пуст и в диск не лезет. -->
+                        <Border Classes="settingRow">
+                            <StackPanel Spacing="10">
+                                <StackPanel Spacing="4">
+                                    <TextBlock Classes="title" Text="Папка хранилища" />
+                                    <TextBlock Classes="desc"
+                                               Text="Папка с файлами Markdown на этом компьютере. Раздел «Заметки» читает ее вместе со всеми вложенными папками и показывает деревом. Файлы остаются вашими: программа их не копирует и не переносит в базу данных." />
+                                </StackPanel>
+                                <Grid ColumnDefinitions="*,Auto,Auto">
+                                    <!-- MinHeight=30 снимает дефолтную min-высоту Fluent (~32px),
+                                         иначе поле выше кнопок рядом. Как у «Пути обновления». -->
+                                    <TextBox x:Name="NotesVaultBox" Grid.Column="0"
+                                             Height="{StaticResource ControlHeightStandard}" VerticalContentAlignment="Center"
+                                             Margin="0,0,8,0"
+                                             Background="{StaticResource BrushSecondaryBg}"
+                                             CornerRadius="{StaticResource RadiusBase}"
+                                             Watermark="Путь к папке с заметками"
+                                             LostFocus="OnNotesVaultChanged" />
+                                    <Button x:Name="NotesVaultBrowseBtn" Grid.Column="1"
+                                            Classes="dialog" Content="Обзор…"
+                                            VerticalAlignment="Center"
+                                            Margin="0,0,8,0"
+                                            Click="OnNotesVaultBrowse" />
+                                    <Button x:Name="NotesVaultClearBtn" Grid.Column="2"
+                                            Classes="dialog" Content="Отключить"
+                                            VerticalAlignment="Center"
+                                            Click="OnNotesVaultClear" />
+                                </Grid>
+                                <!-- Состояние пути: папка найдена или нет. Без этого человек
+                                     видит пустое дерево и не понимает, дело в пути или в папке. -->
+                                <TextBlock x:Name="NotesVaultStatus" Classes="desc"
+                                           Text="" IsVisible="False" />
+                            </StackPanel>
+                        </Border>
+                        <Border Classes="separator h" />
+
+                        <!-- Что именно показывается в дереве — правила заданы жестко, поэтому
+                             это пояснение, а не настройка. -->
+                        <Border Classes="settingRow">
+                            <StackPanel Spacing="4">
+                                <TextBlock Classes="title" Text="Что видно в дереве" />
+                                <TextBlock Classes="desc"
+                                           Text="Показываются все файлы папки, но открываются только Markdown — .md и .markdown. Скрытые файлы и служебные папки (имена с точкой в начале: .git, .obsidian) в дерево не попадают." />
+                            </StackPanel>
+                        </Border>
+                        <Border Classes="separator h" />
+
+                        <Border Classes="settingRow">
+                            <StackPanel Spacing="4">
+                                <TextBlock Classes="title" Text="Сохранение и удаление" />
+                                <TextBlock Classes="desc"
+                                           Text="Заметка сохраняется сама через мгновение после того, как вы перестали печатать, а также при переходе к другой заметке и закрытии программы. Удаленные файлы и папки уходят в корзину системы — их можно вернуть оттуда." />
+                            </StackPanel>
+                        </Border>
+
+                    </StackPanel>
+                </Grid>
+            </ScrollViewer>
+
             <!-- ── О программе ───────────────────────────────────── -->
             <ScrollViewer x:Name="AboutPanel" IsVisible="False"
                           VerticalScrollBarVisibility="Auto">

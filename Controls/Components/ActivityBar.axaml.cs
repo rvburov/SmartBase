@@ -22,6 +22,7 @@ public partial class ActivityBar : UserControl
         TasksBtn.Click += (_, _) => SwitchModule("tasks");
         ConstructorBtn.Click += (_, _) => SwitchModule("constructor");
         ExtensionsBtn.Click += (_, _) => SwitchModule("extensions");
+        NotesBtn.Click += (_, _) => SwitchModule("notes");
         ProfileBtn.Click += (_, _) => SwitchModule("profile");
         SettingsBtn.Click += (_, _) => SwitchModule("settings");
 
@@ -41,6 +42,7 @@ public partial class ActivityBar : UserControl
         TasksBtn.IsVisible       = visible.Contains("tasks");
         ConstructorBtn.IsVisible = visible.Contains("constructor");
         ExtensionsBtn.IsVisible  = visible.Contains("extensions");
+        NotesBtn.IsVisible       = visible.Contains("notes");
     }
 
     public void SetSidebarOpen(bool isOpen)
@@ -64,6 +66,7 @@ public partial class ActivityBar : UserControl
         TasksBtn.IsChecked = module == "tasks";
         ConstructorBtn.IsChecked = module == "constructor";
         ExtensionsBtn.IsChecked = module == "extensions";
+        NotesBtn.IsChecked = module == "notes";
         ProfileBtn.IsChecked = module == "profile";
         SettingsBtn.IsChecked = module == "settings";
     }

@@ -1,0 +1,147 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:w="using:SmartBase.Controls.Widgets"
+             xmlns:comp="using:SmartBase.Controls.Components"
+             x:Class="SmartBase.Views.Notes.NotesControllerView"
+             Background="{StaticResource BrushBg}">
+
+    <UserControl.Styles>
+        <!-- Нижний воздух редактора — ВНУТРИ его прокрутки, на самом тексте: он уезжает вместе
+             со строками, поэтому в середине прокрутки текст доходит до линии футера, а отступ
+             виден только в крайнем нижнем положении. Margin'ом снаружи так не сделать — там
+             остался бы мертвый зазор (тот же прием, что у описания записи). -->
+        <Style Selector="TextBox#NoteEditor /template/ TextPresenter#PART_TextPresenter">
+            <Setter Property="Margin" Value="0,0,0,16" />
+        </Style>
+        <Style Selector="TextBox#NoteEditor /template/ TextBlock#PART_Watermark">
+            <Setter Property="Margin" Value="0,0,0,16" />
+        </Style>
+    </UserControl.Styles>
+
+    <Grid RowDefinitions="Auto,*,Auto">
+
+        <!-- Шапка: имя заметки с правкой по клику -->
+        <comp:NavbarNotes Grid.Row="0" x:Name="HeaderBar" />
+
+        <!-- Тело: исходник, разделенный вид или просмотр. Колонки схлопываются в 0 под режим —
+             колонка со звездой и невидимым содержимым все равно заняла бы место (тот же прием,
+             что в MainWindow.ApplyColumns).
+
+             У каждого видимого прокручиваемого блока СВОЯ полоса, и обе идут от линии шапки до
+             линии футера (вынесены отдельными колонками, ScrollBarLink) — правило
+             docs/developer/ui/scrolling.md. Отступов у самих ScrollViewer нет: воздух висит на
+             содержимом внутри. -->
+        <Grid Grid.Row="1" x:Name="BodyGrid" ClipToBounds="True">
+            <Grid.ColumnDefinitions>
+                <!-- 0 редактор · 1 его полоса · 2 линия раздела · 3 просмотр · 4 его полоса.
+                     Ширины колонок 0 и 3 переключает ApplyMode (доступ по индексу: имена у
+                     ColumnDefinition полей в code-behind не создают). -->
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="0" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+
+            <!-- Редактор: безбордерный, как письмо в заметках. Своей полосы не рисует — ее роль
+                 играет вынесенная (Hidden = прокрутка есть, полосы нет). -->
+            <TextBox Grid.Column="0" x:Name="NoteEditor"
+                     Classes="notesEditor"
+                     AcceptsReturn="True"
+                     TextWrapping="Wrap"
+                     Watermark="Пишите в Markdown..."
+                     Margin="16,0,16,0"
+                     ScrollViewer.VerticalScrollBarVisibility="Hidden"
+                     Background="Transparent"
+                     IsVisible="False" />
+
+            <ScrollBar Grid.Column="1" x:Name="EditorScrollBar"
+                       Orientation="Vertical"
+                       IsVisible="False" />
+
+            <!-- Линия между половинами разделенного вида -->
+            <Border Grid.Column="2" x:Name="SplitLine"
+                    Classes="separator v"
+                    IsVisible="False" />
+
+            <!-- Просмотр: виджет AppMarkdown, а не голый MarkdownScrollViewer — вид берется из
+                 общего Assets/Styles/Markdown.axaml, тот же, что в инструкции пользователя. -->
+            <ScrollViewer Grid.Column="3" x:Name="NotePreviewBox"
+                          IsVisible="False"
+                          VerticalScrollBarVisibility="Hidden"
+                          HorizontalScrollBarVisibility="Disabled">
+                <w:AppMarkdown x:Name="NotePreview"
+                               Markdown=""
+                               Margin="16,16,16,16" />
+            </ScrollViewer>
+
+            <ScrollBar Grid.Column="4" x:Name="PreviewScrollBar"
+                       Orientation="Vertical"
+                       IsVisible="False" />
+
+            <!-- ── Пустые состояния ─────────────────────────────────────────────
+                 Лежат поверх всех колонок: пока заметка не открыта, тело пусто, и человеку
+                 нужно объяснить, чего не хватает. -->
+
+            <!-- Хранилище не выбрано или недоступно -->
+            <StackPanel Grid.Column="0" Grid.ColumnSpan="5" x:Name="VaultHint"
+                        HorizontalAlignment="Center" VerticalAlignment="Center"
+                        Spacing="12" IsVisible="False">
+                <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Center">
+                    <TextBlock x:Name="VaultHintLead"
+                               VerticalAlignment="Center"
+                               Foreground="{StaticResource BrushSecondaryText}" />
+                    <Viewbox Width="{StaticResource IconSizeLarge}" Height="{StaticResource IconSizeLarge}"
+                             VerticalAlignment="Center">
+                        <Canvas Width="24" Height="24">
+                            <Path Data="{StaticResource IconSettings}"
+                                  Stroke="{StaticResource BrushSecondaryText}"
+                                  StrokeThickness="{StaticResource IconStrokeLarge}"
+                                  StrokeLineCap="Round" StrokeJoin="Round" />
+                        </Canvas>
+                    </Viewbox>
+                    <TextBlock x:Name="VaultHintTail"
+                               VerticalAlignment="Center"
+                               Foreground="{StaticResource BrushSecondaryText}" />
+                </StackPanel>
+                <Button x:Name="OpenSettingsBtn" Classes="dialog"
+                        Content="Открыть настройки"
+                        HorizontalAlignment="Center" />
+            </StackPanel>
+
+            <!-- Хранилище есть, заметка не открыта — подсказка такая же, как в конструкторе -->
+            <StackPanel Grid.Column="0" Grid.ColumnSpan="5" x:Name="PickHint"
+                        Orientation="Horizontal"
+                        HorizontalAlignment="Center" VerticalAlignment="Center"
+                        Spacing="8" IsVisible="False">
+                <TextBlock Text="Откройте навигацию, нажмите на"
+                           VerticalAlignment="Center"
+                           Foreground="{StaticResource BrushSecondaryText}" />
+                <Viewbox Width="{StaticResource IconSizeLarge}" Height="{StaticResource IconSizeLarge}"
+                         VerticalAlignment="Center">
+                    <Canvas Width="24" Height="24">
+                        <Path Data="{StaticResource IconPanelOpen}"
+                              Stroke="{StaticResource BrushSecondaryText}"
+                              StrokeThickness="{StaticResource IconStrokeLarge}"
+                              StrokeLineCap="Round" StrokeJoin="Round" />
+                    </Canvas>
+                </Viewbox>
+                <TextBlock Text="и выберите заметку"
+                           VerticalAlignment="Center"
+                           Foreground="{StaticResource BrushSecondaryText}" />
+            </StackPanel>
+
+            <!-- Выбран файл, который раздел не открывает -->
+            <TextBlock Grid.Column="0" Grid.ColumnSpan="5" x:Name="UnsupportedHint"
+                       HorizontalAlignment="Center" VerticalAlignment="Center"
+                       TextWrapping="Wrap" MaxWidth="420" TextAlignment="Center"
+                       Foreground="{StaticResource BrushSecondaryText}"
+                       IsVisible="False" />
+        </Grid>
+
+        <!-- Футер: переключатель режима показа -->
+        <comp:FooterNotes Grid.Row="2" x:Name="FooterBar" />
+
+    </Grid>
+
+</UserControl>

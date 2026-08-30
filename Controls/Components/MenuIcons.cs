@@ -35,6 +35,7 @@ public static class MenuIcons
     private static Geometry FolderTree     => Icon("IconFolderTree");
     private static Geometry FolderPlus     => Icon("IconFolderPlus");
     private static Geometry CollectionPlus => Icon("IconCollectionPlus");
+    private static Geometry FilePlus       => Icon("IconFilePlus");
     private static Geometry Palette        => Icon("IconPalette");
 
     private static SolidColorBrush Red => new(Color.Parse("#FF3B30"));
@@ -89,6 +90,17 @@ public static class MenuIcons
 
     // Заголовок пункта «Создать коллекцию»: иконка таблицы с плюсом + стандартный текст.
     public static Control CreateCollectionHeader() => Header(CollectionPlus, "Создать коллекцию");
+
+    // Заголовок пункта «Создать папку» (раздел «Заметки»): та же иконка folder-plus, что у
+    // «Создать группу» в конструкторе — для человека это одно и то же действие.
+    public static Control CreateFolderHeader() => Header(FolderPlus, "Создать папку");
+
+    // Заголовок пункта «Создать заметку»: иконка файла с плюсом + стандартный текст.
+    public static Control CreateNoteHeader() => Header(FilePlus, "Создать заметку");
+
+    // Заголовок пункта «Переименовать» (раздел «Заметки»): тот же карандаш, что у «Изменить»,
+    // но текст точнее — у файла правится ровно имя.
+    public static Control RenameHeader() => Header(Pencil, "Переименовать");
 
     // Заголовок пункта «Изменить цвет»: иконка палитры + стандартный текст.
     public static Control ColorHeader() => PaletteHeader("Изменить цвет");
