@@ -76,6 +76,22 @@
     <PackageReference Include="DocumentFormat.OpenXml"           Version="3.1.1" />
     <PackageReference Include="ExcelDataReader"                  Version="3.7.0" />
     <PackageReference Include="PdfPig"                          Version="0.1.15" />
+    <!-- Наложение знака на ГОТОВЫЙ PDF (Extensions/PdfWatermark): открывает документ и
+         дописывает надпись в поток страницы, не пересобирая ее содержимое. PdfPig, которым
+         «Анализ PDF файлов» читает документы, для этого не годится — его писатель собирает
+         документ заново постранично. Шрифт знака (PT Sans) отдается своим IFontResolver,
+         см. Extensions/PdfWatermark/WatermarkFont.cs. -->
+    <PackageReference Include="PDFsharp"                         Version="6.2.4" />
+    <!-- Растеризация страниц PDF (Extensions/PdfWatermark): знак ВПЕЧАТЫВАЕТСЯ в пиксели,
+         иначе он снимается редактором за одну операцию — слой поверх страницы стирается
+         выбрасыванием последнего потока /Contents. Docnet.Core, а не PDFtoImage: тот требует
+         SkiaSharp 4.x, а Avalonia.Skia 11.2.3 жестко держит 2.88.9 — приложение бы не собралось.
+         У Docnet.Core транзитивных зависимостей нет вовсе, внутри тот же PDFium. -->
+    <PackageReference Include="Docnet.Core"                      Version="2.6.0" />
+    <!-- Рисование знака по пикселям страницы. Пакет и так приезжает транзитивно с
+         Avalonia.Skia; пин явный, т.к. используем его напрямую, и версия обязана совпадать
+         с той, под которую собрана Avalonia. -->
+    <PackageReference Include="SkiaSharp"                        Version="2.88.9" />
     <!-- Диагностическое логирование в отдельную базу logs.db (Serilog + SQLite-приемник).
          Sinks.SQLite тянет Microsoft.Data.Sqlite, но версия унифицируется вверх до 9.0.1
          (уже в проекте через EF Core) — нативный SQLite один на все приложение. -->

@@ -1,0 +1,152 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:components="using:SmartBase.Controls.Components"
+        xmlns:w="clr-namespace:SmartBase.Controls.Widgets"
+        x:Class="SmartBase.Extensions.PdfWatermark.PdfWatermarkWindow"
+        Title="Водяной знак на PDF"
+        Width="720" Height="820"
+        MinWidth="620" MinHeight="620"
+        WindowStartupLocation="CenterOwner"
+        Background="{StaticResource BrushBg}">
+
+    <DockPanel Margin="24">
+
+        <StackPanel DockPanel.Dock="Top" Spacing="14" Margin="0,0,0,14">
+
+            <!-- 1. Источник. Кнопок обзора ДВЕ: один пикер не умеет выбирать и файл, и папку. -->
+            <StackPanel Spacing="6">
+                <TextBlock Text="1. PDF-файл или папка с документами"
+                           FontWeight="{StaticResource FontWeightBold}" />
+                <Grid ColumnDefinitions="*,10,Auto,10,Auto">
+                    <TextBox Grid.Column="0" x:Name="SourceBox"
+                             VerticalContentAlignment="Center"
+                             Watermark="Выберите файл или папку с документами…"
+                             TextChanged="OnSourceChanged" />
+                    <Button Grid.Column="2" x:Name="FileBtn"
+                            Classes="dialog" Content="Файл…" Click="OnBrowseFile" />
+                    <Button Grid.Column="4" x:Name="FolderBtn"
+                            Classes="dialog" Content="Папка…" Click="OnBrowseFolder" />
+                </Grid>
+            </StackPanel>
+
+            <CheckBox x:Name="RecursiveCheck" IsChecked="False" IsEnabled="False"
+                      Content="Рекурсивный поиск (включая все подпапки)" />
+
+            <!-- 2. Папка результата. Заголовок дословно как у соседних расширений: человек
+                 ходит между окнами, и одно и то же поле обязано называться одинаково. -->
+            <StackPanel Spacing="6">
+                <TextBlock Text="2. Папка для сохранения результата"
+                           FontWeight="{StaticResource FontWeightBold}" />
+                <Grid ColumnDefinitions="*,10,Auto">
+                    <TextBox Grid.Column="0" x:Name="OutputBox"
+                             VerticalContentAlignment="Center"
+                             Watermark="Папка не выбрана"
+                             TextChanged="OnFormChanged" />
+                    <Button Grid.Column="2" x:Name="OutputBtn"
+                            Classes="dialog" Content="Обзор…" Click="OnBrowseOutput" />
+                </Grid>
+            </StackPanel>
+
+            <!-- 3. Получатель и дата. Номера экземпляра в окне НЕТ: он подбирается сам, а
+                 поправить его человек может прямо в коллекции журнала. -->
+            <Grid ColumnDefinitions="2*,14,*">
+                <StackPanel Grid.Column="0" Spacing="6">
+                    <TextBlock Text="3. ФИО кому выдан"
+                               FontWeight="{StaticResource FontWeightBold}" />
+                    <TextBox x:Name="HolderBox"
+                             VerticalContentAlignment="Center"
+                             Watermark="Иванов Иван Иванович"
+                             TextChanged="OnFormChanged" />
+                </StackPanel>
+                <StackPanel Grid.Column="2" Spacing="6">
+                    <TextBlock Text="Дата выдачи"
+                               FontWeight="{StaticResource FontWeightBold}" />
+                    <!-- Высота — стандарт окон расширений (30), а не карточки записи (34):
+                         иначе поле даты выпирало бы над соседними. -->
+                    <w:DateField x:Name="DateBox" HorizontalAlignment="Stretch"
+                                 Height="{StaticResource ControlHeightStandard}" />
+                </StackPanel>
+            </Grid>
+
+            <!-- 4. Текст предупреждения. Стоит в окне, а не только в настройках: его правят
+                 под конкретную выдачу, а настройка держит значение по умолчанию. -->
+            <StackPanel Spacing="6">
+                <TextBlock Text="4. Текст предупреждения на знаке"
+                           FontWeight="{StaticResource FontWeightBold}" />
+                <TextBox x:Name="WarningBox"
+                         VerticalContentAlignment="Center"
+                         Watermark="Передача третьим лицам запрещена"
+                         TextChanged="OnFormChanged" />
+            </StackPanel>
+
+            <!-- 5. Куда пишется журнал выдачи -->
+            <Grid ColumnDefinitions="*,14,*">
+                <StackPanel Grid.Column="0" Spacing="6">
+                    <TextBlock Text="5. База данных"
+                               FontWeight="{StaticResource FontWeightBold}" />
+                    <ComboBox x:Name="DbCombo" Height="30" HorizontalAlignment="Stretch"
+                              SelectionChanged="OnDbChanged" />
+                </StackPanel>
+                <StackPanel Grid.Column="2" Spacing="6">
+                    <TextBlock Text="Коллекция журнала выдачи"
+                               FontWeight="{StaticResource FontWeightBold}" />
+                    <ComboBox x:Name="CollectionCombo" Height="30" HorizontalAlignment="Stretch"
+                              SelectionChanged="OnCollectionChanged" />
+                </StackPanel>
+            </Grid>
+
+            <!-- Статус -->
+            <Border Background="{StaticResource BrushSecondaryBg}"
+                    BorderBrush="{StaticResource BrushSeparator}"
+                    BorderThickness="{DynamicResource BorderLine}"
+                    CornerRadius="{StaticResource RadiusMedium}"
+                    Padding="12,10">
+                <TextBlock x:Name="StatusText"
+                           Text="Готов к работе"
+                           TextWrapping="Wrap"
+                           HorizontalAlignment="Center"
+                           FontWeight="{StaticResource FontWeightBold}"
+                           Foreground="{StaticResource BrushSecondaryText}" />
+            </Border>
+
+            <!-- Прогресс: единый индикатор загрузки приложения -->
+            <components:ProgressIndicator x:Name="Progress" />
+
+            <!-- Действия (2 равные кнопки с зазором 10) -->
+            <Grid ColumnDefinitions="*,10,*">
+                <Button Grid.Column="0" x:Name="ExecuteBtn"
+                        Classes="dialog"
+                        Width="NaN" Height="36"
+                        HorizontalAlignment="Stretch"
+                        IsEnabled="False"
+                        Content="Запустить"
+                        Click="OnExecuteClick" />
+                <Button Grid.Column="2" x:Name="StopBtn"
+                        Classes="dialog"
+                        Width="NaN" Height="36"
+                        HorizontalAlignment="Stretch"
+                        IsEnabled="False"
+                        Content="Остановить"
+                        Click="OnStopClick" />
+            </Grid>
+
+        </StackPanel>
+
+        <!-- Заголовок журнала -->
+        <TextBlock DockPanel.Dock="Top" Margin="0,0,0,8"
+                   Text="Журнал:"
+                   FontWeight="{StaticResource FontWeightBold}" />
+
+        <!-- Журнал (заполняет остаток). Класс multiline (Controls.axaml): полоса прокрутки
+             во всю высоту поля, воздух текста — внутри области прокрутки. -->
+        <TextBox x:Name="LogBox"
+                 Classes="multiline"
+                 IsReadOnly="True"
+                 AcceptsReturn="True"
+                 TextWrapping="Wrap"
+                 FontFamily="{StaticResource FontFamilyBase}"
+                 FontSize="{DynamicResource FontSizeSmall}" />
+
+    </DockPanel>
+
+</Window>

@@ -1,11 +1,18 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             x:Class="SmartBase.Controls.Widgets.DateField">
+             x:Class="SmartBase.Controls.Widgets.DateField"
+             Height="34">
 
     <!-- Поле даты по образцу TimeField: свой Popup, внутрь которого Calendar
          создается ЗАНОВО при каждом открытии (иначе он сохраняет «зажатое»
-         состояние указателя между открытиями и выбирает дату по наведению). -->
-    <Border x:Name="Box" Classes="timeField" Height="34">
+         состояние указателя между открытиями и выбирает дату по наведению).
+
+         Высота 34 задана на САМОМ виджете, а не на рамке внутри: это высота полей
+         карточки записи и диалога задачи, где виджет и живет. В окнах расширений
+         стандарт другой — 30 (ControlHeightStandard, вровень с кнопками и списками), —
+         и там высоту переопределяют снаружи. Стой она на внутренней рамке, снаружи
+         виджет только обрезался бы. -->
+    <Border x:Name="Box" Classes="timeField">
         <Grid ColumnDefinitions="*,Auto">
             <TextBox Grid.Column="0" x:Name="Input" Classes="timeInput"
                      Watermark="дд.мм.гггг" />

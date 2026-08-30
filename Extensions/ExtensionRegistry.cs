@@ -3,6 +3,7 @@ using SmartBase.Extensions.DocRegistry;
 using SmartBase.Extensions.DocsCollection;
 using SmartBase.Extensions.PdfAnalyzer;
 using SmartBase.Extensions.PdfRename;
+using SmartBase.Extensions.PdfWatermark;
 using SmartBase.Extensions.ProductCompare;
 using SmartBase.Extensions.TimeCollector;
 
@@ -25,6 +26,7 @@ public static class ExtensionRegistry
         new DocsCollectionExtension(),
         new TimeCollectorExtension(),
         new DocRegistryExtension(),
+        new PdfWatermarkExtension(),
     ];
 
     /// <summary>Найти расширение по <see cref="IExtension.Id"/> (null, если нет).</summary>
