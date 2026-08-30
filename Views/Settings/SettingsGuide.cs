@@ -402,9 +402,20 @@ public partial class SettingsView
         _guideGripDragging   = true;
         _guideGripStartX     = e.GetPosition(this).X;
         _guideGripStartWidth = _guideTocWidth;
+        FreezeGuideWidth(true);
         e.Pointer.Capture((IInputElement?)sender);
         e.Handled = true;
     }
+
+    /// <summary>
+    /// Заморозить ширину текста на время перетаскивания ручки «Содержания» — причина та же,
+    /// что у панели записи (<c>RecordPageView.FreezeContentWidth</c>), только острее: здесь
+    /// отрендерены ВСЕ документы сразу (docs/user — около 137 КБ), а переверстка markdown
+    /// стоит примерно 1,5 мс на килобайт НА КАЖДОЕ движение мыши. Пока ширина заморожена,
+    /// текст не перетекает и подрезается краем прокрутки; отпустили ручку — встал по месту.
+    /// </summary>
+    private void FreezeGuideWidth(bool freeze) =>
+        GuideHost.Width = freeze && GuideHost.Bounds.Width > 0 ? GuideHost.Bounds.Width : double.NaN;
 
     private void OnGuideGripMoved(object? sender, PointerEventArgs e)
     {
@@ -420,6 +431,7 @@ public partial class SettingsView
     private void OnGuideGripReleased(object? sender, PointerReleasedEventArgs e)
     {
         _guideGripDragging = false;
+        FreezeGuideWidth(false);   // текст встает по новой ширине за один проход
         e.Pointer.Capture(null);
         e.Handled = true;
         AppSettings.SaveGuideTocWidth((int)Math.Round(_guideTocWidth));

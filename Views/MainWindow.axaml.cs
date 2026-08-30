@@ -1211,6 +1211,9 @@ public partial class MainWindow : Window
         _recordGripDragging   = true;
         _recordGripStartX     = e.GetPosition(RootGrid).X;
         _recordGripStartWidth = col.Width.IsAbsolute ? col.Width.Value : col.ActualWidth;
+        // Текст описания на время перетаскивания не переверстывается: иначе каждое движение
+        // мыши стоит 20–50 мс раскладки, и ручка идет рывками (см. FreezeContentWidth).
+        RecordPanel.FreezeContentWidth(true);
         e.Pointer.Capture((Avalonia.Input.IInputElement?)sender);
         e.Handled = true;
     }
@@ -1235,6 +1238,7 @@ public partial class MainWindow : Window
     {
         if (_recordGripDragging) AppSettings.SaveRecordPanelWidth(_recordPanelWidth);
         _recordGripDragging = false;
+        RecordPanel.FreezeContentWidth(false);   // текст встает по новой ширине за один проход
         e.Pointer.Capture(null);
         e.Handled = true;
     }
