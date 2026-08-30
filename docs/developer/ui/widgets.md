@@ -19,6 +19,7 @@
 | [TimeField](../../../Controls/Widgets/TimeField.axaml) | ввод времени; событие `TimeChanged` |
 | [NoticeBanner](../../../Controls/Widgets/NoticeBanner.axaml) | ШАБЛОН красного уведомления (ошибка, пояснение, тост); методы `Show(msg)` / `Hide()` |
 | [CheckListDropdown](../../../Controls/Widgets/CheckListDropdown.axaml) | выпадающий список с галочками (что показывать, а что скрыть); событие `HiddenChanged` |
+| [AppMarkdown](../../../Controls/Widgets/AppMarkdown.cs) | показ markdown-текста с ЕДИНЫМ видом приложения (см. [markdown.md](markdown.md)); голый `MarkdownScrollViewer` в разметке не ставим |
 
 `DateEditor` и `TimeField` используются в диалоге события ([RecordDialog](dialogs.md))
 для выбора начала/конца.
@@ -113,4 +114,4 @@ attached-свойствами, которые навешивают поведе�
 
 ## Связанные документы
 
-[[dialogs]], [[theming]], [[../features/calendar/interactions]]
+[[dialogs]], [[theming]], [[markdown]], [[../features/calendar/interactions]]

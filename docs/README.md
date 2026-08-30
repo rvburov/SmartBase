@@ -53,7 +53,7 @@ EF Core/SQLite). Документация разделена на два раз�
 
 ### UI ([developer/ui/](developer/ui/))
 
-- [widgets.md](developer/ui/widgets.md) · [dialogs.md](developer/ui/dialogs.md) · [theming.md](developer/ui/theming.md).
+- [widgets.md](developer/ui/widgets.md) · [dialogs.md](developer/ui/dialogs.md) · [theming.md](developer/ui/theming.md) · [markdown.md](developer/ui/markdown.md).
 
 ### Гайды ([developer/guides/](developer/guides/))
 

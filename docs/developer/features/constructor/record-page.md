@@ -10,7 +10,7 @@
 
 - View: [RecordPageView.axaml.cs](../../../../Views/ConstructorDb/RecordPageView.axaml.cs)
 - ViewModel: [RecordPageViewModel](../../../../ViewModels/ConstructorDb/) (`Show(repository, recordId, collectionId)`)
-- Markdown: [MarkdownUtils](../../../../Utils/MarkdownUtils.cs) + `Markdown.Avalonia`
+- Markdown: [MarkdownUtils](../../../../Utils/MarkdownUtils.cs) + виджет [AppMarkdown](../../../../Controls/Widgets/AppMarkdown.cs) (вид — общий, см. [[../../ui/markdown]])
 
 ## Как работает
 
@@ -71,7 +71,8 @@
 панель — блок открывается уже на описании, каретка сразу в редакторе.
 
 `MarkdownEditor` — исходный текст; `PreviewToggle` переключает на динамический
-просмотр (`MarkdownPreview.Markdown`). Сохранение текста и заголовка — по потере
+просмотр (`MarkdownPreview.Markdown`, виджет `AppMarkdown` — вид тот же, что в инструкции
+пользователя и в описаниях расширений). Сохранение текста и заголовка — по потере
 фокуса (`WireAutoSave`, «save on blur», чтобы не было шторма записей при печати),
 после чего поднимается `RecordChanged`.
 

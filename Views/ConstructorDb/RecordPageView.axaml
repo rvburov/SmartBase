@@ -1,6 +1,6 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             xmlns:md="https://github.com/whistyun/Markdown.Avalonia"
+             xmlns:w="using:SmartBase.Controls.Widgets"
              xmlns:comp="using:SmartBase.Controls.Components"
              x:Class="SmartBase.Views.ConstructorDb.RecordPageView"
              Background="{StaticResource BrushBg}">
@@ -159,10 +159,13 @@
             <Border Grid.Row="1" x:Name="MarkdownPreviewBox"
                     IsVisible="False"
                     Background="Transparent">
-                <!-- Без правого отступа: полоса прокрутки превью прилегает к краю панели
-                     (Padding у MarkdownScrollViewer нет — отбить только текст нечем). -->
-                <md:MarkdownScrollViewer x:Name="MarkdownPreview"
-                                        Markdown="" />
+                <!-- Виджет AppMarkdown, а не голый MarkdownScrollViewer: вид берется из общего
+                     Assets/Styles/Markdown.axaml — тот же, что в инструкции пользователя и в
+                     описаниях расширений (см. docs/developer/ui/markdown.md).
+                     Без правого отступа: полоса прокрутки превью прилегает к краю панели
+                     (Padding у контрола нет — отбить только текст нечем). -->
+                <w:AppMarkdown x:Name="MarkdownPreview"
+                               Markdown="" />
             </Border>
         </Grid>
 

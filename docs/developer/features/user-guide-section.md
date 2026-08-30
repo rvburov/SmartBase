@@ -16,7 +16,7 @@
 - Разметка: [SettingsView.axaml](../../../Views/Settings/SettingsView.axaml) — `GuidePanel`, `GuideTocPanel`, `GuideTocDivider`, `GuideTocResizeGrip`, стили `Border.tocrow`
 - Порядок документов: [GuideRegistry.cs](../../../Settings/GuideRegistry.cs)
 - Пункт сайдбара: [SettingsRegistry.cs](../../../Settings/SettingsRegistry.cs) (`guide`, иконка `IconBook`)
-- Вид markdown: [Assets/Styles/Markdown.axaml](../../../Assets/Styles/Markdown.axaml)
+- Вид markdown: общий на все приложение — [Assets/Styles/Markdown.axaml](../../../Assets/Styles/Markdown.axaml), виджет [AppMarkdown](../../../Controls/Widgets/AppMarkdown.cs) (см. [[../ui/markdown]])
 - Ширина панели: [AppSettings](../../../Utils/AppSettings.cs) (`guideTocWidth`, Min/Max/Default)
 - Файлы в сборке: [SmartBase.csproj](../../../SmartBase.csproj) — `<AvaloniaResource Include="docs\user\**\*.md" />`
 
@@ -35,15 +35,15 @@
 ### Почему текст режется на секции
 
 Документ делится по заголовкам второго уровня (`SplitBySections`), каждая секция
-рендерится своим `MarkdownScrollViewer` в общий `StackPanel` (`GuideHost`), а прокруткой
+рендерится своим `AppMarkdown` в общий `StackPanel` (`GuideHost`), а прокруткой
 заведует НАШ `ScrollViewer` (`GuidePanel`).
 
-Так сделано ради навигации: у одного `MarkdownScrollViewer` на весь текст своя
+Так сделано ради навигации: у одного контрола на весь текст своя
 прокрутка, и положение заголовка внутри отрендеренного markdown пришлось бы искать
 по визуальному дереву. С секциями положение любой из них известно точно
 (`TranslatePoint` относительно `GuidePanel`).
 
-Вопреки имени, `MarkdownScrollViewer` — **не** `ScrollViewer`: свойств
+Вопреки имени, `MarkdownScrollViewer` (база `AppMarkdown`) — **не** `ScrollViewer`: свойств
 `VerticalScrollBarVisibility`/`HorizontalScrollBarVisibility` у типа нет, отключать
 его прокрутку не нужно и нечем. Внутри вертикального `StackPanel` высота не ограничена,
 поэтому контрол разворачивается на весь текст.
@@ -77,20 +77,15 @@
 
 ### Вид markdown
 
-`Assets/Styles/Markdown.axaml` ставится контролу как `MarkdownStyle`
-(`SettingsGuide.MarkdownStyles`) **вместо** встроенных тем пакета (`MarkdownStyleGithubLike`
-и прочие). Через `Application.Styles` это не работает: собственный стиль контрола сильнее
-глобального, и встроенная тема всегда выигрывала — заголовки шли своим размером, таблицы
-рисовались черными рамками с «зеброй».
+Вид у markdown **общий на все приложение** и описан в одном файле —
+[Assets/Styles/Markdown.axaml](../../../Assets/Styles/Markdown.axaml); подробности,
+селекторы и правило «только через виджет `AppMarkdown`» — в [[../ui/markdown]]. Отсюда его
+не правят: та же разметка так же выглядит в описаниях расширений и в просмотре описания
+записи.
 
-Рендер вешает на элементы классы (`Heading1`…`Heading6`, `Paragraph`, `Blockquote`,
-`CodeBlock`, `Table`, `TableHeader`, `TableRowOdd`/`TableRowEven`, `List`, `ListMarker`,
-`Note`), по ним и стилизуем. Текст — `CTextBlock` из ColorTextBlock.Avalonia, а не
-Avalonia-шный `TextBlock`, поэтому селекторы пишутся по `ctxt|CTextBlock`.
-
-Иерархия заголовков потребовала промежуточного размера между `FontSizeBase` (12) и
-`FontSizeLarge` (20) — добавлен токен **`FontSizeMedium`** (16). Он перечислен поименно
-в [FontScale](../../../Utils/FontScale.cs): без этого «Размер шрифта» его бы не двигал.
+Особенность раздела одна: секций на экране десятки, поэтому набор стилей висит ОДИН раз на
+общем хосте (`ApplyMarkdownStyles` → `AppMarkdown.ApplyStyles(GuideHost)`), а контролы
+создаются с `inheritStyles: true` — свой набор каждый не заводит.
 
 ### Сборка раздела
 

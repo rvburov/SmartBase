@@ -1,6 +1,6 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             xmlns:md="https://github.com/whistyun/Markdown.Avalonia"
+             xmlns:w="using:SmartBase.Controls.Widgets"
              xmlns:comp="using:SmartBase.Controls.Components"
              x:Class="SmartBase.Views.Extensions.ExtensionsView"
              Background="{StaticResource BrushBg}">
@@ -10,13 +10,15 @@
         <!-- Навбар (вынесен в компонент NavbarExtensions). -->
         <comp:NavbarExtensions DockPanel.Dock="Top" x:Name="HeaderBar" />
 
-        <!-- Тело блока: описание расширения в Markdown.
+        <!-- Тело блока: описание расширения в Markdown. Виджет AppMarkdown, а не голый
+             MarkdownScrollViewer — вид берется из общего Assets/Styles/Markdown.axaml
+             (см. docs/developer/ui/markdown.md).
              Правого отступа нет — полоса прокрутки прилегает к краю панели. Отбить только
-             текст, оставив полосу у края, нечем: MarkdownScrollViewer не имеет Padding
-             (свойства для отступа содержимого у типа нет вовсе). -->
-        <md:MarkdownScrollViewer x:Name="DescriptionMd"
-                                 Markdown=""
-                                 Margin="16,16,0,32" />
+             текст, оставив полосу у края, нечем: у контрола нет Padding (свойства для
+             отступа содержимого у типа нет вовсе). -->
+        <w:AppMarkdown x:Name="DescriptionMd"
+                       Markdown=""
+                       Margin="16,16,0,32" />
 
     </DockPanel>
 

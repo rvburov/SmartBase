@@ -2,13 +2,11 @@ using System.Text.RegularExpressions;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
-using Avalonia.Markup.Xaml.Styling;
 using Avalonia.Media;
 using Avalonia.Platform;
-using Avalonia.Styling;
 using Avalonia.Threading;
-using Markdown.Avalonia;
 using Serilog;
+using SmartBase.Controls.Widgets;
 using SmartBase.Settings;
 using SmartBase.Utils;
 
@@ -135,16 +133,11 @@ public partial class SettingsView
     }
 
     /// <summary>
-    /// Наш вид markdown (Assets/Styles/Markdown.axaml) вешается ОДИН раз на общий хост
-    /// секций: стили родителя действуют на все поддерево, а один экземпляр
-    /// <see cref="Styles"/> может принадлежать только одному владельцу — раздать его
-    /// сотне контролов нельзя («The Styles already has a owner»).
+    /// Общий вид markdown (Assets/Styles/Markdown.axaml) вешается ОДИН раз на хост секций:
+    /// стили родителя действуют на все поддерево, а секций тут десятки — копия набора в
+    /// каждой ни к чему. Поэтому и контролы создаются с <c>inheritStyles: true</c>.
     /// </summary>
-    private void ApplyMarkdownStyles() =>
-        GuideHost.Styles.Add(new StyleInclude(new Uri("avares://SmartBase/"))
-        {
-            Source = new Uri("avares://SmartBase/Assets/Styles/Markdown.axaml"),
-        });
+    private void ApplyMarkdownStyles() => AppMarkdown.ApplyStyles(GuideHost);
 
     /// <summary>Линия между блоками — общий стиль разделителей приложения (Controls.axaml).</summary>
     private static Border SectionSeparator() =>
@@ -157,13 +150,8 @@ public partial class SettingsView
         // высота не ограничена, поэтому он разворачивается на весь текст, а прокруткой
         // заведует общий ScrollViewer раздела. Отключить ее свойством нельзя — у типа
         // таких свойств нет (это не ScrollViewer, вопреки имени).
-        new MarkdownScrollViewer
+        new AppMarkdown(inheritStyles: true)
         {
-            // Пустой набор ВМЕСТО встроенной темы пакета (MarkdownStyleGithubLike и
-            // прочие): она живет в самом контроле и потому сильнее наших стилей —
-            // заголовки шли ее размером, таблицы рисовались черными рамками с «зеброй».
-            // Убрали ее — и вид задают стили хоста (см. ApplyMarkdownStyles).
-            MarkdownStyle    = new Styles(),
             Markdown         = markdown,
             SelectionEnabled = true,   // текст инструкции можно выделить и скопировать
         };
