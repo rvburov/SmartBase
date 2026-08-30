@@ -110,6 +110,10 @@
 
 ## Скроллбар
 
+Здесь — **вид** полосы: шаблон, толщина, стрелки, ползунок, цвета. **Раскладка** (где полоса
+стоит, где живет воздух, как собрать новый прокручиваемый блок) вынесена в отдельный
+стандарт — [scrolling.md](scrolling.md), там же три готовые раскладки и сторож-тест.
+
 Полоса прокрутки — **полностью свой шаблон** в `Controls.axaml` (тема Fluent прячет
 ползунок и делает полосу автоскрывающейся; нам нужен классический вид «как в Excel»).
 Действует на ВСЕ `ScrollViewer`/`ScrollBar` приложения — отдельного виджета-обертки нет,
@@ -327,7 +331,10 @@
 Так сделаны: [TaskListView](../../../Views/Tasks/TaskListView.axaml) (строка быстрого
 добавления), [DiagramView](../../../Views/ConstructorDb/Calendar/DiagramView.axaml) (шкала
 дней), [DayView](../../../Views/ConstructorDb/Calendar/DayView.axaml) и
-[WeekView](../../../Views/ConstructorDb/Calendar/WeekView.axaml) (шапка дней + «весь день»).
+[WeekView](../../../Views/ConstructorDb/Calendar/WeekView.axaml) (шапка дней + «весь день»),
+[RecordPageView](../../../Views/ConstructorDb/RecordPageView.axaml) (крошка «Свойство» над
+описанием — там полоса еще и переключается между редактором и превью, см.
+[record-page.md](../features/constructor/record-page.md)).
 
 **Сколько прокручиваемых блоков — столько и полос.** В «Дне»/«Неделе» блок «весь день»
 и сетка времени прокручиваются независимо, поэтому в колонке полос стоят ДВЕ: каждая в

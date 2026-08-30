@@ -65,6 +65,18 @@
         <Style Selector="Border.addprop:pointerover">
             <Setter Property="Background" Value="{StaticResource BrushInactiveBg}" />
         </Style>
+
+        <!-- Нижний воздух редактора описания — ВНУТРИ его прокрутки, на самом тексте: он
+             уезжает вместе со строками, поэтому в середине прокрутки текст доходит до линии
+             футера, а отступ виден только в крайнем нижнем положении. Margin'ом снаружи так
+             не сделать — там остался бы мертвый зазор (тот же прием, что у класса multiline,
+             см. docs/developer/ui/theming.md). -->
+        <Style Selector="TextBox#MarkdownEditor /template/ TextPresenter#PART_TextPresenter">
+            <Setter Property="Margin" Value="0,0,0,16" />
+        </Style>
+        <Style Selector="TextBox#MarkdownEditor /template/ TextBlock#PART_Watermark">
+            <Setter Property="Margin" Value="0,0,0,16" />
+        </Style>
     </UserControl.Styles>
 
     <Grid x:Name="PageGrid" RowDefinitions="Auto,Auto,Auto,*,Auto">
@@ -119,19 +131,23 @@
             </StackPanel>
         </Border>
 
-        <!-- Markdown-описание: отступы 16px по кругу (крошка «Свойство» и редактор вровень с
-             левым краем блока свойств и заголовком записи). Правого отступа у Grid нет — он
-             вернулся крошке и превью отдельно, чтобы полоса прокрутки редактора/превью
-             прилегала к краю панели. -->
-        <Grid Grid.Row="3" RowDefinitions="Auto,*" Margin="16,16,0,16">
+        <!-- Markdown-описание: отступов у САМОГО блока нет — они висят на его содержимом
+             (крошка, редактор, превью), по 16px. Иначе полоса прокрутки отошла бы от линий
+             сверху и снизу, а текст при прокрутке обрывался бы, не доходя до линии
+             (правило ui/theming.md, «полоса прилегает к краю»).
+
+             Полоса вынесена отдельной колонкой (ScrollBarLink, см. ниже): она идет ОТ ЛИНИИ
+             ДО ЛИНИИ — от разделителя над крошкой до линии футера, включая строку крошки.
+             Собственная полоса редактора/превью выше своих границ подняться не может. -->
+        <Grid Grid.Row="3" RowDefinitions="Auto,*" ColumnDefinitions="*,Auto">
 
             <!-- Заголовок нижнего блока — «хлебная крошка»: «Свойство» › [иконка типа] Имя.
                  Все серым (BrushSecondaryText). Часть [иконка типа + имя] (BottomTitleHost)
                  заполняется в code-behind по активному свойству; «Описание» по умолчанию. -->
-            <!-- Нижний зазор крошки (до текста) = верхнему отступу блока (Margin.Top=16,
-                 от линии-разделителя до «Свойство»): «Свойство» отбито сверху и снизу одинаково. -->
-            <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="6"
-                        Margin="0,0,16,16" VerticalAlignment="Center">
+            <!-- Нижний зазор крошки (до текста) = верхнему (от линии-разделителя до
+                 «Свойство»): «Свойство» отбито сверху и снизу одинаково. -->
+            <StackPanel Grid.Row="0" Grid.Column="0" Orientation="Horizontal" Spacing="6"
+                        Margin="16,16,16,16" VerticalAlignment="Center">
                 <TextBlock Text="Свойство"
                            Foreground="{StaticResource BrushSecondaryText}"
                            VerticalAlignment="Center" />
@@ -147,26 +163,41 @@
                             VerticalAlignment="Center" />
             </StackPanel>
 
-            <!-- Редактор: безбордерный (как письмо в заметках) -->
-            <TextBox Grid.Row="1" x:Name="MarkdownEditor"
+            <!-- Редактор: безбордерный (как письмо в заметках). Своей полосы не рисует —
+                 ее роль играет вынесенная (Hidden = прокрутка есть, полосы нет). Нижний
+                 воздух задан не здесь, а Margin'ом текста ВНУТРИ прокрутки (стиль
+                 TextBox#MarkdownEditor выше): снаружи он оставил бы зазор над линией, в
+                 который текст не заезжает. -->
+            <TextBox Grid.Row="1" Grid.Column="0" x:Name="MarkdownEditor"
                      Classes="notesEditor"
                      AcceptsReturn="True"
                      TextWrapping="Wrap"
                      Watermark="Пишите в Markdown..."
+                     Margin="16,0,16,0"
+                     ScrollViewer.VerticalScrollBarVisibility="Hidden"
                      Background="Transparent" />
 
-            <!-- Превью: тоже без рамки -->
-            <Border Grid.Row="1" x:Name="MarkdownPreviewBox"
-                    IsVisible="False"
-                    Background="Transparent">
-                <!-- Виджет AppMarkdown, а не голый MarkdownScrollViewer: вид берется из общего
-                     Assets/Styles/Markdown.axaml — тот же, что в инструкции пользователя и в
-                     описаниях расширений (см. docs/developer/ui/markdown.md).
-                     Без правого отступа: полоса прокрутки превью прилегает к краю панели
-                     (Padding у контрола нет — отбить только текст нечем). -->
+            <!-- Превью: обычный ScrollViewer приложения, markdown внутри него разворачивается
+                 на весь текст (см. docs/developer/ui/markdown.md). Виджет AppMarkdown, а не
+                 голый MarkdownScrollViewer: вид берется из общего Assets/Styles/Markdown.axaml
+                 — тот же, что в инструкции пользователя и в описаниях расширений.
+                 Воздух — на содержимом ВНУТРИ прокрутки, поэтому нижние 16px уезжают вместе
+                 с текстом и в середине прокрутки текст идет по линии. -->
+            <ScrollViewer Grid.Row="1" Grid.Column="0" x:Name="MarkdownPreviewBox"
+                          IsVisible="False"
+                          VerticalScrollBarVisibility="Hidden"
+                          HorizontalScrollBarVisibility="Disabled">
                 <w:AppMarkdown x:Name="MarkdownPreview"
-                               Markdown="" />
-            </Border>
+                               Markdown=""
+                               Margin="16,0,16,16" />
+            </ScrollViewer>
+
+            <!-- Общая полоса блока: одна на редактор и превью (виден всегда ровно один),
+                 источник переключается вместе с режимом — UpdatePreviewVisibility. -->
+            <ScrollBar Grid.Row="0" Grid.RowSpan="2" Grid.Column="1"
+                       x:Name="BottomScrollBar"
+                       Orientation="Vertical"
+                       IsVisible="False" />
         </Grid>
 
         <!-- Футер записи (вынесен в компонент FooterPage). -->

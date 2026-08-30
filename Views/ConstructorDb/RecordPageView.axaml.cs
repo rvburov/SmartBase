@@ -6,6 +6,7 @@ using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Media;
+using SmartBase.Controls.Behaviors;
 using SmartBase.Controls.Widgets;
 using SmartBase.Core.Models;
 using SmartBase.Database.Repositories;
@@ -79,11 +80,22 @@ public partial class RecordPageView : UserControl
     private bool _focusBottomAfterReload;       // описание только что создано — поставить каретку в редактор
     private bool _suppressBottomSync;            // гасит обратную синхронизацию инлайн↔нижний при программной установке
 
+    // Прокрутка редактора живет ВНУТРИ шаблона TextBox, а полоса блока вынесена наружу
+    // (она идет от линии до линии, включая строку крошки) — значит связать их можно только
+    // после применения шаблона. У превью свой, обычный ScrollViewer, искать его не нужно.
+    private ScrollViewer? _editorScroll;
+
     public RecordPageView()
     {
         InitializeComponent();
 
         FooterBar.PreviewToggled += (_, _) => UpdatePreviewVisibility();
+
+        MarkdownEditor.TemplateApplied += (_, e) =>
+        {
+            _editorScroll = e.NameScope.Find<ScrollViewer>("PART_ScrollViewer");
+            UpdateBottomScrollBar();
+        };
 
         // Живая запись имени по символу — как ячейка таблицы: правка имени в навбаре панели
         // сразу видна в строке таблицы (RecordChanged → RefreshRecordRow). NavbarPage сам гасит
@@ -196,7 +208,18 @@ public partial class RecordPageView : UserControl
 
         if (preview)
             MarkdownPreview.Markdown = MarkdownEditor.Text ?? "";
+
+        UpdateBottomScrollBar();
     }
+
+    /// <summary>
+    /// Вынесенная полоса блока описания обслуживает тот контрол, который сейчас виден:
+    /// в режиме просмотра — прокрутку превью, в режиме правки — прокрутку редактора.
+    /// Полоса одна, потому что и блок один: видно всегда ровно одно из двух.
+    /// </summary>
+    private void UpdateBottomScrollBar() =>
+        ScrollBarLink.SetSource(BottomScrollBar,
+                                FooterBar.IsPreview ? MarkdownPreviewBox : _editorScroll);
 
     // ── Перетаскивание ручки между свойствами и описанием ──────────────────────
     //
