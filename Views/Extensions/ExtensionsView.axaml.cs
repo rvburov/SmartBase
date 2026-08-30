@@ -1,3 +1,4 @@
+using Avalonia;
 using Avalonia.Controls;
 using SmartBase.Extensions;
 using SmartBase.Settings;
@@ -42,6 +43,9 @@ public partial class ExtensionsView : UserControl
 
         HeaderBar.Title        = _current.Name;
         DescriptionMd.Markdown = _current.MarkdownDescription;
+        // Прокрутка теперь внешняя (см. разметку) и переключение расширения ее не сбрасывает:
+        // выбранное на середине чтения открывалось бы с середины чужого текста.
+        DescriptionScroll.Offset = new Vector(0, 0);
         HeaderBar.SetRunState(_current.CanRun, _current.CanRun ? "Запустить расширение" : "Запуск пока недоступен");
     }
 
