@@ -17,9 +17,16 @@ public static class NoteAutosave
     /// </summary>
     public static readonly TimeSpan Debounce = TimeSpan.FromMilliseconds(800);
 
-    /// <summary>Пауза перед пересборкой живого превью в разделенном режиме: рендер markdown идет
+    /// <summary>Пауза перед пересборкой готового вида в режиме «Просмотр»: рендер markdown идет
     /// синхронно на UI-потоке и без задержки съел бы набор текста.</summary>
     public static readonly TimeSpan PreviewDebounce = TimeSpan.FromMilliseconds(300);
+
+    /// <summary>
+    /// Пауза перед пересчетом живой разметки. Короче превью втрое: там человек смотрит на соседнюю
+    /// панель, а здесь — ровно на те символы, которые набирает, и задержка читается как подвисание.
+    /// Совсем без паузы тоже нельзя: разбор идет по всему тексту заметки.
+    /// </summary>
+    public static readonly TimeSpan MarkupDebounce = TimeSpan.FromMilliseconds(120);
 
     /// <summary>
     /// Изменил ли файл кто-то снаружи, пока заметка была открыта. Исчезнувший файл тоже считается

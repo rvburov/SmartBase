@@ -71,7 +71,7 @@
     <!-- Модуль «Расширения» (lucide blocks) -->
     <StreamGeometry x:Key="IconBlocks">M10 22V7a1 1 0 0 0-1-1H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-5a1 1 0 0 0-1-1H2 M15 2 H21 A1 1 0 0 1 22 3 V9 A1 1 0 0 1 21 10 H15 A1 1 0 0 1 14 9 V3 A1 1 0 0 1 15 2 Z</StreamGeometry>
     <!-- Модуль «Заметки» и раздел настроек «Заметки» (lucide notebook-pen) -->
-    <StreamGeometry x:Key="IconNotebook">M13.4 2 H6 A2 2 0 0 0 4 4 V20 A2 2 0 0 0 6 22 H18 A2 2 0 0 0 20 20 V12.6 M2 6 H4 M2 10 H4 M2 14 H4 M2 18 H4 M21.378 5.626 A1 1 0 1 0 18.374 2.622 L13.364 7.634 A2 2 0 0 0 12.858 8.488 L12.021 11.358 A0.5 0.5 0 0 0 12.641 11.978 L15.511 11.141 A2 2 0 0 0 16.365 10.635 Z</StreamGeometry>
+    <StreamGeometry x:Key="IconNotebook">M13.4 2 H6 A2 2 0 0 0 4 4 V20 A2 2 0 0 0 6 22 H18 A2 2 0 0 0 20 20 V12.6 M2 6 H6 M2 10 H6 M2 14 H6 M2 18 H6 M21.378 5.626 A1 1 0 1 0 18.374 2.622 L13.364 7.634 A2 2 0 0 0 12.858 8.488 L12.021 11.358 A0.5 0.5 0 0 0 12.641 11.978 L15.511 11.141 A2 2 0 0 0 16.365 10.635 Z</StreamGeometry>
     <!-- Модуль «Настройки» (lucide settings) -->
     <StreamGeometry x:Key="IconSettings">M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1 -2.33 4.033 2.34 2.34 0 0 0 -3.319 1.915 2.34 2.34 0 0 1 -4.659 0 2.34 2.34 0 0 0 -3.32 -1.915 2.34 2.34 0 0 1 -2.33 -4.033 2.34 2.34 0 0 0 0 -3.831 A2.34 2.34 0 0 1 6.35 6.051 a2.34 2.34 0 0 0 3.319 -1.915 Z M15 12 A3 3 0 0 1 9 12 A3 3 0 0 1 15 12 Z</StreamGeometry>
     <!-- Модуль «Профиль» и разделы профиля / тип поля «пользователь» (lucide circle-user-round) -->
@@ -171,10 +171,32 @@
     <StreamGeometry x:Key="IconPencil">M13 21 H21 M15 5 L19 9 M21.174 6.812 A1 1 0 0 0 17.188 2.825 L3.842 16.174 A2 2 0 0 0 3.342 17.004 L2.021 21.356 A0.5 0.5 0 0 0 2.644 21.978 L6.997 20.658 A2 2 0 0 0 7.827 20.161 Z</StreamGeometry>
     <!-- Исходник / разметка (lucide code) -->
     <StreamGeometry x:Key="IconCode">M18 16 L22 12 L18 8 M6 8 L2 12 L6 16 M14.5 4 L9.5 20</StreamGeometry>
-    <!-- Разделенный вид заметки: слева исходник, справа просмотр (lucide columns-2) -->
-    <StreamGeometry x:Key="IconColumns2">M5 3 H19 A2 2 0 0 1 21 5 V19 A2 2 0 0 1 19 21 H5 A2 2 0 0 1 3 19 V5 A2 2 0 0 1 5 3 Z M12 3 V21</StreamGeometry>
-    <!-- Просмотр заметки целиком (lucide eye) -->
-    <StreamGeometry x:Key="IconEye">M2.062 12.348 A1 1 0 0 1 2.062 11.652 A10.75 10.75 0 0 1 21.938 11.652 A1 1 0 0 1 21.938 12.348 A10.75 10.75 0 0 1 2.062 12.348 Z M15 12 A3 3 0 0 1 9 12 A3 3 0 0 1 15 12 Z</StreamGeometry>
+    <!-- Просмотр заметки целиком (lucide book-open) -->
+    <StreamGeometry x:Key="IconBookOpen">M12 5 V21 M20.001 19 A2 2 0 0 0 22 17 V5 A2 2 0 0 0 20.001 3 L16 3.002 A5 5 0 0 0 12 5 A5 5 0 0 0 8 3 H4 A2 2 0 0 0 2 5 V17 A2 2 0 0 0 3.999 19 H8 A5 5 0 0 1 12 21 A5 5 0 0 1 16 19 Z</StreamGeometry>
+    <!-- ─── Форматирование текста заметки (меню редактора) ───
+         Геометрии lucide как есть. Пары «размер ↔ толщина» те же, что у остальных
+         пунктов меню: IconSizeMedium + IconStrokeMedium. -->
+    <!-- Жирный (lucide bold) -->
+    <StreamGeometry x:Key="IconBold">M6 12h9a4 4 0 0 1 0 8H7a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h7a4 4 0 0 1 0 8</StreamGeometry>
+    <!-- Курсив (lucide italic) -->
+    <StreamGeometry x:Key="IconItalic">M19 4h-9 M14 20H5 M15 4 9 20</StreamGeometry>
+    <!-- Зачеркнутый (lucide strikethrough) -->
+    <StreamGeometry x:Key="IconStrikethrough">M16 4H9a3 3 0 0 0-2.83 4 M14 12a4 4 0 0 1 0 8H6 M4 12h16</StreamGeometry>
+    <!-- Ссылка (lucide link) -->
+    <StreamGeometry x:Key="IconLink">M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71 M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71</StreamGeometry>
+    <!-- Маркированный список (lucide list) -->
+    <StreamGeometry x:Key="IconList">M3 12h.01 M3 18h.01 M3 6h.01 M8 12h13 M8 18h13 M8 6h13</StreamGeometry>
+    <!-- Нумерованный список (lucide list-ordered) -->
+    <StreamGeometry x:Key="IconListOrdered">M11 5h10 M11 12h10 M11 19h10 M4 4h1v5 M4 9h2 M6 17.5c0 .8-.7 1.5-1.5 1.5S3 18.3 3 17.5c0-1.4 3-1.6 3-4 0-.9-.7-1.5-1.5-1.5S3 12.7 3 13.5</StreamGeometry>
+    <!-- Заголовок (lucide heading) -->
+    <StreamGeometry x:Key="IconHeading">M6 12h12 M6 20V4 M18 20V4</StreamGeometry>
+    <!-- Цитата (lucide text-quote) -->
+    <StreamGeometry x:Key="IconQuote">M17 6H3 M21 12H8 M21 18H8 M3 12v6</StreamGeometry>
+    <!-- Таблица (lucide table) -->
+    <StreamGeometry x:Key="IconTable">M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z M12 3v18 M3 9h18 M3 15h18</StreamGeometry>
+    <!-- Очистить форматирование (lucide remove-formatting) -->
+    <StreamGeometry x:Key="IconRemoveFormatting">M4 7V4h16v3 M5 20h6 M13 4 8 20 M15 15l5 5 M20 15l-5 5</StreamGeometry>
+
     <!-- Сброс к умолчанию (rotate-ccw) -->
     <StreamGeometry x:Key="IconRotateCcw">M3 12 a9 9 0 1 0 9 -9 a9.75 9.75 0 0 0 -6.74 2.74 L3 8 M3 3 V8 H8</StreamGeometry>
     <!-- Удалить (trash) -->

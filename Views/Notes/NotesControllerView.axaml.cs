@@ -40,10 +40,7 @@ public partial class NotesControllerView : UserControl
     // Конфликт уже показан — не спрашиваем повторно на каждое нажатие клавиши.
     private bool _conflictAsked;
 
-    private ScrollViewer? _editorScroll;
-
-    private readonly DispatcherTimer _saveTimer    = new() { Interval = NoteAutosave.Debounce };
-    private readonly DispatcherTimer _previewTimer = new() { Interval = NoteAutosave.PreviewDebounce };
+    private readonly DispatcherTimer _saveTimer = new() { Interval = NoteAutosave.Debounce };
 
     public NotesControllerView()
     {
@@ -56,16 +53,11 @@ public partial class NotesControllerView : UserControl
             ApplyMode();
         };
 
-        NoteEditor.TemplateApplied += (_, e) =>
-        {
-            _editorScroll = e.NameScope.Find<ScrollViewer>("PART_ScrollViewer");
-            UpdateScrollBars();
-        };
+        // Прокрутка редактора появляется вместе с его шаблоном — позже конструктора.
+        NoteEditor.ScrollerReady += (_, _) => UpdateScrollBars();
+        NoteEditor.TextChanged   += (_, _) => OnTextChanged();
 
-        NoteEditor.TextChanged += (_, _) => OnTextChanged();
-
-        _saveTimer.Tick    += (_, _) => { _saveTimer.Stop(); SaveNow(); };
-        _previewTimer.Tick += (_, _) => { _previewTimer.Stop(); RenderPreview(); };
+        _saveTimer.Tick += (_, _) => { _saveTimer.Stop(); SaveNow(); };
 
         HeaderBar.TitleEdited += (_, name) =>
         {
@@ -187,7 +179,6 @@ public partial class NotesControllerView : UserControl
     private void CloseNote()
     {
         _saveTimer.Stop();
-        _previewTimer.Stop();
 
         _openRelative = null;
         _openFull     = "";
@@ -246,38 +237,34 @@ public partial class NotesControllerView : UserControl
         var open = _openRelative is not null;
         var mode = FooterBar.Mode;
 
-        // В разделенном виде живое превью строится по каждой паузе в наборе. Для больших файлов
-        // это дорого (Markdown.Avalonia собирает дерево синхронно на UI-потоке), поэтому крупная
-        // заметка показывается исходником — иначе набор текста начнет спотыкаться.
-        if (open && mode == NotesViewMode.Split && _openLength > VaultOperations.MaxLivePreviewBytes)
-            mode = NotesViewMode.Source;
+        // «Просмотр» — готовый документ, оба остальных режима — один и тот же редактор.
+        var showPreview = open && mode == NotesViewMode.Preview;
+        var showEditor  = open && !showPreview;
 
-        var showEditor  = open && mode is NotesViewMode.Source or NotesViewMode.Split;
-        var showPreview = open && mode is NotesViewMode.Preview or NotesViewMode.Split;
-        var split       = showEditor && showPreview;
+        // На очень большой заметке живое оформление гасим, но режим НЕ понижаем: редактор тот
+        // же, просто без разметки. Разбор идет по всему тексту, и на мегабайтном файле пауза
+        // после каждого слова стала бы заметной.
+        NoteEditor.LiveMarkup = showEditor
+                                && mode == NotesViewMode.Live
+                                && _openLength <= VaultOperations.MaxLivePreviewBytes;
 
         NoteEditor.IsVisible     = showEditor;
-        EditorScrollBar.IsVisible = showEditor;
-        SplitLine.IsVisible      = split;
         NotePreviewBox.IsVisible = showPreview;
-        PreviewScrollBar.IsVisible = showPreview;
-
-        // Колонка со звездой и невидимым содержимым все равно заняла бы место — схлопываем в 0.
-        var star = new GridLength(1, GridUnitType.Star);
-        var none = new GridLength(0);
-        BodyGrid.ColumnDefinitions[0].Width = showEditor  ? star : none;
-        BodyGrid.ColumnDefinitions[3].Width = showPreview ? star : none;
 
         UpdateScrollBars();
         if (showPreview) RenderPreview();
     }
 
-    // У каждого видимого блока своя полоса: общая на два блока показывала бы положение только
-    // одного из них (правило docs/developer/ui/scrolling.md).
+    // Прокручиваемый блок в теле ровно один — полоса тоже одна, и она перецепляется на текущий.
+    // Дальше ScrollBarLink сам решает, показывать ее: полоса нужна, только если есть куда мотать.
     private void UpdateScrollBars()
     {
-        ScrollBarLink.SetSource(EditorScrollBar,  _editorScroll);
-        ScrollBarLink.SetSource(PreviewScrollBar, NotePreviewBox);
+        ScrollViewer? source = NotePreviewBox.IsVisible ? NotePreviewBox
+                             : NoteEditor.IsVisible     ? NoteEditor.Scroller
+                                                        : null;
+
+        ScrollBarLink.SetSource(BodyScrollBar, source);
+        if (source is null) BodyScrollBar.IsVisible = false;
     }
 
     private void RenderPreview()
@@ -297,20 +284,26 @@ public partial class NotesControllerView : UserControl
         // иначе каждое нажатие уходило бы на диск, а следом в облачный синхронизатор.
         _saveTimer.Stop();
         _saveTimer.Start();
-
-        if (NotePreviewBox.IsVisible)
-        {
-            _previewTimer.Stop();
-            _previewTimer.Start();
-        }
     }
 
+    // Туннелем: иначе клавишу разберет сам редактор. Ctrl/Cmd+Z и Y сюда не попадают намеренно —
+    // это собственная история правок AvaloniaEdit, перехватывать ее нечем и незачем.
     private void OnPanelKeyDown(object? sender, KeyEventArgs e)
     {
-        if (e.Key != Key.S) return;
-        if (!e.KeyModifiers.HasFlag(KeyModifiers.Control) && !e.KeyModifiers.HasFlag(KeyModifiers.Meta)) return;
+        var mod = e.KeyModifiers.HasFlag(KeyModifiers.Control) || e.KeyModifiers.HasFlag(KeyModifiers.Meta);
+        if (!mod) return;
 
-        FlushPendingSave();
+        if (e.Key == Key.S)
+        {
+            FlushPendingSave();
+            e.Handled = true;
+            return;
+        }
+
+        if (!NoteEditor.IsVisible) return;
+        if (NoteEditorBox.CommandFor(e.Key, e.KeyModifiers) is not { } command) return;
+
+        NoteEditor.Run(command);
         e.Handled = true;
     }
 

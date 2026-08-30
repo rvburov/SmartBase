@@ -206,6 +206,16 @@
         <Setter Property="BorderBrush" Value="{StaticResource BrushAccent}" />
     </Style>
 
+    <!-- Тот же вид, но ширина по тексту. В модалке кнопки стоят рядом и выравниваются по 110 px,
+         а одиночная кнопка с длинной подписью в эту ширину не влезает и обрезает текст. Ширину
+         не задаем числом: FontSizeBase меняется настройкой размера шрифта, и любое число рано или
+         поздно окажется мало. NaN = «мерить по содержимому» (значение Width по умолчанию). -->
+    <Style Selector="Button.dialog.auto">
+        <Setter Property="Width"    Value="NaN" />
+        <Setter Property="MinWidth" Value="110" />
+        <Setter Property="Padding"  Value="16,0" />
+    </Style>
+
     <!-- Button/ToggleButton с иконкой: прозрачный фон, при наведении иконка синеет -->
     <Style Selector="Button.icon, ToggleButton.icon">
         <Setter Property="Background"                 Value="Transparent" />

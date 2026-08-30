@@ -312,9 +312,9 @@ public static class AppSettings
         else                     _store?.Set(KeyNotesLastFile, trimmed);
     }
 
-    // Режим тела раздела: "source" — исходный текст, "split" — слева правка, справа живой
-    // просмотр, "preview" — только просмотр. Стандарт — разделенный: ближе всего к тому, как
-    // markdown показывают редакторы заметок.
+    // Режим тела раздела: "source" — просмотр исходного кода, "split" — динамический просмотр
+    // (слева правка, справа живой вид), "preview" — просмотр. Стандарт — динамический: ближе
+    // всего к тому, как markdown показывают редакторы заметок.
     public const string NotesViewModeDefault = "split";
 
     public static string LoadNotesViewMode()

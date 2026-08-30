@@ -4,6 +4,10 @@
     <Styles.Resources>
         <!-- Семейство шрифтов: единый токен на все приложение -->
         <FontFamily x:Key="FontFamilyBase">Helvetica Neue, Arial, sans-serif</FontFamily>
+        <!-- Код: моноширинный. Цепочка запасных — свой шрифт на каждой системе, чтобы не
+             тащить файл в Assets ради одной роли. Пользуются им блоки кода и код внутри
+             строки: и в разметке markdown, и в живом редакторе заметок. -->
+        <FontFamily x:Key="FontFamilyMono">Menlo, Consolas, DejaVu Sans Mono, Courier New, monospace</FontFamily>
 
         <!-- Размеры шрифтов -->
         

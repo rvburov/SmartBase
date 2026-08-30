@@ -66,6 +66,14 @@
     <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="9.0.1" />
     <PackageReference Include="Markdown.Avalonia"                Version="11.0.3" />
     <PackageReference Include="Markdig"                          Version="0.37.0" />
+    <!-- Редактор с посимвольным оформлением (раздел «Заметки», живой markdown): у TextBox
+         начертание одно на все поле, жирным можно сделать либо весь текст, либо ничего.
+         Транзитивно Markdown.Avalonia.SyntaxHigh тянет 11.0.0, но с ней приложение падает при
+         потере фокуса редактором: TextAreaTextInputMethodClient.Selection не проверяет, что
+         TextArea уже отцеплен, а Avalonia 11.2 спрашивает его в этот самый момент
+         (SetTextArea(null) → RaiseSurroundingTextChanged → NRE). В 11.1.0 проверка добавлена;
+         берем 11.2.0 — под ту же линию, что и сама Avalonia. -->
+    <PackageReference Include="Avalonia.AvaloniaEdit"            Version="11.2.0" />
     <PackageReference Include="ClosedXML"                        Version="0.104.2" />
     <!-- Разбор ссылок Excel напрямую (Extensions/ExcelBook: проверка определенных имен
          и ловля ParsingException по типу). Версия — та же, что транзитивно тянет ClosedXML;

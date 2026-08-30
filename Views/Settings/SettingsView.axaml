@@ -717,7 +717,7 @@
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*" />
                     </Grid.ColumnDefinitions>
-                    <StackPanel Margin="16,16,16,32" Spacing="0">
+                    <StackPanel Margin="16,0,16,32">
 
                         <!-- Папка-хранилище: до ее выбора раздел «Заметки» пуст и в диск не лезет. -->
                         <Border Classes="settingRow">
@@ -754,25 +754,6 @@
                             </StackPanel>
                         </Border>
                         <Border Classes="separator h" />
-
-                        <!-- Что именно показывается в дереве — правила заданы жестко, поэтому
-                             это пояснение, а не настройка. -->
-                        <Border Classes="settingRow">
-                            <StackPanel Spacing="4">
-                                <TextBlock Classes="title" Text="Что видно в дереве" />
-                                <TextBlock Classes="desc"
-                                           Text="Показываются все файлы папки, но открываются только Markdown — .md и .markdown. Скрытые файлы и служебные папки (имена с точкой в начале: .git, .obsidian) в дерево не попадают." />
-                            </StackPanel>
-                        </Border>
-                        <Border Classes="separator h" />
-
-                        <Border Classes="settingRow">
-                            <StackPanel Spacing="4">
-                                <TextBlock Classes="title" Text="Сохранение и удаление" />
-                                <TextBlock Classes="desc"
-                                           Text="Заметка сохраняется сама через мгновение после того, как вы перестали печатать, а также при переходе к другой заметке и закрытии программы. Удаленные файлы и папки уходят в корзину системы — их можно вернуть оттуда." />
-                            </StackPanel>
-                        </Border>
 
                     </StackPanel>
                 </Grid>

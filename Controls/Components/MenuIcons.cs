@@ -32,6 +32,7 @@ public static class MenuIcons
     private static Geometry MoveHorizontal => Icon("IconMoveHorizontal");
     private static Geometry MoveVertical   => Icon("IconMoveVertical");
     private static Geometry CheckCheck     => Icon("IconCheckCheck");
+    private static Geometry Check          => Icon("IconCheck");
     private static Geometry FolderTree     => Icon("IconFolderTree");
     private static Geometry FolderPlus     => Icon("IconFolderPlus");
     private static Geometry CollectionPlus => Icon("IconCollectionPlus");
@@ -75,6 +76,43 @@ public static class MenuIcons
             },
         },
     };
+
+    // Пункт выбора одного варианта из набора: у выбранного — галочка, у остальных на ее месте
+    // пустое место той же ширины. Без распорки тексты пунктов съезжали бы друг относительно
+    // друга, и список читался бы как рваный.
+    public static Control ChoiceHeader(string text, bool selected)
+    {
+        var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        row.Children.Add(selected
+            ? StrokeIcon(Check, PrimaryText)
+            : new Border { Width = IconSize("IconSizeMedium") });
+        row.Children.Add(new TextBlock { Text = text, VerticalAlignment = VerticalAlignment.Center });
+        return row;
+    }
+
+    /// <summary>
+    /// Пункт без иконки, но с ее отступом — чтобы текст стоял в одну линию с соседями по меню.
+    /// Нужен там, где иконка ничего не добавляет: «Вырезать», «Копировать», названия подменю.
+    /// </summary>
+    public static Control PlainHeader(string text) => ChoiceHeader(text, selected: false);
+
+    // ── Меню редактора заметки ──────────────────────────────────────────────────
+
+    public static Control BoldHeader()          => Header(Icon("IconBold"),              "Жирный");
+    public static Control ItalicHeader()        => Header(Icon("IconItalic"),            "Курсив");
+    public static Control StrikeHeader()        => Header(Icon("IconStrikethrough"),     "Зачеркнутый");
+    public static Control InlineCodeHeader()    => Header(Icon("IconCode"),              "Код");
+    public static Control LinkHeader()          => Header(Icon("IconLink"),              "Ссылка");
+    public static Control ClearFormatHeader()   => Header(Icon("IconRemoveFormatting"),  "Очистить форматирование");
+
+    public static Control BulletListHeader()    => Header(Icon("IconList"),              "Маркированный список");
+    public static Control OrderedListHeader()   => Header(Icon("IconListOrdered"),       "Нумерованный список");
+    public static Control QuoteHeader()         => Header(Icon("IconQuote"),             "Цитата");
+    public static Control HeadingHeader(string text) => Header(Icon("IconHeading"), text);
+
+    public static Control TableHeader()         => Header(Icon("IconTable"),             "Таблица");
+    public static Control CodeBlockHeader()     => Header(Icon("IconCode"),              "Блок кода");
+    public static Control RuleHeader()          => Header(Icon("IconMinus"),             "Горизонтальная линия");
 
     // Заголовок пункта «Дублировать»: иконка copy + стандартный текст.
     public static Control DuplicateHeader() => Header(Copy, "Дублировать");
