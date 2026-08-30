@@ -16,7 +16,7 @@
 - Разметка: [SettingsView.axaml](../../../Views/Settings/SettingsView.axaml) — `GuidePanel`, `GuideTocPanel`, `GuideTocDivider`, `GuideTocResizeGrip`, стили `Border.tocrow`
 - Порядок документов: [GuideRegistry.cs](../../../Settings/GuideRegistry.cs)
 - Пункт сайдбара: [SettingsRegistry.cs](../../../Settings/SettingsRegistry.cs) (`guide`, иконка `IconBook`)
-- Вид markdown: общий на все приложение — [Assets/Styles/Markdown.axaml](../../../Assets/Styles/Markdown.axaml), виджет [AppMarkdown](../../../Controls/Widgets/AppMarkdown.cs) (см. [[../ui/markdown]])
+- Вид markdown: общий на все приложение — виджет [AppMarkdown](../../../Controls/Widgets/AppMarkdown.cs) и [Controls/Markup](../../../Controls/Markup) (см. [[../ui/markdown]])
 - Ширина панели: [AppSettings](../../../Utils/AppSettings.cs) (`guideTocWidth`, Min/Max/Default)
 - Файлы в сборке: [SmartBase.csproj](../../../SmartBase.csproj) — `<AvaloniaResource Include="docs\user\**\*.md" />`
 
@@ -43,10 +43,9 @@
 по визуальному дереву. С секциями положение любой из них известно точно
 (`TranslatePoint` относительно `GuidePanel`).
 
-Вопреки имени, `MarkdownScrollViewer` (база `AppMarkdown`) — **не** `ScrollViewer`: свойств
-`VerticalScrollBarVisibility`/`HorizontalScrollBarVisibility` у типа нет, отключать
-его прокрутку не нужно и нечем. Внутри вертикального `StackPanel` высота не ограничена,
-поэтому контрол разворачивается на весь текст.
+Своей прокрутки у `AppMarkdown` нет: внутри вертикального `StackPanel` высота не ограничена,
+поэтому секция разворачивается на весь текст, а прокруткой заведует общий `ScrollViewer`
+раздела.
 
 Секция `## Связанные документы` в программу не попадает: wiki-ссылки `[[имя]]` там
 не кликаются, это навигация для GitHub.
@@ -81,14 +80,13 @@
 ### Вид markdown
 
 Вид у markdown **общий на все приложение** и описан в одном файле —
-[Assets/Styles/Markdown.axaml](../../../Assets/Styles/Markdown.axaml); подробности,
-селекторы и правило «только через виджет `AppMarkdown`» — в [[../ui/markdown]]. Отсюда его
-не правят: та же разметка так же выглядит в описаниях расширений и в просмотре описания
-записи.
+[MarkupTheme](../../../Controls/Markup/MarkupTheme.cs); правило «только через виджет
+`AppMarkdown`» и устройство рендера — в [[../ui/markdown]]. Отсюда его не правят: та же
+разметка так же выглядит в описаниях расширений и в просмотре описания записи.
 
-Особенность раздела одна: секций на экране десятки, поэтому набор стилей висит ОДИН раз на
-общем хосте (`ApplyMarkdownStyles` → `AppMarkdown.ApplyStyles(GuideHost)`), а контролы
-создаются с `inheritStyles: true` — свой набор каждый не заводит.
+Особенность раздела одна: вики-ссылки. `[[имя]]` из документов превращаются в настоящие ссылки
+`sb-guide:имя`, а виджет отдает нажатие событием `LinkClicked` — переход равнозначен нажатию
+строки в «Содержании». Неизвестное имя остается простым текстом: ссылка в никуда хуже текста.
 
 ### Сборка раздела
 

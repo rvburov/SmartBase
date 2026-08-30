@@ -64,15 +64,18 @@
     </PackageReference>
     <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="9.0.4" />
     <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="9.0.1" />
-    <PackageReference Include="Markdown.Avalonia"                Version="11.0.3" />
+    <!-- Разбор markdown. ЕДИНСТВЕННЫЙ парсер разметки в приложении: на нем и живое оформление
+         в редакторе заметок, и показ готового текста (Controls/Markup — рендер свой). Готового
+         движка показа больше нет: Markdown.Avalonia приносил второй парсер со своим набором
+         разметки, и «Просмотр» неизбежно расходился с «Динамическим просмотром». -->
     <PackageReference Include="Markdig"                          Version="0.37.0" />
     <!-- Редактор с посимвольным оформлением (раздел «Заметки», живой markdown): у TextBox
          начертание одно на все поле, жирным можно сделать либо весь текст, либо ничего.
-         Транзитивно Markdown.Avalonia.SyntaxHigh тянет 11.0.0, но с ней приложение падает при
-         потере фокуса редактором: TextAreaTextInputMethodClient.Selection не проверяет, что
-         TextArea уже отцеплен, а Avalonia 11.2 спрашивает его в этот самый момент
-         (SetTextArea(null) → RaiseSurroundingTextChanged → NRE). В 11.1.0 проверка добавлена;
-         берем 11.2.0 — под ту же линию, что и сама Avalonia. -->
+         Версия не ниже 11.1: в 11.0.0 приложение падает при потере фокуса редактором —
+         TextAreaTextInputMethodClient.Selection не проверяет, что TextArea уже отцеплен, а
+         Avalonia 11.2 спрашивает его в этот самый момент (SetTextArea(null) →
+         RaiseSurroundingTextChanged → NRE). Берем 11.2.0 — под ту же линию, что и сама
+         Avalonia. Сторожит номер версии Tests/Unit/EditorPackagePinTests. -->
     <PackageReference Include="Avalonia.AvaloniaEdit"            Version="11.2.0" />
     <PackageReference Include="ClosedXML"                        Version="0.104.2" />
     <!-- Разбор ссылок Excel напрямую (Extensions/ExcelBook: проверка определенных имен

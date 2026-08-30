@@ -90,7 +90,7 @@
 | MVVM                   | **CommunityToolkit.Mvvm**; крупные интерактивные модули — намеренно code-behind |
 | Данные           | **EF Core 9** + **SQLite**, **Npgsql** для PostgreSQL, миграции EF                           |
 | Таблицы         | **ClosedXML** и **DocumentFormat.OpenXml** (потоковая SAX-запись), **ExcelDataReader**  |
-| Текст             | **Markdig** + **Markdown.Avalonia** — описания записей                                        |
+| Текст             | **Markdig** — разбор markdown; показ и живое оформление собирает свой рендер                   |
 | Уведомления | **DesktopNotifications** (Windows/Linux), macOS — свой код                                                  |
 | Логи               | **Serilog** + приемник SQLite (`logs.db`)                                                                 |
 | Расширения   | **PdfPig** — разбор PDF, **Docnet.Core** (PDFium) + **SkiaSharp** — впечатывание водяного знака, **PDFsharp** — сборка результата |

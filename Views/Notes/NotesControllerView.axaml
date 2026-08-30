@@ -27,8 +27,8 @@
                                  Watermark="Пишите в Markdown..."
                                  IsVisible="False" />
 
-                <!-- Просмотр: виджет AppMarkdown, а не голый MarkdownScrollViewer — вид берется
-                     из общего Assets/Styles/Markdown.axaml, тот же, что в инструкции. -->
+                <!-- Просмотр: виджет AppMarkdown — тот же разбор и тот же вид, что в
+                     инструкции пользователя и в описаниях расширений. -->
                 <ScrollViewer Grid.Column="0" x:Name="NotePreviewBox"
                               IsVisible="False"
                               VerticalScrollBarVisibility="Hidden"

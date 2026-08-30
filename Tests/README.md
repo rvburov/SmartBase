@@ -13,6 +13,12 @@
 | `Benchmarks` | перф-замеры | `dotnet run -c Release --project Tests/Benchmarks -- <команда>` |
 | `DbGenerator` | генератор большого стенда | `dotnet run -c Release --project Tests/DbGenerator` |
 | `MultiProcess` | многопроцессные/ручные проверки | `dotnet run -c Release --project Tests/MultiProcess -- <режим>` |
+| `MarkupLayout` | раскладка markdown под настоящим шрифтом | `dotnet run --project Tests/MarkupLayout -f net10.0` |
+
+`MarkupLayout` стоит отдельно от `Unit`, потому что ему нужен `Avalonia.Headless`, а `Unit`
+объявлен без внешних зависимостей. Проверяет то, чего не видно без раскладки: что абзац не теряет
+перенесенные строки и что просвет между блоками равен пустым строкам исходника. Обе эти ошибки уже
+были — прогонять после любой правки `Controls/Markup`.
 
 Прогнать автотесты ядра: `./Tests/run-all.sh`; вместе с расширениями — `./Tests/run-all.sh --with-extensions`.
 

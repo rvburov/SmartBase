@@ -866,9 +866,9 @@
 
             <!-- ── Инструкция пользователя ───────────────────────
                  Документы docs/user/*.md, вшитые в сборку (AvaloniaResource). Текст
-                 собирается в code-behind (SettingsGuide) секциями в GuideHost: свой
-                 ScrollViewer вместо MarkdownScrollViewer — так известна Y-координата
-                 каждого заголовка, и оглавление умеет к нему прокручивать. Оглавление —
+                 собирается в code-behind (SettingsGuide) секциями в GuideHost: прокрутка
+                 общая и НАША — так известна Y-координата каждого заголовка, и оглавление
+                 умеет к нему прокручивать. Оглавление —
                  отдельной панелью справа (Column 2 корневой сетки), как «Детали» журнала. -->
             <ScrollViewer x:Name="GuidePanel" IsVisible="False"
                           VerticalScrollBarVisibility="Auto"

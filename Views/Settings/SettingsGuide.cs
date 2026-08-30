@@ -17,12 +17,12 @@ namespace SmartBase.Views.Settings;
 /// (вшиты в сборку как AvaloniaResource) и панель «Содержание» справа — как панель
 /// «Детали» в «Диагностике».
 ///
-/// Почему НЕ один <c>MarkdownScrollViewer</c> на весь текст: у него своя прокрутка, и
-/// узнать положение заголовка внутри отрендеренного markdown можно только поиском по
-/// визуальному дереву. Поэтому документ режется по заголовкам второго уровня, каждый
-/// кусок рендерится своим контролом в общий <see cref="StackPanel"/>, а прокруткой
-/// заведует НАШ <see cref="ScrollViewer"/> — положение любой секции известно точно
-/// (<c>TranslatePoint</c>), и оглавление умеет к ней прокручивать.
+/// Почему НЕ один виджет на весь текст: узнать положение заголовка внутри собранного
+/// markdown можно только поиском по визуальному дереву. Поэтому документ режется по
+/// заголовкам второго уровня, каждый кусок рендерится своим контролом в общий
+/// <see cref="StackPanel"/>, а прокруткой заведует НАШ <see cref="ScrollViewer"/> —
+/// положение любой секции известно точно (<c>TranslatePoint</c>), и оглавление умеет к
+/// ней прокручивать.
 ///
 /// Порядок документов — <see cref="GuideRegistry"/>; подписи в оглавлении берутся из
 /// самих заголовков, руками не дублируются.
@@ -33,6 +33,10 @@ public partial class SettingsView
     private sealed record GuideAnchor(Border Row, Control Section);
 
     private readonly List<GuideAnchor> _guideAnchors = [];
+
+    // Имя документа → его первый пункт оглавления. По нему прыгают вики-ссылки [[имя]] из текста.
+    private readonly Dictionary<string, GuideAnchor> _guideBySlug = new(StringComparer.OrdinalIgnoreCase);
+
     private bool _guideBuilt;
 
     // Кеш Y-координат секций внутри GuideHost — чтобы не мерить все дерево на каждый
@@ -51,8 +55,6 @@ public partial class SettingsView
     {
         if (_guideBuilt) return;
         _guideBuilt = true;
-
-        ApplyMarkdownStyles();
 
         // Проход 1: читаем документы. Заголовки нужны заранее — их подставляют вместо
         // wiki-ссылок [[имя]], а ссылка может смотреть на документ, который идет ниже.
@@ -89,7 +91,8 @@ public partial class SettingsView
                 GuideHost.Children.Add(section);
 
                 // Первая секция документа — его заголовок в оглавлении, остальные — подпункты.
-                AddTocRow($"{number} {(first ? title : heading ?? title)}", sub: !first, section);
+                var anchor = AddTocRow($"{number} {(first ? title : heading ?? title)}", sub: !first, section);
+                if (first) _guideBySlug[Slug(page)] = anchor;
                 first = false;
             }
         }
@@ -132,29 +135,42 @@ public partial class SettingsView
         }
     }
 
-    /// <summary>
-    /// Общий вид markdown (Assets/Styles/Markdown.axaml) вешается ОДИН раз на хост секций:
-    /// стили родителя действуют на все поддерево, а секций тут десятки — копия набора в
-    /// каждой ни к чему. Поэтому и контролы создаются с <c>inheritStyles: true</c>.
-    /// </summary>
-    private void ApplyMarkdownStyles() => AppMarkdown.ApplyStyles(GuideHost);
-
     /// <summary>Линия между блоками — общий стиль разделителей приложения (Controls.axaml).</summary>
     private static Border SectionSeparator() =>
         new() { Classes = { "separator", "h" }, Margin = new Thickness(0, SectionGap, 0, SectionGap) };
 
     private const double SectionGap = 18;
 
-    private Control RenderMarkdown(string markdown) =>
-        // Своя прокрутка контролу не нужна и не мешает: внутри вертикального StackPanel
-        // высота не ограничена, поэтому он разворачивается на весь текст, а прокруткой
-        // заведует общий ScrollViewer раздела. Отключить ее свойством нельзя — у типа
-        // таких свойств нет (это не ScrollViewer, вопреки имени).
-        new AppMarkdown(inheritStyles: true)
+    private Control RenderMarkdown(string markdown)
+    {
+        // Своей прокрутки у виджета нет и не нужно: внутри вертикального StackPanel высота
+        // не ограничена, поэтому секция разворачивается на весь текст, а прокруткой заведует
+        // общий ScrollViewer раздела.
+        var view = new AppMarkdown
         {
             Markdown         = markdown,
             SelectionEnabled = true,   // текст инструкции можно выделить и скопировать
         };
+        view.LinkClicked += OnGuideLink;
+        return view;
+    }
+
+    /// <summary>
+    /// Ссылка внутри инструкции. Свои (<c>GuideScheme</c>) ведут на другой документ справочника
+    /// и обрабатываются здесь — переход равнозначен нажатию строки в «Содержании». Все прочие
+    /// виджет откроет системой, и мешать ему незачем.
+    /// </summary>
+    private void OnGuideLink(object? sender, LinkEventArgs e)
+    {
+        if (!e.Url.StartsWith(GuideScheme, StringComparison.Ordinal)) return;
+
+        e.Handled = true;
+        if (_guideBySlug.TryGetValue(e.Url[GuideScheme.Length..], out var anchor)) ScrollGuideTo(anchor);
+    }
+
+    /// <summary>Схема ссылок внутрь справочника. Своя, потому что адрес тут не путь и не URL —
+    /// это имя документа реестра.</summary>
+    private const string GuideScheme = "sb-guide:";
 
     // ── Разбор markdown ─────────────────────────────────────────────────────────
 
@@ -175,21 +191,17 @@ public partial class SettingsView
 
     /// <summary>
     /// Заменяет вики-ссылки <c>[[имя]]</c> (соглашение документации, см. docs/README.md)
-    /// названием документа в кавычках-елочках: «см. „Календарь“». На GitHub такая ссылка
-    /// кликается, а в программе читалась бы мусором — двойные скобки с латинским именем
-    /// файла. Елочки, а не жирный: так во всей инструкции оформлены названия разделов
-    /// и кнопок, ссылка на документ ничем не выделяется из этого ряда.
+    /// настоящей ссылкой на документ справочника: <c>[Календарь](sb-guide:calendar)</c>.
+    /// Двойные скобки с латинским именем файла на экране читались бы мусором, а на GitHub
+    /// та же строка кликается — поэтому подмена, а не показ как есть.
     ///
-    /// Настоящей ссылкой не делаем: подставить свою команду перехода в Markdown.Avalonia
-    /// 11.0.3 нечем (у контрола нет доступного <c>HyperlinkCommand</c>), а ссылка, которая
-    /// никуда не ведет, хуже простого текста. Переход по документам дает панель «Содержание».
-    /// Неизвестное имя остается текстом как есть.
+    /// Неизвестное имя остается простым текстом: ссылка, ведущая в никуда, хуже текста.
     /// </summary>
     private static string ResolveWikiLinks(string md, IReadOnlyDictionary<string, string> titles) =>
         WikiLinkPattern().Replace(md, m =>
         {
             var name = m.Groups[1].Value.Trim();
-            return titles.TryGetValue(name, out var title) ? $"«{title}»" : name;
+            return titles.TryGetValue(name, out var title) ? $"[{title}]({GuideScheme}{name})" : name;
         });
 
     [GeneratedRegex(@"\[\[([^\]]+)\]\]")]

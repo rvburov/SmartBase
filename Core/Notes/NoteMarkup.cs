@@ -9,6 +9,8 @@ public enum NoteStyle
     Bold,
     Italic,
     Strike,
+    /// <summary>==Подсветка==: маркер поверх текста, начертание не меняется.</summary>
+    Highlight,
     /// <summary>Код внутри строки.</summary>
     Code,
     /// <summary>Строка внутри огражденного блока кода — вместе с самими ограждениями.</summary>

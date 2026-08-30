@@ -48,6 +48,7 @@ public sealed class NoteEditorBox : UserControl
 
     private readonly NoteMarkupColorizer _colorizer = new();
     private readonly NoteMarkerHider     _hider     = new();
+    private readonly NoteHeadingAir      _headingAir = new();
     private readonly DispatcherTimer     _markupTimer = new() { Interval = NoteAutosave.MarkupDebounce };
 
     private int  _renderedFontDelta = FontScale.Delta;
@@ -79,12 +80,16 @@ public sealed class NoteEditorBox : UserControl
 
         // Воздух по краям — 16 со всех сторон, как у «Просмотра» (Margin у AppMarkdown).
         //
-        // Сверху и снизу его задает НЕ Padding: у AvaloniaEdit прокрутка логическая, и Padding
-        // уходит шаблоном на его ScrollViewer, то есть работает рамкой — текст обрезался бы по
-        // ней и при листании не доезжал до линий шапки и футера. Вертикальный воздух живет в
-        // высоте крайних строк документа (NoteAirGenerator) и потому прокручивается вместе с
-        // текстом. По бокам рамка не мешает: горизонтальной прокрутки тут нет.
-        _editor.Padding = new Thickness(Air, 0, Air, 0);
+        // Это рамка, а не воздух внутри содержимого: при прокрутке полоса сверху и снизу
+        // остается, и текст не доезжает до линий шапки и футера. Так сделано не по недосмотру —
+        // иначе в AvaloniaEdit нельзя. У него ВСЕ строки одной высоты: паразитная на первый
+        // взгляд строчка `VisualLineTextParagraphProperties.LineHeight = FontSize * 1.35`
+        // жестко задает высоту абзаца, а `TextLineImpl.CreateLineMetrics` в самом конце
+        // возвращает посчитанную высоту к ней и сдвигает базовую линию на половину разницы.
+        // Поэтому прогон любой высоты (а воздух в первой строке документа был именно им) строку
+        // НЕ удлиняет: он только роняет ее текст вниз, и первая строка наезжает на следующие.
+        // Ровно это и было видно сверху заметки.
+        _editor.Padding = new Thickness(Air);
 
         // AvaloniaEdit по умолчанию разрешает прокрутку ЗА конец текста: к высоте документа он
         // прибавляет почти целый экран (`documentHeight + viewport - высота строки`), и заметку
@@ -106,9 +111,9 @@ public sealed class NoteEditorBox : UserControl
         ApplyLook();
 
         _editor.TextArea.TextView.LineTransformers.Add(_colorizer);
-        // Воздух сверху и снизу — до пряталки маркеров: на первой строке оба могут смотреть на
-        // один и тот же нулевой отступ, и воздух должен встать перед спрятанным знаком.
-        _editor.TextArea.TextView.ElementGenerators.Add(new NoteAirGenerator(Air));
+        // Воздух заголовка — ДО пряталки: на строке заголовка оба смотрят на один и тот же
+        // нулевой отступ, и разрыв строки обязан встать перед спрятанными решетками.
+        _editor.TextArea.TextView.ElementGenerators.Add(_headingAir);
         _editor.TextArea.TextView.ElementGenerators.Add(_hider);
         _markupTimer.Tick += (_, _) => { _markupTimer.Stop(); Rescan(); };
 
@@ -143,7 +148,7 @@ public sealed class NoteEditorBox : UserControl
         AddHandler(KeyDownEvent, OnSearchKeys, RoutingStrategies.Tunnel);
 
         _watermark.IsHitTestVisible = false;
-        // Ровно по первой строке текста: по бокам ее держит Padding, сверху — воздух документа.
+        // Ровно по первой строке текста: там же ее держит рамка редактора.
         _watermark.Margin           = new Thickness(Air);
         _watermark.VerticalAlignment   = VerticalAlignment.Top;
         _watermark.HorizontalAlignment = HorizontalAlignment.Left;
@@ -194,8 +199,9 @@ public sealed class NoteEditorBox : UserControl
         {
             if (_liveMarkup == value) return;
             _liveMarkup = value;
-            _colorizer.Enabled = value;
-            _hider.Enabled     = value;
+            _colorizer.Enabled  = value;
+            _hider.Enabled      = value;
+            _headingAir.Enabled = value;
 
             _markupTimer.Stop();
             if (value)
@@ -206,8 +212,9 @@ public sealed class NoteEditorBox : UserControl
             else
             {
                 // Разметку не держим: заметку могли закрыть, а память под нее — нет.
-                _colorizer.Layout = NoteMarkupLayout.Empty;
-                _hider.Layout     = NoteMarkupLayout.Empty;
+                _colorizer.Layout  = NoteMarkupLayout.Empty;
+                _hider.Layout      = NoteMarkupLayout.Empty;
+                _headingAir.Layout = NoteMarkupLayout.Empty;
                 _editor.TextArea.TextView.Redraw();
             }
         }
@@ -216,8 +223,9 @@ public sealed class NoteEditorBox : UserControl
     private void Rescan()
     {
         var layout = NoteMarkupScanner.Scan(_editor.Document?.Text);
-        _colorizer.Layout = layout;
-        _hider.Layout     = layout;
+        _colorizer.Layout  = layout;
+        _hider.Layout      = layout;
+        _headingAir.Layout = layout;
         _editor.TextArea.TextView.Redraw();
     }
 

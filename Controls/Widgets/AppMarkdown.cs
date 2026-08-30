@@ -1,54 +1,153 @@
+using System.Diagnostics;
 using Avalonia;
-using Avalonia.Markup.Xaml.Styling;
-using Avalonia.Styling;
-using Markdown.Avalonia;
+using Avalonia.Controls;
+using Markdig;
+using Markdig.Extensions.EmphasisExtras;
+using SmartBase.Controls.Markup;
+using SmartBase.Utils;
 
 namespace SmartBase.Controls.Widgets;
 
 /// <summary>
-/// Показ markdown-текста в приложении. ЕДИНСТВЕННЫЙ способ рисовать markdown: голый
-/// <see cref="MarkdownScrollViewer"/> в разметке не ставим — он придет со встроенной темой
-/// пакета и будет выглядеть иначе, чем остальное приложение (так и разошлись описания
-/// расширений и превью записи с инструкцией пользователя).
+/// Показ markdown-текста. ЕДИНСТВЕННЫЙ способ рисовать markdown в приложении: и вид, и разбор
+/// здесь одни на все места (инструкция пользователя, описания расширений, описание записи,
+/// «Просмотр» заметки) — см. docs/developer/ui/markdown.md.
 ///
-/// Виджет делает ровно две вещи, которые иначе пришлось бы повторять в каждом месте:
+/// Разбор — Markdig, показ — свои контролы (<c>Controls/Markup</c>). Готового движка тут больше
+/// нет: Markdown.Avalonia приносил свой набор узлов, свой набор поддержанной разметки и свою
+/// тему, и «Просмотр» неизбежно расходился с живым редактором заметок, который всегда считал
+/// разметку Markdig. Теперь оба режима разбирают текст ОДНИМ парсером с одним набором
+/// расширений, и расхождение может взяться только из разного оформления — а оно сведено в
+/// <see cref="MarkupTheme"/>.
 ///
-/// 1. Гасит встроенную тему пакета (<c>MarkdownStyle</c> = пустой набор). Она живет ВНУТРИ
-///    контрола и потому сильнее любых наших стилей — пока она на месте, заголовки идут ее
-///    размером, а таблицы рисуются черными рамками с «зеброй». Через <c>Application.Styles</c>
-///    ее не перебить, только заменить.
-/// 2. Вешает на себя наш вид — <c>Assets/Styles/Markdown.axaml</c>. Стили родителя действуют
-///    на все поддерево, а рендер строит его сам, поэтому иначе до его элементов не добраться.
-///
-/// Вид markdown правится ТОЛЬКО в <c>Assets/Styles/Markdown.axaml</c> — один файл на все
-/// приложение (см. docs/developer/ui/markdown.md).
+/// Виджет — вертикальная стопка блоков, а не прокрутка (вопреки прежнему имени базового типа):
+/// прокручивает его внешний <c>ScrollViewer</c>, а воздух вокруг текста задается <c>Margin</c>
+/// в разметке — так требует стандарт прокрутки ([[scrolling]]).
 /// </summary>
-public class AppMarkdown : MarkdownScrollViewer
+public class AppMarkdown : StackPanel
 {
-    private static readonly Uri StylesUri = new("avares://SmartBase/Assets/Styles/Markdown.axaml");
-    private static readonly Uri BaseUri   = new("avares://SmartBase/");
+    /// <summary>
+    /// Набор расширений намеренно узкий: включено только то, что живой редактор заметок умеет
+    /// показывать по ходу набора. Расширение, добавленное здесь и не поддержанное там, сразу
+    /// разводит «Просмотр» с «Динамическим просмотром» — ровно та беда, ради которой свой рендер
+    /// и писался (см. <c>Core/Notes/NoteMarkupScanner</c> — тот же набор).
+    /// </summary>
+    private static readonly MarkdownPipeline Pipeline = new MarkdownPipelineBuilder()
+        .UsePipeTables()
+        .UseEmphasisExtras(EmphasisExtraOptions.Strikethrough | EmphasisExtraOptions.Marked)
+        .UseTaskLists()
+        .UseAutoLinks()
+        .Build();
 
-    /// <summary>Обычный случай: вид виджет берет на себя.</summary>
-    public AppMarkdown() : this(inheritStyles: false) { }
+    public static readonly StyledProperty<string?> MarkdownProperty =
+        AvaloniaProperty.Register<AppMarkdown, string?>(nameof(Markdown));
 
-    /// <param name="inheritStyles">
-    /// true — вид приходит с предка (<see cref="ApplyStyles"/>), свой набор виджет не заводит.
-    /// Нужно там, где таких контролов на экране десятки (инструкция пользователя режется на
-    /// секции): один набор стилей на общем хосте дешевле, чем копия в каждом контроле.
-    /// </param>
-    public AppMarkdown(bool inheritStyles)
+    public static readonly StyledProperty<bool> SelectionEnabledProperty =
+        AvaloniaProperty.Register<AppMarkdown, bool>(nameof(SelectionEnabled));
+
+    public static readonly StyledProperty<string?> BasePathProperty =
+        AvaloniaProperty.Register<AppMarkdown, string?>(nameof(BasePath));
+
+    /// <summary>Исходный текст. Пустая строка — законное значение и означает «очистить».</summary>
+    public string? Markdown
     {
-        // Пустой набор ВМЕСТО темы пакета — см. паспорт класса.
-        MarkdownStyle = new Styles();
-        if (!inheritStyles) ApplyStyles(this);
+        get => GetValue(MarkdownProperty);
+        set => SetValue(MarkdownProperty, value);
+    }
+
+    /// <summary>Можно ли выделять текст мышью. По умолчанию нет — выделение нужно там, где текст
+    /// читают и цитируют (инструкция пользователя), а не везде.</summary>
+    public bool SelectionEnabled
+    {
+        get => GetValue(SelectionEnabledProperty);
+        set => SetValue(SelectionEnabledProperty, value);
+    }
+
+    /// <summary>Папка, относительно которой ищутся картинки. Пусто — только абсолютные пути.</summary>
+    public string? BasePath
+    {
+        get => GetValue(BasePathProperty);
+        set => SetValue(BasePathProperty, value);
     }
 
     /// <summary>
-    /// Повесить вид markdown на общий контейнер — для случая <c>inheritStyles: true</c>.
-    /// Отдельный экземпляр <see cref="Styles"/> на каждый вызов не случайность: один набор
-    /// может принадлежать ровно одному владельцу («The Styles already has a owner»), раздать
-    /// его нескольким контролам нельзя.
+    /// Нажали на ссылку. Подписчик решает сам и, если справился, помечает событие обработанным
+    /// (<see cref="LinkEventArgs.Handled"/>); необработанные адреса виджет открывает системой.
+    /// Нужно справочнику: там ссылка ведет на другой документ инструкции, а не наружу.
     /// </summary>
-    public static void ApplyStyles(StyledElement host) =>
-        host.Styles.Add(new StyleInclude(BaseUri) { Source = StylesUri });
+    public event EventHandler<LinkEventArgs>? LinkClicked;
+
+    /// <summary>Размер шрифта, на котором собран текущий вид. Размеры запекаются в прогоны
+    /// числами, поэтому смена «Размера шрифта» требует пересборки — как в таблице и в дереве
+    /// боковой панели.</summary>
+    private int _renderedFontDelta = FontScale.Delta;
+
+    protected override void OnPropertyChanged(AvaloniaPropertyChangedEventArgs change)
+    {
+        base.OnPropertyChanged(change);
+        if (change.Property == MarkdownProperty ||
+            change.Property == SelectionEnabledProperty ||
+            change.Property == BasePathProperty) Render();
+    }
+
+    protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
+    {
+        base.OnAttachedToVisualTree(e);
+        FontScale.Changed += OnFontScaleChanged;
+
+        // Догоняющая пересборка: размер могли поменять, пока виджет был вне дерева.
+        if (_renderedFontDelta != FontScale.Delta) Render();
+    }
+
+    protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
+    {
+        FontScale.Changed -= OnFontScaleChanged;
+        base.OnDetachedFromVisualTree(e);
+    }
+
+    private void OnFontScaleChanged() => Render();
+
+    private void Render()
+    {
+        _renderedFontDelta = FontScale.Delta;
+
+        var text = Markdown;
+        if (string.IsNullOrEmpty(text))
+        {
+            Children.Clear();
+            return;
+        }
+
+        MarkupBlocks.Fill(this, text, Parse(text), SelectionEnabled, OnLinkActivated, BasePath);
+    }
+
+    /// <summary>
+    /// Разбор не имеет права уронить экран: текст приходит и от человека, и из описаний
+    /// расширений. Сорвавшийся разбор — это показ без разметки, а не окно с ошибкой.
+    /// </summary>
+    private static Markdig.Syntax.MarkdownDocument? Parse(string text)
+    {
+        // Полное имя: короткое «Markdown» перехватывается свойством этого же класса.
+        try { return Markdig.Markdown.Parse(text, Pipeline); }
+        catch { return null; }
+    }
+
+    private void OnLinkActivated(object? sender, string url)
+    {
+        var args = new LinkEventArgs(url);
+        LinkClicked?.Invoke(this, args);
+        if (args.Handled || string.IsNullOrWhiteSpace(url)) return;
+
+        // Открывает система: open (macOS), ассоциация (Windows), xdg-open (Linux). Молча —
+        // отказ открыть ссылку не повод показывать человеку окно с ошибкой.
+        try { Process.Start(new ProcessStartInfo { FileName = url, UseShellExecute = true }); }
+        catch { /* нет ассоциации или адрес не тот — переход просто не случится */ }
+    }
+}
+
+/// <summary>Нажатая ссылка. <see cref="Handled"/> означает «переход уже сделан, дальше не надо».</summary>
+public sealed class LinkEventArgs(string url) : EventArgs
+{
+    public string Url { get; } = url;
+    public bool   Handled { get; set; }
 }

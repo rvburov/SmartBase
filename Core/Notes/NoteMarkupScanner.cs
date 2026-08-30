@@ -15,17 +15,23 @@ namespace SmartBase.Core.Notes;
 /// спан эмфазы покрывает вместе с текстом сами звездочки. Вся арифметика отделения маркеров от
 /// содержимого живет здесь и покрыта тестами — в отрисовке ей делать нечего.
 ///
-/// Набор расширений намеренно узкий: только то, что одинаково выглядит и в живом просмотре, и в
-/// режиме «Просмотр» (он собран на другом движке — Markdown.Avalonia). Сноски, формулы, выносные
-/// блоки и <c>==подсветка==</c> не включены: они начали бы прятать символы, которые человек набрал
-/// как обычный текст, а в готовом виде остались бы сырыми.
+/// Набор расширений обязан ДОСЛОВНО совпадать с набором показа
+/// (<c>Controls/Widgets/AppMarkdown</c>): движок теперь один на оба режима, и единственный
+/// способ их развести — разный набор расширений. Расширение, включенное там и не включенное
+/// здесь, дает разметку, которая в готовом виде оформлена, а по ходу набора нет. Сторожит это
+/// <c>Tests/Unit/ScrollingConventionTests</c>.
+///
+/// Сам набор узкий намеренно: сноски, формулы и выносные блоки начали бы прятать символы,
+/// которые человек набрал как обычный текст.
 /// </summary>
 public static class NoteMarkupScanner
 {
     private static readonly MarkdownPipeline Pipeline = new MarkdownPipelineBuilder()
         .UsePipeTables()
-        .UseEmphasisExtras(EmphasisExtraOptions.Strikethrough)
+        .UseEmphasisExtras(EmphasisExtraOptions.Strikethrough | EmphasisExtraOptions.Marked)
+        .UseTaskLists()
         .UseAutoLinks()
+        // Только здесь: живому оформлению нужны точные смещения узлов, показу — нет.
         .UsePreciseSourceLocation()
         .Build();
 
@@ -36,7 +42,6 @@ public static class NoteMarkupScanner
         MarkdownDocument doc;
         try
         {
-            // Полное имя: короткое «Markdown» перехватывает пространство имен Markdown.Avalonia.
             doc = Markdig.Markdown.Parse(text, Pipeline);
         }
         catch
@@ -133,10 +138,13 @@ public static class NoteMarkupScanner
         var contentEnd = SkipRunBack(text, end, content, e.DelimiterChar);
         if (contentEnd <= content) return;
 
-        // Тройные знаки Markdig разбирает вложенными узлами, поэтому здесь ровно два случая.
-        var style = e.DelimiterChar == '~' ? NoteStyle.Strike
-                  : n >= 2                 ? NoteStyle.Bold
-                                           : NoteStyle.Italic;
+        // Тройные знаки Markdig разбирает вложенными узлами, поэтому здесь ровно три случая.
+        var style = e.DelimiterChar switch
+        {
+            '~' => NoteStyle.Strike,
+            '=' => NoteStyle.Highlight,
+            _   => n >= 2 ? NoteStyle.Bold : NoteStyle.Italic,
+        };
 
         Split(spans, text, content, contentEnd, style);
         markers.Add(new NoteMarker(start, content - start));

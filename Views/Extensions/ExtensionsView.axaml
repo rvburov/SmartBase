@@ -10,8 +10,8 @@
         <!-- Навбар (вынесен в компонент NavbarExtensions). -->
         <comp:NavbarExtensions DockPanel.Dock="Top" x:Name="HeaderBar" />
 
-        <!-- Тело блока: описание расширения в Markdown. Виджет AppMarkdown, а не голый
-             MarkdownScrollViewer — вид берется из общего Assets/Styles/Markdown.axaml
+        <!-- Тело блока: описание расширения в Markdown. Виджет AppMarkdown — единственный
+             способ показывать разметку: и разбор, и вид у него одни на все приложение
              (см. docs/developer/ui/markdown.md).
 
              Прокрутка — ОБЫЧНЫЙ ScrollViewer приложения, а не собственная у контрола

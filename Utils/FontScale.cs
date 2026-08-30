@@ -1,5 +1,6 @@
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Media;
 
 namespace SmartBase.Utils;
 
@@ -13,6 +14,7 @@ namespace SmartBase.Utils;
 public static class FontScale
 {
     private static double _baseSmall = 11, _baseBase = 12, _baseMedium = 16, _baseLarge = 20;
+    private static double _baseH3 = 14, _baseMono = 11;
     private static bool _ready;
 
     /// <summary>Текущая дельта в пикселях к стандарту (0 = стандарт).</summary>
@@ -35,6 +37,8 @@ public static class FontScale
         _baseBase   = Read("FontSizeBase",   12);
         _baseMedium = Read("FontSizeMedium", 16);
         _baseLarge  = Read("FontSizeLarge",  20);
+        _baseH3     = Read("FontSizeH3",     14);
+        _baseMono   = Read("FontSizeMono",   11);
         _ready = true;
 
         Delta = AppSettings.LoadFontDelta();
@@ -60,6 +64,10 @@ public static class FontScale
         r["FontSizeBase"]   = _baseBase   + Delta;
         r["FontSizeMedium"] = _baseMedium + Delta;
         r["FontSizeLarge"]  = _baseLarge  + Delta;
+        // Дельта одна на все размеры, в том числе на markdown-овские: разница между ними
+        // задумана постоянной («код на единицу мельче текста»), а не долей от кегля.
+        r["FontSizeH3"]     = _baseH3     + Delta;
+        r["FontSizeMono"]   = _baseMono   + Delta;
     }
 
     private static double Read(string key, double fallback) =>

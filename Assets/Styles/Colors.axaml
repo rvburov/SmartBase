@@ -15,6 +15,10 @@
 
     <!-- Разделители. Единый цвет всех линий в приложении. -->
     <Color x:Key="ColorSeparator">#E5E5EA</Color>
+    <!-- Линия темнее разделителя: полоса цитаты и рамка пустого флажка в markdown.
+         Разделителя им не хватает — он читается как случайная царапина, а эти две линии
+         несут смысл (граница цитаты, «сюда можно нажать»). -->
+    <Color x:Key="ColorLineStrong">#C7C7CC</Color>
 
     <!-- Текст -->
     <Color x:Key="ColorPrimaryText">#1C1C1E</Color>
@@ -30,6 +34,14 @@
     <!-- Светлые подложки чипов (статусы задач): по образцу ColorAccentLight. -->
     <Color x:Key="ColorRedLight">#FFE9E7</Color>
     <Color x:Key="ColorGreenLight">#E3F7E9</Color>
+    <!-- Оранжевый заведен под выносной блок «предупреждение» в markdown: у выносных
+         блоков четыре вида, и три из них уже покрыты синим, зеленым и красным. -->
+    <Color x:Key="ColorOrange">#FF9500</Color>
+
+    <!-- Код внутри строки. Отдельный цвет, а не вторичный серый: серым набраны
+         служебные знаки разметки, и код с ними слился бы. Приглушенный зеленый
+         отделяет код от текста, не споря с синим у ссылок. -->
+    <Color x:Key="ColorCode">#4E9A8C</Color>
 
     <!-- Прочее -->
     <Color x:Key="ColorHover">#E5E5EA</Color>
@@ -45,6 +57,7 @@
     <SolidColorBrush x:Key="BrushSecondaryBg"  Color="{StaticResource ColorSecondaryBg}" />
     <SolidColorBrush x:Key="BrushCardBg"       Color="{StaticResource ColorCardBg}" />
     <SolidColorBrush x:Key="BrushSeparator"    Color="{StaticResource ColorSeparator}" />
+    <SolidColorBrush x:Key="BrushLineStrong"   Color="{StaticResource ColorLineStrong}" />
     <SolidColorBrush x:Key="BrushPrimaryText"  Color="{StaticResource ColorPrimaryText}" />
     <SolidColorBrush x:Key="BrushSecondaryText" Color="{StaticResource ColorSecondaryText}" />
     <SolidColorBrush x:Key="BrushAccent"       Color="{StaticResource ColorAccent}" />
@@ -53,6 +66,8 @@
     <SolidColorBrush x:Key="BrushRedLight"     Color="{StaticResource ColorRedLight}" />
     <SolidColorBrush x:Key="BrushGreen"        Color="{StaticResource ColorGreen}" />
     <SolidColorBrush x:Key="BrushGreenLight"   Color="{StaticResource ColorGreenLight}" />
+    <SolidColorBrush x:Key="BrushOrange"       Color="{StaticResource ColorOrange}" />
+    <SolidColorBrush x:Key="BrushCode"         Color="{StaticResource ColorCode}" />
     <SolidColorBrush x:Key="BrushHover"        Color="{StaticResource ColorHover}" />
     <SolidColorBrush x:Key="BrushTextSelection" Color="{StaticResource ColorTextSelection}" />
 

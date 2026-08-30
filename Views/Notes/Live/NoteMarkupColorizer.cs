@@ -82,23 +82,38 @@ internal sealed class NoteMarkupColorizer : DocumentColorizingTransformer
                 p.SetTextDecorations(TextDecorations.Strikethrough);
                 break;
 
+            // Подсветка — только подложка: начертание у нее не меняется, это маркер поверх
+            // текста. Фон на элементе, а не в свойствах прогона: прямоугольник во всю высоту
+            // строки, а не по коробке глифов.
+            case NoteStyle.Highlight:
+                el.BackgroundBrush = Brush("BrushAccentLight", Brushes.Transparent);
+                break;
+
             case NoteStyle.Code:
             case NoteStyle.CodeBlock:
                 p.SetTypeface(new Typeface(Family("FontFamilyMono", tf.FontFamily), tf.Style, tf.Weight, tf.Stretch));
+                if (Resource("FontSizeMono") is double mono and > 0) p.SetFontRenderingEmSize(mono);
+                // Свой цвет, а не вторичный серый: серым набраны служебные знаки разметки, и код
+                // с ними слился бы.
+                if (style == NoteStyle.Code) p.SetForegroundBrush(Brush("BrushCode", Brushes.Teal));
                 // Фон — на элементе, а не в свойствах прогона: он рисуется прямоугольником на всю
                 // высоту строки, а фон прогона закрасил бы только коробку глифов.
                 el.BackgroundBrush = Brush("BrushCardBg", Brushes.Transparent);
                 break;
 
+            // Размеры и цвета — те же, что в Controls/Markup/MarkupTheme: заголовок обязан
+            // выглядеть одинаково в редакторе и в режиме «Просмотр».
             case NoteStyle.Heading1: Heading(p, tf, "FontSizeLarge");  break;
             case NoteStyle.Heading2: Heading(p, tf, "FontSizeMedium"); break;
-            // H3..H6 идут базовым размером — ровно как в Assets/Styles/Markdown.axaml. Заголовок
-            // обязан выглядеть одинаково в редакторе и в режиме «Просмотр», а промежуточных
-            // размеров в наборе токенов нет.
-            case NoteStyle.Heading3:
-            case NoteStyle.Heading4:
+            case NoteStyle.Heading3: Heading(p, tf, "FontSizeH3");     break;
+            case NoteStyle.Heading4: Heading(p, tf, null);             break;
+            // Ниже четвертого уровня иерархия держится цветом: регистром развести нельзя —
+            // в редакторе текст это содержимое файла.
             case NoteStyle.Heading5:
-            case NoteStyle.Heading6: Heading(p, tf, null); break;
+            case NoteStyle.Heading6:
+                Heading(p, tf, null);
+                p.SetForegroundBrush(Brush("BrushSecondaryText", Brushes.Gray));
+                break;
 
             case NoteStyle.Quote:
                 p.SetForegroundBrush(Brush("BrushSecondaryText", Brushes.Gray));

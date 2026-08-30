@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using System.Xml.Linq;
 
 namespace SmartBase.Tests.Unit;
@@ -76,22 +77,67 @@ public sealed class ScrollingConventionTests
     }
 
     /// <summary>
-    /// Markdown ставится только виджетом <c>AppMarkdown</c>: голый <c>MarkdownScrollViewer</c>
-    /// приходит со встроенной темой пакета и своей прокруткой — вид расходится с приложением,
-    /// а полоса перестает идти во всю высоту блока.
+    /// Markdown ставится только виджетом <c>AppMarkdown</c>. Отследить это по разметке нельзя —
+    /// «показал markdown руками» выглядит как обычный <c>TextBlock</c>. Зато можно отследить
+    /// второй ДВИЖОК: разбор в приложении собирается ровно в двух местах — показ
+    /// (<c>Controls/Widgets/AppMarkdown</c>) и живое оформление в заметках
+    /// (<c>Core/Notes/NoteMarkupScanner</c>). Третий конвейер означает третий набор
+    /// поддержанной разметки.
     /// </summary>
     [Fact]
-    public void Markdown_is_shown_by_the_widget()
+    public void Markdown_is_parsed_in_exactly_two_places()
     {
-        var offenders = new List<string>();
+        var found = PipelineFiles(RepoRoot()).Keys.Order().ToArray();
 
-        foreach (var (path, doc) in Markup(RepoRoot()))
-            foreach (var md in doc.Descendants().Where(e => e.Name.LocalName == "MarkdownScrollViewer"))
-                offenders.Add($"{path}: <MarkdownScrollViewer {NameOf(md) ?? "без имени"}>");
+        Assert.Equal(
+            ["Controls/Widgets/AppMarkdown.cs", "Core/Notes/NoteMarkupScanner.cs"],
+            found);
+    }
 
-        Assert.True(offenders.Count == 0,
-                    "Markdown показывается виджетом AppMarkdown (docs/developer/ui/markdown.md):\n" +
-                    string.Join('\n', offenders));
+    /// <summary>
+    /// Набор расширений у обоих конвейеров одинаков. Движок теперь один на «Просмотр» и
+    /// «Динамический просмотр», и единственный способ их развести — включить расширение в одном
+    /// месте и забыть в другом: разметка окажется оформленной в готовом виде и сырой по ходу
+    /// набора (docs/developer/ui/markdown.md).
+    /// </summary>
+    [Fact]
+    public void Both_parsers_enable_the_same_extensions()
+    {
+        // Точные смещения узлов нужны только живому оформлению — на набор разметки они не влияют.
+        string[] allowedApart = ["UsePreciseSourceLocation"];
+
+        var sets = PipelineFiles(RepoRoot())
+            .ToDictionary(p => p.Key,
+                          p => Regex.Matches(p.Value, @"\.(Use[A-Za-z]+)\s*\(")
+                                    .Select(m => m.Groups[1].Value)
+                                    .Except(allowedApart)
+                                    .ToHashSet(StringComparer.Ordinal));
+
+        var apart = sets.Values.Aggregate((a, b) => [.. a.Except(b), .. b.Except(a)]);
+
+        Assert.True(apart.Count == 0,
+                    "Наборы расширений markdown разошлись — «Просмотр» и «Динамический просмотр» "
+                    + "начнут показывать разное:\n" + string.Join(", ", apart));
+    }
+
+    /// <summary>Файлы, где собирается конвейер Markdig, — путь от корня и содержимое.</summary>
+    private static Dictionary<string, string> PipelineFiles(string root)
+    {
+        var result = new Dictionary<string, string>(StringComparer.Ordinal);
+
+        foreach (var dir in new[] { "Controls", "Core", "Views", "Utils", "Extensions", "Settings" })
+        {
+            var path = Path.Combine(root, dir);
+            if (!Directory.Exists(path)) continue;
+
+            foreach (var file in Directory.EnumerateFiles(path, "*.cs", SearchOption.AllDirectories))
+            {
+                var text = File.ReadAllText(file);
+                if (!text.Contains("new MarkdownPipelineBuilder()", StringComparison.Ordinal)) continue;
+                result[Path.GetRelativePath(root, file).Replace('\\', '/')] = text;
+            }
+        }
+        return result;
     }
 
     /// <summary>

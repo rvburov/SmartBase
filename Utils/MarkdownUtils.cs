@@ -2,7 +2,7 @@ namespace SmartBase.Utils;
 
 /// <summary>
 /// Утилиты для работы с Markdown.
-/// Хранение — plain markdown в DbFieldValue.Value; рендер — Markdown.Avalonia;
+/// Хранение — plain markdown в DbFieldValue.Value; показ — виджет AppMarkdown;
 /// для отображения в календаре/списках используется StripMarkdown.
 /// </summary>
 public static class MarkdownUtils

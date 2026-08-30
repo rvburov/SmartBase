@@ -10,7 +10,7 @@
 - **Avalonia UI 11** (кросс-платформенный desktop, .NET 10), тема Fluent.
 - **Entity Framework Core 9 + SQLite** — хранение.
 - **CommunityToolkit.Mvvm** — `ObservableObject`/`RelayCommand` для ViewModel.
-- **Markdown.Avalonia / Markdig** — описание записей. **ClosedXML** — импорт/экспорт Excel.
+- **Markdig** — разбор markdown (показ собирает свой рендер, `Controls/Markup`). **ClosedXML** — импорт/экспорт Excel.
 
 ## Слои
 

@@ -182,9 +182,8 @@
                      Background="Transparent" />
 
             <!-- Превью: обычный ScrollViewer приложения, markdown внутри него разворачивается
-                 на весь текст (см. docs/developer/ui/markdown.md). Виджет AppMarkdown, а не
-                 голый MarkdownScrollViewer: вид берется из общего Assets/Styles/Markdown.axaml
-                 — тот же, что в инструкции пользователя и в описаниях расширений.
+                 на весь текст (см. docs/developer/ui/markdown.md). Виджет AppMarkdown — тот же
+                 разбор и тот же вид, что в инструкции пользователя и в описаниях расширений.
                  Воздух — на содержимом ВНУТРИ прокрутки, поэтому нижние 16px уезжают вместе
                  с текстом и в середине прокрутки текст идет по линии. -->
             <ScrollViewer Grid.Row="1" Grid.Column="0" x:Name="MarkdownPreviewBox"
