@@ -155,8 +155,8 @@ public sealed class TaskRecordsTests
         var col = SampleData.AddCollection(repo, "Заявки").Id!.Value;
         EnableTasks(repo, col);
 
-        // Поле-дата у коллекции уже есть (его завело включение задач), поэтому автофлаг
-        // «первому полю-дате» больше не срабатывает — обе свои даты включаем явно.
+        // Новые поля-даты заводятся выключенными (тумблер поднимает человек) — обе свои даты
+        // включаем явно, как это делает окно свойства.
         var startId = SampleData.AddField(repo, col, "Начало", "date", position: 4000).Id!.Value;
         var deadlineId = SampleData.AddField(repo, col, "Дедлайн", "date", position: 5000).Id!.Value;
         var fields = FieldsById(repo, col);

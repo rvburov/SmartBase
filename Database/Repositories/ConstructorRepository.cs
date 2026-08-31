@@ -2518,21 +2518,20 @@ public partial class ConstructorRepository(AppDbContext db)
           })
           .ToList();
 
-    /// <param name="autoCalendar">true (по умолчанию) — первое поле-дата коллекции включается
-    /// в календаре само: так ждет тот, кто заводит поле руками. false — флаг остается таким,
-    /// каким его передали: коллекцию собирает код из готовых данных, и дата в ней может быть
-    /// обычной колонкой, а не событием (см. <c>TimeCollectionWriter</c>).</param>
-    public DbField AddField(DbField field, bool autoCalendar = true)
+    /// <summary>
+    /// Заводит поле ровно с теми флагами, что передали. Показ в календаре (<c>IsCalStart</c>)
+    /// сюда не подмешивается: раньше первое поле-дата коллекции включалось само, и любая дата —
+    /// «дата выдачи», «дата расчета», «дата создания» — становилась потоком событий, который
+    /// пользователь потом выключал руками (см. проверку журнала в <c>PdfWatermark</c>).
+    /// Теперь правило одно: тумблер включает человек. Единственное исключение — создание
+    /// события ЧЕРЕЗ календарь: там источник дат доводит <see cref="EnsureCalendarDateField"/>,
+    /// иначе созданная запись не появилась бы в разделе, из которого ее и завели.
+    /// </summary>
+    public DbField AddField(DbField field)
     {
         Demand(PermAction.CreateField, field.CollectionId);
         if (db.DbFields.Any(f => f.CollectionId == field.CollectionId && f.Name == field.Name))
             throw new InvalidOperationException("Поле с таким именем уже существует.");
-
-        // Первое поле-дата в коллекции по умолчанию видно в календаре (IsCalStart); его
-        // значения попадают в индексную проекцию calendar_index (см. SyncCalendarIndexValue).
-        if (autoCalendar && field.FieldType == "date" &&
-            !db.DbFields.Any(f => f.CollectionId == field.CollectionId && f.FieldType == "date" && f.IsCalStart))
-            field.IsCalStart = true;
 
         var entity = new DbFieldEntity
         {
@@ -4191,13 +4190,16 @@ public partial class ConstructorRepository(AppDbContext db)
             if (!targetByName.TryGetValue(meta.Name, out var target))
             {
                 if (!createMissingFields) continue;
-                // Флаги ролей задач не копируем — см. MoveRecordsCore: перенос записи не должен
-                // молча включать коллекцию-приемник в раздел «Задачи».
+                // Флаги разделов не копируем — ни задачные (см. MoveRecordsCore), ни календарный:
+                // перенос ОДНОЙ записи не должен молча включать коллекцию-приемник в «Задачи» или
+                // в календарь. Столбец приезжает пустой ролью, а показывать его в разделе — решение
+                // владельца коллекции-приемника (тумблер в свойствах). Копию/перенос КОЛЛЕКЦИИ это
+                // не касается: там коллекция остается собой и флаги едут следом.
                 target = AddField(new DbField
                 {
                     CollectionId = targetCollectionId, Name = meta.Name,
                     FieldType    = meta.FieldType,      ConfigJson = meta.ConfigJson,
-                    Position     = nextPos,             IsCalStart = meta.IsCalStart,
+                    Position     = nextPos,             IsCalStart = false,
                     IsCalEnd     = meta.IsCalEnd,       IsRequired = meta.IsRequired,
                 });
                 nextPos += 1000;
@@ -4345,18 +4347,18 @@ public partial class ConstructorRepository(AppDbContext db)
                 // Для создаваемого поля-связи переписываем целевую БД под целевую базу переноса
                 // (иначе TargetDbId «поедет»: внутрибазовая связь на источник станет ссылкой в никуда).
                 var cfgJson = canMoveLinks && sf.FieldType == "relation" ? RewriteRelConfig(sf) : sf.ConfigJson;
-                // Флаги ролей задач (IsTaskExec/IsTaskAssigner/IsTaskStatus) НЕ копируем:
-                // они включают в раздел «Задачи» всю коллекцию-приемник, а пользователь просил
-                // перенести записи, а не превращать «Клиентов» в задачи. Роль — свойство
-                // коллекции, а не переносимых значений; перенос ЦЕЛОЙ коллекции (DuplicateCollection,
-                // CrossMove) ее сохраняет — там коллекция и остается собой. Календарные IsCalStart/
-                // IsCalEnd копируются намеренно: они делают видимой дату САМОЙ записи, а не
-                // подписывают цель на чужой раздел.
+                // Флаги разделов (IsTaskExec/IsTaskAssigner/IsTaskStatus и календарный IsCalStart)
+                // НЕ копируем: они подписывают на раздел ВСЮ коллекцию-приемник, а пользователь
+                // просил перенести записи, а не превращать «Клиентов» в задачи и не заливать
+                // календарь чужими датами. Роль — свойство коллекции, а не переносимых значений;
+                // перенос ЦЕЛОЙ коллекции (DuplicateCollection, CrossMove) ее сохраняет — там
+                // коллекция и остается собой. Показать приехавшую дату в календаре — решение
+                // владельца приемника, тумблером в свойствах столбца.
                 tf = AddField(new DbField
                 {
                     CollectionId = targetCollectionId, Name = sf.Name,
                     FieldType    = sf.FieldType,        ConfigJson = cfgJson,
-                    Position     = nextFieldPos,        IsCalStart = sf.IsCalStart,
+                    Position     = nextFieldPos,        IsCalStart = false,
                     IsCalEnd     = sf.IsCalEnd,         IsRequired = sf.IsRequired,
                 });
                 nextFieldPos += 1000;
@@ -6957,36 +6959,72 @@ public partial class ConstructorRepository(AppDbContext db)
 
     // Поле-дата, в которое класть дату события. Если в окне явно выбрано поле
     // (preferredFieldId — date-поле этой коллекции), пишем в него; иначе фолбэк на
-    // EnsureCalendarDateField (видимое поле или авто-«Дата»).
+    // EnsureCalendarDateField (видимое поле, первое существующее или авто-«Дата»).
     private int ResolveCalendarDateField(int collectionId, int preferredFieldId)
     {
         if (preferredFieldId > 0)
         {
             var f = db.DbFields.FirstOrDefault(x =>
                 x.Id == preferredFieldId && x.CollectionId == collectionId && x.FieldType == "date");
-            if (f is not null) return f.Id;
+            // Выбрать в окне события можно и выключенное поле-дату — тогда тумблер поднимаем
+            // мы: человек прямо указал, куда класть дату события, и ожидает увидеть его в
+            // календаре, а не гадать, почему запись создалась и пропала.
+            if (f is not null) { ShowDateFieldInCalendar(f); return f.Id; }
         }
         return EnsureCalendarDateField(collectionId);
     }
 
-    // id поля-источника календаря коллекции: существующее поле-дата с IsCalStart, иначе роль
-    // «Дата» (одноименный столбец получает флаг либо заводится системное «Дата»). Фолбэк,
-    // когда явное поле не выбрано.
+    // id поля-источника календаря коллекции: включенное поле-дата, иначе первое существующее
+    // (его и включаем), иначе роль «Дата» (одноименный столбец получает флаг либо заводится
+    // системное «Дата»). Фолбэк, когда явное поле не выбрано.
     private int EnsureCalendarDateField(int collectionId, bool adoptByName = true)
     {
         if (CalendarDateFieldId(collectionId) is int source) return source;
 
-        // Источника нет (коллекция без даты или помечена «Не отображать») — доводим роль:
-        // добавление события через календарь должно показать запись в календаре.
+        // Источника нет. Раньше здесь сразу доводилась роль — и коллекция с выключенным
+        // «Дедлайном» получала ВТОРОЕ поле-дату: роль ищет столбец по имени «Дата», а
+        // «Дедлайн» под это имя не подходит. Теперь сперва включаем первое существующее
+        // поле-дату (порядок RoleOrder — как у всех ролей): дату человек завел сам, событие
+        // создает через календарь — показать надо именно ее, а не плодить дубль.
+        var existing = db.DbFields
+            .Where(f => f.CollectionId == collectionId && f.FieldType == "date")
+            .OrderBy(f => f.Position).ThenBy(f => f.Id)
+            .FirstOrDefault();
+        if (existing is not null) { ShowDateFieldInCalendar(existing); return existing.Id; }
+
+        // Дат в коллекции нет вовсе — доводим роль: добавление события через календарь
+        // должно показать запись в календаре.
         EnsureRoles(collectionId, [FieldRole.CalendarDate], adoptByName);
         return CalendarDateFieldId(collectionId)
                ?? throw new InvalidOperationException("Не удалось создать поле «Дата»");
+    }
+
+    // Поднимает тумблер показа в календаре у поля-даты. ЕДИНСТВЕННОЕ место, где флаг
+    // включается не рукой пользователя: запись заводят ИЗ календаря, и не показать ее там —
+    // значит потерять ее из виду сразу после создания. Во всех остальных случаях (создание
+    // свойства, перенос записи, импорт) дата остается обычной колонкой, пока человек сам не
+    // включит тумблер в свойствах или чеклистом коллекций в сайдбаре.
+    private void ShowDateFieldInCalendar(DbFieldEntity field)
+    {
+        if (field.IsCalStart) return;
+        Demand(PermAction.EditField, field.CollectionId);
+        field.IsCalStart = true;
+        Log("update", "field", field.Name, CollectionNameOf(field.CollectionId));
+        db.SaveChanges();
     }
 
     /// <summary>Есть ли у коллекции видимое поле-дата (участвует ли она в календаре) — для плашки
     /// «привязано к разделу»: без источника дат календарь коллекцию не показывает, и заявлять
     /// привязку к нему не о чем.</summary>
     public bool HasCalendarDateField(int collectionId) => CalendarDateFieldId(collectionId) is not null;
+
+    /// <summary>
+    /// Есть ли в базе хоть одно поле-дата, показываемое в календаре. Тумблер снят по умолчанию,
+    /// поэтому «пустой календарь» — обычное состояние новой базы, а не поломка: раздел показывает
+    /// подсказку, где этот тумблер искать (см. пустое состояние CalendarControllerView).
+    /// </summary>
+    public bool HasAnyCalendarDateField() =>
+        db.DbFields.Any(f => f.FieldType == "date" && f.IsCalStart);
 
     // Первое (по Position, Id — общее правило ролей) поле-дата коллекции, видимое в календаре.
     private int? CalendarDateFieldId(int collectionId) =>

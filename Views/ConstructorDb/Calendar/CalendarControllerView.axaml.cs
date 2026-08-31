@@ -295,6 +295,8 @@ public partial class CalendarControllerView : UserControl
     {
         _renderedFontDelta = FontScale.Delta;   // активный вид отрисован с текущим размером
 
+        UpdateNoCalendarDatesHint();
+
         var (startDt, endDt) = GetDateRange();
 
         // Якорь и дельта Журнала — одноразовые: снимаем их при ЛЮБОМ обновлении (даже если
@@ -337,6 +339,21 @@ public partial class CalendarControllerView : UserControl
         var gen = ++_gridGen;
         _ = ShowGridLoadingLater(gen);
         _ = LoadGridAsync(gen, _currentViewIndex, startDt, endDt, _currentDate, _searchQuery, scrollToNow);
+    }
+
+    // Плашка «в календаре нечего показывать»: ни в одной смонтированной базе нет поля-даты с
+    // включенным показом. Считаем по ФЛАГАМ, а не по числу событий в окне: пустой март у
+    // размеченной коллекции — это просто пустой март, и подсказка там была бы неправдой.
+    // Галочки коллекций в сайдбаре тоже не смотрим — снятая галочка это осознанный фильтр.
+    // Запрос дешевый (db_fields — десятки строк) и идет перед чтением окна событий, которое
+    // на порядки тяжелее.
+    private void UpdateNoCalendarDatesHint()
+    {
+        var any = false;
+        foreach (var d in _dbs)
+            if (d.Repo.HasAnyCalendarDateField()) { any = true; break; }
+
+        NoCalendarDatesHint.IsVisible = !any && _dbs.Count > 0;
     }
 
     // Точечная правка сетки НА МЕСТЕ: мутирует снимок последней загрузки и перерисовывает

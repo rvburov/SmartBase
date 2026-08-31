@@ -26,7 +26,7 @@ public sealed class CalendarWindowTests
     {
         var repo = db.Constructor;
         var col  = SampleData.AddCollection(repo);
-        var date = SampleData.AddField(repo, col.Id!.Value, "Дата", "date");
+        var date = SampleData.AddCalendarDateField(repo, col.Id!.Value);
         foreach (var (title, value) in events)
         {
             var rec = SampleData.AddRecord(repo, col.Id!.Value, title);

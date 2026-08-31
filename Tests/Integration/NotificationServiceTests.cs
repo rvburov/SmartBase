@@ -41,7 +41,7 @@ public sealed class NotificationServiceTests
     {
         using var db = new TempDatabase();
         var col  = SampleData.AddCollection(db.Constructor, "Дела");
-        var date = SampleData.AddField(db.Constructor, col.Id!.Value, "Дата", "date");
+        var date = SampleData.AddCalendarDateField(db.Constructor, col.Id!.Value);
         AddEvent(db, col.Id!.Value, date.Id!.Value, "Событие1", new DateTime(2026, 7, 1, 10, 0, 0));
         AddEvent(db, col.Id!.Value, date.Id!.Value, "Событие2", new DateTime(2026, 7, 1, 23, 0, 0));
 
@@ -81,7 +81,7 @@ public sealed class NotificationServiceTests
     {
         using var db = new TempDatabase();
         var col  = SampleData.AddCollection(db.Constructor, "Дела");
-        var date = SampleData.AddField(db.Constructor, col.Id!.Value, "Дата", "date");
+        var date = SampleData.AddCalendarDateField(db.Constructor, col.Id!.Value);
         AddEvent(db, col.Id!.Value, date.Id!.Value, "Событие", new DateTime(2026, 7, 1, 10, 0, 0));
 
         var notifier = new FakeNotifier();
@@ -106,7 +106,7 @@ public sealed class NotificationServiceTests
     {
         using var db = new TempDatabase();
         var col  = SampleData.AddCollection(db.Constructor, "Дела");
-        var date = SampleData.AddField(db.Constructor, col.Id!.Value, "Дата", "date");
+        var date = SampleData.AddCalendarDateField(db.Constructor, col.Id!.Value);
         AddEvent(db, col.Id!.Value, date.Id!.Value, "Событие1", new DateTime(2026, 7, 1, 10, 0, 0));
 
         var notifier = new FakeNotifier();
@@ -140,7 +140,7 @@ public sealed class NotificationServiceTests
     {
         using var db = new TempDatabase();
         var col  = SampleData.AddCollection(db.Constructor, "Дела");
-        var date = SampleData.AddField(db.Constructor, col.Id!.Value, "Дата", "date");
+        var date = SampleData.AddCalendarDateField(db.Constructor, col.Id!.Value);
         AddEvent(db, col.Id!.Value, date.Id!.Value, "Событие1", new DateTime(2026, 7, 1, 10, 0, 0));
         AddEvent(db, col.Id!.Value, date.Id!.Value, "Событие2", new DateTime(2026, 7, 1, 11, 0, 0));
 

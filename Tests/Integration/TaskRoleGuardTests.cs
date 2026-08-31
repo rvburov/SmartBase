@@ -171,11 +171,13 @@ public sealed class TaskRoleGuardTests
                                              createMissingFields: true, sourceDbId: 1, targetDbId: 1);
 
         // Свойства созданы и значения приехали, но «Архив» — обычная коллекция: перенос
-        // записей не включает приемник в раздел задач (раньше флаги ролей копировались,
-        // и коллекция внезапно оказывалась там со всеми своими записями).
+        // записей не включает приемник ни в раздел задач, ни в календарь (раньше флаги ролей
+        // копировались, и коллекция внезапно оказывалась там со всеми своими записями).
         var fields = repo.GetFields(archive);
         Assert.Contains(fields, f => f.Name == "Исполнитель");
         Assert.All(fields, f => Assert.False(f.IsTaskExec || f.IsTaskAssigner || f.IsTaskStatus));
+        Assert.Contains(fields, f => f.FieldType == "date");       // срок задачи приехал столбцом…
+        Assert.All(fields, f => Assert.False(f.IsCalStart));       // …но событием календаря не стал
         Assert.Empty(repo.GetTaskRecords());
     }
 

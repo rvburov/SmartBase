@@ -51,7 +51,7 @@ internal static class JournalStand
             var field = repo.AddField(new DbField
             {
                 CollectionId = collectionId, Name = fieldName, FieldType = type, Position = position,
-            }, autoCalendar: false);
+            });
 
             keys.Add(field.Id!.Value.ToString());
             position += 1000;

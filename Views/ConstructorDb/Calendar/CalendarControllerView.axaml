@@ -30,6 +30,28 @@
                            HorizontalAlignment="Left"
                            VerticalAlignment="Top" />
             </Border>
+
+            <!-- Пустое состояние: ни одно свойство «Дата» не отмечено для показа. Тумблер снят
+                 по умолчанию, поэтому у новой базы календарь пуст законно, и молчащий раздел
+                 читался бы как поломка. Плашка НЕ перехватывает ввод (IsHitTestVisible=False):
+                 клик по дню под ней должен по-прежнему создавать событие — это единственный
+                 путь, который настраивает поле-дату сам. -->
+            <Border x:Name="NoCalendarDatesHint" IsVisible="False"
+                    IsHitTestVisible="False"
+                    HorizontalAlignment="Center" VerticalAlignment="Bottom"
+                    Margin="24" Padding="16,12"
+                    MaxWidth="520"
+                    Background="{StaticResource BrushSecondaryBg}"
+                    CornerRadius="{StaticResource RadiusBase}">
+                <StackPanel Spacing="4">
+                    <TextBlock Text="В календаре нечего показывать"
+                               FontWeight="{StaticResource FontWeightBold}" />
+                    <TextBlock TextWrapping="Wrap"
+                               FontSize="{DynamicResource FontSizeSmall}"
+                               Foreground="{StaticResource BrushSecondaryText}"
+                               Text="Ни у одного свойства «Дата» не включен показ в календаре. Включите тумблер «Отображать в календаре» в свойствах столбца — или создайте событие прямо здесь, свойство настроится само." />
+                </StackPanel>
+            </Border>
         </Grid>
 
     </Grid>

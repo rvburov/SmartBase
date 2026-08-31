@@ -46,7 +46,7 @@ public sealed class PgProviderTests
 
         var repo = m.Constructor;
         var col  = SampleData.AddCollection(repo, "PG");
-        var date = SampleData.AddField(repo, col.Id!.Value, "Дата", "date");
+        var date = SampleData.AddCalendarDateField(repo, col.Id!.Value);
         SampleData.AddRecords(repo, col.Id!.Value, count: 10, step: 1000);
         Assert.Equal(10, repo.CountRecords(col.Id!.Value));
 
@@ -100,7 +100,7 @@ public sealed class PgProviderTests
         using var m = DatabaseManager.Open(101, "pg-test", cs, provider: "postgres");
         var repo = m.Constructor;
         var col = SampleData.AddCollection(repo, "PG");
-        var date = SampleData.AddField(repo, col.Id!.Value, "Дата", "date");
+        var date = SampleData.AddCalendarDateField(repo, col.Id!.Value);
         var recs = SampleData.AddRecords(repo, col.Id!.Value, count: 12, step: 1000);
         foreach (var r in recs.Where((_, i) => i % 3 == 0))
             repo.SetFieldValue(r.Id!.Value, date.Id!.Value, "2026-08-15");

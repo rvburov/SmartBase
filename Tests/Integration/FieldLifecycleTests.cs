@@ -99,30 +99,34 @@ public sealed class FieldLifecycleTests
         Assert.DoesNotContain(TitleKey, repo.GetSystemFieldNames(col.Id!.Value).Keys);
     }
 
-    /// <summary>Первое поле-дата коллекции показывается в календаре само — так ждет тот, кто
-    /// заводит поле руками. Сборщику коллекции из готовых данных это не нужно, и он гасит флаг
-    /// через <c>autoCalendar: false</c> (см. TimeCollectionWriter): дата там — обычная колонка.</summary>
+    /// <summary>
+    /// Новое поле-дата в календаре НЕ показывается: тумблер снят по умолчанию, поднимает его
+    /// человек. Раньше первое поле-дата коллекции включалось само, и любая служебная дата
+    /// («дата выдачи», «дата расчета») заливала раздел событиями — расширениям приходилось
+    /// просить пользователя выключить тумблер обратно. Единственное исключение — создание
+    /// события ЧЕРЕЗ календарь (см. <c>CalendarWindowTests</c>).
+    /// </summary>
     [Fact]
-    public void AddField_shows_first_date_in_calendar_unless_the_caller_opts_out()
+    public void AddField_leaves_a_new_date_out_of_the_calendar()
     {
         using var db = new TempDatabase();
         var repo = db.Constructor;
         var col  = SampleData.AddCollection(repo);
 
-        var auto = repo.AddField(new DbField
+        var first = repo.AddField(new DbField
         {
             CollectionId = col.Id!.Value, Name = "Дата", FieldType = "date", Position = 1000,
         });
-        Assert.True(auto.IsCalStart);
+        Assert.False(first.IsCalStart);
+        Assert.False(repo.GetFields(col.Id!.Value).Single(f => f.Id == first.Id).IsCalStart);
 
-        var other = SampleData.AddCollection(repo, "Свод");
-        var quiet = repo.AddField(new DbField
+        // Флаг, переданный явно, репозиторий уважает — так заводят свои поля роли разделов.
+        var marked = repo.AddField(new DbField
         {
-            CollectionId = other.Id!.Value, Name = "Дата", FieldType = "date", Position = 1000,
-        }, autoCalendar: false);
-
-        Assert.False(quiet.IsCalStart);
-        Assert.False(repo.GetFields(other.Id!.Value).Single(f => f.Id == quiet.Id).IsCalStart);
+            CollectionId = col.Id!.Value, Name = "Срок", FieldType = "date", Position = 2000,
+            IsCalStart   = true,
+        });
+        Assert.True(repo.GetFields(col.Id!.Value).Single(f => f.Id == marked.Id).IsCalStart);
     }
 
     private static string[] AddThreeFieldKeys(SmartBase.Database.Repositories.ConstructorRepository repo, int colId)

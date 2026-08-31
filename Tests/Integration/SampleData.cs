@@ -17,6 +17,19 @@ public static class SampleData
                                    string type = "text", int position = 1000) =>
         repo.AddField(new DbField { CollectionId = collectionId, Name = name, FieldType = type, Position = position });
 
+    /// <summary>
+    /// Поле-дата, ВИДИМОЕ в календаре. Обычный <see cref="AddField"/> заводит дату выключенной
+    /// (тумблер поднимает человек), поэтому тесты, которые читают события, отмечают поле явно —
+    /// ровно как это делает пользователь в свойствах столбца.
+    /// </summary>
+    public static DbField AddCalendarDateField(ConstructorRepository repo, int collectionId,
+                                               string name = "Дата", int position = 1000) =>
+        repo.AddField(new DbField
+        {
+            CollectionId = collectionId, Name = name, FieldType = "date",
+            Position     = position,     IsCalStart = true,
+        });
+
     public static DbRecord AddRecord(ConstructorRepository repo, int collectionId, string title = "",
                                      int position = 1000) =>
         repo.AddRecord(new DbRecord { CollectionId = collectionId, Title = title, Position = position });

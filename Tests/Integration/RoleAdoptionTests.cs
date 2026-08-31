@@ -296,12 +296,56 @@ public sealed class RoleAdoptionTests
         var col  = SampleData.AddCollection(repo, "События").Id!.Value;
         var date = SampleData.AddField(repo, col, "Когда", "date", position: 1000).Id!.Value;
 
-        // Первое поле-дата уже видно в календаре — выключаем и включаем заново, как это
-        // делает тумблер в диалоге свойства.
-        repo.SetDateFieldVisible(date, false);
+        // Новое поле-дата заводится выключенным — включаем, как это делает тумблер в диалоге
+        // свойства: вместе с датой коллекция получает роль «Описание» (окно события правит и его).
         repo.SetDateFieldVisible(date, true);
 
         Assert.NotNull(repo.DescriptionFieldId(col));
+    }
+
+    /// <summary>
+    /// Событие, созданное ЧЕРЕЗ календарь, поднимает тумблер существующей дате — и не заводит
+    /// рядом вторую. Роль ищет столбец по имени «Дата», поэтому «Дедлайну» она бы не досталась,
+    /// и коллекция получила бы две даты: одну с данными, вторую — с этим событием.
+    /// </summary>
+    [Fact]
+    public void Event_from_calendar_turns_on_the_existing_hidden_date()
+    {
+        using var db = new TempDatabase();
+        var repo = db.Constructor;
+        var col  = SampleData.AddCollection(repo, "Заявки").Id!.Value;
+        var due  = SampleData.AddField(repo, col, "Дедлайн", "date", position: 1000).Id!.Value;
+        Assert.False(repo.GetFields(col).Single(f => f.Id == due).IsCalStart);
+
+        repo.AddCalendarRecord(new CalendarRecord
+        {
+            CollectionId = col, Title = "Планерка",
+            StartDt = new DateTime(2026, 4, 1, 10, 0, 0), EndDt = new DateTime(2026, 4, 1, 11, 0, 0),
+        });
+
+        var dates = repo.GetFields(col).Where(f => f.FieldType == "date").ToList();
+        Assert.Equal(due, Assert.Single(dates).Id!.Value);
+        Assert.True(dates[0].IsCalStart);
+    }
+
+    /// <summary>Дат в коллекции нет вовсе — событие заводит свою, уже видимую в календаре.</summary>
+    [Fact]
+    public void Event_from_calendar_creates_a_date_when_the_collection_has_none()
+    {
+        using var db = new TempDatabase();
+        var repo = db.Constructor;
+        var col  = SampleData.AddCollection(repo, "Заявки").Id!.Value;
+
+        repo.AddCalendarRecord(new CalendarRecord
+        {
+            CollectionId = col, Title = "Планерка",
+            StartDt = new DateTime(2026, 4, 1, 10, 0, 0), EndDt = new DateTime(2026, 4, 1, 11, 0, 0),
+        });
+
+        var dates   = repo.GetFields(col).Where(f => f.FieldType == "date").ToList();
+        var created = Assert.Single(dates);
+        Assert.Equal("Дата", created.Name);
+        Assert.True(created.IsCalStart);
     }
 
     [Fact]
@@ -312,7 +356,6 @@ public sealed class RoleAdoptionTests
         var col  = SampleData.AddCollection(repo, "События").Id!.Value;
         var date = SampleData.AddField(repo, col, "Когда", "date", position: 1000).Id!.Value;
         var mine = SampleData.AddField(repo, col, "Описание", "text", position: 2000).Id!.Value;
-        repo.SetDateFieldVisible(date, false);
 
         var plan = repo.PlanRoles(col, ConstructorRepository.CalendarRoles, date);
         Assert.Contains(plan.Candidates, c => c.FieldId == mine && c.Role == FieldRole.Description);

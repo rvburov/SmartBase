@@ -109,10 +109,10 @@ public static class TimeCollectionWriter
             var norm = Field(repo, colId, NormFieldName, "number", 2000,
                              JsonSerializer.Serialize(NumberFormatValue.ToConfigObject(NormFormat)));
             // Дата свода — обычная колонка, а не событие: в календаре ей делать нечего
-            // (у свода 600 тыс. строк, и это даты расчетов, а не встречи), поэтому тумблер
-            // «Отображать в календаре» у поля выключен. Без autoCalendar: false репозиторий
-            // включил бы его сам — первому полю-дате коллекции он ставит флаг по умолчанию.
-            var date = Field(repo, colId, DateFieldName, "date",   3000, autoCalendar: false);
+            // (у свода 600 тыс. строк, и это даты расчетов, а не встречи). Тумблер «Отображать
+            // в календаре» у нового поля-даты снят по умолчанию, так что просить об этом
+            // отдельно больше не нужно.
+            var date = Field(repo, colId, DateFieldName, "date",   3000);
             var efio = Field(repo, colId, EfioFieldName, "text",   4000);
             var proj = Field(repo, colId, ProjFieldName, "text",   5000);
             // Поле «файл» без правила авто-привязки (ConfigJson пуст): пути проставляем сами —
@@ -134,12 +134,12 @@ public static class TimeCollectionWriter
     }
 
     private static int Field(ConstructorRepository repo, int colId, string name, string type, int position,
-                             string? configJson = null, bool autoCalendar = true) =>
+                             string? configJson = null) =>
         repo.AddField(new DbField
         {
             CollectionId = colId, Name = name, FieldType = type, Position = position,
             ConfigJson = configJson ?? "{}",
-        }, autoCalendar).Id!.Value;
+        }).Id!.Value;
 
     private static string UniqueName(string baseName, HashSet<string> taken)
     {

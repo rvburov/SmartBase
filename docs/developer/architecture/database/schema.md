@@ -96,7 +96,7 @@
 | `FieldType` | TEXT | `text` / `number` / `date` / `select` / `checkbox` / `url` / `user` / `markdown`; **вычисляемые** (read-only, значение из метаданных записи, НЕ из `db_field_values`): `created_at` / `updated_at` / `created_by` / `updated_by` |
 | `ConfigJson` | TEXT | JSON-настройки типа (дефолт `{}`) |
 | `Position` | INTEGER | внутренний порядок; порядок колонок таблицы — в `column_meta`. Назначается вызывающим кодом (`max + 1000`) и **обязан быть уникален** в коллекции — по нему строится карта полей при дубле/переносе |
-| `IsCalStart` | INTEGER 0/1 | поле-дата видно в календаре (может быть у нескольких полей) |
+| `IsCalStart` | INTEGER 0/1 | поле-дата видно в календаре (может быть у нескольких полей); у нового поля 0 — тумблер поднимает пользователь |
 | `IsCalEnd` | INTEGER 0/1 | не используется |
 | `IsSystem` | INTEGER 0/1 | системное поле |
 | `IsRequired` | INTEGER 0/1 | обязательное |

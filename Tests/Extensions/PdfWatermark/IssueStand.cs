@@ -34,8 +34,8 @@ internal static class IssueStand
     /// отклонить.
     /// </summary>
     /// <param name="dateInCalendar">Включить тумблер календаря у первого поля-даты. Так
-    /// собирается ровно тот случай, который расширение обязано отвергнуть, — и так же
-    /// репозиторий поступает по умолчанию, если поле заводить без <c>autoCalendar: false</c>.</param>
+    /// собирается ровно тот случай, который расширение обязано отвергнуть: журнал выдач
+    /// в календаре — это сотни «выдач» вперемешку с настоящими сроками.</param>
     public static int Create(ConstructorRepository repo, string name,
                              IReadOnlyList<(string Name, string Type)> fields,
                              bool dateInCalendar = false)
@@ -50,12 +50,13 @@ internal static class IssueStand
 
         foreach (var (fieldName, type) in fields)
         {
-            // autoCalendar: false — иначе репозиторий сам включит тумблер первому полю-дате, и
-            // эталонный стенд не прошел бы собственную проверку.
+            // Тумблер календаря репозиторий сам не поднимает — эталонный стенд собирается
+            // выключенным, а «плохой» случай запрашивается флагом dateInCalendar.
             var field = repo.AddField(new DbField
             {
                 CollectionId = collectionId, Name = fieldName, FieldType = type, Position = position,
-            }, autoCalendar: type == "date" && dateInCalendar);
+                IsCalStart   = type == "date" && dateInCalendar,
+            });
 
             keys.Add(field.Id!.Value.ToString());
             position += 1000;

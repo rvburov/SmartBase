@@ -62,17 +62,23 @@ public sealed class SectionSetupPlanTests
         Assert.Equal(["Дата"], Created(plan));
     }
 
-    /// <summary>Поле-дата выбрано в окне события — новую «Дату» заводить не нужно.</summary>
+    /// <summary>
+    /// У коллекции уже есть дата — новую «Дату» заводить не нужно, даже если показ в календаре
+    /// у нее выключен (а выключен он по умолчанию). Событие поднимет тумблер существующему полю
+    /// (<c>EnsureCalendarDateField</c>), поэтому и план обещает только «Описание»: обещать
+    /// столбец, которого не будет, — врать окну подтверждения.
+    /// </summary>
     [Fact]
-    public void Calendar_plan_respects_the_chosen_date_field()
+    public void Calendar_plan_respects_an_existing_date_field_even_when_it_is_hidden()
     {
         using var db = new TempDatabase();
         var repo = db.Constructor;
         var col  = SampleData.AddCollection(repo, "События").Id!.Value;
+        // Заводится выключенным: источником календаря поле не является.
         var when = SampleData.AddField(repo, col, "Когда", "date", position: 1000).Id!.Value;
-        repo.SetDateFieldVisible(when, false);   // источником календаря не является
+        Assert.False(repo.GetFields(col).Single(f => f.Id == when).IsCalStart);
 
-        Assert.Equal(["Дата", "Описание"], Created(repo.PlanCalendarSetup(col)));
+        Assert.Equal(["Описание"], Created(repo.PlanCalendarSetup(col)));
         Assert.Equal(["Описание"], Created(repo.PlanCalendarSetup(col, preferredDateFieldId: when)));
     }
 
@@ -87,7 +93,7 @@ public sealed class SectionSetupPlanTests
         using var db = new TempDatabase();
         var repo = db.Constructor;
         var col  = SampleData.AddCollection(repo, "События").Id!.Value;
-        var when = SampleData.AddField(repo, col, "Когда", "date", position: 1000).Id!.Value;
+        var when = SampleData.AddCalendarDateField(repo, col, "Когда").Id!.Value;
 
         var field = repo.GetFields(col).First(f => f.Id == when);
         Assert.True(field.IsCalStart);

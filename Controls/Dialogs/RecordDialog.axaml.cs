@@ -156,32 +156,58 @@ public partial class RecordDialog : Window
         // Список «Дата события» зависит от выбранной коллекции — обновляем при ее смене
         // (смена БД тоже сюда приводит: LoadCollections сбрасывает выбор коллекции).
         CollectionCombo.SelectionChanged += (_, _) => UpdateEventDateField();
+        EventDateCombo.SelectionChanged  += (_, _) => UpdateEventDateHint();
         UpdateEventDateField();
 
         UpdateTimeVisibility();
     }
 
-    // Список «Дата записи»: показываем всегда. Перечисляет видимые в календаре поля-даты
-    // коллекции (IsCalStart) — куда положить дату этого события. По умолчанию: при изменении —
-    // поле самого события, при создании — первое доступное. Если видимых полей-дат нет —
-    // список пуст, и при сохранении дата ляжет в системное «Дата» (создается автоматически).
+    // Список «Дата записи»: показываем всегда. Перечисляет ВСЕ поля-даты коллекции — и видимые
+    // в календаре (IsCalStart), и выключенные: тумблер по умолчанию снят, поэтому раньше у
+    // коллекции с готовым «Дедлайном» список был пуст, и репозиторий заводил рядом второе,
+    // системное «Дата». Теперь выключенную дату можно выбрать — при сохранении ей поднимут
+    // тумблер (единственный случай, когда показ включается не рукой пользователя: запись
+    // заводят ИЗ календаря). По умолчанию: при изменении — поле самого события, при создании —
+    // первая видимая дата, а если видимых нет — первая имеющаяся. Дат нет вовсе — список пуст,
+    // и при сохранении дата ляжет в системное «Дата» (создается автоматически).
     private void UpdateEventDateField()
     {
         var idx   = CollectionCombo.SelectedIndex;
         var colId = idx >= 0 && idx < _collections.Count ? _collections[idx].Id : null;
 
         _eventDateFields = colId.HasValue
-            ? CurrentRepo.GetFields(colId.Value).Where(f => f.FieldType == "date" && f.IsCalStart).ToList()
+            ? CurrentRepo.GetFields(colId.Value).Where(f => f.FieldType == "date").ToList()
             : [];
 
         EventDateSection.IsVisible = true;
-        EventDateCombo.ItemsSource = _eventDateFields.Select(f => f.Name).ToList();
+        // Выключенную дату помечаем прямо в списке: иначе выбор выглядел бы равнозначным, а
+        // последствие у него свое — показ коллекции в календаре включится.
+        EventDateCombo.ItemsSource = _eventDateFields
+            .Select(f => f.IsCalStart ? f.Name : $"{f.Name} — не показывается в календаре")
+            .ToList();
 
         var sel = _editRecord is not null
             ? _eventDateFields.FindIndex(f => f.Id == _editRecord.FieldId)
             : -1;
+        if (sel < 0) sel = _eventDateFields.FindIndex(f => f.IsCalStart);
         if (sel < 0 && _eventDateFields.Count > 0) sel = 0;
         EventDateCombo.SelectedIndex = sel;
+        UpdateEventDateHint();
+    }
+
+    // Подпись под списком: выбрана дата с выключенным показом — говорим, что произойдет при
+    // сохранении. Молча поднимать тумблер нельзя: это меняет схему коллекции, а не только запись.
+    private void UpdateEventDateHint()
+    {
+        var i       = EventDateCombo.SelectedIndex;
+        var chosen  = i >= 0 && i < _eventDateFields.Count ? _eventDateFields[i] : null;
+        var hidden  = chosen is not null && !chosen.IsCalStart;
+
+        EventDateHint.IsVisible = hidden;
+        EventDateHint.Text = hidden
+            ? $"У свойства «{chosen!.Name}» показ в календаре выключен — он включится при сохранении, " +
+              "иначе запись не появилась бы в календаре. Выключить обратно можно в свойствах столбца."
+            : "";
     }
 
     // Репозиторий выбранной БД.
@@ -483,8 +509,9 @@ public partial class RecordDialog : Window
         var colIdx = CollectionCombo.SelectedIndex;
         var colId  = colIdx >= 0 ? _collections[colIdx].Id : null;
 
-        // Поле-дата, куда положить дату события. Если есть видимые поля-даты — берем выбранное;
-        // если их нет — 0 (репозиторий положит дату в системное «Дата», создав его).
+        // Поле-дата, куда положить дату события. Если у коллекции есть даты — берем выбранную
+        // (выключенной репозиторий поднимет тумблер, см. ResolveCalendarDateField); дат нет —
+        // 0, и репозиторий положит дату в системное «Дата», создав его.
         var chosenFieldId = 0;
         if (_eventDateFields.Count > 0)
         {

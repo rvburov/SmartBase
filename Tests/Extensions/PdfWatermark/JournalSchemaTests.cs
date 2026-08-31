@@ -131,7 +131,7 @@ public sealed class JournalSchemaTests
             var field = db.Constructor.AddField(new DbField
             {
                 CollectionId = id, Name = name, FieldType = type, Position = position,
-            }, autoCalendar: false);
+            });
             keys.Add(field.Id!.Value.ToString());
             position += 1000;
         }
@@ -171,9 +171,8 @@ public sealed class JournalSchemaTests
     [Fact]
     public void Date_column_shown_in_calendar_is_rejected()
     {
-        // Ключевая проверка: репозиторий включает тумблер первому полю-дате САМ, то есть человек
-        // получает его включенным по умолчанию. Пропусти расширение такую коллекцию — и каждая
-        // выдача станет событием календаря.
+        // Ключевая проверка: тумблер календаря у столбца даты мог быть включен осознанно —
+        // пропусти расширение такую коллекцию, и каждая выдача станет событием календаря.
         using var db = new TempDatabase("wm-schema");
         var id = IssueStand.Create(db.Constructor, IssueStand.DefaultName, Reference, dateInCalendar: true);
 

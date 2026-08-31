@@ -270,15 +270,20 @@ public partial class ConstructorRepository
     }
 
     // Поле-источник календаря, которое УЖЕ есть: выбранное в окне события (если оно живо и
-    // типа «Дата») либо первое поле-дата коллекции, видимое в календаре. Тот же выбор, что
-    // делает ResolveCalendarDateField перед записью.
+    // типа «Дата») либо ЛЮБОЕ поле-дата коллекции — включенное или нет. Тот же выбор, что
+    // делает ResolveCalendarDateField перед записью: выключенной дате поднимут тумблер, новое
+    // поле не заведется, — значит и план обещать его не должен.
     private int? ExistingCalendarDateField(int collectionId, int preferredFieldId)
     {
         if (preferredFieldId > 0 &&
             db.DbFields.Any(f => f.Id == preferredFieldId && f.CollectionId == collectionId &&
                                  f.FieldType == "date"))
             return preferredFieldId;
-        return CalendarDateFieldId(collectionId);
+        return CalendarDateFieldId(collectionId)
+            ?? db.DbFields.Where(f => f.CollectionId == collectionId && f.FieldType == "date")
+                          .OrderBy(f => f.Position).ThenBy(f => f.Id)
+                          .Select(f => (int?)f.Id)
+                          .FirstOrDefault();
     }
 
     /// <summary>

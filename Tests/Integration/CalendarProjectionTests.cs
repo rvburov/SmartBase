@@ -22,7 +22,7 @@ public sealed class CalendarProjectionTests
         using var db = new TempDatabase();
         var repo = db.Constructor;
         var col = SampleData.AddCollection(repo);
-        var date = SampleData.AddField(repo, col.Id!.Value, "Дата", "date");
+        var date = SampleData.AddCalendarDateField(repo, col.Id!.Value);
         var rec = SampleData.AddRecord(repo, col.Id!.Value, "Событие");
 
         repo.SetFieldValue(rec.Id!.Value, date.Id!.Value, TimedValue);
@@ -38,7 +38,7 @@ public sealed class CalendarProjectionTests
         using var db = new TempDatabase();
         var repo = db.Constructor;
         var col = SampleData.AddCollection(repo);
-        var date = SampleData.AddField(repo, col.Id!.Value, "Дата", "date");
+        var date = SampleData.AddCalendarDateField(repo, col.Id!.Value);
         var rec = SampleData.AddRecord(repo, col.Id!.Value, "Событие");
         repo.SetFieldValue(rec.Id!.Value, date.Id!.Value, TimedValue);
         Assert.Equal(1, ProjectionRows(db, rec.Id!.Value, date.Id!.Value));
@@ -53,7 +53,7 @@ public sealed class CalendarProjectionTests
         using var db = new TempDatabase();
         var repo = db.Constructor;
         var col = SampleData.AddCollection(repo);
-        var date = SampleData.AddField(repo, col.Id!.Value, "Дата", "date");
+        var date = SampleData.AddCalendarDateField(repo, col.Id!.Value);
         var rec = SampleData.AddRecord(repo, col.Id!.Value, "Событие");
         repo.SetFieldValue(rec.Id!.Value, date.Id!.Value, TimedValue);
 
