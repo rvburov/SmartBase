@@ -89,10 +89,12 @@ public sealed record TextFixes(int Values, int Mixed, IReadOnlyList<string> Desi
 /// Что писатель сделал с листом не так, как просили, — для журнала расширения.
 /// <paramref name="Dropped"/> — элементы обвязки шаблона, которых нет в схеме листа и которые
 /// поэтому не перенесены; <paramref name="PlainLinks"/> — строки, где «Ссылка» осталась текстом,
-/// потому что адрес не влез в формулу. Обе вещи меняют результат МОЛЧА: лист выглядит как надо,
-/// а ведет себя иначе — сказать о них некому, кроме журнала.
+/// потому что адрес не влез в формулу, а <paramref name="PlainFiles"/> — сами эти расчеты с
+/// причиной у каждого, по одному разу на файл. Обе вещи меняют результат МОЛЧА: лист выглядит
+/// как надо, а ведет себя иначе — сказать о них некому, кроме журнала.
 /// </summary>
-public sealed record SheetNotes(IReadOnlyList<string> Dropped, int PlainLinks);
+public sealed record SheetNotes(
+    IReadOnlyList<string> Dropped, int PlainLinks, IReadOnlyList<string> PlainFiles);
 
 /// <summary>Итог: путь к созданному файлу, счетчики, список замечаний и заметки по листу —
 /// все для журнала расширения.</summary>

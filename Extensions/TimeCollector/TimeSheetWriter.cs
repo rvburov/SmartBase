@@ -148,14 +148,14 @@ internal static class TimeSheetWriter
         using var outFile = new FileStream(outputPath, FileMode.Create, FileAccess.Write, FileShare.None);
         using var target  = new ZipArchive(outFile, ZipArchiveMode.Create);
 
-        var plainLinks = 0;
+        var links = new PlainLinkLog();
         foreach (var entry in source.Entries)
         {
             ct.ThrowIfCancellationRequested();
 
             if (entry.FullName == sheetPath)
-                plainLinks = WriteSheet(target, entry.FullName, shell, styles, rows, paints, hidden,
-                                        progress, ct, from, to);
+                WriteSheet(target, entry.FullName, shell, styles, rows, paints, hidden,
+                           links, progress, ct, from, to);
             else if (entry.FullName == TimeSheetStyles.PartPath)
                 CopyText(target, entry.FullName, styles.Xml);
             else if (entry.FullName == "xl/workbook.xml")
@@ -170,7 +170,42 @@ internal static class TimeSheetWriter
                 CopyRaw(target, entry);
         }
 
-        return new SheetNotes(shell.Dropped, plainLinks);
+        return new SheetNotes(shell.Dropped, links.Rows, links.Files);
+    }
+
+    /// <summary>
+    /// Строки, где «Ссылка» осталась текстом (см. <see cref="LinkTarget"/>). Кроме счетчика
+    /// строк ведет список расчетов ПОИМЕННО: счетчик говорит «восемь строк не переходят», а имя
+    /// — какой файл переименовать или переложить ближе к корню, чтобы адрес влез в формулу.
+    /// Расчеты схлопываются: одна книга дает столько строк, сколько в ней расшифровок.
+    /// </summary>
+    private sealed class PlainLinkLog
+    {
+        private readonly HashSet<string> _seen = new(StringComparer.OrdinalIgnoreCase);
+        private readonly List<string>    _files = [];
+
+        /// <summary>Строк со ссылкой-текстом.</summary>
+        public int Rows { get; private set; }
+
+        /// <summary>Расчеты с причиной у каждого, по одному разу.</summary>
+        public IReadOnlyList<string> Files => _files;
+
+        public void Add(TimeRow source)
+        {
+            Rows++;
+            if (_seen.Add(source.SourcePath)) _files.Add(Note(source));
+        }
+
+        private static string Note(TimeRow source)
+        {
+            var name = Path.GetFileName(source.SourcePath);
+
+            // Причина у двух видов разная, и лечатся они по-разному: скобки убираются
+            // переименованием, длина — переносом папки ближе к корню диска.
+            return source.SourcePath.IndexOfAny(BadLinkChars) >= 0
+                ? $"{name} — скобки или кавычка в пути"
+                : $"{name} — путь {source.SourcePath.Length} знаков";
+        }
     }
 
     /// <summary>Влезает ли свод на лист. Проверяем ДО записи: узнать про предел из отказа
@@ -490,10 +525,11 @@ internal static class TimeSheetWriter
 
     // ── Лист ──────────────────────────────────────────────────────────────────
 
-    /// <returns>Сколько строк остались со ссылкой-текстом вместо формулы.</returns>
-    private static int WriteSheet(
+    /// <param name="links">Копилка строк, оставшихся со ссылкой-текстом вместо формулы.</param>
+    private static void WriteSheet(
         ZipArchive target, string path, SheetShell shell, TimeSheetStyles styles,
         IReadOnlyList<TimeRow> rows, TimeCollectorEngine.RowPaint[] paints, IReadOnlySet<int> hidden,
+        PlainLinkLog links,
         IProgress<CollectProgress>? progress, CancellationToken ct, double from, double to)
     {
         var entry = target.CreateEntry(path, CompressionLevel.Optimal);
@@ -545,15 +581,11 @@ internal static class TimeSheetWriter
 
         Add("cols", () => WriteCols(w, shell.Cols, hidden));
 
-        // Строки пишет отложенное действие ниже (см. parts), но выполняется оно ДО выхода
-        // из метода — счетчику отсюда деваться некуда.
-        var plainLinks = 0;
-
         Add("sheetData", () =>
         {
             w.WriteStartElement("sheetData", Ns);
             WriteHeaderRows(w, styles);
-            plainLinks = WriteDataRows(w, styles, rows, paints, progress, ct, from, to);
+            WriteDataRows(w, styles, rows, paints, links, progress, ct, from, to);
             w.WriteEndElement();
         });
 
@@ -570,7 +602,6 @@ internal static class TimeSheetWriter
 
         w.WriteEndElement();
         w.WriteEndDocument();
-        return plainLinks;
     }
 
     /// <summary>
@@ -651,16 +682,15 @@ internal static class TimeSheetWriter
         w.WriteEndElement();
     }
 
-    /// <returns>Сколько строк остались со ссылкой-текстом: адрес не влез в формулу
-    /// (см. <see cref="LinkTarget"/>), и переход по ним делает только макрос шаблона.</returns>
-    private static int WriteDataRows(
+    /// <param name="links">Сюда уходят строки, у которых адрес не влез в формулу
+    /// (см. <see cref="LinkTarget"/>) и переход делает только макрос шаблона.</param>
+    private static void WriteDataRows(
         XmlWriter w, TimeSheetStyles styles,
-        IReadOnlyList<TimeRow> rows, TimeCollectorEngine.RowPaint[] paints,
+        IReadOnlyList<TimeRow> rows, TimeCollectorEngine.RowPaint[] paints, PlainLinkLog links,
         IProgress<CollectProgress>? progress, CancellationToken ct, double from, double to)
     {
-        var plain  = new TimeCollectorEngine.RowPaint(TimeCollectorEngine.RowFill.White, false);
-        var marked = 0;
-        var i      = 0;
+        var plain = new TimeCollectorEngine.RowPaint(TimeCollectorEngine.RowFill.White, false);
+        var i     = 0;
 
         try
         {
@@ -672,7 +702,7 @@ internal static class TimeSheetWriter
                 if ((i & 1023) == 0) ct.ThrowIfCancellationRequested();
 
                 if (WriteRow(w, styles, rows[i], i < paints.Length ? paints[i] : plain,
-                             TopIndent + 1 + i)) marked++;
+                             TopIndent + 1 + i)) links.Add(rows[i]);
 
                 if (i % ProgressEvery == 0 || i == rows.Count - 1)
                     progress?.Report(new CollectProgress(
@@ -688,8 +718,6 @@ internal static class TimeSheetWriter
                 $"Сбой при записи строки {i + 1} из {rows.Count}" +
                 (file.Length > 0 ? $" (расчет: {file})" : "") + $":\n{ex.Message}", ex);
         }
-
-        return marked;
     }
 
     private static bool WriteRow(XmlWriter w, TimeSheetStyles styles, TimeRow source,

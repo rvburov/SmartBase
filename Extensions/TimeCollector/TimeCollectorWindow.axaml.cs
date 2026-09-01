@@ -509,6 +509,13 @@ public partial class TimeCollectorWindow : Window
             LogLine($"ℹ️ Ссылка осталась текстом у строк: {notes.PlainLinks}. Путь к расчету длиннее " +
                     "255 знаков или со скобками в имени — такой адрес Excel в формулу не берет. " +
                     "«>>>» на месте, переход по нему делает макрос шаблона.");
+
+            // Расчеты называются поименно: счетчик говорит, сколько строк не переходят, а имя —
+            // какой файл переименовать или переложить ближе к корню, чтобы адрес влез в формулу.
+            LogLine($"   Расчеты ({notes.PlainFiles.Count}):");
+            foreach (var file in notes.PlainFiles.Take(MaxIssueLines)) LogLine($"     • {file}");
+            if (notes.PlainFiles.Count > MaxIssueLines)
+                LogLine($"     … и еще {notes.PlainFiles.Count - MaxIssueLines}");
         }
 
         if (notes.Dropped.Count > 0)

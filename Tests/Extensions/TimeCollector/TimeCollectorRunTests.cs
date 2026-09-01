@@ -718,8 +718,12 @@ public sealed class TimeCollectorRunTests : IDisposable
         // Строк две, а формула ровно одна — у той, чей путь влез.
         Assert.Equal(1, SheetXml(result.OutputPath).Split("HYPERLINK").Length - 1);
 
-        // И об этом сказано в журнале: ячейка выглядит так же, а работает иначе.
+        // И об этом сказано в журнале: ячейка выглядит так же, а работает иначе. Расчет назван
+        // поименно и с длиной пути — в папке из сотен книг иначе не понять, какую перекладывать.
         Assert.Equal(1, result.Sheet.PlainLinks);
+        var named = Assert.Single(result.Sheet.PlainFiles);
+        Assert.StartsWith(new string('П', filler), named);
+        Assert.Contains("знаков", named);
 
         using var wb = new XLWorkbook(result.OutputPath);
         var ws = wb.Worksheet(TimeCollectorEngine.TargetSheet);
@@ -735,9 +739,18 @@ public sealed class TimeCollectorRunTests : IDisposable
     [Fact]
     public void Brackets_In_The_File_Name_Get_The_Plain_Mark_Too()
     {
-        CreateCalc("П[1]_2025.03.14_Иванов.xlsm", ("Изделие", "А", "АА", 1.0));
+        CreateCalc("П[1]_2025.03.14_Иванов.xlsm",
+            ("Изделие", "А", "АА", 1.0),
+            ("1.",      "Б", "АА", 2.0));
 
-        using var wb = new XLWorkbook(Run().OutputPath);
+        var result = Run();
+
+        // Строки считаются все, а расчет в списке один: одна книга дает столько строк, сколько
+        // в ней расшифровок, и повторять ее имя незачем — переименовывать все равно один файл.
+        Assert.Equal(2, result.Sheet.PlainLinks);
+        Assert.Contains("скобки", Assert.Single(result.Sheet.PlainFiles));
+
+        using var wb = new XLWorkbook(result.OutputPath);
         var ws = wb.Worksheet(TimeCollectorEngine.TargetSheet);
 
         Assert.False(ws.Cell(4, 8).HasFormula);
