@@ -21,8 +21,8 @@ public partial class ActivityBar : UserControl
         CalendarBtn.Click += (_, _) => SwitchModule("calendar");
         TasksBtn.Click += (_, _) => SwitchModule("tasks");
         ConstructorBtn.Click += (_, _) => SwitchModule("constructor");
-        ExtensionsBtn.Click += (_, _) => SwitchModule("extensions");
         NotesBtn.Click += (_, _) => SwitchModule("notes");
+        ExtensionsBtn.Click += (_, _) => SwitchModule("extensions");
         ProfileBtn.Click += (_, _) => SwitchModule("profile");
         SettingsBtn.Click += (_, _) => SwitchModule("settings");
 
@@ -41,8 +41,8 @@ public partial class ActivityBar : UserControl
         CalendarBtn.IsVisible    = visible.Contains("calendar");
         TasksBtn.IsVisible       = visible.Contains("tasks");
         ConstructorBtn.IsVisible = visible.Contains("constructor");
-        ExtensionsBtn.IsVisible  = visible.Contains("extensions");
         NotesBtn.IsVisible       = visible.Contains("notes");
+        ExtensionsBtn.IsVisible  = visible.Contains("extensions");
     }
 
     public void SetSidebarOpen(bool isOpen)
@@ -65,8 +65,8 @@ public partial class ActivityBar : UserControl
         CalendarBtn.IsChecked = module == "calendar";
         TasksBtn.IsChecked = module == "tasks";
         ConstructorBtn.IsChecked = module == "constructor";
-        ExtensionsBtn.IsChecked = module == "extensions";
         NotesBtn.IsChecked = module == "notes";
+        ExtensionsBtn.IsChecked = module == "extensions";
         ProfileBtn.IsChecked = module == "profile";
         SettingsBtn.IsChecked = module == "settings";
     }
