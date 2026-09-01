@@ -13,7 +13,7 @@ public sealed class RegistrySchemaTests
     private static readonly string[] Reference =
     [
         RegistrySchema.DesignationColumn, RegistrySchema.FioColumn, RegistrySchema.DateColumn,
-        RegistrySchema.TopicColumn, RegistrySchema.AccountingColumn,
+        RegistrySchema.ProjectColumn, RegistrySchema.AccountingColumn,
         RegistrySchema.FirstUseColumn, RegistrySchema.SummaryColumn,
     ];
 
@@ -43,7 +43,7 @@ public sealed class RegistrySchemaTests
         Assert.Equal(RegistrySchema.DesignationColumn, byId[shape.DesignationFieldId]);
         Assert.Equal(RegistrySchema.FioColumn,         byId[shape.FioFieldId]);
         Assert.Equal(RegistrySchema.DateColumn,        byId[shape.DateFieldId]);
-        Assert.Equal(RegistrySchema.TopicColumn,       byId[shape.TopicFieldId]);
+        Assert.Equal(RegistrySchema.ProjectColumn,     byId[shape.ProjectFieldId]);
         Assert.Equal(RegistrySchema.AccountingColumn,  byId[shape.AccountingFieldId]);
         Assert.Equal(RegistrySchema.FirstUseColumn,    byId[shape.FirstUseFieldId]);
         Assert.Equal(RegistrySchema.SummaryColumn,     byId[shape.SummaryFieldId]);
@@ -183,8 +183,8 @@ public sealed class RegistrySchemaTests
     [Theory]
     [InlineData("Обозначение", "обозначение", true)]
     [InlineData("Отметка учёта", "Отметка учета", true)]
-    [InlineData(" Тема ", "Тема", true)]
-    [InlineData("Тема", "Темы", false)]
+    [InlineData(" Проект ", "Проект", true)]
+    [InlineData("Проект", "Проекты", false)]
     public void Name_comparison_rules(string actual, string expected, bool same) =>
         Assert.Equal(same, RegistrySchema.SameName(actual, expected));
 }

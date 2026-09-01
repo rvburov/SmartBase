@@ -52,11 +52,18 @@ public sealed class DesignationTests
     public void Execution_and_notes_still_occupy_the_base_number(string designation) =>
         Assert.Equal(1, Designation.NumberIn(designation, "АБВГ", "301121"));
 
-    /// <summary>Больше трех цифр — это уже не номер по ГОСТ. Такую строку пропускаем целиком,
-    /// иначе «0011» занял бы номер 11 по ошибке разбора.</summary>
-    [Fact]
-    public void More_than_three_digits_is_not_a_number() =>
-        Assert.Null(Designation.NumberIn("АБВГ.301121.0011", "АБВГ", "301121"));
+    /// <summary>
+    /// Цифр в номере РОВНО ТРИ. Четыре («0011») — не номер по ГОСТ: иначе он занял бы номер 11
+    /// по ошибке разбора. Две («01») — не номер тем более: это с равным правом и 001, и обрубок
+    /// 011 или 014, а гадать за человека нельзя. Обе строки пропускаются целиком: незанятый
+    /// номер виден проверкой журнала, а угаданный неверно уходит второй раз молча.
+    /// </summary>
+    [Theory]
+    [InlineData("АБВГ.301121.0011")]   // четыре цифры
+    [InlineData("АБВГ.301121.01")]     // две — 001? 011? 014?
+    [InlineData("АБВГ.301121.1")]      // одна
+    public void Number_must_be_exactly_three_digits(string designation) =>
+        Assert.Null(Designation.NumberIn(designation, "АБВГ", "301121"));
 
     [Theory]
     [InlineData("АБВГ.301121.000")]     // номера 000 не бывает
@@ -118,4 +125,85 @@ public sealed class DesignationTests
 
         Assert.Equal(2, Designation.FirstFree(taken, "АБВГ", "301121"));
     }
+
+    // ── Исполнения ────────────────────────────────────────────────────────────
+
+    [Fact]
+    public void Execution_is_formatted_with_two_digits() =>
+        Assert.Equal("АБВГ.301121.002-04", Designation.FormatExecution("АБВГ", "301121", 2, 4));
+
+    [Theory]
+    [InlineData("АБВГ.301121.002-04", 2, 4)]      // исполнение
+    [InlineData("АБВГ.301121.002-04СБ", 2, 4)]    // исполнение с кодом документа
+    [InlineData("АБВГ.301121.002", 2, null)]      // сам документ
+    [InlineData("АБВГ.301121.002СБ", 2, null)]    // документ изделия — исполнения нет
+    public void Series_parse_reads_number_and_execution(string designation, int number, int? execution)
+    {
+        var parsed = Designation.ParseInSeries(designation, "АБВГ", "301121");
+
+        Assert.NotNull(parsed);
+        Assert.Equal(number, parsed!.Value.Number);
+        Assert.Equal(execution, parsed.Value.Execution);
+    }
+
+    /// <summary>Исполнение читается только в каноне «-NN». Иначе строка остается занятым НОМЕРОМ,
+    /// но исполнения не занимает: угадывать, что имелось в виду, нельзя — по угаданному неверно
+    /// исполнение выдали бы второй раз.</summary>
+    [Theory]
+    [InlineData("АБВГ.301121.002-4")]      // одна цифра
+    [InlineData("АБВГ.301121.002-004")]    // три цифры
+    [InlineData("АБВГ.301121.002-00")]     // исполнения 00 не бывает
+    public void Sloppy_execution_is_not_read(string designation)
+    {
+        var parsed = Designation.ParseInSeries(designation, "АБВГ", "301121");
+
+        Assert.NotNull(parsed);
+        Assert.Equal(2, parsed!.Value.Number);
+        Assert.Null(parsed.Value.Execution);
+    }
+
+    [Fact]
+    public void Executions_of_a_number_are_listed_in_order()
+    {
+        string[] journal =
+        [
+            "АБВГ.301121.002", "АБВГ.301121.002-03", "АБВГ.301121.002-01",
+            "АБВГ.301121.003-05",                        // чужой номер
+            "ГМБВ.301121.002-09",                        // чужая организация
+        ];
+
+        Assert.Equal([1, 3], Designation.ExecutionsOf(journal, "АБВГ", "301121", 2));
+    }
+
+    /// <summary>Дырки в исполнениях заполняются так же, как в номерах.</summary>
+    [Fact]
+    public void First_free_execution_fills_the_gap()
+    {
+        string[] journal = ["АБВГ.301121.002-01", "АБВГ.301121.002-03"];
+
+        Assert.Equal(2, Designation.FirstFreeExecution(journal, "АБВГ", "301121", 2));
+    }
+
+    [Fact]
+    public void First_execution_of_a_document_is_01() =>
+        Assert.Equal(1, Designation.FirstFreeExecution(["АБВГ.301121.002"], "АБВГ", "301121", 2));
+
+    [Fact]
+    public void Exhausted_executions_have_no_free_number()
+    {
+        var journal = Enumerable.Range(Designation.MinExecution, Designation.MaxExecution)
+                                .Select(e => Designation.FormatExecution("АБВГ", "301121", 2, e))
+                                .ToList();
+
+        Assert.Null(Designation.FirstFreeExecution(journal, "АБВГ", "301121", 2));
+    }
+
+    /// <summary>Номер занят и самим документом, и любым его исполнением: окну важно понять, есть
+    /// ли в журнале документ, к которому приписывают исполнение.</summary>
+    [Theory]
+    [InlineData("АБВГ.301121.002", true)]
+    [InlineData("АБВГ.301121.002-01", true)]
+    [InlineData("АБВГ.301121.003", false)]
+    public void Number_taken_sees_both_the_document_and_its_executions(string designation, bool taken) =>
+        Assert.Equal(taken, Designation.NumberTaken([designation], "АБВГ", "301121", 2));
 }

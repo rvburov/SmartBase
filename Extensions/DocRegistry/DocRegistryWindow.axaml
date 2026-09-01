@@ -3,8 +3,8 @@
         xmlns:registry="using:SmartBase.Extensions.DocRegistry"
         x:Class="SmartBase.Extensions.DocRegistry.DocRegistryWindow"
         Title="Регистрация КД"
-        Width="720" Height="740"
-        MinWidth="620" MinHeight="560"
+        Width="720" Height="820"
+        MinWidth="620" MinHeight="620"
         WindowStartupLocation="CenterOwner"
         Background="{StaticResource BrushBg}">
 
@@ -59,6 +59,47 @@
                          TextChanged="OnFormChanged" />
             </StackPanel>
 
+            <!-- Исполнение существующего документа: номер серии при этом НЕ расходуется —
+                 к уже выданному номеру приписывается «-NN». Поля показываются только при
+                 включенном тумблере: обычная регистрация про исполнения ничего не знает. -->
+            <StackPanel Spacing="6">
+                <CheckBox x:Name="ExecutionCheck"
+                          Content="Исполнение существующего документа (новый номер не выдается)"
+                          IsCheckedChanged="OnExecutionModeChanged" />
+
+                <Grid x:Name="ExecutionFields" ColumnDefinitions="*,14,*" IsVisible="False">
+                    <StackPanel Grid.Column="0" Spacing="6">
+                        <TextBlock Text="Основной номер"
+                                   FontWeight="{StaticResource FontWeightBold}" />
+                        <TextBox x:Name="BaseNumberBox"
+                                 VerticalContentAlignment="Center"
+                                 Watermark="Три цифры, например 012"
+                                 TextChanged="OnFormChanged" />
+                    </StackPanel>
+                    <StackPanel Grid.Column="2" Spacing="6">
+                        <TextBlock Text="Исполнение"
+                                   FontWeight="{StaticResource FontWeightBold}" />
+                        <Grid ColumnDefinitions="96,12,*">
+                            <TextBox Grid.Column="0" x:Name="ExecutionBox"
+                                     VerticalContentAlignment="Center"
+                                     IsEnabled="False"
+                                     Watermark="01"
+                                     TextChanged="OnFormChanged" />
+                            <CheckBox Grid.Column="2" x:Name="AutoExecutionCheck"
+                                      IsChecked="True"
+                                      VerticalAlignment="Center"
+                                      Content="подобрать сам"
+                                      IsCheckedChanged="OnAutoExecutionChanged" />
+                        </Grid>
+                    </StackPanel>
+                </Grid>
+
+                <TextBlock x:Name="ExecutionHint" Text="" IsVisible="False"
+                           FontSize="{DynamicResource FontSizeSmall}"
+                           TextWrapping="Wrap"
+                           Foreground="{StaticResource BrushSecondaryText}" />
+            </StackPanel>
+
             <Grid ColumnDefinitions="*,14,*">
                 <StackPanel Grid.Column="0" Spacing="6">
                     <TextBlock Text="База данных"
@@ -76,9 +117,11 @@
 
             <Grid ColumnDefinitions="*,14,*" RowDefinitions="Auto,10,Auto">
                 <StackPanel Grid.Row="0" Grid.Column="0" Spacing="6">
-                    <TextBlock Text="Тема" Foreground="{StaticResource BrushSecondaryText}" />
-                    <TextBox x:Name="TopicBox" VerticalContentAlignment="Center"
-                             Watermark="Необязательно" />
+                    <TextBlock Text="Проект"
+                               FontWeight="{StaticResource FontWeightBold}" />
+                    <TextBox x:Name="ProjectBox" VerticalContentAlignment="Center"
+                             Watermark="Обязательно"
+                             TextChanged="OnFormChanged" />
                 </StackPanel>
                 <StackPanel Grid.Row="0" Grid.Column="2" Spacing="6">
                     <TextBlock Text="Отметка учета" Foreground="{StaticResource BrushSecondaryText}" />

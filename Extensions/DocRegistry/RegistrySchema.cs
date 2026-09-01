@@ -12,7 +12,7 @@ namespace SmartBase.Extensions.DocRegistry;
 public sealed record RegistryShape(
     int CollectionId, string CollectionName,
     int DesignationFieldId, int FioFieldId, int DateFieldId, string DateFieldType,
-    int TopicFieldId, int AccountingFieldId, int FirstUseFieldId, int SummaryFieldId);
+    int ProjectFieldId, int AccountingFieldId, int FirstUseFieldId, int SummaryFieldId);
 
 /// <summary>Итог проверки коллекции: либо раскладка, либо причина отказа.</summary>
 /// <param name="Shape">Раскладка полей; <c>null</c> — коллекция не подходит.</param>
@@ -44,7 +44,7 @@ public static class RegistrySchema
     public const string DesignationColumn = "Обозначение";
     public const string FioColumn         = "Фамилия, имя, отчество";
     public const string DateColumn        = "Дата регистрации";
-    public const string TopicColumn       = "Тема";
+    public const string ProjectColumn     = "Проект";
     public const string AccountingColumn  = "Отметка учета";
     public const string FirstUseColumn    = "Примечания (первичное применение)";
     public const string SummaryColumn     = "Примечание (краткая характеристика)";
@@ -53,7 +53,7 @@ public static class RegistrySchema
     public static IReadOnlyList<string> Columns =>
     [
         TitleColumn, DesignationColumn, FioColumn, DateColumn,
-        TopicColumn, AccountingColumn, FirstUseColumn, SummaryColumn,
+        ProjectColumn, AccountingColumn, FirstUseColumn, SummaryColumn,
     ];
 
     /// <summary>Одна колонка коллекции в порядке показа. <paramref name="FieldId"/> = <c>null</c>
@@ -97,7 +97,7 @@ public static class RegistrySchema
             FioFieldId:         columns[2].FieldId!.Value,
             DateFieldId:        columns[3].FieldId!.Value,
             DateFieldType:      columns[3].FieldType,
-            TopicFieldId:       columns[4].FieldId!.Value,
+            ProjectFieldId:     columns[4].FieldId!.Value,
             AccountingFieldId:  columns[5].FieldId!.Value,
             FirstUseFieldId:    columns[6].FieldId!.Value,
             SummaryFieldId:     columns[7].FieldId!.Value), null);

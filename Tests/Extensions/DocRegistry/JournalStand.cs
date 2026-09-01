@@ -20,7 +20,7 @@ internal static class JournalStand
         (RegistrySchema.DesignationColumn, "text"),
         (RegistrySchema.FioColumn,         "text"),
         (RegistrySchema.DateColumn,        "date"),
-        (RegistrySchema.TopicColumn,       "text"),
+        (RegistrySchema.ProjectColumn,       "text"),
         (RegistrySchema.AccountingColumn,  "text"),
         (RegistrySchema.FirstUseColumn,    "text"),
         (RegistrySchema.SummaryColumn,     "text"),
