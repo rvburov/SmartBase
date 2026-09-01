@@ -201,9 +201,13 @@ public static class TimeCollectorEngine
     }
 
     /// <summary>
-    /// Привести текст всех строк к одному алфавиту (см. <see cref="Homoglyphs"/>). Чистятся ВСЕ
-    /// текстовые поля: «Наименование» и «Обозначение КД» приходят из ячеек расчета, «ФИО»
-    /// и «Проект» — из имени файла, и раскладка сбивается везде одинаково.
+    /// Привести текст строк к одному алфавиту (см. <see cref="Homoglyphs"/>). Чистятся поля,
+    /// которые приходят ИЗ ЯЧЕЕК расчета: «Наименование» и «Обозначение КД».
+    ///
+    /// «ФИО» и «Проект» не трогаются, хотя раскладка сбивается и в них. Это части имени файла
+    /// расчета, и макрос шаблона собирает имя обратно из этих же колонок
+    /// («Проект_ГГГГ.ММ.ДД_ФИО.xlsm»): исправленная буква делает файл ненаходимым — там, где
+    /// формулы нет и переход держится на макросе, ссылка после правки перестает работать.
     /// </summary>
     private static TextFixes FixText(
         List<TimeRow> rows, IProgress<CollectProgress>? progress, CancellationToken ct)
@@ -224,22 +228,16 @@ public static class TimeCollectorEngine
             var row  = rows[i];
             var name = Homoglyphs.Normalize(row.Name);
             var deno = Homoglyphs.Normalize(row.Deno);
-            var efio = Homoglyphs.Normalize(row.Efio);
-            var proj = Homoglyphs.Normalize(row.Proj);
 
-            mixed  += name.Mixed + deno.Mixed + efio.Mixed + proj.Mixed;
-            values += (name.Changed ? 1 : 0) + (deno.Changed ? 1 : 0) +
-                      (efio.Changed ? 1 : 0) + (proj.Changed ? 1 : 0);
+            mixed  += name.Mixed + deno.Mixed;
+            values += (name.Changed ? 1 : 0) + (deno.Changed ? 1 : 0);
 
             if (deno.Changed && seen.Add(row.Deno))
                 designations.Add($"{row.Deno} → {deno.Text}");
 
-            if (!(name.Changed || deno.Changed || efio.Changed || proj.Changed)) continue;
+            if (!(name.Changed || deno.Changed)) continue;
 
-            rows[i] = row with
-            {
-                Name = name.Text, Deno = deno.Text, Efio = efio.Text, Proj = proj.Text,
-            };
+            rows[i] = row with { Name = name.Text, Deno = deno.Text };
         }
 
         return new TextFixes(values, mixed, designations);

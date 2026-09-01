@@ -752,10 +752,11 @@ internal static class TimeSheetWriter
     /// <summary>
     /// Адрес расчета для формулы; <c>null</c> — формулой его не записать.
     ///
-    /// Адрес берется В АПОСТРОФАХ: без них ссылка верна только для путей без пробелов и
-    /// спецсимволов, а расчеты лежат в папках вида «Расшифровка 2025» и зовутся «!!!БРАТЬ
-    /// ОСТОРОЖНО…_2025.11.06_Иванов.xlsm». Апостроф внутри пути удваивается — иначе он
-    /// закрыл бы адрес раньше времени.
+    /// Адрес пишется БЕЗ апострофов. Апострофы — синтаксис ссылки в формуле, а первый аргумент
+    /// <c>HYPERLINK</c> не ссылка, а ТЕКСТ адреса: ведущий апостроф Excel считает первым знаком
+    /// имени файла, запись «[путь]Лист» после этого не узнает и достраивает путь относительно
+    /// книги свода — переход уводит в папку свода («…\Desktop\P:\…») вместо расчета. Пробелы
+    /// и прочие спецсимволы кавычить не нужно: адрес и так строковая константа целиком.
     /// </summary>
     private static string? LinkTarget(TimeRow source)
     {
@@ -763,8 +764,7 @@ internal static class TimeSheetWriter
         if (source.SourcePath.Length == 0 ||
             source.SourcePath.IndexOfAny(BadLinkChars) >= 0) return null;
 
-        var path   = source.SourcePath.Replace("'", "''");
-        var target = XmlSafe($"'[{path}]{SourceSheet}'!A{source.RNum + 1}");
+        var target = XmlSafe($"[{source.SourcePath}]{SourceSheet}!A{source.RNum + 1}");
 
         return target.Length > ExcelMaxFormulaText ? null : target;
     }

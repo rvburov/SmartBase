@@ -130,10 +130,11 @@ public sealed class TimeCollectorRunTests : IDisposable
         Assert.Equal(0, ws.Cell(4, 1).GetDouble());
         Assert.Equal(2, ws.Cell(6, 1).GetDouble());
 
-        // Ссылка: и метка для макроса, и формула перехода без макросов. Адрес в апострофах —
-        // без них ссылка ломается на путях с пробелами, а расчеты лежат именно в таких папках.
-        Assert.Contains("HYPERLINK", ws.Cell(4, 8).FormulaA1);
-        Assert.Contains("Расшифровка'!A1", ws.Cell(4, 8).FormulaA1);
+        // Ссылка: и метка для макроса, и формула перехода без макросов. Адрес БЕЗ апострофов:
+        // для HYPERLINK это не ссылка, а текст, и апостроф уходит в имя файла — Excel перестает
+        // узнавать «[путь]Лист» и достраивает путь относительно книги свода.
+        Assert.Contains("HYPERLINK(\"[", ws.Cell(4, 8).FormulaA1);
+        Assert.Contains("]Расшифровка!A1", ws.Cell(4, 8).FormulaA1);
         Assert.Contains(">>>", ws.Cell(4, 8).FormulaA1);
         Assert.Equal(">>>", ws.Cell(4, 8).CachedValue.ToString());
 
@@ -295,19 +296,24 @@ public sealed class TimeCollectorRunTests : IDisposable
         Assert.Equal(1, table.Text.Values);
     }
 
-    // Чистятся ВСЕ текстовые поля, а «ФИО» и «Проект» приходят не из ячеек, а из имени файла —
-    // раскладка сбивается и там.
+    // «ФИО» и «Проект» — части имени файла расчета, и макрос шаблона собирает имя обратно
+    // из этих колонок. Исправленная буква сделала бы файл ненаходимым, поэтому раскладку
+    // в них не трогают, как бы она ни выглядела.
     [Fact]
-    public void Project_And_Author_From_The_File_Name_Are_Cleaned_Too()
+    public void Project_And_Author_Keep_The_Spelling_Of_The_File_Name()
     {
         // «Cтанок» с латинской «C» и «Ивaнов» с латинской «a».
         CreateCalc("Cтанок_2025.03.14_Ивaнов.xlsm", ("Изделие", "Деталь", "К1", 1.0));
 
-        using var wb = new XLWorkbook(Run().OutputPath);
+        var result = Run();
+        using var wb = new XLWorkbook(result.OutputPath);
         var ws = wb.Worksheet(TimeCollectorEngine.TargetSheet);
 
-        Assert.Equal("Иванов", ws.Cell(4, 6).GetString());
-        Assert.Equal("Станок", ws.Cell(4, 7).GetString());
+        Assert.Equal("Ивaнов", ws.Cell(4, 6).GetString());
+        Assert.Equal("Cтанок", ws.Cell(4, 7).GetString());
+
+        // И в счетчик правок они не попадают: чужая раскладка здесь не считается ошибкой.
+        Assert.Equal(0, result.Text.Values);
     }
 
     // Рамка у Excel принадлежит ЯЧЕЙКЕ, а не диапазону: у объединенной пары B1:B2 нижний край
