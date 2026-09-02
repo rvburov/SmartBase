@@ -466,6 +466,11 @@ public partial class DocRegistryWindow : Window
 
         string message, brush;
 
+        // Окно прогресса и его задача-закрытие живут дольше try: закрывать окно надо в любом
+        // исходе, в том числе на ошибке и на отмене.
+        ProgressDialog? progress = null;
+        Task?           closed   = null;
+
         _busy = true;
         RegisterBtn.IsEnabled = false;
         try
@@ -479,7 +484,21 @@ public partial class DocRegistryWindow : Window
             if (!fresh.Ok || fresh.Rows.Count == 0)
                 throw new DocRegistryException("Файл больше не годится к записи — смотрите разбор.");
 
-            var count = DocRegistrar.RegisterAll(_repo!, _shape!, fresh.Rows, DateTime.Now);
+            // Права спрашиваем ЗДЕСЬ, на общем репозитории: пишет список фоновое подключение, а
+            // оно прав не несет — по уговору репозитория разрешение проверяет публичный вход.
+            _repo!.Permissions?.Demand(PermAction.CreateRecord, _shape!.CollectionId);
+            _repo!.Permissions?.Demand(PermAction.EditRecord,   _shape!.CollectionId);
+
+            using var cancel = new CancellationTokenSource();
+
+            progress = new ProgressDialog { Title = "Регистрация КД" };
+            progress.SetInfo($"Строк в файле: {fresh.Rows.Count}");
+            // Фаза — ДО показа, чтобы окно не меняло высоту с первым процентом (как у удаления).
+            progress.SetProgress(0, "Запись в журнал…");
+            progress.EnableCancel(cancel.Cancel);
+            closed = progress.ShowDialog(this);
+
+            var count = await WriteRows(fresh.Rows, progress, cancel.Token);
 
             // Выданные обозначения — сразу в местный список: по нему считается и предпросмотр
             // номера в ручном режиме, и номера следующего файла.
@@ -499,6 +518,11 @@ public partial class DocRegistryWindow : Window
 
             (message, brush) = ($"Записано строк: {count}", "BrushAccent");
         }
+        catch (OperationCanceledException)
+        {
+            // Отмена — та же дорога, что и ошибка: записанные строки уже убраны, журнал чист.
+            (message, brush) = ("Отменено — в журнал не записано ничего", "BrushSecondaryText");
+        }
         catch (PermissionDeniedException ex)
         {
             (message, brush) = (ex.Message, "BrushRed");
@@ -515,6 +539,12 @@ public partial class DocRegistryWindow : Window
         }
         finally
         {
+            if (progress is not null)
+            {
+                progress.Done();
+                if (closed is not null) await closed;
+            }
+
             _busy = false;
         }
 
@@ -523,6 +553,38 @@ public partial class DocRegistryWindow : Window
         RecheckFile();
         UpdateState();
         SetStatus(message, brush);
+    }
+
+    /// <summary>
+    /// Записать строки в фоне, показывая проценты в окне прогресса. Отдает число записанных.
+    ///
+    /// В фон уходит вся запись целиком, вместе со своим подключением к базе
+    /// (<see cref="DocRegistrar.RegisterAllIsolated"/>): пиши мы в UI-потоке, окно прогресса было
+    /// бы неподвижной картинкой — перерисовать его тому же потоку некогда.
+    ///
+    /// Проценты постятся не на каждую строку, а на смену целого процента: на длинном файле поток
+    /// сообщений сам по себе грузит диспетчер сильнее, чем сама запись.
+    /// </summary>
+    private async Task<int> WriteRows(IReadOnlyList<ImportRow> rows, ProgressDialog dialog,
+                                      CancellationToken ct)
+    {
+        var dbPath = _repo!.DbPath;
+        var shape  = _shape!;
+        var total  = rows.Count;
+        var last   = -1;
+
+        // Progress<T> зовет обработчик в том потоке, где создан, — то есть в UI-потоке окна.
+        IProgress<int> progress = new Progress<int>(done =>
+        {
+            var percent = total == 0 ? 100 : done * 100 / total;
+            if (percent == last) return;
+
+            last = percent;
+            dialog.SetProgress(percent / 100.0, $"Запись в журнал… ({done} из {total})");
+        });
+
+        return await Task.Run(
+            () => DocRegistrar.RegisterAllIsolated(dbPath, shape, rows, DateTime.Now, progress, ct), ct);
     }
 
     /// <summary>Кнопка и подсказка в режиме загрузки файлом. Порядок проверок тот же, что и в

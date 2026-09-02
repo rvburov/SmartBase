@@ -1,4 +1,5 @@
 using SmartBase.Core.Models;
+using SmartBase.Database;
 using SmartBase.Database.Repositories;
 
 namespace SmartBase.Extensions.DocRegistry;
@@ -110,12 +111,15 @@ public static class DocRegistrar
     /// одна на все строки — <paramref name="now"/>: она означает момент, когда строка попала в
     /// журнал, и столбец даты в файле поэтому не читается вовсе.
     ///
-    /// ЦЕЛИКОМ ИЛИ НИКАК: сорвалось на любой строке — убираются все записанные до нее. Иначе
-    /// в журнале осталась бы часть файла, и разобрать, какая именно, можно было бы только
-    /// сличением строка за строкой.
+    /// ЦЕЛИКОМ ИЛИ НИКАК: сорвалось на любой строке (или человек нажал «Отмена») — убираются все
+    /// записанные до нее. Иначе в журнале осталась бы часть файла, и разобрать, какая именно,
+    /// можно было бы только сличением строка за строкой.
     /// </summary>
+    /// <param name="progress">Сколько строк уже записано — для окна прогресса.</param>
     public static int RegisterAll(ConstructorRepository repo, RegistryShape shape,
-                                  IReadOnlyList<ImportRow> rows, DateTime now)
+                                  IReadOnlyList<ImportRow> rows, DateTime now,
+                                  IProgress<int>? progress = null,
+                                  CancellationToken ct = default)
     {
         var written = new List<int>(rows.Count);
 
@@ -123,6 +127,8 @@ public static class DocRegistrar
         {
             foreach (var row in rows)
             {
+                ct.ThrowIfCancellationRequested();
+
                 // Второй рубеж: строки приходят проверенными (RegistryImport), но окно — не
                 // единственный вход в запись, а строка без обозначения или без наименования
                 // сделала бы журнал непригодным молча.
@@ -137,6 +143,8 @@ public static class DocRegistrar
                 written.Add(WriteRow(repo, shape, row.Name, row.Designation, row.Fio,
                                      StampFor(shape.DateFieldType, now),
                                      row.Project, row.Accounting, row.FirstUse, row.Summary));
+
+                progress?.Report(written.Count);
             }
         }
         catch
@@ -148,6 +156,43 @@ public static class DocRegistrar
         }
 
         return written.Count;
+    }
+
+    /// <summary>
+    /// То же самое, но на СВОЕМ подключении к базе и одной транзакцией на весь список. Так пишет
+    /// окно: работа уходит в фон, а окно остается живым и показывает прогресс.
+    ///
+    /// Отдельное подключение — потому что общий контекст EF принадлежит UI-потоку и делить его с
+    /// фоном нельзя (тот же прием, что у массовых операций репозитория и у «Документов в
+    /// коллекцию»). Прав такое подключение не несет: разрешение спрашивается на общем
+    /// репозитории до вызова — см. <c>DocRegistryWindow.RegisterFromFile</c>.
+    ///
+    /// Транзакция на весь список — не только про целость, но и про СКОРОСТЬ. Строка журнала это
+    /// запись плюс семь значений, и каждое значение репозиторий коммитит сам (само значение,
+    /// аудит, очередь уведомлений): восемь с лишним коммитов на строку, а коммит на общем файле —
+    /// это цикл захвата и снятия блокировки с записью на диск. Пять строк из файла успевали
+    /// заметно подумать. Под своей транзакцией <c>SaveChanges</c> внутри репозитория попадает в
+    /// нее же (см. <c>ConstructorRepository.WriteScope</c>: чужую транзакцию шаги не трогают), и
+    /// на весь файл выходит один коммит.
+    /// </summary>
+    public static int RegisterAllIsolated(string dbPath, RegistryShape shape,
+                                          IReadOnlyList<ImportRow> rows, DateTime now,
+                                          IProgress<int>? progress = null,
+                                          CancellationToken ct = default)
+    {
+        using var ctx = new AppDbContext(dbPath);
+        ctx.ApplyBulkPerformancePragmas();
+
+        var repo = new ConstructorRepository(ctx);
+
+        // Не закоммитили — транзакция откатится сама на Dispose. Уборку записанных строк это не
+        // отменяет: RegisterAll работает и на общем репозитории, где своей транзакции нет.
+        using var transaction = ctx.Database.BeginTransaction();
+
+        var written = RegisterAll(repo, shape, rows, now, progress, ct);
+        transaction.Commit();
+
+        return written;
     }
 
     /// <summary>

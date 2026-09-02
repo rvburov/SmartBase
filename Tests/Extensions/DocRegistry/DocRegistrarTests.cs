@@ -487,4 +487,70 @@ public sealed class DocRegistrarTests
 
         Assert.Empty(db.Constructor.GetRecords(id));
     }
+
+    /// <summary>Прогресс идет по строкам: окно показывает «записано столько-то из стольких-то».</summary>
+    [Fact]
+    public void Progress_counts_written_rows()
+    {
+        using var db = new TempDatabase();
+        var id    = JournalStand.Create(db.Constructor);
+        var shape = JournalStand.Shape(db.Constructor, id);
+
+        var steps = new List<int>();
+
+        DocRegistrar.RegisterAll(db.Constructor, shape,
+            [FileRow(2, "АБВГ.301121.007"), FileRow(3, "АБВГ.301121.008"), FileRow(4, "АБВГ.301121.009")],
+            Now, new Steps(steps.Add));
+
+        Assert.Equal([1, 2, 3], steps);
+    }
+
+    // ── Запись на своем подключении ───────────────────────────────────────────
+
+    /// <summary>
+    /// Так пишет окно: свое подключение к тому же файлу и одна транзакция на весь список.
+    /// Записанное должно быть видно с ОБЩЕГО подключения — иначе транзакция не закоммичена.
+    /// </summary>
+    [Fact]
+    public void Isolated_write_lands_every_row()
+    {
+        using var db = new TempDatabase("registrar");
+        var id    = JournalStand.Create(db.Constructor);
+        var shape = JournalStand.Shape(db.Constructor, id);
+
+        var count = DocRegistrar.RegisterAllIsolated(db.Path, shape,
+            [FileRow(2, "АБВГ.301121.007"), FileRow(3, "АБВГ.301121.008")], Now);
+
+        Assert.Equal(2, count);
+        Assert.Equal(["Втулка", "Втулка"], db.Constructor.GetRecords(id).Select(r => r.Title));
+    }
+
+    /// <summary>Отмена — та же дорога, что и ошибка: в журнале не остается ни одной строки,
+    /// включая записанные до нажатия.</summary>
+    [Fact]
+    public void Cancelled_isolated_write_leaves_nothing()
+    {
+        using var db = new TempDatabase("registrar");
+        var id    = JournalStand.Create(db.Constructor);
+        var shape = JournalStand.Shape(db.Constructor, id);
+
+        using var cancel = new CancellationTokenSource();
+
+        // Отменяем сразу после первой записанной строки — вторая до записи уже не дойдет.
+        var progress = new Steps(_ => cancel.Cancel());
+
+        Assert.Throws<OperationCanceledException>(() => DocRegistrar.RegisterAllIsolated(
+            db.Path, shape,
+            [FileRow(2, "АБВГ.301121.007"), FileRow(3, "АБВГ.301121.008")],
+            Now, progress, cancel.Token));
+
+        Assert.Empty(db.Constructor.GetRecords(id));
+    }
+
+    /// <summary>Приемник прогресса, зовущий колбэк ПРЯМО в вызывающем потоке: <c>Progress&lt;T&gt;</c>
+    /// постит через контекст синхронизации, и в тесте отчеты приходили бы уже после прогона.</summary>
+    private sealed class Steps(Action<int> step) : IProgress<int>
+    {
+        public void Report(int value) => step(value);
+    }
 }
