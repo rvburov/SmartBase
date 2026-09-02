@@ -57,7 +57,7 @@ public sealed class RegistrySchemaTests
     {
         using var db = new TempDatabase();
 
-        // Меняем местами «Обозначение» и «Фамилия, имя, отчество»: имена все на месте,
+        // Меняем местами «Обозначение» и «ФИО регистрирующего»: имена все на месте,
         // а порядок другой — значения ушли бы не туда.
         string[] swapped = [Reference[1], Reference[0], .. Reference[2..]];
         var id = JournalStand.Create(db.Constructor, "Перепутанный", swapped);

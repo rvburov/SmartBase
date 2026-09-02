@@ -110,8 +110,8 @@ public static class Designation
     // ── Исполнения ────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Занятые исполнения ОДНОГО номера серии, по возрастанию. Пусто — исполнений нет ни одного
-    /// (сам документ при этом может быть зарегистрирован — см. <see cref="NumberTaken"/>).
+    /// Занятые исполнения ОДНОГО номера серии, по возрастанию. Пусто — исполнений нет ни одного;
+    /// сам документ при этом может быть и зарегистрирован, и нет.
     /// </summary>
     public static IReadOnlyList<int> ExecutionsOf(IEnumerable<string?> designations,
                                                   string org, string eskd, int number)
@@ -138,13 +138,4 @@ public static class Designation
         return null;
     }
 
-    /// <summary>Есть ли в журнале хоть одна строка с этим номером серии — с исполнением или без.
-    /// Нужно, чтобы предупредить: исполнение регистрируют к документу, которого в журнале нет.</summary>
-    public static bool NumberTaken(IEnumerable<string?> designations, string org, string eskd, int number)
-    {
-        foreach (var d in designations)
-            if (NumberIn(d, org, eskd) == number) return true;
-
-        return false;
-    }
 }

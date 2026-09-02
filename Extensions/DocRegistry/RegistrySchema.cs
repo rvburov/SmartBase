@@ -42,11 +42,11 @@ public static class RegistrySchema
 
     public const string TitleColumn       = "Наименование";
     public const string DesignationColumn = "Обозначение";
-    public const string FioColumn         = "Фамилия, имя, отчество";
+    public const string FioColumn         = "ФИО регистрирующего";
     public const string DateColumn        = "Дата регистрации";
     public const string ProjectColumn     = "Проект";
     public const string AccountingColumn  = "Отметка учета";
-    public const string FirstUseColumn    = "Примечания (первичное применение)";
+    public const string FirstUseColumn    = "Примечание (первичное применение)";
     public const string SummaryColumn     = "Примечание (краткая характеристика)";
 
     /// <summary>Эталон: столбцы слева направо. Первый — системная колонка записи.</summary>

@@ -198,12 +198,9 @@ public sealed class DesignationTests
         Assert.Null(Designation.FirstFreeExecution(journal, "АБВГ", "301121", 2));
     }
 
-    /// <summary>Номер занят и самим документом, и любым его исполнением: окну важно понять, есть
-    /// ли в журнале документ, к которому приписывают исполнение.</summary>
-    [Theory]
-    [InlineData("АБВГ.301121.002", true)]
-    [InlineData("АБВГ.301121.002-01", true)]
-    [InlineData("АБВГ.301121.003", false)]
-    public void Number_taken_sees_both_the_document_and_its_executions(string designation, bool taken) =>
-        Assert.Equal(taken, Designation.NumberTaken([designation], "АБВГ", "301121", 2));
+    /// <summary>Исполнение занимает и НОМЕР целиком: «002-01» в журнале означает, что документ
+    /// 002 уже выдан, и новый документ его не получит.</summary>
+    [Fact]
+    public void Execution_takes_the_whole_number_too() =>
+        Assert.Equal(3, Designation.FirstFree(["АБВГ.301121.001", "АБВГ.301121.002-01"], "АБВГ", "301121"));
 }

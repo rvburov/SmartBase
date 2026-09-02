@@ -162,61 +162,43 @@ public sealed class DocRegistrarTests
 
     // ── Исполнения ────────────────────────────────────────────────────────────
 
-    /// <summary>Исполнение НЕ расходует номер серии: к указанному документу приписывается «-NN»,
-    /// и следующий новый документ получает тот номер, который получил бы и без исполнения.</summary>
+    /// <summary>Исполнение — часть обозначения: строка та же, к номеру приписывается «-NN».</summary>
     [Fact]
-    public void Execution_does_not_spend_a_series_number()
+    public void Execution_is_appended_to_the_number()
     {
         using var db = new TempDatabase();
         var id    = JournalStand.Create(db.Constructor);
         var shape = JournalStand.Shape(db.Constructor, id);
 
-        JournalStand.AddRow(db.Constructor, shape, "Было", "АБВГ.301121.001");
+        var done = DocRegistrar.Register(db.Constructor, shape, Input() with { Execution = 7 }, Now);
 
-        var execution = DocRegistrar.Register(
-            db.Constructor, shape, Input() with { ForExecution = new ExecutionRequest(1) }, Now);
-        var next = DocRegistrar.Register(db.Constructor, shape, Input(), Now);
-
-        Assert.Equal("АБВГ.301121.001-01", execution.Designation);
-        Assert.Equal(1, execution.Number);
-        Assert.Equal(1, execution.Execution);
-        Assert.Equal("АБВГ.301121.002", next.Designation);   // 001 остался за основным документом
+        Assert.Equal("АБВГ.301121.001-07", done.Designation);
+        Assert.Equal(1, done.Number);
+        Assert.Equal(7, done.Execution);
     }
 
+    /// <summary>
+    /// Названный номер расширение берет как есть — не подбирает первый свободный. На этом стоит
+    /// работа окна: исполнения одного документа заводят подряд, и после «001-01» номер 001 занят,
+    /// а «001-02» должно уйти к нему же, а не к следующему номеру.
+    /// </summary>
     [Fact]
-    public void Execution_can_be_set_by_hand()
+    public void Named_number_is_taken_as_is()
     {
         using var db = new TempDatabase();
         var id    = JournalStand.Create(db.Constructor);
         var shape = JournalStand.Shape(db.Constructor, id);
 
-        JournalStand.AddRow(db.Constructor, shape, "Было", "АБВГ.301121.007");
+        var first  = DocRegistrar.Register(db.Constructor, shape, Input() with { Execution = 1 }, Now);
+        var second = DocRegistrar.Register(
+            db.Constructor, shape, Input() with { Execution = 2, Number = first.Number }, Now);
 
-        var done = DocRegistrar.Register(
-            db.Constructor, shape, Input() with { ForExecution = new ExecutionRequest(7, 12) }, Now);
-
-        Assert.Equal("АБВГ.301121.007-12", done.Designation);
+        Assert.Equal("АБВГ.301121.001-01", first.Designation);
+        Assert.Equal("АБВГ.301121.001-02", second.Designation);
     }
 
-    /// <summary>Подобранное исполнение заполняет дырку — как и номер документа.</summary>
-    [Fact]
-    public void Free_execution_in_the_middle_is_taken()
-    {
-        using var db = new TempDatabase();
-        var id    = JournalStand.Create(db.Constructor);
-        var shape = JournalStand.Shape(db.Constructor, id);
-
-        JournalStand.AddRow(db.Constructor, shape, "Было", "АБВГ.301121.002-01");
-        JournalStand.AddRow(db.Constructor, shape, "Было", "АБВГ.301121.002-03");
-
-        var done = DocRegistrar.Register(
-            db.Constructor, shape, Input() with { ForExecution = new ExecutionRequest(2) }, Now);
-
-        Assert.Equal("АБВГ.301121.002-02", done.Designation);
-    }
-
-    /// <summary>Занятое исполнение — отказ: два документа с одним обозначением завести нельзя.
-    /// Пропускает только явное подтверждение человека, которое окно спрашивает вопросом.</summary>
+    /// <summary>Занятое исполнение — отказ: две строки с одним обозначением заводятся только
+    /// осознанно, а спрашивает об этом окно.</summary>
     [Fact]
     public void Taken_execution_is_refused_without_confirmation()
     {
@@ -227,9 +209,10 @@ public sealed class DocRegistrarTests
         JournalStand.AddRow(db.Constructor, shape, "Было", "АБВГ.301121.002-05");
 
         var error = Assert.Throws<DocRegistryException>(() => DocRegistrar.Register(
-            db.Constructor, shape, Input() with { ForExecution = new ExecutionRequest(2, 5) }, Now));
+            db.Constructor, shape, Input() with { Execution = 5, Number = 2 }, Now));
 
         Assert.Contains("АБВГ.301121.002-05", error.Message);
+        Assert.Single(db.Constructor.GetRecords(id));   // следов отказ не оставил
     }
 
     [Fact]
@@ -243,60 +226,59 @@ public sealed class DocRegistrarTests
 
         var done = DocRegistrar.Register(
             db.Constructor, shape,
-            Input() with { ForExecution = new ExecutionRequest(2, 5, Confirmed: true) }, Now);
+            Input() with { Execution = 5, Number = 2, ConfirmedDuplicate = true }, Now);
 
         Assert.Equal("АБВГ.301121.002-05", done.Designation);
     }
 
-    /// <summary>Основного документа в журнале нет — не отказ: старые документы в журнал часто не
-    /// заносились, и запрет означал бы запрет работы. Предупреждает окно.</summary>
+    /// <summary>Свободное исполнение того же номера отказа не вызывает: занят номер с ДРУГИМ
+    /// исполнением, а это другое обозначение.</summary>
     [Fact]
-    public void Execution_of_a_document_absent_from_the_journal_is_written()
+    public void Free_execution_of_a_taken_number_is_written()
     {
         using var db = new TempDatabase();
         var id    = JournalStand.Create(db.Constructor);
         var shape = JournalStand.Shape(db.Constructor, id);
+
+        JournalStand.AddRow(db.Constructor, shape, "Было", "АБВГ.301121.002-05");
 
         var done = DocRegistrar.Register(
-            db.Constructor, shape, Input() with { ForExecution = new ExecutionRequest(42) }, Now);
+            db.Constructor, shape, Input() with { Execution = 6, Number = 2 }, Now);
 
-        Assert.Equal("АБВГ.301121.042-01", done.Designation);
-    }
-
-    [Fact]
-    public void Exhausted_executions_are_refused()
-    {
-        using var db = new TempDatabase();
-        var id    = JournalStand.Create(db.Constructor);
-        var shape = JournalStand.Shape(db.Constructor, id);
-
-        for (var e = Designation.MinExecution; e <= Designation.MaxExecution; e++)
-            JournalStand.AddRow(db.Constructor, shape, "Было",
-                                Designation.FormatExecution("АБВГ", "301121", 2, e));
-
-        var error = Assert.Throws<DocRegistryException>(() => DocRegistrar.Register(
-            db.Constructor, shape, Input() with { ForExecution = new ExecutionRequest(2) }, Now));
-
-        Assert.Contains("исполнения", error.Message);
+        Assert.Equal("АБВГ.301121.002-06", done.Designation);
     }
 
     [Theory]
     [InlineData(0)]
-    [InlineData(1000)]
-    public void Execution_of_an_impossible_number_is_refused(int number)
+    [InlineData(100)]
+    public void Impossible_execution_is_refused(int execution)
     {
         using var db = new TempDatabase();
         var id    = JournalStand.Create(db.Constructor);
         var shape = JournalStand.Shape(db.Constructor, id);
 
         Assert.Throws<DocRegistryException>(() => DocRegistrar.Register(
-            db.Constructor, shape, Input() with { ForExecution = new ExecutionRequest(number) }, Now));
+            db.Constructor, shape, Input() with { Execution = execution }, Now));
 
         Assert.Empty(db.Constructor.GetRecords(id));
     }
 
-    /// <summary>Строка исполнения заполняется теми же столбцами, что и обычная регистрация:
-    /// у исполнения свой проект, свои примечания и своя дата.</summary>
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1000)]
+    public void Impossible_named_number_is_refused(int number)
+    {
+        using var db = new TempDatabase();
+        var id    = JournalStand.Create(db.Constructor);
+        var shape = JournalStand.Shape(db.Constructor, id);
+
+        Assert.Throws<DocRegistryException>(() => DocRegistrar.Register(
+            db.Constructor, shape, Input() with { Execution = 1, Number = number }, Now));
+
+        Assert.Empty(db.Constructor.GetRecords(id));
+    }
+
+    /// <summary>Строка исполнения заполняется теми же столбцами, что и любая другая.</summary>
     [Fact]
     public void Execution_row_is_filled_like_any_other()
     {
@@ -304,13 +286,12 @@ public sealed class DocRegistrarTests
         var id    = JournalStand.Create(db.Constructor);
         var shape = JournalStand.Shape(db.Constructor, id);
 
-        var done   = DocRegistrar.Register(
-            db.Constructor, shape, Input() with { ForExecution = new ExecutionRequest(5) }, Now);
+        var done   = DocRegistrar.Register(db.Constructor, shape, Input() with { Execution = 1 }, Now);
         var record = db.Constructor.GetRecord(done.RecordId);
         var values = db.Constructor.GetFieldValues(done.RecordId);
 
         Assert.Equal("Втулка",             record!.Title);
-        Assert.Equal("АБВГ.301121.005-01", values[shape.DesignationFieldId]);
+        Assert.Equal("АБВГ.301121.001-01", values[shape.DesignationFieldId]);
         Assert.Equal("Проект",             values[shape.ProjectFieldId]);
         Assert.True(values.ContainsKey(shape.DateFieldId));
     }
