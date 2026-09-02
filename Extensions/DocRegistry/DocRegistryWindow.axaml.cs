@@ -3,6 +3,7 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Media;
+using Avalonia.Platform.Storage;
 using Serilog;
 using SmartBase.Controls.Dialogs;
 using SmartBase.Core.Models;
@@ -21,6 +22,12 @@ namespace SmartBase.Extensions.DocRegistry;
 /// номере: код организации, код ЕСКД, номер, исполнение — строка читается как
 /// «АБВГ.301121.012-01». Номер выдает расширение, поле недоступно; исполнение выбирает человек
 /// из списка 01–99, где занятые помечены.
+///
+/// Второй способ работы — ЗАГРУЗКА ФАЙЛОМ (список сверху): номера в файле уже выданы, окно их
+/// только проверяет и заносит в журнал разом. Тогда все поля документа гаснут — значения берутся
+/// из файла, — а рамка классификатора показывает разбор файла: ошибки с номерами строк или то,
+/// что будет записано. Чтение и проверка — <see cref="RegistryFile"/> и
+/// <see cref="RegistryImport"/>, запись — <see cref="DocRegistrar.RegisterAll"/>.
 ///
 /// Окно НЕ закрывается после записи: документы регистрируют пачками, поэтому ФИО, код
 /// организации, база и коллекция остаются, а код ЕСКД, наименование, проект и примечания
@@ -70,6 +77,22 @@ public partial class DocRegistryWindow : Window
     private bool _suppressSearch;
     private bool _busy;
 
+    // Коды организации из настроек. В ручном режиме из них выбирают, при загрузке файлом по ним
+    // же проверяются обозначения — список нужен обоим, поэтому лежит полем, а не только в ComboBox.
+    private readonly IReadOnlyList<string> _orgs;
+
+    // Разобранный файл со списком номеров: строки как есть и итог их проверки. Строки хранятся,
+    // чтобы перепроверить их после записи (и не читать книгу заново).
+    private IReadOnlyList<ImportRow> _rows = [];
+    private ImportCheck?             _check;
+
+    // Файл не прочитался целиком (не тот формат, не те столбцы) — причина показывается вместо
+    // разбора строк. От ошибок В СТРОКАХ отличается тем, что проверять там нечего.
+    private string? _fileProblem;
+
+    // Номер последнего запущенного чтения файла — то же назначение, что у _searchToken.
+    private int _fileToken;
+
     public DocRegistryWindow()
     {
         InitializeComponent();
@@ -87,18 +110,24 @@ public partial class DocRegistryWindow : Window
 
         // Коды организации объявлены настройкой расширения (экран — «Настройки → Расширения»):
         // у каждого предприятия они свои, и зашивать их в код нельзя.
-        var orgs = DocRegistryExtension.ParseOrgCodes(
+        _orgs = DocRegistryExtension.ParseOrgCodes(
             AppSettings.LoadExtensionSetting(DocRegistryExtension.ExtensionId,
                                              DocRegistryExtension.OrgCodesKey));
-        OrgCombo.ItemsSource   = orgs;
-        OrgCombo.IsEnabled     = orgs.Count > 0;
-        OrgCombo.SelectedIndex = orgs.Count > 0 ? 0 : -1;
+        OrgCombo.ItemsSource   = _orgs;
+        OrgCombo.IsEnabled     = _orgs.Count > 0;
+        OrgCombo.SelectedIndex = _orgs.Count > 0 ? 0 : -1;
 
         // ФИО — тоже настройка расширения: у машины оно одно и меняется редко. Окно подставляет
         // сохраненное и после регистрации пишет обратно то, что стоит в поле, — значение общее
         // с экраном настроек.
         FioBox.Text = AppSettings.LoadExtensionSetting(DocRegistryExtension.ExtensionId,
                                                        DocRegistryExtension.FioKey);
+
+        // Способ регистрации. По умолчанию ручной: файлом заносят старые списки, а изо дня в
+        // день выдают номера по одному. Ни способ, ни путь к файлу между запусками не помнятся —
+        // это выбор под задачу, а не настройка рабочего места.
+        ModeCombo.ItemsSource   = new[] { ManualMode, FileMode };
+        ModeCombo.SelectedIndex = 0;
 
         // Выбор базы тянет за собой список коллекций и проверку структуры.
         RestoreDatabase();
@@ -214,6 +243,10 @@ public partial class DocRegistryWindow : Window
             }
         }
 
+        // Журнал сменился — разбор файла к нему больше не относится: занятые обозначения в
+        // другой коллекции свои. Книгу заново не читаем, строки для этого и хранятся.
+        RecheckFile();
+
         UpdateState();
     }
 
@@ -233,6 +266,287 @@ public partial class DocRegistryWindow : Window
         AppSettings.SaveExtensionSetting(DocRegistryExtension.ExtensionId,
                                          DocRegistryExtension.CollectionKey,
                                          collectionName);
+    }
+
+    // ── Загрузка файлом ───────────────────────────────────────────────────────
+
+    /// <summary>Пункты списка способов регистрации. Первый — по умолчанию.</summary>
+    private const string ManualMode = "Ручное регистрирование номеров КД";
+    private const string FileMode   = "Загрузить файл со списком номеров КД";
+
+    /// <summary>Строк разбора в рамке. Ошибок в чужом файле бывает столько же, сколько строк, а
+    /// список тут не виртуализованный — да и читать тысячу строк подряд все равно никто не станет:
+    /// правят по первым, потом перечитывают файл.</summary>
+    private const int ReportLimit = 200;
+
+    /// <summary>Пауза перед разбором: путь можно вписать руками, и разбор на каждую букву был бы
+    /// чтением книги на каждое нажатие клавиши.</summary>
+    private static readonly TimeSpan FilePause = TimeSpan.FromMilliseconds(300);
+
+    private static readonly FilePickerFileType ExcelType =
+        new($"Excel ({string.Join(", ", RegistryFile.Extensions.Select(e => "*" + e))})")
+        {
+            Patterns = [.. RegistryFile.Extensions.Select(e => "*" + e)],
+        };
+
+    /// <summary>Работаем со списком из файла, а не с одним документом.</summary>
+    private bool ByFile => ModeCombo.SelectedIndex == 1;
+
+    private void OnModeChanged(object? sender, SelectionChangedEventArgs e)
+    {
+        ApplyMode();
+
+        // Разбор прошлого файла в ручном режиме ни при чем, а при возврате к файлу его надо
+        // прочитать заново: журнал за это время мог пополниться руками.
+        _ = ReloadFile();
+    }
+
+    /// <summary>
+    /// Развести окно по способу регистрации: работает ровно то, чем в этом способе пользуются,
+    /// остальное гаснет. Поля не прячутся, а именно гаснут — человек должен видеть, что окно то
+    /// же самое и что значения этих полей теперь берутся из файла.
+    /// </summary>
+    private void ApplyMode()
+    {
+        var byFile = ByFile;
+
+        FileBox.IsEnabled   = byFile;
+        BrowseBtn.IsEnabled = byFile;
+
+        FioBox.IsEnabled         = !byFile;
+        OrgCombo.IsEnabled       = !byFile && _orgs.Count > 0;
+        EskdBox.IsEnabled        = !byFile;
+        ExecutionCombo.IsEnabled = !byFile;
+        NameBox.IsEnabled        = !byFile;
+        ProjectBox.IsEnabled     = !byFile;
+        AccountingBox.IsEnabled  = !byFile;
+        FirstUseBox.IsEnabled    = !byFile;
+        SummaryBox.IsEnabled     = !byFile;
+
+        // Рамка одна на двоих: классификатор нужен только при ручном подборе кода, разбор
+        // файла — только при загрузке.
+        FileReport.IsVisible   = byFile;
+        SuggestList.IsVisible  = !byFile && SuggestList.ItemCount > 0;
+        SuggestEmpty.IsVisible = !byFile && SuggestList.ItemCount == 0;
+    }
+
+    private async void OnBrowseClick(object? sender, RoutedEventArgs e)
+    {
+        var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+        {
+            Title          = "Выберите файл со списком номеров КД",
+            AllowMultiple  = false,
+            FileTypeFilter = [ExcelType],
+        });
+
+        if (files.FirstOrDefault()?.Path.LocalPath is not { } path) return;
+
+        // Тот же файл выбрали второй раз — значит, его поправили и просят перечитать. Текст поля
+        // при этом не меняется, и сам по себе разбор бы не запустился.
+        if (string.Equals(FileBox.Text, path, StringComparison.Ordinal)) _ = ReloadFile();
+        else FileBox.Text = path;
+    }
+
+    private void OnFilePathChanged(object? sender, TextChangedEventArgs e) => _ = ReloadFile();
+
+    /// <summary>
+    /// Прочитать файл и проверить его против журнала. Ответ устаревшего чтения (путь успели
+    /// сменить) отбрасывается по номеру — как и у подбора кода ЕСКД.
+    /// </summary>
+    private async Task ReloadFile()
+    {
+        var token = ++_fileToken;
+
+        _rows        = [];
+        _check       = null;
+        _fileProblem = null;
+
+        ShowReport();
+        UpdateState();
+
+        var path = (FileBox.Text ?? "").Trim();
+        if (!ByFile || path.Length == 0) return;
+
+        await Task.Delay(FilePause);
+        if (token != _fileToken) return;
+
+        try
+        {
+            // В фоне: чтение с диска, разбор книги и распаковка zip внутри нее — окно на это
+            // время замирать не должно.
+            var rows = await Task.Run(() => RegistryFile.Read(path));
+            if (token != _fileToken) return;
+
+            _rows  = rows;
+            _check = RegistryImport.Check(rows, _designations, _orgs);
+        }
+        catch (DocRegistryException ex)
+        {
+            if (token != _fileToken) return;
+            _fileProblem = ex.Message;
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Регистрация КД: файл со списком номеров не прочитан");
+            if (token != _fileToken) return;
+            _fileProblem = $"Файл не прочитан: {ex.Message}";
+        }
+
+        ShowReport();
+        UpdateState();
+    }
+
+    /// <summary>Перепроверить уже прочитанные строки — после смены журнала и после записи.
+    /// Книга при этом не читается: строки для того и хранятся.</summary>
+    private void RecheckFile()
+    {
+        if (_rows.Count == 0) return;
+
+        _check = RegistryImport.Check(_rows, _designations, _orgs);
+        ShowReport();
+    }
+
+    /// <summary>
+    /// Показать разбор файла в рамке: причину, по которой файл не читается, список ошибок или
+    /// перечень того, что будет записано.
+    /// </summary>
+    private void ShowReport()
+    {
+        if (_fileProblem is { } trouble) { ShowLines([trouble]); return; }
+        if (_check is not { } check)     { ShowLines([]);        return; }
+
+        ShowLines(check.Problems.Count > 0
+            ? Limited(check.Problems.Select(p => p.ToString()).ToList(), "ошибок")
+            : Limited(check.Rows.Select(r => $"Строка {r.Line}: {r.Designation} — {r.Name}").ToList(),
+                      "строк"));
+    }
+
+    /// <summary>Первые <see cref="ReportLimit"/> строк, а сколько осталось — последней строкой:
+    /// «показано 200 из 1000» человеку ничего не говорит, а «и еще 800» говорит.</summary>
+    private static List<string> Limited(List<string> lines, string what)
+    {
+        if (lines.Count <= ReportLimit) return lines;
+
+        var shown = lines.Take(ReportLimit).ToList();
+        shown.Add($"…и еще {what}: {lines.Count - ReportLimit}");
+        return shown;
+    }
+
+    private void ShowLines(IReadOnlyList<string> lines) => FileList.ItemsSource = lines;
+
+    /// <summary>
+    /// Записать в журнал разом весь проверенный файл. Спрашиваем подтверждение: строк бывает
+    /// много, а отменить запись одним движением нельзя — записи придется удалять руками.
+    /// </summary>
+    private async Task RegisterFromFile()
+    {
+        if (_check is not { Ok: true } check || check.Rows.Count == 0) return;
+
+        if (!await new ConfirmDialog(
+                $"Записать в коллекцию «{_shape!.CollectionName}» строк: {check.Rows.Count}?",
+                confirmText: "Записать",
+                cancelText:  "Отмена").ShowDialog<bool>(this))
+            return;
+
+        string message, brush;
+
+        _busy = true;
+        RegisterBtn.IsEnabled = false;
+        try
+        {
+            var count = DocRegistrar.RegisterAll(_repo!, _shape!, check.Rows, DateTime.Now);
+
+            // Записанные обозначения — сразу в местный список: по нему считается и предпросмотр
+            // номера в ручном режиме, и повторы при следующей проверке файла.
+            foreach (var row in check.Rows) _designations.Add(row.Designation);
+
+            Log.Information("Регистрация КД: из файла записано строк {Count} — коллекция «{Collection}»",
+                            count, _shape!.CollectionName);
+
+            (message, brush) = ($"Записано строк: {count}", "BrushAccent");
+        }
+        catch (PermissionDeniedException ex)
+        {
+            (message, brush) = (ex.Message, "BrushRed");
+        }
+        catch (DocRegistryException ex)
+        {
+            Log.Warning(ex, "Регистрация КД: список из файла не записан");
+            (message, brush) = (ex.Message, "BrushRed");
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Регистрация КД: непредвиденная ошибка при записи списка из файла");
+            (message, brush) = ($"Ошибка: {ex.Message}", "BrushRed");
+        }
+        finally
+        {
+            _busy = false;
+        }
+
+        // Тот же файл второй раз не запишется: перепроверка против пополненного журнала сделает
+        // все его строки повтором, и кнопка погаснет.
+        RecheckFile();
+        UpdateState();
+        SetStatus(message, brush);
+    }
+
+    /// <summary>Кнопка и подсказка в режиме загрузки файлом. Порядок проверок тот же, что и в
+    /// ручном: сверху вниз по окну — сперва куда пишем, потом что пишем.</summary>
+    private void UpdateFileState()
+    {
+        if (_databases.Count == 0)
+        {
+            Block("Нет доступной базы данных", red: true);
+            return;
+        }
+        if (_orgs.Count == 0)
+        {
+            Block("Укажите коды организации: Настройки → Расширения");
+            return;
+        }
+        if (_repo is null)
+        {
+            Block("База данных недоступна", red: true);
+            return;
+        }
+        if (CollectionCombo.SelectedIndex < 0)
+        {
+            Block("Выберите коллекцию журнала регистрации");
+            return;
+        }
+        if (_shape is null)
+        {
+            Block(_schemaProblem is { Length: > 0 } problem
+                ? $"Вы выбрали неправильную коллекцию — {problem}"
+                : "Вы выбрали неправильную коллекцию", red: true);
+            return;
+        }
+        if ((FileBox.Text ?? "").Trim().Length == 0)
+        {
+            Block("Укажите файл со списком номеров КД");
+            return;
+        }
+        if (_fileProblem is { } trouble)
+        {
+            Block(trouble, red: true);
+            return;
+        }
+        if (_check is not { } check)
+        {
+            Block("Файл читается…");
+            return;
+        }
+        if (!check.Ok)
+        {
+            // Ошибки перечислены в рамке — тут только их число и то, чем это грозит.
+            Block($"Ошибок в файле: {check.Problems.Count} — пока они не исправлены, " +
+                  "не записывается ни одна строка", red: true);
+            return;
+        }
+
+        RegisterBtn.IsEnabled = true;
+        SetStatus($"Будет записано строк: {check.Rows.Count}", "BrushAccent");
     }
 
     // ── Подбор кода ЕСКД ──────────────────────────────────────────────────────
@@ -399,7 +713,10 @@ public partial class DocRegistryWindow : Window
         var rows = view.Rows;
 
         SuggestList.ItemsSource = rows;
-        SuggestList.IsVisible   = rows.Count > 0;
+
+        // В режиме файла рамку занимает разбор списка номеров: подбор, доехавший из фона, не
+        // должен показываться поверх него — вернется вместе с ручным режимом (см. ApplyMode).
+        SuggestList.IsVisible = !ByFile && rows.Count > 0;
 
         // Выделяем не первую строку, а ПЕРВОГО РЕБЕНКА: в дереве наверху стоит цепочка предков,
         // и выделение на ней означало бы, что Enter поднимает обратно, а не ведет вглубь. Так
@@ -413,7 +730,7 @@ public partial class DocRegistryWindow : Window
         // и понимает, где находится.
         if (rows.Count > 0) SuggestList.ScrollIntoView(0);
 
-        SuggestEmpty.IsVisible = rows.Count == 0;
+        SuggestEmpty.IsVisible = !ByFile && rows.Count == 0;
         SuggestEmpty.Text      = "Ничего не нашлось — попробуйте другое слово или введите код цифрами";
 
         SuggestHint.Text = HintFor(view);
@@ -452,6 +769,8 @@ public partial class DocRegistryWindow : Window
     private async void OnRegisterClick(object? sender, RoutedEventArgs e)
     {
         if (_busy || _repo is null || _shape is null) return;
+
+        if (ByFile) { await RegisterFromFile(); return; }
 
         // Занятое исполнение — не отказ, а вопрос: бывает, что документ в журнал занесли
         // задним числом или строку завели ошибочно, и решать это вправе только человек.
@@ -675,6 +994,8 @@ public partial class DocRegistryWindow : Window
     private void UpdateState()
     {
         if (_busy) return;
+
+        if (ByFile) { UpdateFileState(); return; }
 
         var org     = OrgCombo.SelectedItem as string ?? "";
         var eskd    = (EskdBox.Text ?? "").Trim();

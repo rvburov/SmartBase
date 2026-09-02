@@ -404,4 +404,87 @@ public sealed class DocRegistrarTests
 
         Assert.Equal(preview, done.Number);
     }
+
+    // ── Список номеров из файла ───────────────────────────────────────────────
+
+    private static ImportRow FileRow(int line, string designation, string name = "Втулка") =>
+        new(line, name, designation, "Иванов Иван Иванович",
+            "Проект", "Учтено", "Изделие 1", "Кратко");
+
+    /// <summary>Обозначение из файла попадает в журнал КАК ЕСТЬ: номера при загрузке не
+    /// выдаются, они уже выданы раньше.</summary>
+    [Fact]
+    public void File_rows_keep_their_own_designations()
+    {
+        using var db = new TempDatabase();
+        var id    = JournalStand.Create(db.Constructor);
+        var shape = JournalStand.Shape(db.Constructor, id);
+
+        var count = DocRegistrar.RegisterAll(db.Constructor, shape,
+            [FileRow(2, "АБВГ.301121.007"), FileRow(3, "АБВГ.301121.007-01"), FileRow(4, "ГМБВ.723611.012")],
+            Now);
+
+        Assert.Equal(3, count);
+        Assert.Equal(["АБВГ.301121.007", "АБВГ.301121.007-01", "ГМБВ.723611.012"],
+                     DocRegistrar.Designations(db.Constructor, shape));
+    }
+
+    [Fact]
+    public void File_row_fills_all_eight_columns()
+    {
+        using var db = new TempDatabase();
+        var id    = JournalStand.Create(db.Constructor);
+        var shape = JournalStand.Shape(db.Constructor, id);
+
+        DocRegistrar.RegisterAll(db.Constructor, shape, [FileRow(2, "АБВГ.301121.007", "Вал")], Now);
+
+        var recordId = db.Constructor.GetRecords(id).Single().Id!.Value;
+        var values   = db.Constructor.GetFieldValues(recordId);
+
+        Assert.Equal("Вал",                  db.Constructor.GetRecord(recordId)!.Title);
+        Assert.Equal("АБВГ.301121.007",      values[shape.DesignationFieldId]);
+        Assert.Equal("Иванов Иван Иванович", values[shape.FioFieldId]);
+        Assert.Equal("Проект",               values[shape.ProjectFieldId]);
+        Assert.Equal("Учтено",               values[shape.AccountingFieldId]);
+        Assert.Equal("Изделие 1",            values[shape.FirstUseFieldId]);
+        Assert.Equal("Кратко",               values[shape.SummaryFieldId]);
+    }
+
+    /// <summary>Дата регистрации у всех строк файла одна — момент записи: она означает, когда
+    /// строка попала в журнал, а не что стояло в ячейке файла.</summary>
+    [Fact]
+    public void Every_file_row_gets_the_moment_of_writing()
+    {
+        using var db = new TempDatabase();
+        var id    = JournalStand.Create(db.Constructor);
+        var shape = JournalStand.Shape(db.Constructor, id);
+
+        DocRegistrar.RegisterAll(db.Constructor, shape,
+            [FileRow(2, "АБВГ.301121.007"), FileRow(3, "АБВГ.301121.008")], Now);
+
+        var stamps = db.Constructor.GetRecords(id)
+                       .Select(r => db.Constructor.GetFieldValues(r.Id!.Value)[shape.DateFieldId])
+                       .ToList();
+
+        Assert.Equal([DocRegistrar.StampFor(shape.DateFieldType, Now),
+                      DocRegistrar.StampFor(shape.DateFieldType, Now)], stamps);
+    }
+
+    /// <summary>Целиком или никак: сорвалось на одной строке — в журнале не остается ни одной.
+    /// Иначе часть файла оказалась бы записанной, и понять какая можно было бы только сличением
+    /// строка за строкой.</summary>
+    [Fact]
+    public void Nothing_is_written_when_a_row_fails()
+    {
+        using var db = new TempDatabase();
+        var id    = JournalStand.Create(db.Constructor);
+        var shape = JournalStand.Shape(db.Constructor, id);
+
+        // Первая строка годная, вторая без обозначения — движок отказывает на ней, УЖЕ записав
+        // первую. Проверенный файл такой строки не даст, но окно — не единственный вход в запись.
+        Assert.Throws<DocRegistryException>(() => DocRegistrar.RegisterAll(db.Constructor, shape,
+            [FileRow(2, "АБВГ.301121.007"), FileRow(3, "")], Now));
+
+        Assert.Empty(db.Constructor.GetRecords(id));
+    }
 }

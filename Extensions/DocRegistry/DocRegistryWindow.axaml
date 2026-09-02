@@ -1,17 +1,35 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:sys="using:System"
         xmlns:registry="using:SmartBase.Extensions.DocRegistry"
         x:Class="SmartBase.Extensions.DocRegistry.DocRegistryWindow"
         Title="Регистрация КД"
         Width="720" Height="820"
-        MinWidth="620" MinHeight="620"
+        MinWidth="620" MinHeight="660"
         WindowStartupLocation="CenterOwner"
         Background="{StaticResource BrushBg}">
 
     <DockPanel Margin="24">
 
-        <!-- Верх: кто регистрирует, что за обозначение и как называется документ -->
+        <!-- Верх: как регистрируем, кто регистрирует, что за обозначение и как называется документ -->
         <StackPanel DockPanel.Dock="Top" Spacing="14" Margin="0,0,0,10">
+
+            <!-- Способ регистрации и файл со списком номеров — в одном ряду: поле со ссылкой и
+                 «Обзор» относятся ко второму пункту списка и в ручном режиме недоступны. В
+                 режиме файла наоборот гаснет все окно ниже — значения берутся из файла. -->
+            <Grid ColumnDefinitions="290,10,*,10,Auto" VerticalAlignment="Center">
+                <ComboBox Grid.Column="0" x:Name="ModeCombo"
+                          Height="30" HorizontalAlignment="Stretch"
+                          SelectionChanged="OnModeChanged" />
+                <TextBox Grid.Column="2" x:Name="FileBox"
+                         VerticalContentAlignment="Center"
+                         Watermark="Путь к файлу со списком номеров КД"
+                         TextChanged="OnFilePathChanged" />
+                <Button Grid.Column="4" x:Name="BrowseBtn"
+                        Classes="dialog"
+                        Content="Обзор"
+                        Click="OnBrowseClick" />
+            </Grid>
 
             <StackPanel Spacing="6">
                 <TextBlock Text="ФИО регистрирующего"
@@ -224,6 +242,21 @@
                         </DataTemplate>
                     </ListBox.ItemTemplate>
                 </ListBox>
+                <!-- Разбор файла со списком номеров занимает ту же рамку: в режиме файла
+                     классификатор не нужен (код ЕСКД уже стоит в обозначении), а вот список
+                     ошибок с номерами строк нужен целиком и сразу. -->
+                <!-- Воздух — на содержимом ВНУТРИ прокрутки, а не на самом ScrollViewer: иначе
+                     полоса отходит от края рамки, а сверху и снизу остаются мертвые зазоры
+                     (docs/developer/ui/scrolling.md). -->
+                <ScrollViewer x:Name="FileReport" IsVisible="False">
+                    <ItemsControl x:Name="FileList" Margin="10,7">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate x:DataType="sys:String">
+                                <TextBlock Text="{Binding}" TextWrapping="Wrap" Margin="0,0,0,4" />
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </ScrollViewer>
             </Panel>
         </Border>
 

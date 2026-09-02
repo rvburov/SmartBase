@@ -33,12 +33,16 @@ public sealed record Registration(int RecordId, string Designation, int Number, 
 public sealed class DocRegistryException(string message) : Exception(message);
 
 /// <summary>
-/// Регистрация одного документа в коллекции — логика без UI.
+/// Запись в коллекцию-журнал — логика без UI. Два входа: <see cref="Register"/> — один документ,
+/// которому расширение выдает номер; <see cref="RegisterAll"/> — список готовых номеров,
+/// загруженный файлом.
 ///
 /// Работает на ОБЩЕМ репозитории в UI-потоке, в отличие от «Документов в коллекцию» и
 /// «Сводной трудоемкости»: там в базу уходят десятки тысяч записей и фон обязателен, здесь —
-/// одна запись и восемь значений, ради которых заводить отдельное подключение незачем. Заодно
-/// на общем репозитории срабатывают проверки прав (<c>CreateRecord</c>/<c>EditRecord</c>).
+/// одна запись и восемь значений, ради которых заводить отдельное подключение незачем (файл со
+/// списком номеров — тоже не тот размер: журнал регистрации ведут строками, а не тысячами).
+/// Заодно на общем репозитории срабатывают проверки прав
+/// (<c>CreateRecord</c>/<c>EditRecord</c>).
 ///
 /// Номер подбирается ПРЯМО ПЕРЕД записью, а не берется из показанного в окне предпросмотра:
 /// между открытием окна и нажатием кнопки тот же номер мог занять другой регистратор.
@@ -66,9 +70,6 @@ public static class DocRegistrar
     ///
     /// Исполнение (<see cref="RegistrationInput.Execution"/>) — часть обозначения, а не отдельный
     /// вид записи: строка та же, меняется только хвост номера.
-    ///
-    /// Любая ошибка после создания записи убирает эту запись: полузаполненная строка в журнале
-    /// регистрации хуже, чем отсутствие строки, — по ней выдали бы номер повторно.
     /// </summary>
     public static Registration Register(ConstructorRepository repo, RegistryShape shape,
                                         RegistrationInput input, DateTime now)
@@ -92,13 +93,79 @@ public static class DocRegistrar
             ? Designation.FormatExecution(org, eskd, number, e)
             : Designation.Format(org, eskd, number);
 
-        // Запись дописывается в конец: журнал регистрации ведется по порядку выдачи номеров.
-        // afterRecordId = 0 — записи с таким id не бывает, и репозиторий по контракту ставит
-        // такую запись в конец (одним индексным MAX, без загрузки коллекции в память).
+        var recordId = WriteRow(repo, shape, name, designation, input.Fio,
+                                StampFor(shape.DateFieldType, now),
+                                project, input.Accounting, input.FirstUse, input.Summary);
+
+        return new Registration(recordId, designation, number, execution);
+    }
+
+    /// <summary>
+    /// Записать в журнал разом весь список номеров, загруженный файлом
+    /// (<see cref="RegistryFile"/>, <see cref="RegistryImport"/>). Отдает число записанных строк.
+    ///
+    /// Номера тут НЕ ВЫДАЮТСЯ: обозначение каждой строки пришло из файла и уже проверено. А вот
+    /// дата регистрации — своя, <paramref name="now"/> на все строки: она означает момент, когда
+    /// строка попала в журнал, и столбец даты в файле поэтому не читается вовсе.
+    ///
+    /// ЦЕЛИКОМ ИЛИ НИКАК: сорвалось на любой строке — убираются все записанные до нее. Иначе
+    /// в журнале осталась бы часть файла, и разобрать, какая именно, можно было бы только
+    /// сличением строка за строкой.
+    /// </summary>
+    public static int RegisterAll(ConstructorRepository repo, RegistryShape shape,
+                                  IReadOnlyList<ImportRow> rows, DateTime now)
+    {
+        var written = new List<int>(rows.Count);
+
+        try
+        {
+            foreach (var row in rows)
+            {
+                // Второй рубеж: строки приходят проверенными (RegistryImport), но окно — не
+                // единственный вход в запись, а строка без обозначения или без наименования
+                // сделала бы журнал непригодным молча.
+                if (row.Designation.Trim().Length == 0)
+                    throw new DocRegistryException(
+                        $"Строка {row.Line}: не заполнено «{RegistrySchema.DesignationColumn}».");
+
+                if (row.Name.Trim().Length == 0)
+                    throw new DocRegistryException(
+                        $"Строка {row.Line}: не заполнено «{RegistrySchema.TitleColumn}».");
+
+                written.Add(WriteRow(repo, shape, row.Name, row.Designation, row.Fio,
+                                     StampFor(shape.DateFieldType, now),
+                                     row.Project, row.Accounting, row.FirstUse, row.Summary));
+            }
+        }
+        catch
+        {
+            foreach (var recordId in written)
+                try { repo.DeleteRecord(recordId); } catch { /* уборка — best-effort */ }
+
+            throw;
+        }
+
+        return written.Count;
+    }
+
+    /// <summary>
+    /// Одна строка журнала: запись с названием и семь значений по столбцам. Отдает id записи.
+    ///
+    /// Запись дописывается в конец: журнал регистрации ведется по порядку выдачи номеров.
+    /// afterRecordId = 0 — записи с таким id не бывает, и репозиторий по контракту ставит такую
+    /// запись в конец (одним индексным MAX, без загрузки коллекции в память).
+    ///
+    /// Ошибка после создания записи убирает эту запись: полузаполненная строка в журнале хуже,
+    /// чем отсутствие строки, — по ней выдали бы номер повторно.
+    /// </summary>
+    private static int WriteRow(ConstructorRepository repo, RegistryShape shape,
+                                string title, string designation, string fio, string stamp,
+                                string project, string accounting, string firstUse, string summary)
+    {
         var record = repo.AddRecordAfter(new DbRecord
         {
             CollectionId = shape.CollectionId,
-            Title        = name,
+            Title        = title,
         }, afterRecordId: 0);
 
         var recordId = record.Id!.Value;
@@ -106,12 +173,12 @@ public static class DocRegistrar
         try
         {
             Set(repo, recordId, shape.DesignationFieldId, designation);
-            Set(repo, recordId, shape.FioFieldId,         input.Fio);
-            Set(repo, recordId, shape.DateFieldId,        StampFor(shape.DateFieldType, now));
+            Set(repo, recordId, shape.FioFieldId,         fio);
+            Set(repo, recordId, shape.DateFieldId,        stamp);
             Set(repo, recordId, shape.ProjectFieldId,     project);
-            Set(repo, recordId, shape.AccountingFieldId,  input.Accounting);
-            Set(repo, recordId, shape.FirstUseFieldId,    input.FirstUse);
-            Set(repo, recordId, shape.SummaryFieldId,     input.Summary);
+            Set(repo, recordId, shape.AccountingFieldId,  accounting);
+            Set(repo, recordId, shape.FirstUseFieldId,    firstUse);
+            Set(repo, recordId, shape.SummaryFieldId,     summary);
         }
         catch
         {
@@ -119,7 +186,7 @@ public static class DocRegistrar
             throw;
         }
 
-        return new Registration(recordId, designation, number, execution);
+        return recordId;
     }
 
     /// <summary>
