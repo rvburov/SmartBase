@@ -61,12 +61,24 @@ public sealed class RegistryImportTests
         Assert.Equal("АБВГ.301121.001", Given(Against(["АБВГ.723611.001"], Row())));
     }
 
-    /// <summary>Метка исполнения дает первое исполнение: номер только что выдан, и никаких
-    /// исполнений у него быть не может.</summary>
+    /// <summary>Новому номеру исполнение не назначают: номер только выдается, и приписывать
+    /// исполнение не к чему. В сообщении обе правильные строки.</summary>
     [Fact]
-    public void Execution_mark_gives_the_first_execution()
+    public void New_number_with_an_execution_mark_is_refused()
     {
-        Assert.Equal("АБВГ.301121.001-01", Given(Check(Row(designation: "АБВГ.301121.ХХХ-ХХ"))));
+        var problem = Problem(Check(Row(designation: "АБВГ.301121.ХХХ-ХХ")));
+
+        Assert.Contains("новому номеру исполнение не назначают", problem);
+        Assert.Contains("«АБВГ.301121.ХХХ»",                     problem);
+        Assert.Contains("«АБВГ.301121.012-ХХ»",                  problem);
+    }
+
+    /// <summary>Тот же отказ и с готовым исполнением при метке номера.</summary>
+    [Fact]
+    public void New_number_with_a_ready_execution_is_refused()
+    {
+        Assert.Contains("новому номеру исполнение не назначают",
+                        Problem(Check(Row(designation: "АБВГ.301121.ХХХ-01"))));
     }
 
     // ── Названный номер: исполнение существующего документа ───────────────────
@@ -151,15 +163,14 @@ public sealed class RegistryImportTests
                      check.Rows.Select(r => r.Designation));
     }
 
-    /// <summary>Каждая строка — свой документ, даже если строки одинаковы: два «ХХХ-ХХ» подряд
-    /// дают два РАЗНЫХ номера с первым исполнением, а не два исполнения одного документа.</summary>
+    /// <summary>Каждая строка — свой документ, даже если строки одинаковы.</summary>
     [Fact]
     public void Every_row_is_a_document_of_its_own()
     {
-        var check = Check(Row(line: 2, designation: "АБВГ.301121.ХХХ-ХХ"),
-                          Row(line: 3, designation: "АБВГ.301121.ХХХ-ХХ"));
+        var check = Check(Row(line: 2, designation: "АБВГ.301121.ХХХ"),
+                          Row(line: 3, designation: "АБВГ.301121.ХХХ"));
 
-        Assert.Equal(["АБВГ.301121.001-01", "АБВГ.301121.002-01"],
+        Assert.Equal(["АБВГ.301121.001", "АБВГ.301121.002"],
                      check.Rows.Select(r => r.Designation));
     }
 

@@ -165,21 +165,30 @@ public static class Designation
     }
 
     /// <summary>
-    /// Последний выданный номер серии — наибольший из занятых; <c>null</c> — в серии не выдано
-    /// ни одного номера.
+    /// Все выданные номера серии по возрастанию, у каждого — его занятые исполнения (тоже по
+    /// возрастанию; пусто — исполнений у номера нет).
     ///
-    /// Это ДЕЙСТВУЮЩИЙ документ серии: к нему приписывают исполнение, когда его заводят не сразу
-    /// за регистрацией самого документа. Первый свободный тут не годится — он означал бы новый
-    /// документ, а исполнение приписывают к существующему.
+    /// Этим живет список номеров в окне: выбирают из НЕГО, а не набирают руками, поэтому окну
+    /// нужен весь перечень разом, а не ответ про один номер.
     /// </summary>
-    public static int? LastIssued(IEnumerable<string?> designations, string org, string eskd)
+    public static IReadOnlyList<IssuedNumber> Issued(IEnumerable<string?> designations,
+                                                     string org, string eskd)
     {
-        int? last = null;
+        var found = new SortedDictionary<int, SortedSet<int>>();
 
         foreach (var d in designations)
-            if (NumberIn(d, org, eskd) is { } number && (last is null || number > last))
-                last = number;
+        {
+            if (ParseInSeries(d, org, eskd) is not { } parsed) continue;
 
-        return last;
+            if (!found.TryGetValue(parsed.Number, out var executions))
+                found[parsed.Number] = executions = [];
+
+            if (parsed.Execution is { } execution) executions.Add(execution);
+        }
+
+        return [.. found.Select(pair => new IssuedNumber(pair.Key, [.. pair.Value]))];
     }
 }
+
+/// <summary>Выданный номер серии и его занятые исполнения (пусто — исполнений нет).</summary>
+public sealed record IssuedNumber(int Number, IReadOnlyList<int> Executions);

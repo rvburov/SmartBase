@@ -204,20 +204,39 @@ public sealed class DesignationTests
     public void Execution_takes_the_whole_number_too() =>
         Assert.Equal(3, Designation.FirstFree(["АБВГ.301121.001", "АБВГ.301121.002-01"], "АБВГ", "301121"));
 
-    // ── Действующий номер ─────────────────────────────────────────────────────
+    // ── Перечень выданных номеров ─────────────────────────────────────────────
 
-    /// <summary>Последний выданный — НАИБОЛЬШИЙ из занятых, а не первый свободный: к нему
-    /// приписывают исполнение, и дырка в середине серии тут ни при чем.</summary>
+    /// <summary>Номера идут по возрастанию, у каждого — свои исполнения. По этому перечню окно
+    /// и строит список номеров, поэтому порядок тут не украшение.</summary>
     [Fact]
-    public void Last_issued_is_the_greatest_taken_number() =>
-        Assert.Equal(14, Designation.LastIssued(
-            ["АБВГ.301121.001", "АБВГ.301121.014", "АБВГ.301121.002"], "АБВГ", "301121"));
+    public void Issued_numbers_come_sorted_with_their_executions()
+    {
+        var journal = new[]
+        {
+            "АБВГ.301121.014", "АБВГ.301121.002-03", "АБВГ.301121.001",
+            "АБВГ.301121.002-01", "АБВГ.723611.005",
+        };
+
+        var issued = Designation.Issued(journal, "АБВГ", "301121");
+
+        Assert.Equal([1, 2, 14], issued.Select(i => i.Number));
+        Assert.Empty(issued[0].Executions);
+        Assert.Equal([1, 3], issued[1].Executions);
+        Assert.Empty(issued[2].Executions);
+    }
+
+    /// <summary>Исполнение заводит и сам номер: «002-01» в журнале означает, что номер 002
+    /// выдан, даже если строки самого документа в журнале нет.</summary>
+    [Fact]
+    public void Execution_alone_puts_the_number_into_the_list()
+    {
+        var issued = Assert.Single(Designation.Issued(["АБВГ.301121.002-01"], "АБВГ", "301121"));
+
+        Assert.Equal(2, issued.Number);
+        Assert.Equal([1], issued.Executions);
+    }
 
     [Fact]
-    public void Execution_counts_as_the_last_issued() =>
-        Assert.Equal(14, Designation.LastIssued(["АБВГ.301121.014-01"], "АБВГ", "301121"));
-
-    [Fact]
-    public void Empty_series_has_no_last_issued() =>
-        Assert.Null(Designation.LastIssued(["АБВГ.723611.005"], "АБВГ", "301121"));
+    public void Empty_series_has_no_issued_numbers() =>
+        Assert.Empty(Designation.Issued(["АБВГ.723611.005"], "АБВГ", "301121"));
 }

@@ -50,7 +50,7 @@
                      выглядела бы висящей. Дефис перед исполнением — наоборот, по середине и
                      ОБЫЧНОГО начертания: полужирным он превращался в жирную черту, а нужен
                      такой же знак, как в обычном тексте. -->
-                <Grid ColumnDefinitions="150,10,*,10,84,10,150" VerticalAlignment="Center">
+                <Grid ColumnDefinitions="150,10,*,10,150,10,110" VerticalAlignment="Center">
                     <ComboBox Grid.Column="0" x:Name="OrgCombo"
                               Height="30" HorizontalAlignment="Stretch"
                               SelectionChanged="OnTargetChanged" />
@@ -65,24 +65,44 @@
                     <TextBlock Grid.Column="3" Text="." VerticalAlignment="Bottom"
                                HorizontalAlignment="Center"
                                FontWeight="{StaticResource FontWeightBold}" />
-                    <TextBox Grid.Column="4" x:Name="NumberBox"
-                             VerticalContentAlignment="Center"
-                             HorizontalContentAlignment="Center"
-                             IsEnabled="False"
-                             Watermark="номер" />
+                    <!-- Номер ВЫБИРАЮТ, а не вводят: список показывает свободный номер и все
+                         выданные, разложенные по двум группам. В закрытом поле стоит только сам
+                         номер, поэтому ряд по-прежнему читается как готовое обозначение;
+                         заголовки групп живут в списке и выбраться не могут (IsEnabled). -->
+                    <ComboBox Grid.Column="4" x:Name="NumberCombo"
+                              Height="30" HorizontalAlignment="Stretch"
+                              HorizontalContentAlignment="Center"
+                              PlaceholderText="номер"
+                              PlaceholderForeground="{StaticResource BrushSecondaryText}"
+                              SelectionChanged="OnNumberChanged">
+                        <ComboBox.Styles>
+                            <Style Selector="ComboBoxItem" x:DataType="registry:NumberOption">
+                                <Setter Property="IsEnabled" Value="{Binding !IsHeader}" />
+                            </Style>
+                        </ComboBox.Styles>
+                        <ComboBox.ItemTemplate>
+                            <DataTemplate x:DataType="registry:NumberOption">
+                                <Panel>
+                                    <TextBlock Text="{Binding Text}" IsVisible="{Binding !IsHeader}" />
+                                    <TextBlock Text="{Binding Text}" IsVisible="{Binding IsHeader}"
+                                               FontSize="{DynamicResource FontSizeSmall}"
+                                               FontWeight="{StaticResource FontWeightBold}"
+                                               Foreground="{StaticResource BrushSecondaryText}" />
+                                </Panel>
+                            </DataTemplate>
+                        </ComboBox.ItemTemplate>
+                    </ComboBox>
                     <!-- Дефис — тот же знак, что и в самом обозначении: «АБВГ.301121.012-01».
                          Ряд читается как готовый номер, поэтому разделитель тут не украшение. -->
                     <TextBlock Grid.Column="5" Text="-" VerticalAlignment="Center"
                                HorizontalAlignment="Center"
                                FontSize="{DynamicResource FontSizeMedium}" />
-                    <!-- Поле исполнения пустое, пока его не выбрали, и вместо значения в нем
-                         стоит серая подпись «Без исполнения». Она же — первая строка СПИСКА:
-                         ею исполнение снимают, и поле снова пустеет. -->
+                    <!-- Исполнение не выбирают из девяноста девяти: у выбранного номера свободно
+                         только следующее, оно одно в списке и стоит сразу. Выбран новый номер —
+                         поле недоступно и пусто: у нового документа исполнения не бывает. -->
                     <ComboBox Grid.Column="6" x:Name="ExecutionCombo"
                               Height="30" HorizontalAlignment="Stretch"
-                              PlaceholderText="Без исполнения"
-                              PlaceholderForeground="{StaticResource BrushSecondaryText}"
-                              SelectionChanged="OnExecutionChanged" />
+                              HorizontalContentAlignment="Center" />
                 </Grid>
             </StackPanel>
 

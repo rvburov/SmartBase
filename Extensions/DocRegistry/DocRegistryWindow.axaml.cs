@@ -20,12 +20,19 @@ namespace SmartBase.Extensions.DocRegistry;
 ///
 /// Обозначение собрано в ОДИН РЯД из своих частей и с теми же разделителями, что и в готовом
 /// номере: код организации, код ЕСКД, номер, исполнение — строка читается как
-/// «АБВГ.301121.012-01». Номер выдает расширение, поле недоступно; исполнение выбирает человек
-/// из списка 01–99, где занятые помечены.
+/// «АБВГ.301121.012-01».
 ///
-/// Номер зависит от того, выбрано ли исполнение. Без исполнения это первый свободный номер серии
-/// — новый документ. С исполнением — ДЕЙСТВУЮЩИЙ номер: исполнение приписывают к существующему
-/// документу, а не заводят им новый (см. <see cref="NumberFor"/>).
+/// НОМЕР ВЫБИРАЮТ ИЗ СПИСКА, а не вводят (<see cref="RefreshNumbers"/>). В списке свободный номер
+/// под новый документ и все выданные номера серии, разложенные по двум группам — без исполнений
+/// и с исполнениями. Этим и определяется, что регистрируется:
+/// <list type="bullet">
+/// <item>новый номер — новый документ, исполнения у него не бывает, и поле исполнения
+/// недоступно;</item>
+/// <item>выданный номер — его исполнение, и оно обязательно.</item>
+/// </list>
+/// Исполнение при этом не выбирают: у выбранного номера свободно только СЛЕДУЮЩЕЕ, оно одно в
+/// списке и стоит сразу (<see cref="RefreshExecution"/>). Занятое исполнение выбрать нельзя —
+/// значит, и предупреждать о повторе не о чем: окно его просто не собирает.
 ///
 /// Второй способ работы — ЗАГРУЗКА ФАЙЛОМ (список сверху): окно заносит в журнал целый список
 /// разом, выдавая номера по тем же правилам. Тогда все поля документа гаснут — значения берутся
@@ -35,8 +42,9 @@ namespace SmartBase.Extensions.DocRegistry;
 ///
 /// Окно НЕ закрывается после записи: документы регистрируют пачками, поэтому ФИО, код
 /// организации, база и коллекция остаются, а код ЕСКД, наименование, проект и примечания
-/// очищаются под следующий документ. Записали исполнение — не очищается ничего, кроме самого
-/// исполнения: документ тот же, меняется только его вариант. ФИО и коллекция переживают и
+/// очищаются под следующий документ. Записали исполнение — не очищается ничего: документ тот же,
+/// меняется только его вариант, а список сам встает на следующее свободное исполнение. ФИО и
+/// коллекция переживают и
 /// закрытие окна — лежат в настройках расширения (ключи <c>ext.doc-registry.…</c>, уборка при
 /// удалении расширения идет по приставке).
 ///
@@ -63,18 +71,12 @@ public partial class DocRegistryWindow : Window
     // заново по базе, поэтому устареть этот список не страшно.
     private List<string> _designations = [];
 
-    /// <summary>
-    /// Номер, на котором окно держится, пока подряд заводят исполнения одного документа.
-    /// <c>null</c> — номер обычный, первый свободный.
-    ///
-    /// Зачем: после записи «012-01» номер 012 занят, и первый свободный стал бы 013 — второе
-    /// исполнение того же документа ушло бы к чужому номеру. Держится он только при выбранном
-    /// исполнении; сняли исполнение, сменили серию или коллекцию — снова первый свободный.
-    /// </summary>
-    private int? _heldNumber;
+    /// <summary>Список номеров перестраивается — не считать это выбором человека.</summary>
+    private bool _rebuildingNumbers;
 
-    /// <summary>Список исполнений перестраивается — не считать это выбором человека.</summary>
-    private bool _rebuildingExecutions;
+    /// <summary>Строка списка номеров, выбранная человеком. Нужна, чтобы вернуть выбор обратно,
+    /// если он ушел на заголовок группы: заголовок — не номер.</summary>
+    private int _selectedNumberIndex = -1;
 
     // Номер последнего запущенного подбора: ответ с чужим номером — устаревший и не применяется.
     private int  _searchToken;
@@ -231,7 +233,6 @@ public partial class DocRegistryWindow : Window
         _shape         = null;
         _schemaProblem = null;
         _designations  = [];
-        _heldNumber    = null;   // другой журнал — держаться не за что
 
         var index = CollectionCombo.SelectedIndex;
         if (_repo is not null && index >= 0 && index < _collections.Count)
@@ -331,8 +332,11 @@ public partial class DocRegistryWindow : Window
         FioBox.IsEnabled         = !byFile;
         OrgCombo.IsEnabled       = !byFile && _orgs.Count > 0;
         EskdBox.IsEnabled        = !byFile;
-        ExecutionCombo.IsEnabled = !byFile;
         NameBox.IsEnabled        = !byFile;
+        // Номер и исполнение доступны, только когда есть из чего выбирать; в режиме файла —
+        // никогда. Пересчет их содержимого идет в UpdateState и до сюда не доходит.
+        NumberCombo.IsEnabled    = !byFile && NumberCombo.ItemCount    > 0;
+        ExecutionCombo.IsEnabled = !byFile && ExecutionCombo.ItemCount > 0;
         ProjectBox.IsEnabled     = !byFile;
         AccountingBox.IsEnabled  = !byFile;
         FirstUseBox.IsEnabled    = !byFile;
@@ -684,9 +688,7 @@ public partial class DocRegistryWindow : Window
 
     private void OnEskdTextChanged(object? sender, TextChangedEventArgs e)
     {
-        // Сменили код — сменилась серия, и держаться за номер прежней серии нельзя.
-        _heldNumber = null;
-
+        // Сменили код — сменилась серия, и список номеров соберется по ней заново.
         UpdateState();
         if (_suppressSearch) return;
 
@@ -875,11 +877,6 @@ public partial class DocRegistryWindow : Window
 
         if (ByFile) { await RegisterFromFile(); return; }
 
-        // Занятое исполнение — не отказ, а вопрос: бывает, что документ в журнал занесли
-        // задним числом или строку завели ошибочно, и решать это вправе только человек.
-        // Подтверждение спрашиваем ЗДЕСЬ, а не в движке: движок без подтверждения откажет.
-        if (!await ConfirmDuplicateExecution()) return;
-
         var input = Collect();
         string message, brush;
 
@@ -902,16 +899,11 @@ public partial class DocRegistryWindow : Window
             Log.Information("Регистрация КД: {Designation} — коллекция «{Collection}»",
                             done.Designation, _shape.CollectionName);
 
-            // Номер записанного документа окно держит за собой: следующее исполнение припишется
-            // именно к нему. Держать надо и после обычной регистрации — последний выданный в
-            // серии может быть и не этим (номер выдается в дырку: заняты 001, 002 и 014 — новый
-            // документ получит 003, а последний в серии так и останется 014).
-            _heldNumber = done.Number;
-
-            if (done.Execution is not null)
-                ExecutionCombo.SelectedIndex = Designation.FirstFreeExecution(
-                    _designations, input.Org.Trim(), input.Eskd.Trim(), done.Number) ?? -1;
-
+            // Списки пересоберутся в UpdateState по пополненному журналу: записали новый документ
+            // — он появится в группе «Без исполнения», а выбор останется на новом номере (уже
+            // следующем); записали исполнение — номер останется выбранным, а исполнение встанет
+            // на следующее свободное. Обо всем этом заботится RefreshNumbers, держа выбор
+            // по НОМЕРУ, а не по строке списка.
             sameDocument = done.Execution is not null;
 
             ClearDocumentFields(keepDocument: sameDocument);
@@ -946,27 +938,6 @@ public partial class DocRegistryWindow : Window
         if (!sameDocument) EskdBox.Focus();
     }
 
-    /// <summary>
-    /// Спросить подтверждение, если выбранное исполнение уже зарегистрировано. <c>false</c> —
-    /// человек отказался, регистрацию не начинаем. Исполнение свободно или не выбрано — сразу
-    /// <c>true</c>, лишних вопросов не задаем.
-    /// </summary>
-    private async Task<bool> ConfirmDuplicateExecution()
-    {
-        var org  = OrgCombo.SelectedItem as string ?? "";
-        var eskd = (EskdBox.Text ?? "").Trim();
-
-        if (SelectedExecution() is not { } execution) return true;
-        if (NumberFor(org, eskd, withExecution: true) is not { } number) return true;
-        if (!Designation.ExecutionsOf(_designations, org, eskd, number).Contains(execution)) return true;
-
-        return await new ConfirmDialog(
-            $"Обозначение {Designation.FormatExecution(org, eskd, number, execution)} " +
-            "уже зарегистрировано в журнале.\n\nЗаписать еще одну строку с тем же обозначением?",
-            confirmText: "Все равно записать",
-            cancelText:  "Отмена").ShowDialog<bool>(this);
-    }
-
     private RegistrationInput Collect() => new(
         Name:       NameBox.Text       ?? "",
         Org:        OrgCombo.SelectedItem as string ?? "",
@@ -977,15 +948,15 @@ public partial class DocRegistryWindow : Window
         FirstUse:   FirstUseBox.Text    ?? "",
         Summary:    SummaryBox.Text     ?? "",
         Execution:  SelectedExecution(),
-        // Номер называем движку, только когда выбрано исполнение: оно приписывается к
-        // ДЕЙСТВУЮЩЕМУ документу, и это тот самый номер, что стоит в окне. Без исполнения номер
-        // подбирает движок и в момент записи — так он не уйдет к тому, кто нажал кнопку раньше.
-        Number:     SelectedExecution() is null
-                        ? null
-                        : NumberFor(OrgCombo.SelectedItem as string ?? "",
-                                    (EskdBox.Text ?? "").Trim(), withExecution: true),
-        // До регистрации доходят только подтвержденные повторы (см. ConfirmDuplicateExecution).
-        ConfirmedDuplicate: true);
+        // Номер называем движку, только когда выбран существующий: это исполнение, и приписано
+        // оно должно быть именно к тому документу, что выбран в списке. Выбран новый номер —
+        // движок подберет его сам и в момент записи, чтобы он не ушел к тому, кто нажал кнопку
+        // раньше.
+        Number:     SelectedNumber(),
+        // Повторов окно больше не собирает: занятое исполнение в список не попадает. А если то
+        // же исполнение успел занять другой регистратор, пусть движок и откажет — это второй
+        // рубеж, а не придирка.
+        ConfirmedDuplicate: false);
 
     // Под следующий документ: ФИО, организация, база и коллекция остаются — меняется документ,
     // а не регистратор.
@@ -1018,97 +989,121 @@ public partial class DocRegistryWindow : Window
 
     private void OnFormChanged(object? sender, TextChangedEventArgs e) => UpdateState();
 
-    // Код организации — тоже часть серии: сменили его, и номер прежней серии больше не наш.
-    private void OnTargetChanged(object? sender, SelectionChangedEventArgs e)
+    // Код организации — тоже часть серии: сменили его, и списки номеров надо строить заново.
+    private void OnTargetChanged(object? sender, SelectionChangedEventArgs e) => UpdateState();
+
+    // Сменили номер — сменилось и исполнение: у нового номера его не бывает, у выбранного оно
+    // свое. Перестройку списка за выбор человека не принимаем: она вызвала бы саму себя.
+    private void OnNumberChanged(object? sender, SelectionChangedEventArgs e)
     {
-        _heldNumber = null;
+        if (_rebuildingNumbers) return;
 
-        UpdateState();
-    }
-
-    // Выбор исполнения меняет и номер (при выбранном исполнении он держится за документом), и
-    // пометки «занято» в самом списке — пересчитываем все состояние. Перестройку списка за выбор
-    // человека не принимаем: иначе она вызвала бы саму себя.
-    private void OnExecutionChanged(object? sender, SelectionChangedEventArgs e)
-    {
-        if (_rebuildingExecutions) return;
-
-        // «Без исполнения» — способ ОЧИСТИТЬ поле, а не значение в нем: снимаем выбор, и поле
-        // снова пустое. Иначе в обозначении стояло бы слово там, где ждут две цифры.
-        if (ExecutionCombo.SelectedIndex == 0)
+        // Заголовок группы выбраться не должен: в разметке он и недоступен, но список ходят и
+        // с клавиатуры, а она через недоступные пункты перешагивает не всегда.
+        if (NumberCombo.SelectedItem is NumberOption { IsHeader: true })
         {
-            _rebuildingExecutions = true;
-            ExecutionCombo.SelectedIndex = -1;
-            _rebuildingExecutions = false;
+            _rebuildingNumbers = true;
+            NumberCombo.SelectedIndex = _selectedNumberIndex;
+            _rebuildingNumbers = false;
+            return;
         }
 
+        _selectedNumberIndex = NumberCombo.SelectedIndex;
         UpdateState();
     }
 
-    /// <summary>Выбранное исполнение или <c>null</c> — документ без исполнения. Пустое поле и
-    /// первая строка списка дают <c>null</c>, дальше номер исполнения совпадает с номером
-    /// строки.</summary>
-    private int? SelectedExecution()
-    {
-        var index = ExecutionCombo.SelectedIndex;
+    /// <summary>Выбранный пункт списка номеров; <c>null</c> — не выбрано ничего.</summary>
+    private NumberOption? SelectedOption() => NumberCombo.SelectedItem as NumberOption;
 
-        return index >= Designation.MinExecution && index <= Designation.MaxExecution ? index : null;
+    /// <summary>Выбранный существующий номер; <c>null</c> — выбран новый номер или ничего.
+    /// Именно этим отличается регистрация нового документа от исполнения существующего.</summary>
+    private int? SelectedNumber() => SelectedOption()?.Number;
+
+    /// <summary>Исполнение из списка; <c>null</c> — документ без исполнения.</summary>
+    private int? SelectedExecution() =>
+        ExecutionCombo.SelectedItem is string text &&
+        int.TryParse(text, out var execution) ? execution : null;
+
+    /// <summary>
+    /// Перебрать список номеров серии: свободный номер под новый документ и все выданные, двумя
+    /// группами — без исполнений и с исполнениями.
+    ///
+    /// Выбор держится ПО НОМЕРУ, а не по строке списка: после записи исполнения номер переезжает
+    /// из первой группы во вторую, и строка у него другая. Выбран был новый номер — им и остается
+    /// (уже следующим свободным): так подряд заводят разные документы.
+    ///
+    /// В закрытом поле стоит только сам номер — ряд обозначения читается как готовый номер.
+    /// Заголовки групп видны лишь в раскрытом списке и выбраться не могут.
+    /// </summary>
+    private void RefreshNumbers(string org, string eskd)
+    {
+        var chosen = SelectedNumber();
+        var wasNew = SelectedOption() is { IsHeader: false, Number: null };
+
+        var options = new List<NumberOption>();
+
+        if (_shape is not null && org.Length > 0 && EskdCatalog.IsFullCode(eskd))
+        {
+            if (DocRegistrar.NextNumber(_designations, org, eskd) is { } free)
+            {
+                options.Add(NumberOption.Header("Новый номер"));
+                options.Add(NumberOption.New(free));
+            }
+
+            var issued = Designation.Issued(_designations, org, eskd);
+
+            Group("Без исполнения", issued.Where(i => i.Executions.Count == 0));
+            Group("С исполнением",  issued.Where(i => i.Executions.Count > 0));
+
+            void Group(string title, IEnumerable<IssuedNumber> numbers)
+            {
+                var rows = numbers.ToList();
+                if (rows.Count == 0) return;   // пустой группы не показываем — заголовку не о чем
+
+                options.Add(NumberOption.Header(title));
+                options.AddRange(rows.Select(row => NumberOption.Issued(row.Number)));
+            }
+        }
+
+        // Индекс прежнего выбора в НОВОМ списке: сперва по номеру, потом — новый номер, потом
+        // первый доступный пункт (он же новый номер, если он есть).
+        var index = chosen is { } number
+            ? options.FindIndex(o => o.Number == number)
+            : -1;
+
+        if (index < 0 && (wasNew || chosen is not null))
+            index = options.FindIndex(o => o is { IsHeader: false, Number: null });
+
+        if (index < 0) index = options.FindIndex(o => !o.IsHeader);
+
+        _rebuildingNumbers = true;
+        NumberCombo.ItemsSource   = options;
+        NumberCombo.SelectedIndex = index;
+        _rebuildingNumbers = false;
+
+        _selectedNumberIndex = index;
+        NumberCombo.IsEnabled = !ByFile && options.Count > 0;
     }
 
     /// <summary>
-    /// Номер, который получит документ. <c>null</c> — считать рано (нет серии или коллекции) либо
-    /// вся серия занята.
+    /// Список исполнений выбранного номера. Свободно у него только СЛЕДУЮЩЕЕ — оно одно в списке
+    /// и стоит сразу: выбирать из девяноста девяти, где заняты первые два, человеку незачем, а
+    /// занятое исполнение так и вовсе не выбрать.
     ///
-    /// Без исполнения это первый свободный номер серии — новый документ.
-    ///
-    /// С исполнением — наоборот, ДЕЙСТВУЮЩИЙ номер: исполнение приписывают к существующему
-    /// документу, а не заводят им новый. Берется номер, за которым окно держится (только что
-    /// зарегистрированный документ), иначе последний выданный в серии. Не выдано ни одного —
-    /// остается первый свободный: исполнение документа, которого в журнале нет, заводить можно,
-    /// старые документы туда часто не заносились.
+    /// Выбран новый номер — список пуст и недоступен: у нового документа исполнения не бывает.
     /// </summary>
-    private int? NumberFor(string org, string eskd, bool withExecution)
+    private void RefreshExecution(string org, string eskd)
     {
-        if (_shape is null || org.Length == 0 || !EskdCatalog.IsFullCode(eskd)) return null;
+        var free = SelectedNumber() is { } number
+            ? Designation.FirstFreeExecution(_designations, org, eskd, number)
+            : null;
 
-        if (withExecution)
-            return _heldNumber
-                ?? Designation.LastIssued(_designations, org, eskd)
-                ?? DocRegistrar.NextNumber(_designations, org, eskd);
+        var items = free is { } execution ? new List<string> { $"{execution:D2}" } : [];
 
-        return DocRegistrar.NextNumber(_designations, org, eskd);
-    }
-
-    /// <summary>
-    /// Перебрать список исполнений: «Без исполнения» и все номера 01–99, у занятых — пометка. Занятые из
-    /// списка НЕ убираем: человек должен видеть, что 05 уже выдано, а не гадать, почему список
-    /// начинается с 06.
-    /// </summary>
-    private void RefreshExecutions(string org, string eskd, int? number)
-    {
-        var taken = number is { } n && _shape is not null
-            ? Designation.ExecutionsOf(_designations, org, eskd, n).ToHashSet()
-            : [];
-
-        var items = new List<string>(Designation.MaxExecution + 1) { NoExecution };
-
-        for (var e = Designation.MinExecution; e <= Designation.MaxExecution; e++)
-            items.Add(taken.Contains(e) ? $"{e:D2} — занято" : $"{e:D2}");
-
-        // Выбор держим по НОМЕРУ строки: он и есть номер исполнения, а текст строки мог
-        // поменяться вместе с пометкой. Пустое поле (-1) так и остается пустым.
-        var selected = ExecutionCombo.SelectedIndex;
-
-        _rebuildingExecutions = true;
         ExecutionCombo.ItemsSource   = items;
-        ExecutionCombo.SelectedIndex = selected < items.Count ? selected : -1;
-        _rebuildingExecutions = false;
+        ExecutionCombo.SelectedIndex = items.Count > 0 ? 0 : -1;
+        ExecutionCombo.IsEnabled     = !ByFile && items.Count > 0;
     }
-
-    /// <summary>Первая строка списка исполнений — ею поле очищают. Значением поля это слово не
-    /// становится: выбор первой строки снимает выделение, и поле снова показывает ту же надпись,
-    /// но уже серой подписью-подсказкой (<c>PlaceholderText</c> в разметке).</summary>
-    private const string NoExecution = "Без исполнения";
 
     /// <summary>
     /// Пересчитать доступность кнопки и подсказку в статусе. Порядок проверок — порядок
@@ -1125,17 +1120,11 @@ public partial class DocRegistryWindow : Window
         var name    = (NameBox.Text ?? "").Trim();
         var project = (ProjectBox.Text ?? "").Trim();
 
-        // Номер и список исполнений — часть обозначения, а не итога проверок: их показываем
-        // всегда, на каком бы шаге заполнения человек ни стоял.
-        //
-        // Пометки «занято» в списке считаются по ДЕЙСТВУЮЩЕМУ номеру всегда, даже когда
-        // исполнение еще не выбрано: список для того и открывают, чтобы увидеть, какие
-        // исполнения этого документа уже выданы. Считай их по первому свободному номеру —
-        // список был бы пуст, и занятое исполнение всплывало бы только после выбора.
-        var number = NumberFor(org, eskd, SelectedExecution() is not null);
-
-        NumberBox.Text = number is { } shown ? shown.ToString("D3") : "";
-        RefreshExecutions(org, eskd, NumberFor(org, eskd, withExecution: true));
+        // Номер и исполнение — часть обозначения, а не итога проверок: их показываем всегда, на
+        // каком бы шаге заполнения человек ни стоял. Сперва номера — исполнение зависит от того,
+        // какой из них выбран.
+        RefreshNumbers(org, eskd);
+        RefreshExecution(org, eskd);
 
         if (_databases.Count == 0)
         {
@@ -1181,6 +1170,25 @@ public partial class DocRegistryWindow : Window
             Block("Заполните проект");
             return;
         }
+        if (SelectedOption() is not { } option)
+        {
+            Block($"В серии «{Designation.Prefix(org, eskd)}» заняты все номера " +
+                  $"{Designation.MinNumber:D3}–{Designation.MaxNumber:D3}", red: true);
+            return;
+        }
+
+        // Выбран существующий номер — значит, заводят его исполнение, и оно обязано быть.
+        // Свободных не осталось — регистрировать нечего, пусть выберут другой номер.
+        if (option.Number is { } chosen && SelectedExecution() is null)
+        {
+            Block($"У номера {Designation.Format(org, eskd, chosen)} заняты все исполнения " +
+                  $"{Designation.MinExecution:D2}–{Designation.MaxExecution:D2}", red: true);
+            return;
+        }
+
+        // Номер нового документа движок выдаст сам при записи; в окне стоит тот же первый
+        // свободный, и показать в подсказке надо именно его.
+        var number = option.Number ?? DocRegistrar.NextNumber(_designations, org, eskd);
         if (number is null)
         {
             Block($"В серии «{Designation.Prefix(org, eskd)}» заняты все номера " +
@@ -1188,20 +1196,12 @@ public partial class DocRegistryWindow : Window
             return;
         }
 
-        var execution   = SelectedExecution();
-        var designation = execution is { } e
-            ? Designation.FormatExecution(org, eskd, number.Value, e)
+        var designation = SelectedExecution() is { } execution
+            ? Designation.FormatExecution(org, eskd, number.Value, execution)
             : Designation.Format(org, eskd, number.Value);
 
-        // Кнопка работает и на занятом исполнении: это предупреждение, а не запрет, — по нажатию
-        // окно спросит подтверждение. Строку с тем же обозначением заводят осознанно.
         RegisterBtn.IsEnabled = true;
-
-        if (execution is { } chosen &&
-            Designation.ExecutionsOf(_designations, org, eskd, number.Value).Contains(chosen))
-            SetStatus($"Номер занят с таким исполнением: {designation}", "BrushRed");
-        else
-            SetStatus($"Будет присвоено: {designation}", "BrushAccent");
+        SetStatus($"Будет присвоено: {designation}", "BrushAccent");
     }
 
     private void Block(string message, bool red = false)
@@ -1216,4 +1216,23 @@ public partial class DocRegistryWindow : Window
         if (this.TryFindResource(brushKey, out var value) && value is IBrush brush)
             StatusText.Foreground = brush;
     }
+}
+
+/// <summary>
+/// Строка списка номеров: либо заголовок группы, либо номер. Номер бывает двух родов, и разница
+/// между ними — это разница между новым документом и исполнением существующего:
+/// <list type="bullet">
+/// <item><see cref="Number"/> = <c>null</c> — НОВЫЙ номер. Какой именно, видно в
+/// <see cref="Text"/>, но движку он не называется: свободный номер тот выдаст сам и в момент
+/// записи, чтобы он не ушел к тому, кто нажал кнопку раньше;</item>
+/// <item><see cref="Number"/> задан — выданный номер, к которому заводят исполнение.</item>
+/// </list>
+/// В <see cref="Text"/> у номера стоит только он сам: ряд обозначения в окне должен читаться как
+/// готовый номер, а закрытое поле списка показывает ровно эту строку.
+/// </summary>
+public sealed record NumberOption(string Text, int? Number, bool IsHeader)
+{
+    public static NumberOption Header(string title) => new(title, null, true);
+    public static NumberOption New(int free)        => new($"{free:D3}", null, false);
+    public static NumberOption Issued(int number)   => new($"{number:D3}", number, false);
 }
