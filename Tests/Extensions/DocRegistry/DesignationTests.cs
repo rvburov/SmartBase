@@ -203,4 +203,21 @@ public sealed class DesignationTests
     [Fact]
     public void Execution_takes_the_whole_number_too() =>
         Assert.Equal(3, Designation.FirstFree(["АБВГ.301121.001", "АБВГ.301121.002-01"], "АБВГ", "301121"));
+
+    // ── Действующий номер ─────────────────────────────────────────────────────
+
+    /// <summary>Последний выданный — НАИБОЛЬШИЙ из занятых, а не первый свободный: к нему
+    /// приписывают исполнение, и дырка в середине серии тут ни при чем.</summary>
+    [Fact]
+    public void Last_issued_is_the_greatest_taken_number() =>
+        Assert.Equal(14, Designation.LastIssued(
+            ["АБВГ.301121.001", "АБВГ.301121.014", "АБВГ.301121.002"], "АБВГ", "301121"));
+
+    [Fact]
+    public void Execution_counts_as_the_last_issued() =>
+        Assert.Equal(14, Designation.LastIssued(["АБВГ.301121.014-01"], "АБВГ", "301121"));
+
+    [Fact]
+    public void Empty_series_has_no_last_issued() =>
+        Assert.Null(Designation.LastIssued(["АБВГ.723611.005"], "АБВГ", "301121"));
 }

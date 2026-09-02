@@ -23,8 +23,12 @@ namespace SmartBase.Extensions.DocRegistry;
 /// «АБВГ.301121.012-01». Номер выдает расширение, поле недоступно; исполнение выбирает человек
 /// из списка 01–99, где занятые помечены.
 ///
-/// Второй способ работы — ЗАГРУЗКА ФАЙЛОМ (список сверху): номера в файле уже выданы, окно их
-/// только проверяет и заносит в журнал разом. Тогда все поля документа гаснут — значения берутся
+/// Номер зависит от того, выбрано ли исполнение. Без исполнения это первый свободный номер серии
+/// — новый документ. С исполнением — ДЕЙСТВУЮЩИЙ номер: исполнение приписывают к существующему
+/// документу, а не заводят им новый (см. <see cref="NumberFor"/>).
+///
+/// Второй способ работы — ЗАГРУЗКА ФАЙЛОМ (список сверху): окно заносит в журнал целый список
+/// разом, выдавая номера по тем же правилам. Тогда все поля документа гаснут — значения берутся
 /// из файла, — а рамка классификатора показывает разбор файла: ошибки с номерами строк или то,
 /// что будет записано. Чтение и проверка — <see cref="RegistryFile"/> и
 /// <see cref="RegistryImport"/>, запись — <see cref="DocRegistrar.RegisterAll"/>.
@@ -89,6 +93,17 @@ public partial class DocRegistryWindow : Window
     // Файл не прочитался целиком (не тот формат, не те столбцы) — причина показывается вместо
     // разбора строк. От ошибок В СТРОКАХ отличается тем, что проверять там нечего.
     private string? _fileProblem;
+
+    /// <summary>
+    /// Сколько строк записано из этого файла; <c>null</c> — еще не записан.
+    ///
+    /// Сторожит от повторной записи. Номера теперь выдает расширение, поэтому второе нажатие
+    /// кнопки завело бы те же документы еще раз, уже под другими номерами, и ничто бы этому не
+    /// помешало: повторов, на которых спотыкался бы разбор, тут нет по устройству. Записанный
+    /// файл поэтому снимается с разбора целиком — чтобы занести его снова, за него надо взяться
+    /// заново.
+    /// </summary>
+    private int? _written;
 
     // Номер последнего запущенного чтения файла — то же назначение, что у _searchToken.
     private int _fileToken;
@@ -360,6 +375,7 @@ public partial class DocRegistryWindow : Window
         _rows        = [];
         _check       = null;
         _fileProblem = null;
+        _written     = null;
 
         ShowReport();
         UpdateState();
@@ -454,14 +470,32 @@ public partial class DocRegistryWindow : Window
         RegisterBtn.IsEnabled = false;
         try
         {
-            var count = DocRegistrar.RegisterAll(_repo!, _shape!, check.Rows, DateTime.Now);
+            // Номера выдаются ЗАНОВО и по свежему журналу: между разбором файла и нажатием
+            // кнопки те же номера мог занять другой регистратор. Довод тот же, что и у ручной
+            // регистрации, — только там номер один, а здесь весь список.
+            _designations = [.. DocRegistrar.Designations(_repo!, _shape!)];
 
-            // Записанные обозначения — сразу в местный список: по нему считается и предпросмотр
-            // номера в ручном режиме, и повторы при следующей проверке файла.
-            foreach (var row in check.Rows) _designations.Add(row.Designation);
+            var fresh = RegistryImport.Check(_rows, _designations, _orgs);
+            if (!fresh.Ok || fresh.Rows.Count == 0)
+                throw new DocRegistryException("Файл больше не годится к записи — смотрите разбор.");
+
+            var count = DocRegistrar.RegisterAll(_repo!, _shape!, fresh.Rows, DateTime.Now);
+
+            // Выданные обозначения — сразу в местный список: по нему считается и предпросмотр
+            // номера в ручном режиме, и номера следующего файла.
+            foreach (var row in fresh.Rows) _designations.Add(row.Designation);
 
             Log.Information("Регистрация КД: из файла записано строк {Count} — коллекция «{Collection}»",
                             count, _shape!.CollectionName);
+
+            // Файл занесен и с разбора снимается, а в рамке остается то, что записано, — с
+            // выданными номерами: по этому списку человек и сверяется.
+            _written = count;
+            _rows    = [];
+            _check   = null;
+
+            ShowLines(Limited(
+                [.. fresh.Rows.Select(r => $"Строка {r.Line}: {r.Designation} — {r.Name}")], "строк"));
 
             (message, brush) = ($"Записано строк: {count}", "BrushAccent");
         }
@@ -484,8 +518,8 @@ public partial class DocRegistryWindow : Window
             _busy = false;
         }
 
-        // Тот же файл второй раз не запишется: перепроверка против пополненного журнала сделает
-        // все его строки повтором, и кнопка погаснет.
+        // После удачной записи перепроверять нечего — строки сняты с разбора; а вот после отказа
+        // разбор надо освежить: журнал мог измениться, и номера в предпросмотре уже другие.
         RecheckFile();
         UpdateState();
         SetStatus(message, brush);
@@ -520,6 +554,13 @@ public partial class DocRegistryWindow : Window
             Block(_schemaProblem is { Length: > 0 } problem
                 ? $"Вы выбрали неправильную коллекцию — {problem}"
                 : "Вы выбрали неправильную коллекцию", red: true);
+            return;
+        }
+        if (_written is { } written)
+        {
+            RegisterBtn.IsEnabled = false;
+            SetStatus($"Записано строк: {written} — чтобы занести этот файл еще раз, " +
+                      "выберите его заново", "BrushAccent");
             return;
         }
         if ((FileBox.Text ?? "").Trim().Length == 0)
@@ -780,6 +821,9 @@ public partial class DocRegistryWindow : Window
         var input = Collect();
         string message, brush;
 
+        // Записали исполнение — документ остался тот же: поля не чистятся и курсор не уходит.
+        var sameDocument = false;
+
         _busy = true;
         RegisterBtn.IsEnabled = false;
         try
@@ -796,16 +840,19 @@ public partial class DocRegistryWindow : Window
             Log.Information("Регистрация КД: {Designation} — коллекция «{Collection}»",
                             done.Designation, _shape.CollectionName);
 
-            // Записали исполнение — номер остается за этим документом, а список исполнений
-            // встает на следующее свободное: исполнения одного документа заводят подряд. Иначе
-            // список остался бы на только что занятом, и окно тут же сказало бы «номер занят».
-            _heldNumber = done.Execution is null ? null : done.Number;
+            // Номер записанного документа окно держит за собой: следующее исполнение припишется
+            // именно к нему. Держать надо и после обычной регистрации — последний выданный в
+            // серии может быть и не этим (номер выдается в дырку: заняты 001, 002 и 014 — новый
+            // документ получит 003, а последний в серии так и останется 014).
+            _heldNumber = done.Number;
 
             if (done.Execution is not null)
                 ExecutionCombo.SelectedIndex = Designation.FirstFreeExecution(
                     _designations, input.Org.Trim(), input.Eskd.Trim(), done.Number) ?? -1;
 
-            ClearDocumentFields(keepDocument: done.Execution is not null);
+            sameDocument = done.Execution is not null;
+
+            ClearDocumentFields(keepDocument: sameDocument);
             (message, brush) = ($"Зарегистрировано: {done.Designation}", "BrushAccent");
         }
         catch (PermissionDeniedException ex)
@@ -832,9 +879,9 @@ public partial class DocRegistryWindow : Window
         UpdateState();
         SetStatus(message, brush);
 
-        // Курсор — в то поле, с которого начинается следующий документ. Когда номер держится за
-        // документом, код ЕСКД остался прежним и возвращаться в него незачем.
-        if (_heldNumber is null) EskdBox.Focus();
+        // Курсор — в то поле, с которого начинается следующий документ. Записали исполнение —
+        // документ тот же, код ЕСКД остался прежним, и возвращаться в него незачем.
+        if (!sameDocument) EskdBox.Focus();
     }
 
     /// <summary>
@@ -848,7 +895,7 @@ public partial class DocRegistryWindow : Window
         var eskd = (EskdBox.Text ?? "").Trim();
 
         if (SelectedExecution() is not { } execution) return true;
-        if (NumberForDisplay(org, eskd) is not { } number) return true;
+        if (NumberFor(org, eskd, withExecution: true) is not { } number) return true;
         if (!Designation.ExecutionsOf(_designations, org, eskd, number).Contains(execution)) return true;
 
         return await new ConfirmDialog(
@@ -868,9 +915,13 @@ public partial class DocRegistryWindow : Window
         FirstUse:   FirstUseBox.Text    ?? "",
         Summary:    SummaryBox.Text     ?? "",
         Execution:  SelectedExecution(),
-        // Номер называем движку, только пока держимся за документ: иначе пусть подбирает сам и
-        // в момент записи — так номер не уйдет к тому, кто нажал кнопку раньше.
-        Number:     SelectedExecution() is null ? null : _heldNumber,
+        // Номер называем движку, только когда выбрано исполнение: оно приписывается к
+        // ДЕЙСТВУЮЩЕМУ документу, и это тот самый номер, что стоит в окне. Без исполнения номер
+        // подбирает движок и в момент записи — так он не уйдет к тому, кто нажал кнопку раньше.
+        Number:     SelectedExecution() is null
+                        ? null
+                        : NumberFor(OrgCombo.SelectedItem as string ?? "",
+                                    (EskdBox.Text ?? "").Trim(), withExecution: true),
         // До регистрации доходят только подтвержденные повторы (см. ConfirmDuplicateExecution).
         ConfirmedDuplicate: true);
 
@@ -943,15 +994,25 @@ public partial class DocRegistryWindow : Window
     }
 
     /// <summary>
-    /// Номер, который получит документ: тот, за которым окно держится (пока подряд заводят
-    /// исполнения), иначе первый свободный. <c>null</c> — считать рано (нет серии или коллекции)
-    /// либо вся серия занята.
+    /// Номер, который получит документ. <c>null</c> — считать рано (нет серии или коллекции) либо
+    /// вся серия занята.
+    ///
+    /// Без исполнения это первый свободный номер серии — новый документ.
+    ///
+    /// С исполнением — наоборот, ДЕЙСТВУЮЩИЙ номер: исполнение приписывают к существующему
+    /// документу, а не заводят им новый. Берется номер, за которым окно держится (только что
+    /// зарегистрированный документ), иначе последний выданный в серии. Не выдано ни одного —
+    /// остается первый свободный: исполнение документа, которого в журнале нет, заводить можно,
+    /// старые документы туда часто не заносились.
     /// </summary>
-    private int? NumberForDisplay(string org, string eskd)
+    private int? NumberFor(string org, string eskd, bool withExecution)
     {
         if (_shape is null || org.Length == 0 || !EskdCatalog.IsFullCode(eskd)) return null;
 
-        if (SelectedExecution() is not null && _heldNumber is { } held) return held;
+        if (withExecution)
+            return _heldNumber
+                ?? Designation.LastIssued(_designations, org, eskd)
+                ?? DocRegistrar.NextNumber(_designations, org, eskd);
 
         return DocRegistrar.NextNumber(_designations, org, eskd);
     }
@@ -1004,10 +1065,15 @@ public partial class DocRegistryWindow : Window
 
         // Номер и список исполнений — часть обозначения, а не итога проверок: их показываем
         // всегда, на каком бы шаге заполнения человек ни стоял.
-        var number = NumberForDisplay(org, eskd);
+        //
+        // Пометки «занято» в списке считаются по ДЕЙСТВУЮЩЕМУ номеру всегда, даже когда
+        // исполнение еще не выбрано: список для того и открывают, чтобы увидеть, какие
+        // исполнения этого документа уже выданы. Считай их по первому свободному номеру —
+        // список был бы пуст, и занятое исполнение всплывало бы только после выбора.
+        var number = NumberFor(org, eskd, SelectedExecution() is not null);
 
         NumberBox.Text = number is { } shown ? shown.ToString("D3") : "";
-        RefreshExecutions(org, eskd, number);
+        RefreshExecutions(org, eskd, NumberFor(org, eskd, withExecution: true));
 
         if (_databases.Count == 0)
         {

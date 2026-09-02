@@ -95,12 +95,27 @@ public static class Designation
     /// Первый свободный номер серии среди уже выданных обозначений. Дырки заполняются:
     /// заняты 001 и 003 — вернется 002. <c>null</c> — вся серия 001…999 разобрана.
     /// </summary>
-    public static int? FirstFree(IEnumerable<string?> designations, string org, string eskd)
+    public static int? FirstFree(IEnumerable<string?> designations, string org, string eskd) =>
+        FirstFreeAmong(TakenNumbers(designations, org, eskd));
+
+    /// <summary>
+    /// Занятые номера серии — НАБОРОМ. Нужно там, где номера выдаются подряд нескольким
+    /// документам (загрузка файлом): набор пополняется выданным номером, и следующий документ
+    /// получает следующий свободный, а журнал перечитывать не приходится.
+    /// </summary>
+    public static HashSet<int> TakenNumbers(IEnumerable<string?> designations, string org, string eskd)
     {
         var taken = new HashSet<int>();
+
         foreach (var d in designations)
             if (NumberIn(d, org, eskd) is { } number) taken.Add(number);
 
+        return taken;
+    }
+
+    /// <summary>Первый свободный номер среди занятых; <c>null</c> — вся серия 001…999 разобрана.</summary>
+    public static int? FirstFreeAmong(IReadOnlySet<int> taken)
+    {
         for (var n = MinNumber; n <= MaxNumber; n++)
             if (!taken.Contains(n)) return n;
 
@@ -114,28 +129,57 @@ public static class Designation
     /// сам документ при этом может быть и зарегистрирован, и нет.
     /// </summary>
     public static IReadOnlyList<int> ExecutionsOf(IEnumerable<string?> designations,
-                                                  string org, string eskd, int number)
+                                                  string org, string eskd, int number) =>
+        [.. new SortedSet<int>(TakenExecutions(designations, org, eskd, number))];
+
+    /// <summary>
+    /// Занятые исполнения одного номера — НАБОРОМ. Нужно там же, где и набор номеров: когда
+    /// исполнения выдаются подряд нескольким строкам файла, набор пополняется выданным, и
+    /// следующая строка получает следующее свободное.
+    /// </summary>
+    public static HashSet<int> TakenExecutions(IEnumerable<string?> designations,
+                                               string org, string eskd, int number)
     {
-        var taken = new SortedSet<int>();
+        var taken = new HashSet<int>();
 
         foreach (var d in designations)
             if (ParseInSeries(d, org, eskd) is { Execution: { } execution } parsed && parsed.Number == number)
                 taken.Add(execution);
 
-        return [.. taken];
+        return taken;
     }
 
     /// <summary>Первое свободное исполнение номера; <c>null</c> — заняты все 01…99.
     /// Дырки заполняются так же, как у номеров: заняты 01 и 03 — вернется 02.</summary>
     public static int? FirstFreeExecution(IEnumerable<string?> designations,
-                                          string org, string eskd, int number)
-    {
-        var taken = ExecutionsOf(designations, org, eskd, number);
+                                          string org, string eskd, int number) =>
+        FirstFreeExecutionAmong(TakenExecutions(designations, org, eskd, number));
 
+    /// <summary>Первое свободное исполнение среди занятых; <c>null</c> — заняты все 01…99.</summary>
+    public static int? FirstFreeExecutionAmong(IReadOnlySet<int> taken)
+    {
         for (var e = MinExecution; e <= MaxExecution; e++)
             if (!taken.Contains(e)) return e;
 
         return null;
     }
 
+    /// <summary>
+    /// Последний выданный номер серии — наибольший из занятых; <c>null</c> — в серии не выдано
+    /// ни одного номера.
+    ///
+    /// Это ДЕЙСТВУЮЩИЙ документ серии: к нему приписывают исполнение, когда его заводят не сразу
+    /// за регистрацией самого документа. Первый свободный тут не годится — он означал бы новый
+    /// документ, а исполнение приписывают к существующему.
+    /// </summary>
+    public static int? LastIssued(IEnumerable<string?> designations, string org, string eskd)
+    {
+        int? last = null;
+
+        foreach (var d in designations)
+            if (NumberIn(d, org, eskd) is { } number && (last is null || number > last))
+                last = number;
+
+        return last;
+    }
 }

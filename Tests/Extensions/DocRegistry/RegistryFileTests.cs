@@ -12,7 +12,7 @@ public sealed class RegistryFileTests
 {
     private static readonly string[] Values =
     [
-        "Втулка", "АБВГ.301121.001", "Иванов Иван Иванович", "27.08.2026",
+        "Втулка", "АБВГ.301121.ХХХ", "Иванов Иван Иванович", "27.08.2026",
         "Проект", "Учтено", "Изделие 1", "Кратко",
     ];
 
@@ -56,7 +56,7 @@ public sealed class RegistryFileTests
 
         Assert.Equal(2,                       row.Line);
         Assert.Equal("Втулка",                row.Name);
-        Assert.Equal("АБВГ.301121.001",       row.Designation);
+        Assert.Equal("АБВГ.301121.ХХХ",       row.Designation);
         Assert.Equal("Иванов Иван Иванович",  row.Fio);
         Assert.Equal("Проект",                row.Project);
         Assert.Equal("Учтено",                row.Accounting);
@@ -74,7 +74,7 @@ public sealed class RegistryFileTests
         var rows = RegistryFile.Read(Book(dir, sheet =>
         {
             Fill(sheet, 2);
-            Fill(sheet, 5, ["Вал", "АБВГ.301121.002", "Иванов Иван Иванович", "", "Проект", "", "", ""]);
+            Fill(sheet, 5, ["Вал", "АБВГ.301121.ХХХ", "Иванов Иван Иванович", "", "Проект", "", "", ""]);
         }));
 
         Assert.Equal([2, 5], rows.Select(r => r.Line));
@@ -97,7 +97,7 @@ public sealed class RegistryFileTests
 
         var row = Assert.Single(rows);
         Assert.Equal("Втулка",          row.Name);
-        Assert.Equal("АБВГ.301121.001", row.Designation);
+        Assert.Equal("АБВГ.301121.ХХХ", row.Designation);
     }
 
     // ── Шапка ─────────────────────────────────────────────────────────────────
