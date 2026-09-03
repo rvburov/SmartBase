@@ -402,6 +402,12 @@ public partial class RecordDialog : Window
             ShowError(ex.Message);
             return;
         }
+        catch (Exception ex) when (Utils.DbErrors.Handle(ex, _repository.DbPath))
+        {
+            // Общая база занята/недоступна, запись удалил другой пользователь: сообщение
+            // показано карточкой, окно остается открытым вместе с введенным.
+            return;
+        }
 
         Close(true);
     }

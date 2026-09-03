@@ -3,11 +3,13 @@
              x:Class="SmartBase.Controls.Widgets.NoticeBanner"
              IsVisible="False">
 
-    <!-- ЕДИНЫЙ вид уведомления на все приложение: иконка-восклицание + красная рамка +
-         светло-красная подложка + красный текст. Любая новая «красная плашка» (ошибка
-         валидации, пояснение в диалоге, тост) делается ЭТИМ виджетом, а не своей версткой.
+    <!-- ЕДИНЫЙ вид уведомления на все приложение: иконка-восклицание + рамка + светлая
+         подложка + текст в цвет рамки. Красный — ошибка (стандарт), синий (акцент) — сведение
+         (Kind=Info, кисти переключает код). Любая новая «плашка» (ошибка валидации, пояснение
+         в диалоге, карточка AppNotifications) делается ЭТИМ виджетом, а не своей версткой.
          Цвета — только из палитры (Colors.axaml), размер текста — из Typography.axaml. -->
-    <Border Background="{StaticResource BrushRedLight}"
+    <Border x:Name="Frame"
+            Background="{StaticResource BrushRedLight}"
             BorderBrush="{StaticResource BrushRed}"
             BorderThickness="{DynamicResource BorderLine}"
             CornerRadius="{StaticResource RadiusBase}"
@@ -18,7 +20,7 @@
             <Viewbox Grid.Column="0" Width="{StaticResource IconSizeSmall}" Height="{StaticResource IconSizeSmall}"
                      VerticalAlignment="Center">
                 <Canvas Width="24" Height="24">
-                    <Ellipse Width="24" Height="24" Fill="{StaticResource BrushRed}" />
+                    <Ellipse x:Name="IconCircle" Width="24" Height="24" Fill="{StaticResource BrushRed}" />
                     <Path Data="{StaticResource IconAlertMark}"
                           Stroke="White" StrokeThickness="2"
                           StrokeLineCap="Round" />

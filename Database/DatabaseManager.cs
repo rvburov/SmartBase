@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
+using Serilog;
 using SmartBase.Database.Repositories;
 
 namespace SmartBase.Database;
@@ -123,6 +124,9 @@ public sealed partial class DatabaseManager : IDisposable
         // незачем. Тоже в фоне и тоже best-effort.
         _maintenance.Add(Constructor.ApplyTaskEventsRetention());
 
+        // NULL в «Названии» записей старых файлов — разовый ремонт в фоне (см. RepairNullTitles).
+        if (provider != "postgres") _maintenance.Add(RepairNullTitles(Context));
+
         Categories.SeedDefaults();
     }
 
@@ -140,6 +144,12 @@ public sealed partial class DatabaseManager : IDisposable
     {
         WaitMaintenance();
         Context.Dispose();
+        // Закрыли базу — закрываем и пул подключений к ее файлу. Иначе простаивающие
+        // соединения пула держат файл открытым (в WAL — с общим замком: другой процесс не
+        // сможет перевести журнал в DELETE, стенд --check-pragmas ловил здесь «database is
+        // locked»), а после потери сетевой базы повторное монтирование брало бы из пула
+        // мертвый хендл (см. AppDbContext.ResetPool).
+        if (Provider == "sqlite") AppDbContext.ResetPool(Path);
     }
 
     /// <summary>
@@ -175,8 +185,73 @@ public sealed partial class DatabaseManager : IDisposable
     //    в заголовке — при первом открытии с шары конвертируем (нужен эксклюзив;
     //    если его держит старая версия приложения в WAL — прагма упадет SQLITE_BUSY,
     //    монтирование честно покажет «недоступна», а не будет работать небезопасно).
-    private static void ApplyJournalMode(AppDbContext db, bool shared) =>
-        db.Database.ExecuteSqlRaw(shared ? "PRAGMA journal_mode=DELETE;" : "PRAGMA journal_mode=WAL;");
+    //    Смена режима требует эксклюзивного замка на файл, поэтому сначала читаем текущий и
+    //    трогаем файл, только если режим другой: общую базу открывают десятки копий приложения,
+    //    и каждая безусловная запись режима на ходу у соседей заканчивалась бы SQLITE_BUSY.
+    private static void ApplyJournalMode(AppDbContext db, bool shared)
+    {
+        var want = shared ? "delete" : "wal";
+        db.Database.OpenConnection();
+        try
+        {
+            using var cmd = db.Database.GetDbConnection().CreateCommand();
+            cmd.CommandText = "PRAGMA journal_mode;";
+            var current = Convert.ToString(cmd.ExecuteScalar())?.ToLowerInvariant();
+            if (current == want) return;
+            cmd.CommandText = $"PRAGMA journal_mode={want.ToUpperInvariant()};";
+            cmd.ExecuteScalar();
+        }
+        finally
+        {
+            db.Database.CloseConnection();
+        }
+    }
+
+    // Разовый ремонт данных: в старых файлах встречаются записи с NULL в db_records.Title
+    // (колонка объявлена NOT NULL DEFAULT '' с миграции AddRecordTitleAndDescription, но
+    // файлы, созданные до нее иным путем, ограничения не несут). EF при чтении такой строки
+    // в сущность падает «The data is NULL at ordinal» — так рушилось открытие панели записи
+    // (crash.log). Проекции страниц терпят NULL сами (COALESCE), а здесь чиним источник:
+    // один раз на файл (флаг в db_meta), в фоне на свежем подключении, и сначала ЧТЕНИЕМ —
+    // UPDATE держал бы write-замок общей базы на весь скан таблицы, а NULL в ней, как
+    // правило, нет.
+    private const string TitleRepairKey = "repair.title-null";
+
+    private static Task RepairNullTitles(AppDbContext db)
+    {
+        var path = db.DbPath;
+        return Task.Run(() =>
+        {
+            try
+            {
+                using var ctx = new AppDbContext(path);
+                ctx.ApplyPerformancePragmas();
+                ctx.Database.OpenConnection();
+                try
+                {
+                    var conn = ctx.Database.GetDbConnection();
+                    if (ReadMetaLong(conn, TitleRepairKey) is not null) return;
+                    using (var probe = conn.CreateCommand())
+                    {
+                        probe.CommandText = "SELECT 1 FROM db_records WHERE \"Title\" IS NULL LIMIT 1;";
+                        if (probe.ExecuteScalar() is not null)
+                        {
+                            using var fix = conn.CreateCommand();
+                            fix.CommandText = "UPDATE db_records SET \"Title\" = '' WHERE \"Title\" IS NULL;";
+                            var n = fix.ExecuteNonQuery();
+                            Log.Information("Ремонт «Название» в {Path:l}: пустых значений вместо NULL — {Count}", path, n);
+                        }
+                    }
+                    using var mark = conn.CreateCommand();
+                    mark.CommandText = "INSERT INTO db_meta (\"Key\", \"Value\") VALUES ('" + TitleRepairKey + "', '1') " +
+                                       "ON CONFLICT(\"Key\") DO UPDATE SET \"Value\" = '1';";
+                    mark.ExecuteNonQuery();
+                }
+                finally { ctx.Database.CloseConnection(); }
+            }
+            catch { /* best-effort: повторится при следующем монтировании */ }
+        });
+    }
 
     // Прагмы скорости (на соединение):
     //  • synchronous=NORMAL — с WAL безопасно и заметно быстрее коммитов (импорт пачками);

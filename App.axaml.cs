@@ -30,6 +30,21 @@ public partial class App : Application
                 return;
             }
 
+            // Необработанное исключение на UI-потоке (обработчик клика, диспетчерская задача,
+            // продолжение async void — например, тайм-аут буфера обмена внутри TextBox.Copy)
+            // раньше выходило из цикла сообщений и завершало процесс (crash.log «ui-loop»).
+            // Ловим здесь: след остается в crash.log и logs.db, человеку — карточка, работа
+            // продолжается. Точечные catch в UI (DbErrors и др.) остаются основной защитой,
+            // это последний рубеж внутри процесса.
+            Dispatcher.UIThread.UnhandledException += (_, e) =>
+            {
+                Program.LogCrash("ui-handled", e.Exception);
+                e.Handled = true;
+                Controls.Widgets.AppNotifications.Error(
+                    $"Непредвиденная ошибка: {e.Exception.Message} " +
+                    "Подробности записаны в журнал (Настройки → Диагностика).");
+            };
+
             // Прибрать залежавшийся temp-артефакт обновления (~122 МБ) — фоном, чтобы не
             // задерживать старт. См. docs/guides/auto-update.md.
             _ = Task.Run(Setup.InstallService.CleanStaleUpdateArtifacts);

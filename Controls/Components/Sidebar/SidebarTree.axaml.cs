@@ -45,8 +45,37 @@ public partial class SidebarTree : UserControl
     // все из рабочего пространства, и каждая показывается корневым узлом (_showRoots).
     // Locked — база смонтирована, но текущий пользователь не допущен (нет IsApproved и
     // не админ): корень показывается с замком, дети не строятся, клик — запрос доступа.
-    private sealed record MountedDb(int DbId, string Name, ConstructorRepository Repo, bool Locked = false);
+    // Снимок структуры базы (группы/коллекции) читается ОДИН раз за Refresh — в BuildDbChildren —
+    // и дальше служит галочкам, набору активных коллекций и чистке ключей. Раньше каждая из этих
+    // операций ходила в базу заново: при потере сетевой папки сайдбар на UI-потоке ждал таймаут
+    // каждой мертвой базы по несколько раз, а чтение без catch (AllCollectionKeys) роняло
+    // приложение. Readable=false — последнее чтение не удалось: снимок остается прежним, а
+    // галочки такой базы не чистятся (см. PersistChecks).
+    private sealed class MountedDb(int dbId, string name, ConstructorRepository repo, bool locked = false)
+    {
+        public int                   DbId        { get; } = dbId;
+        public string                Name        { get; } = name;
+        public ConstructorRepository Repo        { get; } = repo;
+        public bool                  Locked      { get; } = locked;
+        public List<DbGroup>         Groups      { get; set; } = [];
+        public List<DbCollection>    Collections { get; set; } = [];
+        public bool                  Readable    { get; set; }
+    }
     private readonly List<MountedDb> _dbs = [];
+
+    // Надпись под именем СМОНТИРОВАННОЙ базы («снова доступна» после возврата — ставит
+    // MainWindow на несколько секунд). Дерево пересобирается часто, поэтому текст хранится
+    // и применяется при каждой сборке строк, пока его не снимут (null).
+    private readonly Dictionary<int, string> _dbStatus = [];
+
+    public void SetDatabaseStatus(int dbId, string? text)
+    {
+        if (text is null) _dbStatus.Remove(dbId);
+        else              _dbStatus[dbId] = text;
+        foreach (var row in _rows)
+            if (row.Node.IsDatabase && !row.Node.IsPending && row.Node.DbId == dbId)
+                row.SetStatus(text ?? "", false);
+    }
     private bool _showRoots;
 
     // Еще не смонтированные БД (фоновая очередь): узел-заглушка с именем и статусной
@@ -200,7 +229,7 @@ public partial class SidebarTree : UserControl
         {
             // Запертая база событий не дает (календарь получает только допущенные, но страхуемся).
             if (db.Locked) { result[db.DbId] = []; continue; }
-            var ids = db.Repo.GetAllCollections()
+            var ids = db.Collections
                 .Where(c => c.Id.HasValue).Select(c => c.Id!.Value)
                 .Where(id => !_uncheckedIds.Contains((db.DbId, id)))
                 .ToHashSet();
@@ -287,7 +316,10 @@ public partial class SidebarTree : UserControl
     {
         foreach (var n in nodes)
         {
-            _rows.Add(new SidebarRow(n, depth, _mode, IsChecked(n), _selectedNodes.Contains(n)));
+            var row = new SidebarRow(n, depth, _mode, IsChecked(n), _selectedNodes.Contains(n));
+            if (n.IsDatabase && !n.IsPending && _dbStatus.TryGetValue(n.DbId, out var status))
+                row.SetStatus(status, false);
+            _rows.Add(row);
             if ((n.IsGroup || n.IsDatabase) && n.IsExpanded)
                 Flatten(n.Children, depth + 1);
         }
@@ -356,7 +388,8 @@ public partial class SidebarTree : UserControl
         // цикл UI — приложение падало на простом переключении раздела, унося и остальные
         // смонтированные базы. Теперь такая база показывается пустой (следующее обновление
         // от поллера ее восстановит), а «база пропала» уходит монитору доступности.
-        // Тоста нет намеренно: это ошибка ЧТЕНИЯ, политика — см. DbErrors.HandleRead.
+        // Сообщения нет намеренно: это ошибка ЧТЕНИЯ, политика — см. DbErrors.HandleRead.
+        // Прочитанное запоминается в MountedDb — единственное чтение структуры за Refresh.
         List<DbGroup>      groups;
         List<DbCollection> collections;
         try
@@ -368,8 +401,12 @@ public partial class SidebarTree : UserControl
         {
             DbErrors.HandleRead(ex, db.Repo.DbPath);
             Log.Warning(ex, "Сайдбар: содержимое базы «{Name:l}» не прочитано", db.Name);
+            db.Readable = false;
             return [];
         }
+        db.Groups      = groups;
+        db.Collections = collections;
+        db.Readable    = true;
 
         var root = new List<SidebarNode>();
 
@@ -569,24 +606,25 @@ public partial class SidebarTree : UserControl
         if (!ChecksMode) return;
 
         // Ключи удаленных коллекций иначе копились бы все время жизни установки. Чистим
-        // только по базам, которые сейчас смонтированы и читаемы: у запертой (нет допуска)
-        // список коллекций пуст, и ее галочки стерлись бы за компанию. Ключи баз, которых
-        // сейчас нет вовсе (отключена, недоступна), не трогаем — база вернется с ними.
-        var readable = _dbs.Where(d => !d.Locked).ToList();
+        // только по базам, которые сейчас смонтированы и прочитаны: у запертой (нет допуска)
+        // список коллекций пуст, и ее галочки стерлись бы за компанию; у непрочитанной
+        // (занята/пропала) — тоже. Ключи баз, которых сейчас нет вовсе (отключена,
+        // недоступна), не трогаем — база вернется с ними.
+        var readable = _dbs.Where(d => !d.Locked && d.Readable).ToList();
         var known    = readable.Select(d => d.DbId).ToHashSet();
         var alive    = readable
-            .SelectMany(db => db.Repo.GetAllCollections()
-                                     .Where(c => c.Id.HasValue)
-                                     .Select(c => (Db: db.DbId, Id: c.Id!.Value)))
+            .SelectMany(db => db.Collections
+                                .Where(c => c.Id.HasValue)
+                                .Select(c => (Db: db.DbId, Id: c.Id!.Value)))
             .ToHashSet();
         _uncheckedIds.RemoveWhere(k => known.Contains(k.Db) && !alive.Contains(k));
 
         AppSettings.SaveHiddenCollections(ChecksScope, _uncheckedIds);
     }
 
-    // Ключи (DbId, CollectionId) всех коллекций всех смонтированных БД.
+    // Ключи (DbId, CollectionId) всех коллекций всех смонтированных БД — из снимка, без базы.
     private IEnumerable<(int Db, int Id)> AllCollectionKeys() =>
-        _dbs.SelectMany(db => db.Repo.GetAllCollections()
+        _dbs.SelectMany(db => db.Collections
             .Where(c => c.Id.HasValue)
             .Select(c => (db.DbId, c.Id!.Value)));
 

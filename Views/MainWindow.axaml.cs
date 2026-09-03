@@ -80,10 +80,20 @@ public partial class MainWindow : Window
         // Резолвер чужих баз для межбазовых связей (тип «relation» с TargetDbId>0).
         RelationDbResolver.Configure(workspace);
 
+        // Сообщения человеку — карточки в правом верхнем углу окна (стопкой, сами гаснут).
+        Controls.Widgets.AppNotifications.Install(this);
+
         // Ошибки записи на пользовательских действиях (правка ячейки, CRUD): «занята» —
-        // тост, «недоступна» — тост + сигнал монитору. См. Utils/DbErrors.
+        // карточка + сигнал монитору (на сетевой базе BUSY бывает признаком мертвых хендлов
+        // после перезагрузки сервера), «недоступна» — карточка + сигнал монитору. См. Utils/DbErrors.
         DbErrors.Notify        = Notify;
         DbErrors.ReportFailure = _health.ReportFailureByPath;
+        DbErrors.ReportBusy    = _health.ReportBusyByPath;
+        // Строки, которые мы правили, уже удалил другой пользователь общей базы: сохранение
+        // прошло без них (AppDbContext.SaveReconcilingPhantomDeletes) — человек должен знать.
+        AppDbContext.PhantomRowsDropped = _ => Notify(
+            "Объект уже удален другим пользователем — часть изменений не применена. " +
+            "Данные на экране обновятся через несколько секунд.");
         // Отказ по правам — окном с причиной (тост тут легко пропустить): так ведут себя
         // и запрещенные пункты меню, и замок у коллекции без права просмотра.
         DbErrors.NotifyDenied  = message => Controls.Dialogs.PermissionNotice.Show(this, message);
@@ -134,16 +144,24 @@ public partial class MainWindow : Window
                 _workspace.Unmount(dbId);
                 return;
             }
+            var returned = false;
             if (manager is null)
             {
                 // Не смонтировалась (нет сети/файла) — отдаем монитору под фоновые ретраи:
                 // сервер включится — база подключится сама, без действий пользователя.
                 var entry = _workspace.Registry.GetAll().FirstOrDefault(d => d.Id == dbId);
-                if (entry is not null) _health.TrackFailed(entry);
+                if (entry is not null)
+                    _health.TrackFailed(entry, _mountQueue.StatusOf(dbId)?.Reason ?? "не удалось подключиться");
             }
-            else if (_lostDbIds.Remove(dbId))
-                Notify($"База данных «{manager.Name}» снова доступна.");
+            else
+            {
+                _health.Forget(dbId);   // база живая — ретраи и счетчики ей больше не нужны
+                returned = _lostDbIds.Remove(dbId);
+            }
             SyncMountedToUi();   // узел «оживает»: календарь/задачи подхватывают данные
+            // Вернувшаяся база: вместо всплывашки — надпись «снова доступна» под именем базы
+            // в сайдбарах и в «Управление базой данных» (там же, где висело «недоступна…»).
+            if (returned) ShowReturnedDbStatus(dbId);
         });
 
         // Потеря БД на ходу: размонтировать (как при отключении, но без удаления из
@@ -604,6 +622,7 @@ public partial class MainWindow : Window
     {
         var st = _mountQueue.StatusOf(dbId);
         if (st is null) return;
+        var path = _workspace.Registry.GetAll().FirstOrDefault(d => d.Id == dbId)?.Path;
         var text = st.State switch
         {
             MountQueue.ItemState.Queued =>
@@ -613,9 +632,10 @@ public partial class MainWindow : Window
                 $"База данных «{st.Name}» подключается: {st.Text}. Она откроется автоматически, " +
                 "работать с остальными базами можно уже сейчас.",
             _ =>
-                $"База данных «{st.Name}» {st.Text}. Приложение периодически пытается " +
-                "переподключиться — как только файл снова станет доступен, база откроется сама. " +
-                "Можно также подключить ее заново вручную в настройках («Управление базой данных»).",
+                $"База данных «{st.Name}» {st.Text}." + (path is null ? "" : $"\n{path}\n") +
+                "Приложение периодически пытается переподключиться — как только файл снова станет " +
+                "доступен, база откроется сама. Можно также подключить ее заново вручную в настройках " +
+                "(«Управление базой данных»).",
         };
         await ConfirmDialog.Info(text).ShowDialog(this);
     }
@@ -623,9 +643,13 @@ public partial class MainWindow : Window
     // Потеря смонтированной БД на ходу (сервер выключился, файл удалили): зеркало
     // отключения из настроек, но запись реестра остается — монитор будет ретраить,
     // при возврате файла база оживет сама (очередь → Completed → SyncMountedToUi).
+    // Сервер перезагружают целиком, и монитор объявляет базы одного сервера пачкой —
+    // пересборка сайдбаров одна на всю пачку (RequestSyncMountedToUi) и уже без мертвых баз:
+    // иначе сайдбар читал бы соседние базы на UI-потоке и ждал таймаут каждой из них.
+    // Всплывашки нет: статус живет надписью под именем базы (сайдбар, «Управление базой данных»).
     private void OnDatabaseLost(int dbId, string reason)
     {
-        var db = _workspace.Get(dbId);
+        var db = _workspace.Detach(dbId);
         if (db is null) return;   // уже размонтирована (гонка с отключением из настроек)
         var name = db.Name;
 
@@ -634,11 +658,48 @@ public partial class MainWindow : Window
             _currentConstructorDbId = _workspace.Default.DbId;
             ConstructorModule.DetachDatabase(_workspace.Default.Constructor);
         }
-        _workspace.Unmount(dbId);
-        _mountQueue.MarkFailed(dbId, name, $"недоступна ({reason})");
+        // Закрытие — в фоне: Dispose ждет фоновые чистки (до 5 с), а на мертвой сетевой папке
+        // это ожидание не должно замораживать окно. Пул подключений к файлу сбрасывается там же —
+        // повторное монтирование возьмет свежие хендлы, а не мертвые.
+        _ = Task.Run(() => Workspace.Release(db));
+        _mountQueue.MarkFailed(dbId, name,
+            DbHealthMonitor.LostStatus(reason, DateTime.Now, "переподключится сама"), reason);
         _lostDbIds.Add(dbId);
-        SyncMountedToUi();
-        Notify($"База данных «{name}» недоступна ({reason}) — приложение переподключится автоматически.");
+        RequestSyncMountedToUi();
+    }
+
+    // Отложенная пересборка сайдбаров: несколько запросов подряд (пачка потерянных баз одного
+    // сервера) сливаются в одну — она выполняется, когда очередь UI-потока дойдет до фоновых
+    // задач, то есть после всех уже отправленных OnDatabaseLost.
+    private bool _syncRequested;
+
+    private void RequestSyncMountedToUi()
+    {
+        if (_syncRequested) return;
+        _syncRequested = true;
+        Dispatcher.UIThread.Post(() =>
+        {
+            _syncRequested = false;
+            SyncMountedToUi();
+        }, DispatcherPriority.Background);
+    }
+
+    // Надпись «снова доступна» под именем вернувшейся базы — во всех трех сайдбарах и в
+    // «Управление базой данных», на несколько секунд; затем строка статуса убирается.
+    private void ShowReturnedDbStatus(int dbId)
+    {
+        SetDbStatus(dbId, "снова доступна");
+        DispatcherTimer.RunOnce(() => SetDbStatus(dbId, null), ReturnedStatusLifetime);
+    }
+
+    private static readonly TimeSpan ReturnedStatusLifetime = TimeSpan.FromSeconds(8);
+
+    private void SetDbStatus(int dbId, string? text)
+    {
+        ConstructorSidebar.SetDatabaseStatus(dbId, text);
+        CalendarSidebar.SetDatabaseStatus(dbId, text);
+        TasksSidebar.SetDatabaseStatus(dbId, text);
+        SettingsModule.SetDatabaseStatus(dbId, text);
     }
 
     // Чужие правки в БД (другой пользователь общей базы / другая копия приложения):
@@ -661,9 +722,10 @@ public partial class MainWindow : Window
             if (changedDb.Permissions.AccessGranted != wasGranted)
             {
                 SyncMountedToUi();   // замок в сайдбарах, наборы БД календаря/задач
-                Notify(changedDb.Permissions.AccessGranted
-                    ? $"Администратор подтвердил доступ к базе данных «{changedDb.Name}»."
-                    : $"Доступ к базе данных «{changedDb.Name}» отозван администратором.");
+                if (changedDb.Permissions.AccessGranted)
+                    NotifyInfo($"Администратор подтвердил доступ к базе данных «{changedDb.Name}».");
+                else
+                    Notify($"Доступ к базе данных «{changedDb.Name}» отозван администратором.");
             }
             ProfileModule.OnRemoteUserChanges(dbId);
         }
@@ -704,13 +766,12 @@ public partial class MainWindow : Window
             RecordPanel.ReloadFromDb();
     }
 
-    // Ненавязчивое уведомление в углу окна (якорь — панель модулей: стабильна и видима
-    // в любом разделе). Тем же тостом пользуются ошибки записи (DbErrors).
-    private void Notify(string message) =>
-        Controls.Widgets.Toast.Show(ActivityBarControl, new TextBlock
-        {
-            Text = message, TextWrapping = Avalonia.Media.TextWrapping.Wrap, MaxWidth = 340,
-        }, PlacementMode.RightEdgeAlignedBottom, seconds: 6);
+    // Сообщение человеку — карточка в правом верхнем углу окна (AppNotifications), стопкой с
+    // остальными, сама гаснет. Тем же путем идут ошибки записи (DbErrors). Статус доступности
+    // базы сюда НЕ идет — он живет надписью под именем базы в сайдбаре и в «Управление базой
+    // данных» (MountQueue + DbHealthMonitor.LostStatus).
+    private static void Notify(string message)     => Controls.Widgets.AppNotifications.Error(message);
+    private static void NotifyInfo(string message) => Controls.Widgets.AppNotifications.Info(message);
 
     // Заглушки немонтированных БД для сайдбаров (очередь/обновление/недоступна).
     private List<Controls.Components.PendingDb> PendingDbs() =>
@@ -1221,8 +1282,19 @@ public partial class MainWindow : Window
     {
         var cid = ConstructorModule.CurrentCollectionId;
         if (cid is null) return null;
-        var first = CurrentConstructorRepo.GetRecords(cid.Value).FirstOrDefault();
-        return first?.Id;
+        // Одна строка сиком по индексу (CollectionId, Position), а не вся коллекция ради первого
+        // Id, как было: на больших коллекциях это секунды и память, а NULL в «Названии» старой
+        // записи ронял приложение из EF-проекции (raw-читатель страниц терпит NULL).
+        var repo = CurrentConstructorRepo;
+        try
+        {
+            return repo.GetRecordsPageAfter(cid.Value, null, null, 1).FirstOrDefault()?.Id;
+        }
+        catch (Exception ex) when (DbHealthMonitor.IsBusyError(ex) || DbHealthMonitor.IsUnavailableError(ex))
+        {
+            DbErrors.HandleRead(ex, repo.DbPath);   // база занята/пропала — панель просто не откроется
+            return null;
+        }
     }
 
     private void OpenRecordPanel(int recordId) => OpenRecordPanel(0, recordId);

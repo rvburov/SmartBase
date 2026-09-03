@@ -107,7 +107,7 @@ internal sealed class Program
     // Дозапись в crash.log (best-effort: сбой логирования не должен маскировать исходную ошибку).
     // Дублируем в Serilog (logs.db) — но crash.log остается независимым резервом: он работает,
     // даже если Serilog еще не инициализирован (сбой на старте) или его приемник недоступен.
-    private static void LogCrash(string source, Exception? ex)
+    internal static void LogCrash(string source, Exception? ex)
     {
         // На «тихом» логгере по умолчанию (до AppLog.Init) — безопасный no-op.
         try { Log.Fatal(ex, "Crash: {Source:l} v{Version:l}", source, AppSettings.AppVersion); }

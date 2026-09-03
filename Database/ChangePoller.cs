@@ -44,7 +44,12 @@ public sealed class ChangePoller : IDisposable
         public bool   IsPostgres;
         public long   DataVersion = -1;
         public long   LastLogId   = -1;
+        public int    BusyStreak;   // подряд BUSY на этом соединении (см. Tick)
     }
+
+    // BUSY подряд, после которых постоянное соединение переоткрывается: мертвый хендл сетевого
+    // файла после перезагрузки сервера сам не оживет, а чужой коммит столько не держится.
+    private const int BusyStreakToReopen = 3;
     private readonly Dictionary<int, Watch> _watch = [];
 
     public ChangePoller(Workspace ws, DbHealthMonitor health)
@@ -55,6 +60,9 @@ public sealed class ChangePoller : IDisposable
     }
 
     public void Start() => _timer.Change(ForegroundMs, ForegroundMs);
+
+    /// <summary>Один тик вручную (стенды и тесты — без ожидания таймера).</summary>
+    public void PollNow() => Tick();
 
     /// <summary>Окно активно/в фоне: в фоне частота проверки снижается.</summary>
     public void SetForeground(bool fg)
@@ -87,11 +95,26 @@ public sealed class ChangePoller : IDisposable
             foreach (var db in mounted)
             {
                 try { PollOne(db.DbId, db.Path); }
+                catch (Exception ex) when (DbHealthMonitor.IsBusyError(ex))
+                {
+                    // Файл занят дольше busy_timeout соединения (2 с): чужой долгий коммит — или
+                    // хендл мертв после перезагрузки сервера (SQLite отвечает BUSY и на это).
+                    // Наблюдение и курсор НЕ сбрасываем: сброс курсора терял бы чужие правки
+                    // при каждом BUSY. Монитор проверит базу свежим соединением; три BUSY подряд
+                    // — переоткрываем свое соединение (курсор остается, хвост дочитается).
+                    if (_watch.TryGetValue(db.DbId, out var w) && ++w.BusyStreak >= BusyStreakToReopen)
+                    {
+                        w.Conn?.Dispose();
+                        w.Conn = null;
+                        w.BusyStreak = 0;
+                    }
+                    _health.ReportBusy(db.DbId);
+                }
                 catch (Exception ex)
                 {
                     // Соединение могло умереть вместе с файлом/сетью: наблюдение сбрасываем
-                    // (после возврата базы построится заново), монитору — сигнал о потере
-                    // (BUSY он игнорирует сам). Поллер тем самым — второй детектор пропажи.
+                    // (после возврата базы построится заново), монитору — сигнал о потере.
+                    // Поллер тем самым — второй детектор пропажи.
                     if (_watch.TryGetValue(db.DbId, out var w)) { w.Conn?.Dispose(); _watch.Remove(db.DbId); }
                     _health.ReportFailure(db.DbId, ex);
                 }
@@ -109,15 +132,21 @@ public sealed class ChangePoller : IDisposable
         {
             _watch.GetValueOrDefault(dbId)?.Conn?.Dispose();
             w = new Watch { Path = path, IsPostgres = PgConnectionInfo.IsPostgresConnectionString(path) };
-            w.Conn = w.IsPostgres
-                ? new NpgsqlConnection(path)
-                : new SqliteConnection($"Data Source={path};Mode=ReadOnly;Pooling=False");
-            w.Conn.Open();
+            OpenWatch(w);
             // Первое знакомство: историю не проигрываем — курсор на текущий хвост журнала.
-            if (!w.IsPostgres) w.DataVersion = ReadLong(w.Conn, "PRAGMA data_version;");
-            w.LastLogId  = ReadLong(w.Conn, MaxLogIdSql(w.IsPostgres));
+            if (!w.IsPostgres) w.DataVersion = ReadLong(w.Conn!, "PRAGMA data_version;");
+            w.LastLogId  = ReadLong(w.Conn!, MaxLogIdSql(w.IsPostgres));
             _watch[dbId] = w;
             return;
+        }
+
+        if (w.Conn is null)
+        {
+            // Переоткрытие после серии BUSY (см. Tick): курсор журнала сохранен, версия
+            // сброшена — этот же тик перечитает хвост после курсора, правки за время паузы
+            // не теряются.
+            OpenWatch(w);
+            w.DataVersion = -1;
         }
 
         if (w.IsPostgres)
@@ -129,6 +158,7 @@ public sealed class ChangePoller : IDisposable
         else
         {
             var version = ReadLong(w.Conn!, "PRAGMA data_version;");
+            w.BusyStreak = 0;
             if (version == w.DataVersion) return;   // с прошлого тика БД никто не менял
             w.DataVersion = version;
         }
@@ -161,6 +191,22 @@ public sealed class ChangePoller : IDisposable
 
         if (changes.Count > 0)
             RemoteChanges?.Invoke(dbId, changes);
+    }
+
+    // Постоянное соединение наблюдения. SQLite: read-only, мимо пула (пул общий с рабочими
+    // контекстами, а этому соединению важно жить долго — data_version считается относительно
+    // него) и с коротким busy_timeout: без него PRAGMA data_version падала BUSY на каждом
+    // чужом коммите, и наблюдение сбрасывалось вместе с курсором.
+    private static void OpenWatch(Watch w)
+    {
+        w.Conn = w.IsPostgres
+            ? new NpgsqlConnection(w.Path)
+            : new SqliteConnection($"Data Source={w.Path};Mode=ReadOnly;Pooling=False");
+        w.Conn.Open();
+        if (w.IsPostgres) return;
+        using var cmd = w.Conn.CreateCommand();
+        cmd.CommandText = "PRAGMA busy_timeout=2000;";
+        cmd.ExecuteNonQuery();
     }
 
     private static string MaxLogIdSql(bool postgres) =>

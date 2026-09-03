@@ -1001,6 +1001,24 @@ public partial class SettingsView : UserControl
             }
     }
 
+    // Временная надпись у СМОНТИРОВАННОЙ базы («снова доступна» после возврата — см.
+    // MainWindow.ShowReturnedDbStatus). Список пересобирается часто (каждое монтирование),
+    // поэтому текст хранится и применяется при каждой пересборке, пока его не снимут (null).
+    private readonly Dictionary<int, string> _mountedStatus = [];
+
+    public void SetDatabaseStatus(int dbId, string? text)
+    {
+        if (text is null) _mountedStatus.Remove(dbId);
+        else              _mountedStatus[dbId] = text;
+        if (DatabaseList.ItemsSource is not IEnumerable<DatabaseRow> rows) return;
+        foreach (var r in rows)
+            if (r.Id == dbId && r.IsMounted)
+            {
+                r.SetStatus(text, false);
+                break;
+            }
+    }
+
     // Переключение раздела: заголовок + видимость соответствующей панели.
     public void ShowCategory(string key)
     {
@@ -1049,7 +1067,7 @@ public partial class SettingsView : UserControl
                 IsDefault     = d.IsDefault,
                 IsMounted     = mounted,
                 IsPostgres    = d.IsPostgres,
-                StatusText    = mounted ? null : queue?.Text
+                StatusText    = mounted ? _mountedStatus.GetValueOrDefault(d.Id) : queue?.Text
                     ?? (d.IsPostgres ? "Не подключена (сервер недоступен)"
                                      : "Не подключена (файл недоступен)"),
                 StatusIsError = !mounted && (queue is null || queue.Value.Failed),

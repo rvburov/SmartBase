@@ -3252,33 +3252,41 @@ public partial class ConstructorRepository(AppDbContext db)
 
     // ── Записи (низкоуровневые DbRecord) ──────────────────────────────────────
 
+    // Все записи коллекции — сырым читателем страниц (ReadRecordRows), а не EF-проекцией: в
+    // старых файлах «Название» бывает NULL (см. DatabaseManager.RepairNullTitles), а EF для
+    // непустой по модели колонки вырезает `?? ""` из запроса и падает на материализации
+    // («The data is NULL at ordinal» — так рушилось открытие панели записи). Сырой читатель
+    // терпит NULL и отдает пустое название.
     public List<DbRecord> GetRecords(int collectionId) =>
-        db.DbRecords
-          .Where(r => r.CollectionId == collectionId)
-          .OrderBy(r => r.Position)
-          .Select(r => new DbRecord
-          {
-              Id = r.Id, CollectionId = r.CollectionId, CreatedAt = r.CreatedAt,
-              UpdatedAt = r.UpdatedAt, CreatedBy = r.CreatedBy, UpdatedBy = r.UpdatedBy,
-              Position = r.Position, StartDt = r.StartDt, EndDt = r.EndDt, AllDay = r.AllDay,
-              Title = r.Title,
-              Color = r.Color,
-          })
-          .ToList();
+        ReadRecordRows($@"SELECT {RecordCols} FROM db_records r
+                          WHERE r.CollectionId = @c
+                          ORDER BY r.Position, r.Id",
+                       ("@c", collectionId));
 
     /// <summary>
     /// Легкая выборка (Id, Title) всех записей коллекции в порядке (Position, Id) — для окна
-    /// «Отображение записей». Только две колонки через проекцию + AsNoTracking: не материализует
-    /// полные сущности и не засоряет трекер (на коллекциях в сотни тысяч строк это заметно).
+    /// «Отображение записей». Только две колонки сырым SQL: не материализует полные сущности и
+    /// не засоряет трекер (на коллекциях в сотни тысяч строк это заметно); NULL в «Названии»
+    /// старых файлов читается как пустая строка (EF-проекция на нем падала бы).
     /// </summary>
-    public List<(int Id, string Title)> GetRecordTitlesOrdered(int collectionId) =>
-        db.DbRecords.AsNoTracking()
-          .Where(r => r.CollectionId == collectionId)
-          .OrderBy(r => r.Position).ThenBy(r => r.Id)
-          .Select(r => new { r.Id, r.Title })
-          .ToList()
-          .Select(r => (r.Id, r.Title ?? ""))
-          .ToList();
+    public List<(int Id, string Title)> GetRecordTitlesOrdered(int collectionId)
+    {
+        var result = new List<(int Id, string Title)>();
+        var conn   = db.Database.GetDbConnection();
+        var opened = conn.State != System.Data.ConnectionState.Open;
+        if (opened) conn.Open();
+        try
+        {
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "SELECT Id, Title FROM db_records WHERE CollectionId = @c ORDER BY Position, Id";
+            AddParam(cmd, "@c").Value = collectionId;
+            using var rdr = cmd.ExecuteReader();
+            while (rdr.Read())
+                result.Add((rdr.GetInt32(0), rdr.IsDBNull(1) ? "" : rdr.GetString(1)));
+        }
+        finally { if (opened) conn.Close(); }
+        return result;
+    }
 
     /// <summary>То же, но на ОТДЕЛЬНОМ подключении — чтобы окно «Отображение записей» грузило весь
     /// список (на больших коллекциях это сотни тысяч строк) в фоновом потоке, не подвешивая UI.</summary>
@@ -4623,16 +4631,11 @@ public partial class ConstructorRepository(AppDbContext db)
     public List<DbRecord> GetRecordsByIdsOrdered(IReadOnlyList<int> ids)
     {
         if (ids.Count == 0) return [];
-        var byId = db.DbRecords.AsNoTracking()
-            .Where(r => ids.Contains(r.Id))
-            .Select(r => new DbRecord
-            {
-                Id = r.Id, CollectionId = r.CollectionId, CreatedAt = r.CreatedAt,
-                Position = r.Position, StartDt = r.StartDt, EndDt = r.EndDt, AllDay = r.AllDay,
-                Title = r.Title,
-                Color = r.Color,
-            })
-            .ToList()
+        // Сырой читатель (как у страниц): терпит NULL в «Названии» старых файлов, на котором
+        // EF-проекция падала бы (см. GetRecords). Список id — параметрами, страница ≤ PageSize.
+        var names = ids.Select((_, i) => $"@i{i}").ToArray();
+        var args  = ids.Select((id, i) => ($"@i{i}", (object)id)).ToArray();
+        var byId  = ReadRecordRows($"SELECT {RecordCols} FROM db_records r WHERE r.Id IN ({string.Join(",", names)})", args)
             .ToDictionary(r => r.Id!.Value);
 
         var result = new List<DbRecord>(ids.Count);

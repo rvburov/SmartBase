@@ -79,26 +79,47 @@ public class AppDbContext : DbContext
         return SaveReconcilingPhantomDeletes(() => base.SaveChanges(acceptAllChangesOnSuccess));
     }
 
+    /// <summary>
+    /// Строки, которые мы правили, уже удалил другой пользователь: сохранение прошло БЕЗ них
+    /// (см. <see cref="SaveReconcilingPhantomDeletes"/>). Аргумент — сколько правок отброшено.
+    /// Ставит MainWindow (сообщение человеку); вызывается на потоке сохранения — подписчик
+    /// маршалит в UI сам.
+    /// </summary>
+    public static Action<int>? PhantomRowsDropped;
+
     // Общий контекст живет все время работы с БД. Если SaveChanges падает concurrency-исключением
-    // «ожидалась 1 строка, затронуто 0» на УДАЛЯЕМОЙ строке — этой строки уже нет: ее снес каскад в
-    // ЭТОМ же контексте (удалили группу/коллекцию → дочерние коллекции/записи/значения ушли по FK, а
-    // EF все еще держал их в трекере как отслеживаемые) или другой писатель. Для удаления это УСПЕХ.
-    // Критично не оставить «фантом» в трекере: иначе он повисает Deleted и роняет КАЖДЫЙ следующий
+    // «ожидалась 1 строка, затронуто 0» — этой строки уже нет: ее снес каскад в ЭТОМ же контексте
+    // (удалили группу/коллекцию → дочерние коллекции/записи/значения ушли по FK, а EF все еще
+    // держал их в трекере) или другой пользователь общей базы. Токенов конкурентности у модели
+    // нет, поэтому «0 строк» означает ровно «строки нет», и для любой такой строки правильный
+    // исход один — забыть о ней и сохранить остальное:
+    //  • Deleted — удаление уже состоялось, это УСПЕХ;
+    //  • Modified — чужое удаление под нашей правкой: воскрешать строку нельзя, а остальные
+    //    изменения пакета (например, вставка новой записи при сдвиге позиций соседей, которых
+    //    сосед успел удалить) обязаны доехать. Раньше здесь бросалось наверх, и диалоги без
+    //    фильтра DbErrors роняли приложение (PropertyEditorDialog.TrySave в crash.log). Теперь
+    //    человеку сообщает хук PhantomRowsDropped, а поллер чужих правок через пару секунд
+    //    уберет удаленное и из нашего UI.
+    // Критично не оставить «фантом» в трекере: иначе он повисает и роняет КАЖДЫЙ следующий
     // (даже несвязанный) SaveChanges — отсюда каскад ошибок в диагностике на создание/удаление групп.
-    // Отцепляем конфликтные строки и до-сохраняем остальное; на чужую правку изменяемой строки (не
-    // все Deleted) — чистим трекер и пробрасываем наверх (там DbErrors уведомит «изменено другим»).
     private int SaveReconcilingPhantomDeletes(Func<int> save)
     {
+        var droppedEdits = 0;
         for (var attempt = 0; ; attempt++)
         {
-            try { return save(); }
-            catch (DbUpdateConcurrencyException ex) when (attempt < 5)
+            try
             {
-                var allPhantomDeletes = ex.Entries.Count > 0
-                    && ex.Entries.All(e => e.State == EntityState.Deleted);
-                foreach (var e in ex.Entries) e.State = EntityState.Detached;
-                if (allPhantomDeletes) continue;   // строк уже нет — до-сохраняем реальные изменения
-                throw;                             // чужая правка изменяемой строки — наверх (уведомление)
+                var n = save();
+                if (droppedEdits > 0) PhantomRowsDropped?.Invoke(droppedEdits);
+                return n;
+            }
+            catch (DbUpdateConcurrencyException ex) when (attempt < 5 && ex.Entries.Count > 0)
+            {
+                foreach (var e in ex.Entries)
+                {
+                    if (e.State != EntityState.Deleted) droppedEdits++;
+                    e.State = EntityState.Detached;
+                }
             }
         }
     }
@@ -151,10 +172,15 @@ public class AppDbContext : DbContext
     ///    CommandTimeout=2 — держал дефолтные 30 с соединения);
     ///  • <c>PRAGMA busy_timeout</c> — ожидание внутри самого SQLite (см. ConnectionPragmas).
     /// Дефолт Microsoft.Data.Sqlite — 30 с, и это ощущалось как полное зависание окна: поток
-    /// UI замирал на полминуты и только потом показывал «database is locked». Берем чуть
-    /// больше busy_timeout — один полный цикл ожидания и честный отказ вместо долгих ретраев.
+    /// UI замирал на полминуты и только потом показывал «database is locked».
+    ///
+    /// Значение РАВНО busy_timeout, а не «чуть больше»: Microsoft.Data.Sqlite после каждого
+    /// SQLITE_BUSY сверяет прошедшее время с CommandTimeout и, пока оно меньше, повторяет шаг —
+    /// а шаг сам ждет полный busy_timeout внутри SQLite. С 18 с против 15 с это давало ДВА
+    /// цикла ожидания: замер на стенде (чужой BEGIN IMMEDIATE, сетевой профиль) — 33,3 с до
+    /// «database is locked». При равных значениях первый же отказ SQLite выходит наружу.
     /// </summary>
-    private static int WaitSeconds(string path) => NetworkPath.IsNetwork(path) ? 18 : 12;
+    private static int WaitSeconds(string path) => NetworkPath.IsNetwork(path) ? 15 : 10;
 
     private static string SqliteConnectionString(string path) =>
         new Microsoft.Data.Sqlite.SqliteConnectionStringBuilder
@@ -162,6 +188,30 @@ public class AppDbContext : DbContext
             DataSource     = path,
             DefaultTimeout = WaitSeconds(path),
         }.ToString();
+
+    /// <summary>
+    /// Сбросить пул подключений Microsoft.Data.Sqlite к файлу <paramref name="dbPath"/>.
+    ///
+    /// Пул держит открытые native-соединения по строке подключения и переиспользует их для
+    /// каждого нового <c>new AppDbContext(path)</c> и каждого открытия соединения общего
+    /// контекста. После перезагрузки файлового сервера хендлы SMB в этих соединениях мертвы,
+    /// а SQLite на Windows при отказе <c>LockFileEx</c> отвечает SQLITE_BUSY — не IOERR: каждый
+    /// запрос ждет busy_timeout и падает «database is locked», хотя сервер уже поднялся и свежее
+    /// соединение работает. Так и повторное монтирование брало из пула тот же мертвый хендл.
+    /// Вызывать при размонтировании, при потере базы и когда сетевая база ответила BUSY, а
+    /// свежая проба монитора прошла (см. DbHealthMonitor). Занятые соединения пул не трогает —
+    /// закроет их при возврате; для PostgreSQL — no-op.
+    /// </summary>
+    public static void ResetPool(string dbPath)
+    {
+        if (PgConnectionInfo.IsPostgresConnectionString(dbPath)) return;
+        try
+        {
+            using var key = new Microsoft.Data.Sqlite.SqliteConnection(SqliteConnectionString(dbPath));
+            Microsoft.Data.Sqlite.SqliteConnection.ClearPool(key);
+        }
+        catch { /* best-effort: без сброса просто останется старое поведение */ }
+    }
 
     /// <summary>
     /// Прагмы подключения — применяются при КАЖДОМ его открытии (подписка на StateChange,

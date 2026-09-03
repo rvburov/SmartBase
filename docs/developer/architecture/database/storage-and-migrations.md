@@ -197,6 +197,15 @@ MainWindow при выходе во время обновления показы
 (все фоновые `new AppDbContext(path)` получают его автоматически): на сети —
 `busy_timeout=15000`, `synchronous=FULL` (NORMAL в rollback-режиме рискует файлом при
 сбое питания сервера), `mmap_size=0` (mmap поверх сетевой ФС не рекомендован SQLite).
+`CommandTimeout` EF и `Default Timeout` строки подключения равны `busy_timeout` (15/10 с):
+Microsoft.Data.Sqlite после SQLITE_BUSY повторяет шаг, пока не выйдет CommandTimeout, а
+каждый шаг сам ждет полный `busy_timeout` внутри SQLite — «чуть большее» значение давало
+два цикла ожидания (замер: 33 с до «database is locked» при чужом `BEGIN IMMEDIATE`).
+Режим журнала при монтировании сначала читается и меняется только при расхождении:
+смена требует эксклюзивного замка, а общую базу открывают десятки копий приложения.
+Пул подключений Microsoft.Data.Sqlite к сетевому файлу сбрасывается при размонтировании и
+по сигналу BUSY (`AppDbContext.ResetPool`) — после перезагрузки сервера хендлы в пуле
+мертвы, и SQLite отвечает на них BUSY (подробно — [[multi-database]]).
 Проверяется стендом `Tests/MultiUserHarness --check-pragmas`. Про совместную работу
 нескольких пользователей — [multi-database](multi-database.md).
 

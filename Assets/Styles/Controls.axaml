@@ -409,6 +409,33 @@
         <Setter Property="MaxWidth"                   Value="460" />
     </Style>
 
+    <!-- Карточки сообщений в правом верхнем углу (AppNotifications, WindowNotificationManager):
+         карточка Avalonia (NotificationCard) БЕЗ своего оформления — ни белой подложки, ни тени,
+         ни цветной полоски заголовка (Panel#PART_HeaderBar): всей карточкой служит содержимое,
+         обычный NoticeBanner, ровно как у всплывашки Toast. Ширина чуть больше баннеров в
+         диалогах — длинные сообщения об ошибках записи переносятся в две-три строки. Отступ от
+         краев окна — на менеджере (его собственные поля по умолчанию нулевые). -->
+    <Style Selector="WindowNotificationManager">
+        <Setter Property="Margin" Value="0,8,8,0" />
+    </Style>
+    <Style Selector="NotificationCard">
+        <Setter Property="Width"      Value="380" />
+        <Setter Property="Background" Value="Transparent" />
+        <!-- Тень и скругление в шаблоне Fluent заданы прямо на его Border'ах (локальные
+             значения, стилем не перебить), поэтому шаблон свой. Имена частей сохранены:
+             по PART_LayoutTransformControl тема Fluent анимирует появление и закрытие. -->
+        <Setter Property="Template">
+            <ControlTemplate>
+                <LayoutTransformControl Name="PART_LayoutTransformControl" UseRenderTransform="True">
+                    <ContentPresenter Name="PART_ContentPresenter"
+                                      Content="{TemplateBinding Content}"
+                                      ContentTemplate="{TemplateBinding ContentTemplate}"
+                                      Margin="0,0,0,8" />
+                </LayoutTransformControl>
+            </ControlTemplate>
+        </Setter>
+    </Style>
+
     <!-- ComboBox — серый фон, скругление, рамка как у поля даты/времени -->
     <Style Selector="ComboBox">
         <Setter Property="Background"      Value="{StaticResource BrushSecondaryBg}" />

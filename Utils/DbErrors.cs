@@ -30,6 +30,11 @@ public static class DbErrors
     /// <summary>Сигнал монитору доступности (DbHealthMonitor.ReportFailureByPath).</summary>
     public static Action<string, Exception>? ReportFailure;
 
+    /// <summary>Сигнал монитору «сетевая база ответила BUSY» (DbHealthMonitor.ReportBusyByPath):
+    /// после перезагрузки сервера SQLite отвечает BUSY на мертвые хендлы, и только свежая
+    /// проба отличает это от штатной конкуренции писателей.</summary>
+    public static Action<string>? ReportBusy;
+
     /// <summary>true — ошибка известного класса, обработана (уведомление показано,
     /// монитор оповещен), пробрасывать не нужно. false — чужое исключение.</summary>
     public static bool Handle(Exception ex, string? dbPath)
@@ -45,8 +50,11 @@ public static class DbErrors
         }
         if (DbHealthMonitor.IsBusyError(ex))
         {
-            // Штатная конкуренция — не ошибка приложения, поэтому Warning, не Error.
+            // Штатная конкуренция — не ошибка приложения, поэтому Warning, не Error. Но на
+            // сетевой базе BUSY бывает и признаком мертвых хендлов после перезагрузки сервера —
+            // монитор проверит файл свежим соединением (см. ReportBusy).
             Log.Warning(ex, "БД занята при записи: {Path:l}", dbPath);
+            if (dbPath is not null) ReportBusy?.Invoke(dbPath);
             Post("База данных занята другим пользователем — изменение не сохранено, попробуйте еще раз.");
             return true;
         }
@@ -74,10 +82,17 @@ public static class DbErrors
     /// UI молча показывал бы устаревшее до следующей плановой пробы.</summary>
     public static void HandleRead(Exception ex, string? dbPath)
     {
-        if (dbPath is not null && DbHealthMonitor.IsUnavailableError(ex))
+        if (dbPath is null) return;
+        if (DbHealthMonitor.IsUnavailableError(ex))
         {
             Log.Warning(ex, "БД недоступна при чтении: {Path:l}", dbPath);
             ReportFailure?.Invoke(dbPath, ex);
+        }
+        else if (DbHealthMonitor.IsBusyError(ex))
+        {
+            // Чтение уперлось в BUSY: чужой коммит держит файл дольше busy_timeout (редкость)
+            // или хендлы мертвы после перезагрузки сервера — пусть монитор разберется.
+            ReportBusy?.Invoke(dbPath);
         }
     }
 

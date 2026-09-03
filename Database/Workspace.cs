@@ -75,7 +75,22 @@ public sealed class Workspace : IDisposable
 
             // Открытие вне замка: миграция большой базы может идти минуты, UI в это время
             // свободно читает Mounted (у каждого SQLite-файла свои блокировки).
-            var manager = DatabaseManager.Open(entry.Id, entry.Name, mountPath, entry.Provider, stage);
+            DatabaseManager manager;
+            try
+            {
+                manager = DatabaseManager.Open(entry.Id, entry.Name, mountPath, entry.Provider, stage);
+            }
+            catch (Exception ex) when (!entry.IsPostgres && NetworkPath.IsNetwork(mountPath)
+                                       && DbHealthMonitor.IsBusyError(ex))
+            {
+                // Сетевой файл ответил BUSY на первом же запросе монтирования. Чаще всего это не
+                // чужой писатель, а мертвые хендлы в пуле подключений после перезагрузки сервера
+                // (см. AppDbContext.ResetPool): раньше каждая попытка брала из пула тот же хендл,
+                // падала «database is locked» и уходила на новый круг ретраев по минуте.
+                Log.Information(ex, "Монтирование «{Name:l}»: BUSY на сетевом пути — сбрасываю пул подключений и повторяю", entry.Name);
+                AppDbContext.ResetPool(mountPath);
+                manager = DatabaseManager.Open(entry.Id, entry.Name, mountPath, entry.Provider, stage);
+            }
             lock (_gate)
             {
                 // Гонка двух монтирований одной БД: оставляем первый, лишний закрываем.
@@ -97,16 +112,38 @@ public sealed class Workspace : IDisposable
     /// <summary>Размонтировать БД (закрыть контекст). Дефолтную БД размонтировать нельзя.</summary>
     public void Unmount(int dbId)
     {
-        if (dbId == Default.DbId) return;
-        DatabaseManager? manager;
+        var manager = Detach(dbId);
+        if (manager is not null) Release(manager);
+    }
+
+    /// <summary>Убрать БД из рабочего пространства, НЕ закрывая ее: модули перестают видеть базу
+    /// мгновенно, а закрытие (<see cref="Release"/>) можно сделать в фоне. Нужно при потере базы
+    /// на ходу — Dispose ждет фоновые чистки до 5 с, и на мертвой сетевой папке это ожидание не
+    /// должно лечь на UI-поток. Дефолтную отцепить нельзя (null).</summary>
+    public DatabaseManager? Detach(int dbId)
+    {
+        if (dbId == Default.DbId) return null;
         lock (_gate)
         {
-            manager = _mounted.FirstOrDefault(m => m.DbId == dbId);
-            if (manager is null) return;
-            _mounted.Remove(manager);
+            var manager = _mounted.FirstOrDefault(m => m.DbId == dbId);
+            if (manager is not null) _mounted.Remove(manager);
+            return manager;
         }
-        manager.Dispose();
     }
+
+    /// <summary>Закрыть отцепленную БД: контекст плюс пул подключений к ее файлу (сброс пула —
+    /// внутри DatabaseManager.Dispose; без него повторное монтирование после потери брало бы
+    /// из пула мертвый хендл сетевого файла, см. AppDbContext.ResetPool). Сбой закрытия не
+    /// мешает: база уже не в списке.</summary>
+    public static void Release(DatabaseManager manager)
+    {
+        try { manager.Dispose(); }
+        catch (Exception ex) { Log.Warning(ex, "Закрытие БД «{Name:l}» завершилось ошибкой", manager.Name); }
+    }
+
+    /// <summary>Рабочее пространство поверх УЖЕ открытой дефолтной базы — для стендов и тестов,
+    /// где штатный <see cref="Open"/> не годится (он открывает базу по пути приложения).</summary>
+    public static Workspace Attach(DatabaseRegistry registry, DatabaseManager def) => new(registry, def);
 
     /// <summary>Найти смонтированную БД по ее DbId.</summary>
     public DatabaseManager? Get(int dbId)

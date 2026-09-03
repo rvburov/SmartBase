@@ -12,6 +12,7 @@ dotnet run -c Release --project Tests/MultiProcess -- --check-pragmas
 dotnet run -c Release --project Tests/MultiProcess -- --contend
 dotnet run -c Release --project Tests/MultiProcess -- --writer <db>
 dotnet run -c Release --project Tests/MultiProcess -- --hold-write-lock <db> [сек]
+dotnet run -c Release --project Tests/MultiProcess -- --load <новый.db> --writers 10 --readers 10 --seconds 60
 ```
 
 | Режим | Что делает |
@@ -19,7 +20,8 @@ dotnet run -c Release --project Tests/MultiProcess -- --hold-write-lock <db> [с
 | **--check-pragmas** | Профиль журнала/прагм: локально `WAL` + `NORMAL` + `mmap`; «сеть» → `DELETE` + `synchronous=FULL` + `mmap=0` + `busy_timeout=15000`; и что WAL-файл при «переносе на шару» конвертируется в `DELETE`. |
 | **--contend** | Два **настоящих** дочерних процесса 15 с бьют в одну ячейку: без падений, итоговое значение — от одного из них, `integrity_check = ok`, журнал монотонен. |
 | **--writer <db>** | «Второй пользователь»: раз в 2 с пишет значение + строку `change_log` с чужим `UserKey`. Пока работает — запущенная копия приложения должна вживую подхватить чужую правку (проверка `ChangePoller`). |
-| **--hold-write-lock <db> N** | Держит `BEGIN IMMEDIATE` write-замок N секунд — проверка тоста «база занята». |
+| **--hold-write-lock <db> N** | Держит `BEGIN IMMEDIATE` write-замок N секунд — проверка карточки «база занята». |
+| **--load <новый.db> …** | Нагрузка «N пишут, M смотрят»: по процессу на участника. Писатель правит случайную ячейку через `SetFieldValue` (`--rate` правок/с, стандарт 1), читатель делает то же, что таблица, сайдбар и поллер: `PRAGMA data_version` на постоянном соединении, страница из 200 записей со значениями, раз в пять итераций дерево (`--read-rate`, стандарт 2/с). Сводка: p50/p95/p99/max по каждому виду операции, BUSY, ошибки; проверки — без падений, `integrity_check`, целостность значений, журнал пополнялся. Ключи: `--writers`, `--readers`, `--seconds`, `--records` (размер фикстуры, 2000), `--journal delete\|persist\|truncate` (сравнить режимы журнала на настоящей шаре: DELETE создает и удаляет файл журнала на каждый коммит). Локальный путь идет с эмуляцией сетевого профиля, настоящая шара — как есть; **путь обязан быть новым** — существующий файл стенд не трогает. |
 
 Что можно было автоматизировать — перенесено в автотесты (см. [automated-tests.md](automated-tests.md)):
 локальный профиль прагм из `--check-pragmas` → `PragmaTests`, гонка ячейки из `--contend`

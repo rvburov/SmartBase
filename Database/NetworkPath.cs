@@ -29,6 +29,53 @@ public static class NetworkPath
     public static void ForceNetwork(string path) =>
         Forced[System.IO.Path.GetFullPath(path)] = true;
 
+    /// <summary>Стенды: считать сетевым «сервером» для группировки баз (см. <see cref="ServerRoot"/>)
+    /// заданную папку, а не корень диска — чтобы два временных файла в одной папке выглядели
+    /// как две базы одной шары, а файл в другой папке — как база другого сервера.</summary>
+    public static void ForceServerRoot(string path, string root) =>
+        ForcedRoots[System.IO.Path.GetFullPath(path)] = root;
+
+    private static readonly ConcurrentDictionary<string, string> ForcedRoots = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// «Сервер» сетевого пути — ключ, по которому базы одной шары считаются соседями:
+    /// <c>\\server\share</c> для UNC, <c>P:\</c> для подключенного диска, <c>/Volumes/имя</c>
+    /// на macOS, точка монтирования на Linux. Нужен монитору доступности: сервер перезагружают
+    /// целиком, и потеря одной базы почти наверняка означает потерю остальных на том же
+    /// пути — их выгоднее проверить сразу, чем дать UI-потоку упереться в каждую по очереди.
+    /// Не сетевой путь → null (сравнение без учета регистра).
+    /// </summary>
+    public static string? ServerRoot(string path)
+    {
+        if (string.IsNullOrEmpty(path)) return null;
+        string full;
+        try { full = System.IO.Path.GetFullPath(path); }
+        catch { return null; }
+        if (ForcedRoots.TryGetValue(full, out var forced)) return forced.ToLowerInvariant();
+        if (!IsNetwork(full)) return null;
+        try
+        {
+            if (full.StartsWith(@"\\") || full.StartsWith("//"))
+            {
+                // \\server\share\папка\файл → \\server\share
+                var parts = full.TrimStart('\\', '/').Split(['\\', '/'], 3, StringSplitOptions.RemoveEmptyEntries);
+                return parts.Length >= 2 ? $@"\\{parts[0]}\{parts[1]}".ToLowerInvariant() : full.ToLowerInvariant();
+            }
+            if (OperatingSystem.IsWindows())
+                return (System.IO.Path.GetPathRoot(full) ?? full).ToLowerInvariant();
+            if (OperatingSystem.IsMacOS())
+            {
+                // /Volumes/имя/… → /Volumes/имя
+                var parts = full.Split('/', 4, StringSplitOptions.RemoveEmptyEntries);
+                return parts.Length >= 2 ? $"/{parts[0]}/{parts[1]}".ToLowerInvariant() : full.ToLowerInvariant();
+            }
+            if (OperatingSystem.IsLinux())
+                return LinuxMountPoint(full)?.ToLowerInvariant() ?? full.ToLowerInvariant();
+        }
+        catch { /* ниже — путь целиком как ключ */ }
+        return full.ToLowerInvariant();
+    }
+
     private static bool Detect(string full)
     {
         try
@@ -65,8 +112,15 @@ public static class NetworkPath
     {
         var netFs = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
             { "cifs", "smb3", "smbfs", "nfs", "nfs4", "fuse.sshfs", "davfs", "afpfs", "9p" };
+        return netFs.Contains(LinuxMount(full).Type);
+    }
 
+    private static string? LinuxMountPoint(string full) => LinuxMount(full).Point;
+
+    private static (string? Point, string Type) LinuxMount(string full)
+    {
         var bestLen  = -1;
+        string? bestMount = null;
         var bestType = "";
         foreach (var line in File.ReadLines("/proc/mounts"))
         {
@@ -75,10 +129,11 @@ public static class NetworkPath
             var mount = parts[1].Replace("\\040", " ");   // пробелы экранированы октально
             if (full.StartsWith(mount, StringComparison.Ordinal) && mount.Length > bestLen)
             {
-                bestLen  = mount.Length;
-                bestType = parts[2];
+                bestLen   = mount.Length;
+                bestMount = mount;
+                bestType  = parts[2];
             }
         }
-        return netFs.Contains(bestType);
+        return (bestMount, bestType);
     }
 }

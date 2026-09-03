@@ -18,8 +18,9 @@ public sealed class MountQueue
     public enum ItemState { Queued, Mounting, Failed }
 
     /// <summary>Статус немонтированной БД для сайдбара/настроек: короткий текст обновляется
-    /// живьем из тех же stage-колбэков, что сплэш и окно подключения.</summary>
-    public sealed record ItemStatus(int DbId, string Name, ItemState State, string Text);
+    /// живьем из тех же stage-колбэков, что сплэш и окно подключения. <c>Reason</c> у Failed —
+    /// причина без обвязки («файл не найден», «связь потеряна») для ретраев монитора.</summary>
+    public sealed record ItemStatus(int DbId, string Name, ItemState State, string Text, string? Reason = null);
 
     /// <summary>Изменился статус БД (dbId, сменилось ли состояние — не только процент).</summary>
     public event Action<int, bool>? Changed;
@@ -70,15 +71,30 @@ public sealed class MountQueue
     /// удалили — см. DbHealthMonitor): Failed-статус БЕЗ постановки в очередь, чтобы база
     /// переиспользовала всю инфраструктуру заглушек (узел «недоступна…» в сайдбаре, статус в
     /// настройках, «Подключить заново»). Переподключение ретраит монитор или пользователь.</summary>
-    public void MarkFailed(int dbId, string name, string text)
+    public void MarkFailed(int dbId, string name, string text, string? reason = null)
     {
         lock (_gate)
         {
             // База в этот момент не должна числиться ждущей (ее только что размонтировали).
             _queue.RemoveAll(e => e.Id == dbId);
-            _status[dbId] = new ItemStatus(dbId, name, ItemState.Failed, text);
+            _status[dbId] = new ItemStatus(dbId, name, ItemState.Failed, text, reason);
         }
         Changed?.Invoke(dbId, true);
+    }
+
+    /// <summary>Живая надпись недоступной базы («повтор через ≈ 1 мин», «проверяю…» — ставит
+    /// монитор на каждом переходе ретрая): меняется только текст, состояние и причина прежние,
+    /// дерево/список не пересобираются (Changed со stateChanged=false — тем же путем, что
+    /// проценты миграции). База не в состоянии Failed (уже в очереди/смонтирована) — тишина.</summary>
+    public void UpdateFailedText(int dbId, string text)
+    {
+        lock (_gate)
+        {
+            if (!_status.TryGetValue(dbId, out var s) || s.State != ItemState.Failed) return;
+            if (s.Text == text) return;
+            _status[dbId] = s with { Text = text };
+        }
+        Changed?.Invoke(dbId, false);
     }
 
     /// <summary>Забыть БД (отключили в настройках): из очереди и статусов. Уже монтирующуюся
@@ -138,10 +154,14 @@ public sealed class MountQueue
             lock (_gate)
             {
                 if (m is not null) _status.Remove(entry.Id);
-                else _status[entry.Id] = new ItemStatus(entry.Id, entry.Name, ItemState.Failed,
-                    entry.IsPostgres          ? "недоступна (сервер не отвечает)"
-                    : File.Exists(entry.Path) ? "недоступна (не удалось открыть)"
-                                              : "недоступна (файл не найден)");
+                else
+                {
+                    var reason = entry.IsPostgres          ? "сервер не отвечает"
+                               : File.Exists(entry.Path) ? "не удалось открыть"
+                                                         : "файл не найден";
+                    _status[entry.Id] = new ItemStatus(entry.Id, entry.Name, ItemState.Failed,
+                                                       $"недоступна ({reason})", reason);
+                }
             }
             Changed?.Invoke(entry.Id, true);
             Completed?.Invoke(entry.Id, m);
