@@ -4503,18 +4503,38 @@ public partial class ConstructorRepository(AppDbContext db)
     /// </summary>
     public List<int> GetFilteredRecordIds(int collectionId,
         IReadOnlyDictionary<string, HashSet<string>> filters, bool excludeHidden = false,
-        Func<int, IReadOnlyList<int>, Dictionary<int, string>?>? resolveForeign = null)
+        Func<int, IReadOnlyList<int>, Dictionary<int, string>?>? resolveForeign = null) =>
+        FilteredRecords(collectionId, filters, excludeHidden, resolveForeign)
+            .OrderBy(r => r.Position).ThenBy(r => r.Id).Select(r => r.Id).ToList();
+
+    /// <summary>
+    /// Записи коллекции, прошедшие фильтры колонок, как запрос (без материализации) — общая
+    /// основа списка id отфильтрованной таблицы (<see cref="GetFilteredRecordIds"/>) и
+    /// Excel-каскада счетчиков в окне фильтра (<see cref="GetColumnCounts"/>): список значений
+    /// колонки считается по тому же срезу, что показан в таблице. Условия колонок соединяются
+    /// через И; внутри колонки — IN (...) по набору значений.
+    /// </summary>
+    private IQueryable<DbRecordEntity> FilteredRecords(int collectionId,
+        IReadOnlyDictionary<string, HashSet<string>> filters, bool excludeHidden,
+        Func<int, IReadOnlyList<int>, Dictionary<int, string>?>? resolveForeign)
     {
         var q = db.DbRecords.AsNoTracking()
             .Where(r => r.CollectionId == collectionId
                 && (!excludeHidden || !db.RecordDisplay.Any(d =>
                        d.CollectionId == collectionId && d.RecordId == r.Id && !d.Visible)));
+        if (filters.Count == 0) return q;
 
         // Ключи-связи (db_record_links, а не db_field_values) — своя ветка фильтра.
         var relFieldIds = db.DbFields.AsNoTracking()
             .Where(f => f.CollectionId == collectionId && f.FieldType == "relation")
             .Select(f => f.Id).ToHashSet();
 
+        // ФОРМА УСЛОВИЯ ВАЖНА: набор значений уходит в SQL как `IN (json_each(@p))`, и SQLite
+        // перебирает его заново на каждую строку, если он стоит внутри КОРРЕЛИРОВАННОГО EXISTS
+        // (10 млн записей × 1444 значения «одного дня» — больше 5 минут). Поэтому строка
+        // проверяется через `r.Id IN (SELECT RecordId ... WHERE Value IN (...))` — некоррелированный
+        // подзапрос: список id собирается ОДИН раз по индексу (FieldId, Value), дальше только
+        // проба по нему (те же 10 млн × 1444 — 12 с). Ветка «(Пусто)» коррелирована, но без списка.
         foreach (var (key, allowed) in filters)
         {
             var allow = allowed.ToList();   // EF переведет Contains → SQL IN (...)
@@ -4530,12 +4550,14 @@ public partial class ConstructorRepository(AppDbContext db)
                     var hasCrossDb = db.DbRecordLinks.Any(l => l.FieldId == fid && l.TargetDbId != 0);
                     if (!hasCrossDb)
                     {
-                        // Чисто внутрибазовое поле — серверный EXISTS (индекс-дружественный, без
-                        // материализации ребер). TargetDbId==0 обязателен: иначе осиротевшее межбазовое
-                        // ребро с коллизией id могло бы совпасть с чужим локальным Title.
+                        // Чисто внутрибазовое поле — серверный IN по ребрам (без материализации ребер
+                        // в памяти). TargetDbId==0 обязателен: иначе осиротевшее межбазовое ребро с
+                        // коллизией id могло бы совпасть с чужим локальным Title.
                         q = q.Where(r =>
-                            db.DbRecordLinks.Any(l => l.FieldId == fid && l.FromRecordId == r.Id && l.TargetDbId == 0
-                                && db.DbRecords.Any(t => t.Id == l.ToRecordId && allow.Contains(t.Title ?? "")))
+                            db.DbRecordLinks
+                                .Where(l => l.FieldId == fid && l.TargetDbId == 0
+                                    && db.DbRecords.Where(t => allow.Contains(t.Title ?? "")).Select(t => t.Id).Contains(l.ToRecordId))
+                                .Select(l => l.FromRecordId).Contains(r.Id)
                             || (hasEmpty && !db.DbRecordLinks.Any(l => l.FieldId == fid && l.FromRecordId == r.Id && l.TargetDbId == 0
                                 && db.DbRecords.Any(t => t.Id == l.ToRecordId && (t.Title ?? "") != ""))));
                     }
@@ -4555,13 +4577,14 @@ public partial class ConstructorRepository(AppDbContext db)
                 else
                 {
                     q = q.Where(r =>
-                        db.DbFieldValues.Any(fv => fv.RecordId == r.Id && fv.FieldId == fid && allow.Contains(fv.Value))
+                        db.DbFieldValues.Where(fv => fv.FieldId == fid && allow.Contains(fv.Value))
+                                        .Select(fv => fv.RecordId).Contains(r.Id)
                         || (hasEmpty && !db.DbFieldValues.Any(fv => fv.RecordId == r.Id && fv.FieldId == fid && fv.Value != "")));
                 }
             }
         }
 
-        return q.OrderBy(r => r.Position).ThenBy(r => r.Id).Select(r => r.Id).ToList();
+        return q;
     }
 
     /// <summary>
@@ -4658,11 +4681,19 @@ public partial class ConstructorRepository(AppDbContext db)
     // Порядок значений — как в таблице: по первой позиции записи с этим значением
     // (MIN(Position)); «(Пусто)» всегда последним. Это нужно панели фильтра — при открытии
     // значения идут в том же порядке, что строки таблицы, а сортировку пользователь выбирает сам.
+    //
+    // Счетчики считаются по СРЕЗУ записей (scope): вся коллекция у публичных методов, а у окна
+    // фильтра — записи, прошедшие фильтры остальных колонок (Excel-каскад, см. GetColumnCounts).
 
-    public List<(string Value, int Count)> GetTitleCounts(int collectionId)
+    private IQueryable<DbRecordEntity> Records(int collectionId) =>
+        db.DbRecords.AsNoTracking().Where(r => r.CollectionId == collectionId);
+
+    public List<(string Value, int Count)> GetTitleCounts(int collectionId) =>
+        TitleCounts(Records(collectionId));
+
+    private List<(string Value, int Count)> TitleCounts(IQueryable<DbRecordEntity> scope)
     {
-        var groups = db.DbRecords
-            .Where(r => r.CollectionId == collectionId)
+        var groups = scope
             .GroupBy(r => r.Title)
             .Select(g => new { Value = g.Key, Cnt = g.Count(), FirstPos = g.Min(r => r.Position) })
             .ToList();
@@ -4673,13 +4704,19 @@ public partial class ConstructorRepository(AppDbContext db)
     /// Значения поля с количеством в порядке таблицы (по первой позиции). Записи без строки
     /// значения учитываются в пустом значении "" — в UI оно показывается как «(Пусто)» и идет в конец.
     /// </summary>
-    public List<(string Value, int Count)> GetFieldValueCounts(int collectionId, int fieldId)
+    public List<(string Value, int Count)> GetFieldValueCounts(int collectionId, int fieldId) =>
+        FieldValueCounts(fieldId, Records(collectionId));
+
+    private List<(string Value, int Count)> FieldValueCounts(int fieldId, IQueryable<DbRecordEntity> scope)
     {
-        var groups = db.DbFieldValues
-            .Where(fv => fv.FieldId == fieldId && fv.Record.CollectionId == collectionId)
-            .GroupBy(fv => fv.Value)
-            .Select(g => new { Value = g.Key, Cnt = g.Count(), FirstPos = g.Min(fv => fv.Record.Position) })
-            .ToList();
+        // JOIN со срезом записей: группировка идет по индексу (FieldId, Value), срез отсекает
+        // записи чужой коллекции и не прошедшие фильтры других колонок.
+        var groups = (from fv in db.DbFieldValues.AsNoTracking()
+                      join r in scope on fv.RecordId equals r.Id
+                      where fv.FieldId == fieldId
+                      group r by fv.Value into g
+                      select new { Value = g.Key, Cnt = g.Count(), FirstPos = g.Min(r => r.Position) })
+                     .ToList();
 
         // Непустые — по первой позиции (порядок таблицы).
         var result = groups.Where(g => g.Value != "")
@@ -4687,8 +4724,8 @@ public partial class ConstructorRepository(AppDbContext db)
             .Select(g => (Value: g.Value ?? "", Count: g.Cnt))
             .ToList();
 
-        // «(Пусто)» = записи без строки значения + с пустым значением — последним.
-        var total   = db.DbRecords.Count(r => r.CollectionId == collectionId);
+        // «(Пусто)» = записи среза без строки значения + с пустым значением — последним.
+        var total   = scope.Count();
         var emptied = total - groups.Where(g => g.Value != "").Sum(g => g.Cnt);
         if (emptied > 0) result.Add(("", emptied));
         return result;
@@ -4778,19 +4815,27 @@ public partial class ConstructorRepository(AppDbContext db)
     /// </summary>
     public List<(string Value, int Count)> GetRelationValueCounts(
         int collectionId, int fieldId,
-        Func<int, IReadOnlyList<int>, Dictionary<int, string>?>? resolveForeign = null)
+        Func<int, IReadOnlyList<int>, Dictionary<int, string>?>? resolveForeign = null) =>
+        RelationValueCounts(collectionId, fieldId, resolveForeign, Records(collectionId));
+
+    private List<(string Value, int Count)> RelationValueCounts(
+        int collectionId, int fieldId,
+        Func<int, IReadOnlyList<int>, Dictionary<int, string>?>? resolveForeign,
+        IQueryable<DbRecordEntity> scope)
     {
         var bySource = RelationTitlesBySource(collectionId, fieldId, resolveForeign);
-        var pos = db.DbRecords.AsNoTracking().Where(r => r.CollectionId == collectionId)
-                    .Select(r => new { r.Id, r.Position }).ToList()
-                    .ToDictionary(x => x.Id, x => x.Position);
+        // Позиции источников СРЕЗА: он же задает, какие источники вообще считаются
+        // (при каскаде — только прошедшие фильтры других колонок).
+        var pos = scope.Select(r => new { r.Id, r.Position }).ToList()
+                       .ToDictionary(x => x.Id, x => x.Position);
 
         // value → (уникальные источники, минимальная позиция); мульти-связь на одно имя не дублирует счетчик.
         var byValue = new Dictionary<string, (HashSet<int> Sources, int MinPos)>();
         foreach (var (src, titles) in bySource)
+        {
+            if (!pos.TryGetValue(src, out var p)) continue;   // источник вне среза
             foreach (var title in titles.Where(t => t.Length > 0).Distinct())
             {
-                var p = pos.GetValueOrDefault(src, int.MaxValue);
                 if (byValue.TryGetValue(title, out var agg))
                 {
                     agg.Sources.Add(src);
@@ -4798,13 +4843,14 @@ public partial class ConstructorRepository(AppDbContext db)
                 }
                 else byValue[title] = (new HashSet<int> { src }, p);
             }
+        }
 
         var result = byValue.OrderBy(kv => kv.Value.MinPos)
             .Select(kv => (Value: kv.Key, Count: kv.Value.Sources.Count))
             .ToList();
 
-        var totalSrc  = db.DbRecords.Count(r => r.CollectionId == collectionId);
-        var withNamed = bySource.Count(kv => kv.Value.Any(t => t.Length > 0));   // источники с ИМЕНОВАННОЙ целью
+        var totalSrc  = pos.Count;
+        var withNamed = bySource.Count(kv => pos.ContainsKey(kv.Key) && kv.Value.Any(t => t.Length > 0));   // источники среза с ИМЕНОВАННОЙ целью
         if (totalSrc - withNamed > 0) result.Add(("", totalSrc - withNamed));
         return result;
     }
@@ -4812,27 +4858,58 @@ public partial class ConstructorRepository(AppDbContext db)
     private bool IsRelationField(int fieldId) =>
         db.DbFields.AsNoTracking().Any(f => f.Id == fieldId && f.FieldType == "relation");
 
-    // Счетчики значений колонки (Title/поле/связь) по ключу — диспетчер для фона.
-    private List<(string Value, int Count)> ColumnCounts(int collectionId, string key,
-        Func<int, IReadOnlyList<int>, Dictionary<int, string>?>? resolveForeign = null) =>
-        key == TitleKey ? GetTitleCounts(collectionId)
-        : int.TryParse(key, out var fid)
-            ? (IsRelationField(fid) ? GetRelationValueCounts(collectionId, fid, resolveForeign) : GetFieldValueCounts(collectionId, fid))
-            : [];
+    /// <summary>
+    /// Значения колонки с количеством для окна фильтра — Excel-каскад: считаются только по
+    /// записям, прошедшим фильтры ОСТАЛЬНЫХ колонок (свой фильтр колонки, если он есть в
+    /// <paramref name="filters"/>, не учитывается — иначе снятое значение нельзя было бы вернуть
+    /// в отбор), а при <paramref name="excludeHidden"/> — без скрытых в «Отображении записей».
+    /// Без фильтров — по всей колонке. Порядок — как в таблице, «(Пусто)» последним.
+    /// </summary>
+    public List<(string Value, int Count)> GetColumnCounts(int collectionId, string key,
+        IReadOnlyDictionary<string, HashSet<string>>? filters = null, bool excludeHidden = false,
+        Func<int, IReadOnlyList<int>, Dictionary<int, string>?>? resolveForeign = null)
+    {
+        var others = OtherFilters(filters, key);
+        var scope  = FilteredRecords(collectionId, others, excludeHidden, resolveForeign);
+        return key == TitleKey ? TitleCounts(scope)
+            : int.TryParse(key, out var fid)
+                ? (IsRelationField(fid)
+                    ? RelationValueCounts(collectionId, fid, resolveForeign, scope)
+                    : FieldValueCounts(fid, scope))
+                : [];
+    }
+
+    // Фильтры остальных колонок — снимок (копия наборов): фон читает его, пока UI может
+    // менять живой словарь таблицы.
+    private static Dictionary<string, HashSet<string>> OtherFilters(
+        IReadOnlyDictionary<string, HashSet<string>>? filters, string key) =>
+        filters is null ? new()
+            : filters.Where(kv => kv.Key != key)
+                     .ToDictionary(kv => kv.Key, kv => new HashSet<string>(kv.Value));
 
     /// <summary>
     /// Асинхронно (на фоновом потоке, отдельное read-only подключение) считает значения колонки
     /// с количеством — чтобы окно фильтра открывалось мгновенно, а UI не подвисал на подсчете.
     /// WAL допускает одновременное чтение, поэтому фоновое подключение не конфликтует с основным.
+    /// filters/excludeHidden — Excel-каскад, см. <see cref="GetColumnCounts"/>.
     /// </summary>
-    public Task<List<(string Value, int Count)>> GetColumnCountsAsync(int collectionId, string key)
+    public Task<List<(string Value, int Count)>> GetColumnCountsAsync(int collectionId, string key,
+        IReadOnlyDictionary<string, HashSet<string>>? filters = null, bool excludeHidden = false)
     {
+        // Снимок фильтров других колонок берем на вызывающем (UI) потоке — фон живой словарь не трогает.
+        var others = OtherFilters(filters, key);
+
         // Столбец-связь может ссылаться на ДРУГИЕ базы: их пути снимаем здесь, на UI-потоке (реестр/общие
         // репозитории — только отсюда), а фон читает Title целей по этим путям СВЕЖИМИ изолированными
         // подключениями — общий контекст чужой базы не трогаем (см. правило об общем AppDbContext).
+        // Связью может быть и считаемая колонка, и любая из фильтрующих (каскад резолвит их цели тем же путем).
         Dictionary<int, string>? crossPaths = null;
-        if (int.TryParse(key, out var fid) && IsRelationField(fid))
-            crossPaths = CrossDbPathsForField(collectionId, fid);
+        foreach (var k in others.Keys.Append(key))
+            if (int.TryParse(k, out var fid) && IsRelationField(fid))
+            {
+                crossPaths ??= new();
+                foreach (var (dbId, path) in CrossDbPathsForField(collectionId, fid)) crossPaths[dbId] = path;
+            }
 
         return Task.Run(() =>
         {
@@ -4852,7 +4929,7 @@ public partial class ConstructorRepository(AppDbContext db)
                     fctx.ApplyPerformancePragmas();
                     return new ConstructorRepository(fctx).GetRecordTitles(ids);
                 };
-            return repo.ColumnCounts(collectionId, key, resolveForeign);
+            return repo.GetColumnCounts(collectionId, key, others, excludeHidden, resolveForeign);
         });
     }
 

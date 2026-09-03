@@ -121,6 +121,10 @@ public sealed class DateFilterTreeBox
         RefreshStates();
     }
 
+    /// <summary>Перечитать галочки после правки общего набора снаружи (поиск отметил
+    /// найденное, очистка поиска вернула прежние — <see cref="FilterSelection"/>).</summary>
+    public void RefreshChecked() => RefreshStates();
+
     /// <summary>Пересобрать дерево под строку поиска (пустая — все ветки).</summary>
     public void Search(string? query)
     {

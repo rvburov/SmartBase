@@ -3091,11 +3091,22 @@ public partial class TableView : UserControl
         // ── Данные (грузятся в ФОНЕ; окно открывается мгновенно) ──
         // Уникальные значения с количеством считаются SQL-агрегатом на фоновом потоке
         // (отдельное read-only подключение, WAL → параллельное чтение). До прихода данных в
-        // области списка показывается «Загрузка…». Счетчики — по всей колонке (без Excel-каскада
-        // по другим фильтрам: на больших данных каскад неподъемен, а список значений полный).
+        // области списка показывается «Загрузка…». Excel-каскад: значения и счетчики — только по
+        // строкам, прошедшим фильтры ОСТАЛЬНЫХ колонок и не скрытым в «Отображении записей»
+        // (свой фильтр колонки список не режет — иначе снятое значение не вернуть). Считается
+        // тем же SQL, что и сама фильтрация (GetColumnCounts), в фоне.
         var baseCounts = new List<(string Value, int Count)>();
         var domain     = new HashSet<string>();
         var loaded     = false;
+
+        // Отмеченные сырые значения — общий набор строк списка, дерева дат и правил галочек
+        // (FilterSelection: поиск отмечает найденное, очистка возвращает прежние, итог «Готово»).
+        // Наполняется по приходе данных (см. фоновую загрузку ниже).
+        var checkedSet = new HashSet<string>();
+        var selection  = new FilterSelection(checkedSet);
+        // Значения действующего фильтра колонки — при открытии они идут первыми (их видно сразу,
+        // не листая весь список). Снимок на момент открытия: от щелчков по галочкам строки не прыгают.
+        var initialChosen = _filters.TryGetValue(def.Key, out var f0) ? new HashSet<string>(f0) : null;
 
         // ── Сортировка ──
         // Выбор не применяется сразу: копится в pendingSort и вступает в силу
@@ -3117,9 +3128,10 @@ public partial class TableView : UserControl
         void ReloadCounts()
         {
             // Порядок значений = выбранная сортировка ЭТОЙ колонки (pending или активная),
-            // иначе по значению с пустыми в конце.
+            // иначе по значению с пустыми в конце; отобранные раньше — впереди остальных.
             bool? asc = pendingSort ?? (_sortKey == def.Key ? _sortAsc : (bool?)null);
-            counts = SortValueCounts(baseCounts, def.FieldType, asc);
+            counts = FilterSelection.ChosenFirst(SortValueCounts(baseCounts, def.FieldType, asc),
+                                                 c => c.Raw, initialChosen);
         }
         ReloadCounts();
 
@@ -3152,10 +3164,9 @@ public partial class TableView : UserControl
         };
         panel.Children.Add(search);
 
-        // Наполняется по приходе данных (см. фоновую загрузку ниже).
-        var checkedSet       = new HashSet<string>();
         var syncingSelectAll = false;
 
+        // Подпись меняется по режиму: при поиске — «(Выделить все найденное)», как в Excel.
         var selectAll = new CheckBox
         {
             Content   = "(Выделить все)",
@@ -3279,9 +3290,11 @@ public partial class TableView : UserControl
         }
 
         // Показанные сейчас сырые значения — общий язык обоих режимов списка: по ним
-        // считается «(Выделить все)» и Excel-режим «Заменить» в кнопке «Готово».
+        // считается «(Выделить все)», автоотметка найденного и Excel-режим «Заменить» в
+        // «Готово». Плоский список берет их из уже построенного shown (RebuildList идет
+        // первым), а не фильтрует значения заново на каждое нажатие клавиши.
         IEnumerable<string> MatchedRaws() =>
-            tree is not null ? tree.VisibleRaws : Matched().Select(c => c.Raw);
+            tree is not null ? tree.VisibleRaws : shown.Select(v => v.Raw);
 
         void RebuildList()
         {
@@ -3310,13 +3323,33 @@ public partial class TableView : UserControl
         void SyncSelectAll()
         {
             syncingSelectAll    = true;
+            selectAll.Content   = selection.Searching ? "(Выделить все найденное)" : "(Выделить все)";
             selectAll.IsChecked = tree is not null
                 ? tree.AllVisibleChecked
-                : Matched().All(c => checkedSet.Contains(c.Raw));
+                : shown.All(v => checkedSet.Contains(v.Raw));
             syncingSelectAll    = false;
         }
 
-        search.TextChanged += (_, _) => { RebuildList(); SyncSelectAll(); };
+        // Галочки поменяли не через строки (поиск отметил найденное, очистка вернула прежние) —
+        // строкам списка и дереву надо перечитать их из общего набора.
+        void RefreshChecks()
+        {
+            if (tree is not null) tree.RefreshChecked();
+            else foreach (var vm in shown) vm.Refresh();
+        }
+
+        // Текст поиска изменился: список сужается, найденное отмечается само (Excel), а
+        // очищенный поиск возвращает галочки, бывшие до ввода. Так же вызывается по приходе
+        // данных — на случай, если печатать начали раньше, чем они загрузились.
+        void OnSearchChanged()
+        {
+            RebuildList();
+            selection.OnSearch(search.Text, MatchedRaws());
+            RefreshChecks();
+            SyncSelectAll();
+        }
+
+        search.TextChanged += (_, _) => OnSearchChanged();
         selectAll.IsCheckedChanged += (_, _) =>
         {
             if (syncingSelectAll) return;
@@ -3336,7 +3369,7 @@ public partial class TableView : UserControl
         panel.Children.Add(MakeSeparator());
 
         // ── Кнопка «Готово» ──
-        // Сортировка и фильтр применяются разом, только по этой кнопке.
+        // Сортировка и фильтр применяются разом — по этой кнопке или по Enter в поиске.
         var okBtn = new Button
         {
             Content             = "Готово",
@@ -3344,7 +3377,7 @@ public partial class TableView : UserControl
             Margin              = new Thickness(0, 4, 0, 0),
         };
         okBtn.Classes.Add("dialog");
-        okBtn.Click += (_, _) =>
+        void Apply()
         {
             // Данные еще грузятся — применять нечего (фильтр по колонке не трогаем).
             if (!loaded)
@@ -3358,27 +3391,27 @@ public partial class TableView : UserControl
             if (pendingSort is bool asc) { _sortKey = def.Key; _sortAsc = asc; }
             else if (_sortKey == def.Key) _sortKey = null;
 
-            // Excel-режим «Заменить»: при активном поиске фильтр = только отмеченные
-            // СРЕДИ найденного; значения вне зоны поиска отсекаются (в фильтр не входят).
-            // Поиск пуст — фильтр = все отмеченные галки по всему домену.
-            var hasSearch = !string.IsNullOrWhiteSpace(search.Text);
-            var effective = hasSearch
-                ? MatchedRaws().Where(checkedSet.Contains).ToHashSet()
-                : new HashSet<string>(checkedSet);
-
-            // Отмечены все значения колонки (а не только видимые) — фильтр не нужен.
-            if (domain.SetEquals(effective)) _filters.Remove(def.Key);
+            // Excel-режим «Заменить»: при поиске фильтр = отмеченные СРЕДИ найденного, остальное
+            // отсекается; без поиска — все отмеченные. Отмечено все, что есть в колонке (с учетом
+            // фильтров других колонок), — фильтр не нужен (FilterSelection.Effective).
+            var effective = selection.Effective(MatchedRaws(), domain);
+            if (effective is null) _filters.Remove(def.Key);
             else _filters[def.Key] = effective;
             ApplyFilters();
             close();
-        };
+        }
+        okBtn.Click += (_, _) => Apply();
+        // Enter в поиске — то же, что «Готово»: набрал, нажал, таблица отобрана.
+        search.KeyDown += (_, e) => { if (e.Key == Key.Enter) { Apply(); e.Handled = true; } };
         panel.Children.Add(okBtn);
 
         // ── Фоновая загрузка значений ──
         // Окно уже показано с «Загрузка…»; считаем значения на фоновом потоке и по готовности
         // (на UI-потоке) наполняем список. Если окно успели закрыть — операции над уже
-        // отсоединенными контролами безвредны.
-        _repository!.GetColumnCountsAsync(_collectionId, def.Key).ContinueWith(t =>
+        // отсоединенными контролами безвредны. Фильтры других колонок и скрытые записи
+        // уходят в запрос (каскад); свой фильтр колонки репозиторий отбрасывает сам.
+        _repository!.GetColumnCountsAsync(_collectionId, def.Key, _filters,
+                                          excludeHidden: _hiddenRecords.Count > 0).ContinueWith(t =>
         {
             if (t.IsFaulted || t.IsCanceled) return;
             var data = t.Result;
@@ -3389,6 +3422,9 @@ public partial class TableView : UserControl
                 domain.Clear();
                 foreach (var c in data) domain.Add(c.Value);
 
+                // Галочки — из действующего фильтра колонки, иначе все. Значения фильтра, которых
+                // сейчас нет в списке (их строки спрятал фильтр другой колонки), остаются
+                // отмеченными: снимут чужой фильтр — они снова в отборе.
                 checkedSet.Clear();
                 if (_filters.TryGetValue(def.Key, out var ff)) checkedSet.UnionWith(ff);
                 else checkedSet.UnionWith(domain);
@@ -3409,8 +3445,10 @@ public partial class TableView : UserControl
                         valuesList, search, secondary, fontBase, content: valuesBox);
                 }
 
-                RebuildList();
-                SyncSelectAll();
+                // Галочки заполнены заново — снимок «до поиска» (если печатали до загрузки)
+                // устарел; OnSearchChanged строит список и, если текст уже есть, отмечает найденное.
+                selection.Reset();
+                OnSearchChanged();
                 loaded = true;
             });
         });
@@ -3610,6 +3648,11 @@ public partial class TableView : UserControl
                 _onChanged();
             }
         }
+
+        /// <summary>Перечитать галочку из общего набора — ее поменяли не через строку
+        /// (поиск отметил найденное, очистка поиска вернула прежние).</summary>
+        public void Refresh() =>
+            PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(Checked)));
 
         public event System.ComponentModel.PropertyChangedEventHandler? PropertyChanged;
     }
