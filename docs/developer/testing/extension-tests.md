@@ -163,7 +163,7 @@ Avalonia в тест-хосте не инициализирована — нет
   прямо в тесте, включая шаблоны с «обвязкой», которая обязана пережить прогон. Битый шаблон
   собирается мимо ClosedXML: `.xlsm` — это zip, и `AddDefinedNames` дописывает имена прямо в
   `xl/workbook.xml`. Иначе такое имя не завести — ClosedXML его же и не разбирает (см.
-  «Открытие книг Excel» в [[../features/extensions]]);
+  «Открытие книг Excel» в [[../features/extensions/overview]]);
 - **PDF** (`PdfAnalyzer`) — писатель самого PdfPig (`Writer.PdfDocumentBuilder`): размеры
   задаются в миллиметрах и переводятся в пункты той же формулой, которой движок переводит их
   обратно. Новых зависимостей нет — PdfPig уже в проекте ради чтения;
@@ -287,4 +287,4 @@ Avalonia в тест-хосте не инициализирована — нет
 
 ## Связанные документы
 
-[[../features/extensions]], [[overview]], [[automated-tests]]
+[[../features/extensions/overview]], [[overview]], [[automated-tests]]

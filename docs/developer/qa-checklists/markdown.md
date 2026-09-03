@@ -101,4 +101,4 @@
 
 ## Связанные документы
 
-[[../ui/markdown]], [[notes]], [[../features/user-guide-section]], [[../features/extensions]]
+[[../ui/markdown]], [[notes]], [[../features/user-guide-section]], [[../features/extensions/overview]]

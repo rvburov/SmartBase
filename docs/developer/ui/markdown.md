@@ -210,4 +210,4 @@ C#. Любой новый размер обязан быть поименно п
 
 ## Связанные документы
 
-[[theming]], [[scrolling]], [[widgets]], [[../features/user-guide-section]], [[../features/constructor/record-page]], [[../features/extensions]], [[../features/notes]]
+[[theming]], [[scrolling]], [[widgets]], [[../features/user-guide-section]], [[../features/constructor/record-page]], [[../features/extensions/overview]], [[../features/notes]]

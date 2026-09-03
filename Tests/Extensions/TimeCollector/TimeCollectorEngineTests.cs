@@ -6,7 +6,7 @@ namespace SmartBase.Tests.Extensions.TimeCollector;
 /// Чистая логика расширения «Сводная трудоемкость»: разбор имени файла расчета, отбор файлов
 /// в папке, порядок строк свода, план раскраски и скрытие пустых колонок. Все это — порт
 /// макроса <c>TimeCollector</c>, поэтому тесты заодно фиксируют, где поведение намеренно
-/// отличается от исходника (см. docs/developer/features/extensions.md).
+/// отличается от исходника (см. docs/developer/features/extensions/time-collector.md).
 /// </summary>
 public sealed class TimeCollectorEngineTests
 {

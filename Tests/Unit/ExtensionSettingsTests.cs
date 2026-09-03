@@ -11,7 +11,7 @@ namespace SmartBase.Tests.Unit;
 ///
 /// Инварианты, которые зависят от состава реестра (уникальность Id, объявленные настройки),
 /// проверяются отдельно — Tests/Extensions/Registry/, см. docs/developer/testing/extension-tests.md.
-/// Общая картина механизма — docs/developer/features/extensions.md.
+/// Общая картина механизма — docs/developer/features/extensions/overview.md.
 /// </summary>
 public sealed class ExtensionSettingsTests
 {

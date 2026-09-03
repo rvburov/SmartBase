@@ -10,7 +10,7 @@ namespace SmartBase.Tests.Extensions.TimeCollector;
 ///
 /// Прибитые строки нужны потому, что и Id, и ключи настроек — часть ХРАНИЛИЩА: значения лежат
 /// в app.db под ключом «ext.&lt;Id&gt;.&lt;Key&gt;», и переименование любой из них молча теряет
-/// сохраненные пользователем пути (см. docs/developer/features/extensions.md).
+/// сохраненные пользователем пути (см. docs/developer/features/extensions/time-collector.md).
 ///
 /// CreateWindow() здесь не зовется и звать нельзя: Avalonia в тест-хосте не поднята
 /// (нет AppBuilder, Dispatcher и стилей Application.Current) — конструктор окна упадет.

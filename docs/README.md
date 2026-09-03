@@ -50,7 +50,8 @@ EF Core/SQLite). Документация разделена на два раз�
 - **Импорт/экспорт** ([import-export/](developer/features/import-export/)): [overview](developer/features/import-export/overview.md) · [import](developer/features/import-export/import.md) · [export](developer/features/import-export/export.md) · [cross-database-move](developer/features/import-export/cross-database-move.md).
 - [tasks.md](developer/features/tasks.md) — раздел «Задачи».
 - [notes.md](developer/features/notes.md) — раздел «Заметки»: папка с Markdown на диске, дерево файлов, редактор и просмотр.
-- [categories.md](developer/features/categories.md) · [settings.md](developer/features/settings.md) · [user-guide-section.md](developer/features/user-guide-section.md) · [notifications.md](developer/features/notifications.md) · [autostart-background.md](developer/features/autostart-background.md) · [profile.md](developer/features/profile.md) · [extensions.md](developer/features/extensions.md) · [logging.md](developer/features/logging.md) · [icons.md](developer/features/icons.md).
+- **Расширения** ([extensions/](developer/features/extensions/)): [overview](developer/features/extensions/overview.md) (механизм: контракт, реестр, настройки, видимость, файлы данных) — дальше **файл на расширение**, имя файла равно его `Id`: [pdf-rename](developer/features/extensions/pdf-rename.md) · [product-compare](developer/features/extensions/product-compare.md) · [assembly-calc](developer/features/extensions/assembly-calc.md) · [pdf-analyzer](developer/features/extensions/pdf-analyzer.md) · [docs-collection](developer/features/extensions/docs-collection.md) · [time-collector](developer/features/extensions/time-collector.md) · [doc-registry](developer/features/extensions/doc-registry.md) · [pdf-watermark](developer/features/extensions/pdf-watermark.md).
+- [categories.md](developer/features/categories.md) · [settings.md](developer/features/settings.md) · [user-guide-section.md](developer/features/user-guide-section.md) · [notifications.md](developer/features/notifications.md) · [autostart-background.md](developer/features/autostart-background.md) · [profile.md](developer/features/profile.md) · [logging.md](developer/features/logging.md) · [icons.md](developer/features/icons.md).
 
 ### UI ([developer/ui/](developer/ui/))
 
@@ -105,5 +106,11 @@ EF Core/SQLite). Документация разделена на два раз�
 - **Производительность** — общая картина в
   [performance/overview.md](developer/architecture/performance/overview.md); в фич-документ добавляйте
   подраздел `### Производительность` только при наличии конкретики, со ссылкой на центральный документ.
+- **Расширения** — то же правило, что у типов свойств: механизм в
+  [extensions/overview.md](developer/features/extensions/overview.md), **новое расширение = новый файл**
+  `extensions/<Id>.md` (имя файла равно `Id` расширения). Пользовательский текст про конкретное
+  расширение сюда не попадает вовсе: он живет в `MarkdownDescription` самого расширения, а
+  [user/extensions.md](user/extensions.md) описывает только общий механизм и ни одного расширения
+  по имени не называет.
 - Крупные документы дробим по подтемам в одноименную папку (как `performance/`, `import-export/`),
   оставляя `overview.md` точкой входа.
