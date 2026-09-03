@@ -142,7 +142,7 @@ AvaloniaEdit). У него прокрутка **логическая**: внут
 ## Что проверяет сторож
 
 [ScrollingConventionTests](../../../Tests/Unit/ScrollingConventionTests.cs) читает разметку
-`Views/`, `Controls/`, `Extensions/` и падает на трех вещах:
+`Views/`, `Controls/`, `Extensions/`, `Setup/` и падает на трех вещах:
 
 | Правило | Что ловит |
 |---|---|

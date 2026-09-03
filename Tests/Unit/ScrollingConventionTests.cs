@@ -16,8 +16,8 @@ namespace SmartBase.Tests.Unit;
 /// </summary>
 public sealed class ScrollingConventionTests
 {
-    /// <summary>Разметка экранов и компонентов — то, что пишут руками при новой фиче.</summary>
-    private static readonly string[] MarkupDirs = ["Views", "Controls", "Extensions"];
+    /// <summary>Разметка экранов, компонентов и окна установщика — то, что пишут руками при новой фиче.</summary>
+    private static readonly string[] MarkupDirs = ["Views", "Controls", "Extensions", "Setup"];
 
     private static string RepoRoot()
     {

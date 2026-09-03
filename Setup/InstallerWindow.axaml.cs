@@ -26,12 +26,22 @@ public partial class InstallerWindow : Window
     private bool _busy;
     private readonly string _myVersion;
 
+    /// <summary>Сколько найденных копий видно в списке без прокрутки.</summary>
+    private const int VisibleInstallRows = 3;
+
     public InstallerWindow() : this(false) { }
 
     public InstallerWindow(bool uninstallMode)
     {
         InitializeComponent();
         _preselectCurrent = uninstallMode;
+
+        // Высота списка копий — ровно на VisibleInstallRows строк: высота строки задана в
+        // разметке токеном ControlHeightStandard (MinHeight у ListBoxItem), воздух сверху и
+        // снизу — Padding списка: он живет внутри прокрутки и входит в высоту.
+        var row = (double)this.FindResource("ControlHeightStandard")!;
+        InstallsList.MaxHeight = VisibleInstallRows * row
+                               + InstallsList.Padding.Top + InstallsList.Padding.Bottom;
 
         var v = Assembly.GetExecutingAssembly().GetName().Version;
         _myVersion       = v is null ? "" : $"{v.Major}.{v.Minor}.{v.Build}";
@@ -95,7 +105,7 @@ public partial class InstallerWindow : Window
         var showSingle = showFound && _found.Count == 1;
 
         SingleBlock.IsVisible     = showSingle;
-        InstallsList.IsVisible    = showList;
+        InstallsCard.IsVisible    = showList;
         PathBlock.IsVisible       = !showFound;
         OtherFolderBtn.IsVisible  = _found.Count > 0;
         OtherFolderBtn.Content    = _manualPath ? "← К найденным копиям" : "Установить в другую папку…";
