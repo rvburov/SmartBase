@@ -76,11 +76,20 @@ public sealed partial class DatabaseManager : IDisposable
             // главный контекст оставался с busy_timeout=0 и кешем в 2 МБ.
             TunePerformancePragmas(Context);
 
-            // Самолечение раздутого файла: остатки массовых импортов/удалений — SQLite без
-            // auto_vacuum не возвращает освобожденные страницы в ОС, файл копится в разы
-            // больше данных. Порог: >50% файла свободно И >16 МБ. С этапом и живым прогрессом
-            // на сплэше — разовый VACUUM большого файла не должен выглядеть зависанием.
-            CompactWithProgress(Context, path, name, stage, minFreeBytes: 16L * 1024 * 1024, minFreeRatio: 0.5);
+            // Самолечение раздутого файла — ТОЛЬКО локально. SQLite без auto_vacuum не возвращает
+            // освобожденные страницы в ОС: после «загрузил свод заново, старый удалил» половина
+            // файла — мертвые страницы (прежний порог >50 % ровно на этом случае и не
+            // срабатывал). Порог теперь: свободно > 64 МБ И (≥ 25 % файла ИЛИ ≥ 512 МБ), см.
+            // NeedsCompaction. С этапом и живым прогрессом на сплэше.
+            //
+            // Общая база (сетевая папка) здесь НЕ сжимается никогда: VACUUM переписывает весь файл
+            // через сеть под эксклюзивным замком, и первый смонтировавший заставил бы остальных
+            // двадцать человек минуты смотреть на «database is locked». Для нее — ручное
+            // «Сжать файл» администратора (CompactFile) и резервная копия (BackupTo).
+            if (!IsShared)
+                CompactWithProgress(Context, path, name, stage,
+                                    minFreeBytes: CompactMinFreeBytes, minFreeRatio: CompactMinFreeRatio,
+                                    alwaysAboveBytes: CompactAlwaysAboveBytes);
         }
 
         // Пользователи/права этой базы: регистрируем текущего пользователя (первый
@@ -128,6 +137,9 @@ public sealed partial class DatabaseManager : IDisposable
         if (provider != "postgres") _maintenance.Add(RepairNullTitles(Context));
 
         Categories.SeedDefaults();
+
+        // Сведения о файле для «Управления базой данных» — снимаем здесь, на потоке монтирования.
+        if (provider != "postgres") ReadStorage();
     }
 
     /// <summary>Смонтировать БД с ее идентичностью из реестра (DbId, имя, путь/строка подключения).
@@ -361,27 +373,169 @@ public sealed partial class DatabaseManager : IDisposable
         }
     }
 
+    // ── Свободное место и сжатие ─────────────────────────────────────────────────
+
+    /// <summary>Порог планового самолечения локальной базы при монтировании: свободных страниц
+    /// больше 64 МБ И (не меньше четверти файла ИЛИ больше 512 МБ). Те же числа — подсказка
+    /// «стоит сжать» у общей базы в «Управлении базой данных».</summary>
+    public const long   CompactMinFreeBytes     = 64L * 1024 * 1024;
+    public const double CompactMinFreeRatio     = 0.25;
+    public const long   CompactAlwaysAboveBytes = 512L * 1024 * 1024;
+
+    /// <summary>Файл стоит сжать: свободного места больше порога (см. константы выше).</summary>
+    public static bool NeedsCompaction(long freeBytes, double freeRatio) =>
+        freeBytes > CompactMinFreeBytes &&
+        (freeRatio >= CompactMinFreeRatio || freeBytes >= CompactAlwaysAboveBytes);
+
+    /// <summary>Что занимает файл SQLite-базы: размер файла, живые данные, свободные страницы,
+    /// журнал рядом. У PostgreSQL — null.</summary>
+    public sealed record StorageStats(long FileBytes, long LiveBytes, long FreeBytes, double FreeRatio, long WalBytes)
+    {
+        public bool NeedsCompaction => DatabaseManager.NeedsCompaction(FreeBytes, FreeRatio);
+    }
+
+    /// <summary>Сведения о файле, снятые при монтировании (<see cref="ReadStorage"/>). UI читает
+    /// ЭТО, а не ходит в файл: список баз в настройках перестраивается на UI-потоке, а сетевая
+    /// база в момент потери связи отвечала бы на PRAGMA только через busy_timeout.</summary>
+    public StorageStats? Storage { get; private set; }
+
+    /// <summary>Снять сведения о файле этой базы (три PRAGMA + размер файла; мгновенно) и
+    /// обновить <see cref="Storage"/>. Вызывать с фонового потока или там, где база точно жива.</summary>
+    public StorageStats? ReadStorage()
+    {
+        if (Provider != "sqlite") return null;
+        try
+        {
+            var (freeBytes, freeRatio) = SqliteMaintenance.ReadFreeSpace(Context);
+            var file = new FileInfo(Path).Length;
+            var wal  = Len(Path + "-wal") + Len(Path + "-journal");
+            return Storage = new StorageStats(file, Math.Max(0, file - freeBytes), freeBytes, freeRatio, wal);
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Не удалось прочитать сведения о файле базы «{Name:l}»", Name);
+            return null;
+        }
+    }
+
+    private static long Len(string f) => File.Exists(f) ? new FileInfo(f).Length : 0;
+
     // Сжатие файла (VACUUM) с этапом и живым прогрессом на сплэше. Пороги: minFreeBytes —
-    // абсолютный, minFreeRatio — относительный (доля свободных страниц; 0.5 для планового
-    // самолечения при обычном открытии, 0 — после миграций). VACUUM переписывает живые данные
-    // целиком — на гигабайтных базах это минуты, и без этапа с процентами выглядело зависанием
-    // (наблюдалось вживую на базе 5,8 ГБ).
+    // абсолютный (ниже него не трогаем никогда), minFreeRatio — относительный (доля свободных
+    // страниц; 0 — после миграций), alwaysAboveBytes — абсолютный порог, при котором доля уже
+    // не важна (гигабайт мертвых страниц в 5-гигабайтном файле — это все равно гигабайт).
+    // VACUUM переписывает живые данные целиком — на гигабайтных базах это минуты, и без этапа
+    // с процентами выглядело зависанием (наблюдалось вживую на базе 5,8 ГБ).
     private static void CompactWithProgress(AppDbContext db, string path, string name,
-        Action<string, double?>? stage, long minFreeBytes, double minFreeRatio)
+        Action<string, double?>? stage, long minFreeBytes, double minFreeRatio,
+        long alwaysAboveBytes = long.MaxValue)
     {
         var (freeBytes, freeRatio) = SqliteMaintenance.ReadFreeSpace(db);
-        if (freeBytes <= minFreeBytes || freeRatio < minFreeRatio) return;
+        if (freeBytes <= minFreeBytes) return;
+        if (freeRatio < minFreeRatio && freeBytes < alwaysAboveBytes) return;
 
-        var liveBytes = Math.Max(1, new FileInfo(path).Length - freeBytes);
+        Vacuum(db, path, name, stage);
+    }
+
+    // ВАЖНО (Windows): физическое усечение файла после VACUUM в WAL-режиме делает чекпоинт, а
+    // SetEndOfFile молча не срабатывает, пока файл отображен в память ЛЮБЫМ другим открытым
+    // подключением — в том числе простаивающим в пуле Microsoft.Data.Sqlite: наш профиль ставит
+    // mmap_size на каждое подключение, и такое подключение держит отображение до закрытия.
+    // Итог без сброса пула: freelist пуст, page_count меньше, а файл на диске остается прежнего
+    // размера навсегда (опыт: 39 МБ вместо 20 МБ даже после закрытия всех подключений; свое
+    // отображение VACUUM снимает сам). Поэтому перед VACUUM пул к файлу закрывается; занятые
+    // прямо сейчас подключения (фоновые чтения) он не трогает — вызывающий обязан обеспечить,
+    // что их нет (монтирование: база еще никому не отдана; «Сжать файл»: база отцеплена).
+    // На сетевом пути mmap выключен, и проблемы нет.
+    private static void Vacuum(AppDbContext db, string path, string name, Action<string, double?>? stage)
+    {
+        var liveBytes = Math.Max(1, new FileInfo(path).Length - SqliteMaintenance.ReadFreeSpace(db).FreeBytes);
+        AppDbContext.ResetPool(path);
         db.Database.OpenConnection();
         try
         {
             using (SqliteStageProgress.ForVacuum(db, path, name, liveBytes, stage))
                 db.Database.ExecuteSqlRaw("VACUUM;");
+            // Усечение файла в WAL-режиме делает чекпоинт, а автоматический после коммита
+            // VACUUM запускается только при журнале длиннее 1000 страниц: у сильно опустевшей
+            // базы (свод удален целиком) он не срабатывает, и усечение откладывалось до чужого
+            // чекпоинта — уже при живых mmap-подключениях, где оно молча не проходит (см. выше).
+            // Делаем чекпоинт сами, пока файл никем не отображен. На DELETE-журнале — no-op.
+            db.Database.ExecuteSqlRaw("PRAGMA wal_checkpoint(TRUNCATE);");
         }
         finally
         {
             db.Database.CloseConnection();
+        }
+    }
+
+    /// <summary>
+    /// Ручное сжатие файла (кнопка «Сжать файл» в «Управлении базой данных») — для общей базы,
+    /// которую при монтировании не сжимаем. База должна быть ОТЦЕПЛЕНА от рабочего пространства
+    /// (Workspace.Detach + Release), иначе ее собственные подключения и пул мешают VACUUM.
+    /// Идет на свежем подключении с объемным профилем; прогресс — тем же stage-колбэком, что
+    /// и на сплэше («Сжимаю файл «имя»» + «осталось ≈ N мин»). Занятый файл (чужой писатель,
+    /// busy_timeout истек) — SqliteException «database is locked» наверх, файл цел: VACUUM
+    /// транзакционен.
+    /// </summary>
+    public static void CompactFile(string path, string name, Action<string, double?>? stage)
+    {
+        AppDbContext.ResetPool(path);
+        using var db = new AppDbContext(path);
+        db.ApplyBulkPerformancePragmas();
+        Vacuum(db, path, name, stage);
+        AppDbContext.ResetPool(path);
+    }
+
+    /// <summary>
+    /// Резервная копия: <c>VACUUM INTO</c> в файл <paramref name="targetPath"/> — компактная
+    /// (без свободных страниц) и консистентная копия на момент начала; писателей не блокирует
+    /// (держит только снимок чтения), базу отцеплять не нужно. Существующий файл-цель — ошибка
+    /// (VACUUM INTO требует пустой/несуществующий файл). Прогресс — по росту файла-копии
+    /// относительно живых данных источника. После копирования — <c>integrity_check</c> копии;
+    /// сбой проверки — InvalidOperationException, битая копия удаляется.
+    /// </summary>
+    public static void BackupTo(string path, string name, string targetPath, Action<string, double?>? stage)
+    {
+        if (File.Exists(targetPath)) File.Delete(targetPath);   // VACUUM INTO не перезаписывает
+
+        using var db = new AppDbContext(path);
+        db.ApplyPerformancePragmas();
+        var liveBytes = Math.Max(1, new FileInfo(path).Length - SqliteMaintenance.ReadFreeSpace(db).FreeBytes);
+
+        using var timer = stage is null ? null : new System.Threading.Timer(_ =>
+        {
+            var done = Len(targetPath);
+            var frac = Math.Min(0.99, done / (double)liveBytes);
+            stage($"Копирую «{name}»\n{done / 1048576.0:N0} из ≈ {liveBytes / 1048576.0:N0} МБ", frac);
+        }, null, 0, 500);
+
+        // Путь — параметром: VACUUM INTO принимает выражение, апострофы в имени файла не ломают SQL.
+        db.Database.ExecuteSqlRaw("VACUUM INTO {0};", targetPath);
+        timer?.Dispose();
+
+        stage?.Invoke($"Проверяю копию «{name}»…", null);
+        using var check = new AppDbContext(targetPath);
+        var conn = check.Database.GetDbConnection();
+        conn.Open();
+        try
+        {
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "PRAGMA integrity_check;";
+            cmd.CommandTimeout = 24 * 3600;
+            var result = cmd.ExecuteScalar()?.ToString();
+            if (result != "ok")
+            {
+                conn.Close();
+                AppDbContext.ResetPool(targetPath);
+                try { File.Delete(targetPath); } catch { /* best-effort */ }
+                throw new InvalidOperationException($"Копия не прошла проверку целостности: {result}");
+            }
+        }
+        finally
+        {
+            if (conn.State == System.Data.ConnectionState.Open) conn.Close();
+            AppDbContext.ResetPool(targetPath);
         }
     }
 

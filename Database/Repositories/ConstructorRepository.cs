@@ -951,8 +951,13 @@ public partial class ConstructorRepository(AppDbContext db)
                 vRid.Value = newIds[i];
                 for (var f = 0; f < fieldIds.Count; f++)
                 {
+                    // Пустая ячейка строки в db_field_values не заводится (как в BulkAddRecords):
+                    // отсутствие строки читается как пусто, а на импорте с редкими колонками
+                    // пустые ячейки — десятки процентов таблицы значений и ее индекса.
+                    var value = f < row.FieldValues.Count ? row.FieldValues[f] : null;
+                    if (string.IsNullOrEmpty(value)) continue;
                     vFid.Value = fieldIds[f];
-                    vVal.Value = (f < row.FieldValues.Count ? row.FieldValues[f] : "") ?? "";
+                    vVal.Value = value;
                     insVal.ExecuteNonQuery();
                 }
             }
@@ -5043,6 +5048,15 @@ public partial class ConstructorRepository(AppDbContext db)
                     value, recordId, fieldId);
                 db.SaveChanges();   // дожать строку журнала, не сохраненную упавшим SaveChanges
             }
+        }
+        else if (value.Length == 0)
+        {
+            // Очистка ячейки: строку удаляем, а не оставляем с пустым значением — инвариант
+            // «нет строки = пусто» (так читают страницы, счетчики фильтра, экспорт), и таблица
+            // значений с ее индексом не копят пустые строки. Чужое удаление той же строки
+            // (0 затронутых) гасит SaveReconcilingPhantomDeletes — это тот же исход.
+            db.DbFieldValues.Remove(fv);
+            db.SaveChanges();
         }
         else
         {

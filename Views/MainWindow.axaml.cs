@@ -3,6 +3,7 @@ using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Input;
 using Avalonia.Platform;
+using Avalonia.Platform.Storage;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
 using SmartBase.Controls.Components;
@@ -178,7 +179,11 @@ public partial class MainWindow : Window
             dbId => _workspace.Get(dbId) is not null,
             dbId => _mountQueue.StatusOf(dbId) is { } st
                 ? (st.Text, st.State == MountQueue.ItemState.Failed)
-                : null);
+                : null,
+            // Сведения о файле — снимок, снятый при монтировании (без обращения к файлу с UI-потока).
+            dbId => _workspace.Get(dbId)?.Storage,
+            // Обслуживать файл (сжать/копия) может администратор базы.
+            dbId => _workspace.Get(dbId) is { Provider: "sqlite" } m && m.Permissions.IsAdmin);
 
         // Live mount/unmount: добавление/удаление БД в настройках сразу отражается в
         // сайдбаре конструктора без перезапуска. Новая база встает в хвост очереди —
@@ -210,6 +215,18 @@ public partial class MainWindow : Window
             _mountQueue.Enqueue(entry);
             SyncMountedToUi();
         };
+        // Обслуживание файла базы из «Управления базой данных»: сжатие (через очередь, с
+        // отключением базы на время VACUUM) и резервная копия (без отключения).
+        SettingsModule.DatabaseCompactRequested += (_, dbId) => _ = CompactDatabaseAsync(dbId);
+        SettingsModule.DatabaseBackupRequested  += (_, dbId) => _ = BackupDatabaseAsync(dbId);
+        _mountQueue.MaintenanceFinished += (dbId, error) => Dispatcher.UIThread.Post(() =>
+        {
+            var name = _workspace.Registry.GetAll().FirstOrDefault(d => d.Id == dbId)?.Name ?? "";
+            if (error is not null)
+                Notify($"Сжать файл базы «{name}» не удалось: {error}");
+            else if (_compactSizes.Remove(dbId, out var sizes))
+                NotifyInfo($"Файл базы «{name}» сжат: {DatabaseRowSize(sizes.Before)} → {DatabaseRowSize(sizes.After)}.");
+        });
 
         // Тумблер «Общее → Уведомления»: включаем/выключаем службу на лету.
         SettingsModule.NotificationsEnabledChanged += (_, on) => _notifications.SetEnabled(on);
@@ -631,6 +648,9 @@ public partial class MainWindow : Window
             MountQueue.ItemState.Mounting =>
                 $"База данных «{st.Name}» подключается: {st.Text}. Она откроется автоматически, " +
                 "работать с остальными базами можно уже сейчас.",
+            MountQueue.ItemState.Maintenance =>
+                $"Файл базы данных «{st.Name}» сжимается: {st.Text}. По завершении база " +
+                "подключится сама; работать с остальными базами можно уже сейчас.",
             _ =>
                 $"База данных «{st.Name}» {st.Text}." + (path is null ? "" : $"\n{path}\n") +
                 "Приложение периодически пытается переподключиться — как только файл снова станет " +
@@ -638,6 +658,125 @@ public partial class MainWindow : Window
                 "(«Управление базой данных»).",
         };
         await ConfirmDialog.Info(text).ShowDialog(this);
+    }
+
+    // ── Обслуживание файла базы: «Сжать файл», «Резервная копия…» ─────────────────
+
+    // Размер файла до/после сжатия — для карточки по завершении (пишет фоновая работа
+    // очереди, читает обработчик MaintenanceFinished на UI-потоке уже после нее).
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<int, (long Before, long After)> _compactSizes = new();
+
+    private static string DatabaseRowSize(long bytes) => bytes switch
+    {
+        < 1024L * 1024        => $"{bytes / 1024.0:N0} КБ",
+        < 1024L * 1024 * 1024 => $"{bytes / 1024.0 / 1024:N1} МБ",
+        _                     => $"{bytes / 1024.0 / 1024 / 1024:N2} ГБ",
+    };
+
+    // Сжатие (VACUUM) переписывает файл целиком под эксклюзивным замком, поэтому базу на это
+    // время отцепляем от рабочего пространства (как при потере) и ведем через очередь
+    // монтирования: узел в сайдбаре и строка в настройках показывают «сжимаю файл · 45 % ·
+    // ≈ 2 мин», по завершении база монтируется обратно. Общую базу при монтировании не
+    // сжимаем никогда — это единственный путь вернуть ей место (см. DatabaseManager).
+    private async Task CompactDatabaseAsync(int dbId)
+    {
+        var db    = _workspace.Get(dbId);
+        var entry = _workspace.Registry.GetAll().FirstOrDefault(d => d.Id == dbId);
+        if (db is null || entry is null || entry.IsDefault || db.Provider != "sqlite") return;
+
+        var stats = db.Storage;
+        var text  = $"Сжать файл базы данных «{db.Name}»?\n\n" +
+                    (stats is null ? "" : $"Сейчас {Views.Settings.DatabaseRow.FormatStorage(stats)}.\n\n") +
+                    "Файл будет переписан целиком, данные не меняются. На время сжатия база отключается" +
+                    (db.IsShared
+                        ? ", а другие пользователи не смогут сохранять изменения, пока оно не закончится — " +
+                          "лучше делать это, когда с базой никто не работает. "
+                        : ". ") +
+                    "По завершении база подключится сама.";
+        var ok = await new ConfirmDialog(text, confirmText: "Сжать").ShowDialog<bool>(this);
+        if (!ok) return;
+
+        var detached = _workspace.Detach(dbId);
+        if (detached is null) return;
+        if (_currentConstructorDbId == dbId)
+        {
+            _currentConstructorDbId = _workspace.Default.DbId;
+            ConstructorModule.DetachDatabase(_workspace.Default.Constructor);
+        }
+
+        var name = db.Name;
+        var path = entry.Path;
+        var started = _mountQueue.RunMaintenance(entry, stage =>
+        {
+            // Закрыть контекст и пул подключений к файлу — иначе они мешают VACUUM. Здесь же,
+            // в фоне: Dispose ждет фоновые чистки до 5 с.
+            Workspace.Release(detached);
+            var before = new FileInfo(path).Length;
+            DatabaseManager.CompactFile(path, name, stage);
+            _compactSizes[dbId] = (before, new FileInfo(path).Length);
+            return null;
+        });
+        if (!started)
+        {
+            // База уже в очереди/монтируется (гонка с переподключением) — просто вернем ее.
+            _ = Task.Run(() => Workspace.Release(detached));
+            _mountQueue.Enqueue(entry);
+        }
+        SyncMountedToUi();   // узел базы становится заглушкой «сжимаю файл…»
+    }
+
+    // Резервная копия — VACUUM INTO в выбранный файл: компактная консистентная копия, базу
+    // не отключает и писателей не блокирует (держит только снимок чтения).
+    private async Task BackupDatabaseAsync(int dbId)
+    {
+        var db = _workspace.Get(dbId);
+        if (db is null || db.Provider != "sqlite") return;
+
+        var file = await StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
+        {
+            Title               = "Куда сохранить резервную копию",
+            SuggestedFileName   = $"{db.Name} (копия {DateTime.Now:yyyy-MM-dd_HH-mm}).db",
+            DefaultExtension    = "db",
+            ShowOverwritePrompt = true,
+            FileTypeChoices     = [new FilePickerFileType("База данных SQLite") { Patterns = ["*.db"] }],
+        });
+        var target = file?.TryGetLocalPath();
+        if (string.IsNullOrEmpty(target)) return;
+        if (string.Equals(System.IO.Path.GetFullPath(target), System.IO.Path.GetFullPath(db.Path),
+                          StringComparison.OrdinalIgnoreCase))
+        {
+            Notify("Резервную копию нельзя сохранить поверх самой базы — выберите другой файл.");
+            return;
+        }
+
+        var progress = new ProgressDialog { Title = "Резервная копия" };
+        progress.SetProgress(0, "Подготовка…");
+        var closed = progress.ShowDialog(this);
+        var name   = db.Name;
+        var source = db.Path;
+        try
+        {
+            await Task.Run(() => DatabaseManager.BackupTo(source, name, target, (msg, frac) =>
+                Dispatcher.UIThread.Post(() =>
+                {
+                    var nl    = msg.IndexOf('\n');
+                    var phase = nl < 0 ? msg : msg[..nl];
+                    var info  = nl < 0 ? ""  : msg[(nl + 1)..];
+                    if (frac is { } f) progress.SetProgress(f, phase); else progress.SetSaving(phase);
+                    progress.SetInfo(info);
+                })));
+            NotifyInfo($"Резервная копия базы «{name}» сохранена: {target} ({DatabaseRowSize(new FileInfo(target).Length)}).");
+        }
+        catch (Exception ex)
+        {
+            Program.LogCrash("backup", ex);
+            Notify($"Резервная копия базы «{name}» не создана: {ex.Message}");
+        }
+        finally
+        {
+            progress.Done();
+            await closed;
+        }
     }
 
     // Потеря смонтированной БД на ходу (сервер выключился, файл удалили): зеркало

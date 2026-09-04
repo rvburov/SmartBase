@@ -154,10 +154,12 @@ public sealed class UserValueTests
         Assert.Equal(counts, await repo.GetColumnCountsAsync(col, key));
 
         // Сортировка колонки берет значения отсюда: имена должны быть видны как обычные строки.
+        // Очищенная ячейка строки значения не имеет (инвариант «нет строки = пусто»), поэтому
+        // r3 в словаре отсутствует — как и запись, у которой значения не было никогда.
         var vals = repo.GetColumnValues(col, key);
         Assert.Equal("Иванов Иван", vals[r1]);
         Assert.Equal("Петров Петр", vals[r2]);
-        Assert.Equal("",            vals[r3]);
+        Assert.False(vals.TryGetValue(r3, out var v3) && v3.Length > 0);
     }
 
     // Готовит перенос одной записи с чужим автором из «Заявок» в «Архив» (та же база) и

@@ -2,6 +2,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Media;
 using CommunityToolkit.Mvvm.ComponentModel;
+using SmartBase.Database;
 
 namespace SmartBase.Views.Settings;
 
@@ -11,6 +12,12 @@ namespace SmartBase.Views.Settings;
 /// статусом («в очереди…» / «Обновление · 45% · ≈ 2 мин» — проценты и время обновляются
 /// на лету через <see cref="SetStatus"/>, как у заглушек сайдбара), недоступные — красным
 /// с кнопкой «Подключить заново».
+///
+/// У смонтированной SQLite-базы — третья строка со сведениями о файле («файл 1,7 ГБ ·
+/// свободно 1,1 ГБ (64 %)»): это ответ на «почему база весит столько». Когда свободных
+/// страниц больше порога (<see cref="DatabaseManager.NeedsCompaction"/>), строка красная и
+/// рядом кнопка «Сжать файл» — общую базу при монтировании не сжимаем никогда, локальная
+/// ужмется сама при следующем запуске, но и ее можно сжать не дожидаясь.
 /// </summary>
 public sealed partial class DatabaseRow : ObservableObject
 {
@@ -21,6 +28,11 @@ public sealed partial class DatabaseRow : ObservableObject
     public bool   IsMounted  { get; init; }
     /// <summary>Серверная БД PostgreSQL: бейдж в строке, Path — вид без пароля.</summary>
     public bool   IsPostgres { get; init; }
+    /// <summary>Сведения о файле смонтированной SQLite-базы (null — не смонтирована / PostgreSQL).</summary>
+    public DatabaseManager.StorageStats? Storage { get; init; }
+    /// <summary>Текущий пользователь может обслуживать файл (сжать/копия): база смонтирована,
+    /// это SQLite и он администратор базы.</summary>
+    public bool   CanMaintain { get; init; }
 
     /// <summary>Статусная строка (null — подключена, строки нет).</summary>
     [ObservableProperty] private string? _statusText;
@@ -35,6 +47,43 @@ public sealed partial class DatabaseRow : ObservableObject
     public IBrush StatusBrush => Brush(
         StatusIsError ? "BrushRed" : "BrushSecondaryText",
         StatusIsError ? "#FF3B30" : "#8E8E93");
+
+    // ── Сведения о файле ──────────────────────────────────────────────────────
+
+    public bool ShowStorage => Storage is not null;
+
+    /// <summary>«файл 1,7 ГБ · свободно 1,1 ГБ (64 %)»; без свободных страниц — только размер.</summary>
+    public string StorageText => Storage is null ? "" : FormatStorage(Storage);
+
+    /// <summary>Свободных страниц больше порога — стоит сжать (красная строка + кнопка).</summary>
+    public bool StorageIsWarning => Storage?.NeedsCompaction == true;
+
+    public IBrush StorageBrush => Brush(
+        StorageIsWarning ? "BrushRed" : "BrushSecondaryText",
+        StorageIsWarning ? "#FF3B30" : "#8E8E93");
+
+    /// <summary>«Сжать файл» — только когда есть что возвращать и пользователь вправе; дефолтную
+    /// (локальную) базу нельзя отцепить от рабочего пространства — ее сжимает сам запуск.</summary>
+    public bool ShowCompact => CanMaintain && !IsDefault && StorageIsWarning;
+    /// <summary>«Резервная копия…» — у любой смонтированной SQLite-базы администратора.</summary>
+    public bool ShowBackup  => CanMaintain;
+
+    public static string FormatStorage(DatabaseManager.StorageStats s)
+    {
+        var text = $"файл {Size(s.FileBytes)}";
+        if (s.FreeBytes > 0)
+            text += $" · свободно {Size(s.FreeBytes)} ({s.FreeRatio * 100:0} %)";
+        if (s.NeedsCompaction)
+            text += " — стоит сжать";
+        return text;
+    }
+
+    private static string Size(long bytes) => bytes switch
+    {
+        < 1024L * 1024        => $"{bytes / 1024.0:N0} КБ",
+        < 1024L * 1024 * 1024 => $"{bytes / 1024.0 / 1024:N1} МБ",
+        _                     => $"{bytes / 1024.0 / 1024 / 1024:N2} ГБ",
+    };
 
     /// <summary>Живое обновление статуса из очереди монтирования (тик ~2 раза в секунду).</summary>
     public void SetStatus(string? text, bool isError)

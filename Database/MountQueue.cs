@@ -15,7 +15,7 @@ namespace SmartBase.Database;
 /// </summary>
 public sealed class MountQueue
 {
-    public enum ItemState { Queued, Mounting, Failed }
+    public enum ItemState { Queued, Mounting, Failed, Maintenance }
 
     /// <summary>Статус немонтированной БД для сайдбара/настроек: короткий текст обновляется
     /// живьем из тех же stage-колбэков, что сплэш и окно подключения. <c>Reason</c> у Failed —
@@ -109,6 +109,75 @@ public sealed class MountQueue
         }
         Changed?.Invoke(dbId, true);
     }
+
+    /// <summary>
+    /// Обслуживание файла УЖЕ ОТЦЕПЛЕННОЙ базы («Сжать файл»): состояние Maintenance с живой
+    /// надписью («сжимаю файл · 45 % · ≈ 2 мин» — тем же путем, что проценты миграции), работа
+    /// в фоновом потоке, по завершении база встает в очередь монтирования обратно.
+    /// <paramref name="work"/> получает stage-колбэк формата DatabaseManager.Open («Фаза\nинфо»)
+    /// и возвращает текст ошибки (null — успех); исключения тоже становятся ошибкой. Ошибка
+    /// уходит в <see cref="MaintenanceFinished"/> — MainWindow покажет карточку. Базу, которая
+    /// сейчас в очереди или монтируется, не трогаем (false).
+    /// </summary>
+    public bool RunMaintenance(DatabaseRefEntity entry, Func<Action<string, double?>, string?> work)
+    {
+        lock (_gate)
+        {
+            if (_ws.Get(entry.Id) is not null) return false;              // не отцеплена
+            if (_queue.Any(e => e.Id == entry.Id)) return false;          // ждет монтирования
+            if (_status.TryGetValue(entry.Id, out var s) && s.State is ItemState.Mounting or ItemState.Maintenance)
+                return false;
+            _status[entry.Id] = new ItemStatus(entry.Id, entry.Name, ItemState.Maintenance, "сжимаю файл…");
+        }
+        Changed?.Invoke(entry.Id, true);
+
+        Task.Run(() =>
+        {
+            string? error;
+            try { error = work((msg, frac) => OnMaintenanceStage(entry, msg, frac)); }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "Обслуживание файла БД «{Name:l}» не удалось", entry.Name);
+                error = DbErrorText(ex);
+            }
+            // База возвращается в работу тем же путем, что при подключении. Enqueue переводит
+            // Maintenance → Queued под тем же замком — без промежуточного «не подключена» в
+            // списке настроек. Если базу за это время отключили (Forget снял статус), очередь
+            // смонтирует и тихо размонтирует ее — как при отключении во время монтирования.
+            Enqueue(entry);
+            MaintenanceFinished?.Invoke(entry.Id, error);
+        });
+        return true;
+    }
+
+    /// <summary>Обслуживание завершено: (dbId, текст ошибки или null при успехе). Из фонового потока.</summary>
+    public event Action<int, string?>? MaintenanceFinished;
+
+    private void OnMaintenanceStage(DatabaseRefEntity entry, string msg, double? frac)
+    {
+        var nl    = msg.IndexOf('\n');
+        var info  = nl < 0 ? "" : msg[(nl + 1)..];
+        var parts = new List<string> { "сжимаю файл" };
+        if (frac is { } f) parts.Add($"{(int)(Math.Clamp(f, 0, 1) * 100)}%");
+        const string marker = "осталось ";
+        var i = info.IndexOf(marker, StringComparison.Ordinal);
+        if (i >= 0) parts.Add(info[(i + marker.Length)..].TrimEnd());
+        var text = string.Join(" · ", parts);
+        lock (_gate)
+        {
+            if (!_status.TryGetValue(entry.Id, out var s) || s.State != ItemState.Maintenance) return;
+            if (s.Text == text) return;
+            _status[entry.Id] = s with { Text = text };
+        }
+        Changed?.Invoke(entry.Id, false);
+    }
+
+    // Текст ошибки обслуживания для карточки: занятость файла — по-человечески, остальное —
+    // сообщение исключения.
+    private static string DbErrorText(Exception ex) =>
+        DbHealthMonitor.IsBusyError(ex)
+            ? "файл занят другими пользователями — попробуйте позже, когда никто не сохраняет изменения"
+            : ex.Message;
 
     /// <summary>Статусы всех ждущих/монтирующихся/упавших БД (для узлов-заглушек сайдбара).</summary>
     public IReadOnlyList<ItemStatus> Pending()

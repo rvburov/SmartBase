@@ -59,6 +59,7 @@ internal static class Program
     public static int Main(string[] args)
     {
         SQLitePCL.Batteries_V2.Init();
+        Console.OutputEncoding = System.Text.Encoding.UTF8;   // вывод в файл (> log) читаем как UTF-8
 
         var force  = args.Contains("--force");
         var total  = ArgLong(args, "--count") ?? DefaultTotal;
@@ -83,6 +84,11 @@ internal static class Program
                 if (File.Exists(dbPath + suffix)) File.Delete(dbPath + suffix);
         }
 
+        // Профиль стенда: календарный (по умолчанию, ниже) или широкий разреженный — WideProfile.
+        var profile = ArgStr(args, "--profile") ?? "calendar";
+        if (profile == "wide") return WideProfile.Run(args, dbPath, total);
+        if (profile != "calendar") { Console.WriteLine($"Неизвестный профиль {profile}: calendar | wide."); return 1; }
+
         var scattered = total / 2;
         var huge      = total - scattered;
         var step      = Math.Max(1, ScatterSpanSeconds / scattered);
@@ -96,6 +102,10 @@ internal static class Program
         // 1. Схема — те же миграции EF, что применяет приложение.
         using (var ctx = new AppDbContext(dbPath))
             ctx.Database.Migrate();
+        // Закрытый контекст оставляет в пуле ОТКРЫТОЕ подключение, а файл уже в WAL: сырому
+        // подключению ниже оно мешает переключить журнал (WAL → OFF требует одиночества), и
+        // каждая вставка ждала замок секундами. Пул закрываем (см. WideProfile).
+        AppDbContext.ResetPool(dbPath);
         var tSchema = sw.Elapsed;
         Console.WriteLine($"Схема (Database.Migrate): {tSchema.TotalSeconds:0.0} с");
 
@@ -295,7 +305,9 @@ internal static class Program
 
             for (var g = 0; g < group; g++)
             {
-                rec.Add($"($id{g}, {col}, '{CreatedAt}', $id{g}, $s{g}, $e{g}, 0, NULL, $t{g})");
+                // Аудит записи — как пишет приложение (UpdatedAt = CreatedAt, снимки имени); колонки
+                // Description у db_records больше нет (миграция DescriptionAsField).
+                rec.Add($"($id{g}, {col}, '{CreatedAt}', '{CreatedAt}', 'Стенд', 'Стенд', $id{g}, $s{g}, $e{g}, 0, $t{g})");
                 val.Add($"($id{g}, {fDate}, $v1_{g}), ($id{g}, {fRem}, $v2_{g}), ($id{g}, {fDl}, $v3_{g}), " +
                         $"($id{g}, {fNote}, $v4_{g}), ($id{g}, {fQty}, $v5_{g}), ($id{g}, {fSt}, $v6_{g}), " +
                         $"($id{g}, {fDone}, $v7_{g}), ($id{g}, {fUrl}, $v8_{g})");
@@ -309,8 +321,8 @@ internal static class Program
                 _idxP[g] = Params(_idx, $"$id{g}", $"$s{g}", $"$e{g}", $"$rs{g}", $"$re{g}", $"$ds{g}", $"$de{g}");
             }
 
-            _rec.CommandText = "INSERT INTO db_records (Id, CollectionId, CreatedAt, Position, StartDt, EndDt, " +
-                               "AllDay, Description, Title) VALUES " + string.Join(", ", rec);
+            _rec.CommandText = "INSERT INTO db_records (Id, CollectionId, CreatedAt, UpdatedAt, CreatedBy, UpdatedBy, " +
+                               "Position, StartDt, EndDt, AllDay, Title) VALUES " + string.Join(", ", rec);
             _val.CommandText = "INSERT INTO db_field_values (RecordId, FieldId, Value) VALUES " + string.Join(", ", val);
             _idx.CommandText = "INSERT INTO calendar_index (RecordId, FieldId, CollectionId, StartIso, EndIso, " +
                                "AllDay) VALUES " + string.Join(", ", idx);

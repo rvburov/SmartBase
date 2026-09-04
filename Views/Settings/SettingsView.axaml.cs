@@ -36,6 +36,11 @@ public partial class SettingsView : UserControl
     public event EventHandler<int>?               DatabaseRemoved;
     // Попытка переподключить недоступную БД (по DbId).
     public event EventHandler<int>?               DatabaseReconnectRequested;
+    /// <summary>«Сжать файл» у смонтированной SQLite-базы: MainWindow отцепляет базу и ведет
+    /// VACUUM через очередь монтирования (см. MountQueue.RunMaintenance).</summary>
+    public event EventHandler<int>?               DatabaseCompactRequested;
+    /// <summary>«Резервная копия…» у смонтированной SQLite-базы (VACUUM INTO, без отключения).</summary>
+    public event EventHandler<int>?               DatabaseBackupRequested;
     // Тумблер «Общее → Уведомления» переключен — MainWindow сообщает службе уведомлений.
     public event EventHandler<bool>?              NotificationsEnabledChanged;
     // Тумблеры уведомлений по задачам — туда же, каждый сам по себе.
@@ -974,15 +979,24 @@ public partial class SettingsView : UserControl
     }
 
     // Вызывается из MainWindow: реестр + способ узнать, смонтирована ли БД сейчас,
-    // + статус фоновой очереди монтирования для еще не подключенных.
+    // + статус фоновой очереди монтирования для еще не подключенных, + сведения о файле
+    // смонтированной SQLite-базы (снятые при монтировании, без обращения к файлу отсюда)
+    // и право текущего пользователя обслуживать файл (администратор базы).
     public void Initialize(DatabaseRegistry registry, Func<int, bool> isMounted,
-                           Func<int, (string Text, bool Failed)?>? queueStatus = null)
+                           Func<int, (string Text, bool Failed)?>? queueStatus = null,
+                           Func<int, DatabaseManager.StorageStats?>? storage = null,
+                           Func<int, bool>? canMaintain = null)
     {
         _registry    = registry;
         _isMounted   = isMounted;
         _queueStatus = queueStatus;
+        _storage     = storage;
+        _canMaintain = canMaintain;
         RefreshDatabaseList();
     }
+
+    private Func<int, DatabaseManager.StorageStats?>? _storage;
+    private Func<int, bool>?                          _canMaintain;
 
     // Перестроить список (статус монтирования мог измениться). Вызывается из MainWindow.
     public void RefreshDatabases() => RefreshDatabaseList();
@@ -1067,6 +1081,10 @@ public partial class SettingsView : UserControl
                 IsDefault     = d.IsDefault,
                 IsMounted     = mounted,
                 IsPostgres    = d.IsPostgres,
+                // Сведения о файле и право на «Сжать файл»/«Резервная копия» — только у
+                // смонтированной SQLite-базы (PG-файла нет; отцепленную не трогаем).
+                Storage       = mounted && !d.IsPostgres ? _storage?.Invoke(d.Id) : null,
+                CanMaintain   = mounted && !d.IsPostgres && (_canMaintain?.Invoke(d.Id) ?? false),
                 StatusText    = mounted ? _mountedStatus.GetValueOrDefault(d.Id) : queue?.Text
                     ?? (d.IsPostgres ? "Не подключена (сервер недоступен)"
                                      : "Не подключена (файл недоступен)"),
@@ -1185,5 +1203,19 @@ public partial class SettingsView : UserControl
         // MainWindow попробует смонтировать БД заново и обновит список (статус).
         if (sender is Button { Tag: int id })
             DatabaseReconnectRequested?.Invoke(this, id);
+    }
+
+    // «Сжать файл» / «Резервная копия…»: подтверждение, выбор файла и сама работа — в MainWindow
+    // (там рабочее пространство и очередь монтирования); здесь только сигнал с id базы.
+    private void OnCompactDatabaseClick(object? sender, RoutedEventArgs e)
+    {
+        if (sender is Button { Tag: int id })
+            DatabaseCompactRequested?.Invoke(this, id);
+    }
+
+    private void OnBackupDatabaseClick(object? sender, RoutedEventArgs e)
+    {
+        if (sender is Button { Tag: int id })
+            DatabaseBackupRequested?.Invoke(this, id);
     }
 }

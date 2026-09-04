@@ -182,6 +182,23 @@ public class AppDbContext : DbContext
     /// </summary>
     private static int WaitSeconds(string path) => NetworkPath.IsNetwork(path) ? 15 : 10;
 
+    /// <summary>Предел размера <c>-wal</c> локальной базы после чекпоинта (см. ApplyConnectionPragmas).</summary>
+    public const long WalSizeLimitBytes = 64L * 1024 * 1024;
+
+    /// <summary>
+    /// Чекпоинт WAL после массовой операции (импорт, свод, дубль, удаление) — best-effort, без
+    /// ожидания читателей (PASSIVE): переносит в файл все, что можно, и вместе с
+    /// <c>journal_size_limit</c> усекает журнал до лимита. Иначе после заливки 600 тыс. строк
+    /// <c>-wal</c> лежит рядом с базой в размере всей операции до следующего удобного случая.
+    /// PostgreSQL и сетевые пути (журнал DELETE) — no-op.
+    /// </summary>
+    public void CheckpointWal()
+    {
+        if (IsPostgres || NetworkPath.IsNetwork(_dbPath)) return;
+        try { Database.ExecuteSqlRaw("PRAGMA wal_checkpoint(PASSIVE);"); }
+        catch (Microsoft.Data.Sqlite.SqliteException) { /* занято — усечется при следующем чекпоинте */ }
+    }
+
     private static string SqliteConnectionString(string path) =>
         new Microsoft.Data.Sqlite.SqliteConnectionStringBuilder
         {
@@ -243,6 +260,12 @@ public class AppDbContext : DbContext
     ///    (когерентность кеша страниц между машинами не гарантируется).
     /// foreign_keys включаем явно: каскадное удаление (записи→значения, коллекция→поля/настройки)
     /// держится на FK ON DELETE CASCADE, а оно работает только при включенном enforcement.
+    ///
+    /// journal_size_limit (только локально, где журнал WAL): после массовой операции (свод на
+    /// 600 тыс. строк, импорт, удаление коллекции) файл <c>-wal</c> оставался сотнями мегабайт —
+    /// SQLite после чекпоинта не усекает его, а переиспользует. Лимит усекает журнал до 64 МБ
+    /// на ближайшем чекпоинте (это делает любое подключение, лимит на подключение — поэтому он
+    /// здесь, а не разово). На сетевом пути журнал DELETE, лимит ни на что не влияет.
     /// </summary>
     private void ApplyConnectionPragmas(DbConnection conn)
     {
@@ -254,6 +277,7 @@ public class AppDbContext : DbContext
                   "PRAGMA foreign_keys=ON;"
                 + (shared ? "PRAGMA busy_timeout=15000;" : "PRAGMA busy_timeout=10000;")
                 + (shared ? "PRAGMA synchronous=FULL;"   : "PRAGMA synchronous=NORMAL;")
+                + (shared ? "" : $"PRAGMA journal_size_limit={WalSizeLimitBytes};")
                 + "PRAGMA temp_store=MEMORY;"
                 // Объем — по профилю ЭТОГО контекста. Без mmap чтения страниц индексов идут
                 // pread-syscall'ами (импорт 425k в БД с большими коллекциями — минуты вместо

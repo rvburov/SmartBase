@@ -616,10 +616,34 @@
                                                        FontSize="{DynamicResource FontSizeSmall}"
                                                        Foreground="{Binding StatusBrush}"
                                                        IsVisible="{Binding ShowStatus}" />
+                                            <!-- Сведения о файле смонтированной SQLite-базы: размер и
+                                                 свободные (не возвращенные после удалений) страницы;
+                                                 красным — когда их больше порога и файл стоит сжать -->
+                                            <TextBlock Text="{Binding StorageText}"
+                                                       FontSize="{DynamicResource FontSizeSmall}"
+                                                       Foreground="{Binding StorageBrush}"
+                                                       IsVisible="{Binding ShowStorage}" />
                                         </StackPanel>
 
                                         <StackPanel Grid.Column="1" Orientation="Horizontal"
                                                     Spacing="8" VerticalAlignment="Center">
+
+                                            <!-- Сжать файл (VACUUM): общая база при монтировании не
+                                                 сжимается, только по этой кнопке администратором -->
+                                            <Button Content="Сжать файл"
+                                                    Tag="{Binding Id}"
+                                                    Click="OnCompactDatabaseClick"
+                                                    VerticalAlignment="Center"
+                                                    ToolTip.Tip="Вернуть свободное место: файл переписывается целиком, на время сжатия база отключается"
+                                                    IsVisible="{Binding ShowCompact}" />
+
+                                            <!-- Резервная копия (VACUUM INTO): компактная копия файла, базу не отключает -->
+                                            <Button Content="Резервная копия…"
+                                                    Tag="{Binding Id}"
+                                                    Click="OnBackupDatabaseClick"
+                                                    VerticalAlignment="Center"
+                                                    ToolTip.Tip="Сохранить компактную копию файла базы (без свободных страниц)"
+                                                    IsVisible="{Binding ShowBackup}" />
 
                                             <!-- Серверная БД PostgreSQL: метка провайдера -->
                                             <TextBlock Text="PostgreSQL"
