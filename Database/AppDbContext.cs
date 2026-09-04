@@ -1,6 +1,8 @@
 using System.Data.Common;
 using Microsoft.EntityFrameworkCore;
+using Serilog;
 using SmartBase.Database.Entities;
+using SmartBase.Logging;
 
 namespace SmartBase.Database;
 
@@ -110,7 +112,12 @@ public class AppDbContext : DbContext
             try
             {
                 var n = save();
-                if (droppedEdits > 0) PhantomRowsDropped?.Invoke(droppedEdits);
+                if (droppedEdits > 0)
+                {
+                    Log.Warning("Отброшено правок строк, удаленных другим пользователем: {Count} ({Db:l})",
+                                droppedEdits, DisplayPath);
+                    PhantomRowsDropped?.Invoke(droppedEdits);
+                }
                 return n;
             }
             catch (DbUpdateConcurrencyException ex) when (attempt < 5 && ex.Entries.Count > 0)
@@ -196,8 +203,18 @@ public class AppDbContext : DbContext
     {
         if (IsPostgres || NetworkPath.IsNetwork(_dbPath)) return;
         try { Database.ExecuteSqlRaw("PRAGMA wal_checkpoint(PASSIVE);"); }
-        catch (Microsoft.Data.Sqlite.SqliteException) { /* занято — усечется при следующем чекпоинте */ }
+        catch (Microsoft.Data.Sqlite.SqliteException ex)
+        {
+            // Занято — штатно, усечется при следующем чекпоинте. Остальное (ошибка ввода-вывода,
+            // повреждение) — в журнал: -wal без чекпоинта растет, пока не кончится диск.
+            if (!DbHealthMonitor.IsBusyError(ex))
+                Log.Warning(ex, "Чекпоинт WAL не выполнен: {Path:l}", _dbPath);
+        }
     }
+
+    /// <summary>Путь для журнала диагностики: файл SQLite как есть, у PostgreSQL — без строки
+    /// подключения (в ней пароль).</summary>
+    public string DisplayPath => IsPostgres ? "PostgreSQL" : _dbPath;
 
     private static string SqliteConnectionString(string path) =>
         new Microsoft.Data.Sqlite.SqliteConnectionStringBuilder
@@ -289,10 +306,15 @@ public class AppDbContext : DbContext
                                 : "PRAGMA cache_size=-65536;");   // ~64 МБ
             cmd.ExecuteNonQuery();
         }
-        catch (Microsoft.Data.Sqlite.SqliteException)
+        catch (Microsoft.Data.Sqlite.SqliteException ex)
         {
             // Прагмы — не повод не дать открыть соединение: без них работа просто менее
             // терпима к конкуренции. Реальная ошибка все равно вылезет на первом запросе.
+            // Но след нужен (один на файл за сеанс — соединений открывается сотни): база
+            // работает с настройками SQLite по умолчанию, и «database is locked» без ожидания
+            // у одного из пользователей иначе не с чем связать.
+            if (Diag.Once("pragmas:" + _dbPath))
+                Log.Warning(ex, "Прагмы подключения не применились: {Path:l} — база работает с настройками SQLite по умолчанию", _dbPath);
         }
     }
 

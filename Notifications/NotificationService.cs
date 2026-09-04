@@ -1,6 +1,8 @@
 using System.Threading.Tasks;
 using Avalonia.Threading;
+using Serilog;
 using SmartBase.Core.Models;
+using SmartBase.Logging;
 using SmartBase.Utils;
 
 namespace SmartBase.Notifications;
@@ -138,8 +140,17 @@ public sealed class NotificationService : IDisposable
         _timer.Tick += (_, _) => TickBackground();
         _timer.Start();
 
+        // Служба без окна — ее запуск и состояние тумблеров в журнал: «напоминание не пришло»
+        // начинают разбирать с вопроса, была ли служба вообще включена.
+        Log.Information("Служба уведомлений запущена: календарь {Calendar:l}, назначение задач {Assigned:l}, стадии задач {Status:l}, метка {Watermark:l}",
+                        OnOff(_calendarOn), OnOff(_taskAssignedOn), OnOff(_taskStatusOn), _watermark.ToString("yyyy-MM-dd HH:mm"));
+
         TickBackground();   // догон пропущенного (если включено) — тоже вне UI-потока
     }
+
+    private static string OnOff(bool on) => on ? "вкл" : "выкл";
+    // Повторяющиеся сбои тика (база пропала) — не чаще раза в период на причину.
+    private static readonly TimeSpan FailLogPeriod = TimeSpan.FromMinutes(10);
 
     /// <summary>Синхронный проход: собрать наступившие, показать плашки, обновить значок и метку.
     /// ЧИТАЕТ источник на вызывающем потоке — используется интеграционными тестами напрямую;
@@ -194,7 +205,12 @@ public sealed class NotificationService : IDisposable
             if (calendarOn)
             {
                 try { candidates = _eventSource(watermark, now.AddMinutes(1)); }
-                catch { /* БД могла отвалиться — пропускаем тик, метку не двигаем */ }
+                catch (Exception ex)
+                {
+                    // БД могла отвалиться — пропускаем тик, метку не двигаем. След — один на период.
+                    if (Diag.Throttle("notify:calendar-read", FailLogPeriod))
+                        Log.Warning(ex, "Уведомления: события календаря не прочитаны — тик пропущен, метка не сдвинута");
+                }
             }
 
             // Задачная ветка читается своими подключениями и своим try/catch: упавшая база
@@ -204,10 +220,19 @@ public sealed class NotificationService : IDisposable
             {
                 try
                 {
-                    if (reseed) _taskSource!.Reseed();
-                    else        events = _taskSource!.Read();
+                    if (reseed)
+                    {
+                        _taskSource!.Reseed();
+                        Log.Information("Уведомления по задачам: курсоры очередей сброшены на хвост — накопленное за время выключения не показывается");
+                    }
+                    else events = _taskSource!.Read();
                 }
-                catch { /* очередь недоступна — попробуем следующим тиком */ }
+                catch (Exception ex)
+                {
+                    // Очередь недоступна — попробуем следующим тиком.
+                    if (Diag.Throttle("notify:tasks-read", FailLogPeriod))
+                        Log.Warning(ex, "Уведомления: очередь событий задач недоступна — тик пропущен");
+                }
             }
 
             Dispatcher.UIThread.Post(() =>
@@ -279,7 +304,12 @@ public sealed class NotificationService : IDisposable
             SafeBadge(_unseen);
         }
 
-        try { _taskSource?.Commit(); } catch { /* курсор не записался — увидим событие дважды */ }
+        try { _taskSource?.Commit(); }
+        catch (Exception ex)
+        {
+            // Курсор не записался — увидим событие дважды; повтор баннера объясняется только этой записью.
+            Log.Warning(ex, "Уведомления: курсор очереди задач не сохранен в app.db — события могут показаться повторно");
+        }
         return decision;
     }
 
@@ -290,6 +320,7 @@ public sealed class NotificationService : IDisposable
     {
         if (on == _calendarOn) return;
         _calendarOn = on;
+        Log.Information("Уведомления календаря {State:l} в настройках", on ? "включены" : "выключены");
         if (on)
         {
             _watermark = _clock();
@@ -299,17 +330,18 @@ public sealed class NotificationService : IDisposable
     }
 
     /// <summary>Живое переключение тумблера «Уведомления о назначении задачи».</summary>
-    public void SetTaskAssignedEnabled(bool on) => SetTaskFlag(ref _taskAssignedOn, on);
+    public void SetTaskAssignedEnabled(bool on) => SetTaskFlag(ref _taskAssignedOn, on, "о назначении задачи");
 
     /// <summary>Живое переключение тумблера «Уведомления о смене стадии задачи».</summary>
-    public void SetTaskStatusEnabled(bool on) => SetTaskFlag(ref _taskStatusOn, on);
+    public void SetTaskStatusEnabled(bool on) => SetTaskFlag(ref _taskStatusOn, on, "о смене стадии задачи");
 
     // Включение задачного вида — не показывать накопленное: на ближайшем тике курсоры уедут
     // на хвост очередей (аналог «метка = сейчас» у календаря).
-    private void SetTaskFlag(ref bool flag, bool on)
+    private void SetTaskFlag(ref bool flag, bool on, string what)
     {
         if (on == flag) return;
         flag = on;
+        Log.Information("Уведомления {What:l} {State:l} в настройках", what, on ? "включены" : "выключены");
         if (on) _reseedTasks = true;
         else    ClearBadgeIfAllOff();
     }
@@ -350,6 +382,7 @@ public sealed class NotificationService : IDisposable
 
     public void Dispose()
     {
+        if (_timer is not null) Log.Information("Служба уведомлений остановлена");
         _timer?.Stop();
         _timer = null;   // симметрично Start(): служба остановлена — ее можно запустить заново
         _notifier.Activated -= OnNotifierActivated;
@@ -369,16 +402,33 @@ public sealed class NotificationService : IDisposable
 
     private void Persist(DateTime w)
     {
-        try { _persistWatermark(w); } catch { /* запись метки не критична */ }
+        try { _persistWatermark(w); }
+        catch (Exception ex)
+        {
+            // Запись метки не критична для тика, но без нее после перезапуска придет повтор.
+            if (Diag.Throttle("notify:persist", FailLogPeriod))
+                Log.Warning(ex, "Уведомления: метка времени не сохранена в app.db");
+        }
     }
 
     private void SafeShow(string title, string body, string tag)
     {
-        try { _notifier.Show(title, body, tag); } catch { /* сбой ОС-баннера не ломает цикл */ }
+        try { _notifier.Show(title, body, tag); }
+        catch (Exception ex)
+        {
+            // Сбой ОС-баннера не ломает цикл, но «напоминание не пришло» объясняется только здесь.
+            if (Diag.Throttle("notify:show", FailLogPeriod))
+                Log.Warning(ex, "Баннер ОС не показан: {Title:l}", title);
+        }
     }
 
     private void SafeBadge(int count)
     {
-        try { _badge.SetCount(count); } catch { /* сбой значка не ломает цикл */ }
+        try { _badge.SetCount(count); }
+        catch (Exception ex)
+        {
+            if (Diag.Throttle("notify:badge", FailLogPeriod))
+                Log.Warning(ex, "Значок-счетчик уведомлений не обновлен");
+        }
     }
 }

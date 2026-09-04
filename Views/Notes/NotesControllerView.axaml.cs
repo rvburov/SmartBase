@@ -209,6 +209,11 @@ public partial class NotesControllerView : UserControl
         var noVault = !HasVault || VaultIsMissing;
         var open    = _openRelative is not null;
 
+        // Хранилище задано, но папки нет (сетевой диск отвалился, папку переименовали) —
+        // одна запись на путь за сеанс: раздел покажет подсказку, а журнал — когда это началось.
+        if (VaultIsMissing && Logging.Diag.Once("vault-missing:" + _vault))
+            Serilog.Log.Warning("Хранилище заметок недоступно: {Path:l} — раздел «Заметки» без файлов до возврата папки", _vault);
+
         VaultHint.IsVisible       = noVault;
         UnsupportedHint.IsVisible = !noVault && unsupported;
         PickHint.IsVisible        = !noVault && !unsupported && !open;

@@ -62,10 +62,21 @@ public partial class ExtensionsView : UserControl
     {
         if (_current is null || !_current.CanRun) return;
 
-        var window = _current.CreateWindow();
-        if (window is null) return;
+        try
+        {
+            var window = _current.CreateWindow();
+            if (window is null) return;
 
-        if (TopLevel.GetTopLevel(this) is Window owner) window.Show(owner);
-        else                                            window.Show();
+            if (TopLevel.GetTopLevel(this) is Window owner) window.Show(owner);
+            else                                            window.Show();
+        }
+        catch (Exception ex)
+        {
+            // Сбой самого механизма расширений — окно не создалось или не открылось. Это ядро,
+            // а не расширение (сами расширения в журнал диагностики не пишут): след и карточка,
+            // иначе кнопка «Запустить» молча не работает.
+            Serilog.Log.Error(ex, "Расширение «{Name:l}» ({Id:l}): окно не создано или не открылось", _current.Name, _current.Id);
+            Controls.Widgets.AppNotifications.Error($"Не удалось открыть расширение «{_current.Name}»: {ex.Message}");
+        }
     }
 }

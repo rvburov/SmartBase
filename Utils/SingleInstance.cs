@@ -71,7 +71,12 @@ public sealed class SingleInstance : IDisposable
             _watcher.Created += (_, _) => ShowRequested?.Invoke();
             _watcher.Changed += (_, _) => ShowRequested?.Invoke();
         }
-        catch { /* нет наблюдателя (напр. сетевой путь) — вернуть окно можно кликом/треем */ }
+        catch (Exception ex)
+        {
+            // Нет наблюдателя (напр. сетевой путь) — вернуть окно можно кликом/треем, но
+            // человек, запустивший программу второй раз, увидит «ничего не произошло».
+            Serilog.Log.Warning(ex, "Единственный экземпляр: наблюдатель сигнала не создан в {Dir:l} — повторный запуск не вернет окно, только значок в трее", _dir);
+        }
     }
 
     public void Dispose()

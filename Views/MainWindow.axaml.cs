@@ -6,11 +6,13 @@ using Avalonia.Platform;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
+using Serilog;
 using SmartBase.Controls.Components;
 using SmartBase.Controls.Dialogs;
 using SmartBase.Database;
 using SmartBase.Database.Entities;
 using SmartBase.Database.Repositories;
+using SmartBase.Logging;
 using SmartBase.Notifications;
 using SmartBase.Settings;
 using SmartBase.Utils;
@@ -83,6 +85,10 @@ public partial class MainWindow : Window
 
         // Сообщения человеку — карточки в правом верхнем углу окна (стопкой, сами гаснут).
         Controls.Widgets.AppNotifications.Install(this);
+
+        // Сторож UI-потока: зависания интерфейса попадают в журнал диагностики с длительностью
+        // и списком операций, которые шли в этот момент (см. Logging/UiWatchdog).
+        _watchdog = new UiWatchdog();
 
         // Ошибки записи на пользовательских действиях (правка ячейки, CRUD): «занята» —
         // карточка + сигнал монитору (на сетевой базе BUSY бывает признаком мертвых хендлов
@@ -585,8 +591,24 @@ public partial class MainWindow : Window
             _changes.Dispose();
             _health.Dispose();
             _notifications.Dispose();
+            _watchdog.Dispose();
         };
     }
+
+    private readonly UiWatchdog _watchdog;
+
+    // Человеческое имя раздела для записей о медленном открытии.
+    private static string ModuleTitle(string module) => module switch
+    {
+        "calendar"    => "Календарь",
+        "tasks"       => "Задачи",
+        "constructor" => "Конструктор",
+        "settings"    => "Настройки",
+        "profile"     => "Профиль",
+        "notes"       => "Заметки",
+        "extensions"  => "Расширения",
+        _             => module,
+    };
 
     // Выход уже подтвержден диалогом «база обновляется» — повторно не спрашиваем.
     private bool _closeConfirmed;
@@ -769,7 +791,7 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            Program.LogCrash("backup", ex);
+            Log.Error(ex, "Резервная копия базы «{Name:l}» не создана: {Target:l}", name, target);
             Notify($"Резервная копия базы «{name}» не создана: {ex.Message}");
         }
         finally
@@ -975,6 +997,12 @@ public partial class MainWindow : Window
         _backgroundEnabled = AppSettings.LoadBackgroundEnabled();
         SetupTray();
         if (_tray is not null) _tray.IsVisible = _backgroundEnabled;
+        // Состояние службы без окна — в журнал: вместе с записью о запуске это ответ на вопрос
+        // «программа вообще работала в это время и должна ли была прятаться в трей».
+        if (_backgroundEnabled)
+            Log.Information(_tray is not null
+                ? "Фоновый режим включен: значок в трее создан, закрытие окна прячет программу"
+                : "Фоновый режим включен в настройках, но значок в трее недоступен — закрытие окна завершит программу");
 
         // ⌘Q (macOS — через штатное меню Avalonia, CloseReason=ApplicationShutdown) уже завершает
         // приложение; для Windows/Linux добавляем Ctrl+Q как явный выход, когда окно в фокусе.
@@ -1008,7 +1036,13 @@ public partial class MainWindow : Window
             _tray.Clicked += (_, _) => ShowFromTray();
             TrayIcon.SetIcons(Application.Current, new TrayIcons { _tray });
         }
-        catch { /* трей недоступен (напр. GNOME без расширения) — остаются запасные пути */ }
+        catch (Exception ex)
+        {
+            // Трей недоступен (напр. GNOME без расширения) — остаются запасные пути, но без
+            // значка крестик закрывает программу, а не прячет, и напоминания при закрытом окне
+            // не придут. Снаружи это ничем не видно — только по этой записи.
+            Log.Warning(ex, "Значок в трее не создан — закрытие окна будет завершать программу, уведомления при закрытом окне приходить не будут");
+        }
     }
 
     private static WindowIcon? LoadAppIcon()
@@ -1043,6 +1077,7 @@ public partial class MainWindow : Window
     private void QuitExplicit()
     {
         _explicitQuit = true;
+        Program.ExitReason = "выход из трея или Ctrl+Q";
         (Application.Current?.ApplicationLifetime as IClassicDesktopStyleApplicationLifetime)?.Shutdown();
     }
 
@@ -1051,6 +1086,10 @@ public partial class MainWindow : Window
     private void OnBackgroundChanged(bool on)
     {
         _backgroundEnabled = on;
+        // Редкое действие, меняющее поведение всей программы после закрытия окна, — в журнал.
+        Log.Information("Фоновый режим {State:l} в настройках{Tray:l}",
+                        on ? "включен" : "выключен",
+                        on && _tray is null ? " — значок в трее недоступен, режим не заработает" : "");
         if (_tray is not null) _tray.IsVisible = on;
         // Значок создать не удалось: прятать окно мы не станем (возвращать нечем), и человек
         // должен знать, что тумблер в его системе ничего не даст, — иначе он рассчитывает на
@@ -1151,6 +1190,9 @@ public partial class MainWindow : Window
 
     private void ShowModule(string module)
     {
+        // Порог медленности: раздел, который открывался дольше Diag.UiOpen, попадает в журнал.
+        using var slow = Diag.Measure($"открытие раздела «{ModuleTitle(module)}»", Diag.UiOpen);
+
         // Уходим из заметок — дописать несохраненный текст: автосохранение работает с паузой,
         // и последние набранные символы иначе остались бы только в редакторе.
         if (_activeModule == "notes" && module != "notes") NotesModule.FlushPendingSave();

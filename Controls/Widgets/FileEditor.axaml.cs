@@ -170,7 +170,12 @@ public partial class FileEditor : UserControl
     private void OpenFile()
     {
         try { Process.Start(new ProcessStartInfo { FileName = _path, UseShellExecute = true }); }
-        catch { /* нечем открыть / нет прав — тихо игнорируем */ }
+        catch (Exception ex)
+        {
+            // Нечем открыть / нет прав — для человека тихо, для журнала нет: «файл не открывается»
+            // разбирается по этой записи (сетевой путь недоступен, ассоциации нет).
+            Serilog.Log.Warning(ex, "Не удалось открыть файл системой: {Path:l}", _path);
+        }
     }
 
     private async Task PickFileAsync()

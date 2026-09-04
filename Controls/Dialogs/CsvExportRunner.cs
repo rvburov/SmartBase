@@ -85,9 +85,9 @@ public static class CsvExportRunner
             progressClosed = progress.ShowDialog(owner);
 
             var target  = path;
+            var watch   = Stopwatch.StartNew();
             var written = await Task.Run(() =>
             {
-                var watch   = Stopwatch.StartNew();
                 var eta     = new EtaEstimator();
                 var lastPct = -1;
 
@@ -106,6 +106,9 @@ public static class CsvExportRunner
 
             await CloseProgress(progress, progressClosed);
             progress = null;
+            // Итог массовой операции — в журнал: объем, файл, время.
+            Serilog.Log.Information("Выгрузка в CSV «{Title:l}»: {Rows:N0} строк → {Path:l} за {Ms:N0} мс",
+                                    job.Title, written, path, watch.Elapsed.TotalMilliseconds);
             await ConfirmDialog.Info($"Выгружено строк: {written:N0}.\nФайл: {path}").ShowDialog(owner);
         }
         catch (OperationCanceledException)

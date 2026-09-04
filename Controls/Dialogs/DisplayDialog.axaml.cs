@@ -45,6 +45,9 @@ public partial class DisplayDialog : Window
     public DisplayDialog(ConstructorRepository repository, int collectionId,
                          IReadOnlyList<(string Key, string Name)> columns)
     {
+        // Порог медленности: окно «Отображение» (списки колонок и записей) дольше Diag.UiOpen — в журнал.
+        using var slow = Logging.Diag.Measure("окно «Отображение»", Logging.Diag.UiOpen,
+                                              $"коллекция {collectionId}, колонок {columns.Count}");
         InitializeComponent();
 
         _repository   = repository;

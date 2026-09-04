@@ -74,7 +74,11 @@ public sealed record FileAutoRule(string SourceKey, string Folder, string Format
             if (source.Length == 0 || folder.Length == 0 || format.Length == 0) return null;
             return new FileAutoRule(source, folder, format, recursive);
         }
-        catch (JsonException) { return null; }
+        catch (JsonException ex)
+        {
+            ConfigJsonLog.Broken("файл: авто-привязка", configJson, ex);
+            return null;
+        }
     }
 
     /// <summary>Объект для сериализации в ConfigJson (под ключом «auto»).</summary>

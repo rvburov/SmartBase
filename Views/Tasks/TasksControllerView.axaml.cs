@@ -172,6 +172,8 @@ public partial class TasksControllerView : UserControl
 
         var gen       = ++_gen;
         var oldOffset = TaskList.ScrollOffset;
+        // Порог медленности: чтение раздела по всем допущенным базам дольше Diag.UiOpen — в журнал.
+        using var slow = Logging.Diag.Measure("загрузка раздела «Задачи»", Logging.Diag.UiOpen, $"баз {_dbs.Count}");
         var work      = LoadAllAsync();
 
         // Оверлей — только если загрузка дольше 400 мс (как сетка календаря) И показывать
@@ -183,7 +185,14 @@ public partial class TasksControllerView : UserControl
         Dictionary<(int DbId, int ColId), ConstructorRepository.TaskCollectionStats> stats;
         bool tasksRead;
         try { (list, stats, tasksRead) = await work; }
-        catch { (list, stats, tasksRead) = ([], [], true); }   // фон: недоступная БД не валит UI
+        catch (Exception ex)
+        {
+            // Фон: недоступная БД не валит UI. Но пустой раздел без записи в журнале
+            // неотличим от «задач нет» — одна запись в минуту на причину.
+            if (Logging.Diag.Throttle("tasks-load-fail", TimeSpan.FromMinutes(1)))
+                Log.Warning(ex, "Раздел «Задачи»: список не прочитан (баз {Count}) — показан пустым", _dbs.Count);
+            (list, stats, tasksRead) = ([], [], true);
+        }
 
         if (gen != _gen) return;
         LoadingOverlay.IsVisible = false;

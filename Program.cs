@@ -26,6 +26,12 @@ internal sealed class Program
     // процесс (двойные уведомления). В режимах установщика/удаления не используется.
     internal static SingleInstance? Instance { get; private set; }
 
+    // Момент запуска и причина выхода — для записи о штатном завершении (App, desktop.Exit):
+    // по ней видно, сколько программа работала и как закрылась; ее отсутствие после записи
+    // «Запуск SmartBase» выдает убитый процесс или выключение питания.
+    internal static readonly DateTime StartedAt = DateTime.Now;
+    internal static string? ExitReason { get; set; }
+
     [STAThread]
     public static void Main(string[] args)
     {
@@ -113,15 +119,7 @@ internal sealed class Program
         try { Log.Fatal(ex, "Crash: {Source:l} v{Version:l}", source, AppSettings.AppVersion); }
         catch { }
 
-        try
-        {
-            var path = Path.Combine(AppSettings.AppDataDir, "crash.log");
-            Directory.CreateDirectory(AppSettings.AppDataDir);
-            File.AppendAllText(path,
-                $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {source} v{AppSettings.AppVersion}{Environment.NewLine}" +
-                $"{ex}{Environment.NewLine}{Environment.NewLine}");
-        }
-        catch { }
+        CrashLog.Append(source, ex?.ToString() ?? "(исключения нет)");
     }
 
     // Режим установщика включается аргументом (--install/--uninstall) или именем раздачи

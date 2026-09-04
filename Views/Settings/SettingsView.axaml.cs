@@ -431,7 +431,10 @@ public partial class SettingsView : UserControl
                 UseShellExecute = true,
             });
         }
-        catch { /* нет обработчика для папки — молча игнорируем */ }
+        catch (Exception ex)
+        {
+            Serilog.Log.Warning(ex, "Не удалось открыть папку данных в проводнике: {Dir:l}", AppSettings.AppDataDir);
+        }
     }
 
     // ── Обновления ───────────────────────────────────────────────────────────
@@ -534,6 +537,22 @@ public partial class SettingsView : UserControl
 
             var info = await Task.Run(() => CheckRemoteVersion(folder));
             SetUpdateStatus(info.Message, isError: info.Result == UpdateCheck.Error);
+            // Результат проверки — в журнал целиком, а не только сбой: «обновление лежит в папке
+            // с понедельника, а у пользователя старая версия» иначе не отличить от «папка недоступна».
+            switch (info.Result)
+            {
+                case UpdateCheck.Available:
+                    Serilog.Log.Information("Автопроверка обновления: доступно {Remote:l} (у нас {Current:l}), папка {Folder:l}",
+                                            info.Remote?.ToString() ?? "новая сборка", AppSettings.AppVersion, folder);
+                    break;
+                case UpdateCheck.UpToDate:
+                    Serilog.Log.Information("Автопроверка обновления: версия {Current:l} актуальна, папка {Folder:l}",
+                                            AppSettings.AppVersion, folder);
+                    break;
+                default:
+                    Serilog.Log.Warning("Автопроверка обновления не удалась: {Message:l} (папка {Folder:l})", info.Message, folder);
+                    break;
+            }
             if (info.Result == UpdateCheck.Available && info.RemoteExe is not null && info.Remote is not null)
                 await StartUpdateAsync(info.RemoteExe, info.Remote);
         }
@@ -738,6 +757,7 @@ public partial class SettingsView : UserControl
         }
         catch (Exception ex)
         {
+            Serilog.Log.Error(ex, "Не удалось загрузить обновление из {Source:l}", remoteExe);
             SetUpdateStatus($"Не удалось загрузить обновление: {ex.Message}", isError: true);
             return;
         }
@@ -770,9 +790,13 @@ public partial class SettingsView : UserControl
                 UseShellExecute = false,
                 Arguments       = $"--apply-update --target \"{target}\" --pid {Environment.ProcessId}",
             });
+            Serilog.Log.Information("Обновление начато: {Source:l} → {Target:l}, приложение закрывается для самозамены (версия {Remote:l})",
+                                    remoteExe, target, remote);
+            Program.ExitReason = "перезапуск для обновления";
         }
         catch (Exception ex)
         {
+            Serilog.Log.Error(ex, "Не удалось запустить апдейтер из {Temp:l}", tempExe);
             SetUpdateStatus($"Не удалось запустить обновление: {ex.Message}", isError: true);
             return;
         }

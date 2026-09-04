@@ -37,6 +37,8 @@ public partial class RecordDialog : Window
     // ── Конструктор: схема-режим ──────────────────────────────────────────────
     public RecordDialog(ConstructorRepository repository, int collectionId, int? recordId = null)
     {
+        // Порог медленности: построение окна записи (поля коллекции, значения) дольше Diag.UiOpen — в журнал.
+        using var slow = Logging.Diag.Measure("окно записи", Logging.Diag.UiOpen, $"коллекция {collectionId}");
         InitializeComponent();
 
         _repository   = repository;
@@ -81,6 +83,8 @@ public partial class RecordDialog : Window
         TimeSpan? presetTime       = null,
         bool presetAllDay          = false)
     {
+        // Порог медленности: окно события календаря (список баз, коллекций и полей-дат).
+        using var slow = Logging.Diag.Measure("окно записи календаря", Logging.Diag.UiOpen, $"баз {databases.Count}");
         InitializeComponent();
 
         _databases.AddRange(databases);

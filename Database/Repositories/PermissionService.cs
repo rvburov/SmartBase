@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using Microsoft.EntityFrameworkCore;
+using Serilog;
 using SmartBase.Core.Models;
 using SmartBase.Database.Entities;
 using SmartBase.Utils;
@@ -115,6 +116,11 @@ public sealed class PermissionService(AppDbContext db)
             // «в моменте» появится строка «Ожидает допуска» в панели администратора.
             // Первый пользователь новой базы сам себе не сигналит.
             if (hasAdmin) LogUser("user.join", CurrentUser.DisplayName);
+            // Диагностика программы: события допуска — история того, кто и как получил доступ.
+            if (hasAdmin)
+                Log.Information("Пользователь {User:l} зарегистрирован в базе {Db:l} и ждет допуска", CurrentUser.DisplayName, _db.DisplayPath);
+            else
+                Log.Information("Пользователь {User:l} открыл базу {Db:l} первым и стал ее администратором", CurrentUser.DisplayName, _db.DisplayPath);
             try { _db.SaveChanges(); }
             catch (Microsoft.EntityFrameworkCore.DbUpdateException ex) when (ex.InnerException
                 is Microsoft.Data.Sqlite.SqliteException { SqliteErrorCode: 19 }
@@ -239,6 +245,7 @@ public sealed class PermissionService(AppDbContext db)
         // без перезапуска (его поллер увидит строку и перечитает права).
         LogUser(approved ? "user.approve" : "user.revoke", user.DisplayName);
         _db.SaveChanges();
+        Log.Information("Допуск {Action:l}: {User:l} ({Db:l})", approved ? "выдан" : "отозван", user.DisplayName, _db.DisplayPath);
         Reload();
     }
 
@@ -271,6 +278,7 @@ public sealed class PermissionService(AppDbContext db)
                 Utils.ChangeDetail.Rename(isAdmin ? RoleUser : RoleAdmin,
                                           isAdmin ? RoleAdmin : RoleUser));
         _db.SaveChanges();
+        Log.Information("Роль изменена: {User:l} → {Role:l} ({Db:l})", user.DisplayName, isAdmin ? RoleAdmin : RoleUser, _db.DisplayPath);
         Reload();
     }
 
@@ -293,9 +301,11 @@ public sealed class PermissionService(AppDbContext db)
         if (_db.Entry(user).State == Microsoft.EntityFrameworkCore.EntityState.Detached) return;
 
         // Имя снимаем ДО удаления: после SaveChanges читать сущность уже нельзя.
-        LogUser("user.remove", user.DisplayName);
+        var removedName = user.DisplayName;
+        LogUser("user.remove", removedName);
         _db.DbUsers.Remove(user);
         _db.SaveChanges();
+        Log.Information("Пользователь удален из базы: {User:l} ({Db:l})", removedName, _db.DisplayPath);
         Reload();
     }
 
@@ -407,7 +417,12 @@ public sealed class PermissionService(AppDbContext db)
 
         var expected = Convert.FromBase64String(hash);
         var actual   = Pbkdf2(password, Convert.FromBase64String(salt), iterations);
-        if (!CryptographicOperations.FixedTimeEquals(expected, actual)) return false;
+        if (!CryptographicOperations.FixedTimeEquals(expected, actual))
+        {
+            // Неверный пароль — событие безопасности: кто и в какую базу пытался войти.
+            Log.Warning("Неверный пароль базы {Db:l} (пользователь {User:l})", _db.DisplayPath, CurrentUser.DisplayName);
+            return false;
+        }
 
         var me = Tracked(_db.DbUsers.FirstOrDefault(u => u.UserKey == CurrentUser.Key));
         if (me is not null && !me.IsApproved &&
@@ -418,6 +433,7 @@ public sealed class PermissionService(AppDbContext db)
             // сменит «Ожидает допуска» на допущенного без перезахода.
             LogUser("user.unlock", CurrentUser.DisplayName);
             _db.SaveChanges();
+            Log.Information("Допуск по паролю базы: {User:l} ({Db:l})", CurrentUser.DisplayName, _db.DisplayPath);
         }
         Reload();
         return true;

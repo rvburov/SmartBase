@@ -20,10 +20,24 @@ namespace SmartBase.Logging;
 /// </summary>
 public static class AppLog
 {
+    // Внутренние ошибки приемника за сеанс — не больше стольких строк в crash.log: сбой
+    // приемника (диск полон, файл занят) повторяется на каждой записи и залил бы резерв.
+    private const int SelfLogLimit = 20;
+    private static int _selfLogCount;
+
     /// <summary>Настроить и запустить глобальный логгер. Вызывать один раз на старте
     /// (Program.Main), после создания папки данных (AppSettings.EnsureCreated).</summary>
     public static void Init()
     {
+        // Внутренние ошибки самого Serilog (logs.db заблокирован, поврежден, диск полон) иначе
+        // теряются молча — журнал выглядит пустым ровно тогда, когда нужен. Направляем их в
+        // независимый crash.log (см. CrashLog), чтобы отказ приемника был виден хоть где-то.
+        Serilog.Debugging.SelfLog.Enable(message =>
+        {
+            if (Interlocked.Increment(ref _selfLogCount) <= SelfLogLimit)
+                CrashLog.Append("serilog", message);
+        });
+
         Log.Logger = new LoggerConfiguration()
             .MinimumLevel.Information()
             .Enrich.FromLogContext()

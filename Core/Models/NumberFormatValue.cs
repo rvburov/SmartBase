@@ -117,7 +117,11 @@ public static class NumberFormatValue
 
             return new NumberFormat(kind, decimals, thousands, symbol, suffix, mark);
         }
-        catch (JsonException) { return NumberFormat.Default; }
+        catch (JsonException ex)
+        {
+            ConfigJsonLog.Broken("число: формат", configJson, ex);
+            return NumberFormat.Default;
+        }
     }
 
     /// <summary>Сериализует формат в объект для ConfigJson поля (числа). Обратно читается

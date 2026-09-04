@@ -1,8 +1,10 @@
 ﻿using System.Collections;
 using System.Collections.Specialized;
 using Avalonia.Threading;
+using Serilog;
 using SmartBase.Core.Models;
 using SmartBase.Database.Repositories;
+using SmartBase.Logging;
 
 namespace SmartBase.ViewModels.ConstructorDb;
 
@@ -173,6 +175,10 @@ internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollecti
             // (Возврат на эту страницу запросит загрузку заново.) Чтение полей — на UI-потоке
             // (продолжение после await идет в захваченном контексте), гонки нет.
             if (!_pending.Contains(page) || !_pages.ContainsKey(page)) return;
+            // Порог медленности страницы: медленная подгрузка при прокрутке — первый признак
+            // деградации базы (сеть, раздутый файл), и виден он здесь раньше жалобы.
+            using var slow = Diag.Measure("страница таблицы", Diag.UiPage,
+                                          $"{SmartBase.Utils.DbErrors.Display(_repo.DbPath)}, коллекция {_collectionId}, страница {page}");
             var data = await _repo.LoadPageAsync(_collectionId, _excludeHidden, idSlice, skip, take,
                                                  afterPos, afterId, beforePos, beforeId);
             Dispatcher.UIThread.Post(() => FillFromData(gen, page, data.Records, data.Values, data.CellStyles));
@@ -182,7 +188,13 @@ internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollecti
             // Фоновая загрузка: ошибку проглатываем — строки останутся «Загрузка…» до повторного
             // запроса. Но «файл пропал» сигналит монитору доступности (DbErrors.HandleRead) —
             // иначе таблица висела бы в вечной «Загрузке…» вместо честного «база недоступна».
+            // Прочие ошибки (не сеть и не занятость — то есть наш дефект) без записи остались бы
+            // вечной «Загрузкой…» без объяснения.
             SmartBase.Utils.DbErrors.HandleRead(ex, _repo.DbPath);
+            if (!Database.DbHealthMonitor.IsUnavailableError(ex) && !Database.DbHealthMonitor.IsBusyError(ex)
+                && Diag.Throttle("page-load-fail:" + _repo.DbPath, TimeSpan.FromMinutes(1)))
+                Log.Warning(ex, "Страница таблицы не загрузилась: {Db:l}, коллекция {Collection}, страница {Page}",
+                            SmartBase.Utils.DbErrors.Display(_repo.DbPath), _collectionId, page);
         }
         finally
         {

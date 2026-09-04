@@ -1,8 +1,11 @@
+using System.Diagnostics;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
 using Serilog;
+using Serilog.Events;
 using SmartBase.Database.Repositories;
+using SmartBase.Logging;
 
 namespace SmartBase.Database;
 
@@ -32,9 +35,19 @@ public sealed partial class DatabaseManager : IDisposable
     public ConstructorRepository Constructor { get; }
     public PermissionService     Permissions { get; }
 
+    /// <summary>Режим журнала SQLite после монтирования («wal» локально, «delete» на сетевом
+    /// пути); у PostgreSQL — пусто. Расхождение с ожидаемым пишется в журнал диагностики.</summary>
+    public string   JournalMode   { get; private set; } = "";
+    /// <summary>Сколько заняло монтирование целиком: миграции, сжатие, индексация календаря,
+    /// регистрация пользователя. Дольше <see cref="Diag.Mount"/> — предупреждение в журнале.</summary>
+    public TimeSpan MountDuration { get; private set; }
+
     // Фоновые чистки, запущенные при монтировании (автоочистка журнала и очереди задач).
     // Их обязан дождаться Dispose — см. WaitMaintenance.
     private readonly List<Task> _maintenance = [];
+
+    // Что сделали миграции при монтировании — для записи об открытии базы.
+    private readonly record struct MigrationReport(string From, string To, int Count, TimeSpan Elapsed);
 
     private DatabaseManager(int dbId, string name, string path, string provider, Action<string, double?>? stage)
     {
@@ -42,6 +55,9 @@ public sealed partial class DatabaseManager : IDisposable
         Name     = name;
         Path     = path;
         Provider = provider;
+
+        var watch = Stopwatch.StartNew();
+        MigrationReport? migrated = null;
 
         if (provider == "postgres")
         {
@@ -53,7 +69,13 @@ public sealed partial class DatabaseManager : IDisposable
             IsShared = true;
             Context  = new PgAppDbContext(path);
             stage?.Invoke($"Подключаюсь к серверу «{name}»…", null);
+            var pending = Context.Database.GetPendingMigrations().ToList();
+            var t       = Stopwatch.StartNew();
             Context.Database.Migrate();
+            if (pending.Count > 0)
+                migrated = new MigrationReport(
+                    Context.Database.GetAppliedMigrations().Where(m => !pending.Contains(m)).LastOrDefault() ?? "(пусто)",
+                    pending[^1], pending.Count, t.Elapsed);
         }
         else
         {
@@ -63,10 +85,10 @@ public sealed partial class DatabaseManager : IDisposable
             // Все изменения схемы применяются автоматически через EF Core Migrations.
             // Любая будущая правка сущностей → `dotnet ef migrations add ...` →
             // при следующем запуске Migrate() накатит ее, не трогая существующие данные.
-            ApplySchemaMigrations(Context, path, name, stage);
+            migrated = ApplySchemaMigrations(Context, path, name, stage);
 
             // Режим журнала — по типу пути (WAL локально / DELETE на сети, см. ApplyJournalMode).
-            ApplyJournalMode(Context, IsShared);
+            JournalMode = ApplyJournalMode(Context, IsShared);
 
             // Настройки скорости под большие коллекции (100k–10M строк). В отличие от WAL
             // (живет в заголовке файла) эти прагмы — на соединение, и теперь вызов лишь
@@ -75,6 +97,7 @@ public sealed partial class DatabaseManager : IDisposable
             // молча терялись, как только пул отдавал контексту другое соединение —
             // главный контекст оставался с busy_timeout=0 и кешем в 2 МБ.
             TunePerformancePragmas(Context);
+            VerifyConnectionPragmas();
 
             // Самолечение раздутого файла — ТОЛЬКО локально. SQLite без auto_vacuum не возвращает
             // освобожденные страницы в ОС: после «загрузил свод заново, старый удалил» половина
@@ -110,11 +133,13 @@ public sealed partial class DatabaseManager : IDisposable
         // для записей, у которых дата задана только в поле конструктора. На старых больших
         // базах первое построение проекции календаря — минуты: репортим этап и процент по
         // обработанным строкам (total=0 — тяжелая фаза началась, объем еще неизвестен).
+        var calendarWatch = Stopwatch.StartNew();
         Constructor.MigrateAndBackfillCalendarDates((done, total) => stage?.Invoke(
             total > 0
                 ? $"Индексирую календарь «{name}»\n{done:N0} из {total:N0}"
                 : $"Индексирую календарь «{name}»…",
             total > 0 ? Math.Min(0.99, done / (double)total) : null));
+        var calendar = calendarWatch.Elapsed;
 
         // Разметка ролей разделов: поля с двумя ролями сразу, лишние исполнители (раньше их
         // могло быть несколько на коллекцию) и роли, оставшиеся на неподходящем типе. Запреты
@@ -140,6 +165,60 @@ public sealed partial class DatabaseManager : IDisposable
 
         // Сведения о файле для «Управления базой данных» — снимаем здесь, на потоке монтирования.
         if (provider != "postgres") ReadStorage();
+
+        MountDuration = watch.Elapsed;
+        LogMounted(migrated, calendar);
+    }
+
+    // Одна запись на монтирование — история работы с базами в журнале диагностики: где лежит,
+    // в каком режиме журнала, какого размера, что сделали миграции и сколько все заняло.
+    // Дольше порога Diag.Mount — предупреждение: медленное монтирование видно до жалобы.
+    private void LogMounted(MigrationReport? migrated, TimeSpan calendar)
+    {
+        var where = Provider == "postgres" ? "сервер PostgreSQL"
+                  : IsShared               ? $"сетевой путь {Path}"
+                                           : $"локальный путь {Path}";
+        var journal = JournalMode.Length > 0 ? $", журнал {JournalMode}" : "";
+        var file    = Storage is { } s ? $", файл {Diag.Size(s.FileBytes)} (свободно {s.FreeRatio * 100:N0} %)" : "";
+        var extra   = (migrated is { } m ? $", миграции {m.From} → {m.To} ({m.Count}) за {Diag.Duration(m.Elapsed)}" : "")
+                    + (calendar > TimeSpan.FromSeconds(2) ? $", индексация календаря {Diag.Duration(calendar)}" : "");
+        var level   = MountDuration > Diag.Mount ? LogEventLevel.Warning : LogEventLevel.Information;
+        Log.Write(level, "База «{Name:l}» открыта за {Ms:N0} мс: {Provider:l}, {Where:l}{Journal:l}{File:l}{Extra:l}",
+                  Name, MountDuration.TotalMilliseconds, Provider, where, journal, file, extra);
+    }
+
+    // Контроль прагм подключения после монтирования: busy_timeout=0 или потерянный лимит WAL
+    // означают, что профиль подключения не применился (см. AppDbContext.ApplyConnectionPragmas)
+    // и база работает с настройками SQLite по умолчанию — это должно быть видно в журнале,
+    // а не всплывать «database is locked» без ожидания у одного из двадцати пользователей.
+    private void VerifyConnectionPragmas()
+    {
+        try
+        {
+            Context.Database.OpenConnection();
+            try
+            {
+                using var cmd = Context.Database.GetDbConnection().CreateCommand();
+                cmd.CommandText = "PRAGMA busy_timeout;";
+                var busy = Convert.ToInt64(cmd.ExecuteScalar());
+                cmd.CommandText = "PRAGMA journal_size_limit;";
+                var limit = Convert.ToInt64(cmd.ExecuteScalar());
+                if (busy <= 0)
+                    Log.Warning("База «{Name:l}»: busy_timeout не применился ({Value}) — при чужом писателе запросы будут падать «database is locked» без ожидания",
+                                Name, busy);
+                if (!IsShared && limit != AppDbContext.WalSizeLimitBytes)
+                    Log.Warning("База «{Name:l}»: лимит журнала WAL не применился ({Value}) — файл -wal может расти без усечения",
+                                Name, limit);
+            }
+            finally
+            {
+                Context.Database.CloseConnection();
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "База «{Name:l}»: не удалось проверить прагмы подключения", Name);
+        }
     }
 
     /// <summary>Смонтировать БД с ее идентичностью из реестра (DbId, имя, путь/строка подключения).
@@ -200,7 +279,7 @@ public sealed partial class DatabaseManager : IDisposable
     //    Смена режима требует эксклюзивного замка на файл, поэтому сначала читаем текущий и
     //    трогаем файл, только если режим другой: общую базу открывают десятки копий приложения,
     //    и каждая безусловная запись режима на ходу у соседей заканчивалась бы SQLITE_BUSY.
-    private static void ApplyJournalMode(AppDbContext db, bool shared)
+    private static string ApplyJournalMode(AppDbContext db, bool shared)
     {
         var want = shared ? "delete" : "wal";
         db.Database.OpenConnection();
@@ -208,10 +287,19 @@ public sealed partial class DatabaseManager : IDisposable
         {
             using var cmd = db.Database.GetDbConnection().CreateCommand();
             cmd.CommandText = "PRAGMA journal_mode;";
-            var current = Convert.ToString(cmd.ExecuteScalar())?.ToLowerInvariant();
-            if (current == want) return;
+            var current = Convert.ToString(cmd.ExecuteScalar())?.ToLowerInvariant() ?? "";
+            if (current == want) return current;
             cmd.CommandText = $"PRAGMA journal_mode={want.ToUpperInvariant()};";
-            cmd.ExecuteScalar();
+            // PRAGMA journal_mode=X отвечает режимом, который ДЕЙСТВУЕТ: не смог переключить
+            // (нет прав на файл, чужой замок) — вернет прежний. Для общей базы прежний WAL на
+            // сетевом пути — риск порчи при сбое сервера, и молчать об этом нельзя.
+            var result = Convert.ToString(cmd.ExecuteScalar())?.ToLowerInvariant() ?? "";
+            if (result != want)
+                Log.Warning("База {Path:l}: режим журнала {Mode:l} вместо {Want:l} — {Why:l}",
+                            db.DbPath, result, want,
+                            shared ? "WAL на сетевом пути не защищает от порчи при сбое сервера; проверьте права на файл"
+                                   : "без WAL чтение и запись будут блокировать друг друга");
+            return result;
         }
         finally
         {
@@ -283,15 +371,17 @@ public sealed partial class DatabaseManager : IDisposable
     // и упадет на «таблица уже существует». Чтобы этого избежать, перед Migrate()
     // вручную создаем таблицу истории и фиксируем в ней InitialCreate как
     // «уже примененную». После этого Migrate() накатит только последующие миграции.
-    private static void ApplySchemaMigrations(AppDbContext db, string path, string name, Action<string, double?>? stage)
+    private static MigrationReport? ApplySchemaMigrations(AppDbContext db, string path, string name, Action<string, double?>? stage)
     {
         var dbFileExists = File.Exists(path);
 
         // Случай 1: БД еще не существует — Migrate() сам создаст ее и применит все миграции по порядку.
         if (!dbFileExists)
         {
+            var all   = db.Database.GetPendingMigrations().ToList();
+            var fresh = Stopwatch.StartNew();
             db.Database.Migrate();
-            return;
+            return all.Count > 0 ? new MigrationReport("(новый файл)", all[^1], all.Count, fresh.Elapsed) : null;
         }
 
         // Случай 2: БД есть. Проверяем, есть ли в ней таблица __EFMigrationsHistory
@@ -320,6 +410,12 @@ public sealed partial class DatabaseManager : IDisposable
         ClearStaleMigrationsLock(db);
 
         var pending = db.Database.GetPendingMigrations().ToList();
+
+        // Для записи в журнал: откуда и куда двигаем схему и сколько это заняло.
+        var from    = db.Database.GetAppliedMigrations().LastOrDefault() ?? "(пусто)";
+        var to      = pending.Count > 0 ? pending[^1] : "";
+        var planned = pending.Count;
+        var watch   = Stopwatch.StartNew();
 
         // Тяжелая SchemaCompact (разовая перекладка миллионов строк) идет СОБСТВЕННЫМ
         // возобновляемым конвейером (партиал DatabaseManager.SchemaCompact.cs): порции с
@@ -371,6 +467,8 @@ public sealed partial class DatabaseManager : IDisposable
             CompactWithProgress(db, path, name, stage, minFreeBytes: 16L * 1024 * 1024, minFreeRatio: 0);
             ClearNeedsCompact(db);
         }
+
+        return planned > 0 ? new MigrationReport(from, to, planned, watch.Elapsed) : null;
     }
 
     // ── Свободное место и сжатие ─────────────────────────────────────────────────
@@ -449,7 +547,9 @@ public sealed partial class DatabaseManager : IDisposable
     // На сетевом пути mmap выключен, и проблемы нет.
     private static void Vacuum(AppDbContext db, string path, string name, Action<string, double?>? stage)
     {
-        var liveBytes = Math.Max(1, new FileInfo(path).Length - SqliteMaintenance.ReadFreeSpace(db).FreeBytes);
+        var before    = new FileInfo(path).Length;
+        var watch     = Stopwatch.StartNew();
+        var liveBytes = Math.Max(1, before - SqliteMaintenance.ReadFreeSpace(db).FreeBytes);
         AppDbContext.ResetPool(path);
         db.Database.OpenConnection();
         try
@@ -467,6 +567,11 @@ public sealed partial class DatabaseManager : IDisposable
         {
             db.Database.CloseConnection();
         }
+        // Было → стало по файлу на диске (а не по page_count): именно размер на диске
+        // молча не менялся, пока файл держало отображенным чужое подключение.
+        Log.Information("База «{Name:l}» сжата: {Before:l} → {After:l} за {Ms:N0} мс ({Path:l})",
+                        name, Diag.Size(before), Diag.Size(new FileInfo(path).Length),
+                        watch.Elapsed.TotalMilliseconds, path);
     }
 
     /// <summary>
@@ -499,6 +604,7 @@ public sealed partial class DatabaseManager : IDisposable
     {
         if (File.Exists(targetPath)) File.Delete(targetPath);   // VACUUM INTO не перезаписывает
 
+        var watch = Stopwatch.StartNew();
         using var db = new AppDbContext(path);
         db.ApplyPerformancePragmas();
         var liveBytes = Math.Max(1, new FileInfo(path).Length - SqliteMaintenance.ReadFreeSpace(db).FreeBytes);
@@ -537,6 +643,8 @@ public sealed partial class DatabaseManager : IDisposable
             if (conn.State == System.Data.ConnectionState.Open) conn.Close();
             AppDbContext.ResetPool(targetPath);
         }
+        Log.Information("Резервная копия базы «{Name:l}» сохранена: {Target:l} ({Size:l}) за {Ms:N0} мс",
+                        name, targetPath, Diag.Size(Len(targetPath)), watch.Elapsed.TotalMilliseconds);
     }
 
     // Замок миграций EF 9 (__EFMigrationsLock): Migrate() вставляет строку на время работы и

@@ -2,6 +2,7 @@ using Microsoft.Data.Sqlite;
 using Npgsql;
 using Serilog;
 using SmartBase.Database.Entities;
+using SmartBase.Logging;
 
 namespace SmartBase.Database;
 
@@ -173,6 +174,13 @@ public sealed class DbHealthMonitor : IDisposable
         || (ex is NpgsqlException { InnerException: null } ne && ne.IsTransient)
         || (ex.InnerException is not null && IsUnavailableError(ex.InnerException));
 
+    /// <summary>«Файл базы поврежден»: SQLite CORRUPT(11) / NOTADB(26) — подмножество
+    /// <see cref="IsUnavailableError"/>, но в журнале зовется своим именем: это не сеть и не
+    /// занятость, а сами данные, и лечится проверкой целостности или резервной копией.</summary>
+    public static bool IsCorruptionError(Exception ex) =>
+        (ex is SqliteException se && se.SqliteErrorCode is 11 or 26)
+        || (ex.InnerException is not null && IsCorruptionError(ex.InnerException));
+
     /// <summary>«Занято, не потеря»: SQLite BUSY(5)/LOCKED(6) — файл держит другой писатель;
     /// PostgreSQL 40001 (serialization), 40P01 (deadlock), 55P03 (lock timeout) — штатная
     /// конкуренция транзакций, повтор действия обычно проходит.</summary>
@@ -217,6 +225,9 @@ public sealed class DbHealthMonitor : IDisposable
             if (ProbePath(ProbeTarget(s.Entry)))
             {
                 lock (_gate) _lost.Remove(dbId);
+                // Возврат — в журнал парой к потере: сколько база была недоступна и с какой попытки вернулась.
+                Log.Information("База «{Name:l}» снова доступна через {Down:l} (попытка {Attempt}) — ставлю в очередь монтирования",
+                                s.Entry.Name, Diag.Duration(DateTime.Now - s.LostAt), s.Attempt + 1);
                 // Дальше — существующий конвейер: монтирование, Completed → SyncMountedToUi,
                 // узел в сайдбаре оживает. Если монтирование все же упадет, MainWindow вернет
                 // базу под ретраи через TrackFailed (обработчик Completed).
@@ -293,6 +304,7 @@ public sealed class DbHealthMonitor : IDisposable
         lock (_gate) if (_lost.ContainsKey(dbId)) return;   // уже объявлена (пачкой соседа)
 
         var lost = new List<(int DbId, string Name, string Path, string Reason)> { (dbId, name, path, reason) };
+        var siblingsInfo = "";
 
         var root = NetworkPath.ServerRoot(path);
         if (root is not null)
@@ -317,10 +329,15 @@ public sealed class DbHealthMonitor : IDisposable
                     var goneS = probe.IsCompletedSuccessfully && !probe.Result.FileExists;
                     lost.Add((m.DbId, m.Name, m.Path, goneS ? "файл не найден" : "связь потеряна"));
                 }
-                Log.Warning("База «{Name:l}» потеряна ({Reason:l}); соседей по «{Root:l}»: {Siblings}, из них потеряно: {Lost}",
-                            name, reason, root, siblings.Count, lost.Count - 1);
+                siblingsInfo = $"; соседей по «{root}»: {siblings.Count}, из них потеряно: {lost.Count - 1}";
             }
         }
+
+        // Потеря — всегда в журнал, с соседями или без: это главное событие общей базы, и по нему
+        // вместе с записью о возврате видно, сколько сервер лежал. Строку подключения PostgreSQL
+        // не пишем — в ней пароль.
+        Log.Warning("База «{Name:l}» потеряна ({Reason:l}): {Where:l}{Siblings:l}",
+                    name, reason, PgConnectionInfo.IsPostgresConnectionString(path) ? "сервер PostgreSQL" : path, siblingsInfo);
 
         var now = DateTime.Now;
         lock (_gate)

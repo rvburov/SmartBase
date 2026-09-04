@@ -50,7 +50,15 @@ public partial class App : Application
             _ = Task.Run(Setup.InstallService.CleanStaleUpdateArtifacts);
 
             // Системный реестр БД (app.db). Регистрирует текущую БД как дефолтную.
-            var registry = DatabaseRegistry.Open(AppSettings.DbPath);
+            DatabaseRegistry registry;
+            try { registry = DatabaseRegistry.Open(AppSettings.DbPath); }
+            catch (Exception ex)
+            {
+                // Без app.db нет ни реестра баз, ни настроек — старт невозможен. След в журнале
+                // с путем: обычно это права на папку данных или поврежденный файл.
+                Log.Error(ex, "Системная база app.db не открылась: {Path:l}", AppSettings.SystemDbPath);
+                throw;
+            }
 
             // Настройки приложения хранятся в app.db.
             AppSettings.AttachStore(registry);
@@ -153,6 +161,7 @@ public partial class App : Application
                                 instance.StartListening();
                                 instance.ShowRequested += () => Dispatcher.UIThread.Post(() =>
                                 {
+                                    Log.Information("Повторный запуск: второй экземпляр отклонен, окно работающего показано");
                                     main.Show();
                                     main.Activate();
                                 });
@@ -160,10 +169,16 @@ public partial class App : Application
 
                             desktop.Exit += (_, _) =>
                             {
+                                var mounted = workspace.Mounted.Count;
                                 workspace.Dispose();
                                 registry.Dispose();
                                 Program.NotificationManager?.Dispose();
                                 Program.Instance?.Dispose();
+                                // Запись о штатном выходе: ее отсутствие после «Запуск SmartBase»
+                                // выдает убитый процесс или выключение питания.
+                                Log.Information("Завершение SmartBase ({Reason:l}): работало {Uptime:l}, баз закрыто {Count}",
+                                    Program.ExitReason ?? "закрытие окна",
+                                    Logging.Diag.Duration(DateTime.Now - Program.StartedAt), mounted);
                             };
                         }
 

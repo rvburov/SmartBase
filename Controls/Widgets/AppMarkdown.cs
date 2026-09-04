@@ -141,7 +141,11 @@ public class AppMarkdown : StackPanel
         // Открывает система: open (macOS), ассоциация (Windows), xdg-open (Linux). Молча —
         // отказ открыть ссылку не повод показывать человеку окно с ошибкой.
         try { Process.Start(new ProcessStartInfo { FileName = url, UseShellExecute = true }); }
-        catch { /* нет ассоциации или адрес не тот — переход просто не случится */ }
+        catch (Exception ex)
+        {
+            // Нет ассоциации или адрес не тот — переход просто не случится; причина — в журнале.
+            Serilog.Log.Warning(ex, "Не удалось открыть ссылку системой: {Url:l}", url);
+        }
     }
 }
 

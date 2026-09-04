@@ -41,7 +41,11 @@ public sealed record RelationConfig(int TargetCollectionId, bool Single, string 
             if (target <= 0) return null;
             return new RelationConfig(target, single, separator, targetDb);
         }
-        catch (JsonException) { return null; }
+        catch (JsonException ex)
+        {
+            ConfigJsonLog.Broken("связь", configJson, ex);
+            return null;
+        }
     }
 
     /// <summary>Строка-склейка названий для показа (из ключа <see cref="Separator"/>).</summary>

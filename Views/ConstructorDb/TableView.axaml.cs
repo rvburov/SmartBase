@@ -23,6 +23,7 @@ using SmartBase.Controls.Dialogs;
 using SmartBase.Controls.Widgets;
 using SmartBase.Core.Models;
 using SmartBase.Database.Repositories;
+using SmartBase.Logging;
 using SmartBase.ViewModels.ConstructorDb;
 using SmartBase.Utils;
 using SmartBase.Controls.Behaviors;
@@ -353,6 +354,11 @@ public partial class TableView : UserControl
 
     public void Load(ConstructorRepository repository, int collectionId)
     {
+        // Порог медленности: открытие коллекции (колонки, настройки, первая страница) дольше
+        // Diag.UiOpen — в журнал с базой и коллекцией.
+        using var slow = Diag.Measure("открытие коллекции", Diag.UiOpen,
+                                      $"{DbErrors.Display(repository.DbPath)}, коллекция {collectionId}");
+
         var sameCollection = _lastLoadedCollectionId == collectionId;
 
         _repository   = repository;
@@ -3053,6 +3059,11 @@ public partial class TableView : UserControl
     {
         if (_repository is null) return;
 
+        // Порог медленности: построение и показ окна фильтра (значения считаются уже в фоне,
+        // их порог — отдельно, см. GetColumnCountsAsync ниже).
+        using var slow = Diag.Measure("окно фильтра колонки", Diag.UiOpen,
+                                      $"{DbErrors.Display(_repository.DbPath)}, коллекция {_collectionId}, колонка {def.Header}");
+
         var flyout = new Flyout { Placement = PlacementMode.BottomEdgeAlignedRight };
         flyout.FlyoutPresenterClasses.Add("filterFlyout");
         // Флайаут рендерится в отдельном попап-окне вне зума приложения — контент
@@ -3410,10 +3421,26 @@ public partial class TableView : UserControl
         // (на UI-потоке) наполняем список. Если окно успели закрыть — операции над уже
         // отсоединенными контролами безвредны. Фильтры других колонок и скрытые записи
         // уходят в запрос (каскад); свой фильтр колонки репозиторий отбрасывает сам.
+        var countsSlow = Diag.Measure("список значений фильтра", Diag.UiQuery,
+                                      $"{DbErrors.Display(_repository!.DbPath)}, коллекция {_collectionId}, колонка {def.Header}");
         _repository!.GetColumnCountsAsync(_collectionId, def.Key, _filters,
                                           excludeHidden: _hiddenRecords.Count > 0).ContinueWith(t =>
         {
-            if (t.IsFaulted || t.IsCanceled) return;
+            countsSlow.Dispose();
+            if (t.IsFaulted)
+            {
+                // Окно так и останется с «Загрузка…» — без записи причину не найти.
+                var ex = t.Exception?.GetBaseException();
+                if (ex is not null)
+                {
+                    DbErrors.HandleRead(ex, _repository.DbPath);
+                    if (!Database.DbHealthMonitor.IsUnavailableError(ex) && !Database.DbHealthMonitor.IsBusyError(ex))
+                        Serilog.Log.Warning(ex, "Список значений фильтра не посчитан: {Db:l}, коллекция {Collection}, колонка {Column:l}",
+                                            DbErrors.Display(_repository.DbPath), _collectionId, def.Header);
+                }
+                return;
+            }
+            if (t.IsCanceled) return;
             var data = t.Result;
             Dispatcher.UIThread.Post(() =>
             {
@@ -3705,8 +3732,13 @@ public partial class TableView : UserControl
         // по значениям ОДНОЙ колонки, показ виртуализируется постранично по списку id. Не трогаем
         // нефильтрованные _virtualRows/_virtualView — создаем временный источник; при снятии
         // фильтра вернемся к DefaultItemsSource.
+        // Порог медленности: отбор и сортировка считаются на UI-потоке, дольше Diag.UiQuery — в журнал.
+        using var slow = Diag.Measure("фильтр и сортировка таблицы", Diag.UiQuery,
+                                      $"{DbErrors.Display(_repository.DbPath)}, коллекция {_collectionId}, фильтров {_filters.Count}" +
+                                      (_sortKey is null ? "" : ", с сортировкой"));
         var ids = _repository.GetFilteredRecordIds(_collectionId, _filters,
                                                    excludeHidden: _hiddenRecords.Count > 0);
+        slow.Context += $", отобрано {ids.Count:N0}";
         if (_sortKey is { } sk)
         {
             var def  = _colDefs.FirstOrDefault(d => d.Key == sk);

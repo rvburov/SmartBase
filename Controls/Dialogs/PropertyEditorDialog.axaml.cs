@@ -108,6 +108,8 @@ public partial class PropertyEditorDialog : Window
     public PropertyEditorDialog(ConstructorRepository repository, int collectionId, int? editFieldId = null,
                                 int currentDbId = 0)
     {
+        // Порог медленности: окно свойства (типы, списки коллекций для связи) дольше Diag.UiOpen — в журнал.
+        using var slow = Logging.Diag.Measure("окно свойства", Logging.Diag.UiOpen, $"коллекция {collectionId}");
         InitializeComponent();
 
         _repository   = repository;

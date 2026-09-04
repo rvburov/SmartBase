@@ -172,6 +172,11 @@ public partial class RecordPageView : UserControl
     /// <param name="dbId">База показываемой записи: 0 — активная, &gt;0 — открыта межбазовым переходом.</param>
     public void Show(ConstructorRepository repository, int recordId, int collectionId, int dbId = 0)
     {
+        // Порог медленности: страница записи строит все свойства без виртуализации —
+        // на широкой коллекции это и есть место, где открытие уходит за Diag.UiOpen.
+        using var slow = Logging.Diag.Measure("открытие страницы записи", Logging.Diag.UiOpen,
+                                              $"{Utils.DbErrors.Display(repository.DbPath)}, коллекция {collectionId}, запись {recordId}");
+
         _repo = repository;
         _dbId = dbId;
         _vm = new RecordPageViewModel(repository, recordId, collectionId);

@@ -439,6 +439,10 @@ public partial class CalendarControllerView : UserControl
         // вид разложит по дням сам — остальное по-прежнему приходит картой.
         var spanningOnly = viewIdx == 5 && !hasSearch;
         string? loadingPath = null;   // путь читаемой БД — для сигнала монитору при сбое
+        // Порог медленности: чтение окна календаря по всем базам дольше Diag.UiOpen — в журнал.
+        using var slow = Logging.Diag.Measure("загрузка календаря", Logging.Diag.UiOpen,
+                                              $"вид {viewIdx}, {startDt:yyyy-MM-dd} — {endDt:yyyy-MM-dd}, баз {_dbs.Count}" +
+                                              (hasSearch ? ", с поиском" : ""));
         try
         {
             foreach (var (dbId, _, repo) in _dbs.ToList())
@@ -463,7 +467,12 @@ public partial class CalendarControllerView : UserControl
             // БД недоступна/занята — оставляем прежнее содержимое вида, оверлей снимаем.
             // «Файл пропал» дополнительно сигналит монитору доступности (DbErrors) —
             // иначе календарь молча показывал бы устаревшие данные до следующей пробы.
+            // Прочее (наш дефект в чтении) без записи оставило бы календарь с устаревшим содержимым.
             SmartBase.Utils.DbErrors.HandleRead(ex, loadingPath);
+            if (!DbHealthMonitor.IsUnavailableError(ex) && !DbHealthMonitor.IsBusyError(ex))
+                Serilog.Log.Warning(ex, "Календарь: окно не прочитано ({Db:l}, вид {View}, {From:l} — {To:l})",
+                                    SmartBase.Utils.DbErrors.Display(loadingPath), viewIdx,
+                                    startDt.ToString("yyyy-MM-dd"), endDt.ToString("yyyy-MM-dd"));
             if (gen == _gridGen) { _gridAppliedGen = gen; GridLoadingOverlay.IsVisible = false; }
             return;
         }

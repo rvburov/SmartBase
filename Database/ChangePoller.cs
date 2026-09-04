@@ -1,6 +1,7 @@
 using System.Data.Common;
 using Microsoft.Data.Sqlite;
 using Npgsql;
+using Serilog;
 using SmartBase.Utils;
 
 namespace SmartBase.Database;
@@ -51,6 +52,9 @@ public sealed class ChangePoller : IDisposable
     // файла после перезагрузки сервера сам не оживет, а чужой коммит столько не держится.
     private const int BusyStreakToReopen = 3;
     private readonly Dictionary<int, Watch> _watch = [];
+    // Базы, о сбое наблюдения которых уже написано в журнал: до возврата базы каждый тик
+    // падал бы на том же месте, а одной записи на серию достаточно.
+    private readonly HashSet<int> _failLogged = [];
 
     public ChangePoller(Workspace ws, DbHealthMonitor health)
     {
@@ -94,7 +98,11 @@ public sealed class ChangePoller : IDisposable
 
             foreach (var db in mounted)
             {
-                try { PollOne(db.DbId, db.Path); }
+                try
+                {
+                    PollOne(db.DbId, db.Path);
+                    _failLogged.Remove(db.DbId);
+                }
                 catch (Exception ex) when (DbHealthMonitor.IsBusyError(ex))
                 {
                     // Файл занят дольше busy_timeout соединения (2 с): чужой долгий коммит — или
@@ -107,6 +115,8 @@ public sealed class ChangePoller : IDisposable
                         w.Conn?.Dispose();
                         w.Conn = null;
                         w.BusyStreak = 0;
+                        Log.Warning("Поллер чужих правок: база «{Name:l}» ответила BUSY {Count} раза подряд — соединение наблюдения переоткрыто",
+                                    db.Name, BusyStreakToReopen);
                     }
                     _health.ReportBusy(db.DbId);
                 }
@@ -114,8 +124,12 @@ public sealed class ChangePoller : IDisposable
                 {
                     // Соединение могло умереть вместе с файлом/сетью: наблюдение сбрасываем
                     // (после возврата базы построится заново), монитору — сигнал о потере.
-                    // Поллер тем самым — второй детектор пропажи.
+                    // Поллер тем самым — второй детектор пропажи. Одна запись на серию: до
+                    // возврата базы каждый тик падал бы здесь же.
                     if (_watch.TryGetValue(db.DbId, out var w)) { w.Conn?.Dispose(); _watch.Remove(db.DbId); }
+                    if (_failLogged.Add(db.DbId))
+                        Log.Warning(ex, "Поллер чужих правок: наблюдение за базой «{Name:l}» сброшено — чужие правки не подхватываются до возврата базы",
+                                    db.Name);
                     _health.ReportFailure(db.DbId, ex);
                 }
             }

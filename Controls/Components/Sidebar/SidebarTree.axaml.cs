@@ -1472,6 +1472,7 @@ public partial class SidebarTree : UserControl
 
                     try
                     {
+                        var unitWatch = System.Diagnostics.Stopwatch.StartNew();
                         var src = unit.OpenSource();
                         var schema = src.Analyze(
                             new Progress<double>(p =>
@@ -1489,6 +1490,10 @@ public partial class SidebarTree : UserControl
                                     schema.RowCount == 0 ? 1.0 : n / (double)schema.RowCount)),
                                 "Импорт записей…", info))));
                         created.Add(colId);
+                        // Итог массовой операции — в журнал: объем, файл, время.
+                        Log.Information("Импорт «{Collection:l}»: {Rows:N0} строк из {File:l} за {Ms:N0} мс ({Db:l})",
+                                        unit.CollectionName, schema.RowCount, unit.FilePath,
+                                        unitWatch.Elapsed.TotalMilliseconds, DbErrors.Display(repo.DbPath));
                     }
                     catch (Exception ex) when (ex is not OperationCanceledException)
                     {
@@ -1620,6 +1625,8 @@ public partial class SidebarTree : UserControl
                                     writer.WriteRow(row);
                                 writer.EndTable();
                                 repo.LogExportIsolated(tbl.Collection.CollectionName, total);
+                                Log.Information("Экспорт «{Collection:l}»: {Rows:N0} строк → {File:l}",
+                                                tbl.Collection.CollectionName, total, unit.FilePath);
                             }
                             writer.Finish();
                             completed++;
@@ -1685,7 +1692,11 @@ public partial class SidebarTree : UserControl
                 UseShellExecute = true,
             });
         }
-        catch { /* best-effort */ }
+        catch (Exception ex)
+        {
+            // Best-effort: файлы уже на диске, но «папка не открылась» — след в журнале.
+            Log.Warning(ex, "Не удалось открыть папку экспорта в проводнике: {Folder:l}", folder);
+        }
     }
 
     private void ExpandGroup(int dbId, int groupId)
@@ -1869,6 +1880,7 @@ public partial class SidebarTree : UserControl
 
         (int DbId, int Id, bool IsGroup)? madeBig = null;
         var lastPct = -1;
+        var bulkWatch = System.Diagnostics.Stopwatch.StartNew();
         try
         {
             await Task.Run(() =>
@@ -1900,6 +1912,9 @@ public partial class SidebarTree : UserControl
             // Ошибку фона проглатываем: узел либо скопирован, либо нет — UI не валим.
             Log.Warning(ex, "Сбой фонового копирования узла (дублирование)");
         }
+        // Итог массовой операции — в журнал (сюда попадают только большие объемы, см. порог выше).
+        Log.Information("Дублирование в фоне: целей {Targets}, записей {Records:N0} за {Ms:N0} мс",
+                        targets.Count, total, bulkWatch.Elapsed.TotalMilliseconds);
 
         dlg.Done();
         await dlgClosed;
@@ -2027,6 +2042,7 @@ public partial class SidebarTree : UserControl
         long workTotal = 2 * total;
         var lastPct = -1;
         var lastText = "";
+        var bulkWatch = System.Diagnostics.Stopwatch.StartNew();
         try
         {
             await Task.Run(() =>
@@ -2063,6 +2079,9 @@ public partial class SidebarTree : UserControl
             // Ошибку фона проглатываем: узел либо перенесен, либо нет — UI не валим.
             Log.Warning(ex, "Сбой фонового переноса узла");
         }
+        // Итог массовой операции — в журнал (большие объемы: копия плюс удаление исходника).
+        Log.Information("Перенос между базами в фоне: целей {Targets}, записей {Records:N0} за {Ms:N0} мс",
+                        crossDb.Count, total, bulkWatch.Elapsed.TotalMilliseconds);
 
         dlg.Done();
         await closed;
@@ -2231,6 +2250,7 @@ public partial class SidebarTree : UserControl
             var dlgClosed = dlg.ShowDialog(OwnerWindow);
 
             var lastPct = -1;
+            var bulkWatch = System.Diagnostics.Stopwatch.StartNew();
             try
             {
                 await Task.Run(() =>
@@ -2264,6 +2284,9 @@ public partial class SidebarTree : UserControl
                 if (!DbErrors.Handle(ex, targets.FirstOrDefault().Repo?.DbPath))
                     Log.Warning(ex, "Сбой фонового удаления узла");
             }
+            // Итог массовой операции — в журнал (сюда попадают только большие объемы).
+            Log.Information("Удаление в фоне: целей {Targets}, записей {Records:N0} за {Ms:N0} мс",
+                            targets.Count, total, bulkWatch.Elapsed.TotalMilliseconds);
 
             dlg.Done();
             await dlgClosed;

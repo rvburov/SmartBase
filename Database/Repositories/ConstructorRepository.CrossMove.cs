@@ -309,16 +309,27 @@ public partial class ConstructorRepository
         {
             if (int.TryParse(GetMeta(db, PendingCollectionKey), out var colId))
             {
+                Serilog.Log.Warning("Незавершенный перенос в {Db:l}: найден маркер {Key:l} — частичная копия коллекции {Id} удаляется",
+                                    db.DisplayPath, PendingCollectionKey, colId);
                 DeleteCollectionData(colId, log: false);
                 RemoveMeta(db, PendingCollectionKey);
+                Serilog.Log.Information("Незавершенный перенос в {Db:l}: частичная копия коллекции {Id} удалена", db.DisplayPath, colId);
             }
             if (int.TryParse(GetMeta(db, PendingGroupKey), out var grpId))
             {
+                Serilog.Log.Warning("Незавершенный перенос в {Db:l}: найден маркер {Key:l} — частичная копия группы {Id} удаляется",
+                                    db.DisplayPath, PendingGroupKey, grpId);
                 DeleteGroupData(grpId, log: false);
                 RemoveMeta(db, PendingGroupKey);
+                Serilog.Log.Information("Незавершенный перенос в {Db:l}: частичная копия группы {Id} удалена", db.DisplayPath, grpId);
             }
         }
-        catch { /* маркер остается — доудалим при следующем монтировании */ }
+        catch (Exception ex)
+        {
+            // Маркер остается — доудалим при следующем монтировании; след в журнале нужен,
+            // иначе частичная копия живет в базе молча.
+            Serilog.Log.Warning(ex, "Свип незавершенного переноса в {Db:l} не удался — повтор при следующем монтировании", db.DisplayPath);
+        }
     }
 
     // ── Клонирование структуры групп (EF, строк мало) ───────────────────────────
