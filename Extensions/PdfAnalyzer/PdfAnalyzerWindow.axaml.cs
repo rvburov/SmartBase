@@ -6,7 +6,6 @@ using Avalonia.Controls;
 using Avalonia.Interactivity;
 using Avalonia.Media;
 using Avalonia.Platform.Storage;
-using Serilog;
 using SmartBase.Controls.Dialogs;
 
 namespace SmartBase.Extensions.PdfAnalyzer;
@@ -139,8 +138,8 @@ public partial class PdfAnalyzerWindow : Window
             await OfferResult(result);
         }
         catch (OperationCanceledException) { SetStatus("Отменено", "BrushSecondaryText"); HideCurrentFile(); }
-        catch (PdfAnalyzeException ex)     { Log.Warning(ex, "Анализ PDF не выполнен"); SetStatus(ex.Message, "BrushRed"); HideCurrentFile(); }
-        catch (Exception ex)              { Log.Error(ex, "Анализ PDF: непредвиденная ошибка"); SetStatus($"Ошибка: {ex.Message}", "BrushRed"); HideCurrentFile(); }
+        catch (PdfAnalyzeException ex)     { SetStatus(ex.Message, "BrushRed"); HideCurrentFile(); }
+        catch (Exception ex)              { SetStatus($"Ошибка: {ex.Message}", "BrushRed"); HideCurrentFile(); }
         finally { SetRunning(false); }
     }
 

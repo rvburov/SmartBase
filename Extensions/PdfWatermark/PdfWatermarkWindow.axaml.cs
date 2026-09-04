@@ -4,7 +4,6 @@ using System.Text;
 using Avalonia.Controls;
 using Avalonia.Interactivity;
 using Avalonia.Platform.Storage;
-using Serilog;
 using SmartBase.Controls.Dialogs;
 using SmartBase.Core.Models;
 using SmartBase.Database;
@@ -171,9 +170,8 @@ public partial class PdfWatermarkWindow : Window
                     CollectionCombo.ItemsSource = _collections.Select(c => c.Name).ToList();
                 }
             }
-            catch (Exception ex)
+            catch (Exception)
             {
-                Log.Warning(ex, "Водяной знак: список коллекций базы не прочитан");
                 _repo = null;
             }
         }
@@ -245,7 +243,6 @@ public partial class PdfWatermarkWindow : Window
             }
             catch (Exception ex)
             {
-                Log.Warning(ex, "Водяной знак: коллекция «{Collection}» не прочитана", collection.Name);
                 _schemaProblem = ex.Message;
             }
         }
@@ -339,7 +336,6 @@ public partial class PdfWatermarkWindow : Window
         }
         catch (Exception ex)
         {
-            Log.Error(ex, "Водяной знак: прогон не удался");
             Fail("Прогон не удался.", ex);
         }
         finally

@@ -7,7 +7,6 @@ using Avalonia.Interactivity;
 using Avalonia.Media;
 using Avalonia.Platform.Storage;
 using Avalonia.VisualTree;
-using Serilog;
 using SmartBase.Controls.Components;
 using SmartBase.Controls.Dialogs;
 using SmartBase.Core.Models;
@@ -156,14 +155,12 @@ public partial class DocsCollectionWindow : Window
         catch (DocsCollectionException ex)
         {
             Rollback(repo, shell);
-            Log.Warning(ex, "Документы в коллекцию: не выполнено");
             SetStatus(ex.Message, "BrushRed");
             HideCurrentFile();
         }
         catch (Exception ex)
         {
             Rollback(repo, shell);
-            Log.Error(ex, "Документы в коллекцию: непредвиденная ошибка");
             SetStatus($"Ошибка: {ex.Message}", "BrushRed");
             HideCurrentFile();
         }
@@ -200,9 +197,9 @@ public partial class DocsCollectionWindow : Window
             foreach (var tree in owner.GetVisualDescendants().OfType<SidebarTree>())
                 tree.Refresh();
         }
-        catch (Exception ex)
+        catch (Exception)
         {
-            Log.Warning(ex, "Документы в коллекцию: не удалось обновить сайдбар");
+            // Не критично: сайдбар перечитает структуру при следующем обновлении.
         }
     }
 

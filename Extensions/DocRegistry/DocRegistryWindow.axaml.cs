@@ -4,7 +4,6 @@ using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Media;
 using Avalonia.Platform.Storage;
-using Serilog;
 using SmartBase.Controls.Dialogs;
 using SmartBase.Core.Models;
 using SmartBase.Database;
@@ -172,9 +171,8 @@ public partial class DocRegistryWindow : Window
                     CollectionCombo.ItemsSource = _collections.Select(c => c.Name).ToList();
                 }
             }
-            catch (Exception ex)
+            catch (Exception)
             {
-                Log.Warning(ex, "Регистрация КД: список коллекций базы не прочитан");
                 _repo = null;
             }
         }
@@ -254,7 +252,6 @@ public partial class DocRegistryWindow : Window
             }
             catch (Exception ex)
             {
-                Log.Warning(ex, "Регистрация КД: коллекция «{Collection}» не прочитана", collection.Name);
                 _schemaProblem = ex.Message;
             }
         }
@@ -407,7 +404,6 @@ public partial class DocRegistryWindow : Window
         }
         catch (Exception ex)
         {
-            Log.Error(ex, "Регистрация КД: файл со списком номеров не прочитан");
             if (token != _fileToken) return;
             _fileProblem = $"Файл не прочитан: {ex.Message}";
         }
@@ -508,9 +504,6 @@ public partial class DocRegistryWindow : Window
             // номера в ручном режиме, и номера следующего файла.
             foreach (var row in fresh.Rows) _designations.Add(row.Designation);
 
-            Log.Information("Регистрация КД: из файла записано строк {Count} — коллекция «{Collection}»",
-                            count, _shape!.CollectionName);
-
             // Файл занесен и с разбора снимается, а в рамке остается то, что записано, — с
             // выданными номерами: по этому списку человек и сверяется.
             _written = count;
@@ -533,12 +526,10 @@ public partial class DocRegistryWindow : Window
         }
         catch (DocRegistryException ex)
         {
-            Log.Warning(ex, "Регистрация КД: список из файла не записан");
             (message, brush) = (ex.Message, "BrushRed");
         }
         catch (Exception ex)
         {
-            Log.Error(ex, "Регистрация КД: непредвиденная ошибка при записи списка из файла");
             (message, brush) = ($"Ошибка: {ex.Message}", "BrushRed");
         }
         finally
@@ -669,9 +660,8 @@ public partial class DocRegistryWindow : Window
         {
             await Task.Run(EskdCatalog.Warmup);
         }
-        catch (Exception ex)
+        catch (Exception)
         {
-            Log.Error(ex, "Регистрация КД: справочник ЕСКД не загрузился");
             ShowSuggestions(Nothing);
             SuggestEmpty.Text = "Справочник ЕСКД недоступен — код можно ввести цифрами вручную";
             SuggestHint.Text  = "";   // причина уже названа в рамке, «ничего не нашлось» тут ни при чем
@@ -713,9 +703,8 @@ public partial class DocRegistryWindow : Window
             // распаковку справочника.
             view = await Task.Run(() => EskdCatalog.View(query));
         }
-        catch (Exception ex)
+        catch (Exception)
         {
-            Log.Error(ex, "Регистрация КД: подбор по справочнику ЕСКД не выполнен");
             if (token != _searchToken) return;
             ShowSuggestions(Nothing);
             SuggestEmpty.Text = "Справочник ЕСКД недоступен — код можно ввести цифрами вручную";
@@ -896,9 +885,6 @@ public partial class DocRegistryWindow : Window
             AppSettings.SaveExtensionSetting(DocRegistryExtension.ExtensionId,
                                              DocRegistryExtension.FioKey, input.Fio.Trim());
 
-            Log.Information("Регистрация КД: {Designation} — коллекция «{Collection}»",
-                            done.Designation, _shape.CollectionName);
-
             // Списки пересоберутся в UpdateState по пополненному журналу: записали новый документ
             // — он появится в группе «Без исполнения», а выбор останется на новом номере (уже
             // следующем); записали исполнение — номер останется выбранным, а исполнение встанет
@@ -915,12 +901,10 @@ public partial class DocRegistryWindow : Window
         }
         catch (DocRegistryException ex)
         {
-            Log.Warning(ex, "Регистрация КД: не выполнено");
             (message, brush) = (ex.Message, "BrushRed");
         }
         catch (Exception ex)
         {
-            Log.Error(ex, "Регистрация КД: непредвиденная ошибка");
             (message, brush) = ($"Ошибка: {ex.Message}", "BrushRed");
         }
         finally

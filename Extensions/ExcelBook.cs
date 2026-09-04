@@ -3,7 +3,6 @@ using ClosedXML.Excel;
 using ClosedXML.Parser;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Spreadsheet;
-using Serilog;
 
 namespace SmartBase.Extensions;
 
@@ -97,20 +96,17 @@ public sealed class ExcelBook : IDisposable
             }
 
             var book = new ExcelBook(new XLWorkbook(copy), tempDir);
-            Log.Warning("Книга {File:l} открыта после ремонта: выброшены неразбираемые имена {Names}",
-                        name, dropped);
             return book;
         }
         catch (ExcelOpenException)
         {
             throw;
         }
-        catch (Exception ex)
+        catch (Exception)
         {
             // Ремонт не удался (нет места под копию, книга сломана глубже) — пользователю
             // важна первая причина, а не то, обо что споткнулась попытка ее обойти.
             Cleanup(tempDir);
-            Log.Warning(ex, "Не удалось починить книгу {File:l}", name);
             throw new ExcelOpenException(Explain(parsing));
         }
     }

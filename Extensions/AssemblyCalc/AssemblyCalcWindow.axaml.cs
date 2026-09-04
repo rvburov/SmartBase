@@ -6,7 +6,6 @@ using Avalonia.Controls;
 using Avalonia.Interactivity;
 using Avalonia.Media;
 using Avalonia.Platform.Storage;
-using Serilog;
 using SmartBase.Controls.Dialogs;
 using SmartBase.Utils;
 
@@ -122,12 +121,10 @@ public partial class AssemblyCalcWindow : Window
         }
         catch (AssemblyCalcException ex)
         {
-            Log.Warning(ex, "Расчет сборочных единиц не выполнен");
             SetStatus(ex.Message, "BrushRed");
         }
         catch (Exception ex)
         {
-            Log.Error(ex, "Расчет сборочных единиц: непредвиденная ошибка");
             SetStatus($"Ошибка: {ex.Message}", "BrushRed");
         }
         finally
