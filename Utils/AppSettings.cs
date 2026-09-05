@@ -478,6 +478,108 @@ public static class AppSettings
         else                                _store?.Set(KeyBackgroundEnabled, on.ToString());
     }
 
+    // ── Резервное копирование ─────────────────────────────────────────────────────
+    //
+    // Раздел «Настройки → Резервное копирование»: копии баз (SQLite — файл через VACUUM INTO,
+    // PostgreSQL — дамп pg_dump) складываются в одну папку, расписание у каждой базы свое.
+    // Общие настройки — папка и глубина ротации; на базу — тумблер, строка расписания
+    // (разбирает Database/Backup/BackupSchedule, мусор → стандарт) и отметка последнего
+    // выполнения (состояние службы, как водяная метка уведомлений). Ключи на базу собираются
+    // приставкой «backup.<dbId>.» — фиксированного списка нет, базы приходят и уходят.
+
+    // Пусто = стандартная папка Backups в папке данных приложения (см. ResolveBackupFolder).
+    public const string BackupFolderDefault = "";
+
+    public const int BackupKeepMin     = 1;
+    public const int BackupKeepMax     = 100;
+    public const int BackupKeepDefault = 10;
+
+    public const bool   BackupEnabledDefault  = false;
+    public const string BackupScheduleDefault = "daily 03:00";
+
+    public static string LoadBackupFolder() => _store?.Get(KeyBackupFolder) ?? BackupFolderDefault;
+
+    public static void SaveBackupFolder(string path)
+    {
+        var trimmed = (path ?? "").Trim();
+        if (trimmed.Length == 0) _store?.Remove(KeyBackupFolder);
+        else                     _store?.Set(KeyBackupFolder, trimmed);
+    }
+
+    /// <summary>Папка, куда фактически писать копии: настроенная, а пусто — стандартная
+    /// «Backups» в папке данных (рядом с базами — на том же диске, всегда доступна на запись).</summary>
+    public static string ResolveBackupFolder()
+    {
+        var folder = LoadBackupFolder();
+        return folder.Length > 0 ? folder : Path.Combine(AppDataDir, "Backups");
+    }
+
+    public static int LoadBackupKeep()
+    {
+        if (int.TryParse(_store?.Get(KeyBackupKeep), NumberStyles.Integer, CultureInfo.InvariantCulture, out var n)
+            && n >= BackupKeepMin && n <= BackupKeepMax)
+            return n;
+        return BackupKeepDefault;
+    }
+
+    public static void SaveBackupKeep(int keep)
+    {
+        if (keep == BackupKeepDefault) _store?.Remove(KeyBackupKeep);
+        else                           _store?.Set(KeyBackupKeep, keep.ToString(CultureInfo.InvariantCulture));
+    }
+
+    public static bool LoadBackupEnabled(int dbId) =>
+        bool.TryParse(_store?.Get(BackupKey(dbId, "enabled")), out var on) ? on : BackupEnabledDefault;
+
+    public static void SaveBackupEnabled(int dbId, bool on)
+    {
+        if (on == BackupEnabledDefault) _store?.Remove(BackupKey(dbId, "enabled"));
+        else                            _store?.Set(BackupKey(dbId, "enabled"), on.ToString());
+    }
+
+    // Строка расписания хранится как есть: валидация — в BackupSchedule.Parse (мусор дает
+    // стандарт), самому хранилищу настроек о форматах расписаний знать незачем.
+    public static string LoadBackupSchedule(int dbId) =>
+        _store?.Get(BackupKey(dbId, "schedule")) ?? BackupScheduleDefault;
+
+    public static void SaveBackupSchedule(int dbId, string schedule)
+    {
+        if (schedule == BackupScheduleDefault) _store?.Remove(BackupKey(dbId, "schedule"));
+        else                                   _store?.Set(BackupKey(dbId, "schedule"), schedule);
+    }
+
+    // Отметка последнего выполненного бэкапа — СОСТОЯНИЕ службы, а не настройка (как
+    // водяная метка уведомлений): пишется всегда, дефолта нет. null — копий еще не было
+    // (служба поставит якорь «сейчас» при первом тике включенного расписания).
+    public static DateTime? LoadBackupLastRun(int dbId) =>
+        DateTime.TryParse(_store?.Get(BackupKey(dbId, "lastRun")), CultureInfo.InvariantCulture,
+            DateTimeStyles.RoundtripKind, out var dt) ? dt : null;
+
+    public static void SaveBackupLastRun(int dbId, DateTime instant) =>
+        _store?.Set(BackupKey(dbId, "lastRun"), instant.ToString("o", CultureInfo.InvariantCulture));
+
+    /// <summary>
+    /// Убрать настройки бэкапа баз, которых больше нет в реестре: отключили базу — ее
+    /// расписание и отметки не живут в app.db вечно. Вызывается на старте после AttachStore
+    /// (рядом с уборкой настроек расширений); возвращает число убранных ключей для журнала.
+    /// Сверка — по полной приставке «backup.&lt;id&gt;.»: id — число, «backup.1.» не заденет
+    /// «backup.12.…».
+    /// </summary>
+    public static int RemoveOrphanBackupSettings(IEnumerable<int> liveDbIds)
+    {
+        if (_store is null) return 0;
+
+        // Общие ключи раздела (backupFolder, backupKeep) под приставку «backup.» не попадают:
+        // в них нет точки после слова backup.
+        var live = liveDbIds.Select(id => $"{BackupKeyPrefix}{id.ToString(CultureInfo.InvariantCulture)}.").ToList();
+        var orphans = _store.KeysWithPrefix(BackupKeyPrefix)
+                            .Where(key => !live.Any(p => key.StartsWith(p, StringComparison.Ordinal)))
+                            .ToList();
+
+        foreach (var key in orphans) _store.Remove(key);
+        return orphans.Count;
+    }
+
     // ── Вводный чек-лист первого запуска ──────────────────────────────────────────
     //
     // Не настройка, а отметка «вводные задачи уже заводились» (см. Database/IntroSeed.cs).
@@ -673,6 +775,13 @@ public static class AppSettings
     private const string KeyAutostartEnabled     = "autostartEnabled";
     private const string KeyBackgroundEnabled    = "backgroundEnabled";
     private const string KeyIntroSeedDone        = "introSeedDone";
+    private const string KeyBackupFolder         = "backupFolder";
+    private const string KeyBackupKeep           = "backupKeep";
+    // Не ключ, а приставка: полный ключ на базу собирает BackupKey — «backup.<dbId>.<имя>».
+    private const string BackupKeyPrefix         = "backup.";
+
+    private static string BackupKey(int dbId, string name) =>
+        $"{BackupKeyPrefix}{dbId.ToString(CultureInfo.InvariantCulture)}.{name}";
     // Не ключ, а приставка: полный ключ собирает ExtensionKey из id расширения и имени
     // настройки — фиксированного списка тут быть не может, расширения приходят и уходят.
     private const string ExtensionKeyPrefix      = "ext.";
