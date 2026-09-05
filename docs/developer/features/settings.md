@@ -134,9 +134,7 @@ PostgreSQL», «Создать базу данных PostgreSQL» — вмест
   Введенный пароль хранится защищенно ([SecretProtector](../../../Utils/SecretProtector.cs):
   macOS — Связка ключей, Windows — DPAPI; отключение базы удаляет секрет). В строке
   списка у серверных БД бейдж «PostgreSQL», вторая строка — `postgres://host:port/db`
-  (без пароля) и кнопка «Данные подключения»
-  ([PgDetailsDialog](../../../Controls/Dialogs/PgDetailsDialog.axaml.cs) — сводка для
-  коллеги без пароля, «Скопировать» в буфер). Ссылка «Нет сервера? Установка…»
+  (без пароля). Ссылка «Нет сервера? Установка…»
   открывает помощник [PgServerHelpDialog](../../../Controls/Dialogs/PgServerHelpDialog.axaml.cs).
   Пошаговая настройка сервера — [../guides/postgresql-setup.md](../guides/postgresql-setup.md);
   внутреннее устройство —
@@ -151,25 +149,40 @@ PostgreSQL», «Создать базу данных PostgreSQL» — вмест
   (существовавшая роль с другим паролем не пройдет — нерабочая связка в реестр не
   попадает), регистрирует базу и показывает «Данные подключения». Администратору
   остается только поставить сам сервер.
-- **Отключить** — с подтверждением ([ConfirmDialog](../../../Controls/Dialogs/ConfirmDialog.axaml.cs)); **файл на диске не удаляется** (у PostgreSQL — данные на сервере), дефолтную отключить нельзя.
+- **Отключить** (корзинка) — с подтверждением ([ConfirmDialog](../../../Controls/Dialogs/ConfirmDialog.axaml.cs)); **файл на диске не удаляется** (у PostgreSQL — данные на сервере), дефолтную отключить нельзя.
 - **Переподключить** недоступную БД.
 - **Сведения о файле** — у смонтированной SQLite-базы третья строка «файл 1,7 ГБ · свободно
   1,1 ГБ (64 %)» (`DatabaseRow.StorageText`; данные — `DatabaseManager.Storage`, снимаются при
   монтировании и приходят через `storage` в `Initialize`). Выше порога
   `DatabaseManager.NeedsCompaction` — красная с пометкой «— стоит сжать».
+
+В строке списка из действий остались только шестеренка и корзинка; остальное живет в окне
+**«Настройки базы данных»** ([DbSettingsDialog](../../../Controls/Dialogs/DbSettingsDialog.axaml.cs),
+`OnDbSettingsClick`):
+
+- **Название в списке** — переименование любой базы (включая дефолтную):
+  `DatabaseRegistry.Rename` + событие `DatabaseRenamed` → MainWindow меняет `Name`
+  смонтированного `DatabaseManager` на месте и зовет `SyncMountedToUi()` — сайдбары
+  обновляются без ремаунта.
 - **Сжать файл** — только у администратора базы (`canMaintain`), не у дефолтной и только когда
-  строка красная (`DatabaseRow.ShowCompact`): подтверждение с размером файла и предупреждением
-  для общей базы → `DatabaseCompactRequested` → MainWindow отцепляет базу и запускает
-  `MountQueue.RunMaintenance` (состояние `Maintenance`: «сжимаю файл · 45 % · ≈ 2 мин» здесь и
-  под именем базы в сайдбарах), по завершении база встает в очередь обратно; итог — карточка
-  «Файл базы «X» сжат: A → B» или ошибка (занятый файл — «попробуйте позже»).
-- **Резервная копия…** — у администратора любой SQLite-базы (`ShowBackup`): `SaveFilePicker`
+  строка красная: колбэк окна → `DatabaseCompactRequested` → MainWindow отцепляет базу и
+  запускает `MountQueue.RunMaintenance` (состояние `Maintenance`: «сжимаю файл · 45 % · ≈ 2 мин»
+  здесь и под именем базы в сайдбарах), по завершении база встает в очередь обратно; итог —
+  карточка «Файл базы «X» сжат: A → B» или ошибка (занятый файл — «попробуйте позже»).
+- **Резервная копия…** — у администратора любой SQLite-базы: `SaveFilePicker`
   (имя «X (копия дата_время).db», поверх самой базы — отказ), окно прогресса, `VACUUM INTO` и
   проверка копии в фоне (`DatabaseManager.BackupTo`), база не отключается; итог — карточка.
   Политика и цифры — [[../architecture/database/storage-and-migrations]].
+- **PostgreSQL**: живой статус сервера (TCP-проба `PgServerProbe` при открытии окна) со
+  ссылкой на помощник установки/автозапуска (передает адрес и порт этой базы), кнопка
+  «Данные подключения» ([PgDetailsDialog](../../../Controls/Dialogs/PgDetailsDialog.axaml.cs) —
+  сводка для коллеги без пароля) и **смена сохраненного пароля** — проба новым паролем до
+  записи, затем `DatabaseRegistry.UpdatePgPassword` (старый секрет удаляется из хранилища
+  ОС); несмонтированной базе тут же шлется `DatabaseReconnectRequested`.
 
 Изменения реестра уходят наверх событиями `DatabaseAdded` / `DatabaseRemoved` /
-`DatabaseReconnectRequested`; MainWindow ставит базу в фоновую очередь
+`DatabaseReconnectRequested` / `DatabaseRenamed` /
+`DatabaseCompactRequested` / `DatabaseBackupRequested`; MainWindow ставит базу в фоновую очередь
 [MountQueue](../../../Database/MountQueue.cs) (в хвост — даже если сейчас мигрирует
 другая), размонтирует в [Workspace](../../../Database/Workspace.cs) и обновляет сайдбар.
 Модального окна нет: прогресс виден в статусе строки списка и в заглушке узла
