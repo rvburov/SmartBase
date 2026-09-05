@@ -13,11 +13,17 @@ namespace SmartBase.Controls.Dialogs;
 /// Само приложение ничего не устанавливает: кнопка «Скачать PostgreSQL» открывает
 /// официальную страницу загрузки, установку запускает пользователь (на Windows
 /// установщик запросит права администратора — приложению они не нужны).
+/// Найденной локальной установкой можно управлять кнопками «Запустить/Остановить
+/// сервер» (PgServerControl: brew services / net start под UAC / systemctl через
+/// polkit); где выполнить нельзя — клик копирует готовую команду для терминала.
+/// Итог подтверждает повторная проба порта, а не код возврата команды.
 /// Открывается ссылкой «Нет сервера? Установка…» из окон подключения и создания базы.
 /// Возвращает null.
 /// </summary>
 public partial class PgServerHelpDialog : Window
 {
+    private readonly PgControlPlan? _plan;
+
     /// <param name="host">Предзаполнить адрес (окно настроек PG-базы передает свой сервер).</param>
     /// <param name="port">Предзаполнить порт.</param>
     public PgServerHelpDialog(string? host = null, int? port = null)
@@ -30,15 +36,82 @@ public partial class PgServerHelpDialog : Window
         CheckBtn.Click    += async (_, _) => await CheckAsync();
         CloseBtn.Click    += (_, _) => Close(null);
         DownloadBtn.Click += (_, _) => OpenUrl(PgServerProbe.DownloadUrl);
+        StartBtn.Click    += async (_, _) => await ControlAsync(start: true);
+        StopBtn.Click     += async (_, _) => await ControlAsync(start: false);
         KeyDown           += (_, e) => { if (e.Key == Key.Escape) Close(null); };
 
         foreach (var box in new[] { HostBox, PortBox })
-            box.TextChanged += (_, _) => HideStatus();
+            box.TextChanged += (_, _) => { HideStatus(); UpdateControlRow(); };
 
         ApplyOsGuide();
 
+        // Управлять можно только сервером на этой машине и только найденной установкой.
+        _plan = PgServerControl.DetectLocal();
+        if (_plan is not null)
+        {
+            ToolTip.SetTip(StartBtn, $"{_plan.Description}: {_plan.StartCommand}");
+            ToolTip.SetTip(StopBtn,  $"{_plan.Description}: {_plan.StopCommand}");
+        }
+        UpdateControlRow();
+
         // Первую пробу запускаем сами: окно сразу отвечает на главный вопрос «а сервер есть?».
         Opened += async (_, _) => await CheckAsync();
+    }
+
+    private void UpdateControlRow() =>
+        ControlRow.IsVisible = _plan is not null && IsLocalHost(HostBox.Text?.Trim() ?? "");
+
+    // Запуск/остановка: команда → повторная проба порта до нужного состояния.
+    // CanExecute=false (Linux без polkit и т.п.) — копируем команду в буфер.
+    private async Task ControlAsync(bool start)
+    {
+        if (_plan is null) return;
+        if (!int.TryParse(PortBox.Text?.Trim(), out var port) || port is < 1 or > 65535)
+        { ShowStatus("Порт — число от 1 до 65535", ok: false); return; }
+
+        var command = start ? _plan.StartCommand : _plan.StopCommand;
+        if (!_plan.CanExecute)
+        {
+            var clipboard = TopLevel.GetTopLevel(this)?.Clipboard;
+            if (clipboard is not null) await clipboard.SetTextAsync(command);
+            ShowStatus($"Команда скопирована — вставьте ее в терминал: {command}", ok: false);
+            return;
+        }
+
+        SetBusy(true);
+        ShowStatus(start ? "Запускаю сервер…" : "Останавливаю сервер…", ok: false);
+        try
+        {
+            var error = await (start ? PgServerControl.StartAsync(_plan)
+                                     : PgServerControl.StopAsync(_plan));
+            if (error is not null)
+            {
+                ShowStatus($"Не получилось: {error} Команда для терминала: {command}", ok: false);
+                return;
+            }
+
+            // Команда отработала — ждем, пока порт займет нужное состояние (серверу
+            // нужно несколько секунд на старт; остановка обычно мгновенная).
+            for (var i = 0; i < (start ? 12 : 6); i++)
+            {
+                var up = await PgServerProbe.ProbeTcpAsync("localhost", port, TimeSpan.FromSeconds(1));
+                if (up == start)
+                {
+                    ShowStatus(start
+                        ? $"Сервер работает — порт {port} отвечает."
+                        : $"Сервер остановлен — порт {port} свободен.", ok: start);
+                    return;
+                }
+                await Task.Delay(500);
+            }
+            ShowStatus(start
+                ? $"Команда выполнена, но порт {port} пока не отвечает — нажмите «Проверить» через несколько секунд."
+                : $"Команда выполнена, но порт {port} все еще занят — проверьте, тот ли это сервер.", ok: false);
+        }
+        finally
+        {
+            SetBusy(false);
+        }
     }
 
     private async Task CheckAsync()
@@ -131,7 +204,12 @@ public partial class PgServerHelpDialog : Window
         }
     }
 
-    private void SetBusy(bool busy) => CheckBtn.IsEnabled = !busy;
+    private void SetBusy(bool busy)
+    {
+        CheckBtn.IsEnabled = !busy;
+        StartBtn.IsEnabled = !busy;
+        StopBtn.IsEnabled  = !busy;
+    }
 
     private void ShowStatus(string text, bool ok)
     {

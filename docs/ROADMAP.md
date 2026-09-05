@@ -170,7 +170,10 @@
       (`PgCreateDatabaseDialog` + `Database/PgDatabaseCreator`: DDL квотирует сам сервер
       через `format('%I'/'%L')`, контрольная проба новой ролью, подчистка роли-сироты);
       помощник «Нет сервера? Установка…» (`PgServerHelpDialog` + `Utils/PgServerProbe`)
-      показывает статус сервера (TCP-проба) и инструкцию установки для текущей ОС;
+      показывает статус сервера (TCP-проба), инструкцию установки для текущей ОС и
+      управляет локальным сервером кнопками «Запустить/Остановить»
+      (`Utils/PgServerControl`: brew services / net start под UAC / systemctl через
+      polkit, фолбэк — копия команды);
       кнопка «Данные подключения» (`PgDetailsDialog`) — сводка для коллег без пароля.
       Покрытие — `PgCreateDatabaseTests` (стенд + CI job postgres) и `Tests/Unit`
       (`PgIdentifierTests`); руководство — [user/postgresql-server.md](user/postgresql-server.md).

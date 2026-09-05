@@ -60,6 +60,17 @@
                        TextWrapping="Wrap" />
         </Border>
 
+        <!-- Управление сервером на этой машине: одна команда штатного инструмента ОС
+             (brew services / net start под UAC / systemctl через polkit). Где выполнить
+             нельзя — клик копирует команду для терминала. Только для localhost. -->
+        <Grid x:Name="ControlRow" ColumnDefinitions="Auto,8,Auto,*"
+              Margin="0,0,0,12" IsVisible="False">
+            <Button Grid.Column="0" x:Name="StartBtn" Classes="dialog auto"
+                    Content="Запустить сервер" />
+            <Button Grid.Column="2" x:Name="StopBtn" Classes="dialog auto"
+                    Content="Остановить сервер" />
+        </Grid>
+
         <!-- Полные инструкции (доступ по сети, файрвол) — в руководстве пользователя -->
         <TextBlock Text="Настройка доступа по сети и раздача подключений коллегам описаны в руководстве: Настройки → Руководство → «Сервер PostgreSQL»."
                    Margin="0,0,0,12"

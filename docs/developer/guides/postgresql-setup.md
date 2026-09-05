@@ -63,7 +63,10 @@ docker run --name smartbase-pg \
 
 В самом приложении есть окно-помощник (ссылка «Нет сервера? Установка…» в окнах
 подключения и создания базы): TCP-проба порта + инструкция для текущей ОС
-(`Utils/PgServerProbe`, `Controls/Dialogs/PgServerHelpDialog`).
+(`Utils/PgServerProbe`, `Controls/Dialogs/PgServerHelpDialog`) и кнопки
+«Запустить/Остановить сервер» для найденной локальной установки
+(`Utils/PgServerControl`: brew services / net start под UAC / systemctl через
+polkit; фолбэк — копия команды в буфер).
 
 ## Шаг 2 — создать пользователя и пустую базу
 
