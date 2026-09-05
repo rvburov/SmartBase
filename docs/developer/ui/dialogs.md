@@ -53,6 +53,64 @@ if (await dlg.ShowDialog<bool>(ownerWindow) == true) { /* ... */ }
 [ConstructorControllerView](../../../Views/ConstructorDb/ConstructorControllerView.axaml.cs))
 открывают диалоги и применяют результат к репозиторию.
 
+## Размеры окон (стандарт)
+
+Габариты диалога берутся **только** из токенов
+[Assets/Styles/WindowMetrics.axaml](../../../Assets/Styles/WindowMetrics.axaml) — так же, как
+размер текста берется из `Typography.axaml` (см. [theming.md](theming.md)). Голых чисел в шапке
+окна быть не должно: правка стандарта — одно место, а не двадцать файлов. Размеров ровно три,
+новые не заводим:
+
+| Размер | Токен | Габариты | Кому |
+|---|---|---|---|
+| Compact | `DialogWidthCompact` | 420 × авто | `ConfirmDialog`, `NotificationRecordDialog`, `PasswordDialog`, `ProgressDialog` |
+| Base | `DialogWidthBase` | 520 × авто | все формы: `RecordDialog`, `TaskDialog`, `CollectionDialog`, `GroupDialog`, `CreateItemDialog`, `NoteItemDialog`, `LocationDialog`, `RecordLocationDialog`, `PropertyEditorDialog`, `CreateDatabaseDialog`, `DbSettingsDialog`, `ImportExportDialog`, все `Pg*Dialog` |
+| Wide | `DialogWidthWide` / `DialogHeightWide` | 800 × 800 | `DisplayDialog`, `RecordDisplayDialog` |
+
+Compact — окна без формы: сообщение, подтверждение, пара коротких полей, индикатор процесса.
+Base — размер по умолчанию: если сомневаетесь, берите его. Wide — окна-таблицы, где высота
+нужна под список, а не под форму.
+
+**Как записывается в разметке.** Ширина фиксируется тройкой `Width`/`MinWidth`/`MaxWidth`
+(длинная строка не должна распирать окно), высота у Compact и Base идет за содержимым:
+
+```xml
+<Window Width="{StaticResource DialogWidthBase}"
+        MinWidth="{StaticResource DialogWidthBase}"
+        MaxWidth="{StaticResource DialogWidthBase}"
+        MinHeight="0"
+        SizeToContent="Height"
+        CanResize="False">
+    <StackPanel Margin="{StaticResource DialogPadding}">
+```
+
+**Содержимое ширину не задает.** Отступ от края — единый `DialogPadding` (20,16), а сама форма
+тянется по окну. Прибитая ширина панели (`Width="380"` внутри окна 420) переживает смену
+стандарта молча: окно станет шире, форма — нет, справа появится пустая полоса. Исключение одно —
+`ImportExportDialog`: его ширина считается от содержимого (`SizeToContent="WidthAndHeight"`),
+поэтому колонка задана токеном `DialogColumnWidth` (480 = Base − отступы). Окно с одной колонкой
+выходит ровно в Base, при ручном типе вторая колонка расширяет его вправо на столько же.
+
+**Потолок по экрану.** У Wide габариты жесткие, а зум приложения их умножает
+([WindowZoom](../../../Controls/Behaviors/WindowZoom.cs)): 800 → 1000 при 125%, 1200 при 150% —
+на ноутбучном экране такое окно уходит за нижний край, а ресайза у диалогов нет. Поэтому Wide
+помечены `b:DialogFit.LimitToScreen="True"`
+([DialogFit](../../../Controls/Behaviors/DialogFit.cs)): окно ужимается до рабочей области и
+возвращается в ее центр, остальное добирает внутренний скролл. Окнам с `SizeToContent` это не
+нужно — их высота и так идет за содержимым.
+
+**Стандарт не распространяется на:**
+
+- **окна расширений** ([Extensions/](../../../Extensions/)) — у каждого своя задача и своя
+  компоновка, размер подбирается индивидуально и живет в разметке самого окна;
+- **главное окно** — единственное в своем роде (1331 × 813, минимум 1100 × 760 задан стилем
+  `Window.main` в `Controls.axaml`);
+- **заставку** ([SplashWindow](../../../Views/SplashWindow.axaml)) — ширина по стандарту
+  (Compact), высота своя: окно без системной рамки, показывается до старта интерфейса.
+
+Установщик ([InstallerWindow](../../../Setup/InstallerWindow.axaml)) под стандарт подведен —
+Base с авто-высотой.
+
 ## Группы типов в списке свойства
 
 Выпадашка «Тип» в [PropertyEditorDialog](../../../Controls/Dialogs/PropertyEditorDialog.axaml.cs)

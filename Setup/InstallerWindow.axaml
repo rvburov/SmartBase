@@ -3,7 +3,7 @@
         xmlns:components="using:SmartBase.Controls.Components"
         xmlns:setup="using:SmartBase.Setup"
         x:Class="SmartBase.Setup.InstallerWindow"
-        Width="500" SizeToContent="Height"
+        Width="{StaticResource DialogWidthBase}" SizeToContent="Height"
         CanResize="False"
         WindowStartupLocation="CenterScreen"
         Background="{StaticResource BrushBg}"

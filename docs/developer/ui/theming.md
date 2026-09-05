@@ -6,7 +6,7 @@
 
 ## Где в коде
 
-- Ресурсы и стили: [Assets/Styles/](../../../Assets/Styles/) — `Colors.axaml`, `Typography.axaml`, `Controls.axaml`, `ComboBoxTheme.axaml`
+- Ресурсы и стили: [Assets/Styles/](../../../Assets/Styles/) — `Colors.axaml`, `Typography.axaml`, `WindowMetrics.axaml`, `Controls.axaml`, `ComboBoxTheme.axaml`
 - Подключение: [App.axaml](../../../App.axaml)
 - Масштабирование интерфейса: [Utils/Scaling.cs](../../../Utils/Scaling.cs)
 
@@ -17,7 +17,7 @@
 - `Application.Resources` подключает `Colors.axaml`, `Icons.axaml`, `ZoomPopupThemes.axaml` и
   `ComboBoxTheme.axaml` (`ResourceInclude`) — последние два содержат локальные копии тем Fluent.
 - `Application.Styles` подключает базовую тему `FluentTheme`, стили `DataGrid`,
-  затем `Typography.axaml`, `Controls.axaml` и стиль виджета `AppCheckBox`.
+  затем `Typography.axaml`, `WindowMetrics.axaml`, `Controls.axaml` и стиль виджета `AppCheckBox`.
 - Там же — глобальный стиль `Window` с иконкой приложения (см. [../features/icons.md](../features/icons.md)).
 
 Тема приложения — светлая (`RequestedThemeVariant="Light"`).
@@ -35,6 +35,11 @@
     `CheckBox.onCard` (белый незакрашенный квадрат, тема AppCheckBox) — иначе они
     сливаются с фоном карточки.
 - **Typography.axaml** — размеры/начертания шрифтов, например `FontSizeBase`.
+- **WindowMetrics.axaml** — габариты диалоговых окон: три размера (`DialogWidthCompact` 420,
+  `DialogWidthBase` 520, `DialogWidthWide`/`DialogHeightWide` 800) и единый отступ содержимого
+  `DialogPadding`. Числа в шапках окон не пишутся — только эти токены. Окон расширений,
+  главного окна и высоты заставки стандарт не касается: подробности и таблица «какой диалог
+  какого размера» — в [dialogs.md](dialogs.md#размеры-окон-стандарт).
 - **Controls.axaml** — стили стандартных и кастомных контролов.
   - Контекстное меню текстовых полей — по-русски: глобальный стиль `TextBox`
     задает `ContextFlyout` с пунктами «Вырезать/Копировать/Вставить» (команды и

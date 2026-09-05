@@ -4,16 +4,16 @@
         xmlns:b="clr-namespace:SmartBase.Controls.Behaviors"
         x:Class="SmartBase.Controls.Dialogs.TaskDialog"
         Title="Новая задача"
-        Width="520"
-        MinWidth="520"
-        MaxWidth="520"
+        Width="{StaticResource DialogWidthBase}"
+        MinWidth="{StaticResource DialogWidthBase}"
+        MaxWidth="{StaticResource DialogWidthBase}"
         MinHeight="0"
         SizeToContent="Height"
         WindowStartupLocation="CenterOwner"
         CanResize="False"
         Background="{StaticResource BrushBg}">
 
-    <DockPanel Margin="20,16">
+    <DockPanel Margin="{StaticResource DialogPadding}">
 
         <!-- Кнопки внизу -->
         <Grid DockPanel.Dock="Bottom"

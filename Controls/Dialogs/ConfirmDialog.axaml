@@ -2,16 +2,16 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         x:Class="SmartBase.Controls.Dialogs.ConfirmDialog"
         Title="Подтверждение"
-        Width="420"
-        MinWidth="420"
-        MaxWidth="420"
+        Width="{StaticResource DialogWidthCompact}"
+        MinWidth="{StaticResource DialogWidthCompact}"
+        MaxWidth="{StaticResource DialogWidthCompact}"
         MinHeight="0"
         SizeToContent="Height"
         WindowStartupLocation="CenterOwner"
         CanResize="False"
         Background="{StaticResource BrushBg}">
 
-    <StackPanel Spacing="16" Margin="24" Width="372">
+    <StackPanel Spacing="16" Margin="{StaticResource DialogPadding}">
 
         <TextBlock x:Name="MessageLabel"
                    TextWrapping="Wrap"

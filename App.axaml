@@ -35,6 +35,8 @@
             <Setter Property="Icon" Value="/Assets/Branding/icon.ico" />
         </Style>
         <StyleInclude Source="avares://SmartBase/Assets/Styles/Typography.axaml" />
+        <!-- Стандарт габаритов диалоговых окон (расширений не касается) -->
+        <StyleInclude Source="avares://SmartBase/Assets/Styles/WindowMetrics.axaml" />
         <StyleInclude Source="avares://SmartBase/Assets/Styles/Controls.axaml" />
         <StyleInclude Source="avares://SmartBase/Controls/Widgets/AppCheckBox.axaml" />
     </Application.Styles>

@@ -1,13 +1,15 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:b="clr-namespace:SmartBase.Controls.Behaviors"
         x:Class="SmartBase.Controls.Dialogs.DisplayDialog"
         Title="Отображение свойств"
-        Width="600"
-        MinWidth="600"
-        MaxWidth="600"
-        Height="700"
-        MinHeight="700"
-        MaxHeight="700"
+        Width="{StaticResource DialogWidthWide}"
+        MinWidth="{StaticResource DialogWidthWide}"
+        MaxWidth="{StaticResource DialogWidthWide}"
+        Height="{StaticResource DialogHeightWide}"
+        MinHeight="{StaticResource DialogHeightWide}"
+        MaxHeight="{StaticResource DialogHeightWide}"
+        b:DialogFit.LimitToScreen="True"
         WindowStartupLocation="CenterOwner"
         CanResize="False"
         Background="{StaticResource BrushBg}">
@@ -16,7 +18,7 @@
     <Grid ColumnDefinitions="*,Auto,Auto">
 
         <!-- Левый блок: поиск (сверху) · список (на всю высоту) · Отмена/Сохранить (внизу) -->
-        <Grid Grid.Column="0" Margin="20,16" RowDefinitions="Auto,*,Auto">
+        <Grid Grid.Column="0" Margin="{StaticResource DialogPadding}" RowDefinitions="Auto,*,Auto">
 
             <!-- Поиск + кнопки перемещения выделенного свойства (вверх/вниз) -->
             <Grid Grid.Row="0" ColumnDefinitions="*,Auto" Margin="0,0,0,12">

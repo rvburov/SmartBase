@@ -17,7 +17,7 @@
              Окно расширяется вправо, форма и кнопки не уезжают вниз. -->
         <Grid Grid.Row="0" ColumnDefinitions="Auto,Auto,Auto">
 
-            <StackPanel Grid.Column="0" Width="380" Margin="20,16" Spacing="0">
+            <StackPanel Grid.Column="0" Width="{StaticResource DialogColumnWidth}" Margin="{StaticResource DialogPadding}" Spacing="0">
 
                 <!-- Заголовок колонки — виден, только когда колонок две (ручной тип) -->
                 <TextBlock x:Name="MainHeader" IsVisible="False"
@@ -257,7 +257,7 @@
 
             <!-- Параметры ручного типа ИМПОРТА — правая колонка, тем же стилем, что и левая -->
             <StackPanel Grid.Column="2" x:Name="ManualPanel" IsVisible="False"
-                        Width="380" Margin="20,16" Spacing="0">
+                        Width="{StaticResource DialogColumnWidth}" Margin="{StaticResource DialogPadding}" Spacing="0">
 
                 <TextBlock Text="Параметры ручного импорта"
                            Margin="0,0,0,10"
@@ -355,7 +355,7 @@
 
             <!-- Параметры ручного типа ЭКСПОРТА — та же правая колонка (видима одна из двух) -->
             <StackPanel Grid.Column="2" x:Name="ExportManualPanel" IsVisible="False"
-                        Width="380" Margin="20,16" Spacing="0">
+                        Width="{StaticResource DialogColumnWidth}" Margin="{StaticResource DialogPadding}" Spacing="0">
 
                 <TextBlock Text="Параметры ручной выгрузки"
                            Margin="0,0,0,10"
