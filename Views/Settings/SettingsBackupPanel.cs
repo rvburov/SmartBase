@@ -160,7 +160,14 @@ public partial class SettingsView
         _backupStatus[entry.Id] = status;
 
         // ── Правая часть: «Копировать сейчас» + тумблер ───────────────────────
-        var runNow = new Button { Content = "Копировать сейчас", VerticalAlignment = VerticalAlignment.Center };
+        // Текстовые кнопки настроек — общий стиль «dialog» (как «Обзор…» и «Проверить»);
+        // «auto» снимает фиксированную ширину — подпись длиннее стандартных 110px.
+        var runNow = new Button
+        {
+            Classes           = { "dialog", "auto" },
+            Content           = "Копировать сейчас",
+            VerticalAlignment = VerticalAlignment.Center,
+        };
         runNow.Click += (_, _) => BackupNowRequested?.Invoke(this, entry.Id);
 
         var toggle = new ToggleSwitch

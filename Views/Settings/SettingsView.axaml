@@ -727,9 +727,11 @@
                                         Spacing="8" VerticalAlignment="Center">
                                 <!-- «Сбросить» видна только при выбранной своей папке -->
                                 <Button x:Name="BackupFolderResetBtn"
-                                        Content="Сбросить"
+                                        Classes="dialog" Content="Сбросить"
+                                        VerticalAlignment="Center"
                                         Click="OnBackupFolderResetClick" />
-                                <Button Content="Выбрать…"
+                                <Button Classes="dialog" Content="Выбрать…"
+                                        VerticalAlignment="Center"
                                         Click="OnBackupFolderPickClick" />
                             </StackPanel>
                         </Grid>
