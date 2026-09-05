@@ -15,6 +15,7 @@ public partial class NavbarSettings : UserControl
     public event EventHandler? CreateSqliteRequested;
     public event EventHandler? ConnectSqliteRequested;
     public event EventHandler? ConnectPostgresRequested;
+    public event EventHandler? CreatePostgresRequested;
 
     /// <summary>Нажата кнопка выгрузки диагностики в CSV.</summary>
     public event EventHandler? ExportLogsRequested;
@@ -37,6 +38,7 @@ public partial class NavbarSettings : UserControl
                     case 0: CreateSqliteRequested?.Invoke(this, EventArgs.Empty); break;
                     case 1: ConnectSqliteRequested?.Invoke(this, EventArgs.Empty); break;
                     case 2: ConnectPostgresRequested?.Invoke(this, EventArgs.Empty); break;
+                    case 3: CreatePostgresRequested?.Invoke(this, EventArgs.Empty); break;
                 }
             });
         };

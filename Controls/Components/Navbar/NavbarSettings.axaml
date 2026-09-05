@@ -28,6 +28,7 @@
             <ComboBoxItem Content="Создать базу данных SQLite" />
             <ComboBoxItem Content="Подключить базу данных SQLite" />
             <ComboBoxItem Content="Подключить сервер PostgreSQL" />
+            <ComboBoxItem Content="Создать базу данных PostgreSQL" />
         </ComboBox>
 
         <!-- Выгрузка журнала диагностики в CSV — только в разделе «Диагностика».

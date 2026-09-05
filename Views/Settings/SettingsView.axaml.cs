@@ -118,6 +118,7 @@ public partial class SettingsView : UserControl
         HeaderBar.CreateSqliteRequested    += (_, _) => OnCreateDatabaseClick(this, new RoutedEventArgs());
         HeaderBar.ConnectSqliteRequested   += (_, _) => OnConnectDatabaseClick(this, new RoutedEventArgs());
         HeaderBar.ConnectPostgresRequested += (_, _) => OnConnectPostgresClick(this, new RoutedEventArgs());
+        HeaderBar.CreatePostgresRequested  += (_, _) => OnCreatePostgresClick(this, new RoutedEventArgs());
         HeaderBar.ExportLogsRequested      += (_, _) => _ = ExportLogsToCsv();
     }
 
@@ -1201,6 +1202,58 @@ public partial class SettingsView : UserControl
         var entry = _registry.AddPostgres(result.Name, info);
         DatabaseAdded?.Invoke(this, entry);
         RefreshDatabaseList();
+    }
+
+    // Создать базу на сервере PostgreSQL из приложения: окно создает роль-владельца и базу
+    // (PgCreateDatabaseDialog + PgDatabaseCreator) и возвращает уже ПРОВЕРЕННУЮ связку
+    // база+роль+пароль. Дальше — как у обычного подключения; в конце показываем «Данные
+    // подключения» — сводку для передачи коллегам (без пароля).
+    private async void OnCreatePostgresClick(object? sender, RoutedEventArgs e)
+    {
+        if (_registry is null || VisualRoot is not Window win) return;
+
+        var result = await new PgCreateDatabaseDialog().ShowDialog<PgCreateDatabaseResult?>(win);
+        if (result is null) return;
+
+        var info = result.Info;
+        // Дубль возможен, если запись о базе с этим именем осталась от прежнего сервера.
+        if (_registry.GetAll().Any(d => d.IsPostgres
+                && string.Equals(d.PgHost, info.Host, StringComparison.OrdinalIgnoreCase)
+                && (d.PgPort ?? PgConnectionInfo.DefaultPort) == info.Port
+                && d.PgDatabase == info.Database))
+        {
+            await ConfirmDialog.Info(
+                $"База данных «{info.Database}» на сервере {info.Host}:{info.Port} уже подключена.")
+                .ShowDialog(win);
+            return;
+        }
+
+        var entry = _registry.AddPostgres(result.Name, info);
+        DatabaseAdded?.Invoke(this, entry);
+        RefreshDatabaseList();
+
+        await new PgDetailsDialog(info.Host, info.Port, info.Database, info.User, info.SslMode)
+            .ShowDialog(win);
+    }
+
+    // «Данные подключения» в строке PG-базы: сводка для передачи коллеге. Пароль не
+    // показываем и из хранилища не достаем — он передается отдельно от адреса.
+    private async void OnPgDetailsClick(object? sender, RoutedEventArgs e)
+    {
+        if (_registry is null || VisualRoot is not Window win) return;
+        if (sender is not Button { Tag: int id }) return;
+
+        var entry = _registry.GetAll().FirstOrDefault(d => d.Id == id);
+        if (entry is null || !entry.IsPostgres || entry.PgHost is null || entry.PgDatabase is null)
+            return;
+
+        await new PgDetailsDialog(
+                entry.PgHost,
+                entry.PgPort ?? PgConnectionInfo.DefaultPort,
+                entry.PgDatabase,
+                entry.PgUser ?? "",
+                entry.PgSslMode ?? PgConnectionInfo.DefaultSslMode)
+            .ShowDialog(win);
     }
 
     private async void OnRemoveDatabaseClick(object? sender, RoutedEventArgs e)

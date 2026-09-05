@@ -1,0 +1,165 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:w="clr-namespace:SmartBase.Controls.Widgets"
+        x:Class="SmartBase.Controls.Dialogs.PgCreateDatabaseDialog"
+        Title="Создание базы на сервере PostgreSQL"
+        Width="460"
+        MinWidth="460"
+        MaxWidth="460"
+        MinHeight="0"
+        SizeToContent="Height"
+        WindowStartupLocation="CenterOwner"
+        CanResize="False"
+        Background="{StaticResource BrushBg}">
+
+    <Window.Styles>
+        <!-- Кнопка-ссылка «Нет сервера?..»: без подложки/рамки, при наведении меняется
+             только цвет текста (копия стиля из PropertyEditorDialog). -->
+        <Style Selector="Button.link">
+            <Setter Property="Background"      Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Padding"         Value="4,2" />
+            <Setter Property="Foreground"      Value="{StaticResource BrushAccent}" />
+            <Setter Property="Cursor"          Value="Hand" />
+        </Style>
+        <Style Selector="Button.link /template/ ContentPresenter">
+            <Setter Property="Background" Value="Transparent" />
+        </Style>
+        <Style Selector="Button.link:pointerover /template/ ContentPresenter">
+            <Setter Property="Background" Value="Transparent" />
+        </Style>
+        <Style Selector="Button.link:pressed /template/ ContentPresenter">
+            <Setter Property="Background" Value="Transparent" />
+        </Style>
+        <Style Selector="Button.link:pointerover">
+            <Setter Property="Foreground" Value="#0062CC" />
+        </Style>
+    </Window.Styles>
+
+    <StackPanel Spacing="0" Margin="20,16" Width="420">
+
+        <!-- Помощник установки: статус сервера + инструкция для текущей ОС -->
+        <Button x:Name="HelpBtn" Classes="link"
+                Content="Нет сервера? Установка…"
+                HorizontalAlignment="Left"
+                Margin="-4,0,0,8" />
+
+        <TextBlock Text="Сервер и порт"
+                   Margin="0,0,0,6"
+                   FontWeight="{StaticResource FontWeightBold}"
+                   Foreground="{StaticResource BrushSecondaryText}" />
+        <Grid ColumnDefinitions="*,8,80" Margin="0,0,0,12">
+            <TextBox Grid.Column="0" x:Name="HostBox"
+                     Watermark="localhost"
+                     Height="34"
+                     VerticalContentAlignment="Center"
+                     CornerRadius="{StaticResource RadiusMedium}" />
+            <TextBox Grid.Column="2" x:Name="PortBox"
+                     Text="5432"
+                     Height="34"
+                     VerticalContentAlignment="Center"
+                     CornerRadius="{StaticResource RadiusMedium}" />
+        </Grid>
+
+        <TextBlock Text="Администратор сервера"
+                   Margin="0,0,0,6"
+                   FontWeight="{StaticResource FontWeightBold}"
+                   Foreground="{StaticResource BrushSecondaryText}" />
+        <TextBox x:Name="AdminBox"
+                 Watermark="postgres"
+                 Height="34" Margin="0,0,0,12"
+                 VerticalContentAlignment="Center"
+                 CornerRadius="{StaticResource RadiusMedium}" />
+
+        <TextBlock Text="Пароль администратора"
+                   Margin="0,0,0,6"
+                   FontWeight="{StaticResource FontWeightBold}"
+                   Foreground="{StaticResource BrushSecondaryText}" />
+        <TextBox x:Name="AdminPasswordBox"
+                 PasswordChar="●"
+                 Height="34" Margin="0,0,0,12"
+                 VerticalContentAlignment="Center"
+                 CornerRadius="{StaticResource RadiusMedium}" />
+
+        <TextBlock Text="Шифрование (SSL)"
+                   Margin="0,0,0,6"
+                   FontWeight="{StaticResource FontWeightBold}"
+                   Foreground="{StaticResource BrushSecondaryText}" />
+        <ComboBox x:Name="SslCombo"
+                  Height="34" Margin="0,0,0,12"
+                  HorizontalAlignment="Stretch"
+                  SelectedIndex="1">
+            <ComboBoxItem Tag="Disable" Content="Отключено" />
+            <ComboBoxItem Tag="Prefer"  Content="Если доступно" />
+            <ComboBoxItem Tag="Require" Content="Обязательно" />
+        </ComboBox>
+
+        <!-- Дальше — что создаем (отступ сверху отделяет группу от параметров сервера) -->
+        <TextBlock Text="Имя новой базы данных"
+                   Margin="0,8,0,6"
+                   FontWeight="{StaticResource FontWeightBold}"
+                   Foreground="{StaticResource BrushSecondaryText}" />
+        <TextBox x:Name="DbNameBox"
+                 Watermark="например projects"
+                 Height="34" Margin="0,0,0,12"
+                 VerticalContentAlignment="Center"
+                 CornerRadius="{StaticResource RadiusMedium}" />
+
+        <TextBlock Text="Роль-владелец (логин для подключения)"
+                   Margin="0,0,0,6"
+                   FontWeight="{StaticResource FontWeightBold}"
+                   Foreground="{StaticResource BrushSecondaryText}" />
+        <TextBox x:Name="RoleBox"
+                 Watermark="по умолчанию — имя базы"
+                 Height="34" Margin="0,0,0,12"
+                 VerticalContentAlignment="Center"
+                 CornerRadius="{StaticResource RadiusMedium}" />
+
+        <TextBlock Text="Пароль роли (по нему подключаются к базе)"
+                   Margin="0,0,0,6"
+                   FontWeight="{StaticResource FontWeightBold}"
+                   Foreground="{StaticResource BrushSecondaryText}" />
+        <!-- Пароль виден открыто: сгенерированный нужно скопировать и передать коллегам -->
+        <Grid ColumnDefinitions="*,8,Auto" Margin="0,0,0,12">
+            <TextBox Grid.Column="0" x:Name="RolePasswordBox"
+                     Height="34"
+                     VerticalContentAlignment="Center"
+                     CornerRadius="{StaticResource RadiusMedium}" />
+            <Button Grid.Column="2" x:Name="GenBtn" Classes="dialog auto"
+                    Content="Сгенерировать" />
+        </Grid>
+
+        <TextBlock Text="Название в списке"
+                   Margin="0,0,0,6"
+                   FontWeight="{StaticResource FontWeightBold}"
+                   Foreground="{StaticResource BrushSecondaryText}" />
+        <TextBox x:Name="NameBox"
+                 Watermark="По умолчанию — имя базы"
+                 Height="34" Margin="0,0,0,12"
+                 VerticalContentAlignment="Center"
+                 CornerRadius="{StaticResource RadiusMedium}" />
+
+        <!-- Ошибка сервера/валидации -->
+        <w:NoticeBanner x:Name="NoticeBanner" Margin="0,0,0,12" />
+
+        <!-- Ход работы: «Проверяю…»/«Создаю…» серым, успех — зеленым -->
+        <TextBlock x:Name="StatusText"
+                   IsVisible="False"
+                   Margin="0,0,0,12"
+                   TextWrapping="Wrap"
+                   FontSize="{DynamicResource FontSizeSmall}" />
+
+        <!-- Кнопки -->
+        <Grid ColumnDefinitions="Auto,*,Auto,8,Auto" Margin="0,4,0,0">
+            <!-- Шире стандартных 110: полный текст иначе обрезается -->
+            <Button Grid.Column="0" x:Name="TestBtn" Classes="dialog" Width="170"
+                    Content="Проверить соединение" />
+            <Button Grid.Column="2" x:Name="CancelBtn" Classes="dialog"
+                    Content="Отмена" />
+            <Button Grid.Column="4" x:Name="ConfirmBtn" Classes="dialog"
+                    Content="Создать" />
+        </Grid>
+
+    </StackPanel>
+
+</Window>

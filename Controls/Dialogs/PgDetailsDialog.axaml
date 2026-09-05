@@ -1,0 +1,70 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="SmartBase.Controls.Dialogs.PgDetailsDialog"
+        Title="Данные подключения"
+        Width="460"
+        MinWidth="460"
+        MaxWidth="460"
+        MinHeight="0"
+        SizeToContent="Height"
+        WindowStartupLocation="CenterOwner"
+        CanResize="False"
+        Background="{StaticResource BrushBg}">
+
+    <StackPanel Spacing="0" Margin="20,16" Width="420">
+
+        <!-- Пары «подпись — значение»; значения выделяются мышью (SelectableTextBlock),
+             целиком все копирует кнопка «Скопировать». Пароля здесь нет намеренно. -->
+        <Grid ColumnDefinitions="140,8,*"
+              RowDefinitions="Auto,Auto,Auto,Auto,Auto"
+              Margin="0,0,0,12">
+            <Grid.Styles>
+                <Style Selector="TextBlock.caption">
+                    <Setter Property="FontWeight" Value="{StaticResource FontWeightBold}" />
+                    <Setter Property="Foreground" Value="{StaticResource BrushSecondaryText}" />
+                    <Setter Property="Margin"     Value="0,0,0,8" />
+                </Style>
+                <Style Selector="SelectableTextBlock.value">
+                    <Setter Property="Margin" Value="0,0,0,8" />
+                </Style>
+            </Grid.Styles>
+
+            <TextBlock Grid.Row="0" Grid.Column="0" Classes="caption" Text="Сервер" />
+            <SelectableTextBlock Grid.Row="0" Grid.Column="2" Classes="value" x:Name="HostText" />
+
+            <TextBlock Grid.Row="1" Grid.Column="0" Classes="caption" Text="Порт" />
+            <SelectableTextBlock Grid.Row="1" Grid.Column="2" Classes="value" x:Name="PortText" />
+
+            <TextBlock Grid.Row="2" Grid.Column="0" Classes="caption" Text="База данных" />
+            <SelectableTextBlock Grid.Row="2" Grid.Column="2" Classes="value" x:Name="DatabaseText" />
+
+            <TextBlock Grid.Row="3" Grid.Column="0" Classes="caption" Text="Пользователь" />
+            <SelectableTextBlock Grid.Row="3" Grid.Column="2" Classes="value" x:Name="UserText" />
+
+            <TextBlock Grid.Row="4" Grid.Column="0" Classes="caption" Text="Шифрование (SSL)" />
+            <SelectableTextBlock Grid.Row="4" Grid.Column="2" Classes="value" x:Name="SslText" />
+        </Grid>
+
+        <TextBlock Text="Пароль не показывается — сообщите его коллеге отдельно. Эти данные вводятся в окне «Подключить сервер PostgreSQL»."
+                   Margin="0,0,0,12"
+                   TextWrapping="Wrap"
+                   FontSize="{DynamicResource FontSizeSmall}"
+                   Foreground="{StaticResource BrushSecondaryText}" />
+
+        <!-- «Скопировано» — подтверждение копирования -->
+        <TextBlock x:Name="StatusText"
+                   IsVisible="False"
+                   Margin="0,0,0,12"
+                   FontSize="{DynamicResource FontSizeSmall}" />
+
+        <!-- Кнопки -->
+        <Grid ColumnDefinitions="*,Auto,8,Auto" Margin="0,4,0,0">
+            <Button Grid.Column="1" x:Name="CopyBtn" Classes="dialog"
+                    Content="Скопировать" />
+            <Button Grid.Column="3" x:Name="CloseBtn" Classes="dialog"
+                    Content="Закрыть" />
+        </Grid>
+
+    </StackPanel>
+
+</Window>
