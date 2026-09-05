@@ -14,11 +14,12 @@ public sealed record PgConnectResult(string Name, PgConnectionInfo Info);
 /// <summary>
 /// Окно «Подключение к PostgreSQL»: сервер/порт/база/пользователь/пароль/SSL, проверка
 /// соединения (короткая проба с таймаутом 5 с, см. PgConnectionInfo) и русские тексты
-/// типовых ошибок сервера. Кнопка «Подключить» прогоняет ту же пробу — в реестр не
-/// попадают заведомо нерабочие параметры. Базу на сервере приложение НЕ создает
-/// (создает администратор командой CREATE DATABASE); схему внутри пустой базы
-/// приложение построит само при монтировании. Возвращает <see cref="PgConnectResult"/>
-/// или null при отмене.
+/// типовых ошибок сервера (PgErrors). Кнопка «Подключить» прогоняет ту же пробу — в
+/// реестр не попадают заведомо нерабочие параметры. Подключает СУЩЕСТВУЮЩУЮ базу;
+/// новую базу вместе с ролью-владельцем создает соседнее окно PgCreateDatabaseDialog.
+/// Схему внутри пустой базы приложение построит само при монтировании. Ссылка
+/// «Нет сервера? Установка…» открывает помощник PgServerHelpDialog.
+/// Возвращает <see cref="PgConnectResult"/> или null при отмене.
 /// </summary>
 public partial class PgConnectDialog : Window
 {
@@ -29,6 +30,7 @@ public partial class PgConnectDialog : Window
         TestBtn.Click    += async (_, _) => await TestAsync();
         CancelBtn.Click  += (_, _) => Close(null);
         ConfirmBtn.Click += async (_, _) => await ConfirmAsync();
+        HelpBtn.Click    += async (_, _) => await new PgServerHelpDialog().ShowDialog(this);
         KeyDown          += (_, e) => { if (e.Key == Key.Escape) Close(null); };
 
         foreach (var box in new[] { HostBox, PortBox, DatabaseBox, UserBox, PasswordBox, NameBox })
@@ -97,7 +99,7 @@ public partial class PgConnectDialog : Window
             Log.Warning(ex, "Не удалось подключиться к PostgreSQL {Host:l}:{Port}/{Db:l}",
                 info.Host, info.Port, info.Database);
             HideStatus();
-            ShowError(DescribeError(ex));
+            ShowError(PgErrors.Describe(ex));
             return null;
         }
         finally
@@ -114,26 +116,6 @@ public partial class PgConnectDialog : Window
         var on  = raw.IndexOf(" on ", StringComparison.Ordinal);
         if (on >= 0 && (cut < 0 || on < cut)) cut = on;
         return (cut > 0 ? raw[..cut] : raw).Trim();
-    }
-
-    // Русские тексты типовых ошибок подключения; незнакомое — как есть.
-    private static string DescribeError(Exception ex)
-    {
-        if (ex is PostgresException pe)
-            return pe.SqlState switch
-            {
-                "28P01" => "Неверный пароль или пользователь.",
-                "28000" => "Сервер отклонил подключение — проверьте настройки доступа (pg_hba.conf).",
-                "3D000" => "База данных не найдена на сервере. Создайте ее (CREATE DATABASE) и повторите.",
-                _       => $"Ошибка сервера: {pe.MessageText}",
-            };
-        if (ex is System.Security.Authentication.AuthenticationException
-            || ex.InnerException is System.Security.Authentication.AuthenticationException)
-            return "Не удалось установить защищенное соединение — попробуйте другой режим SSL.";
-        if (ex is TimeoutException or System.Net.Sockets.SocketException
-            || ex.InnerException is TimeoutException or System.Net.Sockets.SocketException)
-            return "Сервер недоступен — проверьте адрес, порт и сеть.";
-        return ex.Message;
     }
 
     private void SetBusy(bool busy)

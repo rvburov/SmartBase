@@ -1,0 +1,83 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="SmartBase.Controls.Dialogs.PgServerHelpDialog"
+        Title="Сервер PostgreSQL"
+        Width="460"
+        MinWidth="460"
+        MaxWidth="460"
+        MinHeight="0"
+        SizeToContent="Height"
+        WindowStartupLocation="CenterOwner"
+        CanResize="False"
+        Background="{StaticResource BrushBg}">
+
+    <StackPanel Spacing="0" Margin="20,16" Width="420">
+
+        <TextBlock Text="Сервер и порт"
+                   Margin="0,0,0,6"
+                   FontWeight="{StaticResource FontWeightBold}"
+                   Foreground="{StaticResource BrushSecondaryText}" />
+
+        <!-- Адрес для проверки: свой компьютер (localhost) или сервер в сети -->
+        <Grid ColumnDefinitions="*,8,80" Margin="0,0,0,12">
+            <TextBox Grid.Column="0" x:Name="HostBox"
+                     Text="localhost"
+                     Height="34"
+                     VerticalContentAlignment="Center"
+                     CornerRadius="{StaticResource RadiusMedium}" />
+            <TextBox Grid.Column="2" x:Name="PortBox"
+                     Text="5432"
+                     Height="34"
+                     VerticalContentAlignment="Center"
+                     CornerRadius="{StaticResource RadiusMedium}" />
+        </Grid>
+
+        <!-- Итог проверки: работает — зеленым, остальное — серым -->
+        <TextBlock x:Name="StatusText"
+                   IsVisible="False"
+                   Margin="0,0,0,6"
+                   TextWrapping="Wrap" />
+
+        <!-- Честный предел пробы: смотрим только сетевой порт -->
+        <TextBlock Text="Проверка — по сетевому порту: сервер на другом порту или в docker-контейнере может показаться не найденным."
+                   Margin="0,0,0,12"
+                   TextWrapping="Wrap"
+                   FontSize="{DynamicResource FontSizeSmall}"
+                   Foreground="{StaticResource BrushSecondaryText}" />
+
+        <TextBlock x:Name="GuideTitle"
+                   Text="Как установить"
+                   Margin="0,0,0,6"
+                   FontWeight="{StaticResource FontWeightBold}"
+                   Foreground="{StaticResource BrushSecondaryText}" />
+
+        <!-- Пошаговая инструкция для текущей ОС (текст задает code-behind) -->
+        <Border Background="{StaticResource BrushCardBg}"
+                CornerRadius="{StaticResource RadiusMedium}"
+                Padding="12"
+                Margin="0,0,0,12">
+            <TextBlock x:Name="GuideText"
+                       TextWrapping="Wrap" />
+        </Border>
+
+        <!-- Полные инструкции (доступ по сети, файрвол) — в руководстве пользователя -->
+        <TextBlock Text="Настройка доступа по сети и раздача подключений коллегам описаны в руководстве: Настройки → Руководство → «Сервер PostgreSQL»."
+                   Margin="0,0,0,12"
+                   TextWrapping="Wrap"
+                   FontSize="{DynamicResource FontSizeSmall}"
+                   Foreground="{StaticResource BrushSecondaryText}" />
+
+        <!-- Кнопки -->
+        <Grid ColumnDefinitions="Auto,*,Auto,8,Auto" Margin="0,4,0,0">
+            <!-- Шире стандартных 110: полный текст иначе обрезается -->
+            <Button Grid.Column="0" x:Name="DownloadBtn" Classes="dialog auto"
+                    Content="Скачать PostgreSQL" />
+            <Button Grid.Column="2" x:Name="CheckBtn" Classes="dialog"
+                    Content="Проверить" />
+            <Button Grid.Column="4" x:Name="CloseBtn" Classes="dialog"
+                    Content="Закрыть" />
+        </Grid>
+
+    </StackPanel>
+
+</Window>

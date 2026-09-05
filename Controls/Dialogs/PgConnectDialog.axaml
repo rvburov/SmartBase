@@ -12,7 +12,37 @@
         CanResize="False"
         Background="{StaticResource BrushBg}">
 
+    <Window.Styles>
+        <!-- Кнопка-ссылка «Нет сервера?..»: без подложки/рамки, при наведении меняется
+             только цвет текста (копия стиля из PropertyEditorDialog). -->
+        <Style Selector="Button.link">
+            <Setter Property="Background"      Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Padding"         Value="4,2" />
+            <Setter Property="Foreground"      Value="{StaticResource BrushAccent}" />
+            <Setter Property="Cursor"          Value="Hand" />
+        </Style>
+        <Style Selector="Button.link /template/ ContentPresenter">
+            <Setter Property="Background" Value="Transparent" />
+        </Style>
+        <Style Selector="Button.link:pointerover /template/ ContentPresenter">
+            <Setter Property="Background" Value="Transparent" />
+        </Style>
+        <Style Selector="Button.link:pressed /template/ ContentPresenter">
+            <Setter Property="Background" Value="Transparent" />
+        </Style>
+        <Style Selector="Button.link:pointerover">
+            <Setter Property="Foreground" Value="#0062CC" />
+        </Style>
+    </Window.Styles>
+
     <StackPanel Spacing="0" Margin="20,16" Width="420">
+
+        <!-- Помощник установки: статус сервера + инструкция для текущей ОС -->
+        <Button x:Name="HelpBtn" Classes="link"
+                Content="Нет сервера? Установка…"
+                HorizontalAlignment="Left"
+                Margin="-4,0,0,8" />
 
         <TextBlock Text="Сервер и порт"
                    Margin="0,0,0,6"
