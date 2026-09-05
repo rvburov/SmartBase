@@ -61,7 +61,9 @@ Linux, Windows, macOS Apple Silicon, macOS Intel. Упавшая платфор�
 
 **7. PostgreSQL на живой базе.**
 Контейнер `postgres:16`, порт 5455, базы `smartbase` и `smartbase2` — как у локального стенда.
-Девять тестов провайдера. Только Linux: сервис-контейнеры работают лишь там.
+Тесты провайдера (`PgProviderTests`) и создания баз из приложения (`PgCreateDatabaseTests`) —
+фильтр `PgProviderTests|PgCreateDatabaseTests`. Только Linux: сервис-контейнеры работают
+лишь там.
 
 **8. Проверка, что тесты PostgreSQL не пропущены.**
 Шаг падает, если в отчете не «Skipped: 0»: не поднявшаяся база иначе дала бы зеленый прогон,

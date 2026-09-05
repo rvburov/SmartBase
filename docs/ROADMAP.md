@@ -160,11 +160,20 @@
       (SQLite ↔ PG, PG ↔ PG) — generic-путем на двух подключениях вместо `ATTACH`
       (`ConstructorRepository.CrossMove`), но **ребра связей этим путем пока не переносятся**;
       покрытие — `Tests/Integration` (`PgProviderTests`, SkippableFact на стенде `sb-pg`) + нагрузка
-      `pgload` в `Tests/Benchmarks`. См.
+      `pgload` и производительность `pgperf` в `Tests/Benchmarks`. См.
       [storage-and-migrations.md](developer/architecture/database/storage-and-migrations.md).
       ⚠️ Общий SQLite-файл в сетевой папке поддержан (см. выше), но рассчитан на единицы
       одновременных писателей и зависит от качества блокировок SMB-сервера; при большей
       нагрузке — Postgres.
+- [x] **PostgreSQL без терминала** — сервер и база поднимаются из окон приложения:
+      «Создать базу данных PostgreSQL» создает на сервере роль-владельца и базу
+      (`PgCreateDatabaseDialog` + `Database/PgDatabaseCreator`: DDL квотирует сам сервер
+      через `format('%I'/'%L')`, контрольная проба новой ролью, подчистка роли-сироты);
+      помощник «Нет сервера? Установка…» (`PgServerHelpDialog` + `Utils/PgServerProbe`)
+      показывает статус сервера (TCP-проба) и инструкцию установки для текущей ОС;
+      кнопка «Данные подключения» (`PgDetailsDialog`) — сводка для коллег без пароля.
+      Покрытие — `PgCreateDatabaseTests` (стенд + CI job postgres) и `Tests/Unit`
+      (`PgIdentifierTests`); руководство — [user/postgresql-server.md](user/postgresql-server.md).
 - [x] **Показ принадлежности события к БД в диалоге**: комбобокс «База данных» в окне записи
       ([RecordDialog.axaml.cs](../Controls/Dialogs/RecordDialog.axaml.cs)) виден и при **изменении**
       события (когда смонтировано 2+ БД), выбрана база события; смена базы = перенос записи

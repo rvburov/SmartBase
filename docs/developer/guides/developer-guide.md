@@ -87,4 +87,5 @@ catch в UI, см. [Utils/DbErrors](../../../Utils/DbErrors.cs)). У польз�
 
 ## Связанные документы
 
-[[../architecture/overview]], [[../architecture/database/storage-and-migrations]], [[user-guide]]
+[[../architecture/overview]], [[../architecture/database/storage-and-migrations]],
+[инструкция пользователя](../../user/README.md)

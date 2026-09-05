@@ -1,8 +1,19 @@
-## PostgreSQL: установка сервера и подключение базы
+# PostgreSQL: установка сервера и подключение базы
 
 Пошаговое руководство администратора: поднять сервер PostgreSQL, создать пустую
 базу и подключить ее в приложении. Как PG-ветка устроена внутри —
-[../architecture/databases.md](../architecture/database/storage-and-migrations.md), раздел «Провайдеры».
+[../architecture/database/storage-and-migrations.md](../architecture/database/storage-and-migrations.md),
+раздел «Провайдеры». Человеческая версия для пользователей без опыта
+администрирования — [../../user/postgresql-server.md](../../user/postgresql-server.md):
+она поставляется внутри приложения (раздел «Руководство») и канонична для
+установки по ОС и раздачи доступов; здесь остаются докер, стенд и специфика
+крупных развертываний.
+
+> **Порты: 5432 и 5455.** Все примеры этого гайда — про боевой сервер на штатном
+> порту **5432**. Тестовый стенд `sb-pg` из [../testing/automated-tests.md](../testing/automated-tests.md)
+> нарочно живет на **5455**, чтобы не конфликтовать с настоящим PostgreSQL на
+> машине разработчика; CI пробрасывает сервис-контейнер на тот же 5455 — тесты
+> не знают разницы.
 
 ## Когда нужен PostgreSQL
 
@@ -41,64 +52,33 @@ docker run --name smartbase-pg \
   `docker ps`; консоль — `docker exec -it smartbase-pg psql -U postgres`.
 - `-v` сохраняет данные при пересоздании контейнера.
 
-**macOS (Homebrew):**
+**Обычная установка (Windows / macOS / Linux)** — пошагово в
+[../../user/postgresql-server.md](../../user/postgresql-server.md) (канонический
+текст, поставляется в приложении). Коротко: Windows — установщик EDB или
+`winget install PostgreSQL.PostgreSQL.16` (PowerShell от имени администратора;
+для тихой установки — `--override "--mode unattended --superpassword …"`), служба
+`postgresql-x64-16`; macOS — `brew install postgresql@16` +
+`brew services start postgresql@16` или Postgres.app; Linux — `apt`/`dnf` +
+`sudo systemctl enable --now postgresql`.
 
-```bash
-brew install postgresql@16
-brew services start postgresql@16
-```
-
-`brew services start` — это и работа в фоне, и автозапуск: регистрируется служба
-launchd, которая поднимает сервер при входе в систему. Управление:
-`brew services stop postgresql@16` / `brew services restart postgresql@16`;
-статус — `brew services list`. `psql` идет в комплекте. (Вариант — приложение
-[Postgres.app](https://postgresapp.com): автозапуск включается галочкой в его
-настройках.)
-
-**Windows (PowerShell от имени администратора):**
-
-```powershell
-winget install --id PostgreSQL.PostgreSQL.16 `
-  --override "--mode unattended --superpassword strong-password"
-```
-
-Без единого окна ставится официальный установщик EDB; `--superpassword` — пароль
-суперпользователя `postgres` (доступные версии покажет
-`winget search PostgreSQL.PostgreSQL`). Сервер регистрируется как служба Windows
-`postgresql-x64-16`: работает в фоне и стартует автоматически при включении
-компьютера. Управление службой:
-
-```powershell
-Get-Service postgresql*                                # статус
-Stop-Service postgresql-x64-16                         # остановить
-Start-Service postgresql-x64-16                        # запустить
-Restart-Service postgresql-x64-16                      # перезапустить (после правки конфигов)
-Set-Service postgresql-x64-16 -StartupType Automatic   # вернуть автозапуск, если отключали
-```
-
-Консоль psql:
-
-```powershell
-& "C:\Program Files\PostgreSQL\16\bin\psql.exe" -U postgres
-```
-
-**Linux (Debian/Ubuntu):**
-
-```bash
-sudo apt install postgresql
-sudo systemctl enable --now postgresql   # автозапуск при загрузке + работа в фоне
-```
-
-Управление: `sudo systemctl stop|start|restart postgresql`; статус —
-`systemctl status postgresql`; консоль — `sudo -u postgres psql`.
+В самом приложении есть окно-помощник (ссылка «Нет сервера? Установка…» в окнах
+подключения и создания базы): TCP-проба порта + инструкция для текущей ОС
+(`Utils/PgServerProbe`, `Controls/Dialogs/PgServerHelpDialog`).
 
 ## Шаг 2 — создать пользователя и пустую базу
 
-Приложение **не создает базу на сервере** — это делает администратор один раз.
-Схему (таблицы, индексы) внутри пустой базы приложение построит само при первом
-подключении.
+Два равнозначных пути; схему (таблицы, индексы) внутри пустой базы приложение в
+обоих случаях построит само при первом подключении.
 
-В `psql` под суперпользователем `postgres`:
+**Из приложения (основной путь):** Настройки → «Управление базой данных» →
+«Добавить базу данных» → **«Создать базу данных PostgreSQL»**. Окно подключается
+администратором к служебной базе `postgres`, создает роль-владельца и базу
+(`Database/PgDatabaseCreator`: DDL квотирует сам сервер через
+`format('%I'/'%L')`), проверяет вход новой ролью и регистрирует базу в реестре.
+Существующая роль переиспользуется (пароль не меняется), роль-сирота после
+неудачного `CREATE DATABASE` подчищается.
+
+**В psql (ручной путь администратора):** под суперпользователем `postgres`:
 
 ```sql
 CREATE ROLE smartbase LOGIN PASSWORD 'сильный-пароль';
@@ -108,7 +88,7 @@ CREATE DATABASE smartbase OWNER smartbase;
 - Имена `smartbase` здесь — примеры, назовите как удобно.
 - `OWNER` обязателен: схему может строить владелец базы. Начиная с PostgreSQL 15
   писать в схему `public` по умолчанию может только владелец, поэтому роль без
-  владения схему создать не сможет.
+  владения схему создать не сможет. Окно создания делает то же самое.
 - Одна такая база = одна строка в списке баз приложения. Нужна вторая независимая
   база — еще один `CREATE DATABASE` на том же сервере.
 
@@ -116,37 +96,15 @@ CREATE DATABASE smartbase OWNER smartbase;
 
 Пропустите, если сервер на том же компьютере, что и приложение (подключение по
 `localhost`). Docker с `-p 5432:5432` сетевые подключения уже принимает — останется
-только файрвол (п. 4).
+только файрвол.
 
-Для установленного сервера — два файла конфигурации (пути покажут `SHOW config_file;`
-и `SHOW hba_file;` в psql):
-
-1. `postgresql.conf` — слушать не только localhost:
-
-   ```
-   listen_addresses = '*'
-   ```
-2. `pg_hba.conf` — разрешить вход по паролю с адресов вашей сети (пример для
-   подсети 192.168.1.0/24):
-
-   ```
-   host  all  all  192.168.1.0/24  scram-sha-256
-   ```
-3. Перезапустить службу PostgreSQL (Linux: `sudo systemctl restart postgresql`;
-   macOS: `brew services restart postgresql@16`; Windows:
-   `Restart-Service postgresql-x64-16`).
-4. Файрвол: открыть входящий TCP-порт 5432 на машине с сервером. Windows
-   (PowerShell от имени администратора):
-
-   ```powershell
-   New-NetFirewallRule -DisplayName "PostgreSQL" -Direction Inbound `
-     -Protocol TCP -LocalPort 5432 -Action Allow
-   ```
-
-   Linux с ufw: `sudo ufw allow 5432/tcp`.
-
-Для сервера в интернете дополнительно: доступ через VPN или проброс порта и SSL на
-сервере (`ssl = on` + сертификат), а в приложении — режим шифрования «Обязательно».
+Полная пошаговая версия с командами по ОС — [../../user/postgresql-server.md](../../user/postgresql-server.md),
+раздел «Дать доступ коллегам». Суть (пути к файлам покажут `SHOW config_file;` и
+`SHOW hba_file;` в psql): `listen_addresses = '*'` в `postgresql.conf`,
+разрешающая строка `host all all <подсеть> scram-sha-256` в `pg_hba.conf`
+(правку только hba применяет `SELECT pg_reload_conf();` без перезапуска),
+открытый входящий TCP 5432 в файрволе. Для сервера в интернете — VPN либо SSL
+(`ssl = on` + сертификат) и режим шифрования «Обязательно» в приложении.
 
 ## Шаг 4 — подключить базу в приложении
 
@@ -185,7 +143,7 @@ CREATE DATABASE smartbase OWNER smartbase;
 | Сообщение                                                                                                             | Причина и что делать                                                                                                              |
 | ------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------- |
 | «Неверный пароль или пользователь»                                                              | опечатка в пароле или имени роли; сверьте с`CREATE ROLE … LOGIN PASSWORD`                                    |
-| «База данных не найдена на сервере»                                                              | не выполнен`CREATE DATABASE` или опечатка в имени базы                                                            |
+| «База данных не найдена на сервере»                                                              | базы нет или опечатка в имени — создайте ее пунктом меню «Создать базу данных PostgreSQL»                                                            |
 | «Сервер отклонил подключение — проверьте настройки доступа (pg_hba.conf)» | нет разрешающей строки для вашего адреса — шаг 3, п. 2                                                     |
 | «Сервер недоступен — проверьте адрес, порт и сеть»                                   | сервер не запущен, неверный адрес/порт, закрыт файрвол или`listen_addresses` не менялся |
 | «Не удалось установить защищенное соединение»                                         | режим SSL не совпадает с настройкой сервера — попробуйте другой режим                      |
@@ -253,13 +211,15 @@ SELECT usename, passwd FROM pg_shadow WHERE usename = 'smartbase';
   только ваш пользователь Windows). На Linux пароль пока хранится открытым текстом
   в app.db. Пароли, сохраненные старыми версиями приложения, переводятся в
   защищенное хранилище автоматически при первом запуске.
-- Все равно не подключайтесь суперпользователем `postgres` — заведите отдельную
-  роль (шаг 2): у нее меньше прав на сервере.
-- Базу на сервере создает администратор; приложение строит только схему внутри
-  пустой базы.
+- Все равно не подключайтесь суперпользователем `postgres` — работайте
+  ролью-владельцем (шаг 2): у нее меньше прав на сервере. Администратор нужен
+  только окну создания базы, его пароль в реестр не попадает.
+- Резервных копий серверных баз приложение не делает — `pg_dump` по расписанию
+  (см. [../../user/postgresql-server.md](../../user/postgresql-server.md),
+  раздел «Резервная копия»).
 - База по умолчанию остается локальным SQLite-файлом.
 
 ## Связанные документы
 
 [[../architecture/database/storage-and-migrations]], [[../architecture/users-permissions]],
-[[../features/settings]], [[user-guide]]
+[[../features/settings]], [../../user/postgresql-server.md](../../user/postgresql-server.md)

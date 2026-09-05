@@ -36,6 +36,7 @@ public static class GuideRegistry
         new("settings",       "settings.md"),
         new("profile",        "profile-access.md"),
         new("postgresql",     "postgresql.md"),
+        new("postgresql-server", "postgresql-server.md"),
         new("install",        "install-update.md"),
         new("shortcuts",      "shortcuts.md"),
     ];

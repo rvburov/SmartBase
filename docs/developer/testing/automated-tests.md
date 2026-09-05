@@ -68,10 +68,12 @@ SQLite + PG), `CsvExportTests` (выгрузка журнала и диагно�
 
 ## PostgreSQL
 
-Тесты `PgProviderTests` — `[SkippableFact]`: без поднятого стенда они помечаются **Skipped**,
-а не падают, поэтому локально и в CI без Docker набор остается зеленым. Стенд —
-docker-контейнер `sb-pg` (порт **5455**), как в
-[../guides/postgresql-setup.md](../guides/postgresql-setup.md); нужны базы `smartbase` и `smartbase2`:
+Тесты `PgProviderTests` (провайдер) и `PgCreateDatabaseTests` (создание базы и
+роли-владельца из приложения, `PgDatabaseCreator`) — `[SkippableFact]`: без поднятого
+стенда они помечаются **Skipped**, а не падают, поэтому локально и в CI без Docker набор
+остается зеленым. Стенд — docker-контейнер `sb-pg` (порт **5455**, о выборе порта — врезка
+в [../guides/postgresql-setup.md](../guides/postgresql-setup.md)); нужны базы `smartbase`
+и `smartbase2`:
 
 ```bash
 docker run --name sb-pg -e POSTGRES_PASSWORD=postgres -p 5455:5432 -d postgres:16
@@ -79,8 +81,15 @@ docker exec sb-pg psql -U postgres -c "CREATE DATABASE smartbase;"
 docker exec sb-pg psql -U postgres -c "CREATE DATABASE smartbase2;"
 ```
 
-Перед прогоном каждый PG-тест сбрасывает схему (`DROP SCHEMA public CASCADE; CREATE SCHEMA
-public;`), чтобы миграция `InitialCreatePg` накатилась начисто.
+На macOS docker работает через colima: перед первым запуском `brew services start colima`.
+
+Перед прогоном каждый PG-тест провайдера сбрасывает схему (`DROP SCHEMA public CASCADE;
+CREATE SCHEMA public;`), чтобы миграция `InitialCreatePg` накатилась начисто.
+`PgCreateDatabaseTests` работают иначе: создают базы/роли с уникальными именами
+`sb_create_test_*` / `sb_create_role_*` и подчищают их в `finally`
+(`DROP DATABASE … WITH (FORCE)`), так что стенд остается чистым. В CI оба класса гоняет
+job `postgres` (фильтр `PgProviderTests|PgCreateDatabaseTests`) с guard-проверкой
+«Skipped: 0» — см. [../guides/ci.md](../guides/ci.md).
 
 ## Замечания по сборке
 

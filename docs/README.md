@@ -63,6 +63,8 @@ EF Core/SQLite). Документация разделена на два раз�
 - [developer-guide.md](developer/guides/developer-guide.md) — миграции, соглашения, раскладка вывода.
 - [postgresql-setup.md](developer/guides/postgresql-setup.md) — PostgreSQL: сервер, база, подключение.
 - [auto-update.md](developer/guides/auto-update.md) — автообновление (сетевая папка + установщик).
+- [ci.md](developer/guides/ci.md) — что и где гоняет CI: матрица ОС, стенд PostgreSQL, guard-проверки.
+- [release.md](developer/guides/release.md) — сборка релиза: артефакты по ОС, подпись, публикация.
 
 ### Тестирование ([developer/testing/](developer/testing/))
 
@@ -71,7 +73,7 @@ EF Core/SQLite). Документация разделена на два раз�
 
 ### QA-чеклисты ([developer/qa-checklists/](developer/qa-checklists/))
 
-Ручные прогоны фич (что нажать → что должно получиться): [overview.md](developer/qa-checklists/overview.md) · [database-file](developer/qa-checklists/database-file.md) · [calendar-diagram](developer/qa-checklists/calendar-diagram.md) · [import](developer/qa-checklists/import.md) · [export](developer/qa-checklists/export.md) · [profile](developer/qa-checklists/profile.md) · [tasks](developer/qa-checklists/tasks.md) · [relation](developer/qa-checklists/relation.md) · [table-columns](developer/qa-checklists/table-columns.md) · [table-navigation](developer/qa-checklists/table-navigation.md) · [filter-date-tree](developer/qa-checklists/filter-date-tree.md) · [diagnostics](developer/qa-checklists/diagnostics.md) · [notes](developer/qa-checklists/notes.md).
+Ручные прогоны фич (что нажать → что должно получиться): [overview.md](developer/qa-checklists/overview.md) · [database-file](developer/qa-checklists/database-file.md) · [calendar-diagram](developer/qa-checklists/calendar-diagram.md) · [import](developer/qa-checklists/import.md) · [export](developer/qa-checklists/export.md) · [profile](developer/qa-checklists/profile.md) · [postgresql](developer/qa-checklists/postgresql.md) · [tasks](developer/qa-checklists/tasks.md) · [relation](developer/qa-checklists/relation.md) · [table-columns](developer/qa-checklists/table-columns.md) · [table-navigation](developer/qa-checklists/table-navigation.md) · [filter-date-tree](developer/qa-checklists/filter-date-tree.md) · [diagnostics](developer/qa-checklists/diagnostics.md) · [notes](developer/qa-checklists/notes.md).
 
 ---
 
@@ -85,7 +87,7 @@ EF Core/SQLite). Документация разделена на два раз�
 - Работа с данными: [table](user/table.md) · [record-page](user/record-page.md) · [properties](user/properties.md) · [filters-sorting](user/filters-sorting.md)
 - Планирование: [calendar](user/calendar.md) · [tasks](user/tasks.md) · [notes](user/notes.md)
 - Обмен и инструменты: [import-export](user/import-export.md) · [extensions](user/extensions.md)
-- Настройка: [settings](user/settings.md) · [profile-access](user/profile-access.md) · [postgresql](user/postgresql.md) · [install-update](user/install-update.md)
+- Настройка: [settings](user/settings.md) · [profile-access](user/profile-access.md) · [postgresql](user/postgresql.md) · [postgresql-server](user/postgresql-server.md) · [install-update](user/install-update.md)
 - Справочное: [shortcuts](user/shortcuts.md)
 
 > **Файлы попадают в сборку.** `docs/user/**/*.md` объявлены `AvaloniaResource`

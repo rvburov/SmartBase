@@ -28,7 +28,7 @@
 ## Файл 1: app.db (системный, один на приложение)
 
 Реестр баз и настройки приложения. Никогда не показывается в сайдбаре, не удаляется,
-изменения схемы — только аддитивно (см. [databases.md](storage-and-migrations.md)).
+изменения схемы — только аддитивно (см. [storage-and-migrations.md](storage-and-migrations.md)).
 
 ### `databases` — реестр подключенных баз
 
@@ -36,9 +36,21 @@
 |---|---|---|
 | `Id` | INTEGER, PK | автоинкремент |
 | `Name` | TEXT | отображаемое имя базы («Основная», …) |
-| `Path` | TEXT | абсолютный путь к файлу `.db` |
-| `Provider` | TEXT | пока всегда `sqlite`; задел под `postgres` |
-| `IsDefault` | INTEGER 0/1 | дефолтная база; ее нельзя удалить из реестра |
+| `Path` | TEXT | у `sqlite` — абсолютный путь к файлу `.db`; у `postgres` — отображаемая строка `postgres://host:port/db` (без пароля, для дедупликации и карточки в настройках) |
+| `Provider` | TEXT | `sqlite` (файл) или `postgres` (сервер) — ветку выбирает `DatabaseManager.Open` |
+| `IsDefault` | INTEGER 0/1 | дефолтная база; ее нельзя удалить из реестра; всегда `sqlite` |
+| `PgHost` | TEXT, NULL | адрес сервера PostgreSQL (только у `postgres`-записей, как и остальные `Pg*`) |
+| `PgPort` | INTEGER, NULL | порт (NULL = 5432) |
+| `PgDatabase` | TEXT, NULL | имя базы на сервере |
+| `PgUser` | TEXT, NULL | роль подключения |
+| `PgPassword` | TEXT, NULL | пароль в защищенном виде через `SecretProtector`: macOS — ссылка на Связку ключей (`keychain:v1:…`), Windows — DPAPI (`dpapi:v1:…`), Linux — открытый текст; читает только `DatabaseRefEntity.ToPgInfo` |
+| `PgSslMode` | TEXT, NULL | `Disable` / `Prefer` / `Require` (NULL = `Prefer`) |
+
+`Pg*`-колонки добавлены аддитивно на старте (`DatabaseRegistry.EnsurePgColumns`) —
+app.db не пересоздается. Типы колонок пользовательских баз на PostgreSQL те же
+логически, но физически имена складываются в lowercase, а `bool` хранится как
+`integer` — см. [storage-and-migrations.md](storage-and-migrations.md), раздел
+«Провайдеры».
 
 ### `app_settings` — настройки приложения (ключ → значение)
 
