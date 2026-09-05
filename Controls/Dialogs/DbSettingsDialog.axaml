@@ -68,13 +68,11 @@
                        Margin="0,0,0,12"
                        TextWrapping="Wrap" />
 
-            <Grid ColumnDefinitions="Auto,8,Auto,*" Margin="0,0,0,12">
+            <!-- Резервная копия переехала в «Настройки → Резервное копирование» -->
+            <Grid ColumnDefinitions="Auto,*" Margin="0,0,0,12">
                 <Button Grid.Column="0" x:Name="CompactBtn" Classes="dialog auto"
                         Content="Сжать файл"
                         ToolTip.Tip="Вернуть свободное место: файл переписывается целиком, на время сжатия база отключается" />
-                <Button Grid.Column="2" x:Name="BackupBtn" Classes="dialog auto"
-                        Content="Резервная копия…"
-                        ToolTip.Tip="Сохранить компактную копию файла базы (без свободных страниц); базу не отключает" />
             </Grid>
 
         </StackPanel>

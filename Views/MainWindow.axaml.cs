@@ -224,10 +224,16 @@ public partial class MainWindow : Window
             _mountQueue.Enqueue(entry);
             SyncMountedToUi();
         };
-        // Обслуживание файла базы из «Управления базой данных»: сжатие (через очередь, с
-        // отключением базы на время VACUUM) и резервная копия (без отключения).
+        // Обслуживание файла базы из «Управления базой данных»: сжатие через очередь,
+        // с отключением базы на время VACUUM.
         SettingsModule.DatabaseCompactRequested += (_, dbId) => _ = CompactDatabaseAsync(dbId);
-        SettingsModule.DatabaseBackupRequested  += (_, dbId) => _ = BackupDatabaseAsync(dbId);
+        // Раздел «Резервное копирование»: ручной запуск — службе; ход и итог — обратно в
+        // раздел (прогресс приходит из фонового потока — маршалим, остальное уже на UI).
+        SettingsModule.BackupNowRequested += (_, dbId) => _ = _backup.RunNowAsync(dbId);
+        _backup.BackupStarted  += dbId => SettingsModule.OnBackupStarted(dbId);
+        _backup.BackupProgress += (dbId, msg, frac) =>
+            Dispatcher.UIThread.Post(() => SettingsModule.OnBackupProgress(dbId, msg, frac));
+        _backup.BackupFinished += (dbId, ok, msg) => SettingsModule.OnBackupFinished(dbId, ok, msg);
         // Переименование в окне настроек базы: реестр уже обновлен — меняем имя
         // смонтированной БД на месте и перечитываем сайдбары, без ремаунта.
         SettingsModule.DatabaseRenamed += (_, e) =>
@@ -696,7 +702,7 @@ public partial class MainWindow : Window
         await ConfirmDialog.Info(text).ShowDialog(this);
     }
 
-    // ── Обслуживание файла базы: «Сжать файл», «Резервная копия…» ─────────────────
+    // ── Обслуживание файла базы: «Сжать файл» ─────────────────────────────────────
 
     // Размер файла до/после сжатия — для карточки по завершении (пишет фоновая работа
     // очереди, читает обработчик MaintenanceFinished на UI-потоке уже после нее).
@@ -761,59 +767,9 @@ public partial class MainWindow : Window
         SyncMountedToUi();   // узел базы становится заглушкой «сжимаю файл…»
     }
 
-    // Резервная копия — VACUUM INTO в выбранный файл: компактная консистентная копия, базу
-    // не отключает и писателей не блокирует (держит только снимок чтения).
-    private async Task BackupDatabaseAsync(int dbId)
-    {
-        var db = _workspace.Get(dbId);
-        if (db is null || db.Provider != "sqlite") return;
-
-        var file = await StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
-        {
-            Title               = "Куда сохранить резервную копию",
-            SuggestedFileName   = $"{db.Name} (копия {DateTime.Now:yyyy-MM-dd_HH-mm}).db",
-            DefaultExtension    = "db",
-            ShowOverwritePrompt = true,
-            FileTypeChoices     = [new FilePickerFileType("База данных SQLite") { Patterns = ["*.db"] }],
-        });
-        var target = file?.TryGetLocalPath();
-        if (string.IsNullOrEmpty(target)) return;
-        if (string.Equals(System.IO.Path.GetFullPath(target), System.IO.Path.GetFullPath(db.Path),
-                          StringComparison.OrdinalIgnoreCase))
-        {
-            Notify("Резервную копию нельзя сохранить поверх самой базы — выберите другой файл.");
-            return;
-        }
-
-        var progress = new ProgressDialog { Title = "Резервная копия" };
-        progress.SetProgress(0, "Подготовка…");
-        var closed = progress.ShowDialog(this);
-        var name   = db.Name;
-        var source = db.Path;
-        try
-        {
-            await Task.Run(() => DatabaseManager.BackupTo(source, name, target, (msg, frac) =>
-                Dispatcher.UIThread.Post(() =>
-                {
-                    var nl    = msg.IndexOf('\n');
-                    var phase = nl < 0 ? msg : msg[..nl];
-                    var info  = nl < 0 ? ""  : msg[(nl + 1)..];
-                    if (frac is { } f) progress.SetProgress(f, phase); else progress.SetSaving(phase);
-                    progress.SetInfo(info);
-                })));
-            NotifyInfo($"Резервная копия базы «{name}» сохранена: {target} ({DatabaseRowSize(new FileInfo(target).Length)}).");
-        }
-        catch (Exception ex)
-        {
-            Log.Error(ex, "Резервная копия базы «{Name:l}» не создана: {Target:l}", name, target);
-            Notify($"Резервная копия базы «{name}» не создана: {ex.Message}");
-        }
-        finally
-        {
-            progress.Done();
-            await closed;
-        }
-    }
+    // Резервная копия переехала в «Настройки → Резервное копирование»: копии снимает
+    // BackupService (по расписанию и кнопкой «Копировать сейчас»), прежней модалки с
+    // выбором файла больше нет — папку задает настройка раздела.
 
     // Потеря смонтированной БД на ходу (сервер выключился, файл удалили): зеркало
     // отключения из настроек, но запись реестра остается — монитор будет ретраить,

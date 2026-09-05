@@ -650,8 +650,9 @@
                                                     VerticalAlignment="Center"
                                                     IsVisible="{Binding ShowReconnect}" />
 
-                                            <!-- Настройки базы: имя, файл/сервер, копия, пароль —
-                                                 все действия строки переехали в это окно -->
+                                            <!-- Настройки базы: имя, файл/сервер, пароль —
+                                                 действия строки переехали в это окно (копия —
+                                                 в разделе «Резервное копирование») -->
                                             <Button Classes="icon"
                                                     Width="28" Height="28"
                                                     Tag="{Binding Id}"
@@ -695,6 +696,65 @@
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
+
+                    </StackPanel>
+                </Grid>
+            </ScrollViewer>
+
+            <!-- ── Резервное копирование ─────────────────────────── -->
+            <!-- Общие настройки (папка, глубина ротации) — статикой здесь; список баз с
+                 расписаниями строится в code-behind (SettingsBackupPanel.RefreshBackupList):
+                 состав редакторов строки зависит от периодичности, разметке его не описать. -->
+            <ScrollViewer x:Name="BackupPanel" IsVisible="False"
+                          VerticalScrollBarVisibility="Auto">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Margin="16,0,16,32">
+
+                    <!-- Папка, куда складываются копии всех баз -->
+                    <Border Classes="settingRow">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <StackPanel Grid.Column="0" Spacing="4"
+                                        VerticalAlignment="Center" Margin="0,0,32,0">
+                                <TextBlock Classes="title" Text="Папка резервных копий" />
+                                <TextBlock Classes="desc"
+                                           Text="Сюда складываются копии всех баз данных. Стандарт — папка Backups в папке данных программы." />
+                                <TextBlock x:Name="BackupFolderText" Classes="desc" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="1" Orientation="Horizontal"
+                                        Spacing="8" VerticalAlignment="Center">
+                                <!-- «Сбросить» видна только при выбранной своей папке -->
+                                <Button x:Name="BackupFolderResetBtn"
+                                        Content="Сбросить"
+                                        Click="OnBackupFolderResetClick" />
+                                <Button Content="Выбрать…"
+                                        Click="OnBackupFolderPickClick" />
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+                    <Border Classes="separator h" />
+
+                    <!-- Глубина ротации: старые копии сверх лимита удаляются автоматически -->
+                    <Border Classes="settingRow">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <StackPanel Grid.Column="0" Spacing="4"
+                                        VerticalAlignment="Center" Margin="0,0,32,0">
+                                <TextBlock Classes="title" Text="Хранить последних копий" />
+                                <TextBlock Classes="desc"
+                                           Text="Сколько копий каждой базы держать в папке: более старые удаляются автоматически после успешного копирования." />
+                            </StackPanel>
+                            <ComboBox x:Name="BackupKeepCombo"
+                                      Width="90"
+                                      VerticalAlignment="Center"
+                                      SelectionChanged="OnBackupKeepChanged" />
+                        </Grid>
+                    </Border>
+                    <Border Classes="separator h" />
+
+                    <!-- Базы с расписаниями: строки строит code-behind -->
+                    <StackPanel x:Name="BackupList" />
 
                     </StackPanel>
                 </Grid>

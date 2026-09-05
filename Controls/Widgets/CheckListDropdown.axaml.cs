@@ -41,6 +41,10 @@ public partial class CheckListDropdown : UserControl
     /// <summary>Набор отмеченных изменился; аргумент — ключи СКРЫТЫХ пунктов.</summary>
     public event EventHandler<IReadOnlyList<string>>? HiddenChanged;
 
+    /// <summary>Ключи СКРЫТЫХ (не отмеченных) пунктов на текущий момент — для мест, где
+    /// состояние читают по чужому событию, а не копят из <see cref="HiddenChanged"/>.</summary>
+    public IReadOnlyList<string> HiddenKeys => [.. _items.Where(i => !i.IsChecked).Select(i => i.Key)];
+
     public CheckListDropdown()
     {
         InitializeComponent();

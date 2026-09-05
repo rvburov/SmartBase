@@ -39,8 +39,6 @@ public partial class SettingsView : UserControl
     /// <summary>«Сжать файл» у смонтированной SQLite-базы: MainWindow отцепляет базу и ведет
     /// VACUUM через очередь монтирования (см. MountQueue.RunMaintenance).</summary>
     public event EventHandler<int>?               DatabaseCompactRequested;
-    /// <summary>«Резервная копия…» у смонтированной SQLite-базы (VACUUM INTO, без отключения).</summary>
-    public event EventHandler<int>?               DatabaseBackupRequested;
     /// <summary>База переименована в окне настроек (имя уже записано в реестр): MainWindow
     /// обновляет имя смонтированной БД на месте и перечитывает сайдбары — без ремаунта.</summary>
     public event EventHandler<(int Id, string Name)>? DatabaseRenamed;
@@ -1067,6 +1065,7 @@ public partial class SettingsView : UserControl
         GeneralPanel.IsVisible    = key == "general";
         AppearancePanel.IsVisible = key == "appearance";
         DatabasePanel.IsVisible   = key == "database";
+        BackupPanel.IsVisible     = key == "backup";
         ExtensionsPanel.IsVisible = key == "extensions";
         GuidePanel.IsVisible      = key == "guide";
         NotesPanel.IsVisible      = key == "notes";
@@ -1087,6 +1086,7 @@ public partial class SettingsView : UserControl
         if (key == "logs")       RebuildLogsPanel();
         if (key == "guide")      BuildGuide();
         if (key == "extensions") BuildExtensionsPanel();
+        if (key == "backup")     RebuildBackupPanel();
     }
 
     // ── Управление базой данных ──────────────────────────────────────────────
@@ -1109,8 +1109,8 @@ public partial class SettingsView : UserControl
                 IsDefault     = d.IsDefault,
                 IsMounted     = mounted,
                 IsPostgres    = d.IsPostgres,
-                // Сведения о файле и право на «Сжать файл»/«Резервная копия» — только у
-                // смонтированной SQLite-базы (PG-файла нет; отцепленную не трогаем).
+                // Сведения о файле и право на «Сжать файл» — только у смонтированной
+                // SQLite-базы (PG-файла нет; отцепленную не трогаем).
                 Storage       = mounted && !d.IsPostgres ? _storage?.Invoke(d.Id) : null,
                 CanMaintain   = mounted && !d.IsPostgres && (_canMaintain?.Invoke(d.Id) ?? false),
                 StatusText    = mounted ? _mountedStatus.GetValueOrDefault(d.Id) : queue?.Text
@@ -1240,9 +1240,9 @@ public partial class SettingsView : UserControl
     }
 
     // Окно «Настройки базы данных» (шестеренка в строке): общее — переименование; у
-    // SQLite — файл/сжатие/копия, у PG — статус сервера, данные подключения, смена
-    // пароля. Сжатие и копию окно запускает колбэками через те же события MainWindow,
-    // которыми раньше пользовались кнопки строки.
+    // SQLite — файл/сжатие, у PG — статус сервера, данные подключения, смена пароля.
+    // Сжатие окно запускает колбэком через то же событие MainWindow, которым раньше
+    // пользовалась кнопка строки. Резервная копия живет в разделе «Резервное копирование».
     private async void OnDbSettingsClick(object? sender, RoutedEventArgs e)
     {
         if (_registry is null || VisualRoot is not Window win) return;
@@ -1256,8 +1256,7 @@ public partial class SettingsView : UserControl
         var canMaintain = mounted && !entry.IsPostgres && (_canMaintain?.Invoke(id) ?? false);
 
         var result = await new DbSettingsDialog(entry, storage, canMaintain,
-                onCompact: () => DatabaseCompactRequested?.Invoke(this, id),
-                onBackup:  () => DatabaseBackupRequested?.Invoke(this, id))
+                onCompact: () => DatabaseCompactRequested?.Invoke(this, id))
             .ShowDialog<DbSettingsResult?>(win);
         if (result is null) return;
 

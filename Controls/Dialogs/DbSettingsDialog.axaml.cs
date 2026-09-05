@@ -16,12 +16,13 @@ public sealed record DbSettingsResult(string? NewName, string? NewPgPassword);
 
 /// <summary>
 /// Окно «Настройки базы данных» (шестеренка в строке базы): общее — переименование в
-/// списке; у SQLite — сведения о файле, «Сжать файл» и «Резервная копия…» (переехали
-/// сюда из строки списка); у PostgreSQL — живой статус сервера (TCP-проба) со ссылкой
-/// на помощник установки/автозапуска, «Данные подключения» и смена сохраненного пароля
-/// (с пробой нового пароля до записи — нерабочий в реестр не попадает).
-/// Сжатие/копия выполняются сразу через колбэки (окно закрывается — ход операции виден
-/// в списке баз, как раньше); имя и пароль возвращаются результатом по «Сохранить»,
+/// списке; у SQLite — сведения о файле и «Сжать файл» (переехал сюда из строки списка);
+/// у PostgreSQL — живой статус сервера (TCP-проба) со ссылкой на помощник
+/// установки/автозапуска, «Данные подключения» и смена сохраненного пароля (с пробой
+/// нового пароля до записи — нерабочий в реестр не попадает). Резервная копия живет в
+/// разделе «Настройки → Резервное копирование».
+/// Сжатие выполняется сразу через колбэк (окно закрывается — ход операции виден в
+/// списке баз, как раньше); имя и пароль возвращаются результатом по «Сохранить»,
 /// запись в реестр делает вызывающий (SettingsView). Возвращает
 /// <see cref="DbSettingsResult"/> или null.
 /// </summary>
@@ -29,15 +30,13 @@ public partial class DbSettingsDialog : Window
 {
     private readonly DatabaseRefEntity _entry;
     private readonly Action? _compact;
-    private readonly Action? _backup;
 
     public DbSettingsDialog(DatabaseRefEntity entry, DatabaseManager.StorageStats? storage,
-                            bool canMaintain, Action? onCompact, Action? onBackup)
+                            bool canMaintain, Action? onCompact)
     {
         InitializeComponent();
         _entry   = entry;
         _compact = onCompact;
-        _backup  = onBackup;
 
         NameBox.Text  = entry.Name;
         PathText.Text = entry.Path;
@@ -57,9 +56,8 @@ public partial class DbSettingsDialog : Window
         }
         else
         {
-            // Сведения и кнопки файла — как в прежней строке списка: сжатие только когда
-            // есть что возвращать (и не у дефолтной — ее сжимает сам запуск), копия — у
-            // любой смонтированной базы администратора.
+            // Сведения и кнопка файла — как в прежней строке списка: сжатие только когда
+            // есть что возвращать (и не у дефолтной — ее сжимает сам запуск).
             if (storage is not null)
             {
                 StorageText.Text = DatabaseRow.FormatStorage(storage);
@@ -73,10 +71,8 @@ public partial class DbSettingsDialog : Window
                 StorageText.Foreground = Brush("BrushSecondaryText", "#8E8E93");
             }
             CompactBtn.IsVisible = canMaintain && !entry.IsDefault && storage?.NeedsCompaction == true;
-            BackupBtn.IsVisible  = canMaintain;
 
             CompactBtn.Click += (_, _) => { _compact?.Invoke(); Close(null); };
-            BackupBtn.Click  += (_, _) => { _backup?.Invoke(); Close(null); };
         }
 
         CancelBtn.Click += (_, _) => Close(null);

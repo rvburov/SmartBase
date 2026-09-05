@@ -102,6 +102,9 @@
     <StreamGeometry x:Key="IconCollection">M12 3 V20 A1 1 0 0 1 11 21 H5 A2 2 0 0 1 3 19 V5 A2 2 0 0 1 5 3 H19 A2 2 0 0 1 21 5 V11 A1 1 0 0 1 20 12 H3 M16 19 L18 21 L22 17</StreamGeometry>
     <!-- База данных (lucide database) -->
     <StreamGeometry x:Key="IconDatabase">M3 5 A9 3 0 1 0 21 5 A9 3 0 1 0 3 5 Z M3 5 V19 A9 3 0 0 0 21 19 V5 M3 12 A9 3 0 0 0 21 12</StreamGeometry>
+
+    <!-- Архив (lucide archive) — раздел «Резервное копирование» -->
+    <StreamGeometry x:Key="IconArchive">M3 3 H21 A1 1 0 0 1 22 4 V7 A1 1 0 0 1 21 8 H3 A1 1 0 0 1 2 7 V4 A1 1 0 0 1 3 3 Z M4 8 V19 A2 2 0 0 0 6 21 H18 A2 2 0 0 0 20 19 V8 M10 12 H14</StreamGeometry>
     <!-- Заметка .md в дереве заметок (lucide file-text) -->
     <StreamGeometry x:Key="IconFileText">M15 2 H6 A2 2 0 0 0 4 4 V20 A2 2 0 0 0 6 22 H18 A2 2 0 0 0 20 20 V7 Z M14 2 V6 A2 2 0 0 0 16 8 H20 M10 9 H8 M16 13 H8 M16 17 H8</StreamGeometry>
     <!-- Любой другой файл в дереве заметок: виден, но не открывается (lucide file) -->
