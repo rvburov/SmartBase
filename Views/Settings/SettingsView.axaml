@@ -745,7 +745,7 @@
                                 <TextBlock Classes="desc"
                                            Text="Сколько копий каждой базы держать в папке: более старые удаляются автоматически после успешного копирования." />
                             </StackPanel>
-                            <ComboBox x:Name="BackupKeepCombo"
+                            <ComboBox Grid.Column="1" x:Name="BackupKeepCombo"
                                       Width="90"
                                       VerticalAlignment="Center"
                                       SelectionChanged="OnBackupKeepChanged" />
