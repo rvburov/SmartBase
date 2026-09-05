@@ -120,6 +120,8 @@ done
 # Фильтры тестов заданы строками с именами классов — их легко осиротить переименованием.
 [ -f "Tests/Integration/PgProviderTests.cs" ] \
   || prob+=("нет Tests/Integration/PgProviderTests.cs — фильтр в job postgres ничего не найдет")
+[ -f "Tests/Integration/PgCreateDatabaseTests.cs" ] \
+  || prob+=("нет Tests/Integration/PgCreateDatabaseTests.cs — фильтр в job postgres потеряет тесты создания баз")
 [ -f "Tests/Integration/LinuxNotificationsTests.cs" ] \
   || prob+=("нет Tests/Integration/LinuxNotificationsTests.cs — шаг про D-Bus ничего не найдет")
 

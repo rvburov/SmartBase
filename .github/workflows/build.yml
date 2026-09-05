@@ -149,8 +149,8 @@ jobs:
             || { echo "::error::тест уведомлений ушел в Skipped — шина D-Bus не поднялась"; exit 1; }
 
   # ── Тесты провайдера PostgreSQL на живой базе ───────────────────────────────
-  # Единственное место, где эти девять тестов вообще выполняются: локально нужен поднятый
-  # docker-контейнер, а на остальных раннерах сервисы недоступны.
+  # Единственное место, где тесты провайдера и создания баз вообще выполняются: локально
+  # нужен поднятый docker-контейнер, а на остальных раннерах сервисы недоступны.
   postgres:
     name: PostgreSQL
     runs-on: ubuntu-latest
@@ -188,12 +188,12 @@ jobs:
           psql -h localhost -p 5455 -U postgres -c 'CREATE DATABASE smartbase'
           psql -h localhost -p 5455 -U postgres -c 'CREATE DATABASE smartbase2'
 
-      # Фильтр по классу, а не весь набор: остальное уже прогнано матрицей на четырех ОС,
+      # Фильтр по классам, а не весь набор: остальное уже прогнано матрицей на четырех ОС,
       # повторять его здесь — впустую жечь минуты.
       - name: Тесты провайдера
         run: |
           dotnet test Tests/Integration --configuration Release \
-            --filter 'FullyQualifiedName~PgProviderTests' \
+            --filter 'FullyQualifiedName~PgProviderTests|FullyQualifiedName~PgCreateDatabaseTests' \
             --logger 'console;verbosity=minimal' | tee pg.log
 
       # Без этой проверки job был бы зеленым и в том случае, когда база не поднялась: тесты
