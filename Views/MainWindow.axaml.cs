@@ -10,6 +10,7 @@ using Serilog;
 using SmartBase.Controls.Components;
 using SmartBase.Controls.Dialogs;
 using SmartBase.Database;
+using SmartBase.Database.Backup;
 using SmartBase.Database.Entities;
 using SmartBase.Database.Repositories;
 using SmartBase.Logging;
@@ -80,6 +81,8 @@ public partial class MainWindow : Window
         _mountQueue  = new MountQueue(workspace);
         _health      = new DbHealthMonitor(workspace, _mountQueue);
         _changes     = new ChangePoller(workspace, _health);
+        // Резервное копирование по расписанию (раздел «Настройки → Резервное копирование»).
+        _backup      = new BackupService(workspace.Registry);
         // Резолвер чужих баз для межбазовых связей (тип «relation» с TargetDbId>0).
         RelationDbResolver.Configure(workspace);
 
@@ -540,6 +543,8 @@ public partial class MainWindow : Window
             _changes.Start();
             // Служба уведомлений: таймер + догон событий, наступивших при закрытом приложении.
             _notifications.Start();
+            // Резервное копирование: таймер расписаний + догон пропущенной копии первым тиком.
+            _backup.Start();
 
             // Автообновление: проверяем сразу — окно показано (в том числе при старте из
             // автозапуска) и может быть владельцем модалки «Обновить/Отмена». Со скрытым
@@ -598,11 +603,13 @@ public partial class MainWindow : Window
             _changes.Dispose();
             _health.Dispose();
             _notifications.Dispose();
+            _backup.Dispose();
             _watchdog.Dispose();
         };
     }
 
     private readonly UiWatchdog _watchdog;
+    private readonly BackupService _backup;
 
     // Человеческое имя раздела для записей о медленном открытии.
     private static string ModuleTitle(string module) => module switch

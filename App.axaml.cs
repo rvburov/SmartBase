@@ -75,6 +75,14 @@ public partial class App : Application
             if (orphans > 0)
                 Log.Information("Настройки удаленных расширений убраны из app.db: {Count}", orphans);
 
+            // Настройки резервного копирования отключенных баз: расписание и отметки базы,
+            // которой больше нет в реестре, не должны жить в app.db вечно.
+            var backupOrphans = AppSettings.RemoveOrphanBackupSettings(
+                registry.GetAll().Select(d => d.Id));
+            if (backupOrphans > 0)
+                Log.Information("Настройки резервного копирования отключенных баз убраны из app.db: {Count}",
+                                backupOrphans);
+
             // Там же — галочки «Расширения → Отображение раздела расширений»: список пунктов
             // динамический (Id реестра), поэтому Id удаленного расширения не должен остаться
             // в «скрытых». Иначе вернувшееся расширение молча оказалось бы скрытым.
