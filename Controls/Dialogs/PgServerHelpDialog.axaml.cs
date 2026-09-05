@@ -18,9 +18,14 @@ namespace SmartBase.Controls.Dialogs;
 /// </summary>
 public partial class PgServerHelpDialog : Window
 {
-    public PgServerHelpDialog()
+    /// <param name="host">Предзаполнить адрес (окно настроек PG-базы передает свой сервер).</param>
+    /// <param name="port">Предзаполнить порт.</param>
+    public PgServerHelpDialog(string? host = null, int? port = null)
     {
         InitializeComponent();
+
+        if (host is not null) HostBox.Text = host;
+        if (port is not null) PortBox.Text = port.Value.ToString();
 
         CheckBtn.Click    += async (_, _) => await CheckAsync();
         CloseBtn.Click    += (_, _) => Close(null);

@@ -41,6 +41,9 @@ public partial class SettingsView : UserControl
     public event EventHandler<int>?               DatabaseCompactRequested;
     /// <summary>«Резервная копия…» у смонтированной SQLite-базы (VACUUM INTO, без отключения).</summary>
     public event EventHandler<int>?               DatabaseBackupRequested;
+    /// <summary>База переименована в окне настроек (имя уже записано в реестр): MainWindow
+    /// обновляет имя смонтированной БД на месте и перечитывает сайдбары — без ремаунта.</summary>
+    public event EventHandler<(int Id, string Name)>? DatabaseRenamed;
     // Тумблер «Общее → Уведомления» переключен — MainWindow сообщает службе уведомлений.
     public event EventHandler<bool>?              NotificationsEnabledChanged;
     // Тумблеры уведомлений по задачам — туда же, каждый сам по себе.
@@ -1236,24 +1239,40 @@ public partial class SettingsView : UserControl
             .ShowDialog(win);
     }
 
-    // «Данные подключения» в строке PG-базы: сводка для передачи коллеге. Пароль не
-    // показываем и из хранилища не достаем — он передается отдельно от адреса.
-    private async void OnPgDetailsClick(object? sender, RoutedEventArgs e)
+    // Окно «Настройки базы данных» (шестеренка в строке): общее — переименование; у
+    // SQLite — файл/сжатие/копия, у PG — статус сервера, данные подключения, смена
+    // пароля. Сжатие и копию окно запускает колбэками через те же события MainWindow,
+    // которыми раньше пользовались кнопки строки.
+    private async void OnDbSettingsClick(object? sender, RoutedEventArgs e)
     {
         if (_registry is null || VisualRoot is not Window win) return;
         if (sender is not Button { Tag: int id }) return;
 
         var entry = _registry.GetAll().FirstOrDefault(d => d.Id == id);
-        if (entry is null || !entry.IsPostgres || entry.PgHost is null || entry.PgDatabase is null)
-            return;
+        if (entry is null) return;
 
-        await new PgDetailsDialog(
-                entry.PgHost,
-                entry.PgPort ?? PgConnectionInfo.DefaultPort,
-                entry.PgDatabase,
-                entry.PgUser ?? "",
-                entry.PgSslMode ?? PgConnectionInfo.DefaultSslMode)
-            .ShowDialog(win);
+        var mounted     = _isMounted?.Invoke(id) ?? false;
+        var storage     = mounted && !entry.IsPostgres ? _storage?.Invoke(id) : null;
+        var canMaintain = mounted && !entry.IsPostgres && (_canMaintain?.Invoke(id) ?? false);
+
+        var result = await new DbSettingsDialog(entry, storage, canMaintain,
+                onCompact: () => DatabaseCompactRequested?.Invoke(this, id),
+                onBackup:  () => DatabaseBackupRequested?.Invoke(this, id))
+            .ShowDialog<DbSettingsResult?>(win);
+        if (result is null) return;
+
+        if (result.NewName is { } newName)
+        {
+            _registry.Rename(id, newName);
+            DatabaseRenamed?.Invoke(this, (id, newName));
+        }
+        if (result.NewPgPassword is { } pwd)
+        {
+            _registry.UpdatePgPassword(id, pwd);
+            // Недоступной базе новый пароль нужен прямо сейчас — пробуем переподключиться.
+            if (!mounted) DatabaseReconnectRequested?.Invoke(this, id);
+        }
+        RefreshDatabaseList();
     }
 
     private async void OnRemoveDatabaseClick(object? sender, RoutedEventArgs e)
@@ -1280,19 +1299,5 @@ public partial class SettingsView : UserControl
         // MainWindow попробует смонтировать БД заново и обновит список (статус).
         if (sender is Button { Tag: int id })
             DatabaseReconnectRequested?.Invoke(this, id);
-    }
-
-    // «Сжать файл» / «Резервная копия…»: подтверждение, выбор файла и сама работа — в MainWindow
-    // (там рабочее пространство и очередь монтирования); здесь только сигнал с id базы.
-    private void OnCompactDatabaseClick(object? sender, RoutedEventArgs e)
-    {
-        if (sender is Button { Tag: int id })
-            DatabaseCompactRequested?.Invoke(this, id);
-    }
-
-    private void OnBackupDatabaseClick(object? sender, RoutedEventArgs e)
-    {
-        if (sender is Button { Tag: int id })
-            DatabaseBackupRequested?.Invoke(this, id);
     }
 }

@@ -20,7 +20,9 @@ public sealed partial class DatabaseManager : IDisposable
     // Идентичность смонтированной БД из реестра: DbId стабилен между запусками
     // и служит «префиксом» для изоляции id при мульти-маунте (Этап 3).
     public int                   DbId        { get; }
-    public string                Name        { get; }
+    // Имя изменяемо: переименование в окне настроек базы обновляет смонтированную БД
+    // на месте (MainWindow), без ремаунта — сайдбары перечитают его в SyncMountedToUi.
+    public string                Name        { get; set; }
     // Для SQLite — путь к файлу; для PostgreSQL — строка подключения Npgsql
     // (фоновые контексты открываются по ней же: new AppDbContext(db.DbPath)).
     public string                Path        { get; }

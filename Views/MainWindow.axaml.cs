@@ -225,6 +225,13 @@ public partial class MainWindow : Window
         // отключением базы на время VACUUM) и резервная копия (без отключения).
         SettingsModule.DatabaseCompactRequested += (_, dbId) => _ = CompactDatabaseAsync(dbId);
         SettingsModule.DatabaseBackupRequested  += (_, dbId) => _ = BackupDatabaseAsync(dbId);
+        // Переименование в окне настроек базы: реестр уже обновлен — меняем имя
+        // смонтированной БД на месте и перечитываем сайдбары, без ремаунта.
+        SettingsModule.DatabaseRenamed += (_, e) =>
+        {
+            if (_workspace.Get(e.Id) is { } renamed) renamed.Name = e.Name;
+            SyncMountedToUi();
+        };
         _mountQueue.MaintenanceFinished += (dbId, error) => Dispatcher.UIThread.Post(() =>
         {
             var name = _workspace.Registry.GetAll().FirstOrDefault(d => d.Id == dbId)?.Name ?? "";

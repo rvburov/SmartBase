@@ -628,32 +628,6 @@
                                         <StackPanel Grid.Column="1" Orientation="Horizontal"
                                                     Spacing="8" VerticalAlignment="Center">
 
-                                            <!-- Сжать файл (VACUUM): общая база при монтировании не
-                                                 сжимается, только по этой кнопке администратором -->
-                                            <Button Content="Сжать файл"
-                                                    Tag="{Binding Id}"
-                                                    Click="OnCompactDatabaseClick"
-                                                    VerticalAlignment="Center"
-                                                    ToolTip.Tip="Вернуть свободное место: файл переписывается целиком, на время сжатия база отключается"
-                                                    IsVisible="{Binding ShowCompact}" />
-
-                                            <!-- Резервная копия (VACUUM INTO): компактная копия файла, базу не отключает -->
-                                            <Button Content="Резервная копия…"
-                                                    Tag="{Binding Id}"
-                                                    Click="OnBackupDatabaseClick"
-                                                    VerticalAlignment="Center"
-                                                    ToolTip.Tip="Сохранить компактную копию файла базы (без свободных страниц)"
-                                                    IsVisible="{Binding ShowBackup}" />
-
-                                            <!-- Данные подключения серверной базы: сводка для
-                                                 передачи коллеге (адрес/порт/база/роль, без пароля) -->
-                                            <Button Content="Данные подключения"
-                                                    Tag="{Binding Id}"
-                                                    Click="OnPgDetailsClick"
-                                                    VerticalAlignment="Center"
-                                                    ToolTip.Tip="Показать адрес, порт, базу и роль для подключения коллеги"
-                                                    IsVisible="{Binding IsPostgres}" />
-
                                             <!-- Серверная БД PostgreSQL: метка провайдера -->
                                             <TextBlock Text="PostgreSQL"
                                                        VerticalAlignment="Center"
@@ -675,6 +649,25 @@
                                                     Click="OnReconnectDatabaseClick"
                                                     VerticalAlignment="Center"
                                                     IsVisible="{Binding ShowReconnect}" />
+
+                                            <!-- Настройки базы: имя, файл/сервер, копия, пароль —
+                                                 все действия строки переехали в это окно -->
+                                            <Button Classes="icon"
+                                                    Width="28" Height="28"
+                                                    Tag="{Binding Id}"
+                                                    Click="OnDbSettingsClick"
+                                                    ToolTip.Tip="Настройки базы данных"
+                                                    VerticalAlignment="Center">
+                                                <Viewbox Width="{StaticResource IconSizeSmall}" Height="{StaticResource IconSizeSmall}">
+                                                    <Canvas Width="24" Height="24">
+                                                        <!-- lucide settings -->
+                                                        <Path Data="{StaticResource IconSettings}"
+                                                              Stroke="{Binding $parent[Button].Foreground}"
+                                                              StrokeThickness="{StaticResource IconStrokeSmall}"
+                                                              StrokeLineCap="Round" StrokeJoin="Round" />
+                                                    </Canvas>
+                                                </Viewbox>
+                                            </Button>
 
                                             <!-- Удалить из реестра (файл не удаляется) -->
                                             <Button Classes="icon red"

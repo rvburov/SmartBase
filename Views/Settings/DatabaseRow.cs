@@ -15,9 +15,9 @@ namespace SmartBase.Views.Settings;
 ///
 /// У смонтированной SQLite-базы — третья строка со сведениями о файле («файл 1,7 ГБ ·
 /// свободно 1,1 ГБ (64 %)»): это ответ на «почему база весит столько». Когда свободных
-/// страниц больше порога (<see cref="DatabaseManager.NeedsCompaction"/>), строка красная и
-/// рядом кнопка «Сжать файл» — общую базу при монтировании не сжимаем никогда, локальная
-/// ужмется сама при следующем запуске, но и ее можно сжать не дожидаясь.
+/// страниц больше порога (<see cref="DatabaseManager.NeedsCompaction"/>), строка красная —
+/// сжатие и резервная копия живут в окне «Настройки базы данных» (шестеренка строки,
+/// DbSettingsDialog); из действий в строке только шестеренка и корзинка.
 /// </summary>
 public sealed partial class DatabaseRow : ObservableObject
 {
@@ -61,12 +61,6 @@ public sealed partial class DatabaseRow : ObservableObject
     public IBrush StorageBrush => Brush(
         StorageIsWarning ? "BrushRed" : "BrushSecondaryText",
         StorageIsWarning ? "#FF3B30" : "#8E8E93");
-
-    /// <summary>«Сжать файл» — только когда есть что возвращать и пользователь вправе; дефолтную
-    /// (локальную) базу нельзя отцепить от рабочего пространства — ее сжимает сам запуск.</summary>
-    public bool ShowCompact => CanMaintain && !IsDefault && StorageIsWarning;
-    /// <summary>«Резервная копия…» — у любой смонтированной SQLite-базы администратора.</summary>
-    public bool ShowBackup  => CanMaintain;
 
     public static string FormatStorage(DatabaseManager.StorageStats s)
     {

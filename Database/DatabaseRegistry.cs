@@ -218,6 +218,28 @@ public sealed class DatabaseRegistry : IDisposable, ISettingsDatabase
         return entity;
     }
 
+    /// <summary>Переименовать БД в списке (окно настроек базы). Имя — только подпись:
+    /// путь/подключение не меняются. Пустое имя игнорируется.</summary>
+    public void Rename(int id, string name)
+    {
+        var entity = _db.Databases.FirstOrDefault(d => d.Id == id);
+        if (entity is null || string.IsNullOrWhiteSpace(name)) return;
+        entity.Name = name.Trim();
+        _db.SaveChanges();
+    }
+
+    /// <summary>Сменить сохраненный пароль подключения PG-записи (пароль роли поменяли на
+    /// сервере). Старый секрет удаляется из хранилища ОС, новый защищается заново.
+    /// Работоспособность пароля проверяет вызывающий (окно делает пробу до записи).</summary>
+    public void UpdatePgPassword(int id, string password)
+    {
+        var entity = _db.Databases.FirstOrDefault(d => d.Id == id);
+        if (entity is null || !entity.IsPostgres) return;
+        SecretProtector.Delete(entity.PgPassword ?? "");
+        entity.PgPassword = SecretProtector.Protect(password);
+        _db.SaveChanges();
+    }
+
     /// <summary>Удалить БД из реестра. Дефолтную удалить нельзя.</summary>
     public void Remove(int id)
     {
