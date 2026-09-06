@@ -2,13 +2,16 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:components="using:SmartBase.Controls.Components"
         x:Class="SmartBase.Views.SplashWindow"
-        Width="{StaticResource DialogWidthCompact}" Height="230"
+        Width="460" Height="230"
         CanResize="False"
         ShowInTaskbar="True"
         SystemDecorations="None"
         WindowStartupLocation="CenterScreen"
         Background="{StaticResource BrushBg}"
         Title="SmartBase">
+
+    <!-- Габариты — свои, числами: заставка не диалог и под стандарт размеров
+         (Assets/Styles/WindowMetrics.axaml) не подводится, как и главное окно. -->
 
     <!-- Тонкая рамка вокруг окна (у сплэша нет системной рамки) -->
     <Border BorderBrush="{StaticResource BrushSeparator}" BorderThickness="{DynamicResource BorderLine}">
