@@ -217,12 +217,20 @@ public partial class DayView : UserControl
         {
             foreach (var (ev, colIdx, nCols, rightLimit) in AssignColumns(group))
             {
-                var startMin = DateOnly.FromDateTime(ev.StartDt) == dayDate
-                    ? ev.StartDt.Hour * 60 + ev.StartDt.Minute
-                    : 0;
-                var effectiveEndMin = DateOnly.FromDateTime(ev.EndDt) == dayDate
-                    ? ev.EndDt.Hour * 60 + ev.EndDt.Minute
-                    : 1440;
+                // Сегменты многодневного события обрезаются рабочими часами (см. WeekView):
+                // граница дня ведет себя как полночь, ночные часы не закрашиваются.
+                var segS       = CalendarSettings.DayStartMinutes;
+                var segE       = CalendarSettings.DayEndMinutes;
+                var isStartDay = DateOnly.FromDateTime(ev.StartDt) == dayDate;
+                var isEndDay   = DateOnly.FromDateTime(ev.EndDt) == dayDate;
+                var rawStart   = ev.StartDt.Hour * 60 + ev.StartDt.Minute;
+                var rawEnd     = ev.EndDt.Hour * 60 + ev.EndDt.Minute;
+                var startMin = isStartDay
+                    ? rawStart
+                    : (isEndDay ? rawEnd : segE) > segS ? segS : 0;
+                var effectiveEndMin = isEndDay
+                    ? rawEnd
+                    : (isStartDay ? rawStart : segS) < segE ? segE : 1440;
                 var evH        = Math.Max(22, effectiveEndMin - startMin);
                 var evHVisible = evH - 2;
                 var color      = Color.Parse(EventColors.Display(ev.Color));
@@ -614,15 +622,24 @@ public partial class DayView : UserControl
                     var endT   = CalendarMath.ResizeEndTarget(_currentDays[0], rawEnd,
                         dayS, effE, CalendarSettings.FiveDayWeek).Min;
                     var ghostEnd = Math.Clamp(rawEnd, minEnd, Math.Max(minEnd, effE));
-                    var ghostH   = Math.Max(13, ghostEnd - effectiveStartMin - 2);
-                    Canvas.SetTop(_resizeGhost, effectiveStartMin + 2);
+                    // Верх ghost — как у отрисованного сегмента: продолжение с прошлого
+                    // дня при лимитах начинается с начала рабочего дня, не с полуночи.
+                    var ghostTop = effectiveStartMin;
+                    if (DateOnly.FromDateTime(_resizeEntry.Ev.StartDt) != resizeColDay)
+                    {
+                        var endHere = DateOnly.FromDateTime(_resizeEntry.Ev.EndDt) == resizeColDay
+                            ? _resizeEntry.Ev.EndDt.Hour * 60 + _resizeEntry.Ev.EndDt.Minute : dayE;
+                        if (endHere > dayS) ghostTop = dayS;
+                    }
+                    var ghostH = Math.Max(13, ghostEnd - ghostTop - 2);
+                    Canvas.SetTop(_resizeGhost, ghostTop + 2);
                     _resizeGhost.Height = ghostH;
-                    UpdateResizeGhostText(ghostH, effectiveStartMin, endT);
+                    UpdateResizeGhostText(ghostH, ghostTop, endT);
 
                     var svH = TimeScroll.Bounds.Height;
                     if (svH > 0)
                     {
-                        var ghostBottom = effectiveStartMin + 2 + ghostH;
+                        var ghostBottom = ghostTop + 2 + ghostH;
                         if (ghostBottom > TimeScroll.Offset.Y + svH - 30)
                             TimeScroll.Offset = TimeScroll.Offset.WithY(
                                 Math.Clamp(ghostBottom - svH + 30, 0, Math.Max(0, 1440 - svH)));
@@ -707,10 +724,19 @@ public partial class DayView : UserControl
                     var startT   = CalendarMath.ResizeStartTarget(_currentDays[0], rawStart,
                         effS, dayE, CalendarSettings.FiveDayWeek).Min;
                     var ghostStart = Math.Clamp(rawStart, Math.Min(effS, maxStart), maxStart);
-                    var ghostH     = Math.Max(13, effectiveEndMin - ghostStart - 2);
+                    // Низ ghost — как у отрисованного сегмента: продолжение в следующий
+                    // день при лимитах заканчивается в конце рабочего дня, не в полночь.
+                    var ghostBottom = effectiveEndMin;
+                    if (DateOnly.FromDateTime(_resizeEntry.Ev.EndDt) != resizeColDay)
+                    {
+                        var startHere = DateOnly.FromDateTime(_resizeEntry.Ev.StartDt) == resizeColDay
+                            ? _resizeEntry.Ev.StartDt.Hour * 60 + _resizeEntry.Ev.StartDt.Minute : dayS;
+                        if (startHere < dayE) ghostBottom = dayE;
+                    }
+                    var ghostH = Math.Max(13, ghostBottom - ghostStart - 2);
                     Canvas.SetTop(_resizeGhost, ghostStart + 2);
                     _resizeGhost.Height = ghostH;
-                    UpdateResizeGhostText(ghostH, startT, effectiveEndMin);
+                    UpdateResizeGhostText(ghostH, startT, ghostBottom);
 
                     var svH = TimeScroll.Bounds.Height;
                     if (svH > 0 && ghostStart + 2 < TimeScroll.Offset.Y + 30)

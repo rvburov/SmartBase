@@ -24,13 +24,16 @@ public partial class TimeField : UserControl
         Input.Text       = TimeText.Format(_time);
 
         // Времена вне разрешенного диапазона гаснут и не выбираются (контейнеры
-        // переиспользуются — IsEnabled ставится на каждой подготовке заново).
+        // переиспользуются — состояние ставится на каждой подготовке заново).
+        // Прозрачность — явно: тема пунктов списка недоступность сама не подсвечивает.
         List.ContainerPrepared += (_, e) =>
         {
             if (e.Container is not ListBoxItem item) return;
             var minutes = e.Index * 15;
-            item.IsEnabled = _allowedFromMin < 0
+            var allowed = _allowedFromMin < 0
                 || (minutes >= _allowedFromMin && minutes <= _allowedToMin);
+            item.IsEnabled = allowed;
+            item.Opacity   = allowed ? 1.0 : 0.4;
         };
 
         Input.TextChanged += (_, _) =>
