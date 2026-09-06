@@ -59,7 +59,7 @@ public partial class DayView : UserControl
     // resize state
     private bool        _isResizingEvent;
     private EventEntry? _resizeEntry;
-    private List<EventEntry> _resizeDimmedBtns = [];
+    private List<EventEntry> _resizeHiddenBtns = [];
     private bool        _resizeFromBottom;
     private Border?     _resizeGhost;
     private Border?     _resizeGhostOverflow;
@@ -545,11 +545,12 @@ public partial class DayView : UserControl
             DragOverlay.Children.Add(_resizeGhost);
 
             entry.Btn.Opacity = 0;
-            // Остальные сегменты события приглушаются (симметрия с WeekView).
-            _resizeDimmedBtns = _eventEntries
+            // Остальные сегменты события скрываются целиком (симметрия с WeekView):
+            // при resize новое положение показывают только яркие ghost, без прозрачных.
+            _resizeHiddenBtns = _eventEntries
                 .Where(x => x != entry && x.Ev.Id == entry.Ev.Id && x.Ev.FieldId == entry.Ev.FieldId)
                 .ToList();
-            foreach (var b in _resizeDimmedBtns) b.Dim?.Invoke();
+            foreach (var b in _resizeHiddenBtns) b.Btn.Opacity = 0;
             e.Pointer.Capture(EventsGrid);
             e.Handled = true;
             return;
@@ -1039,8 +1040,8 @@ public partial class DayView : UserControl
                 _resizeGhostOverflow = null;
             }
             _resizeEntry.Btn.Opacity = 1.0;
-            foreach (var b in _resizeDimmedBtns) b.Undim?.Invoke();
-            _resizeDimmedBtns.Clear();
+            foreach (var b in _resizeHiddenBtns) b.Btn.Opacity = 1.0;
+            _resizeHiddenBtns.Clear();
 
             _isResizingEvent         = false;
             _resizeEntry             = null;

@@ -68,7 +68,7 @@ public partial class WeekView : UserControl
     // resize state
     private bool        _isResizingEvent;
     private EventEntry? _resizeEntry;
-    private List<EventEntry> _resizeDimmedBtns = [];
+    private List<EventEntry> _resizeHiddenBtns = [];
     private bool        _resizeFromBottom;
     private Border?     _resizeGhost;
     private Border?     _resizeGhostOverflow;
@@ -608,12 +608,13 @@ public partial class WeekView : UserControl
             DragOverlay.Children.Add(_resizeGhost);
 
             entry.Btn.Opacity = 0;
-            // Остальные сегменты события приглушаются (как при drag): их состояние
-            // показывает ghost — иначе рядом с ним маячит яркий «дубль» в соседней колонке.
-            _resizeDimmedBtns = _eventEntries
+            // Остальные сегменты события скрываются целиком, как и грабнутый: новое
+            // положение показывают только ЯРКИЕ ghost — при resize полупрозрачных
+            // «призраков» быть не должно (в отличие от drag, где оригинал приглушен).
+            _resizeHiddenBtns = _eventEntries
                 .Where(x => x != entry && x.Ev.Id == entry.Ev.Id && x.Ev.FieldId == entry.Ev.FieldId)
                 .ToList();
-            foreach (var b in _resizeDimmedBtns) b.Dim?.Invoke();
+            foreach (var b in _resizeHiddenBtns) b.Btn.Opacity = 0;
             e.Pointer.Capture(EventsGrid);
             e.Handled = true;
             return;
@@ -1544,8 +1545,8 @@ public partial class WeekView : UserControl
                 _resizeGhostOverflow = null;
             }
             _resizeEntry.Btn.Opacity = 1.0;
-            foreach (var b in _resizeDimmedBtns) b.Undim?.Invoke();
-            _resizeDimmedBtns.Clear();
+            foreach (var b in _resizeHiddenBtns) b.Btn.Opacity = 1.0;
+            _resizeHiddenBtns.Clear();
 
             _isResizingEvent          = false;
             _resizeEntry              = null;
