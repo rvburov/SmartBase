@@ -348,17 +348,22 @@ public partial class MonthView : UserControl
                 var isCurrentMonth = d.Month == _currentDate.Month;
                 var isToday        = d.Date == DateTime.Today;
                 var isWeekend      = col >= 5;
+                // 5-дневка: ячейки выходных пустые — однодневные записи Сб/Вс не
+                // показываются (бары туда и так не заходят), «+N еще» не рисуется.
+                var hideWeekend    = isWeekend && CalendarSettings.FiveDayWeek;
 
                 // Строки, занятые spanning-барами в этот день (с дырами).
                 var spanRows = _SpanRowsForDay(d, layout);
 
                 // Однодневные события
-                var singles = _events
-                    .Where(e => !e.AllDay
-                             && e.EndDt.Date == e.StartDt.Date
-                             && e.StartDt.Date == d.Date)
-                    .OrderBy(e => e.StartDt)
-                    .ToList();
+                var singles = hideWeekend
+                    ? []
+                    : _events
+                        .Where(e => !e.AllDay
+                                 && e.EndDt.Date == e.StartDt.Date
+                                 && e.StartDt.Date == d.Date)
+                        .OrderBy(e => e.StartDt)
+                        .ToList();
 
                 // Последняя строка, помещающаяся по высоте: row*BarStep от DateH,
                 // снизу резерв под «+N еще» (MoreH) и нижний отступ (BPad).
@@ -379,10 +384,11 @@ public partial class MonthView : UserControl
                     else                hiddenSingles++;
                 }
 
-                var hidden = hiddenSingles + hiddenSpans[col];
+                var hidden = hideWeekend ? 0 : hiddenSingles + hiddenSpans[col];
 
                 // Обрезанные ограниченным чтением (в _events их нет) — тоже скрытые.
-                if (received is not null && _dayTotals!.TryGetValue(DateOnly.FromDateTime(d), out var total))
+                if (!hideWeekend && received is not null
+                    && _dayTotals!.TryGetValue(DateOnly.FromDateTime(d), out var total))
                     hidden += Math.Max(0, total - received.GetValueOrDefault(d.Date));
 
                 DayGrid.Children.Add(

@@ -415,7 +415,9 @@ public partial class YearView : UserControl
             // Клик по числу текущего месяца → попап со списком событий дня,
             // привязанный к этой ячейке. Оборачиваем в прозрачный Border на всю
             // ячейку, чтобы кликабельной была вся площадь, а не только блок 22×22.
-            if (isCurrentMonth)
+            // 5-дневка: выходные не интерактивны — попап дня не открывается,
+            // записи Сб/Вс в Годе не показываются (как и подсветка).
+            if (isCurrentMonth && !(CalendarSettings.FiveDayWeek && CalendarMath.IsWeekend(d)))
             {
                 var dayDate = d.Date;
                 var hit = new Border
