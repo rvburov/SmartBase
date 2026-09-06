@@ -61,6 +61,8 @@ public partial class DayView : UserControl
     private EventEntry? _resizeEntry;
     private List<EventEntry> _resizeHiddenBtns = [];
     private bool        _resizeFromBottom;
+    // Поправка «ручка на границе сегмента — не край события» (см. WeekView).
+    private int         _resizeVirtualOffset;
     private Border?     _resizeGhost;
     private Border?     _resizeGhostOverflow;
     private TextBlock?  _resizeGhostTitleBlock;
@@ -537,6 +539,26 @@ public partial class DayView : UserControl
             _resizeFromBottom = onBottomEdge;
             _isResizingEvent  = true;
 
+            // Поправка «ручка на границе сегмента — не край события» (см. WeekView).
+            _resizeVirtualOffset = 0;
+            var limS = CalendarSettings.DayStartMinutes;
+            var limE = CalendarSettings.DayEndMinutes;
+            if (CalendarMath.HasDayLimits(limS, limE))
+            {
+                var segDate = DateOnly.FromDateTime(_currentDays[0]);
+                if (onBottomEdge && DateOnly.FromDateTime(entry.Ev.EndDt) > segDate)
+                {
+                    var endMin = entry.Ev.EndDt.Hour * 60 + entry.Ev.EndDt.Minute;
+                    _resizeVirtualOffset = Math.Clamp(endMin, limS, limE) - limS;
+                }
+                else if (onTopEdge && !onBottomEdge
+                         && DateOnly.FromDateTime(entry.Ev.StartDt) < segDate)
+                {
+                    var startMin = entry.Ev.StartDt.Hour * 60 + entry.Ev.StartDt.Minute;
+                    _resizeVirtualOffset = -(limE - Math.Clamp(startMin, limS, limE));
+                }
+            }
+
             var ghostW   = colW - 2.0;
             _resizeGhost = CreateGhostButton(entry.Ev, entry.EndMin - entry.StartMin - 2, ghostW,
                                out _resizeGhostTitleBlock, out _resizeGhostTimeBlock, out _resizeGhostContentStack);
@@ -601,6 +623,7 @@ public partial class DayView : UserControl
         {
             var colW      = EventsGrid.Bounds.Width;
             var rawY      = (int)(pos.Y / 15) * 15;
+            var rawYeff   = rawY + _resizeVirtualOffset; // фактический край события на ленте
             var timeSnapped = Math.Clamp(rawY, 0, 1440);
             _resizeGhost.IsVisible = true;
 
@@ -618,7 +641,7 @@ public partial class DayView : UserControl
                 var hasLimits = CalendarMath.HasDayLimits(dayS, dayE);
                 // При лимитах конец выше начала рабочего дня уходит в предыдущий день
                 // (вне экрана «Дня») — ghost скрывается, как при уходе за верх сетки.
-                var canShrinkLeft  = (rawY < 0 || (hasLimits && rawY <= dayS)) && startIsPrevDay;
+                var canShrinkLeft  = ((!hasLimits && rawY < 0) || (hasLimits && rawYeff <= dayS)) && startIsPrevDay;
 
                 if (canShrinkLeft)
                 {
@@ -638,7 +661,7 @@ public partial class DayView : UserControl
                         ? effectiveStartMin + 30
                         : Math.Max(0, 30 - (1440 - actualStartMin));
                     var effE   = CalendarMath.EffectiveDayEnd(effectiveStartMin, dayE);
-                    var rawEnd = Math.Max(rawY, minEnd);
+                    var rawEnd = Math.Max(rawYeff, minEnd);
                     var endT   = CalendarMath.ResizeEndTarget(_currentDays[0], rawEnd,
                         dayS, effE, CalendarSettings.FiveDayWeek).Min;
                     var ghostEnd = Math.Clamp(rawEnd, minEnd, Math.Max(minEnd, effE));
@@ -741,7 +764,7 @@ public partial class DayView : UserControl
                         ? effectiveEndMin - 30
                         : Math.Min(1440, 1440 + actualEndMin - 30);
                     var effS     = CalendarMath.EffectiveDayStart(effectiveEndMin, dayS);
-                    var rawStart = Math.Min(rawY, maxStart);
+                    var rawStart = Math.Min(rawYeff, maxStart);
 
                     // Зона за концом дня: старт перетекает в следующий видимый день —
                     // он вне экрана «Дня», ghost скрывается (как при уходе за низ сетки).
@@ -909,6 +932,7 @@ public partial class DayView : UserControl
             var resizePos = e.GetPosition(EventsGrid);
             var ev        = _resizeEntry.Ev;
             var rawY      = (int)(resizePos.Y / 15) * 15;
+            var rawYeff   = rawY + _resizeVirtualOffset; // фактический край события на ленте
             var timeSnapped = Math.Clamp(rawY, 0, 1440);
 
             if (_resizeFromBottom)
@@ -924,12 +948,12 @@ public partial class DayView : UserControl
                 var dayE      = CalendarSettings.DayEndMinutes;
                 var hasLimits = CalendarMath.HasDayLimits(dayS, dayE);
 
-                if ((rawY < 0 || (hasLimits && rawY <= dayS)) && startIsPrevDay)
+                if (((!hasLimits && rawY < 0) || (hasLimits && rawYeff <= dayS)) && startIsPrevDay)
                 {
                     // Конец ушел выше начала рабочего дня (или верха сетки) — перетекает
                     // на конец предыдущего видимого дня, не выходя за его рабочие часы.
                     var prevDay = PrevDay(_currentDays[0]);
-                    var baseT   = hasLimits ? dayE - (dayS - rawY) : 1440 + rawY;
+                    var baseT   = hasLimits ? dayE - (dayS - rawYeff) : 1440 + rawY;
                     var targetT = Math.Clamp(baseT, actualStartMin + 30,
                         CalendarMath.EffectiveDayEnd(actualStartMin, dayE));
                     ev.EndDt = targetT >= 1440
@@ -953,7 +977,7 @@ public partial class DayView : UserControl
                     // числе за низом сетки) перетекает на следующий видимый день через
                     // ResizeEndTarget; событие вне часов лимита не имеет (EffectiveDayEnd).
                     var rawEnd = hasLimits
-                        ? Math.Max(rawY, minEnd)
+                        ? Math.Max(rawYeff, minEnd)
                         : Math.Clamp(timeSnapped, minEnd, 1440);
                     var (endDay, endMin) = CalendarMath.ResizeEndTarget(resizeDay, rawEnd,
                         dayS, CalendarMath.EffectiveDayEnd(effectiveStartMin, dayE),
@@ -1004,7 +1028,7 @@ public partial class DayView : UserControl
                     // числе выше верха сетки) перетекает на конец предыдущего видимого
                     // дня; зона за концом дня — на начало следующего.
                     var rawStart = hasLimits
-                        ? Math.Min(rawY, maxStart)
+                        ? Math.Min(rawYeff, maxStart)
                         : Math.Clamp(timeSnapped, 0, maxStart);
                     if (hasLimits && rawStart >= dayE && !sameDayEnd)
                     {

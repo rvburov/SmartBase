@@ -70,6 +70,11 @@ public partial class WeekView : UserControl
     private EventEntry? _resizeEntry;
     private List<EventEntry> _resizeHiddenBtns = [];
     private bool        _resizeFromBottom;
+    // Ручка на границе сегмента — не край события: у события через границу дня
+    // фактический конец/старт лежит в соседнем дне. Поправка (минуты рабочей ленты)
+    // прибавляется к позиции указателя, чтобы жест продолжал фактический край без
+    // скачка, а хвост в соседней колонке сужался плавно. 0 — край в этом же дне.
+    private int         _resizeVirtualOffset;
     private Border?     _resizeGhost;
     private Border?     _resizeGhostOverflow;
     private TextBlock?  _resizeGhostTitleBlock;
@@ -599,6 +604,27 @@ public partial class WeekView : UserControl
             _resizeFromBottom = onBottomEdge;
             _isResizingEvent  = true;
 
+            // Поправка «ручка на границе сегмента — не край события»: при рабочих
+            // часах фактический конец/старт в соседнем дне продолжается жестом плавно.
+            _resizeVirtualOffset = 0;
+            var limS = CalendarSettings.DayStartMinutes;
+            var limE = CalendarSettings.DayEndMinutes;
+            if (CalendarMath.HasDayLimits(limS, limE))
+            {
+                var segDate = DateOnly.FromDateTime(_currentDays[entry.DayCol]);
+                if (onBottomEdge && DateOnly.FromDateTime(entry.Ev.EndDt) > segDate)
+                {
+                    var endMin = entry.Ev.EndDt.Hour * 60 + entry.Ev.EndDt.Minute;
+                    _resizeVirtualOffset = Math.Clamp(endMin, limS, limE) - limS;
+                }
+                else if (onTopEdge && !onBottomEdge
+                         && DateOnly.FromDateTime(entry.Ev.StartDt) < segDate)
+                {
+                    var startMin = entry.Ev.StartDt.Hour * 60 + entry.Ev.StartDt.Minute;
+                    _resizeVirtualOffset = -(limE - Math.Clamp(startMin, limS, limE));
+                }
+            }
+
             var borderLeft = entry.DayCol > 0 ? 1.0 : 0.0;
             var ghostW     = colW - 2.0 - borderLeft;
             _resizeGhost   = CreateGhostButton(entry.Ev, entry.EndMin - entry.StartMin - 2, ghostW,
@@ -676,6 +702,7 @@ public partial class WeekView : UserControl
             var rawPointerCol = colW > 0 ? (int)Math.Floor(pos.X / colW) : _resizeEntry.DayCol;
             var pointerCol    = Math.Clamp(rawPointerCol, 0, _currentDays.Count - 1);
             var rawY          = (int)(pos.Y / 15) * 15;
+            var rawYeff       = rawY + _resizeVirtualOffset; // фактический край события на ленте
             var timeSnapped   = Math.Clamp(rawY, 0, 1440);
             _resizeGhost.IsVisible = true;
 
@@ -699,8 +726,8 @@ public partial class WeekView : UserControl
                 // Конец уходит в предыдущий день: мышь перешла влево ИЛИ ушла выше Y=0;
                 // при лимитах — уже выше начала рабочего дня (зона до 09:00 не существует,
                 // конец перетекает на конец предыдущего видимого дня).
-                var canShrinkLeft  = (rawPointerCol < _resizeEntry.DayCol || rawY < 0
-                                      || (hasLimits && rawY <= dayS))
+                var canShrinkLeft  = (rawPointerCol < _resizeEntry.DayCol || (!hasLimits && rawY < 0)
+                                      || (hasLimits && rawYeff <= dayS))
                                      && startIsPrevDay;
 
                 if (canShrinkLeft)
@@ -711,7 +738,7 @@ public partial class WeekView : UserControl
                     var targetTime = rawPointerCol < _resizeEntry.DayCol
                         ? timeSnapped
                         : hasLimits
-                            ? Math.Clamp(dayE - (dayS - rawY), 0, dayE)
+                            ? Math.Clamp(dayE - (dayS - rawYeff), 0, dayE)
                             : Math.Clamp(1440 + rawY, 0, 1440);
                     var targetVisible  = logicalCol >= 0 && logicalCol < _currentDays.Count;
                     var targetCol      = Math.Clamp(logicalCol, 0, _currentDays.Count - 1);
@@ -753,7 +780,7 @@ public partial class WeekView : UserControl
                     // Рабочие часы: ghost прижат к концу дня, текст показывает фактический
                     // конец (хвост перетекает на следующий видимый день).
                     var rawEnd = hasLimits
-                        ? Math.Max(rawY, minEnd)
+                        ? Math.Max(rawYeff, minEnd)
                         : Math.Clamp(timeSnapped, minEnd, 1440);
                     var endT = hasLimits
                         ? CalendarMath.ResizeEndTarget(_currentDays[_resizeEntry.DayCol], rawEnd,
@@ -912,7 +939,7 @@ public partial class WeekView : UserControl
                     // Рабочие часы: ghost прижат к началу дня, текст показывает фактический
                     // старт (излишек перетекает на конец предыдущего видимого дня).
                     var rawStart = hasLimits
-                        ? Math.Min(rawY, maxStart)
+                        ? Math.Min(rawYeff, maxStart)
                         : Math.Clamp(timeSnapped, 0, maxStart);
 
                     // Зона за концом дня: старт перетекает в следующий видимый день —
@@ -1327,6 +1354,7 @@ public partial class WeekView : UserControl
             var colW          = EventsGrid.Bounds.Width / _currentDays.Count;
             var rawPointerCol = colW > 0 ? (int)Math.Floor(resizePos.X / colW) : _resizeEntry.DayCol;
             var rawY          = (int)(resizePos.Y / 15) * 15;
+            var rawYeff       = rawY + _resizeVirtualOffset; // фактический край события на ленте
             var timeSnapped   = Math.Clamp(rawY, 0, 1440);
 
             if (_resizeFromBottom)
@@ -1348,8 +1376,8 @@ public partial class WeekView : UserControl
                                      && !(hasLimits && rawPointerCol <= _resizeEntry.DayCol);
                 // При лимитах конец, ушедший выше начала рабочего дня, перетекает на
                 // конец предыдущего видимого дня (зеркало превью).
-                var canShrinkLeft  = (rawPointerCol < _resizeEntry.DayCol || rawY < 0
-                                      || (hasLimits && rawY <= dayS))
+                var canShrinkLeft  = (rawPointerCol < _resizeEntry.DayCol || (!hasLimits && rawY < 0)
+                                      || (hasLimits && rawYeff <= dayS))
                                      && startIsPrevDay;
 
                 if (canShrinkLeft)
@@ -1360,7 +1388,7 @@ public partial class WeekView : UserControl
                     var targetTime     = rawPointerCol < _resizeEntry.DayCol
                         ? timeSnapped
                         : hasLimits
-                            ? Math.Clamp(dayE - (dayS - rawY), 0, dayE)
+                            ? Math.Clamp(dayE - (dayS - rawYeff), 0, dayE)
                             : Math.Clamp(1440 + rawY, 0, 1440);
                     var evStartDay     = DateOnly.FromDateTime(ev.StartDt);
                     var targetDateOnly = DateOnly.FromDateTime(targetDay);
@@ -1387,7 +1415,7 @@ public partial class WeekView : UserControl
                     // начатое впритык к концу дня или позже (вне часов), лимита не имеет
                     // (EffectiveDayEnd) — иначе минимум 30 минут заклинил бы ручку.
                     var rawEnd = hasLimits
-                        ? Math.Max(rawY, minEnd)
+                        ? Math.Max(rawYeff, minEnd)
                         : Math.Clamp(timeSnapped, minEnd, 1440);
                     var (endDay, endMin) = CalendarMath.ResizeEndTarget(resizeDay, rawEnd,
                         dayS, CalendarMath.EffectiveDayEnd(effectiveStartMin, dayE), FiveDay);
@@ -1489,7 +1517,7 @@ public partial class WeekView : UserControl
                     // числе выше верха сетки) перетекает на конец предыдущего видимого
                     // дня; зона за концом дня — на начало следующего.
                     var rawStart = hasLimits
-                        ? Math.Min(rawY, maxStart)
+                        ? Math.Min(rawYeff, maxStart)
                         : Math.Clamp(timeSnapped, 0, maxStart);
                     if (hasLimits && rawStart >= dayE && !sameDayEnd)
                     {
