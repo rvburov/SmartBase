@@ -31,8 +31,10 @@ public partial class RecordDialog : Window
     private int _selectedDbId;
     // Поля-даты выбранной коллекции (для списка «Дата события» при 2+ датах).
     private List<DbField> _eventDateFields = [];
+    // Конец по умолчанию — старт плюс «Длительность нового события» из настроек календаря.
     private TimeSpan _savedStartTime = new(9, 0, 0);
-    private TimeSpan _savedEndTime   = new(10, 0, 0);
+    private TimeSpan _savedEndTime   = new TimeSpan(9, 0, 0)
+        + TimeSpan.FromMinutes(SmartBase.Utils.CalendarSettings.NewEventDurationMinutes);
 
     // ── Конструктор: схема-режим ──────────────────────────────────────────────
     public RecordDialog(ConstructorRepository repository, int collectionId, int? recordId = null)
@@ -123,7 +125,8 @@ public partial class RecordDialog : Window
         if (presetTime.HasValue)
         {
             _savedStartTime = presetTime.Value;
-            _savedEndTime   = presetTime.Value + TimeSpan.FromHours(1);
+            _savedEndTime   = presetTime.Value
+                + TimeSpan.FromMinutes(SmartBase.Utils.CalendarSettings.NewEventDurationMinutes);
         }
         StartTimeField.Time = _savedStartTime;
         EndTimeField.Time   = _savedEndTime;

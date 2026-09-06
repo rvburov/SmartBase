@@ -493,6 +493,9 @@ public partial class DayView : UserControl
             if (e.ClickCount >= 2 && _currentDays.Count > 0)
             {
                 var minutes = (int)(pos.Y / 30) * 30;
+                // Рабочие часы: новое событие укладывается в период дня.
+                minutes = CalendarMath.ClampStartMin(minutes, CalendarSettings.NewEventDurationMinutes,
+                    CalendarSettings.DayStartMinutes, CalendarSettings.DayEndMinutes);
                 var day     = _currentDays[0];
                 var dt      = new DateTime(day.Year, day.Month, day.Day, minutes / 60, minutes % 60, 0);
                 TimeSlotCreationRequested?.Invoke(this, dt);
@@ -713,6 +716,10 @@ public partial class DayView : UserControl
             var rawY     = pos.Y - _dragOffsetY;
             var duration = (int)(_dragEvent!.EndDt - _dragEvent.StartDt).TotalMinutes;
             var snapped  = (int)Math.Floor(rawY / 15) * 15;
+            // Рабочие часы: старт зажимается так, чтобы событие уложилось в период —
+            // ghost показывает то, что ляжет при отпускании (без лимитов — сквозной проход).
+            snapped = CalendarMath.ClampStartMin(snapped, duration,
+                CalendarSettings.DayStartMinutes, CalendarSettings.DayEndMinutes);
 
             Canvas.SetLeft(_dragGhost, 0);
 
@@ -802,14 +809,31 @@ public partial class DayView : UserControl
                 }
                 else
                 {
-                    var minEnd = DateOnly.FromDateTime(ev.StartDt) == resizeColDay
+                    var sameDayStart = DateOnly.FromDateTime(ev.StartDt) == resizeColDay;
+                    var minEnd = sameDayStart
                         ? effectiveStartMin + 30
                         : Math.Max(0, 30 - (1440 - actualStartMin));
                     var newEndMin = Math.Clamp(timeSnapped, minEnd, 1440);
-                    ev.EndDt = newEndMin >= 1440
-                        ? resizeDay.Date.AddDays(1)
-                        : new DateTime(resizeDay.Year, resizeDay.Month, resizeDay.Day,
-                                       newEndMin / 60, newEndMin % 60, 0);
+                    if (sameDayStart)
+                    {
+                        // Рабочие часы: за концом дня — перескок на начало следующего
+                        // видимого дня; событие вне часов лимита не имеет (EffectiveDayEnd).
+                        var (endDay, endMin) = CalendarMath.ResizeEndTarget(resizeDay, newEndMin,
+                            CalendarSettings.DayStartMinutes,
+                            CalendarMath.EffectiveDayEnd(effectiveStartMin, CalendarSettings.DayEndMinutes),
+                            CalendarSettings.FiveDayWeek);
+                        ev.EndDt = endMin >= 1440
+                            ? endDay.Date.AddDays(1)
+                            : new DateTime(endDay.Year, endDay.Month, endDay.Day,
+                                           endMin / 60, endMin % 60, 0);
+                    }
+                    else
+                    {
+                        ev.EndDt = newEndMin >= 1440
+                            ? resizeDay.Date.AddDays(1)
+                            : new DateTime(resizeDay.Year, resizeDay.Month, resizeDay.Day,
+                                           newEndMin / 60, newEndMin % 60, 0);
+                    }
                 }
             }
             else
@@ -841,14 +865,28 @@ public partial class DayView : UserControl
                 }
                 else
                 {
-                    var maxStart = DateOnly.FromDateTime(ev.EndDt) == resizeColDay
+                    var sameDayEnd = DateOnly.FromDateTime(ev.EndDt) == resizeColDay;
+                    var maxStart = sameDayEnd
                         ? effectiveEndMin - 30
                         : Math.Min(1440, 1440 + actualEndMin - 30);
                     var newStartMin = Math.Clamp(timeSnapped, 0, maxStart);
-                    ev.StartDt = newStartMin >= 1440
-                        ? resizeDay.Date.AddDays(1)
-                        : new DateTime(resizeDay.Year, resizeDay.Month, resizeDay.Day,
-                                       newStartMin / 60, newStartMin % 60, 0);
+                    if (sameDayEnd)
+                    {
+                        // Рабочие часы: раньше начала дня — старт перепрыгивает на конец
+                        // предыдущего видимого дня (симметрия ResizeEndTarget).
+                        var (startDay, startMin) = CalendarMath.ResizeStartTarget(resizeDay, newStartMin,
+                            CalendarMath.EffectiveDayStart(effectiveEndMin, CalendarSettings.DayStartMinutes),
+                            CalendarSettings.DayEndMinutes, CalendarSettings.FiveDayWeek);
+                        ev.StartDt = new DateTime(startDay.Year, startDay.Month, startDay.Day,
+                                                  startMin / 60, startMin % 60, 0);
+                    }
+                    else
+                    {
+                        ev.StartDt = newStartMin >= 1440
+                            ? resizeDay.Date.AddDays(1)
+                            : new DateTime(resizeDay.Year, resizeDay.Month, resizeDay.Day,
+                                           newStartMin / 60, newStartMin % 60, 0);
+                    }
                 }
             }
 
@@ -928,6 +966,9 @@ public partial class DayView : UserControl
             var rawY     = pos.Y - _dragOffsetY;
             var duration = (int)(_dragEvent.EndDt - _dragEvent.StartDt).TotalMinutes;
             var snapped  = (int)Math.Floor(rawY / 15) * 15;
+            // Рабочие часы: старт зажимается в период дня (см. ghost в Moved).
+            snapped = CalendarMath.ClampStartMin(snapped, duration,
+                CalendarSettings.DayStartMinutes, CalendarSettings.DayEndMinutes);
 
             DateTime newStart;
             if (snapped < 0)
@@ -1258,6 +1299,9 @@ public partial class DayView : UserControl
             _Deselect();
 
             var minutes = (int)(_gridContextPos.Y / 30) * 30;
+            // Рабочие часы: новое событие укладывается в период дня.
+            minutes = CalendarMath.ClampStartMin(minutes, CalendarSettings.NewEventDurationMinutes,
+                CalendarSettings.DayStartMinutes, CalendarSettings.DayEndMinutes);
             var day     = _currentDays[0];
             var dt      = new DateTime(day.Year, day.Month, day.Day, minutes / 60, minutes % 60, 0);
 

@@ -550,6 +550,9 @@ public partial class WeekView : UserControl
             if (e.ClickCount >= 2 && col >= 0 && col < _currentDays.Count)
             {
                 var minutes = (int)(pos.Y / 30) * 30;
+                // Рабочие часы: новое событие укладывается в период дня.
+                minutes = CalendarMath.ClampStartMin(minutes, CalendarSettings.NewEventDurationMinutes,
+                    CalendarSettings.DayStartMinutes, CalendarSettings.DayEndMinutes);
                 var day     = _currentDays[col];
                 var dt      = new DateTime(day.Year, day.Month, day.Day,
                                            minutes / 60, minutes % 60, 0);
@@ -888,6 +891,10 @@ public partial class WeekView : UserControl
             var rawY      = pos.Y - _dragOffsetY; // может быть отрицательным (overflow из предыдущего дня)
             var duration  = (int)(_dragEvent!.EndDt - _dragEvent.StartDt).TotalMinutes;
             var snapped   = (int)Math.Floor(rawY / 15) * 15;
+            // Рабочие часы: старт зажимается так, чтобы событие уложилось в период —
+            // ghost показывает то, что ляжет при отпускании (без лимитов — сквозной проход).
+            snapped = CalendarMath.ClampStartMin(snapped, duration,
+                CalendarSettings.DayStartMinutes, CalendarSettings.DayEndMinutes);
 
             var borderLeft = col > 0 ? 1.0 : 0.0;
             Canvas.SetLeft(_dragGhost, col * colW + borderLeft);
@@ -1110,13 +1117,31 @@ public partial class WeekView : UserControl
                 }
                 else if (!canExtendRight)
                 {
-                    var minEnd = DateOnly.FromDateTime(ev.StartDt) == resizeColDay
+                    var sameDayStart = DateOnly.FromDateTime(ev.StartDt) == resizeColDay;
+                    var minEnd = sameDayStart
                         ? effectiveStartMin + 30
                         : Math.Max(0, 30 - (1440 - actualStartMin));
                     var newEndMin = Math.Clamp(timeSnapped, minEnd, 1440);
-                    ev.EndDt = newEndMin >= 1440
-                        ? resizeDay.Date.AddDays(1)
-                        : new DateTime(resizeDay.Year, resizeDay.Month, resizeDay.Day, newEndMin / 60, newEndMin % 60, 0);
+                    if (sameDayStart)
+                    {
+                        // Рабочие часы: за концом дня продолжение перепрыгивает на начало
+                        // следующего видимого дня. Событие, начатое впритык к концу дня или
+                        // позже (вне часов), лимита не имеет (EffectiveDayEnd) — иначе
+                        // минимум 30 минут заклинил бы ручку.
+                        var (endDay, endMin) = CalendarMath.ResizeEndTarget(resizeDay, newEndMin,
+                            CalendarSettings.DayStartMinutes,
+                            CalendarMath.EffectiveDayEnd(effectiveStartMin, CalendarSettings.DayEndMinutes),
+                            FiveDay);
+                        ev.EndDt = endMin >= 1440
+                            ? endDay.Date.AddDays(1)
+                            : new DateTime(endDay.Year, endDay.Month, endDay.Day, endMin / 60, endMin % 60, 0);
+                    }
+                    else
+                    {
+                        ev.EndDt = newEndMin >= 1440
+                            ? resizeDay.Date.AddDays(1)
+                            : new DateTime(resizeDay.Year, resizeDay.Month, resizeDay.Day, newEndMin / 60, newEndMin % 60, 0);
+                    }
                 }
                 else
                 {
@@ -1168,13 +1193,27 @@ public partial class WeekView : UserControl
                 }
                 else if (!canExtendLeft)
                 {
-                    var maxStart = DateOnly.FromDateTime(ev.EndDt) == resizeColDay
+                    var sameDayEnd = DateOnly.FromDateTime(ev.EndDt) == resizeColDay;
+                    var maxStart = sameDayEnd
                         ? effectiveEndMin - 30
                         : Math.Min(1440, 1440 + actualEndMin - 30);
                     var newStartMin = Math.Clamp(timeSnapped, 0, maxStart);
-                    ev.StartDt = newStartMin >= 1440
-                        ? resizeDay.Date.AddDays(1)
-                        : new DateTime(resizeDay.Year, resizeDay.Month, resizeDay.Day, newStartMin / 60, newStartMin % 60, 0);
+                    if (sameDayEnd)
+                    {
+                        // Рабочие часы: раньше начала дня — старт перепрыгивает на конец
+                        // предыдущего видимого дня (симметрия ResizeEndTarget).
+                        var (startDay, startMin) = CalendarMath.ResizeStartTarget(resizeDay, newStartMin,
+                            CalendarMath.EffectiveDayStart(effectiveEndMin, CalendarSettings.DayStartMinutes),
+                            CalendarSettings.DayEndMinutes, FiveDay);
+                        ev.StartDt = new DateTime(startDay.Year, startDay.Month, startDay.Day,
+                                                  startMin / 60, startMin % 60, 0);
+                    }
+                    else
+                    {
+                        ev.StartDt = newStartMin >= 1440
+                            ? resizeDay.Date.AddDays(1)
+                            : new DateTime(resizeDay.Year, resizeDay.Month, resizeDay.Day, newStartMin / 60, newStartMin % 60, 0);
+                    }
                 }
                 else
                 {
@@ -1277,6 +1316,9 @@ public partial class WeekView : UserControl
             var rawY     = pos.Y - _dragOffsetY;
             var duration = (int)(_dragEvent.EndDt - _dragEvent.StartDt).TotalMinutes;
             var snapped  = (int)Math.Floor(rawY / 15) * 15;
+            // Рабочие часы: старт зажимается в период дня (см. ghost в Moved).
+            snapped = CalendarMath.ClampStartMin(snapped, duration,
+                CalendarSettings.DayStartMinutes, CalendarSettings.DayEndMinutes);
 
             // Колонка → дата ТОЛЬКО через DayAtCol: за краями окна экстраполяция идет
             // видимыми днями (при 5-дневке за пятницей — понедельник), а окно «по дню»
@@ -1671,6 +1713,9 @@ public partial class WeekView : UserControl
             _Deselect();
 
             var minutes = (int)(_gridContextPos.Y / 30) * 30;
+            // Рабочие часы: новое событие укладывается в период дня.
+            minutes = CalendarMath.ClampStartMin(minutes, CalendarSettings.NewEventDurationMinutes,
+                CalendarSettings.DayStartMinutes, CalendarSettings.DayEndMinutes);
             var day     = _currentDays[col];
             var dt      = new DateTime(day.Year, day.Month, day.Day, minutes / 60, minutes % 60, 0);
 
