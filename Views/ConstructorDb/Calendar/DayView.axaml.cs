@@ -50,6 +50,7 @@ public partial class DayView : UserControl
     private List<EventEntry>  _dragDimmedBtns = [];
     private Point             _dragStartPos;
     private double            _dragOffsetY;
+    private int               _dragWorkingLen;
     private bool              _isDragging;
     private int               _pressClickCount;
     private int               _dragSourceStartMin;
@@ -193,9 +194,11 @@ public partial class DayView : UserControl
 
         var canvas  = new Canvas { Background = Brushes.Transparent };
         var dayDate = date;
+        // Порог «сетка или полоса „весь день"» — по видимой длительности (см. WeekView).
         var dayEvents = allEvents
             .Where(e => !e.AllDay
-                     && (e.EndDt - e.StartDt).TotalSeconds < 86400
+                     && CalendarMath.VisibleDurationMinutes(e.StartDt, e.EndDt,
+                            CalendarSettings.FiveDayWeek) < 1440
                      && DateOnly.FromDateTime(e.StartDt) <= dayDate
                      && dayDate <= DateOnly.FromDateTime(e.EndDt)
                      && !(DateOnly.FromDateTime(e.EndDt) == dayDate
@@ -535,9 +538,18 @@ public partial class DayView : UserControl
 
         var evStartDay = DateOnly.FromDateTime(entry.Ev.StartDt);
         var colDay     = DateOnly.FromDateTime(_currentDays[0]);
+        var dayS       = CalendarSettings.DayStartMinutes;
+        var dayE       = CalendarSettings.DayEndMinutes;
+        // Виртуальный верх события, начавшегося в предыдущем дне, — на рабочей ленте
+        // (без лимитов формула вырождается в прежнюю pos.Y + (1440 − startMin)).
+        var evStartMin = entry.Ev.StartDt.Hour * 60 + entry.Ev.StartDt.Minute;
         _dragOffsetY   = evStartDay < colDay
-            ? pos.Y + (1440 - (entry.Ev.StartDt.Hour * 60 + entry.Ev.StartDt.Minute))
+            ? pos.Y - dayS + dayE - Math.Clamp(evStartMin, dayS, dayE)
             : pos.Y - (entry.StartMin + 2);
+        // Перетаскивание сохраняет длительность по рабочей ленте (хвост за границей
+        // дня перетекает на следующий видимый день, а не в невидимую субботу).
+        _dragWorkingLen = CalendarMath.WorkingLengthMinutes(entry.Ev.StartDt, entry.Ev.EndDt,
+            dayS, dayE, CalendarSettings.FiveDayWeek);
 
         // Визуальный отклик на press — только для обычного клика по невыделенному
         // (для плавного drag). С Shift все выделение/toggle делается на release,
@@ -576,11 +588,45 @@ public partial class DayView : UserControl
 
                 var isOverflowDown = rawY > 1440;
                 var canShrinkLeft  = rawY < 0 && startIsPrevDay;
+                var dayS      = CalendarSettings.DayStartMinutes;
+                var dayE      = CalendarSettings.DayEndMinutes;
+                var hasLimits = CalendarMath.HasDayLimits(dayS, dayE);
 
                 if (canShrinkLeft)
                 {
                     // Конец уходит в предыдущий день — вне экрана
                     _resizeGhost.IsVisible = false;
+                    if (_resizeGhostOverflow != null)
+                    {
+                        DragOverlay.Children.Remove(_resizeGhostOverflow);
+                        _resizeGhostOverflow = null;
+                    }
+                }
+                else if (hasLimits)
+                {
+                    // Рабочие часы: ghost прижат к концу дня, излишек перетекает на
+                    // следующий видимый день — текст показывает фактический конец.
+                    var minEnd = DateOnly.FromDateTime(_resizeEntry.Ev.StartDt) == resizeColDay
+                        ? effectiveStartMin + 30
+                        : Math.Max(0, 30 - (1440 - actualStartMin));
+                    var effE   = CalendarMath.EffectiveDayEnd(effectiveStartMin, dayE);
+                    var rawEnd = Math.Max(rawY, minEnd);
+                    var endT   = CalendarMath.ResizeEndTarget(_currentDays[0], rawEnd,
+                        dayS, effE, CalendarSettings.FiveDayWeek).Min;
+                    var ghostEnd = Math.Clamp(rawEnd, minEnd, Math.Max(minEnd, effE));
+                    var ghostH   = Math.Max(13, ghostEnd - effectiveStartMin - 2);
+                    Canvas.SetTop(_resizeGhost, effectiveStartMin + 2);
+                    _resizeGhost.Height = ghostH;
+                    UpdateResizeGhostText(ghostH, effectiveStartMin, endT);
+
+                    var svH = TimeScroll.Bounds.Height;
+                    if (svH > 0)
+                    {
+                        var ghostBottom = effectiveStartMin + 2 + ghostH;
+                        if (ghostBottom > TimeScroll.Offset.Y + svH - 30)
+                            TimeScroll.Offset = TimeScroll.Offset.WithY(
+                                Math.Clamp(ghostBottom - svH + 30, 0, Math.Max(0, 1440 - svH)));
+                    }
                     if (_resizeGhostOverflow != null)
                     {
                         DragOverlay.Children.Remove(_resizeGhostOverflow);
@@ -635,11 +681,41 @@ public partial class DayView : UserControl
 
                 var isOverflowUp   = rawY < 0;
                 var isOverflowDown = rawY > 1440;
+                var dayS      = CalendarSettings.DayStartMinutes;
+                var dayE      = CalendarSettings.DayEndMinutes;
+                var hasLimits = CalendarMath.HasDayLimits(dayS, dayE);
 
                 if (isOverflowDown)
                 {
                     // Начало уходит в следующий день — вне экрана
                     _resizeGhost.IsVisible = false;
+                    if (_resizeGhostOverflow != null)
+                    {
+                        DragOverlay.Children.Remove(_resizeGhostOverflow);
+                        _resizeGhostOverflow = null;
+                    }
+                }
+                else if (hasLimits)
+                {
+                    // Рабочие часы: ghost прижат к началу дня, излишек перетекает на конец
+                    // предыдущего видимого дня — текст показывает фактический старт.
+                    var maxStart = DateOnly.FromDateTime(_resizeEntry.Ev.EndDt) == resizeColDay
+                        ? effectiveEndMin - 30
+                        : Math.Min(1440, 1440 + actualEndMin - 30);
+                    var effS     = CalendarMath.EffectiveDayStart(effectiveEndMin, dayS);
+                    var rawStart = Math.Min(rawY, maxStart);
+                    var startT   = CalendarMath.ResizeStartTarget(_currentDays[0], rawStart,
+                        effS, dayE, CalendarSettings.FiveDayWeek).Min;
+                    var ghostStart = Math.Clamp(rawStart, Math.Min(effS, maxStart), maxStart);
+                    var ghostH     = Math.Max(13, effectiveEndMin - ghostStart - 2);
+                    Canvas.SetTop(_resizeGhost, ghostStart + 2);
+                    _resizeGhost.Height = ghostH;
+                    UpdateResizeGhostText(ghostH, startT, effectiveEndMin);
+
+                    var svH = TimeScroll.Bounds.Height;
+                    if (svH > 0 && ghostStart + 2 < TimeScroll.Offset.Y + 30)
+                        TimeScroll.Offset = TimeScroll.Offset.WithY(Math.Max(0, ghostStart - 28));
+
                     if (_resizeGhostOverflow != null)
                     {
                         DragOverlay.Children.Remove(_resizeGhostOverflow);
@@ -713,56 +789,49 @@ public partial class DayView : UserControl
 
         if (_dragGhost is not null)
         {
+            // Позиция и длительность считаются по рабочей ленте: границы дня из настроек
+            // ведут себя как полночь (без лимитов — прежние сутки 0..1440).
             var rawY     = pos.Y - _dragOffsetY;
-            var duration = (int)(_dragEvent!.EndDt - _dragEvent.StartDt).TotalMinutes;
+            var dayS     = CalendarSettings.DayStartMinutes;
+            var dayE     = CalendarSettings.DayEndMinutes;
+            var duration = _dragWorkingLen;
             var snapped  = (int)Math.Floor(rawY / 15) * 15;
-            // Рабочие часы: старт зажимается так, чтобы событие уложилось в период —
-            // ghost показывает то, что ляжет при отпускании (без лимитов — сквозной проход).
-            snapped = CalendarMath.ClampStartMin(snapped, duration,
-                CalendarSettings.DayStartMinutes, CalendarSettings.DayEndMinutes);
+            var (shift, m) = CalendarMath.NormalizeDragStart(snapped, dayS, dayE);
+            var endM = CalendarMath.AddWorkingMinutes(_currentDays[0], m, duration,
+                dayS, dayE, CalendarSettings.FiveDayWeek).Min;
 
             Canvas.SetLeft(_dragGhost, 0);
 
-            if (snapped < 0)
+            if (shift < 0)
             {
-                var minutesInThisDay = duration + snapped;
-                if (minutesInThisDay >= 13)
+                // Старт ушел в предыдущий день (вне экрана) — виден только хвост
+                // от начала дня; текст показывает виртуальный старт предыдущего дня.
+                var tail = m + duration - dayE;
+                if (tail >= 13)
                 {
-                    Canvas.SetTop(_dragGhost, 2);
-                    _dragGhost.Height    = minutesInThisDay - 2;
+                    Canvas.SetTop(_dragGhost, dayS + 2);
+                    _dragGhost.Height    = Math.Min(tail, dayE - dayS) - 2;
                     _dragGhost.IsVisible = true;
-                    UpdateDragGhostText(_dragGhost.Height, 1440 + snapped, 1440 + snapped + duration);
+                    UpdateDragGhostText(_dragGhost.Height, m, endM);
                 }
                 else _dragGhost.IsVisible = false;
             }
-            else if (snapped >= 1440)
-            {
-                var nextDayMin = Math.Clamp(snapped - 1440, 0, 1425);
-                Canvas.SetTop(_dragGhost, nextDayMin);
-                _dragGhost.Height    = Math.Max(13, Math.Min(duration, 1440 - nextDayMin) - 2);
-                _dragGhost.IsVisible = true;
-                UpdateDragGhostText(_dragGhost.Height, nextDayMin, nextDayMin + duration);
-            }
-            else if (snapped + duration > 1440)
-            {
-                var clamped = Math.Clamp(snapped, 0, 1425);
-                var mainH   = 1440 - clamped - 2;
-                _dragGhost.IsVisible = mainH >= 13;
-                if (mainH >= 13)
-                {
-                    Canvas.SetTop(_dragGhost, clamped);
-                    _dragGhost.Height = mainH;
-                    UpdateDragGhostText(mainH, clamped, clamped + duration);
-                }
-            }
             else
             {
-                var clamped = Math.Clamp(snapped, 0, 1425);
-                var ghostH  = Math.Max(13, Math.Min(duration, 1440 - clamped) - 2);
-                _dragGhost.IsVisible = true;
-                Canvas.SetTop(_dragGhost, clamped);
-                _dragGhost.Height = ghostH;
-                UpdateDragGhostText(ghostH, clamped, clamped + duration);
+                // shift 0 — обычное положение (хвост за концом дня уходит за экран);
+                // shift +1 — событие целиком в следующем дне, ghost сигналит на его месте.
+                var visH = Math.Min(duration, dayE - m) - 2;
+                if (m + duration > dayE && visH < 13)
+                {
+                    _dragGhost.IsVisible = false;
+                }
+                else
+                {
+                    _dragGhost.IsVisible = true;
+                    Canvas.SetTop(_dragGhost, m);
+                    _dragGhost.Height = Math.Max(13, visH);
+                    UpdateDragGhostText(_dragGhost.Height, m, endM);
+                }
             }
 
             if (_dragGhostOverflow != null)
@@ -791,16 +860,21 @@ public partial class DayView : UserControl
                 var resizeDay      = _currentDays[0];
                 var startIsPrevDay = DateOnly.FromDateTime(ev.StartDt) < resizeColDay;
                 var isOverflowDown = rawY > 1440;
+                var dayS      = CalendarSettings.DayStartMinutes;
+                var dayE      = CalendarSettings.DayEndMinutes;
+                var hasLimits = CalendarMath.HasDayLimits(dayS, dayE);
 
                 if (rawY < 0 && startIsPrevDay)
                 {
                     var prevDay   = PrevDay(_currentDays[0]);
-                    var targetT   = Math.Clamp(1440 + rawY, actualStartMin + 30, 1440);
+                    // При лимитах конец в предыдущем дне не выходит за его рабочие часы.
+                    var targetT   = Math.Clamp(1440 + rawY, actualStartMin + 30,
+                        CalendarMath.EffectiveDayEnd(actualStartMin, dayE));
                     ev.EndDt = targetT >= 1440
                         ? prevDay.Date.AddDays(1)
                         : new DateTime(prevDay.Year, prevDay.Month, prevDay.Day, targetT / 60, targetT % 60, 0);
                 }
-                else if (isOverflowDown)
+                else if (isOverflowDown && !hasLimits)
                 {
                     var nextDay    = NextDay(_currentDays[0]);
                     var endTimeMin = Math.Clamp(rawY - 1440, 0, 1425);
@@ -813,27 +887,19 @@ public partial class DayView : UserControl
                     var minEnd = sameDayStart
                         ? effectiveStartMin + 30
                         : Math.Max(0, 30 - (1440 - actualStartMin));
-                    var newEndMin = Math.Clamp(timeSnapped, minEnd, 1440);
-                    if (sameDayStart)
-                    {
-                        // Рабочие часы: за концом дня — перескок на начало следующего
-                        // видимого дня; событие вне часов лимита не имеет (EffectiveDayEnd).
-                        var (endDay, endMin) = CalendarMath.ResizeEndTarget(resizeDay, newEndMin,
-                            CalendarSettings.DayStartMinutes,
-                            CalendarMath.EffectiveDayEnd(effectiveStartMin, CalendarSettings.DayEndMinutes),
-                            CalendarSettings.FiveDayWeek);
-                        ev.EndDt = endMin >= 1440
-                            ? endDay.Date.AddDays(1)
-                            : new DateTime(endDay.Year, endDay.Month, endDay.Day,
-                                           endMin / 60, endMin % 60, 0);
-                    }
-                    else
-                    {
-                        ev.EndDt = newEndMin >= 1440
-                            ? resizeDay.Date.AddDays(1)
-                            : new DateTime(resizeDay.Year, resizeDay.Month, resizeDay.Day,
-                                           newEndMin / 60, newEndMin % 60, 0);
-                    }
+                    // Рабочие часы: верхнего зажима нет — излишек за концом дня (в том
+                    // числе за низом сетки) перетекает на следующий видимый день через
+                    // ResizeEndTarget; событие вне часов лимита не имеет (EffectiveDayEnd).
+                    var rawEnd = hasLimits
+                        ? Math.Max(rawY, minEnd)
+                        : Math.Clamp(timeSnapped, minEnd, 1440);
+                    var (endDay, endMin) = CalendarMath.ResizeEndTarget(resizeDay, rawEnd,
+                        dayS, CalendarMath.EffectiveDayEnd(effectiveStartMin, dayE),
+                        CalendarSettings.FiveDayWeek);
+                    ev.EndDt = endMin >= 1440
+                        ? endDay.Date.AddDays(1)
+                        : new DateTime(endDay.Year, endDay.Month, endDay.Day,
+                                       endMin / 60, endMin % 60, 0);
                 }
             }
             else
@@ -845,8 +911,12 @@ public partial class DayView : UserControl
                 var resizeDay    = _currentDays[0];
                 var isOverflowUp = rawY < 0;
                 var isOverflowDown = rawY > 1440;
+                var dayS       = CalendarSettings.DayStartMinutes;
+                var dayE       = CalendarSettings.DayEndMinutes;
+                var hasLimits  = CalendarMath.HasDayLimits(dayS, dayE);
+                var sameDayEnd = DateOnly.FromDateTime(ev.EndDt) == resizeColDay;
 
-                if (isOverflowDown)
+                if (isOverflowDown && !hasLimits)
                 {
                     var nextDay     = NextDay(_currentDays[0]);
                     var evEndDay    = DateOnly.FromDateTime(ev.EndDt);
@@ -856,7 +926,7 @@ public partial class DayView : UserControl
                     ev.StartDt = new DateTime(nextDay.Year, nextDay.Month, nextDay.Day,
                                              newStartMin / 60, newStartMin % 60, 0);
                 }
-                else if (isOverflowUp)
+                else if (isOverflowUp && !hasLimits)
                 {
                     var prevDay      = PrevDay(_currentDays[0]);
                     var startTimeMin = Math.Clamp(1440 + rawY, 0, 1425);
@@ -865,27 +935,34 @@ public partial class DayView : UserControl
                 }
                 else
                 {
-                    var sameDayEnd = DateOnly.FromDateTime(ev.EndDt) == resizeColDay;
                     var maxStart = sameDayEnd
                         ? effectiveEndMin - 30
                         : Math.Min(1440, 1440 + actualEndMin - 30);
-                    var newStartMin = Math.Clamp(timeSnapped, 0, maxStart);
-                    if (sameDayEnd)
+                    // Рабочие часы: нижнего зажима нет — старт выше начала дня (в том
+                    // числе выше верха сетки) перетекает на конец предыдущего видимого
+                    // дня; зона за концом дня — на начало следующего.
+                    var rawStart = hasLimits
+                        ? Math.Min(rawY, maxStart)
+                        : Math.Clamp(timeSnapped, 0, maxStart);
+                    if (hasLimits && rawStart > dayE && !sameDayEnd)
                     {
-                        // Рабочие часы: раньше начала дня — старт перепрыгивает на конец
-                        // предыдущего видимого дня (симметрия ResizeEndTarget).
-                        var (startDay, startMin) = CalendarMath.ResizeStartTarget(resizeDay, newStartMin,
-                            CalendarMath.EffectiveDayStart(effectiveEndMin, CalendarSettings.DayStartMinutes),
-                            CalendarSettings.DayEndMinutes, CalendarSettings.FiveDayWeek);
-                        ev.StartDt = new DateTime(startDay.Year, startDay.Month, startDay.Day,
-                                                  startMin / 60, startMin % 60, 0);
+                        var nextDay = NextDay(resizeDay);
+                        var sm = Math.Min(dayS + (rawStart - dayE), dayE);
+                        if (DateOnly.FromDateTime(nextDay) == DateOnly.FromDateTime(ev.EndDt))
+                            sm = Math.Min(sm, actualEndMin - 30);
+                        sm = Math.Max(0, sm);
+                        ev.StartDt = new DateTime(nextDay.Year, nextDay.Month, nextDay.Day,
+                                                  sm / 60, sm % 60, 0);
                     }
                     else
                     {
-                        ev.StartDt = newStartMin >= 1440
-                            ? resizeDay.Date.AddDays(1)
-                            : new DateTime(resizeDay.Year, resizeDay.Month, resizeDay.Day,
-                                           newStartMin / 60, newStartMin % 60, 0);
+                        var (startDay, startMin) = CalendarMath.ResizeStartTarget(resizeDay, rawStart,
+                            CalendarMath.EffectiveDayStart(effectiveEndMin, dayS),
+                            dayE, CalendarSettings.FiveDayWeek);
+                        ev.StartDt = startMin >= 1440
+                            ? startDay.Date.AddDays(1)
+                            : new DateTime(startDay.Year, startDay.Month, startDay.Day,
+                                           startMin / 60, startMin % 60, 0);
                     }
                 }
             }
@@ -963,37 +1040,28 @@ public partial class DayView : UserControl
         }
         else if (_currentDays.Count > 0)
         {
+            // Старт и конец — по рабочей ленте: позиция вне границ дня перетекает на
+            // соседний ВИДИМЫЙ день, хвост события — тоже (Пт 23:00 + 2 ч при 5-дневке
+            // = Пн 01:00, а не невидимая суббота; 17:00 + 2 ч при 09–18 = 10:00 завтра).
             var rawY     = pos.Y - _dragOffsetY;
-            var duration = (int)(_dragEvent.EndDt - _dragEvent.StartDt).TotalMinutes;
+            var dayS     = CalendarSettings.DayStartMinutes;
+            var dayE     = CalendarSettings.DayEndMinutes;
+            var fiveDay  = CalendarSettings.FiveDayWeek;
+            var duration = _dragWorkingLen;
             var snapped  = (int)Math.Floor(rawY / 15) * 15;
-            // Рабочие часы: старт зажимается в период дня (см. ghost в Moved).
-            snapped = CalendarMath.ClampStartMin(snapped, duration,
-                CalendarSettings.DayStartMinutes, CalendarSettings.DayEndMinutes);
+            var (shift, m) = CalendarMath.NormalizeDragStart(snapped, dayS, dayE);
+            var day = shift switch
+            {
+                < 0 => PrevDay(_currentDays[0]),
+                > 0 => NextDay(_currentDays[0]),
+                _   => _currentDays[0],
+            };
+            var (endDay, endMin) = CalendarMath.AddWorkingMinutes(day, m, duration, dayS, dayE, fiveDay);
 
-            DateTime newStart;
-            if (snapped < 0)
-            {
-                var prevDay    = PrevDay(_currentDays[0]);
-                var prevDayMin = Math.Clamp(1440 + snapped, 0, 1425);
-                newStart = new DateTime(prevDay.Year, prevDay.Month, prevDay.Day,
-                                        prevDayMin / 60, prevDayMin % 60, 0);
-            }
-            else if (snapped >= 1440)
-            {
-                var nextDay    = NextDay(_currentDays[0]);
-                var nextDayMin = Math.Clamp(snapped - 1440, 0, 1425);
-                newStart = new DateTime(nextDay.Year, nextDay.Month, nextDay.Day,
-                                        nextDayMin / 60, nextDayMin % 60, 0);
-            }
-            else
-            {
-                var clamped = Math.Clamp(snapped, 0, 1425);
-                var day     = _currentDays[0];
-                newStart = new DateTime(day.Year, day.Month, day.Day, clamped / 60, clamped % 60, 0);
-            }
-
-            _dragEvent.StartDt = newStart;
-            _dragEvent.EndDt   = newStart.AddMinutes(duration);
+            _dragEvent.StartDt = new DateTime(day.Year, day.Month, day.Day, m / 60, m % 60, 0);
+            _dragEvent.EndDt   = endMin >= 1440
+                ? endDay.Date.AddDays(1)
+                : new DateTime(endDay.Year, endDay.Month, endDay.Day, endMin / 60, endMin % 60, 0);
             _pendingSelectId   = (_dragEvent.Id ?? 0, _dragEvent.FieldId);
             RecordMoved?.Invoke(this, _dragEvent);
         }

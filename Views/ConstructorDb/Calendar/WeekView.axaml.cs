@@ -50,6 +50,7 @@ public partial class WeekView : UserControl
     private List<EventEntry> _dragDimmedBtns = [];
     private Point          _dragStartPos;
     private double         _dragOffsetY;
+    private int            _dragWorkingLen;
     private bool           _isDragging;
     private int            _pressClickCount;
     private int            _dragSourceCol;
@@ -232,9 +233,12 @@ public partial class WeekView : UserControl
             var day     = allDays[col];
             var canvas  = new Canvas { Background = Brushes.Transparent };
             var dayDate = DateOnly.FromDateTime(day);
+            // Порог «сетка или полоса „весь день"» — по ВИДИМОЙ длительности: при
+            // 5-дневке выходные дни не считаются (Пт 23:00 – Пн 01:00 — это 2 часа,
+            // событие остается в сетке); при 7-дневке — прежние сырые 24 часа.
             var dayEvents = allEvents
                 .Where(e => !e.AllDay
-                         && (e.EndDt - e.StartDt).TotalSeconds < 86400
+                         && CalendarMath.VisibleDurationMinutes(e.StartDt, e.EndDt, FiveDay) < 1440
                          && DateOnly.FromDateTime(e.StartDt) <= dayDate
                          && dayDate <= DateOnly.FromDateTime(e.EndDt)
                          && !(DateOnly.FromDateTime(e.EndDt) == dayDate
@@ -594,18 +598,26 @@ public partial class WeekView : UserControl
         _dragSourceStartMin  = entry.StartMin;
 
         // Если схватили overflow-сегмент (событие началось в предыдущем дне),
-        // учитываем виртуальное начало события (отрицательная Y) для плавного перетаскивания
+        // учитываем виртуальное начало события (отрицательная Y) для плавного
+        // перетаскивания. Виртуальный верх считается по рабочей ленте — без лимитов
+        // формула вырождается в прежнюю pos.Y + (1440 − startMin).
         var evStartDay  = DateOnly.FromDateTime(entry.Ev.StartDt);
         var colDay      = DateOnly.FromDateTime(_currentDays[entry.DayCol]);
+        var pressDayS   = CalendarSettings.DayStartMinutes;
+        var pressDayE   = CalendarSettings.DayEndMinutes;
         if (evStartDay < colDay)
         {
-            var prevDayMinutes = 1440 - (entry.Ev.StartDt.Hour * 60 + entry.Ev.StartDt.Minute);
-            _dragOffsetY = pos.Y + prevDayMinutes;
+            var evStartMin = entry.Ev.StartDt.Hour * 60 + entry.Ev.StartDt.Minute;
+            _dragOffsetY = pos.Y - pressDayS + pressDayE - Math.Clamp(evStartMin, pressDayS, pressDayE);
         }
         else
         {
             _dragOffsetY = pos.Y - (entry.StartMin + 2);
         }
+        // Перетаскивание сохраняет длительность по рабочей ленте (хвост за границей
+        // дня перетекает на следующий видимый день, а не в невидимую субботу).
+        _dragWorkingLen = CalendarMath.WorkingLengthMinutes(entry.Ev.StartDt, entry.Ev.EndDt,
+            pressDayS, pressDayE, CalendarSettings.FiveDayWeek);
 
         // Визуальный отклик на press даем только для обычного клика по
         // невыделенному событию (чтобы при последующем drag цвет уже сменился).
@@ -646,7 +658,14 @@ public partial class WeekView : UserControl
                 var startIsPrevDay    = DateOnly.FromDateTime(_resizeEntry.Ev.StartDt) < resizeColDay;
 
                 var isOverflowDown = rawY > 1440;
-                var canExtendRight = rawPointerCol > _resizeEntry.DayCol || isOverflowDown;
+                var dayS      = CalendarSettings.DayStartMinutes;
+                var dayE      = CalendarSettings.DayEndMinutes;
+                var hasLimits = CalendarMath.HasDayLimits(dayS, dayE);
+                var effE      = CalendarMath.EffectiveDayEnd(effectiveStartMin, dayE);
+                // Зеркало коммита: при лимитах вертикальный overflow в той же колонке
+                // идет через рабочую ленту, а не через «+1 колонка от полуночи».
+                var canExtendRight = (rawPointerCol > _resizeEntry.DayCol || isOverflowDown)
+                                     && !(hasLimits && rawPointerCol <= _resizeEntry.DayCol);
                 // Конец уходит в предыдущий день: мышь перешла влево ИЛИ ушла выше Y=0
                 var canShrinkLeft  = (rawPointerCol < _resizeEntry.DayCol || rawY < 0)
                                      && startIsPrevDay;
@@ -667,7 +686,11 @@ public partial class WeekView : UserControl
                     var targetDateOnly = DateOnly.FromDateTime(targetDate);
                     var newStartMin    = evStartDay == targetDateOnly ? actualStartMin : 0;
                     var minEnd         = evStartDay == targetDateOnly ? actualStartMin + 30 : 30;
-                    var newEndMin      = Math.Clamp(targetTime, minEnd, 1440);
+                    var maxEnd         = hasLimits
+                        ? Math.Max(minEnd, CalendarMath.EffectiveDayEnd(
+                              evStartDay == targetDateOnly ? actualStartMin : 0, dayE))
+                        : 1440;
+                    var newEndMin      = Math.Clamp(targetTime, minEnd, maxEnd);
                     var ghostH         = Math.Max(13, newEndMin - newStartMin - 2);
                     Canvas.SetLeft(_resizeGhost, logicalCol * colW + targetBorder);
                     _resizeGhost.Width  = colW - 2.0 - targetBorder;
@@ -687,11 +710,20 @@ public partial class WeekView : UserControl
                     var minEnd = DateOnly.FromDateTime(_resizeEntry.Ev.StartDt) == resizeColDay
                         ? effectiveStartMin + 30
                         : Math.Max(0, 30 - (1440 - actualStartMin));
-                    var newEndMin = Math.Clamp(timeSnapped, minEnd, 1440);
+                    // Рабочие часы: ghost прижат к концу дня, текст показывает фактический
+                    // конец (хвост перетекает на следующий видимый день).
+                    var rawEnd = hasLimits
+                        ? Math.Max(rawY, minEnd)
+                        : Math.Clamp(timeSnapped, minEnd, 1440);
+                    var endT = hasLimits
+                        ? CalendarMath.ResizeEndTarget(_currentDays[_resizeEntry.DayCol], rawEnd,
+                              dayS, effE, FiveDay).Min
+                        : rawEnd;
+                    var newEndMin = Math.Clamp(rawEnd, minEnd, hasLimits ? Math.Max(minEnd, effE) : 1440);
                     var ghostH    = Math.Max(13, newEndMin - effectiveStartMin - 2);
                     Canvas.SetTop(_resizeGhost, effectiveStartMin + 2);
                     _resizeGhost.Height = ghostH;
-                    UpdateResizeGhostText(ghostH, effectiveStartMin, newEndMin);
+                    UpdateResizeGhostText(ghostH, effectiveStartMin, endT);
 
                     var svH = TimeScroll.Bounds.Height;
                     if (svH > 0)
@@ -702,7 +734,21 @@ public partial class WeekView : UserControl
                                 Math.Clamp(ghostBottom - svH + 30, 0, Math.Max(0, 1440 - svH)));
                     }
 
-                    if (_resizeGhostOverflow != null)
+                    // Хвост за концом дня — ghost в следующей колонке от начала дня.
+                    var tailCol = _resizeEntry.DayCol + 1;
+                    if (hasLimits && rawEnd > effE && tailCol < _currentDays.Count)
+                    {
+                        var oH = Math.Max(13, endT - dayS - 2);
+                        if (_resizeGhostOverflow is null)
+                        {
+                            _resizeGhostOverflow = CreateGhostButton(_resizeEntry.Ev, oH, colW - 3.0);
+                            DragOverlay.Children.Add(_resizeGhostOverflow);
+                        }
+                        _resizeGhostOverflow.Height = oH;
+                        Canvas.SetLeft(_resizeGhostOverflow, tailCol * colW + 1.0);
+                        Canvas.SetTop(_resizeGhostOverflow, dayS + 2);
+                    }
+                    else if (_resizeGhostOverflow != null)
                     {
                         DragOverlay.Children.Remove(_resizeGhostOverflow);
                         _resizeGhostOverflow = null;
@@ -710,14 +756,18 @@ public partial class WeekView : UserControl
                 }
                 else
                 {
-                    var ghostH = Math.Max(13, 1440 - effectiveStartMin - 2);
+                    var ghostEnd = hasLimits ? effE : 1440;
+                    var ghostH   = Math.Max(13, ghostEnd - effectiveStartMin - 2);
                     Canvas.SetTop(_resizeGhost, effectiveStartMin + 2);
                     _resizeGhost.Height = ghostH;
-                    UpdateResizeGhostText(ghostH, effectiveStartMin, 1440);
+                    UpdateResizeGhostText(ghostH, effectiveStartMin, ghostEnd);
 
                     var nextTime       = isOverflowDown && rawPointerCol <= _resizeEntry.DayCol
                         ? Math.Clamp(rawY - 1440, 0, 1425) : timeSnapped;
-                    var overflowH      = Math.Max(13, nextTime - 2);
+                    // При лимитах хвост в колонке указателя рисуется от начала дня.
+                    var overflowTop    = hasLimits ? dayS + 2.0 : 2.0;
+                    if (hasLimits) nextTime = Math.Clamp(nextTime, dayS, dayE);
+                    var overflowH      = Math.Max(13, nextTime - (int)overflowTop);
                     var logicalOverflowCol = isOverflowDown && rawPointerCol <= _resizeEntry.DayCol
                         ? _resizeEntry.DayCol + 1 : rawPointerCol;
                     var overflowVisible    = logicalOverflowCol >= 0 && logicalOverflowCol < _currentDays.Count;
@@ -734,13 +784,14 @@ public partial class WeekView : UserControl
                     {
                         _resizeGhostOverflow = CreateGhostButton(_resizeEntry.Ev, overflowH, colW - 3.0);
                         Canvas.SetLeft(_resizeGhostOverflow, logicalOverflowCol * colW + 1.0);
-                        Canvas.SetTop(_resizeGhostOverflow, 2);
+                        Canvas.SetTop(_resizeGhostOverflow, overflowTop);
                         DragOverlay.Children.Add(_resizeGhostOverflow);
                     }
                     else
                     {
                         _resizeGhostOverflow.Height = overflowH;
                         Canvas.SetLeft(_resizeGhostOverflow, logicalOverflowCol * colW + 1.0);
+                        Canvas.SetTop(_resizeGhostOverflow, overflowTop);
                     }
                 }
             }
@@ -754,8 +805,17 @@ public partial class WeekView : UserControl
 
                 var isOverflowUp   = rawY < 0;
                 var isOverflowDown = rawY > 1440;
-                var canExtendLeft  = rawPointerCol < _resizeEntry.DayCol || isOverflowUp;
-                var canExtendRight = (rawPointerCol > _resizeEntry.DayCol || isOverflowDown) && !canExtendLeft;
+                var dayS      = CalendarSettings.DayStartMinutes;
+                var dayE      = CalendarSettings.DayEndMinutes;
+                var hasLimits = CalendarMath.HasDayLimits(dayS, dayE);
+                var effS      = CalendarMath.EffectiveDayStart(effectiveEndMin, dayS);
+                // Зеркало коммита: при лимитах вертикальный overflow в той же колонке
+                // идет через рабочую ленту, а не через «±1 колонка от полуночи».
+                var canExtendLeft  = (rawPointerCol < _resizeEntry.DayCol || isOverflowUp)
+                                     && !(hasLimits && rawPointerCol >= _resizeEntry.DayCol);
+                var canExtendRight = (rawPointerCol > _resizeEntry.DayCol || isOverflowDown)
+                                     && !canExtendLeft
+                                     && !(hasLimits && rawPointerCol <= _resizeEntry.DayCol);
 
                 if (canExtendRight)
                 {
@@ -765,6 +825,7 @@ public partial class WeekView : UserControl
                     var targetTime = isOverflowDown && rawPointerCol <= _resizeEntry.DayCol
                         ? Math.Clamp(rawY - 1440, 0, 1440)
                         : timeSnapped;
+                    if (hasLimits) targetTime = Math.Clamp(targetTime, Math.Min(dayS, dayE - 15), dayE - 15);
                     var targetVisible  = logicalCol >= 0 && logicalCol < _currentDays.Count;
                     var targetCol      = Math.Clamp(logicalCol, 0, _currentDays.Count - 1);
                     var targetDate     = CalendarMath.DayAtCol(_currentDays, logicalCol, FiveDay);
@@ -795,17 +856,42 @@ public partial class WeekView : UserControl
                     var maxStart = DateOnly.FromDateTime(_resizeEntry.Ev.EndDt) == resizeColDay
                         ? effectiveEndMin - 30
                         : Math.Min(1440, 1440 + actualEndMin - 30);
-                    var newStartMin = Math.Clamp(timeSnapped, 0, maxStart);
+                    // Рабочие часы: ghost прижат к началу дня, текст показывает фактический
+                    // старт (излишек перетекает на конец предыдущего видимого дня).
+                    var rawStart = hasLimits
+                        ? Math.Min(rawY, maxStart)
+                        : Math.Clamp(timeSnapped, 0, maxStart);
+                    var startT = hasLimits
+                        ? CalendarMath.ResizeStartTarget(_currentDays[_resizeEntry.DayCol], rawStart,
+                              effS, dayE, FiveDay).Min
+                        : rawStart;
+                    var newStartMin = hasLimits
+                        ? Math.Clamp(rawStart, Math.Min(effS, maxStart), maxStart)
+                        : rawStart;
                     var ghostH      = Math.Max(13, effectiveEndMin - newStartMin - 2);
                     Canvas.SetTop(_resizeGhost, newStartMin + 2);
                     _resizeGhost.Height = ghostH;
-                    UpdateResizeGhostText(ghostH, newStartMin, effectiveEndMin);
+                    UpdateResizeGhostText(ghostH, startT, effectiveEndMin);
 
                     var svH = TimeScroll.Bounds.Height;
                     if (svH > 0 && newStartMin + 2 < TimeScroll.Offset.Y + 30)
                         TimeScroll.Offset = TimeScroll.Offset.WithY(Math.Max(0, newStartMin - 28));
 
-                    if (_resizeGhostOverflow != null)
+                    // Излишек выше начала дня — ghost в предыдущей колонке до конца ее дня.
+                    var headCol = _resizeEntry.DayCol - 1;
+                    if (hasLimits && rawStart < effS && headCol >= 0)
+                    {
+                        var oH = Math.Max(13, dayE - startT - 2);
+                        if (_resizeGhostOverflow is null)
+                        {
+                            _resizeGhostOverflow = CreateGhostButton(_resizeEntry.Ev, oH, colW - 3.0);
+                            DragOverlay.Children.Add(_resizeGhostOverflow);
+                        }
+                        _resizeGhostOverflow.Height = oH;
+                        Canvas.SetLeft(_resizeGhostOverflow, headCol * colW + (headCol > 0 ? 1.0 : 0.0));
+                        Canvas.SetTop(_resizeGhostOverflow, startT + 2);
+                    }
+                    else if (_resizeGhostOverflow != null)
                     {
                         DragOverlay.Children.Remove(_resizeGhostOverflow);
                         _resizeGhostOverflow = null;
@@ -813,13 +899,18 @@ public partial class WeekView : UserControl
                 }
                 else
                 {
-                    var ghostH = Math.Max(13, effectiveEndMin - 2);
-                    Canvas.SetTop(_resizeGhost, 2);
+                    var ghostTop = hasLimits ? effS : 0;
+                    var ghostH   = Math.Max(13, effectiveEndMin - ghostTop - 2);
+                    Canvas.SetTop(_resizeGhost, ghostTop + 2);
                     _resizeGhost.Height = ghostH;
-                    UpdateResizeGhostText(ghostH, 0, effectiveEndMin);
+                    UpdateResizeGhostText(ghostH, ghostTop, effectiveEndMin);
 
                     var overflowStart      = isOverflowUp && rawPointerCol >= _resizeEntry.DayCol
                         ? Math.Clamp(1440 + rawY, 0, 1425) : Math.Clamp(timeSnapped, 0, 1425);
+                    // При лимитах старт в ранней колонке остается в ее рабочих часах,
+                    // хвост колонки рисуется до конца ее дня.
+                    if (hasLimits) overflowStart = Math.Clamp(overflowStart, Math.Min(dayS, dayE - 15), dayE - 15);
+                    var overflowEnd        = hasLimits ? dayE : 1440;
                     var logicalOverflowCol = isOverflowUp && rawPointerCol >= _resizeEntry.DayCol
                         ? _resizeEntry.DayCol - 1 : rawPointerCol;
                     var overflowVisible    = logicalOverflowCol >= 0 && logicalOverflowCol < _currentDays.Count;
@@ -836,14 +927,14 @@ public partial class WeekView : UserControl
                     else if (_resizeGhostOverflow is null)
                     {
                         _resizeGhostOverflow = CreateGhostButton(_resizeEntry.Ev,
-                            Math.Max(13, 1440 - overflowStart - 2), colW - 3.0);
+                            Math.Max(13, overflowEnd - overflowStart - 2), colW - 3.0);
                         Canvas.SetLeft(_resizeGhostOverflow, prevLeft);
                         Canvas.SetTop(_resizeGhostOverflow, overflowStart + 2);
                         DragOverlay.Children.Add(_resizeGhostOverflow);
                     }
                     else
                     {
-                        _resizeGhostOverflow.Height = Math.Max(13, 1440 - overflowStart - 2);
+                        _resizeGhostOverflow.Height = Math.Max(13, overflowEnd - overflowStart - 2);
                         Canvas.SetTop(_resizeGhostOverflow, overflowStart + 2);
                         Canvas.SetLeft(_resizeGhostOverflow, prevLeft);
                     }
@@ -889,17 +980,71 @@ public partial class WeekView : UserControl
             var rawCol    = colW > 0 ? (int)Math.Floor(pos.X / colW) : 0;
             var col       = Math.Clamp(rawCol, 0, _currentDays.Count - 1);
             var rawY      = pos.Y - _dragOffsetY; // может быть отрицательным (overflow из предыдущего дня)
-            var duration  = (int)(_dragEvent!.EndDt - _dragEvent.StartDt).TotalMinutes;
+            var duration  = _dragWorkingLen;      // длительность по рабочей ленте
             var snapped   = (int)Math.Floor(rawY / 15) * 15;
-            // Рабочие часы: старт зажимается так, чтобы событие уложилось в период —
-            // ghost показывает то, что ляжет при отпускании (без лимитов — сквозной проход).
-            snapped = CalendarMath.ClampStartMin(snapped, duration,
-                CalendarSettings.DayStartMinutes, CalendarSettings.DayEndMinutes);
+            var dragDayS  = CalendarSettings.DayStartMinutes;
+            var dragDayE  = CalendarSettings.DayEndMinutes;
 
             var borderLeft = col > 0 ? 1.0 : 0.0;
             Canvas.SetLeft(_dragGhost, col * colW + borderLeft);
 
-            if (snapped < 0 && col > 0)
+            if (CalendarMath.HasDayLimits(dragDayS, dragDayE))
+            {
+                // Рабочие часы: позиция и хвост считаются по рабочей ленте — старт в
+                // «мертвой» зоне перетекает на соседний видимый день (соседнюю колонку),
+                // хвост за концом дня продолжается с начала следующего дня.
+                var (shift, m) = CalendarMath.NormalizeDragStart(snapped, dragDayS, dragDayE);
+                var endM = CalendarMath.AddWorkingMinutes(_currentDays[col], m, duration,
+                    dragDayS, dragDayE, FiveDay).Min;
+                var lastCol  = _currentDays.Count - 1;
+                var startCol = col + shift;
+                var seg1H    = Math.Min(duration, dragDayE - m) - 2;
+
+                // Основной ghost — колонка старта; за правым краем сигналим в последней.
+                var mainCol = Math.Min(startCol, lastCol);
+                if (mainCol >= 0 && seg1H >= 11)
+                {
+                    var mainBorder = mainCol > 0 ? 1.0 : 0.0;
+                    Canvas.SetLeft(_dragGhost, mainCol * colW + mainBorder);
+                    Canvas.SetTop(_dragGhost, m);
+                    _dragGhost.Height    = Math.Max(13, seg1H);
+                    _dragGhost.IsVisible = true;
+                    UpdateDragGhostText(_dragGhost.Height, m, endM);
+                }
+                else _dragGhost.IsVisible = false;
+
+                // Хвост за концом дня — ghost в следующей колонке от начала дня.
+                var tail = m + duration - dragDayE;
+                var oCol = startCol + 1;
+                if (tail >= 15 && startCol <= lastCol && oCol >= 0 && oCol <= lastCol)
+                {
+                    var oTopBase = dragDayS + 2.0;
+                    var oTop     = Math.Max(oTopBase, TimeScroll.Offset.Y);
+                    var oH       = Math.Min(tail, dragDayE - dragDayS) - 2 - (oTop - oTopBase);
+                    if (oH >= 13)
+                    {
+                        if (_dragGhostOverflow is null)
+                        {
+                            _dragGhostOverflow = CreateGhostButton(_dragEvent!, oH, colW - 3.0);
+                            DragOverlay.Children.Add(_dragGhostOverflow);
+                        }
+                        _dragGhostOverflow.Height = oH;
+                        Canvas.SetLeft(_dragGhostOverflow, oCol * colW + 1.0);
+                        Canvas.SetTop(_dragGhostOverflow, oTop);
+                    }
+                    else if (_dragGhostOverflow != null)
+                    {
+                        DragOverlay.Children.Remove(_dragGhostOverflow);
+                        _dragGhostOverflow = null;
+                    }
+                }
+                else if (_dragGhostOverflow != null)
+                {
+                    DragOverlay.Children.Remove(_dragGhostOverflow);
+                    _dragGhostOverflow = null;
+                }
+            }
+            else if (snapped < 0 && col > 0)
             {
                 // Событие началось в предыдущей колонке
                 var prevDayStart     = 1440 + snapped;
@@ -1094,7 +1239,13 @@ public partial class WeekView : UserControl
 
                 var startIsPrevDay = DateOnly.FromDateTime(ev.StartDt) < resizeColDay;
                 var isOverflowDown = rawY > 1440;
-                var canExtendRight = rawPointerCol > _resizeEntry.DayCol || isOverflowDown;
+                var dayS       = CalendarSettings.DayStartMinutes;
+                var dayE       = CalendarSettings.DayEndMinutes;
+                var hasLimits  = CalendarMath.HasDayLimits(dayS, dayE);
+                // Рабочие часы: вертикальный overflow в той же колонке идет через рабочую
+                // ленту (перескок за конец дня), а не через «+1 колонка от полуночи».
+                var canExtendRight = (rawPointerCol > _resizeEntry.DayCol || isOverflowDown)
+                                     && !(hasLimits && rawPointerCol <= _resizeEntry.DayCol);
                 var canShrinkLeft  = (rawPointerCol < _resizeEntry.DayCol || rawY < 0)
                                      && startIsPrevDay;
 
@@ -1109,7 +1260,12 @@ public partial class WeekView : UserControl
                     var evStartDay     = DateOnly.FromDateTime(ev.StartDt);
                     var targetDateOnly = DateOnly.FromDateTime(targetDay);
                     var minEnd         = evStartDay == targetDateOnly ? actualStartMin + 30 : 30;
-                    var newEndMin      = Math.Clamp(targetTime, minEnd, 1440);
+                    // При лимитах конец не выходит за рабочие часы целевого дня.
+                    var maxEnd         = hasLimits
+                        ? Math.Max(minEnd, CalendarMath.EffectiveDayEnd(
+                              evStartDay == targetDateOnly ? actualStartMin : 0, dayE))
+                        : 1440;
+                    var newEndMin      = Math.Clamp(targetTime, minEnd, maxEnd);
                     ev.EndDt = newEndMin >= 1440
                         ? targetDay.Date.AddDays(1)
                         : new DateTime(targetDay.Year, targetDay.Month, targetDay.Day,
@@ -1121,27 +1277,29 @@ public partial class WeekView : UserControl
                     var minEnd = sameDayStart
                         ? effectiveStartMin + 30
                         : Math.Max(0, 30 - (1440 - actualStartMin));
-                    var newEndMin = Math.Clamp(timeSnapped, minEnd, 1440);
-                    if (sameDayStart)
-                    {
-                        // Рабочие часы: за концом дня продолжение перепрыгивает на начало
-                        // следующего видимого дня. Событие, начатое впритык к концу дня или
-                        // позже (вне часов), лимита не имеет (EffectiveDayEnd) — иначе
-                        // минимум 30 минут заклинил бы ручку.
-                        var (endDay, endMin) = CalendarMath.ResizeEndTarget(resizeDay, newEndMin,
-                            CalendarSettings.DayStartMinutes,
-                            CalendarMath.EffectiveDayEnd(effectiveStartMin, CalendarSettings.DayEndMinutes),
-                            FiveDay);
-                        ev.EndDt = endMin >= 1440
-                            ? endDay.Date.AddDays(1)
-                            : new DateTime(endDay.Year, endDay.Month, endDay.Day, endMin / 60, endMin % 60, 0);
-                    }
-                    else
-                    {
-                        ev.EndDt = newEndMin >= 1440
-                            ? resizeDay.Date.AddDays(1)
-                            : new DateTime(resizeDay.Year, resizeDay.Month, resizeDay.Day, newEndMin / 60, newEndMin % 60, 0);
-                    }
+                    // Рабочие часы: верхнего зажима нет — излишек за концом дня (в том
+                    // числе за низом сетки) перетекает на следующий видимый день. Событие,
+                    // начатое впритык к концу дня или позже (вне часов), лимита не имеет
+                    // (EffectiveDayEnd) — иначе минимум 30 минут заклинил бы ручку.
+                    var rawEnd = hasLimits
+                        ? Math.Max(rawY, minEnd)
+                        : Math.Clamp(timeSnapped, minEnd, 1440);
+                    var (endDay, endMin) = CalendarMath.ResizeEndTarget(resizeDay, rawEnd,
+                        dayS, CalendarMath.EffectiveDayEnd(effectiveStartMin, dayE), FiveDay);
+                    ev.EndDt = endMin >= 1440
+                        ? endDay.Date.AddDays(1)
+                        : new DateTime(endDay.Year, endDay.Month, endDay.Day, endMin / 60, endMin % 60, 0);
+                }
+                else if (hasLimits)
+                {
+                    // Указатель в поздней колонке: конец — в ее дне по рабочей ленте
+                    // (ниже низа сетки — перетекает дальше через ResizeEndTarget).
+                    var baseDay = CalendarMath.DayAtCol(_currentDays, rawPointerCol, FiveDay);
+                    var rawT    = isOverflowDown ? rawY : Math.Max(timeSnapped, dayS + 15);
+                    var (endDay, endMin) = CalendarMath.ResizeEndTarget(baseDay, rawT, dayS, dayE, FiveDay);
+                    ev.EndDt = endMin >= 1440
+                        ? endDay.Date.AddDays(1)
+                        : new DateTime(endDay.Year, endDay.Month, endDay.Day, endMin / 60, endMin % 60, 0);
                 }
                 else
                 {
@@ -1172,10 +1330,36 @@ public partial class WeekView : UserControl
 
                 var isOverflowUp   = rawY < 0;
                 var isOverflowDown = rawY > 1440;
-                var canExtendLeft  = rawPointerCol < _resizeEntry.DayCol || isOverflowUp;
-                var canExtendRight = (rawPointerCol > _resizeEntry.DayCol || isOverflowDown) && !canExtendLeft;
+                var dayS       = CalendarSettings.DayStartMinutes;
+                var dayE       = CalendarSettings.DayEndMinutes;
+                var hasLimits  = CalendarMath.HasDayLimits(dayS, dayE);
+                var sameDayEnd = DateOnly.FromDateTime(ev.EndDt) == resizeColDay;
+                // Рабочие часы: вертикальный overflow в той же колонке идет через рабочую
+                // ленту (перескок за границу дня), а не через «±1 колонка от полуночи».
+                var canExtendLeft  = (rawPointerCol < _resizeEntry.DayCol || isOverflowUp)
+                                     && !(hasLimits && rawPointerCol >= _resizeEntry.DayCol);
+                var canExtendRight = (rawPointerCol > _resizeEntry.DayCol || isOverflowDown)
+                                     && !canExtendLeft
+                                     && !(hasLimits && rawPointerCol <= _resizeEntry.DayCol);
 
-                if (canExtendRight)
+                if (canExtendRight && hasLimits)
+                {
+                    // Указатель в поздней колонке: старт — в ее дне по рабочей ленте
+                    // (зона за концом дня перетекает на следующий видимый день).
+                    var baseDay = CalendarMath.DayAtCol(_currentDays, rawPointerCol, FiveDay);
+                    var t       = isOverflowDown ? rawY : timeSnapped;
+                    if (t > dayE)
+                    {
+                        baseDay = CalendarMath.NextVisibleDay(baseDay, FiveDay);
+                        t       = Math.Min(dayS + (t - dayE), dayE);
+                    }
+                    else t = Math.Clamp(t, Math.Min(dayS, dayE - 15), dayE - 15);
+                    if (DateOnly.FromDateTime(baseDay) == DateOnly.FromDateTime(ev.EndDt))
+                        t = Math.Max(0, Math.Min(t, actualEndMin - 30));
+                    ev.StartDt = new DateTime(baseDay.Year, baseDay.Month, baseDay.Day,
+                                              t / 60, t % 60, 0);
+                }
+                else if (canExtendRight)
                 {
                     var logicalCol = isOverflowDown && rawPointerCol <= _resizeEntry.DayCol
                         ? _resizeEntry.DayCol + 1 : rawPointerCol;
@@ -1193,26 +1377,33 @@ public partial class WeekView : UserControl
                 }
                 else if (!canExtendLeft)
                 {
-                    var sameDayEnd = DateOnly.FromDateTime(ev.EndDt) == resizeColDay;
                     var maxStart = sameDayEnd
                         ? effectiveEndMin - 30
                         : Math.Min(1440, 1440 + actualEndMin - 30);
-                    var newStartMin = Math.Clamp(timeSnapped, 0, maxStart);
-                    if (sameDayEnd)
+                    // Рабочие часы: нижнего зажима нет — старт выше начала дня (в том
+                    // числе выше верха сетки) перетекает на конец предыдущего видимого
+                    // дня; зона за концом дня — на начало следующего.
+                    var rawStart = hasLimits
+                        ? Math.Min(rawY, maxStart)
+                        : Math.Clamp(timeSnapped, 0, maxStart);
+                    if (hasLimits && rawStart > dayE && !sameDayEnd)
                     {
-                        // Рабочие часы: раньше начала дня — старт перепрыгивает на конец
-                        // предыдущего видимого дня (симметрия ResizeEndTarget).
-                        var (startDay, startMin) = CalendarMath.ResizeStartTarget(resizeDay, newStartMin,
-                            CalendarMath.EffectiveDayStart(effectiveEndMin, CalendarSettings.DayStartMinutes),
-                            CalendarSettings.DayEndMinutes, FiveDay);
-                        ev.StartDt = new DateTime(startDay.Year, startDay.Month, startDay.Day,
-                                                  startMin / 60, startMin % 60, 0);
+                        var nextDay = CalendarMath.NextVisibleDay(resizeDay, FiveDay);
+                        var sm = Math.Min(dayS + (rawStart - dayE), dayE);
+                        if (DateOnly.FromDateTime(nextDay) == DateOnly.FromDateTime(ev.EndDt))
+                            sm = Math.Min(sm, actualEndMin - 30);
+                        sm = Math.Max(0, sm);
+                        ev.StartDt = new DateTime(nextDay.Year, nextDay.Month, nextDay.Day,
+                                                  sm / 60, sm % 60, 0);
                     }
                     else
                     {
-                        ev.StartDt = newStartMin >= 1440
-                            ? resizeDay.Date.AddDays(1)
-                            : new DateTime(resizeDay.Year, resizeDay.Month, resizeDay.Day, newStartMin / 60, newStartMin % 60, 0);
+                        var (startDay, startMin) = CalendarMath.ResizeStartTarget(resizeDay, rawStart,
+                            CalendarMath.EffectiveDayStart(effectiveEndMin, dayS), dayE, FiveDay);
+                        ev.StartDt = startMin >= 1440
+                            ? startDay.Date.AddDays(1)
+                            : new DateTime(startDay.Year, startDay.Month, startDay.Day,
+                                           startMin / 60, startMin % 60, 0);
                     }
                 }
                 else
@@ -1230,6 +1421,9 @@ public partial class WeekView : UserControl
                         startTimeMin = Math.Clamp(1440 + rawY, 0, 1425);
                     }
                     var startDay = CalendarMath.DayAtCol(_currentDays, _resizeEntry.DayCol - dayOffset, FiveDay);
+                    // При лимитах старт в ранней колонке остается в ее рабочих часах.
+                    if (hasLimits)
+                        startTimeMin = Math.Clamp(startTimeMin, Math.Min(dayS, dayE - 15), dayE - 15);
                     ev.StartDt = new DateTime(startDay.Year, startDay.Month, startDay.Day,
                                               startTimeMin / 60, startTimeMin % 60, 0);
                 }
@@ -1314,40 +1508,25 @@ public partial class WeekView : UserControl
             var colW     = ColW();
             var rawCol   = colW > 0 ? (int)Math.Floor(pos.X / colW) : 0;
             var rawY     = pos.Y - _dragOffsetY;
-            var duration = (int)(_dragEvent.EndDt - _dragEvent.StartDt).TotalMinutes;
+            var duration = _dragWorkingLen;
             var snapped  = (int)Math.Floor(rawY / 15) * 15;
-            // Рабочие часы: старт зажимается в период дня (см. ghost в Moved).
-            snapped = CalendarMath.ClampStartMin(snapped, duration,
-                CalendarSettings.DayStartMinutes, CalendarSettings.DayEndMinutes);
+            var dayS     = CalendarSettings.DayStartMinutes;
+            var dayE     = CalendarSettings.DayEndMinutes;
 
             // Колонка → дата ТОЛЬКО через DayAtCol: за краями окна экстраполяция идет
             // видимыми днями (при 5-дневке за пятницей — понедельник), а окно «по дню»
             // и вовсе не непрерывно — арифметика AddDays от days[0] здесь лжет.
-            DateTime newStart;
-            if (snapped < 0)
-            {
-                var prevDay    = CalendarMath.DayAtCol(_currentDays, rawCol - 1, FiveDay);
-                var prevDayMin = Math.Clamp(1440 + snapped, 0, 1425);
-                newStart = new DateTime(prevDay.Year, prevDay.Month, prevDay.Day,
-                                        prevDayMin / 60, prevDayMin % 60, 0);
-            }
-            else if (snapped >= 1440)
-            {
-                var nextDay    = CalendarMath.DayAtCol(_currentDays, rawCol + 1, FiveDay);
-                var nextDayMin = Math.Clamp(snapped - 1440, 0, 1425);
-                newStart = new DateTime(nextDay.Year, nextDay.Month, nextDay.Day,
-                                        nextDayMin / 60, nextDayMin % 60, 0);
-            }
-            else
-            {
-                var clamped = Math.Clamp(snapped, 0, 1425);
-                var day     = CalendarMath.DayAtCol(_currentDays, rawCol, FiveDay);
-                newStart = new DateTime(day.Year, day.Month, day.Day,
-                                        clamped / 60, clamped % 60, 0);
-            }
+            // Старт и хвост — по рабочей ленте: позиция вне границ дня перетекает на
+            // соседний видимый день, хвост события — тоже (Пт 23:00 + 2 ч при 5-дневке
+            // = Пн 01:00, а не невидимая суббота; 17:00 + 2 ч при 09–18 = 10:00 завтра).
+            var (shift, m) = CalendarMath.NormalizeDragStart(snapped, dayS, dayE);
+            var day = CalendarMath.DayAtCol(_currentDays, rawCol + shift, FiveDay);
+            var (endDay, endMin) = CalendarMath.AddWorkingMinutes(day, m, duration, dayS, dayE, FiveDay);
 
-            _dragEvent.StartDt = newStart;
-            _dragEvent.EndDt   = newStart.AddMinutes(duration);
+            _dragEvent.StartDt = new DateTime(day.Year, day.Month, day.Day, m / 60, m % 60, 0);
+            _dragEvent.EndDt   = endMin >= 1440
+                ? endDay.Date.AddDays(1)
+                : new DateTime(endDay.Year, endDay.Month, endDay.Day, endMin / 60, endMin % 60, 0);
 
             _pendingSelectId = (_dragEvent.Id ?? 0, _dragEvent.FieldId);
             RecordMoved?.Invoke(this, _dragEvent);

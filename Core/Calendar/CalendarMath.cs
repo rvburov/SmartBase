@@ -235,6 +235,83 @@ public static class CalendarMath
         return (PrevVisibleDay(day, fiveDay), Math.Max(dayEndMin - underflow, dayStartMin));
     }
 
+    // ── Рабочая лента: drag и партиция сетки ──────────────────────────────────
+    // Границы дня ведут себя как полночь: время между dayEnd и dayStart следующего
+    // видимого дня не существует, хвост события перетекает через границу (18:00 →
+    // 09:00 понедельника при 5-дневке). Без лимитов лента совпадает с обычными
+    // сутками, а методы — с прежней арифметикой AddMinutes/AddDays.
+
+    /// <summary>
+    /// Нормализация позиции старта перетаскиваемого события: снап-минуты могут выходить
+    /// за границы дня (указатель утащен за сетку или в «мертвую» зону вне рабочих часов).
+    /// Возвращает сдвиг в видимых днях (−1/0/+1) и минуты старта в пределах дня.
+    /// Без лимитов тождественно прежним веткам «&lt;0 → предыдущий день, ≥1440 → следующий».
+    /// </summary>
+    public static (int DayShift, int StartMin) NormalizeDragStart(int snappedMin,
+                                                                  int dayStartMin, int dayEndMin)
+    {
+        var window = dayEndMin - dayStartMin;
+        var shift  = 0;
+        var m      = snappedMin;
+        if (m < dayStartMin) { m += window; shift = -1; }
+        else if (m >= dayEndMin) { m -= window; shift = 1; }
+        return (shift, Math.Clamp(m, dayStartMin, dayEndMin - 15));
+    }
+
+    /// <summary>
+    /// Конец события: старт + длительность по рабочей ленте. Хвост за концом дня
+    /// перетекает на начало следующего видимого дня. Конец ровно в dayEnd остается
+    /// в том же дне (минуты 1440 вызывающий превращает в полночь следующих суток).
+    /// Без лимитов и при 7-дневке тождественно StartDt.AddMinutes(minutes).
+    /// </summary>
+    public static (DateTime Day, int Min) AddWorkingMinutes(DateTime day, int startMin, int minutes,
+                                                            int dayStartMin, int dayEndMin, bool fiveDay)
+    {
+        day = day.Date;
+        var window = Math.Max(1, dayEndMin - dayStartMin);
+        var m      = startMin + minutes;
+        while (m > dayEndMin)
+        {
+            day = NextVisibleDay(day, fiveDay);
+            m  -= window;
+        }
+        return (day, m);
+    }
+
+    /// <summary>
+    /// Длительность события в минутах рабочей ленты — то, что сохраняет перетаскивание.
+    /// Однодневное — сырая длительность (событие вне часов не усыхает). Многодневное —
+    /// сумма пересечений с рабочими окнами видимых дней (Пт 23:00 – Пн 01:00 при
+    /// 5-дневке — 2 часа); совсем не пересекается — сырая длительность, не больше суток.
+    /// Без лимитов и при 7-дневке тождественно (EndDt − StartDt).TotalMinutes.
+    /// </summary>
+    public static int WorkingLengthMinutes(DateTime startDt, DateTime endDt,
+                                           int dayStartMin, int dayEndMin, bool fiveDay)
+    {
+        var raw = (int)(endDt - startDt).TotalMinutes;
+        if (raw <= 0) return 0;
+        if (endDt <= startDt.Date.AddDays(1)) return raw;
+
+        var total = 0;
+        for (var d = startDt.Date; d < endDt; d = d.AddDays(1))
+        {
+            if (!IsVisibleDay(d, fiveDay)) continue;
+            var s = d == startDt.Date ? (int)startDt.TimeOfDay.TotalMinutes : 0;
+            var e = d == endDt.Date ? (int)endDt.TimeOfDay.TotalMinutes : MinutesPerDay;
+            total += Math.Max(0, Math.Min(e, dayEndMin) - Math.Max(s, dayStartMin));
+        }
+        return total > 0 ? total : Math.Min(raw, MinutesPerDay);
+    }
+
+    /// <summary>
+    /// Видимая длительность события в минутах — критерий «часовая сетка или полоса
+    /// „весь день"» (порог 1440). При 5-дневке дни выходных не считаются: Пт 23:00 –
+    /// Пн 01:00 — 2 минуты × 60, событие остается в сетке. При 7-дневке — сырая
+    /// длительность (прежний порог 24 часов).
+    /// </summary>
+    public static int VisibleDurationMinutes(DateTime startDt, DateTime endDt, bool fiveDay) =>
+        WorkingLengthMinutes(startDt, endDt, 0, MinutesPerDay, fiveDay);
+
     // ── Месяц: бары многодневных ──────────────────────────────────────────────
 
     /// <summary>

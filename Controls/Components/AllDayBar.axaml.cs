@@ -4,6 +4,7 @@ using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Media;
+using SmartBase.Core.Calendar;
 using SmartBase.Core.Models;
 using SmartBase.Controls.Behaviors;
 using SmartBase.Utils;
@@ -397,8 +398,11 @@ public partial class AllDayBar : UserControl
             DividersPanel.Children.Add(divider);
         }
 
+        // Зеркало фильтра часовой сетки: порог — видимая длительность (при 5-дневке
+        // выходные дни не считаются), иначе событие потеряется или задвоится.
         var allDayEvents = events
-            .Where(e => e.AllDay || (e.EndDt - e.StartDt).TotalSeconds >= 86400)
+            .Where(e => e.AllDay || CalendarMath.VisibleDurationMinutes(e.StartDt, e.EndDt,
+                            CalendarSettings.FiveDayWeek) >= 1440)
             .Where(e => _currentDays.Any(d =>
                 DateOnly.FromDateTime(e.StartDt) <= d && d <= DateOnly.FromDateTime(e.EndDt)))
             .DistinctBy(e => (e.Id, e.FieldId))   // событие = (запись, поле-дата): не схлопываем разные даты одной записи

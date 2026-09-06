@@ -166,6 +166,20 @@ public partial class RecordDialog : Window
         WireTimeField(StartTimeField, t => _savedStartTime = t);
         WireTimeField(EndTimeField,   t => _savedEndTime   = t);
 
+        // Ограничения из настроек календаря: при рабочих часах времена вне периода гаснут
+        // в выпадающем списке, при пятидневке выходные даты в календаре не кликаются.
+        // Ручной ввод не ограничивается — существующие события вне периода правятся как есть.
+        if (CalendarSettings.HasDayLimits)
+        {
+            StartTimeField.SetAllowedRange(CalendarSettings.DayStartMinutes, CalendarSettings.DayEndMinutes);
+            EndTimeField.SetAllowedRange(CalendarSettings.DayStartMinutes, CalendarSettings.DayEndMinutes);
+        }
+        if (CalendarSettings.FiveDayWeek)
+        {
+            StartDateField.IsDateDisabled = CalendarMath.IsWeekend;
+            EndDateField.IsDateDisabled   = CalendarMath.IsWeekend;
+        }
+
         CancelBtn.Click += (_, _) => Close(null);
         DeleteBtn.Click += (_, _) => Close(new RecordDialogResult(null, Deleted: true));
         SaveBtn.Click   += (_, _) => TrySaveCalendar(editRecord?.Id);

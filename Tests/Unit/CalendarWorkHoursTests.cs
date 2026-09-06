@@ -148,4 +148,108 @@ public sealed class CalendarWorkHoursTests
         Assert.Equal(DayStart, CalendarMath.EffectiveDayStart(12 * 60, DayStart));
         Assert.Equal(0, CalendarMath.EffectiveDayStart(8 * 60, DayStart));
     }
+
+    // ── Рабочая лента: нормализация старта drag ───────────────────────────────
+
+    [Fact]
+    public void NormalizeDragStart_no_limits_matches_legacy_branches()
+    {
+        // Прежние ветки: <0 → предыдущий день, ≥1440 → следующий, иначе clamp 0..1425.
+        Assert.Equal((0, 10 * 60), CalendarMath.NormalizeDragStart(10 * 60, 0, 1440));
+        Assert.Equal((0, 1425), CalendarMath.NormalizeDragStart(1435, 0, 1440));
+        Assert.Equal((-1, 23 * 60), CalendarMath.NormalizeDragStart(-60, 0, 1440));
+        Assert.Equal((1, 60), CalendarMath.NormalizeDragStart(1500, 0, 1440));
+        Assert.Equal((1, 0), CalendarMath.NormalizeDragStart(1440, 0, 1440));
+    }
+
+    [Fact]
+    public void NormalizeDragStart_dead_zones_map_to_neighbor_days()
+    {
+        // Зона за концом дня (18:00+) — это уже следующий день: 20:00 → 09:00 + 2:00.
+        Assert.Equal((1, 11 * 60), CalendarMath.NormalizeDragStart(20 * 60, DayStart, DayEnd));
+        // Зона до начала дня (08:00) — предыдущий день: 18:00 − 1:00 = 17:00.
+        Assert.Equal((-1, 17 * 60), CalendarMath.NormalizeDragStart(8 * 60, DayStart, DayEnd));
+        // Внутри окна — как есть; впритык к концу — не позже dayEnd − 15.
+        Assert.Equal((0, 12 * 60), CalendarMath.NormalizeDragStart(12 * 60, DayStart, DayEnd));
+        Assert.Equal((1, DayStart), CalendarMath.NormalizeDragStart(DayEnd, DayStart, DayEnd));
+    }
+
+    // ── Рабочая лента: конец события от старта и длительности ─────────────────
+
+    [Fact]
+    public void AddWorkingMinutes_no_limits_equals_add_minutes()
+    {
+        // Через полночь: 23:00 + 2:00 = 01:00 следующего видимого дня.
+        Assert.Equal((Fri.AddDays(1), 60),
+            CalendarMath.AddWorkingMinutes(Fri, 23 * 60, 120, 0, 1440, fiveDay: false));
+        // При 5-дневке хвост пятницы уходит на понедельник — «суббота» не существует.
+        Assert.Equal((Mon.AddDays(7), 60),
+            CalendarMath.AddWorkingMinutes(Fri, 23 * 60, 120, 0, 1440, fiveDay: true));
+        // Конец ровно в полночь остается минутой 1440 того же дня.
+        Assert.Equal((Fri, 1440),
+            CalendarMath.AddWorkingMinutes(Fri, 23 * 60, 60, 0, 1440, fiveDay: true));
+    }
+
+    [Fact]
+    public void AddWorkingMinutes_wraps_at_day_end()
+    {
+        // Вторник 17:00 + 2 часа при 09:00–18:00 = среда 10:00 (час во вторник, час в среду).
+        var tue = Mon.AddDays(1);
+        Assert.Equal((tue.AddDays(1), 10 * 60),
+            CalendarMath.AddWorkingMinutes(tue, 17 * 60, 120, DayStart, DayEnd, fiveDay: false));
+        // Пятница 17:00 + 2 часа при 5-дневке = понедельник 10:00.
+        Assert.Equal((Mon.AddDays(7), 10 * 60),
+            CalendarMath.AddWorkingMinutes(Fri, 17 * 60, 120, DayStart, DayEnd, fiveDay: true));
+        // Ровно до конца дня — без перескока.
+        Assert.Equal((Fri, DayEnd),
+            CalendarMath.AddWorkingMinutes(Fri, 17 * 60, 60, DayStart, DayEnd, fiveDay: true));
+        // Длиннее рабочего окна — перетекает через несколько дней: 10 часов с 17:00
+        // = 1 ч (пт) + 9 ч (пн) → конец в 18:00 понедельника.
+        Assert.Equal((Mon.AddDays(7), DayEnd),
+            CalendarMath.AddWorkingMinutes(Fri, 17 * 60, 10 * 60, DayStart, DayEnd, fiveDay: true));
+    }
+
+    // ── Рабочая лента: длительность события ───────────────────────────────────
+
+    [Fact]
+    public void WorkingLength_single_day_keeps_raw_duration()
+    {
+        // Однодневное вне часов не усыхает: 08:00–10:00 остается двумя часами.
+        Assert.Equal(120, CalendarMath.WorkingLengthMinutes(
+            Mon.AddHours(8), Mon.AddHours(10), DayStart, DayEnd, fiveDay: false));
+        // До полуночи включительно — однодневное.
+        Assert.Equal(60, CalendarMath.WorkingLengthMinutes(
+            Mon.AddHours(23), Mon.AddDays(1), DayStart, DayEnd, fiveDay: false));
+    }
+
+    [Fact]
+    public void WorkingLength_multiday_sums_visible_window_intersections()
+    {
+        var tue = Mon.AddDays(1);
+        // Вторник 17:00 – среда 10:00 = час + час.
+        Assert.Equal(120, CalendarMath.WorkingLengthMinutes(
+            tue.AddHours(17), tue.AddDays(1).AddHours(10), DayStart, DayEnd, fiveDay: false));
+        // Пятница 23:00 – понедельник 01:00 при 5-дневке без лимитов = 2 часа.
+        Assert.Equal(120, CalendarMath.WorkingLengthMinutes(
+            Fri.AddHours(23), Mon.AddDays(7).AddHours(1), 0, 1440, fiveDay: true));
+        // Совсем мимо рабочих окон (чт 23:00 – пт 01:00 при 09–18) — сырая длительность.
+        Assert.Equal(120, CalendarMath.WorkingLengthMinutes(
+            Fri.AddDays(-1).AddHours(23), Fri.AddHours(1), DayStart, DayEnd, fiveDay: false));
+        // Без лимитов при 7-дневке = сырая длительность (легаси).
+        Assert.Equal(26 * 60, CalendarMath.WorkingLengthMinutes(
+            tue.AddHours(10), tue.AddDays(1).AddHours(12), 0, 1440, fiveDay: false));
+    }
+
+    // ── Видимая длительность: порог «сетка или полоса „весь день"» ────────────
+
+    [Fact]
+    public void VisibleDuration_skips_weekend_days_in_five_day_mode()
+    {
+        // Пт 23:00 – Пн 01:00: в 7-дневке 50 часов (полоса), в 5-дневке 2 часа (сетка).
+        var end = Mon.AddDays(7).AddHours(1);
+        Assert.Equal(50 * 60, CalendarMath.VisibleDurationMinutes(Fri.AddHours(23), end, fiveDay: false));
+        Assert.Equal(120, CalendarMath.VisibleDurationMinutes(Fri.AddHours(23), end, fiveDay: true));
+        // Обычное событие — сырая длительность в обоих режимах.
+        Assert.Equal(60, CalendarMath.VisibleDurationMinutes(Mon.AddHours(10), Mon.AddHours(11), true));
+    }
 }

@@ -45,6 +45,13 @@ public partial class DateField : UserControl
         }
     }
 
+    /// <summary>
+    /// Дни, запрещенные к выбору в выпадающем календаре: гаснут и не кликаются
+    /// (например, выходные при пятидневке). Ручной ввод не ограничивается,
+    /// уже выбранная дата не гасится (иначе Calendar не примет выбор).
+    /// </summary>
+    public Func<DateTime, bool>? IsDateDisabled { get; set; }
+
     /// <summary>Открыт ли выпадающий календарь (для внешней выпадашки — не закрываться, пока открыт).</summary>
     public bool IsPopupOpen => Pop.IsOpen;
 
@@ -58,6 +65,26 @@ public partial class DateField : UserControl
             SelectionMode = CalendarSelectionMode.SingleDate,
             DisplayDate   = _date ?? DateTime.Today,
         };
+
+        // Запрещенные дни — BlackoutDates непрерывными диапазонами на ±10 лет
+        // вокруг текущей даты (дальше листать месяцами нереалистично).
+        if (IsDateDisabled is { } disabled)
+        {
+            var anchor   = _date ?? DateTime.Today;
+            var to       = anchor.AddYears(10);
+            DateTime? runStart = null;
+            for (var d = anchor.AddYears(-10); d <= to; d = d.AddDays(1))
+            {
+                if (disabled(d) && d != _date) runStart ??= d;
+                else if (runStart is { } rs)
+                {
+                    cal.BlackoutDates.Add(new CalendarDateRange(rs, d.AddDays(-1)));
+                    runStart = null;
+                }
+            }
+            if (runStart is { } tail) cal.BlackoutDates.Add(new CalendarDateRange(tail, to));
+        }
+
         if (_date is { } d0) cal.SelectedDate = d0;
 
         // Подписываемся ПОСЛЕ установки даты, чтобы программная установка не сработала как выбор.
