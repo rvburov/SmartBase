@@ -24,7 +24,7 @@ public partial class SettingsView
         ["По неделе", "По дню", "По неделе с остановкой на «Сегодня»"];
 
     private static readonly int[] CalendarDurationOptions = [30, 60, 90, 120];
-    private static readonly string[] CalendarDurationLabels = ["30 минут", "1 час", "1,5 часа", "2 часа"];
+    private static readonly string[] CalendarDurationLabels = ["30 минут", "1 час", "1 час 30 минут", "2 часа"];
 
     // Гасит обработчики, пока контролы наполняются кодом (как _backupBuilding у «Бэкапа»).
     private bool _calendarBuilding;
