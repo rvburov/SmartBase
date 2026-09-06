@@ -126,18 +126,27 @@ public partial class SettingsView
             SelectedIndex = schedule.DayOfMonth - 1,
         };
 
-        var yearDay = new ComboBox
-        {
-            Width         = 70,
-            ItemsSource   = Enumerable.Range(1, 31).Select(d => d.ToString()).ToList(),
-            SelectedIndex = schedule.Day - 1,
-        };
+        var yearDay = new ComboBox { Width = 70 };
         var yearMonth = new ComboBox
         {
             Width         = 120,
             ItemsSource   = BackupMonthLabels,
             SelectedIndex = schedule.Month - 1,
         };
+
+        // Список дней следует за месяцем, как сетка месяца в календаре: у февраля максимум
+        // 29 (правило годовое, без года — 29-е существует в високосные годы, в обычные
+        // копия снимется 28-го, см. BackupPlanner), у апреля 30. «31 февраля» выбрать
+        // нельзя физически. Выбранный день при смене месяца сохраняется, лишний — поджимается.
+        void SyncYearDays(int selectedDay)
+        {
+            var month = Math.Max(1, yearMonth.SelectedIndex + 1);
+            var max   = DateTime.DaysInMonth(2000, month);   // 2000 високосный: февраль → 29
+            if (yearDay.Items.Count != max)
+                yearDay.ItemsSource = Enumerable.Range(1, max).Select(d => d.ToString()).ToList();
+            yearDay.SelectedIndex = Math.Min(Math.Max(1, selectedDay), max) - 1;
+        }
+        SyncYearDays(schedule.Day);
 
         var time = new TimeField { Width = 96, Time = schedule.Time.ToTimeSpan() };
 
@@ -201,7 +210,7 @@ public partial class SettingsView
         days.HiddenChanged          += (_, _) => Save();
         dayOfMonth.SelectionChanged += (_, _) => Save();
         yearDay.SelectionChanged    += (_, _) => Save();
-        yearMonth.SelectionChanged  += (_, _) => Save();
+        yearMonth.SelectionChanged  += (_, _) => { SyncYearDays(yearDay.SelectedIndex + 1); Save(); };
         time.TimeChanged            += (_, _) => Save();
 
         toggle.IsCheckedChanged += (_, _) =>
