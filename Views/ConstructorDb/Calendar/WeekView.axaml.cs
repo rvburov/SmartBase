@@ -810,9 +810,26 @@ public partial class WeekView : UserControl
                                 Math.Clamp(ghostBottom - svH + 30, 0, Math.Max(0, 1440 - svH)));
                     }
 
-                    // Хвост за концом дня — ghost в следующей колонке от начала дня.
+                    // Второй ghost: неизменная ГОЛОВА события в предыдущей колонке
+                    // (ручка на сегменте продолжения — начало события не меняется, но
+                    // его сегмент скрыт и должен оставаться видимым) ЛИБО хвост за
+                    // концом дня в следующей колонке.
+                    var headCol = _resizeEntry.DayCol - 1;
                     var tailCol = _resizeEntry.DayCol + 1;
-                    if (hasLimits && rawEnd > effE && tailCol < _currentDays.Count)
+                    if (hasLimits && startIsPrevDay && headCol >= 0)
+                    {
+                        var headTop = Math.Clamp(actualStartMin, dayS, dayE);
+                        var oH = Math.Max(13, dayE - headTop - 2);
+                        if (_resizeGhostOverflow is null)
+                        {
+                            _resizeGhostOverflow = CreateGhostButton(_resizeEntry.Ev, oH, colW - 3.0);
+                            DragOverlay.Children.Add(_resizeGhostOverflow);
+                        }
+                        _resizeGhostOverflow.Height = oH;
+                        Canvas.SetLeft(_resizeGhostOverflow, headCol * colW + (headCol > 0 ? 1.0 : 0.0));
+                        Canvas.SetTop(_resizeGhostOverflow, headTop + 2);
+                    }
+                    else if (hasLimits && rawEnd > effE && tailCol < _currentDays.Count)
                     {
                         var oH = Math.Max(13, endT - dayS - 2);
                         if (_resizeGhostOverflow is null)
@@ -1001,9 +1018,25 @@ public partial class WeekView : UserControl
                     if (svH > 0 && newStartMin + 2 < TimeScroll.Offset.Y + 30)
                         TimeScroll.Offset = TimeScroll.Offset.WithY(Math.Max(0, newStartMin - 28));
 
-                    // Излишек выше начала дня — ghost в предыдущей колонке до конца ее дня.
-                    var headCol = _resizeEntry.DayCol - 1;
-                    if (hasLimits && rawStart < effS && headCol >= 0)
+                    // Второй ghost: неизменный ХВОСТ события в следующей колонке
+                    // (ручка на стартовом сегменте — конец не меняется, но его сегмент
+                    // скрыт) ЛИБО излишек выше начала дня в предыдущей колонке.
+                    var headCol  = _resizeEntry.DayCol - 1;
+                    var tailCol2 = _resizeEntry.DayCol + 1;
+                    if (hasLimits && !sameDayEndHere && tailCol2 < _currentDays.Count)
+                    {
+                        var tailEnd = Math.Clamp(actualEndMin, dayS, dayE);
+                        var oH = Math.Max(13, tailEnd - dayS - 2);
+                        if (_resizeGhostOverflow is null)
+                        {
+                            _resizeGhostOverflow = CreateGhostButton(_resizeEntry.Ev, oH, colW - 3.0);
+                            DragOverlay.Children.Add(_resizeGhostOverflow);
+                        }
+                        _resizeGhostOverflow.Height = oH;
+                        Canvas.SetLeft(_resizeGhostOverflow, tailCol2 * colW + 1.0);
+                        Canvas.SetTop(_resizeGhostOverflow, dayS + 2);
+                    }
+                    else if (hasLimits && rawStart < effS && headCol >= 0)
                     {
                         var oH = Math.Max(13, dayE - startT - 2);
                         if (_resizeGhostOverflow is null)
