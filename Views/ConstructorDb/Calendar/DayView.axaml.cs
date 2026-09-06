@@ -227,7 +227,7 @@ public partial class DayView : UserControl
                 var rawEnd     = ev.EndDt.Hour * 60 + ev.EndDt.Minute;
                 var startMin = isStartDay
                     ? rawStart
-                    : (isEndDay ? rawEnd : segE) > segS ? segS : 0;
+                    : (isEndDay ? rawEnd : segE) >= segS ? segS : 0;
                 var effectiveEndMin = isEndDay
                     ? rawEnd
                     : (isStartDay ? rawStart : segS) < segE ? segE : 1440;
@@ -595,10 +595,12 @@ public partial class DayView : UserControl
                 var startIsPrevDay    = DateOnly.FromDateTime(_resizeEntry.Ev.StartDt) < resizeColDay;
 
                 var isOverflowDown = rawY > 1440;
-                var canShrinkLeft  = rawY < 0 && startIsPrevDay;
                 var dayS      = CalendarSettings.DayStartMinutes;
                 var dayE      = CalendarSettings.DayEndMinutes;
                 var hasLimits = CalendarMath.HasDayLimits(dayS, dayE);
+                // При лимитах конец выше начала рабочего дня уходит в предыдущий день
+                // (вне экрана «Дня») — ghost скрывается, как при уходе за верх сетки.
+                var canShrinkLeft  = (rawY < 0 || (hasLimits && rawY <= dayS)) && startIsPrevDay;
 
                 if (canShrinkLeft)
                 {
@@ -716,11 +718,25 @@ public partial class DayView : UserControl
                 {
                     // Рабочие часы: ghost прижат к началу дня, излишек перетекает на конец
                     // предыдущего видимого дня — текст показывает фактический старт.
-                    var maxStart = DateOnly.FromDateTime(_resizeEntry.Ev.EndDt) == resizeColDay
+                    var sameDayEndHere = DateOnly.FromDateTime(_resizeEntry.Ev.EndDt) == resizeColDay;
+                    var maxStart = sameDayEndHere
                         ? effectiveEndMin - 30
                         : Math.Min(1440, 1440 + actualEndMin - 30);
                     var effS     = CalendarMath.EffectiveDayStart(effectiveEndMin, dayS);
                     var rawStart = Math.Min(rawY, maxStart);
+
+                    // Зона за концом дня: старт перетекает в следующий видимый день —
+                    // он вне экрана «Дня», ghost скрывается (как при уходе за низ сетки).
+                    if (!sameDayEndHere && rawStart > dayE)
+                    {
+                        _resizeGhost.IsVisible = false;
+                        if (_resizeGhostOverflow != null)
+                        {
+                            DragOverlay.Children.Remove(_resizeGhostOverflow);
+                            _resizeGhostOverflow = null;
+                        }
+                        return;
+                    }
                     var startT   = CalendarMath.ResizeStartTarget(_currentDays[0], rawStart,
                         effS, dayE, CalendarSettings.FiveDayWeek).Min;
                     var ghostStart = Math.Clamp(rawStart, Math.Min(effS, maxStart), maxStart);
@@ -890,11 +906,13 @@ public partial class DayView : UserControl
                 var dayE      = CalendarSettings.DayEndMinutes;
                 var hasLimits = CalendarMath.HasDayLimits(dayS, dayE);
 
-                if (rawY < 0 && startIsPrevDay)
+                if ((rawY < 0 || (hasLimits && rawY <= dayS)) && startIsPrevDay)
                 {
-                    var prevDay   = PrevDay(_currentDays[0]);
-                    // При лимитах конец в предыдущем дне не выходит за его рабочие часы.
-                    var targetT   = Math.Clamp(1440 + rawY, actualStartMin + 30,
+                    // Конец ушел выше начала рабочего дня (или верха сетки) — перетекает
+                    // на конец предыдущего видимого дня, не выходя за его рабочие часы.
+                    var prevDay = PrevDay(_currentDays[0]);
+                    var baseT   = hasLimits ? dayE - (dayS - rawY) : 1440 + rawY;
+                    var targetT = Math.Clamp(baseT, actualStartMin + 30,
                         CalendarMath.EffectiveDayEnd(actualStartMin, dayE));
                     ev.EndDt = targetT >= 1440
                         ? prevDay.Date.AddDays(1)

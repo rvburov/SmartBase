@@ -271,7 +271,7 @@ public partial class WeekView : UserControl
                     var rawEnd     = ev.EndDt.Hour * 60 + ev.EndDt.Minute;
                     var startMin = isStartDay
                         ? rawStart
-                        : (isEndDay ? rawEnd : segE) > segS ? segS : 0;
+                        : (isEndDay ? rawEnd : segE) >= segS ? segS : 0;
                     var effectiveEndMin = isEndDay
                         ? rawEnd
                         : (isStartDay ? rawStart : segS) < segE ? segE : 1440;
@@ -677,8 +677,11 @@ public partial class WeekView : UserControl
                 // идет через рабочую ленту, а не через «+1 колонка от полуночи».
                 var canExtendRight = (rawPointerCol > _resizeEntry.DayCol || isOverflowDown)
                                      && !(hasLimits && rawPointerCol <= _resizeEntry.DayCol);
-                // Конец уходит в предыдущий день: мышь перешла влево ИЛИ ушла выше Y=0
-                var canShrinkLeft  = (rawPointerCol < _resizeEntry.DayCol || rawY < 0)
+                // Конец уходит в предыдущий день: мышь перешла влево ИЛИ ушла выше Y=0;
+                // при лимитах — уже выше начала рабочего дня (зона до 09:00 не существует,
+                // конец перетекает на конец предыдущего видимого дня).
+                var canShrinkLeft  = (rawPointerCol < _resizeEntry.DayCol || rawY < 0
+                                      || (hasLimits && rawY <= dayS))
                                      && startIsPrevDay;
 
                 if (canShrinkLeft)
@@ -688,7 +691,9 @@ public partial class WeekView : UserControl
                         ? rawPointerCol : _resizeEntry.DayCol - 1;
                     var targetTime = rawPointerCol < _resizeEntry.DayCol
                         ? timeSnapped
-                        : Math.Clamp(1440 + rawY, 0, 1440);
+                        : hasLimits
+                            ? Math.Clamp(dayE - (dayS - rawY), 0, dayE)
+                            : Math.Clamp(1440 + rawY, 0, 1440);
                     var targetVisible  = logicalCol >= 0 && logicalCol < _currentDays.Count;
                     var targetCol      = Math.Clamp(logicalCol, 0, _currentDays.Count - 1);
                     var targetDate     = CalendarMath.DayAtCol(_currentDays, logicalCol, FiveDay);
@@ -718,6 +723,11 @@ public partial class WeekView : UserControl
                 }
                 else if (!canExtendRight)
                 {
+                    // Вернуть ghost в свою колонку (мог переезжать в соседнюю в canShrinkLeft).
+                    var homeBorder = _resizeEntry.DayCol > 0 ? 1.0 : 0.0;
+                    Canvas.SetLeft(_resizeGhost, _resizeEntry.DayCol * colW + homeBorder);
+                    _resizeGhost.Width = colW - 2.0 - homeBorder;
+
                     var minEnd = DateOnly.FromDateTime(_resizeEntry.Ev.StartDt) == resizeColDay
                         ? effectiveStartMin + 30
                         : Math.Max(0, 30 - (1440 - actualStartMin));
@@ -876,7 +886,8 @@ public partial class WeekView : UserControl
                 {
                     // For overflow segments (event ends on a next day), max start accounts for
                     // the portion remaining on the next day so the total >= 30 min.
-                    var maxStart = DateOnly.FromDateTime(_resizeEntry.Ev.EndDt) == resizeColDay
+                    var sameDayEndHere = DateOnly.FromDateTime(_resizeEntry.Ev.EndDt) == resizeColDay;
+                    var maxStart = sameDayEndHere
                         ? effectiveEndMin - 30
                         : Math.Min(1440, 1440 + actualEndMin - 30);
                     // Рабочие часы: ghost прижат к началу дня, текст показывает фактический
@@ -884,6 +895,41 @@ public partial class WeekView : UserControl
                     var rawStart = hasLimits
                         ? Math.Min(rawY, maxStart)
                         : Math.Clamp(timeSnapped, 0, maxStart);
+
+                    // Зона за концом дня: старт перетекает в следующий видимый день —
+                    // ghost переезжает в следующую колонку, правый сегмент уменьшается
+                    // на глазах (зеркало коммита, вместо 13px-ползунка у низа колонки).
+                    if (hasLimits && !sameDayEndHere && rawStart > dayE)
+                    {
+                        var sCol = _resizeEntry.DayCol + 1;
+                        if (sCol < _currentDays.Count)
+                        {
+                            var endsThere = DateOnly.FromDateTime(_resizeEntry.Ev.EndDt)
+                                == DateOnly.FromDateTime(_currentDays[sCol]);
+                            var bottom = endsThere ? actualEndMin : dayE;
+                            var sm = Math.Clamp(dayS + (rawStart - dayE),
+                                dayS, Math.Max(dayS, bottom - 30));
+                            var h = Math.Max(13, bottom - sm - 2);
+                            Canvas.SetLeft(_resizeGhost, sCol * colW + 1.0);
+                            _resizeGhost.Width = colW - 3.0;
+                            Canvas.SetTop(_resizeGhost, sm + 2);
+                            _resizeGhost.Height = h;
+                            UpdateResizeGhostText(h, sm, bottom);
+                        }
+                        else _resizeGhost.IsVisible = false;
+
+                        if (_resizeGhostOverflow != null)
+                        {
+                            DragOverlay.Children.Remove(_resizeGhostOverflow);
+                            _resizeGhostOverflow = null;
+                        }
+                        return;
+                    }
+                    // Вернуть ghost в свою колонку (мог переезжать в соседнюю выше).
+                    var homeBorder = _resizeEntry.DayCol > 0 ? 1.0 : 0.0;
+                    Canvas.SetLeft(_resizeGhost, _resizeEntry.DayCol * colW + homeBorder);
+                    _resizeGhost.Width = colW - 2.0 - homeBorder;
+
                     var startT = hasLimits
                         ? CalendarMath.ResizeStartTarget(_currentDays[_resizeEntry.DayCol], rawStart,
                               effS, dayE, FiveDay).Min
@@ -1281,7 +1327,10 @@ public partial class WeekView : UserControl
                 // ленту (перескок за конец дня), а не через «+1 колонка от полуночи».
                 var canExtendRight = (rawPointerCol > _resizeEntry.DayCol || isOverflowDown)
                                      && !(hasLimits && rawPointerCol <= _resizeEntry.DayCol);
-                var canShrinkLeft  = (rawPointerCol < _resizeEntry.DayCol || rawY < 0)
+                // При лимитах конец, ушедший выше начала рабочего дня, перетекает на
+                // конец предыдущего видимого дня (зеркало превью).
+                var canShrinkLeft  = (rawPointerCol < _resizeEntry.DayCol || rawY < 0
+                                      || (hasLimits && rawY <= dayS))
                                      && startIsPrevDay;
 
                 if (canShrinkLeft)
@@ -1291,7 +1340,9 @@ public partial class WeekView : UserControl
                     var targetDay      = CalendarMath.DayAtCol(_currentDays, logicalCol, FiveDay);
                     var targetTime     = rawPointerCol < _resizeEntry.DayCol
                         ? timeSnapped
-                        : Math.Clamp(1440 + rawY, 0, 1440);
+                        : hasLimits
+                            ? Math.Clamp(dayE - (dayS - rawY), 0, dayE)
+                            : Math.Clamp(1440 + rawY, 0, 1440);
                     var evStartDay     = DateOnly.FromDateTime(ev.StartDt);
                     var targetDateOnly = DateOnly.FromDateTime(targetDay);
                     var minEnd         = evStartDay == targetDateOnly ? actualStartMin + 30 : 30;
