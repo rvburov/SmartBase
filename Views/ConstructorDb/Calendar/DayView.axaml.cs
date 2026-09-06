@@ -677,7 +677,10 @@ public partial class DayView : UserControl
                     var ghostH = Math.Max(13, ghostEnd - ghostTop - 2);
                     Canvas.SetTop(_resizeGhost, ghostTop + 2);
                     _resizeGhost.Height = ghostH;
-                    UpdateResizeGhostText(ghostH, ghostTop, endT);
+                    // Текст — фактические края события: старт может лежать в прошлом дне.
+                    var textStart = DateOnly.FromDateTime(_resizeEntry.Ev.StartDt) != resizeColDay
+                        ? actualStartMin : ghostTop;
+                    UpdateResizeGhostText(ghostH, textStart, endT);
 
                     var svH = TimeScroll.Bounds.Height;
                     if (svH > 0)
@@ -793,7 +796,9 @@ public partial class DayView : UserControl
                     var ghostH = Math.Max(13, ghostBottom - ghostStart - 2);
                     Canvas.SetTop(_resizeGhost, ghostStart + 2);
                     _resizeGhost.Height = ghostH;
-                    UpdateResizeGhostText(ghostH, startT, ghostBottom);
+                    // Текст — фактические края события: конец может лежать в другом дне.
+                    var textEnd = sameDayEndHere ? ghostBottom : actualEndMin;
+                    UpdateResizeGhostText(ghostH, startT, textEnd);
 
                     var svH = TimeScroll.Bounds.Height;
                     if (svH > 0 && ghostStart + 2 < TimeScroll.Offset.Y + 30)

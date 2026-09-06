@@ -641,6 +641,37 @@ public partial class WeekView : UserControl
                 .Where(x => x != entry && x.Ev.Id == entry.Ev.Id && x.Ev.FieldId == entry.Ev.FieldId)
                 .ToList();
             foreach (var b in _resizeHiddenBtns) b.Btn.Opacity = 0;
+
+            // Второй ghost (голова/хвост события в соседней колонке) — СРАЗУ при
+            // нажатии, Moved его лишь обновляет: иначе скрытый второй сегмент
+            // «исчезает» до первого движения мыши.
+            if (CalendarMath.HasDayLimits(limS, limE))
+            {
+                var segD = DateOnly.FromDateTime(_currentDays[entry.DayCol]);
+                if (DateOnly.FromDateTime(entry.Ev.StartDt) < segD && entry.DayCol > 0)
+                {
+                    var headTop = Math.Clamp(
+                        entry.Ev.StartDt.Hour * 60 + entry.Ev.StartDt.Minute, limS, limE);
+                    var hCol = entry.DayCol - 1;
+                    _resizeGhostOverflow = CreateGhostButton(entry.Ev,
+                        Math.Max(13, limE - headTop - 2), colW - 3.0);
+                    Canvas.SetLeft(_resizeGhostOverflow, hCol * colW + (hCol > 0 ? 1.0 : 0.0));
+                    Canvas.SetTop(_resizeGhostOverflow, headTop + 2);
+                    DragOverlay.Children.Add(_resizeGhostOverflow);
+                }
+                else if (DateOnly.FromDateTime(entry.Ev.EndDt) > segD
+                         && entry.DayCol + 1 < _currentDays.Count)
+                {
+                    var tailEnd = Math.Clamp(
+                        entry.Ev.EndDt.Hour * 60 + entry.Ev.EndDt.Minute, limS, limE);
+                    var tCol = entry.DayCol + 1;
+                    _resizeGhostOverflow = CreateGhostButton(entry.Ev,
+                        Math.Max(13, tailEnd - limS - 2), colW - 3.0);
+                    Canvas.SetLeft(_resizeGhostOverflow, tCol * colW + 1.0);
+                    Canvas.SetTop(_resizeGhostOverflow, limS + 2);
+                    DragOverlay.Children.Add(_resizeGhostOverflow);
+                }
+            }
             e.Pointer.Capture(EventsGrid);
             e.Handled = true;
             return;
@@ -799,7 +830,11 @@ public partial class WeekView : UserControl
                     var ghostH = Math.Max(13, newEndMin - ghostTop - 2);
                     Canvas.SetTop(_resizeGhost, ghostTop + 2);
                     _resizeGhost.Height = ghostH;
-                    UpdateResizeGhostText(ghostH, ghostTop, endT);
+                    // Текст — фактические края события: старт может лежать в прошлом дне.
+                    var textStart = hasLimits
+                                    && DateOnly.FromDateTime(_resizeEntry.Ev.StartDt) != resizeColDay
+                        ? actualStartMin : ghostTop;
+                    UpdateResizeGhostText(ghostH, textStart, endT);
 
                     var svH = TimeScroll.Bounds.Height;
                     if (svH > 0)
@@ -1012,7 +1047,9 @@ public partial class WeekView : UserControl
                     var ghostH = Math.Max(13, ghostBottom - newStartMin - 2);
                     Canvas.SetTop(_resizeGhost, newStartMin + 2);
                     _resizeGhost.Height = ghostH;
-                    UpdateResizeGhostText(ghostH, startT, ghostBottom);
+                    // Текст — фактические края события: конец может лежать в другом дне.
+                    var textEnd = hasLimits && !sameDayEndHere ? actualEndMin : ghostBottom;
+                    UpdateResizeGhostText(ghostH, startT, textEnd);
 
                     var svH = TimeScroll.Bounds.Height;
                     if (svH > 0 && newStartMin + 2 < TimeScroll.Offset.Y + 30)
