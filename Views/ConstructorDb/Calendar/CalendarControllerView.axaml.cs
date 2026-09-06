@@ -2,6 +2,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Threading;
 using SmartBase.Controls.Dialogs;
+using SmartBase.Core.Calendar;
 using SmartBase.Core.Models;
 using SmartBase.Database;
 using SmartBase.Database.Repositories;
@@ -19,6 +20,9 @@ public partial class CalendarControllerView : UserControl
 
     private DateTime _currentDate = DateTime.Today;
     private int _currentViewIndex = 4;   // 4 = Месяц
+    // Окно «Недели» центрировано на сегодня (режим прокрутки «с остановкой на „Сегодня"»):
+    // выставляется StepWeekAnchor/кнопкой «Сегодня», сбивается навигацией в других видах.
+    private bool _weekCentered;
     // Активные коллекции по БД (DbId → набор id). null до первого SetActiveIds.
     private Dictionary<int, HashSet<int>>? _activeByDb;
     private string _searchQuery = "";
@@ -82,21 +86,32 @@ public partial class CalendarControllerView : UserControl
     // активный вид пересобираем. Дельта последнего рендера — чтобы перерисовать при возврате
     // к календарю (изменение могло произойти, пока был открыт другой раздел).
     private int _renderedFontDelta = FontScale.Delta;
+    // То же для настроек календаря (дней в неделе, рабочие часы, прокрутка недели).
+    private long _renderedCalendarStamp = CalendarSettings.Stamp;
 
     protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
     {
         base.OnAttachedToVisualTree(e);
-        FontScale.Changed += OnFontScaleChanged;
-        if (_dbs.Count > 0 && _renderedFontDelta != FontScale.Delta) RefreshCurrent();
+        FontScale.Changed        += OnFontScaleChanged;
+        CalendarSettings.Changed += OnCalendarSettingsChanged;
+        if (_dbs.Count > 0 && (_renderedFontDelta != FontScale.Delta
+                               || _renderedCalendarStamp != CalendarSettings.Stamp))
+            RefreshCurrent();
     }
 
     protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
     {
-        FontScale.Changed -= OnFontScaleChanged;
+        FontScale.Changed        -= OnFontScaleChanged;
+        CalendarSettings.Changed -= OnCalendarSettingsChanged;
         base.OnDetachedFromVisualTree(e);
     }
 
     private void OnFontScaleChanged()
+    {
+        if (_dbs.Count > 0) RefreshCurrent();
+    }
+
+    private void OnCalendarSettingsChanged()
     {
         if (_dbs.Count > 0) RefreshCurrent();
     }
@@ -111,7 +126,11 @@ public partial class CalendarControllerView : UserControl
         NavbarControl.TodayClicked  += (_, _) =>
         {
             if (_currentViewIndex == 1) { JournalViewCtrl.GoToday(); return; }
-            _currentDate = DateTime.Today; RefreshCurrent(scrollToNow: true);
+            _currentDate = DateTime.Today;
+            // «С остановкой на „Сегодня"»: кнопка тоже центрирует окно недели.
+            _weekCentered = _currentViewIndex == 3
+                && CalendarSettings.WeekScrollMode == CalendarWeekScrollMode.ByWeekStopToday;
+            RefreshCurrent(scrollToNow: true);
         };
         NavbarControl.PrevClicked   += (_, _) =>
         {
@@ -261,39 +280,47 @@ public partial class CalendarControllerView : UserControl
         RefreshCurrent(scrollToNow: true);
     }
 
-    private void NavigatePrev()
-    {
-        _currentDate = _currentViewIndex switch
-        {
-            0 => _currentDate.AddDays(-1),
-            2 => _currentDate.AddDays(-1),
-            3 => _currentDate.AddDays(-7),
-            4 => _currentDate.AddMonths(-1),
-            5 => _currentDate.AddYears(-1),
-            6 => DiagramViewCtrl.ScaleYears > 0 ? _currentDate.AddYears(-DiagramViewCtrl.ScaleYears)
-                                                : _currentDate.AddMonths(-1),
-            _ => _currentDate.AddDays(-1),
-        };
-    }
+    private void NavigatePrev() => Navigate(-1);
+    private void NavigateNext() => Navigate(+1);
 
-    private void NavigateNext()
+    private void Navigate(int direction)
     {
-        _currentDate = _currentViewIndex switch
+        // Навигация вне «Недели» сбивает центрирование «на сегодня» — при возврате
+        // окно строится от даты, а не от центра.
+        if (_currentViewIndex != 3) _weekCentered = false;
+
+        var fiveDay = CalendarSettings.FiveDayWeek;
+        switch (_currentViewIndex)
         {
-            0 => _currentDate.AddDays(1),
-            2 => _currentDate.AddDays(1),
-            3 => _currentDate.AddDays(7),
-            4 => _currentDate.AddMonths(1),
-            5 => _currentDate.AddYears(1),
-            6 => DiagramViewCtrl.ScaleYears > 0 ? _currentDate.AddYears(DiagramViewCtrl.ScaleYears)
-                                                : _currentDate.AddMonths(1),
-            _ => _currentDate.AddDays(1),
-        };
+            // «Расписание» показывает выходные и при 5-дневке — обычный шаг в день.
+            case 0: _currentDate = _currentDate.AddDays(direction); break;
+            case 2: _currentDate = direction > 0
+                        ? CalendarMath.NextVisibleDay(_currentDate, fiveDay)
+                        : CalendarMath.PrevVisibleDay(_currentDate, fiveDay); break;
+            case 3:
+                (_currentDate, _weekCentered) = CalendarMath.StepWeekAnchor(
+                    _currentDate, _weekCentered, CalendarSettings.WeekScrollMode,
+                    fiveDay, DateTime.Today, direction);
+                break;
+            case 4: _currentDate = _currentDate.AddMonths(direction); break;
+            case 5: _currentDate = _currentDate.AddYears(direction); break;
+            case 6: _currentDate = DiagramViewCtrl.ScaleYears > 0
+                        ? _currentDate.AddYears(direction * DiagramViewCtrl.ScaleYears)
+                        : _currentDate.AddMonths(direction); break;
+            default: _currentDate = _currentDate.AddDays(direction); break;
+        }
     }
 
     private void RefreshCurrent(bool scrollToNow = false)
     {
-        _renderedFontDelta = FontScale.Delta;   // активный вид отрисован с текущим размером
+        _renderedFontDelta      = FontScale.Delta;   // активный вид отрисован с текущим размером
+        _renderedCalendarStamp  = CalendarSettings.Stamp;
+
+        // 5-дневка: выходная дата в «Дне»/«Неделе» невидима (пришла из «Месяца» или
+        // настройка сменилась на лету) — прижимаем вперед, к понедельнику.
+        if (CalendarSettings.FiveDayWeek && _currentViewIndex is 2 or 3
+            && CalendarMath.IsWeekend(_currentDate))
+            _currentDate = CalendarMath.NextVisibleDay(_currentDate, fiveDay: true);
 
         UpdateNoCalendarDatesHint();
 
@@ -554,7 +581,7 @@ public partial class CalendarControllerView : UserControl
         switch (viewIdx)
         {
             case 2: DayViewCtrl.Refresh(records, DateOnly.FromDateTime(currentDate)); break;
-            case 3: WeekViewCtrl.Refresh(records, currentDate, scrollToNow); break;
+            case 3: WeekViewCtrl.Refresh(records, WeekDays(), scrollToNow); break;
             case 4: MonthViewCtrl.Refresh(records, currentDate, totals); break;
             case 5: YearViewCtrl.Refresh(records, currentDate.Year, totals); break;
             case 6: DiagramViewCtrl.Refresh(records, currentDate, scrollToNow,
@@ -587,10 +614,21 @@ public partial class CalendarControllerView : UserControl
             GridLoadingOverlay.IsVisible = true;
     }
 
+    // Дни окна вида «Неделя»: 7 подряд или 5 рабочих, якорь — по режиму прокрутки
+    // (понедельник / сама дата / центр на сегодня). Дни диктует контроллер, вид их
+    // только рисует — иначе режим «по дню» и 5-дневку не собрать.
+    private IReadOnlyList<DateTime> WeekDays()
+    {
+        var fiveDay = CalendarSettings.FiveDayWeek;
+        var anchor  = CalendarMath.WeekAnchor(_currentDate, CalendarSettings.WeekScrollMode,
+                                              fiveDay, _weekCentered, DateTime.Today);
+        return CalendarMath.WeekWindow(anchor, fiveDay);
+    }
+
     private (DateTime start, DateTime end) GetDateRange() => _currentViewIndex switch
     {
         2 => (_currentDate.Date, _currentDate.Date.AddDays(1)),
-        3 => (StartOfWeek(_currentDate), StartOfWeek(_currentDate).AddDays(7)),
+        3 => WeekRange(),
         4 => (StartOfWeek(new DateTime(_currentDate.Year, _currentDate.Month, 1)),
               StartOfWeek(new DateTime(_currentDate.Year, _currentDate.Month, 1)).AddDays(42)),
         5 => (new DateTime(_currentDate.Year, 1, 1), new DateTime(_currentDate.Year + 1, 1, 1)),
@@ -604,12 +642,16 @@ public partial class CalendarControllerView : UserControl
         _ => (DateTime.Today.AddDays(-365), DateTime.Today.AddDays(365)),
     };
 
-    private static DateTime StartOfWeek(DateTime d)
+    // Окно чтения «Недели»: [первый видимый день, последний + 1). При 5-дневке с
+    // невыровненным окном («по дню») выходные внутри диапазона читаются, но колонок
+    // для них нет — вид их просто не рисует.
+    private (DateTime start, DateTime end) WeekRange()
     {
-        var diff = (int)d.DayOfWeek - (int)DayOfWeek.Monday;
-        if (diff < 0) diff += 7;
-        return d.AddDays(-diff).Date;
+        var days = WeekDays();
+        return (days[0], days[^1].AddDays(1));
     }
+
+    private static DateTime StartOfWeek(DateTime d) => CalendarMath.StartOfWeek(d);
 
     private static readonly Avalonia.Media.IBrush BrushRed =
         new Avalonia.Media.SolidColorBrush(Avalonia.Media.Color.Parse("#FF3B30"));
@@ -638,12 +680,19 @@ public partial class CalendarControllerView : UserControl
         NavbarControl.SetTitle(_currentViewIndex switch
         {
             2 => _currentDate.ToString("dddd, d MMMM yyyy", ru),
-            3 => $"{StartOfWeek(_currentDate):d MMM} – {StartOfWeek(_currentDate).AddDays(6):d MMM yyyy}",
+            3 => WeekTitle(),
             4 => _currentDate.ToString("MMMM yyyy", ru),
             5 => _currentDate.Year.ToString(),
             6 => DiagramViewCtrl.TitleFor(_currentDate),   // «июль 2026» / «2026» / «2020–2029»
             _ => "Все записи",
         });
+    }
+
+    // Заголовок «Недели» — по фактическому окну (при «по дню» оно не выровнено на Пн).
+    private string WeekTitle()
+    {
+        var days = WeekDays();
+        return $"{days[0]:d MMM} – {days[^1]:d MMM yyyy}";
     }
 
     private async Task OpenAddAllDayDialog(DateOnly date)

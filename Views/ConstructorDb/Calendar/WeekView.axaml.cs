@@ -7,6 +7,7 @@ using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Threading;
+using SmartBase.Core.Calendar;
 using SmartBase.Core.Models;
 using SmartBase.Utils;
 using SmartBase.Controls.Behaviors;
@@ -54,6 +55,14 @@ public partial class WeekView : UserControl
     private int            _dragSourceCol;
     private int            _dragSourceStartMin;
     private List<DateTime> _currentDays = [];
+
+    // 5-дневка: окно короче семи дней — соседи колонок считаются по ВИДИМЫМ дням
+    // (после пятницы — понедельник). Судим по фактическому окну, а не по настройке:
+    // между сменой настройки и Refresh состояния не расходятся.
+    private bool FiveDay => _currentDays.Count is > 0 and < 7;
+
+    // Ширина колонки дня; 0 — окно еще не построено (деление на счетчик дней, не на 7).
+    private double ColW() => _currentDays.Count > 0 ? EventsGrid.Bounds.Width / _currentDays.Count : 0;
 
     // resize state
     private bool        _isResizingEvent;
@@ -180,15 +189,20 @@ public partial class WeekView : UserControl
         }
     }
 
-    public void Refresh(IEnumerable<CalendarRecord> events, DateTime weekStart, bool scrollToNow = false)
+    // Дни окна диктует контроллер (CalendarControllerView.WeekDays): 7 подряд или 5 рабочих,
+    // выровненные на понедельник или скользящие («по дню») — вид их только рисует.
+    public void Refresh(IEnumerable<CalendarRecord> events, IReadOnlyList<DateTime> days, bool scrollToNow = false)
     {
-        var monday    = weekStart.AddDays(-(((int)weekStart.DayOfWeek + 6) % 7));
-        var allDays   = Enumerable.Range(0, 7).Select(i => monday.AddDays(i)).ToList();
+        var allDays   = days.Select(d => d.Date).ToList();
         var allEvents = events.ToList();
 
         _currentDays = allDays;
         _eventEntries.Clear();
         _selections.Clear();
+
+        WeekHeaderDays.Columns = allDays.Count;
+        ColumnLines.Columns    = allDays.Count;
+        WeekColumns.Columns    = allDays.Count;
 
         AllDayBarCtrl.SetData(allDays.Select(DateOnly.FromDateTime), allEvents);
         BuildHeader(allDays);
@@ -421,7 +435,9 @@ public partial class WeekView : UserControl
             canvas.AttachedToVisualTree += (_, _) => LayoutDayEntries(canvas.Bounds.Width > 0 ? canvas.Bounds.Width : canvas.Width);
 
             var dayGrid = new Grid();
-            if (col >= 5)
+            // Затенение выходных — по дню недели, не по индексу колонки: в режиме
+            // «по дню» окно не выровнено на понедельник и Сб/Вс бывают в середине.
+            if (CalendarMath.IsWeekend(day))
                 dayGrid.Background = new SolidColorBrush(Color.FromArgb(7, 0, 0, 0));
             dayGrid.Children.Add(canvas);
 
@@ -512,7 +528,7 @@ public partial class WeekView : UserControl
         if (!e.GetCurrentPoint(EventsGrid).Properties.IsLeftButtonPressed) return;
 
         var pos  = e.GetPosition(EventsGrid);
-        var colW = EventsGrid.Bounds.Width / 7;
+        var colW = ColW();
         if (colW <= 0) return;
 
         var col   = (int)(pos.X / colW);
@@ -642,7 +658,7 @@ public partial class WeekView : UserControl
                         : Math.Clamp(1440 + rawY, 0, 1440);
                     var targetVisible  = logicalCol >= 0 && logicalCol < _currentDays.Count;
                     var targetCol      = Math.Clamp(logicalCol, 0, _currentDays.Count - 1);
-                    var targetDate     = _currentDays[_resizeEntry.DayCol].AddDays(logicalCol - _resizeEntry.DayCol);
+                    var targetDate     = CalendarMath.DayAtCol(_currentDays, logicalCol, FiveDay);
                     var targetBorder   = logicalCol > 0 ? 1.0 : 0.0;
                     var evStartDay     = DateOnly.FromDateTime(_resizeEntry.Ev.StartDt);
                     var targetDateOnly = DateOnly.FromDateTime(targetDate);
@@ -748,7 +764,7 @@ public partial class WeekView : UserControl
                         : timeSnapped;
                     var targetVisible  = logicalCol >= 0 && logicalCol < _currentDays.Count;
                     var targetCol      = Math.Clamp(logicalCol, 0, _currentDays.Count - 1);
-                    var targetDate     = _currentDays[_resizeEntry.DayCol].AddDays(logicalCol - _resizeEntry.DayCol);
+                    var targetDate     = CalendarMath.DayAtCol(_currentDays, logicalCol, FiveDay);
                     var targetBorder   = logicalCol > 0 ? 1.0 : 0.0;
                     var evEndDay       = DateOnly.FromDateTime(_resizeEntry.Ev.EndDt);
                     var targetDateOnly = DateOnly.FromDateTime(targetDate);
@@ -842,7 +858,7 @@ public partial class WeekView : UserControl
 
             _isDragging = true;
 
-            var colW       = EventsGrid.Bounds.Width / 7;
+            var colW       = ColW();
             var borderLeft = _dragSourceCol > 0 ? 1.0 : 0.0;
             var ghostW     = colW - 2.0 - borderLeft;
             var ghostH     = _dragSourceBtn.Bounds.Height;
@@ -866,7 +882,7 @@ public partial class WeekView : UserControl
 
         if (_dragGhost is not null)
         {
-            var colW      = EventsGrid.Bounds.Width / 7;
+            var colW      = ColW();
             var rawCol    = colW > 0 ? (int)Math.Floor(pos.X / colW) : 0;
             var col       = Math.Clamp(rawCol, 0, _currentDays.Count - 1);
             var rawY      = pos.Y - _dragOffsetY; // может быть отрицательным (overflow из предыдущего дня)
@@ -1079,7 +1095,7 @@ public partial class WeekView : UserControl
                 {
                     var logicalCol = rawPointerCol < _resizeEntry.DayCol
                         ? rawPointerCol : _resizeEntry.DayCol - 1;
-                    var targetDay      = _currentDays[_resizeEntry.DayCol].AddDays(logicalCol - _resizeEntry.DayCol);
+                    var targetDay      = CalendarMath.DayAtCol(_currentDays, logicalCol, FiveDay);
                     var targetTime     = rawPointerCol < _resizeEntry.DayCol
                         ? timeSnapped
                         : Math.Clamp(1440 + rawY, 0, 1440);
@@ -1116,7 +1132,7 @@ public partial class WeekView : UserControl
                         dayOffset  = 1;
                         endTimeMin = Math.Clamp(rawY - 1440, 0, 1425);
                     }
-                    var endDay = _currentDays[_resizeEntry.DayCol].AddDays(dayOffset);
+                    var endDay = CalendarMath.DayAtCol(_currentDays, _resizeEntry.DayCol + dayOffset, FiveDay);
                     ev.EndDt = new DateTime(endDay.Year, endDay.Month, endDay.Day,
                                             endTimeMin / 60, endTimeMin % 60, 0);
                 }
@@ -1141,7 +1157,7 @@ public partial class WeekView : UserControl
                     var targetTime     = isOverflowDown && rawPointerCol <= _resizeEntry.DayCol
                         ? Math.Clamp(rawY - 1440, 0, 1440)
                         : timeSnapped;
-                    var targetDay      = _currentDays[_resizeEntry.DayCol].AddDays(logicalCol - _resizeEntry.DayCol);
+                    var targetDay      = CalendarMath.DayAtCol(_currentDays, logicalCol, FiveDay);
                     var evEndDay       = DateOnly.FromDateTime(ev.EndDt);
                     var targetDateOnly = DateOnly.FromDateTime(targetDay);
                     var maxStart       = evEndDay == targetDateOnly
@@ -1174,7 +1190,7 @@ public partial class WeekView : UserControl
                         dayOffset    = 1;
                         startTimeMin = Math.Clamp(1440 + rawY, 0, 1425);
                     }
-                    var startDay = _currentDays[_resizeEntry.DayCol].AddDays(-dayOffset);
+                    var startDay = CalendarMath.DayAtCol(_currentDays, _resizeEntry.DayCol - dayOffset, FiveDay);
                     ev.StartDt = new DateTime(startDay.Year, startDay.Month, startDay.Day,
                                               startTimeMin / 60, startTimeMin % 60, 0);
                 }
@@ -1215,8 +1231,8 @@ public partial class WeekView : UserControl
             else
             {
                 // find the entry to set selection frame
-                var colW  = EventsGrid.Bounds.Width / 7;
-                var col   = (int)(pos.X / colW);
+                var colW  = ColW();
+                var col   = colW > 0 ? (int)(pos.X / colW) : 0;
                 var entry = _eventEntries
                     .Where(h => h.DayCol == col && pos.Y >= h.StartMin && pos.Y <= h.EndMin)
                     .OrderByDescending(h =>
@@ -1256,25 +1272,26 @@ public partial class WeekView : UserControl
         }
         else if (_currentDays.Count > 0)
         {
-            var colW     = EventsGrid.Bounds.Width / 7;
+            var colW     = ColW();
             var rawCol   = colW > 0 ? (int)Math.Floor(pos.X / colW) : 0;
             var rawY     = pos.Y - _dragOffsetY;
             var duration = (int)(_dragEvent.EndDt - _dragEvent.StartDt).TotalMinutes;
             var snapped  = (int)Math.Floor(rawY / 15) * 15;
 
-            // AddDays корректно работает с отрицательными rawCol (предыдущая неделя)
-            // и rawCol >= 7 (следующая неделя)
+            // Колонка → дата ТОЛЬКО через DayAtCol: за краями окна экстраполяция идет
+            // видимыми днями (при 5-дневке за пятницей — понедельник), а окно «по дню»
+            // и вовсе не непрерывно — арифметика AddDays от days[0] здесь лжет.
             DateTime newStart;
             if (snapped < 0)
             {
-                var prevDay    = _currentDays[0].AddDays(rawCol - 1);
+                var prevDay    = CalendarMath.DayAtCol(_currentDays, rawCol - 1, FiveDay);
                 var prevDayMin = Math.Clamp(1440 + snapped, 0, 1425);
                 newStart = new DateTime(prevDay.Year, prevDay.Month, prevDay.Day,
                                         prevDayMin / 60, prevDayMin % 60, 0);
             }
             else if (snapped >= 1440)
             {
-                var nextDay    = _currentDays[0].AddDays(rawCol + 1);
+                var nextDay    = CalendarMath.DayAtCol(_currentDays, rawCol + 1, FiveDay);
                 var nextDayMin = Math.Clamp(snapped - 1440, 0, 1425);
                 newStart = new DateTime(nextDay.Year, nextDay.Month, nextDay.Day,
                                         nextDayMin / 60, nextDayMin % 60, 0);
@@ -1282,7 +1299,7 @@ public partial class WeekView : UserControl
             else
             {
                 var clamped = Math.Clamp(snapped, 0, 1425);
-                var day     = _currentDays[0].AddDays(rawCol);
+                var day     = CalendarMath.DayAtCol(_currentDays, rawCol, FiveDay);
                 newStart = new DateTime(day.Year, day.Month, day.Day,
                                         clamped / 60, clamped % 60, 0);
             }
@@ -1560,11 +1577,13 @@ public partial class WeekView : UserControl
     {
         WeekHeaderDays.Children.Clear();
 
-        for (var i = 0; i < 7; i++)
+        for (var i = 0; i < days.Count; i++)
         {
             var d         = days[i];
             var isToday   = d.Date == DateTime.Today;
-            var isWeekend = i >= 5;
+            // Подпись и «красность» — по дню недели, не по индексу: окно «по дню»
+            // не выровнено на понедельник, а при 5-дневке выходных колонок нет.
+            var isWeekend = CalendarMath.IsWeekend(d);
 
             var fg = isToday   ? new SolidColorBrush(Color.Parse("#007AFF"))
                    : isWeekend ? new SolidColorBrush(Color.Parse("#FF3B30"))
@@ -1572,7 +1591,7 @@ public partial class WeekView : UserControl
 
             WeekHeaderDays.Children.Add(new TextBlock
             {
-                Text                = $"{DayNames[i]} {d.Day}",
+                Text                = $"{DayNames[((int)d.DayOfWeek + 6) % 7]} {d.Day}",
                 FontSize            = FontSizeBase,
                 FontWeight          = isToday ? WeightBold : WeightNormal,
                 Foreground          = fg,
@@ -1623,7 +1642,7 @@ public partial class WeekView : UserControl
         var menu = new ContextMenu();
         menu.Opening += (_, args) =>
         {
-            var colW = EventsGrid.Bounds.Width / 7;
+            var colW = ColW();
             if (colW <= 0 || _currentDays.Count == 0)
             {
                 if (args is System.ComponentModel.CancelEventArgs cancel) cancel.Cancel = true;

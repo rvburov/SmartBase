@@ -38,6 +38,10 @@ public static class CalendarSettings
     /// <summary>Настройки изменились — календарю пора пересобраться.</summary>
     public static event Action? Changed;
 
+    /// <summary>Счетчик изменений — «догоняющая» перерисовка при возврате к календарю
+    /// (изменение могло произойти, пока был открыт другой раздел), как FontScale.Delta.</summary>
+    public static long Stamp { get; private set; }
+
     /// <summary>Старт: считать сохраненные значения. Вызывать после AppSettings.AttachStore.</summary>
     public static void Init()
     {
@@ -52,6 +56,7 @@ public static class CalendarSettings
         if (days is not (5 or 7) || days == DaysInWeek) return;
         DaysInWeek = days;
         AppSettings.SaveCalendarDaysInWeek(days);
+        Stamp++;
         Changed?.Invoke();
     }
 
@@ -77,6 +82,7 @@ public static class CalendarSettings
         DayEndMinutes   = endMin;
         AppSettings.SaveCalendarDayStart(startMin);
         AppSettings.SaveCalendarDayEnd(endMin);
+        Stamp++;
         Changed?.Invoke();
     }
 
@@ -85,6 +91,7 @@ public static class CalendarSettings
         if (mode == WeekScrollMode) return;
         WeekScrollMode = mode;
         AppSettings.SaveCalendarWeekScroll(ScrollKey(mode));
+        Stamp++;
         Changed?.Invoke();
     }
 
@@ -93,6 +100,7 @@ public static class CalendarSettings
         if (minutes is not (30 or 60 or 90 or 120) || minutes == NewEventDurationMinutes) return;
         NewEventDurationMinutes = minutes;
         AppSettings.SaveCalendarNewEventDuration(minutes);
+        Stamp++;
         Changed?.Invoke();
     }
 

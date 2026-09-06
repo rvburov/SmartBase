@@ -341,7 +341,9 @@ public partial class AllDayBar : UserControl
             var colW   = ColW();
             var maxCol = Math.Max(0, _currentDays.Count - _dragSourceSpan);
             var newCol = Math.Clamp((int)(pos.X / colW), 0, maxCol);
-            var delta  = newCol - _dragSourceCol;
+            // Сдвиг — разница ДАТ видимых колонок, а не колонок в днях: при 5-дневке
+            // соседняя с пятницей колонка — понедельник (+3 календарных дня).
+            var delta  = _currentDays[newCol].DayNumber - _currentDays[_dragSourceCol].DayNumber;
 
             if (delta != 0)
             {

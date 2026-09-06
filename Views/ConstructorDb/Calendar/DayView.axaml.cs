@@ -6,6 +6,7 @@ using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Threading;
+using SmartBase.Core.Calendar;
 using SmartBase.Core.Models;
 using SmartBase.Utils;
 
@@ -13,6 +14,11 @@ namespace SmartBase.Views.ConstructorDb.Calendar;
 
 public partial class DayView : UserControl
 {
+    // Сосед дня при drag/resize за полночь: при 5-дневке (рабочая неделя) — ближайший
+    // ВИДИМЫЙ день (после пятницы — понедельник, перед понедельником — пятница).
+    private static DateTime NextDay(DateTime d) => CalendarMath.NextVisibleDay(d, CalendarSettings.FiveDayWeek);
+    private static DateTime PrevDay(DateTime d) => CalendarMath.PrevVisibleDay(d, CalendarSettings.FiveDayWeek);
+
     // Размеры/веса шрифта — из токенов Typography.axaml (резолв ресурса в рантайме).
     // Свежий размер из Application.Resources — меняется живьем при изменении FontScale.
     private static double FontSizeBase =>
@@ -781,7 +787,7 @@ public partial class DayView : UserControl
 
                 if (rawY < 0 && startIsPrevDay)
                 {
-                    var prevDay   = _currentDays[0].AddDays(-1);
+                    var prevDay   = PrevDay(_currentDays[0]);
                     var targetT   = Math.Clamp(1440 + rawY, actualStartMin + 30, 1440);
                     ev.EndDt = targetT >= 1440
                         ? prevDay.Date.AddDays(1)
@@ -789,7 +795,7 @@ public partial class DayView : UserControl
                 }
                 else if (isOverflowDown)
                 {
-                    var nextDay    = _currentDays[0].AddDays(1);
+                    var nextDay    = NextDay(_currentDays[0]);
                     var endTimeMin = Math.Clamp(rawY - 1440, 0, 1425);
                     ev.EndDt = new DateTime(nextDay.Year, nextDay.Month, nextDay.Day,
                                             endTimeMin / 60, endTimeMin % 60, 0);
@@ -818,7 +824,7 @@ public partial class DayView : UserControl
 
                 if (isOverflowDown)
                 {
-                    var nextDay     = _currentDays[0].AddDays(1);
+                    var nextDay     = NextDay(_currentDays[0]);
                     var evEndDay    = DateOnly.FromDateTime(ev.EndDt);
                     var maxStart    = evEndDay == DateOnly.FromDateTime(nextDay)
                         ? Math.Max(0, actualEndMin - 30) : 1425;
@@ -828,7 +834,7 @@ public partial class DayView : UserControl
                 }
                 else if (isOverflowUp)
                 {
-                    var prevDay      = _currentDays[0].AddDays(-1);
+                    var prevDay      = PrevDay(_currentDays[0]);
                     var startTimeMin = Math.Clamp(1440 + rawY, 0, 1425);
                     ev.StartDt = new DateTime(prevDay.Year, prevDay.Month, prevDay.Day,
                                               startTimeMin / 60, startTimeMin % 60, 0);
@@ -926,14 +932,14 @@ public partial class DayView : UserControl
             DateTime newStart;
             if (snapped < 0)
             {
-                var prevDay    = _currentDays[0].AddDays(-1);
+                var prevDay    = PrevDay(_currentDays[0]);
                 var prevDayMin = Math.Clamp(1440 + snapped, 0, 1425);
                 newStart = new DateTime(prevDay.Year, prevDay.Month, prevDay.Day,
                                         prevDayMin / 60, prevDayMin % 60, 0);
             }
             else if (snapped >= 1440)
             {
-                var nextDay    = _currentDays[0].AddDays(1);
+                var nextDay    = NextDay(_currentDays[0]);
                 var nextDayMin = Math.Clamp(snapped - 1440, 0, 1425);
                 newStart = new DateTime(nextDay.Year, nextDay.Month, nextDay.Day,
                                         nextDayMin / 60, nextDayMin % 60, 0);
