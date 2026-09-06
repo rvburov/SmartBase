@@ -68,6 +68,7 @@ public partial class WeekView : UserControl
     // resize state
     private bool        _isResizingEvent;
     private EventEntry? _resizeEntry;
+    private List<EventEntry> _resizeDimmedBtns = [];
     private bool        _resizeFromBottom;
     private Border?     _resizeGhost;
     private Border?     _resizeGhostOverflow;
@@ -421,8 +422,7 @@ public partial class WeekView : UserControl
                         {
                             _Deselect();
                             _ClearAllDaySelection();
-                            entry.Select?.Invoke();
-                            _selections[entry.Ev] = entry.Deselect ?? (() => { });
+                            _SelectEvent(entry);
                         }
                     }, RoutingStrategies.Tunnel);
                 }
@@ -477,8 +477,7 @@ public partial class WeekView : UserControl
                 e.Ev.Id == _pendingSelectId.Value.Id && e.Ev.FieldId == _pendingSelectId.Value.FieldId);
             if (toSelect is not null)
             {
-                toSelect.Select?.Invoke();
-                _selections[toSelect.Ev] = toSelect.Deselect ?? (() => { });
+                _SelectEvent(toSelect);
             }
             _pendingSelectId = null;
         }
@@ -493,6 +492,20 @@ public partial class WeekView : UserControl
     {
         foreach (var unhighlight in _selections.Values.ToList()) unhighlight();
         _selections.Clear();
+    }
+
+    // Выделить событие целиком: событие через границу дня рисуется несколькими
+    // сегментами (в колонках соседних дней) — подсвечиваются и снимаются ВСЕ разом.
+    private void _SelectEvent(EventEntry entry)
+    {
+        var twins = _eventEntries
+            .Where(x => x.Ev.Id == entry.Ev.Id && x.Ev.FieldId == entry.Ev.FieldId)
+            .ToList();
+        foreach (var t in twins) t.Select?.Invoke();
+        _selections[entry.Ev] = () =>
+        {
+            foreach (var t in twins) t.Deselect?.Invoke();
+        };
     }
 
     // Снять выделение в баре «весь день» — зовем при выделении в часовой сетке,
@@ -595,6 +608,12 @@ public partial class WeekView : UserControl
             DragOverlay.Children.Add(_resizeGhost);
 
             entry.Btn.Opacity = 0;
+            // Остальные сегменты события приглушаются (как при drag): их состояние
+            // показывает ghost — иначе рядом с ним маячит яркий «дубль» в соседней колонке.
+            _resizeDimmedBtns = _eventEntries
+                .Where(x => x != entry && x.Ev.Id == entry.Ev.Id && x.Ev.FieldId == entry.Ev.FieldId)
+                .ToList();
+            foreach (var b in _resizeDimmedBtns) b.Dim?.Invoke();
             e.Pointer.Capture(EventsGrid);
             e.Handled = true;
             return;
@@ -639,8 +658,7 @@ public partial class WeekView : UserControl
         {
             _Deselect();
             _ClearAllDaySelection();
-            entry.Select?.Invoke();
-            _selections[entry.Ev] = entry.Deselect ?? (() => { });
+            _SelectEvent(entry);
         }
 
         e.Pointer.Capture(EventsGrid);
@@ -899,7 +917,7 @@ public partial class WeekView : UserControl
                     // Зона за концом дня: старт перетекает в следующий видимый день —
                     // ghost переезжает в следующую колонку, правый сегмент уменьшается
                     // на глазах (зеркало коммита, вместо 13px-ползунка у низа колонки).
-                    if (hasLimits && !sameDayEndHere && rawStart > dayE)
+                    if (hasLimits && !sameDayEndHere && rawStart >= dayE)
                     {
                         var sCol = _resizeEntry.DayCol + 1;
                         if (sCol < _currentDays.Count)
@@ -1472,7 +1490,7 @@ public partial class WeekView : UserControl
                     var rawStart = hasLimits
                         ? Math.Min(rawY, maxStart)
                         : Math.Clamp(timeSnapped, 0, maxStart);
-                    if (hasLimits && rawStart > dayE && !sameDayEnd)
+                    if (hasLimits && rawStart >= dayE && !sameDayEnd)
                     {
                         var nextDay = CalendarMath.NextVisibleDay(resizeDay, FiveDay);
                         var sm = Math.Min(dayS + (rawStart - dayE), dayE);
@@ -1526,6 +1544,8 @@ public partial class WeekView : UserControl
                 _resizeGhostOverflow = null;
             }
             _resizeEntry.Btn.Opacity = 1.0;
+            foreach (var b in _resizeDimmedBtns) b.Undim?.Invoke();
+            _resizeDimmedBtns.Clear();
 
             _isResizingEvent          = false;
             _resizeEntry              = null;
@@ -1574,8 +1594,7 @@ public partial class WeekView : UserControl
                         if (_selections.ContainsKey(entry.Ev)) _DeselectOne(entry.Ev);
                         else
                         {
-                            entry.Select?.Invoke();
-                            _selections[entry.Ev] = entry.Deselect ?? (() => { });
+                            _SelectEvent(entry);
                         }
                     }
                     else
@@ -1583,8 +1602,7 @@ public partial class WeekView : UserControl
                         // обычный клик — оставить выделенным только это событие
                         _Deselect();
                         _ClearAllDaySelection();
-                        entry.Select?.Invoke();
-                        _selections[entry.Ev] = entry.Deselect ?? (() => { });
+                        _SelectEvent(entry);
                     }
                 }
             }

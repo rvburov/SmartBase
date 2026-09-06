@@ -59,6 +59,7 @@ public partial class DayView : UserControl
     // resize state
     private bool        _isResizingEvent;
     private EventEntry? _resizeEntry;
+    private List<EventEntry> _resizeDimmedBtns = [];
     private bool        _resizeFromBottom;
     private Border?     _resizeGhost;
     private Border?     _resizeGhostOverflow;
@@ -375,8 +376,7 @@ public partial class DayView : UserControl
                     {
                         _Deselect();
                         _ClearAllDaySelection();
-                        entry.Select?.Invoke();
-                        _selections[entry.Ev] = entry.Deselect ?? (() => { });
+                        _SelectEvent(entry);
                     }
                 }, RoutingStrategies.Tunnel);
             }
@@ -420,8 +420,7 @@ public partial class DayView : UserControl
                 e.Ev.Id == _pendingSelectId.Value.Id && e.Ev.FieldId == _pendingSelectId.Value.FieldId);
             if (toSelect is not null)
             {
-                toSelect.Select?.Invoke();
-                _selections[toSelect.Ev] = toSelect.Deselect ?? (() => { });
+                _SelectEvent(toSelect);
             }
             _pendingSelectId = null;
         }
@@ -436,6 +435,20 @@ public partial class DayView : UserControl
     {
         foreach (var unhighlight in _selections.Values.ToList()) unhighlight();
         _selections.Clear();
+    }
+
+    // Выделить событие целиком: событие через границу дня может давать несколько
+    // сегментов — подсвечиваются и снимаются ВСЕ разом (симметрия с WeekView).
+    private void _SelectEvent(EventEntry entry)
+    {
+        var twins = _eventEntries
+            .Where(x => x.Ev.Id == entry.Ev.Id && x.Ev.FieldId == entry.Ev.FieldId)
+            .ToList();
+        foreach (var t in twins) t.Select?.Invoke();
+        _selections[entry.Ev] = () =>
+        {
+            foreach (var t in twins) t.Deselect?.Invoke();
+        };
     }
 
     // Снять выделение в баре «весь день» при выделении в часовой сетке.
@@ -532,6 +545,11 @@ public partial class DayView : UserControl
             DragOverlay.Children.Add(_resizeGhost);
 
             entry.Btn.Opacity = 0;
+            // Остальные сегменты события приглушаются (симметрия с WeekView).
+            _resizeDimmedBtns = _eventEntries
+                .Where(x => x != entry && x.Ev.Id == entry.Ev.Id && x.Ev.FieldId == entry.Ev.FieldId)
+                .ToList();
+            foreach (var b in _resizeDimmedBtns) b.Dim?.Invoke();
             e.Pointer.Capture(EventsGrid);
             e.Handled = true;
             return;
@@ -567,8 +585,7 @@ public partial class DayView : UserControl
         {
             _Deselect();
             _ClearAllDaySelection();
-            entry.Select?.Invoke();
-            _selections[entry.Ev] = entry.Deselect ?? (() => { });
+            _SelectEvent(entry);
         }
 
         e.Pointer.Capture(EventsGrid);
@@ -727,7 +744,7 @@ public partial class DayView : UserControl
 
                     // Зона за концом дня: старт перетекает в следующий видимый день —
                     // он вне экрана «Дня», ghost скрывается (как при уходе за низ сетки).
-                    if (!sameDayEndHere && rawStart > dayE)
+                    if (!sameDayEndHere && rawStart >= dayE)
                     {
                         _resizeGhost.IsVisible = false;
                         if (_resizeGhostOverflow != null)
@@ -988,7 +1005,7 @@ public partial class DayView : UserControl
                     var rawStart = hasLimits
                         ? Math.Min(rawY, maxStart)
                         : Math.Clamp(timeSnapped, 0, maxStart);
-                    if (hasLimits && rawStart > dayE && !sameDayEnd)
+                    if (hasLimits && rawStart >= dayE && !sameDayEnd)
                     {
                         var nextDay = NextDay(resizeDay);
                         var sm = Math.Min(dayS + (rawStart - dayE), dayE);
@@ -1022,6 +1039,8 @@ public partial class DayView : UserControl
                 _resizeGhostOverflow = null;
             }
             _resizeEntry.Btn.Opacity = 1.0;
+            foreach (var b in _resizeDimmedBtns) b.Undim?.Invoke();
+            _resizeDimmedBtns.Clear();
 
             _isResizingEvent         = false;
             _resizeEntry             = null;
@@ -1067,8 +1086,7 @@ public partial class DayView : UserControl
                         if (_selections.ContainsKey(entry.Ev)) _DeselectOne(entry.Ev);
                         else
                         {
-                            entry.Select?.Invoke();
-                            _selections[entry.Ev] = entry.Deselect ?? (() => { });
+                            _SelectEvent(entry);
                         }
                     }
                     else
@@ -1076,8 +1094,7 @@ public partial class DayView : UserControl
                         // обычный клик — оставить выделенным только это событие
                         _Deselect();
                         _ClearAllDaySelection();
-                        entry.Select?.Invoke();
-                        _selections[entry.Ev] = entry.Deselect ?? (() => { });
+                        _SelectEvent(entry);
                     }
                 }
             }
