@@ -141,6 +141,32 @@ public sealed class CalendarWorkHoursTests
         Assert.Equal((Mon, 20 * 60), CalendarMath.ResizeStartTarget(Mon, 20 * 60, DayStart, DayEnd, true));
     }
 
+    // ── Видимая длительность в днях (перенос многодневных) ────────────────────
+
+    [Fact]
+    public void VisibleDaysBetween_counts_only_visible_days()
+    {
+        // Без 5-дневки — обычная разница дат.
+        Assert.Equal(4, CalendarMath.VisibleDaysBetween(Mon, Fri, fiveDay: false));
+        // Чт → Пн следующей недели: Пт, Пн — два видимых шага.
+        Assert.Equal(2, CalendarMath.VisibleDaysBetween(Mon.AddDays(3), Mon.AddDays(7), true));
+        // Конец на субботе считается как пятница (занятые видимые дни: Чт, Пт).
+        Assert.Equal(1, CalendarMath.VisibleDaysBetween(Mon.AddDays(3), Mon.AddDays(5), true));
+        // Обратное направление — отрицательный сдвиг.
+        Assert.Equal(-2, CalendarMath.VisibleDaysBetween(Mon.AddDays(7), Mon.AddDays(3), true));
+        Assert.Equal(0, CalendarMath.VisibleDaysBetween(Fri, Fri, true));
+    }
+
+    [Fact]
+    public void Visible_span_move_stretches_across_weekend()
+    {
+        // Чт–Пт (2 видимых дня), перенос на день вперед: старт Пт, конец —
+        // AddVisibleDays(Пт, 1) = Пн, запись растянулась через выходные.
+        var span = CalendarMath.VisibleDaysBetween(Mon.AddDays(3), Mon.AddDays(4), true);
+        Assert.Equal(1, span);
+        Assert.Equal(Mon.AddDays(7), CalendarMath.AddVisibleDays(Fri, span, true));
+    }
+
     // ── Партиция «сетка / полоса „весь день"» ─────────────────────────────────
 
     [Fact]

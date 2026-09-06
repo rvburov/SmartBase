@@ -1149,10 +1149,14 @@ public partial class DiagramView : UserControl
             _newEnd     = _origEnd.AddDays(delta);
             if (fiveDay && delta != 0)
             {
+                // Старт не встает на Сб/Вс, а конец считается по числу ВИДИМЫХ дней
+                // исходной записи: пересечение нового положения с выходными растягивает
+                // календарные даты через них (Чт–Пт, перенесенная на день вперед, —
+                // это Пт–Пн, а не Пт–Сб).
                 var snapped = CalendarMath.SnapToWorkday(_newStart, Math.Sign(delta), true);
-                var extra   = (snapped - _newStart.Date).Days;
-                _newStart   = _newStart.AddDays(extra);
-                _newEnd     = _newEnd.AddDays(extra);
+                var span    = CalendarMath.VisibleDaysBetween(_origStart, _origEnd, true);
+                _newStart   = snapped + _origStart.TimeOfDay;
+                _newEnd     = CalendarMath.AddVisibleDays(snapped, span, true) + _origEnd.TimeOfDay;
             }
         }
 

@@ -348,9 +348,21 @@ public partial class AllDayBar : UserControl
 
             if (delta != 0)
             {
-                var duration       = (int)(_dragEvent.EndDt - _dragEvent.StartDt).TotalDays;
-                _dragEvent.StartDt = _dragEvent.StartDt.AddDays(delta);
+                var s0             = _dragEvent.StartDt;
+                var duration       = (int)(_dragEvent.EndDt - s0).TotalDays;
+                _dragEvent.StartDt = s0.AddDays(delta);
                 _dragEvent.EndDt   = _dragEvent.StartDt.AddDays(duration);
+                // 5-дневка: перенос сохраняет число ВИДИМЫХ дней — пересечение нового
+                // положения с выходными растягивает календарные даты через них
+                // (Чт–Пт, перенесенная на день вперед, — это Пт–Пн, а не Пт–Сб);
+                // старт на Сб/Вс не встает (запись могла начинаться в выходной).
+                if (CalendarSettings.FiveDayWeek)
+                {
+                    var snapped = CalendarMath.SnapToWorkday(_dragEvent.StartDt, Math.Sign(delta), true);
+                    var span    = CalendarMath.VisibleDaysBetween(s0.Date, s0.Date.AddDays(duration), true);
+                    _dragEvent.StartDt = snapped + s0.TimeOfDay;
+                    _dragEvent.EndDt   = CalendarMath.AddVisibleDays(snapped, span, true) + s0.TimeOfDay;
+                }
                 RecordMoved?.Invoke(this, _dragEvent);
             }
         }

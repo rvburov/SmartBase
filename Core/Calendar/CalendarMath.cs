@@ -76,6 +76,23 @@ public static class CalendarMath
         return direction > 0 ? NextVisibleDay(d, true) : PrevVisibleDay(d, true);
     }
 
+    /// <summary>
+    /// Сдвиг от from до to в видимых днях (to позже — положительный; тот же день — 0).
+    /// Это «видимая длительность в днях», которую сохраняет перенос многодневного
+    /// события: перенос через выходные растягивает календарные даты, а не число
+    /// видимых дней. Без 5-дневки — обычная разница дат.
+    /// </summary>
+    public static int VisibleDaysBetween(DateTime from, DateTime to, bool fiveDay)
+    {
+        var f = from.Date;
+        var t = to.Date;
+        if (!fiveDay) return (t - f).Days;
+        var n = 0;
+        while (f < t) { f = NextVisibleDay(f, true); n++; }
+        while (f > t) { f = PrevVisibleDay(f, true); n--; }
+        return n;
+    }
+
     // ── Окно вида «Неделя» ────────────────────────────────────────────────────
 
     /// <summary>

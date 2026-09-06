@@ -982,6 +982,18 @@ public partial class MonthView : UserControl
             var (origS, origE) = (_dragOrigStart, _dragOrigEnd);
             ev.StartDt = _dragOrigStart + delta;
             ev.EndDt   = _dragOrigEnd   + delta;
+            // 5-дневка: старт не встает на Сб/Вс (бар мог быть схвачен за серединный
+            // сегмент — прижимаем по направлению переноса), а конец многодневного —
+            // по числу ВИДИМЫХ дней исходной записи: пересечение нового положения с
+            // выходными растягивает календарные даты через них (Чт–Пт, перенесенная
+            // на день вперед, — это Пт–Пн, а не Пт–Сб).
+            if (CalendarSettings.FiveDayWeek && _dragOrigEnd.Date > _dragOrigStart.Date)
+            {
+                var snapped = CalendarMath.SnapToWorkday(ev.StartDt, Math.Sign(delta.Days), true);
+                var span    = CalendarMath.VisibleDaysBetween(_dragOrigStart, _dragOrigEnd, true);
+                ev.StartDt  = snapped + _dragOrigStart.TimeOfDay;
+                ev.EndDt    = CalendarMath.AddVisibleDays(ev.StartDt, span, true) + _dragOrigEnd.TimeOfDay;
+            }
             _CancelDrag();
             // Исходные даты — контроллеру: перенос между днями правится дельтой на месте
             // (−1 старому дню, +1 новому — в т.ч. карта счетчиков «+N еще»), без перезагрузки.
