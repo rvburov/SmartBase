@@ -165,7 +165,7 @@ public partial class SettingsView
         editors.Children.Add(time);
 
         // ── Статус ────────────────────────────────────────────────────────────
-        var status = new TextBlock { Classes = { "desc" }, Text = BackupLastRunText(entry.Id) };
+        var status = new TextBlock { Classes = { "desc" }, Text = BackupStatusText(entry.Id) };
         _backupStatus[entry.Id] = status;
 
         // ── Правая часть: «Копировать сейчас» + тумблер ───────────────────────
@@ -203,6 +203,7 @@ public partial class SettingsView
             if (_backupBuilding) return;
             AppSettings.SaveBackupSchedule(entry.Id, ComposeBackupSchedule(
                 freq, days, dayOfMonth, yearDay, yearMonth, time).ToString());
+            RefreshBackupStatus(entry.Id);   // дата следующей копии следует за расписанием
         }
 
         ApplyVisibility();
@@ -219,6 +220,7 @@ public partial class SettingsView
             var on = toggle.IsChecked == true;
             editors.IsEnabled = on;
             AppSettings.SaveBackupEnabled(entry.Id, on);
+            RefreshBackupStatus(entry.Id);   // «Следующая копия» видна только при включенном
         };
 
         // ── Сборка строки ─────────────────────────────────────────────────────
@@ -297,10 +299,28 @@ public partial class SettingsView
         VerticalAlignment = VerticalAlignment.Center,
     };
 
-    private string BackupLastRunText(int dbId) =>
-        AppSettings.LoadBackupLastRun(dbId) is { } last
-            ? $"Последняя копия: {last:dd.MM.yyyy HH:mm}"
-            : "Копий еще не было";
+    // «Последняя копия: … · Следующая копия: …». Дата следующей считается тем же
+    // планировщиком и от тех же системных часов, что у службы, — показывается фактический
+    // день с учетом длины месяцев и високосности конкретного года (правило «31-е» в
+    // коротком месяце здесь честно превращается в его последний день). До первого тика
+    // службы якорь — «сейчас», как в BackupService; просроченный запуск (догон после
+    // выключенного приложения) показывается словами, а не датой в прошлом.
+    private string BackupStatusText(int dbId)
+    {
+        var last = AppSettings.LoadBackupLastRun(dbId);
+        var text = last is { } l ? $"Последняя копия: {l:dd.MM.yyyy HH:mm}" : "Копий еще не было";
+        if (!AppSettings.LoadBackupEnabled(dbId)) return text;
+
+        var now  = DateTime.Now;
+        var next = BackupPlanner.NextRun(
+            BackupSchedule.Parse(AppSettings.LoadBackupSchedule(dbId)), last ?? now);
+        return next <= now
+            ? $"{text} · Следующая копия: в ближайшую минуту"
+            : $"{text} · Следующая копия: {next:dd.MM.yyyy HH:mm}";
+    }
+
+    private void RefreshBackupStatus(int dbId) =>
+        SetBackupStatus(dbId, BackupStatusText(dbId), error: false);
 
     // ── Общие настройки раздела ───────────────────────────────────────────────
 
@@ -358,9 +378,13 @@ public partial class SettingsView
         SetBackupStatus(dbId, fraction is { } f ? $"{phase} · {f * 100:N0} %" : phase, error: false);
     }
 
-    /// <summary>Итог: успех — свежая отметка «Последняя копия…», сбой — текст ошибки красным.</summary>
-    public void OnBackupFinished(int dbId, bool ok, string message) =>
-        SetBackupStatus(dbId, ok ? BackupLastRunText(dbId) : $"Ошибка: {message}", error: !ok);
+    /// <summary>Итог: успех — свежие «Последняя копия…» и «Следующая копия…», сбой — текст
+    /// ошибки красным (до следующего события или перезахода в раздел).</summary>
+    public void OnBackupFinished(int dbId, bool ok, string message)
+    {
+        if (ok) RefreshBackupStatus(dbId);
+        else    SetBackupStatus(dbId, $"Ошибка: {message}", error: true);
+    }
 
     private void SetBackupStatus(int dbId, string text, bool error)
     {
