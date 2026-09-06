@@ -197,13 +197,12 @@ public partial class DayView : UserControl
 
         var canvas  = new Canvas { Background = Brushes.Transparent };
         var dayDate = date;
-        // Порог «сетка или полоса „весь день"» — FitsHourGrid (см. WeekView): с рабочими
-        // часами событие любой длины остается в сетке.
+        // Порог «сетка или полоса „весь день"» — FitsHourGrid (см. WeekView): с настройкой
+        // «длинные события в сетке» событие любой длины остается блоками по дням.
         var dayEvents = allEvents
             .Where(e => !e.AllDay
                      && CalendarMath.FitsHourGrid(e.StartDt, e.EndDt,
-                            CalendarSettings.DayStartMinutes, CalendarSettings.DayEndMinutes,
-                            CalendarSettings.FiveDayWeek)
+                            CalendarSettings.MultiDayGrid, CalendarSettings.FiveDayWeek)
                      && DateOnly.FromDateTime(e.StartDt) <= dayDate
                      && dayDate <= DateOnly.FromDateTime(e.EndDt)
                      && !(DateOnly.FromDateTime(e.EndDt) == dayDate
@@ -605,10 +604,20 @@ public partial class DayView : UserControl
         var dayE       = CalendarSettings.DayEndMinutes;
         // Виртуальный верх события, начавшегося в предыдущем дне, — на рабочей ленте
         // (без лимитов формула вырождается в прежнюю pos.Y + (1440 − startMin)).
+        // Старт может лежать не в соседнем, а в более дальнем дне (событие в 3+
+        // дня) — каждый промежуточный видимый день добавляет окно ленты.
         var evStartMin = entry.Ev.StartDt.Hour * 60 + entry.Ev.StartDt.Minute;
         _dragOffsetY   = evStartDay < colDay
             ? pos.Y - dayS + dayE - Math.Clamp(evStartMin, dayS, dayE)
             : pos.Y - (entry.StartMin + 2);
+        if (evStartDay < colDay)
+        {
+            var pressWindow = Math.Max(15, dayE - dayS);
+            for (var d = CalendarMath.PrevVisibleDay(_currentDays[0], CalendarSettings.FiveDayWeek);
+                 DateOnly.FromDateTime(d) > evStartDay;
+                 d = CalendarMath.PrevVisibleDay(d, CalendarSettings.FiveDayWeek))
+                _dragOffsetY += pressWindow;
+        }
         // Перетаскивание сохраняет длительность по рабочей ленте (хвост за границей
         // дня перетекает на следующий видимый день, а не в невидимую субботу).
         _dragWorkingLen = CalendarMath.WorkingLengthMinutes(entry.Ev.StartDt, entry.Ev.EndDt,
@@ -1175,12 +1184,9 @@ public partial class DayView : UserControl
             var duration = _dragWorkingLen;
             var snapped  = (int)Math.Floor(rawY / 15) * 15;
             var (shift, m) = CalendarMath.NormalizeDragStart(snapped, dayS, dayE);
-            var day = shift switch
-            {
-                < 0 => PrevDay(_currentDays[0]),
-                > 0 => NextDay(_currentDays[0]),
-                _   => _currentDays[0],
-            };
+            // Сдвиг может быть больше одного дня (событие в 3+ дня схвачено за
+            // поздний сегмент) — шагаем видимыми днями.
+            var day = CalendarMath.AddVisibleDays(_currentDays[0], shift, fiveDay);
             var (endDay, endMin) = CalendarMath.AddWorkingMinutes(day, m, duration, dayS, dayE, fiveDay);
 
             _dragEvent.StartDt = new DateTime(day.Year, day.Month, day.Day, m / 60, m % 60, 0);

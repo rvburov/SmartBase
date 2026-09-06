@@ -44,8 +44,32 @@ public sealed class CalendarSettingsTests
 
         Assert.False(CalendarSettings.FiveDayWeek);
         Assert.False(CalendarSettings.HasDayLimits);
+        Assert.False(CalendarSettings.MultiDayGrid);
         Assert.Equal(CalendarWeekScrollMode.ByWeek, CalendarSettings.WeekScrollMode);
         Assert.Equal(60, CalendarSettings.NewEventDurationMinutes);
+    }
+
+    // ── Длинные события в сетке ───────────────────────────────────────────────
+
+    [Fact]
+    public void Multi_day_grid_survives_save_and_default_removes_key()
+    {
+        var store = Attach();
+        CalendarSettings.SetMultiDayGrid(true);
+        Assert.True(AppSettings.LoadCalendarMultiDayGrid());
+        Assert.True(store.Has("calendarMultiDayGrid"));
+        CalendarSettings.SetMultiDayGrid(false);
+        Assert.False(store.Has("calendarMultiDayGrid"));
+    }
+
+    [Fact]
+    public void Multi_day_grid_garbage_falls_back_to_default()
+    {
+        var store = Attach();
+        store.Set("calendarMultiDayGrid", "мусор");
+        Assert.False(AppSettings.LoadCalendarMultiDayGrid());
+        CalendarSettings.Init();
+        Assert.False(CalendarSettings.MultiDayGrid);
     }
 
     // ── Дней в неделе ─────────────────────────────────────────────────────────

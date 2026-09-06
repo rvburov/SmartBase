@@ -399,12 +399,11 @@ public partial class AllDayBar : UserControl
         }
 
         // Зеркало фильтра часовой сетки (FitsHourGrid), иначе событие потеряется или
-        // задвоится: с рабочими часами в полосе только AllDay — растянутые на несколько
-        // дней события остаются в сетке блоками по дням.
+        // задвоится: с настройкой «длинные события в сетке» в полосе только AllDay —
+        // растянутые на несколько дней события остаются в сетке блоками по дням.
         var allDayEvents = events
             .Where(e => e.AllDay || !CalendarMath.FitsHourGrid(e.StartDt, e.EndDt,
-                            CalendarSettings.DayStartMinutes, CalendarSettings.DayEndMinutes,
-                            CalendarSettings.FiveDayWeek))
+                            CalendarSettings.MultiDayGrid, CalendarSettings.FiveDayWeek))
             .Where(e => _currentDays.Any(d =>
                 DateOnly.FromDateTime(e.StartDt) <= d && d <= DateOnly.FromDateTime(e.EndDt)))
             .DistinctBy(e => (e.Id, e.FieldId))   // событие = (запись, поле-дата): не схлопываем разные даты одной записи

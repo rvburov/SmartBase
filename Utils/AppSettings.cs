@@ -298,6 +298,21 @@ public static class AppSettings
         else _store?.Set(KeyCalendarWeekScroll, mode);
     }
 
+    // Длинные события в часовой сетке. Стандарт (false) — событие длиннее 24 часов
+    // видимой длительности уходит в полосу «весь день», как всегда работало. Включено —
+    // событие любой длины остается в сетке блоками по дням (drag/resize растягивают
+    // через несколько дней), в полосу уходят только записи «весь день».
+    public const bool CalendarMultiDayGridDefault = false;
+
+    public static bool LoadCalendarMultiDayGrid() =>
+        bool.TryParse(_store?.Get(KeyCalendarMultiDayGrid), out var on) ? on : CalendarMultiDayGridDefault;
+
+    public static void SaveCalendarMultiDayGrid(bool on)
+    {
+        if (on == CalendarMultiDayGridDefault) _store?.Remove(KeyCalendarMultiDayGrid);
+        else _store?.Set(KeyCalendarMultiDayGrid, on.ToString());
+    }
+
     // Длительность нового события при создании из сетки календаря. Стандарт — час.
     public const int CalendarNewEventDurationDefault = 60;
 
@@ -852,6 +867,7 @@ public static class AppSettings
     private const string KeyCalendarDayStart          = "calendarDayStartMin";
     private const string KeyCalendarDayEnd            = "calendarDayEndMin";
     private const string KeyCalendarWeekScroll        = "calendarWeekScroll";
+    private const string KeyCalendarMultiDayGrid      = "calendarMultiDayGrid";
     private const string KeyCalendarNewEventDuration  = "calendarNewEventDuration";
     private const string KeyDiagramScale     = "diagramScale";
     private const string KeyConstructorView  = "constructorView";

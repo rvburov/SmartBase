@@ -257,17 +257,19 @@ public static class CalendarMath
     /// <summary>
     /// Нормализация позиции старта перетаскиваемого события: снап-минуты могут выходить
     /// за границы дня (указатель утащен за сетку или в «мертвую» зону вне рабочих часов).
-    /// Возвращает сдвиг в видимых днях (−1/0/+1) и минуты старта в пределах дня.
-    /// Без лимитов тождественно прежним веткам «&lt;0 → предыдущий день, ≥1440 → следующий».
+    /// Возвращает сдвиг в видимых днях и минуты старта в пределах дня; выход больше чем
+    /// на окно (событие в 3+ дня схвачено за поздний сегмент) дает сдвиг на несколько
+    /// дней. В пределах одного окна тождественно прежним веткам
+    /// «&lt;0 → предыдущий день, ≥1440 → следующий».
     /// </summary>
     public static (int DayShift, int StartMin) NormalizeDragStart(int snappedMin,
                                                                   int dayStartMin, int dayEndMin)
     {
-        var window = dayEndMin - dayStartMin;
+        var window = Math.Max(1, dayEndMin - dayStartMin);
         var shift  = 0;
         var m      = snappedMin;
-        if (m < dayStartMin) { m += window; shift = -1; }
-        else if (m >= dayEndMin) { m -= window; shift = 1; }
+        while (m < dayStartMin) { m += window; shift--; }
+        while (m >= dayEndMin) { m -= window; shift++; }
         return (shift, Math.Clamp(m, dayStartMin, dayEndMin - 15));
     }
 
@@ -327,14 +329,15 @@ public static class CalendarMath
 
     /// <summary>
     /// Событие (не «весь день») отображается в часовой сетке, а не в полосе «весь день».
-    /// Без лимитов — прежний порог: видимая длительность меньше суток. С рабочими часами
-    /// событие любой длины остается в сетке: растягивание на несколько дней рисует блоки
-    /// по дням (серединные дни — полное рабочее окно), в полосу уходят только AllDay.
+    /// Стандарт (multiDayGrid=false) — прежний порог: видимая длительность меньше суток,
+    /// длиннее — полоса «весь день». С настройкой «длинные события в сетке» событие
+    /// любой длины остается в сетке блоками по дням (серединные дни — полное рабочее
+    /// окно или сутки), в полосу уходят только AllDay. Правило одно для любого источника
+    /// длительности: drag, resize или ручной ввод времени в окне записи.
     /// </summary>
     public static bool FitsHourGrid(DateTime startDt, DateTime endDt,
-                                    int dayStartMin, int dayEndMin, bool fiveDay) =>
-        HasDayLimits(dayStartMin, dayEndMin)
-        || VisibleDurationMinutes(startDt, endDt, fiveDay) < MinutesPerDay;
+                                    bool multiDayGrid, bool fiveDay) =>
+        multiDayGrid || VisibleDurationMinutes(startDt, endDt, fiveDay) < MinutesPerDay;
 
     // ── Месяц: бары многодневных ──────────────────────────────────────────────
 

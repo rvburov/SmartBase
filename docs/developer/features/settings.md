@@ -41,7 +41,9 @@
   (`hiddenViews.calendar`) — переехали из «Оформления» без переименования ключей; новые:
   дней в неделе 7/5 (`calendarDaysInWeek`), рабочие часы в минутах (`calendarDayStartMin` /
   `calendarDayEndMin`, стандарт 0/1440 = «без ограничений», кросс-инвариант start + 60 ≤ end),
-  режим прокрутки недели (`calendarWeekScroll`: `week` / `day` / `weekStopToday`) и
+  режим прокрутки недели (`calendarWeekScroll`: `week` / `day` / `weekStopToday`),
+  длинные события в сетке (`calendarMultiDayGrid`, стандарт false — событие длиннее суток
+  уходит в полосу «весь день») и
   длительность нового события (`calendarNewEventDuration`: 30/60/90/120). Живой доступ —
   статический [CalendarSettings](../../../Utils/CalendarSettings.cs) (кэш + событие
   `Changed`, по образцу FontScale): календарь подписан и пересобирается без перезапуска.

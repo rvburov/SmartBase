@@ -48,6 +48,8 @@ public partial class SettingsView
         CalendarDaysCombo.ItemsSource   = CalendarDayLabels;
         CalendarDaysCombo.SelectedIndex = Math.Max(0, Array.IndexOf(CalendarDayOptions, CalendarSettings.DaysInWeek));
 
+        CalendarMultiDayToggle.IsChecked = CalendarSettings.MultiDayGrid;
+
         CalendarWeekScrollCombo.ItemsSource   = CalendarScrollLabels;
         CalendarWeekScrollCombo.SelectedIndex = Math.Max(0, Array.IndexOf(CalendarScrollOptions, CalendarSettings.WeekScrollMode));
 
@@ -76,6 +78,12 @@ public partial class SettingsView
         var i = CalendarDaysCombo.SelectedIndex;
         if (i >= 0 && i < CalendarDayOptions.Length)
             CalendarSettings.SetDaysInWeek(CalendarDayOptions[i]);
+    }
+
+    private void OnCalendarMultiDayToggled(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        if (_calendarBuilding) return;
+        CalendarSettings.SetMultiDayGrid(CalendarMultiDayToggle.IsChecked == true);
     }
 
     private void OnCalendarWeekScrollChanged(object? sender, SelectionChangedEventArgs e)

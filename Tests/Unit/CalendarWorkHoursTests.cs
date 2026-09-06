@@ -144,24 +144,41 @@ public sealed class CalendarWorkHoursTests
     // ── Партиция «сетка / полоса „весь день"» ─────────────────────────────────
 
     [Fact]
-    public void FitsHourGrid_no_limits_keeps_legacy_24h_threshold()
+    public void FitsHourGrid_standard_keeps_legacy_24h_threshold()
     {
-        Assert.True(CalendarMath.FitsHourGrid(Mon.AddHours(10), Mon.AddHours(33), 0, 1440, false));
-        Assert.False(CalendarMath.FitsHourGrid(Mon.AddHours(10), Mon.AddHours(35), 0, 1440, false));
+        // Стандарт (настройка выключена): длиннее суток — полоса «весь день»,
+        // независимо от рабочих часов и того, как событие получило длину.
+        Assert.True(CalendarMath.FitsHourGrid(Mon.AddHours(10), Mon.AddHours(33), false, false));
+        Assert.False(CalendarMath.FitsHourGrid(Mon.AddHours(10), Mon.AddHours(35), false, false));
         // 5-дневка: выходные не считаются — Пт 23:00 – Пн 01:00 остается в сетке.
         Assert.True(CalendarMath.FitsHourGrid(
-            Fri.AddHours(23), Mon.AddDays(7).AddHours(1), 0, 1440, true));
+            Fri.AddHours(23), Mon.AddDays(7).AddHours(1), false, true));
     }
 
     [Fact]
-    public void FitsHourGrid_with_limits_any_length_stays_in_grid()
+    public void FitsHourGrid_multi_day_setting_keeps_any_length_in_grid()
     {
-        // Рабочие часы: растягивание на несколько дней рисует блоки по дням —
-        // событие не уходит в полосу «весь день» независимо от длины.
+        // «Длинные события в сетке»: событие любой длины рисуется блоками по дням —
+        // в полосу «весь день» не уходит.
         Assert.True(CalendarMath.FitsHourGrid(
-            Mon.AddHours(11), Mon.AddDays(4).AddHours(10), DayStart, DayEnd, false));
+            Mon.AddHours(11), Mon.AddDays(4).AddHours(10), true, false));
         Assert.True(CalendarMath.FitsHourGrid(
-            Mon.AddHours(11), Mon.AddDays(14), DayStart, DayEnd, true));
+            Mon.AddHours(11), Mon.AddDays(14), true, true));
+    }
+
+    [Fact]
+    public void NormalizeDragStart_flows_multiple_windows()
+    {
+        // Событие в 3+ дня схвачено за поздний сегмент: снап на два окна выше
+        // начала дня — сдвиг на два видимых дня назад, минуты в пределах дня.
+        var window = DayEnd - DayStart;
+        Assert.Equal((-2, 16 * 60),
+            CalendarMath.NormalizeDragStart(16 * 60 - 2 * window, DayStart, DayEnd));
+        Assert.Equal((2, 10 * 60),
+            CalendarMath.NormalizeDragStart(10 * 60 + 2 * window, DayStart, DayEnd));
+        // Без лимитов: минус двое суток — сдвиг −2 (прежняя ветка давала бы −1).
+        Assert.Equal((-2, 10 * 60),
+            CalendarMath.NormalizeDragStart(10 * 60 - 2 * 1440, 0, 1440));
     }
 
     // ── Совместимость лимитов с минимумом 30 минут ────────────────────────────

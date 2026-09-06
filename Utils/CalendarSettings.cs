@@ -29,6 +29,13 @@ public static class CalendarSettings
     /// <summary>Рабочие часы заданы (не весь диапазон суток).</summary>
     public static bool HasDayLimits => CalendarMath.HasDayLimits(DayStartMinutes, DayEndMinutes);
 
+    /// <summary>
+    /// Длинные события остаются в часовой сетке: событие любой длины рисуется блоками
+    /// по дням, drag/resize растягивают через несколько дней. Стандарт (false) —
+    /// событие длиннее 24 часов видимой длительности уходит в полосу «весь день».
+    /// </summary>
+    public static bool MultiDayGrid { get; private set; } = AppSettings.CalendarMultiDayGridDefault;
+
     /// <summary>Режим листания вида «Неделя».</summary>
     public static CalendarWeekScrollMode WeekScrollMode { get; private set; } = CalendarWeekScrollMode.ByWeek;
 
@@ -47,6 +54,7 @@ public static class CalendarSettings
     {
         DaysInWeek = AppSettings.LoadCalendarDaysInWeek();
         (DayStartMinutes, DayEndMinutes) = LoadDayBounds();
+        MultiDayGrid = AppSettings.LoadCalendarMultiDayGrid();
         WeekScrollMode = ParseScroll(AppSettings.LoadCalendarWeekScroll());
         NewEventDurationMinutes = AppSettings.LoadCalendarNewEventDuration();
     }
@@ -82,6 +90,15 @@ public static class CalendarSettings
         DayEndMinutes   = endMin;
         AppSettings.SaveCalendarDayStart(startMin);
         AppSettings.SaveCalendarDayEnd(endMin);
+        Stamp++;
+        Changed?.Invoke();
+    }
+
+    public static void SetMultiDayGrid(bool on)
+    {
+        if (on == MultiDayGrid) return;
+        MultiDayGrid = on;
+        AppSettings.SaveCalendarMultiDayGrid(on);
         Stamp++;
         Changed?.Invoke();
     }

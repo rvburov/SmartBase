@@ -244,14 +244,13 @@ public partial class WeekView : UserControl
             var day     = allDays[col];
             var canvas  = new Canvas { Background = Brushes.Transparent };
             var dayDate = DateOnly.FromDateTime(day);
-            // Порог «сетка или полоса „весь день"» — FitsHourGrid: без лимитов видимая
-            // длительность меньше суток (при 5-дневке выходные не считаются); с рабочими
-            // часами событие любой длины остается в сетке блоками по дням.
+            // Порог «сетка или полоса „весь день"» — FitsHourGrid: стандартно видимая
+            // длительность меньше суток (при 5-дневке выходные не считаются); с настройкой
+            // «длинные события в сетке» событие любой длины остается блоками по дням.
             var dayEvents = allEvents
                 .Where(e => !e.AllDay
                          && CalendarMath.FitsHourGrid(e.StartDt, e.EndDt,
-                                CalendarSettings.DayStartMinutes,
-                                CalendarSettings.DayEndMinutes, FiveDay)
+                                CalendarSettings.MultiDayGrid, FiveDay)
                          && DateOnly.FromDateTime(e.StartDt) <= dayDate
                          && dayDate <= DateOnly.FromDateTime(e.EndDt)
                          && !(DateOnly.FromDateTime(e.EndDt) == dayDate
@@ -662,8 +661,9 @@ public partial class WeekView : UserControl
 
             // Ghost-сегменты остальных блоков события (голова, серединные дни, хвост) —
             // СРАЗУ при нажатии, Moved их лишь обновляет: иначе скрытые сегменты
-            // «исчезают» до первого движения мыши.
-            if (CalendarMath.HasDayLimits(limS, limE))
+            // «исчезают» до первого движения мыши. При «длинных событиях в сетке»
+            // раскладка нужна и без рабочих часов (сегменты по суткам).
+            if (CalendarMath.HasDayLimits(limS, limE) || CalendarSettings.MultiDayGrid)
                 UpdateSegGhosts(entry.Ev, entry.Ev.StartDt, entry.Ev.EndDt, entry.DayCol, colW);
             e.Pointer.Capture(EventsGrid);
             e.Handled = true;
@@ -690,6 +690,13 @@ public partial class WeekView : UserControl
         {
             var evStartMin = entry.Ev.StartDt.Hour * 60 + entry.Ev.StartDt.Minute;
             _dragOffsetY = pos.Y - pressDayS + pressDayE - Math.Clamp(evStartMin, pressDayS, pressDayE);
+            // Старт может лежать не в соседнем, а в более дальнем дне (событие в 3+
+            // дня) — каждый промежуточный видимый день добавляет окно ленты.
+            var pressWindow = Math.Max(15, pressDayE - pressDayS);
+            for (var d = CalendarMath.PrevVisibleDay(_currentDays[entry.DayCol], FiveDay);
+                 DateOnly.FromDateTime(d) > evStartDay;
+                 d = CalendarMath.PrevVisibleDay(d, FiveDay))
+                _dragOffsetY += pressWindow;
         }
         else
         {
@@ -868,7 +875,7 @@ public partial class WeekView : UserControl
                     UpdateResizeGhostText(ghostH, textStart, newEndMin);
 
                     // Голова и серединные дни между стартом и новым концом.
-                    if (hasLimits)
+                    if (hasLimits || CalendarSettings.MultiDayGrid)
                         UpdateSegGhosts(_resizeEntry.Ev, _resizeEntry.Ev.StartDt,
                             AtMinute(targetDate, newEndMin), logicalCol, colW);
                     if (_resizeGhostOverflow != null)
@@ -928,7 +935,7 @@ public partial class WeekView : UserControl
                     // Ghost-сегменты в остальных колонках: неизменная голова события,
                     // серединные дни и перетекший за конец дня хвост — растягивание
                     // работает через несколько дней, все блоки видимы.
-                    if (hasLimits)
+                    if (hasLimits || CalendarSettings.MultiDayGrid)
                         UpdateSegGhosts(_resizeEntry.Ev, _resizeEntry.Ev.StartDt,
                             AtMinute(endTarget.Day, endTarget.Min), _resizeEntry.DayCol, colW);
                     if (_resizeGhostOverflow != null)
@@ -972,32 +979,49 @@ public partial class WeekView : UserControl
                     {
                         var nextTime       = isOverflowDown && rawPointerCol <= _resizeEntry.DayCol
                             ? Math.Clamp(rawY - 1440, 0, 1425) : timeSnapped;
-                        var overflowTop    = 2.0;
-                        var overflowH      = Math.Max(13, nextTime - (int)overflowTop);
                         var logicalOverflowCol = isOverflowDown && rawPointerCol <= _resizeEntry.DayCol
                             ? _resizeEntry.DayCol + 1 : rawPointerCol;
-                        var overflowVisible    = logicalOverflowCol >= 0 && logicalOverflowCol < _currentDays.Count;
 
-                        if (!overflowVisible)
+                        if (CalendarSettings.MultiDayGrid)
                         {
+                            // «Длинные события в сетке»: сегменты прочих колонок (голова,
+                            // серединные дни, хвост) — общая раскладка по суткам.
+                            var cEndDay = CalendarMath.DayAtCol(_currentDays, logicalOverflowCol, FiveDay);
+                            UpdateSegGhosts(_resizeEntry.Ev, _resizeEntry.Ev.StartDt,
+                                AtMinute(cEndDay, nextTime), _resizeEntry.DayCol, colW);
                             if (_resizeGhostOverflow != null)
                             {
                                 DragOverlay.Children.Remove(_resizeGhostOverflow);
                                 _resizeGhostOverflow = null;
                             }
                         }
-                        else if (_resizeGhostOverflow is null)
-                        {
-                            _resizeGhostOverflow = CreateGhostButton(_resizeEntry.Ev, overflowH, colW - 3.0);
-                            Canvas.SetLeft(_resizeGhostOverflow, logicalOverflowCol * colW + 1.0);
-                            Canvas.SetTop(_resizeGhostOverflow, overflowTop);
-                            DragOverlay.Children.Add(_resizeGhostOverflow);
-                        }
                         else
                         {
-                            _resizeGhostOverflow.Height = overflowH;
-                            Canvas.SetLeft(_resizeGhostOverflow, logicalOverflowCol * colW + 1.0);
-                            Canvas.SetTop(_resizeGhostOverflow, overflowTop);
+                            var overflowTop     = 2.0;
+                            var overflowH       = Math.Max(13, nextTime - (int)overflowTop);
+                            var overflowVisible = logicalOverflowCol >= 0 && logicalOverflowCol < _currentDays.Count;
+
+                            if (!overflowVisible)
+                            {
+                                if (_resizeGhostOverflow != null)
+                                {
+                                    DragOverlay.Children.Remove(_resizeGhostOverflow);
+                                    _resizeGhostOverflow = null;
+                                }
+                            }
+                            else if (_resizeGhostOverflow is null)
+                            {
+                                _resizeGhostOverflow = CreateGhostButton(_resizeEntry.Ev, overflowH, colW - 3.0);
+                                Canvas.SetLeft(_resizeGhostOverflow, logicalOverflowCol * colW + 1.0);
+                                Canvas.SetTop(_resizeGhostOverflow, overflowTop);
+                                DragOverlay.Children.Add(_resizeGhostOverflow);
+                            }
+                            else
+                            {
+                                _resizeGhostOverflow.Height = overflowH;
+                                Canvas.SetLeft(_resizeGhostOverflow, logicalOverflowCol * colW + 1.0);
+                                Canvas.SetTop(_resizeGhostOverflow, overflowTop);
+                            }
                         }
                     }
                 }
@@ -1056,7 +1080,7 @@ public partial class WeekView : UserControl
                     UpdateResizeGhostText(ghostH, newStartMin, extTextEnd);
 
                     // Серединные дни и хвост события за колонкой нового старта.
-                    if (hasLimits)
+                    if (hasLimits || CalendarSettings.MultiDayGrid)
                         UpdateSegGhosts(_resizeEntry.Ev, AtMinute(targetDate, newStartMin),
                             _resizeEntry.Ev.EndDt, logicalCol, colW);
                     if (_resizeGhostOverflow != null)
@@ -1148,7 +1172,7 @@ public partial class WeekView : UserControl
                     // Ghost-сегменты в остальных колонках: перетекший выше начала дня
                     // старт, серединные дни и неизменный хвост события — растягивание
                     // работает через несколько дней, все блоки видимы.
-                    if (hasLimits)
+                    if (hasLimits || CalendarSettings.MultiDayGrid)
                         UpdateSegGhosts(_resizeEntry.Ev, AtMinute(startTarget.Day, startTarget.Min),
                             _resizeEntry.Ev.EndDt, _resizeEntry.DayCol, colW);
                     if (_resizeGhostOverflow != null)
@@ -1185,6 +1209,19 @@ public partial class WeekView : UserControl
                         var textEnd = DateOnly.FromDateTime(_resizeEntry.Ev.EndDt) == resizeColDay
                             ? effectiveEndMin : actualEndMin;
                         UpdateResizeGhostText(ghostH, overflowStart, textEnd);
+                        if (_resizeGhostOverflow != null)
+                        {
+                            DragOverlay.Children.Remove(_resizeGhostOverflow);
+                            _resizeGhostOverflow = null;
+                        }
+                    }
+                    else if (CalendarSettings.MultiDayGrid)
+                    {
+                        // «Длинные события в сетке»: сегменты прочих колонок (старт в
+                        // ранней, серединные дни, хвост) — общая раскладка по суткам.
+                        var cStartDay = CalendarMath.DayAtCol(_currentDays, logicalOverflowCol, FiveDay);
+                        UpdateSegGhosts(_resizeEntry.Ev, AtMinute(cStartDay, overflowStart),
+                            _resizeEntry.Ev.EndDt, _resizeEntry.DayCol, colW);
                         if (_resizeGhostOverflow != null)
                         {
                             DragOverlay.Children.Remove(_resizeGhostOverflow);
@@ -1270,11 +1307,12 @@ public partial class WeekView : UserControl
             var borderLeft = col > 0 ? 1.0 : 0.0;
             Canvas.SetLeft(_dragGhost, col * colW + borderLeft);
 
-            if (CalendarMath.HasDayLimits(dragDayS, dragDayE))
+            if (CalendarMath.HasDayLimits(dragDayS, dragDayE) || CalendarSettings.MultiDayGrid)
             {
                 // Рабочие часы: позиция и хвост считаются по рабочей ленте — старт в
                 // «мертвой» зоне перетекает на соседний видимый день (соседнюю колонку),
-                // хвост за концом дня продолжается с начала следующего дня.
+                // хвост за концом дня продолжается с начала следующего дня. При «длинных
+                // событиях в сетке» лента (окно 0/1440 = сутки) рисует все сегменты.
                 var (shift, m) = CalendarMath.NormalizeDragStart(snapped, dragDayS, dragDayE);
                 var lastCol  = _currentDays.Count - 1;
                 var startCol = col + shift;
