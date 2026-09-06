@@ -13,7 +13,10 @@
 - Элемент списка: класс `EventListItem` (там же)
 - Виртуальный список: [CalendarDayVirtualList.cs](../../../../Views/ConstructorDb/Calendar/CalendarDayVirtualList.cs)
 - Данные: `ListViewCtrl.LoadFrom(sources, dayStart, dayEnd, currentDate, search)`; диапазон от
-  контроллера — один день, `sources` — список подключенных БД с активными коллекциями
+  контроллера — один день, `sources` — список подключенных БД с активными коллекциями.
+  При пятидневке (настройки календаря) навигация листает только рабочие дни — с пятницы
+  «Вперед» ведет на понедельник, выходная дата прижимается вперед в `RefreshCurrent`
+  (см. [overview.md](overview.md#настройки-календаря))
 - Запросы: `GetCalendarDayEventsByOffset` / `LoadCalendarDayPageAsync` / `CountCalendarDayEvents`
   в [ConstructorRepository.cs](../../../../Database/Repositories/ConstructorRepository.cs)
 

@@ -783,7 +783,7 @@
                                         VerticalAlignment="Center" Margin="0,0,32,0">
                                 <TextBlock Classes="title" Text="Дней в неделе" />
                                 <TextBlock Classes="desc"
-                                           Text="7 — обычная неделя. 5 — рабочая: виды «День» и «Неделя» показывают и листают только Пн–Пт, а перетягивание и растягивание событий перепрыгивает выходные во всех видах." />
+                                           Text="7 — обычная неделя. 5 — рабочая: «Расписание», «День» и «Неделя» листают только Пн–Пт, новые события не попадают на выходные, а перетягивание и растягивание перепрыгивает их во всех видах." />
                             </StackPanel>
                             <ComboBox Grid.Column="1" x:Name="CalendarDaysCombo"
                                       Width="240" Height="{StaticResource ControlHeightStandard}"

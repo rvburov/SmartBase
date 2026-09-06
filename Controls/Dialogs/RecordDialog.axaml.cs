@@ -3,9 +3,11 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Layout;
 using SmartBase.Controls.Widgets;
+using SmartBase.Core.Calendar;
 using SmartBase.Core.Models;
 using SmartBase.Core.Validators;
 using SmartBase.Database.Repositories;
+using SmartBase.Utils;
 
 namespace SmartBase.Controls.Dialogs;
 
@@ -31,10 +33,21 @@ public partial class RecordDialog : Window
     private int _selectedDbId;
     // Поля-даты выбранной коллекции (для списка «Дата события» при 2+ датах).
     private List<DbField> _eventDateFields = [];
-    // Конец по умолчанию — старт плюс «Длительность нового события» из настроек календаря.
-    private TimeSpan _savedStartTime = new(9, 0, 0);
-    private TimeSpan _savedEndTime   = new TimeSpan(9, 0, 0)
-        + TimeSpan.FromMinutes(SmartBase.Utils.CalendarSettings.NewEventDurationMinutes);
+    // Время нового события по умолчанию (создание без подсказки времени — «Расписание»,
+    // «Журнал», кнопка «+»): старт — начало рабочего дня из настроек календаря (без
+    // лимитов — 09:00), конец — плюс «Длительность нового события»; пара укладывается
+    // в рабочие часы.
+    private TimeSpan _savedStartTime = DefaultCreationStart();
+    private TimeSpan _savedEndTime   = DefaultCreationStart()
+        + TimeSpan.FromMinutes(CalendarSettings.NewEventDurationMinutes);
+
+    private static TimeSpan DefaultCreationStart()
+    {
+        var start = CalendarSettings.HasDayLimits ? CalendarSettings.DayStartMinutes : 9 * 60;
+        start = CalendarMath.ClampStartMin(start, CalendarSettings.NewEventDurationMinutes,
+            CalendarSettings.DayStartMinutes, CalendarSettings.DayEndMinutes);
+        return TimeSpan.FromMinutes(start);
+    }
 
     // ── Конструктор: схема-режим ──────────────────────────────────────────────
     public RecordDialog(ConstructorRepository repository, int collectionId, int? recordId = null)
@@ -126,7 +139,7 @@ public partial class RecordDialog : Window
         {
             _savedStartTime = presetTime.Value;
             _savedEndTime   = presetTime.Value
-                + TimeSpan.FromMinutes(SmartBase.Utils.CalendarSettings.NewEventDurationMinutes);
+                + TimeSpan.FromMinutes(CalendarSettings.NewEventDurationMinutes);
         }
         StartTimeField.Time = _savedStartTime;
         EndTimeField.Time   = _savedEndTime;

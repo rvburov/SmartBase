@@ -292,8 +292,9 @@ public partial class CalendarControllerView : UserControl
         var fiveDay = CalendarSettings.FiveDayWeek;
         switch (_currentViewIndex)
         {
-            // «Расписание» показывает выходные и при 5-дневке — обычный шаг в день.
-            case 0: _currentDate = _currentDate.AddDays(direction); break;
+            // «Расписание» и «День» при 5-дневке листают только рабочие дни:
+            // с пятницы «Вперед» — понедельник, с понедельника «Назад» — пятница.
+            case 0:
             case 2: _currentDate = direction > 0
                         ? CalendarMath.NextVisibleDay(_currentDate, fiveDay)
                         : CalendarMath.PrevVisibleDay(_currentDate, fiveDay); break;
@@ -316,9 +317,9 @@ public partial class CalendarControllerView : UserControl
         _renderedFontDelta      = FontScale.Delta;   // активный вид отрисован с текущим размером
         _renderedCalendarStamp  = CalendarSettings.Stamp;
 
-        // 5-дневка: выходная дата в «Дне»/«Неделе» невидима (пришла из «Месяца» или
-        // настройка сменилась на лету) — прижимаем вперед, к понедельнику.
-        if (CalendarSettings.FiveDayWeek && _currentViewIndex is 2 or 3
+        // 5-дневка: выходная дата в «Расписании»/«Дне»/«Неделе» невидима (пришла из
+        // «Месяца» или настройка сменилась на лету) — прижимаем вперед, к понедельнику.
+        if (CalendarSettings.FiveDayWeek && _currentViewIndex is 0 or 2 or 3
             && CalendarMath.IsWeekend(_currentDate))
             _currentDate = CalendarMath.NextVisibleDay(_currentDate, fiveDay: true);
 
@@ -695,13 +696,19 @@ public partial class CalendarControllerView : UserControl
         return $"{days[0]:d MMM} – {days[^1]:d MMM yyyy}";
     }
 
+    // 5-дневка: новые записи на выходные не попадают — предлагаемая дата создания
+    // прижимается вперед, к понедельнику (Журнал/Месяц/Год выходные показывают, но
+    // двойной клик по субботе предлагает рабочий день; руками в окне дату сменить можно).
+    private static DateTime SnapCreationDate(DateTime d) =>
+        CalendarMath.SnapToWorkday(d, +1, CalendarSettings.FiveDayWeek);
+
     private async Task OpenAddAllDayDialog(DateOnly date)
     {
         if (VisualRoot is not Avalonia.Controls.Window win || _dbs.Count == 0) return;
 
         // Выбор целевой БД встроен в само окно (показывается при нескольких БД).
         var dlg = new RecordDialog(_dbs, _dbs[0].DbId,
-                                   presetDate: date.ToDateTime(TimeOnly.MinValue),
+                                   presetDate: SnapCreationDate(date.ToDateTime(TimeOnly.MinValue)),
                                    presetAllDay: true);
         var result = await dlg.ShowDialog<RecordDialogResult?>(win);
         if (result?.Record is not null)
@@ -718,7 +725,8 @@ public partial class CalendarControllerView : UserControl
     {
         if (VisualRoot is not Avalonia.Controls.Window win || _dbs.Count == 0) return;
 
-        var dlg = new RecordDialog(_dbs, _dbs[0].DbId, presetDate: presetDate, presetTime: presetTime);
+        var dlg = new RecordDialog(_dbs, _dbs[0].DbId,
+                                   presetDate: SnapCreationDate(presetDate), presetTime: presetTime);
         var result = await dlg.ShowDialog<RecordDialogResult?>(win);
         if (result?.Record is not null)
         {

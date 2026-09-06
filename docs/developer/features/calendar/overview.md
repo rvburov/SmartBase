@@ -75,9 +75,12 @@ MVVM-слой (`CalendarControllerViewModel` и `*ViewModel`) с такой же
 [CalendarMath](../../../../Core/Calendar/CalendarMath.cs) (покрыты `Tests/Unit/CalendarMathTests`
 и `CalendarWorkHoursTests`):
 
-- **Дней в неделе 7/5** (`CalendarSettings.FiveDayWeek`). При пятидневке День/Неделя
-  показывают и листают только Пн–Пт (`Next/PrevVisibleDay`; выходная `_currentDate`
-  прижимается вперед в `RefreshCurrent`). Ключевой инвариант: дни окна НЕ непрерывны,
+- **Дней в неделе 7/5** (`CalendarSettings.FiveDayWeek`). При пятидневке Расписание/День/
+  Неделя листают только Пн–Пт (`Next/PrevVisibleDay`; выходная `_currentDate` прижимается
+  вперед в `RefreshCurrent`). Журнал/Месяц/Год выходные показывают, но новые записи на
+  них не попадают: `SnapCreationDate` в `OpenAddDialog`/`OpenAddAllDayDialog` прижимает
+  предлагаемую дату вперед к рабочему дню (руками в окне дату сменить можно). Ключевой
+  инвариант: дни окна НЕ непрерывны,
   поэтому все переводы «колонка → дата» в WeekView идут через `CalendarMath.DayAtCol`
   (за краями окна — экстраполяция видимыми днями: за пятницей — понедельник), а не через
   `AddDays` по индексу. Многодневные бары Месяца клипуются пятницей
@@ -94,7 +97,9 @@ MVVM-слой (`CalendarControllerViewModel` и `*ViewModel`) с такой же
   режим «с остановкой на „Сегодня“» держит флаг `_weekCentered` (окно `today−3..today+3`,
   в пятидневке — 2 рабочих дня вокруг), кнопка «Сегодня» в этом режиме тоже центрирует.
 - **Длительность нового события** (`NewEventDurationMinutes`) — конец по умолчанию в
-  `RecordDialog` и охват при создании из сетки.
+  `RecordDialog` и охват при создании из сетки. Создание без подсказки времени
+  (Расписание/Журнал/кнопка «+») стартует с начала рабочего дня из настроек
+  (`RecordDialog.DefaultCreationStart`; без лимитов — 09:00, как раньше).
 
 ### Создание / редактирование / удаление
 
