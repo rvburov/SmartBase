@@ -209,7 +209,8 @@ public static class CalendarMath
     /// <summary>
     /// Конец события при растягивании вниз: за концом дня продолжение «перепрыгивает»
     /// на начало следующего видимого дня (18:00 → 09:00 понедельника при 5-дневке),
-    /// излишек хода указателя переносится туда же. Ранний край не трогается —
+    /// излишек хода указателя переносится туда же; излишек больше рабочего окна
+    /// перетекает дальше — через несколько дней. Ранний край не трогается —
     /// его ограничивает минимум 30 минут на стороне вызывающего.
     /// </summary>
     public static (DateTime Day, int Min) ResizeEndTarget(DateTime day, int rawMin,
@@ -217,8 +218,14 @@ public static class CalendarMath
     {
         day = day.Date;
         if (!HasDayLimits(dayStartMin, dayEndMin) || rawMin <= dayEndMin) return (day, rawMin);
-        var overflow = rawMin - dayEndMin;
-        return (NextVisibleDay(day, fiveDay), Math.Min(dayStartMin + overflow, dayEndMin));
+        var window = Math.Max(1, dayEndMin - dayStartMin);
+        var m = rawMin;
+        while (m > dayEndMin)
+        {
+            day = NextVisibleDay(day, fiveDay);
+            m  -= window;
+        }
+        return (day, m);
     }
 
     /// <summary>
@@ -231,8 +238,14 @@ public static class CalendarMath
     {
         day = day.Date;
         if (!HasDayLimits(dayStartMin, dayEndMin) || rawMin >= dayStartMin) return (day, rawMin);
-        var underflow = dayStartMin - rawMin;
-        return (PrevVisibleDay(day, fiveDay), Math.Max(dayEndMin - underflow, dayStartMin));
+        var window = Math.Max(1, dayEndMin - dayStartMin);
+        var m = rawMin;
+        while (m < dayStartMin)
+        {
+            day = PrevVisibleDay(day, fiveDay);
+            m  += window;
+        }
+        return (day, m);
     }
 
     // ── Рабочая лента: drag и партиция сетки ──────────────────────────────────
@@ -311,6 +324,17 @@ public static class CalendarMath
     /// </summary>
     public static int VisibleDurationMinutes(DateTime startDt, DateTime endDt, bool fiveDay) =>
         WorkingLengthMinutes(startDt, endDt, 0, MinutesPerDay, fiveDay);
+
+    /// <summary>
+    /// Событие (не «весь день») отображается в часовой сетке, а не в полосе «весь день».
+    /// Без лимитов — прежний порог: видимая длительность меньше суток. С рабочими часами
+    /// событие любой длины остается в сетке: растягивание на несколько дней рисует блоки
+    /// по дням (серединные дни — полное рабочее окно), в полосу уходят только AllDay.
+    /// </summary>
+    public static bool FitsHourGrid(DateTime startDt, DateTime endDt,
+                                    int dayStartMin, int dayEndMin, bool fiveDay) =>
+        HasDayLimits(dayStartMin, dayEndMin)
+        || VisibleDurationMinutes(startDt, endDt, fiveDay) < MinutesPerDay;
 
     // ── Месяц: бары многодневных ──────────────────────────────────────────────
 

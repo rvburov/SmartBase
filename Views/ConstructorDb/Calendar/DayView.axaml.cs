@@ -197,11 +197,13 @@ public partial class DayView : UserControl
 
         var canvas  = new Canvas { Background = Brushes.Transparent };
         var dayDate = date;
-        // Порог «сетка или полоса „весь день"» — по видимой длительности (см. WeekView).
+        // Порог «сетка или полоса „весь день"» — FitsHourGrid (см. WeekView): с рабочими
+        // часами событие любой длины остается в сетке.
         var dayEvents = allEvents
             .Where(e => !e.AllDay
-                     && CalendarMath.VisibleDurationMinutes(e.StartDt, e.EndDt,
-                            CalendarSettings.FiveDayWeek) < 1440
+                     && CalendarMath.FitsHourGrid(e.StartDt, e.EndDt,
+                            CalendarSettings.DayStartMinutes, CalendarSettings.DayEndMinutes,
+                            CalendarSettings.FiveDayWeek)
                      && DateOnly.FromDateTime(e.StartDt) <= dayDate
                      && dayDate <= DateOnly.FromDateTime(e.EndDt)
                      && !(DateOnly.FromDateTime(e.EndDt) == dayDate
@@ -540,22 +542,34 @@ public partial class DayView : UserControl
             _isResizingEvent  = true;
 
             // Поправка «ручка на границе сегмента — не край события» (см. WeekView).
+            // Край может лежать не в соседнем, а в более дальнем дне — каждый
+            // промежуточный видимый день добавляет рабочее окно.
             _resizeVirtualOffset = 0;
             var limS = CalendarSettings.DayStartMinutes;
             var limE = CalendarSettings.DayEndMinutes;
             if (CalendarMath.HasDayLimits(limS, limE))
             {
+                var window  = Math.Max(15, limE - limS);
+                var fiveDay = CalendarSettings.FiveDayWeek;
                 var segDate = DateOnly.FromDateTime(_currentDays[0]);
                 if (onBottomEdge && DateOnly.FromDateTime(entry.Ev.EndDt) > segDate)
                 {
                     var endMin = entry.Ev.EndDt.Hour * 60 + entry.Ev.EndDt.Minute;
                     _resizeVirtualOffset = Math.Clamp(endMin, limS, limE) - limS;
+                    for (var d = CalendarMath.NextVisibleDay(_currentDays[0], fiveDay);
+                         DateOnly.FromDateTime(d) < DateOnly.FromDateTime(entry.Ev.EndDt);
+                         d = CalendarMath.NextVisibleDay(d, fiveDay))
+                        _resizeVirtualOffset += window;
                 }
                 else if (onTopEdge && !onBottomEdge
                          && DateOnly.FromDateTime(entry.Ev.StartDt) < segDate)
                 {
                     var startMin = entry.Ev.StartDt.Hour * 60 + entry.Ev.StartDt.Minute;
                     _resizeVirtualOffset = -(limE - Math.Clamp(startMin, limS, limE));
+                    for (var d = CalendarMath.PrevVisibleDay(_currentDays[0], fiveDay);
+                         DateOnly.FromDateTime(d) > DateOnly.FromDateTime(entry.Ev.StartDt);
+                         d = CalendarMath.PrevVisibleDay(d, fiveDay))
+                        _resizeVirtualOffset -= window;
                 }
             }
 
@@ -962,11 +976,25 @@ public partial class DayView : UserControl
                 if (((!hasLimits && rawY < 0) || (hasLimits && rawYeff <= dayS)) && startIsPrevDay)
                 {
                     // Конец ушел выше начала рабочего дня (или верха сетки) — перетекает
-                    // на конец предыдущего видимого дня, не выходя за его рабочие часы.
+                    // на конец предыдущего видимого дня, не выходя за его рабочие часы;
+                    // ход по ленте может перетечь назад через несколько дней (не раньше
+                    // дня старта — дальше конец держит минимум 30 минут).
                     var prevDay = PrevDay(_currentDays[0]);
                     var baseT   = hasLimits ? dayE - (dayS - rawYeff) : 1440 + rawY;
-                    var targetT = Math.Clamp(baseT, actualStartMin + 30,
-                        CalendarMath.EffectiveDayEnd(actualStartMin, dayE));
+                    if (hasLimits)
+                    {
+                        var window  = Math.Max(15, dayE - dayS);
+                        var startDo = DateOnly.FromDateTime(ev.StartDt);
+                        while (baseT <= dayS && DateOnly.FromDateTime(prevDay) > startDo)
+                        {
+                            prevDay = PrevDay(prevDay);
+                            baseT  += window;
+                        }
+                    }
+                    var endIsStartDay = DateOnly.FromDateTime(prevDay) == DateOnly.FromDateTime(ev.StartDt);
+                    var targetT = Math.Clamp(baseT,
+                        endIsStartDay ? actualStartMin + 30 : 30,
+                        CalendarMath.EffectiveDayEnd(endIsStartDay ? actualStartMin : 0, dayE));
                     ev.EndDt = targetT >= 1440
                         ? prevDay.Date.AddDays(1)
                         : new DateTime(prevDay.Year, prevDay.Month, prevDay.Day, targetT / 60, targetT % 60, 0);

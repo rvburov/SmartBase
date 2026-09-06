@@ -81,12 +81,24 @@ public sealed class CalendarWorkHoursTests
     }
 
     [Fact]
-    public void ResizeEnd_overflow_is_capped_by_next_day_end()
+    public void ResizeEnd_overflow_bigger_than_window_flows_across_days()
     {
-        // Излишек больше рабочего окна — конец не выпрыгивает за конец следующего дня.
+        // Излишек больше рабочего окна перетекает дальше — растягивание работает
+        // через несколько дней. Окно 17:00–18:00 (1 час), указатель на низу сетки:
+        // 6 часов излишка = 6 рабочих дней вперед, конец в конце окна.
         var (day, min) = CalendarMath.ResizeEndTarget(Fri, 1440, 17 * 60, DayEnd, fiveDay: true);
-        Assert.Equal(Mon.AddDays(7), day);
+        Assert.Equal(Mon.AddDays(14), day);
         Assert.Equal(DayEnd, min);
+    }
+
+    [Fact]
+    public void ResizeEnd_far_overflow_flows_two_days()
+    {
+        // Окно 09:00–18:00, ход с виртуальной поправкой ниже низа сетки (29:00):
+        // Пн 18:00 → Вт (окно целиком) → Ср 11:00.
+        var (day, min) = CalendarMath.ResizeEndTarget(Mon, 29 * 60, DayStart, DayEnd, fiveDay: true);
+        Assert.Equal(Mon.AddDays(2), day);
+        Assert.Equal(11 * 60, min);
     }
 
     [Fact]
@@ -112,10 +124,12 @@ public sealed class CalendarWorkHoursTests
     }
 
     [Fact]
-    public void ResizeStart_underflow_is_capped_by_prev_day_start()
+    public void ResizeStart_underflow_bigger_than_window_flows_across_days()
     {
+        // Окно 09:00–10:00 (1 час), указатель на верху сетки (00:00): 9 часов
+        // недолета = 9 рабочих дней назад, старт в начале окна.
         var (day, min) = CalendarMath.ResizeStartTarget(Mon, 0, DayStart, 10 * 60, fiveDay: true);
-        Assert.Equal(Fri.AddDays(-7), day);
+        Assert.Equal(Mon.AddDays(-13), day);
         Assert.Equal(DayStart, min);
     }
 
@@ -125,6 +139,29 @@ public sealed class CalendarWorkHoursTests
         // Старт позже конца дня (событие вне часов, 20:00) — не трогаем: верхнюю границу
         // держит минимум 30 минут (start <= end - 30) на стороне вызывающего.
         Assert.Equal((Mon, 20 * 60), CalendarMath.ResizeStartTarget(Mon, 20 * 60, DayStart, DayEnd, true));
+    }
+
+    // ── Партиция «сетка / полоса „весь день"» ─────────────────────────────────
+
+    [Fact]
+    public void FitsHourGrid_no_limits_keeps_legacy_24h_threshold()
+    {
+        Assert.True(CalendarMath.FitsHourGrid(Mon.AddHours(10), Mon.AddHours(33), 0, 1440, false));
+        Assert.False(CalendarMath.FitsHourGrid(Mon.AddHours(10), Mon.AddHours(35), 0, 1440, false));
+        // 5-дневка: выходные не считаются — Пт 23:00 – Пн 01:00 остается в сетке.
+        Assert.True(CalendarMath.FitsHourGrid(
+            Fri.AddHours(23), Mon.AddDays(7).AddHours(1), 0, 1440, true));
+    }
+
+    [Fact]
+    public void FitsHourGrid_with_limits_any_length_stays_in_grid()
+    {
+        // Рабочие часы: растягивание на несколько дней рисует блоки по дням —
+        // событие не уходит в полосу «весь день» независимо от длины.
+        Assert.True(CalendarMath.FitsHourGrid(
+            Mon.AddHours(11), Mon.AddDays(4).AddHours(10), DayStart, DayEnd, false));
+        Assert.True(CalendarMath.FitsHourGrid(
+            Mon.AddHours(11), Mon.AddDays(14), DayStart, DayEnd, true));
     }
 
     // ── Совместимость лимитов с минимумом 30 минут ────────────────────────────
