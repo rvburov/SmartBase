@@ -82,6 +82,7 @@ public partial class YearView : UserControl
         // событие на три года иначе крутило бы тысячу дней, из которых нужны 365.
         var yearStart   = new DateTime(year, 1, 1);
         var yearEnd     = new DateTime(year, 12, 31);
+        var fiveDay     = CalendarSettings.FiveDayWeek;
         var eventCounts = new Dictionary<DateTime, int>();
         var received    = new Dictionary<DateTime, int>();   // доставлено по дню СТАРТА
         foreach (var e in _events)
@@ -89,19 +90,20 @@ public partial class YearView : UserControl
             received[e.StartDt.Date] = received.GetValueOrDefault(e.StartDt.Date) + 1;
             var from = e.StartDt.Date < yearStart ? yearStart : e.StartDt.Date;
             var to   = e.EndDt.Date   > yearEnd   ? yearEnd   : e.EndDt.Date;
-            var skipWeekends = CalendarSettings.FiveDayWeek && e.EndDt.Date > e.StartDt.Date;
             foreach (var d in EachDay(from, to))
             {
-                // 5-дневка: многодневное событие обходит выходные (счетчики и подсветка);
-                // однодневное выходного дня остается — в Годе выходные видимы.
-                if (skipWeekends && CalendarMath.IsWeekend(d)) continue;
+                // 5-дневка: выходные не подсвечиваются совсем — ни диапазонами
+                // многодневных, ни однодневными записями выходного дня (сами записи
+                // остаются доступны кликом по числу — попап дня их показывает).
+                if (fiveDay && CalendarMath.IsWeekend(d)) continue;
                 eventCounts[d] = eventCounts.GetValueOrDefault(d) + 1;
             }
         }
         if (dayTotals is not null)
             foreach (var (d, total) in dayTotals)
             {
-                var key   = d.ToDateTime(TimeOnly.MinValue);
+                var key = d.ToDateTime(TimeOnly.MinValue);
+                if (fiveDay && CalendarMath.IsWeekend(key)) continue;
                 var extra = total - received.GetValueOrDefault(key);
                 if (extra > 0) eventCounts[key] = eventCounts.GetValueOrDefault(key) + extra;
             }

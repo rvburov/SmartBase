@@ -5,6 +5,7 @@ using Avalonia.Interactivity;
 using Avalonia.Media;
 using Avalonia.Threading;
 using SmartBase.Controls.Components;
+using SmartBase.Core.Calendar;
 using SmartBase.Core.Models;
 using SmartBase.Utils;
 using SmartBase.Controls.Behaviors;
@@ -1360,17 +1361,28 @@ public partial class DiagramView : UserControl
 
     private static string RuDuration(DateTime start, DateTime end, bool allDay)
     {
+        // 5-дневка: суббота и воскресенье в расчет дней и часов не идут (Пт–Пн
+        // «весь день» — 2 дня, Пт 23:00 – Пн 01:00 — 2 часа). Сами полосы и ось
+        // дней не меняются — выходные на диаграмме видимы. Охват целиком из
+        // выходных считается как есть, иначе подпись была бы пустой.
+        var fiveDay = CalendarSettings.FiveDayWeek;
         if (allDay)
         {
-            var days = (end.Date - start.Date).Days + 1;
+            var days = 0;
+            if (fiveDay)
+                for (var wd = start.Date; wd <= end.Date; wd = wd.AddDays(1))
+                    if (!CalendarMath.IsWeekend(wd)) days++;
+            if (!fiveDay || days == 0) days = (end.Date - start.Date).Days + 1;
             return days <= 1 ? "24 часа" : $"{days} {Plural(days, "день", "дня", "дней")}";
         }
 
-        var ts = end - start;
-        if (ts <= TimeSpan.Zero) return "";
-        var d = (int)ts.TotalDays;
-        var h = ts.Hours;
-        var m = ts.Minutes;
+        var totalMin = fiveDay
+            ? CalendarMath.VisibleDurationMinutes(start, end, true)
+            : (int)(end - start).TotalMinutes;
+        if (totalMin <= 0) return "";
+        var d = totalMin / 1440;
+        var h = totalMin % 1440 / 60;
+        var m = totalMin % 60;
         var parts = new List<string>(3);
         if (d > 0) parts.Add($"{d} {Plural(d, "день", "дня", "дней")}");
         if (h > 0) parts.Add($"{h} {Plural(h, "час", "часа", "часов")}");
