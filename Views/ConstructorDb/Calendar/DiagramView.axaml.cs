@@ -1111,18 +1111,29 @@ public partial class DiagramView : UserControl
             foreach (var v in _pressEntry.Visuals) v.IsVisible = false;
         }
 
+        // 5-дневка: край растягивания и старт переноса на Сб/Вс не встают —
+        // перепрыгивают по направлению жеста (за пятницу — понедельник, назад —
+        // пятница). Направление считается от ИСХОДНОГО положения (стабильно в
+        // течение жеста). Полосы через выходные при этом не обрезаются, событие
+        // с исходным краем на выходном без движения не трогается (direction 0).
+        var fiveDay = CalendarSettings.FiveDayWeek;
         if (_resizeLeft || _resizeRight)
         {
             var dayIdx = Math.Clamp((int)(p.X / dayW), 0, _rangeDays - 1);
+            var day    = _rangeStart.AddDays(dayIdx);
             if (_resizeRight)
             {
+                if (fiveDay)
+                    day = CalendarMath.SnapToWorkday(day, Math.Sign((day - _origEnd.Date).Ticks), true);
                 // Новый день конца + исходное время суток; конец не раньше начала.
-                var candidate = _rangeStart.AddDays(dayIdx) + _origEnd.TimeOfDay;
+                var candidate = day + _origEnd.TimeOfDay;
                 if (candidate > _newStart) _newEnd = candidate;
             }
             else
             {
-                var candidate = _rangeStart.AddDays(dayIdx) + _origStart.TimeOfDay;
+                if (fiveDay)
+                    day = CalendarMath.SnapToWorkday(day, Math.Sign((day - _origStart.Date).Ticks), true);
+                var candidate = day + _origStart.TimeOfDay;
                 if (candidate < _newEnd) _newStart = candidate;
             }
         }
@@ -1136,6 +1147,13 @@ public partial class DiagramView : UserControl
             delta       = Math.Clamp(delta, minD, maxD);
             _newStart   = _origStart.AddDays(delta);
             _newEnd     = _origEnd.AddDays(delta);
+            if (fiveDay && delta != 0)
+            {
+                var snapped = CalendarMath.SnapToWorkday(_newStart, Math.Sign(delta), true);
+                var extra   = (snapped - _newStart.Date).Days;
+                _newStart   = _newStart.AddDays(extra);
+                _newEnd     = _newEnd.AddDays(extra);
+            }
         }
 
         DragOverlay.Children.Clear();
