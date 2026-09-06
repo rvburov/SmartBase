@@ -1066,6 +1066,7 @@ public partial class SettingsView : UserControl
         AppearancePanel.IsVisible = key == "appearance";
         DatabasePanel.IsVisible   = key == "database";
         BackupPanel.IsVisible     = key == "backup";
+        CalendarPanel.IsVisible   = key == "calendar";
         ExtensionsPanel.IsVisible = key == "extensions";
         GuidePanel.IsVisible      = key == "guide";
         NotesPanel.IsVisible      = key == "notes";
@@ -1087,6 +1088,7 @@ public partial class SettingsView : UserControl
         if (key == "guide")      BuildGuide();
         if (key == "extensions") BuildExtensionsPanel();
         if (key == "backup")     RebuildBackupPanel();
+        if (key == "calendar")   RebuildCalendarPanel();
     }
 
     // ── Управление базой данных ──────────────────────────────────────────────

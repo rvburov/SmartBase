@@ -342,22 +342,8 @@
                     </Border>
                     <Border Classes="separator h" />
 
-                    <Border Classes="settingRow">
-                        <Grid ColumnDefinitions="*,Auto">
-                            <StackPanel Grid.Column="0" Spacing="4"
-                                        VerticalAlignment="Center" Margin="0,0,32,0">
-                                <TextBlock Classes="title" Text="Отображение по умолчанию раздела календаря" />
-                                <TextBlock Classes="desc"
-                                           Text="Какой вид календаря открывается при переходе в раздел." />
-                            </StackPanel>
-                            <ComboBox Grid.Column="1" x:Name="CalendarViewCombo"
-                                      Width="240" Height="{StaticResource ControlHeightStandard}"
-                                      VerticalAlignment="Center"
-                                      Background="{StaticResource BrushSecondaryBg}"
-                                      CornerRadius="{StaticResource RadiusBase}" />
-                        </Grid>
-                    </Border>
-                    <Border Classes="separator h" />
+                    <!-- Строки календаря (стартовый вид, видимость видов) переехали в раздел
+                         «Календарь» — CalendarPanel ниже; механизм InitAppearance общий. -->
 
                     <Border Classes="settingRow">
                         <Grid ColumnDefinitions="*,Auto">
@@ -407,20 +393,6 @@
                                            Text="Какие разделы показывать в панели навигации слева. «Настройки» и «Профиль» скрыть нельзя." />
                             </StackPanel>
                             <w:CheckListDropdown Grid.Column="1" x:Name="NavigationVisibility"
-                                                 Width="240" VerticalAlignment="Center" />
-                        </Grid>
-                    </Border>
-                    <Border Classes="separator h" />
-
-                    <Border Classes="settingRow">
-                        <Grid ColumnDefinitions="*,Auto">
-                            <StackPanel Grid.Column="0" Spacing="4"
-                                        VerticalAlignment="Center" Margin="0,0,32,0">
-                                <TextBlock Classes="title" Text="Отображение раздела календаря" />
-                                <TextBlock Classes="desc"
-                                           Text="Какие виды календаря показывать в переключателе навбара." />
-                            </StackPanel>
-                            <w:CheckListDropdown Grid.Column="1" x:Name="CalendarVisibility"
                                                  Width="240" VerticalAlignment="Center" />
                         </Grid>
                     </Border>
@@ -757,6 +729,135 @@
 
                     <!-- Базы с расписаниями: строки строит code-behind -->
                     <StackPanel x:Name="BackupList" />
+
+                    </StackPanel>
+                </Grid>
+            </ScrollViewer>
+
+            <!-- ── Календарь ─────────────────────────────────────── -->
+            <!-- Все настройки раздела «Календарь» в одном месте: строки стартового вида и
+                 видимости видов переехали из «Оформления» (контролы те же, проводка —
+                 общий InitAppearance), остальное наполняет SettingsCalendarPanel. -->
+            <ScrollViewer x:Name="CalendarPanel" IsVisible="False"
+                          VerticalScrollBarVisibility="Auto">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Margin="16,0,16,32">
+
+                    <Border Classes="settingRow">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <StackPanel Grid.Column="0" Spacing="4"
+                                        VerticalAlignment="Center" Margin="0,0,32,0">
+                                <TextBlock Classes="title" Text="Отображение по умолчанию" />
+                                <TextBlock Classes="desc"
+                                           Text="Какой вид календаря открывается при переходе в раздел." />
+                            </StackPanel>
+                            <ComboBox Grid.Column="1" x:Name="CalendarViewCombo"
+                                      Width="240" Height="{StaticResource ControlHeightStandard}"
+                                      VerticalAlignment="Center"
+                                      Background="{StaticResource BrushSecondaryBg}"
+                                      CornerRadius="{StaticResource RadiusBase}" />
+                        </Grid>
+                    </Border>
+                    <Border Classes="separator h" />
+
+                    <Border Classes="settingRow">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <StackPanel Grid.Column="0" Spacing="4"
+                                        VerticalAlignment="Center" Margin="0,0,32,0">
+                                <TextBlock Classes="title" Text="Отображаемые виды" />
+                                <TextBlock Classes="desc"
+                                           Text="Какие виды календаря показывать в переключателе навбара." />
+                            </StackPanel>
+                            <w:CheckListDropdown Grid.Column="1" x:Name="CalendarVisibility"
+                                                 Width="240" VerticalAlignment="Center" />
+                        </Grid>
+                    </Border>
+                    <Border Classes="separator h" />
+
+                    <Border Classes="settingRow">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <StackPanel Grid.Column="0" Spacing="4"
+                                        VerticalAlignment="Center" Margin="0,0,32,0">
+                                <TextBlock Classes="title" Text="Дней в неделе" />
+                                <TextBlock Classes="desc"
+                                           Text="7 — обычная неделя. 5 — рабочая: виды «День» и «Неделя» показывают и листают только Пн–Пт, а перетягивание и растягивание событий перепрыгивает выходные во всех видах." />
+                            </StackPanel>
+                            <ComboBox Grid.Column="1" x:Name="CalendarDaysCombo"
+                                      Width="240" Height="{StaticResource ControlHeightStandard}"
+                                      VerticalAlignment="Center"
+                                      Background="{StaticResource BrushSecondaryBg}"
+                                      CornerRadius="{StaticResource RadiusBase}"
+                                      SelectionChanged="OnCalendarDaysChanged" />
+                        </Grid>
+                    </Border>
+                    <Border Classes="separator h" />
+
+                    <Border Classes="settingRow">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <StackPanel Grid.Column="0" Spacing="4"
+                                        VerticalAlignment="Center" Margin="0,0,32,0">
+                                <TextBlock Classes="title" Text="День начинается в" />
+                                <TextBlock Classes="desc"
+                                           Text="Начало рабочих часов: перетягивание, растягивание и создание событий укладываются в период от начала до конца дня. Шкала часов при этом показывается целиком, события вне периода остаются на своих местах." />
+                            </StackPanel>
+                            <w:TimeField Grid.Column="1" x:Name="CalendarDayStartField"
+                                         Width="96" VerticalAlignment="Center" />
+                        </Grid>
+                    </Border>
+                    <Border Classes="separator h" />
+
+                    <Border Classes="settingRow">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <StackPanel Grid.Column="0" Spacing="4"
+                                        VerticalAlignment="Center" Margin="0,0,32,0">
+                                <TextBlock Classes="title" Text="День заканчивается в" />
+                                <TextBlock Classes="desc"
+                                           Text="Конец рабочих часов: растягивание события за эту границу продолжается с начала следующего дня. 00:00 в обоих полях — без ограничений." />
+                            </StackPanel>
+                            <w:TimeField Grid.Column="1" x:Name="CalendarDayEndField"
+                                         Width="96" VerticalAlignment="Center" />
+                        </Grid>
+                    </Border>
+                    <Border Classes="separator h" />
+
+                    <Border Classes="settingRow">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <StackPanel Grid.Column="0" Spacing="4"
+                                        VerticalAlignment="Center" Margin="0,0,32,0">
+                                <TextBlock Classes="title" Text="Прокрутка в неделе" />
+                                <TextBlock Classes="desc"
+                                           Text="Как листает вид «Неделя»: по целой неделе, по одному дню или по неделе с остановкой на «Сегодня» — сегодняшний день встает посередине." />
+                            </StackPanel>
+                            <ComboBox Grid.Column="1" x:Name="CalendarWeekScrollCombo"
+                                      Width="240" Height="{StaticResource ControlHeightStandard}"
+                                      VerticalAlignment="Center"
+                                      Background="{StaticResource BrushSecondaryBg}"
+                                      CornerRadius="{StaticResource RadiusBase}"
+                                      SelectionChanged="OnCalendarWeekScrollChanged" />
+                        </Grid>
+                    </Border>
+                    <Border Classes="separator h" />
+
+                    <Border Classes="settingRow">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <StackPanel Grid.Column="0" Spacing="4"
+                                        VerticalAlignment="Center" Margin="0,0,32,0">
+                                <TextBlock Classes="title" Text="Длительность нового события" />
+                                <TextBlock Classes="desc"
+                                           Text="Сколько длится событие, созданное из сетки календаря, пока длительность не поменяли вручную." />
+                            </StackPanel>
+                            <ComboBox Grid.Column="1" x:Name="CalendarDurationCombo"
+                                      Width="240" Height="{StaticResource ControlHeightStandard}"
+                                      VerticalAlignment="Center"
+                                      Background="{StaticResource BrushSecondaryBg}"
+                                      CornerRadius="{StaticResource RadiusBase}"
+                                      SelectionChanged="OnCalendarDurationChanged" />
+                        </Grid>
+                    </Border>
+                    <Border Classes="separator h" />
 
                     </StackPanel>
                 </Grid>

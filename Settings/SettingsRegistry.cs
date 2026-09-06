@@ -17,6 +17,7 @@ public static class SettingsRegistry
         new("appearance", "Оформление",                "IconSun"),
         new("database",   "Управление базой данных",   "IconDatabase"),
         new("backup",     "Резервное копирование",     "IconArchive"),
+        new("calendar",   "Календарь",                 "IconCalendarDate"),
         new("notes",      "Заметки",                   "IconNotebook"),
         new("extensions", "Расширения",                "IconBlocks"),
         new("guide",      "Инструкция пользователя",   "IconBook"),
