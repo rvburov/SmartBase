@@ -1197,9 +1197,11 @@ public partial class WeekView : UserControl
                 var startCol = col + shift;
                 var seg1H    = Math.Min(duration, dragDayE - m) - 2;
 
-                // Основной ghost — колонка старта; за правым краем сигналим в последней.
-                var mainCol = Math.Min(startCol, lastCol);
-                if (mainCol >= 0 && seg1H >= 11)
+                // Основной ghost — только в колонке старта; если старт перетек за
+                // последнюю видимую колонку (следующий день вне экрана) — сверху той же
+                // колонки ничего не рисуем, перенос виден после отпускания.
+                var mainCol = startCol;
+                if (mainCol >= 0 && mainCol <= lastCol && seg1H >= 11)
                 {
                     var mainBorder = mainCol > 0 ? 1.0 : 0.0;
                     Canvas.SetLeft(_dragGhost, mainCol * colW + mainBorder);
@@ -1330,14 +1332,9 @@ public partial class WeekView : UserControl
             }
             else if (snapped >= 1440 && col == _currentDays.Count - 1)
             {
-                // Воскресенье → следующий понедельник: col+1 вне экрана,
-                // показываем ghost сверху той же колонки чтобы сигнализировать переход
-                var nextDayMin = Math.Clamp(snapped - 1440, 0, 1425);
-                Canvas.SetLeft(_dragGhost, col * colW + borderLeft);
-                Canvas.SetTop(_dragGhost, nextDayMin);
-                _dragGhost.Height    = Math.Max(13, Math.Min(duration, 1440 - nextDayMin) - 2);
-                _dragGhost.IsVisible = true;
-                UpdateDragGhostText(_dragGhost.Height, nextDayMin, nextDayMin + duration);
+                // Воскресенье → следующий понедельник: col+1 вне экрана — ghost скрываем,
+                // сверху той же колонки ничего не рисуем (перенос виден после отпускания).
+                _dragGhost.IsVisible = false;
                 if (_dragGhostOverflow != null)
                 {
                     DragOverlay.Children.Remove(_dragGhostOverflow);

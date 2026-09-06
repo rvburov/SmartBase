@@ -904,10 +904,16 @@ public partial class DayView : UserControl
                 }
                 else _dragGhost.IsVisible = false;
             }
+            else if (shift > 0)
+            {
+                // Событие целиком перетекло в следующий день (вне экрана) — ghost
+                // скрываем, сверху того же дня ничего не рисуем (перенос виден
+                // после отпускания).
+                _dragGhost.IsVisible = false;
+            }
             else
             {
-                // shift 0 — обычное положение (хвост за концом дня уходит за экран);
-                // shift +1 — событие целиком в следующем дне, ghost сигналит на его месте.
+                // shift 0 — обычное положение (хвост за концом дня уходит за экран).
                 var visH = Math.Min(duration, dayE - m) - 2;
                 if (m + duration > dayE && visH < 13)
                 {
