@@ -3,6 +3,7 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Media;
+using SmartBase.Core.Calendar;
 using SmartBase.Core.Models;
 using SmartBase.Utils;
 using SmartBase.Controls.Behaviors;
@@ -184,6 +185,15 @@ public partial class MonthView : UserControl
         {
             int sc  = Math.Max(0, (int)(ev.StartDt.Date - weekStart.Date).TotalDays);
             int ec  = Math.Min(6, (int)(ev.EndDt.Date   - weekStart.Date).TotalDays);
+            // 5-дневка: бары обходят выходные — сегмент клипуется пятницей, сегмент
+            // целиком в Сб/Вс в этой неделе не рисуется (бар Пт–Пн распадается на
+            // пятницу этой недели и понедельник следующей сам собой).
+            if (CalendarSettings.FiveDayWeek)
+            {
+                var clip = CalendarMath.ClipSpanToWorkdays(sc, ec, fiveDay: true);
+                if (clip is null) continue;
+                (sc, ec) = clip.Value;
+            }
             int row = rowEnds.Count;
             for (int r = 0; r < rowEnds.Count; r++)
             {
@@ -202,6 +212,8 @@ public partial class MonthView : UserControl
     private HashSet<int> _SpanRowsForDay(DateTime d, Dictionary<int, LayoutEntry> layout)
     {
         var rows = new HashSet<int>();
+        // 5-дневка: в выходных ячейках баров нет — все строки свободны для чипов.
+        if (CalendarSettings.FiveDayWeek && CalendarMath.IsWeekend(d)) return rows;
         foreach (var e in _events)
         {
             if (!(e.AllDay || e.EndDt.Date > e.StartDt.Date)) continue;
@@ -306,6 +318,10 @@ public partial class MonthView : UserControl
                 var (rowIdx, sc, ec) = layout[ev.Id.Value];
                 var leftCap  = ev.StartDt.Date >= weekStart;
                 var rightCap = ev.EndDt.Date   <= weekEnd;
+                // 5-дневка: бар обрезан пятницей, а событие продолжается дальше —
+                // конец рисуем открытым (без скругления), как продолжение за неделю.
+                if (CalendarSettings.FiveDayWeek && ev.EndDt.Date > weekStart.AddDays(ec))
+                    rightCap = false;
                 var barY     = wrow * ch + DateH + rowIdx * BarStep;
 
                 // Не влезает — учитываем в счетчике скрытых
@@ -933,8 +949,12 @@ public partial class MonthView : UserControl
         }
         var target = _DayAtPos(pos);
         if (!target.HasValue) return;
-        var changed = target.Value.Date != _dragTargetDay;
-        if (changed) _dragTargetDay = target.Value.Date;
+        // 5-дневка: сброс на выходной прижимается к ближайшему рабочему дню по
+        // направлению перетаскивания (ghost сразу встает на прижатый день).
+        var targetDay = CalendarMath.SnapToWorkday(target.Value.Date,
+            Math.Sign((target.Value.Date - _dragSourceDay).Days), CalendarSettings.FiveDayWeek);
+        var changed = targetDay != _dragTargetDay;
+        if (changed) _dragTargetDay = targetDay;
 
         // Счетчик исходного дня: пока событие уведено в другой день — там одним
         // меньше; вернулось на место — счетчик восстанавливаем.

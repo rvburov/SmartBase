@@ -4,7 +4,9 @@ using Avalonia.Controls.Primitives;
 using Avalonia.Layout;
 using Avalonia.Media;
 using CommunityToolkit.Mvvm.Input;
+using SmartBase.Core.Calendar;
 using SmartBase.Core.Models;
+using SmartBase.Utils;
 using System.Windows.Input;
 
 namespace SmartBase.Views.ConstructorDb.Calendar;
@@ -87,8 +89,14 @@ public partial class YearView : UserControl
             received[e.StartDt.Date] = received.GetValueOrDefault(e.StartDt.Date) + 1;
             var from = e.StartDt.Date < yearStart ? yearStart : e.StartDt.Date;
             var to   = e.EndDt.Date   > yearEnd   ? yearEnd   : e.EndDt.Date;
+            var skipWeekends = CalendarSettings.FiveDayWeek && e.EndDt.Date > e.StartDt.Date;
             foreach (var d in EachDay(from, to))
+            {
+                // 5-дневка: многодневное событие обходит выходные (счетчики и подсветка);
+                // однодневное выходного дня остается — в Годе выходные видимы.
+                if (skipWeekends && CalendarMath.IsWeekend(d)) continue;
                 eventCounts[d] = eventCounts.GetValueOrDefault(d) + 1;
+            }
         }
         if (dayTotals is not null)
             foreach (var (d, total) in dayTotals)
