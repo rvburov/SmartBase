@@ -226,6 +226,95 @@ public static class AppSettings
         else                              _store?.Set(KeyCalendarView, index.ToString(CultureInfo.InvariantCulture));
     }
 
+    // ── Настройки календаря ──────────────────────────────────────────────────────
+    //
+    // Раздел настроек «Календарь». Живой доступ с кэшем и событием изменения —
+    // CalendarSettings (по образцу FontScale); здесь только хранение дельт.
+    // Дней в неделе: 7 (Пн-Вс) или 5 (Пн-Пт) — влияет на виды «День» и «Неделя»
+    // и на перетягивание/растягивание событий через выходные.
+    public const int CalendarDaysInWeekDefault = 7;
+
+    public static int LoadCalendarDaysInWeek()
+    {
+        if (int.TryParse(_store?.Get(KeyCalendarDaysInWeek), NumberStyles.Integer, CultureInfo.InvariantCulture, out var v)
+            && v is 5 or 7)
+            return v;
+        return CalendarDaysInWeekDefault;
+    }
+
+    public static void SaveCalendarDaysInWeek(int days)
+    {
+        if (days == CalendarDaysInWeekDefault) _store?.Remove(KeyCalendarDaysInWeek);
+        else _store?.Set(KeyCalendarDaysInWeek, days.ToString(CultureInfo.InvariantCulture));
+    }
+
+    // Рабочие часы дня в минутах от полуночи. Стандарт 0/1440 — «без ограничений»:
+    // перетягивание, растягивание и создание событий работают как раньше.
+    // Кросс-инвариант start + 60 <= end проверяет CalendarSettings, не Load*.
+    public const int CalendarDayStartDefault = 0;
+    public const int CalendarDayEndDefault   = 1440;
+
+    public static int LoadCalendarDayStart()
+    {
+        if (int.TryParse(_store?.Get(KeyCalendarDayStart), NumberStyles.Integer, CultureInfo.InvariantCulture, out var v)
+            && v is >= 0 and <= 1425)
+            return v;
+        return CalendarDayStartDefault;
+    }
+
+    public static void SaveCalendarDayStart(int minutes)
+    {
+        if (minutes == CalendarDayStartDefault) _store?.Remove(KeyCalendarDayStart);
+        else _store?.Set(KeyCalendarDayStart, minutes.ToString(CultureInfo.InvariantCulture));
+    }
+
+    public static int LoadCalendarDayEnd()
+    {
+        if (int.TryParse(_store?.Get(KeyCalendarDayEnd), NumberStyles.Integer, CultureInfo.InvariantCulture, out var v)
+            && v is >= 15 and <= 1440)
+            return v;
+        return CalendarDayEndDefault;
+    }
+
+    public static void SaveCalendarDayEnd(int minutes)
+    {
+        if (minutes == CalendarDayEndDefault) _store?.Remove(KeyCalendarDayEnd);
+        else _store?.Set(KeyCalendarDayEnd, minutes.ToString(CultureInfo.InvariantCulture));
+    }
+
+    // Прокрутка вида «Неделя» кнопками Назад/Вперед: по неделе (стандарт), по дню,
+    // по неделе с остановкой на «Сегодня» (сегодня посередине окна).
+    public const string CalendarWeekScrollDefault = "week";
+
+    public static string LoadCalendarWeekScroll()
+    {
+        var v = _store?.Get(KeyCalendarWeekScroll);
+        return v is "week" or "day" or "weekStopToday" ? v : CalendarWeekScrollDefault;
+    }
+
+    public static void SaveCalendarWeekScroll(string mode)
+    {
+        if (mode == CalendarWeekScrollDefault) _store?.Remove(KeyCalendarWeekScroll);
+        else _store?.Set(KeyCalendarWeekScroll, mode);
+    }
+
+    // Длительность нового события при создании из сетки календаря. Стандарт — час.
+    public const int CalendarNewEventDurationDefault = 60;
+
+    public static int LoadCalendarNewEventDuration()
+    {
+        if (int.TryParse(_store?.Get(KeyCalendarNewEventDuration), NumberStyles.Integer, CultureInfo.InvariantCulture, out var v)
+            && v is 30 or 60 or 90 or 120)
+            return v;
+        return CalendarNewEventDurationDefault;
+    }
+
+    public static void SaveCalendarNewEventDuration(int minutes)
+    {
+        if (minutes == CalendarNewEventDurationDefault) _store?.Remove(KeyCalendarNewEventDuration);
+        else _store?.Set(KeyCalendarNewEventDuration, minutes.ToString(CultureInfo.InvariantCulture));
+    }
+
     // ── Масштаб Диаграммы ────────────────────────────────────────────────────────
     //
     // Шкала таймлайна вида «Диаграмма»: месяц, год, 5 или 10 лет.
@@ -759,6 +848,11 @@ public static class AppSettings
     private const string KeyStartupModule    = "startupModule";
     private const string KeyTasksView        = "tasksView";
     private const string KeyCalendarView     = "calendarView";
+    private const string KeyCalendarDaysInWeek        = "calendarDaysInWeek";
+    private const string KeyCalendarDayStart          = "calendarDayStartMin";
+    private const string KeyCalendarDayEnd            = "calendarDayEndMin";
+    private const string KeyCalendarWeekScroll        = "calendarWeekScroll";
+    private const string KeyCalendarNewEventDuration  = "calendarNewEventDuration";
     private const string KeyDiagramScale     = "diagramScale";
     private const string KeyConstructorView  = "constructorView";
     private const string KeyUpdatePath       = "updatePath";
