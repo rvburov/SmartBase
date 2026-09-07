@@ -58,6 +58,11 @@ public class AppDbContext : DbContext
         // жизни, поэтому одной подписки достаточно.
         if (!IsPostgres)
             Database.GetDbConnection().StateChange += OnConnectionStateChange;
+
+        // Шина своих изменений: что затронуто, собирается по событиям трекера (без лишнего
+        // DetectChanges), выпускается после SaveChanges или на коммите транзакции.
+        ChangeTracker.Tracked      += (_, e) => NoteDirty(e.Entry.Entity, e.Entry.State);
+        ChangeTracker.StateChanged += (_, e) => NoteDirty(e.Entry.Entity, e.NewState);
     }
 
     private void OnConnectionStateChange(object? sender, System.Data.StateChangeEventArgs e)
@@ -78,7 +83,86 @@ public class AppDbContext : DbContext
     public override int SaveChanges(bool acceptAllChangesOnSuccess)
     {
         StampNewRecordAudit();
-        return SaveReconcilingPhantomDeletes(() => base.SaveChanges(acceptAllChangesOnSuccess));
+        var n = SaveReconcilingPhantomDeletes(() => base.SaveChanges(acceptAllChangesOnSuccess));
+        NoteSaved();
+        return n;
+    }
+
+    // ── Шина своих изменений (ChangeBus) ──────────────────────────────────────
+    //
+    // Что изменилось, собирается по событиям трекера: Tracked — сущность попала в контекст
+    // (Added — создание), StateChanged — сменила состояние (Modified при DetectChanges внутри
+    // SaveChanges, Deleted при Remove). Это дешевле, чем обходить ChangeTracker.Entries()
+    // перед сохранением: обход сам вызывает DetectChanges, то есть удваивал бы его на каждом
+    // SaveChanges. Строки change_log несут действие/тип/коллекцию как есть; сущности данных
+    // сводятся к тем же типам, что в журнале; UI-таблицы (ширины, стили, отображение),
+    // очередь уведомлений и метаданные экрану других разделов не нужны — пропускаются.
+    // Правки мимо трекера (ExecuteDelete, сырой SQL массовых путей) видны через строку журнала,
+    // которую такие пути пишут сами (LogNow).
+
+    private readonly HashSet<ChangeBus.Change> _dirty = [];   // с последнего SaveChanges
+    private HashSet<ChangeBus.Change>? _pendingCommit;        // сохранено внутри транзакции — ждет коммита
+
+    private void NoteDirty(object entity, EntityState state)
+    {
+        if (state is not (EntityState.Added or EntityState.Modified or EntityState.Deleted)) return;
+
+        if (entity is ChangeLogEntity log)
+        {
+            if (state == EntityState.Added)
+                _dirty.Add(new ChangeBus.Change(log.Action, log.TargetType, log.CollectionName));
+            return;
+        }
+
+        var type = entity switch
+        {
+            DbGroupEntity      => "group",
+            DbCollectionEntity => "collection",
+            DbFieldEntity      => "field",
+            DbRecordEntity or DbFieldValueEntity or DbRecordLinkEntity or CalendarIndexEntity => "record",
+            DbUserEntity or DbPermissionEntity => "user",
+            CategoryEntity     => "category",
+            _                  => null,
+        };
+        if (type is null) return;
+
+        var action = state switch
+        {
+            EntityState.Added   => "create",
+            EntityState.Deleted => "delete",
+            _                   => "update",
+        };
+        _dirty.Add(new ChangeBus.Change(action, type, null));
+    }
+
+    // После удачного SaveChanges: вне транзакции — сразу в шину, внутри — отложить до коммита
+    // (см. ChangeBusInterceptor): до него соседнее подключение изменений не увидит.
+    private void NoteSaved()
+    {
+        if (_dirty.Count == 0) return;
+        var changes = _dirty.ToList();
+        _dirty.Clear();
+
+        if (Database.CurrentTransaction is null)
+            ChangeBus.Publish(_dbPath, changes);
+        else
+            (_pendingCommit ??= []).UnionWith(changes);
+    }
+
+    internal void OnTransactionStarted() => _pendingCommit?.Clear();
+
+    internal void OnTransactionCommitted()
+    {
+        if (_pendingCommit is not { Count: > 0 } pending) return;
+        var changes = pending.ToList();
+        pending.Clear();
+        ChangeBus.Publish(_dbPath, changes);
+    }
+
+    internal void OnTransactionRolledBack()
+    {
+        _pendingCommit?.Clear();
+        _dirty.Clear();   // несохраненное откатилось вместе с трекером (WriteScope чистит его)
     }
 
     /// <summary>
@@ -131,12 +215,14 @@ public class AppDbContext : DbContext
         }
     }
 
-    public override System.Threading.Tasks.Task<int> SaveChangesAsync(
+    public override async System.Threading.Tasks.Task<int> SaveChangesAsync(
         bool acceptAllChangesOnSuccess,
         System.Threading.CancellationToken cancellationToken = default)
     {
         StampNewRecordAudit();
-        return base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
+        var n = await base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
+        NoteSaved();
+        return n;
     }
 
     private void StampNewRecordAudit()
@@ -168,6 +254,8 @@ public class AppDbContext : DbContext
         // ApplyLowercaseNames), что молча ломало бы SQL. Ключ учитывает IsPostgres.
         options.ReplaceService<Microsoft.EntityFrameworkCore.Infrastructure.IModelCacheKeyFactory,
                                ProviderModelCacheKeyFactory>();
+        // Границы транзакций для шины своих изменений (см. NoteSaved).
+        options.AddInterceptors(ChangeBusInterceptor.Instance);
     }
 
     /// <summary>
