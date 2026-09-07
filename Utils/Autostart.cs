@@ -68,6 +68,29 @@ public static class Autostart
     /// <summary>Доступен ли автозапуск (установленное приложение). В dev-режиме — false.</summary>
     public static bool IsSupported => LaunchTarget() is not null;
 
+    /// <summary>
+    /// Почему тумблер автозапуска серый — словами под тумблером. Раньше он просто гас, и человек,
+    /// запустивший программу из другой папки (скачанный файл, временная папка, отладочная сборка),
+    /// принимал это за поломку. Пустая строка — автозапуск доступен.
+    /// </summary>
+    public static string UnsupportedReason()
+    {
+        if (IsSupported) return "";
+#if DEBUG
+        return "Автозапуск недоступен в отладочной сборке (запуск из исходников).";
+#else
+        if (InstallService.IsRunningInstalledCopy() == false)
+        {
+            var installed = InstallService.RegisteredInstallDirs();
+            var where     = installed.Count > 0 ? string.Join("; ", installed) : "не найдена";
+            return "Автозапуском распоряжается только установленная копия программы. " +
+                   $"Сейчас запущено из папки {InstallService.CurrentDir}, установленная копия: {where}. " +
+                   "Откройте программу через ярлык установленной копии.";
+        }
+        return "Автозапуск недоступен: не удалось определить путь к программе.";
+#endif
+    }
+
     /// <summary>Стоит ли запись автозапуска в системе прямо сейчас (не то, что записано в настройках).</summary>
     public static bool IsEnabled() => Record() is not null;
 

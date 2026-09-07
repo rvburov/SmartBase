@@ -179,6 +179,11 @@ public partial class MainWindow : Window
         _health.DatabaseLost += (dbId, reason) =>
             Dispatcher.UIThread.Post(() => OnDatabaseLost(dbId, reason));
 
+        // Файл общей базы держит другой процесс (серия BUSY, которую сброс пула не лечит):
+        // надпись «занята другим компьютером» под именем базы, снимается, когда занятость прошла.
+        _health.DatabaseBusy += (dbId, text) =>
+            Dispatcher.UIThread.Post(() => SetDbStatus(dbId, text));
+
         // Чужие правки из другой копии приложения → обновить затронутые части UI.
         _changes.RemoteChanges += (dbId, rows) =>
             Dispatcher.UIThread.Post(() => OnRemoteChanges(dbId, rows));

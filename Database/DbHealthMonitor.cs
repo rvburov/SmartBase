@@ -31,6 +31,10 @@ public sealed class DbHealthMonitor : IDisposable
     /// <summary>БД потеряна: (dbId, причина — «файл не найден» / «связь потеряна»).</summary>
     public event Action<int, string>? DatabaseLost;
 
+    /// <summary>Файл общей базы держит другой процесс: серия BUSY, которую сброс пула не лечит,
+    /// — (dbId, надпись под именем базы); null — занятость прошла, надпись снять.</summary>
+    public event Action<int, string?>? DatabaseBusy;
+
     private readonly Workspace  _ws;
     private readonly MountQueue _queue;
     private readonly Timer      _timer;
@@ -51,6 +55,17 @@ public sealed class DbHealthMonitor : IDisposable
     private readonly HashSet<int> _urgent = [];
     // Срочные проверки, вызванные BUSY сетевой базы: пройдет свежая проба — сбросить пул.
     private readonly HashSet<int> _busyReported = [];
+    // История «BUSY, но проба прошла» по базе: моменты за последнее окно. Сброс пула лечит мертвые
+    // хендлы с первого раза; если серия продолжается, файл держит другой процесс или компьютер —
+    // тогда одно предупреждение и надпись под именем базы вместо бесконечного цикла сбросов.
+    private readonly Dictionary<int, Queue<DateTime>> _busyHistory = [];
+    private readonly HashSet<int> _busyShown = [];
+
+    private static readonly TimeSpan BusyWindow     = TimeSpan.FromMinutes(10);
+    private const int             BusyToEscalate    = 5;
+    private static readonly TimeSpan BusyClearAfter = TimeSpan.FromMinutes(2);
+    private static readonly TimeSpan BusyLogPeriod  = TimeSpan.FromMinutes(1);
+    public const string BusyStatus = "занята другим компьютером";
 
     private const int ProbePeriodMs   = 10_000;  // штатный тик
     private const int ProbeWaitMs     = 5_000;   // ожидание пробы (дальше поток бросаем)
@@ -144,6 +159,8 @@ public sealed class DbHealthMonitor : IDisposable
             _urgent.Remove(dbId);
             _busyReported.Remove(dbId);
             _failStreak.Remove(dbId);
+            _busyHistory.Remove(dbId);
+            _busyShown.Remove(dbId);
         }
     }
 
@@ -280,8 +297,9 @@ public sealed class DbHealthMonitor : IDisposable
                     // дешевое переоткрытие соединений), либо хендлы мертвы после перезагрузки
                     // сервера — тогда это и есть лечение.
                     AppDbContext.ResetPool(path);
-                    Log.Information("База «{Name:l}» отвечала BUSY, свежая проба прошла — пул подключений сброшен", name);
+                    NoteBusy(dbId, name, path);
                 }
+                else ClearBusyIfQuiet(dbId, name);
                 return;
             }
 
@@ -294,6 +312,50 @@ public sealed class DbHealthMonitor : IDisposable
         {
             lock (_gate) _probing.Remove(dbId);
         }
+    }
+
+    // Учет серии «BUSY, но свежая проба прошла». Первый случай — сведения (мертвые хендлы после
+    // перезагрузки сервера лечатся сбросом пула с первого раза), дальше не чаще раза в минуту.
+    // Пять случаев за десять минут — сброс пула не лечит: файл держит другой процесс или
+    // компьютер (чужая программа, копия с файлом в WAL, зависший процесс). Тогда одно
+    // предупреждение с подсказкой, где искать, и надпись под именем базы.
+    private void NoteBusy(int dbId, string name, string path)
+    {
+        int count;
+        bool escalate;
+        lock (_gate)
+        {
+            var now = DateTime.UtcNow;
+            if (!_busyHistory.TryGetValue(dbId, out var q)) _busyHistory[dbId] = q = new Queue<DateTime>();
+            q.Enqueue(now);
+            while (q.Count > 0 && now - q.Peek() > BusyWindow) q.Dequeue();
+            count    = q.Count;
+            escalate = count >= BusyToEscalate && _busyShown.Add(dbId);
+        }
+
+        if (escalate)
+        {
+            Log.Warning("База «{Name:l}» отвечала BUSY {Count} раз за {Window:l} — сброс пула не помогает, файл держит другой процесс или компьютер: {Path:l}. Проверьте открытые файлы на сервере и файлы -wal/-shm рядом с базой",
+                        name, count, Diag.Duration(BusyWindow), path);
+            DatabaseBusy?.Invoke(dbId, BusyStatus);
+        }
+        else if (Diag.Throttle("busy-reset:" + path, BusyLogPeriod))
+            Log.Information("База «{Name:l}» отвечала BUSY, свежая проба прошла — пул подключений сброшен", name);
+    }
+
+    // Плановая проба прошла, а BUSY давно не было — занятость прошла, надпись снимаем.
+    private void ClearBusyIfQuiet(int dbId, string name)
+    {
+        lock (_gate)
+        {
+            if (!_busyShown.Contains(dbId)) return;
+            if (_busyHistory.TryGetValue(dbId, out var q) && q.Count > 0
+                && DateTime.UtcNow - q.Last() < BusyClearAfter) return;
+            _busyShown.Remove(dbId);
+            _busyHistory.Remove(dbId);
+        }
+        Log.Information("База «{Name:l}»: занятость файла прошла — надпись снята", name);
+        DatabaseBusy?.Invoke(dbId, null);
     }
 
     // Потеря базы — и сразу проверка ее соседей по серверу: их пробуем параллельно, упавшие
@@ -378,10 +440,20 @@ public sealed class DbHealthMonitor : IDisposable
         entry.IsPostgres ? entry.ToPgInfo()?.ToConnectionString() ?? entry.Path : entry.Path;
 
     // Быстрая проба пути: файл существует и открывается на чтение.
-    private static bool ProbePath(string path)
+    private static bool ProbePath(string path) => Probe(path, TimeSpan.FromMilliseconds(ProbeWaitMs)) == ProbeOutcome.Ok;
+
+    /// <summary>Исход пробы пути: читается / файла нет / файл есть, но не читается / не ответила
+    /// за отведенное время (зависшая сетевая папка — поток пробы остается стоять в ядре).</summary>
+    public enum ProbeOutcome { Ok, Missing, Unreadable, Timeout }
+
+    /// <summary>Проба пути с пределом ожидания — для очереди монтирования: на зависшей папке
+    /// монтирование не начинается вовсе, а не виснет в первом же обращении к файлу.</summary>
+    public static ProbeOutcome Probe(string path, TimeSpan wait)
     {
         var probe = Task.Run(() => ProbePathDetailed(path));
-        return probe.Wait(ProbeWaitMs) && probe.Result.Ok;
+        if (!probe.Wait(wait)) return ProbeOutcome.Timeout;
+        var (ok, exists) = probe.Result;
+        return ok ? ProbeOutcome.Ok : exists ? ProbeOutcome.Unreadable : ProbeOutcome.Missing;
     }
 
     /// <summary>Подмена пробы для стендов и тестов: вернула значение — оно и есть результат

@@ -60,6 +60,8 @@ public partial class SidebarTree : UserControl
         public List<DbGroup>         Groups      { get; set; } = [];
         public List<DbCollection>    Collections { get; set; } = [];
         public bool                  Readable    { get; set; }
+        // Повтор чтения после BUSY уже назначен: один на серию, снимается удачным чтением.
+        public bool                  BusyRetried { get; set; }
     }
     private readonly List<MountedDb> _dbs = [];
 
@@ -380,6 +382,8 @@ public partial class SidebarTree : UserControl
         return _dbs.Count > 0 ? BuildDbChildren(_dbs[0]) : [];
     }
 
+    private static readonly TimeSpan BusyRetryDelay = TimeSpan.FromSeconds(4);
+
     private List<SidebarNode> BuildDbChildren(MountedDb db)
     {
         // Содержимое ОДНОЙ базы не должно ронять все дерево. Чтение идет на общем контексте
@@ -402,11 +406,23 @@ public partial class SidebarTree : UserControl
             DbErrors.HandleRead(ex, db.Repo.DbPath);
             Log.Warning(ex, "Сайдбар: содержимое базы «{Name:l}» не прочитано", db.Name);
             db.Readable = false;
+            // BUSY сетевой базы после возврата сервера лечится сбросом пула (монитор делает его по
+            // сигналу из HandleRead за секунду-две) — повторяем чтение сами, один раз на серию,
+            // чтобы дерево не стояло пустым до следующего события.
+            if (DbHealthMonitor.IsBusyError(ex) && !db.BusyRetried)
+            {
+                db.BusyRetried = true;
+                DispatcherTimer.RunOnce(() =>
+                {
+                    if (_dbs.Any(d => d.DbId == db.DbId && !d.Readable)) Refresh();
+                }, BusyRetryDelay);
+            }
             return [];
         }
         db.Groups      = groups;
         db.Collections = collections;
         db.Readable    = true;
+        db.BusyRetried = false;
 
         var root = new List<SidebarNode>();
 

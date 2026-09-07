@@ -80,8 +80,8 @@ public sealed class Workspace : IDisposable
             {
                 manager = DatabaseManager.Open(entry.Id, entry.Name, mountPath, entry.Provider, stage);
             }
-            catch (Exception ex) when (!entry.IsPostgres && NetworkPath.IsNetwork(mountPath)
-                                       && DbHealthMonitor.IsBusyError(ex))
+            catch (Exception ex) when (ex is not MountBlockedException && !entry.IsPostgres
+                                       && NetworkPath.IsNetwork(mountPath) && DbHealthMonitor.IsBusyError(ex))
             {
                 // Сетевой файл ответил BUSY на первом же запросе монтирования. Чаще всего это не
                 // чужой писатель, а мертвые хендлы в пуле подключений после перезагрузки сервера
@@ -100,6 +100,14 @@ public sealed class Workspace : IDisposable
             }
             return manager;
         }
+        catch (MountBlockedException ex)
+        {
+            // Понятная внешняя причина (файл в WAL у другого компьютера, чужая миграция): причина
+            // словами уходит в статус базы через MountQueue (TakeMountFailReason) и в журнал.
+            _failReasons[entry.Id] = ex.Reason;
+            Log.Warning(ex.InnerException, "Не удалось смонтировать БД «{Name:l}» ({Path:l}): {Reason:l}", entry.Name, entry.Path, ex.Reason);
+            return null;
+        }
         catch (Exception ex)
         {
             // Недоступная/поврежденная БД — статус покажут сайдбар и список БД в настройках.
@@ -108,6 +116,15 @@ public sealed class Workspace : IDisposable
             return null;
         }
     }
+
+    // Причины последнего неудачного монтирования словами (см. MountBlockedException) — очередь
+    // забирает их для статуса «недоступна (…)» и ретраев монитора.
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<int, string> _failReasons = new();
+
+    /// <summary>Забрать причину последнего отказа монтирования (null — обычный отказ:
+    /// файл не найден / не удалось открыть).</summary>
+    public string? TakeMountFailReason(int dbId) =>
+        _failReasons.TryRemove(dbId, out var reason) ? reason : null;
 
     /// <summary>Размонтировать БД (закрыть контекст). Дефолтную БД размонтировать нельзя.</summary>
     public void Unmount(int dbId)
@@ -139,6 +156,38 @@ public sealed class Workspace : IDisposable
     {
         try { manager.Dispose(); }
         catch (Exception ex) { Log.Warning(ex, "Закрытие БД «{Name:l}» завершилось ошибкой", manager.Name); }
+    }
+
+    /// <summary>
+    /// Закрыть все базы при выходе из приложения — с пределом времени. Закрытие сетевой SQLite-базы
+    /// на зависшей папке не возвращается вовсе (операция стоит в ядре, ее не отменить): раньше
+    /// обработчик выхода ждал ее без предела на UI-потоке, окно уже исчезло, а процесс оставался в
+    /// Диспетчере задач с занятым exe — обновление и повторный запуск были невозможны. Теперь каждая
+    /// база закрывается в фоне, ждем не дольше <paramref name="budget"/> на всех; не успевшие
+    /// остаются системе (в режиме DELETE файлу это ничем не грозит: все зафиксированное уже на
+    /// диске). Возвращает число закрытых вовремя.
+    /// </summary>
+    public static readonly TimeSpan ShutdownBudget = TimeSpan.FromSeconds(15);
+
+    public int CloseAll(TimeSpan budget)
+    {
+        List<DatabaseManager> list;
+        lock (_gate)
+        {
+            list = _mounted.ToList();
+            _mounted.Clear();
+        }
+        var deadline = DateTime.UtcNow + budget;
+        var closing  = list.Select(m => (Manager: m, Task: Task.Run(() => Release(m)))).ToList();
+        var closed   = 0;
+        foreach (var (manager, task) in closing)
+        {
+            var left = deadline - DateTime.UtcNow;
+            if (task.IsCompleted || (left > TimeSpan.Zero && task.Wait(left))) { closed++; continue; }
+            Log.Warning("База «{Name:l}» не закрылась за отведенное время ({Budget:l}) — закрытие оставлено системе: {Where:l}",
+                        manager.Name, Logging.Diag.Duration(budget), manager.Context.DisplayPath);
+        }
+        return closed;
     }
 
     /// <summary>Рабочее пространство поверх УЖЕ открытой дефолтной базы — для стендов и тестов,

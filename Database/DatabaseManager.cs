@@ -82,12 +82,26 @@ public sealed partial class DatabaseManager : IDisposable
         else
         {
             IsShared = NetworkPath.IsNetwork(path);
+            // Признак общей базы внутри самого файла (db_meta storage.shared): его ставит первая копия
+            // приложения, увидевшая файл на сетевом пути, и дальше он сильнее определения по пути.
+            // Иначе одна копия с ошибкой определения (диск еще не восстановлен после входа в
+            // систему, локальный путь на машине с папкой) переводила бы общий файл в WAL, а
+            // остальные — обратно, и все это через борьбу за эксклюзивный замок.
+            if (!IsShared && IsMarkedShared(path))
+            {
+                NetworkPath.ForceNetwork(path);
+                IsShared = true;
+                Log.Warning("База «{Name:l}»: путь {Path:l} определен как локальный, но файл помечен как общий — открываю как сетевую (журнал DELETE)",
+                            name, path);
+            }
             Context  = new AppDbContext(path);
 
             // Все изменения схемы применяются автоматически через EF Core Migrations.
             // Любая будущая правка сущностей → `dotnet ef migrations add ...` →
             // при следующем запуске Migrate() накатит ее, не трогая существующие данные.
             migrated = ApplySchemaMigrations(Context, path, name, stage);
+
+            if (IsShared) MarkShared(Context);
 
             // Режим журнала — по типу пути (WAL локально / DELETE на сети, см. ApplyJournalMode).
             JournalMode = ApplyJournalMode(Context, IsShared);
@@ -295,7 +309,21 @@ public sealed partial class DatabaseManager : IDisposable
             // PRAGMA journal_mode=X отвечает режимом, который ДЕЙСТВУЕТ: не смог переключить
             // (нет прав на файл, чужой замок) — вернет прежний. Для общей базы прежний WAL на
             // сетевом пути — риск порчи при сбое сервера, и молчать об этом нельзя.
-            var result = Convert.ToString(cmd.ExecuteScalar())?.ToLowerInvariant() ?? "";
+            string result;
+            try
+            {
+                result = Convert.ToString(cmd.ExecuteScalar())?.ToLowerInvariant() ?? "";
+            }
+            catch (Microsoft.Data.Sqlite.SqliteException ex) when (shared && DbHealthMonitor.IsBusyError(ex))
+            {
+                // Файл общей базы в WAL, и его держит другой компьютер (копия, открывшая файл как
+                // локальный, или чужая программа): эксклюзив для перевода в DELETE не взять.
+                // Открывать в WAL по сети нельзя, поэтому монтирование не состоится — но с
+                // причиной словами, а не «не удалось открыть». Монитор повторит через минуту.
+                Log.Warning(ex, "База {Path:l}: файл в режиме {Mode:l}, перевести в {Want:l} не удалось — файл держит другой компьютер",
+                            db.DbPath, current, want);
+                throw new MountBlockedException(MountBlockedException.WalHeldElsewhere, ex);
+            }
             if (result != want)
                 Log.Warning("База {Path:l}: режим журнала {Mode:l} вместо {Want:l} — {Why:l}",
                             db.DbPath, result, want,
@@ -454,10 +482,9 @@ public sealed partial class DatabaseManager : IDisposable
             }
             SetNeedsCompact(db);
         }
-        else
-        {
-            db.Database.Migrate();   // история актуальна — быстрый no-op
-        }
+        // История актуальна — Migrate() НЕ зовем. Холостой вызов не бесплатен: EF 9 и без ожидающих
+        // миграций берет замок __EFMigrationsLock (две записи в общий файл на каждое монтирование
+        // каждым пользователем) и ждет чужую строку бесконечно (см. ClearStaleMigrationsLock).
 
         // Отложенное сжатие после миграций: пересоздания таблиц оставляют ~40% файла
         // свободными страницами — ниже порога планового самолечения (>50%), сам файл не
@@ -660,17 +687,37 @@ public sealed partial class DatabaseManager : IDisposable
     //    замок при этом свежий. Кража возможна лишь в паузах живого мигратора (второй
     //    экземпляр приложения на том же файле) — тогда одна из миграций упадет с ошибкой DDL
     //    без порчи данных (миграции транзакционны), что несравнимо лучше вечного зависания.
+    //
+    // Строки нет — не трогаем файл вовсе (без лишней записи в общий файл на каждом монтировании).
+    // Строка есть, а DELETE упал BUSY — писатель жив и держит файл: это мигратор на другом
+    // компьютере. Раньше здесь молчали и звали Migrate(), а он ждет чужую строку БЕСКОНЕЧНО
+    // (проверено на EF 9.0.1 — даже когда ожидающих миграций нет): база висела «подключается…»
+    // с нулевой загрузкой и без единой записи в журнале. Теперь монтирование честно прерывается
+    // с причиной «схему базы обновляет другой компьютер» — монитор повторит через минуту.
     private static void ClearStaleMigrationsLock(AppDbContext db)
     {
         if (!HasTable(db, "__EFMigrationsLock")) return;
+        db.Database.OpenConnection();
         try
         {
-            db.Database.ExecuteSqlRaw("PRAGMA busy_timeout=3000;");
-            db.Database.ExecuteSqlRaw("DELETE FROM \"__EFMigrationsLock\";");
+            using var cmd = db.Database.GetDbConnection().CreateCommand();
+            cmd.CommandText = "SELECT COUNT(*) FROM \"__EFMigrationsLock\";";
+            if (Convert.ToInt64(cmd.ExecuteScalar()) == 0) return;
+            cmd.CommandText = "PRAGMA busy_timeout=3000;";
+            cmd.ExecuteNonQuery();
+            cmd.CommandText = "DELETE FROM \"__EFMigrationsLock\";";
+            cmd.ExecuteNonQuery();
+            Log.Information("База {Path:l}: снят протухший замок миграций (владелец не отвечает)", db.DbPath);
         }
-        catch (Microsoft.Data.Sqlite.SqliteException)
+        catch (Microsoft.Data.Sqlite.SqliteException ex) when (DbHealthMonitor.IsBusyError(ex))
         {
-            // BUSY: замок держит живой мигратор — пусть Migrate() ждет его штатно.
+            Log.Warning("База {Path:l}: замок миграций держит живой процесс — схему сейчас обновляет другой компьютер, монтирование отложено",
+                        db.DbPath);
+            throw new MountBlockedException(MountBlockedException.MigrationElsewhere, ex);
+        }
+        finally
+        {
+            db.Database.CloseConnection();
         }
     }
 
@@ -793,6 +840,61 @@ public sealed partial class DatabaseManager : IDisposable
         {
             _timer.Dispose();
             SQLitePCL.raw.sqlite3_progress_handler(_handle, 0, null!, null);
+        }
+    }
+
+    // ── Признак общей базы внутри файла ─────────────────────────────────────────
+    //
+    // db_meta storage.shared = 1. Ставится при монтировании по сетевому пути и читается ДО
+    // открытия контекста сырым read-only подключением: любая копия приложения, которой путь
+    // показался локальным (диск еще не восстановлен после входа, локальный путь на машине с
+    // папкой), обязана открыть такой файл в сетевом режиме — иначе она переведет его в WAL.
+    private const string SharedMarkKey = "storage.shared";
+
+    private static bool IsMarkedShared(string path)
+    {
+        try
+        {
+            if (!File.Exists(path)) return false;
+            using var conn = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={path};Mode=ReadOnly;Pooling=False");
+            conn.Open();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "SELECT 1 FROM sqlite_master WHERE type='table' AND name='db_meta';";
+            if (cmd.ExecuteScalar() is null) return false;
+            cmd.CommandText = $"SELECT \"Value\" FROM db_meta WHERE \"Key\" = '{SharedMarkKey}';";
+            return Convert.ToString(cmd.ExecuteScalar()) == "1";
+        }
+        catch
+        {
+            return false;   // не прочитали — решает определение по пути, как раньше
+        }
+    }
+
+    // Одна запись на файл за всю его жизнь: сначала чтение, запись только при отсутствии
+    // признака. Отказ (файл только для чтения, чужой писатель) не мешает монтированию.
+    private static void MarkShared(AppDbContext db)
+    {
+        try
+        {
+            if (!HasTable(db, "db_meta")) return;
+            db.Database.OpenConnection();
+            try
+            {
+                var conn = db.Database.GetDbConnection();
+                if (ReadMetaLong(conn, SharedMarkKey) == 1) return;
+                using var cmd = conn.CreateCommand();
+                cmd.CommandText = $"INSERT INTO db_meta (\"Key\", \"Value\") VALUES ('{SharedMarkKey}', '1') " +
+                                  "ON CONFLICT(\"Key\") DO UPDATE SET \"Value\" = '1';";
+                cmd.ExecuteNonQuery();
+            }
+            finally
+            {
+                db.Database.CloseConnection();
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Information(ex, "База {Path:l}: признак общей базы не записан (файл занят или только для чтения) — поставится при следующем монтировании", db.DbPath);
         }
     }
 

@@ -3315,6 +3315,40 @@ public partial class ConstructorRepository(AppDbContext db)
     // excludeHidden=true исключает записи, скрытые в окне «Отображение записей»
     // (record_display.Visible=false). Фильтр уходит в SQL до Count/Skip/Take, поэтому
     // виртуализация и пагинация таблицы сохраняются (см. VirtualRowList).
+    /// <summary>Снимок всего, что таблица читает при открытии коллекции (см. <see cref="CollectionOpenSnapshot"/>),
+    /// на ЭТОМ контексте — для фонового чтения см. <see cref="ReadOpenSnapshotAsync"/>.</summary>
+    public CollectionOpenSnapshot ReadOpenSnapshot(int collectionId)
+    {
+        var collection    = GetAllCollections().FirstOrDefault(c => c.Id == collectionId);
+        var recordDisplay = GetRecordDisplay(collectionId);
+        var anyHidden     = recordDisplay.Any(kv => !kv.Value.Visible);
+        var count         = CountRecords(collectionId);
+        return new CollectionOpenSnapshot(
+            collection,
+            GetUiSettings(collectionId),
+            GetFields(collectionId),
+            GetSystemFieldNames(collectionId),
+            GetColumnOrder(collectionId),
+            GetColumnDisplay(collectionId),
+            GetColumnStyles(collectionId),
+            GetColumnWidths(collectionId),
+            recordDisplay,
+            GetRowHeights(collectionId),
+            GetRowStyles(collectionId),
+            count,
+            anyHidden ? CountRecords(collectionId, excludeHidden: true) : count);
+    }
+
+    /// <summary>То же в фоне на собственном контексте (общий контекст не потокобезопасен): UI-поток
+    /// ждет один await вместо десятка обращений к файлу — на медленной сетевой папке это секунды.</summary>
+    public Task<CollectionOpenSnapshot> ReadOpenSnapshotAsync(int collectionId) =>
+        Task.Run(() =>
+        {
+            using var ctx = new AppDbContext(db.DbPath);
+            ctx.ApplyPerformancePragmas();
+            return new ConstructorRepository(ctx).ReadOpenSnapshot(collectionId);
+        });
+
     public int CountRecords(int collectionId, bool excludeHidden = false) =>
         db.DbRecords.Count(r => r.CollectionId == collectionId
             && (!excludeHidden || !db.RecordDisplay.Any(d =>

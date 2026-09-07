@@ -69,7 +69,7 @@ internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollecti
 
     public VirtualRowList(ConstructorRepository repo, int collectionId, List<DbField> fields,
                           bool excludeHidden = false, IReadOnlyList<int>? recordIds = null,
-                          RelationLinksCache? relLinks = null)
+                          RelationLinksCache? relLinks = null, int? knownCount = null)
     {
         _repo          = repo;
         _collectionId  = collectionId;
@@ -79,8 +79,9 @@ internal sealed class VirtualRowList : IList<TableRowVm>, IList, INotifyCollecti
         _relLinks      = relLinks;
         _relationFieldIds = fields.Where(f => f.FieldType == "relation" && f.Id is not null)
                                   .Select(f => f.Id!.Value).ToArray();
-        // Режим списка id (фильтр/сортировка): длина списка. Иначе — считаем из БД.
-        _dataCount     = recordIds?.Count ?? repo.CountRecords(collectionId, excludeHidden);
+        // Режим списка id (фильтр/сортировка): длина списка. Иначе — из снимка открытия
+        // коллекции (посчитан в фоне), а без него — считаем из БД.
+        _dataCount     = recordIds?.Count ?? knownCount ?? repo.CountRecords(collectionId, excludeHidden);
     }
 
     // Батч-префетч связей видимой страницы: по одному GetLinksBatch на каждое поле-связь вместо N

@@ -21,13 +21,31 @@ public static class NetworkPath
         try { full = System.IO.Path.GetFullPath(path); }
         catch { return true; }   // кривой путь — консервативно
         if (Forced.ContainsKey(full)) return true;
-        return Cache.GetOrAdd(full, Detect);
+        if (Cache.TryGetValue(full, out var cached)) return cached;
+        // Кешируется только уверенный ответ. Пока подключенный диск P: еще не восстановлен после
+        // входа в систему, Windows отвечает NoRootDirectory — это не «локальный диск», а «пока не
+        // знаю»: ответ «локально», запомненный в этот момент, при следующем монтировании переводил
+        // бы общую базу в WAL (см. Detect). Такой путь считается сетевым и переспрашивается.
+        var (network, definitive) = DetectDetailed(full);
+        if (definitive) Cache[full] = network;
+        return network;
     }
 
-    /// <summary>Принудительно пометить путь сетевым — для стендов/харнессов, где настоящей
-    /// шары нет, но нужно проверить сетевой профиль (журнал DELETE, прагмы).</summary>
+    /// <summary>Принудительно пометить путь сетевым: стенды и тесты, где настоящей шары нет, и
+    /// файл с признаком общей базы внутри (см. DatabaseManager — <c>storage.shared</c> в db_meta),
+    /// открытый по пути, который система определила как локальный.</summary>
     public static void ForceNetwork(string path) =>
         Forced[System.IO.Path.GetFullPath(path)] = true;
+
+    /// <summary>Забыть все, что известно о пути (принудительная пометка и кеш определения) — для
+    /// тестов, которые проверяют повторное определение с чистого листа.</summary>
+    public static void Forget(string path)
+    {
+        var full = System.IO.Path.GetFullPath(path);
+        Forced.TryRemove(full, out _);
+        Cache.TryRemove(full, out _);
+        ForcedRoots.TryRemove(full, out _);
+    }
 
     /// <summary>Стенды: считать сетевым «сервером» для группировки баз (см. <see cref="ServerRoot"/>)
     /// заданную папку, а не корень диска — чтобы два временных файла в одной папке выглядели
@@ -76,33 +94,67 @@ public static class NetworkPath
         return full.ToLowerInvariant();
     }
 
-    private static bool Detect(string full)
+    // (сетевой ли путь, уверенный ли это ответ). Неуверенный ответ всегда «сеть» и не кешируется.
+    private static (bool Network, bool Definitive) DetectDetailed(string full)
     {
         try
         {
             if (OperatingSystem.IsWindows())
             {
                 // UNC-путь или подключенный сетевой диск.
-                if (full.StartsWith(@"\\") || full.StartsWith("//")) return true;
+                if (full.StartsWith(@"\\") || full.StartsWith("//")) return (true, true);
                 var root = System.IO.Path.GetPathRoot(full);
-                if (string.IsNullOrEmpty(root)) return true;
-                return new DriveInfo(root).DriveType == DriveType.Network;
+                if (string.IsNullOrEmpty(root)) return (true, true);
+                return ClassifyDrive(new DriveInfo(root).DriveType, IsPersistentMapping(root));
             }
 
             if (OperatingSystem.IsMacOS())
                 // Все под /Volumes/ — сетевые шары И внешние диски: у обоих одна модель
                 // отказа («том пропал на ходу»), обоим положен DELETE-журнал. Проще и
                 // надежнее, чем P/Invoke statfs с разбором типа ФС.
-                return full.StartsWith("/Volumes/", StringComparison.OrdinalIgnoreCase);
+                return (full.StartsWith("/Volumes/", StringComparison.OrdinalIgnoreCase), true);
 
             if (OperatingSystem.IsLinux())
-                return IsLinuxNetworkMount(full);
+                return (IsLinuxNetworkMount(full), true);
 
-            return true;   // неизвестная ОС — консервативно
+            return (true, true);   // неизвестная ОС — консервативно
         }
         catch
         {
-            return true;   // не смогли определить — считаем сетью (безопасный режим)
+            return (true, false);   // не смогли определить — считаем сетью и переспросим
+        }
+    }
+
+    /// <summary>
+    /// Тип диска Windows → (сетевой, уверенно). <see cref="DriveType.Network"/> — сеть; локальные
+    /// типы — не сеть; <see cref="DriveType.NoRootDirectory"/> и <see cref="DriveType.Unknown"/> —
+    /// диска сейчас нет: так выглядит подключенный сетевой диск до восстановления после входа в
+    /// систему. Если буква числится в постоянных подключениях пользователя
+    /// (<paramref name="persistentMapping"/>), это уверенно сеть; иначе — сеть «до выяснения»,
+    /// без кеша. Чистая функция — под юнит-тестом.
+    /// </summary>
+    public static (bool Network, bool Definitive) ClassifyDrive(DriveType type, bool persistentMapping) => type switch
+    {
+        DriveType.Network => (true, true),
+        DriveType.Fixed or DriveType.Removable or DriveType.CDRom or DriveType.Ram => (false, true),
+        _ => persistentMapping ? (true, true) : (true, false),
+    };
+
+    // Постоянные подключения сетевых дисков Windows («восстанавливать при входе») лежат в
+    // HKCU\Network\<буква> — запись есть и тогда, когда сам диск еще не восстановлен.
+    private static bool IsPersistentMapping(string root)
+    {
+        if (!OperatingSystem.IsWindows()) return false;
+        var letter = root.TrimEnd('\\', '/').TrimEnd(':');
+        if (letter.Length != 1 || !char.IsLetter(letter[0])) return false;
+        try
+        {
+            using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(@"Network\" + letter);
+            return key is not null;
+        }
+        catch
+        {
+            return false;
         }
     }
 

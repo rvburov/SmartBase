@@ -46,6 +46,10 @@ public static partial class InstallService
             .Where(p => !string.Equals(p, full, StringComparison.OrdinalIgnoreCase)));
     }
 
+    /// <summary>Папки установки по <c>installs.json</c> без проверки на диске — мгновенно
+    /// (подсказка у тумблера автозапуска).</summary>
+    public static IReadOnlyList<string> RegisteredInstallDirs() => ReadRegisteredPaths();
+
     private static List<string> ReadRegisteredPaths()
     {
         try

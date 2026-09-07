@@ -15,7 +15,10 @@ internal sealed class Program
 
     // Самозамена при обновлении не удалась (файл был занят) — апдейтер перезапустил нас с этим
     // флагом. App покажет разовое уведомление, что версия осталась прежней.
-    internal static bool UpdateFailed { get; private set; }
+    /// <summary>Перезапуск после неудавшейся самозамены: причина из аргумента
+    /// <c>--update-failed &lt;причина&gt;</c> (см. <see cref="InstallService.UpdateFailedMessage"/>);
+    /// null — обычный запуск.</summary>
+    internal static string? UpdateFailedReason { get; private set; }
 
     // Хвост версий до 1.0.5: автозапуск с включенным фоновым режимом писал в команду
     // --background, и приложение стартовало со скрытым окном — человек видел, что при входе
@@ -67,7 +70,12 @@ internal sealed class Program
         }
 
         // Перезапуск после НЕудавшейся самозамены — App-режим, но с уведомлением пользователю.
-        UpdateFailed = Array.Exists(args, a => a == "--update-failed");
+        // Причина — следующим аргументом (старый апдейтер мог передать флаг без нее).
+        var failedAt = Array.IndexOf(args, "--update-failed");
+        if (failedAt >= 0)
+            UpdateFailedReason = failedAt + 1 < args.Length && !args[failedAt + 1].StartsWith("--")
+                ? args[failedAt + 1]
+                : "unknown";
 
         Mode = ResolveMode(args);
         if (Mode == SetupMode.App)
@@ -199,10 +207,15 @@ internal sealed class Program
         }
         if (string.IsNullOrEmpty(target)) return;
 
-        // Дождаться закрытия старого приложения — иначе файл занят.
+        // Дождаться закрытия старого приложения — иначе файл занят. Штатный выход укладывается в
+        // секунды, но закрытие баз идет с бюджетом (Workspace.CloseAll), а процесс, у которого
+        // операция к зависшей сетевой папке стоит в ядре, не завершится вообще — ждать его дольше
+        // минуты бессмысленно, зато причину надо назвать: иначе человек видит «файл занят другим
+        // процессом» и не понимает, каким.
+        var oldAlive = false;
         if (pid > 0)
         {
-            try { Process.GetProcessById(pid).WaitForExit(20_000); }
+            try { oldAlive = !Process.GetProcessById(pid).WaitForExit(60_000); }
             catch { /* процесс уже завершился */ }
         }
 
@@ -214,10 +227,12 @@ internal sealed class Program
 
         // Замена с повторами внутри ReplaceArtifact: на Windows блокировки могут держать файл
         // пару секунд; на macOS заменяется весь .app-бандл (publish под mac не single-file).
-        // Если так и не удалось (файл занят) — перезапустим старую версию с --update-failed,
-        // чтобы приложение сообщило: обновление не применилось, версия прежняя.
-        var replaced = InstallService.ReplaceArtifact(src, target);
-        var flag     = replaced ? "" : "--update-failed";
+        // Если так и не удалось — перезапустим старую версию с --update-failed <причина>, чтобы
+        // приложение сообщило: обновление не применилось, версия прежняя, и что с этим делать.
+        var replaced = !oldAlive && InstallService.ReplaceArtifact(src, target);
+        var flag     = replaced  ? ""
+                     : oldAlive  ? "--update-failed " + InstallService.UpdateFailedOldProcess
+                                 : "--update-failed " + InstallService.UpdateFailedFileLocked;
 
         // Заменен только бинарь, а все, что установщик создал вокруг него, осталось от прежней
         // сборки: ярлыки, установщик рядом, запись в списке приложений. Из-за этого оболочка

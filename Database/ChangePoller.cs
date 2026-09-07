@@ -78,8 +78,19 @@ public sealed class ChangePoller : IDisposable
     public void Dispose()
     {
         _timer.Dispose();
-        foreach (var w in _watch.Values) w.Conn?.Dispose();
+        // Соединения наблюдения закрываются в фоне: закрытие хендла сетевого файла на зависшей
+        // папке не возвращается, а Dispose зовется с UI-потока при закрытии окна — выход
+        // приложения не должен на этом стоять (см. Workspace.CloseAll).
+        var conns = _watch.Values.Select(w => w.Conn).Where(c => c is not null).ToList();
         _watch.Clear();
+        if (conns.Count == 0) return;
+        _ = Task.Run(() =>
+        {
+            foreach (var c in conns)
+            {
+                try { c!.Dispose(); } catch { /* best-effort */ }
+            }
+        });
     }
 
     private void Tick()

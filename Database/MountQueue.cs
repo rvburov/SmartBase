@@ -1,5 +1,6 @@
 using Serilog;
 using SmartBase.Database.Entities;
+using SmartBase.Logging;
 
 namespace SmartBase.Database;
 
@@ -201,6 +202,36 @@ public sealed class MountQueue
         Task.Run(Pump);
     }
 
+    /// <summary>Ожидание пробы пути перед монтированием сетевой базы: папка не ответила — монтирование
+    /// не начинается, база помечается «недоступна (папка не отвечает)» и уходит под ретраи монитора.
+    /// Раньше первое же обращение к файлу на зависшей папке вставало в ядре без предела времени: база
+    /// висела «подключается…», очередь стояла, а процесс после закрытия окна не мог завершиться.</summary>
+    public static TimeSpan PreMountProbeWait { get; set; } = TimeSpan.FromSeconds(15);
+
+    /// <summary>Монтирование без единого сигнала прогресса дольше этого считается зависшим: база
+    /// помечается недоступной, очередь идет дальше. Само монтирование не прерывается (операцию в
+    /// ядре не отменить); завершится позже — база подключится (<see cref="OnAbandonedMountFinished"/>).</summary>
+    public static TimeSpan StallLimit { get; set; } = TimeSpan.FromMinutes(5);
+
+    private static readonly TimeSpan StallPoll = TimeSpan.FromSeconds(2);
+
+    // Последний сигнал прогресса монтирования и его этап — для сторожа зависания.
+    private sealed class MountProgress
+    {
+        private long _lastTicks = DateTime.UtcNow.Ticks;
+        private volatile string _stage = "подключение";
+
+        public DateTime LastActivity => new(Interlocked.Read(ref _lastTicks), DateTimeKind.Utc);
+        public string   Stage        => _stage;
+
+        public void Touch(string msg)
+        {
+            Interlocked.Exchange(ref _lastTicks, DateTime.UtcNow.Ticks);
+            var nl = msg.IndexOf('\n');
+            _stage = nl < 0 ? msg : msg[..nl];
+        }
+    }
+
     private void Pump()
     {
         while (true)
@@ -215,26 +246,75 @@ public sealed class MountQueue
             }
             Changed?.Invoke(entry.Id, true);
 
-            // Mount() гасит ошибки сам (вернет null); страхуемся на случай неожиданных.
             DatabaseManager? m = null;
-            try { m = _ws.Mount(entry, (msg, frac) => OnStage(entry, msg, frac)); }
-            catch (Exception ex) { Log.Error(ex, "Неожиданный сбой монтирования БД «{Name:l}»", entry.Name); }
+            string? blocked = null;   // причина, по которой монтирование не начато или брошено
 
+            if (!entry.IsPostgres && NetworkPath.IsNetwork(entry.Path)
+                && DbHealthMonitor.Probe(entry.Path, PreMountProbeWait) == DbHealthMonitor.ProbeOutcome.Timeout)
+            {
+                blocked = MountBlockedException.ShareNotResponding;
+                Log.Warning("Монтирование «{Name:l}» не начато: папка не ответила за {Wait:l} ({Path:l}) — база помечена недоступной, повтор позже",
+                            entry.Name, Diag.Duration(PreMountProbeWait), entry.Path);
+            }
+            else
+            {
+                // Mount() гасит ошибки сам (вернет null); страхуемся на случай неожиданных. Работа —
+                // в отдельной задаче, чтобы сторож мог бросить зависшее монтирование и идти дальше.
+                var progress = new MountProgress();
+                var task = Task.Run(() =>
+                {
+                    try { return _ws.Mount(entry, (msg, frac) => { progress.Touch(msg); OnStage(entry, msg, frac); }); }
+                    catch (Exception ex)
+                    {
+                        Log.Error(ex, "Неожиданный сбой монтирования БД «{Name:l}»", entry.Name);
+                        return null;
+                    }
+                });
+                while (!task.Wait(StallPoll))
+                {
+                    if (DateTime.UtcNow - progress.LastActivity < StallLimit) continue;
+                    blocked = MountBlockedException.ShareNotResponding;
+                    Log.Warning("Монтирование «{Name:l}» не продвигается {Stall:l} (этап «{Stage:l}», {Path:l}) — база помечена недоступной, очередь идет дальше; завершится позже — подключится",
+                                entry.Name, Diag.Duration(StallLimit), progress.Stage, entry.Path);
+                    _ = task.ContinueWith(t => OnAbandonedMountFinished(entry, t.Result),
+                                          TaskContinuationOptions.OnlyOnRanToCompletion);
+                    break;
+                }
+                if (blocked is null) m = task.Result;
+            }
+
+            string? reason = null;
+            if (m is null)
+                reason = blocked ?? _ws.TakeMountFailReason(entry.Id)
+                       ?? (entry.IsPostgres          ? "сервер не отвечает"
+                         : File.Exists(entry.Path) ? "не удалось открыть"
+                                                   : "файл не найден");
             lock (_gate)
             {
                 if (m is not null) _status.Remove(entry.Id);
                 else
-                {
-                    var reason = entry.IsPostgres          ? "сервер не отвечает"
-                               : File.Exists(entry.Path) ? "не удалось открыть"
-                                                         : "файл не найден";
                     _status[entry.Id] = new ItemStatus(entry.Id, entry.Name, ItemState.Failed,
                                                        $"недоступна ({reason})", reason);
-                }
             }
             Changed?.Invoke(entry.Id, true);
             Completed?.Invoke(entry.Id, m);
         }
+    }
+
+    // Брошенное сторожем монтирование все же завершилось. Удачно — база уже в Workspace
+    // (гонку с повторным монтированием разруливает Workspace.Mount), снимаем статус «недоступна»
+    // и сообщаем подписчику как об обычном завершении. Неудачно — статус уже стоит, тишина.
+    private void OnAbandonedMountFinished(DatabaseRefEntity entry, DatabaseManager? m)
+    {
+        if (m is null) return;
+        lock (_gate)
+        {
+            if (_status.TryGetValue(entry.Id, out var s) && s.State == ItemState.Failed)
+                _status.Remove(entry.Id);
+        }
+        Log.Information("Монтирование «{Name:l}», брошенное как зависшее, завершилось — база подключена", entry.Name);
+        Changed?.Invoke(entry.Id, true);
+        Completed?.Invoke(entry.Id, m);
     }
 
     private void OnStage(DatabaseRefEntity entry, string msg, double? frac)

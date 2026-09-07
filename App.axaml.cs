@@ -160,11 +160,12 @@ public partial class App : Application
                             // Самозамена при обновлении не удалась (файл был занят) — версия
                             // осталась прежней. Разовое уведомление, чтобы пользователь не думал,
                             // что обновился. Подробности — docs/guides/auto-update.md.
-                            if (Program.UpdateFailed)
-                                _ = ConfirmDialog.Info(
-                                    "Обновление не удалось применить — файл был занят другим процессом. " +
-                                    "Приложение осталось на прежней версии, попробуйте обновиться еще раз.")
-                                    .ShowDialog(main);
+                            if (Program.UpdateFailedReason is { } failedReason)
+                            {
+                                Log.Warning("Обновление не применилось ({Reason:l}) — версия прежняя: {Version:l}",
+                                            failedReason, AppSettings.AppVersion);
+                                _ = ConfirmDialog.Info(Setup.InstallService.UpdateFailedMessage(failedReason)).ShowDialog(main);
+                            }
 
                             // Повторный запуск (второй экземпляр) просит показать окно.
                             if (Program.Instance is { } instance)
@@ -181,15 +182,22 @@ public partial class App : Application
                             desktop.Exit += (_, _) =>
                             {
                                 var mounted = workspace.Mounted.Count;
-                                workspace.Dispose();
+                                // Файл единственного экземпляра — первым делом: если закрытие сетевой
+                                // базы зависнет, повторный запуск (и перезапуск апдейтером) не должен
+                                // молча выходить из-за занятого instance.lock.
+                                Program.Instance?.Dispose();
+                                // Базы — с пределом времени и в фоне: закрытие файла на зависшей
+                                // папке не возвращается, а выход из-за этого не должен стоять
+                                // (см. Workspace.CloseAll).
+                                var closed = workspace.CloseAll(Workspace.ShutdownBudget);
                                 registry.Dispose();
                                 Program.NotificationManager?.Dispose();
-                                Program.Instance?.Dispose();
                                 // Запись о штатном выходе: ее отсутствие после «Запуск SmartBase»
                                 // выдает убитый процесс или выключение питания.
-                                Log.Information("Завершение SmartBase ({Reason:l}): работало {Uptime:l}, баз закрыто {Count}",
+                                Log.Information("Завершение SmartBase ({Reason:l}): работало {Uptime:l}, баз закрыто {Count}{Tail:l}",
                                     Program.ExitReason ?? "закрытие окна",
-                                    Logging.Diag.Duration(DateTime.Now - Program.StartedAt), mounted);
+                                    Logging.Diag.Duration(DateTime.Now - Program.StartedAt), closed,
+                                    closed < mounted ? $" из {mounted} — остальные не ответили за {Logging.Diag.Duration(Workspace.ShutdownBudget)}" : "");
                             };
                         }
 

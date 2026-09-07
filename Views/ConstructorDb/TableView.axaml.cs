@@ -93,6 +93,9 @@ public partial class TableView : UserControl
     private bool _manualRowResize;
     private bool _snapPending;
     private List<DbField>        _fields  = [];
+    // Снимок открытия коллекции, прочитанный в фоне (см. Load с snapshot): пока он есть,
+    // LoadColumnState/ReloadRows берут данные из него, а не ходят в базу с UI-потока.
+    private CollectionOpenSnapshot? _snapshot;
     private List<TableColumnDef> _colDefs = [];
     private VirtualRowList?      _virtualRows;
     // ВИДИМЫЙ список строк: = _virtualRows без фильтра/сортировки, = временный filteredRows при них.
@@ -352,7 +355,12 @@ public partial class TableView : UserControl
     private void Guarded(MenuItem item, PermAction action, Action run) =>
         item.Click += (_, _) => PermissionNotice.Run(this, Can(action), action, run);
 
-    public void Load(ConstructorRepository repository, int collectionId)
+    public void Load(ConstructorRepository repository, int collectionId) => Load(repository, collectionId, null);
+
+    /// <summary>Открыть коллекцию. <paramref name="snapshot"/> — данные открытия, прочитанные в фоне
+    /// (<see cref="ConstructorRepository.ReadOpenSnapshotAsync"/>): с ним UI-поток в базу не ходит,
+    /// только строит колонки и строки; без него (обновление той же коллекции, смена вида) читает сам.</summary>
+    public void Load(ConstructorRepository repository, int collectionId, CollectionOpenSnapshot? snapshot)
     {
         // Порог медленности: открытие коллекции (колонки, настройки, первая страница) дольше
         // Diag.UiOpen — в журнал с базой и коллекцией.
@@ -363,29 +371,36 @@ public partial class TableView : UserControl
 
         _repository   = repository;
         _collectionId = collectionId;
+        _snapshot     = snapshot;
+        try
+        {
+            // Правку без права изменения записей отменяет BeginningEdit (там же — окно
+            // с причиной): read-only сетка молча игнорировала бы двойной клик, и человек
+            // не понимал бы, почему ячейка не открывается.
+            RecordsGrid.IsReadOnly = false;
 
-        // Правку без права изменения записей отменяет BeginningEdit (там же — окно
-        // с причиной): read-only сетка молча игнорировала бы двойной клик, и человек
-        // не понимал бы, почему ячейка не открывается.
-        RecordsGrid.IsReadOnly = false;
+            // Фильтры/сортировка не переносятся между коллекциями.
+            _filters.Clear();
+            _sortKey = null;
 
-        // Фильтры/сортировка не переносятся между коллекциями.
-        _filters.Clear();
-        _sortKey = null;
+            var (colResize, rowResize, _) = snapshot?.UiSettings ?? repository.GetUiSettings(collectionId);
+            _manualColResize = colResize;
+            _manualRowResize = rowResize;
 
-        var (colResize, rowResize, _) = repository.GetUiSettings(collectionId);
-        _manualColResize = colResize;
-        _manualRowResize = rowResize;
+            // При refresh той же коллекции (создание/изменение свойства) сохраняем
+            // горизонтальную прокрутку — иначе при 50 колонках откидывает в начало.
+            // Смена коллекции — скролл сбрасываем (новая таблица начинается слева).
+            if (sameCollection)
+                ReloadPreservingScroll();
+            else
+                Reload();
 
-        // При refresh той же коллекции (создание/изменение свойства) сохраняем
-        // горизонтальную прокрутку — иначе при 50 колонках откидывает в начало.
-        // Смена коллекции — скролл сбрасываем (новая таблица начинается слева).
-        if (sameCollection)
-            ReloadPreservingScroll();
-        else
-            Reload();
-
-        _lastLoadedCollectionId = collectionId;
+            _lastLoadedCollectionId = collectionId;
+        }
+        finally
+        {
+            _snapshot = null;   // дальнейшие обновления читают базу сами — снимок устаревает
+        }
     }
 
     // Avalonia DataGrid НЕ использует ScrollViewer для горизонтальной прокрутки —
@@ -861,16 +876,18 @@ public partial class TableView : UserControl
     {
         if (_repository is null) return;
 
-        _hiddenRecords = _repository.GetRecordDisplay(_collectionId)
+        var snap = _snapshot;   // снимок открытия (прочитан в фоне) — вместо обращений с UI-потока
+        _hiddenRecords = (snap?.RecordDisplay ?? _repository.GetRecordDisplay(_collectionId))
             .Where(kv => !kv.Value.Visible)
             .Select(kv => kv.Key)
             .ToHashSet();
-        _rowHeights = _repository.GetRowHeights(_collectionId);
-        _rowStyles  = _repository.GetRowStyles(_collectionId);
+        _rowHeights = snap?.RowHeights ?? _repository.GetRowHeights(_collectionId);
+        _rowStyles  = snap?.RowStyles  ?? _repository.GetRowStyles(_collectionId);
 
         _relLinks.Clear();   // новый источник строк — прежний прогрев связей неактуален
         _virtualRows = new VirtualRowList(_repository, _collectionId, _fields,
-                                         excludeHidden: _hiddenRecords.Count > 0, relLinks: _relLinks);
+                                         excludeHidden: _hiddenRecords.Count > 0, relLinks: _relLinks,
+                                         knownCount: snap?.VisibleRecordCount);
         _virtualRows.RecordEdited += (_, rid) => RecordValueEdited?.Invoke(this, rid);
         // Виртуализирующая обертка: DataGrid не материализует источник, тянет только видимые
         // строки → большие коллекции открываются мгновенно. Всегда включена.
@@ -928,20 +945,22 @@ public partial class TableView : UserControl
     {
         if (_repository is null) return;
 
-        _fields = _repository.GetFields(_collectionId)
+        // Снимок открытия (прочитан в фоне) — вместо обращений к базе с UI-потока.
+        var snap = _snapshot;
+        _fields = (snap?.Fields ?? _repository.GetFields(_collectionId))
             .Where(f => f.FieldType != "markdown")
             .ToList();
 
-        _systemNames = _repository.GetSystemFieldNames(_collectionId);
-        _columnOrder = _repository.GetColumnOrder(_collectionId);
-        _hiddenColumns = _repository.GetColumnDisplay(_collectionId)
+        _systemNames = snap?.SystemNames ?? _repository.GetSystemFieldNames(_collectionId);
+        _columnOrder = snap?.ColumnOrder ?? _repository.GetColumnOrder(_collectionId);
+        _hiddenColumns = (snap?.ColumnDisplay ?? _repository.GetColumnDisplay(_collectionId))
             .Where(kv => !kv.Value.Visible)
             .Select(kv => kv.Key)
             .ToHashSet();
-        _columnStyles = _repository.GetColumnStyles(_collectionId);
+        _columnStyles = snap?.ColumnStyles ?? _repository.GetColumnStyles(_collectionId);
         // Ручные ширины (аспект column_meta.Width). Читаются здесь, потому что LoadColumnState
         // вызывается из всех путей пересборки колонок — отдельной точки чтения не нужно.
-        _colWidths = _repository.GetColumnWidths(_collectionId);
+        _colWidths = snap?.ColumnWidths ?? _repository.GetColumnWidths(_collectionId);
     }
 
     // ── Точечные изменения набора колонок (без полной пересборки) ──────────────

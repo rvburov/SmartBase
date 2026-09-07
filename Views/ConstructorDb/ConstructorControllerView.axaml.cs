@@ -144,24 +144,43 @@ public partial class ConstructorControllerView : UserControl
     // Открыть коллекцию из конкретной БД: перенацеливаем модуль на ее репозиторий.
     // В основной области одновременно открыта одна коллекция, поэтому достаточно
     // держать активным один репозиторий (мульти-маунт живет в сайдбаре).
-    public void OpenFrom(ConstructorRepository repository, int collectionId)
+    public void OpenFrom(ConstructorRepository repository, int collectionId) =>
+        _ = OpenAsync(repository, collectionId);
+
+    // Открытие по клику в сайдбаре: данные коллекции читаются в фоне одним снимком, UI-поток
+    // только строит таблицу. На медленной сетевой папке прежний синхронный путь замораживал окно
+    // на секунды («Интерфейс не отвечал 6,7 с — выполнялось: открытие коллекции»). Пока снимок
+    // читается, человек может кликнуть другую коллекцию — устаревший результат отбрасывается по
+    // счетчику поколений. Снимок не прочитался (база занята/пропала) — синхронный путь как раньше,
+    // он покажет пустой вид или ошибку тем же порядком.
+    private int _openGeneration;
+
+    private async Task OpenAsync(ConstructorRepository repository, int collectionId)
     {
+        var gen = ++_openGeneration;
         _repository = repository;
-        SelectCollection(collectionId);
+        NavbarConstructor.SetTitle("Открываю…");
+
+        CollectionOpenSnapshot? snapshot = null;
+        using (SmartBase.Logging.Diag.Measure("чтение коллекции", SmartBase.Logging.Diag.UiOpen,
+                                              $"{SmartBase.Utils.DbErrors.Display(repository.DbPath)}, коллекция {collectionId}"))
+        {
+            try { snapshot = await repository.ReadOpenSnapshotAsync(collectionId); }
+            catch (Exception ex) { SmartBase.Utils.DbErrors.HandleRead(ex, repository.DbPath); }
+        }
+
+        if (gen != _openGeneration || !ReferenceEquals(_repository, repository)) return;
+        SelectCollection(collectionId, snapshot);
     }
 
-    // БД текущей коллекции размонтирована (удалена в настройках): переключаемся на
-    // запасной репозиторий и очищаем вид, чтобы не держать ссылку на закрытый контекст.
-    public void DetachDatabase(ConstructorRepository fallback)
-    {
-        _repository = fallback;
-        ClearView();
-    }
+    // Синхронный путь (Refresh, смена вида): читает базу сам.
+    public void SelectCollection(int collectionId) => SelectCollection(collectionId, null);
 
-    public void SelectCollection(int collectionId)
+    private void SelectCollection(int collectionId, CollectionOpenSnapshot? snapshot)
     {
-        var cols = _repository!.GetAllCollections();
-        var col  = cols.FirstOrDefault(c => c.Id == collectionId);
+        var col = snapshot is not null
+            ? snapshot.Collection
+            : _repository!.GetAllCollections().FirstOrDefault(c => c.Id == collectionId);
         if (col is null)
         {
             // Коллекция отсутствует (например, удалена) — очищаем view.
@@ -173,15 +192,23 @@ public partial class ConstructorControllerView : UserControl
         NavbarConstructor.SetTitle(col.Name);
         SetEmptyState(false);
 
-        var (_, _, viewMode) = _repository.GetUiSettings(collectionId);
+        var (_, _, viewMode) = snapshot?.UiSettings ?? _repository!.GetUiSettings(collectionId);
         NavbarConstructor.SetViewMode(viewMode);
-        SwitchView(viewMode);
+        SwitchView(viewMode, snapshot);
 
         // Нижняя панель: диапазон видимых строк приедет от таблицы, когда она разложится
         // (VisibleRangeChanged) — до тех пор кнопки погашены. Своего счетчика записей у
         // панели нет, поэтому и CountRecords при открытии коллекции больше не считаем:
         // на большой коллекции это был заметный запрос на UI-потоке.
         FooterConstructor.SetRange(TableViewportRange.Empty);
+    }
+
+    // БД текущей коллекции размонтирована (удалена в настройках): переключаемся на
+    // запасной репозиторий и очищаем вид, чтобы не держать ссылку на закрытый контекст.
+    public void DetachDatabase(ConstructorRepository fallback)
+    {
+        _repository = fallback;
+        ClearView();
     }
 
     public void Refresh()
@@ -245,7 +272,7 @@ public partial class ConstructorControllerView : UserControl
         RecordPageClosed?.Invoke(this, EventArgs.Empty);
     }
 
-    private void SwitchView(string mode)
+    private void SwitchView(string mode, CollectionOpenSnapshot? snapshot = null)
     {
         TableViewCtrl.IsVisible = mode != "list";
         ListViewCtrl.IsVisible  = mode == "list";
@@ -260,7 +287,7 @@ public partial class ConstructorControllerView : UserControl
             if (mode == "list")
                 ListViewCtrl.Load(_repository, _currentCollectionId.Value);
             else
-                TableViewCtrl.Load(_repository, _currentCollectionId.Value);
+                TableViewCtrl.Load(_repository, _currentCollectionId.Value, snapshot);
         }
     }
 

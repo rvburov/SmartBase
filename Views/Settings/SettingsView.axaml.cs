@@ -282,6 +282,14 @@ public partial class SettingsView : UserControl
     // записи отметку Диспетчера не сбрасывает.
     private void RefreshAutostartHint()
     {
+        // Тумблер серый — сказать почему: отладочная сборка или копия не из папки установки.
+        // Раньше он просто гас, и это принимали за поломку после обновления.
+        if (!Autostart.IsSupported)
+        {
+            AutostartHint.IsVisible = true;
+            AutostartHint.Text      = Autostart.UnsupportedReason();
+            return;
+        }
         var disabled = Autostart.DisabledInSystemUi();
         AutostartHint.IsVisible = disabled;
         if (!disabled) return;
