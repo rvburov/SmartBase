@@ -35,7 +35,7 @@ EF Core/SQLite). Документация разделена на два раз�
 - **База данных** ([database/](developer/architecture/database/)):
   [schema](developer/architecture/database/schema.md) (справочник всех таблиц/колонок) ·
   [storage-and-migrations](developer/architecture/database/storage-and-migrations.md) (два файла, миграции, пути, WAL) ·
-  [multi-database](developer/architecture/database/multi-database.md) (несколько БД одновременно) ·
+  [multi-database](developer/architecture/database/multi-database.md) (несколько БД одновременно; чужие правки поллером и свои — шиной `ChangeBus`, по которой разделы обновляются в моменте) ·
   [network-shares](developer/architecture/database/network-shares.md) (общая база SQLite в сетевой папке: определение пути, режим DELETE и признак в файле, монтирование, потеря и возврат, зависшая папка, файлы рядом с базой, проверка на боевой машине).
 - [users-permissions.md](developer/architecture/users-permissions.md) — пользователи, допуск, права, пароль, журнал.
 - **Производительность** ([performance/](developer/architecture/performance/)):
@@ -74,7 +74,7 @@ EF Core/SQLite). Документация разделена на два раз�
 
 ### QA-чеклисты ([developer/qa-checklists/](developer/qa-checklists/))
 
-Ручные прогоны фич (что нажать → что должно получиться): [overview.md](developer/qa-checklists/overview.md) · [database-file](developer/qa-checklists/database-file.md) · [backup](developer/qa-checklists/backup.md) · [calendar-diagram](developer/qa-checklists/calendar-diagram.md) · [calendar-settings](developer/qa-checklists/calendar-settings.md) · [import](developer/qa-checklists/import.md) · [export](developer/qa-checklists/export.md) · [profile](developer/qa-checklists/profile.md) · [postgresql](developer/qa-checklists/postgresql.md) · [tasks](developer/qa-checklists/tasks.md) · [relation](developer/qa-checklists/relation.md) · [table-columns](developer/qa-checklists/table-columns.md) · [table-navigation](developer/qa-checklists/table-navigation.md) · [filter-date-tree](developer/qa-checklists/filter-date-tree.md) · [diagnostics](developer/qa-checklists/diagnostics.md) · [notes](developer/qa-checklists/notes.md).
+Ручные прогоны фич (что нажать → что должно получиться): [overview.md](developer/qa-checklists/overview.md) · [database-file](developer/qa-checklists/database-file.md) · [backup](developer/qa-checklists/backup.md) · [calendar-diagram](developer/qa-checklists/calendar-diagram.md) · [calendar-settings](developer/qa-checklists/calendar-settings.md) · [import](developer/qa-checklists/import.md) · [export](developer/qa-checklists/export.md) · [profile](developer/qa-checklists/profile.md) · [postgresql](developer/qa-checklists/postgresql.md) · [tasks](developer/qa-checklists/tasks.md) · [cross-section-sync](developer/qa-checklists/cross-section-sync.md) · [relation](developer/qa-checklists/relation.md) · [table-columns](developer/qa-checklists/table-columns.md) · [table-navigation](developer/qa-checklists/table-navigation.md) · [filter-date-tree](developer/qa-checklists/filter-date-tree.md) · [diagnostics](developer/qa-checklists/diagnostics.md) · [notes](developer/qa-checklists/notes.md).
 
 ---
 
