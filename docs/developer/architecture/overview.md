@@ -65,6 +65,9 @@ DI-контейнера нет — зависимости собираются �
 - Модель данных и таблицы — [data-model.md](data-model.md).
 - Хранилище, миграции, пути — [databases.md](database/storage-and-migrations.md).
 - Несколько БД одновременно — [multi-database.md](database/multi-database.md).
+- Общая база SQLite в сетевой папке (определение пути, режим DELETE и признак в файле,
+  монтирование, потеря и возврат, зависшая папка, файлы рядом с базой, проверка на боевой
+  машине) — [network-shares.md](database/network-shares.md).
 - Фичи — [../features/](../features/).
 
 ## Связанные документы

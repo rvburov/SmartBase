@@ -35,7 +35,8 @@ EF Core/SQLite). Документация разделена на два раз�
 - **База данных** ([database/](developer/architecture/database/)):
   [schema](developer/architecture/database/schema.md) (справочник всех таблиц/колонок) ·
   [storage-and-migrations](developer/architecture/database/storage-and-migrations.md) (два файла, миграции, пути, WAL) ·
-  [multi-database](developer/architecture/database/multi-database.md) (несколько БД одновременно).
+  [multi-database](developer/architecture/database/multi-database.md) (несколько БД одновременно) ·
+  [network-shares](developer/architecture/database/network-shares.md) (общая база SQLite в сетевой папке: определение пути, режим DELETE и признак в файле, монтирование, потеря и возврат, зависшая папка, файлы рядом с базой, проверка на боевой машине).
 - [users-permissions.md](developer/architecture/users-permissions.md) — пользователи, допуск, права, пароль, журнал.
 - **Производительность** ([performance/](developer/architecture/performance/)):
   [overview](developer/architecture/performance/overview.md) (принципы, индексы, узкие места) ·
