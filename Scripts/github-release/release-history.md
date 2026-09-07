@@ -19,7 +19,7 @@
 
 ## [Не выпущено]
 
-## [1.2.0]
+## [1.2.0] — 2026-09-07
 
 ### Добавлено
 - Раздел «Заметки»: папка с файлами Markdown на вашем компьютере — дерево файлов, три режима
@@ -173,7 +173,8 @@
 - Работа с несколькими базами одновременно, SQLite и PostgreSQL, пользователи и права.
 - Импорт и экспорт, автообновление из сетевой папки, нативные уведомления, автозапуск.
 
-[Не выпущено]: https://github.com/rvburov/SmartBase/compare/v1.1.0...HEAD
+[Не выпущено]: https://github.com/rvburov/SmartBase/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/rvburov/SmartBase/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/rvburov/SmartBase/compare/v1.0.4...v1.1.0
 [1.0.4]: https://github.com/rvburov/SmartBase/compare/v1.0.3...v1.0.4
 [1.0.3]: https://github.com/rvburov/SmartBase/releases/tag/v1.0.3
