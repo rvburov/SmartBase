@@ -312,8 +312,13 @@ public partial class CalendarControllerView : UserControl
         }
     }
 
+    /// <summary>Момент последнего чтения данных (<see cref="ChangeBus.Now"/>): главное окно
+    /// перечитывает календарь по своим коммитам, только если они новее этой отметки.</summary>
+    public long DataStamp { get; private set; }
+
     private void RefreshCurrent(bool scrollToNow = false)
     {
+        DataStamp               = ChangeBus.Now();
         _renderedFontDelta      = FontScale.Delta;   // активный вид отрисован с текущим размером
         _renderedCalendarStamp  = CalendarSettings.Stamp;
 

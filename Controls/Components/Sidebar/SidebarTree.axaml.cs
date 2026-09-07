@@ -184,8 +184,13 @@ public partial class SidebarTree : UserControl
                 row.SetStatus(status, failed);
     }
 
+    /// <summary>Момент последней перестройки дерева (<see cref="ChangeBus.Now"/>): главное окно
+    /// перестраивает дерево по своим структурным коммитам, только если они новее.</summary>
+    public long DataStamp { get; private set; }
+
     public void Refresh()
     {
+        DataStamp = ChangeBus.Now();
         if (_dbs.Count == 0 && _pending.Count == 0) return;
 
         _renderedFontDelta = FontScale.Delta;   // дерево отрисовано с текущим размером

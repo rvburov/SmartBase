@@ -187,6 +187,9 @@ public partial class MainWindow : Window
         // Чужие правки из другой копии приложения → обновить затронутые части UI.
         _changes.RemoteChanges += (dbId, rows) =>
             Dispatcher.UIThread.Post(() => OnRemoteChanges(dbId, rows));
+        // Свои коммиты из любого места процесса (разделы, панель записи, окна расширений,
+        // фоновые операции) → обновить те части UI, что читали данные раньше (см. FlushLocalChanges).
+        ChangeBus.Committed += OnLocalCommit;
 
         // Раздел настроек «Управление базой данных»: реестр + статус монтирования/очереди.
         SettingsModule.Initialize(workspace.Registry,
@@ -611,6 +614,8 @@ public partial class MainWindow : Window
 
         Closed += (_, _) =>
         {
+            ChangeBus.Committed -= OnLocalCommit;   // событие статическое — не держать окно
+            _localFlushTimer?.Stop();
             _changes.Dispose();
             _health.Dispose();
             _notifications.Dispose();
@@ -846,6 +851,10 @@ public partial class MainWindow : Window
         var changedDb = _workspace.Get(dbId);
         if (changedDb is null) return;   // база уже размонтирована/потеряна
 
+        // Скрытый раздел перечитает данные при показе, если читал их раньше этого момента
+        // (ShowModule → «Задачи»); календарь и конструктор при показе перечитывают всегда.
+        _lastChange[dbId] = ChangeBus.Now();
+
         // События пользователей (присоединение/допуск/права, targetType "user"):
         // перечитать свой снапшот прав и открытую панель администратора — у админа
         // новый пользователь появляется «в моменте», у ожидающего допуск снимает замок
@@ -891,15 +900,117 @@ public partial class MainWindow : Window
             else            ConstructorModule.RefreshRowsRemote();
         }
 
-        // Видимый агрегатный модуль перечитывает события/задачи затронутой БД.
+        // Видимый агрегатный модуль перечитывает события/задачи затронутой БД. Задачи — принудительно:
+        // при том же наборе галочек SetActiveIds чтение пропускает, а чужая правка галочек не меняет.
         if (_activeModule == "calendar")
             CalendarModule.SetActiveIds(CalendarSidebar.GetActiveIds());
         else if (_activeModule == "tasks")
-            TasksModule.SetActiveIds(TasksSidebar.GetActiveIds());
+            TasksModule.SetActiveIds(TasksSidebar.GetActiveIds(), force: true);
 
         // Открытая панель записи могла показывать измененную запись — перечитать значения.
         if (_recordPanelLogicalOpen && _currentConstructorDbId == dbId)
             RecordPanel.ReloadFromDb();
+    }
+
+    // ── Свои изменения: единая шина ───────────────────────────────────────────
+    //
+    // Раздел обновляет себя после собственного действия сам, а другие разделы узнавали о нем
+    // через точечные события (CollectionsChanged, RecordValueEdited, …) — и набор их был
+    // неполным: правка ячейки в конструкторе не доходила до «Задач», перенос события в
+    // календаре — до «Задач» и конструктора, запись из окна расширения — ни до кого, пока
+    // человек не переключит раздел или галочку. Поллер чужих правок тут не помощник: свои
+    // строки change_log он отбрасывает по UserKey. Поэтому любой коммит в базу из этого
+    // процесса поднимает ChangeBus.Committed (см. AppDbContext.NoteSaved), а здесь все
+    // сводится к одному правилу: часть экрана перечитывает данные, если читала их РАНЬШЕ
+    // последнего коммита (ее DataStamp против момента коммита). Кто сам правил — уже
+    // обновился после записи, его отметка новее, и лишней перезагрузки у него нет.
+    //
+    // Коммиты копятся LocalFlushDelay после последнего из них: задача — это запись плюс
+    // несколько значений, панель записи пишет на каждую букву, массовая операция коммитит
+    // порциями, — а обновление нужно одно на пачку и после ее конца (обновление посреди
+    // порций читало бы базу под следующим коммитом).
+    private readonly ChangeBatch _localChanges = new();
+    private DispatcherTimer? _localFlushTimer;
+    private static readonly TimeSpan LocalFlushDelay = TimeSpan.FromMilliseconds(300);
+    // Пока человек печатает в ячейке таблицы или в панели записи, их перечитывание ждет.
+    private static readonly TimeSpan LocalRetryDelay = TimeSpan.FromSeconds(2);
+    // Момент последнего коммита по базе — своего (шина) или чужого (поллер). Раздел, читавший
+    // данные раньше него, при показе перечитывает их (ShowModule → «Задачи»).
+    private readonly Dictionary<int, long> _lastChange = [];
+
+    private long LastChangeStamp() => _lastChange.Count == 0 ? 0 : _lastChange.Values.Max();
+
+    // С потока записи (UI или фонового), синхронно внутри SaveChanges/Commit: запомнить и
+    // уйти — любая работа с базой отсюда была бы реентерабельным вызовом контекста.
+    private void OnLocalCommit(string dbPath, IReadOnlyList<ChangeBus.Change> changes)
+    {
+        _localChanges.Add(dbPath, changes, ChangeBus.Now());
+        Dispatcher.UIThread.Post(RestartLocalFlush, DispatcherPriority.Background);
+    }
+
+    private void RestartLocalFlush()
+    {
+        _localFlushTimer ??= new DispatcherTimer(LocalFlushDelay, DispatcherPriority.Background,
+                                                 (_, _) => FlushLocalChanges());
+        _localFlushTimer.Stop();
+        _localFlushTimer.Start();
+    }
+
+    private void FlushLocalChanges()
+    {
+        _localFlushTimer?.Stop();
+        foreach (var entry in _localChanges.Drain())
+        {
+            // База еще монтируется (миграции, сиды) или уже отключена — ее покажет SyncMountedToUi,
+            // когда она встанет в рабочее пространство.
+            var db = _workspace.Mounted.FirstOrDefault(m =>
+                string.Equals(m.Path, entry.DbPath, StringComparison.OrdinalIgnoreCase));
+            if (db is null) continue;
+
+            _lastChange[db.DbId] = Math.Max(_lastChange.GetValueOrDefault(db.DbId), entry.Stamp);
+            ApplyLocalChanges(db.DbId, entry.Structural, entry.Stamp);
+        }
+    }
+
+    // Перечитать то, что читало данные раньше коммита stamp. Само правило — RefreshPlan (чистое,
+    // под тестами), здесь только снимок экрана и выполнение шагов. Повторяемо: пока человек
+    // печатает в ячейке таблицы или в панели записи, их перечитывание откладывается и заходит
+    // снова — остальные части к тому времени уже свежие (их отметки новее) и не трогаются.
+    private void ApplyLocalChanges(int dbId, bool structural, long stamp)
+    {
+        if (_workspace.Get(dbId) is null) return;
+
+        var steps = RefreshPlan.After(new RefreshPlan.Screen(
+            CommitStamp:             stamp,
+            Structural:              structural,
+            ActiveModule:            _activeModule,
+            CalendarSidebarStamp:    CalendarSidebar.DataStamp,
+            TasksSidebarStamp:       TasksSidebar.DataStamp,
+            ConstructorSidebarStamp: ConstructorSidebar.DataStamp,
+            CalendarStamp:           CalendarModule.DataStamp,
+            TasksStamp:              TasksModule.DataStamp,
+            ConstructorShowsDb:      _currentConstructorDbId == dbId && ConstructorModule.IsVisible,
+            ConstructorStamp:        ConstructorModule.DataStamp,
+            CellEditing:             ConstructorModule.IsCellEditing,
+            RecordPanelShowsDb:      _recordPanelLogicalOpen && _currentConstructorDbId == dbId,
+            RecordPanelStamp:        RecordPanel.DataStamp,
+            RecordPanelFocused:      RecordPanel.IsKeyboardFocusWithin));
+
+        // Сайдбары — раньше разделов: набор галочек читается уже с перестроенного дерева.
+        if (steps.Has(RefreshPlan.Steps.CalendarSidebar))    CalendarSidebar.Refresh();
+        if (steps.Has(RefreshPlan.Steps.TasksSidebar))       TasksSidebar.Refresh();
+        if (steps.Has(RefreshPlan.Steps.ConstructorSidebar)) ConstructorSidebar.Refresh();
+
+        if (steps.Has(RefreshPlan.Steps.Calendar)) CalendarModule.SetActiveIds(CalendarSidebar.GetActiveIds());
+        if (steps.Has(RefreshPlan.Steps.Tasks))    TasksModule.SetActiveIds(TasksSidebar.GetActiveIds(), force: true);
+
+        if (steps.Has(RefreshPlan.Steps.ConstructorFull))      ConstructorModule.Refresh();
+        else if (steps.Has(RefreshPlan.Steps.ConstructorRows)) ConstructorModule.RefreshRowsRemote();
+
+        if (steps.Has(RefreshPlan.Steps.RecordPanel)) RecordPanel.ReloadFromDb();
+
+        if (steps.Has(RefreshPlan.Steps.Retry))
+            DispatcherTimer.RunOnce(() => ApplyLocalChanges(dbId, structural, stamp), LocalRetryDelay);
     }
 
     // Сообщение человеку — карточка в правом верхнем углу окна (AppNotifications), стопкой с
@@ -1195,7 +1306,10 @@ public partial class MainWindow : Window
             ConstructorSidebar.IsVisible = false;
             TasksSidebar.IsVisible       = _sidebarOpen;
             TasksSidebar.Refresh();
-            TasksModule.SetActiveIds(TasksSidebar.GetActiveIds());
+            // С прошлого чтения раздела в базах что-то коммитили (правка в конструкторе или
+            // календаре, запись расширения, чужая правка) — перечитать, даже если галочки те же.
+            TasksModule.SetActiveIds(TasksSidebar.GetActiveIds(),
+                                     force: RefreshPlan.IsStale(TasksModule.DataStamp, LastChangeStamp()));
         }
         else if (module == "constructor")
         {
@@ -1515,9 +1629,16 @@ public partial class MainWindow : Window
     // Панель записи при этом остается открытой (кнопка живет внутри нее).
     private void ApplyConstructorContentVisibility(bool isOpen)
     {
+        var reopened = isOpen && !_collectionOpen;
         _collectionOpen = isOpen;
         RecordPanel.SetCollectionPanelOpen(isOpen);
         ApplyColumns();
+
+        // Пока блок коллекции был свернут, таблицу не перечитывали (скрытое не обновляется —
+        // см. ApplyLocalChanges); если с ее последнего чтения в базе коммитили — перечитать сейчас.
+        if (reopened && RefreshPlan.IsStale(ConstructorModule.DataStamp,
+                                            _lastChange.GetValueOrDefault(_currentConstructorDbId)))
+            ConstructorModule.Refresh();
     }
 
     // ── Перетаскивание ручки панели записи ─────────────────────────────────────

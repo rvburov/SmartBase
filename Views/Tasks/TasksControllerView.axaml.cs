@@ -101,15 +101,27 @@ public partial class TasksControllerView : UserControl
         RefreshCurrent();
     }
 
-    public void SetActiveIds(Dictionary<int, HashSet<int>> activeByDb)
+    /// <summary>Момент последнего чтения данных (<see cref="ChangeBus.Now"/>): главное окно
+    /// сверяет его с моментом последнего коммита в базы — своего или чужого — и решает,
+    /// перечитывать ли раздел при возврате в него и на лету.</summary>
+    public long DataStamp { get; private set; }
+
+    /// <param name="force">
+    /// Перечитать, даже если набор галочек тот же: с прошлого чтения в базах что-то поменялось
+    /// (правка в конструкторе или календаре, запись расширения, чужая правка). Без этого раздел
+    /// показывал старые карточки, пока человек не переключит галочку. Перечитывается тихо: список
+    /// уже на экране, и волна «Загрузка…» на нем выглядела бы как открытие заново.
+    /// </param>
+    public void SetActiveIds(Dictionary<int, HashSet<int>> activeByDb, bool force = false)
     {
         // Тот же набор галочек — перечитывать нечего. Сайдбар присылает его и когда ничего не
         // менял (возврат в раздел, перемонтирование базы), а на большой базе каждый лишний
         // заход — это лишний счет по всем коллекциям и волна «Загрузка…» на ровном месте.
-        if (TaskLoadPlan.SameActiveIds(_activeByDb, activeByDb)) return;
+        if (!force && TaskLoadPlan.SameActiveIds(_activeByDb, activeByDb)) return;
 
+        var quiet = force && TaskLoadPlan.SameActiveIds(_activeByDb, activeByDb);
         _activeByDb = activeByDb;
-        RefreshCurrent();
+        RefreshCurrent(quiet);
     }
 
     // Обновить набор смонтированных БД (live add/remove) без переподписки обработчиков.
@@ -168,6 +180,7 @@ public partial class TasksControllerView : UserControl
 
     private async Task LoadAsync(bool quiet = false)
     {
+        DataStamp = ChangeBus.Now();
         if (_dbs.Count == 0) { _loaded = []; ApplyToList(); return; }
 
         var gen       = ++_gen;

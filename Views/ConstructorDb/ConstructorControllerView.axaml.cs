@@ -39,7 +39,17 @@ public partial class ConstructorControllerView : UserControl
     /// открытая панель «Страница записи» должна перестроить список свойств.</summary>
     public event EventHandler? FieldsChanged;
 
-    private void NotifyFieldsChanged() => FieldsChanged?.Invoke(this, EventArgs.Empty);
+    private void NotifyFieldsChanged() { Touch(); FieldsChanged?.Invoke(this, EventArgs.Empty); }
+
+    /// <summary>
+    /// Момент, на который показанное соответствует базе (<see cref="ChangeBus.Now"/>). Ставится
+    /// при каждом чтении коллекции и после каждой своей правки, уже отраженной на месте. Главное
+    /// окно по своим коммитам (панель записи, календарь, задачи, расширения) перечитывает
+    /// таблицу, только если коммит новее этой отметки, — своя правка лишней перезагрузки не дает.
+    /// </summary>
+    public long DataStamp { get; private set; }
+
+    private void Touch() => DataStamp = ChangeBus.Now();
 
     /// <summary>Текущая открытая коллекция (для MainWindow при открытии PageView).</summary>
     public int? CurrentCollectionId => _currentCollectionId;
@@ -74,7 +84,7 @@ public partial class ConstructorControllerView : UserControl
         // CRUD для записей — через контекстные меню в TableView/ListView.
         TableViewCtrl.RecordClicked             += (_, rid)  => OpenPage(rid);
         TableViewCtrl.CrossDbRecordRequested    += (_, t)    => CrossDbRecordPageRequested?.Invoke(this, t);
-        TableViewCtrl.RecordValueEdited         += (_, rid)  => RecordValueEdited?.Invoke(this, rid);
+        TableViewCtrl.RecordValueEdited         += (_, rid)  => { Touch(); RecordValueEdited?.Invoke(this, rid); };
         TableViewCtrl.RecordCreateRequested     += (_, e)    => _ = CreateAndOpen(e.Open, e.AfterId);
         TableViewCtrl.RecordsDeleteRequested    += (_, ids)  => _ = DeleteRecordsWithConfirm(ids);
         TableViewCtrl.RecordDuplicateRequested  += (_, ids)  => _ = DuplicateRecords(ids);
@@ -188,6 +198,7 @@ public partial class ConstructorControllerView : UserControl
             return;
         }
 
+        Touch();
         _currentCollectionId = collectionId;
         NavbarConstructor.SetTitle(col.Name);
         SetEmptyState(false);
@@ -236,6 +247,7 @@ public partial class ConstructorControllerView : UserControl
     private void RefreshRows(bool structural = false)
     {
         if (_currentCollectionId is null || _repository is null) return;
+        Touch();
 
         // Число записей нижней панели больше не нужно (счетчика нет) — его пересчет
         // отсюда убран; индикатор диапазона таблица обновит сама, когда разложит строки.
@@ -257,6 +269,7 @@ public partial class ConstructorControllerView : UserControl
     public void RefreshRecordRow(int recordId)
     {
         if (_currentCollectionId is null || _repository is null) return;
+        Touch();
         if (TableViewCtrl.IsVisible) TableViewCtrl.RefreshRecordRow(recordId);
         else                         Refresh();
     }
@@ -696,7 +709,10 @@ public partial class ConstructorControllerView : UserControl
         var dlg = new DisplayDialog(_repository, _currentCollectionId.Value, columns);
         var ok  = await dlg.ShowDialog<bool?>(win);
         if (ok == true)
+        {
+            Touch();
             TableViewCtrl.ReloadColumns();   // только колонки (строки не сбрасываем); выделение работает
+        }
     }
 
     // Окно «Отображение записей» — менеджер видимости/уровней/порядка строк. Список

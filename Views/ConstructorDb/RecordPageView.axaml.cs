@@ -23,6 +23,25 @@ namespace SmartBase.Views.ConstructorDb;
 public partial class RecordPageView : UserControl
 {
     public event EventHandler<int>? RecordChanged;
+
+    /// <summary>
+    /// Момент, на который панель соответствует базе (<see cref="Database.ChangeBus.Now"/>):
+    /// ставится при показе и перечитывании записи и после каждой своей записи в базу. Главное
+    /// окно по своим коммитам перечитывает панель, только если коммит новее, — иначе набор
+    /// текста в панели (запись на каждую букву) перечитывал бы ее же на каждой букве.
+    /// </summary>
+    public long DataStamp { get; private set; }
+
+    private void Touch() => DataStamp = Database.ChangeBus.Now();
+
+    // Своя запись в базу состоялась и уже отражена на месте — сообщить таблице (RecordChanged)
+    // и отметить панель свежей.
+    private void NotifyRecordChanged()
+    {
+        if (_vm is null) return;
+        Touch();
+        RecordChanged?.Invoke(this, _vm.RecordId);
+    }
     public event EventHandler<bool>? CollectionPanelToggled;
 
     /// <summary>Клик по чипу поля-связи: открыть связанную запись (ее Id; коллекция может быть
@@ -148,7 +167,7 @@ public partial class RecordPageView : UserControl
             var entered = text.Trim();
             _vm.Title = string.IsNullOrEmpty(entered) ? "Без названия" : entered;
             ApplyFileSideEffects(_vm.SaveTitle());   // «Название» — источник авто-file: обновить файл-ячейки
-            RecordChanged?.Invoke(this, _vm.RecordId);
+            NotifyRecordChanged();
         };
 
         // Живая запись активного текстового свойства по символу. Цель (поле «Описание» либо
@@ -177,6 +196,7 @@ public partial class RecordPageView : UserControl
         using var slow = Logging.Diag.Measure("открытие страницы записи", Logging.Diag.UiOpen,
                                               $"{Utils.DbErrors.Display(repository.DbPath)}, коллекция {collectionId}, запись {recordId}");
 
+        Touch();
         _repo = repository;
         _dbId = dbId;
         _vm = new RecordPageViewModel(repository, recordId, collectionId);
@@ -206,6 +226,7 @@ public partial class RecordPageView : UserControl
     public void ReloadFromDb()
     {
         if (_vm is null || _repo is null) return;
+        Touch();
 
         var recordId     = _vm.RecordId;
         var collectionId = _vm.CollectionId;
@@ -988,7 +1009,7 @@ public partial class RecordPageView : UserControl
     private void PersistProperty(PropertyRowVm row)
     {
         ApplyFileSideEffects(row.Persist());
-        if (_vm is not null) RecordChanged?.Invoke(this, _vm.RecordId);
+        NotifyRecordChanged();
     }
 
     // Авто-привязка пересчитала файл-столбцы этой записи (правка столбца-источника, в т.ч.
@@ -1190,7 +1211,7 @@ public partial class RecordPageView : UserControl
                     if (db > 0) CrossDbRelatedRecordRequested?.Invoke(this, (db, t.RecordId));
                     else RelatedRecordRequested?.Invoke(this, t.RecordId);            // панель в активной БД
                 };
-                rel.Changed  += (_, _) => { if (_vm is not null) RecordChanged?.Invoke(this, _vm.RecordId); };
+                rel.Changed  += (_, _) => NotifyRecordChanged();
                 input = rel;
                 break;
             }
