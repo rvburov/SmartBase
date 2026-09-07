@@ -213,6 +213,10 @@
     <StreamGeometry x:Key="IconCalendar">M7 4 L7 7 M17 4 L17 7 M4 9 L20 9 M5 6 L19 6 A1 1 0 0 1 20 7 L20 19 A1 1 0 0 1 19 20 L5 20 A1 1 0 0 1 4 19 L4 7 A1 1 0 0 1 5 6 Z</StreamGeometry>
     <!-- Часы в полях времени (lucide clock-4): круг + стрелки на 4 часа -->
     <StreamGeometry x:Key="IconClock">M2 12 A10 10 0 0 1 22 12 A10 10 0 0 1 2 12 Z M12 6 V12 L16 14</StreamGeometry>
+    <!-- Пунктирный круг (lucide circle-dashed) — стадия «Запланировано» в фильтре задач: еще не начато -->
+    <StreamGeometry x:Key="IconCircleDashed">M10.1 2.182a10 10 0 0 1 3.8 0 M13.9 21.818a10 10 0 0 1-3.8 0 M17.609 3.721a10 10 0 0 1 2.69 2.7 M2.182 13.9a10 10 0 0 1 0-3.8 M20.279 17.609a10 10 0 0 1-2.7 2.69 M21.818 10.1a10 10 0 0 1 0 3.8 M3.721 6.391a10 10 0 0 1 2.7-2.69 M6.391 20.279a10 10 0 0 1-2.69-2.7</StreamGeometry>
+    <!-- Треугольник «пуск» (lucide play) — стадия «В работе» в фильтре задач -->
+    <StreamGeometry x:Key="IconPlay">M5 5a2 2 0 0 1 3.008-1.728l11.997 6.998a2 2 0 0 1 .003 3.458l-12 7A2 2 0 0 1 5 19z</StreamGeometry>
     <!-- Восклицательный знак баннера ошибки (тело «!» в красном круге) -->
     <StreamGeometry x:Key="IconAlertMark">M12 6 L12 14 M12 17 L12 18.5</StreamGeometry>
     <!-- Треугольник с «!» (lucide triangle-alert) — поле «Ошибка» в деталях журнала -->

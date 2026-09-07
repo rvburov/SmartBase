@@ -69,11 +69,25 @@ public partial class ConstructorRepository
     /// без учета регистра, а SQLite так кириллицу не сравнивает — варианты считает вызывающий.
     /// </param>
     /// <param name="Now">«Сейчас» — от него считаются «Сегодня» и просрочка.</param>
+    /// <param name="Stage">Имя стадии для вида <c>Stage</c> (значение поля «Статус»).</param>
+    /// <param name="HideDone">Скрывать выполненные во всех видах, кроме стадии «Выполнено»
+    /// (настройка «Показывать выполненные» выключена).</param>
+    /// <param name="OverdueNextDay">Просрочка со следующего дня после срока, а не с момента срока.</param>
     public sealed record TaskView(string Kind, string Search,
-                                  IReadOnlyCollection<string> MeVariants, DateTime Now)
+                                  IReadOnlyCollection<string> MeVariants, DateTime Now,
+                                  string Stage = "", bool HideDone = false, bool OverdueNextDay = false)
     {
-        /// <summary>Вид без сужения: все задачи, поиск пуст.</summary>
-        public bool IsAll => Kind == "All" && Search.Length == 0;
+        /// <summary>Вид без сужения: все задачи, поиск пуст, выполненные не скрыты.</summary>
+        public bool IsAll => Kind == "All" && Search.Length == 0 && !HideDone;
+
+        /// <summary>Вид одной стадии.</summary>
+        public bool IsStage => Kind == "Stage";
+
+        /// <summary>Стадия «Выполнено»: единственный вид, в котором скрытые выполненные видны.</summary>
+        public bool IsDoneStage => IsStage && Stage == TaskStatusDone;
+
+        /// <summary>Ключ вида — тот же, что <c>TaskFilter.Key</c>: «All», …, «Stage:В работе».</summary>
+        public string Key => IsStage ? "Stage:" + Stage : Kind;
     }
 
     /// <summary>
@@ -154,6 +168,10 @@ public partial class ConstructorRepository
     {
         var parts = new List<string>();
 
+        // Скрытые выполненные не попадают никуда, кроме собственной стадии (TaskFilters.Matches).
+        if (view.HideDone && !view.IsDoneStage && statusFieldId is not null)
+            parts.Add("COALESCE(vs.Value, '') <> @done");
+
         switch (view.Kind)
         {
             case "Today":
@@ -165,7 +183,11 @@ public partial class ConstructorRepository
             case "Overdue":
                 if (!dated || due is not { } o) return null;
                 parts.Add(statusFieldId is null ? "1 = 1" : "COALESCE(vs.Value, '') <> @done");
-                parts.Add($"COALESCE({o.End}, {o.Start}) <= @now");
+                // Момент просрочки — как в TaskFilters.IsOverdue: конец срока прошел либо
+                // день конца срока уже позади.
+                parts.Add(view.OverdueNextDay
+                    ? $"substr(COALESCE({o.End}, {o.Start}), 1, 10) < @today"
+                    : $"COALESCE({o.End}, {o.Start}) <= @now");
                 break;
 
             case "NoDue":
@@ -178,8 +200,13 @@ public partial class ConstructorRepository
                     : $"COALESCE(ve.Value, '') IN ({string.Join(",", view.MeVariants.Select((_, i) => "@me" + i))})");
                 break;
 
-            case "Done":
-                parts.Add(statusFieldId is null ? "1 = 0" : "COALESCE(vs.Value, '') = @done");
+            case "Stage":
+                // Пустой статус карточка показывает как «Запланировано» — эта стадия берет и его.
+                // Поля-статуса нет вовсе: все статусы пустые, то есть все «Запланировано».
+                var planned = view.Stage == TaskStatusPlanned;
+                if (statusFieldId is null) parts.Add(planned ? "1 = 1" : "1 = 0");
+                else parts.Add(planned ? "COALESCE(vs.Value, '') IN ('', @stage)"
+                                       : "COALESCE(vs.Value, '') = @stage");
                 break;
         }
 
@@ -193,13 +220,14 @@ public partial class ConstructorRepository
     // Нужны ли условию значения исполнителя/статуса — лишние соединения на каждую строку
     // добавлять незачем.
     private static bool NeedsExec(TaskView v)   => v.Kind == "AssignedToMe";
-    private static bool NeedsStatus(TaskView v) => v.Kind is "Done" or "Overdue";
+    private static bool NeedsStatus(TaskView v) => v.Kind is "Stage" or "Overdue" || v.HideDone;
     private static bool NeedsRecord(TaskView v) => v.Search.Length > 0;
 
     private void BindView(System.Data.Common.DbCommand cmd, TaskView view, int collectionId)
     {
         AddParam(cmd, "@c").Value     = collectionId;
         AddParam(cmd, "@done").Value  = TaskStatusDone;
+        AddParam(cmd, "@stage").Value = view.Stage;
         AddParam(cmd, "@now").Value   = DateTime.SpecifyKind(view.Now, DateTimeKind.Unspecified).ToString("o");
         AddParam(cmd, "@today").Value = view.Now.ToString("yyyy-MM-dd");
 
@@ -234,16 +262,14 @@ public partial class ConstructorRepository
     /// которым строится полоса прокрутки, считаются отдельно и ТОЧНО
     /// (<see cref="CountTaskView"/>) — крышка живет только в пилюле.
     /// </summary>
+    /// <param name="views">Виды пунктов навбара (стандартные и стадии); ответ — по <see cref="TaskView.Key"/>.</param>
     public Dictionary<string, int> CountTaskViews(Dictionary<int, TaskCollectionStats> stats,
-                                                  IReadOnlyList<string> kinds, string search,
-                                                  IReadOnlyCollection<string> meVariants,
-                                                  DateTime now, int cap)
+                                                  IReadOnlyList<TaskView> views, int cap)
     {
-        var result = new Dictionary<string, int>(kinds.Count);
-        foreach (var kind in kinds)
+        var result = new Dictionary<string, int>(views.Count);
+        foreach (var view in views)
         {
-            var view = new TaskView(kind, search, meVariants, now);
-            var sum  = 0;
+            var sum = 0;
             foreach (var (colId, s) in stats)
             {
                 if (sum >= cap) break;                       // дальше считать незачем — уже «999+»
@@ -252,20 +278,19 @@ public partial class ConstructorRepository
                 if (sum >= cap || s.MultiDate) continue;
                 sum += CountStream(colId, s, view, dated: false, cap: cap - sum).Total;
             }
-            result[kind] = Math.Min(sum, cap);
+            result[view.Key] = Math.Min(sum, cap);
         }
         return result;
     }
 
     /// <summary>Фоновые счетчики пилюль на ОТДЕЛЬНОМ подключении.</summary>
     public Task<Dictionary<string, int>> CountTaskViewsAsync(
-        Dictionary<int, TaskCollectionStats> stats, IReadOnlyList<string> kinds, string search,
-        IReadOnlyCollection<string> meVariants, DateTime now, int cap) =>
+        Dictionary<int, TaskCollectionStats> stats, IReadOnlyList<TaskView> views, int cap) =>
         Task.Run(() =>
         {
             using var ctx = new AppDbContext(db.DbPath);
             ctx.ApplyPerformancePragmas();
-            return new ConstructorRepository(ctx).CountTaskViews(stats, kinds, search, meVariants, now, cap);
+            return new ConstructorRepository(ctx).CountTaskViews(stats, views, cap);
         });
 
     // Сколько записей коллекции имеют срок — граница потоков для вида «Все задачи».

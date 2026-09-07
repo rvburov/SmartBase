@@ -575,10 +575,11 @@ public partial class TaskListView : UserControl
             return c;
         }
 
-        // Левая колонка: название + «Исполнитель X · Назначил Y».
+        // Левая колонка: название + «Исполнитель X · Назначил Y». Название обычным начертанием:
+        // жирным оно спорило с заголовком коллекции и именами людей, а выделяет карточку и так
+        // ее рамка; жирными остаются исполнитель и «Назначил» — то, что в строке ищут глазами.
         var title = (TextBlock)Bound(new TextBlock
         {
-            FontWeight   = bold,
             TextTrimming = TextTrimming.CharacterEllipsis,
         },
         (TextBlock.TextProperty,             nameof(TaskCardVm.TitleValue)),
@@ -783,6 +784,11 @@ public partial class TaskCardVm : ObservableObject
     /// <summary>Прочерк вместо пустого значения — раздел показывает и нераспределенные записи.</summary>
     public const string Dash = "—";
 
+    /// <summary>Правила показа из «Настройки → Задачи» (момент просрочки): ставит контроллер
+    /// перед каждой раскладкой списка, чтобы чип срока и фильтр «Просрочено» считали одно и
+    /// то же (<see cref="TaskFilters.IsOverdue"/>).</summary>
+    public static TaskRules Rules { get; set; } = TaskRules.Default;
+
     /// <summary>Задача строки. У заглушки — пустая заготовка: настоящей еще нет.</summary>
     public TaskRecord Task { get; private set; } = new();
 
@@ -904,7 +910,8 @@ public partial class TaskCardVm : ObservableObject
     }
 
     // Чип остатка: просрочка (красный) / «Сегодня» / «Осталось N ч|дн.». У выполненных —
-    // только нейтральное «Сегодня», без просрочки и обратного отсчета.
+    // только нейтральное «Сегодня», без просрочки и обратного отсчета. Момент просрочки —
+    // общий с фильтром (TaskFilters.IsOverdue, правило из настроек раздела).
     private static (string Text, bool Overdue)? DueChip(TaskRecord t, DateTime now)
     {
         if (t.DueStart is not DateTime s) return null;
@@ -913,7 +920,7 @@ public partial class TaskCardVm : ObservableObject
         if (t.Status == ConstructorRepository.TaskStatusDone)
             return end.Date == now.Date ? ("Сегодня", false) : null;
 
-        if (end <= now)
+        if (TaskFilters.IsOverdue(t, now, Rules))
         {
             var days = (int)(now.Date - end.Date).TotalDays;
             if (days >= 1) return ($"Просрочено на {days} дн.", true);
@@ -922,6 +929,8 @@ public partial class TaskCardVm : ObservableObject
         }
 
         if (t.AllDay && end.Date == now.Date) return ("Сегодня", false);
+        // Просрочка «со следующего дня»: срок сегодня уже прошел, но день еще идет — «Сегодня».
+        if (end <= now) return ("Сегодня", false);
 
         var left = end - now;
         if (left.TotalHours < 24)

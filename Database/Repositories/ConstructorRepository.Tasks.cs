@@ -114,6 +114,56 @@ public partial class ConstructorRepository
     /// <summary>Есть ли у коллекции включенное поле-исполнитель (участвует в задачах).</summary>
     public bool HasTaskExecField(int collectionId) => TaskExecFieldId(collectionId) is not null;
 
+    // ── Стадии ────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Стадии задач раздела — пункты поля «Статус» (роль <c>IsTaskStatus</c>, тип
+    /// <c>status</c>/<c>select</c>) всех коллекций с включенными задачами, объединенные без
+    /// повторов в порядке полей. Семантика <paramref name="activeIds"/> — как везде в разделе:
+    /// null = все коллекции базы, ПУСТОЙ набор = ни одной. Коллекция без исполнителя стадий не
+    /// дает: ее записей в разделе нет. Поле-статус коллекции берется по <see cref="RoleOrder"/>,
+    /// как и при чтении задач, — иначе список стадий и значения карточек разошлись бы по полям.
+    /// </summary>
+    public List<string> GetTaskStages(ISet<int>? activeIds = null)
+    {
+        if (activeIds is { Count: 0 }) return [];
+
+        var withExec = db.DbFields.AsNoTracking()
+            .Where(f => f.FieldType == "user" && f.IsTaskExec)
+            .Select(f => f.CollectionId)
+            .Distinct()
+            .ToHashSet();
+
+        var statusFields = RoleOrder(db.DbFields.AsNoTracking()
+                .Where(f => f.IsTaskStatus && (f.FieldType == "status" || f.FieldType == "select")))
+            .Select(f => new { f.CollectionId, f.ConfigJson })
+            .ToList();
+
+        var result = new List<string>();
+        var seen   = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var group in statusFields.GroupBy(f => f.CollectionId))
+        {
+            if (!withExec.Contains(group.Key)) continue;
+            if (activeIds is not null && !activeIds.Contains(group.Key)) continue;
+            foreach (var option in ReadOptions(group.First().ConfigJson))
+                if (seen.Add(option)) result.Add(option);
+        }
+        return result;
+    }
+
+    /// <summary>Пункты поля «Статус» одной коллекции — для окна задачи. Поля нет или у него
+    /// нет пунктов — три стандартные стадии (их и заведет <c>EnsureTaskCollection</c>).</summary>
+    public List<string> GetTaskStageOptions(int collectionId)
+    {
+        var config = RoleOrder(db.DbFields.AsNoTracking()
+                .Where(f => f.CollectionId == collectionId && f.IsTaskStatus &&
+                            (f.FieldType == "status" || f.FieldType == "select")))
+            .Select(f => f.ConfigJson)
+            .FirstOrDefault();
+        var options = ReadOptions(config);
+        return options.Count > 0 ? options : [.. TaskStatusOptions];
+    }
+
     /// <summary>Имя свойства по id ("" — свойства нет) — для окон, называющих носителя роли.</summary>
     public string FieldName(int fieldId) =>
         db.DbFields.Where(f => f.Id == fieldId).Select(f => f.Name).FirstOrDefault() ?? "";
@@ -308,8 +358,9 @@ public partial class ConstructorRepository
                 return $"{baseName} {i}";
     }
 
-    // Дополняет ConfigJson select-поля недостающими опциями (существующие — как есть).
-    private static string MergeSelectOptions(string configJson, IReadOnlyList<string> required)
+    /// <summary>Пункты поля-списка из его ConfigJson (<c>{"options":[…]}</c>) в порядке поля;
+    /// нечитаемый или пустой конфиг — пусто.</summary>
+    public static List<string> ReadOptions(string? configJson)
     {
         var options = new List<string>();
         try
@@ -320,8 +371,15 @@ public partial class ConstructorRepository
                     if (el.ValueKind == JsonValueKind.String && el.GetString() is { Length: > 0 } s)
                         options.Add(s);
         }
-        catch (JsonException) { /* нечитаемый конфиг — просто перезапишем опциями статусов */ }
+        catch (JsonException) { /* нечитаемый конфиг — как пустой */ }
+        return options;
+    }
 
+    // Дополняет ConfigJson select-поля недостающими опциями (существующие — как есть;
+    // нечитаемый конфиг просто перезаписывается опциями статусов).
+    private static string MergeSelectOptions(string configJson, IReadOnlyList<string> required)
+    {
+        var options = ReadOptions(configJson);
         foreach (var r in required)
             if (!options.Contains(r))
                 options.Add(r);

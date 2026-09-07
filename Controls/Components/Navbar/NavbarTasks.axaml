@@ -90,6 +90,34 @@
                     </Grid>
                 </DataTemplate>
             </ComboBox.ItemTemplate>
+
+            <!-- Контейнер пунктов выпадашки (к свернутому боксу не применяется): черта над
+                 первым пунктом группы стадий (StartsGroup) — в зазоре между пунктами, вне
+                 подсвечиваемого ContentPresenter, поэтому hover/выбор ее не захватывают.
+                 Тот же прием, что у списка типов свойств (PropertyEditorDialog). -->
+            <ComboBox.ItemContainerTheme>
+                <ControlTheme TargetType="ComboBoxItem" BasedOn="{StaticResource {x:Type ComboBoxItem}}">
+                    <Setter Property="Template">
+                        <ControlTemplate>
+                            <StackPanel Spacing="0">
+                                <Border Height="1" Margin="6,0,6,6"
+                                        Background="{StaticResource BrushSeparator}"
+                                        IsVisible="{Binding StartsGroup}" />
+                                <ContentPresenter Name="ContentPresenter"
+                                                  Background="{TemplateBinding Background}"
+                                                  BorderBrush="{TemplateBinding BorderBrush}"
+                                                  BorderThickness="{TemplateBinding BorderThickness}"
+                                                  CornerRadius="{TemplateBinding CornerRadius}"
+                                                  Padding="{TemplateBinding Padding}"
+                                                  Content="{TemplateBinding Content}"
+                                                  ContentTemplate="{TemplateBinding ContentTemplate}"
+                                                  HorizontalContentAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                                  VerticalContentAlignment="{TemplateBinding VerticalContentAlignment}" />
+                            </StackPanel>
+                        </ControlTemplate>
+                    </Setter>
+                </ControlTheme>
+            </ComboBox.ItemContainerTheme>
         </ComboBox>
 
         <!-- Вид (пока единственный «Список») -->

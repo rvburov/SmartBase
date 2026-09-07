@@ -40,7 +40,24 @@ public partial class TasksControllerView : UserControl
     private readonly List<(int DbId, string Name, ConstructorRepository Repo)> _dbs = [];
     private Dictionary<int, HashSet<int>>? _activeByDb;
     private string _searchQuery = "";
-    private TaskFilterKind _filter = TaskFilterKind.All;
+    private TaskFilter _filter = TaskFilter.All;
+    // Стадии группы фильтра — объединение пунктов поля «Статус» отмеченных коллекций всех баз;
+    // снимаются в UpdateChrome вместе с коллекциями.
+    private List<string> _stages = [];
+
+    // Правила показа из «Настройки → Задачи»; пока стандартные — живой сервис настроек
+    // появляется вместе с разделом настроек.
+    private static TaskRules Rules => TaskRules.Default;
+
+    // Полный список пунктов навбара: стандартные плюс стадии.
+    private List<TaskFilter> Filters => TaskFilters.WithStages(_stages);
+
+    // Вид репозитория для пункта фильтра: правила показа уходят в SQL теми же флагами, какими
+    // их читает проход по памяти (TaskFilters.Matches).
+    private static ConstructorRepository.TaskView ViewFor(TaskFilter f, string search,
+                                                          IReadOnlyCollection<string> me, DateTime now) =>
+        new(f.Kind.ToString(), search, me, now, f.StageName,
+            HideDone: !Rules.ShowDone, OverdueNextDay: Rules.OverdueNextDay);
     private List<TaskRecord> _loaded = [];
     // Коллекции для заголовков групп: (DbId, ColId) → место в сайдбаре, цвет и название.
     // Снимается при загрузке — ApplyToList зовется и на каждый символ поиска.
@@ -86,7 +103,7 @@ public partial class TasksControllerView : UserControl
         SetDatabaseList(databases);
 
         NavbarControl.SearchChanged += (_, q) => { _searchQuery = q; ApplyToList(); };
-        NavbarControl.FilterChanged += (_, kind) => { _filter = kind; ApplyToList(); };
+        NavbarControl.FilterChanged += (_, f) => { _filter = f; ApplyToList(); };
 
         // Обработчики событий синхронные, поэтому Task не ждем — но и не теряем (см. Fire):
         // раньше `_ = QuickAdd(req)` превращал любую не пойманную внутри ошибку в unobserved
@@ -212,6 +229,7 @@ public partial class TasksControllerView : UserControl
         _loaded      = list;
         _stats       = stats;
         _loadedStale = !tasksRead;
+        TaskCardVm.Rules = Rules;   // чип срока на карточке считает просрочку тем же правилом, что фильтр
         UpdateChrome();
         ApplyToList();
 
@@ -279,6 +297,18 @@ public partial class TasksControllerView : UserControl
                 }
         _collections = collections;
 
+        // Стадии для группы фильтра: пункты поля «Статус» отмеченных коллекций всех баз, без
+        // повторов и в порядке полей. Хвост списка навбара пересобирается только при смене набора.
+        var stages = new List<string>();
+        foreach (var (dbId, _, repo) in _dbs)
+        {
+            ISet<int>? active = _activeByDb is not null && _activeByDb.TryGetValue(dbId, out var s) ? s : null;
+            foreach (var stage in repo.GetTaskStages(active))
+                if (!stages.Contains(stage)) stages.Add(stage);
+        }
+        _stages = stages;
+        NavbarControl.SetStages(stages);
+
         // Цель по умолчанию — та же, что была до появления выбора: первая отмеченная.
         var (targetDbId, targetColId) = ResolveQuickAddTarget();
         var fallback = new QuickCollectionOption(targetDbId, targetColId, "");
@@ -309,7 +339,7 @@ public partial class TasksControllerView : UserControl
         var me    = CurrentUser.DisplayName;
         RefreshFilterCounts(found, now, me);
 
-        var shown = found.Where(t => TaskFilters.Matches(t, _filter, now, me));
+        var shown = found.Where(t => TaskFilters.Matches(t, _filter, now, me, Rules));
 
         // Раздел не помещается в память — показываем его страницами. Это касается ЛЮБОГО вида:
         // и поиск, и каждый из пяти фильтров уходят в SQL тем же условием, каким описаны в
@@ -335,7 +365,7 @@ public partial class TasksControllerView : UserControl
     {
         if (SectionTotal() <= TaskLoadCap)
         {
-            NavbarControl.SetFilterCounts(TaskFilters.Counts(found, now, me), _filter);
+            NavbarControl.SetFilterCounts(TaskFilters.Counts(found, Filters, now, me, Rules), _filter);
             return;
         }
         _ = RefreshFilterCountsFromDbAsync(++_countGen, now, me);
@@ -343,24 +373,26 @@ public partial class TasksControllerView : UserControl
 
     private async Task RefreshFilterCountsFromDbAsync(long gen, DateTime now, string me)
     {
-        var kinds  = TaskFilters.All.Select(k => k.ToString()).ToList();
-        var totals = TaskFilters.All.ToDictionary(k => k, _ => 0);
+        var filters = Filters;
+        var totals  = filters.ToDictionary(f => f, _ => 0);
         // Считать точнее потолка пилюли незачем: на единицу больше — уже «999+».
-        var cap    = Controls.Components.TaskFilterItem.CountCap + 1;
-        var search = (_searchQuery ?? "").Trim();
+        var cap     = Controls.Components.TaskFilterItem.CountCap + 1;
+        var search  = (_searchQuery ?? "").Trim();
 
         foreach (var (dbId, _, repo) in _dbs.ToList())
         {
             var byCol = StatsOfDb(dbId);
             if (byCol.Count == 0) continue;
 
+            var meVariants = MeVariants(repo, me);
+            var views      = filters.Select(f => ViewFor(f, search, meVariants, now)).ToList();
             Dictionary<string, int> part;
-            try { part = await repo.CountTaskViewsAsync(byCol, kinds, search, MeVariants(repo, me), now, cap); }
+            try { part = await repo.CountTaskViewsAsync(byCol, views, cap); }
             catch { continue; }   // фон: недоступная БД не валит счетчики остальных
 
             if (gen != _countGen) return;
-            foreach (var k in TaskFilters.All)
-                totals[k] += part.GetValueOrDefault(k.ToString());
+            foreach (var f in filters)
+                totals[f] += part.GetValueOrDefault(f.Key);
         }
 
         if (gen != _countGen) return;
@@ -424,8 +456,7 @@ public partial class TasksControllerView : UserControl
 
             // Вид у каждой базы свой: варианты написания текущего пользователя берутся из ее
             // списка пользователей.
-            var view = new ConstructorRepository.TaskView(
-                _filter.ToString(), search, MeVariants(repo, me), now);
+            var view = ViewFor(_filter, search, MeVariants(repo, me), now);
 
             Dictionary<int, ConstructorRepository.TaskViewSize> sizes;
             try { sizes = await repo.CountTaskViewAsync(byCol, view); }
@@ -471,7 +502,7 @@ public partial class TasksControllerView : UserControl
     private string NoTasksHint()
     {
         if (!string.IsNullOrWhiteSpace(_searchQuery)) return "Ничего не найдено";
-        if (_filter != TaskFilterKind.All) return $"Нет задач: {TaskFilters.Label(_filter).ToLowerInvariant()}";
+        if (_filter != TaskFilter.All) return $"Нет задач: {_filter.Label.ToLowerInvariant()}";
         var noneChecked = _activeByDb is not null && _activeByDb.Count > 0 &&
                           _activeByDb.Values.All(ids => ids.Count == 0);
         return noneChecked ? "Отметьте коллекции в боковой панели" : "Нет задач";

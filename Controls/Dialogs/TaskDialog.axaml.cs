@@ -21,19 +21,25 @@ public partial class TaskDialog : Window
     private int _selectedDbId;
     private TimeSpan _savedStartTime = new(9, 0, 0);
     private TimeSpan _savedEndTime   = new(10, 0, 0);
+    // Стадия новой задачи из настроек раздела; ставится, если есть среди пунктов коллекции.
+    private readonly string? _presetStage;
 
+    /// <param name="presetStage">Стадия, которую выбрать у новой задачи (настройка «Стадия
+    /// новой задачи»); нет среди пунктов коллекции — первый пункт.</param>
     public TaskDialog(
         IReadOnlyList<(int DbId, string Name, ConstructorRepository Repo)> databases,
         int selectedDbId,
         TaskRecord? editTask   = null,
         int? presetCollectionId = null,
-        string? presetTitle     = null)
+        string? presetTitle     = null,
+        string? presetStage     = null)
     {
         InitializeComponent();
 
         _databases.AddRange(databases);
         _selectedDbId = _databases.Any(d => d.DbId == selectedDbId) ? selectedDbId : _databases[0].DbId;
         _editTask     = editTask;
+        _presetStage  = presetStage;
 
         // Выбор БД — только при создании и когда смонтировано несколько баз.
         var showDbPicker = _databases.Count > 1 && editTask is null;
@@ -49,14 +55,16 @@ public partial class TaskDialog : Window
                 _selectedDbId = _databases[idx].DbId;
                 LoadCollections(CurrentRepo);
                 LoadUserOptions();
+                LoadStatuses(StatusCombo.SelectedItem as string);
             };
         }
 
         LoadCollections(CurrentRepo);
         LoadUserOptions();
+        LoadStatuses(null);
 
-        StatusCombo.ItemsSource   = ConstructorRepository.TaskStatusOptions.ToList();
-        StatusCombo.SelectedIndex = 0;
+        // Стадии — пункты поля «Статус» выбранной коллекции: у другой коллекции они свои.
+        CollectionCombo.SelectionChanged += (_, _) => LoadStatuses(StatusCombo.SelectedItem as string);
 
         StartDateField.Date = DateTime.Today;
         EndDateField.Date   = DateTime.Today;
@@ -156,15 +164,35 @@ public partial class TaskDialog : Window
         combo.SelectedIndex = idx >= 0 ? idx : 0;
     }
 
+    // Стадии — пункты поля «Статус» выбранной коллекции (их может быть сколько угодно), а не три
+    // зашитые: иначе задачу нельзя было бы перевести в стадию, заведенную в таблице. Что выбрать:
+    // текущий выбор, если он есть среди пунктов; иначе стадия по умолчанию из настроек; иначе
+    // первый пункт. Значение редактируемой задачи, которого среди пунктов уже нет (стадию убрали
+    // из списка), добавляется сырым — как исторический исполнитель.
+    private void LoadStatuses(string? current)
+    {
+        var colIdx = CollectionCombo.SelectedIndex;
+        var colId  = colIdx >= 0 && colIdx < _collections.Count ? _collections[colIdx].Id : null;
+        var opts   = colId is int cid
+            ? CurrentRepo.GetTaskStageOptions(cid)
+            : ConstructorRepository.TaskStatusOptions.ToList();
+        if (opts.Count == 0) opts = ConstructorRepository.TaskStatusOptions.ToList();
+
+        if (current is { Length: > 0 } && !opts.Contains(current) && current == _editTask?.Status)
+            opts.Add(current);
+
+        var pick = current is { Length: > 0 } && opts.Contains(current)                ? current
+                 : _presetStage is { Length: > 0 } && opts.Contains(_presetStage)    ? _presetStage
+                 : opts[0];
+
+        StatusCombo.ItemsSource   = opts;
+        StatusCombo.SelectedIndex = opts.IndexOf(pick);
+    }
+
     private void FillFromTask(TaskRecord t)
     {
         TitleBox.Text = t.Title;
         DescBox.Text  = t.Description;
-
-        var statuses = ConstructorRepository.TaskStatusOptions.ToList();
-        if (t.Status.Length > 0 && !statuses.Contains(t.Status)) statuses.Add(t.Status);
-        StatusCombo.ItemsSource   = statuses;
-        StatusCombo.SelectedIndex = t.Status.Length > 0 ? statuses.IndexOf(t.Status) : 0;
 
         if (t.DueStart is DateTime start)
         {
@@ -187,6 +215,9 @@ public partial class TaskDialog : Window
             var idx = _collections.FindIndex(c => c.Id == t.CollectionId);
             if (idx >= 0) CollectionCombo.SelectedIndex = idx;
         }
+
+        // Стадии коллекции задачи; ее собственная стадия выбирается, даже если ее уже нет в списке.
+        LoadStatuses(t.Status);
     }
 
     // «Без даты» прячет блоки срока; «Весь день» — только поля времени. Смена коллекции
