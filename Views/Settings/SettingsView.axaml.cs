@@ -1016,15 +1016,19 @@ public partial class SettingsView : UserControl
     // + статус фоновой очереди монтирования для еще не подключенных, + сведения о файле
     // смонтированной SQLite-базы (снятые при монтировании, без обращения к файлу отсюда)
     // и право текущего пользователя обслуживать файл (администратор базы).
+    /// <param name="taskStages">Стадии задач всех допущенных баз — для списка «Стадия новой
+    /// задачи» в разделе «Задачи»; null — только три стандартные.</param>
     public void Initialize(DatabaseRegistry registry, Func<int, bool> isMounted,
                            Func<int, (string Text, bool Failed)?>? queueStatus = null,
                            Func<int, DatabaseManager.StorageStats?>? storage = null,
-                           Func<int, bool>? canMaintain = null)
+                           Func<int, bool>? canMaintain = null,
+                           Func<IReadOnlyList<string>>? taskStages = null)
     {
         _registry    = registry;
         _isMounted   = isMounted;
         _queueStatus = queueStatus;
         _storage     = storage;
+        _taskStages  = taskStages;
         _canMaintain = canMaintain;
         RefreshDatabaseList();
     }
@@ -1075,6 +1079,7 @@ public partial class SettingsView : UserControl
         DatabasePanel.IsVisible   = key == "database";
         BackupPanel.IsVisible     = key == "backup";
         CalendarPanel.IsVisible   = key == "calendar";
+        TasksPanel.IsVisible      = key == "tasks";
         ExtensionsPanel.IsVisible = key == "extensions";
         GuidePanel.IsVisible      = key == "guide";
         NotesPanel.IsVisible      = key == "notes";
@@ -1097,6 +1102,7 @@ public partial class SettingsView : UserControl
         if (key == "extensions") BuildExtensionsPanel();
         if (key == "backup")     RebuildBackupPanel();
         if (key == "calendar")   RebuildCalendarPanel();
+        if (key == "tasks")      RebuildTasksPanel();
     }
 
     // ── Управление базой данных ──────────────────────────────────────────────

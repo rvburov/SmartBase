@@ -45,9 +45,12 @@ public partial class TasksControllerView : UserControl
     // снимаются в UpdateChrome вместе с коллекциями.
     private List<string> _stages = [];
 
-    // Правила показа из «Настройки → Задачи»; пока стандартные — живой сервис настроек
-    // появляется вместе с разделом настроек.
-    private static TaskRules Rules => TaskRules.Default;
+    // Правила показа из «Настройки → Задачи» (живой сервис TaskSettings).
+    private static TaskRules Rules => new(TaskSettings.OverdueNextDay, TaskSettings.ShowDone);
+
+    // Фильтр, который нужно поставить при входе (настройка «Фильтр при открытии раздела»).
+    // Стадия ставится позже — когда стадии известны после первой загрузки (SetStages).
+    private TaskFilter? _startFilter;
 
     // Полный список пунктов навбара: стандартные плюс стадии.
     private List<TaskFilter> Filters => TaskFilters.WithStages(_stages);
@@ -83,14 +86,30 @@ public partial class TasksControllerView : UserControl
     protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
     {
         base.OnAttachedToVisualTree(e);
-        FontScale.Changed += OnFontScaleChanged;
+        FontScale.Changed    += OnFontScaleChanged;
+        TaskSettings.Changed += OnTaskSettingsChanged;
         if (_dbs.Count > 0 && _renderedFontDelta != FontScale.Delta) ApplyToList();
+        if (_dbs.Count > 0 && _renderedTaskSettingsStamp != TaskSettings.Stamp) OnTaskSettingsChanged();
     }
 
     protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
     {
-        FontScale.Changed -= OnFontScaleChanged;
+        FontScale.Changed    -= OnFontScaleChanged;
+        TaskSettings.Changed -= OnTaskSettingsChanged;
         base.OnDetachedFromVisualTree(e);
+    }
+
+    // Настройки раздела меняются живьем: правила показа (просрочка, выполненные) требуют
+    // перечитать список и счетчики, умолчания строки добавления — переставить ее поля.
+    private long _renderedTaskSettingsStamp = TaskSettings.Stamp;
+
+    private void OnTaskSettingsChanged()
+    {
+        _renderedTaskSettingsStamp = TaskSettings.Stamp;
+        if (_dbs.Count == 0) return;
+        TaskList.ApplyQuickDefaults();
+        UpdateQuickUserOptions(TaskList.SelectedCollection?.DbId ?? ResolveQuickAddTarget().DbId);
+        RefreshCurrent(quiet: true);
     }
 
     private void OnFontScaleChanged()
@@ -103,7 +122,21 @@ public partial class TasksControllerView : UserControl
         SetDatabaseList(databases);
 
         NavbarControl.SearchChanged += (_, q) => { _searchQuery = q; ApplyToList(); };
-        NavbarControl.FilterChanged += (_, f) => { _filter = f; ApplyToList(); };
+        NavbarControl.FilterChanged += (_, f) =>
+        {
+            _filter = f;
+            TaskSettings.RememberFilter(f.Key);   // для режима «последний выбранный»
+            ApplyToList();
+        };
+
+        // Стартовый фильтр из настроек: стандартный ставится сразу, стадия — когда стадии
+        // известны (после первой загрузки, см. UpdateChrome).
+        _startFilter = TaskFilter.ParseKey(TaskSettings.InitialFilterKey);
+        if (_startFilter is { IsStage: false } start)
+        {
+            if (NavbarControl.SelectFilter(start)) _filter = start;
+            _startFilter = null;
+        }
 
         // Обработчики событий синхронные, поэтому Task не ждем — но и не теряем (см. Fire):
         // раньше `_ = QuickAdd(req)` превращал любую не пойманную внутри ошибку в unobserved
@@ -309,6 +342,14 @@ public partial class TasksControllerView : UserControl
         _stages = stages;
         NavbarControl.SetStages(stages);
 
+        // Стартовая стадия из настроек — одна попытка, когда стадии впервые известны: нет такой
+        // стадии в базах — остаемся на «Всех задачах», а не ждем ее появления.
+        if (_startFilter is { } pending)
+        {
+            _startFilter = null;
+            if (NavbarControl.SelectFilter(pending)) _filter = pending;
+        }
+
         // Цель по умолчанию — та же, что была до появления выбора: первая отмеченная.
         var (targetDbId, targetColId) = ResolveQuickAddTarget();
         var fallback = new QuickCollectionOption(targetDbId, targetColId, "");
@@ -317,9 +358,22 @@ public partial class TasksControllerView : UserControl
         UpdateQuickUserOptions(TaskList.SelectedCollection?.DbId ?? targetDbId);
     }
 
-    // «Исполнитель» строки быстрого добавления — пользователи базы, в которой заведется задача.
+    // «Исполнитель» строки быстрого добавления — пользователи базы, в которой заведется задача;
+    // кто выбран по умолчанию, решает настройка (я / не назначен).
     private void UpdateQuickUserOptions(int dbId) =>
-        TaskList.SetUserOptions(RepoFor(dbId)?.GetUserOptions() ?? [], CurrentUser.DisplayName);
+        TaskList.SetUserOptions(RepoFor(dbId)?.GetUserOptions() ?? [],
+                                TaskSettings.QuickExecutorMe ? CurrentUser.DisplayName : "");
+
+    // Стадия новой задачи: из настроек, если она есть среди пунктов коллекции; иначе первая из
+    // них (у коллекции без поля-статуса — стандартные три, их и заведет EnsureTaskCollection).
+    private static string DefaultStageFor(ConstructorRepository repo, int? collectionId)
+    {
+        var wanted  = TaskSettings.DefaultStage;
+        var options = collectionId is int cid
+            ? repo.GetTaskStageOptions(cid)
+            : [.. ConstructorRepository.TaskStatusOptions];
+        return options.Contains(wanted) ? wanted : options[0];
+    }
 
     // Поиск и сортировка — в памяти. Задачи разложены по коллекциям (порядок групп — как в
     // сайдбаре), внутри группы: срок ↑, «без даты» в конец, тай-брейк по Id.
@@ -552,11 +606,13 @@ public partial class TasksControllerView : UserControl
             if (!prepared) return;
         }
 
-        var executor = req.Executor.Length > 0 ? req.Executor : CurrentUser.DisplayName;
-        // Назначил — сам пользователь: он ставит задачу (по умолчанию — себе же).
+        // Исполнитель — ровно как выбран в строке: пустой значит «не назначен», задача заводится
+        // нераспределенной (раздел такие показывает прочерком). Назначил — сам пользователь:
+        // он ставит задачу. Стадия — из настроек раздела.
+        var executor = req.Executor;
+        var status   = DefaultStageFor(repo, colId);
         if (!TryWrite(repo, () => repo.AddTaskRecord(colId, req.Title.Trim(), executor,
-                                                     CurrentUser.DisplayName,
-                                                     ConstructorRepository.TaskStatusPlanned, req.Due)))
+                                                     CurrentUser.DisplayName, status, req.Due)))
             return;
 
         CollectionsMayHaveChanged?.Invoke(this, EventArgs.Empty);

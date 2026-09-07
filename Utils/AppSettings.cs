@@ -522,6 +522,80 @@ public static class AppSettings
         else                               _store?.Set(KeyNotifyTaskStatus, on.ToString());
     }
 
+    // ── Раздел «Настройки → Задачи» ──────────────────────────────────────────────
+    //
+    // Хранятся дельтами (стандарт = отсутствие ключа); живой кэш, разбор мусора и событие —
+    // TaskSettings. Строковые значения (стартовый фильтр, срок, стадия) здесь отдаются как
+    // есть: что из них допустимо, решает сервис.
+    public const bool   TasksOverdueNextDayDefault  = false;   // просрочка с момента срока
+    public const bool   TasksShowDoneDefault        = true;
+    public const string TasksStartFilterDefault     = "All";
+    public const bool   TasksQuickExecutorMeDefault = true;
+    public const string TasksQuickDueDefault        = "none";
+    public static readonly string TasksDefaultStageDefault =
+        SmartBase.Database.Repositories.ConstructorRepository.TaskStatusPlanned;
+
+    public static bool LoadTasksOverdueNextDay() =>
+        bool.TryParse(_store?.Get(KeyTasksOverdueNextDay), out var on) ? on : TasksOverdueNextDayDefault;
+
+    public static void SaveTasksOverdueNextDay(bool on)
+    {
+        if (on == TasksOverdueNextDayDefault) _store?.Remove(KeyTasksOverdueNextDay);
+        else                                  _store?.Set(KeyTasksOverdueNextDay, on.ToString());
+    }
+
+    public static bool LoadTasksShowDone() =>
+        bool.TryParse(_store?.Get(KeyTasksShowDone), out var on) ? on : TasksShowDoneDefault;
+
+    public static void SaveTasksShowDone(bool on)
+    {
+        if (on == TasksShowDoneDefault) _store?.Remove(KeyTasksShowDone);
+        else                            _store?.Set(KeyTasksShowDone, on.ToString());
+    }
+
+    public static string LoadTasksStartFilter() => _store?.Get(KeyTasksStartFilter) ?? TasksStartFilterDefault;
+
+    public static void SaveTasksStartFilter(string key)
+    {
+        if (key == TasksStartFilterDefault) _store?.Remove(KeyTasksStartFilter);
+        else                                _store?.Set(KeyTasksStartFilter, key);
+    }
+
+    // Последний выбранный фильтр — СОСТОЯНИЕ для режима «последний выбранный», не настройка:
+    // пишется всегда, пустое значение снимает ключ.
+    public static string LoadTasksLastFilter() => _store?.Get(KeyTasksLastFilter) ?? "";
+
+    public static void SaveTasksLastFilter(string key)
+    {
+        if (key.Length == 0) _store?.Remove(KeyTasksLastFilter);
+        else                 _store?.Set(KeyTasksLastFilter, key);
+    }
+
+    public static bool LoadTasksQuickExecutorMe() =>
+        bool.TryParse(_store?.Get(KeyTasksQuickExecutorMe), out var me) ? me : TasksQuickExecutorMeDefault;
+
+    public static void SaveTasksQuickExecutorMe(bool me)
+    {
+        if (me == TasksQuickExecutorMeDefault) _store?.Remove(KeyTasksQuickExecutorMe);
+        else                                   _store?.Set(KeyTasksQuickExecutorMe, me.ToString());
+    }
+
+    public static string LoadTasksQuickDue() => _store?.Get(KeyTasksQuickDue) ?? TasksQuickDueDefault;
+
+    public static void SaveTasksQuickDue(string key)
+    {
+        if (key == TasksQuickDueDefault) _store?.Remove(KeyTasksQuickDue);
+        else                             _store?.Set(KeyTasksQuickDue, key);
+    }
+
+    public static string LoadTasksDefaultStage() => _store?.Get(KeyTasksDefaultStage) ?? TasksDefaultStageDefault;
+
+    public static void SaveTasksDefaultStage(string stage)
+    {
+        if (stage == TasksDefaultStageDefault) _store?.Remove(KeyTasksDefaultStage);
+        else                                   _store?.Set(KeyTasksDefaultStage, stage);
+    }
+
     // Курсоры прочитанной очереди событий по базам — СОСТОЯНИЕ, а не настройка (как водяная
     // метка): пишутся всегда, дефолта у них нет. Формат «db:id;db:id» — как у галочек
     // коллекций: один ключ вместо ключа на базу, а курсоры размонтированных баз отпадают
@@ -882,6 +956,13 @@ public static class AppSettings
     private const string KeyNotifyTaskAssigned   = "notifyTaskAssigned";
     private const string KeyNotifyTaskStatus     = "notifyTaskStatus";
     private const string KeyTaskEventCursors     = "notifyTaskCursors";
+    private const string KeyTasksOverdueNextDay  = "tasksOverdueNextDay";
+    private const string KeyTasksShowDone        = "tasksShowDone";
+    private const string KeyTasksStartFilter     = "tasksStartFilter";
+    private const string KeyTasksLastFilter      = "tasksLastFilter";
+    private const string KeyTasksQuickExecutorMe = "tasksQuickExecutorMe";
+    private const string KeyTasksQuickDue        = "tasksQuickDue";
+    private const string KeyTasksDefaultStage    = "tasksDefaultStage";
     private const string KeyAutostartEnabled     = "autostartEnabled";
     private const string KeyBackgroundEnabled    = "backgroundEnabled";
     private const string KeyIntroSeedDone        = "introSeedDone";

@@ -342,25 +342,9 @@
                     </Border>
                     <Border Classes="separator h" />
 
-                    <!-- Строки календаря (стартовый вид, видимость видов) переехали в раздел
-                         «Календарь» — CalendarPanel ниже; механизм InitAppearance общий. -->
-
-                    <Border Classes="settingRow">
-                        <Grid ColumnDefinitions="*,Auto">
-                            <StackPanel Grid.Column="0" Spacing="4"
-                                        VerticalAlignment="Center" Margin="0,0,32,0">
-                                <TextBlock Classes="title" Text="Отображение по умолчанию раздела задач" />
-                                <TextBlock Classes="desc"
-                                           Text="Какой вид открывается при переходе в раздел «Задачи»." />
-                            </StackPanel>
-                            <ComboBox Grid.Column="1" x:Name="TasksViewCombo"
-                                      Width="240" Height="{StaticResource ControlHeightStandard}"
-                                      VerticalAlignment="Center"
-                                      Background="{StaticResource BrushSecondaryBg}"
-                                      CornerRadius="{StaticResource RadiusBase}" />
-                        </Grid>
-                    </Border>
-                    <Border Classes="separator h" />
+                    <!-- Строки календаря и задач (стартовый вид, видимость видов) переехали в
+                         разделы «Календарь» и «Задачи» — CalendarPanel и TasksPanel ниже;
+                         механизм InitAppearance общий. -->
 
                     <Border Classes="settingRow">
                         <Grid ColumnDefinitions="*,Auto">
@@ -393,20 +377,6 @@
                                            Text="Какие разделы показывать в панели навигации слева. «Настройки» и «Профиль» скрыть нельзя." />
                             </StackPanel>
                             <w:CheckListDropdown Grid.Column="1" x:Name="NavigationVisibility"
-                                                 Width="240" VerticalAlignment="Center" />
-                        </Grid>
-                    </Border>
-                    <Border Classes="separator h" />
-
-                    <Border Classes="settingRow">
-                        <Grid ColumnDefinitions="*,Auto">
-                            <StackPanel Grid.Column="0" Spacing="4"
-                                        VerticalAlignment="Center" Margin="0,0,32,0">
-                                <TextBlock Classes="title" Text="Отображение раздела задач" />
-                                <TextBlock Classes="desc"
-                                           Text="Какие виды задач показывать в переключателе навбара. Пока вид один — Список." />
-                            </StackPanel>
-                            <w:CheckListDropdown Grid.Column="1" x:Name="TasksVisibility"
                                                  Width="240" VerticalAlignment="Center" />
                         </Grid>
                     </Border>
@@ -871,6 +841,160 @@
                                       Background="{StaticResource BrushSecondaryBg}"
                                       CornerRadius="{StaticResource RadiusBase}"
                                       SelectionChanged="OnCalendarDurationChanged" />
+                        </Grid>
+                    </Border>
+                    <Border Classes="separator h" />
+
+                    </StackPanel>
+                </Grid>
+            </ScrollViewer>
+
+            <!-- ── Задачи ────────────────────────────────────────── -->
+            <!-- Раздел «Задачи»: стартовый вид и видимость видов (контролы те же, что были в
+                 «Оформлении», механизм InitAppearance общий), остальное наполняет
+                 SettingsTasksPanel и пишет в живой сервис TaskSettings — раздел перечитывается
+                 сразу. Тумблеры уведомлений по задачам остаются в «Общее». -->
+            <ScrollViewer x:Name="TasksPanel" IsVisible="False"
+                          VerticalScrollBarVisibility="Auto">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Margin="16,0,16,32">
+
+                    <Border Classes="settingRow">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <StackPanel Grid.Column="0" Spacing="4"
+                                        VerticalAlignment="Center" Margin="0,0,32,0">
+                                <TextBlock Classes="title" Text="Отображение по умолчанию" />
+                                <TextBlock Classes="desc"
+                                           Text="Какой вид открывается при переходе в раздел «Задачи»." />
+                            </StackPanel>
+                            <ComboBox Grid.Column="1" x:Name="TasksViewCombo"
+                                      Width="240" Height="{StaticResource ControlHeightStandard}"
+                                      VerticalAlignment="Center"
+                                      Background="{StaticResource BrushSecondaryBg}"
+                                      CornerRadius="{StaticResource RadiusBase}" />
+                        </Grid>
+                    </Border>
+                    <Border Classes="separator h" />
+
+                    <Border Classes="settingRow">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <StackPanel Grid.Column="0" Spacing="4"
+                                        VerticalAlignment="Center" Margin="0,0,32,0">
+                                <TextBlock Classes="title" Text="Отображаемые виды" />
+                                <TextBlock Classes="desc"
+                                           Text="Какие виды задач показывать в переключателе навбара. Пока вид один — Список." />
+                            </StackPanel>
+                            <w:CheckListDropdown Grid.Column="1" x:Name="TasksVisibility"
+                                                 Width="240" VerticalAlignment="Center" />
+                        </Grid>
+                    </Border>
+                    <Border Classes="separator h" />
+
+                    <Border Classes="settingRow">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <StackPanel Grid.Column="0" Spacing="4"
+                                        VerticalAlignment="Center" Margin="0,0,32,0">
+                                <TextBlock Classes="title" Text="Фильтр при открытии раздела" />
+                                <TextBlock Classes="desc"
+                                           Text="Какой быстрый фильтр стоит при входе в раздел. «Последний выбранный» — тот, на котором раздел оставили в прошлый раз, в том числе стадия." />
+                            </StackPanel>
+                            <ComboBox Grid.Column="1" x:Name="TasksStartFilterCombo"
+                                      Width="240" Height="{StaticResource ControlHeightStandard}"
+                                      VerticalAlignment="Center"
+                                      Background="{StaticResource BrushSecondaryBg}"
+                                      CornerRadius="{StaticResource RadiusBase}"
+                                      SelectionChanged="OnTasksStartFilterChanged" />
+                        </Grid>
+                    </Border>
+                    <Border Classes="separator h" />
+
+                    <Border Classes="settingRow">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <StackPanel Grid.Column="0" Spacing="4"
+                                        VerticalAlignment="Center" Margin="0,0,32,0">
+                                <TextBlock Classes="title" Text="Показывать выполненные" />
+                                <TextBlock Classes="desc"
+                                           Text="Выполненные задачи видны во всех фильтрах. Выключено — они остаются только в стадии «Выполнено» списка фильтров, а в заголовке коллекции по-прежнему считаются." />
+                            </StackPanel>
+                            <ToggleSwitch Grid.Column="1" x:Name="TasksShowDoneToggle"
+                                          OnContent="" OffContent=""
+                                          VerticalAlignment="Center"
+                                          IsCheckedChanged="OnTasksShowDoneToggled" />
+                        </Grid>
+                    </Border>
+                    <Border Classes="separator h" />
+
+                    <Border Classes="settingRow">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <StackPanel Grid.Column="0" Spacing="4"
+                                        VerticalAlignment="Center" Margin="0,0,32,0">
+                                <TextBlock Classes="title" Text="Момент просрочки" />
+                                <TextBlock Classes="desc"
+                                           Text="«С момента срока» — задача на 10:00 просрочена уже в 10:01. «Со следующего дня» — просрочена, только когда день срока прошел; до конца дня карточка показывает «Сегодня». Влияет на чип карточки и фильтр «Просрочено»." />
+                            </StackPanel>
+                            <ComboBox Grid.Column="1" x:Name="TasksOverdueCombo"
+                                      Width="240" Height="{StaticResource ControlHeightStandard}"
+                                      VerticalAlignment="Center"
+                                      Background="{StaticResource BrushSecondaryBg}"
+                                      CornerRadius="{StaticResource RadiusBase}"
+                                      SelectionChanged="OnTasksOverdueChanged" />
+                        </Grid>
+                    </Border>
+                    <Border Classes="separator h" />
+
+                    <Border Classes="settingRow">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <StackPanel Grid.Column="0" Spacing="4"
+                                        VerticalAlignment="Center" Margin="0,0,32,0">
+                                <TextBlock Classes="title" Text="Стадия новой задачи" />
+                                <TextBlock Classes="desc"
+                                           Text="Какую стадию получает задача при быстром добавлении и в окне задачи. В списке — стадии всех подключенных баз; если у коллекции такой стадии нет, берется первая из ее списка." />
+                            </StackPanel>
+                            <ComboBox Grid.Column="1" x:Name="TasksDefaultStageCombo"
+                                      Width="240" Height="{StaticResource ControlHeightStandard}"
+                                      VerticalAlignment="Center"
+                                      Background="{StaticResource BrushSecondaryBg}"
+                                      CornerRadius="{StaticResource RadiusBase}"
+                                      SelectionChanged="OnTasksDefaultStageChanged" />
+                        </Grid>
+                    </Border>
+                    <Border Classes="separator h" />
+
+                    <Border Classes="settingRow">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <StackPanel Grid.Column="0" Spacing="4"
+                                        VerticalAlignment="Center" Margin="0,0,32,0">
+                                <TextBlock Classes="title" Text="Исполнитель в быстром добавлении" />
+                                <TextBlock Classes="desc"
+                                           Text="Кто стоит исполнителем в строке быстрого добавления: вы или никто. «Не назначен» — задача заводится нераспределенной, раздать ее можно потом; выбор в строке всегда можно поменять перед добавлением." />
+                            </StackPanel>
+                            <ComboBox Grid.Column="1" x:Name="TasksQuickExecutorCombo"
+                                      Width="240" Height="{StaticResource ControlHeightStandard}"
+                                      VerticalAlignment="Center"
+                                      Background="{StaticResource BrushSecondaryBg}"
+                                      CornerRadius="{StaticResource RadiusBase}"
+                                      SelectionChanged="OnTasksQuickExecutorChanged" />
+                        </Grid>
+                    </Border>
+                    <Border Classes="separator h" />
+
+                    <Border Classes="settingRow">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <StackPanel Grid.Column="0" Spacing="4"
+                                        VerticalAlignment="Center" Margin="0,0,32,0">
+                                <TextBlock Classes="title" Text="Срок в быстром добавлении" />
+                                <TextBlock Classes="desc"
+                                           Text="Какая дата подставляется в строку быстрого добавления: без срока, сегодня или завтра. Подставляется при открытии раздела и после каждого добавления; дату всегда можно поменять перед добавлением." />
+                            </StackPanel>
+                            <ComboBox Grid.Column="1" x:Name="TasksQuickDueCombo"
+                                      Width="240" Height="{StaticResource ControlHeightStandard}"
+                                      VerticalAlignment="Center"
+                                      Background="{StaticResource BrushSecondaryBg}"
+                                      CornerRadius="{StaticResource RadiusBase}"
+                                      SelectionChanged="OnTasksQuickDueChanged" />
                         </Grid>
                     </Border>
                     <Border Classes="separator h" />

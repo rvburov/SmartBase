@@ -79,8 +79,10 @@ public partial class TaskListView : UserControl
             _                        => new Control(),
         }, supportsRecycling: false);
 
-        // Срок по умолчанию — вечер текущего дня; сама дата пуста («без даты»).
+        // Время по умолчанию — вечер текущего дня; дата — по настройке «Срок в быстром
+        // добавлении» (стандарт — пусто, «без даты»).
         QuickTimeField.Time = new TimeSpan(18, 0, 0);
+        QuickDateField.Date = TaskSettings.QuickDueDate(DateTime.Today);
 
         QuickTitle.KeyDown += (_, e) =>
         {
@@ -353,14 +355,37 @@ public partial class TaskListView : UserControl
     public QuickCollectionOption? SelectedCollection => QuickCollection.SelectedItem as QuickCollectionOption;
 
     // Опции исполнителя строки быстрого добавления (пользователи целевой БД).
+    /// <summary>Первый пункт списка исполнителей строки добавления: задача заводится
+    /// нераспределенной — раздел показывает такие прочерком, и именно их предстоит раздать.</summary>
+    public const string UnassignedLabel = "Не назначен";
+
+    /// <param name="selected">Кого выбрать: имя либо пусто — «Не назначен» (настройка
+    /// «Исполнитель в быстром добавлении»). Выбор, сделанный человеком в строке, переживает
+    /// перечитывание списка.</param>
     public void SetUserOptions(IReadOnlyList<string> options, string selected)
     {
-        var opts = options.Count > 0 ? options.ToList() : [CurrentUser.DisplayName];
+        var opts = new List<string> { UnassignedLabel };
+        opts.AddRange(options.Count > 0 ? options : [CurrentUser.DisplayName]);
         if (selected.Length > 0 && !opts.Contains(selected)) opts.Add(selected);
         var keep = QuickExecutor.SelectedItem as string;
         QuickExecutor.ItemsSource = opts;
         var idx = keep is not null ? opts.IndexOf(keep) : -1;
-        if (idx < 0) idx = opts.IndexOf(selected);
+        if (idx < 0) idx = selected.Length > 0 ? opts.IndexOf(selected) : 0;
+        QuickExecutor.SelectedIndex = idx >= 0 ? idx : 0;
+    }
+
+    /// <summary>
+    /// Переставить поля строки добавления по настройкам раздела: дата — по «Срок в быстром
+    /// добавлении», исполнитель — по «Исполнитель в быстром добавлении». Зовется при открытии
+    /// раздела, при смене настроек и после каждого добавления.
+    /// </summary>
+    public void ApplyQuickDefaults()
+    {
+        QuickDateField.Date = TaskSettings.QuickDueDate(DateTime.Today);
+
+        if (QuickExecutor.ItemsSource is not IList<string> opts || opts.Count == 0) return;
+        var wanted = TaskSettings.QuickExecutorMe ? CurrentUser.DisplayName : UnassignedLabel;
+        var idx    = opts.IndexOf(wanted);
         QuickExecutor.SelectedIndex = idx >= 0 ? idx : 0;
     }
 
@@ -396,9 +421,13 @@ public partial class TaskListView : UserControl
                 : new DateValue(day.Date, day.Date + new TimeSpan(23, 59, 0), true);
         }
 
-        var executor = QuickExecutor.SelectedItem as string ?? CurrentUser.DisplayName;
+        // «Не назначен» уходит пустым исполнителем — задача заводится нераспределенной.
+        var executor = QuickExecutor.SelectedItem as string ?? "";
+        if (executor == UnassignedLabel) executor = "";
         QuickAddRequested?.Invoke(this, new QuickAddRequest(title, due, executor, SelectedCollection));
         QuickTitle.Text = "";
+        // Дата — снова по настройке; исполнитель остается: несколько задач подряд одному человеку.
+        QuickDateField.Date = TaskSettings.QuickDueDate(DateTime.Today);
     }
 
     // ── Заголовок группы (коллекция) ─────────────────────────────────────────

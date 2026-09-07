@@ -200,7 +200,9 @@ public partial class MainWindow : Window
             // Сведения о файле — снимок, снятый при монтировании (без обращения к файлу с UI-потока).
             dbId => _workspace.Get(dbId)?.Storage,
             // Обслуживать файл (сжать/копия) может администратор базы.
-            dbId => _workspace.Get(dbId) is { Provider: "sqlite" } m && m.Permissions.IsAdmin);
+            dbId => _workspace.Get(dbId) is { Provider: "sqlite" } m && m.Permissions.IsAdmin,
+            // Стадии задач всех допущенных баз — для списка «Стадия новой задачи».
+            taskStages: () => GrantedDbs().SelectMany(m => m.Constructor.GetTaskStages()).Distinct().ToList());
 
         // Live mount/unmount: добавление/удаление БД в настройках сразу отражается в
         // сайдбаре конструктора без перезапуска. Новая база встает в хвост очереди —
