@@ -1,4 +1,3 @@
-using SmartBase.Extensions;
 using SmartBase.Settings;
 using SmartBase.Utils;
 
@@ -176,16 +175,9 @@ public sealed class ViewCatalogTests
     // Пункты берутся из реестра, а не перечислены в каталоге. Поэтому проверки здесь НЕ
     // называют ни одного расширения и не рассчитывают на их число: удалили расширение (или
     // все сразу) — тесты обязаны остаться зелеными, иначе обещание «убрал папку, и больше
-    // ничего править не нужно» не выполняется.
-
-    [Fact]
-    public void Extensions_scope_mirrors_the_registry()
-    {
-        var items = ViewCatalog.All(ViewCatalog.ScopeExtensions);
-
-        Assert.Equal(ExtensionRegistry.All.Select(e => e.Id),   items.Select(v => v.Key));
-        Assert.Equal(ExtensionRegistry.All.Select(e => e.Name), items.Select(v => v.Label));
-    }
+    // ничего править не нужно» не выполняется. Само зеркало «пункты = реестр» проверяется в
+    // Tests/Extensions/Registry (ViewCatalogContractTests): тесты ядра не знают пространства
+    // имен расширений вовсе, за этим следит сторож «Ядро не знает про расширения» в CI.
 
     // Скрываем все, кроме первого: работает и на пустом реестре (скрывать нечего, видимых нет),
     // и на одном расширении, и на шести.
