@@ -35,8 +35,12 @@ public static class VaultRules
         !attrs.HasFlag(FileAttributes.ReparsePoint);
 
     /// <summary>Открывается только markdown. Остальные файлы в дереве видны, но не открываются.</summary>
+    // Расширение сравнивается без учета регистра НА ЛЮБОЙ ОС: «ЗАМЕТКА.MD» — Markdown и на Linux,
+    // где файловая система различает регистр. <see cref="Comparison"/> здесь не подходит — это
+    // правило тождества ПУТЕЙ (два имени — один файл или разные), а не признак формата.
     public static bool IsMarkdown(string name) =>
-        name.EndsWith(".md", Comparison) || name.EndsWith(".markdown", Comparison);
+        name.EndsWith(".md", StringComparison.OrdinalIgnoreCase) ||
+        name.EndsWith(".markdown", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>Относительный путь в каноническом виде: разделитель '/', без крайних слешей.</summary>
     public static string Normalize(string? relativePath) =>

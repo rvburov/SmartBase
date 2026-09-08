@@ -14,11 +14,22 @@ public static class NetworkPath
     private static readonly ConcurrentDictionary<string, bool> Cache  = new(StringComparer.OrdinalIgnoreCase);
     private static readonly ConcurrentDictionary<string, bool> Forced = new(StringComparer.OrdinalIgnoreCase);
 
+    // UNC-запись (\\server\share или //server/share) — сеть на любой ОС. Проверяется по СЫРОЙ
+    // строке, до GetFullPath: на Linux и macOS обратный слеш — обычный символ имени, и
+    // GetFullPath приклеил бы к такому пути текущую папку, спрятав префикс. Такая строка в
+    // реестре баз бывает у файла, скопированного с Windows-машины, — считать ее локальной нельзя.
+    private static bool IsUnc(string path) =>
+        path.StartsWith(@"\\", StringComparison.Ordinal) || path.StartsWith("//", StringComparison.Ordinal);
+
+    // Ключ кеша и пометок: UNC-строка остается как есть, остальное — полный путь.
+    private static string Full(string path) => IsUnc(path) ? path : System.IO.Path.GetFullPath(path);
+
     public static bool IsNetwork(string path)
     {
         if (string.IsNullOrEmpty(path)) return false;
+        if (IsUnc(path)) return true;
         string full;
-        try { full = System.IO.Path.GetFullPath(path); }
+        try { full = Full(path); }
         catch { return true; }   // кривой путь — консервативно
         if (Forced.ContainsKey(full)) return true;
         if (Cache.TryGetValue(full, out var cached)) return cached;
@@ -35,13 +46,13 @@ public static class NetworkPath
     /// файл с признаком общей базы внутри (см. DatabaseManager — <c>storage.shared</c> в db_meta),
     /// открытый по пути, который система определила как локальный.</summary>
     public static void ForceNetwork(string path) =>
-        Forced[System.IO.Path.GetFullPath(path)] = true;
+        Forced[Full(path)] = true;
 
     /// <summary>Забыть все, что известно о пути (принудительная пометка и кеш определения) — для
     /// тестов, которые проверяют повторное определение с чистого листа.</summary>
     public static void Forget(string path)
     {
-        var full = System.IO.Path.GetFullPath(path);
+        var full = Full(path);
         Forced.TryRemove(full, out _);
         Cache.TryRemove(full, out _);
         ForcedRoots.TryRemove(full, out _);
@@ -51,7 +62,7 @@ public static class NetworkPath
     /// заданную папку, а не корень диска — чтобы два временных файла в одной папке выглядели
     /// как две базы одной шары, а файл в другой папке — как база другого сервера.</summary>
     public static void ForceServerRoot(string path, string root) =>
-        ForcedRoots[System.IO.Path.GetFullPath(path)] = root;
+        ForcedRoots[Full(path)] = root;
 
     private static readonly ConcurrentDictionary<string, string> ForcedRoots = new(StringComparer.OrdinalIgnoreCase);
 
@@ -67,13 +78,13 @@ public static class NetworkPath
     {
         if (string.IsNullOrEmpty(path)) return null;
         string full;
-        try { full = System.IO.Path.GetFullPath(path); }
+        try { full = Full(path); }
         catch { return null; }
         if (ForcedRoots.TryGetValue(full, out var forced)) return forced.ToLowerInvariant();
         if (!IsNetwork(full)) return null;
         try
         {
-            if (full.StartsWith(@"\\") || full.StartsWith("//"))
+            if (IsUnc(full))
             {
                 // \\server\share\папка\файл → \\server\share
                 var parts = full.TrimStart('\\', '/').Split(['\\', '/'], 3, StringSplitOptions.RemoveEmptyEntries);
@@ -102,7 +113,7 @@ public static class NetworkPath
             if (OperatingSystem.IsWindows())
             {
                 // UNC-путь или подключенный сетевой диск.
-                if (full.StartsWith(@"\\") || full.StartsWith("//")) return (true, true);
+                if (IsUnc(full)) return (true, true);
                 var root = System.IO.Path.GetPathRoot(full);
                 if (string.IsNullOrEmpty(root)) return (true, true);
                 return ClassifyDrive(new DriveInfo(root).DriveType, IsPersistentMapping(root));
