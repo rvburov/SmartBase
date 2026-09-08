@@ -706,10 +706,13 @@ public sealed class TimeCollectorRunTests : IDisposable
     public void Too_Long_Path_Gets_The_Plain_Mark_Instead_Of_A_Formula()
     {
         // Путь подгоняется под предел, но остается в MAX_PATH: длиннее файл просто не создать.
+        // Наполнитель — латиница: предел Excel считается в знаках, а предел имени файла на Linux —
+        // 255 байт, и кириллица (два байта на знак в UTF-8) в него не влезала: ext4 отвечал
+        // ENAMETOOLONG, и файл не создавался вовсе.
         var filler = 245 - _calc.Length - 1 - "_2025.03.14_Иванов.xlsm".Length;
         Assert.True(filler > 0, "временная папка стенда слишком длинная для этой проверки");
 
-        CreateCalc(new string('П', filler) + "_2025.03.14_Иванов.xlsm",
+        CreateCalc(new string('P', filler) + "_2025.03.14_Иванов.xlsm",
                    ("Изделие", "Длинный", "ДД", 1.0));
         CreateCalc("К_2025.03.14_Петров.xlsm", ("Изделие", "Короткий", "КК", 2.0));
 
@@ -722,7 +725,7 @@ public sealed class TimeCollectorRunTests : IDisposable
         // поименно и с длиной пути — в папке из сотен книг иначе не понять, какую перекладывать.
         Assert.Equal(1, result.Sheet.PlainLinks);
         var named = Assert.Single(result.Sheet.PlainFiles);
-        Assert.StartsWith(new string('П', filler), named);
+        Assert.StartsWith(new string('P', filler), named);
         Assert.Contains("знаков", named);
 
         using var wb = new XLWorkbook(result.OutputPath);

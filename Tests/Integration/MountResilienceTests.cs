@@ -180,8 +180,12 @@ public sealed class MountResilienceTests
             Assert.Equal(MountBlockedException.ShareNotResponding, st.Reason);
             Assert.Contains("папка не отвечает", st.Text);
 
-            // Папка ответила — повторная постановка монтирует как обычно.
+            // Папка ответила — повторная постановка монтирует как обычно. Ожидание пробы — штатное:
+            // здесь проверяется возврат папки, а не предел времени. Короткое ожидание из первой
+            // части тут ни к чему, а на занятом раннере CI оно роняло тест: проба здорового пути
+            // не успевала за 300 мс, и вторая попытка тоже заканчивалась «папка не отвечает».
             DbHealthMonitor.ProbeOverride = null;
+            MountQueue.PreMountProbeWait = savedWait;
             done.Reset();
             queue.Enqueue(entry);
             Assert.True(done.Wait(TimeSpan.FromSeconds(60)), "повторное монтирование не завершилось");

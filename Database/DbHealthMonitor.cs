@@ -271,7 +271,7 @@ public sealed class DbHealthMonitor : IDisposable
     {
         try
         {
-            var probe = Task.Run(() => ProbePathDetailed(path));
+            var probe = StartProbe(path);
             var ok    = probe.Wait(ProbeWaitMs) && probe.Result.Ok;
             var gone  = probe.IsCompleted && !probe.Result.FileExists;
 
@@ -379,7 +379,7 @@ public sealed class DbHealthMonitor : IDisposable
 
             if (siblings.Count > 0)
             {
-                var probes = siblings.Select(m => (Db: m, Probe: Task.Run(() => ProbePathDetailed(m.Path)))).ToList();
+                var probes = siblings.Select(m => (Db: m, Probe: StartProbe(m.Path))).ToList();
                 Task.WaitAll(probes.Select(p => (Task)p.Probe).ToArray(), ProbeWaitMs);
                 foreach (var (m, probe) in probes)
                 {
@@ -450,7 +450,7 @@ public sealed class DbHealthMonitor : IDisposable
     /// монтирование не начинается вовсе, а не виснет в первом же обращении к файлу.</summary>
     public static ProbeOutcome Probe(string path, TimeSpan wait)
     {
-        var probe = Task.Run(() => ProbePathDetailed(path));
+        var probe = StartProbe(path);
         if (!probe.Wait(wait)) return ProbeOutcome.Timeout;
         var (ok, exists) = probe.Result;
         return ok ? ProbeOutcome.Ok : exists ? ProbeOutcome.Unreadable : ProbeOutcome.Missing;
@@ -460,6 +460,23 @@ public sealed class DbHealthMonitor : IDisposable
     /// пробы пути, null — обычная проба. Настоящую пропажу сетевой папки в тесте не
     /// устроить (открытый SQLite-файл на Windows не удалить и не переименовать).</summary>
     public static Func<string, (bool Ok, bool FileExists)?>? ProbeOverride;
+
+    // Проба идет на СВОЕЙ нити, а не в пуле потоков, по двум причинам. На зависшей сетевой папке
+    // проба стоит в ядре минутами — пул терял бы рабочий поток на каждую такую попытку. И
+    // наоборот: когда пул занят (старт с десятком баз, экспорт, параллельный прогон тестов),
+    // задача из пула ждала бы свободного потока дольше самого предела ожидания, и здоровая
+    // папка выглядела бы «не отвечает» — так и падал тест очереди монтирования на раннерах CI.
+    // Снаружи это обычная Task: Wait с пределом, Result, IsCompletedSuccessfully.
+    private static Task<(bool Ok, bool FileExists)> StartProbe(string path)
+    {
+        var tcs = new TaskCompletionSource<(bool Ok, bool FileExists)>(TaskCreationOptions.RunContinuationsAsynchronously);
+        new Thread(() =>
+        {
+            try { tcs.SetResult(ProbePathDetailed(path)); }
+            catch (Exception ex) { tcs.SetException(ex); }
+        }) { IsBackground = true, Name = "db-probe" }.Start();
+        return tcs.Task;
+    }
 
     // Проба: File.Exists ОБЯЗАТЕЛЕН отдельно от открытия — на POSIX удаленный файл
     // продолжает «работать» через уже открытый хендл долгоживущего контекста, записи

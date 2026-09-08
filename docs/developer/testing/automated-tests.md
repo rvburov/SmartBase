@@ -101,6 +101,26 @@ job `postgres` (фильтр `PgProviderTests|PgCreateDatabaseTests`) с guard-�
   `Tests/MultiProcess` — консольные инструменты, не автотесты
   ([benchmarks.md](benchmarks.md), [multi-process.md](multi-process.md), [test-database.md](test-database.md)).
 
+## Платформенные ловушки
+
+Локально тесты идут на Windows, а в CI — еще на Linux и двух macOS, и между выпусками матрица
+не запускается сама ([../guides/ci.md](../guides/ci.md)). На чем уже ловились тесты, прошедшие
+на Windows:
+
+- **Регистр.** Файловая система Linux различает регистр, и `StringComparison.Ordinal` для
+  тождества путей там верен. Но признак формата — не тождество: расширение файла сравнивается
+  без учета регистра на любой ОС (`VaultRules.IsMarkdown`).
+- **UNC-путь.** `Path.GetFullPath` на Linux и macOS не знает записи `\\server\share`: обратный
+  слеш там обычный знак имени, и к строке приклеивается текущая папка. UNC распознается по сырой
+  строке до нормализации (`NetworkPath.IsUnc`).
+- **Имя файла — 255 байт, а не знаков.** На ext4 кириллица занимает два байта на знак, и имя из
+  170 русских букв не создать вовсе (`ENAMETOOLONG`); на Windows и APFS предел считается в
+  знаках. Длинные имена в тестах набираются латиницей (`TimeCollectorRunTests`).
+- **Пул потоков раннера занят.** xUnit гоняет классы параллельно, и задача из пула может ждать
+  свободного потока дольше короткого предела вроде 300 мс: здоровый путь выглядит «не отвечает».
+  Пробы пути идут на своей нити (`DbHealthMonitor.StartProbe`), а короткий предел в тесте
+  ставится только на ту часть, где проверяется сам предел (`MountResilienceTests`).
+
 ## Связанные документы
 
 - [architecture/performance.md](../architecture/performance/overview.md) — keyset-пагинация, календарная проекция

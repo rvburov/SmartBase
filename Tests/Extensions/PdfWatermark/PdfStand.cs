@@ -117,7 +117,8 @@ internal static class PdfStand
     /// <summary>Размер страницы в пунктах — печать и поля обязаны пережить растеризацию.</summary>
     public static (double W, double H) PageSize(string path, int pageNumber = 1)
     {
-        using var doc = PdfReader.Open(path, PdfDocumentOpenMode.InformationOnly);
+        // Import, а не InformationOnly: тот в PDFsharp объявлен устаревшим и не реализован.
+        using var doc = PdfReader.Open(path, PdfDocumentOpenMode.Import);
         var page = doc.Pages[pageNumber - 1];
         return (page.Width.Point, page.Height.Point);
     }
