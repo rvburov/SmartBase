@@ -20,6 +20,13 @@ public partial class NavbarSettings : UserControl
     /// <summary>Нажата кнопка выгрузки диагностики в CSV.</summary>
     public event EventHandler? ExportLogsRequested;
 
+    /// <summary>Выбрана вкладка раздела «Интеграции»; в аргументе — ее ключ.</summary>
+    public event EventHandler<string>? IntegrationTabRequested;
+
+    // Гасит событие, пока список наполняется кодом: смена ItemsSource дергает
+    // SelectionChanged, и без флага открытие раздела перезаписывало бы сохраненную вкладку.
+    private bool _integrationsBuilding;
+
     public NavbarSettings()
     {
         InitializeComponent();
@@ -42,10 +49,38 @@ public partial class NavbarSettings : UserControl
                 }
             });
         };
+
+        IntegrationsCombo.SelectionChanged += (_, _) =>
+        {
+            if (_integrationsBuilding) return;
+
+            var index = IntegrationsCombo.SelectedIndex;
+            if (index < 0 || index >= Settings.IntegrationTabs.All.Count) return;
+
+            IntegrationTabRequested?.Invoke(this, Settings.IntegrationTabs.All[index].Key);
+        };
     }
 
     /// <summary>Заголовок раздела настроек.</summary>
     public string Title { set => TitleText.Text = value; }
+
+    /// <summary>
+    /// Наполнить переключатель вкладок «Интеграций» и выбрать нужную. Подписи берутся из
+    /// <see cref="Settings.IntegrationTabs"/> — единственного места, где они перечислены.
+    /// </summary>
+    public void SetIntegrationTabs(string selectedKey)
+    {
+        _integrationsBuilding = true;
+
+        IntegrationsCombo.ItemsSource   = Settings.IntegrationTabs.All.Select(t => t.Label).ToList();
+        IntegrationsCombo.SelectedIndex = Settings.IntegrationTabs.All.ToList()
+            .FindIndex(t => t.Key == Settings.IntegrationTabs.Resolve(selectedKey).Key);
+
+        _integrationsBuilding = false;
+    }
+
+    /// <summary>Показать/скрыть переключатель вкладок (виден только в «Интеграциях»).</summary>
+    public bool ShowIntegrationTabs { set => IntegrationsCombo.IsVisible = value; }
 
     /// <summary>Показать/скрыть «Добавить базу данных» (видна только в разделе БД).</summary>
     public bool ShowDatabaseActions { set => AddDatabaseCombo.IsVisible = value; }

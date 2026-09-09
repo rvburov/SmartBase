@@ -121,6 +121,9 @@ public partial class SettingsView : UserControl
         HeaderBar.ConnectPostgresRequested += (_, _) => OnConnectPostgresClick(this, new RoutedEventArgs());
         HeaderBar.CreatePostgresRequested  += (_, _) => OnCreatePostgresClick(this, new RoutedEventArgs());
         HeaderBar.ExportLogsRequested      += (_, _) => _ = ExportLogsToCsv();
+
+        // Переключатель вкладок «Интеграций» — там же, в навбаре (виден только в этом разделе).
+        HeaderBar.IntegrationTabRequested  += (_, key) => ShowIntegrationTab(key);
     }
 
     // ── Оформление: что открывается по умолчанию и что вообще показывать ─────
@@ -1081,6 +1084,7 @@ public partial class SettingsView : UserControl
         CalendarPanel.IsVisible   = key == "calendar";
         TasksPanel.IsVisible      = key == "tasks";
         ExtensionsPanel.IsVisible = key == "extensions";
+        IntegrationsPanel.IsVisible = key == "integrations";
         GuidePanel.IsVisible      = key == "guide";
         NotesPanel.IsVisible      = key == "notes";
         LogsPanel.IsVisible       = key == "logs";
@@ -1096,10 +1100,12 @@ public partial class SettingsView : UserControl
         // Кнопка «Добавить базу данных» в навбаре осмысленна только в разделе БД.
         HeaderBar.ShowDatabaseActions = key == "database";
         HeaderBar.ShowLogsActions     = key == "logs";
+        HeaderBar.ShowIntegrationTabs = key == "integrations";
 
         if (key == "logs")       RebuildLogsPanel();
         if (key == "guide")      BuildGuide();
         if (key == "extensions") BuildExtensionsPanel();
+        if (key == "integrations") BuildIntegrationsPanel();
         if (key == "backup")     RebuildBackupPanel();
         if (key == "calendar")   RebuildCalendarPanel();
         if (key == "tasks")      RebuildTasksPanel();

@@ -24,6 +24,12 @@ namespace SmartBase.Integrations;
 /// вместе с подписью: источник, которому подпись обязательна, обязан пройти проверку и из
 /// снимка тоже.
 /// </summary>
+/// <summary>Место, где программа ищет политику, — строка экрана «Безопасность».</summary>
+/// <param name="Name">Имя источника, то же, что в отчете о чтении.</param>
+/// <param name="Where">Путь или ветка реестра.</param>
+/// <param name="SignatureRequired">Обязательна ли здесь подпись.</param>
+public sealed record PolicyPlace(string Name, string Where, bool SignatureRequired);
+
 public static class PolicySources
 {
     /// <summary>Имя файла политики во всех папках — одно.</summary>
@@ -57,6 +63,25 @@ public static class PolicySources
 
     /// <summary>Пометка к имени источника, когда он прочитан не с места, а из снимка.</summary>
     public const string LastKnownSuffix = " (последняя известная)";
+
+    /// <summary>
+    /// Где программа ищет политику — для экрана «Безопасность». Место в списке есть всегда,
+    /// даже если файла там нет: администратору нужно знать, куда положить, а не гадать.
+    /// </summary>
+    public static IReadOnlyList<PolicyPlace> Places() =>
+    [
+        OperatingSystem.IsWindows()
+            ? new PolicyPlace(NameRegistry, $@"HKLM\{RegistrySubKey}", false)
+            : new PolicyPlace(NameUnix, Path.Combine(SystemFolderUnix, FileName), false),
+
+        new(NameInstall, Path.Combine(AppContext.BaseDirectory, FileName), false),
+
+        // Папке раздачи подпись обязательна: в нее пишут без прав администратора.
+        new(NameShare, string.IsNullOrWhiteSpace(AppSettings.LoadUpdatePath())
+                ? "не задана в настройках обновления"
+                : Path.Combine(AppSettings.LoadUpdatePath(), FileName),
+            true),
+    ];
 
     /// <summary>
     /// Собрать источники так, как это делает работающая программа: системное место, папка

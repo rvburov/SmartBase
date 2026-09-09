@@ -802,6 +802,19 @@ public static class AppSettings
     private static string ExtensionKey(string extensionId, string key) =>
         $"{ExtensionKeyPrefix}{extensionId}.{key}";
 
+    // ── Открытая вкладка раздела «Интеграции» ──────────────────────────────────
+    //
+    // Какая вкладка открывается при входе в раздел. Настройки как таковой нет — это память
+    // о последнем выборе, как у видов календаря: человек настраивает обмен в несколько
+    // заходов, и каждый раз возвращаться к первой вкладке было бы утомительно.
+    //
+    // Список значений задает Settings/IntegrationTabs.cs; проверка там же, поэтому
+    // незнакомое значение (правка app.db руками, откат на версию с другим набором вкладок)
+    // молча заменяется первой вкладкой, а не роняет раздел.
+    public static string LoadIntegrationsTab() => _store?.Get(KeyIntegrationsTab) ?? "";
+
+    public static void SaveIntegrationsTab(string key) => _store?.Set(KeyIntegrationsTab, key);
+
     // ── Последняя известная политика интеграций ────────────────────────────────
     //
     // Снимок текста политики по каждому источнику. Нужен ровно для одного случая: сетевая
@@ -970,6 +983,7 @@ public static class AppSettings
     private const string KeyGuideTocWidth    = "guideTocWidth";
     private const string KeyFontDelta        = "fontDelta";
     private const string KeyStartupModule    = "startupModule";
+    private const string KeyIntegrationsTab  = "integrations.tab";
     private const string KeyTasksView        = "tasksView";
     private const string KeyCalendarView     = "calendarView";
     private const string KeyCalendarDaysInWeek        = "calendarDaysInWeek";

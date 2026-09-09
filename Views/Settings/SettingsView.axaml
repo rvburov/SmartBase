@@ -1039,6 +1039,27 @@
                 </Grid>
             </ScrollViewer>
 
+            <!-- ── Интеграции ────────────────────────────────────── -->
+            <!-- Раздел один, а внутри вкладки; переключатель между ними — выпадающий список
+                 в навбаре, как виды календаря (docs/ROADMAP-API.md, раздел 4). Каждая
+                 вкладка — своя панель ниже, содержимое собирает SettingsIntegrationsPanel. -->
+            <ScrollViewer x:Name="IntegrationsPanel" IsVisible="False"
+                          VerticalScrollBarVisibility="Auto">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Margin="16,0,16,32">
+
+                        <!-- Безопасность: что разрешено этой машине и откуда это взялось.
+                             Только показ — правится политика вне программы, и это главное
+                             свойство раздела (см. overview.md, «Файл политики»). -->
+                        <StackPanel x:Name="IntegrationsSecurityTab" Spacing="0" />
+
+                    </StackPanel>
+                </Grid>
+            </ScrollViewer>
+
             <!-- ── Заметки ───────────────────────────────────────── -->
             <ScrollViewer x:Name="NotesPanel" IsVisible="False"
                           VerticalScrollBarVisibility="Auto">

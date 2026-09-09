@@ -15,6 +15,14 @@ namespace SmartBase.Integrations;
 /// </summary>
 public static class EgressSetup
 {
+    /// <summary>
+    /// Итог последнего чтения — для экрана «Безопасность». Не запас на будущее: экран обязан
+    /// показывать то, чем шлюз заряжен СЕЙЧАС, а не то, что прочитается при повторном обходе
+    /// источников. Сетевая папка могла с тех пор пропасть, и второе чтение дало бы другую
+    /// картину, чем действующие ограничения.
+    /// </summary>
+    public static PolicyLoadResult Last { get; private set; } = new(EgressPolicySet.Closed, []);
+
     /// <summary>Прочитать политику и отдать ее шлюзу. Возвращает отчет для экрана «Безопасность».</summary>
     public static PolicyLoadResult Init()
     {
@@ -30,12 +38,12 @@ public static class EgressSetup
             // закрытой — шлюзу ничего не подключено.
             Log.Error(ex, "Политика интеграций не прочиталась: исходящие обращения запрещены");
             EgressGate.Close();
-            return new PolicyLoadResult(EgressPolicySet.Closed, []);
+            return Last = new PolicyLoadResult(EgressPolicySet.Closed, []);
         }
 
         EgressGate.AttachPolicy(result.Set);
         Report(result);
-        return result;
+        return Last = result;
     }
 
     private static void Report(PolicyLoadResult result)

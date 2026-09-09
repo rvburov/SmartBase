@@ -6,7 +6,7 @@
 
     <!-- Заголовок слева, действия раздела справа — как в остальных навбарах
          (NavbarConstructor: переключатель вида справа тем же стилем). -->
-    <Grid ColumnDefinitions="*,Auto,Auto" Margin="16,0">
+    <Grid ColumnDefinitions="*,Auto,Auto,Auto" Margin="16,0">
 
         <TextBlock Grid.Column="0" x:Name="TitleText"
                    Text="Оформление"
@@ -31,10 +31,21 @@
             <ComboBoxItem Content="Создать базу данных PostgreSQL" />
         </ComboBox>
 
+        <!-- Вкладки раздела «Интеграции»: Соединения, Запросы, Безопасность и остальные по
+             мере готовности. Переключатель именно здесь, а не строкой под сайдбаром: это
+             такой же выбор вида, как месяц/неделя в календаре, и место у него то же.
+             Выбор сохраняется, в отличие от меню «Добавить базу данных» рядом. -->
+        <ComboBox Grid.Column="2" x:Name="IntegrationsCombo"
+                  IsVisible="False"
+                  Width="210" Height="{StaticResource ControlHeightStandard}"
+                  VerticalAlignment="Center"
+                  Background="{StaticResource BrushSecondaryBg}"
+                  CornerRadius="{StaticResource RadiusBase}" />
+
         <!-- Выгрузка журнала диагностики в CSV — только в разделе «Диагностика».
              Вид кнопки — как «Импорт/Экспорт» в сайдбаре конструктора (navbtn 30×30,
              lucide download). -->
-        <Button Grid.Column="2" x:Name="ExportLogsBtn"
+        <Button Grid.Column="3" x:Name="ExportLogsBtn"
                 Classes="navbtn" Width="30" Height="30"
                 IsVisible="False"
                 VerticalAlignment="Center"
