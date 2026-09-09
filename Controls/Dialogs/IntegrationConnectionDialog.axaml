@@ -1,0 +1,151 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:w="clr-namespace:SmartBase.Controls.Widgets"
+        x:Class="SmartBase.Controls.Dialogs.IntegrationConnectionDialog"
+        Title="Соединение"
+        Width="{StaticResource DialogWidthBase}"
+        MinWidth="{StaticResource DialogWidthBase}"
+        MaxWidth="{StaticResource DialogWidthBase}"
+        MinHeight="0"
+        SizeToContent="Height"
+        WindowStartupLocation="CenterOwner"
+        CanResize="False"
+        Background="{StaticResource BrushBg}">
+
+    <StackPanel Spacing="0" Margin="{StaticResource DialogPadding}">
+
+        <TextBlock Text="Название"
+                   Margin="0,0,0,6"
+                   FontWeight="{StaticResource FontWeightBold}"
+                   Foreground="{StaticResource BrushSecondaryText}" />
+        <TextBox x:Name="NameBox"
+                 Watermark="Учетная система"
+                 Height="34" Margin="0,0,0,12"
+                 VerticalContentAlignment="Center"
+                 CornerRadius="{StaticResource RadiusMedium}" />
+
+        <TextBlock Text="Адрес"
+                   Margin="0,0,0,6"
+                   FontWeight="{StaticResource FontWeightBold}"
+                   Foreground="{StaticResource BrushSecondaryText}" />
+        <TextBox x:Name="AddressBox"
+                 Watermark="https://сервер/путь"
+                 Height="34" Margin="0,0,0,6"
+                 VerticalContentAlignment="Center"
+                 CornerRadius="{StaticResource RadiusMedium}" />
+
+        <!-- Строка политики — не украшение: она отвечает на вопрос «а можно ли вообще по
+             этому адресу», не дожидаясь нажатия «Проверить связь». Отказ шлюза объясняет
+             себя словами, иначе его принимают за поломку сети. -->
+        <TextBlock x:Name="PolicyText"
+                   Margin="0,0,0,12"
+                   TextWrapping="Wrap"
+                   FontSize="{DynamicResource FontSizeSmall}" />
+
+        <TextBlock Text="Авторизация"
+                   Margin="0,0,0,6"
+                   FontWeight="{StaticResource FontWeightBold}"
+                   Foreground="{StaticResource BrushSecondaryText}" />
+        <ComboBox x:Name="AuthCombo"
+                  Height="34" Margin="0,0,0,12"
+                  HorizontalAlignment="Stretch"
+                  SelectedIndex="0">
+            <ComboBoxItem Tag="none"   Content="Без авторизации" />
+            <ComboBoxItem Tag="header" Content="Ключ в своем заголовке" />
+            <ComboBoxItem Tag="bearer" Content="Токен (Authorization: Bearer)" />
+            <ComboBoxItem Tag="basic"  Content="Имя и пароль (Basic)" />
+            <ComboBoxItem Tag="query"  Content="Ключ в параметрах адреса" />
+        </ComboBox>
+
+        <StackPanel x:Name="AuthNameBlock" IsVisible="False">
+            <TextBlock x:Name="AuthNameLabel"
+                       Text="Имя заголовка"
+                       Margin="0,0,0,6"
+                       FontWeight="{StaticResource FontWeightBold}"
+                       Foreground="{StaticResource BrushSecondaryText}" />
+            <TextBox x:Name="AuthNameBox"
+                     Height="34" Margin="0,0,0,12"
+                     VerticalContentAlignment="Center"
+                     CornerRadius="{StaticResource RadiusMedium}" />
+        </StackPanel>
+
+        <StackPanel x:Name="SecretBlock" IsVisible="False">
+            <TextBlock Text="Секрет"
+                       Margin="0,0,0,6"
+                       FontWeight="{StaticResource FontWeightBold}"
+                       Foreground="{StaticResource BrushSecondaryText}" />
+            <!-- Секрет виден только точками и в карточку соединения не попадает: он лежит
+                 в защищенном хранилище системы (см. IntegrationsRegistry). -->
+            <TextBox x:Name="SecretBox"
+                     PasswordChar="•"
+                     Height="34" Margin="0,0,0,6"
+                     VerticalContentAlignment="Center"
+                     CornerRadius="{StaticResource RadiusMedium}" />
+            <CheckBox x:Name="ClearSecretCheck"
+                      IsVisible="False"
+                      Content="Убрать сохраненный секрет"
+                      Margin="0,0,0,12" />
+        </StackPanel>
+
+        <TextBlock Text="Постоянные заголовки"
+                   Margin="0,0,0,6"
+                   FontWeight="{StaticResource FontWeightBold}"
+                   Foreground="{StaticResource BrushSecondaryText}" />
+        <!-- Построчно «Имя: значение» — тот же вид, в котором заголовки пишут в документации
+             и в строке cURL. Отдельный редактор строк выглядел бы солиднее, но заставлял бы
+             перенабирать то, что уже есть в буфере обмена. -->
+        <TextBox x:Name="HeadersBox"
+                 AcceptsReturn="True"
+                 Watermark="Accept: application/json"
+                 Height="72" Margin="0,0,0,6"
+                 TextWrapping="NoWrap"
+                 CornerRadius="{StaticResource RadiusMedium}" />
+        <TextBlock Text="По строке на заголовок, в виде «Имя: значение». Секретам здесь не место — для них есть авторизация выше."
+                   Margin="0,0,0,12"
+                   TextWrapping="Wrap"
+                   FontSize="{DynamicResource FontSizeSmall}"
+                   Foreground="{StaticResource BrushSecondaryText}" />
+
+        <Grid ColumnDefinitions="*,12,*" Margin="0,0,0,12">
+            <StackPanel Grid.Column="0">
+                <TextBlock Text="Таймаут, с"
+                           Margin="0,0,0,6"
+                           FontWeight="{StaticResource FontWeightBold}"
+                           Foreground="{StaticResource BrushSecondaryText}" />
+                <TextBox x:Name="TimeoutBox"
+                         Height="34"
+                         VerticalContentAlignment="Center"
+                         CornerRadius="{StaticResource RadiusMedium}" />
+            </StackPanel>
+            <StackPanel Grid.Column="2">
+                <TextBlock Text="Повторов при обрыве"
+                           Margin="0,0,0,6"
+                           FontWeight="{StaticResource FontWeightBold}"
+                           Foreground="{StaticResource BrushSecondaryText}" />
+                <TextBox x:Name="RetriesBox"
+                         Height="34"
+                         VerticalContentAlignment="Center"
+                         CornerRadius="{StaticResource RadiusMedium}" />
+            </StackPanel>
+        </Grid>
+
+        <w:NoticeBanner x:Name="NoticeBanner" Margin="0,0,0,12" />
+
+        <TextBlock x:Name="StatusText"
+                   IsVisible="False"
+                   Margin="0,0,0,12"
+                   TextWrapping="Wrap"
+                   FontSize="{DynamicResource FontSizeSmall}" />
+
+        <Grid ColumnDefinitions="Auto,*,Auto,8,Auto" Margin="0,4,0,0">
+            <Button Grid.Column="0" x:Name="TestBtn" Classes="dialog" Width="150"
+                    Content="Проверить связь" />
+            <Button Grid.Column="2" x:Name="CancelBtn" Classes="dialog"
+                    Content="Отмена" />
+            <Button Grid.Column="4" x:Name="ConfirmBtn" Classes="dialog"
+                    Content="Сохранить" />
+        </Grid>
+
+    </StackPanel>
+
+</Window>

@@ -1,0 +1,58 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:w="clr-namespace:SmartBase.Controls.Widgets"
+        x:Class="SmartBase.Controls.Dialogs.CurlImportDialog"
+        Title="Вставить cURL"
+        Width="{StaticResource DialogWidthBase}"
+        MinWidth="{StaticResource DialogWidthBase}"
+        MaxWidth="{StaticResource DialogWidthBase}"
+        MinHeight="0"
+        SizeToContent="Height"
+        WindowStartupLocation="CenterOwner"
+        CanResize="False"
+        Background="{StaticResource BrushBg}">
+
+    <StackPanel Spacing="0" Margin="{StaticResource DialogPadding}">
+
+        <TextBlock Text="Строка из документации к чужой программе. Программа разберет ее и заполнит карточки — ничего не выполняя и не читая с диска."
+                   Margin="0,0,0,10"
+                   TextWrapping="Wrap"
+                   FontSize="{DynamicResource FontSizeSmall}"
+                   Foreground="{StaticResource BrushSecondaryText}" />
+
+        <TextBox x:Name="CurlBox"
+                 AcceptsReturn="True"
+                 Watermark="curl https://сервер/orders -H 'Authorization: Bearer …'"
+                 Height="140" Margin="0,0,0,12"
+                 TextWrapping="NoWrap"
+                 CornerRadius="{StaticResource RadiusMedium}" />
+
+        <!-- Что получилось: адрес, метод и — главное — что программа сочла секретом.
+             Молчаливый перенос параметра из адреса в поле авторизации выглядел бы как
+             потеря параметра. -->
+        <StackPanel x:Name="ResultBlock" IsVisible="False" Spacing="6" Margin="0,0,0,12">
+            <TextBlock x:Name="ResultText"
+                       TextWrapping="Wrap"
+                       FontSize="{DynamicResource FontSizeSmall}" />
+            <TextBlock x:Name="NotesText"
+                       IsVisible="False"
+                       TextWrapping="Wrap"
+                       FontSize="{DynamicResource FontSizeSmall}"
+                       Foreground="{StaticResource BrushSecondaryText}" />
+        </StackPanel>
+
+        <w:NoticeBanner x:Name="NoticeBanner" Margin="0,0,0,12" />
+
+        <Grid ColumnDefinitions="Auto,*,Auto,8,Auto" Margin="0,4,0,0">
+            <Button Grid.Column="0" x:Name="ParseBtn" Classes="dialog" Width="130"
+                    Content="Разобрать" />
+            <Button Grid.Column="2" x:Name="CancelBtn" Classes="dialog"
+                    Content="Отмена" />
+            <Button Grid.Column="4" x:Name="ConfirmBtn" Classes="dialog"
+                    IsEnabled="False"
+                    Content="Заполнить" />
+        </Grid>
+
+    </StackPanel>
+
+</Window>

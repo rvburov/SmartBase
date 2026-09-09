@@ -16,7 +16,9 @@ public static class IntegrationTabs
 {
     public static IReadOnlyList<IntegrationTab> All { get; } =
     [
-        new("security", "Безопасность"),
+        new("connections", "Соединения"),
+        new("requests",    "Запросы"),
+        new("security",    "Безопасность"),
     ];
 
     /// <summary>Вкладка по ключу; неизвестный ключ — первая вкладка.</summary>

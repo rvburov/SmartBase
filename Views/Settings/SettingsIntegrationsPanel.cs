@@ -43,9 +43,15 @@ public partial class SettingsView
         _integrationsTab = IntegrationTabs.Resolve(key).Key;
         AppSettings.SaveIntegrationsTab(_integrationsTab);
 
-        IntegrationsSecurityTab.IsVisible = _integrationsTab == "security";
+        IntegrationsConnectionsTab.IsVisible = _integrationsTab == "connections";
+        IntegrationsRequestsTab.IsVisible    = _integrationsTab == "requests";
+        IntegrationsSecurityTab.IsVisible    = _integrationsTab == "security";
 
-        if (_integrationsTab == "security") BuildIntegrationsSecurity();
+        // Список строится при каждом показе: карточки правятся в окнах, и вернуться на вкладку
+        // можно уже с другим их составом.
+        if (_integrationsTab == "connections") BuildIntegrationsConnections();
+        if (_integrationsTab == "requests")    BuildIntegrationsRequests();
+        if (_integrationsTab == "security")    BuildIntegrationsSecurity();
     }
 
     // ── Вкладка «Безопасность» ────────────────────────────────────────────────
