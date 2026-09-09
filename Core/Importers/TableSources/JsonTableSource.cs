@@ -63,7 +63,7 @@ public sealed class JsonTableSource(string path) : ITableSource
         if (rowCount == 0)
             throw new ImportException("В файле нет записей — нет данных для импорта.");
 
-        var titleKey = PickTitleKey(keys, firstKey)
+        var titleKey = SourceHelpers.PickJsonTitleKey(keys, firstKey)
             ?? throw new ImportException("В объектах JSON нет ни одного ключа — нечего импортировать.");
 
         var named = keys.Select((k, i) => (Col: i, Raw: k.Trim())).ToList();
@@ -79,18 +79,6 @@ public sealed class JsonTableSource(string path) : ITableSource
 
         return new ImportSchema(nameByIdx[_titleIdx], fieldNames, rowCount,
                                 rowCount - stats[titleKey].NonEmpty);
-    }
-
-    // Приоритет ключа названия: «Название» → name → title (без учета регистра, первый по порядку
-    // появления), иначе первый ключ первого объекта.
-    private static string? PickTitleKey(List<string> keys, string? firstKey)
-    {
-        foreach (var cand in new[] { "название", "name", "title" })
-        {
-            var hit = keys.FirstOrDefault(k => string.Equals(k, cand, StringComparison.OrdinalIgnoreCase));
-            if (hit is not null) return hit;
-        }
-        return firstKey ?? (keys.Count > 0 ? keys[0] : null);
     }
 
     public IEnumerable<ImportRow> ReadRows(CancellationToken ct)
@@ -110,7 +98,7 @@ public sealed class JsonTableSource(string path) : ITableSource
                 foreach (var p in doc.RootElement.EnumerateObject())
                 {
                     if (!index.TryGetValue(p.Name, out var i)) continue;   // ключа не было в проходе 1
-                    var s = FormatValue(p.Value);
+                    var s = SourceHelpers.FormatJsonValue(p.Value);
                     if (i == _titleIdx) title = s;
                     else vals[i < _titleIdx ? i : i - 1] = s;
                 }
@@ -118,13 +106,6 @@ public sealed class JsonTableSource(string path) : ITableSource
                 yield return new ImportRow(title, vals);
             }
     }
-
-    private static string FormatValue(JsonElement v) => v.ValueKind switch
-    {
-        JsonValueKind.String                          => v.GetString() ?? "",
-        JsonValueKind.Null or JsonValueKind.Undefined => "",
-        _                                             => v.GetRawText(),   // числа/булевы как в файле; объект/массив — сырой JSON
-    };
 
     // ── Потоковое чтение значений ─────────────────────────────────────────────
 

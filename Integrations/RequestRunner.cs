@@ -1,0 +1,298 @@
+using System.Text.Json;
+
+namespace SmartBase.Integrations;
+
+/// <summary>
+/// Итог запуска запроса: собранные записи и то, чем запуск закончился.
+/// </summary>
+/// <param name="Ok">Записи получены — их можно укладывать в коллекцию.</param>
+/// <param name="Explanation">Что случилось, человеческим языком: и отказ политики, и сетевой
+/// сбой, и «уперлись в потолок строк».</param>
+/// <param name="Json">Записи одним массивом JSON — то, что читает <c>JsonTextSource</c>. При
+/// неудаче пустой: половина выгрузки, уложенная в коллекцию, хуже, чем ничего, — заметить
+/// недостачу потом невозможно.</param>
+/// <param name="Rows">Сколько записей собрано; при неудаче — сколько успели до нее.</param>
+/// <param name="Pages">Сколько порций пришлось запросить.</param>
+/// <param name="Bytes">Сколько байт пришло суммарно.</param>
+/// <param name="Elapsed">Сколько заняло.</param>
+/// <param name="SafeAddress">Куда ходили — без секрета, для журнала.</param>
+/// <param name="StatusCode">Код последнего ответа; 0 — ответа не было.</param>
+/// <param name="Capped">Сбор остановлен потолком строк из политики, а не концом данных.</param>
+public sealed record RunOutcome(
+    bool     Ok,
+    string   Explanation,
+    string   Json,
+    int      Rows,
+    int      Pages,
+    long     Bytes,
+    TimeSpan Elapsed,
+    string   SafeAddress,
+    int      StatusCode,
+    bool     Capped)
+{
+    internal static RunOutcome Failed(string explanation, EgressResponse answer, int pages, int rows) =>
+        new(false, explanation, "[]", rows, pages, answer.Bytes, answer.Elapsed,
+            answer.SafeAddress, answer.StatusCode, false);
+}
+
+/// <summary>
+/// Запуск запроса: подставить переменные, отправить, при необходимости пройти по страницам и
+/// собрать записи в один массив.
+///
+/// Слоем ниже лежит <see cref="EgressHttp"/> — здесь нет ни одного сетевого типа, только
+/// последовательность вызовов и разбор ответа. Разделение то же, что у плана и транспорта:
+/// решения отдельно, сокет отдельно.
+///
+/// Три правила, ради которых этот слой и существует:
+///
+/// <list type="number">
+///   <item><b>Незнакомая подстановка останавливает запуск.</b> <c>{{опечатка}}</c> уехала бы в
+///   чужую программу буквально, а пустой ответ потом искали бы неделю.</item>
+///   <item><b>Страницы берутся до конца данных, но не дальше потолка.</b> Без разбивки выгрузка
+///   молча обрывается на первой сотне записей — самая частая и самая незаметная беда обмена;
+///   без потолка чужая программа с бесконечной пагинацией крутит цикл вечно.</item>
+///   <item><b>Потолок строк берется из политики организации</b>, а не из настроек человека.
+///   Настройка, которую можно поднять, — это не потолок.</item>
+/// </list>
+/// </summary>
+public static class RequestRunner
+{
+    /// <summary>
+    /// Сколько порций подряд разрешено запросить. Страховка от чужой программы, которая на
+    /// любой номер страницы отвечает одним и тем же непустым списком: такой обмен иначе не
+    /// кончается никогда.
+    /// </summary>
+    public const int MaxPages = 200;
+
+    /// <summary>Запустить запрос и собрать записи.</summary>
+    public static async Task<RunOutcome> RunAsync(
+        IntegrationConnection connection,
+        IntegrationRequest    request,
+        string                secret,
+        VariableContext       context,
+        CancellationToken     ct = default)
+    {
+        var limit = EgressGate.Policy.MaxRowsPerRun;
+
+        if (limit <= 0)
+            return new RunOutcome(false,
+                "политика организации не разрешает получать записи: потолок строк за запуск — 0",
+                "[]", 0, 0, 0, TimeSpan.Zero, "", 0, false);
+
+        var items   = new List<string>();
+        var bytes   = 0L;
+        var elapsed = TimeSpan.Zero;
+        var pages   = 0;
+        var last    = "";
+        var status  = 0;
+
+        // Метка следующей порции у курсорной разбивки; у страничной — номер, у сдвиговой — сдвиг.
+        string? cursor = null;
+        var     number = 1;
+        var     offset = 0;
+
+        while (pages < MaxPages)
+        {
+            var page = Page(request, context, cursor, number, offset, out var unknown);
+
+            if (unknown.Count > 0)
+                return new RunOutcome(false,
+                    "неизвестные подстановки: " + string.Join(", ", unknown.Select(u => "{{" + u + "}}")),
+                    "[]", items.Count, pages, bytes, elapsed, "", 0, false);
+
+            var answer = await EgressHttp.SendAsync(connection, page, secret, ct);
+
+            pages++;
+            bytes  += answer.Bytes;
+            elapsed = answer.Elapsed > elapsed ? answer.Elapsed : elapsed;
+            last    = answer.SafeAddress;
+            status  = answer.StatusCode;
+
+            if (!answer.Sent)
+                return RunOutcome.Failed(
+                    answer.Reason == EgressDenyReason.None
+                        ? answer.Explanation
+                        : "запрещено политикой: " + answer.Explanation,
+                    answer, pages, items.Count);
+
+            if (!answer.Ok)
+                return RunOutcome.Failed(
+                    $"чужая программа ответила {answer.StatusCode}"
+                    + (answer.Explanation.Length > 0 ? "; " + answer.Explanation : ""),
+                    answer, pages, items.Count);
+
+            if (answer.Truncated)
+                return RunOutcome.Failed(
+                    "ответ длиннее потолка и обрезан — записи из него взять нельзя, "
+                    + "разбейте выгрузку на страницы",
+                    answer, pages, items.Count);
+
+            if (!TryTake(answer.Body, request, items, limit, out cursor, out var taken, out var error))
+                return RunOutcome.Failed(error, answer, pages, items.Count);
+
+            var capped = items.Count >= limit;
+
+            // Конец данных: порция пустая, разбивки нет вовсе либо чужая программа больше не
+            // дала метку следующей порции.
+            var done = taken == 0
+                    || request.Paging == RequestPaging.None
+                    || (request.Paging == RequestPaging.Cursor && string.IsNullOrEmpty(cursor));
+
+            if (done || capped)
+                return new RunOutcome(true,
+                    capped && !done
+                        ? $"собрано {items.Count} записей — потолок политики на один запуск"
+                        : "",
+                    "[" + string.Join(",", items) + "]",
+                    items.Count, pages, bytes, elapsed, last, status, capped && !done);
+
+            number++;
+            offset += taken;
+        }
+
+        return new RunOutcome(true,
+            $"остановлено после {MaxPages} порций: чужая программа не сообщает о конце списка",
+            "[" + string.Join(",", items) + "]",
+            items.Count, pages, bytes, elapsed, last, status, true);
+    }
+
+    // ── Одна порция ───────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Запрос за одну порцию: подстановки применены, параметр разбивки дописан к пути. Первая
+    /// порция идет БЕЗ параметра разбивки — так чужие программы и описывают свой первый вызов,
+    /// а лишний <c>?page=1</c> некоторые из них считают ошибкой.
+    /// </summary>
+    private static IntegrationRequest Page(
+        IntegrationRequest request,
+        VariableContext    context,
+        string?            cursor,
+        int                number,
+        int                offset,
+        out IReadOnlyList<string> unknown)
+    {
+        var path = RequestVariables.Apply(request.Path, context, out var pathUnknown);
+        var body = RequestVariables.Apply(request.Body, context, out var bodyUnknown);
+
+        unknown = [.. pathUnknown.Concat(bodyUnknown).Distinct()];
+
+        var mark = request.Paging switch
+        {
+            RequestPaging.Page   when number > 1 => Parameter(request.PagingField, number.ToString()),
+            RequestPaging.Offset when offset > 0 => Parameter(request.PagingField, offset.ToString()),
+            RequestPaging.Cursor when !string.IsNullOrEmpty(cursor) =>
+                Parameter(request.PagingField, cursor!),
+            _ => "",
+        };
+
+        if (mark.Length > 0) path += (path.Contains('?') ? "&" : "?") + mark;
+
+        return request with { Path = path, Body = body };
+    }
+
+    private static string Parameter(string name, string value) =>
+        Uri.EscapeDataString(name.Trim()) + "=" + Uri.EscapeDataString(value);
+
+    /// <summary>
+    /// Забрать записи из ответа и метку следующей порции. Записи складываются сырым текстом:
+    /// разбирать их значения будет источник импорта, и делать это дважды незачем.
+    /// </summary>
+    private static bool TryTake(
+        string             body,
+        IntegrationRequest request,
+        List<string>       items,
+        int                limit,
+        out string?        cursor,
+        out int            taken,
+        out string         error)
+    {
+        cursor = null;
+        taken  = 0;
+        error  = "";
+
+        JsonDocument document;
+        try
+        {
+            document = JsonDocument.Parse(body, new JsonDocumentOptions
+            {
+                AllowTrailingCommas = true,
+                CommentHandling     = JsonCommentHandling.Skip,
+            });
+        }
+        catch (JsonException failure)
+        {
+            // Тело ответа в сообщение не попадает: в нем может оказаться что угодно, вплоть до
+            // секрета, а сообщение уходит в журнал.
+            error = "ответ не является JSON: " + failure.Message;
+            return false;
+        }
+
+        using (document)
+        {
+            var node = document.RootElement;
+
+            foreach (var step in (request.ItemsPath ?? "").Split('.', StringSplitOptions.RemoveEmptyEntries))
+            {
+                if (node.ValueKind != JsonValueKind.Object || !node.TryGetProperty(step, out var next))
+                {
+                    error = $"в ответе нет пути «{request.ItemsPath}» — не найдена часть «{step}»";
+                    return false;
+                }
+
+                node = next;
+            }
+
+            switch (node.ValueKind)
+            {
+                case JsonValueKind.Array:
+                    foreach (var item in node.EnumerateArray())
+                    {
+                        if (items.Count >= limit) break;
+                        items.Add(item.GetRawText());
+                        taken++;
+                    }
+                    break;
+
+                // Одиночный объект — обычный ответ справочного вызова: это одна запись.
+                case JsonValueKind.Object:
+                    if (items.Count < limit) { items.Add(node.GetRawText()); taken++; }
+                    break;
+
+                default:
+                    error = "по указанному пути в ответе лежит не список записей, а одиночное значение";
+                    return false;
+            }
+
+            if (request.Paging == RequestPaging.Cursor)
+                cursor = Cursor(document.RootElement, request.PagingField);
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Метка следующей порции из корня ответа: путь по точкам, как и у массива записей. Метки
+    /// нет или она пустая — список кончился.
+    /// </summary>
+    private static string? Cursor(JsonElement root, string field)
+    {
+        var node = root;
+
+        foreach (var step in (field ?? "").Split('.', StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (node.ValueKind != JsonValueKind.Object || !node.TryGetProperty(step, out var next))
+                return null;
+
+            node = next;
+        }
+
+        var value = node.ValueKind switch
+        {
+            JsonValueKind.String => node.GetString(),
+            JsonValueKind.Number => node.GetRawText(),
+            _                    => null,
+        };
+
+        return string.IsNullOrWhiteSpace(value) ? null : value;
+    }
+}

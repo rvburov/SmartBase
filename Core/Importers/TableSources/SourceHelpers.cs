@@ -149,6 +149,40 @@ public static class SourceHelpers
     private static string[] Split(string? raw) =>
         (raw ?? "").Split([',', ';'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
+    // ── Значения и ключи JSON ─────────────────────────────────────────────────
+    //
+    // Источников JSON два — файл (потоковый) и ответ чужой программы (уже в памяти), — и
+    // решать «какой ключ считать названием» они обязаны ОДИНАКОВО. Иначе один и тот же набор
+    // записей, пришедший файлом и по сети, ложился бы в коллекцию по-разному.
+
+    /// <summary>
+    /// Ключ названия записи: «Название» → name → title (без учета регистра, в этом порядке),
+    /// иначе первый ключ первого объекта. <c>null</c> — ключей нет вовсе.
+    /// </summary>
+    public static string? PickJsonTitleKey(List<string> keys, string? firstKey)
+    {
+        foreach (var candidate in new[] { "название", "name", "title" })
+        {
+            var hit = keys.FirstOrDefault(k => string.Equals(k, candidate, StringComparison.OrdinalIgnoreCase));
+            if (hit is not null) return hit;
+        }
+
+        return firstKey ?? (keys.Count > 0 ? keys[0] : null);
+    }
+
+    /// <summary>
+    /// Значение JSON текстом: строка как есть, null → пусто, числа и булевы — сырым токеном
+    /// (чтобы не терять точность на округлении), вложенный объект или массив — сырым JSON.
+    /// </summary>
+    public static string FormatJsonValue(System.Text.Json.JsonElement value) => value.ValueKind switch
+    {
+        System.Text.Json.JsonValueKind.String => value.GetString() ?? "",
+
+        System.Text.Json.JsonValueKind.Null or System.Text.Json.JsonValueKind.Undefined => "",
+
+        _ => value.GetRawText(),
+    };
+
     // ── Значения Excel ────────────────────────────────────────────────────────
 
     /// <summary>
