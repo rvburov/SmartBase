@@ -18,7 +18,14 @@ public sealed class DatabaseRegistry : IDisposable, ISettingsDatabase
     {
         _db = db;
         IsFreshInstall = freshInstall;
+        Integrations   = new IntegrationsRegistry(db);
     }
+
+    /// <summary>
+    /// Соединения интеграций — они тоже живут в app.db и потому открываются вместе с реестром,
+    /// на том же контексте: второе подключение к app.db не нужно ни одному из них.
+    /// </summary>
+    public IntegrationsRegistry Integrations { get; }
 
     /// <summary>
     /// Чистая установка: до этого запуска у приложения не было НИ ОДНОЙ базы данных —
@@ -38,6 +45,7 @@ public sealed class DatabaseRegistry : IDisposable, ISettingsDatabase
         db.Database.EnsureCreated();   // создает app.db и таблицы, если их нет; существующие данные не трогает
         EnsureSettingsTable(db);       // app_settings могло не быть в старых app.db (EnsureCreated ее не достроит)
         EnsurePgColumns(db);           // Pg*-колонки реестра появились позже — достраиваем аддитивно
+        EnsureIntegrationTables(db);   // соединения интеграций появились позже — по тому же правилу
         db.Database.ExecuteSqlRaw("PRAGMA journal_mode=WAL;");  // WAL: параллельные чтения во время записи
         // Самолечение раздутого app.db: реестр и настройки крошечные, раздуться нечему,
         // но для полноты — если файл вдруг раздулся свободными страницами, разово ужимаем.
@@ -82,6 +90,21 @@ public sealed class DatabaseRegistry : IDisposable, ISettingsDatabase
             "CREATE TABLE IF NOT EXISTS \"app_settings\" (" +
             "\"Key\" TEXT NOT NULL CONSTRAINT \"PK_app_settings\" PRIMARY KEY, " +
             "\"Value\" TEXT NOT NULL);");
+
+    // Таблицы интеграций появились позже: в существующих app.db их нет, а EnsureCreated()
+    // достраивать схему не умеет. Правило то же, что и у остальных: только аддитивно.
+    private static void EnsureIntegrationTables(SystemDbContext db) =>
+        db.Database.ExecuteSqlRaw(
+            "CREATE TABLE IF NOT EXISTS \"integration_connections\" (" +
+            "\"Id\" INTEGER NOT NULL CONSTRAINT \"PK_integration_connections\" PRIMARY KEY AUTOINCREMENT, " +
+            "\"Name\" TEXT NOT NULL, " +
+            "\"Address\" TEXT NOT NULL, " +
+            "\"Auth\" TEXT NOT NULL, " +
+            "\"AuthName\" TEXT NULL, " +
+            "\"Secret\" TEXT NULL, " +
+            "\"HeadersJson\" TEXT NULL, " +
+            "\"TimeoutSeconds\" INTEGER NOT NULL, " +
+            "\"Retries\" INTEGER NOT NULL);");
 
     // Колонки PG-подключений появились позже таблицы databases: в старых app.db их нет,
     // а EnsureCreated() существующую таблицу не достраивает. Правило app.db — только

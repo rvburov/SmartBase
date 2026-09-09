@@ -24,7 +24,17 @@ public static class SecretProtector
 {
     private const string KeychainPrefix  = "keychain:v1:";
     private const string DpapiPrefix     = "dpapi:v1:";
+    // Имя службы в Связке ключей macOS. Историческое: сначала защищались только пароли
+    // PostgreSQL. Переименовать нельзя — по этому имени лежат уже сохраненные элементы, и
+    // смена имени сделала бы их ненайденными. Новым потребителям — своя служба параметром.
     private const string KeychainService = "SmartBase PostgreSQL";
+
+    /// <summary>
+    /// Служба Связки ключей для секретов интеграций (токены и пароли чужих программ).
+    /// Отдельная от паролей баз намеренно: удаление базы не должно задевать токен обмена,
+    /// а человеку в Связке ключей видно, что к чему относится.
+    /// </summary>
+    public const string IntegrationsService = "SmartBase Integrations";
 
     /// <summary>Строка уже в защищенном виде (имеет известный префикс)?</summary>
     public static bool IsProtected(string stored) =>
@@ -32,7 +42,7 @@ public static class SecretProtector
         stored.StartsWith(DpapiPrefix, StringComparison.Ordinal);
 
     /// <summary>Секрет → строка для хранения. При недоступном хранилище ОС — как есть.</summary>
-    public static string Protect(string secret)
+    public static string Protect(string secret, string service = KeychainService)
     {
         if (secret.Length == 0) return secret;
         try
@@ -40,7 +50,7 @@ public static class SecretProtector
             if (OperatingSystem.IsMacOS())
             {
                 var account = Guid.NewGuid().ToString("N");
-                MacKeychain.Save(KeychainService, account, secret);
+                MacKeychain.Save(service, account, secret);
                 return KeychainPrefix + account;
             }
             if (OperatingSystem.IsWindows())
@@ -62,12 +72,12 @@ public static class SecretProtector
     }
 
     /// <summary>Строка из хранения → секрет. Утерянный/нечитаемый секрет — пустая строка.</summary>
-    public static string Unprotect(string stored)
+    public static string Unprotect(string stored, string service = KeychainService)
     {
         if (stored.StartsWith(KeychainPrefix, StringComparison.Ordinal))
         {
             if (!OperatingSystem.IsMacOS()) return "";
-            try { return MacKeychain.Load(KeychainService, stored[KeychainPrefix.Length..]) ?? ""; }
+            try { return MacKeychain.Load(service, stored[KeychainPrefix.Length..]) ?? ""; }
             catch (Exception ex) { Log.Warning(ex, "Не удалось прочитать пароль из Связки ключей"); return ""; }
         }
         if (stored.StartsWith(DpapiPrefix, StringComparison.Ordinal))
@@ -87,11 +97,11 @@ public static class SecretProtector
     }
 
     /// <summary>Удалить секрет из хранилища ОС (при удалении базы из реестра).</summary>
-    public static void Delete(string stored)
+    public static void Delete(string stored, string service = KeychainService)
     {
         if (!stored.StartsWith(KeychainPrefix, StringComparison.Ordinal)) return;   // DPAPI — без внешнего состояния
         if (!OperatingSystem.IsMacOS()) return;
-        try { MacKeychain.Delete(KeychainService, stored[KeychainPrefix.Length..]); }
+        try { MacKeychain.Delete(service, stored[KeychainPrefix.Length..]); }
         catch { /* нет элемента — и не надо */ }
     }
 

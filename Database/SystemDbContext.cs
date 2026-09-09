@@ -17,6 +17,9 @@ public class SystemDbContext : DbContext
     public DbSet<DatabaseRefEntity> Databases { get; set; } = null!;
     public DbSet<AppSettingEntity>  Settings  { get; set; } = null!;
 
+    /// <summary>Соединения интеграций — локальные, как и все настройки обмена (см. сущность).</summary>
+    public DbSet<IntegrationConnectionEntity> IntegrationConnections { get; set; } = null!;
+
     private readonly string _path;
 
     public SystemDbContext(string path) => _path = path;
@@ -36,6 +39,12 @@ public class SystemDbContext : DbContext
         {
             e.ToTable("app_settings");
             e.HasKey(x => x.Key);
+        });
+
+        model.Entity<IntegrationConnectionEntity>(e =>
+        {
+            e.ToTable("integration_connections");
+            e.HasKey(x => x.Id);
         });
     }
 }
