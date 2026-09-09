@@ -313,7 +313,7 @@ FK-каскадов у этих таблиц нет (исключение — `c
 
 | Колонка | Тип | Описание |
 |---|---|---|
-| `Key` | TEXT, PK | `password.hash` / `password.salt` / `password.iterations` / `changelog.retention.enabled` / `changelog.retention.months`, … |
+| `Key` | TEXT, PK | `password.hash` / `password.salt` / `password.iterations` / `changelog.retention.enabled` / `changelog.retention.months` / `confidentiality` (метка базы: `restricted`, `closed`; строки нет — «Открыто», см. [интеграции](../../features/integrations/overview.md)), … |
 | `Value` | TEXT | |
 
 #### `change_log` — журнал изменений

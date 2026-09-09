@@ -63,6 +63,14 @@ public partial class App : Application
             // Настройки приложения хранятся в app.db.
             AppSettings.AttachStore(registry);
 
+            // Политика организации для обмена с чужими программами — сразу после AttachStore
+            // и раньше всего остального: снимок последней известной политики лежит в app.db,
+            // а шлюз наружу обязан быть заряжен до появления первого желающего выйти. До
+            // этого вызова дверь закрыта (состояние EgressGate по умолчанию — самое строгое),
+            // поэтому сбой загрузки ничего не открывает.
+            // См. docs/developer/features/integrations/overview.md.
+            Integrations.EgressSetup.Init();
+
             // Расширения: Id — ключ и строки сайдбара, и группы настроек «ext.<Id>.…»,
             // поэтому тезки недопустимы (проверка падает с явным сообщением).
             Extensions.ExtensionRegistry.EnsureUniqueIds();

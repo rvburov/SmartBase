@@ -2022,6 +2022,7 @@ public partial class ConstructorRepository(AppDbContext db)
         // Перенос = изъятие из источника + создание в целевой: проверяем права ОБЕИХ баз.
         source.Demand(PermAction.DeleteCollection, collectionId);
         target.Demand(PermAction.CreateCollection);
+        target.DemandMoveFromAllowed(source);
         var snap = source.ExportCollection(collectionId);
         snap.Collection.Name = newName;
         var moved = target.ImportCollection(snap, targetGroupId);
@@ -2045,6 +2046,7 @@ public partial class ConstructorRepository(AppDbContext db)
         // Перенос = изъятие из источника + создание в целевой: проверяем права ОБЕИХ баз.
         source.Demand(PermAction.DeleteCollection);
         target.Demand(PermAction.CreateCollection);
+        target.DemandMoveFromAllowed(source);
         var snap = source.ExportGroup(groupId);
         snap.Group.Name = newName;
         var moved = target.ImportGroup(snap, targetParentId);
@@ -2085,6 +2087,11 @@ public partial class ConstructorRepository(AppDbContext db)
         // this — ЦЕЛЕВАЯ база: проверяем право создавать в ней. Право удаления в источнике
         // проверяет UI по репозиторию источника (его PermissionService здесь недоступен).
         Demand(PermAction.CreateCollection);
+
+        // Из закрытого контура в менее строгую базу данные не переезжают: иначе запрет на
+        // исходящие обходится в два приема — перенес и выгрузил уже оттуда.
+        // См. ConstructorRepository.Confidentiality.cs.
+        DemandMoveFromAllowed(sourceDbPath);
 
         // Пара с PostgreSQL (или PG→PG): ATTACH существует только у SQLite — переносим
         // generic-путем на двух независимых подключениях (см. ConstructorRepository.CrossMove).
@@ -2138,6 +2145,9 @@ public partial class ConstructorRepository(AppDbContext db)
     {
         // this — ЦЕЛЕВАЯ база (см. MoveCollectionIsolated: источник проверяет UI).
         Demand(PermAction.CreateCollection);
+
+        // Тот же запрет, что и у переноса коллекции: из закрытого контура наружу нельзя.
+        DemandMoveFromAllowed(sourceDbPath);
 
         // Пара с PostgreSQL (или PG→PG): generic-путь вместо ATTACH (см. CrossMove). Связи не переносим.
         if (db.IsPostgres || PgConnectionInfo.IsPostgresConnectionString(sourceDbPath))

@@ -1,0 +1,264 @@
+using System.Net;
+using SmartBase.Core.Models;
+
+namespace SmartBase.Integrations;
+
+/// <summary>Почему наружу нельзя. Код нужен журналу и экрану: текст меняется, код — нет.</summary>
+public enum EgressDenyReason
+{
+    /// <summary>Запрета нет — обращение разрешено.</summary>
+    None = 0,
+
+    /// <summary>Сборка для закрытого контура: исходящих в ней нет по построению.</summary>
+    ClosedLoopBuild,
+
+    /// <summary>Политика организации не найдена или не прочиталась.</summary>
+    NoPolicy,
+
+    /// <summary>Срок действия политики истек.</summary>
+    PolicyExpired,
+
+    /// <summary>Изолированный режим: исходящих нет вовсе.</summary>
+    IsolatedMode,
+
+    /// <summary>Схема адреса не поддерживается (разрешены только http и https).</summary>
+    SchemeNotAllowed,
+
+    /// <summary>Адрес не разобрался.</summary>
+    BadAddress,
+
+    /// <summary>Имя узла не входит в белый список.</summary>
+    HostNotAllowed,
+
+    /// <summary>Фактический адрес соединения не входит в разрешенные сети.</summary>
+    AddressNotAllowed,
+
+    /// <summary>Внутренний режим, а имя разрешилось в публичный адрес.</summary>
+    PublicAddressInInternalMode,
+
+    /// <summary>Путь лежит вне разрешенных политикой корней.</summary>
+    FolderNotAllowed,
+
+    /// <summary>База помечена закрытым контуром: исходящих у нее нет.</summary>
+    DatabaseIsClosed,
+
+    /// <summary>У свойства стоит метка конфиденциальности: наружу оно не уходит.</summary>
+    FieldIsLabeled,
+}
+
+/// <summary>Решение шлюза: пускать или нет, почему и что показать человеку.</summary>
+/// <param name="Allowed">Разрешено ли обращение.</param>
+/// <param name="Reason">Код запрета; у разрешения — <see cref="EgressDenyReason.None"/>.</param>
+/// <param name="Explanation">Текст для человека и для журнала — без секретов.</param>
+public sealed record EgressDecision(bool Allowed, EgressDenyReason Reason, string Explanation)
+{
+    private static readonly EgressDecision Ok = new(true, EgressDenyReason.None, "разрешено политикой");
+
+    public static EgressDecision Allow() => Ok;
+
+    public static EgressDecision Deny(EgressDenyReason reason, string explanation) =>
+        new(false, reason, explanation);
+}
+
+/// <summary>
+/// ЕДИНСТВЕННАЯ дверь наружу. Через нее проходит любое обращение к чужой программе: и сетевое,
+/// и запись в чужую папку. Смысл не в удобстве, а в проверяемости — на вопрос «где программа
+/// выходит наружу» ответ должен быть «один файл», а не «надо посмотреть весь проект»
+/// (docs/ROADMAP-API.md, раздел 10.2).
+///
+/// Держится это тремя вещами, и одной мало:
+/// <list type="number">
+///   <item>сам шлюз — все решения принимаются здесь;</item>
+///   <item>сторож <c>Tests/Unit/OneDoorOutwardTests</c> — сетевые типы не используются больше
+///         нигде в решении, включая <c>Extensions/</c>;</item>
+///   <item>сборка для закрытого контура (<c>-p:ClosedLoop=true</c>) — в ней исходящих нет по
+///         построению, и это видно в манифесте сборки.</item>
+/// </list>
+///
+/// Состояние по умолчанию — <see cref="EgressPolicySet.Closed"/>: пока загрузчик не принес
+/// политику, наружу нельзя ничего. Порядок именно такой, а не «сначала работает, потом
+/// ограничим»: иначе окно между стартом и загрузкой политики становится дырой.
+/// </summary>
+public static class EgressGate
+{
+    /// <summary>Разрешенные схемы. Все остальное (file, ftp, ws) — запрет без разговоров.</summary>
+    private static readonly string[] AllowedSchemes = ["http", "https"];
+
+    private static EgressPolicySet _policy = EgressPolicySet.Closed;
+
+    /// <summary>Действующая политика. До вызова <see cref="AttachPolicy"/> — самая строгая.</summary>
+    public static EgressPolicySet Policy => _policy;
+
+    /// <summary>
+    /// Подключить прочитанную политику. Зовет загрузчик на старте и при перечитывании; тесты
+    /// подставляют свою. Прием тот же, что у <c>AppSettings.AttachStore</c>: контейнера
+    /// зависимостей в приложении нет, а связывать шлюз с чтением файлов незачем.
+    /// </summary>
+    public static void AttachPolicy(EgressPolicySet policy) => _policy = policy;
+
+    /// <summary>Вернуть шлюз в состояние по умолчанию — наружу нельзя ничего.</summary>
+    public static void Close() => _policy = EgressPolicySet.Closed;
+
+    /// <summary>
+    /// Собрана ли программа для закрытого контура. Показывается в «О программе» и в паспорте
+    /// интеграций: человеку и проверяющему нужен ответ на месте, а не сверка манифеста.
+    /// </summary>
+    public static bool ClosedLoopBuild =>
+#if CLOSED_LOOP
+        true;
+#else
+        false;
+#endif
+
+    /// <summary>Проверка адреса по имени — до запроса. Сегодняшний день берется системный.</summary>
+    public static EgressDecision Check(Uri? address) =>
+        Check(address, DateOnly.FromDateTime(DateTime.Today));
+
+    /// <summary>
+    /// Проверка адреса по имени — до запроса. День передается явно: срок действия политики
+    /// обязан проверяться и в тестах, а тест, зависящий от системных часов, доверия не стоит.
+    /// </summary>
+    public static EgressDecision Check(Uri? address, DateOnly today)
+    {
+#if CLOSED_LOOP
+        _ = address; _ = today;
+        return EgressDecision.Deny(EgressDenyReason.ClosedLoopBuild,
+            "сборка для закрытого контура: исходящих обращений в ней нет");
+#else
+        if (address is null || !address.IsAbsoluteUri)
+            return EgressDecision.Deny(EgressDenyReason.BadAddress, "адрес не разобрался");
+
+        var gate = CheckPolicyState(today);
+        if (!gate.Allowed) return gate;
+
+        if (!AllowedSchemes.Contains(address.Scheme, StringComparer.OrdinalIgnoreCase))
+            return EgressDecision.Deny(EgressDenyReason.SchemeNotAllowed,
+                $"схема «{address.Scheme}» не поддерживается: разрешены только http и https");
+
+        if (!_policy.AllowsHost(address.Host))
+            return EgressDecision.Deny(EgressDenyReason.HostNotAllowed,
+                $"адрес «{address.Host}» не входит в белый список организации");
+
+        return EgressDecision.Allow();
+#endif
+    }
+
+    /// <summary>
+    /// Проверка ФАКТИЧЕСКОГО адреса соединения — после того, как имя разрешилось. Вторая
+    /// проверка обязательна: между сверкой имени и соединением запись DNS может смениться, и
+    /// белый список по именам сам по себе не значит ничего (docs/ROADMAP-API.md, 10.5).
+    /// Соединяться нужно ровно с тем адресом, который сюда передан.
+    /// </summary>
+    public static EgressDecision CheckResolved(IPAddress? address, DateOnly today)
+    {
+#if CLOSED_LOOP
+        _ = address; _ = today;
+        return EgressDecision.Deny(EgressDenyReason.ClosedLoopBuild,
+            "сборка для закрытого контура: исходящих обращений в ней нет");
+#else
+        if (address is null)
+            return EgressDecision.Deny(EgressDenyReason.BadAddress, "имя не разрешилось в адрес");
+
+        var gate = CheckPolicyState(today);
+        if (!gate.Allowed) return gate;
+
+        if (!_policy.AllowsAddress(address))
+            return EgressDecision.Deny(EgressDenyReason.AddressNotAllowed,
+                $"адрес {address} не входит в разрешенные сети организации");
+
+        // Внутренний режим держится на приватности адреса, а не на списке имен: имя из списка,
+        // разрешившееся в публичный адрес, — ровно тот случай, ради которого проверка вторая.
+        if (_policy.Mode == EgressMode.Internal && !NetworkAddress.IsPrivate(address))
+            return EgressDecision.Deny(EgressDenyReason.PublicAddressInInternalMode,
+                $"внутренний контур: адрес {address} не из сетей организации");
+
+        return EgressDecision.Allow();
+#endif
+    }
+
+    /// <inheritdoc cref="CheckResolved(IPAddress?, DateOnly)"/>
+    public static EgressDecision CheckResolved(IPAddress? address) =>
+        CheckResolved(address, DateOnly.FromDateTime(DateTime.Today));
+
+    /// <summary>
+    /// Проверка пути, куда сценарию разрешено писать и откуда читать. Выгрузка файлом — такой
+    /// же выход наружу, как запрос: съемный диск и личная папка уносят данные не хуже адреса.
+    /// Ручной выгрузки человеком это не касается — она остается и лишь пишется в журнал.
+    /// </summary>
+    public static EgressDecision CheckFolder(string? path, DateOnly today)
+    {
+        var gate = CheckPolicyState(today);
+        if (!gate.Allowed) return gate;
+
+        if (!_policy.AllowsFolder(path))
+            return EgressDecision.Deny(EgressDenyReason.FolderNotAllowed,
+                "папка вне корней, разрешенных политикой организации");
+
+        return EgressDecision.Allow();
+    }
+
+    /// <inheritdoc cref="CheckFolder(string?, DateOnly)"/>
+    public static EgressDecision CheckFolder(string? path) =>
+        CheckFolder(path, DateOnly.FromDateTime(DateTime.Today));
+
+    /// <summary>
+    /// Можно ли вообще что-то отправлять из этой базы. Метка «закрытый контур» запрещает
+    /// исходящие независимо от политики, режима и прав: это самый грубый и самый понятный
+    /// проверяющему рубеж — секретная база физически не имеет исходящих путей, а обычные базы
+    /// продолжают работать со всеми интеграциями.
+    ///
+    /// Метка «для служебного пользования» обмен НЕ запрещает: иначе ее не поставят ни на одну
+    /// рабочую базу и механизм окажется бумажным. Точный запрет — метка на свойстве
+    /// (<see cref="CheckField"/>).
+    /// </summary>
+    public static EgressDecision CheckDatabase(ConfidentialityLabel label, DateOnly today)
+    {
+        if (label == ConfidentialityLabel.Closed)
+            return EgressDecision.Deny(EgressDenyReason.DatabaseIsClosed,
+                "база помечена закрытым контуром: исходящие обращения из нее запрещены");
+
+        return CheckPolicyState(today);
+    }
+
+    /// <inheritdoc cref="CheckDatabase(ConfidentialityLabel, DateOnly)"/>
+    public static EgressDecision CheckDatabase(ConfidentialityLabel label) =>
+        CheckDatabase(label, DateOnly.FromDateTime(DateTime.Today));
+
+    /// <summary>
+    /// Можно ли подставить это свойство в исходящий шаг. Любая метка строже «Открыто» —
+    /// запрет.
+    ///
+    /// Проверка нужна при НАСТРОЙКЕ, а не при отправке: помеченное поле не должно появляться
+    /// в списке привязки вовсе. Узнавать об ограничении из ошибки в журнале — худший из
+    /// возможных способов: сценарий уже настроен, человек уверен, что данные уходят, и
+    /// молчание выглядит поломкой.
+    /// </summary>
+    public static EgressDecision CheckField(ConfidentialityLabel label)
+    {
+        if (label == ConfidentialityLabel.Open) return EgressDecision.Allow();
+
+        return EgressDecision.Deny(EgressDenyReason.FieldIsLabeled,
+            $"у свойства метка «{Confidentiality.Title(label)}»: наружу оно не уходит");
+    }
+
+    /// <summary>
+    /// Общее для всех проверок состояние политики: есть ли она, не истекла ли, не заперт ли
+    /// контур. Вынесено отдельно, чтобы ни одна дверь не могла пройти мимо этих трех вопросов.
+    /// </summary>
+    private static EgressDecision CheckPolicyState(DateOnly today)
+    {
+        if (!_policy.Any)
+            return EgressDecision.Deny(EgressDenyReason.NoPolicy,
+                "политика организации не найдена: исходящие обращения запрещены");
+
+        if (_policy.Expired(today))
+            return EgressDecision.Deny(EgressDenyReason.PolicyExpired,
+                $"срок действия политики истек {_policy.ValidUntil:dd.MM.yyyy}");
+
+        if (_policy.Mode == EgressMode.Isolated)
+            return EgressDecision.Deny(EgressDenyReason.IsolatedMode,
+                "изолированный режим: исходящие обращения запрещены");
+
+        return EgressDecision.Allow();
+    }
+}
