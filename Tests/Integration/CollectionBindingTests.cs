@@ -1,7 +1,9 @@
 using SmartBase.Core.Importers;
 using SmartBase.Core.Importers.TableSources;
+using SmartBase.Core.Models;
 using SmartBase.Database.Repositories;
 using SmartBase.Integrations;
+using SmartBase.Utils;
 
 namespace SmartBase.Tests.Integration;
 
@@ -15,6 +17,13 @@ namespace SmartBase.Tests.Integration;
 /// </summary>
 public sealed class CollectionBindingTests
 {
+    /// <summary>
+    /// Ключ базы данных в привязке. Укладка его не проверяет — репозиторий И ЕСТЬ база; ключ
+    /// нужен экрану, чтобы выбрать, в какую базу нести ответ. Здесь он просто должен быть
+    /// заполнен: непроставленный ключ привязка считает ошибкой.
+    /// </summary>
+    private const int Db = 1;
+
     /// <summary>Коллекция с двумя свойствами и привязка к ней по номеру.</summary>
     private static (int CollectionId, int NumberId, int StateId) Collection(ConstructorRepository repo)
     {
@@ -50,7 +59,7 @@ public sealed class CollectionBindingTests
         using var db = new TempDatabase();
         var (collectionId, numberId, stateId) = Collection(db.Constructor);
 
-        var binding = new CollectionBinding(collectionId,
+        var binding = new CollectionBinding(Db, collectionId,
         [
             new BindingColumn("Название", null),
             new BindingColumn("Номер",    numberId),
@@ -78,7 +87,7 @@ public sealed class CollectionBindingTests
         using var db = new TempDatabase();
         var (collectionId, numberId, _) = Collection(db.Constructor);
 
-        var binding = new CollectionBinding(collectionId,
+        var binding = new CollectionBinding(Db, collectionId,
             [new BindingColumn("Название", null), new BindingColumn("Номер", numberId)]);
 
         Apply(db.Constructor, binding, """[{"Название":"Молоток","Номер":"А-1","Лишнее":"мусор"}]""");
@@ -99,7 +108,7 @@ public sealed class CollectionBindingTests
         using var db = new TempDatabase();
         var (collectionId, numberId, stateId) = Collection(db.Constructor);
 
-        var binding = new CollectionBinding(collectionId,
+        var binding = new CollectionBinding(Db, collectionId,
         [
             new BindingColumn("Название", null),
             new BindingColumn("Номер",    numberId),
@@ -127,7 +136,7 @@ public sealed class CollectionBindingTests
         using var db = new TempDatabase();
         var (collectionId, numberId, _) = Collection(db.Constructor);
 
-        var binding = new CollectionBinding(collectionId,
+        var binding = new CollectionBinding(Db, collectionId,
             [new BindingColumn("Название", null), new BindingColumn("Номер", numberId)],
             MatchColumn: "Название");
 
@@ -146,7 +155,7 @@ public sealed class CollectionBindingTests
         using var db = new TempDatabase();
         var (collectionId, numberId, stateId) = Collection(db.Constructor);
 
-        var binding = new CollectionBinding(collectionId,
+        var binding = new CollectionBinding(Db, collectionId,
         [
             new BindingColumn("Название", null),
             new BindingColumn("Номер",    numberId),
@@ -179,11 +188,11 @@ public sealed class CollectionBindingTests
             new("Название", null), new("Номер", numberId), new("Статус", stateId),
         };
 
-        Apply(db.Constructor, new CollectionBinding(collectionId, columns, MatchColumn: "Номер"),
+        Apply(db.Constructor, new CollectionBinding(Db, collectionId, columns, MatchColumn: "Номер"),
             """[{"Название":"Молоток","Номер":"А-1","Статус":"новый"}]""");
 
         var result = Apply(db.Constructor,
-            new CollectionBinding(collectionId, columns, MatchColumn: "Номер", UpdateExisting: false),
+            new CollectionBinding(Db, collectionId, columns, MatchColumn: "Номер", UpdateExisting: false),
             """[{"Название":"Молоток","Номер":"А-1","Статус":"отгружен"}]""");
 
         Assert.Equal(1, result.Skipped);
@@ -200,7 +209,7 @@ public sealed class CollectionBindingTests
         var (collectionId, numberId, _) = Collection(db.Constructor);
 
         var result = Apply(db.Constructor,
-            new CollectionBinding(collectionId,
+            new CollectionBinding(Db, collectionId,
                 [new BindingColumn("Название", null), new BindingColumn("Номер", numberId)],
                 MatchColumn: "Номер", CreateMissing: false),
             """[{"Название":"Молоток","Номер":"А-1"}]""");
@@ -219,7 +228,7 @@ public sealed class CollectionBindingTests
         var (collectionId, numberId, _) = Collection(db.Constructor);
 
         var result = Apply(db.Constructor,
-            new CollectionBinding(collectionId,
+            new CollectionBinding(Db, collectionId,
                 [new BindingColumn("Название", null), new BindingColumn("Номер", numberId)],
                 MatchColumn: "Номер"),
             """[{"Название":"Молоток","Номер":""},{"Название":"Отвертка","Номер":"А-2"}]""");
@@ -247,7 +256,7 @@ public sealed class CollectionBindingTests
         }
 
         var result = Apply(db.Constructor,
-            new CollectionBinding(collectionId,
+            new CollectionBinding(Db, collectionId,
                 [new BindingColumn("Название", null), new BindingColumn("Номер", numberId),
                  new BindingColumn("Статус", stateId)],
                 MatchColumn: "Номер"),
@@ -268,7 +277,7 @@ public sealed class CollectionBindingTests
         using var db = new TempDatabase();
         var (collectionId, numberId, _) = Collection(db.Constructor);
 
-        var binding = new CollectionBinding(collectionId,
+        var binding = new CollectionBinding(Db, collectionId,
             [new BindingColumn("Название", null), new BindingColumn("Номер", numberId)]);
 
         Apply(db.Constructor, binding, """[{"Название":"Молоток","Номер":"А-1"}]""");
@@ -290,7 +299,7 @@ public sealed class CollectionBindingTests
         var (collectionId, numberId, _) = Collection(db.Constructor);
 
         var error = Assert.Throws<ImportException>(() => Apply(db.Constructor,
-            new CollectionBinding(collectionId,
+            new CollectionBinding(Db, collectionId,
                 [new BindingColumn("Название", null), new BindingColumn("Номер", numberId)]),
             """[{"Название":"Молоток"}]"""));
 
@@ -307,7 +316,7 @@ public sealed class CollectionBindingTests
         db.Constructor.DeleteField(numberId);
 
         var error = Assert.Throws<ImportException>(() => Apply(db.Constructor,
-            new CollectionBinding(collectionId,
+            new CollectionBinding(Db, collectionId,
                 [new BindingColumn("Название", null), new BindingColumn("Номер", numberId)]),
             """[{"Название":"Молоток","Номер":"А-1"}]"""));
 
@@ -320,7 +329,7 @@ public sealed class CollectionBindingTests
         using var db = new TempDatabase();
 
         var error = Assert.Throws<ImportException>(() => Apply(db.Constructor,
-            new CollectionBinding(404, [new BindingColumn("Название", null)]),
+            new CollectionBinding(Db, 404, [new BindingColumn("Название", null)]),
             """[{"Название":"Молоток"}]"""));
 
         Assert.Contains("Коллекция не найдена", error.Message, StringComparison.Ordinal);
@@ -334,11 +343,69 @@ public sealed class CollectionBindingTests
         var (collectionId, numberId, _) = Collection(db.Constructor);
 
         var error = Assert.Throws<ImportException>(() => Apply(db.Constructor,
-            new CollectionBinding(collectionId,
+            new CollectionBinding(Db, collectionId,
                 [new BindingColumn("Название", null), new BindingColumn("Номер", numberId)],
                 MatchColumn: "Нет такой"),
             """[{"Название":"Молоток","Номер":"А-1"}]"""));
 
         Assert.Contains("не переносится", error.Message, StringComparison.Ordinal);
+    }
+
+    // ── Отдельное подключение и права ─────────────────────────────────────────
+
+    /// <summary>
+    /// Укладка с фонового потока идет на СВОЕМ подключении: общий контекст в это время
+    /// занят интерфейсом. Здесь проверяется, что путь тот же и записи доходят.
+    /// </summary>
+    [Fact]
+    public void Isolated_apply_writes_the_same_way()
+    {
+        using var db = new TempDatabase();
+        var (collectionId, numberId, _) = Collection(db.Constructor);
+
+        var (schema, rows) = Source("""
+            [{"Название":"Молоток","Номер":"А-1"},
+             {"Название":"Отвертка","Номер":"А-2"}]
+            """);
+
+        var result = db.Constructor.ApplyRowsIsolated(
+            new CollectionBinding(Db, collectionId,
+                [new BindingColumn("Название", null), new BindingColumn("Номер", numberId)]),
+            schema, rows, CancellationToken.None);
+
+        Assert.Equal(2, result.Created);
+
+        var titles = db.Constructor.GetRecords(collectionId).Select(r => r.Title).ToList();
+        Assert.Contains("Молоток", titles);
+        Assert.Contains("Отвертка", titles);
+    }
+
+    /// <summary>
+    /// Права спрашиваются ДО первой записи, а не по ходу: отказ на середине оставил бы
+    /// коллекцию наполовину обновленной, а обмен повторяется по расписанию — разбираться в
+    /// таком состоянии потом некому.
+    /// </summary>
+    [Fact]
+    public void Rights_are_asked_before_the_first_record()
+    {
+        using var db = new TempDatabase();
+        var (collectionId, numberId, _) = Collection(db.Constructor);
+
+        var userId = db.Permissions.CurrentUserId;
+        db.Permissions.SetMask(userId, null, (int)PermAction.ViewCollection);
+
+        var me = db.Context.DbUsers.First(u => u.UserKey == CurrentUser.Key);
+        me.IsAdmin    = false;
+        me.IsApproved = true;
+        db.Context.SaveChanges();
+        db.Permissions.Reload(notify: false);
+
+        Assert.Throws<PermissionDeniedException>(() => Apply(db.Constructor,
+            new CollectionBinding(Db, collectionId,
+                [new BindingColumn("Название", null), new BindingColumn("Номер", numberId)]),
+            """[{"Название":"Молоток","Номер":"А-1"},{"Название":"Отвертка","Номер":"А-2"}]"""));
+
+        // Ни одной записи: отказ случился до первой, а не на второй.
+        Assert.Empty(db.Constructor.GetRecords(collectionId));
     }
 }

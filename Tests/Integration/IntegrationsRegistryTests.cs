@@ -329,7 +329,7 @@ public sealed class IntegrationsRegistryTests
 
                 Assert.Null(registry.Integrations.Binding(id));
 
-                registry.Integrations.SaveBinding(id, new CollectionBinding(7,
+                registry.Integrations.SaveBinding(id, new CollectionBinding(3, 7,
                     [new BindingColumn("Название", null), new BindingColumn("Номер", 11)],
                     MatchColumn: "Номер"));
             }
@@ -339,7 +339,10 @@ public sealed class IntegrationsRegistryTests
                 var binding = again.Integrations.Binding(id);
 
                 Assert.NotNull(binding);
-                Assert.Equal(7, binding!.CollectionId);
+                // Ключ базы переживает перезапуск наравне с коллекцией: без него привязка
+                // после переключения баз указала бы на чужую коллекцию с тем же номером.
+                Assert.Equal(3, binding!.DbId);
+                Assert.Equal(7, binding.CollectionId);
                 Assert.Equal("Номер", binding.MatchColumn);
                 Assert.Equal(11, binding.MatchFieldId);
 
@@ -437,7 +440,7 @@ public sealed class IntegrationsRegistryTests
                 var connectionId = second.Integrations.Save(Card()).Id;
                 var id = second.Integrations.SaveRequest(Query("Остатки", connectionId)).Id;
 
-                second.Integrations.SaveBinding(id, new CollectionBinding(7,
+                second.Integrations.SaveBinding(id, new CollectionBinding(3, 7,
                     [new BindingColumn("Название", null)]));
 
                 Assert.NotNull(second.Integrations.Binding(id));

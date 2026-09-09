@@ -12,7 +12,7 @@ namespace SmartBase.Tests.Unit;
 public sealed class CollectionBindingTests
 {
     private static CollectionBinding Valid() =>
-        new(7, [new BindingColumn("Название", null), new BindingColumn("Номер", 11)]);
+        new(3, 7, [new BindingColumn("Название", null), new BindingColumn("Номер", 11)]);
 
     // ── Заполнено правильно ───────────────────────────────────────────────────
 
@@ -49,6 +49,17 @@ public sealed class CollectionBindingTests
     {
         Assert.Contains((Valid() with { CollectionId = 0 }).Problems(),
             p => p.Contains("коллекция", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// Без ключа базы привязка после переключения баз указывала бы на коллекцию с тем же
+    /// номером в соседней базе — и обмен уложил бы ответ не туда, никому об этом не сказав.
+    /// </summary>
+    [Fact]
+    public void Database_is_required()
+    {
+        Assert.Contains((Valid() with { DbId = 0 }).Problems(),
+            p => p.Contains("база данных", StringComparison.Ordinal));
     }
 
     [Fact]

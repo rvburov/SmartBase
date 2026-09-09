@@ -1021,11 +1021,16 @@ public partial class SettingsView : UserControl
     // и право текущего пользователя обслуживать файл (администратор базы).
     /// <param name="taskStages">Стадии задач всех допущенных баз — для списка «Стадия новой
     /// задачи» в разделе «Задачи»; null — только три стандартные.</param>
+    /// <param name="databases">Открытые базы, к которым допущен текущий пользователь. Зовется
+    /// каждый раз заново, а не берется списком: базы монтируются и отцепляются на ходу, а
+    /// «Интеграции» укладывают ответ в коллекцию выбранной базы и обязаны видеть их состав
+    /// таким, каков он сейчас.</param>
     public void Initialize(DatabaseRegistry registry, Func<int, bool> isMounted,
                            Func<int, (string Text, bool Failed)?>? queueStatus = null,
                            Func<int, DatabaseManager.StorageStats?>? storage = null,
                            Func<int, bool>? canMaintain = null,
-                           Func<IReadOnlyList<string>>? taskStages = null)
+                           Func<IReadOnlyList<string>>? taskStages = null,
+                           Func<IReadOnlyList<DatabaseManager>>? databases = null)
     {
         _registry    = registry;
         _isMounted   = isMounted;
@@ -1033,11 +1038,13 @@ public partial class SettingsView : UserControl
         _storage     = storage;
         _taskStages  = taskStages;
         _canMaintain = canMaintain;
+        _databases   = databases;
         RefreshDatabaseList();
     }
 
     private Func<int, DatabaseManager.StorageStats?>? _storage;
     private Func<int, bool>?                          _canMaintain;
+    private Func<IReadOnlyList<DatabaseManager>>?     _databases;
 
     // Перестроить список (статус монтирования мог измениться). Вызывается из MainWindow.
     public void RefreshDatabases() => RefreshDatabaseList();

@@ -171,12 +171,14 @@ public partial class SettingsView
 
         foreach (var request in requests)
         {
-            rows.Add(RequestRow(request, connections));
+            rows.Add(RequestRow(registry, request, connections));
             rows.Add(new Border { Classes = { "separator", "h" } });
         }
     }
 
-    private Border RequestRow(IntegrationRequest request, IReadOnlyList<IntegrationConnection> connections)
+    private Border RequestRow(Database.IntegrationsRegistry registry,
+                              IntegrationRequest request,
+                              IReadOnlyList<IntegrationConnection> connections)
     {
         var connection = connections.FirstOrDefault(c => c.Id == request.ConnectionId);
 
@@ -187,9 +189,17 @@ public partial class SettingsView
             ? request.ItemsPath.Length > 0 ? "Записи в ответе: " + request.ItemsPath : ""
             : $"Разбивка на страницы: {PagingText(request.Paging)} · {request.PagingField}";
 
+        // Когда запрос последний раз отработал — то самое, что подставляется в
+        // {{последний_запуск}}. Без этой строки человек не знает, с какой границы пойдет
+        // следующая выгрузка, и не понимает, почему пришло меньше, чем он ждал.
+        if (registry.LastRun(request.Id) is { } last)
+            extra += (extra.Length > 0 ? " · " : "")
+                   + "Последний запуск: " + last.ToLocalTime().ToString("dd.MM.yyyy HH:mm");
+
         return CardRow(request.Name, description, extra,
             edit:   () => _ = EditRequestAsync(request),
-            delete: () => _ = DeleteRequestAsync(request));
+            delete: () => _ = DeleteRequestAsync(request),
+            first:  ("В коллекцию", () => _ = RunToCollectionAsync(registry, request, connection)));
     }
 
     private async Task EditRequestAsync(IntegrationRequest card)
@@ -315,8 +325,14 @@ public partial class SettingsView
         return new Border { Classes = { "settingRow" }, Child = buttons };
     }
 
-    /// <summary>Строка карточки: имя, пояснение, вторая строка мелким и кнопки справа.</summary>
-    private static Border CardRow(string title, string description, string extra, Action edit, Action delete)
+    /// <summary>
+    /// Строка карточки: имя, пояснение, вторая строка мелким и кнопки справа.
+    /// <paramref name="first"/> — главное действие карточки, если оно есть; стоит перед
+    /// «Изменить», потому что нажимают его чаще, чем правят саму карточку.
+    /// </summary>
+    private static Border CardRow(string title, string description, string extra,
+                                  Action edit, Action delete,
+                                  (string Text, Action Click)? first = null)
     {
         var left = new StackPanel { Spacing = 4, VerticalAlignment = VerticalAlignment.Center };
         left.Children.Add(new TextBlock { Classes = { "title" }, Text = title });
@@ -330,6 +346,7 @@ public partial class SettingsView
             VerticalAlignment = VerticalAlignment.Center,
         };
 
+        if (first is { } main) buttons.Children.Add(SmallButton(main.Text, main.Click));
         buttons.Children.Add(SmallButton("Изменить", edit));
         buttons.Children.Add(SmallButton("Удалить", delete));
 

@@ -42,6 +42,11 @@ public partial class ConstructorRepository
         if (!db.DbCollections.AsNoTracking().Any(c => c.Id == binding.CollectionId))
             throw new ImportException("Коллекция не найдена — возможно, ее удалили.");
 
+        // Права спрашиваются ДО первой записи, хотя их проверит и каждый AddRecord отдельно:
+        // отказ на середине оставил бы коллекцию наполовину обновленной, а обмен повторяется
+        // по расписанию — разбираться в таком состоянии потом некому.
+        DemandRights(binding);
+
         var reader = ColumnReader(binding, schema);
         var fields = FieldsOfBinding(binding);
 
@@ -108,6 +113,40 @@ public partial class ConstructorRepository
         LogNow("import", "collection", CollectionNameOf(binding.CollectionId) ?? "", count: created + updated);
 
         return result;
+    }
+
+    /// <summary>
+    /// То же на ОТДЕЛЬНОМ подключении — для вызова с фонового потока. Общий контекст с фонового
+    /// потока трогать нельзя: его параллельно использует интерфейс, и EF отвечает на это
+    /// «A second operation was started on this context instance» (см. <c>ImportStreamedCollectionIsolated</c>).
+    ///
+    /// Права спрашиваются ЗДЕСЬ, на публичной точке входа: изолированный клон репозитория прав
+    /// не несет, и внутри проверять их уже нечем.
+    /// </summary>
+    public BindingResult ApplyRowsIsolated(
+        CollectionBinding      binding,
+        ImportSchema           schema,
+        IEnumerable<ImportRow> rows,
+        CancellationToken      ct,
+        IProgress<int>?        progress = null)
+    {
+        DemandRights(binding);
+
+        using var ctx = new AppDbContext(db.DbPath);
+        return new ConstructorRepository(ctx).ApplyRows(binding, schema, rows, ct, progress);
+    }
+
+    /// <summary>
+    /// Права, без которых привязку применять нечем. Спрашивается только то, что привязка
+    /// собирается делать: право заводить записи не нужно тому, кто выбрал «только обновлять».
+    /// </summary>
+    private void DemandRights(CollectionBinding binding)
+    {
+        if (!binding.Matches || binding.CreateMissing)
+            Demand(PermAction.CreateRecord, binding.CollectionId);
+
+        if (binding.Matches && binding.UpdateExisting)
+            Demand(PermAction.EditRecord, binding.CollectionId);
     }
 
     // ── Чтение колонок источника ──────────────────────────────────────────────

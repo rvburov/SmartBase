@@ -17,7 +17,13 @@ public sealed record BindingColumn(string Column, int? FieldId);
 /// Сопоставление задается ОДНОЙ колонкой, а не отдельной парой «колонка + поле»: искать
 /// разрешено только по тому, что и так переносится. Иначе получалась бы связь, которой нет на
 /// экране: запись обновляется по полю, которого в привязке не видно.
+///
+/// База данных названа явно, отдельным ключом. Соединения и запросы лежат в системной app.db и
+/// общие для всех баз, а ключи коллекций у каждой базы свои: без ключа базы сохраненная привязка
+/// после переключения баз указывала бы на коллекцию с тем же номером в СОСЕДНЕЙ базе — и обмен
+/// молча уложил бы чужие записи не туда.
 /// </summary>
+/// <param name="DbId">База данных, в которой живет коллекция.</param>
 /// <param name="CollectionId">Коллекция, в которую кладем.</param>
 /// <param name="Columns">Колонки ответа и их место в коллекции. Колонка, которой здесь нет,
 /// не переносится — это нормально: чужая программа отдает лишнее почти всегда.</param>
@@ -26,6 +32,7 @@ public sealed record BindingColumn(string Column, int? FieldId);
 /// <param name="UpdateExisting">Найденную запись обновлять.</param>
 /// <param name="CreateMissing">Ненайденную заводить.</param>
 public sealed record CollectionBinding(
+    int                          DbId,
     int                          CollectionId,
     IReadOnlyList<BindingColumn> Columns,
     string                       MatchColumn   = "",
@@ -52,6 +59,9 @@ public sealed record CollectionBinding(
     public IReadOnlyList<string> Problems()
     {
         var problems = new List<string>();
+
+        if (DbId <= 0)
+            problems.Add("Не выбрана база данных");
 
         if (CollectionId <= 0)
             problems.Add("Не выбрана коллекция");

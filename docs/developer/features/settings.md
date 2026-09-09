@@ -76,7 +76,11 @@
   вкладка запоминается (`integrations.tab`). Панель собирает
   [SettingsIntegrationsPanel](../../../Views/Settings/SettingsIntegrationsPanel.cs); вкладка
   «Безопасность» только показывает то, чем заряжен шлюз (`EgressSetup.Last`), — правится
-  политика вне программы, см. [integrations/overview.md](integrations/overview.md)
+  политика вне программы, см. [integrations/overview.md](integrations/overview.md).
+  Кнопка «В коллекцию» на карточке запроса ведет обмен целиком
+  ([SettingsIntegrationsRun](../../../Views/Settings/SettingsIntegrationsRun.cs)) и потому
+  единственная в разделе настроек пишет в РАБОЧУЮ базу; список открытых баз дает `MainWindow`
+  вызываемым провайдером `databases` в `Initialize` — базы монтируются и отцепляются на ходу
 - **Инструкция пользователя** (`guide`) — документы `docs/user/*.md` с панелью
   «Содержание» справа, см. [[user-guide-section]]
 - **Диагностика** (`logs`) — журнал `logs.db` с фильтром и панелью «Детали», см. [[logging]]
