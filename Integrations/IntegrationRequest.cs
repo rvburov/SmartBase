@@ -78,13 +78,25 @@ public sealed record IntegrationRequest(
     /// </summary>
     public IReadOnlyList<string> Problems()
     {
+        var problems = ShapeProblems().ToList();
+
+        if (ConnectionId <= 0)
+            problems.Add("Не выбрано соединение");
+
+        return problems;
+    }
+
+    /// <summary>
+    /// Что не так с самим запросом, без привязки к соединению. Нужно там, где соединение и так
+    /// известно: при проверке связи карточку еще не сохранили, ключа у нее нет, а путь и метод
+    /// проверить надо.
+    /// </summary>
+    public IReadOnlyList<string> ShapeProblems()
+    {
         var problems = new List<string>();
 
         if (string.IsNullOrWhiteSpace(Name))
             problems.Add("Название не заполнено");
-
-        if (ConnectionId <= 0)
-            problems.Add("Не выбрано соединение");
 
         var path = (Path ?? "").Trim();
 
@@ -120,11 +132,11 @@ public sealed record IntegrationRequest(
     /// «https://сервер/обмен» + «/orders» дало бы «https://сервер/orders» — не то, чего ждет
     /// человек, настроивший соединение на подкаталог.
     ///
-    /// <c>null</c> — карточка негодная; причину скажет <see cref="Problems"/>.
+    /// <c>null</c> — карточка негодная; причину скажет <see cref="ShapeProblems"/>.
     /// </summary>
     public Uri? BuildAddress(IntegrationConnection connection)
     {
-        if (Problems().Count > 0 || connection.BaseAddress is null) return null;
+        if (ShapeProblems().Count > 0 || connection.BaseAddress is null) return null;
 
         var head = connection.Address.Trim().TrimEnd('/');
         var tail = (Path ?? "").Trim();

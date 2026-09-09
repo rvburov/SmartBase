@@ -68,6 +68,20 @@
     <DefineConstants>$(DefineConstants);CLOSED_LOOP</DefineConstants>
   </PropertyGroup>
 
+  <!--
+    Отправляющий слой подменяется ФАЙЛОМ, а не условной компиляцией: в закрытой сборке в
+    дистрибутиве нет ни HttpClient, ни сокета, ни разрешения имен — проверяющему нечего искать,
+    а не «есть, но выключено». Условная компиляция при этом остается ровно в одном месте
+    (см. комментарий выше), и обе сборки собираются из одного и того же исходного дерева.
+  -->
+  <ItemGroup Condition="'$(ClosedLoop)' == 'true'">
+    <Compile Remove="Integrations\EgressHttp.Open.cs" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(ClosedLoop)' != 'true'">
+    <Compile Remove="Integrations\EgressHttp.Closed.cs" />
+  </ItemGroup>
+
   <ItemGroup>
     <PackageReference Include="Avalonia"                        Version="11.2.3" />
     <PackageReference Include="Avalonia.Desktop"               Version="11.2.3" />

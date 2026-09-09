@@ -152,6 +152,46 @@ public sealed class OneDoorOutwardTests
     }
 
     /// <summary>
+    /// Отправляющий слой закрытой сборки — заглушка, и в ней не должно быть ни сетевого
+    /// клиента, ни сокета. Иначе обещание «в закрытом дистрибутиве сетевого кода нет»
+    /// перестает быть правдой, а заметить это чтением настроек невозможно.
+    /// </summary>
+    [Fact]
+    public void Closed_loop_transport_has_no_network_code()
+    {
+        var path = Path.Combine(RepoRoot(), "Integrations", "EgressHttp.Closed.cs");
+        Assert.True(File.Exists(path), "Заглушка отправляющего слоя пропала: " + path);
+
+        var text = File.ReadAllText(path);
+
+        var found = OutboundTypes.Concat(SocketTypes)
+            .Where(type => text.Contains(type, StringComparison.Ordinal))
+            .ToList();
+
+        Assert.True(found.Count == 0,
+            "В заглушке закрытой сборки завелся сетевой код:\n  " + string.Join("\n  ", found));
+    }
+
+    /// <summary>
+    /// Подмена отправляющего слоя объявлена в проекте. Без этой проверки можно переименовать
+    /// файл или потерять строку в SmartBase.csproj — и закрытая сборка молча соберется с
+    /// обычным сетевым клиентом внутри.
+    /// </summary>
+    [Fact]
+    public void Closed_loop_swap_is_declared_in_the_project()
+    {
+        var project = File.ReadAllText(Path.Combine(RepoRoot(), "SmartBase.csproj"));
+
+        Assert.Contains("'$(ClosedLoop)' == 'true'", project, StringComparison.Ordinal);
+        Assert.Contains("<Compile Remove=\"Integrations\\EgressHttp.Open.cs\" />", project,
+            StringComparison.Ordinal);
+        Assert.Contains("<Compile Remove=\"Integrations\\EgressHttp.Closed.cs\" />", project,
+            StringComparison.Ordinal);
+
+        Assert.True(File.Exists(Path.Combine(RepoRoot(), "Integrations", "EgressHttp.Open.cs")));
+    }
+
+    /// <summary>
     /// Сам шлюз обязан быть на месте. Без этой проверки удаление файла превратило бы оба
     /// теста выше в вечнозеленые: запрещать станет нечего и некому.
     /// </summary>
