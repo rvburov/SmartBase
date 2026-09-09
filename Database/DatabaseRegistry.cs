@@ -118,7 +118,41 @@ public sealed class DatabaseRegistry : IDisposable, ISettingsDatabase
             "\"Body\" TEXT NULL, " +
             "\"Paging\" TEXT NOT NULL, " +
             "\"PagingField\" TEXT NULL, " +
-            "\"ItemsPath\" TEXT NULL);");
+            "\"ItemsPath\" TEXT NULL, " +
+            "\"BindingJson\" TEXT NULL, " +
+            "\"LastRunAt\" TEXT NULL);");
+
+        // Привязка и отметка о последнем запуске появились позже самой таблицы: в app.db,
+        // созданных до них, этих колонок нет, а CREATE IF NOT EXISTS существующую таблицу не
+        // достраивает. Правило то же, что у остальных, — только аддитивно.
+        AddColumns(db, "integration_requests", [("BindingJson", "TEXT"), ("LastRunAt", "TEXT")]);
+    }
+
+    /// <summary>
+    /// Дописать колонки, которых в таблице еще нет. Общий прием app.db: он никогда не
+    /// пересоздается, поэтому схема догоняется <c>ALTER ADD</c>, а не пересборкой.
+    /// </summary>
+    private static void AddColumns(
+        SystemDbContext db, string table, IReadOnlyList<(string Name, string Type)> columns)
+    {
+        var have = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var conn = db.Database.GetDbConnection();
+        if (conn.State != System.Data.ConnectionState.Open) conn.Open();
+
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = $"PRAGMA table_info(\"{table}\");";
+            using var reader = cmd.ExecuteReader();
+            while (reader.Read()) have.Add(reader.GetString(1));
+        }
+
+        // EF1002 «возможная SQL-инъекция»: имя таблицы и колонок приходит из кода рядом,
+        // значений от пользователя в запросе нет. Параметром идентификатор сделать нельзя.
+        #pragma warning disable EF1002
+        foreach (var (name, type) in columns)
+            if (!have.Contains(name))
+                db.Database.ExecuteSqlRaw($"ALTER TABLE \"{table}\" ADD COLUMN \"{name}\" {type} NULL;");
+        #pragma warning restore EF1002
     }
 
     // Колонки PG-подключений появились позже таблицы databases: в старых app.db их нет,

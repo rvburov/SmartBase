@@ -1,3 +1,4 @@
+using Microsoft.EntityFrameworkCore;
 using SmartBase.Database;
 using SmartBase.Integrations;
 using SmartBase.Utils;
@@ -312,7 +313,138 @@ public sealed class IntegrationsRegistryTests
         finally { Cleanup(dir, appDb, dataDb); }
     }
 
+    // ── Привязка и отметка о запуске ──────────────────────────────────────────
+
+    [Fact]
+    public void Binding_round_trips()
+    {
+        var (dir, appDb, dataDb) = TempPaths();
+        try
+        {
+            int id;
+            using (var registry = DatabaseRegistry.Open(dataDb, appDb))
+            {
+                var connectionId = registry.Integrations.Save(Card()).Id;
+                id = registry.Integrations.SaveRequest(Query("Остатки", connectionId)).Id;
+
+                Assert.Null(registry.Integrations.Binding(id));
+
+                registry.Integrations.SaveBinding(id, new CollectionBinding(7,
+                    [new BindingColumn("Название", null), new BindingColumn("Номер", 11)],
+                    MatchColumn: "Номер"));
+            }
+
+            using (var again = DatabaseRegistry.Open(dataDb, appDb))
+            {
+                var binding = again.Integrations.Binding(id);
+
+                Assert.NotNull(binding);
+                Assert.Equal(7, binding!.CollectionId);
+                Assert.Equal("Номер", binding.MatchColumn);
+                Assert.Equal(11, binding.MatchFieldId);
+
+                again.Integrations.SaveBinding(id, null);
+                Assert.Null(again.Integrations.Binding(id));
+            }
+        }
+        finally { Cleanup(dir, appDb, dataDb); }
+    }
+
+    /// <summary>
+    /// Отметка о запуске — то, из чего берется «отдай изменения с прошлого раза». Она обязана
+    /// переживать перезапуск программы, иначе выгрузка каждый раз начиналась бы с нуля.
+    /// </summary>
+    [Fact]
+    public void Last_run_is_remembered()
+    {
+        var (dir, appDb, dataDb) = TempPaths();
+        try
+        {
+            int id;
+            var moment = new DateTimeOffset(2026, 9, 9, 8, 30, 0, TimeSpan.FromHours(3));
+
+            using (var registry = DatabaseRegistry.Open(dataDb, appDb))
+            {
+                var connectionId = registry.Integrations.Save(Card()).Id;
+                id = registry.Integrations.SaveRequest(Query("Остатки", connectionId)).Id;
+
+                Assert.Null(registry.Integrations.LastRun(id));
+
+                registry.Integrations.MarkRun(id, moment);
+            }
+
+            using (var again = DatabaseRegistry.Open(dataDb, appDb))
+                Assert.Equal(moment, again.Integrations.LastRun(id));
+        }
+        finally { Cleanup(dir, appDb, dataDb); }
+    }
+
+    /// <summary>Битая привязка не роняет экран: человек соберет ее заново.</summary>
+    [Fact]
+    public void Broken_binding_reads_as_none()
+    {
+        var (dir, appDb, dataDb) = TempPaths();
+        try
+        {
+            using var registry = DatabaseRegistry.Open(dataDb, appDb);
+            var connectionId = registry.Integrations.Save(Card()).Id;
+            var id = registry.Integrations.SaveRequest(Query("Остатки", connectionId)).Id;
+
+            using (var ctx = new SystemDbContext(appDb))
+            {
+                var row = ctx.IntegrationRequests.First(r => r.Id == id);
+                row.BindingJson = "{не json";
+                ctx.SaveChanges();
+            }
+
+            using var again = DatabaseRegistry.Open(dataDb, appDb);
+            Assert.Null(again.Integrations.Binding(id));
+        }
+        finally { Cleanup(dir, appDb, dataDb); }
+    }
+
     // ── Аддитивность схемы app.db ─────────────────────────────────────────────
+
+    /// <summary>
+    /// Колонки, появившиеся позже таблицы, дописываются к существующей: app.db не
+    /// пересоздается, и схема догоняется ALTER ADD. Здесь таблица нарочно приводится к
+    /// прежнему виду — так она и выглядит в app.db, созданном предыдущим выпуском.
+    /// </summary>
+    [Fact]
+    public void Columns_added_later_appear_in_an_older_table()
+    {
+        var (dir, appDb, dataDb) = TempPaths();
+        try
+        {
+            using (var first = DatabaseRegistry.Open(dataDb, appDb))
+                Assert.Empty(first.Integrations.Requests());
+
+            // Прежний вид таблицы: без BindingJson и LastRunAt.
+            using (var ctx = new SystemDbContext(appDb))
+            {
+                ctx.Database.ExecuteSqlRaw("DROP TABLE \"integration_requests\";");
+                ctx.Database.ExecuteSqlRaw(
+                    "CREATE TABLE \"integration_requests\" (" +
+                    "\"Id\" INTEGER NOT NULL CONSTRAINT \"PK_integration_requests\" PRIMARY KEY AUTOINCREMENT, " +
+                    "\"Name\" TEXT NOT NULL, \"ConnectionId\" INTEGER NOT NULL, " +
+                    "\"Method\" TEXT NOT NULL, \"Path\" TEXT NOT NULL, " +
+                    "\"HeadersJson\" TEXT NULL, \"Body\" TEXT NULL, " +
+                    "\"Paging\" TEXT NOT NULL, \"PagingField\" TEXT NULL, \"ItemsPath\" TEXT NULL);");
+            }
+
+            using (var second = DatabaseRegistry.Open(dataDb, appDb))
+            {
+                var connectionId = second.Integrations.Save(Card()).Id;
+                var id = second.Integrations.SaveRequest(Query("Остатки", connectionId)).Id;
+
+                second.Integrations.SaveBinding(id, new CollectionBinding(7,
+                    [new BindingColumn("Название", null)]));
+
+                Assert.NotNull(second.Integrations.Binding(id));
+            }
+        }
+        finally { Cleanup(dir, appDb, dataDb); }
+    }
 
     /// <summary>
     /// Таблица соединений достраивается в УЖЕ СУЩЕСТВУЮЩЕМ app.db: он никогда не

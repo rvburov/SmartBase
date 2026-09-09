@@ -1,0 +1,344 @@
+using SmartBase.Core.Importers;
+using SmartBase.Core.Importers.TableSources;
+using SmartBase.Database.Repositories;
+using SmartBase.Integrations;
+
+namespace SmartBase.Tests.Integration;
+
+/// <summary>
+/// Укладка ответа чужой программы в существующую коллекцию (<c>ConstructorRepository.ApplyRows</c>).
+///
+/// Обычный импорт заводит новую коллекцию; обмен так работать не может — он повторяется по
+/// расписанию, и каждый запуск обязан ложиться в ту же таблицу. Отсюда и главные проверки:
+/// повторный запуск с теми же данными НЕ плодит дубли, а неоднозначный ключ не дает править
+/// запись наугад.
+/// </summary>
+public sealed class CollectionBindingTests
+{
+    /// <summary>Коллекция с двумя свойствами и привязка к ней по номеру.</summary>
+    private static (int CollectionId, int NumberId, int StateId) Collection(ConstructorRepository repo)
+    {
+        var collection = SampleData.AddCollection(repo, "Заказы");
+        var number     = SampleData.AddField(repo, collection.Id!.Value, "Номер");
+        var state      = SampleData.AddField(repo, collection.Id!.Value, "Статус", position: 2000);
+
+        return (collection.Id!.Value, number.Id!.Value, state.Id!.Value);
+    }
+
+    private static (ImportSchema Schema, List<ImportRow> Rows) Source(string json)
+    {
+        var source = new JsonTextSource(json);
+        var schema = source.Analyze(null, CancellationToken.None);
+        return (schema, [.. source.ReadRows(CancellationToken.None)]);
+    }
+
+    private static BindingResult Apply(
+        ConstructorRepository repo, CollectionBinding binding, string json)
+    {
+        var (schema, rows) = Source(json);
+        return repo.ApplyRows(binding, schema, rows, CancellationToken.None);
+    }
+
+    private static string Value(ConstructorRepository repo, int recordId, int fieldId) =>
+        repo.GetFieldValues(recordId).TryGetValue(fieldId, out var value) ? value : "";
+
+    // ── Обычная укладка ───────────────────────────────────────────────────────
+
+    [Fact]
+    public void Rows_become_records_with_title_and_fields()
+    {
+        using var db = new TempDatabase();
+        var (collectionId, numberId, stateId) = Collection(db.Constructor);
+
+        var binding = new CollectionBinding(collectionId,
+        [
+            new BindingColumn("Название", null),
+            new BindingColumn("Номер",    numberId),
+            new BindingColumn("Статус",   stateId),
+        ]);
+
+        var result = Apply(db.Constructor, binding, """
+            [{"Название":"Молоток","Номер":"А-1","Статус":"новый"},
+             {"Название":"Отвертка","Номер":"А-2","Статус":"новый"}]
+            """);
+
+        Assert.Equal(2, result.Created);
+        Assert.Equal(0, result.Updated);
+
+        var records = db.Constructor.GetRecords(collectionId);
+        Assert.Equal(["Молоток", "Отвертка"], records.Select(r => r.Title));
+        Assert.Equal("А-1", Value(db.Constructor, records[0].Id!.Value, numberId));
+        Assert.Equal("новый", Value(db.Constructor, records[0].Id!.Value, stateId));
+    }
+
+    /// <summary>Колонку можно и не переносить: чужая программа отдает лишнее почти всегда.</summary>
+    [Fact]
+    public void Columns_outside_the_binding_are_not_transferred()
+    {
+        using var db = new TempDatabase();
+        var (collectionId, numberId, _) = Collection(db.Constructor);
+
+        var binding = new CollectionBinding(collectionId,
+            [new BindingColumn("Название", null), new BindingColumn("Номер", numberId)]);
+
+        Apply(db.Constructor, binding, """[{"Название":"Молоток","Номер":"А-1","Лишнее":"мусор"}]""");
+
+        var record = Assert.Single(db.Constructor.GetRecords(collectionId));
+        Assert.Single(db.Constructor.GetFieldValues(record.Id!.Value));
+    }
+
+    // ── Повторный запуск ──────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Главное свойство обмена: второй запуск с теми же данными не плодит дубли, а обновляет
+    /// заведенное. Без этого ежечасная выгрузка за сутки превращает коллекцию в помойку.
+    /// </summary>
+    [Fact]
+    public void Second_run_updates_instead_of_duplicating()
+    {
+        using var db = new TempDatabase();
+        var (collectionId, numberId, stateId) = Collection(db.Constructor);
+
+        var binding = new CollectionBinding(collectionId,
+        [
+            new BindingColumn("Название", null),
+            new BindingColumn("Номер",    numberId),
+            new BindingColumn("Статус",   stateId),
+        ],
+        MatchColumn: "Номер");
+
+        Apply(db.Constructor, binding, """[{"Название":"Молоток","Номер":"А-1","Статус":"новый"}]""");
+
+        var second = Apply(db.Constructor, binding,
+            """[{"Название":"Молоток большой","Номер":"А-1","Статус":"отгружен"}]""");
+
+        Assert.Equal(0, second.Created);
+        Assert.Equal(1, second.Updated);
+
+        var record = Assert.Single(db.Constructor.GetRecords(collectionId));
+        Assert.Equal("Молоток большой", record.Title);
+        Assert.Equal("отгружен", Value(db.Constructor, record.Id!.Value, stateId));
+    }
+
+    /// <summary>Сопоставлять можно и по названию — тогда ключ лежит в самой записи.</summary>
+    [Fact]
+    public void Matching_by_title_works_too()
+    {
+        using var db = new TempDatabase();
+        var (collectionId, numberId, _) = Collection(db.Constructor);
+
+        var binding = new CollectionBinding(collectionId,
+            [new BindingColumn("Название", null), new BindingColumn("Номер", numberId)],
+            MatchColumn: "Название");
+
+        Apply(db.Constructor, binding, """[{"Название":"Молоток","Номер":"А-1"}]""");
+        var second = Apply(db.Constructor, binding, """[{"Название":"Молоток","Номер":"А-9"}]""");
+
+        Assert.Equal(1, second.Updated);
+        var record = Assert.Single(db.Constructor.GetRecords(collectionId));
+        Assert.Equal("А-9", Value(db.Constructor, record.Id!.Value, numberId));
+    }
+
+    /// <summary>Один и тот же ключ дважды в ОДНОМ ответе — вторая строка обновляет первую.</summary>
+    [Fact]
+    public void Repeated_key_inside_one_answer_updates_the_new_record()
+    {
+        using var db = new TempDatabase();
+        var (collectionId, numberId, stateId) = Collection(db.Constructor);
+
+        var binding = new CollectionBinding(collectionId,
+        [
+            new BindingColumn("Название", null),
+            new BindingColumn("Номер",    numberId),
+            new BindingColumn("Статус",   stateId),
+        ],
+        MatchColumn: "Номер");
+
+        var result = Apply(db.Constructor, binding, """
+            [{"Название":"Молоток","Номер":"А-1","Статус":"новый"},
+             {"Название":"Молоток","Номер":"А-1","Статус":"отгружен"}]
+            """);
+
+        Assert.Equal(1, result.Created);
+        Assert.Equal(1, result.Updated);
+
+        var record = Assert.Single(db.Constructor.GetRecords(collectionId));
+        Assert.Equal("отгружен", Value(db.Constructor, record.Id!.Value, stateId));
+    }
+
+    // ── Что делать с найденным и ненайденным ──────────────────────────────────
+
+    [Fact]
+    public void Update_can_be_switched_off()
+    {
+        using var db = new TempDatabase();
+        var (collectionId, numberId, stateId) = Collection(db.Constructor);
+
+        var columns = new BindingColumn[]
+        {
+            new("Название", null), new("Номер", numberId), new("Статус", stateId),
+        };
+
+        Apply(db.Constructor, new CollectionBinding(collectionId, columns, MatchColumn: "Номер"),
+            """[{"Название":"Молоток","Номер":"А-1","Статус":"новый"}]""");
+
+        var result = Apply(db.Constructor,
+            new CollectionBinding(collectionId, columns, MatchColumn: "Номер", UpdateExisting: false),
+            """[{"Название":"Молоток","Номер":"А-1","Статус":"отгружен"}]""");
+
+        Assert.Equal(1, result.Skipped);
+        Assert.Equal(0, result.Updated);
+
+        var record = Assert.Single(db.Constructor.GetRecords(collectionId));
+        Assert.Equal("новый", Value(db.Constructor, record.Id!.Value, stateId));
+    }
+
+    [Fact]
+    public void Creation_can_be_switched_off()
+    {
+        using var db = new TempDatabase();
+        var (collectionId, numberId, _) = Collection(db.Constructor);
+
+        var result = Apply(db.Constructor,
+            new CollectionBinding(collectionId,
+                [new BindingColumn("Название", null), new BindingColumn("Номер", numberId)],
+                MatchColumn: "Номер", CreateMissing: false),
+            """[{"Название":"Молоток","Номер":"А-1"}]""");
+
+        Assert.Equal(1, result.Skipped);
+        Assert.Empty(db.Constructor.GetRecords(collectionId));
+    }
+
+    /// <summary>
+    /// Пустой ключ не заводит запись: иначе каждый следующий запуск плодил бы для нее дубль.
+    /// </summary>
+    [Fact]
+    public void Empty_key_is_counted_and_skipped()
+    {
+        using var db = new TempDatabase();
+        var (collectionId, numberId, _) = Collection(db.Constructor);
+
+        var result = Apply(db.Constructor,
+            new CollectionBinding(collectionId,
+                [new BindingColumn("Название", null), new BindingColumn("Номер", numberId)],
+                MatchColumn: "Номер"),
+            """[{"Название":"Молоток","Номер":""},{"Название":"Отвертка","Номер":"А-2"}]""");
+
+        Assert.Equal(1, result.Empty);
+        Assert.Equal(1, result.Created);
+        Assert.Single(db.Constructor.GetRecords(collectionId));
+    }
+
+    /// <summary>
+    /// В коллекции две записи с одинаковым ключом — править одну из них наугад хуже, чем не
+    /// трогать ни одной и сказать об этом.
+    /// </summary>
+    [Fact]
+    public void Ambiguous_key_touches_nothing()
+    {
+        using var db = new TempDatabase();
+        var (collectionId, numberId, stateId) = Collection(db.Constructor);
+
+        foreach (var title in new[] { "Первый", "Второй" })
+        {
+            var record = SampleData.AddRecord(db.Constructor, collectionId, title);
+            db.Constructor.SetFieldValue(record.Id!.Value, numberId, "А-1");
+            db.Constructor.SetFieldValue(record.Id!.Value, stateId, "новый");
+        }
+
+        var result = Apply(db.Constructor,
+            new CollectionBinding(collectionId,
+                [new BindingColumn("Название", null), new BindingColumn("Номер", numberId),
+                 new BindingColumn("Статус", stateId)],
+                MatchColumn: "Номер"),
+            """[{"Название":"Молоток","Номер":"А-1","Статус":"отгружен"}]""");
+
+        Assert.Equal(1, result.Ambiguous);
+        Assert.Equal(0, result.Updated);
+        Assert.Equal(0, result.Created);
+
+        foreach (var record in db.Constructor.GetRecords(collectionId))
+            Assert.Equal("новый", Value(db.Constructor, record.Id!.Value, stateId));
+    }
+
+    /// <summary>Без ключа сопоставления каждая строка ответа — новая запись.</summary>
+    [Fact]
+    public void Without_a_key_every_row_is_a_new_record()
+    {
+        using var db = new TempDatabase();
+        var (collectionId, numberId, _) = Collection(db.Constructor);
+
+        var binding = new CollectionBinding(collectionId,
+            [new BindingColumn("Название", null), new BindingColumn("Номер", numberId)]);
+
+        Apply(db.Constructor, binding, """[{"Название":"Молоток","Номер":"А-1"}]""");
+        Apply(db.Constructor, binding, """[{"Название":"Молоток","Номер":"А-1"}]""");
+
+        Assert.Equal(2, db.Constructor.GetRecords(collectionId).Count);
+    }
+
+    // ── Привязка, которая больше не подходит ──────────────────────────────────
+
+    /// <summary>
+    /// Колонка исчезла из ответа — это ошибка, а не тихая пустота: иначе поле обнулялось бы при
+    /// каждом запуске, и заметили бы это нескоро.
+    /// </summary>
+    [Fact]
+    public void Column_missing_from_the_answer_is_an_error()
+    {
+        using var db = new TempDatabase();
+        var (collectionId, numberId, _) = Collection(db.Constructor);
+
+        var error = Assert.Throws<ImportException>(() => Apply(db.Constructor,
+            new CollectionBinding(collectionId,
+                [new BindingColumn("Название", null), new BindingColumn("Номер", numberId)]),
+            """[{"Название":"Молоток"}]"""));
+
+        Assert.Contains("Номер", error.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>Свойство удалили из коллекции — привязку надо поправить, а не молчать.</summary>
+    [Fact]
+    public void Field_removed_from_the_collection_is_an_error()
+    {
+        using var db = new TempDatabase();
+        var (collectionId, numberId, _) = Collection(db.Constructor);
+
+        db.Constructor.DeleteField(numberId);
+
+        var error = Assert.Throws<ImportException>(() => Apply(db.Constructor,
+            new CollectionBinding(collectionId,
+                [new BindingColumn("Название", null), new BindingColumn("Номер", numberId)]),
+            """[{"Название":"Молоток","Номер":"А-1"}]"""));
+
+        Assert.Contains("Номер", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Missing_collection_is_an_error()
+    {
+        using var db = new TempDatabase();
+
+        var error = Assert.Throws<ImportException>(() => Apply(db.Constructor,
+            new CollectionBinding(404, [new BindingColumn("Название", null)]),
+            """[{"Название":"Молоток"}]"""));
+
+        Assert.Contains("Коллекция не найдена", error.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>Негодная привязка до записи не доходит.</summary>
+    [Fact]
+    public void Broken_binding_is_refused()
+    {
+        using var db = new TempDatabase();
+        var (collectionId, numberId, _) = Collection(db.Constructor);
+
+        var error = Assert.Throws<ImportException>(() => Apply(db.Constructor,
+            new CollectionBinding(collectionId,
+                [new BindingColumn("Название", null), new BindingColumn("Номер", numberId)],
+                MatchColumn: "Нет такой"),
+            """[{"Название":"Молоток","Номер":"А-1"}]"""));
+
+        Assert.Contains("не переносится", error.Message, StringComparison.Ordinal);
+    }
+}

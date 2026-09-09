@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using SmartBase.Database.Entities;
@@ -178,6 +179,69 @@ public sealed class IntegrationsRegistry(SystemDbContext db)
 
         db.SaveChanges();
         return ToModel(entity);
+    }
+
+    // ── Привязка к коллекции и отметка о запуске ──────────────────────────────
+
+    /// <summary>
+    /// Привязка «ответ → коллекция»; <c>null</c> — запрос еще ни разу не укладывали. Битая
+    /// строка тоже дает <c>null</c>: человек соберет привязку заново, а падать при открытии
+    /// экрана из-за настройки одного запроса незачем.
+    /// </summary>
+    public CollectionBinding? Binding(int requestId)
+    {
+        var json = db.IntegrationRequests.AsNoTracking()
+                     .FirstOrDefault(r => r.Id == requestId)?.BindingJson;
+
+        if (string.IsNullOrWhiteSpace(json)) return null;
+
+        try
+        {
+            return JsonSerializer.Deserialize<CollectionBinding>(json);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>Запомнить привязку; <c>null</c> — забыть ее.</summary>
+    public void SaveBinding(int requestId, CollectionBinding? binding)
+    {
+        var entity = db.IntegrationRequests.FirstOrDefault(r => r.Id == requestId);
+        if (entity is null) return;
+
+        entity.BindingJson = binding is null ? null : JsonSerializer.Serialize(binding);
+        db.SaveChanges();
+    }
+
+    /// <summary>
+    /// Когда запрос последний раз отработал успешно; <c>null</c> — еще ни разу. Отсюда берется
+    /// значение подстановки <c>{{последний_запуск}}</c>.
+    /// </summary>
+    public DateTimeOffset? LastRun(int requestId)
+    {
+        var stored = db.IntegrationRequests.AsNoTracking()
+                       .FirstOrDefault(r => r.Id == requestId)?.LastRunAt;
+
+        return DateTimeOffset.TryParse(stored, CultureInfo.InvariantCulture,
+                                       DateTimeStyles.RoundtripKind, out var moment)
+            ? moment
+            : null;
+    }
+
+    /// <summary>
+    /// Отметить удачный запуск. Зовется ТОЛЬКО после того, как записи легли в коллекцию:
+    /// отметь его раньше — и неудавшийся обмен сдвинул бы границу «отдай изменения с прошлого
+    /// раза», а пропущенные записи не пришли бы уже никогда.
+    /// </summary>
+    public void MarkRun(int requestId, DateTimeOffset moment)
+    {
+        var entity = db.IntegrationRequests.FirstOrDefault(r => r.Id == requestId);
+        if (entity is null) return;
+
+        entity.LastRunAt = moment.ToString("o", CultureInfo.InvariantCulture);
+        db.SaveChanges();
     }
 
     /// <summary>Удалить запрос. Соединение и его секрет остаются: ими пользуются другие запросы.</summary>
