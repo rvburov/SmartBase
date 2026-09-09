@@ -46,3 +46,47 @@ public class IntegrationConnectionEntity
     /// <summary>Сколько раз повторить при обрыве связи.</summary>
     public int Retries { get; set; }
 }
+
+/// <summary>
+/// Запрос к чужой программе (системная БД app.db, таблица «integration_requests»).
+///
+/// Живет рядом с соединением и по тем же причинам — локально: запрос без соединения
+/// бессмыслен, а соединение хранится в app.db, потому что содержит секрет.
+///
+/// Секрета здесь нет вовсе: он принадлежит соединению. Заголовки запроса лежат открытым
+/// текстом, и это правильно — при разборе строки cURL заголовок авторизации из них
+/// выносится в секрет соединения (<c>CurlParser</c>).
+///
+/// Таблица заводится аддитивно (<c>DatabaseRegistry.EnsureIntegrationTables</c>).
+/// </summary>
+public class IntegrationRequestEntity
+{
+    [Key] public int Id { get; set; }
+
+    /// <summary>Имя для человека: «Заказы за сутки».</summary>
+    [Required] public string Name { get; set; } = "";
+
+    /// <summary>Соединение, через которое уходит запрос.</summary>
+    public int ConnectionId { get; set; }
+
+    /// <summary>Метод: get, post, put, patch, delete.</summary>
+    [Required] public string Method { get; set; } = "get";
+
+    /// <summary>Путь с параметрами относительно адреса соединения.</summary>
+    [Required] public string Path { get; set; } = "/";
+
+    /// <summary>Заголовки запроса — JSON-массив пар имя-значение.</summary>
+    public string? HeadersJson { get; set; }
+
+    /// <summary>Тело запроса.</summary>
+    public string? Body { get; set; }
+
+    /// <summary>Способ разбивки на страницы: none, page, offset, cursor.</summary>
+    [Required] public string Paging { get; set; } = "none";
+
+    /// <summary>Имя параметра страницы или поля ответа с меткой следующей порции.</summary>
+    public string? PagingField { get; set; }
+
+    /// <summary>Путь к массиву записей в ответе: <c>data.items</c>.</summary>
+    public string? ItemsPath { get; set; }
+}

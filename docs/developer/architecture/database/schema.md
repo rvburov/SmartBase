@@ -14,7 +14,8 @@
   [UiEntities.cs](../../../../Database/Entities/UiEntities.cs) (проекции и UI-настройки),
   [ProfileEntities.cs](../../../../Database/Entities/ProfileEntities.cs) (пользователи/права/журнал),
   [DatabaseRefEntity.cs](../../../../Database/Entities/DatabaseRefEntity.cs) и
-  [AppSettingEntity.cs](../../../../Database/Entities/AppSettingEntity.cs) (app.db).
+  [AppSettingEntity.cs](../../../../Database/Entities/AppSettingEntity.cs) и
+  [IntegrationEntities.cs](../../../../Database/Entities/IntegrationEntities.cs) (app.db).
 - Маппинг, ключи и индексы: [AppDbContext.cs](../../../../Database/AppDbContext.cs) (`OnModelCreating`),
   [SystemDbContext.cs](../../../../Database/SystemDbContext.cs).
 - Миграции: [Database/Migrations/](../../../../Database/Migrations/).
@@ -92,6 +93,27 @@ app.db не пересоздается. Типы колонок пользова
 нескольких машинах разом — секрет в нем был бы доступен всем, у кого есть доступ к папке.
 Таблица достраивается аддитивно (`DatabaseRegistry.EnsureIntegrationTables`), как и все в
 app.db: он никогда не пересоздается.
+
+### `integration_requests` — запросы к чужим программам
+
+| Колонка | Тип | Описание |
+|---|---|---|
+| `Id` | INTEGER, PK | автоинкремент |
+| `Name` | TEXT | имя для человека |
+| `ConnectionId` | INTEGER | соединение, через которое уходит запрос |
+| `Method` | TEXT | `get`, `post`, `put`, `patch`, `delete` |
+| `Path` | TEXT | путь с параметрами относительно адреса соединения; всегда относительный |
+| `HeadersJson` | TEXT, null | заголовки запроса, JSON-массив пар |
+| `Body` | TEXT, null | тело запроса |
+| `Paging` | TEXT | разбивка на страницы: `none`, `page`, `offset`, `cursor` |
+| `PagingField` | TEXT, null | имя параметра страницы или поля ответа с меткой следующей порции |
+| `ItemsPath` | TEXT, null | путь к массиву записей в ответе: `data.items` |
+
+Секрета здесь нет: он принадлежит соединению. Заголовки лежат открытым текстом, и это верно —
+при вставке строки cURL заголовок авторизации из них выносится в секрет соединения
+(`CurlParser`). Внешнего ключа на `integration_connections` нет (таблица заводится сырым DDL),
+целостность держит `IntegrationsRegistry`: запрос без существующего соединения не сохраняется,
+а соединение с запросами не удаляется.
 
 ---
 

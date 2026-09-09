@@ -1,0 +1,136 @@
+namespace SmartBase.Integrations;
+
+/// <summary>Метод запроса. Пятерки хватает на обмен данными; экзотика вроде HEAD не нужна.</summary>
+public enum RequestMethod
+{
+    Get = 0,
+    Post,
+    Put,
+    Patch,
+    Delete,
+}
+
+/// <summary>
+/// Как чужая программа отдает длинные списки. Без этого выгрузка молча обрывается на первой
+/// сотне записей — самая частая и самая незаметная беда обмена.
+/// </summary>
+public enum RequestPaging
+{
+    /// <summary>Все приходит одним ответом.</summary>
+    None = 0,
+
+    /// <summary>Номер страницы: <c>?page=1</c>, <c>?page=2</c>…</summary>
+    Page,
+
+    /// <summary>Сдвиг от начала: <c>?offset=0</c>, <c>?offset=100</c>…</summary>
+    Offset,
+
+    /// <summary>Метка следующей порции из прошлого ответа: <c>?cursor=…</c>.</summary>
+    Cursor,
+}
+
+/// <summary>
+/// Запрос — «что дергаем»: метод, путь, заголовки, тело, разбивка на страницы и путь к массиву
+/// в ответе. Живет поверх <see cref="IntegrationConnection"/>: адрес и секрет берутся оттуда,
+/// иначе смена токена превращалась бы в обход десятка карточек.
+///
+/// Путь ОТНОСИТЕЛЬНЫЙ, и это правило безопасности, а не удобства. Позволь здесь полный адрес —
+/// и карточка показывала бы безобидное соединение «Учетная система», а запрос уходил бы куда
+/// угодно. Хост берется только из соединения, а его проверяет <see cref="EgressGate"/>.
+///
+/// Модель без ввода-вывода: отправка, подстановка переменных и разбор ответа — отдельные
+/// слои. Здесь только форма запроса и ее проверка.
+/// </summary>
+/// <param name="Id">Ключ строки в <c>app.db</c>; 0 — запрос еще не сохранен.</param>
+/// <param name="Name">Имя для человека: «Заказы за сутки».</param>
+/// <param name="ConnectionId">Соединение, через которое уходит запрос.</param>
+/// <param name="Method">Метод.</param>
+/// <param name="Path">Путь с параметрами относительно адреса соединения:
+/// <c>/orders?since={{последний_запуск}}</c>.</param>
+/// <param name="Headers">Заголовки запроса; заголовки соединения добавляются к ним при отправке.</param>
+/// <param name="Body">Тело; для <see cref="RequestMethod.Get"/> пустое.</param>
+/// <param name="Paging">Как чужая программа отдает длинные списки.</param>
+/// <param name="PagingField">Имя параметра страницы, сдвига или поля с меткой следующей порции.</param>
+/// <param name="ItemsPath">Путь к массиву записей в ответе: <c>data.items</c>. Пусто — ответ сам
+/// является массивом либо одной записью.</param>
+public sealed record IntegrationRequest(
+    int                              Id,
+    string                           Name,
+    int                              ConnectionId,
+    RequestMethod                    Method,
+    string                           Path,
+    IReadOnlyList<IntegrationHeader> Headers,
+    string                           Body,
+    RequestPaging                    Paging,
+    string                           PagingField,
+    string                           ItemsPath)
+{
+    /// <summary>Пустая карточка для экрана «Добавить».</summary>
+    public static IntegrationRequest New() =>
+        new(0, "", 0, RequestMethod.Get, "/", [], "", RequestPaging.None, "", "");
+
+    /// <summary>Нужно ли этому способу разбивки имя параметра или поля.</summary>
+    public bool NeedsPagingField => Paging != RequestPaging.None;
+
+    /// <summary>
+    /// Что не так с карточкой; пустой список — можно сохранять. Проверяется форма, а не
+    /// доступность: ответит ли сервер и разрешит ли политика адрес — вопросы отдельные.
+    /// </summary>
+    public IReadOnlyList<string> Problems()
+    {
+        var problems = new List<string>();
+
+        if (string.IsNullOrWhiteSpace(Name))
+            problems.Add("Название не заполнено");
+
+        if (ConnectionId <= 0)
+            problems.Add("Не выбрано соединение");
+
+        var path = (Path ?? "").Trim();
+
+        if (path.Length == 0)
+            problems.Add("Путь не заполнен: для корня адреса достаточно «/»");
+        else if (Uri.TryCreate(path, UriKind.Absolute, out _))
+            problems.Add("Путь должен быть относительным: адрес задается соединением");
+        else if (path.StartsWith("//", StringComparison.Ordinal))
+            problems.Add("Путь должен быть относительным: «//сервер» уводит запрос на чужой хост");
+        else if (path.Contains("..", StringComparison.Ordinal))
+            problems.Add("Путь не должен содержать «..»: так запрос уходит выше адреса соединения");
+        else if (!path.StartsWith('/'))
+            problems.Add("Путь должен начинаться с «/»");
+
+        if (Method == RequestMethod.Get && !string.IsNullOrWhiteSpace(Body))
+            problems.Add("У метода GET тела не бывает: перенесите данные в путь или смените метод");
+
+        if (NeedsPagingField && string.IsNullOrWhiteSpace(PagingField))
+            problems.Add(Paging == RequestPaging.Cursor
+                ? "Не указано поле ответа с меткой следующей порции"
+                : "Не указано имя параметра разбивки на страницы");
+
+        foreach (var header in Headers)
+            if (string.IsNullOrWhiteSpace(header.Name))
+                problems.Add("У заголовка не заполнено имя");
+
+        return problems;
+    }
+
+    /// <summary>
+    /// Полный адрес запроса: адрес соединения плюс путь. Склейка строками, а не
+    /// <see cref="Uri"/>: тот по правилам считает «/orders» заменой всего пути, и
+    /// «https://сервер/обмен» + «/orders» дало бы «https://сервер/orders» — не то, чего ждет
+    /// человек, настроивший соединение на подкаталог.
+    ///
+    /// <c>null</c> — карточка негодная; причину скажет <see cref="Problems"/>.
+    /// </summary>
+    public Uri? BuildAddress(IntegrationConnection connection)
+    {
+        if (Problems().Count > 0 || connection.BaseAddress is null) return null;
+
+        var head = connection.Address.Trim().TrimEnd('/');
+        var tail = (Path ?? "").Trim();
+
+        return Uri.TryCreate(tail == "/" ? head : head + tail, UriKind.Absolute, out var address)
+            ? address
+            : null;
+    }
+}

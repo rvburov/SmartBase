@@ -20,6 +20,9 @@ public class SystemDbContext : DbContext
     /// <summary>Соединения интеграций — локальные, как и все настройки обмена (см. сущность).</summary>
     public DbSet<IntegrationConnectionEntity> IntegrationConnections { get; set; } = null!;
 
+    /// <summary>Запросы интеграций — лежат рядом с соединениями, поодиночке они бессмысленны.</summary>
+    public DbSet<IntegrationRequestEntity> IntegrationRequests { get; set; } = null!;
+
     private readonly string _path;
 
     public SystemDbContext(string path) => _path = path;
@@ -44,6 +47,12 @@ public class SystemDbContext : DbContext
         model.Entity<IntegrationConnectionEntity>(e =>
         {
             e.ToTable("integration_connections");
+            e.HasKey(x => x.Id);
+        });
+
+        model.Entity<IntegrationRequestEntity>(e =>
+        {
+            e.ToTable("integration_requests");
             e.HasKey(x => x.Id);
         });
     }

@@ -7,9 +7,9 @@ using SmartBase.Utils;
 namespace SmartBase.Database;
 
 /// <summary>
-/// Хранилище соединений интеграций поверх системной app.db. Все локальное: соединения и их
-/// секреты не попадают в файл базы данных, потому что он ездит по сетевой папке и открыт на
-/// нескольких машинах разом (docs/ROADMAP-API.md, раздел 3).
+/// Хранилище соединений и запросов интеграций поверх системной app.db. Все локальное:
+/// настройки обмена и секреты не попадают в файл базы данных, потому что он ездит по сетевой
+/// папке и открыт на нескольких машинах разом (docs/ROADMAP-API.md, раздел 3).
 ///
 /// Единственная точка, где секрет расшифровывается, — <see cref="Secret"/>. Все остальное
 /// работает с <see cref="IntegrationConnection"/>, в котором секрета нет вовсе: соединения
@@ -96,16 +96,97 @@ public sealed class IntegrationsRegistry(SystemDbContext db)
         return ToModel(entity);
     }
 
-    /// <summary>Удалить соединение вместе с его секретом.</summary>
+    /// <summary>
+    /// Удалить соединение вместе с его секретом. Соединение, на которое ссылаются запросы, не
+    /// удаляется: молча унести с собой чужие карточки хуже, чем отказать, а человек должен сам
+    /// решить, переносить их на другое соединение или удалять.
+    /// </summary>
     public void Delete(int id)
     {
         var entity = db.IntegrationConnections.FirstOrDefault(c => c.Id == id);
         if (entity is null) return;
 
+        var used = db.IntegrationRequests.Count(r => r.ConnectionId == id);
+        if (used > 0)
+            throw new InvalidOperationException(
+                $"Соединение не удалено: на него ссылаются запросы ({used}). "
+                + "Удалите их или переключите на другое соединение.");
+
         if (!string.IsNullOrEmpty(entity.Secret))
             SecretProtector.Delete(entity.Secret, SecretProtector.IntegrationsService);
 
         db.IntegrationConnections.Remove(entity);
+        db.SaveChanges();
+    }
+
+    // ── Запросы ───────────────────────────────────────────────────────────────
+
+    /// <summary>Все запросы по имени.</summary>
+    public IReadOnlyList<IntegrationRequest> Requests() =>
+        [.. db.IntegrationRequests.AsNoTracking()
+             .OrderBy(r => r.Name)
+             .AsEnumerable()
+             .Select(ToModel)];
+
+    /// <summary>Запросы одного соединения — для карточки соединения и при его удалении.</summary>
+    public IReadOnlyList<IntegrationRequest> RequestsOf(int connectionId) =>
+        [.. db.IntegrationRequests.AsNoTracking()
+             .Where(r => r.ConnectionId == connectionId)
+             .OrderBy(r => r.Name)
+             .AsEnumerable()
+             .Select(ToModel)];
+
+    /// <summary>Запрос по ключу; <c>null</c> — такого нет.</summary>
+    public IntegrationRequest? FindRequest(int id)
+    {
+        var entity = db.IntegrationRequests.AsNoTracking().FirstOrDefault(r => r.Id == id);
+        return entity is null ? null : ToModel(entity);
+    }
+
+    /// <summary>
+    /// Создать или обновить запрос. Соединение должно существовать: запрос без него — это
+    /// карточка, которую невозможно ни отправить, ни показать.
+    /// </summary>
+    public IntegrationRequest SaveRequest(IntegrationRequest request)
+    {
+        var problems = request.Problems();
+        if (problems.Count > 0)
+            throw new InvalidOperationException("Запрос не сохранен: " + string.Join("; ", problems));
+
+        if (!db.IntegrationConnections.Any(c => c.Id == request.ConnectionId))
+            throw new InvalidOperationException("Запрос не сохранен: соединение не найдено");
+
+        var entity = request.Id > 0
+            ? db.IntegrationRequests.FirstOrDefault(r => r.Id == request.Id)
+            : null;
+
+        if (entity is null)
+        {
+            entity = new IntegrationRequestEntity();
+            db.IntegrationRequests.Add(entity);
+        }
+
+        entity.Name         = request.Name.Trim();
+        entity.ConnectionId = request.ConnectionId;
+        entity.Method       = MethodToStorage(request.Method);
+        entity.Path         = request.Path.Trim();
+        entity.HeadersJson  = JsonSerializer.Serialize(request.Headers);
+        entity.Body         = request.Body;
+        entity.Paging       = PagingToStorage(request.Paging);
+        entity.PagingField  = request.PagingField.Trim();
+        entity.ItemsPath    = request.ItemsPath.Trim();
+
+        db.SaveChanges();
+        return ToModel(entity);
+    }
+
+    /// <summary>Удалить запрос. Соединение и его секрет остаются: ими пользуются другие запросы.</summary>
+    public void DeleteRequest(int id)
+    {
+        var entity = db.IntegrationRequests.FirstOrDefault(r => r.Id == id);
+        if (entity is null) return;
+
+        db.IntegrationRequests.Remove(entity);
         db.SaveChanges();
     }
 
@@ -135,6 +216,57 @@ public sealed class IntegrationsRegistry(SystemDbContext db)
     /// мог записать более новый выпуск программы. Секрет при этом никуда не уйдет — запрос
     /// просто отправится без него и получит отказ, что и правильно.
     /// </summary>
+    private static IntegrationRequest ToModel(IntegrationRequestEntity entity) =>
+        new(entity.Id,
+            entity.Name,
+            entity.ConnectionId,
+            MethodFromStorage(entity.Method),
+            entity.Path,
+            ParseHeaders(entity.HeadersJson),
+            entity.Body ?? "",
+            PagingFromStorage(entity.Paging),
+            entity.PagingField ?? "",
+            entity.ItemsPath ?? "");
+
+    private static string MethodToStorage(RequestMethod method) => method switch
+    {
+        RequestMethod.Post   => "post",
+        RequestMethod.Put    => "put",
+        RequestMethod.Patch  => "patch",
+        RequestMethod.Delete => "delete",
+        _                    => "get",
+    };
+
+    /// <summary>
+    /// Незнакомый метод читается как GET — самый безобидный из возможных. Строку мог записать
+    /// более новый выпуск программы, и превращать это в отказ открыть настройки незачем.
+    /// </summary>
+    private static RequestMethod MethodFromStorage(string? stored) => stored switch
+    {
+        "post"   => RequestMethod.Post,
+        "put"    => RequestMethod.Put,
+        "patch"  => RequestMethod.Patch,
+        "delete" => RequestMethod.Delete,
+        _        => RequestMethod.Get,
+    };
+
+    private static string PagingToStorage(RequestPaging paging) => paging switch
+    {
+        RequestPaging.Page   => "page",
+        RequestPaging.Offset => "offset",
+        RequestPaging.Cursor => "cursor",
+        _                    => "none",
+    };
+
+    /// <summary>Незнакомая разбивка читается как «все одним ответом» — без домыслов.</summary>
+    private static RequestPaging PagingFromStorage(string? stored) => stored switch
+    {
+        "page"   => RequestPaging.Page,
+        "offset" => RequestPaging.Offset,
+        "cursor" => RequestPaging.Cursor,
+        _        => RequestPaging.None,
+    };
+
     private static ConnectionAuth AuthFromStorage(string? stored) => stored switch
     {
         "header" => ConnectionAuth.Header,

@@ -93,7 +93,8 @@ public sealed class DatabaseRegistry : IDisposable, ISettingsDatabase
 
     // Таблицы интеграций появились позже: в существующих app.db их нет, а EnsureCreated()
     // достраивать схему не умеет. Правило то же, что и у остальных: только аддитивно.
-    private static void EnsureIntegrationTables(SystemDbContext db) =>
+    private static void EnsureIntegrationTables(SystemDbContext db)
+    {
         db.Database.ExecuteSqlRaw(
             "CREATE TABLE IF NOT EXISTS \"integration_connections\" (" +
             "\"Id\" INTEGER NOT NULL CONSTRAINT \"PK_integration_connections\" PRIMARY KEY AUTOINCREMENT, " +
@@ -105,6 +106,20 @@ public sealed class DatabaseRegistry : IDisposable, ISettingsDatabase
             "\"HeadersJson\" TEXT NULL, " +
             "\"TimeoutSeconds\" INTEGER NOT NULL, " +
             "\"Retries\" INTEGER NOT NULL);");
+
+        db.Database.ExecuteSqlRaw(
+            "CREATE TABLE IF NOT EXISTS \"integration_requests\" (" +
+            "\"Id\" INTEGER NOT NULL CONSTRAINT \"PK_integration_requests\" PRIMARY KEY AUTOINCREMENT, " +
+            "\"Name\" TEXT NOT NULL, " +
+            "\"ConnectionId\" INTEGER NOT NULL, " +
+            "\"Method\" TEXT NOT NULL, " +
+            "\"Path\" TEXT NOT NULL, " +
+            "\"HeadersJson\" TEXT NULL, " +
+            "\"Body\" TEXT NULL, " +
+            "\"Paging\" TEXT NOT NULL, " +
+            "\"PagingField\" TEXT NULL, " +
+            "\"ItemsPath\" TEXT NULL);");
+    }
 
     // Колонки PG-подключений появились позже таблицы databases: в старых app.db их нет,
     // а EnsureCreated() существующую таблицу не достраивает. Правило app.db — только

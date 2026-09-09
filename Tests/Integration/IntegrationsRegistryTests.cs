@@ -38,6 +38,14 @@ public sealed class IntegrationsRegistryTests
             Auth    = ConnectionAuth.Bearer,
         };
 
+    private static IntegrationRequest Query(string name, int connectionId) =>
+        IntegrationRequest.New() with
+        {
+            Name         = name,
+            ConnectionId = connectionId,
+            Path         = "/orders",
+        };
+
     // ── Создание и чтение ─────────────────────────────────────────────────────
 
     [Fact]
@@ -186,6 +194,120 @@ public sealed class IntegrationsRegistryTests
 
             Assert.Contains("Адрес не заполнен", error.Message, StringComparison.Ordinal);
             Assert.Empty(registry.Integrations.Connections());
+        }
+        finally { Cleanup(dir, appDb, dataDb); }
+    }
+
+    // ── Запросы ───────────────────────────────────────────────────────────────
+
+    [Fact]
+    public void Request_is_saved_and_read_back()
+    {
+        var (dir, appDb, dataDb) = TempPaths();
+        try
+        {
+            int id;
+            int connectionId;
+
+            using (var registry = DatabaseRegistry.Open(dataDb, appDb))
+            {
+                connectionId = registry.Integrations.Save(Card()).Id;
+
+                id = registry.Integrations.SaveRequest(IntegrationRequest.New() with
+                {
+                    Name         = "Заказы за сутки",
+                    ConnectionId = connectionId,
+                    Method       = RequestMethod.Post,
+                    Path         = "/orders?since={{последний_запуск}}",
+                    Headers      = [new IntegrationHeader("Accept", "application/json")],
+                    Body         = """{"depot":1}""",
+                    Paging       = RequestPaging.Cursor,
+                    PagingField  = "next_cursor",
+                    ItemsPath    = "data.items",
+                }).Id;
+            }
+
+            using (var again = DatabaseRegistry.Open(dataDb, appDb))
+            {
+                var card = again.Integrations.FindRequest(id);
+
+                Assert.NotNull(card);
+                Assert.Equal("Заказы за сутки", card!.Name);
+                Assert.Equal(connectionId, card.ConnectionId);
+                Assert.Equal(RequestMethod.Post, card.Method);
+                Assert.Equal("/orders?since={{последний_запуск}}", card.Path);
+                Assert.Equal(["Accept"], card.Headers.Select(h => h.Name));
+                Assert.Equal("""{"depot":1}""", card.Body);
+                Assert.Equal(RequestPaging.Cursor, card.Paging);
+                Assert.Equal("next_cursor", card.PagingField);
+                Assert.Equal("data.items", card.ItemsPath);
+            }
+        }
+        finally { Cleanup(dir, appDb, dataDb); }
+    }
+
+    [Fact]
+    public void Requests_are_listed_by_connection()
+    {
+        var (dir, appDb, dataDb) = TempPaths();
+        try
+        {
+            using var registry = DatabaseRegistry.Open(dataDb, appDb);
+            var first  = registry.Integrations.Save(Card("Склад")).Id;
+            var second = registry.Integrations.Save(Card("Бухгалтерия")).Id;
+
+            registry.Integrations.SaveRequest(Query("Остатки",  first));
+            registry.Integrations.SaveRequest(Query("Движения", first));
+            registry.Integrations.SaveRequest(Query("Счета",    second));
+
+            Assert.Equal(["Движения", "Остатки"], registry.Integrations.RequestsOf(first).Select(r => r.Name));
+            Assert.Equal(3, registry.Integrations.Requests().Count);
+        }
+        finally { Cleanup(dir, appDb, dataDb); }
+    }
+
+    /// <summary>Запрос без соединения отправить некуда — такую карточку хранить незачем.</summary>
+    [Fact]
+    public void Request_without_a_connection_is_refused()
+    {
+        var (dir, appDb, dataDb) = TempPaths();
+        try
+        {
+            using var registry = DatabaseRegistry.Open(dataDb, appDb);
+
+            var error = Assert.Throws<InvalidOperationException>(() =>
+                registry.Integrations.SaveRequest(Query("Остатки", connectionId: 404)));
+
+            Assert.Contains("соединение не найдено", error.Message, StringComparison.Ordinal);
+        }
+        finally { Cleanup(dir, appDb, dataDb); }
+    }
+
+    /// <summary>
+    /// Соединение, на котором висят запросы, не удаляется молча вместе с ними: унести чужие
+    /// карточки хуже, чем отказать.
+    /// </summary>
+    [Fact]
+    public void Connection_in_use_is_not_deleted()
+    {
+        var (dir, appDb, dataDb) = TempPaths();
+        try
+        {
+            using var registry = DatabaseRegistry.Open(dataDb, appDb);
+            var connectionId = registry.Integrations.Save(Card()).Id;
+            var requestId    = registry.Integrations.SaveRequest(Query("Остатки", connectionId)).Id;
+
+            var error = Assert.Throws<InvalidOperationException>(
+                () => registry.Integrations.Delete(connectionId));
+
+            Assert.Contains("ссылаются запросы", error.Message, StringComparison.Ordinal);
+            Assert.Single(registry.Integrations.Connections());
+
+            registry.Integrations.DeleteRequest(requestId);
+            registry.Integrations.Delete(connectionId);
+
+            Assert.Empty(registry.Integrations.Connections());
+            Assert.Empty(registry.Integrations.Requests());
         }
         finally { Cleanup(dir, appDb, dataDb); }
     }
