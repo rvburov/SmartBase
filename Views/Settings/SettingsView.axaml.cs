@@ -12,6 +12,7 @@ using SmartBase.Controls.Widgets;
 using SmartBase.Database;
 using SmartBase.Database.Entities;
 using SmartBase.Extensions;
+using SmartBase.Integrations;
 using SmartBase.Settings;
 using SmartBase.Utils;
 
@@ -1034,7 +1035,8 @@ public partial class SettingsView : UserControl
                            Func<int, bool>? canMaintain = null,
                            Func<IReadOnlyList<string>>? taskStages = null,
                            Func<IReadOnlyList<DatabaseManager>>? databases = null,
-                           Func<CancellationToken, Task<InboxRun>>? inboxSweep = null)
+                           Func<CancellationToken, Task<InboxRun>>? inboxSweep = null,
+                           Func<Scenario, CancellationToken, Task<ScenarioOutcome>>? scenarioRun = null)
     {
         _registry    = registry;
         _isMounted   = isMounted;
@@ -1044,6 +1046,7 @@ public partial class SettingsView : UserControl
         _canMaintain = canMaintain;
         _databases   = databases;
         _inboxSweep  = inboxSweep;
+        _scenarioRun = scenarioRun;
         RefreshDatabaseList();
     }
 
@@ -1051,6 +1054,7 @@ public partial class SettingsView : UserControl
     private Func<int, bool>?                          _canMaintain;
     private Func<IReadOnlyList<DatabaseManager>>?     _databases;
     private Func<CancellationToken, Task<InboxRun>>? _inboxSweep;
+    private Func<Scenario, CancellationToken, Task<ScenarioOutcome>>? _scenarioRun;
 
     // Перестроить список (статус монтирования мог измениться). Вызывается из MainWindow.
     public void RefreshDatabases() => RefreshDatabaseList();

@@ -216,7 +216,10 @@ public partial class MainWindow : Window
             databases: GrantedDbs,
             // Кнопка «Проверить папку» ведет ту же службу, что ходит по расписанию: две
             // реализации одного обхода разошлись бы на первой же правке.
-            inboxSweep: ct => _inbox.RunNowAsync(ct));
+            inboxSweep: ct => _inbox.RunNowAsync(ct),
+            // «Запустить» у сценария ведет ту же службу, что ходит по расписанию: проверка,
+            // идущая другой дорогой, не отвечает на вопрос «а что будет само».
+            scenarioRun: (scenario, ct) => _scenarios.RunNowAsync(scenario, ct));
 
         // Live mount/unmount: добавление/удаление БД в настройках сразу отражается в
         // сайдбаре конструктора без перезапуска. Новая база встает в хвост очереди —

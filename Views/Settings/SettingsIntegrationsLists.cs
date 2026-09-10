@@ -344,14 +344,29 @@ public partial class SettingsView
     /// <paramref name="first"/> — главное действие карточки, если оно есть; стоит перед
     /// «Изменить», потому что нажимают его чаще, чем правят саму карточку.
     /// </summary>
+    /// <paramref name="lead"/> — управление слева от имени (тумблер сценария): выключить обмен
+    /// нужно чаще, чем править его, и ради этого не должно открываться окно.
     private static Border CardRow(string title, string description, string extra,
                                   Action edit, Action delete,
-                                  (string Text, Action Click)? first = null)
+                                  (string Text, Action Click)? first = null,
+                                  Control? lead = null)
     {
-        var left = new StackPanel { Spacing = 4, VerticalAlignment = VerticalAlignment.Center };
-        left.Children.Add(new TextBlock { Classes = { "title" }, Text = title });
-        left.Children.Add(Note(description));
-        if (extra.Length > 0) left.Children.Add(Note(extra));
+        var text = new StackPanel { Spacing = 4, VerticalAlignment = VerticalAlignment.Center };
+        text.Children.Add(new TextBlock { Classes = { "title" }, Text = title });
+        text.Children.Add(Note(description));
+        if (extra.Length > 0) text.Children.Add(Note(extra));
+
+        Control left = text;
+
+        if (lead is not null)
+        {
+            var line = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,12,*") };
+            Grid.SetColumn(lead, 0);
+            Grid.SetColumn(text, 2);
+            line.Children.Add(lead);
+            line.Children.Add(text);
+            left = line;
+        }
 
         var buttons = new StackPanel
         {

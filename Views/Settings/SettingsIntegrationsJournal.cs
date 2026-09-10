@@ -54,6 +54,10 @@ public partial class SettingsView
     public void OnScenarioRan()
     {
         if (_integrationsTab == "journal") BuildIntegrationsJournal();
+
+        // И список сценариев: у отработавшего изменилось время последнего запуска, а у
+        // соседей могла уйти или появиться строка «не сработает».
+        if (_integrationsTab == "scenarios") BuildIntegrationsScenarios();
     }
 
     private void BuildIntegrationsJournal()

@@ -13,7 +13,8 @@ namespace SmartBase.Views.Settings;
 ///
 /// Переключение вкладок и вкладка «Безопасность» живут здесь; списки соединений и запросов —
 /// в <c>SettingsIntegrationsLists</c>, обмен по кнопке — в <c>SettingsIntegrationsRun</c>,
-/// папка-приемник — в <c>SettingsIntegrationsInbox</c>, журнал запусков — в
+/// папка-приемник — в <c>SettingsIntegrationsInbox</c>, сценарии — в
+/// <c>SettingsIntegrationsScenarios</c>, журнал запусков — в
 /// <c>SettingsIntegrationsJournal</c>.
 ///
 /// «Безопасность» показывает то, что программе уже известно: действующий режим, судьбу каждого
@@ -50,6 +51,7 @@ public partial class SettingsView
 
         IntegrationsConnectionsTab.IsVisible = _integrationsTab == "connections";
         IntegrationsRequestsTab.IsVisible    = _integrationsTab == "requests";
+        IntegrationsScenariosTab.IsVisible   = _integrationsTab == "scenarios";
         IntegrationsInboxTab.IsVisible       = _integrationsTab == "inbox";
         IntegrationsSecurityTab.IsVisible    = _integrationsTab == "security";
         IntegrationsJournalTab.IsVisible     = _integrationsTab == "journal";
@@ -58,6 +60,7 @@ public partial class SettingsView
         // можно уже с другим их составом.
         if (_integrationsTab == "connections") BuildIntegrationsConnections();
         if (_integrationsTab == "requests")    BuildIntegrationsRequests();
+        if (_integrationsTab == "scenarios")   BuildIntegrationsScenarios();
         if (_integrationsTab == "inbox")       BuildIntegrationsInbox();
         if (_integrationsTab == "security")    BuildIntegrationsSecurity();
         if (_integrationsTab == "journal")     BuildIntegrationsJournal();
