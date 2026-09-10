@@ -129,12 +129,16 @@ public partial class SettingsView
     {
         var channel = new ComboBox
         {
-            ItemsSource              = new List<string> { "Все каналы", "Запросы по сети", "Файлы из папки" },
+            ItemsSource              = new List<string>
+            {
+                "Все каналы", "Запросы по сети", "Файлы из папки", "Сценарии",
+            },
             SelectedIndex            = _journalChannel switch
             {
                 null                 => 0,
                 RunChannel.Request   => 1,
-                _                    => 2,
+                RunChannel.Inbox     => 2,
+                _                    => 3,
             },
             Height                   = 34,
             MinWidth                 = 190,
@@ -149,6 +153,7 @@ public partial class SettingsView
             {
                 1 => RunChannel.Request,
                 2 => RunChannel.Inbox,
+                3 => RunChannel.Scenario,
                 _ => null,
             };
 
@@ -257,7 +262,7 @@ public partial class SettingsView
         };
 
         Put(grid, 0, Cell(Moment(run), secondary: true));
-        Put(grid, 2, Cell(run.Channel == RunChannel.Request ? "сеть" : "папка", secondary: true));
+        Put(grid, 2, Cell(ChannelName(run.Channel), secondary: true));
         Put(grid, 4, Cell(run.Name.Length > 0 ? run.Name : "без названия"));
         Put(grid, 6, Cell(run.Rows > 0 ? $"{run.Rows:N0}" : "—", secondary: true));
 
@@ -296,18 +301,17 @@ public partial class SettingsView
 
         list.Children.Add(Note(run.Explanation.Length > 0 ? run.Explanation : "Без объяснения."));
 
-        list.Children.Add(Note(run.Channel == RunChannel.Request
-            ? "Адрес: " + (run.Address.Length > 0 ? run.Address : "не записан")
-            : "Папка: " + (run.Address.Length > 0 ? run.Address : "не записана")));
+        // Куда ходили — только если было куда: у строки сценария адреса нет, и «не записан»
+        // в ней читался бы как потеря, а не как «неприменимо».
+        if (run.Address.Length > 0)
+            list.Children.Add(Note(
+                (run.Channel == RunChannel.Request ? "Адрес: " : "Папка: ") + run.Address));
 
         list.Children.Add(Note(Numbers(run)));
 
         list.Children.Add(Note("База данных: " + DatabaseName(run.DbId)));
 
-        list.Children.Add(Note(run.Counts
-            ? "В расход по потолкам засчитан."
-            : "В расход не идет: файл из папки обмена идет внутрь, а потолки ограничивают то, "
-              + "что уходит наружу."));
+        list.Children.Add(Note(run.Counts ? "В расход по потолкам засчитан." : NotCounted(run)));
 
         var copy = SmallButton("Скопировать", () =>
             _ = TopLevel.GetTopLevel(this)?.Clipboard?.SetTextAsync(Plain(run)));
@@ -329,8 +333,7 @@ public partial class SettingsView
     /// журнале и так лежит замаскированным.
     /// </summary>
     private string Plain(RunEntry run) =>
-        $"{Full(run)} · {(run.Channel == RunChannel.Request ? "запрос по сети" : "файл из папки")}"
-        + $" · {run.Name} · {(run.Ok ? "удача" : "ошибка")}\n"
+        $"{Full(run)} · {ChannelText(run.Channel)} · {run.Name} · {(run.Ok ? "удача" : "ошибка")}\n"
         + $"{run.Address}\n"
         + $"{run.Explanation}\n"
         + $"{Numbers(run)} · база: {DatabaseName(run.DbId)}";
@@ -395,6 +398,38 @@ public partial class SettingsView
     }
 
     // ── Мелочи оформления ─────────────────────────────────────────────────────
+
+    /// <summary>Канал колонкой — коротко, чтобы влезло.</summary>
+    private static string ChannelName(RunChannel channel) => channel switch
+    {
+        RunChannel.Request => "сеть",
+        RunChannel.Inbox   => "папка",
+        _                  => "сценарий",
+    };
+
+    /// <summary>Канал в пересылаемом тексте — словами, без экрана рядом.</summary>
+    private static string ChannelText(RunChannel channel) => channel switch
+    {
+        RunChannel.Request => "запрос по сети",
+        RunChannel.Inbox   => "файл из папки",
+        _                  => "сценарий",
+    };
+
+    /// <summary>Почему строка не заняла места в потолках. Причины разные, и путать их нельзя.</summary>
+    private static string NotCounted(RunEntry run) => run.Channel switch
+    {
+        RunChannel.Inbox =>
+            "В расход не идет: файл из папки обмена идет внутрь, а потолки ограничивают то, что "
+            + "уходит наружу.",
+
+        RunChannel.Scenario =>
+            "В расход не идет: его уже заняли строки шагов, а посчитать одно и то же дважды "
+            + "значит вдвое занизить потолок.",
+
+        _ =>
+            "В расход не идет: запуск остановлен до сети — отказом политики, выбранной квотой "
+            + "или незнакомой подстановкой. Обмена не было.",
+    };
 
     /// <summary>Время строки; испорченный правкой файла момент показывается как есть.</summary>
     private static string Moment(RunEntry run) =>

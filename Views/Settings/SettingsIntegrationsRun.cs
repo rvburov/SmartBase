@@ -140,10 +140,14 @@ public partial class SettingsView
         // Строка журнала пишется и для НЕУДАЧНОГО запроса. Отказ чужой программы все равно был
         // обращением к ней: он расходует квоту и он же нужен при разборе «почему ничего не
         // пришло» — именно неудачных строк там ищут больше всего.
+        //
+        // В расход при этом идет только то, что дошло до сети: запуск, остановленный отказом
+        // политики или выбранной квотой, обменом не был — засчитай его, и отказ по квоте
+        // продлевал бы сам себя.
         Database.RunJournal.Add(Database.RunEntry.New(
             Database.RunChannel.Request, request.Name, outcome.SafeAddress, outcome.Ok,
             outcome.Explanation, outcome.Rows, outcome.Bytes, outcome.Elapsed,
-            dbId: 0, at: startedAt, counts: true));
+            dbId: 0, at: startedAt, counts: outcome.Sent));
 
         if (outcome.Ok) return outcome;
 

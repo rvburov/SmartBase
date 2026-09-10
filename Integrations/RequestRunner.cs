@@ -18,6 +18,10 @@ namespace SmartBase.Integrations;
 /// <param name="SafeAddress">Куда ходили — без секрета, для журнала.</param>
 /// <param name="StatusCode">Код последнего ответа; 0 — ответа не было.</param>
 /// <param name="Capped">Сбор остановлен потолком строк из политики, а не концом данных.</param>
+/// <param name="Sent">Хоть одна порция ушла в сеть. Запуск, остановленный до сокета — отказом
+/// политики, выбранной квотой, незнакомой подстановкой, — обменом НЕ был, и в накопительный
+/// расход его записывать нельзя: отказ по квоте продлевал бы сам себя, а часовое окно не
+/// опустело бы никогда. Отказ чужой программы — другое дело: обращение состоялось.</param>
 public sealed record RunOutcome(
     bool     Ok,
     string   Explanation,
@@ -28,11 +32,13 @@ public sealed record RunOutcome(
     TimeSpan Elapsed,
     string   SafeAddress,
     int      StatusCode,
-    bool     Capped)
+    bool     Capped,
+    bool     Sent = false)
 {
-    internal static RunOutcome Failed(string explanation, EgressResponse answer, int pages, int rows) =>
+    internal static RunOutcome Failed(
+        string explanation, EgressResponse answer, int pages, int rows, bool sent) =>
         new(false, explanation, "[]", rows, pages, answer.Bytes, answer.Elapsed,
-            answer.SafeAddress, answer.StatusCode, false);
+            answer.SafeAddress, answer.StatusCode, false, sent);
 }
 
 /// <summary>
@@ -99,6 +105,10 @@ public static class RequestRunner
         var last    = "";
         var status  = 0;
 
+        // Ушла ли в сеть хоть одна порция. От этого зависит, идет ли запуск в накопительный
+        // расход: остановленный до сокета обменом не был.
+        var sent    = false;
+
         // Метка следующей порции у курсорной разбивки; у страничной — номер, у сдвиговой — сдвиг.
         string? cursor = null;
         var     number = 1;
@@ -120,6 +130,7 @@ public static class RequestRunner
             elapsed = answer.Elapsed > elapsed ? answer.Elapsed : elapsed;
             last    = answer.SafeAddress;
             status  = answer.StatusCode;
+            sent   |= answer.Sent;
 
             // Порция уже пришла, и это неизбежно: узнать ее размер заранее нельзя. Зато
             // следующая не уйдет — а собранное отбрасывается целиком, как и при любой другой
@@ -128,29 +139,29 @@ public static class RequestRunner
                 return RunOutcome.Failed(
                     $"выбран потолок объема за сутки: осталось было {budget:N0} байт, "
                     + $"а выгрузка потребовала {bytes:N0}",
-                    answer, pages, items.Count);
+                    answer, pages, items.Count, sent);
 
             if (!answer.Sent)
                 return RunOutcome.Failed(
                     answer.Reason == EgressDenyReason.None
                         ? answer.Explanation
                         : "запрещено политикой: " + answer.Explanation,
-                    answer, pages, items.Count);
+                    answer, pages, items.Count, sent);
 
             if (!answer.Ok)
                 return RunOutcome.Failed(
                     $"чужая программа ответила {answer.StatusCode}"
                     + (answer.Explanation.Length > 0 ? "; " + answer.Explanation : ""),
-                    answer, pages, items.Count);
+                    answer, pages, items.Count, sent);
 
             if (answer.Truncated)
                 return RunOutcome.Failed(
                     "ответ длиннее потолка и обрезан — записи из него взять нельзя, "
                     + "разбейте выгрузку на страницы",
-                    answer, pages, items.Count);
+                    answer, pages, items.Count, sent);
 
             if (!TryTake(answer.Body, request, items, limit, out cursor, out var taken, out var error))
-                return RunOutcome.Failed(error, answer, pages, items.Count);
+                return RunOutcome.Failed(error, answer, pages, items.Count, sent);
 
             var capped = items.Count >= limit;
 
@@ -166,7 +177,7 @@ public static class RequestRunner
                         ? $"собрано {items.Count} записей — потолок политики на один запуск"
                         : "",
                     "[" + string.Join(",", items) + "]",
-                    items.Count, pages, bytes, elapsed, last, status, capped && !done);
+                    items.Count, pages, bytes, elapsed, last, status, capped && !done, sent);
 
             number++;
             offset += taken;
@@ -175,7 +186,7 @@ public static class RequestRunner
         return new RunOutcome(true,
             $"остановлено после {MaxPages} порций: чужая программа не сообщает о конце списка",
             "[" + string.Join(",", items) + "]",
-            items.Count, pages, bytes, elapsed, last, status, true);
+            items.Count, pages, bytes, elapsed, last, status, true, sent);
     }
 
     // ── Одна порция ───────────────────────────────────────────────────────────
