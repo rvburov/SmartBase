@@ -87,6 +87,10 @@ public partial class MainWindow : Window
         // Список баз передается вызываемым: потерянную базу монитор доступности размонтирует,
         // и правило «база недоступна — не запускаемся» держится само.
         _inbox       = new InboxService(GrantedDbs);
+        // Сценарии по расписанию («Настройки → Интеграции»). Реестр сценариев лежит в app.db,
+        // базы передаются вызываемым списком, сообщения шага идут карточками в углу окна.
+        _scenarios   = new ScenarioService(workspace.Registry.Integrations, GrantedDbs,
+                                           Controls.Widgets.AppNotifications.Info);
         // Резолвер чужих баз для межбазовых связей (тип «relation» с TargetDbId>0).
         RelationDbResolver.Configure(workspace);
 
@@ -257,6 +261,9 @@ public partial class MainWindow : Window
         // Автоматический обход папки обмена что-то тронул — показать это на вкладке «Прием»:
         // включенный тумблер иначе ничем не отличается от выключенного, пока файлы не придут.
         _inbox.Swept += run => SettingsModule.OnInboxSwept(run);
+        // Сценарий отработал сам — обновить открытый журнал: смотреть на устаревший список,
+        // пока обмен идет у тебя на глазах, незачем.
+        _scenarios.Ran += (_, _) => SettingsModule.OnScenarioRan();
         // Переименование в окне настроек базы: реестр уже обновлен — меняем имя
         // смонтированной БД на месте и перечитываем сайдбары, без ремаунта.
         SettingsModule.DatabaseRenamed += (_, e) =>
@@ -576,6 +583,9 @@ public partial class MainWindow : Window
             _backup.Start();
             // Прием файлов: таймер обхода папки обмена (сам разбор — только если включен).
             _inbox.Start();
+            // Сценарии: таймер расписаний. Выключенный сценарий не трогается, а тот, кому что-то
+            // мешает, пропускает тик молча и догонит пропущенное, когда помеха уйдет.
+            _scenarios.Start();
 
             // Автообновление: проверяем сразу — окно показано (в том числе при старте из
             // автозапуска) и может быть владельцем модалки «Обновить/Отмена». Со скрытым
@@ -638,6 +648,7 @@ public partial class MainWindow : Window
             _notifications.Dispose();
             _backup.Dispose();
             _inbox.Dispose();
+            _scenarios.Dispose();
             _watchdog.Dispose();
         };
     }
@@ -645,6 +656,7 @@ public partial class MainWindow : Window
     private readonly UiWatchdog _watchdog;
     private readonly BackupService _backup;
     private readonly InboxService  _inbox;
+    private readonly ScenarioService _scenarios;
 
     // Человеческое имя раздела для записей о медленном открытии.
     private static string ModuleTitle(string module) => module switch

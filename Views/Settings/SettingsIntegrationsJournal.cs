@@ -47,6 +47,15 @@ public partial class SettingsView
     // Один курсор на все строки: каждый Cursor держит ручку системы, а строк на экране сотни.
     private static readonly Cursor HandCursor = new(StandardCursorType.Hand);
 
+    /// <summary>
+    /// Сценарий отработал сам. Зовет MainWindow из службы сценариев; экран перестраивается,
+    /// только если журнал открыт, — иначе это работа впустую.
+    /// </summary>
+    public void OnScenarioRan()
+    {
+        if (_integrationsTab == "journal") BuildIntegrationsJournal();
+    }
+
     private void BuildIntegrationsJournal()
     {
         var rows = IntegrationsJournalTab.Children;
