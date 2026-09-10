@@ -126,6 +126,15 @@ public sealed class DatabaseRegistry : IDisposable, ISettingsDatabase
         // созданных до них, этих колонок нет, а CREATE IF NOT EXISTS существующую таблицу не
         // достраивает. Правило то же, что у остальных, — только аддитивно.
         AddColumns(db, "integration_requests", [("BindingJson", "TEXT"), ("LastRunAt", "TEXT")]);
+
+        db.Database.ExecuteSqlRaw(
+            "CREATE TABLE IF NOT EXISTS \"integration_scenarios\" (" +
+            "\"Id\" INTEGER NOT NULL CONSTRAINT \"PK_integration_scenarios\" PRIMARY KEY AUTOINCREMENT, " +
+            "\"Name\" TEXT NOT NULL, " +
+            "\"Enabled\" INTEGER NOT NULL, " +
+            "\"Trigger\" TEXT NOT NULL, " +
+            "\"StepsJson\" TEXT NULL, " +
+            "\"LastRunAt\" TEXT NULL);");
     }
 
     /// <summary>

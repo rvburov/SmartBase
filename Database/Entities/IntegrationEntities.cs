@@ -107,3 +107,41 @@ public class IntegrationRequestEntity
     /// </summary>
     public string? LastRunAt { get; set; }
 }
+
+/// <summary>
+/// Сценарий — «когда и что» (системная БД app.db, таблица «integration_scenarios»).
+///
+/// Лежит в app.db, а не в файле базы данных, и это не мелочь: файл базы ездит по сетевой папке
+/// и открыт на нескольких машинах разом. Сценарий, лежащий в нем, сработал бы на каждой открытой
+/// копии программы — и один обмен по расписанию превратился бы в пять одновременных
+/// (docs/ROADMAP-API.md, раздел 3).
+///
+/// Таблица заводится аддитивно (<c>DatabaseRegistry.EnsureIntegrationTables</c>).
+/// </summary>
+public class IntegrationScenarioEntity
+{
+    [Key] public int Id { get; set; }
+
+    /// <summary>Имя для человека: «Заказы из учетной системы».</summary>
+    [Required] public string Name { get; set; } = "";
+
+    /// <summary>Ходит ли сценарий сам. Выключенный запускается только кнопкой.</summary>
+    public bool Enabled { get; set; }
+
+    /// <summary>Триггер одной строкой: <c>manual</c>, <c>every 30</c>, <c>daily 07:00</c>.</summary>
+    [Required] public string Trigger { get; set; } = "manual";
+
+    /// <summary>
+    /// Шаги одной строкой JSON — как привязка у запроса и по той же причине: список переменной
+    /// длины, который читает один экран, не стоит второй таблицы со своими ключами.
+    /// </summary>
+    public string? StepsJson { get; set; }
+
+    /// <summary>
+    /// Когда сценарий отработал в прошлый раз (ISO-8601). Отсюда считается следующий запуск, и
+    /// сюда же служба ставит якорь при включении: пусто означает «еще ни разу», и по расписанию
+    /// такой сценарий не сработает, пока якорь не проставлен, — иначе включенный вечером
+    /// «ежедневно в 07:00» пошел бы немедленно.
+    /// </summary>
+    public string? LastRunAt { get; set; }
+}

@@ -16,7 +16,7 @@ namespace SmartBase.Database;
 /// работает с <see cref="IntegrationConnection"/>, в котором секрета нет вовсе: соединения
 /// показываются на экранах, экспортируются и попадают в отчеты, и секрету там делать нечего.
 /// </summary>
-public sealed class IntegrationsRegistry(SystemDbContext db)
+public sealed partial class IntegrationsRegistry(SystemDbContext db)
 {
     /// <summary>Все соединения по имени. Секретов здесь нет — только их наличие.</summary>
     public IReadOnlyList<IntegrationConnection> Connections() =>
@@ -244,11 +244,23 @@ public sealed class IntegrationsRegistry(SystemDbContext db)
         db.SaveChanges();
     }
 
-    /// <summary>Удалить запрос. Соединение и его секрет остаются: ими пользуются другие запросы.</summary>
+    /// <summary>
+    /// Удалить запрос. Соединение и его секрет остаются: ими пользуются другие запросы.
+    ///
+    /// Запрос, на который ссылается шаг сценария, не удаляется — то же правило, что у
+    /// соединения с запросами: молча оставить сценарий с дырой посреди списка шагов хуже, чем
+    /// отказать, а решать, переключить шаг или удалить сценарий, должен человек.
+    /// </summary>
     public void DeleteRequest(int id)
     {
         var entity = db.IntegrationRequests.FirstOrDefault(r => r.Id == id);
         if (entity is null) return;
+
+        var used = ScenariosUsing(id);
+        if (used.Count > 0)
+            throw new InvalidOperationException(
+                $"Запрос не удален: его выполняют сценарии ({used.Count}). "
+                + "Уберите шаг из сценария или удалите сценарий.");
 
         db.IntegrationRequests.Remove(entity);
         db.SaveChanges();

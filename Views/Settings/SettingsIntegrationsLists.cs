@@ -223,6 +223,20 @@ public partial class SettingsView
     {
         if (VisualRoot is not Window win || Integrations is null) return;
 
+        // Запрос с шагом сценария не удаляется — как и соединение с запросами: сценарий с дырой
+        // посреди списка шагов хуже отказа.
+        var used = Integrations.ScenariosUsing(request.Id);
+
+        if (used.Count > 0)
+        {
+            await ConfirmDialog.Info(
+                    $"Запрос «{request.Name}» выполняют сценарии ({used.Count}): "
+                    + string.Join(", ", used.Select(s => s.Name))
+                    + ".\n\nУберите шаг из сценария или удалите сценарий.")
+                .ShowDialog(win);
+            return;
+        }
+
         var confirmed = await new ConfirmDialog($"Удалить запрос «{request.Name}»?")
             .ShowDialog<bool>(win);
 
