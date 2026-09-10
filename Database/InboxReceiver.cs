@@ -14,14 +14,22 @@ namespace SmartBase.Database;
 /// приходило, и второй раз оно не обрабатывается.</param>
 /// <param name="Reclaimed">Брошенных захватов возвращено во «Входящие».</param>
 /// <param name="Receipts">Квитанции этого обхода — то же, что уехало отправителю.</param>
+/// <param name="Problem">Почему обход не состоялся вовсе: папка вне политики, пропал сетевой
+/// диск, база сейчас недоступна. Пусто — обход прошел. Поле нужно ЭКРАНУ: молчаливое «новых
+/// файлов нет» в ответ на недоступную папку — ровно то, из-за чего потом неделю ищут, почему
+/// обмен «не работает».</param>
 public sealed record InboxRun(
     int                          Accepted,
     int                          Rejected,
     int                          Repeats,
     int                          Reclaimed,
-    IReadOnlyList<InboxReceipt>  Receipts)
+    IReadOnlyList<InboxReceipt>  Receipts,
+    string                       Problem = "")
 {
     public static readonly InboxRun Nothing = new(0, 0, 0, 0, []);
+
+    /// <summary>Обход не состоялся — причина в <see cref="Problem"/>.</summary>
+    public static InboxRun Failed(string problem) => new(0, 0, 0, 0, [], problem);
 
     /// <summary>Сколько файлов тронуто всего.</summary>
     public int Files => Accepted + Rejected + Repeats;
@@ -29,6 +37,8 @@ public sealed record InboxRun(
     /// <summary>Итог одной строкой — для экрана и журнала.</summary>
     public string Summary()
     {
+        if (Problem.Length > 0) return "обход не состоялся: " + Problem;
+
         var parts = new List<string>();
 
         if (Accepted  > 0) parts.Add($"принято {Accepted}");
@@ -195,7 +205,9 @@ public static class InboxReceiver
                            message.Rows, failure.Message, now), false);
         }
 
-        var plan = repo.TryPlan(message, schema, dbId, out var problem);
+        // Свод и укладка идут на ОТДЕЛЬНОМ подключении: обход папки целиком живет в фоне, а
+        // общий контекст в это время занят интерфейсом.
+        var plan = repo.TryPlanIsolated(message, schema, dbId, out var problem);
 
         if (plan is null)
             return (Reject(layout, file, claimed, message.MessageId, message.Collection,

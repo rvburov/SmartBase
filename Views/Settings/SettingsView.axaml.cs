@@ -1025,12 +1025,16 @@ public partial class SettingsView : UserControl
     /// каждый раз заново, а не берется списком: базы монтируются и отцепляются на ходу, а
     /// «Интеграции» укладывают ответ в коллекцию выбранной базы и обязаны видеть их состав
     /// таким, каков он сейчас.</param>
+    /// <param name="inboxSweep">Разобрать папку обмена немедленно. Ведет это служба приема
+    /// (<c>InboxService</c>) — та же, что ходит по расписанию: две реализации одного обхода
+    /// разошлись бы на первой же правке.</param>
     public void Initialize(DatabaseRegistry registry, Func<int, bool> isMounted,
                            Func<int, (string Text, bool Failed)?>? queueStatus = null,
                            Func<int, DatabaseManager.StorageStats?>? storage = null,
                            Func<int, bool>? canMaintain = null,
                            Func<IReadOnlyList<string>>? taskStages = null,
-                           Func<IReadOnlyList<DatabaseManager>>? databases = null)
+                           Func<IReadOnlyList<DatabaseManager>>? databases = null,
+                           Func<CancellationToken, Task<InboxRun>>? inboxSweep = null)
     {
         _registry    = registry;
         _isMounted   = isMounted;
@@ -1039,12 +1043,14 @@ public partial class SettingsView : UserControl
         _taskStages  = taskStages;
         _canMaintain = canMaintain;
         _databases   = databases;
+        _inboxSweep  = inboxSweep;
         RefreshDatabaseList();
     }
 
     private Func<int, DatabaseManager.StorageStats?>? _storage;
     private Func<int, bool>?                          _canMaintain;
     private Func<IReadOnlyList<DatabaseManager>>?     _databases;
+    private Func<CancellationToken, Task<InboxRun>>? _inboxSweep;
 
     // Перестроить список (статус монтирования мог измениться). Вызывается из MainWindow.
     public void RefreshDatabases() => RefreshDatabaseList();

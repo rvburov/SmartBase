@@ -26,6 +26,24 @@ namespace SmartBase.Views.Settings;
 /// </summary>
 public partial class SettingsView
 {
+    // Последний обход и когда он был — чтобы человек видел, что автоматический разбор живой.
+    // Без этой строки включенный тумблер ничем не отличается от выключенного, пока файлы не
+    // придут; а «не работает ли оно вообще» — первый вопрос, который тут задают.
+    private InboxRun?       _lastInboxRun;
+    private DateTimeOffset? _lastInboxAt;
+
+    /// <summary>
+    /// Автоматический обход что-то тронул. Зовет MainWindow из службы приема; экран
+    /// перестраивается, только если вкладка открыта, — иначе это работа впустую.
+    /// </summary>
+    public void OnInboxSwept(InboxRun run)
+    {
+        _lastInboxRun = run;
+        _lastInboxAt  = DateTimeOffset.Now;
+
+        if (_integrationsTab == "inbox") BuildIntegrationsInbox();
+    }
+
     private void BuildIntegrationsInbox()
     {
         var rows = IntegrationsInboxTab.Children;
@@ -36,6 +54,7 @@ public partial class SettingsView
 
         Add(rows, FolderRow(folder));
         Add(rows, DatabaseRow(databases));
+        Add(rows, AutoRow(folder, databases));
         Add(rows, CheckRow(folder, databases));
         Add(rows, Row("Что класть в папку",
             "Это же описание можно переслать той стороне: больше от нее ничего не требуется.",
@@ -157,6 +176,41 @@ public partial class SettingsView
             combo);
     }
 
+    // ── Автоматический разбор ─────────────────────────────────────────────────
+
+    /// <summary>
+    /// Тумблер «разбирать самому». Выключен по умолчанию, и это правильный умолчательный
+    /// выбор: запись в базу без участия человека включают осознанно, а не обнаруживают.
+    /// </summary>
+    private Border AutoRow(string folder, IReadOnlyList<DatabaseManager> databases)
+    {
+        var ready  = folder.Length > 0 && databases.Any(d => d.DbId == AppSettings.LoadInboxDb());
+        var toggle = new ToggleSwitch
+        {
+            IsChecked = AppSettings.LoadInboxAuto(),
+            IsEnabled = ready,
+        };
+
+        toggle.IsCheckedChanged += (_, _) => AppSettings.SaveInboxAuto(toggle.IsChecked == true);
+
+        var block = new StackPanel { Spacing = 6 };
+        block.Children.Add(toggle);
+
+        if (!ready)
+            block.Children.Add(Note("Станет доступно, когда выбраны папка и база данных."));
+        else
+            block.Children.Add(Note(
+                $"Программа заглядывает в папку раз в {InboxService.TickSeconds} секунд, пока она "
+                + "открыта. Если папка пропадет (выключили сетевой диск), следующая попытка будет "
+                + $"через {InboxService.RetryDelay.TotalMinutes:N0} минут, а не каждые полминуты — "
+                + "иначе за ночь журнал заполнится одинаковыми ошибками."));
+
+        return Row("Разбирать самому",
+            "Файлы будут приниматься без нажатия кнопки. База, которая сейчас недоступна, "
+            + "прием останавливает: складывать записи некуда, и файлы зря уехали бы в «Ошибки».",
+            block);
+    }
+
     // ── Разбор ────────────────────────────────────────────────────────────────
 
     private Border CheckRow(string folder, IReadOnlyList<DatabaseManager> databases)
@@ -178,6 +232,9 @@ public partial class SettingsView
         if (folder.Length == 0)      block.Children.Add(Note("Сначала выберите папку обмена."));
         else if (target is null)     block.Children.Add(Note("Сначала выберите базу данных."));
 
+        if (_lastInboxRun is { } last && _lastInboxAt is { } at)
+            block.Children.Add(Note($"Последний обход в {at.ToLocalTime():HH:mm} — {last.Summary()}."));
+
         return Row("Разбор входящих",
             "Пока прием запускается вручную: программа обходит «Входящие», укладывает каждый "
             + "готовый файл и кладет отправителю квитанцию.",
@@ -185,34 +242,26 @@ public partial class SettingsView
     }
 
     /// <summary>
-    /// Обойти папку и показать итог. Ошибки на каждом шаге показываются человеку: «кнопка не
-    /// работает» — худшее, чем может кончиться обмен.
+    /// Обойти папку и показать итог. Сам обход ведет служба приема — та же, что ходит по
+    /// расписанию: две реализации одного обхода разошлись бы на первой же правке, и ручная
+    /// проверка перестала бы отвечать на вопрос «а что будет само».
     /// </summary>
     private async Task ReceiveAsync()
     {
         if (VisualRoot is not Window win) return;
 
-        var databases = _databases?.Invoke() ?? [];
-        var target    = databases.FirstOrDefault(d => d.DbId == AppSettings.LoadInboxDb());
-
-        if (target is null)
+        if (_inboxSweep is not { } sweep)
         {
-            await ConfirmDialog.Info("База данных для приема не выбрана или закрылась.").ShowDialog(win);
-            return;
-        }
-
-        // Разрешение спрашивается здесь же, у политики: сохраненный путь — всего лишь память
-        // о выборе, а корни задает организация и может их поменять.
-        var layout = InboxFolder.Open(AppSettings.LoadInboxFolder(), out var explanation);
-
-        if (layout is null)
-        {
-            await ConfirmDialog.Info("Папка обмена недоступна: " + explanation).ShowDialog(win);
+            await ConfirmDialog.Info("Прием сейчас недоступен: база данных еще не открыта.")
+                .ShowDialog(win);
             return;
         }
 
         var progress = new ProgressDialog { Title = "Прием файлов" };
         using var cts = new CancellationTokenSource();
+
+        // Отмена останавливает обход МЕЖДУ файлами, а не посреди зависшего сетевого чтения:
+        // обещать большее нечестно — файловый ввод-вывод на мертвой шаре не отменяется.
         progress.EnableCancel(cts.Cancel);
 
         // Сколько файлов лежит во «Входящих», заранее неизвестно — процентов тут не бывает.
@@ -220,28 +269,22 @@ public partial class SettingsView
         var closed = progress.ShowDialog(win);
         var open   = true;
 
-        IProgress<string> ui = new Progress<string>(name => progress.SetInfo(name));
-
         InboxRun run;
         try
         {
-            var repo = target.Constructor;
-            var dbId = target.DbId;
-
-            run = await Task.Run(() => InboxReceiver.Run(
-                layout, repo, dbId, Environment.MachineName,
-                DateTimeOffset.Now, cts.Token, ui));
+            run = await sweep(cts.Token);
         }
         catch (Exception failure)
         {
-            if (open) { open = false; progress.Done(); await closed; }
-            await ConfirmDialog.Info("Прием не состоялся: " + failure.Message).ShowDialog(win);
-            return;
+            run = InboxRun.Failed(failure.Message);
         }
         finally
         {
-            if (open) { progress.Done(); await closed; }
+            if (open) { open = false; progress.Done(); await closed; }
         }
+
+        _lastInboxRun = run;
+        _lastInboxAt  = DateTimeOffset.Now;
 
         BuildIntegrationsInbox();
         await ConfirmDialog.Info(Report(run)).ShowDialog(win);
@@ -250,6 +293,8 @@ public partial class SettingsView
     /// <summary>Итог обхода: числа и построчно — что стало с каждым файлом.</summary>
     private static string Report(InboxRun run)
     {
+        if (run.Problem.Length > 0) return "Прием не состоялся: " + run.Problem;
+
         var text = "Итог: " + run.Summary() + ".";
 
         if (run.Receipts.Count == 0) return text;

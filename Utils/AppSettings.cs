@@ -838,6 +838,14 @@ public static class AppSettings
 
     public static void SaveInboxDb(int dbId) => _store?.Set(KeyInboxDb, dbId.ToString());
 
+    /// <summary>
+    /// Разбирать папку самому, раз в полминуты. Выключено по умолчанию, и это правильный
+    /// умолчательный выбор: запись в базу без участия человека включают осознанно.
+    /// </summary>
+    public static bool LoadInboxAuto() => _store?.Get(KeyInboxAuto) == "1";
+
+    public static void SaveInboxAuto(bool enabled) => _store?.Set(KeyInboxAuto, enabled ? "1" : "0");
+
     // ── Последняя известная политика интеграций ────────────────────────────────
     //
     // Снимок текста политики по каждому источнику. Нужен ровно для одного случая: сетевая
@@ -1009,6 +1017,7 @@ public static class AppSettings
     private const string KeyIntegrationsTab  = "integrations.tab";
     private const string KeyInboxFolder      = "integrations.inbox.folder";
     private const string KeyInboxDb          = "integrations.inbox.db";
+    private const string KeyInboxAuto        = "integrations.inbox.auto";
     private const string KeyTasksView        = "tasksView";
     private const string KeyCalendarView     = "calendarView";
     private const string KeyCalendarDaysInWeek        = "calendarDaysInWeek";

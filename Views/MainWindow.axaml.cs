@@ -83,6 +83,10 @@ public partial class MainWindow : Window
         _changes     = new ChangePoller(workspace, _health);
         // Резервное копирование по расписанию (раздел «Настройки → Резервное копирование»).
         _backup      = new BackupService(workspace.Registry);
+        // Прием файлов из папки обмена по расписанию («Настройки → Интеграции → Прием»).
+        // Список баз передается вызываемым: потерянную базу монитор доступности размонтирует,
+        // и правило «база недоступна — не запускаемся» держится само.
+        _inbox       = new InboxService(GrantedDbs);
         // Резолвер чужих баз для межбазовых связей (тип «relation» с TargetDbId>0).
         RelationDbResolver.Configure(workspace);
 
@@ -205,7 +209,10 @@ public partial class MainWindow : Window
             taskStages: () => GrantedDbs().SelectMany(m => m.Constructor.GetTaskStages()).Distinct().ToList(),
             // Открытые базы — «Интеграциям»: ответ чужой программы укладывается в коллекцию
             // выбранной базы, и список должен быть тем, что есть на экране прямо сейчас.
-            databases: GrantedDbs);
+            databases: GrantedDbs,
+            // Кнопка «Проверить папку» ведет ту же службу, что ходит по расписанию: две
+            // реализации одного обхода разошлись бы на первой же правке.
+            inboxSweep: ct => _inbox.RunNowAsync(ct));
 
         // Live mount/unmount: добавление/удаление БД в настройках сразу отражается в
         // сайдбаре конструктора без перезапуска. Новая база встает в хвост очереди —
@@ -247,6 +254,9 @@ public partial class MainWindow : Window
         _backup.BackupProgress += (dbId, msg, frac) =>
             Dispatcher.UIThread.Post(() => SettingsModule.OnBackupProgress(dbId, msg, frac));
         _backup.BackupFinished += (dbId, ok, msg) => SettingsModule.OnBackupFinished(dbId, ok, msg);
+        // Автоматический обход папки обмена что-то тронул — показать это на вкладке «Прием»:
+        // включенный тумблер иначе ничем не отличается от выключенного, пока файлы не придут.
+        _inbox.Swept += run => SettingsModule.OnInboxSwept(run);
         // Переименование в окне настроек базы: реестр уже обновлен — меняем имя
         // смонтированной БД на месте и перечитываем сайдбары, без ремаунта.
         SettingsModule.DatabaseRenamed += (_, e) =>
@@ -564,6 +574,8 @@ public partial class MainWindow : Window
             _notifications.Start();
             // Резервное копирование: таймер расписаний + догон пропущенной копии первым тиком.
             _backup.Start();
+            // Прием файлов: таймер обхода папки обмена (сам разбор — только если включен).
+            _inbox.Start();
 
             // Автообновление: проверяем сразу — окно показано (в том числе при старте из
             // автозапуска) и может быть владельцем модалки «Обновить/Отмена». Со скрытым
@@ -625,12 +637,14 @@ public partial class MainWindow : Window
             _health.Dispose();
             _notifications.Dispose();
             _backup.Dispose();
+            _inbox.Dispose();
             _watchdog.Dispose();
         };
     }
 
     private readonly UiWatchdog _watchdog;
     private readonly BackupService _backup;
+    private readonly InboxService  _inbox;
 
     // Человеческое имя раздела для записей о медленном открытии.
     private static string ModuleTitle(string module) => module switch

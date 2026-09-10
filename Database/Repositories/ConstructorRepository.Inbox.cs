@@ -118,6 +118,21 @@ public partial class ConstructorRepository
         return new InboxPlan(binding, ignored);
     }
 
+    /// <summary>
+    /// То же на ОТДЕЛЬНОМ подключении — для вызова с фонового потока. Свод читает состав
+    /// коллекции, а общий контекст в это время занят интерфейсом: EF отвечает на второе
+    /// обращение к нему «A second operation was started on this context instance».
+    ///
+    /// Приемник ходит сюда именно этим путем: обход папки идет в фоне целиком, от захвата до
+    /// квитанции.
+    /// </summary>
+    public InboxPlan? TryPlanIsolated(InboxMessage message, ImportSchema schema, int dbId,
+                                      out string problem)
+    {
+        using var ctx = new AppDbContext(db.DbPath);
+        return new ConstructorRepository(ctx).TryPlan(message, schema, dbId, out problem);
+    }
+
     /// <summary>Колонки файла в порядке схемы: название записи и свойства.</summary>
     private static IEnumerable<string> Columns(ImportSchema schema)
     {
