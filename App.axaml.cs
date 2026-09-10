@@ -71,6 +71,22 @@ public partial class App : Application
             // См. docs/developer/features/integrations/overview.md.
             Integrations.EgressSetup.Init();
 
+            // Журнал запусков обмена — сразу за политикой: он же считает накопительные квоты
+            // (запусков в час, байт в сутки), и без него потолки политики не с чем сверять.
+            // Сбой открытия журнала обмен не останавливает: шлюз при отсутствии счетчика
+            // считает расход нулевым, а про сбой узнает «Диагностика».
+            try
+            {
+                var journal = new Database.RunJournal(AppSettings.RunJournalPath);
+                journal.Trim();   // уборка раз в запуск: расти файлу незачем
+                Database.RunJournal.Attach(journal);
+                Integrations.EgressGate.AttachUsage(journal.AsUsage());
+            }
+            catch (Exception ex)
+            {
+                Log.Warning(ex, "Журнал обмена не открылся: {Path:l}", AppSettings.RunJournalPath);
+            }
+
             // Расширения: Id — ключ и строки сайдбара, и группы настроек «ext.<Id>.…»,
             // поэтому тезки недопустимы (проверка падает с явным сообщением).
             Extensions.ExtensionRegistry.EnsureUniqueIds();

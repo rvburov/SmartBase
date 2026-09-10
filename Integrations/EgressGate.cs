@@ -44,6 +44,30 @@ public enum EgressDenyReason
 
     /// <summary>У свойства стоит метка конфиденциальности: наружу оно не уходит.</summary>
     FieldIsLabeled,
+
+    /// <summary>Выбран потолок запусков в час.</summary>
+    TooManyRuns,
+
+    /// <summary>Выбран потолок объема за сутки.</summary>
+    TooManyBytes,
+}
+
+/// <summary>
+/// Сколько уже израсходовано — накопительные счетчики для квот политики. Считает их журнал
+/// запусков, а решает <see cref="EgressGate"/>: в шлюзе нет ввода-вывода, и его решения обязаны
+/// проверяться без единого файла.
+///
+/// Не подключен ни один счетчик — расход считается нулевым. Это не дыра: без журнала нет и
+/// обмена, который в него пишет, а запирать шлюз из-за отсутствия счетчика значило бы ломать
+/// тесты и первые запуски на пустой машине.
+/// </summary>
+public interface IEgressUsage
+{
+    /// <summary>Сколько засчитанных запусков было с указанного момента.</summary>
+    int RunsSince(DateTimeOffset moment);
+
+    /// <summary>Сколько байт прошло с указанного момента.</summary>
+    long BytesSince(DateTimeOffset moment);
 }
 
 /// <summary>Решение шлюза: пускать или нет, почему и что показать человеку.</summary>
@@ -96,8 +120,20 @@ public static class EgressGate
     /// </summary>
     public static void AttachPolicy(EgressPolicySet policy) => _policy = policy;
 
+    private static IEgressUsage? _usage;
+
+    /// <summary>
+    /// Подключить счетчик расхода — журнал запусков. Тем же приемом, что и политика: шлюз
+    /// решает, журнал считает, и связывать одно с другим напрямую незачем.
+    /// </summary>
+    public static void AttachUsage(IEgressUsage? usage) => _usage = usage;
+
     /// <summary>Вернуть шлюз в состояние по умолчанию — наружу нельзя ничего.</summary>
-    public static void Close() => _policy = EgressPolicySet.Closed;
+    public static void Close()
+    {
+        _policy = EgressPolicySet.Closed;
+        _usage  = null;
+    }
 
     /// <summary>
     /// Собрана ли программа для закрытого контура. Показывается в «О программе» и в паспорте
@@ -200,6 +236,61 @@ public static class EgressGate
     /// <inheritdoc cref="CheckFolder(string?, DateOnly)"/>
     public static EgressDecision CheckFolder(string? path) =>
         CheckFolder(path, DateOnly.FromDateTime(DateTime.Today));
+
+    /// <summary>
+    /// Не выбраны ли накопительные потолки политики: запусков в час и байт в сутки. Спрашивается
+    /// ПЕРЕД обращением, а не после, — потолок, о котором узнают задним числом, ничего не
+    /// ограничивает.
+    ///
+    /// Окна скользящие, а не календарные: «час» — это последние шестьдесят минут, а не «с начала
+    /// текущего часа». Календарное окно обнуляется в ноль минут, и тысяча запросов, поставленная
+    /// на 59-ю и 61-ю минуту, прошла бы дважды за две минуты.
+    ///
+    /// Расход считает журнал; счетчик не подключен — расход нулевой (см. <see cref="IEgressUsage"/>).
+    /// </summary>
+    /// <param name="now">Момент обращения; передается явно — тест на часах не строится.</param>
+    /// <param name="bytes">Сколько байт собирается пройти; 0 — объем заранее неизвестен, и
+    /// проверяется только уже израсходованное.</param>
+    public static EgressDecision CheckQuota(DateTimeOffset now, long bytes = 0)
+    {
+        var gate = CheckPolicyState(DateOnly.FromDateTime(now.LocalDateTime.Date));
+        if (!gate.Allowed) return gate;
+
+        if (_usage is not { } usage) return EgressDecision.Allow();
+
+        var runs = usage.RunsSince(now - TimeSpan.FromHours(1));
+        if (runs >= _policy.MaxRunsPerHour)
+            return EgressDecision.Deny(EgressDenyReason.TooManyRuns,
+                $"выбран потолок запусков в час: {runs} из {_policy.MaxRunsPerHour}");
+
+        // Любой обмен стоит хотя бы что-то, поэтому выбранный до нуля остаток — уже отказ, даже
+        // когда объем заранее неизвестен. Пропустить запрос ради того, чтобы отклонить его на
+        // первой же порции, значит зря потревожить чужую программу.
+        var spent = usage.BytesSince(now - TimeSpan.FromDays(1));
+        if (spent >= _policy.MaxBytesPerDay || spent + Math.Max(0, bytes) > _policy.MaxBytesPerDay)
+            return EgressDecision.Deny(EgressDenyReason.TooManyBytes,
+                $"выбран потолок объема за сутки: {spent:N0} из {_policy.MaxBytesPerDay:N0} байт");
+
+        return EgressDecision.Allow();
+    }
+
+    /// <summary>
+    /// Сколько байт еще можно получить за сутки. Нужно тем, кто качает порциями: спросить
+    /// квоту один раз перед запуском мало — выгрузка на двести порций по тридцать мегабайт
+    /// перешагнет любой суточный потолок, ни разу его не спросив.
+    ///
+    /// Счетчик не подключен либо политика запирает контур — <c>0</c> при запрете и
+    /// <see cref="long.MaxValue"/> при отсутствии счетчика: считать нечем, а придумывать
+    /// ограничение шлюз не должен.
+    /// </summary>
+    public static long BytesLeft(DateTimeOffset now)
+    {
+        if (!CheckPolicyState(DateOnly.FromDateTime(now.LocalDateTime.Date)).Allowed) return 0;
+
+        if (_usage is not { } usage) return long.MaxValue;
+
+        return Math.Max(0, _policy.MaxBytesPerDay - usage.BytesSince(now - TimeSpan.FromDays(1)));
+    }
 
     /// <summary>
     /// Можно ли вообще что-то отправлять из этой базы. Метка «закрытый контур» запрещает

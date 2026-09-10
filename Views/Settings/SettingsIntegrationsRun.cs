@@ -54,7 +54,7 @@ public partial class SettingsView
         // не пришли бы уже никогда.
         var startedAt = DateTimeOffset.UtcNow;
 
-        var outcome = await SendAsync(win, registry, request, connection);
+        var outcome = await SendAsync(win, registry, request, connection, startedAt);
         if (outcome is null) return;
 
         var source = new JsonTextSource(outcome.Json);
@@ -105,7 +105,8 @@ public partial class SettingsView
     private static async Task<RunOutcome?> SendAsync(Window                        win,
                                                      Database.IntegrationsRegistry registry,
                                                      IntegrationRequest            request,
-                                                     IntegrationConnection         connection)
+                                                     IntegrationConnection         connection,
+                                                     DateTimeOffset                startedAt)
     {
         var progress = new ProgressDialog { Title = "Запрос" };
         using var cts = new CancellationTokenSource();
@@ -134,8 +135,17 @@ public partial class SettingsView
             if (open) { open = false; progress.Done(); await closed; }
         }
 
-        if (outcome is null) return null;
-        if (outcome.Ok)      return outcome;
+        if (outcome is null) return null;   // отменили — событием обмена это не считается
+
+        // Строка журнала пишется и для НЕУДАЧНОГО запроса. Отказ чужой программы все равно был
+        // обращением к ней: он расходует квоту и он же нужен при разборе «почему ничего не
+        // пришло» — именно неудачных строк там ищут больше всего.
+        Database.RunJournal.Add(Database.RunEntry.New(
+            Database.RunChannel.Request, request.Name, outcome.SafeAddress, outcome.Ok,
+            outcome.Explanation, outcome.Rows, outcome.Bytes, outcome.Elapsed,
+            dbId: 0, at: startedAt, counts: true));
+
+        if (outcome.Ok) return outcome;
 
         await ConfirmDialog.Info($"Запрос «{request.Name}» не дал записей.\n\n{outcome.Explanation}")
             .ShowDialog(win);

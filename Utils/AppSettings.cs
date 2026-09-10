@@ -53,6 +53,10 @@ public static class AppSettings
     public static string SystemDbPath { get; } = Path.Combine(AppDataDir, "app.db");
     // Диагностический лог (Serilog → SQLite): единый файл на приложение, не per-database.
     public static string LogsDbPath { get; } = Path.Combine(AppDataDir, "logs.db");
+    // Журнал запусков обмена: тоже единый на приложение и намеренно НЕ внутри файла базы —
+    // файл базы ездит по сетевой папке, и числа обмена раздули бы его на всех машинах разом
+    // (docs/ROADMAP-API.md, 10.10).
+    public static string RunJournalPath { get; } = Path.Combine(AppDataDir, "integrations.db");
 
     public static void EnsureCreated() =>
         Directory.CreateDirectory(AppDataDir);

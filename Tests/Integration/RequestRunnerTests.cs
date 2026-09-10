@@ -327,4 +327,70 @@ public sealed class RequestRunnerTests : IDisposable
         Assert.Equal("[]", outcome.Json);
         Assert.Equal(1, outcome.Rows);   // успели собрать одну — это видно в отчете
     }
+
+    // ── Накопительные потолки ─────────────────────────────────────────────────
+
+    /// <summary>Счетчик расхода, отдающий заданные числа: расход считает журнал, решает шлюз.</summary>
+    private sealed class Spent(int runs, long bytes) : IEgressUsage
+    {
+        public int  RunsSince(DateTimeOffset moment)  => runs;
+        public long BytesSince(DateTimeOffset moment) => bytes;
+    }
+
+    /// <summary>
+    /// Потолок спрашивается ДО первого сокета: потолок, о котором узнают задним числом, ничего
+    /// не ограничивает. Сервер при этом не должен увидеть ни одного обращения.
+    /// </summary>
+    [Fact]
+    public async Task Spent_hourly_ceiling_stops_the_run_before_the_socket()
+    {
+        AllowLoopback();
+        EgressGate.AttachUsage(new Spent(runs: 100, bytes: 0));
+
+        using var server = new TinyServer(_ => TinyServer.Reply(200, Items("А")));
+
+        var outcome = await Run(server, Request());
+
+        Assert.False(outcome.Ok);
+        Assert.Contains("запусков в час", outcome.Explanation, StringComparison.Ordinal);
+        Assert.Empty(server.Seen);
+    }
+
+    [Fact]
+    public async Task Spent_daily_budget_stops_the_run_before_the_socket()
+    {
+        AllowLoopback();
+        EgressGate.AttachUsage(new Spent(runs: 0, bytes: 1024 * 1024));
+
+        using var server = new TinyServer(_ => TinyServer.Reply(200, Items("А")));
+
+        var outcome = await Run(server, Request());
+
+        Assert.False(outcome.Ok);
+        Assert.Contains("объема за сутки", outcome.Explanation, StringComparison.Ordinal);
+        Assert.Empty(server.Seen);
+    }
+
+    /// <summary>
+    /// Спросить квоту один раз перед запуском мало: выгрузка на много порций перешагнула бы
+    /// суточный потолок, ни разу его не спросив. Собранное при этом отбрасывается целиком —
+    /// как при любой другой неудаче посреди выгрузки.
+    /// </summary>
+    [Fact]
+    public async Task Paging_stops_when_the_daily_budget_runs_out()
+    {
+        AllowLoopback();
+
+        // Суточное право почти выбрано: на запуск хватает, на первую же порцию — нет.
+        EgressGate.AttachUsage(new Spent(runs: 0, bytes: 1024 * 1024 - 10));
+
+        using var server = new TinyServer(_ => TinyServer.Reply(200, Items("А", "Б", "В")));
+
+        var outcome = await Run(server, Request(paging: RequestPaging.Page, pagingField: "page"));
+
+        Assert.False(outcome.Ok);
+        Assert.Contains("объема за сутки", outcome.Explanation, StringComparison.Ordinal);
+        Assert.Equal("[]", outcome.Json);
+        Assert.Single(server.Seen);   // вторая порция уже не ушла
+    }
 }

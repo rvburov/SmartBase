@@ -7,7 +7,7 @@
 
 ## Что лежит в папке данных
 
-Полный состав `AppSettings.AppDataDir`: три базы SQLite и три служебных файла. Ничего
+Полный состав `AppSettings.AppDataDir`: четыре базы SQLite и три служебных файла. Ничего
 из этого не появляется «само» — у каждого файла есть конкретное место в коде, которое
 его создает.
 
@@ -18,8 +18,12 @@
 | `database.db` | [AppDbContext](../../../../Database/AppDbContext.cs) | пользовательские данные (коллекции, поля, записи, события календаря) |
 | `app.db` | [SystemDbContext](../../../../Database/SystemDbContext.cs) | системное: реестр БД (`databases`) + настройки (`app_settings`) |
 | `logs.db` | [AppLog](../../../../Logging/AppLog.cs) | диагностический лог Serilog для «Настройки → Диагностика»; автоочистка записей старше 30 дней — [features/logging.md](../../features/logging.md) |
+| `integrations.db` | [RunJournal](../../../../Database/RunJournal.cs) | журнал запусков обмена: что дергали, чем кончилось, сколько строк и байт. По нему же считаются накопительные квоты политики; уборка — последние 20 000 строк. Секрета в нем нет ни при каких настройках — [features/integrations/overview.md](../../features/integrations/overview.md) |
 
 `app.db` — независимое хранилище: никогда не показывается в сайдбаре и не удаляется.
+
+`integrations.db` лежит здесь, а не внутри файла базы, намеренно: файл базы ездит по сетевой
+папке и открыт на нескольких машинах разом, а числа обмена раздули бы его у всех сразу.
 
 Рядом с каждой открытой базой SQLite держит `*.db-wal` и `*.db-shm` — это штатный режим
 WAL, вручную их удалять не нужно.
@@ -64,7 +68,8 @@ WAL, вручную их удалять не нужно.
   `SmartBase.csproj`) — изолированно «как venv», переживает `dotnet clean` и снос
   `artifacts/`.
 
-`database.db` → `AppSettings.DbPath`, `app.db` → `AppSettings.SystemDbPath`; `logs.db` и
+`database.db` → `AppSettings.DbPath`, `app.db` → `AppSettings.SystemDbPath`,
+`integrations.db` → `AppSettings.RunJournalPath`; `logs.db` и
 все служебные файлы — прямо в `AppSettings.AppDataDir`.
 
 ## Миграции схемы (database.db)

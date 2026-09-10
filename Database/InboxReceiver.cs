@@ -125,6 +125,15 @@ public static class InboxReceiver
             if      (repeat)           repeats++;
             else if (receipt.Accepted) accepted++;
             else                       rejected++;
+
+            // Строка журнала на каждый файл — включая отклоненный: разбор «почему записи не
+            // появились» начинается именно с них. В накопительные квоты обмен файлами не
+            // засчитывается: квоты ограничивают то, что уходит наружу, а файл идет внутрь.
+            RunJournal.Add(RunEntry.New(
+                RunChannel.Inbox, file.Name, layout.Incoming,
+                receipt.Accepted, repeat ? "повтор: сообщение уже приходило" : receipt.Explanation,
+                receipt.Created + receipt.Updated, 0, TimeSpan.Zero,
+                dbId, now, counts: false));
         }
 
         return new InboxRun(accepted, rejected, repeats, reclaimed, receipts);
