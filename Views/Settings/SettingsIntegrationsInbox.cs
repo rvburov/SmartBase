@@ -42,6 +42,10 @@ public partial class SettingsView
         _lastInboxAt  = DateTimeOffset.Now;
 
         if (_integrationsTab == "inbox") BuildIntegrationsInbox();
+
+        // Открытый журнал тоже обновляется: обход только что дописал в него строки, и смотреть
+        // на устаревший список, пока прием работает у тебя на глазах, незачем.
+        if (_integrationsTab == "journal") BuildIntegrationsJournal();
     }
 
     private void BuildIntegrationsInbox()

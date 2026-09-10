@@ -20,6 +20,7 @@ public static class IntegrationTabs
         new("requests",    "Запросы"),
         new("inbox",       "Прием"),
         new("security",    "Безопасность"),
+        new("journal",     "Журнал"),
     ];
 
     /// <summary>Вкладка по ключу; неизвестный ключ — первая вкладка.</summary>
