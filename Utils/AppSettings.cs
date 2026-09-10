@@ -815,6 +815,25 @@ public static class AppSettings
 
     public static void SaveIntegrationsTab(string key) => _store?.Set(KeyIntegrationsTab, key);
 
+    // ── Папка-приемник ─────────────────────────────────────────────────────────
+    //
+    // Корень обмена и база, в которую ложатся входящие файлы. Настройка МАШИННАЯ, и это не
+    // упущение: одну и ту же папку намеренно смотрят несколько компьютеров разом (захват идет
+    // переименованием, см. Integrations/InboxFolder.cs). Держи ее в общей базе — и включение
+    // приемника на одной машине включало бы его у всех.
+    //
+    // Разрешен ли сам корень, решает политика организации, а не эта настройка: сохраненный
+    // путь — всего лишь память о выборе, и запрещенная папка просто не откроется.
+    public static string LoadInboxFolder() => _store?.Get(KeyInboxFolder) ?? "";
+
+    public static void SaveInboxFolder(string path) => _store?.Set(KeyInboxFolder, path ?? "");
+
+    /// <summary>База, в которую ложатся входящие файлы; 0 — не выбрана.</summary>
+    public static int LoadInboxDb() =>
+        int.TryParse(_store?.Get(KeyInboxDb), out var id) && id > 0 ? id : 0;
+
+    public static void SaveInboxDb(int dbId) => _store?.Set(KeyInboxDb, dbId.ToString());
+
     // ── Последняя известная политика интеграций ────────────────────────────────
     //
     // Снимок текста политики по каждому источнику. Нужен ровно для одного случая: сетевая
@@ -984,6 +1003,8 @@ public static class AppSettings
     private const string KeyFontDelta        = "fontDelta";
     private const string KeyStartupModule    = "startupModule";
     private const string KeyIntegrationsTab  = "integrations.tab";
+    private const string KeyInboxFolder      = "integrations.inbox.folder";
+    private const string KeyInboxDb          = "integrations.inbox.db";
     private const string KeyTasksView        = "tasksView";
     private const string KeyCalendarView     = "calendarView";
     private const string KeyCalendarDaysInWeek        = "calendarDaysInWeek";

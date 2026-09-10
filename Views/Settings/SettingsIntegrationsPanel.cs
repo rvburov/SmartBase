@@ -11,12 +11,16 @@ namespace SmartBase.Views.Settings;
 /// «Задачи»). Раздел один, а внутри вкладки; переключатель между ними — выпадающий список в
 /// навбаре, как виды календаря.
 ///
-/// Пока вкладка одна — «Безопасность». Она показывает то, что программе уже известно:
-/// действующий режим, судьбу каждого источника политики, разрешенные адреса, папки и потолки.
-/// Только показывает: политика правится ВНЕ программы, и ни одной кнопки, меняющей права,
-/// здесь нет и не будет — в этом весь смысл контура (docs/ROADMAP-API.md, раздел 10).
+/// Переключение вкладок и вкладка «Безопасность» живут здесь; списки соединений и запросов —
+/// в <c>SettingsIntegrationsLists</c>, обмен по кнопке — в <c>SettingsIntegrationsRun</c>,
+/// папка-приемник — в <c>SettingsIntegrationsInbox</c>.
 ///
-/// Единственное действие — «Перечитать»: администратор поправил файл, а перезапускать
+/// «Безопасность» показывает то, что программе уже известно: действующий режим, судьбу каждого
+/// источника политики, разрешенные адреса, папки и потолки. Только показывает: политика правится
+/// ВНЕ программы, и ни одной кнопки, меняющей права, здесь нет и не будет — в этом весь смысл
+/// контура (docs/ROADMAP-API.md, раздел 10).
+///
+/// Единственное действие вкладки — «Перечитать»: администратор поправил файл, а перезапускать
 /// программу ради этого незачем.
 /// </summary>
 public partial class SettingsView
@@ -45,12 +49,14 @@ public partial class SettingsView
 
         IntegrationsConnectionsTab.IsVisible = _integrationsTab == "connections";
         IntegrationsRequestsTab.IsVisible    = _integrationsTab == "requests";
+        IntegrationsInboxTab.IsVisible       = _integrationsTab == "inbox";
         IntegrationsSecurityTab.IsVisible    = _integrationsTab == "security";
 
         // Список строится при каждом показе: карточки правятся в окнах, и вернуться на вкладку
         // можно уже с другим их составом.
         if (_integrationsTab == "connections") BuildIntegrationsConnections();
         if (_integrationsTab == "requests")    BuildIntegrationsRequests();
+        if (_integrationsTab == "inbox")       BuildIntegrationsInbox();
         if (_integrationsTab == "security")    BuildIntegrationsSecurity();
     }
 

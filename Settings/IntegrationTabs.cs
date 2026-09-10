@@ -18,6 +18,7 @@ public static class IntegrationTabs
     [
         new("connections", "Соединения"),
         new("requests",    "Запросы"),
+        new("inbox",       "Прием"),
         new("security",    "Безопасность"),
     ];
 
