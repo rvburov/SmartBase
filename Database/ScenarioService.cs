@@ -154,6 +154,10 @@ public sealed class ScenarioService : IDisposable
             return true;
         }
 
+        // Работы не нашлось — папка обмена пуста. Ни строки, ни события: экрану нечего
+        // обновлять, а «Диагностика» иначе к утру состояла бы из одного этого сценария.
+        if (outcome.Idle) return true;
+
         if (outcome.Ok)
         {
             _said.Remove(scenario.Id);

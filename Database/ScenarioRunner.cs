@@ -69,9 +69,22 @@ public sealed record StepTable(IReadOnlyList<string>                            
 /// <param name="Table">Что шаг передает следующему; <c>null</c> — ничего, и дальше идет то, что
 /// было. Шаг, который таблицы не делает (сообщение), поток не обрывает: между запросом и
 /// действием можно поставить уведомление, не потеряв строки.</param>
-public sealed record StepOutcome(bool Ok, string Line, int Rows = 0, StepTable? Table = null)
+/// <param name="Text">Текст, который шаг передает следующему, — файл, взятый из папки. Его ждет
+/// преобразователь формата.</param>
+/// <param name="Idle">Делать было нечего, и сценарий на этом кончается ТИХО: ни строки журнала,
+/// ни записи в «Диагностику». Пустая папка обмена, проверяемая каждые пять минут, иначе давала бы
+/// три сотни одинаковых строк в сутки, и настоящую среди них потом не найти.</param>
+public sealed record StepOutcome(bool       Ok,
+                                 string     Line,
+                                 int        Rows  = 0,
+                                 StepTable? Table = null,
+                                 string     Text  = "",
+                                 bool       Idle  = false)
 {
     public static StepOutcome Bad(string reason) => new(false, reason);
+
+    /// <summary>Делать нечего — сценарий кончается молча.</summary>
+    public static StepOutcome Nothing => new(true, "", Idle: true);
 }
 
 /// <summary>
@@ -87,6 +100,8 @@ public sealed record StepOutcome(bool Ok, string Line, int Rows = 0, StepTable? 
 /// <param name="Started">Дело дошло хотя бы до первого шага. Отличать это от «первый шаг не
 /// удался» обязательно: причины у них разные — там не сложилось окружение, здесь не сработал
 /// сам обмен, — и человек по этим двум случаям идет в разные места.</param>
+/// <param name="Idle">Работы не нашлось: папка обмена пуста или в ней лежал уже принятый повтор.
+/// Такой запуск в журнал не пишется вовсе.</param>
 public sealed record ScenarioOutcome(
     bool                  Ok,
     string                Problem,
@@ -95,7 +110,8 @@ public sealed record ScenarioOutcome(
     int                   Rows,
     TimeSpan              Elapsed,
     IReadOnlyList<string> Lines,
-    bool                  Started = true)
+    bool                  Started = true,
+    bool                  Idle    = false)
 {
     /// <summary>Сценарий не запускался вовсе — не сложилось до первого шага.</summary>
     public static ScenarioOutcome Blocked(string problem, int total) =>
@@ -103,9 +119,11 @@ public sealed record ScenarioOutcome(
 
     /// <summary>Итог одной строкой — для журнала, списка и карточки.</summary>
     public string Summary() =>
-        Problem.Length > 0
-            ? (Started ? $"остановлен на шаге {Done + 1} из {Total}: " : "не запускался: ") + Problem
-            : $"шагов выполнено {Done}, записей {Rows}";
+        Idle
+            ? "делать было нечего"
+            : Problem.Length > 0
+                ? (Started ? $"остановлен на шаге {Done + 1} из {Total}: " : "не запускался: ") + Problem
+                : $"шагов выполнено {Done}, записей {Rows}";
 }
 
 /// <summary>
@@ -125,8 +143,12 @@ public sealed record ScenarioOutcome(
 /// коллекцию, работа расширения — уходит в <c>Task.Run</c> на отдельном подключении, как и в
 /// ручном обмене.
 /// </summary>
-public static class ScenarioRunner
+public static partial class ScenarioRunner
 {
+    /// <summary>Пустой набор значений — вход преобразователя, которому поля не нужны.</summary>
+    private static readonly IReadOnlyDictionary<string, string> NoValues =
+        new Dictionary<string, string>(StringComparer.Ordinal);
+
     /// <summary>
     /// Что мешает сценарию отработать прямо сейчас; <c>null</c> — ничто.
     ///
@@ -134,6 +156,10 @@ public static class ScenarioRunner
     /// говорит «пропусти этот тик молча» (база откроется — сценарий догонит пропущенное), а
     /// человеку, нажавшему «Запустить сейчас», — почему ничего не произошло. Молчаливое
     /// бездействие в ответ на нажатие хуже любого отказа.
+    ///
+    /// Диска этот метод не касается: его спрашивают на каждую перерисовку списка сценариев, а
+    /// папка обмена лежит на сетевом диске, который бывает выключен. Проверяется разрешение
+    /// политики — оно считается по строкам, — а существование папки выяснит сам шаг.
     /// </summary>
     public static string? Blocker(Scenario                       scenario,
                                   IntegrationsRegistry           registry,
@@ -142,11 +168,35 @@ public static class ScenarioRunner
     {
         if (scenario.Steps.Count == 0) return "в сценарии нет шагов";
 
+        // Текст берется из папки и нужен преобразователю формата. Порядок шагов тут и
+        // проверяется: преобразователь, стоящий первым, разбирать ему нечего.
+        var text = false;
+
         foreach (var step in scenario.Steps)
         {
+            if (step.Kind == ScenarioStepKind.Intake)
+            {
+                if (string.IsNullOrWhiteSpace(step.Folder)) return "в шаге не выбрана папка обмена";
+
+                var decision = EgressGate.CheckFolder(step.Folder);
+                if (!decision.Allowed) return "папка обмена: " + decision.Explanation;
+
+                text = true;
+                continue;
+            }
+
             if (step.Kind == ScenarioStepKind.Action)
             {
                 if (ActionOf(step, extensions, out var trouble) is not { } action) return trouble;
+
+                if (action.Kind == ExtensionActionKind.Transformer)
+                {
+                    if (!text) return NoInput(action);
+                    continue;
+                }
+
+                if (step.CollectionId <= 0)
+                    return $"у действия «{action.Name}» не выбрана коллекция";
 
                 if (databases.All(d => d.DbId != step.DbId))
                     return $"база данных для действия «{action.Name}» сейчас не открыта";
@@ -194,7 +244,8 @@ public static class ScenarioRunner
 
         if (Blocker(scenario, registry, databases, extensions) is { } blocker)
         {
-            Journal(scenario, ok: false, blocker, rows: 0, clock.Elapsed, DbOf(scenario, registry), now);
+            Journal(scenario, ok: false, blocker, rows: 0, clock.Elapsed, DbOf(scenario, registry),
+                    now, "");
             return ScenarioOutcome.Blocked(blocker, total);
         }
 
@@ -207,37 +258,73 @@ public static class ScenarioRunner
         var rows    = 0;
         var done    = 0;
         var problem = "";
+        var idle    = false;
 
         StepTable? table = null;
+        var        text  = "";
+        Intake?    taken = null;
 
-        foreach (var step in scenario.Steps)
+        try
         {
-            ct.ThrowIfCancellationRequested();
-
-            var outcome = step.Kind switch
+            foreach (var step in scenario.Steps)
             {
-                ScenarioStepKind.Request => await RequestStepAsync(step, registry, databases, carry, ct),
-                ScenarioStepKind.Action  => await ActionStepAsync(step, databases, extensions, table, now, ct),
-                _                        => NoticeStep(step, notice),
-            };
+                ct.ThrowIfCancellationRequested();
 
-            lines.Add(outcome.Line);
-            rows += outcome.Rows;
+                var outcome = step.Kind switch
+                {
+                    ScenarioStepKind.Request => await RequestStepAsync(step, registry, databases, carry, ct),
+                    ScenarioStepKind.Action  => await ActionStepAsync(step, databases, extensions, table, text, now, ct),
+                    ScenarioStepKind.Intake  => IntakeStep(step, now, ref taken),
+                    _                        => NoticeStep(step, notice),
+                };
 
-            if (outcome.Table is not null) table = outcome.Table;
+                // Делать нечего — расходимся молча, не оставляя следа ни в журнале, ни в отчете.
+                if (outcome.Idle) { idle = true; break; }
 
-            // Первый неудавшийся шаг останавливает цепочку: следующий работал бы с данными,
-            // которых не пришло.
-            if (!outcome.Ok) { problem = outcome.Line; break; }
+                if (outcome.Line.Length > 0) lines.Add(outcome.Line);
+                rows += outcome.Rows;
 
-            done++;
+                if (outcome.Table is not null)  table = outcome.Table;
+                if (outcome.Text.Length  > 0)   text  = outcome.Text;
+
+                // Первый неудавшийся шаг останавливает цепочку: следующий работал бы с данными,
+                // которых не пришло.
+                if (!outcome.Ok) { problem = outcome.Line; break; }
+
+                done++;
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Остановил человек. Взятый файл возвращается во «Входящие»: держать чужой захват
+            // до срока незачем, а разобран он не был.
+            Abandon(taken);
+            throw;
         }
 
+        // Тихий запуск — не неудача: делать было нечего, и жаловаться не на что.
         var ok = problem.Length == 0;
-        var result = new ScenarioOutcome(ok, problem, done, total, rows, clock.Elapsed, lines);
 
-        Journal(scenario, ok, ok ? result.Summary() : problem, rows, clock.Elapsed,
-                DbOf(scenario, registry), now);
+        // Ответ отправителю и уборка его файла — последним делом и по итогу ВСЕГО сценария:
+        // единица работы здесь не шаг, а сообщение целиком.
+        if (taken is { } file)
+        {
+            var answer = ok ? string.Join("; ", lines) : problem;
+            if (Close(file, ok, rows, answer, now) is { } trouble && problem.Length == 0)
+            {
+                problem = trouble;
+                ok      = false;
+            }
+        }
+
+        var result = new ScenarioOutcome(ok, problem, done, total, rows, clock.Elapsed, lines,
+                                         Started: true, Idle: idle);
+
+        // Тихий запуск в журнал не идет: пустая папка, проверяемая каждые пять минут, иначе
+        // оставила бы к утру три сотни строк «делать было нечего».
+        if (!idle)
+            Journal(scenario, ok, ok ? result.Summary() : problem, rows, clock.Elapsed,
+                    DbOf(scenario, registry), now, taken?.File.Name ?? "");
 
         return result;
     }
@@ -371,11 +458,18 @@ public static class ScenarioRunner
                                                            IReadOnlyList<DatabaseManager> databases,
                                                            IReadOnlyList<IExtension>      extensions,
                                                            StepTable?                     incoming,
+                                                           string                         text,
                                                            DateTimeOffset                 now,
                                                            CancellationToken              ct)
     {
         if (ActionOf(step, extensions, out var trouble) is not { } action)
             return StepOutcome.Bad(trouble);
+
+        if (action.Kind == ExtensionActionKind.Transformer)
+            return await TransformStepAsync(action, text, now, ct);
+
+        if (step.CollectionId <= 0)
+            return StepOutcome.Bad($"у действия «{action.Name}» не выбрана коллекция");
 
         if (databases.FirstOrDefault(d => d.DbId == step.DbId) is not { } target)
             return StepOutcome.Bad($"база данных для действия «{action.Name}» сейчас не открыта");
@@ -450,13 +544,71 @@ public static class ScenarioRunner
 
         // Одна строка — говорит само действие: «зарегистрировано АБВГ.301121.001» и есть тот
         // ответ, которого ждет отправитель. Много строк — счет: полсотни объяснений подряд в
-        // отчете читаются хуже, чем одно число, а место для построчной сводки — квитанция, и
-        // она появится вместе с приемом из папки.
+        // отчете читаются хуже, чем одно число, а место для построчной сводки — квитанция.
         var line = ran == 1 && said.Length > 0
             ? $"Действие «{action.Name}»: {said}"
             : $"Действие «{action.Name}»: выполнено {ran}, записей {rows}";
 
         return new StepOutcome(true, line, rows);
+    }
+
+    /// <summary>
+    /// Преобразователь формата: текст файла → строки таблицы. В базу он не пишет и подключения
+    /// не получает — иначе за разбор текста пришлось бы спрашивать права на запись.
+    ///
+    /// Строки читает ТОТ ЖЕ источник, что и ответ чужой программы (<see cref="JsonTextSource"/>):
+    /// один и тот же набор данных, пришедший файлом и по сети, обязан ложиться в коллекцию
+    /// одинаково — и дальше работает существующее сопоставление колонок без единой правки.
+    /// </summary>
+    private static async Task<StepOutcome> TransformStepAsync(IExtensionAction  action,
+                                                              string            text,
+                                                              DateTimeOffset    now,
+                                                              CancellationToken ct)
+    {
+        if (text.Length == 0)
+            return StepOutcome.Bad(NoInput(action));
+
+        ActionResult result;
+        try
+        {
+            result = await Task.Run(
+                () => action.Run(new ActionContext(null, 0, 0, now), new ActionInput(NoValues, text)), ct);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception error)
+        {
+            return StepOutcome.Bad($"«{action.Name}» сорвался: {error.Message}");
+        }
+
+        if (!result.Ok) return StepOutcome.Bad($"«{action.Name}»: {result.Explanation}");
+
+        var source = new JsonTextSource(result.Json);
+
+        ImportSchema schema;
+        try
+        {
+            schema = await Task.Run(() => source.Analyze(null, ct), ct);
+        }
+        catch (ImportException error)
+        {
+            return StepOutcome.Bad($"«{action.Name}» вернул строки, которые не разобрались: "
+                                 + error.Message);
+        }
+
+        if (schema.RowCount > StepTable.MaxRows)
+            return StepOutcome.Bad(
+                $"«{action.Name}»: строк {schema.RowCount}, а за один запуск их обрабатывается не "
+                + $"больше {StepTable.MaxRows}");
+
+        var rows = await Task.Run(() => source.ReadRows(ct).ToList(), ct);
+
+        // Записей этот шаг не заводит, поэтому в счет сценария не идет: посчитать разобранные
+        // строки здесь и заведенные записи на следующем шаге значило бы удвоить итог.
+        return new StepOutcome(true, $"Разбор «{action.Name}»: {result.Explanation}", 0,
+                               StepTable.Of(schema, rows));
     }
 
     /// <summary>
@@ -540,18 +692,13 @@ public static class ScenarioRunner
             return null;
         }
 
-        // Преобразователь формата разбирает то, что пришло текстом или файлом, — а шагу подать
-        // ему нечего: канал, который такой вход приносит, еще не заведен. Отказ здесь честнее
-        // молчаливого пропуска: настройка, которая ничего не делает, читается как поломка.
-        if (action.Kind == ExtensionActionKind.Transformer)
-        {
-            trouble = $"«{action.Name}» — преобразователь формата, и шагом сценария он пока не "
-                    + "ставится: ему нечего подать на вход";
-            return null;
-        }
-
         return action;
     }
+
+    /// <summary>Преобразователю нечего разбирать — текст в сценарий приносит папка обмена.</summary>
+    private static string NoInput(IExtensionAction action) =>
+        $"«{action.Name}» разбирает то, что пришло текстом, а текста нет: поставьте перед ним "
+        + "шаг «файл из папки»";
 
     /// <summary>
     /// Обязательное поле действия, для которого шаг не задал выражения; <c>null</c> — все
@@ -609,7 +756,7 @@ public static class ScenarioRunner
     /// В накопительный расход не идет: его уже заняли строки шагов.
     /// </summary>
     private static void Journal(Scenario scenario, bool ok, string explanation, int rows,
-                                TimeSpan elapsed, int dbId, DateTimeOffset now) =>
-        RunJournal.Add(RunEntry.New(RunChannel.Scenario, scenario.Name, "", ok, explanation,
+                                TimeSpan elapsed, int dbId, DateTimeOffset now, string file) =>
+        RunJournal.Add(RunEntry.New(RunChannel.Scenario, scenario.Name, file, ok, explanation,
                                     rows, 0, elapsed, dbId, now, counts: false));
 }

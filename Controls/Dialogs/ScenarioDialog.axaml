@@ -92,11 +92,14 @@
             </ScrollViewer>
         </Border>
 
-        <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,0,0,12">
-            <Button x:Name="AddRequestBtn" Content="Добавить запрос" Height="30" Padding="12,0" />
-            <Button x:Name="AddActionBtn"  Content="Добавить действие" Height="30" Padding="12,0" />
-            <Button x:Name="AddNoticeBtn"  Content="Добавить сообщение" Height="30" Padding="12,0" />
-        </StackPanel>
+        <!-- Кнопок четыре, и в одну строку они не помещаются: WrapPanel переносит сам, а
+             подпись «+» делает их кнопками добавления, а не отбора. -->
+        <WrapPanel Margin="0,0,0,4">
+            <Button x:Name="AddRequestBtn" Content="+ Запрос"        Height="30" Padding="12,0" Margin="0,0,8,8" />
+            <Button x:Name="AddActionBtn"  Content="+ Действие"      Height="30" Padding="12,0" Margin="0,0,8,8" />
+            <Button x:Name="AddIntakeBtn"  Content="+ Файл из папки" Height="30" Padding="12,0" Margin="0,0,8,8" />
+            <Button x:Name="AddNoticeBtn"  Content="+ Сообщение"     Height="30" Padding="12,0" Margin="0,0,8,8" />
+        </WrapPanel>
 
         <!-- ── Включен ──────────────────────────────────────────────────────── -->
 

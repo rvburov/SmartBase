@@ -1,7 +1,6 @@
 using Avalonia.Controls;
 using SmartBase.Core.Models;
 using SmartBase.Database;
-using SmartBase.Database.Repositories;
 using SmartBase.Extensions;
 using SmartBase.Extensions.DocRegistry;
 using SmartBase.Integrations;
@@ -105,7 +104,12 @@ public sealed class ScenarioActionTests : IDisposable
 
             if (Answer?.Invoke(Seen.Count) is { } answer) return answer;
 
-            context.Repo.AddRecord(new DbRecord
+            // Операции подключение дает оболочка, и оно заполнено всегда; пусто оно бывает
+            // только у преобразователя.
+            if (context.Repo is not { } repo)
+                return ActionResult.Failed("действию не дали подключения к базе данных");
+
+            repo.AddRecord(new DbRecord
             {
                 CollectionId = context.CollectionId,
                 Title        = input.Value("title"),
@@ -115,7 +119,7 @@ public sealed class ScenarioActionTests : IDisposable
         }
     }
 
-    /// <summary>Преобразователь формата — шагом сценария пока не ставится.</summary>
+    /// <summary>Преобразователь формата: без текста от предыдущего шага ему нечего разбирать.</summary>
     private sealed class Parser : IExtensionAction
     {
         public string              Key         => "parse";
@@ -360,17 +364,30 @@ public sealed class ScenarioActionTests : IDisposable
     }
 
     /// <summary>
-    /// Преобразователю формата шагом подать нечего: канал, который приносит такой вход, еще не
-    /// заведен. Отказ честнее молчаливого пропуска — настройка, которая ничего не делает,
-    /// читается как поломка.
+    /// Преобразователь разбирает то, что пришло текстом, а текст в сценарий приносит шаг «файл
+    /// из папки». Поставленный первым, он говорит об этом словами — и говорит еще в списке
+    /// сценариев, а не в отчете через сутки.
     /// </summary>
     [Fact]
-    public void A_transformer_is_not_a_step_yet()
+    public async Task A_transformer_without_text_is_refused_by_name()
+    {
+        var scenario = Of(ScenarioStep.OfAction(StandId, "parse", 0, 0));
+
+        Assert.Contains("шаг «файл из папки»", Blocker(scenario, new Stand(new Parser())),
+                        StringComparison.Ordinal);
+
+        Assert.False((await Run(scenario, new Stand(new Parser()))).Ok);
+    }
+
+    /// <summary>Операция без коллекции не выполнится, и сказано об этом заранее.</summary>
+    [Fact]
+    public void An_operation_without_a_collection_is_refused()
     {
         var journal  = Orders();
-        var scenario = Of(ScenarioStep.OfAction(StandId, "parse", DbId, journal));
+        var scenario = Of(ScenarioStep.OfAction(StandId, "write", DbId, 0, Values("Х")));
 
-        Assert.Contains("преобразователь формата", Blocker(scenario, new Stand(new Parser())),
+        Assert.Contains("не выбрана коллекция",
+                        Blocker(scenario, new Stand(new Writer { CollectionId = journal })),
                         StringComparison.Ordinal);
     }
 
@@ -496,7 +513,7 @@ public sealed class ScenarioActionTests : IDisposable
         using var server = new TinyServer(_ => TinyServer.Reply(200, Items(("Втулка", "Молоток"))));
 
         var orders    = Orders();
-        var journal   = RegistryJournal(_db.Constructor);
+        var journal   = RegistryStand.Create(_db.Constructor);
         var requestId = NewRequest(server, orders);
 
         var outcome = await Run(
@@ -519,27 +536,4 @@ public sealed class ScenarioActionTests : IDisposable
         Assert.Contains("АБВГ.301121.001", string.Join(" ", outcome.Lines), StringComparison.Ordinal);
     }
 
-    /// <summary>Коллекция-журнал регистрации: столбцы в порядке из <see cref="RegistrySchema"/>.</summary>
-    private static int RegistryJournal(ConstructorRepository repo)
-    {
-        var collectionId = SampleData.AddCollection(repo, "Журнал регистрации").Id!.Value;
-
-        repo.SetSystemFieldName(collectionId, RegistrySchema.TitleKey,
-                                RegistrySchema.TitleColumn, "Название");
-
-        var keys     = new List<string> { RegistrySchema.TitleKey };
-        var position = 1000;
-
-        foreach (var column in RegistrySchema.Columns.Skip(1))
-        {
-            var type  = column == RegistrySchema.DateColumn ? "date" : "text";
-            var field = SampleData.AddField(repo, collectionId, column, type, position);
-
-            keys.Add(field.Id!.Value.ToString());
-            position += 1000;
-        }
-
-        repo.SaveColumnOrder(collectionId, keys);
-        return collectionId;
-    }
 }

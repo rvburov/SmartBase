@@ -121,6 +121,7 @@ public partial class ScenarioDialog : Window
 
         AddRequestBtn.Click += (_, _) => AddStep(ScenarioStep.OfRequest(0));
         AddNoticeBtn.Click  += (_, _) => AddStep(ScenarioStep.OfNotice(""));
+        AddIntakeBtn.Click  += (_, _) => AddStep(ScenarioStep.OfIntake(""));
         AddActionBtn.Click  += async (_, _) => await AddActionAsync();
 
         // Ссылаться не на что — запросы заводят на соседней вкладке, и сказать об этом надо
@@ -141,6 +142,7 @@ public partial class ScenarioDialog : Window
         {
             ScenarioStepKind.Request => RequestRow(step),
             ScenarioStepKind.Action  => ActionRow(step),
+            ScenarioStepKind.Intake  => IntakeRow(step),
             _                        => NoticeRow(step),
         };
 
@@ -244,6 +246,25 @@ public partial class ScenarioDialog : Window
         };
 
         return new StepRow { Kind = ScenarioStepKind.Notify, Text = box };
+    }
+
+    /// <summary>
+    /// Строка шага «файл из папки»: путь к корню обмена. Выбор папки кнопкой тут не нужен —
+    /// путь на общем диске приходит от администратора строкой и вставляется целиком, а обход
+    /// сетевых дисков окном выбора на выключенном сервере отвечает минутным ожиданием.
+    /// </summary>
+    private static StepRow IntakeRow(ScenarioStep step)
+    {
+        var box = new TextBox
+        {
+            Text                     = step.Folder,
+            Height                   = 30,
+            Watermark                = @"P:\Обмен\КД",
+            VerticalContentAlignment = VerticalAlignment.Center,
+            CornerRadius             = new CornerRadius(6),
+        };
+
+        return new StepRow { Kind = ScenarioStepKind.Intake, Text = box };
     }
 
     /// <summary>
@@ -369,6 +390,7 @@ public partial class ScenarioDialog : Window
             {
                 ScenarioStepKind.Request => ScenarioStep.OfRequest(SelectedRequest(row)),
                 ScenarioStepKind.Action  => row.Action,
+                ScenarioStepKind.Intake  => ScenarioStep.OfIntake((row.Text!.Text ?? "").Trim()),
                 _                        => ScenarioStep.OfNotice((row.Text!.Text ?? "").Trim()),
             });
 

@@ -69,6 +69,24 @@ public sealed record InboxReceipt(
             result.Created, result.Updated, result.Skipped, result.Ambiguous, result.Empty,
             explanation, Stamp(at));
 
+    /// <summary>
+    /// Ответ СЦЕНАРИЯ на взятый из папки файл. Своей укладки у сценария нет: числа и слова
+    /// приносят его шаги, и главное из них — ответ действия («зарегистрировано АБВГ.301121.001»).
+    /// Ради этого ответа отправитель квитанцию и читает.
+    ///
+    /// Коллекция не называется. Шагов бывает несколько, и каждый пишет в свою: выбрать одну из
+    /// них для ответа значило бы соврать в поле, которое читает машина отправителя.
+    /// </summary>
+    /// <param name="file">Имя файла отправителя.</param>
+    /// <param name="id">Идентификатор сообщения; пусто — защиты от повтора нет.</param>
+    /// <param name="accepted">Сценарий дошел до конца.</param>
+    /// <param name="rows">Сколько записей завели его шаги.</param>
+    /// <param name="explanation">Что случилось — словами, для человека и для отправителя.</param>
+    /// <param name="at">Момент ответа.</param>
+    public static InboxReceipt OfScenario(string file, string id, bool accepted, int rows,
+                                          string explanation, DateTimeOffset at) =>
+        new(file, id, accepted, "", 1, rows, 0, 0, 0, 0, explanation, Stamp(at));
+
     /// <summary>Текст квитанции для записи в файл.</summary>
     public string ToJson() => JsonSerializer.Serialize(this, Format);
 

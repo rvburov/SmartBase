@@ -229,9 +229,9 @@ public sealed class ScenarioTests
     /// база — вопросы момента запуска: список расширений знает оболочка, а не модель.
     /// </summary>
     [Fact]
-    public void An_action_step_needs_an_extension_an_action_and_a_collection()
+    public void An_action_step_needs_an_extension_and_an_action()
     {
-        Assert.Equal(3, ScenarioStep.OfAction("", "", 0, 0).Problems().Count);
+        Assert.Equal(2, ScenarioStep.OfAction("", "", 0, 0).Problems().Count);
         Assert.Empty(ScenarioStep.OfAction("реестр", "register", 1, 5).Problems());
     }
 
@@ -255,6 +255,36 @@ public sealed class ScenarioTests
     {
         Assert.Empty(ScenarioStep.OfAction("реестр", "register", 1, 5).Fields);
         Assert.Empty(ScenarioStep.OfNotice("Готово").Fields);
+    }
+
+    /// <summary>
+    /// Коллекция у шага-действия НЕ спрашивается формой: нужна она или нет, зависит от вида
+    /// действия, а вид знает расширение. Преобразователю формата коллекция не нужна вовсе.
+    /// </summary>
+    [Fact]
+    public void The_form_does_not_ask_an_action_step_for_a_collection()
+    {
+        Assert.Empty(ScenarioStep.OfAction("реестр", "parse", 0, 0).Problems());
+    }
+
+    // ── Шаг «файл из папки» ───────────────────────────────────────────────────
+
+    /// <summary>
+    /// Папка — все, что нужно шагу от человека. Разрешена ли она политикой и существует ли —
+    /// вопросы момента запуска: сетевой диск бывает выключен, а сценарий должен сохраниться.
+    /// </summary>
+    [Fact]
+    public void An_intake_step_needs_a_folder()
+    {
+        Assert.Single(ScenarioStep.OfIntake("   ").Problems());
+        Assert.Empty(ScenarioStep.OfIntake(@"P:\Обмен\КД").Problems());
+    }
+
+    [Fact]
+    public void An_intake_step_says_where_it_looks()
+    {
+        Assert.Equal(@"Файл из папки: P:\Обмен\КД",
+                     ScenarioStep.OfIntake(@"P:\Обмен\КД").Describe());
     }
 
     /// <summary>«Ходит сам» — это и включен, и есть чем заводить.</summary>

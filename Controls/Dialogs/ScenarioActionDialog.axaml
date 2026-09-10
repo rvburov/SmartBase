@@ -39,7 +39,8 @@
 
         <!-- ── Куда писать ──────────────────────────────────────────────────── -->
 
-        <TextBlock Text="Куда писать"
+        <TextBlock x:Name="PlaceLabel"
+                   Text="Куда писать"
                    Margin="0,0,0,6"
                    FontWeight="{StaticResource FontWeightBold}"
                    Foreground="{StaticResource BrushSecondaryText}" />
@@ -54,12 +55,14 @@
 
         <!-- ── Значения полей ───────────────────────────────────────────────── -->
 
-        <TextBlock Text="Значения полей"
+        <TextBlock x:Name="FieldsLabel"
+                   Text="Значения полей"
                    Margin="0,0,0,6"
                    FontWeight="{StaticResource FontWeightBold}"
                    Foreground="{StaticResource BrushSecondaryText}" />
 
-        <TextBlock Text="Постоянный текст — как написано. Значение из строки предыдущего шага — {{Имя колонки}}. Колонка, которой в строке нет, останавливает шаг: пустое поле нашлось бы только через неделю."
+        <TextBlock x:Name="FieldsHint"
+                   Text="Постоянный текст — как написано. Значение из строки предыдущего шага — {{Имя колонки}}. Колонка, которой в строке нет, останавливает шаг: пустое поле нашлось бы только через неделю."
                    Margin="0,0,0,6"
                    TextWrapping="Wrap"
                    FontSize="{DynamicResource FontSizeSmall}"
@@ -67,7 +70,8 @@
 
         <!-- Полоса идет во всю высоту блока, а воздух висит на содержимом ВНУТРИ прокрутки
              (docs/developer/ui/scrolling.md) — иначе она отходит от рамки. -->
-        <Border BorderBrush="{StaticResource BrushSeparator}"
+        <Border x:Name="FieldsBox"
+                BorderBrush="{StaticResource BrushSeparator}"
                 BorderThickness="{DynamicResource BorderLine}"
                 CornerRadius="{StaticResource RadiusBase}"
                 ClipToBounds="True"

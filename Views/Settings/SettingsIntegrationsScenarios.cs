@@ -132,16 +132,14 @@ public partial class SettingsView
     }
 
     /// <summary>
-    /// Действия, которые можно поставить шагом. Преобразователи формата в список не попадают:
-    /// подать им на вход шагу пока нечего, и предлагать выбор, который кончится отказом, —
-    /// худший вид подсказки.
+    /// Действия, которые можно поставить шагом, — оба вида. Преобразователю нужен текст, и
+    /// приносит его шаг «файл из папки»; поставленный без него, он отказывает словами, а живая
+    /// строка «не сработает» говорит об этом еще в списке.
     /// </summary>
     private static List<ActionChoice> Actions() =>
     [
         .. ExtensionRegistry.All.SelectMany(
-            extension => extension.Actions
-                .Where(a => a.Kind == ExtensionActionKind.Operation)
-                .Select(a => new ActionChoice(extension.Id, extension.Name, a))),
+            extension => extension.Actions.Select(a => new ActionChoice(extension.Id, extension.Name, a))),
     ];
 
     /// <summary>

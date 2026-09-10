@@ -139,11 +139,18 @@ public static class InboxFolder
     // ── Что готово к разбору ──────────────────────────────────────────────────
 
     /// <summary>
-    /// Файлы, которые можно брать: расширение <c>.json</c>, пролежали нетронутыми
+    /// Файлы, которые можно брать: подходящее расширение, пролежали нетронутыми
     /// <see cref="Settle"/> и открываются монопольно. Порядок — по времени записи: обмен
     /// зависит от порядка, если отправитель шлет правки одной и той же записи подряд.
     /// </summary>
-    public static IReadOnlyList<InboxFile> Ready(InboxLayout layout, DateTimeOffset now)
+    /// <param name="layout">Разложенные папки обмена.</param>
+    /// <param name="now">Момент, от которого считается выдержка.</param>
+    /// <param name="extension">Какие файлы брать; пусто — ЛЮБЫЕ. Приемник берет только
+    /// <c>.json</c>: у него свой формат, и чужой файл он все равно отверг бы. Шагу сценария
+    /// формат задает расширение-преобразователь, и знать его заранее папке незачем — сообщение
+    /// приходит и текстом, и XML, и чем угодно еще.</param>
+    public static IReadOnlyList<InboxFile> Ready(InboxLayout layout, DateTimeOffset now,
+                                                 string extension = ".json")
     {
         if (!Directory.Exists(layout.Incoming)) return [];
 
@@ -154,7 +161,19 @@ public static class InboxFolder
             // Файл с меткой захвата и половинка вида «заказы.json.tmp» сюда не попадают: у них
             // другое расширение, и это ровно та защита, ради которой отправителя просят
             // переименовывать.
-            if (!Path.GetExtension(path).Equals(".json", StringComparison.OrdinalIgnoreCase)) continue;
+            if (extension.Length > 0)
+            {
+                if (!Path.GetExtension(path).Equals(extension, StringComparison.OrdinalIgnoreCase))
+                    continue;
+            }
+            else
+            {
+                // Берем любой — значит, отсеиваем то же самое, но руками: захват соседа и
+                // недописанную половинку. Иначе «заказы.json.занял-ПК17» прочитался бы как
+                // обычный файл с невиданным расширением.
+                if (path.Contains(ClaimMark, StringComparison.Ordinal))                     continue;
+                if (Path.GetExtension(path).Equals(".tmp", StringComparison.OrdinalIgnoreCase)) continue;
+            }
 
             DateTime written;
             try

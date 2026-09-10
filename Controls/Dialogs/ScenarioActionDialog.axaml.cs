@@ -84,9 +84,9 @@ public partial class ScenarioActionDialog : Window
             NoticeBanner.Show("Ни одно расширение не объявило действий, которые можно поставить "
                             + "шагом сценария.");
         else if (_places.Count == 0)
-            NoticeBanner.Show("Нет открытых баз данных: действию некуда писать.");
+            NoticeBanner.Show("Нет открытых баз данных: операции будет некуда писать.");
 
-        SaveBtn.IsEnabled = _actions.Count > 0 && _places.Count > 0;
+        SaveBtn.IsEnabled = _actions.Count > 0;
 
         CancelBtn.Click += (_, _) => Close(null);
         SaveBtn.Click   += (_, _) => Save();
@@ -124,7 +124,18 @@ public partial class ScenarioActionDialog : Window
 
         ActionHint.Text = choice.Action.Description;
 
-        if (choice.Action.Fields.Count == 0)
+        // Преобразователь формата в базу не пишет и полей не ждет: он разбирает то, что принес
+        // предыдущий шаг. Показывать ему «куда писать» значило бы спрашивать о том, чего он не
+        // делает, — и человек искал бы у себя ошибку, не найдя коллекции по смыслу.
+        var parses = choice.Action.Kind == ExtensionActionKind.Transformer;
+
+        PlaceLabel.IsVisible = !parses;
+        PlaceCombo.IsVisible = !parses;
+        FieldsLabel.IsVisible = !parses;
+        FieldsHint.IsVisible  = !parses;
+        FieldsBox.IsVisible   = !parses;
+
+        if (parses || choice.Action.Fields.Count == 0)
         {
             FieldsPanel.Children.Add(new TextBlock
             {
@@ -169,6 +180,23 @@ public partial class ScenarioActionDialog : Window
         if (Chosen is not { } choice)
         {
             NoticeBanner.Show("Не выбрано действие.");
+            return;
+        }
+
+        // Преобразователь ни в базу не пишет, ни полей не ждет: настройка у него кончается
+        // выбором самого действия.
+        if (choice.Action.Kind == ExtensionActionKind.Transformer)
+        {
+            Close(_step with
+            {
+                Kind         = ScenarioStepKind.Action,
+                Extension    = choice.ExtensionId,
+                Action       = choice.Action.Key,
+                DbId         = 0,
+                CollectionId = 0,
+                FieldValues  = new Dictionary<string, string>(StringComparer.Ordinal),
+            });
+
             return;
         }
 

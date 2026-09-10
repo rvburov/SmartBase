@@ -60,15 +60,19 @@ public sealed class RegisterAction : IExtensionAction
 
     public ActionResult Run(ActionContext context, ActionInput input)
     {
-        var collection = context.Repo.GetAllCollections()
-                                .FirstOrDefault(c => c.Id == context.CollectionId);
+        // Операции подключение дает оболочка, и оно заполнено всегда. Проверка здесь — не
+        // недоверие, а вежливость: отказ словами понятнее, чем падение в фоне.
+        if (context.Repo is not { } repo)
+            return ActionResult.Failed("действию не дали подключения к базе данных");
+
+        var collection = repo.GetAllCollections().FirstOrDefault(c => c.Id == context.CollectionId);
 
         if (collection is null)
             return ActionResult.Failed("коллекция журнала не найдена в этой базе данных");
 
         // Структура коллекции сверяется КАЖДЫЙ раз, а не при настройке шага: столбец могли
         // переименовать или переставить вчера, и тогда значения легли бы не туда.
-        var check = RegistrySchema.Check(context.Repo, context.CollectionId, collection.Name);
+        var check = RegistrySchema.Check(repo, context.CollectionId, collection.Name);
 
         if (!check.Ok || check.Shape is not { } shape)
             return ActionResult.Failed(
@@ -91,7 +95,7 @@ public sealed class RegisterAction : IExtensionAction
 
         try
         {
-            var done = DocRegistrar.Register(context.Repo, shape, registration,
+            var done = DocRegistrar.Register(repo, shape, registration,
                                              context.Now.LocalDateTime);
 
             return ActionResult.Done("зарегистрировано: " + done.Designation);

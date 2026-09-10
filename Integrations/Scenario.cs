@@ -171,6 +171,13 @@ public enum ScenarioStepKind
     /// Выполнить действие расширения над строками, которые принес предыдущий шаг.
     /// </summary>
     Action,
+
+    /// <summary>
+    /// Взять из папки обмена один файл и передать его текст дальше. Точка входа принадлежит
+    /// СЦЕНАРИЮ, а не расширению: одну папку можно разбирать разными сценариями, а одно
+    /// расширение повесить на несколько папок (docs/ROADMAP-API.md, раздел 9).
+    /// </summary>
+    Intake,
 }
 
 /// <summary>
@@ -188,7 +195,7 @@ public enum ScenarioStepKind
 /// <c>{{имя колонки}}</c> из строки, которую принес предыдущий шаг. Так одно и то же расширение
 /// вешается на разные каналы и разные журналы, ничего о них не зная.
 ///
-/// Видов пока три — по той же причине, что и у триггеров: остальные из плана (создать запись,
+/// Видов пока четыре — по той же причине, что и у триггеров: остальные из плана (создать запись,
 /// экспорт выборки) ждут своих исполнителей.
 /// </summary>
 /// <param name="Kind">Вид шага.</param>
@@ -201,6 +208,7 @@ public enum ScenarioStepKind
 /// <param name="FieldValues">Выражения для полей действия по их ключам; <c>null</c> — пусто.
 /// Словарь намеренно не участвует в сравнении записей (у него ссылочное равенство) — сравнивать
 /// шаги целиком в программе негде, а хранение идет через JSON.</param>
+/// <param name="Folder">Корень папки обмена (только <see cref="ScenarioStepKind.Intake"/>).</param>
 public sealed record ScenarioStep(
     ScenarioStepKind                     Kind,
     int                                  RequestId,
@@ -209,7 +217,8 @@ public sealed record ScenarioStep(
     string                               Action       = "",
     int                                  DbId         = 0,
     int                                  CollectionId = 0,
-    IReadOnlyDictionary<string, string>? FieldValues  = null)
+    IReadOnlyDictionary<string, string>? FieldValues  = null,
+    string                               Folder       = "")
 {
     /// <summary>Сколько знаков умещается в карточке сообщения, не превращая ее в простыню.</summary>
     public const int MaxTextLength = 200;
@@ -230,6 +239,9 @@ public sealed record ScenarioStep(
     public static ScenarioStep OfAction(string extension, string action, int dbId, int collectionId,
                                         IReadOnlyDictionary<string, string>? fields = null) =>
         new(ScenarioStepKind.Action, 0, "", extension, action, dbId, collectionId, fields);
+
+    public static ScenarioStep OfIntake(string folder) =>
+        new(ScenarioStepKind.Intake, 0, "", Folder: folder);
 
     /// <summary>Что не так с шагом; пустой список — годится.</summary>
     public IReadOnlyList<string> Problems()
@@ -252,10 +264,16 @@ public sealed record ScenarioStep(
             // Есть ли такое расширение и такое действие — вопрос момента запуска, как и
             // открытая база: список расширений знает оболочка, а не модель. Здесь проверяется
             // только то, что человек вообще сделал выбор.
+            //
+            // Коллекция тут НЕ спрашивается, хотя операция без нее не выполнится: нужна она или
+            // нет, зависит от вида действия, а вид знает расширение. Спросит тот, кто знает, —
+            // проверка выполнимости и живая строка «не сработает».
             if (string.IsNullOrWhiteSpace(Extension)) problems.Add("В шаге не выбрано расширение");
             if (string.IsNullOrWhiteSpace(Action))    problems.Add("В шаге не выбрано действие");
-            if (CollectionId <= 0)                    problems.Add("В шаге не выбрана коллекция");
         }
+
+        if (Kind == ScenarioStepKind.Intake && string.IsNullOrWhiteSpace(Folder))
+            problems.Add("В шаге не выбрана папка обмена");
 
         return problems;
     }
@@ -274,6 +292,9 @@ public sealed record ScenarioStep(
 
         ScenarioStepKind.Action => "Действие расширения: "
             + (name.Length > 0 ? name : Action),
+
+        ScenarioStepKind.Intake => "Файл из папки: "
+            + (Folder.Length > 0 ? Folder : "папка не выбрана"),
 
         _ => "Неизвестный шаг",
     };
