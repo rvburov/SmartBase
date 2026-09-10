@@ -9,7 +9,12 @@ namespace SmartBase.Tests.Integration;
 /// Проверяется то, ради чего он и заведен: числа, по которым считаются накопительные квоты, и
 /// правило «в квоты идет только то, что уходит наружу». Плюс живучесть — журнал не должен
 /// ронять обмен, о котором он всего лишь рассказывает.
+///
+/// Набор идет в общей очереди шлюза, хотя сети не касается: он трогает ОДИН НА ПРИЛОЖЕНИЕ
+/// журнал (<c>RunJournal.Attach</c>), а на него же смотрят сценарии и прием. Отними у них
+/// журнал посреди прогона — и строки, которые они только что записали, окажутся в чужом файле.
 /// </summary>
+[Collection(EgressCollection.Name)]
 public sealed class RunJournalTests : IDisposable
 {
     private readonly string _path = Path.Combine(Path.GetTempPath(), $"sbjournal_{Guid.NewGuid():N}.db");

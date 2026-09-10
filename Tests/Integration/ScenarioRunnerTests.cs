@@ -73,7 +73,9 @@ public sealed class ScenarioRunnerTests : IDisposable
         {
             Name           = "Учетная система",
             Address        = $"http://127.0.0.1:{server.Port}",
-            TimeoutSeconds = 10,
+            // Запас времени намеренно большой: на загруженной машине полный прогон отнимает
+            // потоки у тестового сервера, а проверяем мы не скорость петли.
+            TimeoutSeconds = 30,
             Retries        = 0,
         });
 

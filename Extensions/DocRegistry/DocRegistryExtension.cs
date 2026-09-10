@@ -340,6 +340,13 @@ public sealed class DocRegistryExtension : IExtension
         new(CollectionKey, "Коллекция журнала регистрации",    "Журнал регистрации"),
     ];
 
+    /// <summary>
+    /// Регистрация шагом сценария — та же самая, что в окне (см. <see cref="RegisterAction"/>).
+    /// Сообщение из папки обмена становится четвертым способом позвать одно и то же, рядом с
+    /// окном и загрузкой файла: логика регистрации не дублируется.
+    /// </summary>
+    public IReadOnlyList<IExtensionAction> Actions { get; } = [new RegisterAction()];
+
     public Window? CreateWindow() => new DocRegistryWindow();
 
     /// <summary>
