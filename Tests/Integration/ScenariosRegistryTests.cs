@@ -96,6 +96,49 @@ public sealed class ScenariosRegistryTests
         finally { Cleanup(dir, appDb, dataDb); }
     }
 
+    /// <summary>
+    /// Шаг-действие переживает переоткрытие целиком — вместе с выражениями полей. Они лежат в
+    /// той же строке JSON, что и остальные шаги, и потерять их означало бы получить сценарий,
+    /// который молча регистрирует документы с пустыми полями.
+    /// </summary>
+    [Fact]
+    public void An_action_step_survives_a_reopen_with_its_field_expressions()
+    {
+        var (dir, appDb, dataDb) = TempPaths();
+        try
+        {
+            int id;
+
+            var step = ScenarioStep.OfAction("doc-registry", "register", 3, 7,
+                                             new Dictionary<string, string>
+                                             {
+                                                 ["org"]  = "АБВГ",
+                                                 ["name"] = "{{Название}}",
+                                             });
+
+            using (var registry = DatabaseRegistry.Open(dataDb, appDb))
+                id = registry.Integrations.SaveScenario(Scenario.New() with
+                {
+                    Name  = "Заявки в журнал",
+                    Steps = [step],
+                }).Id;
+
+            using (var again = DatabaseRegistry.Open(dataDb, appDb))
+            {
+                var saved = again.Integrations.FindScenario(id)!.Steps.Single();
+
+                Assert.Equal(ScenarioStepKind.Action, saved.Kind);
+                Assert.Equal("doc-registry", saved.Extension);
+                Assert.Equal("register",     saved.Action);
+                Assert.Equal(3,              saved.DbId);
+                Assert.Equal(7,              saved.CollectionId);
+                Assert.Equal("АБВГ",         saved.Fields["org"]);
+                Assert.Equal("{{Название}}", saved.Fields["name"]);
+            }
+        }
+        finally { Cleanup(dir, appDb, dataDb); }
+    }
+
     [Fact]
     public void A_scenario_of_a_wrong_shape_is_refused()
     {

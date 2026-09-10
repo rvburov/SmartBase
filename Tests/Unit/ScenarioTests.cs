@@ -218,6 +218,43 @@ public sealed class ScenarioTests
     {
         Assert.Equal("Запрос в коллекцию: Заказы", ScenarioStep.OfRequest(7).Describe("Заказы"));
         Assert.Equal("Сообщение: Готово", ScenarioStep.OfNotice("Готово").Describe());
+        Assert.Equal("Действие расширения: Зарегистрировать",
+                     ScenarioStep.OfAction("реестр", "register", 1, 2).Describe("Зарегистрировать"));
+    }
+
+    // ── Шаг «действие расширения» ─────────────────────────────────────────────
+
+    /// <summary>
+    /// Проверяется только сделанный выбор. Есть ли такое расширение, такое действие и открыта ли
+    /// база — вопросы момента запуска: список расширений знает оболочка, а не модель.
+    /// </summary>
+    [Fact]
+    public void An_action_step_needs_an_extension_an_action_and_a_collection()
+    {
+        Assert.Equal(3, ScenarioStep.OfAction("", "", 0, 0).Problems().Count);
+        Assert.Empty(ScenarioStep.OfAction("реестр", "register", 1, 5).Problems());
+    }
+
+    /// <summary>Выражения полей переживают дорогу и достаются по ключу поля.</summary>
+    [Fact]
+    public void An_action_step_carries_the_field_expressions()
+    {
+        var step = ScenarioStep.OfAction("реестр", "register", 1, 5, new Dictionary<string, string>
+        {
+            ["org"]     = "АБВГ",
+            ["project"] = "{{Проект}}",
+        });
+
+        Assert.Equal("АБВГ",        step.Fields["org"]);
+        Assert.Equal("{{Проект}}",  step.Fields["project"]);
+    }
+
+    /// <summary>Шаг без выражений — не поломка: проверка на пустоту не должна расползаться.</summary>
+    [Fact]
+    public void A_step_without_expressions_has_an_empty_set()
+    {
+        Assert.Empty(ScenarioStep.OfAction("реестр", "register", 1, 5).Fields);
+        Assert.Empty(ScenarioStep.OfNotice("Готово").Fields);
     }
 
     /// <summary>«Ходит сам» — это и включен, и есть чем заводить.</summary>

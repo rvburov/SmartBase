@@ -90,6 +90,7 @@ public partial class MainWindow : Window
         // Сценарии по расписанию («Настройки → Интеграции»). Реестр сценариев лежит в app.db,
         // базы передаются вызываемым списком, сообщения шага идут карточками в углу окна.
         _scenarios   = new ScenarioService(workspace.Registry.Integrations, GrantedDbs,
+                                           SmartBase.Extensions.ExtensionRegistry.All,
                                            Controls.Widgets.AppNotifications.Info);
         // Резолвер чужих баз для межбазовых связей (тип «relation» с TargetDbId>0).
         RelationDbResolver.Configure(workspace);

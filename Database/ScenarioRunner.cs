@@ -1,15 +1,75 @@
 using System.Diagnostics;
 using SmartBase.Core.Importers;
 using SmartBase.Core.Importers.TableSources;
+using SmartBase.Extensions;
 using SmartBase.Integrations;
 
 namespace SmartBase.Database;
+
+/// <summary>
+/// Таблица, которую шаг передает следующему: имена колонок и строки, разобранные по ним.
+///
+/// Это и есть то, что течет между шагами. Понадобилось оно ровно с появлением шага «действие»:
+/// действию-операции нужна заполненная запись, а взять ее неоткуда, кроме как у предыдущего
+/// шага. Раньше этого не было — и заводить поток данных «на будущее» было бы гаданием.
+///
+/// Строка — словарь «колонка → значение», а не список по позиции: шаг ссылается на колонку по
+/// ИМЕНИ, и порядок в чужой выгрузке меняется без предупреждения.
+/// </summary>
+/// <param name="Columns">Имена колонок в порядке источника — для объяснений человеку.</param>
+/// <param name="Rows">Строки; поиск колонки без учета регистра.</param>
+public sealed record StepTable(IReadOnlyList<string>                             Columns,
+                               IReadOnlyList<IReadOnlyDictionary<string, string>> Rows)
+{
+    /// <summary>
+    /// Сколько строк один шаг передает дальше.
+    ///
+    /// Ограничение не про память — строки маленькие. Оно про то, что действие расширения над
+    /// каждой строкой ЗАВОДИТ ЗАПИСЬ: ошибка в настройке обмена, приносящем десять тысяч строк,
+    /// иначе означала бы десять тысяч документов в журнале регистрации, и разгребать их пришлось
+    /// бы руками. Пятисот хватает любому разумному обмену, а неразумный лучше остановить до
+    /// первой записи, чем после последней.
+    /// </summary>
+    public const int MaxRows = 500;
+
+    /// <summary>Таблица из разобранного источника: колонка «Название» плюс свойства схемы.</summary>
+    public static StepTable Of(ImportSchema schema, IReadOnlyList<ImportRow> rows)
+    {
+        var title   = string.IsNullOrWhiteSpace(schema.TitleHeader) ? "Название" : schema.TitleHeader;
+        var columns = new List<string> { title };
+        columns.AddRange(schema.FieldNames);
+
+        var table = new List<IReadOnlyDictionary<string, string>>(rows.Count);
+
+        foreach (var row in rows)
+        {
+            var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                [title] = row.Title,
+            };
+
+            for (var i = 0; i < schema.FieldNames.Count && i < row.FieldValues.Count; i++)
+                values[schema.FieldNames[i]] = row.FieldValues[i];
+
+            table.Add(values);
+        }
+
+        return new StepTable(columns, table);
+    }
+
+    /// <summary>Одна пустая строка — вход для шага, которому предыдущий ничего не передал.</summary>
+    public static StepTable Empty { get; } =
+        new([], [new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)]);
+}
 
 /// <summary>Итог одного шага: удался ли и что о нем сказать человеку.</summary>
 /// <param name="Ok">Шаг сделал свое дело.</param>
 /// <param name="Line">Строка для отчета и журнала; при неудаче — причина.</param>
 /// <param name="Rows">Сколько записей прошло через шаг.</param>
-public sealed record StepOutcome(bool Ok, string Line, int Rows = 0)
+/// <param name="Table">Что шаг передает следующему; <c>null</c> — ничего, и дальше идет то, что
+/// было. Шаг, который таблицы не делает (сообщение), поток не обрывает: между запросом и
+/// действием можно поставить уведомление, не потеряв строки.</param>
+public sealed record StepOutcome(bool Ok, string Line, int Rows = 0, StepTable? Table = null)
 {
     public static StepOutcome Bad(string reason) => new(false, reason);
 }
@@ -53,16 +113,17 @@ public sealed record ScenarioOutcome(
 ///
 /// Отдельно от службы-таймера, как <c>InboxReceiver</c> отдельно от <c>InboxService</c>: здесь
 /// «что делать», там «когда». Ради этого же разделения сюда приходят параметрами и открытые
-/// базы, и момент, и способ показать сообщение — на часы, окна и глобальные списки этот класс
-/// не смотрит и проверяется тестами целиком.
+/// базы, и список расширений, и момент, и способ показать сообщение — на часы, окна и
+/// глобальные списки этот класс не смотрит и проверяется тестами целиком.
 ///
 /// <b>Первый неудавшийся шаг останавливает сценарий.</b> Правило, а не настройка: шаги идут
 /// цепочкой, и следующий работал бы с данными, которых не пришло. Отказ виден в журнале и в
 /// отчете, а сообщать о нем — дело того, кто сценарий завел.
 ///
 /// <b>Вызывать нужно с UI-потока.</b> Реестр (<see cref="IntegrationsRegistry"/>) живет на общем
-/// контексте app.db, который принадлежит интерфейсу; тяжелое — разбор ответа и запись в
-/// коллекцию — уходит в <c>Task.Run</c> на отдельном подключении, как и в ручном обмене.
+/// контексте app.db, который принадлежит интерфейсу; тяжелое — разбор ответа, запись в
+/// коллекцию, работа расширения — уходит в <c>Task.Run</c> на отдельном подключении, как и в
+/// ручном обмене.
 /// </summary>
 public static class ScenarioRunner
 {
@@ -76,12 +137,25 @@ public static class ScenarioRunner
     /// </summary>
     public static string? Blocker(Scenario                       scenario,
                                   IntegrationsRegistry           registry,
-                                  IReadOnlyList<DatabaseManager> databases)
+                                  IReadOnlyList<DatabaseManager> databases,
+                                  IReadOnlyList<IExtension>      extensions)
     {
         if (scenario.Steps.Count == 0) return "в сценарии нет шагов";
 
         foreach (var step in scenario.Steps)
         {
+            if (step.Kind == ScenarioStepKind.Action)
+            {
+                if (ActionOf(step, extensions, out var trouble) is not { } action) return trouble;
+
+                if (databases.All(d => d.DbId != step.DbId))
+                    return $"база данных для действия «{action.Name}» сейчас не открыта";
+
+                if (Unfilled(step, action) is { } unfilled) return unfilled;
+
+                continue;
+            }
+
             if (step.Kind != ScenarioStepKind.Request) continue;
 
             if (registry.FindRequest(step.RequestId) is not { } request)
@@ -102,7 +176,7 @@ public static class ScenarioRunner
 
     /// <summary>
     /// Выполнить сценарий. <paramref name="notice"/> — как показать сообщение человеку;
-    /// <paramref name="now"/> — момент для журнала.
+    /// <paramref name="now"/> — момент для журнала и для действий.
     ///
     /// Отмену бросает наружу: остановил человек — итога у такого запуска нет, и притворяться,
     /// что сценарий чем-то кончился, незачем.
@@ -110,6 +184,7 @@ public static class ScenarioRunner
     public static async Task<ScenarioOutcome> RunAsync(Scenario                       scenario,
                                                        IntegrationsRegistry           registry,
                                                        IReadOnlyList<DatabaseManager> databases,
+                                                       IReadOnlyList<IExtension>      extensions,
                                                        DateTimeOffset                 now,
                                                        Action<string>                 notice,
                                                        CancellationToken              ct = default)
@@ -117,27 +192,39 @@ public static class ScenarioRunner
         var clock = Stopwatch.StartNew();
         var total = scenario.Steps.Count;
 
-        if (Blocker(scenario, registry, databases) is { } blocker)
+        if (Blocker(scenario, registry, databases, extensions) is { } blocker)
         {
             Journal(scenario, ok: false, blocker, rows: 0, clock.Elapsed, DbOf(scenario, registry), now);
             return ScenarioOutcome.Blocked(blocker, total);
         }
+
+        // Строки запроса поднимаются в память ТОЛЬКО когда есть кому их принять: обычный обмен
+        // укладывает ответ потоком, и превращать его в список ради шага, которого в сценарии
+        // нет, значило бы платить памятью за неиспользуемую возможность.
+        var carry = scenario.Steps.Any(s => s.Kind == ScenarioStepKind.Action);
 
         var lines   = new List<string>();
         var rows    = 0;
         var done    = 0;
         var problem = "";
 
+        StepTable? table = null;
+
         foreach (var step in scenario.Steps)
         {
             ct.ThrowIfCancellationRequested();
 
-            var outcome = step.Kind == ScenarioStepKind.Request
-                ? await RequestStepAsync(step, registry, databases, ct)
-                : NoticeStep(step, notice);
+            var outcome = step.Kind switch
+            {
+                ScenarioStepKind.Request => await RequestStepAsync(step, registry, databases, carry, ct),
+                ScenarioStepKind.Action  => await ActionStepAsync(step, databases, extensions, table, now, ct),
+                _                        => NoticeStep(step, notice),
+            };
 
             lines.Add(outcome.Line);
             rows += outcome.Rows;
+
+            if (outcome.Table is not null) table = outcome.Table;
 
             // Первый неудавшийся шаг останавливает цепочку: следующий работал бы с данными,
             // которых не пришло.
@@ -155,7 +242,7 @@ public static class ScenarioRunner
         return result;
     }
 
-    // ── Шаги ──────────────────────────────────────────────────────────────────
+    // ── Шаг «запрос» ──────────────────────────────────────────────────────────
 
     /// <summary>
     /// Запрос в коллекцию — то же самое, что делает кнопка «В коллекцию», только без окон.
@@ -164,9 +251,11 @@ public static class ScenarioRunner
     /// проверил глазами. Автомат не выдумывает соответствие колонок — ошибку в угаданном имени
     /// поля видно только по пустой коллекции через неделю.
     /// </summary>
+    /// <param name="carry">Дальше по сценарию есть шаг, которому нужны эти строки.</param>
     private static async Task<StepOutcome> RequestStepAsync(ScenarioStep                   step,
                                                             IntegrationsRegistry           registry,
                                                             IReadOnlyList<DatabaseManager> databases,
+                                                            bool                           carry,
                                                             CancellationToken              ct)
     {
         // Повторная проверка после Blocker: между ними человек мог удалить карточку, а
@@ -215,11 +304,25 @@ public static class ScenarioRunner
             return StepOutcome.Bad($"ответ запроса «{request.Name}» не разобрался: {error.Message}");
         }
 
+        // Отказ ДО первой записи, а не после последней: следующий шаг — действие расширения,
+        // которое заводит запись на каждую строку, и разгребать лишнее пришлось бы руками.
+        if (carry && schema.RowCount > StepTable.MaxRows)
+            return StepOutcome.Bad(
+                $"ответ запроса «{request.Name}»: строк {schema.RowCount}, а следующий шаг "
+                + $"выполняет действие над каждой — за один запуск их бывает не больше "
+                + $"{StepTable.MaxRows}. Сузьте выборку запроса или уберите шаг действия");
+
+        // Строки в список — только ради следующего шага; иначе укладка идет потоком, как и
+        // в ручном обмене, и память не зависит от размера ответа.
+        IReadOnlyList<ImportRow>? carried = null;
+        if (carry) carried = await Task.Run(() => source.ReadRows(ct).ToList(), ct);
+
         BindingResult result;
         try
         {
             result = await Task.Run(
-                () => target.Constructor.ApplyRowsIsolated(binding, schema, source.ReadRows(ct), ct), ct);
+                () => target.Constructor.ApplyRowsIsolated(
+                    binding, schema, carried ?? source.ReadRows(ct), ct), ct);
         }
         catch (OperationCanceledException)
         {
@@ -241,8 +344,169 @@ public static class ScenarioRunner
             line += ". Ответ пришел не целиком — отметка о последнем запуске не сдвинута, "
                   + "остаток придет следующим запуском";
 
-        return new StepOutcome(true, line, result.Created + result.Updated);
+        return new StepOutcome(true, line, result.Created + result.Updated,
+                               carried is null ? null : StepTable.Of(schema, carried));
     }
+
+    // ── Шаг «действие расширения» ─────────────────────────────────────────────
+
+    /// <summary>
+    /// Действие расширения над строками предыдущего шага (docs/ROADMAP-API.md, раздел 9).
+    ///
+    /// Оболочка делает здесь ровно три вещи и ни одной сверх того: подставляет значения полей,
+    /// открывает отдельное подключение и обходит строки. Что означает «зарегистрировать
+    /// документ», знает только расширение, и знать это оболочке незачем — иначе правило,
+    /// поправленное в расширении, разошлось бы со вторым его прочтением здесь.
+    ///
+    /// <b>Все подстановки считаются ДО первой записи.</b> Опечатка в имени колонки, найденная на
+    /// сотой строке, оставила бы девяносто девять готовых записей и никакого способа понять,
+    /// какие из них лишние.
+    ///
+    /// <b>Первая отказавшая строка останавливает шаг.</b> Продолжить значило бы решить за
+    /// человека, что отказ несущественный. Уже сделанное при этом остается сделанным: операция
+    /// расширения — не транзакция обмена, и откатывать чужую работу оболочка не берется. Сколько
+    /// прошло и на чем встали, говорит строка отчета.
+    /// </summary>
+    private static async Task<StepOutcome> ActionStepAsync(ScenarioStep                   step,
+                                                           IReadOnlyList<DatabaseManager> databases,
+                                                           IReadOnlyList<IExtension>      extensions,
+                                                           StepTable?                     incoming,
+                                                           DateTimeOffset                 now,
+                                                           CancellationToken              ct)
+    {
+        if (ActionOf(step, extensions, out var trouble) is not { } action)
+            return StepOutcome.Bad(trouble);
+
+        if (databases.FirstOrDefault(d => d.DbId == step.DbId) is not { } target)
+            return StepOutcome.Bad($"база данных для действия «{action.Name}» сейчас не открыта");
+
+        var table = incoming ?? StepTable.Empty;
+
+        if (table.Rows.Count > StepTable.MaxRows)
+            return StepOutcome.Bad(
+                $"действие «{action.Name}»: строк {table.Rows.Count}, а за один запуск их "
+                + $"выполняется не больше {StepTable.MaxRows}");
+
+        var inputs = new List<ActionInput>(table.Rows.Count);
+
+        foreach (var row in table.Rows)
+        {
+            if (Input(step, action, row, table, out var problem) is not { } input)
+                return StepOutcome.Bad($"действие «{action.Name}»: {problem}");
+
+            inputs.Add(input);
+        }
+
+        var ran     = 0;
+        var rows    = 0;
+        var failure = "";
+        var said    = "";   // что сказало действие в последний раз
+
+        try
+        {
+            await Task.Run(() => target.Constructor.UseIsolated(step.CollectionId, repo =>
+            {
+                var context = new ActionContext(repo, step.DbId, step.CollectionId, now);
+
+                foreach (var input in inputs)
+                {
+                    ct.ThrowIfCancellationRequested();
+
+                    var result = action.Run(context, input);
+
+                    if (!result.Ok)
+                    {
+                        failure = inputs.Count > 1
+                            ? $"строка {ran + 1} из {inputs.Count}: {result.Explanation}"
+                            : result.Explanation;
+
+                        return false;
+                    }
+
+                    ran++;
+                    rows += result.Rows;
+                    said  = result.Explanation;
+                }
+
+                return true;
+            }), ct);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception error)
+        {
+            // Расширение обязано возвращать отказ результатом, но обязанность — не гарантия:
+            // упавшее расширение не должно уносить с собой службу сценариев.
+            return StepOutcome.Bad($"действие «{action.Name}» сорвалось: {error.Message}");
+        }
+
+        if (failure.Length > 0)
+        {
+            var made = ran > 0 ? $" (до этого выполнено {ran})" : "";
+            return StepOutcome.Bad($"действие «{action.Name}»: {failure}{made}");
+        }
+
+        // Одна строка — говорит само действие: «зарегистрировано АБВГ.301121.001» и есть тот
+        // ответ, которого ждет отправитель. Много строк — счет: полсотни объяснений подряд в
+        // отчете читаются хуже, чем одно число, а место для построчной сводки — квитанция, и
+        // она появится вместе с приемом из папки.
+        var line = ran == 1 && said.Length > 0
+            ? $"Действие «{action.Name}»: {said}"
+            : $"Действие «{action.Name}»: выполнено {ran}, записей {rows}";
+
+        return new StepOutcome(true, line, rows);
+    }
+
+    /// <summary>
+    /// Собрать вход действия для одной строки: подставить колонки и убедиться, что обязательные
+    /// поля заполнены. <c>null</c> — не собрался, причина в <paramref name="problem"/>.
+    /// </summary>
+    private static ActionInput? Input(ScenarioStep                        step,
+                                      IExtensionAction                    action,
+                                      IReadOnlyDictionary<string, string> row,
+                                      StepTable                           table,
+                                      out string                          problem)
+    {
+        problem = "";
+
+        var values = new Dictionary<string, string>(StringComparer.Ordinal);
+
+        foreach (var (key, expression) in step.Fields)
+        {
+            var value = ScenarioValues.Apply(expression, row, out var unknown);
+
+            if (unknown.Count > 0)
+            {
+                var known = table.Columns.Count > 0
+                    ? "; в строке есть: " + string.Join(", ", table.Columns)
+                    : "; предыдущий шаг строк не передал";
+
+                problem = $"в поле «{Label(action, key)}» названы колонки, которых нет: "
+                        + string.Join(", ", unknown) + known;
+
+                return null;
+            }
+
+            values[key] = value;
+        }
+
+        foreach (var field in action.Fields)
+        {
+            if (!field.Required) continue;
+
+            if (!values.TryGetValue(field.Key, out var value) || value.Trim().Length == 0)
+            {
+                problem = $"поле «{field.Label}» не заполнено, а без него действие не выполняется";
+                return null;
+            }
+        }
+
+        return new ActionInput(values);
+    }
+
+    // ── Шаг «сообщение» ───────────────────────────────────────────────────────
 
     /// <summary>Сообщение человеку. Единственный шаг, который ничего не меняет.</summary>
     private static StepOutcome NoticeStep(ScenarioStep step, Action<string> notice)
@@ -254,6 +518,65 @@ public static class ScenarioRunner
     // ── Мелочи ────────────────────────────────────────────────────────────────
 
     /// <summary>
+    /// Найти действие шага; <c>null</c> — не нашлось, и причина в <paramref name="trouble"/>.
+    /// Ответ нужен в двух местах — <see cref="Blocker"/> и самому шагу, — и текст обязан быть
+    /// одинаковым: человек видит его сначала в списке сценариев, потом в отчете о запуске.
+    /// </summary>
+    private static IExtensionAction? ActionOf(ScenarioStep              step,
+                                              IReadOnlyList<IExtension> extensions,
+                                              out string                trouble)
+    {
+        trouble = "";
+
+        if (extensions.FirstOrDefault(e => e.Id == step.Extension) is not { } extension)
+        {
+            trouble = $"расширение шага не найдено ({step.Extension})";
+            return null;
+        }
+
+        if (extension.Actions.FirstOrDefault(a => a.Key == step.Action) is not { } action)
+        {
+            trouble = $"у расширения «{extension.Name}» нет действия «{step.Action}»";
+            return null;
+        }
+
+        // Преобразователь формата разбирает то, что пришло текстом или файлом, — а шагу подать
+        // ему нечего: канал, который такой вход приносит, еще не заведен. Отказ здесь честнее
+        // молчаливого пропуска: настройка, которая ничего не делает, читается как поломка.
+        if (action.Kind == ExtensionActionKind.Transformer)
+        {
+            trouble = $"«{action.Name}» — преобразователь формата, и шагом сценария он пока не "
+                    + "ставится: ему нечего подать на вход";
+            return null;
+        }
+
+        return action;
+    }
+
+    /// <summary>
+    /// Обязательное поле действия, для которого шаг не задал выражения; <c>null</c> — все
+    /// заполнено. Проверка ранняя: пустое обязательное поле не зависит от того, что придет в
+    /// строке, и знать о нем надо из списка сценариев, а не из отчета через сутки.
+    /// </summary>
+    private static string? Unfilled(ScenarioStep step, IExtensionAction action)
+    {
+        foreach (var field in action.Fields)
+        {
+            if (!field.Required) continue;
+
+            if (!step.Fields.TryGetValue(field.Key, out var expression)
+                || string.IsNullOrWhiteSpace(expression))
+                return $"у действия «{action.Name}» не заполнено поле «{field.Label}»";
+        }
+
+        return null;
+    }
+
+    /// <summary>Подпись поля действия; ключ — на случай поля, которого у действия уже нет.</summary>
+    private static string Label(IExtensionAction action, string key) =>
+        action.Fields.FirstOrDefault(f => f.Key == key)?.Label ?? key;
+
+    /// <summary>
     /// Почему сценарий не тронет запрос без привязки. Текст один на все места: и служба, и
     /// экран объясняют это одинаково, а объяснение здесь — половина дела.
     /// </summary>
@@ -263,15 +586,17 @@ public static class ScenarioRunner
         + "разложенное, но не придумывает его сам";
 
     /// <summary>
-    /// Какую базу задел сценарий — по первому шагу с привязкой. Нужно колонке журнала: разбор
-    /// «что пришло в эту базу» иначе не сведется.
+    /// Какую базу задел сценарий — по первому шагу, который вообще называет базу. Нужно колонке
+    /// журнала: разбор «что пришло в эту базу» иначе не сведется.
     /// </summary>
     private static int DbOf(Scenario scenario, IntegrationsRegistry registry)
     {
         foreach (var step in scenario.Steps)
         {
-            if (step.Kind != ScenarioStepKind.Request) continue;
-            if (registry.Binding(step.RequestId) is { } binding) return binding.DbId;
+            if (step.Kind == ScenarioStepKind.Action && step.DbId > 0) return step.DbId;
+
+            if (step.Kind == ScenarioStepKind.Request
+                && registry.Binding(step.RequestId) is { } binding) return binding.DbId;
         }
 
         return 0;

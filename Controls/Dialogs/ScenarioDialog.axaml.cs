@@ -24,6 +24,11 @@ namespace SmartBase.Controls.Dialogs;
 ///   <item><b>Шаг «запрос» выбирает только КАРТОЧКУ запроса.</b> Раскладку колонок он берет у
 ///   нее же — ту, которую человек однажды настроил кнопкой «В коллекцию» и проверил глазами.
 ///   Окно говорит об этом прямо: запрос без привязки помечен, и сценарий его не выполнит.</item>
+///   <item><b>Шаг «действие» правится своим окном.</b> У действия есть и коллекция, и список
+///   полей, которого окно не знает наперед, — в строку списка это не помещается, а класть
+///   вглубь то, что помещается (запрос, сообщение), значило бы прятать частое ради редкого.
+///   Строка показывает настроенное словами и открывает <see cref="ScenarioActionDialog"/>
+///   нажатием.</item>
 /// </list>
 ///
 /// Возвращает <see cref="Scenario"/> или null при отмене.
@@ -46,23 +51,47 @@ public partial class ScenarioDialog : Window
     ];
 
     /// <summary>Строка списка шагов: сам шаг и то, чем его правят.</summary>
-    private sealed record StepRow(ScenarioStepKind Kind, ComboBox? Requests, TextBox? Text);
+    private sealed class StepRow
+    {
+        public required ScenarioStepKind Kind { get; init; }
+
+        public ComboBox? Requests { get; init; }
+        public TextBox?  Text     { get; init; }
+        public Button?   Card     { get; init; }
+
+        /// <summary>Настроенный шаг-действие; у остальных видов не используется.</summary>
+        public ScenarioStep Action { get; set; } = ScenarioStep.OfAction("", "", 0, 0);
+
+        /// <summary>Чем правят шаг — один контрол на строку.</summary>
+        public Control Editor => (Control?)Requests ?? Text ?? (Control)Card!;
+    }
 
     private readonly Scenario _card;
 
     // Запросы, на которые можно сослаться: ключ, имя и есть ли у него привязка к коллекции.
     private readonly IReadOnlyList<(int Id, string Name, bool Bound)> _requests;
 
+    // Действия расширений и коллекции открытых баз — все, что нужно шагу «действие».
+    private readonly IReadOnlyList<ActionChoice>     _actions;
+    private readonly IReadOnlyList<CollectionChoice> _places;
+
     private readonly List<StepRow> _steps = [];
 
     /// <param name="card">Что правим; <see cref="Scenario.New"/> — новый сценарий.</param>
     /// <param name="requests">Карточки запросов с пометкой «привязка настроена».</param>
-    public ScenarioDialog(Scenario card, IReadOnlyList<(int Id, string Name, bool Bound)> requests)
+    /// <param name="actions">Действия расширений, которые можно поставить шагом.</param>
+    /// <param name="places">Коллекции открытых баз — куда действие может писать.</param>
+    public ScenarioDialog(Scenario                                        card,
+                          IReadOnlyList<(int Id, string Name, bool Bound)> requests,
+                          IReadOnlyList<ActionChoice>                     actions,
+                          IReadOnlyList<CollectionChoice>                 places)
     {
         InitializeComponent();
 
         _card     = card;
         _requests = requests;
+        _actions  = actions;
+        _places   = places;
 
         Title        = card.Id > 0 ? "Сценарий" : "Новый сценарий";
         NameBox.Text = card.Name;
@@ -92,10 +121,12 @@ public partial class ScenarioDialog : Window
 
         AddRequestBtn.Click += (_, _) => AddStep(ScenarioStep.OfRequest(0));
         AddNoticeBtn.Click  += (_, _) => AddStep(ScenarioStep.OfNotice(""));
+        AddActionBtn.Click  += async (_, _) => await AddActionAsync();
 
         // Ссылаться не на что — запросы заводят на соседней вкладке, и сказать об этом надо
         // раньше, чем человек нажмет и получит пустой список.
         AddRequestBtn.IsEnabled = _requests.Count > 0;
+        AddActionBtn.IsEnabled  = _actions.Count > 0 && _places.Count > 0;
 
         CancelBtn.Click += (_, _) => Close(null);
         SaveBtn.Click   += (_, _) => Save();
@@ -106,10 +137,28 @@ public partial class ScenarioDialog : Window
 
     private void AddStep(ScenarioStep step)
     {
-        var row = step.Kind == ScenarioStepKind.Request ? RequestRow(step) : NoticeRow(step);
+        var row = step.Kind switch
+        {
+            ScenarioStepKind.Request => RequestRow(step),
+            ScenarioStepKind.Action  => ActionRow(step),
+            _                        => NoticeRow(step),
+        };
 
         _steps.Add(row);
         Rebuild();
+    }
+
+    /// <summary>
+    /// Завести шаг-действие. Окно настройки открывается СРАЗУ, а пустая строка в списке не
+    /// появляется вовсе: шаг без действия и коллекции все равно не сохранится, а строка
+    /// «настройте меня» — работа, переложенная на человека.
+    /// </summary>
+    private async Task AddActionAsync()
+    {
+        var made = await new ScenarioActionDialog(ScenarioStep.OfAction("", "", 0, 0),
+                                                  _actions, _places).ShowDialog<ScenarioStep?>(this);
+
+        if (made is not null) AddStep(made);
     }
 
     private StepRow RequestRow(ScenarioStep step)
@@ -125,7 +174,54 @@ public partial class ScenarioDialog : Window
         var index = _requests.ToList().FindIndex(r => r.Id == step.RequestId);
         combo.SelectedIndex = index >= 0 ? index : (_requests.Count > 0 ? 0 : -1);
 
-        return new StepRow(ScenarioStepKind.Request, combo, null);
+        return new StepRow { Kind = ScenarioStepKind.Request, Requests = combo };
+    }
+
+    /// <summary>Строка шага-действия: настроенное словами, нажатие открывает окно настройки.</summary>
+    private StepRow ActionRow(ScenarioStep step)
+    {
+        var card = new Button
+        {
+            Height                     = 30,
+            Padding                    = new Thickness(10, 0),
+            HorizontalAlignment        = HorizontalAlignment.Stretch,
+            HorizontalContentAlignment = HorizontalAlignment.Left,
+            VerticalContentAlignment   = VerticalAlignment.Center,
+        };
+
+        var row = new StepRow { Kind = ScenarioStepKind.Action, Card = card, Action = step };
+
+        card.Content = CardText(step);
+        card.Click  += async (_, _) => await EditActionAsync(row);
+
+        return row;
+    }
+
+    private async Task EditActionAsync(StepRow row)
+    {
+        var made = await new ScenarioActionDialog(row.Action, _actions, _places)
+                             .ShowDialog<ScenarioStep?>(this);
+
+        if (made is null) return;
+
+        row.Action        = made;
+        row.Card!.Content = CardText(made);
+    }
+
+    /// <summary>Что настроено в шаге-действии — одной строкой на кнопке.</summary>
+    private string CardText(ScenarioStep step)
+    {
+        if (step.Extension.Length == 0) return "Действие не выбрано";
+
+        var action = _actions.FirstOrDefault(a => a.ExtensionId == step.Extension
+                                               && a.Action.Key  == step.Action);
+
+        var place = _places.FirstOrDefault(p => p.DbId         == step.DbId
+                                             && p.CollectionId == step.CollectionId);
+
+        var text = step.Describe(action?.Action.Name ?? "");
+
+        return place is null ? text : text + " → " + place.Name;
     }
 
     /// <summary>
@@ -147,7 +243,7 @@ public partial class ScenarioDialog : Window
             CornerRadius             = new CornerRadius(6),
         };
 
-        return new StepRow(ScenarioStepKind.Notify, null, box);
+        return new StepRow { Kind = ScenarioStepKind.Notify, Text = box };
     }
 
     /// <summary>
@@ -160,8 +256,8 @@ public partial class ScenarioDialog : Window
         // Но у контрола может быть только один родитель, и, пока прежняя строка его держит,
         // положить его в новую нельзя: Avalonia отвечает на это исключением.
         foreach (var row in _steps)
-            if (((Control?)row.Requests ?? row.Text!).Parent is Panel old)
-                old.Children.Remove((Control?)row.Requests ?? row.Text!);
+            if (row.Editor.Parent is Panel old)
+                old.Children.Remove(row.Editor);
 
         StepsPanel.Children.Clear();
 
@@ -194,7 +290,7 @@ public partial class ScenarioDialog : Window
                 VerticalAlignment = VerticalAlignment.Center,
             });
 
-            Put(grid, 2, (Control?)row.Requests ?? row.Text!);
+            Put(grid, 2, row.Editor);
 
             Put(grid, 4, Tiny("↑", () => Move(index, -1), enabled: i > 0));
             Put(grid, 6, Tiny("↓", () => Move(index,  1), enabled: i < _steps.Count - 1));
@@ -269,9 +365,12 @@ public partial class ScenarioDialog : Window
         var steps = new List<ScenarioStep>();
 
         foreach (var row in _steps)
-            steps.Add(row.Kind == ScenarioStepKind.Request
-                ? ScenarioStep.OfRequest(SelectedRequest(row))
-                : ScenarioStep.OfNotice((row.Text!.Text ?? "").Trim()));
+            steps.Add(row.Kind switch
+            {
+                ScenarioStepKind.Request => ScenarioStep.OfRequest(SelectedRequest(row)),
+                ScenarioStepKind.Action  => row.Action,
+                _                        => ScenarioStep.OfNotice((row.Text!.Text ?? "").Trim()),
+            });
 
         var result = _card with
         {

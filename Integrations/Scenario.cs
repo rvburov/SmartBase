@@ -166,6 +166,11 @@ public enum ScenarioStepKind
 
     /// <summary>Показать сообщение человеку.</summary>
     Notify,
+
+    /// <summary>
+    /// Выполнить действие расширения над строками, которые принес предыдущий шаг.
+    /// </summary>
+    Action,
 }
 
 /// <summary>
@@ -178,22 +183,53 @@ public enum ScenarioStepKind
 /// руками, сценарий не выполняет и говорит об этом: угаданное соответствие колонок видно только
 /// по пустой коллекции через неделю.
 ///
-/// Видов пока два — по той же причине, что и у триггеров: остальные из плана (создать запись,
-/// экспорт выборки, шаг-расширение) ждут своих исполнителей и контракта <c>Actions</c>.
+/// Шаг «действие» не несет ни строчки логики расширения: он называет расширение, действие и
+/// коллекцию, а значения полей задает выражениями — постоянный текст или
+/// <c>{{имя колонки}}</c> из строки, которую принес предыдущий шаг. Так одно и то же расширение
+/// вешается на разные каналы и разные журналы, ничего о них не зная.
+///
+/// Видов пока три — по той же причине, что и у триггеров: остальные из плана (создать запись,
+/// экспорт выборки) ждут своих исполнителей.
 /// </summary>
 /// <param name="Kind">Вид шага.</param>
 /// <param name="RequestId">Запрос (только <see cref="ScenarioStepKind.Request"/>).</param>
 /// <param name="Text">Текст сообщения (только <see cref="ScenarioStepKind.Notify"/>).</param>
-public sealed record ScenarioStep(ScenarioStepKind Kind, int RequestId, string Text)
+/// <param name="Extension">Ключ расширения (только <see cref="ScenarioStepKind.Action"/>).</param>
+/// <param name="Action">Ключ действия внутри расширения.</param>
+/// <param name="DbId">База, в которой лежит коллекция шага.</param>
+/// <param name="CollectionId">Коллекция, с которой работает действие.</param>
+/// <param name="FieldValues">Выражения для полей действия по их ключам; <c>null</c> — пусто.
+/// Словарь намеренно не участвует в сравнении записей (у него ссылочное равенство) — сравнивать
+/// шаги целиком в программе негде, а хранение идет через JSON.</param>
+public sealed record ScenarioStep(
+    ScenarioStepKind                     Kind,
+    int                                  RequestId,
+    string                               Text,
+    string                               Extension    = "",
+    string                               Action       = "",
+    int                                  DbId         = 0,
+    int                                  CollectionId = 0,
+    IReadOnlyDictionary<string, string>? FieldValues  = null)
 {
     /// <summary>Сколько знаков умещается в карточке сообщения, не превращая ее в простыню.</summary>
     public const int MaxTextLength = 200;
+
+    /// <summary>Пустой набор — чтобы проверка на <c>null</c> не расползлась по всем местам.</summary>
+    private static readonly IReadOnlyDictionary<string, string> Nothing =
+        new Dictionary<string, string>(StringComparer.Ordinal);
+
+    /// <summary>Выражения для полей действия; у остальных видов шага пусто.</summary>
+    public IReadOnlyDictionary<string, string> Fields => FieldValues ?? Nothing;
 
     public static ScenarioStep OfRequest(int requestId) =>
         new(ScenarioStepKind.Request, requestId, "");
 
     public static ScenarioStep OfNotice(string text) =>
         new(ScenarioStepKind.Notify, 0, text);
+
+    public static ScenarioStep OfAction(string extension, string action, int dbId, int collectionId,
+                                        IReadOnlyDictionary<string, string>? fields = null) =>
+        new(ScenarioStepKind.Action, 0, "", extension, action, dbId, collectionId, fields);
 
     /// <summary>Что не так с шагом; пустой список — годится.</summary>
     public IReadOnlyList<string> Problems()
@@ -211,19 +247,33 @@ public sealed record ScenarioStep(ScenarioStepKind Kind, int RequestId, string T
                 problems.Add($"Текст сообщения длиннее {MaxTextLength} знаков");
         }
 
+        if (Kind == ScenarioStepKind.Action)
+        {
+            // Есть ли такое расширение и такое действие — вопрос момента запуска, как и
+            // открытая база: список расширений знает оболочка, а не модель. Здесь проверяется
+            // только то, что человек вообще сделал выбор.
+            if (string.IsNullOrWhiteSpace(Extension)) problems.Add("В шаге не выбрано расширение");
+            if (string.IsNullOrWhiteSpace(Action))    problems.Add("В шаге не выбрано действие");
+            if (CollectionId <= 0)                    problems.Add("В шаге не выбрана коллекция");
+        }
+
         return problems;
     }
 
     /// <summary>
-    /// Одной строкой для списка шагов. Имя запроса приходит извне: шаг знает только ключ, а
-    /// таскать ради подписи весь реестр в модель незачем.
+    /// Одной строкой для списка шагов. Имя того, на что шаг ссылается (запроса или действия),
+    /// приходит извне: шаг знает только ключ, а таскать ради подписи весь реестр в модель
+    /// незачем.
     /// </summary>
-    public string Describe(string requestName = "") => Kind switch
+    public string Describe(string name = "") => Kind switch
     {
         ScenarioStepKind.Request => "Запрос в коллекцию: "
-            + (requestName.Length > 0 ? requestName : $"№{RequestId}"),
+            + (name.Length > 0 ? name : $"№{RequestId}"),
 
         ScenarioStepKind.Notify => "Сообщение: " + Text,
+
+        ScenarioStepKind.Action => "Действие расширения: "
+            + (name.Length > 0 ? name : Action),
 
         _ => "Неизвестный шаг",
     };
@@ -237,9 +287,10 @@ public sealed record ScenarioStep(ScenarioStepKind Kind, int RequestId, string T
 /// на каждой открытой копии программы — и один обмен превратился бы в пять.
 ///
 /// Модель без ввода-вывода: выполняет сценарий отдельная служба, а здесь только форма и ее
-/// проверка. Условий («ЕСЛИ» из плана) пока нет — им нужно то, что течет между шагами, а это
-/// приезжает вместе с контрактом <c>Actions</c>; заводить настройку раньше исполнителя значило
-/// бы обещать несбыточное.
+/// проверка. Условий («ЕСЛИ» из плана) пока нет. Между шагами уже течет таблица — ее берет шаг
+/// «действие», — но условию нужен не поток, а язык сравнения над ним, а всякий такой язык
+/// приходится описывать, отлаживать и объяснять. Выбирать его форму раньше, чем станет видно,
+/// какие сравнения нужны на деле, значит выбирать вслепую.
 /// </summary>
 /// <param name="Id">Ключ строки в <c>app.db</c>; 0 — сценарий еще не сохранен.</param>
 /// <param name="Name">Имя для человека: «Заказы из учетной системы».</param>

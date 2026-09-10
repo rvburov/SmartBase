@@ -52,7 +52,7 @@ public sealed class ScenarioServiceTests : IDisposable
     private IntegrationsRegistry Cards => _registry.Integrations;
 
     private ScenarioService Service() =>
-        new(Cards, () => [_db.Manager], _notices.Add);
+        new(Cards, () => [_db.Manager], [], _notices.Add);
 
     private static readonly DateTimeOffset Now =
         new(new DateTime(2026, 9, 10, 12, 0, 0, DateTimeKind.Local));

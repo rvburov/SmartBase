@@ -2,6 +2,7 @@ using Avalonia.Controls;
 using Avalonia.Layout;
 using SmartBase.Controls.Dialogs;
 using SmartBase.Database;
+using SmartBase.Extensions;
 using SmartBase.Integrations;
 
 namespace SmartBase.Views.Settings;
@@ -70,7 +71,8 @@ public partial class SettingsView
 
         // Что помешает прямо сейчас — спрашивается вживую у того же кода, которым пользуется
         // служба: два ответа на один вопрос разошлись бы на первой же правке.
-        if (ScenarioRunner.Blocker(scenario, registry, _databases?.Invoke() ?? []) is { } blocker)
+        if (ScenarioRunner.Blocker(scenario, registry, _databases?.Invoke() ?? [],
+                                   ExtensionRegistry.All) is { } blocker)
             extra += (extra.Length > 0 ? " · " : "") + "Не сработает: " + blocker;
 
         var toggle = new ToggleSwitch
@@ -111,7 +113,8 @@ public partial class SettingsView
             .Select(r => (r.Id, r.Name, Bound: registry.Binding(r.Id) is not null))
             .ToList();
 
-        var result = await new ScenarioDialog(card, requests).ShowDialog<Scenario?>(win);
+        var result = await new ScenarioDialog(card, requests, Actions(), Places())
+            .ShowDialog<Scenario?>(win);
 
         if (result is null) return;
 
@@ -126,6 +129,36 @@ public partial class SettingsView
         }
 
         BuildIntegrationsScenarios();
+    }
+
+    /// <summary>
+    /// Действия, которые можно поставить шагом. Преобразователи формата в список не попадают:
+    /// подать им на вход шагу пока нечего, и предлагать выбор, который кончится отказом, —
+    /// худший вид подсказки.
+    /// </summary>
+    private static List<ActionChoice> Actions() =>
+    [
+        .. ExtensionRegistry.All.SelectMany(
+            extension => extension.Actions
+                .Where(a => a.Kind == ExtensionActionKind.Operation)
+                .Select(a => new ActionChoice(extension.Id, extension.Name, a))),
+    ];
+
+    /// <summary>
+    /// Коллекции открытых баз — куда действие может писать. Список читается в момент открытия
+    /// окна: базы монтируются и отваливаются, и держать его заранее значило бы показывать
+    /// вчерашние.
+    /// </summary>
+    private List<CollectionChoice> Places()
+    {
+        var places = new List<CollectionChoice>();
+
+        foreach (var database in _databases?.Invoke() ?? [])
+            foreach (var collection in database.Constructor.GetAllCollections())
+                if (collection.Id is { } id)
+                    places.Add(new CollectionChoice(database.DbId, id, database.Name, collection.Name));
+
+        return places;
     }
 
     private async Task DeleteScenarioAsync(Scenario scenario)

@@ -85,7 +85,11 @@
   ([SettingsIntegrationsScenarios](../../../Views/Settings/SettingsIntegrationsScenarios.cs))
   правится окном [ScenarioDialog](../../../Controls/Dialogs/ScenarioDialog.axaml.cs), а тумблер
   живет в самой строке — включение ставит якорь расписания, поэтому идет через
-  `IntegrationsRegistry.EnableScenario`, а не через правку поля.
+  `IntegrationsRegistry.EnableScenario`, а не через правку поля. Шаг «действие расширения» имеет
+  свое окно ([ScenarioActionDialog](../../../Controls/Dialogs/ScenarioActionDialog.axaml.cs)): в
+  строку списка не помещаются ни коллекция, ни список полей, которого окно не знает наперед. Список
+  действий и список коллекций собирает сама вкладка — `ExtensionRegistry.All` называется здесь,
+  а не в исполнителе сценариев.
   Вкладка «Прием» ([SettingsIntegrationsInbox](../../../Views/Settings/SettingsIntegrationsInbox.cs))
   пишет туда же, разбирая файлы из папки обмена; ее настройки (`integrations.inbox.folder`,
   `integrations.inbox.db`) намеренно МАШИННЫЕ — одну папку смотрят несколько компьютеров разом, и

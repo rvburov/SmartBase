@@ -1,5 +1,6 @@
 using Avalonia.Threading;
 using Serilog;
+using SmartBase.Extensions;
 using SmartBase.Integrations;
 
 namespace SmartBase.Database;
@@ -38,6 +39,7 @@ public sealed class ScenarioService : IDisposable
 
     private readonly IntegrationsRegistry                 _cards;
     private readonly Func<IReadOnlyList<DatabaseManager>> _databases;
+    private readonly IReadOnlyList<IExtension>            _extensions;
     private readonly Action<string>                       _notice;
 
     private DispatcherTimer? _timer;
@@ -47,13 +49,21 @@ public sealed class ScenarioService : IDisposable
     // утру тысячу одинаковых строк.
     private readonly Dictionary<int, string> _said = [];
 
+    /// <param name="cards">Реестр интеграций — сценарии, запросы, соединения.</param>
+    /// <param name="databases">Открытые базы на момент тика.</param>
+    /// <param name="extensions">Расширения, чьи действия можно поставить шагом. Список приходит
+    /// параметром, а не берется из глобального реестра: службу проверяют тестами, а тест с
+    /// зашитым списком расширений проверял бы заодно и его состав.</param>
+    /// <param name="notice">Как показать сообщение человеку.</param>
     public ScenarioService(IntegrationsRegistry                 cards,
                            Func<IReadOnlyList<DatabaseManager>> databases,
+                           IReadOnlyList<IExtension>            extensions,
                            Action<string>                       notice)
     {
-        _cards     = cards;
-        _databases = databases;
-        _notice    = notice;
+        _cards      = cards;
+        _databases  = databases;
+        _extensions = extensions;
+        _notice     = notice;
     }
 
     /// <summary>Запуск из UI-потока. Идемпотентен: окно возвращается из трея снова и снова.</summary>
@@ -122,7 +132,7 @@ public sealed class ScenarioService : IDisposable
     {
         var databases = _databases();
 
-        if (ScenarioRunner.Blocker(scenario, _cards, databases) is { } blocker)
+        if (ScenarioRunner.Blocker(scenario, _cards, databases, _extensions) is { } blocker)
         {
             Complain(scenario, blocker);
             return false;
@@ -134,7 +144,8 @@ public sealed class ScenarioService : IDisposable
         ScenarioOutcome outcome;
         try
         {
-            outcome = await ScenarioRunner.RunAsync(scenario, _cards, databases, now, _notice, ct);
+            outcome = await ScenarioRunner.RunAsync(scenario, _cards, databases, _extensions,
+                                                    now, _notice, ct);
         }
         catch (Exception failure)
         {
@@ -174,7 +185,7 @@ public sealed class ScenarioService : IDisposable
     public async Task<ScenarioOutcome> RunNowAsync(Scenario scenario, CancellationToken ct = default)
     {
         var outcome = await ScenarioRunner.RunAsync(
-            scenario, _cards, _databases(), DateTimeOffset.Now, _notice, ct);
+            scenario, _cards, _databases(), _extensions, DateTimeOffset.Now, _notice, ct);
 
         Ran?.Invoke(scenario, outcome);
         return outcome;

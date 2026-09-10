@@ -1,0 +1,92 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:b="clr-namespace:SmartBase.Controls.Behaviors"
+        xmlns:w="clr-namespace:SmartBase.Controls.Widgets"
+        x:Class="SmartBase.Controls.Dialogs.ScenarioActionDialog"
+        Title="Действие расширения"
+        Width="{StaticResource DialogWidthBase}"
+        MinWidth="{StaticResource DialogWidthBase}"
+        MaxWidth="{StaticResource DialogWidthBase}"
+        MinHeight="0"
+        SizeToContent="Height"
+        b:DialogFit.LimitToScreen="True"
+        WindowStartupLocation="CenterOwner"
+        CanResize="False"
+        Background="{StaticResource BrushBg}">
+
+    <StackPanel Spacing="0" Margin="{StaticResource DialogPadding}">
+
+        <!-- ── Что делать ───────────────────────────────────────────────────── -->
+
+        <TextBlock Text="Что делать"
+                   Margin="0,0,0,6"
+                   FontWeight="{StaticResource FontWeightBold}"
+                   Foreground="{StaticResource BrushSecondaryText}" />
+
+        <ComboBox x:Name="ActionCombo"
+                  Height="34"
+                  Margin="0,0,0,6"
+                  HorizontalAlignment="Stretch"
+                  VerticalContentAlignment="Center"
+                  Background="{StaticResource BrushSecondaryBg}"
+                  CornerRadius="{StaticResource RadiusBase}" />
+
+        <TextBlock x:Name="ActionHint"
+                   Margin="0,0,0,12"
+                   TextWrapping="Wrap"
+                   FontSize="{DynamicResource FontSizeSmall}"
+                   Foreground="{StaticResource BrushSecondaryText}" />
+
+        <!-- ── Куда писать ──────────────────────────────────────────────────── -->
+
+        <TextBlock Text="Куда писать"
+                   Margin="0,0,0,6"
+                   FontWeight="{StaticResource FontWeightBold}"
+                   Foreground="{StaticResource BrushSecondaryText}" />
+
+        <ComboBox x:Name="PlaceCombo"
+                  Height="34"
+                  Margin="0,0,0,12"
+                  HorizontalAlignment="Stretch"
+                  VerticalContentAlignment="Center"
+                  Background="{StaticResource BrushSecondaryBg}"
+                  CornerRadius="{StaticResource RadiusBase}" />
+
+        <!-- ── Значения полей ───────────────────────────────────────────────── -->
+
+        <TextBlock Text="Значения полей"
+                   Margin="0,0,0,6"
+                   FontWeight="{StaticResource FontWeightBold}"
+                   Foreground="{StaticResource BrushSecondaryText}" />
+
+        <TextBlock Text="Постоянный текст — как написано. Значение из строки предыдущего шага — {{Имя колонки}}. Колонка, которой в строке нет, останавливает шаг: пустое поле нашлось бы только через неделю."
+                   Margin="0,0,0,6"
+                   TextWrapping="Wrap"
+                   FontSize="{DynamicResource FontSizeSmall}"
+                   Foreground="{StaticResource BrushSecondaryText}" />
+
+        <!-- Полоса идет во всю высоту блока, а воздух висит на содержимом ВНУТРИ прокрутки
+             (docs/developer/ui/scrolling.md) — иначе она отходит от рамки. -->
+        <Border BorderBrush="{StaticResource BrushSeparator}"
+                BorderThickness="{DynamicResource BorderLine}"
+                CornerRadius="{StaticResource RadiusBase}"
+                ClipToBounds="True"
+                Margin="0,0,0,12"
+                Padding="0">
+            <ScrollViewer MaxHeight="240"
+                          HorizontalScrollBarVisibility="Disabled"
+                          VerticalScrollBarVisibility="Auto">
+                <StackPanel x:Name="FieldsPanel" Spacing="8" Margin="10,8" />
+            </ScrollViewer>
+        </Border>
+
+        <w:NoticeBanner x:Name="NoticeBanner" Margin="0,0,0,12" />
+
+        <Grid ColumnDefinitions="*,Auto,8,Auto" Margin="0,4,0,0">
+            <Button Grid.Column="1" x:Name="CancelBtn" Classes="dialog" Content="Отмена" />
+            <Button Grid.Column="3" x:Name="SaveBtn"   Classes="dialog" Content="Готово" />
+        </Grid>
+
+    </StackPanel>
+
+</Window>

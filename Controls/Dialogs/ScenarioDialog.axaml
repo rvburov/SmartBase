@@ -94,6 +94,7 @@
 
         <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,0,0,12">
             <Button x:Name="AddRequestBtn" Content="Добавить запрос" Height="30" Padding="12,0" />
+            <Button x:Name="AddActionBtn"  Content="Добавить действие" Height="30" Padding="12,0" />
             <Button x:Name="AddNoticeBtn"  Content="Добавить сообщение" Height="30" Padding="12,0" />
         </StackPanel>
 

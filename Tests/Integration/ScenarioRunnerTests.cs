@@ -102,7 +102,7 @@ public sealed class ScenarioRunnerTests : IDisposable
         });
 
     private Task<ScenarioOutcome> Run(Scenario scenario) =>
-        ScenarioRunner.RunAsync(scenario, Cards, [_db.Manager], DateTimeOffset.Now, _notices.Add);
+        ScenarioRunner.RunAsync(scenario, Cards, [_db.Manager], [], DateTimeOffset.Now, _notices.Add);
 
     private static string Items(params string[] names) =>
         "[" + string.Join(",", names.Select(n => $"{{\"Название\":\"{n}\",\"Номер\":\"{n}-1\"}}")) + "]";
@@ -219,7 +219,7 @@ public sealed class ScenarioRunnerTests : IDisposable
         var scenario = Save(ScenarioStep.OfRequest(requestId));
 
         Assert.Contains("не настроена привязка",
-                        ScenarioRunner.Blocker(scenario, Cards, [_db.Manager]) ?? "",
+                        ScenarioRunner.Blocker(scenario, Cards, [_db.Manager], []) ?? "",
                         StringComparison.Ordinal);
 
         var outcome = await Run(scenario);
@@ -246,11 +246,11 @@ public sealed class ScenarioRunnerTests : IDisposable
         var scenario = Save(ScenarioStep.OfRequest(requestId));
 
         // Открытых баз нет вовсе — так это выглядит после размонтирования.
-        Assert.Contains("не открыта", ScenarioRunner.Blocker(scenario, Cards, []) ?? "",
+        Assert.Contains("не открыта", ScenarioRunner.Blocker(scenario, Cards, [], []) ?? "",
                         StringComparison.Ordinal);
 
         var outcome = await ScenarioRunner.RunAsync(
-            scenario, Cards, [], DateTimeOffset.Now, _notices.Add);
+            scenario, Cards, [], [], DateTimeOffset.Now, _notices.Add);
 
         Assert.False(outcome.Ok);
         Assert.Empty(server.Seen);
