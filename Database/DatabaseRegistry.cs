@@ -135,6 +135,15 @@ public sealed class DatabaseRegistry : IDisposable, ISettingsDatabase
             "\"Trigger\" TEXT NOT NULL, " +
             "\"StepsJson\" TEXT NULL, " +
             "\"LastRunAt\" TEXT NULL);");
+
+        db.Database.ExecuteSqlRaw(
+            "CREATE TABLE IF NOT EXISTS \"integration_directions\" (" +
+            "\"RequestId\" INTEGER NOT NULL CONSTRAINT \"PK_integration_directions\" PRIMARY KEY, " +
+            "\"Fingerprint\" TEXT NOT NULL, " +
+            "\"Confirmed\" TEXT NOT NULL, " +
+            "\"At\" TEXT NOT NULL, " +
+            "\"Until\" TEXT NOT NULL, " +
+            "\"UsedAt\" TEXT NULL);");
     }
 
     /// <summary>

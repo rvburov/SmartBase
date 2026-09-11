@@ -145,3 +145,30 @@ public class IntegrationScenarioEntity
     /// </summary>
     public string? LastRunAt { get; set; }
 }
+
+/// <summary>
+/// Подтвержденное исходящее направление (<see cref="SmartBase.Integrations.OutgoingDirection"/>).
+///
+/// Ключ — сам запрос: направление у него одно, и отдельный счетчик строк тут только повод
+/// завести два подтверждения на один обмен.
+/// </summary>
+public class IntegrationDirectionEntity
+{
+    /// <summary>Запрос, которому разрешено отправлять; он же ключ строки.</summary>
+    [Key] public int RequestId { get; set; }
+
+    /// <summary>Отпечаток запроса на момент подтверждения: правка сбрасывает разрешение.</summary>
+    [Required] public string Fingerprint { get; set; } = "";
+
+    /// <summary>Кто подтвердил.</summary>
+    [Required] public string Confirmed { get; set; } = "";
+
+    /// <summary>Когда подтвердили (ISO-8601).</summary>
+    [Required] public string At { get; set; } = "";
+
+    /// <summary>До какого момента действует включительно (ISO-8601).</summary>
+    [Required] public string Until { get; set; } = "";
+
+    /// <summary>Когда направлением пользовались в последний раз (ISO-8601); пусто — ни разу.</summary>
+    public string? UsedAt { get; set; }
+}

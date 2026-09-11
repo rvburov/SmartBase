@@ -17,7 +17,8 @@ namespace SmartBase.Integrations;
 ///   "maxBytesPerDay": 52428800,
 ///   "maxRunsPerHour": 60,
 ///   "validUntil": "2026-12-31",
-///   "userMayAddHosts": false
+///   "userMayAddHosts": false,
+///   "masterHash": "pbkdf2$210000$...$..."
 /// }
 /// </code>
 ///
@@ -89,6 +90,7 @@ public static class PolicyJson
             if (!TryLong(root, "maxBytesPerDay", out var bytes, out error)) return null;
             if (!TryLong(root, "maxRunsPerHour", out var runs,  out error)) return null;
             if (!TryBool(root, "userMayAddHosts", out var mayAdd, out error)) return null;
+            if (!TryText(root, "masterHash",      out var master, out error)) return null;
 
             return new EgressPolicy(
                 mode,
@@ -100,7 +102,8 @@ public static class PolicyJson
                 (int)Math.Clamp(runs ?? 0, 0, int.MaxValue),
                 validUntil,
                 mayAdd ?? false,
-                source);
+                source,
+                master);
         }
     }
 
@@ -155,6 +158,28 @@ public static class PolicyJson
         }
 
         date = parsed;
+        return true;
+    }
+
+    /// <summary>
+    /// Строковое поле; отсутствует — пустая строка. Нет отдельной проверки «похоже ли это на
+    /// хэш»: испорченный хэш не совпадет ни с одним паролем (<see cref="MasterPassword.Matches"/>),
+    /// и подтвердить им ничего нельзя — этого достаточно.
+    /// </summary>
+    private static bool TryText(JsonElement root, string name, out string text, out string error)
+    {
+        text  = "";
+        error = "";
+
+        if (!root.TryGetProperty(name, out var value)) return true;
+
+        if (value.ValueKind != JsonValueKind.String)
+        {
+            error = $"поле «{name}» должно быть строкой";
+            return false;
+        }
+
+        text = value.GetString()?.Trim() ?? "";
         return true;
     }
 

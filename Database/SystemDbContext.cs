@@ -26,6 +26,8 @@ public class SystemDbContext : DbContext
     /// <summary>Сценарии — там же: сценарий в файле базы сработал бы на каждой открытой копии.</summary>
     public DbSet<IntegrationScenarioEntity> IntegrationScenarios { get; set; } = null!;
 
+    public DbSet<IntegrationDirectionEntity> IntegrationDirections { get; set; } = null!;
+
     private readonly string _path;
 
     public SystemDbContext(string path) => _path = path;
@@ -63,6 +65,12 @@ public class SystemDbContext : DbContext
         {
             e.ToTable("integration_scenarios");
             e.HasKey(x => x.Id);
+        });
+
+        model.Entity<IntegrationDirectionEntity>(e =>
+        {
+            e.ToTable("integration_directions");
+            e.HasKey(x => x.RequestId);
         });
     }
 }

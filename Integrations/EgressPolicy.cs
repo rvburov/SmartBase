@@ -39,6 +39,8 @@ public enum EgressMode
 /// <param name="ValidUntil">Последний день действия включительно; <c>null</c> — без срока.</param>
 /// <param name="UserMayAddHosts">Разрешено ли пользователю дописывать адреса самому.</param>
 /// <param name="Source">Откуда политика прочитана — для экрана «Безопасность» и журнала.</param>
+/// <param name="MasterHash">Проверочный хэш мастер-пароля (<see cref="MasterPassword"/>); пусто —
+/// этот источник подтверждать исходящие направления не позволяет вовсе.</param>
 public sealed record EgressPolicy(
     EgressMode              Mode,
     IReadOnlyList<string>   Hosts,
@@ -49,7 +51,8 @@ public sealed record EgressPolicy(
     int                     MaxRunsPerHour,
     DateOnly?               ValidUntil,
     bool                    UserMayAddHosts,
-    string                  Source)
+    string                  Source,
+    string                  MasterHash = "")
 {
     /// <summary>
     /// Самая строгая политика: наружу нельзя ничего. Ею подменяется любой источник, который
@@ -58,6 +61,9 @@ public sealed record EgressPolicy(
     /// </summary>
     public static EgressPolicy Closed { get; } = new(
         EgressMode.Isolated, [], [], [], 0, 0, 0, null, false, "нет политики");
+
+    /// <summary>Позволяет ли ЭТОТ источник подтверждать исходящие направления.</summary>
+    public bool HasMaster => MasterPassword.Defined(MasterHash);
 
     /// <summary>Разрешает ли ЭТОТ источник имя узла (без учета режима и срока).</summary>
     public bool AllowsHost(string? host) =>
@@ -165,4 +171,26 @@ public sealed class EgressPolicySet
     /// <summary>Путь разрешен, только если он лежит внутри разрешенных корней каждого источника.</summary>
     public bool AllowsFolder(string? path) =>
         Sources.Count > 0 && Sources.All(p => p.AllowsFolder(path));
+
+    /// <summary>
+    /// Есть ли чем подтверждать исходящие направления — хотя бы один источник назвал
+    /// мастер-пароль.
+    /// </summary>
+    public bool HasMaster => Sources.Any(p => p.HasMaster);
+
+    /// <summary>
+    /// Подходит ли пароль. Правило то же, что у остальных рамок, — ПЕРЕСЕЧЕНИЕ: пароль обязан
+    /// подойти КАЖДОМУ источнику, который его назвал.
+    ///
+    /// Два источника с разными паролями означают, что две инстанции не договорились между собой,
+    /// и подтвердить направление нельзя ни одним из них. Это не придирка: отдать полномочие по
+    /// любому из двух паролей значило бы, что более строгий источник обходится наличием более
+    /// мягкого — ровно то, ради чего пересечение и заведено.
+    ///
+    /// Ни один источник пароля не назвал — <c>false</c>. Подтверждать нечем, а значит, исходящих
+    /// направлений нет: отсутствие настройки обязано быть безопасным состоянием.
+    /// </summary>
+    public bool MasterMatches(string? password) =>
+        HasMaster && Sources.Where(p => p.HasMaster)
+                            .All(p => MasterPassword.Matches(p.MasterHash, password));
 }
