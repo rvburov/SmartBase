@@ -536,4 +536,97 @@ public sealed class ScenarioActionTests : IDisposable
         Assert.Contains("АБВГ.301121.001", string.Join(" ", outcome.Lines), StringComparison.Ordinal);
     }
 
+    // ── Отбор строк ───────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// «ЕСЛИ» из плана: до действия доходят только подходящие строки. Отброшенные названы
+    /// ЧИСЛОМ в отчете — отбор, молча теряющий половину выгрузки, неотличим от поломки.
+    /// </summary>
+    [Fact]
+    public async Task Only_the_rows_that_pass_reach_the_action()
+    {
+        AllowLoopback();
+        using var server = new TinyServer(_ => TinyServer.Reply(200,
+            Items(("Втулка", "Молоток"), ("Кронштейн", ""), ("Шайба", "Рубанок"))));
+
+        var orders    = Orders();
+        var journal   = SampleData.AddCollection(_db.Constructor, "Журнал").Id!.Value;
+        var requestId = NewRequest(server, orders);
+        var writer    = new Writer { CollectionId = journal };
+
+        var outcome = await Run(
+            Of(ScenarioStep.OfRequest(requestId),
+               ScenarioStep.OfFilter(new ScenarioCondition("Проект", ScenarioTest.Filled)),
+               ScenarioStep.OfAction(StandId, "write", DbId, journal, Values("{{Название}}"))),
+            new Stand(writer));
+
+        Assert.True(outcome.Ok, outcome.Problem);
+        Assert.Equal([("Втулка", ""), ("Шайба", "")], writer.Seen);
+        Assert.Contains("подошло 2 из 3", string.Join(" ", outcome.Lines), StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Не подошла ни одна строка — сценарий кончается, и это НЕ неудача: данные пришли, просто
+    /// делать по ним нечего. Жаловаться тут не на что, а рассказать надо.
+    /// </summary>
+    [Fact]
+    public async Task Nothing_passing_stops_the_scenario_without_a_complaint()
+    {
+        AllowLoopback();
+        using var server = new TinyServer(_ => TinyServer.Reply(200, Items(("Втулка", ""))));
+
+        var orders    = Orders();
+        var journal   = SampleData.AddCollection(_db.Constructor, "Журнал").Id!.Value;
+        var requestId = NewRequest(server, orders);
+        var writer    = new Writer { CollectionId = journal };
+
+        var outcome = await Run(
+            Of(ScenarioStep.OfRequest(requestId),
+               ScenarioStep.OfFilter(new ScenarioCondition("Проект", ScenarioTest.Filled)),
+               ScenarioStep.OfAction(StandId, "write", DbId, journal, Values("{{Название}}"))),
+            new Stand(writer));
+
+        Assert.True(outcome.Ok, outcome.Problem);
+        Assert.Empty(writer.Seen);
+        Assert.Equal(2, outcome.Done);   // запрос и отбор, а действие не тронуто
+        Assert.Contains("не подошла ни одна", string.Join(" ", outcome.Lines), StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Колонка, которой в строках нет, ОСТАНАВЛИВАЕТ шаг. Считать ее пустой значило бы отобрать
+    /// ноль строк и не сказать почему: опечатка выглядела бы точно так же, как честно не
+    /// подошедшие данные.
+    /// </summary>
+    [Fact]
+    public async Task A_column_that_is_not_there_stops_the_filter()
+    {
+        AllowLoopback();
+        using var server = new TinyServer(_ => TinyServer.Reply(200, Items(("Втулка", "Молоток"))));
+
+        var orders    = Orders();
+        var requestId = NewRequest(server, orders);
+
+        var outcome = await Run(
+            Of(ScenarioStep.OfRequest(requestId),
+               ScenarioStep.OfFilter(new ScenarioCondition("Заказчик", ScenarioTest.Filled))),
+            new Stand(new Writer()));
+
+        Assert.False(outcome.Ok);
+        Assert.Contains("Заказчик", outcome.Problem, StringComparison.Ordinal);
+        Assert.Contains("в строке есть", outcome.Problem, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Отбор первым шагом отбирать нечего, и сказано об этом ЗАРАНЕЕ — в списке сценариев, а не
+    /// в отчете через сутки.
+    /// </summary>
+    [Fact]
+    public void A_filter_without_incoming_rows_is_refused_by_name()
+    {
+        var scenario = Of(ScenarioStep.OfFilter(
+            new ScenarioCondition("Проект", ScenarioTest.Filled)));
+
+        Assert.Contains("отбирать нечего", Blocker(scenario, new Stand(new Writer())),
+                        StringComparison.Ordinal);
+    }
 }

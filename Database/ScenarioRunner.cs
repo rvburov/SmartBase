@@ -62,6 +62,26 @@ public sealed record StepTable(IReadOnlyList<string>                            
         new([], [new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)]);
 }
 
+/// <summary>Что делать со сценарием после шага.</summary>
+public enum StepFlow
+{
+    /// <summary>Дальше по списку.</summary>
+    Continue = 0,
+
+    /// <summary>
+    /// Дальше незачем, и это не неудача: отбор не нашел подходящих строк. Запуск состоялся —
+    /// строка журнала пишется, ответ отправителю тоже.
+    /// </summary>
+    Stop,
+
+    /// <summary>
+    /// Делать было нечего, и сценарий кончается ТИХО: ни строки журнала, ни записи в
+    /// «Диагностику». Пустая папка обмена, проверяемая каждые пять минут, иначе давала бы три
+    /// сотни одинаковых строк в сутки, и настоящую среди них потом не найти.
+    /// </summary>
+    Silent,
+}
+
 /// <summary>Итог одного шага: удался ли и что о нем сказать человеку.</summary>
 /// <param name="Ok">Шаг сделал свое дело.</param>
 /// <param name="Line">Строка для отчета и журнала; при неудаче — причина.</param>
@@ -71,20 +91,22 @@ public sealed record StepTable(IReadOnlyList<string>                            
 /// действием можно поставить уведомление, не потеряв строки.</param>
 /// <param name="Text">Текст, который шаг передает следующему, — файл, взятый из папки. Его ждет
 /// преобразователь формата.</param>
-/// <param name="Idle">Делать было нечего, и сценарий на этом кончается ТИХО: ни строки журнала,
-/// ни записи в «Диагностику». Пустая папка обмена, проверяемая каждые пять минут, иначе давала бы
-/// три сотни одинаковых строк в сутки, и настоящую среди них потом не найти.</param>
+/// <param name="Flow">Идти ли дальше по списку шагов.</param>
 public sealed record StepOutcome(bool       Ok,
                                  string     Line,
                                  int        Rows  = 0,
                                  StepTable? Table = null,
                                  string     Text  = "",
-                                 bool       Idle  = false)
+                                 StepFlow   Flow  = StepFlow.Continue)
 {
     public static StepOutcome Bad(string reason) => new(false, reason);
 
     /// <summary>Делать нечего — сценарий кончается молча.</summary>
-    public static StepOutcome Nothing => new(true, "", Idle: true);
+    public static StepOutcome Nothing => new(true, "", Flow: StepFlow.Silent);
+
+    /// <summary>Дальше незачем, но запуск состоялся и о нем надо рассказать.</summary>
+    public static StepOutcome Halt(string line, StepTable? table = null) =>
+        new(true, line, Table: table, Flow: StepFlow.Stop);
 }
 
 /// <summary>
@@ -168,12 +190,20 @@ public static partial class ScenarioRunner
     {
         if (scenario.Steps.Count == 0) return "в сценарии нет шагов";
 
-        // Текст берется из папки и нужен преобразователю формата. Порядок шагов тут и
-        // проверяется: преобразователь, стоящий первым, разбирать ему нечего.
+        // Порядок шагов тут и проверяется. Текст приносит папка, и нужен он преобразователю;
+        // строки приносят запрос и преобразователь, и нужны они отбору. Поставленный первым,
+        // такой шаг разбирать и отбирать будет нечего.
         var text = false;
+        var rows = false;
 
         foreach (var step in scenario.Steps)
         {
+            if (step.Kind == ScenarioStepKind.Filter)
+            {
+                if (!rows) return NoRows();
+                continue;
+            }
+
             if (step.Kind == ScenarioStepKind.Intake)
             {
                 if (string.IsNullOrWhiteSpace(step.Folder)) return "в шаге не выбрана папка обмена";
@@ -192,6 +222,7 @@ public static partial class ScenarioRunner
                 if (action.Kind == ExtensionActionKind.Transformer)
                 {
                     if (!text) return NoInput(action);
+                    rows = true;
                     continue;
                 }
 
@@ -219,6 +250,8 @@ public static partial class ScenarioRunner
 
             if (databases.All(d => d.DbId != binding.DbId))
                 return $"база данных для запроса «{request.Name}» сейчас не открыта";
+
+            rows = true;
         }
 
         return null;
@@ -252,7 +285,8 @@ public static partial class ScenarioRunner
         // Строки запроса поднимаются в память ТОЛЬКО когда есть кому их принять: обычный обмен
         // укладывает ответ потоком, и превращать его в список ради шага, которого в сценарии
         // нет, значило бы платить памятью за неиспользуемую возможность.
-        var carry = scenario.Steps.Any(s => s.Kind == ScenarioStepKind.Action);
+        var carry = scenario.Steps.Any(
+            s => s.Kind is ScenarioStepKind.Action or ScenarioStepKind.Filter);
 
         var lines   = new List<string>();
         var rows    = 0;
@@ -275,11 +309,12 @@ public static partial class ScenarioRunner
                     ScenarioStepKind.Request => await RequestStepAsync(step, registry, databases, carry, ct),
                     ScenarioStepKind.Action  => await ActionStepAsync(step, databases, extensions, table, text, now, ct),
                     ScenarioStepKind.Intake  => IntakeStep(step, now, ref taken),
+                    ScenarioStepKind.Filter  => FilterStep(step, table),
                     _                        => NoticeStep(step, notice),
                 };
 
                 // Делать нечего — расходимся молча, не оставляя следа ни в журнале, ни в отчете.
-                if (outcome.Idle) { idle = true; break; }
+                if (outcome.Flow == StepFlow.Silent) { idle = true; break; }
 
                 if (outcome.Line.Length > 0) lines.Add(outcome.Line);
                 rows += outcome.Rows;
@@ -292,6 +327,10 @@ public static partial class ScenarioRunner
                 if (!outcome.Ok) { problem = outcome.Line; break; }
 
                 done++;
+
+                // Отбор не нашел подходящих строк: остальные шаги не к чему применять, но
+                // запуск состоялся, и рассказать о нем надо — в том числе отправителю.
+                if (outcome.Flow == StepFlow.Stop) break;
             }
         }
         catch (OperationCanceledException)
@@ -657,6 +696,65 @@ public static partial class ScenarioRunner
 
         return new ActionInput(values);
     }
+
+    // ── Шаг «отбор» ───────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Отбор строк по условиям — «ЕСЛИ» из плана (docs/ROADMAP-API.md, раздел 2). Дальше идут
+    /// только строки, на которых выполнились ВСЕ условия.
+    ///
+    /// Условием он работает сам собой: у сообщения из папки строка одна, и «отобрано ноль» там
+    /// читается как «условие не выполнилось». У выгрузки из чужой программы строк много, и
+    /// полезнее отобрать подходящие, чем остановить обмен целиком из-за одной строки без
+    /// проекта.
+    ///
+    /// <b>Отброшенные строки названы числом в отчете.</b> Отбор, молча теряющий половину
+    /// выгрузки, неотличим от поломки — а разбираются с этим через неделю и по пустой коллекции.
+    ///
+    /// Колонка, которой в строках нет, ОСТАНАВЛИВАЕТ шаг. Считать ее пустой значило бы отобрать
+    /// ноль строк и не сказать почему: опечатка в имени колонки выглядела бы точно так же, как
+    /// честно не подошедшие данные.
+    /// </summary>
+    private static StepOutcome FilterStep(ScenarioStep step, StepTable? incoming)
+    {
+        if (step.Tests.Count == 0)
+            return StepOutcome.Bad("в отборе нет ни одного условия");
+
+        if (incoming is not { } table)
+            return StepOutcome.Bad(NoRows());
+
+        var unknown = step.Tests.Select(t => t.Column)
+                          .Where(c => !table.Columns.Contains(c, StringComparer.OrdinalIgnoreCase))
+                          .Distinct(StringComparer.OrdinalIgnoreCase)
+                          .ToList();
+
+        if (unknown.Count > 0)
+            return StepOutcome.Bad(
+                "в отборе названы колонки, которых нет: " + string.Join(", ", unknown)
+                + (table.Columns.Count > 0
+                    ? "; в строке есть: " + string.Join(", ", table.Columns)
+                    : "; предыдущий шаг строк не передал"));
+
+        var kept = table.Rows.Where(row => step.Tests.All(test => test.Holds(row))).ToList();
+        var lost = table.Rows.Count - kept.Count;
+
+        var what = string.Join(" и ", step.Tests);
+
+        if (kept.Count == 0)
+            return StepOutcome.Halt($"Отбор ({what}): не подошла ни одна строка из "
+                                  + $"{table.Rows.Count}, дальше незачем");
+
+        var line = lost > 0
+            ? $"Отбор ({what}): подошло {kept.Count} из {table.Rows.Count}"
+            : $"Отбор ({what}): подошли все {kept.Count}";
+
+        return new StepOutcome(true, line, 0, table with { Rows = kept });
+    }
+
+    /// <summary>Отбирать нечего — строки в сценарий приносит запрос или преобразователь.</summary>
+    private static string NoRows() =>
+        "отбирать нечего: перед отбором нужен шаг, который приносит строки, — запрос в коллекцию "
+        + "или разбор файла";
 
     // ── Шаг «сообщение» ───────────────────────────────────────────────────────
 

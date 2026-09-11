@@ -287,6 +287,50 @@ public sealed class ScenarioTests
                      ScenarioStep.OfIntake(@"P:\Обмен\КД").Describe());
     }
 
+    // ── Шаг «отбор» ───────────────────────────────────────────────────────────
+
+    [Fact]
+    public void A_filter_without_conditions_is_a_problem()
+    {
+        Assert.Single(ScenarioStep.OfFilter().Problems());
+    }
+
+    /// <summary>Негодное условие называет свой номер: в отборе их бывает несколько.</summary>
+    [Fact]
+    public void A_bad_condition_names_its_place()
+    {
+        var step = ScenarioStep.OfFilter(
+            new ScenarioCondition("Проект", ScenarioTest.Filled),
+            new ScenarioCondition("Статус", ScenarioTest.Equals));
+
+        Assert.Equal(["Условие 2: не заполнен образец"], step.Problems());
+    }
+
+    [Fact]
+    public void Too_many_conditions_are_refused()
+    {
+        var many = Enumerable.Range(0, ScenarioStep.MaxConditions + 1)
+                             .Select(i => new ScenarioCondition($"Поле {i}", ScenarioTest.Filled))
+                             .ToArray();
+
+        Assert.Contains(ScenarioStep.OfFilter(many).Problems(),
+                        p => p.Contains("Условий больше", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// Условия соединяются союзом «и»: «или» пришлось бы рисовать скобками, а скобки в строке
+    /// настройки читаются хуже, чем два отбора подряд.
+    /// </summary>
+    [Fact]
+    public void A_filter_reads_as_a_phrase()
+    {
+        var step = ScenarioStep.OfFilter(
+            new ScenarioCondition("Проект", ScenarioTest.Filled),
+            new ScenarioCondition("Статус", ScenarioTest.Equals, "Оплачен"));
+
+        Assert.Equal("Отбор: Проект заполнено и Статус равно Оплачен", step.Describe());
+    }
+
     /// <summary>«Ходит сам» — это и включен, и есть чем заводить.</summary>
     [Fact]
     public void Automatic_means_enabled_and_scheduled()

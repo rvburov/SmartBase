@@ -11,9 +11,10 @@ namespace SmartBase.Controls.Dialogs;
 /// Окно правки сценария: «когда» и «что делать».
 ///
 /// Три полосы вместо графа узлов — сценарии линейные, а редактор графа это отдельный проект
-/// (docs/ROADMAP-API.md, раздел 13). Полоса «ЕСЛИ» из плана здесь пока не показана: условиям
-/// нужно то, что течет между шагами, а это приезжает вместе с контрактом <c>Actions</c>.
-/// Настройка, которая ничего не делает, читается как поломка.
+/// (docs/ROADMAP-API.md, раздел 13). Полосы «ЕСЛИ» в шапке нет: условия стали ШАГОМ
+/// (<see cref="ScenarioFilterDialog"/>), потому что им нужны данные, а данные появляются только
+/// после того, как их кто-то принес. Полоса в шапке обязана была бы угадывать, к какому шагу
+/// относится, — а отбор, поставленный между «разобрать» и «зарегистрировать», не гадает ни о чем.
 ///
 /// Два решения окна стоит назвать.
 ///
@@ -59,7 +60,10 @@ public partial class ScenarioDialog : Window
         public TextBox?  Text     { get; init; }
         public Button?   Card     { get; init; }
 
-        /// <summary>Настроенный шаг-действие; у остальных видов не используется.</summary>
+        /// <summary>
+        /// Настроенный шаг — у тех видов, которые правятся своим окном (действие и отбор). У
+        /// остальных не используется: им хватает одного контрола в строке.
+        /// </summary>
         public ScenarioStep Action { get; set; } = ScenarioStep.OfAction("", "", 0, 0);
 
         /// <summary>Чем правят шаг — один контрол на строку.</summary>
@@ -123,6 +127,7 @@ public partial class ScenarioDialog : Window
         AddNoticeBtn.Click  += (_, _) => AddStep(ScenarioStep.OfNotice(""));
         AddIntakeBtn.Click  += (_, _) => AddStep(ScenarioStep.OfIntake(""));
         AddActionBtn.Click  += async (_, _) => await AddActionAsync();
+        AddFilterBtn.Click  += async (_, _) => await AddFilterAsync();
 
         // Ссылаться не на что — запросы заводят на соседней вкладке, и сказать об этом надо
         // раньше, чем человек нажмет и получит пустой список.
@@ -143,6 +148,7 @@ public partial class ScenarioDialog : Window
             ScenarioStepKind.Request => RequestRow(step),
             ScenarioStepKind.Action  => ActionRow(step),
             ScenarioStepKind.Intake  => IntakeRow(step),
+            ScenarioStepKind.Filter  => FilterRow(step),
             _                        => NoticeRow(step),
         };
 
@@ -208,6 +214,45 @@ public partial class ScenarioDialog : Window
 
         row.Action        = made;
         row.Card!.Content = CardText(made);
+    }
+
+    /// <summary>
+    /// Завести шаг-отбор. Окно открывается сразу, по той же причине, что и у действия: отбор
+    /// без условий не сохранится, а пустая строка «настройте меня» — переложенная работа.
+    /// </summary>
+    private async Task AddFilterAsync()
+    {
+        var made = await new ScenarioFilterDialog(ScenarioStep.OfFilter())
+                             .ShowDialog<ScenarioStep?>(this);
+
+        if (made is not null) AddStep(made);
+    }
+
+    /// <summary>Строка шага-отбора: условия словами, нажатие открывает окно правки.</summary>
+    private StepRow FilterRow(ScenarioStep step)
+    {
+        var card = new Button
+        {
+            Height                     = 30,
+            Padding                    = new Thickness(10, 0),
+            HorizontalAlignment        = HorizontalAlignment.Stretch,
+            HorizontalContentAlignment = HorizontalAlignment.Left,
+            VerticalContentAlignment   = VerticalAlignment.Center,
+            Content                    = step.Describe(),
+        };
+
+        var row = new StepRow { Kind = ScenarioStepKind.Filter, Card = card, Action = step };
+
+        card.Click += async (_, _) =>
+        {
+            var made = await new ScenarioFilterDialog(row.Action).ShowDialog<ScenarioStep?>(this);
+            if (made is null) return;
+
+            row.Action   = made;
+            card.Content = made.Describe();
+        };
+
+        return row;
     }
 
     /// <summary>Что настроено в шаге-действии — одной строкой на кнопке.</summary>
@@ -390,6 +435,7 @@ public partial class ScenarioDialog : Window
             {
                 ScenarioStepKind.Request => ScenarioStep.OfRequest(SelectedRequest(row)),
                 ScenarioStepKind.Action  => row.Action,
+                ScenarioStepKind.Filter  => row.Action,
                 ScenarioStepKind.Intake  => ScenarioStep.OfIntake((row.Text!.Text ?? "").Trim()),
                 _                        => ScenarioStep.OfNotice((row.Text!.Text ?? "").Trim()),
             });

@@ -1,0 +1,62 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:b="clr-namespace:SmartBase.Controls.Behaviors"
+        xmlns:w="clr-namespace:SmartBase.Controls.Widgets"
+        x:Class="SmartBase.Controls.Dialogs.ScenarioFilterDialog"
+        Title="Отбор строк"
+        Width="{StaticResource DialogWidthBase}"
+        MinWidth="{StaticResource DialogWidthBase}"
+        MaxWidth="{StaticResource DialogWidthBase}"
+        MinHeight="0"
+        SizeToContent="Height"
+        b:DialogFit.LimitToScreen="True"
+        WindowStartupLocation="CenterOwner"
+        CanResize="False"
+        Background="{StaticResource BrushBg}">
+
+    <StackPanel Spacing="0" Margin="{StaticResource DialogPadding}">
+
+        <TextBlock Text="Дальше пойдут только строки, на которых выполнились ВСЕ условия. Не подошла ни одна — сценарий на этом кончится, и это не ошибка."
+                   Margin="0,0,0,6"
+                   TextWrapping="Wrap"
+                   FontSize="{DynamicResource FontSizeSmall}"
+                   Foreground="{StaticResource BrushSecondaryText}" />
+
+        <TextBlock Text="Имя колонки — как его назвал предыдущий шаг. Колонка, которой в строках нет, останавливает шаг: иначе опечатка выглядела бы как честно не подошедшие данные."
+                   Margin="0,0,0,8"
+                   TextWrapping="Wrap"
+                   FontSize="{DynamicResource FontSizeSmall}"
+                   Foreground="{StaticResource BrushSecondaryText}" />
+
+        <!-- Полоса идет во всю высоту блока, а воздух висит на содержимом ВНУТРИ прокрутки
+             (docs/developer/ui/scrolling.md) — иначе она отходит от рамки. -->
+        <Border BorderBrush="{StaticResource BrushSeparator}"
+                BorderThickness="{DynamicResource BorderLine}"
+                CornerRadius="{StaticResource RadiusBase}"
+                ClipToBounds="True"
+                Margin="0,0,0,8"
+                Padding="0">
+            <ScrollViewer MaxHeight="240"
+                          HorizontalScrollBarVisibility="Disabled"
+                          VerticalScrollBarVisibility="Auto">
+                <StackPanel x:Name="TestsPanel" Spacing="8" Margin="10,8" />
+            </ScrollViewer>
+        </Border>
+
+        <Button x:Name="AddTestBtn"
+                Content="+ Условие"
+                Height="30"
+                Padding="12,0"
+                Margin="0,0,0,12"
+                HorizontalAlignment="Left" />
+
+        <w:NoticeBanner x:Name="NoticeBanner" Margin="0,0,0,12" />
+
+        <Grid ColumnDefinitions="*,Auto,8,Auto" Margin="0,4,0,0">
+            <Button Grid.Column="1" x:Name="CancelBtn" Classes="dialog" Content="Отмена" />
+            <Button Grid.Column="3" x:Name="SaveBtn"   Classes="dialog" Content="Готово" />
+        </Grid>
+
+    </StackPanel>
+
+</Window>

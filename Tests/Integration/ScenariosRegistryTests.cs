@@ -139,6 +139,47 @@ public sealed class ScenariosRegistryTests
         finally { Cleanup(dir, appDb, dataDb); }
     }
 
+    /// <summary>
+    /// Шаги «файл из папки» и «отбор» переживают переоткрытие вместе со своей начинкой. Потерять
+    /// условия страшнее, чем потерять шаг целиком: отбор без условий не сохранится и будет
+    /// виден, а отбор, пропускающий ВСЕ, выглядит работающим.
+    /// </summary>
+    [Fact]
+    public void An_intake_and_a_filter_survive_a_reopen_whole()
+    {
+        var (dir, appDb, dataDb) = TempPaths();
+        try
+        {
+            int id;
+
+            using (var registry = DatabaseRegistry.Open(dataDb, appDb))
+                id = registry.Integrations.SaveScenario(Scenario.New() with
+                {
+                    Name  = "Регистрация из папки",
+                    Steps =
+                    [
+                        ScenarioStep.OfIntake(@"P:\Обмен\КД"),
+                        ScenarioStep.OfFilter(new ScenarioCondition("Проект", ScenarioTest.Filled),
+                                              new ScenarioCondition("Статус", ScenarioTest.Equals,
+                                                                    "Оплачен")),
+                    ],
+                }).Id;
+
+            using (var again = DatabaseRegistry.Open(dataDb, appDb))
+            {
+                var steps = again.Integrations.FindScenario(id)!.Steps;
+
+                Assert.Equal(ScenarioStepKind.Intake, steps[0].Kind);
+                Assert.Equal(@"P:\Обмен\КД",          steps[0].Folder);
+
+                Assert.Equal(ScenarioStepKind.Filter, steps[1].Kind);
+                Assert.Equal("Отбор: Проект заполнено и Статус равно Оплачен",
+                             steps[1].Describe());
+            }
+        }
+        finally { Cleanup(dir, appDb, dataDb); }
+    }
+
     [Fact]
     public void A_scenario_of_a_wrong_shape_is_refused()
     {

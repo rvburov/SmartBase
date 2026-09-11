@@ -178,6 +178,12 @@ public enum ScenarioStepKind
     /// расширение повесить на несколько папок (docs/ROADMAP-API.md, раздел 9).
     /// </summary>
     Intake,
+
+    /// <summary>
+    /// Отбор строк по условиям — то самое «ЕСЛИ» из плана. Дальше идут только строки, которые
+    /// подошли; не подошла ни одна — сценарий на этом кончается, и это не неудача.
+    /// </summary>
+    Filter,
 }
 
 /// <summary>
@@ -209,6 +215,8 @@ public enum ScenarioStepKind
 /// Словарь намеренно не участвует в сравнении записей (у него ссылочное равенство) — сравнивать
 /// шаги целиком в программе негде, а хранение идет через JSON.</param>
 /// <param name="Folder">Корень папки обмена (только <see cref="ScenarioStepKind.Intake"/>).</param>
+/// <param name="Conditions">Условия отбора (только <see cref="ScenarioStepKind.Filter"/>);
+/// <c>null</c> — пусто. Список, как и словарь полей, не участвует в сравнении записей.</param>
 public sealed record ScenarioStep(
     ScenarioStepKind                     Kind,
     int                                  RequestId,
@@ -218,7 +226,8 @@ public sealed record ScenarioStep(
     int                                  DbId         = 0,
     int                                  CollectionId = 0,
     IReadOnlyDictionary<string, string>? FieldValues  = null,
-    string                               Folder       = "")
+    string                               Folder       = "",
+    IReadOnlyList<ScenarioCondition>?    Conditions   = null)
 {
     /// <summary>Сколько знаков умещается в карточке сообщения, не превращая ее в простыню.</summary>
     public const int MaxTextLength = 200;
@@ -229,6 +238,16 @@ public sealed record ScenarioStep(
 
     /// <summary>Выражения для полей действия; у остальных видов шага пусто.</summary>
     public IReadOnlyDictionary<string, string> Fields => FieldValues ?? Nothing;
+
+    /// <summary>
+    /// Сколько условий помещается в один отбор. Предохранитель того же рода, что и потолок
+    /// шагов: десяток условий в строку еще читается, а полтора десятка уже не проверяются
+    /// глазами — и отбор начинает жить своей жизнью.
+    /// </summary>
+    public const int MaxConditions = 10;
+
+    /// <summary>Условия отбора; у остальных видов шага пусто.</summary>
+    public IReadOnlyList<ScenarioCondition> Tests => Conditions ?? [];
 
     public static ScenarioStep OfRequest(int requestId) =>
         new(ScenarioStepKind.Request, requestId, "");
@@ -242,6 +261,9 @@ public sealed record ScenarioStep(
 
     public static ScenarioStep OfIntake(string folder) =>
         new(ScenarioStepKind.Intake, 0, "", Folder: folder);
+
+    public static ScenarioStep OfFilter(params ScenarioCondition[] conditions) =>
+        new(ScenarioStepKind.Filter, 0, "", Conditions: conditions);
 
     /// <summary>Что не так с шагом; пустой список — годится.</summary>
     public IReadOnlyList<string> Problems()
@@ -275,6 +297,18 @@ public sealed record ScenarioStep(
         if (Kind == ScenarioStepKind.Intake && string.IsNullOrWhiteSpace(Folder))
             problems.Add("В шаге не выбрана папка обмена");
 
+        if (Kind == ScenarioStepKind.Filter)
+        {
+            if (Tests.Count == 0)
+                problems.Add("В отборе нет ни одного условия");
+            else if (Tests.Count > MaxConditions)
+                problems.Add($"Условий больше {MaxConditions}: отберите в два приема");
+
+            for (var i = 0; i < Tests.Count; i++)
+                foreach (var problem in Tests[i].Problems())
+                    problems.Add($"Условие {i + 1}: {problem}");
+        }
+
         return problems;
     }
 
@@ -295,6 +329,11 @@ public sealed record ScenarioStep(
 
         ScenarioStepKind.Intake => "Файл из папки: "
             + (Folder.Length > 0 ? Folder : "папка не выбрана"),
+
+        // Условия соединяются союзом «и»: «или» пришлось бы рисовать скобками, а скобки в
+        // строке настройки читаются хуже, чем два отбора подряд.
+        ScenarioStepKind.Filter => "Отбор: "
+            + (Tests.Count > 0 ? string.Join(" и ", Tests) : "условия не заданы"),
 
         _ => "Неизвестный шаг",
     };
