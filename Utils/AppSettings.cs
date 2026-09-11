@@ -58,6 +58,10 @@ public static class AppSettings
     // (docs/ROADMAP-API.md, 10.10).
     public static string RunJournalPath { get; } = Path.Combine(AppDataDir, "integrations.db");
 
+    // Журнал безопасности — рядом, но отдельным файлом: рабочий журнал чистит пользователь, а
+    // этот только дополняется и читается проверяющим (docs/ROADMAP-API.md, 10.10).
+    public static string SecurityJournalPath { get; } = Path.Combine(AppDataDir, "security.db");
+
     public static void EnsureCreated() =>
         Directory.CreateDirectory(AppDataDir);
 

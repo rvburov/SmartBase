@@ -87,6 +87,22 @@ public partial class App : Application
                 Log.Warning(ex, "Журнал обмена не открылся: {Path:l}", AppSettings.RunJournalPath);
             }
 
+            // Журнал безопасности — тот, который читает проверяющий. В отличие от рабочего, его
+            // сбой не «переживается»: правило «не записалось — не отправляем» опирается на то,
+            // что журнал есть. Не открылся — исходящего просто не будет, и сказать об этом надо
+            // громче, чем про рабочий.
+            try
+            {
+                Database.SecurityJournal.Attach(
+                    new Database.SecurityJournal(AppSettings.SecurityJournalPath));
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "Журнал безопасности НЕ открылся: {Path:l}. Исходящий обмен "
+                            + "работать не будет — отправка без следа не допускается",
+                          AppSettings.SecurityJournalPath);
+            }
+
             // Расширения: Id — ключ и строки сайдбара, и группы настроек «ext.<Id>.…»,
             // поэтому тезки недопустимы (проверка падает с явным сообщением).
             Extensions.ExtensionRegistry.EnsureUniqueIds();
