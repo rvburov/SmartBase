@@ -308,7 +308,7 @@ public sealed class InboxReceiverTests : IDisposable
         Put(layout, name, Message("Заказы", "add", "", "m1", """[ { "Название": "Молоток" } ]"""));
 
         var claimed = InboxFolder.TryClaim(
-            new InboxFile(Path.Combine(layout.Incoming, name), name), "ПК18");
+            new InboxFile(Path.Combine(layout.Incoming, name), name), "ПК18", Now);
 
         Assert.NotNull(claimed);
 
@@ -333,7 +333,7 @@ public sealed class InboxReceiverTests : IDisposable
         Put(layout, name, Message("Заказы", "add", "", "m1", """[ { "Название": "Молоток" } ]"""));
 
         var claimed = InboxFolder.TryClaim(
-            new InboxFile(Path.Combine(layout.Incoming, name), name), "ПК18")!;
+            new InboxFile(Path.Combine(layout.Incoming, name), name), "ПК18", Now)!;
 
         File.SetLastWriteTimeUtc(claimed, (Now - TimeSpan.FromDays(1)).UtcDateTime);
 

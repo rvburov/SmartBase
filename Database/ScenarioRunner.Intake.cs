@@ -65,22 +65,19 @@ public static partial class ScenarioRunner
                 return StepOutcome.Nothing;
             }
 
-            var claimed = InboxFolder.TryClaim(file, Environment.MachineName);
+            var claimed = InboxFolder.TryClaim(file, Environment.MachineName, now);
             if (claimed is null) continue;   // забрал сосед — идем к следующему
 
-            string text;
-            try
-            {
-                // Кодировка — по метке в начале файла, иначе UTF-8: тот же выбор, что и у
-                // службы приема, и меняться он не должен от того, каким каналом пришел файл.
-                text = System.IO.File.ReadAllText(claimed);
-            }
-            catch (Exception failure) when (failure is IOException or UnauthorizedAccessException)
+            // Читается тем же кодом, что и у службы приема, — вместе с потолком размера:
+            // канал другой, а папка та же, и правила у нее одни.
+            var text = InboxFolder.ReadText(claimed, out var unread);
+
+            if (text is null)
             {
                 // Прочитать не вышло — отвечаем отправителю и убираем файл в «Ошибки»: молча
                 // оставить его во «Входящих» значило бы спотыкаться о него каждые пять минут.
                 taken = new Intake(layout, file, claimed, id);
-                return StepOutcome.Bad("файл не прочитался: " + failure.Message);
+                return StepOutcome.Bad(unread);
             }
 
             taken = new Intake(layout, file, claimed, id);
@@ -99,7 +96,7 @@ public static partial class ScenarioRunner
     /// </summary>
     private static void Repeat(InboxLayout layout, InboxFile file, DateTimeOffset now)
     {
-        var claimed = InboxFolder.TryClaim(file, Environment.MachineName);
+        var claimed = InboxFolder.TryClaim(file, Environment.MachineName, now);
         if (claimed is null) return;
 
         try

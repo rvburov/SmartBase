@@ -108,7 +108,7 @@ public static class InboxReceiver
         {
             if (ct.IsCancellationRequested) break;
 
-            var claimed = InboxFolder.TryClaim(file, machine);
+            var claimed = InboxFolder.TryClaim(file, machine, now);
             if (claimed is null) continue;   // забрал сосед
 
             progress?.Report(file.Name);
@@ -155,16 +155,12 @@ public static class InboxReceiver
         InboxLayout layout, ConstructorRepository repo, int dbId,
         InboxFile file, string claimed, DateTimeOffset now)
     {
-        string text;
-        try
-        {
-            text = File.ReadAllText(claimed);
-        }
-        catch (Exception failure) when (failure is IOException or UnauthorizedAccessException)
-        {
-            return (Reject(layout, file, claimed, "", "", 0,
-                           "файл не прочитался: " + failure.Message, now), false);
-        }
+        // Потолок размера спрашивается ДО чтения: файл в общую папку кладет кто угодно с
+        // правами на запись, и гигабайт оттуда не должен кончаться нехваткой памяти.
+        var text = InboxFolder.ReadText(claimed, out var unread);
+
+        if (text is null)
+            return (Reject(layout, file, claimed, "", "", 0, unread, now), false);
 
         var message = InboxMessage.TryParse(text, out var error);
 

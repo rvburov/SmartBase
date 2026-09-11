@@ -132,7 +132,7 @@ public sealed class InboxFolderTests : IDisposable
         var layout = Layout();
         var file   = Put(layout, "заказы.json");
 
-        Assert.NotNull(InboxFolder.TryClaim(file, "ПК17"));
+        Assert.NotNull(InboxFolder.TryClaim(file, "ПК17", Now));
         Assert.Empty(InboxFolder.Ready(layout, Now));
     }
 
@@ -180,8 +180,8 @@ public sealed class InboxFolderTests : IDisposable
         var layout = Layout();
         var file   = Put(layout, "заказы.json");
 
-        var first  = InboxFolder.TryClaim(file, "ПК17");
-        var second = InboxFolder.TryClaim(file, "ПК18");
+        var first  = InboxFolder.TryClaim(file, "ПК17", Now);
+        var second = InboxFolder.TryClaim(file, "ПК18", Now);
 
         Assert.NotNull(first);
         Assert.Null(second);
@@ -195,12 +195,17 @@ public sealed class InboxFolderTests : IDisposable
         var layout = Layout();
         var file   = Put(layout, "заказы.json");
 
-        var claimed = InboxFolder.TryClaim(file, "ПК17")!;
+        var claimed = InboxFolder.TryClaim(file, "ПК17", Now)!;
         InboxFolder.Release(claimed, file);
 
         Assert.True(File.Exists(file.Path));
         Assert.False(File.Exists(claimed));
-        Assert.Single(InboxFolder.Ready(layout, Now));
+
+        // Время записи у вернувшегося файла — момент захвата, поэтому выдержку он выждет
+        // заново: пять секунд при обходе раз в полминуты. Сказано здесь, а не умолчано,
+        // потому что это видимое следствие отметки времени при захвате.
+        Assert.Empty(InboxFolder.Ready(layout, Now));
+        Assert.Single(InboxFolder.Ready(layout, Now + InboxFolder.Settle));
     }
 
     /// <summary>
@@ -213,7 +218,7 @@ public sealed class InboxFolderTests : IDisposable
         var layout = Layout();
         var file   = Put(layout, "заказы.json");
 
-        var claimed = InboxFolder.TryClaim(file, "ПК17")!;
+        var claimed = InboxFolder.TryClaim(file, "ПК17", Now)!;
         File.SetLastWriteTimeUtc(claimed, (Now - TimeSpan.FromDays(1)).UtcDateTime);
 
         Assert.Equal(1, InboxFolder.ReclaimStale(layout, Now));
@@ -230,11 +235,34 @@ public sealed class InboxFolderTests : IDisposable
         var layout = Layout();
         var file   = Put(layout, "заказы.json");
 
-        var claimed = InboxFolder.TryClaim(file, "ПК17")!;
+        var claimed = InboxFolder.TryClaim(file, "ПК17", Now)!;
         File.SetLastWriteTimeUtc(claimed, (Now - TimeSpan.FromMinutes(10)).UtcDateTime);
 
         Assert.Equal(0, InboxFolder.ReclaimStale(layout, Now));
         Assert.True(File.Exists(claimed));
+    }
+
+    /// <summary>
+    /// Брошенность считается от ЗАХВАТА, а не от того, когда файл написали. Переименование
+    /// время записи не трогает, поэтому без отметки файл, пролежавший во «Входящих» дольше
+    /// <see cref="InboxFolder.StaleClaim"/> — ночная доставка, база была недоступна, — сразу
+    /// после захвата выглядел бы брошенным: сосед вернул бы его во «Входящие» посреди
+    /// обработки, и сообщение разобралось бы дважды.
+    ///
+    /// Этот тест намеренно НЕ ставит время руками, в отличие от соседних: именно рукой,
+    /// поставленной после захвата, дефект и был закрыт от проверки.
+    /// </summary>
+    [Fact]
+    public void Claim_of_a_long_waiting_file_is_not_abandoned_from_the_start()
+    {
+        var layout = Layout();
+        var file   = Put(layout, "заказы.json", age: TimeSpan.FromDays(1));
+
+        var claimed = InboxFolder.TryClaim(file, "ПК17", Now)!;
+
+        Assert.Equal(0, InboxFolder.ReclaimStale(layout, Now));
+        Assert.True(File.Exists(claimed));
+        Assert.False(File.Exists(file.Path));
     }
 
     /// <summary>Отправитель прислал файл заново — брошенный захват на его место не возвращается.</summary>
@@ -244,12 +272,48 @@ public sealed class InboxFolderTests : IDisposable
         var layout = Layout();
         var file   = Put(layout, "заказы.json", """{"новый":1}""");
 
-        var claimed = InboxFolder.TryClaim(file, "ПК17")!;
+        var claimed = InboxFolder.TryClaim(file, "ПК17", Now)!;
         File.SetLastWriteTimeUtc(claimed, (Now - TimeSpan.FromDays(1)).UtcDateTime);
         Put(layout, "заказы.json", """{"свежий":1}""");
 
         Assert.Equal(0, InboxFolder.ReclaimStale(layout, Now));
         Assert.Contains("свежий", File.ReadAllText(file.Path), StringComparison.Ordinal);
+    }
+
+    // ── Чтение файла ──────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Файл в общую папку кладет кто угодно с правами на запись, а читается он в строку целиком
+    /// и разбирается поверх нее. Потолок спрашивается у файловой системы ДО чтения: узнать о
+    /// беде, когда тридцать мегабайт уже в памяти, — не защита.
+    /// </summary>
+    [Fact]
+    public void A_file_over_the_ceiling_is_refused_before_it_is_read()
+    {
+        var layout = Layout();
+        var path   = Path.Combine(layout.Incoming, "огромный.json");
+
+        // Длина ставится, а не пишется: на диск ложится дырявый файл, а размер файловая
+        // система показывает настоящий — именно его потолок и спрашивает.
+        using (var big = new FileStream(path, FileMode.Create, FileAccess.Write))
+            big.SetLength(InboxFolder.MaxFileBytes + 1);
+
+        var text = InboxFolder.ReadText(path, out var trouble);
+
+        Assert.Null(text);
+        Assert.Contains("слишком велик", trouble, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void A_file_within_the_ceiling_is_read_as_it_is()
+    {
+        var layout = Layout();
+        var file   = Put(layout, "заказы.json", """{"Название":"Молоток"}""");
+
+        var text = InboxFolder.ReadText(file.Path, out var trouble);
+
+        Assert.Equal("""{"Название":"Молоток"}""", text);
+        Assert.Equal("", trouble);
     }
 
     // ── Память о принятых сообщениях ──────────────────────────────────────────
@@ -325,7 +389,7 @@ public sealed class InboxFolderTests : IDisposable
     {
         var layout  = Layout();
         var file    = Put(layout, "заказы.json");
-        var claimed = InboxFolder.TryClaim(file, "ПК17")!;
+        var claimed = InboxFolder.TryClaim(file, "ПК17", Now)!;
 
         var target = InboxFolder.Finish(layout, claimed, file, accepted: true, Now);
 
@@ -339,7 +403,7 @@ public sealed class InboxFolderTests : IDisposable
     {
         var layout  = Layout();
         var file    = Put(layout, "заказы.json");
-        var claimed = InboxFolder.TryClaim(file, "ПК17")!;
+        var claimed = InboxFolder.TryClaim(file, "ПК17", Now)!;
 
         var target = InboxFolder.Finish(layout, claimed, file, accepted: false, Now);
 
@@ -357,10 +421,10 @@ public sealed class InboxFolderTests : IDisposable
         var layout = Layout();
 
         var first = Put(layout, "заказы.json", """{"первый":1}""");
-        InboxFolder.Finish(layout, InboxFolder.TryClaim(first, "ПК17")!, first, true, Now);
+        InboxFolder.Finish(layout, InboxFolder.TryClaim(first, "ПК17", Now)!, first, true, Now);
 
         var second = Put(layout, "заказы.json", """{"второй":1}""");
-        var target = InboxFolder.Finish(layout, InboxFolder.TryClaim(second, "ПК17")!, second, true, Now);
+        var target = InboxFolder.Finish(layout, InboxFolder.TryClaim(second, "ПК17", Now)!, second, true, Now);
 
         Assert.Equal(Path.Combine(layout.Processed, "2026-09", "заказы (2).json"), target);
         Assert.Contains("первый",
