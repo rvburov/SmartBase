@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using SmartBase.Core.Models;
 using SmartBase.Database.Entities;
+using SmartBase.Integrations;
 
 namespace SmartBase.Database.Repositories;
 
@@ -27,15 +28,22 @@ public partial class ConstructorRepository
     /// Поставить метку базе. «Открыто» — строка убирается: хранить значение, равное стандарту,
     /// в этой базе не принято.
     ///
-    /// Понижение метки (со строгой на свободную) — отдельное событие в журнале изменений:
-    /// иначе запрет обходится снятием метки за две секунды и без следа. Мастер-пароль
-    /// ответственного здесь пока не спрашивается — он появится вместе с подтверждением
-    /// исходящих направлений (docs/ROADMAP-API.md, шаг 5).
+    /// Возвращает причину отказа; пусто — метка поставлена. Отказ, а не исключение: понижение
+    /// метки — обычное действие человека за экраном, и неверный пароль здесь такая же опечатка,
+    /// как и в окне подтверждения направления.
     /// </summary>
-    public void SetDatabaseLabel(ConfidentialityLabel label)
+    /// <param name="label">Новая метка.</param>
+    /// <param name="password">Мастер-пароль политики; нужен ТОЛЬКО при понижении. Повышать
+    /// метку можно без него: строже — значит безопаснее, и спрашивать за это пароль значило бы
+    /// отучить людей повышать метки вовсе.</param>
+    public string SetDatabaseLabel(ConfidentialityLabel label, string? password = null)
     {
         var before = GetDatabaseLabel();
-        if (before == label) return;
+        if (before == label) return "";
+
+        if (Downgrade(before, label, password, "база",
+                          System.IO.Path.GetFileNameWithoutExtension(db.DbPath)) is { Length: > 0 } trouble)
+            return trouble;
 
         var row = db.DbMeta.Find(Confidentiality.Key);
 
@@ -57,6 +65,7 @@ public partial class ConstructorRepository
             detail: $"{Confidentiality.Title(before)} → {Confidentiality.Title(label)}");
 
         db.SaveChanges();
+        return "";
     }
 
     /// <summary>Метка свойства. Ключа в конфиге нет — «Открыто»; конфиг сломан — «Закрытый контур».</summary>
@@ -67,14 +76,24 @@ public partial class ConstructorRepository
     /// <summary>
     /// Поставить метку свойству. Остальные настройки свойства сохраняются — метка живет рядом
     /// с ними, а не вместо них.
+    ///
+    /// Возвращает причину отказа; пусто — метка поставлена. Понижение здесь под тем же замком,
+    /// что и у базы: именно меткой поля закрывается точный случай «это поле наружу нельзя», и
+    /// снять ее без пароля значило бы оставить запрет на честном слове.
     /// </summary>
-    public void SetFieldLabel(int fieldId, ConfidentialityLabel label)
+    /// <param name="fieldId">Ключ свойства.</param>
+    /// <param name="label">Новая метка.</param>
+    /// <param name="password">Мастер-пароль политики; нужен только при понижении.</param>
+    public string SetFieldLabel(int fieldId, ConfidentialityLabel label, string? password = null)
     {
         var field = db.DbFields.FirstOrDefault(f => f.Id == fieldId);
-        if (field is null) return;
+        if (field is null) return "свойство не найдено";
 
         var before = Confidentiality.FromConfig(field.ConfigJson);
-        if (before == label) return;
+        if (before == label) return "";
+
+        if (Downgrade(before, label, password, "свойство", field.Name) is { Length: > 0 } trouble)
+            return trouble;
 
         field.ConfigJson = Confidentiality.WriteToConfig(field.ConfigJson, label);
 
@@ -85,6 +104,68 @@ public partial class ConstructorRepository
             detail: $"{Confidentiality.Title(before)} → {Confidentiality.Title(label)}");
 
         db.SaveChanges();
+        return "";
+    }
+
+    // ── Понижение метки ───────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Можно ли понизить метку, и если можно — оставить след. Возвращает причину отказа; пусто —
+    /// разрешено (в том числе когда понижения и нет вовсе).
+    ///
+    /// Три правила, и каждое закрывает свой способ обойти запрет (docs/ROADMAP-API.md, 10.6).
+    ///
+    /// <list type="number">
+    ///   <item><b>Понижение — по мастер-паролю политики.</b> Без него весь механизм меток
+    ///   держится на честном слове: помеченное поле нельзя отправить, но метку можно снять за
+    ///   две секунды, и тогда уже можно все.</item>
+    ///   <item><b>Пароля в политике нет — понижать нечем.</b> То же fail-closed, что и у
+    ///   исходящих направлений: отсутствие настройки обязано быть безопасным состоянием, иначе
+    ///   машина без политики становится машиной без ограничений.</item>
+    ///   <item><b>Не записалось — не понижаем.</b> Понижение метки — ровно то событие, ради
+    ///   которого журнал безопасности заведен: с него начинается разбор «как данные ушли
+    ///   наружу». Понижение, о котором не осталось следа, ничем не отличается от тайного.</item>
+    /// </list>
+    ///
+    /// Повышение метки пароля НЕ требует и следа не оставляет: строже — значит безопаснее, а
+    /// спрашивать пароль за осторожность значит отучить от нее.
+    /// </summary>
+    private string Downgrade(ConfidentialityLabel before, ConfidentialityLabel after,
+                             string? password, string what, string name)
+    {
+        if (after >= before) return "";
+
+        var policy = EgressGate.Policy;
+
+        if (!policy.HasMaster)
+            return "понизить метку нечем: мастер-пароль не задан ни одним источником политики "
+                 + "организации. Обратитесь к ответственному за интеграции";
+
+        if (!policy.MasterMatches(password))
+            return "мастер-пароль не подошел";
+
+        var entry = SecurityEntry.New(
+            SecurityEvent.Downgrade, allowed: true,
+            who:         SmartBase.Utils.CurrentUser.DisplayName,
+            scenario:    "",
+            address:     $"{what} «{name}»",
+            fields:      what == "свойство" ? name : "",
+            rows:        0,
+            bytes:       0,
+            bodyHash:    "",
+            explanation: $"{Confidentiality.Title(before)} → {Confidentiality.Title(after)}",
+            dbId:        0,
+            at:          DateTimeOffset.Now,
+            confirmed:   SmartBase.Utils.CurrentUser.DisplayName);
+
+        // Тот же порядок, что и у отправки: сначала след, потом действие. Строка, которую пишут
+        // по итогу, не ляжет ровно в том случае, ради которого журнал и заведен.
+        if (!SecurityJournal.Add(entry))
+            return "понижение не записалось в журнал безопасности, поэтому и не выполнено: "
+                 + "снятие метки без следа — ровно то, чего требование службы безопасности не "
+                 + "допускает. Причина записана в «Диагностике»";
+
+        return "";
     }
 
     // ── Перенос между базами ──────────────────────────────────────────────────
