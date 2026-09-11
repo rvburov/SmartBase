@@ -128,7 +128,7 @@ public static class RequestRunner
                 "политика организации не разрешает получать записи: потолок строк за запуск — 0",
                 outward);
 
-        var quota = EgressGate.CheckQuota(DateTimeOffset.Now);
+        var quota = EgressGate.CheckQuota(DateTimeOffset.Now, request.Id);
         if (!quota.Allowed)
             return RunPreview.Blocked("запрещено политикой: " + quota.Explanation, outward);
 
@@ -187,7 +187,7 @@ public static class RequestRunner
         // Накопительные потолки спрашиваются ДО первого сокета: потолок, о котором узнают
         // задним числом, ничего не ограничивает.
         var moment = DateTimeOffset.Now;
-        var quota  = EgressGate.CheckQuota(moment);
+        var quota  = EgressGate.CheckQuota(moment, request.Id);
 
         if (!quota.Allowed)
             return new RunOutcome(false, "запрещено политикой: " + quota.Explanation,
@@ -195,7 +195,7 @@ public static class RequestRunner
 
         // Сколько еще можно получить за сутки. Спросить один раз перед запуском мало: выгрузка
         // на двести порций перешагнула бы любой суточный потолок, ни разу его не спросив.
-        var budget = EgressGate.BytesLeft(moment);
+        var budget = EgressGate.BytesLeft(moment, request.Id);
 
         var items   = new List<string>();
         var bytes   = 0L;
@@ -236,8 +236,8 @@ public static class RequestRunner
             // неудаче посреди выгрузки.
             if (bytes > budget)
                 return RunOutcome.Failed(
-                    $"выбран потолок объема за сутки: осталось было {budget:N0} байт, "
-                    + $"а выгрузка потребовала {bytes:N0}",
+                    $"выбран суточный потолок объема этого направления: осталось было "
+                    + $"{budget:N0} байт, а выгрузка потребовала {bytes:N0}",
                     answer, pages, items.Count, sent);
 
             if (!answer.Sent)

@@ -112,7 +112,8 @@ public static partial class ScenarioRunner
         // случилось, и без строки это выглядело бы как пропажа сообщения.
         RunJournal.Add(RunEntry.New(RunChannel.Inbox, file.Name, layout.Incoming, ok: true,
                                     "повтор: сообщение уже приходило", rows: 0, bytes: 0,
-                                    elapsed: TimeSpan.Zero, dbId: 0, at: now, counts: false));
+                                    elapsed: TimeSpan.Zero, dbId: 0, at: now, counts: false,
+                                    direction: 0));   // файл идет внутрь, направления у него нет
     }
 
     /// <summary>

@@ -125,7 +125,23 @@ public partial class SettingsView
         if (policy.Any)
         {
             list.Children.Add(Note($"Запусков за час: {hour.Runs:N0} из {policy.MaxRunsPerHour:N0}."));
-            list.Children.Add(Note($"Передано за сутки: {Size(day.Bytes)} из {Size(policy.MaxBytesPerDay)}."));
+            list.Children.Add(Note($"Передано за сутки, всего: {Size(day.Bytes)}."));
+
+            // Суточный потолок объема — у КАЖДОГО направления свой, поэтому общая цифра на
+            // вопрос «почему отказали» не отвечает: отказать может одно направление при
+            // почти пустом счете у остальных. Показываются те, что уже что-то потратили,
+            // самые нагруженные сверху.
+            foreach (var spent in journal.SpentByDirection(now - TimeSpan.FromDays(1))
+                                         .Where(s => s.Bytes > 0))
+            {
+                var name = spent.Name.Length > 0 ? spent.Name
+                         : spent.Direction == 0  ? "без карточки"
+                         : $"карточка №{spent.Direction}";
+
+                list.Children.Add(Note(
+                    $"    {name}: {Size(spent.Bytes)} из {Size(policy.MaxBytesPerDay)}"
+                    + (spent.Bytes >= policy.MaxBytesPerDay ? " — потолок выбран." : ".")));
+            }
         }
         else
         {
@@ -137,8 +153,10 @@ public partial class SettingsView
 
         return Row("Расход",
             "Окно скользящее: час и сутки считаются назад от текущего момента, а не с начала "
-            + "часа и не с полуночи. В расход идет только то, что уходит НАРУЖУ, — файлы из "
-            + "папки обмена идут внутрь и потолков не занимают.",
+            + "часа и не с полуночи. Запусков в час считается по всему обмену, а объем за сутки — "
+            + "по каждому направлению отдельно: подтверждают и отзывают карточку запроса, ей же "
+            + "назначен и потолок. В расход идет только то, что уходит НАРУЖУ, — файлы из папки "
+            + "обмена идут внутрь и потолков не занимают.",
             list);
     }
 

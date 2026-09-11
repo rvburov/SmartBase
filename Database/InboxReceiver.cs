@@ -143,7 +143,7 @@ public static class InboxReceiver
                 RunChannel.Inbox, file.Name, layout.Incoming,
                 receipt.Accepted, repeat ? "повтор: сообщение уже приходило" : receipt.Explanation,
                 receipt.Created + receipt.Updated, 0, TimeSpan.Zero,
-                dbId, now, counts: false));
+                dbId, now, counts: false, direction: 0));   // файл идет внутрь
         }
 
         return new InboxRun(accepted, rejected, repeats, reclaimed, receipts);

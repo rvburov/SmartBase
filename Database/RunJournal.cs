@@ -41,6 +41,9 @@ public enum RunChannel
 /// <param name="DbId">Ключ базы, которую задел запуск; 0 — ни одной.</param>
 /// <param name="Counts">Считается ли запуск в накопительные квоты политики. Обмен файлами не
 /// считается: квоты ограничивают то, что уходит наружу, а файл из папки идет внутрь.</param>
+/// <param name="Direction">Направление — ключ карточки запроса; 0 — запуск без карточки (файл из
+/// папки, итоговая строка сценария). По нему считается суточный потолок объема: подтверждают и
+/// отзывают именно карточку, и потолок в 10.6 назначен ей же, а не обмену целиком.</param>
 public sealed record RunEntry(
     long       Id,
     string     At,
@@ -53,15 +56,16 @@ public sealed record RunEntry(
     long       Bytes,
     long       Ms,
     int        DbId,
-    bool       Counts)
+    bool       Counts,
+    int        Direction)
 {
     /// <summary>Новая строка «сейчас»; момент передается явно — тест не должен зависеть от часов.</summary>
     public static RunEntry New(RunChannel channel, string name, string address, bool ok,
                                string explanation, int rows, long bytes, TimeSpan elapsed,
-                               int dbId, DateTimeOffset at, bool counts) =>
+                               int dbId, DateTimeOffset at, bool counts, int direction) =>
         new(0, at.ToUniversalTime().ToString("o", CultureInfo.InvariantCulture),
             channel, name, address, ok, explanation, rows, bytes,
-            (long)elapsed.TotalMilliseconds, dbId, counts);
+            (long)elapsed.TotalMilliseconds, dbId, counts, direction);
 
     /// <summary>Момент записи; <c>null</c> — строка испорчена правкой файла руками.</summary>
     public DateTimeOffset? Moment =>
@@ -132,12 +136,37 @@ public sealed class RunJournal
                 Bytes       INTEGER NOT NULL,
                 Ms          INTEGER NOT NULL,
                 DbId        INTEGER NOT NULL,
-                Counts      INTEGER NOT NULL
+                Counts      INTEGER NOT NULL,
+                Direction   INTEGER NOT NULL DEFAULT 0
             );
             CREATE INDEX IF NOT EXISTS runs_at ON runs (At);
             """;
 
         command.ExecuteNonQuery();
+
+        AddDirection(connection);
+    }
+
+    /// <summary>
+    /// Достроить колонку направления в журнале, заведенном прежней версией программы. Строки,
+    /// написанные до нее, получают направление 0 — «неизвестно чье»: задним числом раскладывать
+    /// их по карточкам не по чему, а выбросить сутки расхода значило бы разрешить ровно столько
+    /// же сверх потолка.
+    ///
+    /// Отдельным шагом, а не переписыванием таблицы: журнал копится годами, и ронять его при
+    /// обновлении программы нельзя.
+    /// </summary>
+    private static void AddDirection(SqliteConnection connection)
+    {
+        using (var look = connection.CreateCommand())
+        {
+            look.CommandText = "SELECT COUNT(*) FROM pragma_table_info('runs') WHERE name = 'Direction';";
+            if (Convert.ToInt32(look.ExecuteScalar(), CultureInfo.InvariantCulture) > 0) return;
+        }
+
+        using var add = connection.CreateCommand();
+        add.CommandText = "ALTER TABLE runs ADD COLUMN Direction INTEGER NOT NULL DEFAULT 0;";
+        add.ExecuteNonQuery();
     }
 
     private SqliteConnection Open()
@@ -173,8 +202,8 @@ public sealed class RunJournal
                 using var command    = connection.CreateCommand();
 
                 command.CommandText = """
-                    INSERT INTO runs (At, Channel, Name, Address, Ok, Explanation, Rows, Bytes, Ms, DbId, Counts)
-                    VALUES ($at, $channel, $name, $address, $ok, $explanation, $rows, $bytes, $ms, $db, $counts);
+                    INSERT INTO runs (At, Channel, Name, Address, Ok, Explanation, Rows, Bytes, Ms, DbId, Counts, Direction)
+                    VALUES ($at, $channel, $name, $address, $ok, $explanation, $rows, $bytes, $ms, $db, $counts, $direction);
                     SELECT last_insert_rowid();
                     """;
 
@@ -189,6 +218,7 @@ public sealed class RunJournal
                 command.Parameters.AddWithValue("$ms",          entry.Ms);
                 command.Parameters.AddWithValue("$db",          entry.DbId);
                 command.Parameters.AddWithValue("$counts",      entry.Counts ? 1 : 0);
+                command.Parameters.AddWithValue("$direction",   entry.Direction);
 
                 return Convert.ToInt64(command.ExecuteScalar(), CultureInfo.InvariantCulture);
             }
@@ -213,7 +243,7 @@ public sealed class RunJournal
                 using var command    = connection.CreateCommand();
 
                 command.CommandText = """
-                    SELECT Id, At, Channel, Name, Address, Ok, Explanation, Rows, Bytes, Ms, DbId, Counts
+                    SELECT Id, At, Channel, Name, Address, Ok, Explanation, Rows, Bytes, Ms, DbId, Counts, Direction
                     FROM runs ORDER BY Id DESC LIMIT $take;
                     """;
 
@@ -227,7 +257,8 @@ public sealed class RunJournal
                         reader.GetInt64(0), reader.GetString(1), (RunChannel)reader.GetInt32(2),
                         reader.GetString(3), reader.GetString(4), reader.GetInt32(5) != 0,
                         reader.GetString(6), reader.GetInt32(7), reader.GetInt64(8),
-                        reader.GetInt64(9), reader.GetInt32(10), reader.GetInt32(11) != 0));
+                        reader.GetInt64(9), reader.GetInt32(10), reader.GetInt32(11) != 0,
+                        reader.GetInt32(12)));
 
                 return rows;
             }
@@ -242,14 +273,31 @@ public sealed class RunJournal
     // ── Накопительные счетчики ────────────────────────────────────────────────
 
     /// <summary>
-    /// Сколько запусков и байт засчитано с указанного момента. Считаются только строки с
-    /// <see cref="RunEntry.Counts"/>: квоты ограничивают то, что уходит НАРУЖУ, а файл из папки
-    /// идет внутрь и к ним отношения не имеет.
+    /// Сколько запусков и байт засчитано с указанного момента — по всему обмену. Считаются только
+    /// строки с <see cref="RunEntry.Counts"/>: квоты ограничивают то, что уходит НАРУЖУ, а файл
+    /// из папки идет внутрь и к ним отношения не имеет.
     ///
     /// Считаются и НЕудачные запуски тоже: отказ чужой программы все равно был обращением к
     /// ней, и не считать его значило бы разрешить бесконечный перебор в ответ на ошибки.
+    ///
+    /// Общая сумма байт нужна экрану — «сколько всего ушло за сутки», — а не потолку: суточный
+    /// потолок объема назначен направлению, и считает его <see cref="BytesSince"/>.
     /// </summary>
-    public (int Runs, long Bytes) Since(DateTimeOffset moment)
+    public (int Runs, long Bytes) Since(DateTimeOffset moment) => Since(moment, direction: null);
+
+    /// <summary>
+    /// Сколько байт засчитано с указанного момента ПО ОДНОМУ направлению — ключу карточки
+    /// запроса. Это и есть счет, по которому проверяется суточный потолок объема (10.6).
+    /// </summary>
+    public long BytesSince(DateTimeOffset moment, int direction) =>
+        Since(moment, direction).Bytes;
+
+    /// <summary>
+    /// Общий счет: <paramref name="direction"/> равен <c>null</c> — по всему обмену, иначе по
+    /// одному направлению. Одним запросом на оба случая, потому что «считается ли строка» и
+    /// «неудачные тоже» здесь общие, а разойдясь, они однажды разошлись бы в сторону разрешения.
+    /// </summary>
+    private (int Runs, long Bytes) Since(DateTimeOffset moment, int? direction)
     {
         try
         {
@@ -260,11 +308,14 @@ public sealed class RunJournal
 
                 command.CommandText = """
                     SELECT COUNT(*), IFNULL(SUM(Bytes), 0) FROM runs
-                    WHERE Counts = 1 AND At >= $since;
+                    WHERE Counts = 1 AND At >= $since
+                      AND ($any = 1 OR Direction = $direction);
                     """;
 
                 command.Parameters.AddWithValue("$since",
                     moment.ToUniversalTime().ToString("o", CultureInfo.InvariantCulture));
+                command.Parameters.AddWithValue("$any",       direction is null ? 1 : 0);
+                command.Parameters.AddWithValue("$direction", direction ?? 0);
 
                 using var reader = command.ExecuteReader();
 
@@ -279,6 +330,58 @@ public sealed class RunJournal
             // быть безопасным состоянием: битый журнал не должен снимать ограничения.
             Serilog.Log.Warning("Журнал обмена: счетчики не читаются — {Reason:l}", failure.Message);
             return (int.MaxValue, long.MaxValue);
+        }
+    }
+
+    /// <summary>
+    /// Расход по направлениям за период: ключ карточки, ее имя и сколько байт ушло. Нужен экрану
+    /// «Журнал»: потолок объема теперь у каждого направления свой, и общая строка «передано за
+    /// сутки» на вопрос «почему отказали» больше не отвечает.
+    ///
+    /// Имя берется у самой свежей строки направления — карточку могли переименовать, и показывать
+    /// человеку прошлогоднее имя незачем.
+    /// </summary>
+    public IReadOnlyList<(int Direction, string Name, long Bytes)> SpentByDirection(DateTimeOffset moment)
+    {
+        try
+        {
+            lock (_lock)
+            {
+                using var connection = Open();
+                using var command    = connection.CreateCommand();
+
+                command.CommandText = """
+                    SELECT Direction,
+                           (SELECT Name FROM runs AS last
+                             WHERE last.Direction = runs.Direction AND last.Counts = 1
+                               AND last.At >= $since
+                             ORDER BY last.Id DESC LIMIT 1),
+                           IFNULL(SUM(Bytes), 0)
+                    FROM runs
+                    WHERE Counts = 1 AND At >= $since
+                    GROUP BY Direction
+                    ORDER BY SUM(Bytes) DESC;
+                    """;
+
+                command.Parameters.AddWithValue("$since",
+                    moment.ToUniversalTime().ToString("o", CultureInfo.InvariantCulture));
+
+                var spent = new List<(int, string, long)>();
+                using var reader = command.ExecuteReader();
+
+                while (reader.Read())
+                    spent.Add((reader.GetInt32(0),
+                               reader.IsDBNull(1) ? "" : reader.GetString(1),
+                               reader.GetInt64(2)));
+
+                return spent;
+            }
+        }
+        catch (SqliteException failure)
+        {
+            Serilog.Log.Warning("Журнал обмена: расход по направлениям не читается — {Reason:l}",
+                                failure.Message);
+            return [];
         }
     }
 
@@ -349,7 +452,8 @@ public sealed class RunJournal
     {
         public int RunsSince(DateTimeOffset moment) => journal.Since(moment).Runs;
 
-        public long BytesSince(DateTimeOffset moment) => journal.Since(moment).Bytes;
+        public long BytesSince(DateTimeOffset moment, int direction) =>
+            journal.BytesSince(moment, direction);
     }
 
     /// <summary>Счетчик расхода поверх этого журнала.</summary>

@@ -433,7 +433,7 @@ public static partial class ScenarioRunner
         RunJournal.Add(RunEntry.New(
             RunChannel.Request, request.Name, outcome.SafeAddress, outcome.Ok, outcome.Explanation,
             outcome.Rows, outcome.Bytes, outcome.Elapsed, binding.DbId, startedAt,
-            counts: outcome.Sent));
+            counts: outcome.Sent, direction: request.Id));
 
         // Направлением воспользовались — отсчет простоя начинается заново. Считается по тому же
         // признаку, что и расход квоты: данные ДОШЛИ до сети. Запуск, остановленный замком или
@@ -883,5 +883,8 @@ public static partial class ScenarioRunner
     private static void Journal(Scenario scenario, bool ok, string explanation, int rows,
                                 TimeSpan elapsed, int dbId, DateTimeOffset now, string file) =>
         RunJournal.Add(RunEntry.New(RunChannel.Scenario, scenario.Name, file, ok, explanation,
-                                    rows, 0, elapsed, dbId, now, counts: false));
+                                    rows, 0, elapsed, dbId, now, counts: false,
+                                    // Итоговая строка сценария направления не несет: в расход
+                                    // она не идет, а объем уже посчитан строками его шагов.
+                                    direction: 0));
 }

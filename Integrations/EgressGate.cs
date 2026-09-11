@@ -63,11 +63,24 @@ public enum EgressDenyReason
 /// </summary>
 public interface IEgressUsage
 {
-    /// <summary>Сколько засчитанных запусков было с указанного момента.</summary>
+    /// <summary>
+    /// Сколько засчитанных запусков было с указанного момента — по всему обмену сразу. Потолок
+    /// запусков в час общий намеренно: он про то, как часто программа вообще стучится наружу, а
+    /// не про то, куда именно.
+    /// </summary>
     int RunsSince(DateTimeOffset moment);
 
-    /// <summary>Сколько байт прошло с указанного момента.</summary>
-    long BytesSince(DateTimeOffset moment);
+    /// <summary>
+    /// Сколько байт прошло с указанного момента ПО ЭТОМУ направлению.
+    ///
+    /// Направление — карточка запроса (ее ключ), потому что подтверждают и отзывают именно ее
+    /// (раздел 10.8 дорожной карты). Общая сумма по всему обмену тут не годится дважды: читающий
+    /// опрос каждые пять минут съедал бы потолок, заведенный против выноса данных, а один шумный
+    /// обмен останавливал бы все остальные, настроенные правильно.
+    /// </summary>
+    /// <param name="moment">С какого момента считать.</param>
+    /// <param name="direction">Ключ карточки запроса; 0 — обмен без карточки.</param>
+    long BytesSince(DateTimeOffset moment, int direction);
 }
 
 /// <summary>Решение шлюза: пускать или нет, почему и что показать человеку.</summary>
@@ -247,11 +260,22 @@ public static class EgressGate
     /// на 59-ю и 61-ю минуту, прошла бы дважды за две минуты.
     ///
     /// Расход считает журнал; счетчик не подключен — расход нулевой (см. <see cref="IEgressUsage"/>).
+    ///
+    /// <b>Потолок запусков — общий, потолок объема — на направление</b>, ровно как написано в
+    /// 10.6. Направление подтверждают и отзывают по одному, мастер-паролем и на срок, поэтому и
+    /// счет объема ведется по нему: общая сумма означала бы, что читающий опрос каждые пять
+    /// минут выбирает потолок, заведенный против выноса данных, а один шумный обмен останавливает
+    /// все прочие, настроенные правильно. Обратная сторона названа честно: суммарный выход машины
+    /// равен потолку, умноженному на число направлений, и ограничивает его не это число, а то,
+    /// что каждое исходящее направление кто-то подтвердил отдельно.
     /// </summary>
     /// <param name="now">Момент обращения; передается явно — тест на часах не строится.</param>
+    /// <param name="direction">Направление — ключ карточки запроса. Обязателен: значение по
+    /// умолчанию свалило бы весь новый обмен в общий счет нулевого направления, и потолок
+    /// перестал бы значить то, что значит.</param>
     /// <param name="bytes">Сколько байт собирается пройти; 0 — объем заранее неизвестен, и
     /// проверяется только уже израсходованное.</param>
-    public static EgressDecision CheckQuota(DateTimeOffset now, long bytes = 0)
+    public static EgressDecision CheckQuota(DateTimeOffset now, int direction, long bytes = 0)
     {
         var gate = CheckPolicyState(DateOnly.FromDateTime(now.LocalDateTime.Date));
         if (!gate.Allowed) return gate;
@@ -266,10 +290,11 @@ public static class EgressGate
         // Любой обмен стоит хотя бы что-то, поэтому выбранный до нуля остаток — уже отказ, даже
         // когда объем заранее неизвестен. Пропустить запрос ради того, чтобы отклонить его на
         // первой же порции, значит зря потревожить чужую программу.
-        var spent = usage.BytesSince(now - TimeSpan.FromDays(1));
+        var spent = usage.BytesSince(now - TimeSpan.FromDays(1), direction);
         if (spent >= _policy.MaxBytesPerDay || spent + Math.Max(0, bytes) > _policy.MaxBytesPerDay)
             return EgressDecision.Deny(EgressDenyReason.TooManyBytes,
-                $"выбран потолок объема за сутки: {spent:N0} из {_policy.MaxBytesPerDay:N0} байт");
+                $"выбран суточный потолок объема этого направления: "
+              + $"{spent:N0} из {_policy.MaxBytesPerDay:N0} байт");
 
         return EgressDecision.Allow();
     }
@@ -283,13 +308,16 @@ public static class EgressGate
     /// <see cref="long.MaxValue"/> при отсутствии счетчика: считать нечем, а придумывать
     /// ограничение шлюз не должен.
     /// </summary>
-    public static long BytesLeft(DateTimeOffset now)
+    /// <param name="now">Момент обращения.</param>
+    /// <param name="direction">Направление — ключ карточки запроса; остаток считается по нему.</param>
+    public static long BytesLeft(DateTimeOffset now, int direction)
     {
         if (!CheckPolicyState(DateOnly.FromDateTime(now.LocalDateTime.Date)).Allowed) return 0;
 
         if (_usage is not { } usage) return long.MaxValue;
 
-        return Math.Max(0, _policy.MaxBytesPerDay - usage.BytesSince(now - TimeSpan.FromDays(1)));
+        return Math.Max(0,
+            _policy.MaxBytesPerDay - usage.BytesSince(now - TimeSpan.FromDays(1), direction));
     }
 
     /// <summary>

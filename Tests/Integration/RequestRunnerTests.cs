@@ -339,7 +339,7 @@ public sealed class RequestRunnerTests : IDisposable
     private sealed class Spent(int runs, long bytes) : IEgressUsage
     {
         public int  RunsSince(DateTimeOffset moment)  => runs;
-        public long BytesSince(DateTimeOffset moment) => bytes;
+        public long BytesSince(DateTimeOffset moment, int direction) => bytes;
     }
 
     /// <summary>
@@ -372,7 +372,8 @@ public sealed class RequestRunnerTests : IDisposable
         var outcome = await Run(server, Request());
 
         Assert.False(outcome.Ok);
-        Assert.Contains("объема за сутки", outcome.Explanation, StringComparison.Ordinal);
+        Assert.Contains("суточный потолок объема этого направления", outcome.Explanation,
+                        StringComparison.Ordinal);
         Assert.Empty(server.Seen);
     }
 
@@ -394,7 +395,8 @@ public sealed class RequestRunnerTests : IDisposable
         var outcome = await Run(server, Request(paging: RequestPaging.Page, pagingField: "page"));
 
         Assert.False(outcome.Ok);
-        Assert.Contains("объема за сутки", outcome.Explanation, StringComparison.Ordinal);
+        Assert.Contains("суточный потолок объема этого направления", outcome.Explanation,
+                        StringComparison.Ordinal);
         Assert.Equal("[]", outcome.Json);
         Assert.Single(server.Seen);   // вторая порция уже не ушла
     }

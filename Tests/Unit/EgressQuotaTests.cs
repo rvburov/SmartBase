@@ -16,11 +16,19 @@ public sealed class EgressQuotaTests : IDisposable
 
     private static readonly DateTimeOffset Now = new(2026, 9, 10, 12, 0, 0, TimeSpan.Zero);
 
-    /// <summary>Счетчик, который просто отдает заданные числа и запоминает, о чем спрашивали.</summary>
-    private sealed class Spent(int runs, long bytes) : IEgressUsage
+    /// <summary>Направление, о котором спрашивают в большинстве проверок, — ключ карточки запроса.</summary>
+    private const int Direction = 7;
+
+    /// <summary>
+    /// Счетчик, который отдает заданные числа и запоминает, о чем спрашивали. Байты — по
+    /// направлениям: <c>byDirection</c> задает расход поименно, <c>bytes</c> — для всех прочих.
+    /// </summary>
+    private sealed class Spent(int runs, long bytes,
+                               Dictionary<int, long>? byDirection = null) : IEgressUsage
     {
         public DateTimeOffset? RunsFrom  { get; private set; }
         public DateTimeOffset? BytesFrom { get; private set; }
+        public int?            AskedFor  { get; private set; }
 
         public int RunsSince(DateTimeOffset moment)
         {
@@ -28,10 +36,13 @@ public sealed class EgressQuotaTests : IDisposable
             return runs;
         }
 
-        public long BytesSince(DateTimeOffset moment)
+        public long BytesSince(DateTimeOffset moment, int direction)
         {
             BytesFrom = moment;
-            return bytes;
+            AskedFor  = direction;
+            return byDirection is not null && byDirection.TryGetValue(direction, out var own)
+                ? own
+                : bytes;
         }
     }
 
@@ -57,8 +68,8 @@ public sealed class EgressQuotaTests : IDisposable
     {
         Attach();
 
-        Assert.True(EgressGate.CheckQuota(Now).Allowed);
-        Assert.Equal(long.MaxValue, EgressGate.BytesLeft(Now));
+        Assert.True(EgressGate.CheckQuota(Now, Direction).Allowed);
+        Assert.Equal(long.MaxValue, EgressGate.BytesLeft(Now, Direction));
     }
 
     /// <summary>Закрытый шлюз отвечает своей причиной, а не «квота выбрана».</summary>
@@ -67,11 +78,11 @@ public sealed class EgressQuotaTests : IDisposable
     {
         EgressGate.Close();
 
-        var decision = EgressGate.CheckQuota(Now);
+        var decision = EgressGate.CheckQuota(Now, Direction);
 
         Assert.False(decision.Allowed);
         Assert.Equal(EgressDenyReason.NoPolicy, decision.Reason);
-        Assert.Equal(0, EgressGate.BytesLeft(Now));
+        Assert.Equal(0, EgressGate.BytesLeft(Now, Direction));
     }
 
     // ── Запуски в час ─────────────────────────────────────────────────────────
@@ -82,7 +93,7 @@ public sealed class EgressQuotaTests : IDisposable
         Attach(runsPerHour: 10);
         EgressGate.AttachUsage(new Spent(runs: 9, bytes: 0));
 
-        Assert.True(EgressGate.CheckQuota(Now).Allowed);
+        Assert.True(EgressGate.CheckQuota(Now, Direction).Allowed);
     }
 
     [Fact]
@@ -91,7 +102,7 @@ public sealed class EgressQuotaTests : IDisposable
         Attach(runsPerHour: 10);
         EgressGate.AttachUsage(new Spent(runs: 10, bytes: 0));
 
-        var decision = EgressGate.CheckQuota(Now);
+        var decision = EgressGate.CheckQuota(Now, Direction);
 
         Assert.False(decision.Allowed);
         Assert.Equal(EgressDenyReason.TooManyRuns, decision.Reason);
@@ -109,7 +120,7 @@ public sealed class EgressQuotaTests : IDisposable
         var spent = new Spent(runs: 0, bytes: 0);
         EgressGate.AttachUsage(spent);
 
-        EgressGate.CheckQuota(Now);
+        EgressGate.CheckQuota(Now, Direction);
 
         Assert.Equal(Now - TimeSpan.FromHours(1), spent.RunsFrom);
     }
@@ -122,7 +133,7 @@ public sealed class EgressQuotaTests : IDisposable
         Attach(bytesPerDay: 1000);
         EgressGate.AttachUsage(new Spent(runs: 0, bytes: 1001));
 
-        var decision = EgressGate.CheckQuota(Now);
+        var decision = EgressGate.CheckQuota(Now, Direction);
 
         Assert.False(decision.Allowed);
         Assert.Equal(EgressDenyReason.TooManyBytes, decision.Reason);
@@ -135,8 +146,67 @@ public sealed class EgressQuotaTests : IDisposable
         Attach(bytesPerDay: 1000);
         EgressGate.AttachUsage(new Spent(runs: 0, bytes: 900));
 
-        Assert.True(EgressGate.CheckQuota(Now, bytes: 100).Allowed);
-        Assert.False(EgressGate.CheckQuota(Now, bytes: 101).Allowed);
+        Assert.True(EgressGate.CheckQuota(Now, Direction, bytes: 100).Allowed);
+        Assert.False(EgressGate.CheckQuota(Now, Direction, bytes: 101).Allowed);
+    }
+
+    // ── Потолок объема — на направление ───────────────────────────────────────
+
+    /// <summary>
+    /// Суточный потолок объема назначен НАПРАВЛЕНИЮ, а не обмену целиком (10.6): подтверждают и
+    /// отзывают карточку запроса, ей же принадлежит и счет. Общая сумма означала бы, что один
+    /// шумный обмен останавливает все прочие, настроенные правильно, — а заодно что читающий
+    /// опрос каждые пять минут выбирает потолок, заведенный против выноса данных.
+    /// </summary>
+    [Fact]
+    public void A_direction_that_spent_its_day_does_not_stop_the_others()
+    {
+        Attach(bytesPerDay: 1000);
+        EgressGate.AttachUsage(new Spent(runs: 0, bytes: 0,
+            byDirection: new Dictionary<int, long> { [7] = 1000, [8] = 10 }));
+
+        Assert.False(EgressGate.CheckQuota(Now, direction: 7).Allowed);
+        Assert.True(EgressGate.CheckQuota(Now, direction: 8).Allowed);
+    }
+
+    /// <summary>Счетчик спрашивают именно о том направлении, о котором спросили шлюз.</summary>
+    [Fact]
+    public void The_counter_is_asked_about_the_direction_in_question()
+    {
+        Attach();
+        var spent = new Spent(runs: 0, bytes: 0);
+        EgressGate.AttachUsage(spent);
+
+        EgressGate.CheckQuota(Now, direction: 42);
+
+        Assert.Equal(42, spent.AskedFor);
+    }
+
+    /// <summary>Остаток на сутки — тоже свой у каждого направления: по нему идет выгрузка порциями.</summary>
+    [Fact]
+    public void Remaining_budget_is_counted_per_direction()
+    {
+        Attach(bytesPerDay: 1000);
+        EgressGate.AttachUsage(new Spent(runs: 0, bytes: 0,
+            byDirection: new Dictionary<int, long> { [7] = 900, [8] = 100 }));
+
+        Assert.Equal(100, EgressGate.BytesLeft(Now, direction: 7));
+        Assert.Equal(900, EgressGate.BytesLeft(Now, direction: 8));
+    }
+
+    /// <summary>
+    /// А вот потолок запусков в час — общий, и это не недосмотр: он про то, как часто программа
+    /// вообще стучится наружу. Раздай его по направлениям — и десять карточек дали бы десятикратную
+    /// частоту обращений к одной и той же чужой программе.
+    /// </summary>
+    [Fact]
+    public void The_hourly_run_ceiling_stays_common_to_the_whole_exchange()
+    {
+        Attach(runsPerHour: 10);
+        EgressGate.AttachUsage(new Spent(runs: 10, bytes: 0));
+
+        Assert.Equal(EgressDenyReason.TooManyRuns, EgressGate.CheckQuota(Now, direction: 7).Reason);
+        Assert.Equal(EgressDenyReason.TooManyRuns, EgressGate.CheckQuota(Now, direction: 8).Reason);
     }
 
     [Fact]
@@ -146,7 +216,7 @@ public sealed class EgressQuotaTests : IDisposable
         var spent = new Spent(runs: 0, bytes: 0);
         EgressGate.AttachUsage(spent);
 
-        EgressGate.BytesLeft(Now);
+        EgressGate.BytesLeft(Now, Direction);
 
         Assert.Equal(Now - TimeSpan.FromDays(1), spent.BytesFrom);
     }
@@ -157,7 +227,7 @@ public sealed class EgressQuotaTests : IDisposable
         Attach(bytesPerDay: 1000);
         EgressGate.AttachUsage(new Spent(runs: 0, bytes: 400));
 
-        Assert.Equal(600, EgressGate.BytesLeft(Now));
+        Assert.Equal(600, EgressGate.BytesLeft(Now, Direction));
     }
 
     /// <summary>Перерасход дает ноль, а не отрицательное число: остаток не бывает отрицательным.</summary>
@@ -167,7 +237,7 @@ public sealed class EgressQuotaTests : IDisposable
         Attach(bytesPerDay: 1000);
         EgressGate.AttachUsage(new Spent(runs: 0, bytes: 5000));
 
-        Assert.Equal(0, EgressGate.BytesLeft(Now));
+        Assert.Equal(0, EgressGate.BytesLeft(Now, Direction));
     }
 
     /// <summary>Отключение счетчика вместе со шлюзом: иначе он пережил бы смену политики.</summary>
@@ -180,6 +250,6 @@ public sealed class EgressQuotaTests : IDisposable
         EgressGate.Close();
         Attach();
 
-        Assert.True(EgressGate.CheckQuota(Now).Allowed);
+        Assert.True(EgressGate.CheckQuota(Now, Direction).Allowed);
     }
 }

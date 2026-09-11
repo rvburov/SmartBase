@@ -33,14 +33,17 @@ public sealed class RunJournalTests : IDisposable
 
     private RunJournal Journal() => new(_path);
 
-    private static RunEntry Request(string name, long bytes, DateTimeOffset at, bool ok = true) =>
+    private static RunEntry Request(string name, long bytes, DateTimeOffset at, bool ok = true,
+                                    int direction = 7) =>
         RunEntry.New(RunChannel.Request, name, "https://api.zavod.local/orders?key=***", ok,
                      ok ? "" : "чужая программа ответила 500", rows: 10, bytes: bytes,
-                     elapsed: TimeSpan.FromMilliseconds(250), dbId: 0, at: at, counts: true);
+                     elapsed: TimeSpan.FromMilliseconds(250), dbId: 0, at: at, counts: true,
+                     direction: direction);
 
     private static RunEntry Inbox(string file, DateTimeOffset at) =>
         RunEntry.New(RunChannel.Inbox, file, @"P:\Обмен\Входящие", ok: true, "",
-                     rows: 5, bytes: 4096, elapsed: TimeSpan.Zero, dbId: 3, at: at, counts: false);
+                     rows: 5, bytes: 4096, elapsed: TimeSpan.Zero, dbId: 3, at: at, counts: false,
+                     direction: 0);
 
     // ── Запись и чтение ───────────────────────────────────────────────────────
 
@@ -146,7 +149,101 @@ public sealed class RunJournalTests : IDisposable
         var usage = journal.AsUsage();
 
         Assert.Equal(1,   usage.RunsSince(Now - TimeSpan.FromHours(1)));
-        Assert.Equal(700, usage.BytesSince(Now - TimeSpan.FromHours(1)));
+        Assert.Equal(700, usage.BytesSince(Now - TimeSpan.FromHours(1), direction: 7));
+    }
+
+    // ── Расход по направлениям ────────────────────────────────────────────────
+
+    /// <summary>
+    /// Суточный потолок объема назначен направлению — ключу карточки запроса (10.6), — поэтому и
+    /// счет ведется по нему. Сложи все вместе, и один шумный обмен останавливал бы прочие,
+    /// настроенные правильно.
+    /// </summary>
+    [Fact]
+    public void Bytes_are_counted_per_direction()
+    {
+        var journal = Journal();
+
+        journal.Write(Request("Заказы",  500, Now, direction: 7));
+        journal.Write(Request("Остатки", 300, Now, direction: 8));
+        journal.Write(Request("Заказы",  200, Now, direction: 7));
+
+        var since = Now - TimeSpan.FromHours(1);
+
+        Assert.Equal(700,  journal.BytesSince(since, direction: 7));
+        Assert.Equal(300,  journal.BytesSince(since, direction: 8));
+        Assert.Equal(0,    journal.BytesSince(since, direction: 9));
+        Assert.Equal(1000, journal.Since(since).Bytes);   // общая сумма осталась для экрана
+    }
+
+    /// <summary>
+    /// Экрану нужен разрез по направлениям: общая цифра на вопрос «почему отказали» не отвечает,
+    /// когда отказало одно направление при почти пустом счете у остальных. Имя берется у самой
+    /// свежей строки — карточку могли переименовать.
+    /// </summary>
+    [Fact]
+    public void Spending_by_direction_names_the_freshest_card_name()
+    {
+        var journal = Journal();
+
+        journal.Write(Request("Заказы за сутки", 100, Now - TimeSpan.FromMinutes(10), direction: 7));
+        journal.Write(Request("Заказы",          400, Now, direction: 7));
+        journal.Write(Request("Остатки",          50, Now, direction: 8));
+        journal.Write(Inbox("заказы.json", Now));   // файл идет внутрь и в разрез не попадает
+
+        var spent = journal.SpentByDirection(Now - TimeSpan.FromHours(1));
+
+        Assert.Equal(2, spent.Count);
+        Assert.Equal((7, "Заказы", 500L), spent[0]);   // самое нагруженное — первым
+        Assert.Equal((8, "Остатки", 50L), spent[1]);
+    }
+
+    /// <summary>
+    /// Журнал, заведенный прежней версией программы, колонки направления не имеет. Она
+    /// достраивается, а история остается: журнал копится годами, и ронять его при обновлении
+    /// нельзя. Строки, написанные до правки, получают направление 0 — раскладывать их по
+    /// карточкам задним числом не по чему.
+    /// </summary>
+    [Fact]
+    public void An_old_journal_gains_the_direction_column_and_keeps_its_history()
+    {
+        using (var connection = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={_path}"))
+        {
+            connection.Open();
+            using var command = connection.CreateCommand();
+
+            command.CommandText = """
+                CREATE TABLE runs (
+                    Id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                    At          TEXT    NOT NULL,
+                    Channel     INTEGER NOT NULL,
+                    Name        TEXT    NOT NULL,
+                    Address     TEXT    NOT NULL,
+                    Ok          INTEGER NOT NULL,
+                    Explanation TEXT    NOT NULL,
+                    Rows        INTEGER NOT NULL,
+                    Bytes       INTEGER NOT NULL,
+                    Ms          INTEGER NOT NULL,
+                    DbId        INTEGER NOT NULL,
+                    Counts      INTEGER NOT NULL
+                );
+                INSERT INTO runs (At, Channel, Name, Address, Ok, Explanation, Rows, Bytes, Ms, DbId, Counts)
+                VALUES ('2026-09-10T11:00:00.0000000+00:00', 0, 'Старый запуск', 'https://api.zavod.local', 1, '', 3, 900, 10, 0, 1);
+                """;
+
+            command.ExecuteNonQuery();
+        }
+
+        var journal = Journal();
+        var row     = journal.Recent().Single();
+
+        Assert.Equal("Старый запуск", row.Name);
+        Assert.Equal(0, row.Direction);
+        Assert.Equal(900, journal.BytesSince(Now - TimeSpan.FromHours(2), direction: 0));
+
+        // И новая строка ложится рядом со старой, а не вместо нее.
+        journal.Write(Request("Заказы", 100, Now, direction: 7));
+        Assert.Equal(2, journal.Recent().Count);
     }
 
     // ── Уборка ────────────────────────────────────────────────────────────────
