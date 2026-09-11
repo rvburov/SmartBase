@@ -166,6 +166,57 @@ public sealed class PolicySourcesTests : IDisposable
         Assert.Null(PolicySources.FromFolder("папка раздачи", "share", "", signatureRequired: true));
     }
 
+    // ── Источник не читается ──────────────────────────────────────────────────
+
+    /// <summary>
+    /// Папку видно, а файл в ней не читается: нет прав, держит кто-то другой. Источник
+    /// недоступен — и требование подписи с него НЕ снимается.
+    ///
+    /// Почему это важнее, чем кажется. Снимок пишется РАНЬШЕ, чем подпись проверена: чтение
+    /// запоминает текст и отдает кандидата, а сверяет его уже <c>PolicyLoader</c>. Значит в
+    /// снимке вполне может лежать неподписанный файл из папки раздачи. Сними здесь требование —
+    /// и файл, отвергнутый при первом чтении, прошел бы со второго: достаточно, чтобы папка
+    /// ответила отказом в доступе. Недоступность обязана сужать права, а не открывать то, что
+    /// уже отвергли.
+    /// </summary>
+    [Fact]
+    public void Unreadable_file_keeps_the_signature_requirement()
+    {
+        var folder = Folder("razdacha");
+        Write(folder, Policy);   // подписи рядом нет
+
+        var first = PolicySources.FromFolder("папка раздачи", "share", folder, signatureRequired: true);
+        Assert.NotNull(first);
+        Assert.True(first!.SignatureRequired);
+
+        // Файл держат монопольно — прочитать его больше нельзя.
+        using var held = new FileStream(Path.Combine(folder, PolicySources.FileName),
+                                        FileMode.Open, FileAccess.Read, FileShare.None);
+
+        var candidate = PolicySources.FromFolder("папка раздачи", "share", folder, signatureRequired: true);
+
+        Assert.NotNull(candidate);
+        Assert.Equal(Policy, candidate!.Json);
+        Assert.Contains(PolicySources.LastKnownSuffix, candidate.Source, StringComparison.Ordinal);
+        Assert.True(candidate.SignatureRequired);
+    }
+
+    /// <summary>Снимка нет — кандидат без текста: загрузчику этого хватит, чтобы запереть контур.</summary>
+    [Fact]
+    public void Unreadable_file_without_a_snapshot_gives_a_candidate_without_text()
+    {
+        var folder = Folder("razdacha");
+        Write(folder, Policy);
+
+        using var held = new FileStream(Path.Combine(folder, PolicySources.FileName),
+                                        FileMode.Open, FileAccess.Read, FileShare.None);
+
+        var candidate = PolicySources.FromFolder("папка раздачи", "share", folder, signatureRequired: true);
+
+        Assert.NotNull(candidate);
+        Assert.Null(candidate!.Json);
+    }
+
     // ── Снимок обновляется ────────────────────────────────────────────────────
 
     [Fact]

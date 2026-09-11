@@ -147,7 +147,7 @@ public static class PolicySources
         {
             // Ветка есть, а прочитать не дали. Это НЕ «политики нет»: источник существует,
             // и трактовать его отсутствием значило бы расширить права.
-            return Unreadable(NameRegistry, SnapshotSystem);
+            return Unreadable(NameRegistry, SnapshotSystem, signatureRequired: false);
         }
     }
 
@@ -174,7 +174,7 @@ public static class PolicySources
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            return Unreadable(name, snapshotKey);
+            return Unreadable(name, snapshotKey, signatureRequired);
         }
     }
 
@@ -191,7 +191,7 @@ public static class PolicySources
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            return Unreadable(name, snapshotKey);
+            return Unreadable(name, snapshotKey, signatureRequired);
         }
     }
 
@@ -236,9 +236,16 @@ public static class PolicySources
     /// Источник есть, но не читается. Снимка нет — отдаем кандидата без текста: загрузчик
     /// запрет контур, и это верно. «Источник был, а что в нем, мы не знаем» безопасно
     /// трактовать только так.
+    ///
+    /// <b>Требование подписи переносится в снимок как есть.</b> Снимок пишется РАНЬШЕ, чем
+    /// подпись проверена (<see cref="FromFile"/> запоминает прочитанное и отдает кандидата,
+    /// а сверяет его уже <see cref="PolicyLoader"/>), поэтому в снимке вполне может лежать
+    /// неподписанный файл из папки раздачи. Сними здесь требование — и он, отвергнутый при
+    /// первом чтении, был бы принят со второго, стоит папке ответить отказом в доступе.
+    /// Недоступность источника обязана сужать права, а не открывать то, что уже отвергли.
     /// </summary>
-    private static PolicyCandidate Unreadable(string name, string snapshotKey) =>
-        Snapshot(name, snapshotKey, signatureRequired: false) ?? new PolicyCandidate(name, null);
+    private static PolicyCandidate Unreadable(string name, string snapshotKey, bool signatureRequired) =>
+        Snapshot(name, snapshotKey, signatureRequired) ?? new PolicyCandidate(name, null);
 
     /// <summary>Последняя известная копия источника; <c>null</c> — копии нет.</summary>
     private static PolicyCandidate? Snapshot(string name, string snapshotKey, bool signatureRequired)
