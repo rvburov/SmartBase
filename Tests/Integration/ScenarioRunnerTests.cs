@@ -35,6 +35,7 @@ public sealed class ScenarioRunnerTests : IDisposable
     {
         EgressGate.Close();
         RunJournal.Attach(null);
+        SecurityJournal.Attach(null);
         _registry.Dispose();
         _db.Dispose();
         TempDatabase.Cleanup(_appDb);
@@ -44,7 +45,9 @@ public sealed class ScenarioRunnerTests : IDisposable
 
     private IntegrationsRegistry Cards => _registry.Integrations;
 
-    private static void AllowLoopback(int maxRows = 1000) =>
+    private const string Master = "секрет-организации";
+
+    private static void AllowLoopback(int maxRows = 1000, bool master = false) =>
         EgressGate.AttachPolicy(EgressPolicySet.Of(new EgressPolicy(
             EgressMode.Internal,
             Hosts:           ["127.0.0.1"],
@@ -55,7 +58,8 @@ public sealed class ScenarioRunnerTests : IDisposable
             MaxRunsPerHour:  100,
             ValidUntil:      null,
             UserMayAddHosts: false,
-            Source:          "тест")));
+            Source:          "тест",
+            MasterHash:      master ? MasterPassword.Hash(Master) : "")));
 
     /// <summary>Коллекция «Заказы» со свойством «Номер».</summary>
     private (int CollectionId, int NumberId) Collection()
@@ -351,5 +355,146 @@ public sealed class ScenarioRunnerTests : IDisposable
 
         Assert.False(step.Ok);
         Assert.False(step.Counts);
+    }
+
+    // ── Замок на исходящем ────────────────────────────────────────────────────
+
+    /// <summary>Запрос-отправитель на тестовый сервер: такому нужно подтверждение направления.</summary>
+    private int NewPush(TinyServer server)
+    {
+        var connection = Cards.Save(IntegrationConnection.New() with
+        {
+            Name           = "Учетная система",
+            Address        = $"http://127.0.0.1:{server.Port}",
+            TimeoutSeconds = 30,
+            Retries        = 0,
+        });
+
+        return Cards.SaveRequest(IntegrationRequest.New() with
+        {
+            Name         = "Отдать итог",
+            ConnectionId = connection.Id,
+            Method       = RequestMethod.Post,
+            Path         = "/result",
+            Body         = "{\"итог\":1}",
+        }).Id;
+    }
+
+    private SecurityJournal Security()
+    {
+        var journal = new SecurityJournal(Path.Combine(_dir, "security.db"));
+        SecurityJournal.Attach(journal);
+        return journal;
+    }
+
+    /// <summary>
+    /// Сценарий по расписанию — единственное место, где отправка уходит ночью и без человека, и
+    /// замок на ней держит так же, как на кнопке: неподтвержденный шаг не доходит до сокета.
+    /// </summary>
+    [Fact]
+    public async Task An_unconfirmed_outgoing_step_stops_before_the_socket()
+    {
+        AllowLoopback(master: true);
+        Security();
+
+        using var server = new TinyServer(_ => TinyServer.Reply(200, Items("Молоток")));
+
+        var (collectionId, numberId) = Collection();
+        var requestId = NewPush(server);
+        BindTo(requestId, collectionId, numberId);
+
+        var outcome = await Run(Save(ScenarioStep.OfRequest(requestId)));
+
+        Assert.False(outcome.Ok);
+        Assert.Contains("направление", outcome.Problem, StringComparison.Ordinal);
+        Assert.Empty(server.Seen);
+    }
+
+    /// <summary>
+    /// Заблокированный шаг оставляет в журнале безопасности ИМЯ СЦЕНАРИЯ. Отправку, ушедшую
+    /// сама собой в три часа ночи, проверяющий обязан уметь привязать к тому, кто ее завел, —
+    /// иначе строка журнала говорит «программа попробовала» и больше ничего.
+    /// </summary>
+    [Fact]
+    public async Task The_security_row_names_the_scenario()
+    {
+        AllowLoopback(master: true);
+        var journal = Security();
+
+        using var server = new TinyServer(_ => TinyServer.Reply(200, Items("Молоток")));
+
+        var (collectionId, numberId) = Collection();
+        var requestId = NewPush(server);
+        BindTo(requestId, collectionId, numberId);
+
+        await Run(Save(ScenarioStep.OfRequest(requestId)));
+
+        var row = journal.Recent().Single();
+
+        Assert.Equal(SecurityEvent.Send,          row.Event);
+        Assert.False(row.Allowed);
+        Assert.Equal("Заказы каждые полчаса",     row.Scenario);
+        Assert.Equal(_db.Manager.DbId,            row.DbId);
+    }
+
+    /// <summary>
+    /// Подтвержденный шаг проходит целиком — и отмечается использованным: обмен, работающий
+    /// каждый день, не должен отключиться по простою посреди работы.
+    /// </summary>
+    [Fact]
+    public async Task A_confirmed_outgoing_step_goes_through_and_marks_the_direction()
+    {
+        AllowLoopback(master: true);
+        Security();
+
+        using var server = new TinyServer(_ => TinyServer.Reply(200, Items("Молоток")));
+
+        var (collectionId, numberId) = Collection();
+        var requestId = NewPush(server);
+        BindTo(requestId, collectionId, numberId);
+
+        var request = Cards.FindRequest(requestId)!;
+
+        Cards.ConfirmDirection(request, Master, "Петров П. П.", days: 90,
+                               DateTimeOffset.Now, out var trouble);
+        Assert.Equal("", trouble);
+
+        var outcome = await Run(Save(ScenarioStep.OfRequest(requestId)));
+
+        Assert.True(outcome.Ok, outcome.Problem);
+        Assert.Single(server.Seen);
+        Assert.NotNull(Cards.Direction(requestId)!.UsedAt);
+    }
+
+    /// <summary>
+    /// Правка запроса после подтверждения останавливает отправку. Подтвердить безобидный запрос
+    /// и дописать в него выгрузку — самый дешевый обход согласования, и закрыт он должен быть не
+    /// на экране, а здесь, где отправка происходит на самом деле.
+    /// </summary>
+    [Fact]
+    public async Task An_edited_request_stops_even_with_a_confirmation_in_place()
+    {
+        AllowLoopback(master: true);
+        Security();
+
+        using var server = new TinyServer(_ => TinyServer.Reply(200, Items("Молоток")));
+
+        var (collectionId, numberId) = Collection();
+        var requestId = NewPush(server);
+        BindTo(requestId, collectionId, numberId);
+
+        var request = Cards.FindRequest(requestId)!;
+
+        Cards.ConfirmDirection(request, Master, "Петров П. П.", days: 90,
+                               DateTimeOffset.Now, out _);
+
+        // Тело поменялось — отпечаток разошелся с подтвержденным.
+        Cards.SaveRequest(request with { Body = "{\"итог\":1,\"клиенты\":\"все\"}" });
+
+        var outcome = await Run(Save(ScenarioStep.OfRequest(requestId)));
+
+        Assert.False(outcome.Ok);
+        Assert.Contains("правили", outcome.Problem, StringComparison.Ordinal);
+        Assert.Empty(server.Seen);
     }
 }

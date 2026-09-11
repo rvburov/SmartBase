@@ -244,10 +244,12 @@ public partial class SettingsView
             return;
         }
 
+        // Причина отказа берется у того же замка, что стоит на настоящей отправке, — иначе
+        // сухой прогон однажды показал бы «уйдет», там где не уйдет.
         var preview = RequestRunner.Preview(
             connection, request, registry.Secret(connection.Id),
             VariableContext.Now(registry.LastRun(request.Id), connection.Address),
-            registry.OutwardTrouble(request, DateTimeOffset.Now));
+            Database.OutwardGuard.Refusal(registry, request, DateTimeOffset.Now));
 
         await new RequestPreviewDialog(preview).ShowDialog(win);
     }

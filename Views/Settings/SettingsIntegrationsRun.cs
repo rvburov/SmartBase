@@ -108,6 +108,14 @@ public partial class SettingsView
                                                      IntegrationConnection         connection,
                                                      DateTimeOffset                startedAt)
     {
+        var context = VariableContext.Now(registry.LastRun(request.Id), connection.Address);
+
+        // Замок на исходящем — до окна с бегущей полосой: отказ должен прийти немедленно, а не
+        // после прогресса, который никуда не шел. Сценария тут нет, кнопку нажал человек, и в
+        // журнале безопасности так и будет записано.
+        var verdict = Database.OutwardGuard.Check(registry, connection, request, context,
+                                                  scenario: "", dbId: 0, DateTimeOffset.Now);
+
         var progress = new ProgressDialog { Title = "Запрос" };
         using var cts = new CancellationTokenSource();
         progress.EnableCancel(cts.Cancel);
@@ -122,9 +130,8 @@ public partial class SettingsView
         try
         {
             outcome = await RequestRunner.RunAsync(
-                connection, request, registry.Secret(connection.Id),
-                VariableContext.Now(registry.LastRun(request.Id), connection.Address),
-                cts.Token);
+                connection, request, registry.Secret(connection.Id), context,
+                verdict.Trouble, cts.Token);
         }
         catch (OperationCanceledException)
         {
@@ -148,6 +155,9 @@ public partial class SettingsView
             Database.RunChannel.Request, request.Name, outcome.SafeAddress, outcome.Ok,
             outcome.Explanation, outcome.Rows, outcome.Bytes, outcome.Elapsed,
             dbId: 0, at: startedAt, counts: outcome.Sent));
+
+        // Направлением воспользовались — отсчет простоя начинается заново.
+        if (outcome.Sent) Database.OutwardGuard.Used(registry, request, DateTimeOffset.Now);
 
         if (outcome.Ok) return outcome;
 

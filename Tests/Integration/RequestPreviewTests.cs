@@ -136,7 +136,8 @@ public sealed class RequestPreviewTests : IDisposable
 
         var preview = RequestRunner.Preview(connection, request, "token", Context());
 
-        var outcome = await RequestRunner.RunAsync(connection, request, "token", Context());
+        var outcome = await RequestRunner.RunAsync(connection, request, "token", Context(),
+                                                   refusal: null);
 
         Assert.True(outcome.Ok, outcome.Explanation);
         Assert.Equal(preview.Body, seen);
@@ -153,8 +154,9 @@ public sealed class RequestPreviewTests : IDisposable
     {
         AllowLoopback();
 
-        var preview = RequestRunner.Preview(Connection(8080), Push(), "token", Context(),
-                                            outwardTrouble: "не подтверждено мастер-паролем");
+        var preview = RequestRunner.Preview(
+            Connection(8080), Push(), "token", Context(),
+            refusal: "исходящее направление: не подтверждено мастер-паролем");
 
         Assert.False(preview.Ok);
         Assert.Contains("не подтверждено", preview.Explanation, StringComparison.Ordinal);

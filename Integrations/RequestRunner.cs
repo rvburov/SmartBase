@@ -108,20 +108,20 @@ public static class RequestRunner
     /// показать их все значило бы утопить в них то единственное, ради чего сухой прогон и
     /// смотрят, — тело запроса.
     /// </summary>
-    /// <param name="outwardTrouble">Ответ <c>IntegrationsRegistry.OutwardTrouble</c>: почему
-    /// этому запросу нельзя отправлять; <c>null</c> — можно. Спрашивается снаружи, потому что
-    /// подтверждения живут в app.db, а этот слой к базе не ходит.</param>
+    /// <param name="refusal">Готовая причина, по которой запуск не состоится, — ответ
+    /// <c>OutwardGuard.Refusal</c>; <c>null</c> — ничто не мешает. Спрашивается снаружи, потому
+    /// что подтверждения живут в app.db, а этот слой к базе не ходит. Приходит она уже целой
+    /// фразой: собери ее здесь — и та же фраза собиралась бы вторым способом в отправке.</param>
     public static RunPreview Preview(
         IntegrationConnection connection,
         IntegrationRequest    request,
         string                secret,
         VariableContext       context,
-        string?               outwardTrouble = null)
+        string?               refusal = null)
     {
         var outward = request.Outward;
 
-        if (outwardTrouble is { Length: > 0 })
-            return RunPreview.Blocked("исходящее направление: " + outwardTrouble, outward);
+        if (refusal is { Length: > 0 }) return RunPreview.Blocked(refusal, outward);
 
         if (EgressGate.Policy.MaxRowsPerRun <= 0)
             return RunPreview.Blocked(
@@ -152,14 +152,31 @@ public static class RequestRunner
                               plan.Method, plan.SafeAddress, plan.SafeHeaders, plan.Body, outward);
     }
 
-    /// <summary>Запустить запрос и собрать записи.</summary>
+    /// <summary>
+    /// Запустить запрос и собрать записи.
+    /// </summary>
+    /// <param name="refusal">Почему отправлять нельзя — готовой фразой; <c>null</c> — можно.
+    /// Ответ дает <c>OutwardGuard.Check</c>: подтверждено ли направление и лег ли след в журнал
+    /// безопасности.
+    ///
+    /// Параметр <b>обязательный, и это главное в нем</b>. Значение по умолчанию означало бы, что
+    /// вопрос «этому обмену разрешено уносить данные?» можно не задать — просто забыв про него в
+    /// новом месте вызова. Так замок и обходят: не взломом, а вызовом в обход. Теперь не
+    /// ответить на вопрос нельзя — не собирается.</param>
     public static async Task<RunOutcome> RunAsync(
         IntegrationConnection connection,
         IntegrationRequest    request,
         string                secret,
         VariableContext       context,
+        string?               refusal,
         CancellationToken     ct = default)
     {
+        // До всего остального: отказ направления — это отказ ДО первого сокета, и в
+        // накопительный расход он не идет (Sent: false). Иначе неподтвержденный запрос выбирал
+        // бы чужую квоту, ни разу никуда не сходив.
+        if (refusal is { Length: > 0 })
+            return new RunOutcome(false, refusal, "[]", 0, 0, 0, TimeSpan.Zero, "", 0, false);
+
         var limit = EgressGate.Policy.MaxRowsPerRun;
 
         if (limit <= 0)

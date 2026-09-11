@@ -306,7 +306,8 @@ public static partial class ScenarioRunner
 
                 var outcome = step.Kind switch
                 {
-                    ScenarioStepKind.Request => await RequestStepAsync(step, registry, databases, carry, ct),
+                    ScenarioStepKind.Request => await RequestStepAsync(step, registry, databases,
+                                                                       carry, scenario.Name, now, ct),
                     ScenarioStepKind.Action  => await ActionStepAsync(step, databases, extensions, table, text, now, ct),
                     ScenarioStepKind.Intake  => IntakeStep(step, now, ref taken),
                     ScenarioStepKind.Filter  => FilterStep(step, table),
@@ -378,10 +379,15 @@ public static partial class ScenarioRunner
     /// поля видно только по пустой коллекции через неделю.
     /// </summary>
     /// <param name="carry">Дальше по сценарию есть шаг, которому нужны эти строки.</param>
+    /// <param name="scenario">Имя сценария — для журнала безопасности: отправку, ушедшую ночью
+    /// сама собой, проверяющий должен уметь привязать к тому, кто ее завел.</param>
+    /// <param name="now">Момент запуска — тот же, которым меряется срок направления.</param>
     private static async Task<StepOutcome> RequestStepAsync(ScenarioStep                   step,
                                                             IntegrationsRegistry           registry,
                                                             IReadOnlyList<DatabaseManager> databases,
                                                             bool                           carry,
+                                                            string                         scenario,
+                                                            DateTimeOffset                 now,
                                                             CancellationToken              ct)
     {
         // Повторная проверка после Blocker: между ними человек мог удалить карточку, а
@@ -402,9 +408,16 @@ public static partial class ScenarioRunner
         // изменившиеся в чужой программе, пока шел обмен, иначе оказались бы позади границы.
         var startedAt = DateTimeOffset.UtcNow;
 
+        var context = VariableContext.Now(registry.LastRun(request.Id), connection.Address);
+
+        // Замок на исходящем. Спрашивается ДО запуска и оставляет след — и разрешающий, и
+        // запрещающий: попытка отправить данные наружу событие само по себе, состоялась она или
+        // нет. Читающий запрос сюда не попадает — ему подтверждать нечего.
+        var verdict = OutwardGuard.Check(registry, connection, request, context,
+                                         scenario, binding.DbId, now);
+
         var outcome = await RequestRunner.RunAsync(
-            connection, request, registry.Secret(connection.Id),
-            VariableContext.Now(registry.LastRun(request.Id), connection.Address), ct);
+            connection, request, registry.Secret(connection.Id), context, verdict.Trouble, ct);
 
         // Строка журнала пишется и для НЕУДАЧНОГО запроса: именно их ищут, разбирая «почему
         // записи не появились». В расход идет только то, что дошло до сети.
@@ -412,6 +425,11 @@ public static partial class ScenarioRunner
             RunChannel.Request, request.Name, outcome.SafeAddress, outcome.Ok, outcome.Explanation,
             outcome.Rows, outcome.Bytes, outcome.Elapsed, binding.DbId, startedAt,
             counts: outcome.Sent));
+
+        // Направлением воспользовались — отсчет простоя начинается заново. Считается по тому же
+        // признаку, что и расход квоты: данные ДОШЛИ до сети. Запуск, остановленный замком или
+        // политикой, дверью не пользовался, и продлевать ею жизнь забытому обмену незачем.
+        if (outcome.Sent) OutwardGuard.Used(registry, request, now);
 
         if (!outcome.Ok)
             return StepOutcome.Bad($"запрос «{request.Name}»: {outcome.Explanation}");

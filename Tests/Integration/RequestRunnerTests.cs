@@ -57,9 +57,14 @@ public sealed class RequestRunnerTests : IDisposable
     private static VariableContext Context(DateTimeOffset? lastRun = null) =>
         new(new DateOnly(2026, 9, 9), lastRun);
 
+    /// <summary>
+    /// Обычный запуск. Замок исходящего направления здесь снят намеренно: этот набор проверяет
+    /// страницы, разбор ответа и потолки, а не согласование — у согласования свой набор.
+    /// </summary>
     private static Task<RunOutcome> Run(
         TinyServer server, IntegrationRequest request, VariableContext? context = null) =>
-        RequestRunner.RunAsync(Connection(server), request, secret: "", context ?? Context());
+        RequestRunner.RunAsync(Connection(server), request, secret: "", context ?? Context(),
+                               refusal: null);
 
     /// <summary>Записи из итогового массива — по названию.</summary>
     private static List<string> Names(RunOutcome outcome) =>
