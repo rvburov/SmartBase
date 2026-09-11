@@ -138,6 +138,17 @@ public partial class ConstructorRepository
     /// привязки: помеченное поле не должно появляться в списке вовсе — узнавать об ограничении
     /// из ошибки в журнале человек не должен.
     /// </summary>
+    /// <summary>
+    /// Сколько свойств во ВСЕЙ базе несут собственную метку — строка паспорта интеграций.
+    /// Считается по базе целиком, а не по коллекции: проверяющему нужно «сколько всего
+    /// помечено», а не разбивка, которой он все равно не сверит.
+    /// </summary>
+    public int LabeledFieldCount() =>
+        db.DbFields.AsNoTracking()
+          .Select(f => f.ConfigJson)
+          .AsEnumerable()
+          .Count(json => Confidentiality.FromConfig(json) != ConfidentialityLabel.Open);
+
     public IReadOnlyList<int> LabeledFieldIds(int collectionId) =>
         [.. db.DbFields.AsNoTracking()
              .Where(f => f.CollectionId == collectionId)

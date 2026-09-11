@@ -1,5 +1,7 @@
 using Avalonia.Controls;
 using Avalonia.Layout;
+using Avalonia.Platform.Storage;
+using SmartBase.Controls.Dialogs;
 using SmartBase.Integrations;
 using SmartBase.Settings;
 using SmartBase.Utils;
@@ -22,8 +24,10 @@ namespace SmartBase.Views.Settings;
 /// ВНЕ программы, и ни одной кнопки, меняющей права, здесь нет и не будет — в этом весь смысл
 /// контура (docs/ROADMAP-API.md, раздел 10).
 ///
-/// Единственное действие вкладки — «Перечитать»: администратор поправил файл, а перезапускать
-/// программу ради этого незачем.
+/// Действий у вкладки два, и ни одно ничего не разрешает. «Перечитать политику» — администратор
+/// поправил файл, а перезапускать программу ради этого незачем. «Паспорт интеграций» выписывает
+/// показанное файлом для службы безопасности (10.16), добавляя к нему то, чего на экране нет:
+/// подтвержденные направления и сводку по журналу за месяц.
 /// </summary>
 public partial class SettingsView
 {
@@ -107,24 +111,103 @@ public partial class SettingsView
 
         Add(rows, Row("Ограничения", "", LimitsList(policy)), last: true);
 
-        // 5. Единственное действие раздела.
-        var reread = new Button
-        {
-            Content             = "Перечитать политику",
-            Height              = 30,
-            Padding             = new Avalonia.Thickness(12, 0),
-            HorizontalAlignment = HorizontalAlignment.Left,
-            Margin              = new Avalonia.Thickness(0, 12, 0, 0),
-        };
-
-        reread.Click += (_, _) =>
+        // 5. Два действия раздела, и ни одно из них ничего не разрешает: одно перечитывает
+        //    политику, второе выписывает то же самое файлом.
+        var reread = SmallButton("Перечитать политику", () =>
         {
             EgressSetup.Init();
             BuildIntegrationsSecurity();
-        };
+        });
 
-        rows.Add(reread);
+        var passport = SmallButton("Паспорт интеграций…", () => _ = ExportPassportAsync());
+
+        rows.Add(new StackPanel
+        {
+            Orientation         = Orientation.Horizontal,
+            Spacing             = 8,
+            HorizontalAlignment = HorizontalAlignment.Left,
+            Margin              = new Avalonia.Thickness(0, 12, 0, 0),
+            Children            = { reread, passport },
+        });
     }
+
+    // ── Паспорт интеграций ────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Выписать паспорт интеграций файлом (docs/ROADMAP-API.md, 10.16) — то, что отдают службе
+    /// безопасности: что разрешено, с чем программа соединяется, кому разрешено уносить данные
+    /// и что уходило за месяц.
+    ///
+    /// Собирается на UI-потоке и намеренно: сведения берутся у реестра (общий контекст app.db) и
+    /// у открытых баз. Журнал за месяц читается страницами, и это единственное место, где
+    /// заметное ожидание вообще возможно — поэтому кнопка гасится на время работы.
+    /// </summary>
+    private async Task ExportPassportAsync()
+    {
+        if (VisualRoot is not Window win) return;
+
+        if (Integrations is not { } registry)
+        {
+            await ConfirmDialog.Info("Настройки интеграций еще не открылись — повторите.")
+                               .ShowDialog(win);
+            return;
+        }
+
+        if (_passporting) return;
+        _passporting = true;
+
+        try
+        {
+            var databases = (_databases?.Invoke() ?? [])
+                .Select(m => new Database.PassportDatabase(
+                    m.DbId, m.Name,
+                    m.Constructor.GetDatabaseLabel(),
+                    m.Constructor.LabeledFieldCount()))
+                .ToList();
+
+            var text = Database.IntegrationsPassport.Build(
+                registry, EgressSetup.Last, Database.SecurityJournal.Current, databases,
+                CurrentUser.DisplayName, DateTimeOffset.Now);
+
+            var file = await win.StorageProvider.SaveFilePickerAsync(
+                new Avalonia.Platform.Storage.FilePickerSaveOptions
+                {
+                    Title               = "Куда сохранить паспорт интеграций",
+                    SuggestedFileName   = $"Паспорт интеграций {DateTime.Now:yyyy-MM-dd HH-mm}.txt",
+                    DefaultExtension    = "txt",
+                    ShowOverwritePrompt = true,
+                    FileTypeChoices     =
+                    [
+                        new Avalonia.Platform.Storage.FilePickerFileType("Текстовый файл")
+                        {
+                            Patterns = ["*.txt"],
+                        },
+                    ],
+                });
+
+            if (file?.TryGetLocalPath() is not { Length: > 0 } path) return;
+
+            // С меткой порядка байтов: файл открывают Блокнотом, а он без метки читает русский
+            // текст как набор знаков вопроса.
+            await File.WriteAllTextAsync(path, text, new System.Text.UTF8Encoding(true));
+
+            Serilog.Log.Information("Паспорт интеграций выписан: {Path:l}", path);
+
+            await ConfirmDialog.Info($"Паспорт интеграций сохранен.\n\nФайл: {path}")
+                               .ShowDialog(win);
+        }
+        catch (Exception error)
+        {
+            Serilog.Log.Warning(error, "Паспорт интеграций не выписался");
+
+            await ConfirmDialog.Info("Сохранить паспорт не удалось.\n\n" + error.Message)
+                               .ShowDialog(win);
+        }
+        finally { _passporting = false; }
+    }
+
+    // Паспорт читает журнал за месяц: второй щелчок дал бы вторую работу и второе окно.
+    private bool _passporting;
 
     // ── Тексты ────────────────────────────────────────────────────────────────
 
