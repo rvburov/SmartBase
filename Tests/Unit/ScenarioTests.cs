@@ -37,6 +37,7 @@ public sealed class ScenarioTests
     [InlineData("manual")]
     [InlineData("every 30")]
     [InlineData("daily 07:00")]
+    [InlineData("changed 15 3 42")]
     public void Trigger_survives_a_round_trip(string stored) =>
         Assert.Equal(stored, ScenarioTrigger.Parse(stored).ToString());
 
@@ -55,6 +56,11 @@ public sealed class ScenarioTests
     [InlineData("every 2000")]        // реже суток — это уже «ежедневно»
     [InlineData("daily 25:00")]
     [InlineData("daily 7:00")]        // формат строгий: только HH:mm
+    [InlineData("changed 15")]        // без коллекции следить не за чем
+    [InlineData("changed 15 3")]
+    [InlineData("changed 1 3 42")]    // тишины меньше пяти минут не бывает
+    [InlineData("changed 15 0 42")]   // база не названа
+    [InlineData("changed 15 3 0")]    // коллекция не названа
     public void Garbage_reads_as_manual(string? stored) =>
         Assert.Equal(ScenarioTriggerKind.Manual, ScenarioTrigger.Parse(stored).Kind);
 
@@ -338,5 +344,95 @@ public sealed class ScenarioTests
         Assert.True(Sample().Automatic);
         Assert.False(Sample(enabled: false).Automatic);
         Assert.False((Sample(ScenarioTrigger.Manual, enabled: false)).Automatic);
+    }
+
+    // ── Триггер «изменение данных» ────────────────────────────────────────────
+
+    /// <summary>
+    /// Часов у этого триггера нет: «пора ли» решают правки, а не расписание. Поэтому и ближайший
+    /// запуск у него не считается — вернуть тут время значило бы заставить службу ждать минуты,
+    /// когда данные уже поменялись.
+    /// </summary>
+    [Fact]
+    public void A_data_trigger_has_no_schedule_of_its_own()
+    {
+        var trigger = ScenarioTrigger.OnChange(dbId: 3, collectionId: 42, settle: 15);
+
+        Assert.True(trigger.WatchesData);
+        Assert.Null(trigger.NextRun(Evening));
+        Assert.False(trigger.IsDue(Evening.AddYears(-1), Evening));
+    }
+
+    /// <summary>Ходит сам — значит, и он тоже: включенный сценарий по правкам идет без кнопки.</summary>
+    [Fact]
+    public void A_data_trigger_counts_as_automatic()
+    {
+        Assert.True(Sample(ScenarioTrigger.OnChange(3, 42, 15)).Automatic);
+    }
+
+    /// <summary>Не выбрана коллекция — следить не за чем, и сохранять такое незачем.</summary>
+    [Fact]
+    public void A_data_trigger_without_a_collection_is_refused()
+    {
+        var problems = ScenarioTrigger.OnChange(dbId: 0, collectionId: 0, settle: 15).Problems();
+
+        Assert.Contains(problems, p => p.Contains("коллекция", StringComparison.Ordinal));
+    }
+
+    /// <summary>Тишины меньше пяти минут не бывает: правка каждой строки дала бы обмен на строку.</summary>
+    [Theory]
+    [InlineData(1)]
+    [InlineData(0)]
+    [InlineData(2000)]
+    public void A_settle_time_outside_the_bounds_is_refused(int settle)
+    {
+        var problems = ScenarioTrigger.OnChange(3, 42, settle).Problems();
+
+        Assert.Contains(problems, p => p.Contains("тишины", StringComparison.Ordinal));
+    }
+
+    /// <summary>Имя коллекции приходит извне; без него строка честно называет ключ.</summary>
+    [Fact]
+    public void A_data_trigger_describes_itself_by_the_collection()
+    {
+        var trigger = ScenarioTrigger.OnChange(3, 42, 15);
+
+        Assert.Equal("при правках в «Заказы», через 15 мин тишины", trigger.Describe("Заказы"));
+        Assert.Contains("№42", trigger.Describe());
+    }
+
+    /// <summary>
+    /// Сценарий, который ПИШЕТ в ту же коллекцию, правки которой его заводят, не сохраняется.
+    /// Такой запускал бы сам себя без конца — и, что хуже, выбрал бы часовой потолок политики,
+    /// остановив ВЕСЬ обмен, а не только себя.
+    /// </summary>
+    [Fact]
+    public void A_scenario_that_feeds_its_own_trigger_is_refused()
+    {
+        var scenario = Scenario.New() with
+        {
+            Name    = "Круг",
+            Enabled = true,
+            Trigger = ScenarioTrigger.OnChange(dbId: 1, collectionId: 10, settle: 15),
+            Steps   = [ScenarioStep.OfAction("реестр", "register", dbId: 1, collectionId: 10)],
+        };
+
+        Assert.Contains(scenario.Problems(),
+                        p => p.Contains("сам себя", StringComparison.Ordinal));
+    }
+
+    /// <summary>Запись в ДРУГУЮ коллекцию круга не образует — и запрещать ее незачем.</summary>
+    [Fact]
+    public void Writing_into_another_collection_is_allowed()
+    {
+        var scenario = Scenario.New() with
+        {
+            Name    = "Отдать итог",
+            Enabled = true,
+            Trigger = ScenarioTrigger.OnChange(dbId: 1, collectionId: 10, settle: 15),
+            Steps   = [ScenarioStep.OfAction("реестр", "register", dbId: 1, collectionId: 11)],
+        };
+
+        Assert.Empty(scenario.Problems());
     }
 }

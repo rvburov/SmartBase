@@ -56,13 +56,29 @@ public partial class SettingsView
         }
     }
 
+    /// <summary>
+    /// Имя коллекции, за правками которой следит сценарий; пусто — база закрыта или коллекции
+    /// больше нет. Тогда строка покажет ключ, и это честнее выдуманного имени: «коллекция №5»
+    /// сразу говорит, что искать ее сейчас негде.
+    /// </summary>
+    private string WatchedName(Scenario scenario)
+    {
+        if (!scenario.Trigger.WatchesData) return "";
+
+        var databases = _databases?.Invoke() ?? [];
+
+        return databases.FirstOrDefault(d => d.DbId == scenario.Trigger.DbId) is { } database
+            ? database.Constructor.CollectionName(scenario.Trigger.CollectionId)
+            : "";
+    }
+
     private Border ScenarioRow(IntegrationsRegistry registry, Scenario scenario)
     {
         var steps = scenario.Steps.Count == 1
             ? "1 шаг"
             : $"{scenario.Steps.Count} " + (scenario.Steps.Count < 5 ? "шага" : "шагов");
 
-        var description = scenario.Trigger.Describe() + " · " + steps;
+        var description = scenario.Trigger.Describe(WatchedName(scenario)) + " · " + steps;
 
         var extra = "";
 

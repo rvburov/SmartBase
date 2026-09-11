@@ -51,6 +51,20 @@ public partial class ScenarioDialog : Window
         (1440, "сутки"),
     ];
 
+    /// <summary>
+    /// Сколько ждать тишины после последней правки. Список короче, чем у периодичности, и
+    /// намеренно: это не «как часто ходить», а «сколько дать человеку доредактировать», и
+    /// ответов тут по-настоящему немного.
+    /// </summary>
+    private static readonly (int Minutes, string Text)[] Settles =
+    [
+        (5,  "5 минут тишины"),
+        (10, "10 минут тишины"),
+        (15, "15 минут тишины"),
+        (30, "30 минут тишины"),
+        (60, "час тишины"),
+    ];
+
     /// <summary>Строка списка шагов: сам шаг и то, чем его правят.</summary>
     private sealed class StepRow
     {
@@ -108,9 +122,22 @@ public partial class ScenarioDialog : Window
             ? card.Trigger.Time.ToString("HH:mm", CultureInfo.InvariantCulture)
             : "";
 
-        ManualRadio.IsChecked = card.Trigger.Kind == ScenarioTriggerKind.Manual;
-        EveryRadio.IsChecked  = card.Trigger.Kind == ScenarioTriggerKind.Every;
-        DailyRadio.IsChecked  = card.Trigger.Kind == ScenarioTriggerKind.Daily;
+        ChangedCombo.ItemsSource = _places.Select(p => $"{p.Database} · {p.Name}").ToList();
+        ChangedCombo.SelectedIndex = _places.Count == 0 ? -1 : Math.Max(0, _places.ToList().FindIndex(
+            p => p.DbId == card.Trigger.DbId && p.CollectionId == card.Trigger.CollectionId));
+
+        SettleCombo.ItemsSource = Settles.Select(s => s.Text).ToList();
+        SettleCombo.SelectedIndex = Math.Max(0, Array.FindIndex(
+            Settles, s => s.Minutes == card.Trigger.Minutes));
+
+        ManualRadio.IsChecked  = card.Trigger.Kind == ScenarioTriggerKind.Manual;
+        EveryRadio.IsChecked   = card.Trigger.Kind == ScenarioTriggerKind.Every;
+        DailyRadio.IsChecked   = card.Trigger.Kind == ScenarioTriggerKind.Daily;
+        ChangedRadio.IsChecked = card.Trigger.Kind == ScenarioTriggerKind.Changed;
+
+        // Следить не за чем: баз нет или в них нет коллекций. Отключенный переключатель честнее
+        // пустого списка — он говорит «сейчас нельзя», а не «выбирайте из ничего».
+        ChangedRadio.IsEnabled = _places.Count > 0;
 
         EnabledSwitch.IsChecked = card.Enabled;
 
@@ -118,9 +145,10 @@ public partial class ScenarioDialog : Window
 
         ShowHint();
 
-        ManualRadio.IsCheckedChanged   += (_, _) => ShowHint();
+        ManualRadio.IsCheckedChanged    += (_, _) => ShowHint();
         EveryRadio.IsCheckedChanged     += (_, _) => ShowHint();
         DailyRadio.IsCheckedChanged     += (_, _) => ShowHint();
+        ChangedRadio.IsCheckedChanged   += (_, _) => ShowHint();
         EnabledSwitch.IsCheckedChanged  += (_, _) => ShowHint();
 
         AddRequestBtn.Click += (_, _) => AddStep(ScenarioStep.OfRequest(0));
@@ -405,15 +433,26 @@ public partial class ScenarioDialog : Window
     /// </summary>
     private void ShowHint()
     {
-        var manual = ManualRadio.IsChecked == true;
+        var manual  = ManualRadio.IsChecked  == true;
+        var changed = ChangedRadio.IsChecked == true;
+
+        // Уточнение к правкам показывается только вместе с ними: строка «через 5 минут тишины»
+        // под выбранным «ежедневно в 07:00» читается как часть расписания.
+        SettleLabel.IsVisible  = changed;
+        SettleCombo.IsVisible  = changed;
+        ChangedCombo.IsEnabled = changed;
 
         EnabledHint.Text = manual
             ? "Сценарий без расписания запускается только кнопкой, и включать его незачем — "
               + "выберите периодичность или оставьте тумблер выключенным."
-            : EnabledSwitch.IsChecked == true
-                ? "Сценарий будет запускаться сам. Пока выбранная база данных недоступна, запуск "
-                  + "пропускается и догоняется, когда она вернется."
-                : "Пока выключен: запускается только кнопкой «Запустить» в списке.";
+            : changed
+                ? "Сценарий пойдет, когда правки УТИХНУТ на выбранное время: правка десяти строк "
+                  + "подряд даст один запуск, а не десять. Считаются правки только на этом "
+                  + "компьютере."
+                : EnabledSwitch.IsChecked == true
+                    ? "Сценарий будет запускаться сам. Пока выбранная база данных недоступна, запуск "
+                      + "пропускается и догоняется, когда она вернется."
+                    : "Пока выключен: запускается только кнопкой «Запустить» в списке.";
     }
 
     // ── Сохранение ────────────────────────────────────────────────────────────
@@ -464,7 +503,7 @@ public partial class ScenarioDialog : Window
             ? _requests[index].Id
             : 0;
 
-    /// <summary>Триггер из переключателей; null — время набрано не так (причина в problem).</summary>
+    /// <summary>Триггер из переключателей; null — выбор неполон (причина в problem).</summary>
     private ScenarioTrigger? ReadTrigger(out string problem)
     {
         problem = "";
@@ -475,6 +514,20 @@ public partial class ScenarioDialog : Window
         {
             var index = Math.Max(0, EveryCombo.SelectedIndex);
             return ScenarioTrigger.EveryMinutes(Intervals[index].Minutes);
+        }
+
+        if (ChangedRadio.IsChecked == true)
+        {
+            if (ChangedCombo.SelectedIndex < 0 || ChangedCombo.SelectedIndex >= _places.Count)
+            {
+                problem = "Выберите коллекцию, за изменениями которой следить";
+                return null;
+            }
+
+            var place  = _places[ChangedCombo.SelectedIndex];
+            var settle = Settles[Math.Clamp(SettleCombo.SelectedIndex, 0, Settles.Length - 1)].Minutes;
+
+            return ScenarioTrigger.OnChange(place.DbId, place.CollectionId, settle);
         }
 
         if (TimeOnly.TryParseExact((TimeBox.Text ?? "").Trim(), "HH:mm",

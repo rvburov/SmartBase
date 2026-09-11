@@ -251,6 +251,15 @@ public static partial class ScenarioRunner
             if (databases.All(d => d.DbId != binding.DbId))
                 return $"база данных для запроса «{request.Name}» сейчас не открыта";
 
+            // Круг: сценарий заводится правками в коллекции и сам же в нее пишет. Модель такой
+            // круг ловит у шага «действие» — там коллекция записана прямо в шаге, — а здесь она
+            // приезжает из привязки карточки запроса, о которой модель не знает.
+            if (scenario.Trigger.WatchesData
+             && binding.DbId == scenario.Trigger.DbId
+             && binding.CollectionId == scenario.Trigger.CollectionId)
+                return $"запрос «{request.Name}» пишет в ту же коллекцию, изменения которой "
+                     + "заводят сценарий: он запускал бы сам себя без конца";
+
             rows = true;
         }
 

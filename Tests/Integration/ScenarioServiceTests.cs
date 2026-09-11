@@ -254,4 +254,212 @@ public sealed class ScenarioServiceTests : IDisposable
         Assert.True(outcome.Ok, outcome.Problem);
         Assert.Single(server.Seen);
     }
+
+    // ── Триггер «изменение данных» ────────────────────────────────────────────
+
+    /// <summary>
+    /// Коллекция, за которой следит триггер, — ОТДЕЛЬНАЯ от той, куда сценарий пишет: иначе он
+    /// заводил бы сам себя, и этот случай проверяется своим тестом.
+    /// </summary>
+    private (int Id, string Name) Watched(string name = "Клиенты") =>
+        (SampleData.AddCollection(_db.Constructor, name).Id!.Value, name);
+
+    /// <summary>Сценарий, который заводится правками в указанной коллекции.</summary>
+    private Scenario ByChange(int requestId, int collectionId, int settle = 15) =>
+        Ready(requestId, ScenarioTrigger.OnChange(_db.Manager.DbId, collectionId, settle));
+
+    private void Note(ScenarioService service, string collection, DateTimeOffset at) =>
+        service.Changes.Note(_db.Manager.Path, collection, at);
+
+    /// <summary>Правок не было — сценарий стоит. Ни часов, ни повода.</summary>
+    [Fact]
+    public async Task Without_a_change_a_data_scenario_stays_put()
+    {
+        using var server = Server();
+        var watched = Watched();
+
+        ByChange(ReadyRequest(server), watched.Id);
+
+        Assert.Equal(0, await Service().TickAsync(Now.AddHours(5)));
+        Assert.Empty(server.Seen);
+    }
+
+    /// <summary>
+    /// Правка была — но обмен уходит не сразу, а когда правки утихнут. Это и есть весь смысл
+    /// времени тишины: правка десяти строк подряд дает один запуск, а не десять.
+    /// </summary>
+    [Fact]
+    public async Task A_change_starts_the_scenario_only_after_the_quiet_time()
+    {
+        using var server = Server();
+        var watched = Watched();
+        var service = Service();
+
+        ByChange(ReadyRequest(server), watched.Id, settle: 15);
+
+        Note(service, watched.Name, Now);
+
+        Assert.Equal(0, await service.TickAsync(Now.AddMinutes(14)));
+        Assert.Empty(server.Seen);
+
+        Assert.Equal(1, await service.TickAsync(Now.AddMinutes(16)));
+        Assert.Single(server.Seen);
+    }
+
+    /// <summary>
+    /// Новая правка во время ожидания отсчет НАЧИНАЕТ ЗАНОВО. Иначе человек, правящий таблицу
+    /// полчаса, получил бы обмен посреди работы — с половиной своих правок.
+    /// </summary>
+    [Fact]
+    public async Task A_fresh_change_restarts_the_quiet_time()
+    {
+        using var server = Server();
+        var watched = Watched();
+        var service = Service();
+
+        ByChange(ReadyRequest(server), watched.Id, settle: 15);
+
+        Note(service, watched.Name, Now);
+        Note(service, watched.Name, Now.AddMinutes(10));
+
+        // С первой правки прошло 16 минут, а с последней — только 6.
+        Assert.Equal(0, await service.TickAsync(Now.AddMinutes(16)));
+
+        Assert.Equal(1, await service.TickAsync(Now.AddMinutes(26)));
+    }
+
+    /// <summary>Отработал — правка забыта: второй раз по одной и той же правке сценарий не идет.</summary>
+    [Fact]
+    public async Task A_change_starts_the_scenario_only_once()
+    {
+        using var server = Server();
+        var watched = Watched();
+        var service = Service();
+
+        ByChange(ReadyRequest(server), watched.Id, settle: 15);
+
+        Note(service, watched.Name, Now);
+
+        Assert.Equal(1, await service.TickAsync(Now.AddMinutes(16)));
+        Assert.Equal(0, await service.TickAsync(Now.AddHours(5)));
+
+        Assert.Single(server.Seen);
+    }
+
+    /// <summary>
+    /// А новая правка заводит его снова. Правки забываются В НАЧАЛЕ запуска именно ради этого:
+    /// то, что пришло после чтения данных, обязано уйти следующим обменом, а не потеряться.
+    /// </summary>
+    [Fact]
+    public async Task A_change_after_the_run_starts_it_again()
+    {
+        using var server = Server();
+        var watched = Watched();
+        var service = Service();
+
+        ByChange(ReadyRequest(server), watched.Id, settle: 15);
+
+        Note(service, watched.Name, Now);
+        Assert.Equal(1, await service.TickAsync(Now.AddMinutes(16)));
+
+        Note(service, watched.Name, Now.AddMinutes(20));
+        Assert.Equal(1, await service.TickAsync(Now.AddMinutes(40)));
+
+        Assert.Equal(2, server.Seen.Count);
+    }
+
+    /// <summary>Правка в чужой коллекции сценарий не заводит: следят за одной, названной.</summary>
+    [Fact]
+    public async Task A_change_in_another_collection_does_not_start_it()
+    {
+        using var server = Server();
+        var watched = Watched();
+        var service = Service();
+
+        ByChange(ReadyRequest(server), watched.Id, settle: 15);
+
+        Note(service, "Поставщики", Now);
+
+        Assert.Equal(0, await service.TickAsync(Now.AddHours(1)));
+        Assert.Empty(server.Seen);
+    }
+
+    /// <summary>
+    /// Настоящая запись в базу доезжает до копилки через шину. Остальные тесты подкладывают
+    /// правки руками — быстро и без часов, — но проверить сам стык надо хотя бы раз: разойдись
+    /// он, и триггер молчал бы, а все проверки оставались бы зелеными.
+    /// </summary>
+    [Fact]
+    public void A_real_commit_reaches_the_watch()
+    {
+        var collection = SampleData.AddCollection(_db.Constructor, "Клиенты");
+
+        var watch = new ChangeWatch();
+        watch.Attach();
+
+        try
+        {
+            SampleData.AddRecord(_db.Constructor, collection.Id!.Value, "Ромашка");
+
+            Assert.NotNull(watch.LastChange(_db.Manager.Path, "Клиенты"));
+        }
+        finally { watch.Dispose(); }
+    }
+
+    /// <summary>Отписались — правки больше не копятся: подписка живет ровно столько же, сколько служба.</summary>
+    [Fact]
+    public void A_disposed_watch_stops_listening()
+    {
+        var collection = SampleData.AddCollection(_db.Constructor, "Клиенты");
+
+        var watch = new ChangeWatch();
+        watch.Attach();
+        watch.Dispose();
+
+        SampleData.AddRecord(_db.Constructor, collection.Id!.Value, "Ромашка");
+
+        Assert.Equal(0, watch.Count);
+    }
+
+    /// <summary>
+    /// Структурная правка — не «данные изменились». Добавленная колонка не меняет того, что
+    /// уйдет, и гонять из-за нее обмен незачем.
+    /// </summary>
+    [Fact]
+    public void A_structural_change_is_not_data()
+    {
+        Assert.True(ChangeWatch.IsData("record"));
+        Assert.True(ChangeWatch.IsData("records"));
+
+        Assert.False(ChangeWatch.IsData("field"));
+        Assert.False(ChangeWatch.IsData("collection"));
+        Assert.False(ChangeWatch.IsData("group"));
+        Assert.False(ChangeWatch.IsData("user"));
+    }
+
+    /// <summary>
+    /// Круг: сценарий заводится правками в коллекции и сам же в нее пишет. Здесь его ловит
+    /// проверка выполнимости — коллекция приезжает из привязки карточки запроса, о которой
+    /// модель не знает.
+    /// </summary>
+    [Fact]
+    public async Task A_scenario_that_feeds_its_own_trigger_never_runs()
+    {
+        using var server = Server();
+        var requestId = ReadyRequest(server);
+
+        // Привязка запроса смотрит в «Заказы» — за ней же и следим.
+        var binding  = Cards.Binding(requestId)!;
+        var service  = Service();
+        var scenario = ByChange(requestId, binding.CollectionId, settle: 15);
+
+        Note(service, "Заказы", Now);
+
+        Assert.Equal(0, await service.TickAsync(Now.AddHours(1)));
+        Assert.Empty(server.Seen);
+
+        Assert.Contains("сам себя",
+                        ScenarioRunner.Blocker(scenario, Cards, [_db.Manager], [])!,
+                        StringComparison.Ordinal);
+    }
 }

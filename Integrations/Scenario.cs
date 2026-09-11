@@ -14,6 +14,16 @@ public enum ScenarioTriggerKind
 
     /// <summary>Ежедневно в назначенное время.</summary>
     Daily,
+
+    /// <summary>
+    /// Когда поменялись данные в выбранной коллекции — и правки утихли.
+    ///
+    /// Появился этот вид последним и намеренно: исполнителя у него не было. Единственный шаг,
+    /// которому «данные изменились» по-настоящему нужно, — отправка наружу, а она стоит под
+    /// замком из шага 5 (docs/ROADMAP-API.md). Заведи триггер раньше — и человек получил бы
+    /// настройку, которая ничего не делает.
+    /// </summary>
+    Changed,
 }
 
 /// <summary>
@@ -21,10 +31,9 @@ public enum ScenarioTriggerKind
 /// параметром, как у <c>BackupPlanner</c> и <c>NotificationScheduler</c>, — иначе расписание
 /// нельзя проверить, не подводя системное время.
 ///
-/// Видов пока три, и это не половина задуманного, а то, что уже есть чем выполнять. Триггеры
-/// «изменение данных» и «календарное событие» из плана (docs/ROADMAP-API.md, раздел 2) появятся
-/// вместе со своими исполнителями: заводить их здесь раньше значило бы показать человеку
-/// настройку, которая ничего не делает.
+/// Видов четыре: «календарное событие» из плана (docs/ROADMAP-API.md, раздел 2) появится вместе
+/// со своим исполнителем — заводить его здесь раньше значило бы показать человеку настройку,
+/// которая ничего не делает.
 ///
 /// Календарные периодичности (по дням недели, месяцам) сюда не переехали намеренно: они уже
 /// описаны в <c>BackupSchedule</c>, и обмену нужен другой набор — «каждые полчаса» там как раз
@@ -32,13 +41,24 @@ public enum ScenarioTriggerKind
 /// две подсистемы, которые ничем больше не связаны.
 /// </summary>
 /// <param name="Kind">Вид триггера.</param>
-/// <param name="Minutes">Через сколько минут повторять (только <see cref="ScenarioTriggerKind.Every"/>).</param>
+/// <param name="Minutes">Через сколько минут повторять (<see cref="ScenarioTriggerKind.Every"/>)
+/// либо сколько ждать тишины после последней правки (<see cref="ScenarioTriggerKind.Changed"/>).</param>
 /// <param name="Time">Время суток (только <see cref="ScenarioTriggerKind.Daily"/>).</param>
-public sealed record ScenarioTrigger(ScenarioTriggerKind Kind, int Minutes, TimeOnly Time)
+/// <param name="DbId">База, за коллекцией которой следим (только <see cref="ScenarioTriggerKind.Changed"/>).</param>
+/// <param name="CollectionId">Коллекция, правки в которой заводят сценарий.</param>
+public sealed record ScenarioTrigger(
+    ScenarioTriggerKind Kind,
+    int                 Minutes,
+    TimeOnly            Time,
+    int                 DbId         = 0,
+    int                 CollectionId = 0)
 {
     /// <summary>
     /// Чаще пяти минут — это уже опрос, а не расписание. Каждый запуск стоит места в часовом
     /// потолке политики, и обмен раз в минуту выбрал бы его до обеда, ничего не успев.
+    ///
+    /// Для «изменения данных» это же число означает другое — сколько ждать тишины, — но предел у
+    /// него тот же и по той же причине: правка каждой строки таблицы дала бы по обмену на строку.
     /// </summary>
     public const int MinMinutes = 5;
 
@@ -53,6 +73,13 @@ public sealed record ScenarioTrigger(ScenarioTriggerKind Kind, int Minutes, Time
     public static ScenarioTrigger DailyAt(TimeOnly time) =>
         new(ScenarioTriggerKind.Daily, 0, time);
 
+    /// <summary>Следить за правками в коллекции и ждать <paramref name="settle"/> минут тишины.</summary>
+    public static ScenarioTrigger OnChange(int dbId, int collectionId, int settle) =>
+        new(ScenarioTriggerKind.Changed, settle, default, dbId, collectionId);
+
+    /// <summary>Следит ли триггер за правками в коллекции.</summary>
+    public bool WatchesData => Kind == ScenarioTriggerKind.Changed;
+
     /// <summary>Что не так с триггером; пустой список — годится.</summary>
     public IReadOnlyList<string> Problems()
     {
@@ -60,6 +87,15 @@ public sealed record ScenarioTrigger(ScenarioTriggerKind Kind, int Minutes, Time
 
         if (Kind == ScenarioTriggerKind.Every && (Minutes < MinMinutes || Minutes > MaxMinutes))
             problems.Add($"Повторять можно не чаще {MinMinutes} минут и не реже раза в сутки");
+
+        if (Kind == ScenarioTriggerKind.Changed)
+        {
+            if (CollectionId <= 0 || DbId <= 0)
+                problems.Add("Не выбрана коллекция, за изменениями которой следить");
+
+            if (Minutes < MinMinutes || Minutes > MaxMinutes)
+                problems.Add($"Ждать тишины можно не меньше {MinMinutes} минут и не больше суток");
+        }
 
         return problems;
     }
@@ -101,14 +137,21 @@ public sealed record ScenarioTrigger(ScenarioTriggerKind Kind, int Minutes, Time
     public bool IsDue(DateTimeOffset? lastRun, DateTimeOffset now) =>
         lastRun is { } last && NextRun(last) is { } next && now >= next;
 
-    /// <summary>Одной строкой для экрана и списка.</summary>
-    public string Describe() => Kind switch
+    /// <summary>
+    /// Одной строкой для экрана и списка. Имя коллекции приходит извне: триггер знает только
+    /// ключ, а таскать ради подписи целую базу в модель незачем.
+    /// </summary>
+    public string Describe(string collection = "") => Kind switch
     {
         ScenarioTriggerKind.Every => Minutes % 60 == 0 && Minutes >= 60
             ? $"каждые {Minutes / 60} ч"
             : $"каждые {Minutes} мин",
 
         ScenarioTriggerKind.Daily => "ежедневно в " + Time.ToString("HH:mm", CultureInfo.InvariantCulture),
+
+        ScenarioTriggerKind.Changed =>
+            $"при правках в «{(collection.Length > 0 ? collection : "коллекции №" + CollectionId)}»"
+            + $", через {Minutes} мин тишины",
 
         _ => "вручную",
     };
@@ -122,7 +165,13 @@ public sealed record ScenarioTrigger(ScenarioTriggerKind Kind, int Minutes, Time
     {
         ScenarioTriggerKind.Every => "every " + Minutes.ToString(CultureInfo.InvariantCulture),
         ScenarioTriggerKind.Daily => "daily " + Time.ToString("HH:mm", CultureInfo.InvariantCulture),
-        _                         => "manual",
+
+        ScenarioTriggerKind.Changed =>
+            $"changed {Minutes.ToString(CultureInfo.InvariantCulture)} "
+            + $"{DbId.ToString(CultureInfo.InvariantCulture)} "
+            + $"{CollectionId.ToString(CultureInfo.InvariantCulture)}",
+
+        _ => "manual",
     };
 
     /// <summary>
@@ -145,6 +194,13 @@ public sealed record ScenarioTrigger(ScenarioTriggerKind Kind, int Minutes, Time
             ["daily", var time] when TimeOnly.TryParseExact(time, "HH:mm", CultureInfo.InvariantCulture,
                                                             DateTimeStyles.None, out var moment) =>
                 DailyAt(moment),
+
+            ["changed", var settle, var db, var collection]
+                when int.TryParse(settle, NumberStyles.Integer, CultureInfo.InvariantCulture, out var wait)
+                  && int.TryParse(db, NumberStyles.Integer, CultureInfo.InvariantCulture, out var dbId)
+                  && int.TryParse(collection, NumberStyles.Integer, CultureInfo.InvariantCulture, out var id)
+                  && wait >= MinMinutes && wait <= MaxMinutes && dbId > 0 && id > 0 =>
+                OnChange(dbId, id, wait),
 
             _ => Manual,
         };
@@ -401,7 +457,38 @@ public sealed record Scenario(
         if (Enabled && Trigger.Kind == ScenarioTriggerKind.Manual)
             problems.Add("Сценарий без расписания включать незачем: он запускается только кнопкой");
 
+        problems.AddRange(SelfLoop());
+
         return problems;
+    }
+
+    /// <summary>
+    /// Сценарий, который ПИШЕТ в ту самую коллекцию, правки которой его заводят. Такой запускал
+    /// бы сам себя без конца: отработал — записал — снова изменилось — снова отработал.
+    ///
+    /// Ловится это при сохранении, а не в работе, и намеренно: круг, замеченный на боевой
+    /// машине, к тому моменту уже выбрал часовой потолок политики и остановил ВЕСЬ обмен, а не
+    /// только себя. Отказать человеку словами, пока он смотрит на настройку, дешевле в тысячу раз.
+    ///
+    /// Здесь проверяются шаги «действие» — те, у которых коллекция записана прямо в шаге. Шаг
+    /// «запрос» берет коллекцию у привязки своей карточки, и о ней модель не знает; его ловит
+    /// <c>ScenarioRunner.Blocker</c>, у которого реестр под рукой.
+    /// </summary>
+    private IEnumerable<string> SelfLoop()
+    {
+        if (!Trigger.WatchesData) yield break;
+
+        for (var i = 0; i < Steps.Count; i++)
+        {
+            var step = Steps[i];
+
+            if (step.Kind != ScenarioStepKind.Action)            continue;
+            if (step.DbId != Trigger.DbId)                       continue;
+            if (step.CollectionId != Trigger.CollectionId)       continue;
+
+            yield return $"Шаг {i + 1} пишет в ту же коллекцию, изменения которой заводят "
+                       + "сценарий: он запускал бы сам себя без конца";
+        }
     }
 
     /// <summary>Ходит ли сценарий сам — и включен, и есть чем заводить.</summary>

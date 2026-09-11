@@ -37,6 +37,13 @@ public sealed class ScenarioService : IDisposable
     /// <summary>Сценарий отработал. UI-поток; экран обновляет журнал и список.</summary>
     public event Action<Scenario, ScenarioOutcome>? Ran;
 
+    /// <summary>
+    /// Копилка своих правок для триггера «изменение данных». Принадлежит службе: подписка на
+    /// шину живет ровно столько же, сколько таймер, и забыть отписаться нельзя. Открыта наружу
+    /// ради тестов — так триггер проверяется без настоящих коммитов.
+    /// </summary>
+    public ChangeWatch Changes { get; } = new();
+
     private readonly IntegrationsRegistry                 _cards;
     private readonly Func<IReadOnlyList<DatabaseManager>> _databases;
     private readonly IReadOnlyList<IExtension>            _extensions;
@@ -71,17 +78,27 @@ public sealed class ScenarioService : IDisposable
     {
         if (_timer is not null) return;
 
+        // Подписка на шину своих правок — вместе с таймером: решает-то по ним все равно тик, и
+        // копить правки, пока служба не работает, значило бы завести сценарий пачкой при первом
+        // же возвращении окна из трея.
+        Changes.Attach();
+
         _timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(TickSeconds) };
         _timer.Tick += (_, _) => _ = TickAsync(DateTimeOffset.Now);
         _timer.Start();
 
-        var automatic = _cards.Scenarios().Count(s => s.Automatic);
+        var scenarios = _cards.Scenarios();
+        var automatic = scenarios.Count(s => s.Automatic);
+        var watching  = scenarios.Count(s => s.Automatic && s.Trigger.WatchesData);
 
-        Log.Information("Сценарии: служба запущена, по расписанию ходят {Count}", automatic);
+        Log.Information("Сценарии: служба запущена, сами ходят {Count} (из них по правкам {Watching})",
+                        automatic, watching);
     }
 
     public void Dispose()
     {
+        Changes.Dispose();
+
         if (_timer is null) return;
 
         _timer.Stop();
@@ -110,7 +127,7 @@ public sealed class ScenarioService : IDisposable
             foreach (var scenario in _cards.Scenarios())
             {
                 if (!scenario.Automatic) continue;
-                if (!scenario.Trigger.IsDue(_cards.ScenarioLastRun(scenario.Id), now)) continue;
+                if (!Due(scenario, now))  continue;
 
                 if (await AutomaticAsync(scenario, now, ct)) ran++;
             }
@@ -121,6 +138,58 @@ public sealed class ScenarioService : IDisposable
         }
 
         return ran;
+    }
+
+    // ── Пора ли ───────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Пора ли заводить сценарий. У расписания ответ дает сам триггер, у «изменения данных» —
+    /// копилка правок: расписание считается от часов, а правки приходят когда придут.
+    /// </summary>
+    private bool Due(Scenario scenario, DateTimeOffset now) =>
+        scenario.Trigger.WatchesData
+            ? Stirred(scenario, now)
+            : scenario.Trigger.IsDue(_cards.ScenarioLastRun(scenario.Id), now);
+
+    /// <summary>
+    /// Менялись ли данные — и утихли ли правки.
+    ///
+    /// <b>Ждем ТИШИНЫ, а не просто паузы.</b> Отсчет идет от ПОСЛЕДНЕЙ правки, поэтому правка
+    /// десяти строк подряд дает один обмен, а не десять, и загрузка на тысячу записей уходит
+    /// одним куском после того, как закончится. Плата за это названа честно: пока правки идут
+    /// непрерывно, обмен ждет. Это и задумано — отправлять посреди загрузки значит отправлять
+    /// половину.
+    /// </summary>
+    private bool Stirred(Scenario scenario, DateTimeOffset now)
+    {
+        if (Watched(scenario) is not { } spot)                                 return false;
+        if (Changes.LastChange(spot.Path, spot.Collection) is not { } last)     return false;
+
+        var settle = Math.Clamp(scenario.Trigger.Minutes,
+                                ScenarioTrigger.MinMinutes, ScenarioTrigger.MaxMinutes);
+
+        return now - last >= TimeSpan.FromMinutes(settle);
+    }
+
+    /// <summary>
+    /// За чем следим: путь базы и имя коллекции. <c>null</c> — база закрыта или коллекции больше
+    /// нет; тогда сценарий просто не заводится, как и всякий другой с закрытой базой.
+    ///
+    /// Имя, а не ключ, потому что шина изменений говорит именами: так их пишет журнал изменений.
+    /// Переименовали коллекцию — триггер поедет за ней сам, ключ-то остался прежним.
+    /// </summary>
+    private (string Path, string Collection)? Watched(Scenario scenario)
+    {
+        var trigger = scenario.Trigger;
+
+        if (!trigger.WatchesData) return null;
+
+        if (_databases().FirstOrDefault(d => d.DbId == trigger.DbId) is not { } database)
+            return null;
+
+        var collection = database.Constructor.CollectionName(trigger.CollectionId);
+
+        return collection.Length > 0 ? (database.Path, collection) : null;
     }
 
     /// <summary>
@@ -140,6 +209,11 @@ public sealed class ScenarioService : IDisposable
 
         // Отметка — до работы, моментом начала: период считается от старта, а не от финиша.
         _cards.MarkScenarioRun(scenario.Id, now);
+
+        // Правки отработаны — забываем их тоже В НАЧАЛЕ. Правка, пришедшая во время работы,
+        // обязана завести сценарий заново: данные-то стали другими уже после того, как их
+        // прочитали.
+        if (Watched(scenario) is { } spot) Changes.Forget(spot.Path, spot.Collection);
 
         ScenarioOutcome outcome;
         try

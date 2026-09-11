@@ -62,6 +62,32 @@
                          CornerRadius="{StaticResource RadiusBase}" />
             </Grid>
 
+            <Grid ColumnDefinitions="Auto,8,*">
+                <RadioButton Grid.Column="0" x:Name="ChangedRadio" GroupName="trigger"
+                             Content="При правках в" VerticalAlignment="Center" />
+                <ComboBox Grid.Column="2" x:Name="ChangedCombo"
+                          Height="30"
+                          HorizontalAlignment="Stretch"
+                          VerticalContentAlignment="Center"
+                          Background="{StaticResource BrushSecondaryBg}"
+                          CornerRadius="{StaticResource RadiusBase}" />
+            </Grid>
+
+            <!-- Время тишины — отдельной строкой с отступом: это уточнение к правкам, а не
+                 пятый вид триггера. -->
+            <Grid ColumnDefinitions="Auto,8,*" Margin="24,0,0,0">
+                <TextBlock Grid.Column="0" x:Name="SettleLabel"
+                           Text="через" VerticalAlignment="Center"
+                           Foreground="{StaticResource BrushSecondaryText}" />
+                <ComboBox Grid.Column="2" x:Name="SettleCombo"
+                          Height="30"
+                          MinWidth="160"
+                          HorizontalAlignment="Left"
+                          VerticalContentAlignment="Center"
+                          Background="{StaticResource BrushSecondaryBg}"
+                          CornerRadius="{StaticResource RadiusBase}" />
+            </Grid>
+
         </StackPanel>
 
         <!-- ── Что делать ───────────────────────────────────────────────────── -->
@@ -85,7 +111,7 @@
                 ClipToBounds="True"
                 Margin="0,0,0,8"
                 Padding="0">
-            <ScrollViewer MaxHeight="220"
+            <ScrollViewer MaxHeight="180"
                           HorizontalScrollBarVisibility="Disabled"
                           VerticalScrollBarVisibility="Auto">
                 <StackPanel x:Name="StepsPanel" Spacing="6" Margin="10,8" />
