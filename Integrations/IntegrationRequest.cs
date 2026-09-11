@@ -169,8 +169,8 @@ public sealed record IntegrationRequest(
                 : "Не указано имя параметра разбивки на страницы");
 
         foreach (var header in Headers)
-            if (string.IsNullOrWhiteSpace(header.Name))
-                problems.Add("У заголовка не заполнено имя");
+            if (header.Trouble() is { Length: > 0 } trouble)
+                problems.Add(char.ToUpperInvariant(trouble[0]) + trouble[1..]);
 
         return problems;
     }

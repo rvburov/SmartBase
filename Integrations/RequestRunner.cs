@@ -61,6 +61,35 @@ public sealed record RunOutcome(
 ///   Настройка, которую можно поднять, — это не потолок.</item>
 /// </list>
 /// </summary>
+/// <summary>
+/// Сухой прогон: что уйдет наружу, если запустить запрос прямо сейчас (docs/ROADMAP-API.md, 10.9).
+///
+/// Собирается ТЕМ ЖЕ кодом, которым собирается настоящая отправка, — иначе экран показывал бы
+/// одно, а уходило другое, и доверять такому показу было бы нельзя вовсе. Ни одного сокета при
+/// этом не открывается: даже имя узла не разрешается, потому что сам запрос к DNS уже говорит
+/// наружу, что программа этим адресом интересуется.
+/// </summary>
+/// <param name="Ok">Запуск состоялся бы.</param>
+/// <param name="Explanation">Что помешает; пусто — ничто.</param>
+/// <param name="Method">Метод первой порции.</param>
+/// <param name="SafeAddress">Полный адрес БЕЗ секрета.</param>
+/// <param name="Headers">Заголовки с замаскированным секретом.</param>
+/// <param name="Body">Тело с подставленными переменными — ровно то, что уйдет.</param>
+/// <param name="Outward">Уносит ли этот запрос данные наружу.</param>
+public sealed record RunPreview(
+    bool                             Ok,
+    string                           Explanation,
+    RequestMethod                    Method,
+    string                           SafeAddress,
+    IReadOnlyList<IntegrationHeader> Headers,
+    string                           Body,
+    bool                             Outward)
+{
+    /// <summary>Отказ до сборки вызова: показывать нечего, причина одна.</summary>
+    public static RunPreview Blocked(string explanation, bool outward) =>
+        new(false, explanation, RequestMethod.Get, "", [], "", outward);
+}
+
 public static class RequestRunner
 {
     /// <summary>
@@ -69,6 +98,59 @@ public static class RequestRunner
     /// кончается никогда.
     /// </summary>
     public const int MaxPages = 200;
+
+    /// <summary>
+    /// Показать, что уйдет, ничего не отправляя. Проверяются те же рамки и в том же порядке, что
+    /// и при запуске: потолок строк, накопительные квоты, подстановки, белый список адресов и
+    /// подтверждение исходящего направления.
+    ///
+    /// Показывается ПЕРВАЯ порция. Страниц бывает двести, и они отличаются одним параметром;
+    /// показать их все значило бы утопить в них то единственное, ради чего сухой прогон и
+    /// смотрят, — тело запроса.
+    /// </summary>
+    /// <param name="outwardTrouble">Ответ <c>IntegrationsRegistry.OutwardTrouble</c>: почему
+    /// этому запросу нельзя отправлять; <c>null</c> — можно. Спрашивается снаружи, потому что
+    /// подтверждения живут в app.db, а этот слой к базе не ходит.</param>
+    public static RunPreview Preview(
+        IntegrationConnection connection,
+        IntegrationRequest    request,
+        string                secret,
+        VariableContext       context,
+        string?               outwardTrouble = null)
+    {
+        var outward = request.Outward;
+
+        if (outwardTrouble is { Length: > 0 })
+            return RunPreview.Blocked("исходящее направление: " + outwardTrouble, outward);
+
+        if (EgressGate.Policy.MaxRowsPerRun <= 0)
+            return RunPreview.Blocked(
+                "политика организации не разрешает получать записи: потолок строк за запуск — 0",
+                outward);
+
+        var quota = EgressGate.CheckQuota(DateTimeOffset.Now);
+        if (!quota.Allowed)
+            return RunPreview.Blocked("запрещено политикой: " + quota.Explanation, outward);
+
+        var page = Page(request, context, cursor: null, number: 1, offset: 0, out var unknown);
+
+        if (unknown.Count > 0)
+            return RunPreview.Blocked(
+                "неизвестные подстановки: " + string.Join(", ", unknown.Select(u => "{{" + u + "}}")),
+                outward);
+
+        var plan = EgressPlan.Build(connection, page, secret, out var error);
+
+        if (plan is null) return RunPreview.Blocked(error, outward);
+
+        // Белый список спрашивается ПО ИМЕНИ и только: разрешение имени — уже обращение наружу,
+        // а сухой прогон не должен говорить чужой сети ничего.
+        var decision = EgressGate.Check(plan.Address);
+
+        return new RunPreview(decision.Allowed,
+                              decision.Allowed ? "" : "запрещено политикой: " + decision.Explanation,
+                              plan.Method, plan.SafeAddress, plan.SafeHeaders, plan.Body, outward);
+    }
 
     /// <summary>Запустить запрос и собрать записи.</summary>
     public static async Task<RunOutcome> RunAsync(

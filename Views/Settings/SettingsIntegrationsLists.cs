@@ -196,10 +196,122 @@ public partial class SettingsView
             extra += (extra.Length > 0 ? " · " : "")
                    + "Последний запуск: " + last.ToLocalTime().ToString("dd.MM.yyyy HH:mm");
 
+        // Состояние исходящего направления — прямо в карточке. Человек, у которого обмен встал,
+        // должен увидеть причину здесь, а не искать ее в журнале: «срок вышел» и «запрос
+        // правили» лечатся по-разному.
+        if (request.Outward)
+        {
+            var trouble = registry.OutwardTrouble(request, DateTimeOffset.Now);
+
+            extra += (extra.Length > 0 ? " · " : "") + "Направление: "
+                   + (trouble ?? registry.Direction(request.Id)?.Describe() ?? "подтверждено");
+        }
+
+        // «Что уйдет» есть у любого запроса — читающий тоже стоит посмотреть глазами перед
+        // первым запуском. Подтверждение появляется только у исходящего: читающему подтверждать
+        // нечего, и кнопка, которая ничего не делает, читается как поломка.
+        var more = new List<(string Text, Action Click)>
+        {
+            ("Что уйдет", () => _ = PreviewRequestAsync(registry, request, connection)),
+        };
+
+        if (request.Outward)
+            more.Add(registry.Direction(request.Id) is null
+                ? ("Подтвердить", () => _ = ConfirmDirectionAsync(registry, request))
+                : ("Отозвать",    () => _ = RevokeDirectionAsync(registry, request)));
+
         return CardRow(request.Name, description, extra,
             edit:   () => _ = EditRequestAsync(request),
             delete: () => _ = DeleteRequestAsync(request),
-            first:  ("В коллекцию", () => _ = RunToCollectionAsync(registry, request, connection)));
+            first:  ("В коллекцию", () => _ = RunToCollectionAsync(registry, request, connection)),
+            more:   more);
+    }
+
+    /// <summary>
+    /// Сухой прогон: собрать запрос целиком и показать, ничего не отправляя
+    /// (docs/ROADMAP-API.md, 10.9).
+    /// </summary>
+    private async Task PreviewRequestAsync(Database.IntegrationsRegistry registry,
+                                           IntegrationRequest request,
+                                           IntegrationConnection? connection)
+    {
+        if (VisualRoot is not Window win) return;
+
+        if (connection is null)
+        {
+            await ConfirmDialog.Info("У запроса не найдено соединение: адрес брать неоткуда.")
+                               .ShowDialog(win);
+            return;
+        }
+
+        var preview = RequestRunner.Preview(
+            connection, request, registry.Secret(connection.Id),
+            VariableContext.Now(registry.LastRun(request.Id), connection.Address),
+            registry.OutwardTrouble(request, DateTimeOffset.Now));
+
+        await new RequestPreviewDialog(preview).ShowDialog(win);
+    }
+
+    /// <summary>
+    /// Подтвердить исходящее направление мастер-паролем. Пароль проверяет реестр (а он —
+    /// политику): экран его не видит и не хранит.
+    /// </summary>
+    private async Task ConfirmDirectionAsync(Database.IntegrationsRegistry registry,
+                                             IntegrationRequest request)
+    {
+        if (VisualRoot is not Window win) return;
+
+        var what = $"{request.Name}: {request.Method.ToString().ToUpperInvariant()} {request.Path}";
+
+        var done = await new DirectionConfirmDialog(what, (password, days) =>
+        {
+            registry.ConfirmDirection(request, password, Utils.CurrentUser.DisplayName, days,
+                                      DateTimeOffset.Now, out var trouble);
+
+            if (trouble.Length > 0) return trouble;
+
+            // След подтверждения — в журнале безопасности, а не в рабочем: это решение о
+            // полномочии, и читает его проверяющий. Не записалось — говорим об этом сразу:
+            // подтверждение без следа ничем не лучше отправки без следа.
+            var written = Database.SecurityJournal.Add(Database.SecurityEntry.New(
+                Database.SecurityEvent.Confirm, allowed: true,
+                who: Utils.CurrentUser.DisplayName, scenario: "",
+                address: request.Path, fields: "", rows: 0, bytes: 0, bodyHash: "",
+                explanation: $"подтверждено направление «{request.Name}» на {days} дней",
+                dbId: 0, at: DateTimeOffset.Now, confirmed: Utils.CurrentUser.DisplayName));
+
+            return written
+                ? null
+                : "подтверждение записано, но след в журнале безопасности не лег — сообщите "
+                + "ответственному за интеграции";
+        }).ShowDialog<bool>(win);
+
+        if (done) BuildIntegrationsRequests();
+    }
+
+    /// <summary>Отозвать подтверждение — руками, до срока.</summary>
+    private async Task RevokeDirectionAsync(Database.IntegrationsRegistry registry,
+                                            IntegrationRequest request)
+    {
+        if (VisualRoot is not Window win) return;
+
+        var yes = await new ConfirmDialog(
+            $"Отозвать подтверждение у запроса «{request.Name}»? Он перестанет отправлять данные "
+            + "наружу, а вернуть разрешение можно только мастер-паролем.",
+            "Отозвать").ShowDialog<bool>(win);
+
+        if (!yes) return;
+
+        registry.RevokeDirection(request.Id);
+
+        Database.SecurityJournal.Add(Database.SecurityEntry.New(
+            Database.SecurityEvent.Revoke, allowed: true,
+            who: Utils.CurrentUser.DisplayName, scenario: "",
+            address: request.Path, fields: "", rows: 0, bytes: 0, bodyHash: "",
+            explanation: $"отозвано направление «{request.Name}»",
+            dbId: 0, at: DateTimeOffset.Now));
+
+        BuildIntegrationsRequests();
     }
 
     private async Task EditRequestAsync(IntegrationRequest card)
@@ -349,7 +461,8 @@ public partial class SettingsView
     private static Border CardRow(string title, string description, string extra,
                                   Action edit, Action delete,
                                   (string Text, Action Click)? first = null,
-                                  Control? lead = null)
+                                  Control? lead = null,
+                                  IReadOnlyList<(string Text, Action Click)>? more = null)
     {
         var text = new StackPanel { Spacing = 4, VerticalAlignment = VerticalAlignment.Center };
         text.Children.Add(new TextBlock { Classes = { "title" }, Text = title });
@@ -368,21 +481,32 @@ public partial class SettingsView
             left = line;
         }
 
-        var buttons = new StackPanel
-        {
-            Orientation       = Orientation.Horizontal,
-            Spacing           = 8,
-            VerticalAlignment = VerticalAlignment.Center,
-        };
+        // Кнопок у карточки бывает до пяти (исходящий запрос: «В коллекцию», «Что уйдет»,
+        // «Подтвердить», «Изменить», «Удалить»), и в узком окне они съели бы описание целиком.
+        // WrapPanel переносит лишние на вторую строку, а MinWidth левой колонки не дает
+        // описанию исчезнуть: строка, из которой не видно, о чем она, бесполезна.
+        var buttons = new WrapPanel { VerticalAlignment = VerticalAlignment.Center };
 
-        if (first is { } main) buttons.Children.Add(SmallButton(main.Text, main.Click));
-        buttons.Children.Add(SmallButton("Изменить", edit));
-        buttons.Children.Add(SmallButton("Удалить", delete));
+        void Add(string text, Action click)
+        {
+            var button = SmallButton(text, click);
+            button.Margin = new Avalonia.Thickness(8, 0, 0, 4);
+            buttons.Children.Add(button);
+        }
+
+        if (first is { } main) Add(main.Text, main.Click);
+
+        foreach (var action in more ?? []) Add(action.Text, action.Click);
+
+        Add("Изменить", edit);
+        Add("Удалить", delete);
 
         var grid = new Grid
         {
             ColumnDefinitions = new ColumnDefinitions("*,Auto"),
         };
+
+        grid.ColumnDefinitions[0].MinWidth = 220;
 
         left.Margin = new Avalonia.Thickness(0, 0, 32, 0);
         Grid.SetColumn(left, 0);

@@ -104,8 +104,14 @@ public sealed record IntegrationConnection(
             problems.Add($"Повторов вне границ: от 0 до {MaxRetries}");
 
         foreach (var header in Headers)
-            if (string.IsNullOrWhiteSpace(header.Name))
-                problems.Add("У заголовка не заполнено имя");
+            if (header.Trouble() is { Length: > 0 } trouble)
+                problems.Add(char.ToUpperInvariant(trouble[0]) + trouble[1..]);
+
+        // Имя заголовка авторизации — такой же заголовок, и латиница ему нужна не меньше. Про
+        // ПУСТОЕ имя выше уже сказано своими словами, и повторять это вторым сообщением незачем.
+        if (Auth == ConnectionAuth.Header && !string.IsNullOrWhiteSpace(AuthName)
+            && new IntegrationHeader(AuthName, "").Trouble() is { Length: > 0 } auth)
+            problems.Add(char.ToUpperInvariant(auth[0]) + auth[1..]);
 
         return problems;
     }
@@ -118,4 +124,38 @@ public sealed record IntegrationConnection(
 /// <summary>Постоянный заголовок соединения или запроса.</summary>
 /// <param name="Name">Имя заголовка.</param>
 /// <param name="Value">Значение; секретов здесь быть не должно — для них есть авторизация.</param>
-public sealed record IntegrationHeader(string Name, string Value);
+public sealed record IntegrationHeader(string Name, string Value)
+{
+    /// <summary>
+    /// Что не так с заголовком; пустая строка — годится.
+    ///
+    /// Проверяется в первую очередь ЛАТИНИЦА. Заголовки HTTP по стандарту только из ASCII, и
+    /// <c>HttpClient</c> отвечает на кириллицу исключением уже в момент отправки — то есть
+    /// ночью, из фонового сценария, и в виде, который человеку ничего не объясняет. Поймать
+    /// это при сохранении карточки стоит одной проверки, а не поймать — стоит суток
+    /// разбирательств.
+    /// </summary>
+    public string Trouble()
+    {
+        var name = (Name ?? "").Trim();
+
+        if (name.Length == 0) return "у заголовка не заполнено имя";
+
+        if (!IsAscii(name))
+            return $"имя заголовка «{name}» не из латиницы: заголовки HTTP бывают только "
+                 + "латинскими, и такой запрос не уйдет вовсе";
+
+        // Пробел и двоеточие в имени рвут сам протокол, а не только этот запрос.
+        if (name.Any(c => c is ' ' or ':' or '	'))
+            return $"в имени заголовка «{name}» есть пробел или двоеточие";
+
+        if (!IsAscii(Value ?? ""))
+            return $"значение заголовка «{name}» не из латиницы: заголовки HTTP бывают только "
+                 + "латинскими";
+
+        return "";
+    }
+
+    /// <summary>Только видимые знаки ASCII — то, что вообще бывает в заголовке.</summary>
+    private static bool IsAscii(string text) => text.All(c => c is >= ' ' and <= '~');
+}

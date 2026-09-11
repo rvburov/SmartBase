@@ -1,0 +1,86 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:b="clr-namespace:SmartBase.Controls.Behaviors"
+        xmlns:w="clr-namespace:SmartBase.Controls.Widgets"
+        x:Class="SmartBase.Controls.Dialogs.RequestPreviewDialog"
+        Title="Что уйдет"
+        Width="{StaticResource DialogWidthWide}"
+        MinWidth="{StaticResource DialogWidthWide}"
+        MaxWidth="{StaticResource DialogWidthWide}"
+        MinHeight="0"
+        SizeToContent="Height"
+        b:DialogFit.LimitToScreen="True"
+        WindowStartupLocation="CenterOwner"
+        CanResize="False"
+        Background="{StaticResource BrushBg}">
+
+    <StackPanel Spacing="0" Margin="{StaticResource DialogPadding}">
+
+        <TextBlock Text="Запрос собран целиком, но НЕ отправлен. Секреты заменены на «***» — здесь и в журнале их не бывает."
+                   Margin="0,0,0,8"
+                   TextWrapping="Wrap"
+                   FontSize="{DynamicResource FontSizeSmall}"
+                   Foreground="{StaticResource BrushSecondaryText}" />
+
+        <w:NoticeBanner x:Name="NoticeBanner" Margin="0,0,0,12" />
+
+        <TextBlock Text="Куда и чем"
+                   Margin="0,0,0,6"
+                   FontWeight="{StaticResource FontWeightBold}"
+                   Foreground="{StaticResource BrushSecondaryText}" />
+
+        <SelectableTextBlock x:Name="AddressText"
+                             Margin="0,0,0,12"
+                             TextWrapping="Wrap"
+                             FontFamily="{StaticResource FontFamilyMono}" />
+
+        <TextBlock Text="Заголовки"
+                   Margin="0,0,0,6"
+                   FontWeight="{StaticResource FontWeightBold}"
+                   Foreground="{StaticResource BrushSecondaryText}" />
+
+        <!-- Полоса идет во всю высоту блока, а воздух висит на содержимом ВНУТРИ прокрутки
+             (docs/developer/ui/scrolling.md) — иначе она отходит от рамки. -->
+        <Border BorderBrush="{StaticResource BrushSeparator}"
+                BorderThickness="{DynamicResource BorderLine}"
+                CornerRadius="{StaticResource RadiusBase}"
+                ClipToBounds="True"
+                Margin="0,0,0,12"
+                Padding="0">
+            <ScrollViewer MaxHeight="120"
+                          HorizontalScrollBarVisibility="Disabled"
+                          VerticalScrollBarVisibility="Auto">
+                <StackPanel x:Name="HeadersPanel" Spacing="4" Margin="10,8" />
+            </ScrollViewer>
+        </Border>
+
+        <TextBlock x:Name="BodyLabel"
+                   Text="Тело"
+                   Margin="0,0,0,6"
+                   FontWeight="{StaticResource FontWeightBold}"
+                   Foreground="{StaticResource BrushSecondaryText}" />
+
+        <Border x:Name="BodyBox"
+                BorderBrush="{StaticResource BrushSeparator}"
+                BorderThickness="{DynamicResource BorderLine}"
+                CornerRadius="{StaticResource RadiusBase}"
+                ClipToBounds="True"
+                Margin="0,0,0,12"
+                Padding="0">
+            <ScrollViewer MaxHeight="260"
+                          HorizontalScrollBarVisibility="Auto"
+                          VerticalScrollBarVisibility="Auto">
+                <SelectableTextBlock x:Name="BodyText"
+                                     Margin="10,8"
+                                     FontFamily="{StaticResource FontFamilyMono}" />
+            </ScrollViewer>
+        </Border>
+
+        <Grid ColumnDefinitions="Auto,*,Auto" Margin="0,4,0,0">
+            <Button Grid.Column="0" x:Name="CopyBtn"  Classes="dialog" Content="Скопировать" />
+            <Button Grid.Column="2" x:Name="CloseBtn" Classes="dialog" Content="Закрыть" />
+        </Grid>
+
+    </StackPanel>
+
+</Window>

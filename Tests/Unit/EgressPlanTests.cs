@@ -15,7 +15,9 @@ namespace SmartBase.Tests.Unit;
 /// </summary>
 public sealed class EgressPlanTests
 {
-    private const string Token = "T0K3N-СЕКРЕТ";
+    // Латиницей: заголовок HTTP другим не бывает, и секрет, набранный кириллицей, до сокета не
+    // доходит вовсе — про этот случай есть свой тест.
+    private const string Token = "T0K3N-SECRET";
 
     private static IntegrationConnection Connection(
         ConnectionAuth auth = ConnectionAuth.None,
@@ -122,6 +124,38 @@ public sealed class EgressPlanTests
         Assert.Contains("?since=1&api_key=", plan.Address.AbsoluteUri, StringComparison.Ordinal);
         Assert.Equal("https://srv.zavod.local/exchange/orders?since=1&api_key=" + EgressPlan.Mask,
             plan.SafeAddress);
+    }
+
+    /// <summary>
+    /// Секрет, набранный кириллицей, до сокета не доходит: заголовок HTTP бывает только
+    /// латинским, и клиент отвечает на такой исключением уже при записи в сокет — ночью, из
+    /// фонового сценария, и в виде, который человеку ничего не объясняет. Сборка вызова
+    /// отказывает СЛОВАМИ и называет виноватого: карточка секрета не содержит, и проверить его
+    /// раньше негде.
+    /// </summary>
+    [Theory]
+    [InlineData(ConnectionAuth.Bearer, "")]
+    [InlineData(ConnectionAuth.Header, "X-Api-Key")]
+    public void A_secret_that_is_not_latin_never_reaches_the_socket(ConnectionAuth auth, string name)
+    {
+        var plan = EgressPlan.Build(Connection(auth, name), Request(), "секрет-кириллицей",
+                                    out var error);
+
+        Assert.Null(plan);
+        Assert.Contains("латиницей", error, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// А в параметре адреса кириллица живет прекрасно: там она экранируется процентами, и
+    /// запрещать ее заодно с заголовками значило бы отобрать рабочий случай ради чужого правила.
+    /// </summary>
+    [Fact]
+    public void In_the_query_a_secret_may_be_anything()
+    {
+        var plan = EgressPlan.Build(Connection(ConnectionAuth.Query, "ключ"), Request(),
+                                    "секрет-кириллицей", out var error);
+
+        Assert.True(plan is not null, error);
     }
 
     /// <summary>Общая проверка: в безопасном виде вызова секрета нет нигде.</summary>

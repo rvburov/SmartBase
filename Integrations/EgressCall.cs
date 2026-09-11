@@ -120,6 +120,26 @@ public sealed record EgressPlan(
                 break;
         }
 
+        // Последняя проверка перед сборкой: заголовок не из латиницы отправить НЕЛЬЗЯ —
+        // HttpClient отвечает на такой исключением уже в момент записи в сокет. Форму карточек
+        // проверяет их собственный разбор, но сюда приходит еще и СЕКРЕТ, которого в карточке
+        // нет: набранный кириллицей токен иначе ронял бы обмен ночью и без объяснений.
+        //
+        // Имя заголовка в сообщении есть, значение — никогда: оно и есть секрет.
+        foreach (var header in headers)
+        {
+            if (Ascii(header.Name) && Ascii(header.Value)) continue;
+
+            error = header.Name.Equals(secretHeader, StringComparison.OrdinalIgnoreCase)
+                        && !Ascii(header.Value)
+                ? $"секрет соединения набран не латиницей, а заголовок «{header.Name}» бывает "
+                + "только латинским — такой запрос не уйдет вовсе"
+                : $"заголовок «{header.Name}» не из латиницы: заголовки HTTP бывают только "
+                + "латинскими";
+
+            return null;
+        }
+
         var body = request.Method == RequestMethod.Get ? "" : request.Body ?? "";
 
         return new EgressPlan(
@@ -134,6 +154,9 @@ public sealed record EgressPlan(
             Idempotency(request.Method),
             secretHeader);
     }
+
+    /// <summary>Только видимые знаки ASCII — то, что вообще бывает в заголовке HTTP.</summary>
+    private static bool Ascii(string? text) => (text ?? "").All(c => c is >= ' ' and <= '~');
 
     /// <summary>
     /// План для кнопки «Проверить связь»: GET по адресу соединения без пути. Отдельный метод

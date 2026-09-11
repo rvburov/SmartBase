@@ -160,4 +160,48 @@ public sealed class IntegrationRequestTests
 
         Assert.Null(Valid().BuildAddress(Connection("не адрес")));
     }
+
+    // ── Заголовки ─────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Заголовок не из латиницы отправить НЕЛЬЗЯ: по стандарту HTTP их не бывает, и клиент
+    /// отвечает на такой исключением в момент записи в сокет — то есть ночью, из фонового
+    /// сценария, и в виде, который человеку ничего не объясняет. Ловим при сохранении карточки.
+    /// </summary>
+    [Fact]
+    public void A_header_that_is_not_latin_is_refused_when_saving()
+    {
+        var request = Valid() with { Headers = [new IntegrationHeader("X-Отдел", "KB")] };
+
+        Assert.Contains(request.ShapeProblems(),
+                        p => p.Contains("латиницы", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void A_header_value_that_is_not_latin_is_refused_too()
+    {
+        var request = Valid() with { Headers = [new IntegrationHeader("X-Department", "КБ")] };
+
+        Assert.Contains(request.ShapeProblems(),
+                        p => p.Contains("латиницы", StringComparison.Ordinal));
+    }
+
+    /// <summary>Пробел и двоеточие в имени рвут сам протокол, а не только этот запрос.</summary>
+    [Theory]
+    [InlineData("X Department")]
+    [InlineData("X-Department:")]
+    public void A_header_name_with_a_space_or_a_colon_is_refused(string name)
+    {
+        var request = Valid() with { Headers = [new IntegrationHeader(name, "KB")] };
+
+        Assert.NotEmpty(request.ShapeProblems());
+    }
+
+    [Fact]
+    public void A_plain_latin_header_is_fine()
+    {
+        var request = Valid() with { Headers = [new IntegrationHeader("X-Department", "KB")] };
+
+        Assert.Empty(request.ShapeProblems());
+    }
 }
