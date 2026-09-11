@@ -470,7 +470,26 @@ public sealed class IntegrationsPassportTests : IDisposable
 
             Assert.Contains("ЧЕГО ЭТОТ ДОКУМЕНТ НЕ ДОКАЗЫВАЕТ", text, StringComparison.Ordinal);
             Assert.Contains("сводкой, а не доказательством",     text, StringComparison.Ordinal);
-            Assert.Contains("папке аудита организации",          text, StringComparison.Ordinal);
+
+            return Task.CompletedTask;
+        });
+    }
+
+    /// <summary>
+    /// Копия журнала вне машины названа — без нее цепочка отпечатков не ловит подмену файла
+    /// целиком, — но названа как то, чего программа НЕ делает. Раньше паспорт перечислял ее
+    /// среди того, чем он проверяется, и проверяющий обопрался бы на рубеж, которого нет.
+    /// Документ, врущий службе безопасности о собственных рубежах, хуже ненаписанного.
+    /// </summary>
+    [Fact]
+    public async Task The_passport_does_not_pass_off_a_missing_audit_copy_as_a_control()
+    {
+        await WithRegistry(cards =>
+        {
+            var text = Build(cards, null);
+
+            Assert.Contains("папке аудита организации",       text, StringComparison.Ordinal);
+            Assert.Contains("ТАКОЙ КОПИИ ПРОГРАММА НЕ ВЕДЕТ", text, StringComparison.Ordinal);
 
             return Task.CompletedTask;
         });
