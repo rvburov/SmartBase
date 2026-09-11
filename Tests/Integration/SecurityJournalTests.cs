@@ -212,6 +212,124 @@ public sealed class SecurityJournalTests : IDisposable
         Assert.NotEqual(left.ChainHash(""), right.ChainHash(""));
     }
 
+    // ── Выборка для экрана ────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Сужение идет в SQL, а не в память. Проверяется это единственным наблюдаемым способом:
+    /// потолок строк применяется ПОСЛЕ условий. Отбирай экран из прочитанной пачки — и строка,
+    /// подошедшая под условия, но не попавшая в пачку, пропала бы молча.
+    /// </summary>
+    [Fact]
+    public void Narrowing_happens_before_the_limit()
+    {
+        var journal = Journal();
+
+        // Одна подходящая строка и десять неподходящих поверх нее — в пачку из трех свежих
+        // подходящая не попадает.
+        journal.Write(Send("Заказы", allowed: false));
+
+        for (var i = 0; i < 10; i++) journal.Write(Send("Заказы", allowed: true));
+
+        var found = journal.Page(new SecurityFilter(BlockedOnly: true), take: 3);
+
+        Assert.Single(found);
+        Assert.False(found[0].Allowed);
+    }
+
+    /// <summary>Род события отбирается по нему же, а не по тексту пояснения.</summary>
+    [Fact]
+    public void An_event_kind_is_selected_by_itself()
+    {
+        var journal = Journal();
+
+        journal.Write(Send("Заказы", allowed: true));
+        journal.Write(SecurityEntry.New(SecurityEvent.Confirm, true, "Петров П. П.", "",
+                                        "/result", "", 0, 0, "", "подтверждено", 0, Now));
+
+        var confirms = journal.Page(new SecurityFilter(Event: SecurityEvent.Confirm));
+
+        Assert.Equal(SecurityEvent.Confirm, Assert.Single(confirms).Event);
+    }
+
+    /// <summary>
+    /// Период отсекается сравнением строк, и это работает ровно потому, что момент записан
+    /// одним форматом. Тест на границе: строка ровно на границе периода попадает, а более
+    /// старая — нет.
+    /// </summary>
+    [Fact]
+    public void A_period_cuts_off_what_is_older()
+    {
+        var journal = Journal();
+
+        journal.Write(Send("Старое", allowed: true, at: Now.AddDays(-40)));
+        journal.Write(Send("Свежее", allowed: true, at: Now));
+
+        var recent = journal.Page(new SecurityFilter(Since: Now.AddDays(-30)));
+
+        Assert.Equal("Свежее", Assert.Single(recent).Scenario);
+    }
+
+    /// <summary>Свежие сверху: журнал читают с конца, а не с начала.</summary>
+    [Fact]
+    public void The_freshest_row_comes_first()
+    {
+        var journal = Journal();
+
+        journal.Write(Send("Первое", allowed: true));
+        journal.Write(Send("Второе", allowed: true));
+
+        Assert.Equal("Второе", journal.Page(new SecurityFilter())[0].Scenario);
+    }
+
+    /// <summary>
+    /// Выгрузка идет страницами и доходит до конца. Проверяется страницей заведомо меньше
+    /// журнала: обход, теряющий стык страниц, отдал бы меньше строк, и заметить недостачу в
+    /// готовом CSV было бы уже нельзя.
+    /// </summary>
+    [Fact]
+    public void The_export_walks_the_whole_journal_in_pages()
+    {
+        var journal = Journal();
+
+        for (var i = 0; i < 7; i++) journal.Write(Send($"Запуск {i}", allowed: true));
+
+        var all = journal.Stream(new SecurityFilter(), page: 3).ToList();
+
+        Assert.Equal(7, all.Count);
+        Assert.Equal("Запуск 6", all[0].Scenario);   // свежие сверху
+        Assert.Equal("Запуск 0", all[^1].Scenario);
+        Assert.Equal(7, all.Select(e => e.Id).Distinct().Count());
+    }
+
+    /// <summary>Счетчик для окна подтверждения считает отобранное, а не весь файл.</summary>
+    [Fact]
+    public void The_count_follows_the_same_conditions()
+    {
+        var journal = Journal();
+
+        journal.Write(Send("Заказы", allowed: false));
+        journal.Write(Send("Заказы", allowed: true));
+        journal.Write(Send("Заказы", allowed: true));
+
+        Assert.Equal(3, journal.Count(new SecurityFilter()));
+        Assert.Equal(1, journal.Count(new SecurityFilter(BlockedOnly: true)));
+    }
+
+    /// <summary>
+    /// В выгруженной строке нет ни тела, ни значений полей — только их имена и отпечаток.
+    /// Файл уезжает проверяющему целиком, и то, чего нет на экране, взяться в нем неоткуда.
+    /// </summary>
+    [Fact]
+    public void An_exported_row_carries_names_but_no_values()
+    {
+        var row = SecurityJournal.CsvRow(Send("Заказы", allowed: true));
+
+        Assert.Equal(SecurityJournal.CsvHeaders.Count, row.Count);
+        Assert.Contains("Название, Проект", row);
+        Assert.DoesNotContain(row, cell => cell.Contains("тело", StringComparison.Ordinal));
+        Assert.Contains(SecurityJournal.Sha256("тело"), row);
+    }
+
     // ── Общий доступ ──────────────────────────────────────────────────────────
 
     /// <summary>

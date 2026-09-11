@@ -111,6 +111,17 @@ public sealed record SecurityEntry(
 }
 
 /// <summary>
+/// Чем сузить выборку журнала. Пустой фильтр — все строки подряд.
+/// </summary>
+/// <param name="Event">Только события этого рода; <c>null</c> — любые.</param>
+/// <param name="BlockedOnly">Только заблокированные попытки — их ищут чаще всего.</param>
+/// <param name="Since">Не раньше этого момента; <c>null</c> — с самого начала.</param>
+public sealed record SecurityFilter(
+    SecurityEvent?  Event       = null,
+    bool            BlockedOnly = false,
+    DateTimeOffset? Since       = null);
+
+/// <summary>
 /// Журнал безопасности — отдельный от рабочего и от «Диагностики» (docs/ROADMAP-API.md, 10.10).
 ///
 /// Разница с журналом запусков не в колонках, а в назначении. Рабочий журнал читает тот, кто
@@ -301,6 +312,166 @@ public sealed class SecurityJournal
             return [];
         }
     }
+
+    /// <summary>
+    /// Строки под условия, свежие сверху, не больше <paramref name="take"/> штук.
+    ///
+    /// Сужение уходит в SQL, а не в память: журнал не чистит никто, он копится годами, и
+    /// «прочитать последние пятьсот и отобрать из них» означало бы, что проверяющий, ищущий одно
+    /// заблокированное событие полугодовой давности, его просто не найдет.
+    /// </summary>
+    public IReadOnlyList<SecurityEntry> Page(SecurityFilter filter, int take = 200) =>
+        Fetch(filter, before: 0, take);
+
+    /// <summary>
+    /// Все строки под условия, свежие сверху, ЛЕНИВОЙ последовательностью: страницы читаются по
+    /// мере того, как их забирают. Так выгружают в CSV — журнал за год не должен подниматься в
+    /// память целиком ради того, чтобы уехать в файл.
+    ///
+    /// Замок берется на каждую страницу отдельно, а не на весь обход: держать его, пока
+    /// вызывающий пишет строки на диск, значило бы остановить запись в журнал на все время
+    /// выгрузки — то есть остановить исходящий обмен.
+    /// </summary>
+    public IEnumerable<SecurityEntry> Stream(SecurityFilter filter, int page = 500)
+    {
+        var size   = Math.Max(1, page);
+        var before = 0L;
+
+        while (true)
+        {
+            var rows = Fetch(filter, before, size);
+            if (rows.Count == 0) yield break;
+
+            foreach (var row in rows) yield return row;
+
+            before = rows[^1].Id;
+            if (rows.Count < size) yield break;
+        }
+    }
+
+    /// <summary>Сколько строк подходит под условия.</summary>
+    public long Count(SecurityFilter filter)
+    {
+        try
+        {
+            lock (_lock)
+            {
+                using var connection = Open();
+                using var command    = connection.CreateCommand();
+
+                command.CommandText = "SELECT COUNT(*) FROM events" + Where(filter, before: 0, command);
+
+                return Convert.ToInt64(command.ExecuteScalar(), CultureInfo.InvariantCulture);
+            }
+        }
+        catch (SqliteException)
+        {
+            return 0;
+        }
+    }
+
+    /// <summary>Одна страница: строки старше <paramref name="before"/> (0 — с самого конца).</summary>
+    private IReadOnlyList<SecurityEntry> Fetch(SecurityFilter filter, long before, int take)
+    {
+        try
+        {
+            lock (_lock)
+            {
+                using var connection = Open();
+                using var command    = connection.CreateCommand();
+
+                command.CommandText = Select + Where(filter, before, command)
+                                    + " ORDER BY Id DESC LIMIT $take;";
+
+                command.Parameters.AddWithValue("$take", Math.Max(1, take));
+
+                return Read(command);
+            }
+        }
+        catch (SqliteException failure)
+        {
+            Serilog.Log.Warning("Журнал безопасности: страница не прочиталась — {Reason:l}",
+                                failure.Message);
+            return [];
+        }
+    }
+
+    /// <summary>Условия отбора одной строкой — и те же параметры в команду.</summary>
+    private static string Where(SecurityFilter filter, long before, SqliteCommand command)
+    {
+        var parts = new List<string>();
+
+        if (before > 0)
+        {
+            parts.Add("Id < $before");
+            command.Parameters.AddWithValue("$before", before);
+        }
+
+        if (filter.Event is { } kind)
+        {
+            parts.Add("Event = $event");
+            command.Parameters.AddWithValue("$event", (int)kind);
+        }
+
+        if (filter.BlockedOnly) parts.Add("Allowed = 0");
+
+        // Момент сравнивается строкой, и это работает ровно потому, что все строки записаны
+        // одним форматом: ISO-8601 в UTC сортируется как текст.
+        if (filter.Since is { } since)
+        {
+            parts.Add("At >= $since");
+            command.Parameters.AddWithValue("$since",
+                since.ToUniversalTime().ToString("o", CultureInfo.InvariantCulture));
+        }
+
+        return parts.Count > 0 ? " WHERE " + string.Join(" AND ", parts) : "";
+    }
+
+    // ── Выгрузка ──────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Колонки выгрузки. Те же сведения, что и в подробностях строки на экране, и ни одного
+    /// сверх того: то, чего нет на экране, в файле для проверяющего взяться неоткуда.
+    /// </summary>
+    public static readonly IReadOnlyList<string> CsvHeaders =
+    [
+        "Время", "Событие", "Решение", "Кто", "Сценарий", "Адрес", "Поля",
+        "Записей", "Байт", "Отпечаток тела", "Подтвердил", "База", "Пояснение",
+    ];
+
+    /// <summary>
+    /// Событие словами. Одно на экран и на выгрузку: проверяющий, сверяющий файл с экраном,
+    /// должен видеть одни и те же слова, а не догадываться, что «Send» и «отправка» — одно и то
+    /// же событие.
+    /// </summary>
+    public static string Name(SecurityEvent kind) => kind switch
+    {
+        SecurityEvent.Send      => "отправка данных наружу",
+        SecurityEvent.Confirm   => "подтверждение направления",
+        SecurityEvent.Revoke    => "снятие подтверждения",
+        SecurityEvent.Downgrade => "понижение метки конфиденциальности",
+        _                       => "ручная выгрузка данных",
+    };
+
+    /// <summary>Строка журнала колонками выгрузки, в порядке <see cref="CsvHeaders"/>.</summary>
+    public static IReadOnlyList<string> CsvRow(SecurityEntry entry) =>
+    [
+        entry.Moment is { } moment
+            ? moment.ToLocalTime().ToString("dd.MM.yyyy HH:mm:ss", CultureInfo.InvariantCulture)
+            : entry.At,
+        Name(entry.Event),
+        entry.Allowed ? "разрешено" : "заблокировано",
+        entry.Who,
+        entry.Scenario,
+        entry.Address,
+        entry.Fields,
+        entry.Rows.ToString(CultureInfo.InvariantCulture),
+        entry.Bytes.ToString(CultureInfo.InvariantCulture),
+        entry.BodyHash,
+        entry.Confirmed,
+        entry.DbId > 0 ? entry.DbId.ToString(CultureInfo.InvariantCulture) : "",
+        entry.Explanation,
+    ];
 
     /// <summary>Сколько строк в журнале.</summary>
     public long Count()

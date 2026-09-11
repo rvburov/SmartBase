@@ -65,6 +65,12 @@ public partial class SettingsView
         var rows = IntegrationsJournalTab.Children;
         rows.Clear();
 
+        // Переключатель журналов — первой строкой и до всего остального: он должен работать и
+        // тогда, когда один из двух журналов не открылся.
+        Add(rows, SecuritySwitchRow());
+
+        if (_securityLog) { BuildSecurityLog(rows); return; }
+
         if (RunJournal.Current is not { } journal)
         {
             // Журнал не открылся при запуске — сам обмен при этом работает: падать из-за того,
