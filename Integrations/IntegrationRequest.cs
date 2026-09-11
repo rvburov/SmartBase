@@ -151,7 +151,7 @@ public sealed record IntegrationRequest(
 
         if (path.Length == 0)
             problems.Add("Путь не заполнен: для корня адреса достаточно «/»");
-        else if (Uri.TryCreate(path, UriKind.Absolute, out _))
+        else if (HasScheme(path))
             problems.Add("Путь должен быть относительным: адрес задается соединением");
         else if (path.StartsWith("//", StringComparison.Ordinal))
             problems.Add("Путь должен быть относительным: «//сервер» уводит запрос на чужой хост");
@@ -173,6 +173,29 @@ public sealed record IntegrationRequest(
                 problems.Add(char.ToUpperInvariant(trouble[0]) + trouble[1..]);
 
         return problems;
+    }
+
+    /// <summary>
+    /// Начинается ли путь со схемы — «https:», «file:», «javascript:». Именно разбор начала
+    /// строки, а не <c>Uri.TryCreate(path, UriKind.Absolute, …)</c>: на macOS и Linux тот
+    /// считает абсолютным любой путь с «/» в начале (читает «/orders» как «file:///orders»),
+    /// и проверка отвергала бы каждый нормальный путь — а заодно обнуляла бы
+    /// <see cref="BuildAddress"/>, то есть обмен там не работал бы вовсе.
+    ///
+    /// Схема по RFC 3986: буква, дальше буквы, цифры, «+», «-», «.» и двоеточие. Двоеточие
+    /// внутри пути («/orders?t=12:30») схемой не считается — до него должна идти буква.
+    /// </summary>
+    private static bool HasScheme(string path)
+    {
+        var colon = path.IndexOf(':');
+
+        if (colon <= 0 || !char.IsAsciiLetter(path[0])) return false;
+
+        for (var i = 1; i < colon; i++)
+            if (!char.IsAsciiLetterOrDigit(path[i]) && path[i] is not ('+' or '-' or '.'))
+                return false;
+
+        return true;
     }
 
     /// <summary>
