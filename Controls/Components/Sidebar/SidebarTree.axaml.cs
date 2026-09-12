@@ -1574,6 +1574,10 @@ public partial class SidebarTree : UserControl
         var owner = OwnerWindow;
         if (owner is null) return (null, null);
 
+        // Журнал безопасности спрашивается ДО первого файла: узнать об отказе, когда выгрузка
+        // уже лежит на диске, поздно. См. ExportTrace.
+        if (!ExportTrace.Ready) return (req.Draft, ExportTrace.NoJournal);
+
         var progress = new ProgressDialog();
         using var cts = new CancellationTokenSource();
         progress.EnableCancel(() => cts.Cancel());
@@ -1604,6 +1608,7 @@ public partial class SidebarTree : UserControl
                     try
                     {
                         var fileCreated = false;
+                        var traced      = new List<ExportedCollection>();
                         try
                         {
                             // Создание файла — первым: права/диск падают до чтения данных.
@@ -1646,11 +1651,14 @@ public partial class SidebarTree : UserControl
                                     writer.WriteRow(row);
                                 writer.EndTable();
                                 repo.LogExportIsolated(tbl.Collection.CollectionName, total);
+                                traced.Add(new ExportedCollection(
+                                    tbl.Collection.DbId, tbl.Collection.CollectionName, total,
+                                    cols.Select(c => c.Header).ToList(),
+                                    ExportLabel(repo, cols)));
                                 Log.Information("Экспорт «{Collection:l}»: {Rows:N0} строк → {File:l}",
                                                 tbl.Collection.CollectionName, total, unit.FilePath);
                             }
                             writer.Finish();
-                            completed++;
                         }
                         catch
                         {
@@ -1661,6 +1669,18 @@ public partial class SidebarTree : UserControl
                                 try { File.Delete(unit.FilePath); } catch { /* best-effort */ }
                             throw;
                         }
+
+                        // Файл дописан и закрыт — только теперь у него есть объем и отпечаток,
+                        // и только теперь его можно записать в журнал безопасности. След не
+                        // лег — файл удаляется: выгрузка без записи не допускается так же, как
+                        // отправка без записи (ExportTrace).
+                        if (!ExportTrace.Note(unit.FilePath, traced, DateTimeOffset.Now))
+                        {
+                            try { File.Delete(unit.FilePath); } catch { /* best-effort */ }
+                            throw new ExportException(ExportTrace.NotWritten);
+                        }
+
+                        completed++;
                     }
                     catch (Exception ex) when (ex is not OperationCanceledException)
                     {
@@ -1700,6 +1720,18 @@ public partial class SidebarTree : UserControl
             return (req.Draft, ExportErrors.Map(ex, req.Spec.Folder).Message);
         }
     }
+
+    // Самая строгая метка конфиденциальности среди базы и выгружаемых столбцов — она уходит в
+    // пояснение строки журнала безопасности. Метка базы лежит в db_meta, метка свойства — в его
+    // ConfigJson (см. ConstructorRepository.Confidentiality).
+    //
+    // Выгрузку метка НЕ запрещает: запрет на исходящие — про сетевую дверь, а отнять у закрытой
+    // базы экспорт значило бы отнять печать отчетов. Проверяющий видит метку строкой журнала.
+    private static ConfidentialityLabel ExportLabel(ConstructorRepository      repo,
+                                                    IEnumerable<ExportColumn>  columns) =>
+        columns.Aggregate(repo.GetDatabaseLabel(),
+                          (strictest, column) => Confidentiality.Strictest(
+                              strictest, Confidentiality.FromConfig(column.ConfigJson)));
 
     // Показ результата экспорта: открываем папку в проводнике (как SettingsView открывает
     // папку данных приложения). Сбой открытия не критичен — файлы уже на диске.
