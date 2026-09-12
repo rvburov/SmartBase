@@ -33,6 +33,13 @@ namespace SmartBase.Integrations;
 /// <item>повторяет только то, что можно повторить безопасно.</item>
 /// </list>
 /// </summary>
+//
+// Запрет сетевых типов снят НА ВЕСЬ ФАЙЛ, и это не поблажка, а определение двери: файл и есть
+// то единственное место, где им позволено быть (BannedSymbols.txt, правило RS0030). Снятие
+// пофразно — по строке на каждый вызов — говорило бы, что дверей много и каждая маленькая.
+// Мест с этой строкой в репозитории два, и второе — проба порта PostgreSQL; появление третьего
+// роняет тест OneDoorOutwardTests.Suppressions_live_only_in_the_gate_and_in_the_postgres_probe.
+#pragma warning disable RS0030
 public static class EgressHttp
 {
     /// <summary>

@@ -47,6 +47,13 @@
       в коде указывает на иконку, а не на разметку. Предупреждение неприменимо целиком.
     -->
     <NoWarn>$(NoWarn);AVLN3001</NoWarn>
+    <!--
+      RS0030 — использован запрещенный символ из BannedSymbols.txt (правило «наружу одна
+      дверь», docs/ROADMAP-API.md, 10.2). Именно ОШИБКА, а не предупреждение: предупреждение
+      в проекте, где их и так три сотни от чужих пакетов, никто не увидит, а смысл рубежа в
+      том, что сборка с сетевым вызовом мимо шлюза не собирается вовсе.
+    -->
+    <WarningsAsErrors>$(WarningsAsErrors);RS0030</WarningsAsErrors>
   </PropertyGroup>
 
   <!--
@@ -80,6 +87,23 @@
 
   <ItemGroup Condition="'$(ClosedLoop)' != 'true'">
     <Compile Remove="Integrations\EgressHttp.Closed.cs" />
+  </ItemGroup>
+
+  <!--
+    Второй рубеж правила «наружу одна дверь» (docs/ROADMAP-API.md, 10.2). Первый — текстовый
+    тест Tests/Unit/OneDoorOutwardTests.cs, он читает исходники и ловит даже упоминание в
+    комментарии. Анализатор ловит то, чего текст не видит: тип, использованный без своего
+    имени — через var, псевдоним using, наследника или обобщенный параметр.
+
+    Анализатор служебный и в дистрибутив не попадает (PrivateAssets=all): он работает во
+    время компиляции и в артефакты сборки не входит.
+  -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.CodeAnalysis.BannedApiAnalyzers" Version="5.6.0">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+    <AdditionalFiles Include="BannedSymbols.txt" />
   </ItemGroup>
 
   <ItemGroup>

@@ -203,4 +203,114 @@ public sealed class OneDoorOutwardTests
         Assert.True(File.Exists(Path.Combine(root, "Integrations", "EgressGate.cs")));
         Assert.True(File.Exists(Path.Combine(root, "Integrations", "EgressPolicy.cs")));
     }
+
+    // ── Второй рубеж: анализатор запрещенных вызовов ──────────────────────────
+
+    /// <summary>
+    /// Строка, которой снимается запрет анализатора. Ищется дословно: пробел внутри — часть
+    /// синтаксиса, и вариантов написания у нее нет.
+    /// </summary>
+    private const string Suppression = "#pragma warning disable RS0030";
+
+    /// <summary>
+    /// Анализатор подключен и его список на месте. Тесты этого файла проверяют ТЕКСТ, а
+    /// анализатор — типы, и ловят они разное: через <c>var</c>, псевдоним <c>using</c> или
+    /// обобщенный параметр имя типа в исходнике не появляется вовсе, и текстовый поиск такой
+    /// вызов пропустит. Потеряйся строка из проекта — второй рубеж исчезнет молча, а сборка
+    /// продолжит идти: заметить это можно только отсюда.
+    /// </summary>
+    [Fact]
+    public void Banned_api_analyzer_is_wired_into_the_project()
+    {
+        var root    = RepoRoot();
+        var project = File.ReadAllText(Path.Combine(root, "SmartBase.csproj"));
+
+        Assert.Contains("Microsoft.CodeAnalysis.BannedApiAnalyzers", project, StringComparison.Ordinal);
+        Assert.Contains("<AdditionalFiles Include=\"BannedSymbols.txt\" />", project, StringComparison.Ordinal);
+
+        // Предупреждение в проекте, где их и так три сотни от чужих пакетов, никто не увидит.
+        Assert.Contains("RS0030", project, StringComparison.Ordinal);
+        Assert.Contains("<WarningsAsErrors>", project, StringComparison.Ordinal);
+
+        var banned = File.ReadAllText(Path.Combine(root, "BannedSymbols.txt"));
+
+        // Список может пополняться, но эти четыре — то самое, ради чего он заведен.
+        foreach (var symbol in new[]
+                 {
+                     "T:System.Net.Http.HttpClient;",
+                     "T:System.Net.Sockets.Socket;",
+                     "T:System.Net.HttpListener;",
+                     "T:System.Net.Dns;",
+                 })
+            Assert.Contains(symbol, banned, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Снятий запрета ровно два, и оба поименные: дверь наружу и проба порта PostgreSQL (своя
+    /// база приложения, а не чужая программа). Третье снятие — это третья дверь, и появиться
+    /// она должна не молча: правило «наружу одна дверь» держится не самим анализатором, а тем,
+    /// что исключений из него по пальцам.
+    /// </summary>
+    [Fact]
+    public void Suppressions_live_only_in_the_gate_and_in_the_postgres_probe()
+    {
+        var root = RepoRoot();
+
+        var allowed = new[]
+        {
+            Path.Combine("Integrations", "EgressHttp.Open.cs"),
+            Path.Combine("Utils", "PgServerProbe.cs"),
+        };
+
+        var found = Sources(root)
+            .Where(f => f.Text.Contains(Suppression, StringComparison.Ordinal))
+            .Select(f => f.Path)
+            .OrderBy(p => p, StringComparer.Ordinal)
+            .ToList();
+
+        Assert.Equal(allowed.OrderBy(p => p, StringComparer.Ordinal), found);
+    }
+
+    // ── Посторонние процессы на пути обмена ───────────────────────────────────
+
+    /// <summary>
+    /// Путь обмена: шлюз, движок сценариев и прием файлов. Именно здесь исполняется то, что
+    /// настроил человек, — и здесь же запуск постороннего процесса означал бы «выполнить
+    /// команду с той стороны».
+    /// </summary>
+    private static bool OnExchangePath(string relativePath)
+    {
+        if (InsideGate(relativePath)) return true;
+
+        var db = "Database" + Path.DirectorySeparatorChar;
+        if (!relativePath.StartsWith(db, StringComparison.Ordinal)) return false;
+
+        var name = Path.GetFileName(relativePath);
+        return name.StartsWith("Scenario", StringComparison.Ordinal)
+            || name.StartsWith("Inbox", StringComparison.Ordinal)
+            || name.StartsWith("Integrations", StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Обмен не запускает посторонних процессов (10.2). Запрет НЕ на всю программу: открыть
+    /// файл или ссылку в системе — обычное дело, этим заняты «Диагностика», расширения и
+    /// помощник PostgreSQL. Запрещено ровно то, о чем говорит раздел 13: шаг «выполнить
+    /// команду» и любой встроенный интерпретатор. Заведись <c>Process.Start</c> на пути
+    /// обмена — и сценарий, приехавший файлом из папки, получил бы исполнение на машине.
+    /// </summary>
+    [Fact]
+    public void The_exchange_path_never_starts_a_foreign_process()
+    {
+        var root = RepoRoot();
+
+        var offenders = Sources(root)
+            .Where(f => OnExchangePath(f.Path))
+            .SelectMany(f => new[] { "Process.Start", "ProcessStartInfo" }
+                .Where(type => f.Text.Contains(type, StringComparison.Ordinal))
+                .Select(type => $"{f.Path}: {type}"))
+            .ToList();
+
+        Assert.True(offenders.Count == 0,
+            "Запуск постороннего процесса на пути обмена:\n  " + string.Join("\n  ", offenders));
+    }
 }

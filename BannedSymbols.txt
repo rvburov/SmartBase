@@ -1,0 +1,34 @@
+# Запрещенные вызовы — второй рубеж правила «наружу одна дверь»
+# (docs/ROADMAP-API.md, 10.2; docs/developer/features/integrations/overview.md).
+# Первый рубеж — текстовый тест Tests/Unit/OneDoorOutwardTests.cs: он читает исходники и
+# ловит даже упоминание сетевого типа в комментарии. Этот список ловит другое: тип,
+# использованный БЕЗ упоминания имени — через var, псевдоним using, наследника или
+# обобщенный параметр. Текстом такое не найти, а компилятору видно.
+# Снимается запрет строкой «#pragma warning disable RS0030», и мест с ней в репозитории два:
+# сама дверь (Integrations/EgressHttp.Open.cs) и проба порта PostgreSQL (Utils/PgServerProbe.cs —
+# своя база приложения, а не чужая программа). Третье роняет тест OneDoorOutwardTests.
+# Формат: «ID_символа;сообщение». Пустых строк и строк из одного знака «#» тут быть не может:
+# анализатор считает их записями без символа и ругается RS0031 — поэтому текст сплошной.
+# ── Клиенты HTTP ──────────────────────────────────────────────────────────────
+T:System.Net.Http.HttpClient;наружу ходит только Integrations/EgressGate.cs
+T:System.Net.Http.HttpClientHandler;наружу ходит только Integrations/EgressGate.cs
+T:System.Net.Http.SocketsHttpHandler;наружу ходит только Integrations/EgressGate.cs
+T:System.Net.Http.HttpMessageInvoker;наружу ходит только Integrations/EgressGate.cs
+T:System.Net.Http.HttpRequestMessage;запрос наружу собирает Integrations/EgressPlan.cs
+T:System.Net.WebClient;устаревший клиент; наружу ходит только Integrations/EgressGate.cs
+T:System.Net.WebRequest;устаревший клиент; наружу ходит только Integrations/EgressGate.cs
+T:System.Net.HttpWebRequest;устаревший клиент; наружу ходит только Integrations/EgressGate.cs
+# ── Прием входящих по сети: слушать порт программа не должна вовсе ────────────
+# Прием идет папкой обмена (10.13), а вебхуки из интернета названы в разделе 13 среди того,
+# чего не будет, — вместо них опрос или релей.
+T:System.Net.HttpListener;прием идет папкой обмена, а не своим слушателем
+T:System.Net.Sockets.TcpListener;прием идет папкой обмена, а не своим слушателем
+# ── Сырые сокеты и разрешение имен ────────────────────────────────────────────
+# Разрешение имени — уже обращение наружу: сам запрос к DNS говорит чужой сети, что программа
+# этим адресом интересуется (10.5). Поэтому Dns здесь наравне с сокетом.
+T:System.Net.Sockets.Socket;сокет открывает только Integrations/EgressHttp.Open.cs
+T:System.Net.Sockets.TcpClient;сокет открывает только Integrations/EgressHttp.Open.cs
+T:System.Net.Sockets.UdpClient;сокет открывает только Integrations/EgressHttp.Open.cs
+T:System.Net.Dns;разрешение имени — обращение наружу: только за шлюзом
+# ── Почта ─────────────────────────────────────────────────────────────────────
+T:System.Net.Mail.SmtpClient;почта уходит шагом сценария через шлюз, а не своим клиентом

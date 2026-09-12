@@ -30,9 +30,15 @@ public static class PgServerProbe
     {
         try
         {
+            // Единственный сокет вне шлюза, и запрет снят ровно на эти три строки. PostgreSQL —
+            // СВОЯ база приложения, а не чужая программа: белому списку организации, квотам и
+            // журналу обмена здесь нечего делать. А проба порта нужна, чтобы отличить
+            // «сервер выключен» от «пароль не тот», — без нее окно-помощник бесполезно.
+#pragma warning disable RS0030
             using var client = new TcpClient();
             using var cts    = new CancellationTokenSource(timeout);
             await client.ConnectAsync(host, port, cts.Token);
+#pragma warning restore RS0030
             return true;
         }
         catch
