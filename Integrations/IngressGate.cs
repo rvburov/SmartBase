@@ -69,7 +69,8 @@ public sealed record IngressDecision(bool Allowed, IngressDenyReason Reason, str
 /// Разница с исходящей дверью одна, и она принципиальная: <b>петлевой адрес политики не
 /// спрашивает</b>. Данные при приеме идут ВНУТРЬ, а обратиться к <c>127.0.0.1</c> может только
 /// программа, уже работающая на этой машине, — то есть та, которая и так читает файл базы.
-/// Сетевой режим — другое дело: слушать адрес машины разрешает организация, а не пользователь.
+/// Сетевой режим — другое дело: слушать адрес машины разрешает организация, а не пользователь,
+/// и разрешение это спрашивается у КАЖДОГО источника политики, как и все остальные рамки.
 /// </summary>
 public static class IngressGate
 {
@@ -125,9 +126,31 @@ public static class IngressGate
             return IngressDecision.Deny(IngressDenyReason.BadPort,
                 $"номер порта годится от {MinPort} до {MaxPort}");
 
-        if (mode == IngressMode.Network)
+        if (mode == IngressMode.Network) return CheckNetwork();
+
+        return IngressDecision.Allow();
+    }
+
+    /// <summary>
+    /// Разрешает ли организация слушать адрес машины. Проверяется отдельно от режима контура:
+    /// режим — про то, куда программе можно ходить, а это про то, кого к ней пускают, и связывать
+    /// одно с другим значило бы закрыть прием там, где просто нет исходящих.
+    /// </summary>
+    private static IngressDecision CheckNetwork()
+    {
+        var policy = EgressGate.Policy;
+
+        if (!policy.Any)
             return IngressDecision.Deny(IngressDenyReason.NetworkNotAllowed,
-                "прием по локальной сети разрешает политика организации, а не пользователь");
+                "политика организации не найдена: прием по локальной сети запрещен");
+
+        if (policy.Expired(DateOnly.FromDateTime(DateTime.Today)))
+            return IngressDecision.Deny(IngressDenyReason.NetworkNotAllowed,
+                $"срок действия политики истек {policy.ValidUntil:dd.MM.yyyy}");
+
+        if (!policy.AllowsListen)
+            return IngressDecision.Deny(IngressDenyReason.NetworkNotAllowed,
+                "прием по локальной сети не разрешен политикой организации");
 
         return IngressDecision.Allow();
     }
@@ -139,7 +162,29 @@ public static class IngressGate
     /// Адрес, который называют отправителю. Пустая строка — слушать нечего: режим выключен или
     /// запрещен, и показывать адрес, по которому никто не ответит, значит объяснять отказ
     /// молчанием.
+    ///
+    /// В сетевом режиме это адрес машины — ПОДСКАЗКА: слушает программа все адреса сразу, потому
+    /// что плат на машине бывает несколько, и выбирать за человека, какая из них «та самая», она
+    /// не должна.
     /// </summary>
-    public static string Address(IngressMode mode, int port) =>
-        Check(mode, port).Allowed ? $"http://{LoopbackHost}:{port}" : "";
+    public static string Address(IngressMode mode, int port)
+    {
+        if (!Check(mode, port).Allowed) return "";
+
+        if (mode != IngressMode.Network) return $"http://{LoopbackHost}:{port}";
+
+        var machine = MachineAddress.Local();
+        return machine.Length > 0 ? $"http://{machine}:{port}" : $"http://<адрес машины>:{port}";
+    }
+
+    /// <summary>
+    /// Адрес для слушателя — тот, который занимает порт. Отличается от <see cref="Address"/>
+    /// намеренно: человеку называют конкретный адрес машины, а слушать надо ВСЕ ее адреса, иначе
+    /// отправитель, пришедший со второй сетевой платы, не достучится и причину не узнает никто.
+    ///
+    /// Косая черта на конце обязательна: без нее слушающий слой адрес не принимает.
+    /// </summary>
+    public static string Prefix(IngressMode mode, int port) => mode == IngressMode.Network
+        ? $"http://+:{port}/"
+        : $"http://{LoopbackHost}:{port}/";
 }

@@ -75,9 +75,11 @@ public sealed class IngressService : IDisposable
 
         // След ДО открытия порта. Не лег — порта не будет: слушатель, о котором не осталось
         // записи, ровно то, чего требование службы безопасности не допускает.
-        var prefix = $"http://{IngressGate.LoopbackHost}:{port}/";
+        var prefix = IngressGate.Prefix(mode, port);
 
-        if (!Note(true, prefix, "открыт порт приема данных"))
+        if (!Note(true, prefix, mode == IngressMode.Network
+                                    ? "открыт порт приема данных: локальная сеть"
+                                    : "открыт порт приема данных: только этот компьютер"))
         {
             Trouble = "журнал безопасности не принял запись, и порт не открыт";
             Log.Warning("Прием по сети: {Reason:l}", Trouble);
@@ -118,7 +120,7 @@ public sealed class IngressService : IDisposable
             return;
         }
 
-        var prefix = $"http://{IngressGate.LoopbackHost}:{_port}/";
+        var prefix = IngressGate.Prefix(_mode, _port);
 
         _door.Dispose();
         _door = null;

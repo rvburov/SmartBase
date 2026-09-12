@@ -15,6 +15,38 @@ public sealed class PolicyJsonTests
 {
     private const string Source = "тест";
 
+    // ── Прием по сети ─────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Слушать адрес машины разрешает политика, и по умолчанию — нет: поля в файле не назвали,
+    /// значит сетевой прием запрещен. Это то же правило, что у остальных рамок: отсутствие
+    /// настройки обязано быть безопасным состоянием.
+    /// </summary>
+    [Fact]
+    public void Listening_on_the_network_is_forbidden_unless_the_policy_says_otherwise()
+    {
+        var silent = PolicyJson.Parse("""{ "version": 1, "mode": "internal" }""", Source, out _);
+
+        Assert.NotNull(silent);
+        Assert.False(silent!.AllowListen);
+
+        var allowed = PolicyJson.Parse(
+            """{ "version": 1, "mode": "internal", "allowNetworkListen": true }""", Source, out _);
+
+        Assert.True(allowed!.AllowListen);
+    }
+
+    /// <summary>Не тот тип поля — отказ целиком, как и у остальных: опечатку нельзя понимать.</summary>
+    [Fact]
+    public void A_listening_flag_that_is_not_a_flag_refuses_the_whole_file()
+    {
+        var policy = PolicyJson.Parse(
+            """{ "version": 1, "allowNetworkListen": "да" }""", Source, out var error);
+
+        Assert.Null(policy);
+        Assert.Contains("allowNetworkListen", error, StringComparison.Ordinal);
+    }
+
     // ── Разбор целого файла ───────────────────────────────────────────────────
 
     [Fact]

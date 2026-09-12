@@ -18,6 +18,7 @@ namespace SmartBase.Integrations;
 ///   "maxRunsPerHour": 60,
 ///   "validUntil": "2026-12-31",
 ///   "userMayAddHosts": false,
+///   "allowNetworkListen": false,
 ///   "masterHash": "pbkdf2$210000$...$..."
 /// }
 /// </code>
@@ -89,8 +90,9 @@ public static class PolicyJson
             if (!TryLong(root, "maxRowsPerRun",  out var rows,  out error)) return null;
             if (!TryLong(root, "maxBytesPerDay", out var bytes, out error)) return null;
             if (!TryLong(root, "maxRunsPerHour", out var runs,  out error)) return null;
-            if (!TryBool(root, "userMayAddHosts", out var mayAdd, out error)) return null;
-            if (!TryText(root, "masterHash",      out var master, out error)) return null;
+            if (!TryBool(root, "userMayAddHosts",    out var mayAdd, out error)) return null;
+            if (!TryBool(root, "allowNetworkListen", out var listen, out error)) return null;
+            if (!TryText(root, "masterHash",         out var master, out error)) return null;
 
             return new EgressPolicy(
                 mode,
@@ -103,7 +105,8 @@ public static class PolicyJson
                 validUntil,
                 mayAdd ?? false,
                 source,
-                master);
+                master,
+                listen ?? false);
         }
     }
 

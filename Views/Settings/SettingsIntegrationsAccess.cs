@@ -4,6 +4,7 @@ using Avalonia.Platform.Storage;
 using SmartBase.Controls.Dialogs;
 using SmartBase.Database;
 using SmartBase.Integrations;
+using SmartBase.Setup;
 using SmartBase.Utils;
 
 namespace SmartBase.Views.Settings;
@@ -46,18 +47,31 @@ public partial class SettingsView
             + "С соседнего компьютера сюда не достучаться физически, даже зная токен. "
             + "Прав администратора не требуется."));
 
-        // Сетевой режим показан, но недоступен: пустое место на его месте читалось бы как
-        // «такого не бывает», а серая строка с причиной — как «есть, но не вам решать».
-        var network = ModeChoice("Разрешить по локальной сети", IngressMode.Network, mode,
-            "Слушать адрес машины в сети разрешает политика организации, а не пользователь. "
-            + "Сверх того нужны права администратора один раз — занять адрес и открыть порт "
-            + "в брандмауэре.");
+        // Сетевой режим показан всегда: пустое место на его месте читалось бы как «такого не
+        // бывает», а серая строка с причиной — как «есть, но не вам решать».
+        var verdict = IngressGate.Check(IngressMode.Network, port);
 
-        network.IsEnabled = false;
+        var network = ModeChoice("Разрешить по локальной сети", IngressMode.Network, mode,
+            verdict.Allowed
+                ? "Слушать будем все адреса машины сразу — их бывает несколько. Нужны права "
+                + "администратора ОДИН раз: занять адрес и открыть порт в брандмауэре."
+                : Capitalize(verdict.Explanation)
+                + ". Разрешает его организация, а не пользователь, — обратитесь к "
+                + "ответственному за интеграции.");
+
+        network.IsEnabled = verdict.Allowed;
         block.Children.Add(network);
+
+        if (verdict.Allowed && ListenerPermissions.Needed)
+            block.Children.Add(PermissionsLine(port));
 
         block.Children.Add(PortLine(mode, port));
         block.Children.Add(Note(StateLine()));
+
+        if (mode == IngressMode.Network && MachineAddress.All().Count > 1)
+            block.Children.Add(Note("Адреса этой машины: "
+                + string.Join(", ", MachineAddress.All())
+                + ". Отправителю называют тот, по которому он до нас дотянется."));
 
         return Row("Как к нам обращаются",
             "Прием по сети нужен тем отправителям, которые стоят на этом же компьютере: "
@@ -100,6 +114,60 @@ public partial class SettingsView
 
         return block;
     }
+
+    /// <summary>
+    /// Разрешения системы для сетевого режима: занять адрес и открыть порт в брандмауэре.
+    /// Программа не делает этого молча — команды показываются, копируются и выполняются по
+    /// кнопке: менять настройки машины за спиной у того, кто за нее отвечает, нельзя.
+    /// </summary>
+    private Control PermissionsLine(int port)
+    {
+        var block = new StackPanel { Spacing = 6, Margin = new Avalonia.Thickness(0, 4, 0, 0) };
+
+        block.Children.Add(Note(
+            "    Права администратора нужны один раз на машину. Кнопка ниже выполнит обе команды "
+            + "с окном контроля учетных записей; если прав нет — скопируйте их и передайте в "
+            + "службу ИТ."));
+
+        block.Children.Add(new StackPanel
+        {
+            Orientation         = Orientation.Horizontal,
+            Spacing             = 8,
+            HorizontalAlignment = HorizontalAlignment.Left,
+            Children            =
+            {
+                SmallButton("Настроить разрешения…", () => _ = GrantListenerAsync(port)),
+                SmallButton("Скопировать команды", () =>
+                    _ = TopLevel.GetTopLevel(this)?.Clipboard?
+                        .SetTextAsync(ListenerPermissions.Script(port))),
+            },
+        });
+
+        return block;
+    }
+
+    private async Task GrantListenerAsync(int port)
+    {
+        if (VisualRoot is not Window win) return;
+        if (!AllowIntegrations(Core.Models.PermAction.IntegrationsSetup)) return;
+
+        var trouble = await ListenerPermissions.GrantAsync(port);
+
+        // Успех не объявляется словами: подтвердит его только поднявшийся слушатель. Поэтому
+        // сразу пробуем открыть порт заново и показываем то, чем это кончилось.
+        _ingress?.Apply();
+        BuildIntegrationsInbox();
+
+        await ConfirmDialog.Info(trouble is null
+            ? "Команды выполнены. Состояние приема — строкой ниже переключателей: "
+            + "если порт открылся, там стоит адрес."
+            : "Разрешения не выданы: " + trouble + ".\n\n"
+            + "Команды можно скопировать кнопкой рядом и передать в службу ИТ.")
+            .ShowDialog(win);
+    }
+
+    private static string Capitalize(string text) =>
+        text.Length == 0 ? text : char.ToUpperInvariant(text[0]) + text[1..];
 
     /// <summary>Номер порта. Правится, только когда прием включен: менять номер двери, которой
     /// нет, незачем.</summary>

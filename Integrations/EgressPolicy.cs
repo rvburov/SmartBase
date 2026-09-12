@@ -41,6 +41,10 @@ public enum EgressMode
 /// <param name="Source">Откуда политика прочитана — для экрана «Безопасность» и журнала.</param>
 /// <param name="MasterHash">Проверочный хэш мастер-пароля (<see cref="MasterPassword"/>); пусто —
 /// этот источник подтверждать исходящие направления не позволяет вовсе.</param>
+/// <param name="AllowListen">Разрешает ли этот источник слушать АДРЕС МАШИНЫ в локальной сети
+/// (docs/ROADMAP-API.md, 10.12 и шаг 8). Петлевой адрес сюда не относится: к <c>127.0.0.1</c>
+/// может обратиться только программа этой же машины, и разрешать ей то, что она и так может,
+/// незачем. По умолчанию <c>false</c> — сетевой режим включается точечно, на машине обмена.</param>
 public sealed record EgressPolicy(
     EgressMode              Mode,
     IReadOnlyList<string>   Hosts,
@@ -52,7 +56,8 @@ public sealed record EgressPolicy(
     DateOnly?               ValidUntil,
     bool                    UserMayAddHosts,
     string                  Source,
-    string                  MasterHash = "")
+    string                  MasterHash = "",
+    bool                    AllowListen = false)
 {
     /// <summary>
     /// Самая строгая политика: наружу нельзя ничего. Ею подменяется любой источник, который
@@ -159,6 +164,14 @@ public sealed class EgressPolicySet
     /// <summary>Дописывать адреса самому разрешено, только если это позволяют все источники.</summary>
     public bool UserMayAddHosts =>
         Sources.Count > 0 && Sources.All(p => p.UserMayAddHosts);
+
+    /// <summary>
+    /// Слушать адрес машины в сети разрешено, только если это позволяет КАЖДЫЙ источник. Правило
+    /// то же, что у остальных рамок, и здесь оно особенно уместно: открытый в сеть порт — то, о
+    /// чем спрашивают в первую очередь, и «хоть один разрешил» было бы неверным ответом.
+    /// </summary>
+    public bool AllowsListen =>
+        Sources.Count > 0 && Sources.All(p => p.AllowListen);
 
     /// <summary>Имя узла разрешено, только если его разрешает каждый источник.</summary>
     public bool AllowsHost(string? host) =>
