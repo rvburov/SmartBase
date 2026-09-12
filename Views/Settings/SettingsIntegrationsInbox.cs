@@ -9,8 +9,10 @@ using SmartBase.Utils;
 namespace SmartBase.Views.Settings;
 
 /// <summary>
-/// Вкладка «Прием» раздела «Интеграции» (partial SettingsView): папка, куда чужая программа
-/// кладет файлы, и разбор того, что там накопилось.
+/// Папочная половина вкладки «Доступ извне» (partial SettingsView): папка, куда чужая программа
+/// кладет файлы, и разбор того, что там накопилось. Сетевая половина — в
+/// <c>SettingsIntegrationsAccess</c>; экран один, потому что вопрос у человека один — «как до
+/// нас достучаться».
 ///
 /// Канал единственный, у которого нет двери, и потому единственный, который работает
 /// асинхронно: файл дождется, пока приемник включат. При выключаемом на ночь сервере это
@@ -56,10 +58,18 @@ public partial class SettingsView
         var folder    = AppSettings.LoadInboxFolder();
         var databases = _databases?.Invoke() ?? [];
 
+        // Порядок тот же, что в плане (раздел 6.7): сначала сеть, потом папка, потом токены и
+        // описание. Сеть первой не потому, что важнее, — с нее начинают читать.
+        Add(rows, AccessModeRow());
+
         Add(rows, FolderRow(folder));
         Add(rows, DatabaseRow(databases));
         Add(rows, AutoRow(folder, databases));
         Add(rows, CheckRow(folder, databases));
+
+        Add(rows, TokensRow());
+        Add(rows, ApiRow());
+
         Add(rows, Row("Что класть в папку",
             "Это же описание можно переслать той стороне: больше от нее ничего не требуется.",
             InboxHelp()), last: true);

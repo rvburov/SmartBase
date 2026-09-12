@@ -28,6 +28,9 @@ public class SystemDbContext : DbContext
 
     public DbSet<IntegrationDirectionEntity> IntegrationDirections { get; set; } = null!;
 
+    /// <summary>Токены входящего канала — тоже локальные: порт слушает одна машина.</summary>
+    public DbSet<IntegrationTokenEntity> IntegrationTokens { get; set; } = null!;
+
     private readonly string _path;
 
     public SystemDbContext(string path) => _path = path;
@@ -71,6 +74,12 @@ public class SystemDbContext : DbContext
         {
             e.ToTable("integration_directions");
             e.HasKey(x => x.RequestId);
+        });
+
+        model.Entity<IntegrationTokenEntity>(e =>
+        {
+            e.ToTable("integration_tokens");
+            e.HasKey(x => x.Id);
         });
     }
 }

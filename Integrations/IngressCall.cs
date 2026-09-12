@@ -1,0 +1,64 @@
+using System.Text.Encodings.Web;
+using System.Text.Json;
+
+namespace SmartBase.Integrations;
+
+/// <summary>
+/// Договор входящего канала: адреса и заголовок токена. Лежит у двери, потому что его читают
+/// обе стороны — слушатель, разбирающий запрос, и описание API, которое пересылают отправителю.
+/// Раздвоение этих строк означало бы, что программа принимает по одному адресу, а обещает
+/// другой.
+/// </summary>
+public static class IngressApi
+{
+    /// <summary>Куда присылают сообщения.</summary>
+    public const string InboxPath = "/v1/inbox";
+
+    /// <summary>Проверка связи: «жив ли слушатель и тот ли это токен».</summary>
+    public const string PingPath = "/v1/ping";
+
+    /// <summary>Описание схемы коллекций.</summary>
+    public const string SchemaPath = "/v1/schema";
+
+    /// <summary>Заголовок, в котором едет токен.</summary>
+    public const string TokenHeader = "X-SmartBase-Token";
+}
+
+/// <summary>
+/// Обращение чужой программы — уже прочитанное и отвязанное от сокета.
+///
+/// Лежит рядом с дверью, а не с обработчиком, намеренно: слушатель ничего не знает ни про базы,
+/// ни про токены, а обработчик — ни про сокеты. Между ними только эта пара записей, и благодаря
+/// ей прием проверяется тестами целиком, не открывая ни одного порта.
+/// </summary>
+/// <param name="Method">Метод: GET, POST.</param>
+/// <param name="Path">Путь без адреса и без параметров запроса.</param>
+/// <param name="Token">Текст токена из заголовка; пусто — заголовка не было.</param>
+/// <param name="Body">Тело запроса.</param>
+/// <param name="Remote">Откуда пришли — для журнала. На петлевом адресе это всегда
+/// <c>127.0.0.1</c>, и поле существует ради сетевого режима.</param>
+public sealed record IngressCall(string Method, string Path, string Token, string Body,
+                                 string Remote = "");
+
+/// <summary>Ответ отправителю: код и тело. Тело всегда JSON — отвечать чужой программе
+/// страницей с разметкой незачем.</summary>
+public sealed record IngressAnswer(int Status, string Body)
+{
+    private static readonly JsonSerializerOptions Format = new()
+    {
+        WriteIndented = true,
+        Encoder       = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+    };
+
+    /// <summary>Отказ с причиной словами. Причина по-русски: ее читает человек, который
+    /// налаживает обмен, а не программа, которая его ведет.</summary>
+    public static IngressAnswer Problem(int status, string explanation) =>
+        new(status, JsonSerializer.Serialize(new { ok = false, error = explanation }, Format));
+
+    /// <summary>Ответ с готовым телом.</summary>
+    public static IngressAnswer Ok(string body) => new(200, body);
+
+    /// <summary>Ответ объектом.</summary>
+    public static IngressAnswer Ok(object value) =>
+        new(200, JsonSerializer.Serialize(value, Format));
+}

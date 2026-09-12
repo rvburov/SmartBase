@@ -87,6 +87,10 @@ public partial class MainWindow : Window
         // Список баз передается вызываемым: потерянную базу монитор доступности размонтирует,
         // и правило «база недоступна — не запускаемся» держится само.
         _inbox       = new InboxService(GrantedDbs);
+        // Прием по сети («Настройки → Интеграции → Доступ извне»). Порт открывается только
+        // после того, как о нем легла строка в журнал безопасности: слушатель, о котором не
+        // осталось записи, — ровно то, чего требование службы безопасности не допускает.
+        _ingress     = new IngressService(GrantedDbs, AppSettings.SystemDbPath);
         // Сценарии по расписанию («Настройки → Интеграции»). Реестр сценариев лежит в app.db,
         // базы передаются вызываемым списком, сообщения шага идут карточками в углу окна.
         _scenarios   = new ScenarioService(workspace.Registry.Integrations, GrantedDbs,
@@ -218,6 +222,8 @@ public partial class MainWindow : Window
             // Кнопка «Проверить папку» ведет ту же службу, что ходит по расписанию: две
             // реализации одного обхода разошлись бы на первой же правке.
             inboxSweep: ct => _inbox.RunNowAsync(ct),
+            // Служба приема по сети: экран включает ее и показывает, слушает она или нет.
+            ingress: _ingress,
             // «Запустить» у сценария ведет ту же службу, что ходит по расписанию: проверка,
             // идущая другой дорогой, не отвечает на вопрос «а что будет само».
             scenarioRun: (scenario, ct) => _scenarios.RunNowAsync(scenario, ct));
@@ -265,6 +271,8 @@ public partial class MainWindow : Window
         // Автоматический обход папки обмена что-то тронул — показать это на вкладке «Прием»:
         // включенный тумблер иначе ничем не отличается от выключенного, пока файлы не придут.
         _inbox.Swept += run => SettingsModule.OnInboxSwept(run);
+        // Порт открылся или закрылся — перерисовать строку состояния на вкладке «Доступ извне».
+        _ingress.Changed += () => Dispatcher.UIThread.Post(SettingsModule.OnIngressChanged);
         // Сценарий отработал сам — обновить открытый журнал: смотреть на устаревший список,
         // пока обмен идет у тебя на глазах, незачем.
         _scenarios.Ran += (_, _) => SettingsModule.OnScenarioRan();
@@ -609,6 +617,9 @@ public partial class MainWindow : Window
             _backup.Start();
             // Прием файлов: таймер обхода папки обмена (сам разбор — только если включен).
             _inbox.Start();
+            // Прием по сети: открыть порт, если его включали. Выключенный прием — состояние по
+            // умолчанию, и тогда здесь не происходит ничего.
+            _ingress.Apply();
             // Сценарии: таймер расписаний. Выключенный сценарий не трогается, а тот, кому что-то
             // мешает, пропускает тик молча и догонит пропущенное, когда помеха уйдет.
             _scenarios.Start();
@@ -674,6 +685,7 @@ public partial class MainWindow : Window
             _notifications.Dispose();
             _backup.Dispose();
             _inbox.Dispose();
+            _ingress.Dispose();
             _scenarios.Dispose();
             _watchdog.Dispose();
         };
@@ -682,6 +694,7 @@ public partial class MainWindow : Window
     private readonly UiWatchdog _watchdog;
     private readonly BackupService _backup;
     private readonly InboxService  _inbox;
+    private readonly IngressService _ingress;
     private readonly ScenarioService _scenarios;
 
     // Человеческое имя раздела для записей о медленном открытии.

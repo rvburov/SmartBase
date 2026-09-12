@@ -32,7 +32,10 @@ public static class CurrentUser
     }
 
     /// <summary>Стабильный ключ пользователя: «учетка@компьютер» в нижнем регистре.</summary>
-    public static string Key { get; } =
+    public static string Key => _acting.Value?.Key ?? OwnKey;
+
+    /// <summary>Ключ человека, сидящего за машиной, — без подмены на робота.</summary>
+    public static string OwnKey { get; } =
         $"{Environment.UserName}@{Environment.MachineName}".ToLowerInvariant();
 
     public static string LastName
@@ -73,10 +76,48 @@ public static class CurrentUser
     {
         get
         {
+            if (_acting.Value is { } robot) return robot.Name;
+
             var name = string.Join(" ",
                 new[] { _lastName, _firstName, _middleName }.Where(p => p.Length > 0));
-            return name.Length > 0 ? name : Key;
+            return name.Length > 0 ? name : OwnKey;
         }
+    }
+
+    // ── Действие от чужого имени ───────────────────────────────────────────────
+    //
+    // Входящий канал пишет записи от имени ПОЛЬЗОВАТЕЛЯ-РОБОТА, а не того, кто сидит за машиной
+    // (docs/ROADMAP-API.md, раздел 7): в истории изменений должно стоять «Обмен учетной системы
+    // создал запись», иначе чужие записи неотличимы от своих и разбирать потом нечего.
+    //
+    // Подмена живет в AsyncLocal, а не в поле: обращения обрабатываются каждое на своей задаче,
+    // и общее поле означало бы, что одно обращение переименовывает автора у соседнего. Область
+    // действия — ровно один блок using, и ставит ее только приемник.
+
+    private sealed record Actor(string Key, string Name);
+
+    private static readonly AsyncLocal<Actor?> _acting = new();
+
+    /// <summary>Сейчас записи пишутся от имени робота, а не человека.</summary>
+    public static bool ActingAsRobot => _acting.Value is not null;
+
+    /// <summary>
+    /// Писать от имени робота, пока не закончится блок. Ключ и имя попадут и в <c>db_users</c>,
+    /// и в журнал изменений — тем же путем, что и у человека, потому что путь один.
+    /// </summary>
+    public static IDisposable ActAs(string key, string name) => new ActorScope(key, name);
+
+    private sealed class ActorScope : IDisposable
+    {
+        private readonly Actor? _previous;
+
+        public ActorScope(string key, string name)
+        {
+            _previous     = _acting.Value;
+            _acting.Value = new Actor(key, name);
+        }
+
+        public void Dispose() => _acting.Value = _previous;
     }
 
     // Пустое значение = дефолт → ключ удаляется (в app.db только отличия от стандарта).

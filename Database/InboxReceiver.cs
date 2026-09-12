@@ -1,5 +1,3 @@
-using SmartBase.Core.Importers;
-using SmartBase.Core.Importers.TableSources;
 using SmartBase.Database.Repositories;
 using SmartBase.Integrations;
 
@@ -186,54 +184,11 @@ public static class InboxReceiver
             return (past, true);
         }
 
-        // Записи читает ТОТ ЖЕ источник, что и ответ чужой программы: один и тот же набор
-        // данных, пришедший файлом и по сети, обязан ложиться в коллекцию одинаково.
-        var source = new JsonTextSource(message.RowsJson);
-
-        ImportSchema schema;
-        try
-        {
-            schema = source.Analyze(null, CancellationToken.None);
-        }
-        catch (ImportException failure)
-        {
-            return (Reject(layout, file, claimed, message.MessageId, message.Collection,
-                           message.Rows, failure.Message, now), false);
-        }
-
-        // Свод и укладка идут на ОТДЕЛЬНОМ подключении: обход папки целиком живет в фоне, а
-        // общий контекст в это время занят интерфейсом.
-        var plan = repo.TryPlanIsolated(message, schema, dbId, out var problem);
-
-        if (plan is null)
-            return (Reject(layout, file, claimed, message.MessageId, message.Collection,
-                           message.Rows, problem, now), false);
-
-        BindingResult result;
-        try
-        {
-            result = repo.ApplyRowsIsolated(plan.Binding, schema,
-                                            source.ReadRows(CancellationToken.None),
-                                            CancellationToken.None);
-        }
-        catch (Exception failure) when (failure is ImportException or InvalidOperationException)
-        {
-            return (Reject(layout, file, claimed, message.MessageId, message.Collection,
-                           message.Rows, failure.Message, now), false);
-        }
-
-        // Про выброшенные колонки отправитель узнает из квитанции. Чужая программа отдает
-        // лишнее почти всегда, и это не ошибка; но молча выбросить присланное — худшее, что
-        // может сделать приемник: отправитель годами будет думать, что колонка доходит.
-        var note = plan.Ignored.Count > 0
-            ? "не перенесены колонки: " + string.Join(", ", plan.Ignored)
-            : "";
-
-        var receipt = InboxReceipt.Accept(file.Name, message.MessageId, message.Collection,
-                                          message.Rows, result, now, note);
+        // Дальше — общая часть обоих транспортов: файл и тело запроса ложатся одним кодом.
+        var receipt = InboxIntake.Apply(message, repo, dbId, file.Name, now);
 
         Write(layout, receipt);
-        Move(layout, claimed, file, accepted: true, now);
+        Move(layout, claimed, file, receipt.Accepted, now);
 
         return (receipt, false);
     }

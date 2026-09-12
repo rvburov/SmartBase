@@ -850,6 +850,40 @@ public static class AppSettings
 
     public static void SaveInboxAuto(bool enabled) => _store?.Set(KeyInboxAuto, enabled ? "1" : "0");
 
+    // ── Прием по сети ──────────────────────────────────────────────────────────
+    //
+    // Настройка тоже МАШИННАЯ, и тут иначе быть не может: порт открывает конкретный компьютер.
+    // Выключено по умолчанию — открытый порт заводят осознанно, а не обнаруживают.
+    //
+    // Что именно разрешено, решает дверь (Integrations/IngressGate.cs): сохраненный режим —
+    // память о выборе, и запрещенный политикой режим просто не заработает.
+
+    /// <summary>Режим приема по сети; неизвестное значение читается как «выключено».</summary>
+    public static Integrations.IngressMode LoadIngressMode() => _store?.Get(KeyIngressMode) switch
+    {
+        "loopback" => Integrations.IngressMode.Loopback,
+        "network"  => Integrations.IngressMode.Network,
+        _          => Integrations.IngressMode.Off,
+    };
+
+    public static void SaveIngressMode(Integrations.IngressMode mode) =>
+        _store?.Set(KeyIngressMode, mode switch
+        {
+            Integrations.IngressMode.Loopback => "loopback",
+            Integrations.IngressMode.Network  => "network",
+            _                                 => "off",
+        });
+
+    /// <summary>Порт слушателя; не задан или негоден — порт по умолчанию.</summary>
+    public static int LoadIngressPort() =>
+        int.TryParse(_store?.Get(KeyIngressPort), out var port)
+        && Integrations.IngressGate.ValidPort(port)
+            ? port
+            : Integrations.IngressGate.DefaultPort;
+
+    public static void SaveIngressPort(int port) =>
+        _store?.Set(KeyIngressPort, port.ToString(System.Globalization.CultureInfo.InvariantCulture));
+
     // ── Последняя известная политика интеграций ────────────────────────────────
     //
     // Снимок текста политики по каждому источнику. Нужен ровно для одного случая: сетевая
@@ -1022,6 +1056,8 @@ public static class AppSettings
     private const string KeyInboxFolder      = "integrations.inbox.folder";
     private const string KeyInboxDb          = "integrations.inbox.db";
     private const string KeyInboxAuto        = "integrations.inbox.auto";
+    private const string KeyIngressMode      = "integrations.ingress.mode";
+    private const string KeyIngressPort      = "integrations.ingress.port";
     private const string KeyTasksView        = "tasksView";
     private const string KeyCalendarView     = "calendarView";
     private const string KeyCalendarDaysInWeek        = "calendarDaysInWeek";

@@ -27,15 +27,29 @@ public sealed class OneDoorOutwardTests
     /// <summary>Обращение к чужой программе по сети или почтой. Разрешено только за шлюзом.</summary>
     private static readonly string[] OutboundTypes =
     [
-        "HttpClient", "HttpListener", "HttpRequestMessage", "HttpWebRequest",
+        "HttpClient", "HttpRequestMessage", "HttpWebRequest",
         "WebRequest", "WebClient", "SmtpClient", "System.Net.Http",
     ];
 
     /// <summary>Сырые сокеты — уровнем ниже; отдельный список, потому что и исключения другие.</summary>
     private static readonly string[] SocketTypes =
     [
-        "System.Net.Sockets", "TcpClient", "TcpListener", "new Socket",
+        "System.Net.Sockets", "TcpClient", "new Socket",
     ];
+
+    /// <summary>
+    /// Слушать порт. Отдельный список, потому что это ДРУГАЯ дверь: наружу через нее не уходит
+    /// ничего, а вот пускать внутрь она может — и решение «кого пускать» обязано быть в одном
+    /// месте ровно по той же причине, что и «куда ходить».
+    /// </summary>
+    private static readonly string[] ListenerTypes =
+    [
+        "HttpListener", "TcpListener",
+    ];
+
+    /// <summary>Единственный файл, которому позволено слушать порт.</summary>
+    private static readonly string InwardDoor =
+        Path.Combine("Integrations", "IngressHttp.Open.cs");
 
     /// <summary>
     /// Где сокеты законны и почему. Это НЕ интеграции: PostgreSQL — своя база данных
@@ -97,6 +111,38 @@ public sealed class OneDoorOutwardTests
 
         Assert.True(offenders.Count == 0,
             "Обращение наружу мимо шлюза Integrations/EgressGate.cs:\n  " + string.Join("\n  ", offenders));
+    }
+
+    /// <summary>
+    /// Слушатель живет ровно в одном файле. Правило строже исходящего: у двери наружу разрешена
+    /// вся папка <c>Integrations/</c>, а слушателю — один поименный файл, потому что второй
+    /// слушатель означал бы второй набор правил о том, кого пускать в базу.
+    /// </summary>
+    [Fact]
+    public void Listener_lives_only_in_the_inward_door()
+    {
+        var root = RepoRoot();
+
+        var offenders = Sources(root)
+            .Where(f => f.Path != InwardDoor)
+            .SelectMany(f => ListenerTypes
+                .Where(type => f.Text.Contains(type, StringComparison.Ordinal))
+                .Select(type => $"{f.Path}: {type}"))
+            .ToList();
+
+        Assert.True(offenders.Count == 0,
+            "Слушатель порта вне двери внутрь Integrations/IngressHttp.Open.cs:\n  "
+            + string.Join("\n  ", offenders));
+    }
+
+    /// <summary>Сама дверь внутрь обязана быть на месте — иначе тест выше вечнозеленый.</summary>
+    [Fact]
+    public void The_inward_door_itself_is_in_place()
+    {
+        var root = RepoRoot();
+
+        Assert.True(File.Exists(Path.Combine(root, InwardDoor)));
+        Assert.True(File.Exists(Path.Combine(root, "Integrations", "IngressGate.cs")));
     }
 
     /// <summary>Сырые сокеты — только у шлюза и у поименного списка файлов PostgreSQL.</summary>
@@ -164,7 +210,7 @@ public sealed class OneDoorOutwardTests
 
         var text = File.ReadAllText(path);
 
-        var found = OutboundTypes.Concat(SocketTypes)
+        var found = OutboundTypes.Concat(SocketTypes).Concat(ListenerTypes)
             .Where(type => text.Contains(type, StringComparison.Ordinal))
             .ToList();
 
@@ -246,19 +292,20 @@ public sealed class OneDoorOutwardTests
     }
 
     /// <summary>
-    /// Снятий запрета ровно два, и оба поименные: дверь наружу и проба порта PostgreSQL (своя
-    /// база приложения, а не чужая программа). Третье снятие — это третья дверь, и появиться
-    /// она должна не молча: правило «наружу одна дверь» держится не самим анализатором, а тем,
-    /// что исключений из него по пальцам.
+    /// Снятий запрета ровно три, и все поименные: дверь наружу, дверь внутрь и проба порта
+    /// PostgreSQL (своя база приложения, а не чужая программа). Четвертое снятие — это четвертая
+    /// дверь, и появиться она должна не молча: правило «дверей по пальцам» держится не самим
+    /// анализатором, а тем, что исключений из него считаное число.
     /// </summary>
     [Fact]
-    public void Suppressions_live_only_in_the_gate_and_in_the_postgres_probe()
+    public void Suppressions_live_only_at_the_two_doors_and_the_postgres_probe()
     {
         var root = RepoRoot();
 
         var allowed = new[]
         {
             Path.Combine("Integrations", "EgressHttp.Open.cs"),
+            InwardDoor,
             Path.Combine("Utils", "PgServerProbe.cs"),
         };
 

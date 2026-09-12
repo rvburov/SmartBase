@@ -103,6 +103,21 @@ public partial class App : Application
                           AppSettings.SecurityJournalPath);
             }
 
+            // Память о повторах входящего канала — рядом с рабочим журналом, в том же файле.
+            // Ее сбой прием не останавливает: повтор в худшем случае обновит те же записи теми
+            // же значениями, а отказать из-за недоступной памяти значило бы остановить обмен.
+            try
+            {
+                var replies = new Database.IngressReplies(AppSettings.RunJournalPath);
+                replies.Forget(DateTimeOffset.Now);   // уборка раз в запуск, как у журнала
+                Database.IngressReplies.Attach(replies);
+            }
+            catch (Exception ex)
+            {
+                Log.Warning(ex, "Память о повторах приема не открылась: {Path:l}",
+                            AppSettings.RunJournalPath);
+            }
+
             // Расширения: Id — ключ и строки сайдбара, и группы настроек «ext.<Id>.…»,
             // поэтому тезки недопустимы (проверка падает с явным сообщением).
             Extensions.ExtensionRegistry.EnsureUniqueIds();

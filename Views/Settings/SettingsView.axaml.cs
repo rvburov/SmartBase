@@ -1026,6 +1026,9 @@ public partial class SettingsView : UserControl
     /// каждый раз заново, а не берется списком: базы монтируются и отцепляются на ходу, а
     /// «Интеграции» укладывают ответ в коллекцию выбранной базы и обязаны видеть их состав
     /// таким, каков он сейчас.</param>
+    /// <param name="ingress">Служба приема по сети — открывает и закрывает порт. Передается
+    /// самой службой, а не парой обратных вызовов: экрану нужны и состояние, и действие, и
+    /// расщеплять их значило бы завести два мнения о том, слушаем ли мы сейчас.</param>
     /// <param name="inboxSweep">Разобрать папку обмена немедленно. Ведет это служба приема
     /// (<c>InboxService</c>) — та же, что ходит по расписанию: две реализации одного обхода
     /// разошлись бы на первой же правке.</param>
@@ -1036,7 +1039,8 @@ public partial class SettingsView : UserControl
                            Func<IReadOnlyList<string>>? taskStages = null,
                            Func<IReadOnlyList<DatabaseManager>>? databases = null,
                            Func<CancellationToken, Task<InboxRun>>? inboxSweep = null,
-                           Func<Scenario, CancellationToken, Task<ScenarioOutcome>>? scenarioRun = null)
+                           Func<Scenario, CancellationToken, Task<ScenarioOutcome>>? scenarioRun = null,
+                           IngressService? ingress = null)
     {
         _registry    = registry;
         _isMounted   = isMounted;
@@ -1047,6 +1051,7 @@ public partial class SettingsView : UserControl
         _databases   = databases;
         _inboxSweep  = inboxSweep;
         _scenarioRun = scenarioRun;
+        _ingress     = ingress;
         RefreshDatabaseList();
     }
 
@@ -1055,6 +1060,8 @@ public partial class SettingsView : UserControl
     private Func<IReadOnlyList<DatabaseManager>>?     _databases;
     private Func<CancellationToken, Task<InboxRun>>? _inboxSweep;
     private Func<Scenario, CancellationToken, Task<ScenarioOutcome>>? _scenarioRun;
+    // Служба приема по сети: экран ее включает, а она отвечает, слушает или нет и почему.
+    private IngressService? _ingress;
 
     // Перестроить список (статус монтирования мог измениться). Вызывается из MainWindow.
     public void RefreshDatabases() => RefreshDatabaseList();

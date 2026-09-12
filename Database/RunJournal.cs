@@ -22,6 +22,13 @@ public enum RunChannel
     /// дважды значит вдвое занизить потолок.
     /// </summary>
     Scenario,
+
+    /// <summary>
+    /// Обращение чужой программы к нашему слушателю. Свой канал, а не «папка»: путь другой, и
+    /// разбирающему «почему записи не появились» первым делом нужно знать, каким именно путем
+    /// они шли. В расход не идет по той же причине, что и файл, — данные идут ВНУТРЬ.
+    /// </summary>
+    Ingress,
 }
 
 /// <summary>
@@ -449,6 +456,7 @@ public sealed class RunJournal
         RunChannel.Request  => "сеть",
         RunChannel.Inbox    => "папка",
         RunChannel.Scenario => "сценарий",
+        RunChannel.Ingress  => "прием",
         _                   => channel.ToString(),
     };
 

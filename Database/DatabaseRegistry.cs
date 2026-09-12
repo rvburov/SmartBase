@@ -146,6 +146,17 @@ public sealed class DatabaseRegistry : IDisposable, ISettingsDatabase
             "\"At\" TEXT NOT NULL, " +
             "\"Until\" TEXT NOT NULL, " +
             "\"UsedAt\" TEXT NULL);");
+
+        db.Database.ExecuteSqlRaw(
+            "CREATE TABLE IF NOT EXISTS \"integration_tokens\" (" +
+            "\"Id\" INTEGER NOT NULL CONSTRAINT \"PK_integration_tokens\" PRIMARY KEY AUTOINCREMENT, " +
+            "\"Name\" TEXT NOT NULL, " +
+            "\"DbId\" INTEGER NOT NULL, " +
+            "\"Hash\" TEXT NOT NULL, " +
+            "\"RobotKey\" TEXT NOT NULL, " +
+            "\"CreatedAt\" TEXT NOT NULL, " +
+            "\"UsedAt\" TEXT NULL, " +
+            "\"Enabled\" INTEGER NOT NULL DEFAULT 1);");
     }
 
     /// <summary>

@@ -182,3 +182,39 @@ public class IntegrationDirectionEntity
     /// <summary>Когда направлением пользовались в последний раз (ISO-8601); пусто — ни разу.</summary>
     public string? UsedAt { get; set; }
 }
+
+/// <summary>
+/// Токен доступа для входящего канала (<see cref="SmartBase.Integrations.AccessToken"/>).
+///
+/// Лежит в app.db, а не в файле базы, и причина та же, что у соединений: файл базы ездит по
+/// сетевой папке. Хэш токена в нем был бы доступен всем, у кого есть доступ к папке, а токен
+/// выдается на ОДНОЙ машине — той, которая слушает порт.
+///
+/// Сам секрет не хранится нигде: в <see cref="Hash"/> лежит проверочный PBKDF2, а текст токена
+/// показывается один раз, при создании.
+/// </summary>
+public class IntegrationTokenEntity
+{
+    [Key] public int Id { get; set; }
+
+    /// <summary>Имя для человека; оно же имя пользователя-робота в целевой базе.</summary>
+    [Required] public string Name { get; set; } = "";
+
+    /// <summary>База, в которую токену разрешено писать.</summary>
+    public int DbId { get; set; }
+
+    /// <summary>Проверочный хэш секрета.</summary>
+    [Required] public string Hash { get; set; } = "";
+
+    /// <summary>Ключ пользователя-робота в <c>db_users</c> целевой базы.</summary>
+    [Required] public string RobotKey { get; set; } = "";
+
+    /// <summary>Когда выдан (ISO-8601).</summary>
+    [Required] public string CreatedAt { get; set; } = "";
+
+    /// <summary>Когда токеном пользовались в последний раз (ISO-8601); пусто — ни разу.</summary>
+    public string? UsedAt { get; set; }
+
+    /// <summary>Выключенный токен не пускают; строку при этом не удаляют.</summary>
+    public bool Enabled { get; set; } = true;
+}

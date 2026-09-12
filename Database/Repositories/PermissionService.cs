@@ -26,7 +26,7 @@ namespace SmartBase.Database.Repositories;
 /// вызываются с UI-потока (или при монтировании, пока контекст не разделен) — как и все
 /// операции общего контекста; Can/Demand можно звать из фоновых потоков (только кеш).
 /// </summary>
-public sealed class PermissionService(AppDbContext db)
+public sealed partial class PermissionService(AppDbContext db)
 {
     private readonly AppDbContext _db = db;
 

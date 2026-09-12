@@ -169,12 +169,14 @@ public partial class SettingsView
             ItemsSource              = new List<string>
             {
                 "Все каналы", "Запросы по сети", "Файлы из папки", "Сценарии",
+                "Обращения к нам",
             },
             SelectedIndex            = _journalChannel switch
             {
                 null                 => 0,
                 RunChannel.Request   => 1,
                 RunChannel.Inbox     => 2,
+                RunChannel.Ingress   => 4,
                 _                    => 3,
             },
             Height                   = 34,
@@ -191,6 +193,7 @@ public partial class SettingsView
                 1 => RunChannel.Request,
                 2 => RunChannel.Inbox,
                 3 => RunChannel.Scenario,
+                4 => RunChannel.Ingress,
                 _ => null,
             };
 
@@ -414,7 +417,12 @@ public partial class SettingsView
         // в ней читался бы как потеря, а не как «неприменимо».
         if (run.Address.Length > 0)
             list.Children.Add(Note(
-                (run.Channel == RunChannel.Request ? "Адрес: " : "Папка: ") + run.Address));
+                (run.Channel switch
+                {
+                    RunChannel.Request => "Адрес: ",
+                    RunChannel.Ingress => "Откуда: ",
+                    _                  => "Папка: ",
+                }) + run.Address));
 
         list.Children.Add(Note(Numbers(run)));
 
@@ -635,6 +643,7 @@ public partial class SettingsView
     {
         RunChannel.Request => "запрос по сети",
         RunChannel.Inbox   => "файл из папки",
+        RunChannel.Ingress => "обращение к нам",
         _                  => "сценарий",
     };
 
@@ -644,6 +653,10 @@ public partial class SettingsView
         RunChannel.Inbox =>
             "В расход не идет: файл из папки обмена идет внутрь, а потолки ограничивают то, что "
             + "уходит наружу.",
+
+        RunChannel.Ingress =>
+            "В расход не идет: чужая программа принесла данные внутрь, а потолки ограничивают то, "
+            + "что уходит наружу.",
 
         RunChannel.Scenario =>
             "В расход не идет: его уже заняли строки шагов, а посчитать одно и то же дважды "
