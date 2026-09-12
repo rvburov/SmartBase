@@ -201,7 +201,102 @@ public partial class PropertyEditorDialog : Window
         SaveBtn.Click   += (_, _) => TrySave();
         NameBox.KeyDown += (_, e) => { if (e.Key == Avalonia.Input.Key.Enter) TrySave(); };
         NameBox.TextChanged += (_, _) => HideError();
+
+        SetupLabel();
     }
+
+    // ── Конфиденциальность ───────────────────────────────────────────────────
+
+    /// <summary>Метка свойства, стоящая сейчас.</summary>
+    private SmartBase.Core.Models.ConfidentialityLabel _label;
+
+    /// <summary>Идет установка метки — событие списка не должно уйти на второй круг.</summary>
+    private bool _labelBusy;
+
+    /// <summary>Порядок в списке — от свободного к строгому, как читается шкала.</summary>
+    private static readonly SmartBase.Core.Models.ConfidentialityLabel[] Labels =
+    [
+        SmartBase.Core.Models.ConfidentialityLabel.Open,
+        SmartBase.Core.Models.ConfidentialityLabel.Restricted,
+        SmartBase.Core.Models.ConfidentialityLabel.Closed,
+    ];
+
+    /// <summary>
+    /// Метка свойства (docs/ROADMAP-API.md, 10.6) — точный запрет «это поле наружу нельзя»,
+    /// в отличие от грубого рубежа у базы.
+    ///
+    /// Показывается только у СОХРАНЕННОГО свойства: у нового еще нет ключа, которому ставить
+    /// метку, а заводить метку «про запас» в окне создания значило бы объяснять человеку, почему
+    /// она иногда не сохраняется. Поставить ее можно сразу после создания, открыв свойство
+    /// заново.
+    ///
+    /// Метка применяется СРАЗУ, а не по «Сохранить»: понижение спрашивает мастер-пароль и пишет
+    /// в журнал безопасности, и складывать такое действие в общую кнопку значило бы прятать его
+    /// среди правок формата.
+    /// </summary>
+    private void SetupLabel()
+    {
+        if (_editFieldId is not { } fieldId || _systemMode) return;
+
+        _label = _repository.GetFieldLabel(fieldId);
+
+        LabelSection.IsVisible   = true;
+        LabelCombo.ItemsSource   = Labels.Select(SmartBase.Core.Models.Confidentiality.Title).ToList();
+        LabelCombo.SelectedIndex = Array.IndexOf(Labels, _label);
+        ShowLabelHint();
+
+        LabelCombo.SelectionChanged += async (_, _) => await ApplyLabelAsync(fieldId);
+    }
+
+    private async Task ApplyLabelAsync(int fieldId)
+    {
+        if (_labelBusy || LabelCombo.SelectedIndex < 0) return;
+
+        var chosen = Labels[LabelCombo.SelectedIndex];
+        if (chosen == _label) return;
+
+        bool done;
+
+        if (chosen > _label)
+        {
+            // Повышение идет без вопросов: строже — значит безопаснее.
+            var trouble = _repository.SetFieldLabel(fieldId, chosen);
+            done = trouble.Length == 0;
+            if (!done) ShowError(char.ToUpperInvariant(trouble[0]) + trouble[1..]);
+        }
+        else
+        {
+            var ask = PasswordDialog.ForMaster(
+                $"свойства «{NameBox.Text?.Trim()}»",
+                SmartBase.Core.Models.Confidentiality.Title(_label),
+                SmartBase.Core.Models.Confidentiality.Title(chosen),
+                password => _repository.SetFieldLabel(fieldId, chosen, password));
+
+            done = await ask.ShowDialog<bool>(this);
+        }
+
+        if (done)
+        {
+            _label = chosen;
+            ShowLabelHint();
+            HideError();
+            return;
+        }
+
+        // Отказались или не вышло — список возвращается на прежнюю метку: показывать
+        // выбранное там, где оно не применилось, значит отпустить человека уверенным, что
+        // поле помечено.
+        _labelBusy = true;
+        LabelCombo.SelectedIndex = Array.IndexOf(Labels, _label);
+        _labelBusy = false;
+    }
+
+    private void ShowLabelHint() => LabelHint.Text =
+        _label == SmartBase.Core.Models.ConfidentialityLabel.Open
+            ? "Открыто: свойство можно подставить в исходящий шаг обмена."
+            : "Помеченное свойство в исходящий шаг подставить нельзя — его не будет в списке при "
+            + "настройке привязки. Понизить метку можно только по мастер-паролю политики "
+            + "организации, и понижение попадет в журнал безопасности.";
 
     // Переключатель «Отображать в календаре» виден только для типа «Дата»,
     // «Добавить в раздел задач» — только для типа «Пользователь», редактор пунктов —

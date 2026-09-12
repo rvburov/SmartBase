@@ -1294,8 +1294,15 @@ public partial class SettingsView : UserControl
         var storage     = mounted && !entry.IsPostgres ? _storage?.Invoke(id) : null;
         var canMaintain = mounted && !entry.IsPostgres && (_canMaintain?.Invoke(id) ?? false);
 
+        // Метка конфиденциальности лежит ВНУТРИ файла базы, поэтому окну нужен репозиторий
+        // подключенной базы. Не подключена — строки метки в окне просто не будет: читать и
+        // писать нечего, а показать поле и отказать при нажатии значило бы объяснять человеку
+        // устройство хранения.
+        var repo = (_databases?.Invoke() ?? []).FirstOrDefault(d => d.DbId == id)?.Constructor;
+
         var result = await new DbSettingsDialog(entry, storage, canMaintain,
-                onCompact: () => DatabaseCompactRequested?.Invoke(this, id))
+                onCompact: () => DatabaseCompactRequested?.Invoke(this, id),
+                repo: repo)
             .ShowDialog<DbSettingsResult?>(win);
         if (result is null) return;
 

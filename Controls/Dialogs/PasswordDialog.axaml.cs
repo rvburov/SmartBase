@@ -11,12 +11,17 @@ namespace SmartBase.Controls.Dialogs;
 /// «Разблокировать» (<see cref="ForUnlock"/>): одно поле, проверка через переданный
 /// колбэк (PermissionService.TryUnlock) — неверный пароль показывает баннер, окно не
 /// закрывается; успех возвращает true (ShowDialog&lt;bool&gt;).
+/// «Мастер-пароль» (<see cref="ForMaster"/>): то же одно поле, но колбэк возвращает ПРИЧИНУ
+/// отказа словами, а не «да/нет». Причин тут несколько и они разные — пароль не подошел, пароля
+/// нет ни в одном источнике политики, след не записался в журнал, — и «Неверный пароль» вместо
+/// любой из них отправил бы человека искать опечатку там, где ее нет.
 /// </summary>
 public partial class PasswordDialog : Window
 {
-    private readonly Func<string, bool>? _tryUnlock;
+    /// <summary>Проверка пароля: пусто в ответе — подошел, иначе причина отказа для баннера.</summary>
+    private readonly Func<string, string>? _tryUnlock;
 
-    private PasswordDialog(Func<string, bool>? tryUnlock)
+    private PasswordDialog(Func<string, string>? tryUnlock)
     {
         InitializeComponent();
         _tryUnlock = tryUnlock;
@@ -47,13 +52,41 @@ public partial class PasswordDialog : Window
     /// <summary>Разблокировка запертой базы. ShowDialog&lt;bool&gt; → true при верном пароле.</summary>
     public static PasswordDialog ForUnlock(string dbName, Func<string, bool> tryUnlock)
     {
-        var dlg = new PasswordDialog(tryUnlock);
+        var dlg = new PasswordDialog(password => tryUnlock(password) ? "" : "Неверный пароль");
         dlg.Title = "База данных защищена";
         dlg.InfoText.Text =
             $"База данных «{dbName}» доступна после подтверждения администратором или " +
             "по паролю. Введите пароль, чтобы открыть ее сейчас.";
         dlg.RepeatBlock.IsVisible = false;
         dlg.ConfirmBtn.Content = "Открыть";
+        return dlg;
+    }
+
+    /// <summary>
+    /// Мастер-пароль политики: понижение метки конфиденциальности (docs/ROADMAP-API.md, 10.6).
+    /// Окно спрашивает пароль, а делает понижение сам вызывающий — колбэк возвращает причину
+    /// отказа либо пусто. Так проверка и действие остаются в одном месте (репозиторий), а окно
+    /// не знает про метки ничего: неверный пароль, отсутствие пароля в политике и незаписавшийся
+    /// след отвечают разными словами, и все они приезжают готовой фразой.
+    ///
+    /// ShowDialog&lt;bool&gt; → true, когда понижение выполнено.
+    /// </summary>
+    /// <param name="what">О чем речь: «базы «Заказы»», «свойства «Сумма»».</param>
+    /// <param name="from">Метка до.</param>
+    /// <param name="to">Метка после.</param>
+    /// <param name="lower">Понизить метку этим паролем; возвращает причину отказа или пусто.</param>
+    public static PasswordDialog ForMaster(string what, string from, string to,
+                                           Func<string, string> lower)
+    {
+        var dlg = new PasswordDialog(lower);
+        dlg.Title = "Понижение метки конфиденциальности";
+        dlg.InfoText.Text =
+            $"Метка {what} понижается: «{from}» → «{to}». Понижение разрешает ответственный за "
+            + "интеграции — введите мастер-пароль политики организации. Событие попадет в журнал "
+            + "безопасности.";
+        dlg.PasswordLabel.Text    = "Мастер-пароль политики";
+        dlg.RepeatBlock.IsVisible = false;
+        dlg.ConfirmBtn.Content    = "Понизить";
         return dlg;
     }
 
@@ -70,10 +103,12 @@ public partial class PasswordDialog : Window
         // Режим разблокировки: проверяем пароль на месте, окно живет до успеха/отмены.
         if (_tryUnlock is not null)
         {
-            if (_tryUnlock(password)) Close(true);
+            var trouble = _tryUnlock(password);
+
+            if (trouble.Length == 0) Close(true);
             else
             {
-                ShowError("Неверный пароль");
+                ShowError(trouble);
                 PasswordBox.Focus();
                 PasswordBox.SelectAll();
             }

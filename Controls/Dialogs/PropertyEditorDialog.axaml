@@ -497,6 +497,24 @@
             </StackPanel>
         </StackPanel>
 
+        <!-- ── Конфиденциальность ─────────────────────────────────────────── -->
+        <!-- Только у сохраненного свойства: у нового еще нет ключа, которому ставить метку. -->
+        <StackPanel x:Name="LabelSection" Spacing="0" IsVisible="False" Margin="0,0,0,12">
+            <TextBlock Text="Конфиденциальность"
+                       Margin="0,0,0,6"
+                       FontWeight="{StaticResource FontWeightBold}"
+                       Foreground="{StaticResource BrushSecondaryText}" />
+            <ComboBox x:Name="LabelCombo"
+                      Height="34" Margin="0,0,0,6"
+                      HorizontalAlignment="Stretch"
+                      VerticalContentAlignment="Center"
+                      CornerRadius="{StaticResource RadiusMedium}" />
+            <TextBlock x:Name="LabelHint"
+                       TextWrapping="Wrap"
+                       FontSize="{DynamicResource FontSizeSmall}"
+                       Foreground="{StaticResource BrushSecondaryText}" />
+        </StackPanel>
+
         <!-- Пояснение для системных колонок «Название»/«Описание»: скрыто по умолчанию,
              показывается только в системном режиме (см. code-behind). Объясняет, почему
              тип заблокирован и свойство нельзя удалить. Тот же баннер, что у ошибок

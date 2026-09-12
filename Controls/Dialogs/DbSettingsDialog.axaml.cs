@@ -4,8 +4,10 @@ using Avalonia.Input;
 using Avalonia.Media;
 using Npgsql;
 using Serilog;
+using SmartBase.Core.Models;
 using SmartBase.Database;
 using SmartBase.Database.Entities;
+using SmartBase.Database.Repositories;
 using SmartBase.Utils;
 using SmartBase.Views.Settings;
 
@@ -31,12 +33,23 @@ public partial class DbSettingsDialog : Window
     private readonly DatabaseRefEntity _entry;
     private readonly Action? _compact;
 
+    /// <summary>Репозиторий подключенной базы; <c>null</c> — база не смонтирована.</summary>
+    private readonly ConstructorRepository? _repo;
+
+    /// <summary>Метка, стоящая сейчас. Нужна, чтобы вернуть список на место после отказа.</summary>
+    private ConfidentialityLabel _label;
+
+    /// <summary>Идет установка метки — событие списка не должно уйти на второй круг.</summary>
+    private bool _labelBusy;
+
     public DbSettingsDialog(DatabaseRefEntity entry, DatabaseManager.StorageStats? storage,
-                            bool canMaintain, Action? onCompact)
+                            bool canMaintain, Action? onCompact,
+                            ConstructorRepository? repo = null)
     {
         InitializeComponent();
         _entry   = entry;
         _compact = onCompact;
+        _repo    = repo;
 
         NameBox.Text  = entry.Name;
         PathText.Text = entry.Path;
@@ -83,8 +96,108 @@ public partial class DbSettingsDialog : Window
         foreach (var box in new[] { NameBox, PgPasswordBox })
             box.TextChanged += (_, _) => { HideError(); HideStatus(); };
 
+        SetupLabel();
+
         Opened += (_, _) => NameBox.Focus();
     }
+
+    // ── Конфиденциальность ───────────────────────────────────────────────────
+
+    /// <summary>
+    /// Метка базы (docs/ROADMAP-API.md, 10.6). Показывается ТОЛЬКО у подключенной базы, и это не
+    /// придирка: метка лежит в <c>db_meta</c>, то есть внутри самого файла — именно затем, чтобы
+    /// уезжать вместе с ним. Файл не открыт — читать и писать нечего.
+    ///
+    /// Метка применяется СРАЗУ, а не по «Сохранить» вместе с названием: понижение спрашивает
+    /// мастер-пароль и пишет в журнал безопасности, и складывать такое действие в общую кнопку
+    /// значило бы прятать его среди переименований.
+    /// </summary>
+    private void SetupLabel()
+    {
+        if (_repo is null) return;
+
+        _label = _repo.GetDatabaseLabel();
+
+        LabelSection.IsVisible = true;
+        LabelCombo.ItemsSource = Labels.Select(Confidentiality.Title).ToList();
+        LabelCombo.SelectedIndex = Array.IndexOf(Labels, _label);
+        ShowLabelHint();
+
+        LabelCombo.SelectionChanged += async (_, _) => await ApplyLabelAsync();
+    }
+
+    /// <summary>Порядок в списке — от свободного к строгому, как читается шкала.</summary>
+    private static readonly ConfidentialityLabel[] Labels =
+    [
+        ConfidentialityLabel.Open,
+        ConfidentialityLabel.Restricted,
+        ConfidentialityLabel.Closed,
+    ];
+
+    private async Task ApplyLabelAsync()
+    {
+        if (_repo is null || _labelBusy) return;
+        if (LabelCombo.SelectedIndex < 0) return;
+
+        var chosen = Labels[LabelCombo.SelectedIndex];
+        if (chosen == _label) return;
+
+        // Повышение идет без вопросов: строже — значит безопаснее. Понижение спрашивает
+        // мастер-пароль политики, и спрашивает его окно, а делает понижение репозиторий:
+        // проверка и действие обязаны жить в одном месте.
+        bool done;
+
+        if (chosen > _label)
+        {
+            done = Trouble(_repo.SetDatabaseLabel(chosen));
+        }
+        else
+        {
+            var ask = PasswordDialog.ForMaster(
+                $"базы «{_entry.Name}»",
+                Confidentiality.Title(_label), Confidentiality.Title(chosen),
+                password => _repo.SetDatabaseLabel(chosen, password));
+
+            done = await ask.ShowDialog<bool>(this);
+        }
+
+        if (done)
+        {
+            _label = chosen;
+            ShowLabelHint();
+            HideError();
+            return;
+        }
+
+        // Отказались или не вышло — список возвращается на прежнюю метку. Показывать
+        // выбранное там, где оно не применилось, нельзя: человек уйдет уверенный, что
+        // база помечена.
+        _labelBusy = true;
+        LabelCombo.SelectedIndex = Array.IndexOf(Labels, _label);
+        _labelBusy = false;
+    }
+
+    /// <summary>Поставить метку и показать причину, если не вышло.</summary>
+    private bool Trouble(string trouble)
+    {
+        if (trouble.Length == 0) return true;
+
+        ShowError(char.ToUpperInvariant(trouble[0]) + trouble[1..]);
+        return false;
+    }
+
+    private void ShowLabelHint() => LabelHint.Text = _label switch
+    {
+        ConfidentialityLabel.Closed =>
+            "Закрытый контур: исходящих у этой базы нет вовсе, и перенос данных из нее в менее "
+            + "строгую базу запрещен. Метка уезжает вместе с файлом базы.",
+        ConfidentialityLabel.Restricted =>
+            "Для служебного пользования: пометка для людей и журнала, обмен она не запрещает. "
+            + "Точный запрет ставится меткой на свойстве.",
+        _ =>
+            "Открыто: обычное состояние базы. Понизить метку обратно можно только по "
+            + "мастер-паролю политики организации, и понижение попадет в журнал безопасности.",
+    };
 
     // Живой статус сервера PG: та же TCP-проба, что у помощника — без пароля и прав.
     private async Task ProbeServerAsync()
