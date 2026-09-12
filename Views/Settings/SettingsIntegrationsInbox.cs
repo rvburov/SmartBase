@@ -79,18 +79,11 @@ public partial class SettingsView
 
     private Border FolderRow(string folder)
     {
-        var box = new TextBox
-        {
-            Text                     = folder,
-            Watermark                = @"P:\Обмен",
-            Height                   = 34,
-            IsReadOnly               = true,
-            VerticalContentAlignment = VerticalAlignment.Center,
-            CornerRadius             = new Avalonia.CornerRadius(8),
-        };
+        // Поле пути и кнопки рядом — та же раскладка, что у пути обновления в «О программе».
+        var box = Field(folder, watermark: @"P:\Обмен", readOnly: true);
 
-        var choose = SmallButton("Выбрать", () => _ = ChooseInboxFolderAsync());
-        var clear  = SmallButton("Убрать",  () =>
+        var choose = RowButton("Выбрать…", () => _ = ChooseInboxFolderAsync());
+        var clear  = RowButton("Убрать",  () =>
         {
             if (!AllowIntegrations(Core.Models.PermAction.IntegrationsSetup)) return;
 
@@ -108,7 +101,7 @@ public partial class SettingsView
 
         var block = new StackPanel { Spacing = 6 };
         block.Children.Add(line);
-        block.Children.Add(Note(FolderVerdict(folder)));
+        block.Children.Add(DataBox(FolderVerdict(folder)));
 
         return Row("Папка обмена",
             "Под ней программа заводит «Входящие», «Обработанные», «Ошибки» и «Квитанции». "
@@ -169,17 +162,10 @@ public partial class SettingsView
                 "Список станет доступен, когда откроется база данных: входящие файлы ложатся "
                 + "в ее коллекции.");
 
-        var combo = new ComboBox
-        {
-            ItemsSource              = databases.Select(d => d.Name).ToList(),
-            Height                   = 34,
-            HorizontalAlignment      = HorizontalAlignment.Stretch,
-            VerticalContentAlignment = VerticalAlignment.Center,
-        };
-
         var saved = AppSettings.LoadInboxDb();
         var index = databases.ToList().FindIndex(d => d.DbId == saved);
-        combo.SelectedIndex = index >= 0 ? index : -1;
+
+        var combo = Picker(databases.Select(d => d.Name), index >= 0 ? index : -1);
 
         combo.SelectionChanged += (_, _) =>
         {
@@ -187,7 +173,7 @@ public partial class SettingsView
                 AppSettings.SaveInboxDb(databases[combo.SelectedIndex].DbId);
         };
 
-        return Row("База данных",
+        return SideRow("База данных",
             "Куда ложатся входящие файлы. Коллекцию отправитель называет ИМЕНЕМ — номера "
             + "коллекций у каждой базы свои, и знать их он не может.",
             combo);
@@ -202,30 +188,21 @@ public partial class SettingsView
     private Border AutoRow(string folder, IReadOnlyList<DatabaseManager> databases)
     {
         var ready  = folder.Length > 0 && databases.Any(d => d.DbId == AppSettings.LoadInboxDb());
-        var toggle = new ToggleSwitch
-        {
-            IsChecked = AppSettings.LoadInboxAuto(),
-            IsEnabled = ready,
-        };
+        var toggle = Toggle(AppSettings.LoadInboxAuto(), ready);
 
         toggle.IsCheckedChanged += (_, _) => AppSettings.SaveInboxAuto(toggle.IsChecked == true);
 
-        var block = new StackPanel { Spacing = 6 };
-        block.Children.Add(toggle);
-
-        if (!ready)
-            block.Children.Add(Note("Станет доступно, когда выбраны папка и база данных."));
-        else
-            block.Children.Add(Note(
-                $"Программа заглядывает в папку раз в {InboxService.TickSeconds} секунд, пока она "
-                + "открыта. Если папка пропадет (выключили сетевой диск), следующая попытка будет "
-                + $"через {InboxService.RetryDelay.TotalMinutes:N0} минут, а не каждые полминуты — "
-                + "иначе за ночь журнал заполнится одинаковыми ошибками."));
-
-        return Row("Разбирать самому",
+        // Тумблер справа, пояснение слева — раскладка всех тумблеров настроек.
+        return SideRow("Разбирать самому",
             "Файлы будут приниматься без нажатия кнопки. База, которая сейчас недоступна, "
             + "прием останавливает: складывать записи некуда, и файлы зря уехали бы в «Ошибки».",
-            block);
+            toggle,
+            under: Note(ready
+                ? $"Программа заглядывает в папку раз в {InboxService.TickSeconds} секунд, пока "
+                  + "она открыта. Если папка пропадет (выключили сетевой диск), следующая попытка "
+                  + $"будет через {InboxService.RetryDelay.TotalMinutes:N0} минут, а не каждые "
+                  + "полминуты — иначе за ночь журнал заполнится одинаковыми ошибками."
+                : "Станет доступно, когда выбраны папка и база данных."));
     }
 
     // ── Разбор ────────────────────────────────────────────────────────────────
@@ -234,28 +211,22 @@ public partial class SettingsView
     {
         var target = databases.FirstOrDefault(d => d.DbId == AppSettings.LoadInboxDb());
 
-        var button = SmallButton("Проверить папку", () => _ = ReceiveAsync());
+        var button = RowButton("Проверить папку", () => _ = ReceiveAsync());
         button.IsEnabled = folder.Length > 0 && target is not null;
 
-        var block = new StackPanel { Spacing = 6 };
-        block.Children.Add(new StackPanel
-        {
-            Orientation         = Orientation.Horizontal,
-            Spacing             = 8,
-            HorizontalAlignment = HorizontalAlignment.Left,
-            Children            = { button },
-        });
+        // Чего не хватает — пояснением, а итог обхода — ячейкой с данными: первое говорит
+        // человеку, что сделать, второе показывает сделанное программой.
+        Control? under = null;
 
-        if (folder.Length == 0)      block.Children.Add(Note("Сначала выберите папку обмена."));
-        else if (target is null)     block.Children.Add(Note("Сначала выберите базу данных."));
+        if (folder.Length == 0)  under = Note("Сначала выберите папку обмена.");
+        else if (target is null) under = Note("Сначала выберите базу данных.");
+        else if (_lastInboxRun is { } last && _lastInboxAt is { } at)
+            under = DataBox($"Последний обход в {at.ToLocalTime():HH:mm} — {last.Summary()}.");
 
-        if (_lastInboxRun is { } last && _lastInboxAt is { } at)
-            block.Children.Add(Note($"Последний обход в {at.ToLocalTime():HH:mm} — {last.Summary()}."));
-
-        return Row("Разбор входящих",
+        return SideRow("Разбор входящих",
             "Пока прием запускается вручную: программа обходит «Входящие», укладывает каждый "
             + "готовый файл и кладет отправителю квитанцию.",
-            block);
+            button, under);
     }
 
     /// <summary>
@@ -340,7 +311,10 @@ public partial class SettingsView
             + "пусть пишет во временное имя и переименовывает: «заказы.json.tmp» → «заказы.json»."));
 
         list.Children.Add(Note("Внутри файла:"));
-        list.Children.Add(Note("""
+
+        // Пример — моноширинной ячейкой: его переписывают в чужую программу знак в знак, а
+        // пропорциональный шрифт в такой работе врет про пробелы и скобки.
+        list.Children.Add(CodeBox("""
             {
               "collection": "Заказы",
               "mode": "update",
@@ -348,7 +322,7 @@ public partial class SettingsView
               "id": "2026-09-10-0042",
               "rows": [ { "Номер": "А-1", "Название": "Молоток" } ]
             }
-            """));
+            """, maxHeight: 160));
 
         list.Children.Add(Note(
             "«collection» — имя коллекции; «mode» — «add» (добавить) или «update» (найти по "

@@ -1,5 +1,4 @@
 using Avalonia.Controls;
-using Avalonia.Layout;
 using Avalonia.Platform.Storage;
 using SmartBase.Controls.Dialogs;
 using SmartBase.Database;
@@ -53,7 +52,7 @@ public partial class SettingsView
         foreach (var scenario in scenarios)
         {
             rows.Add(ScenarioRow(registry, scenario));
-            rows.Add(new Border { Classes = { "separator", "h" } });
+            rows.Add(Separator());
         }
     }
 
@@ -65,20 +64,13 @@ public partial class SettingsView
     private Border ScenarioActions(Database.IntegrationsRegistry registry,
                                    IReadOnlyList<Scenario> scenarios)
     {
-        var buttons = new StackPanel
-        {
-            Orientation         = Orientation.Horizontal,
-            Spacing             = 8,
-            HorizontalAlignment = HorizontalAlignment.Left,
-        };
-
-        buttons.Children.Add(SmallButton("Добавить", () => _ = EditScenarioAsync(Scenario.New())));
-
-        var export = SmallButton("Выгрузить в файл", () => _ = ExportScenariosAsync(registry, scenarios));
+        var export = RowButton("Выгрузить в файл", () => _ = ExportScenariosAsync(registry, scenarios));
         export.IsEnabled = scenarios.Count > 0;
-        buttons.Children.Add(export);
 
-        buttons.Children.Add(SmallButton("Загрузить из файла", () => _ = ImportScenariosAsync(registry)));
+        var buttons = ButtonLine(
+            RowButton("Добавить", () => _ = EditScenarioAsync(Scenario.New())),
+            export,
+            RowButton("Загрузить из файла", () => _ = ImportScenariosAsync(registry)));
 
         return new Border { Classes = { "settingRow" }, Child = buttons };
     }
@@ -226,14 +218,10 @@ public partial class SettingsView
                                    ExtensionRegistry.All) is { } blocker)
             extra += (extra.Length > 0 ? " · " : "") + "Не сработает: " + blocker;
 
-        var toggle = new ToggleSwitch
-        {
-            IsChecked         = scenario.Enabled,
-            VerticalAlignment = VerticalAlignment.Center,
-            // Включать сценарий без расписания незачем: он не сработает никогда, а человек
-            // будет считать, что обмен идет.
-            IsEnabled         = scenario.Trigger.Kind != ScenarioTriggerKind.Manual,
-        };
+        // Включать сценарий без расписания незачем: он не сработает никогда, а человек будет
+        // считать, что обмен идет.
+        var toggle = Toggle(scenario.Enabled,
+                            enabled: scenario.Trigger.Kind != ScenarioTriggerKind.Manual);
 
         toggle.IsCheckedChanged += (_, _) =>
         {

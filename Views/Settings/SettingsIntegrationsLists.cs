@@ -1,5 +1,4 @@
 using Avalonia.Controls;
-using Avalonia.Layout;
 using SmartBase.Controls.Dialogs;
 using SmartBase.Integrations;
 
@@ -52,7 +51,7 @@ public partial class SettingsView
         foreach (var connection in connections)
         {
             rows.Add(ConnectionRow(registry, connection));
-            rows.Add(new Border { Classes = { "separator", "h" } });
+            rows.Add(Separator());
         }
     }
 
@@ -175,7 +174,7 @@ public partial class SettingsView
         foreach (var request in requests)
         {
             rows.Add(RequestRow(registry, request, connections));
-            rows.Add(new Border { Classes = { "separator", "h" } });
+            rows.Add(Separator());
         }
     }
 
@@ -189,7 +188,7 @@ public partial class SettingsView
     /// </summary>
     private Control PresetButton()
     {
-        var button = SmallButton("Из заготовки", () => { });
+        var button = RowButton("Из заготовки", () => { });
 
         var menu = new MenuFlyout { Placement = PlacementMode.BottomEdgeAlignedLeft };
 
@@ -546,103 +545,7 @@ public partial class SettingsView
         _                    => "нет",
     };
 
-    // ── Строки списка ─────────────────────────────────────────────────────────
-
-    /// <summary>Строка со списком действий сверху вкладки.</summary>
-    private static Border Actions(string first, Action onFirst,
-                                  string? second = null, Action? onSecond = null,
-                                  Control? third = null)
-    {
-        var buttons = new StackPanel
-        {
-            Orientation         = Orientation.Horizontal,
-            Spacing             = 8,
-            HorizontalAlignment = HorizontalAlignment.Left,
-        };
-
-        buttons.Children.Add(SmallButton(first, onFirst));
-        if (second is not null && onSecond is not null) buttons.Children.Add(SmallButton(second, onSecond));
-        if (third is not null) buttons.Children.Add(third);
-
-        return new Border { Classes = { "settingRow" }, Child = buttons };
-    }
-
-    /// <summary>
-    /// Строка карточки: имя, пояснение, вторая строка мелким и кнопки справа.
-    /// <paramref name="first"/> — главное действие карточки, если оно есть; стоит перед
-    /// «Изменить», потому что нажимают его чаще, чем правят саму карточку.
-    /// </summary>
-    /// <paramref name="lead"/> — управление слева от имени (тумблер сценария): выключить обмен
-    /// нужно чаще, чем править его, и ради этого не должно открываться окно.
-    private static Border CardRow(string title, string description, string extra,
-                                  Action edit, Action delete,
-                                  (string Text, Action Click)? first = null,
-                                  Control? lead = null,
-                                  IReadOnlyList<(string Text, Action Click)>? more = null)
-    {
-        var text = new StackPanel { Spacing = 4, VerticalAlignment = VerticalAlignment.Center };
-        text.Children.Add(new TextBlock { Classes = { "title" }, Text = title });
-        text.Children.Add(Note(description));
-        if (extra.Length > 0) text.Children.Add(Note(extra));
-
-        Control left = text;
-
-        if (lead is not null)
-        {
-            var line = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,12,*") };
-            Grid.SetColumn(lead, 0);
-            Grid.SetColumn(text, 2);
-            line.Children.Add(lead);
-            line.Children.Add(text);
-            left = line;
-        }
-
-        // Кнопок у карточки бывает до пяти (исходящий запрос: «В коллекцию», «Что уйдет»,
-        // «Подтвердить», «Изменить», «Удалить»), и в узком окне они съели бы описание целиком.
-        // WrapPanel переносит лишние на вторую строку, а MinWidth левой колонки не дает
-        // описанию исчезнуть: строка, из которой не видно, о чем она, бесполезна.
-        var buttons = new WrapPanel { VerticalAlignment = VerticalAlignment.Center };
-
-        void Add(string text, Action click)
-        {
-            var button = SmallButton(text, click);
-            button.Margin = new Avalonia.Thickness(8, 0, 0, 4);
-            buttons.Children.Add(button);
-        }
-
-        if (first is { } main) Add(main.Text, main.Click);
-
-        foreach (var action in more ?? []) Add(action.Text, action.Click);
-
-        Add("Изменить", edit);
-        Add("Удалить", delete);
-
-        var grid = new Grid
-        {
-            ColumnDefinitions = new ColumnDefinitions("*,Auto"),
-        };
-
-        grid.ColumnDefinitions[0].MinWidth = 220;
-
-        left.Margin = new Avalonia.Thickness(0, 0, 32, 0);
-        Grid.SetColumn(left, 0);
-        Grid.SetColumn(buttons, 1);
-        grid.Children.Add(left);
-        grid.Children.Add(buttons);
-
-        return new Border { Classes = { "settingRow" }, Child = grid };
-    }
-
-    private static Button SmallButton(string text, Action click)
-    {
-        var button = new Button
-        {
-            Content = text,
-            Height  = 30,
-            Padding = new Avalonia.Thickness(12, 0),
-        };
-
-        button.Click += (_, _) => click();
-        return button;
-    }
+    // Строки списка (Actions, CardRow) и сами контролы — в SettingsIntegrationsStyle:
+    // вид у всех шести вкладок раздела один, и держать его в одном месте дешевле, чем
+    // сверять шесть.
 }

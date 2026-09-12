@@ -1,7 +1,6 @@
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Layout;
-using Avalonia.Media;
 using SmartBase.Database;
 
 namespace SmartBase.Views.Settings;
@@ -51,14 +50,7 @@ public partial class SettingsView
     /// <summary>Переключатель журналов — первой строкой вкладки, до всего остального.</summary>
     private Border SecuritySwitchRow()
     {
-        var choice = new ComboBox
-        {
-            ItemsSource              = new List<string> { "Запуски", "Безопасность" },
-            SelectedIndex            = _securityLog ? 1 : 0,
-            Height                   = 34,
-            MinWidth                 = 190,
-            VerticalContentAlignment = VerticalAlignment.Center,
-        };
+        var choice = Picker(["Запуски", "Безопасность"], _securityLog ? 1 : 0);
 
         // Обработчик вешается ПОСЛЕ выставления значения: иначе первый же показ вкладки
         // перестроил бы сам себя.
@@ -71,7 +63,7 @@ public partial class SettingsView
             BuildIntegrationsJournal();
         };
 
-        return Row("Какой журнал",
+        return SideRow("Какой журнал",
             "«Запуски» — рабочий журнал обмена: его чистят, по нему считаются потолки. "
             + "«Безопасность» — отдельный файл для проверки: только добавление, цепочка хэшей, "
             + "ни тел, ни значений полей.",
@@ -131,20 +123,6 @@ public partial class SettingsView
     {
         var block = new StackPanel { Spacing = 6 };
 
-        var check = SmallButton("Проверить цепочку", () =>
-        {
-            _securityChain = journal.Verify();
-            BuildIntegrationsJournal();
-        });
-
-        block.Children.Add(new StackPanel
-        {
-            Orientation         = Orientation.Horizontal,
-            Spacing             = 8,
-            HorizontalAlignment = HorizontalAlignment.Left,
-            Children            = { check },
-        });
-
         if (_securityChain is { } first)
         {
             var verdict = Note(first == 0
@@ -153,14 +131,16 @@ public partial class SettingsView
                 + "поправили или вырезали. Сообщите ответственному за интеграции и сверьтесь с "
                 + "копией журнала в папке аудита организации.");
 
-            if (first != 0)
-            {
-                verdict.Foreground = Ink("BrushRed", "#FF3B30");
-                verdict.Classes.Remove("desc");
-            }
+            if (first != 0) verdict.Foreground = Ink("BrushRed", "#FF3B30");
 
-            block.Children.Add(verdict);
+            block.Children.Add(DataBox(new[] { verdict }));
         }
+
+        block.Children.Add(ButtonLine(RowButton("Проверить цепочку", () =>
+        {
+            _securityChain = journal.Verify();
+            BuildIntegrationsJournal();
+        })));
 
         return Row("Проверка целости",
             "Каждая строка включает хэш предыдущей, поэтому поправить или вырезать строку задним "
@@ -173,26 +153,18 @@ public partial class SettingsView
 
     private Border SecurityFilterRow()
     {
-        var kinds = new ComboBox
-        {
-            ItemsSource              = new List<string>
+        var kinds = Picker(
+            ["Все события", "Отправки", "Подтверждения", "Снятия подтверждения",
+             "Понижения меток", "Ручные выгрузки"],
+            _securityEvent switch
             {
-                "Все события", "Отправки", "Подтверждения", "Снятия подтверждения",
-                "Понижения меток", "Ручные выгрузки",
-            },
-            SelectedIndex            = _securityEvent switch
-            {
-                null                     => 0,
-                SecurityEvent.Send       => 1,
-                SecurityEvent.Confirm    => 2,
-                SecurityEvent.Revoke     => 3,
-                SecurityEvent.Downgrade  => 4,
-                _                        => 5,
-            },
-            Height                   = 34,
-            MinWidth                 = 190,
-            VerticalContentAlignment = VerticalAlignment.Center,
-        };
+                null                    => 0,
+                SecurityEvent.Send      => 1,
+                SecurityEvent.Confirm   => 2,
+                SecurityEvent.Revoke    => 3,
+                SecurityEvent.Downgrade => 4,
+                _                       => 5,
+            });
 
         kinds.SelectionChanged += (_, _) =>
         {
@@ -209,20 +181,13 @@ public partial class SettingsView
             Reset();
         };
 
-        var period = new ComboBox
+        var period = Picker(["7 дней", "30 дней", "Год", "Все"], _securityDays switch
         {
-            ItemsSource              = new List<string> { "7 дней", "30 дней", "Год", "Все" },
-            SelectedIndex            = _securityDays switch
-            {
-                7   => 0,
-                30  => 1,
-                365 => 2,
-                _   => 3,
-            },
-            Height                   = 34,
-            MinWidth                 = 120,
-            VerticalContentAlignment = VerticalAlignment.Center,
-        };
+            7   => 0,
+            30  => 1,
+            365 => 2,
+            _   => 3,
+        }, width: 120);
 
         period.SelectionChanged += (_, _) =>
         {
@@ -250,15 +215,9 @@ public partial class SettingsView
             Reset();
         };
 
-        var export = SmallButton("Выгрузить CSV", () => _ = ExportSecurityLogAsync());
+        var export = RowButton("Выгрузить CSV", () => _ = ExportSecurityLogAsync());
 
-        var line = new WrapPanel { Orientation = Orientation.Horizontal };
-
-        foreach (var control in new Control[] { kinds, period, blocked, export })
-        {
-            control.Margin = new Thickness(0, 0, 12, 6);
-            line.Children.Add(control);
-        }
+        var line = ButtonLine(kinds, period, blocked, export);
 
         return Row("Что показывать",
             "Заблокированные попытки — то, ради чего журнал во многом и ведется: «программа "
@@ -323,14 +282,11 @@ public partial class SettingsView
         var list = new StackPanel { Spacing = 0 };
 
         if (page.Count == 0)
-        {
-            list.Children.Add(Note(_securityEvent is not null || _securityBlockedOnly || _securityDays > 0
-                ? "Под выбранные условия не подошло ни одной строки."
-                : "Событий безопасности еще не было: наружу ничего не уходило и направлений не "
-                + "подтверждали."));
-
-            return Row("События", "", list);
-        }
+            return Row("События", "", DataBox(
+                _securityEvent is not null || _securityBlockedOnly || _securityDays > 0
+                    ? "Под выбранные условия не подошло ни одной строки."
+                    : "Событий безопасности еще не было: наружу ничего не уходило и направлений "
+                    + "не подтверждали."));
 
         list.Children.Add(SecurityHeaderLine());
 
@@ -339,15 +295,13 @@ public partial class SettingsView
 
         if (more)
         {
-            var next = SmallButton("Показать еще", () =>
+            var next = ButtonLine(RowButton("Показать еще", () =>
             {
                 _securityShown = Shown() + SecurityPage;
                 BuildIntegrationsJournal();
-            });
+            }));
 
-            next.Margin = new Thickness(0, 10, 0, 0);
-            next.HorizontalAlignment = HorizontalAlignment.Left;
-
+            next.Margin = new Thickness(0, 10, 0, -6);
             list.Children.Add(next);
         }
 
@@ -362,27 +316,21 @@ public partial class SettingsView
 
     private static Control SecurityHeaderLine()
     {
-        var grid = new Grid { ColumnDefinitions = SecurityColumns(), Margin = new Thickness(0, 0, 0, 4) };
+        var grid = new Grid { ColumnDefinitions = SecurityColumns() };
 
         Put(grid, 0, Head("Время"));
         Put(grid, 2, Head("Что произошло"));
         Put(grid, 4, Head("Кто"));
         Put(grid, 6, Head("Решение"));
 
-        return grid;
+        return TableHead(grid);
     }
 
     private Control SecurityLine(SecurityEntry entry)
     {
         var open = _securityOpen == entry.Id;
 
-        var grid = new Grid
-        {
-            ColumnDefinitions = SecurityColumns(),
-            // Прозрачный фон нужен для попадания мышью: без него нажатие проходит мимо строки.
-            Background        = Brushes.Transparent,
-            Cursor            = HandCursor,
-        };
+        var grid = new Grid { ColumnDefinitions = SecurityColumns() };
 
         Put(grid, 0, Cell(SecurityMoment(entry), secondary: true));
         Put(grid, 2, Cell(EventLine(entry)));
@@ -393,30 +341,20 @@ public partial class SettingsView
                                  entry.Allowed ? "#34C759" : "#FF3B30");
         Put(grid, 6, verdict);
 
-        var block = new StackPanel { Spacing = 6, Children = { grid } };
-        if (open) block.Children.Add(SecurityDetails(entry));
-
-        // Нажатие ловит сама строка, а не рамка вокруг: иначе щелчок по раскрытым подробностям
-        // закрывал бы их — ровно в тот момент, когда человек в них вчитывается.
-        grid.PointerPressed += (_, _) =>
+        return TableRow(grid, open ? SecurityDetails(entry) : null, open, () =>
         {
             _securityOpen = open ? 0 : entry.Id;
             BuildIntegrationsJournal();
-        };
-
-        return new Border
-        {
-            Padding         = new Thickness(0, 7, 0, 7),
-            BorderThickness = new Thickness(0, 0, 0, 1),
-            BorderBrush     = Ink("BrushSeparator", "#E5E5EA"),
-            Child           = block,
-        };
+        });
     }
 
-    /// <summary>Подробности строки: то, чему не нашлось места в колонках.</summary>
+    /// <summary>
+    /// Подробности строки: то, чему не нашлось места в колонках. Лежат в ячейке с данными — как
+    /// подробности строки журнала обмена на соседнем экране.
+    /// </summary>
     private Control SecurityDetails(SecurityEntry entry)
     {
-        var list = new StackPanel { Spacing = 4, Margin = new Thickness(0, 2, 0, 4) };
+        var list = new StackPanel { Spacing = 4 };
 
         list.Children.Add(Note(entry.Explanation.Length > 0 ? entry.Explanation : "Без объяснения."));
 
@@ -448,18 +386,14 @@ public partial class SettingsView
 
         list.Children.Add(Note("База данных: " + DatabaseName(entry.DbId)));
 
-        var copy = SmallButton("Скопировать", () =>
+        var copy = RowButton("Скопировать", () =>
             _ = TopLevel.GetTopLevel(this)?.Clipboard?.SetTextAsync(SecurityPlain(entry)));
 
-        list.Children.Add(new StackPanel
+        return new StackPanel
         {
-            Orientation         = Orientation.Horizontal,
-            HorizontalAlignment = HorizontalAlignment.Left,
-            Margin              = new Thickness(0, 4, 0, 0),
-            Children            = { copy },
-        });
-
-        return list;
+            Spacing  = 6,
+            Children = { DataBox(list), ButtonLine(copy) },
+        };
     }
 
     /// <summary>
@@ -485,10 +419,11 @@ public partial class SettingsView
 
     private Border SecurityFileRow(SecurityJournal journal)
     {
-        var block = new StackPanel { Spacing = 6 };
-
-        block.Children.Add(Note($"Файл: {journal.Path}"));
-        block.Children.Add(Note($"Всего строк: {journal.Count():N0}."));
+        var block = DataBox(new[]
+        {
+            Note($"Файл: {journal.Path}"),
+            Note($"Всего строк: {journal.Count():N0}."),
+        });
 
         return Row("Где это лежит",
             "Журнал общий на все базы данных и лежит рядом с настройками программы. Кнопки "

@@ -1,0 +1,437 @@
+using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Layout;
+using Avalonia.Media;
+
+namespace SmartBase.Views.Settings;
+
+/// <summary>
+/// Общий вид раздела «Интеграции» (partial SettingsView): строка настройки, кнопка, выпадающий
+/// список, поле, тумблер, ячейка с данными и строка таблицы.
+///
+/// <b>Зачем отдельный файл.</b> Вкладок в разделе шесть, и собираются они в code-behind — там,
+/// где остальные разделы настроек описаны разметкой. Пока каждая вкладка заводила контролы сама,
+/// они разъезжались: у одной высота поля 34, у другой 30, кнопки то с рамкой, то без. Вид
+/// задается здесь одним набором и берется ТОЛЬКО отсюда — числа в самих вкладках не пишутся.
+///
+/// <b>Откуда взяты числа.</b> Из соседних разделов настроек, а не придуманы заново:
+///
+/// <list type="bullet">
+///   <item>кнопка — общий стиль <c>dialog auto</c>, как «Копировать сейчас» в «Резервном
+///   копировании» и «Проверить» в «О программе»;</item>
+///   <item>поле и список — высота <c>ControlHeightStandard</c>, серый фон, скругление
+///   <c>RadiusBase</c>, как поле пути обновления и списки «Оформления»;</item>
+///   <item>тумблер — без подписей «On/Off», как все тумблеры настроек;</item>
+///   <item>строка таблицы — высота <c>RowHeightStandard</c> и линии <c>separator h</c>, как
+///   таблица «Диагностики» и таблица конструктора.</item>
+/// </list>
+///
+/// Ресурсы читаются через <see cref="Application.TryFindResource(object, out object?)"/> с
+/// запасным значением: то же правило, что у прочих code-behind панелей (типографика в C# —
+/// docs/developer/ui/theming.md).
+/// </summary>
+public partial class SettingsView
+{
+    /// <summary>Ширина выпадающего списка в строке настройки — как у списков «Оформления».</summary>
+    private const double PickerWidth = 240;
+
+    // ── Ресурсы ───────────────────────────────────────────────────────────────
+
+    private static IBrush Ink(string key, string fallbackHex) =>
+        Application.Current!.TryFindResource(key, out var found) && found is IBrush brush
+            ? brush
+            : new SolidColorBrush(Color.Parse(fallbackHex));
+
+    private static double Metric(string key, double fallback) =>
+        Application.Current!.TryFindResource(key, out var found) && found is double value
+            ? value
+            : fallback;
+
+    private static CornerRadius Radius(string key, double fallback) =>
+        Application.Current!.TryFindResource(key, out var found) && found is CornerRadius radius
+            ? radius
+            : new CornerRadius(fallback);
+
+    // ── Строка настройки ──────────────────────────────────────────────────────
+
+    private static TextBlock Note(string text) => new()
+    {
+        Classes      = { "desc" },
+        Text         = text,
+        TextWrapping = TextWrapping.Wrap,
+    };
+
+    /// <summary>
+    /// Пояснение со сдвигом — подчиненная строка: пояснение под переключателем, подробность
+    /// направления под его именем. Сдвиг отступом, а не пробелами в начале строки: пробелы
+    /// уезжают при переносе длинной фразы, и второй ее строки сдвиг уже не касается.
+    /// </summary>
+    private static TextBlock SubNote(string text)
+    {
+        var note = Note(text);
+        note.Margin = new Thickness(16, 0, 0, 0);
+
+        return note;
+    }
+
+    /// <summary>
+    /// Строка раздела: заголовок, пояснение и, если нужно, содержимое под ними. Так устроены
+    /// строки, у которых под пояснением лежит список или несколько контролов сразу (как строка
+    /// «Обновления» в «О программе»).
+    /// </summary>
+    private static Border Row(string title, string description, Control? content = null)
+    {
+        var block = new StackPanel { Spacing = 6 };
+        block.Children.Add(new TextBlock { Classes = { "title" }, Text = title });
+
+        if (description.Length > 0) block.Children.Add(Note(description));
+        if (content is not null)
+        {
+            content.Margin = new Thickness(0, 4, 0, 0);
+            block.Children.Add(content);
+        }
+
+        return new Border { Classes = { "settingRow" }, Child = block };
+    }
+
+    /// <summary>
+    /// Строка с одним управляющим элементом справа — основная раскладка настроек: слева
+    /// заголовок и пояснение, справа тумблер, список или кнопка. Отступ 32 слева от контрола и
+    /// выравнивание по центру — те же, что в разметке остальных разделов.
+    /// </summary>
+    private static Border SideRow(string title, string description, Control side,
+                                  Control? under = null)
+    {
+        var text = new StackPanel
+        {
+            Spacing           = 4,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin            = new Thickness(0, 0, 32, 0),
+        };
+
+        text.Children.Add(new TextBlock { Classes = { "title" }, Text = title });
+        if (description.Length > 0) text.Children.Add(Note(description));
+        if (under is not null)
+        {
+            under.Margin = new Thickness(0, 4, 0, 0);
+            text.Children.Add(under);
+        }
+
+        side.VerticalAlignment = VerticalAlignment.Center;
+
+        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto") };
+        Grid.SetColumn(text, 0);
+        Grid.SetColumn(side, 1);
+        grid.Children.Add(text);
+        grid.Children.Add(side);
+
+        return new Border { Classes = { "settingRow" }, Child = grid };
+    }
+
+    /// <summary>Строка и разделитель под ней — как в разметке остальных разделов.</summary>
+    private static void Add(Avalonia.Controls.Controls rows, Border row, bool last = false)
+    {
+        rows.Add(row);
+        if (!last) rows.Add(Separator());
+    }
+
+    private static Border Separator() => new() { Classes = { "separator", "h" } };
+
+    // ── Управляющие элементы ──────────────────────────────────────────────────
+
+    /// <summary>
+    /// Кнопка настроек. Общий стиль «dialog»; «auto» снимает фиксированную ширину 110 —
+    /// подписи вроде «Паспорт интеграций…» в нее не влезают (тот же прием, что у кнопки
+    /// «Копировать сейчас» в «Резервном копировании»).
+    /// </summary>
+    private static Button RowButton(string text, Action click)
+    {
+        var button = new Button
+        {
+            Classes           = { "dialog", "auto" },
+            Content           = text,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+
+        button.Click += (_, _) => click();
+        return button;
+    }
+
+    /// <summary>
+    /// Ряд кнопок и мелких контролов (список отбора, галочка). Переносится, когда их больше,
+    /// чем влезает в ширину: у карточки запроса действий до шести, и в узком окне они иначе
+    /// съели бы описание целиком.
+    ///
+    /// Зазор висит СЛЕВА у всех, кроме первого, а не справа у всех: ряд бывает прижат и к
+    /// левому краю строки, и к правому, и висящий с краю отступ в обоих случаях виден.
+    /// </summary>
+    private static WrapPanel ButtonLine(params Control[] items)
+    {
+        // Нижний зазор нужен только перенесенной строке; у единственной он превратился бы в
+        // лишний воздух под рядом — снимаем его отрицательным отступом самой панели.
+        var line = new WrapPanel
+        {
+            HorizontalAlignment = HorizontalAlignment.Left,
+            Margin              = new Thickness(0, 0, 0, -6),
+        };
+
+        for (var i = 0; i < items.Length; i++)
+        {
+            items[i].Margin = new Thickness(i == 0 ? 0 : 8, 0, 0, 6);
+            line.Children.Add(items[i]);
+        }
+
+        return line;
+    }
+
+    /// <summary>
+    /// Выпадающий список настроек. Высота, фон и скругление — из общих токенов; ширина по
+    /// умолчанию та же, что у списков «Оформления», чтобы столбец контролов был ровным.
+    /// </summary>
+    private static ComboBox Picker(IEnumerable<string> items, int selected,
+                                   double width = PickerWidth)
+    {
+        var picker = new ComboBox
+        {
+            ItemsSource              = items.ToList(),
+            SelectedIndex            = selected,
+            Width                    = width,
+            Height                   = Metric("ControlHeightStandard", 30),
+            VerticalContentAlignment = VerticalAlignment.Center,
+            Background               = Ink("BrushSecondaryBg", "#F2F2F7"),
+            CornerRadius             = Radius("RadiusBase", 6),
+        };
+
+        return picker;
+    }
+
+    /// <summary>Поле ввода настроек — как поле пути обновления в «О программе».</summary>
+    private static TextBox Field(string text, string watermark = "",
+                                 double width = double.NaN, bool readOnly = false)
+    {
+        var box = new TextBox
+        {
+            Text                     = text,
+            Watermark                = watermark,
+            Width                    = width,
+            Height                   = Metric("ControlHeightStandard", 30),
+            IsReadOnly               = readOnly,
+            VerticalContentAlignment = VerticalAlignment.Center,
+            Background               = Ink("BrushSecondaryBg", "#F2F2F7"),
+            CornerRadius             = Radius("RadiusBase", 6),
+        };
+
+        return box;
+    }
+
+    /// <summary>
+    /// Тумблер настроек. Подписи пустые: «On»/«Off» латиницей рядом с русским заголовком —
+    /// след стандартной темы, и во всех остальных разделах их снимают.
+    /// </summary>
+    private static ToggleSwitch Toggle(bool on, bool enabled = true) => new()
+    {
+        IsChecked         = on,
+        IsEnabled         = enabled,
+        OnContent         = "",
+        OffContent        = "",
+        VerticalAlignment = VerticalAlignment.Center,
+    };
+
+    // ── Ячейка с данными ──────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Ячейка с данными: то, что программа показывает, — в такой же рамке, что и поле ввода, но
+    /// серым и без нажатия. Сюда идут списки политики, состояние приема, подробности строки
+    /// журнала — все, что человек читает, а не правит.
+    /// </summary>
+    private static Border DataBox(Control content) => new()
+    {
+        Classes = { "dataBox" },
+        Child   = content,
+    };
+
+    /// <summary>Ячейка из готовых строк — самый частый случай.</summary>
+    private static Border DataBox(IEnumerable<Control> lines)
+    {
+        var list = new StackPanel { Spacing = 4 };
+
+        foreach (var line in lines) list.Children.Add(line);
+
+        return DataBox(list);
+    }
+
+    /// <summary>Ячейка из одной фразы.</summary>
+    private static Border DataBox(string text) => DataBox(new[] { Note(text) });
+
+    /// <summary>
+    /// Моноширинная ячейка: пример файла, тело запроса и ответа. Высота ограничена, текст не
+    /// переносится — ответ чужой программы бывает на восемь тысяч знаков, и перенос по словам
+    /// врет о том, что в нем написано.
+    /// </summary>
+    private static Border CodeBox(string text, bool selectable = true, double maxHeight = 180)
+    {
+        Control content = selectable
+            ? new SelectableTextBlock { Classes = { "mono" }, Text = text }
+            : new TextBlock           { Classes = { "mono" }, Text = text };
+
+        return new Border
+        {
+            Classes = { "dataBox" },
+            Child   = new ScrollViewer
+            {
+                MaxHeight                     = maxHeight,
+                HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Auto,
+                VerticalScrollBarVisibility   = Avalonia.Controls.Primitives.ScrollBarVisibility.Auto,
+                Content                       = content,
+            },
+        };
+    }
+
+    // ── Таблица ───────────────────────────────────────────────────────────────
+
+    private static TextBlock Head(string text) => new()
+    {
+        Classes           = { "desc" },
+        Text              = text,
+        FontWeight        = FontWeight.SemiBold,
+        VerticalAlignment = VerticalAlignment.Center,
+    };
+
+    private static TextBlock Cell(string text, bool secondary = false)
+    {
+        var cell = new TextBlock
+        {
+            Text              = text,
+            TextTrimming      = TextTrimming.CharacterEllipsis,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+
+        if (secondary) cell.Classes.Add("desc");
+
+        return cell;
+    }
+
+    private static void Put(Grid grid, int column, Control cell)
+    {
+        Grid.SetColumn(cell, column);
+        grid.Children.Add(cell);
+    }
+
+    /// <summary>Шапка таблицы: высота строки и линия под ней — как у шапки DataGrid.</summary>
+    private static Control TableHead(Grid columns)
+    {
+        var block = new StackPanel { Spacing = 0 };
+
+        block.Children.Add(new Border { Classes = { "tableHead" }, Child = columns });
+        block.Children.Add(Separator());
+
+        return block;
+    }
+
+    /// <summary>
+    /// Строка таблицы: сама строка, под ней — раскрытые подробности, под ними — линия. Нажатие
+    /// ловит строка, а не весь блок: щелчок по подробностям закрывал бы их ровно в тот момент,
+    /// когда человек в них вчитывается.
+    /// </summary>
+    private static Control TableRow(Grid columns, Control? details, bool open, Action click)
+    {
+        var row = new Border { Classes = { "tableRow" }, Child = columns };
+        if (open) row.Classes.Add("open");
+
+        row.PointerPressed += (_, _) => click();
+
+        var block = new StackPanel { Spacing = 0, Children = { row } };
+
+        if (details is not null)
+        {
+            details.Margin = new Thickness(0, 0, 0, 8);
+            block.Children.Add(details);
+        }
+
+        block.Children.Add(Separator());
+
+        return block;
+    }
+
+    // ── Списки карточек (соединения, запросы, сценарии) ───────────────────────
+
+    /// <summary>Строка со списком действий сверху вкладки.</summary>
+    private static Border Actions(string first, Action onFirst,
+                                  string? second = null, Action? onSecond = null,
+                                  Control? third = null)
+    {
+        var buttons = new List<Control> { RowButton(first, onFirst) };
+
+        if (second is not null && onSecond is not null) buttons.Add(RowButton(second, onSecond));
+        if (third is not null) buttons.Add(third);
+
+        return new Border { Classes = { "settingRow" }, Child = ButtonLine([.. buttons]) };
+    }
+
+    /// <summary>
+    /// Строка карточки: имя, пояснение, вторая строка мелким и кнопки справа.
+    /// <paramref name="first"/> — главное действие карточки, если оно есть; стоит перед
+    /// «Изменить», потому что нажимают его чаще, чем правят саму карточку.
+    /// <paramref name="lead"/> — управление слева от имени (тумблер сценария): выключить обмен
+    /// нужно чаще, чем править его, и ради этого не должно открываться окно.
+    /// </summary>
+    private static Border CardRow(string title, string description, string extra,
+                                  Action edit, Action delete,
+                                  (string Text, Action Click)? first = null,
+                                  Control? lead = null,
+                                  IReadOnlyList<(string Text, Action Click)>? more = null)
+    {
+        var text = new StackPanel { Spacing = 4, VerticalAlignment = VerticalAlignment.Center };
+        text.Children.Add(new TextBlock { Classes = { "title" }, Text = title });
+        text.Children.Add(Note(description));
+        if (extra.Length > 0) text.Children.Add(Note(extra));
+
+        Control left = text;
+
+        if (lead is not null)
+        {
+            var line = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,12,*") };
+            Grid.SetColumn(lead, 0);
+            Grid.SetColumn(text, 2);
+            line.Children.Add(lead);
+            line.Children.Add(text);
+            left = line;
+        }
+
+        // Кнопок у карточки бывает до шести (исходящий запрос: «В коллекцию», «Что уйдет»,
+        // «Что уносит», «Подтвердить», «Изменить», «Удалить»), и в узком окне они съели бы
+        // описание целиком. ButtonLine переносит лишние на вторую строку, а MinWidth левой
+        // колонки не дает описанию исчезнуть: строка, из которой не видно, о чем она, бесполезна.
+        var buttons = new List<Control>();
+
+        if (first is { } main) buttons.Add(RowButton(main.Text, main.Click));
+
+        foreach (var action in more ?? []) buttons.Add(RowButton(action.Text, action.Click));
+
+        buttons.Add(RowButton("Изменить", edit));
+        buttons.Add(RowButton("Удалить", delete));
+
+        var line2 = ButtonLine([.. buttons]);
+        line2.VerticalAlignment = VerticalAlignment.Center;
+
+        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto") };
+        grid.ColumnDefinitions[0].MinWidth = 220;
+
+        left.Margin = new Thickness(0, 0, 24, 0);
+        Grid.SetColumn(left, 0);
+        Grid.SetColumn(line2, 1);
+        grid.Children.Add(left);
+        grid.Children.Add(line2);
+
+        return new Border { Classes = { "settingRow" }, Child = grid };
+    }
+
+    // ── Числа ─────────────────────────────────────────────────────────────────
+
+    private static string Size(long bytes) => bytes switch
+    {
+        < 1024L * 1024        => $"{bytes / 1024.0:N0} КБ",
+        < 1024L * 1024 * 1024 => $"{bytes / 1024.0 / 1024:N1} МБ",
+        _                     => $"{bytes / 1024.0 / 1024 / 1024:N2} ГБ",
+    };
+}

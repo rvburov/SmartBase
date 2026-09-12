@@ -1,6 +1,5 @@
 using Avalonia;
 using Avalonia.Controls;
-using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Media;
 using SmartBase.Controls.Dialogs;
@@ -43,9 +42,6 @@ public partial class SettingsView
 
     // Ключ строки, у которой раскрыты подробности; 0 — ни одной.
     private long _journalOpen;
-
-    // Один курсор на все строки: каждый Cursor держит ручку системы, а строк на экране сотни.
-    private static readonly Cursor HandCursor = new(StandardCursorType.Hand);
 
     /// <summary>
     /// Сценарий отработал сам. Зовет MainWindow из службы сценариев; экран перестраивается,
@@ -117,7 +113,7 @@ public partial class SettingsView
                 "Счетчики не читаются, и обмен наружу поэтому запрещен: непрочитанный расход "
                 + "считается выбранным до конца. Причина записана в «Диагностике»."));
 
-            return Row("Расход", "", list);
+            return Row("Расход", "", DataBox(list));
         }
 
         if (policy.Any)
@@ -136,8 +132,8 @@ public partial class SettingsView
                          : spent.Direction == 0  ? "без карточки"
                          : $"карточка №{spent.Direction}";
 
-                list.Children.Add(Note(
-                    $"    {name}: {Size(spent.Bytes)} из {Size(policy.MaxBytesPerDay)}"
+                list.Children.Add(SubNote(
+                    $"{name}: {Size(spent.Bytes)} из {Size(policy.MaxBytesPerDay)}"
                     + (spent.Bytes >= policy.MaxBytesPerDay ? " — потолок выбран." : ".")));
             }
         }
@@ -157,32 +153,23 @@ public partial class SettingsView
             + "ответ, — потому что потолок заведен против выноса данных, а выносят их телом "
             + "запроса. Считается только обмен, пользующийся дверью наружу: файлы из папки "
             + "обмена идут внутрь и потолков не занимают.",
-            list);
+            DataBox(list));
     }
 
     // ── Что показывать ────────────────────────────────────────────────────────
 
     private Border FilterRow()
     {
-        var channel = new ComboBox
-        {
-            ItemsSource              = new List<string>
+        var channel = Picker(
+            ["Все каналы", "Запросы по сети", "Файлы из папки", "Сценарии", "Обращения к нам"],
+            _journalChannel switch
             {
-                "Все каналы", "Запросы по сети", "Файлы из папки", "Сценарии",
-                "Обращения к нам",
-            },
-            SelectedIndex            = _journalChannel switch
-            {
-                null                 => 0,
-                RunChannel.Request   => 1,
-                RunChannel.Inbox     => 2,
-                RunChannel.Ingress   => 4,
-                _                    => 3,
-            },
-            Height                   = 34,
-            MinWidth                 = 190,
-            VerticalContentAlignment = VerticalAlignment.Center,
-        };
+                null               => 0,
+                RunChannel.Request => 1,
+                RunChannel.Inbox   => 2,
+                RunChannel.Ingress => 4,
+                _                  => 3,
+            });
 
         // Обработчик вешается ПОСЛЕ выставления значения: иначе первый же показ вкладки
         // перестроил бы сам себя.
@@ -215,20 +202,15 @@ public partial class SettingsView
             BuildIntegrationsJournal();
         };
 
-        var refresh = SmallButton("Обновить", () =>
+        var refresh = RowButton("Обновить", () =>
         {
             _journalOpen = 0;
             BuildIntegrationsJournal();
         });
 
-        var export = SmallButton("Выгрузить CSV", () => _ = ExportRunsAsync());
+        var export = RowButton("Выгрузить CSV", () => _ = ExportRunsAsync());
 
-        var line = new StackPanel
-        {
-            Orientation = Orientation.Horizontal,
-            Spacing     = 12,
-            Children    = { channel, failed, refresh, export },
-        };
+        var line = ButtonLine(channel, failed, refresh, export);
 
         return Row("Что показывать",
             "Разбор «почему записи не появились» начинается с неудачных строк — их тут больше "
@@ -334,7 +316,7 @@ public partial class SettingsView
 
     private static Control HeaderLine()
     {
-        var grid = new Grid { ColumnDefinitions = RunColumns(), Margin = new Thickness(0, 0, 0, 4) };
+        var grid = new Grid { ColumnDefinitions = RunColumns() };
 
         Put(grid, 0,  Head("Время"));
         Put(grid, 2,  Head("Канал"));
@@ -344,7 +326,7 @@ public partial class SettingsView
         Put(grid, 10, Head("Строк"));
         Put(grid, 12, Head("Итог"));
 
-        return grid;
+        return TableHead(grid);
     }
 
     /// <summary>
@@ -355,13 +337,7 @@ public partial class SettingsView
     {
         var open = _journalOpen == run.Id;
 
-        var grid = new Grid
-        {
-            ColumnDefinitions = RunColumns(),
-            // Прозрачный фон нужен для попадания мышью: без него нажатие проходит мимо строки.
-            Background        = Brushes.Transparent,
-            Cursor            = HandCursor,
-        };
+        var grid = new Grid { ColumnDefinitions = RunColumns() };
 
         Put(grid, 0, Cell(Moment(run), secondary: true));
         Put(grid, 2, Cell(ChannelName(run.Channel), secondary: true));
@@ -378,34 +354,21 @@ public partial class SettingsView
         verdict.Foreground = Ink(run.Ok ? "BrushGreen" : "BrushRed", run.Ok ? "#34C759" : "#FF3B30");
         Put(grid, 12, verdict);
 
-        var block = new StackPanel { Spacing = 6, Children = { grid } };
-        if (open) block.Children.Add(Details(run));
-
-        // Нажатие ловит сама строка, а не рамка вокруг: иначе щелчок по раскрытым подробностям
-        // закрывал бы их — ровно в тот момент, когда человек в них вчитывается.
-        grid.PointerPressed += (_, _) =>
+        return TableRow(grid, open ? Details(run) : null, open, () =>
         {
             _journalOpen = open ? 0 : run.Id;
             BuildIntegrationsJournal();
-        };
-
-        return new Border
-        {
-            Padding         = new Thickness(0, 7, 0, 7),
-            BorderThickness = new Thickness(0, 0, 0, 1),
-            BorderBrush     = Ink("BrushSeparator", "#E5E5EA"),
-            Child           = block,
-        };
+        });
     }
 
-    /// <summary>Подробности строки: то, чему не нашлось места в колонках.</summary>
+    /// <summary>
+    /// Подробности строки: то, чему не нашлось места в колонках. Лежат в ячейке с данными —
+    /// раскрытый блок должен отличаться от строк вокруг, иначе он читается как еще одна строка
+    /// таблицы, только без колонок.
+    /// </summary>
     private Control Details(RunEntry run)
     {
-        var list = new StackPanel
-        {
-            Spacing = 4,
-            Margin  = new Thickness(0, 2, 0, 4),
-        };
+        var list = new StackPanel { Spacing = 4 };
 
         // У удачи объяснения не бывает, и строка «Без объяснения» читалась бы как потерянный
         // текст, а не как его отсутствие. У неудачи оно обязано быть — и если его нет, это
@@ -430,11 +393,6 @@ public partial class SettingsView
 
         list.Children.Add(Note(run.Counts ? "В расход по потолкам засчитан." : NotCounted(run)));
 
-        // Тела запроса и ответа — то, ради чего журнал отладки и открывают: без них панель
-        // отвечает «не получилось» и не отвечает «почему».
-        if (run.SentBody.Length > 0) list.Children.Add(Body("Запрос",  run.SentBody));
-        if (run.GotBody.Length  > 0) list.Children.Add(Body("Ответ",   run.GotBody));
-
         // Строка есть, а тел нет — это может значить и «их не было», и «уже не хранятся».
         // Второе надо сказать вслух: молчание читается как потеря.
         if (run.Channel == RunChannel.Request && run.SentBody.Length == 0 && run.GotBody.Length == 0)
@@ -448,27 +406,26 @@ public partial class SettingsView
             list.Children.Add(Note($"Сценарий: {run.Scenario}"
                 + (run.Step.Length > 0 ? $" · {run.Step}" : " · сценарий целиком")));
 
-        var buttons = new StackPanel
-        {
-            Orientation         = Orientation.Horizontal,
-            Spacing             = 8,
-            HorizontalAlignment = HorizontalAlignment.Left,
-            Margin              = new Thickness(0, 4, 0, 0),
-        };
+        var block = new StackPanel { Spacing = 6, Children = { DataBox(list) } };
 
-        buttons.Children.Add(SmallButton("Скопировать", () =>
-            _ = TopLevel.GetTopLevel(this)?.Clipboard?.SetTextAsync(Plain(run))));
+        // Тела запроса и ответа — то, ради чего журнал отладки и открывают: без них панель
+        // отвечает «не получилось» и не отвечает «почему». Каждое в своей ячейке: у них свой
+        // шрифт и своя прокрутка, а внутри общей ячейки они читались бы как продолжение чисел.
+        if (run.SentBody.Length > 0) block.Children.Add(Body("Запрос",  run.SentBody));
+        if (run.GotBody.Length  > 0) block.Children.Add(Body("Ответ",   run.GotBody));
+
+        var copy = RowButton("Скопировать", () =>
+            _ = TopLevel.GetTopLevel(this)?.Clipboard?.SetTextAsync(Plain(run)));
 
         // Повтор — только у сетевого шага и только когда карточка запроса еще на месте. Файл из
         // папки повторить нельзя: он уже разобран и уехал в «Обработанные», а квитанция отсечет
         // второй заход. Итоговую строку сценария — тоже: повторять надо сценарий, а у него своя
         // кнопка на соседней вкладке.
-        if (Repeatable(run) is { } request)
-            buttons.Children.Add(SmallButton("Повторить шаг", () => _ = RepeatRunAsync(request)));
+        block.Children.Add(Repeatable(run) is { } request
+            ? ButtonLine(copy, RowButton("Повторить шаг", () => _ = RepeatRunAsync(request)))
+            : ButtonLine(copy));
 
-        list.Children.Add(buttons);
-
-        return list;
+        return block;
     }
 
     /// <summary>
@@ -520,41 +477,11 @@ public partial class SettingsView
     /// Высота ограничена: ответ чужой программы бывает на восемь тысяч знаков, и вылезший на
     /// три экрана JSON увел бы из виду сам список запусков.
     /// </summary>
-    private Control Body(string title, string text)
+    private static Control Body(string title, string text) => new StackPanel
     {
-        var box = new SelectableTextBlock
-        {
-            Text         = text,
-            TextWrapping = TextWrapping.NoWrap,
-            FontFamily   = new FontFamily("Menlo, Consolas, monospace"),
-            FontSize     = 11,
-            Foreground   = Ink("BrushSecondaryText", "#8E8E93"),
-        };
-
-        return new StackPanel
-        {
-            Spacing  = 3,
-            Margin   = new Thickness(0, 4, 0, 0),
-            Children =
-            {
-                Note(title + ":"),
-                new Border
-                {
-                    Padding         = new Thickness(8, 6, 8, 6),
-                    CornerRadius    = new CornerRadius(6),
-                    BorderThickness = new Thickness(1),
-                    BorderBrush     = Ink("BrushSeparator", "#E5E5EA"),
-                    MaxHeight       = 180,
-                    Child = new ScrollViewer
-                    {
-                        HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Auto,
-                        VerticalScrollBarVisibility   = Avalonia.Controls.Primitives.ScrollBarVisibility.Auto,
-                        Content                       = box,
-                    },
-                },
-            },
-        };
-    }
+        Spacing  = 4,
+        Children = { Note(title + ":"), CodeBox(text) },
+    };
 
     /// <summary>
     /// Строка текстом — чтобы переслать той стороне. Именно этим кончается почти каждый разбор
@@ -587,23 +514,18 @@ public partial class SettingsView
 
     private Border FileRow(RunJournal journal, int read, bool narrow)
     {
-        var clear = SmallButton("Очистить журнал", () => _ = ClearJournalAsync());
-
         var block = new StackPanel { Spacing = 6 };
-        block.Children.Add(new StackPanel
-        {
-            Orientation         = Orientation.Horizontal,
-            Spacing             = 8,
-            HorizontalAlignment = HorizontalAlignment.Left,
-            Children            = { clear },
-        });
 
-        block.Children.Add(Note($"Файл: {journal.Path}"));
-        block.Children.Add(Note(
-            (narrow ? $"Прочитано подошедших строк: {read:N0}."
-                    : $"Прочитано последних строк: {read:N0}.")
-            + $" Журнал хранит не больше {RunJournal.Keep:N0} строк и подрезает себя сам при "
-            + "запуске программы."));
+        block.Children.Add(DataBox(new[]
+        {
+            Note($"Файл: {journal.Path}"),
+            Note((narrow ? $"Прочитано подошедших строк: {read:N0}."
+                         : $"Прочитано последних строк: {read:N0}.")
+                 + $" Журнал хранит не больше {RunJournal.Keep:N0} строк и подрезает себя сам "
+                 + "при запуске программы."),
+        }));
+
+        block.Children.Add(ButtonLine(RowButton("Очистить журнал", () => _ = ClearJournalAsync())));
 
         return Row("Где это лежит",
             "Журнал общий на все базы данных и лежит рядом с настройками программы, а не внутри "
@@ -698,35 +620,6 @@ public partial class SettingsView
             : $"№{dbId} (сейчас не открыта)";
     }
 
-    private static TextBlock Head(string text) => new()
-    {
-        Classes    = { "desc" },
-        Text       = text,
-        FontWeight = FontWeight.SemiBold,
-    };
-
-    private static TextBlock Cell(string text, bool secondary = false)
-    {
-        var cell = new TextBlock
-        {
-            Text              = text,
-            TextTrimming      = TextTrimming.CharacterEllipsis,
-            VerticalAlignment = VerticalAlignment.Center,
-        };
-
-        if (secondary) cell.Classes.Add("desc");
-
-        return cell;
-    }
-
-    private static void Put(Grid grid, int column, Control cell)
-    {
-        Grid.SetColumn(cell, column);
-        grid.Children.Add(cell);
-    }
-
-    private static IBrush Ink(string key, string fallbackHex) =>
-        Application.Current!.TryFindResource(key, out var found) && found is IBrush brush
-            ? brush
-            : new SolidColorBrush(Color.Parse(fallbackHex));
+    // Ячейки таблицы (Head, Cell, Put), строка таблицы и кисти — в SettingsIntegrationsStyle:
+    // журнал обмена и журнал безопасности показывают одну и ту же таблицу с разными колонками.
 }

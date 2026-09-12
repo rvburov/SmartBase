@@ -1,5 +1,4 @@
 using Avalonia.Controls;
-using Avalonia.Layout;
 using Avalonia.Platform.Storage;
 using SmartBase.Controls.Dialogs;
 using SmartBase.Integrations;
@@ -117,7 +116,10 @@ public partial class SettingsView
 
         // 1. Что вообще можно. Первой строкой и человеческим языком: проверяющий должен
         //    получить ответ здесь, а не собирать его из таблиц ниже.
-        Add(rows, Row("Состояние контура", StateText(policy, today)));
+        Add(rows, Row("Состояние контура",
+            "Что программе разрешено прямо сейчас. Ответ собран в том же порядке, в котором "
+            + "спрашивает сам шлюз: сборка, наличие политики, ее срок, режим.",
+            DataBox(StateText(policy, today))));
 
         // 2. Откуда взялись ограничения и что стало с каждым источником. Пересечение названо
         //    прямо: без этого таблица источников читается как «хоть один разрешил».
@@ -176,22 +178,17 @@ public partial class SettingsView
 
         // 5. Два действия раздела, и ни одно из них ничего не разрешает: одно перечитывает
         //    политику, второе выписывает то же самое файлом.
-        var reread = SmallButton("Перечитать политику", () =>
+        var reread = RowButton("Перечитать политику", () =>
         {
             EgressSetup.Init();
             BuildIntegrationsSecurity();
         });
 
-        var passport = SmallButton("Паспорт интеграций…", () => _ = ExportPassportAsync());
+        var passport = RowButton("Паспорт интеграций…", () => _ = ExportPassportAsync());
 
-        rows.Add(new StackPanel
-        {
-            Orientation         = Orientation.Horizontal,
-            Spacing             = 8,
-            HorizontalAlignment = HorizontalAlignment.Left,
-            Margin              = new Avalonia.Thickness(0, 12, 0, 0),
-            Children            = { reread, passport },
-        });
+        var actions = ButtonLine(reread, passport);
+        actions.Margin = new Avalonia.Thickness(0, 12, 0, -6);
+        rows.Add(actions);
 
         // Сказано вслух, потому что вкладка без единого поля ввода читается как «еще не
         // доделали». Она не не доделана — в этом ее устройство.
@@ -321,26 +318,26 @@ public partial class SettingsView
 
     private static Control SourcesList(PolicyLoadResult loaded)
     {
-        var list = new StackPanel { Spacing = 6 };
+        var lines = new List<Control>();
 
         // Момент применения — первой строкой и раньше самих источников. Вопрос звучит как
         // «с какого момента действует то, что я вижу», и ответ на него не время правки файла:
         // файл могли поправить час назад, а «Перечитать политику» никто не нажимал.
-        list.Children.Add(Note(EgressSetup.AppliedAt is { } applied
+        lines.Add(Note(EgressSetup.AppliedAt is { } applied
             ? $"Применено {applied.ToLocalTime():dd.MM.yyyy HH:mm}"
               + (loaded.Reads.Count > 1 ? $" · пересечение {loaded.Reads.Count} источников" : "")
             : "Политика еще не читалась за этот заход."));
 
         if (loaded.Reads.Count == 0)
         {
-            list.Children.Add(Note("Ни одного источника не найдено."));
-            return list;
+            lines.Add(Note("Ни одного источника не найдено."));
+            return DataBox(lines);
         }
 
         foreach (var read in loaded.Reads)
-            list.Children.Add(Note($"{(read.Accepted ? "принят" : "отклонен")} · {read.Source} — {read.Note}"));
+            lines.Add(Note($"{(read.Accepted ? "принят" : "отклонен")} · {read.Source} — {read.Note}"));
 
-        return list;
+        return DataBox(lines);
     }
 
     /// <summary>
@@ -352,12 +349,12 @@ public partial class SettingsView
     private Control DirectionsList()
     {
         if (Integrations is not { } registry)
-            return Note("Список станет доступен, когда откроется база данных.");
+            return DataBox("Список станет доступен, когда откроется база данных.");
 
         var outward = registry.Requests().Where(r => r.Outward).ToList();
 
         if (outward.Count == 0)
-            return Note("Запросов, уносящих данные наружу, не заведено ни одного.");
+            return DataBox("Запросов, уносящих данные наружу, не заведено ни одного.");
 
         var now  = DateTimeOffset.Now;
         var list = new StackPanel { Spacing = 6 };
@@ -379,25 +376,25 @@ public partial class SettingsView
 
             if (direction is null)
             {
-                var idle = Note("    не подтверждено — отправлять не может");
+                var idle = SubNote("не подтверждено — отправлять не может");
                 idle.Foreground = Ink("BrushRed", "#FF3B30");
                 list.Children.Add(idle);
                 continue;
             }
 
-            list.Children.Add(Note($"    подтвердил {direction.Confirmed} · "
+            list.Children.Add(SubNote($"подтвердил {direction.Confirmed} · "
                 + $"до {direction.Until.ToLocalTime():dd.MM.yyyy} · "
                 + $"за месяц {Size(bytes)}"));
 
-            var state = Note(trouble is null
-                ? "    действует"
-                : "    не действует: " + trouble);
+            var state = SubNote(trouble is null
+                ? "действует"
+                : "не действует: " + trouble);
 
             if (trouble is not null) state.Foreground = Ink("BrushRed", "#FF3B30");
             list.Children.Add(state);
         }
 
-        return list;
+        return DataBox(list);
     }
 
     /// <summary>
@@ -409,9 +406,9 @@ public partial class SettingsView
         var bases = _databases?.Invoke() ?? [];
 
         if (bases.Count == 0)
-            return Note("Ни одной базы не открыто — показывать нечего.");
+            return DataBox("Ни одной базы не открыто — показывать нечего.");
 
-        var list   = new StackPanel { Spacing = 6 };
+        var lines  = new List<Control>();
         var fields = 0;
 
         foreach (var manager in bases)
@@ -427,37 +424,36 @@ public partial class SettingsView
             if (label == Core.Models.ConfidentialityLabel.Closed)
                 line.Foreground = Ink("BrushRed", "#FF3B30");
 
-            list.Children.Add(line);
+            lines.Add(line);
         }
 
-        list.Children.Add(Note($"Полей с метками: {fields:N0}."));
+        lines.Add(Note($"Полей с метками: {fields:N0}."));
 
-        if (fields == 0) return list;
+        var block = new StackPanel { Spacing = 6, Children = { DataBox(lines) } };
 
-        list.Children.Add(new StackPanel
-        {
-            Orientation         = Orientation.Horizontal,
-            HorizontalAlignment = HorizontalAlignment.Left,
-            Margin              = new Avalonia.Thickness(0, 4, 0, 0),
-            Children            =
+        if (fields == 0) return block;
+
+        block.Children.Add(ButtonLine(
+            RowButton(_labeledFieldsShown ? "Скрыть список" : "Показать список", () =>
             {
-                SmallButton(_labeledFieldsShown ? "Скрыть список" : "Показать список", () =>
-                {
-                    _labeledFieldsShown = !_labeledFieldsShown;
-                    BuildIntegrationsSecurity();
-                }),
-            },
-        });
+                _labeledFieldsShown = !_labeledFieldsShown;
+                BuildIntegrationsSecurity();
+            })));
 
-        if (!_labeledFieldsShown) return list;
+        if (!_labeledFieldsShown) return block;
+
+        // Раскрытый список — СВОЕЙ ячейкой, а не строками в общей: это отдельные данные, и
+        // дописывать их в ячейку со сводкой значило бы смешать «сколько» и «какие именно».
+        var named = new List<Control>();
 
         foreach (var manager in bases)
             foreach (var (collection, field, label) in manager.Constructor.LabeledFields())
-                list.Children.Add(Note(
-                    $"    {manager.Name} · {collection} · {field} — "
-                    + Core.Models.Confidentiality.Title(label)));
+                named.Add(Note($"{manager.Name} · {collection} · {field} — "
+                               + Core.Models.Confidentiality.Title(label)));
 
-        return list;
+        block.Children.Add(DataBox(named));
+
+        return block;
     }
 
     // Развернут ли список помеченных свойств. Живет в пределах захода: это лупа, а не настройка.
@@ -469,15 +465,9 @@ public partial class SettingsView
     /// </summary>
     private Control BlocksList()
     {
-        var list = new StackPanel { Spacing = 6 };
-
         if (Database.SecurityJournal.Current is not { } journal)
-        {
-            list.Children.Add(Note(
-                "Журнал безопасности не открылся, и считать блокировки не по чему. "
-                + "Причина записана в разделе «Диагностика»."));
-            return list;
-        }
+            return DataBox("Журнал безопасности не открылся, и считать блокировки не по чему. "
+                           + "Причина записана в разделе «Диагностика».");
 
         long blocked;
         try
@@ -488,25 +478,20 @@ public partial class SettingsView
         catch (Exception error)
         {
             Serilog.Log.Warning(error, "Блокировки за неделю не сосчитались");
-            list.Children.Add(Note("Счет блокировок не удался — см. раздел «Диагностика»."));
-            return list;
+            return DataBox("Счет блокировок не удался — см. раздел «Диагностика».");
         }
 
-        list.Children.Add(Note(blocked == 0
+        var box = DataBox(blocked == 0
             ? "За неделю не заблокировано ни одной попытки."
-            : $"Заблокировано попыток: {blocked:N0}."));
+            : $"Заблокировано попыток: {blocked:N0}.");
 
-        if (blocked == 0) return list;
+        if (blocked == 0) return box;
 
-        list.Children.Add(new StackPanel
+        return new StackPanel
         {
-            Orientation         = Orientation.Horizontal,
-            HorizontalAlignment = HorizontalAlignment.Left,
-            Margin              = new Avalonia.Thickness(0, 4, 0, 0),
-            Children            = { SmallButton("В журнал", OpenBlockedInJournal) },
-        });
-
-        return list;
+            Spacing  = 6,
+            Children = { box, ButtonLine(RowButton("В журнал", OpenBlockedInJournal)) },
+        };
     }
 
     /// <summary>
@@ -528,26 +513,26 @@ public partial class SettingsView
 
     private static Control PlacesList()
     {
-        var list = new StackPanel { Spacing = 6 };
+        var lines = new List<Control>();
 
         foreach (var place in PolicySources.Places())
-            list.Children.Add(Note(
+            lines.Add(Note(
                 $"{place.Name} — {place.Where}" + (place.SignatureRequired ? " · подпись обязательна" : "")));
 
-        return list;
+        return DataBox(lines);
     }
 
     private static Control AddressList(EgressPolicySet policy)
     {
-        if (!policy.Any) return Note("Список пуст: разрешенных адресов нет.");
+        if (!policy.Any) return DataBox("Список пуст: разрешенных адресов нет.");
 
         var list = new StackPanel { Spacing = 6 };
 
         foreach (var source in policy.Sources)
         {
             list.Children.Add(Note($"{source.Source}:"));
-            list.Children.Add(Note("    имена — " + Join(source.Hosts)));
-            list.Children.Add(Note("    сети — "  + Join(source.Networks)));
+            list.Children.Add(SubNote("имена — " + Join(source.Hosts)));
+            list.Children.Add(SubNote("сети — "  + Join(source.Networks)));
 
             // Имя и фактический адрес проверяются подряд, поэтому пустой список сетей запирает
             // контур целиком. При заполненном списке имен это выглядит как настроенный обмен, и
@@ -555,8 +540,8 @@ public partial class SettingsView
             // разрешенном имени читается как поломка программы, а не как незаполненное поле.
             if (source.Hosts.Count > 0 && source.Networks.Count == 0)
             {
-                var alarm = Note(
-                    "    сети не заданы — обмен закрыт целиком: адрес проверяется отдельно от "
+                var alarm = SubNote(
+                    "сети не заданы — обмен закрыт целиком: адрес проверяется отдельно от "
                     + "имени, и пустой список не пропускает никого. Для узлов организации "
                     + "перечислите ее сети, для внешних узлов — 0.0.0.0/0 и ::/0.");
 
@@ -565,59 +550,54 @@ public partial class SettingsView
             }
         }
 
-        return list;
+        return DataBox(list);
     }
 
     private static Control FolderList(EgressPolicySet policy)
     {
-        if (!policy.Any) return Note("Папок не разрешено.");
+        if (!policy.Any) return DataBox("Папок не разрешено.");
 
-        var list = new StackPanel { Spacing = 6 };
+        var lines = new List<Control>();
 
         foreach (var source in policy.Sources)
-            list.Children.Add(Note($"{source.Source} — " + Join(source.Folders)));
+            lines.Add(Note($"{source.Source} — " + Join(source.Folders)));
 
-        return list;
+        return DataBox(lines);
     }
 
     /// <summary>Куда складываются копии исходящего; «никуда» — тоже ответ, и он частый.</summary>
     private static Control MirrorList(EgressPolicySet policy)
     {
-        var list = new StackPanel { Spacing = 6 };
-
         if (policy.Mirrors.Count == 0)
-        {
-            list.Children.Add(Note(
-                "Не ведется: политика не назвала папку. Это состояние по умолчанию — копии "
-                + "секретных данных не разбрасываются по машине без указания."));
-            return list;
-        }
+            return DataBox("Не ведется: политика не назвала папку. Это состояние по умолчанию — "
+                           + "копии секретных данных не разбрасываются по машине без указания.");
+
+        var lines = new List<Control>();
 
         foreach (var folder in policy.Mirrors)
-            list.Children.Add(Note(folder));
+            lines.Add(Note(folder));
 
-        list.Children.Add(Note(
+        lines.Add(Note(
             "Копия снимается с того, что ДОШЛО до сети, и только с запросов, уносящих данные. "
             + "Читающие обращения в зеркало не идут."));
 
-        return list;
+        return DataBox(lines);
     }
 
     private static Control LimitsList(EgressPolicySet policy)
     {
-        if (!policy.Any) return Note("Ограничения не заданы: обмен запрещен целиком.");
+        if (!policy.Any) return DataBox("Ограничения не заданы: обмен запрещен целиком.");
 
-        var list = new StackPanel { Spacing = 6 };
-
-        list.Children.Add(Note($"строк за один запуск — не больше {policy.MaxRowsPerRun:N0}"));
-        list.Children.Add(Note($"объем в сутки — не больше {Size(policy.MaxBytesPerDay)}"));
-        list.Children.Add(Note($"запусков в час — не больше {policy.MaxRunsPerHour:N0}"));
-        list.Children.Add(Note("срок действия — "
-            + (policy.ValidUntil is { } until ? until.ToString("dd.MM.yyyy") : "без срока")));
-        list.Children.Add(Note("дописывать адреса самому — "
-            + (policy.UserMayAddHosts ? "разрешено" : "запрещено")));
-
-        return list;
+        return DataBox(new[]
+        {
+            Note($"строк за один запуск — не больше {policy.MaxRowsPerRun:N0}"),
+            Note($"объем в сутки — не больше {Size(policy.MaxBytesPerDay)}"),
+            Note($"запусков в час — не больше {policy.MaxRunsPerHour:N0}"),
+            Note("срок действия — "
+                 + (policy.ValidUntil is { } until ? until.ToString("dd.MM.yyyy") : "без срока")),
+            Note("дописывать адреса самому — "
+                 + (policy.UserMayAddHosts ? "разрешено" : "запрещено")),
+        });
     }
 
     // ── Мелочи оформления ─────────────────────────────────────────────────────
@@ -625,40 +605,5 @@ public partial class SettingsView
     private static string Join(IReadOnlyList<string> values) =>
         values.Count == 0 ? "не заданы" : string.Join(", ", values);
 
-    private static string Size(long bytes) => bytes switch
-    {
-        < 1024L * 1024        => $"{bytes / 1024.0:N0} КБ",
-        < 1024L * 1024 * 1024 => $"{bytes / 1024.0 / 1024:N1} МБ",
-        _                     => $"{bytes / 1024.0 / 1024 / 1024:N2} ГБ",
-    };
-
-    private static TextBlock Note(string text) => new()
-    {
-        Classes   = { "desc" },
-        Text      = text,
-        TextWrapping = Avalonia.Media.TextWrapping.Wrap,
-    };
-
-    /// <summary>Строка раздела: заголовок, пояснение и, если нужно, содержимое под ними.</summary>
-    private static Border Row(string title, string description, Control? content = null)
-    {
-        var block = new StackPanel { Spacing = 6 };
-        block.Children.Add(new TextBlock { Classes = { "title" }, Text = title });
-
-        if (description.Length > 0) block.Children.Add(Note(description));
-        if (content is not null)
-        {
-            content.Margin = new Avalonia.Thickness(0, 4, 0, 0);
-            block.Children.Add(content);
-        }
-
-        return new Border { Classes = { "settingRow" }, Child = block };
-    }
-
-    /// <summary>Строка и разделитель под ней — как в разметке остальных разделов.</summary>
-    private static void Add(Avalonia.Controls.Controls rows, Border row, bool last = false)
-    {
-        rows.Add(row);
-        if (!last) rows.Add(new Border { Classes = { "separator", "h" } });
-    }
+    // Строка настройки, ячейка с данными и прочий общий вид — в SettingsIntegrationsStyle.
 }

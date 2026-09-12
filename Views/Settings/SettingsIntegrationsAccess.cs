@@ -66,12 +66,16 @@ public partial class SettingsView
             block.Children.Add(PermissionsLine(port));
 
         block.Children.Add(PortLine(mode, port));
-        block.Children.Add(Note(StateLine()));
+
+        // Слушаем или нет — в ячейке с данными: это ответ программы, а не пояснение к
+        // переключателям, и отличаться он должен так же, как отличается показанное от набранного.
+        var state = new List<Control> { Note(StateLine()) };
 
         if (mode == IngressMode.Network && MachineAddress.All().Count > 1)
-            block.Children.Add(Note("Адреса этой машины: "
-                + string.Join(", ", MachineAddress.All())
-                + ". Отправителю называют тот, по которому он до нас дотянется."));
+            state.Add(Note("Адреса этой машины: " + string.Join(", ", MachineAddress.All())
+                           + ". Отправителю называют тот, по которому он до нас дотянется."));
+
+        block.Children.Add(DataBox(state));
 
         return Row("Как к нам обращаются",
             "Прием по сети нужен тем отправителям, которые стоят на этом же компьютере: "
@@ -109,7 +113,7 @@ public partial class SettingsView
         var block = new StackPanel { Spacing = 2 };
         block.Children.Add(radio);
 
-        var note = Note("    " + explanation);
+        var note = SubNote(explanation);
         block.Children.Add(note);
 
         return block;
@@ -124,24 +128,16 @@ public partial class SettingsView
     {
         var block = new StackPanel { Spacing = 6, Margin = new Avalonia.Thickness(0, 4, 0, 0) };
 
-        block.Children.Add(Note(
-            "    Права администратора нужны один раз на машину. Кнопка ниже выполнит обе команды "
+        block.Children.Add(SubNote(
+            "Права администратора нужны один раз на машину. Кнопка ниже выполнит обе команды "
             + "с окном контроля учетных записей; если прав нет — скопируйте их и передайте в "
             + "службу ИТ."));
 
-        block.Children.Add(new StackPanel
-        {
-            Orientation         = Orientation.Horizontal,
-            Spacing             = 8,
-            HorizontalAlignment = HorizontalAlignment.Left,
-            Children            =
-            {
-                SmallButton("Настроить разрешения…", () => _ = GrantListenerAsync(port)),
-                SmallButton("Скопировать команды", () =>
-                    _ = TopLevel.GetTopLevel(this)?.Clipboard?
-                        .SetTextAsync(ListenerPermissions.Script(port))),
-            },
-        });
+        block.Children.Add(ButtonLine(
+            RowButton("Настроить разрешения…", () => _ = GrantListenerAsync(port)),
+            RowButton("Скопировать команды", () =>
+                _ = TopLevel.GetTopLevel(this)?.Clipboard?
+                    .SetTextAsync(ListenerPermissions.Script(port)))));
 
         return block;
     }
@@ -173,17 +169,12 @@ public partial class SettingsView
     /// нет, незачем.</summary>
     private Control PortLine(IngressMode mode, int port)
     {
-        var box = new TextBox
-        {
-            Text                     = port.ToString(System.Globalization.CultureInfo.InvariantCulture),
-            Width                    = 110,
-            Height                   = 34,
-            IsEnabled                = mode != IngressMode.Off,
-            VerticalContentAlignment = VerticalAlignment.Center,
-            CornerRadius             = new Avalonia.CornerRadius(8),
-        };
+        var box = Field(port.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                        width: 110);
 
-        var apply = SmallButton("Применить", () =>
+        box.IsEnabled = mode != IngressMode.Off;
+
+        var apply = RowButton("Применить", () =>
         {
             if (!AllowIntegrations(Core.Models.PermAction.IntegrationsSetup)) return;
 
@@ -202,16 +193,15 @@ public partial class SettingsView
 
         apply.IsEnabled = mode != IngressMode.Off;
 
-        var line = new StackPanel
+        var label = new TextBlock
         {
-            Orientation         = Orientation.Horizontal,
-            Spacing             = 8,
-            HorizontalAlignment = HorizontalAlignment.Left,
-            Margin              = new Avalonia.Thickness(0, 6, 0, 0),
-            Children            = { new TextBlock { Classes = { "desc" }, Text = "Порт",
-                                                    VerticalAlignment = VerticalAlignment.Center },
-                                    box, apply },
+            Classes           = { "desc" },
+            Text              = "Порт",
+            VerticalAlignment = VerticalAlignment.Center,
         };
+
+        var line = ButtonLine(label, box, apply);
+        line.Margin = new Avalonia.Thickness(0, 6, 0, -6);
 
         return line;
     }
@@ -240,19 +230,20 @@ public partial class SettingsView
 
     private Border TokensRow()
     {
-        var block = new StackPanel { Spacing = 6 };
+        var block = new StackPanel { Spacing = 8 };
 
         if (Integrations is not { } registry)
         {
-            block.Children.Add(Note("Список станет доступен, когда откроется база данных."));
+            block.Children.Add(DataBox("Список станет доступен, когда откроется база данных."));
             return Row("Токены доступа", TokensHelp(), block);
         }
 
-        var tokens   = registry.Tokens();
-        var opened   = _databases?.Invoke() ?? [];
+        var tokens = registry.Tokens();
+        var opened = _databases?.Invoke() ?? [];
 
         if (tokens.Count == 0)
-            block.Children.Add(Note("Не выдано ни одного токена — постучаться к нам сейчас некому."));
+            block.Children.Add(DataBox("Не выдано ни одного токена — постучаться к нам сейчас "
+                                       + "некому."));
 
         foreach (var token in tokens)
         {
@@ -265,40 +256,36 @@ public partial class SettingsView
                     ? $" · последнее обращение {used.ToLocalTime():dd.MM.yyyy HH:mm}"
                     : " · обращений не было"));
 
-            if (!token.Enabled) line.Foreground = Ink("BrushSecondaryText", "#8E8E93");
-
-            block.Children.Add(line);
-
-            var actions = new StackPanel
-            {
-                Orientation         = Orientation.Horizontal,
-                Spacing             = 8,
-                HorizontalAlignment = HorizontalAlignment.Left,
-                Margin              = new Avalonia.Thickness(0, 0, 0, 6),
-            };
-
             var item = token;
 
-            actions.Children.Add(SmallButton(item.Enabled ? "Выключить" : "Включить", () =>
-            {
-                if (!AllowIntegrations(Core.Models.PermAction.IntegrationsSetup)) return;
+            // Сам токен — в ячейке с данными, действия над ним — рядом, как кнопки строки в
+            // «Управлении базой данных»: показанное и нажимаемое не смешиваются.
+            var actions = ButtonLine(
+                RowButton(item.Enabled ? "Выключить" : "Включить", () =>
+                {
+                    if (!AllowIntegrations(Core.Models.PermAction.IntegrationsSetup)) return;
 
-                registry.EnableToken(item.Id, !item.Enabled);
-                BuildIntegrationsInbox();
-            }));
+                    registry.EnableToken(item.Id, !item.Enabled);
+                    BuildIntegrationsInbox();
+                }),
+                RowButton("Убрать", () => _ = RemoveTokenAsync(registry, item)));
 
-            actions.Children.Add(SmallButton("Убрать", () => _ = RemoveTokenAsync(registry, item)));
+            var box = DataBox(new[] { line });
+            box.VerticalAlignment = VerticalAlignment.Center;
+            actions.VerticalAlignment = VerticalAlignment.Center;
+            actions.Margin = new Avalonia.Thickness(8, 0, 0, -6);
 
-            block.Children.Add(actions);
+            var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto") };
+            Grid.SetColumn(box, 0);
+            Grid.SetColumn(actions, 1);
+            grid.Children.Add(box);
+            grid.Children.Add(actions);
+
+            block.Children.Add(grid);
         }
 
-        block.Children.Add(new StackPanel
-        {
-            Orientation         = Orientation.Horizontal,
-            HorizontalAlignment = HorizontalAlignment.Left,
-            Margin              = new Avalonia.Thickness(0, 4, 0, 0),
-            Children            = { SmallButton("Создать токен", () => _ = IssueTokenAsync(registry)) },
-        });
+        block.Children.Add(ButtonLine(
+            RowButton("Создать токен", () => _ = IssueTokenAsync(registry))));
 
         return Row("Токены доступа", TokensHelp(), block);
     }
@@ -387,34 +374,17 @@ public partial class SettingsView
 
         if (opened.Count == 0)
         {
-            block.Children.Add(Note("Описание станет доступно, когда откроется база данных."));
+            block.Children.Add(DataBox("Описание станет доступно, когда откроется база данных."));
             return Row("Описание для отправителя", ApiHelp(), block);
         }
 
-        var combo = new ComboBox
-        {
-            ItemsSource              = opened.Select(d => d.Name).ToList(),
-            SelectedIndex            = 0,
-            Height                   = 34,
-            MinWidth                 = 220,
-            VerticalContentAlignment = VerticalAlignment.Center,
-        };
+        var combo = Picker(opened.Select(d => d.Name), 0);
 
-        block.Children.Add(combo);
-
-        block.Children.Add(new StackPanel
-        {
-            Orientation         = Orientation.Horizontal,
-            Spacing             = 8,
-            HorizontalAlignment = HorizontalAlignment.Left,
-            Margin              = new Avalonia.Thickness(0, 4, 0, 0),
-            Children            =
-            {
-                SmallButton("Показать",        () => _ = ShowApiAsync(Chosen(combo, opened), copy: false)),
-                SmallButton("Скопировать",     () => _ = ShowApiAsync(Chosen(combo, opened), copy: true)),
-                SmallButton("Сохранить в файл", () => _ = SaveApiAsync(Chosen(combo, opened))),
-            },
-        });
+        block.Children.Add(ButtonLine(
+            combo,
+            RowButton("Показать",         () => _ = ShowApiAsync(Chosen(combo, opened), copy: false)),
+            RowButton("Скопировать",      () => _ = ShowApiAsync(Chosen(combo, opened), copy: true)),
+            RowButton("Сохранить в файл", () => _ = SaveApiAsync(Chosen(combo, opened)))));
 
         return Row("Описание для отправителя", ApiHelp(), block);
     }

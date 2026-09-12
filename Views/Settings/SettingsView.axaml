@@ -105,6 +105,58 @@
             <Setter Property="CornerRadius"             Value="{StaticResource RadiusBase}" />
         </Style>
 
+        <!-- ── Ячейка с данными ────────────────────────────────────────────────
+             Показанное программой (списки политики, состояние приема, тела запросов)
+             живет в такой же рамке, что и поле ввода, — но серым текстом и без нажатия:
+             человек по виду отличает «сюда вводят» от «здесь показано», а не по тому,
+             отзовется ли рамка на щелчок. Строки раздела «Интеграции» собираются в
+             code-behind, поэтому вид задан стилем — как у поля настройки расширения
+             выше и строк панели «Содержание» ниже. -->
+        <Style Selector="Border.dataBox">
+            <Setter Property="Background"      Value="{StaticResource BrushSecondaryBg}" />
+            <Setter Property="BorderBrush"     Value="{StaticResource BrushSeparator}" />
+            <Setter Property="BorderThickness" Value="{DynamicResource BorderLine}" />
+            <Setter Property="CornerRadius"    Value="{StaticResource RadiusBase}" />
+            <Setter Property="Padding"         Value="10,8" />
+        </Style>
+        <!-- :is(TextBlock) — чтобы правило доставало и до SelectableTextBlock: выделяемый
+             текст в ячейке тот же самый, отличается он только возможностью его скопировать. -->
+        <Style Selector="Border.dataBox :is(TextBlock)">
+            <Setter Property="FontSize"     Value="{DynamicResource FontSizeSmall}" />
+            <Setter Property="Foreground"   Value="{StaticResource BrushSecondaryText}" />
+            <Setter Property="TextWrapping" Value="Wrap" />
+        </Style>
+        <!-- Моноширинная ячейка: пример файла, тело запроса и ответа. Перенос по словам
+             в них врет о содержимом, поэтому текст не переносится, а прокручивается. -->
+        <Style Selector="Border.dataBox :is(TextBlock).mono">
+            <Setter Property="FontFamily"   Value="{StaticResource FontFamilyMono}" />
+            <Setter Property="TextWrapping" Value="NoWrap" />
+        </Style>
+
+        <!-- ── Строка таблицы раздела «Интеграции» ─────────────────────────────
+             Журналы обмена и безопасности — таблицы, и меряются они теми же числами,
+             что таблица конструктора и «Диагностика»: высота строки RowHeightStandard,
+             подсветка под курсором BrushSecondaryBg, линия под строкой — отдельный
+             separator h. Раскрытые подробности лежат ПОД строкой, вне ее рамки: иначе
+             подсветка уезжала бы на полэкрана вместе с ними. -->
+        <Style Selector="Border.tableRow">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="Cursor"     Value="Hand" />
+            <Setter Property="MinHeight"  Value="{StaticResource RowHeightStandard}" />
+            <Setter Property="Padding"    Value="0,6" />
+        </Style>
+        <Style Selector="Border.tableRow:pointerover">
+            <Setter Property="Background" Value="{StaticResource BrushSecondaryBg}" />
+        </Style>
+        <Style Selector="Border.tableRow.open">
+            <Setter Property="Background" Value="{StaticResource BrushAccentLight}" />
+        </Style>
+        <!-- Шапка таблицы: та же высота, что у строки, и тот же вид, что у шапки DataGrid. -->
+        <Style Selector="Border.tableHead">
+            <Setter Property="MinHeight" Value="{StaticResource RowHeightStandard}" />
+            <Setter Property="Padding"   Value="0,6" />
+        </Style>
+
         <!-- Пункт панели «Содержание» (раздел «Инструкция пользователя»). Подсветка во всю
              ширину без скруглений, как строка сайдбара (SidebarList.axaml): панель — та же
              навигация, только внутри раздела. Строки строятся в code-behind (SettingsGuide). -->
