@@ -420,7 +420,11 @@ public partial class SettingsView
 
         list.Children.Add(Note(entry.Explanation.Length > 0 ? entry.Explanation : "Без объяснения."));
 
-        if (entry.Address.Length > 0) list.Children.Add(Note("Адрес: " + entry.Address));
+        // У выгрузки в «адресе» лежит путь к файлу, а у отправки — сетевой адрес. Слово должно
+        // называть то, что под ним: проверяющий читает эти строки подряд и не должен гадать.
+        if (entry.Address.Length > 0)
+            list.Children.Add(Note((entry.Event == SecurityEvent.Export ? "Файл: " : "Адрес: ")
+                                   + entry.Address));
 
         if (entry.Scenario.Length > 0)
             list.Children.Add(Note("Сценарий: " + entry.Scenario));
@@ -438,7 +442,9 @@ public partial class SettingsView
             list.Children.Add(Note($"Записей: {entry.Rows:N0} · объем: {Size(entry.Bytes)}"));
 
         if (entry.BodyHash.Length > 0)
-            list.Children.Add(Note("Отпечаток тела: " + entry.BodyHash));
+            list.Children.Add(Note((entry.Event == SecurityEvent.Export
+                                        ? "Отпечаток файла: " : "Отпечаток тела: ")
+                                   + entry.BodyHash));
 
         list.Children.Add(Note("База данных: " + DatabaseName(entry.DbId)));
 
@@ -469,7 +475,10 @@ public partial class SettingsView
         + (entry.Address.Length > 0   ? entry.Address + "\n"                 : "")
         + (entry.Fields.Length > 0    ? $"поля: {entry.Fields}\n"            : "")
         + $"записей: {entry.Rows:N0} · объем: {Size(entry.Bytes)}\n"
-        + (entry.BodyHash.Length > 0  ? $"отпечаток тела: {entry.BodyHash}\n" : "")
+        + (entry.BodyHash.Length > 0
+              ? (entry.Event == SecurityEvent.Export ? "отпечаток файла: " : "отпечаток тела: ")
+                + entry.BodyHash + "\n"
+              : "")
         + entry.Explanation;
 
     // ── Файл ──────────────────────────────────────────────────────────────────
