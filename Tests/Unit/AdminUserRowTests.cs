@@ -75,11 +75,20 @@ public sealed class AdminUserRowTests
         Assert.True(approved.RightsEnabled);
     }
 
+    /// <summary>
+    /// Права уровня базы — создание коллекций и оба права интеграций: у отдельной коллекции
+    /// переопределять их нечем, и галка в области «коллекция» обязана быть недоступной.
+    /// </summary>
     [Fact]
-    public void Create_collection_is_editable_only_for_whole_database()
+    public void Database_level_rights_are_editable_only_for_whole_database()
     {
-        Assert.True(Other(scopeIsDb: true).CreateCollectionEnabled);
-        Assert.False(Other(scopeIsDb: false).CreateCollectionEnabled);
+        Assert.True(Other(scopeIsDb: true).DatabaseOnlyEnabled);
+        Assert.False(Other(scopeIsDb: false).DatabaseOnlyEnabled);
+
+        Assert.True(PermActionLabels.DatabaseOnly(PermAction.CreateCollection));
+        Assert.True(PermActionLabels.DatabaseOnly(PermAction.IntegrationsSetup));
+        Assert.True(PermActionLabels.DatabaseOnly(PermAction.IntegrationsOutward));
+        Assert.False(PermActionLabels.DatabaseOnly(PermAction.EditRecord));
     }
 
     [Fact]

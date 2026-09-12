@@ -80,6 +80,7 @@ public partial class SettingsView
     private async Task EditConnectionAsync(IntegrationConnection card)
     {
         if (VisualRoot is not Window win || Integrations is null) return;
+        if (!AllowIntegrations(Core.Models.PermAction.IntegrationsSetup)) return;
 
         var registry = Integrations;
         var hasSecret = card.Id > 0 && registry.HasSecret(card.Id);
@@ -97,6 +98,7 @@ public partial class SettingsView
     private async Task DeleteConnectionAsync(IntegrationConnection connection)
     {
         if (VisualRoot is not Window win || Integrations is null) return;
+        if (!AllowIntegrations(Core.Models.PermAction.IntegrationsSetup)) return;
 
         var registry = Integrations;
         var used     = registry.RequestsOf(connection.Id);
@@ -262,6 +264,7 @@ public partial class SettingsView
                                              IntegrationRequest request)
     {
         if (VisualRoot is not Window win) return;
+        if (!AllowIntegrations(Core.Models.PermAction.IntegrationsOutward)) return;
 
         var what = $"{request.Name}: {request.Method.ToString().ToUpperInvariant()} {request.Path}";
 
@@ -296,6 +299,7 @@ public partial class SettingsView
                                             IntegrationRequest request)
     {
         if (VisualRoot is not Window win) return;
+        if (!AllowIntegrations(Core.Models.PermAction.IntegrationsOutward)) return;
 
         var yes = await new ConfirmDialog(
             $"Отозвать подтверждение у запроса «{request.Name}»? Он перестанет отправлять данные "
@@ -319,6 +323,7 @@ public partial class SettingsView
     private async Task EditRequestAsync(IntegrationRequest card)
     {
         if (VisualRoot is not Window win || Integrations is null) return;
+        if (!AllowIntegrations(Core.Models.PermAction.IntegrationsSetup)) return;
 
         var registry    = Integrations;
         var connections = registry.Connections();
@@ -336,6 +341,7 @@ public partial class SettingsView
     private async Task DeleteRequestAsync(IntegrationRequest request)
     {
         if (VisualRoot is not Window win || Integrations is null) return;
+        if (!AllowIntegrations(Core.Models.PermAction.IntegrationsSetup)) return;
 
         // Запрос с шагом сценария не удаляется — как и соединение с запросами: сценарий с дырой
         // посреди списка шагов хуже отказа.
@@ -368,6 +374,7 @@ public partial class SettingsView
     private async Task ImportCurlAsync()
     {
         if (VisualRoot is not Window win || Integrations is null) return;
+        if (!AllowIntegrations(Core.Models.PermAction.IntegrationsSetup)) return;
 
         var import = await new CurlImportDialog().ShowDialog<CurlImport?>(win);
         if (import is null) return;

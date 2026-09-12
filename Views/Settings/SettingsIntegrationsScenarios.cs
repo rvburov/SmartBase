@@ -102,6 +102,15 @@ public partial class SettingsView
 
         toggle.IsCheckedChanged += (_, _) =>
         {
+            // Тумблер — настройка обмена, а не запуск: он решает, пойдет ли сценарий сам по
+            // расписанию, когда за экраном никого нет. Пересборка списка возвращает галку на
+            // место, если права не хватило.
+            if (!AllowIntegrations(Core.Models.PermAction.IntegrationsSetup))
+            {
+                BuildIntegrationsScenarios();
+                return;
+            }
+
             // Включение ставит ЯКОРЬ — момент, от которого считается первый запуск. Без него
             // «ежедневно в 07:00», включенное вечером, сработало бы немедленно.
             registry.EnableScenario(scenario.Id, toggle.IsChecked == true, DateTimeOffset.Now);
@@ -120,6 +129,7 @@ public partial class SettingsView
     private async Task EditScenarioAsync(Scenario card)
     {
         if (VisualRoot is not Window win || Integrations is null) return;
+        if (!AllowIntegrations(Core.Models.PermAction.IntegrationsSetup)) return;
 
         var registry = Integrations;
 
@@ -178,6 +188,7 @@ public partial class SettingsView
     private async Task DeleteScenarioAsync(Scenario scenario)
     {
         if (VisualRoot is not Window win || Integrations is null) return;
+        if (!AllowIntegrations(Core.Models.PermAction.IntegrationsSetup)) return;
 
         var confirmed = await new ConfirmDialog($"Удалить сценарий «{scenario.Name}»?")
             .ShowDialog<bool>(win);

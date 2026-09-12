@@ -68,6 +68,8 @@ public partial class ProfileView
         (PermAction.EditField,           "Свойства",  "IconSliders"),
         (PermAction.DeleteField,         "Свойства",  "IconSliders"),
         (PermAction.DuplicateField,      "Свойства",  "IconSliders"),
+        (PermAction.IntegrationsSetup,   "Интеграции", "IconWorkflow"),
+        (PermAction.IntegrationsOutward, "Интеграции", "IconWorkflow"),
     ];
 
     // Все прочитанные строки и то, что показано после фильтра и сортировки.
@@ -333,10 +335,10 @@ public partial class ProfileView
 
         foreach (var (action, group, iconKey) in UsersActionColumns)
         {
-            // «Создавать коллекции» имеет смысл только на уровне базы: у несозданной
-            // коллекции переопределений нет.
-            var enabledPath = action == PermAction.CreateCollection
-                ? nameof(AdminUserRow.CreateCollectionEnabled)
+            // Часть прав имеет смысл только на уровне базы — у отдельной коллекции
+            // переопределять их нечем (PermActionLabels.DatabaseOnly).
+            var enabledPath = PermActionLabels.DatabaseOnly(action)
+                ? nameof(AdminUserRow.DatabaseOnlyEnabled)
                 : nameof(AdminUserRow.RightsEnabled);
             // Ширина под самую длинную подпись («Дублирование коллекции») — колонки действий
             // одинаковые, иначе шапка выглядит рваной; лишнее уходит в прокрутку.
@@ -1186,8 +1188,9 @@ public sealed class AdminUserRow : INotifyPropertyChanged
     /// допуска настраивать нечего, пока допуск не выдан.</summary>
     public bool RightsEnabled => !IsSelf && !_isAdmin && _isApproved;
 
-    /// <summary>«Создавать коллекции» — только на уровне базы.</summary>
-    public bool CreateCollectionEnabled => RightsEnabled && _scopeIsDatabase;
+    /// <summary>Права уровня базы («Создавать коллекции», оба права интеграций) — только
+    /// при выбранной области «вся база».</summary>
+    public bool DatabaseOnlyEnabled => RightsEnabled && _scopeIsDatabase;
 
     // ── INotifyPropertyChanged ────────────────────────────────────────────────
 

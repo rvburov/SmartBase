@@ -88,7 +88,13 @@ public partial class SettingsView
 
         // Привязка запоминается ТОЛЬКО после удачной укладки: сохрани ее раньше — и следующий
         // запуск подставил бы раскладку, которая уже один раз не сработала.
-        registry.SaveBinding(request.Id, binding);
+        //
+        // И только тому, кому разрешена настройка обмена. Запуск руками правом не ограничен, но
+        // запомненной раскладкой потом воспользуется сценарий по расписанию: иначе запуск руками
+        // молча переучил бы ночной обмен на другую коллекцию — в обход запрета на настройку.
+        var remembered = CanIntegrations(Core.Models.PermAction.IntegrationsSetup);
+
+        if (remembered) registry.SaveBinding(request.Id, binding);
         MarkIfComplete(registry, request.Id, startedAt, outcome);
 
         // Карточка запроса показывает время последнего запуска — после обмена оно другое.
@@ -96,7 +102,12 @@ public partial class SettingsView
         // изменения в общую шину при сохранении (см. AppDbContext).
         BuildIntegrationsRequests();
 
-        await ConfirmDialog.Info(Report(request, outcome, result)).ShowDialog(win);
+        await ConfirmDialog.Info(Report(request, outcome, result)
+            + (remembered
+                ? ""
+                : "\n\nРаскладка не запомнена: настройка интеграций запрещена администратором "
+                + "базы данных. Записи перенесены, но следующий запуск снова спросит, что куда "
+                + "ложится.")).ShowDialog(win);
     }
 
     // ── Шаги ──────────────────────────────────────────────────────────────────

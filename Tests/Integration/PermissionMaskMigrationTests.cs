@@ -7,11 +7,20 @@ using SmartBase.Database;
 namespace SmartBase.Tests.Integration;
 
 /// <summary>
-/// Миграция <c>AddDuplicateFieldRight</c>: у дублирования свойства появился свой бит
-/// (<c>PermAction.DuplicateField</c> = 4096), раньше операция шла под правом создания
-/// (<c>CreateField</c> = 512). Схема не меняется — меняются УЖЕ СОХРАНЕННЫЕ маски:
-/// без бэкфилла каждый, кому администратор что-то урезал, внезапно потерял бы дубль
-/// свойства (в старых масках нового бита нет физически).
+/// Бэкфилл масок при появлении новых битов <see cref="SmartBase.Core.Models.PermAction"/>.
+/// Схема при этом не меняется — меняются УЖЕ СОХРАНЕННЫЕ маски: нового бита в них нет
+/// физически, и без бэкфилла каждый, кому администратор что-то урезал, молча потерял бы
+/// операцию, которая до этого ему была разрешена.
+///
+/// Проверяются обе такие миграции разом, потому что обе правят одни и те же строки:
+///
+/// <list type="bullet">
+///   <item><c>AddDuplicateFieldRight</c> — дубль свойства получил свой бит (4096), а раньше
+///   шел под правом создания (512): разрешение ПЕРЕНОСИТСЯ тем, у кого было создание.</item>
+///   <item><c>AddIntegrationRights</c> — настройка обмена и исходящие направления (8192 и
+///   16384) до этого не спрашивали права вовсе, и получают их ВСЕ: миграция заводит
+///   администратору ручку, а не отбирает у людей то, что они уже делали.</item>
+/// </list>
 ///
 /// Проверяем на «старой» базе: накатываем миграции до предыдущей, наливаем маски сырым
 /// SQL и доводим до последней.
@@ -25,6 +34,9 @@ public sealed class PermissionMaskMigrationTests
     private const int CreateField    = 512;
     private const int DuplicateField = 4096;
     private const int OldAll         = 4095;   // PermAction.All до появления нового бита
+
+    // Права интеграций: настройка (8192) и исходящие (16384).
+    private const int Integrations = 8192 | 16384;
 
     // Три пользователя: с полной старой маской, с урезанной (создание свойств снято)
     // и с переопределением на коллекцию — бэкфилл обязан разобрать все три случая.
@@ -60,13 +72,17 @@ public sealed class PermissionMaskMigrationTests
     private static void AssertBackfilled(System.Data.Common.DbConnection conn, string column)
     {
         // Мог создавать свойства → получил и новое право: поведение до миграции сохранено.
-        Assert.Equal(OldAll | DuplicateField, Mask(conn, column, 10));
-        Assert.Equal(OldAll | DuplicateField, Mask(conn, column, 12));
+        Assert.Equal(OldAll | DuplicateField | Integrations, Mask(conn, column, 10));
+        Assert.Equal(OldAll | DuplicateField | Integrations, Mask(conn, column, 12));
 
         // Не мог создавать → дубль по-прежнему закрыт, лишних прав миграция не раздает.
         var trimmed = Mask(conn, column, 11);
         Assert.Equal(0, trimmed & DuplicateField);
         Assert.Equal(0, trimmed & CreateField);
+
+        // А права интеграций достаются и ему: до этой миграции настройка обмена не
+        // спрашивала ничего, и урезанная маска не означала запрета на нее.
+        Assert.Equal(Integrations, trimmed & Integrations);
     }
 
     [Fact]

@@ -25,11 +25,20 @@ public enum PermAction
     DeleteField         = 1 << 11,
     DuplicateField      = 1 << 12,
 
+    /// <summary>Настройка обмена: соединения, запросы, сценарии, папка приема
+    /// (docs/ROADMAP-API.md, 10.8). Право уровня базы.</summary>
+    IntegrationsSetup   = 1 << 13,
+
+    /// <summary>Включение исходящих направлений — тех запросов, которые уносят данные наружу
+    /// (docs/ROADMAP-API.md, 10.8). Право уровня базы.</summary>
+    IntegrationsOutward = 1 << 14,
+
     /// <summary>Полная маска — права допущенного пользователя по умолчанию
     /// (администратор снимает лишнее в панели).</summary>
     All = ViewCollection | EditCollection | DeleteCollection | DuplicateCollection |
           CreateCollection | CreateRecord | EditRecord | DeleteRecord | DuplicateRecord |
-          CreateField | EditField | DeleteField | DuplicateField,
+          CreateField | EditField | DeleteField | DuplicateField |
+          IntegrationsSetup | IntegrationsOutward,
 }
 
 /// <summary>Русские подписи действий для панели администратора и сообщений об отказе.</summary>
@@ -55,8 +64,21 @@ public static class PermActionLabels
         PermAction.EditField           => "Изменение свойства",
         PermAction.DeleteField         => "Удаление свойства",
         PermAction.DuplicateField      => "Дублирование свойства",
+        PermAction.IntegrationsSetup   => "Интеграции: настройка",
+        PermAction.IntegrationsOutward => "Интеграции: исходящие",
         _                              => a.ToString(),
     };
+
+    /// <summary>
+    /// Право выдается только на всю базу: переопределять его у отдельной коллекции нечем.
+    /// У создания коллекции — потому что у несозданной коллекции переопределений нет; у
+    /// интеграций — потому что обмен один на все базы, открытые на этой машине, и «настройка
+    /// обмена в коллекции „Заказы“» не означала бы ничего.
+    /// </summary>
+    public static bool DatabaseOnly(PermAction a) =>
+        a is PermAction.CreateCollection
+          or PermAction.IntegrationsSetup
+          or PermAction.IntegrationsOutward;
 
     /// <summary>
     /// Что право разрешает — текст подсказки над заголовком колонки. Перечисляет все
@@ -101,6 +123,15 @@ public static class PermActionLabels
             "Удалять свойства вместе со значениями во всех записях коллекции.",
         PermAction.DuplicateField =>
             "Создавать копию свойства вместе с его значениями во всех записях коллекции.",
+        PermAction.IntegrationsSetup =>
+            "Заводить и править соединения, запросы и сценарии обмена, настраивать папку " +
+            "приема и чистить журнал запусков. Запускать настроенный обмен вручную можно " +
+            "и без этого права. Право уровня базы: настройки обмена общие для всех баз, " +
+            "открытых на этой машине.",
+        PermAction.IntegrationsOutward =>
+            "Подтверждать и отзывать исходящие направления — запросы, которые уносят данные " +
+            "наружу. Само подтверждение сверх этого требует мастер-пароля политики " +
+            "организации, и без политики его не выдать вовсе. Право уровня базы.",
         _ => "Действие в базе данных.",
     };
 
@@ -120,6 +151,9 @@ public static class PermActionLabels
         PermAction.EditField           => "изменение свойств запрещено администратором базы данных",
         PermAction.DeleteField         => "удаление свойств запрещено администратором базы данных",
         PermAction.DuplicateField      => "дублирование свойств запрещено администратором базы данных",
+        PermAction.IntegrationsSetup   => "настройка интеграций запрещена администратором базы данных",
+        PermAction.IntegrationsOutward =>
+            "включение исходящих направлений запрещено администратором базы данных",
         _                              => "действие запрещено администратором базы данных",
     };
 }

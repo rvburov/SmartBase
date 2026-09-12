@@ -82,6 +82,8 @@ public partial class SettingsView
         var choose = SmallButton("Выбрать", () => _ = ChooseInboxFolderAsync());
         var clear  = SmallButton("Убрать",  () =>
         {
+            if (!AllowIntegrations(Core.Models.PermAction.IntegrationsSetup)) return;
+
             AppSettings.SaveInboxFolder("");
             BuildIntegrationsInbox();
         });
@@ -128,6 +130,7 @@ public partial class SettingsView
     private async Task ChooseInboxFolderAsync()
     {
         if (TopLevel.GetTopLevel(this) is not { } top) return;
+        if (!AllowIntegrations(Core.Models.PermAction.IntegrationsSetup)) return;
 
         IStorageFolder? start = null;
         var current = AppSettings.LoadInboxFolder();

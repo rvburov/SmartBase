@@ -483,6 +483,7 @@ public partial class SettingsView
     private async Task ClearJournalAsync()
     {
         if (VisualRoot is not Window win || RunJournal.Current is not { } journal) return;
+        if (!AllowIntegrations(Core.Models.PermAction.IntegrationsSetup)) return;
 
         var confirmed = await new ConfirmDialog(
                 "Очистить журнал обмена? История запусков будет удалена без возможности "
