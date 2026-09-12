@@ -90,10 +90,12 @@
   строку списка не помещаются ни коллекция, ни список полей, которого окно не знает наперед. Список
   действий и список коллекций собирает сама вкладка — `ExtensionRegistry.All` называется здесь,
   а не в исполнителе сценариев.
-  Вкладка «Прием» ([SettingsIntegrationsInbox](../../../Views/Settings/SettingsIntegrationsInbox.cs))
-  пишет туда же, разбирая файлы из папки обмена; ее настройки (`integrations.inbox.folder`,
-  `integrations.inbox.db`) намеренно МАШИННЫЕ — одну папку смотрят несколько компьютеров разом, и
-  общая настройка включала бы прием сразу у всех. Вкладка «Журнал»
+  Вкладка «Доступ извне» ([SettingsIntegrationsInbox](../../../Views/Settings/SettingsIntegrationsInbox.cs)
+  плюс [SettingsIntegrationsAccess](../../../Views/Settings/SettingsIntegrationsAccess.cs))
+  пишет туда же — папку обмена, режим приема по сети и номер порта; все ее настройки
+  (`integrations.inbox.*`, `integrations.ingress.*`) намеренно МАШИННЫЕ. У папки потому, что одну
+  папку смотрят несколько компьютеров разом, и общая настройка включала бы прием сразу у всех;
+  у порта — потому что порт открывает конкретный компьютер, и иначе тут быть не может. Вкладка «Журнал»
   ([SettingsIntegrationsJournal](../../../Views/Settings/SettingsIntegrationsJournal.cs)) читает
   `integrations.db` (`RunJournal.Current`) и первой строкой показывает расход по накопительным
   потолкам: считается он по этому же журналу, и без него отказ шлюза нечем проверить. Отбор по
