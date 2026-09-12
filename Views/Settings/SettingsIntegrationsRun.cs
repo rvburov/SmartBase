@@ -154,7 +154,8 @@ public partial class SettingsView
         Database.RunJournal.Add(Database.RunEntry.New(
             Database.RunChannel.Request, request.Name, outcome.SafeAddress, outcome.Ok,
             outcome.Explanation, outcome.Rows, outcome.Bytes, outcome.Elapsed,
-            dbId: 0, at: startedAt, counts: outcome.Sent, direction: request.Id));
+            dbId: 0, at: startedAt, counts: outcome.Sent, direction: request.Id,
+            sentBody: outcome.SentBody, gotBody: outcome.GotBody));
 
         // Направлением воспользовались — отсчет простоя начинается заново.
         if (outcome.Sent) Database.OutwardGuard.Used(registry, request, DateTimeOffset.Now);

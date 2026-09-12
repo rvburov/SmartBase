@@ -33,12 +33,15 @@ public sealed record RunOutcome(
     string   SafeAddress,
     int      StatusCode,
     bool     Capped,
-    bool     Sent = false)
+    bool     Sent = false,
+    string   SentBody = "",
+    string   GotBody  = "")
 {
     internal static RunOutcome Failed(
-        string explanation, EgressResponse answer, int pages, int rows, bool sent) =>
+        string explanation, EgressResponse answer, int pages, int rows, bool sent,
+        string sentBody = "", string gotBody = "") =>
         new(false, explanation, "[]", rows, pages, answer.Bytes, answer.Elapsed,
-            answer.SafeAddress, answer.StatusCode, false, sent);
+            answer.SafeAddress, answer.StatusCode, false, sent, sentBody, gotBody);
 }
 
 /// <summary>
@@ -208,6 +211,10 @@ public static class RequestRunner
         // расход: остановленный до сокета обменом не был.
         var sent    = false;
 
+        // Тела первой порции — для журнала запусков. Секрет из них вырезан, длина урезана.
+        var sentBody = "";
+        var gotBody  = "";
+
         // Метка следующей порции у курсорной разбивки; у страничной — номер, у сдвиговой — сдвиг.
         string? cursor = null;
         var     number = 1;
@@ -224,6 +231,16 @@ public static class RequestRunner
 
             var answer = await EgressHttp.SendAsync(connection, page, secret, ct);
 
+            // Тела запоминаются от ПЕРВОЙ порции и до всех проверок ниже: именно неудачные
+            // запуски разбирают по телам, а неудача чаще всего и случается на первой порции.
+            // Показывать при этом последнюю из сорока — значит отвечать не на тот вопрос:
+            // человек ищет, что ушло и что пришло в ответ, а не что было в конце выгрузки.
+            if (pages == 0)
+            {
+                sentBody = Journalled(page.Body, secret);
+                gotBody  = Journalled(answer.Body, secret);
+            }
+
             pages++;
             bytes  += answer.Bytes;
             elapsed = answer.Elapsed > elapsed ? answer.Elapsed : elapsed;
@@ -238,29 +255,29 @@ public static class RequestRunner
                 return RunOutcome.Failed(
                     $"выбран суточный потолок объема этого направления: осталось было "
                     + $"{budget:N0} байт, а выгрузка потребовала {bytes:N0}",
-                    answer, pages, items.Count, sent);
+                    answer, pages, items.Count, sent, sentBody, gotBody);
 
             if (!answer.Sent)
                 return RunOutcome.Failed(
                     answer.Reason == EgressDenyReason.None
                         ? answer.Explanation
                         : "запрещено политикой: " + answer.Explanation,
-                    answer, pages, items.Count, sent);
+                    answer, pages, items.Count, sent, sentBody, gotBody);
 
             if (!answer.Ok)
                 return RunOutcome.Failed(
                     $"чужая программа ответила {answer.StatusCode}"
                     + (answer.Explanation.Length > 0 ? "; " + answer.Explanation : ""),
-                    answer, pages, items.Count, sent);
+                    answer, pages, items.Count, sent, sentBody, gotBody);
 
             if (answer.Truncated)
                 return RunOutcome.Failed(
                     "ответ длиннее потолка и обрезан — записи из него взять нельзя, "
                     + "разбейте выгрузку на страницы",
-                    answer, pages, items.Count, sent);
+                    answer, pages, items.Count, sent, sentBody, gotBody);
 
             if (!TryTake(answer.Body, request, items, limit, out cursor, out var taken, out var error))
-                return RunOutcome.Failed(error, answer, pages, items.Count, sent);
+                return RunOutcome.Failed(error, answer, pages, items.Count, sent, sentBody, gotBody);
 
             var capped = items.Count >= limit;
 
@@ -276,7 +293,8 @@ public static class RequestRunner
                         ? $"собрано {items.Count} записей — потолок политики на один запуск"
                         : "",
                     "[" + string.Join(",", items) + "]",
-                    items.Count, pages, bytes, elapsed, last, status, capped && !done, sent);
+                    items.Count, pages, bytes, elapsed, last, status, capped && !done, sent,
+                    sentBody, gotBody);
 
             number++;
             offset += taken;
@@ -285,7 +303,34 @@ public static class RequestRunner
         return new RunOutcome(true,
             $"остановлено после {MaxPages} порций: чужая программа не сообщает о конце списка",
             "[" + string.Join(",", items) + "]",
-            items.Count, pages, bytes, elapsed, last, status, true, sent);
+            items.Count, pages, bytes, elapsed, last, status, true, sent, sentBody, gotBody);
+    }
+
+    /// <summary>
+    /// Потолок тела, попадающего в журнал запусков. Тело нужно, чтобы разобрать неудачу, а не
+    /// чтобы хранить выгрузку: ответ бывает и в тридцать мегабайт, а строк в журнале двадцать
+    /// тысяч. Показанного куска хватает на то, ради чего тело и смотрят, — увидеть форму ответа
+    /// и текст ошибки чужой программы.
+    /// </summary>
+    public const int JournalBodyLimit = 8 * 1024;
+
+    /// <summary>
+    /// Тело в том виде, в каком его можно положить в журнал: без секрета и не длиннее потолка.
+    ///
+    /// Секрет вырезается ТЕМ ЖЕ знаком, что и в заголовках (<c>EgressPlan.Mask</c>): человек,
+    /// сверяющий журнал с сухим прогоном, не должен гадать, одно это и то же или разное. В теле
+    /// секрету взяться неоткуда — он живет в заголовке или в адресе, — но «неоткуда» здесь
+    /// значит «пока никто не вписал его руками», и полагаться на это нельзя.
+    /// </summary>
+    private static string Journalled(string? body, string secret)
+    {
+        var text = body ?? "";
+
+        if (secret.Length > 0) text = text.Replace(secret, EgressPlan.Mask, StringComparison.Ordinal);
+
+        return text.Length <= JournalBodyLimit
+            ? text
+            : text[..JournalBodyLimit] + $"\n… показано {JournalBodyLimit:N0} знаков из {text.Length:N0}";
     }
 
     // ── Одна порция ───────────────────────────────────────────────────────────

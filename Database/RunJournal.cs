@@ -44,6 +44,9 @@ public enum RunChannel
 /// <param name="Direction">Направление — ключ карточки запроса; 0 — запуск без карточки (файл из
 /// папки, итоговая строка сценария). По нему считается суточный потолок объема: подтверждают и
 /// отзывают именно карточку, и потолок в 10.6 назначен ей же, а не обмену целиком.</param>
+/// <param name="SentBody">Тело запроса, как оно ушло: без секрета и не длиннее потолка. Пусто —
+/// тела не было либо запуск до сети не дошел.</param>
+/// <param name="GotBody">Тело ответа чужой программы, по тем же правилам.</param>
 public sealed record RunEntry(
     long       Id,
     string     At,
@@ -57,15 +60,18 @@ public sealed record RunEntry(
     long       Ms,
     int        DbId,
     bool       Counts,
-    int        Direction)
+    int        Direction,
+    string     SentBody = "",
+    string     GotBody  = "")
 {
     /// <summary>Новая строка «сейчас»; момент передается явно — тест не должен зависеть от часов.</summary>
     public static RunEntry New(RunChannel channel, string name, string address, bool ok,
                                string explanation, int rows, long bytes, TimeSpan elapsed,
-                               int dbId, DateTimeOffset at, bool counts, int direction) =>
+                               int dbId, DateTimeOffset at, bool counts, int direction,
+                               string sentBody = "", string gotBody = "") =>
         new(0, at.ToUniversalTime().ToString("o", CultureInfo.InvariantCulture),
             channel, name, address, ok, explanation, rows, bytes,
-            (long)elapsed.TotalMilliseconds, dbId, counts, direction);
+            (long)elapsed.TotalMilliseconds, dbId, counts, direction, sentBody, gotBody);
 
     /// <summary>Момент записи; <c>null</c> — строка испорчена правкой файла руками.</summary>
     public DateTimeOffset? Moment =>
@@ -104,6 +110,17 @@ public sealed class RunJournal
     /// </summary>
     public const int Keep = 20_000;
 
+    /// <summary>
+    /// У скольких последних строк держатся ТЕЛА запроса и ответа. Числа в журнале дешевы и
+    /// нужны долго — по ним считаются квоты и по ним видно, что обмен вообще шел. Тела дороги и
+    /// нужны коротко: их смотрят, пока разбираются со свежей бедой, а не через полгода.
+    ///
+    /// Держи тела у всех двадцати тысяч строк — и журнал отладки вырос бы в сотни мегабайт на
+    /// ровном месте. Поэтому уборка стирает тела у строк старше этого числа, оставляя сами
+    /// строки на месте: «запуск был, тело уже не хранится» честнее, чем пропавшая строка.
+    /// </summary>
+    public const int KeepBodies = 500;
+
     private readonly string _path;
     private readonly object _lock = new();
 
@@ -137,35 +154,40 @@ public sealed class RunJournal
                 Ms          INTEGER NOT NULL,
                 DbId        INTEGER NOT NULL,
                 Counts      INTEGER NOT NULL,
-                Direction   INTEGER NOT NULL DEFAULT 0
+                Direction   INTEGER NOT NULL DEFAULT 0,
+                SentBody    TEXT    NOT NULL DEFAULT '',
+                GotBody     TEXT    NOT NULL DEFAULT ''
             );
             CREATE INDEX IF NOT EXISTS runs_at ON runs (At);
             """;
 
         command.ExecuteNonQuery();
 
-        AddDirection(connection);
+        AddColumn(connection, "Direction", "INTEGER NOT NULL DEFAULT 0");
+        AddColumn(connection, "SentBody",  "TEXT NOT NULL DEFAULT ''");
+        AddColumn(connection, "GotBody",   "TEXT NOT NULL DEFAULT ''");
     }
 
     /// <summary>
-    /// Достроить колонку направления в журнале, заведенном прежней версией программы. Строки,
-    /// написанные до нее, получают направление 0 — «неизвестно чье»: задним числом раскладывать
-    /// их по карточкам не по чему, а выбросить сутки расхода значило бы разрешить ровно столько
-    /// же сверх потолка.
+    /// Достроить колонку в журнале, заведенном прежней версией программы. Строки, написанные до
+    /// нее, получают значение по умолчанию: направление 0 — «неизвестно чье» (раскладывать их по
+    /// карточкам задним числом не по чему), тела — пустые.
     ///
     /// Отдельным шагом, а не переписыванием таблицы: журнал копится годами, и ронять его при
     /// обновлении программы нельзя.
     /// </summary>
-    private static void AddDirection(SqliteConnection connection)
+    private static void AddColumn(SqliteConnection connection, string name, string declaration)
     {
         using (var look = connection.CreateCommand())
         {
-            look.CommandText = "SELECT COUNT(*) FROM pragma_table_info('runs') WHERE name = 'Direction';";
+            look.CommandText = "SELECT COUNT(*) FROM pragma_table_info('runs') WHERE name = $name;";
+            look.Parameters.AddWithValue("$name", name);
             if (Convert.ToInt32(look.ExecuteScalar(), CultureInfo.InvariantCulture) > 0) return;
         }
 
         using var add = connection.CreateCommand();
-        add.CommandText = "ALTER TABLE runs ADD COLUMN Direction INTEGER NOT NULL DEFAULT 0;";
+        // Имя и объявление приходят только отсюда, константами: параметров в DDL не бывает.
+        add.CommandText = $"ALTER TABLE runs ADD COLUMN {name} {declaration};";
         add.ExecuteNonQuery();
     }
 
@@ -202,8 +224,8 @@ public sealed class RunJournal
                 using var command    = connection.CreateCommand();
 
                 command.CommandText = """
-                    INSERT INTO runs (At, Channel, Name, Address, Ok, Explanation, Rows, Bytes, Ms, DbId, Counts, Direction)
-                    VALUES ($at, $channel, $name, $address, $ok, $explanation, $rows, $bytes, $ms, $db, $counts, $direction);
+                    INSERT INTO runs (At, Channel, Name, Address, Ok, Explanation, Rows, Bytes, Ms, DbId, Counts, Direction, SentBody, GotBody)
+                    VALUES ($at, $channel, $name, $address, $ok, $explanation, $rows, $bytes, $ms, $db, $counts, $direction, $sentBody, $gotBody);
                     SELECT last_insert_rowid();
                     """;
 
@@ -219,6 +241,8 @@ public sealed class RunJournal
                 command.Parameters.AddWithValue("$db",          entry.DbId);
                 command.Parameters.AddWithValue("$counts",      entry.Counts ? 1 : 0);
                 command.Parameters.AddWithValue("$direction",   entry.Direction);
+                command.Parameters.AddWithValue("$sentBody",    entry.SentBody ?? "");
+                command.Parameters.AddWithValue("$gotBody",     entry.GotBody  ?? "");
 
                 return Convert.ToInt64(command.ExecuteScalar(), CultureInfo.InvariantCulture);
             }
@@ -243,7 +267,7 @@ public sealed class RunJournal
                 using var command    = connection.CreateCommand();
 
                 command.CommandText = """
-                    SELECT Id, At, Channel, Name, Address, Ok, Explanation, Rows, Bytes, Ms, DbId, Counts, Direction
+                    SELECT Id, At, Channel, Name, Address, Ok, Explanation, Rows, Bytes, Ms, DbId, Counts, Direction, SentBody, GotBody
                     FROM runs ORDER BY Id DESC LIMIT $take;
                     """;
 
@@ -258,7 +282,7 @@ public sealed class RunJournal
                         reader.GetString(3), reader.GetString(4), reader.GetInt32(5) != 0,
                         reader.GetString(6), reader.GetInt32(7), reader.GetInt64(8),
                         reader.GetInt64(9), reader.GetInt32(10), reader.GetInt32(11) != 0,
-                        reader.GetInt32(12)));
+                        reader.GetInt32(12), reader.GetString(13), reader.GetString(14)));
 
                 return rows;
             }
@@ -388,11 +412,13 @@ public sealed class RunJournal
     // ── Уборка ────────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Оставить последние <see cref="Keep"/> строк. Возвращает, сколько удалено.
+    /// Оставить последние <see cref="Keep"/> строк, а тела — только у последних
+    /// <see cref="KeepBodies"/>. Возвращает, сколько строк удалено; стертые тела не считаются —
+    /// строка осталась, и пропажей это не было.
     ///
     /// Уборка идет по КЛЮЧУ, а не по дате: часы на машине переводят, а ключ растет всегда.
     /// </summary>
-    public int Trim(int keep = Keep)
+    public int Trim(int keep = Keep, int keepBodies = KeepBodies)
     {
         try
         {
@@ -401,6 +427,8 @@ public sealed class RunJournal
                 using var connection = Open();
                 using var command    = connection.CreateCommand();
 
+                // Два шага, и порядок между ними не важен: сперва уходят старые строки
+                // целиком, потом у оставшихся, но уже немолодых, стираются тела.
                 command.CommandText = """
                     DELETE FROM runs WHERE Id <= (
                         SELECT IFNULL(MAX(Id), 0) - $keep FROM runs
@@ -409,7 +437,20 @@ public sealed class RunJournal
 
                 command.Parameters.AddWithValue("$keep", Math.Max(1, keep));
 
-                return command.ExecuteNonQuery();
+                var removed = command.ExecuteNonQuery();
+
+                using var bodies = connection.CreateCommand();
+
+                bodies.CommandText = """
+                    UPDATE runs SET SentBody = '', GotBody = ''
+                    WHERE (SentBody <> '' OR GotBody <> '')
+                      AND Id <= (SELECT IFNULL(MAX(Id), 0) - $keepBodies FROM runs);
+                    """;
+
+                bodies.Parameters.AddWithValue("$keepBodies", Math.Max(1, keepBodies));
+                bodies.ExecuteNonQuery();
+
+                return removed;
             }
         }
         catch (SqliteException failure)

@@ -433,7 +433,8 @@ public static partial class ScenarioRunner
         RunJournal.Add(RunEntry.New(
             RunChannel.Request, request.Name, outcome.SafeAddress, outcome.Ok, outcome.Explanation,
             outcome.Rows, outcome.Bytes, outcome.Elapsed, binding.DbId, startedAt,
-            counts: outcome.Sent, direction: request.Id));
+            counts: outcome.Sent, direction: request.Id,
+            sentBody: outcome.SentBody, gotBody: outcome.GotBody));
 
         // Направлением воспользовались — отсчет простоя начинается заново. Считается по тому же
         // признаку, что и расход квоты: данные ДОШЛИ до сети. Запуск, остановленный замком или

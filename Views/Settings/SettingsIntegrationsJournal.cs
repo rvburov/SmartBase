@@ -350,6 +350,18 @@ public partial class SettingsView
 
         list.Children.Add(Note(run.Counts ? "В расход по потолкам засчитан." : NotCounted(run)));
 
+        // Тела запроса и ответа — то, ради чего журнал отладки и открывают: без них панель
+        // отвечает «не получилось» и не отвечает «почему».
+        if (run.SentBody.Length > 0) list.Children.Add(Body("Запрос",  run.SentBody));
+        if (run.GotBody.Length  > 0) list.Children.Add(Body("Ответ",   run.GotBody));
+
+        // Строка есть, а тел нет — это может значить и «их не было», и «уже не хранятся».
+        // Второе надо сказать вслух: молчание читается как потеря.
+        if (run.Channel == RunChannel.Request && run.SentBody.Length == 0 && run.GotBody.Length == 0)
+            list.Children.Add(Note(
+                "Тела запроса и ответа не хранятся: они держатся только у последних "
+                + $"{RunJournal.KeepBodies:N0} запусков."));
+
         var copy = SmallButton("Скопировать", () =>
             _ = TopLevel.GetTopLevel(this)?.Clipboard?.SetTextAsync(Plain(run)));
 
@@ -365,6 +377,50 @@ public partial class SettingsView
     }
 
     /// <summary>
+    /// Тело запроса или ответа: заголовок и сам текст в рамке, моноширинным шрифтом и с
+    /// прокруткой по высоте. Текст выделяемый — половина разбора кончается тем, что кусок
+    /// ответа пересылают той стороне.
+    ///
+    /// Высота ограничена: ответ чужой программы бывает на восемь тысяч знаков, и вылезший на
+    /// три экрана JSON увел бы из виду сам список запусков.
+    /// </summary>
+    private Control Body(string title, string text)
+    {
+        var box = new SelectableTextBlock
+        {
+            Text         = text,
+            TextWrapping = TextWrapping.NoWrap,
+            FontFamily   = new FontFamily("Menlo, Consolas, monospace"),
+            FontSize     = 11,
+            Foreground   = Ink("BrushSecondaryText", "#8E8E93"),
+        };
+
+        return new StackPanel
+        {
+            Spacing  = 3,
+            Margin   = new Thickness(0, 4, 0, 0),
+            Children =
+            {
+                Note(title + ":"),
+                new Border
+                {
+                    Padding         = new Thickness(8, 6, 8, 6),
+                    CornerRadius    = new CornerRadius(6),
+                    BorderThickness = new Thickness(1),
+                    BorderBrush     = Ink("BrushSeparator", "#E5E5EA"),
+                    MaxHeight       = 180,
+                    Child = new ScrollViewer
+                    {
+                        HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Auto,
+                        VerticalScrollBarVisibility   = Avalonia.Controls.Primitives.ScrollBarVisibility.Auto,
+                        Content                       = box,
+                    },
+                },
+            },
+        };
+    }
+
+    /// <summary>
     /// Строка текстом — чтобы переслать той стороне. Именно этим кончается почти каждый разбор
     /// неудачного обмена, и перенабирать числа руками незачем. Секрета в тексте нет: адрес в
     /// журнале и так лежит замаскированным.
@@ -373,7 +429,9 @@ public partial class SettingsView
         $"{Full(run)} · {ChannelText(run.Channel)} · {run.Name} · {(run.Ok ? "удача" : "ошибка")}\n"
         + $"{run.Address}\n"
         + $"{run.Explanation}\n"
-        + $"{Numbers(run)} · база: {DatabaseName(run.DbId)}";
+        + $"{Numbers(run)} · база: {DatabaseName(run.DbId)}"
+        + (run.SentBody.Length > 0 ? $"\n\nЗапрос:\n{run.SentBody}" : "")
+        + (run.GotBody.Length  > 0 ? $"\n\nОтвет:\n{run.GotBody}"   : "");
 
     /// <summary>
     /// Числа запуска. Пустые не показываются: обмен файлами не меряет ни объем, ни длительность,

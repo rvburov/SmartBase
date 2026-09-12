@@ -333,6 +333,68 @@ public sealed class RequestRunnerTests : IDisposable
         Assert.Equal(1, outcome.Rows);   // успели собрать одну — это видно в отчете
     }
 
+    // ── Тела для журнала ──────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Тела запроса и ответа возвращаются итогом и уходят в журнал: без них панель подробностей
+    /// отвечает «не получилось» и не отвечает «почему».
+    /// </summary>
+    [Fact]
+    public async Task Bodies_come_back_with_the_outcome()
+    {
+        AllowLoopback();
+        using var server = new TinyServer(_ => TinyServer.Reply(200, Items("А")));
+
+        var outcome = await Run(server, Request() with
+        {
+            Method = RequestMethod.Post,
+            Body   = """{"since":"2026-09-09"}""",
+        });
+
+        Assert.Contains("since", outcome.SentBody, StringComparison.Ordinal);
+        Assert.Contains("\"name\":\"А\"", outcome.GotBody, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Тела берутся от ПЕРВОЙ порции: неудачу разбирают по ней, а показывать последнюю из сорока
+    /// значило бы отвечать не на тот вопрос — человек ищет, что ушло и что пришло в ответ, а не
+    /// что было в конце выгрузки.
+    /// </summary>
+    [Fact]
+    public async Task Bodies_are_taken_from_the_first_page()
+    {
+        AllowLoopback();
+        var page = 0;
+
+        using var server = new TinyServer(_ =>
+            TinyServer.Reply(200, ++page == 1 ? Items("первая") : "[]"));
+
+        var outcome = await Run(server, Request(paging: RequestPaging.Page, pagingField: "page"));
+
+        Assert.True(outcome.Ok, outcome.Explanation);
+        Assert.Contains("первая", outcome.GotBody, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Секрет вырезается из тела тем же знаком, что и из заголовков. В теле ему взяться неоткуда
+    /// — он живет в заголовке или в адресе, — но «неоткуда» здесь значит «пока никто не вписал
+    /// его руками», и полагаться на это нельзя: журнал выгружают и пересылают.
+    /// </summary>
+    [Fact]
+    public async Task A_secret_typed_into_the_body_does_not_reach_the_journal()
+    {
+        AllowLoopback();
+        using var server = new TinyServer(_ => TinyServer.Reply(200, Items("А")));
+
+        var outcome = await RequestRunner.RunAsync(
+            Connection(server),
+            Request() with { Method = RequestMethod.Post, Body = """{"token":"очень-секретно"}""" },
+            secret: "очень-секретно", context: Context(), refusal: null);
+
+        Assert.DoesNotContain("очень-секретно", outcome.SentBody, StringComparison.Ordinal);
+        Assert.Contains("***", outcome.SentBody, StringComparison.Ordinal);
+    }
+
     // ── Накопительные потолки ─────────────────────────────────────────────────
 
     /// <summary>Счетчик расхода, отдающий заданные числа: расход считает журнал, решает шлюз.</summary>

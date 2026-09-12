@@ -246,6 +246,63 @@ public sealed class RunJournalTests : IDisposable
         Assert.Equal(2, journal.Recent().Count);
     }
 
+    // ── Тела запроса и ответа ─────────────────────────────────────────────────
+
+    /// <summary>
+    /// Тела — то, ради чего журнал отладки и открывают: без них панель подробностей отвечает
+    /// «не получилось» и не отвечает «почему».
+    /// </summary>
+    [Fact]
+    public void Bodies_read_back_with_the_entry()
+    {
+        var journal = Journal();
+
+        journal.Write(RunEntry.New(
+            RunChannel.Request, "Заказы", "https://api.zavod.local/orders", ok: false,
+            "чужая программа ответила 422", rows: 0, bytes: 120,
+            elapsed: TimeSpan.FromMilliseconds(30), dbId: 0, at: Now, counts: true, direction: 7,
+            sentBody: """{"since":"2026-09-10"}""",
+            gotBody:  """{"error":"unknown field since"}"""));
+
+        var row = journal.Recent().Single();
+
+        Assert.Contains("since", row.SentBody, StringComparison.Ordinal);
+        Assert.Contains("unknown field", row.GotBody, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Числа в журнале дешевы и нужны долго — по ним считаются квоты. Тела дороги и нужны
+    /// коротко. Поэтому уборка стирает тела у строк старше своего порога, ОСТАВЛЯЯ сами строки:
+    /// «запуск был, тело уже не хранится» честнее, чем пропавшая строка. Иначе журнал отладки
+    /// вырос бы в сотни мегабайт на ровном месте.
+    /// </summary>
+    [Fact]
+    public void Trim_drops_old_bodies_but_keeps_the_rows()
+    {
+        var journal = Journal();
+
+        for (var i = 0; i < 10; i++)
+            journal.Write(RunEntry.New(
+                RunChannel.Request, $"Запуск {i}", "https://api.zavod.local", ok: true, "",
+                rows: 1, bytes: 10, elapsed: TimeSpan.Zero, dbId: 0, at: Now,
+                counts: true, direction: 7,
+                sentBody: $"запрос {i}", gotBody: $"ответ {i}"));
+
+        // Строк оставляем все десять, тел — только у трех последних.
+        Assert.Equal(0, journal.Trim(keep: 100, keepBodies: 3));
+
+        var rows = journal.Recent();
+
+        Assert.Equal(10, rows.Count);
+        Assert.All(rows.Take(3), r => Assert.NotEqual("", r.SentBody));
+        Assert.All(rows.Skip(3), r =>
+        {
+            Assert.Equal("", r.SentBody);
+            Assert.Equal("", r.GotBody);
+            Assert.NotEqual("", r.Name);   // сама строка на месте
+        });
+    }
+
     // ── Уборка ────────────────────────────────────────────────────────────────
 
     /// <summary>Уборка идет по ключу, а не по дате: часы на машине переводят, а ключ растет всегда.</summary>
