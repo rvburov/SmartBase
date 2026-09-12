@@ -932,6 +932,13 @@ public partial class SidebarTree : UserControl
                 () => RelocateSelectionOrNode(node))));
             menu.Items.Add(MenuItemDuplicate(Guard(PermAction.DuplicateCollection, id,
                 () => DuplicateSelectionOrNode(node))));
+
+            // Действия обмена над ВСЕЙ коллекцией. Место выбрано по охвату: здесь коллекция
+            // целиком (и потому тут же ручные сценарии), в меню строки таблицы — выделенные
+            // записи, в шапке открытой записи — она одна. Отсюда коллекцию можно отправить, даже
+            // не открывая ее.
+            if (!multi) AddActionItems(menu, db, id);
+
             menu.Items.Add(MenuItemDelete(Guard(PermAction.DeleteCollection, id,
                 () => _ = DeleteSelectionOrNode(node))));
         }
@@ -959,6 +966,44 @@ public partial class SidebarTree : UserControl
 
     // Сдвиг попапа сабменю — общий для всех подменю сайдбара (цвет, поля-даты, исполнители).
     private static void FixSubmenuGap(MenuItem item) => MenuIcons.FixSubmenuGap(item);
+
+    /// <summary>
+    /// Действия обмена для коллекции сайдбара (docs/ROADMAP-API.md, шаг 6); <c>null</c> — обмен
+    /// не подключен, и пункта в меню нет вовсе. Аргументы — база и коллекция узла: сайдбар
+    /// показывает коллекции ВСЕХ смонтированных баз, и «текущая база» тут ничего не значит.
+    ///
+    /// Сайдбар об интеграциях не знает: он показывает то, что ему дали, и зовет то, что ему
+    /// дали. Собирает список раздел данных (<c>Views/ConstructorDb/IntegrationActions.cs</c>).
+    /// </summary>
+    public Func<int, int, IReadOnlyList<DataAction>>? DataActions { get; set; }
+
+    // Пункт «Действия» в меню коллекции. Состав спрашивается на КАЖДОЕ открытие меню: обмен
+    // могли настроить, пока окно висело на экране. Пусто — пункта нет: пункт, который всегда
+    // есть и всегда пуст, читается как поломка.
+    private void AddActionItems(ContextMenu menu, int dbId, int collectionId)
+    {
+        var actions = DataActions?.Invoke(dbId, collectionId) ?? [];
+        if (actions.Count == 0) return;
+
+        var host = new MenuItem { Header = MenuIcons.ActionsHeader() };
+        FixSubmenuGap(host);
+
+        var items = new List<MenuItem>();
+
+        foreach (var action in actions)
+        {
+            var item = new MenuItem { Header = MenuIcons.IntegrationHeader(action.Title) };
+            var run  = action.Run;
+
+            // Пустой список записей означает «вся коллекция»: собирает их сама отправка,
+            // страницами, а не интерфейс.
+            item.Click += (_, _) => _ = run([]);
+            items.Add(item);
+        }
+
+        host.ItemsSource = items;
+        menu.Items.Add(host);
+    }
 
     // Палитра и разметка пунктов — общие (ColorMenu). У коллекции «без цвета» хранится
     // не как NULL, а дефолтным синим (EventColors.Default) — это ее исторический контракт.

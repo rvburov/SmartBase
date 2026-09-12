@@ -8,8 +8,8 @@
          окна на y=56 (MainWindow), иначе линии удваивались бы в 2px. -->
     <DockPanel>
 
-        <!-- Заголовок слева, действия обмена + переключатель вида + toggle панели записи справа -->
-        <Grid ColumnDefinitions="*,Auto,Auto,Auto" Margin="16,0">
+        <!-- Заголовок слева, переключатель вида + toggle панели записи справа -->
+        <Grid ColumnDefinitions="*,Auto,Auto" Margin="16,0">
 
             <TextBlock Grid.Column="0" x:Name="TitleDisplay"
                        HorizontalAlignment="Stretch"
@@ -29,26 +29,8 @@
                      FontWeight="{StaticResource FontWeightBold}"
                      Margin="0,0,12,0" />
 
-            <!-- Действия обмена: видна, только когда для коллекции что-то настроено. Кнопка,
-                 которая всегда есть и всегда пуста, читается как поломка. -->
-            <Button Grid.Column="1" x:Name="ActionsBtn" Classes="navbtn"
-                    Width="30" Height="30" Margin="0,0,8,0"
-                    IsVisible="False"
-                    VerticalAlignment="Center"
-                    CornerRadius="{StaticResource RadiusMedium}"
-                    ToolTip.Tip="Действия обмена">
-                <Viewbox Width="{StaticResource IconSizeMedium}" Height="{StaticResource IconSizeMedium}">
-                    <Canvas Width="24" Height="24">
-                        <Path Data="{StaticResource IconPlay}"
-                              Stroke="{Binding $parent[Button].Foreground}"
-                              StrokeThickness="{StaticResource IconStrokeMedium}"
-                              StrokeLineCap="Round" StrokeJoin="Round" />
-                    </Canvas>
-                </Viewbox>
-            </Button>
-
             <!-- Переключатель вида (Таблица / Список) -->
-            <ComboBox Grid.Column="2" x:Name="ViewSelector"
+            <ComboBox Grid.Column="1" x:Name="ViewSelector"
                       Width="130" Height="30"
                       VerticalAlignment="Center"
                       Background="{StaticResource BrushSecondaryBg}"
@@ -56,7 +38,7 @@
 
             <!-- Toggle правой панели записи: arrow-right-from-line (открыть) /
                  arrow-left-to-line (закрыть). Логика как у SidebarBtn в ActivityBar. -->
-            <ToggleButton Grid.Column="3" x:Name="RecordPanelBtn" Classes="navbtn"
+            <ToggleButton Grid.Column="2" x:Name="RecordPanelBtn" Classes="navbtn"
                           Width="30" Height="30" Margin="8,0,0,0"
                           VerticalAlignment="Center"
                           CornerRadius="{StaticResource RadiusMedium}"

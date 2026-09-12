@@ -7,6 +7,7 @@ using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.VisualTree;
+using SmartBase.Controls.Components;
 using SmartBase.Controls.Behaviors;
 using SmartBase.Controls.Widgets;
 using SmartBase.Core.Models;
@@ -669,7 +670,7 @@ public partial class RecordPageView : UserControl
         {
             var item = new MenuItem
             {
-                Header = Controls.Components.MenuIcons.PlainHeader(action.Title),
+                Header = Controls.Components.MenuIcons.IntegrationHeader(action.Title),
             };
 
             var run = action.Run;

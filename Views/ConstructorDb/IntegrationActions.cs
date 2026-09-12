@@ -1,16 +1,10 @@
 using Avalonia.Controls;
+using SmartBase.Controls.Components;
 using SmartBase.Controls.Dialogs;
 using SmartBase.Database;
 using SmartBase.Integrations;
 
 namespace SmartBase.Views.ConstructorDb;
-
-/// <summary>
-/// Одно действие обмена, показанное там, где лежат данные.
-/// </summary>
-/// <param name="Title">Как оно называется в меню.</param>
-/// <param name="Run">Что сделать. Список записей — выделенные строки; пустой — вся коллекция.</param>
-public sealed record DataAction(string Title, Func<IReadOnlyList<int>, Task> Run);
 
 /// <summary>
 /// Точки вызова обмена в разделе данных (docs/ROADMAP-API.md, шаг 6): пункт «Действия» в

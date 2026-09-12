@@ -19,9 +19,6 @@ public partial class NavbarConstructor : UserControl
     /// <summary>Запрос изменить видимость правой панели записи (true — открыть, false — закрыть).</summary>
     public event EventHandler<bool>?   RecordPanelToggled;
 
-    /// <summary>Нажата кнопка «Действия обмена»: список собирает и показывает раздел.</summary>
-    public event EventHandler<Control>? ActionsRequested;
-
     private string _committedTitle = "";
 
     public NavbarConstructor()
@@ -62,15 +59,7 @@ public partial class NavbarConstructor : UserControl
             UpdateRecordPanelIcon();
             RecordPanelToggled?.Invoke(this, RecordPanelBtn.IsChecked == true);
         };
-
-        ActionsBtn.Click += (_, _) => ActionsRequested?.Invoke(this, ActionsBtn);
     }
-
-    /// <summary>
-    /// Показать кнопку действий. Скрывается, когда для коллекции ничего не настроено: кнопка,
-    /// которая всегда есть и всегда пуста, читается как поломка, а не как «обмена тут нет».
-    /// </summary>
-    public void ShowActions(bool show) => ActionsBtn.IsVisible = show;
 
     /// <summary>Показывает/скрывает контролы, осмысленные только при выбранной коллекции
     /// (переключатель вида и кнопка панели записи).</summary>
@@ -78,7 +67,6 @@ public partial class NavbarConstructor : UserControl
     {
         ViewSelector.IsVisible   = show;
         RecordPanelBtn.IsVisible = show;
-        if (!show) ActionsBtn.IsVisible = false;
     }
 
     /// <summary>Синхронизирует визуальное состояние кнопки с фактической видимостью панели записи.</summary>

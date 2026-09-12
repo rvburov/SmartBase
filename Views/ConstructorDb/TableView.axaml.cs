@@ -2254,7 +2254,7 @@ public partial class TableView : UserControl
 
         var host = new MenuItem
         {
-            Header    = Controls.Components.MenuIcons.PlainHeader("Действия"),
+            Header    = Controls.Components.MenuIcons.ActionsHeader(),
             IsVisible = false,
         };
 
@@ -2274,7 +2274,7 @@ public partial class TableView : UserControl
             {
                 var item = new MenuItem
                 {
-                    Header = Controls.Components.MenuIcons.PlainHeader(action.Title),
+                    Header = Controls.Components.MenuIcons.IntegrationHeader(action.Title),
                 };
 
                 var run = action.Run;

@@ -300,12 +300,19 @@ public partial class MainWindow : Window
         // Допущенные БД — для окна «Расположение» записи (перенос в другую коллекцию/БД).
         ConstructorModule.SetDatabases(GrantedDbs());
 
-        // Точки вызова обмена в разделе данных: пункт «Действия» в меню таблицы и кнопка в
-        // навбаре коллекции. Сценарий запускается ТОЙ ЖЕ службой, что ходит по расписанию, —
-        // вторая дорога не отвечала бы на вопрос «а что будет само».
-        ConstructorModule.AttachIntegrations(
-            workspace.Registry.Integrations, GrantedDbs,
-            (scenario, ct) => _scenarios.RunNowAsync(scenario, ct));
+        // Точки вызова обмена в разделе данных. Охват задает МЕСТО: меню строки таблицы —
+        // выделенные записи, меню коллекции в сайдбаре — вся коллекция, шапка открытой записи —
+        // она одна.
+        ConstructorModule.AttachIntegrations(workspace.Registry.Integrations, GrantedDbs);
+
+        // Сайдбар: вся коллекция целиком, и потому здесь же ручные сценарии. Запускает их ТА ЖЕ
+        // служба, что ходит по расписанию, — вторая дорога не отвечала бы на вопрос «а что будет
+        // само».
+        ConstructorSidebar.DataActions = (dbId, collectionId) =>
+            Views.ConstructorDb.IntegrationActions.Build(
+                this, workspace.Registry.Integrations, GrantedDbs(),
+                (scenario, ct) => _scenarios.RunNowAsync(scenario, ct),
+                dbId, collectionId, scenarios: true);
 
         // Панель записи: те же действия, но над одной показанной записью. Ноль вместо базы
         // означает «текущая» — панель могла быть открыта и межбазовым переходом, и тогда база

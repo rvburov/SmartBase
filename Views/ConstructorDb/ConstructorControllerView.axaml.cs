@@ -1,5 +1,6 @@
 ﻿using Avalonia.Controls;
 using Avalonia.Threading;
+using SmartBase.Controls.Components;
 using SmartBase.Controls.Dialogs;
 using SmartBase.Core.Models;
 using SmartBase.Database;
@@ -114,11 +115,10 @@ public partial class ConstructorControllerView : UserControl
         FooterConstructor.LastRowClicked  += (_, _) => TableViewCtrl.ScrollRowsToEnd();
         TableViewCtrl.VisibleRangeChanged += (_, range) => FooterConstructor.SetRange(range);
 
-        // Точки вызова обмена: список собирается здесь, а показывают его таблица и навбар.
-        // Меню строки зовет действия для ВЫДЕЛЕННЫХ записей, кнопка навбара — для коллекции
-        // целиком, поэтому сценарии (у которых понятия «эти три записи» нет) есть только там.
-        TableViewCtrl.DataActions = () => DataActions(scenarios: false);
-        NavbarConstructor.ActionsRequested += (_, anchor) => ShowActionsMenu(anchor);
+        // Точки вызова обмена: список собирается здесь, а показывает его таблица. Охват здесь —
+        // ВЫДЕЛЕННЫЕ записи, поэтому сценариев в списке нет: у сценария нет понятия «эти три
+        // записи». Вся коллекция целиком — из контекстного меню сайдбара.
+        TableViewCtrl.DataActions = DataActions;
 
         // Стартовое состояние: коллекция не выбрана — заголовок-плейсхолдер и подсказка.
         NavbarConstructor.SetTitle("");
@@ -132,53 +132,28 @@ public partial class ConstructorControllerView : UserControl
     /// <param name="integrations">Реестр интеграций из app.db.</param>
     /// <param name="databases">Открытые базы — их спрашивают на момент запуска, а не при
     /// подключении: база могла закрыться, пока коллекция висела на экране.</param>
-    /// <param name="scenarioRun">Запуск сценария — та же служба, что ходит по расписанию.</param>
-    public void AttachIntegrations(
-        Database.IntegrationsRegistry?                               integrations,
-        Func<IReadOnlyList<DatabaseManager>>?                        databases,
-        Func<Scenario, CancellationToken, Task<ScenarioOutcome>>?    scenarioRun)
+    public void AttachIntegrations(Database.IntegrationsRegistry?        integrations,
+                                   Func<IReadOnlyList<DatabaseManager>>? databases)
     {
-        _integrations = integrations;
+        _integrations   = integrations;
         _integrationDbs = databases;
-        _scenarioRun  = scenarioRun;
     }
 
-    private Database.IntegrationsRegistry?                            _integrations;
-    private Func<IReadOnlyList<DatabaseManager>>?                     _integrationDbs;
-    private Func<Scenario, CancellationToken, Task<ScenarioOutcome>>? _scenarioRun;
-
-    /// <summary>Действия обмена для открытой коллекции; пусто — показывать нечего.</summary>
-    private IReadOnlyList<DataAction> DataActions(bool scenarios) =>
-        VisualRoot is Window window && _currentCollectionId is int collection
-            ? IntegrationActions.Build(window, _integrations, _integrationDbs?.Invoke() ?? [],
-                                       _scenarioRun, CurrentDbId, collection, scenarios)
-            : [];
+    private Database.IntegrationsRegistry?        _integrations;
+    private Func<IReadOnlyList<DatabaseManager>>? _integrationDbs;
 
     /// <summary>
-    /// Меню кнопки навбара. Охват — вся коллекция: пустой список записей означает «все», и
-    /// собирает их уже сама отправка, страницами, а не интерфейс.
+    /// Действия обмена для открытой коллекции; пусто — показывать нечего.
+    ///
+    /// Сценариев здесь нет намеренно: охват меню строки — ВЫДЕЛЕННЫЕ записи, а у сценария нет
+    /// понятия «эти три записи». Коллекция целиком запускается из сайдбара.
     /// </summary>
-    private void ShowActionsMenu(Control anchor)
-    {
-        var actions = DataActions(scenarios: true);
-        if (actions.Count == 0) return;
-
-        var menu = new MenuFlyout { Placement = PlacementMode.BottomEdgeAlignedRight };
-
-        foreach (var action in actions)
-        {
-            var item = new MenuItem
-            {
-                Header = Controls.Components.MenuIcons.PlainHeader(action.Title),
-            };
-
-            var run = action.Run;
-            item.Click += (_, _) => _ = run([]);
-            menu.Items.Add(item);
-        }
-
-        menu.ShowAt(anchor);
-    }
+    private IReadOnlyList<DataAction> DataActions() =>
+        VisualRoot is Window window && _currentCollectionId is int collection
+            ? IntegrationActions.Build(window, _integrations, _integrationDbs?.Invoke() ?? [],
+                                       scenarioRun: null, CurrentDbId, collection,
+                                       scenarios: false)
+            : [];
 
     // Пустое состояние (коллекция не выбрана): подсказка по центру, скрыты контролы
     // навбара (вид/запись) и нижняя панель — показывать навигацию по несуществующей
@@ -269,9 +244,6 @@ public partial class ConstructorControllerView : UserControl
         NavbarConstructor.SetViewMode(viewMode);
         SwitchView(viewMode, snapshot);
 
-        // Кнопка действий есть ровно тогда, когда для ЭТОЙ коллекции что-то настроено: всегда
-        // видимая и всегда пустая, она читалась бы как поломка.
-        NavbarConstructor.ShowActions(DataActions(scenarios: true).Count > 0);
 
         // Нижняя панель: диапазон видимых строк приедет от таблицы, когда она разложится
         // (VisibleRangeChanged) — до тех пор кнопки погашены. Своего счетчика записей у

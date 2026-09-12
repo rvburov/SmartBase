@@ -38,6 +38,8 @@ public static class MenuIcons
     private static Geometry CollectionPlus => Icon("IconCollectionPlus");
     private static Geometry FilePlus       => Icon("IconFilePlus");
     private static Geometry Palette        => Icon("IconPalette");
+    private static Geometry Workflow       => Icon("IconWorkflow");
+    private static Geometry Play           => Icon("IconPlay");
 
     private static SolidColorBrush Red => new(Color.Parse("#FF3B30"));
 
@@ -89,6 +91,19 @@ public static class MenuIcons
         row.Children.Add(new TextBlock { Text = text, VerticalAlignment = VerticalAlignment.Center });
         return row;
     }
+
+    /// <summary>
+    /// Заголовок подменю «Действия» — зонтик, под которым живут и обмен, и (по плану) действия
+    /// расширений. Поэтому у него иконка запуска, а не обмена: своя иконка стоит у каждого
+    /// ПУНКТА и говорит, откуда он взялся.
+    /// </summary>
+    public static Control ActionsHeader() => Header(Play, "Действия");
+
+    /// <summary>
+    /// Пункт, приехавший из интеграций, — та же иконка, что у раздела «Интеграции» в настройках:
+    /// человек должен узнать, где это настраивается, не читая текста.
+    /// </summary>
+    public static Control IntegrationHeader(string text) => Header(Workflow, text);
 
     /// <summary>
     /// Пункт без иконки, но с ее отступом — чтобы текст стоял в одну линию с соседями по меню.
