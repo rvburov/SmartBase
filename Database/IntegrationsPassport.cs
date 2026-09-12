@@ -66,13 +66,19 @@ public static class IntegrationsPassport
     /// <param name="who">Кто составляет.</param>
     /// <param name="now">Момент составления.</param>
     /// <param name="days">Глубина сводки в днях.</param>
+    /// <param name="ingress">Режим приема по сети на ЭТОЙ машине. Приходит параметром, а не
+    /// читается из настроек: паспорт собирается из того, что ему дали, — иначе его нельзя ни
+    /// проверить, ни собрать для машины, за которой сейчас не сидят.</param>
+    /// <param name="ingressPort">Порт приема.</param>
     public static string Build(IntegrationsRegistry            registry,
                                PolicyLoadResult                policy,
                                SecurityJournal?                journal,
                                IReadOnlyList<PassportDatabase> databases,
                                string                          who,
                                DateTimeOffset                  now,
-                               int                             days = DefaultDays)
+                               int                             days        = DefaultDays,
+                               IngressMode                     ingress     = IngressMode.Off,
+                               int                             ingressPort = IngressGate.DefaultPort)
     {
         var text  = new StringBuilder();
         var since = now.AddDays(-Math.Max(1, days));
@@ -80,9 +86,9 @@ public static class IntegrationsPassport
         Head(text, who, now, since, days);
         Policy(text, policy.Set, policy.Reads, DateOnly.FromDateTime(now.LocalDateTime.Date));
         Connections(text, registry);
-        Ingress(text, registry, databases);
+        Ingress(text, registry, databases, ingress, ingressPort);
         Directions(text, registry, now);
-        Traffic(text, journal, since);
+        Traffic(text, journal, since, policy.Set);
         Labels(text, databases);
         Journal(text, journal);
         Limits(text, journal, days);
@@ -213,16 +219,15 @@ public static class IntegrationsPassport
     /// ответ обязан быть в том же документе: слушаем ли, каким способом, кому выдан доступ и
     /// что этот доступ позволяет.
     ///
-    /// Настройки приема берутся у машины, а не у базы: порт открывает конкретный компьютер, и
-    /// паспорт составляется про него.
+    /// Настройки приема приходят параметром: порт открывает конкретный компьютер, и паспорт
+    /// составляется про него — но читать их отсюда значило бы связать сборку документа с
+    /// хранилищем настроек, которого у проверки нет.
     /// </summary>
     private static void Ingress(StringBuilder text, IntegrationsRegistry registry,
-                                IReadOnlyList<PassportDatabase> databases)
+                                IReadOnlyList<PassportDatabase> databases,
+                                IngressMode mode, int port)
     {
         Title(text, "3. КТО МОЖЕТ ПОСТУЧАТЬСЯ К НАМ");
-
-        var mode = Utils.AppSettings.LoadIngressMode();
-        var port = Utils.AppSettings.LoadIngressPort();
 
         if (!IngressGate.ListenerBuild)
             text.AppendLine("  Сборка без слушателя: принимающего кода в ней нет, порт не открывается.");
@@ -331,9 +336,23 @@ public static class IntegrationsPassport
         public HashSet<string> Fields = new(StringComparer.OrdinalIgnoreCase);
     }
 
-    private static void Traffic(StringBuilder text, SecurityJournal? journal, DateTimeOffset since)
+    private static void Traffic(StringBuilder text, SecurityJournal? journal, DateTimeOffset since,
+                                EgressPolicySet policy)
     {
         Title(text, "5. ЧТО УХОДИЛО ЗА ПЕРИОД");
+
+        var mirrors = policy.Mirrors;
+
+        if (mirrors.Count == 0)
+            text.AppendLine("  Зеркало исходящего не ведется: политика не назвала папку.");
+        else
+        {
+            text.AppendLine("  Копии отправленного складываются в:");
+            foreach (var folder in mirrors) text.AppendLine("    " + folder);
+            text.AppendLine("  Там лежат САМИ данные — в этом документе и в журнале их нет.");
+        }
+
+        text.AppendLine();
 
         if (journal is null)
         {

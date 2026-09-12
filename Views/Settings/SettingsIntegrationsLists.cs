@@ -159,7 +159,8 @@ public partial class SettingsView
         }
 
         rows.Add(Actions("Добавить", () => _ = EditRequestAsync(IntegrationRequest.New()),
-                         "Из cURL",   () => _ = ImportCurlAsync()));
+                         "Из cURL",   () => _ = ImportCurlAsync(),
+                         PresetButton()));
 
         var requests = registry.Requests();
 
@@ -176,6 +177,37 @@ public partial class SettingsView
             rows.Add(RequestRow(registry, request, connections));
             rows.Add(new Border { Classes = { "separator", "h" } });
         }
+    }
+
+    /// <summary>
+    /// Кнопка «Из заготовки»: список готовых карточек. Заготовка не создает «другой» запрос —
+    /// она заполняет тот же самый, и открывается он обычной карточкой, где видно, что именно
+    /// заполнили (docs/ROADMAP-API.md, раздел 5).
+    ///
+    /// Список выпадающий, а не пять кнопок в ряд: заготовок будет больше, а строка действий
+    /// одна на весь экран.
+    /// </summary>
+    private Control PresetButton()
+    {
+        var button = SmallButton("Из заготовки", () => { });
+
+        var menu = new MenuFlyout { Placement = PlacementMode.BottomEdgeAlignedLeft };
+
+        foreach (var preset in RequestPresets.All)
+        {
+            var item = new MenuItem { Header = preset.Title };
+            var made = preset;
+
+            // Подсказка живет в подсказке пункта, а не второй строкой: строка «зачем это берут»
+            // длиннее самого названия, и в меню она превратила бы список в простыню.
+            ToolTip.SetTip(item, made.Hint);
+
+            item.Click += (_, _) => _ = EditRequestAsync(made.Request);
+            menu.Items.Add(item);
+        }
+
+        button.Flyout = menu;
+        return button;
     }
 
     private Border RequestRow(Database.IntegrationsRegistry registry,
@@ -517,7 +549,9 @@ public partial class SettingsView
     // ── Строки списка ─────────────────────────────────────────────────────────
 
     /// <summary>Строка со списком действий сверху вкладки.</summary>
-    private static Border Actions(string first, Action onFirst, string? second = null, Action? onSecond = null)
+    private static Border Actions(string first, Action onFirst,
+                                  string? second = null, Action? onSecond = null,
+                                  Control? third = null)
     {
         var buttons = new StackPanel
         {
@@ -528,6 +562,7 @@ public partial class SettingsView
 
         buttons.Children.Add(SmallButton(first, onFirst));
         if (second is not null && onSecond is not null) buttons.Children.Add(SmallButton(second, onSecond));
+        if (third is not null) buttons.Children.Add(third);
 
         return new Border { Classes = { "settingRow" }, Child = buttons };
     }

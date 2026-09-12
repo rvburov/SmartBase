@@ -527,14 +527,18 @@ public sealed class IntegrationsPassportTests : IDisposable
         {
             cards.Issue("Обмен учетной системы", dbId: 1, "ПК17", Now);
 
-            var text = Build(cards, null,
-                [new PassportDatabase(1, "Основная", ConfidentialityLabel.Open, 0)]);
+            var text = IntegrationsPassport.Build(
+                cards, Policy(), null,
+                [new PassportDatabase(1, "Основная", ConfidentialityLabel.Open, 0)],
+                "Иванов И. И.", Now, ingress: IngressMode.Loopback,
+                ingressPort: IngressGate.DefaultPort);
 
             var section = Section(text, "3. КТО МОЖЕТ ПОСТУЧАТЬСЯ", "4. КОМУ РАЗРЕШЕНО");
 
             Assert.Contains("Обмен учетной системы", section, StringComparison.Ordinal);
             Assert.Contains("Основная",              section, StringComparison.Ordinal);
             Assert.Contains("обращений не было",     section, StringComparison.Ordinal);
+            Assert.Contains(IngressGate.LoopbackHost, section, StringComparison.Ordinal);
 
             // Главное утверждение раздела: читать данные через этот канал нельзя.
             Assert.Contains("Читать данные через", section, StringComparison.Ordinal);

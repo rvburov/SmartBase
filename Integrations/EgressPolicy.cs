@@ -41,6 +41,11 @@ public enum EgressMode
 /// <param name="Source">Откуда политика прочитана — для экрана «Безопасность» и журнала.</param>
 /// <param name="MasterHash">Проверочный хэш мастер-пароля (<see cref="MasterPassword"/>); пусто —
 /// этот источник подтверждать исходящие направления не позволяет вовсе.</param>
+/// <param name="Mirror">Куда складывать зеркало исходящего — копию всего, что уходит наружу
+/// (docs/ROADMAP-API.md, 10.1). Пусто — зеркала нет; это состояние по умолчанию. Папку называет
+/// ОРГАНИЗАЦИЯ, и не случайно: в отличие от журнала безопасности, зеркало содержит сами данные,
+/// и лежать им место там, куда доступ есть у проверяющего, а не у того, за кем ведется
+/// наблюдение.</param>
 /// <param name="AllowListen">Разрешает ли этот источник слушать АДРЕС МАШИНЫ в локальной сети
 /// (docs/ROADMAP-API.md, 10.12 и шаг 8). Петлевой адрес сюда не относится: к <c>127.0.0.1</c>
 /// может обратиться только программа этой же машины, и разрешать ей то, что она и так может,
@@ -57,7 +62,8 @@ public sealed record EgressPolicy(
     bool                    UserMayAddHosts,
     string                  Source,
     string                  MasterHash = "",
-    bool                    AllowListen = false)
+    bool                    AllowListen = false,
+    string                  Mirror      = "")
 {
     /// <summary>
     /// Самая строгая политика: наружу нельзя ничего. Ею подменяется любой источник, который
@@ -172,6 +178,17 @@ public sealed class EgressPolicySet
     /// </summary>
     public bool AllowsListen =>
         Sources.Count > 0 && Sources.All(p => p.AllowListen);
+
+    /// <summary>
+    /// Куда складывать зеркало исходящего. Здесь пересечения НЕТ, и это не недосмотр: зеркало —
+    /// не разрешение, а указание, и два источника, назвавшие разные папки, означают две
+    /// инстанции, каждая из которых хочет свою копию. Пишем в обе.
+    /// </summary>
+    public IReadOnlyList<string> Mirrors =>
+        [.. Sources.Select(p => p.Mirror)
+                   .Where(m => !string.IsNullOrWhiteSpace(m))
+                   .Select(m => m.Trim())
+                   .Distinct(StringComparer.OrdinalIgnoreCase)];
 
     /// <summary>Имя узла разрешено, только если его разрешает каждый источник.</summary>
     public bool AllowsHost(string? host) =>

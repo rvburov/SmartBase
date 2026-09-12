@@ -70,6 +70,15 @@ public static class RequestLauncher
         // что и расход квоты: данные ДОШЛИ до сети.
         if (outcome.Sent) OutwardGuard.Used(registry, request, now);
 
+        // Копия ушедшего — в папку аудита организации, если она ее назвала (10.1). Снимается
+        // ПОСЛЕ отправки и только с того, что дошло до сети: копия неотправленного означала бы
+        // отправку, которой не было. Читающие запросы зеркала не касаются — они ничего не
+        // уносят, и складывать в папку аудита их ответы значит хоронить в ней настоящие копии.
+        if (outcome.Sent && request.Outward && EgressMirror.Configured)
+            EgressMirror.Note(request, outcome.SafeAddress, outcome.SentBody,
+                              payload?.Rows ?? 0, payload?.Fields ?? "",
+                              outcome.Ok, Utils.CurrentUser.DisplayName, scenario, now);
+
         return outcome;
     }
 }

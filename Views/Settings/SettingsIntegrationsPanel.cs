@@ -145,6 +145,14 @@ public partial class SettingsView
 
         Add(rows, Row("Ограничения", "", LimitsList(policy)));
 
+        // Зеркало — единственное место контура, где наружу от программы уходят САМИ данные, и
+        // молчать о нем нельзя: человек должен знать, что копия отправленного где-то лежит.
+        Add(rows, Row("Зеркало исходящего",
+            "Копия всего, что уходит наружу, в папке аудита организации. В отличие от журнала "
+            + "безопасности, копия содержит сами данные — поэтому папку называет организация, "
+            + "а не программа и не пользователь.",
+            MirrorList(policy)));
+
         // 5. Кто сейчас может уносить данные наружу. До этой строки экран отвечал только на
         //    вопрос «что разрешено вообще»; проверяющего же занимает «кому разрешено здесь и
         //    сейчас, с чьего подтверждения и до какого числа».
@@ -233,7 +241,9 @@ public partial class SettingsView
 
             var text = Database.IntegrationsPassport.Build(
                 registry, EgressSetup.Last, Database.SecurityJournal.Current, databases,
-                CurrentUser.DisplayName, DateTimeOffset.Now);
+                CurrentUser.DisplayName, DateTimeOffset.Now,
+                ingress:     AppSettings.LoadIngressMode(),
+                ingressPort: AppSettings.LoadIngressPort());
 
             var file = await win.StorageProvider.SaveFilePickerAsync(
                 new Avalonia.Platform.Storage.FilePickerSaveOptions
@@ -566,6 +576,29 @@ public partial class SettingsView
 
         foreach (var source in policy.Sources)
             list.Children.Add(Note($"{source.Source} — " + Join(source.Folders)));
+
+        return list;
+    }
+
+    /// <summary>Куда складываются копии исходящего; «никуда» — тоже ответ, и он частый.</summary>
+    private static Control MirrorList(EgressPolicySet policy)
+    {
+        var list = new StackPanel { Spacing = 6 };
+
+        if (policy.Mirrors.Count == 0)
+        {
+            list.Children.Add(Note(
+                "Не ведется: политика не назвала папку. Это состояние по умолчанию — копии "
+                + "секретных данных не разбрасываются по машине без указания."));
+            return list;
+        }
+
+        foreach (var folder in policy.Mirrors)
+            list.Children.Add(Note(folder));
+
+        list.Children.Add(Note(
+            "Копия снимается с того, что ДОШЛО до сети, и только с запросов, уносящих данные. "
+            + "Читающие обращения в зеркало не идут."));
 
         return list;
     }

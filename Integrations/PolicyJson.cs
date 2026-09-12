@@ -19,6 +19,7 @@ namespace SmartBase.Integrations;
 ///   "validUntil": "2026-12-31",
 ///   "userMayAddHosts": false,
 ///   "allowNetworkListen": false,
+///   "mirror": "P:\\Аудит\\Исходящее",
 ///   "masterHash": "pbkdf2$210000$...$..."
 /// }
 /// </code>
@@ -93,6 +94,7 @@ public static class PolicyJson
             if (!TryBool(root, "userMayAddHosts",    out var mayAdd, out error)) return null;
             if (!TryBool(root, "allowNetworkListen", out var listen, out error)) return null;
             if (!TryText(root, "masterHash",         out var master, out error)) return null;
+            if (!TryText(root, "mirror",             out var mirror, out error)) return null;
 
             return new EgressPolicy(
                 mode,
@@ -106,7 +108,8 @@ public static class PolicyJson
                 mayAdd ?? false,
                 source,
                 master,
-                listen ?? false);
+                listen ?? false,
+                mirror);
         }
     }
 
