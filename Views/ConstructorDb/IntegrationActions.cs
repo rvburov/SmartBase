@@ -129,10 +129,13 @@ public static class IntegrationActions
             return;
         }
 
+        // Число — ПОСЛЕ существительного, как и везде в программе («Полей с метками: 0»). Ставь
+        // его перед — и пришлось бы склонять «записи» в трех формах ради одной строки, а на
+        // «1 выделенных записей» спотыкается глаз.
         var scope = records.Count > 0 ? "выделенных записей" : "записей коллекции";
 
         var confirmed = await new ConfirmDialog(
-                $"Отправить {payload.Rows:N0} {scope} наружу?\n\n"
+                $"Отправить наружу {scope}: {payload.Rows:N0}?\n\n"
                 + $"Запрос: {request.Name}\n"
                 + $"Адрес: {connection.Address}{request.Path}\n"
                 + $"Поля: {payload.Fields}",
