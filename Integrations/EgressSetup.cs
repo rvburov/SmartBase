@@ -23,9 +23,19 @@ public static class EgressSetup
     /// </summary>
     public static PolicyLoadResult Last { get; private set; } = new(EgressPolicySet.Closed, []);
 
+    /// <summary>
+    /// Когда действующие ограничения были применены; <c>null</c> — политику еще не читали ни
+    /// разу за этот заход. Вопрос проверяющего звучит как «с какого момента действует то, что
+    /// я вижу», и ответ на него — не время правки файла, а момент, когда программа его взяла:
+    /// файл могли поправить час назад, а «Перечитать политику» никто не нажал.
+    /// </summary>
+    public static DateTimeOffset? AppliedAt { get; private set; }
+
     /// <summary>Прочитать политику и отдать ее шлюзу. Возвращает отчет для экрана «Безопасность».</summary>
     public static PolicyLoadResult Init()
     {
+        AppliedAt = DateTimeOffset.Now;
+
         PolicyLoadResult result;
         try
         {

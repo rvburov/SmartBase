@@ -230,6 +230,24 @@ public partial class ConstructorRepository
           .AsEnumerable()
           .Count(json => Confidentiality.FromConfig(json) != ConfidentialityLabel.Open);
 
+    /// <summary>
+    /// Помеченные свойства ВСЕЙ базы: коллекция, свойство и метка. Нужен экрану «Безопасность»
+    /// по нажатию «Показать список»: цифра отвечает на вопрос «много ли помечено», а список —
+    /// на вопрос «что именно», и второй задают реже, зато тянет он имена коллекций.
+    ///
+    /// Порядок — коллекция, потом свойство: список читают глазами и ищут в нем знакомое имя.
+    /// </summary>
+    public IReadOnlyList<(string Collection, string Field, ConfidentialityLabel Label)> LabeledFields() =>
+        [.. db.DbFields.AsNoTracking()
+             .Join(db.DbCollections.AsNoTracking(),
+                   f => f.CollectionId, c => c.Id,
+                   (f, c) => new { Collection = c.Name, Field = f.Name, f.ConfigJson })
+             .AsEnumerable()
+             .Select(x => (x.Collection, x.Field, Label: Confidentiality.FromConfig(x.ConfigJson)))
+             .Where(x => x.Label != ConfidentialityLabel.Open)
+             .OrderBy(x => x.Collection, StringComparer.CurrentCulture)
+             .ThenBy(x => x.Field, StringComparer.CurrentCulture)];
+
     public IReadOnlyList<int> LabeledFieldIds(int collectionId) =>
         [.. db.DbFields.AsNoTracking()
              .Where(f => f.CollectionId == collectionId)

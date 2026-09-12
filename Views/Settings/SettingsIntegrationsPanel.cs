@@ -143,7 +143,28 @@ public partial class SettingsView
             "Куда разрешено класть и откуда брать файлы. Все остальные папки закрыты.",
             FolderList(policy)));
 
-        Add(rows, Row("Ограничения", "", LimitsList(policy)), last: true);
+        Add(rows, Row("Ограничения", "", LimitsList(policy)));
+
+        // 5. Кто сейчас может уносить данные наружу. До этой строки экран отвечал только на
+        //    вопрос «что разрешено вообще»; проверяющего же занимает «кому разрешено здесь и
+        //    сейчас, с чьего подтверждения и до какого числа».
+        Add(rows, Row("Действующие направления",
+            "Исходящим считается запрос, уносящий данные наружу; читающему подтверждать нечего. "
+            + "Подтверждение выдается мастер-паролем организации, на срок и с отсчетом простоя.",
+            DirectionsList()));
+
+        // 6. Метки — вторая половина правила «что именно уходит» (10.6): белый список отвечает
+        //    «куда», метки — «что». Одно без другого не читается.
+        Add(rows, Row("Метки конфиденциальности",
+            "Метка базы и метки отдельных свойств. «Закрытый контур» запрещает исходящие "
+            + "независимо от политики, режима и прав.",
+            LabelsList()));
+
+        // 7. Сколько раз замок сработал. Ноль — тоже ответ: контур либо никому не мешает, либо
+        //    в нем не работают вовсе, и отличить одно от другого помогает соседняя вкладка.
+        Add(rows, Row("Блокировок за неделю",
+            "Отказы, записанные в журнал безопасности за последние семь дней.",
+            BlocksList()), last: true);
 
         // 5. Два действия раздела, и ни одно из них ничего не разрешает: одно перечитывает
         //    политику, второе выписывает то же самое файлом.
@@ -162,6 +183,17 @@ public partial class SettingsView
             HorizontalAlignment = HorizontalAlignment.Left,
             Margin              = new Avalonia.Thickness(0, 12, 0, 0),
             Children            = { reread, passport },
+        });
+
+        // Сказано вслух, потому что вкладка без единого поля ввода читается как «еще не
+        // доделали». Она не не доделана — в этом ее устройство.
+        rows.Add(new TextBlock
+        {
+            Classes      = { "desc" },
+            Text         = "Ни одного поля ввода здесь нет и не будет: политику правит "
+                         + "ответственный за интеграции, вне программы.",
+            TextWrapping = Avalonia.Media.TextWrapping.Wrap,
+            Margin       = new Avalonia.Thickness(0, 8, 0, 0),
         });
     }
 
@@ -279,15 +311,209 @@ public partial class SettingsView
 
     private static Control SourcesList(PolicyLoadResult loaded)
     {
-        if (loaded.Reads.Count == 0)
-            return Note("Ни одного источника не найдено.");
-
         var list = new StackPanel { Spacing = 6 };
+
+        // Момент применения — первой строкой и раньше самих источников. Вопрос звучит как
+        // «с какого момента действует то, что я вижу», и ответ на него не время правки файла:
+        // файл могли поправить час назад, а «Перечитать политику» никто не нажимал.
+        list.Children.Add(Note(EgressSetup.AppliedAt is { } applied
+            ? $"Применено {applied.ToLocalTime():dd.MM.yyyy HH:mm}"
+              + (loaded.Reads.Count > 1 ? $" · пересечение {loaded.Reads.Count} источников" : "")
+            : "Политика еще не читалась за этот заход."));
+
+        if (loaded.Reads.Count == 0)
+        {
+            list.Children.Add(Note("Ни одного источника не найдено."));
+            return list;
+        }
 
         foreach (var read in loaded.Reads)
             list.Children.Add(Note($"{(read.Accepted ? "принят" : "отклонен")} · {read.Source} — {read.Note}"));
 
         return list;
+    }
+
+    /// <summary>
+    /// Кто может уносить данные наружу прямо сейчас. Показываются ВСЕ исходящие запросы, а не
+    /// только подтвержденные: «заведено, но не подтверждено» — такой же ответ проверяющему, и
+    /// без него список выглядел бы полным, когда он пуст просто потому, что подтверждать
+    /// забыли.
+    /// </summary>
+    private Control DirectionsList()
+    {
+        if (Integrations is not { } registry)
+            return Note("Список станет доступен, когда откроется база данных.");
+
+        var outward = registry.Requests().Where(r => r.Outward).ToList();
+
+        if (outward.Count == 0)
+            return Note("Запросов, уносящих данные наружу, не заведено ни одного.");
+
+        var now  = DateTimeOffset.Now;
+        var list = new StackPanel { Spacing = 6 };
+
+        // Объем за месяц — по рабочему журналу и по тому же ключу направления, по которому
+        // считается суточный потолок. Журнал подрезается, поэтому цифра честно «за то, что
+        // помнит журнал», а не «за календарный месяц».
+        var spent = Database.RunJournal.Current?.SpentByDirection(now.AddDays(-30))
+                    ?? [];
+
+        foreach (var request in outward)
+        {
+            var direction = registry.Direction(request.Id);
+            var trouble   = registry.OutwardTrouble(request, now);
+            var bytes     = spent.FirstOrDefault(s => s.Direction == request.Id).Bytes;
+
+            list.Children.Add(Note($"{request.Name} — "
+                + $"{request.Method.ToString().ToUpperInvariant()} {request.Path}"));
+
+            if (direction is null)
+            {
+                var idle = Note("    не подтверждено — отправлять не может");
+                idle.Foreground = Ink("BrushRed", "#FF3B30");
+                list.Children.Add(idle);
+                continue;
+            }
+
+            list.Children.Add(Note($"    подтвердил {direction.Confirmed} · "
+                + $"до {direction.Until.ToLocalTime():dd.MM.yyyy} · "
+                + $"за месяц {Size(bytes)}"));
+
+            var state = Note(trouble is null
+                ? "    действует"
+                : "    не действует: " + trouble);
+
+            if (trouble is not null) state.Foreground = Ink("BrushRed", "#FF3B30");
+            list.Children.Add(state);
+        }
+
+        return list;
+    }
+
+    /// <summary>
+    /// Метки открытых баз и счетчик помеченных свойств. Список свойств разворачивается по
+    /// нажатию: цифра нужна всегда, а имена — редко, и в базе их бывают сотни.
+    /// </summary>
+    private Control LabelsList()
+    {
+        var bases = _databases?.Invoke() ?? [];
+
+        if (bases.Count == 0)
+            return Note("Ни одной базы не открыто — показывать нечего.");
+
+        var list   = new StackPanel { Spacing = 6 };
+        var fields = 0;
+
+        foreach (var manager in bases)
+        {
+            var label = manager.Constructor.GetDatabaseLabel();
+            fields += manager.Constructor.LabeledFieldCount();
+
+            var line = Note($"База «{manager.Name}» — {Core.Models.Confidentiality.Title(label)}"
+                + (label == Core.Models.ConfidentialityLabel.Closed
+                    ? ": исходящие запрещены"
+                    : ""));
+
+            if (label == Core.Models.ConfidentialityLabel.Closed)
+                line.Foreground = Ink("BrushRed", "#FF3B30");
+
+            list.Children.Add(line);
+        }
+
+        list.Children.Add(Note($"Полей с метками: {fields:N0}."));
+
+        if (fields == 0) return list;
+
+        list.Children.Add(new StackPanel
+        {
+            Orientation         = Orientation.Horizontal,
+            HorizontalAlignment = HorizontalAlignment.Left,
+            Margin              = new Avalonia.Thickness(0, 4, 0, 0),
+            Children            =
+            {
+                SmallButton(_labeledFieldsShown ? "Скрыть список" : "Показать список", () =>
+                {
+                    _labeledFieldsShown = !_labeledFieldsShown;
+                    BuildIntegrationsSecurity();
+                }),
+            },
+        });
+
+        if (!_labeledFieldsShown) return list;
+
+        foreach (var manager in bases)
+            foreach (var (collection, field, label) in manager.Constructor.LabeledFields())
+                list.Children.Add(Note(
+                    $"    {manager.Name} · {collection} · {field} — "
+                    + Core.Models.Confidentiality.Title(label)));
+
+        return list;
+    }
+
+    // Развернут ли список помеченных свойств. Живет в пределах захода: это лупа, а не настройка.
+    private bool _labeledFieldsShown;
+
+    /// <summary>
+    /// Сколько отказов легло в журнал безопасности за неделю и кнопка перехода к ним. Ноль
+    /// показывается словами, а не пустотой: пустая строка читается как «не считали».
+    /// </summary>
+    private Control BlocksList()
+    {
+        var list = new StackPanel { Spacing = 6 };
+
+        if (Database.SecurityJournal.Current is not { } journal)
+        {
+            list.Children.Add(Note(
+                "Журнал безопасности не открылся, и считать блокировки не по чему. "
+                + "Причина записана в разделе «Диагностика»."));
+            return list;
+        }
+
+        long blocked;
+        try
+        {
+            blocked = journal.Count(new Database.SecurityFilter(
+                Event: null, BlockedOnly: true, Since: DateTimeOffset.Now.AddDays(-7)));
+        }
+        catch (Exception error)
+        {
+            Serilog.Log.Warning(error, "Блокировки за неделю не сосчитались");
+            list.Children.Add(Note("Счет блокировок не удался — см. раздел «Диагностика»."));
+            return list;
+        }
+
+        list.Children.Add(Note(blocked == 0
+            ? "За неделю не заблокировано ни одной попытки."
+            : $"Заблокировано попыток: {blocked:N0}."));
+
+        if (blocked == 0) return list;
+
+        list.Children.Add(new StackPanel
+        {
+            Orientation         = Orientation.Horizontal,
+            HorizontalAlignment = HorizontalAlignment.Left,
+            Margin              = new Avalonia.Thickness(0, 4, 0, 0),
+            Children            = { SmallButton("В журнал", OpenBlockedInJournal) },
+        });
+
+        return list;
+    }
+
+    /// <summary>
+    /// Открыть журнал безопасности уже с нужным отбором. Переход без отбора заставил бы человека
+    /// повторять руками то, что экран уже знает, — и на второй странице он бы отбор забыл.
+    /// </summary>
+    private void OpenBlockedInJournal()
+    {
+        _securityLog         = true;
+        _securityBlockedOnly = true;
+        _securityEvent       = null;
+        _securityDays        = 7;
+        _securityShown       = 0;
+        _securityOpen        = 0;
+
+        HeaderBar.SetIntegrationTabs("journal");
+        ShowIntegrationTab("journal");
     }
 
     private static Control PlacesList()

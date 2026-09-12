@@ -172,6 +172,38 @@ public sealed class ConfidentialityRepositoryTests : IDisposable
         Assert.DoesNotContain(open.Id!.Value, labeled);
     }
 
+    /// <summary>
+    /// Список помеченных свойств ВСЕЙ базы — строка экрана «Безопасность» по кнопке «Показать
+    /// список». Проверяется главное: попадает только помеченное, и вместе с именем свойства
+    /// названа коллекция — без нее «Сумма» в базе из тридцати коллекций не значит ничего.
+    /// </summary>
+    [Fact]
+    public void Labeled_fields_of_the_whole_database_name_their_collection()
+    {
+        using var db = new TempDatabase();
+
+        var orders  = SampleData.AddCollection(db.Constructor, "Заказы");
+        var people  = SampleData.AddCollection(db.Constructor, "Люди");
+        var sum     = SampleData.AddField(db.Constructor, orders.Id!.Value, "Сумма", "number");
+        var phone   = SampleData.AddField(db.Constructor, people.Id!.Value, "Телефон", "text");
+        _           = SampleData.AddField(db.Constructor, people.Id!.Value, "Город", "text");
+
+        db.Constructor.SetFieldLabel(sum.Id!.Value,   ConfidentialityLabel.Closed);
+        db.Constructor.SetFieldLabel(phone.Id!.Value, ConfidentialityLabel.Restricted);
+
+        var labeled = db.Constructor.LabeledFields();
+
+        Assert.Equal(2, labeled.Count);
+        Assert.Equal(db.Constructor.LabeledFieldCount(), labeled.Count);
+
+        // Порядок — по коллекции, потом по свойству: список читают глазами.
+        Assert.Equal(("Заказы", "Сумма", ConfidentialityLabel.Closed), labeled[0]);
+        Assert.Equal(("Люди", "Телефон", ConfidentialityLabel.Restricted), labeled[1]);
+
+        // Непомеченное свойство в список не попадает — иначе он перестает что-либо означать.
+        Assert.DoesNotContain(labeled, f => f.Field == "Город");
+    }
+
     // ── Перенос между базами ──────────────────────────────────────────────────
 
     /// <summary>
