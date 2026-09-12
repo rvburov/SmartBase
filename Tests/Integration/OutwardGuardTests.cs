@@ -141,12 +141,12 @@ public sealed class OutwardGuardTests : IDisposable
             var request    = Push(cards, connection.Id);
 
             var verdict = OutwardGuard.Check(cards, connection, request, Context(),
-                                             scenario: "Итоги суток", dbId: 3, Now);
+                                             scenario: "Итоги суток", dbId: 3, Now, payload: null);
 
             Assert.False(verdict.Allowed);
 
             var outcome = await RequestRunner.RunAsync(connection, request, "", Context(),
-                                                       verdict.Trouble);
+                                                       verdict.Trouble, payload: null);
 
             Assert.False(outcome.Ok);
             Assert.Contains("не подтверждено", outcome.Explanation, StringComparison.Ordinal);
@@ -171,10 +171,10 @@ public sealed class OutwardGuardTests : IDisposable
             var request    = Push(cards, connection.Id);
 
             var verdict = OutwardGuard.Check(cards, connection, request, Context(),
-                                             scenario: "", dbId: 0, Now);
+                                             scenario: "", dbId: 0, Now, payload: null);
 
             var outcome = await RequestRunner.RunAsync(connection, request, "", Context(),
-                                                       verdict.Trouble);
+                                                       verdict.Trouble, payload: null);
 
             Assert.False(outcome.Sent);
         });
@@ -197,13 +197,13 @@ public sealed class OutwardGuardTests : IDisposable
             Confirm(cards, request);
 
             var verdict = OutwardGuard.Check(cards, connection, request, Context(),
-                                             scenario: "", dbId: 0, Now);
+                                             scenario: "", dbId: 0, Now, payload: null);
 
             Assert.True(verdict.Allowed, verdict.Trouble);
             Assert.Equal("Петров П. П.", verdict.Confirmed);
 
             var outcome = await RequestRunner.RunAsync(connection, request, "", Context(),
-                                                       verdict.Trouble);
+                                                       verdict.Trouble, payload: null);
 
             Assert.True(outcome.Ok, outcome.Explanation);
             Assert.Single(server.Seen);
@@ -227,7 +227,7 @@ public sealed class OutwardGuardTests : IDisposable
             var request    = Pull(cards, connection.Id);
 
             var verdict = OutwardGuard.Check(cards, connection, request, Context(),
-                                             scenario: "", dbId: 0, Now);
+                                             scenario: "", dbId: 0, Now, payload: null);
 
             Assert.True(verdict.Allowed);
             Assert.Equal(0, journal.Count());
@@ -259,13 +259,13 @@ public sealed class OutwardGuardTests : IDisposable
             Confirm(cards, request);
 
             var verdict = OutwardGuard.Check(cards, connection, request, Context(),
-                                             scenario: "", dbId: 0, Now);
+                                             scenario: "", dbId: 0, Now, payload: null);
 
             Assert.False(verdict.Allowed);
             Assert.Contains("след", verdict.Trouble!, StringComparison.Ordinal);
 
             var outcome = await RequestRunner.RunAsync(connection, request, "", Context(),
-                                                       verdict.Trouble);
+                                                       verdict.Trouble, payload: null);
 
             Assert.False(outcome.Ok);
             Assert.Empty(server.Seen);
@@ -290,7 +290,7 @@ public sealed class OutwardGuardTests : IDisposable
             var request    = Push(cards, connection.Id);
 
             OutwardGuard.Check(cards, connection, request, Context(),
-                               scenario: "Итоги суток", dbId: 3, Now);
+                               scenario: "Итоги суток", dbId: 3, Now, payload: null);
 
             var row = journal.Recent().Single();
 
@@ -323,7 +323,7 @@ public sealed class OutwardGuardTests : IDisposable
 
             Confirm(cards, request);
 
-            OutwardGuard.Check(cards, connection, request, Context(), scenario: "", dbId: 0, Now);
+            OutwardGuard.Check(cards, connection, request, Context(), scenario: "", dbId: 0, Now, payload: null);
 
             var row = journal.Recent().Single();
 
@@ -353,7 +353,7 @@ public sealed class OutwardGuardTests : IDisposable
 
             Confirm(cards, request);
 
-            OutwardGuard.Check(cards, connection, request, Context(), scenario: "", dbId: 0, Now);
+            OutwardGuard.Check(cards, connection, request, Context(), scenario: "", dbId: 0, Now, payload: null);
 
             var row = journal.Recent().Single();
 
@@ -381,7 +381,7 @@ public sealed class OutwardGuardTests : IDisposable
 
             Confirm(cards, request);
 
-            OutwardGuard.Check(cards, connection, request, Context(), scenario: "", dbId: 0, Now);
+            OutwardGuard.Check(cards, connection, request, Context(), scenario: "", dbId: 0, Now, payload: null);
 
             var row = journal.Recent().Single();
 
@@ -413,9 +413,9 @@ public sealed class OutwardGuardTests : IDisposable
             Confirm(cards, request);
 
             var verdict = OutwardGuard.Check(cards, connection, request, Context(),
-                                             scenario: "", dbId: 0, Now);
+                                             scenario: "", dbId: 0, Now, payload: null);
 
-            await RequestRunner.RunAsync(connection, request, "", Context(), verdict.Trouble);
+            await RequestRunner.RunAsync(connection, request, "", Context(), verdict.Trouble, payload: null);
 
             var row  = journal.Recent().Single();
             var seen = server.Seen.Single().Body;
@@ -445,10 +445,10 @@ public sealed class OutwardGuardTests : IDisposable
             Confirm(cards, request);
 
             var verdict = OutwardGuard.Check(cards, connection, request, Context(),
-                                             scenario: "", dbId: 0, Now);
+                                             scenario: "", dbId: 0, Now, payload: null);
 
             var outcome = await RequestRunner.RunAsync(connection, request, "", Context(),
-                                                       verdict.Trouble);
+                                                       verdict.Trouble, payload: null);
 
             Assert.False(outcome.Ok);
             Assert.Equal(1, journal.Count());

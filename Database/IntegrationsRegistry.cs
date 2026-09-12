@@ -216,6 +216,43 @@ public sealed partial class IntegrationsRegistry(SystemDbContext db)
     }
 
     /// <summary>
+    /// Исходящая привязка «коллекция → JSON»; <c>null</c> — запрос ничего из коллекции не
+    /// уносит. Битая строка тоже дает <c>null</c>, по той же причине, что и у входящей.
+    /// </summary>
+    public OutgoingBinding? Outgoing(int requestId)
+    {
+        var json = db.IntegrationRequests.AsNoTracking()
+                     .FirstOrDefault(r => r.Id == requestId)?.OutgoingJson;
+
+        if (string.IsNullOrWhiteSpace(json)) return null;
+
+        try
+        {
+            return JsonSerializer.Deserialize<OutgoingBinding>(json);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Запомнить исходящую привязку; <c>null</c> — забыть ее.
+    ///
+    /// Подтверждение направления отдельно сбрасывать не надо: состав полей входит в отпечаток
+    /// запроса (<see cref="OutgoingBinding.Mark"/>), и дописанное поле роняет подтверждение тем
+    /// же способом, что и правка тела, — «запрос правили после подтверждения».
+    /// </summary>
+    public void SaveOutgoing(int requestId, OutgoingBinding? binding)
+    {
+        var entity = db.IntegrationRequests.FirstOrDefault(r => r.Id == requestId);
+        if (entity is null) return;
+
+        entity.OutgoingJson = binding is null ? null : JsonSerializer.Serialize(binding);
+        db.SaveChanges();
+    }
+
+    /// <summary>
     /// Когда запрос последний раз отработал успешно; <c>null</c> — еще ни разу. Отсюда берется
     /// значение подстановки <c>{{последний_запуск}}</c>.
     /// </summary>

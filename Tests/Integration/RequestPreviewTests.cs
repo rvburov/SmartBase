@@ -71,7 +71,7 @@ public sealed class RequestPreviewTests : IDisposable
     {
         AllowLoopback();
 
-        var preview = RequestRunner.Preview(Connection(8080), Push(), "token", Context());
+        var preview = RequestRunner.Preview(Connection(8080), Push(), "token", Context(), refusal: null, payload: null);
 
         Assert.True(preview.Ok, preview.Explanation);
         Assert.Equal(RequestMethod.Post, preview.Method);
@@ -91,7 +91,7 @@ public sealed class RequestPreviewTests : IDisposable
         AllowLoopback();
 
         var preview = RequestRunner.Preview(Connection(8080), Push(), "very-secret-token",
-                                            Context());
+                                            Context(), refusal: null, payload: null);
 
         Assert.DoesNotContain("very-secret-token", preview.SafeAddress, StringComparison.Ordinal);
 
@@ -107,7 +107,7 @@ public sealed class RequestPreviewTests : IDisposable
     {
         AllowLoopback();
 
-        var preview = RequestRunner.Preview(Connection(8080), Push(), "token", Context());
+        var preview = RequestRunner.Preview(Connection(8080), Push(), "token", Context(), refusal: null, payload: null);
 
         Assert.Contains(preview.Headers, h => h.Name == "X-Department" && h.Value == "KB");
     }
@@ -134,10 +134,10 @@ public sealed class RequestPreviewTests : IDisposable
         var connection = Connection(server.Port);
         var request    = Push();
 
-        var preview = RequestRunner.Preview(connection, request, "token", Context());
+        var preview = RequestRunner.Preview(connection, request, "token", Context(), refusal: null, payload: null);
 
         var outcome = await RequestRunner.RunAsync(connection, request, "token", Context(),
-                                                   refusal: null);
+                                                   refusal: null, payload: null);
 
         Assert.True(outcome.Ok, outcome.Explanation);
         Assert.Equal(preview.Body, seen);
@@ -156,7 +156,7 @@ public sealed class RequestPreviewTests : IDisposable
 
         var preview = RequestRunner.Preview(
             Connection(8080), Push(), "token", Context(),
-            refusal: "исходящее направление: не подтверждено мастер-паролем");
+            refusal: "исходящее направление: не подтверждено мастер-паролем", payload: null);
 
         Assert.False(preview.Ok);
         Assert.Contains("не подтверждено", preview.Explanation, StringComparison.Ordinal);
@@ -170,7 +170,7 @@ public sealed class RequestPreviewTests : IDisposable
             EgressMode.Internal, ["api.zavod.local"], ["10.0.0.0/8"], [],
             1000, 1024 * 1024, 100, null, false, "тест")));
 
-        var preview = RequestRunner.Preview(Connection(8080), Push(), "token", Context());
+        var preview = RequestRunner.Preview(Connection(8080), Push(), "token", Context(), refusal: null, payload: null);
 
         Assert.False(preview.Ok);
         Assert.Contains("политикой", preview.Explanation, StringComparison.Ordinal);
@@ -183,7 +183,7 @@ public sealed class RequestPreviewTests : IDisposable
         AllowLoopback();
 
         var preview = RequestRunner.Preview(
-            Connection(8080), Push() with { Body = "{{опечатка}}" }, "token", Context());
+            Connection(8080), Push() with { Body = "{{опечатка}}" }, "token", Context(), refusal: null, payload: null);
 
         Assert.False(preview.Ok);
         Assert.Contains("{{опечатка}}", preview.Explanation, StringComparison.Ordinal);
@@ -200,7 +200,7 @@ public sealed class RequestPreviewTests : IDisposable
         AllowLoopback();
 
         var preview = RequestRunner.Preview(Connection(8080), Push(), "секрет-кириллицей",
-                                            Context());
+                                            Context(), refusal: null, payload: null);
 
         Assert.False(preview.Ok);
         Assert.Contains("латиницей", preview.Explanation, StringComparison.Ordinal);
@@ -220,7 +220,7 @@ public sealed class RequestPreviewTests : IDisposable
         EgressGate.AttachUsage(new Spent(8 * 1024 * 1024 - 10));
 
         var preview = RequestRunner.Preview(
-            Connection(8080), Push() with { Body = new string('x', 500) }, "token", Context());
+            Connection(8080), Push() with { Body = new string('x', 500) }, "token", Context(), refusal: null, payload: null);
 
         Assert.False(preview.Ok);
         Assert.Contains("суточный потолок объема", preview.Explanation, StringComparison.Ordinal);
@@ -245,7 +245,7 @@ public sealed class RequestPreviewTests : IDisposable
             {
                 Id = 8, Name = "Заказы", ConnectionId = 1, Path = "/orders",
             },
-            "token", Context());
+            "token", Context(), refusal: null, payload: null);
 
         Assert.True(preview.Ok, preview.Explanation);
         Assert.False(preview.Outward);

@@ -54,9 +54,12 @@ public sealed record OutgoingDirection(
     public const int MaxDays = 365;
 
     /// <summary>Подтвердить запрос на указанный срок.</summary>
+    /// <param name="outgoing">Отпечаток состава исходящей привязки; пусто — запрос ничего из
+    /// коллекции не уносит. Подтверждают запрос ВМЕСТЕ с составом полей.</param>
     public static OutgoingDirection Confirm(IntegrationRequest request, string who,
-                                            DateTimeOffset now, int days) =>
-        new(request.Id, request.Fingerprint(), who, now,
+                                            DateTimeOffset now, int days,
+                                            string outgoing = "") =>
+        new(request.Id, request.Fingerprint(outgoing), who, now,
             now.AddDays(Math.Clamp(days, 1, MaxDays)));
 
     /// <summary>Момент, от которого считается простой: последнее использование либо подтверждение.</summary>
@@ -68,11 +71,11 @@ public sealed record OutgoingDirection(
     /// Причина возвращается словами и одна: человек, у которого обмен встал, должен увидеть
     /// «вышел срок» или «запрос правили», а не общее «не разрешено».
     /// </summary>
-    public string? Trouble(IntegrationRequest request, DateTimeOffset now)
+    public string? Trouble(IntegrationRequest request, DateTimeOffset now, string outgoing = "")
     {
         if (request.Id != RequestId) return "подтверждение выдано другому запросу";
 
-        if (Fingerprint != request.Fingerprint())
+        if (Fingerprint != request.Fingerprint(outgoing))
             return "запрос правили после подтверждения — нужно подтвердить заново";
 
         if (now > Until)
@@ -85,8 +88,8 @@ public sealed record OutgoingDirection(
     }
 
     /// <summary>Действует ли направление для этого запроса.</summary>
-    public bool Works(IntegrationRequest request, DateTimeOffset now) =>
-        Trouble(request, now) is null;
+    public bool Works(IntegrationRequest request, DateTimeOffset now, string outgoing = "") =>
+        Trouble(request, now, outgoing) is null;
 
     /// <summary>Одной строкой для карточки: до какого числа и кем подтверждено.</summary>
     public string Describe() =>

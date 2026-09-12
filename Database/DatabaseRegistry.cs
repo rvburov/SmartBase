@@ -120,12 +120,14 @@ public sealed class DatabaseRegistry : IDisposable, ISettingsDatabase
             "\"PagingField\" TEXT NULL, " +
             "\"ItemsPath\" TEXT NULL, " +
             "\"BindingJson\" TEXT NULL, " +
+            "\"OutgoingJson\" TEXT NULL, " +
             "\"LastRunAt\" TEXT NULL);");
 
-        // Привязка и отметка о последнем запуске появились позже самой таблицы: в app.db,
+        // Привязки и отметка о последнем запуске появились позже самой таблицы: в app.db,
         // созданных до них, этих колонок нет, а CREATE IF NOT EXISTS существующую таблицу не
         // достраивает. Правило то же, что у остальных, — только аддитивно.
-        AddColumns(db, "integration_requests", [("BindingJson", "TEXT"), ("LastRunAt", "TEXT")]);
+        AddColumns(db, "integration_requests",
+                   [("BindingJson", "TEXT"), ("OutgoingJson", "TEXT"), ("LastRunAt", "TEXT")]);
 
         db.Database.ExecuteSqlRaw(
             "CREATE TABLE IF NOT EXISTS \"integration_scenarios\" (" +

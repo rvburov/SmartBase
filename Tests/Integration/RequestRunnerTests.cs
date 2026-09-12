@@ -64,7 +64,7 @@ public sealed class RequestRunnerTests : IDisposable
     private static Task<RunOutcome> Run(
         TinyServer server, IntegrationRequest request, VariableContext? context = null) =>
         RequestRunner.RunAsync(Connection(server), request, secret: "", context ?? Context(),
-                               refusal: null);
+                               refusal: null, payload: null);
 
     /// <summary>Записи из итогового массива — по названию.</summary>
     private static List<string> Names(RunOutcome outcome) =>
@@ -389,7 +389,7 @@ public sealed class RequestRunnerTests : IDisposable
         var outcome = await RequestRunner.RunAsync(
             Connection(server),
             Request() with { Method = RequestMethod.Post, Body = """{"token":"очень-секретно"}""" },
-            secret: "очень-секретно", context: Context(), refusal: null);
+            secret: "очень-секретно", context: Context(), refusal: null, payload: null);
 
         Assert.DoesNotContain("очень-секретно", outcome.SentBody, StringComparison.Ordinal);
         Assert.Contains("***", outcome.SentBody, StringComparison.Ordinal);

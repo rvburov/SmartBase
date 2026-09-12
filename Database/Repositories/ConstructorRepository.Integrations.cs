@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using SmartBase.Core.Exporters;
 using SmartBase.Core.Importers;
 using SmartBase.Core.Models;
 using SmartBase.Integrations;
@@ -305,6 +306,91 @@ public partial class ConstructorRepository
 
         foreach (var (column, fieldId) in fields)
             SetFieldValue(recordId, fieldId, reader(row, column));
+    }
+
+    // ── Наружу: строки коллекции под исходящую привязку ───────────────────────
+
+    /// <summary>
+    /// Строки коллекции, готовые уйти наружу.
+    /// </summary>
+    /// <param name="Columns">Колонки в порядке полей привязки — из них берется ТИП значения.</param>
+    /// <param name="Rows">Значения строк в том же порядке. Может прийти на одну больше
+    /// потолка — по ней вызывающий и узнает, что записи в потолок не влезли.</param>
+    /// <param name="Collection">Имя коллекции — для сообщений человеку.</param>
+    /// <param name="Trouble">Почему отправлять нечего; <c>null</c> — все в порядке.</param>
+    public sealed record OutgoingRows(
+        IReadOnlyList<ExportColumn> Columns,
+        IReadOnlyList<string[]>     Rows,
+        string                      Collection,
+        string?                     Trouble)
+    {
+        public static OutgoingRows Bad(string trouble) => new([], [], "", trouble);
+    }
+
+    /// <summary>
+    /// Прочитать записи коллекции под исходящую привязку — на ОТДЕЛЬНОМ подключении: зовут это
+    /// и из фонового сценария, а общий контекст принадлежит интерфейсу.
+    ///
+    /// Здесь стоят обе метки конфиденциальности, и стоят они ВТОРЫМ рубежом. Первый — окно
+    /// настройки: помеченное свойство в списке не появляется вовсе (10.6). Но метку могли
+    /// поставить после того, как привязку собрали, — и тогда отправка обязана встать, а не
+    /// уносить поле, которое кто-то только что закрыл.
+    ///
+    /// Читается на одну строку больше потолка: «влезло ровно столько» и «не влезло» — разные
+    /// ответы, и отправить первые N из тысячи, промолчав об остальных, нельзя.
+    /// </summary>
+    /// <param name="binding">Что и под какими именами уходит.</param>
+    /// <param name="limit">Потолок строк за запуск — из политики организации.</param>
+    /// <param name="ct">Отмена.</param>
+    public OutgoingRows ReadOutgoingIsolated(OutgoingBinding binding, int limit, CancellationToken ct)
+    {
+        // Права — на публичной точке входа, как у ApplyRowsIsolated: изолированный клон
+        // репозитория прав не несет. Отправка наружу начинается с чтения, и права на чтение
+        // коллекции — то самое, чего требует эта половина.
+        Demand(PermAction.ViewCollection, binding.CollectionId);
+
+        using var ctx = new AppDbContext(db.DbPath);
+        ctx.ApplyPerformancePragmas();
+        var isolated = new ConstructorRepository(ctx);
+
+        var closed = EgressGate.CheckDatabase(isolated.GetDatabaseLabel());
+        if (!closed.Allowed) return OutgoingRows.Bad(closed.Explanation);
+
+        var collection = isolated.CollectionName(binding.CollectionId);
+        if (collection.Length == 0)
+            return OutgoingRows.Bad("коллекция, записи которой уходят, удалена");
+
+        // includeHidden: скрытая колонка — это настройка ПОКАЗА таблицы, а привязка названа
+        // поименно и человеком. Молча выбросить из нее поле, спрятанное в другом экране,
+        // значило бы отправлять не то, что показано в окне настройки.
+        var available = isolated.GetExportColumns(binding.CollectionId, includeHidden: true)
+                                .ToDictionary(c => c.Key, StringComparer.Ordinal);
+
+        var columns = new List<ExportColumn>(binding.Fields.Count);
+
+        foreach (var field in binding.Fields)
+        {
+            var key = field.FieldId?.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                   ?? TitleKey;
+
+            if (!available.TryGetValue(key, out var column))
+                return OutgoingRows.Bad(
+                    $"свойства, уходившего под именем «{field.Name}», в коллекции "
+                    + $"«{collection}» больше нет — привязку надо собрать заново");
+
+            var mark = EgressGate.CheckField(Confidentiality.FromConfig(column.ConfigJson));
+
+            if (!mark.Allowed)
+                return OutgoingRows.Bad($"свойство «{column.Header}»: {mark.Explanation}");
+
+            columns.Add(column);
+        }
+
+        var rows = ReadExportRowsIsolated(binding.CollectionId, columns, excludeHidden: false, ct)
+                   .Take(Math.Max(0, limit) + 1)
+                   .ToList();
+
+        return new OutgoingRows(columns, rows, collection, null);
     }
 
     /// <summary>Позиция для первой новой записи — в конец коллекции, как при обычном добавлении.</summary>

@@ -122,12 +122,19 @@ public static class RequestRunner
     /// <c>OutwardGuard.Refusal</c>; <c>null</c> — ничто не мешает. Спрашивается снаружи, потому
     /// что подтверждения живут в app.db, а этот слой к базе не ходит. Приходит она уже целой
     /// фразой: собери ее здесь — и та же фраза собиралась бы вторым способом в отправке.</param>
+    /// <param name="payload">Тело, собранное из коллекции исходящей привязкой; <c>null</c> —
+    /// запрос ничего из коллекции не уносит, и тело берется из карточки. Обязательный параметр
+    /// по той же причине, что и <paramref name="refusal"/>: сухой прогон, строка журнала
+    /// безопасности и сама отправка обязаны говорить об ОДНОМ теле, а значение по умолчанию
+    /// означало бы, что где-то его можно не передать — и экран показал бы одно, а ушло
+    /// другое.</param>
     public static RunPreview Preview(
         IntegrationConnection connection,
         IntegrationRequest    request,
         string                secret,
         VariableContext       context,
-        string?               refusal = null)
+        string?               refusal,
+        OutgoingPayload?      payload)
     {
         var outward = request.Outward;
 
@@ -142,7 +149,7 @@ public static class RequestRunner
         if (!quota.Allowed)
             return RunPreview.Blocked("запрещено политикой: " + quota.Explanation, outward);
 
-        var page = Page(request, context, cursor: null, number: 1, offset: 0, out var unknown);
+        var page = Page(request, context, payload, cursor: null, number: 1, offset: 0, out var unknown);
 
         if (unknown.Count > 0)
             return RunPreview.Blocked(
@@ -182,12 +189,17 @@ public static class RequestRunner
     /// вопрос «этому обмену разрешено уносить данные?» можно не задать — просто забыв про него в
     /// новом месте вызова. Так замок и обходят: не взломом, а вызовом в обход. Теперь не
     /// ответить на вопрос нельзя — не собирается.</param>
+    /// <param name="payload">Тело, собранное из коллекции исходящей привязкой; <c>null</c> —
+    /// запрос ничего из коллекции не уносит. Обязательный по той же причине, что и
+    /// <paramref name="refusal"/>: тело, о котором отчитался сухой прогон и которое записано в
+    /// журнал безопасности, обязано быть тем же, что уходит в сокет.</param>
     public static async Task<RunOutcome> RunAsync(
         IntegrationConnection connection,
         IntegrationRequest    request,
         string                secret,
         VariableContext       context,
         string?               refusal,
+        OutgoingPayload?      payload,
         CancellationToken     ct = default)
     {
         // До всего остального: отказ направления — это отказ ДО первого сокета, и в
@@ -238,7 +250,7 @@ public static class RequestRunner
 
         while (pages < MaxPages)
         {
-            var page = Page(request, context, cursor, number, offset, out var unknown);
+            var page = Page(request, context, payload, cursor, number, offset, out var unknown);
 
             if (unknown.Count > 0)
                 return new RunOutcome(false,
@@ -377,13 +389,29 @@ public static class RequestRunner
     private static IntegrationRequest Page(
         IntegrationRequest request,
         VariableContext    context,
+        OutgoingPayload?   payload,
         string?            cursor,
         int                number,
         int                offset,
         out IReadOnlyList<string> unknown)
     {
         var path = RequestVariables.Apply(request.Path, context, out var pathUnknown);
-        var body = RequestVariables.Apply(request.Body, context, out var bodyUnknown);
+
+        string                body;
+        IReadOnlyList<string> bodyUnknown;
+
+        if (payload is not null)
+        {
+            // Тело из коллекции подстановок НЕ проходит: это данные, а не заготовка. Значение
+            // поля, в котором человек написал «{{сегодня}}», уехало бы сегодняшней датой вместо
+            // самого текста, и заметили бы это на той стороне, а не здесь.
+            body        = payload.Body;
+            bodyUnknown = [];
+        }
+        else
+        {
+            body = RequestVariables.Apply(request.Body, context, out bodyUnknown);
+        }
 
         unknown = [.. pathUnknown.Concat(bodyUnknown).Distinct()];
 

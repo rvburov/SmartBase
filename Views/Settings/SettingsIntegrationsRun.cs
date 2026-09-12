@@ -54,7 +54,26 @@ public partial class SettingsView
         // не пришли бы уже никогда.
         var startedAt = DateTimeOffset.UtcNow;
 
-        var outcome = await SendAsync(win, registry, request, connection, startedAt);
+        // Тело из коллекции, если запрос уносит записи. Собирается ДО окна с полосой: отказ
+        // («база закрыта», «поле помечено») должен прийти сразу, а не после прогресса.
+        var (payload, cannot) = Database.OutgoingSource.Build(registry, request, databases);
+
+        if (cannot is { Length: > 0 })
+        {
+            await ConfirmDialog.Info($"Запрос «{request.Name}» отправить нельзя.\n\n{cannot}")
+                .ShowDialog(win);
+            return;
+        }
+
+        if (payload is { Rows: 0 })
+        {
+            await ConfirmDialog.Info(
+                    $"В коллекции «{payload.Collection}» нет записей — отправлять нечего.")
+                .ShowDialog(win);
+            return;
+        }
+
+        var outcome = await SendAsync(win, registry, request, connection, startedAt, payload);
         if (outcome is null) return;
 
         var source = new JsonTextSource(outcome.Json);
@@ -117,7 +136,8 @@ public partial class SettingsView
                                                      Database.IntegrationsRegistry registry,
                                                      IntegrationRequest            request,
                                                      IntegrationConnection         connection,
-                                                     DateTimeOffset                startedAt)
+                                                     DateTimeOffset                startedAt,
+                                                     OutgoingPayload?              payload)
     {
         var context = VariableContext.Now(registry.LastRun(request.Id), connection.Address);
 
@@ -125,7 +145,8 @@ public partial class SettingsView
         // после прогресса, который никуда не шел. Сценария тут нет, кнопку нажал человек, и в
         // журнале безопасности так и будет записано.
         var verdict = Database.OutwardGuard.Check(registry, connection, request, context,
-                                                  scenario: "", dbId: 0, DateTimeOffset.Now);
+                                                  scenario: "", dbId: 0, DateTimeOffset.Now,
+                                                  payload);
 
         var progress = new ProgressDialog { Title = "Запрос" };
         using var cts = new CancellationTokenSource();
@@ -142,7 +163,7 @@ public partial class SettingsView
         {
             outcome = await RequestRunner.RunAsync(
                 connection, request, registry.Secret(connection.Id), context,
-                verdict.Trouble, cts.Token);
+                verdict.Trouble, payload, cts.Token);
         }
         catch (OperationCanceledException)
         {

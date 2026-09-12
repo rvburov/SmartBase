@@ -1,0 +1,265 @@
+using System.Text.Encodings.Web;
+using System.Text.Json;
+using SmartBase.Core.Exporters;
+using SmartBase.Core.Exporters.TableWriters;
+using SmartBase.Core.Models;
+
+namespace SmartBase.Integrations;
+
+/// <summary>
+/// Как обернуто тело исходящего запроса. Чужие программы просят по-разному, и подогнать их под
+/// один вид нельзя: обмен либо принимается той стороной, либо нет.
+/// </summary>
+public enum OutgoingShape
+{
+    /// <summary>Голый массив записей: <c>[{…},{…}]</c>.</summary>
+    Array = 0,
+
+    /// <summary>Массив внутри объекта: <c>{"orders":[{…}]}</c>.</summary>
+    Wrapped,
+
+    /// <summary>Одна запись объектом: <c>{…}</c>. Больше одной записи такой обмен не примет.</summary>
+    Single,
+}
+
+/// <summary>
+/// Одно поле, уходящее наружу.
+/// </summary>
+/// <param name="FieldId">Свойство коллекции; <c>null</c> — название записи.</param>
+/// <param name="Name">Имя этого поля в JSON — так, как его ждет чужая программа. Оно почти
+/// никогда не совпадает с названием свойства: у нас «Номер заказа», у них <c>order_no</c>.</param>
+public sealed record OutgoingField(int? FieldId, string Name);
+
+/// <summary>
+/// Исходящая привязка — «какие поля коллекции и под какими именами уходят наружу». Зеркало
+/// <see cref="CollectionBinding"/> (docs/ROADMAP-API.md, раздел 2: «Наружу — зеркально»).
+///
+/// До нее наружу могло уйти только то, что человек напечатал в теле запроса руками: замок из
+/// шага 5 стоял на двери, через которую нечего было вынести. Теперь тело собирается из записей
+/// коллекции — и именно поэтому состав выгрузки задан списком, а не правилом.
+///
+/// <b>Ни «отправить запись целиком», ни «все поля».</b> Список полей перечислен поименно
+/// (раздел 10.6): состав того, что уходит, должен читаться глазами и не меняться сам собой,
+/// когда в коллекции заведут новое свойство. Заведешь правило «все, кроме помеченных» — и новое
+/// поле начнет уходить наружу в тот же день, когда его создали, никого не спросив.
+///
+/// <b>Помеченного поля в привязке нет и быть не может.</b> Запрет срабатывает при настройке —
+/// помеченные свойства просто не показываются в списке, — а <see cref="Problems"/> проверяет это
+/// еще раз при сохранении: метку могли поставить после того, как привязку собрали.
+///
+/// Модель без ввода-вывода: строки читает репозиторий, тело собирает <see cref="OutgoingBody"/>.
+/// </summary>
+/// <param name="DbId">База, из которой берутся записи. Названа явно по той же причине, что и у
+/// входящей привязки: соединения и запросы общие для всех баз, а ключи коллекций у каждой
+/// свои.</param>
+/// <param name="CollectionId">Коллекция, записи которой уходят.</param>
+/// <param name="Fields">Поля и их имена в JSON. Порядок — тот, в каком они показаны человеку.</param>
+/// <param name="Shape">Как обернуто тело.</param>
+/// <param name="Envelope">Имя поля-обертки (только для <see cref="OutgoingShape.Wrapped"/>).</param>
+public sealed record OutgoingBinding(
+    int                          DbId,
+    int                          CollectionId,
+    IReadOnlyList<OutgoingField> Fields,
+    OutgoingShape                Shape    = OutgoingShape.Array,
+    string                       Envelope = "")
+{
+    /// <summary>Обертка объектом — у нее есть имя поля.</summary>
+    public bool Wrapped => Shape == OutgoingShape.Wrapped;
+
+    /// <summary>Обмен на одну запись: больше одной такой запрос не примет.</summary>
+    public bool Single => Shape == OutgoingShape.Single;
+
+    /// <summary>
+    /// Что не так с привязкой; пустой список — годится. Отказ, а не исключение: привязку
+    /// собирает человек в окне, и неверно заполненное поле — обычное дело.
+    /// </summary>
+    public IReadOnlyList<string> Problems()
+    {
+        var problems = new List<string>();
+
+        if (DbId <= 0 || CollectionId <= 0)
+            problems.Add("Не выбрана коллекция, записи которой уходят");
+
+        if (Fields.Count == 0)
+            problems.Add("Не выбрано ни одного поля — отправлять нечего");
+
+        if (Fields.Any(f => string.IsNullOrWhiteSpace(f.Name)))
+            problems.Add("У каждого поля должно быть имя, под которым оно уходит");
+
+        // Два поля под одним именем — это не «последнее победит», а молчаливая потеря одного из
+        // них на той стороне: JSON с повторяющимся ключом разбирают все по-своему.
+        var twice = Fields.Select(f => f.Name.Trim())
+                          .Where(n => n.Length > 0)
+                          .GroupBy(n => n, StringComparer.OrdinalIgnoreCase)
+                          .Where(g => g.Count() > 1)
+                          .Select(g => g.Key)
+                          .ToList();
+
+        if (twice.Count > 0)
+            problems.Add("Одно имя занято дважды: " + string.Join(", ", twice));
+
+        if (Wrapped && string.IsNullOrWhiteSpace(Envelope))
+            problems.Add("Не задано имя поля, в котором уйдет массив записей");
+
+        return problems;
+    }
+
+    /// <summary>
+    /// Отпечаток состава: что именно уходит наружу. Входит в отпечаток запроса
+    /// (<c>IntegrationRequest.Fingerprint</c>), поэтому дописанное поле роняет подтверждение
+    /// направления — как его роняет правка тела или пути. Иначе состав выгрузки оставался бы
+    /// единственной частью отправки, которую можно поменять после согласования.
+    ///
+    /// Собирается из смысла, а не сериализацией записи: заведи в модели новое свойство — и
+    /// сериализация сменилась бы у всех разом, отключив обмен там, где ничего не меняли.
+    /// Разделитель — знак 0x1F кодом, по той же причине, что и в отпечатке запроса.
+    /// </summary>
+    public string Mark() => string.Join((char)0x1F,
+        [
+            ((int)Shape).ToString(System.Globalization.CultureInfo.InvariantCulture),
+            Envelope.Trim(),
+            DbId.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            CollectionId.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            .. Fields.Select(f => (f.FieldId?.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                                   ?? "название") + "=" + f.Name.Trim()),
+        ]);
+
+    /// <summary>Как это читается на карточке запроса.</summary>
+    public string Describe() => Shape switch
+    {
+        OutgoingShape.Single  => $"одна запись, полей: {Fields.Count}",
+        OutgoingShape.Wrapped => $"записи в поле «{Envelope.Trim()}», полей: {Fields.Count}",
+        _                     => $"массив записей, полей: {Fields.Count}",
+    };
+}
+
+/// <summary>
+/// Готовое тело исходящего запроса вместе с тем, что о нем надо записать в журналы.
+/// </summary>
+/// <param name="Body">Тело как оно уйдет в сеть.</param>
+/// <param name="Rows">Сколько записей в нем.</param>
+/// <param name="Fields">Имена полей через запятую — для строки журнала безопасности. Значений
+/// там нет и не будет, поэтому имена собираются отдельно от тела.</param>
+/// <param name="Collection">Имя коллекции — для сообщений человеку.</param>
+public sealed record OutgoingPayload(string Body, int Rows, string Fields, string Collection);
+
+/// <summary>
+/// Сборка тела из строк коллекции.
+///
+/// <b>Значения типизируются по типу свойства, а не по виду значения.</b> Число уходит числом,
+/// галочка — <c>true</c>/<c>false</c>, мультисписок — массивом строк, все остальное — строкой.
+/// Ровно те же правила, что у выгрузки коллекции в JSON
+/// (<see cref="JsonTableWriter"/>): два способа получить из одной коллекции JSON обязаны давать
+/// одинаковый JSON. Угадывать тип по самому значению нельзя — артикул <c>007</c> ушел бы числом
+/// <c>7</c>, и нашлось бы это через неделю по ненайденному товару.
+///
+/// Кириллица не превращается в <c>\uXXXX</c>: тело показывается человеку сухим прогоном, и
+/// читать его должно быть можно.
+/// </summary>
+public static class OutgoingBody
+{
+    /// <summary>
+    /// Собрать тело. <paramref name="columns"/> идут в том же порядке, что и
+    /// <see cref="OutgoingBinding.Fields"/>, — их дает репозиторий, читающий строки: тип поля
+    /// берется из коллекции на момент отправки, а не из сохраненной привязки, иначе смена типа
+    /// свойства молча меняла бы вид выгрузки.
+    /// </summary>
+    /// <exception cref="ArgumentException">Списки полей и колонок разошлись — это ошибка
+    /// вызывающего, а не человека за экраном.</exception>
+    public static OutgoingPayload Build(OutgoingBinding             binding,
+                                        IReadOnlyList<ExportColumn> columns,
+                                        IReadOnlyList<string[]>     rows,
+                                        string                      collection)
+    {
+        if (columns.Count != binding.Fields.Count)
+            throw new ArgumentException(
+                "Колонок не столько же, сколько полей привязки", nameof(columns));
+
+        var buffer = new MemoryStream();
+        var names  = binding.Fields
+                            .Select(f => JsonEncodedText.Encode(
+                                f.Name.Trim(), JavaScriptEncoder.UnsafeRelaxedJsonEscaping))
+                            .ToArray();
+
+        using (var writer = new Utf8JsonWriter(buffer, new JsonWriterOptions
+               {
+                   Indented = false,
+                   Encoder  = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+               }))
+        {
+            switch (binding.Shape)
+            {
+                case OutgoingShape.Single:
+                    // Записей нет — уходит пустой объект, а не «ничего»: тело обязано остаться
+                    // разбираемым JSON, иначе чужая программа ответит невнятной ошибкой разбора.
+                    WriteRow(writer, names, columns, rows.Count > 0 ? rows[0] : []);
+                    break;
+
+                case OutgoingShape.Wrapped:
+                    writer.WriteStartObject();
+                    writer.WritePropertyName(JsonEncodedText.Encode(
+                        binding.Envelope.Trim(), JavaScriptEncoder.UnsafeRelaxedJsonEscaping));
+                    WriteRows(writer, names, columns, rows);
+                    writer.WriteEndObject();
+                    break;
+
+                default:
+                    WriteRows(writer, names, columns, rows);
+                    break;
+            }
+        }
+
+        return new OutgoingPayload(
+            System.Text.Encoding.UTF8.GetString(buffer.ToArray()),
+            binding.Single ? Math.Min(1, rows.Count) : rows.Count,
+            string.Join(", ", binding.Fields.Select(f => f.Name.Trim())),
+            collection);
+    }
+
+    private static void WriteRows(Utf8JsonWriter writer, JsonEncodedText[] names,
+                                  IReadOnlyList<ExportColumn> columns,
+                                  IReadOnlyList<string[]> rows)
+    {
+        writer.WriteStartArray();
+        foreach (var row in rows) WriteRow(writer, names, columns, row);
+        writer.WriteEndArray();
+    }
+
+    /// <summary>
+    /// Одна запись объектом. Значения короче списка полей — остальные уходят пустыми строками:
+    /// пропустить ключ значило бы отдать той стороне разные наборы полей у разных записей.
+    /// </summary>
+    private static void WriteRow(Utf8JsonWriter writer, JsonEncodedText[] names,
+                                 IReadOnlyList<ExportColumn> columns, string[] row)
+    {
+        writer.WriteStartObject();
+
+        for (var i = 0; i < names.Length; i++)
+        {
+            var raw = i < row.Length ? row[i] ?? "" : "";
+
+            switch (columns[i].FieldType)
+            {
+                case "checkbox":
+                    writer.WriteBoolean(names[i], WriterHelpers.IsChecked(raw));
+                    break;
+
+                case "number" when raw.Length > 0 && WriterHelpers.TryNumber(raw, out var number):
+                    writer.WriteNumber(names[i], number);
+                    break;
+
+                case "multiselect":
+                    writer.WriteStartArray(names[i]);
+                    foreach (var one in MultiSelectValue.Parse(raw)) writer.WriteStringValue(one);
+                    writer.WriteEndArray();
+                    break;
+
+                default:
+                    writer.WriteString(names[i], raw);
+                    break;
+            }
+        }
+
+        writer.WriteEndObject();
+    }
+}

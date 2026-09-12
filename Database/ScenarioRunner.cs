@@ -427,14 +427,29 @@ public static partial class ScenarioRunner
 
         var context = VariableContext.Now(registry.LastRun(request.Id), connection.Address);
 
+        // Тело из коллекции — до замка: и в журнал безопасности, и в сокет обязано уйти одно и
+        // то же тело, а собирается оно один раз на запуск.
+        var (payload, cannot) = OutgoingSource.Build(registry, request, databases, ct);
+
+        if (cannot is { Length: > 0 })
+            return StepOutcome.Bad($"запрос «{request.Name}»: {cannot}");
+
+        // Отправлять пустой массив незачем: запуск занял бы место в часовом потолке и оставил бы
+        // в журнале строку «ушло 0 записей». Пустая коллекция — это не неудача, а «сегодня
+        // нечего слать», и сценарий на этом кончается так же, как на пустом отборе.
+        if (payload is { Rows: 0 })
+            return StepOutcome.Halt($"в коллекции «{payload.Collection}» нет записей — "
+                                  + $"запросу «{request.Name}» нечего отправлять");
+
         // Замок на исходящем. Спрашивается ДО запуска и оставляет след — и разрешающий, и
         // запрещающий: попытка отправить данные наружу событие само по себе, состоялась она или
         // нет. Читающий запрос сюда не попадает — ему подтверждать нечего.
         var verdict = OutwardGuard.Check(registry, connection, request, context,
-                                         scenario, binding.DbId, now);
+                                         scenario, binding.DbId, now, payload);
 
         var outcome = await RequestRunner.RunAsync(
-            connection, request, registry.Secret(connection.Id), context, verdict.Trouble, ct);
+            connection, request, registry.Secret(connection.Id), context, verdict.Trouble,
+            payload, ct);
 
         // Строка журнала пишется и для НЕУДАЧНОГО запроса: именно их ищут, разбирая «почему
         // записи не появились». В расход идет только то, что дошло до сети.

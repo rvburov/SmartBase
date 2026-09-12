@@ -80,13 +80,17 @@ public static class OutwardGuard
     /// </summary>
     /// <param name="scenario">Имя сценария; пусто — человек нажал кнопку сам.</param>
     /// <param name="dbId">Ключ базы, которую задевает обмен; 0 — ни одной.</param>
+    /// <param name="payload">Тело, собранное из коллекции (<c>OutgoingSource.Build</c>);
+    /// <c>null</c> — запрос ничего из коллекции не уносит. Приходит готовым, а не собирается
+    /// здесь: в журнал обязано лечь ТО ЖЕ тело, которое уйдет в сокет.</param>
     public static OutwardVerdict Check(IntegrationsRegistry  registry,
                                        IntegrationConnection connection,
                                        IntegrationRequest    request,
                                        VariableContext       context,
                                        string                scenario,
                                        int                   dbId,
-                                       DateTimeOffset        now)
+                                       DateTimeOffset        now,
+                                       OutgoingPayload?      payload)
     {
         if (!request.Outward) return OutwardVerdict.Free;
 
@@ -97,10 +101,17 @@ public static class OutwardGuard
         // показывает сухой прогон. Собирается ДАЖЕ ДЛЯ ОТКАЗА: проверяющему, разбирающему
         // заблокированную попытку, первым делом нужно знать, куда и с чем в нее шли.
         var preview = RequestRunner.Preview(
-            connection, request, registry.Secret(connection.Id), context);
+            connection, request, registry.Secret(connection.Id), context,
+            refusal: null, payload);
 
         var body = Encoding.UTF8.GetBytes(preview.Body);
-        var (rows, fields) = Shape(preview.Body);
+
+        // Состав известен ТОЧНО, когда тело собрала привязка: имена полей взяты из нее, а не
+        // угаданы разбором текста. Разбор остается для тела, напечатанного руками, — там
+        // другого источника правды нет.
+        var (rows, fields) = payload is not null
+            ? (payload.Rows, payload.Fields)
+            : Shape(preview.Body);
 
         var written = SecurityJournal.Add(SecurityEntry.New(
             SecurityEvent.Send,

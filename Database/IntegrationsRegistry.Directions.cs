@@ -78,7 +78,10 @@ public sealed partial class IntegrationsRegistry
             return null;
         }
 
-        var direction = OutgoingDirection.Confirm(request, who, now, days);
+        // Состав исходящих полей входит в отпечаток: подтверждают «этот запрос с ЭТИМИ полями».
+        // Спрашивается он здесь, у реестра, потому что привязка лежит в той же таблице, а не в
+        // карточке, — экрану подтверждения об этом знать незачем.
+        var direction = OutgoingDirection.Confirm(request, who, now, days, OutgoingMark(request.Id));
 
         var entity = db.IntegrationDirections.FirstOrDefault(d => d.RequestId == request.Id);
 
@@ -146,8 +149,15 @@ public sealed partial class IntegrationsRegistry
         if (Direction(request.Id) is not { } direction)
             return "не подтверждено мастер-паролем";
 
-        return direction.Trouble(request, now);
+        return direction.Trouble(request, now, OutgoingMark(request.Id));
     }
+
+    /// <summary>
+    /// Отпечаток состава исходящей привязки; пусто — привязки нет. Обертка ради одного: и
+    /// подтверждение, и проверка обязаны спрашивать состав ОДИНАКОВО, иначе подтвержденное
+    /// направление переставало бы действовать в тот же миг.
+    /// </summary>
+    private string OutgoingMark(int requestId) => Outgoing(requestId)?.Mark() ?? "";
 
     // ── Перевод ───────────────────────────────────────────────────────────────
 

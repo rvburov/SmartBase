@@ -198,6 +198,12 @@ public partial class SettingsView
             extra += (extra.Length > 0 ? " · " : "")
                    + "Последний запуск: " + last.ToLocalTime().ToString("dd.MM.yyyy HH:mm");
 
+        // Что запрос уносит из коллекции — в карточке, рядом с остальным. Строка «полей: 4»
+        // отвечает на первый вопрос проверяющего и на первый же вопрос человека, вернувшегося к
+        // обмену через полгода.
+        if (registry.Outgoing(request.Id) is { } outgoing)
+            extra += (extra.Length > 0 ? " · " : "") + "Уносит: " + outgoing.Describe();
+
         // Состояние исходящего направления — прямо в карточке. Человек, у которого обмен встал,
         // должен увидеть причину здесь, а не искать ее в журнале: «срок вышел» и «запрос
         // правили» лечатся по-разному.
@@ -217,10 +223,16 @@ public partial class SettingsView
             ("Что уйдет", () => _ = PreviewRequestAsync(registry, request, connection)),
         };
 
+        // «Что уносит» — только у исходящего: читающий запрос данные не отдает, и предлагать ему
+        // набрать состав полей значило бы обещать отправку, которой не будет.
         if (request.Outward)
+        {
+            more.Add(("Что уносит", () => _ = EditOutgoingAsync(registry, request)));
+
             more.Add(registry.Direction(request.Id) is null
                 ? ("Подтвердить", () => _ = ConfirmDirectionAsync(registry, request))
                 : ("Отозвать",    () => _ = RevokeDirectionAsync(registry, request)));
+        }
 
         return CardRow(request.Name, description, extra,
             edit:   () => _ = EditRequestAsync(request),
@@ -246,14 +258,63 @@ public partial class SettingsView
             return;
         }
 
+        // Тело собирается ровно тем же вызовом, что и при настоящей отправке: сухой прогон,
+        // который показывает НЕ то тело, что уйдет, хуже, чем его отсутствие.
+        var (payload, cannot) = Database.OutgoingSource.Build(
+            registry, request, _databases?.Invoke() ?? []);
+
+        if (cannot is { Length: > 0 })
+        {
+            await ConfirmDialog.Info($"Показать нечего: {cannot}").ShowDialog(win);
+            return;
+        }
+
         // Причина отказа берется у того же замка, что стоит на настоящей отправке, — иначе
         // сухой прогон однажды показал бы «уйдет», там где не уйдет.
         var preview = RequestRunner.Preview(
             connection, request, registry.Secret(connection.Id),
             VariableContext.Now(registry.LastRun(request.Id), connection.Address),
-            Database.OutwardGuard.Refusal(registry, request, DateTimeOffset.Now));
+            Database.OutwardGuard.Refusal(registry, request, DateTimeOffset.Now),
+            payload);
 
         await new RequestPreviewDialog(preview).ShowDialog(win);
+    }
+
+    /// <summary>
+    /// Набрать состав того, что запрос уносит из коллекции (docs/ROADMAP-API.md, раздел 2).
+    ///
+    /// Право спрашивается как у любой другой настройки обмена: запускать настроенное можно и без
+    /// него, а менять состав выгрузки — нельзя. Подтверждение направления сбрасывать отдельно не
+    /// надо: состав входит в отпечаток запроса, и правка роняет его сама.
+    /// </summary>
+    private async Task EditOutgoingAsync(Database.IntegrationsRegistry registry,
+                                         IntegrationRequest request)
+    {
+        if (VisualRoot is not Window win) return;
+        if (!AllowIntegrations(Core.Models.PermAction.IntegrationsSetup)) return;
+
+        var databases = _databases?.Invoke() ?? [];
+
+        if (databases.Count == 0)
+        {
+            await ConfirmDialog.Info(
+                    "Нет открытых баз данных: брать записи неоткуда.\n\n"
+                    + "Подключите базу в разделе «Управление базой данных» и повторите.")
+                .ShowDialog(win);
+            return;
+        }
+
+        var options = databases
+            .Select(m => new DbOption(m.DbId, m.Name, m.Constructor))
+            .ToList();
+
+        var choice = await new OutgoingBindingDialog(options, registry.Outgoing(request.Id))
+            .ShowDialog<OutgoingChoice?>(win);
+
+        if (choice is null) return;
+
+        registry.SaveOutgoing(request.Id, choice.Binding);
+        BuildIntegrationsRequests();
     }
 
     /// <summary>
