@@ -309,6 +309,102 @@ public sealed class OutgoingSourceTests : IDisposable
         });
     }
 
+    // ── Выделенные записи (точки вызова из раздела данных) ────────────────────
+
+    /// <summary>
+    /// Человек выделил строки в таблице и позвал действие — уходят ровно они. Порядок при этом
+    /// табличный, а не тот, в каком их выделяли: выделение мышью порядка не имеет, и одни и те
+    /// же записи обязаны давать одно и то же тело.
+    /// </summary>
+    [Fact]
+    public async Task Only_the_chosen_records_go_out_and_in_table_order()
+    {
+        AttachPolicy();
+
+        await WithStand(async (cards, data) =>
+        {
+            var (collection, sum) = Orders(data);
+            var third = SampleData.AddRecord(data.Constructor, collection, "А-3", 300).Id!.Value;
+            data.Constructor.SetFieldValue(third, sum, "300");
+
+            var second = data.Constructor.GetRecordsPageAfter(collection, null, null, 10)
+                             .First(r => r.Title == "А-2").Id!.Value;
+
+            var request = Push(cards);
+            cards.SaveOutgoing(request.Id, Binding(collection, sum));
+
+            // Порядок выделения — обратный табличному.
+            var (payload, trouble) = OutgoingSource.Build(
+                cards, request, [data.Manager], [third, second]);
+
+            Assert.Null(trouble);
+            Assert.Equal("""[{"order_no":"А-2","amount":250},{"order_no":"А-3","amount":300}]""",
+                         payload!.Body);
+            Assert.Equal(2, payload.Rows);
+
+            await Task.CompletedTask;
+        });
+    }
+
+    /// <summary>
+    /// Выделение живет в таблице, а коллекцию за это время могли переключить: чужие записи
+    /// отбрасываются молча, а не уезжают наружу вместе со своими.
+    /// </summary>
+    [Fact]
+    public async Task Records_of_another_collection_are_dropped()
+    {
+        AttachPolicy();
+
+        await WithStand(async (cards, data) =>
+        {
+            var (collection, sum) = Orders(data);
+
+            var other   = SampleData.AddCollection(data.Constructor, "Другое").Id!.Value;
+            var foreign = SampleData.AddRecord(data.Constructor, other, "Чужая", 10).Id!.Value;
+
+            var mine = data.Constructor.GetRecordsPageAfter(collection, null, null, 10)
+                           .First(r => r.Title == "А-1").Id!.Value;
+
+            var request = Push(cards);
+            cards.SaveOutgoing(request.Id, Binding(collection, sum));
+
+            var (payload, trouble) = OutgoingSource.Build(
+                cards, request, [data.Manager], [mine, foreign]);
+
+            Assert.Null(trouble);
+            Assert.Equal(1, payload!.Rows);
+            Assert.DoesNotContain("Чужая", payload.Body, StringComparison.Ordinal);
+
+            await Task.CompletedTask;
+        });
+    }
+
+    /// <summary>Обмен «одна запись» из точки вызова — обычный случай: выделили строку и позвали.</summary>
+    [Fact]
+    public async Task Single_record_exchange_works_for_one_chosen_row()
+    {
+        AttachPolicy();
+
+        await WithStand(async (cards, data) =>
+        {
+            var (collection, sum) = Orders(data);
+
+            var one = data.Constructor.GetRecordsPageAfter(collection, null, null, 10)
+                          .First(r => r.Title == "А-1").Id!.Value;
+
+            var request = Push(cards);
+            cards.SaveOutgoing(request.Id,
+                               Binding(collection, sum) with { Shape = OutgoingShape.Single });
+
+            var (payload, trouble) = OutgoingSource.Build(cards, request, [data.Manager], [one]);
+
+            Assert.Null(trouble);
+            Assert.Equal("""{"order_no":"А-1","amount":100}""", payload!.Body);
+
+            await Task.CompletedTask;
+        });
+    }
+
     // ── Хранение и подтверждение ──────────────────────────────────────────────
 
     [Fact]

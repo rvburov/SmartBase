@@ -26,13 +26,17 @@ public static class OutgoingSource
     /// <param name="registry">Реестр интеграций — в нем лежит привязка.</param>
     /// <param name="request">Запрос, который собираются запустить.</param>
     /// <param name="databases">Базы, открытые на этой машине прямо сейчас.</param>
+    /// <param name="records">Какие записи отправлять; <c>null</c> или пусто — всю коллекцию.
+    /// Список приходит от точки вызова в разделе данных: человек выделил строки и позвал
+    /// действие для них.</param>
     /// <param name="ct">Отмена.</param>
     /// <returns>Готовое тело либо причина, по которой его не собрать, — готовой фразой.</returns>
     public static (OutgoingPayload? Payload, string? Trouble) Build(
         IntegrationsRegistry           registry,
         IntegrationRequest             request,
         IReadOnlyList<DatabaseManager> databases,
-        CancellationToken              ct = default)
+        IReadOnlyList<int>?            records = null,
+        CancellationToken              ct      = default)
     {
         if (registry.Outgoing(request.Id) is not { } binding) return (null, null);
 
@@ -50,7 +54,7 @@ public static class OutgoingSource
             return (null, "политика организации не разрешает отправлять записи: "
                         + "потолок строк за запуск — 0");
 
-        var read = source.Constructor.ReadOutgoingIsolated(binding, limit, ct);
+        var read = source.Constructor.ReadOutgoingIsolated(binding, limit, ct, records);
 
         if (read.Trouble is { Length: > 0 } trouble) return (null, trouble);
 

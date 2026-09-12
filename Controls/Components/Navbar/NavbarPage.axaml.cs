@@ -17,6 +17,9 @@ public partial class NavbarPage : UserControl
     /// <summary>Нажата кнопка блока коллекции (true — открыть, false — закрыть).</summary>
     public event EventHandler<bool>? CollectionPanelToggled;
 
+    /// <summary>Нажата кнопка «Действия обмена»: список собирает и показывает раздел.</summary>
+    public event EventHandler<Control>? ActionsRequested;
+
     // Гасит TitleChanged на время служебной установки имени (SetTitle), чтобы ее не приняли за правку.
     private bool _suppressTitleChange;
 
@@ -31,6 +34,8 @@ public partial class NavbarPage : UserControl
             TitleBox.Focus();
             TitleBox.SelectAll();
         };
+
+        ActionsBtn.Click += (_, _) => ActionsRequested?.Invoke(this, ActionsBtn);
 
         TitleBox.LostFocus += (_, _) => ExitTitleEdit();
         TitleBox.KeyDown   += (_, e) =>
@@ -64,6 +69,12 @@ public partial class NavbarPage : UserControl
         ExitTitleEdit();
         _suppressTitleChange = false;
     }
+
+    /// <summary>
+    /// Показать кнопку действий. Скрывается, когда для коллекции ничего не настроено: кнопка,
+    /// которая всегда есть и всегда пуста, читается как поломка.
+    /// </summary>
+    public void ShowActions(bool show) => ActionsBtn.IsVisible = show;
 
     /// <summary>Синхронизирует визуальное состояние кнопки с фактической видимостью блока коллекции.</summary>
     public void SetCollectionPanelOpen(bool isOpen)

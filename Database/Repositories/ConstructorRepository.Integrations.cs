@@ -342,7 +342,12 @@ public partial class ConstructorRepository
     /// <param name="binding">Что и под какими именами уходит.</param>
     /// <param name="limit">Потолок строк за запуск — из политики организации.</param>
     /// <param name="ct">Отмена.</param>
-    public OutgoingRows ReadOutgoingIsolated(OutgoingBinding binding, int limit, CancellationToken ct)
+    /// <param name="records">Какие записи отправлять; <c>null</c> или пусто — всю коллекцию.
+    /// Список приходит от точки вызова: человек выделил строки в таблице и позвал действие
+    /// именно для них.</param>
+    public OutgoingRows ReadOutgoingIsolated(OutgoingBinding binding, int limit,
+                                             CancellationToken ct,
+                                             IReadOnlyList<int>? records = null)
     {
         // Права — на публичной точке входа, как у ApplyRowsIsolated: изолированный клон
         // репозитория прав не несет. Отправка наружу начинается с чтения, и права на чтение
@@ -386,11 +391,52 @@ public partial class ConstructorRepository
             columns.Add(column);
         }
 
-        var rows = ReadExportRowsIsolated(binding.CollectionId, columns, excludeHidden: false, ct)
-                   .Take(Math.Max(0, limit) + 1)
-                   .ToList();
+        var rows = records is { Count: > 0 }
+            ? isolated.ChosenRows(binding.CollectionId, columns, records, Math.Max(0, limit) + 1)
+            : ReadExportRowsIsolated(binding.CollectionId, columns, excludeHidden: false, ct)
+              .Take(Math.Max(0, limit) + 1)
+              .ToList();
 
         return new OutgoingRows(columns, rows, collection, null);
+    }
+
+    /// <summary>
+    /// Значения выбранных записей в порядке колонок. Порядок строк — тот же, что в таблице
+    /// (Position, Id), а не тот, в каком человек их выделял: выделение мышью порядка не имеет, и
+    /// отправить одни и те же записи двумя разными списками значило бы получить два разных тела.
+    ///
+    /// Записи не из этой коллекции отбрасываются молча: выделение живет в таблице, а коллекцию
+    /// за это время могли переключить.
+    /// </summary>
+    private List<string[]> ChosenRows(int collectionId, IReadOnlyList<ExportColumn> columns,
+                                      IReadOnlyList<int> records, int take)
+    {
+        var chosen = db.DbRecords.AsNoTracking()
+                       .Where(r => r.CollectionId == collectionId && records.Contains(r.Id))
+                       .OrderBy(r => r.Position).ThenBy(r => r.Id)
+                       .Take(take)
+                       .ToList();
+
+        var values = GetFieldValuesBatch([.. chosen.Select(r => r.Id)]);
+
+        var rows = new List<string[]>(chosen.Count);
+
+        foreach (var record in chosen)
+        {
+            var mine = values.GetValueOrDefault(record.Id);
+            var row  = new string[columns.Count];
+
+            for (var i = 0; i < columns.Count; i++)
+                row[i] = columns[i].Key == TitleKey
+                    ? record.Title
+                    : columns[i].FieldId is int field && mine is not null
+                        ? mine.GetValueOrDefault(field, "")
+                        : "";
+
+            rows.Add(row);
+        }
+
+        return rows;
     }
 
     /// <summary>Позиция для первой новой записи — в конец коллекции, как при обычном добавлении.</summary>

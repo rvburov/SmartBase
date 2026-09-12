@@ -139,15 +139,6 @@ public partial class SettingsView
                                                      DateTimeOffset                startedAt,
                                                      OutgoingPayload?              payload)
     {
-        var context = VariableContext.Now(registry.LastRun(request.Id), connection.Address);
-
-        // Замок на исходящем — до окна с бегущей полосой: отказ должен прийти немедленно, а не
-        // после прогресса, который никуда не шел. Сценария тут нет, кнопку нажал человек, и в
-        // журнале безопасности так и будет записано.
-        var verdict = Database.OutwardGuard.Check(registry, connection, request, context,
-                                                  scenario: "", dbId: 0, DateTimeOffset.Now,
-                                                  payload);
-
         var progress = new ProgressDialog { Title = "Запрос" };
         using var cts = new CancellationTokenSource();
         progress.EnableCancel(cts.Cancel);
@@ -161,9 +152,12 @@ public partial class SettingsView
         RunOutcome? outcome = null;
         try
         {
-            outcome = await RequestRunner.RunAsync(
-                connection, request, registry.Secret(connection.Id), context,
-                verdict.Trouble, payload, cts.Token);
+            // Замок, отправка, строка журнала и отметка о простое — одной цепочкой, общей со
+            // сценариями (RequestLauncher). Сценария тут нет, кнопку нажал человек, и в журнале
+            // безопасности так и будет записано.
+            outcome = await Database.RequestLauncher.SendAsync(
+                registry, connection, request, payload, dbId: 0, startedAt,
+                DateTimeOffset.Now, ct: cts.Token);
         }
         catch (OperationCanceledException)
         {
@@ -175,22 +169,6 @@ public partial class SettingsView
         }
 
         if (outcome is null) return null;   // отменили — событием обмена это не считается
-
-        // Строка журнала пишется и для НЕУДАЧНОГО запроса. Отказ чужой программы все равно был
-        // обращением к ней: он расходует квоту и он же нужен при разборе «почему ничего не
-        // пришло» — именно неудачных строк там ищут больше всего.
-        //
-        // В расход при этом идет только то, что дошло до сети: запуск, остановленный отказом
-        // политики или выбранной квотой, обменом не был — засчитай его, и отказ по квоте
-        // продлевал бы сам себя.
-        Database.RunJournal.Add(Database.RunEntry.New(
-            Database.RunChannel.Request, request.Name, outcome.SafeAddress, outcome.Ok,
-            outcome.Explanation, outcome.Rows, outcome.Bytes, outcome.Elapsed,
-            dbId: 0, at: startedAt, counts: outcome.Sent, direction: request.Id,
-            sentBody: outcome.SentBody, gotBody: outcome.GotBody));
-
-        // Направлением воспользовались — отсчет простоя начинается заново.
-        if (outcome.Sent) Database.OutwardGuard.Used(registry, request, DateTimeOffset.Now);
 
         if (outcome.Ok) return outcome;
 

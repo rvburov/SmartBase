@@ -425,11 +425,9 @@ public static partial class ScenarioRunner
         // изменившиеся в чужой программе, пока шел обмен, иначе оказались бы позади границы.
         var startedAt = DateTimeOffset.UtcNow;
 
-        var context = VariableContext.Now(registry.LastRun(request.Id), connection.Address);
-
         // Тело из коллекции — до замка: и в журнал безопасности, и в сокет обязано уйти одно и
         // то же тело, а собирается оно один раз на запуск.
-        var (payload, cannot) = OutgoingSource.Build(registry, request, databases, ct);
+        var (payload, cannot) = OutgoingSource.Build(registry, request, databases, ct: ct);
 
         if (cannot is { Length: > 0 })
             return StepOutcome.Bad($"запрос «{request.Name}»: {cannot}");
@@ -441,29 +439,12 @@ public static partial class ScenarioRunner
             return StepOutcome.Halt($"в коллекции «{payload.Collection}» нет записей — "
                                   + $"запросу «{request.Name}» нечего отправлять");
 
-        // Замок на исходящем. Спрашивается ДО запуска и оставляет след — и разрешающий, и
-        // запрещающий: попытка отправить данные наружу событие само по себе, состоялась она или
-        // нет. Читающий запрос сюда не попадает — ему подтверждать нечего.
-        var verdict = OutwardGuard.Check(registry, connection, request, context,
-                                         scenario, binding.DbId, now, payload);
-
-        var outcome = await RequestRunner.RunAsync(
-            connection, request, registry.Secret(connection.Id), context, verdict.Trouble,
-            payload, ct);
-
-        // Строка журнала пишется и для НЕУДАЧНОГО запроса: именно их ищут, разбирая «почему
-        // записи не появились». В расход идет только то, что дошло до сети.
-        RunJournal.Add(RunEntry.New(
-            RunChannel.Request, request.Name, outcome.SafeAddress, outcome.Ok, outcome.Explanation,
-            outcome.Rows, outcome.Bytes, outcome.Elapsed, binding.DbId, startedAt,
-            counts: outcome.Sent, direction: request.Id,
-            sentBody: outcome.SentBody, gotBody: outcome.GotBody,
-            scenario: scenario, step: mark));
-
-        // Направлением воспользовались — отсчет простоя начинается заново. Считается по тому же
-        // признаку, что и расход квоты: данные ДОШЛИ до сети. Запуск, остановленный замком или
-        // политикой, дверью не пользовался, и продлевать ею жизнь забытому обмену незачем.
-        if (outcome.Sent) OutwardGuard.Used(registry, request, now);
+        // Замок, отправка, строка журнала и отметка о простое — одной цепочкой на всех, кто
+        // запускает запросы (RequestLauncher): повторенная здесь, она однажды повторилась бы не
+        // целиком, и ночной обмен перестал бы считаться, продолжая работать.
+        var outcome = await RequestLauncher.SendAsync(
+            registry, connection, request, payload, binding.DbId, startedAt, now,
+            scenario, mark, ct);
 
         if (!outcome.Ok)
             return StepOutcome.Bad($"запрос «{request.Name}»: {outcome.Explanation}");

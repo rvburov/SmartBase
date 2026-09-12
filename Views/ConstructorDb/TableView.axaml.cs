@@ -2218,6 +2218,7 @@ public partial class TableView : UserControl
         AddColorItems(menu, row);
         AddRecordMoveItems(menu, row);
         AddHeightModeItems(menu);
+        AddActionItems(menu);
 
         menu.Items.Add(new Separator());
 
@@ -2232,6 +2233,58 @@ public partial class TableView : UserControl
     // Резолвится на момент вызова, поэтому видит id, проставленный async-заполнением строки.
     private static int RowRecordId(DataGridRow row) =>
         (row.DataContext as TableRowVm)?.RecordId ?? 0;
+
+    /// <summary>
+    /// Действия обмена, настроенные для открытой коллекции (docs/ROADMAP-API.md, шаг 6). Пусто —
+    /// пункта в меню нет вовсе.
+    ///
+    /// Таблица об интеграциях ничего не знает и знать не должна: она показывает то, что ей дали,
+    /// и зовет то, что ей дали. Собирает список раздел (<see cref="IntegrationActions"/>).
+    /// </summary>
+    public Func<IReadOnlyList<DataAction>>? DataActions { get; set; }
+
+    // ── Пункт «Действия» в меню строки ────────────────────────────────────────
+    //
+    // Состав пересчитывается в menu.Opening: обмен могли настроить, пока таблица открыта, а
+    // собранное один раз меню показывало бы вчерашний список. Пункт применяется ко ВСЕМУ
+    // мультивыделению строк — как удаление и цвет.
+    private void AddActionItems(ContextMenu menu)
+    {
+        if (DataActions is null) return;
+
+        var host = new MenuItem
+        {
+            Header    = Controls.Components.MenuIcons.PlainHeader("Действия"),
+            IsVisible = false,
+        };
+
+        Controls.Components.MenuIcons.FixSubmenuGap(host);
+        menu.Items.Add(host);
+
+        menu.Opening += (_, _) =>
+        {
+            var actions = DataActions?.Invoke() ?? [];
+
+            host.IsVisible = actions.Count > 0;
+            if (actions.Count == 0) return;
+
+            var items = new List<MenuItem>();
+
+            foreach (var action in actions)
+            {
+                var item = new MenuItem
+                {
+                    Header = Controls.Components.MenuIcons.PlainHeader(action.Title),
+                };
+
+                var run = action.Run;
+                item.Click += (_, _) => _ = run(SelectedRecordIds());
+                items.Add(item);
+            }
+
+            host.ItemsSource = items;
+        };
+    }
 
     // ── Пункты цвета в меню строки ────────────────────────────────────────────
     //

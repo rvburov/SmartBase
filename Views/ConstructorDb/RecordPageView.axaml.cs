@@ -102,6 +102,16 @@ public partial class RecordPageView : UserControl
     private RecordPageViewModel? _vm;
     private ConstructorRepository? _repo;   // для перечитывания записи из БД (ReloadFromDb)
 
+    /// <summary>
+    /// Действия обмена над ПОКАЗЫВАЕМОЙ записью (docs/ROADMAP-API.md, шаг 6). Аргументы —
+    /// база и коллекция записи: панель может быть открыта межбазовым переходом, и спрашивать
+    /// «текущую базу приложения» здесь нельзя.
+    ///
+    /// Панель об интеграциях ничего не знает: она показывает то, что ей дали, и зовет то, что
+    /// ей дали. Собирает список раздел (<see cref="IntegrationActions"/>).
+    /// </summary>
+    public Func<int, int, IReadOnlyList<DataAction>>? DataActions { get; set; }
+
     // База ПОКАЗЫВАЕМОЙ записи (0 — активная). Панель может быть открыта межбазовым переходом, и тогда
     // «текущая база» для нее и для приложения — РАЗНЫЕ. Без этого внутрибазовая связь чужой записи
     // уводила бы в активную базу (см. Navigate ниже).
@@ -183,6 +193,8 @@ public partial class RecordPageView : UserControl
         };
 
         HeaderBar.CollectionPanelToggled += (_, open) => CollectionPanelToggled?.Invoke(this, open);
+
+        HeaderBar.ActionsRequested += (_, anchor) => ShowActionsMenu(anchor);
     }
 
     /// <summary>Синхронизирует визуальное состояние кнопки с фактической видимостью блока коллекции.</summary>
@@ -208,6 +220,7 @@ public partial class RecordPageView : UserControl
 
         BuildProperties();
         ApplyPropsHeight();
+        RefreshActions();
 
         // Новая запись — нижний блок по умолчанию на «Описании»; описания у коллекции нет —
         // снизу пусто, а в крошке снова видна ссылка + «Добавить описание» (выбор другого
@@ -628,6 +641,44 @@ public partial class RecordPageView : UserControl
     // Запрещенное действие не гасим, а объясняем по клику — как в таблице.
     private void Guarded(MenuItem item, PermAction action, Action run) =>
         item.Click += (_, _) => Controls.Dialogs.PermissionNotice.Run(this, Can(action), action, run);
+
+    // ── Действия обмена над записью ───────────────────────────────────────────
+
+    /// <summary>Показать кнопку действий, если для этой коллекции что-то настроено.</summary>
+    private void RefreshActions() =>
+        HeaderBar.ShowActions(Actions().Count > 0);
+
+    private IReadOnlyList<DataAction> Actions() =>
+        _vm is null ? [] : DataActions?.Invoke(_dbId, _vm.CollectionId) ?? [];
+
+    /// <summary>
+    /// Список действий под кнопкой. Собирается на КАЖДОЕ открытие: обмен могли настроить, пока
+    /// панель висела на экране, а собранное однажды меню показывало бы вчерашний список.
+    /// </summary>
+    private void ShowActionsMenu(Control anchor)
+    {
+        if (_vm is null) return;
+
+        var actions = Actions();
+        if (actions.Count == 0) return;
+
+        var record = _vm.RecordId;
+        var menu   = new MenuFlyout { Placement = PlacementMode.BottomEdgeAlignedRight };
+
+        foreach (var action in actions)
+        {
+            var item = new MenuItem
+            {
+                Header = Controls.Components.MenuIcons.PlainHeader(action.Title),
+            };
+
+            var run = action.Run;
+            item.Click += (_, _) => _ = run([record]);
+            menu.Items.Add(item);
+        }
+
+        menu.ShowAt(anchor);
+    }
 
     private ContextMenu BuildPropertyMenu(PropertyRowVm row)
     {
