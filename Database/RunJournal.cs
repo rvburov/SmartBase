@@ -483,6 +483,46 @@ public sealed class RunJournal
         Since(moment, direction).Bytes;
 
     /// <summary>
+    /// Сколько байт отдано с указанного момента по ОДНОЙ выдаче чтения — ключу выдачи. Счет
+    /// отдельный от исходящих направлений намеренно: у чтения свой суточный потолок, и займи
+    /// оно общий — чужая программа, читающая нас, съедала бы разрешение чужих отправок.
+    ///
+    /// Считаются только УДАЧНЫЕ ответы: отказ данных не отдал. Битый журнал отвечает «потолок
+    /// выбран» — тем же правилом, что <see cref="Since(DateTimeOffset)"/>: непрочитанный расход
+    /// не должен снимать ограничение.
+    /// </summary>
+    public long ReadBytesSince(DateTimeOffset moment, int grant)
+    {
+        try
+        {
+            lock (_lock)
+            {
+                using var connection = Open();
+                using var command    = connection.CreateCommand();
+
+                command.CommandText = """
+                    SELECT IFNULL(SUM(Bytes), 0) FROM runs
+                    WHERE Channel = $ingress AND Direction = $grant AND Ok = 1
+                      AND At >= $since;
+                    """;
+
+                command.Parameters.AddWithValue("$ingress", (int)RunChannel.Ingress);
+                command.Parameters.AddWithValue("$grant",   grant);
+                command.Parameters.AddWithValue("$since",
+                    moment.ToUniversalTime().ToString("o", CultureInfo.InvariantCulture));
+
+                return command.ExecuteScalar() is long spent ? spent : 0L;
+            }
+        }
+        catch (SqliteException failure)
+        {
+            Serilog.Log.Warning("Журнал обмена: расход выдачи не сосчитался — {Reason:l}",
+                                failure.Message);
+            return long.MaxValue;
+        }
+    }
+
+    /// <summary>
     /// Общий счет: <paramref name="direction"/> равен <c>null</c> — по всему обмену, иначе по
     /// одному направлению. Одним запросом на оба случая, потому что «считается ли строка» и
     /// «неудачные тоже» здесь общие, а разойдясь, они однажды разошлись бы в сторону разрешения.

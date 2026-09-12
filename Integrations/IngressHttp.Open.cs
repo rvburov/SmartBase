@@ -149,7 +149,8 @@ public sealed class IngressHttp : IDisposable
             request.Url?.AbsolutePath ?? "/",
             TokenOf(request),
             body,
-            request.RemoteEndPoint?.Address.ToString() ?? "");
+            request.RemoteEndPoint?.Address.ToString() ?? "",
+            request.Url?.Query ?? "");
 
         await WriteAsync(context, _answer(call));
     }

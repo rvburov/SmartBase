@@ -149,7 +149,7 @@ public sealed class IngressHandlerTests : IDisposable
     [Fact]
     public void An_unknown_address_says_so_without_mentioning_tokens()
     {
-        var answer = Get("/v1/records", "");
+        var answer = Get("/v1/tables", "");
 
         Assert.Equal(404, answer.Status);
         Assert.Contains(IngressApi.InboxPath, answer.Body, StringComparison.Ordinal);
@@ -162,16 +162,19 @@ public sealed class IngressHandlerTests : IDisposable
     }
 
     /// <summary>
-    /// Обработчика, отдающего записи, не существует: «вычитать базу через свой же порт» не
-    /// выключено настройкой — его нет вовсе (10.12).
+    /// Токен сам по себе не читает: у чтения свой замок — выдача, и без нее <c>/v1/records</c>
+    /// отказывает (полные проверки замка — в <c>IngressReadTests</c>). Придуманных адресов
+    /// «вычитать сбоку» по-прежнему не существует.
     /// </summary>
     [Fact]
-    public void There_is_no_way_to_read_records_out()
+    public void A_token_alone_does_not_read_records_out()
     {
         Orders();
         var secret = Issue();
 
-        foreach (var path in new[] { "/v1/records", "/v1/rows", "/v1/collections/Заказы" })
+        Assert.Equal(403, Get("/v1/records", secret).Status);
+
+        foreach (var path in new[] { "/v1/rows", "/v1/collections/Заказы" })
             Assert.Equal(404, Get(path, secret).Status);
     }
 

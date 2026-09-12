@@ -218,3 +218,43 @@ public class IntegrationTokenEntity
     /// <summary>Выключенный токен не пускают; строку при этом не удаляют.</summary>
     public bool Enabled { get; set; } = true;
 }
+
+/// <summary>
+/// Выдача чтения (<see cref="SmartBase.Integrations.ReadGrant"/>): токену разрешено читать одну
+/// коллекцию, поименованные поля, до срока.
+///
+/// Лежит в app.db рядом с токеном и направлениями — и по той же причине: читает порт ОДНОЙ
+/// машины, а подтверждение выдано на ней и этому человеку. Пароль сюда не попадает никогда:
+/// его проверяет политика, здесь остается только след.
+/// </summary>
+public class IntegrationGrantEntity
+{
+    [Key] public int Id { get; set; }
+
+    /// <summary>Токен, которому разрешено читать.</summary>
+    public int TokenId { get; set; }
+
+    /// <summary>Коллекция — ключом: имя может смениться, выдача остается.</summary>
+    public int CollectionId { get; set; }
+
+    /// <summary>Имя коллекции на момент выдачи — для экрана и паспорта.</summary>
+    [Required] public string Collection { get; set; } = "";
+
+    /// <summary>Ключи полей строкой: <c>t,12,15</c>. Источник истины о составе.</summary>
+    [Required] public string FieldKeys { get; set; } = "";
+
+    /// <summary>Имена полей на момент выдачи — для экрана и паспорта.</summary>
+    [Required] public string Fields { get; set; } = "";
+
+    /// <summary>Кто подтвердил.</summary>
+    [Required] public string Confirmed { get; set; } = "";
+
+    /// <summary>Когда подтверждена (ISO-8601).</summary>
+    [Required] public string At { get; set; } = "";
+
+    /// <summary>До какого момента действует включительно (ISO-8601).</summary>
+    [Required] public string Until { get; set; } = "";
+
+    /// <summary>Когда читали в последний раз (ISO-8601); пусто — ни разу.</summary>
+    public string? UsedAt { get; set; }
+}

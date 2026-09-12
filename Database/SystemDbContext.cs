@@ -31,6 +31,9 @@ public class SystemDbContext : DbContext
     /// <summary>Токены входящего канала — тоже локальные: порт слушает одна машина.</summary>
     public DbSet<IntegrationTokenEntity> IntegrationTokens { get; set; } = null!;
 
+    /// <summary>Выдачи чтения — рядом с токенами: читает порт этой же машины.</summary>
+    public DbSet<IntegrationGrantEntity> IntegrationGrants { get; set; } = null!;
+
     private readonly string _path;
 
     public SystemDbContext(string path) => _path = path;
@@ -79,6 +82,12 @@ public class SystemDbContext : DbContext
         model.Entity<IntegrationTokenEntity>(e =>
         {
             e.ToTable("integration_tokens");
+            e.HasKey(x => x.Id);
+        });
+
+        model.Entity<IntegrationGrantEntity>(e =>
+        {
+            e.ToTable("integration_grants");
             e.HasKey(x => x.Id);
         });
     }

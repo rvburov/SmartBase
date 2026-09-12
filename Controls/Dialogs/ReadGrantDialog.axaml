@@ -1,0 +1,124 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:b="clr-namespace:SmartBase.Controls.Behaviors"
+        xmlns:w="clr-namespace:SmartBase.Controls.Widgets"
+        x:Class="SmartBase.Controls.Dialogs.ReadGrantDialog"
+        Title="Разрешить чтение"
+        Width="{StaticResource DialogWidthBase}"
+        MinWidth="{StaticResource DialogWidthBase}"
+        MaxWidth="{StaticResource DialogWidthBase}"
+        MinHeight="0"
+        SizeToContent="Height"
+        b:DialogFit.LimitToScreen="True"
+        WindowStartupLocation="CenterOwner"
+        CanResize="False"
+        Background="{StaticResource BrushBg}">
+
+    <StackPanel Spacing="0" Margin="{StaticResource DialogPadding}">
+
+        <TextBlock Text="Выдача разрешает роботу ВЫЧИТЫВАТЬ одну коллекцию: поименованные поля, до срока. Каждый ответ ложится в журнал безопасности и занимает суточный потолок выдачи."
+                   Margin="0,0,0,12"
+                   TextWrapping="Wrap"
+                   FontSize="{DynamicResource FontSizeSmall}"
+                   Foreground="{StaticResource BrushSecondaryText}" />
+
+        <TextBlock Text="Какому токену"
+                   Margin="0,0,0,6"
+                   FontWeight="{StaticResource FontWeightBold}"
+                   Foreground="{StaticResource BrushSecondaryText}" />
+
+        <ComboBox x:Name="TokenCombo"
+                  Height="{StaticResource ControlHeightStandard}"
+                  Margin="0,0,0,12"
+                  HorizontalAlignment="Stretch"
+                  VerticalContentAlignment="Center"
+                  Background="{StaticResource BrushSecondaryBg}"
+                  CornerRadius="{StaticResource RadiusBase}" />
+
+        <TextBlock Text="Какую коллекцию"
+                   Margin="0,0,0,6"
+                   FontWeight="{StaticResource FontWeightBold}"
+                   Foreground="{StaticResource BrushSecondaryText}" />
+
+        <ComboBox x:Name="CollectionCombo"
+                  Height="{StaticResource ControlHeightStandard}"
+                  Margin="0,0,0,12"
+                  HorizontalAlignment="Stretch"
+                  VerticalContentAlignment="Center"
+                  Background="{StaticResource BrushSecondaryBg}"
+                  CornerRadius="{StaticResource RadiusBase}" />
+
+        <TextBlock Text="Какие поля"
+                   Margin="0,0,0,6"
+                   FontWeight="{StaticResource FontWeightBold}"
+                   Foreground="{StaticResource BrushSecondaryText}" />
+
+        <!-- Полоса идет во всю высоту рамки, воздух — на списке ВНУТРИ прокрутки
+             (docs/developer/ui/scrolling.md). Помеченные и невыдаваемые поля показаны
+             серыми с причиной, а не спрятаны: пустое место читается как поломка. -->
+        <Border BorderBrush="{StaticResource BrushSeparator}"
+                BorderThickness="{DynamicResource BorderLine}"
+                CornerRadius="{StaticResource RadiusBase}"
+                ClipToBounds="True"
+                Margin="0,0,0,6"
+                Padding="0">
+            <ScrollViewer MaxHeight="220"
+                          HorizontalScrollBarVisibility="Disabled"
+                          VerticalScrollBarVisibility="Auto">
+                <StackPanel x:Name="FieldsPanel" Spacing="4" Margin="10,8" />
+            </ScrollViewer>
+        </Border>
+
+        <TextBlock Text="Помеченные свойства выдать нельзя; метку, поставленную после выдачи, чтение проверит само и остановится."
+                   Margin="0,0,0,12"
+                   TextWrapping="Wrap"
+                   FontSize="{DynamicResource FontSizeSmall}"
+                   Foreground="{StaticResource BrushSecondaryText}" />
+
+        <TextBlock Text="На какой срок"
+                   Margin="0,0,0,6"
+                   FontWeight="{StaticResource FontWeightBold}"
+                   Foreground="{StaticResource BrushSecondaryText}" />
+
+        <ComboBox x:Name="DaysCombo"
+                  Height="{StaticResource ControlHeightStandard}"
+                  Margin="0,0,0,6"
+                  HorizontalAlignment="Stretch"
+                  VerticalContentAlignment="Center"
+                  Background="{StaticResource BrushSecondaryBg}"
+                  CornerRadius="{StaticResource RadiusBase}" />
+
+        <TextBlock x:Name="IdleHint"
+                   Margin="0,0,0,12"
+                   TextWrapping="Wrap"
+                   FontSize="{DynamicResource FontSizeSmall}"
+                   Foreground="{StaticResource BrushSecondaryText}" />
+
+        <TextBlock Text="Мастер-пароль организации"
+                   Margin="0,0,0,6"
+                   FontWeight="{StaticResource FontWeightBold}"
+                   Foreground="{StaticResource BrushSecondaryText}" />
+
+        <TextBox x:Name="PasswordBox"
+                 Height="{StaticResource ControlHeightStandard}"
+                 Margin="0,0,0,6"
+                 PasswordChar="•"
+                 VerticalContentAlignment="Center"
+                 CornerRadius="{StaticResource RadiusBase}" />
+
+        <TextBlock Text="Пароль знает ответственный за интеграции. В программе его нет: проверяется он по политике организации, которую программа не правит."
+                   Margin="0,0,0,12"
+                   TextWrapping="Wrap"
+                   FontSize="{DynamicResource FontSizeSmall}"
+                   Foreground="{StaticResource BrushSecondaryText}" />
+
+        <w:NoticeBanner x:Name="NoticeBanner" Margin="0,0,0,12" />
+
+        <Grid ColumnDefinitions="*,Auto,8,Auto" Margin="0,4,0,0">
+            <Button Grid.Column="1" x:Name="CancelBtn" Classes="dialog" Content="Отмена" />
+            <Button Grid.Column="3" x:Name="SaveBtn"   Classes="dialog" Content="Разрешить" />
+        </Grid>
+
+    </StackPanel>
+
+</Window>

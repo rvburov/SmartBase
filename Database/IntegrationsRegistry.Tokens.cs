@@ -85,6 +85,10 @@ public sealed partial class IntegrationsRegistry
         var entity = db.IntegrationTokens.FirstOrDefault(t => t.Id == id);
         if (entity is null) return false;
 
+        // Выдачи чтения уходят вместе с токеном: без него они не разрешают никому и ничего,
+        // но в паспорте читались бы как действующие.
+        RemoveGrantsOf(id);
+
         db.IntegrationTokens.Remove(entity);
         db.SaveChanges();
         return true;

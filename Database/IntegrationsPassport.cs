@@ -272,11 +272,54 @@ public static class IntegrationsPassport
         }
 
         text.AppendLine();
-        text.AppendLine("  Что позволяет токен: класть записи в свою базу. Читать данные через");
-        text.AppendLine("  этот канал нельзя — обработчика, отдающего записи, в программе нет,");
-        text.AppendLine("  и наружу отдается только состав коллекций: имена и типы, без значений.");
-        text.AppendLine("  Каждый токен — обычный пользователь базы; права ему выдает и отзывает");
-        text.AppendLine("  ее администратор той же панелью, что и человеку.");
+        text.AppendLine("  Что позволяет токен: класть записи в свою базу. Чтение через этот");
+        text.AppendLine("  канал закрыто отдельным замком — ВЫДАЧЕЙ: ее подтверждает мастер-");
+        text.AppendLine("  пароль организации на коллекцию и поименованные поля, с оглядкой на");
+        text.AppendLine("  метки, со сроком, отсчетом простоя и своим суточным потолком; каждый");
+        text.AppendLine("  ответ ложится в журнал безопасности. Без выдачи наружу отдается");
+        text.AppendLine("  только состав коллекций: имена и типы, без значений. Каждый токен —");
+        text.AppendLine("  обычный пользователь базы; права ему выдает и отзывает ее");
+        text.AppendLine("  администратор той же панелью, что и человеку.");
+        text.AppendLine();
+
+        Grants(text, registry);
+    }
+
+    /// <summary>
+    /// Действующие выдачи чтения — то, что проверяющий спросит следом за токенами: «а что
+    /// именно им разрешено вычитать». Показываются ВСЕ выдачи, включая недействующие:
+    /// «выдано, но простаивает» — такой же ответ, как «действует».
+    /// </summary>
+    private static void Grants(StringBuilder text, IntegrationsRegistry registry)
+    {
+        var grants = registry.Grants();
+
+        if (grants.Count == 0)
+        {
+            text.AppendLine("  Выдач чтения нет ни одной: вычитать данные по сети не может никто.");
+            text.AppendLine();
+            return;
+        }
+
+        var tokens = registry.Tokens();
+        var now    = DateTimeOffset.Now;
+
+        text.AppendLine($"  Выдач чтения: {grants.Count}");
+        text.AppendLine();
+
+        foreach (var grant in grants)
+        {
+            var token = tokens.FirstOrDefault(t => t.Id == grant.TokenId);
+
+            text.AppendLine($"  «{Text(token?.Name ?? $"токен №{grant.TokenId}")}»  →  "
+                          + $"коллекция «{Text(grant.Collection)}»");
+            text.AppendLine($"    поля: {Text(grant.Fields)}");
+            text.AppendLine($"    подтвердил {Text(grant.Confirmed)} · до {Moment(grant.Until)}");
+
+            if (grant.Trouble(now) is { } trouble)
+                text.AppendLine("    не действует: " + trouble);
+        }
+
         text.AppendLine();
     }
 

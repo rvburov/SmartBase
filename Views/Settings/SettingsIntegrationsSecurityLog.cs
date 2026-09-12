@@ -154,16 +154,17 @@ public partial class SettingsView
     private Border SecurityFilterRow()
     {
         var kinds = Picker(
-            ["Все события", "Отправки", "Подтверждения", "Снятия подтверждения",
-             "Понижения меток", "Ручные выгрузки"],
+            ["Все события", "Отправки", "Чтения по выдаче", "Подтверждения",
+             "Снятия подтверждения", "Понижения меток", "Ручные выгрузки"],
             _securityEvent switch
             {
                 null                    => 0,
                 SecurityEvent.Send      => 1,
-                SecurityEvent.Confirm   => 2,
-                SecurityEvent.Revoke    => 3,
-                SecurityEvent.Downgrade => 4,
-                _                       => 5,
+                SecurityEvent.Read      => 2,
+                SecurityEvent.Confirm   => 3,
+                SecurityEvent.Revoke    => 4,
+                SecurityEvent.Downgrade => 5,
+                _                       => 6,
             });
 
         kinds.SelectionChanged += (_, _) =>
@@ -171,10 +172,11 @@ public partial class SettingsView
             _securityEvent = kinds.SelectedIndex switch
             {
                 1 => SecurityEvent.Send,
-                2 => SecurityEvent.Confirm,
-                3 => SecurityEvent.Revoke,
-                4 => SecurityEvent.Downgrade,
-                5 => SecurityEvent.Export,
+                2 => SecurityEvent.Read,
+                3 => SecurityEvent.Confirm,
+                4 => SecurityEvent.Revoke,
+                5 => SecurityEvent.Downgrade,
+                6 => SecurityEvent.Export,
                 _ => null,
             };
 

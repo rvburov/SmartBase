@@ -364,6 +364,172 @@ public partial class SettingsView
         BuildIntegrationsInbox();
     }
 
+    // ── Что можно читать ──────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Выдачи чтения (docs/ROADMAP-API.md, шаг 10). Блок стоит СРАЗУ за токенами: токен
+    /// отвечает «кто может постучаться», выдача — «что ему позволено вычитать», и читаются
+    /// они подряд.
+    /// </summary>
+    private Border ReadsRow()
+    {
+        var block = new StackPanel { Spacing = 8 };
+
+        if (Integrations is not { } registry)
+        {
+            block.Children.Add(DataBox("Список станет доступен, когда откроется база данных."));
+            return Row("Что можно читать", ReadsHelp(), block);
+        }
+
+        var grants = registry.Grants();
+        var tokens = registry.Tokens();
+        var now    = DateTimeOffset.Now;
+
+        if (grants.Count == 0)
+            block.Children.Add(DataBox(
+                "Выдач нет — вычитать данные по сети не может никто. Это состояние по "
+                + "умолчанию: чтение разрешают осознанно, а не обнаруживают."));
+
+        foreach (var grant in grants)
+        {
+            var token = tokens.FirstOrDefault(t => t.Id == grant.TokenId);
+
+            var lines = new List<Control>
+            {
+                Note($"{token?.Name ?? $"токен №{grant.TokenId}"} → коллекция «{grant.Collection}»"),
+                Note($"поля: {grant.Fields} · {grant.Describe()}"),
+            };
+
+            if (grant.Trouble(now) is { } trouble)
+            {
+                var bad = Note("не действует: " + trouble);
+                bad.Foreground = Ink("BrushRed", "#FF3B30");
+                lines.Add(bad);
+            }
+
+            var box = DataBox(lines);
+            box.VerticalAlignment = VerticalAlignment.Center;
+
+            var item    = grant;
+            var actions = ButtonLine(RowButton("Отозвать", () => _ = RevokeGrantAsync(registry, item)));
+            actions.VerticalAlignment = VerticalAlignment.Center;
+            actions.Margin            = new Avalonia.Thickness(8, 0, 0, -6);
+
+            var line = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto") };
+            Grid.SetColumn(box, 0);
+            Grid.SetColumn(actions, 1);
+            line.Children.Add(box);
+            line.Children.Add(actions);
+
+            block.Children.Add(line);
+        }
+
+        var issue = RowButton("Разрешить чтение…", () => _ = IssueGrantAsync(registry));
+        issue.IsEnabled = tokens.Count > 0;
+
+        block.Children.Add(ButtonLine(issue));
+
+        if (tokens.Count == 0)
+            block.Children.Add(Note("Сначала создайте токен: выдача разрешает чтение ему."));
+
+        return Row("Что можно читать", ReadsHelp(), block);
+    }
+
+    private static string ReadsHelp() =>
+        "Токен по умолчанию только пишет. Чтение разрешает ВЫДАЧА: одна коллекция, "
+        + "поименованные поля, срок — подтверждается мастер-паролем организации, как исходящее "
+        + "направление. Каждый ответ ложится в журнал безопасности и занимает суточный потолок "
+        + "выдачи; помеченные поля не выдаются вовсе.";
+
+    private async Task IssueGrantAsync(Database.IntegrationsRegistry registry)
+    {
+        if (VisualRoot is not Window win) return;
+        if (!AllowIntegrations(Core.Models.PermAction.IntegrationsOutward)) return;
+
+        var opened = _databases?.Invoke() ?? [];
+
+        // Токены закрытых баз в списке не предлагаются: состав их коллекций взять неоткуда.
+        var usable = registry.Tokens()
+            .Select(t => (Token: t, Db: opened.FirstOrDefault(d => d.DbId == t.DbId)))
+            .Where(p => p.Db is not null)
+            .ToList();
+
+        if (usable.Count == 0)
+        {
+            await ConfirmDialog.Info(
+                    "Нет ни одного токена открытой базы данных: выдача разрешает чтение "
+                    + "токену, и сначала нужен он.")
+                .ShowDialog(win);
+            return;
+        }
+
+        DatabaseManager DbOf(int tokenId) => usable.First(p => p.Token.Id == tokenId).Db!;
+
+        var dialog = new ReadGrantDialog(
+            [.. usable.Select(p => (p.Token.Id, $"{p.Token.Name} — {p.Db!.Name}"))],
+            tokenId => [.. DbOf(tokenId).Constructor.GetAllCollections()
+                            .Where(c => c.Id is not null)
+                            .Select(c => (c.Id!.Value, c.Name ?? ""))],
+            (tokenId, collectionId) =>
+                DbOf(tokenId).Constructor.GrantColumnsIsolated(collectionId),
+            choice =>
+            {
+                var made = registry.ConfirmGrant(
+                    choice.TokenId, choice.CollectionId, choice.Collection,
+                    choice.FieldKeys, choice.Fields, choice.Password,
+                    CurrentUser.DisplayName, choice.Days, DateTimeOffset.Now, out var trouble);
+
+                if (made is null) return trouble;
+
+                // След — в журнал безопасности, как у направления: это решение о полномочии,
+                // и читает его проверяющий. Не записалось — сказать сразу.
+                var token = registry.Token(choice.TokenId);
+
+                var written = Database.SecurityJournal.Add(Database.SecurityEntry.New(
+                    Database.SecurityEvent.Confirm, allowed: true,
+                    who: CurrentUser.DisplayName, scenario: "",
+                    address: IngressApi.RecordsPath + "?collection=" + choice.Collection,
+                    fields: choice.Fields, rows: 0, bytes: 0, bodyHash: "",
+                    explanation: $"выдано чтение коллекции «{choice.Collection}» токену "
+                               + $"«{token?.Name ?? choice.TokenId.ToString()}» на {choice.Days} дней",
+                    dbId: token?.DbId ?? 0, at: DateTimeOffset.Now,
+                    confirmed: CurrentUser.DisplayName));
+
+                return written
+                    ? null
+                    : "выдача записана, но след в журнале безопасности не лег — сообщите "
+                    + "ответственному за интеграции";
+            });
+
+        if (await dialog.ShowDialog<bool>(win)) BuildIntegrationsInbox();
+    }
+
+    private async Task RevokeGrantAsync(Database.IntegrationsRegistry registry,
+                                        ReadGrant grant)
+    {
+        if (VisualRoot is not Window win) return;
+        if (!AllowIntegrations(Core.Models.PermAction.IntegrationsOutward)) return;
+
+        var yes = await new ConfirmDialog(
+            $"Отозвать выдачу на коллекцию «{grant.Collection}»? Чтение остановится сразу же, "
+            + "а вернуть его можно только мастер-паролем.",
+            "Отозвать").ShowDialog<bool>(win);
+
+        if (!yes) return;
+
+        registry.RevokeGrant(grant.Id);
+
+        Database.SecurityJournal.Add(Database.SecurityEntry.New(
+            Database.SecurityEvent.Revoke, allowed: true,
+            who: CurrentUser.DisplayName, scenario: "",
+            address: IngressApi.RecordsPath + "?collection=" + grant.Collection,
+            fields: grant.Fields, rows: 0, bytes: 0, bodyHash: "",
+            explanation: $"отозвана выдача чтения коллекции «{grant.Collection}»",
+            dbId: 0, at: DateTimeOffset.Now));
+
+        BuildIntegrationsInbox();
+    }
+
     // ── Описание API ──────────────────────────────────────────────────────────
 
     private Border ApiRow()

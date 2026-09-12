@@ -68,6 +68,7 @@ public partial class SettingsView
         Add(rows, CheckRow(folder, databases));
 
         Add(rows, TokensRow());
+        Add(rows, ReadsRow());
         Add(rows, ApiRow());
 
         Add(rows, Row("Что класть в папку",

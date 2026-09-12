@@ -540,8 +540,10 @@ public sealed class IntegrationsPassportTests : IDisposable
             Assert.Contains("обращений не было",     section, StringComparison.Ordinal);
             Assert.Contains(IngressGate.LoopbackHost, section, StringComparison.Ordinal);
 
-            // Главное утверждение раздела: читать данные через этот канал нельзя.
-            Assert.Contains("Читать данные через", section, StringComparison.Ordinal);
+            // Главные утверждения раздела: чтение закрыто выдачей, а выдач здесь нет ни одной —
+            // и об этом сказано словами, а не пустотой.
+            Assert.Contains("ВЫДАЧЕЙ", section, StringComparison.Ordinal);
+            Assert.Contains("Выдач чтения нет ни одной", section, StringComparison.Ordinal);
 
             return Task.CompletedTask;
         });

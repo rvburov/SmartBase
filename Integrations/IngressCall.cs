@@ -20,6 +20,12 @@ public static class IngressApi
     /// <summary>Описание схемы коллекций.</summary>
     public const string SchemaPath = "/v1/schema";
 
+    /// <summary>Чтение записей — только по выдаче (docs/ROADMAP-API.md, шаг 10).</summary>
+    public const string RecordsPath = "/v1/records";
+
+    /// <summary>Журнал изменений коллекции — только по выдаче; отвечает и про удаления.</summary>
+    public const string ChangesPath = "/v1/changes";
+
     /// <summary>Заголовок, в котором едет токен.</summary>
     public const string TokenHeader = "X-SmartBase-Token";
 }
@@ -37,8 +43,34 @@ public static class IngressApi
 /// <param name="Body">Тело запроса.</param>
 /// <param name="Remote">Откуда пришли — для журнала. На петлевом адресе это всегда
 /// <c>127.0.0.1</c>, и поле существует ради сетевого режима.</param>
+/// <param name="Query">Строка параметров как пришла, с «?» или без; разбирает ее
+/// <see cref="Param"/>. Нужна чтению: коллекция, момент и курсор едут параметрами.</param>
 public sealed record IngressCall(string Method, string Path, string Token, string Body,
-                                 string Remote = "");
+                                 string Remote = "", string Query = "")
+{
+    /// <summary>
+    /// Значение параметра запроса; пусто — параметра нет. Разбор свой и нарочно простой:
+    /// имена и курсоры — одна строка без повторов, а тянуть ради нее разбор форм незачем.
+    /// </summary>
+    public string Param(string name)
+    {
+        foreach (var pair in (Query ?? "").TrimStart('?').Split('&',
+                     StringSplitOptions.RemoveEmptyEntries))
+        {
+            var eq = pair.IndexOf('=');
+            if (eq <= 0) continue;
+
+            if (!string.Equals(Uri.UnescapeDataString(pair[..eq]), name,
+                               StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            // Плюс — пробел: так кодируют формы, и «Заказы за сутки» приходит с плюсами.
+            return Uri.UnescapeDataString(pair[(eq + 1)..].Replace('+', ' ')).Trim();
+        }
+
+        return "";
+    }
+}
 
 /// <summary>Ответ отправителю: код и тело. Тело всегда JSON — отвечать чужой программе
 /// страницей с разметкой незачем.</summary>

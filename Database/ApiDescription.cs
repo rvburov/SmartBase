@@ -59,6 +59,8 @@ public static class ApiDescription
             text.AppendLine($"Проверка:   GET  {address}{IngressApi.PingPath}");
             text.AppendLine($"Схема:      GET  {address}{IngressApi.SchemaPath}");
             text.AppendLine($"Сообщение:  POST {address}{IngressApi.InboxPath}");
+            text.AppendLine($"Чтение:     GET  {address}{IngressApi.RecordsPath}?collection=<имя>");
+            text.AppendLine($"Изменения:  GET  {address}{IngressApi.ChangesPath}?collection=<имя>");
             text.AppendLine();
         }
 
@@ -109,8 +111,23 @@ public static class ApiDescription
 
         text.AppendLine("Колонки сводятся со свойствами ПО ИМЕНАМ; то, чему места не нашлось, "
                       + "перечислено в квитанции.");
-        text.AppendLine("Данные по этому адресу только принимаются: прочитать записи через него "
-                      + "нельзя — такого обработчика нет.");
+        text.AppendLine();
+
+        text.AppendLine("Чтение");
+        text.AppendLine();
+        text.AppendLine("Чтение закрыто ВЫДАЧЕЙ: ее подтверждает ответственный за интеграции на "
+                      + "компьютере-приемнике — на одну коллекцию, поименованные поля и срок. Без "
+                      + "выдачи любой GET отвечает отказом с причиной.");
+        text.AppendLine();
+        text.AppendLine($"    GET {IngressApi.RecordsPath}?collection=<имя>&since=<момент>&after=<ключ>&limit=<число>");
+        text.AppendLine("      «since» — только записи, правленные с момента (ISO-8601); «after» — "
+                      + "ключ записи из поля «next» прошлого ответа; страница до "
+                      + "500 записей. В ответе: id, updated и values с полями выдачи.");
+        text.AppendLine();
+        text.AppendLine($"    GET {IngressApi.ChangesPath}?collection=<имя>&after=<номер>&limit=<число>");
+        text.AppendLine("      Хвост журнала изменений коллекции — отвечает и про УДАЛЕНИЯ, о "
+                      + "которых чтение записей молчит. В журнале имена записей, а не ключи: он "
+                      + "ведется для человека. «after» — номер из поля «next» прошлого ответа.");
 
         return text.ToString();
     }
@@ -120,9 +137,11 @@ public static class ApiDescription
         JsonSerializer.Serialize(new
         {
             database,
-            inbox  = IngressApi.InboxPath,
-            ping   = IngressApi.PingPath,
-            schema = IngressApi.SchemaPath,
+            inbox   = IngressApi.InboxPath,
+            ping    = IngressApi.PingPath,
+            schema  = IngressApi.SchemaPath,
+            records = IngressApi.RecordsPath + "?collection=<имя>&since=<момент>&after=<ключ>",
+            changes = IngressApi.ChangesPath + "?collection=<имя>&after=<номер>",
             message = new
             {
                 collection = "<имя коллекции>",

@@ -25,10 +25,12 @@ namespace SmartBase.Database;
 ///   <item><b>Укладка</b> — общим кодом обоих транспортов, от имени робота.</item>
 /// </list>
 ///
-/// <b>Наружу дверь не отдает ничего.</b> Обработчика, возвращающего записи, здесь нет: токену по
-/// умолчанию выдается право писать и ни одного права читать, и «вычитать базу через свой же порт»
-/// не должно быть выключено настройкой — его не должно существовать. Отдается только схема
-/// собственных коллекций: имена и типы, без единого значения.
+/// <b>Наружу дверь отдает данные только по выдаче.</b> Токену по умолчанию выдается право
+/// писать и ни одного права читать; чтение (<c>/v1/records</c>, <c>/v1/changes</c>) открывается
+/// отдельным замком — выдачей, подтвержденной мастер-паролем организации, с масками робота,
+/// метками, суточным потолком и строкой в журнале безопасности на КАЖДЫЙ ответ. Ответ на
+/// чтение — данные, покидающие программу, и рубежи у него те же, что у отправки: правило
+/// «не записалось — не отправляем» действует и здесь, дословно (docs/ROADMAP-API.md, шаг 10).
 /// </summary>
 public static class IngressHandler
 {
@@ -58,10 +60,13 @@ public static class IngressHandler
         // отвечать «неверный токен» на опечатку в пути — верный способ искать не там.
         if (path != IngressApi.PingPath
             && path != IngressApi.SchemaPath
-            && path != IngressApi.InboxPath)
+            && path != IngressApi.InboxPath
+            && path != IngressApi.RecordsPath
+            && path != IngressApi.ChangesPath)
             return IngressAnswer.Problem(404,
                 $"Такого адреса нет. Есть: {IngressApi.PingPath}, "
-              + $"{IngressApi.SchemaPath}, {IngressApi.InboxPath}.");
+              + $"{IngressApi.SchemaPath}, {IngressApi.InboxPath}, "
+              + $"{IngressApi.RecordsPath}, {IngressApi.ChangesPath}.");
 
         var method = (call.Method ?? "").ToUpperInvariant();
         var wanted = path == IngressApi.InboxPath ? "POST" : "GET";
@@ -90,9 +95,11 @@ public static class IngressHandler
 
         return path switch
         {
-            IngressApi.PingPath   => Ping(token, target, access),
-            IngressApi.SchemaPath => Schema(token, target, access),
-            _                         => Inbox(call, token, target, access, registry, replies, now),
+            IngressApi.PingPath    => Ping(token, target, access),
+            IngressApi.SchemaPath  => Schema(token, target, access),
+            IngressApi.RecordsPath => Records(call, token, target, access, registry, now),
+            IngressApi.ChangesPath => Changes(call, token, target, access, registry, now),
+            _                          => Inbox(call, token, target, access, registry, replies, now),
         };
     }
 
@@ -130,6 +137,316 @@ public static class IngressHandler
 
         return IngressAnswer.Ok(
             ApiDescription.Json(target.Name, target.Constructor.ApiSchemaIsolated()));
+    }
+
+    // ── Чтение по выдаче ──────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Отдать страницу записей (docs/ROADMAP-API.md, шаг 10). Порядок проверок — от дешевых к
+    /// дорогим, и каждый отказ называет себя: маска робота, параметры, коллекция, выдача, ее
+    /// срок, суточный потолок — и только потом чтение. Ответ уходит ПОСЛЕ строки в журнале
+    /// безопасности: не записалось — не отдаем, дословно как у отправки.
+    /// </summary>
+    private static IngressAnswer Records(IngressCall call, AccessToken token,
+                                         DatabaseManager target, RobotAccess access,
+                                         IntegrationsRegistry registry, DateTimeOffset now)
+    {
+        var source = $"{call.Remote} {IngressApi.RecordsPath}".Trim();
+
+        if (Prepare(call, token, target, access, registry, source, now) is not { } ready)
+            return _refusal!;
+
+        var (grant, collection, collectionId) = ready;
+
+        if (ParseMoment(call.Param("since"), out var since) is { } badSince)
+            return Refuse(400, badSince, token, source, now);
+
+        if (ParseNumber(call.Param("after"), out var after) is { } badAfter)
+            return Refuse(400, badAfter, token, source, now);
+
+        ParseNumber(call.Param("limit"), out var limit);
+
+        var started = DateTimeOffset.Now;
+
+        ConstructorRepository.ApiRows read;
+        try
+        {
+            read = target.Constructor.ApiReadIsolated(
+                collectionId, grant.FieldKeys, since, (int)after,
+                limit > 0 ? (int)limit : ConstructorRepository.ApiPage);
+        }
+        catch (PermissionDeniedException denied)
+        {
+            // Права того, кто ОТКРЫЛ базу на этой машине: слушает его процесс, и обмен не
+            // может читать его руками то, что ему самому не показывают.
+            return RefuseRead(403, "На компьютере-приемнике: " + denied.Message,
+                              token, grant, collection, source, now);
+        }
+
+        if (read.Trouble is { } cannot)
+            return RefuseRead(403, Capitalize(cannot) + ".", token, grant, collection, source, now);
+
+        var rows = read.Rows.Select(r => new Dictionary<string, object>
+        {
+            ["id"]      = r.Id,
+            ["updated"] = r.Updated,
+            // Значения — отдельным полем, а не вперемешку со служебными: свойство, названное
+            // «id», иначе перезаписало бы ключ записи.
+            ["values"]  = Columns(read.Columns, r.Values),
+        }).ToList();
+
+        var body = IngressAnswer.Ok(new
+        {
+            ok         = true,
+            collection,
+            rows,
+            next       = read.More && read.Rows.Count > 0 ? (int?)read.Rows[^1].Id : null,
+        }).Body;
+
+        return Deliver(body, read.Rows.Count, string.Join(", ", read.Columns),
+                       $"чтение коллекции «{collection}»",
+                       call, token, target, grant, collection, registry, source, started, now);
+    }
+
+    /// <summary>
+    /// Отдать хвост журнала изменений коллекции — то, на что не отвечает чтение записей: «что
+    /// УДАЛЯЛИ». В журнале имена, а не ключи записей, — он ведется для человека, и об этом
+    /// прямо сказано в описании API.
+    /// </summary>
+    private static IngressAnswer Changes(IngressCall call, AccessToken token,
+                                         DatabaseManager target, RobotAccess access,
+                                         IntegrationsRegistry registry, DateTimeOffset now)
+    {
+        var source = $"{call.Remote} {IngressApi.ChangesPath}".Trim();
+
+        if (Prepare(call, token, target, access, registry, source, now) is not { } ready)
+            return _refusal!;
+
+        var (grant, collection, _) = ready;
+
+        if (ParseNumber(call.Param("after"), out var after) is { } badAfter)
+            return Refuse(400, badAfter, token, source, now);
+
+        ParseNumber(call.Param("limit"), out var limit);
+
+        var started = DateTimeOffset.Now;
+
+        ConstructorRepository.ApiChangesPage tail;
+        try
+        {
+            tail = target.Constructor.ApiChangesIsolated(
+                collection, after, limit > 0 ? (int)limit : ConstructorRepository.ApiPage);
+        }
+        catch (PermissionDeniedException denied)
+        {
+            return RefuseRead(403, "На компьютере-приемнике: " + denied.Message,
+                              token, grant, collection, source, now);
+        }
+
+        if (tail.Trouble is { } stopped)
+            return RefuseRead(403, Capitalize(stopped) + ".", token, grant, collection, source, now);
+
+        var body = IngressAnswer.Ok(new
+        {
+            ok         = true,
+            collection,
+            changes    = tail.Changes.Select(c => new
+            {
+                n      = c.Id,
+                at     = c.At,
+                action = c.Action,
+                target = c.Target,
+                name   = c.Name,
+            }).ToList(),
+            next       = tail.More && tail.Changes.Count > 0 ? (long?)tail.Changes[^1].Id : null,
+        }).Body;
+
+        return Deliver(body, tail.Changes.Count, "",
+                       $"журнал изменений коллекции «{collection}»",
+                       call, token, target, grant, collection, registry, source, started, now);
+    }
+
+    // Отказ, собранный общей проверкой Prepare. Поле, а не пара out/кортеж, потому что отказов
+    // у проверки шесть видов и каждый уже готовым ответом; поток обращений последовательный
+    // (слушатель обрабатывает по одному), гонки за поле нет.
+    [ThreadStatic] private static IngressAnswer? _refusal;
+
+    /// <summary>
+    /// Общие проверки обоих чтений: маска робота, параметр коллекции, сама коллекция, выдача,
+    /// ее срок и суточный потолок. <c>null</c> — отказ, и он лежит в <see cref="_refusal"/>.
+    /// </summary>
+    private static (ReadGrant Grant, string Collection, int CollectionId)? Prepare(
+        IngressCall call, AccessToken token, DatabaseManager target, RobotAccess access,
+        IntegrationsRegistry registry, string source, DateTimeOffset now)
+    {
+        // Маска чтения — отдельная и по умолчанию ее НЕТ: роботу выдают право писать, а
+        // читать разрешает администратор той же панелью, что человеку.
+        if (access.Trouble(Core.Models.PermAction.ViewCollection) is { } trouble)
+        {
+            _refusal = RefuseRead(403, Capitalize(trouble) + ".", token, null, "", source, now);
+            return null;
+        }
+
+        var collection = call.Param("collection");
+
+        if (collection.Length == 0)
+        {
+            _refusal = Refuse(400, "Не назван параметр «collection»: какую коллекцию читать.",
+                              token, source, now);
+            return null;
+        }
+
+        if (target.Constructor.CollectionIdByNameIsolated(collection) is not { } collectionId)
+        {
+            _refusal = Refuse(404, $"Коллекции «{collection}» в этой базе нет.",
+                              token, source, now);
+            return null;
+        }
+
+        // Выдача — сам замок. Ее отсутствие и ее просроченность называются РАЗНЫМИ словами:
+        // первое лечится у администратора, второе — новым подтверждением, и слать человека
+        // не туда значит потерять ему день.
+        if (registry.GrantFor(token.Id, collectionId) is not { } grant)
+        {
+            _refusal = RefuseRead(403,
+                $"Чтение коллекции «{collection}» этому токену не разрешено: выдачи нет. "
+                + "Выдачу подтверждает ответственный за интеграции на компьютере-приемнике.",
+                token, null, collection, source, now);
+            return null;
+        }
+
+        if (grant.Trouble(now) is { } stale)
+        {
+            _refusal = RefuseRead(403, "Выдача не действует: " + stale + ".",
+                                  token, grant, collection, source, now);
+            return null;
+        }
+
+        // Потолок — свой у каждой выдачи и только по журналу: не по чему считать расход —
+        // значит, потолок выбран. Битый счетчик не должен снимать ограничение.
+        if (RunJournal.Current is not { } journal)
+        {
+            _refusal = RefuseRead(503,
+                "Журнал обмена недоступен: расход потолка не по чему считать, чтение остановлено.",
+                token, grant, collection, source, now);
+            return null;
+        }
+
+        var policy = EgressGate.Policy;
+
+        if (policy.Any
+            && journal.ReadBytesSince(now - TimeSpan.FromDays(1), grant.Id)
+               >= policy.MaxBytesPerDay)
+        {
+            _refusal = RefuseRead(429,
+                "Суточный потолок этой выдачи выбран — окно скользящее, попробуйте позже.",
+                token, grant, collection, source, now);
+            return null;
+        }
+
+        return (grant, collection, collectionId);
+    }
+
+    /// <summary>
+    /// Отдать готовый ответ чтения — журналы, отметки, тело. Строка в журнале безопасности
+    /// идет ПЕРВОЙ, и неудача записи останавливает выдачу: данные, о которых не осталось
+    /// следа, не покидают программу.
+    /// </summary>
+    private static IngressAnswer Deliver(string body, int rows, string fields, string what,
+                                         IngressCall call, AccessToken token,
+                                         DatabaseManager target, ReadGrant grant,
+                                         string collection, IntegrationsRegistry registry,
+                                         string source, DateTimeOffset started,
+                                         DateTimeOffset now)
+    {
+        var bytes = System.Text.Encoding.UTF8.GetByteCount(body);
+
+        var written = SecurityJournal.Add(SecurityEntry.New(
+            SecurityEvent.Read, allowed: true,
+            who: token.Name, scenario: "",
+            address: $"{call.Path}?collection={collection}",
+            fields: fields, rows: rows, bytes: bytes,
+            bodyHash: SecurityJournal.Sha256(body),
+            explanation: what, dbId: token.DbId, at: now, confirmed: grant.Confirmed));
+
+        if (!written)
+            return Refuse(503,
+                "Журнал безопасности недоступен: чтение остановлено — данные, о которых не "
+                + "осталось записи, не отдаются.", token, source, now);
+
+        RunJournal.Add(RunEntry.New(
+            RunChannel.Ingress, token.Name, source, ok: true,
+            $"{Capitalize(what)}: отдано записей {rows}.", rows, bytes,
+            DateTimeOffset.Now - started, token.DbId, now,
+            counts: false, direction: grant.Id));
+
+        // Отметки — от них считается простой выдачи и строка «последнее обращение» у робота.
+        registry.MarkGrantUsed(grant.Id, now);
+        PermissionService.MarkRobotSeenIsolated(target.Constructor.DbPath, token.RobotKey, now);
+
+        return IngressAnswer.Ok(body);
+    }
+
+    /// <summary>
+    /// Отказ чтения: строка в оба журнала. В журнал безопасности — потому что отказанная
+    /// попытка чтения такой же ответ проверяющему, как отказанная отправка: «программа
+    /// попробовала, и ей не дали» и есть доказательство, что рамки работают.
+    /// </summary>
+    private static IngressAnswer RefuseRead(int status, string explanation, AccessToken token,
+                                            ReadGrant? grant, string collection, string source,
+                                            DateTimeOffset now)
+    {
+        SecurityJournal.Add(SecurityEntry.New(
+            SecurityEvent.Read, allowed: false,
+            who: token.Name, scenario: "",
+            address: collection.Length > 0
+                ? $"{IngressApi.RecordsPath}?collection={collection}"
+                : IngressApi.RecordsPath,
+            fields: "", rows: 0, bytes: 0, bodyHash: "",
+            explanation: explanation, dbId: token.DbId, at: now,
+            confirmed: grant?.Confirmed ?? ""));
+
+        return Refuse(status, explanation, token, source, now);
+    }
+
+    /// <summary>Значения строки под именами колонок — в порядке выдачи.</summary>
+    private static Dictionary<string, string> Columns(IReadOnlyList<string> names,
+                                                      string[] values)
+    {
+        var row = new Dictionary<string, string>(names.Count);
+
+        for (var i = 0; i < names.Count; i++)
+            row[names[i]] = i < values.Length ? values[i] : "";
+
+        return row;
+    }
+
+    /// <summary>Момент из параметра; вернувшаяся строка — отказ словами.</summary>
+    private static string? ParseMoment(string text, out string normalized)
+    {
+        normalized = "";
+        if (text.Length == 0) return null;
+
+        if (!DateTimeOffset.TryParse(text, System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.RoundtripKind, out var moment))
+            return "Параметр «since» не разобрался: нужен момент вида 2026-09-12T10:00:00Z.";
+
+        normalized = moment.ToUniversalTime()
+                           .ToString("o", System.Globalization.CultureInfo.InvariantCulture);
+        return null;
+    }
+
+    /// <summary>Число из параметра; вернувшаяся строка — отказ словами.</summary>
+    private static string? ParseNumber(string text, out long value)
+    {
+        value = 0;
+        if (text.Length == 0) return null;
+
+        return long.TryParse(text, System.Globalization.NumberStyles.Integer,
+                             System.Globalization.CultureInfo.InvariantCulture, out value)
+               && value >= 0
+            ? null
+            : "Числовой параметр не разобрался: нужно целое число не меньше нуля.";
     }
 
     // ── Сообщение ─────────────────────────────────────────────────────────────
