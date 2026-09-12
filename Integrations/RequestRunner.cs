@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Json;
 
 namespace SmartBase.Integrations;
@@ -13,7 +14,11 @@ namespace SmartBase.Integrations;
 /// недостачу потом невозможно.</param>
 /// <param name="Rows">Сколько записей собрано; при неудаче — сколько успели до нее.</param>
 /// <param name="Pages">Сколько порций пришлось запросить.</param>
-/// <param name="Bytes">Сколько байт пришло суммарно.</param>
+/// <param name="Bytes">Сколько байт прошло через дверь суммарно: тела, ушедшие наружу, и тела
+/// ответов, пришедших обратно. По этому числу считается суточный потолок объема, поэтому
+/// отправленное в нем не учесть нельзя: потолок заведен против выноса базы «по капле»
+/// (docs/ROADMAP-API.md, 10.6), а выносят данные как раз телом запроса. Считать один ответ
+/// значило бы мерить противоположное — сколько данных в базу пришло.</param>
 /// <param name="Elapsed">Сколько заняло.</param>
 /// <param name="SafeAddress">Куда ходили — без секрета, для журнала.</param>
 /// <param name="StatusCode">Код последнего ответа; 0 — ответа не было.</param>
@@ -37,10 +42,12 @@ public sealed record RunOutcome(
     string   SentBody = "",
     string   GotBody  = "")
 {
+    /// <param name="bytes">Объем ВСЕГО запуска, а не последней порции: неудача на сороковой
+    /// странице не отменяет тридцати девяти прошедших, и в суточный потолок они уже вошли.</param>
     internal static RunOutcome Failed(
-        string explanation, EgressResponse answer, int pages, int rows, bool sent,
+        string explanation, EgressResponse answer, int pages, int rows, long bytes, bool sent,
         string sentBody = "", string gotBody = "") =>
-        new(false, explanation, "[]", rows, pages, answer.Bytes, answer.Elapsed,
+        new(false, explanation, "[]", rows, pages, bytes, answer.Elapsed,
             answer.SafeAddress, answer.StatusCode, false, sent, sentBody, gotBody);
 }
 
@@ -142,6 +149,15 @@ public static class RequestRunner
                 "неизвестные подстановки: " + string.Join(", ", unknown.Select(u => "{{" + u + "}}")),
                 outward);
 
+        // Объем отправляемого известен и здесь — ровно тот же вопрос и в том же месте, что и в
+        // запуске. Сухой прогон заведен ради ответа «что уйдет», и «не уйдет вовсе, суточный
+        // потолок выбран» — такой же ответ, который лучше получить до нажатия «В коллекцию».
+        var volume = EgressGate.CheckQuota(
+            DateTimeOffset.Now, request.Id, Encoding.UTF8.GetByteCount(page.Body));
+
+        if (!volume.Allowed)
+            return RunPreview.Blocked("запрещено политикой: " + volume.Explanation, outward);
+
         var plan = EgressPlan.Build(connection, page, secret, out var error);
 
         if (plan is null) return RunPreview.Blocked(error, outward);
@@ -229,6 +245,23 @@ public static class RequestRunner
                     "неизвестные подстановки: " + string.Join(", ", unknown.Select(u => "{{" + u + "}}")),
                     "[]", items.Count, pages, bytes, elapsed, "", 0, false);
 
+            // Сколько эта порция унесет наружу. Меряется тело: записи уходят только им — путь
+            // собирается из переменных запуска, и значений полей в нем не бывает по устройству
+            // подстановок, а заголовки заданы карточкой соединения и от объема выгрузки не
+            // зависят. Байты, а не знаки: в UTF-8 кириллица вдвое тяжелее, и потолок,
+            // посчитанный по длине строки, на русских данных оказался бы вдвое выше заданного.
+            var outgoing = Encoding.UTF8.GetByteCount(page.Body);
+
+            // Единственная проверка объема, которая успевает что-то предотвратить: размер
+            // отправляемого известен ДО сокета. Ответ так проверить нельзя — его размер
+            // узнается по факту, и потолок ответа работает задним числом (ниже).
+            if (bytes + outgoing > budget)
+                return new RunOutcome(false,
+                    $"выбран суточный потолок объема этого направления: осталось было "
+                    + $"{budget:N0} байт, а отправка потребовала {bytes + outgoing:N0}",
+                    "[]", items.Count, pages, bytes, elapsed, last, status, false, sent,
+                    sentBody, gotBody);
+
             var answer = await EgressHttp.SendAsync(connection, page, secret, ct);
 
             // Тела запоминаются от ПЕРВОЙ порции и до всех проверок ниже: именно неудачные
@@ -242,42 +275,43 @@ public static class RequestRunner
             }
 
             pages++;
-            bytes  += answer.Bytes;
+            bytes  += outgoing + answer.Bytes;
             elapsed = answer.Elapsed > elapsed ? answer.Elapsed : elapsed;
             last    = answer.SafeAddress;
             status  = answer.StatusCode;
             sent   |= answer.Sent;
 
-            // Порция уже пришла, и это неизбежно: узнать ее размер заранее нельзя. Зато
-            // следующая не уйдет — а собранное отбрасывается целиком, как и при любой другой
-            // неудаче посреди выгрузки.
+            // Ответ уже пришел, и это неизбежно: узнать его размер заранее нельзя. Зато
+            // следующая порция не уйдет — а собранное отбрасывается целиком, как и при любой
+            // другой неудаче посреди выгрузки.
             if (bytes > budget)
                 return RunOutcome.Failed(
                     $"выбран суточный потолок объема этого направления: осталось было "
                     + $"{budget:N0} байт, а выгрузка потребовала {bytes:N0}",
-                    answer, pages, items.Count, sent, sentBody, gotBody);
+                    answer, pages, items.Count, bytes, sent, sentBody, gotBody);
 
             if (!answer.Sent)
                 return RunOutcome.Failed(
                     answer.Reason == EgressDenyReason.None
                         ? answer.Explanation
                         : "запрещено политикой: " + answer.Explanation,
-                    answer, pages, items.Count, sent, sentBody, gotBody);
+                    answer, pages, items.Count, bytes, sent, sentBody, gotBody);
 
             if (!answer.Ok)
                 return RunOutcome.Failed(
                     $"чужая программа ответила {answer.StatusCode}"
                     + (answer.Explanation.Length > 0 ? "; " + answer.Explanation : ""),
-                    answer, pages, items.Count, sent, sentBody, gotBody);
+                    answer, pages, items.Count, bytes, sent, sentBody, gotBody);
 
             if (answer.Truncated)
                 return RunOutcome.Failed(
                     "ответ длиннее потолка и обрезан — записи из него взять нельзя, "
                     + "разбейте выгрузку на страницы",
-                    answer, pages, items.Count, sent, sentBody, gotBody);
+                    answer, pages, items.Count, bytes, sent, sentBody, gotBody);
 
             if (!TryTake(answer.Body, request, items, limit, out cursor, out var taken, out var error))
-                return RunOutcome.Failed(error, answer, pages, items.Count, sent, sentBody, gotBody);
+                return RunOutcome.Failed(
+                    error, answer, pages, items.Count, bytes, sent, sentBody, gotBody);
 
             var capped = items.Count >= limit;
 

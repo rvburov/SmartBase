@@ -440,6 +440,51 @@ public sealed class RequestRunnerTests : IDisposable
     }
 
     /// <summary>
+    /// Суточный потолок заведен против выноса базы «по капле» (10.6), поэтому в расход идет и
+    /// то, что УШЛО. Считать один ответ значило бы мерить противоположное: выгрузка на десять
+    /// мегабайт с ответом «ok» не занимала бы в потолке почти ничего.
+    /// </summary>
+    [Fact]
+    public async Task Sent_body_counts_towards_the_daily_volume()
+    {
+        AllowLoopback();
+        using var server = new TinyServer(_ => TinyServer.Reply(200, Items("А")));
+
+        var body = new string('я', 1000);   // 2000 байт в UTF-8 — вдвое больше знаков
+
+        var outcome = await Run(server,
+            Request() with { Method = RequestMethod.Post, Body = $"{{\"note\":\"{body}\"}}" });
+
+        Assert.True(outcome.Ok, outcome.Explanation);
+        Assert.True(outcome.Bytes > 2000,
+                    $"объем {outcome.Bytes} байт не включает отправленное тело");
+    }
+
+    /// <summary>
+    /// Размер отправляемого известен ДО сокета — значит, и отказать можно до него. Это
+    /// единственная проверка объема, которая успевает что-то предотвратить: данные, не влезающие
+    /// в остаток суток, наружу не уходят вовсе, а не пересчитываются задним числом.
+    /// </summary>
+    [Fact]
+    public async Task A_body_that_does_not_fit_the_budget_never_reaches_the_socket()
+    {
+        AllowLoopback();
+
+        // Суточное право почти выбрано: на запуск хватает, на тело — нет.
+        EgressGate.AttachUsage(new Spent(runs: 0, bytes: 1024 * 1024 - 100));
+
+        using var server = new TinyServer(_ => TinyServer.Reply(200, Items("А")));
+
+        var outcome = await Run(server,
+            Request() with { Method = RequestMethod.Post, Body = new string('x', 500) });
+
+        Assert.False(outcome.Ok);
+        Assert.Contains("суточный потолок объема этого направления", outcome.Explanation,
+                        StringComparison.Ordinal);
+        Assert.Empty(server.Seen);
+    }
+
+    /// <summary>
     /// Спросить квоту один раз перед запуском мало: выгрузка на много порций перешагнула бы
     /// суточный потолок, ни разу его не спросив. Собранное при этом отбрасывается целиком —
     /// как при любой другой неудаче посреди выгрузки.

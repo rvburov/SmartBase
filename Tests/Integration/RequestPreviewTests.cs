@@ -206,6 +206,33 @@ public sealed class RequestPreviewTests : IDisposable
         Assert.Contains("латиницей", preview.Explanation, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// Сухой прогон проверяет те же рамки и в том же порядке, что и запуск, — значит, и объем
+    /// отправляемого. Иначе экран говорит «уйдет вот это», а нажатие «В коллекцию» отвечает
+    /// отказом по потолку: ради ответа на этот вопрос до отправки прогон и заведен.
+    /// </summary>
+    [Fact]
+    public void A_body_that_does_not_fit_the_daily_volume_is_refused_in_the_preview()
+    {
+        AllowLoopback();
+
+        // Суточное право почти выбрано: на сам запуск хватает, на тело — нет.
+        EgressGate.AttachUsage(new Spent(8 * 1024 * 1024 - 10));
+
+        var preview = RequestRunner.Preview(
+            Connection(8080), Push() with { Body = new string('x', 500) }, "token", Context());
+
+        Assert.False(preview.Ok);
+        Assert.Contains("суточный потолок объема", preview.Explanation, StringComparison.Ordinal);
+    }
+
+    /// <summary>Счетчик расхода с заданным числом: расход считает журнал, решает шлюз.</summary>
+    private sealed class Spent(long bytes) : IEgressUsage
+    {
+        public int  RunsSince(DateTimeOffset moment)  => 0;
+        public long BytesSince(DateTimeOffset moment, int direction) => bytes;
+    }
+
     /// <summary>Читающий запрос исходящим не считается — и подтверждения не ждет.</summary>
     [Fact]
     public void A_reading_request_is_not_marked_outward()
