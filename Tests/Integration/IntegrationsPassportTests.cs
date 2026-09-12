@@ -268,7 +268,7 @@ public sealed class IntegrationsPassportTests : IDisposable
         {
             Cards(cards);
 
-            var directions = Section(Build(cards, null), "3. КОМУ РАЗРЕШЕНО", "4. ЧТО УХОДИЛО");
+            var directions = Section(Build(cards, null), "4. КОМУ РАЗРЕШЕНО", "5. ЧТО УХОДИЛО");
 
             Assert.DoesNotContain("Забрать заказы", directions, StringComparison.Ordinal);
             Assert.Contains("Отдать итог",          directions, StringComparison.Ordinal);
@@ -298,7 +298,7 @@ public sealed class IntegrationsPassportTests : IDisposable
 
         await WithRegistry(cards =>
         {
-            var traffic = Section(Build(cards, journal), "4. ЧТО УХОДИЛО", "5. МЕТКИ");
+            var traffic = Section(Build(cards, journal), "5. ЧТО УХОДИЛО", "6. МЕТКИ");
 
             Assert.Contains("https://api.zavod.local/result", traffic, StringComparison.Ordinal);
             Assert.DoesNotContain("день=", traffic, StringComparison.Ordinal);
@@ -328,7 +328,7 @@ public sealed class IntegrationsPassportTests : IDisposable
 
         await WithRegistry(cards =>
         {
-            var traffic = Section(Build(cards, journal), "4. ЧТО УХОДИЛО", "5. МЕТКИ");
+            var traffic = Section(Build(cards, journal), "5. ЧТО УХОДИЛО", "6. МЕТКИ");
 
             Assert.Contains("из них заблокировано 1", traffic, StringComparison.Ordinal);
             Assert.Contains("заблокировано 1",        traffic, StringComparison.Ordinal);
@@ -513,6 +513,51 @@ public sealed class IntegrationsPassportTests : IDisposable
     // ── Мелочи ────────────────────────────────────────────────────────────────
 
     /// <summary>Кусок текста между двумя заголовками — чтобы искать в нужном разделе.</summary>
+    // ── Кто может постучаться к нам ───────────────────────────────────────────
+
+    /// <summary>
+    /// Входящий канал в паспорте есть, и он называет главное: кому выдан доступ, куда он ведет
+    /// и чего НЕ позволяет. Про открытый порт проверяющий спрашивает раньше, чем про исходящие,
+    /// и ответ обязан лежать в том же документе.
+    /// </summary>
+    [Fact]
+    public async Task The_inward_channel_is_written_out_with_its_tokens()
+    {
+        await WithRegistry(cards =>
+        {
+            cards.Issue("Обмен учетной системы", dbId: 1, "ПК17", Now);
+
+            var text = Build(cards, null,
+                [new PassportDatabase(1, "Основная", ConfidentialityLabel.Open, 0)]);
+
+            var section = Section(text, "3. КТО МОЖЕТ ПОСТУЧАТЬСЯ", "4. КОМУ РАЗРЕШЕНО");
+
+            Assert.Contains("Обмен учетной системы", section, StringComparison.Ordinal);
+            Assert.Contains("Основная",              section, StringComparison.Ordinal);
+            Assert.Contains("обращений не было",     section, StringComparison.Ordinal);
+
+            // Главное утверждение раздела: читать данные через этот канал нельзя.
+            Assert.Contains("Читать данные через", section, StringComparison.Ordinal);
+
+            return Task.CompletedTask;
+        });
+    }
+
+    /// <summary>Ни одного токена — тоже ответ, и он должен быть написан словами.</summary>
+    [Fact]
+    public async Task With_no_tokens_the_passport_says_so()
+    {
+        await WithRegistry(cards =>
+        {
+            var section = Section(Build(cards, null),
+                                  "3. КТО МОЖЕТ ПОСТУЧАТЬСЯ", "4. КОМУ РАЗРЕШЕНО");
+
+            Assert.Contains("не выдано ни одного", section, StringComparison.Ordinal);
+
+            return Task.CompletedTask;
+        });
+    }
+
     private static string Section(string text, string from, string to)
     {
         var start = text.IndexOf(from, StringComparison.Ordinal);

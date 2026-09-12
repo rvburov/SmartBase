@@ -90,6 +90,30 @@
   </ItemGroup>
 
   <!--
+    Сборка без слушателя: dotnet build -p:NoListener=true
+
+    Прием на 127.0.0.1 данные наружу не отдает, и убирать его незачем — но открытый порт на
+    секретной машине вызовет вопросы, а ответ «его физически нет» проверяется за минуту, тогда
+    как «он есть, но безопасен» — никогда. Массовый канал в закрытом контуре все равно папка
+    обмена, поэтому потеря невелика: остаются папка-приемник и канал командной строки.
+
+    Флаг НЕЗАВИСИМ от ClosedLoop: это разные вопросы («куда программа ходит» и «кого она к себе
+    пускает»), и их сочетают по обстоятельствам. Условная компиляция живет ровно в одном месте —
+    Integrations/IngressGate.cs, свойство ListenerBuild.
+  -->
+  <PropertyGroup Condition="'$(NoListener)' == 'true'">
+    <DefineConstants>$(DefineConstants);NO_LISTENER</DefineConstants>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(NoListener)' == 'true'">
+    <Compile Remove="Integrations\IngressHttp.Open.cs" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(NoListener)' != 'true'">
+    <Compile Remove="Integrations\IngressHttp.Closed.cs" />
+  </ItemGroup>
+
+  <!--
     Второй рубеж правила «наружу одна дверь» (docs/ROADMAP-API.md, 10.2). Первый — текстовый
     тест Tests/Unit/OneDoorOutwardTests.cs, он читает исходники и ловит даже упоминание в
     комментарии. Анализатор ловит то, чего текст не видит: тип, использованный без своего

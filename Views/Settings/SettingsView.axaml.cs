@@ -67,6 +67,10 @@ public partial class SettingsView : UserControl
         {
             var text = $"Версия {version.Major}.{version.Minor}.{version.Build}";
             if (BuildDate() is { } built) text += $" · сборка {built:dd.MM.yyyy}";
+            // Особая сборка называет себя здесь. Без этого через полгода никто не скажет, какая
+            // из них стоит на машине, а отличаются они тем, о чем спрашивает служба безопасности
+            // (docs/ROADMAP-API.md, 10.16.1).
+            if (BuildFlavour() is { Length: > 0 } flavour) text += " · " + flavour;
             VersionText.Text = text;
         }
         DataPathText.Text   = AppSettings.AppDataDir;
@@ -422,6 +426,21 @@ public partial class SettingsView : UserControl
     // путь к запущенному .exe; работает одинаково в обычной и single-file-сборке
     // (в отличие от Assembly.Location, который в single-file пуст и дает warning IL3000).
     // Так дата всегда отражает текущий бинарь и видна в раздаваемой версии — без ручного указания.
+    /// <summary>
+    /// Чем эта сборка отличается от обычной; пусто — ничем. Две особые сборки независимы:
+    /// «куда программа ходит» и «кого она к себе пускает» — разные вопросы, и сочетают их по
+    /// обстоятельствам.
+    /// </summary>
+    private static string BuildFlavour()
+    {
+        var parts = new List<string>(2);
+
+        if (SmartBase.Integrations.EgressGate.ClosedLoopBuild)  parts.Add("закрытый контур");
+        if (!SmartBase.Integrations.IngressGate.ListenerBuild)   parts.Add("без слушателя");
+
+        return string.Join(", ", parts);
+    }
+
     private static DateTime? BuildDate()
     {
         try

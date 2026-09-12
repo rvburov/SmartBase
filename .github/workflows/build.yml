@@ -187,13 +187,24 @@ jobs:
       - name: Сборка закрытого контура
         run: dotnet build SmartBase.csproj --configuration Release -p:ClosedLoop=true
 
+      # Второй флаг того же рода: сборка без слушателя. Вопросы разные — «куда программа ходит»
+      # и «кого она к себе пускает», — и сочетают их по обстоятельствам, поэтому собираются обе
+      # конфигурации по отдельности и одна вместе.
+      - name: Сборка без слушателя
+        run: dotnet build SmartBase.csproj --configuration Release -p:NoListener=true
+
+      - name: Сборка закрытого контура без слушателя
+        run: dotnet build SmartBase.csproj --configuration Release -p:ClosedLoop=true -p:NoListener=true
+
       # Встречная проверка: в ОБЫЧНОЙ сборке отправляющий слой на месте. Без нее job остался бы
       # зеленым и в том случае, когда Open-файл потеряли совсем, — закрытая сборка собралась бы
       # как ни в чем не бывало, а вместе с ней исчез бы весь исходящий обмен.
-      - name: Отправляющий слой на месте в обычной сборке
+      - name: Оба слоя на месте в обычной сборке
         run: |
           test -f Integrations/EgressHttp.Open.cs \
             || { echo "::error::Integrations/EgressHttp.Open.cs пропал — в обычной сборке не осталось отправляющего слоя"; exit 1; }
+          test -f Integrations/IngressHttp.Open.cs \
+            || { echo "::error::Integrations/IngressHttp.Open.cs пропал — в обычной сборке не осталось слушателя"; exit 1; }
           dotnet build SmartBase.csproj --configuration Release
 
   # ── Тесты провайдера PostgreSQL на живой базе ───────────────────────────────

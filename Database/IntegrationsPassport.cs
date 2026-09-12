@@ -80,6 +80,7 @@ public static class IntegrationsPassport
         Head(text, who, now, since, days);
         Policy(text, policy.Set, policy.Reads, DateOnly.FromDateTime(now.LocalDateTime.Date));
         Connections(text, registry);
+        Ingress(text, registry, databases);
         Directions(text, registry, now);
         Traffic(text, journal, since);
         Labels(text, databases);
@@ -205,12 +206,81 @@ public static class IntegrationsPassport
         text.AppendLine();
     }
 
-    // ── 3. Направления ────────────────────────────────────────────────────────
+    // ── 3. Кто может постучаться к нам ────────────────────────────────────────
+
+    /// <summary>
+    /// Входящий канал. Проверяющий спрашивает об открытом порте раньше, чем об исходящих, и
+    /// ответ обязан быть в том же документе: слушаем ли, каким способом, кому выдан доступ и
+    /// что этот доступ позволяет.
+    ///
+    /// Настройки приема берутся у машины, а не у базы: порт открывает конкретный компьютер, и
+    /// паспорт составляется про него.
+    /// </summary>
+    private static void Ingress(StringBuilder text, IntegrationsRegistry registry,
+                                IReadOnlyList<PassportDatabase> databases)
+    {
+        Title(text, "3. КТО МОЖЕТ ПОСТУЧАТЬСЯ К НАМ");
+
+        var mode = Utils.AppSettings.LoadIngressMode();
+        var port = Utils.AppSettings.LoadIngressPort();
+
+        if (!IngressGate.ListenerBuild)
+            text.AppendLine("  Сборка без слушателя: принимающего кода в ней нет, порт не открывается.");
+        else
+        {
+            var decision = IngressGate.Check(mode, port);
+
+            text.AppendLine(mode switch
+            {
+                IngressMode.Off      => "  Прием по сети выключен.",
+                IngressMode.Loopback => $"  Прием только с этого компьютера: {IngressGate.LoopbackHost}:{port}.",
+                _                    => $"  Прием по локальной сети, порт {port}.",
+            });
+
+            if (mode != IngressMode.Off && !decision.Allowed)
+                text.AppendLine("  Сейчас не действует: " + decision.Explanation + ".");
+        }
+
+        text.AppendLine();
+
+        var tokens = registry.Tokens();
+
+        if (tokens.Count == 0)
+            text.AppendLine("  Токенов доступа не выдано ни одного: постучаться к нам некому.");
+        else
+        {
+            text.AppendLine($"  Токенов выдано: {tokens.Count}");
+            text.AppendLine();
+
+            foreach (var token in tokens)
+            {
+                var database = databases.FirstOrDefault(d => d.Id == token.DbId)?.Name
+                            ?? $"база №{token.DbId} (не открыта)";
+
+                text.AppendLine($"  «{Text(token.Name)}»  →  {Text(database)}"
+                              + (token.Enabled ? "" : "  [выключен]"));
+
+                text.AppendLine(token.Used is { } used
+                    ? $"    последнее обращение {Moment(used)}"
+                    : "    обращений не было");
+            }
+        }
+
+        text.AppendLine();
+        text.AppendLine("  Что позволяет токен: класть записи в свою базу. Читать данные через");
+        text.AppendLine("  этот канал нельзя — обработчика, отдающего записи, в программе нет,");
+        text.AppendLine("  и наружу отдается только состав коллекций: имена и типы, без значений.");
+        text.AppendLine("  Каждый токен — обычный пользователь базы; права ему выдает и отзывает");
+        text.AppendLine("  ее администратор той же панелью, что и человеку.");
+        text.AppendLine();
+    }
+
+    // ── 4. Направления ────────────────────────────────────────────────────────
 
     private static void Directions(StringBuilder text, IntegrationsRegistry registry,
                                    DateTimeOffset now)
     {
-        Title(text, "3. КОМУ РАЗРЕШЕНО УНОСИТЬ ДАННЫЕ");
+        Title(text, "4. КОМУ РАЗРЕШЕНО УНОСИТЬ ДАННЫЕ");
 
         var outward = registry.Requests().Where(r => r.Outward).ToList();
 
@@ -263,7 +333,7 @@ public static class IntegrationsPassport
 
     private static void Traffic(StringBuilder text, SecurityJournal? journal, DateTimeOffset since)
     {
-        Title(text, "4. ЧТО УХОДИЛО ЗА ПЕРИОД");
+        Title(text, "5. ЧТО УХОДИЛО ЗА ПЕРИОД");
 
         if (journal is null)
         {
@@ -323,7 +393,7 @@ public static class IntegrationsPassport
 
     private static void Labels(StringBuilder text, IReadOnlyList<PassportDatabase> databases)
     {
-        Title(text, "5. МЕТКИ КОНФИДЕНЦИАЛЬНОСТИ");
+        Title(text, "6. МЕТКИ КОНФИДЕНЦИАЛЬНОСТИ");
 
         if (databases.Count == 0)
         {
@@ -347,7 +417,7 @@ public static class IntegrationsPassport
 
     private static void Journal(StringBuilder text, SecurityJournal? journal)
     {
-        Title(text, "6. ЖУРНАЛ БЕЗОПАСНОСТИ");
+        Title(text, "7. ЖУРНАЛ БЕЗОПАСНОСТИ");
 
         if (journal is null)
         {
@@ -369,7 +439,7 @@ public static class IntegrationsPassport
 
     private static void Limits(StringBuilder text, SecurityJournal? journal, int days)
     {
-        Title(text, "7. ЧЕГО ЭТОТ ДОКУМЕНТ НЕ ДОКАЗЫВАЕТ");
+        Title(text, "8. ЧЕГО ЭТОТ ДОКУМЕНТ НЕ ДОКАЗЫВАЕТ");
 
         text.AppendLine("  Он составлен той самой программой, о которой рассказывает, и потому");
         text.AppendLine("  является сводкой, а не доказательством. Проверяется он журналом");

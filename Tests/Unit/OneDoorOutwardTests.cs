@@ -145,6 +145,63 @@ public sealed class OneDoorOutwardTests
         Assert.True(File.Exists(Path.Combine(root, "Integrations", "IngressGate.cs")));
     }
 
+    /// <summary>
+    /// Условная компиляция сборки без слушателя живет ровно в одном файле — в двери внутрь,
+    /// ровно как <c>CLOSED_LOOP</c> живет в двери наружу. Расползись она по коду, и дистрибутивов
+    /// стало бы четыре разных вместо одного с двумя понятными отличиями.
+    /// </summary>
+    [Fact]
+    public void No_listener_switch_lives_only_in_the_inward_gate()
+    {
+        var root = RepoRoot();
+        var gate = Path.Combine("Integrations", "IngressGate.cs");
+
+        var offenders = Sources(root)
+            .Where(f => f.Path != gate && f.Text.Contains("NO_LISTENER", StringComparison.Ordinal))
+            .Select(f => f.Path)
+            .ToList();
+
+        Assert.True(offenders.Count == 0,
+            "Условная компиляция сборки без слушателя вне двери внутрь:\n  "
+            + string.Join("\n  ", offenders));
+    }
+
+    /// <summary>
+    /// Заглушка слушателя не должна обзавестись сетевым кодом: иначе обещание «в этой сборке
+    /// порт не открывается» перестает быть правдой, а заметить это чтением настроек невозможно.
+    /// </summary>
+    [Fact]
+    public void The_no_listener_stub_has_no_network_code()
+    {
+        var path = Path.Combine(RepoRoot(), "Integrations", "IngressHttp.Closed.cs");
+        Assert.True(File.Exists(path), "Заглушка слушателя пропала: " + path);
+
+        var text = File.ReadAllText(path);
+
+        var found = OutboundTypes.Concat(SocketTypes).Concat(ListenerTypes)
+            .Where(type => text.Contains(type, StringComparison.Ordinal))
+            .ToList();
+
+        Assert.True(found.Count == 0,
+            "В заглушке слушателя завелся сетевой код:\n  " + string.Join("\n  ", found));
+    }
+
+    /// <summary>
+    /// Подмена слушателя объявлена в проекте. Без этой проверки можно потерять строку в
+    /// SmartBase.csproj — и сборка без слушателя молча соберется со слушателем внутри.
+    /// </summary>
+    [Fact]
+    public void No_listener_swap_is_declared_in_the_project()
+    {
+        var project = File.ReadAllText(Path.Combine(RepoRoot(), "SmartBase.csproj"));
+
+        Assert.Contains("'$(NoListener)' == 'true'", project, StringComparison.Ordinal);
+        Assert.Contains("<Compile Remove=\"Integrations\\IngressHttp.Open.cs\" />", project,
+                        StringComparison.Ordinal);
+        Assert.Contains("<Compile Remove=\"Integrations\\IngressHttp.Closed.cs\" />", project,
+                        StringComparison.Ordinal);
+    }
+
     /// <summary>Сырые сокеты — только у шлюза и у поименного списка файлов PostgreSQL.</summary>
     [Fact]
     public void Raw_sockets_live_only_in_the_gate_and_in_the_postgres_files()
