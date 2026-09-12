@@ -1,5 +1,6 @@
 using Avalonia.Controls;
 using Avalonia.Layout;
+using Avalonia.Platform.Storage;
 using SmartBase.Controls.Dialogs;
 using SmartBase.Database;
 using SmartBase.Extensions;
@@ -35,9 +36,9 @@ public partial class SettingsView
 
         var registry = Integrations;
 
-        rows.Add(Actions("Добавить", () => _ = EditScenarioAsync(Scenario.New())));
-
         var scenarios = registry.Scenarios();
+
+        rows.Add(ScenarioActions(registry, scenarios));
 
         if (scenarios.Count == 0)
         {
@@ -54,6 +55,140 @@ public partial class SettingsView
             rows.Add(ScenarioRow(registry, scenario));
             rows.Add(new Border { Classes = { "separator", "h" } });
         }
+    }
+
+    /// <summary>
+    /// Действия над списком: добавить и перенести настройки между машинами. Перенос стоит
+    /// рядом с «Добавить», потому что это второй способ завести сценарий — и для того, кто
+    /// получил файл от коллеги, единственный.
+    /// </summary>
+    private Border ScenarioActions(Database.IntegrationsRegistry registry,
+                                   IReadOnlyList<Scenario> scenarios)
+    {
+        var buttons = new StackPanel
+        {
+            Orientation         = Orientation.Horizontal,
+            Spacing             = 8,
+            HorizontalAlignment = HorizontalAlignment.Left,
+        };
+
+        buttons.Children.Add(SmallButton("Добавить", () => _ = EditScenarioAsync(Scenario.New())));
+
+        var export = SmallButton("Выгрузить в файл", () => _ = ExportScenariosAsync(registry, scenarios));
+        export.IsEnabled = scenarios.Count > 0;
+        buttons.Children.Add(export);
+
+        buttons.Children.Add(SmallButton("Загрузить из файла", () => _ = ImportScenariosAsync(registry)));
+
+        return new Border { Classes = { "settingRow" }, Child = buttons };
+    }
+
+    /// <summary>
+    /// Выгрузить все сценарии одним файлом. Вместе с ними уезжают запросы и соединения, на
+    /// которые они ссылаются: сценарий без них на той стороне не соберется.
+    ///
+    /// <b>Секретов в файле нет и быть не может.</b> Сказано это и в самом файле, и человеку —
+    /// иначе на той стороне будут неделю искать, почему обмен отвечает «401».
+    /// </summary>
+    private async Task ExportScenariosAsync(Database.IntegrationsRegistry registry,
+                                            IReadOnlyList<Scenario> scenarios)
+    {
+        if (VisualRoot is not Window win || scenarios.Count == 0) return;
+
+        var now    = DateTimeOffset.Now;
+        var bundle = Database.ScenarioTransfer.Export(registry, scenarios, _databases?.Invoke() ?? [],
+                                                      Environment.MachineName, now);
+
+        var file = await win.StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
+        {
+            Title               = "Куда выгрузить настройки обмена",
+            SuggestedFileName   = ScenarioBundle.FileName(now),
+            DefaultExtension    = "json",
+            ShowOverwritePrompt = true,
+            FileTypeChoices     = [new FilePickerFileType("Файл JSON") { Patterns = ["*.json"] }],
+        });
+
+        if (file?.TryGetLocalPath() is not { Length: > 0 } path) return;
+
+        try
+        {
+            await File.WriteAllTextAsync(path, bundle.ToJson(), new System.Text.UTF8Encoding(false));
+
+            await ConfirmDialog.Info(
+                $"Настройки выгружены: {bundle.Summary()}.\n\nФайл: {path}\n\n"
+                + "Секретов в нем нет: токены и пароли лежат в защищенном хранилище системы и в "
+                + "файл не попадают. На той стороне их впишут заново.").ShowDialog(win);
+        }
+        catch (Exception error)
+        {
+            await ConfirmDialog.Info("Выгрузить не удалось.\n\n" + error.Message).ShowDialog(win);
+        }
+    }
+
+    /// <summary>
+    /// Загрузить настройки из файла. Существующее не переписывается, тезка приезжает рядом под
+    /// свободным именем, а приехавшие сценарии выключены: файл открывают, чтобы посмотреть, а не
+    /// чтобы немедленно начать обмен с чужой системой.
+    /// </summary>
+    private async Task ImportScenariosAsync(Database.IntegrationsRegistry registry)
+    {
+        if (VisualRoot is not Window win) return;
+        if (!AllowIntegrations(Core.Models.PermAction.IntegrationsSetup)) return;
+
+        var chosen = await win.StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+        {
+            Title           = "Файл с настройками обмена",
+            AllowMultiple   = false,
+            FileTypeFilter  = [new FilePickerFileType("Файл JSON") { Patterns = ["*.json"] }],
+        });
+
+        if (chosen.FirstOrDefault()?.TryGetLocalPath() is not { Length: > 0 } path) return;
+
+        string text;
+        try
+        {
+            text = await File.ReadAllTextAsync(path);
+        }
+        catch (Exception error)
+        {
+            await ConfirmDialog.Info("Файл не прочитался.\n\n" + error.Message).ShowDialog(win);
+            return;
+        }
+
+        if (ScenarioBundle.TryParse(text, out var trouble) is not { } bundle)
+        {
+            await ConfirmDialog.Info("Файл не принят: " + trouble + ".").ShowDialog(win);
+            return;
+        }
+
+        var ok = await new ConfirmDialog(
+            $"Загрузить настройки обмена?\n\nВ файле: {bundle.Summary()}.\n"
+            + $"Собран на компьютере «{bundle.Machine}».\n\n"
+            + "Уже заведенное не переписывается, а сценарии приедут выключенными — "
+            + "включите их, когда проверите.", "Загрузить").ShowDialog<bool>(win);
+
+        if (!ok) return;
+
+        ImportReport report;
+        try
+        {
+            report = Database.ScenarioTransfer.Import(bundle, registry, _databases?.Invoke() ?? [],
+                                                      DateTimeOffset.Now);
+        }
+        catch (Exception error)
+        {
+            await ConfirmDialog.Info("Загрузить не удалось.\n\n" + error.Message).ShowDialog(win);
+            return;
+        }
+
+        BuildIntegrationsScenarios();
+
+        var message = report.Summary() + ".";
+
+        if (report.Notes.Count > 0)
+            message += "\n\n" + string.Join("\n", report.Notes);
+
+        await ConfirmDialog.Info(message).ShowDialog(win);
     }
 
     /// <summary>
