@@ -8,8 +8,8 @@
          окна на y=56 (MainWindow), иначе линии удваивались бы в 2px. -->
     <DockPanel>
 
-        <!-- Имя записи слева, действия обмена + toggle блока коллекции справа -->
-        <Grid ColumnDefinitions="*,Auto,Auto" Margin="16,0">
+        <!-- Редактируемое имя записи слева + toggle блока коллекции справа -->
+        <Grid ColumnDefinitions="*,Auto" Margin="16,0">
 
             <TextBlock Grid.Column="0" x:Name="TitleDisplay"
                        HorizontalAlignment="Stretch"
@@ -29,24 +29,7 @@
                      FontWeight="{StaticResource FontWeightBold}"
                      Margin="0,0,12,0" />
 
-            <!-- Действия обмена над ЭТОЙ записью: видна, только когда что-то настроено. -->
-            <Button Grid.Column="1" x:Name="ActionsBtn" Classes="navbtn"
-                    Width="30" Height="30" Margin="0,0,8,0"
-                    IsVisible="False"
-                    VerticalAlignment="Center"
-                    CornerRadius="{StaticResource RadiusMedium}"
-                    ToolTip.Tip="Действия обмена">
-                <Viewbox Width="{StaticResource IconSizeMedium}" Height="{StaticResource IconSizeMedium}">
-                    <Canvas Width="24" Height="24">
-                        <Path Data="{StaticResource IconPlay}"
-                              Stroke="{Binding $parent[Button].Foreground}"
-                              StrokeThickness="{StaticResource IconStrokeMedium}"
-                              StrokeLineCap="Round" StrokeJoin="Round" />
-                    </Canvas>
-                </Viewbox>
-            </Button>
-
-            <ToggleButton Grid.Column="2" x:Name="CollectionPanelBtn" Classes="navbtn"
+            <ToggleButton Grid.Column="1" x:Name="CollectionPanelBtn" Classes="navbtn"
                           Width="30" Height="30"
                           VerticalAlignment="Center"
                           CornerRadius="{StaticResource RadiusMedium}"

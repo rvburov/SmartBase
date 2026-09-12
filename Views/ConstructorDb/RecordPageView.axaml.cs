@@ -195,7 +195,7 @@ public partial class RecordPageView : UserControl
 
         HeaderBar.CollectionPanelToggled += (_, open) => CollectionPanelToggled?.Invoke(this, open);
 
-        HeaderBar.ActionsRequested += (_, anchor) => ShowActionsMenu(anchor);
+        FooterBar.ActionsRequested += (_, anchor) => ShowActionsMenu(anchor);
     }
 
     /// <summary>Синхронизирует визуальное состояние кнопки с фактической видимостью блока коллекции.</summary>
@@ -647,7 +647,7 @@ public partial class RecordPageView : UserControl
 
     /// <summary>Показать кнопку действий, если для этой коллекции что-то настроено.</summary>
     private void RefreshActions() =>
-        HeaderBar.ShowActions(Actions().Count > 0);
+        FooterBar.ShowActions(Actions().Count > 0);
 
     private IReadOnlyList<DataAction> Actions() =>
         _vm is null ? [] : DataActions?.Invoke(_dbId, _vm.CollectionId) ?? [];
@@ -664,7 +664,8 @@ public partial class RecordPageView : UserControl
         if (actions.Count == 0) return;
 
         var record = _vm.RecordId;
-        var menu   = new MenuFlyout { Placement = PlacementMode.BottomEdgeAlignedRight };
+        // Раскрывается ВВЕРХ: кнопка стоит в нижней полосе, и меню вниз ушло бы за экран.
+        var menu   = new MenuFlyout { Placement = PlacementMode.TopEdgeAlignedLeft };
 
         foreach (var action in actions)
         {
