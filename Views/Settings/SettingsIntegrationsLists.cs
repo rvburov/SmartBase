@@ -207,13 +207,13 @@ public partial class SettingsView
         // Состояние исходящего направления — прямо в карточке. Человек, у которого обмен встал,
         // должен увидеть причину здесь, а не искать ее в журнале: «срок вышел» и «запрос
         // правили» лечатся по-разному.
-        if (request.Outward)
-        {
-            var trouble = registry.OutwardTrouble(request, DateTimeOffset.Now);
+        var trouble = request.Outward
+            ? registry.OutwardTrouble(request, DateTimeOffset.Now)
+            : null;
 
+        if (request.Outward)
             extra += (extra.Length > 0 ? " · " : "") + "Направление: "
                    + (trouble ?? registry.Direction(request.Id)?.Describe() ?? "подтверждено");
-        }
 
         // «Что уйдет» есть у любого запроса — читающий тоже стоит посмотреть глазами перед
         // первым запуском. Подтверждение появляется только у исходящего: читающему подтверждать
@@ -229,9 +229,20 @@ public partial class SettingsView
         {
             more.Add(("Что уносит", () => _ = EditOutgoingAsync(registry, request)));
 
-            more.Add(registry.Direction(request.Id) is null
-                ? ("Подтвердить", () => _ = ConfirmDirectionAsync(registry, request))
-                : ("Отозвать",    () => _ = RevokeDirectionAsync(registry, request)));
+            // Кнопка выбирается по тому, ДЕЙСТВУЕТ ли направление, а не по тому, существует ли
+            // запись о нем. Запрос правили, вышел срок, направление простаивало — строка в базе
+            // осталась, но разрешения нет, и человеку нужна ровно одна кнопка: подтвердить
+            // заново. Предлагать в этом состоянии «Отозвать» значило бы просить его отменить то,
+            // что уже не работает, и лишь потом разрешить снова.
+            more.Add((registry.Direction(request.Id), trouble) switch
+            {
+                (null, _)  => ("Подтвердить",
+                               () => _ = ConfirmDirectionAsync(registry, request)),
+                (_, null)  => ("Отозвать",
+                               () => _ = RevokeDirectionAsync(registry, request)),
+                _          => ("Подтвердить заново",
+                               () => _ = ConfirmDirectionAsync(registry, request)),
+            });
         }
 
         return CardRow(request.Name, description, extra,
