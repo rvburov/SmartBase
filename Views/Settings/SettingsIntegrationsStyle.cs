@@ -267,17 +267,24 @@ public partial class SettingsView
     /// Моноширинная ячейка: пример файла, тело запроса и ответа. Высота ограничена, текст не
     /// переносится — ответ чужой программы бывает на восемь тысяч знаков, и перенос по словам
     /// врет о том, что в нем написано.
+    ///
+    /// Раскладка по стандарту прокрутки (docs/developer/ui/scrolling.md): у рамки отступа НЕТ,
+    /// воздух висит на тексте ВНУТРИ прокрутки. Иначе полоса отходит от краев ячейки и идет не
+    /// во всю ее высоту, а сам воздух остается стоять, когда текст под ним уже уехал.
+    /// <c>ClipToBounds</c> срезает полосы скруглением рамки.
     /// </summary>
     private static Border CodeBox(string text, bool selectable = true, double maxHeight = 180)
     {
         Control content = selectable
-            ? new SelectableTextBlock { Classes = { "mono" }, Text = text }
-            : new TextBlock           { Classes = { "mono" }, Text = text };
+            ? new SelectableTextBlock { Classes = { "mono" }, Text = text, Margin = BoxPadding }
+            : new TextBlock           { Classes = { "mono" }, Text = text, Margin = BoxPadding };
 
         return new Border
         {
-            Classes = { "dataBox" },
-            Child   = new ScrollViewer
+            Classes      = { "dataBox" },
+            Padding      = new Thickness(0),
+            ClipToBounds = true,
+            Child        = new ScrollViewer
             {
                 MaxHeight                     = maxHeight,
                 HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Auto,
@@ -286,6 +293,13 @@ public partial class SettingsView
             },
         };
     }
+
+    /// <summary>
+    /// Воздух ячейки с данными. Тот же, что в стиле <c>Border.dataBox</c>: у прокручиваемой
+    /// ячейки он переезжает с рамки на содержимое и обязан остаться прежним — иначе соседние
+    /// ячейки на одном экране разойдутся по отступу.
+    /// </summary>
+    private static readonly Thickness BoxPadding = new(10, 8);
 
     // ── Таблица ───────────────────────────────────────────────────────────────
 
