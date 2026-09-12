@@ -47,6 +47,12 @@ public enum RunChannel
 /// <param name="SentBody">Тело запроса, как оно ушло: без секрета и не длиннее потолка. Пусто —
 /// тела не было либо запуск до сети не дошел.</param>
 /// <param name="GotBody">Тело ответа чужой программы, по тем же правилам.</param>
+/// <param name="Scenario">Каким сценарием запущено; пусто — руками с экрана. Отдельно от
+/// <paramref name="Name"/> намеренно: у строки шага в имени стоит запрос, и без этого поля
+/// ответить «а чей это был запуск» можно только по времени соседних строк.</param>
+/// <param name="Step">Какой это был шаг — «шаг 2 из 5: запрос». Пусто — запуск не из сценария.
+/// Номер и род шага, а не его настройки: сценарий с тех пор могли поправить, и хранить в журнале
+/// то, что уже неправда, хуже, чем не хранить ничего.</param>
 public sealed record RunEntry(
     long       Id,
     string     At,
@@ -62,16 +68,20 @@ public sealed record RunEntry(
     bool       Counts,
     int        Direction,
     string     SentBody = "",
-    string     GotBody  = "")
+    string     GotBody  = "",
+    string     Scenario = "",
+    string     Step     = "")
 {
     /// <summary>Новая строка «сейчас»; момент передается явно — тест не должен зависеть от часов.</summary>
     public static RunEntry New(RunChannel channel, string name, string address, bool ok,
                                string explanation, int rows, long bytes, TimeSpan elapsed,
                                int dbId, DateTimeOffset at, bool counts, int direction,
-                               string sentBody = "", string gotBody = "") =>
+                               string sentBody = "", string gotBody = "",
+                               string scenario = "", string step = "") =>
         new(0, at.ToUniversalTime().ToString("o", CultureInfo.InvariantCulture),
             channel, name, address, ok, explanation, rows, bytes,
-            (long)elapsed.TotalMilliseconds, dbId, counts, direction, sentBody, gotBody);
+            (long)elapsed.TotalMilliseconds, dbId, counts, direction, sentBody, gotBody,
+            scenario, step);
 
     /// <summary>Момент записи; <c>null</c> — строка испорчена правкой файла руками.</summary>
     public DateTimeOffset? Moment =>
@@ -79,6 +89,20 @@ public sealed record RunEntry(
                                 DateTimeStyles.RoundtripKind, out var moment)
             ? moment
             : null;
+}
+
+/// <summary>
+/// Что показывать и что выгружать из журнала запусков.
+/// </summary>
+/// <param name="Channel">Только этот канал; <c>null</c> — любые.</param>
+/// <param name="FailedOnly">Только неудачные строки — с них начинается всякий разбор.</param>
+public sealed record RunFilter(RunChannel? Channel = null, bool FailedOnly = false)
+{
+    /// <summary>Без сужения — весь журнал.</summary>
+    public static RunFilter Any { get; } = new();
+
+    /// <summary>Сужено ли хоть чем-нибудь: окно выгрузки говорит об этом вслух.</summary>
+    public bool Narrow => Channel is not null || FailedOnly;
 }
 
 /// <summary>
@@ -156,7 +180,9 @@ public sealed class RunJournal
                 Counts      INTEGER NOT NULL,
                 Direction   INTEGER NOT NULL DEFAULT 0,
                 SentBody    TEXT    NOT NULL DEFAULT '',
-                GotBody     TEXT    NOT NULL DEFAULT ''
+                GotBody     TEXT    NOT NULL DEFAULT '',
+                Scenario    TEXT    NOT NULL DEFAULT '',
+                Step        TEXT    NOT NULL DEFAULT ''
             );
             CREATE INDEX IF NOT EXISTS runs_at ON runs (At);
             """;
@@ -166,6 +192,8 @@ public sealed class RunJournal
         AddColumn(connection, "Direction", "INTEGER NOT NULL DEFAULT 0");
         AddColumn(connection, "SentBody",  "TEXT NOT NULL DEFAULT ''");
         AddColumn(connection, "GotBody",   "TEXT NOT NULL DEFAULT ''");
+        AddColumn(connection, "Scenario",  "TEXT NOT NULL DEFAULT ''");
+        AddColumn(connection, "Step",      "TEXT NOT NULL DEFAULT ''");
     }
 
     /// <summary>
@@ -224,8 +252,8 @@ public sealed class RunJournal
                 using var command    = connection.CreateCommand();
 
                 command.CommandText = """
-                    INSERT INTO runs (At, Channel, Name, Address, Ok, Explanation, Rows, Bytes, Ms, DbId, Counts, Direction, SentBody, GotBody)
-                    VALUES ($at, $channel, $name, $address, $ok, $explanation, $rows, $bytes, $ms, $db, $counts, $direction, $sentBody, $gotBody);
+                    INSERT INTO runs (At, Channel, Name, Address, Ok, Explanation, Rows, Bytes, Ms, DbId, Counts, Direction, SentBody, GotBody, Scenario, Step)
+                    VALUES ($at, $channel, $name, $address, $ok, $explanation, $rows, $bytes, $ms, $db, $counts, $direction, $sentBody, $gotBody, $scenario, $step);
                     SELECT last_insert_rowid();
                     """;
 
@@ -243,6 +271,8 @@ public sealed class RunJournal
                 command.Parameters.AddWithValue("$direction",   entry.Direction);
                 command.Parameters.AddWithValue("$sentBody",    entry.SentBody ?? "");
                 command.Parameters.AddWithValue("$gotBody",     entry.GotBody  ?? "");
+                command.Parameters.AddWithValue("$scenario",    entry.Scenario ?? "");
+                command.Parameters.AddWithValue("$step",        entry.Step     ?? "");
 
                 return Convert.ToInt64(command.ExecuteScalar(), CultureInfo.InvariantCulture);
             }
@@ -256,8 +286,51 @@ public sealed class RunJournal
 
     // ── Чтение ────────────────────────────────────────────────────────────────
 
+    private const string Select =
+        "SELECT Id, At, Channel, Name, Address, Ok, Explanation, Rows, Bytes, Ms, DbId, Counts, "
+      + "Direction, SentBody, GotBody, Scenario, Step FROM runs";
+
     /// <summary>Последние строки, свежие сверху.</summary>
-    public IReadOnlyList<RunEntry> Recent(int take = 200)
+    public IReadOnlyList<RunEntry> Recent(int take = 200) => Fetch(RunFilter.Any, before: 0, take);
+
+    /// <summary>
+    /// Строки под условия, свежие сверху, не больше <paramref name="take"/> штук.
+    ///
+    /// Сужение уходит в SQL, а не в память: «прочитать последние пятьсот и отобрать из них»
+    /// означало бы, что человек, ищущий единственную неудачу вчерашней ночи, ее не найдет —
+    /// удачные строки вытеснят ее из прочитанной пачки.
+    /// </summary>
+    public IReadOnlyList<RunEntry> Page(RunFilter filter, int take = 200) =>
+        Fetch(filter, before: 0, take);
+
+    /// <summary>
+    /// Все строки под условия, свежие сверху, ЛЕНИВОЙ последовательностью: страницы читаются по
+    /// мере того, как их забирают. Так выгружают в CSV — двадцать тысяч строк с телами не должны
+    /// подниматься в память целиком ради того, чтобы уехать в файл.
+    ///
+    /// Замок берется на каждую страницу отдельно, а не на весь обход: держать его, пока
+    /// вызывающий пишет строки на диск, значило бы остановить запись в журнал на все время
+    /// выгрузки — то есть остановить обмен.
+    /// </summary>
+    public IEnumerable<RunEntry> Stream(RunFilter filter, int page = 500)
+    {
+        var size   = Math.Max(1, page);
+        var before = 0L;
+
+        while (true)
+        {
+            var rows = Fetch(filter, before, size);
+            if (rows.Count == 0) yield break;
+
+            foreach (var row in rows) yield return row;
+
+            before = rows[^1].Id;
+            if (rows.Count < size) yield break;
+        }
+    }
+
+    /// <summary>Сколько строк подходит под условия — чтобы окно выгрузки знало, сколько их.</summary>
+    public long Count(RunFilter filter)
     {
         try
         {
@@ -266,10 +339,29 @@ public sealed class RunJournal
                 using var connection = Open();
                 using var command    = connection.CreateCommand();
 
-                command.CommandText = """
-                    SELECT Id, At, Channel, Name, Address, Ok, Explanation, Rows, Bytes, Ms, DbId, Counts, Direction, SentBody, GotBody
-                    FROM runs ORDER BY Id DESC LIMIT $take;
-                    """;
+                command.CommandText = "SELECT COUNT(*) FROM runs" + Where(filter, before: 0, command);
+
+                return Convert.ToInt64(command.ExecuteScalar(), CultureInfo.InvariantCulture);
+            }
+        }
+        catch (SqliteException)
+        {
+            return 0;
+        }
+    }
+
+    /// <summary>Одна страница: строки старше <paramref name="before"/> (0 — с самого конца).</summary>
+    private IReadOnlyList<RunEntry> Fetch(RunFilter filter, long before, int take)
+    {
+        try
+        {
+            lock (_lock)
+            {
+                using var connection = Open();
+                using var command    = connection.CreateCommand();
+
+                command.CommandText = Select + Where(filter, before, command)
+                                    + " ORDER BY Id DESC LIMIT $take;";
 
                 command.Parameters.AddWithValue("$take", Math.Max(1, take));
 
@@ -282,7 +374,8 @@ public sealed class RunJournal
                         reader.GetString(3), reader.GetString(4), reader.GetInt32(5) != 0,
                         reader.GetString(6), reader.GetInt32(7), reader.GetInt64(8),
                         reader.GetInt64(9), reader.GetInt32(10), reader.GetInt32(11) != 0,
-                        reader.GetInt32(12), reader.GetString(13), reader.GetString(14)));
+                        reader.GetInt32(12), reader.GetString(13), reader.GetString(14),
+                        reader.GetString(15), reader.GetString(16)));
 
                 return rows;
             }
@@ -293,6 +386,71 @@ public sealed class RunJournal
             return [];
         }
     }
+
+    /// <summary>Условия отбора одной строкой — и те же параметры в команду.</summary>
+    private static string Where(RunFilter filter, long before, SqliteCommand command)
+    {
+        var parts = new List<string>();
+
+        if (before > 0)
+        {
+            parts.Add("Id < $before");
+            command.Parameters.AddWithValue("$before", before);
+        }
+
+        if (filter.Channel is { } channel)
+        {
+            parts.Add("Channel = $channel");
+            command.Parameters.AddWithValue("$channel", (int)channel);
+        }
+
+        if (filter.FailedOnly) parts.Add("Ok = 0");
+
+        return parts.Count > 0 ? " WHERE " + string.Join(" AND ", parts) : "";
+    }
+
+    // ── Выгрузка ──────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Колонки выгрузки — те же сведения, что и в подробностях строки на экране.
+    ///
+    /// Тел здесь нет, и это не забывчивость: в CSV они превратили бы файл в нечитаемый — тело
+    /// бывает в восемь килобайт, с переносами строк и кавычками. Выгрузку открывают таблицей и
+    /// смотрят «что, когда и чем кончилось»; тело смотрят на экране, у одной строки.
+    /// </summary>
+    public static readonly IReadOnlyList<string> CsvHeaders =
+    [
+        "Время", "Канал", "Сценарий", "Шаг", "Что запускали", "Адрес", "Итог",
+        "Объяснение", "Строк", "Байт", "Миллисекунд", "База", "В расход",
+    ];
+
+    /// <summary>Одна строка выгрузки — в том же порядке, что и заголовки.</summary>
+    public static IReadOnlyList<string> CsvRow(RunEntry entry) =>
+    [
+        entry.Moment?.ToLocalTime().ToString("dd.MM.yyyy HH:mm:ss", CultureInfo.CurrentCulture)
+            ?? entry.At,
+        ChannelName(entry.Channel),
+        entry.Scenario,
+        entry.Step,
+        entry.Name,
+        entry.Address,
+        entry.Ok ? "удача" : "ошибка",
+        entry.Explanation,
+        entry.Rows.ToString(CultureInfo.CurrentCulture),
+        entry.Bytes.ToString(CultureInfo.CurrentCulture),
+        entry.Ms.ToString(CultureInfo.CurrentCulture),
+        entry.DbId > 0 ? entry.DbId.ToString(CultureInfo.CurrentCulture) : "",
+        entry.Counts ? "да" : "нет",
+    ];
+
+    /// <summary>Название канала для выгрузки — то же слово, что и на экране.</summary>
+    public static string ChannelName(RunChannel channel) => channel switch
+    {
+        RunChannel.Request  => "сеть",
+        RunChannel.Inbox    => "папка",
+        RunChannel.Scenario => "сценарий",
+        _                   => channel.ToString(),
+    };
 
     // ── Накопительные счетчики ────────────────────────────────────────────────
 

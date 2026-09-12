@@ -39,7 +39,8 @@ public static partial class ScenarioRunner
     /// Взять из папки один файл и передать его текст дальше. Возвращает
     /// <see cref="StepOutcome.Nothing"/>, если брать нечего.
     /// </summary>
-    private static StepOutcome IntakeStep(ScenarioStep step, DateTimeOffset now, ref Intake? taken)
+    private static StepOutcome IntakeStep(ScenarioStep step, string scenario, string mark,
+                                          DateTimeOffset now, ref Intake? taken)
     {
         // Второй такой шаг взял бы второй файл, а квитанция у сценария одна: на два файла ее не
         // разделить, и один отправитель остался бы без ответа.
@@ -61,7 +62,7 @@ public static partial class ScenarioRunner
 
             if (InboxFolder.AlreadySeen(layout, id))
             {
-                Repeat(layout, file, now);
+                Repeat(layout, file, scenario, mark, now);
                 return StepOutcome.Nothing;
             }
 
@@ -94,7 +95,8 @@ public static partial class ScenarioRunner
     /// раз. Файл при этом убирается из «Входящих», иначе он остался бы там навсегда и каждый
     /// запуск спотыкался бы о него заново.
     /// </summary>
-    private static void Repeat(InboxLayout layout, InboxFile file, DateTimeOffset now)
+    private static void Repeat(InboxLayout layout, InboxFile file, string scenario, string mark,
+                               DateTimeOffset now)
     {
         var claimed = InboxFolder.TryClaim(file, Environment.MachineName, now);
         if (claimed is null) return;
@@ -113,7 +115,8 @@ public static partial class ScenarioRunner
         RunJournal.Add(RunEntry.New(RunChannel.Inbox, file.Name, layout.Incoming, ok: true,
                                     "повтор: сообщение уже приходило", rows: 0, bytes: 0,
                                     elapsed: TimeSpan.Zero, dbId: 0, at: now, counts: false,
-                                    direction: 0));   // файл идет внутрь, направления у него нет
+                                    direction: 0,   // файл идет внутрь, направления у него нет
+                                    scenario: scenario, step: mark));
     }
 
     /// <summary>

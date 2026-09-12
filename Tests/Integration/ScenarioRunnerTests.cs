@@ -295,6 +295,14 @@ public sealed class ScenarioRunnerTests : IDisposable
         Assert.True(step.Ok);
         Assert.True(step.Counts);            // обмен состоялся — место в потолке занято
         Assert.Equal(_db.Manager.DbId, step.DbId);
+
+        // Обе строки называют сценарий: отбор по нему должен доставать и итог, и его шаги.
+        Assert.Equal("Заказы каждые полчаса", scenario.Scenario);
+        Assert.Equal("Заказы каждые полчаса", step.Scenario);
+
+        // Номер и род шага — у шага; у итоговой строки шага нет, она про сценарий целиком.
+        Assert.Equal("шаг 1 из 1 · запрос", step.Step);
+        Assert.Equal("", scenario.Step);
     }
 
     /// <summary>

@@ -309,16 +309,23 @@ public static partial class ScenarioRunner
 
         try
         {
-            foreach (var step in scenario.Steps)
+            for (var number = 1; number <= scenario.Steps.Count; number++)
             {
+                var step = scenario.Steps[number - 1];
+
                 ct.ThrowIfCancellationRequested();
+
+                // Пометка шага уезжает в журнал вместе со строкой: без нее разбор сценария из
+                // пяти шагов начинается с пересчета строк по времени, а два шага, запускающих
+                // один и тот же запрос, не различить вовсе.
+                var mark = StepMark(number, scenario.Steps.Count, step.Kind);
 
                 var outcome = step.Kind switch
                 {
                     ScenarioStepKind.Request => await RequestStepAsync(step, registry, databases,
-                                                                       carry, scenario.Name, now, ct),
+                                                                       carry, scenario.Name, mark, now, ct),
                     ScenarioStepKind.Action  => await ActionStepAsync(step, databases, extensions, table, text, now, ct),
-                    ScenarioStepKind.Intake  => IntakeStep(step, now, ref taken),
+                    ScenarioStepKind.Intake  => IntakeStep(step, scenario.Name, mark, now, ref taken),
                     ScenarioStepKind.Filter  => FilterStep(step, table),
                     _                        => NoticeStep(step, notice),
                 };
@@ -396,6 +403,7 @@ public static partial class ScenarioRunner
                                                             IReadOnlyList<DatabaseManager> databases,
                                                             bool                           carry,
                                                             string                         scenario,
+                                                            string                         mark,
                                                             DateTimeOffset                 now,
                                                             CancellationToken              ct)
     {
@@ -434,7 +442,8 @@ public static partial class ScenarioRunner
             RunChannel.Request, request.Name, outcome.SafeAddress, outcome.Ok, outcome.Explanation,
             outcome.Rows, outcome.Bytes, outcome.Elapsed, binding.DbId, startedAt,
             counts: outcome.Sent, direction: request.Id,
-            sentBody: outcome.SentBody, gotBody: outcome.GotBody));
+            sentBody: outcome.SentBody, gotBody: outcome.GotBody,
+            scenario: scenario, step: mark));
 
         // Направлением воспользовались — отсчет простоя начинается заново. Считается по тому же
         // признаку, что и расход квоты: данные ДОШЛИ до сети. Запуск, остановленный замком или
@@ -876,6 +885,25 @@ public static partial class ScenarioRunner
     }
 
     /// <summary>
+    /// Как шаг называется в журнале: «шаг 2 из 5 · запрос».
+    ///
+    /// Номер и род, а не настройки шага. Сценарий с тех пор могли поправить — переставить шаги,
+    /// сменить запрос, — и строка журнала, хранящая подробности, через неделю врала бы. Номер
+    /// тоже может разойтись с нынешним сценарием, но он хотя бы честно говорит, каким шаг был в
+    /// момент запуска, и различает два шага, дергающих один и тот же запрос.
+    /// </summary>
+    private static string StepMark(int number, int total, ScenarioStepKind kind) =>
+        $"шаг {number} из {total} · " + kind switch
+        {
+            ScenarioStepKind.Request => "запрос",
+            ScenarioStepKind.Notify  => "уведомление",
+            ScenarioStepKind.Action  => "действие",
+            ScenarioStepKind.Intake  => "файл из папки",
+            ScenarioStepKind.Filter  => "отбор",
+            _                        => kind.ToString(),
+        };
+
+    /// <summary>
     /// Итоговая строка сценария в журнале. Пишется ВСЕГДА, даже когда до первого шага не дошло:
     /// у такой неудачи своей строки нет вовсе, и без этой причина не видна нигде.
     ///
@@ -887,5 +915,10 @@ public static partial class ScenarioRunner
                                     rows, 0, elapsed, dbId, now, counts: false,
                                     // Итоговая строка сценария направления не несет: в расход
                                     // она не идет, а объем уже посчитан строками его шагов.
-                                    direction: 0));
+                                    direction: 0,
+                                    // Имя сценария дублируется полем намеренно: отбор по
+                                    // сценарию должен доставать и итог, и все его шаги разом.
+                                    scenario: scenario.Name,
+                                    // Шага у итога нет: он про сценарий целиком.
+                                    step: ""));
 }

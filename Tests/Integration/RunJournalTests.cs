@@ -334,6 +334,111 @@ public sealed class RunJournalTests : IDisposable
         Assert.Equal((0, 0L), journal.Since(Now - TimeSpan.FromDays(1)));
     }
 
+    // ── Сценарий и шаг ────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Чей это был запуск и какой шаг. Без этих двух полей разбор сценария из пяти шагов
+    /// начинается с пересчета строк по времени, а два шага, дергающих один и тот же запрос, не
+    /// различить вовсе.
+    /// </summary>
+    [Fact]
+    public void Scenario_and_step_read_back_with_the_entry()
+    {
+        var journal = Journal();
+
+        journal.Write(RunEntry.New(RunChannel.Request, "Заказы", "https://api.zavod.local", true,
+                                   "", rows: 1, bytes: 10, elapsed: TimeSpan.Zero, dbId: 0,
+                                   at: Now, counts: true, direction: 7,
+                                   scenario: "Ночной обмен", step: "шаг 2 из 5 · запрос"));
+
+        var row = journal.Recent().Single();
+
+        Assert.Equal("Ночной обмен",        row.Scenario);
+        Assert.Equal("шаг 2 из 5 · запрос", row.Step);
+    }
+
+    /// <summary>Запуск руками сценарию не принадлежит — и поля у него пустые, а не выдуманные.</summary>
+    [Fact]
+    public void A_run_by_hand_has_no_scenario_and_no_step()
+    {
+        var journal = Journal();
+
+        journal.Write(Request("Заказы", 100, Now));
+
+        var row = journal.Recent().Single();
+
+        Assert.Equal("", row.Scenario);
+        Assert.Equal("", row.Step);
+    }
+
+    // ── Отбор и выгрузка ──────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Сужение уходит в SQL, а не в память. Проверяется именно это: берется страница РАЗМЕРОМ В
+    /// ОДНУ строку, и в нее обязана попасть неудача, лежащая под двумя удачными. Отбери «после
+    /// чтения» — и в такой странице ее не окажется.
+    /// </summary>
+    [Fact]
+    public void Narrowing_happens_in_sql_and_reaches_past_the_page()
+    {
+        var journal = Journal();
+
+        journal.Write(Request("Старая неудача", 100, Now - TimeSpan.FromHours(3), ok: false));
+        journal.Write(Request("Удача",          100, Now - TimeSpan.FromHours(2)));
+        journal.Write(Request("Еще удача",      100, Now - TimeSpan.FromHours(1)));
+
+        var failed = journal.Page(new RunFilter(FailedOnly: true), take: 1);
+
+        Assert.Equal("Старая неудача", failed.Single().Name);
+    }
+
+    [Fact]
+    public void Filter_by_channel_and_count_agree_with_each_other()
+    {
+        var journal = Journal();
+
+        journal.Write(Request("Заказы", 100, Now));
+        journal.Write(Inbox("отгрузка.json", Now));
+        journal.Write(Inbox("остатки.json",  Now));
+
+        var files = new RunFilter(Channel: RunChannel.Inbox);
+
+        Assert.Equal(2, journal.Count(files));
+        Assert.Equal(2, journal.Page(files).Count);
+        Assert.Equal(2, journal.Stream(files, page: 1).Count());   // страницы склеиваются
+
+        Assert.Equal(3, journal.Count(RunFilter.Any));
+        Assert.False(RunFilter.Any.Narrow);
+        Assert.True(files.Narrow);
+    }
+
+    /// <summary>
+    /// Колонок в строке столько же, сколько заголовков. Разойдись они — файл откроется со
+    /// сдвинутыми колонками, и заметит это тот, кто будет по нему разбираться, а не тот, кто
+    /// добавил поле.
+    /// </summary>
+    [Fact]
+    public void Csv_row_matches_the_headers()
+    {
+        var journal = Journal();
+
+        journal.Write(RunEntry.New(RunChannel.Request, "Заказы", "https://api.zavod.local", true,
+                                   "", rows: 1, bytes: 10, elapsed: TimeSpan.Zero, dbId: 0,
+                                   at: Now, counts: true, direction: 7,
+                                   sentBody: "{\"a\":1}", gotBody: "[]",
+                                   scenario: "Ночной обмен", step: "шаг 1 из 1 · запрос"));
+
+        var row = RunJournal.CsvRow(journal.Recent().Single());
+
+        Assert.Equal(RunJournal.CsvHeaders.Count, row.Count);
+        Assert.Contains("Ночной обмен",        row);
+        Assert.Contains("шаг 1 из 1 · запрос", row);
+
+        // Тел в выгрузке нет: восемь килобайт с переносами строк превратили бы таблицу в
+        // нечитаемую, а смотрят их на экране, у одной строки.
+        Assert.DoesNotContain(row, cell => cell.Contains("\"a\":1", StringComparison.Ordinal));
+    }
+
     // ── Живучесть ─────────────────────────────────────────────────────────────
 
     /// <summary>

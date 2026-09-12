@@ -82,18 +82,16 @@ public partial class SettingsView
             return;
         }
 
-        var all      = journal.Recent(JournalRead);
-        var selected = all.Where(Fits).ToList();
+        // Сужение уходит в SQL, а не в память: отбери «неудачные» из прочитанной пачки — и
+        // единственная ночная неудача не найдется, потому что удачные строки вытеснят ее.
+        var filter   = new RunFilter(_journalChannel, _journalFailedOnly);
+        var selected = journal.Page(filter, JournalRead);
 
         Add(rows, SpendRow(journal));
         Add(rows, FilterRow());
         Add(rows, RunsRow(selected));
-        Add(rows, FileRow(journal, all.Count), last: true);
+        Add(rows, FileRow(journal, selected.Count, filter.Narrow), last: true);
     }
-
-    private bool Fits(RunEntry entry) =>
-        (_journalChannel is not { } channel || entry.Channel == channel)
-        && (!_journalFailedOnly || !entry.Ok);
 
     // ── Расход ────────────────────────────────────────────────────────────────
 
@@ -220,17 +218,62 @@ public partial class SettingsView
             BuildIntegrationsJournal();
         });
 
+        var export = SmallButton("Выгрузить CSV", () => _ = ExportRunsAsync());
+
         var line = new StackPanel
         {
             Orientation = Orientation.Horizontal,
             Spacing     = 12,
-            Children    = { channel, failed, refresh },
+            Children    = { channel, failed, refresh, export },
         };
 
         return Row("Что показывать",
             "Разбор «почему записи не появились» начинается с неудачных строк — их тут больше "
-            + "всего и ищут.",
+            + "всего и ищут. Выгрузка отдает ВСЕ подошедшие строки, а не показанные две сотни.",
             line);
+    }
+
+    // ── Выгрузка запусков ─────────────────────────────────────────────────────
+
+    // Считать строки на большом журнале — секунды, а окон в это время еще нет: второй щелчок
+    // дал бы вторую выгрузку и второе окно подтверждения.
+    private bool _runsExporting;
+
+    /// <summary>
+    /// Выгрузить отобранные запуски в CSV.
+    ///
+    /// Выгружается все, что подошло под условия, а не показанные две сотни строк: человек,
+    /// нажавший «Выгрузить», просит журнал, а не картинку экрана. Строки читаются лениво,
+    /// страницами, поэтому размер файла ограничивает только диск.
+    ///
+    /// Тел запроса и ответа в файле нет — они превратили бы таблицу в нечитаемую. Их смотрят на
+    /// экране, у одной строки; в CSV идут числа и итоги, ради которых таблицу и открывают.
+    /// </summary>
+    private async Task ExportRunsAsync()
+    {
+        if (TopLevel.GetTopLevel(this) is not Window owner) return;
+        if (RunJournal.Current is not { } journal) return;
+        if (_runsExporting) return;
+
+        // Снимок условий ДО ожидания: их могли поменять, пока считались строки.
+        var filter = new RunFilter(_journalChannel, _journalFailedOnly);
+
+        _runsExporting = true;
+        try
+        {
+            await Controls.Dialogs.CsvExportRunner.Run(owner, new Controls.Dialogs.CsvExportRunner.Job(
+                Title:           "Выгрузка журнала обмена",
+                What:            "Журнал обмена",
+                TotalRows:       journal.Count(filter),
+                Filtered:        filter.Narrow,
+                DefaultFileName: Controls.Dialogs.CsvExportRunner.FileName(
+                                     "Журнал обмена", DateTime.Now),
+                Headers:         RunJournal.CsvHeaders,
+                Rows:            ct => journal.Stream(filter)
+                                              .TakeWhile(_ => !ct.IsCancellationRequested)
+                                              .Select(RunJournal.CsvRow)));
+        }
+        finally { _runsExporting = false; }
     }
 
     // ── Список запусков ───────────────────────────────────────────────────────
@@ -268,18 +311,35 @@ public partial class SettingsView
             list);
     }
 
+    /// <summary>
+    /// Что стоит в колонке «Шаг». Пометка приходит из сценария целой фразой («шаг 2 из 5 ·
+    /// запрос»), но слово «шаг» в колонке с таким заголовком — лишнее: колонка узкая, и место
+    /// нужнее номеру и роду.
+    /// </summary>
+    private static string StepCell(RunEntry run)
+    {
+        if (run.Step.Length > 0)
+            return run.Step.StartsWith("шаг ", StringComparison.Ordinal) ? run.Step[4..] : run.Step;
+
+        // Итоговая строка сценария — не шаг, а сценарий целиком: у нее есть имя сценария, но
+        // номера шага нет и быть не может.
+        return run.Scenario.Length > 0 ? "целиком" : "—";
+    }
+
     /// <summary>Ширины колонок общие у шапки и строк — иначе таблица «поедет».</summary>
-    private static ColumnDefinitions RunColumns() => new("104,8,58,8,*,8,58,8,74");
+    private static ColumnDefinitions RunColumns() => new("104,8,58,8,*,8,150,8,140,8,58,8,74");
 
     private static Control HeaderLine()
     {
         var grid = new Grid { ColumnDefinitions = RunColumns(), Margin = new Thickness(0, 0, 0, 4) };
 
-        Put(grid, 0, Head("Время"));
-        Put(grid, 2, Head("Канал"));
-        Put(grid, 4, Head("Что запускали"));
-        Put(grid, 6, Head("Строк"));
-        Put(grid, 8, Head("Итог"));
+        Put(grid, 0,  Head("Время"));
+        Put(grid, 2,  Head("Канал"));
+        Put(grid, 4,  Head("Что запускали"));
+        Put(grid, 6,  Head("Сценарий"));
+        Put(grid, 8,  Head("Шаг"));
+        Put(grid, 10, Head("Строк"));
+        Put(grid, 12, Head("Итог"));
 
         return grid;
     }
@@ -303,11 +363,17 @@ public partial class SettingsView
         Put(grid, 0, Cell(Moment(run), secondary: true));
         Put(grid, 2, Cell(ChannelName(run.Channel), secondary: true));
         Put(grid, 4, Cell(run.Name.Length > 0 ? run.Name : "без названия"));
-        Put(grid, 6, Cell(run.Rows > 0 ? $"{run.Rows:N0}" : "—", secondary: true));
+
+        // «Руками» — не пустота, а ответ: запуск с экрана сценарию не принадлежит. Прочерк в
+        // этой колонке читался бы как «сценарий был, но потерялся».
+        Put(grid, 6, Cell(run.Scenario.Length > 0 ? run.Scenario : "руками", secondary: true));
+        Put(grid, 8, Cell(StepCell(run), secondary: true));
+
+        Put(grid, 10, Cell(run.Rows > 0 ? $"{run.Rows:N0}" : "—", secondary: true));
 
         var verdict = Cell(run.Ok ? "удача" : "ошибка");
         verdict.Foreground = Ink(run.Ok ? "BrushGreen" : "BrushRed", run.Ok ? "#34C759" : "#FF3B30");
-        Put(grid, 8, verdict);
+        Put(grid, 12, verdict);
 
         var block = new StackPanel { Spacing = 6, Children = { grid } };
         if (open) block.Children.Add(Details(run));
@@ -368,18 +434,74 @@ public partial class SettingsView
                 "Тела запроса и ответа не хранятся: они держатся только у последних "
                 + $"{RunJournal.KeepBodies:N0} запусков."));
 
-        var copy = SmallButton("Скопировать", () =>
-            _ = TopLevel.GetTopLevel(this)?.Clipboard?.SetTextAsync(Plain(run)));
+        // Сценарий и шаг — в подробностях целиком: в колонке они урезаны по ширине, а
+        // выписывают отсюда, из подробностей, вместе с остальным.
+        if (run.Scenario.Length > 0)
+            list.Children.Add(Note($"Сценарий: {run.Scenario}"
+                + (run.Step.Length > 0 ? $" · {run.Step}" : " · сценарий целиком")));
 
-        list.Children.Add(new StackPanel
+        var buttons = new StackPanel
         {
             Orientation         = Orientation.Horizontal,
+            Spacing             = 8,
             HorizontalAlignment = HorizontalAlignment.Left,
             Margin              = new Thickness(0, 4, 0, 0),
-            Children            = { copy },
-        });
+        };
+
+        buttons.Children.Add(SmallButton("Скопировать", () =>
+            _ = TopLevel.GetTopLevel(this)?.Clipboard?.SetTextAsync(Plain(run))));
+
+        // Повтор — только у сетевого шага и только когда карточка запроса еще на месте. Файл из
+        // папки повторить нельзя: он уже разобран и уехал в «Обработанные», а квитанция отсечет
+        // второй заход. Итоговую строку сценария — тоже: повторять надо сценарий, а у него своя
+        // кнопка на соседней вкладке.
+        if (Repeatable(run) is { } request)
+            buttons.Children.Add(SmallButton("Повторить шаг", () => _ = RepeatRunAsync(request)));
+
+        list.Children.Add(buttons);
 
         return list;
+    }
+
+    /// <summary>
+    /// Карточка запроса, которым можно повторить этот запуск; <c>null</c> — повторять нечем.
+    ///
+    /// Проверяется не «был ли это запрос», а «жива ли его карточка»: направление в строке журнала
+    /// — ключ карточки, и она могла уехать вместе с запросом, который человек удалил. Кнопка,
+    /// отвечающая «карточки больше нет», хуже отсутствующей кнопки.
+    /// </summary>
+    private IntegrationRequest? Repeatable(RunEntry run) =>
+        run.Channel == RunChannel.Request && run.Direction > 0 && Integrations is { } registry
+            ? registry.FindRequest(run.Direction)
+            : null;
+
+    /// <summary>
+    /// Повторить запуск — тем же путем, которым запрос запускают с карточки: «В коллекцию».
+    /// Своего пути повтора нет намеренно: он повторял бы не то, что делает обычный запуск, и
+    /// разошелся бы с ним на первой же правке.
+    ///
+    /// Замок исходящего направления, квоты и права при этом спрашиваются заново. Повтор — это
+    /// новый запуск, а не переигрывание старого: разрешение, действовавшее вчера, сегодня могло
+    /// кончиться, и молча пользоваться вчерашним нельзя.
+    /// </summary>
+    private async Task RepeatRunAsync(IntegrationRequest request)
+    {
+        if (VisualRoot is not Window win || Integrations is not { } registry) return;
+
+        var connection = registry.Find(request.ConnectionId);
+
+        if (connection is null)
+        {
+            await ConfirmDialog.Info(
+                    $"У запроса «{request.Name}» не найдено соединение: повторять нечем.")
+                .ShowDialog(win);
+            return;
+        }
+
+        await RunToCollectionAsync(registry, request, connection);
+
+        _journalOpen = 0;
+        BuildIntegrationsJournal();
     }
 
     /// <summary>
@@ -455,7 +577,7 @@ public partial class SettingsView
 
     // ── Файл журнала ──────────────────────────────────────────────────────────
 
-    private Border FileRow(RunJournal journal, int read)
+    private Border FileRow(RunJournal journal, int read, bool narrow)
     {
         var clear = SmallButton("Очистить журнал", () => _ = ClearJournalAsync());
 
@@ -470,8 +592,10 @@ public partial class SettingsView
 
         block.Children.Add(Note($"Файл: {journal.Path}"));
         block.Children.Add(Note(
-            $"Прочитано последних строк: {read:N0}. Журнал хранит не больше "
-            + $"{RunJournal.Keep:N0} строк и подрезает себя сам при запуске программы."));
+            (narrow ? $"Прочитано подошедших строк: {read:N0}."
+                    : $"Прочитано последних строк: {read:N0}.")
+            + $" Журнал хранит не больше {RunJournal.Keep:N0} строк и подрезает себя сам при "
+            + "запуске программы."));
 
         return Row("Где это лежит",
             "Журнал общий на все базы данных и лежит рядом с настройками программы, а не внутри "
@@ -502,12 +626,9 @@ public partial class SettingsView
     // ── Мелочи оформления ─────────────────────────────────────────────────────
 
     /// <summary>Канал колонкой — коротко, чтобы влезло.</summary>
-    private static string ChannelName(RunChannel channel) => channel switch
-    {
-        RunChannel.Request => "сеть",
-        RunChannel.Inbox   => "папка",
-        _                  => "сценарий",
-    };
+    // Слово канала одно на экран и на выгрузку: разойдись они — человек, сверяющий CSV с
+    // экраном, решил бы, что смотрит разные журналы.
+    private static string ChannelName(RunChannel channel) => RunJournal.ChannelName(channel);
 
     /// <summary>Канал в пересылаемом тексте — словами, без экрана рядом.</summary>
     private static string ChannelText(RunChannel channel) => channel switch
