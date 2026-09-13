@@ -64,7 +64,7 @@ if (await dlg.ShowDialog<bool>(ownerWindow) == true) { /* ... */ }
 | Размер | Токен | Габариты | Кому |
 |---|---|---|---|
 | Compact | `DialogWidthCompact` | 420 × авто | `ConfirmDialog`, `NotificationRecordDialog`, `PasswordDialog`, `ProgressDialog` |
-| Base | `DialogWidthBase` | 520 × авто | все формы: `RecordDialog`, `TaskDialog`, `CollectionDialog`, `GroupDialog`, `CreateItemDialog`, `NoteItemDialog`, `LocationDialog`, `RecordLocationDialog`, `PropertyEditorDialog`, `CreateDatabaseDialog`, `DbSettingsDialog`, `ImportExportDialog`, все `Pg*Dialog` |
+| Base | `DialogWidthBase` | 520 × авто | все формы: `RecordDialog`, `TaskDialog`, `CollectionDialog`, `GroupDialog`, `CreateItemDialog`, `NoteItemDialog`, `LocationDialog`, `RecordLocationDialog`, `PropertyEditorDialog`, `CreateDatabaseDialog`, `DbSettingsDialog`, `ImportExportDialog`, `MasterHashDialog`, все `Pg*Dialog` |
 | Wide | `DialogWidthWide` / `DialogHeightWide` | 800 × 800 | `DisplayDialog`, `RecordDisplayDialog` |
 | Data | `DialogWidthData` / `DialogHeightData` + `DialogMinWidthData` / `DialogMinHeightData` | 900 × 700, растягивается, минимум 640 × 480 | `IntegrationBindingDialog`, `OutgoingBindingDialog`, `RequestPreviewDialog`, `IntegrationRequestDialog`, `ScenarioDialog`, `ApiDescriptionDialog` |
 

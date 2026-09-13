@@ -164,7 +164,15 @@ public sealed class SecurityContourView : UserControl
         };
 
         if (ForAdmin)
+        {
             buttons.Add(RowButton("Паспорт интеграций…", () => _ = ExportPassportAsync()));
+
+            // Подсчет мастер-хэша — единственное, что программа дает СОСТАВИТЕЛЮ политики.
+            // Формат хэша свой, и без этой кнопки его приходилось воспроизводить сторонним
+            // скриптом: строку masterHash требует любое исходящее направление, а посчитать ее
+            // было нечем. Политику кнопка не трогает — считает и отдает.
+            buttons.Add(RowButton("Мастер-пароль для политики…", () => _ = MasterHashAsync()));
+        }
 
         var actions = ButtonLine([.. buttons]);
         actions.Margin = new Avalonia.Thickness(0, 12, 0, -6);
@@ -176,10 +184,25 @@ public sealed class SecurityContourView : UserControl
         {
             Classes      = { "desc" },
             Text         = "Ни одного поля ввода здесь нет и не будет: политику правит "
-                         + "ответственный за интеграции, вне программы.",
+                         + "ответственный за интеграции, вне программы. «Мастер-пароль для "
+                         + "политики» ее тоже не трогает — считает строку, которую он впишет "
+                         + "в файл сам.",
             TextWrapping = TextWrapping.Wrap,
             Margin       = new Avalonia.Thickness(0, 8, 0, 0),
         });
+    }
+
+    // ── Мастер-пароль для политики ────────────────────────────────────────────
+
+    /// <summary>
+    /// Открыть окно подсчета проверочного хэша мастер-пароля. Ничего не сохраняет: строка нужна
+    /// тому, кто СОСТАВЛЯЕТ политику, и попадает в нее руками (см.
+    /// <see cref="MasterHashDialog"/>).
+    /// </summary>
+    private async Task MasterHashAsync()
+    {
+        if (VisualRoot is not Window win) return;
+        await new MasterHashDialog().ShowDialog(win);
     }
 
     // ── Паспорт интеграций ────────────────────────────────────────────────────

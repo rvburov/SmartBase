@@ -189,4 +189,49 @@ public sealed class PolicyJsonTests
         Assert.Equal(0, policy!.MaxRowsPerRun);
         Assert.Equal(0, policy.MaxBytesPerDay);
     }
+
+    // ── Мастер-пароль: подсчет и проверка сходятся ────────────────────────────
+
+    /// <summary>
+    /// Строка, посчитанная окном «Мастер-пароль для политики», принимается собственной проверкой
+    /// программы: попадает в файл, читается разбором и подтверждает тот самый пароль.
+    ///
+    /// Цепочка короткая, но живет в трех местах — счет (<see cref="MasterPassword.Hash"/>),
+    /// разбор файла и сверка (<see cref="EgressPolicySet.MasterMatches"/>), — и разойтись им
+    /// достаточно в одном знаке формата. Разойдись они молча, администратор впишет в политику
+    /// строку, которую программа не примет, и узнает об этом в момент, когда некому будет
+    /// подтвердить исходящее направление.
+    /// </summary>
+    [Fact]
+    public void A_hash_computed_by_the_program_is_accepted_by_the_program()
+    {
+        var hash = MasterPassword.Hash("пароль-организации");
+
+        var policy = PolicyJson.Parse($$"""{"mode":"external","masterHash":"{{hash}}"}""",
+                                      Source, out var error);
+
+        Assert.NotNull(policy);
+        Assert.Equal("", error);
+        Assert.True(policy!.HasMaster);
+
+        var set = EgressPolicySet.Of(policy);
+
+        Assert.True (set.HasMaster);
+        Assert.True (set.MasterMatches("пароль-организации"));
+        Assert.False(set.MasterMatches("другой-пароль"));
+    }
+
+    /// <summary>
+    /// Пустая строка мастер-пароля — это «пароля нет», а не «подходит любой». Так выглядит
+    /// политика, в которую строку еще не вписали, и подтверждать направления ею нельзя ничем.
+    /// </summary>
+    [Fact]
+    public void A_policy_without_a_master_hash_confirms_nothing()
+    {
+        var policy = PolicyJson.Parse("""{"mode":"external","masterHash":""}""", Source, out _);
+
+        Assert.NotNull(policy);
+        Assert.False(policy!.HasMaster);
+        Assert.False(EgressPolicySet.Of(policy).MasterMatches(""));
+    }
 }
