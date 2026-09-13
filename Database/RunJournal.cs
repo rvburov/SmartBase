@@ -103,13 +103,25 @@ public sealed record RunEntry(
 /// </summary>
 /// <param name="Channel">Только этот канал; <c>null</c> — любые.</param>
 /// <param name="FailedOnly">Только неудачные строки — с них начинается всякий разбор.</param>
-public sealed record RunFilter(RunChannel? Channel = null, bool FailedOnly = false)
+/// <param name="Columns">Отбор по колонкам — «как в Excel»: имя колонки и выбранные значения
+/// (docs/ROADMAP-API.md, шаг 14). Пустое множество значений означает «все», и такой колонки в
+/// словаре не бывает. Имена колонок проверяются по белому списку
+/// (<see cref="RunJournal.Filterable"/>): они уходят в SQL, а подставлять в SQL имя, пришедшее
+/// с экрана, нельзя даже в своей программе.</param>
+public sealed record RunFilter(
+    RunChannel?                                                  Channel    = null,
+    bool                                                         FailedOnly = false,
+    IReadOnlyDictionary<string, IReadOnlyCollection<string>>?    Columns    = null)
 {
     /// <summary>Без сужения — весь журнал.</summary>
     public static RunFilter Any { get; } = new();
 
+    /// <summary>Отбор по колонкам; пусто — по колонкам не сужали.</summary>
+    public IReadOnlyDictionary<string, IReadOnlyCollection<string>> Picked =>
+        Columns ?? new Dictionary<string, IReadOnlyCollection<string>>(StringComparer.Ordinal);
+
     /// <summary>Сужено ли хоть чем-нибудь: окно выгрузки говорит об этом вслух.</summary>
-    public bool Narrow => Channel is not null || FailedOnly;
+    public bool Narrow => Channel is not null || FailedOnly || Picked.Count > 0;
 }
 
 /// <summary>
@@ -394,8 +406,72 @@ public sealed class RunJournal
         }
     }
 
+    /// <summary>
+    /// Колонки, по которым можно отбирать значениями. Белый список, а не «любое имя»: имя
+    /// колонки уходит в SQL как есть, и подставлять туда пришедшее с экрана нельзя даже в своей
+    /// программе. Заголовки — те же, что в шапке таблицы на экране.
+    /// </summary>
+    public static readonly IReadOnlyDictionary<string, string> Filterable =
+        new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["Channel"]  = "Канал",
+            ["Name"]     = "Что запускали",
+            ["Scenario"] = "Сценарий",
+            ["Step"]     = "Шаг",
+            ["Ok"]       = "Итог",
+        };
+
+    /// <summary>
+    /// Какие значения бывают в колонке и сколько строк на каждое — для отбора «как в Excel».
+    ///
+    /// Считается ПОД ТЕКУЩИМ отбором, но без условия по самой этой колонке: иначе, сняв галочку,
+    /// человек больше не увидел бы снятое значение в списке и не смог бы вернуть его обратно.
+    /// </summary>
+    /// <param name="column">Имя колонки из <see cref="Filterable"/>; чужое — пустой список.</param>
+    /// <param name="filter">Отбор, под которым считаем.</param>
+    /// <param name="take">Сколько значений вернуть, свежих и частых сверху.</param>
+    public IReadOnlyList<(string Value, int Count)> Values(string column, RunFilter filter,
+                                                          int take = 200)
+    {
+        if (!Filterable.ContainsKey(column)) return [];
+
+        try
+        {
+            lock (_lock)
+            {
+                using var connection = Open();
+                using var command    = connection.CreateCommand();
+
+                command.CommandText =
+                    $"SELECT {column} AS V, COUNT(*) AS C FROM runs"
+                  + Where(filter, before: 0, command, except: column)
+                  + " GROUP BY V ORDER BY C DESC, V LIMIT $take;";
+
+                command.Parameters.AddWithValue("$take", Math.Max(1, take));
+
+                var values = new List<(string, int)>();
+                using var reader = command.ExecuteReader();
+
+                while (reader.Read())
+                    values.Add((reader.IsDBNull(0) ? "" : reader.GetValue(0)?.ToString() ?? "",
+                                reader.GetInt32(1)));
+
+                return values;
+            }
+        }
+        catch (SqliteException failure)
+        {
+            Serilog.Log.Warning("Журнал обмена: значения колонки не читаются — {Reason:l}",
+                                failure.Message);
+            return [];
+        }
+    }
+
     /// <summary>Условия отбора одной строкой — и те же параметры в команду.</summary>
-    private static string Where(RunFilter filter, long before, SqliteCommand command)
+    /// <param name="except">Колонка, условие по которой не ставится: так считаются значения для
+    /// ее же списка отбора.</param>
+    private static string Where(RunFilter filter, long before, SqliteCommand command,
+                                string except = "")
     {
         var parts = new List<string>();
 
@@ -412,6 +488,28 @@ public sealed class RunJournal
         }
 
         if (filter.FailedOnly) parts.Add("Ok = 0");
+
+        var at = 0;
+
+        foreach (var (column, values) in filter.Picked)
+        {
+            if (!Filterable.ContainsKey(column))                   continue;
+            if (string.Equals(column, except, StringComparison.Ordinal)) continue;
+            if (values.Count == 0)                                 continue;
+
+            var names = new List<string>(values.Count);
+
+            foreach (var value in values)
+            {
+                var name = "$v" + at++.ToString(CultureInfo.InvariantCulture);
+                names.Add(name);
+                command.Parameters.AddWithValue(name, value ?? "");
+            }
+
+            // Числовые колонки сравниваются как текст (CAST): значения приходят с экрана
+            // строками, а «1» и 1 в SQLite — разные вещи.
+            parts.Add($"CAST({column} AS TEXT) IN ({string.Join(", ", names)})");
+        }
 
         return parts.Count > 0 ? " WHERE " + string.Join(" AND ", parts) : "";
     }

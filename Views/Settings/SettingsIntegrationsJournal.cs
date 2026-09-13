@@ -44,6 +44,10 @@ public partial class SettingsView
     // «докрутил до сотой строки» — это не настройка, а сегодняшний разбор.
     private int _journalShown;
 
+    // Отбор по колонкам — «как в Excel»: колонка и выбранные в ее воронке значения. Тоже лупа,
+    // а не режим работы, поэтому в настройках не запоминается.
+    private readonly Dictionary<string, HashSet<string>> _journalPicked = new(StringComparer.Ordinal);
+
     /// <summary>
     /// Сценарий отработал сам. Зовет MainWindow из службы сценариев; экран перестраивается,
     /// только если журнал открыт, — иначе это работа впустую.
@@ -81,7 +85,7 @@ public partial class SettingsView
 
         // Сужение уходит в SQL, а не в память: отбери «неудачные» из прочитанной пачки — и
         // единственная ночная неудача не найдется, потому что удачные строки вытеснят ее.
-        var filter = new RunFilter(_journalChannel, _journalFailedOnly);
+        var filter = JournalFilter();
 
         // Одна строка сверх показанного — так и узнаем, есть ли что дальше, не считая весь файл.
         var page = journal.Page(filter, JournalShown() + 1);
@@ -102,6 +106,26 @@ public partial class SettingsView
     /// так лежит в файле рядом.
     /// </summary>
     private int JournalShown() => _journalShown > 0 ? _journalShown : JournalPage;
+
+    /// <summary>Что показываем: переключатели сверху плюс воронки в шапке таблицы.</summary>
+    private RunFilter JournalFilter()
+    {
+        var picked = new Dictionary<string, IReadOnlyCollection<string>>(StringComparer.Ordinal);
+
+        foreach (var (column, values) in _journalPicked)
+            if (values.Count > 0) picked[column] = values;
+
+        return new RunFilter(_journalChannel, _journalFailedOnly, picked);
+    }
+
+    /// <summary>Выбранное в воронке колонки; множество живет, пока открыт раздел.</summary>
+    private HashSet<string> JournalPicked(string column)
+    {
+        if (!_journalPicked.TryGetValue(column, out var values))
+            _journalPicked[column] = values = new HashSet<string>(StringComparer.Ordinal);
+
+        return values;
+    }
 
     // ── Расход ────────────────────────────────────────────────────────────────
 
@@ -257,7 +281,7 @@ public partial class SettingsView
         if (_runsExporting) return;
 
         // Снимок условий ДО ожидания: их могли поменять, пока считались строки.
-        var filter = new RunFilter(_journalChannel, _journalFailedOnly);
+        var filter = JournalFilter();
 
         _runsExporting = true;
         try
@@ -341,17 +365,23 @@ public partial class SettingsView
     /// <summary>Ширины колонок общие у шапки и строк — иначе таблица «поедет».</summary>
     private static ColumnDefinitions RunColumns() => new("104,8,58,8,*,8,150,8,140,8,58,8,74");
 
-    private static Control HeaderLine()
+    /// <summary>
+    /// Шапка таблицы. У колонок, по которым есть что отбирать, — воронка с отбором «как в
+    /// Excel» (<see cref="Controls.Widgets.ColumnFilter"/>); отбор уходит в SQL, а не отсеивает
+    /// показанную пачку. «Время» и «Строк» воронки не получают: у первого значения уникальны и
+    /// список из них бесполезен, у второго отбор по числу строк никто не ищет.
+    /// </summary>
+    private Control HeaderLine()
     {
         var grid = new Grid { ColumnDefinitions = RunColumns() };
 
         Put(grid, 0,  Head("Время"));
-        Put(grid, 2,  Head("Канал"));
-        Put(grid, 4,  Head("Что запускали"));
-        Put(grid, 6,  Head("Сценарий"));
-        Put(grid, 8,  Head("Шаг"));
+        Put(grid, 2,  Funnel("Channel",  "Канал"));
+        Put(grid, 4,  Funnel("Name",     "Что запускали"));
+        Put(grid, 6,  Funnel("Scenario", "Сценарий"));
+        Put(grid, 8,  Funnel("Step",     "Шаг"));
         Put(grid, 10, Head("Строк"));
-        Put(grid, 12, Head("Итог"));
+        Put(grid, 12, Funnel("Ok",       "Итог"));
 
         return TableHead(grid);
     }
@@ -585,6 +615,48 @@ public partial class SettingsView
     /// <summary>Канал колонкой — коротко, чтобы влезло.</summary>
     // Слово канала одно на экран и на выгрузку: разойдись они — человек, сверяющий CSV с
     // экраном, решил бы, что смотрит разные журналы.
+    /// <summary>Заголовок колонки с воронкой отбора.</summary>
+    private Control Funnel(string column, string title) =>
+        Controls.Widgets.ColumnFilter.Head(title, () => JournalValues(column),
+                                           JournalPicked(column),
+                                           () =>
+                                           {
+                                               // Сужение начинает чтение заново: страницы были
+                                               // от другой выборки.
+                                               _journalShown = 0;
+                                               _journalOpen  = 0;
+                                               BuildIntegrationsJournal();
+                                           });
+
+    /// <summary>
+    /// Какие значения бывают в колонке. Числа переводятся в слова прямо здесь: в журнале канал
+    /// лежит числом, а человеку нужен «Запрос», и список отбора не место для расшифровки кодов.
+    /// </summary>
+    private IReadOnlyList<Controls.Widgets.ColumnFilterValue> JournalValues(string column)
+    {
+        if (RunJournal.Current is not { } journal) return [];
+
+        var values = journal.Values(column, JournalFilter());
+        var made   = new List<Controls.Widgets.ColumnFilterValue>(values.Count);
+
+        foreach (var (value, count) in values)
+            made.Add(new Controls.Widgets.ColumnFilterValue(value, ValueText(column, value), count));
+
+        return made;
+    }
+
+    /// <summary>Как назвать значение колонки человеку.</summary>
+    private static string ValueText(string column, string value) => column switch
+    {
+        "Channel" => int.TryParse(value, out var channel)
+            ? ChannelName((RunChannel)channel)
+            : value,
+
+        "Ok" => value == "1" ? "удача" : "ошибка",
+
+        _ => value.Length > 0 ? value : "(пусто)",
+    };
+
     private static string ChannelName(RunChannel channel) => RunJournal.ChannelName(channel);
 
     /// <summary>Канал в пересылаемом тексте — словами, без экрана рядом.</summary>

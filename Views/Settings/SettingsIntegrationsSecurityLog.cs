@@ -39,6 +39,10 @@ public partial class SettingsView
     private int            _securityDays = 30;
     private int            _securityShown;
 
+    // Отбор по колонкам — «как в Excel»: колонка и выбранные в ее воронке значения. Живет в
+    // пределах захода в программу, как и остальные сужения этого экрана.
+    private readonly Dictionary<string, HashSet<string>> _securityPicked = new(StringComparer.Ordinal);
+
     // Ключ строки с раскрытыми подробностями; 0 — ни одной.
     private long _securityOpen;
 
@@ -86,7 +90,7 @@ public partial class SettingsView
             return;
         }
 
-        var filter = new SecurityFilter(_securityEvent, _securityBlockedOnly, Since());
+        var filter = SecurityFilterNow();
 
         // Одна строка сверх показанного — так и узнаем, есть ли что дальше, не считая весь файл.
         var page = journal.Page(filter, take: Shown() + 1);
@@ -105,6 +109,66 @@ public partial class SettingsView
     /// то, что и так лежит в файле рядом.
     /// </summary>
     private int Shown() => _securityShown > 0 ? _securityShown : SecurityPage;
+
+    /// <summary>Что показываем: переключатели сверху плюс воронки в шапке таблицы.</summary>
+    private SecurityFilter SecurityFilterNow()
+    {
+        var picked = new Dictionary<string, IReadOnlyCollection<string>>(StringComparer.Ordinal);
+
+        foreach (var (column, values) in _securityPicked)
+            if (values.Count > 0) picked[column] = values;
+
+        return new SecurityFilter(_securityEvent, _securityBlockedOnly, Since(), picked);
+    }
+
+    /// <summary>Выбранное в воронке колонки; множество живет, пока открыт раздел.</summary>
+    private HashSet<string> SecurityPicked(string column)
+    {
+        if (!_securityPicked.TryGetValue(column, out var values))
+            _securityPicked[column] = values = new HashSet<string>(StringComparer.Ordinal);
+
+        return values;
+    }
+
+    /// <summary>Заголовок колонки с воронкой отбора.</summary>
+    private Control SecurityFunnel(string column, string title) =>
+        Controls.Widgets.ColumnFilter.Head(title, () => SecurityValues(column),
+                                            SecurityPicked(column),
+                                            () =>
+                                            {
+                                                _securityShown = 0;
+                                                _securityOpen  = 0;
+                                                BuildIntegrationsJournal();
+                                            });
+
+    /// <summary>
+    /// Какие значения бывают в колонке. Числа переводятся в слова здесь: в журнале событие лежит
+    /// числом, а проверяющему нужно «Отправка наружу».
+    /// </summary>
+    private IReadOnlyList<Controls.Widgets.ColumnFilterValue> SecurityValues(string column)
+    {
+        if (SecurityJournal.Current is not { } journal) return [];
+
+        var values = journal.Values(column, SecurityFilterNow());
+        var made   = new List<Controls.Widgets.ColumnFilterValue>(values.Count);
+
+        foreach (var (value, count) in values)
+            made.Add(new Controls.Widgets.ColumnFilterValue(value, SecurityValueText(column, value),
+                                                            count));
+
+        return made;
+    }
+
+    private static string SecurityValueText(string column, string value) => column switch
+    {
+        "Event" => int.TryParse(value, out var kind)
+            ? SecurityJournal.Name((SecurityEvent)kind)
+            : value,
+
+        "Allowed" => value == "1" ? "разрешено" : "блокировка",
+
+        _ => value.Length > 0 ? value : "(пусто)",
+    };
 
     private DateTimeOffset? Since() =>
         _securityDays > 0 ? DateTimeOffset.Now.AddDays(-_securityDays) : null;
@@ -256,7 +320,7 @@ public partial class SettingsView
         if (_securityExporting) return;
 
         // Снимок условий ДО ожидания: их могли поменять, пока считались строки.
-        var filter = new SecurityFilter(_securityEvent, _securityBlockedOnly, Since());
+        var filter = SecurityFilterNow();
         var narrow = _securityEvent is not null || _securityBlockedOnly || _securityDays > 0;
 
         _securityExporting = true;
@@ -316,14 +380,19 @@ public partial class SettingsView
     /// <summary>Ширины колонок общие у шапки и строк — иначе таблица «поедет».</summary>
     private static ColumnDefinitions SecurityColumns() => new("104,8,*,8,96,8,74");
 
-    private static Control SecurityHeaderLine()
+    /// <summary>
+    /// Шапка таблицы. У колонок, по которым есть что отбирать, — воронка с отбором «как в
+    /// Excel»; отбор уходит в SQL, а не отсеивает показанную пачку: журнал никто не чистит, он
+    /// копится годами, и одно заблокированное событие полугодовой давности иначе не найти.
+    /// </summary>
+    private Control SecurityHeaderLine()
     {
         var grid = new Grid { ColumnDefinitions = SecurityColumns() };
 
         Put(grid, 0, Head("Время"));
-        Put(grid, 2, Head("Что произошло"));
-        Put(grid, 4, Head("Кто"));
-        Put(grid, 6, Head("Решение"));
+        Put(grid, 2, SecurityFunnel("Event",   "Что произошло"));
+        Put(grid, 4, SecurityFunnel("Who",     "Кто"));
+        Put(grid, 6, SecurityFunnel("Allowed", "Решение"));
 
         return TableHead(grid);
     }

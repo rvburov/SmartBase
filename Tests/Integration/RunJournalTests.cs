@@ -465,4 +465,143 @@ public sealed class RunJournalTests : IDisposable
 
         Assert.Single(journal.Recent());
     }
+    // ── Отбор по колонкам ─────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Отбор «как в Excel» уходит в SQL, а не отсеивает прочитанную пачку: журнал копится
+    /// годами, и одна ночная неудача полугодовой давности иначе не нашлась бы.
+    /// </summary>
+    [Fact]
+    public void Column_filter_narrows_by_value()
+    {
+        var journal = Journal();
+
+        journal.Write(Request("Заказы",   2048, Now));
+        journal.Write(Request("Остатки",  1024, Now));
+        journal.Write(Inbox("КД-17.json", Now));
+
+        var only = new Dictionary<string, IReadOnlyCollection<string>>(StringComparer.Ordinal)
+        {
+            ["Name"] = new[] { "Заказы" },
+        };
+
+        var rows = journal.Page(new RunFilter(Columns: only));
+
+        Assert.Equal("Заказы", Assert.Single(rows).Name);
+    }
+
+    /// <summary>Несколько значений одной колонки складываются союзом «или».</summary>
+    [Fact]
+    public void Several_values_of_one_column_are_an_or()
+    {
+        var journal = Journal();
+
+        journal.Write(Request("Заказы",  2048, Now));
+        journal.Write(Request("Остатки", 1024, Now));
+        journal.Write(Request("Цены",     512, Now));
+
+        var only = new Dictionary<string, IReadOnlyCollection<string>>(StringComparer.Ordinal)
+        {
+            ["Name"] = new[] { "Заказы", "Цены" },
+        };
+
+        Assert.Equal(["Цены", "Заказы"],
+                     journal.Page(new RunFilter(Columns: only)).Select(r => r.Name).ToArray());
+    }
+
+    /// <summary>Колонки складываются союзом «и»: канал И название.</summary>
+    [Fact]
+    public void Different_columns_are_an_and()
+    {
+        var journal = Journal();
+
+        journal.Write(Request("Заказы", 2048, Now));
+        journal.Write(Inbox("Заказы",   Now));
+
+        var only = new Dictionary<string, IReadOnlyCollection<string>>(StringComparer.Ordinal)
+        {
+            ["Name"]    = new[] { "Заказы" },
+            ["Channel"] = new[] { ((int)RunChannel.Inbox).ToString() },
+        };
+
+        Assert.Equal(RunChannel.Inbox, Assert.Single(journal.Page(new RunFilter(Columns: only))).Channel);
+    }
+
+    /// <summary>
+    /// Имя колонки уходит в SQL как есть, поэтому оно берется из белого списка: чужое имя
+    /// отбор просто не сужает — и уж точно не роняет журнал.
+    /// </summary>
+    [Fact]
+    public void An_unknown_column_narrows_nothing()
+    {
+        var journal = Journal();
+
+        journal.Write(Request("Заказы", 2048, Now));
+
+        var only = new Dictionary<string, IReadOnlyCollection<string>>(StringComparer.Ordinal)
+        {
+            ["Name = 'x' OR 1=1 --"] = new[] { "что угодно" },
+        };
+
+        Assert.Single(journal.Page(new RunFilter(Columns: only)));
+    }
+
+    [Fact]
+    public void Values_of_a_column_come_with_counts()
+    {
+        var journal = Journal();
+
+        journal.Write(Request("Заказы",  2048, Now));
+        journal.Write(Request("Заказы",  1024, Now));
+        journal.Write(Request("Остатки",  512, Now));
+
+        var values = journal.Values("Name", RunFilter.Any);
+
+        Assert.Equal(("Заказы", 2), values[0]);
+        Assert.Contains(("Остатки", 1), values);
+    }
+
+    /// <summary>
+    /// Значения колонки считаются под текущим отбором, но БЕЗ условия по ней самой: иначе
+    /// снятое галочкой значение исчезло бы из списка и вернуть его было бы нечем.
+    /// </summary>
+    [Fact]
+    public void Values_ignore_the_filter_on_their_own_column()
+    {
+        var journal = Journal();
+
+        journal.Write(Request("Заказы",  2048, Now));
+        journal.Write(Request("Остатки", 1024, Now));
+        journal.Write(Inbox("КД-17.json", Now));
+
+        var only = new Dictionary<string, IReadOnlyCollection<string>>(StringComparer.Ordinal)
+        {
+            ["Name"]    = new[] { "Заказы" },
+            ["Channel"] = new[] { ((int)RunChannel.Request).ToString() },
+        };
+
+        var filter = new RunFilter(Columns: only);
+
+        // По своей колонке условие снято — видны оба запроса…
+        Assert.Equal(["Заказы", "Остатки"],
+                     journal.Values("Name", filter).Select(v => v.Value).OrderBy(v => v).ToArray());
+
+        // …а по чужой действует: файл из папки под отбор по названию не подошел.
+        Assert.Equal([((int)RunChannel.Request).ToString()],
+                     journal.Values("Channel", filter).Select(v => v.Value).ToArray());
+    }
+
+    [Fact]
+    public void A_column_filter_counts_as_narrowing()
+    {
+        Assert.False(RunFilter.Any.Narrow);
+
+        var only = new Dictionary<string, IReadOnlyCollection<string>>(StringComparer.Ordinal)
+        {
+            ["Name"] = new[] { "Заказы" },
+        };
+
+        Assert.True(new RunFilter(Columns: only).Narrow);
+    }
+
 }

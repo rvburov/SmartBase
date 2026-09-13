@@ -130,10 +130,23 @@ public sealed record SecurityEntry(
 /// <param name="Event">Только события этого рода; <c>null</c> — любые.</param>
 /// <param name="BlockedOnly">Только заблокированные попытки — их ищут чаще всего.</param>
 /// <param name="Since">Не раньше этого момента; <c>null</c> — с самого начала.</param>
+/// <param name="Columns">Отбор по колонкам — «как в Excel»: имя колонки и выбранные значения
+/// (docs/ROADMAP-API.md, шаг 14). Имена проверяются по белому списку
+/// (<see cref="SecurityJournal.Filterable"/>): они уходят в SQL, а подставлять туда пришедшее с
+/// экрана нельзя даже в своей программе.</param>
 public sealed record SecurityFilter(
     SecurityEvent?  Event       = null,
     bool            BlockedOnly = false,
-    DateTimeOffset? Since       = null);
+    DateTimeOffset? Since       = null,
+    IReadOnlyDictionary<string, IReadOnlyCollection<string>>? Columns = null)
+{
+    /// <summary>Отбор по колонкам; пусто — по колонкам не сужали.</summary>
+    public IReadOnlyDictionary<string, IReadOnlyCollection<string>> Picked =>
+        Columns ?? new Dictionary<string, IReadOnlyCollection<string>>(StringComparer.Ordinal);
+
+    /// <summary>Сужен ли отбор хоть чем-нибудь.</summary>
+    public bool Narrow => Event is not null || BlockedOnly || Since is not null || Picked.Count > 0;
+}
 
 /// <summary>
 /// Журнал безопасности — отдельный от рабочего и от «Диагностики» (docs/ROADMAP-API.md, 10.10).
@@ -411,7 +424,8 @@ public sealed class SecurityJournal
     }
 
     /// <summary>Условия отбора одной строкой — и те же параметры в команду.</summary>
-    private static string Where(SecurityFilter filter, long before, SqliteCommand command)
+    private static string Where(SecurityFilter filter, long before, SqliteCommand command,
+                                string except = "")
     {
         var parts = new List<string>();
 
@@ -428,6 +442,27 @@ public sealed class SecurityJournal
         }
 
         if (filter.BlockedOnly) parts.Add("Allowed = 0");
+
+        var at = 0;
+
+        foreach (var (column, values) in filter.Picked)
+        {
+            if (!Filterable.ContainsKey(column))                         continue;
+            if (string.Equals(column, except, StringComparison.Ordinal)) continue;
+            if (values.Count == 0)                                       continue;
+
+            var names = new List<string>(values.Count);
+
+            foreach (var value in values)
+            {
+                var name = "$v" + at++.ToString(CultureInfo.InvariantCulture);
+                names.Add(name);
+                command.Parameters.AddWithValue(name, value ?? "");
+            }
+
+            // Числовые колонки сравниваются как текст: значения приходят с экрана строками.
+            parts.Add($"CAST({column} AS TEXT) IN ({string.Join(", ", names)})");
+        }
 
         // Момент сравнивается строкой, и это работает ровно потому, что все строки записаны
         // одним форматом: ISO-8601 в UTC сортируется как текст.
@@ -506,6 +541,61 @@ public sealed class SecurityJournal
         catch (SqliteException)
         {
             return 0;
+        }
+    }
+
+    /// <summary>
+    /// Колонки, по которым можно отбирать значениями, и их заголовки на экране. Белый список, а
+    /// не «любое имя»: имя колонки уходит в SQL как есть.
+    /// </summary>
+    public static readonly IReadOnlyDictionary<string, string> Filterable =
+        new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["Event"]    = "Событие",
+            ["Allowed"]  = "Итог",
+            ["Who"]      = "Кто",
+            ["Scenario"] = "Сценарий",
+        };
+
+    /// <summary>
+    /// Какие значения бывают в колонке и сколько строк на каждое — для отбора «как в Excel».
+    /// Считается под текущим отбором, но без условия по самой этой колонке: иначе снятое
+    /// значение исчезало бы из списка и вернуть его было бы нечем.
+    /// </summary>
+    public IReadOnlyList<(string Value, int Count)> Values(string column, SecurityFilter filter,
+                                                          int take = 200)
+    {
+        if (!Filterable.ContainsKey(column)) return [];
+
+        try
+        {
+            lock (_lock)
+            {
+                using var connection = Open();
+                using var command    = connection.CreateCommand();
+
+                command.CommandText =
+                    $"SELECT {column} AS V, COUNT(*) AS C FROM events"
+                  + Where(filter, before: 0, command, except: column)
+                  + " GROUP BY V ORDER BY C DESC, V LIMIT $take;";
+
+                command.Parameters.AddWithValue("$take", Math.Max(1, take));
+
+                var values = new List<(string, int)>();
+                using var reader = command.ExecuteReader();
+
+                while (reader.Read())
+                    values.Add((reader.IsDBNull(0) ? "" : reader.GetValue(0)?.ToString() ?? "",
+                                reader.GetInt32(1)));
+
+                return values;
+            }
+        }
+        catch (SqliteException failure)
+        {
+            Serilog.Log.Warning("Журнал безопасности: значения колонки не читаются — {Reason:l}",
+                                failure.Message);
+            return [];
         }
     }
 

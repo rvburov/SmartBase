@@ -367,4 +367,85 @@ public sealed class SecurityJournalTests : IDisposable
         command.CommandText = sql;
         command.ExecuteNonQuery();
     }
+    // ── Отбор по колонкам ─────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Отбор «как в Excel» уходит в SQL: журнал не чистит никто, он копится годами, и
+    /// проверяющий, ищущий одну блокировку полугодовой давности, иначе ее не найдет.
+    /// </summary>
+    [Fact]
+    public void Column_filter_narrows_by_value()
+    {
+        var journal = Journal();
+
+        journal.Write(Send("Заказы",  allowed: true));
+        journal.Write(Send("Остатки", allowed: false));
+
+        var only = new Dictionary<string, IReadOnlyCollection<string>>(StringComparer.Ordinal)
+        {
+            ["Scenario"] = new[] { "Остатки" },
+        };
+
+        Assert.Equal("Остатки",
+                     Assert.Single(journal.Page(new SecurityFilter(Columns: only))).Scenario);
+    }
+
+    [Fact]
+    public void Values_of_a_column_come_with_counts()
+    {
+        var journal = Journal();
+
+        journal.Write(Send("Заказы",  allowed: true));
+        journal.Write(Send("Заказы",  allowed: false));
+        journal.Write(Send("Остатки", allowed: true));
+
+        var values = journal.Values("Scenario", new SecurityFilter());
+
+        Assert.Equal(("Заказы", 2), values[0]);
+        Assert.Contains(("Остатки", 1), values);
+    }
+
+    /// <summary>
+    /// Значения колонки считаются под текущим отбором, но БЕЗ условия по ней самой: иначе снятое
+    /// галочкой значение исчезало бы из списка навсегда.
+    /// </summary>
+    [Fact]
+    public void Values_ignore_the_filter_on_their_own_column()
+    {
+        var journal = Journal();
+
+        journal.Write(Send("Заказы",  allowed: true));
+        journal.Write(Send("Остатки", allowed: false));
+
+        var only = new Dictionary<string, IReadOnlyCollection<string>>(StringComparer.Ordinal)
+        {
+            ["Scenario"] = new[] { "Заказы" },
+        };
+
+        var filter = new SecurityFilter(Columns: only);
+
+        Assert.Equal(["Заказы", "Остатки"],
+                     journal.Values("Scenario", filter).Select(v => v.Value).OrderBy(v => v).ToArray());
+
+        // По чужой колонке условие действует: под отбор по сценарию подошла одна строка.
+        Assert.Equal(["1"], journal.Values("Allowed", filter).Select(v => v.Value).ToArray());
+    }
+
+    /// <summary>Имя колонки берется из белого списка: чужое просто не сужает отбор.</summary>
+    [Fact]
+    public void An_unknown_column_narrows_nothing()
+    {
+        var journal = Journal();
+
+        journal.Write(Send("Заказы", allowed: true));
+
+        var only = new Dictionary<string, IReadOnlyCollection<string>>(StringComparer.Ordinal)
+        {
+            ["Who = 'x' OR 1=1 --"] = new[] { "что угодно" },
+        };
+
+        Assert.Single(journal.Page(new SecurityFilter(Columns: only)));
+        Assert.Empty(journal.Values("Who = 'x' OR 1=1 --", new SecurityFilter()));
+    }
+
 }
