@@ -504,7 +504,7 @@
                  и крестик справа. Нижнюю границу шапки рисует общая линия окна на y=56
                  (MainWindow) — своей линии нет, иначе удвоение. -->
             <Grid x:Name="UsersPanel" IsVisible="False"
-                  RowDefinitions="Auto,*"
+                  RowDefinitions="Auto,Auto,*"
                   Background="{StaticResource BrushBg}">
 
                 <Grid Grid.Row="0" ColumnDefinitions="*,Auto,Auto"
@@ -542,13 +542,32 @@
                     </Button>
                 </Grid>
 
+                <!-- Область «Все базы данных»: куда уйдут правки и куда не уйдут. Стоит НАД
+                     таблицей и до первого щелчка — область действия галки человек должен
+                     знать заранее, а не узнавать из отчета о сделанном. Вторая строка —
+                     итог последней массовой правки (ProfileAdminAcross.cs). -->
+                <Border Grid.Row="1" x:Name="AcrossNote" IsVisible="False"
+                        Background="{StaticResource BrushSecondaryBg}"
+                        Padding="16,10">
+                    <StackPanel Spacing="4">
+                        <TextBlock x:Name="AcrossNoteText"
+                                   FontSize="{DynamicResource FontSizeSmall}"
+                                   Foreground="{StaticResource BrushSecondaryText}"
+                                   TextWrapping="Wrap" />
+                        <TextBlock x:Name="AcrossOutcomeText" IsVisible="False"
+                                   FontSize="{DynamicResource FontSizeSmall}"
+                                   Foreground="{StaticResource BrushPrimaryText}"
+                                   TextWrapping="Wrap" />
+                    </StackPanel>
+                </Border>
+
                 <!-- Матрица «пользователь × действия»: колонки строятся в коде
                      (ProfileAdminUsers.cs) — вид таблицы конструктора: иконка типа
                      в шапке, шеврон фильтра/сортировки, те же линии и высота строки.
                      Первая колонка закреплена — имя видно при горизонтальной прокрутке
                      (полосу под ней освобождает стиль на PART_FrozenColumnScrollBarSpacer
                      выше). -->
-                <Panel Grid.Row="1">
+                <Panel Grid.Row="2">
                     <DataGrid x:Name="UsersGrid"
                               AutoGenerateColumns="False"
                               RowHeight="{StaticResource RowHeightStandard}"

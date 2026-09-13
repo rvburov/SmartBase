@@ -28,8 +28,9 @@ namespace SmartBase.Views.Profile;
 /// Панель «Пользователи» панели администратора: таблица «пользователь × действия» во всю
 /// высоту справа (тот же прием, что панель «Детали» в «Настройки → Диагностика»).
 /// Строка — пользователь базы, колонки — роль, доступ к базе, действия <see cref="PermAction"/>
-/// с чекбоксами, даты и удаление из базы. Область действия прав (вся база или коллекция)
-/// выбирается в шапке панели.
+/// с чекбоксами, даты и удаление из базы. Область действия прав выбирается в шапке панели: все
+/// базы данных, вся выбранная база или коллекция в ней. Сводный вид «все базы» живет в
+/// <c>ProfileAdminAcross</c> — там же объяснено, почему «все базы» значит «все открытые».
 ///
 /// Вид таблицы — как у таблицы конструктора и журналов: иконка типа + подпись + шеврон
 /// фильтра в шапке, те же линии, высота строки RowHeightStandard. Фильтр и сортировка
@@ -50,6 +51,7 @@ public partial class ProfileView
     private const string UsersKeyApproved = "approved";
     private const string UsersKeyCreated  = "created";
     private const string UsersKeySeen     = "seen";
+    private const string UsersKeyRemove   = "remove";
 
     // Действия в порядке колонок: группа (иконка + первая строка подсказки). Подпись
     // и описание берутся из PermActionLabels — единый источник для панели и документации.
@@ -82,16 +84,19 @@ public partial class ProfileView
     private bool    _userSortAsc = true;
     private Flyout? _userFlyout;
 
-    // Области прав в порядке ScopeCombo: null = вся база, иначе id коллекции.
-    private List<int?> _scopes = [];
+    // Области прав в порядке ScopeCombo.
+    private List<AdminScope> _scopes = [];
 
     // Колонки строятся один раз при первом открытии.
     private bool _usersHooked;
 
-    private int? CurrentScope =>
+    private AdminScope CurrentScope =>
         ScopeCombo.SelectedIndex >= 0 && ScopeCombo.SelectedIndex < _scopes.Count
             ? _scopes[ScopeCombo.SelectedIndex]
-            : null;
+            : AdminScope.WholeDatabase;
+
+    /// <summary>Правим права сразу во всех открытых базах, а не в выбранной.</summary>
+    private bool AcrossDatabases => CurrentScope.AllDatabases;
 
     // ── Открытие и закрытие ───────────────────────────────────────────────────
 
@@ -143,8 +148,8 @@ public partial class ProfileView
 
     // ── Область действия прав ─────────────────────────────────────────────────
 
-    // «Вся база данных» + коллекции выбранной базы. Настройки коллекции приоритетнее
-    // настроек базы — так же считает PermissionService.GetMask.
+    // «Все базы данных» + «Вся база данных» + коллекции выбранной базы. Настройки коллекции
+    // приоритетнее настроек базы — так же считает PermissionService.GetMask.
     private void RebuildScopes()
     {
         if (_adminDb is null) return;
@@ -154,16 +159,29 @@ public partial class ProfileView
         var keep = CurrentScope;
 
         var collections = _adminDb.Constructor.GetAllCollections();
-        _scopes = [null];
-        var labels = new List<string> { "Вся база данных" };
+
+        _scopes = [];
+        var labels = new List<string>();
+
+        // «Все базы данных» — только когда баз больше одной: при единственной базе этот пункт
+        // означал бы ровно то же, что следующий, и выбор без разницы читается как поломка.
+        if (_adminDbs.Count > 1)
+        {
+            _scopes.Add(AdminScope.Everywhere);
+            labels.Add("Все базы данных");
+        }
+
+        _scopes.Add(AdminScope.WholeDatabase);
+        labels.Add("Вся база данных");
+
         foreach (var c in collections.Where(c => c.Id.HasValue))
         {
-            _scopes.Add(c.Id);
+            _scopes.Add(AdminScope.Of(c.Id!.Value));
             labels.Add(c.Name);
         }
 
         ScopeCombo.ItemsSource = labels;
-        var idx = keep is int cid ? _scopes.IndexOf(cid) : 0;
+        var idx = _scopes.IndexOf(keep);
         ScopeCombo.SelectedIndex = idx >= 0 ? idx : 0;   // SelectionChanged → ReloadUserRows
         ReloadUserRows();
     }
@@ -181,8 +199,21 @@ public partial class ProfileView
         _userRows.Clear();
         if (_adminDb is null) return;
 
-        var scope = CurrentScope;
+        ShowScopeColumns();
+
+        if (AcrossDatabases) LoadRowsAcrossDatabases();
+        else                 LoadRowsOfDatabase();
+
+        ApplyUserFilters();
+    }
+
+    private void LoadRowsOfDatabase()
+    {
+        if (_adminDb is null) return;
+
+        var scope = CurrentScope.Collection;
         var perms = _adminDb.Permissions;
+
         foreach (var user in perms.GetUsers())
             _allUserRows.Add(new AdminUserRow(user, perms.GetMask(user.Id, scope), scope is null)
             {
@@ -190,8 +221,6 @@ public partial class ProfileView
                 ApprovalChanged = OnUserApprovalChanged,
                 RoleChanged     = OnUserRoleChanged,
             });
-
-        ApplyUserFilters();
     }
 
     // Фильтр и сортировка считаются здесь же: пользователей десятки, ходить в БД незачем.
@@ -225,7 +254,12 @@ public partial class ProfileView
         UsersKeySeen     => row.LastSeenText,
         _ when key.StartsWith("act", StringComparison.Ordinal) &&
                int.TryParse(key.AsSpan(3), out var bit)
-                         => row[bit] ? "Разрешено" : "Запрещено",
+                         => row[bit] switch
+                            {
+                                true  => "Разрешено",
+                                false => "Запрещено",
+                                null  => "По-разному",
+                            },
         _                => "",
     };
 
@@ -233,9 +267,12 @@ public partial class ProfileView
     // доступность соседних ячеек, а сосед мог тем временем поправить свое.
     private void OnUserRightChanged(AdminUserRow row, PermAction action, bool allowed)
     {
+        if (AcrossDatabases) { ApplyRightEverywhere(row, action, allowed); return; }
+
         if (_adminDb is null) return;
         var mask = allowed ? row.Mask | (int)action : row.Mask & ~(int)action;
-        if (!RunAdminAction(() => _adminDb.Permissions.SetMask(row.Id, CurrentScope, mask))) return;
+        if (!RunAdminAction(() => _adminDb.Permissions.SetMask(row.Id, CurrentScope.Collection, mask)))
+            return;
         row.Mask = mask;
         // Фильтр по этой же колонке мог перестать пропускать строку — пересобираем.
         if (_userFilters.Count > 0) ApplyUserFilters();
@@ -357,7 +394,7 @@ public partial class ProfileView
                                           "Когда пользователь в последний раз открывал эту базу данных."));
         // Колонка действия: фильтровать нечего — шеврона нет. Последняя колонка правой линии
         // заголовка не рисует: ее край и так очерчен краем таблицы (как в диагностике).
-        AddUsersColumn("", "Удаление пользователя", "IconTrash", 210, BuildUserRemoveCell(),
+        AddUsersColumn(UsersKeyRemove, "Удаление пользователя", "IconTrash", 210, BuildUserRemoveCell(),
                        tip: BuildUsersTip("Удаление пользователя",
                                           "Убрать пользователя из базы данных вместе с выданными правами. " +
                                           "При следующем открытии базы он вернется в список как ожидающий допуска."),
@@ -447,6 +484,8 @@ public partial class ProfileView
             ColumnDefinitions   = new ColumnDefinitions("*,Auto"),
             HorizontalAlignment = HorizontalAlignment.Stretch,
             VerticalAlignment   = VerticalAlignment.Stretch,
+            // Ключ колонки — по нему панель находит ее, когда прячет в области «все базы».
+            Tag                 = key,
         };
         Grid.SetColumn(border, 0);
         host.Children.Add(border);
@@ -1082,6 +1121,20 @@ public partial class ProfileView
 }
 
 /// <summary>
+/// Один человек в одной базе данных: где он есть, под каким ключом и с какими правами. Нужен
+/// сводному виду «все базы данных»: права лежат внутри файла каждой базы, и строка сводного вида
+/// собирается из нескольких таких мест.
+/// </summary>
+public sealed record AdminUserPlace(int    DbId,
+                                    string DbName,
+                                    int    UserId,
+                                    int    Mask,
+                                    bool   IsAdmin,
+                                    bool   IsApproved,
+                                    string CreatedAt,
+                                    string LastSeenAt);
+
+/// <summary>
 /// Строка таблицы пользователей: снапшот <see cref="DbUserEntity"/> + действующая маска прав
 /// в выбранной области. Правки уходят в базу через колбэки панели (RightChanged/ApprovalChanged/
 /// RoleChanged) прямо из сеттеров — как строка таблицы конструктора (TableRowVm).
@@ -1090,6 +1143,12 @@ public partial class ProfileView
 /// свою строку не правит никто; у администратора все действия разрешены и заблокированы
 /// (роль дает полный доступ — чтобы ограничить, другой администратор сначала меняет роль);
 /// у ожидающего допуска чекбоксы действий выключены, пока допуск не выдан.
+///
+/// <b>Сводный вид «все базы данных».</b> Второй конструктор собирает строку из нескольких баз
+/// сразу: человек тот же (ключ «учетная запись@компьютер» один на машину), а прав у него столько
+/// же, сколько баз он открывал. Галка тогда трехсостоянная: разрешено везде, запрещено везде или
+/// «по-разному» — и последнее состояние не выдумано ради красоты, а единственно честное, когда
+/// базы разошлись. Щелчок по ней применяет решение во ВСЕ базы сразу.
 /// </summary>
 public sealed class AdminUserRow : INotifyPropertyChanged
 {
@@ -1097,6 +1156,9 @@ public sealed class AdminUserRow : INotifyPropertyChanged
     private readonly bool _isAdmin;
     private readonly bool _isApproved;
     private readonly bool _scopeIsDatabase;
+
+    // Биты, по которым базы разошлись; всегда 0 вне сводного вида.
+    private int _mixed;
 
     public AdminUserRow(DbUserEntity user, int mask, bool scopeIsDatabase)
     {
@@ -1111,6 +1173,48 @@ public sealed class AdminUserRow : INotifyPropertyChanged
         _isApproved = user.IsApproved;
         _scopeIsDatabase = scopeIsDatabase;
     }
+
+    /// <summary>
+    /// Сводная строка: один человек и его права во всех открытых базах разом.
+    ///
+    /// Право считается разрешенным, только если оно разрешено ВЕЗДЕ. Иначе бы галка обещала
+    /// больше, чем есть: «разрешено» рядом с базой, где запрещено, — это неправда, и узнают о
+    /// ней по отказу. Базы, где человек администратор, в расхождение не идут: там разрешено все
+    /// по роли, и считать это «расхождением прав» значило бы звать администратора чинить то, что
+    /// не сломано.
+    /// </summary>
+    public AdminUserRow(string userKey, string displayName, IReadOnlyList<AdminUserPlace> places)
+    {
+        Id          = 0;                   // ключа строки во «всех базах» нет: их столько же, сколько баз
+        UserKey     = userKey;
+        DisplayName = displayName;
+        IsSelf      = userKey == CurrentUser.Key;
+        Places      = places;
+
+        // Даты сводим краями: «подключен» — когда впервые открыл хоть одну базу, «последняя
+        // активность» — когда в последний раз открывал хоть какую-нибудь.
+        CreatedAtText = FormatTs(places.Select(p => p.CreatedAt).Where(s => s.Length > 0)
+                                       .OrderBy(s => s, StringComparer.Ordinal).FirstOrDefault() ?? "");
+        LastSeenText  = FormatTs(places.Select(p => p.LastSeenAt).Where(s => s.Length > 0)
+                                       .OrderByDescending(s => s, StringComparer.Ordinal).FirstOrDefault() ?? "");
+
+        // Маска, действующая в каждой базе: у администратора — все биты, у остальных своя.
+        var masks = places.Select(p => p.IsAdmin ? AllBits : p.Mask).ToList();
+
+        _mask  = masks.Aggregate(AllBits, (all, m) => all & m);          // разрешено везде
+        _mixed = masks.Aggregate(0,       (any, m) => any | m) & ~_mask; // где-то да, где-то нет
+
+        _isAdmin    = places.All(p => p.IsAdmin);
+        _isApproved = places.Any(p => p.IsApproved);
+        _scopeIsDatabase = true;   // сводный вид — это всегда «вся база», в каждой из баз
+    }
+
+    /// <summary>Все биты <see cref="PermAction"/> разом — «разрешено все».</summary>
+    private static readonly int AllBits =
+        Enum.GetValues<PermAction>().Aggregate(0, (all, a) => all | (int)a);
+
+    /// <summary>Где этот человек есть; пусто вне сводного вида.</summary>
+    public IReadOnlyList<AdminUserPlace> Places { get; } = [];
 
     public int    Id          { get; }
     public string UserKey     { get; }
@@ -1142,15 +1246,24 @@ public sealed class AdminUserRow : INotifyPropertyChanged
         }
     }
 
-    /// <summary>Галка действия. Ключ — бит <see cref="PermAction"/> (путь биндинга «[64]»).
-    /// У администратора разрешено все — галки стоят и не редактируются.</summary>
-    public bool this[int bit]
+    /// <summary>
+    /// Галка действия. Ключ — бит <see cref="PermAction"/> (путь биндинга «[64]»).
+    /// У администратора разрешено все — галки стоят и не редактируются.
+    ///
+    /// <c>null</c> бывает только в сводном виде и значит «по-разному»: в одних базах разрешено,
+    /// в других нет. Снять галку из этого состояния нельзя одним щелчком — он ставит ее, и это
+    /// правильно: «выровнять по разрешению» и «выровнять по запрету» должны различаться
+    /// действием, а не тем, с какой стороны человек начал.
+    /// </summary>
+    public bool? this[int bit]
     {
-        get => _isAdmin || (_mask & bit) == bit;
+        get => _isAdmin                 ? true
+             : (_mixed & bit) == bit    ? null
+             : (_mask  & bit) == bit;
         set
         {
-            if (this[bit] == value) return;
-            RightChanged?.Invoke(this, (PermAction)bit, value);
+            if (value is not { } wanted || this[bit] == value) return;
+            RightChanged?.Invoke(this, (PermAction)bit, wanted);
         }
     }
 
