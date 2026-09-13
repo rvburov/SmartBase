@@ -270,7 +270,10 @@ public partial class SettingsView
 
         try
         {
-            registry.SaveScenario(result);
+            // Момент передается явно — от него реестр ставит якорь сценарию, сохраненному
+            // включенным: окно правки заводит новый сценарий, а тумблер в списке трогают уже
+            // после.
+            registry.SaveScenario(result, DateTimeOffset.Now);
         }
         catch (InvalidOperationException error)
         {

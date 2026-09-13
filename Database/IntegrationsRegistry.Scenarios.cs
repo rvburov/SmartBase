@@ -48,8 +48,12 @@ public sealed partial class IntegrationsRegistry
     /// Проверяется форма и существование запросов, но НЕ выполнимость: есть ли у запроса
     /// привязка к коллекции и открыта ли нужная база — вопросы момента запуска. База откроется
     /// завтра, а сценарий должен сохраниться сегодня.
+    ///
+    /// Сохранение ставит ЯКОРЬ, если сценарий сохраняется включенным (см. <see cref="Anchor"/>):
+    /// новый сценарий заводят окном правки, а тумблер в списке трогают уже после — и без якоря
+    /// он выглядел бы включенным, не срабатывая ни разу.
     /// </summary>
-    public Scenario SaveScenario(Scenario scenario)
+    public Scenario SaveScenario(Scenario scenario, DateTimeOffset? now = null)
     {
         var problems = scenario.Problems();
         if (problems.Count > 0)
@@ -75,16 +79,14 @@ public sealed partial class IntegrationsRegistry
         entity.Trigger   = scenario.Trigger.ToString();
         entity.StepsJson = JsonSerializer.Serialize(scenario.Steps);
 
+        Anchor(entity, now ?? DateTimeOffset.Now);
+
         db.SaveChanges();
         return ToModel(entity);
     }
 
     /// <summary>
     /// Включить или выключить сценарий, не открывая карточку: тумблер в списке.
-    ///
-    /// Включение ставит ЯКОРЬ — момент, от которого считается первый запуск. Без него сценарий
-    /// «ежедневно в 07:00», включенный вечером, сработал бы немедленно: пустая отметка о
-    /// прошлом запуске означает «еще ни разу», и ближайший запуск оказался бы в прошлом.
     /// </summary>
     public void EnableScenario(int id, bool enabled, DateTimeOffset now)
     {
@@ -92,11 +94,28 @@ public sealed partial class IntegrationsRegistry
         if (entity is null) return;
 
         entity.Enabled = enabled;
-
-        if (enabled && string.IsNullOrEmpty(entity.LastRunAt))
-            entity.LastRunAt = now.ToString("o", CultureInfo.InvariantCulture);
+        Anchor(entity, now);
 
         db.SaveChanges();
+    }
+
+    /// <summary>
+    /// ЯКОРЬ — момент, от которого считается первый срок у включенного сценария. Без него
+    /// <see cref="Scenario.IsDue"/> отвечает «не пора» навсегда: пустая отметка о прошлом запуске
+    /// означает «еще ни разу», и ближайшего срока от нее не отсчитать.
+    ///
+    /// Якорь нужен именно на включении, а не при заведении: сценарий «ежедневно в 07:00»,
+    /// включенный вечером, иначе сработал бы немедленно — ровно того, чего человек не просил.
+    ///
+    /// <b>Правило живет здесь, а не у тумблера,</b> потому что включенным сценарий становится
+    /// тремя путями: тумблером в списке, окном правки (им заводят новый) и файлом переноса. Пока
+    /// якорь ставил один тумблер, сценарий, созданный включенным в окне, не срабатывал НИ РАЗУ и
+    /// выглядел при этом исправным — ни строки в журнале, ни пометки «что мешает».
+    /// </summary>
+    private static void Anchor(IntegrationScenarioEntity entity, DateTimeOffset now)
+    {
+        if (entity.Enabled && string.IsNullOrEmpty(entity.LastRunAt))
+            entity.LastRunAt = now.ToString("o", CultureInfo.InvariantCulture);
     }
 
     /// <summary>Удалить сценарий. Запросы и соединения остаются: они живут сами по себе.</summary>
@@ -113,7 +132,7 @@ public sealed partial class IntegrationsRegistry
 
     /// <summary>
     /// Когда сценарий отработал в прошлый раз; <c>null</c> — еще ни разу, и по расписанию он не
-    /// пойдет, пока не проставлен якорь (см. <see cref="EnableScenario"/>).
+    /// пойдет, пока не проставлен якорь (см. <see cref="Anchor"/>).
     /// </summary>
     public DateTimeOffset? ScenarioLastRun(int id)
     {

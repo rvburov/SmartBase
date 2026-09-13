@@ -306,6 +306,102 @@ public sealed class ScenariosRegistryTests
     }
 
     /// <summary>
+    /// Сохранение включенным ставит якорь ТАК ЖЕ, как тумблер. Новый сценарий заводят окном
+    /// правки, и тумблер в нем включают там же — пока якорь ставил один список, такой сценарий
+    /// не срабатывал ни разу и выглядел при этом исправным.
+    /// </summary>
+    [Fact]
+    public void Saving_an_enabled_scenario_anchors_it_too()
+    {
+        var (dir, appDb, dataDb) = TempPaths();
+        try
+        {
+            using var registry = DatabaseRegistry.Open(dataDb, appDb);
+            var id = registry.Integrations.SaveScenario(Sample(NewRequest(registry)) with
+            {
+                Enabled = true,
+                Trigger = ScenarioTrigger.DailyAt(new TimeOnly(7, 0)),
+            }, Now).Id;
+
+            var anchor = registry.Integrations.ScenarioLastRun(id);
+
+            Assert.NotNull(anchor);
+            Assert.Equal(Now.ToUniversalTime(), anchor!.Value.ToUniversalTime());
+        }
+        finally { Cleanup(dir, appDb, dataDb); }
+    }
+
+    /// <summary>
+    /// Ради чего якорь и заведен: сценарий, созданный включенным, СРАБАТЫВАЕТ в свой срок и не
+    /// срабатывает раньше. Без якоря <c>IsDue</c> отвечал «не пора» навсегда.
+    /// </summary>
+    [Fact]
+    public void A_scenario_created_enabled_becomes_due_at_its_hour()
+    {
+        var (dir, appDb, dataDb) = TempPaths();
+        try
+        {
+            using var registry = DatabaseRegistry.Open(dataDb, appDb);
+            var id = registry.Integrations.SaveScenario(Sample(NewRequest(registry)) with
+            {
+                Enabled = true,
+                Trigger = ScenarioTrigger.DailyAt(new TimeOnly(7, 0)),
+            }, Now).Id;
+
+            var anchor  = registry.Integrations.ScenarioLastRun(id);
+            var trigger = registry.Integrations.FindScenario(id)!.Trigger;
+
+            // Якорь поставлен вечером 10-го: до утра 11-го не пора, а в 07:00 — пора.
+            Assert.False(trigger.IsDue(anchor, Now.AddHours(1)));
+            Assert.True (trigger.IsDue(anchor, Now.AddHours(12)));
+        }
+        finally { Cleanup(dir, appDb, dataDb); }
+    }
+
+    /// <summary>
+    /// Сохранение ВЫКЛЮЧЕННЫМ якоря не ставит: отсчитывать нечего, пока сценарий не включен.
+    /// Так же приезжают сценарии файлом переноса — они выключены нарочно.
+    /// </summary>
+    [Fact]
+    public void Saving_a_disabled_scenario_leaves_no_anchor()
+    {
+        var (dir, appDb, dataDb) = TempPaths();
+        try
+        {
+            using var registry = DatabaseRegistry.Open(dataDb, appDb);
+            var id = registry.Integrations.SaveScenario(Sample(NewRequest(registry)), Now).Id;
+
+            Assert.Null(registry.Integrations.ScenarioLastRun(id));
+        }
+        finally { Cleanup(dir, appDb, dataDb); }
+    }
+
+    /// <summary>
+    /// Правка работающего сценария якорь НЕ двигает: иначе каждое открытие карточки отодвигало
+    /// бы ближайший запуск, и «ежедневно в 07:00» уезжало бы на сутки от одного нажатия
+    /// «Сохранить».
+    /// </summary>
+    [Fact]
+    public void Editing_a_running_scenario_keeps_its_mark()
+    {
+        var (dir, appDb, dataDb) = TempPaths();
+        try
+        {
+            using var registry = DatabaseRegistry.Open(dataDb, appDb);
+            var saved = registry.Integrations.SaveScenario(
+                Sample(NewRequest(registry)) with { Enabled = true }, Now);
+
+            var first = registry.Integrations.ScenarioLastRun(saved.Id);
+
+            registry.Integrations.SaveScenario(saved with { Name = "Заказы по-новому" },
+                                               Now.AddHours(5));
+
+            Assert.Equal(first, registry.Integrations.ScenarioLastRun(saved.Id));
+        }
+        finally { Cleanup(dir, appDb, dataDb); }
+    }
+
+    /// <summary>
     /// Отметка ставится и после НЕУДАЧНОГО запуска: она про срок, а не про успех. Не отмечай
     /// неудачу — и сломавшийся сценарий пошел бы по кругу на каждом тике таймера.
     /// </summary>
