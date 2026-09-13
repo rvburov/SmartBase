@@ -122,6 +122,10 @@ public partial class App : Application
             // поэтому тезки недопустимы (проверка падает с явным сообщением).
             Extensions.ExtensionRegistry.EnsureUniqueIds();
 
+            // Автоматизации находятся по сборке, а их ключ хранится в шаге сценария: тезки
+            // означали бы шаг, выполняющий не то, что настроили.
+            Extensions.Automations.AutomationRegistry.EnsureUniqueKeys();
+
             // Убрать настройки расширений, которых в сборке больше нет: удалили папку
             // расширения и строку реестра — при первом же запуске уходят и его строки из
             // app.db, лишнего не остается. См. docs/features/extensions.md.
