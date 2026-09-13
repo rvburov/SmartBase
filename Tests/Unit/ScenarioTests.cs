@@ -38,6 +38,8 @@ public sealed class ScenarioTests
     [InlineData("every 30")]
     [InlineData("daily 07:00")]
     [InlineData("changed 15 3 42")]
+    [InlineData("event 30 3 42")]
+    [InlineData("event 0 3 42")]      // «к началу события» — законный ответ
     public void Trigger_survives_a_round_trip(string stored) =>
         Assert.Equal(stored, ScenarioTrigger.Parse(stored).ToString());
 
@@ -61,6 +63,8 @@ public sealed class ScenarioTests
     [InlineData("changed 1 3 42")]    // тишины меньше пяти минут не бывает
     [InlineData("changed 15 0 42")]   // база не названа
     [InlineData("changed 15 3 0")]    // коллекция не названа
+    [InlineData("event -5 3 42")]     // упреждение не бывает отрицательным
+    [InlineData("event 30 3 0")]      // коллекция не названа
     public void Garbage_reads_as_manual(string? stored) =>
         Assert.Equal(ScenarioTriggerKind.Manual, ScenarioTrigger.Parse(stored).Kind);
 
@@ -434,5 +438,136 @@ public sealed class ScenarioTests
         };
 
         Assert.Empty(scenario.Problems());
+    }
+
+    // ── Триггер «календарное событие» ─────────────────────────────────────────
+
+    /// <summary>Часов у календарного триггера тоже нет: «пора ли» решают события.</summary>
+    [Fact]
+    public void A_calendar_trigger_has_no_schedule_of_its_own()
+    {
+        var trigger = ScenarioTrigger.BeforeEvent(dbId: 3, collectionId: 42, lead: 30);
+
+        Assert.True(trigger.WatchesCalendar);
+        Assert.True(trigger.WatchesCollection);
+        Assert.False(trigger.WatchesData);
+        Assert.Null(trigger.NextRun(Evening));
+        Assert.True(Sample(trigger).Automatic);
+    }
+
+    [Fact]
+    public void A_calendar_trigger_without_a_collection_is_refused()
+    {
+        Assert.Contains(ScenarioTrigger.BeforeEvent(0, 0, 30).Problems(),
+                        p => p.Contains("коллекция", StringComparison.Ordinal));
+    }
+
+    /// <summary>Ноль — «к началу события» — годится; отрицательное и больше суток — нет.</summary>
+    [Theory]
+    [InlineData(0,    true)]
+    [InlineData(30,   true)]
+    [InlineData(1440, true)]
+    [InlineData(-5,   false)]
+    [InlineData(2000, false)]
+    public void A_lead_time_is_bounded(int lead, bool fine)
+    {
+        var problems = ScenarioTrigger.BeforeEvent(3, 42, lead).Problems();
+
+        if (fine) Assert.Empty(problems);
+        else Assert.Contains(problems, p => p.Contains("Упреждение", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void A_calendar_trigger_describes_itself_in_words()
+    {
+        Assert.Equal("за 30 мин до события в «Смены»",
+                     ScenarioTrigger.BeforeEvent(3, 42, 30).Describe("Смены"));
+        Assert.Equal("к началу события в «Смены»",
+                     ScenarioTrigger.BeforeEvent(3, 42, 0).Describe("Смены"));
+    }
+
+    /// <summary>
+    /// Календарный триггер под тем же правилом круга, что и правки: созданная запись с датой —
+    /// это новое событие, и сценарий заводил бы сам себя, только медленнее.
+    /// </summary>
+    [Fact]
+    public void A_calendar_scenario_may_not_write_into_its_own_collection()
+    {
+        var scenario = Scenario.New() with
+        {
+            Name    = "Круг по календарю",
+            Enabled = true,
+            Trigger = ScenarioTrigger.BeforeEvent(dbId: 1, collectionId: 10, lead: 30),
+            Steps   = [ScenarioStep.OfRecord(1, 10,
+                          new Dictionary<string, string> { ["Название"] = "Напоминание" })],
+        };
+
+        Assert.Contains(scenario.Problems(),
+                        p => p.Contains("сам себя", StringComparison.Ordinal));
+    }
+
+    // ── Шаг «создать запись» ──────────────────────────────────────────────────
+
+    [Fact]
+    public void A_record_step_needs_a_collection_and_at_least_one_value()
+    {
+        var empty = ScenarioStep.OfRecord(0, 0, new Dictionary<string, string>());
+
+        Assert.Contains(empty.Problems(), p => p.Contains("коллекция", StringComparison.Ordinal));
+        Assert.Contains(empty.Problems(), p => p.Contains("ни одного поля", StringComparison.Ordinal));
+
+        var filled = ScenarioStep.OfRecord(1, 10,
+            new Dictionary<string, string> { ["Название"] = "{{Название}} — напоминание" });
+
+        Assert.Empty(filled.Problems());
+    }
+
+    [Fact]
+    public void A_record_step_says_where_and_how_much()
+    {
+        var step = ScenarioStep.OfRecord(1, 10, new Dictionary<string, string>
+        {
+            ["Название"] = "{{Название}}",
+            ["Смена"]    = "",
+        });
+
+        Assert.Equal("Создать запись: Журнал смен (1 полей)", step.Describe("Журнал смен"));
+    }
+
+    // ── Шаг «экспорт выборки» ─────────────────────────────────────────────────
+
+    [Fact]
+    public void An_export_step_needs_collection_folder_and_a_known_format()
+    {
+        var bad = ScenarioStep.OfExport(0, 0, " ", "pdf");
+
+        Assert.Contains(bad.Problems(), p => p.Contains("коллекция", StringComparison.Ordinal));
+        Assert.Contains(bad.Problems(), p => p.Contains("папка", StringComparison.Ordinal));
+        Assert.Contains(bad.Problems(), p => p.Contains("Формат", StringComparison.Ordinal));
+
+        Assert.Empty(ScenarioStep.OfExport(1, 10, @"P:\Обмен\Выгрузки", "csv").Problems());
+    }
+
+    /// <summary>Отбор у выгрузки необязателен: без условий уходит вся коллекция.</summary>
+    [Fact]
+    public void An_export_step_lives_without_conditions_but_checks_the_given_ones()
+    {
+        var whole = ScenarioStep.OfExport(1, 10, @"P:\Обмен", "json");
+        Assert.Empty(whole.Problems());
+
+        var broken = ScenarioStep.OfExport(1, 10, @"P:\Обмен", "json",
+            [new ScenarioCondition("Статус", ScenarioTest.Equals)]);
+
+        Assert.Contains(broken.Problems(),
+                        p => p.Contains("не заполнен образец", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void An_export_step_says_what_leaves_and_in_which_format()
+    {
+        var step = ScenarioStep.OfExport(1, 10, @"P:\Обмен", "xlsx",
+            [new ScenarioCondition("Статус", ScenarioTest.Equals, "Не оплачен")]);
+
+        Assert.Equal("Экспорт выборки: Заказы → xlsx, условий: 1", step.Describe("Заказы"));
     }
 }

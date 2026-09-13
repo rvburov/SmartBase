@@ -88,6 +88,31 @@
                           CornerRadius="{StaticResource RadiusBase}" />
             </Grid>
 
+            <Grid ColumnDefinitions="Auto,8,*">
+                <RadioButton Grid.Column="0" x:Name="CalendarRadio" GroupName="trigger"
+                             Content="К событию в" VerticalAlignment="Center" />
+                <ComboBox Grid.Column="2" x:Name="CalendarCombo"
+                          Height="30"
+                          HorizontalAlignment="Stretch"
+                          VerticalContentAlignment="Center"
+                          Background="{StaticResource BrushSecondaryBg}"
+                          CornerRadius="{StaticResource RadiusBase}" />
+            </Grid>
+
+            <!-- Упреждение — тем же приемом, что время тишины: уточнение, а не вид триггера. -->
+            <Grid ColumnDefinitions="Auto,8,*" Margin="24,0,0,0">
+                <TextBlock Grid.Column="0" x:Name="LeadLabel"
+                           Text="когда" VerticalAlignment="Center"
+                           Foreground="{StaticResource BrushSecondaryText}" />
+                <ComboBox Grid.Column="2" x:Name="LeadCombo"
+                          Height="30"
+                          MinWidth="160"
+                          HorizontalAlignment="Left"
+                          VerticalContentAlignment="Center"
+                          Background="{StaticResource BrushSecondaryBg}"
+                          CornerRadius="{StaticResource RadiusBase}" />
+            </Grid>
+
         </StackPanel>
 
         <!-- ── Что делать ───────────────────────────────────────────────────── -->
@@ -118,14 +143,16 @@
             </ScrollViewer>
         </Border>
 
-        <!-- Кнопок четыре, и в одну строку они не помещаются: WrapPanel переносит сам, а
+        <!-- Кнопок много, и в одну строку они не помещаются: WrapPanel переносит сам, а
              подпись «+» делает их кнопками добавления, а не отбора. -->
         <WrapPanel Margin="0,0,0,4">
-            <Button x:Name="AddRequestBtn" Content="+ Запрос"        Height="30" Padding="12,0" Margin="0,0,8,8" />
-            <Button x:Name="AddActionBtn"  Content="+ Действие"      Height="30" Padding="12,0" Margin="0,0,8,8" />
-            <Button x:Name="AddIntakeBtn"  Content="+ Файл из папки" Height="30" Padding="12,0" Margin="0,0,8,8" />
-            <Button x:Name="AddFilterBtn"  Content="+ Отбор"         Height="30" Padding="12,0" Margin="0,0,8,8" />
-            <Button x:Name="AddNoticeBtn"  Content="+ Сообщение"     Height="30" Padding="12,0" Margin="0,0,8,8" />
+            <Button x:Name="AddRequestBtn" Content="+ Запрос"          Height="30" Padding="12,0" Margin="0,0,8,8" />
+            <Button x:Name="AddActionBtn"  Content="+ Действие"        Height="30" Padding="12,0" Margin="0,0,8,8" />
+            <Button x:Name="AddIntakeBtn"  Content="+ Файл из папки"   Height="30" Padding="12,0" Margin="0,0,8,8" />
+            <Button x:Name="AddFilterBtn"  Content="+ Отбор"           Height="30" Padding="12,0" Margin="0,0,8,8" />
+            <Button x:Name="AddRecordBtn"  Content="+ Создать запись"  Height="30" Padding="12,0" Margin="0,0,8,8" />
+            <Button x:Name="AddExportBtn"  Content="+ Экспорт выборки" Height="30" Padding="12,0" Margin="0,0,8,8" />
+            <Button x:Name="AddNoticeBtn"  Content="+ Сообщение"       Height="30" Padding="12,0" Margin="0,0,8,8" />
         </WrapPanel>
 
         <!-- ── Включен ──────────────────────────────────────────────────────── -->

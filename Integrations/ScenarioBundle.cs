@@ -56,7 +56,8 @@ public sealed record BundleStep(
     [property: JsonPropertyName("collection")] string Collection,
     [property: JsonPropertyName("fields")]     IReadOnlyDictionary<string, string>? Fields,
     [property: JsonPropertyName("folder")]     string Folder,
-    [property: JsonPropertyName("conditions")] IReadOnlyList<ScenarioCondition>? Conditions);
+    [property: JsonPropertyName("conditions")] IReadOnlyList<ScenarioCondition>? Conditions,
+    [property: JsonPropertyName("format")]     string Format = "");
 
 /// <summary>Сценарий в переносимом виде. Тумблер не переносится — см. описание набора.</summary>
 public sealed record BundleScenario(

@@ -22,7 +22,9 @@ public sealed record ExportedCollection(
     ConfidentialityLabel  Label);
 
 /// <summary>
-/// След ручной выгрузки в журнале безопасности (docs/ROADMAP-API.md, шаг 6).
+/// След выгрузки в файл в журнале безопасности (docs/ROADMAP-API.md, шаг 6) — ручной и, с
+/// шага 11, автоматической: шаг сценария «экспорт выборки» оставляет ту же строку, только с
+/// именем сценария.
 ///
 /// Замок из шага 5 стоит на сетевой двери, но данные уходят и другим путем: человек жмет
 /// «Экспорт» и получает файл со всей коллекцией. Функция рабочая, и запрещать ее нельзя —
@@ -78,7 +80,11 @@ public static class ExportTrace
     /// <param name="path">Куда лег файл — полным путем: проверяющему нужно именно место.</param>
     /// <param name="tables">Что попало в файл.</param>
     /// <param name="now">Момент. Передается явно — журнал проверяется тестами построчно.</param>
-    public static bool Note(string path, IReadOnlyList<ExportedCollection> tables, DateTimeOffset now)
+    /// <param name="scenario">Имя сценария, если выгрузил шаг «экспорт выборки», — выгрузку,
+    /// ушедшую ночью саму собой, проверяющий должен уметь привязать к тому, кто ее завел.
+    /// Пусто — человек нажал «Экспорт» сам.</param>
+    public static bool Note(string path, IReadOnlyList<ExportedCollection> tables,
+                            DateTimeOffset now, string scenario = "")
     {
         var (bytes, hash) = Measure(path);
 
@@ -86,13 +92,13 @@ public static class ExportTrace
             SecurityEvent.Export,
             allowed:     true,
             who:         CurrentUser.DisplayName,
-            scenario:    "",
+            scenario:    scenario,
             address:     path,
             fields:      Fields(tables),
             rows:        Rows(tables),
             bytes:       bytes,
             bodyHash:    hash,
-            explanation: Explanation(tables),
+            explanation: Explanation(tables, scenario),
             dbId:        SingleDb(tables),
             at:          now));
     }
@@ -151,7 +157,8 @@ public static class ExportTrace
     /// Пояснение: что за коллекции и сколько строк каждая, а перед ними — метка, если она
     /// строже «Открыто». Метка идет первой намеренно: ее ищут взглядом, а не вычитывают.
     /// </summary>
-    private static string Explanation(IReadOnlyList<ExportedCollection> tables)
+    private static string Explanation(IReadOnlyList<ExportedCollection> tables,
+                                      string scenario = "")
     {
         var label = tables.Aggregate(ConfidentialityLabel.Open,
                                      (strictest, table) =>
@@ -166,7 +173,9 @@ public static class ExportTrace
             ? ""
             : $"{Confidentiality.Title(label)}. ";
 
-        return $"{mark}выгружено руками: {what}";
+        var how = scenario.Length > 0 ? $"выгружено сценарием «{scenario}»" : "выгружено руками";
+
+        return $"{mark}{how}: {what}";
     }
 
     /// <summary>

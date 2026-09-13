@@ -192,15 +192,41 @@ public static partial class ScenarioRunner
 
         // Порядок шагов тут и проверяется. Текст приносит папка, и нужен он преобразователю;
         // строки приносят запрос и преобразователь, и нужны они отбору. Поставленный первым,
-        // такой шаг разбирать и отбирать будет нечего.
+        // такой шаг разбирать и отбирать будет нечего. Календарный триггер строки ПРИНОСИТ
+        // САМ — наступившие события, как будто их принес нулевой шаг.
         var text = false;
-        var rows = false;
+        var rows = scenario.Trigger.WatchesCalendar;
 
         foreach (var step in scenario.Steps)
         {
             if (step.Kind == ScenarioStepKind.Filter)
             {
                 if (!rows) return NoRows();
+                continue;
+            }
+
+            if (step.Kind == ScenarioStepKind.CreateRecord)
+            {
+                if (step.CollectionId <= 0) return "в шаге не выбрана коллекция для записи";
+
+                if (databases.All(d => d.DbId != step.DbId))
+                    return "база данных для создания записи сейчас не открыта";
+
+                continue;
+            }
+
+            if (step.Kind == ScenarioStepKind.Export)
+            {
+                if (step.CollectionId <= 0) return "в шаге не выбрана коллекция для выгрузки";
+
+                if (databases.All(d => d.DbId != step.DbId))
+                    return "база данных для выгрузки сейчас не открыта";
+
+                // Папка — та же дверь, что сетевой адрес: автоматическая выгрузка работает
+                // только внутри корней, разрешенных политикой (10.11).
+                var folder = EgressGate.CheckFolder(step.Folder);
+                if (!folder.Allowed) return "папка выгрузки: " + folder.Explanation;
+
                 continue;
             }
 
@@ -253,8 +279,9 @@ public static partial class ScenarioRunner
 
             // Круг: сценарий заводится правками в коллекции и сам же в нее пишет. Модель такой
             // круг ловит у шага «действие» — там коллекция записана прямо в шаге, — а здесь она
-            // приезжает из привязки карточки запроса, о которой модель не знает.
-            if (scenario.Trigger.WatchesData
+            // приезжает из привязки карточки запроса, о которой модель не знает. Календарный
+            // триггер под тем же правилом: запись с датой — новое событие.
+            if (scenario.Trigger.WatchesCollection
              && binding.DbId == scenario.Trigger.DbId
              && binding.CollectionId == scenario.Trigger.CollectionId)
                 return $"запрос «{request.Name}» пишет в ту же коллекцию, изменения которой "
@@ -270,6 +297,10 @@ public static partial class ScenarioRunner
     /// Выполнить сценарий. <paramref name="notice"/> — как показать сообщение человеку;
     /// <paramref name="now"/> — момент для журнала и для действий.
     ///
+    /// <paramref name="initial"/> — строки, которые принес ТРИГГЕР: календарный кладет сюда
+    /// наступившие события, и первый же шаг работает с ними, как со строками запроса. Запуск
+    /// кнопкой таблицы не несет — шаг, которому нужны строки, честно скажет, каких колонок нет.
+    ///
     /// Отмену бросает наружу: остановил человек — итога у такого запуска нет, и притворяться,
     /// что сценарий чем-то кончился, незачем.
     /// </summary>
@@ -279,7 +310,8 @@ public static partial class ScenarioRunner
                                                        IReadOnlyList<IExtension>      extensions,
                                                        DateTimeOffset                 now,
                                                        Action<string>                 notice,
-                                                       CancellationToken              ct = default)
+                                                       CancellationToken              ct      = default,
+                                                       StepTable?                     initial = null)
     {
         var clock = Stopwatch.StartNew();
         var total = scenario.Steps.Count;
@@ -303,7 +335,7 @@ public static partial class ScenarioRunner
         var problem = "";
         var idle    = false;
 
-        StepTable? table = null;
+        StepTable? table = initial;
         var        text  = "";
         Intake?    taken = null;
 
@@ -327,6 +359,9 @@ public static partial class ScenarioRunner
                     ScenarioStepKind.Action  => await ActionStepAsync(step, databases, extensions, table, text, now, ct),
                     ScenarioStepKind.Intake  => IntakeStep(step, scenario.Name, mark, now, ref taken),
                     ScenarioStepKind.Filter  => FilterStep(step, table),
+                    ScenarioStepKind.CreateRecord => await RecordStepAsync(step, databases, table, ct),
+                    ScenarioStepKind.Export  => await ExportStepAsync(step, databases,
+                                                                      scenario.Name, now, ct),
                     _                        => NoticeStep(step, notice),
                 };
 
@@ -871,7 +906,10 @@ public static partial class ScenarioRunner
     {
         foreach (var step in scenario.Steps)
         {
-            if (step.Kind == ScenarioStepKind.Action && step.DbId > 0) return step.DbId;
+            if (step.Kind is ScenarioStepKind.Action
+                          or ScenarioStepKind.CreateRecord
+                          or ScenarioStepKind.Export
+                && step.DbId > 0) return step.DbId;
 
             if (step.Kind == ScenarioStepKind.Request
                 && registry.Binding(step.RequestId) is { } binding) return binding.DbId;
@@ -891,12 +929,14 @@ public static partial class ScenarioRunner
     private static string StepMark(int number, int total, ScenarioStepKind kind) =>
         $"шаг {number} из {total} · " + kind switch
         {
-            ScenarioStepKind.Request => "запрос",
-            ScenarioStepKind.Notify  => "уведомление",
-            ScenarioStepKind.Action  => "действие",
-            ScenarioStepKind.Intake  => "файл из папки",
-            ScenarioStepKind.Filter  => "отбор",
-            _                        => kind.ToString(),
+            ScenarioStepKind.Request      => "запрос",
+            ScenarioStepKind.Notify       => "уведомление",
+            ScenarioStepKind.Action       => "действие",
+            ScenarioStepKind.Intake       => "файл из папки",
+            ScenarioStepKind.Filter       => "отбор",
+            ScenarioStepKind.CreateRecord => "создание записи",
+            ScenarioStepKind.Export       => "экспорт выборки",
+            _                             => kind.ToString(),
         };
 
     /// <summary>

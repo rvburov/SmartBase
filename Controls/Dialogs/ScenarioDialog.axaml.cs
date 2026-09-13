@@ -65,6 +65,23 @@ public partial class ScenarioDialog : Window
         (60, "час тишины"),
     ];
 
+    /// <summary>
+    /// Упреждение календарного триггера — за сколько до начала события заводить сценарий.
+    /// Ноль минут — «к началу» — законный ответ: это не частота опроса, а фора.
+    /// </summary>
+    private static readonly (int Minutes, string Text)[] Leads =
+    [
+        (0,    "к началу события"),
+        (5,    "за 5 минут"),
+        (10,   "за 10 минут"),
+        (15,   "за 15 минут"),
+        (30,   "за 30 минут"),
+        (60,   "за час"),
+        (120,  "за 2 часа"),
+        (720,  "за 12 часов"),
+        (1440, "за сутки"),
+    ];
+
     /// <summary>Строка списка шагов: сам шаг и то, чем его правят.</summary>
     private sealed class StepRow
     {
@@ -130,14 +147,25 @@ public partial class ScenarioDialog : Window
         SettleCombo.SelectedIndex = Math.Max(0, Array.FindIndex(
             Settles, s => s.Minutes == card.Trigger.Minutes));
 
-        ManualRadio.IsChecked  = card.Trigger.Kind == ScenarioTriggerKind.Manual;
-        EveryRadio.IsChecked   = card.Trigger.Kind == ScenarioTriggerKind.Every;
-        DailyRadio.IsChecked   = card.Trigger.Kind == ScenarioTriggerKind.Daily;
-        ChangedRadio.IsChecked = card.Trigger.Kind == ScenarioTriggerKind.Changed;
+        CalendarCombo.ItemsSource = _places.Select(p => $"{p.Database} · {p.Name}").ToList();
+        CalendarCombo.SelectedIndex = _places.Count == 0 ? -1 : Math.Max(0, _places.ToList().FindIndex(
+            p => p.DbId == card.Trigger.DbId && p.CollectionId == card.Trigger.CollectionId));
+
+        LeadCombo.ItemsSource = Leads.Select(l => l.Text).ToList();
+        LeadCombo.SelectedIndex = card.Trigger.Kind == ScenarioTriggerKind.Calendar
+            ? Math.Max(0, Array.FindIndex(Leads, l => l.Minutes == card.Trigger.Minutes))
+            : Array.FindIndex(Leads, l => l.Minutes == 30);   // осмысленный дефолт: за полчаса
+
+        ManualRadio.IsChecked   = card.Trigger.Kind == ScenarioTriggerKind.Manual;
+        EveryRadio.IsChecked    = card.Trigger.Kind == ScenarioTriggerKind.Every;
+        DailyRadio.IsChecked    = card.Trigger.Kind == ScenarioTriggerKind.Daily;
+        ChangedRadio.IsChecked  = card.Trigger.Kind == ScenarioTriggerKind.Changed;
+        CalendarRadio.IsChecked = card.Trigger.Kind == ScenarioTriggerKind.Calendar;
 
         // Следить не за чем: баз нет или в них нет коллекций. Отключенный переключатель честнее
         // пустого списка — он говорит «сейчас нельзя», а не «выбирайте из ничего».
-        ChangedRadio.IsEnabled = _places.Count > 0;
+        ChangedRadio.IsEnabled  = _places.Count > 0;
+        CalendarRadio.IsEnabled = _places.Count > 0;
 
         EnabledSwitch.IsChecked = card.Enabled;
 
@@ -149,6 +177,7 @@ public partial class ScenarioDialog : Window
         EveryRadio.IsCheckedChanged     += (_, _) => ShowHint();
         DailyRadio.IsCheckedChanged     += (_, _) => ShowHint();
         ChangedRadio.IsCheckedChanged   += (_, _) => ShowHint();
+        CalendarRadio.IsCheckedChanged  += (_, _) => ShowHint();
         EnabledSwitch.IsCheckedChanged  += (_, _) => ShowHint();
 
         AddRequestBtn.Click += (_, _) => AddStep(ScenarioStep.OfRequest(0));
@@ -156,11 +185,15 @@ public partial class ScenarioDialog : Window
         AddIntakeBtn.Click  += (_, _) => AddStep(ScenarioStep.OfIntake(""));
         AddActionBtn.Click  += async (_, _) => await AddActionAsync();
         AddFilterBtn.Click  += async (_, _) => await AddFilterAsync();
+        AddRecordBtn.Click  += async (_, _) => await AddRecordAsync();
+        AddExportBtn.Click  += async (_, _) => await AddExportAsync();
 
         // Ссылаться не на что — запросы заводят на соседней вкладке, и сказать об этом надо
         // раньше, чем человек нажмет и получит пустой список.
         AddRequestBtn.IsEnabled = _requests.Count > 0;
         AddActionBtn.IsEnabled  = _actions.Count > 0 && _places.Count > 0;
+        AddRecordBtn.IsEnabled  = _places.Count > 0;
+        AddExportBtn.IsEnabled  = _places.Count > 0;
 
         CancelBtn.Click += (_, _) => Close(null);
         SaveBtn.Click   += (_, _) => Save();
@@ -173,11 +206,13 @@ public partial class ScenarioDialog : Window
     {
         var row = step.Kind switch
         {
-            ScenarioStepKind.Request => RequestRow(step),
-            ScenarioStepKind.Action  => ActionRow(step),
-            ScenarioStepKind.Intake  => IntakeRow(step),
-            ScenarioStepKind.Filter  => FilterRow(step),
-            _                        => NoticeRow(step),
+            ScenarioStepKind.Request      => RequestRow(step),
+            ScenarioStepKind.Action       => ActionRow(step),
+            ScenarioStepKind.Intake       => IntakeRow(step),
+            ScenarioStepKind.Filter       => FilterRow(step),
+            ScenarioStepKind.CreateRecord => RecordRow(step),
+            ScenarioStepKind.Export       => ExportRow(step),
+            _                             => NoticeRow(step),
         };
 
         _steps.Add(row);
@@ -243,6 +278,86 @@ public partial class ScenarioDialog : Window
         row.Action        = made;
         row.Card!.Content = CardText(made);
     }
+
+    /// <summary>Завести шаг «создать запись» — окно сразу, как у действия и отбора.</summary>
+    private async Task AddRecordAsync()
+    {
+        var made = await new ScenarioRecordDialog(
+                ScenarioStep.OfRecord(0, 0, new Dictionary<string, string>()), _places)
+            .ShowDialog<ScenarioStep?>(this);
+
+        if (made is not null) AddStep(made);
+    }
+
+    /// <summary>Строка шага «создать запись»: настроенное словами, нажатие открывает окно.</summary>
+    private StepRow RecordRow(ScenarioStep step)
+    {
+        var card = new Button
+        {
+            Height                     = 30,
+            Padding                    = new Thickness(10, 0),
+            HorizontalAlignment        = HorizontalAlignment.Stretch,
+            HorizontalContentAlignment = HorizontalAlignment.Left,
+            VerticalContentAlignment   = VerticalAlignment.Center,
+        };
+
+        var row = new StepRow { Kind = ScenarioStepKind.CreateRecord, Card = card, Action = step };
+
+        card.Content = PlacedText(step);
+        card.Click  += async (_, _) =>
+        {
+            var made = await new ScenarioRecordDialog(row.Action, _places)
+                                 .ShowDialog<ScenarioStep?>(this);
+            if (made is null) return;
+
+            row.Action   = made;
+            card.Content = PlacedText(made);
+        };
+
+        return row;
+    }
+
+    /// <summary>Завести шаг «экспорт выборки» — окно сразу, как у остальных сложных шагов.</summary>
+    private async Task AddExportAsync()
+    {
+        var made = await new ScenarioExportDialog(ScenarioStep.OfExport(0, 0, "", "csv"), _places)
+            .ShowDialog<ScenarioStep?>(this);
+
+        if (made is not null) AddStep(made);
+    }
+
+    /// <summary>Строка шага «экспорт выборки»: настроенное словами, нажатие открывает окно.</summary>
+    private StepRow ExportRow(ScenarioStep step)
+    {
+        var card = new Button
+        {
+            Height                     = 30,
+            Padding                    = new Thickness(10, 0),
+            HorizontalAlignment        = HorizontalAlignment.Stretch,
+            HorizontalContentAlignment = HorizontalAlignment.Left,
+            VerticalContentAlignment   = VerticalAlignment.Center,
+        };
+
+        var row = new StepRow { Kind = ScenarioStepKind.Export, Card = card, Action = step };
+
+        card.Content = PlacedText(step);
+        card.Click  += async (_, _) =>
+        {
+            var made = await new ScenarioExportDialog(row.Action, _places)
+                                 .ShowDialog<ScenarioStep?>(this);
+            if (made is null) return;
+
+            row.Action   = made;
+            card.Content = PlacedText(made);
+        };
+
+        return row;
+    }
+
+    /// <summary>Подпись шага, чья суть — коллекция: имя берется из списка мест.</summary>
+    private string PlacedText(ScenarioStep step) =>
+        step.Describe(_places.FirstOrDefault(p => p.DbId == step.DbId
+                                                && p.CollectionId == step.CollectionId)?.Name ?? "");
 
     /// <summary>
     /// Завести шаг-отбор. Окно открывается сразу, по той же причине, что и у действия: отбор
@@ -433,14 +548,19 @@ public partial class ScenarioDialog : Window
     /// </summary>
     private void ShowHint()
     {
-        var manual  = ManualRadio.IsChecked  == true;
-        var changed = ChangedRadio.IsChecked == true;
+        var manual   = ManualRadio.IsChecked   == true;
+        var changed  = ChangedRadio.IsChecked  == true;
+        var calendar = CalendarRadio.IsChecked == true;
 
         // Уточнение к правкам показывается только вместе с ними: строка «через 5 минут тишины»
         // под выбранным «ежедневно в 07:00» читается как часть расписания.
         SettleLabel.IsVisible  = changed;
         SettleCombo.IsVisible  = changed;
         ChangedCombo.IsEnabled = changed;
+
+        LeadLabel.IsVisible     = calendar;
+        LeadCombo.IsVisible     = calendar;
+        CalendarCombo.IsEnabled = calendar;
 
         EnabledHint.Text = manual
             ? "Сценарий без расписания запускается только кнопкой, и включать его незачем — "
@@ -449,10 +569,14 @@ public partial class ScenarioDialog : Window
                 ? "Сценарий пойдет, когда правки УТИХНУТ на выбранное время: правка десяти строк "
                   + "подряд даст один запуск, а не десять. Считаются правки только на этом "
                   + "компьютере."
-                : EnabledSwitch.IsChecked == true
-                    ? "Сценарий будет запускаться сам. Пока выбранная база данных недоступна, запуск "
-                      + "пропускается и догоняется, когда она вернется."
-                    : "Пока выключен: запускается только кнопкой «Запустить» в списке.";
+                : calendar
+                    ? "Сценарий пойдет к началу каждого события коллекции, с выбранной форой. "
+                      + "Наступившие события приходят первому шагу строками: Название, Начало, "
+                      + "Конец, Весь день, Коллекция."
+                    : EnabledSwitch.IsChecked == true
+                        ? "Сценарий будет запускаться сам. Пока выбранная база данных недоступна, запуск "
+                          + "пропускается и догоняется, когда она вернется."
+                        : "Пока выключен: запускается только кнопкой «Запустить» в списке.";
     }
 
     // ── Сохранение ────────────────────────────────────────────────────────────
@@ -472,11 +596,13 @@ public partial class ScenarioDialog : Window
         foreach (var row in _steps)
             steps.Add(row.Kind switch
             {
-                ScenarioStepKind.Request => ScenarioStep.OfRequest(SelectedRequest(row)),
-                ScenarioStepKind.Action  => row.Action,
-                ScenarioStepKind.Filter  => row.Action,
-                ScenarioStepKind.Intake  => ScenarioStep.OfIntake((row.Text!.Text ?? "").Trim()),
-                _                        => ScenarioStep.OfNotice((row.Text!.Text ?? "").Trim()),
+                ScenarioStepKind.Request      => ScenarioStep.OfRequest(SelectedRequest(row)),
+                ScenarioStepKind.Action       => row.Action,
+                ScenarioStepKind.Filter       => row.Action,
+                ScenarioStepKind.CreateRecord => row.Action,
+                ScenarioStepKind.Export       => row.Action,
+                ScenarioStepKind.Intake       => ScenarioStep.OfIntake((row.Text!.Text ?? "").Trim()),
+                _                             => ScenarioStep.OfNotice((row.Text!.Text ?? "").Trim()),
             });
 
         var result = _card with
@@ -528,6 +654,20 @@ public partial class ScenarioDialog : Window
             var settle = Settles[Math.Clamp(SettleCombo.SelectedIndex, 0, Settles.Length - 1)].Minutes;
 
             return ScenarioTrigger.OnChange(place.DbId, place.CollectionId, settle);
+        }
+
+        if (CalendarRadio.IsChecked == true)
+        {
+            if (CalendarCombo.SelectedIndex < 0 || CalendarCombo.SelectedIndex >= _places.Count)
+            {
+                problem = "Выберите коллекцию, события которой заводят сценарий";
+                return null;
+            }
+
+            var place = _places[CalendarCombo.SelectedIndex];
+            var lead  = Leads[Math.Clamp(LeadCombo.SelectedIndex, 0, Leads.Length - 1)].Minutes;
+
+            return ScenarioTrigger.BeforeEvent(place.DbId, place.CollectionId, lead);
         }
 
         if (TimeOnly.TryParseExact((TimeBox.Text ?? "").Trim(), "HH:mm",

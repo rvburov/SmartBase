@@ -24,6 +24,14 @@ public enum ScenarioTriggerKind
     /// настройку, которая ничего не делает.
     /// </summary>
     Changed,
+
+    /// <summary>
+    /// За N минут до начала календарного события в выбранной коллекции (docs/ROADMAP-API.md,
+    /// шаг 11). Ждал своих исполнителей так же, как «изменение данных»: пока сценарий не умел
+    /// ни создать запись, ни выгрузить выборку, напоминать ему было нечем. Наступившие события
+    /// сценарий получает СТРОКАМИ — как будто их принес первый шаг.
+    /// </summary>
+    Calendar,
 }
 
 /// <summary>
@@ -31,21 +39,18 @@ public enum ScenarioTriggerKind
 /// параметром, как у <c>BackupPlanner</c> и <c>NotificationScheduler</c>, — иначе расписание
 /// нельзя проверить, не подводя системное время.
 ///
-/// Видов четыре: «календарное событие» из плана (docs/ROADMAP-API.md, раздел 2) появится вместе
-/// со своим исполнителем — заводить его здесь раньше значило бы показать человеку настройку,
-/// которая ничего не делает.
-///
 /// Календарные периодичности (по дням недели, месяцам) сюда не переехали намеренно: они уже
 /// описаны в <c>BackupSchedule</c>, и обмену нужен другой набор — «каждые полчаса» там как раз
 /// нет. Тащить тип резервного копирования в интеграции ради двух общих строк значило бы связать
 /// две подсистемы, которые ничем больше не связаны.
 /// </summary>
 /// <param name="Kind">Вид триггера.</param>
-/// <param name="Minutes">Через сколько минут повторять (<see cref="ScenarioTriggerKind.Every"/>)
-/// либо сколько ждать тишины после последней правки (<see cref="ScenarioTriggerKind.Changed"/>).</param>
+/// <param name="Minutes">Через сколько минут повторять (<see cref="ScenarioTriggerKind.Every"/>),
+/// сколько ждать тишины после последней правки (<see cref="ScenarioTriggerKind.Changed"/>) либо
+/// за сколько минут до начала события заводить (<see cref="ScenarioTriggerKind.Calendar"/>).</param>
 /// <param name="Time">Время суток (только <see cref="ScenarioTriggerKind.Daily"/>).</param>
-/// <param name="DbId">База, за коллекцией которой следим (только <see cref="ScenarioTriggerKind.Changed"/>).</param>
-/// <param name="CollectionId">Коллекция, правки в которой заводят сценарий.</param>
+/// <param name="DbId">База, за коллекцией которой следим (правки и календарь).</param>
+/// <param name="CollectionId">Коллекция, правки или события которой заводят сценарий.</param>
 public sealed record ScenarioTrigger(
     ScenarioTriggerKind Kind,
     int                 Minutes,
@@ -77,8 +82,21 @@ public sealed record ScenarioTrigger(
     public static ScenarioTrigger OnChange(int dbId, int collectionId, int settle) =>
         new(ScenarioTriggerKind.Changed, settle, default, dbId, collectionId);
 
+    /// <summary>Заводить за <paramref name="lead"/> минут до начала события в коллекции.</summary>
+    public static ScenarioTrigger BeforeEvent(int dbId, int collectionId, int lead) =>
+        new(ScenarioTriggerKind.Calendar, lead, default, dbId, collectionId);
+
     /// <summary>Следит ли триггер за правками в коллекции.</summary>
     public bool WatchesData => Kind == ScenarioTriggerKind.Changed;
+
+    /// <summary>Заводится ли триггер календарными событиями.</summary>
+    public bool WatchesCalendar => Kind == ScenarioTriggerKind.Calendar;
+
+    /// <summary>
+    /// Привязан ли триггер к коллекции. Для таких сценарий не должен САМ писать в эту
+    /// коллекцию: правка заводила бы его заново, и круг не кончился бы никогда.
+    /// </summary>
+    public bool WatchesCollection => WatchesData || WatchesCalendar;
 
     /// <summary>Что не так с триггером; пустой список — годится.</summary>
     public IReadOnlyList<string> Problems()
@@ -95,6 +113,16 @@ public sealed record ScenarioTrigger(
 
             if (Minutes < MinMinutes || Minutes > MaxMinutes)
                 problems.Add($"Ждать тишины можно не меньше {MinMinutes} минут и не больше суток");
+        }
+
+        if (Kind == ScenarioTriggerKind.Calendar)
+        {
+            if (CollectionId <= 0 || DbId <= 0)
+                problems.Add("Не выбрана коллекция, события которой заводят сценарий");
+
+            // Ноль минут — «к началу события» — годится: это не частота опроса, а упреждение.
+            if (Minutes < 0 || Minutes > MaxMinutes)
+                problems.Add("Упреждение — от нуля минут до суток");
         }
 
         return problems;
@@ -153,6 +181,9 @@ public sealed record ScenarioTrigger(
             $"при правках в «{(collection.Length > 0 ? collection : "коллекции №" + CollectionId)}»"
             + $", через {Minutes} мин тишины",
 
+        ScenarioTriggerKind.Calendar => (Minutes > 0 ? $"за {Minutes} мин до события" : "к началу события")
+            + $" в «{(collection.Length > 0 ? collection : "коллекции №" + CollectionId)}»",
+
         _ => "вручную",
     };
 
@@ -168,6 +199,11 @@ public sealed record ScenarioTrigger(
 
         ScenarioTriggerKind.Changed =>
             $"changed {Minutes.ToString(CultureInfo.InvariantCulture)} "
+            + $"{DbId.ToString(CultureInfo.InvariantCulture)} "
+            + $"{CollectionId.ToString(CultureInfo.InvariantCulture)}",
+
+        ScenarioTriggerKind.Calendar =>
+            $"event {Minutes.ToString(CultureInfo.InvariantCulture)} "
             + $"{DbId.ToString(CultureInfo.InvariantCulture)} "
             + $"{CollectionId.ToString(CultureInfo.InvariantCulture)}",
 
@@ -201,6 +237,13 @@ public sealed record ScenarioTrigger(
                   && int.TryParse(collection, NumberStyles.Integer, CultureInfo.InvariantCulture, out var id)
                   && wait >= MinMinutes && wait <= MaxMinutes && dbId > 0 && id > 0 =>
                 OnChange(dbId, id, wait),
+
+            ["event", var lead, var db, var collection]
+                when int.TryParse(lead, NumberStyles.Integer, CultureInfo.InvariantCulture, out var ahead)
+                  && int.TryParse(db, NumberStyles.Integer, CultureInfo.InvariantCulture, out var dbId)
+                  && int.TryParse(collection, NumberStyles.Integer, CultureInfo.InvariantCulture, out var id)
+                  && ahead >= 0 && ahead <= MaxMinutes && dbId > 0 && id > 0 =>
+                BeforeEvent(dbId, id, ahead),
 
             _ => Manual,
         };
@@ -240,6 +283,20 @@ public enum ScenarioStepKind
     /// подошли; не подошла ни одна — сценарий на этом кончается, и это не неудача.
     /// </summary>
     Filter,
+
+    /// <summary>
+    /// Создать запись: коллекция и таблица «поле → выражение» с подстановками из строки
+    /// предыдущего шага (docs/ROADMAP-API.md, шаг 11). Запись на каждую пришедшую строку;
+    /// шагу без строк — одна запись из постоянных значений.
+    /// </summary>
+    CreateRecord,
+
+    /// <summary>
+    /// Выгрузить выборку коллекции в файл: формат, папка из разрешенных политикой, отбор
+    /// строк условиями (шаг 11). Читает КОЛЛЕКЦИЮ, а не поток шагов: выборка существует и
+    /// тогда, когда сценарию никто ничего не принес.
+    /// </summary>
+    Export,
 }
 
 /// <summary>
@@ -270,9 +327,13 @@ public enum ScenarioStepKind
 /// <param name="FieldValues">Выражения для полей действия по их ключам; <c>null</c> — пусто.
 /// Словарь намеренно не участвует в сравнении записей (у него ссылочное равенство) — сравнивать
 /// шаги целиком в программе негде, а хранение идет через JSON.</param>
-/// <param name="Folder">Корень папки обмена (только <see cref="ScenarioStepKind.Intake"/>).</param>
-/// <param name="Conditions">Условия отбора (только <see cref="ScenarioStepKind.Filter"/>);
-/// <c>null</c> — пусто. Список, как и словарь полей, не участвует в сравнении записей.</param>
+/// <param name="Folder">Корень папки обмена (<see cref="ScenarioStepKind.Intake"/>) либо папка,
+/// в которую ложится файл выгрузки (<see cref="ScenarioStepKind.Export"/>).</param>
+/// <param name="Conditions">Условия отбора (<see cref="ScenarioStepKind.Filter"/> — над потоком
+/// строк, <see cref="ScenarioStepKind.Export"/> — над строками коллекции); <c>null</c> — пусто.
+/// Список, как и словарь полей, не участвует в сравнении записей.</param>
+/// <param name="Format">Формат файла выгрузки (только <see cref="ScenarioStepKind.Export"/>):
+/// «csv», «json» либо «xlsx».</param>
 public sealed record ScenarioStep(
     ScenarioStepKind                     Kind,
     int                                  RequestId,
@@ -283,7 +344,8 @@ public sealed record ScenarioStep(
     int                                  CollectionId = 0,
     IReadOnlyDictionary<string, string>? FieldValues  = null,
     string                               Folder       = "",
-    IReadOnlyList<ScenarioCondition>?    Conditions   = null)
+    IReadOnlyList<ScenarioCondition>?    Conditions   = null,
+    string                               Format       = "")
 {
     /// <summary>Сколько знаков умещается в карточке сообщения, не превращая ее в простыню.</summary>
     public const int MaxTextLength = 200;
@@ -320,6 +382,21 @@ public sealed record ScenarioStep(
 
     public static ScenarioStep OfFilter(params ScenarioCondition[] conditions) =>
         new(ScenarioStepKind.Filter, 0, "", Conditions: conditions);
+
+    public static ScenarioStep OfRecord(int dbId, int collectionId,
+                                        IReadOnlyDictionary<string, string> fields) =>
+        new(ScenarioStepKind.CreateRecord, 0, "", DbId: dbId, CollectionId: collectionId,
+            FieldValues: fields);
+
+    public static ScenarioStep OfExport(int dbId, int collectionId, string folder, string format,
+                                        IReadOnlyList<ScenarioCondition>? conditions = null) =>
+        new(ScenarioStepKind.Export, 0, "", DbId: dbId, CollectionId: collectionId,
+            Folder: folder, Conditions: conditions, Format: format);
+
+    /// <summary>Форматы выгрузки, которые умеет шаг «экспорт выборки». Ровно те, что пишут
+    /// готовые писатели экспорта; «xlsm» намеренно не предлагается — macro-enabled контейнер
+    /// автомату ни к чему.</summary>
+    public static readonly IReadOnlyList<string> ExportFormats = ["csv", "json", "xlsx"];
 
     /// <summary>Что не так с шагом; пустой список — годится.</summary>
     public IReadOnlyList<string> Problems()
@@ -365,6 +442,38 @@ public sealed record ScenarioStep(
                     problems.Add($"Условие {i + 1}: {problem}");
         }
 
+        if (Kind == ScenarioStepKind.CreateRecord)
+        {
+            if (CollectionId <= 0 || DbId <= 0)
+                problems.Add("В шаге не выбрана коллекция");
+
+            // Запись без единого значения заводить можно, но незачем: такой шаг почти
+            // наверняка забытая заготовка, и молча плодить пустые записи по расписанию хуже,
+            // чем спросить.
+            if (Fields.All(f => string.IsNullOrWhiteSpace(f.Value)))
+                problems.Add("В шаге не заполнено ни одного поля записи");
+        }
+
+        if (Kind == ScenarioStepKind.Export)
+        {
+            if (CollectionId <= 0 || DbId <= 0)
+                problems.Add("В шаге не выбрана коллекция");
+
+            if (string.IsNullOrWhiteSpace(Folder))
+                problems.Add("В шаге не выбрана папка для файла выгрузки");
+
+            if (!ExportFormats.Contains(Format.Trim().ToLowerInvariant()))
+                problems.Add("Формат выгрузки — " + string.Join(", ", ExportFormats));
+
+            // Отбор у выгрузки необязателен: пустой список условий означает «вся коллекция».
+            if (Tests.Count > MaxConditions)
+                problems.Add($"Условий больше {MaxConditions}: отберите в два приема");
+
+            for (var i = 0; i < Tests.Count; i++)
+                foreach (var problem in Tests[i].Problems())
+                    problems.Add($"Условие {i + 1}: {problem}");
+        }
+
         return problems;
     }
 
@@ -390,6 +499,15 @@ public sealed record ScenarioStep(
         // строке настройки читаются хуже, чем два отбора подряд.
         ScenarioStepKind.Filter => "Отбор: "
             + (Tests.Count > 0 ? string.Join(" и ", Tests) : "условия не заданы"),
+
+        ScenarioStepKind.CreateRecord => "Создать запись: "
+            + (name.Length > 0 ? name : $"коллекция №{CollectionId}")
+            + $" ({Fields.Count(f => !string.IsNullOrWhiteSpace(f.Value))} полей)",
+
+        ScenarioStepKind.Export => "Экспорт выборки: "
+            + (name.Length > 0 ? name : $"коллекция №{CollectionId}")
+            + $" → {Format}"
+            + (Tests.Count > 0 ? $", условий: {Tests.Count}" : ""),
 
         _ => "Неизвестный шаг",
     };
@@ -465,26 +583,30 @@ public sealed record Scenario(
     /// <summary>
     /// Сценарий, который ПИШЕТ в ту самую коллекцию, правки которой его заводят. Такой запускал
     /// бы сам себя без конца: отработал — записал — снова изменилось — снова отработал.
+    /// Календарный триггер под тем же правилом: созданная запись с датой — это новое событие,
+    /// и круг тот же, только медленнее.
     ///
     /// Ловится это при сохранении, а не в работе, и намеренно: круг, замеченный на боевой
     /// машине, к тому моменту уже выбрал часовой потолок политики и остановил ВЕСЬ обмен, а не
     /// только себя. Отказать человеку словами, пока он смотрит на настройку, дешевле в тысячу раз.
     ///
-    /// Здесь проверяются шаги «действие» — те, у которых коллекция записана прямо в шаге. Шаг
-    /// «запрос» берет коллекцию у привязки своей карточки, и о ней модель не знает; его ловит
-    /// <c>ScenarioRunner.Blocker</c>, у которого реестр под рукой.
+    /// Здесь проверяются шаги «действие» и «создать запись» — те, у которых коллекция записана
+    /// прямо в шаге. Шаг «запрос» берет коллекцию у привязки своей карточки, и о ней модель не
+    /// знает; его ловит <c>ScenarioRunner.Blocker</c>, у которого реестр под рукой.
     /// </summary>
     private IEnumerable<string> SelfLoop()
     {
-        if (!Trigger.WatchesData) yield break;
+        if (!Trigger.WatchesCollection) yield break;
 
         for (var i = 0; i < Steps.Count; i++)
         {
             var step = Steps[i];
 
-            if (step.Kind != ScenarioStepKind.Action)            continue;
-            if (step.DbId != Trigger.DbId)                       continue;
-            if (step.CollectionId != Trigger.CollectionId)       continue;
+            if (step.Kind is not (ScenarioStepKind.Action or ScenarioStepKind.CreateRecord))
+                continue;
+
+            if (step.DbId != Trigger.DbId)                 continue;
+            if (step.CollectionId != Trigger.CollectionId) continue;
 
             yield return $"Шаг {i + 1} пишет в ту же коллекцию, изменения которой заводят "
                        + "сценарий: он запускал бы сам себя без конца";

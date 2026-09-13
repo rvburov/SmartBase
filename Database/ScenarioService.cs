@@ -144,12 +144,75 @@ public sealed class ScenarioService : IDisposable
 
     /// <summary>
     /// Пора ли заводить сценарий. У расписания ответ дает сам триггер, у «изменения данных» —
-    /// копилка правок: расписание считается от часов, а правки приходят когда придут.
+    /// копилка правок, у календаря — наступившие события: расписание считается от часов, а
+    /// правки и события приходят когда придут.
     /// </summary>
     private bool Due(Scenario scenario, DateTimeOffset now) =>
-        scenario.Trigger.WatchesData
-            ? Stirred(scenario, now)
-            : scenario.Trigger.IsDue(_cards.ScenarioLastRun(scenario.Id), now);
+        scenario.Trigger.WatchesData     ? Stirred(scenario, now)
+        : scenario.Trigger.WatchesCalendar ? UpcomingEvents(scenario, now).Count > 0
+        : scenario.Trigger.IsDue(_cards.ScenarioLastRun(scenario.Id), now);
+
+    /// <summary>
+    /// События, до начала которых осталось упреждение триггера, — те, чей момент
+    /// «начало − упреждение» попал в окно (прошлый запуск, сейчас]. Окно считается от отметки
+    /// о запуске, поэтому событие заводит сценарий ОДИН раз, а пропущенное за выключенной
+    /// программой догоняется одним запуском со всеми накопившимися событиями.
+    ///
+    /// Календарь живет в местном времени без смещения — тем же, что у службы уведомлений.
+    /// </summary>
+    private List<Core.Models.CalendarRecord> UpcomingEvents(Scenario scenario, DateTimeOffset now)
+    {
+        var trigger = scenario.Trigger;
+
+        if (_cards.ScenarioLastRun(scenario.Id) is not { } last) return [];
+
+        if (_databases().FirstOrDefault(d => d.DbId == trigger.DbId) is not { } database)
+            return [];
+
+        var lead = TimeSpan.FromMinutes(Math.Clamp(trigger.Minutes, 0, ScenarioTrigger.MaxMinutes));
+        var from = last.ToLocalTime().DateTime + lead;
+        var to   = now.ToLocalTime().DateTime + lead;
+
+        if (to <= from) return [];
+
+        return database.Constructor
+            .GetCalendarRecordsByRange(from, to, new HashSet<int> { trigger.CollectionId })
+            .Where(r => r.StartDt > from && r.StartDt <= to)
+            // Одна запись дает событие на каждое видимое поле-дату — ключ (запись, поле).
+            .GroupBy(r => (r.Id, r.FieldId))
+            .Select(g => g.First())
+            .OrderBy(r => r.StartDt)
+            .Take(StepTable.MaxRows)
+            .ToList();
+    }
+
+    /// <summary>
+    /// Наступившие события — строками для первого шага: название, время и коллекция, как их
+    /// видит человек в календаре. Даты — местные, «дд.ММ.гггг чч:мм»; у событий на весь день —
+    /// без времени.
+    /// </summary>
+    private static StepTable EventsTable(IReadOnlyList<Core.Models.CalendarRecord> events)
+    {
+        var rows = new List<IReadOnlyDictionary<string, string>>(events.Count);
+
+        foreach (var record in events)
+            rows.Add(new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["Название"]  = record.DisplayTitle,
+                ["Начало"]    = Stamp(record.StartDt, record.AllDay),
+                ["Конец"]     = Stamp(record.EndDt, record.AllDay),
+                ["Весь день"] = record.AllDay ? "да" : "нет",
+                ["Коллекция"] = record.CollectionName,
+            });
+
+        return new StepTable(["Название", "Начало", "Конец", "Весь день", "Коллекция"], rows);
+    }
+
+    private static string Stamp(DateTime moment, bool allDay) =>
+        moment == default
+            ? ""
+            : moment.ToString(allDay ? "dd.MM.yyyy" : "dd.MM.yyyy HH:mm",
+                              System.Globalization.CultureInfo.InvariantCulture);
 
     /// <summary>
     /// Менялись ли данные — и утихли ли правки.
@@ -207,6 +270,18 @@ public sealed class ScenarioService : IDisposable
             return false;
         }
 
+        // События календарного триггера считаются ДО отметки о запуске: отметка сдвигает
+        // окно, из которого они взяты, и посчитанное после нее было бы пустым.
+        StepTable? initial = null;
+
+        if (scenario.Trigger.WatchesCalendar)
+        {
+            var due = UpcomingEvents(scenario, now);
+            if (due.Count == 0) return false;   // событие исчезло между «пора» и запуском
+
+            initial = EventsTable(due);
+        }
+
         // Отметка — до работы, моментом начала: период считается от старта, а не от финиша.
         _cards.MarkScenarioRun(scenario.Id, now);
 
@@ -219,7 +294,7 @@ public sealed class ScenarioService : IDisposable
         try
         {
             outcome = await ScenarioRunner.RunAsync(scenario, _cards, databases, _extensions,
-                                                    now, _notice, ct);
+                                                    now, _notice, ct, initial);
         }
         catch (Exception failure)
         {

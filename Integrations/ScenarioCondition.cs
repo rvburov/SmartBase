@@ -76,9 +76,16 @@ public sealed record ScenarioCondition(string Column, ScenarioTest Test, string 
     /// такая колонка вообще — вопрос не сюда: об этом говорит шаг, и говорит словами, а молча
     /// считать отсутствующую колонку пустой значило бы отобрать ноль строк и не сказать почему.
     /// </summary>
-    public bool Holds(IReadOnlyDictionary<string, string> row)
+    public bool Holds(IReadOnlyDictionary<string, string> row) =>
+        HoldsValue(row.TryGetValue(Column, out var found) ? found ?? "" : "");
+
+    /// <summary>
+    /// То же на голом значении — для строк, которые идут не словарем, а массивом в порядке
+    /// колонок: выгрузка сопоставляет колонку условию один раз, а не на каждую строку.
+    /// </summary>
+    public bool HoldsValue(string? raw)
     {
-        var value = row.TryGetValue(Column, out var found) ? (found ?? "").Trim() : "";
+        var value  = (raw ?? "").Trim();
         var sample = Value.Trim();
 
         return Test switch

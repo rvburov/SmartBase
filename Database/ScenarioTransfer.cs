@@ -121,7 +121,8 @@ public static class ScenarioTransfer
                 NameOfCollection(databases, step.DbId, step.CollectionId),
                 step.FieldValues,
                 step.Folder,
-                step.Conditions))]);
+                step.Conditions,
+                step.Format))]);
 
     private static string NameOfDatabase(IReadOnlyList<DatabaseManager> databases, int dbId) =>
         dbId <= 0 ? "" : databases.FirstOrDefault(d => d.DbId == dbId)?.Name ?? "";
@@ -347,7 +348,8 @@ public static class ScenarioTransfer
             collectionId,
             step.Fields,
             step.Folder ?? "",
-            step.Conditions);
+            step.Conditions,
+            step.Format ?? "");
     }
 
     private static ScenarioTrigger Unpack(BundleTrigger? trigger,
@@ -375,6 +377,17 @@ public static class ScenarioTransfer
                 if (dbId > 0 && collectionId > 0)
                     return ScenarioTrigger.OnChange(dbId, collectionId,
                         Math.Clamp(trigger.Minutes, ScenarioTrigger.MinMinutes, ScenarioTrigger.MaxMinutes));
+
+                notes.Add($"Сценарий «{scenario}»: коллекция триггера «{trigger.Collection}» "
+                        + $"в базе «{trigger.Database}» не нашлась — он приехал ручным.");
+                return ScenarioTrigger.Manual;
+
+            case "calendar":
+                var (eventDb, eventCollection) = Resolve(databases, trigger.Database, trigger.Collection);
+
+                if (eventDb > 0 && eventCollection > 0)
+                    return ScenarioTrigger.BeforeEvent(eventDb, eventCollection,
+                        Math.Clamp(trigger.Minutes, 0, ScenarioTrigger.MaxMinutes));
 
                 notes.Add($"Сценарий «{scenario}»: коллекция триггера «{trigger.Collection}» "
                         + $"в базе «{trigger.Database}» не нашлась — он приехал ручным.");
@@ -454,10 +467,12 @@ public static class ScenarioTransfer
 
     private static ScenarioStepKind ParseStepKind(string? text) => (text ?? "").Trim().ToLowerInvariant() switch
     {
-        "request" => ScenarioStepKind.Request,
-        "action"  => ScenarioStepKind.Action,
-        "intake"  => ScenarioStepKind.Intake,
-        "filter"  => ScenarioStepKind.Filter,
-        _         => ScenarioStepKind.Notify,
+        "request"      => ScenarioStepKind.Request,
+        "action"       => ScenarioStepKind.Action,
+        "intake"       => ScenarioStepKind.Intake,
+        "filter"       => ScenarioStepKind.Filter,
+        "createrecord" => ScenarioStepKind.CreateRecord,
+        "export"       => ScenarioStepKind.Export,
+        _              => ScenarioStepKind.Notify,
     };
 }
