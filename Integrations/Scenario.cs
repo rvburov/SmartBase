@@ -32,6 +32,22 @@ public enum ScenarioTriggerKind
     /// сценарий получает СТРОКАМИ — как будто их принес первый шаг.
     /// </summary>
     Calendar,
+
+    /// <summary>
+    /// Один раз при запуске программы (docs/ROADMAP-API.md, раздел 2).
+    ///
+    /// Для чего он нужен: забрать то, что накопилось у чужой программы, пока этот компьютер был
+    /// выключен. Расписанием это не выражается — «каждые 30 минут» после включения ждет
+    /// полчаса, а «ежедневно в 07:00» не сработает вовсе, если в семь машина еще не работала.
+    ///
+    /// <b>Парного «при остановке» нет и не будет.</b> Раздел 2 обещал оба, но обещание
+    /// невыполнимо по существу: выключение питания, закрытие сеанса и снятие процесса не дают
+    /// программе ни одного шанса отработать, а закрытие окна пришлось бы задерживать на время
+    /// сетевого обмена — до полуминуты на каждый шаг. Триггер, который срабатывает «обычно, но
+    /// не всегда», хуже отсутствующего: на него нельзя опереться, а выглядит он как гарантия.
+    /// Сказано об этом в разделе 13 роадмапа.
+    /// </summary>
+    Startup,
 }
 
 /// <summary>
@@ -86,11 +102,17 @@ public sealed record ScenarioTrigger(
     public static ScenarioTrigger BeforeEvent(int dbId, int collectionId, int lead) =>
         new(ScenarioTriggerKind.Calendar, lead, default, dbId, collectionId);
 
+    /// <summary>Один раз при запуске программы.</summary>
+    public static ScenarioTrigger OnStartup => new(ScenarioTriggerKind.Startup, 0, default);
+
     /// <summary>Следит ли триггер за правками в коллекции.</summary>
     public bool WatchesData => Kind == ScenarioTriggerKind.Changed;
 
     /// <summary>Заводится ли триггер календарными событиями.</summary>
     public bool WatchesCalendar => Kind == ScenarioTriggerKind.Calendar;
+
+    /// <summary>Заводится ли триггер запуском программы.</summary>
+    public bool OnStart => Kind == ScenarioTriggerKind.Startup;
 
     /// <summary>
     /// Привязан ли триггер к коллекции. Для таких сценарий не должен САМ писать в эту
@@ -184,6 +206,8 @@ public sealed record ScenarioTrigger(
         ScenarioTriggerKind.Calendar => (Minutes > 0 ? $"за {Minutes} мин до события" : "к началу события")
             + $" в «{(collection.Length > 0 ? collection : "коллекции №" + CollectionId)}»",
 
+        ScenarioTriggerKind.Startup => "при запуске программы",
+
         _ => "вручную",
     };
 
@@ -206,6 +230,8 @@ public sealed record ScenarioTrigger(
             $"event {Minutes.ToString(CultureInfo.InvariantCulture)} "
             + $"{DbId.ToString(CultureInfo.InvariantCulture)} "
             + $"{CollectionId.ToString(CultureInfo.InvariantCulture)}",
+
+        ScenarioTriggerKind.Startup => "startup",
 
         _ => "manual",
     };
@@ -244,6 +270,8 @@ public sealed record ScenarioTrigger(
                   && int.TryParse(collection, NumberStyles.Integer, CultureInfo.InvariantCulture, out var id)
                   && ahead >= 0 && ahead <= MaxMinutes && dbId > 0 && id > 0 =>
                 BeforeEvent(dbId, id, ahead),
+
+            ["startup"] => OnStartup,
 
             _ => Manual,
         };

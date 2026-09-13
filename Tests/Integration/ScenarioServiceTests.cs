@@ -472,4 +472,91 @@ public sealed class ScenarioServiceTests : IDisposable
                         ScenarioRunner.Blocker(scenario, Cards, [_db.Manager], [])!,
                         StringComparison.Ordinal);
     }
+
+
+    // ── При запуске программы ─────────────────────────────────────────────────
+
+    /// <summary>
+    /// Сценарий «при запуске программы» идет на первом же тике — и ровно ОДИН раз за заход.
+    /// Ради этого он и заведен: забрать накопившееся у чужой стороны, пока компьютер был
+    /// выключен. Расписанием это не выражается — «каждые 30 минут» после включения ждет
+    /// полчаса, а «ежедневно в 07:00» не сработает вовсе, если в семь машина не работала.
+    /// </summary>
+    [Fact]
+    public async Task A_startup_scenario_runs_once_per_launch()
+    {
+        using var server  = Server();
+        Ready(ReadyRequest(server), ScenarioTrigger.OnStartup);
+
+        var service = Service();
+        service.PrimeStartup();
+
+        Assert.Equal(1, await service.TickAsync(Now));
+        Assert.Single(server.Seen);
+
+        // Второй тик того же захода его не трогает.
+        Assert.Equal(0, await service.TickAsync(Now.AddMinutes(1)));
+        Assert.Single(server.Seen);
+    }
+
+    /// <summary>
+    /// Заведенный ПОСЛЕ старта сценарий в этот заход не идет: «при запуске» с того момента еще
+    /// не случалось. Иначе сохранение карточки означало бы немедленный обмен — ровно того, чего
+    /// человек не просил, и того же, от чего бережет якорь расписания.
+    /// </summary>
+    [Fact]
+    public async Task A_startup_scenario_created_later_waits_for_the_next_launch()
+    {
+        using var server = Server();
+
+        var service = Service();
+        service.PrimeStartup();               // сценариев «при запуске» еще нет
+
+        Ready(ReadyRequest(server), ScenarioTrigger.OnStartup);
+
+        Assert.Equal(0, await service.TickAsync(Now));
+        Assert.Empty(server.Seen);
+    }
+
+    /// <summary>
+    /// Помеха не съедает запуск: сценарий остается в наборе и идет, когда помеха уйдет. Догон
+    /// тот же, что у расписания, — иначе единственный шанс отработать за заход терялся бы
+    /// из-за базы, которая смонтировалась на секунду позже службы.
+    /// </summary>
+    [Fact]
+    public async Task A_blocked_startup_scenario_keeps_its_turn()
+    {
+        using var server = Server();
+        var request = ReadyRequest(server, withBinding: false);   // привязки нет — помеха
+        var scenario = Ready(request, ScenarioTrigger.OnStartup);
+
+        var service = Service();
+        service.PrimeStartup();
+
+        Assert.Equal(0, await service.TickAsync(Now));
+        Assert.Empty(server.Seen);
+
+        // Помеха ушла — тот же заход, тот же набор.
+        var collection = _db.Constructor.GetAllCollections().Single(c => c.Name == "Заказы");
+        Cards.SaveBinding(request, new CollectionBinding(_db.Manager.DbId, collection.Id!.Value,
+            [new BindingColumn("Название", null)]));
+
+        Assert.Equal(1, await service.TickAsync(Now.AddMinutes(1)));
+        Assert.Single(server.Seen);
+        Assert.NotNull(Cards.ScenarioLastRun(scenario.Id));
+    }
+
+    /// <summary>Выключенный «при запуске» не идет: тумблер главнее триггера.</summary>
+    [Fact]
+    public async Task A_disabled_startup_scenario_stays_put()
+    {
+        using var server = Server();
+        Ready(ReadyRequest(server), ScenarioTrigger.OnStartup, enabled: false);
+
+        var service = Service();
+        service.PrimeStartup();
+
+        Assert.Equal(0, await service.TickAsync(Now));
+        Assert.Empty(server.Seen);
+    }
 }

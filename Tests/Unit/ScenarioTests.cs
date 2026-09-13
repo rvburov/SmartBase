@@ -643,4 +643,50 @@ public sealed class ScenarioTests
 
         Assert.Equal("Преобразовать строки: Сумма, С НДС", step.Describe());
     }
+
+
+    // ── При запуске программы ─────────────────────────────────────────────────
+
+    /// <summary>
+    /// Триггер «при запуске» расписания не имеет: его заводит событие, а не часы. <c>NextRun</c>
+    /// отвечает «никогда», и <c>IsDue</c> — «не пора»: решает служба, а не модель.
+    /// </summary>
+    [Fact]
+    public void A_startup_trigger_has_no_schedule()
+    {
+        var trigger = ScenarioTrigger.OnStartup;
+
+        Assert.True(trigger.OnStart);
+        Assert.Null(trigger.NextRun(Evening));
+        Assert.False(trigger.IsDue(Evening.AddDays(-1), Evening));
+        Assert.Empty(trigger.Problems());
+    }
+
+    /// <summary>Строка хранения читается обратно — и мусор рядом с ней не становится запуском.</summary>
+    [Fact]
+    public void A_startup_trigger_survives_the_round_trip()
+    {
+        Assert.Equal("startup", ScenarioTrigger.OnStartup.ToString());
+        Assert.Equal(ScenarioTriggerKind.Startup, ScenarioTrigger.Parse("startup").Kind);
+        Assert.Equal(ScenarioTriggerKind.Manual,  ScenarioTrigger.Parse("startup 5").Kind);
+    }
+
+    /// <summary>
+    /// Сценарий с таким триггером считается автоматическим: тумблер у него работает так же, как
+    /// у расписания, и выключенный не идет.
+    /// </summary>
+    [Fact]
+    public void A_startup_scenario_is_automatic_when_enabled()
+    {
+        var card = Scenario.New() with
+        {
+            Name    = "Забрать накопившееся",
+            Trigger = ScenarioTrigger.OnStartup,
+            Steps   = [ScenarioStep.OfNotice("Готово")],
+        };
+
+        Assert.False(card.Automatic);
+        Assert.True((card with { Enabled = true }).Automatic);
+        Assert.Equal("при запуске программы", card.Trigger.Describe());
+    }
 }

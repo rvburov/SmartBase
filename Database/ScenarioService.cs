@@ -52,6 +52,15 @@ public sealed class ScenarioService : IDisposable
     private DispatcherTimer? _timer;
     private bool             _ticking;   // запуски не накладываются; все входы с UI-потока
 
+    // Сценарии «при запуске программы», которым этот заход еще не отработал. Набор берется ОДИН
+    // раз, при старте службы: заведенный позже сценарий сработает в следующий заход, а не
+    // немедленно — «при запуске» с тех пор не случалось.
+    //
+    // Набор, а не флаг «уже отработали», потому что сценарию может что-то мешать: база не
+    // смонтирована, соединение не поднялось. Такой тик пропускается молча, и сценарий остается в
+    // наборе — догон работает так же, как у расписания.
+    private readonly HashSet<int> _startupLeft = [];
+
     // О чем уже сказали в «Диагностику», по сценарию. Ночь без сетевой базы иначе оставляет к
     // утру тысячу одинаковых строк.
     private readonly Dictionary<int, string> _said = [];
@@ -83,6 +92,8 @@ public sealed class ScenarioService : IDisposable
         // же возвращении окна из трея.
         Changes.Attach();
 
+        PrimeStartup();
+
         _timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(TickSeconds) };
         _timer.Tick += (_, _) => _ = TickAsync(DateTimeOffset.Now);
         _timer.Start();
@@ -93,6 +104,21 @@ public sealed class ScenarioService : IDisposable
 
         Log.Information("Сценарии: служба запущена, сами ходят {Count} (из них по правкам {Watching})",
                         automatic, watching);
+    }
+
+    /// <summary>
+    /// Запомнить сценарии «при запуске программы» — те, что должны отработать за этот заход.
+    ///
+    /// Отдельным методом, а не строкой внутри <see cref="Start"/>, потому что <c>Start</c>
+    /// заводит таймер на UI-потоке, а проверять триггер надо и без него.
+    /// </summary>
+    public void PrimeStartup()
+    {
+        _startupLeft.Clear();
+
+        foreach (var scenario in _cards.Scenarios())
+            if (scenario.Automatic && scenario.Trigger.OnStart)
+                _startupLeft.Add(scenario.Id);
     }
 
     public void Dispose()
@@ -129,7 +155,13 @@ public sealed class ScenarioService : IDisposable
                 if (!scenario.Automatic) continue;
                 if (!Due(scenario, now))  continue;
 
-                if (await AutomaticAsync(scenario, now, ct)) ran++;
+                if (!await AutomaticAsync(scenario, now, ct)) continue;
+
+                ran++;
+
+                // Отработал — из набора «при запуске» уходит: второй раз за один заход
+                // программы этот триггер не срабатывает.
+                if (scenario.Trigger.OnStart) _startupLeft.Remove(scenario.Id);
             }
         }
         finally
@@ -148,7 +180,8 @@ public sealed class ScenarioService : IDisposable
     /// правки и события приходят когда придут.
     /// </summary>
     private bool Due(Scenario scenario, DateTimeOffset now) =>
-        scenario.Trigger.WatchesData     ? Stirred(scenario, now)
+        scenario.Trigger.OnStart         ? _startupLeft.Contains(scenario.Id)
+        : scenario.Trigger.WatchesData     ? Stirred(scenario, now)
         : scenario.Trigger.WatchesCalendar ? UpcomingEvents(scenario, now).Count > 0
         : scenario.Trigger.IsDue(_cards.ScenarioLastRun(scenario.Id), now);
 

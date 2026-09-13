@@ -157,6 +157,7 @@ public partial class ScenarioDialog : Window
             : Array.FindIndex(Leads, l => l.Minutes == 30);   // осмысленный дефолт: за полчаса
 
         ManualRadio.IsChecked   = card.Trigger.Kind == ScenarioTriggerKind.Manual;
+        StartupRadio.IsChecked  = card.Trigger.Kind == ScenarioTriggerKind.Startup;
         EveryRadio.IsChecked    = card.Trigger.Kind == ScenarioTriggerKind.Every;
         DailyRadio.IsChecked    = card.Trigger.Kind == ScenarioTriggerKind.Daily;
         ChangedRadio.IsChecked  = card.Trigger.Kind == ScenarioTriggerKind.Changed;
@@ -174,6 +175,7 @@ public partial class ScenarioDialog : Window
         ShowHint();
 
         ManualRadio.IsCheckedChanged    += (_, _) => ShowHint();
+        StartupRadio.IsCheckedChanged   += (_, _) => ShowHint();
         EveryRadio.IsCheckedChanged     += (_, _) => ShowHint();
         DailyRadio.IsCheckedChanged     += (_, _) => ShowHint();
         ChangedRadio.IsCheckedChanged   += (_, _) => ShowHint();
@@ -592,6 +594,7 @@ public partial class ScenarioDialog : Window
         var manual   = ManualRadio.IsChecked   == true;
         var changed  = ChangedRadio.IsChecked  == true;
         var calendar = CalendarRadio.IsChecked == true;
+        var startup  = StartupRadio.IsChecked  == true;
 
         // Уточнение к правкам показывается только вместе с ними: строка «через 5 минут тишины»
         // под выбранным «ежедневно в 07:00» читается как часть расписания.
@@ -614,6 +617,12 @@ public partial class ScenarioDialog : Window
                     ? "Сценарий пойдет к началу каждого события коллекции, с выбранной форой. "
                       + "Наступившие события приходят первому шагу строками: Название, Начало, "
                       + "Конец, Весь день, Коллекция."
+                    : startup
+                        ? "Сценарий пойдет один раз за заход программы — чтобы забрать то, что "
+                          + "накопилось, пока компьютер был выключен. Заведенный сейчас сработает "
+                          + "в следующий запуск: «при запуске» с этого момента еще не случалось. "
+                          + "Парного «при остановке» нет: выключение питания и снятие процесса не "
+                          + "дают программе отработать, а такой триггер лучше не обещать вовсе."
                     : EnabledSwitch.IsChecked == true
                         ? "Сценарий будет запускаться сам. Пока выбранная база данных недоступна, запуск "
                           + "пропускается и догоняется, когда она вернется."
@@ -676,7 +685,8 @@ public partial class ScenarioDialog : Window
     {
         problem = "";
 
-        if (ManualRadio.IsChecked == true) return ScenarioTrigger.Manual;
+        if (ManualRadio.IsChecked  == true) return ScenarioTrigger.Manual;
+        if (StartupRadio.IsChecked == true) return ScenarioTrigger.OnStartup;
 
         if (EveryRadio.IsChecked == true)
         {

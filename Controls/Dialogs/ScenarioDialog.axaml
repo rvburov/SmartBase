@@ -42,6 +42,14 @@
 
             <RadioButton x:Name="ManualRadio" GroupName="trigger" Content="Только вручную" />
 
+            <!-- «При запуске программы» — забрать накопившееся у чужой стороны за то время, пока
+                 этот компьютер был выключен. Расписанием это не выражается: «каждые 30 минут»
+                 после включения ждет полчаса, а «ежедневно в 07:00» не сработает вовсе, если в
+                 семь машина еще не работала. Парного «при остановке» нет намеренно — см.
+                 ScenarioTriggerKind.Startup. -->
+            <RadioButton x:Name="StartupRadio" GroupName="trigger"
+                         Content="При запуске программы" />
+
             <Grid ColumnDefinitions="Auto,8,*">
                 <RadioButton Grid.Column="0" x:Name="EveryRadio" GroupName="trigger"
                              Content="Каждые" VerticalAlignment="Center" />
